@@ -17,8 +17,8 @@ export {
 	fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) -> void;
 	fiAssembleJsFile(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, code : List<string>) -> void;
 	fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) -> List<string>;
-	fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : () -> void) -> void;
-	fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : () -> void) -> void;
+	fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : (int) -> void) -> void;
+	fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : (int) -> void) -> void;
 	fiEnsureModulesDirectory(cfg : FiJsConfig) -> void;
 }
 
@@ -78,25 +78,26 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 				p = fiPrepareWebFonts(cfg);
 				tmpfiles := p.first;
 				fontparams = p.second;
-				concat(
+				if (fontparams == []) [] else concat(
 					concat(
 						concat(hxparams, ["-lib pixijs"]),
 						fontparams
 					), ["-D flow_main=\"" + ovl.mainFn + "\""])
 			} else hxparams;
 
-		hxparams2 = if (containsSet(ovl.nativeClasses, "RenderSupport3D") && cfg.jsmode != NODEJS_MODE) {
+		hxparams2 = if (hxparams1 != [] && containsSet(ovl.nativeClasses, "RenderSupport3D") && cfg.jsmode != NODEJS_MODE) {
 				concat(hxparams1, ["-lib threejs"])
 			} else hxparams1;
 
 		// Push 'readable' into haxe code.
-		hxparams3 = if (cfg.readable) {
+		hxparams3 = if (hxparams2 == []) []
+			else if (cfg.readable) {
 				concat(hxparams2, ["-D readable"])
 			} else if (!isEmptySet(cfg.jslibrary)) {
 				concat(hxparams2, ["-D jslibrary"])
 			} else hxparams2;
 
-		hxparams4 = if (getConfigParameterDef(program.config.config, "dce", "") == "2") {
+		hxparams4 = if (hxparams3 != [] && getConfigParameterDef(program.config.config, "dce", "") == "2") {
 				fcVerbose(cfg, 0, "Dead Haxe code elimination...");
 				natives = getTreeValues(fiCollectAllNativeNames(cfg, program, ovl));
 				if (natives != []) {
@@ -114,7 +115,7 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 		fcVerbose(cfg, 1, "Call 'haxe " + buildFile + "'");
 
 		setFileContent(buildFile, strGlue(hxparams3, "\n"));
-		startProcess("haxe", [buildFile], ".", "",
+		if (hxparams3 != []) startProcess("haxe", [buildFile], ".", "",
 			\c, o, e -> {
 				r0 = getFileContent(jsfile);
 				r = if (c != 0) {
@@ -142,7 +143,9 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 				}
 				callback(r);
 			}
-		);
+		) else {
+			callback("");
+		}
 	} else {
 		callback("/* TODO: non-Haxe runtime goes here */\n");
 	}
@@ -441,7 +444,7 @@ fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<str
 }
 
 fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback) {
-	callback()
+	callback(0)
 }
 
 fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback) {
@@ -455,18 +458,18 @@ fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback) {
 				startProcess("js-beautify.cmd", beautifyParams, ".", "",
 					\c1, o1, e1 -> {
 						fcVerbose(cfg, 0, "Trying js-beautify.cmd for '" + cfg.outputfile + "'");
-						callback();
 						if (c1 != 0) {
 							fcPrintln("js-beautify.cmd failed.", cfg.threadId);
 							fcPrintln(e1, cfg.threadId);
 							fcPrintln(o1, cfg.threadId);
 							fcPrintln(i2s(c1), cfg.threadId);
 						}
+						callback(if (c1 == 0) c1 else 5 + c1);
 					}
 				);
 			} else {
 				fcVerbose(cfg, 0, "Beautify done.");
-				callback();
+				callback(0);
 			}
 			if (cfg.modules != "") {
 				deleteFile(cfg.outputfile);

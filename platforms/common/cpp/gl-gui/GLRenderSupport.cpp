@@ -1927,8 +1927,8 @@ StackSlot GLRenderSupport::interruptibleDeferUntilRender(RUNNER_ARGS)
     return RUNNER->AllocateNativeClosure(ByteCodeRunner::RemoveDeferredAction, "InterruptibleTimer$disposer", 0, this, 1, cb_root);
 }
 
-std::vector<GLClip*> regularStageChildren = std::vector<GLClip*>();
 GLClip *fullWindowClipParent = NULL;
+std::vector<int> hiddenClipsIds;
 StackSlot GLRenderSupport::toggleFullWindow(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(fw);
@@ -1947,26 +1947,38 @@ void GLRenderSupport::toggleFullWindow(bool fw)
 
         if (fw) {
             fullWindowClipParent = FullWindowTarget->getParent();
-            regularStageChildren = Stage->removeChildren();
 
-            if (regularStageChildren.size() != 0) {
-                Stage->addChild(FullWindowTarget);
+            if (fullWindowClipParent != NULL) {
+                const auto& children = Stage->getChildren();
 
-                notifyFullWindow(true);
-            } else { // Stage is not ready yet
+                if (children.size() != 0) {
+                    for (auto child : children) {
+                        if (child->isVisible()) {
+                            hiddenClipsIds.push_back(child->getFlowValue().GetNativeValId());
+                            child->setVisible(false);
+                        }
+                    }
+                    Stage->addChild(FullWindowTarget);
+
+                    notifyFullWindow(true);
+                } else { // Stage is not ready yet
+                    FullWindowPending = true;
+                }
+            } else {
                 FullWindowPending = true;
             }
         } else {
-            if (fullWindowClipParent != NULL && regularStageChildren.size() != 0) {
-                Stage->removeChildren();
+            if (fullWindowClipParent != NULL && hiddenClipsIds.size() != 0) {
+                const auto& children = Stage->getChildren();
+                for (auto child : children) {
+                    if (find(hiddenClipsIds.begin(), hiddenClipsIds.end(), child->getFlowValue().GetNativeValId()) != hiddenClipsIds.end()) {
+                        child->setVisible(true);
+                    }
+                }
+                hiddenClipsIds.clear();
 
                 if (!FullWindowTarget->isDestroyed() && !fullWindowClipParent->isDestroyed())
                     fullWindowClipParent->addChild(FullWindowTarget);
-
-                for (unsigned i = 0; i < regularStageChildren.size(); i++) {
-                    if (!regularStageChildren[i]->isDestroyed())
-                        Stage->addChild(regularStageChildren[i]);
-                }
 
                 notifyFullWindow(false);
             }

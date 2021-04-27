@@ -1,20 +1,20 @@
 package com.area9innovation.flow;
 
-import java.util.Hashtable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
 
 public abstract class FlowRuntime {
 	private IHostFactory host_factory;
 	public Struct[] struct_prototypes;
-	public Hashtable<String,Integer> struct_ids;
-	private Hashtable<Class,NativeHost> hosts;
+	public ConcurrentHashMap<String,Integer> struct_ids;
+	private ConcurrentHashMap<Class,NativeHost> hosts;
 
 	private String[] str_args;
 
 	protected FlowRuntime(Struct[] structs, String[] args) {
 		struct_prototypes = structs;
-		struct_ids = new Hashtable<String,Integer>();
-		hosts = new Hashtable<Class,NativeHost>();
+		struct_ids = new ConcurrentHashMap<String,Integer>();
+		hosts = new ConcurrentHashMap<Class,NativeHost>();
 		str_args = args;
 
 		for (int i = 0; i < structs.length; i++)

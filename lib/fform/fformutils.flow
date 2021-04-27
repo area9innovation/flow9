@@ -103,7 +103,7 @@ switchTransform(tr : Transform<?>, fn : (b : Behaviour<?>) -> Form) -> Form {
 	}
 }
 
-switchTransform2(tr : Transform<?>, convertFn : (?) -> (??), fn : (b : Behaviour<??>) -> Form) -> Form {
+switchTransform2(tr : Transform<?>, convertFn : (?) -> ??, fn : (b : Behaviour<??>) -> Form) -> Form {
 	switch (tr) {
 		ConstBehaviour(__) : fn(const(convertFn(fgetValue(tr))));
 		default: {
@@ -199,7 +199,7 @@ fform2form(fform : FForm) -> Form {
 		FAvailable2(a, form) : Available2(a, fform2form(form));
 		FAccess(prop, form) : FAccessProperties2AccessProperties(prop) |> (\f -> Constructor(Access(f.first, fform2form(form)), f.second));
 		FSetPending(setpending, form) : switchTransform(setpending, \sp -> SetPending(sp, fform2form(form)));
-		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, style));
+		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, FRealHTMLStyle2RealHTMLStyle(style)));
 		FMForm(form) : form;
 		FDynamicGroup2(__, __, __) : FDynamicGroup2DynamicGroup(fform) |> (\f -> Constructor(f.first, f.second));
 		FVideo(__, __, __) : FVideo2Video(fform) |> (\f -> Constructor(f.first, f.second));
@@ -209,6 +209,15 @@ fform2form(fform : FForm) -> Form {
 		FAnimation(content, __, __) : fform2form(content); // TODO:
 		FOrigin(origin, form) : fform2form(form); // TODO:
 	}
+}
+
+FRealHTMLStyle2RealHTMLStyle(style : [FRealHTMLStyle]) -> [RealHTMLStyle] {
+	filtermap(style, \st -> 
+		switch (st) {
+			RealHTMLStyle(): cast(Some(st) : Some<FRealHTMLStyle> -> Maybe<RealHTMLStyle>);
+			default: None();
+		}
+	)
 }
 
 form2fform(_form : Form) -> FForm {
@@ -1027,22 +1036,28 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
 	textfield = makeStyledTextfield(fgetValue(text), style);
-	u1 =
+	uns = [
 		eitherFn(
 			tryExtractStruct(style, FDynamicColor(const(-1))),
 			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
 			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
-		);
-	u2 =
+		),
+
 		eitherMap(
 			tryExtractStruct(style, LangAttribute(const(""))),
 			\la -> makeSubscribe(la.languageCode, \code -> setAccessAttributes(textfield, [["lang", code]]))(),
 			nop
-		);
+		),
+
+		eitherMap(
+			tryExtractStruct(style, TextWidthInspector(make(0.))),
+			\tw -> addEventListener(textfield, "textwidthchanged", \ -> nextDistinct(tw.width, getTextFieldWidth(textfield))),
+			nop
+		)
+	];
 
 	disposer = \ -> {
-		u1();
-		u2();
+		applyall(uns);
 
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {

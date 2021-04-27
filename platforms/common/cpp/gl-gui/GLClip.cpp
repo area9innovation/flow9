@@ -262,6 +262,10 @@ const GLBoundingBox &GLClip::getGlobalBBox()
 
         for (T_Filters::iterator it = filters.begin(); it != filters.end(); ++it)
             (*it)->updateBBox(this, global_bbox_full, &global_bbox_effect);
+
+        if (local_transform_raw.ox != 0 || local_transform_raw.oy != 0) {
+            wipeFlags(WipeLocalTransformChanged);
+        }
     }
 
     return global_bbox_effect;
@@ -288,6 +292,10 @@ const GLBoundingBox &GLClip::getLocalBBox()
 
         for (T_Filters::iterator it = filters.begin(); it != filters.end(); ++it)
             (*it)->updateBBox(this, local_bbox_full, &local_bbox_effect);
+
+        if (local_transform_raw.ox != 0 || local_transform_raw.oy != 0) {
+            wipeFlags(WipeLocalTransformChanged);
+        }
     }
 
     return local_bbox_effect;

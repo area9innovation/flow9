@@ -38,6 +38,13 @@ export {
 	*/
 	TextFragment(text : string, charStyle : [CharacterStyle]) -> TextFragments;
 	TextFragmentExt(text : string, charStyle : [CharacterStyle], styles : [TextFragmentStyle]) -> TextFragments;
+	TextFragmentWithDecorator(
+		text : string,
+		charStyle : [CharacterStyle],
+		styles : [TextFragmentStyle],
+		wordDecorator : (Form) -> Form,
+		customParagraphStyle : [ParagraphStyle]
+	) -> TextFragments;
 		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild;
 			TextFragmentMoreLineBreaks();
 			TextFragmentLastChild();
@@ -63,7 +70,8 @@ export {
 		indexingInit : int,
 		init : List<GeneralWrapElement>,
 		isLastChild : bool,
-		disableBreaksAfterHyphen : bool
+		disableBreaksAfterHyphen : bool,
+		emulateLetterspacing : bool
 	) -> GeneralTextFragments;
 	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
 	// also we have to add such element after the last \n in the last child text element of the paragraph
@@ -281,6 +289,10 @@ TextFragment(text, charStyle) {
 }
 
 TextFragmentExt(text, charStyle, style) {
+	TextFragmentWithDecorator(text, charStyle, [], idfn, [])
+}
+
+TextFragmentWithDecorator(text, charStyle, style, wordDecorator : (Form) -> Form, customParagraphStyle : [ParagraphStyle]) {
 	generalFragments = breakTextFragment(
 		text,
 		charStyle,
@@ -288,10 +300,11 @@ TextFragmentExt(text, charStyle, style) {
 		-100000,
 		makeList(),
 		containsStruct(style, TextFragmentLastChild()),
-		false
+		false,
+		containsStruct(customParagraphStyle, IgnoreLetterspacingOnReflow())
 	);
 	TextFragments(
-		mapList(generalFragments.elements, \e -> general2WrapElement(e, generalFragments.style))
+		mapList(generalFragments.elements, \e -> general2WrapElement(e, generalFragments.style, wordDecorator))
 	)
 }
 
@@ -301,11 +314,12 @@ DynamicWrapElement(index : int, form : WrapElement, width : Behaviour<double>);
 // It will monitor the available width, and reflow as necessary (also when dynamic
 // forms change size).
 // The result is a behaviour that produces an array of lines (each expressed as a Form)
-Wrap(availableWidth : Behaviour<double>, elements : [WrapElement],
-     alignment : ParagraphAlignment, interlineSpacing : double,
-     background : int, opacity : double)
-    -> DynamicBehaviour<[Form]> {
-    dynamicElementsList = ref makeList();
+Wrap(
+	availableWidth : Behaviour<double>, elements : [WrapElement],
+	alignment : ParagraphAlignment, interlineSpacing : double,
+	background : int, opacity : double
+) -> DynamicBehaviour<[Form]> {
+	dynamicElementsList = ref makeList();
 
 	widths = mapi(elements, \i, e -> {
 		switch(e : WrapElement) {
@@ -556,7 +570,8 @@ breakTextFragment(
 	indexingInit : int,
 	init : List<GeneralWrapElement>,
 	isLastChild : bool,
-	disableBreaksAfterHyphen : bool
+	disableBreaksAfterHyphen : bool,
+	emulateLetterspacing : bool
 ) -> GeneralTextFragments {
 
 	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing, offset, f -> {
@@ -577,7 +592,7 @@ breakTextFragment(
 	textLen = strlen(text);
 
 	space1Pos = ref -1;                                        // next pos of space char
-	space2Pos = ref -1;                                        // next pos of zero-width space char
+	// space2Pos = ref -1;                                        // next pos of zero-width space char
 	newLinePos = ref -1;                                       // next pos of newline symbol
 	hyphenPos : ref Pair<int, bool> = ref Pair(-1, false);     // pair of next pos of hyphen and soft sign
 	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
@@ -595,10 +610,8 @@ breakTextFragment(
 			if (isBiDiEnabled()) {
 				if (i >= ^chrCatPos) chrCatPos := remapMinusOne(getCharCatSplitPos(text, i+1, textLen)-1);
 			} else chrCatPos := i;
-			if (^chrCatPos > ^space1Pos) space1Pos := remapMinusOne(strRangeIndexOf(text, " ", ^chrCatPos, textLen));
-			if (^chrCatPos > ^space2Pos) space2Pos := remapMinusOne(strRangeIndexOf(text, "\u200b", ^chrCatPos, textLen));  // \u200b is zero-width space
+			if (^chrCatPos > ^space1Pos) space1Pos := indexOfWordDivider(text, ^chrCatPos, textLen);
 			if (^chrCatPos > ^newLinePos) newLinePos := remapMinusOne(strRangeIndexOf(text, "\n", ^chrCatPos, textLen));
-
 			if (^chrCatPos >= ^hyphenPos.first) {  // soft inequality because we want to keep hyphenPos greater than ^chrCatPos (findBreakAfterAllowPos2 returns at least ^chrCatPos+1)
 				hyphenPos := {
 					if (disableBreaksAfterHyphen || isUrlParameterTrue("fix40612"))
@@ -613,7 +626,7 @@ breakTextFragment(
 			// TODO try to get rid of array hence malloc optimisation needed.
 			noBiDiPositions : [Pair<int, SymbolAtPositionType>] = [
 				Pair(^space1Pos, PositionSpace()),
-				Pair(^space2Pos, PositionSpace()),
+				// Pair(^space2Pos, PositionSpace()),
 				Pair(^newLinePos, PositionLineBreak()),
 				Pair(^hyphenPos.first,
 					if (^hyphenPos.second) {
@@ -628,14 +641,14 @@ breakTextFragment(
 			else
 				noBiDiPositions;
 
-			keyPosM = fold(positions, None(), \pos : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
+			keyPosM = fold(positions, None(), \posM : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
 				if (currPos.first >= textLen) {
-					pos
+					posM
 				} else {
-					switch(pos) {
+					switch (posM) {
 						None(): Some(currPos);
-						Some(p): {
-							Some(if (p.first <= currPos.first) p else currPos)
+						Some(pos): {
+							Some(if (pos.first <= currPos.first) pos else currPos)
 						}
 					}
 				}
@@ -738,7 +751,51 @@ breakTextFragment(
 
 	elements = ^loop1(0, indexingInit, init);
 
-	GeneralTextFragments(elements, style);
+	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
+	// If paragraph has several successive WigiText fragments with letterspacing, then the space between them will be lost
+	// so we make a trick - add zerro-width space to the end of text in Text to force it to add last letterspacing space
+	// It is not used for TropicWigify
+	letterspacingNeeded = emulateLetterspacing && !isLastChild && containsStruct(style, LetterSpacing(0.0));
+
+	GeneralTextFragments(
+		if (letterspacingNeeded) switch(elements) {
+			Cons(h, t) : Cons(makeLetterSpacingForWord(h), t);
+			EmptyList() : elements;
+		} else elements,
+		style
+	);
+}
+
+makeLetterSpacingForWord(w : GeneralWrapElement) -> GeneralWrapElement {
+	switch(w) {
+		GeneralInspectElement(inspector, word) : GeneralInspectElement(
+			inspector,
+			makeLetterSpacingForWord(word)
+		);
+		GeneralText(txt) : GeneralText(txt + "\u200b");
+		default : w
+	}
+}
+
+wordDividers = map(
+	[
+		" ",
+		"\u200b",
+		"，",
+		"。",
+		"、",
+		"：",
+		"「",
+		"」",
+	],
+	\c -> getCharCodeAt(c, 0)
+);
+
+indexOfWordDivider(text : string, start : int, end: int) -> int {
+	countUntil(start, end, \idx -> contains(
+		wordDividers,
+		getCharCodeAt(text, idx)
+	));
 }
 
 mergeTextFragments(tf1 : TextFragments, tf2 : TextFragments) -> TextFragments {

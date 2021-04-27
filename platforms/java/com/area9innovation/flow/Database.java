@@ -27,7 +27,7 @@ public class Database extends NativeHost {
         public Connection con = null;
         public String err = "";
         public RSObject lrurs = null;
-        private DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSS");
+        private DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
         private HashSet<String> intOverflowFields = new HashSet<String>();
 
         public DBObject() {
@@ -94,7 +94,7 @@ public class Database extends NativeHost {
             err = "";
             dbObj = dbo;
 
-            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+            Statement stmt = dbo.con.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
             boolean resType = stmt.execute(query, Statement.RETURN_GENERATED_KEYS);
             if (resType) {
                 rs = stmt.getResultSet();
@@ -217,6 +217,9 @@ public class Database extends NativeHost {
         }
     }
 
+    // We don't want to support it in java,
+    // we prefer performance and more fast record sets (ResultSet.TYPE_FORWARD_ONLY)
+    /*
     public final Integer resultLengthDb(Object result) {
         RSObject res = (RSObject) result;
         try {
@@ -233,11 +236,12 @@ public class Database extends NativeHost {
             return 0;
         }
     }
+    */
 
     public final Boolean hasNextResultDb(Object result) {
         RSObject res = (RSObject) result;
         try {
-            if (res == null) return false;
+            if (res == null || res.rs == null) return false;
             return notEmptyResultSet(res.rs);
         } catch (SQLException se) {
             res.err = getSqlErrorMessage(se);
@@ -416,7 +420,7 @@ public class Database extends NativeHost {
     public final Struct[] nextResultDb(Object result) {
         RSObject res = (RSObject) result;
 
-        if (res == null) return new Struct[0];
+        if (res == null || res.rs == null) return new Struct[0];
         try {
             String[] fieldNames = getFieldNames(res.rs);
             int[] fieldTypes = getFieldTypes(res.rs);

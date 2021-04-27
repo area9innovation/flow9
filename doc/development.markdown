@@ -139,7 +139,7 @@ links chain is created ` globalAdditionalOffsetB` -> `offsetX` -> `Translate`
 	}
 
 There is no `unsubscriber` returned by `select` (unlike `selectu`) and, thus,
-it is not possible to break the links chain to aloow `GC` make its work.
+it is not possible to break the links chain to allow `GC` make its work.
 Library functions and Forms that accepts behaviours are (or at least should
 be) leaks free. It is safe to pass global behaviours as arguments directly.
 The problems arises due to transforms without unsubscribers.
@@ -243,7 +243,7 @@ defer `examineSuspects` call, i.e.
 		examineSuspects("my code")
 	})
 
-Also if you run `flowcpp` with `--debug` you can see a callstack for each of the suspect. Sometimes it's not easy to figure out as they all ends somewhere deep and it's not alway the end of the callstack that is causing the problem. You can do a quick check to see if there are any selects in the callstack.
+Also if you run `flowcpp` with `--debug` you can see a callstack for each of the suspect. Sometimes it's not easy to figure out as they all ends somewhere deep and it's not always the end of the callstack that is causing the problem. You can do a quick check to see if there are any selects in the callstack.
 
 <h2 id=profiling>Profiling</h2>
 
@@ -395,7 +395,7 @@ or similar.
 
 <h2 id=slow>My GUI is slow!</h2>
 
-The most common cause of slowness is due to excessive repaiting in your GUI. The second most cause is
+The most common cause of slowness is due to excessive repainting in your GUI. The second most cause is
 overly complicated layout.
 
 The first cause can be improved by moving dynamic parts of your UI further down to minimize the parts that

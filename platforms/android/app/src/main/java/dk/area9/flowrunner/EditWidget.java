@@ -4,7 +4,7 @@ import java.util.ArrayList;
 
 import android.content.Context;
 import android.os.Handler;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -64,6 +64,9 @@ class EditWidget extends NativeWidget {
 
                 @Override
                 public void afterTextChanged(Editable s) {
+                    if (id == 0)
+                        return;
+                    
                     String oldText = textView.getText().toString();
                     String newText = group.getWrapper().textIsAcceptedByFlowFilters(id, oldText);
                     if (previousText.equals(newText) || newText.equals(oldText)) {

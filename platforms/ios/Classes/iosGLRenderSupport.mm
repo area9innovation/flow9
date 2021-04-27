@@ -191,6 +191,16 @@
                 return NO;
         }
         
+        
+        // Workaround for proposed email choose. Range behaves wrong from iOS side.
+        if ([string isEqualToString:@""] && range.length == 0) {
+            NSUInteger location = range.location;
+            range.location = range.length;
+            range.length = location;
+        } else if (textView.realText.length == 0 && textView.text.length > 0) {
+            range.location = 0;
+        }
+        
         NSString* newText =
             [textView.realText stringByReplacingCharactersInRange: range withString: string];
         int maxLength = clip->getMaxChars();
@@ -892,6 +902,13 @@ bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
         return true;
     }
     
+    if ([ns_url hasPrefix: @"file://"]) {
+        NSString* imagePath = [ns_url substringWithRange:NSMakeRange(7, [ns_url length]-7)];
+        NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
+        resolvePictureDataAsBitmap(url, imageData);
+        return true;
+    }
+    
     void (^on_success)(NSData * data) = ^void(NSData * data) {
         resolvePictureDataAsBitmap(url, data);
     };
@@ -1392,7 +1409,7 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     
     NSString * ns_url = UNICODE2NS( web_clip->getUrl() );
     
-    NSURL* baseResourceUrl = [[NSBundle mainBundle] resourceURL];
+    NSURL* baseResourceUrl = [NSURL fileURLWithPath:applicationLibraryDirectory()];
     NSURL* baseResourceWwwUrl = [baseResourceUrl URLByAppendingPathComponent:@"www"];
     bool isLocalFile = [ns_url hasPrefix:@"./"];
     NSURL * rq_url = nil;
@@ -1420,8 +1437,10 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
     [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
     
+    NSString* path = [[[baseResourceWwwUrl URLByDeletingLastPathComponent] path] stringByAppendingString:@"/flow-local-store/images/pwa_nnc_logo.png"];
+    
     if (isLocalFile) {
-        [web_view loadFileURL:rq_url allowingReadAccessToURL:[baseResourceUrl URLByDeletingLastPathComponent]];
+        [web_view loadFileURL:rq_url allowingReadAccessToURL:[baseResourceWwwUrl URLByDeletingLastPathComponent]];
     } else {
         [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
     }

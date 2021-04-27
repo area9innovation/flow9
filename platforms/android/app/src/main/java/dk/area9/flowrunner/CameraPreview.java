@@ -13,7 +13,7 @@ import android.media.MediaRecorder;
 import android.media.CamcorderProfile;
 import android.os.Build;
 import android.os.Environment;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 import android.util.Log;
 import android.view.Display;
 import android.view.Surface;

@@ -536,8 +536,9 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			maybeMap(tryExtractStruct(style, MOnNewValue2(nop1)), \onv -> Pair(onv.fn, false))
 		);
 	mWidth = extractStruct(style, MWidth(-1.)).width;
-	clickEnabled = extractStruct(style, MClickEnabled(const(true))).enabled;
+	clickEnabled = extractStruct(style, MClickEnabled(const(true)));
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
+	captionClickable = !contains(style, MCaptionNonClickable());
 
 	caption = \en ->
 		switch (captionM) {
@@ -557,6 +558,8 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			default: m2t(captionM, parent)
 		}
 
+	pressed = make(false);
+
 	focusState =
 		concat(
 			concatStyles(
@@ -566,6 +569,7 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 					MRippleType(const(MRippleCenter())),
 					MHighlightOnFocus(const(true)),
 					MHighlightOnHover(const(true)),
+					TPressed(pressed),
 					MRippleOverlay(false),
 					AccessRole(accessRole),
 					MAddFocusGroup(true)
@@ -599,7 +603,19 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 	)
 	|> (\f -> TBorder(border4.left / 4.0, border4.top / 4.0, border4.right / 4.0, border4.bottom / 4.0, f))
 	|> (\f -> {
-		cap = caption(fmin(enabled, parent.enabled));
+		cap =
+			if (captionClickable)
+				MComponent2T(
+					manager,
+					parent,
+					name + "Caption",
+					[onClick, clickEnabled, MEnabled(enabled), MFocusEnabled(const(false))],
+					\foc ->
+						TConstruct([\ -> fconnect(foc.down, pressed)], caption(foc.enabled)),
+					m2t
+				)
+			else 
+				caption(fmin(enabled, parent.enabled));
 
 		switch (captionPosition.pos) {
 			MBeforePosition() : TBaselineCols2Dir(cap, f, parent.rtl);
@@ -802,9 +818,10 @@ MFloatingButton2T(manager : MaterialManager, parent : MFocusGroup, m : MFloating
 	bgColor = extractMColor(parent, m.style, MAccentColor());
 	iconColor = MThemeColor2MColor(parent, extractStruct(m.style, MIconColor(MWhite())).color);
 	iconOpacity = extractStruct(m.style, FillOpacity(1.));
-	buttonSize = if (extractStruct(m.style, MFabMini(false)).mini) 40. else 56.;
+	buttonSize = extractStruct(m.style, MFabSize(if (extractStruct(m.style, MFabMini(false)).mini) 40. else 56.)).size;
 	elevation = \down -> extractStruct(m.style, MElevation(fif(down, const(12.), const(6.)))).elevation;
 	scrollPoint = extractStruct(m.style, makeTScrollInspectVisible()).topleft;
+	centeredShape = contains(m.style, MFloatingButtonCenteredShape());
 
 	showActionButtons = make(false);
 	enabled = extractStruct(m.state, MEnabled(const(true))).enabled;
@@ -878,7 +895,9 @@ MFloatingButton2T(manager : MaterialManager, parent : MFocusGroup, m : MFloating
 			"MFloatingButton",
 			focusState,
 			\focus ->
-				TEasedShadowShape(manager, parent, elevation(focus.down), f, 0.3, RectangleShape("MFloatingButton"))
+				TEasedShadowShape(manager, parent, elevation(focus.down), f, 0.3,
+					if (centeredShape) RectangleCenteredShape("MFloatingButton") else RectangleShape("MFloatingButton")
+				)
 				|> (\f2 ->
 					eitherFn(
 						speedDial,
@@ -1128,6 +1147,8 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 		if (fgetValue(selectable.enabled)) reverseBehaviour(selectable.selected)
 	};
 	width = tryExtractStruct(style, MWidth(-1.));
+	textStyle0 = tryExtractStruct(style, MCustomTextStyle([]));
+	textStyle = eitherMap(textStyle0, \ts -> ts.style, [MDataRow()]);
 	color = extractMColor(parent, style, MPrimaryColor());
 	shadeColor = MColor(color.color, min(900, color.shade + 200), color.accent);
 	icon : Material =
@@ -1162,15 +1183,15 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 
 		eitherMap(
 			width,
-			\w -> MEllipsisText2T(manager, parent, MEllipsisText(title, [MDataRow(), col]), m2t),
-			MText2T(parent, title, [MDataRow(), col])
+			\w -> MEllipsisText2T(manager, parent, MEllipsisText(title, arrayPush(textStyle, col)), m2t),
+			MText2T(parent, title, arrayPush(textStyle, col))
 		)
-		|> (\f -> TCenterYIn(f, TFixed(0., chipContentHeight)))
+		|> (\f -> eitherMap(textStyle0, \__ -> f, TCenterYIn(f, TFixed(0., chipContentHeight))))
 		|> (\f ->
 			if (icon != TEmpty()) {
 				TCols2Dir(
 					switch (icon) {
-						MLetterIcon(text, iconStyle, textStyle): {
+						MLetterIcon(text, iconStyle, txtStyle): {
 							MLetterIcon2T(
 								manager,
 								p,
@@ -1182,7 +1203,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 											extractMColor(parent, iconStyle, MPrimaryColor())
 											|> (\f3 -> replaceStruct(f2, MColor(f3.color, min(900, f3.shade + 200), f3.accent)))
 										} else f2),
-									textStyle
+									txtStyle
 								)
 							)
 						}
@@ -1190,7 +1211,8 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 							MAvatar2T(p, url, replaceStruct(avatarStyle, MIconSize(32.)))
 						}
 						MIcon(name, iconStyle): {
-							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, replaceStruct(iconStyle, MIconSize(20.))))
+							st = eitherMap(textStyle0, \__ -> iconStyle, replaceStruct(iconStyle, MIconSize(20.)));
+							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, st))
 						}
 						default: TEmpty();
 					}
@@ -1241,7 +1263,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 									if (sel) {
 										if (hov) shadeColor else color
 									} else
-										MGrey(if (hov) 600 else 300);
+										MThemeColor2MColor(parent, extractStruct(style, MUnselectedColor(MGrey(if (hov) 600 else 300))).color);
 								MShapeFrame(
 									parent,
 									[MFill(col)],
@@ -1258,7 +1280,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 						const(0.63),
 						MShapeFrame(
 							parent,
-							[MFill(MGrey(300))],
+							[MThemeFill(parent, extractStruct(style, MUnselectedColor(MGrey(300))).color)],
 							TBorder4(8., f(false, false)),
 							"MChip"
 						)
@@ -1321,6 +1343,8 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 		if (fgetValue(selectable.enabled)) reverseBehaviour(selectable.selected)
 	};
 	width = tryExtractStruct(style, MWidth(-1.));
+	textStyle0 = tryExtractStruct(style, MCustomTextStyle([]));
+	textStyle = eitherMap(textStyle0, \ts -> ts.style, [MDataRow()]);
 	mousePosition = makePoint();
 	outlined = contains(style, MOutlined());
 	strokeWidth = 1.;
@@ -1362,7 +1386,7 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 
 		titleStyle =
 			fselect2(textColor, isEnabled, FLift2(\col, en ->
-				ifArrayPush([MDataRow(), col], !en, MTextDisabled())
+				ifArrayPush(arrayPush(textStyle, col), !en, MTextDisabled())
 			));
 
 		TSelect(titleStyle, \st ->
@@ -1372,18 +1396,18 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 				MText2T(p, title, st)
 			)
 		)
-		|> (\f -> TCenterYIn(f, TFixed(0., chipContentHeight)))
+		|> (\f -> eitherMap(textStyle0, \__ -> f, TCenterYIn(f, TFixed(0., chipContentHeight))))
 		|> (\f -> eitherMap(icon, \ic -> {
 				TCols2Dir(
 					switch (ic) {
-						MLetterIcon(text, iconStyle, textStyle): {
+						MLetterIcon(text, iconStyle, txtStyle): {
 							MLetterIcon2T(
 								manager,
 								p,
 								MLetterIcon(
 									text,
 									replaceStruct(iconStyle, MIconSize(32.)),
-									textStyle
+									txtStyle
 								)
 							)
 						}
@@ -1391,7 +1415,8 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 							MAvatar2T(p, url, replaceStruct(avatarStyle, MIconSize(32.)))
 						}
 						MIcon(name, iconStyle): {
-							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, replaceStruct(iconStyle, MIconSize(20.))))
+							st = eitherMap(textStyle0, \__ -> iconStyle, replaceStruct(iconStyle, MIconSize(20.)));
+							TBorder(12.0, 6.0, 4.0, 6.0, MIcon2T(p, name, st))
 						}
 						default: TEmpty();
 					}

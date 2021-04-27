@@ -8,12 +8,17 @@ class PdfClip extends FlowCanvas {
 	private var page : Dynamic;
 	private var pageScale : Float = 1.0;
 
+	private var rendered : Bool = false;
 	private var renderWidget : Dynamic;
 	private var renderContext : Dynamic;
 	private var renderTask : Dynamic;
 
 	public function new() {
 		super();
+
+		if (RenderSupport.RendererType == "html") {
+			nativeWidget.style.zIndex = 'inherit';
+		}
 
 		renderWidget = cast(Browser.document.createElement('canvas'), CanvasElement);
 		renderContext = renderWidget.getContext("2d");
@@ -38,7 +43,7 @@ class PdfClip extends FlowCanvas {
 			this.updateNativeWidgetTransformMatrix();
 			this.updateNativeWidgetOpacity();
 
-			if (pageChanged) {
+			if (RenderSupport.RendererType == "html" || pageChanged) {
 				renderView(nativeWidget.getContext("2d"), RenderSupport.backingStoreRatio);
 			}
 
@@ -82,7 +87,7 @@ class PdfClip extends FlowCanvas {
 				taskPromise.then(function(e : Dynamic) {
 					renderTask = null;
 					this.invalidateTransform();
-					untyped this.nativeWidgetBoundsChanged = this.isHTMLRenderer();
+					this.rendered = true;
 				}).catchError(function(e : Dynamic) {
 					renderTask = null;
 					renderPage();
@@ -92,6 +97,9 @@ class PdfClip extends FlowCanvas {
 	}
 
 	private function renderView(ctx : Dynamic, resolution : Float) {
+		if (!rendered)
+			return;
+
 		if (!this.isHTMLRenderer()) {
 			ctx.globalAlpha = this.worldAlpha;
 			ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);

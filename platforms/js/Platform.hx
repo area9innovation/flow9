@@ -16,6 +16,7 @@ class Platform {
 	public static var isMobile : Bool = false;
 	public static var isRetinaDisplay : Bool = false;
 	public static var isHighDensityDisplay : Bool = false;
+	public static var isWKWebView : Bool = false;
 
 	public static var isMacintosh : Bool = false;
 	public static var isWindows : Bool = false;

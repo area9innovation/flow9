@@ -14,6 +14,7 @@ import * as tools from "./tools";
 import * as updater from "./updater";
 import * as simplegit from 'simple-git/promise';
 //import { performance } from 'perf_hooks';
+import editors from './editors';
 const isPortReachable = require('is-port-reachable');
 
 interface ProblemMatcher {
@@ -64,6 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.restartLspClient', startLspClient),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
 	);
+	editors.forEach(editor => context.subscriptions.push(editor.register(context)));
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
