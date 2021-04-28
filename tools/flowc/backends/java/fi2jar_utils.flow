@@ -2,6 +2,11 @@ import tools/flowc/backends/common;
 
 export {
 	fi2javaGradleDeps2JarDeps(cfg : FiJavaConfig) -> [string];
+
+	runGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void, onExit : (errocode : int) -> void) -> native;
+
+	// Returns the gradle version like '6.8' in case gradle is installed and -1.0 otherwise.
+	fcGradleVersion() -> double;
 }
 
 fi2javaGradleDeps2JarDeps(cfg : FiJavaConfig) -> [string] {
@@ -14,4 +19,40 @@ fi2javaGradleDeps2JarDeps(cfg : FiJavaConfig) -> [string] {
 			}
 		}
 	);
+}
+
+runGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void, onExit : (errocode : int) -> void) -> native {
+	println("Run Gradle: " + toString(windows()));
+	if (windows()) {
+		println(">> cmd: " + strGlue(concat(["cmd", "gradle", "/c"], args), " "));
+		runSystemProcess("cmd", concat(["/c", "gradle"], args), currentWorkingDirectory, onStdOutLine, onStdErr, onExit);
+	} else {
+		runSystemProcess("gradle", args, currentWorkingDirectory, onStdOutLine, onStdErr, onExit);
+	}
+}
+
+fc_gradle_version : ref Maybe<double> = ref None();
+
+fcGradleVersion() -> double {
+	lookup_version = \-> {
+		out = ref "";
+		err = ref false;
+		exitCode = ref 0;
+		runGradle(["-version"], ".", \o -> out := ^out + "\n" + o, \e -> err := true, \c -> exitCode := c);
+		version = if (^exitCode == 0 && !^err) ^out else "";
+
+		gradle_version = filtermap(
+			strSplit(version, "\n"),
+			\line0 -> {
+				line = toLowerCase(line0);
+				if (startsWith(line, "gradle")) Some(substring(line, 7, strlen(line) - 7)) else None();
+			}
+		);
+		if (length(gradle_version) != 1) {
+			-1.0;
+		} else {
+			s2d(gradle_version[0]);
+		}
+	}
+	onlyOnce(fc_gradle_version, lookup_version);
 }
