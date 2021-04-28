@@ -9,11 +9,39 @@ export {
 }
 
 fi2JavaBuildRaw(cfg : FiJavaConfig, path : string, callback : (int) -> void) -> void {
-	fi2javaDownloadDependenciesWithGradle(cfg, \code -> 
+	fi2JavaBuildRawCheckDependencies(cfg, \code -> 
 		if (code == 0) {
 			fi2JavaBuildFatJar(cfg, path, callback);
 		} else callback(5 + code)
 	);
+}
+
+fi2JavaBuildRawCheckDependencies(cfg : FiJavaConfig, callback : (int) -> void) -> void {
+	flow_dir = findFlowDir();
+	if (flow_dir == "") {
+		fcPrintln("flow directory is not found - can't download/check dependencies", cfg.threadId);
+		callback(5);
+	} else {
+		if (fcGradleVersion() < 6.7) {
+			// There's no suitable gradle installation - try to find if all necessary dependencies are present.
+			java_lib_dir = pathCombineMany([flow_dir, "platforms", "java", "lib"]);
+			jar_deps = fi2javaGradleDeps2JarDeps(cfg);
+			missing_jar_deps = filter(jar_deps, \dep -> !fileExists(pathCombine(java_lib_dir, dep)));
+			if (length(missing_jar_deps) == 0) {
+				fcVerbose(cfg, 1, "All dependencies are already downloaded");
+				callback(0);
+			} else {
+				fcVerbose(cfg, -1, 
+					"There are dependencies, which are not present in '" + java_lib_dir + "', please place them there:\n" +
+					strIndent(strGlue(jar_deps, "\n"))
+				);
+				callback(5);
+			}
+		} else {
+			// Use gradle to download all missing dependencies to java/lib
+			fi2javaDownloadDependenciesWithGradle(cfg, callback);
+		}
+	}
 }
 
 fi2JavaBuildFatJar(cfg : FiJavaConfig, path : string, callback : (int) -> void) -> void {
