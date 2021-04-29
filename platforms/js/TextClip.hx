@@ -445,7 +445,8 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.step = step;
 			}
 
-			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
+			// Chrome tends to ignore autocomplete="off"
+			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : Platform.isChrome ? 'chrome-off' : 'off';
 
 			if (maxChars >= 0) {
 				nativeWidget.maxLength = maxChars;
