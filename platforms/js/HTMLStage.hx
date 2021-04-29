@@ -30,6 +30,10 @@ class HTMLStage extends NativeWidgetClip {
 			if (!updating) {
 				updating = true;
 				RenderSupport.once("drawframe", function() {
+					if (!this.nativeWidget) {
+						return;
+					}
+
 					stageRect = untyped this.nativeWidget.getBoundingClientRect();
 
 					for (clip in clips) {
@@ -74,7 +78,7 @@ class HTMLStage extends NativeWidgetClip {
 	}
 
 	public function removeElementChild(child : Element) : Void {
-		if (child.parentElement == nativeWidget) {
+		if (child.parentElement == nativeWidget && nativeWidget != null) {
 			nativeWidget.removeChild(child);
 		}
 	}
