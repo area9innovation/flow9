@@ -5,7 +5,13 @@ to demonstrate how Gringo works.
 
 It parses a subset of Flow grammar to a strongly typed AST.
 
-Check out the video here:
+Run
+
+	flowcpp tools/gringo/pflow/pflow.flow
+
+# Videos
+
+Check out the video here where the parser is written:
 
 https://youtu.be/ZnIlsZbY4JY
 
