@@ -434,7 +434,9 @@ setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
 
 patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	cwd = strReplace(resolveRelativePath("."), "\\", "/");
-	conf_dir = findFlowConfigDir(dirName(conf.flowfile));
+	conf_dir = findFlowConfigDir(dirName(resolveRelativePath(changeFileExt(conf.flowfile, ".flow"))));
+	resolve_relative_to_conf = \file -> 
+		fcFirstExistentFile([file, resolveRelativePath(pathCombine(conf_dir, file))], 0, file);
 
 	// Setup the 'output-dir' in case it is not set explicitly.
 	conf1 = switch (lookupTree(conf.config, "output-dir")) {
@@ -448,7 +450,7 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	conf3 = setTree(conf2, "working-dir", lookupTreeDef(conf2, "working-dir", cwd));
 
 	resolve_fontconfig = \file -> {
-		resolved = fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file);
+		resolved = resolve_relative_to_conf(file);
 		setTree(setTree(conf3, "fontconfig", resolved), "fontconfig-file", resolved);
 	}
 
@@ -465,13 +467,13 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 
 	// Resolve relative path for 'html-splash', because server may run in a different place.
 	conf5 = switch (lookupTree(conf4, "html-splash")) {
-		Some(file): setTree(conf4, "html-splash", fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file));
+		Some(file): setTree(conf4, "html-splash", resolve_relative_to_conf(file));
 		None(): conf4;
 	}
 
 	// Resolve relative path for 'js-extern-lib', because server may run in a different place.
 	conf6 = switch (lookupTree(conf5, "js-extern-lib")) {
-		Some(file): setTree(conf5, "js-extern-lib", fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file));
+		Some(file): setTree(conf5, "js-extern-lib", resolve_relative_to_conf(file));
 		None(): conf5;
 	}
 
@@ -479,8 +481,48 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	fontconfig = lookupTreeDef(conf6, "fontconfig-file", conf.jsParams.fontconfig);
 	jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
 
+	conf7 = switch (lookupTree(conf6, "java-natives")) {
+		Some(natives): 
+			setTree(conf6, "java-natives", 
+				strGlue(filtermap(strSplit(natives, ","), \nat -> 
+					if (isSpace(nat)) None() else {
+						Some(resolve_relative_to_conf(nat))
+					}
+				), ",")
+			);
+		None(): conf6;
+	}
+
+	conf8 = switch (lookupTree(conf7, "include")) {
+		Some(includes): 
+			setTree(conf7, "include", 
+				strGlue(filtermap(strSplit(includes, ","), \include -> 
+					if (isSpace(include)) None() else {
+						Some(resolve_relative_to_conf(include))
+					}
+				), ",")
+			);
+		None(): conf7;
+	}
+
+	conf9 = switch (lookupTree(conf8, "I")) {
+		Some(includes): 
+			setTree(conf8, "I", 
+				strGlue(filtermap(strSplit(includes, ","), \include -> 
+					if (isSpace(include)) None() else {
+						Some(resolve_relative_to_conf(include));
+					}
+				), ",")
+			);
+		None(): conf8;
+	}
+
 	// Output the result
-	CompilerConfig(conf with config = conf6, jsParams = jsParams);
+	CompilerConfig(conf with 
+		includes = map(conf.includes, resolve_relative_to_conf),
+		config = conf9, 
+		jsParams = jsParams
+	);
 }
 
 setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
