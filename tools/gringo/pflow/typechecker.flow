@@ -2,7 +2,7 @@ import tools/gringo/pflow/pexp;
 import tools/gringo/pflow/texp;
 import tools/gringo/pflow/prettyprint;
 import ds/tree;
-import ds/union_find;
+import ds/union_find_map;
 
 export {
 	makeTypeEnv() -> TypeEnv;
@@ -15,16 +15,16 @@ export {
 
 TypeEnv(
 	vars : Tree<string, TType>,
-	tyvars : ref Tree<int, TType>,
-	unionFind : UnionFind,
+	unionFindMap : UnionFindMap<[TType]>,
 	unique : ref int
 );
 
 makeTypeEnv() -> TypeEnv {
 	TypeEnv(
 		makeTree(),
-		ref makeTree(),
-		makeUnionFind(0),
+		makeUnionFindMap([], \l, r -> {
+			sortUnique(concat(l, r))
+		}),
 		ref 0
 	)
 }
@@ -61,14 +61,15 @@ mkTypeVar(env : TypeEnv) -> TType {
 
 indent = ref "";
 typecheckTExp(env : TypeEnv, p : TExp) -> TType {
-	inden = ^indent;
+	/*inden = ^indent;
 	println(inden + p.structname);
 	indent := ^indent + "  ";
+	*/
 	todo = \-> {
 		println("TODO: Type check "+ toString(p));
 		mkTypeVar(env);
 	}
-	resulttype =  switch (p) {
+	resulttype = switch (p) {
 		TBool(b): TTypeBool();
 		TInt(i): TTypeInt();
 		TString(s): TTypeString();
@@ -139,7 +140,6 @@ typecheckTExp(env : TypeEnv, p : TExp) -> TType {
 				TVar(id, tv): {
 					mtype = typeBuiltin(env, id);
 					mtype ?? {
-						println("Builtin " + id);
 						unifyTypes(env, mtype, tv);
 						mtype
 					} : {
@@ -173,9 +173,8 @@ typecheckTExp(env : TypeEnv, p : TExp) -> TType {
 		}
 	};
 
-	println(inden + p.structname + " gave " + prettyTType(env, resulttype));
-
-	indent := inden;
+	// println(inden + p.structname + " gave " + prettyTType(env, resulttype));
+	// indent := inden;
 	resulttype
 }
 
@@ -194,31 +193,16 @@ unifyTypes(env : TypeEnv, left : TType, right : TType) -> void {
 			}
 		};
 		bindTyvar = \tyvar, type -> {
-			root = unionFind(env.unionFind, tyvar);
-			println("Binding " + i2s(tyvar) + " to " + toString(type) + " in " + i2s(root));
-			mtype = lookupTree(^(env.tyvars), root);
-			mtype ?? {
-				unifyTypes(env, mtype, type);
-			} : {
-				env.tyvars := setTree(^(env.tyvars), root, type);
-			}
+			types = getUnionMapValue(env.unionFindMap, tyvar);
+			ntypes = sortUnique(arrayPush(types, type));
+			setUnionMapValue(env.unionFindMap, tyvar, ntypes);
 		}
 		switch (left) {
 			TTypeVar(lid): {
 				switch (right) {
 					TTypeVar(rid): {
-						moveTyvar = \from, to -> {
-							mtype = lookupTree(^(env.tyvars), from);
-							mtype ?? {
-								env.tyvars := removeFromTree(^(env.tyvars), from);
-								unifyTypes(env, TTypeVar(to), mtype);
-							} : {}
-						}
-						// 1, 6, 203, 465
-						println("Unifying " + i2s(lid) + " and " + i2s(rid));
-						root = unionUnion(env.unionFind, lid, rid);
-						moveTyvar(lid, root);
-						moveTyvar(rid, root);
+						// println("Unifying " + i2s(lid) + " and " + i2s(rid));
+						root = unionUnionMap(env.unionFindMap, lid, rid);
 					}
 					TTypeFunction(__, __): {
 						unifyTypes(env, right, left);
@@ -251,13 +235,10 @@ unifyTypes(env : TypeEnv, left : TType, right : TType) -> void {
 			TTypeFunction(largs, lreturnType): {
 				switch (right) {
 					TTypeFunction(rargs, rreturnType): {
-						println("Unifying functions");
-						println([left, right]);
 						if (length(largs) != length(rargs)) {
 							error();
 						} else {
 							iteri(largs, \i, larg -> {
-								println([larg, rargs[i]]);
 								unifyTypes(env, larg, rargs[i]);
 							});
 						}
@@ -305,7 +286,6 @@ resolveTValue(env : TypeEnv, t : TValue) -> TValue {
 	}
 }
 
-
 resolveType(env : TypeEnv, type : TType) -> TType {
 	switch (type) {
 		TTypeBool(): type;
@@ -314,8 +294,18 @@ resolveType(env : TypeEnv, type : TType) -> TType {
 		TTypeArray(atype): TTypeArray(resolveType(env, atype));
 		TTypeFunction(args, returnType): TTypeFunction(map(args, \a -> resolveType(env, a)), resolveType(env, returnType));
 		TTypeVar(id): {
-			root = unionFind(env.unionFind, id);
-			lookupTreeDef(^(env.tyvars), root, type)
+			types = getUnionMapValue(env.unionFindMap, id);
+			if (length(types) == 0) {
+				type
+			} else {
+				rtypes = sortUnique(map(types, \tt -> resolveType(env, tt)));
+				if (length(rtypes) == 1) {
+					rtypes[0];
+				} else {
+					println("ERROR: Could not find unique type: " + prettyTType(env, type));
+					rtypes[0];
+				}
+			}
 		}
 	}
 }
@@ -365,11 +355,14 @@ prettyTType(env : TypeEnv, type : TType) -> string {
 		TTypeFunction(args, returnType): "(" + superglue(args, \a -> prettyTType(env, a), ", ") + ") -> " 
 			+ prettyTType(env, returnType);
 		TTypeVar(id): {
-			root = unionFind(env.unionFind, id);
-			mtype = lookupTree(^(env.tyvars), root);
-			mtype ?? {
-				prettyTType(env, mtype) + " (a" + i2s(root) + ")";
-			} : ("a" + i2s(root))
+			types : [TType] = getUnionMapValue(env.unionFindMap, id);
+			if (types == []) {
+				"a" + i2s(id);
+			} else if (length(types) == 1) {
+				prettyTType(env, types[0])
+			} else {
+				"{" + superglue(types, \tt -> prettyTType(env, tt), ", ") + "}"
+			}
 		}
 	}
 }
@@ -412,7 +405,7 @@ prettyTExp(env : TypeEnv, p : TExp) -> string {
 			blueprint("
 				{
 					%values%
-				} : %type%", [
+				} %type%", [
 				"values", superglue(values, \arg ->prettyTExp(env, arg), ";\n"),
 				"type", pt(type)
 			]) 
