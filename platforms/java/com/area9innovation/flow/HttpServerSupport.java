@@ -335,7 +335,9 @@ public class HttpServerSupport extends NativeHost
 				return new Func1<String, String>() {
 					public String invoke(String chunk) {
 						try {
-							exchange.getResponseBody().write((chunk).getBytes("UTF-8"));
+							OutputStream os = exchange.getResponseBody();
+							os.write(chunk.getBytes("UTF-8"));
+							os.flush();
 							return "";
 						} catch (IOException e) {
 							return "Sending chunk error: " + e.getMessage();
