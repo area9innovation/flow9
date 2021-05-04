@@ -9,8 +9,10 @@ export {
 		keyGroupName : string,
 		// The docking state
 		state : MDockingState,
+		// The editor stage wrapped by dockable areas
+		content : Material,
 		// Draw a layout for the docking editor
-		layout : Material,
+		layoutFn : (Material, MDockingState) -> Material,
 		// Panels in the editor
 		panels : [MDPanelType],
 		// Some docking styles
@@ -51,13 +53,13 @@ export {
 	// Helpers for docking areas
 
 	// Docking cols
-	makeMDCols(state : MDockingState, area : MDArea) -> Material;
+	makeMDCols(area : MDArea) -> (MDockingState) -> Material;
 	// Docking cols reversed version - Right to left
-	makeMDColsR(state : MDockingState, area : MDArea) -> Material;
+	makeMDColsR(area : MDArea) -> (MDockingState) -> Material;
 	// Docking lines
-	makeMDLines(state : MDockingState, area : MDArea) -> Material;
+	makeMDLines(area : MDArea) -> (MDockingState) -> Material;
 	// Docking lines reversed version - Bottom to top
-	makeMDLinesB(state : MDockingState, area : MDArea) -> Material;
+	makeMDLinesB(area : MDArea) -> (MDockingState) -> Material;
 
 	// Hook for docking areas in layout and styles for customizations
 	MDArea(title : string, style : [MDockingAreaStyle]);
@@ -66,11 +68,11 @@ export {
 	// Helpers for layout functions
 
 	// Left, Right - docking layout
-	makeMDockingLayoutFnLR(state : MDockingState, editorContent : Material, left : MDArea, right : MDArea) -> Material;
+	makeMDockingLayoutFnLR(left : MDArea, right : MDArea) -> (Material, MDockingState) -> Material;
 	// Top, Left, Right - docking layout
-	makeMDockingLayoutFnTLR(state : MDockingState, editorContent : Material, top : MDArea, left : MDArea, right : MDArea) -> Material;
+	makeMDockingLayoutFnTLR(top : MDArea, left : MDArea, right : MDArea) -> (Material, MDockingState) -> Material;
 	// Top, Left, Right, Bottom - docking layout
-	makeMDockingLayoutFnTLRB(state : MDockingState, editorContent : Material, top : MDArea, left : MDArea, right : MDArea, bottom : MDArea) -> Material;
+	makeMDockingLayoutFnTLRB(top : MDArea, left : MDArea, right : MDArea, bottom : MDArea) -> (Material, MDockingState) -> Material;
 }
 
 
@@ -78,18 +80,19 @@ export {
 makeMDEditor(
 	keyGroupName : string,
 	state : MDockingState,
-	layout : Material, 
+	content : Material, 
+	layoutFn : (Material, MDockingState) -> Material, 
 	panels : [MDPanelType],
 	style : [MDockingStyle]
 ) -> Material {
 
-	// areas = getValue(state.dockingAreas);
-	// areaTitles = uniq(map(panels, \p -> p.position.areaTitle));
+	areas = getValue(state.dockingAreas);
+	areaTitles = uniq(map(panels, \p -> p.position.areaTitle));
 
 	// Populate area Ids
-	// next(state.dockingAreas, 
-	// 	foldi(areaTitles, makeTree(), \i, acc, t -> setTree(acc, t, i))
-	// );
+	next(state.dockingAreas, 
+		foldi(areaTitles, makeTree(), \i, acc, t -> setTree(acc, t, i))
+	);
 
 	panelsA = mapi(panels, \j, p -> {
 		panelStyle = p.style;
@@ -98,6 +101,9 @@ makeMDEditor(
 	});
 
 	filteredStyle = removeAllStructs(style, MDockingEnableLoadAndStoreCache("", false));
+
+	addBox = \c : Material -> MAttachBox(c, state.stageWH);
+	layout = layoutFn(addBox(content), state);
 
 	MDockingUI(state, panelsA, layout, concat(filteredStyle, [
 		MDockingEnableLoadAndStoreCache(keyGroupName, true)
@@ -130,57 +136,64 @@ panelType2DockingPanel(areaId : int, rowId : int, pt : MDPanelType) -> MDockingP
 }
 
 
-
-
-
-makeMDCols(state : MDockingState, area : MDArea) -> Material {
-	initializeDockingAreas(state, area.title);
-	areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, 0);
-	MDockingArea(true, state, areaId, area.style);
+makeMDCols(area : MDArea) -> (MDockingState) -> Material {
+	\state : MDockingState -> {
+		areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, -1);
+		MDockingArea(true, state, areaId, area.style);
+	}
 }
-makeMDColsR(state : MDockingState, area : MDArea) -> Material {
-	initializeDockingAreas(state, area.title);
-	areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, 0);
-	MDockingArea(true, state, areaId, concat([MDockingRightCols()], area.style))
+makeMDColsR(area : MDArea) -> (MDockingState) -> Material {
+	\state : MDockingState -> {
+		areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, -1);
+		MDockingArea(true, state, areaId, concat([MDockingRightCols()], area.style))
+	}
 }
-makeMDLines(state : MDockingState, area : MDArea) -> Material {
-	initializeDockingAreas(state, area.title);
-	areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, 0);
-	MDockingArea(false, state, areaId, area.style);
+makeMDLines(area : MDArea) -> (MDockingState) -> Material {
+	\state : MDockingState -> {
+		areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, -1);
+		MDockingArea(false, state, areaId, area.style)
+	}
 }
-makeMDLinesB(state : MDockingState, area : MDArea) -> Material {
-	initializeDockingAreas(state, area.title);
-	areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, 0);
-	MDockingArea(false, state, areaId, concat([MDockingBottomLines()], area.style));
-}
-
-makeMDockingLayoutFnLR(state : MDockingState, editorContent : Material, left : MDArea, right : MDArea) -> Material {
-	MColsA([
-		makeMDCols(state, left),
-		MDContent(state, editorContent),
-		makeMDColsR(state, right)
-	]);
+makeMDLinesB(area : MDArea) -> (MDockingState) -> Material {
+	\state : MDockingState -> {
+		areaId = lookupTreeDef(getValue(state.dockingAreas), area.title, -1);
+		MDockingArea(false, state, areaId, concat([MDockingBottomLines()], area.style))
+	}
 }
 
-makeMDockingLayoutFnTLR(state : MDockingState, editorContent : Material, top : MDArea, left : MDArea, right : MDArea) -> Material {
-	MLinesA([
-		makeMDLines(state, top),
+makeMDockingLayoutFnLR(left : MDArea, right : MDArea) -> (Material, MDockingState) -> Material {
+	\content : Material, state : MDockingState -> {
 		MColsA([
-			makeMDCols(state, left),
-			MDContent(state, editorContent),
-			makeMDColsR(state, right)
-		]),
-	]);
+			makeMDCols(left)(state),
+			MDContent(state, content),
+			makeMDColsR(right)(state)
+		])
+	}
 }
 
-makeMDockingLayoutFnTLRB(state : MDockingState, editorContent : Material, top : MDArea, left : MDArea, right : MDArea, bottom : MDArea) -> Material {
-	MLinesA([
-		makeMDLines(state, top),
-		MColsA([
-			makeMDCols(state, left),
-			MDContent(state, editorContent),
-			makeMDColsR(state, right)
-		]),
-		makeMDLinesB(state, bottom)
-	]);
+makeMDockingLayoutFnTLR(top : MDArea, left : MDArea, right : MDArea) -> (Material, MDockingState) -> Material {
+	\content : Material, state : MDockingState -> {
+		MLinesA([
+			makeMDLines(top)(state),
+			MColsA([
+				makeMDCols(left)(state),
+				MDContent(state, content),
+				makeMDColsR(right)(state)
+			]),
+		])
+	}
+}
+
+makeMDockingLayoutFnTLRB(top : MDArea, left : MDArea, right : MDArea, bottom : MDArea) -> (Material, MDockingState) -> Material {
+	\content : Material, state : MDockingState -> {
+		MLinesA([
+			makeMDLines(top)(state),
+			MColsA([
+				makeMDCols(left)(state),
+				MDContent(state, content),
+				makeMDColsR(right)(state)
+			]),
+			makeMDLinesB(bottom)(state)
+		])
+	}
 }
