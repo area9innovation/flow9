@@ -2,7 +2,7 @@ package dk.area9.flowrunner;
 
 import android.media.MediaRecorder;
 import android.os.Build;
-import android.support.annotation.RequiresApi;
+import androidx.annotation.RequiresApi;
 
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;

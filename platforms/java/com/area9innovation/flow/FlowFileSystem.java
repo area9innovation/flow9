@@ -115,7 +115,7 @@ public class FlowFileSystem extends NativeHost {
 	}
 
 	public Object getFileByPath(String path) {
-		return null;
+		return new File(path);
 	}
 
 	public double fileSizeNative(Object file) {

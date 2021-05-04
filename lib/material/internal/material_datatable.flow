@@ -4,25 +4,41 @@ import material/internal/material_list;
 
 export {
 	MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MLightweightDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MLightweightDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
 MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	style = m.style;
-	rows = m.rows;
-	rowsCountB = flength(rows);
+	MDynamicDataTable2TInner(manager, parent, m.columns, m.rows, idfn, m.style, false, m2t)
+}
 
-	sorting = makeMSortingState(rows, style);
-	paginationState = makeMPaginationState(style);
-	page = paginationState.page;
+MLightweightDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MLightweightDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MDynamicDataTable2TInner(manager, parent, m.columns, m.data, m.rowsFn, m.style, true, m2t)
+}
 
-	state = makeMDataTableState(m, manager, parent, m2t, rowsCountB, paginationState, sorting);
+MDynamicDataTable2TInner(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	columns : [MColumnDynamic],
+	data : Transform<[?]>,
+	rowsFn : (?) -> [Material], 
+	style : [MDataTableStyle],
+	lightweight : bool,
+	m2t : (Material, MFocusGroup) -> Tropic
+) -> Tropic {
+	rowsCountB = flength(data);
 
-	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
+	reorderList = if (lightweight) None() else tryExtractStruct(style, MListReorder(make([]), const(false)));
 	isReorderEnabled = eitherMap(reorderList, \rl : MListReorder -> fgetValue(rl.enabled), false);
 	reorderShowIcon = !contains(style, MListReorderHideIcon());
 	// Reserved space for column with drag&drop reorder icon. Icon added at function MListLine2T
 	reorderIconSpace = if (isReorderEnabled && reorderShowIcon) 40. else 0.;
 	reorderOnDragEnd = contains(style, MReorderOnDragEnd());
+
+	sorting = makeMSortingState(data, rowsFn, style, isSome(reorderList), lightweight);
+	paginationState = makeMPaginationState(style, isSome(reorderList));
+	page = paginationState.page;
+
+	state = makeMDataTableState(columns, style, manager, parent, m2t, rowsCountB, paginationState, sorting);
 
 	rowsBoxScrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 	hoverEnabled : MHoverEnabled = extractStruct(style, MHoverEnabled(const(true)));
@@ -35,7 +51,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	headerStyle = tryExtractStruct(style, defaultHS);
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle> = tryExtractStruct(style, MSelectedBackgroundStyle([]));
-	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 	
 	showFixedRow = eitherMap(state.fixedRow, \fr -> fr.show, const(false));
 	lifted = eitherMap(tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), [])), \is -> is.mode == MLiftedFirstColumnMode(), false);
@@ -161,145 +176,200 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			MDTFooter(manager, p, paginationState, rowsCountB, scrollEnabled, noFooter, footerHeight, footerMinWidth, m2t);
 
 		// Data rows
-		MSelect2T(manager, p, "MDynamicDataTableLines", [], expandRow, \er, p2 ->
-			eitherMap(
-				state.fixedRow,
-				\fr -> fconcat(const([fr.cols]), rows),
-				rows
-			)
-			|> (\rc -> fmapi(rc, \j0, row -> {
+		content =
+			if (lightweight) {
+				MSelect2T(manager, p, "MDynamicDataTableLines", [], sorting.result, \sortRes, p2 -> {
+					rows =
+						fselect2(data, page, FLift2(\dat, pg ->
+							map(subrange(sortRes, pg.first, pg.second), \i -> elementAtMap(dat, i, rowsFn, []))
+						));
+						
+					TSelect(rows, \rws -> {
+						pg = getValue(page);
+						mapi(rws, \j0, cells : [Material] -> {
+							j = sortRes[j0 + pg.first];
 
-					j = j0 - b2i(isSome(state.fixedRow));
-					
-					makeLineContent = \p3 : MFocusGroup ->
-						state.makeCells(p3, j, row)
-						|> (\cells : [Tropic] -> expandContent(cells, er))
-						|> wrapItemsForFirstColumnMode(p)
-						|> (\t -> TColsDir(t, p.rtl))
-						|> wrapIntoBorders(p2)
-						|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
-						|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
-						|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
-									TIfLazy2(
-										fselect(state.selection.selected, FLift(\arr -> contains(arr, j))),
-										\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
-										false
-									), t
-								))
-						|> (\t -> if (state.separators) TLines2Dir(t, m2t(MSeparator(true), p3), p.rtl) else t);
-
-					MCustomLine(
-						MGetFocusGroup(makeLineContent),
-						[state.clickEnabled, MHeight(countRowHeight(er)), TagName("tr")]
-					);
-				})
-			)
-			|> (\rws0 : Transform<[MCustomLine]> ->
-				(
-					if (isSome(state.fixedRow))
-						fselect(rws0, tail |> FLift)
-					else
-						rws0
-				)
-				|> (\rws : Transform<[MCustomLine]> ->
-					eitherFn(
-						reorderList,
-						\rl ->
-							MSelect2T(
-								manager,
-								p2,
-								"MDataTableContent",
-								[],
-								rws,
-								\f4, p3 ->
-									MList2T(
-										manager,
-										p3,
-										MList(
-											f4,
-											concat(
-												[MSideBorders(const(0.)), MAddScroll(None())],
-												eitherMap(selectedBgStyle, v2a, [])
-											),
-											[state.selection, state.onClick, rl, hoverEnabled]
-											|> (\st : [MListState] -> ifArrayPush(st, !reorderShowIcon, MListReorderHideIcon()))
-											|> (\st -> ifArrayPush(st, reorderOnDragEnd, MReorderOnDragEnd()))
-										),
-										m2t
-									)
-							),
-						\ -> {
-							listSort = make([]);
-
-							TConstruct(
-								[
-									\ -> fconnect(sorting.result, listSort),
-								]
-								|> (\arr -> maybeArrayPush(arr,
-										maybeMap(mRowsPerPage, \mrpp -> \ -> fconnect(paginationState.rowsPerPage, mrpp.rowsPerPage)))),
-								MDynamicList2T(
-									manager,
-									p2,
-									MDynamicList(
-										cast(rws : Transform<[MCustomLine]> -> Transform<[MListLine]>),
-										concat(
-											[MSideBorders(const(0.))],
-											eitherMap(selectedBgStyle, v2a, [])
-										),
-										concat([
-												state.selection, state.selectionEnabled, state.onClick, MListReorder(listSort, const(false)),
-												rowsBoxScrollPosition, TScrollEnabled(scrollEnabled),
-												MScrollbars(
-													TScrollbarStyle(getMaterialScrollBar().x with visible = scrollEnabled),
-													TScrollbarStyle(getMaterialScrollBar().y with visible = scrollEnabled)
-												), hoverEnabled, MScrollBound(scrollEnabled, scrollEnabled)
-											],
-											verticalScroll
-										)
-									),
-									m2t
+							state.makeCells(p2, j, cells)
+							|> wrapItemsForFirstColumnMode(p)
+							|> (\t -> TColsDir(t, p.rtl))
+							|> wrapIntoBorders(p2)
+							|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
+							|> (\t -> MComponent2T(manager, p2, "MDataTableLine" + i2s(j), [
+									MHighlightOnHover(const(true)),
+									MOnClick(\ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(j)),
+									MRippleType(const(MRippleFill()))
+								], \__ -> t, m2t)
+							)
+							|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
+										TIfLazy2(
+											fcontains(state.selection.selected, const(j)),
+											\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
+											false
+										), t
+									))
+							|> (\t -> 
+								TIfLazy2(
+									fcontains(state.selection.selected, const(j)),
+									\v -> {
+										if (v)
+											TFrame(0., 0.,
+												eitherMap(
+													selectedBgStyle,
+													\sbs -> sbs.style,
+													[Fill(contrastingColor(p2)), FillOpacity(if (getLightBackground(p2)) 0.08 else 0.16)]
+												),
+												t
+											)
+										else t
+									},
+									false
 								)
 							)
-						}
-					)
-				)
-				|> (\f : Tropic ->
+							|> (\t -> if (state.separators) TLines2Dir(t, MSeparator2T(manager, p2, true), p.rtl) else t)
+						})
+						|> (\t -> TLinesDir(t, p.rtl))
+					})
+				})
+			} else {
+				rows = fmap(data, rowsFn);
+				MSelect2T(manager, p, "MDynamicDataTableLines", [], expandRow, \er, p2 ->
 					eitherMap(
 						state.fixedRow,
-						\fr -> {
-							bStyle = filtermap(fr.style, \st -> switch (st) {
-								TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
-								default : None()
-							});
+						\fr -> fconcat(const([fr.cols]), rows),
+						rows
+					)
+					|> (\rc -> fmapi(rc, \j0, row -> {
 
-							onFixedRowClick = tryExtractStruct(fr.style, MOnClick(nop));
+							j = j0 - b2i(isSome(state.fixedRow));
+							
+							makeLineContent = \p3 : MFocusGroup ->
+								state.makeCells(p3, j, row)
+								|> (\cells : [Tropic] -> expandContent(cells, er))
+								|> wrapItemsForFirstColumnMode(p)
+								|> (\t -> TColsDir(t, p.rtl))
+								|> wrapIntoBorders(p2)
+								|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
+								|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
+								|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
+											TIfLazy2(
+												fcontains(state.selection.selected, const(j)),
+												\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
+												false
+											), t
+										))
+								|> (\t -> if (state.separators) TLines2Dir(t, MSeparator2T(state.manager, p3, true), p.rtl) else t);
 
-							TCopySize(
-								MSelect2T(manager, p2, "MDataTableFixedRow", [], rws0, \fr2, p3 ->
-									firstElement(fr2, MCustomLine(TEmpty(), [])).content
-									|> (\f4 -> eitherMap(
-										onFixedRowClick,
-										\onclk ->
-											MComponent([
-												MOnClick(onclk.click),
-												MRippleType(const(MRippleFill())),
-												state.clickEnabled
-											], \__ -> f4),
-										f4
-									))
-									|> (\f4 -> m2t(f4, p3))
-								),
-								\tr -> TRounded(2., 2., 0., 0., bStyle, tr),
-								false
+							MCustomLine(
+								MGetFocusGroup(makeLineContent),
+								[state.clickEnabled, MHeight(countRowHeight(er)), TagName("tr")]
+							);
+						})
+					)
+					|> (\rws0 : Transform<[MCustomLine]> ->
+						(
+							if (isSome(state.fixedRow))
+								fselect(rws0, tail |> FLift)
+							else
+								rws0
+						)
+						|> (\rws : Transform<[MCustomLine]> ->
+							eitherFn(
+								reorderList,
+								\rl ->
+									MSelect2T(
+										manager,
+										p2,
+										"MDataTableContent",
+										[],
+										rws,
+										\f4, p3 ->
+											MList2T(
+												manager,
+												p3,
+												MList(
+													f4,
+													concat(
+														[MSideBorders(const(0.)), MAddScroll(None())],
+														eitherMap(selectedBgStyle, v2a, [])
+													),
+													[state.selection, state.onClick, rl, hoverEnabled]
+													|> (\st : [MListState] -> ifArrayPush(st, !reorderShowIcon, MListReorderHideIcon()))
+													|> (\st -> ifArrayPush(st, reorderOnDragEnd, MReorderOnDragEnd()))
+												),
+												m2t
+											)
+									),
+								\ -> {
+									listSort = make([]);
+
+									TConstruct(
+										[\ -> fconnect(sorting.result, listSort)],
+										MDynamicList2T(
+											manager,
+											p2,
+											MDynamicList(
+												cast(rws : Transform<[MCustomLine]> -> Transform<[MListLine]>),
+												concat(
+													[MSideBorders(const(0.))],
+													eitherMap(selectedBgStyle, v2a, [])
+												),
+												concat([
+														state.selection, state.selectionEnabled, state.onClick, MListReorder(listSort, const(false)),
+														rowsBoxScrollPosition, TScrollEnabled(scrollEnabled),
+														MScrollbars(
+															TScrollbarStyle(getMaterialScrollBar().x with visible = scrollEnabled),
+															TScrollbarStyle(getMaterialScrollBar().y with visible = scrollEnabled)
+														), hoverEnabled, MScrollBound(scrollEnabled, scrollEnabled)
+													],
+													verticalScroll
+												)
+											),
+											m2t
+										)
+									)
+								}
 							)
-							|> (\t -> TShow(fr.show, t))
-							|> (\t -> TLines2Dir(t, f, p.rtl))
-						},
-						f
+						)
+						|> (\f : Tropic ->
+							eitherMap(
+								state.fixedRow,
+								\fr -> {
+									bStyle = filtermap(fr.style, \st -> switch (st) {
+										TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
+										default : None()
+									});
+
+									onFixedRowClick = tryExtractStruct(fr.style, MOnClick(nop));
+
+									TCopySize(
+										MSelect2T(manager, p2, "MDataTableFixedRow", [], rws0, \fr2, p3 ->
+											firstElement(fr2, MCustomLine(TEmpty(), [])).content
+											|> (\f4 -> eitherMap(
+												onFixedRowClick,
+												\onclk ->
+													MComponent([
+														MOnClick(onclk.click),
+														MRippleType(const(MRippleFill())),
+														state.clickEnabled
+													], \__ -> f4),
+												f4
+											))
+											|> (\f4 -> m2t(f4, p3))
+										),
+										\tr -> TRounded(2., 2., 0., 0., bStyle, tr),
+										false
+									)
+									|> (\t -> TShow(fr.show, t))
+									|> (\t -> TLines2Dir(t, f, p.rtl))
+								},
+								f
+							)
+						)
 					)
 				)
-			)
-		)
+			};
+
+		content
 		|> (\f -> TAvailableHeight(f, rowsAvailableHeight))
 		|> (\f -> TConstruct(
 				concat(
@@ -401,7 +471,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				)
 		)
 		|> (\t -> TAttachAvailableHeight(t, rowsBoxH))
-		|> (if (!paginationState.anyType && isFConst(m.rows) && !fgetValue(scrollEnabled) && isFConst(expandRow))
+		|> (if (!paginationState.anyType && isFConst(data) && !fgetValue(scrollEnabled) && isFConst(expandRow))
 				makeTropicConstantHeight(Some(i2d(fgetValue(rowsCountB)) * countRowHeight(fgetValue(expandRow))))
 			else idfn)
 		|> (\t -> if (state.separators) TLines2Dir(m2t(MSeparator(true), p), t, p.rtl) else t)
@@ -431,8 +501,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 				MScroll2T(manager, p, scroll, m2t)
 			}, t))
-		|> MDTFirstColumn(state, p, headers, rows, sorting, innerScrollState, expandRow, rowsBoxScrollPosition,
-				rowBackgroundStyle, selectedBgStyle,visibleRowsHeight, rowsAvailableHeight)
+		|> MDTFirstColumn(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, rowsBoxScrollPosition,
+				rowBackgroundStyle, selectedBgStyle,visibleRowsHeight, rowsAvailableHeight, page, lightweight)
 		|> (\t -> TAccess([TagName("tbody")], t))
 		|> (\t -> TAccess([TagName("table")], t))
 		|> addHeaderActions(p)
@@ -463,7 +533,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		)
 		|> (\t -> TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tableWidth(expandRow)) else tableWidth(expandRow)))
 		|> (\t -> if (state.fullWidthAdvanced) TTweak([TSnapSize(8., -1., false)], t, TEmpty()) else t)
-		|> (if (!paginationState.anyType && isFConst(m.rows) && !fgetValue(scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
+		|> (if (!paginationState.anyType && isFConst(data) && !fgetValue(scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
 		|> (if (state.fullWidth || isAnyWidthByContent || isInnerScroll || !isDefExpandRow) idfn else makeTropicConstantWidth(None()))
 		|> (\t ->
 			if (state.fullWidth) {
@@ -525,7 +595,8 @@ MDTState(
 );
 
 makeMDataTableState(
-	m : MDynamicDataTable,
+	columns0 : [MColumnDynamic],
+	style : [MDataTableStyle],
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	m2t : (Material, MFocusGroup) -> Tropic,
@@ -533,8 +604,6 @@ makeMDataTableState(
 	paginationState : MPaginationState,
 	sorting : MSortingState
 ) -> MDTState {
-	style = m.style;
-
 	cellBorder = 16.;
 	externalBorder = 16.;
 
@@ -593,7 +662,7 @@ makeMDataTableState(
 	widthByContent = contains(style, MWidthByContent());
 	headCount = 1 + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
 
-	columns = m.columns
+	columns = columns0
 		|> (\arr -> map(arr, \col ->
 			if (widthByContent || contains(col.style, MWidthByContent()))
 				MColumnDynamic(col with style = arrayPush(col.style, MWidthByContentLimited(const(-1.), const(-1.))))
@@ -621,7 +690,7 @@ makeMDataTableState(
 				tryExtractStruct(col.style, MWidthByContentLimited(const(-1.), const(-1.))), \mwc ->
 				fsubselect(cellWs, FLift(\cWs ->
 					fsubselect(paginationState.page, FLift(\pg ->
-						fsubselect(sorting.result, FLift(\srt ->	{
+						fsubselect(sorting.result, FLift(\srt -> {
 							currentRows =
 								eitherMap(
 									fixedRow,
@@ -673,7 +742,7 @@ makeMDataTableState(
 						} else {
 							if (getValue(selRow))
 								nextDistinct(selection.selected, [j])
-							else if (selection.toggle)
+							else 
 								nextDistinct(selection.selected, [])
 						}
 					},
@@ -792,14 +861,14 @@ MPaginationState(
 	subs : (Transform<int>, Transform<[int]>) -> [() -> () -> void]
 );
 
-makeMPaginationState(style : [MDataTableStyle]) -> MPaginationState {
-	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
+makeMPaginationState(style : [MDataTableStyle], isReorder : bool) -> MPaginationState {
 	currentPage = tryExtractStruct(style, MCurrentPage(make(0)));
+	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 	goToIndex = tryExtractStruct(style, MGoToIndex(make(-1)));
 	paginationDef = MPagination(make(0), []);
-	pagination = if (isSome(reorderList)) paginationDef else extractStruct(style, paginationDef);
+	pagination = if (isReorder) paginationDef else extractStruct(style, paginationDef);
 	isEmpty = pagination.rowsPerPage == [];
-	auto = isNone(reorderList) && isEmpty && contains(style, MPaginationAutoScaling());
+	auto = !isReorder && isEmpty && contains(style, MPaginationAutoScaling());
 	anyType = !isEmpty || auto;
 
 	hideAutoPaginationFooter = contains(style, MHideAutoPaginationFooter());
@@ -859,6 +928,17 @@ makeMPaginationState(style : [MDataTableStyle]) -> MPaginationState {
 					),
 				sbs
 			)
+		)
+		|> (\sbs ->
+			eitherMap(
+				mRowsPerPage,
+				\mrpp ->
+					concat(
+						[\ -> fconnect(rowsPerPage, mrpp.rowsPerPage)],
+						sbs
+					),
+				sbs
+			)
 		);
 
 	MPaginationState(
@@ -881,7 +961,7 @@ MSortingState(
 	sortedBy : DynamicBehaviour<MDataTableSorting>,
 	sortColumnNumber : DynamicBehaviour<int>,
 	hasExtOrderBy : bool,
-	onColumnClick : (int, Maybe<MSort>, bool) -> void,
+	onColumnClick : (int, Maybe<MSort>, bool, bool) -> void,
 	subs : ([MColumnDynamic]) -> [() -> () -> void]
 );
 
@@ -889,13 +969,13 @@ MDataTableSorting(
 	column : int,
 	ascending : bool,
 	sortInfo : Maybe<MSort>,
+	autoSortByRowData : bool
 );
 
-makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> MSortingState {
-	reorderList = tryExtractStruct(style, MListReorder(make([]), const(false)));
+makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDataTableStyle], isReorder : bool, lightweight : bool) -> MSortingState {
 	defaultParam : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
-	sortedBy : DynamicBehaviour<MDataTableSorting> = make(MDataTableSorting(-1, true, None()));
+	sortedBy : DynamicBehaviour<MDataTableSorting> = make(MDataTableSorting(-1, true, None(), false));
 	sortColumnNumber = make(-1);
 	sortUpdating = tryExtractStruct(style, MUpdateSorting(0));
 	hasExtOrderBy = contains(style, MExternalSort());
@@ -904,7 +984,7 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 	updatingTrigger = make(true);
 	maybeApply(sortUpdating, \su -> updateTrigger(updatingTrigger, su.delay));
 
-	result = fsubselect(rows, FLift(\rws : [[Material]] ->
+	result = fsubselect(data, FLift(\dat : [?] ->
 		fselect2(sortedBy, updatingTrigger, FLift2(\sb : MDataTableSorting, __ -> {
 			sorted =
 				if (sb.column >= 0 && !hasExtOrderBy)
@@ -912,41 +992,53 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 						sb.sortInfo,
 						\sInfo ->
 							mergeSort(
-								enumFromTo(0, length(rws) - 1),
+								enumFromTo(0, length(dat) - 1),
 								\a, b ->
 									if (sb.ascending) sInfo.colCompares(a, b)
 									else sInfo.colCompares(b, a)
 							),
 						\ ->
-							map(
-								sortCustom(
-									mapi(rws, \j, r ->
-										Pair({
-											cellM = elementAt(r, sb.column, TEmpty());
-											switch (cellM) {
-												MMutable(mutContent): fgetValue(mutContent);
-												TMutable(mutContent): fgetValue(mutContent);
-												default: cellM
-											}
-										}, j)),
-									firstOfPair, sb.ascending
-								),
-								secondOfPair
-							)
+							if (lightweight && sb.autoSortByRowData)
+								map(
+									sortCustom(
+										mapi(dat, \j, r -> Pair(r, j)),
+										firstOfPair,
+										sb.ascending
+									),
+									secondOfPair
+								)
+							else
+								map(
+									sortCustom(
+										mapi(dat, \j, r ->
+											Pair({
+												cellM = elementAt(rowsFn(r), sb.column, TEmpty());
+												switch (cellM) {
+													MMutable(mutContent): fgetValue(mutContent);
+													TMutable(mutContent): fgetValue(mutContent);
+													default: cellM
+												}
+											}, j)
+										),
+										firstOfPair,
+										sb.ascending
+									),
+									secondOfPair
+								)
 					)
-				else enumFromTo(0, length(rws) - 1);
+				else enumFromTo(0, length(dat) - 1);
 			listSortedCallback(sorted);
 			sorted
 		})
 	)));
 
-	onColumnClick = \i, columnSortStyle, initialClick -> {
+	onColumnClick = \i, columnSortStyle, autoSortByRowData, initialClick -> {
 		if (!initialClick || (^isFirstClick && getValue(defaultParam).colIndex == i)) {
 			sb = fgetValue(sortedBy);
 			
 			if (sb.column == i && !sb.ascending) {
 				nextDistinct(defaultParam, MSortingParam(-1, true));
-				next(sortedBy, MDataTableSorting(-1, false, None()))
+				next(sortedBy, MDataTableSorting(-1, false, None(), false))
 			} else {
 				asc =
 					if (sb.column == -1)
@@ -954,7 +1046,7 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 					else
 						sb.column != i;
 				nextDistinct(defaultParam, MSortingParam(i, asc));
-				next(sortedBy, MDataTableSorting(i, asc, columnSortStyle))
+				next(sortedBy, MDataTableSorting(i, asc, columnSortStyle, autoSortByRowData))
 			}
 			isFirstClick := false
 		}
@@ -965,12 +1057,14 @@ makeMSortingState(rows : Transform<[[Material]]>, style : [MDataTableStyle]) -> 
 			\sb -> nextDistinct(sortColumnNumber, sb.column),
 			\num -> {
 				sortColumn =
-					if (num >= 0 && isNone(reorderList))
+					if (num >= 0 && !isReorder)
 						tryExtractStruct(columns[num].style, MSort(\__, __ -> 0))
 					else
 						None();
 
-				nextDistinct(sortedBy, MDataTableSorting(num, !getValue(defaultParam).isAsc, sortColumn));
+				autoSortByRowData = num >= 0 && contains(columns[num].style, MAutoSortByRowData());	
+
+				nextDistinct(sortedBy, MDataTableSorting(num, !getValue(defaultParam).isAsc, sortColumn, autoSortByRowData));
 			})
 	];
 
@@ -1036,7 +1130,8 @@ MDTTitles(
 		arrowStyle = eitherMap(colHeaderStyle, \chs -> style2MIconStyle(chs.textStyle), []);
 		rightAlign = isSameStructType(commonAlignment2abs(extractCommonAlignment(c.style), p.rtl), RightAlign());
 		sortStyle = if (isReorder) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
-		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort())));
+		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort()) || contains(c.style, MAutoSortByRowData())));
+		columnWidthInspector = tryExtractStruct(c.style, MColumnWidthInspector(make(0.)));
 		i = i0 - state.headCount + 1;
 
 		defHeaderTitle = \isSelected : bool -> {
@@ -1062,7 +1157,8 @@ MDTTitles(
 
 		(if (sortable) {
 			hover = make(false);
-			clickColumn = \initialClick -> sorting.onColumnClick(i, sortStyle, initialClick);
+			autoSortByRowData = contains(c.style, MAutoSortByRowData());
+			clickColumn = \initialClick -> sorting.onColumnClick(i, sortStyle, autoSortByRowData, initialClick);
 
 				TIfLazy2(
 					fselect(sorting.sortedBy, FLift(\sb : MDataTableSorting -> sb.column == i)),
@@ -1162,6 +1258,15 @@ MDTTitles(
 			} else t
 		)
 		|> alignCellContent(p, state.cellBorder, c.style, state.cellBox(i0, true))
+		|> (\t -> eitherMap(columnWidthInspector, \inspector ->
+				if (existsIndex(state.columnWidths, i0))
+					TConstruct(
+						[makeSubscribe(state.columnWidths[i0], \w -> nextDistinct(inspector.width, w - state.cellBorder))],
+						t
+					)
+				else t,
+				t
+			))
 		|> (\t -> TAccess([TagName("th")], t))
 	});
 }
@@ -1170,7 +1275,8 @@ MDTFirstColumn(
 	state : MDTState,
 	parent : MFocusGroup,
 	headers : [Tropic],
-	rows : Transform<[[Material]]>,
+	data : Transform<[?]>,
+	rowsFn : (?) -> [Material],
 	sorting : MSortingState,
 	innerScrollState : Maybe<MInnerScrollState>,
 	expandRow : Transform<int>,
@@ -1179,6 +1285,8 @@ MDTFirstColumn(
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle>,
 	visibleRowsHeight : Transform<double>,
 	rowsAvailableHeight : Transform<double>,
+	page : DynamicBehaviour<Pair<int, int>>,
+	lightweight : bool
 ) -> (Tropic) -> Tropic {
 	\table ->
 		eitherMap(innerScrollState, \is -> if (is.glued || is.lifted) {
@@ -1198,8 +1306,12 @@ MDTFirstColumn(
 				|> implementExpandRow(true);
 
 			cells =
-				fselect2(sorting.result, rows, FLift2(\sortRes, rws -> {
-					map(sortRes, \i -> elementAt(rws, i, []))
+				fselect3(sorting.result, data, if (lightweight) page else make(Pair(-1, -1)), \sortRes, dat, pg -> {
+					rows =
+						if (lightweight) map(subrange(sortRes, pg.first, pg.second), \i -> elementAtMap(dat, i, rowsFn, []))
+						else map(sortRes, \i -> elementAtMap(dat, i, rowsFn, []));
+
+					rows
 					|> (\arr -> eitherMap(state.fixedRow, \fr -> concat([fr.cols], arr), arr))
 					|> (\arr -> mapi(arr, \i0, row -> {
 						i = i0 - b2i(isSome(state.fixedRow));
@@ -1217,7 +1329,7 @@ MDTFirstColumn(
 						|> (\t -> if (is.glued)
 								eitherMap(rowBackgroundStyle, \rb -> if (i == -1) t else
 									TIfLazy2(
-										fselect(state.selection.selected, FLift(\arr2 -> contains(arr2, sortRes[i]))),
+										fcontains(state.selection.selected, const(sortRes[i])),
 										\v -> if (v && isSome(selectedBgStyle)) TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, []), t)
 											else TFrame(0., 0., rb.fn(sortRes[i]), t),
 										false
@@ -1234,32 +1346,38 @@ MDTFirstColumn(
 								TagName("tr")
 							], \__ -> t, state.m2t) else t)
 					}))
-				}));
+				});
+
+			firstColumn0 =
+				if (lightweight)
+					TSelect(cells, \l -> TLinesDir(l, parent.rtl))
+				else
+					TSelect(eitherMap(state.fixedRow, \__ -> fselect(cells, FLift(tail)), cells), \l -> TLinesDir(l, parent.rtl))
+					|> (\t -> MScroll2T(state.manager, parent, MScroll(t, TFillXY(), [
+							MScrollCropByContent(),
+							TScrollEnabled(const(false)),
+							MScrollbars(
+								TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
+								TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
+							),
+							rowsBoxScrollPosition,
+							MScrollBound(const(false), const(false))
+						]), state.m2t))
+					|> (\t -> eitherMap(state.fixedRow, \fr -> {
+							bStyle =
+								filtermap(fr.style, \st -> switch (st) {
+									TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
+									default : None()
+								});
+
+							TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
+							|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
+							|> (\t2 -> TShow(fr.show, t2))
+							|> (\t2 -> TLines2Dir(t2, t, parent.rtl))
+						}, t));
 
 			firstColumn =
-				TSelect(eitherMap(state.fixedRow, \__ -> fselect(cells, FLift(tail)), cells), \l -> TLinesDir(l, parent.rtl))
-				|> (\t -> MScroll2T(state.manager, parent, MScroll(t, TFillXY(), [
-						MScrollCropByContent(),
-						TScrollEnabled(const(false)),
-						MScrollbars(
-							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
-							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
-						),
-						rowsBoxScrollPosition,
-						MScrollBound(const(false), const(false))
-					]), state.m2t))
-				|> (\t -> eitherMap(state.fixedRow, \fr -> {
-						bStyle =
-							filtermap(fr.style, \st -> switch (st) {
-								TGraphicsStyle() : {a : Maybe<TGraphicsStyle> = Some(st); a};
-								default : None()
-							});
-
-						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
-						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
-						|> (\t2 -> TShow(fr.show, t2))
-						|> (\t2 -> TLines2Dir(t2, t, parent.rtl))
-					}, t))
+				firstColumn0
 				|> (\t -> TAlpha(fif(parent.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)), t))
 				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
 				|> (\t -> if (state.separators && is.glued) TLines2Dir(MSeparator2T(state.manager, parent, true), t, parent.rtl) else t)

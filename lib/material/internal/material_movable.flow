@@ -10,6 +10,8 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 	position = extractStruct(m.style, MMovablePosition(make(zeroPoint))).position;
 	expand = contains(m.style, MMovableExpandArea());
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
+	interactionsOnTop = contains(m.style, MInteractionsOnTop());
+	keepCenter = contains(m.style, MMovableKeepCenter());
 
 	isDragging = make(false);
 	mouseXY = make(zeroPoint);
@@ -19,21 +21,27 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 	movableAreaWH = makeWH();
 	paddingWH = makeWH();
 	targetWH = makeWH();
+	targetWHBuffer = cloneBehaviour(targetWH);
 	safetySpace = 36.0;
 
 	grabArea = extractStruct(m.style, MMovableGrabArea(TEmpty(), TSized(targetWH)));
 
-	updatePosition = \movWH, tarWH, mxy, dxy -> {
+	updatePosition = \movWH, prevTarWH, tarWH, mxy, dxy -> {
 		expandGapWidth = if (expand) tarWH.width - safetySpace else 0.;
 		expandGapHeight = if (expand) tarWH.height - safetySpace else 0.;
+
+		newPosition =
+			Point(
+				mxy.x - dxy.x + (if (keepCenter) (prevTarWH.width - tarWH.width) / 2. else 0.),
+				mxy.y - dxy.y + (if (keepCenter) (prevTarWH.height - tarWH.height) / 2. else 0.)
+			);
 
 		nextDistinct(
 			position,
 			Point(
-				max(-expandGapWidth, min(mxy.x - dxy.x, movWH.width - tarWH.width + expandGapWidth)),
-				max(-expandGapHeight, min(mxy.y - dxy.y, movWH.height - tarWH.height + expandGapHeight))
+				max(-expandGapWidth, min(newPosition.x, movWH.width - tarWH.width + expandGapWidth)),
+				max(-expandGapHeight, min(newPosition.y, movWH.height - tarWH.height + expandGapHeight))
 			)
-
 		)
 	};
 
@@ -64,9 +72,9 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 		|> (\t -> TFrame(0., 0., interactiveRectangleStyle, t))
 		|> (\t -> TInteractive([TMouseXY(mouseXY)], t))
 		|> (\t ->
-			TGroup2(
-				grabAreaM(p),
-				target(p)
+			(
+				if (interactionsOnTop) TGroup2(target(p), grabAreaM(p))
+				else TGroup2(grabAreaM(p), target(p))
 			)
 			|> (\t2 -> TTranslate(position, t2))
 			|> (\t2 -> TFixSize(t2, TEmpty()))
@@ -75,7 +83,13 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 		|> (\t ->
 			TConstruct(
 				[
-					make2Subscribe(movableAreaWH, targetWH, \movWH, tarWH -> updatePosition(movWH, tarWH, getValue(position), zeroPoint)),
+					\ -> {nextDistinct(targetWHBuffer, fgetValue(targetWH)); nop},
+					\ -> fconnect(fstall(targetWH, 0), targetWHBuffer),
+					make2Subscribe(
+						movableAreaWH,
+						fselectWithLast(targetWHBuffer, FLift2(\old, new -> Pair(old, new))),
+						\movWH, tarWH -> updatePosition(movWH, tarWH.first, tarWH.second, getValue(position), zeroPoint)
+					),
 					makeSubscribe2(isDragging, \dr -> if (dr) {
 						addMInteractionItemId(manager, movableId);
 						local = getValue(mouseXYLocal);
@@ -86,7 +100,7 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 					makeSubscribe2(mouseXY, \mxy ->
 						if (isCurrentMInteractionItemId(manager, movableId) && getValue(isDragging) && fgetValue(enabled)) {
 							blockOtherMInteractionItemIds(manager, movableId);
-							updatePosition(getValue(movableAreaWH), getValue(targetWH), mxy, ^cursorPosition)
+							updatePosition(getValue(movableAreaWH), getValue(targetWH), getValue(targetWH), mxy, ^cursorPosition)
 						}
 					)
 				],

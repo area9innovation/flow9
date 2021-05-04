@@ -9,7 +9,7 @@ export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
 	renderParagraphEx(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager, renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>) -> Form;
-	getLineIndent(paraIndent : double, lineIndex : int) -> double;
+	getLineIndent(paraIndent : double, isFirstLine : bool) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement;
 	makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement>;
@@ -88,6 +88,8 @@ ParaWord(
 	form: GhostForm,
 	interactivityIdM : Maybe<int>
 );
+
+ParaWordGroup(words: [ParaWord], rigidWidth: double, softWidth: double);
 
 ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double);
@@ -169,8 +171,6 @@ renderParagraph(
 	renderParagraphEx(p, s, rtl, widthManager, None());
 }
 
-ParaWordGroup(words: [ParaWord], rigidWidth: double, softWidth: double);
-
 extractParaAtomicForm = \word1 : ParaWord -> {
 	w : ParaAtomic = word1.word;
 	f : Form = switch(w : ParaAtomic) {
@@ -192,6 +192,9 @@ getWordForm = \word1 -> {
 		CoordinateInspectElement(__, f): f;
 	};
 };
+
+defaultFontSizeStyle = FontSize(14.0);
+emptyParaWordGroup = ParaWordGroup([], 0.0, 0.0);
 
 renderParagraphEx(
 	p : [ParagraphElement],
@@ -238,7 +241,6 @@ renderParagraphEx(
 	));
 
 	keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isParagraphMarked && i <= 1);
-	emptyWordGroup = ParaWordGroup([], 0.0, 0.0);
 	isText = \w -> switch (w.word) {
 		Empty() : false;
 		default : true;
@@ -253,30 +255,16 @@ renderParagraphEx(
 			if (it) group.softWidth+w else group.softWidth
 		)
 	};
-	wordGroups = foldi(words, [], \i, acc : [ParaWordGroup], word -> {
-		form = getWordForm(word);
-		group = lastElement(acc, emptyWordGroup);
 
-		if (switch (word.word) {
-			NewLine(): true;
-			Space(__): true;
-			LinePart(__, __, __): true;
-			default: {
-				f = getWordForm(word);
-				// it is no use to make line with zero-width content, so we continue counting if the width is 0
-				// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
-				// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-				if (keepFormTogetherOrWithMark(f, i) || 0.0 == group.rigidWidth + group.softWidth) {
-					false;
-				} else {
-					true
-				}
-			};
-		})
-			arrayPush(acc, addWordToGroup(emptyWordGroup, word))
-		else 
-			arrayPush(take(acc, length(acc)-1), addWordToGroup(group, word))
-	});
+	getWordGhostedForm = \word1 -> {
+		g = word1.ghosted;
+		switch (g : Ghosted) {
+			Empty(): extractParaAtomicForm(word1);
+			Ghost(xc, yc, fm): g;
+			InspectGhost(__, fm): g;
+			CoordinateInspectElement(__, __): g;
+		}
+	};
 
 
 	aw = make(0.0);
@@ -351,6 +339,36 @@ renderParagraphEx(
 		),
 		\ -> {
 			updateFn = \wi-> {
+				// TODO use lists instead.
+				wordGroups = foldi(words, Pair([], false), \i, acc : Pair<[ParaWordGroup]>, word -> {
+					form = getWordGhostedForm(word);
+					group = lastElement(acc.first, emptyParaWordGroup);
+					makeGroup_wasSpaceP = switch (word.word) {
+						NewLine(): Pair(true, false);
+						Space(__): Pair(false, true);
+						LinePart(__, __, __): Pair(true, false);
+						default: {
+							f = getWordForm(word);
+							// it is no use to make line with zero-width content, so we continue counting if the width is 0
+							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
+							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+							Pair(
+								if (keepFormTogetherOrWithMark(f, i) || 0.0 == group.rigidWidth + group.softWidth) {
+									false;
+								} else {
+									true
+								},
+								false
+							)
+						};
+					}
+					Pair(
+						if (makeGroup_wasSpaceP.first || acc.second) arrayPush(acc.first, addWordToGroup(emptyParaWordGroup, setWordForm(word, form)))
+						else arrayPush(take(acc.first, length(acc.first)-1), addWordToGroup(group, setWordForm(word, form))),
+						makeGroup_wasSpaceP.second
+					)
+				}).first;
+
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -362,7 +380,7 @@ renderParagraphEx(
 					isParagraphMarked,
 					rtl,
 					fitLongWords,
-					extractStruct(s, FontSize(14.0)).size,
+					extractStruct(s, defaultFontSizeStyle).size,
 					isText
 				);
 
@@ -410,17 +428,18 @@ getParaLineInfos(
 	fontSize : double,
 	isText : (ParaWord) -> bool
 ) -> [ParaLineInfo] {
+	getGroupWidth = \g -> g.rigidWidth + g.softWidth;
 	textScale = if (shrinkLongWords && wordGroups != []) {
 		maxWidthGroup = fold(
 			tail(wordGroups),
-			Pair(wordGroups[0], wordGroups[0].rigidWidth + wordGroups[0].softWidth),
+			wordGroups[0],
 			\maxGroup, group -> {
-				width = group.rigidWidth + group.softWidth;
-				if (width > maxGroup.second) Pair(group, width) else maxGroup
+				width = getGroupWidth(group);
+				if (width > getGroupWidth(maxGroup)) group else maxGroup
 			}
 		);
-		if (maxWidthGroup.second > availableWidth) {
-			(availableWidth - maxWidthGroup.first.rigidWidth) / maxWidthGroup.first.softWidth
+		if (getGroupWidth(maxWidthGroup) > availableWidth) {
+			(availableWidth - maxWidthGroup.rigidWidth) / maxWidthGroup.softWidth
 		} else 1.0
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale, isText);
@@ -603,7 +622,7 @@ getJoinableTextMetrics(
 	getDefault = \-> {
 		formSize : Pair<Form, Behaviour<FormMetrics>> = getDynamicFormSize2(form, getExactTopPoint);
 		Pair(formSize.first, cast(formSize.second : Behaviour<FormMetrics> -> Transform<FormMetrics>))
-	}
+	};
 	if (ignoreLetterSpacing) {
 		getDefault()
 	} else switch (form) {
@@ -656,8 +675,8 @@ isGhostable(f : Form) -> bool {
 
 // We indent the first line if paragraph's first-line indent is positive
 // or all of the other lines if the indent is negative.
-getLineIndent(paraIndent : double, lineIndex : int) -> double {
-	if (paraIndent > 0.0 && lineIndex == 0 || paraIndent < 0.0 && lineIndex != 0 ) abs(paraIndent)
+getLineIndent(paraIndent : double, isFirstLine : bool) -> double {
+	if (paraIndent > 0.0 && isFirstLine || paraIndent < 0.0 && !isFirstLine) abs(paraIndent)
 	else 0.0;
 }
 
@@ -671,7 +690,8 @@ reflowParaWords(
 	textScale : double,
 	isText : (ParaWord) -> bool
 ) -> [ParaLine] {
-	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, 0);
+
+	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, true);
 	reflowResult = reflowParaWords2(
 		wordGroups,
 		firstLineWidth,
@@ -709,58 +729,51 @@ reflowParaWords2(
 	textScale : double,
 	isText : (ParaWord) -> bool
 ) -> [ParaLine] {
-	getWordGhostedForm = \word1 -> {
-		g = word1.ghosted;
-		switch (g : Ghosted) {
-			Empty(): extractParaAtomicForm(word1);
-			Ghost(xc, yc, fm): g;
-			InspectGhost(__, fm): g;
-			CoordinateInspectElement(__, __): g;
-		}
+	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
+
+	getWordWidths = \word -> {
+		w = getParaWordWidth(word);
+		if (isText(word)) Pair(0.0, w) else Pair(w, 0.0)
 	};
 
 	makeParaWord2 = \word2, form2 -> {
 		g = word2.ghosted;
 		replaceWordGhosted = \ -> {
-			r : Ghosted = switch (g : Ghosted) {
+			switch (g : Ghosted) {
 				Empty(): Empty();
 				Ghost(xc, yc, __): Ghost(xc, yc, form2);
 				InspectGhost(inspector, __): InspectGhost(inspector, form2);
 				CoordinateInspectElement(inspector, __): CoordinateInspectElement(inspector, form2);
 			}
-			r;
 		};
 
 		ghosted = replaceWordGhosted();
 		ghostedForm = {
 			switch (g : Ghosted) {
 				Empty(): extractParaAtomicForm(word2);
-				default: replaceWordGhosted();
+				default: ghosted;
 			};
 		};
-		ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm, word2.interactivityIdM);
+		ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm, word2.interactivityIdM)
 	};
-
-	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
 
 	addLine = \cwordgroups : [ParaWordGroup], indent : double -> {
 		cwords = concatA(map(cwordgroups, \g -> g.words));
 		cwordslasti = length(cwords)-1;
 		if (cwords == []) result else arrayPush(result, ParaLine({
 			cw = mapi(cwords, \cwordi, cword -> {
-				w = switch(cword.word) {
+				switch(cword.word) {
 					LinePart(f, p, e):
 						makeParaWord2(cword, if (cwordi == 0) f else if (cwordi < cwordslasti) p else e);
 					default: cword;
-				};
-				setWordForm(w, getWordGhostedForm(w))
+				}
 			});
 
 			if (textScale == 1.0) cw else {
 				scale = \f -> Scale(const(textScale), const(textScale), f);
 				map(cw, \w -> {
 					if (isText(w)) {
-						gform = getWordGhostedForm(w);
+						wform = w.form;
 						ParaWord(
 							w.word,
 							fselect(w.metrics, FLift(\fm -> FormMetrics(fm.width*textScale, fm.height*textScale, fm.baseline*textScale, fm.dHeight*textScale))),
@@ -770,11 +783,11 @@ reflowParaWords2(
 								InspectGhost(inspector, f): InspectGhost(inspector, scale(f));
 								CoordinateInspectElement(i, f): CoordinateInspectElement(i, scale(f));
 							},
-							switch (gform) {
+							switch (wform) {
 								Ghost(xc, yc, form): Ghost(xc, yc, scale(form));
 								CoordinateInspectElement(inspector, form): CoordinateInspectElement(inspector, scale(form));
 								InspectGhost(inspector, form): InspectGhost(inspector, scale(form));
-								Form(): scale(gform);
+								Form(): scale(wform);
 							},
 							w.interactivityIdM
 						)
@@ -782,7 +795,7 @@ reflowParaWords2(
 				})
 			}},
 			indent
-		));
+		))
 	}
 
 	detachWord = \w : ParaWord, detach : bool -> {
@@ -799,24 +812,20 @@ reflowParaWords2(
 
 	lineIndex = length(result);
 
-	lineIndent = getLineIndent(paraIndent, lineIndex);
-	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, lineIndex + 1);
+	lineIndent = getLineIndent(paraIndent, lineIndex==0);
+	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, false);
 
 	if (wordGroups == []) {
 		addLine(currentWordGroups, lineIndent);
 	} else {
 		group = wordGroups[0];
 		word = group.words[0];
-		getWordWidths = \w -> 
-			if (isText(word)) Pair(0.0, w) else Pair(w, 0.0);
-		wordWidths = getWordWidths(getParaWordWidth(word));
+		wordWidths = getWordWidths(word);
 		detachWord(word, false);
 		restGroups = tail(wordGroups);
 		restGroup = ParaWordGroup(tail(group.words), group.rigidWidth - wordWidths.first, group.softWidth - wordWidths.second);
 		rest = if(restGroup.words == []) restGroups else concat([restGroup], restGroups);
 		groupWidth = group.rigidWidth + textScale * group.softWidth;
-		//width = wordWidths.first + textScale * wordWidths.second;
-		//restGroupWidth = restGroup.rigidWidth + textScale * restGroup.softWidth;
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
 				reflowParaWords2(
@@ -840,7 +849,7 @@ reflowParaWords2(
 						restGroups,
 						availableWidth,
 						remaining - groupWidth,
-						arrayPush(currentWordGroups, group /*ParaWordGroup(group with words=concat([setWordForm(word, getWordGhostedForm(word))], tail(group.words)))*/),
+						arrayPush(currentWordGroups, group),
 						result,
 						paraIndent,
 						fontSize,
@@ -848,7 +857,7 @@ reflowParaWords2(
 						isText
 					);
 				} else {
-					//detachWord(word, true);
+					detachWord(word, true);
 					reflowParaWords2(
 						rest,
 						nextLineWidth,

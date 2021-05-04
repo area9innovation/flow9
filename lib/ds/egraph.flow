@@ -19,6 +19,11 @@ export {
 	// If e already exists, it returns the class it belongs to
 	addEExp(g : EGraph<?>, e : ?) -> int;
 
+	addENode(g : EGraph<?>, f : ENode<?>) -> int;
+
+	// Make a new, empty equivalence class
+	makeEClass(g : EGraph<?>) -> int;
+
 	// Unifies two equivalence classes and returns the new class id
 	unionEClass(g : EGraph<?>, a : int, b : int) -> int;
 
@@ -27,14 +32,23 @@ export {
 	// full merging throughout the graph. O(n*depth of deepest merge)
 	canonicalizeEGraph(e : EGraph<?>) -> void;
 
+	canonicalizeENode(g : EGraph<?>, f : ENode<?>) -> ENode<?>;
+
 	// Given an equivalence class id, get the equivalent nodes
 	getEClassNodes(g : EGraph<?>, class : int) -> Set<ENode<?>>;
+	setEClassNodes(g : EGraph<?>, class : int, node : Set<ENode<?>>) -> void;
 
 	// Given an equivalence class, what is the canonical id?
 	getEClassRoot(g : EGraph<?>, class : int) -> int;
 
 	// Check if these two have the same class
 	isSameEClass(e : EGraph<?>, a : int, b : int) -> bool;
+
+	// Visit all roots, with the equivalence sets in each
+	iterEGraph(e : EGraph<?>, fn : (int, Set<ENode<?>>) -> void) -> void;
+
+	// What is the current set of root eclasses?
+	getEClasses(e : EGraph<?>) -> Set<int>;
 
 	EGraph(
 		// From equivalence class (int) to set of ENodes in that class
@@ -55,7 +69,6 @@ export {
 		args : [int]
 	);
 }
-
 
 makeEGraph(splitChildren : (?) -> Pair<?, [?]>) -> EGraph {
 	EGraph(
@@ -95,17 +108,28 @@ addEExp(g : EGraph<?>, e : ?) -> int {
 	addENode(g, enode);
 }
 
-unionEClass(g : EGraph<?>, a : int, b : int) -> int {
-	id = unionUnionMap(g.eclass, a, b);
-	nodes : Set<ENode<?>> = getUnionMapValue(g.eclass, id);
-	eclass : Set<ENode<?>> = mapSet(nodes, \enode : ENode<?> -> {
-		g.memo ::= removeFromTree(g.memo, enode);
-		enode0 = canonicalizeENode(g, enode);
-		g.memo ::= setTree(g.memo, enode0, id);
-		enode0;
-	});
-	setUnionMapValue(g.eclass, id, eclass);
+makeEClass(g : EGraph<?>) -> int {
+	id = g.nextId;
+	setUnionMapValue(g.eclass, id, makeSet());
+	g.nextId ::= id + 1;
 	id;
+}
+
+unionEClass(g : EGraph<?>, a : int, b : int) -> int {
+	if (a == b) {
+		a
+	} else {
+		id = unionUnionMap(g.eclass, a, b);
+		nodes : Set<ENode<?>> = getUnionMapValue(g.eclass, id);
+		eclass : Set<ENode<?>> = mapSet(nodes, \enode : ENode<?> -> {
+			g.memo ::= removeFromTree(g.memo, enode);
+			enode0 = canonicalizeENode(g, enode);
+			g.memo ::= setTree(g.memo, enode0, id);
+			enode0;
+		});
+		setUnionMapValue(g.eclass, id, eclass);
+		id;
+	}
 }
 
 // TODO: If we track the parents more precisely,
@@ -115,7 +139,7 @@ canonicalizeEGraph(e : EGraph<?>) -> void {
 	joined = ref false;
 	iterUnionMap(e.eclass, \class : int, nodes : Set<ENode<?>> -> {
 		if (class < e.nextId) {
-			iterSet(nodes, \node -> {
+			iterSet(nodes, \node : ENode<?> -> {
 				// OK, redo the node
 				c0 = canonicalizeENode(e, node);
 				cclass = lookupTreeDef(e.memo, c0, class);
@@ -138,10 +162,24 @@ getEClassNodes(g : EGraph<?>, class : int) -> Set<ENode<?>> {
 	getUnionMapValue(g.eclass, class);
 }
 
+setEClassNodes(g : EGraph<?>, class : int, node : Set<ENode<?>>) -> void {
+	setUnionMapValue(g.eclass, class, node);
+}
+
 getEClassRoot(g : EGraph<?>, class : int) -> int {
 	findUnionMapRoot(g.eclass, class);
 }
 
 isSameEClass(e : EGraph<?>, a : int, b : int) -> bool {
 	getEClassRoot(e, a) == getEClassRoot(e, b);
+}
+
+iterEGraph(e : EGraph<?>, fn : (int, Set<ENode<?>>) -> void) -> void {
+	iterUnionMap(e.eclass, \root, nodes -> {
+		fn(root, mapSet(nodes, \node -> canonicalizeENode(e, node)))
+	});
+}
+
+getEClasses(e : EGraph<?>) -> Set<int> {
+	getUnionMapRoots(e.eclass);
 }
