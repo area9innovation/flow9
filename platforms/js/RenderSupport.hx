@@ -956,7 +956,15 @@ class RenderSupport {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
 			// On iOS 14 preventing default on 'touchstart' leads to bug with trackpad : 'pointer*' events disapper
-			if (!((Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1") && Platform.isIOS && Platform.browserMajorVersion >= 14 && RendererType == 'html' && e.type == 'touchstart')) {
+			// 'mousedown' also shouldn`t be prevented, because inputs stop to focus in this case.
+			var doNotPreventDefault =
+				(Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1")
+				&& Platform.isIOS
+				&& Platform.browserMajorVersion >= 14
+				&& RendererType == 'html'
+				&& (e.type == 'touchstart' || e.type == 'mousedown');
+
+			if (!doNotPreventDefault) {
 				e.preventDefault();
 			}
 
