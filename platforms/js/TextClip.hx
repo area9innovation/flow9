@@ -1159,9 +1159,9 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.MousePos.y = e.pageY;
 
 			if (e.which == 3 || e.button == 2) {
-				RenderSupport.PixiStage.emit("mouserightdown");
+				RenderSupport.PixiStage.emit("mouserightup");
 			} else if (e.which == 2 || e.button == 1) {
-				RenderSupport.PixiStage.emit("mousemiddledown");
+				RenderSupport.PixiStage.emit("mousemiddleup");
 			} else if (e.which == 1 || e.button == 0) {
 				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 			}
