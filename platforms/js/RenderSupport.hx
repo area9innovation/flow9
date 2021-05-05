@@ -1787,6 +1787,10 @@ class RenderSupport {
 		clip.setAutoAlign(autoalign);
 	}
 
+	public static function setPreventContextMenu(clip : TextClip, preventContextMenu : Bool) : Void {
+		clip.setPreventContextMenu(preventContextMenu);
+	}
+
 	public static function setTextInput(clip : TextClip) : Void {
 		clip.setTextInput();
 	}
