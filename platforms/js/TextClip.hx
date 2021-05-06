@@ -470,7 +470,7 @@ class TextClip extends NativeWidgetClip {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = alpha;
+				nativeWidget.style.opacity = (RenderSupport.RendererType != "canvas" || isFocused) ? alpha : 0;
 				nativeWidget.style.color = style.fill;
 			}
 		} else {
