@@ -163,6 +163,7 @@ class TextClip extends NativeWidgetClip {
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
 	public var isInteractive : Bool = false;
+	public var preventContextMenu : Bool = false;
 
 	private var baselineWidget : Dynamic;
 	private var needBaseline : Bool = true;
@@ -980,6 +981,14 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public function setPreventContextMenu(preventContextMenu : Bool) {
+		if (this.preventContextMenu != preventContextMenu) {
+			this.preventContextMenu = preventContextMenu;
+
+			invalidateStyle();
+		}
+	}
+
 	public function setMaxChars(maxChars : Int) {
 		if (this.maxChars != maxChars) {
 			this.maxChars = maxChars;
@@ -1031,6 +1040,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.addEventListener('scroll', onScroll);
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
+		nativeWidget.addEventListener('contextmenu', onContextMenu);
 
 		invalidateStyle();
 	}
@@ -1149,9 +1159,9 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.MousePos.y = e.pageY;
 
 			if (e.which == 3 || e.button == 2) {
-				RenderSupport.PixiStage.emit("mouserightdown");
+				RenderSupport.PixiStage.emit("mouserightup");
 			} else if (e.which == 2 || e.button == 1) {
-				RenderSupport.PixiStage.emit("mousemiddledown");
+				RenderSupport.PixiStage.emit("mousemiddleup");
 			} else if (e.which == 1 || e.button == 0) {
 				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
 			}
@@ -1313,6 +1323,10 @@ class TextClip extends NativeWidgetClip {
 		if (isFocused) {
 			checkPositionSelection();
 		}
+	}
+
+	public function onContextMenu(e) {
+		if (this.preventContextMenu) e.preventDefault();
 	}
 
 	public function getDescription() : String {
