@@ -1,0 +1,76 @@
+import tools/flowc/backends/common;
+
+export {
+	fi2javaGradleDeps2JarDeps(cfg : FiJavaConfig) -> [string];
+
+	// run a gradle task
+	runGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void, onExit : (errocode : int) -> void) -> native;
+
+	// Returns the gradle version like '6.8' in case gradle is installed and -1.0 otherwise.
+	fcGradleVersion() -> double;
+}
+
+fi2javaGradleDeps2JarDeps(cfg : FiJavaConfig) -> [string] {
+	filtermap(cfg.dependencies, \dep ->
+		if (!startsWith(dep, "gradle")) None() else {
+			gradle_dep = substring(dep, 7, strlen(dep) - 8);
+			components = strSplit(gradle_dep, ":");
+			if (length(components) != 3) None() else {
+				Some(components[1] + "-" + components[2] + ".jar");
+			}
+		}
+	);
+}
+
+// This is a synchroniuos call
+execGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void) -> int {
+	// In windows gradle should be wrapped with cmd 
+	if (windows()) {
+		execSystemProcess("cmd", concat(["/c", "gradle"], args), currentWorkingDirectory, onStdOutLine, onStdErr);
+	} else {
+		execSystemProcess("gradle", args, currentWorkingDirectory, onStdOutLine, onStdErr);
+	}
+}
+
+runGradle(args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void, onExit : (errocode : int) -> void) -> native {
+	// In windows gradle should be wrapped with cmd 
+	if (windows()) {
+		runSystemProcess("cmd", concat(["/c", "gradle"], args), currentWorkingDirectory, onStdOutLine, onStdErr, onExit);
+	} else {
+		runSystemProcess("gradle", args, currentWorkingDirectory, onStdOutLine, onStdErr, onExit);
+	}
+}
+
+fc_gradle_version : ref Maybe<double> = ref None();
+
+fcGradleVersion() -> double {
+	lookup_version = \-> {
+		out = ref "";
+		err = ref false;
+		exitCode = execGradle(["-version"], ".", \o -> out := ^out + "\n" + o, \e -> err := true);
+		version = if (exitCode == 0 && !^err) ^out else "";
+
+		// Find the first line with 'gradle' keyword, following by a double
+		gradle_version = filtermap(
+			strSplit(version, "\n"),
+			\line0 -> {
+				line = toLowerCase(line0);
+				ind = strIndexOf(line, "gradle");
+				if (ind == -1) None() else {
+					// A substring after 'gradle' keyword
+					ver_str0 = substring(line, ind + 7, strlen(line) - (ind + 7));
+					// Remove a trailing dot, if exists, and extra spaces
+					ver_str = trim2(ver_str0, ". ");
+					// Check if ver_str contains a double value
+					if (isDouble(ver_str)) Some(ver_str) else None();
+				}
+			}
+		);
+		if (length(gradle_version) == 0) {
+			-1.0;
+		} else {
+			s2d(gradle_version[0]);
+		}
+	}
+	onlyOnce(fc_gradle_version, lookup_version);
+}
