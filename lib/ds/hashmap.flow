@@ -33,7 +33,7 @@ Lookup      4.9       3.6       2.6    1.7   1.3   0.9
 	//
 	// Hash collisions are handled with conventional Tree<?, ??> data structure. 
 	HashMap(
-		data : [ref Tree<?, ??>],
+		data : ref [ref Tree<?, ??>],
 		hash : (?) -> int,
 		size : ref int,
 		loadFactor : double // By default is 0.75
@@ -107,13 +107,13 @@ defaultHashMapCapacity = 4;
 
 makeHashMapOfVolume(hash : (?) -> int, volume : int, loadFactor : double) -> HashMap<?, ??> {
 	// The initial size of hash map is 0
-	HashMap(arrayRepeatDeferred(\ -> ref makeTree(), volume), hash, ref 0, loadFactor)
+	HashMap(ref arrayRepeatDeferred(\ -> ref makeTree(), volume), hash, ref 0, loadFactor)
 }
 
 lookupHashMap(hashMap : HashMap<?, ??>, key : ?) -> Maybe<??> {
 	index = hashMapIndex(hashMap, key);
 	if (index >= 0) {
-		lookupTree(^(hashMap.data[index]), key)
+		lookupTree(^(^(hashMap.data)[index]), key)
 	} else {
 		None()
 	}
@@ -125,68 +125,66 @@ lookupHashMapDef(hashMap : HashMap<?, ??>, key : ?, defaultValue : ??) -> ?? {
 
 containsKeyHashMap(hashMap : HashMap<?, ??>, key : ?) -> bool {
 	index = hashMapIndex(hashMap, key);
-	index >= 0 && containsKeyTree(^(hashMap.data[index]), key)
+	index >= 0 && containsKeyTree(^(^(hashMap.data)[index]), key)
 }
 
 setHashMap(hashMap : HashMap<?, ??>, key : ?, value : ??) -> void {
-	resized = resizeHashMapOnDemand(hashMap);
-	i = hashMapIndex(resized, key);
+	resizeHashMapOnDemand(hashMap);
+	i = hashMapIndex(hashMap, key);
 	if (i >= 0) {
-		bucket = ^(resized.data[i]);
+		bucket = ^(^(hashMap.data)[i]);
 		switch (lookupTree(bucket, key)) {
 			Some(__): { }
-			None(): resized.size := ^(resized.size) + 1;
+			None(): hashMap.size := ^(hashMap.size) + 1;
 		}
-		resized.data[i] := setTree(bucket, key, value);
+		^(hashMap.data)[i] := setTree(bucket, key, value);
 	}
 }
 
-resizeHashMapOnDemand(hashMap : HashMap<?, ??>) -> HashMap<?, ??> {
-	if (cast(^(hashMap.size) + 1 : int -> double) > cast(length(hashMap.data): int -> double) * hashMap.loadFactor) {
-		resized = makeHashMapOfVolume(hashMap.hash, length(hashMap.data) * 2, hashMap.loadFactor);
-		iter(hashMap.data, 
+resizeHashMapOnDemand(hashMap : HashMap<?, ??>) -> void {
+	if (cast(^(hashMap.size) + 1 : int -> double) > cast(length(^(hashMap.data)): int -> double) * hashMap.loadFactor) {
+		// Double the size of the data vector
+		resized_data = arrayRepeatDeferred(\ -> ref makeTree(), length(^(hashMap.data)) * 2);
+		iter(^(hashMap.data), 
 			\bucket -> {
 				traverseInOrder(^bucket, \key, value -> {
-						i = hashMapIndex(resized, key);
+						i = hashMapDataIndex(resized_data, hashMap.hash, key);
 						if (i >= 0)
-							resized.data[i] := setTree(^(resized.data[i]), key, value);
+							resized_data[i] := setTree(^(resized_data[i]), key, value);
 					}
 				)
 			}
 		);
-		resized.size := ^(hashMap.size);
-		resized
-	} else {
-		hashMap
+		hashMap.data := resized_data;
 	}
 }
 
 removeFromHashMap(hashMap : HashMap<?, ??>, key : ?) -> void {
 	i = hashMapIndex(hashMap, key);
 	if (i >= 0) {
-		bucket = ^(hashMap.data[i]);
+		bucket = ^(^(hashMap.data)[i]);
 		switch (lookupTree(bucket, key)) {
 			Some(__): hashMap.size := ^(hashMap.size) - 1;
 			None(): { }
 		}
-		hashMap.data[i] := removeFromTree(bucket, key);
+		^(hashMap.data)[i] := removeFromTree(bucket, key);
 	}
 }
 
 iterHashMap(hashMap : HashMap<?, ??>, fn : (key : ?, value : ??) -> void) -> void {
-	iter(hashMap.data, 
+	iter(^(hashMap.data), 
 		\tree -> traverseInOrder(^tree, \key, value -> fn(key, value))
 	)
 }
 
 foldHashMap(hashMap : HashMap<?, ??>, acc: ???, f: (key: ?, value: ??, acc: ???) -> ???) -> ??? {
-	fold(hashMap.data, acc,
+	fold(^(hashMap.data), acc,
 		\ac, tree -> foldTree(^tree, ac, \key, value, a -> f(key, value, a))
 	)
 }
 
 mapHashMap(hashMap : HashMap<?, ??>, f: (key: ?, value: ??) -> ???) -> HashMap<?, ???> {
-	mapped = makeHashMapOfVolume(hashMap.hash, length(hashMap.data), hashMap.loadFactor);
+	mapped = makeHashMapOfVolume(hashMap.hash, length(^(hashMap.data)), hashMap.loadFactor);
 	iterHashMap(hashMap,
 		\key, value -> setHashMap(mapped, key, f(key, value))
 	);
@@ -246,11 +244,16 @@ hashMap2pairs(hashMap : HashMap<?, ??>) -> [Pair<?, ??>] {
 }
 
 hashMapIndex(hashMap : HashMap<?, ??>, key : ?) -> int {
-	len = length(hashMap.data);
+	hashMapDataIndex(^(hashMap.data), hashMap.hash, key);
+}
+
+
+hashMapDataIndex(data : [ref Tree<?,??>], hash : (?) -> int, key : ?) -> int {
+	len = length(data);
 	if (len > 0) {
-		i = hashMap.hash(key) % length(hashMap.data);
+		i = hash(key) % length(data);
 		if (i < 0) {
-			i + length(hashMap.data);
+			i + length(data);
 		} else {
 			i
 		}
@@ -264,13 +267,13 @@ popHashMap(hashMap : HashMap<?, ??>) -> Maybe<Pair<?, ??>> {
 }
 
 doPopHashMap(hashMap : HashMap<?, ??>, i : int) -> Maybe<Pair<?, ??>> {
-	if (i == length(hashMap.data)) None() else {
-		switch (^(hashMap.data[i])) {
+	if (i == length(^(hashMap.data))) None() else {
+		switch (^(^(hashMap.data)[i])) {
 			TreeEmpty(): {
 				doPopHashMap(hashMap, i + 1);
 			}
 			TreeNode(k, v, __,__,__): {
-				hashMap.data[i] := removeFromTree(^(hashMap.data[i]), k);
+				^(hashMap.data)[i] := removeFromTree(^(^(hashMap.data)[i]), k);
 				hashMap.size := ^(hashMap.size) - 1;
 				Some(Pair(k, v));
 			}
@@ -279,7 +282,7 @@ doPopHashMap(hashMap : HashMap<?, ??>, i : int) -> Maybe<Pair<?, ??>> {
 }
 
 copyHashMap(hashMap : HashMap<?, ??>) -> HashMap<?, ??> {
-	copied = makeHashMapOfVolume(hashMap.hash, length(hashMap.data), hashMap.loadFactor);
+	copied = makeHashMapOfVolume(hashMap.hash, length(^(hashMap.data)), hashMap.loadFactor);
 	iterHashMap(hashMap, \key, value -> { setHashMap(copied, key, value); { }});
 	copied
 }
