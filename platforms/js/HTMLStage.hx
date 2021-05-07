@@ -27,16 +27,24 @@ class HTMLStage extends NativeWidgetClip {
 		nativeWidget.appendChild(child);
 	}
 
-	public function assignClip(id : String, clip : DisplayObject) : Void {
-		if (clips.get(id) != null) {
-			this.removeChild(clips.get(id));
+	public function assignClip(className : String, clip : DisplayObject) : Void {
+		if (clips.get(className) != null) {
+			this.removeChild(clips.get(className));
 		}
 
-		untyped clip.forceParentNode = Browser.document.getElementById(id);
-		clip.initNativeWidget();
-		this.addChild(clip);
+		if (!nativeWidget) {
+			return;
+		}
 
-		clips.set(id, clip);
+		var element = nativeWidget.getElementsByClassName(className)[0];
+
+		if (element) {
+			untyped clip.forceParentNode = element;
+			clip.initNativeWidget();
+			this.addChild(clip);
+
+			clips.set(className, clip);
+		}
 	}
 
 	public function insertBefore(child : Element, reference : Element) : Void {
