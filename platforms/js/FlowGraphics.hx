@@ -57,6 +57,10 @@ class FlowGraphics extends Graphics {
 		isNativeWidget = false;
 	}
 
+	public function useSvg() {
+		isSvg = true;
+	}
+
 	public function beginGradientFill(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
 		fillGradient = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix, type : type };
 
