@@ -1043,7 +1043,7 @@ public class Native extends NativeHost {
 	// Monday is 0
 	public final int dayOfWeek(int year, int month, int day) {
 		Calendar c = Calendar.getInstance();
-		c.set(year, month, day);
+		c.set(year, month - 1, day);
 		return (c.get(Calendar.DAY_OF_WEEK) - (Calendar.SUNDAY + 1) + 7) % 7;
 	}
 
