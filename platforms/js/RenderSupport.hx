@@ -1187,9 +1187,9 @@ class RenderSupport {
 			return false;
 		};
 
-		Browser.window.addEventListener(event_name, wheel_cb, false);
+		untyped __js__("window.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
 		if ( event_name == "DOMMouseScroll" ) {
-			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
+			untyped __js__("window.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
 		}
 	}
 
