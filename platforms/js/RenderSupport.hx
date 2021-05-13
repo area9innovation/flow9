@@ -1468,7 +1468,7 @@ class RenderSupport {
 
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
-				if (RendererType == "html") {
+				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
 
@@ -1495,8 +1495,8 @@ class RenderSupport {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
 		if (accessWidget == null) {
-			if (AccessibilityEnabled || RendererType == "html") {
-				if (RendererType == "html") {
+			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
+				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
 
@@ -1975,7 +1975,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -2447,7 +2447,7 @@ class RenderSupport {
 	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else if (RenderSupport.RendererType != "html") {
+		} else if (RenderSupport.RendererType != "html" || !clip.isHTMLRenderer()) {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
@@ -2837,7 +2837,7 @@ class RenderSupport {
 			return;
 		}
 
-		if (RendererType == "html") {
+		if (clip.isHTMLRenderer()) {
 			untyped clip.filterPadding = 0.0;
 			var filterCount = 0;
 

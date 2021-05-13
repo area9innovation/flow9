@@ -6,8 +6,9 @@ import pixi.core.display.DisplayObject;
 using DisplayObjectHelper;
 
 class HTMLStage extends NativeWidgetClip {
-	private var isHTMLStage = true;
-	private var clips : Map<String, DisplayObject> = new Map<String, DisplayObject>();
+	public var isHTMLStage = true;
+	private var clips : Map<String, FlowContainer> = new Map<String, FlowContainer>();
+	private var stageRect : Dynamic;
 	public function new(width : Float, height : Float) {
 		super();
 
@@ -21,6 +22,34 @@ class HTMLStage extends NativeWidgetClip {
 		nativeWidget.classList.add("stage");
 
 		Browser.document.body.appendChild(nativeWidget);
+		stageRect = untyped this.nativeWidget.getBoundingClientRect();
+
+		var config = { attributes: true, childList: true, subtree: true };
+		var updating = false;
+		var callback = function() {
+			if (!updating) {
+				updating = true;
+				RenderSupport.once("drawframe", function() {
+					if (!this.nativeWidget) {
+						return;
+					}
+
+					stageRect = untyped this.nativeWidget.getBoundingClientRect();
+
+					for (clip in clips) {
+						if (clip.children != null && clip.children.length > 0) {
+							var parentRect = untyped clip.children[0].forceParentNode.getBoundingClientRect();
+							clip.setClipX(parentRect.x - stageRect.x);
+							clip.setClipY(parentRect.y - stageRect.y);
+						}
+					}
+
+					updating = false;
+				});
+			}
+		};
+		var observer = untyped __js__("new MutationObserver(callback)");
+		observer.observe(nativeWidget, config);
 	}
 
 	public function appendChild(child : Element) : Void {
@@ -29,21 +58,21 @@ class HTMLStage extends NativeWidgetClip {
 
 	public function assignClip(className : String, clip : DisplayObject) : Void {
 		if (clips.get(className) != null) {
+			clips.get(className).removeChildren();
 			this.removeChild(clips.get(className));
 		}
 
-		if (!nativeWidget) {
-			return;
-		}
-
+		var container = new FlowContainer();
+		untyped container.isHTMLStageContainer = true;
 		var element = nativeWidget.getElementsByClassName(className)[0];
 
 		if (element) {
 			untyped clip.forceParentNode = element;
 			clip.initNativeWidget();
-			this.addChild(clip);
+			container.addChild(clip);
+			this.addChild(container);
 
-			clips.set(className, clip);
+			clips.set(className, container);
 		}
 	}
 
@@ -55,5 +84,9 @@ class HTMLStage extends NativeWidgetClip {
 		if (nativeWidget != null && child.parentElement == nativeWidget) {
 			nativeWidget.removeChild(child);
 		}
+	}
+
+	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
+		return;
 	}
 }
