@@ -56,21 +56,24 @@ class HTMLStage extends NativeWidgetClip {
 		nativeWidget.appendChild(child);
 	}
 
-	public function assignClip(id : String, clip : DisplayObject) : Void {
-		if (clips.get(id) != null) {
-			clips.get(id).removeChildren();
-			this.removeChild(clips.get(id));
+	public function assignClip(className : String, clip : DisplayObject) : Void {
+		if (clips.get(className) != null) {
+			clips.get(className).removeChildren();
+			this.removeChild(clips.get(className));
 		}
 
 		var container = new FlowContainer();
 		untyped container.isHTMLStageContainer = true;
-		untyped clip.forceParentNode = Browser.document.getElementById(id);
+		var element = nativeWidget.getElementsByClassName(className)[0];
 
-		clip.initNativeWidget();
-		container.addChild(clip);
-		this.addChild(container);
+		if (element) {
+			untyped clip.forceParentNode = element;
+			clip.initNativeWidget();
+			container.addChild(clip);
+			this.addChild(container);
 
-		clips.set(id, container);
+			clips.set(className, container);
+		}
 	}
 
 	public function insertBefore(child : Element, reference : Element) : Void {

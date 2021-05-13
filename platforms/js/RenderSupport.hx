@@ -956,7 +956,15 @@ class RenderSupport {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
 			// On iOS 14 preventing default on 'touchstart' leads to bug with trackpad : 'pointer*' events disapper
-			if (!((Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1") && Platform.isIOS && Platform.browserMajorVersion >= 14 && RendererType == 'html' && e.type == 'touchstart')) {
+			// 'mousedown' also shouldn`t be prevented, because inputs stop to focus in this case.
+			var doNotPreventDefault =
+				(Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1")
+				&& Platform.isIOS
+				&& Platform.browserMajorVersion >= 14
+				&& RendererType == 'html'
+				&& (e.type == 'touchstart' || e.type == 'mousedown');
+
+			if (!doNotPreventDefault) {
 				e.preventDefault();
 			}
 
@@ -1179,9 +1187,9 @@ class RenderSupport {
 			return false;
 		};
 
-		Browser.window.addEventListener(event_name, wheel_cb, false);
+		untyped __js__("window.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
 		if ( event_name == "DOMMouseScroll" ) {
-			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
+			untyped __js__("window.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
 		}
 	}
 
@@ -1785,6 +1793,10 @@ class RenderSupport {
 
 	public static function setAutoAlign(clip : TextClip, autoalign : String) : Void {
 		clip.setAutoAlign(autoalign);
+	}
+
+	public static function setPreventContextMenu(clip : TextClip, preventContextMenu : Bool) : Void {
+		clip.setPreventContextMenu(preventContextMenu);
 	}
 
 	public static function setTextInput(clip : TextClip) : Void {
