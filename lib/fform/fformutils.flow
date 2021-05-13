@@ -7,6 +7,9 @@ export {
 	addChildClip(parent : native, child : native, alive : ref bool) -> void;
 	addChildClipAt(parent : native, child : native, id : int, alive : ref bool) -> void;
 	removeChildClip(parent : native, child : native, alive : ref bool) -> void;
+	attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult;
+	attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability], id : int) -> FRenderResult;
+	attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapability], fn : (native) -> () -> void) -> FRenderResult;
 
 	isConvertableForm(form : Form) -> bool;
 	fform2form(fform : FForm) -> Form;
@@ -85,6 +88,43 @@ removeChildClip(parent : native, child : native, alive : ref bool) -> void {
 		println("Warning: Double dispose");
 		printCallstack();
 		println("---");
+	}
+}
+
+attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult {
+	alive = generate(0, length(children), \__ -> ref false);
+	iteri(children, \i, c -> addChildClip(clip, c, alive[i]));
+
+	FRenderResult(
+		[clip],
+		concat([\ -> iteri(children, \i, c -> removeChildClip(clip, c, alive[i]))], disposers),
+		cap
+	)
+}
+
+attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability], id : int) -> FRenderResult {
+	alive = generate(0, length(children), \__ -> ref false);
+	iteri(children, \i, c -> addChildClipAt(clip, c, id + i, alive[i]));
+
+	FRenderResult(
+		[clip],
+		concat([\ -> iteri(children, \i, c -> removeChildClip(clip, c, alive[i]))], disposers),
+		cap
+	)
+}
+
+attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapability], fn : (native) -> () -> void) -> FRenderResult {
+	if (length(d.clips) > 0) {
+		if (length(d.clips) == 1 && !exists(cap, \c -> contains(d.capabilities, c)) && !contains(cap, FClipRotate())) {
+			FRenderResult(d.clips, concat(map(d.clips, fn), d.disposers), uniq(concat(d.capabilities, cap)));
+		} else {
+			c = makeClip();
+			setClipDebugInfo(c, "form", form);
+
+			attachFChildren(c, d.clips, concat(d.disposers, [fn(c), \ -> deleteNative(c)]), cap)
+		}
+	} else {
+		FRenderResult(d.clips, d.disposers, [])
 	}
 }
 
@@ -873,6 +913,8 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 		clip = makeGraphics();
 		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
 
+		scale = if (isUrlParameterTrue("preScale")) 100. else 1.;
+
 		u = make2Subscribe(path0, style0, \path, style -> {
 			clearGraphics(clip);
 
@@ -936,7 +978,7 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 			}
 
 			maybeApply(^fillcolour, \fc : int -> beginFill(clip, fc, ^fillopacity));
-			maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth, sc, ^strokeopacity));
+			maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth * scale, sc, ^strokeopacity));
 			maybeApply(^strokeLineGradient, \sg : StrokeLineGradient-> {
 				colors = map(sg.points, \c -> c.color);
 				alphas = map(sg.points, \c -> c.alpha);
@@ -957,19 +999,19 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 			iter(if (js && length(path) == 1) path else deconstructGraphicsPath(path), \op : StaticGraphicOp ->
 				switch (op : StaticGraphicOp) {
 					MoveTo(x, y) : {
-						moveTo(clip, x, y);
+						moveTo(clip, x * scale, y * scale);
 					}
 					LineTo(x, y) : {
 						needClose := true;
-						lineTo(clip, x, y);
+						lineTo(clip, x * scale, y * scale);
 					}
 					CubicBezierTo(x, y, cx, cy): {
 						needClose := true;
-						curveTo(clip, cx, cy, x, y);
+						curveTo(clip, cx * scale, cy * scale, x * scale, y * scale);
 					}
 					QuadraticBezierTo(x, y, cx, cy): {
 						needClose := true;
-						curveTo(clip, cx, cy, x, y);
+						curveTo(clip, cx * scale, cy * scale, x * scale, y * scale);
 					}
 					ClosePath(): {
 						needClose := false;
@@ -977,19 +1019,19 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 					}
 					GRect(x, y, width, height): {
 						needClose := false;
-						drawRect(clip, x, y, width, height);
+						drawRect(clip, x * scale, y * scale, width * scale, height * scale);
 					}
 					GRoundedRect(x, y, width, height, radius): {
 						needClose := false;
-						drawRoundedRect(clip, x, y, width, height, radius);
+						drawRoundedRect(clip, x * scale, y * scale, width * scale, height * scale, radius * scale);
 					}
 					GEllipse(x, y, width, height): {
 						needClose := false;
-						drawEllipse(clip, x, y, width, height);
+						drawEllipse(clip, x * scale, y * scale, width * scale, height * scale);
 					}
 					GCircle(x, y, radius): {
 						needClose := false;
-						drawCircle(clip, x, y, radius);
+						drawCircle(clip, x * scale, y * scale, radius * scale);
 					}
 				}
 			);
@@ -1000,7 +1042,20 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 
 		})();
 
-		FRenderResult([clip], [u, \ -> deleteNative(clip)], [FClipMove(), FClipAnimation()])
+		if (isUrlParameterTrue("preScale")) {
+			attachFChildAndCapability(
+				FGraphics(path0, style0),
+				FRenderResult([clip], [u, \ -> deleteNative(clip)], [FClipMove(), FClipAnimation()]),
+				[FClipScale(), FClipRotate(), FClipAnimation()],
+				\sclip -> {
+					setClipScaleX(sclip, 1. / scale);
+					setClipScaleY(sclip, 1. / scale);
+					nop
+				}
+			)
+		} else {
+			FRenderResult([clip], [u, \ -> deleteNative(clip)], [FClipMove(), FClipAnimation()])
+		}
 	} else {
 		clip = makeClip();
 		setClipDebugInfo(clip, "form", FGraphics(path0, style0));
