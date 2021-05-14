@@ -955,18 +955,9 @@ class RenderSupport {
 			try {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
-			// On iOS 14 preventing default on 'touchstart' leads to bug with trackpad : 'pointer*' events disapper
-			// 'mousedown' also shouldn`t be prevented, because inputs stop to focus in this case.
-			var doNotPreventDefault =
-				(Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1")
-				&& Platform.isIOS
-				&& Platform.browserMajorVersion >= 14
-				&& RendererType == 'html'
-				&& (e.type == 'touchstart' || e.type == 'mousedown');
-
-			if (!doNotPreventDefault) {
-				e.preventDefault();
-			}
+			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
+			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
+			e.preventDefault();
 
 			if (e.touches != null) {
 				TouchPoints = e.touches;
@@ -1072,13 +1063,6 @@ class RenderSupport {
 				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
-				// On iOS 14 swiping on touchscreen leads to bug with trackpad events : 'pointer*' become 'mouse*'
-				if ((Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1") && Platform.isIOS && Platform.browserMajorVersion >= 14) {
-					addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
-					addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
-					addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
-					addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
-				}
 			}
 
 			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
