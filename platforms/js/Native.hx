@@ -105,7 +105,8 @@ class Native {
 	public static function importJSModule(arg : Dynamic, cb : Dynamic -> Void) : Void {
 		#if (js && !flow_nodejs)
 			try {
-				untyped __js__("eval(\"import(arg + '\\nconst importJSModuleVersion =' + Math.random()).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
+				untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
 			} catch( e : Dynamic) {
 				Errors.report(e);
 				cb(null);

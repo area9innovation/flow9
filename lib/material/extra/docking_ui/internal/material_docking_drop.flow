@@ -17,8 +17,9 @@ export {
 
 	// The place where we can drop panels
 	dockingDropLine(
-		isColumn : bool,
+		resizeArea : bool,  // This dropline can be placed into a resizable Area or resizable Panel
 		resizeW : bool,
+		isToolbarArea : bool,
 		dropInfo : MDockingDropInfo,
 		state : MDockingState,   
 		defPanelsOrderA : [int], // colId, rowId
@@ -27,6 +28,7 @@ export {
 		hoverSize : Tropic,
 		dropSize : Tropic,
 		isEndpoint : bool,
+		endAlignment : bool,
 		style : [MDockingStyle]
 	) -> Material;
 
@@ -37,8 +39,7 @@ export {
 		onDrop : DynamicBehaviour<int>,
 		order : DynamicBehaviour<[int]>,
 		dockedPanelsGrid : DynamicBehaviour<[[int]]>,
-		isDockingCol : DynamicBehaviour<bool>,
-		isRow : DynamicBehaviour<bool>,
+		isRow : DynamicBehaviour<bool>
 	);
 }
 
@@ -66,8 +67,9 @@ dockingResizeLine(
 
 
 dockingDropLine(
-	isColumn : bool,
+	resizeArea : bool,  // This dropline can be placed into a resizable Area or resizable Panel
 	resizeW : bool,
+	isToolbarArea : bool,
 	dropInfo : MDockingDropInfo,
 	state : MDockingState,
 	order : [int], // colId, rowId
@@ -76,6 +78,7 @@ dockingDropLine(
 	hoverSize : Tropic,
 	dropSize : Tropic,
 	isEndpoint : bool,
+	endAlignment : bool,
 	style : [MDockingStyle]
 ) -> Material {
 
@@ -96,58 +99,63 @@ dockingDropLine(
 	panelsOrderB = dropInfo.order;
 	panelsArray = dropInfo.dockedPanelsGrid;
 
-	isDockingCol = dropInfo.isDockingCol;
 	isRow = dropInfo.isRow; 
 
-	offSetHover =  \f : Material -> {
-		MAvailable(
-			if (resizeW) {
-				if ((isRightCol && isEndpoint) || (!isRightCol && !isEndpoint)) MCols2(TFillX(), f) else f
-			} else {
-				if ((isBottomLine && isEndpoint) || (!isBottomLine && !isEndpoint)) MLines2(TFillY(), f) else f
-			},
-			dropSize
-		)
+	alignLine =  \f : Material -> {
+		if (resizeW) {
+			if ((isRightCol && isEndpoint) || (!isRightCol && !isEndpoint)) MAlignCenterEnd(f) else f
+		} else {
+			if ((isBottomLine && isEndpoint) || (!isBottomLine && !isEndpoint)) MAlignBottomEnd(f) else f
+		}
 	}
 
 	MIfLazy(
 		fselect(manager.manager.dragging, 
-		FLift(\dr -> 
-			(dr >= 0) &&
-			(dr < length(getValue(state.title))) &&
-			zorder >= getValue(manager.manager.zorder) &&
-			(dr < length(getValue(groupA))) &&
-			(if (getValue(groupA)[dr] == []) true else contains(getValue(groupA)[dr], groupName))
-		)
-	),	\e -> if (e) {
+			FLift(\dr -> { 
+				(dr >= 0) &&
+				(dr < length(getValue(state.title))) &&
+				(zorder >= getValue(manager.manager.zorder))&&
+				(dr < length(getValue(groupA))) &&
+				(resizeArea || (isToolbarArea && isSameStructType(getValue(state.content)[dr], MDPanelToolbar([]))) || (!isToolbarArea && !isSameStructType(getValue(state.content)[dr], MDPanelToolbar([])))) &&
+				(if (getValue(groupA)[dr] == []) true else contains(getValue(groupA)[dr], groupName))
+			})
+		),	\e -> if (e) {
 
 			MGroup([
-				resizeBar,
+				resizeBar |> alignLine,
+				// Drop Line
 				MDropSpot2(onHover, onDrop, 		
-					TRectangle([MFill(dockingPrimaryColor), FillOpacity(dockingHelperDropOpacity)], dropSize), // Hightlight allowed droppimg areas
+					TRectangle([MFill(dockingPrimaryColor), FillOpacity(dockingHelperDropOpacity)], dropSize), // Hightlight allowed dropping areas
 					false
-				),
-				// hoveringBar |> offSetHover
+				) 	
+				// |> (\f -> MGroup2(f, MCenterIn(MText(toString(order), [MOverline(), MBlack()])|> (\m -> if (resizeW) MRotate90Left(m) else m), dropSize))) // debug
+				|> (\f -> if (!updateRow) f else {if (resizeW) MCenterY(f) else MCenterX(f)})
+				|> alignLine,
+				
 				MConstruct([
 					makeSubscribe(onHover, \h -> if (h >= 0) {
-							next(isDockingCol, isColumn);
-							next(panelsOrderB, order);
-							next(isRow, updateRow);
+						next(panelsOrderB, order);
+						next(isRow, updateRow);
+						next(hovering, true);
+
+							// Align to end
+							isToolbar = isSameStructType(getValue(state.content)[h], MDPanelToolbar([]));
+							if (isToolbar) {
+								pstyle = getValue(state.panelStyle)[h];
+								isEndAlignedB = extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign;
+								next(isEndAlignedB, endAlignment);
+							}
 							
-							if (/*(*/getValue(isRow) /*&& (dockedLength == getValue(state.dropSize)[h].width)*/) next(hovering, true)
-								else if (!getValue(isRow)) next(hovering, true)
-									else next(hovering, false);
 						} else next(hovering, false)
 					),
 					// On drop function
 					makeSubscribe(onDrop, \d -> if (d >= 0) {
 						updateDockingPositions(d, areaId, dockA, panelsArray, panelsOrderB, isRow);
 					})],
-					MShowLazy(hovering, \ -> TRectangle([MFill(dockingDropLineHoverColor), FillOpacity(dockingDropLineHoverOpacity)], hoverSize)) |> offSetHover
-				) |> offSetHover
+					// Visible drop line on hover
+					MShowLazy(hovering, \ -> TRectangle([MFill(dockingDropLineHoverColor), FillOpacity(dockingDropLineHoverOpacity)], hoverSize)) |> alignLine
+				) 
 			])
-			// |> (\f -> MGroup2(f, MCenterIn(MText(toString(order), [MOverline(), MBlack()]), dropSize))) // debug
-
 		} else resizeBar
 	);
 }

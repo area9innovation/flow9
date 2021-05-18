@@ -308,6 +308,9 @@ semaction = "\" sem-exp
 
 ## Inspiration
 
+Extending PEG with various things:
+https://norswap.com/pubs/thesis.pdf
+
 Optimizing PEG grammars:
 https://mpickering.github.io/papers/parsley-icfp.pdf
 
