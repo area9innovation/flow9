@@ -74,7 +74,7 @@ MDynamicMenu2TInner(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									8.,
 									nop,
 									popupId,
-									getValue(focusedItem)
+									focusedItem
 								),
 								m2t
 							)
@@ -108,22 +108,27 @@ MDynamicMenuHandleShortcuts(
 
 		TInteractive(
 			[
-				KeyDown(\ke -> {
-					if (!getValue(openMenu.opened) && exists(fgetValue(shortcuts), \s -> matchShortcutKeyCode(ke, s))) {
-						next(openMenu.opened, true);
+				KeyDown2(\h, ke ->
+					if (!getValue(openMenu.opened)) {
+						if (!h && exists(fgetValue(shortcuts), \s -> matchShortcutKeyCode(ke, s))) {
+							next(openMenu.opened, true);
 
-						emitKeyEvent(getStage(), "keydown", ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode);
-						emitKeyEvent(getStage(), "keyup", ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode);
+							emitKeyEvent(getStage(), "keydown", ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode);
+							emitKeyEvent(getStage(), "keyup", ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode);
 
-						deferred(\ -> next(openMenu.opened, false));
-					}
-				}),
+							deferred(\ -> next(openMenu.opened, false));
+							true
+						} else if (fgetValue(buttonFocused.focused) && (ke.utf == "enter" || ke.utf == " ")) {
+							nextDistinct(focusedItem, Some(MMenuFirstItem()));
+							true
+						} else h
+					} else h
+				),
 				KeyUp2(\h, ke ->
 					if (!h && !getValue(openMenu.opened) && fgetValue(buttonFocused.focused)) {
 						onKeyUp = \type -> {
 							nextDistinct(focusedItem, Some(type));
 							nextDistinct(openMenu.opened, true);
-							nextDistinct(focusedItem, None());
 						}
 						if (ke.utf == "up") {
 							onKeyUp(MMenuLastItem());
@@ -316,12 +321,13 @@ MMenuPanelItem2T(
 			openMenu = extractStruct(style, MOpenMenu(make(false)));
 			refArrayPush(openMenus, openMenu);
 			rollOver = make(false);
+			focused = extractStruct(style, MFocused(make(false)));
 			(\p ->
 				(\par ->
 					switch (button) {
 						MTextButton(text, onClick, buttonStyle, buttonState): {
 							MMenuTextButton2T(manager, par, text, extractStruct(buttonState, MShortcut("")).shortcut, onClick,
-								buttonStyle, openMenu, m2t)
+								buttonStyle, openMenu, focused, m2t)
 						}
 						MIconButton(name, onClick, iconStyle, state): {
 							iconSize = MMenuPanelIconSize(iconStyle, height, borders);
@@ -347,7 +353,7 @@ MMenuPanelItem2T(
 						}
 					}
 				)
-				|> (\f -> MMenu2T(manager, p, MMenu(MGetFocusGroup(f), items, concat(replaceStruct(style, openMenu), [THovering(rollOver), MBelowButton()])), m2t))
+				|> (\f -> MMenu2T(manager, p, MMenu(MGetFocusGroup(f), items, concat(replaceStruct(style, openMenu), [focused, THovering(rollOver), MBelowButton()])), m2t))
 				|> TCenterY
 			)
 			|> (\f ->
@@ -611,7 +617,7 @@ MDropDownMenu2T(
 					0.,
 					nop,
 					"",
-					None()
+					make(None())
 				).items
 				|> MGrid
 				|> (\f3 -> m2t(f3, parent))
@@ -1265,6 +1271,7 @@ MMenuTextButton2T(
 	onClick : () -> void,
 	style : [MTextButtonStyle],
 	openMenu : MOpenMenu,
+	focused : MFocused,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
 	raised = contains(style, MButtonRaised());
@@ -1278,7 +1285,8 @@ MMenuTextButton2T(
 				reverseBehaviour(openMenu.opened)
 			}),
 			MRippleType(const(MRippleFill())),
-			extractStruct(style, MButtonTitle(const(text)))
+			extractStruct(style, MButtonTitle(const(text))),
+			focused
 		];
 
 	disabled = \ ->
@@ -1387,7 +1395,7 @@ MMenuLines2MPopup(
 	elevation : double,
 	closeBelow : () -> void,
 	popupId : string,
-	focusedItem : Maybe<MMenuFocusedItem>
+	focusedItem : DynamicBehaviour<Maybe<MMenuFocusedItem>>
 ) -> MPopup {
 	tableRow = contains(style0, MDataTableRow());
 	tableFooter = contains(style0, MDataTableFooter());
@@ -1536,11 +1544,22 @@ MMenuLines2MPopup(
 			t
 		);
 
-	focusOnOpen = \arr -> {
-		focused = make(false);
-		timer(50, \ -> nextDistinct(focused, true));
-		arrayPush(arr, MFocused(focused))
-	}
+	focusOnOpen = \i ->
+		eitherMap(getValue(focusedItem),
+			\fi ->
+				if (
+					((i == shiftGap) && fi == MMenuFirstItem())
+					|| (i == length(items1) - 1 && fi == MMenuLastItem())
+				) {
+					focused = make(false);
+					timer(50, \ -> {
+						nextDistinct(focusedItem, None());
+						nextDistinct(focused, true);
+					});
+					[MFocused(focused)]
+				} else [],
+			[]
+		);
 
 	makeMMenuLine = \i, title : Maybe<string>, content : Maybe<Material>, _style ->
 		\parent -> {
@@ -1562,20 +1581,8 @@ MMenuLines2MPopup(
 						FAccessAttribute("id", const(id)),
 						extractStruct(_style, MRippleOutlineEnabled(const(false)))
 					]
+					|> (\arr -> concat(arr, focusOnOpen(i)))
 					|> (\arr -> eitherMap(title, \t -> arrayPush(arr, extractStruct(_style, MButtonTitle(const(t)))), arr))
-					|> (\arr ->
-						eitherMap(focusedItem,
-							\fi ->
-								if (
-									((i == shiftGap) && fi == MMenuFirstItem())
-									|| (i == length(items1) - 1 && fi == MMenuLastItem())
-								)
-									focusOnOpen(arr)
-								else arr,
-							if (i == selectedId + shiftGap || (selectedId == -1 && i == 0)) focusOnOpen(arr)
-							else arr
-						)
-					)
 				);
 			lineTextStyle = extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(parent)))).style;
 
@@ -1643,6 +1650,7 @@ MMenuLines2MPopup(
 			isOpenOnClick = contains(style, MSubMenuOpenOnClick());
 			isCloseParentOnClick = extractStruct(style, MCloseParentOnClick(true)).close;
 			subMenuPopupId = getPopupId(manager);
+			subFocusedItem = make(None());
 
 			focusState =
 				replaceStructMany(
@@ -1661,6 +1669,7 @@ MMenuLines2MPopup(
 						extractStruct(style, MRippleOutlineEnabled(const(false)))
 					]
 				)
+				|> (\arr -> concat(arr, focusOnOpen(i)))
 				|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
 			lineTextStyle = extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(parent)))).style;
 
@@ -1674,8 +1683,13 @@ MMenuLines2MPopup(
 					)
 				)
 				|> (\t -> TInteractive([
-						KeyUp(\ke -> if (ke.utf == "left") {
-							nextDistinct(hovered, -1);
+						KeyDown(\ke -> {
+							if (ke.utf == "left" && fgetValue(subOpenMenu.opened)) {
+								nextDistinct(hovered, -1);
+								deferred(\ -> nextDistinct(focus.focused, true));
+							} else if ((ke.utf == "enter" || ke.utf == " ") && getValue(focus.focused)) {
+								nextDistinct(subFocusedItem, Some(MMenuFirstItem()))
+							}
 						})
 					], t))
 				|> (\f2 ->
@@ -1724,14 +1738,11 @@ MMenuLines2MPopup(
 												closeBelow();
 											},
 											subMenuPopupId,
-											None()
+											subFocusedItem
 										),
 										m2t
 									)
 							}),
-							makeSubscribe2(subOpenMenu.opened, \op ->
-								if (!op) deferred(\ -> nextDistinct(focus.focused, true))
-							),
 							\ -> \ -> next(subOpenMenu.opened, false)
 						],
 						f2
