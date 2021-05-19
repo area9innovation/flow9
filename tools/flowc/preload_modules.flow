@@ -53,7 +53,7 @@ preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string
 	preloadedModulesAndErrors = preloadModulesInParallel(config, globEnv, makeTree1(flowfile, FcImport2(flowfile, "", 0, 0)), Pair(makeTree(), []));
 	all_preloaded = preloadedModulesAndErrors.first;
 	load_errors = preloadedModulesAndErrors.second;
-	resolving_errors = checkAmbiguityOfModulePathResolving(all_preloaded, config);
+	resolving_errors = checkModulesAmbiguity(getTreeKeys(all_preloaded), config);
 	all_errors = concat(load_errors, resolving_errors);
 	if (all_errors != []) {
 		iter(all_errors, errHandler);
@@ -66,18 +66,43 @@ preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string
 }
 
 // Checks if a one module name has several source paths, resolved via includes/working dir.
-checkAmbiguityOfModulePathResolving(modules : Tree<string, FcPreloadedModule>, conf : CompilerConfig) -> [FcError] {
-	foldTree(modules, [], \mod_name, preloaded, acc -> {
-		paths = findAllFlowPaths(mod_name, conf.includes, lookupTreeDef(conf.config, "working-dir", ""));
-		if (length(paths) == 1) acc else
-		if (length(paths) == 0) {
-			// Impossible branch, since a module was loaded.
-			concat(acc, [FcError("Path for module name '" + mod_name + "' is not resolved (must be impossible)", [])]);
-		} else {
-			concat(acc, [FcError(
+checkModulesAmbiguity(modules : [string], config : CompilerConfig) -> [FcError] {
+	resolve_path = \path -> strReplace(resolveRelativePath(path), "\\", "/");
+
+	// Grab all flow files from a given directory.
+	flow_files = \dir -> if (!isDirectory(dir)) [] else {
+		filtermap(readDirectoryRecursively(dir), \file -> 
+			if (endsWith(file, ".flow")) Some(resolve_path(file)) else None()
+		);
+	}
+
+	// Grab all accessible files (absolute paths) from all possible places
+	this_dir_srcs = flow_files(".");
+	working_dir = lookupTreeDef(config.config, "working-dir", "");
+	work_dir_srcs = flow_files(working_dir);
+	includes_dirs = map(config.includes, flow_files);
+	work_includes_dirs = map(config.includes, \dir -> flow_files(pathCombine(working_dir, dir)));
+
+	// Gather all files (absolute paths) in one array
+	all_files = uniq(concat(
+		concat(this_dir_srcs, work_dir_srcs),
+		concat(concatA(includes_dirs), concatA(work_includes_dirs))
+	));
+
+	// Map a trimmed flowpath of a file onto the file
+	flowpaths2files = fold(all_files, makeTree(), \acc, file -> {
+		trimmed = trimFlowfile(file, config.includes, working_dir);
+		setTree(acc, trimmed, concat(lookupTreeDef(acc, trimmed, []), [file]));
+	});
+
+	// Find such flowpaths from modules that have more then one image at flowpaths2files mapping
+	filtermap(modules, \mod_name -> {
+		paths = lookupTreeDef(flowpaths2files, mod_name, []);
+		if (length(paths) <= 1) None() else {
+			Some(FcError(
 				"Ambiguous module name '" + mod_name + "'",
 				map(paths, \path -> FcPosition(path, 0, 0))
-			)]);
+			));
 		}
 	});
 }
