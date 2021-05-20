@@ -950,39 +950,47 @@ class RenderSupport {
 		untyped __js__("element.removeEventListener(event, fn, { passive : false })");
 	}
 
+	public static function addPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.addEventListener(event, fn, { passive : true })");
+	}
+
+	public static function removePassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.removeEventListener(event, fn, { passive : true })");
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
 			try {
-			// Prevent default drop focus on canvas
-			// Works incorrectly in Edge
-			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
-			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-			e.preventDefault();
+				// Prevent default drop focus on canvas
+				// Works incorrectly in Edge
+				// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
+				// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
+				e.preventDefault();
 
-			if (e.touches != null) {
-				TouchPoints = e.touches;
-				emit("touchstart");
+				if (e.touches != null) {
+					TouchPoints = e.touches;
+					emit("touchstart");
 
-				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX;
-					MousePos.y = e.touches[0].pageY;
+					if (e.touches.length == 1) {
+						MousePos.x = e.touches[0].pageX;
+						MousePos.y = e.touches[0].pageY;
 
-					if (MouseUpReceived) emit("mousedown");
-				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+						if (MouseUpReceived) emit("mousedown");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						emit("mouserightdown");
+					} else if (e.which == 2 || e.button == 1) {
+						emit("mousemiddledown");
+					} else if (e.which == 1 || e.button == 0) {
+						if (MouseUpReceived) emit("mousedown");
+					}
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				if (e.which == 3 || e.button == 2) {
-					emit("mouserightdown");
-				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddledown");
-				} else if (e.which == 1 || e.button == 0) {
-					if (MouseUpReceived) emit("mousedown");
-				}
-			}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointerdown error : ");
 				untyped console.log(e);
@@ -991,27 +999,27 @@ class RenderSupport {
 
 		var onpointerup = function(e : Dynamic) {
 			try {
-			if (e.touches != null) {
-				TouchPoints = e.touches;
-				emit("touchend");
+				if (e.touches != null) {
+					TouchPoints = e.touches;
+					emit("touchend");
 
-				GesturesDetector.endPinch();
+					GesturesDetector.endPinch();
 
-				if (e.touches.length == 0) {
-					if (!MouseUpReceived) emit("mouseup");
+					if (e.touches.length == 0) {
+						if (!MouseUpReceived) emit("mouseup");
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						emit("mouserightup");
+					} else if (e.which == 2 || e.button == 1) {
+						emit("mousemiddleup");
+					} else if (e.which == 1 || e.button == 0) {
+						if (!MouseUpReceived) emit("mouseup");
+					}
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				if (e.which == 3 || e.button == 2) {
-					emit("mouserightup");
-				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddleup");
-				} else if (e.which == 1 || e.button == 0) {
-					if (!MouseUpReceived) emit("mouseup");
-				}
-			}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointerup error : ");
 				untyped console.log(e);
@@ -1020,26 +1028,26 @@ class RenderSupport {
 
 		var onpointermove = function(e : Dynamic) {
 			try {
-			if (e.touches != null) {
-				e.preventDefault();
+				if (e.touches != null) {
+					e.preventDefault();
 
-				TouchPoints = e.touches;
-				emit("touchmove");
+					TouchPoints = e.touches;
+					emit("touchmove");
 
-				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX;
-					MousePos.y = e.touches[0].pageY;
+					if (e.touches.length == 1) {
+						MousePos.x = e.touches[0].pageX;
+						MousePos.y = e.touches[0].pageY;
+
+						emit("mousemove");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
 
 					emit("mousemove");
-				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				emit("mousemove");
-			}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointermove error : ");
 				untyped console.log(e);
@@ -1048,9 +1056,9 @@ class RenderSupport {
 
 		var onpointerout = function(e : Dynamic) {
 			try {
-			if (e.relatedTarget == Browser.document.documentElement) {
-				if (!MouseUpReceived) emit("mouseup");
-			}
+				if (e.relatedTarget == Browser.document.documentElement) {
+					if (!MouseUpReceived) emit("mouseup");
+				}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointerout error : ");
 				untyped console.log(e);
@@ -1059,7 +1067,7 @@ class RenderSupport {
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-				addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+				addPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
 				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
@@ -1069,7 +1077,7 @@ class RenderSupport {
 			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
+			addPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
 			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
@@ -1079,7 +1087,7 @@ class RenderSupport {
 			Browser.document.body.onpointermove = onpointermove;
 			Browser.document.body.onpointerout = onpointerout;
 		} else {
-			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
