@@ -958,6 +958,7 @@ class RenderSupport {
 		untyped __js__("element.removeEventListener(event, fn, { passive : true })");
 	}
 
+	public static var PreventDefault : Bool = true;
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
 			try {
@@ -965,7 +966,7 @@ class RenderSupport {
 				// Works incorrectly in Edge
 				// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
 				// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-				e.preventDefault();
+				if (PreventDefault) e.preventDefault();
 
 				if (e.touches != null) {
 					TouchPoints = e.touches;
@@ -1067,7 +1068,7 @@ class RenderSupport {
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-				addPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+				addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
 				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
@@ -1077,7 +1078,7 @@ class RenderSupport {
 			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			addPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
 			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
@@ -1087,7 +1088,7 @@ class RenderSupport {
 			Browser.document.body.onpointermove = onpointermove;
 			Browser.document.body.onpointerout = onpointerout;
 		} else {
-			addPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
 			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
