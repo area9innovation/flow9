@@ -1,5 +1,6 @@
 import tools/gringo/pflow/pexp;
 import tools/gringo/pflow/values;
+import tools/gringo/pflow/prettyprint;
 import ds/tree;
 import algorithms;
 
@@ -57,11 +58,17 @@ interpretPExp(env : Tree<string, PValue>, e : PExp) -> PValue {
 			PArrayValue(map(values, \v -> interpretPExp(env, v)));
 		}
 		PSequence(values): {
-			fold(values, PBool(true), \acc, value -> {
-				interpretPExp(env, value)
-			})
+			n = length(values);
+			if (n == 0) PBool(true)
+			else if (n == 1) {
+				interpretPExp(env, values[0])
+			} else {
+				// Inefficient, but tail call
+				interpretPExp(env, values[0]);
+				interpretPExp(env, PSequence(tail(values)));
+			}
 		}
-	}
+	};
 }
 
 captureFreeVars(env : Tree<string, PValue>, body : PExp) -> PExp {
@@ -71,9 +78,10 @@ captureFreeVars(env : Tree<string, PValue>, body : PExp) -> PExp {
 	switch (body) {
 		PValue(): body;
 		PLet(id, value, lbody): {
+			notself = removeFromTree(env, id);
 			PLet(id,
-				rec(value),
-				captureFreeVars(removeFromTree(env, id), lbody)
+				captureFreeVars(notself, value),
+				captureFreeVars(notself, lbody)
 			);
 		}
 		PLambda(args, lbody): {
@@ -81,7 +89,13 @@ captureFreeVars(env : Tree<string, PValue>, body : PExp) -> PExp {
 				captureFreeVars(fold(args, env, removeFromTree), lbody)
 			);
 		}
-		PVar(id): lookupTreeDef(env, id, body);
+		PVar(id): {
+			val = lookupTreeDef(env, id, body);
+			switch (val) {
+				PLambda(__, __): body;
+				default: val;
+			}
+		}
 		PIf(cond, then, else_): PIf(rec(cond), rec(then), rec(else_));
 		PCall(fn, args): PCall(rec(fn), map(args, rec));
 		PArray(values): PArray(map(values, rec));
@@ -116,6 +130,10 @@ handleBuiltinCall(id : PExp, eargs : [PValue]) -> Maybe<PValue> {
 			}),
 			Pair(PVar("not"), \args -> PBool(!getPBool(args[0]))),
 			Pair(PVar("negate"), \args -> PInt(-getPInt(args[0]))),
+			Pair(PVar("println"), \args -> {
+				println(prettyPExp(args[0]));
+				args[0];
+			}),
 		]);
 	});
 	
