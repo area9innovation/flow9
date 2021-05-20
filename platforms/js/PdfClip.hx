@@ -99,8 +99,8 @@ class PdfClip extends FlowCanvas {
 	private function renderView(ctx : Dynamic, resolution : Float) {
 		if (!rendered)
 			return;
-		
-		if (RenderSupport.RendererType != "html") {
+
+		if (!this.isHTMLRenderer()) {
 			ctx.globalAlpha = this.worldAlpha;
 			ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
 		}

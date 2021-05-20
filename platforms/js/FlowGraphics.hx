@@ -125,7 +125,7 @@ class FlowGraphics extends Graphics {
 
 		calculateGraphicsBounds();
 
-		if (strokeGradient != null && RenderSupport.RendererType == "html") {
+		if (strokeGradient != null && this.isHTMLRenderer()) {
 			untyped data.gradient = strokeGradient;
 			untyped data.strokeGradient = strokeGradient.type == 'radial' ?
 				"radial-gradient(" :
@@ -141,7 +141,7 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (fillGradient != null) {
-			if (RenderSupport.RendererType == "html") {
+			if (this.isHTMLRenderer()) {
 				untyped data.gradient = fillGradient;
 				untyped data.fillGradient = fillGradient.type == 'radial' ?
 					"radial-gradient(" :

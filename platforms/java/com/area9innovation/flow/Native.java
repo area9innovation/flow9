@@ -815,6 +815,22 @@ public class Native extends NativeHost {
 		return null;
 	}
 
+	public final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
+		Timer timer = new Timer(false);
+		TimerTask task = new TimerTask() {
+			public void run() {
+				invokeCallback(new Runnable() {
+					public void run() {
+						cb.invoke();
+						timer.cancel();
+					}
+				});
+			}
+		};
+		timer.schedule(task, ms);
+		return null;
+	}
+
 	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
 		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
@@ -1027,7 +1043,7 @@ public class Native extends NativeHost {
 	// Monday is 0
 	public final int dayOfWeek(int year, int month, int day) {
 		Calendar c = Calendar.getInstance();
-		c.set(year, month, day);
+		c.set(year, month - 1, day);
 		return (c.get(Calendar.DAY_OF_WEEK) - (Calendar.SUNDAY + 1) + 7) % 7;
 	}
 
