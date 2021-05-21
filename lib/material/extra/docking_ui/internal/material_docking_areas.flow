@@ -13,8 +13,8 @@ export {
 	// - each panel can have a vertical or horizontal orientation, but its size is defined by default as vertical
 	// - when docked on cols a panel will be shown as vertical, when on lines as horizontal
 	// - example in flow9/lib/material/tests/test_docking_ui.flow
-	
-	MDockingArea(isColumn : bool, state : MDockingState, /*groupName : string,*/ areaId : int, style : [MDockingAreaStyle]) -> Material;
+
+	MDockingArea(isColumn : bool, state : MDockingState, areaId : int, style : [MDockingAreaStyle]) -> Material;
 
 	// Place the docking content here, and wrap it with docking areas
 	MDContent(state : MDockingState, content : Material) -> Material;
@@ -33,7 +33,7 @@ MDContent(state : MDockingState, content : Material) -> Material {
 
 // Let's think about dockable/resizable MCols with inside MLines of panels, 
 // the logic can be swithched and we get MLines with inside MCols 
-MDockingArea(isColumn : bool, state : MDockingState, /*groupName : string,*/ areaId : int, style : [MDockingAreaStyle]) -> Material {
+MDockingArea(isColumn : bool, state : MDockingState, areaId : int, style : [MDockingAreaStyle]) -> Material {
 	MShowLazy(fselect(state.size, FLift(\sz -> sz != [])), 
 		\ -> {
 			manager = state.manager;
@@ -155,38 +155,37 @@ makeDockedPanelA(
 	lastPanel = length(colA) - 1;
 	lastCol = numOfCols - 1;
 			
-
 	dontResize  = contains(style, MDAreaDontResize());
 	dontSideExpandPanel = fold(colA, false, \acc, p -> acc || 
 		contains(getValue(state.panelStyle)[p], MDPanelHideSideExpander()) ||
-		isSameStructType(getValue(state.content)[p], MDPanelToolbar([]))
-	); ///
-	showSideExpanderBtn = isColumn && !contains(style, MDAreaHideSideExpander()) && !dontSideExpandPanel; /////
+		isSameStructType(getValue(state.content)[p], MDPanelToolbarButtons([]))
+	);
+	showSideExpanderBtn = isColumn && !contains(style, MDAreaHideSideExpander()) && !dontSideExpandPanel;
 	dontResizeAll = fold(colA, true, \acc, p -> acc && contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
 
-
-
 	// Resizable area size
-	isFirstToolbarItem = isSameStructType(getValue(state.content)[colA[0]], MDPanelToolbar([]));
+	containsToolbar = containsDockingToolbar(state, colA);
+	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
+	containsToolbarFillSize = foldi(colA, false, \p, acc, pId -> acc || isPanelFullSize(state, pId));
+
 	dockedWidthA = map(colA, \s -> getValue(state.dockedSize)[s].width);
 	dockedHeightA = map(colA, \s -> getValue(state.dockedSize)[s].height);
 	maxDockedWidth = either(maxA(dockedWidthA), -doubleMax);
 	maxDockedHeight = either(maxA(dockedHeightA), -doubleMax);
 		
 	areaW = if (isColumn) maxDockedWidth else {
-		if (isFirstToolbarItem) maxDockedWidth else {
+		if (containsToolbar) maxDockedWidth else {
 			// We need to add the topbar height for area lines (content panel)
 			maxDockedHeight + dockingBarHeightPanel
 		}
 	}
 
 	areaWB = make(areaW);
+	maxAreaSizeB = make(0.0);
 
 	// Side expander button
 	sideExpBtn = makeSideExpanderBtn(isColumn, state, colA, areaTheme, style)
 		|> showIf(showSideExpanderBtn);
-
-	maxAreaSizeB = make(0.0);
 
 	// Panel containers in a col
 	panelsHA = map(colA, \__ -> make(0.0));
@@ -199,7 +198,7 @@ makeDockedPanelA(
 	dropTr = makeVSize(32.0, isColumn);
 	hoverTr = makeHSize(dockingDropLineHoverSize, isColumn);
 	makeHandlesDrop = \resizeW : bool, order : [int], endpointOffset : bool, endAlignment : bool -> {	
-		dockingDropLine(false, resizeW, isFirstToolbarItem, dropInfo, state, order, true, MEmpty(), hoverTr, dropTr, endpointOffset, endAlignment, style);
+		dockingDropLine(false, resizeW, containsToolbar, dropInfo, state, order, true, MEmpty(), hoverTr, dropTr, endpointOffset, endAlignment, style);
 	}
 	panelAlignmentFiller	= \cId : int, rd : int -> {
 		[
@@ -227,7 +226,7 @@ makeDockedPanelA(
 			fillPanelOrderId = if (fillLast) lastPanel else 0;
 
 			pstyle = getValue(state.panelStyle)[panelId];
-			isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+			isToolbar = isDockingToolbar(state, panelId);
 			dontMove  = contains(pstyle, MDPanelDontMove());
 			topBarH = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else dockingBarHeightPanel;
 			topBarW = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else 0.0;
@@ -312,12 +311,15 @@ makeDockedPanelA(
 				TFillX() |> (\f -> MAttachWidth(f, maxAreaSizeB))  // Get max row width
 			},
 			// Docked panels
-			if (!isFirstToolbarItem) makeDockedResizablePanels(colA, 0, false) else {
-				[
-					makeDockedResizablePanels(startA, 0, false),
-					panelAlignmentFiller(colId, length(startA)),
-					makeDockedResizablePanels(endA, length(startA), true)
-				]|> (\f -> if (isColumn) MLinesA(f) else MColsA(f))
+			if (!containsToolbar) makeDockedResizablePanels(colA, 0, false) else {
+				// if (!containsToolbarButtons) makeDockedResizablePanels(colA, 0, false) else {
+				if (containsToolbarFillSize) makeDockedResizablePanels(colA, 0, false) else {
+					[
+						makeDockedResizablePanels(startA, 0, false),
+						panelAlignmentFiller(colId, length(startA)),
+						makeDockedResizablePanels(endA, length(startA), true)
+					]|> (\f -> if (isColumn) MLinesA(f) else MColsA(f))
+				}
 			}
 			|> (\f -> MFrame(0.0, if (isColumn) dockingRadius else 0.0,[MFill(panelBgColorFn(areaTheme, style))], f))
 		)
@@ -377,7 +379,11 @@ resizePanelH(
 	enabled = getValue(state.enabled)[panelId];
 
 	se = getValue(getValue(state.sideExpanded)[colA[0]]);
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	isToolbarCustom = isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty()));
+	isToolbar = isDockingToolbar(state, panelId);
+	isToolbarFillSize = isToolbarCustom && isPanelFullSize(state, panelId);
+
+	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
 	dontMove  = contains(pstyle, MDPanelDontMove());
 
 	topBarH = if (dontMove) 0.0 else {if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel};
@@ -504,17 +510,19 @@ resizePanelH(
 	MInteractive([
 		TMouseXY(mouseXyLocal)
 		],
-		MAvailable(	
-			scrollBox,
-			TSelect(sizeB, \s -> makeHSize(s, isColumn)) 
-			|> (\f -> if (!isToolbar && isLastPanel) TGroup2(TFillXY(), f) else f)
-		)	
+		box |> (\m -> if (isToolbarFillSize) m 	else { 
+			MAvailable(	
+				m,
+				TSelect(sizeB, \s -> makeHSize(s, isColumn)) 
+				|> (\f -> if (!isToolbar && isLastPanel) TGroup2(TFillXY(), f) else f)
+			)
+		})
 		// Keep separator and topbar sizes out of MAvailable
 		|> addRowSeparators
 		|> (\t -> 
 			MCopySize(t, \sz -> 	
 				MAvailable(
-					TRectangle([MFill(MWhite()), FillOpacity(0.0) /*, MStroke(MYellow(500)), StrokeWidth(1.0)*/], TFillXY()) |> addDragAndDropHelperGroup,
+					TRectangle([MFill(MWhite()), FillOpacity(0.0)], TFillXY()) |> addDragAndDropHelperGroup,
 					sz
 				),
 			true
@@ -557,13 +565,12 @@ resizeAreaW(
 	startingValueB = make(0.0);
 	firstPanelId = firstElement(colA, 0);
 	cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
-	isFirstToolbarItem = isSameStructType(getValue(state.content)[colA[0]], MDPanelToolbar([]));
+	containsToolbar = containsDockingToolbar(state, colA);
 
 	panelsWidthA = map(colA, \s -> getValue(state.size)[s].width);
 	maxPanelsWidth = either(maxA(panelsWidthA), -doubleMax);
 	se = getValue(getValue(state.sideExpanded)[firstPanelId]);
 
-	// numOfCols = length(areaGrid);
 	lastCol = numOfCols - 1;
 
 	isReversed = isRightCol || isBottomLine;
@@ -576,13 +583,12 @@ resizeAreaW(
 	hoverTr = makeVSize(dockingDropLineHoverSize, isColumn);
 
 	colFiller = if (isColumn) TFillX() else TFillY();
-	corrSide = if (isReversed) -1.0 else 1.0;
 
 	makeHandlesDrop = \resizeW : bool, order : [int], showResize : bool, endpointOffset : bool -> {
 		resizeHelper = dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, resizeTr, style)  
 			|> (\m -> MShowLazy(fselectLift(fmerge(map(colA, \c -> getValue(state.sideExpanded)[c])), \seA -> contains(seA, true)), \ -> m))
-			|> showIf(showResize && !isFirstToolbarItem);
-		dockingDropLine(true, resizeW, isFirstToolbarItem, dropInfo, state, order, false, resizeHelper, hoverTr, dropTr, endpointOffset, false, style);		
+			|> showIf(showResize && !containsToolbar);
+		dockingDropLine(true, resizeW, containsToolbar, dropInfo, state, order, false, resizeHelper, hoverTr, dropTr, endpointOffset, false, style);		
 	}
 	
 	colWithHandles =
@@ -649,21 +655,21 @@ resizeAreaW(
 	addColSeparators = \ f : Material ->
 		if (isColumn) {
 			MColsA([
-				if (isEdgeReverse && dontResize) TEmpty() else  {
+				/*if (isEdgeReverse && dontResize) TEmpty() else */ {
 					if (isRightCol) makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme, style) else TEmpty()	// sx
 				},
 				f,
-				if (isEdge && dontResize) TEmpty() else {
+				/*if (isEdge && dontResize) TEmpty() else*/ {
 					if (isRightCol) TEmpty() else makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme, style)  	// dx
 				}
 			])
 		} else {
 			MLines([
-				if (isEdgeReverse && dontResize) TEmpty() else  {
+				/*if (isEdgeReverse && dontResize) TEmpty() else */ {
 					if (isBottomLine)  makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme, style) else TEmpty()  // top
 				},	
 				f,
-				if (isEdge && dontResize) TEmpty() else {
+				/*if (isEdge && dontResize) TEmpty() else*/ {
 					if (isBottomLine) TEmpty() else makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme, style)  // bottom
 				}	
 			])
@@ -675,16 +681,14 @@ resizeAreaW(
 	contentHeight = make(0.0);
 
 	MConstruct([
-		// makeSubscribe(sizeB, \s -> println(s)),
 		makeSubscribe2(isResizing, \rs -> { 
 			if (!rs) {
 				// Update all docked panels in a col removing correction
 				iter(colA, \pId -> {
-					isToolbar = isSameStructType(getValue(state.content)[pId], MDPanelToolbar([]));
-					// topBarCorrection = if (isToolbar) dockingBarHeightToolbar else 0.0;
-					topBarCorrection = 0.0;
+					isToolbar = isDockingToolbar(state, pId);
+					topBarCorrection = if (isToolbar) dockingBarHeightToolbar else 0.0;
 					if (isColumn) updateW(state.dockedSize, pId,  getValue(sizeB))
-						else updateH(state.dockedSize, pId,  getValue(sizeB) - topBarCorrection);
+						else updateH(state.dockedSize, pId,  getValue(sizeB)- topBarCorrection);
 				});
 				// Update cache
 				if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
@@ -778,6 +782,5 @@ resizeAreaW(
 			true
 			)
 		)
-
 	));
 }
