@@ -1,0 +1,296 @@
+import material/material2tropic;
+
+Sudoku(
+	// The numbers on the board. 0 is empty
+	board : [[DynamicBehaviour<int>]],
+	// Whether there is a conflict in this cell
+	errors : DynamicBehaviour<[[bool]]>,
+	// Highlighted
+	highlight : DynamicBehaviour<[[bool]]>,
+	// Whether this cell is selected
+	selected : [[DynamicBehaviour<bool>]],
+	// Scribbles
+	scribbles : [[DynamicBehaviour<Set<int>>]],
+	// Is the sudoku solved?
+	win : DynamicBehaviour<bool>,
+	// Are we dragging at the moment
+	dragging : DynamicBehaviour<bool>,
+	scribble : DynamicBehaviour<bool>
+);
+
+drawCell(s : Sudoku, x : int, y : int) -> Material {
+	hover = make(false);
+	down = make(false);
+
+	MInteractive([
+		TMouseInside(hover, true),
+		TMouseDown(down)
+	],
+		MConstruct([
+			makeSubscribe(down, \d -> {
+				if (getValue(hover)) {
+					if (d) {
+						if (!getValue(s.dragging)) {
+							// Clear out selections
+							generate(0, 9, \sy -> {
+								generate(0, 9, \sx -> {
+									next(s.selected[sy][sx], sx == x && sy == y);
+									0
+								});
+							});
+							updateHighlights(s);
+							{}
+						}
+						next(s.dragging, true);
+					}
+				}
+				if (!d) {
+					next(s.dragging, false);
+				}
+			}),
+			makeSubscribe(hover, \h -> {
+				if (h && getValue(s.dragging)) {
+					next(s.selected[y][x], true);
+					updateHighlights(s);
+				}
+			})
+		],
+			MGroup([
+				MSelect4(s.errors, s.win, s.selected[y][x], s.highlight, \errors, win, selected, highlight -> {
+					MFrame(0.0, 0.0, [
+						MStroke(MGrey(300)),
+						if (win) {
+							MFill(MGreen(500))
+						} else if (errors[y][x] && selected) {
+							MFill(MOrange(500))
+						} else if (selected) {
+							MFill(MYellow(500))
+						} else if (errors[y][x]) {
+							MFill(MRed(500))
+						} else if (highlight[y][x]) {
+							MFill(MYellow(100))
+						} else {
+							MFill(MWhite())
+						}
+					], MFixed(32.0, 32.0))
+				}),
+				MSelect2(s.board[y][x], s.scribbles[y][x], \c, ns -> {
+					if (c == 0) {
+						MBorder(1.0, 1.0, 0.0, 0.0,
+							MEvenGrid(
+								generate(0, 3, \scy -> {
+									generate(0, 3, \scx -> {
+										n = scy * 3 + scx + 1;
+										MCenterIn(
+											if (containsSet(ns, n)) {
+												TText(i2s(n), [FontSize(8.0)])
+											} else MEmpty(),
+											MFixed(10.0, 10.0)
+										)
+									})
+								})
+							)
+						)
+					} else MEmpty()
+				}),
+				MSelect(s.board[y][x], \c -> {
+					if (c == 0) {
+						MEmpty()
+					} else {
+						MCenterIn(
+							MText(i2s(c), []),
+							MFixed(32.0, 32.0)
+						)
+					}
+				})
+			])
+		)
+	)
+}
+
+highlightCondition(s : Sudoku, x : int, y : int) -> bool {
+	selected = exists(generate(0, 9, \sy -> {
+		exists(generate(0, 9, \sx -> {
+			getValue(s.selected[sy][sx])
+		}), idfn)
+	}), idfn);
+	selected && forall(generate(0, 9, \sy -> {
+		forall(generate(0, 9, \sx -> {
+			if (getValue(s.selected[sy][sx])) {
+				checkHighlightCell(x, y, sx, sy)
+			} else true;
+		}), idfn)
+	}), idfn);
+}
+
+checkHighlightCell(x1 : int, y1 : int, x2 : int, y2 : int) -> bool {
+	x1 == x2 || y1 == y2
+	|| (x1 / 3 == x2 / 3 && y1 /3 == y2/3)
+}
+
+drawSuduko(s : Sudoku) -> Material {
+	key = makeTKey(\ke -> {
+		"1" <= ke.utf && ke.utf <= "9" || ke.utf == " "
+	});
+	MConstruct([
+			makeSubscribe(key.pressed, \ke -> {
+				update = \c -> {
+					generate(0, 9, \y -> {
+						generate(0, 9, \x -> {
+							if (getValue(s.selected[y][x])) {
+								if (getValue(s.scribble)) {
+									scribbles = getValue(s.scribbles[y][x]);
+									nextDistinct(s.scribbles[y][x], if (c == 0) {
+										makeSet();
+									} else {
+										if (containsSet(scribbles, c)) {
+											removeSet(scribbles, c);
+										} else {
+											insertSet(scribbles, c);
+										}
+									});
+								} else {
+									nextDistinct(s.board[y][x], c);
+								};
+							}
+							0;
+						});
+					});
+					updateCorrectness(s);
+				}
+				if ("1" <= ke.utf && ke.utf <= "9") {
+					update(s2i(ke.utf));
+				} else if (ke.utf == " ") {
+					update(0);
+				}
+			})
+		],
+		MInteractive(
+			[
+				key
+			],
+			MLines([
+				MGroup([
+					MEvenGrid(
+						mapi(s.board, \y, row -> {
+							mapi(row, \x, c -> {
+								drawCell(s, x, y)
+							})
+						})
+					),
+					MEvenGrid(
+						generate(0, 3, \y -> {
+							generate(0, 3, \x -> {
+								MFrame(0.0, 0.0, [MStroke(MBlack())],
+									MFixed(96.0, 96.0)
+								)
+							})
+						})
+					)
+				]),
+				MCheckBox(MText("SCRIBBLE", []), s.scribble, [MShortcut("s")])
+			])
+		)
+	)
+}
+
+updateCorrectness(s : Sudoku) -> void {
+	errors = ref false;
+	next(s.errors, 
+		generate(0, 9, \y -> {
+			generate(0, 9, \x -> {
+				c = checkCell(s, x, y);
+				if (c) {
+					errors := true;
+				}
+				c;
+			})
+		})
+	);
+
+	updateHighlights(s);
+
+	allFilled = forall(generate(0, 9, \y -> {
+		forall(generate(0, 9, \x -> getValue(s.board[y][x]) != 0), idfn)
+	}), idfn);
+
+	nextDistinct(s.win, !(^errors) && allFilled);
+}
+
+updateHighlights(s : Sudoku) -> void {
+	next(s.highlight,
+		generate(0, 9, \y -> {
+			generate(0, 9, \x -> {
+				highlightCondition(s, x, y)
+			})
+		})
+	);
+}
+
+checkCell(s : Sudoku, x : int, y : int) -> bool {
+	n = getValue(s.board[y][x]);
+
+	if (n == 0) {
+		false;
+	} else {
+		// Check if there are any columns with the same number
+		simpleconflict = exists(generate(0, 9, \y2 -> {
+			if (y2 == y) false
+			else getValue(s.board[y2][x]) == n
+		}), idfn)
+
+		// Check if there are any rows with the same number
+		|| exists(generate(0, 9, \x2 -> {
+			if (x2 == x) false
+			else getValue(s.board[y][x2]) == n
+		}), idfn);
+
+		// Check if there are any other numbers in the same box with the same number
+		xbox = x / 3;
+		ybox = y / 3;
+		exists(generate(3 * ybox, 3 * ybox + 3, \by -> {
+			exists(generate(3 * xbox, 3 * xbox +3 , \bx -> {
+				if (by == y && bx == x) {
+					false
+				} else {
+					getValue(s.board[by][bx]) == n
+				}
+			}), idfn)
+		}), idfn) || simpleconflict;
+	}
+}
+
+main() {
+	sudoku = Sudoku(
+		generate(0, 9, \y -> {
+			generate(0, 9, \x -> {
+				make(0)
+			});
+		}),
+		make(generate(0, 9, \y -> {
+			generate(0, 9, \x -> false)
+		})),
+		make(generate(0, 9, \y -> {
+			generate(0, 9, \x -> false)
+		})),
+		generate(0, 9, \y -> {
+			generate(0, 9, \x -> make(false))
+		}),
+		generate(0, 9, \y -> {
+			generate(0, 9, \x -> make(makeSet()))
+		}),
+		make(false),
+		make(false),
+		make(false),
+	);
+	updateCorrectness(sudoku);
+	mrender(makeMaterialManager([]), true, 
+		MZoom(
+			MBorder4(8.0, 
+				drawSuduko(sudoku),
+			),
+			MFillXY(),
+			true,
+		)
+	)
+}
