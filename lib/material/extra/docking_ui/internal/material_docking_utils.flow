@@ -36,18 +36,22 @@ export {
 	// Handles & buttons
 	makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material;
 	makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material;
-	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool) -> Material;
+	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool) -> Material;
 	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material;
 
 	// Utils
 	showIf(cond : bool) -> (Material) -> Material;
 	makeColsIf(isColumn : bool) -> ([Material]) -> Material;
-	makeVSize(s : double, rotate: bool) -> Tropic;
-	makeHSize(s : double, rotate: bool) -> Tropic;
+	makeVSize(thickness : double, rotate: bool) -> Tropic;
+	makeHSize(thickness : double, rotate: bool) -> Tropic;
 	makeColFixedSize(w : double, h : double, rotate: bool) -> Tropic;
 	makeLineFixedSize(w : double, h : double, rotate: bool) -> Tropic;
 	getAllPanelsHeightExcept(id : int, isColumn : bool, state : MDockingState, colA : [int]) -> double;
 	alignEndPanels(state : MDockingState, colA : [int]) -> Pair<[int], [int]>;
+	isPanelFullSize(state : MDockingState, panelId : int) -> bool;
+	isDockingToolbar(state : MDockingState, panelId : int) -> bool;
+	containsDockingToolbar(state : MDockingState, colA : [int]) -> bool;
+	containsDockingToolbarButtons(state : MDockingState, colA : [int]) -> bool;
 	
 	updateH(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, h : double) -> void;
 	updateW(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, w : double) -> void;
@@ -55,6 +59,24 @@ export {
 	// Debug prints
 	makeMDockingDebugPrints(state : MDockingState) -> Material;
 }
+
+isPanelFullSize(state : MDockingState, panelId : int) -> bool {
+	getValue(state.dockedSize)[panelId].height == -1.0
+}
+
+isDockingToolbar(state : MDockingState, panelId : int) -> bool {
+	isSameStructType(getValue(state.content)[panelId], MDPanelToolbarButtons([])) ||
+	isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty()))
+}
+
+containsDockingToolbar(state : MDockingState, colA : [int]) -> bool {
+	fold(colA, false, \acc, pId -> acc || isDockingToolbar(state, pId))
+}
+
+containsDockingToolbarButtons(state : MDockingState, colA : [int]) -> bool {
+	fold(colA, false, \acc, pId -> acc || isSameStructType(getValue(state.content)[pId], MDPanelToolbarButtons([])))
+}
+
 
 initializeDockingAreas(state : MDockingState, areaTitle : string) -> void {
 	areas = getValue(state.dockingAreas);
@@ -131,6 +153,9 @@ dockingState2json(state : MDockingState) -> Json {
 				mobileSize = getValue(state.mobileSize)[panelId];
 				dockedSize = getValue(state.dockedSize)[panelId];
 				pos = getValue(getValue(state.positions)[panelId]);
+				pstyle = getValue(state.panelStyle)[panelId];
+				isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+
 
 				Pair(i2s(panelId),
 					JsonObject(
@@ -150,6 +175,7 @@ dockingState2json(state : MDockingState) -> Json {
 							Pair("enabled", JsonBool(enabled)),
 							Pair("expanded", JsonBool(expanded)),
 							Pair("sideExpanded", JsonBool(sideExpanded)),
+							Pair("endAligned", JsonBool(isEndAligned)),
 						]
 					)
 				);
@@ -158,7 +184,6 @@ dockingState2json(state : MDockingState) -> Json {
 	// json2stringFormatted(dockAjson) |> println;  // Debug print
 	dockAjson
 }
-
 
 makeFillPanelSubscriber(
 	isColumn : bool,
@@ -173,7 +198,7 @@ makeFillPanelSubscriber(
 
 	pstyle = getValue(state.panelStyle)[panelId];
 	dontMove  = contains(pstyle, MDPanelDontMove());
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	isToolbar = isDockingToolbar(state, panelId);
 	topBarH = if (dontMove) 0.0 else {if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel};
 	topBarW = if (dontMove) 0.0 else {if (isToolbar) dockingBarHeightToolbar else 0.0};
 	
@@ -186,7 +211,7 @@ makeFillPanelSubscriber(
 
 	dontSideExpandPanel = fold(colA, false, \acc, p -> acc || 
 		contains(getValue(state.panelStyle)[p], MDPanelHideSideExpander()) ||
-		isSameStructType(getValue(state.content)[p], MDPanelToolbar([]))
+		isSameStructType(getValue(state.content)[p], MDPanelToolbarButtons([]))
 	);
 	showSideExpanderBtn = isColumn && !contains(style, MDAreaHideSideExpander()) && !dontSideExpandPanel;
 	
@@ -237,7 +262,6 @@ makeFillPanelSubscriber(
 	)
 }
 
-
 getAllPanelsHeightExcept(exceptId : int, isColumn : bool, state : MDockingState, colA : [int]) -> double {
 	foldi(colA, 0.0, \k, acc, pId -> {
 		if (k < (length(colA) )) {
@@ -256,7 +280,7 @@ getAllPanelsHeightExcept(exceptId : int, isColumn : bool, state : MDockingState,
 
 
 calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool, se : bool, ex : bool, pId : int) -> double {
-	isToolbar = isSameStructType(getValue(state.content)[pId], MDPanelToolbar([]));
+	isToolbar = isDockingToolbar(state, pId);
 	pstyle = getValue(state.panelStyle)[pId];
 	dontMove  = contains(pstyle, MDPanelDontMove());
 	topBarH = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else dockingBarHeightPanel;
@@ -292,67 +316,52 @@ makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panel
 	draggingBarInactive(light) |> showIf(!isToolbar)
 }
 
-makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool) -> Material {
+makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
-	dontMove  = contains(pstyle, MDPanelDontMove());
+	dontMove  = dontShow || contains(pstyle, MDPanelDontMove());
 
 	isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
 	isFirstPanel = panelId == firstElement(colA, intMax);
 	isLastPanel = panelId == lastElement(colA, intMax);
 	isEdge = if (isEndAligned) isLastPanel else isFirstPanel;
 
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	isToolbar = isDockingToolbar(state, panelId);
 	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel / 2.0;
 	topBarSize = makeHSize(topBarH, isColumn || !isToolbar);
 
 	handleH = 26.0;
-	handleW = 1.0; //4.0;
-	helperSize = makeColFixedSize(48.0, topBarH, isColumn);
+	handleW = 2.0; //4.0;
+	helperSizeMobile = makeColFixedSize(28.0, topBarH, isColumn);
+	helperSizeDocked = makeHSize(topBarH, isColumn);
 	isHovering = make(false);
 
 	dontMoveHandle =
-		TRectangle([MFill(color)], makeColFixedSize(handleH, 1.0, isColumn))
+		TRounded4(6.0, [MFill(color), FillOpacity(0.2)], makeHSize(handleW, isColumn)) 
+			|> (\m -> if (isColumn) MBorderLeftRight(12.0)(m) else MBorderTopBottom(12.0)(m))
+			|> (\t -> MCenterIn(t, topBarSize))
 			|> (\m -> 
-				if (isColumn) {
-					if (isEndAligned) MLines2A(TFillY(), m) else m
-				} else {
-					if (isEndAligned) MCols2A(TFillX(), m) else m
-				}
+				if (isEdge) {
+					TRounded4(6.0, [MFill(MRed(500)), FillOpacity(dockingTopbarDragHelperOpacity)], TFixed(topBarH, topBarH)) 
+				} else m
 			)
 			|> (\m -> if (isColumn) MCenterX(m) else MCenterY(m))
-			|> showIf(!isEdge);
 
-	dragHandle =
-		TRectangle([MFill(dockingTopbarDragHelperColor), FillOpacity(dockingTopbarDragHelperOpacity)], helperSize)
+	dragHandleDocked =
+		TRectangle([MFill(dockingTopbarDragHelperColor), FillOpacity(dockingTopbarDragHelperOpacity)], helperSizeDocked)
 			|> (\t -> 	
 				MCopySize(t, \sz -> 
 					MCenterIn(
-						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {
-							// TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 1.0)], makeColFixedSize(handleH, handleW, isColumn))
-							TRectangle([MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 1.0)], makeColFixedSize(handleH, handleW, isColumn))
-						}),
-						sz
-					), 
-					true
-				) |> (\m -> if (enableHover) MInteractive([TMouseInside(isHovering, false)], m) else m)
-			)
-			|> (\t -> MCenterIn(t, topBarSize));
-
-
-	dragHandleMobile =
-		TRectangle([MFill(dockingTopbarDragHelperColor), FillOpacity(dockingTopbarDragHelperOpacity)], helperSize)
-			|> (\t -> 	
-				MCopySize(t, \sz -> 
-					MCenterIn(
-						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {
-							TRounded(
-								0.0, 0.0, dockingRadius, dockingRadius, 
-								[MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 0.3)], 
-								makeColFixedSize(14.0, 2.0, isColumn)
-							) 
-							
-							|> (\m -> if (isColumn && !isToolbar) MLines2(m |> MBorderTop(dockingBarHeightToolbar / 2.0), TFillY()) else m)
+						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {	
+							if (isEdge){
+								[
+									TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.07 else 0.2})], makeHSize(handleW, isColumn)),
+									TFixed(4.0, 4.0),
+									TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.07 else 0.2})], makeHSize(handleW, isColumn)) 
+								] |> (\m -> if (isColumn) MCols(m) else MLines(m))
+							} else {
+							TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.1 else 0.2})], makeHSize(handleW, isColumn)) 
+							}
 
 						}),
 						sz
@@ -360,11 +369,33 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 					true
 				) 
 				|> (\m -> if (enableHover) MInteractive([TMouseInside(isHovering, false)], m) else m)
+				|> (\m -> if (isColumn) MBorderLeftRight(12.0)(m) else MBorderTopBottom(12.0)(m))
+			)
+			|> (\t -> MCenterIn(t, topBarSize))
+				// |> (\m -> MFrame(0.0, 6.0, [MFill(MCyan(500)), FillOpacity(0.2)], m)); //debug
+
+	dragHandleMobile =
+		TRectangle([MFill(dockingTopbarDragHelperColor), FillOpacity(dockingTopbarDragHelperOpacity)], helperSizeMobile)
+			|> (\t -> 	
+				MCopySize(t, \sz -> 
+					MCenterIn(
+						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {
+							TRounded(
+								0.0, 0.0, dockingRadius, dockingRadius, 
+								[MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 0.3)], 
+								makeColFixedSize(16.0, handleW, isColumn)
+							) 	
+							|> (\m -> if (isColumn && !isToolbar) MLines2(m |> MBorderTop(dockingBarHeightToolbar / 2.0), TFillY()) else m)
+						}),
+						sz
+					), 
+					true
+				) 
+				|> (\m -> if (enableHover) MInteractive([TMouseInside(isHovering, false)], m) else m)
 			) 
-			|> MAlignTopCenter
 
 	if (docked) {
-		if (dontMove) dontMoveHandle else dragHandle
+		if (dontMove) dontMoveHandle else dragHandleDocked
 	} else dragHandleMobile
 };
 
@@ -460,8 +491,8 @@ updateW(sizeB : DynamicBehaviour<[WidthHeight]>, id : int, w : double) -> void {
 
 showIf(cond : bool) -> (Material) -> Material {\m : Material -> if (cond) m else TEmpty()}
 makeColsIf(isColumn : bool) -> ([Material]) -> Material {\m : [Material] -> if (isColumn) MCols(m) else MLinesA(m)}
-makeVSize(s : double, rotate: bool) -> Tropic { if (rotate) TFillWY(s) else TFillXH(s)}
-makeHSize(s : double, rotate: bool) -> Tropic { if (rotate) TFillXH(s) else TFillWY(s)}
+makeVSize(thickness : double, rotate: bool) -> Tropic { if (rotate) TFillWY(thickness) else TFillXH(thickness)}
+makeHSize(thickness : double, rotate: bool) -> Tropic { if (rotate) TFillXH(thickness) else TFillWY(thickness)}
 makeColFixedSize(w : double, h : double, rotate: bool) -> Tropic { if (rotate) TFixed(w, h) else TFixed(h, w)}
 makeLineFixedSize(w : double, h : double, rotate: bool) -> Tropic { if (rotate) TFixed(h, w) else TFixed(w, h)}
 

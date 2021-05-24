@@ -9,15 +9,27 @@ class HTMLStage extends NativeWidgetClip {
 	public var isHTMLStage = true;
 	private var clips : Map<String, FlowContainer> = new Map<String, FlowContainer>();
 	private var stageRect : Dynamic;
+	public var isInteractive : Bool = true;
 	public function new(width : Float, height : Float) {
 		super();
 
 		setWidth(width);
 		setHeight(height);
 
+		on("pointerover", function() {
+			RenderSupport.PreventDefault = false;
+		});
+
+		on("pointerout", function() {
+			RenderSupport.PreventDefault = true;
+		});
+
+		once("removed", function() {
+			RenderSupport.PreventDefault = true;
+		});
+
 		this.initNativeWidget();
 
-		untyped nativeWidget.style['pointer-events'] = 'auto';
 		nativeWidget.style.display = 'none';
 		nativeWidget.classList.add("stage");
 
