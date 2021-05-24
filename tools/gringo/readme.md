@@ -218,7 +218,7 @@ Put your grammar in a `.gringo` file, and compile it with something like:
 and it will produce a `mygrammar_parser.flow` file with the grammar where it will export
 a function like
 
-	parse_exp(DParseAcc) -> bool;
+	parse_exp(acc : DParseAcc<?>) -> bool;
 
 Then use like this:
 
