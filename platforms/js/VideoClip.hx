@@ -478,6 +478,7 @@ class VideoClip extends FlowContainer {
 
 	public function addVideoSource(src : String, type : String) : Void {
 		var source = Browser.document.createElement('source');
+		source.onerror = onStreamError;
 
 		untyped source.src = src;
 		if (type != "") {
