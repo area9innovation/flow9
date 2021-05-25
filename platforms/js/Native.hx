@@ -102,6 +102,20 @@ class Native {
 		return result;
 	}
 
+	public static function importJSModule(arg : Dynamic, cb : Dynamic -> Void) : Void {
+		#if (js && !flow_nodejs)
+			try {
+				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
+				untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+			} catch( e : Dynamic) {
+				Errors.report(e);
+				cb(null);
+			}
+		#else
+			cb(null);
+		#end
+	}
+
 	static var complainedMissingExternal : Bool = false;
 
 	public static function hostAddCallback(name : String, cb : Void -> Dynamic) : Dynamic {

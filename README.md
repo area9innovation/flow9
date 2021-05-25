@@ -84,15 +84,9 @@ There is a YouTube channel here:
 
 https://www.youtube.com/channel/UC9lxa2X3hMFQKaKnn-sq2Pg
 
-There is a chat in Telegram for discussions about flow:
+Here is a Discord server for discussions about flow:
 
-https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
-
-There is a mailing list group in groups.io about flow as well:
-
-https://groups.io/g/flow
-
-Your first message requires moderation approval to avoid spam.
+https://discord.gg/9gGJu6KU
 
 Tooling
 -------

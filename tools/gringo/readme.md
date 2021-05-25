@@ -218,7 +218,7 @@ Put your grammar in a `.gringo` file, and compile it with something like:
 and it will produce a `mygrammar_parser.flow` file with the grammar where it will export
 a function like
 
-	parse_exp(DParseAcc) -> bool;
+	parse_exp(acc : DParseAcc<?>) -> bool;
 
 Then use like this:
 
@@ -307,6 +307,9 @@ semaction = "\" sem-exp
 	sem-exps = $"list" sem-exp ("," sem-exp $"cons")* | $"list";
 
 ## Inspiration
+
+Extending PEG with various things:
+https://norswap.com/pubs/thesis.pdf
 
 Optimizing PEG grammars:
 https://mpickering.github.io/papers/parsley-icfp.pdf

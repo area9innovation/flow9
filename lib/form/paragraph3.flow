@@ -316,7 +316,10 @@ renderParagraphEx(
 		filtermap(words, \word -> {
 			applyStyles = \form -> eitherMap(
 				lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
-				\wordStyles -> applyListenersAndModifiers(wordStyles, form),
+				\wordStyles -> {
+					applyListenersAndModifiers(wordStyles, form)
+					|>(\f -> applyBlockHighlighting(wordStyles, f))
+				},
 				form
 			);
 			switch (word.ghosted : Ghosted) {
@@ -1150,7 +1153,7 @@ applyIntStylesAndHighlighting(
 		)
 	);
 
-	dynamicCharStyleBM = tryExtractStruct(styles, DynamicCharStyle(make([])));
+	dynamicHighlightStyleBM = tryExtractStruct(styles, DynamicHighlightStyle(make([]), false));
 
 	textAndBackPair = switch(form) {
 		Text(txt, txtStyle) : {
@@ -1166,10 +1169,10 @@ applyIntStylesAndHighlighting(
 			// We draw custom highlighting to fix gaps for cases of justifying alignment
 			// And to have more straight and pretty highlighting.
 			eitherMap(
-				dynamicCharStyleBM,
-				\dynCharStyle -> Pair(
-					Select(dynCharStyle.styleB, \chStyle -> makeTxt(chStyle)),
-					Select(dynCharStyle.styleB, \chStyle -> makeBackRect(txtStyle, chStyle))
+				dynamicHighlightStyleBM,
+				\dynHlStyle -> Pair(
+					Select(dynHlStyle.styleB, \chStyle -> makeTxt(chStyle)),
+					Select(dynHlStyle.styleB, \chStyle -> makeBackRect(txtStyle, chStyle))
 				),
 				Pair(makeTxt([]), makeBackRect(txtStyle, []))
 			)
@@ -1177,8 +1180,8 @@ applyIntStylesAndHighlighting(
 		default : Pair(
 			form,
 			eitherMap(
-				dynamicCharStyleBM,
-				\dynCharStyle -> Select(dynCharStyle.styleB, \chStyle -> makeBackRect([], chStyle)),
+				dynamicHighlightStyleBM,
+				\dynHlStyle -> Select(dynHlStyle.styleB, \chStyle -> makeBackRect([], chStyle)),
 				Empty()
 			)
 		);
@@ -1210,6 +1213,36 @@ applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) 
 	}
 }
 
+applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> Form {
+	eitherMap(tryExtractStruct(styles, DynamicHighlightStyle(make([]), false)),
+	\dynamicHlStyle -> {
+		if (dynamicHlStyle.extraHighlight) {
+			getStyleForRectFromCharStyle = \s -> eitherMap(
+				tryExtractStruct(s, BackgroundFill(white)),
+				\backFill -> [
+					Stroke(backFill.color),
+					StrokeOpacity(extractStruct(s, BackgroundFillOpacity(1.0)).opacity),
+					StrokeWidth(3.0),
+				],
+				[]
+			);
+
+			makeRect = \dynStyle, wh : WidthHeight -> Rectangle(
+				wh.width,
+				wh.height,
+				getStyleForRectFromCharStyle(dynStyle)
+			);
+
+			whB = makeWH();
+			Group([
+				Inspect([ISize(whB)], form),
+				Select2(dynamicHlStyle.styleB, whB, makeRect),
+			])
+		} else form
+	},
+	form
+	)
+}
 
 // Joins texts together to a single text element, along with the new metrics
 optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
