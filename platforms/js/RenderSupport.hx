@@ -2739,6 +2739,10 @@ class RenderSupport {
 		picture.switchUseCrossOrigin(useCrossOrigin);
 	}
 
+	public static function setPictureReferrerPolicy(picture : FlowSprite, referrerpolicy : String) : Void {
+		picture.setPictureReferrerPolicy(referrerpolicy);
+	}
+
 	public static function parseXml(xmlString) {
 		var doc;
 		if (untyped __js__('window.ActiveXObject')) {
