@@ -413,6 +413,12 @@ class FlowSprite extends Sprite {
 		}
 	}
 
+	public function setPictureReferrerPolicy(referrerpolicy) : Void {
+		if (nativeWidget != null) {
+			nativeWidget.referrerPolicy = referrerpolicy;
+		}
+	}
+
 	public function calculateWidgetBounds() : Void {
 		if (!widgetBoundsChanged) {
 			return;
