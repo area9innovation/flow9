@@ -446,8 +446,7 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.step = step;
 			}
 
-			// Chrome tends to ignore autocomplete="off"
-			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : Platform.isChrome ? 'chrome-off' : 'off';
+			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
 
 			if (maxChars >= 0) {
 				nativeWidget.maxLength = maxChars;
@@ -1199,6 +1198,10 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.ensureCurrentInputVisible();
 		}
 
+		if (Platform.isIOS) {
+			Browser.document.addEventListener('selectionchange', onSelectionChange);
+		}
+
 		invalidateMetrics();
 	}
 
@@ -1222,6 +1225,10 @@ class TextClip extends NativeWidgetClip {
 
 		if (nativeWidget == null || parent == null) {
 			return;
+		}
+
+		if (Platform.isIOS) {
+			Browser.document.removeEventListener('selectionchange', onSelectionChange);
 		}
 
 		invalidateMetrics();
@@ -1327,6 +1334,13 @@ class TextClip extends NativeWidgetClip {
 
 	public function onContextMenu(e) {
 		if (this.preventContextMenu) e.preventDefault();
+	}
+
+
+	public function onSelectionChange() {
+		if (isFocused) {
+			checkPositionSelection();
+		}
 	}
 
 	public function getDescription() : String {

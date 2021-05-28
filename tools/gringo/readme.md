@@ -90,6 +90,15 @@ which is short for this grammar:
 
 The "<" only works on the right-hand side of a sequence.
 
+In some situations, you can use the empty string to ensure that
+right-recursive constructs refer to top-level expression, rather than
+the following once:
+
+	exp = ...
+		|> '\' ws lambdaargs "->" ws exp ""  // The "" makes right-recursion disappear
+		|> ...
+		;
+
 ## Actions
 
 The `$<term>` construct is used to produce semantic actions. This will send
