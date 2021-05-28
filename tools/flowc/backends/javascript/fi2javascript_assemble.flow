@@ -14,7 +14,11 @@ import sys/system;
 // import formats/uri/uri;
 
 export {
-	fiLinkRuntime(cfg : FiJsConfig, native_names : [string], haxe_dce : bool, ovl : FiJsOverlayGroup, callback : (runtimeContent : string) -> void) -> void;
+	fiLinkRuntime(
+		cfg : FiJsConfig, native_names : [string], haxe_dce : bool, 
+		native_classes : Set<string>, add_class : (string) -> void, mainFn : string,
+		callback : (runtimeContent : string) -> void
+	) -> void;
 	fiAssembleJsFile(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, code : List<string>) -> void;
 	fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) -> List<string>;
 	fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : (int) -> void) -> void;
@@ -22,14 +26,17 @@ export {
 	fiEnsureModulesDirectory(cfg : FiJsConfig) -> void;
 }
 
-fiLinkRuntime(cfg : FiJsConfig, native_names : [string], haxe_dce : bool, ovl : FiJsOverlayGroup, callback : (runtimeContent : string) -> void) {
+fiLinkRuntime(
+	cfg : FiJsConfig, native_names : [string], haxe_dce : bool, 
+	native_classes : Set<string>, add_class : (string) -> void, mainFn : string,
+	callback : (runtimeContent : string) -> void) {
 	if (cfg.haxeRuntime) {
 		delfile = if (cfg.debug) \s -> "" else deleteFile;
 		deleteFiles = \filenames : [string] -> iter(filenames, \fn -> {delfile(fn); {}});
 
 		rt = "import HaxeRuntime;\n";
 
-		imports = foldSet(ovl.nativeClasses, "",  \acc, e -> {
+		imports = foldSet(native_classes, "",  \acc, e -> {
 			importName = if ((e == "RenderSupport" || e == "RenderSupport3D" || e == "MediaStreamSupport" || e == "MediaRecorderSupport") && (cfg.jsmode == NODEJS_MODE || !isEmptySet(cfg.jslibrary))) {
 				e + "NodeJs" 
 			} else {
@@ -51,7 +58,7 @@ fiLinkRuntime(cfg : FiJsConfig, native_names : [string], haxe_dce : bool, ovl : 
 				HaxeRuntime._structargtypes_ = new haxe.ds.IntMap<Array<RuntimeType>>();
 				";
 
-		rs = if (containsSet(ovl.nativeClasses, "RenderSupport")) {
+		rs = if (containsSet(native_classes, "RenderSupport")) {
 				"  new RenderSupport();\n";
 			} else {
 				""
@@ -74,7 +81,7 @@ fiLinkRuntime(cfg : FiJsConfig, native_names : [string], haxe_dce : bool, ovl : 
 				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D no-deprecation-warnings", "-D js-classic"];
 
 		tmpfiles = ref [];
-		hxparams1 = if (containsSet(ovl.nativeClasses, "RenderSupport") && cfg.jsmode != NODEJS_MODE) {
+		hxparams1 = if (containsSet(native_classes, "RenderSupport") && cfg.jsmode != NODEJS_MODE) {
 				p = fiPrepareWebFonts(cfg);
 				tmpfiles := p.first;
 				fontparams = p.second;
@@ -82,10 +89,10 @@ fiLinkRuntime(cfg : FiJsConfig, native_names : [string], haxe_dce : bool, ovl : 
 					concat(
 						concat(hxparams, ["-lib pixijs"]),
 						fontparams
-					), ["-D flow_main=\"" + ovl.mainFn + "\""])
+					), ["-D flow_main=\"" + mainFn + "\""])
 			} else hxparams;
 
-		hxparams2 = if (hxparams1 != [] && containsSet(ovl.nativeClasses, "RenderSupport3D") && cfg.jsmode != NODEJS_MODE) {
+		hxparams2 = if (hxparams1 != [] && containsSet(native_classes, "RenderSupport3D") && cfg.jsmode != NODEJS_MODE) {
 				concat(hxparams1, ["-lib threejs"])
 			} else hxparams1;
 
@@ -99,7 +106,6 @@ fiLinkRuntime(cfg : FiJsConfig, native_names : [string], haxe_dce : bool, ovl : 
 
 		hxparams4 = if (hxparams3 != [] && haxe_dce) {
 				fcVerbose(cfg, 0, "Dead Haxe code elimination...");
-				add_class = \class_ -> ovl.nativeClasses ::= insertSet(ovl.nativeClasses, class_);
 				natives = fiMangleNativeNames(cfg, native_names, add_class);
 				if (natives != []) {
 					natives1 = concat(
