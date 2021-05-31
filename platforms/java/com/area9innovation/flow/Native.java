@@ -1941,7 +1941,7 @@ public class Native extends NativeHost {
 	public final String urlDecode(String s) {
 		try {
 			return URLDecoder.decode(s, "UTF-8");
-		} catch (UnsupportedEncodingException e) {
+		} catch (UnsupportedEncodingException | IllegalArgumentException e) {
 			System.out.println(e.toString());
 			return "";
 		}
