@@ -2673,6 +2673,10 @@ class RenderSupport {
 		graphics.clear();
 	}
 
+	public static function useSvg(graphics : FlowGraphics) : Void {
+		graphics.useSvg();
+	}
+
 	public static function setLineStyle(graphics : FlowGraphics, width : Float, color : Int, opacity : Float) : Void {
 		graphics.lineStyle(width, removeAlphaChannel(color), opacity);
 	}
