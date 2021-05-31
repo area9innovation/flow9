@@ -10,29 +10,45 @@ export {
 
 	// This will represent the logical (not syntactical format of an URI).
 	// Parsing an URL will to some extend try to correct misformed urls,
-	// It will not validate an url string
-
-	// TODO: Handle relative urls. See test uri3_test.flow.
+	// It is not well suited for validating an url string
 
 	// - It is possible to represent duplicated keys in the search and hash params. For example a=1&a=2.
-	// - The protocol and hostname will be lowercase, the path, search and hash are case sensitive.
-	// - The last element in the path can end with a / so it is possible to represent url's to folders
+	// - The protocol and hostname will be lowercase, the path, search and hash are case is preserved.
 	// - If a search or hash is not on the key=value form, then it is still stored in a KeyValue with an empty key.
-	// - The search and hash params order is preserved, and it is possible to have duplicated keys.
+	// - The search and hash params order is preserved.
 	
 	Uri3(
-		protocol: string,		// For example "https"
-		hostname: string,		// For example "area9.dk"
-		port: int,				// For example 443
+		// For example "https"
+		protocol: string,
 
-		path: [string],			// For example ["rhapsode", "flowjs.html"]
-		search: [KeyValue],		// For example [KeyValue("name", "learner"), KeyValue("full", "Soren Andersen")];
-		hash: [KeyValue],		// For example [KeyValue("", "home"), KeyValue("item", "123")];
+		// For example "area9.dk"
+		hostname: string,
+
+		// For example 443. It is 0 if not specified
+		port: int,
+
+		// For example ["rhapsode", "flowjs.html"]
+		path: [string],
+
+		// If the path start with a slash then it is absolute to the root of the server. 
+		// An url with an hostname is always absolute, a relative is path always have an empty host.
+		pathIsAbsolute: bool,
+		
+		// If the path ends with a slash then it is a folder. 
+		// If there a host and no path, it is also a folder
+		pathIsFolder: bool,
+
+		// For example [KeyValue("name", "learner"), KeyValue("full", "Soren Andersen")];
+		search: [KeyValue],
+
+		// For example [KeyValue("", "home"), KeyValue("item", "123")];
+		hash: [KeyValue],
 	);
 
+	// A default Uri
 	makeUri3() -> Uri3;
 
-	// Convert a href to an Uri
+	// Parse a href as an Uri
 	uri3(href: string) -> Uri3;
 
 	// Convert the Uri to a string
@@ -58,7 +74,8 @@ export {
 	uri3MakeTree(params: [KeyValue]) -> Tree<string, string>;
 }
 
-makeUri3() -> Uri3 { Uri3("", "", 0, [], [], []); }
+makeUri3() -> Uri3 { Uri3("", "", 0, [], false, false, [], []); }
+
 
 uri3(href: string) -> Uri3 {
 
@@ -66,7 +83,7 @@ uri3(href: string) -> Uri3 {
 	takeTail = \str: string, index: int -> substring(str, index, strlen(str) - index);
 
 	// Protocol
-	protocolIndex = strIndexOf(href, "://");
+	protocolIndex = strIndexOf(href, ":");
 	protocolRest = if (protocolIndex < 0) {
 		Pair("", href);
 	} else {
@@ -75,7 +92,8 @@ uri3(href: string) -> Uri3 {
 			// This is not the protocol, assume it is something else.
 			Pair("", href);
 		} else {
-			Pair(toLowerCase(p), takeTail(href, protocolIndex + 3));
+			// Protocols are case insensitive
+			Pair(toLowerCase(p), takeTail(href, protocolIndex + 1));
 		}
 	}
 	protocol = protocolRest.first;
@@ -114,30 +132,59 @@ uri3(href: string) -> Uri3 {
 	slashes = strSplit2(e[0], ["/"]);
 	slashesCount = length(slashes);
 
-	hostPath = foldi(
-		slashes, 
-		Pair("", []), 
-		\i: int, acc: Pair<string, [string]>, str -> {
+	hostPath = if (slashesCount >= 3 && slashes[0] == "/" && slashes[1] == "/") {
+		if (slashes[2] == "/") {
+			Pair("", subrange(slashes, 2, slashesCount - 2));
+		} else {
+			Pair(toLowerCase(slashes[2]), subrange(slashes, 3, slashesCount - 3));
+		}
+	} else {
+		Pair("", slashes);
+	}
+
+	haveHost = hostPath.first != "";
+	pathParts = length(hostPath.second);
+
+	// HostPath is the Quadruple: host, [path], pathIsAbsolute, pathIsFolder
+	path = foldi(
+		hostPath.second, 
+		Triple([], haveHost, haveHost), 
+		\i: int, acc: Triple<[string], bool, bool>, str -> {
 			if (i == 0) {
 				if (str == "/") {
-					// When starting with a slash there it means that there are no hostname or port
-					Pair("", []);
+					if (i == pathParts - 1) {
+						Triple([], true, true);
+					} else {
+						Triple([], true, false);
+					}
 				} else {
-					// The first element is the host, the host is case insensitive
-					Pair(toLowerCase(str), []);
+					// If there is a host, then the path is absolute.
+					Triple(acc with first = [urlDecode2(str)]);
 				}
 			} else if (str == "/") {
-				if (i == slashesCount - 1 && length(acc.second) == 0) {
-					// Keep the last slash so we can represent urls that are folders...
-					// If the path is empty it is pr. default an empty folder.
-					Pair(acc.first, arrayPush(acc.second, "/"));
+				if (i == pathParts - 1) {
+					Triple(acc with third = true);
 				} else {
-					// Ignore
 					acc;
 				}
 			} else {
-				// Paths can be url encoded, so decode them...
-				Pair(acc.first, arrayPush(acc.second, urlDecode2(str)));
+				Triple(acc with first = arrayPush(acc.first, urlDecode2(str)));
+			}
+		}
+	);
+
+	// Ignore . and go back with ..
+	pathReduced = foldi(
+		path.first,
+		[],
+		\i: int, acc: [string], str -> {
+			if (str == ".") {
+				// ignore
+				acc;
+			} else if (str == ".." && length(acc) >= 1) {
+				take(acc, length(acc) - 1);
+			} else {
+				arrayPush(acc, str);
 			}
 		}
 	);
@@ -185,28 +232,29 @@ uri3(href: string) -> Uri3 {
 		});
 	};
 
-	Uri3(protocol, hostname, port, hostPath.second, makeKv(e[1]), makeKv(e[2]));
+	Uri3(protocol, hostname, port, pathReduced, path.second, path.third, makeKv(e[1]), makeKv(e[2]));
 }
 
 uri3GetHref(u: Uri3) -> string {
-	pathStr = uri3GetPathname(u);
+	originStr = uri3GetOrigin(u);
 	searchStr = uri3GetSearch(u);
 	hashStr = uri3GetHash(u);
 
-	// Make sure the host ends with a slash unless it is not followed by anything
-	pathSep = if (pathStr != "" || searchStr != "" || hashStr != "") {
-		"/"
-	} else {
+	pathname = uri3GetPathname(u);
+	pathStr = if (pathname == "/" && originStr != "" && searchStr == "" && hashStr == "") {
+		// Do not add a trailing slash, this way it works like the browser
 		"";
-	};
-	
-	s = \sep: string, str: string -> if (str == "") { "" } else { sep + str };
+	} else {
+		pathname;
+	}
 
-	uri3GetOrigin(u) + pathSep + pathStr + s("?", searchStr) + s("#", hashStr);
+	s = \sep: string, str: string -> if (str == "") "" else sep + str;
+
+	originStr + pathStr + s("?", searchStr) + s("#", hashStr);
 }
 
 uri3GetHost(u: Uri3) {
-	u.hostname + if (
+	u.hostname + (if (
 		(u.port == 0) ||
 		(u.protocol == "http" && u.port == 80) || 
 		(u.protocol == "https" && u.port == 443) || 
@@ -216,31 +264,51 @@ uri3GetHost(u: Uri3) {
 		""
 	} else {
 		":" + i2s(u.port);
-	}
+	})
 }
 
 uri3GetOrigin(u: Uri3) -> string {
-	// The extra ()'s are needed otherwise it will not give the correct result!
-	// This is a flow bug!
-	(if (u.protocol != "") {
-		u.protocol + "://"
+	protocolStr = if (u.protocol != "") {
+		u.protocol + ":"
 	} else {
 		"";
-	}) + uri3GetHost(u);
+	};
+	hostStr = uri3GetHost(u);
+	if (protocolStr == "" && hostStr == "") {
+		""
+	} else {
+		// If either the protocol or the host is specified, then the url must include the //
+		protocolStr + "//" + hostStr
+	}
 }
 
 uri3GetPathname(u: Uri3) -> string { 
-	fold(u.path, "", \acc: string, p: string -> {
-		if (p == "/") {
-			acc + "/";
+	p1 = foldi(u.path, "", \i: int, acc: string, p: string -> {
+		if (i == 0) {
+			urlEncode2(p);
 		} else {
-			if (acc == "") {
-				urlEncode2(p);
-			} else {
-				acc + "/" + urlEncode2(p);
-			}
+			acc + "/" + urlEncode2(p);
 		}
 	});
+
+	if (p1=="") {
+		if (u.pathIsAbsolute || u.pathIsFolder) {
+			"/"
+		} else {
+			"";
+		}
+	} else {
+		p2 = if (u.pathIsAbsolute) {
+			"/" + p1;
+		} else {
+			p1;
+		}
+		if (u.pathIsFolder) {
+			p2 + "/";
+		} else {
+			p2;
+		}
+	}
 }
 
 uri3GlueSearchParameters(params: [KeyValue]) -> string  {
