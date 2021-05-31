@@ -90,6 +90,15 @@ which is short for this grammar:
 
 The "<" only works on the right-hand side of a sequence.
 
+In some situations, you can use the empty string to ensure that
+right-recursive constructs refer to top-level expression, rather than
+the following once:
+
+	exp = ...
+		|> '\' ws lambdaargs "->" ws exp ""  // The "" makes right-recursion disappear
+		|> ...
+		;
+
 ## Actions
 
 The `$<term>` construct is used to produce semantic actions. This will send
@@ -218,7 +227,7 @@ Put your grammar in a `.gringo` file, and compile it with something like:
 and it will produce a `mygrammar_parser.flow` file with the grammar where it will export
 a function like
 
-	parse_exp(DParseAcc) -> bool;
+	parse_exp(acc : DParseAcc<?>) -> bool;
 
 Then use like this:
 
@@ -307,6 +316,9 @@ semaction = "\" sem-exp
 	sem-exps = $"list" sem-exp ("," sem-exp $"cons")* | $"list";
 
 ## Inspiration
+
+Extending PEG with various things:
+https://norswap.com/pubs/thesis.pdf
 
 Optimizing PEG grammars:
 https://mpickering.github.io/papers/parsley-icfp.pdf

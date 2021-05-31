@@ -46,11 +46,10 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 	positionScale = make(zeroPositionScale);
 	zorder = getValue(manager.manager.zorder);
 	isDragging = manager.manager.dragging;
-	isDraggingT = fselect(isDragging, FLift(\dr -> (dr >= 0) && (dr < length(panelsA)) && zorder >= getValue(manager.manager.zorder)));
+	isDraggingT = fselect(isDragging, FLift(\dr -> (dr >= 0) && (dr < length(panelsA)) && getValue(state.dock)[dr].areaId >= 0 && zorder >= getValue(manager.manager.zorder)));
 
 	iteri(panelsA, \i, p -> {
 		next(localPositionA, replace(getValue(localPositionA), i , zeroPoint));
-		next(panelsStyleA, replace(getValue(panelsStyleA), i , p.style));
 	});
 
 	//overlay layout
@@ -101,11 +100,13 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 	// movablePanelsLayer = MSelect(fselect(state.dock,FLift(\d -> concatA(extractAreaGridById(getValue(dockA), -1)))), \m ->
 	// MGroup(map(m, \p -> makeMovablePanel(state, p, localPositionA))));
 
+	layoutBoxed = layout |> (\m -> MFrame(dockingSeparatorSize, 0.0, [MFill(areaBgColorFn(true, state.style))], m));
+
 	MInteractive([TMouseXY(state.mouseXy)],
 		MGroup(concatA([
 			// [makeMDockingDebugPrints(state)],        // Uncomment for debug prints
 			[TPositionScale(positionScale, TRectangle([MFill(MGrey(100))], TFillXY()))],
-			[MScroll(layout, TFillXY(), [])],
+			[MScroll(layoutBoxed, TFillXY(), [])],
 			movablePanelsLayer,
 			[movableDropArea]
 		]))
@@ -147,6 +148,40 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		});
 	};
 
+	// End Alignment
+	alignToolbar = \pId : int  -> {
+		pstyle = getValue(state.panelStyle)[pId];
+		isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+		cEndAligned = getJsonBoolValue(getJsonFieldValue(cachedPanelA[pId], "endAligned", JsonNull()), isEndAligned);
+		endAligned = if (cacheEnabled) cEndAligned else isEndAligned;
+
+		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), pId , 
+			replaceStruct(getValue(panelsStyleA)[pId], MDPanelEndAlign(make(endAligned)))
+		));
+	}
+
+	// Panel's size
+	getPanelSize = \p : MDockingPanel, pId : int, minWidth : double  -> {
+		cWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[pId], "w", JsonNull()), doubleMax);
+		cHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[pId], "h", JsonNull()), doubleMax);
+		pWidth = if (cacheEnabled && (cWidth != doubleMax)) cWidth else minWidth;
+		pHeight = if (cacheEnabled && (cHeight != doubleMax)) cHeight else p.size.height;
+
+		cDockedWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[pId], "dockedW", JsonNull()), doubleMax);
+		cDockedHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[pId], "dockedH", JsonNull()), doubleMax);
+		dockedWidth = if (cacheEnabled && (cDockedWidth != doubleMax)) cDockedWidth else minWidth;
+		dockedHeight = if (cacheEnabled && (cDockedHeight != doubleMax)) cDockedHeight else p.size.height;
+
+		cMobileWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[pId], "mobileW", JsonNull()), doubleMax);
+		cMobileHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[pId], "mobileH", JsonNull()), doubleMax);
+		mobileWidth = if (cacheEnabled && (cMobileWidth != doubleMax)) cMobileWidth else minWidth;
+		mobileHeight = if (cacheEnabled && (cMobileHeight != doubleMax)) cMobileHeight else p.size.height;
+
+		next(state.size, replace(getValue(state.size), pId , WidthHeight(pWidth, pHeight)));
+		next(state.mobileSize, replace(getValue(state.mobileSize), pId , WidthHeight(mobileWidth, mobileHeight)));
+		next(state.dockedSize, replace(getValue(state.dockedSize), pId , WidthHeight(dockedWidth, dockedHeight)));
+	}
+
 	// Panels
 	if (getValue(titleA) == []) {
 		iteri(panelsA, \i, p -> {
@@ -154,40 +189,31 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 			next(panelIconA, replace(getValue(panelIconA), i , extractStruct(p.style, MDPanelIcon("web_asset")).icon));
 			next(contentA, replace(getValue(contentA), i , p.content));
 			next(groupA, replace(getValue(groupA), i ,  extractStruct(p.style, MDPanelAllowedGroups([])).allowedGroups));
-			next(panelsStyleA, replace(getValue(panelsStyleA), i , p.style));
-
+			
+			// End Alignment
+			defPStyle = addMissingStruct(p.style, MDPanelEndAlign(make(false)));
+			nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), i , defPStyle));
+				
 			switch (p.content) {
 				// Toolbar
-				MDPanelToolbar(buttonsA) : {
-					minWidth = dockingItemHeight;
-					dontShowSep = contains(p.style, MDPanelHideToolbarSeparators());
-					panelHeight = if (dontShowSep) (minWidth * i2d(length(buttonsA))) else (minWidth * i2d(length(buttonsA))) + (i2d(length(buttonsA)) - 1.0);
-					// toolbar size is given in vertical orientation, as a panel
+				MDPanelToolbarButtons(buttonsA) : {
+					alignToolbar(i);
+					minWidth = extractStruct(p.style, MDPanelToolbarThickness(dockingItemHeight)).thickness;
+					panelHeight = minWidth * i2d(length(buttonsA));
+					// NOTE: Toolbar size is given in vertical orientation, as a panel
 					size = WidthHeight(minWidth, panelHeight);
 					next(state.size, replace(getValue(state.size), i , size));
 					next(state.dockedSize, replace(getValue(state.dockedSize), i , size));
 					next(state.mobileSize, replace(getValue(state.mobileSize), i , size));
-				}			
+				}
+				MDPanelToolbarCustom(__) : {
+					alignToolbar(i);
+					minWidth = extractStruct(p.style, MDPanelToolbarThickness(dockingItemHeight)).thickness;
+					getPanelSize(p, i, minWidth);
+				}	
 				// Content
-				MDPanelContent(mat): {
-					cWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[i], "w", JsonNull()), doubleMax);
-					cHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[i], "h", JsonNull()), doubleMax);
-					pWidth = if (cacheEnabled && (cWidth != doubleMax)) cWidth else p.size.width;
-					pHeight = if (cacheEnabled && (cHeight != doubleMax)) cHeight else p.size.height;
-
-					cDockedWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[i], "dockedW", JsonNull()), doubleMax);
-					cDockedHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[i], "dockedH", JsonNull()), doubleMax);
-					dockedWidth = if (cacheEnabled && (cDockedWidth != doubleMax)) cDockedWidth else p.size.width;
-					dockedHeight = if (cacheEnabled && (cDockedHeight != doubleMax)) cDockedHeight else p.size.height;
-
-					cMobileWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[i], "mobileW", JsonNull()), doubleMax);
-					cMobileHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanelA[i], "mobileH", JsonNull()), doubleMax);
-					mobileWidth = if (cacheEnabled && (cMobileWidth != doubleMax)) cMobileWidth else p.size.width;
-					mobileHeight = if (cacheEnabled && (cMobileHeight != doubleMax)) cMobileHeight else p.size.height;
-
-					next(state.size, replace(getValue(state.size), i , WidthHeight(pWidth, pHeight)));
-					next(state.mobileSize, replace(getValue(state.mobileSize), i , WidthHeight(mobileWidth, mobileHeight)));
-					next(state.dockedSize, replace(getValue(state.dockedSize), i , WidthHeight(dockedWidth, dockedHeight)));
+				MDPanelContent(__): {
+					getPanelSize(p, i, p.size.width);
 				}
 			};
 		});

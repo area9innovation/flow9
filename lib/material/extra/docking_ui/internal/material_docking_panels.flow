@@ -20,17 +20,18 @@ export {
 	);
 						
 	makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : DynamicBehaviour<[Point]>) -> Material;
-	makeDockedPanel(isColumn : bool, state : MDockingState, panelId : int, style : [MDockingStyle]) -> Material;
+	makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, panelId : int, style : [MDockingStyle]) -> Material;
 }
 
 
-makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool, isForcedHorizontal : bool, resizePressed : DynamicBehaviour<bool>, isHovering : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material {
+makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool, isVerticalToolbarMobile : bool, resizePressed : DynamicBehaviour<bool>, isHovering : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material {
 	manager = state.manager;
-	pstyle = getValue(state.panelStyle)[panelId];
 	panelContent = getValue(state.content)[panelId];
-	dontShowSep = contains(style, MDPanelHideToolbarSeparators());
 	dontResize  = contains(style, MDPanelDontResize());
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	pstyle = getValue(state.panelStyle)[panelId];
+	isToolbar = isDockingToolbar(state, panelId);
+	isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+
 	// Theme
 	darkTheme = contains(pstyle, MDPanelForceDarkTheme());
 	lightTheme = contains(pstyle, MDPanelForceLightTheme());
@@ -46,26 +47,27 @@ makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool
 			|> MBorderBottom(dockingRadius / 2.0)
 	);
 
-	content =
+	content = 
 		switch (panelContent : MDockingPanelContent) {
-			MDPanelToolbar(buttonsA): {
-				mapi(buttonsA, \i, btn : MDPanelToolbarItem -> {
-					click  = extractStruct(btn.style, MOnClick(nop)).click;
-					pad = 10.0;
-					minWidth = dockingItemHeight;
-					sep = if (dontShowSep) TEmpty() else MSeparator(!isForcedHorizontal);
-					buttonSep = if (i == length(buttonsA) - 1) TEmpty() else {if (dontShowSep) TEmpty() else sep}
-
-					ic = MCursor(FingerCursor(), MIcon(btn.icon, [MIconSize(dockingToolbarIconSize), FillOpacity(dockingToolbarIconOpacity)]));
-					button = MRawButton(ic, ic, ic, ic, "", [], [TOnClicked(click)]);
-
-					b = if (isForcedHorizontal) MCols2A(MCenterIn(button, TFillWY(minWidth)), buttonSep)
-							else MLines2(MCenterIn(button, TFillXH(minWidth)), buttonSep);
-
-					if (!isForcedHorizontal) MBorder(pad, 0.0, pad, 0.0, b) else MBorder(0.0, pad, 0.0, pad, b);
-
-
-				}) |> (\m -> if (isForcedHorizontal) MColsA(m) else MLines(m))
+			MDPanelToolbarButtons(buttonsA): {
+				mapi(buttonsA, \i, btn : Material -> {
+					minWidth = extractStruct(pstyle, MDPanelToolbarThickness(dockingItemHeight)).thickness;
+					MCenterIn(
+						btn, // |> (\m -> MFrame(0.0, 6.0, [MFill(MBlue(500)), FillOpacity(0.3)], m)), //debug 
+						TFixed(minWidth, minWidth)
+					)
+					// |> (\m -> MFrame(0.0, 6.0, [MFill(MOrange(300)), FillOpacity(0.2)], m)) //debug
+				}) |> (\m -> {
+					if (isEndAligned) {
+						if (isVerticalToolbarMobile) MAlignCenterEnd(MColsA(m)) else MAlignBottomEnd(MLines(m))
+					} else {
+						if (isVerticalToolbarMobile) MAlignCenterStart(MColsA(m)) else MAlignTopCenter(MLines(m))
+					}
+				})
+			}
+			MDPanelToolbarCustom(mat) : {
+				mat |> (\m -> if (isPanelFullSize(state, panelId)) m else {if (isEndAligned) MAlignCenterEnd(m) else MAlignCenterStart(m)}) 
+				// |> (\m -> MFrame(0.0, 6.0, [MFill(MPurple(400)), FillOpacity(0.2)], m)); //debug
 			}
 			MDPanelContent(mat) : mat;
 		};
@@ -76,38 +78,43 @@ makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool
 			if (dontResize || isToolbar) TEmpty() else resizeHandleMobile;
 		} else TEmpty()
 	])
-	|> (\f -> (MExplicitTheme(f, theme, [])));
+	|> (\m -> (MExplicitTheme(m, theme, [])));
 }
 
-makePanelTopBar(docked : bool, panelId: int, state : MDockingState, isColumn: bool, pTheme : bool) -> Material {
+makePanelTopBar(docked : bool, panelId: int, colA : [int], state : MDockingState, isColumn: bool, pTheme : bool) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
 	enabled = getValue(state.enabled)[panelId];
 	expanded = getValue(state.expanded)[panelId];
 	sideExpanded = getValue(state.sideExpanded)[panelId];
-	position = getValue(state.positions)[panelId];
 	title = getValue(state.title)[panelId];
 	minTitleEllipsisWidth = extractStruct(pstyle, MDPanelTitleEllipsis(120.0)).width;
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
-	// Size
-	size = if (docked) getValue(state.dockedSize)[panelId] else getValue(state.mobileSize)[panelId];
-	width = size.width;
-	height = size.height;
-	isForcedHorizontal = contains(pstyle, MDPanelForceHorizontalWhenMobile());
-	topBarSize = makeHSize(if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel, isColumn || !isToolbar);
+	dontMove = contains(pstyle, MDPanelDontMove());
+	// Order
+	isFirstPanel = panelId == firstElement(colA, intMax);
+	isLastPanel = panelId == lastElement(colA, intMax);
+	// Topbar
+	isToolbar = isDockingToolbar(state, panelId);
+	isCustomToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty()));
+	toolbarThickness = extractStruct(pstyle, MDPanelToolbarThickness(dockingItemHeight)).thickness;
+	isVerticalToolbarMobile = !contains(pstyle, MDPanelVerticalToolbarWhenMobile());
+	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
+	topBarSize = makeHSize(topBarH, isColumn || !isToolbar);
+	hideTopbar = contains(pstyle, MDPanelHideTopbar());
 	// Prop
 	disableButton = contains(pstyle, MDPanelShowCloseBtn());
 	disableExpander = contains(pstyle, MDPanelHideExpanderBtn());
-	// Colors
+	// Colorsm
 	barColorFn : MColor = topBarColorFn(pTheme, pstyle);
 	panelColorFn : MColor = panelBgColorFn(pTheme, pstyle);
-	titleColorFn : MColor = titleColorFn(pTheme, pstyle);
+	tColorFn : MColor = titleColorFn(pTheme, pstyle);
 	sepColorFn = separatorColorFn(pTheme, state.style);
+	toolbarSepColorFn = toolbarHandleColorFn(pTheme, state.style);
 
 	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), []);
 	getPanelIcon = \st : [MIconStyle] ->  {
 		icon = extractStruct(pstyle, MDPanelIcon("web_asset")).icon;
-		MIcon(icon, concat([titleColorFn], st));
+		MIcon(icon, concat([tColorFn], st));
 	}
 
 	makeIconToggleButton = \boolB : DynamicBehaviour<bool>,
@@ -115,9 +122,40 @@ makePanelTopBar(docked : bool, panelId: int, state : MDockingState, isColumn: bo
 		tooltipOn : string, tooltipOff :string,
 		iconSize: double, clickFn : () -> void,
 		iconColor : MColor, fill : double -> {
-			MSelect(boolB,\b -> if (b) MIconButton(iconOn, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\f -> addTooltip(tooltipOn, f))
-				else MIconButton(iconOff, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\f -> addTooltip(tooltipOff, f))
+			MSelect(boolB,\b -> if (b) MIconButton(iconOn, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\m -> addTooltip(tooltipOn, m))
+				else MIconButton(iconOff, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fill), MIconButtonBorder(1.0)], []) |> (\m -> addTooltip(tooltipOff, m))
 			) |> MCenterY
+	}
+
+	linedHandle = \enableHover : bool, rotate : bool ->  makeMDockingLinedHandle(rotate, docked, state, toolbarSepColorFn, panelId, colA, enableHover, false);
+
+	// Drag handle
+	r = dockingRadius;			
+	mobileDragHandle = \rotate : bool -> {
+		cursor = fif(fselect(manager.manager.dragging, FLift(\dr -> dr >= 0)), const(GrabbingCursor()), const(GrabCursor()));		
+		linedHandle(true, rotate) 
+		|> (\m -> 
+			if (dontMove) m else {
+				MSelect(state.mobileSize, \ms -> {
+					draggingShape = 
+						TRounded(r, r, r, r, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)],
+						if (isCustomToolbar) TFixed(toolbarThickness, toolbarThickness * 3.0) else
+							TFixed(
+								ms[panelId].width, 
+								if (getValue(getValue(state.expanded)[panelId])) ms[panelId].height else dockingBarHeightPanel
+							)
+						);						
+					dsRotated = draggingShape |> (\ds -> if (isToolbar && isVerticalToolbarMobile) TRotate90(ds) else ds);	
+					positionCorrection = if (isToolbar) zeroPoint else Point(-(ms[panelId].width / 2.0) + dockingTopBarHandleWidth, 0.0);
+					// Draggable handle
+					MDraggable(panelId, m, [
+						TDragShape(TTranslate(const(positionCorrection), dsRotated)),
+						TCursorShape(DynamicCursor(cursor))
+					])
+				})
+			}
+		)
+		|> (\m -> if (rotate) MCenterX(m) else MCenterY(m))
 	}
 
 	// Panel's buttons
@@ -127,7 +165,7 @@ makePanelTopBar(docked : bool, panelId: int, state : MDockingState, isColumn: bo
 		clickedB = make(false);
 		switch (btn) {
 			MDPanelCustomButton(ic, tt, clkFn, st) : {
-				btnColor = extractStruct(st, titleColorFn);
+				btnColor = extractStruct(st, tColorFn);
 				makeIconToggleButton(clickedB, ic, ic, tt, tt, dockingTopBarIconSize, clkFn, btnColor, 0.5);
 			}
 			default: MEmpty();
@@ -135,28 +173,24 @@ makePanelTopBar(docked : bool, panelId: int, state : MDockingState, isColumn: bo
 
 	});
 
-	// Handles
-	linedHandle = makeMDockingLinedHandle(isColumn, sepColorFn);
-
 	// TopBar Content
 	panelTopBarButtons = {
 		MBaselineColsA([
 			getPanelIcon([MIconSize(dockingTopBarIconSize), FillOpacity(dockingTitleOpacity)])
-				|> MBorderLeft(10.0)
+				|> MBorderStart(10.0)
 				|> MCenterY,
-			MEllipsisText(title, [titleColorFn, dockingTitleFont, MMinWidth(minTitleEllipsisWidth)]) 
-			|> MBorderLeft(10.0) 
-			|> MCenterY,
+			MEllipsisText(title, [tColorFn, dockingTitleFont, MMinWidth(minTitleEllipsisWidth)]) 
+				|> MBorderStart(10.0)
+				|> MCenterY,
 			TFillX(),
 			if (customButtons)
 				MBaselineColsA(panelButtonsA) |> MCenterY
 			else TEmpty(),
 			if (disableButton)
-				MCols2A(
-					TFixed(6.0, 0.0),
-					MIconButton("close", \ -> next(enabled, false), [MIconSize(dockingTopBarIconSize - 4.0), titleColorFn, MIconButtonBorder(1.0), FillOpacity(0.5)], [])
-						|> (\f -> addTooltip("hide panel", f)) |> MCenterY
-				)
+				MIconButton("close", \ -> next(enabled, false), [MIconSize(dockingTopBarIconSize - 4.0), tColorFn, MIconButtonBorder(1.0), FillOpacity(0.5)], [])
+					|> MBorderStart(6.0)
+					|> (\m -> addTooltip("hide panel", m))
+					|> MCenterY
 			else TEmpty(),
 			TFixed(4.0, 0.0),
 
@@ -174,72 +208,56 @@ makePanelTopBar(docked : bool, panelId: int, state : MDockingState, isColumn: bo
 						reverseBehaviour(expanded);
 						// next(state.dock, getValue(state.dock)); //force redraw (should be used for mobile)
 					},
-					titleColorFn,
+					tColorFn,
 					0.5
-				) |> showIf(isColumn),
-
-
+				) |> showIf(isColumn || !docked),
 			TFixed(8.0, 0.0)
 		])
+		|> (\m -> if (docked) m else MGroup2(m, mobileDragHandle(!isColumn)))
 	}
 
 	dockedTopBar = \isSideExpanded : bool  -> {
 		MAvailable(
 			MGroup([
 				// Topbar background
-				if (isToolbar) {
-					TRounded(dockingRadius, 0.0, 0.0, dockingRadius, [MFill(panelColorFn)], makeHSize(dockingBarHeightToolbar, isColumn))
-				} else {
-
+				if (isToolbar) MEmpty() else {
 					if (isColumn) {
 						if (isSideExpanded) {
 							MIfLazy(expanded,\e -> 
-								if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(barColorFn), FillOpacity(1.0)], TFillXH(dockingBarHeightPanel))
-									else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColorFn)], TFillXH(dockingBarHeightPanel))
-							) //|> showIf(!contains(pstyle, MDPanelDontShowTopbar()));
+								if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(barColorFn), FillOpacity(1.0)], TFillXH(topBarH))
+									else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColorFn)], TFillXH(topBarH))
+							)
 						} else {
-							TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColorFn)], TFillXH(dockingBarHeightPanel))
-								|> (\f -> addTooltip(title + " panel", f))
+							TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColorFn)], TFillXH(topBarH))
+								|> (\m -> addTooltip(title + " panel", m))
 						}
 
 					} else {				
-						TRectangle([MFill(barColorFn), /*FillOpacity(0.0)*/], TFillXH(dockingBarHeightPanel))
+						TRectangle([MFill(barColorFn), /*FillOpacity(0.0)*/], TFillXH(topBarH))
 					}
 				},
 				// Topbar content
-				if (isToolbar) {
-					MCenterIn(
-						linedHandle |> (\m -> if (isColumn) MOffset(0.0, 4.0, m) else MOffset(4.0, 0.0, m)), // tweak handle position for toolbar content
-						topBarSize
-					)
-					// |>(\m -> MGroup2(TRectangle([MFill(panelBgColorFn(pTheme, pstyle))], topBarSize) ,m))
-
-				} else {
-						if (isSideExpanded) panelTopBarButtons else {			
-							getPanelIcon([MIconSize(sideExpanderButtonSize), FillOpacity(0.3)]) |> MCenter
-						}
+				if (isToolbar) linedHandle(true, isColumn) else {
+					if (isSideExpanded) panelTopBarButtons else {			
+						getPanelIcon([MIconSize(sideExpanderButtonSize), FillOpacity(0.3)]) |> MCenter
+					}
 				}
 			]), topBarSize
-		);
+		) |> showIf(!hideTopbar);
 	};
 
 	mobileTopBar =
-		if (isToolbar) {
-			linedHandle 
-				|> (\f -> if (!isColumn) MCols2A(TFillX(), MCenterY(f)) else MLines2(TFillY(), MCenterX(f)))
-				|> (\m -> if (isColumn) MOffset(0.0, 4.0, m) else MOffset(4.0, 0.0, m)) // tweak handle position for toolbar content
-
-		} else {
+		if (isToolbar) mobileDragHandle(isColumn) else {
 			MAvailable(
 				MGroup([
-					MSelect(expanded,\e -> if (e) TRounded(dockingRadius, dockingRadius, 0.0, 0.0, [MFill(barColorFn)], TFillXY())
-						else TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(barColorFn)], TFillXY())	
+					MSelect(expanded,\e -> if (e) TRounded(r, r, 0.0, 0.0, [MFill(barColorFn)], TFillXY())
+						else TRounded(r, r, r, r, [MFill(barColorFn)], TFillXY())	
 					),
-					if (isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([])))
-						MCenterIn(linedHandle, TFillXH(dockingBarHeightPanel))
+					if (isSameStructType(getValue(state.content)[panelId], MDPanelToolbarButtons([])))
+						MCenterIn(linedHandle(false, isColumn), TFillXH(topBarH))
 					else panelTopBarButtons			
 				]),
-				TFillXH(dockingBarHeightPanel)
+				TFillXH(topBarH)
 			);
 		}
 
@@ -261,7 +279,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	expanded = getValue(state.expanded)[panelId];
 	position = getValue(state.positions)[panelId];
 	pstyle = getValue(state.panelStyle)[panelId];
-	isForcedHorizontal = contains(pstyle, MDPanelForceHorizontalWhenMobile());
+	isVerticalToolbarMobile = !contains(pstyle, MDPanelVerticalToolbarWhenMobile());
 	cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
 	// Theme
 	darkTheme = contains(pstyle, MDPanelForceDarkTheme());
@@ -271,9 +289,9 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	resizePressed = make(false);
 	isResizing = make(false);
 	isHovering = make(false);
-	dContent = makeDockingPanelContent(state, panelId, true, isForcedHorizontal, resizePressed, isHovering, pstyle);
+	dContent = makeDockingPanelContent(state, panelId, true, isVerticalToolbarMobile, resizePressed, isHovering, pstyle);
 
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	isToolbar = isDockingToolbar(state, panelId);
 	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
 
 	// Size
@@ -290,56 +308,45 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	mouseXyLocal = make(zeroPoint);
 	dragPressed = make(false);
 	tempWH = make(WidthHeight(width, height));
-	r = dockingRadius;
 
-	draggingShape = TSelect(state.mobileSize, \ms ->
-		if (getValue(getValue(state.expanded)[panelId])) {
-			TRounded(r, r, r, r, [MFill(dockingPrimaryColor /*panelBgColorFn(fgetValue(mobileTheme), pstyle)*/), FillOpacity(dockingMobileOpacity)], TFixed(ms[panelId].width, ms[panelId].height))
-		} else TRounded(r, r, r, r, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)], TFixed(ms[panelId].width, dockingBarHeightPanel))
-	) |> (\m -> if (isForcedHorizontal) TRotate90(m) else m);
-
-	makeResizablePanel = \c : Material, lg : bool -> {	
+	resizablePanel = \c : Material, lg : bool -> {	
+		addShadow = \m : Material -> {
+			MShadowShape(const(4.0), m, 
+				TropicShape(
+					TRounded4(dockingRadius, [MFill(panelBgColorFn(lg, pstyle))], TFillXY())
+				)
+			)
+		}
+		panelTopBar = makePanelTopBar(false, panelId, [], state, !isVerticalToolbarMobile, lg);
+		 
 		MConstruct([
 				makeSubscribe(isResizing, \rs -> {
 					if (!rs) {
 					// update mobile size
-					next(state.mobileSize, replace(getValue(state.mobileSize), panelId , getValue(tempWH))); //
+					next(state.mobileSize, replace(getValue(state.mobileSize), panelId , getValue(tempWH)));
 				}
 			})
 		],
 		MInteractive([TMouseXY(mouseXyLocal)],
-			// TODO: Toolbar item options
-
-			if(isToolbar) {
-				toolbarSize = TFixed(width, size.height + topBarH) |> (\m -> if (!isForcedHorizontal) m else TRotate90(m));
-				MAvailable(
+			if (isToolbar) {
+				toolbarSize = TFixed(width, size.height + topBarH) |> (\m -> if (!isVerticalToolbarMobile) m else TRotate90(m));
+				println("toolbarSize: "+ toString(width) + " x " + toString(size.height + topBarH));
 					[
-						makePanelTopBar(false, panelId, state, !isForcedHorizontal, lg),
-						MCenterIn(c, TFillXY())
+						panelTopBar,
+						c
 					]
-					|> (\f -> if (isForcedHorizontal) MCols(f) else MLines(f))
-					|> (\f -> 
-						MShadowShape(const(4.0), f, 
-							TropicShape(
-								TRounded4(dockingRadius, [MFill(panelBgColorFn(lg, pstyle))], TFillXY()),
-								
-							)
-						)
-					),
-					toolbarSize
-				)
+					|> (\m -> if (isVerticalToolbarMobile) MCols(m) else MLines(m))
+					|> addShadow
+					|> (\m -> MCopySize(m, \sz -> MAvailable(m,	sz), true)) // fix for zero-size fillers
+					|> (\m -> MAvailable(m,	toolbarSize))
 			} else {
 				MSelect(expanded,\e -> {
 					MAvailable(
 						MLines2(
-							makePanelTopBar(false, panelId, state, !isForcedHorizontal, lg),
+							panelTopBar,
 							if (e) c else TEmpty() 
-						) 
-						|> (\f -> 
-							MShadowShape(const(4.0), f, 
-								TropicShape(TRounded4(dockingRadius, [MFill(panelBgColorFn(lg, pstyle))], TFillXY()))
-							)
-						),
+						)
+						|> addShadow,
 						if (e) TSized(tempWH) else TSelect(tempWH, \wh ->  TFixed(wh.width, dockingBarHeightPanel)),
 					)
 				})	
@@ -347,20 +354,26 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 		))
 	}
 
-	makeMovablePanel = \lg -> 
-		MDraggable(panelId,
-			MSelect(manager.manager.dragging, \h -> {
-				d = MConstruct([
-					makeSubscribe(dragPressed, \p -> {
-						if (p) next(cursorPositionA, replace(getValue(cursorPositionA), panelId, getValue(mouseXyLocal)));
-					})],
-					makeResizablePanel(dContent, lg)
-				);
-				if (h == panelId) draggingShape else d;
-
-			})|> (\f-> MInteractive([TMouseDownGhost(dragPressed)],f)),
-			[]
-		);
+	movablePanel = \lg -> {
+		MConstruct([
+			makeSubscribe(dragPressed, \p -> {
+				if (p) next(cursorPositionA, replace(getValue(cursorPositionA), panelId, getValue(mouseXyLocal)));
+			})],
+			resizablePanel(dContent, lg)
+		)
+		|> (\m-> MInteractive([TMouseDownGhost(dragPressed)], m))
+		|> (\m->
+			MMovable(
+				m,
+				TFillXY(),
+				[
+					MMovableCustomCursor(MoveCursor()),
+					MMovableDontPassClicks(),
+					MMovablePosition(position)
+				]
+			)
+		)
+	}
 
 	MConstruct([
 		makeSubscribe2(isResizing, \rs -> { 
@@ -386,29 +399,31 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 		}),
 		makeSubscribe(mouseXyLocal, \mxy -> {
 			if (isCurrentMInteractionItemId(manager, itemId) && getValue(isResizing)) {
+				rtlCorrection = if (getDefaultRtl()) 1.0 else 1.0;
 				blockOtherMInteractionItemIds(manager, itemId);
 				nextDistinct(tempWH, WidthHeight(getValue(tempWH).width, max(minHeight, mxy.y)));
-				nextDistinct(tempWH, WidthHeight(max(minWidth, mxy.x), getValue(tempWH).height));
+				nextDistinct(tempWH, WidthHeight(max(minWidth, rtlCorrection * mxy.x), getValue(tempWH).height));
 			}
 		})
 	],	
 	MSelect2(dockA, mobileTheme, \d, lg -> {
 		if (d[panelId].areaId < 0) {
 			next(getValue(state.sideExpanded)[panelId], true);
-			MSelect(enabled, \e -> if (e) 
-				MTranslate(
-					const(getValue(position)), 
-					makeMovablePanel(lg)
-				) else TEmpty()
-			);
+			MShowLazy(enabled, \ -> movablePanel(lg));
 		} else MEmpty();	
-	}))
+	})) 
+	
 }
 
-makeDockedPanel(isColumn : bool, state : MDockingState, panelId : int, style : [MDockingStyle]) -> Material {
+makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, panelId : int, style : [MDockingStyle]) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
+	dontMove  = contains(pstyle, MDPanelDontMove());
+	isToolbar = isDockingToolbar(state, panelId);
+	isCustomToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty()));
+	toolbarThickness = extractStruct(pstyle, MDPanelToolbarThickness(dockingItemHeight)).thickness;
+	isVerticalToolbarMobile = !contains(pstyle, MDPanelVerticalToolbarWhenMobile());
+	isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
 
 	// Scroll
 	dontScroll  = contains(pstyle, MDPanelDontScroll());
@@ -421,6 +436,10 @@ makeDockedPanel(isColumn : bool, state : MDockingState, panelId : int, style : [
 	};
 	scrollTopLeft = extractStruct(style, MDPanelScrollInspectVisible(make(zeroPoint), makeWH())).scrollTopLeft;
 	scrollWidthHeight = extractStruct(style, MDPanelScrollInspectVisible(make(zeroPoint), makeWH())).scrollWidthHeight;
+	
+	// Order
+	isFirstPanel = panelId == firstElement(colA, intMax);
+	isLastPanel = panelId == lastElement(colA, intMax);
 
 	// Expanded
 	expanded = getValue(state.expanded)[panelId];
@@ -431,20 +450,15 @@ makeDockedPanel(isColumn : bool, state : MDockingState, panelId : int, style : [
 	darkTheme = contains(pstyle, MDPanelForceDarkTheme());
 	lightTheme = contains(pstyle, MDPanelForceLightTheme());
 	dockedTheme = if (darkTheme) const(false) else if (lightTheme) const(true) else manager.white;
-
-
-	// println("  -   -   -   -   -   -   -   -   - > DockedPanel " + i2s(panelId));
+	toolbarSepColorFn = toolbarHandleColorFn(fgetValue(dockedTheme), state.style);
 
 
 	// Panel's content
 	dContent = makeDockingPanelContent(state, panelId, false, !isColumn, make(false), make(false), pstyle);
 	dPanel = \lg : bool -> {
 		if (isToolbar) {
-			dContent 
-			|> (\f -> MGroup2(TFillXY(), f))
-			|> (\f -> MGroup2(TRounded(0.0, 0.0, dockingRadius, dockingRadius, [MFill(panelBgColorFn(lg, pstyle))], TFillXY()), f))  
+			dContent |> (\m -> MGroup2(TRectangle([MFill(panelBgColorFn(lg, pstyle))], TFillXY()), m))		
 		} else {
-			
 			MSelect(expanded, \e -> {	
 				pContent = if (dontScroll) {
 					MCropSize(TFillXY(), dContent)
@@ -463,69 +477,46 @@ makeDockedPanel(isColumn : bool, state : MDockingState, panelId : int, style : [
 				} else	pContent;
 
 			}) 
-			|> (\f -> MGroup2(TRounded(0.0, 0.0, dockingRadius, dockingRadius, [MFill(panelBgColorFn(lg, pstyle))], TFillXY()), f))  
+			|> (\m -> MGroup2(TRounded(0.0, 0.0, dockingRadius, dockingRadius, [MFill(panelBgColorFn(lg, pstyle))], TFillXY()), m))  
 			|> (\m -> if (!isColumn) m else MShowLazy(sideExpanded, \ -> m))
 		} 
 	}
 
 	MSelect(dockedTheme, \lg -> {
-		addRowTopBars = \f : Material -> [addDockedTopbar(isColumn, state, panelId, lg, style), f]
-			|> (\r -> if (isColumn) MLines(r) else {if (isToolbar) MCols(r) else MLines(r)});
-		dPanel(lg) 
-			|> addRowTopBars
+		[
+			makePanelTopBar(true, panelId, colA, state, isColumn, lg)	
+				|> (\m -> 
+					if (dontMove) m else {
+						MSelect(state.dockedSize, \ms -> {
+							r = dockingRadius;
+							cursor = fif(fselect(manager.manager.dragging, FLift(\dr -> dr >= 0)), const(GrabbingCursor()), const(GrabCursor()));
+							draggingShape = 
+								TRounded(r, r, r, r, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)],
+								if (isCustomToolbar) TFixed(toolbarThickness, toolbarThickness * 3.0) else
+									TFixed(
+										ms[panelId].width, 
+										if (getValue(getValue(state.expanded)[panelId])) ms[panelId].height else dockingBarHeightPanel
+									)
+								);
+							dsRotated = draggingShape |> (\ds -> if (isToolbar && isVerticalToolbarMobile) TRotate90(ds) else ds);	
+
+							// Draggable handle
+							MDraggable(panelId, m, [
+								TDragShape(TTranslate(const(zeroPoint), dsRotated)),
+								TCursorShape(DynamicCursor(cursor))
+							])
+						})
+					}
+				),
+			dPanel(lg),
+			makeMDockingLinedHandle(isColumn, true, state, toolbarSepColorFn, panelId, colA, false, true)
+				|> showIf(isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty())) && isPanelFullSize(state, panelId))
+		]
+		|> (\r -> {
+			if (isToolbar) {
+				if (isColumn) MLinesA(if (isEndAligned) reverseA(r) else r)
+					else MColsA(if (isEndAligned) reverseA(r) else r)
+			} else MLines(r)
+		});
 	})
-}
-
-
-addDockedTopbar(isColumn : bool, state : MDockingState, panelId : int, pTheme : bool, style : [MDockingStyle]) -> Material {
-	manager = state.manager;
-	pstyle = getValue(state.panelStyle)[panelId];
-	dontMove  = contains(pstyle, MDPanelDontMove());
-	isToolbar = isSameStructType(getValue(state.content)[panelId], MDPanelToolbar([]));
-	panelDockedSize = getValue(state.dockedSize)[panelId];
-	r = dockingRadius;
-	enabled = getValue(state.enabled)[panelId];
-
-
-	dheight = if (isColumn) panelDockedSize.height else panelDockedSize.width;
-	// dheight = if (isColumn) panelDockedSize.height else {
-	// 	if (isToolbar) panelDockedSize.height else panelDockedSize.width
-	// };
-	posCorrection = Point(0.0, 0.0);
-		// if (isColumn) Point(0.0, 0.0) else {
-		// 	dx = 4.0; 
-		// 	dy = (dheight / 2.0) - 12.0; 
-		// 	Point(dx, -dy);
-		// }
-
-	// Mobile size for dragging shape
-	mHeight = getValue(state.mobileSize)[panelId].height;
-	mWidth = getValue(state.mobileSize)[panelId].width;
-	panelSize = TFixed(mWidth, mHeight);
-
-	draggingShape = 
-		TRounded(dockingRadius, dockingRadius, dockingRadius, dockingRadius, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)], panelSize) 
-			|> (\m -> 
-				if (isToolbar) {
-					if (isColumn) m else TRotate90(m)
-				} else m
-			);
-
-	cursor = fif(fselect(manager.manager.dragging, FLift(\dr -> dr >= 0)), const(GrabbingCursor()), const(GrabCursor()));
-	// MSelect(theme, \lg -> {
-		// Test for removing top bar
-		// MTooltip(
-		// 	// MBorder4(12.0, MIcon("trip_origin", [MIconSize(dockingTopBarIconSize - 8.0), FillOpacity(0.9), titleColorFn(lg, [])])),
-		// 	MBorder4(12.0, MIcon("trip_origin", [MIconSize(dockingTopBarIconSize - 8.0), FillOpacity(0.9), MYellow(500)])),
-		// 	MText("Undock Panel", []),
-		// 	[]
-		// ) 	
-		makePanelTopBar(true, panelId, state, isColumn, pTheme) 
-			|> (\f -> if (dontMove) f else
-				MDraggable(panelId, f, [
-					TDragShape(TTranslate(const(posCorrection), draggingShape)),
-					TCursorShape(DynamicCursor(cursor))
-				])
-			)
-	// })
 }

@@ -37,20 +37,22 @@ export {
 	// For each set, what is the parent this set belongs to?
 	// If it points to itself, it is the root of a set.
 	UnionFindMap(
-		mutable parents : [ref int], 
-		mutable values : [ref ?], 
+		parents : ref [ref int], 
+		values : ref [ref ?], 
 		defaultValue : ?, 
-		mergeFn : (?, ?) -> ?
+		mergeFn : (?, ?) -> ?,
+		merging : ref bool,
+		pendingMerges : ref List<Pair<int, int>>
 	);
 }
 
 makeUnionFindMap(defaultValue : ?, mergeFn : (?, ?) -> ?) -> UnionFindMap<?> {
-	UnionFindMap([], [], defaultValue, mergeFn);
+	UnionFindMap(ref [], ref [], defaultValue, mergeFn, ref false, ref makeList());
 }
 
 findUnionMapRoot(u : UnionFindMap<?>, i : int) -> int {
 	unionEnsureMapCapacity(u, i);
-	pr : ref int = u.parents[i];
+	pr : ref int = ^(u.parents)[i];
 	p = ^pr;
 	if (p == i) i
 	else {
@@ -63,14 +65,14 @@ findUnionMapRoot(u : UnionFindMap<?>, i : int) -> int {
 
 getUnionMapValue(u : UnionFindMap<?>, i : int) -> ? {
 	root = findUnionMapRoot(u, i);
-	if (root < length(u.values)) {
-		^(u.values[root])
+	if (root < length(^(u.values))) {
+		^(^(u.values)[root])
 	} else u.defaultValue
 }
 
 setUnionMapValue(u : UnionFindMap<?>, i : int, value : ?) -> void {
 	root = findUnionMapRoot(u, i);
-	u.values[root] := value;
+	^(u.values)[root] := value;
 }
 
 unionUnionMap(u : UnionFindMap<?>, x : int, y : int) -> int {
@@ -78,35 +80,56 @@ unionUnionMap(u : UnionFindMap<?>, x : int, y : int) -> int {
 	yset = findUnionMapRoot(u, y);
 	if (xset == yset) {
 		xset;
-	} else if (x % 2 == 0) {
-		u.parents[xset] := yset;
-		u.values[yset] := u.mergeFn(^(u.values[xset]), ^(u.values[yset]));
-		u.values[xset] := u.defaultValue;
-		yset;
 	} else {
-		u.parents[yset] := xset;
-		u.values[xset] := u.mergeFn(^(u.values[xset]), ^(u.values[yset]));
-		u.values[yset] := u.defaultValue;
-		xset;
+		nparent = if (xset % 2 != yset % 2) xset else yset;
+		nchild  = if (xset % 2 != yset % 2) yset else xset;
+		if (^(u.merging)) {
+			u.pendingMerges := Cons(Pair(xset, yset), ^(u.pendingMerges));
+		} else {
+			xval = ^(^(u.values)[xset]);
+			yval = ^(^(u.values)[yset]);
+			u.merging := true;
+			nval = u.mergeFn(xval, yval);
+			u.merging := false;
+
+			^(u.parents)[nchild] := nparent;
+			^(u.values)[nparent] := nval;
+			^(u.values)[nchild] := u.defaultValue;
+
+			processPendingUnions(u);
+		}
+		nparent
+	}
+}
+
+processPendingUnions(u : UnionFindMap<?>) -> void {
+	pending = ^(u.pendingMerges);
+	if (!isEmptyList(pending)) {
+		u.pendingMerges := makeList();
+		iterList(pending, \p -> {
+			unionUnionMap(u, p.first, p.second);
+			{}
+		});
+		processPendingUnions(u);
 	}
 }
 
 unionEnsureMapCapacity(u : UnionFindMap<?>, i : int) -> void {
-	n = length(u.parents);
+	n = length(^(u.parents));
 	if (i >= n) {
 		// Be sure to at least double capacity
 		end = max(2 * n, i + 1);
-		newParents = concat(u.parents, generate(n, end, \j -> ref j));
+		newParents = concat(^(u.parents), generate(n, end, \j -> ref j));
 		// println([i, n, end, length(newParents)]);
-		u.parents ::= newParents;
+		u.parents := newParents;
 
-		newValues = concat(u.values, generate(n, end, \__ -> ref u.defaultValue));
-		u.values ::= newValues;
+		newValues = concat(^(u.values), generate(n, end, \__ -> ref u.defaultValue));
+		u.values := newValues;
 	}
 }
 
 getUnionMapRoots(u : UnionFindMap<?>) -> Set<int> {
-	foldi(u.parents, makeSet(), \i, acc, parent -> {
+	foldi(^(u.parents), makeSet(), \i, acc, parent -> {
 		if (i == ^parent) {
 			insertSet(acc, i)
 		} else acc;
@@ -116,7 +139,7 @@ getUnionMapRoots(u : UnionFindMap<?>) -> Set<int> {
 iterUnionMap(u : UnionFindMap<?>, fn : (int, ?) -> void) -> void {
 	roots = getUnionMapRoots(u);
 	iterSet(roots, \root -> {
-		val = ^(u.values[root]);
+		val = ^(^(u.values)[root]);
 		fn(root, val)
 	});
 }
@@ -124,9 +147,9 @@ iterUnionMap(u : UnionFindMap<?>, fn : (int, ?) -> void) -> void {
 mapUnionMap(u : UnionFindMap<?>, fn : (int, ?) -> ?) -> void {
 	roots = getUnionMapRoots(u);
 	iterSet(roots, \root -> {
-		val = ^(u.values[root]);
+		val = ^(^(u.values)[root]);
 		nval = fn(root, val);
-		u.values[root] := nval;
+		^(u.values)[root] := nval;
 	});
 }
 
@@ -135,10 +158,10 @@ findUnionMap(u : UnionFindMap<?>, fn : (int, ?) -> bool, def : int) -> int {
 }
 
 doFindUnionMap(u : UnionFindMap<?>, i : int, fn : (int, ?) -> bool, def : int) -> int {
-	if (i < length(u.parents)) {
-		root = ^(u.parents[i]);
+	if (i < length(^(u.parents))) {
+		root = ^(^(u.parents)[i]);
 		if (i == root) {
-			val = ^(u.values[root]);
+			val = ^(^(u.values)[root]);
 			hit = fn(i, val);
 			if (hit) {
 				i;

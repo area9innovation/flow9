@@ -950,48 +950,48 @@ class RenderSupport {
 		untyped __js__("element.removeEventListener(event, fn, { passive : false })");
 	}
 
+	public static function addPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.addEventListener(event, fn, { passive : true })");
+	}
+
+	public static function removePassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.removeEventListener(event, fn, { passive : true })");
+	}
+
+	public static var PreventDefault : Bool = true;
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
 			try {
-			// Prevent default drop focus on canvas
-			// Works incorrectly in Edge
-			// On iOS 14 preventing default on 'touchstart' leads to bug with trackpad : 'pointer*' events disapper
-			// 'mousedown' also shouldn`t be prevented, because inputs stop to focus in this case.
-			var doNotPreventDefault =
-				(Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1")
-				&& Platform.isIOS
-				&& Platform.browserMajorVersion >= 14
-				&& RendererType == 'html'
-				&& (e.type == 'touchstart' || e.type == 'mousedown');
+				// Prevent default drop focus on canvas
+				// Works incorrectly in Edge
+				// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
+				// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
+				if (PreventDefault) e.preventDefault();
 
-			if (!doNotPreventDefault) {
-				e.preventDefault();
-			}
+				if (e.touches != null) {
+					TouchPoints = e.touches;
+					emit("touchstart");
 
-			if (e.touches != null) {
-				TouchPoints = e.touches;
-				emit("touchstart");
+					if (e.touches.length == 1) {
+						MousePos.x = e.touches[0].pageX;
+						MousePos.y = e.touches[0].pageY;
 
-				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX;
-					MousePos.y = e.touches[0].pageY;
+						if (MouseUpReceived) emit("mousedown");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
 
-					if (MouseUpReceived) emit("mousedown");
-				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					if (e.which == 3 || e.button == 2) {
+						emit("mouserightdown");
+					} else if (e.which == 2 || e.button == 1) {
+						emit("mousemiddledown");
+					} else if (e.which == 1 || e.button == 0) {
+						if (MouseUpReceived) emit("mousedown");
+					}
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				if (e.which == 3 || e.button == 2) {
-					emit("mouserightdown");
-				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddledown");
-				} else if (e.which == 1 || e.button == 0) {
-					if (MouseUpReceived) emit("mousedown");
-				}
-			}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointerdown error : ");
 				untyped console.log(e);
@@ -1000,27 +1000,27 @@ class RenderSupport {
 
 		var onpointerup = function(e : Dynamic) {
 			try {
-			if (e.touches != null) {
-				TouchPoints = e.touches;
-				emit("touchend");
+				if (e.touches != null) {
+					TouchPoints = e.touches;
+					emit("touchend");
 
-				GesturesDetector.endPinch();
+					GesturesDetector.endPinch();
 
-				if (e.touches.length == 0) {
-					if (!MouseUpReceived) emit("mouseup");
+					if (e.touches.length == 0) {
+						if (!MouseUpReceived) emit("mouseup");
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						emit("mouserightup");
+					} else if (e.which == 2 || e.button == 1) {
+						emit("mousemiddleup");
+					} else if (e.which == 1 || e.button == 0) {
+						if (!MouseUpReceived) emit("mouseup");
+					}
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				if (e.which == 3 || e.button == 2) {
-					emit("mouserightup");
-				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddleup");
-				} else if (e.which == 1 || e.button == 0) {
-					if (!MouseUpReceived) emit("mouseup");
-				}
-			}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointerup error : ");
 				untyped console.log(e);
@@ -1029,26 +1029,26 @@ class RenderSupport {
 
 		var onpointermove = function(e : Dynamic) {
 			try {
-			if (e.touches != null) {
-				e.preventDefault();
+				if (e.touches != null) {
+					e.preventDefault();
 
-				TouchPoints = e.touches;
-				emit("touchmove");
+					TouchPoints = e.touches;
+					emit("touchmove");
 
-				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX;
-					MousePos.y = e.touches[0].pageY;
+					if (e.touches.length == 1) {
+						MousePos.x = e.touches[0].pageX;
+						MousePos.y = e.touches[0].pageY;
+
+						emit("mousemove");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
 
 					emit("mousemove");
-				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				emit("mousemove");
-			}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointermove error : ");
 				untyped console.log(e);
@@ -1057,9 +1057,9 @@ class RenderSupport {
 
 		var onpointerout = function(e : Dynamic) {
 			try {
-			if (e.relatedTarget == Browser.document.documentElement) {
-				if (!MouseUpReceived) emit("mouseup");
-			}
+				if (e.relatedTarget == Browser.document.documentElement) {
+					if (!MouseUpReceived) emit("mouseup");
+				}
 			} catch (e : Dynamic) {
 				untyped console.log("onpointerout error : ");
 				untyped console.log(e);
@@ -1072,13 +1072,6 @@ class RenderSupport {
 				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
 				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
 				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
-				// On iOS 14 swiping on touchscreen leads to bug with trackpad events : 'pointer*' become 'mouse*'
-				if ((Util.getParameter("touch_fix") == "1" || Util.getParameter("new") == "1") && Platform.isIOS && Platform.browserMajorVersion >= 14) {
-					addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
-					addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
-					addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
-					addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
-				}
 			}
 
 			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
@@ -1187,9 +1180,9 @@ class RenderSupport {
 			return false;
 		};
 
-		Browser.window.addEventListener(event_name, wheel_cb, false);
+		untyped __js__("window.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
 		if ( event_name == "DOMMouseScroll" ) {
-			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
+			untyped __js__("window.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
 		}
 	}
 
@@ -1468,7 +1461,7 @@ class RenderSupport {
 
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
-				if (RendererType == "html") {
+				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
 
@@ -1495,8 +1488,8 @@ class RenderSupport {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
 		if (accessWidget == null) {
-			if (AccessibilityEnabled || RendererType == "html") {
-				if (RendererType == "html") {
+			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
+				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
 
@@ -1975,7 +1968,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -2447,7 +2440,7 @@ class RenderSupport {
 	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else if (RenderSupport.RendererType != "html") {
+		} else if (RenderSupport.RendererType != "html" || !clip.isHTMLRenderer()) {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
@@ -2750,6 +2743,10 @@ class RenderSupport {
 		picture.switchUseCrossOrigin(useCrossOrigin);
 	}
 
+	public static function setPictureReferrerPolicy(picture : FlowSprite, referrerpolicy : String) : Void {
+		picture.setPictureReferrerPolicy(referrerpolicy);
+	}
+
 	public static function parseXml(xmlString) {
 		var doc;
 		if (untyped __js__('window.ActiveXObject')) {
@@ -2841,7 +2838,7 @@ class RenderSupport {
 			return;
 		}
 
-		if (RendererType == "html") {
+		if (clip.isHTMLRenderer()) {
 			untyped clip.filterPadding = 0.0;
 			var filterCount = 0;
 
