@@ -595,6 +595,11 @@ class RenderSupport {
 
 		createPixiRenderer();
 
+		// Workaround to catch wheel events from trackpad on iPad in Safari
+		if (Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1")) {
+			appendScrollCatcher();
+		}
+
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
 		initBrowserWindowEventListeners();
@@ -611,6 +616,19 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+	}
+
+	private static function appendScrollCatcher() {
+		var catcherWrapper = Browser.document.createElement("div");
+		catcherWrapper.style.width = '100%';
+		catcherWrapper.style.height = '100%';
+		catcherWrapper.style.overflow = 'scroll';
+		var catcher = Browser.document.createElement("div");
+		catcher.style.position = 'relative';
+		catcher.style.height = 'calc(100% + 1px)';
+
+		catcherWrapper.appendChild(catcher);
+		Browser.document.body.appendChild(catcherWrapper);
 	}
 
 	private static function appendDebugClip() {
@@ -2673,6 +2691,10 @@ class RenderSupport {
 		graphics.clear();
 	}
 
+	public static function useSvg(graphics : FlowGraphics) : Void {
+		graphics.useSvg();
+	}
+
 	public static function setLineStyle(graphics : FlowGraphics, width : Float, color : Int, opacity : Float) : Void {
 		graphics.lineStyle(width, removeAlphaChannel(color), opacity);
 	}
@@ -2737,6 +2759,10 @@ class RenderSupport {
 
 	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
 		picture.switchUseCrossOrigin(useCrossOrigin);
+	}
+
+	public static function setPictureReferrerPolicy(picture : FlowSprite, referrerpolicy : String) : Void {
+		picture.setPictureReferrerPolicy(referrerpolicy);
 	}
 
 	public static function parseXml(xmlString) {
