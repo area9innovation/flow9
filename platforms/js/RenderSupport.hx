@@ -1181,15 +1181,17 @@ class RenderSupport {
 				if (event.deltaMode == 1) {	// delta in LINE units
 					pX *= LINE_HEIGHT;
 					pY *= LINE_HEIGHT;
-				} else { // delta in PAGE units
+				} else if (event.deltaMode == 2) { // delta in PAGE units
 					pX *= PAGE_HEIGHT;
 					pY *= PAGE_HEIGHT;
 				}
 			}
 
 			// Fall-back if spin cannot be determined
-			if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
-			if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+			if (!(Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1"))) {
+				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
+				if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+			}
 
 			if (event.shiftKey != null && event.shiftKey && sX == 0.0) {
 				sX = sY;
