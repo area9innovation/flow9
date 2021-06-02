@@ -62,7 +62,12 @@ class RenderSupport {
 	public static var DebugClip = null;
 
 	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
-		if (DebugClip != null) DebugClip.innerText += ('\n' + text + " " + text2);
+		if (DebugClip != null) {
+			var innertext = DebugClip.innerText;
+			var newText = "";
+			untyped __js__("newText = innertext.split('\\n').slice(-40).join('\\n')");
+			DebugClip.innerText = newText + ('\n' + text + " " + text2);
+		};
 	}
 
 	private static var RenderSupportInitialised : Bool = init();
