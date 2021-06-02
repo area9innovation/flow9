@@ -51,7 +51,7 @@ export {
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTab,
-		CalendarScrolls, CalendarPlannedHideDeleteButton;
+		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -133,6 +133,8 @@ export {
 		);
 		CalendarScrolls(enable : bool);
 		CalendarPlannedHideDeleteButton();
+		// Check if event is read only
+		CalendarReadOnlyEvent(isReadOnly : (CalendarEvent) -> Transform<bool>);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -868,6 +870,7 @@ dayEventsPopup(
 	closePopupAfterAdditionalAction = containsStruct(styles, CloseDayPopupAfterAdditionalAction());
 	isReadOnly = fgetValue(extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB);
 	customPopupM = tryExtractStruct(styles, CalendarEventsPopup(nop3));
+	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 
 	close = make(false);
 	dayEvents = make(dayEventsStatic);
@@ -1061,41 +1064,47 @@ dayEventsPopup(
 	}
 
 	makeEditButton = \event : CalendarEvent, eventType : CalendarEventDecription -> {
-		MCenterYIn(
-			MIconButton("mode_edit",
-				\-> {
-					eventType.editAction(event.id);
-					next(close, true);
-				},
-				[MGrey(700), MIconSize(22.)],
-				[]
-			),
-			editButtonBox
-		)
+		MIf(isReadOnlyEvent(event),
+			MEmpty(),
+			MCenterYIn(
+				MIconButton("mode_edit",
+					\-> {
+						eventType.editAction(event.id);
+						next(close, true);
+					},
+					[MGrey(700), MIconSize(22.)],
+					[]
+				),
+				editButtonBox
+			)
+		);
 	}
 
 	makeDeleteButton = \event : CalendarEvent, eventType : CalendarEventDecription -> {
-		MCenterYIn(
-			MIconButton("delete",
-				\-> {
-					popupClose = make(false);
-					ShowMDialog(manager, popupClose, [],
-						eventDeletePopup(
-							\-> next(popupClose, true),
-							\-> {
-								next(popupClose, true);
-								evIndexInDay = either(findi(getValue(dayEvents), \p -> p.id == event.id), -1);
-								if (evIndexInDay != -1) next(dayEvents, removeIndex(getValue(dayEvents), evIndexInDay));
-								eventType.deleteAction(event.id);
-							}
-						)
-					);
-				},
-				[MGrey(700), MIconSize(22.)],
-				[]
-			),
-			deleteButtonBox
-		)
+		MIf(isReadOnlyEvent(event),
+			MEmpty(),
+			MCenterYIn(
+				MIconButton("delete",
+					\-> {
+						popupClose = make(false);
+						ShowMDialog(manager, popupClose, [],
+							eventDeletePopup(
+								\-> next(popupClose, true),
+								\-> {
+									next(popupClose, true);
+									evIndexInDay = either(findi(getValue(dayEvents), \p -> p.id == event.id), -1);
+									if (evIndexInDay != -1) next(dayEvents, removeIndex(getValue(dayEvents), evIndexInDay));
+									eventType.deleteAction(event.id);
+								}
+							)
+						);
+					},
+					[MGrey(700), MIconSize(22.)],
+					[]
+				),
+				deleteButtonBox
+			)
+		);
 	}
 
 	makeAvatar = \eventType : CalendarEventDecription -> {
@@ -1265,6 +1274,7 @@ MonthTable(
 	hideTimeInfo = contains(styles, HideTimeInfo());
 	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
+	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> MCenterIn(MText(dayName, []), MFillXH(58.0)))).getView;
 	otherMonthViewM = tryExtractStruct(styles, CalendarMonthFillEmpty(\__, __, __ -> MEmpty()));
@@ -1361,7 +1371,7 @@ MonthTable(
 
 			isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
 			MComponent(
-				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fand(fnot(isReadOnlyB), isEditActionNotEmptyB))],
+				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fand(fnot(isReadOnlyEvent(item)), fand(fnot(isReadOnlyB), isEditActionNotEmptyB)))],
 				\__ -> {
 					MSelect(eventTypeB, \eventType -> {
 						getEventView(MonthTab(), item, eventType, dayDate, 1, getDefaultView) |> MFixWidth(getDefaultView(item))
@@ -1756,6 +1766,7 @@ RangeView(
 ) -> CalendarTabView {
 	gridWidth = 1.0;
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
+	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 
@@ -1873,7 +1884,7 @@ RangeView(
 
 		isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
 		MComponent(
-			[MOnClick(\ -> fgetValue(eventTypeB).editAction(event.id)), MEnabled(fand(fnot(isReadOnlyB), isEditActionNotEmptyB))],
+			[MOnClick(\ -> fgetValue(eventTypeB).editAction(event.id)), MEnabled(fand(fnot(isReadOnlyEvent(event)), fand(fnot(isReadOnlyB), isEditActionNotEmptyB)))],
 			\__ -> {
 				MSelect(eventTypeB, \eventType -> {
 					eventCells = getEventCells(eventType);
@@ -1985,6 +1996,7 @@ PlannedEventsTable(
 	littleFont = MBody();
 	calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
+	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	printButtonStyleM = maybeMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> p.style);
 	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event, __ -> {
 		eventName = if (event.title != "") event.title else event.eventType;
@@ -2116,10 +2128,10 @@ PlannedEventsTable(
 		startTimeM = createTimeLabel(times.first);
 		endTimeM = createTimeLabel(times.second);
 
-		isEditActionNotEmpty = eventType.editAction != nop1;
 		isSelectedB = fand(feq(currentLine, number), fnot(isPrintingB));
+		enabledB = if (eventType.editAction == nop1) const(false) else fand(fnot(isReadOnlyEvent(event)), fnot(isReadOnlyB));
 		MComponent(
-			[MOnClick(\ -> nextDistinct(currentLine, number)), MEnabled(fand(fnot(isReadOnlyB), const(isEditActionNotEmpty)))],
+			[MOnClick(\ -> nextDistinct(currentLine, number)), MEnabled(enabledB)],
 			\__ -> MGroup([
 				MGroup2(
 					MSelect(isSelectedB, \isSelected ->
@@ -2524,6 +2536,7 @@ getCalendarDayView(
 ) -> CalendarTabView {
 	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
+	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	needContentViewFrame = extractStruct(
 		styles, CalendarDayCustomTab(\__, __ -> MEmpty(), true)
 	).needContentViewFrame;
@@ -2552,9 +2565,9 @@ getCalendarDayView(
 			);
 		}
 
-		isEditActionNotEmpty = dayEvent.type.editAction != nop1;
+		enabledB = if (dayEvent.type.editAction == nop1) const(false) else fand(fnot(isReadOnlyEvent(dayEvent.event)), fnot(isReadOnlyB));
 		eventViewM = MComponent(
-			[MOnClick(\ -> dayEvent.type.editAction(dayEvent.event.id)), MEnabled(fand(fnot(isReadOnlyB), const(isEditActionNotEmpty)))],
+			[MOnClick(\ -> dayEvent.type.editAction(dayEvent.event.id)), MEnabled(enabledB)],
 			\__ -> getEventView(DayTab(), dayEvent.event, dayEvent.type, date, 1, getDefaultView)
 		);
 
