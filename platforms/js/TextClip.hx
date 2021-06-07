@@ -1040,6 +1040,9 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
 		nativeWidget.addEventListener('contextmenu', onContextMenu);
+		if (Platform.isIOS) {
+			nativeWidget.addEventListener('select', onSelect);
+		}
 
 		invalidateStyle();
 	}
@@ -1336,10 +1339,17 @@ class TextClip extends NativeWidgetClip {
 		if (this.preventContextMenu) e.preventDefault();
 	}
 
+	public function onSelect(e) {
+		emit("selectall");
+	}
 
 	public function onSelectionChange() {
 		if (isFocused) {
 			checkPositionSelection();
+
+			if (getCursorPosition() != getSelectionEnd()) {
+				emit("selectionchange");
+			}
 		}
 	}
 
