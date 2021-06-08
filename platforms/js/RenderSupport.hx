@@ -3292,7 +3292,7 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			render();
+			forceRender();
 
 			return img;
 		} catch(e : Dynamic) {
@@ -3301,7 +3301,7 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			render();
+			forceRender();
 
 			return 'error';
 		}
