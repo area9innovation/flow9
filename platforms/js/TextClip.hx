@@ -169,6 +169,7 @@ class TextClip extends NativeWidgetClip {
 	private var needBaseline : Bool = true;
 
 	private var doNotRemap : Bool = false;
+	private var preventSelectEvent : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1341,15 +1342,17 @@ class TextClip extends NativeWidgetClip {
 
 	public function onSelect(e) {
 		emit("selectall");
+		preventSelectEvent = true;
 	}
 
 	public function onSelectionChange() {
 		if (isFocused) {
 			checkPositionSelection();
 
-			if (getCursorPosition() != getSelectionEnd()) {
+			if (!preventSelectEvent && getCursorPosition() != getSelectionEnd()) {
 				emit("selectionchange");
 			}
+			preventSelectEvent = false;
 		}
 	}
 
