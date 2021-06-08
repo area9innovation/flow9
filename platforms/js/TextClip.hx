@@ -1486,6 +1486,20 @@ class TextClip extends NativeWidgetClip {
 		return function() { TextInputKeyUpFilters.remove(filter); }
 	}
 
+	public function addOnCopyEventListener(fn : (String -> Void) -> Void) : Void -> Void {
+		var onCopy = function(e) {
+			var setClipboardData = function(newText) {
+				e.preventDefault();
+				untyped e.clipboardData.setData('text/plain', newText);
+			}
+			fn(setClipboardData);
+		}
+		if (nativeWidget) nativeWidget.addEventListener('copy', onCopy);
+		return function() {
+			if (nativeWidget) nativeWidget.removeEventListener('copy', onCopy);
+		}
+	}
+
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {

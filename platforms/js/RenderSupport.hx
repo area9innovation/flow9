@@ -1924,6 +1924,10 @@ class RenderSupport {
 			return clip.addTextInputKeyUpEventFilter(filter);
 	}
 
+	public static function addTextInputOnCopyEvent(clip : TextClip, fn : (String -> Void) -> Void) : Void -> Void {
+		return clip.addOnCopyEventListener(fn);
+	}
+
 	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.addChild(child);
 	}
