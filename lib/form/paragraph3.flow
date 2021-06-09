@@ -90,7 +90,7 @@ ParaWord(
 );
 
 ParaWordWidth(rigidWidth : double, softWidth : double, finalRigidWidthDelta : double, finalSoftWidthDelta : double);
-ParaWordGroup(words : [ParaWord], width : ParaWordWidth);
+ParaWordGroup(words : [ParaWord], width : ref ParaWordWidth);
 
 ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double);
@@ -196,7 +196,7 @@ getWordForm = \word1 -> {
 
 defaultFontSizeStyle = FontSize(14.0);
 zeroParaWordWidth = ParaWordWidth(0.0, 0.0, 0.0, 0.0);
-emptyParaWordGroup = ParaWordGroup([], zeroParaWordWidth);
+emptyParaWordGroup = ParaWordGroup([], ref zeroParaWordWidth);
 paraLinePartFRemake = isUrlParameterTrue("plpf");
 paraLinePartFRemakeD = b2d(paraLinePartFRemake);
 
@@ -291,7 +291,7 @@ renderParagraphEx(
 	));
 
 	keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isParagraphMarked && i <= 1);
-	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), addParaWordWidth(group.width, getParaWordWidth(word, group.words==[])));
+	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), ref zeroParaWordWidth);
 
 	getWordGhostedForm = \word1 -> {
 		g = word1.ghosted;
@@ -368,6 +368,36 @@ renderParagraphEx(
 		})
 	));
 
+	// TODO use lists instead.
+	wordGroups = foldi(words, [], \i, acc : [ParaWordGroup], word -> {
+		form = getWordGhostedForm(word);
+		group = lastElement(acc, emptyParaWordGroup);
+		lastSpace = switch(lastElement(group.words, ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None())).word) {
+			Space(__): true;
+			default: false;
+		};
+
+		if (switch (word.word) {
+			NewLine(): true;
+			Space(__): false;
+			LinePart(__, __, __): lastSpace;
+			default: {
+				f = getWordForm(word);
+				// it is no use to make line with zero-width content, so we continue counting if the width is 0
+				// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
+				// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+				if (keepFormTogetherOrWithMark(f, i) || 0.0 == (^(group.width).rigidWidth) + (^(group.width).softWidth) + ((^(group.width).finalRigidWidthDelta) + (^(group.width).finalSoftWidthDelta))*paraLinePartFRemakeD) {
+					lastSpace;
+				} else {
+					true
+				}
+			};
+		})
+			arrayPush(acc, addWordToGroup(emptyParaWordGroup, setWordForm(word, form)))
+		else
+			arrayPush(take(acc, length(acc)-1), addWordToGroup(group, setWordForm(word, form)))
+	});
+
 	Constructor(
 		Inspect(
 			[AvailableWidth2(aw)],
@@ -379,39 +409,14 @@ renderParagraphEx(
 		),
 		\ -> {
 			updateFn = \wi-> {
-				// TODO use lists instead.
-				wordGroups = foldi(words, Pair([], false), \i, acc : Pair<[ParaWordGroup]>, word -> {
-					form = getWordGhostedForm(word);
-					group = lastElement(acc.first, emptyParaWordGroup);
-					makeGroup_wasSpaceP = switch (word.word) {
-						NewLine(): Pair(true, false);
-						Space(__): Pair(false, true);
-						LinePart(__, __, __): Pair(true, false);
-						default: {
-							f = getWordForm(word);
-							// it is no use to make line with zero-width content, so we continue counting if the width is 0
-							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
-							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-							Pair(
-								if (keepFormTogetherOrWithMark(f, i) || 0.0 == group.width.rigidWidth + group.width.softWidth + (group.width.finalRigidWidthDelta + group.width.finalSoftWidthDelta)*paraLinePartFRemakeD) {
-									false;
-								} else {
-									true
-								},
-								false
-							)
-						};
-					}
-					Pair(
-						if (makeGroup_wasSpaceP.first || acc.second) arrayPush(acc.first, addWordToGroup(emptyParaWordGroup, setWordForm(word, form)))
-						else arrayPush(take(acc.first, length(acc.first)-1), addWordToGroup(group, setWordForm(word, form))),
-						makeGroup_wasSpaceP.second
-					)
-				}).first;
-
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
+				iter(wordGroups, \wg ->
+					wg.width := foldi(wg.words, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
+						addParaWordWidth(acc, getParaWordWidth(pw, i==0))
+					)
+				);
 				infos = getParaLineInfos(
 					alignment,
 					wordGroups,
@@ -471,12 +476,12 @@ getParaLineInfos(
 			tail(wordGroups),
 			wordGroups[0],
 			\maxGroup : ParaWordGroup, group : ParaWordGroup -> {
-				width = getParaWordWidthValue(group.width, 1.0);
-				if (width > getParaWordWidthValue(maxGroup.width, 1.0)) group else maxGroup
+				width = getParaWordWidthValue(^(group.width), 1.0);
+				if (width > getParaWordWidthValue(^(maxGroup.width), 1.0)) group else maxGroup
 			}
 		);
-		if (getParaWordWidthValue(maxWidthGroup.width, 1.0) > availableWidth) {
-			(availableWidth - maxWidthGroup.width.rigidWidth - paraLinePartFRemakeD*maxWidthGroup.width.finalRigidWidthDelta) / (maxWidthGroup.width.softWidth + paraLinePartFRemakeD*maxWidthGroup.width.finalSoftWidthDelta)
+		if (getParaWordWidthValue(^(maxWidthGroup.width), 1.0) > availableWidth) {
+			(availableWidth - (^(maxWidthGroup.width).rigidWidth) - paraLinePartFRemakeD*(^(maxWidthGroup.width).finalRigidWidthDelta)) / ((^(maxWidthGroup.width).softWidth) + paraLinePartFRemakeD*(^(maxWidthGroup.width).finalSoftWidthDelta))
 		} else 1.0
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
@@ -831,13 +836,13 @@ reflowParaWords2(
 		wordWidth = getParaWordWidth(word, paraLinePartFRemake);
 		detachWord(word, false);
 		restGroups = tail(wordGroups);
-		restFinalDeltaOrg = if (length(group.words) > 1 && paraLinePartFRemake) group.width else zeroParaWordWidth;
+		restFinalDeltaOrg = if (length(group.words) > 1 && paraLinePartFRemake) ^(group.width) else zeroParaWordWidth;
 		restGroup = ParaWordGroup(
 			tail(group.words),
-			ParaWordWidth(group.width.rigidWidth - wordWidth.rigidWidth, group.width.softWidth - wordWidth.softWidth, restFinalDeltaOrg.finalRigidWidthDelta, restFinalDeltaOrg.finalSoftWidthDelta)
+			ref ParaWordWidth((^(group.width)).rigidWidth - wordWidth.rigidWidth, (^(group.width).softWidth) - wordWidth.softWidth, restFinalDeltaOrg.finalRigidWidthDelta, restFinalDeltaOrg.finalSoftWidthDelta)
 		);
 		rest = if(restGroup.words == []) restGroups else concat([restGroup], restGroups);
-		groupWidth = getParaWordWidthValue(group.width, textScale);
+		groupWidth = getParaWordWidthValue(^(group.width), textScale);
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
 				reflowParaWords2(
