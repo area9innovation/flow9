@@ -753,6 +753,7 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 
 FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
 	filtermap(style, \s -> switch (s) {
+		Underlined(__) : None();
 		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
 		default : None()
 	})
@@ -951,7 +952,7 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 				maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
 			});
 
-			if (isUrlParameterTrue("new") && contains(style, UseSvg())) {
+			if (contains(style, UseSvg()) && !isUrlParameterFalse("useSvg")) {
 				useSvg(clip);
 			}
 
@@ -1075,24 +1076,7 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	eitherFn(
 		tryExtractStruct(style, Underlined([])),
 		\undr -> {
-			uStyle = undr.style;
-			wd = getTextFieldWidth(textfield);
-			hgt = getTextFieldHeight(textfield) - 1.;
-
-			urr =
-				renderFGraphics(
-					const([
-						MoveTo(0., hgt),
-						LineTo(wd, hgt),
-					]),
-					const(
-						if (uStyle != [])
-							uStyle
-						else
-							[Stroke(extractStruct(style, Fill(0x000000)).color)]
-					)
-				);
-
+			urr = renderUnderline(textfield, undr, StartAlign(), None(), style);
 			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), [FClipMask()])
 		},
 		\ ->
@@ -1252,7 +1236,64 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		makeSubscribe2(text, \__ -> updateMetricsFn())()
 	);
 
-	FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities)
+	result = FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities);
+
+	eitherMap(
+		tryExtractStruct(style, Underlined([])),
+		\undr -> {
+			urr = renderUnderline(textfield, undr, extractCommonAlignment(style), tryExtractStruct(style, ParagraphWidth(const(-1.))), charStyle);
+			FRenderResult(
+				concat(result.clips, urr.clips),
+				concat(result.disposers, urr.disposers),
+				concat(result.capabilities, urr.capabilities)
+			)
+		},
+		result
+	)
+}
+
+renderUnderline(
+	textfield : native,
+	underlined : Underlined,
+	align : CommonAlignment,
+	paragraphWidth : Maybe<ParagraphWidth>,
+	style : [FTextStyle]) -> FRenderResult {
+
+	renderFGraphics(
+		eitherFn(
+			paragraphWidth,
+			\parWd ->
+				fselect(parWd.width, FLift(\pwd -> {
+					wd = getTextFieldWidth(textfield);
+					hgt = getTextFieldHeight(textfield) - 1.;
+
+					left = max(0.,
+						if (align == RightAlign()) pwd - wd
+						else if (align == CenterAlign()) (pwd - wd) / 2.
+						else 0.
+					);
+
+					[
+						MoveTo(left, hgt),
+						LineTo(left + wd, hgt),
+					]
+				})),
+			\ -> {
+				wd = getTextFieldWidth(textfield);
+				hgt = getTextFieldHeight(textfield) - 1.;
+				const([
+					MoveTo(0., hgt),
+					LineTo(wd, hgt),
+				])
+			}
+		),
+		const(
+			if (underlined.style != [])
+				underlined.style
+			else
+				[Stroke(extractStruct(style, Fill(0x000000)).color)]
+		)
+	);
 }
 
 renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void {

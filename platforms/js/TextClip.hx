@@ -169,6 +169,7 @@ class TextClip extends NativeWidgetClip {
 	private var needBaseline : Bool = true;
 
 	private var doNotRemap : Bool = false;
+	private var preventSelectEvent : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1040,6 +1041,9 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
 		nativeWidget.addEventListener('contextmenu', onContextMenu);
+		if (Platform.isIOS) {
+			nativeWidget.addEventListener('select', onSelect);
+		}
 
 		invalidateStyle();
 	}
@@ -1336,10 +1340,19 @@ class TextClip extends NativeWidgetClip {
 		if (this.preventContextMenu) e.preventDefault();
 	}
 
+	public function onSelect(e) {
+		emit("selectall");
+		preventSelectEvent = true;
+	}
 
 	public function onSelectionChange() {
 		if (isFocused) {
 			checkPositionSelection();
+
+			if (!preventSelectEvent && getCursorPosition() != getSelectionEnd()) {
+				emit("selectionchange");
+			}
+			preventSelectEvent = false;
 		}
 	}
 
@@ -1471,6 +1484,20 @@ class TextClip extends NativeWidgetClip {
 	public function addTextInputKeyUpEventFilter(filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		TextInputKeyUpFilters.push(filter);
 		return function() { TextInputKeyUpFilters.remove(filter); }
+	}
+
+	public function addOnCopyEventListener(fn : (String -> Void) -> Void) : Void -> Void {
+		var onCopy = function(e) {
+			var setClipboardData = function(newText) {
+				e.preventDefault();
+				untyped e.clipboardData.setData('text/plain', newText);
+			}
+			fn(setClipboardData);
+		}
+		if (nativeWidget) nativeWidget.addEventListener('copy', onCopy);
+		return function() {
+			if (nativeWidget) nativeWidget.removeEventListener('copy', onCopy);
+		}
 	}
 
 	private function updateTextMetrics() : Void {

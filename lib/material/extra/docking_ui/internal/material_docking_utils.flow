@@ -61,12 +61,12 @@ export {
 }
 
 isPanelFullSize(state : MDockingState, panelId : int) -> bool {
-	getValue(state.dockedSize)[panelId].height == -1.0
+	pstyle = getValue(state.panelStyle)[panelId];
+	contains(pstyle, MDToolbarFullSizeFixed());
 }
 
 isDockingToolbar(state : MDockingState, panelId : int) -> bool {
-	isSameStructType(getValue(state.content)[panelId], MDPanelToolbarButtons([])) ||
-	isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty()))
+	isSameStructType(getValue(state.content)[panelId], MDToolbarContent([]))
 }
 
 containsDockingToolbar(state : MDockingState, colA : [int]) -> bool {
@@ -74,7 +74,7 @@ containsDockingToolbar(state : MDockingState, colA : [int]) -> bool {
 }
 
 containsDockingToolbarButtons(state : MDockingState, colA : [int]) -> bool {
-	fold(colA, false, \acc, pId -> acc || isSameStructType(getValue(state.content)[pId], MDPanelToolbarButtons([])))
+	fold(colA, false, \acc, pId -> acc || isSameStructType(getValue(state.content)[pId], MDToolbarContent([])))
 }
 
 
@@ -154,7 +154,7 @@ dockingState2json(state : MDockingState) -> Json {
 				dockedSize = getValue(state.dockedSize)[panelId];
 				pos = getValue(getValue(state.positions)[panelId]);
 				pstyle = getValue(state.panelStyle)[panelId];
-				isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+				isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
 
 
 				Pair(i2s(panelId),
@@ -211,7 +211,7 @@ makeFillPanelSubscriber(
 
 	dontSideExpandPanel = fold(colA, false, \acc, p -> acc || 
 		contains(getValue(state.panelStyle)[p], MDPanelHideSideExpander()) ||
-		isSameStructType(getValue(state.content)[p], MDPanelToolbarButtons([]))
+		isSameStructType(getValue(state.content)[p], MDToolbarContent([]))
 	);
 	showSideExpanderBtn = isColumn && !contains(style, MDAreaHideSideExpander()) && !dontSideExpandPanel;
 	
@@ -283,7 +283,8 @@ calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool,
 	isToolbar = isDockingToolbar(state, pId);
 	pstyle = getValue(state.panelStyle)[pId];
 	dontMove  = contains(pstyle, MDPanelDontMove());
-	topBarH = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else dockingBarHeightPanel;
+	hideTopbar = contains(pstyle, MDPanelHideTopbar());
+	topBarH = if (isToolbar) {if (dontMove || hideTopbar) 0.0 else dockingBarHeightToolbar} else {if (hideTopbar) 0.0 else dockingBarHeightPanel};
 	dSize = getValue(state.dockedSize)[pId];
 	pW = dSize.width;
 	pH = dSize.height;
@@ -321,7 +322,7 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 	pstyle = getValue(state.panelStyle)[panelId];
 	dontMove  = dontShow || contains(pstyle, MDPanelDontMove());
 
-	isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+	isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
 	isFirstPanel = panelId == firstElement(colA, intMax);
 	isLastPanel = panelId == lastElement(colA, intMax);
 	isEdge = if (isEndAligned) isLastPanel else isFirstPanel;
@@ -329,6 +330,7 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 	isToolbar = isDockingToolbar(state, panelId);
 	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel / 2.0;
 	topBarSize = makeHSize(topBarH, isColumn || !isToolbar);
+	fillSpace = contains(pstyle, MDToolbarFullSizeFixed());
 
 	handleH = 26.0;
 	handleW = 2.0; //4.0;
@@ -353,15 +355,15 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 				MCopySize(t, \sz -> 
 					MCenterIn(
 						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {	
-							if (isEdge){
+							// if (isEdge){
 								[
 									TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.07 else 0.2})], makeHSize(handleW, isColumn)),
 									TFixed(4.0, 4.0),
 									TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.07 else 0.2})], makeHSize(handleW, isColumn)) 
 								] |> (\m -> if (isColumn) MCols(m) else MLines(m))
-							} else {
-							TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.1 else 0.2})], makeHSize(handleW, isColumn)) 
-							}
+							// } else {
+								// TRounded4(6.0, [MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else {if (isEdge) 0.1 else 0.2})], makeHSize(handleW, isColumn)) 
+							// }
 
 						}),
 						sz
@@ -395,7 +397,7 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 			) 
 
 	if (docked) {
-		if (dontMove) dontMoveHandle else dragHandleDocked
+		if (dontMove || fillSpace) dontMoveHandle else dragHandleDocked
 	} else dragHandleMobile
 };
 
@@ -474,7 +476,7 @@ alignEndPanels(state : MDockingState, colA : [int]) -> Pair<[int], [int]> {
 		startA = acc.first;
 		endA = acc.second;
 		pstyle = getValue(state.panelStyle)[pId];
-		isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+		isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
 		Pair(
 			if (isEndAligned) startA else arrayPush(startA, pId),
 			if (isEndAligned) arrayPush(endA, pId) else endA
