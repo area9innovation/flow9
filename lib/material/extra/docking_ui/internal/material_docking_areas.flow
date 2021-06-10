@@ -22,11 +22,11 @@ export {
 
 
 MDContent(state : MDockingState, content : Material) -> Material {
-		MGroup2(
-			MSelect(state.manager.white, \w -> MGroup2(
-				TRectangle([MFill(areaBgColorFn(w, state.style))], TFillXY()),
-				MFrame(0.0, dockingRadius, [MFill(editorBgColorFn(w, state.style))], TFillXY())
-			)),
+	MGroup2(
+		MSelect(state.manager.white, \w -> MGroup2(
+			TRectangle([MFill(areaBgColorFn(w, state.style))], TFillXY()),
+			MFrame(0.0, dockingRadius, [MFill(editorBgColorFn(w, state.style))], TFillXY())
+		)),
 		MCropSize(TFillXY(), content)
 	) |> (\c -> MAttachBox(c, state.stageWH))
 }
@@ -158,7 +158,7 @@ makeDockedPanelA(
 	dontResize  = contains(style, MDAreaDontResize());
 	dontSideExpandPanel = fold(colA, false, \acc, p -> acc || 
 		contains(getValue(state.panelStyle)[p], MDPanelHideSideExpander()) ||
-		isSameStructType(getValue(state.content)[p], MDPanelToolbarButtons([]))
+		isSameStructType(getValue(state.content)[p], MDToolbarContent([]))
 	);
 	showSideExpanderBtn = isColumn && !contains(style, MDAreaHideSideExpander()) && !dontSideExpandPanel;
 	dontResizeAll = fold(colA, true, \acc, p -> acc && contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
@@ -167,6 +167,8 @@ makeDockedPanelA(
 	containsToolbar = containsDockingToolbar(state, colA);
 	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
 	containsToolbarFillSize = foldi(colA, false, \p, acc, pId -> acc || isPanelFullSize(state, pId));
+	containsHideTopBar = fold(colA, false, \acc, p -> acc || contains(getValue(state.panelStyle)[p], MDPanelHideTopbar()));
+
 
 	dockedWidthA = map(colA, \s -> getValue(state.dockedSize)[s].width);
 	dockedHeightA = map(colA, \s -> getValue(state.dockedSize)[s].height);
@@ -176,7 +178,7 @@ makeDockedPanelA(
 	areaW = if (isColumn) maxDockedWidth else {
 		if (containsToolbar) maxDockedWidth else {
 			// We need to add the topbar height for area lines (content panel)
-			maxDockedHeight + dockingBarHeightPanel
+			maxDockedHeight + if(containsHideTopBar) 0.0 else dockingBarHeightPanel
 		}
 	}
 
@@ -228,7 +230,8 @@ makeDockedPanelA(
 			pstyle = getValue(state.panelStyle)[panelId];
 			isToolbar = isDockingToolbar(state, panelId);
 			dontMove  = contains(pstyle, MDPanelDontMove());
-			topBarH = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else dockingBarHeightPanel;
+			hideTopbar = contains(pstyle, MDPanelHideTopbar());
+			topBarH = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else {if (hideTopbar) 0.0 else dockingBarHeightPanel};
 			topBarW = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else 0.0;
 
 			// Expanded
@@ -312,7 +315,6 @@ makeDockedPanelA(
 			},
 			// Docked panels
 			if (!containsToolbar) makeDockedResizablePanels(colA, 0, false) else {
-				// if (!containsToolbarButtons) makeDockedResizablePanels(colA, 0, false) else {
 				if (containsToolbarFillSize) makeDockedResizablePanels(colA, 0, false) else {
 					[
 						makeDockedResizablePanels(startA, 0, false),
@@ -366,7 +368,7 @@ resizePanelH(
 	lastPanelId = length(colA) - 1;
 	fillLast =  contains(style, MDAreaExpandLastPanel());
 	fillPanelOrderId = if (fillLast) lastPanelId else 0;
-	isEndAligned = getValue(extractStruct(pstyle, MDPanelEndAlign(make(false))).endAlign);
+	isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
 
 	resizePressed = make(false);
 	isResizing = make(false);
@@ -379,14 +381,13 @@ resizePanelH(
 	enabled = getValue(state.enabled)[panelId];
 
 	se = getValue(getValue(state.sideExpanded)[colA[0]]);
-	isToolbarCustom = isSameStructType(getValue(state.content)[panelId], MDPanelToolbarCustom(MEmpty()));
 	isToolbar = isDockingToolbar(state, panelId);
-	isToolbarFillSize = isToolbarCustom && isPanelFullSize(state, panelId);
+	isToolbarFillSize = isToolbar && isPanelFullSize(state, panelId);
 
 	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
 	dontMove  = contains(pstyle, MDPanelDontMove());
-
-	topBarH = if (dontMove) 0.0 else {if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel};
+	hideTopbar = contains(pstyle, MDPanelHideTopbar());
+	topBarH = if (dontMove || hideTopbar) 0.0 else {if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel};
 	topBarCorrection = if (isColumn) topBarH else {
 		if (isToolbar) dockingBarHeightToolbar else 0.0;
 	}
@@ -408,7 +409,7 @@ resizePanelH(
 			|> showIf(showResize && !isToolbar);
 		dockingDropLine(false, resizeW, isToolbar, dropInfo, state, order, true, resizeHelper, hoverTr, dropTr, endpointOffset, endAlignment, style)
 			|> (\m -> MShowLazy(fmin(expanded, sideExpanded), \ -> m));
-	}
+	} |> showIf(!isToolbarFillSize);
 
 	rowsWithHandles = 
 		if (isColumn) {
@@ -463,7 +464,6 @@ resizePanelH(
 					rowFiller,
 					makeHandlesDrop(true, [colId, rowId + 1], true, false)
 						|> showIf(!isToolbar)
-
 				]
 				else
 				[
@@ -479,7 +479,7 @@ resizePanelH(
 
 	addDragAndDropHelperGroup = \ f : Material ->  MGroup2(f, rowsWithHandles);
 
-	scrollBox = box |> (\m -> if (dontScrollArea) MCropSize(TFillXY(), m) else MScroll(m, TFillXY(), []));
+	scrollBox = box |> (\m -> if (dontScrollArea || isToolbar) MCropSize(TFillXY(), m) else MScroll(m, TFillXY(), []));
 
 	MConstruct([
 		makeSubscribe2(isResizing, \rs -> { 
@@ -510,7 +510,7 @@ resizePanelH(
 	MInteractive([
 		TMouseXY(mouseXyLocal)
 		],
-		box |> (\m -> if (isToolbarFillSize) m 	else { 
+		box |> (\m -> if (isToolbarFillSize) MCropSize(TFillXY(), m) else { 
 			MAvailable(	
 				m,
 				TSelect(sizeB, \s -> makeHSize(s, isColumn)) 
@@ -681,6 +681,7 @@ resizeAreaW(
 	contentHeight = make(0.0);
 
 	MConstruct([
+		// makeSubscribe(sizeB, \p -> println(p)),
 		makeSubscribe2(isResizing, \rs -> { 
 			if (!rs) {
 				// Update all docked panels in a col removing correction
@@ -704,8 +705,7 @@ resizeAreaW(
 				next(isResizing, true);
 				// Resize should not go over the content size
 				next(contentWidth, getValue(state.stageWH).width);
-				next(contentHeight, getValue(state.stageWH).height);
-				
+				next(contentHeight, getValue(state.stageWH).height);				
 			} else {
 				if (getValue(isResizing)) next(isResizing, false);
 			}

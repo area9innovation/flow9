@@ -62,7 +62,12 @@ class RenderSupport {
 	public static var DebugClip = null;
 
 	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
-		if (DebugClip != null) DebugClip.innerText += ('\n' + text + " " + text2);
+		if (DebugClip != null) {
+			var innertext = DebugClip.innerText;
+			var newText = "";
+			untyped __js__("newText = innertext.split('\\n').slice(-40).join('\\n')");
+			DebugClip.innerText = newText + ('\n' + text + " " + text2);
+		};
 	}
 
 	private static var RenderSupportInitialised : Bool = init();
@@ -1176,15 +1181,17 @@ class RenderSupport {
 				if (event.deltaMode == 1) {	// delta in LINE units
 					pX *= LINE_HEIGHT;
 					pY *= LINE_HEIGHT;
-				} else { // delta in PAGE units
+				} else if (event.deltaMode == 2) { // delta in PAGE units
 					pX *= PAGE_HEIGHT;
 					pY *= PAGE_HEIGHT;
 				}
 			}
 
 			// Fall-back if spin cannot be determined
-			if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
-			if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+			if (!(Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1"))) {
+				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
+				if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+			}
 
 			if (event.shiftKey != null && event.shiftKey && sX == 0.0) {
 				sX = sY;
@@ -1917,6 +1924,10 @@ class RenderSupport {
 			return clip.addTextInputKeyUpEventFilter(filter);
 	}
 
+	public static function addTextInputOnCopyEvent(clip : TextClip, fn : (String -> Void) -> Void) : Void -> Void {
+		return clip.addOnCopyEventListener(fn);
+	}
+
 	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.addChild(child);
 	}
@@ -1986,7 +1997,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && !Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -2446,7 +2457,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged"){
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall") {
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {
@@ -3281,7 +3292,7 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			render();
+			forceRender();
 
 			return img;
 		} catch(e : Dynamic) {
@@ -3290,7 +3301,7 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			render();
+			forceRender();
 
 			return 'error';
 		}

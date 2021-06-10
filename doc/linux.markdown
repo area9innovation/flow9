@@ -15,7 +15,7 @@ choice.
 4.  [Install `Haxe`](#install-haxe)
 5.  [Install `Neko`](#install-neko)
 6.  [Install `JDK`](#install-jdk)
-7.  [Compile Flow itself(Optional)](#compile-flow-itself-optional)
+7.  [Compile Flow itself(Optional)](#compile-flow-itselfoptional)
 8.  [Check it using flowcpp (C++ runner)](#c-runner-flowcpp)
 9.  [Install fdb, the Flow debugger](#fdb-the-flow-debugger)
 10. [Check it using flowjs (Javascript in browser)](#try-it-javascript-in-browser)
