@@ -385,6 +385,7 @@ public class HttpServerSupport extends NativeHost
 								responseStatusCode,
 								responseBytes.length
 							);
+							if (os == null) os = exchange.getResponseBody();
 							os.write(responseBytes);
 							os.close();
 						}
