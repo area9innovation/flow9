@@ -211,7 +211,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 						TCopySize(
 							f,
 							\tr -> {
-								defTranslation = const(Point(0., -state.bottomMargin));
+								defTranslation = fselect(state.bottomPanelHeight, FLift(\bph -> Point(0., -bph)));
 
 								TBaselineColsDir(buttons, p.rtl)
 								|> TBorderLeftRight(8.)
@@ -293,7 +293,8 @@ MCarouselState(
 	tuneChevrons : Maybe<MCarouselChevronTunes>,
 	chevronsStyle : Maybe<MCarouselChevronStyle>,
 	progress : Maybe<MCarouselProgressState>,
-	bottomMargin : double,
+	wrapBottomTitle : (Tropic) -> Tropic,
+	bottomPanelHeight : Transform<double>,
 	buttonsColor : MThemeColor,
 	iconSize : double,
 	heightByContent : bool,
@@ -376,17 +377,14 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 				f2(nop1)
 			)
 		);
-	hasTitle = exists(m.contents, \c -> extractStruct(c.style, MCarouselText("", "")).title != "");
-	hasSubtitle = exists(m.contents, \c -> extractStruct(c.style, MCarouselText("", "")).subtitle != "");
-	bottomMargin =
-		if (hasTitle && hasSubtitle)
-			64.
-		else if (hasTitle)
-			50.
-		else if (hasSubtitle)
-			46.
-		else
-			0.;
+	bottomTitleHeights = make([]);
+	wrapBottomTitle = \m2 -> {
+		hgt = make(0.);
+		dynArrayPush(bottomTitleHeights, hgt);
+		TAttachHeight(m2, hgt)
+	}
+	bottomPanelHeight = fsubselect(bottomTitleHeights, FLift(\bth -> fmaxA(bth, 0.)));
+
 	buttonsColor = extractStruct(m.style, MCarouselButtonsColor(MWhite())).color;
 
 	progress =
@@ -515,7 +513,8 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		tuneChevrons,
 		chevronsStyle,
 		progress,
-		bottomMargin,
+		wrapBottomTitle,
+		bottomPanelHeight,
 		buttonsColor,
 		iconSize,
 		heightByContent,
@@ -628,18 +627,6 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 			TEmpty();
 		}
 	};
-	getTextFontSize = \isTitle, defFontStyle -> {
-		if (containsStruct(c.style, MCarouselTextFontStyle(MSubheading(), MCaption()))) {
-			textFontStyles = extractStruct(c.style, MCarouselTextFontStyle(MSubheading(), MCaption()));
-			if (isTitle) {
-				textFontStyles.titleFontStyle;
-			} else {
-				textFontStyles.subtitleFontStyle;
-			}
-		} else {
-			defFontStyle;
-		}
-	};
 
 	(\p ->
 		(\p2 ->
@@ -714,21 +701,22 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 			} else
 				f(p)
 		)
-		|> (\f ->
-			if (state.bottomMargin != 0.) { // Add text overlay and place it at the bottom
+		|> (\f -> {
 				txt = extractStruct(c.style, MCarouselText("", ""));
+				fontStyle = extractStruct(c.style, MCarouselTextFontStyle(MSubheading(), MCaption()));
 				footerColor = extractStruct(style, MCarouselFooterColor(MGrey(900))).color;
 				footerOpacity = extractStruct(style, MCarouselFooterOpacity(0.8)).opacity;
 				TCopySize(
 					f,
 					\tr -> {
-							TLines2(
-								makeTitle(txt.title, getTextFontSize(true, MSubheading())),
-								makeTitle(txt.subtitle, getTextFontSize(false, MCaption()))
-							)
+						TLines2(
+							makeTitle(txt.title, fontStyle.titleFontStyle),
+							makeTitle(txt.subtitle, fontStyle.subtitleFontStyle)
+						)
+						|> state.wrapBottomTitle
+						|> (\f2 -> TCenterYIn(f2, TSizedHeight(0., state.bottomPanelHeight)))
 						|> (\f2 -> TBorder4(16., f2))
 						|> (\f2 -> TGroup2(TFillX(), f2))
-						|> (\f2 -> TFixSize(f2, TFillXH(state.bottomMargin)))
 						|> (\f2 -> TFrame(0., 0., [MThemeFill(parent, footerColor), FillOpacity(footerOpacity)], f2))
 						|> (\f2 -> TAvailableWidth(f2, state.itemWidth))
 						|> (\f2 ->
@@ -742,12 +730,12 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 								f2
 							)
 						)
+						|> (\f2 -> TVisible(fgreater(state.bottomPanelHeight, zero), f2))
 						|> (\f2 -> TTweak([TAlign(const(0.), const(1.))], f2, tr))
 					},
 					true
 				)
-			} else
-				f
+			}
 		)
 	)
 	|> (\f -> // Add OnClick
