@@ -222,7 +222,7 @@ public class HttpServerSupport extends NativeHost
 		@Override
 		public void handle(HttpExchange exchange) throws IOException
 		{
-			ResponseHandler handler = new ResponseHandler(exchange);
+			ResponseHandler handler = new ResponseHandler(exchange, false);
 			onMessage.invoke(
 				exchange.getRequestURI().toString(),
 				readInputStream(exchange.getRequestBody()),
@@ -266,7 +266,7 @@ public class HttpServerSupport extends NativeHost
 		@Override
 		public void handle(HttpExchange exchange) throws IOException
 		{
-			ResponseHandler handler = new ResponseHandler(exchange);
+			ResponseHandler handler = new ResponseHandler(exchange, true);
 			onMessage.invoke(
 				exchange.getRequestURI().toString(),
 				readInputStream(exchange.getRequestBody()),
@@ -325,17 +325,19 @@ public class HttpServerSupport extends NativeHost
 		public static class ResponseHandler {
 			private Integer responseStatusCode = 200;
 			private HttpExchange exchange;
+			private OutputStream os;
+			private Boolean deflate;
 
-			public ResponseHandler(HttpExchange _exchange)
+			public ResponseHandler(HttpExchange _exchange, Boolean _deflate)
 			{
 				exchange = _exchange;
+				deflate = _deflate;
 			}
 
 			public Func1<String, String> makeSendChunk() {
 				return new Func1<String, String>() {
 					public String invoke(String chunk) {
 						try {
-							OutputStream os = exchange.getResponseBody();
 							os.write(chunk.getBytes("UTF-8"));
 							os.flush();
 							return "";
@@ -350,7 +352,7 @@ public class HttpServerSupport extends NativeHost
 				return new Func0<Object>() {
 					public Object invoke() {
 						try {
-							exchange.getResponseBody().close();
+							os.close();
 						} catch (IOException e) {
 							System.out.println(e);
 						}
@@ -385,7 +387,6 @@ public class HttpServerSupport extends NativeHost
 								responseStatusCode,
 								responseBytes.length
 							);
-							OutputStream os = exchange.getResponseBody();
 							os.write(responseBytes);
 							os.close();
 						}
@@ -412,6 +413,16 @@ public class HttpServerSupport extends NativeHost
 									.map(Object::toString)
 									.collect(Collectors.toList())
 							);
+
+						os = exchange.getResponseBody();
+						if (deflate) {
+							exchange.getResponseHeaders().put(
+								"Content-Encoding",
+								Collections.singletonList("deflate")
+							);
+							os = new java.util.zip.DeflaterOutputStream(os);
+						}
+
 						return null;
 					}
 				};
