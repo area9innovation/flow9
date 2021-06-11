@@ -86,7 +86,7 @@ public class HttpServerSupport extends NativeHost
 			Object[],
 			Func0<Object>,
 			Func1<String, String>,
-			Func1<String, Integer>,
+			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> onMessage
 	)
@@ -222,7 +222,7 @@ public class HttpServerSupport extends NativeHost
 		@Override
 		public void handle(HttpExchange exchange) throws IOException
 		{
-			ResponseHandler handler = new ResponseHandler(exchange, false);
+			ResponseHandler handler = new ResponseHandler(exchange);
 			onMessage.invoke(
 				exchange.getRequestURI().toString(),
 				readInputStream(exchange.getRequestBody()),
@@ -244,7 +244,7 @@ public class HttpServerSupport extends NativeHost
 			Object[],
 			Func0<Object>,
 			Func1<String, String>,
-			Func1<String, Integer>,
+			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> onMessage;
 
@@ -256,7 +256,7 @@ public class HttpServerSupport extends NativeHost
 			Object[],
 			Func0<Object>,
 			Func1<String, String>,
-			Func1<String, Integer>,
+			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> _onMessage)
 		{
@@ -266,7 +266,7 @@ public class HttpServerSupport extends NativeHost
 		@Override
 		public void handle(HttpExchange exchange) throws IOException
 		{
-			ResponseHandler handler = new ResponseHandler(exchange, true);
+			ResponseHandler handler = new ResponseHandler(exchange);
 			onMessage.invoke(
 				exchange.getRequestURI().toString(),
 				readInputStream(exchange.getRequestBody()),
@@ -326,12 +326,10 @@ public class HttpServerSupport extends NativeHost
 			private Integer responseStatusCode = 200;
 			private HttpExchange exchange;
 			private OutputStream os;
-			private Boolean deflate;
 
-			public ResponseHandler(HttpExchange _exchange, Boolean _deflate)
+			public ResponseHandler(HttpExchange _exchange)
 			{
 				exchange = _exchange;
-				deflate = _deflate;
 			}
 
 			public Func1<String, String> makeSendChunk() {
@@ -413,25 +411,23 @@ public class HttpServerSupport extends NativeHost
 									.map(Object::toString)
 									.collect(Collectors.toList())
 							);
-
-						os = exchange.getResponseBody();
-						if (deflate) {
-							exchange.getResponseHeaders().put(
-								"Content-Encoding",
-								Collections.singletonList("deflate")
-							);
-							os = new java.util.zip.DeflaterOutputStream(os);
-						}
-
 						return null;
 					}
 				};
 			}
 
-			public Func1<String, Integer> makeSendHeaders() {
-				return new Func1<String, Integer>() {
-					public String invoke(Integer status) {
+			public Func2<String, Integer, Boolean> makeSendHeaders() {
+				return new Func2<String, Integer, Boolean>() {
+					public String invoke(Integer status, Boolean compressBody) {
 						try {
+							os = exchange.getResponseBody();
+							if (compressBody) {
+								exchange.getResponseHeaders().put(
+									"Content-Encoding",
+									Collections.singletonList("deflate")
+								);
+								os = new java.util.zip.DeflaterOutputStream(os);
+							}
 							exchange.sendResponseHeaders(status, 0);
 							return "";
 						} catch (IOException e) {
