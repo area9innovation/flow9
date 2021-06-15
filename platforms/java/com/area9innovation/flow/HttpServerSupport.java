@@ -427,7 +427,7 @@ public class HttpServerSupport extends NativeHost
 									"Content-Encoding",
 									Collections.singletonList("deflate")
 								);
-								os = new java.util.zip.DeflaterOutputStream(os);
+								os = new java.util.zip.DeflaterOutputStream(os, true);
 							}
 							exchange.sendResponseHeaders(status, 0);
 							return "";
