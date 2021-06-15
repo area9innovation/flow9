@@ -602,7 +602,8 @@ MDTState(
 	widthByContent : bool,
 	headCount : int,
 	isCheckboxColumn : (int) -> bool,
-	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, Maybe<[MIconStyle]>) -> Tropic,
+	checkboxSelectAllPages : Transform<bool>,
+	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, Maybe<[MIconStyle]>, Maybe<Transform<string>>) -> Tropic,
 	makeCells : (MFocusGroup, int, [Material]) -> [Tropic],
 	cellBox : (int, bool) -> Tropic,
 	enabled : Transform<bool>,
@@ -665,17 +666,19 @@ makeMDataTableState(
 	isCheckboxColumn = \i -> isSome(checkboxSelection) && i == 0;
 	checkboxColor = eitherMap(checkboxSelection, \cs -> extractMColor(parent, cs.style, MPrimaryColor()), MPrimaryColor());
 	checkboxBorder = \rh -> forceRange((rh - 24.) / 2., 0., 12.);
-	checkboxIconSize = eitherMap(checkboxSelection, \cs -> extractStruct(cs.style, MIconSize(standardIconSize)).size, standardIconSize);
+	checkboxIconSize = extractStruct(eitherMap(checkboxSelection, \cs -> cs.style, []), MIconSize(standardIconSize)).size;
 	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + checkboxIconSize - cellBorder;
+	checkboxSelectAllPages = extractStruct(eitherMap(checkboxSelection, \cs -> cs.style, []), MCheckboxSelectAllPages(const(false))).enabled;
 
-	makeChkbox = \p, trigger, en, onClk, hStyle -> {
+	makeChkbox = \p, trigger, en, onClk, hStyle, tooltipText -> {
 		lh = lineHeight(isSome(hStyle));
 		chStyle =
-			concat3(
+			concatA([
 				[MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)],
 				eitherMap(hStyle, \hs : [MIconStyle] -> concat(hs, [MUncheckedIconStyle(arrayPush(hs, MIconSize(checkboxIconSize)))]), []),
-				[MIconSize(checkboxIconSize)]
-			);
+				[MIconSize(checkboxIconSize)],
+				eitherMap(tooltipText, \tt -> [MTooltipText(tt)], [])
+			]);
 
 		MCheckBox2T(manager, p, MCheckBox(TEmpty(), trigger, chStyle), m2t)
 		|> (\t -> TBorderDir(-checkboxBorder(lh) / 2. - cellBorder / 2., 0., 0., 0., t, p.rtl))
@@ -771,6 +774,7 @@ makeMDataTableState(
 								nextDistinct(selection.selected, [])
 						}
 					},
+					None(),
 					None()
 				)
 				|> (\t -> TConstruct(
@@ -863,6 +867,7 @@ makeMDataTableState(
 		widthByContent,
 		headCount,
 		isCheckboxColumn,
+		checkboxSelectAllPages,
 		makeChkbox,
 		makeCells,
 		cellBox,
@@ -1235,10 +1240,12 @@ MDTTitles(
 				)
 		)
 		|> (\t -> if (state.isCheckboxColumn(i0)) {
-				selAll = make(false);
+				allSelected = make(false);
+				shouldSelectAll = fOr(state.scrollEnabled, state.checkboxSelectAllPages);
+
 				selPage =
 					fselect3(
-						fif(state.scrollEnabled, fselect(rowsCountB, FLift(\rc -> Pair(0, rc))), page),
+						fif(shouldSelectAll, fselect(rowsCountB, FLift(\rc -> Pair(0, rc))), page),
 						sorting.result,
 						fsubselect(state.selectionEnabled.enabled, FLift(fmerge)),
 						\pg, sr, en ->
@@ -1253,18 +1260,23 @@ MDTTitles(
 							)
 					);
 
-				state.makeChkbox(p, selAll,
+				state.makeChkbox(p, allSelected,
 					if (state.selection.multiple)
 						fand(state.selection.enabled, fselect(selPage, FLift(\pg -> length(pg) > 0)))
 					else
 						const(false),
 					\ -> nextDistinct(state.selection.selected,
-						if (getValue(selAll))
+						if (getValue(allSelected))
 							concat(getValue(state.selection.selected), fgetValue(selPage)) |> uniq
 						else 
 							filter(getValue(state.selection.selected), \x -> !contains(fgetValue(selPage), x))
 					),
-					Some(arrowStyle)
+					Some(arrowStyle),
+					Some(fselect2(
+						fif(allSelected, const("Unselect"), const("Select")),
+						fif(shouldSelectAll, const("all pages"), const("current page")),
+						FLift2(\s1, s2 -> s1 + " " + s2)
+					))
 				)
 				|> (\t2 ->
 					if (state.selection.multiple)
@@ -1272,7 +1284,7 @@ MDTTitles(
 							[
 								make2Subscribe(state.selection.selected, selPage, \sel, pg ->
 									nextDistinct(
-										selAll,
+										allSelected,
 										length(pg) != 0 && length(sel) >= length(pg)
 											&& forall(pg, \j -> contains(sel, j))
 									)
