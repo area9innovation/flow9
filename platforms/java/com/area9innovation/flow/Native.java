@@ -49,19 +49,20 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
+import com.sun.management.OperatingSystemMXBean;
 
-@SuppressWarnings("unchecked")
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
 	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
-	public Native() {
-	try {
-		md5original = MessageDigest.getInstance("MD5");
-	} catch (NoSuchAlgorithmException e) {
-		md5original = null;
-	}
+	private static OperatingSystemMXBean osBean = java.lang.management.ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
 
+	public Native() {
+		try {
+			md5original = MessageDigest.getInstance("MD5");
+		} catch (NoSuchAlgorithmException e) {
+			md5original = null;
+		}
 	}
 
 	public final Object println(Object arg) {
@@ -157,8 +158,8 @@ public class Native extends NativeHost {
 	}
 
 	public final String toBinary(Object value) {
-		Map<Integer, Integer> structIdxs = new HashMap();
-		List<Struct> structDefs = new ArrayList();
+		Map<Integer, Integer> structIdxs = new HashMap<Integer, Integer>();
+		List<Struct> structDefs = new ArrayList<Struct>();
 
 		StringBuilder buf = new StringBuilder();
 		writeBinaryValue(value, buf, structIdxs, structDefs);
@@ -432,7 +433,7 @@ public class Native extends NativeHost {
 	}
 
 	public final Object[] string2utf8(String str) {
-		ArrayList<Integer> bytesList = new ArrayList();
+		ArrayList<Integer> bytesList = new ArrayList<Integer>();
 		// We know we need at least this
 		bytesList.ensureCapacity(str.length());
 
@@ -688,6 +689,7 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> Object[] map(Object[] arr, Func1<T1,T2> clos) {
 		Object[] rv = new Object[arr.length];
 		for (int i = 0; i < arr.length; i++)
@@ -695,12 +697,14 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> Object iter(Object[] arr, Func1<Object,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			clos.invoke((T)arr[i]);
 		return null;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> Object[] mapi(Object[] arr, Func2<T1,Integer,T2> clos) {
 		Object[] rv = new Object[arr.length];
 		for (int i = 0; i < arr.length; i++)
@@ -708,12 +712,14 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> Object iteri(Object[] arr, Func2<Object,Integer,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			clos.invoke(i, (T)arr[i]);
 		return null;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> int iteriUntil(Object[] arr, Func2<Boolean,Integer,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			if (clos.invoke(i, (T)arr[i]))
@@ -721,18 +727,21 @@ public class Native extends NativeHost {
 		return arr.length;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> T1 fold(Object[] arr, T1 init, Func2<T1,T1,T2> clos) {
 		for (int i = 0; i < arr.length; i++)
 			init = clos.invoke(init, (T2)arr[i]);
 		return init;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> T1 foldi(Object[] arr, T1 init, Func3<T1,Integer,T1,T2> clos) {
 		for (int i = 0; i < arr.length; i++)
 			init = clos.invoke(i, init, (T2)arr[i]);
 		return init;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> Object[] filter(Object[] arr, Func1<Boolean,T> test) {
 		boolean[] tmp = new boolean[arr.length];
 		int count = 0;
@@ -746,6 +755,7 @@ public class Native extends NativeHost {
 		return out;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> boolean exists(Object[] arr, Func1<Boolean,T> test) {
 		for (int i = 0; i < arr.length; i++)
 			if (test.invoke((T)arr[i]))
@@ -766,7 +776,7 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private Map<Long, Timer> timers = new HashMap();
+	private Map<Long, Timer> timers = new HashMap<Long, Timer>();
 
 	private Timer getTimer() {
 		Long threadId = Thread.currentThread().getId();
@@ -1613,7 +1623,8 @@ public class Native extends NativeHost {
 	  List<Callable<Object>> tasks2 = new ArrayList<Callable<Object>>();
 
 	  for (int i = 0; i < tasks.length; i++) {
-		Func0<Object> task = (Func0<Object> ) tasks[i];
+		@SuppressWarnings("unchecked")
+		Func0<Object> task = (Func0<Object>) tasks[i];
 		tasks2.add(new Callable<Object>() {
 		  @Override
 		  public Object call() throws Exception {
@@ -1682,7 +1693,8 @@ public class Native extends NativeHost {
 	}
 
 	public final Object setConcurrentHashMap(Object map, Object key, Object value) {
-		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		@SuppressWarnings("unchecked")
+		ConcurrentHashMap<Object, Object> concurrentMap = (ConcurrentHashMap<Object, Object>) map;
 		concurrentMap.put(key, value);
 		return null;
 	}
@@ -1692,9 +1704,10 @@ public class Native extends NativeHost {
 		return concurrentMap.containsKey(key) ? concurrentMap.get(key) : defval;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final Object setAllConcurrentHashMap(Object map1, Object map2) {
-		ConcurrentHashMap concurrentMap1 = (ConcurrentHashMap) map1;
-		ConcurrentHashMap concurrentMap2 = (ConcurrentHashMap) map2;
+		ConcurrentHashMap<Object, Object> concurrentMap1 = (ConcurrentHashMap<Object, Object>) map1;
+		ConcurrentHashMap<Object, Object> concurrentMap2 = (ConcurrentHashMap<Object, Object>) map2;
 		concurrentMap1.putAll(concurrentMap2);
 		return null;
 	}
@@ -1716,8 +1729,9 @@ public class Native extends NativeHost {
 	}
 
 	public final Object[] keysConcurrentHashMap(Object map) {
-		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
-		ArrayList<Object> ret = new ArrayList();
+		@SuppressWarnings("unchecked")
+		ConcurrentHashMap<Object, Object> concurrentMap = (ConcurrentHashMap<Object, Object>) map;
+		ArrayList<Object> ret = new ArrayList<Object>();
 		for (Enumeration<Object> e = concurrentMap.keys(); e.hasMoreElements();) {
 			ret.add(e.nextElement());
 		}
@@ -1851,6 +1865,11 @@ public class Native extends NativeHost {
 		return (double)(Runtime.getRuntime().maxMemory());
 	}
 
+	// CPU load
+	public final double getProcessCpuLoad() {
+		return osBean.getProcessCpuLoad();
+	}
+
 	// Vector natives:
 	public final Object makeVector(Integer capacity) {
 		return new ArrayList(capacity);
@@ -1860,12 +1879,14 @@ public class Native extends NativeHost {
 		return vector.get(i.intValue());
 	}
 	public final Object setVector(Object v, Integer i, Object x) {
-		ArrayList vector = (ArrayList)v;
+		@SuppressWarnings("unchecked")
+		ArrayList<Object> vector = (ArrayList<Object>)v;
 		vector.set(i.intValue(), x);
 		return null;
 	}
 	public final Object addVector(Object v, Object x) {
-		ArrayList vector = (ArrayList)v;
+		@SuppressWarnings("unchecked")
+		ArrayList<Object> vector = (ArrayList<Object>)v;
 		vector.add(x);
 		return null;
 	}
@@ -1892,8 +1913,9 @@ public class Native extends NativeHost {
 		return null;
 	}
 	public final Object subVector(Object v, Integer index, Integer len) {
-		ArrayList vector = (ArrayList)v;
-		ArrayList sub = new ArrayList(len);
+		@SuppressWarnings("unchecked")
+		ArrayList<Object> vector = (ArrayList<Object>)v;
+		ArrayList<Object> sub = new ArrayList<Object>(len);
 		for (int i = index; i < index + len; ++ i) {
 			sub.add(vector.get(i));
 		}
@@ -1904,7 +1926,7 @@ public class Native extends NativeHost {
 		return vector.toArray();
 	}
 	public final Object array2vector(Object[] a) {
-		return new ArrayList(Arrays.asList(a));
+		return new ArrayList<Object>(Arrays.asList(a));
 	}
 
 	public final <RT> Func0<RT> synchronizedConstFn(Object lock, Func0<RT> fn) {
