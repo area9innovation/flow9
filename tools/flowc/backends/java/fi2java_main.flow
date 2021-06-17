@@ -42,6 +42,8 @@ generateJavaMainClass(gctx : JavaGlobalContext, cfg : FiJavaConfig) -> void {
 	// General init function
 	pushstr("\tfinal private void init() {\n");
 	pushstr("\t\tinit_modules();\n");
+	pushstr("\t\tinit_wrappers();\n");
+	pushstr("\t\tinit_native_wrappers();\n");
 	pushstr("\t\tinit_hosts();\n");
 	pushstr("\t\tinit_code();\n");
 	pushstr("\t}\n");
@@ -95,9 +97,34 @@ generateJavaMainWrappers(gctx : JavaGlobalContext, cfg : FiJavaConfig, pushstr :
 		fcPrintln(cfg.mainClassName + " wrappers: " + i2s(length(wrappers)), config.threadId);
 	}
 	pushstr("\n\t// Wrappers: " + i2s(length(wrappers)) + "\n");
-	pushstr(concatStrings(map(wrappers, \wr ->
-		"\tfinal " + wr.type + " " + wr.name + " = " + wr.code + ";\n"
-	)));
+
+	// Declare wrappers
+	iter(wrappers, \wr ->
+		pushstr("\t" + wr.type + " " + wr.name + ";\n")
+	);
+
+	// Produce wrapper initialization code
+	init_wrapper_code = \wr -> "\t\t" + wr.name + " = " + wr.code + ";\n";
+	if (length(wrappers) < 128) {
+		pushstr("\tfinal private void init_wrappers() {\n");
+		pushstr(concatStrings(map(wrappers, init_wrapper_code)));
+		pushstr("\t}\n");
+	} else {
+		init_wrappers_chuncks = splitByNumber(wrappers, 128);
+		iteri(init_wrappers_chuncks, \i, chunk -> {
+			pushstr("\tfinal private void init_wrappers_" + i2s(i) + "() {\n");
+			pushstr(concatStrings(map(chunk, init_wrapper_code)));
+			pushstr("\t}\n");
+		});
+		pushstr("\tfinal private void init_wrappers() {\n");
+		iteri(init_wrappers_chuncks, \i, __ ->
+			pushstr("\t\tinit_wrappers_" + i2s(i) + "();\n")
+		);
+		pushstr("\t}\n");
+		if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+			fcPrintln(cfg.mainClassName + " init_wrappers chunks: " + i2s(length(init_wrappers_chuncks)), config.threadId);
+		}
+	}
 }
 
 generateJavaMainNativeWrappers(gctx : JavaGlobalContext, cfg : FiJavaConfig, pushstr : (string) -> void) -> void {
@@ -107,10 +134,34 @@ generateJavaMainNativeWrappers(gctx : JavaGlobalContext, cfg : FiJavaConfig, pus
 		fcPrintln(cfg.mainClassName + " native wrappers: " + i2s(length(native_wrappers)), config.threadId);
 	}
 	pushstr("\n\t// Native Wrappers (" + i2s(length(native_wrappers)) + ")\n");
-	pushstr(concatStrings(map(native_wrappers, \wr ->
-		"\tfinal " + wr.type + " nw_" + wr.name + " = " + wr.code + ";\n" +
-		"\t" + wr.type + " n_" + wr.name + " = nw_" + wr.name + ";\n"
-	)));
+
+	// Declare wrappers
+	iter(native_wrappers, \wr ->
+		pushstr("\t" + wr.type + " n_" + wr.name + ";\n")
+	);
+
+	// Produce wrapper initialization code
+	init_wrapper_code = \wr -> "\t\tn_" + wr.name + " = " + wr.code + ";\n";
+	if (length(native_wrappers) < 128) {
+		pushstr("\tfinal private void init_native_wrappers() {\n");
+		pushstr(concatStrings(map(native_wrappers, init_wrapper_code)));
+		pushstr("\t}\n");
+	} else {
+		init_wrappers_chuncks = splitByNumber(native_wrappers, 128);
+		iteri(init_wrappers_chuncks, \i, chunk -> {
+			pushstr("\tfinal private void init_native_wrappers_" + i2s(i) + "() {\n");
+			pushstr(concatStrings(map(chunk, init_wrapper_code)));
+			pushstr("\t}\n");
+		});
+		pushstr("\tfinal private void init_native_wrappers() {\n");
+		iteri(init_wrappers_chuncks, \i, __ ->
+			pushstr("\t\tinit_native_wrappers_" + i2s(i) + "();\n")
+		);
+		pushstr("\t}\n");
+		if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+			fcPrintln(cfg.mainClassName + " init_native_wrappers chunks: " + i2s(length(init_wrappers_chuncks)), config.threadId);
+		}
+	}
 }
 
 generateJavaMainInitHosts(gctx : JavaGlobalContext, cfg : FiJavaConfig, pushstr : (string) -> void) -> void {
