@@ -601,7 +601,7 @@ class RenderSupport {
 		createPixiRenderer();
 
 		// Workaround to catch wheel events from trackpad on iPad in Safari
-		if (Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0") {
+		if (Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1")) {
 			appendScrollCatcher();
 		}
 
@@ -1188,7 +1188,7 @@ class RenderSupport {
 			}
 
 			// Fall-back if spin cannot be determined
-			if (!(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")) {
+			if (!(Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1"))) {
 				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
 				if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
 			}
