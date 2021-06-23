@@ -242,7 +242,7 @@ class DisplayObjectHelper {
 		clip.interactive = untyped clip.scrollRectListener != null || clip.isInteractive
 			|| (
 				// It allows to catch wheel events from trackpad on iPad in Safari
-				!(Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1"))
+				!(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")
 				&& (clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null)
 			);
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
