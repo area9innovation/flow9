@@ -425,11 +425,13 @@ public class HttpServerSupport extends NativeHost
 							if (compressBody) {
 								exchange.getResponseHeaders().put(
 									"Content-Encoding",
-									Collections.singletonList("deflate")
+									Collections.singletonList("gzip")
 								);
-								os = new java.util.zip.DeflaterOutputStream(os, true);
+								exchange.sendResponseHeaders(status, 0);
+								os = new java.util.zip.GZIPOutputStream(os, true);
+							} else {
+								exchange.sendResponseHeaders(status, 0);
 							}
-							exchange.sendResponseHeaders(status, 0);
 							return "";
 						} catch (IOException e) {
 							return "Sending headers error: " + e.getMessage();
