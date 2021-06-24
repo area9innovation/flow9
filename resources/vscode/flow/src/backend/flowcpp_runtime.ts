@@ -74,7 +74,7 @@ export class MI2 extends EventEmitter {
 			this.process.on("error", ((err) => { this.emit("launcherror", err); }).bind(this));
 			
 			this.emit("debug-ready");
-			resolve();
+			resolve(this);
 		});
 	}
 

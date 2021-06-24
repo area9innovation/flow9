@@ -3294,7 +3294,11 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			forceRender();
+			if (Util.getParameter("debug_snapshot") == '1') {
+				render();
+			} else {
+				forceRender();
+			}
 
 			return img;
 		} catch(e : Dynamic) {
@@ -3303,7 +3307,11 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			forceRender();
+			if (Util.getParameter("debug_snapshot") == '1') {
+				render();
+			} else {
+				forceRender();
+			}
 
 			return 'error';
 		}
