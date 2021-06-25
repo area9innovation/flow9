@@ -294,17 +294,6 @@ renderParagraphEx(
 	keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isParagraphMarked && i <= 1);
 	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), ref zeroParaWordWidth);
 
-	getWordGhostedForm = \word1, pos -> {
-		g = word1.ghosted;
-		switch (g : Ghosted) {
-			Empty(): extractParaAtomicForm(word1, pos);
-			Ghost(xc, yc, fm): g;
-			InspectGhost(__, fm): g;
-			CoordinateInspectElement(__, __): g;
-		}
-	};
-
-
 	aw = make(0.0);
 	update = make(0);
 	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
@@ -369,42 +358,44 @@ renderParagraphEx(
 		})
 	));
 
-	// TODO use lists instead.
-	wordGroups = foldi(words, [], \i, acc : [ParaWordGroup], word -> {
-		form = getWordGhostedForm(word, 1);
-		group = lastElement(acc, emptyParaWordGroup);
+	wordGroups = foldi(words, makeList(), \i, acc : List<ParaWordGroup>, word -> {
+		wordForm = ParaWord(word with form =
+			switch (word.ghosted : Ghosted) {
+				Empty(): extractParaAtomicForm(word, 1);
+				Ghost(xc, yc, fm): word.ghosted;
+				InspectGhost(__, fm): word.ghosted;
+				CoordinateInspectElement(__, __): word.ghosted;
+			}
+		);
+
+		group = headList(acc, emptyParaWordGroup);
 		lastSpace = switch(lastElement(group.words, emptyParaWord).word) {
 			Space(__): true;
 			default: false;
 		};
-		lastWord = lastElement(group.words, emptyParaWord);
-		lastWordText = getWordText(lastWord);
-		lastChr = strsubsmart(lastWordText, -1, 0);
+		lastChr = strsubsmart(getWordText(lastElement(group.words, emptyParaWord)), -1, 0);
 		lastChrIsMath = lastChr != "" && strContains("+-=×/", lastChr);
-		mathWrapGroup = if (lastChrIsMath) {
-			makeParaWordGroupForMath(word, lastChr, "", "")
-		} else emptyParaWordGroup;
 
 		if (lastChrIsMath || switch (word.word) {
 			NewLine(): true;
 			Space(__): false;
 			LinePart(st, __, __): lastSpace;
-			default: {
-				f = getWordForm(word, -1);
-				// it is no use to make line with zero-width content, so we continue counting if the width is 0
-				// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
-				// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-				if (keepFormTogetherOrWithMark(f, i) || 0.0 == (^(group.width).rigidWidth) + (^(group.width).softWidth) + ((^(group.width).finalRigidWidthDelta) + (^(group.width).finalSoftWidthDelta))*paraLinePartFRemakeD) {
-					lastSpace;
-				} else {
-					true
-				}
-			};
-		})
-			arrayPush(acc, addWordToGroup(mathWrapGroup, setWordForm(word, form)))
-		else
-			arrayPush(take(acc, length(acc)-1), addWordToGroup(group, setWordForm(word, form)))
-	});
+			default: !keepFormTogetherOrWithMark(getWordForm(word, -1), i) || lastSpace;
+		}) {
+			Cons(
+				addWordToGroup(
+					if (lastChrIsMath) { makeParaWordGroupForMath(word, lastChr) } else { emptyParaWordGroup },
+					wordForm
+				),
+				acc
+			)
+		} else {
+			Cons(
+				addWordToGroup(group, wordForm),
+				tailList(acc)
+			)
+		}
+	}) |> list2array;
 
 	Constructor(
 		Inspect(
@@ -1318,12 +1309,12 @@ setWordText(w : ParaWord, t : string) -> ParaWord {
 	};
 }
 
-makeParaWordGroupForMath(w : ParaWord, s : string, m : string, e : string) -> ParaWordGroup {
+makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 	makeParaWordGroup = \word -> ParaWordGroup([word], ref zeroParaWordWidth);
 	switch(w.word) {
 		Text(__, st):
 			ParaWord(
-				LinePart(Text(s, st), Text(m, st), Text(e, st)),
+				LinePart(Text(s, st), Text("", st), Text("", st)),
 				w.metrics,
 				w.ghosted,
 				switch(w.form) {
@@ -1338,15 +1329,11 @@ makeParaWordGroupForMath(w : ParaWord, s : string, m : string, e : string) -> Pa
 			) |> makeParaWordGroup;
 		LinePart(sf, mf, ef): {
 			swt = \f, t -> cast(setWordText(ParaWord(f, w.metrics, w.ghosted, w.form, w.interactivityIdM), t).word : ParaAtomic-> Form);
-			ParaWord(w with word=LinePart(swt(sf, s), swt(mf, m), swt(ef, e))) |> makeParaWordGroup;
+			ParaWord(w with word=LinePart(swt(sf, s), swt(mf, ""), swt(ef, ""))) |> makeParaWordGroup;
 		};
 		default: emptyParaWordGroup;
 	};
 }
-
-setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
-	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
-};
 
 makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager {
 	paragraphWidths = generate(0, paragraphs, \__ -> make(0.0));
