@@ -16,7 +16,14 @@ Sudoku(
 	// Are we dragging at the moment
 	dragging : DynamicBehaviour<bool>,
 	// Are we in scribble mode?
-	scribble : DynamicBehaviour<bool>
+	scribble : DynamicBehaviour<bool>,
+	// Undo stack
+	undoStack : DynamicBehaviour<List<SudokuSnapshot>>
+);
+
+SudokuSnapshot(
+	board : [[int]],
+	scribbles : [[Set<int>]]
 );
 
 drawCell(s : Sudoku, x : int, y : int) -> Material {
@@ -159,7 +166,9 @@ updateHighlights(s : Sudoku) -> void {
 }
 
 // Change the selected cells to this number
-updateCell(s : Sudoku, c : int) ->  void{
+updateCell(s : Sudoku, c : int) -> void {
+	snapshot = getSudokuSnapshot(s);
+	next(s.undoStack, Cons(snapshot, getValue(s.undoStack)));
 	generate2d(9, \x, y -> {
 		if (getValue(s.selected[y][x])) {
 			if (c == 0) {
@@ -234,6 +243,16 @@ drawSudoku(s : Sudoku) -> Material {
 						MTextButton("CLEAR ALL", \ -> {
 							clearBoard(s);
 						}, [], []),
+						MTextButton("HELP", \ -> {
+							updatePossibleScribbles(s);
+						}, [], []),
+						MTextButton("UNDO", \ -> {
+							undoSudoku(s);
+							updateCorrectness(s);
+						} ,[] , []),
+						MTextButton("SOLVE", \ -> {
+							solveSudoku(s);
+						}, [], [])
 					])
 				])
 			])
@@ -333,6 +352,106 @@ generate2d(n : int, fn : (x : int, y: int) -> ?) -> [[?]] {
 	});
 }
 
+getSudokuSnapshot(s : Sudoku) -> SudokuSnapshot {
+	SudokuSnapshot(
+		map(s.board, \row -> {
+			map(row, getValue)
+		}),
+		map(s.scribbles, \row -> {
+			map(row, getValue)
+		})
+	)
+}
+
+setSudokuFromSnapshot(s : Sudoku, snapshot : SudokuSnapshot) -> void {
+	iteri(snapshot.board, \y, row -> {
+		iteri(row, \x, cell -> {
+			nextDistinct(s.board[y][x], cell);
+			nextDistinct(s.scribbles[y][x], snapshot.scribbles[y][x]);
+		})
+	});
+}
+
+undoSudoku(s : Sudoku) -> void {
+	undoStack = getValue(s.undoStack);
+	switch (undoStack) {
+		EmptyList(): {}
+		Cons(state, rest): {
+			setSudokuFromSnapshot(s, state);
+			next(s.undoStack, rest);
+		}
+	}
+}
+
+popUndoSudoku(s : Sudoku) -> void {
+	undoStack = getValue(s.undoStack);
+	switch (undoStack) {
+		EmptyList(): {}
+		Cons(state, rest): {
+			next(s.undoStack, rest);
+		}
+	}
+}
+
+updatePossibleScribbles(s : Sudoku) -> void {
+	fullSet = buildSet(enumFromTo(1, 9));
+	generate2d(9, \x, y -> {
+		next(s.scribbles[y][x], fullSet)
+	});
+	updateCorrectness(s);
+}
+
+solveSudoku(s : Sudoku) -> void {
+	updatePossibleScribbles(s);
+	doSolveSudoku(s, 0);
+	{}
+}
+
+doSolveSudoku(s : Sudoku, cell : int) -> bool {
+	if (cell >= 9 * 9) true
+	else {
+		x = cell % 9;
+		y = cell / 9;
+		if (getValue(s.board[y][x]) != 0) {
+			// println("Cell " + i2s(x + 1) + "," + i2s(y + 1) + " is set already to " + i2s(getValue(s.board[y][x])));
+			doSolveSudoku(s, cell + 1);
+		} else {
+			options : Set<int> = getValue(s.scribbles[y][x]);
+			// println("Trying to solve cell " + i2s(cell) + " " + i2s(x+ 1) + "," + i2s(y+ 1) + " with options " + toString(set2array(options)));
+			trySudokuOptions(s, cell, x, y, options)
+		}
+	}
+}
+
+trySudokuOptions(s : Sudoku, cell : int, x : int, y : int, options : Set<int>) -> bool {
+	mres = popMinSet(options);
+	mres ?? {
+		value = mres.value;
+		rest = mres.rest;
+		// println("  Trying " + i2s(value) + " in " + i2s(cell) + " " + i2s(x + 1) + "," + i2s(y + 1));
+		existingState = getSudokuSnapshot(s);
+		nextDistinct(s.board[y][x], value);
+		updateCorrectness(s);
+		if (getValue(s.errors)[y][x]) {
+			// println("  Failed in " + i2s(cell) + " " + i2s(x + 1) + "," + i2s(y + 1));
+			setSudokuFromSnapshot(s, existingState);
+			trySudokuOptions(s, cell, x, y, rest);
+		} else {
+			// println("  Succeeded in " + i2s(cell) + " " + i2s(x + 1) + "," + i2s(y + 1));
+			if (doSolveSudoku(s, cell + 1)) {
+				true;
+			} else {
+				// println("  Failed later in " + i2s(cell) + " " + i2s(x+ 1) + "," + i2s(y+ 1));
+				setSudokuFromSnapshot(s, existingState);
+				trySudokuOptions(s, cell, x, y, rest);
+			}
+		}
+	} : {
+		// We have no choice but to fail
+		false;
+	}
+}
+
 main() {
 	sudoku = Sudoku(
 		generate2d(9, \x, y -> make(0)),
@@ -343,6 +462,7 @@ main() {
 		make(false),
 		make(false),
 		make(false),
+		make(makeList()),
 	);
 	updateCorrectness(sudoku);
 	mrender(makeMaterialManager([]), true, 
