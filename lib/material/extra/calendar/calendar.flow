@@ -2,6 +2,7 @@ import material/material_dialog;
 import material/material_ui;
 import excel_datetime;
 import text/translation;
+import pebbles/pebble_parameters;
 
 export {
 	CalendarForEvents(
@@ -51,7 +52,7 @@ export {
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTab,
-		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent;
+		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -135,9 +136,17 @@ export {
 		CalendarPlannedHideDeleteButton();
 		// Check if event is read only
 		CalendarReadOnlyEvent(isReadOnly : (CalendarEvent) -> Transform<bool>);
+		// Enable pebble for views and print dialog
+		CalendarPebbles(controller : PebbleController);
+		// hide tabs/views dropdown
+		CalendarHideTabs();
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
+
+	getCalendarTabId(tab : CalendarTab) -> string;
+	getCalendarTabName(tab : CalendarTab) -> string;
+	getCalendarTabById(tabId : string) -> Maybe<CalendarTab>;
 
 	CalendarActionButtons : (
 		addButton : Material,
@@ -2228,18 +2237,15 @@ PlannedEventsTable(
 
 	addBackground = \m -> MFrame(0.0, 0.0, calendarTabMenuStyle.background, m);
 
-	printCalendarButtonM = eitherMap(printButtonStyleM, \printButtonStyle -> {
-		headerM = MLines2A(addBackground(titleTextM), columnNames);
-		getPrintPages = \availableSize -> {
-			rows = fgetValue(rowsB);
-			rowHeight = lineHeight + lineSeparatorHeight;
-			rowsPerPage = floor(availableSize.height / rowHeight);
-			pagesCount = ceil(i2d(length(rows)) / i2d(rowsPerPage));
-			generate(0, pagesCount, \i -> MLinesA(subrange(rows, i * rowsPerPage, rowsPerPage)));
-		}
-		style = if (printButtonStyle == []) calendarTabMenuStyle.icon else printButtonStyle;
-		getPrintCalendarIconButton(manager, headerM, MEmpty(), getPrintPages, isPrintingB, style);
-	}, MEmpty());
+	printHeaderM = MLines2A(addBackground(titleTextM), columnNames);
+	getPrintPages = \availableSize -> {
+		rows = fgetValue(rowsB);
+		rowHeight = lineHeight + lineSeparatorHeight;
+		rowsPerPage = floor(availableSize.height / rowHeight);
+		pagesCount = ceil(i2d(length(rows)) / i2d(rowsPerPage));
+		generate(0, pagesCount, \i -> MLinesA(subrange(rows, i * rowsPerPage, rowsPerPage)));
+	}
+	printCalendarButtonM = getPrintCalendarIconButton(manager, printHeaderM, MEmpty(), getPrintPages, isPrintingB, styles);
 
 	headerM = addBackground(MColsYCenterA([titleTextM, tabsDropdownM, printCalendarButtonM]));
 
@@ -2576,7 +2582,7 @@ getCalendarDayView(
 
 	getDayEvent = \i, event -> maybeMap(find(dayEventTypes, \type -> type.name == event.eventType), \type -> CalendarDayEvent(i, event, type, make(0.0)));
 
-	sortEvents = \events -> sortCustom(events, \e -> time2stamp(e.event.startDate) + time2stamp(e.event.endDate) * 0.001, true);
+	sortDayEvents = \events -> sortCustom(events, \e -> time2stamp(e.event.startDate) + time2stamp(e.event.endDate) * 0.001, true);
 	isAllDayEvent = \dayEvent -> {
 		time2date(dayEvent.event.startDate) != time2date(dayEvent.event.endDate) ||
 			(dayEvent.event.startDate <= date2time(date) && dayEvent.event.endDate >= date2timeEOD(date));
@@ -2584,7 +2590,7 @@ getCalendarDayView(
 	splittedEvents = unzip(filtermapi(dayEvents, getDayEvent), isAllDayEvent);
 
 	allDayEvents = splittedEvents.first;
-	nonAllDayEvents = sortEvents(splittedEvents.second);
+	nonAllDayEvents = sortDayEvents(splittedEvents.second);
 	pastEventsB = make([]);
 	currentEventsB = make([]);
 	futureEventsB = make([]);
@@ -2629,8 +2635,8 @@ getCalendarDayView(
 		} else {
 			unpair(unzip(events, \e -> currentTime > e.event.startDate), \nonFutureEvents, newFutureEvents -> {
 				unpair(unzip(concat(nonFutureEvents, getValue(currentEventsB)), \e -> currentTime > e.event.endDate), \newPastEvents, newCurrentEvents -> {
-					newSortedPastEvents = sortEvents(concat(getValue(pastEventsB), newPastEvents));
-					newSortedCurrentEvents = sortEvents(newCurrentEvents);
+					newSortedPastEvents = sortDayEvents(concat(getValue(pastEventsB), newPastEvents));
+					newSortedCurrentEvents = sortDayEvents(newCurrentEvents);
 					nextDistinct(pastEventsB, newSortedPastEvents);
 					nextDistinct(currentEventsB, newSortedCurrentEvents);
 					nextDistinct(futureEventsB, newFutureEvents);
@@ -2709,6 +2715,46 @@ getCalendarDayView(
 	);
 }
 
+getCalendarTabById(tabId : string) -> Maybe<CalendarTab> {
+	if (tabId == "year") {
+		Some(YearTab());
+	} else if (tabId == "month") {
+		Some(MonthTab());
+	} else if (tabId == "planned") {
+		Some(PlannedTab());
+	} else if (tabId == "range") {
+		Some(RangeTab());
+	} else if (tabId == "week") {
+		Some(WeekTab());
+	} else if (tabId == "day") {
+		Some(DayTab());
+	} else {
+		None();
+	}
+}
+
+getCalendarTabId(tab : CalendarTab) -> string {
+	switch (tab) {
+		YearTab(): "year";
+		MonthTab(): "month";
+		PlannedTab(): "planned";
+		RangeTab(): "range";
+		WeekTab(): "week";
+		DayTab(): "day";
+	}
+}
+
+getCalendarTabName(tab : CalendarTab) -> string {
+	switch (tab) {
+		YearTab(): _("Year");
+		MonthTab(): _("Month");
+		PlannedTab(): _("Planned");
+		RangeTab(): _("Range");
+		WeekTab(): _("Week");
+		DayTab(): _("Day");
+	}
+}
+
 CalendarForEvents(
 	allEvents : DynamicBehaviour<[CalendarEvent]>,
 	currentEventTypes : DynamicBehaviour<[CalendarEventDecription]>,
@@ -2736,23 +2782,23 @@ CalendarForEvents(
 	hideEventsCount = containsStruct(styles, CalendarYearHideEventsCount());
 	dayCustomTabM = tryExtractStruct(styles, CalendarDayCustomTab(\__, __ -> MEmpty(), true));
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	pebbleControllerM = maybeMap(tryExtractStruct(styles, CalendarPebbles(makeDummyPebbleController())), \pebble -> pebble.controller);
 
 	filteredEvents = make(getValue(allEvents));
 	hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
 	choosedFilters = make(hiddenEventTypes);
 
+	isMobileViewB = if (isMobilePhone()) const(true) else fless(fwidth(manager.stageWH), const(1000.0));
+
 	tabOrder : [CalendarTab] = extractStruct(styles, TabOrder([YearTab(), MonthTab(), PlannedTab()])).tabs;
-	//0 - year, 1 - month, 2 - planned - by default
-	choosedTab = make(
-		findiDef(
-			tabOrder,
-			eq(extractStruct(styles, DefaultTab(YearTab())).tab),
-			0
-	));
+	defaultTabFromStyle = extractStruct(styles, DefaultTab(YearTab())).tab;
+	defaultTab = if (!contains(tabOrder, defaultTabFromStyle)) firstElement(tabOrder, YearTab()) else defaultTabFromStyle;
+	selectedTabB = make(defaultTab);
+
 	tabColors = extractStruct(styles, TabColors(MWhite(), MGrey(300)));
 	activeTabColor = tabColors.activeTabColor;
 	nonActiveTabColor = tabColors.nonActiveTabColor;
-	hideTabs = length(tabOrder) < 2;
+	hideTabs = length(tabOrder) < 2 || containsStruct(styles, CalendarHideTabs());
 
 	maxYear = dateMax.year;
 	minYear = dateMin.year;
@@ -2804,7 +2850,7 @@ CalendarForEvents(
 						\-> {
 							nextDistinct(currentMonthNumber, monthNumber);
 							nextDistinct(currentDate, Date(getValue(currentDate).year, monthNumber, 1));
-							nextDistinct(choosedTab, findiDef(tabOrder, eq(MonthTab()), 0));
+							if (contains(tabOrder, MonthTab())) nextDistinct(selectedTabB, MonthTab());
 						}
 					);
 				})
@@ -2826,10 +2872,16 @@ CalendarForEvents(
 	monthViewsM = generate(1, 13, monthView);
 	annualView = CalendarTabView(
 		MAttachAvailableWidth(
-			MAvailableWidth(
-				MFlexibleGrid(const(monthViewsM), [CenterAlign()]),
-				yearWidthB
-			),
+			MIfLazy(fless(yearAvailableWidthB, const(monthWidth * 2.0)), \isOneColumn -> {
+				if (isOneColumn) {
+					MScale(ffactor2(fdivide(yearAvailableWidthB, const(monthWidth))), MLinesA(monthViewsM));
+				} else {
+					MAvailableWidth(
+						MFlexibleGrid(const(monthViewsM), [CenterAlign()]),
+						yearWidthB
+					);
+				}
+			}),
 			yearAvailableWidthB
 		),
 		\availableSize -> {
@@ -2849,37 +2901,26 @@ CalendarForEvents(
 		}
 	);
 
-	getTabName = \tab : CalendarTab -> {
-		switch(tab) {
-			YearTab(): _("Year");
-			MonthTab(): _("Month");
-			PlannedTab(): _("Planned");
-			RangeTab(): _("Range");
-			WeekTab(): _("Week");
-			DayTab(): _("Day");
-		}
-	}
-
-	makeTabTitle = \tabNumber : int, tabType : CalendarTab -> {
+	makeTabTitle = \tab : CalendarTab -> {
 		minWidth = 120.;
 		maxWidth = 210.;
 		tabHeight = 62.0;
 		MClickable(
 			MGroup2(
-				MSelect(choosedTab, \tab ->
+				MSelect(selectedTabB, \selectedTab ->
 					TRectangle(
 						[MFill(choosedTabsColor),
-						FillOpacity(if (tab == tabNumber) 1.0 else 0.0)],
+						FillOpacity(if (selectedTab == tab) 1.0 else 0.0)],
 						TFillXYXY(minWidth, 5., maxWidth, 5.)
 					)
 				),
 				MCenterIn(
-					MSelect(choosedTab, \tab ->
+					MSelect(selectedTabB, \selectedTab ->
 						MParagraph(
-							toUpperCase(getTabName(tabType)),
+							toUpperCase(getCalendarTabName(tab)),
 							[
-								if (tab == tabNumber) activeTabColor else nonActiveTabColor,
-								if (tab == tabNumber) MCustomFont(20., "RobotoMedium", primaryTextOpacity) else MTitle(),
+								if (selectedTab == tab) activeTabColor else nonActiveTabColor,
+								if (selectedTab == tab) MCustomFont(20., "RobotoMedium", primaryTextOpacity) else MTitle(),
 								CenterAlign(), MWidth(maxWidth)
 							]
 						)
@@ -2887,19 +2928,29 @@ CalendarForEvents(
 					TFillXYXY(minWidth, tabHeight, maxWidth, tabHeight)
 				)
 			),
-			\ -> nextDistinct(choosedTab, tabNumber)
+			\ -> nextDistinct(selectedTabB, tab)
 		)
 	}
 
 	subMenuButtonStyle = calendarTabMenuStyle.button;
 	subMenuDropdownStyle = concat([MRightIcon("arrow_drop_down", []), MButtonPaddings(14.0, 2.0, 10.0, 2.0)], subMenuButtonStyle);
-	tabTitles = MCenterXIn(MCols(mapi(tabOrder, makeTabTitle)), TFillX());
-	tabsDropdownButtonM = MSelect(choosedTab, \tab -> {
-		name = getTabName(tabOrder[tab]);
+	tabTitles = MCenterXIn(MCols(map(tabOrder, makeTabTitle)), TFillX());
+	tabsDropdownButtonM = MSelect(selectedTabB, \tab -> {
+		name = getCalendarTabName(tab);
 		MTextButton(name, nop, subMenuDropdownStyle, []);
 	});
 	tabsDropdownM = if (!hideTabs && isTabsDropdown) {
-		MDropDown(choosedTab, "", map(tabOrder, getTabName), [MCustomButton(tabsDropdownButtonM), MOutlined()]) |> MBorderEnd(14.0);
+		selectedTabIdB = make(elemIndex(tabOrder, getValue(selectedTabB), 0));
+		MConstruct([
+				\ -> fBidirectionalLink(selectedTabB, selectedTabIdB,
+					\selectedTab -> nextDistinct(selectedTabIdB, elemIndex(tabOrder, selectedTab, 0)),
+					\selectedTabId -> if (existsIndex(tabOrder, selectedTabId)) {
+						nextDistinct(selectedTabB, tabOrder[selectedTabId]);
+					}
+				)
+			],
+			MDropDown(selectedTabIdB, "", map(tabOrder, getCalendarTabName), [MCustomButton(tabsDropdownButtonM), MOutlined()])
+		)|> MBorderEnd(14.0);
 	} else {
 		MEmpty();
 	}
@@ -2942,7 +2993,7 @@ CalendarForEvents(
 		);
 	}
 
-	subMenuIconStyle = calendarTabMenuStyle.icon;
+	subMenuIconStyle = arrayPush(calendarTabMenuStyle.icon, MIconButtonBorder(4.0));
 
 	monthTable = MonthTable(filteredEvents, currentEventTypes, currentDate, dateMin, dateMax, manager, displayedEventsInOneDay, choosedFilters, isPrintingB, styles);
 	plannedTable = PlannedEventsTable(filteredEvents, currentEventTypes, manager, tabsDropdownM, styles);
@@ -2966,6 +3017,10 @@ CalendarForEvents(
 
 	addHeaderBackground = \m -> MFrame(0.0, 0.0, calendarTabMenuStyle.background, m);
 	addHeaderBorder = \m -> MCenterX(m |> MBorderTopBottom(16.0));
+	addLeftRightBorder = \m, b -> {
+		borderT = fselect(isMobileViewB, FLift(\isMobile -> if (isMobile) 4.0 else b));
+		MBorderT(borderT, const(0.0), borderT, const(0.0), m);
+	}
 
 	TabContent = \tab : CalendarTab -> {
 		updateCurrentDate = \newDate : Date -> {
@@ -2999,18 +3054,32 @@ CalendarForEvents(
 		drawCalendarTabMenuText = \date, defaultText -> {
 			text = either(extractStruct(styles, CalendarTabMenuText(\__, __ -> None())).getText(date, tab), defaultText);
 			textM = MText(text, customFontStyle);
-			if (menuTightWidth) textM |> MBorderLeftRight(32.0) else MCenterX(textM);
+			if (menuTightWidth) addLeftRightBorder(textM, 32.0) else MCenterX(textM);
 		}
 
 		getTodayButton = \currentStartDate -> {
 			if (showTodayButton) {
 				isNotCurrentYearB = fselect(currentDate, FLift(\date -> date.year != currentStartDate.year));
 				MVisible(if (tab != YearTab()) fneq(currentDate, currentStartDate) else isNotCurrentYearB,
-					MTextButton(
-						_("Today"),
-						\ -> updateCurrentDate(currentStartDate),
-						concat([MButtonPaddings(28.0, 6.0, 28.0, 6.0)], subMenuButtonStyle),
-						[]
+					MIf(isMobileViewB,
+						MGroup2(
+							MIconButton(
+								"calendar_today",
+								\ -> updateCurrentDate(currentStartDate),
+								[MIconButtonBorder(4.0)],
+								[]
+							),
+							MCenterXIn(
+								MText(i2s(getCurrentDate().day), [MCaptionColumn()]) |> MBorderTop(11.0),
+								MFixedX(32.0)
+							)
+						),
+						MTextButton(
+							_("Today"),
+							\ -> updateCurrentDate(currentStartDate),
+							concat([MButtonPaddings(28.0, 6.0, 28.0, 6.0)], subMenuButtonStyle),
+							[]
+						)
 					)
 				);
 			} else {
@@ -3031,10 +3100,7 @@ CalendarForEvents(
 		}
 
 		getPrintButton = \headerM, getPrintPages -> {
-			eitherMap(printButtonStyleM, \printButtonStyle -> {
-				style = if (printButtonStyle == []) subMenuIconStyle else printButtonStyle;
-				getPrintCalendarIconButton(manager, addHeaderBackground(headerM), printLegendM, getPrintPages, isPrintingB, style);
-			}, MEmpty());
+			getPrintCalendarIconButton(manager, addHeaderBackground(headerM), printLegendM, getPrintPages, isPrintingB, styles);
 		}
 
 		buildActionButtons = \currentStartDate, printButtonM, prevPeriodButtons, nextPeriodButtons -> {
@@ -3049,7 +3115,7 @@ CalendarForEvents(
 		}
 
 		getAdditionalButtons = \buttons : CalendarActionButtons -> {
-			todayButton = buttons.todayButton |> MBorderLeftRight(16.0);
+			todayButton = addLeftRightBorder(buttons.todayButton, 16.0);
 			leftButtons = [
 				MGroup2(
 					MWidthOf(MCols([buttons.addButton, buttons.printButton, buttons.tabsDropdown])),
@@ -3443,15 +3509,18 @@ CalendarForEvents(
 			tabContent,
 			[
 				MOnSwipeLeft(\point, delta -> {
-					if (!getValue(isSwipePaused) && delta.x < -20. && getValue(choosedTab) != 0) {
-						next(choosedTab, getValue(choosedTab) - 1);
+					selectedTabId = elemIndex(tabOrder, getValue(selectedTabB), 0);
+					if (!getValue(isSwipePaused) && delta.x < -20. && selectedTabId > 0) {
+						nextDistinct(selectedTabB, tabOrder[selectedTabId - 1]);
 						pauseSwipe();
 					}
 					true;
 				}),
 				MOnSwipeRight(\point, delta -> {
-					if (!getValue(isSwipePaused) && delta.x > 20. && getValue(choosedTab) != length(tabOrder) - 1) {
-						next(choosedTab, getValue(choosedTab) + 1);
+					tabsCount = length(tabOrder);
+					selectedTabId = elemIndex(tabOrder, getValue(selectedTabB), tabsCount);
+					if (!getValue(isSwipePaused) && delta.x > 20. && selectedTabId < tabsCount - 1) {
+						nextDistinct(selectedTabB, tabOrder[selectedTabId + 1]);
 						pauseSwipe();
 					}
 					true;
@@ -3460,7 +3529,7 @@ CalendarForEvents(
 		)
 	}
 
-	MConstruct(
+	viewM = MConstruct(
 		[
 			makeSubscribe(allEvents, \events -> {
 				filters = getValue(choosedFilters);
@@ -3473,27 +3542,40 @@ CalendarForEvents(
 		MGroup([
 			MLinesA([
 				if (hideTabs || isTabsDropdown) MEmpty() else tabTitles,
-				MBorderA(16., 0., 16., 0.,
-					MSelect(choosedTab, \tabNumber -> TabContent(elementAt(tabOrder, tabNumber, YearTab())))
-				)
+				addLeftRightBorder(MSelect(selectedTabB, \tab -> TabContent(tab)), 16.0)
 			]),
 			if (hideAddEventButton) MEmpty()
-			else MShow(fnot(isReadOnlyB), MLines2A(
-				TFillY(),
-				MCols2A(
-					TFillX(),
-					MFloatingButton("add",
-						[MBlack()],
-						[MOnClick(\-> {
-							today = stamp2date(timestamp());
-							todayEvents = filter(getValue(filteredEvents), \item -> time2date(item.startDate) == today);
-							dayEventsPopup(today, todayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
-						})]
-					)
+			else MShow(fnot(isReadOnlyB),
+				MFloatingButton(
+					"add",
+					[MBottom(), MEnd(), getPrimaryColor(manager)],
+					[MOnClick(\-> {
+						today = stamp2date(timestamp());
+						todayEvents = filter(getValue(filteredEvents), \item -> time2date(item.startDate) == today);
+						dayEventsPopup(today, todayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
+					})]
 				)
-			))
+			)
 		])
-	)
+	);
+	eitherMap(pebbleControllerM, \pebbleController -> {
+		selectedTabIdB = make("");
+		getTab = \tabId -> {
+			tab = either(getCalendarTabById(tabId), defaultTab);
+			if (contains(tabOrder, tab)) tab else defaultTab;
+		}
+		onTabIdChange = \tabId -> {
+			if (eitherMap(getCalendarTabById(tabId), \tab -> !contains(tabOrder, tab), true)) {
+				setViewFromPebble(pebbleController, extendCurrentPebbleWithParameter(pebbleController, "calendarTab", getCalendarTabId(defaultTab)));
+			} else {
+				nextDistinct(selectedTabB, getTab(tabId));
+			}
+		}
+		MConstruct(
+			[makeSubscribe(selectedTabB, \selectedTab -> nextDistinct(selectedTabIdB, getCalendarTabId(selectedTab)))],
+			MLinkPebbleParameters(pebbleController, [PebbleStringLink("calendarTab", selectedTabIdB, onTabIdChange, RecordURLChange())], viewM)
+		);
+	}, viewM);
 }
 
 getPrintCalendarIconButton(
@@ -3502,9 +3584,9 @@ getPrintCalendarIconButton(
 	footerM : Material,
 	getPrintPages : (WidthHeight) -> [Material],
 	isPrintingB : DynamicBehaviour<bool>,
-	style : [MIconButtonStyle]
+	styles : [CalendarForEventsStyle]
 ) -> Material {
-	showDialog = \ -> {
+	showDialog = \isRunningB : Transform<bool>, disposer : () -> void -> {
 		closeB = make(false);
 		pageSizeB = make(4);
 		pageOrientationB = make(1);
@@ -3582,7 +3664,7 @@ getPrintCalendarIconButton(
 					),
 					MFixSize(MPrintPages(pagesB), MEmpty())
 				])
-			), const(260.0))
+			), const(240.0))
 		);
 
 		dialogStyle = [
@@ -3590,13 +3672,32 @@ getPrintCalendarIconButton(
 			MDialogClickOutToClose(),
 			MDialogTitle(_("Print Dialog")),
 			MDialogActions([
-				MTextButton(_("CLOSE"), \ -> next(closeB, true), [], []),
+				MTextButton(_("CLOSE"), disposer, [], []),
 				MTextButton(_("PREVIEW"), onPrint, [], []),
 			])
 		];
 
-		ShowMDialog(manager, closeB, dialogStyle, dialogViewM);
+		ShowMDialog(manager, fnot(isRunningB), dialogStyle, dialogViewM);
 	}
-	
-	MIconButton("print", showDialog, style, [MTooltipText(const(_("Print")))]);
+
+	getButton = \fn -> {
+		eitherMap(tryExtractStruct(styles, CalendarPrintable([])), \p -> {
+			calendarTabMenuStyle = extractStruct(styles, defaultCalendarTabMenuStyle);
+			style = if (p.style == []) calendarTabMenuStyle.icon else p.style;
+			MIconButton("print", fn, style, [MTooltipText(const(_("Print")))]);
+			
+		}, MEmpty());
+	}
+	eitherMap(maybeMap(tryExtractStruct(styles, CalendarPebbles(makeDummyPebbleController())), \pebble -> pebble.controller),
+		\pebbleController -> {
+			printCalendarB = make(false);
+			buttonM = getButton(\ -> nextDistinct(printCalendarB, true));
+			MLinkPebbleParameters(pebbleController, [makePebbleBoolTrigger("calendarPrint", printCalendarB, showDialog, RecordURLChange())], buttonM);
+		},
+		getButton(\ -> {
+			isRunningB = make(true);
+			disposer = \ -> next(isRunningB, false);
+			showDialog(isRunningB, disposer);
+		})
+	);
 }
