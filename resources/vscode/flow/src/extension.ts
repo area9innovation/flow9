@@ -9,7 +9,8 @@ import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
     LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RevealOutputChannelOn,
-} from 'vscode-languageclient';
+} from 'vscode-languageclient/node';
+
 import * as tools from "./tools";
 import * as updater from "./updater";
 import * as simplegit from 'simple-git/promise';

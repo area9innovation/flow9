@@ -239,12 +239,7 @@ class DisplayObjectHelper {
 
 	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
 
-		clip.interactive = untyped clip.scrollRectListener != null || clip.isInteractive
-			|| (
-				// It allows to catch wheel events from trackpad on iPad in Safari
-				!(Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1"))
-				&& (clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null)
-			);
+		clip.interactive = untyped clip.scrollRectListener != null || clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
@@ -632,7 +627,9 @@ class DisplayObjectHelper {
 			clip.mask = null;
 			untyped clip.maskContainer = null;
 
-			deleteNativeWidget(clip);
+			if (Util.getParameter("debug_snapshot") != '1') {
+				deleteNativeWidget(clip);
+			}
 
 			invalidateTransform(clip, 'removeScrollRect');
 		}
@@ -1776,7 +1773,10 @@ class DisplayObjectHelper {
 				}
 			}
 
-			nativeWidget.style.pointerEvents = 'auto';
+			nativeWidget.style.pointerEvents =
+				(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")
+				? 'unset' // It allows to catch wheel events from trackpad on iPad in Safari
+				: 'auto';
 
 			if (untyped clip.isFileDrop) {
 				nativeWidget.ondragover = function(e) {

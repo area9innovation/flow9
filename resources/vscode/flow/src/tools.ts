@@ -1,4 +1,4 @@
-import { spawn, ChildProcess, spawnSync } from "child_process";
+import { spawn, ChildProcess, spawnSync } from 'child_process';
 
 export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]): ChildProcess {
     const options = wd && wd.length > 0 ? { cwd: wd, shell: true } : { shell : true};
@@ -17,7 +17,10 @@ export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (st
 }
 
 export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
-  return spawnSync(cmd, args, { cwd: wd, shell: true, encoding: "utf8" });
+    const options = wd && wd.length > 0 ? 
+		{ cwd: wd, shell: true, encoding: "utf8" as BufferEncoding } :
+        { shell: true, encoding: "utf8" as BufferEncoding };
+    return spawnSync(cmd, args, options);
 }
 
 export function shutdownFlowcHttpServerSync() {

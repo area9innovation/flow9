@@ -601,7 +601,7 @@ class RenderSupport {
 		createPixiRenderer();
 
 		// Workaround to catch wheel events from trackpad on iPad in Safari
-		if (Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1")) {
+		if (Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0") {
 			appendScrollCatcher();
 		}
 
@@ -1188,7 +1188,7 @@ class RenderSupport {
 			}
 
 			// Fall-back if spin cannot be determined
-			if (!(Platform.isIOS && Platform.isSafari && (Util.getParameter("new") == "1" || Util.getParameter("trackpad_scroll") == "1"))) {
+			if (!(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")) {
 				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
 				if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
 			}
@@ -1997,7 +1997,9 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && !Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0") {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null &&
+			(Util.getParameter("debug_native_animation") == "1" || (!Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0"))
+		) {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -3292,7 +3294,11 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			forceRender();
+			if (Util.getParameter("debug_snapshot") == '1') {
+				render();
+			} else {
+				forceRender();
+			}
 
 			return img;
 		} catch(e : Dynamic) {
@@ -3301,7 +3307,11 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			forceRender();
+			if (Util.getParameter("debug_snapshot") == '1') {
+				render();
+			} else {
+				forceRender();
+			}
 
 			return 'error';
 		}

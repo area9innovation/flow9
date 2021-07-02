@@ -86,7 +86,7 @@ public class HttpServerSupport extends NativeHost
 			Object[],
 			Func0<Object>,
 			Func1<String, String>,
-			Func1<String, Integer>,
+			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> onMessage
 	)
@@ -244,7 +244,7 @@ public class HttpServerSupport extends NativeHost
 			Object[],
 			Func0<Object>,
 			Func1<String, String>,
-			Func1<String, Integer>,
+			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> onMessage;
 
@@ -256,7 +256,7 @@ public class HttpServerSupport extends NativeHost
 			Object[],
 			Func0<Object>,
 			Func1<String, String>,
-			Func1<String, Integer>,
+			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> _onMessage)
 		{
@@ -325,6 +325,7 @@ public class HttpServerSupport extends NativeHost
 		public static class ResponseHandler {
 			private Integer responseStatusCode = 200;
 			private HttpExchange exchange;
+			private OutputStream os;
 
 			public ResponseHandler(HttpExchange _exchange)
 			{
@@ -335,7 +336,6 @@ public class HttpServerSupport extends NativeHost
 				return new Func1<String, String>() {
 					public String invoke(String chunk) {
 						try {
-							OutputStream os = exchange.getResponseBody();
 							os.write(chunk.getBytes("UTF-8"));
 							os.flush();
 							return "";
@@ -350,7 +350,7 @@ public class HttpServerSupport extends NativeHost
 				return new Func0<Object>() {
 					public Object invoke() {
 						try {
-							exchange.getResponseBody().close();
+							os.close();
 						} catch (IOException e) {
 							System.out.println(e);
 						}
@@ -385,7 +385,7 @@ public class HttpServerSupport extends NativeHost
 								responseStatusCode,
 								responseBytes.length
 							);
-							OutputStream os = exchange.getResponseBody();
+							if (os == null) os = exchange.getResponseBody();
 							os.write(responseBytes);
 							os.close();
 						}
@@ -417,11 +417,21 @@ public class HttpServerSupport extends NativeHost
 				};
 			}
 
-			public Func1<String, Integer> makeSendHeaders() {
-				return new Func1<String, Integer>() {
-					public String invoke(Integer status) {
+			public Func2<String, Integer, Boolean> makeSendHeaders() {
+				return new Func2<String, Integer, Boolean>() {
+					public String invoke(Integer status, Boolean compressBody) {
 						try {
-							exchange.sendResponseHeaders(status, 0);
+							os = exchange.getResponseBody();
+							if (compressBody) {
+								exchange.getResponseHeaders().put(
+									"Content-Encoding",
+									Collections.singletonList("gzip")
+								);
+								exchange.sendResponseHeaders(status, 0);
+								os = new java.util.zip.GZIPOutputStream(os, true);
+							} else {
+								exchange.sendResponseHeaders(status, 0);
+							}
 							return "";
 						} catch (IOException e) {
 							return "Sending headers error: " + e.getMessage();
