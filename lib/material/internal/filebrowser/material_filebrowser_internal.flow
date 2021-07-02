@@ -133,17 +133,20 @@ getContentAPI(engine : FilebrowserEngine<?, ??>, path : string, ext : [string], 
 
 // start the elements searching (which names contains searchText string) and updating the content view
 getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : string, ext : [string], filterFn : (string) -> bool) -> Material {
-	stateSearch = makeSearchState(state.engine, searchText |> toLowerCase, ext, state.currentPathB, state.selectedElementsB);
+	// Special state2 for search case to have tooltips in result view.
+	// Without dummy `currentPathB` files in the current folder will be without tooltips.
+	state2 = FilebrowserState(state with currentPathB=make("-1"));
+	stateSearch = makeSearchState(state.engine, toLowerCase(searchText), ext, state.currentPathB, state.selectedElementsB);
 	next(stateSearch.counterB, getValue(stateSearch.counterB) + 1);
-	currentPath = state.currentPathB |> getValue;
+	currentPath = getValue(state.currentPathB);
 
 	itemB = make(MLoading(_("Searching, please wait...")));
 	resD = ref [];
 	resF = ref [];
 
 	resultScreen = \-> {
-		dirs = map(^resD, \d -> { r = split2Name_Path(d); FBContentPath(Pair(d, true), ref makeTree(), true, r.second, r.first); });
-		files = map(^resF, \f -> { r = split2Name_Path(f); FBContentPath(Pair(f, false), ref makeTree(), false, r.second, r.first); });
+		dirs = map(^resD, \d -> { r = split2Name_Path(d); FBContentPath(Pair(r.first, true), ref makeTree(), true, r.second, r.first); });
+		files = map(^resF, \f -> { r = split2Name_Path(f); FBContentPath(Pair(r.first, false), ref makeTree(), false, r.second, r.first); });
 
 		if (!getValue(stateSearch.breakSearchB)) {
 			l = length(dirs) + length(files);
@@ -154,7 +157,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state, dirs, files, None(), make([]))
+						getContentUI(state2, dirs, files, None(), make([]))
 					)
 			)
 		}
@@ -192,9 +195,23 @@ getContentRecursive(state : SearchState, currentPath : string, filterFn : (strin
 	correctedCurPath = addSlash2pathEnd(currentPath);
 
 	getContentAPI(state.engine, currentPath, state.ext, filterFn, \dirs, files -> {
+		dirs2 = filtermap(dirs, \dir -> {
+			r = takeAfterLast(dir, "/", dir);
+			if (r != "..") Some(r)
+			else None();
+		});
+
 		if (!getValue(state.breakSearchB)) {
-			resD = filter(dirs, \dir -> strContains(dir |> toLowerCase, state.text) && dir != "..");
-			resF = filter(files, \file -> strContains(file |> toLowerCase, state.text));
+			resD = filtermap(dirs2, \dir -> {
+				r = takeAfterLast(dir, "/", dir);
+				if (strContains(toLowerCase(r), state.text)) Some(r)
+				else None();
+			});
+			resF = filtermap(files, \file -> {
+				r = takeAfterLast(file, "/", file);
+				if (strContains(toLowerCase(r), state.text)) Some(r)
+				else None();
+			});
 
 			if (length(resD) + length(resF) > 0)
 				onOK(
@@ -208,9 +225,9 @@ getContentRecursive(state : SearchState, currentPath : string, filterFn : (strin
 
 		// go to in the sub folders
 		if (!getValue(state.breakSearchB))
-			iter(filter(dirs, \d -> d != ".."), \dir ->
+			iter(dirs2, \dir -> {
 				getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, onError)
-			);
+			});
 	}, onError
 	);
 }
@@ -1052,7 +1069,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				MFixSize(
 					MColsA([
 						TFixed(5.0, 0.0),
-						MPadA(0.0, -6.0, MTextInput(state.searchTextB, [], [MEnabled(const(true))])),
+						MPadA(0.0, -6.0, MTextInput(state.searchTextB, [MShowUnderline(false)], [MEnabled(const(true))])),
 						MIconButton("close", \-> {nextDistinct(state.searchTextB, ""); nextDistinct(inSearchB, false);}, [MIconButtonBorder(1.0), MIconSize(34.0), MOrange(500)], [])
 					]),
 					TFixed(200.0, 36.0)
