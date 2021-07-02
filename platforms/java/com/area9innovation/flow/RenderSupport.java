@@ -36,7 +36,8 @@ public class RenderSupport extends NativeHost {
 	public Object makeClip() {
 		return null;
 	}
-	public void assignClip(Object stage, String className, Object clip) {
+	public Object assignClip(Object stage, String className, Object clip) {
+		return null;
 	}
 	public Object makeGraphics() {
 		return null;
