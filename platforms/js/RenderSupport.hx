@@ -3289,16 +3289,12 @@ class RenderSupport {
 		render();
 
 		try {
-			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			var img = Util.getParameter("dummy_snapshot") == '1' ? "" : PixiRenderer.plugins.extract.base64(PixiStage);
 			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			if (Util.getParameter("debug_snapshot") == '1') {
-				render();
-			} else {
-				forceRender();
-			}
+			forceRender();
 
 			return img;
 		} catch(e : Dynamic) {
@@ -3307,11 +3303,7 @@ class RenderSupport {
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
-			if (Util.getParameter("debug_snapshot") == '1') {
-				render();
-			} else {
-				forceRender();
-			}
+			forceRender();
 
 			return 'error';
 		}
