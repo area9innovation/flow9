@@ -52,7 +52,7 @@ export {
 		CalendarMenuTightWidth, CalendarMenuAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarDayCustomTab,
-		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs;
+		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -140,6 +140,8 @@ export {
 		CalendarPebbles(controller : PebbleController);
 		// hide tabs/views dropdown
 		CalendarHideTabs();
+		// hide weekends in month, week & range (days) tabs
+		CalendarHideWeekends();
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -1233,7 +1235,9 @@ makeLineOfDaysBlockForMonthView(
 	startIndex : int,
 	getOtherMonthDay : (int) -> Material,
 	daysBlock : [Material],
-	result : [Material]) -> [Material] {
+	hideWeekends : bool,
+	result : [Material],
+) -> [Material] {
 
 	blocksLength = length(daysBlock);
 
@@ -1241,7 +1245,7 @@ makeLineOfDaysBlockForMonthView(
 		result
 	} else {
 		newLine = MCols(
-			generate(startIndex, startIndex + 7, \blockIndex -> {
+			generate(startIndex, startIndex + if (hideWeekends) 5 else 7, \blockIndex -> {
 				i = blockIndex - blocksLength;
 				if (i < 0) {
 					daysBlock[blockIndex];
@@ -1250,7 +1254,7 @@ makeLineOfDaysBlockForMonthView(
 				}
 			})
 		);
-		makeLineOfDaysBlockForMonthView(startIndex + 7, getOtherMonthDay, daysBlock, arrayPush(result, newLine))
+		makeLineOfDaysBlockForMonthView(startIndex + 7, getOtherMonthDay, daysBlock, hideWeekends, arrayPush(result, newLine))
 	}
 }
 
@@ -1290,6 +1294,7 @@ MonthTable(
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	isDynamicNumberOfEvents = maxDisplayedEventsInOneDay == -1;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	hideWeekends = contains(styles, CalendarHideWeekends());
 
 	weekDayHeightB = make(0.0);
 	dayTitleHeightB = make(0.0);
@@ -1593,7 +1598,7 @@ MonthTable(
 	};
 
 	MonthViewByWeek = \curD : Date, items : [CalendarEvent] -> {
-		headerM = MLines2(MSeparator(true), MColsA(mapi(weekDayNames, makeWeekDayNameCell)));
+		headerM = MLines2(MSeparator(true), MColsA(mapi(if (hideWeekends) take(weekDayNames, 5) else weekDayNames, makeWeekDayNameCell)));
 		weekDay = dayOfWeek(curD);
 		rowsCount = ceil(i2d(getNumberOfDaysPerMonthInTheYear(curD.year)[curD.month] + weekDay) / 7.0);
 		minEventsCount = 1;
@@ -1617,7 +1622,7 @@ MonthTable(
 			generate(-weekDay, 0, getOtherMonthDay),
 			calendarFiltering(items, rowsEventsCount)
 		);
-		rows = makeLineOfDaysBlockForMonthView(0, getOtherMonthDay, days, []);
+		rows = makeLineOfDaysBlockForMonthView(0, getOtherMonthDay, days, hideWeekends, []);
 
 		updateDisplayedEvents = \avaliableHeight, weekDayHeight, dayTitleHeight, eventRowHeight -> {
 			availableDayHeight = (avaliableHeight - weekDayHeight) / i2d(rowsCount) - dayTitleHeight;
@@ -1778,6 +1783,7 @@ RangeView(
 	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(1.0)).opacity;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	hideWeekends = contains(styles, CalendarHideWeekends());
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -1812,21 +1818,63 @@ RangeView(
 	byDayCellHeight = if (showDaysNames) 58.0 else 48.0;
 	byDayCellSize : Tropic = TFillXH(byDayCellHeight);
 
+	getDaysWithoutWeekends = \start : Date, end : Date -> {
+		filtermap(enumFromTo(0, getDaysBetweenDates(start, end)), \dateNum -> {
+			date = addDaysToDate(start, dateNum);
+			if (dayOfWeek(date) >= 5) None() else Some(date)
+		})
+	}
+
 	getRangeColumnsCount = \start : Date, end : Date -> {
-		if (rangeType == 0) getDaysBetweenDates(start, end)
+		if (rangeType == 0) {
+			if (hideWeekends) {
+				length(getDaysWithoutWeekends(start, end)) - 1
+			} else {
+				getDaysBetweenDates(start, end)
+			}
+		}
 		else if (rangeType == 1) getWeeksBetweenDates(start, end, 0)
 		else end.month - start.month + 12 * (end.year - start.year)
 	}
 
 	getNextDate = \oldDate : Date, dateNum : int -> {
-		newDate = if (rangeType == 0) addDaysToDate(oldDate, 1 * dateNum)
-			else if (rangeType == 1) getNextWeekStartDate(getWeekOfYear(oldDate, 0, true), oldDate.year, dateNum)
-			else addMonthsToDate(oldDate, 1 * dateNum);
+		newDate = if (rangeType == 0) {
+			if (hideWeekends) {
+				elementAt(getDaysWithoutWeekends(startDate, endDate), dateNum, oldDate)
+			} else {
+				addDaysToDate(oldDate, dateNum)
+			}
+		} else if (rangeType == 1) {
+			getNextWeekStartDate(getWeekOfYear(oldDate, 0, true), oldDate.year, dateNum)
+		} else {
+			addMonthsToDate(oldDate, 1 * dateNum)
+		}
 		min(max(newDate, startDate), endDate)
 	}
 
 	columnsCountInRange = getRangeColumnsCount(startDate, endDate) + 1;
-	rangeEvents = filter(events, \event -> time2date(event.startDate) <= endDate && startDate <= time2date(event.endDate));
+
+	rangeEvents = filtermap(events, \event -> {
+		if (time2date(event.startDate) <= endDate && startDate <= time2date(event.endDate)) {
+			if (rangeType == 0 && hideWeekends) {
+				eventStart = time2date(event.startDate);
+				eventEnd = time2date(event.endDate);
+
+				eventStartDay = dayOfWeek(eventStart);
+				eventEndDay = dayOfWeek(eventEnd);
+
+				newEvent = CalendarEvent(event with
+					startDate = if (eventStartDay >= 5) date2time(addDaysToDate(eventStart, 7 - eventStartDay)) else event.startDate,
+					endDate = if (eventEndDay >= 5) date2time(addDaysToDate(eventEnd, 4 - eventEndDay)) else event.endDate
+				);
+				if (time2stamp(newEvent.startDate) <= time2stamp(newEvent.endDate)) Some(newEvent) else None()
+			} else {
+				Some(event)
+			}
+		} else {
+			None()
+		}
+	});
 
 	cellBorder = \colour : int, height : double -> TRectangle([Fill(colour)], TFillMax(2., height));
 
@@ -1935,7 +1983,7 @@ RangeView(
 	monthNamesRowHeightB = make(0.0);
 	monthNamesRow = MAttachHeight(MCols(generate(0, monthCount, \idx -> {
 		date = addMonthsToDate(startDate, idx);
-		len = getDaysBetweenDates(
+		len = getRangeColumnsCount(
 			if (idx == 0) startDate else Date(date.year, date.month, 1),
 			if (idx == monthCount - 1) endDate else Date(date.year, date.month, getNumberOfDaysPerMonthInTheYear(date.year)[date.month])
 		) + 1;
