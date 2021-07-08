@@ -141,6 +141,17 @@ LspRenameFile : (oldUri: URI, newUri: URI, options : Maybe<LspRenameFileOptions>
 LspDeleteFileOptions : (recursive : bool, ignoreIfNotExists : bool);
 LspDeleteFile : (uri: URI, options : Maybe<LspDeleteFileOptions>);
 
+LspCallHierarchyItem : (
+	name : string,
+	kind : int,
+	tags : [int], // DiagnosticTag: Unnecessary = 1, Deprecated = 2
+	detail : string,
+	uri : URI,
+	range: LspRange,
+	selectionRange: LspRange,
+	data : Json
+);
+
 lspRequestMessage2Json(request : LspRequestMessage) -> Json;
 lspNotificationMessage2Json(request : LspNotificationMessage) -> Json;
 lspResponseMessage2Json(response : LspResponseMessage) -> Json;
@@ -197,6 +208,8 @@ lspRenameFile2Json(rename : LspRenameFile) -> Json;
 lspDeleteFileOptions2Json(opts : LspDeleteFileOptions) -> Json;
 lspDeleteFile2Json(delete : LspDeleteFile) -> Json;
 
+lspCallHierarchyItem2Json(item : LspCallHierarchyItem) -> Json;
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage>;
 json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage>;
 json2LspResponseError(json : Json) -> Maybe<LspResponseError>;
@@ -249,6 +262,8 @@ json2LspRenameFileOptions(json : Json) -> Maybe<LspRenameFileOptions>;
 json2LspRenameFile(json : Json) -> Maybe<LspRenameFile>;
 json2LspDeleteFileOptions(json : Json) -> Maybe<LspDeleteFileOptions>;
 json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile>;
+
+json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem>;
 
 // 0 stands for no kind
 lspSymbolKindName2id = pairs2tree([
@@ -718,6 +733,19 @@ lspDeleteFile2Json(delete : LspDeleteFile) -> Json {
 		Some(Pair("kind", JsonString("delete"))),
 		Some(Pair("uri", JsonString(uri2string(delete.uri)))),
 		maybeMap(delete.options, \opts -> Pair("options", lspDeleteFileOptions2Json(opts)))
+	], idfn));
+}
+
+lspCallHierarchyItem2Json(item : LspCallHierarchyItem) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("name", JsonString(item.name))),
+		Some(Pair("kind", JsonString(i2s(item.kind)))),
+		if (length(item.tags) == 0) None() else Some(Pair("tags", JsonArray(map(item.tags, \tag -> JsonString(i2s(tag)))))),
+		if (item.detail == "") None() else Some(Pair("detail", JsonString(item.detail))),
+		Some(Pair("uri", JsonString(uri2string(item.uri)))),
+		Some(Pair("range", lspRange2Json(item.range))),
+		Some(Pair("selectionRange", lspRange2Json(item.selectionRange))),
+		if (item.data == JsonNull()) None() else Some(Pair("data", item.data))
 	], idfn));
 }
 
@@ -1199,6 +1227,24 @@ json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile> {
 			parseURI(getJsonStringField(json, "uri", "")),
 			json2LspDeleteFileOptions(getJsonObjectField(json, "options"))
 		));
+	}
+}
+
+json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem> {
+	if (!forall(["name", "kind", "uri", "range", "selectionRange"], \field -> jsonObjectHasField(json, field))) None() else {
+		name = getJsonStringField(json, "name", "");
+		kind = s2i(getJsonStringField(json, "kind", ""));
+		tags = filtermap(getJsonArrayField(json, "tags"), getJsonIntValueM);
+		detail = getJsonStringField(json, "detail", "");
+		uri = parseURI(getJsonStringField(json, "uri", ""));
+		data = getJsonFieldValue(json, "name", JsonNull());
+		maybeBind(json2LspRange(getJsonFieldValue(json, "range", JsonNull())), \range -> 
+			maybeMap(json2LspRange(getJsonFieldValue(json, "selectionRange", JsonNull())), \selectionRange ->
+				LspCallHierarchyItem(
+					name, kind, tags, detail, uri, range, selectionRange, data
+				)
+			)
+		);
 	}
 }
 
