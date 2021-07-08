@@ -61,7 +61,7 @@ Configure MySQL-server mode:
 printf '[mysqld]
 sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
-More details on mysql setup can be found in `flow9/doc/mysql.markdown`
+More details on mysql setup can be found in `innovation/doc/mysql.markdown`
 
 ## PHP7.2
 Set up PHP:
