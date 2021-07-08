@@ -20,6 +20,9 @@ import tools/flowc_lsp/lsp_utils;
 	- textDocument/hover
 	- textDocument/rename
 	- textDocument/completion
+	- textDocument/callHierarchy
+	- callHierarchy/incomingCalls
+	- callHierarchy/outgoingCalls
 	- workspace/executeCommand
 */
 
@@ -94,6 +97,9 @@ lspMethods = pairs2tree([
 	Pair("textDocument/hover", lspTextDocumentHover),
 	Pair("textDocument/rename", lspTextDocumentRename),
 	Pair("textDocument/completion", lspTextDocumentCompletion),
+	Pair("textDocument/prepareCallHierarchy", lspTextDocumentPrepareCallHierarchy),
+	Pair("callHierarchy/incomingCalls", lspCallHierarchyIncomingCalls),
+	Pair("callHierarchy/outgoingCalls", lspCallHierarchyOutgoingCalls),
 	Pair("workspace/executeCommand", lspWorkspaceExecuteCommand),
 ]);
 
@@ -218,6 +224,7 @@ lspInitialize(call: LspMethodCall) -> void {
 							Pair("workDoneProgress", JsonBool(false))
 						])
 					),
+					Pair("callHierarchyProvider", JsonBool(true)),
 					Pair("textDocumentSync",
 						JsonObject([
 							Pair("openClose", JsonBool(true)),
@@ -508,6 +515,102 @@ lspTextDocumentCompletion(call: LspMethodCall) -> void {
 		}
 	}
 }
+
+lspTextDocumentPrepareCallHierarchy(call: LspMethodCall) -> void {
+	switch (json2LspTextDocumentPositionParams(call.params)) {
+		Some(textpos): {
+			path = fcCorrectUriPath(textpos.textDocument.uri.path);
+			conf = lspFileConfig(path);
+			lspRunConf(true,
+				setConfigOptions(conf, [
+						Pair("exp-line", i2s(textpos.position.line)), 
+						Pair("exp-column", i2s(textpos.position.character)), 
+						Pair("calls-info", "1")
+					]
+				),
+				\code, out, err -> {
+					if (lspDetectLspError(out, call.lspConf)) {
+						call.out_cb(lspErrorDiagnostics(textpos.textDocument.uri, out));
+						call.out_cb(lspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							item = parseJsonSafe(out); //LspHover([LspMarkedString("flow", out)], None());
+							call.out_cb(lspNormalResponse(call.id, JsonArray([item])));
+						} else {
+							call.out_cb(lspNormalResponse(call.id, JsonNull()));
+						}
+					}
+				}
+			);
+		}
+		None(): {
+			call.out_cb(lspErrorResponse(call.id, 1, "prepareCallHierarchy request is illegal"));
+		}
+	}
+}
+
+lspCallHierarchyIncomingCalls(call: LspMethodCall) -> void {
+	switch (json2LspCallHierarchyIncomingCallsParams(call.params)) {
+		Some(params): {
+			path = fcCorrectUriPath(params.item.uri.path);
+			conf = lspFileConfig(path);
+			lspRunConf(true,
+				setConfigOptions(conf, [
+						Pair("calls-incoming", params.item.name)
+					]
+				),
+				\code, out, err -> {
+					if (lspDetectLspError(out, call.lspConf)) {
+						call.out_cb(lspErrorDiagnostics(params.item.uri, out));
+						call.out_cb(lspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							incoming = parseJsonSafe(out);
+							call.out_cb(lspNormalResponse(call.id, incoming));
+						} else {
+							call.out_cb(lspNormalResponse(call.id, JsonNull()));
+						}
+					}
+				}
+			);
+		}
+		None(): {
+			call.out_cb(lspErrorResponse(call.id, 1, "callHierarchy/incomingCalls request is illegal"));
+		}
+	}
+}
+
+lspCallHierarchyOutgoingCalls(call: LspMethodCall) -> void {
+	switch (json2LspCallHierarchyOutgoingCallsParams(call.params)) {
+		Some(params): {
+			path = fcCorrectUriPath(params.item.uri.path);
+			conf = lspFileConfig(path);
+			lspRunConf(true,
+				setConfigOptions(conf, [
+						Pair("calls-outgoing", params.item.name)
+					]
+				),
+				\code, out, err -> {
+					if (lspDetectLspError(out, call.lspConf)) {
+						call.out_cb(lspErrorDiagnostics(params.item.uri, out));
+						call.out_cb(lspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							outgoing = parseJsonSafe(out);
+							call.out_cb(lspNormalResponse(call.id, outgoing));
+						} else {
+							call.out_cb(lspNormalResponse(call.id, JsonNull()));
+						}
+					}
+				}
+			);
+		}
+		None(): {
+			call.out_cb(lspErrorResponse(call.id, 1, "callHierarchy/outgoingCalls request is illegal"));
+		}
+	}
+}
+
 
 lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 	switch (json2LspExecuteCommandParams(call.params)) {
