@@ -1774,7 +1774,7 @@ class DisplayObjectHelper {
 			}
 
 			nativeWidget.style.pointerEvents =
-				(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")
+				(Platform.isIOS && Platform.isSafari && !untyped clip.isInput && Util.getParameter("trackpad_scroll") != "0")
 				? 'unset' // It allows to catch wheel events from trackpad on iPad in Safari
 				: 'auto';
 

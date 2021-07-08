@@ -170,6 +170,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var doNotRemap : Bool = false;
 	private var preventSelectEvent : Bool = false;
+	private var preventMouseUpEvent : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1171,6 +1172,10 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		e.stopPropagation();
+		if (preventMouseUpEvent) {
+			e.preventDefault();
+			preventMouseUpEvent = false;
+		}
 	}
 
 	private function onFocus(e : Event) : Void {
@@ -1458,9 +1463,14 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function setSelection(start : Int, end : Int) : Void {
+		// setSelectionRange triggers 'focusin' event in Safari
+		if (Platform.isSafari && (start == -1 || end == -1)) {
+			return;
+		}
 		// Chrome doesn't support this method for 'number' inputs
 		try {
 			nativeWidget.setSelectionRange(start, end);
+			preventMouseUpEvent = true;
 		} catch (e : Dynamic) {
 			return;
 		}
