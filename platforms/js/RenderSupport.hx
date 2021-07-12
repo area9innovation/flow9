@@ -3271,10 +3271,14 @@ class RenderSupport {
 	}
 
 	public static function getSnapshot() : String {
-		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), Util.getParameter("debug_snapshot_2") == '1');
 	}
 
 	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
+		return getSnapshotBox2(x, y, w, h, false);
+	}
+
+	public static function getSnapshotBox2(x : Int, y : Int, w : Int, h : Int, ?fullSnapshot : Bool = false) : String {
 		var child : FlowContainer = untyped PixiStage.children[0];
 
 		if (child == null) {
@@ -3283,14 +3287,14 @@ class RenderSupport {
 
 		untyped RenderSupport.LayoutText = true;
 		emit("enable_sprites");
-		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
+		PixiStage.forceClipRenderable();
 		render();
 
 		try {
 			var img = Util.getParameter("dummy_snapshot") == '1' ? "" : PixiRenderer.plugins.extract.base64(PixiStage);
-			child.removeScrollRect();
+			if (!fullSnapshot) child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
@@ -3299,7 +3303,7 @@ class RenderSupport {
 			return img;
 		} catch(e : Dynamic) {
 			trace(e);
-			child.removeScrollRect();
+			if (!fullSnapshot) child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
