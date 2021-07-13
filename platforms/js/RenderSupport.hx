@@ -3271,7 +3271,7 @@ class RenderSupport {
 	}
 
 	public static function getSnapshot() : String {
-		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), Util.getParameter("debug_snapshot_2") == '1');
+		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), true);
 	}
 
 	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
@@ -3292,23 +3292,23 @@ class RenderSupport {
 		PixiStage.forceClipRenderable();
 		render();
 
-		try {
-			var img = Util.getParameter("dummy_snapshot") == '1' ? "" : PixiRenderer.plugins.extract.base64(PixiStage);
-			if (!fullSnapshot) child.removeScrollRect();
+		var dispFn = function() {
+			// With fix disabled glitches start to happen on iPad after some snapshots
+			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_disable") != '1';
+			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
 			forceRender();
+		}
 
+		try {
+			var img = Util.getParameter("dummy_snapshot") == '1' ? "" : PixiRenderer.plugins.extract.base64(PixiStage);
+			dispFn();
 			return img;
 		} catch(e : Dynamic) {
 			trace(e);
-			if (!fullSnapshot) child.removeScrollRect();
-			untyped RenderSupport.LayoutText = false;
-			emit("disable_sprites");
-
-			forceRender();
-
+			dispFn();
 			return 'error';
 		}
 	}
