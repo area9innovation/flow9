@@ -130,17 +130,6 @@ findAllPathsToMain(uses : Tree<string, [string]>, paths : [[string]], acc : [[st
 	}
 }
 
-/*
-lspSymbolKindName2id = pairs2tree([
-	Pair("File", 1),       Pair("Module", 2),      Pair("Namespace", 3), Pair("Package", 4),     Pair("Class", 5),
-	Pair("Method", 6),     Pair("Property", 7),    Pair("Field", 8),     Pair("Constructor", 9), Pair("Enum", 10),
-	Pair("Interface", 11), Pair("Function", 12),   Pair("Variable", 13), Pair("Constant", 14),   Pair("String", 15),
-	Pair("Number", 16),    Pair("Boolean", 17),    Pair("Array", 18),    Pair("Object", 19),     Pair("Key", 20),
-	Pair("Null", 21),      Pair("EnumMember", 22), Pair("Struct", 23),   Pair("Event", 24),      Pair("Operator", 25),
-	Pair("TypeParameter", 26),
-]);
-*/
-
 type2LspSymbolkind(type : FiType, names : FiGlobalNames) -> int {
 	switch (type) {
 		FiTypeArray(__): lookupTreeDef(lspSymbolKindName2id, "Array", 0);
@@ -173,7 +162,7 @@ nature2LspSymbolkind(nature : FcSymbolNature, names : FiGlobalNames) -> int {
 }
 
 pos2LspPosition(pos : int, resolver : LineResolver) -> LspPosition {
-	linecol = findLine(resolver, pos);
+	linecol = findLine1(resolver, pos, 1);
 	LspPosition(linecol.lineno - 1, linecol.column - 1);
 }
 
@@ -204,33 +193,10 @@ lspCallHierarchyMethods(prog : FiProgram, env : FcTypeEnvGlobal) -> void {
 lspPrepareCallHierarchy(prog : FiProgram, line : int, col : int, env : FcTypeEnvGlobal) -> void {
 	config = prog.config;
 	file = config.flowfile;
-
-	// findFlowPath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string) -> string;
-
 	path = findFlowPath(config.flowfile, true, config.includes, lookupTreeDef(config.config, "working-dir", ""));
-
-
 	src = fcFileSource(env, path);
 	resolver = makeLineResolver(src);
 	name = getNameByLineCol(line, col, src);
-
-	// fastSymbolNature(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> Maybe<FcSymbolNature>;
-
-	/*
-	LspCallHierarchyItem : (
-		name : string,
-		kind : int,
-		tags : [int], // DiagnosticTag: Unnecessary = 1, Deprecated = 2
-		detail : string,
-		uri : URI,
-		range: LspRange,
-		selectionRange: LspRange,
-		data : Json
-	);
-	*/
-	// string2LspSymbolKind(s : string) -> int
-
-	// getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2>
 	maybeApply(getFcInfo2ByLineCol(line, col, src), \fc_range ->
 		maybeApply(fastSymbolNature(config, env, name, line, col), \nature -> {
 			kind = nature2LspSymbolkind(nature, prog.names);
@@ -247,48 +213,21 @@ lspPrepareCallHierarchy(prog : FiProgram, line : int, col : int, env : FcTypeEnv
 	);
 }
 
-/*
-LspCallHierarchyItem : (
-	name : string,
-	kind : int,
-	tags : [int], // DiagnosticTag: Unnecessary = 1, Deprecated = 2
-	detail : string,
-	uri : URI,
-	range: LspRange,
-	selectionRange: LspRange,
-	data : Json
-);
-*/
-
-// LspCallHierarchyIncomingCall : (from: LspCallHierarchyItem, fromRanges: [LspRange]);
-
-//symbolIcomingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [LspCallHierarchyIncomingCall]
-
 lspCallHierarchyIncoming(prog : FiProgram, json : string, env : FcTypeEnvGlobal) -> void {
 	config = prog.config;
 	file = config.flowfile;
 	maybeApply(json2LspCallHierarchyItem(parseJsonSafe(json)), \item -> {
-		//all_deps = symbolDependenciesOccurs(prog, env);
-		//name_deps = lookupTreeDef(all_deps, item.name, makeTree());
 		calls = map(symbolIcomingCalls(prog, item.name, env), lspCallHierarchyIncomingCall2Json);
 		fcPrintln(json2string(JsonArray(calls)), config.threadId);
 	});
 }
 
-// LspCallHierarchyOutgoingCall : (from: LspCallHierarchyItem, fromRanges: [LspRange]);
-
 lspCallHierarchyOutgoing(prog : FiProgram, json : string, env : FcTypeEnvGlobal) -> void {
 	config = prog.config;
 	file = config.flowfile;
 	maybeApply(json2LspCallHierarchyItem(parseJsonSafe(json)), \item -> {
-		/*all_deps = symbolDependenciesOccurs(prog, env);
-		name_deps = lookupTreeDef(all_deps, item.name, makeTree());
-		calls = map(getTreeValues(name_deps), \occurs -> {
-			fromRanges = map(set2array(occurs), \occur -> fiSymbolOccur2LspLocation(occur, env).range);
-			incoming = LspCallHierarchyIncomingCall(item, fromRanges);
-			lspCallHierarchyIncomingCall2Json(incoming);
-		});
-		fcPrintln(json2string(JsonArray(calls)), config.threadId);*/
+		calls = map(symbolOutgoingCalls(prog, item.name, env), lspCallHierarchyOutgoingCall2Json);
+		fcPrintln(json2string(JsonArray(calls)), config.threadId);
 	});
 }
 
@@ -310,33 +249,58 @@ fifreevarsOccurs(e : FiExp, path : string, src : string, threadId : int) -> Tree
 	fifreevarsOccursBoundFree(e, path, src, threadId, makeSet(), makeTree());
 }
 
-// getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2>
-
 fifreevarsOccursBoundFree(expr : FiExp, path : string, src : string, threadId : int, bound : Set<string>, free : Tree<string, Set<FiSymbolOccurrence>>) -> Tree<string, Set<FiSymbolOccurrence>> {
-	fold_freevars = \es, b, f -> 
-		fold(es, f, \acc, e -> fifreevarsOccursBoundFree(e, path, src, threadId, b, acc));
+	fold_freevars = \es, f -> {
+		fold(es, f, \acc, e -> fifreevarsOccursBoundFree(e, path, src, threadId, bound, acc));
+	}
 	switch (expr) {
-		FiLambda(args, e, __, __):    fifreevarsOccursBoundFree(e, path, src, threadId, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), free);
-		FiCall(f, es, __, __):        fold_freevars(es, bound, fifreevarsOccursBoundFree(f, path, src, threadId, bound, free));
-		FiVar(x, __, beg):             if (containsSet(bound, x)) free else {
-			switch (getFcInfo2ByPos(beg, src)) {
-				Some(info2): {
-					setTree(free, x, insertSet(lookupTreeDef(free, x, makeSet()), 
-						FiSymbolOccurrence(path, info2)
-					));
-				}
-				None(): {
-					fcPrintln("Couldn't find a symbol boundaries - an error", threadId);
-					free;
+		FiLambda(args, e, __, __): {
+			lambda_bound = fold(args, bound, \acc, arg -> insertSet(acc, arg.name));
+			fifreevarsOccursBoundFree(e, path, src, threadId, lambda_bound, free);
+		}
+		FiCall(f, es, __, __):{
+			free_f = fifreevarsOccursBoundFree(f, path, src, threadId, bound, free);
+			fold_freevars(es, free_f);
+		}
+		FiVar(x, __, beg): {
+			if (containsSet(bound, x)) free else {
+				switch (getFcInfo2ByPos(beg, src)) {
+					Some(info2): {
+						setTree(free, x, insertSet(lookupTreeDef(free, x, makeSet()), 
+							FiSymbolOccurrence(path, info2)
+						));
+					}
+					None(): {
+						fcPrintln("Couldn't find a symbol boundaries - an error", threadId);
+						free;
+					}
 				}
 			}
 		}
-		FiLet(x, __, e1, e2, __, __): fifreevarsOccursBoundFree(e2, path, src, threadId, insertSet(bound, x), fifreevarsOccursBoundFree(e1, path, src, threadId, bound, free));
-		FiIf(e1, e2, e3, __, __):     fold_freevars([e1, e2, e3], bound, free);
-		FiSwitch(e, __, cs, __, __):  fold(cs, fifreevarsOccursBoundFree(e, path, src, threadId, bound, free), \acc, c -> fifreevarsOccursBoundFree(c.body, path, src, threadId, bound, acc));
-		FiCast(e, __, __, __, __):    fifreevarsOccursBoundFree(e, path, src, threadId, bound, free);
-		FiSeq(es, __, __):            fold_freevars(es, bound, free);
-		FiCallPrim(__, es, __, __):   fold_freevars(es, bound, free);
+		FiLet(x, __, e1, e2, __, __): {
+			e1_free = fifreevarsOccursBoundFree(e1, path, src, threadId, bound, free);
+			let_bound = insertSet(bound, x);
+			fifreevarsOccursBoundFree(e2, path, src, threadId, let_bound, e1_free);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			fold_freevars([e1, e2, e3], free);
+		}
+		FiSwitch(e, __, cs, __, __): {
+			e_free = fifreevarsOccursBoundFree(e, path, src, threadId, bound, free);
+			fold(cs, e_free, \acc, c -> {
+				case_bound = fold(c.argNames, bound, \ac, arg_name -> if (arg_name == "__") ac else insertSet(ac, arg_name));
+				fifreevarsOccursBoundFree(c.body, path, src, threadId, case_bound, acc);
+			});
+		}
+		FiCast(e, __, __, __, __): {
+			fifreevarsOccursBoundFree(e, path, src, threadId, bound, free);
+		}
+		FiSeq(es, __, __): {
+			fold_freevars(es, free);
+		}
+		FiCallPrim(__, es, __, __): {
+			fold_freevars(es, free)
+		}
 		FiString(__, __):             free; // here I would want to match simply on union FcConst
 		FiBool(__, __):               free;
 		FiDouble(__, __):             free;
@@ -347,21 +311,22 @@ fifreevarsOccursBoundFree(expr : FiExp, path : string, src : string, threadId : 
 	}
 }
 
-symbolFuncIcomingCalls(
+fiDeclarationIcomingCalls(
 	path : string, name : string, src : string, threadId : int, 
-	fn_name : string, fn_pos : int, fn_body : FiExp, env : FcTypeEnvGlobal
+	decl : FiDeclaration, env : FcTypeEnvGlobal
 ) -> [LspCallHierarchyIncomingCall] {
-	freeOccurs = fifreevarsOccurs(fn_body, path, src, threadId);
+	body = bodyOfFiDeclaration(decl);
+	freeOccurs = fifreevarsOccurs(body, path, src, threadId);
 	fromRanges = map(set2array(lookupTreeDef(freeOccurs, name, makeSet())), \occur -> 
 		fiSymbolOccur2LspLocation(occur, env).range
 	);
 	if (fromRanges == []) [] else {
-		switch (getFcInfo2ByPos(fn_pos, src)) {
+		switch (getFcInfo2ByPos(decl.defiStart, src)) {
 			Some(info2): {
 				resolver = makeLineResolver(src);
 				range = info2LspRange(info2, resolver);
 				item = LspCallHierarchyItem(
-					fn_name, lookupTreeDef(lspSymbolKindName2id, "Function", 0), 
+					decl.name, lspKindOfFiDeclaration(decl), 
 					[], // no tags yet
 					"", // no details yet
 					URI("file", URIAuthority("", "", ""), path, "", ""),
@@ -377,24 +342,32 @@ symbolFuncIcomingCalls(
 }
 
 symbolIcomingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [LspCallHierarchyIncomingCall] {
-	fold(getTreeValues(prog.modules), [], \acc, module -> {
+	fcFoldCache(env, [], \acc, module -> {
 		path = module.fileinfo.fullpath;
 		src = fcFileSource(env, path);
 		acc1 = fold(module.functions, acc, \ac, fn ->
 			concat(ac, 
-				symbolFuncIcomingCalls(
+				fiDeclarationIcomingCalls(
 					path, name, src, prog.config.threadId, 
-					fn.name, fn.defiStart, fn.lambda, env
+					fn, env
 				)
 			)
 		);
-		fold(module.natives, acc1, \ac, nat ->
+		acc2 = fold(module.globalVars, acc1, \ac, var ->
+			concat(ac, 
+				fiDeclarationIcomingCalls(
+					path, name, src, prog.config.threadId, 
+					var, env
+				)
+			)
+		);
+		fold(module.natives, acc2, \ac, nat ->
 			switch (nat.fallbackLambda) {
 				FiLambda(__, __, __, __): {
 					concat(ac, 
-						symbolFuncIcomingCalls(
+						fiDeclarationIcomingCalls(
 							path, name, src, prog.config.threadId, 
-							nat.name, nat.defiStart, nat.fallbackLambda, env
+							nat, env
 						)
 					);
 				}
@@ -406,4 +379,83 @@ symbolIcomingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [L
 			}
 		);
 	});
+}
+
+bodyOfFiDeclaration(decl : FiDeclaration) -> FiExp {
+	switch (decl) {
+		FiFunctionDec(__, lambda, type, declStart, defiStart): {
+			lambda;
+		}
+		FiGlobalVar(__, value, type, declStart, defiStart): {
+			value;
+		}
+		FiNativeDec(__, io, type, nativeName, fallback, declStart, defiStart): {
+			fallback;
+		}
+	}
+}
+
+lspKindOfFiDeclaration(decl : FiDeclaration) -> int {
+	switch (decl) {
+		FiFunctionDec(__, lambda, type, declStart, defiStart): {
+			lookupTreeDef(lspSymbolKindName2id, "Function", 0)
+		}
+		FiGlobalVar(__, value, type, declStart, defiStart): {
+			lookupTreeDef(lspSymbolKindName2id, "Variable", 0)
+		}
+		FiNativeDec(__, io, type, nativeName, fallback, declStart, defiStart): {
+			lookupTreeDef(lspSymbolKindName2id, "Method", 0)
+		}
+	}
+}
+
+symbolOutgoingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [LspCallHierarchyOutgoingCall] {
+	conf = prog.config;
+	switch (lookupTree(prog.names.toplevel, name)) {
+		Some(decl): {
+			body = bodyOfFiDeclaration(decl);
+			module = name2FimoduleInFiProgram(prog, conf.flowfile, name);
+			path = module.fileinfo.fullpath;
+			src = fcFileSource(env, path);
+			freeOccurs = fifreevarsOccurs(body, path, src, conf.threadId);
+			filtermap(tree2pairs(freeOccurs), \p -> {
+				called_name = p.first;
+				occurs = set2array(p.second);
+				called_module = name2FimoduleInFiProgram(prog, conf.flowfile, called_name);
+				called_path = called_module.fileinfo.fullpath;
+				called_src = fcFileSource(env, called_path);
+				fromRanges = map(occurs, \occur -> fiSymbolOccur2LspLocation(occur, env).range);
+				switch (lookupTree(prog.names.toplevel, called_name)) {
+					Some(called_decl): {
+						called_start = called_decl.defiStart;
+						switch (getFcInfo2ByPos(called_start, called_src)) {
+							Some(called_info2): {
+								resolver = makeLineResolver(called_src);
+								range = info2LspRange(called_info2, resolver);
+								called_item = LspCallHierarchyItem(
+									called_name, lspKindOfFiDeclaration(called_decl), 
+									[], // no tags yet
+									"", // no details yet
+									URI("file", URIAuthority("", "", ""), called_path, "", ""),
+									range, range, JsonNull()
+								);
+								Some(LspCallHierarchyOutgoingCall(called_item, fromRanges));
+							}
+							None(): {
+								// Must not happen
+								None();
+							}
+						}
+					}
+					None(): {
+						// Must not happen
+						None();
+					}
+				}
+			});
+		}
+		None(): {
+			[];
+		}
+	}
 }
