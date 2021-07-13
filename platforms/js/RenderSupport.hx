@@ -1997,9 +1997,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (clip.isHTMLRenderer() && Browser.document.body.animate != null &&
-			(Util.getParameter("debug_native_animation") == "1" || (!Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0"))
-		) {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && !Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -3303,7 +3301,7 @@ class RenderSupport {
 		}
 
 		try {
-			var img = Util.getParameter("dummy_snapshot") == '1' ? "" : PixiRenderer.plugins.extract.base64(PixiStage);
+			var img = PixiRenderer.plugins.extract.base64(PixiStage);
 			dispFn();
 			return img;
 		} catch(e : Dynamic) {
