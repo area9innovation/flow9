@@ -205,6 +205,7 @@ renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle])
 			StrokeOpacity(opacity): strokeopacity := opacity;
 			StrokeWidth(width): strokewidth := width;
 			StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+			UseSvg() : {}
 		}
 	});
 	if (0xdeaddead != (^fillcolour)) {
@@ -277,10 +278,15 @@ renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle])
 		None() : {}
 	}
 
+	if (contains(style, UseSvg()) && !isUrlParameterFalse("useSvg")) {
+		useSvg(clip);
+	}
+
 	// Render the path
 	needClose = ref false;
 	moveTo(g, 0.0, 0.0); // Make sure we start from (0.0, 0.0). JS works incorrectly without this
-	iter(if (js && length(path) == 1) path else deconstructGraphicsPath(path), \op ->
+	path2 = if (js && length(path) == 1) path else deconstructGraphicsPath(path);
+	iter(path2, \op ->
 		switch (op : StaticGraphicOp) {
 			MoveTo(x, y) : {
 				moveTo(g, x, y);
@@ -319,6 +325,20 @@ renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle])
 			}
 		}
 	);
+	// Workaround for cpp : single LineTo with Fill can disappear.
+	if (cpp) {
+		lines = fold(path2, Pair(true, 0), \acc : Pair<bool, int>, p ->
+			if (acc.first) switch(p) {
+				LineTo(__, __) : Pair(acc with second = acc.second + 1);
+				CubicBezierTo(__, __, __, __) : Pair(acc with first = false);
+				QuadraticBezierTo(__, __, __, __) : Pair(acc with first = false);
+				default : acc
+			} else acc
+		);
+		if (lines.first && lines.second == 1) {
+			needClose := false;
+		}
+	}
 	if (^needClose) {
 		endFill(g);
 	}

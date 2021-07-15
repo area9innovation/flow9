@@ -67,7 +67,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			// Chrome can't render svgs with <img> element if file contains "data:img" type instead of "data:image"
 			// As workaround we insert svg content directly to innerHTML
 			forceSvg = Platform.isChrome && url.indexOf(".svg") > 0;
@@ -209,7 +209,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function enableSprites() : Void {
-		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
 			return;
 		}
 
@@ -248,7 +248,7 @@ class FlowSprite extends Sprite {
 						}
 					}
 				} else {
-					if (RenderSupport.RendererType == "html") {
+					if (this.isHTMLRenderer()) {
 						if (nativeWidget == null) {
 							return;
 						}
@@ -407,9 +407,15 @@ class FlowSprite extends Sprite {
 	public function switchUseCrossOrigin(useCrossOrigin) : Void {
 		if (this.useCrossOrigin != useCrossOrigin) {
 			this.useCrossOrigin = useCrossOrigin;
-			
+
 			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url)
 			else nativeWidget.crossOrigin = null;
+		}
+	}
+
+	public function setPictureReferrerPolicy(referrerpolicy) : Void {
+		if (nativeWidget != null) {
+			nativeWidget.referrerPolicy = referrerpolicy;
 		}
 	}
 
@@ -418,7 +424,7 @@ class FlowSprite extends Sprite {
 			return;
 		}
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
@@ -427,8 +433,18 @@ class FlowSprite extends Sprite {
 
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
-				widgetBounds.maxX = nativeWidget.naturalWidth != null && nativeWidget.naturalWidth > 0 ? nativeWidget.naturalWidth : nativeWidget.clientWidth;
-				widgetBounds.maxY = nativeWidget.naturalHeight != null && nativeWidget.naturalHeight > 0 ? nativeWidget.naturalHeight : nativeWidget.clientHeight;
+
+				if (nativeWidget.naturalWidth != null && nativeWidget.naturalHeight != null && (nativeWidget.naturalWidth > 0 || nativeWidget.naturalHeight > 0)) {
+					widgetBounds.maxX = nativeWidget.naturalWidth;
+					widgetBounds.maxY = nativeWidget.naturalHeight;
+				} else {
+					Browser.document.body.appendChild(nativeWidget);
+
+					widgetBounds.maxX = nativeWidget.clientWidth * RenderSupport.backingStoreRatio;
+					widgetBounds.maxY = nativeWidget.clientHeight * RenderSupport.backingStoreRatio;
+
+					this.addNativeWidget();
+				}
 			}
 		} else {
 			widgetBounds.minX = 0;

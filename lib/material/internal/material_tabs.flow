@@ -19,6 +19,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	tabsContentBgStyle = extractStruct(m.style, MTabsContentBackgroundStyle([])).style;
 	itemsColor = tryExtractMToolbarItemsMColor(parent, mergeTGraphicsStyles(bgStyle, tabsBgStyle), m.style);
 	indicatorColor : MColor = MThemeColor2MColor(parent, extractStruct(m.style, MTabsIndicatorColor(MAccentColor())).color);
+	indicatorHeight = extractStruct(m.style, MTabsIndicatorHeight(2.)).height;
 	indicatorAbove = contains(m.style, MTabIndicatorOnTop());
 	addAction = tryExtractStruct(m.style, MTabsAddAction(\__ -> TEmpty()));
 	elevation = extractStruct(m.style, MElevation(const(if (js) 0. else 2.))).elevation;
@@ -131,10 +132,10 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						}));
 					focusState = replaceStructMany(tb.style, [onClick, AccessRole("tab"), MRippleType(const(MRippleFill()))]);
 					tabIcon = tryExtractStruct(tb.style, MTabIcon(TEmpty()));
-					TSelect3(tb.text, tabsWidths, fand(const(!isKeepTabColor), feq(m.selected, i)), \txt, tws, selected ->
+					TSelect2(tb.text, fand(const(!isKeepTabColor), feq(m.selected, i)), \txt, selected ->
 						if (txt != "") {
 							color = if (selected) Some(indicatorColor) else itemsColor;
-							MTabsText(manager, p2, txt, tabMinWidth, tws[i]-bordersGap, capitalizeTitle, showTooltip, tabsFontStyle, color, m2t, !titleAlignIcon)
+							MTabsText(manager, p2, txt, capitalizeTitle, showTooltip, tabsFontStyle, color, m2t, !(titleAlignIcon && isSome(tabIcon)))
 							|> TBorderTopBottom(2.)
 						} else if (leftAlignIcon) TFillX()
 						else TEmpty()
@@ -212,7 +213,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 								}
 							})();
 
-							uns2 = makeSubscribe(bf.metrics.height, \h ->
+							uns2 = makeSubscribe(fstall(bf.metrics.height, 0), \h ->
 								nextDistinct(tabsHeight, max(getValue(tabsHeight), h))
 							)();
 
@@ -253,7 +254,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 			|> makeTropicConstantHeight(None())
 			|> (\t -> TGroup2(
 					t,
-					MTabsBottomLine(manager, p, tabsWidths, m.selected, order, scrollPosition, inspectScroll, tabsHeight, indicatorColor, indicatorAbove)
+					MTabsIndicator(manager, p, tabsWidths, m.selected, order, scrollPosition, inspectScroll, tabsHeight, indicatorColor, indicatorHeight, indicatorAbove)
 				)
 			)
 			|> (\t -> TAttachAvailableWidth(t, stageWidth))
@@ -407,103 +408,61 @@ MTabsText(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	text0 : string,
-	minWidth : double,
-	width : double,
 	capitalizeTitle : bool,
 	showTooltip : MShowTooltip,
 	tabsFontStyle : MFontStyle,
 	itemsColor : Maybe<MColor>,
 	m2t : (Material, MFocusGroup) -> Tropic,
-	centerText : bool,
+	centerText : bool
 ) -> Tropic {
-	textLen = strlen(text0);
-	capitalizeFn = if (capitalizeTitle) toUpperCase else idfn;
-	text = capitalizeFn(text0);
-
-	// itemsColor2 : Maybe<MTextStyle> = itemsColor; // does not help neko
-	itemsColor2 : Maybe<MTextStyle> = switch (itemsColor) {
-		Some(color): Some(color);
-		None(): None();
-	}
+	text = if (capitalizeTitle) toUpperCase(text0) else text0;
 	customFont = MFontStyle2MFont(parent, tabsFontStyle);
-	style : [MTextStyle] = maybeArrayPush([customFont], itemsColor2);
-	textMetrics = getTropicMetrics(MText2T(parent, text, style));
 
-	scaledSizes = collectorLoop(
-		customFont.size - dfloor(customFont.size/2.0) * b2d(isUrlParameterTrue("7629")),
-		\sz -> sz+1.0,
-		\sz -> sz <= customFont.size && textMetrics.width * sz < max(width, minWidth) * customFont.size,
-		idfn
-	);
-	scaledSize = lastElement(scaledSizes, customFont.size + 1.0);
-	if (scaledSize <= customFont.size) {
-		scaledStyle : [MTextStyle] = maybeArrayPush([MFont(customFont with size=scaledSize)], itemsColor2);
-		MText2T(parent, text, scaledStyle)
-		|> (\m -> if (centerText) TCenterX(m) else m)
-	} else {
-		newText = splitText(text);
-
-		if (newText.second != "") {
-			newTabsFontStyle = if (tabsFontStyle == defaultTabFontStyle) {
-				MCaptionColumnSelected()
-			} else tabsFontStyle;
-			newTextStyle : [MTextStyle] = maybeArrayPush([newTabsFontStyle], itemsColor2);
-
-			TLines2(
-				MText2T(parent, newText.first, newTextStyle)
-				|> (\m -> if (centerText) TCenterX(m) else m),
-				(if (textLen < floor(minWidth / 7.))
-					MText2T(parent, newText.second, newTextStyle)
-				else
-					MEllipsisText2T(
-						manager,
-						parent,
-						MEllipsisText(capitalizeFn(newText.second), arrayPush(newTextStyle, showTooltip)),
-						m2t
-					)
-				) |> (\m -> if (centerText) TCenterX(m) else m)
+	truncated = make(false);
+	style = concatA([
+		if (centerText) [
+			CenterAlign(),
+			MEllipsisTextAlignment(CenterAlign())
+		] else [],
+		[MMaxLines(2), showTooltip],
+		eitherMap(itemsColor, v2a, [])
+	]);
+	TGroup2(
+		TVisible(fnot(truncated), MEllipsisText2T(manager, parent, MEllipsisText(
+			text,
+			concat(
+				style,
+				[
+					customFont,
+					MTextIsTruncated(truncated)
+				]
 			)
-		} else
-			MEllipsisText2T(manager, parent, MEllipsisText(text, arrayPush(style, showTooltip)), m2t)
-			|> (\m -> if (centerText) TCenterX(m) else m)
-	}
-}
-
-splitText(text : string) -> Pair<string, string> {
-	splitText2(text, strLeft(text, 18), strRight(text, 18))
-}
-
-splitText2(text : string, text1 : string, text2 : string) -> Pair<string, string> {
-	if (endsWith(text1, " ")) {
-		Pair(strLeft(text, strlen(text1) - 1), strRight(text, strlen(text1)))
-	} else if (startsWith(text2, " ")) {
-		Pair(strLeft(text, strlen(text2)), strRight(text, strlen(text2)))
-	} else {
-		if (strlen(text1) == 0 || strlen(text2) == 0)
-			Pair(text, "")
-		else
-			splitText2(
-				text,
-				strLeft(text, strlen(text1) - 1),
-				strRight(text, strlen(text1) - 1)
+		), m2t))
+		|> TFixHeight2Maybe(fif(truncated, const(Some(0.)), const(None()))),
+		TShowLazy(truncated, \ -> MEllipsisText2T(manager, parent, MEllipsisText(
+			text,
+			arrayPush(
+				style,
+				MFont(customFont with size = customFont.size / 1.5),
 			)
-	}
+		), m2t))
+	)
 }
 
 MTabAnimation(
-	trans : Point,
+	xTranslation : double,
 	trop : double,
 	scroll : double
 );
 
-MTabsBottomLineInfo(
+MTabsIndicatorInfo(
 	width : double,
 	tabsWidths : [double],
 	selected : int,
 	order : [int]
 );
 
-MTabsBottomLineInfo2MTabAnimation(info : MTabsBottomLineInfo) -> MTabAnimation {
+MTabsIndicatorInfo2MTabAnimation(info : MTabsIndicatorInfo) -> MTabAnimation {
 	wds = info.tabsWidths;
 	sel = info.selected;
 	ord = findiDef(info.order, eq(sel), sel);
@@ -514,28 +473,29 @@ MTabsBottomLineInfo2MTabAnimation(info : MTabsBottomLineInfo) -> MTabAnimation {
 		nTrop = wds[ord];
 
 		MTabAnimation(
-			Point(nTransWidth, 0.),
+			nTransWidth,
 			nTrop,
 			forceRange(0., nTransWidth - info.width / 2. + nTrop / 2., fullW - info.width)
 		);
 	} else {
 		MTabAnimation(
-			zeroPoint,
+			0.0,
 			0.0,
 			0.0
 		);
 	}
 }
 
-MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[double]>, selected : Transform<int>, order : Maybe<MListReorder>,
+MTabsIndicator(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[double]>, selected : Transform<int>, order : Maybe<MListReorder>,
 	scrollPosition : DynamicBehaviour<Point>, inspectScroll : TScrollInspectVisible, tabsHeight : DynamicBehaviour<double>,
-	indicatorColor : MColor, indicatorAbove : bool
+	indicatorColor : MColor, lineHeight : double, indicatorAbove : bool
 ) -> Tropic {
 
 	prevS = ref fgetValue(selected);
-	lineHeight = 2.0;
 	isRTL = parent.rtl;
-	orderedTabsWidths = fselect(tabsWidths, FLift(arrayRTL2(isRTL)));
+	orderI : ([int]) -> [int] = if (isRTL) reverseA else idfn;
+	orderD : ([double]) -> [double] = if (isRTL) reverseA else idfn;
+	orderedTabsWidths = fselect(tabsWidths, FLift(orderD));
 
 	trigger =
 		fselect4(
@@ -549,22 +509,24 @@ MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : Dy
 					else
 						selected
 			),
-			eitherMap(order, \or -> fselect(or.order, FLift(arrayRTL2(isRTL))), const([])),
-			\wd, twds, sel, ord -> MTabsBottomLineInfo(wd, twds, sel, ord)
+			eitherMap(order, \or -> fselect(or.order, FLift(orderI)), const([])),
+			\wd, twds : [double], sel, ord -> MTabsIndicatorInfo(wd, twds, sel, ord)
 		);
 
+	indicatorBaseWidth = 100.; 
+
 	TAnimation(
-		TSizedWidth(const(10.0), lineHeight)
+		TFixed(indicatorBaseWidth, lineHeight)
 		|> addTBackground(indicatorColor),
-		fselect(fselectWithLast(fselect(trigger, MTabsBottomLineInfo2MTabAnimation |> FLift), FIdentity2()), FLift(\p : Pair<MTabAnimation, MTabAnimation> -> {
+		fselect(fselectWithLast(fselect(trigger, MTabsIndicatorInfo2MTabAnimation |> FLift), FIdentity2()), FLift(\p : Pair<MTabAnimation, MTabAnimation> -> {
 			next(scrollPosition, Point(p.second.scroll, 0.0));
 			sel = fgetValue(trigger).selected;
 
 			if (^prevS == sel || !parent.theme.enableAnimations) {
 				[
 					FAnimationKeyframe([
-						FTranslateValue(Point(p.second.trans.x, 0.0)),
-						FScaleValue(Factor(p.second.trop / 10.0, 1.0))
+						FTranslateValue(Point(p.second.xTranslation, 0.0)),
+						FScaleValue(Factor(p.second.trop / indicatorBaseWidth, 1.0))
 					])
 				];
 			} else {
@@ -572,12 +534,12 @@ MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : Dy
 
 				[
 					FAnimationKeyframe([
-						FTranslateValue(Point(p.first.trans.x, 0.0)),
-						FScaleValue(Factor(p.first.trop / 10.0, 1.0))
+						FTranslateValue(Point(p.first.xTranslation, 0.0)),
+						FScaleValue(Factor(p.first.trop / indicatorBaseWidth, 1.0))
 					]),
 					FAnimationKeyframe([
-						FTranslateValue(Point(p.second.trans.x, 0.0)),
-						FScaleValue(Factor(p.second.trop / 10.0, 1.0))
+						FTranslateValue(Point(p.second.xTranslation, 0.0)),
+						FScaleValue(Factor(p.second.trop / indicatorBaseWidth, 1.0))
 					])
 				];
 			}
@@ -611,6 +573,8 @@ mergeTGraphicsStyles(a : [TGraphicsStyle], b : [TGraphicsStyle]) -> [TGraphicsSt
 
 			FillOpacity(opacity) : if (opacity > 0.) replaceStruct(acc, st) else acc;
 			StrokeOpacity(opacity) : if (opacity > 0.) replaceStruct(acc, st) else acc;
+
+			UseSvg(): arrayPush(acc, st);
 		}
 	)
 }

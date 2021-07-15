@@ -12,7 +12,7 @@ export {
 	// Launch loaded bytecode in a parallel thread with the specified url and parameters.
 	// The loaded code object can be reused for more runBytecode calls.
 	// Specified callbacks are invoked on completion and via child's notifyParentRunner.
-	native runBytecode : io (code : native, url : string, onDone : (code : int, output : string) -> void, 
+	native runBytecode : io (code : native, url : string, onDone : (code : int, output : string) -> void,
 			onMessage : (id : string, msg : string) -> void) -> native = Native.runBytecode;
 
 	// Send an asynchronous message to the child thread started with runBytecode.
@@ -48,6 +48,8 @@ export {
 	native initConcurrentHashMap : () -> native = Native.initConcurrentHashMap;
 	native setConcurrentHashMap : (m : native, key : ?, value : ??) -> void = Native.setConcurrentHashMap;
 	native getConcurrentHashMap : (m : native, key : ?, defval : ??) -> ?? = Native.getConcurrentHashMap;
+	// merge m1 and m2 into m1
+	native setAllConcurrentHashMap : (m1 : native, m2 : native) -> void = Native.setAllConcurrentHashMap;
 	native containsConcurrentHashMap : (m : native, key : ?) -> bool = Native.containsConcurrentHashMap;
 	native valuesConcurrentHashMap : (m : native) -> [??] = Native.valuesConcurrentHashMap;
 	native removeConcurrentHashMap : (m : native, key : ?) -> void = Native.removeConcurrentHashMap;
@@ -55,10 +57,18 @@ export {
 	native sizeConcurrentHashMap : (m : native) -> int = Native.sizeConcurrentHashMap;
 	native clearConcurrentHashMap : (m : native) -> void = Native.clearConcurrentHashMap;
 
-	// Creates a function call, wrapped in a synchronized block with a given lock object.
-	// The lock on the object, passed in a first argument, is set during the call invocation and
+	// Creates a function call, wrapped in a synchronized block with a given lock object (mutex).
+	// The lock on the object, passed in a first argument, usually is a shared object, which may be modified
+	// by the second functional argument from different threads. It is set by a JVM during the call invocation and
 	// is released when the call is completed. If synchronized function is called from the other
 	// thread with the object with an active lock, the other thread will wait until the lock is released.
+	//
+	// Example of usage: implementaion of atomicRefIntAddition:
+	//
+	// makeAtomicRefIntAddition(v : ref int) -> (int) -> int {
+	//    synchronizedUnaryFn(v, \delta -> { v := ^v + delta; ^v });
+	// }
+	native synchronizedConstFn : (lock : flow, fn : () -> ?) -> () -> ? = Native.synchronizedConstFn;
 	native synchronizedUnaryFn : (lock : flow, fn : (?) -> ??) -> (?) -> ?? = Native.synchronizedUnaryFn;
 	native synchronizedBinaryFn : (lock : flow, fn : (?, ??) -> ???) -> (?, ??) -> ??? = Native.synchronizedBinaryFn;
 
@@ -97,6 +107,10 @@ loadBytecode(file : string) -> native {
 availableProcessors() -> int {
 	1
 }
+
+synchronizedConstFn(lock : flow, fn : () -> ?) -> () -> ? { fn; }
+synchronizedUnaryFn(lock : flow, fn : (?) -> ??) -> (?) -> ?? { fn; }
+synchronizedBinaryFn(lock : flow, fn : (?, ??) -> ???) -> (?, ??) -> ??? { fn; }
 
 runBytecode(code : native, url : string, onDone : (code : int, output : string) -> void, onMessage : (id : string, msg : string) -> void) -> native {
 	deferred(\ -> onDone(-1, "NOT IMPLEMENTED"));
@@ -156,6 +170,12 @@ setConcurrentHashMap(m : native, key : ?, value : ??) -> void {
 getConcurrentHashMap(m : native, key : ?, defval : ??) -> ?? {
 	t = cast(flow(m) : flow -> ref Tree<?, ??>);
 	lookupTreeDef(^t, key, defval);
+}
+
+setAllConcurrentHashMap(m1 : native, m2 : native) -> void {
+	t1 = cast(flow(m1) : flow -> ref Tree<?, ??>);
+	t2 = cast(flow(m2) : flow -> ref Tree<?, ??>);
+	t1 := mergeTree(^t1, ^t2);
 }
 
 containsConcurrentHashMap(m : native, key : ?) -> bool {

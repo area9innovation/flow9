@@ -22,6 +22,7 @@ class FlowContainer extends Container {
 	public var stageChanged : Bool = false;
 	private var worldTransformChanged : Bool = false;
 	private var localTransformChanged : Bool = true;
+	public var cropEnabled : Bool = true;
 
 	private var localBounds = new Bounds();
 	private var _bounds = new Bounds();
@@ -34,6 +35,7 @@ class FlowContainer extends Container {
 
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
+	public var isFlowContainer : Bool = true;
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
@@ -44,11 +46,11 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = (RenderSupport.RendererType == "html" && RenderSupport.RenderContainers) || worldVisible;
+		isNativeWidget = (this.isHTMLRenderer() && RenderSupport.RenderContainers) || worldVisible;
 
 		if (worldVisible) {
 			nativeWidget = Browser.document.body;
-		} else if (RenderSupport.RendererType == "html") {
+		} else if (this.isHTMLRenderer()) {
 			createNativeWidget();
 		}
 	}
@@ -133,7 +135,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (this.isHTMLRenderer() && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -152,7 +154,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (this.isHTMLRenderer() && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -167,7 +169,7 @@ class FlowContainer extends Container {
 				this.updateKeepNativeWidgetChildren();
 			}
 
-			if (RenderSupport.RendererType != "html" || this.isCanvas) {
+			if (!this.isHTMLRenderer()) {
 				this.invalidateTransform("removeChild");
 			}
 
@@ -189,7 +191,7 @@ class FlowContainer extends Container {
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (stageChanged) {
 				stageChanged = false;
 

@@ -1,0 +1,477 @@
+import material/material2tropic;
+
+Sudoku(
+	// The numbers on the board. 0 is empty
+	board : [[DynamicBehaviour<int>]],
+	// Whether there is a conflict in this cell
+	errors : DynamicBehaviour<[[bool]]>,
+	// Highlighted cell - if numbers match
+	highlight : DynamicBehaviour<[[bool]]>,
+	// Whether this cell is selected
+	selected : [[DynamicBehaviour<bool>]],
+	// Scribbles - pencil marks for each set
+	scribbles : [[DynamicBehaviour<Set<int>>]],
+	// Is the sudoku solved?
+	win : DynamicBehaviour<bool>,
+	// Are we dragging at the moment
+	dragging : DynamicBehaviour<bool>,
+	// Are we in scribble mode?
+	scribble : DynamicBehaviour<bool>,
+	// Undo stack
+	undoStack : DynamicBehaviour<List<SudokuSnapshot>>
+);
+
+SudokuSnapshot(
+	board : [[int]],
+	scribbles : [[Set<int>]]
+);
+
+drawCell(s : Sudoku, x : int, y : int) -> Material {
+	hover = make(false);
+	down = make(false);
+
+	MInteractive([
+		TMouseInside(hover, true),
+		TMouseDown(down)
+	],
+		MConstruct([
+			makeSubscribe(down, \d -> {
+				if (getValue(hover)) {
+					if (d) {
+						if (!getValue(s.dragging)) {
+							// Clear out selections
+							generate2d(9, \sx, sy -> {
+								next(s.selected[sy][sx], sx == x && sy == y);
+								0
+							});
+							updateHighlights(s);
+							{}
+						}
+						next(s.dragging, true);
+					}
+				}
+				if (!d) {
+					next(s.dragging, false);
+				}
+			}),
+			makeSubscribe(hover, \h -> {
+				if (h && getValue(s.dragging)) {
+					next(s.selected[y][x], true);
+					updateHighlights(s);
+				}
+			})
+		],
+			MGroup([
+				MSelect4(s.errors, s.win, s.selected[y][x], s.highlight, \errors, win, selected, highlight -> {
+					MFrame(0.0, 0.0, [
+						MStroke(MGrey(300)),
+						if (win) {
+							MFill(MGreen(500))
+						} else if (errors[y][x] && selected) {
+							MFill(MOrange(500))
+						} else if (selected) {
+							MFill(MYellow(500))
+						} else if (errors[y][x]) {
+							MFill(MRed(500))
+						} else if (highlight[y][x]) {
+							MFill(MYellow(100))
+						} else {
+							MFill(MWhite())
+						}
+					], MFixed(32.0, 32.0))
+				}),
+				MSelect2(s.board[y][x], s.scribbles[y][x], \c, ns -> {
+					if (c == 0) {
+						MBorder(1.0, 1.0, 0.0, 0.0,
+							MEvenGrid(
+								generate2d(3, \scx, scy -> {
+									n = scy * 3 + scx + 1;
+									MCenterIn(
+										if (containsSet(ns, n)) {
+											TText(i2s(n), [FontSize(8.0)])
+										} else MEmpty(),
+										MFixed(10.0, 10.0)
+									)
+								})
+							)
+						)
+					} else MEmpty()
+				}),
+				MSelect(s.board[y][x], \c -> {
+					if (c == 0) {
+						MEmpty()
+					} else {
+						MCenterIn(
+							MText(i2s(c), []),
+							MFixed(32.0, 32.0)
+						)
+					}
+				})
+			])
+		)
+	)
+}
+
+// Should this cell be highlighted?
+highlightCondition(s : Sudoku, x : int, y : int) -> bool {
+	// Is any cell selected?
+	selected = exists(generate(0, 9, \sy -> {
+		exists(generate(0, 9, \sx -> {
+			getValue(s.selected[sy][sx])
+		}), idfn)
+	}), idfn);
+
+	// What numbers are selected?
+	selectedNumbers = foldRange(0, 8, makeSet(), \acc, sy -> {
+		foldRange(0, 8, acc, \acc2, sx -> {
+			if (getValue(s.selected[sy][sx])) {
+				c = getValue(s.board[sy][sx]);
+				if (c != 0) {
+					insertSet(acc2, c);
+				} else acc2;
+			} else acc2;
+		})
+	});
+
+	selected 
+	&& (
+		// We have the same number as a selected cell
+		containsSet(selectedNumbers, getValue(s.board[y][x]))
+		// We have the same scribble as a selected cell
+		|| !isEmptySet(intersectSets(getValue(s.scribbles[y][x]), selectedNumbers))
+		// All selected cells are in the same column, row and/or box
+		|| forall(generate(0, 9, \sy -> {
+			forall(generate(0, 9, \sx -> {
+				if (getValue(s.selected[sy][sx])) {
+					checkHighlightCell(x, y, sx, sy)
+				} else true;
+			}), idfn)
+		}), idfn)
+	);
+}
+
+// Are these two cells in the same suduko line/col or box?
+checkHighlightCell(x1 : int, y1 : int, x2 : int, y2 : int) -> bool {
+	x1 == x2 || y1 == y2
+	|| (x1 / 3 == x2 / 3 && y1 /3 == y2/3)
+}
+
+// Update all highlights
+updateHighlights(s : Sudoku) -> void {
+	next(s.highlight,
+		generate2d(9, \x, y -> {
+			highlightCondition(s, x, y)
+		})
+	);
+}
+
+// Change the selected cells to this number
+updateCell(s : Sudoku, c : int) -> void {
+	snapshot = getSudokuSnapshot(s);
+	next(s.undoStack, Cons(snapshot, getValue(s.undoStack)));
+	generate2d(9, \x, y -> {
+		if (getValue(s.selected[y][x])) {
+			if (c == 0) {
+				// Clear is both number and scribbles
+				nextDistinct(s.board[y][x], 0);
+				nextDistinct(s.scribbles[y][x], makeSet());
+			} else if (getValue(s.scribble)) {
+				scribbles = getValue(s.scribbles[y][x]);
+				nextDistinct(s.scribbles[y][x], 
+					if (containsSet(scribbles, c)) {
+						removeSet(scribbles, c);
+					} else {
+						insertSet(scribbles, c);
+					}
+				);
+			} else {
+				nextDistinct(s.board[y][x], c);
+			};
+		}
+		0;
+	});
+	updateCorrectness(s);
+}
+
+drawSudoku(s : Sudoku) -> Material {
+	key = makeTKey(\ke -> {
+		"1" <= ke.utf && ke.utf <= "9" || ke.utf == "backspace"
+	});
+	MConstruct([
+			makeSubscribe(key.pressed, \ke -> {
+				if ("1" <= ke.utf && ke.utf <= "9") {
+					updateCell(s, s2i(ke.utf));
+				} else if (ke.utf == "backspace") {
+					updateCell(s, 0);
+				}
+			})
+		],
+		MInteractive(
+			[
+				key
+			],
+			MLines([
+				MGroup([
+					MEvenGrid(
+						mapi(s.board, \y, row -> {
+							mapi(row, \x, c -> {
+								drawCell(s, x, y)
+							})
+						})
+					),
+					MEvenGrid(
+						generate2d(3, \x, y -> {
+							MFrame(0.0, 0.0, [MStroke(MBlack())],
+								MFixed(96.0, 96.0)
+							)
+						})
+					)
+				]),
+				MLines([
+					MBaselineCols(
+						generate(1, 10, \c -> {
+							MTextButton(i2s(c), \ -> {
+								updateCell(s, c)
+							}, [MButtonPaddings(12.0, 10.0, 12.0, 9.0)], [])
+						}),
+					),
+					MBaselineCols([
+						MTextButton("CLEAR", \ -> {
+							updateCell(s, 0)
+						}, [], []),
+						MCheckBox(MText("SCRIBBLE", []), s.scribble, [MShortcut(" ")]),
+						MTextButton("CLEAR ALL", \ -> {
+							clearBoard(s);
+						}, [], []),
+						MTextButton("HELP", \ -> {
+							updatePossibleScribbles(s);
+						}, [], []),
+						MTextButton("UNDO", \ -> {
+							undoSudoku(s);
+							updateCorrectness(s);
+						} ,[] , []),
+						MTextButton("SOLVE", \ -> {
+							solveSudoku(s);
+						}, [], [])
+					])
+				])
+			])
+		)
+	)
+}
+
+// Reset the board
+clearBoard(s : Sudoku) -> void {
+	generate2d(9, \x, y -> {
+		next(s.board[y][x], 0);
+		next(s.scribbles[y][x], makeSet());
+		next(s.selected[y][x], false);
+		0;
+	});
+	updateCorrectness(s);
+}
+
+// Mark any errors and check if it is solved
+updateCorrectness(s : Sudoku) -> void {
+	updateHighlights(s);
+
+	errors = ref false;
+	next(s.errors, 
+		generate2d(9, \x, y -> {
+			c = checkCell(s, x, y);
+			if (c) {
+				errors := true;
+			}
+			c;
+		})
+	);
+
+	allFilled = forall(generate(0, 9, \y -> {
+		forall(generate(0, 9, \x -> getValue(s.board[y][x]) != 0), idfn)
+	}), idfn);
+
+	nextDistinct(s.win, !(^errors) && allFilled);
+}
+
+// Check if there is a conflict in this cell
+checkCell(s : Sudoku, x : int, y : int) -> bool {
+	n = getValue(s.board[y][x]);
+
+	xbox = x / 3;
+	ybox = y / 3;
+
+	// OK, check if there are any scribbles that should be cleared
+	scribbles = getValue(s.scribbles[y][x]);
+	// Remove all in the same column
+	acc2 = foldRange(0, 8, scribbles, \acc, y2 -> {
+		removeSet(acc, getValue(s.board[y2][x]));
+	});
+	acc3 = foldRange(0, 8, acc2, \acc, x2 -> {
+		removeSet(acc, getValue(s.board[y][x2]));
+	});
+	acc4 = foldRange(3 * ybox, 3 * ybox + 2, acc3, \acc, by -> {
+		foldRange(3 * xbox, 3 * xbox + 2, acc, \acc0, bx -> {
+			removeSet(acc0, getValue(s.board[by][bx]));
+		})
+	});
+	nextDistinct(s.scribbles[y][x], acc4);
+
+	if (n == 0) {
+		false;
+	} else {
+		// Check if there are any columns with the same number
+		simpleconflict = exists(generate(0, 9, \y2 -> {
+			if (y2 == y) false
+			else getValue(s.board[y2][x]) == n
+		}), idfn)
+
+		// Check if there are any rows with the same number
+		|| exists(generate(0, 9, \x2 -> {
+			if (x2 == x) false
+			else getValue(s.board[y][x2]) == n
+		}), idfn);
+
+		// Check if there are any other numbers in the same box with the same number
+		exists(generate(3 * ybox, 3 * ybox + 3, \by -> {
+			exists(generate(3 * xbox, 3 * xbox +3 , \bx -> {
+				if (by == y && bx == x) {
+					false
+				} else {
+					getValue(s.board[by][bx]) == n
+				}
+			}), idfn)
+		}), idfn) || simpleconflict;
+	}
+}
+
+generate2d(n : int, fn : (x : int, y: int) -> ?) -> [[?]] {
+	generate(0, n, \y -> {
+		generate(0, n, \x -> {
+			fn(x, y);
+		});
+	});
+}
+
+getSudokuSnapshot(s : Sudoku) -> SudokuSnapshot {
+	SudokuSnapshot(
+		map(s.board, \row -> {
+			map(row, getValue)
+		}),
+		map(s.scribbles, \row -> {
+			map(row, getValue)
+		})
+	)
+}
+
+setSudokuFromSnapshot(s : Sudoku, snapshot : SudokuSnapshot) -> void {
+	iteri(snapshot.board, \y, row -> {
+		iteri(row, \x, cell -> {
+			nextDistinct(s.board[y][x], cell);
+			nextDistinct(s.scribbles[y][x], snapshot.scribbles[y][x]);
+		})
+	});
+}
+
+undoSudoku(s : Sudoku) -> void {
+	undoStack = getValue(s.undoStack);
+	switch (undoStack) {
+		EmptyList(): {}
+		Cons(state, rest): {
+			setSudokuFromSnapshot(s, state);
+			next(s.undoStack, rest);
+		}
+	}
+}
+
+popUndoSudoku(s : Sudoku) -> void {
+	undoStack = getValue(s.undoStack);
+	switch (undoStack) {
+		EmptyList(): {}
+		Cons(state, rest): {
+			next(s.undoStack, rest);
+		}
+	}
+}
+
+updatePossibleScribbles(s : Sudoku) -> void {
+	fullSet = buildSet(enumFromTo(1, 9));
+	generate2d(9, \x, y -> {
+		next(s.scribbles[y][x], fullSet)
+	});
+	updateCorrectness(s);
+}
+
+solveSudoku(s : Sudoku) -> void {
+	updatePossibleScribbles(s);
+	doSolveSudoku(s, 0);
+	{}
+}
+
+doSolveSudoku(s : Sudoku, cell : int) -> bool {
+	if (cell >= 9 * 9) true
+	else {
+		x = cell % 9;
+		y = cell / 9;
+		if (getValue(s.board[y][x]) != 0) {
+			// println("Cell " + i2s(x + 1) + "," + i2s(y + 1) + " is set already to " + i2s(getValue(s.board[y][x])));
+			doSolveSudoku(s, cell + 1);
+		} else {
+			options : Set<int> = getValue(s.scribbles[y][x]);
+			// println("Trying to solve cell " + i2s(cell) + " " + i2s(x+ 1) + "," + i2s(y+ 1) + " with options " + toString(set2array(options)));
+			trySudokuOptions(s, cell, x, y, options)
+		}
+	}
+}
+
+trySudokuOptions(s : Sudoku, cell : int, x : int, y : int, options : Set<int>) -> bool {
+	mres = popMinSet(options);
+	mres ?? {
+		value = mres.value;
+		rest = mres.rest;
+		// println("  Trying " + i2s(value) + " in " + i2s(cell) + " " + i2s(x + 1) + "," + i2s(y + 1));
+		existingState = getSudokuSnapshot(s);
+		nextDistinct(s.board[y][x], value);
+		updateCorrectness(s);
+		if (getValue(s.errors)[y][x]) {
+			// println("  Failed in " + i2s(cell) + " " + i2s(x + 1) + "," + i2s(y + 1));
+			setSudokuFromSnapshot(s, existingState);
+			trySudokuOptions(s, cell, x, y, rest);
+		} else {
+			// println("  Succeeded in " + i2s(cell) + " " + i2s(x + 1) + "," + i2s(y + 1));
+			if (doSolveSudoku(s, cell + 1)) {
+				true;
+			} else {
+				// println("  Failed later in " + i2s(cell) + " " + i2s(x+ 1) + "," + i2s(y+ 1));
+				setSudokuFromSnapshot(s, existingState);
+				trySudokuOptions(s, cell, x, y, rest);
+			}
+		}
+	} : {
+		// We have no choice but to fail
+		false;
+	}
+}
+
+main() {
+	sudoku = Sudoku(
+		generate2d(9, \x, y -> make(0)),
+		make(generate2d(9, \x, y -> false)),
+		make(generate2d(9, \x, y -> false)),
+		generate2d(9, \x, y -> make(false)),
+		generate2d(9, \x, y -> make(makeSet())),
+		make(false),
+		make(false),
+		make(false),
+		make(makeList()),
+	);
+	updateCorrectness(sudoku);
+	mrender(makeMaterialManager([]), true, 
+		MZoom(
+			MBorder4(8.0, 
+				drawSudoku(sudoku),
+			),
+			MFillXY(),
+			true,
+		)
+	)
+}

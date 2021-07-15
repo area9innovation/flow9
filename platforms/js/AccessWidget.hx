@@ -201,7 +201,8 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		if (RenderSupport.RendererType != "html") {
+		if (RenderSupport.RendererType != "html" &&
+			(accessWidget == null || accessWidget.clip != null || !accessWidget.clip.isHTMLRenderer())) {
 			updateTransform();
 
 			for (child in children) {
@@ -211,7 +212,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateTransform() : Void {
-		if (RenderSupport.RendererType != "html" && accessWidget != null) {
+		if (accessWidget != null && accessWidget.clip != null && !accessWidget.clip.isHTMLRenderer()) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -481,7 +482,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (clip.isHTMLRenderer()) {
 			return;
 		}
 
@@ -513,7 +514,8 @@ class AccessWidget extends EventEmitter {
 
 	public function set_element(element : Element) : Element {
 		if (this.element != element) {
-			if (this.element != null && this.element.parentNode != null && (element != null || RenderSupport.RendererType != "html")) {
+			if (this.element != null && this.element.parentNode != null &&
+				(element != null || (RenderSupport.RendererType != "html" && (this.clip == null || !this.clip.isHTMLRenderer())))) {
 				this.element.parentNode.removeChild(this.element);
 
 				untyped __js__("delete this.element;");
@@ -528,8 +530,7 @@ class AccessWidget extends EventEmitter {
 					this.clip.updateKeepNativeWidgetChildren();
 				}
 
-				// Add focus notification. Used for focus control
-				this.element.addEventListener("focus", function () {
+				var onFocus = function () {
 					focused = true;
 					if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 
@@ -545,7 +546,7 @@ class AccessWidget extends EventEmitter {
 						);
 
 						return;
-					}
+					};
 
 					clip.emit("focus");
 
@@ -553,11 +554,10 @@ class AccessWidget extends EventEmitter {
 
 					if (parent != null) {
 						parent.emitEvent("childfocused", clip);
-					}
-				});
+					};
+				};
 
-				// Add blur notification. Used for focus control
-				this.element.addEventListener("blur", function () {
+				var onBlur = function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
 						RenderSupport.once(
 							"stagechanged",
@@ -570,14 +570,52 @@ class AccessWidget extends EventEmitter {
 						);
 
 						return;
-					}
+					};
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
 						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
 					});
-				});
+				};
+
+				if (this.element.tagName.toLowerCase() == "iframe") {
+					var fn = function () {};
+
+					fn = function () {
+						RenderSupport.defer(function () {
+							if (Browser.document.activeElement == this.element) {
+								onFocus();
+							} else {
+								onBlur();
+
+								Browser.window.removeEventListener("focus", fn);
+								Browser.window.removeEventListener("blur", fn);
+							}
+						});
+					}
+
+					this.element.addEventListener("mouseenter", function () {
+						if (Browser.document.activeElement == null || Browser.document.activeElement == Browser.document.body) {
+							Browser.window.focus();
+						}
+
+						Browser.window.addEventListener("focus", fn);
+						Browser.window.addEventListener("blur", fn);
+					});
+
+					this.element.addEventListener("mouseleave", function () {
+						if (!focused) {
+							Browser.window.removeEventListener("focus", fn);
+							Browser.window.removeEventListener("blur", fn);
+						}
+					});
+				};
+
+				// Add focus notification. Used for focus control
+				this.element.addEventListener("focus", onFocus);
+				// Add blur notification. Used for focus control
+				this.element.addEventListener("blur", onBlur);
 
 				if (this.tagName == "button") {
 					this.element.classList.remove("accessElement");
@@ -666,7 +704,7 @@ class AccessWidget extends EventEmitter {
 			this.clip.updateKeepNativeWidgetChildren();
 		}
 
-		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
+		if (RenderSupport.RendererType == "html" && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
@@ -693,8 +731,6 @@ class AccessWidget extends EventEmitter {
 				if (e.target == element && e.detail == 0) {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
-					} else {
-						RenderSupport.emulateMouseClickOnClip(clip);
 					}
 				}
 			};
@@ -1064,7 +1100,7 @@ class AccessWidget extends EventEmitter {
 			var accessWidget = child.accessWidget;
 
 			if (accessWidget != null && accessWidget.element != null) {
-				if (RenderSupport.RendererType != "html") {
+				if (RenderSupport.RendererType != "html" && (accessWidget.clip == null || !accessWidget.clip.isHTMLRenderer())) {
 					if (child.changed) {
 						try {
 							if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {

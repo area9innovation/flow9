@@ -1,0 +1,134 @@
+import material/material_ui;
+import media/mediastream;
+import media/mediarecorder;
+
+main() {
+    choosedAudioDevice = make(0);
+    audioDevices = make(None());
+
+    userMediaStream = make(None());
+    stopUserMediaStream = ref nop;
+
+    initDeviceInfo(\-> {
+        requestAudioInputDevices(\devices -> {
+            next(audioDevices, Some(devices));
+        })
+    });
+
+    mediaControls = make(None());
+    audioUrl = make(None());
+
+    record = \ -> {
+        makeMediaStream(
+            \stream -> {
+                next(userMediaStream, Some(stream));
+                stopUserMediaStream := stream.stop;
+            },
+            \error -> println(error),
+            [
+                eitherMap(getValue(audioDevices), \d -> MediaStreamAudioDeviceId(d[getValue(choosedAudioDevice)].deviceId), MediaStreamAudioDeviceId("")),
+                MediaStreamRecordAudio(true),
+                MediaStreamRecordVideo(false)
+            ]
+        )
+    }
+
+    makeRecorderFn= \stream -> \-> {
+        makeMediaRecorderFromStream(
+            [
+                MediaRecorderDataCallback(\blobUrl -> {
+                    next(audioUrl, Some(blobUrl));
+
+                    makeFileByBlobUrl(
+                        blobUrl,
+                        "audio.mp3",
+                        \file -> {
+                            uploadClientFile(
+                                file,
+                                "http://localhost/nnc/upload.php",
+                                [],
+                                [],
+                                []
+                            ) |> ignore;
+                        },
+                        println
+                    );
+                })
+            ],
+            stream,
+            \controls -> next(mediaControls, Some(controls)),
+            println,
+            []
+        );
+    }
+
+    stopRecord = \-> {
+        ^stopUserMediaStream();
+        next(userMediaStream, None());
+        stopUserMediaStream := nop;
+    }
+
+    mrender(makeMaterialManager([]), false,
+        MLines([
+            MSelect(audioDevices, \d ->
+                eitherMap(d,
+                    \val -> MDropDown(
+                        choosedAudioDevice,
+                        "NONE",
+                        map(val, \i -> i.label),
+                        []
+                    ),
+                    MEmpty()
+                )
+            ),
+            MSelect(
+                fIsSome(userMediaStream),
+                \isRecording -> MTextButton(if (!isRecording) "Start Stream" else "Stop Stream", if (!isRecording) record else stopRecord, [], [MEnabled(fIsSome(audioDevices))])
+            ),
+            MSelect(
+                userMediaStream,
+                \streamM -> {
+                    eitherMap(
+                        streamM,
+                        \stream -> {
+                            MCols2(
+                                MTextButton("Start Record", makeRecorderFn(stream), [], []),
+                                MSelect(
+                                    mediaControls,
+                                    \controlsM -> {
+                                        eitherMap(
+                                            controlsM,
+                                            \controls -> MCols([
+                                                MTextButton("Start", controls.start, [], []),
+                                                MTextButton("Resume", controls.resume, [], []),
+                                                MTextButton("Pause", controls.pause, [], []),
+                                                MTextButton("Stop", controls.stop, [], [])
+                                            ]),
+                                            MEmpty()
+                                        )
+                                    }
+                                )
+                            )
+                        },
+                        MEmpty()
+                    )
+                }
+            ),
+            MSelect(
+                audioUrl,
+                \urlM -> {
+                    eitherMap(
+                        urlM,
+                        \url -> MAudioPlayer(
+                            url,
+                            [MWidth(400.0)]
+                        ),
+                        MEmpty()
+                    )
+                }
+            )
+
+        ])
+        |> MCenter
+    )
+}

@@ -40,7 +40,7 @@ class RenderSupport {
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
 	public static var EnableFocusFrame : Bool = false;
 	/* Antialiasing doesn't work correctly on mobile devices */
-	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 	public static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
@@ -59,6 +59,16 @@ class RenderSupport {
 	public static var hadUserInteracted = false;
 
 	public static var WebFontsConfig = null;
+	public static var DebugClip = null;
+
+	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
+		if (DebugClip != null) {
+			var innertext = DebugClip.innerText;
+			var newText = "";
+			untyped __js__("newText = innertext.split('\\n').slice(-40).join('\\n')");
+			DebugClip.innerText = newText + ('\n' + text + " " + text2);
+		};
+	}
 
 	private static var RenderSupportInitialised : Bool = init();
 
@@ -88,9 +98,9 @@ class RenderSupport {
 			RendererType = rendererType;
 			RoundPixels = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : RendererType != "html";
 			Antialias = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" :
-				!Native.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+				!Native.isTouchScreen() && (RendererType != "webgl" || Native.detectDedicatedGPU());
 
-			untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+			untyped __js__("PIXI.TextMetrics.METRICS_STRING = ((Platform.isMacintosh || Platform.isIOS) && RenderSupport.RendererType != 'html') ? '|Éq█Å' : '|Éq'");
 
 			PixiWorkarounds.workaroundGetContext();
 
@@ -373,8 +383,10 @@ class RenderSupport {
 		emit("beforeprint");
 		forceRender();
 
-		PixiStage.onImagesLoaded(function () {
-			Browser.window.print();
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				Browser.window.print();
+			});
 		});
 	}
 
@@ -395,7 +407,7 @@ class RenderSupport {
 		return Math.max(roundPlus(ratio, 2), 1.0);
 	}
 
-	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
+	public static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
 		untyped __js__("setTimeout(fn, time)");
 	}
 
@@ -425,21 +437,6 @@ class RenderSupport {
 
 	private static function printOptionValues() : Void {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
-	}
-
-	public static function detectExternalVideoCard() : Bool {
-		var canvas = Browser.document.createElement('canvas');
-		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
-
-		if (gl == null) {
-			return false;
-		}
-
-		var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-		var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
-		var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-
-		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
 	}
 
 	private static function disablePixiPlugins() {
@@ -498,7 +495,7 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
-		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
+		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
 			RendererType = "webgl";
@@ -580,11 +577,15 @@ class RenderSupport {
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
 
+		if (Util.getParameter("debugClip") == "1") {
+			appendDebugClip();
+		}
+
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
 		}
 
-		untyped __js__("PIXI.TextMetrics.METRICS_STRING = (Platform.isMacintosh || (Platform.isIOS && RenderSupport.RendererType != 'html')) ? '|Éq█Å' : '|Éq'");
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = ((Platform.isMacintosh || Platform.isIOS) && RenderSupport.RendererType != 'html') ? '|Éq█Å' : '|Éq'");
 
 		PixiWorkarounds.workaroundGetContext();
 		PixiWorkarounds.workaroundTextMetrics();
@@ -598,6 +599,11 @@ class RenderSupport {
 		}
 
 		createPixiRenderer();
+
+		// Workaround to catch wheel events from trackpad on iPad in Safari
+		if (Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0") {
+			appendScrollCatcher();
+		}
 
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
@@ -615,6 +621,39 @@ class RenderSupport {
 
 		render();
 		requestAnimationFrame();
+	}
+
+	private static function appendScrollCatcher() {
+		var catcherWrapper = Browser.document.createElement("div");
+		catcherWrapper.style.width = '100%';
+		catcherWrapper.style.height = '100%';
+		catcherWrapper.style.overflow = 'scroll';
+		var catcher = Browser.document.createElement("div");
+		catcher.style.position = 'relative';
+		catcher.style.height = 'calc(100% + 1px)';
+
+		catcherWrapper.appendChild(catcher);
+		Browser.document.body.appendChild(catcherWrapper);
+	}
+
+	private static function appendDebugClip() {
+		var debugClip = Browser.document.createElement("p");
+		Browser.document.body.appendChild(debugClip);
+
+		debugClip.textContent = "DEBUG";
+		debugClip.style.fontSize = "12px";
+		debugClip.style.zIndex = "1000";
+		debugClip.style.background = "#424242";
+		debugClip.style.color = "#FFFFFF";
+		debugClip.style.padding = "8px";
+		debugClip.style.paddingTop = "4px";
+		debugClip.style.paddingBottom = "4px";
+		debugClip.style.borderRadius = "4px";
+		debugClip.style.left = "50%";
+		debugClip.style.top = "8px";
+		debugClip.style.transform = "translate(-50%, 0)";
+
+		DebugClip = debugClip;
 	}
 
 	private static function StartFlowMainWithTimeCheck() {
@@ -934,88 +973,119 @@ class RenderSupport {
 		untyped __js__("element.removeEventListener(event, fn, { passive : false })");
 	}
 
+	public static function addPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.addEventListener(event, fn, { passive : true })");
+	}
+
+	public static function removePassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
+		untyped __js__("element.removeEventListener(event, fn, { passive : true })");
+	}
+
+	public static var PreventDefault : Bool = true;
 	private static inline function initPixiStageEventListeners() {
 		var onpointerdown = function(e : Dynamic) {
-			// Prevent default drop focus on canvas
-			// Works incorrectly in Edge
-			e.preventDefault();
+			try {
+				// Prevent default drop focus on canvas
+				// Works incorrectly in Edge
+				// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
+				// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
+				if (PreventDefault) e.preventDefault();
 
-			if (e.touches != null) {
-				TouchPoints = e.touches;
-				emit("touchstart");
+				if (e.touches != null) {
+					TouchPoints = e.touches;
+					emit("touchstart");
 
-				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX;
-					MousePos.y = e.touches[0].pageY;
+					if (e.touches.length == 1) {
+						MousePos.x = e.touches[0].pageX;
+						MousePos.y = e.touches[0].pageY;
 
-					if (MouseUpReceived) emit("mousedown");
-				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+						if (MouseUpReceived) emit("mousedown");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						emit("mouserightdown");
+					} else if (e.which == 2 || e.button == 1) {
+						emit("mousemiddledown");
+					} else if (e.which == 1 || e.button == 0) {
+						if (MouseUpReceived) emit("mousedown");
+					}
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				if (e.which == 3 || e.button == 2) {
-					emit("mouserightdown");
-				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddledown");
-				} else if (e.which == 1 || e.button == 0) {
-					if (MouseUpReceived) emit("mousedown");
-				}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerdown error : ");
+				untyped console.log(e);
 			}
 		};
 
 		var onpointerup = function(e : Dynamic) {
-			if (e.touches != null) {
-				TouchPoints = e.touches;
-				emit("touchend");
+			try {
+				if (e.touches != null) {
+					TouchPoints = e.touches;
+					emit("touchend");
 
-				GesturesDetector.endPinch();
+					GesturesDetector.endPinch();
 
-				if (e.touches.length == 0) {
-					if (!MouseUpReceived) emit("mouseup");
+					if (e.touches.length == 0) {
+						if (!MouseUpReceived) emit("mouseup");
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
+
+					if (e.which == 3 || e.button == 2) {
+						emit("mouserightup");
+					} else if (e.which == 2 || e.button == 1) {
+						emit("mousemiddleup");
+					} else if (e.which == 1 || e.button == 0) {
+						if (!MouseUpReceived) emit("mouseup");
+					}
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				if (e.which == 3 || e.button == 2) {
-					emit("mouserightup");
-				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddleup");
-				} else if (e.which == 1 || e.button == 0) {
-					if (!MouseUpReceived) emit("mouseup");
-				}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerup error : ");
+				untyped console.log(e);
 			}
 		};
 
 		var onpointermove = function(e : Dynamic) {
-			if (e.touches != null) {
-				e.preventDefault();
+			try {
+				if (e.touches != null) {
+					e.preventDefault();
 
-				TouchPoints = e.touches;
-				emit("touchmove");
+					TouchPoints = e.touches;
+					emit("touchmove");
 
-				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX;
-					MousePos.y = e.touches[0].pageY;
+					if (e.touches.length == 1) {
+						MousePos.x = e.touches[0].pageX;
+						MousePos.y = e.touches[0].pageY;
+
+						emit("mousemove");
+					} else if (e.touches.length > 1) {
+						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					}
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
+					MousePos.x = e.pageX;
+					MousePos.y = e.pageY;
 
 					emit("mousemove");
-				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-				MousePos.x = e.pageX;
-				MousePos.y = e.pageY;
-
-				emit("mousemove");
+			} catch (e : Dynamic) {
+				untyped console.log("onpointermove error : ");
+				untyped console.log(e);
 			}
 		};
 
 		var onpointerout = function(e : Dynamic) {
-			if (e.relatedTarget == Browser.document.documentElement) {
-				if (!MouseUpReceived) emit("mouseup");
+			try {
+				if (e.relatedTarget == Browser.document.documentElement) {
+					if (!MouseUpReceived) emit("mouseup");
+				}
+			} catch (e : Dynamic) {
+				untyped console.log("onpointerout error : ");
+				untyped console.log(e);
 			}
 		};
 
@@ -1111,15 +1181,17 @@ class RenderSupport {
 				if (event.deltaMode == 1) {	// delta in LINE units
 					pX *= LINE_HEIGHT;
 					pY *= LINE_HEIGHT;
-				} else { // delta in PAGE units
+				} else if (event.deltaMode == 2) { // delta in PAGE units
 					pX *= PAGE_HEIGHT;
 					pY *= PAGE_HEIGHT;
 				}
 			}
 
 			// Fall-back if spin cannot be determined
-			if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
-			if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+			if (!(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")) {
+				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
+				if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+			}
 
 			if (event.shiftKey != null && event.shiftKey && sX == 0.0) {
 				sX = sY;
@@ -1133,22 +1205,9 @@ class RenderSupport {
 			return false;
 		};
 
-		Browser.window.addEventListener(event_name, wheel_cb, false);
+		untyped __js__("window.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
 		if ( event_name == "DOMMouseScroll" ) {
-			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
-		}
-	}
-
-
-	private static function emitForInteractives(clip : DisplayObject, event : String) : Void {
-		if (clip.interactive)
-			clip.emit(event);
-
-		if (untyped clip.children != null) {
-			var childs : Array<DisplayObject> = untyped clip.children;
-			for (c in childs) {
-				emitForInteractives(c, event);
-			}
+			untyped __js__("window.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
 		}
 	}
 
@@ -1162,18 +1221,6 @@ class RenderSupport {
 		} catch (er : Dynamic) {
 			Errors.report("Error in provideEvent: " + er);
 		}
-	}
-
-	public static function emulateMouseClickOnClip(clip : DisplayObject) : Void {
-		var b = clip.getBounds();
-		MousePos = clip.toGlobal(new Point( b.width / 2.0, b.height / 2.0));
-
-		// Expicitly emulate user action with mouse
-		emulateEvent("mousemove");
-		emulateEvent("mouseover", 100, clip);
-		emulateEvent("mousedown", 400);
-		emulateEvent("mouseup", 500);
-		emulateEvent("mouseout", 600, clip);
 	}
 
 	private static function forceRollOverRollOutUpdate() : Void {
@@ -1248,21 +1295,6 @@ class RenderSupport {
 				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
 			}
 		}
-	}
-
-	private static function emulateEvent(event : String, delay : Int = 10, clip : DisplayObject = null) : Void {
-		defer(function() {
-			isEmulating = true;
-
-			if (event == "mouseover" || event == "mouseout") {
-				if (clip != null)
-					emitForInteractives(clip, event);
-			} else {
-				emit(event);
-			}
-
-			isEmulating = false;
-		}, delay);
 	}
 
 	public static function ensureCurrentInputVisible() : Void {
@@ -1454,11 +1486,14 @@ class RenderSupport {
 
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
-				if (RendererType == "html") {
+				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
 
 				var nativeWidget : Element = untyped clip.nativeWidget;
+				if (untyped clip.iframe != null) {
+					nativeWidget = untyped clip.iframe;
+				}
 
 				// Create DOM node for access. properties
 				if (nativeWidget != null) {
@@ -1478,8 +1513,8 @@ class RenderSupport {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
 		if (accessWidget == null) {
-			if (AccessibilityEnabled || RendererType == "html") {
-				if (RendererType == "html") {
+			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
+				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
 
@@ -1582,6 +1617,14 @@ class RenderSupport {
 
 	public static function getStageHeight() : Float {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
+	}
+
+	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
+		FontLoader.loadPreconfiguredWebFonts(families, onDone);
+	}
+
+	public static function getFontStylesConfigString() : String {
+		return haxe.Resource.getString("fontstyles");
 	}
 
 	public static function makeTextField(fontFamily : String) : TextClip {
@@ -1770,6 +1813,10 @@ class RenderSupport {
 		clip.setAutoAlign(autoalign);
 	}
 
+	public static function setPreventContextMenu(clip : TextClip, preventContextMenu : Bool) : Void {
+		clip.setPreventContextMenu(preventContextMenu);
+	}
+
 	public static function setTextInput(clip : TextClip) : Void {
 		clip.setTextInput();
 	}
@@ -1866,11 +1913,19 @@ class RenderSupport {
 		return clip.addTextInputFilter(filter);
 	}
 
+	public static function addTextInputEventFilter(clip : TextClip, filter : String -> String -> String) : Void -> Void {
+		return clip.addTextInputEventFilter(filter);
+	}
+
 	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		if (event == "keydown")
 			return clip.addTextInputKeyDownEventFilter(filter);
 		else
 			return clip.addTextInputKeyUpEventFilter(filter);
+	}
+
+	public static function addTextInputOnCopyEvent(clip : TextClip, fn : (String -> Void) -> Void) : Void -> Void {
+		return clip.addOnCopyEventListener(fn);
 	}
 
 	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
@@ -1942,7 +1997,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (RendererType == "html" && Browser.document.body.animate != null && Util.getParameter("native_animation") != "0") {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && !Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -2402,9 +2457,9 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible"){
-			clip.on("visible", fn);
-			return function() { clip.off("visible", fn); }
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall") {
+			clip.on(event, fn);
+			return function() { clip.off(event, fn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -2414,7 +2469,7 @@ class RenderSupport {
 	public static function addFileDropListener(clip : FlowContainer, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
 		if (Platform.isMobile) {
 			return function() { };
-		} else if (RenderSupport.RendererType != "html") {
+		} else if (RenderSupport.RendererType != "html" || !clip.isHTMLRenderer()) {
 			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
 			clip.addChild(dropArea);
@@ -2625,6 +2680,14 @@ class RenderSupport {
 		return null;
 	}
 
+	public static function countClips(?parent : DisplayObject) : Int {
+		if (parent == null) {
+			parent = PixiStage;
+		}
+
+		return parent.countClips();
+	}
+
 	public static function makeGraphics() : FlowGraphics {
 		return new FlowGraphics();
 	}
@@ -2637,6 +2700,10 @@ class RenderSupport {
 
 	public static function clearGraphics(graphics : FlowGraphics) : Void {
 		graphics.clear();
+	}
+
+	public static function useSvg(graphics : FlowGraphics) : Void {
+		graphics.useSvg();
 	}
 
 	public static function setLineStyle(graphics : FlowGraphics, width : Float, color : Int, opacity : Float) : Void {
@@ -2705,6 +2772,44 @@ class RenderSupport {
 		picture.switchUseCrossOrigin(useCrossOrigin);
 	}
 
+	public static function setPictureReferrerPolicy(picture : FlowSprite, referrerpolicy : String) : Void {
+		picture.setPictureReferrerPolicy(referrerpolicy);
+	}
+
+	public static function parseXml(xmlString) {
+		var doc;
+		if (untyped __js__('window.ActiveXObject')) {
+			// Internet Explorer
+			doc = untyped __js__('new ActiveXObject("MSXML.DOMDocument")');
+			doc.async = false;
+			doc.loadXML(xmlString);
+		} else {
+			// Other browsers
+			var parser = untyped __js__('new DOMParser()');
+			doc = parser.parseFromString(xmlString, "text/xml");
+		}
+		return doc;
+	}
+
+	public static function checkIsValidSvg(url : String, cb : (Bool) -> Void) : Void {
+		var svgXhr = new js.html.XMLHttpRequest();
+		if (!Platform.isIE && !Platform.isEdge)
+			svgXhr.overrideMimeType('image/svg+xml');
+
+		svgXhr.onload = function () {
+			try {
+				var doc = parseXml(svgXhr.response);
+				var viewBox = untyped doc.documentElement.getAttribute('viewBox');
+				cb(viewBox != null);
+			} catch (e : Dynamic) {
+				cb(false);
+			}
+		};
+
+		svgXhr.open('GET', url, true);
+		svgXhr.send();
+	}
+
 	public static function cursor2css(cursor : String) : String {
 		return switch (cursor) {
 			case "arrow": "default";
@@ -2762,7 +2867,7 @@ class RenderSupport {
 			return;
 		}
 
-		if (RendererType == "html") {
+		if (clip.isHTMLRenderer()) {
 			untyped clip.filterPadding = 0.0;
 			var filterCount = 0;
 
@@ -2939,6 +3044,10 @@ class RenderSupport {
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		clip.setScrollRect(left, top, width, height);
+	}
+
+	public static function setCropEnabled(clip : FlowContainer, enabled : Bool) : Void {
+		clip.setCropEnabled(enabled);
 	}
 
 	public static function setContentRect(clip : FlowContainer, width : Float, height : Float) : Void {
@@ -3160,10 +3269,14 @@ class RenderSupport {
 	}
 
 	public static function getSnapshot() : String {
-		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), true);
 	}
 
 	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
+		return getSnapshotBox2(x, y, w, h, false);
+	}
+
+	public static function getSnapshotBox2(x : Int, y : Int, w : Int, h : Int, ?fullSnapshot : Bool = false) : String {
 		var child : FlowContainer = untyped PixiStage.children[0];
 
 		if (child == null) {
@@ -3172,26 +3285,98 @@ class RenderSupport {
 
 		untyped RenderSupport.LayoutText = true;
 		emit("enable_sprites");
-		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
+		PixiStage.forceClipRenderable();
 		render();
+
+		var dispFn = function() {
+			// With fix disabled glitches start to happen on iPad after some snapshots
+			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_disable") != '1';
+			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
+			untyped RenderSupport.LayoutText = false;
+			emit("disable_sprites");
+
+			forceRender();
+		}
 
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
-			child.removeScrollRect();
+			dispFn();
+			return img;
+		} catch(e : Dynamic) {
+			trace(e);
+			dispFn();
+			return 'error';
+		}
+	}
+
+	public static function getClipSnapshot(clip : FlowContainer, cb : String -> Void) : Void {
+		if (!printMode) {
+			printMode = true;
+			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
+			DisplayObjectHelper.InvalidateRenderable = false;
+		}
+
+		PixiStage.forceClipRenderable();
+		forceRender();
+
+		PixiStage.once("drawframe", function () {
+			PixiStage.onImagesLoaded(function () {
+				PixiStage.once("drawframe", function () {
+					var snapshot = clip.children != null && clip.children.length > 0 ?
+						getClipSnapshotBox(
+							untyped clip,
+							Math.floor(clip.worldTransform.tx),
+							Math.floor(clip.worldTransform.ty),
+							Math.floor(clip.getWidth()),
+							Math.floor(clip.getHeight())
+						) : "";
+
+					if (printMode) {
+						printMode = false;
+						DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
+						forceRender();
+					}
+
+					cb(snapshot);
+				});
+			});
+		});
+	}
+
+	public static function getClipSnapshotBox(clip : FlowContainer, x : Int, y : Int, w : Int, h : Int) : String {
+		if (clip == null) {
+			return "";
+		}
+
+		untyped RenderSupport.LayoutText = true;
+		emit("enable_sprites");
+		var prevX = clip.x;
+		var prevY = clip.y;
+		clip.setScrollRect(x, y, w, h);
+
+		forceRender();
+
+		var dispFn = function() {
+			clip.removeScrollRect();
+			clip.x = prevX;
+			clip.y = prevY;
+			clip.invalidateTransform('getClipSnapshotBox');
+
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
+			forceRender();
+		}
 
-			render();
+		try {
+			var img = untyped __js__("RenderSupport.PixiRenderer.plugins.extract.base64(clip == RenderSupport.mainRenderClip() ? clip : clip.children[0])");
+			dispFn();
 
 			return img;
 		} catch(e : Dynamic) {
-			child.removeScrollRect();
-			untyped RenderSupport.LayoutText = false;
-			emit("disable_sprites");
-
-			render();
+			trace(e);
+			dispFn();
 
 			return 'error';
 		}
@@ -3265,6 +3450,10 @@ class RenderSupport {
 		return new HTMLStage(width, height);
 	}
 
+	public static function assignClip(stage : HTMLStage, id : String, clip : DisplayObject) : Void {
+		stage.assignClip(id, clip);
+	}
+
 	public static function createElement(tagName : String) : Element {
 		return Browser.document.createElementNS(
 				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
@@ -3284,11 +3473,39 @@ class RenderSupport {
 		element.nodeValue = value;
 	}
 
-	public static function setAttribute(element : Element, name : String, value : String) : Void {
-		if (name == "innerHTML")
-			element.innerHTML = value
-		else
-			element.setAttribute(name, value);
+	public static function getElementById(selector : String) : Element {
+		return Browser.document.getElementById(selector);
+	}
+
+	public static function getElementChildren(element : Dynamic) : Array<Element> {
+		if (element.isHTMLStage) {
+			return untyped Array.from(element.nativeWidget.childNodes);
+		} else {
+			return untyped Array.from(element.childNodes);
+		}
+	}
+
+	public static function getElementNextSibling(element : Dynamic) : Element {
+		return element.nextSibling;
+	}
+
+	public static function isElementNull(element : Element) : Bool {
+		return element == null;
+	}
+
+
+	public static function setAttribute(element : Element, name : String, value : String, ?safe : Bool = false) : Void {
+		if (safe) {
+			if (name == "innerHTML")
+				element.innerHTML = untyped __js__("DOMPurify.sanitize(value)")
+			else
+				element.setAttribute(name, untyped __js__("DOMPurify.sanitize(value)"));
+		} else {
+			if (name == "innerHTML")
+				element.innerHTML = value
+			else
+				element.setAttribute(name, value);
+		}
 	}
 
 	public static function removeAttribute(element : Element, name : String) : Void {
@@ -3368,6 +3585,10 @@ class RenderSupport {
 		var wrapper = function(e) { cb(Browser.window.location.hash); }
 		untyped Browser.window.addEventListener("hashchange", wrapper);
 		return function() { untyped Browser.window.removeEventListener("hashchange", wrapper); };
+	}
+
+	public static function reloadPage(forced : Bool) : Void {
+		Browser.window.location.reload(forced);
 	}
 
 	public static function setGlobalZoomEnabled(enabled : Bool) : Void {

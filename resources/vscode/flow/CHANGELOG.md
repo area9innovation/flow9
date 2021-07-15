@@ -156,5 +156,17 @@
 ## 0.4.9
  - 'runUI' command is added: runs a visual application, compiled to html+js, in webview panel.
 
+ ## 0.4.10
+ - obsolete LSP modes (JS and flowc-based) are removed.
+
+ ## 0.4.11
+ - more concise format of server memory state is used.
+
+ ## 0.4.12
+ - html files are placed in the www2 directory in the nearest directory with flow.config file.
+
+## 0.4.13
+- a test editor written in flow is added. Readme is updated with instructions how to implement a custom editor written in flow. 
+
 ## 0.5.0
  - flow notebook, based on proposed Vscode Notebook API, is added. Work only in code-insiders with '--enable-proposed-api area9.flow' option.

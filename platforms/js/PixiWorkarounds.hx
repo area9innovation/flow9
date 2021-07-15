@@ -753,7 +753,7 @@ class PixiWorkarounds {
 				{
 					for (var j = 0; j < line; j += 4)
 					{
-						if (imagedata[idx + j] !== 255)
+						if (typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' ? imagedata[idx + j] !== 255 : imagedata[idx + j] <= 150)
 						{
 							stop = true;
 							break;
@@ -779,7 +779,7 @@ class PixiWorkarounds {
 				{
 					for (var j = 0; j < line; j += 4)
 					{
-						if (imagedata[idx + j] !== 255)
+						if (typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' ? imagedata[idx + j] !== 255 : imagedata[idx + j] <= 150)
 						{
 							stop = true;
 							break;
@@ -798,48 +798,6 @@ class PixiWorkarounds {
 
 				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
-
-				context.fillStyle = '#f00';
-				context.fillRect(0, 0, width, height);
-
-				context.textBaseline = 'alphabetic';
-				context.fillStyle = '#000';
-				context.fillText('B', 0, baseline);
-
-				imagedata = context.getImageData(0, 0, width, height).data;
-				pixels = imagedata.length;
-				line = width * 4;
-
-				i = 0;
-				idx = 0;
-				stop = false;
-
-				// ascent. scan from top to bottom until we find a non red pixel
-				for (i = 0; i < baseline; ++i)
-				{
-					for (var j = 0; j < line; j += 4)
-					{
-						if (imagedata[idx + j] !== 255)
-						{
-							stop = true;
-							break;
-						}
-					}
-					if (!stop)
-					{
-						idx += line;
-					}
-					else
-					{
-						break;
-					}
-				}
-
-				if (Platform.isMacintosh) {
-					properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1.0))) / 2.0;
-					properties.descent -= properties.baselineCorrection;
-					properties.ascent += properties.baselineCorrection;
-				}
 
 				PIXI.TextMetrics._fonts[font] = properties;
 
@@ -1009,7 +967,7 @@ class PixiWorkarounds {
 
 						this.emit('transformchanged');
 
-						if (RenderSupport.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html' && !this.isHTML) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1022,7 +980,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -1047,7 +1005,7 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (RenderSupport.RendererType == 'html') {
+						if (RenderSupport.RendererType == 'html' || this.isHTML) {
 							if (RenderSupport.LayoutText || this.isCanvas) {
 								this.textClipChanged = true;
 								this.layoutText();
@@ -1071,7 +1029,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupport.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html' && !this.isHTML) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1086,7 +1044,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {

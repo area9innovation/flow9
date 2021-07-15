@@ -66,6 +66,7 @@ export {
 		numeric : bool,
 		numericStep : Maybe<MNumericStep>,
 		readOnly : bool,
+		preventContextMenu : bool,
 		color : MColor,
 		width : double,
 		textWidth : DynamicBehaviour<double>,
@@ -138,7 +139,8 @@ export {
 		scrollPosition : DynamicBehaviour<Point>,
 		positionScale : DynamicBehaviour<PositionScale>,
 		elevation : Transform<double>,
-		customMetrics : MCustomPopup
+		customMetrics : MCustomPopup,
+		dynListMode : bool
 	);
 
 	MInputErrorState(
@@ -277,7 +279,7 @@ export {
 	};
 }
 
-numericFilter = \s -> {
+numericFilter(s) {
 	dotB = ref false;
 
 	fold(enumFromTo(0, strlen(s) - 1), "", \acc, i ->
@@ -327,6 +329,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	filterFn = tryExtractStruct(state, MInputFilter(\c, __ -> c));
 	textInputCursorShape = make(DefaultCursor());
 	noLeftBorder = contains(style, MInputNoLeftBorder());
+	preventContextMenu = contains(state, MInputPreventContextMenu());
 	scrollStyle = extractStruct(style, MTextInputScrollStyle([])).style;
 	// For testing purposes
 	defaultSkin =
@@ -351,11 +354,12 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		)
 		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
-			concat(
+			concatA([
 				[firstOfTriple(f), secondOfTriple(f)],
-				extractStructMany(customTextStyle, LetterSpacing(0.0))
-			)
-			|> (\f2 -> if (thirdOfTriple(f)) f2 else arrayPush(f2, MTextDisabled()))
+				if (thirdOfTriple(f)) [] else [MTextDisabled()],
+				extractStructMany(customTextStyle, LetterSpacing(0.0)),
+				extractStructMany(customTextStyle, MDynamicColor(const(MBlack()))),
+			])
 		);
 
 	textStyle = extractStruct(style, MDynamicTextStyle(const(mTextStyle))).style;
@@ -423,8 +427,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	// Popup
 	popup =
-		if (isPopup) {
-			customPopup = extractStruct(style, MCustomPopup(None(), None(), None()));
+		if (isPopup)
 			Some(
 				MInputPopupState(
 					MOpenMenu(make(false)),
@@ -435,10 +438,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MScrollPosition(make(zeroPoint))).position,
 					make(zeroPositionScale),
 					either(elevation, MElevation(const(0.))).elevation,
-					customPopup
+					extractStruct(style, MCustomPopup(None(), None(), None())),
+					contains(style, MSuggestionsDynamicListMode())
 				)
 			)
-		} else
+		else
 			None();
 
 	backgroundDefaultColor = contrastingColor(parent);
@@ -465,7 +469,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	// Left Button
 	leftButtonDef =
-		MLeftCustomButton(MIcon("search", [MIconSize(iconSize)]), MIcon("arrow_back", [MIconSize(iconSize)]), 56.);
+		MLeftCustomButton(MIcon("search", [MIconSize(iconSize)]), MIcon("arrow_back", [MIconSize(iconSize)]), 56., true);
 
 	showLeftButton = extractStruct(style, MShowLeftButton(false)).show;
 
@@ -628,7 +632,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	// Autocomplete
 	startSearch = extractStruct(style, MAutoCompleteStartSearch(0, 0));
 	preparedSentenceMatcher = extractStruct(style, MPreparedSentenceMatcher(const(dummySentenceMatcher)));
-	sentenceMatcher = extractStruct(style, MSentenceMatcher(buildSentenceMatcher, makeAutocompleteMatcher(startSearch.minChars)));
+	sentenceMatcher = extractStruct(style, MSentenceMatcher(simpleBuildSentenceMatcher, makeAutocompleteMatcher(startSearch.minChars)));
 
 	matchers =
 		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
@@ -1024,7 +1028,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		concatA([
 			if (useNativeInput)
 				[
-					makeSubscribe2(focus, \focused -> {
+					makeSubscribe2(fstall(focus, 0), \focused -> {
 						nextDistinct(mfocus.focused, focused);
 
 						maybeApply(
@@ -1036,17 +1040,20 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						if (focused) {
 							maybeApply(
 								positionOnFocus,
-								\pof -> deferred(\ ->
+								\pof -> deferUntilRender(\ ->
 									nextDistinct(position, min(max(pof(getValue(content), getValue(position)), 0), strlen(getValue(content))))
 								)
 							);
 
 							maybeApply(
 								selectionOnFocus,
-								\sof -> deferred(\ ->
+								\sof -> deferUntilRender(\ ->
 									nextDistinct(selection, min(max(sof(getValue(content), getValue(selection)), 0), strlen(getValue(content))))
 								)
 							);
+						} else {
+							maybeApply(positionOnFocus, \__ -> deferUntilRender(\ -> nextDistinct(position, -1)));
+							maybeApply(selectionOnFocus, \__ -> deferUntilRender(\ -> nextDistinct(selection, -1)));
 						}
 					}),
 				]
@@ -1154,6 +1161,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		numeric,
 		numericStep,
 		readOnly,
+		preventContextMenu,
 		color,
 		width,
 		textWidth,
@@ -1977,8 +1985,10 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 	}
 
 	pasteEventListener = \ -> addPasteEventListener(\__ -> {
-		if (fgetValue(focused))
+		if (fgetValue(focused)) {
 			insertStr(getGlobalClipboard());
+			deferUntilNextFrameRendered(\ -> nextDistinct(focused, true));
+		}
 	});
 
 	handleMouseDown = \handled : bool, mi : MouseDownInfo -> {
@@ -2427,6 +2437,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 									[FInputFilter(\str -> fn.fn(str, getValue(inputState.focus)))],
 								[]
 							),
+							if (inputState.preventContextMenu) [FPreventContextMenu()] else [],
 							if ((^fAccessibilityEnabled || cpp) && !mobile) {
 								accessProperties = extractStructMany(state, FAccessAttribute("", const("")));
 
@@ -2580,7 +2591,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 			|> (\f2 -> if (f.third) f2 else arrayPush(f2, MTextDisabled()))
 		);
 	isTextInputInPopup = !contains(style, MTextInputOutOfPopup());
-	custLeftButton = extractStruct(style, MLeftCustomButton(TEmpty(), TFixed(1., 1.), 56.));
+	custLeftButton = extractStruct(style, MLeftCustomButton(TEmpty(), TFixed(1., 1.), 56., true));
 	leftButton = extractStruct(style, MShowLeftButton(false)).show || custLeftButton.closed != TEmpty();
 	leftIcon = extractStruct(style, MLeftIcon("", [])).icon != "";
 	label = extractStruct(style, MLabel("")).label;

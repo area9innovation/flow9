@@ -1,13 +1,15 @@
 package dk.area9.flowrunner;
 
 import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.support.annotation.NonNull;
-import android.support.v4.app.NotificationCompat;
+import android.os.Build;
+import androidx.annotation.NonNull;
+import androidx.core.app.NotificationCompat;
 
 // We interact with NotificationManager in this receiver
 // onReceive will be called at scheduled time for every scheduled notification
@@ -40,7 +42,9 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
             notificationIconID = android.R.drawable.ic_popup_reminder;
         }
 
-        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context);
+        String channelId = FlowNotificationsAPI.CHANNEL_ID;
+
+        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, channelId);
 
         mBuilder.setSmallIcon(notificationIconID)
                 .setContentTitle(notificationTitle)
@@ -48,6 +52,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
                 .setContentIntent(onClickIntent)
                 .setDeleteIntent(onCancelIntent)
                 .setOngoing(pinNotification)
+                .setChannelId(channelId)
                 .setAutoCancel(!pinNotification);
 
         if (withSound) {

@@ -24,6 +24,7 @@ import java.nio.charset.CharsetDecoder;
 import java.io.FileInputStream;
 import java.io.File;
 import java.nio.charset.CodingErrorAction;
+import java.net.URLDecoder;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.CharsetEncoder;
@@ -48,19 +49,20 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
+import com.sun.management.OperatingSystemMXBean;
 
-@SuppressWarnings("unchecked")
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
 	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
-	public Native() {
-	try {
-		md5original = MessageDigest.getInstance("MD5");
-	} catch (NoSuchAlgorithmException e) {
-		md5original = null;
-	}
+	private static OperatingSystemMXBean osBean = java.lang.management.ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
 
+	public Native() {
+		try {
+			md5original = MessageDigest.getInstance("MD5");
+		} catch (NoSuchAlgorithmException e) {
+			md5original = null;
+		}
 	}
 
 	public final Object println(Object arg) {
@@ -156,8 +158,8 @@ public class Native extends NativeHost {
 	}
 
 	public final String toBinary(Object value) {
-		Map<Integer, Integer> structIdxs = new HashMap();
-		List<Struct> structDefs = new ArrayList();
+		Map<Integer, Integer> structIdxs = new HashMap<Integer, Integer>();
+		List<Struct> structDefs = new ArrayList<Struct>();
 
 		StringBuilder buf = new StringBuilder();
 		writeBinaryValue(value, buf, structIdxs, structDefs);
@@ -431,7 +433,7 @@ public class Native extends NativeHost {
 	}
 
 	public final Object[] string2utf8(String str) {
-		ArrayList<Integer> bytesList = new ArrayList();
+		ArrayList<Integer> bytesList = new ArrayList<Integer>();
 		// We know we need at least this
 		bytesList.ensureCapacity(str.length());
 
@@ -464,6 +466,8 @@ public class Native extends NativeHost {
 			bytesList.add(0x80 | b2);
 			bytesList.add(0x80 | b3);
 			bytesList.add(0x80 | b4);
+			// Surrogate pair
+			++i;
 			} else if (x <= 0x3FFFFFF) {
 			int b5 = x & 0x3F;
 			int b4 = (x >> 6) & 0x3F;
@@ -476,6 +480,8 @@ public class Native extends NativeHost {
 			bytesList.add(0x80 | b3);
 			bytesList.add(0x80 | b4);
 			bytesList.add(0x80 | b5);
+			// Surrogate pair
+			++i;
 			} else {
 			}
 		}
@@ -506,7 +512,9 @@ public class Native extends NativeHost {
 
 			char[] cs = Character.toChars(h);
 
+			// Surrogate pair
 			str.append(cs[0]);
+			str.append(cs[1]);
 			} else if ((b1 & 0xF8) == 0xF0 && i < len - 3) {
 			byte b2 = bytes[i+1];
 			byte b3 = bytes[i+2];
@@ -514,6 +522,7 @@ public class Native extends NativeHost {
 			i = i+3;
 
 			int h1 = (b1 & 0x7) << 18;
+
 			int h2 = (b2 & 0x3F) << 12;
 			int h3 = (b3 & 0x3F) << 6;
 			int h4 = 0x3F & b4;
@@ -522,7 +531,9 @@ public class Native extends NativeHost {
 
 			char[] cs = Character.toChars(h);
 
+			// Surrogate pair
 			str.append(cs[0]);
+			str.append(cs[1]);
 			} else if ((b1 & 0xF0) == 0xE0 && i < len - 2) {
 			byte b2 = bytes[i+1];
 			byte b3 = bytes[i+2];
@@ -551,12 +562,14 @@ public class Native extends NativeHost {
 			} else {
 			int h = b1 & 0xff;
 			char[] cs = Character.toChars(h);
+
 			str.append(cs[0]);
 			}
 		}
 
 		return str.toString();
 	}
+
 	public final Object[] s2a(String str) {
 		int l = str.length();
 		Object[] rv = new Object[l];
@@ -676,6 +689,7 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> Object[] map(Object[] arr, Func1<T1,T2> clos) {
 		Object[] rv = new Object[arr.length];
 		for (int i = 0; i < arr.length; i++)
@@ -683,12 +697,14 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> Object iter(Object[] arr, Func1<Object,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			clos.invoke((T)arr[i]);
 		return null;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> Object[] mapi(Object[] arr, Func2<T1,Integer,T2> clos) {
 		Object[] rv = new Object[arr.length];
 		for (int i = 0; i < arr.length; i++)
@@ -696,12 +712,14 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> Object iteri(Object[] arr, Func2<Object,Integer,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			clos.invoke(i, (T)arr[i]);
 		return null;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> int iteriUntil(Object[] arr, Func2<Boolean,Integer,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			if (clos.invoke(i, (T)arr[i]))
@@ -709,18 +727,21 @@ public class Native extends NativeHost {
 		return arr.length;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> T1 fold(Object[] arr, T1 init, Func2<T1,T1,T2> clos) {
 		for (int i = 0; i < arr.length; i++)
 			init = clos.invoke(init, (T2)arr[i]);
 		return init;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T1,T2> T1 foldi(Object[] arr, T1 init, Func3<T1,Integer,T1,T2> clos) {
 		for (int i = 0; i < arr.length; i++)
 			init = clos.invoke(i, init, (T2)arr[i]);
 		return init;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> Object[] filter(Object[] arr, Func1<Boolean,T> test) {
 		boolean[] tmp = new boolean[arr.length];
 		int count = 0;
@@ -734,6 +755,7 @@ public class Native extends NativeHost {
 		return out;
 	}
 
+	@SuppressWarnings("unchecked")
 	public final <T> boolean exists(Object[] arr, Func1<Boolean,T> test) {
 		for (int i = 0; i < arr.length; i++)
 			if (test.invoke((T)arr[i]))
@@ -754,16 +776,41 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private Timer timer_obj = null;
+	private Map<Long, Timer> timers = new HashMap<Long, Timer>();
+
+	private Timer getTimer() {
+		Long threadId = Thread.currentThread().getId();
+		if (timers.containsKey(threadId)) {
+			return timers.get(threadId);
+		} else {
+			Timer timer = new Timer(true);
+			synchronized (timers) {
+				timers.put(threadId, timer);
+			}
+
+			TimerTask task = new TimerTask() {
+				public void run() {
+					invokeCallback(new Runnable() {
+						public void run() {
+							synchronized (timers) {
+								timers.put(Thread.currentThread().getId(), timer);
+							}
+						}
+					});
+				}
+			};
+			timer.schedule(task, 0);
+
+			return timer;
+		}
+	}
 
 	public void invokeCallback(Runnable cb) {
 		cb.run();
 	}
 
 	public final Object timer(int ms, final Func0<Object> cb) {
-		if (timer_obj == null)
-			timer_obj = new Timer(true);
-
+		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
 				invokeCallback(new Runnable() {
@@ -773,15 +820,29 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		timer_obj.schedule(task, ms);
+		timer.schedule(task, ms);
 
 		return null;
 	}
 
-	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		if (timer_obj == null)
-			timer_obj = new Timer(true);
+	public final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
+		Timer timer = new Timer(false);
+		TimerTask task = new TimerTask() {
+			public void run() {
+				invokeCallback(new Runnable() {
+					public void run() {
+						cb.invoke();
+						timer.cancel();
+					}
+				});
+			}
+		};
+		timer.schedule(task, ms);
+		return null;
+	}
 
+	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
+		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
 				invokeCallback(new Runnable() {
@@ -791,11 +852,11 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		timer_obj.schedule(task, ms);
+		timer.schedule(task, ms);
 
 		return new Func0<Object>() {
 			public Object invoke() {
-				timer_obj.cancel();
+				timer.cancel();
 				return null;
 			}
 		};
@@ -918,10 +979,25 @@ public class Native extends NativeHost {
 	}
 
 	public final Object captureCallstack() {
-		return null;
+		return Thread.currentThread().getStackTrace();
+	}
+	public final String captureStringCallstack() {
+		return callstack2string(captureCallstack());
+	}
+	public final String callstack2string(Object obj) {
+		if (obj instanceof StackTraceElement[]) {
+			StackTraceElement[] stack = (StackTraceElement[])obj;
+			StringBuilder sb = new StringBuilder();
+			for (StackTraceElement el : stack) {
+				sb.append(el.toString() + "\n");
+			}
+			return sb.toString();
+		} else {
+			return new String();
+		}
 	}
 	public final Object captureCallstackItem(int index) {
-		return null;
+		return Thread.currentThread().getStackTrace()[index];
 	}
 	public final Object impersonateCallstackItem(Object item, int index) {
 		return null;
@@ -977,7 +1053,7 @@ public class Native extends NativeHost {
 	// Monday is 0
 	public final int dayOfWeek(int year, int month, int day) {
 		Calendar c = Calendar.getInstance();
-		c.set(year, month, day);
+		c.set(year, month - 1, day);
 		return (c.get(Calendar.DAY_OF_WEEK) - (Calendar.SUNDAY + 1) + 7) % 7;
 	}
 
@@ -1071,9 +1147,8 @@ public class Native extends NativeHost {
 
 	public final String getFileContentBinary(String name) {
 		try {
-			// TODO: This is wrong. Figure it out
-			byte[] encoded = Files.readAllBytes(Paths.get(name));
-			return new String(encoded, StandardCharsets.ISO_8859_1);
+			byte[] bytes = Files.readAllBytes(Paths.get(name));
+			return new String(bytes, StandardCharsets.ISO_8859_1);
 		} catch (IOException e) {
 			return "";
 		}
@@ -1083,11 +1158,15 @@ public class Native extends NativeHost {
 		Writer writer = null;
 
 		try {
-			// TODO: This is wrong. Figure it out
 			writer = new BufferedWriter(new OutputStreamWriter(
 				new FileOutputStream(name), StandardCharsets.ISO_8859_1)
 			);
-			writer.write(data);
+			char[] bytes = new char[data.length()];
+			for (int i = 0; i < bytes.length; i++) {
+				int cp =  Character.codePointAt(data, i);
+				bytes[i] = (char)(cp % 256);
+			}
+			writer.write(bytes);
 		} catch (IOException ex) {
 		} finally {
 			try {
@@ -1544,7 +1623,8 @@ public class Native extends NativeHost {
 	  List<Callable<Object>> tasks2 = new ArrayList<Callable<Object>>();
 
 	  for (int i = 0; i < tasks.length; i++) {
-		Func0<Object> task = (Func0<Object> ) tasks[i];
+		@SuppressWarnings("unchecked")
+		Func0<Object> task = (Func0<Object>) tasks[i];
 		tasks2.add(new Callable<Object>() {
 		  @Override
 		  public Object call() throws Exception {
@@ -1613,7 +1693,8 @@ public class Native extends NativeHost {
 	}
 
 	public final Object setConcurrentHashMap(Object map, Object key, Object value) {
-		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
+		@SuppressWarnings("unchecked")
+		ConcurrentHashMap<Object, Object> concurrentMap = (ConcurrentHashMap<Object, Object>) map;
 		concurrentMap.put(key, value);
 		return null;
 	}
@@ -1621,6 +1702,14 @@ public class Native extends NativeHost {
 	public final Object getConcurrentHashMap(Object map, Object key, Object defval) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		return concurrentMap.containsKey(key) ? concurrentMap.get(key) : defval;
+	}
+
+	@SuppressWarnings("unchecked")
+	public final Object setAllConcurrentHashMap(Object map1, Object map2) {
+		ConcurrentHashMap<Object, Object> concurrentMap1 = (ConcurrentHashMap<Object, Object>) map1;
+		ConcurrentHashMap<Object, Object> concurrentMap2 = (ConcurrentHashMap<Object, Object>) map2;
+		concurrentMap1.putAll(concurrentMap2);
+		return null;
 	}
 
 	public final Boolean containsConcurrentHashMap(Object map, Object key) {
@@ -1633,15 +1722,16 @@ public class Native extends NativeHost {
 		return concurrentMap.values().toArray();
 	}
 
-	public final Object[] removeConcurrentHashMap(Object map, Object key) {
+	public final Object removeConcurrentHashMap(Object map, Object key) {
 		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
 		concurrentMap.remove(key);
 		return null;
 	}
 
 	public final Object[] keysConcurrentHashMap(Object map) {
-		ConcurrentHashMap concurrentMap = (ConcurrentHashMap) map;
-		ArrayList<Object> ret = new ArrayList();
+		@SuppressWarnings("unchecked")
+		ConcurrentHashMap<Object, Object> concurrentMap = (ConcurrentHashMap<Object, Object>) map;
+		ArrayList<Object> ret = new ArrayList<Object>();
 		for (Enumeration<Object> e = concurrentMap.keys(); e.hasMoreElements();) {
 			ret.add(e.nextElement());
 		}
@@ -1775,6 +1865,11 @@ public class Native extends NativeHost {
 		return (double)(Runtime.getRuntime().maxMemory());
 	}
 
+	// CPU load
+	public final double getProcessCpuLoad() {
+		return osBean.getProcessCpuLoad();
+	}
+
 	// Vector natives:
 	public final Object makeVector(Integer capacity) {
 		return new ArrayList(capacity);
@@ -1784,12 +1879,14 @@ public class Native extends NativeHost {
 		return vector.get(i.intValue());
 	}
 	public final Object setVector(Object v, Integer i, Object x) {
-		ArrayList vector = (ArrayList)v;
+		@SuppressWarnings("unchecked")
+		ArrayList<Object> vector = (ArrayList<Object>)v;
 		vector.set(i.intValue(), x);
 		return null;
 	}
 	public final Object addVector(Object v, Object x) {
-		ArrayList vector = (ArrayList)v;
+		@SuppressWarnings("unchecked")
+		ArrayList<Object> vector = (ArrayList<Object>)v;
 		vector.add(x);
 		return null;
 	}
@@ -1807,7 +1904,41 @@ public class Native extends NativeHost {
 		vector.clear();
 		return null;
 	}
+	public final Object shrinkVector(Object v, Integer size) {
+		ArrayList vector = (ArrayList)v;
+		int i = vector.size();
+		while (i > size) {
+			vector.remove(--i);
+		}
+		return null;
+	}
+	public final Object subVector(Object v, Integer index, Integer len) {
+		@SuppressWarnings("unchecked")
+		ArrayList<Object> vector = (ArrayList<Object>)v;
+		ArrayList<Object> sub = new ArrayList<Object>(len);
+		for (int i = index; i < index + len; ++ i) {
+			sub.add(vector.get(i));
+		}
+		return sub;
+	}
+	public final Object[] vector2array(Object v) {
+		ArrayList vector = (ArrayList)v;
+		return vector.toArray();
+	}
+	public final Object array2vector(Object[] a) {
+		return new ArrayList<Object>(Arrays.asList(a));
+	}
 
+	public final <RT> Func0<RT> synchronizedConstFn(Object lock, Func0<RT> fn) {
+		return new Func0<RT>() {
+			@Override
+			public RT invoke() {
+				synchronized (lock) {
+					return fn.invoke();
+				}
+			}
+		};
+	}
 	public final <RT, A1> Func1<RT, A1> synchronizedUnaryFn(Object lock, Func1<RT, A1> fn) {
 		return new Func1<RT, A1>() {
 			@Override
@@ -1827,5 +1958,14 @@ public class Native extends NativeHost {
 				}
 			}
 		};
+	}
+
+	public final String urlDecode(String s) {
+		try {
+			return URLDecoder.decode(s, "UTF-8");
+		} catch (UnsupportedEncodingException | IllegalArgumentException e) {
+			System.out.println(e.toString());
+			return "";
+		}
 	}
 }

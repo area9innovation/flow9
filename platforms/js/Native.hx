@@ -102,6 +102,20 @@ class Native {
 		return result;
 	}
 
+	public static function importJSModule(arg : Dynamic, cb : Dynamic -> Void) : Void {
+		#if (js && !flow_nodejs)
+			try {
+				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
+				untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+			} catch( e : Dynamic) {
+				Errors.report(e);
+				cb(null);
+			}
+		#else
+			cb(null);
+		#end
+	}
+
 	static var complainedMissingExternal : Bool = false;
 
 	public static function hostAddCallback(name : String, cb : Void -> Dynamic) : Dynamic {
@@ -185,9 +199,7 @@ class Native {
 	public static var clipboardDataHtml = "";
 
 	public static function getClipboard() : String {
-		#if flash
-			return clipboardData;
-		#elseif (js && !flow_nodejs)
+		#if (js && !flow_nodejs)
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				return untyped Browser.window.clipboardData.getData("Text");
 			}
@@ -224,12 +236,10 @@ class Native {
 	}
 
 	public static function getClipboardToCB(callback : String->Void) : Void {
-		#if flash
-			callback(clipboardData);
-		#elseif (js && !flow_nodejs)
+		#if (js && !flow_nodejs)
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				callback(untyped Browser.window.clipboardData.getData("Text"));
-			} else if (untyped navigator.clipboard) {
+			} else if (untyped navigator.clipboard && untyped navigator.clipboard.readText) {
 				untyped navigator.clipboard.readText().then(callback, function(e){
 					Errors.print(e);
 				});
@@ -1650,6 +1660,67 @@ class Native {
 		#else
 		return 0.0;
 		#end
+	}
+
+	public static function detectDedicatedGPU() : Bool {
+		try {
+			var canvas = Browser.document.createElement('canvas');
+			var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
+
+			if (gl == null) {
+				return false;
+			}
+
+			var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+			var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+			var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+
+			return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
+		} catch (e : Dynamic) {
+			return false;
+		}
+	}
+
+	public static function domCompleteTiming() : Float {
+		try {
+			return untyped __js__("window.performance.timing.domComplete - window.performance.timing.domLoading");
+		} catch (e : Dynamic) {
+			return -1;
+		}
+	}
+
+	public static function estimateCPUSpeed() : Float {
+		#if js
+		untyped __js__("
+			var _speedconstant = 1.15600e-8;
+			var d = new Date();
+			var amount = 150000000;
+			var estprocessor = 1.7;
+			for (var i = amount; i > 0; i--) {}
+			var newd = new Date();
+			di = (newd.getTime() - d.getTime()) / 1000;
+			spd = ((_speedconstant * amount) / di);
+			return Math.round(spd * 1000) / 1000;
+		");
+		#end
+
+		return -1;
+	}
+
+	public static function getDeviceMemory() : Float {
+		try {
+			return untyped __js__("window.navigator.deviceMemory || -1");
+		} catch (e : Dynamic) {
+			return -1;
+		}
+	}
+
+	public static function getDevicePlatform() : Float {
+		try {
+			return untyped __js__("window.navigator.platform || ''");
+		} catch (e : Dynamic) {
+			return -1;
+		}
 	}
 
 	private static var FlowCrashHandlers : Array< String -> Void > = new Array< String -> Void>();

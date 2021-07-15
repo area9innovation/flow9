@@ -1,5 +1,5 @@
 import tools/flowc/backends/common;
-import formats/json/json;
+import formats/json/json_parse;
 import formats/uri2/uri2;
 
 export {
@@ -15,23 +15,31 @@ fiPrepareWebFonts(cfg : FiJsConfig) {
 	resourcesuffix = "_tmp.json";
 	resourceprefix = "_";
 
-	jf = getFileContent(cfg.fontconfig);
-	if (jf == "") {
-		fcPrintln("WARNING: Could not read font config file: " + cfg.fontconfig, cfg.threadId);
+	res = if (!fileExists(cfg.fontconfig)) {
+		fcPrintln("WARNING: font config file: " + cfg.fontconfig + " doesn't exist", cfg.threadId);
+		[];
+	} else {
+		fcVerbose(cfg, 0, "Using fontconfig file '" + cfg.fontconfig + "'");
+		jf = getFileContent(cfg.fontconfig);
+		switch (parseJsonSafer(jf)) {
+			Some(jsn): {
+				fold(fontSetup, [], \acc, e -> {
+					v = getJsonFieldValue(jsn, e.first, JsonNull());
+					if (v != JsonNull()) {
+						fl_name = resourceprefix + e.first + resourcesuffix;
+						saveFileContent(fl_name, json2string(v), cfg.threadId);
+						arrayPush(acc, Pair(fl_name, e.second));
+					} else acc
+				});
+			}
+			None(): {
+				fcPrintln("Error: Config file: " + cfg.fontconfig + " contains non-valid JSON format", cfg.threadId);
+				[]
+			}
+		}
 	}
-	jsn = parseJson(jf);
-
-	res = fold(fontSetup, [], \acc, e -> {
-		v = getJsonFieldValue(jsn, e.first, JsonNull());
-		if (v != JsonNull()) {
-			fl_name = resourceprefix + e.first + resourcesuffix;
-			saveFileContent(fl_name, json2string(v), cfg.threadId);
-			arrayPush(acc, Pair(fl_name, e.second));
-		} else acc
-	});
-
 	tmpfiles = map(res, \p -> p.first);
-	args = concatA(map(res, \p -> ["-resource " + p.first + p.second]));
+	args = map(res, \p -> "-resource " + p.first + p.second);
 
 	Pair(tmpfiles, args);
 }

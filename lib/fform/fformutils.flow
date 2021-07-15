@@ -103,7 +103,7 @@ switchTransform(tr : Transform<?>, fn : (b : Behaviour<?>) -> Form) -> Form {
 	}
 }
 
-switchTransform2(tr : Transform<?>, convertFn : (?) -> (??), fn : (b : Behaviour<??>) -> Form) -> Form {
+switchTransform2(tr : Transform<?>, convertFn : (?) -> ??, fn : (b : Behaviour<??>) -> Form) -> Form {
 	switch (tr) {
 		ConstBehaviour(__) : fn(const(convertFn(fgetValue(tr))));
 		default: {
@@ -186,7 +186,7 @@ fform2form(fform : FForm) -> Form {
 
 			Group(if (above) concat([f1], f2) else arrayPush(f2, f1));
 		}
-		FCrop2(left, top, width, height, form, stack) : switchTransform(left, \l -> switchTransform(top, \t -> switchTransform(width, \w ->
+		FCrop2(left, top, width, height, enabled, form, stack) : switchTransform(left, \l -> switchTransform(top, \t -> switchTransform(width, \w ->
 			switchTransform(height, \h -> Crop2(l, t, w, h, fform2form(form), stack)))));
 		FControlFocus(focus, form) : ControlFocus(focus, fform2form(form));
 		FPicture(url, size, s) : Inspect([ISize(size)], Picture(url, s));
@@ -199,7 +199,7 @@ fform2form(fform : FForm) -> Form {
 		FAvailable2(a, form) : Available2(a, fform2form(form));
 		FAccess(prop, form) : FAccessProperties2AccessProperties(prop) |> (\f -> Constructor(Access(f.first, fform2form(form)), f.second));
 		FSetPending(setpending, form) : switchTransform(setpending, \sp -> SetPending(sp, fform2form(form)));
-		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, style));
+		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, FRealHTMLStyle2RealHTMLStyle(style)));
 		FMForm(form) : form;
 		FDynamicGroup2(__, __, __) : FDynamicGroup2DynamicGroup(fform) |> (\f -> Constructor(f.first, f.second));
 		FVideo(__, __, __) : FVideo2Video(fform) |> (\f -> Constructor(f.first, f.second));
@@ -209,6 +209,15 @@ fform2form(fform : FForm) -> Form {
 		FAnimation(content, __, __) : fform2form(content); // TODO:
 		FOrigin(origin, form) : fform2form(form); // TODO:
 	}
+}
+
+FRealHTMLStyle2RealHTMLStyle(style : [FRealHTMLStyle]) -> [RealHTMLStyle] {
+	filtermap(style, \st -> 
+		switch (st) {
+			RealHTMLStyle(): cast(Some(st) : Some<FRealHTMLStyle> -> Maybe<RealHTMLStyle>);
+			default: None();
+		}
+	)
 }
 
 form2fform(_form : Form) -> FForm {
@@ -228,7 +237,7 @@ form2fform(_form : Form) -> FForm {
 		Filter2(filt, form, stack) : FFilter2(filt, form2fform(form), stack);
 		Cursor(shape, form) : FCursor(shape, form2fform(form));
 		Mutable2(form, stack) : FMutable2(fselect(form, FLift(\f -> form2fform(f))), stack);
-		Crop2(left, top, width, height, form, stack) : FCrop2(left, top, width, height, form2fform(form), stack);
+		Crop2(left, top, width, height, form, stack) : FCrop2(left, top, width, height, const(true), form2fform(form), stack);
 		Picture(url, s) : FPicture(url, make(zeroWH), s);
 		Constructor(form, fn) : FConstructor(form2fform(form), fn);
 		FullWindow(fw, form) : FFullWindow(fw, make(zeroWH), form2fform(form));
@@ -744,6 +753,7 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 
 FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
 	filtermap(style, \s -> switch (s) {
+		Underlined(__) : None();
 		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
 		default : None()
 	})
@@ -886,6 +896,7 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 					StrokeOpacity(opacity): strokeopacity := opacity;
 					StrokeWidth(width): strokewidth := width;
 					StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+					UseSvg() : {}
 				}
 			);
 
@@ -940,6 +951,10 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 				offsets = map(gf.points, \c -> c.offset);
 				maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
 			});
+
+			if (contains(style, UseSvg()) && !isUrlParameterFalse("useSvg")) {
+				useSvg(clip);
+			}
 
 			// Render the path
 			needClose = ref false;
@@ -1027,22 +1042,28 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
 	textfield = makeStyledTextfield(fgetValue(text), style);
-	u1 =
+	uns = [
 		eitherFn(
 			tryExtractStruct(style, FDynamicColor(const(-1))),
 			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
 			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
-		);
-	u2 =
+		),
+
 		eitherMap(
 			tryExtractStruct(style, LangAttribute(const(""))),
 			\la -> makeSubscribe(la.languageCode, \code -> setAccessAttributes(textfield, [["lang", code]]))(),
 			nop
-		);
+		),
+
+		eitherMap(
+			tryExtractStruct(style, TextWidthInspector(make(0.))),
+			\tw -> addEventListener(textfield, "textwidthchanged", \ -> nextDistinct(tw.width, getTextFieldWidth(textfield))),
+			nop
+		)
+	];
 
 	disposer = \ -> {
-		u1();
-		u2();
+		applyall(uns);
 
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {
@@ -1055,24 +1076,7 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	eitherFn(
 		tryExtractStruct(style, Underlined([])),
 		\undr -> {
-			uStyle = undr.style;
-			wd = getTextFieldWidth(textfield);
-			hgt = getTextFieldHeight(textfield) - 1.;
-
-			urr =
-				renderFGraphics(
-					const([
-						MoveTo(0., hgt),
-						LineTo(wd, hgt),
-					]),
-					const(
-						if (uStyle != [])
-							uStyle
-						else
-							[Stroke(extractStruct(style, Fill(0x000000)).color)]
-					)
-				);
-
+			urr = renderUnderline(textfield, undr, StartAlign(), None(), style);
 			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), [FClipMask()])
 		},
 		\ ->
@@ -1232,7 +1236,64 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		makeSubscribe2(text, \__ -> updateMetricsFn())()
 	);
 
-	FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities)
+	result = FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities);
+
+	eitherMap(
+		tryExtractStruct(style, Underlined([])),
+		\undr -> {
+			urr = renderUnderline(textfield, undr, extractCommonAlignment(style), tryExtractStruct(style, ParagraphWidth(const(-1.))), charStyle);
+			FRenderResult(
+				concat(result.clips, urr.clips),
+				concat(result.disposers, urr.disposers),
+				concat(result.capabilities, urr.capabilities)
+			)
+		},
+		result
+	)
+}
+
+renderUnderline(
+	textfield : native,
+	underlined : Underlined,
+	align : CommonAlignment,
+	paragraphWidth : Maybe<ParagraphWidth>,
+	style : [FTextStyle]) -> FRenderResult {
+
+	renderFGraphics(
+		eitherFn(
+			paragraphWidth,
+			\parWd ->
+				fselect(parWd.width, FLift(\pwd -> {
+					wd = getTextFieldWidth(textfield);
+					hgt = getTextFieldHeight(textfield) - 1.;
+
+					left = max(0.,
+						if (align == RightAlign()) pwd - wd
+						else if (align == CenterAlign()) (pwd - wd) / 2.
+						else 0.
+					);
+
+					[
+						MoveTo(left, hgt),
+						LineTo(left + wd, hgt),
+					]
+				})),
+			\ -> {
+				wd = getTextFieldWidth(textfield);
+				hgt = getTextFieldHeight(textfield) - 1.;
+				const([
+					MoveTo(0., hgt),
+					LineTo(wd, hgt),
+				])
+			}
+		),
+		const(
+			if (underlined.style != [])
+				underlined.style
+			else
+				[Stroke(extractStruct(style, Fill(0x000000)).color)]
+		)
+	);
 }
 
 renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void {
@@ -1834,9 +1895,9 @@ fform2s(rform : FForm, level : int) -> string {
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"
 		}
-		FCrop2(left, top, cwidth, cheight, form, stack): {
+		FCrop2(left, top, cwidth, cheight, enabled, form, stack): {
 			generateSpaces + structName + toString(fgetValue(left)) + ", " + toString(fgetValue(top)) + ", " +
-				toString(fgetValue(cwidth)) + ", " + toString(fgetValue(cheight)) + "," + "\n" +
+				toString(fgetValue(cwidth)) + ", " + toString(fgetValue(cheight)) + "," + "\n" + toString(fgetValue(enabled)) + "," + "\n" +
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"
 		}

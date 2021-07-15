@@ -11,7 +11,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.content.pm.ApplicationInfo;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.util.Log;
 
 public class FlowNotificationsAPI {
@@ -44,6 +44,12 @@ public class FlowNotificationsAPI {
     public static final String EXTRA_NOTIFICATION_ID = ".EXTRA_NOTIFICATION_ID";
     public static final String EXTRA_NOTIFICATION_WITH_SOUND = ".EXTRA_NOTIFICATION_WITH_SOUND";
     public static final String EXTRA_PINNED_NOTIFICATION = ".EXTRA_PINNED_NOTIFICATION";
+
+    public static final String CHANNEL_ID = "local_channel";
+    public static final String CHANNEL_NAME = "Local Notifications";
+
+    public static final String PUSH_CHANNEL_ID = "push_channel";
+    public static final String PUSH_CHANNEL_NAME = "Remote Notifications";
 
     private FlowNotificationsAPI() {
     }

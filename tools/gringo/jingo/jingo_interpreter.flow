@@ -1,0 +1,117 @@
+import tools/gringo/jingo/jingo_ast;
+import tools/gringo/jingo/utils;
+import tools/gringo/jingo/jingo_pretty;
+import ds/tree;
+
+export {
+	// Extract all definitions of words
+	captureJDefines(env : Tree<string, [Jingo<?>]>, stack : List<Jingo<?>>, lines : [Jingo<?>]) -> Tree<string, [Jingo<?>]>;
+
+	// Push this code onto the stack (and evaluate as relevant)
+	runJingo(
+		builtins : Tree<string, (stack : List<Jingo<?>>) -> List<Jingo<?>>>, 
+		env : Tree<string, [Jingo<?>]>, stack : List<Jingo<?>>, code : Jingo<?>
+	) -> List<Jingo<?>>;
+
+	// Push these codes onto the stack
+	runJingos(
+		builtins : Tree<string, (stack : List<Jingo<?>>) -> List<Jingo<?>>>, 
+		env : Tree<string, [Jingo<?>]>, stack : List<Jingo<?>>, codes : [Jingo<?>]
+	) -> List<Jingo<?>>;
+}
+
+captureJDefines(env : Tree<string, [Jingo<?>]>, stack : List<Jingo<?>>, lines : [Jingo<?>]) -> Tree<string, [Jingo<?>]> {
+	if (lines == []) env
+	else {
+		line = lines[0];
+		switch (line) {
+			JOperand(op): {
+				if (op == "define") {
+					code = popJStack(stack);
+					codes = getJArray(code.first);
+					name = popJStack(code.second);
+					// println("Set " + getJString(name.first) + " to " + toString(codes));
+					nenv = setTree(env, getJString(name.first), codes);
+					captureJDefines(nenv, name.second, tail(lines));
+				} else if (op == "defines") {
+					env
+				} else {
+					println("Unexpected op in defines: " + op);
+					env;
+				}
+			}
+			default: {
+				captureJDefines(env, Cons(line, stack), tail(lines));
+			}
+		}
+	}
+}
+
+runJingo(
+	builtins : Tree<string, (stack : List<Jingo<?>>) -> List<Jingo<?>>>, 
+	env : Tree<string, [Jingo<?>]>, stack : List<Jingo<?>>, code : Jingo<?>
+) -> List<Jingo<?>> {
+	// println("Pushing " + toString(code));
+	switch (code) {
+		JInt(val): Cons(code, stack);
+		JString(val): Cons(code, stack);
+		JArray(val): Cons(code, stack);
+		JNative(val): Cons(code, stack);
+		JOperand(op): {
+			if (op == "eval" || op == "i") { 
+				// Unroll any array for evaluation
+				quote = popJStack(stack);
+				quotecode = quote.first;
+				switch (quotecode) {
+					JArray(vals): {
+						runJingos(builtins, env, quote.second, vals)
+					}
+					default: {
+						println("eval/i only works on quoted code");
+						stack;
+					}
+				}
+			} else if (op == "ifte") {
+				elsecode = popJStack(stack);
+				thencode = popJStack(elsecode.second);
+				cond = popJStack(thencode.second);
+
+				ns = if (getJInt(cond.first) != 0) {
+					pushJStack(cond.second, thencode.first); 
+				} else {
+					pushJStack(cond.second, elsecode.first); 
+				}
+				runJingo(
+					builtins, env, ns, JOperand("eval")
+				)
+			} else if (op == "debug") {
+				jstack2string(stack);
+				stack;
+			} else {
+				mcodes = lookupTree(env, op);
+				mcodes ?? {
+					runJingos(builtins, env, stack, mcodes)
+				} : {
+					ncode = lookupTree(builtins, op);
+					switch (ncode) {
+						None(): {
+							println("Unknown operand " + op);
+							Cons(code, stack);
+						}
+						Some(codefn): {
+							codefn(stack);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+runJingos(builtins : Tree<string, (stack : List<Jingo<?>>) -> List<Jingo<?>>>, 
+	env : Tree<string, [Jingo<?>]>, stack : List<Jingo<?>>, codes : [Jingo<?>]
+) -> List<Jingo<?>> {
+	fold(codes, stack, \acc, a -> {
+		runJingo(builtins, env, acc, a)
+	})
+}

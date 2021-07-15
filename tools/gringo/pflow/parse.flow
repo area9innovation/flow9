@@ -1,0 +1,96 @@
+import text/gringo/gringo_interpreter;
+import text/deserialize_string;
+import tools/gringo/pflow/pexp;
+import tools/gringo/pflow/values;
+
+export {
+	parsePFlow(source : string) -> PExp;
+}
+
+parsePFlow(code : string) -> PExp {
+	grammar = prepareGringoParser("#include tools/gringo/pflow/pexp.gringo", println);
+		actions : GringoAction<List<PExp>> = gringoTypedAction(
+		\s -> PString(s),
+		\e -> switch (e) {
+			PString(s): s;
+			default: "";
+		},
+		\b -> PBool(b),
+		\i : string -> PInt(s2i(i)),
+		\d : string -> PString(d),
+		\ -> PArray([]),
+		\e : PExp, l -> {
+			switch (l) {
+				PArray(es): PArray(arrayPush(es, e));
+				default: e;
+			}
+		},
+		expOps(),
+	);
+	e : PExp = gringoInterpretedParse(code, 
+		// expOps(),
+		actions,
+		grammar,
+		PBool(false),
+		println
+	);
+	e;
+}
+
+
+expOps() -> GringoTypedOperators {
+	un = \op -> {
+		Pair(op, \a : PExp -> PCall(PVar(op), [a]))
+	};
+	bin = \op -> {
+		Pair(op, \a : PExp, b : PExp -> PCall(PVar(op), [a, b]))
+	};
+	GringoTypedOperators(
+		// Nullary
+		pairs2tree([
+			Pair("true", \ -> {
+				println("Here");
+				PBool(true)
+			}),
+			Pair("false", \ -> {
+				PBool(false)
+			}),
+		]),
+		// Unary
+		pairs2tree([
+			Pair("unescape", \s : PExp -> {
+				PString(deserializeString(getPString(s)).first)
+			}),
+			Pair("var", \id -> PVar(getPString(id))),
+			un("negate"),
+			un("not"),
+			Pair("sequence", \ss -> {
+				PSequence(getPArray(ss))
+			}),
+		]),
+		// Binary
+		pairs2tree([
+			Pair("call", \fn, args -> {
+				PCall(fn, getPArray(args))
+			}),
+			Pair("lambda", \args, body -> {
+				PLambda(map(getPArray(args), getPString), body)
+			}),
+			bin("||"), bin("&&"),
+			bin("=="), bin("!="), bin("<="), bin("<"), bin(">="), bin(">"),
+			bin("+"), bin("-"), bin("*"), bin("/"), bin("%"), bin("index"),
+		]),
+		// Ternary
+		pairs2tree([
+			Pair("let", \id, val, body -> {
+				PLet(getPString(id), val, body)
+			}),
+			Pair("if", \c, t, e -> {
+				PIf(c, t, e)
+			}),
+		]),
+		makeTree(),
+		// Stack ops
+		makeTree(),
+	);
+}

@@ -1,0 +1,261 @@
+import maybe;
+import formats/json/json;
+
+export {
+    native checkBluetoothSupported : () -> bool = BluetoothSupport.checkBluetoothSupported;
+
+
+    // Below functionality implements https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API
+
+    // Only by user action
+    requestBluetoothDevice(filter : BluetoothFilterParameters, onDevice : (BluetoothDevice) -> void, onError : (string) -> void) -> void;
+
+    // If acceptAllDevices is true, then filters parameter is ignored
+    BluetoothFilterParameters(acceptAllDevices : bool, filters : Maybe<BluetoothFilters>, optionalServices : Maybe<[string]>);
+    BluetoothFilters(services : Maybe<[string]>, name : Maybe<string>, namePrefix : Maybe<string>);
+
+    BluetoothDevice(id : string, name : string, gatt : BluetoothGattServer);
+
+    BluetoothGattServer(
+        connected : bool,
+        connect : (onDone : () -> void, onError : (string) -> void) -> void,
+        disconnect : () -> void, // When disconnect is called all nested services and characteristics are invalidated
+        getPrimaryService : (
+            uuid : string,
+            onService : (service : BluetoothGattService) -> void,
+            onError : (string) -> void
+        ) -> void
+    );
+
+    BluetoothGattService(
+        uuid : string,
+        isPrimary : bool,
+        getCharacteristic : (
+            uuid : string,
+            onCharacteristic : (characteristic : BluetoothGattCharacteristic) -> void,
+            onError : (string) -> void
+        ) -> void,
+        getIncludedService : (
+            uuid : string,
+            onService : (service : BluetoothGattService) -> void,
+            onError : (string) -> void
+        ) -> void
+    );
+
+    BluetoothGattCharacteristic(
+        uuid : string,
+        properties : BluetoothGattCharacteristicProperties,
+        addValueListener : (callback : (value : [int]) -> void) -> () -> void, // Return function removes listener
+        readValue : (onValue : (value : [int]) -> void, onError : (string) -> void) -> void,
+        writeValue : (value : [int], onDone : () -> void, onError : (string) -> void) -> void
+    );
+    BluetoothGattCharacteristicProperties(
+        authenticatedSignedWrites : bool,
+        broadcast : bool,
+        indicate : bool,
+        notify : bool,
+        read : bool,
+        reliableWrite : bool,
+        writableAuxiliaries : bool,
+        write : bool,
+        writeWithoutResponse : bool
+    );
+}
+
+native requestBluetoothDeviceNative : io (filter : string, onDevice : (gattServerNative : native, gattConnected : bool, id : string, name : string) -> void, onError : (string) -> void) -> void = BluetoothSupport.requestBluetoothDevice;
+
+native connectGattServerNative : io (gattServerNative : native, onDone : () -> void, onError : (string) -> void) -> void = BluetoothSupport.connectGattServer;
+native disconnectGattServerNative : io (gattServerNative : native) -> void = BluetoothSupport.disconnectGattServer;
+native getGattServerPrimaryServiceNative : io (
+    gattServerNative : native,
+    uuid : string,
+    onService : (
+        gattServiceNative : native,
+        uuid : string,
+        isPrimary : bool
+    ) -> void,
+    onError : (string) -> void
+) -> void = BluetoothSupport.getGattServerPrimaryService;
+
+
+native getServiceCharacteristicNative : io (
+    serviceNative : native,
+    uuid : string,
+    onCharacteristic : (characteristicNative : native, characteristicUuid : string, characteristicProperties : [bool]) -> void,
+    onError : (string) -> void
+) -> void = BluetoothSupport.getServiceCharacteristic;
+
+native getGattServiceIncludedServiceNative : io (
+    gattServiceNative : native,
+    uuid : string,
+    onService : (gattIncludedServiceNative : native, includedServiceUuid : string, isPrimary : bool) -> void,
+    onError : (string) -> void
+) -> void = BluetoothSupport.getGattServiceIncludedService;
+
+
+native addGattCharacteristicValueListenerNative : io (characteristicNative : native, callback : (value : [int]) -> void) -> () -> void = BluetoothSupport.addGattCharacteristicValueListener;
+native readGattCharacteristicValueNative : io (characteristicNative : native, onValue : (value : [int]) -> void, onError : (string) -> void) -> void = BluetoothSupport.readGattCharacteristicValue;
+native writeGattCharacteristicValueNative : io (characteristicNative : native, value : [int], onDone : () -> void, onError : (string) -> void) -> void = BluetoothSupport.writeGattCharacteristicValue;
+
+
+dummyBluetoothGattService = BluetoothGattService(
+    "",
+    false,
+    nop3,
+    nop3
+);
+
+requestBluetoothDevice(filter : BluetoothFilterParameters, onDevice : (BluetoothDevice) -> void, onError : (string) -> void) {
+    stringFilter = json2string(bluetoothFilterParameters2json(filter));
+
+    requestBluetoothDeviceNative(
+        stringFilter,
+        \gattServerNative, gattConnected, id, name -> {
+            onDevice(makeBluetoothDevice(gattServerNative, gattConnected, id, name))
+        },
+        onError
+    );
+}
+
+bluetoothFilterParameters2json(filter : BluetoothFilterParameters) {
+    emptyJsonObject = JsonObject([]);
+
+    filterJsonOptionalServices = eitherMap(
+        filter.optionalServices,
+        \services -> {
+            setJsonField(emptyJsonObject, "optionalServices", JsonArray(map(services, \service -> JsonString(service))))
+        },
+        emptyJsonObject
+    );
+
+    if (filter.acceptAllDevices) {
+        setJsonField(filterJsonOptionalServices, "acceptAllDevices", JsonBool(true));
+    } else {
+        eitherMap(
+            filter.filters,
+            \bluetoothFilter -> {
+                filterJsonService = eitherMap(
+                    bluetoothFilter.services,
+                    \bluetoothFilterServices -> {
+                        pushJsonValue(JsonArray([]), JsonObject([Pair("services", JsonArray(map(bluetoothFilterServices, \service -> JsonString(service))))]));
+                    },
+                    JsonArray([])
+                );
+
+                filterJsonName = eitherMap(
+                    bluetoothFilter.name,
+                    \name -> {
+                        pushJsonValue(filterJsonService, JsonObject([Pair("name", JsonString(name))]));
+                    },
+                    filterJsonService
+                );
+
+                filterJsonNamePrefix = eitherMap(
+                    bluetoothFilter.namePrefix,
+                    \namePrefix -> {
+                        pushJsonValue(filterJsonName, JsonObject([Pair("namePrefix", JsonString(namePrefix))]));
+                    },
+                    filterJsonName
+                );
+
+                setJsonField(filterJsonOptionalServices, "filters", filterJsonNamePrefix);
+            },
+            filterJsonOptionalServices
+        );
+    }
+}
+
+makeBluetoothDevice(gattServerNative : native, gattConnected : bool, id : string, name : string) {
+    BluetoothDevice(
+        id,
+        name,
+        BluetoothGattServer(
+            gattConnected,
+            \onDone, onError -> {
+                connectGattServerNative(gattServerNative, onDone, onError)
+            },
+            \ -> {
+                disconnectGattServerNative(gattServerNative)
+            },
+            \primaryServiceUuid, onService, onServiceError -> {
+                getGattServerPrimaryServiceNative(
+                    gattServerNative,
+                    primaryServiceUuid,
+                    \gattServiceNative, serviceUuid, isPrimary -> {
+                        onService(makeService(gattServiceNative, serviceUuid, isPrimary));
+                    },
+                    onServiceError
+                )
+            }
+        )
+    );
+}
+
+makeService(gattServiceNative : native, serviceUuid : string, isPrimary : bool) {
+    BluetoothGattService(
+        serviceUuid,
+        isPrimary,
+        \characteristicUuid, onCharacteristic, onCharacteristicError -> {
+            getServiceCharacteristicNative(
+                gattServiceNative,
+                characteristicUuid,
+                \serviceCharacteristicNative, characteristicUuidReturned, characteristicProperties -> {
+                    onCharacteristic(
+                        makeCharacteristic(serviceCharacteristicNative, characteristicUuidReturned, characteristicProperties)
+                    )
+                },
+                onCharacteristicError
+            )
+        },
+        \includedServiceUuid, onIncludedService, onIncludedServiceError -> {
+            getGattServiceIncludedServiceNative(
+                gattServiceNative,
+                includedServiceUuid,
+                \gattIncludedServiceNative, includedServiceUuidReturned, isIncludedServicePrimary -> {
+                    onIncludedService(makeService(gattIncludedServiceNative, includedServiceUuidReturned, isIncludedServicePrimary));
+                },
+                onIncludedServiceError
+            )
+        }
+    )
+}
+
+makeCharacteristic(serviceCharacteristicNative : native, characteristicUuid : string, characteristicProperties : [bool]) {
+    properties = BluetoothGattCharacteristicProperties(
+        characteristicProperties[0],
+        characteristicProperties[1],
+        characteristicProperties[2],
+        characteristicProperties[3],
+        characteristicProperties[4],
+        characteristicProperties[5],
+        characteristicProperties[6],
+        characteristicProperties[7],
+        characteristicProperties[8]
+    );
+
+    BluetoothGattCharacteristic(
+        characteristicUuid,
+        properties,
+        \callback -> {
+            addGattCharacteristicValueListenerNative(
+                serviceCharacteristicNative,
+                callback
+            );
+        },
+        \onValue, onValueError -> {
+            readGattCharacteristicValueNative(
+                serviceCharacteristicNative,
+                onValue,
+                onValueError
+            )
+        },
+        \value, onDone, onValueError -> {
+            writeGattCharacteristicValueNative(
+                serviceCharacteristicNative,
+                value,
+                onDone,
+                onValueError
+            )
+        },
+    )
+}

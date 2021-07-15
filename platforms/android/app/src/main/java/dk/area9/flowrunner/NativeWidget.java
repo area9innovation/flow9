@@ -1,7 +1,7 @@
 package dk.area9.flowrunner;
 
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.view.View;
 
 abstract class NativeWidget {

@@ -2,9 +2,6 @@
 :: Make sure you have javac from JDK on your path!
 @echo off
 
-pushd .
-pushd .
-
 for /d %%i in ("%ProgramFiles%\Java\jdk1.14*") do (set Located=%%i)
 rem check if JDK was located
 if "%Located%"=="" goto else
@@ -65,5 +62,11 @@ echo }>> %VERFILE%
 
 )
 
+pushd %BASE_DIR%
 call flowc1 jar=flowc_1 tools/flowc/flowc.flow
-move flowc_1.jar %BASE_DIR%\tools\flowc\flowc.jar
+
+"%JAVA%" bin\check_java_version.java
+if errorlevel 1 pause
+
+move flowc_1.jar tools\flowc\flowc.jar
+popd

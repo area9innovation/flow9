@@ -1,0 +1,159 @@
+import tools/gringo/pflow/pexp;
+import tools/gringo/pflow/values;
+import tools/gringo/pflow/prettyprint;
+import ds/tree;
+import algorithms;
+
+export {
+	interpretPExp(env : Tree<string, PValue>, e : PExp) -> PValue;
+}
+
+interpretPExp(env : Tree<string, PValue>, e : PExp) -> PValue {
+	switch (e) {
+		PValue(): e;
+		PLet(id, value, body): {
+			evalue = interpretPExp(env, value);
+			nenv = setTree(env, id, evalue);
+			interpretPExp(nenv, body);
+		}
+		PVar(id): {
+			lookupTreeDef(env, id, PString("Unknown id " + id));
+		}
+		PIf(cond, then, else_): {
+			econd = interpretPExp(env, cond);
+			interpretPExp(env, if (econd == PBool(true)) then else else_);
+		}
+		PCall(fn, args): {
+			eargs = map(args, \v -> interpretPExp(env, v));
+			mvalue = handleBuiltinCall(fn, eargs);
+			mvalue ?? {
+				mvalue
+			} : {
+				efn = interpretPExp(env, fn);
+				switch (efn) {
+					PLambda(largs, body): {
+						if (length(eargs) == length(largs)) {
+							nenv = foldi(largs, env, \i, acc, larg : string -> {
+								setTree(acc, larg, eargs[i])
+							});
+							interpretPExp(nenv, body);
+						} else {
+							PString("Expected different # args");
+						}
+					}
+					default: {
+						println(efn);
+						PString("Expected lambda");
+					}
+				}
+
+			}
+		}
+		PLambda(args, body): {
+			PLambda(args,
+				captureFreeVars(env, body)
+			);
+		}
+		PArray(values): {
+			PArrayValue(map(values, \v -> interpretPExp(env, v)));
+		}
+		PSequence(values): {
+			n = length(values);
+			if (n == 0) PBool(true)
+			else if (n == 1) {
+				interpretPExp(env, values[0])
+			} else {
+				// Inefficient, but tail call
+				interpretPExp(env, values[0]);
+				interpretPExp(env, PSequence(tail(values)));
+			}
+		}
+	};
+}
+
+captureFreeVars(env : Tree<string, PValue>, body : PExp) -> PExp {
+	rec = \ee -> {
+		captureFreeVars(env, ee);
+	};
+	switch (body) {
+		PValue(): body;
+		PLet(id, value, lbody): {
+			notself = removeFromTree(env, id);
+			PLet(id,
+				captureFreeVars(notself, value),
+				captureFreeVars(notself, lbody)
+			);
+		}
+		PLambda(args, lbody): {
+			PLambda(args,
+				captureFreeVars(fold(args, env, removeFromTree), lbody)
+			);
+		}
+		PVar(id): {
+			val = lookupTreeDef(env, id, body);
+			switch (val) {
+				PLambda(__, __): body;
+				default: val;
+			}
+		}
+		PIf(cond, then, else_): PIf(rec(cond), rec(then), rec(else_));
+		PCall(fn, args): PCall(rec(fn), map(args, rec));
+		PArray(values): PArray(map(values, rec));
+		PSequence(values): PSequence(map(values, rec));
+	}
+}
+
+builtinOps : ref Maybe<Tree<PExp, ([PValue]) -> PValue>> = ref None();
+
+handleBuiltinCall(id : PExp, eargs : [PValue]) -> Maybe<PValue> {
+	ops = onlyOnce(builtinOps, \ -> {
+		pairs2tree([
+			Pair(PVar("&&"), \args -> PBool(getPBool(args[0]) && getPBool(args[1]))),
+			Pair(PVar("||"), \args -> PBool(getPBool(args[0]) || getPBool(args[1]))),
+
+			Pair(PVar("<="), \args -> PBool(comparePValue(args[0], args[1]) <= 0)),
+			Pair(PVar("<"), \args -> PBool(comparePValue(args[0], args[1]) < 0)),
+			Pair(PVar("=="), \args -> PBool(comparePValue(args[0], args[1]) == 0)),
+			Pair(PVar("!="), \args -> PBool(comparePValue(args[0], args[1]) != 0)),
+			Pair(PVar(">="), \args -> PBool(comparePValue(args[0], args[1]) >= 0)),
+			Pair(PVar(">"), \args -> PBool(comparePValue(args[0], args[1]) > 0)),
+
+			Pair(PVar("+"), \args -> PInt(getPInt(args[0]) + getPInt(args[1]))), // TODO: For string as well?
+			Pair(PVar("-"), \args -> PInt(getPInt(args[0]) - getPInt(args[1]))),
+			Pair(PVar("*"), \args -> PInt(getPInt(args[0]) * getPInt(args[1]))),
+			Pair(PVar("/"), \args -> PInt(getPInt(args[0]) / getPInt(args[1]))),
+			Pair(PVar("%"), \args -> PInt(getPInt(args[0]) % getPInt(args[1]))),
+			Pair(PVar("index"), \args -> {
+				a = getPArrayValue(args[0]);
+				index = getPInt(args[1]);
+				elementAt(a, index, PBool(false))
+			}),
+			Pair(PVar("not"), \args -> PBool(!getPBool(args[0]))),
+			Pair(PVar("negate"), \args -> PInt(-getPInt(args[0]))),
+			Pair(PVar("println"), \args -> {
+				println(prettyPExp(args[0]));
+				args[0];
+			}),
+		]);
+	});
+	
+	mfn = lookupTree(ops, id);
+	mfn ?? {
+		Some(mfn(eargs));
+	} : None();
+}
+
+// 0 if equal, -1 if left is less than right.
+comparePValue(left : PValue, right : PValue) -> int {
+	switch (left) {
+		PBool(lb): genericCompare(lb, getPBool(right));
+		PInt(li): genericCompare(li, getPInt(right));
+		PString(ls): genericCompare(ls, getPString(right));
+		PArrayValue(values): {
+			genericCompare(left, right);
+		}
+		PLambda(args, body): {
+			genericCompare(left, right);
+		}
+	}
+}

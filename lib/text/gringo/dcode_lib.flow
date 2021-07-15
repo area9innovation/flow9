@@ -1,0 +1,126 @@
+import text/gringo/gringo_ast;
+import text/gringo/gringo_env;
+import text/gringo/gringo_action;
+import string;
+import ds/tree;
+
+export {
+	DParseAcc(
+		input : string,
+		action : GringoAction<?>,
+
+		mutable i : int,
+		// What is the result of the semantic actions so far?
+		mutable output : ?,
+		// What errors did we get?
+		mutable errors : Tree<int, string>,
+		// A stack of checkpoints
+		mutable stack : List<DCheckpoint<?>>,
+		// The last checkpoint for match string
+		mutable starti : int,
+		// The longest we have matched
+		mutable maxi : int,
+	);
+	DCheckpoint(i : int, output : ?, errors : Tree<int, string>);
+
+	DParseAcc2GringoEnv(d : DParseAcc<?>) -> GringoEnv<?>;
+	GringoEnv2DParseAcc(g : GringoEnv<?>) -> DParseAcc<?>;
+
+	pushDCheckpoint(acc : DParseAcc<?>) -> void;
+	discardDCheckpoint(acc : DParseAcc<?>) -> bool;
+	restoreDCheckpoint(acc : DParseAcc<?>) -> bool;
+	parseStar(acc : DParseAcc<?>, matcher : () -> bool) -> bool;
+	matchString(acc : DParseAcc<?>, s : string) -> bool;
+	matchRange(acc : DParseAcc<?>, l : int, u : int) -> bool;
+	addVerbatim(acc : DParseAcc<?>, text : string) -> bool;
+	addMatched(acc : DParseAcc<?>, text : string) -> bool;
+	addParseError(acc : DParseAcc<?>, text : string) -> bool;
+}
+
+DParseAcc2GringoEnv(d : DParseAcc<?>) -> GringoEnv<?> {
+	GringoEnv(
+		d.input,
+		makeTree(),
+		d.action,
+		d.output,
+		d.errors,
+		d.i,
+		d.i != strlen(d.input),
+		0,
+	);
+}
+
+GringoEnv2DParseAcc(g : GringoEnv<?>) -> DParseAcc<?> {
+	DParseAcc(g.input, g.action, g.i, g.output, g.errors, makeList(), 0, 0)
+}
+
+
+pushDCheckpoint(acc : DParseAcc<?>) -> void {
+	acc.stack ::= Cons(DCheckpoint(acc.i, acc.output, acc.errors), acc.stack);
+}
+
+discardDCheckpoint(acc : DParseAcc<?>) -> bool {
+	switch (acc.stack) {
+		EmptyList(): false;
+		Cons(head, tail_): {
+			acc.stack ::= tail_;
+			true;
+		}
+	}
+}
+
+restoreDCheckpoint(acc : DParseAcc<?>) -> bool {
+	switch (acc.stack) {
+		EmptyList(): false;
+		Cons(head, tail_): {
+			acc.i ::= head.i;
+			acc.output ::= head.output;
+			acc.errors ::= head.errors;
+			acc.stack ::= tail_;
+			false;
+		}
+	}
+}
+
+parseStar(acc : DParseAcc<?>, matcher : () -> bool) -> bool {
+	pushDCheckpoint(acc);
+	if (matcher()) {
+		discardDCheckpoint(acc);
+		parseStar(acc, matcher)
+	} else {
+		restoreDCheckpoint(acc);
+		true;
+	};
+}
+
+matchString(acc : DParseAcc<?>, s : string) -> bool {
+	if (strContainsAt(acc.input, acc.i, s)) {
+		acc.i ::= acc.i + strlen(s);
+		if (acc.i > acc.maxi) acc.maxi ::= acc.i;
+		true;
+	} else false;
+}
+
+matchRange(acc : DParseAcc<?>, l : int, u : int) -> bool {
+	code = getCharCodeAt(acc.input, acc.i);
+	if (acc.i < strlen(acc.input) && l <= code && code <= u) {
+		acc.i ::= acc.i + 1;
+		if (acc.i > acc.maxi) acc.maxi ::= acc.i;
+		true;
+	} else false;
+}
+
+addVerbatim(acc : DParseAcc<?>, text : string) -> bool {
+	acc.output ::= acc.action.addVerbatim(acc.output, text);
+	true;
+}
+
+addMatched(acc : DParseAcc<?>, text : string) -> bool {
+	acc.output ::= acc.action.addMatched(acc.output, text);
+	true;
+}
+
+addParseError(acc : DParseAcc<?>, text : string) -> bool {
+	acc.errors ::= setTree(acc.errors, acc.i, text);
+	true;
+}

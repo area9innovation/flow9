@@ -1,3 +1,4 @@
+import lingo/linecolumn;
 import tools/flowc/flowcacc;
 import tools/flowc/typechecker/type_expect;
 import tools/flowc/dependencies;
@@ -75,6 +76,7 @@ export {
 	fcAddToCache(env : FcTypeEnvGlobal, name : string, loaded : FcLoaded) -> void;
 	fcClearCache(env : FcTypeEnvGlobal) -> void;
 	fcIterCache(env : FcTypeEnvGlobal, fn : (FiModule) -> void) -> void;
+	fcFoldCache(env : FcTypeEnvGlobal, init : ?, fn : (?, FiModule) -> ?) -> ?;
 
 	FiNamed ::= FiDeclaration, FiStructOrUnion;
 
@@ -92,6 +94,8 @@ export {
 
 	// Lookups a cached file source, if not found - loads and stores.
 	fcFileSource(env : FcTypeEnvGlobal, path : string) -> string;
+	// Lookups a cached line resolver for a file, if not initialized - initializes it.
+	fcFileLineResolver(env : FcTypeEnvGlobal, path : string) -> LineResolver;
 	// Stores a certain string as a source for some path.
 	fcSetFileSource(env : FcTypeEnvGlobal, path : string, src : string) -> void;
 	// Loads file source from filesystem. May be used to undo fcSetFileSource function.
@@ -150,6 +154,15 @@ fcIterCache(env : FcTypeEnvGlobal, fn : (FiModule) -> void) -> void {
 	);
 }
 
+fcFoldCache(env : FcTypeEnvGlobal, init : ?, fn : (?, FiModule) -> ?) -> ? {
+	fold(valuesConcurrentHashMap(env.moduleCache), init, \acc, m -> 
+		switch (m) {
+			Some(cached): if (cached.outdated) acc else fn(acc, cached.loaded.module);
+			None(): acc;
+		}
+	);
+}
+
 fcLookupNameInCache(env : FcTypeEnvGlobal, name : string) -> Maybe<FcCacheNamed> {
 	getConcurrentHashMap(env.nameCache, name, None());
 }
@@ -168,19 +181,20 @@ fcFilterNameCacheArray(env : FcTypeEnvGlobal, fn : (FcCacheNamed) -> bool) -> [F
 
 FcCachedSource(
 	text : string,
-	modified : double
+	modified : double,
+	resolver : Maybe<LineResolver>
 );
 
 fcFileSource(env : FcTypeEnvGlobal, path : string) -> string {
 	if (!containsConcurrentHashMap(env.sourceCache, path)) {
-		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(getFileContent(path), fileModified(path)));
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(getFileContent(path), fileModified(path), None()));
 	}
-	cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0));
+	cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0, None()));
 	modified = fileModified(path);
 	if (cached.modified != modified) {
 		// Reload outdated source.
 		text = getFileContent(path);
-		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, modified));
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, modified, None()));
 		text;
 	} else {
 		cached.text;
@@ -189,15 +203,45 @@ fcFileSource(env : FcTypeEnvGlobal, path : string) -> string {
 
 fcSetFileSource(env : FcTypeEnvGlobal, path : string, text : string) -> void {
 	if (!containsConcurrentHashMap(env.sourceCache, path)) {
-		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, fileModified(path)));
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, fileModified(path), None()));
 	} else {
-		cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0));
-		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, cached.modified));
+		cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0, None()));
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, cached.modified, None()));
 	}
 }
 
 fcLoadFileSource(env : FcTypeEnvGlobal, path : string) -> void {
-	setConcurrentHashMap(env.sourceCache, path, FcCachedSource(getFileContent(path), fileModified(path)));
+	setConcurrentHashMap(env.sourceCache, path, FcCachedSource(getFileContent(path), fileModified(path), None()));
+}
+
+fcFileLineResolver(env : FcTypeEnvGlobal, path : string) -> LineResolver {
+	if (!containsConcurrentHashMap(env.sourceCache, path)) {
+		text = getFileContent(path);
+		setConcurrentHashMap(env.sourceCache, path, 
+			FcCachedSource(text, fileModified(path), Some(makeLineResolver(text)))
+		);
+	}
+	cached = getConcurrentHashMap(env.sourceCache, path, FcCachedSource("", 0.0, None()));
+	modified = fileModified(path);
+	if (cached.modified != modified) {
+		// Reload outdated source.
+		text = getFileContent(path);
+		resolver = makeLineResolver(text);
+		setConcurrentHashMap(env.sourceCache, path, FcCachedSource(text, modified, Some(resolver)));
+		resolver;
+	} else {
+		switch (cached.resolver) {
+			Some(resolver): {
+				resolver;
+			}
+			None(): {
+				// Init the source line resolver.
+				resolver = makeLineResolver(cached.text);
+				setConcurrentHashMap(env.sourceCache, path, FcCachedSource(cached with resolver = Some(resolver)));
+				resolver;
+			}
+		}
+	}
 }
 
 fcCacheSizeInfo(env : FcTypeEnvGlobal) -> string {

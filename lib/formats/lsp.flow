@@ -10,6 +10,8 @@ import string_utils;
 
 export {
 
+LspMessage ::= LspRequestMessage, LspResponseMessage, LspNotificationMessage;
+
 LspRequestMessage : (jsonrpc: string, id : Json, method : string, params : Json);
 LspNotificationMessage : (jsonrpc: string, method : string, params : Json);
 LspResponseMessage : (jsonrpc: string, id: Json, result : Json, error : Maybe<LspResponseError>);
@@ -139,6 +141,21 @@ LspRenameFile : (oldUri: URI, newUri: URI, options : Maybe<LspRenameFileOptions>
 LspDeleteFileOptions : (recursive : bool, ignoreIfNotExists : bool);
 LspDeleteFile : (uri: URI, options : Maybe<LspDeleteFileOptions>);
 
+LspCallHierarchyItem : (
+	name : string,
+	kind : int,
+	tags : [int], // DiagnosticTag: Unnecessary = 1, Deprecated = 2
+	detail : string,
+	uri : URI,
+	range: LspRange,
+	selectionRange: LspRange,
+	data : Json
+);
+LspCallHierarchyIncomingCallsParams : (item : LspCallHierarchyItem);
+LspCallHierarchyIncomingCall : (from: LspCallHierarchyItem, fromRanges: [LspRange]);
+LspCallHierarchyOutgoingCallsParams : (item : LspCallHierarchyItem);
+LspCallHierarchyOutgoingCall : (to: LspCallHierarchyItem, fromRanges : [LspRange]);
+
 lspRequestMessage2Json(request : LspRequestMessage) -> Json;
 lspNotificationMessage2Json(request : LspNotificationMessage) -> Json;
 lspResponseMessage2Json(response : LspResponseMessage) -> Json;
@@ -195,9 +212,16 @@ lspRenameFile2Json(rename : LspRenameFile) -> Json;
 lspDeleteFileOptions2Json(opts : LspDeleteFileOptions) -> Json;
 lspDeleteFile2Json(delete : LspDeleteFile) -> Json;
 
+lspCallHierarchyItem2Json(item : LspCallHierarchyItem) -> Json;
+lspCallHierarchyIncomingCallsParams2Json(params : LspCallHierarchyIncomingCallsParams) -> Json;
+lspCallHierarchyIncomingCall2Json(call : LspCallHierarchyIncomingCall) -> Json;
+lspCallHierarchyOutgoingCallsParams2Json(params : LspCallHierarchyOutgoingCallsParams) -> Json;
+lspCallHierarchyOutgoingCall2Json(call : LspCallHierarchyOutgoingCall) -> Json;
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage>;
 json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage>;
 json2LspResponseError(json : Json) -> Maybe<LspResponseError>;
+json2LspNotificationMessage(json : Json) -> Maybe<LspNotificationMessage>;
 
 json2LspPosition(json : Json) -> Maybe<LspPosition>;
 json2LspRange(json : Json) -> Maybe<LspRange>;
@@ -246,6 +270,12 @@ json2LspRenameFileOptions(json : Json) -> Maybe<LspRenameFileOptions>;
 json2LspRenameFile(json : Json) -> Maybe<LspRenameFile>;
 json2LspDeleteFileOptions(json : Json) -> Maybe<LspDeleteFileOptions>;
 json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile>;
+
+json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem>;
+json2LspCallHierarchyIncomingCallsParams(json : Json) -> Maybe<LspCallHierarchyIncomingCallsParams>;
+json2LspCallHierarchyIncomingCall(json : Json) -> Maybe<LspCallHierarchyIncomingCall>;
+json2LspCallHierarchyOutgoingCallsParams(json : Json) -> Maybe<LspCallHierarchyOutgoingCallsParams>;
+json2LspCallHierarchyOutgoingCall(json : Json) -> Maybe<LspCallHierarchyOutgoingCall>;
 
 // 0 stands for no kind
 lspSymbolKindName2id = pairs2tree([
@@ -718,6 +748,41 @@ lspDeleteFile2Json(delete : LspDeleteFile) -> Json {
 	], idfn));
 }
 
+lspCallHierarchyItem2Json(item : LspCallHierarchyItem) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("name", JsonString(item.name))),
+		Some(Pair("kind", JsonString(i2s(item.kind)))),
+		if (length(item.tags) == 0) None() else Some(Pair("tags", JsonArray(map(item.tags, \tag -> JsonString(i2s(tag)))))),
+		if (item.detail == "") None() else Some(Pair("detail", JsonString(item.detail))),
+		Some(Pair("uri", JsonString(uri2string(item.uri)))),
+		Some(Pair("range", lspRange2Json(item.range))),
+		Some(Pair("selectionRange", lspRange2Json(item.selectionRange))),
+		if (item.data == JsonNull()) None() else Some(Pair("data", item.data))
+	], idfn));
+}
+
+lspCallHierarchyIncomingCallsParams2Json(params : LspCallHierarchyIncomingCallsParams) -> Json {
+	JsonObject([Pair("item", lspCallHierarchyItem2Json(params.item))]);
+}
+
+lspCallHierarchyIncomingCall2Json(call : LspCallHierarchyIncomingCall) -> Json {
+	JsonObject([
+		Pair("from", lspCallHierarchyItem2Json(call.from)),
+		Pair("fromRanges", JsonArray(map(call.fromRanges, lspRange2Json))),
+	]);
+}
+
+lspCallHierarchyOutgoingCallsParams2Json(params : LspCallHierarchyOutgoingCallsParams) -> Json {
+	JsonObject([Pair("item", lspCallHierarchyItem2Json(params.item))]);
+}
+
+lspCallHierarchyOutgoingCall2Json(call : LspCallHierarchyOutgoingCall) -> Json {
+	JsonObject([
+		Pair("to", lspCallHierarchyItem2Json(call.to)),
+		Pair("fromRanges", JsonArray(map(call.fromRanges, lspRange2Json))),
+	]);
+}
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage> {
 	jsonrpc = getJsonStringField(json, "jsonrpc", "");
 	id = getJsonFieldValue(json, "id", JsonNull());
@@ -734,6 +799,14 @@ json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage> {
 	error = getJsonFieldValue(json, "error", JsonNull());
 	if (jsonrpc == "") None() else 
 	Some(LspResponseMessage(jsonrpc, id, result, json2LspResponseError(error)));
+}
+
+json2LspNotificationMessage(json : Json) -> Maybe<LspNotificationMessage> {
+	jsonrpc = getJsonStringField(json, "jsonrpc", "");
+	method = getJsonStringField(json, "method", "");
+	params = getJsonFieldValue(json, "params", JsonNull());
+	if (jsonrpc == "" || method == "") None() else 
+	Some(LspNotificationMessage(jsonrpc, method, params));
 }
 
 json2LspResponseError(json : Json) -> Maybe<LspResponseError> {
@@ -1191,8 +1264,63 @@ json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile> {
 	}
 }
 
+json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem> {
+	if (!forall(["name", "kind", "uri", "range", "selectionRange"], \field -> jsonObjectHasField(json, field))) None() else {
+		name = getJsonStringField(json, "name", "");
+		kind = s2i(getJsonStringField(json, "kind", ""));
+		tags = filtermap(getJsonArrayField(json, "tags"), getJsonIntValueM);
+		detail = getJsonStringField(json, "detail", "");
+		uri = parseURI(getJsonStringField(json, "uri", ""));
+		data = getJsonFieldValue(json, "name", JsonNull());
+		maybeBind(json2LspRange(getJsonFieldValue(json, "range", JsonNull())), \range -> 
+			maybeMap(json2LspRange(getJsonFieldValue(json, "selectionRange", JsonNull())), \selectionRange ->
+				LspCallHierarchyItem(
+					name, kind, tags, detail, uri, range, selectionRange, data
+				)
+			)
+		);
+	}
+}
+
+json2LspCallHierarchyIncomingCallsParams(json : Json) -> Maybe<LspCallHierarchyIncomingCallsParams> {
+	if (!jsonObjectHasField(json, "item")) None() else {
+		item_json = getJsonFieldValue(json, "item", JsonNull());
+		maybeMap(json2LspCallHierarchyItem(item_json), \item -> 
+			LspCallHierarchyIncomingCallsParams(item)
+		)
+	}
+}
+
+json2LspCallHierarchyIncomingCall(json : Json) -> Maybe<LspCallHierarchyIncomingCall> {
+	if (!jsonObjectHasField(json, "from") || !jsonObjectHasField(json, "fromRanges")) None() else {
+		from_json = getJsonFieldValue(json, "from", JsonNull());
+		fromRanges_jsons = getJsonArrayField(json, "fromRanges");
+		maybeMap(json2LspCallHierarchyItem(from_json), \from -> 
+			LspCallHierarchyIncomingCall(from, filtermap(fromRanges_jsons, json2LspRange))
+		)
+	}
+}
+
+json2LspCallHierarchyOutgoingCallsParams(json : Json) -> Maybe<LspCallHierarchyOutgoingCallsParams> {
+	if (!jsonObjectHasField(json, "item")) None() else {
+		item_json = getJsonFieldValue(json, "item", JsonNull());
+		maybeMap(json2LspCallHierarchyItem(item_json), \item -> 
+			LspCallHierarchyOutgoingCallsParams(item)
+		)
+	}
+}
+
+json2LspCallHierarchyOutgoingCall(json : Json) -> Maybe<LspCallHierarchyOutgoingCall> {
+	if (!jsonObjectHasField(json, "to") || !jsonObjectHasField(json, "toRanges")) None() else {
+		to_json = getJsonFieldValue(json, "to", JsonNull());
+		toRanges_jsons = getJsonArrayField(json, "toRanges");
+		maybeMap(json2LspCallHierarchyItem(to_json), \to -> 
+			LspCallHierarchyOutgoingCall(to, filtermap(toRanges_jsons, json2LspRange))
+		)
+	}
+}
+
 lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string {
-	patch = unescapeStr(changeEvent.text);
 	if (changeEvent.range.start.line != -1) {
 		resolver = makeLineResolver(src);
 		start = findLineIndex(resolver, changeEvent.range.start.line, changeEvent.range.start.character);
@@ -1200,9 +1328,9 @@ lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src 
 
 		before = substring(src, 0, start);
 		after = substring(src, end, strlen(src) - end);
-		before + patch + after;
+		before + changeEvent.text + after;
 	} else {
 		// changed file is passed as a whole.
-		patch;
+		changeEvent.text;
 	}
 }
