@@ -92,6 +92,7 @@ ParaWord(
 ParaWordWidth(rigidWidth : double, softWidth : double, finalRigidWidthDelta : double, finalSoftWidthDelta : double);
 ParaWordGroup(words : [ParaWord], width : ref ParaWordWidth);
 
+
 ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
 
@@ -254,6 +255,18 @@ renderParagraphEx(
 	widthManager : ParagraphWidthManager,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>
 ) -> Form {
+
+
+	renderParagrapName = if (p == []) "" else {
+		e = p[0];
+		switch (e) {
+			TextFragments(list): {
+				name = substring(toString(list2array(list)), 0, 60);
+				if (strContains(name, "Text(\"1\"")) name else "";
+			}
+			default: "";
+		}
+	}
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -460,6 +473,19 @@ renderParagraphEx(
 	})
 }
 
+getParaLineInfo(line : ParaLine, alignment : ParaLineAlignment) -> ParaLineInfo {
+	optimizedLine = getOptimizedLine(line.words, alignment);
+	metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
+	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+	ParaLineInfo(
+		optimizedLine,
+		lineAsc,
+		fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
+		fold(metrics, line.indent, \ac, m -> ac + m.width),
+		line.indent,
+	)
+}
+
 getParaLineInfos(
 	alignment : ParaLineAlignment,
 	wordGroups : [ParaWordGroup],
@@ -483,19 +509,8 @@ getParaLineInfos(
 			(availableWidth - (^(maxWidthGroup.width).rigidWidth) - paraLinePartFRemakeD*(^(maxWidthGroup.width).finalRigidWidthDelta)) / ((^(maxWidthGroup.width).softWidth) + paraLinePartFRemakeD*(^(maxWidthGroup.width).finalSoftWidthDelta))
 		} else 1.0
 	} else 1.0;
-	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
-	map(reflowResult, \line -> {
-		optimizedLine = getOptimizedLine(line.words, alignment);
-		metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
-		lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
-		ParaLineInfo(
-			optimizedLine,
-			lineAsc,
-			fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
-			fold(metrics, line.indent, \ac, m -> ac + m.width),
-			line.indent,
-		)
-	});
+	reflowResult = reflowParaWords(wordGroups, availableWidth, alignment, indent, rtl, fontSize, textScale);
+	map(reflowResult, \line -> getParaLineInfo(line, alignment));
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -743,6 +758,7 @@ remeasureFirstWord(wgs : [ParaWordGroup]) -> [ParaWordGroup] {
 reflowParaWords(
 	wordGroups : [ParaWordGroup],
 	availableParaWidth : double,
+	align : ParaLineAlignment,
 	paraIndent : double,
 	rtl : bool,
 	fontSize : double,
@@ -752,10 +768,10 @@ reflowParaWords(
 	remeasureFirstWord(wordGroups);
 	reflowResult = reflowParaWords2(
 		wordGroups,
-		firstLineWidth,
-		firstLineWidth,
 		[],
 		[],
+		firstLineWidth,
+		align,
 		paraIndent,
 		fontSize,
 		textScale
@@ -773,21 +789,20 @@ reflowParaWords(
 // here availableWidth is an amount of width for current line
 reflowParaWords2(
 	wordGroups : [ParaWordGroup],
+	currentLine : [ParaWordGroup],
+	paraLines : [ParaLine],
 	availableWidth : double,
-	remainingWithSpacing : double,
-	currentWordGroups : [ParaWordGroup],
-	result : [ParaLine],
+	align : ParaLineAlignment,
 	paraIndent : double,
 	fontSize : double,
 	textScale : double
 ) -> [ParaLine] {
-	remaining = remainingWithSpacing - getUserDefinedWordSpacingPercent() * fontSize;
-	lineIndent = getLineIndent(paraIndent, result==[]);
+	lineIndent = getLineIndent(paraIndent, paraLines==[]);
 
-	addLine = \-> {
-		cwords = concatA(mapi(currentWordGroups, \i, g -> g.words));
+	getParalineLine : ([ParaWordGroup]) -> Maybe<ParaLine> = \currentLine2 -> {
+		cwords = concatA(mapi(currentLine2, \i, g -> g.words));
 		cwordslasti = length(cwords)-1;
-		if (cwords == []) result else arrayPush(result, ParaLine({
+		if (cwords == []) None() else Some(ParaLine({
 			cw = mapi(cwords, \cwordi, cword -> {
 				switch(cword.word) {
 					LinePart(f, p, e):
@@ -827,6 +842,10 @@ reflowParaWords2(
 			}},
 			lineIndent
 		))
+	}
+
+	addLine = \ -> {
+		eitherMap(getParalineLine(currentLine), \line -> arrayPush(paraLines, line), paraLines)
 	};
 
 	detachWord = \w : ParaWord, detach : bool -> {
@@ -841,8 +860,6 @@ reflowParaWords2(
 		}
 	};
 
-	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, false);
-
 	if (wordGroups == []) {
 		addLine()
 	} else {
@@ -856,31 +873,47 @@ reflowParaWords2(
 			default: false;
 		};
 		restGroups = tail(wordGroups);
-		rest = if (isSpc) {
-			restFinalDeltaOrg = if (length(group.words) > 1 && paraLinePartFRemake) ^(group.width) else zeroParaWordWidth;
-			restGroup = ParaWordGroup(
-				tail(group.words),
-				ref ParaWordWidth((^(group.width)).rigidWidth - wordWidth.rigidWidth, (^(group.width).softWidth) - wordWidth.softWidth, restFinalDeltaOrg.finalRigidWidthDelta, restFinalDeltaOrg.finalSoftWidthDelta)
-			);
-			if(restGroup.words == []) restGroups else concat([restGroup], restGroups)
-		} else wordGroups;
 		detachWord(word, isSpc);
 		isNewLine = switch (word.word : ParaAtomic) {
 			NewLine(): true;
-			default:
-				max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining
-				&& (isSpc || currentWordGroups != [])
+			default: {
+				// we have to measure current line with additional of the next word group and compare it with availableWidth to deside if we should make new line
+				eitherMap(
+					getParalineLine(arrayPush(currentLine, group)),
+					\line -> getParaLineInfo(line, align).lineWidth,
+					0.0
+				) > availableWidth && (isSpc || currentLine != [])
+			}
 		};
 		if (isNewLine) {
+			rest = if (isSpc) {
+				restFinalDeltaOrg = if (length(group.words) > 1 && paraLinePartFRemake) ^(group.width) else zeroParaWordWidth;
+				restGroup = ParaWordGroup(
+					tail(group.words),
+					ref ParaWordWidth((^(group.width)).rigidWidth - wordWidth.rigidWidth, (^(group.width).softWidth) - wordWidth.softWidth, restFinalDeltaOrg.finalRigidWidthDelta, restFinalDeltaOrg.finalSoftWidthDelta)
+				);
+				if(restGroup.words == []) restGroups else concat([restGroup], restGroups)
+			} else wordGroups;
+
 			reflowParaWords2(
-				remeasureFirstWord(rest), nextLineWidth, nextLineWidth,
-				[], addLine(),
-				paraIndent, fontSize, textScale
+				remeasureFirstWord(rest),
+				[],
+				addLine(),
+				availableWidth,
+				align,
+				paraIndent,
+				fontSize,
+				textScale
 			)
 		} else reflowParaWords2(
-			restGroups, availableWidth, remaining - groupWidth,
-			arrayPush(currentWordGroups, group), result,
-			paraIndent, fontSize, textScale
+			restGroups,
+			arrayPush(currentLine, group),
+			paraLines,
+			availableWidth,
+			align,
+			paraIndent,
+			fontSize,
+			textScale
 		);
 	}
 }
