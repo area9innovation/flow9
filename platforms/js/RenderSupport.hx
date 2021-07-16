@@ -3292,7 +3292,7 @@ class RenderSupport {
 
 		var dispFn = function() {
 			// With fix disabled glitches start to happen on iPad after some snapshots
-			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_disable") != '1';
+			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_enable") == '1';
 			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
