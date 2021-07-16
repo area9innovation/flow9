@@ -89,9 +89,7 @@ ParaWord(
 	interactivityIdM : Maybe<int>
 );
 
-ParaWordWidth(rigidWidth : double, softWidth : double, finalRigidWidthDelta : double, finalSoftWidthDelta : double);
-ParaWordGroup(words : [ParaWord], width : ref ParaWordWidth);
-
+ParaWordGroup(words : [ParaWord]);
 
 ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
@@ -196,8 +194,7 @@ getWordForm = \word1, pos -> {
 };
 
 defaultFontSizeStyle = FontSize(14.0);
-zeroParaWordWidth = ParaWordWidth(0.0, 0.0, 0.0, 0.0);
-emptyParaWordGroup = ParaWordGroup([], ref zeroParaWordWidth);
+emptyParaWordGroup = ParaWordGroup([]);
 emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None());
 paraLinePartFRemake = isUrlParameterTrue("plpf");
 paraLinePartFRemakeD = b2d(paraLinePartFRemake);
@@ -222,31 +219,6 @@ makeParaWord2(word2 : ParaWord, form2 : Form, pos : int) -> ParaWord {
 	};
 	ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm, word2.interactivityIdM)
 };
-
-
-getParaWordWidth(word : ParaWord, pos : int) -> ParaWordWidth {
-	fgetw = \w -> fgetValue(makeParaWord2(word, w, pos).metrics).width;
-	p = switch(word.word) {
-		LinePart(f, p, e):
-			if (pos == 0) fgetw(f) |> \h -> Pair(h, h)
-			else Pair(fgetw(p), fgetw(e));
-		default: fgetValue(word.metrics).width |> \h -> Pair(h, h);
-	};
-	switch(word.word) {
-		// Non-text
-		Empty(): ParaWordWidth(p.first, 0.0, paraLinePartFRemakeD*(p.second-p.first), 0.0);
-		// Text
-		default: ParaWordWidth(0.0, p.first, 0.0, paraLinePartFRemakeD*(p.second-p.first));
-	}
-};
-
-addParaWordWidth(w1 : ParaWordWidth, w2 : ParaWordWidth) -> ParaWordWidth {
-	ParaWordWidth(w1.rigidWidth + w2.rigidWidth, w1.softWidth + w2.softWidth, w2.finalRigidWidthDelta, w2.finalSoftWidthDelta)
-}
-
-getParaWordWidthValue(w : ParaWordWidth, textScale : double) -> double {
-	w.rigidWidth + w.finalRigidWidthDelta + textScale * (w.softWidth + w.finalSoftWidthDelta)
-}
 
 renderParagraphEx(
 	p : [ParagraphElement],
@@ -305,7 +277,7 @@ renderParagraphEx(
 	));
 
 	keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isParagraphMarked && i <= 1);
-	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), ref zeroParaWordWidth);
+	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word));
 
 	aw = make(0.0);
 	update = make(0);
@@ -424,11 +396,7 @@ renderParagraphEx(
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-				iter(wordGroups, \wg ->
-					wg.width := foldi(wg.words, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
-						addParaWordWidth(acc, getParaWordWidth(pw, 1))
-					)
-				);
+
 				infos = getParaLineInfos(
 					alignment,
 					wordGroups,
@@ -497,16 +465,18 @@ getParaLineInfos(
 	fontSize : double
 ) -> [ParaLineInfo] {
 	textScale = if (shrinkLongWords && wordGroups != []) {
-		maxWidthGroup : ParaWordGroup = fold(
-			tail(wordGroups),
-			wordGroups[0],
-			\maxGroup : ParaWordGroup, group : ParaWordGroup -> {
-				width = getParaWordWidthValue(^(group.width), 1.0);
-				if (width > getParaWordWidthValue(^(maxGroup.width), 1.0)) group else maxGroup
-			}
-		);
-		if (getParaWordWidthValue(^(maxWidthGroup.width), 1.0) > availableWidth) {
-			(availableWidth - (^(maxWidthGroup.width).rigidWidth) - paraLinePartFRemakeD*(^(maxWidthGroup.width).finalRigidWidthDelta)) / ((^(maxWidthGroup.width).softWidth) + paraLinePartFRemakeD*(^(maxWidthGroup.width).finalSoftWidthDelta))
+		maxWidth = fold(wordGroups, 0.0, \maxWidth, wg -> {
+			eitherMap(
+				wordGroups2ParaLine([wg], getLineIndent(indent, true), 1.0),
+				\line -> {
+					width = getParaLineInfo(line, alignment).lineWidth;
+					if (maxWidth > width) maxWidth else width;
+				},
+				0.0
+			)
+		})
+		if (maxWidth > availableWidth) {
+			availableWidth / maxWidth
 		} else 1.0
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, alignment, indent, rtl, fontSize, textScale);
@@ -736,24 +706,6 @@ getLineIndent(paraIndent : double, isFirstLine : bool) -> double {
 	else 0.0;
 }
 
-// Correct metrics of the first word of the line
-remeasureFirstWord(wgs : [ParaWordGroup]) -> [ParaWordGroup] {
-	if (wgs != []) {
-		wg = wgs[0];
-		w = wg.words[0];
-		oldWW = getParaWordWidth(w, 1);
-		newWW = getParaWordWidth(w, 0);
-		gw = ^(wg.width);
-		wg.width := if (length(wg.words) == 1)
-			newWW
-		else ParaWordWidth(gw with
-			rigidWidth=gw.rigidWidth-oldWW.rigidWidth+newWW.rigidWidth,
-			softWidth=gw.softWidth-oldWW.softWidth+newWW.softWidth
-		);
-	}
-	wgs
-}
-
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
 reflowParaWords(
 	wordGroups : [ParaWordGroup],
@@ -765,7 +717,6 @@ reflowParaWords(
 	textScale : double,
 ) -> [ParaLine] {
 	firstLineWidth = availableParaWidth - getLineIndent(paraIndent, true);
-	remeasureFirstWord(wordGroups);
 	reflowResult = reflowParaWords2(
 		wordGroups,
 		[],
@@ -786,6 +737,51 @@ reflowParaWords(
 	else reflowResult;
 }
 
+wordGroups2ParaLine(currentLine : [ParaWordGroup], lineIndent : double, textScale : double) -> Maybe<ParaLine> {
+	cwords = concatA(mapi(currentLine, \i, g -> g.words));
+	cwordslasti = length(cwords)-1;
+	if (cwords == []) None() else Some(ParaLine({
+		cw = mapi(cwords, \cwordi, cword -> {
+			switch(cword.word) {
+				LinePart(f, p, e):
+					makeParaWord2(cword, if (cwordi==0) f else if (cwordi < cwordslasti) p else e, if (cwordi < cwordslasti) cwordi else -1);
+				default: cword;
+			}
+		});
+
+		if (textScale == 1.0) cw else {
+			scale = \f -> Scale(const(textScale), const(textScale), f);
+			map(cw, \w -> {
+				switch (w.word) {
+					Empty(): w;  // Non-text
+					default: {
+						// Text
+						wform = w.form;
+						ParaWord(
+							w.word,
+							fselect(w.metrics, FLift(\fm -> FormMetrics(fm.width*textScale, fm.height*textScale, fm.baseline*textScale, fm.dHeight*textScale))),
+							switch (w.ghosted : Ghosted) {
+								Empty(): Empty();
+								Ghost(x, y, f): Ghost(x, y, scale(f));
+								InspectGhost(inspector, f): InspectGhost(inspector, scale(f));
+								CoordinateInspectElement(i, f): CoordinateInspectElement(i, scale(f));
+							},
+							switch (wform) {
+								Ghost(xc, yc, form): Ghost(xc, yc, scale(form));
+								CoordinateInspectElement(inspector, form): CoordinateInspectElement(inspector, scale(form));
+								InspectGhost(inspector, form): InspectGhost(inspector, scale(form));
+								Form(): scale(wform);
+							},
+							w.interactivityIdM
+						)
+					}
+				}
+			})
+		}},
+		lineIndent
+	))
+}
+
 // here availableWidth is an amount of width for current line
 reflowParaWords2(
 	wordGroups : [ParaWordGroup],
@@ -800,48 +796,7 @@ reflowParaWords2(
 	lineIndent = getLineIndent(paraIndent, paraLines==[]);
 
 	getParalineLine : ([ParaWordGroup]) -> Maybe<ParaLine> = \currentLine2 -> {
-		cwords = concatA(mapi(currentLine2, \i, g -> g.words));
-		cwordslasti = length(cwords)-1;
-		if (cwords == []) None() else Some(ParaLine({
-			cw = mapi(cwords, \cwordi, cword -> {
-				switch(cword.word) {
-					LinePart(f, p, e):
-						makeParaWord2(cword, if (cwordi==0) f else if (cwordi < cwordslasti) p else e, if (cwordi < cwordslasti) cwordi else -1);
-					default: cword;
-				}
-			});
-
-			if (textScale == 1.0) cw else {
-				scale = \f -> Scale(const(textScale), const(textScale), f);
-				map(cw, \w -> {
-					switch (w.word) {
-						Empty(): w;  // Non-text
-						default: {
-							// Text
-							wform = w.form;
-							ParaWord(
-								w.word,
-								fselect(w.metrics, FLift(\fm -> FormMetrics(fm.width*textScale, fm.height*textScale, fm.baseline*textScale, fm.dHeight*textScale))),
-								switch (w.ghosted : Ghosted) {
-									Empty(): Empty();
-									Ghost(x, y, f): Ghost(x, y, scale(f));
-									InspectGhost(inspector, f): InspectGhost(inspector, scale(f));
-									CoordinateInspectElement(i, f): CoordinateInspectElement(i, scale(f));
-								},
-								switch (wform) {
-									Ghost(xc, yc, form): Ghost(xc, yc, scale(form));
-									CoordinateInspectElement(inspector, form): CoordinateInspectElement(inspector, scale(form));
-									InspectGhost(inspector, form): InspectGhost(inspector, scale(form));
-									Form(): scale(wform);
-								},
-								w.interactivityIdM
-							)
-						}
-					}
-				})
-			}},
-			lineIndent
-		))
+		wordGroups2ParaLine(currentLine2, lineIndent, textScale)
 	}
 
 	addLine = \ -> {
@@ -865,8 +820,6 @@ reflowParaWords2(
 	} else {
 		group = wordGroups[0];
 		word = group.words[0];
-		wordWidth = getParaWordWidth(word, if (paraLinePartFRemake) 0 else 1);
-		groupWidth = getParaWordWidthValue(ParaWordWidth(^(group.width) with finalSoftWidthDelta=0.0, finalRigidWidthDelta=0.0), textScale);
 		isSpc = switch (word.word : ParaAtomic) {
 			Space(__): true;
 			NewLine(): true;
@@ -887,16 +840,12 @@ reflowParaWords2(
 		};
 		if (isNewLine) {
 			rest = if (isSpc) {
-				restFinalDeltaOrg = if (length(group.words) > 1 && paraLinePartFRemake) ^(group.width) else zeroParaWordWidth;
-				restGroup = ParaWordGroup(
-					tail(group.words),
-					ref ParaWordWidth((^(group.width)).rigidWidth - wordWidth.rigidWidth, (^(group.width).softWidth) - wordWidth.softWidth, restFinalDeltaOrg.finalRigidWidthDelta, restFinalDeltaOrg.finalSoftWidthDelta)
-				);
+				restGroup = ParaWordGroup(tail(group.words));
 				if(restGroup.words == []) restGroups else concat([restGroup], restGroups)
 			} else wordGroups;
 
 			reflowParaWords2(
-				remeasureFirstWord(rest),
+				rest,
 				[],
 				addLine(),
 				availableWidth,
@@ -1343,7 +1292,7 @@ setWordText(w : ParaWord, t : string) -> ParaWord {
 }
 
 makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
-	makeParaWordGroup = \word -> ParaWordGroup([word], ref zeroParaWordWidth);
+	makeParaWordGroup = \word -> ParaWordGroup([word]);
 	switch(w.word) {
 		Text(__, st):
 			ParaWord(
