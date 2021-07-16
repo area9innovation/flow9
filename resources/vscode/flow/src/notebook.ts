@@ -5,11 +5,116 @@ import { readFileSync } from 'fs';
 
 let encoder = new TextEncoder();
 
+interface RawNotebookData {
+	cells: RawNotebookCell[]
+}
+  
+interface RawNotebookCell {
+	language: string;
+	value: string;
+	kind: vscode.NotebookCellKind;
+	editable?: boolean;
+}
+  
+export class FlowNotebookSerializer implements vscode.NotebookSerializer {
+	public readonly label: string = 'My Sample Content Serializer';
+  
+	public async deserializeNotebook(data: Uint8Array, token: vscode.CancellationToken): Promise<vscode.NotebookData> {
+	  var contents = new TextDecoder().decode(data);    // convert to String to make JSON object
+  
+	  // Read file contents
+	  let raw: RawNotebookData;
+	  try {
+		raw = <RawNotebookData>JSON.parse(contents);
+	  } catch {
+		raw = { cells: [] };
+	  }
+  
+	  // Create array of Notebook cells for the VS Code API from file contents
+	  const cells = raw.cells.map(item => new vscode.NotebookCellData(
+		item.kind,
+		item.value,
+		item.language
+	  ));
+  
+	  // Pass read and formatted Notebook Data to VS Code to display Notebook with saved cells
+	  return new vscode.NotebookData(
+		cells
+	  );
+	}
+  
+	public async serializeNotebook(data: vscode.NotebookData, token: vscode.CancellationToken): Promise<Uint8Array> {
+	  // Map the Notebook data into the format we want to save the Notebook data as
+	  let contents: RawNotebookData = { cells: []};
+  
+	  for (const cell of data.cells) {
+		contents.cells.push({
+		  kind: cell.kind,
+		  language: cell.languageId,
+		  value: cell.value
+		});
+	  }
+  
+	  // Give a string of all the data to save and VS Code will handle the rest
+	  return new TextEncoder().encode(JSON.stringify(contents));
+	}
+}
+
+export class FlowNotebookController {
+	readonly id = 'flow-notebook';
+	public readonly label = 'Flow9 Notebook Controller';
+	readonly supportedLanguages = ['flow'];
+  
+	private _executionOrder = 0;
+	private readonly _controller: vscode.NotebookController;
+  
+	constructor() {
+	  this._controller = vscode.notebooks.createNotebookController(this.id, 'flow-notebook', this.label);
+	  this._controller.supportedLanguages = this.supportedLanguages;
+	  this._controller.supportsExecutionOrder = true;
+	  this._controller.executeHandler = this._executeAll.bind(this);
+	}
+  
+	dispose(): void {
+		  this._controller.dispose();
+	}
+  
+	private _executeAll(cells: vscode.NotebookCell[], _notebook: vscode.NotebookDocument, _controller: vscode.NotebookController): void {
+		  for (let cell of cells) {
+			  this._doExecution(cell);
+		  }
+	  }
+  
+	private async _doExecution(cell: vscode.NotebookCell): Promise<void> {
+	  const execution = this._controller.createNotebookCellExecution(cell);
+  
+	  execution.executionOrder = ++this._executionOrder;
+	  execution.start(Date.now());
+  
+	  try {
+		execution.replaceOutput([new vscode.NotebookCellOutput([
+		  vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()), "x-application/sample-json-renderer"),
+		  vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()))
+		])]);
+  
+		execution.end(true, Date.now());
+	  } catch (err) {
+		execution.replaceOutput([new vscode.NotebookCellOutput([
+		  vscode.NotebookCellOutputItem.error(err)
+		])]);
+		execution.end(false, Date.now());
+	  }
+	}
+  }
+  
+  
+
 export class FlowNotebookProvider implements vscode.NotebookContentProvider {
     async openNotebook(uri: vscode.Uri): Promise<vscode.NotebookData> {
         const cells = <vscode.NotebookCellData[]>JSON.parse((await vscode.workspace.fs.readFile(uri)).toString());
         const languages = ['markdown', 'flow'];
-        const metadata: vscode.NotebookDocumentMetadata = { 
+        const metadata: vscode.NotebookDocumentContentOptions
+		 NotebookDocumentMetadata = { 
             editable: true, 
             cellEditable: true, 
             cellHasExecutionOrder: false, 
@@ -167,7 +272,7 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
     }
     cancelAllCellsExecution(document: vscode.NotebookDocument): void {
         //this.callback("Error: interrapted");
-        document.cells.forEach((cell) => {
+        document.getCells().forEach((cell) => {
             if (cell.metadata.runState == vscode.NotebookCellRunState.Running) {
                 cell.metadata.runState = vscode.NotebookCellRunState.Error;
                 cell.metadata.lastRunDuration = +new Date() - this.start;
@@ -236,6 +341,7 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
     }
     private setCellTextSuccess(cell: vscode.NotebookCell, result: string): void {
         cell.outputs = [{outputKind: vscode.CellOutputKind.Text, text: result}];
+		cell.executionSummary.success = true;
         cell.metadata.runState = vscode.NotebookCellRunState.Success;
         cell.metadata.lastRunDuration = +new Date() - this.start;
     }
@@ -286,9 +392,9 @@ export function createNotebook(): void {
     let ask: vscode.InputBoxOptions = { prompt: "Notebook file: ", placeHolder: "" };
 	vscode.window.showInputBox(ask).then(file => {
         let content : [vscode.NotebookCellData] = [{
-                cellKind: vscode.CellKind.Markdown,
-                source: "Put your markdown text here",
-                language: "markdown",
+                kind: vscode.NotebookCellKind.Markup,
+                value: "Put your markdown text here",
+                languageId: "markdown",
                 outputs: [],
                 metadata: {}
         }];

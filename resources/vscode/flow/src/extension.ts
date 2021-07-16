@@ -66,8 +66,10 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.runUI', runUI),
 		reg_comm('flow.createNotebook', notebook.createNotebook),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
-		vscode.notebook.registerNotebookContentProvider('flow-notebook', new notebook.FlowNotebookProvider()),
-		vscode.notebook.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new notebook.FlowNotebookKernelProvider())
+		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
+		new notebook.FlowNotebookController(),
+		//vscode.notebooks.registerNotebookContentProvider('flow-notebook', new notebook.FlowNotebookProvider()),
+		//vscode.notebooks.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new notebook.FlowNotebookKernelProvider())
 	);
 	editors.forEach(editor => context.subscriptions.push(editor.register(context)));
 	notebook.startExecutor();
