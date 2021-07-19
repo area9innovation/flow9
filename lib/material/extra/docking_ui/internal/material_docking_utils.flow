@@ -36,8 +36,8 @@ export {
 	// Handles & buttons
 	makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material;
 	makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material;
-	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool) -> Material;
-	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material;
+	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool, light : bool) -> Material;
+	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, aStyle : [MDockingAreaStyle], style : [MDockingStyle]) -> Material;
 	makeMDIconToggleButton(boolB : DynamicBehaviour<bool>, iconOn : string, iconOff : string, tooltipOn : string, tooltipOff : string, iconSize: double, clickFn : () -> void, iconColor : MColor, fillOp : double) -> Material;
 
 	// Utils
@@ -87,6 +87,7 @@ initializeDockingAreas(state : MDockingState, areaTitle : string) -> void {
 
 undockPanel(state : MDockingState, panelId : int) -> void {
 	// println("undock panel: " + i2s(panelId));
+	// nextDistinct(getValue(state.expanded)[panelId], true); // expand before undock
 	next(state.dock, mapi(getValue(state.dock), \j, item -> if (j == panelId) MDock(-1, item.colId, item.rowId) else item));
 }
 
@@ -289,8 +290,8 @@ calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool,
 	dSize = getValue(state.dockedSize)[pId];
 	pW = dSize.width;
 	pH = dSize.height;
-	// println("calculate: pId: " + i2s(pId) + "  |  en: " + b2s(en) + "  |  se: " + b2s(se) + "  |  ex: " + b2s(ex));
-	if (en) {
+
+	h = if (en) {
 		if (se) {
 			if (ex) {
 				if (isColumn) {
@@ -306,6 +307,8 @@ calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool,
 			}
 		} else topBarH;
 	} else 0.0;
+	// println("calculate: " + getValue(state.title)[pId] + "  | pId: " + i2s(pId) + "  |  en: " + b2s(en) + "  |  se: " + b2s(se) + "  |  ex: " + b2s(ex) + "  | " + d2s(h)  + "  | " + d2s(pH));
+	h
 }
 
 makeMDIconToggleButton(
@@ -326,12 +329,12 @@ makeMDIconToggleButton(
 makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material {
 	dockingSeparatorSize = getDSeparatorSize(isColumn, state.style);
 	dragHandleSize = makeVSize(dockingSeparatorSize, isColumn);
-	draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSize);
+	draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, state.style))], dragHandleSize);
 	pstyle = getValue(state.panelStyle)[panelId];
 	draggingBarInactive(light) |> showIf(!isToolbar)
 }
 
-makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool) -> Material {
+makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool, light : bool) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
 	dontMove  = dontShow || contains(pstyle, MDPanelDontMove());
@@ -396,8 +399,7 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 				MCopySize(t, \sz -> 
 					MCenterIn(
 						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {
-							TRounded(
-								0.0, 0.0, dockingRadius, dockingRadius, 
+							TRounded4(dockingRadius,
 								[MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 0.3)], 
 								makeColFixedSize(16.0, handleW, isColumn)
 							) 	
@@ -422,9 +424,10 @@ reverseSideExpandedinColA(state : MDockingState, colA : [int]) -> void {
 	nextDistinct(state.sideExpanded, seA);
 }
 
-makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material {	
-	isRightCol  = contains(style, MDockingRightCols());
-	se = getValue(getValue(state.sideExpanded)[colA[0]]);
+makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, aStyle : [MDockingAreaStyle], style : [MDockingStyle]) -> Material {	
+	isRightCol  = contains(aStyle, MDockingRightCols());
+	dRadius = getDockingRadius(state.style);
+	seB = getValue(state.sideExpanded)[firstElement(colA, 0)];
 	btnSize = makeHSize(sideExpanderButtonSize, isColumn);
 	btnFiller = if(isColumn) TFillX() else TFillY();
 	sideExpFn = \ -> {
@@ -440,21 +443,25 @@ makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light 
 		if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
 	}
 	 
-	sideExpBtnLabel = if (if (getDefaultRtl()) !isRightCol else isRightCol) {
-		if (se) "skip_next" else "skip_previous";
-	} else {
-		if (!se) "skip_next" else "skip_previous";
+	sideExpBtn = \lg : bool -> {
+		MSelect(seB, \se -> { 
+			sideExpBtnLabel = if (if (getDefaultRtl()) !isRightCol else isRightCol) {
+				if (se) "skip_next" else "skip_previous";
+			} else {
+				if (!se) "skip_next" else "skip_previous";
+			}
+			MIcon(sideExpBtnLabel, [MIconSize(sideExpanderIconSize), titleColorFn(lg, style)])
+				|> (\m -> if (isColumn) m else MRotate90Left(m));
+		})
 	}
-	sideExpBtn = \lg : bool -> MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), titleColorFn(lg, style)])
-		|> (\m -> if (isColumn) m else MRotate90Left(m));
 
 	sideExpBtnItem = \lg : bool -> MGroup2(
-		TRectangle([MFill(sideExpanderBgColorFn(lg, style))], btnSize),
-		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg), TFixed(2.0, 2.0)]) else MColsA([TFixed(2.0, 2.0), sideExpBtn(lg), btnFiller])
+		TRounded4(min(2.0, dRadius), [MFill(sideExpanderBgColorFn(lg, state.style))], btnSize),
+		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg)]) else MColsA([sideExpBtn(lg), btnFiller])
 	);
 	sideExpBtnItemHover = \lg : bool -> MGroup2(
-		TRectangle([MFill(sideExpanderHoverColorFn(lg, style))], btnSize),
-		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg), TFixed(2.0, 2.0),]) else MColsA([TFixed(2.0, 2.0), sideExpBtn(lg)])
+		TRounded4(min(2.0, dRadius), [MFill(sideExpanderHoverColorFn(lg, style))], btnSize),
+		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg)]) else sideExpBtn(lg)
 	);
 	MRawButton(sideExpBtnItem(light), sideExpBtnItemHover(light), sideExpBtnItem(light), sideExpBtnItem(light), "", [], [TOnClicked(sideExpFn)]);
 }

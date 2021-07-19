@@ -199,9 +199,7 @@ class Native {
 	public static var clipboardDataHtml = "";
 
 	public static function getClipboard() : String {
-		#if flash
-			return clipboardData;
-		#elseif (js && !flow_nodejs)
+		#if (js && !flow_nodejs)
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				return untyped Browser.window.clipboardData.getData("Text");
 			}
@@ -238,12 +236,10 @@ class Native {
 	}
 
 	public static function getClipboardToCB(callback : String->Void) : Void {
-		#if flash
-			callback(clipboardData);
-		#elseif (js && !flow_nodejs)
+		#if (js && !flow_nodejs)
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				callback(untyped Browser.window.clipboardData.getData("Text"));
-			} else if (untyped navigator.clipboard) {
+			} else if (untyped navigator.clipboard && untyped navigator.clipboard.readText) {
 				untyped navigator.clipboard.readText().then(callback, function(e){
 					Errors.print(e);
 				});

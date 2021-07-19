@@ -1997,9 +1997,7 @@ class RenderSupport {
 	}
 
 	public static function addClipAnimation(clip : DisplayObject, keyframes : Array<Array<String>>, options : Array<Array<String>>, onFinish : Void -> Void, fallbackAnimation : Void -> (Void -> Void)) : Void -> Void {
-		if (clip.isHTMLRenderer() && Browser.document.body.animate != null &&
-			(Util.getParameter("debug_native_animation") == "1" || (!Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0"))
-		) {
+		if (clip.isHTMLRenderer() && Browser.document.body.animate != null && !Platform.isSafari && !Platform.isIOS && Util.getParameter("native_animation") != "0") {
 			if (untyped clip.nativeWidget == null) {
 				clip.initNativeWidget();
 			}
@@ -3271,10 +3269,14 @@ class RenderSupport {
 	}
 
 	public static function getSnapshot() : String {
-		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), true);
 	}
 
 	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
+		return getSnapshotBox2(x, y, w, h, false);
+	}
+
+	public static function getSnapshotBox2(x : Int, y : Int, w : Int, h : Int, ?fullSnapshot : Bool = false) : String {
 		var child : FlowContainer = untyped PixiStage.children[0];
 
 		if (child == null) {
@@ -3283,28 +3285,28 @@ class RenderSupport {
 
 		untyped RenderSupport.LayoutText = true;
 		emit("enable_sprites");
-		child.removeScrollRect();
 		child.setScrollRect(x, y, w, h);
 
+		PixiStage.forceClipRenderable();
 		render();
 
-		try {
-			var img = Util.getParameter("dummy_snapshot") == '1' ? "" : PixiRenderer.plugins.extract.base64(PixiStage);
-			child.removeScrollRect();
+		var dispFn = function() {
+			// With fix disabled glitches start to happen on iPad after some snapshots
+			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_enable") == '1';
+			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
 			forceRender();
+		}
 
+		try {
+			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			dispFn();
 			return img;
 		} catch(e : Dynamic) {
 			trace(e);
-			child.removeScrollRect();
-			untyped RenderSupport.LayoutText = false;
-			emit("disable_sprites");
-
-			forceRender();
-
+			dispFn();
 			return 'error';
 		}
 	}
