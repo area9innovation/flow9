@@ -285,12 +285,19 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TDynamicGroup2(stackChanges, currentStack, combiner) : {
 			fgroupChanges : DynamicBehaviour<[FGroupChange]> = make([]);
 			tropicItems : DynamicBehaviour<[TDynamicGroupItem]> = make([]);
-			verticalCombiner = if (combiner == TLinesCombiner() || combiner == TLinesACombiner()) FAddition() else FMax();
+			isVertical = switch (combiner) {
+				TLinesCombiner() : true;
+				TLinesACombiner() : true;
+				TBaselineLinesCombiner() : true;
+				TBaselineLinesACombiner() : true;
+				default : false;
+			}
+			verticalCombiner = if (isVertical) FAddition() else FMax();
 			horizontalCombiner = if (combiner == TColsCombiner() || combiner == TColsACombiner()) FAddition() else FMax();
 
 			rtl = getDefaultRtl();
 			rtlCols = combiner == TColsACombiner() && rtl;
-			rtlLines = combiner == TLinesACombiner() && rtl;
+			rtlLines = (combiner == TLinesACombiner() || combiner == TBaselineLinesACombiner()) && rtl;
 			maxWidth = if (rtlLines) fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0) else const(0.0);
 
 			createNewTAcc = \itemIndex, tropic -> {
@@ -330,24 +337,22 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 								else
 									fselect2(
 										prevItem.position,
-										if (combiner == TLinesCombiner() || combiner == TLinesACombiner())
+										if (isVertical)
 											prevItem.acc.metrics.height
 										else
 											prevItem.acc.metrics.width,
-										if (combiner == TLinesCombiner() || combiner == TLinesACombiner())
-											FLift2(\p : Point, metric : double ->
+										FLift2(\p : Point, metric : double ->
+											if (isVertical)
 												Point(
 													0.0,
 													p.y + metric
 												)
-											)
-										else
-											FLift2(\p : Point, metric : double ->
+											else
 												Point(
 													p.x + metric,
 													0.0
 												)
-											)
+										)
 									)
 							)
 						);
@@ -501,6 +506,25 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				);
 			};
 
+			baseline =
+				if (combiner == TBaselineLinesCombiner() || combiner == TBaselineLinesACombiner()) {
+					fsubselect(tropicItems, FLift(\items : [TDynamicGroupItem] ->
+						if (length(items) > 0) items[0].acc.metrics.baseline
+						else const(0.0)
+					))
+				} else if (isUrlParameterTrue("new") && (combiner == TLinesCombiner() || combiner == TLinesACombiner())) {
+					fsubselect(tropicItems, FLift(\items : [TDynamicGroupItem] ->
+						foldi(items, const(0.0), \i, acc, it ->
+							faddition(acc, 
+								if (i < length(items) - 1) it.acc.metrics.height
+								else it.acc.metrics.baseline
+							)
+						)
+					))
+				} else {
+					fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
+				}
+
 			TAcc(
 				if (metricsOnly)
 					FEmpty()
@@ -512,14 +536,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				TFormMetrics(
 					fsubselectFn(tropicItems, \item -> item.acc.metrics.width, horizontalCombiner, 0.0),
 					fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0),
-					if (isUrlParameterTrue("new") && (combiner == TLinesCombiner() || combiner == TLinesACombiner())) {
-						fsubselect(tropicItems, FLift(\items : [TDynamicGroupItem] ->
-							if (length(items) > 0) items[0].acc.metrics.baseline
-							else const(0.0)
-						))
-					} else {
-						fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
-					}
+					baseline
 				),
 				fsubselectFn(tropicItems, \item -> item.acc.minWidth, horizontalCombiner, 0.0),
 				fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0),
@@ -2223,7 +2240,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			}
 
 			isFullWidth = contains(style, FullWidth()) || parRightAlign || parCenterAlign;
-			wd = if (isFullWidth) parWidthB else fselect(metrics, FLift(\met -> met.width));
+			metWidth = fselect(metrics, FLift(\met -> met.width));
+			wd =
+				if (isFullWidth) {
+					if (!isUrlParameterFalse("paragraph_width_fix_enabled") && (contains(style, TooltipSupport()) || isUrlParameterTrue("new"))) {
+						fmax(parWidthB, metWidth)
+					} else {
+						parWidthB
+					}
+				} else metWidth;
 			hgt = fselect(metrics, FLift(\met -> met.height + parMargin.top + parMargin.bottom));
 
 			TAcc(
