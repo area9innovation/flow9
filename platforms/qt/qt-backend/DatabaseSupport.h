@@ -41,7 +41,9 @@ public:
     DECLARE_NATIVE_METHOD(closeDb);
     DECLARE_NATIVE_METHOD(escapeDb);
 
+    StackSlot requestDbBase(ByteCodeRunner*, QString queryString,  StackSlot* params);
     DECLARE_NATIVE_METHOD(requestDb);
+    DECLARE_NATIVE_METHOD(requestDbWithQueryParams);
     DECLARE_NATIVE_METHOD(requestExceptionDb);
 
     DECLARE_NATIVE_METHOD(requestDbMulti);

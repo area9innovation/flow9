@@ -5,6 +5,7 @@ import tools/flowc/flowc_usage;
 import tools/flowc/flowc_version;
 import tools/flowc/flowc_rename;
 import tools/flowc/flowc_outline;
+import tools/flowc/callgraph;
 import tools/flowc/backends/build;
 import tools/flowc/manipulation/deadcode;
 import tools/flowc/manipulation/cse;
@@ -117,13 +118,24 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 		printCallGraph(callgraphFilename, prog);
 	}
 
+	callpathFuncFrom = getConfigParameter(config, "callpath-from");
+	if (callpathFuncFrom != "") {
+		callpathFuncTo = getConfigParameterDef(config, "callpath-to", "main");
+		callpathMaxNum = s2i(getConfigParameterDef(config, "callpath-num", "32"));
+		pathInCallGraph(callpathFuncFrom, callpathFuncTo, callpathMaxNum, prog);
+	}
+
+	if (isAnyConfigParametersSet(config, ["calls-info", "calls-incoming", "calls-outgoing"])) {
+		lspCallHierarchyMethods(prog, env);
+	}
+
 	// Handle all switches that look and dump info about the program
 	handleFindOptions(env, file, prog);
 
 	// Extract translation data from program
 	xliff = isConfigParameterTrue(config, "xliff");
 	if (xliff) {
-		saveXliffData(prog, changeFileExt(fileNameOnly(file), ".xlf"));
+		saveXliffData(prog, changeFileExt(fileNameOnly(file), ".xlf"), getConfigParameter(config, "xliff-filter"));
 	}
 
 	lint = getConfigParameterDef(config, "lint", "0");
@@ -196,36 +208,6 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 	prog_optimized = optimizeCode(cse, env, file, makeTree());
 	incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
 	prog_optimized
-}
-
-printCallGraph(filename : string, prog : FiProgram) -> void {
-	lines = concatA(map(getTreeValues(prog.modules), \module -> {
-		config = prog.config.config;
-		useFullPath = isConfigParameterTrue(config, "callgraph-fullpath");
-
-		heading = "*** file: " + (if (useFullPath) module.fileinfo.fullpath else {module.fileinfo.flowfile + ".flow"});
-		functions = map(module.functions, \f : FiFunctionDec ->
-			Pair(f.name, fifreevars(f.lambda))
-		);
-		natives = map(module.natives, \f : FiNativeDec ->
-			Pair(f.name,
-				switch (f.fallbackLambda) {
-					FiLambda(__, __, __, __): fifreevars(f.fallbackLambda);
-					FiVoid(__): makeSet();
-					default: {
-						fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, f.fallbackLambda), prog.config.threadId);
-						makeSet()
-					}
-				}
-			)
-		);
-		lines2 = map(concat(natives, functions), \p : Pair<string, Set<string>> ->
-			p.first + ": " + strGlue(set2array(p.second), " ")
-		);
-		concat([heading], lines2)
-	}));
-	if (setFileContent(filename, strGlue(map(lines, \l -> l + "\n"), ""))) {}
-	else fcPrintln("Cannot write callgraph to file '" + filename + "'", prog.config.threadId);
 }
 
 runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {

@@ -1463,6 +1463,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function setSelection(start : Int, end : Int) : Void {
+		// setSelectionRange triggers 'focusin' event in Safari
+		if (Platform.isSafari && (start == -1 || end == -1)) {
+			return;
+		}
 		// Chrome doesn't support this method for 'number' inputs
 		try {
 			nativeWidget.setSelectionRange(start, end);

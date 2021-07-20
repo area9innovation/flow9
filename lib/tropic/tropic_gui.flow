@@ -238,10 +238,19 @@ export {
 	// If show is false initially tr function isn't called until show is true
 	TVisibleLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic;
 
-	// Crops only in X dimension
-	TCropSizeX : (content : Tropic, width : Tropic) -> Tropic;
-	// Crops only in Y dimension
-	TCropSizeY : (content : Tropic, height : Tropic) -> Tropic;
+	// Crops in one direction and forceably set given width/height
+	TCropWidth(content : Tropic, width : Tropic) -> Tropic;
+	TCropHeight(content : Tropic, height : Tropic) -> Tropic;
+	TCropWidth2(content : Tropic, width : Transform<double>) -> Tropic;
+	TCropHeight2(content : Tropic, height : Transform<double>) -> Tropic;
+	// Similar to TCrop*, but doesn't forceably increase metric if it is less than given width/height
+	TLimitWidth(content : Tropic, width : Tropic) -> Tropic;
+	TLimitHeight(content : Tropic, height : Tropic) -> Tropic;
+	TLimitWidth2(content : Tropic, width : Transform<double>) -> Tropic;
+	TLimitHeight2(content : Tropic, height : Transform<double>) -> Tropic;
+
+	// For backward compatibility
+	TCropSizeX(content : Tropic, width : Tropic) -> Tropic { TCropWidth(content, width) };
 
 	// ---
 	// TScrollable - DEPRECATED, use TScroll
@@ -304,9 +313,6 @@ export {
 	TAvailableWidth(tr : Tropic, available : Transform<double>) -> Tropic;
 	TAvailableHeight(tr : Tropic, available : Transform<double>) -> Tropic;
 	TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : Transform<double>) -> Tropic;
-
-	TCropWidth(tr : Tropic, w : Transform<double>) -> Tropic;
-	TCropHeight(tr : Tropic, h : Transform<double>) -> Tropic;
 
 	TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic;
 	TAlignHorizontalDir(align : CommonAlignment, isRTL : bool) -> (Tropic) -> Tropic;
@@ -1643,10 +1649,33 @@ TVisibleLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
 	}
 }
 
-TCropSizeX(content : Tropic, width : Tropic) -> Tropic {
+TCropWidth(content : Tropic, width : Tropic) -> Tropic {
+	TCropByOneMetricTropic(content, width, true, true)
+}
+
+TCropHeight(content : Tropic, height : Tropic) -> Tropic {
+	TCropByOneMetricTropic(content, height, false, true)
+}
+
+TLimitWidth(content : Tropic, width : Tropic) -> Tropic {
+	TCropByOneMetricTropic(content, width, true, false)
+}
+
+TLimitHeight(content : Tropic, height : Tropic) -> Tropic {
+	TCropByOneMetricTropic(content, height, false, false)
+}
+
+TCropByOneMetricTropic(content : Tropic, size : Tropic, cropByWidth : bool, force : bool) -> Tropic {
 	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
 		c = t2a(content, parent, sheet, metricsOnly);
-		b = t2a(width, parent, sheet, true);
+		sz = t2a(size, parent, sheet, true);
+
+		forceSize = \szMtr, mtr -> if (force) szMtr else fmin(szMtr, mtr);
+
+		metrics =
+			if (cropByWidth) TFormMetrics(c.metrics with width = forceSize(sz.metrics.width, c.metrics.width))
+			else TFormMetrics(c.metrics with height = forceSize(sz.metrics.height, c.metrics.height));
+
 		form =
 			if (metricsOnly)
 				FEmpty()
@@ -1654,24 +1683,58 @@ TCropSizeX(content : Tropic, width : Tropic) -> Tropic {
 				FCrop(
 					zero,
 					zero,
-					b.metrics.width,
-					c.metrics.height,
+					metrics.width,
+					metrics.height,
 					c.form
 				);
-		TAcc(c with
-			form = form,
-			minWidth = b.minWidth,
-			maxWidth = b.maxWidth,
-			metrics = TFormMetrics(c.metrics with width = b.metrics.width),
-			xFillers = b.xFillers
-		)
+		if (cropByWidth) {
+			TAcc(c with
+				form = form,
+				metrics = metrics,
+				minWidth = forceSize(sz.minWidth, c.minWidth),
+				maxWidth = forceSize(sz.maxWidth, c.maxWidth),
+				xFillers = sz.xFillers,
+				xConstant = c.xConstant && sz.xConstant
+			)
+		} else {
+			TAcc(c with
+				form = form,
+				metrics = metrics,
+				minHeight = forceSize(sz.minHeight, c.minHeight),
+				maxHeight = forceSize(sz.maxHeight, c.maxHeight),
+				yFillers = sz.yFillers,
+				yConstant = c.yConstant && sz.yConstant
+			)
+		}
 	});
 }
 
-TCropSizeY(content : Tropic, height : Tropic) -> Tropic {
+TCropWidth2(content : Tropic, width : Transform<double>) -> Tropic {
+	TCropByOneMetric(content, width, true, true)
+};
+
+TCropHeight2(content : Tropic, height : Transform<double>) -> Tropic {
+	TCropByOneMetric(content, height, false, true)
+};
+
+TLimitWidth2(content : Tropic, width : Transform<double>) -> Tropic {
+	TCropByOneMetric(content, width, true, false)
+};
+
+TLimitHeight2(content : Tropic, height : Transform<double>) -> Tropic {
+	TCropByOneMetric(content, height, false, false)
+};
+
+TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool, force : bool) -> Tropic {
 	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
 		c = t2a(content, parent, sheet, metricsOnly);
-		b = t2a(height, parent, sheet, true);
+		forceSize = \mtr -> if (force) size else fmin(size, mtr);
+		constant = \cnst -> isFConst(size) && (force || cnst);
+
+		metrics =
+			if (cropByWidth) TFormMetrics(c.metrics with width = forceSize(c.metrics.width))
+			else TFormMetrics(c.metrics with height = forceSize(c.metrics.height));
+
 		form =
 			if (metricsOnly)
 				FEmpty()
@@ -1679,17 +1742,31 @@ TCropSizeY(content : Tropic, height : Tropic) -> Tropic {
 				FCrop(
 					zero,
 					zero,
-					c.metrics.width,
-					b.metrics.height,
+					metrics.width,
+					metrics.height,
 					c.form
 				);
-		TAcc(c with
-			form = form,
-			minHeight = b.minHeight,
-			maxHeight = b.maxHeight,
-			metrics = TFormMetrics(c.metrics with height = b.metrics.height),
-			yFillers = b.yFillers
-		)
+
+		if (cropByWidth)
+			TAcc(
+				c with
+					form = form,
+					metrics = metrics,
+					minWidth = forceSize(c.minWidth),
+					maxWidth = forceSize(c.maxWidth),
+					xFillers = zero,
+					xConstant = constant(c.xConstant)
+			)
+		else
+			TAcc(
+				c with
+					form = form,
+					metrics = metrics,
+					minHeight = forceSize(c.minHeight),
+					maxHeight = forceSize(c.maxHeight),
+					yFillers = zero,
+					yConstant = constant(c.yConstant)
+			)
 	});
 }
 
@@ -2082,60 +2159,6 @@ TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : 
 	TransformTAcc(\t2a, pi, st, mo ->
 		t2a(tr, TParentInfo(pi with maxX = availableW, maxY = availableH), st, mo)
 	)
-}
-
-TCropWidth(tr : Tropic, width : Transform<double>) -> Tropic {
-	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
-		a = t2a(tr, parent, sheet, metricsOnly);
-		metrics = TFormMetrics(a.metrics with width = width);
-		form =
-			if (metricsOnly)
-				FEmpty()
-			else
-				FCrop(
-					zero,
-					zero,
-					metrics.width,
-					metrics.height,
-					a.form
-				);
-		TAcc(
-			a with
-				form = form,
-				minWidth = width,
-				maxWidth = width,
-				metrics = metrics,
-				xFillers = const(0.0),
-				xConstant = isFConst(width)
-		)
-	});
-}
-
-TCropHeight(tr : Tropic, height : Transform<double>) -> Tropic {
-	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
-		a = t2a(tr, parent, sheet, metricsOnly);
-		metrics = TFormMetrics(a.metrics with height = height);
-		form =
-			if (metricsOnly)
-				FEmpty()
-			else
-				FCrop(
-					zero,
-					zero,
-					metrics.width,
-					metrics.height,
-					a.form
-				);
-		TAcc(
-			a with
-				form = form,
-				minHeight = height,
-				maxHeight = height,
-				metrics = metrics,
-				yFillers = const(0.0),
-				yConstant = isFConst(height)
-		)
-	});
 }
 
 TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic {
