@@ -129,6 +129,8 @@ class RenderSupport {
 	}
 
 	public static function setAccessibilityZoom(zoom : Float) : Void {
+		debugLog('setAccessibilityZoom', zoom);
+		debugLog('accessibilityZoom', accessibilityZoom);
 		if (accessibilityZoom != zoom) {
 			accessibilityZoom = zoom;
 			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
@@ -143,6 +145,8 @@ class RenderSupport {
 	private static var accessibilityZoomTooltip : Dynamic;
 
 	public static function showAccessibilityZoomTooltip() : Void {
+		debugLog('browserZoom', browserZoom);
+
 		if (accessibilityZoomTooltip != null) {
 			Browser.document.body.removeChild(accessibilityZoomTooltip);
 			accessibilityZoomTooltip = null;
