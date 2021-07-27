@@ -3231,6 +3231,7 @@ class RenderSupport {
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
 		var oldNode = Browser.document.getElementById('app-favicon');
+		var oldIcons = Browser.document.querySelectorAll("link[rel='icon']");
 		var node = Browser.document.createElement('link');
 		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
@@ -3238,6 +3239,9 @@ class RenderSupport {
 		node.setAttribute("type", "image/ico");
 		if (oldNode != null) {
 			head.removeChild(oldNode);
+		}
+		if (oldIcons != null) {
+			untyped __js__("oldIcons.forEach(node => head.removeChild(node))");
 		}
 		head.appendChild(node);
 	}
