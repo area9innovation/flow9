@@ -1657,16 +1657,24 @@ public class Native extends NativeHost {
 	  return resArr;
 	}
 
-	public final Object concurrentAsyncCallback(Func2<Object, String, Func1<Object, Object>> task, Func1<Object,Object> onDone) {
+	public final Object concurrentAsyncCallback(
+		Func2<Object, String, Func1<Object, Object>> task,
+		Func1<Object, Object> onDone,
+		Func1<Object, String> onFail
+	) {
 		// thread #1
 		CompletableFuture.supplyAsync(() -> {
 			// thread #2
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
-			task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
-				// thread #2
-				completableFuture.complete(res);
-				return null;
-			});
+			try {
+				task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
+					// thread #2
+					completableFuture.complete(res);
+					return null;
+				});
+			} catch (Exception e) {
+				return onFail.invoke("Thread failed: " + e.getMessage());
+			}
 			Object result = null;
 			try {
 				result = completableFuture.get();
