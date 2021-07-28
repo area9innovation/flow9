@@ -1666,14 +1666,15 @@ public class Native extends NativeHost {
 		CompletableFuture.supplyAsync(() -> {
 			// thread #2
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
+			String threadId = Long.toString(Thread.currentThread().getId());
 			try {
-				task.invoke(Long.toString(Thread.currentThread().getId()), (res) -> {
+				task.invoke(threadId, (res) -> {
 					// thread #2
 					completableFuture.complete(res);
 					return null;
 				});
 			} catch (Exception e) {
-				return onFail.invoke("Thread failed: " + e.getMessage());
+				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
 			}
 			Object result = null;
 			try {
