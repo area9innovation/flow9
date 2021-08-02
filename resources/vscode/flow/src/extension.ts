@@ -9,6 +9,8 @@ import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
     LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RevealOutputChannelOn,
+	ErrorAction, CloseAction, Message
+
 } from 'vscode-languageclient/node';
 
 import * as tools from "./tools";
@@ -211,6 +213,15 @@ function startLspClient() {
 			//        is implemented properly in clangd
 			code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
 			protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
+		},
+		errorHandler: {
+			error: (error: Error, message: Message, count: number) => {
+				flowChannel.appendLine("ERR: " + message + "\n" + error.message);
+				return ErrorAction.Continue;
+			},
+			closed: () => {
+				return CloseAction.DoNotRestart;
+			}
 		}
 	}
 
