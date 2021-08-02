@@ -215,7 +215,7 @@ function startLspClient() {
 	}
 
 	// Create the language client and start the client.
-	client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
+	client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions, true);
 	// Start the client. This will also launch the server
 	client.start();
 	client.onReady().then(() => sendOutlineEnabledUpdate());
