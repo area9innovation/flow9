@@ -129,6 +129,8 @@ class RenderSupport {
 	}
 
 	public static function setAccessibilityZoom(zoom : Float) : Void {
+		debugLog('setAccessibilityZoom', zoom);
+		debugLog('accessibilityZoom', accessibilityZoom);
 		if (accessibilityZoom != zoom) {
 			accessibilityZoom = zoom;
 			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
@@ -143,6 +145,8 @@ class RenderSupport {
 	private static var accessibilityZoomTooltip : Dynamic;
 
 	public static function showAccessibilityZoomTooltip() : Void {
+		debugLog('browserZoom', browserZoom);
+
 		if (accessibilityZoomTooltip != null) {
 			Browser.document.body.removeChild(accessibilityZoomTooltip);
 			accessibilityZoomTooltip = null;
@@ -3227,6 +3231,7 @@ class RenderSupport {
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
 		var oldNode = Browser.document.getElementById('app-favicon');
+		var oldIcons = Browser.document.querySelectorAll("link[rel='icon']");
 		var node = Browser.document.createElement('link');
 		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
@@ -3234,6 +3239,9 @@ class RenderSupport {
 		node.setAttribute("type", "image/ico");
 		if (oldNode != null) {
 			head.removeChild(oldNode);
+		}
+		if (oldIcons != null) {
+			untyped __js__("oldIcons.forEach(node => head.removeChild(node))");
 		}
 		head.appendChild(node);
 	}

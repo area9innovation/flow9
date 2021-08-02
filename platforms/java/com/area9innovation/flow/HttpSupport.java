@@ -52,7 +52,7 @@ public class HttpSupport extends NativeHost {
 				con.setDoOutput(true); // Triggers POST.
 				con.setRequestMethod("POST");
 
-				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded"); 
+				con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 				con.setRequestProperty("charset", "utf-8");
 				con.setRequestProperty("Content-Length", Integer.toString(postDataLength));
 				con.setUseCaches(false);
@@ -68,7 +68,7 @@ public class HttpSupport extends NativeHost {
 						urlWithParams += "?" + urlParameters;
 					}
 				}
-				URL obj = new URL(urlWithParams);				
+				URL obj = new URL(urlWithParams);
 				// GET
 				con = (HttpURLConnection) obj.openConnection();
 				this.addHeaders(con, headers);
@@ -77,18 +77,18 @@ public class HttpSupport extends NativeHost {
 
 			int responseCode = con.getResponseCode();
 			onStatus.invoke(responseCode);
-	
+
 			// TODO: Make this asynchronous
 			BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
 			String inputLine;
 			StringBuffer response = new StringBuffer();
-	 
+
 			while ((inputLine = in.readLine()) != null) {
 				response.append(inputLine);
 				response.append('\n');
 			}
 			in.close();
-	
+
 			onData.invoke(response.toString());
         } catch (MalformedURLException e) {
         	onError.invoke("Malformed url " + url + " " + e.getMessage());
@@ -148,7 +148,7 @@ public class HttpSupport extends NativeHost {
 				this.addHeaders(con, headers);
 				con.setRequestProperty("charset", "utf-8");
 				con.setRequestMethod(method);
-				con.setDoOutput(true);	
+				con.setDoOutput(true);
 				con.setRequestProperty("Content-Length", Integer.toString(postDataLength));
 				con.setUseCaches(false);
 				try(DataOutputStream wr = new DataOutputStream(con.getOutputStream())) {
@@ -167,7 +167,7 @@ public class HttpSupport extends NativeHost {
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
 				con.setRequestMethod(method);
-				con.setDoOutput(true);				
+				con.setDoOutput(true);
 			}
 			con.setConnectTimeout(timeout.intValue());
 			con.setReadTimeout(timeout.intValue());
@@ -200,12 +200,16 @@ public class HttpSupport extends NativeHost {
 			ArrayList<Object[]> responseHeaders = new ArrayList();
 			Map<String, List<String>> respHeaders = con.getHeaderFields();
 	        for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
+				String key = entry.getKey();
+				if (key == null) key = "";
+
 				List<String> values = entry.getValue();
 				String value = "";
 				if (!values.isEmpty()) {
 					value = values.get(0);
 				}
-				String[] kv = {entry.getKey(), value};
+
+				String[] kv = {key, value};
 				responseHeaders.add(kv);
 			}
 
@@ -252,14 +256,14 @@ public class HttpSupport extends NativeHost {
 		return null;
 	}
 
-	public final Func0<Object> uploadFile(String url, 
-			Object[] params, 
-			Object[] headers, 
+	public final Func0<Object> uploadFile(String url,
+			Object[] params,
+			Object[] headers,
 			Object[] fileTypes,
 			Func0<Object> onOpen,
 			Func2<Boolean, String, Integer> onSelect,
 			Func1<Object, String> onData,
-			Func1<Object, String> onError, 
+			Func1<Object, String> onError,
 			Func2<Object, Double, Double> onProgress,
 			Func0<Object> onCancel) {
 		// TODO
@@ -270,12 +274,12 @@ public class HttpSupport extends NativeHost {
 
 	public final Func0<Object> uploadNativeFile(
 			Object file,
-			String url, 
-			Object[] params, 
-			Object[] headers, 
+			String url,
+			Object[] params,
+			Object[] headers,
 			Func0<Object> onOpen,
 			Func1<Object, String> onData,
-			Func1<Object, String> onError, 
+			Func1<Object, String> onError,
 			Func2<Object, Double, Double> onProgress) {
 
 		File _file = (File)file;
