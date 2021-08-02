@@ -23,8 +23,10 @@ fi
 
 mkdir -p flow/platforms/qt/bin/linux
 mkdir -p flow/bin
+mkdir -p flow/resources/fonts
 cp ${FLOW}/platforms/qt/bin/linux/QtByteRunner flow/platforms/qt/bin/linux/QtByteRunner
 cp ${FLOW}/bin flow/ -r
+cp ${FLOW}/resources/fonts flow/ -r
 
 sed "s|%QT_VERSION%|${QT_VERSION}|" Dockerfile.template > Dockerfile
 
