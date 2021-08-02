@@ -1373,7 +1373,7 @@ class RenderSupport {
 			emit("drawframe", timestamp);
 		}
 
-		if (PageWasHidden) {
+		if (PageWasHidden && !Browser.document.hidden) {
 			PageWasHidden = false;
 			InvalidateLocalStages();
 		} else if (Browser.document.hidden) {
