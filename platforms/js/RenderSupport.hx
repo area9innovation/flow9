@@ -1665,6 +1665,10 @@ class RenderSupport {
 		// STUB; only implemented in C++/OpenGL
 	}
 
+	public static function setVideoIsAudio(clip : VideoClip) : Void {
+		clip.setIsAudio();
+	}
+
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
 		fontslope : String, fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float,
 		alignBottom : Bool, bottomBorder : Float, scaleMode : Bool, scaleModeMin : Float, scaleModeMax : Float, escapeHTML : Bool) : Void {
