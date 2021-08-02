@@ -193,6 +193,7 @@ function stopLspClient() {
 function startLspClient() {
 	stopLspClient();
 	serverStatusBarItem.show();
+	vscode.window.showInformationMessage("process.platform: '" + process.platform + "'");
 	const serverOptions: ServerOptions = {
 		command: process.platform == "win32" ? 'flowc1_lsp.bat' : 'flowc1_lsp',
 		args: [],
