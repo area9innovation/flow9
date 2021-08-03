@@ -199,7 +199,7 @@ function startLspClient() {
 	const serverOptions: ServerOptions = {
 		command: process.platform == "win32" ? 'flowc1_lsp.bat' : 'flowc1_lsp',
 		args: [],
-		options: { detached: false }
+		options: { detached: false, shell: true }
 	};
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
