@@ -3245,7 +3245,12 @@ class RenderSupport {
 			head.removeChild(oldNode);
 		}
 		if (oldIcons != null) {
-			untyped __js__("oldIcons.forEach(node => head.removeChild(node))");
+			// untyped __js__("oldIcons.forEach(node => {head.removeChild(node);})");
+			untyped __js__("oldIcons.forEach(
+				function (node) {
+					head.removeChild(node);
+				}
+			)");
 		}
 		head.appendChild(node);
 	}
