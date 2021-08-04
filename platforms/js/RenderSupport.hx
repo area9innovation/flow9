@@ -1373,7 +1373,7 @@ class RenderSupport {
 			emit("drawframe", timestamp);
 		}
 
-		if (PageWasHidden) {
+		if (PageWasHidden && !Browser.document.hidden) {
 			PageWasHidden = false;
 			InvalidateLocalStages();
 		} else if (Browser.document.hidden) {
@@ -1663,6 +1663,10 @@ class RenderSupport {
 
 	public static function setVideoControls(clip : VideoClip, controls : Dynamic) : Void {
 		// STUB; only implemented in C++/OpenGL
+	}
+
+	public static function setVideoIsAudio(clip : VideoClip) : Void {
+		clip.setIsAudio();
 	}
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
@@ -3241,7 +3245,12 @@ class RenderSupport {
 			head.removeChild(oldNode);
 		}
 		if (oldIcons != null) {
-			untyped __js__("oldIcons.forEach(node => head.removeChild(node))");
+			// untyped __js__("oldIcons.forEach(node => {head.removeChild(node);})");
+			untyped __js__("oldIcons.forEach(
+				function (node) {
+					head.removeChild(node);
+				}
+			)");
 		}
 		head.appendChild(node);
 	}
