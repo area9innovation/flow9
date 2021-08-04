@@ -289,7 +289,8 @@ renderParagraphEx(
 	keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isParagraphMarked && i <= 1);
 	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word));
 
-	awB = make(if (tightWidth) INF_METRICS else 0.0);
+	extAwB = make(0.0);
+	intAwB = make(if (tightWidth) INF_METRICS else 0.0);
 	update = make(0);
 	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0, INF_METRICS));
 
@@ -361,7 +362,7 @@ renderParagraphEx(
 	updateLines(INF_METRICS);
 
 	renderedParagraph = Select(linesB, \lines -> {
-		aw = getValue(awB);
+		aw = getValue(intAwB);
 		trace(\ -> "renderedParagraph: " + toString(aw) + ", lines: " + toString(length(lines.lines)) + ", maxWidth: " + toString(lines.maxLineWidth) + ", rendered at " + toString(lines.aw));
 		prevAccessibilityParent = ^accessibilityParent;
 		accessibilityParent := paragraphAccessibilityParent;
@@ -403,7 +404,7 @@ renderParagraphEx(
 
 	Constructor(
 		Inspect(
-			[AvailableWidth2(awB)],
+			[AvailableWidth2(extAwB)],
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
 				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
 			} else {
@@ -411,10 +412,12 @@ renderParagraphEx(
 			}
 		),
 		\ -> {
+			resetTimer = ref nop;
 
 			uns = concatA([
 				[
-					subscribe(awB, updateLines),
+					subscribe(intAwB, updateLines),
+					connect(extAwB, intAwB)
 				],
 				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
@@ -422,13 +425,24 @@ renderParagraphEx(
 						// When an update from a dynamic element is requested, we do it in the next frame
 						if (u == 1) deferUntilNextFrameRendered(\ -> {
 							next(update, 0);
-							updateLines(getValue(awB))
+							updateLines(getValue(intAwB))
 						})
 					})
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
-					trace(\-> "dynamicWords["+i2s(i)+"] -> " + toString(m));
-					if (i < ndymamicUpper) updateLines(getValue(awB)) else nextDistinct(update, 1)
+					if (tightWidth) {
+						^resetTimer();
+						trace(\-> "SET intAw to INF_METRICS because of dynamicWords["+i2s(i)+"] -> " + toString(m));
+						nextDistinct(intAwB, INF_METRICS);
+						resetTimer:= interruptibleTimer(0, \-> {
+							resetTimer:= nop;
+							trace(\-> "RESTORE intAw after dynamicWords["+i2s(i)+"] -> " + toString(m) + " to current extAw " + toString(getValue(extAwB)));
+							nextDistinct(intAwB, getValue(extAwB));
+						});
+					} else {
+						trace(\-> "dynamicWords["+i2s(i)+"] -> " + toString(m));
+						if (i < ndymamicUpper) updateLines(getValue(intAwB)) else nextDistinct(update, 1)
+					}
 				})())
 			]);
 			\ -> applyall(uns)
