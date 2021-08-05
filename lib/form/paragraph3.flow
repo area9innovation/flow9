@@ -413,11 +413,28 @@ renderParagraphEx(
 		),
 		\ -> {
 			resetTimer = ref nop;
+			restartReflow = \reason -> {
+				^resetTimer();
+				trace(\-> "SET intAw " + toString(getValue(intAwB)) + " -> INF_METRICS because of " + reason);
+				nextDistinct(intAwB, INF_METRICS);
+				resetTimer:= interruptibleTimer(0, \-> {
+					resetTimer:= nop;
+					trace(\-> "RESTORE intAw after " + reason + " to current extAw " + toString(getValue(extAwB)));
+					nextDistinct(intAwB, getValue(extAwB));
+				});
+			}
 
 			uns = concatA([
 				[
 					subscribe(intAwB, updateLines),
-					connect(extAwB, intAwB)
+					subscribe(extAwB, \extAw-> {
+						if (tightWidth && extAw > getValue(intAwB)) {
+							restartReflow("extAw -> " + toString(extAw));
+						} else {
+							trace(\-> "IGNORE extAw change " + toString(extAw));
+							nextDistinct(intAwB, extAw)
+						}
+					})
 				],
 				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
@@ -431,14 +448,7 @@ renderParagraphEx(
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
 					if (tightWidth) {
-						^resetTimer();
-						trace(\-> "SET intAw to INF_METRICS because of dynamicWords["+i2s(i)+"] -> " + toString(m));
-						nextDistinct(intAwB, INF_METRICS);
-						resetTimer:= interruptibleTimer(0, \-> {
-							resetTimer:= nop;
-							trace(\-> "RESTORE intAw after dynamicWords["+i2s(i)+"] -> " + toString(m) + " to current extAw " + toString(getValue(extAwB)));
-							nextDistinct(intAwB, getValue(extAwB));
-						});
+						restartReflow("dynamicWords["+i2s(i)+"] -> " + toString(m));
 					} else {
 						trace(\-> "dynamicWords["+i2s(i)+"] -> " + toString(m));
 						if (i < ndymamicUpper) updateLines(getValue(intAwB)) else nextDistinct(update, 1)
