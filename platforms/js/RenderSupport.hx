@@ -129,6 +129,8 @@ class RenderSupport {
 	}
 
 	public static function setAccessibilityZoom(zoom : Float) : Void {
+		debugLog('setAccessibilityZoom', zoom);
+		debugLog('accessibilityZoom', accessibilityZoom);
 		if (accessibilityZoom != zoom) {
 			accessibilityZoom = zoom;
 			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
@@ -143,6 +145,8 @@ class RenderSupport {
 	private static var accessibilityZoomTooltip : Dynamic;
 
 	public static function showAccessibilityZoomTooltip() : Void {
+		debugLog('browserZoom', browserZoom);
+
 		if (accessibilityZoomTooltip != null) {
 			Browser.document.body.removeChild(accessibilityZoomTooltip);
 			accessibilityZoomTooltip = null;
@@ -1369,7 +1373,7 @@ class RenderSupport {
 			emit("drawframe", timestamp);
 		}
 
-		if (PageWasHidden) {
+		if (PageWasHidden && !Browser.document.hidden) {
 			PageWasHidden = false;
 			InvalidateLocalStages();
 		} else if (Browser.document.hidden) {
@@ -1659,6 +1663,10 @@ class RenderSupport {
 
 	public static function setVideoControls(clip : VideoClip, controls : Dynamic) : Void {
 		// STUB; only implemented in C++/OpenGL
+	}
+
+	public static function setVideoIsAudio(clip : VideoClip) : Void {
+		clip.setIsAudio();
 	}
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
@@ -3227,6 +3235,7 @@ class RenderSupport {
 	public static function setFavIcon(url : String) : Void {
 		var head = Browser.document.getElementsByTagName('head')[0];
 		var oldNode = Browser.document.getElementById('app-favicon');
+		var oldIcons = Browser.document.querySelectorAll("link[rel='icon']");
 		var node = Browser.document.createElement('link');
 		node.setAttribute("id", "app-favicon");
 		node.setAttribute("rel", "shortcut icon");
@@ -3234,6 +3243,14 @@ class RenderSupport {
 		node.setAttribute("type", "image/ico");
 		if (oldNode != null) {
 			head.removeChild(oldNode);
+		}
+		if (oldIcons != null) {
+			// untyped __js__("oldIcons.forEach(node => {head.removeChild(node);})");
+			untyped __js__("oldIcons.forEach(
+				function (node) {
+					head.removeChild(node);
+				}
+			)");
 		}
 		head.appendChild(node);
 	}
@@ -3292,7 +3309,7 @@ class RenderSupport {
 
 		var dispFn = function() {
 			// With fix disabled glitches start to happen on iPad after some snapshots
-			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_disable") != '1';
+			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_enable") == '1';
 			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");

@@ -475,14 +475,8 @@ MDynamicDataTable2TInner(
 								);
 
 							iteri(
-								splitWithoutHead(state.columnWidths, er) |> cutFirstColumn,
-								\i, r -> iter(r, \r0 : Transform<double> ->
-									switch (r0) {
-										DynamicBehaviour(__, __):
-											nextDistinct(r0, newSizes[i]);
-										default: {}
-									}
-								)
+								splitWithoutHead(state.columnCalculatedWidths, er) |> cutFirstColumn,
+								\i, r -> iter(r, \cellWidth -> nextDistinct(cellWidth, newSizes[i]))
 							)
 						})] else []
 					),
@@ -590,6 +584,7 @@ MDTState(
 	cellWs : Transform<[[DynamicBehaviour<double>]]>,
 	minWidths : [Transform<double>],
 	columnWidths : [Transform<double>],
+	columnCalculatedWidths : [DynamicBehaviour<double>],
 	rowHeight: double,
 	lineHeight : (bool) -> double,
 	headerActions : MHeaderActions,
@@ -717,9 +712,14 @@ makeMDataTableState(
 			)
 		));
 
-	minWidths = map(columns, \c -> fselect(c.width, FLift(\w -> i2d(w) + cellBorder)));
+	minWidths = map(columns, \c -> {
+		colEnabled = extractStruct(c.style, MEnabled(const(true))).enabled;
+		fif(colEnabled, fselect(c.width, FLift(\w -> i2d(w) + cellBorder)), zero)
+	});
+	columnCalculatedWidths = mapi(columns, \i, col -> make(fgetValue(minWidths[i])));
 	columnWidths : [Transform<double>] =
-		mapi(columns, \i, col ->
+		mapi(columns, \i, col -> {
+			colEnabled = extractStruct(col.style, MEnabled(const(true))).enabled;
 			eitherMap(
 				tryExtractStruct(col.style, MWidthByContentLimited(const(-1.), const(-1.))), \mwc ->
 				fsubselect(cellWs, FLift(\cWs ->
@@ -749,11 +749,12 @@ makeMDataTableState(
 					))
 				)),
 			if (fullWidth)
-				make(fgetValue(minWidths[i]))
+				columnCalculatedWidths[i]
 			else
 				minWidths[i]
 			)
-		);
+			|> (\w -> fif(colEnabled, w, zero))
+		});
 
 	cellBox = \i, h -> TSizedWidth(columnWidths[i], lineHeight(h));
 
@@ -803,6 +804,7 @@ makeMDataTableState(
 				TEmpty()
 			else {
 				colStyle = columns[i].style;
+				colEnabled = extractStruct(colStyle, MEnabled(const(true))).enabled;
 				box = cellBox(i, false);
 				content =
 					eitherMap(
@@ -820,6 +822,7 @@ makeMDataTableState(
 				MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
 				|> alignCellContent(p, cellBorder, colStyle, box)
 				|> (\t -> TAccess([TagName("td")], t))
+				|> (\t -> TShow(colEnabled, t))
 			}
 		})
 	};
@@ -855,6 +858,7 @@ makeMDataTableState(
 		cellWs,
 		minWidths,
 		columnWidths,
+		columnCalculatedWidths,
 		rowHeight,
 		lineHeight,
 		headerActions,
@@ -1171,6 +1175,7 @@ MDTTitles(
 		sortStyle = if (isReorder) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 		sortable = isSome(sortStyle) || (!isReorder && (sorting.hasExtOrderBy || contains(c.style, MAutoSort()) || contains(c.style, MAutoSortByRowData())));
 		columnWidthInspector = tryExtractStruct(c.style, MColumnWidthInspector(make(0.)));
+		colEnabled = extractStruct(c.style, MEnabled(const(true))).enabled;
 		i = i0 - state.headCount + 1;
 
 		defHeaderTitle = \isSelected : bool -> {
@@ -1314,6 +1319,7 @@ MDTTitles(
 				t
 			))
 		|> (\t -> TAccess([TagName("th")], t))
+		|> (\t -> TShow(colEnabled, t))
 	});
 }
 

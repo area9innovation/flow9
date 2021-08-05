@@ -538,7 +538,6 @@ MDropDownMenu2T(
 	tableRow = contains(style, MDataTableRow());
 	tableFooter = contains(style, MDataTableFooter());
 	customButton = tryExtractStruct(style, MCustomButton(TEmpty()));
-	customButtonBaselineOffsetEnabled = extractStruct(style, MCustomButtonBaselineOffsetEnabled(isUrlParameterTrue("baseline_offset_enable"))).enabled;
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
 	nonSpecified : MNonSpecifiedLine = extractStruct(style, MNonSpecified(MMenuSingleLine(_("Pick"), []))).item;
 	croppedButton = contains(style, MCroppedButton());
@@ -641,8 +640,7 @@ MDropDownMenu2T(
 		eitherFn(
 			customButton,
 			\cb ->
-				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None(), Some(buttonTitle), popupId, extractMButtonState(style))
-				|> (\f -> if (customButtonBaselineOffsetEnabled) TBaselineOffset(const(-12.), f) else f),
+				MMenuButton2T(manager, p, cb.button, m2t, openMenu, enabled, true, None(), Some(buttonTitle), popupId, extractMButtonState(style)),
 			\ -> {
 				lItems = length(items);
 
@@ -758,7 +756,6 @@ MMultiSelectDropDown2T(
 	addClear = contains(style, MAddClearButton());
 	showTooltip = extractStruct(style, MShowTooltip(const(true)));
 	customButton = tryExtractStruct(style, MCustomButton(TEmpty()));
-	customButtonBaselineOffsetEnabled = extractStruct(style, MCustomButtonBaselineOffsetEnabled(isUrlParameterTrue("baseline_offset_enable"))).enabled;
 	outlined = contains(style, MOutlined());
 	filled = contains(style, MFilled());
 	plain = !outlined && !filled;
@@ -841,8 +838,7 @@ MMultiSelectDropDown2T(
 					tryExtractStruct(m.style, MButtonTitle(const(""))),
 					popupId,
 					extractMButtonState(style)
-				)
-				|> (\f -> if (customButtonBaselineOffsetEnabled) TBaselineOffset(const(-12.), f) else f),
+				),
 			defMenuButton
 		)
 		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn);
@@ -940,6 +936,9 @@ MMenuTitle2T(
 	selected : bool,
 	widthByButton : bool,
 	width : double,
+	mWidthLimits : Maybe<MMenuWidthLimits>,
+	primaryWidth : Maybe<DynamicBehaviour<double>>,
+	secondaryWidth : Maybe<DynamicBehaviour<double>>,
 	showTooltip : Transform<bool>,
 	textStyle : [MTextStyle],
 	inspectMetrics : Maybe<Pair<DynamicBehaviour<double>, DynamicBehaviour<double>>>,
@@ -947,7 +946,7 @@ MMenuTitle2T(
 ) -> Tropic {
 	TSelect(title, \t ->
 		if (t != "")
-			(if (width > 0. || widthByButton)
+			(if (width > 0. || widthByButton || isSome(mWidthLimits))
 				MEllipsisText2T(
 					manager,
 					parent,
@@ -963,6 +962,10 @@ MMenuTitle2T(
 					),
 					m2t
 				)
+				|> (\t2 -> eitherMap(mWidthLimits, \limits ->
+					TAvailableWidth(t2, fsubtract(limits.maxWidth, faddition(either(primaryWidth, zero), either(secondaryWidth, zero)))),
+					t2
+				))
 			else
 				MText2T(
 					parent,
@@ -971,7 +974,8 @@ MMenuTitle2T(
 						replaceStructMany(textStyle, [selectedColor, FillOpacity(1.0)])
 					else
 						textStyle
-				))
+				)
+			)
 			|> (\f -> eitherMap(inspectMetrics, \insp -> TInspect([IBaseline(insp.first), Height(insp.second)], f), f))
 			|> (\f -> TAlignStartDir(f, parent.rtl))
 			|> (\f -> TCenterYIn(f, TFixed(0., lineHeight)))
@@ -990,7 +994,8 @@ MMenuPrimaryAction2T(
 	selectedColor : MColor,
 	selected : bool,
 	indent : bool,
-	m2t : (Material, MFocusGroup) -> Tropic
+	m2t : (Material, MFocusGroup) -> Tropic,
+	width : DynamicBehaviour<double>
 ) -> Tropic {
 	eitherMap(
 		tryExtractStruct(style, MPrimaryAction(TEmpty())),
@@ -1000,7 +1005,8 @@ MMenuPrimaryAction2T(
 			|> TBorderLeft(lineBorders)
 			|> (\f -> TFixSize(f, TFixed(40. + lineBorders, lineHeight))),
 		TFixed(lineBorders + if (indent) 40. else 0., 0.)
-	);
+	)
+	|> (\t -> TAttachWidth(t, width))
 }
 
 MMenuSecondaryAction2T(
@@ -1009,7 +1015,8 @@ MMenuSecondaryAction2T(
 	lineHeight : double,
 	lineBorders : double,
 	addPlayArrow : bool,
-	m2t : (Material, MFocusGroup) -> Tropic
+	m2t : (Material, MFocusGroup) -> Tropic,
+	width : DynamicBehaviour<double>
 ) -> Tropic {
 	eitherFn(
 		tryExtractStruct(style, MSecondaryAction(TEmpty())),
@@ -1029,8 +1036,8 @@ MMenuSecondaryAction2T(
 			TCenterIn(TBorder(8., 0., lineBorders, 0., TBaselineColsDir(secondaryAction, parent.rtl)), TFixed(0., lineHeight))
 		else
 			TFixed(lineBorders, 0.)
-	);
-
+	)
+	|> (\t -> TAttachWidth(t, width))
 }
 
 MDropDownMenuButton2T(
@@ -1047,6 +1054,7 @@ MDropDownMenuButton2T(
 	tableRow = contains(style0, MDataTableRow());
 	tableFooter = contains(style0, MDataTableFooter());
 	mWidth = extractStruct(style0, MWidth(-1.)).width;
+	mWidthLimits = tryExtractStruct(style0, MMenuWidthLimits(zero, zero));
 	croppedButton = contains(style0, MCroppedButton());
 	croppedTitle = contains(style0, MDropDownMenuCropByContent());
 	lineBorders0 = extractStruct(style0, MMenuLineBorders(if (tableFooter) 16. else 24.)).borders;
@@ -1103,8 +1111,10 @@ MDropDownMenuButton2T(
 	floatingLabelProgress = make(1.);
 	labelWidth = make(0.);
 
-	pAc = \st -> MMenuPrimaryAction2T(manager, parent, st, lineHeight, lineBorders, color, color, false, indent, m2t);
-	sAc = \st -> MMenuSecondaryAction2T(parent, st, lineHeight, lineBorders, false, m2t);
+	primaryWidth = make(0.);
+	secondaryWidth = make(0.);
+	pAc = \st -> MMenuPrimaryAction2T(manager, parent, st, lineHeight, lineBorders, color, color, false, indent, m2t, primaryWidth);
+	sAc = \st -> MMenuSecondaryAction2T(parent, st, lineHeight, lineBorders, false, m2t, secondaryWidth);
 
 	addActions = \st -> \t ->
 		TColsDir([
@@ -1142,8 +1152,9 @@ MDropDownMenuButton2T(
 				baseline = make(0.);
 				height = make(0.);
 
-				MMenuTitle2T(manager, parent, const(title), lineHeight, color, false,
-					false, mWidth, showTooltip, lineTextStyle, Some(Pair(baseline, height)), m2t
+				MMenuTitle2T(
+					manager, parent, const(title), lineHeight, color, false, false, mWidth, mWidthLimits,
+					Some(primaryWidth), Some(secondaryWidth), showTooltip, lineTextStyle, Some(Pair(baseline, height)), m2t
 				)
 				|> (\t -> TAlignStartDir(t, parent.rtl))
 				|> (\t ->
@@ -1402,7 +1413,7 @@ MMenuLinesState(
 	nearTitle : bool,
 	popupId : string,
 	activeDescendantId : DynamicBehaviour<string>,
-	makeTitle : (MFocusGroup, [MTextStyle], Transform<string>, bool, bool) -> Tropic
+	makeTitle : (MFocusGroup, [MTextStyle], Transform<string>, bool, bool, Maybe<DynamicBehaviour<double>>, Maybe<DynamicBehaviour<double>>) -> Tropic
 );
 
 MMenuLines2Material(
@@ -1499,12 +1510,12 @@ MMenuLines2Material(
 		else
 			style;
 
-	addActions = \parent, style, selected, addPlayArrow -> \t ->
+	addActions = \parent, style, selected, addPlayArrow, primaryWidth, secondaryWidth -> \t ->
 		TColsDir([
 			MMenuPrimaryAction2T(state.manager, parent, style, lineHeight, lineBorders, getTextColor(parent),
-				selectedColor(parent), selected, indent, state.m2t),
+				selectedColor(parent), selected, indent, state.m2t, primaryWidth),
 			t,
-			MMenuSecondaryAction2T(parent, style, lineHeight, lineBorders, addPlayArrow, state.m2t)
+			MMenuSecondaryAction2T(parent, style, lineHeight, lineBorders, addPlayArrow, state.m2t, secondaryWidth)
 		], parent.rtl)
 		|> (\t2 -> if (state.nearTitle) TGroup2(t2, TFillX()) else t2);
 
@@ -1550,15 +1561,18 @@ MMenuLines2Material(
 				);
 			lineTextStyle = extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(parent)))).style;
 
+			primaryWidth = make(0.);
+			secondaryWidth = make(0.);
+
 			MComponent2T(state.manager, parent, "MMenuSingleLine", focusState, \focus ->  // Display chosen item when expanded
 				eitherFn(title,
-					\t -> state.makeTitle(parent, lineTextStyle, const(t), selected, itemOnTop(i)),
+					\t -> state.makeTitle(parent, lineTextStyle, const(t), selected, itemOnTop(i), Some(primaryWidth), Some(secondaryWidth)),
 					\ ->
 						state.m2t(MAlignStart(either(content, TEmpty())), parent)
 						|> (\t -> TCenterYIn(t, TFixed(0., hgt)))
 						|> (\t -> TGroup2(TFillX(), t))
 				)
-				|> addActions(parent, style, selected, false)
+				|> addActions(parent, style, selected, false, primaryWidth, secondaryWidth)
 				|> (\t ->
 					TAlpha(
 						getMenuAlpha(focus, parent),
@@ -1592,13 +1606,15 @@ MMenuLines2Material(
 					)
 				else
 					f;
+			primaryWidth = make(0.);
+			secondaryWidth = make(0.);
 
 			MGetFocusGroup(\parent -> {
 				groupColor = extractMColor(parent, style, MPrimaryColor());
 				lineTextStyle = extractStruct(style, MCustomTextStyle([groupColor, MBodyBold()])).style;
 
-				state.makeTitle(parent, lineTextStyle, const(title), false, false)
-				|> addActions(parent, style, false, false)
+				state.makeTitle(parent, lineTextStyle, const(title), false, false, Some(primaryWidth), Some(secondaryWidth))
+				|> addActions(parent, style, false, false, primaryWidth, secondaryWidth)
 				|> makeTropicConstantHeight(Some(lineHeight))
 				|> (\f -> addLine(parent, f))
 			})
@@ -1643,9 +1659,12 @@ MMenuLines2Material(
 					);
 				actionsStyle = replaceStruct(style, MSecondaryAction(sAc));
 
+				primaryWidth = make(0.);
+				secondaryWidth = make(0.);
+
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
-					state.makeTitle(parent, lineTextStyle(parent), title, false, false)
-					|> addActions(parent, actionsStyle, false, false)
+					state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					|> addActions(parent, actionsStyle, false, false, primaryWidth, secondaryWidth)
 					|> (\t ->
 						TAlpha(
 							getMenuAlpha(focus, parent),
@@ -1676,6 +1695,9 @@ MMenuLines2Material(
 				subMenuPopupId = getPopupId(state.manager);
 				subFocusedItem = make(None());
 
+				primaryWidth = make(0.);
+				secondaryWidth = make(0.);
+
 				focusState =
 					replaceStructMany(
 						style,
@@ -1697,8 +1719,8 @@ MMenuLines2Material(
 					|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
 
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
-					state.makeTitle(parent, lineTextStyle(parent), title, false, false)
-					|> addActions(parent, style, false, true)
+					state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					|> addActions(parent, style, false, true, primaryWidth, secondaryWidth)
 					|> (\t ->
 						TAlpha(
 							getMenuAlpha(focus, parent),
@@ -1826,6 +1848,7 @@ MMenuLines2MPopup(
 	maxHeight = extractStruct(style0, MMaxHeight(-1.));
 	mWidth = extractStruct(style0, MWidth(-1.)).width;
 	widthByButton = contains(style0, MWidthByButton());
+	mWidthLimits = tryExtractStruct(style0, MMenuWidthLimits(zero, zero));
 	singleSelection = tryExtractStruct(style0, MSingleSelection(make(-1)));
 	selectedId = eitherMap(singleSelection, \ss -> getValue(ss.selected), -1);
 	selectedColor : (MFocusGroup) -> MColor = \parent -> MThemeColor2MColor(parent, extractStruct(style0, MSelectedColor(MAccentColor())).color);
@@ -1861,9 +1884,10 @@ MMenuLines2MPopup(
 	lineBorders = extractStruct(style0, MMenuLineBorders(if (tableFooter) 16. else 24.)).borders;
 	nearTitle = contains(style0, MDropDownIconNearTitle());
 
-	makeTitle = \parent, lineTextStyle, ttl, selected, onTop ->
-		MMenuTitle2T(manager, parent, ttl, lineHeight, selectedColor(parent), selected,
-			widthByButton, mWidth, showTooltip, lineTextStyle, None(), m2t
+	makeTitle = \parent, lineTextStyle, ttl, selected, onTop, primaryWidth, secondaryWidth ->
+		MMenuTitle2T(
+			manager, parent, ttl, lineHeight, selectedColor(parent), selected, widthByButton, mWidth, mWidthLimits,
+			primaryWidth, secondaryWidth, showTooltip, lineTextStyle, None(), m2t
 		)
 		|> (\t -> TAlignStartDir(t, parent.rtl))
 		|> (\f -> if (onTop && nearTitle) f else TGroup2(TFillX(), f));
@@ -1875,7 +1899,7 @@ MMenuLines2MPopup(
 				concat(
 					[[
 						MGetFocusGroup(\p ->
-							makeTitle(p, [MBodyBold(), MPrimaryColor()], const(lbl.label), false, false)
+							makeTitle(p, [MBodyBold(), MPrimaryColor()], const(lbl.label), false, false, None(), None())
 							|> TBorderLeftRight(lineBorders)
 							|> makeTropicConstantHeight(Some(lineHeight))
 						)
@@ -1957,8 +1981,16 @@ MMenuLines2MPopup(
 					arrayPush(f, RMWidth(fmin(fwidth(buttonWH), const(mWidth))))
 				else
 					arrayPush(f, RMWidth(fwidth(buttonWH)))
-			} else
-				ifArrayPush(f, mWidth > 0., RMWidth(const(mWidth)))
+			} else {
+				if (mWidth > 0.) {
+					arrayPush(f, RMWidth(const(mWidth)))
+				} else {
+					eitherMap(mWidthLimits, \limits ->
+						arrayPush(f, RMWidthLimits(limits.minWidth, limits.maxWidth)),
+						f
+					)
+				}
+			}
 		)
 		|> (\f -> {
 			offset =

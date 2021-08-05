@@ -2,6 +2,8 @@ import material/material_ui;
 import material/extra/docking_ui/internal/material_docking_styles;
 import material/extra/docking_ui/internal/material_docking_theme;
 import material/extra/docking_ui/internal/material_docking_state;
+import material/extra/docking_ui/internal/material_docking_workspace;
+
 
 
 
@@ -15,7 +17,7 @@ export {
 	initializeDockingAreas(state : MDockingState, areaTitle : string) -> void;
 	// Estimate size for panel's resizable container
 	calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool, se : bool, ex : bool, pID : int) -> double;
-
+	// Correct panel size
 	makeFillPanelSubscriber(
 		isColumn : bool,
 		rowId : int,
@@ -27,17 +29,11 @@ export {
 		style : [MDockingAreaStyle]
 	) -> () -> () -> void;
 
-	// Cache docking state
-	addDockingSuffix(input : string) -> string;
-	dockingState2json(state : MDockingState) -> Json;
-	setMDockingStateKeyValue(state : MDockingState) -> bool;
-	removeMDockingStateKeyValue(state : MDockingState) -> void;
-
 	// Handles & buttons
 	makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material;
 	makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material;
-	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool) -> Material;
-	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material;
+	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool, light : bool) -> Material;
+	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, aStyle : [MDockingAreaStyle], style : [MDockingStyle]) -> Material;
 	makeMDIconToggleButton(boolB : DynamicBehaviour<bool>, iconOn : string, iconOff : string, tooltipOn : string, tooltipOff : string, iconSize: double, clickFn : () -> void, iconColor : MColor, fillOp : double) -> Material;
 
 	// Utils
@@ -87,6 +83,7 @@ initializeDockingAreas(state : MDockingState, areaTitle : string) -> void {
 
 undockPanel(state : MDockingState, panelId : int) -> void {
 	// println("undock panel: " + i2s(panelId));
+	// nextDistinct(getValue(state.expanded)[panelId], true); // expand before undock
 	next(state.dock, mapi(getValue(state.dock), \j, item -> if (j == panelId) MDock(-1, item.colId, item.rowId) else item));
 }
 
@@ -124,66 +121,6 @@ extractAreaGridAlignedById(state : MDockingState, dockA: [MDock], areaId : int) 
 		)
 		|> (\f -> filter(f, \item -> item.first != [] || item.second != []))
 	}
-}
-
-addDockingSuffix(input : string) -> string {
-	input + "_MDockingPanels"
-}
-
-setMDockingStateKeyValue(state : MDockingState) -> bool {
-	keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
-	// println("> setKey: " + keyGroupName); // debug print
-	setKeyValue(keyGroupName |> addDockingSuffix, json2string(dockingState2json(state)));
-}
-
-removeMDockingStateKeyValue(state : MDockingState) -> void {
-	keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
-	removeKeyValue(keyGroupName |> addDockingSuffix)
-}
-
-dockingState2json(state : MDockingState) -> Json {
-	dockA = getValue(state.dock);
-	dockAjson = 
-		JsonObject(
-			mapi(dockA,\panelId, dock -> {
-				title = getValue(state.title)[panelId];
-				enabled = getValue(getValue(state.enabled)[panelId]);
-				expanded = getValue(getValue(state.expanded)[panelId]);
-				sideExpanded = getValue(getValue(state.sideExpanded)[panelId]);
-				size = getValue(state.size)[panelId];
-				mobileSize = getValue(state.mobileSize)[panelId];
-				dockedSize = getValue(state.dockedSize)[panelId];
-				pos = getValue(getValue(state.positions)[panelId]);
-				pstyle = getValue(state.panelStyle)[panelId];
-				isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
-
-
-				Pair(i2s(panelId),
-					JsonObject(
-						[
-							Pair("title", JsonString(title)),
-							Pair("areaId", JsonDouble(i2d(dock.areaId))),
-							Pair("colId", JsonDouble(i2d(dock.colId))),
-							Pair("rowId", JsonDouble(i2d(dock.rowId))),
-							Pair("x", JsonDouble(pos.x)),
-							Pair("y", JsonDouble(pos.y)),
-							Pair("w", JsonDouble(size.width)),
-							Pair("h", JsonDouble(size.height)),
-							Pair("mobileW", JsonDouble(dockedSize.width)),
-							Pair("mobileH", JsonDouble(dockedSize.height)),
-							Pair("dockedW", JsonDouble(dockedSize.width)),
-							Pair("dockedH", JsonDouble(dockedSize.height)),
-							Pair("enabled", JsonBool(enabled)),
-							Pair("expanded", JsonBool(expanded)),
-							Pair("sideExpanded", JsonBool(sideExpanded)),
-							Pair("endAligned", JsonBool(isEndAligned)),
-						]
-					)
-				);
-
-			}));
-	// json2stringFormatted(dockAjson) |> println;  // Debug print
-	dockAjson
 }
 
 makeFillPanelSubscriber(
@@ -289,8 +226,8 @@ calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool,
 	dSize = getValue(state.dockedSize)[pId];
 	pW = dSize.width;
 	pH = dSize.height;
-	// println("calculate: pId: " + i2s(pId) + "  |  en: " + b2s(en) + "  |  se: " + b2s(se) + "  |  ex: " + b2s(ex));
-	if (en) {
+
+	h = if (en) {
 		if (se) {
 			if (ex) {
 				if (isColumn) {
@@ -306,6 +243,8 @@ calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool,
 			}
 		} else topBarH;
 	} else 0.0;
+	// println("calculate: " + getValue(state.title)[pId] + "  | pId: " + i2s(pId) + "  |  en: " + b2s(en) + "  |  se: " + b2s(se) + "  |  ex: " + b2s(ex) + "  | " + d2s(h)  + "  | " + d2s(pH));
+	h
 }
 
 makeMDIconToggleButton(
@@ -326,12 +265,12 @@ makeMDIconToggleButton(
 makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material {
 	dockingSeparatorSize = getDSeparatorSize(isColumn, state.style);
 	dragHandleSize = makeVSize(dockingSeparatorSize, isColumn);
-	draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, style))], dragHandleSize);
+	draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, state.style))], dragHandleSize);
 	pstyle = getValue(state.panelStyle)[panelId];
 	draggingBarInactive(light) |> showIf(!isToolbar)
 }
 
-makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool) -> Material {
+makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool, light : bool) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
 	dontMove  = dontShow || contains(pstyle, MDPanelDontMove());
@@ -396,8 +335,7 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 				MCopySize(t, \sz -> 
 					MCenterIn(
 						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {
-							TRounded(
-								0.0, 0.0, dockingRadius, dockingRadius, 
+							TRounded4(dockingRadius,
 								[MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 0.3)], 
 								makeColFixedSize(16.0, handleW, isColumn)
 							) 	
@@ -422,9 +360,10 @@ reverseSideExpandedinColA(state : MDockingState, colA : [int]) -> void {
 	nextDistinct(state.sideExpanded, seA);
 }
 
-makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, style : [MDockingStyle]) -> Material {	
-	isRightCol  = contains(style, MDockingRightCols());
-	se = getValue(getValue(state.sideExpanded)[colA[0]]);
+makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, aStyle : [MDockingAreaStyle], style : [MDockingStyle]) -> Material {	
+	isRightCol  = contains(aStyle, MDockingRightCols());
+	dRadius = getDockingRadius(state.style);
+	seB = getValue(state.sideExpanded)[firstElement(colA, 0)];
 	btnSize = makeHSize(sideExpanderButtonSize, isColumn);
 	btnFiller = if(isColumn) TFillX() else TFillY();
 	sideExpFn = \ -> {
@@ -440,21 +379,25 @@ makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light 
 		if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
 	}
 	 
-	sideExpBtnLabel = if (if (getDefaultRtl()) !isRightCol else isRightCol) {
-		if (se) "skip_next" else "skip_previous";
-	} else {
-		if (!se) "skip_next" else "skip_previous";
+	sideExpBtn = \lg : bool -> {
+		MSelect(seB, \se -> { 
+			sideExpBtnLabel = if (if (getDefaultRtl()) !isRightCol else isRightCol) {
+				if (se) "skip_next" else "skip_previous";
+			} else {
+				if (!se) "skip_next" else "skip_previous";
+			}
+			MIcon(sideExpBtnLabel, [MIconSize(sideExpanderIconSize), titleColorFn(lg, style)])
+				|> (\m -> if (isColumn) m else MRotate90Left(m));
+		})
 	}
-	sideExpBtn = \lg : bool -> MIcon(sideExpBtnLabel, [MIconSize(sideExpanderButtonSize - 2.0), titleColorFn(lg, style)])
-		|> (\m -> if (isColumn) m else MRotate90Left(m));
 
 	sideExpBtnItem = \lg : bool -> MGroup2(
-		TRectangle([MFill(sideExpanderBgColorFn(lg, style))], btnSize),
-		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg), TFixed(2.0, 2.0)]) else MColsA([TFixed(2.0, 2.0), sideExpBtn(lg), btnFiller])
+		TRounded4(min(2.0, dRadius), [MFill(sideExpanderBgColorFn(lg, state.style))], btnSize),
+		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg)]) else MColsA([sideExpBtn(lg), btnFiller])
 	);
 	sideExpBtnItemHover = \lg : bool -> MGroup2(
-		TRectangle([MFill(sideExpanderHoverColorFn(lg, style))], btnSize),
-		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg), TFixed(2.0, 2.0),]) else MColsA([TFixed(2.0, 2.0), sideExpBtn(lg)])
+		TRounded4(min(2.0, dRadius), [MFill(sideExpanderHoverColorFn(lg, style))], btnSize),
+		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg)]) else sideExpBtn(lg)
 	);
 	MRawButton(sideExpBtnItem(light), sideExpBtnItemHover(light), sideExpBtnItem(light), sideExpBtnItem(light), "", [], [TOnClicked(sideExpFn)]);
 }
