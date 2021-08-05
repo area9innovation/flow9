@@ -74,10 +74,12 @@ export class FlowNotebookController {
 
   
 	constructor() {
-	  this._controller = vscode.notebooks.createNotebookController(this.id, 'flow-notebook', this.label);
-	  this._controller.supportedLanguages = this.supportedLanguages;
-	  this._controller.supportsExecutionOrder = true;
-	  this._controller.executeHandler = this._executeAll.bind(this);
+        startExecutor();
+        this.setupExecutorCallbacks();
+        this._controller = vscode.notebooks.createNotebookController(this.id, 'flow-notebook', this.label);
+        this._controller.supportedLanguages = this.supportedLanguages;
+        this._controller.supportsExecutionOrder = true;
+        this._controller.executeHandler = this._executeAll.bind(this);
 	}
   
 	dispose(): void {
@@ -95,8 +97,9 @@ export class FlowNotebookController {
   
 	  execution.executionOrder = ++this._executionOrder;
 	  execution.start(Date.now());
+      this.executeCell(cell, execution);
   
-	  try {
+	  /*try {
 		execution.replaceOutput([new vscode.NotebookCellOutput([
 		  vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()), "x-application/sample-json-renderer"),
 		  vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()))
@@ -108,7 +111,7 @@ export class FlowNotebookController {
 		  vscode.NotebookCellOutputItem.error(err)
 		])]);
 		execution.end(false, Date.now());
-	  }
+	  }*/
 	}
 
 
@@ -136,13 +139,13 @@ export class FlowNotebookController {
 		executor.on("exit", (code : number, signal : string) => executor = null);
     }
 
-	async executeCell(cell: vscode.NotebookCell): Promise<void> {
-        return this.executeCellDeferred(cell)();
+	async executeCell(cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): Promise<void> {
+        return this.executeCellDeferred(cell)(execution);
     }
-    executeCellDeferred(cell: vscode.NotebookCell): () => Promise<void> {
+    executeCellDeferred(cell: vscode.NotebookCell): (execution: vscode.NotebookCellExecution) => Promise<void> {
         if (cell.kind == vscode.NotebookCellKind.Code /*&& cell.document.languageId == "flow"*/) {
-            return () => new Promise((resolve, reject) => {
-                this.setCellRunning(cell);
+            return (execution: vscode.NotebookCellExecution) => new Promise((resolve, reject) => {
+                this.setCellRunning(cell, execution);
                 const code = this.prepareCellCode(cell);
                 const should_be_rendered = this.cellShouldBeRendered(cell);
 				//const js_opts = "readable=1";
@@ -159,9 +162,9 @@ export class FlowNotebookController {
                     const wrap_resolve = () => { this.callback = (s: string) => { }; resolve(); }
                     const wrap_reject  = () => { this.callback = (s: string) => { }; reject(); }
                     if (should_be_rendered) {
-                        this.callback = this.makeHtmlOutCallback(wrap_resolve, wrap_reject, cell);
+                        this.callback = this.makeHtmlOutCallback(wrap_resolve, wrap_reject, cell, execution);
                     } else {
-                        this.callback = this.makeTextOutCallback(wrap_resolve, wrap_reject, cell);
+                        this.callback = this.makeTextOutCallback(wrap_resolve, wrap_reject, cell, execution);
                     }
                 }
             });
@@ -195,16 +198,16 @@ export class FlowNotebookController {
 		startExecutor();
         this.setupExecutorCallbacks();
     }
-    private makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell): (a : string) => void { 
+    private makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
         let first_try = true;
         return (buffer : string) => {
             buffer = buffer.replace("\"No carrier\"", "");
             if (first_try) {
                 if (buffer.indexOf('Error:') == -1) {
-                    this.setCellTextSuccess(cell, buffer);
+                    this.setCellTextSuccess(cell, buffer, execution);
                     resolve();
                 } else if (buffer == "Error: interrupted") {
-                    this.setCellFail(cell, buffer);
+                    this.setCellFail(cell, buffer, execution);
                     reject(buffer);
                 } else {
                     const code = this.prepareCellCode(cell);
@@ -217,26 +220,26 @@ export class FlowNotebookController {
                 }
             } else {
                 if (buffer.indexOf('Error:') == -1) {
-                    this.setCellTextSuccess(cell, buffer);
+                    this.setCellTextSuccess(cell, buffer, execution);
                     resolve();
                 } else {
-                    this.setCellFail(cell, buffer);
+                    this.setCellFail(cell, buffer, execution);
                     reject(buffer);
                 }
             }
         }
     }
-    private makeHtmlOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell): (a : string) => void { 
+    private makeHtmlOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
         return (buffer : string) => {
             buffer = buffer.replace("\"No carrier\"", "");
             if (buffer.indexOf('Error:') == -1) {
                 //if (buffer.length > 10000) {
                 //    kernelChannel.appendLine("buffer.length: " + buffer.length);
                 //}
-                this.setCellHtmlSuccess(cell, buffer);
+                this.setCellHtmlSuccess(cell, buffer, execution);
                 resolve();
             } else {
-                this.setCellFail(cell, buffer);
+                this.setCellFail(cell, buffer, execution);
                 reject(buffer);
             }
         }
@@ -246,19 +249,28 @@ export class FlowNotebookController {
         // Leave only one new line after a line of code (remove extra newlines)
         return code.replace(/(\r\n|\r|\n){2,}/g, '\n').trim();
     }
-    private setCellRunning(cell: vscode.NotebookCell): void {
+    private setCellRunning(cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): void {
         cell.metadata.runState = "vscode.NotebookCellRunState.Running";
         this.start = +new Date();
         cell.metadata.runStartTime = this.start;
         cell.metadata.executionOrder = ++this.runIndex;
     }
-    private setCellTextSuccess(cell: vscode.NotebookCell, result: string): void {
-        cell.outputs = [{outputKind: vscode.CellOutputKind.Text, text: result}];
-		cell.executionSummary.success = true;
-        cell.metadata.runState = vscode.NotebookCellRunState.Success;
-        cell.metadata.lastRunDuration = +new Date() - this.start;
+    private setCellTextSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
+
+        //cell.outputs = [{outputKind: vscode.CellOutputKind.Text, text: result}];
+		//cell.executionSummary.success = true;
+        //cell.metadata.runState = vscode.NotebookCellRunState.Success;
+        //cell.metadata.lastRunDuration = +new Date() - this.start;
+
+        execution.replaceOutput(new vscode.NotebookCellOutput([
+            //vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()), "x-application/sample-json-renderer"),
+            //vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()))
+            vscode.NotebookCellOutputItem.text(result)
+        ]));
+    
+        execution.end(true, Date.now());
     }
-    private setCellHtmlSuccess(cell: vscode.NotebookCell, result: string): void {
+    private setCellHtmlSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
 		const js_file = readFileSync("www/cell_" + cell.index  + ".html.js").toString();
 		const html_file = readFileSync("www/cell_" + cell.index  + ".html").toString();
 		const test_html_file = readFileSync("www/test.html").toString();
@@ -266,7 +278,7 @@ export class FlowNotebookController {
 		//kernelChannel.appendLine("js_file.length: " + js_file.length);
 		//kernelChannel.appendLine("html_file.length: " + html_file.length);
 
-        cell.outputs = [{
+        /*cell.outputs = [{
             outputKind: vscode.CellOutputKind.Rich, 
             data: {
                 "text/plain": [
@@ -282,17 +294,34 @@ export class FlowNotebookController {
             }
         }];
         cell.metadata.runState = vscode.NotebookCellRunState.Success;
-        cell.metadata.lastRunDuration = +new Date() - this.start;
+        cell.metadata.lastRunDuration = +new Date() - this.start;*/
+
+
+        execution.replaceOutput(new vscode.NotebookCellOutput([
+            //vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()), "x-application/sample-json-renderer"),
+            //vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()))
+            vscode.NotebookCellOutputItem.text(result, 'text/plain'),
+            vscode.NotebookCellOutputItem.text(js_file, 'application/javascript'),
+            vscode.NotebookCellOutputItem.text(js_file, 'text/x-javascript'),
+            vscode.NotebookCellOutputItem.text("<!DOCTYPE html>\n" + html_file, 'text/html'),
+        ]));
+    
+        execution.end(true, Date.now());
     }
-    private setCellFail(cell: vscode.NotebookCell, message: string): void {
-        cell.outputs = [{
+    private setCellFail(cell: vscode.NotebookCell, message: string, execution: vscode.NotebookCellExecution): void {
+        /*cell.outputs = [{
             outputKind: vscode.CellOutputKind.Error,
             ename: "flow kernel",
             evalue: message,
             traceback: []
         }];
         cell.metadata.runState = vscode.NotebookCellRunState.Error;
-        cell.metadata.lastRunDuration = undefined;
+        cell.metadata.lastRunDuration = undefined;*/
+
+        execution.replaceOutput(new vscode.NotebookCellOutput([
+            vscode.NotebookCellOutputItem.error(Error(message))
+        ]));
+        execution.end(true, Date.now());
     }
     private cellShouldBeRendered(cell: vscode.NotebookCell): boolean {
         const code = cell.document.getText();
@@ -349,7 +378,7 @@ export class FlowNotebookProvider implements vscode.NotebookContentProvider {
 		await vscode.workspace.fs.writeFile(targetResource, encoder.encode(JSON.stringify(contents)));
     }
 }
-*/
+
 export class FlowNotebookKernelProvider implements vscode.NotebookKernelProvider {
     async provideKernels(document: vscode.NotebookDocument, token: vscode.CancellationToken): Promise<[FlowNotebookKernel]> {
         return new Promise((resolve, reject) => {
@@ -361,7 +390,7 @@ export class FlowNotebookKernelProvider implements vscode.NotebookKernelProvider
         });
     }
 }
-
+*/
 export function killExecutor(): void {
 	if (executor) {
 		executor.stdin.write("exit");
@@ -384,6 +413,7 @@ export function startExecutor(): void {
 let executor : ChildProcess = null;
 let kernelChannel: vscode.OutputChannel = vscode.window.createOutputChannel("Flow Notebook kernel");
 
+/*
 class FlowNotebookKernel implements vscode.NotebookKernel {
     label: "flow";
     private runIndex: number = 0;
@@ -581,6 +611,7 @@ class FlowNotebookKernel implements vscode.NotebookKernel {
         return code.indexOf('render') != -1 || code.indexOf('material') != -1;
     }
 }
+*/
 
 export function createNotebook(): void {
     let ask: vscode.InputBoxOptions = { prompt: "Notebook file: ", placeHolder: "" };
