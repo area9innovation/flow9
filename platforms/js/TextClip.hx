@@ -1244,7 +1244,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
-		var newValue : String = nativeWidget.value;
+		// Some browsers tend to return nativeWidget.value without decimal separator at the end, but still visually display it
+		var decimalSeparatorFix = type == 'number' && (e.data == '.' || e.data == ',');
+		var nativeWidgetValue = decimalSeparatorFix ? nativeWidget.value + e.data : nativeWidget.value;
+		var newValue : String = nativeWidgetValue;
 
 		if (maxChars > 0) {
 			newValue = newValue.substr(0, maxChars);
@@ -1265,14 +1268,20 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (newValue != nativeWidget.value) {
+		var setNewValue = function(val) {
+			if ((Platform.isChrome || Platform.isEdge) && decimalSeparatorFix) {
+				nativeWidget.value = '';
+			}
+			nativeWidget.value = newValue;
+		}
+
+		if (newValue != nativeWidgetValue) {
 			if (e != null && e.data != null && e.data.length != null) {
 				var newCursorPosition : Int = untyped cursorPosition + newValue.length - nativeWidget.value.length + e.data.length;
-
-				nativeWidget.value = newValue;
+				setNewValue(newValue);
 				setSelection(newCursorPosition, newCursorPosition);
 			} else {
-				nativeWidget.value = newValue;
+				setNewValue(newValue);
 			}
 		} else {
 			var selectionStart = getSelectionStart();
