@@ -64,7 +64,6 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.flowConsole', flowConsole),
 		reg_comm('flow.execCommand', execCommand),
 		reg_comm('flow.runUI', runUI),
-		reg_comm('flow.createNotebook', notebook.createNotebook),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
 		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
 		new notebook.FlowNotebookController(),
@@ -172,7 +171,7 @@ function startHttpServer() {
 			serverChannel.show();
 		}
 		httpServer = tools.launchFlowcHttpServer(
-			getFlowRoot(), 
+			tools.getFlowRoot(), 
 			showHttpServerOnline, 
 			showHttpServerOffline,
 			(msg : any) => serverChannel.appendLine(msg)
@@ -263,7 +262,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
     if (null == flowRepoUpdateChannel) {
         flowRepoUpdateChannel = vscode.window.createOutputChannel("Flow Update");
     }
-    const flowRoot = getFlowRoot();
+    const flowRoot = tools.getFlowRoot();
     if (!fs.existsSync(flowRoot)) {
         await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
         return;
@@ -392,16 +391,6 @@ function compileCurrentFile(extra_args : string[] = [], on_compiled : () => void
 	);
 }
 
-function getFlowRoot(): string {
-    const config = vscode.workspace.getConfiguration("flow");
-	let root: string = config.get("root");
-	if (!fs.existsSync(root)) {
-		root = tools.run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
-		config.update("root", root, vscode.ConfigurationTarget.Global);
-	}
-	return root;
-}
-
 function processFile(
 	getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs,
 	use_lsp : boolean,
@@ -415,7 +404,7 @@ function processFile(
         let current = ++counter;
         flowChannel.clear();
         flowChannel.show(true);
-        let flowpath: string = getFlowRoot();
+        let flowpath: string = tools.getFlowRoot();
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
