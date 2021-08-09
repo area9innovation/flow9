@@ -684,7 +684,7 @@ class DisplayObjectHelper {
 		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
-		if (isHTMLRenderer(clip) && !fromSnapshot) {
+		if (isHTMLRenderer(clip) && !(fromSnapshot && Util.getParameter("webclip_snapshot_enabled") != "0")) {
 			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
