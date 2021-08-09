@@ -3302,7 +3302,7 @@ class RenderSupport {
 
 		untyped RenderSupport.LayoutText = true;
 		emit("enable_sprites");
-		child.setScrollRect(x, y, w, h);
+		child.setScrollRect(x, y, w, h, true);
 
 		PixiStage.forceClipRenderable();
 		render();
