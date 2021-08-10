@@ -525,7 +525,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontSize = '${style.fontSize}px';
 		nativeWidget.style.background = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
+		nativeWidget.style.lineHeight = '${(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -541,10 +541,11 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				var lineHeightGap = (style.lineHeight - (style.fontSize * 1.15)) / 2.0;
+				baselineWidget.style.height = '${(style.fontProperties.fontSize + lineHeightGap)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
+				untyped console.log(style.fontProperties.descent);
+				nativeWidget.style.marginTop = '${-(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -705,7 +706,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function measureFont() : Void {
-		style.fontProperties = TextMetrics.measureFont(style.toFontString());
+		untyped __js__("this.style.fontProperties = PIXI.TextMetrics.measureFont(this.style.toFontString(), this.style.fontSize);");
 	}
 
 	private function layoutText() : Void {
