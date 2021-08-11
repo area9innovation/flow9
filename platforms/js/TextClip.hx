@@ -705,7 +705,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function measureFont() : Void {
-		style.fontProperties = TextMetrics.measureFont(style.toFontString());
+		untyped __js__("this.style.fontProperties = PIXI.TextMetrics.measureFont(this.style.toFontString(), this.style.fontSize);");
 	}
 
 	private function layoutText() : Void {
