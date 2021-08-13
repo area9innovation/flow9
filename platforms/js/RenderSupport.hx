@@ -1432,9 +1432,22 @@ class RenderSupport {
 		render();
 	}
 
+	private static var onPasteEnabled = true;
+	public static inline function enablePasteEventListener() : Void {
+		onPasteEnabled = true;
+	}
+	public static inline function disablePasteEventListener() : Void {
+		onPasteEnabled = false;
+	}
+
 	public static function addPasteEventListener(fn : Array<Dynamic> -> Void) : Void -> Void {
-		on("paste", fn);
-		return function() { off("paste", fn); };
+		var filteredFn = function(arg : Array<Dynamic>) {
+			if (onPasteEnabled) {
+				fn(arg);
+			}
+		 }
+		on("paste", filteredFn);
+		return function() { off("paste", filteredFn); };
 	}
 
 	public static function addMessageEventListener(fn : String -> String -> Void) : Void -> Void {

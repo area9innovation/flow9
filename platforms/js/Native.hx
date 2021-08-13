@@ -214,6 +214,7 @@ class Native {
 			untyped textArea.select();
 
 			try {
+				RenderSupport.disablePasteEventListener();
 				var successful = Browser.document.execCommand('paste');
 
 				if (successful) {
@@ -224,6 +225,7 @@ class Native {
 			} catch (err : Dynamic) {
 				Errors.report('Oops, unable to paste');
 			}
+			RenderSupport.enablePasteEventListener();
 
 			Browser.document.body.removeChild(textArea);
 
