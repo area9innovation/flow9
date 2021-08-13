@@ -214,7 +214,14 @@ class Native {
 			untyped textArea.select();
 
 			try {
-				RenderSupport.disablePasteEventListener();
+				#if js
+				untyped __js__("
+					if (typeof RenderSupport !== 'undefined') {
+						RenderSupport.disablePasteEventListener();
+					}
+				");
+				#end
+
 				var successful = Browser.document.execCommand('paste');
 
 				if (successful) {
@@ -225,7 +232,14 @@ class Native {
 			} catch (err : Dynamic) {
 				Errors.report('Oops, unable to paste');
 			}
-			RenderSupport.enablePasteEventListener();
+
+			#if js
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined') {
+					RenderSupport.enablePasteEventListener();
+				}
+			");
+			#end
 
 			Browser.document.body.removeChild(textArea);
 
