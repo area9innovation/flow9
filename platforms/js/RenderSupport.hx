@@ -3470,6 +3470,10 @@ class RenderSupport {
 		cb(clip.evalJS(code));
 	}
 
+	public static function webClipCustomRequest(clip : Dynamic, headers : Array<Array<String>>) : Void {
+		clip.makeCustomRequest(headers);
+	}
+
 	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {
 		return new HTMLStage(width, height);
 	}

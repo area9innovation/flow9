@@ -136,6 +136,30 @@ class WebClip extends NativeWidgetClip {
 		};
 	}
 
+	public function makeCustomRequest(headers : Array<Array<String>>) {
+		var xhr = new js.html.XMLHttpRequest();
+	    xhr.open('GET', iframe.src);
+	    xhr.onreadystatechange = onCustomResponse;
+	    untyped xhr.responseType = 'document';
+	    untyped __js__('headers.forEach(function (header) {
+	        xhr.setRequestHeader(header[0], header[1]);
+	    })');
+	    iframe.src = null;
+	    xhr.send();
+	}
+
+	public function onCustomResponse(event : Dynamic) {
+		try {
+			var iframeDocument = iframe.contentWindow.document;
+			iframeDocument.open();
+			iframeDocument.write(event.currentTarget.response.documentElement.innerHTML);
+			iframeDocument.close();
+
+		} catch (e : Dynamic) {
+			untyped console.warn("Error onCustomResponse : ", e.message);
+		}
+	}
+
 	private function applyShrinkToFit() {
 		if (this.getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
 			var scaleH = nativeWidget.clientHeight / this.htmlPageHeight;
