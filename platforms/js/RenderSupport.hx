@@ -3286,14 +3286,10 @@ class RenderSupport {
 	}
 
 	public static function getSnapshot() : String {
-		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), true);
+		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
 	}
 
 	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
-		return getSnapshotBox2(x, y, w, h, false);
-	}
-
-	public static function getSnapshotBox2(x : Int, y : Int, w : Int, h : Int, ?fullSnapshot : Bool = false) : String {
 		var child : FlowContainer = untyped PixiStage.children[0];
 
 		if (child == null) {
@@ -3308,9 +3304,7 @@ class RenderSupport {
 		render();
 
 		var dispFn = function() {
-			// With fix disabled glitches start to happen on iPad after some snapshots
-			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_enable") == '1';
-			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 
