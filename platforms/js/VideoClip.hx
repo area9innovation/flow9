@@ -31,6 +31,7 @@ class VideoClip extends FlowContainer {
 	private var subtitlesScaleModeMin : Float = -1.0;
 	private var subtitlesScaleModeMax : Float = -1.0;
 	private var autoPlay : Bool = false;
+	private var isAudio : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
@@ -105,7 +106,7 @@ class VideoClip extends FlowContainer {
 
 		autoPlay = !startPaused;
 		addVideoSource(filename, "");
-		videoWidget = Browser.document.createElement("video");
+		videoWidget = Browser.document.createElement(this.isAudio ? "audio" : "video");
 
 		if (this.isHTMLRenderer()) {
 			this.initNativeWidget("div");
@@ -173,8 +174,11 @@ class VideoClip extends FlowContainer {
 			this.updateNativeWidgetMask();
 			nativeWidget.style.transform = 'none';
 
-			var width = Math.round(this.getWidth() * untyped this.transform.scale.x);
-			var height = Math.round(this.getHeight() * untyped this.transform.scale.y);
+			var width0 = Math.round(this.getWidth() * untyped this.transform.scale.x);
+			var height0 = Math.round(this.getHeight() * untyped this.transform.scale.y);
+
+			var width = Math.isNaN(width0) ? 0 : width0;
+			var height = Math.isNaN(height0) ? 0 : height0;
 
 			videoWidget.width = width;
 			videoWidget.height = height;
@@ -214,6 +218,10 @@ class VideoClip extends FlowContainer {
 		if (videoWidget != null) {
 			videoWidget.loop = loop;
 		}
+	}
+
+	public function setIsAudio() : Void {
+		this.isAudio = Util.getParameter("new") == "1" && Util.getParameter("video2audio") != "1";
 	}
 
 	public function playVideo(filename : String, startPaused : Bool) : Void {
