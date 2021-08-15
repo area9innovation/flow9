@@ -66,18 +66,12 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.runUI', runUI),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
 		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
-		new notebook.FlowNotebookController(),
-		//vscode.notebooks.registerNotebookContentProvider('flow-notebook', new notebook.FlowNotebookProvider()),
-		//vscode.notebooks.registerNotebookKernelProvider({filenamePattern: "*.{noteflow,flow}"}, new notebook.FlowNotebookKernelProvider())
+		new notebook.FlowNotebookController()
 	);
 	editors.forEach(editor => context.subscriptions.push(editor.register(context)));
-	notebook.startExecutor();
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show();
-
-	checkHttpServerStatus(true);
-	setInterval(checkHttpServerStatus, 3000, false);
 
 	// Create an LSP client
 	startLspClient();
@@ -222,7 +216,11 @@ function startLspClient() {
 	client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
 	// Start the client. This will also launch the server
 	client.start();
-	client.onReady().then(() => sendOutlineEnabledUpdate());
+	client.onReady().then(() => {
+		sendOutlineEnabledUpdate();
+		checkHttpServerStatus(true);
+		setInterval(checkHttpServerStatus, 3000, false);
+	});
 }
 
 function showHttpServerOnline(mem_stats : string = null) {
@@ -243,7 +241,6 @@ export function deactivate() {
 	if (httpServer) {
 		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
 	}
-	notebook.killExecutor();
     // kill all child processed we launched
     childProcesses.forEach(child => { 
         child.kill('SIGKILL'); 
