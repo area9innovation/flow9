@@ -78,7 +78,7 @@ export class FlowNotebookController {
   
 	private execChainOfPromises(promises: (() => Promise<void>)[], i : integer): void {
 		if (i < promises.length) {
-			promises[i]().then(
+			promises[i]().then( 
 				() => this.execChainOfPromises(promises, i + 1),
 				(x : string) => {
 					vscode.window.showErrorMessage("CHAIN OF PROMISES FAILED", x);
@@ -121,7 +121,7 @@ export class FlowNotebookController {
 			const is_repl_command = this.isAReplCommand(cell);
 			const flow_dir = tools.getFlowRoot();
 			const html_opts = 
-				"verbose=1 bin-dir=" + flow_dir + "/bin/ readable=1 js-call-main=1 repl-compile-output=1 repl-no-quit=1";
+				"verbose=1 bin-dir=" + flow_dir + "/bin/ js-call-main=1 repl-compile-output=1 repl-no-quit=1 repl-save-tmp=1";
 			const request = should_be_rendered ? 
 				"compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
 				(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force\n" + code + "\n\nexec cell_" + cell.index + "\n"); 
@@ -135,6 +135,7 @@ export class FlowNotebookController {
 				if (is_repl_command) {
 					this.callback = this.makeTextOutCallback(wrap_resolve, wrap_reject, cell, execution);
 				} else if (should_be_rendered) {
+					vscode.window.showInformationMessage("shouldbe rendered" + escape(request));
 					this.callback = this.makeHtmlOutCallback(wrap_resolve, wrap_reject, cell, execution);
 				} else {
 					this.callback = (s: string) => { 
@@ -183,13 +184,16 @@ export class FlowNotebookController {
 	private setCellHtmlSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
 		const js_file = readFileSync("www/cell_" + cell.index  + ".html.js").toString();
 		const html_file = readFileSync("www/cell_" + cell.index  + ".html").toString();
-		const test_html_file = readFileSync("www/test.html").toString();
-		execution.replaceOutput(new vscode.NotebookCellOutput([
-			vscode.NotebookCellOutputItem.text("output: '" + result + "'", 'text/plain'),
-			vscode.NotebookCellOutputItem.text(js_file, 'application/javascript'),
-			vscode.NotebookCellOutputItem.text(js_file, 'text/x-javascript'),
-			vscode.NotebookCellOutputItem.text("<!DOCTYPE html>\n" + html_file, 'text/html'),
-		]));
+		vscode.window.showInformationMessage("html_file: '" + html_file.slice(0, 128) + "'");
+		execution.replaceOutput(new vscode.NotebookCellOutput(
+			[
+				vscode.NotebookCellOutputItem.text("<!DOCTYPE html>\n" + html_file, 'text/html'),
+				vscode.NotebookCellOutputItem.text(result, 'text/plain'),
+				//vscode.NotebookCellOutputItem.text(js_file, 'application/javascript'),
+				//vscode.NotebookCellOutputItem.text(js_file, 'text/x-javascript'),
+			], 
+			{'enableScripts': true}
+		));
 		execution.end(true, Date.now());
 	}
 	private setCellFail(cell: vscode.NotebookCell, message: string, execution: vscode.NotebookCellExecution): void {

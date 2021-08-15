@@ -79,7 +79,7 @@ fcReplReadCommand(env : FcReplEnv) -> FcReplCommand {
 	if (length(splitted) == 0) {
 		fcReplReadCommand(env);
 	} else {
-		fcReplDebug("REPL have read command: " + comm + ", args: " + strGlue(args, ", "), env.config, 1);
+		fcReplDebug("REPL have read command: " + comm + ", args: " + strGlue(args, ", "), env.config, 0);
 		if (comm == "help") {
 			details = if (length(args) == 0) "" else args[0];
 			fcReplPrintln(fcReplPrintHelp(details), env.config);
@@ -131,7 +131,7 @@ fcReplReadCommand(env : FcReplEnv) -> FcReplCommand {
 				}
 			}
 		} else if (comm == "compile") {
-			FcReplCompile(fcReadCode(env.config), tail(args)); 
+			FcReplCompile(fcReadCode(env.config), args); 
 		} else if (comm == "add") {
 			if (length(args) == 0) {
 				fcReplPrintln("add command must take an argument: the name of a code piece", env.config);
@@ -285,7 +285,7 @@ fcReplLoopStep(env : FcReplEnv) -> FcReplEnv {
 }
 
 fcDeleteGently(file : string, config : CompilerConfig) -> void {
-	if (fileExists(file)) {
+	if (fileExists(file) && isConfigParameterFalse(config.config, "repl-save-tmp")) {
 		err = deleteFile(file);
 		if (err != "") {
 			fcReplPrintln(err, config);
@@ -349,19 +349,25 @@ fcPrepareStatsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 }
 
 fcPrepareDeclsSource(env : FcReplEnv, code : string, args : [string]) -> string {
+	main = if (strContains(code, "main()")) "" else 
+	blueprint("
+		main() -> void {
+			%quit%
+		}
+		",
+		["quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"]
+	);
 	blueprint("
 		%env_code%
 
 		%cur_code%
 		
-		main() -> void {
-			%quit%
-		}
+		%main%
 		",
 		[
 			"env_code", fcReplJoinCode(env),
 			"cur_code", code,
-			"quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"
+			"main", main
 		]
 	);
 }
@@ -449,7 +455,7 @@ fcReplCompile(env : FcReplEnv, code0 : string, args : [string]) -> bool {
 					}
 				}
 			}
-			cmp_code = execSystemProcess(flowc, concat(args, ["___tmp___.flow"]), ".", print_err, print_out);
+			cmp_code = execSystemProcess(flowc, concat(args, ["___tmp___.flow"]), ".", print_out, print_err);
 			fcDeleteGently("___tmp___.flow", env.config);
 			(^err_count == 0) && (cmp_code == 0);
 		}
@@ -491,7 +497,7 @@ fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 			flowcpp = "flowcpp" + (if (hasTargetName("windows")) ".bat" else "");
 			compile_code = 
 				if (engine == "jar") {
-					cmp_code = execSystemProcess(flowc, ["jar=1", "___tmp___.flow"], ".", print_err, println);
+					cmp_code = execSystemProcess(flowc, ["jar=1", "___tmp___.flow"], ".", print_out, print_err);
 					if (cmp_code == 0) {
 						execSystemProcess("java", ["-jar", "___tmp___.jar"], ".", print_out, print_out);
 						{ }
@@ -499,7 +505,7 @@ fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 					fcDeleteGently("___tmp___.jar", env.config);
 					cmp_code
 				} else if (engine == "js") {
-					cmp_code = execSystemProcess(flowc, ["es6=___tmp___.js", "nodejs=1", "___tmp___.flow"], ".", print_err, println);
+					cmp_code = execSystemProcess(flowc, ["es6=___tmp___.js", "nodejs=1", "___tmp___.flow"], ".", print_out, print_err);
 					if (cmp_code == 0) {
 						execSystemProcess("js", ["___tmp___.js"], ".", print_out, print_out);
 						{ }
@@ -507,7 +513,7 @@ fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 					fcDeleteGently("___tmp___.js", env.config);
 					cmp_code
 				} else if (engine == "bc") {
-					cmp_code = execSystemProcess(flowc, ["bytecode=1", "___tmp___.flow"], ".", print_err, println);
+					cmp_code = execSystemProcess(flowc, ["bytecode=1", "___tmp___.flow"], ".", print_out, print_err);
 					if (cmp_code == 0) {
 						execSystemProcess(flowcpp, ["--batch", "___tmp___.bytecode"], ".", print_out, print_out);
 						{ }
