@@ -94,7 +94,7 @@ fcReplReadCommand(env : FcReplEnv) -> FcReplCommand {
 				fcReplPrintln("show command must take an argument: the name of a code piece", false, env.config);
 			} else {
 				if (args[0] == "all") {
-					fcReplPrintln(fcReplJoinCode(env), true, env.config);
+					fcReplPrintln(fcReplJoinCode(env, true), true, env.config);
 				} else {
 					switch (lookupTree(env.pieces, args[0])) {
 						Some(piece): fcReplPrintln(piece.code, true, env.config);
@@ -260,7 +260,7 @@ fcReplLoopStep(env : FcReplEnv) -> FcReplEnv {
 			FcReplEnv(env with pieces = removeFromTree(env.pieces, name));
 		}
 		FcReplSave(file): {
-			setFileContent(file, fcReplJoinCode(env));
+			setFileContent(file, fcReplJoinCode(env, true));
 			env;
 		}
 		FcReplImport(file): {
@@ -317,7 +317,7 @@ fcPrepareExpSource(env : FcReplEnv, code : string, args : [string]) -> string {
 		}
 		",
 		[
-			"env_code", fcReplJoinCode(env),
+			"env_code", fcReplJoinCode(env, false),
 			"expr_code", code,
 			"quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"
 		]
@@ -334,7 +334,7 @@ fcPrepareStatsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 		}
 		",
 		[
-			"env_code", fcReplJoinCode(env),
+			"env_code", fcReplJoinCode(env, false),
 			"main_code", code,
 			"quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"
 		]
@@ -358,7 +358,7 @@ fcPrepareDeclsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 		%main%
 		",
 		[
-			"env_code", fcReplJoinCode(env),
+			"env_code", fcReplJoinCode(env, false),
 			"cur_code", code,
 			"main", main
 		]
@@ -376,7 +376,7 @@ fcPreparePieceSource(env : FcReplEnv, piece : FcReplPiece, args : [string]) -> s
 }
 
 fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplPiece> {
-	env_code = fcReplJoinCode(env);
+	env_code = fcReplJoinCode(env, false);
 	code1 = trim2(code0, " \t\n\r");
 	cur_code = if (code1 != "" && !endsWith(code1, ";")) code1 + ";" else code1;
 	cur_unwrapped = fcReplUnwrapfcReplPrintln(cur_code);
@@ -535,21 +535,20 @@ fcReplOnOut(output : FcReplOutput, env : FcReplEnv) -> (string) -> void {
 	}
 }
 
-fcReplJoinCode(env : FcReplEnv) -> string {
+fcReplJoinCode(env : FcReplEnv, all : bool) -> string {
 	imports = uniq(concat(env.imports, ["string"]));
 	strGlue(map(imports, \imp -> "import " + 
 		(if (endsWith(imp, ";")) imp else imp + ";")
 	), "\n") + "\n\n" +
 	(if (sizeTree(env.pieces) == 0) "" else 
 		concatStrings(map(
-			filter(tree2pairs(env.pieces), \pair -> 
+			sortCustom(tree2pairs(env.pieces), \p -> p.first, true), 
+			\pair -> 
 				switch (pair.second) {
-					FcReplDecls(__,__): true;
-					FcReplStats(__,__): false;
-					FcReplExp(__,__): false;
+					FcReplDecls(name, code): "// " + name + "\n" + code + "\n";
+					FcReplStats(name, code): if (all) "// " + name + "\n/* \n" + strIndent(code) + "\n*/\n" else "";
+					FcReplExp(name, code):   if (all) "// " + name + "\n//" + strReplace(code, "\n", "\\n") + "\n" else "";
 				}
-			), 
-			\p -> "// " + p.first + "\n" + p.second.code + "\n"
 		))
 	) +
 	(if (env.code == "") "" else env.code + "\n\n");
