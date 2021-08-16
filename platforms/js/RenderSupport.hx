@@ -1373,7 +1373,7 @@ class RenderSupport {
 			emit("drawframe", timestamp);
 		}
 
-		if (PageWasHidden) {
+		if (PageWasHidden && !Browser.document.hidden) {
 			PageWasHidden = false;
 			InvalidateLocalStages();
 		} else if (Browser.document.hidden) {
@@ -1432,9 +1432,22 @@ class RenderSupport {
 		render();
 	}
 
+	private static var onPasteEnabled = true;
+	public static inline function enablePasteEventListener() : Void {
+		onPasteEnabled = true;
+	}
+	public static inline function disablePasteEventListener() : Void {
+		onPasteEnabled = false;
+	}
+
 	public static function addPasteEventListener(fn : Array<Dynamic> -> Void) : Void -> Void {
-		on("paste", fn);
-		return function() { off("paste", fn); };
+		var filteredFn = function(arg : Array<Dynamic>) {
+			if (onPasteEnabled) {
+				fn(arg);
+			}
+		 }
+		on("paste", filteredFn);
+		return function() { off("paste", filteredFn); };
 	}
 
 	public static function addMessageEventListener(fn : String -> String -> Void) : Void -> Void {
@@ -1663,6 +1676,10 @@ class RenderSupport {
 
 	public static function setVideoControls(clip : VideoClip, controls : Dynamic) : Void {
 		// STUB; only implemented in C++/OpenGL
+	}
+
+	public static function setVideoIsAudio(clip : VideoClip) : Void {
+		clip.setIsAudio();
 	}
 
 	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int,
@@ -3241,7 +3258,12 @@ class RenderSupport {
 			head.removeChild(oldNode);
 		}
 		if (oldIcons != null) {
-			untyped __js__("oldIcons.forEach(node => head.removeChild(node))");
+			// untyped __js__("oldIcons.forEach(node => {head.removeChild(node);})");
+			untyped __js__("oldIcons.forEach(
+				function (node) {
+					head.removeChild(node);
+				}
+			)");
 		}
 		head.appendChild(node);
 	}
@@ -3277,14 +3299,10 @@ class RenderSupport {
 	}
 
 	public static function getSnapshot() : String {
-		return getSnapshotBox2(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()), true);
+		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
 	}
 
 	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
-		return getSnapshotBox2(x, y, w, h, false);
-	}
-
-	public static function getSnapshotBox2(x : Int, y : Int, w : Int, h : Int, ?fullSnapshot : Bool = false) : String {
 		var child : FlowContainer = untyped PixiStage.children[0];
 
 		if (child == null) {
@@ -3293,15 +3311,13 @@ class RenderSupport {
 
 		untyped RenderSupport.LayoutText = true;
 		emit("enable_sprites");
-		child.setScrollRect(x, y, w, h);
+		child.setScrollRect(x, y, w, h, true);
 
 		PixiStage.forceClipRenderable();
 		render();
 
 		var dispFn = function() {
-			// With fix disabled glitches start to happen on iPad after some snapshots
-			var ipadFixEnabled = Util.getParameter("snapshot_ipad_fix_enable") == '1';
-			if (!(fullSnapshot && ipadFixEnabled)) child.removeScrollRect();
+			child.removeScrollRect();
 			untyped RenderSupport.LayoutText = false;
 			emit("disable_sprites");
 

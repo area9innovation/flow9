@@ -536,7 +536,7 @@ class DisplayObjectHelper {
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
-	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
+	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float, ?fromSnapshot : Bool = false) : Void {
 		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		left = round(left);
@@ -562,7 +562,7 @@ class DisplayObjectHelper {
 			clip.scrollRect = new FlowGraphics();
 			scrollRect = clip.scrollRect;
 
-			setClipMask(clip, scrollRect);
+			setClipMask(clip, scrollRect, fromSnapshot);
 			clip.addChild(scrollRect);
 		}
 
@@ -633,7 +633,7 @@ class DisplayObjectHelper {
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
-	public static inline function setClipMask(clip : FlowContainer, maskContainer : Container) : Void {
+	public static inline function setClipMask(clip : FlowContainer, maskContainer : Container, ?fromSnapshot : Bool = false) : Void {
 		if (maskContainer != clip.scrollRect) {
 			removeScrollRect(clip);
 		}
@@ -684,7 +684,7 @@ class DisplayObjectHelper {
 		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
-		if (isHTMLRenderer(clip)) {
+		if (isHTMLRenderer(clip) && !(fromSnapshot && Util.getParameter("webclip_snapshot_enabled") != "0")) {
 			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
