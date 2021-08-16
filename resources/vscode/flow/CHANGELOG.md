@@ -169,4 +169,4 @@
 - a test editor written in flow is added. Readme is updated with instructions how to implement a custom editor written in flow. 
 
 ## 0.5.0
- - flow notebook, based on proposed Vscode Notebook API, is added. Work only in code-insiders with '--enable-proposed-api area9.flow' option.
+ - flow notebook, based on Vscode Notebook API, is added.
