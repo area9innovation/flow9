@@ -64,149 +64,143 @@ export class FlowNotebookController {
 	private readonly _controller: vscode.NotebookController;
   
 	constructor() {
-		this.startExecutor();
+		this._startExecutor(() => {});
 		this._controller = vscode.notebooks.createNotebookController(this.id, 'flow-notebook', this.label);
 		this._controller.supportedLanguages = this.supportedLanguages;
 		this._controller.supportsExecutionOrder = true;
 		this._controller.executeHandler = this._executeAll.bind(this);
 	}
-  
 	dispose(): void {
-		this.killExecutor()
+		this._killExecutor();
 		this._controller.dispose();
 	}
-  
-	private execChainOfPromises(promises: (() => Promise<void>)[], i : integer): void {
+	private _execChainOfPromises(promises: (() => Promise<void>)[], i : integer): void {
 		if (i < promises.length) {
 			promises[i]().then( 
-				() => this.execChainOfPromises(promises, i + 1),
-				(x : string) => {
-					vscode.window.showErrorMessage("CHAIN OF PROMISES FAILED", x);
-				}
+				() => this._execChainOfPromises(promises, i + 1),
+				(x : string) => { }
 			);
-		} else {
-			vscode.window.showInformationMessage("CHAIN OF PROMISES COMPLETED");
 		}
 	}
-
 	private _executeAll(cells: vscode.NotebookCell[], _notebook: vscode.NotebookDocument, _controller: vscode.NotebookController): void {
-		//for (let cell of cells) {
-		//	this.executeCell(cell);
-		//}
-		//const promises = cells.map(this.executeCell.bind(this));
-		this.execChainOfPromises(cells.map(this.executeCell.bind(this)), 0);
-		//Promise.all().then(() => vscode.window.showInformationMessage("PROMISE COMPLETED"));
+		this._execChainOfPromises(cells.map(this._executeCell.bind(this)), 0);
 	}
-  
-	/*private async _doExecution(cell: vscode.NotebookCell): Promise<void> {
-		if (!this.executor) {
-			this.startExecutor();
-		}
-		const execution = this._controller.createNotebookCellExecution(cell);	
-		execution.executionOrder = ++this._executionOrder;
-		execution.start(Date.now());
-		this.executeCell(cell, execution);
-	}*/
-
-	private executeCell(cell: vscode.NotebookCell): () => Promise<void> {
+	private _executeCell(cell: vscode.NotebookCell): () => Promise<void> {
 		return () => new Promise((resolve, reject) => {
-			if (!this.executor) {
-				this.startExecutor();
-			}
-			const execution = this._controller.createNotebookCellExecution(cell);	
-			execution.executionOrder = ++this._executionOrder;
-			execution.start(Date.now());
-			const code = this.prepareCellCode(cell);
-			const should_be_rendered = this.cellShouldBeRendered(cell);
-			const is_repl_command = this.isAReplCommand(cell);
-			const flow_dir = tools.getFlowRoot();
-			const html_opts = 
-				"verbose=1 bin-dir=" + flow_dir + "/bin/ js-call-main=1 repl-compile-output=1 repl-no-quit=1 repl-save-tmp=1";
-			const request = should_be_rendered ? 
-				"compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
-				(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force\n" + code + "\n\nexec cell_" + cell.index + "\n"); 
-			vscode.window.showInformationMessage("REQ1: " + escape(request));
-			this.kernelChannel.append(request);
-			if (!this.executor || !this.executor.stdin.write(request)) {
-				reject("Error while writing: \n" + request);
-			} else {
-				const wrap_resolve = () => { this.callback = (s: string) => { }; resolve(); }
-				const wrap_reject  = () => { this.callback = (s: string) => { }; reject(); }
-				if (is_repl_command) {
-					this.callback = this.makeTextOutCallback(wrap_resolve, wrap_reject, cell, execution);
-				} else if (should_be_rendered) {
-					vscode.window.showInformationMessage("shouldbe rendered" + escape(request));
-					this.callback = this.makeHtmlOutCallback(wrap_resolve, wrap_reject, cell, execution);
+			const exec = () => {
+				const execution = this._controller.createNotebookCellExecution(cell);	
+				execution.executionOrder = ++this._executionOrder;
+				execution.start(Date.now());
+				execution.token.onCancellationRequested(() => {
+					// In case the execution is aborted, we shut down the executor.
+					this._killExecutor();
+					execution.replaceOutput(new vscode.NotebookCellOutput([
+						vscode.NotebookCellOutputItem.text("Execution interrupted.")
+					]));
+					execution.end(false, Date.now());
+					reject("Execution interrupted.");
+				});
+				const code = this._prepareCellCode(cell);
+				const should_be_rendered = this._cellShouldBeRendered(cell);
+				const is_repl_command = this._isAReplCommand(cell);
+				const flow_dir = tools.getFlowRoot();
+				// Possible options, passed to 'compile' command:
+				//   readable=1 
+				//   "bin-dir=" + flow_dir + "/bin/"
+				//   repl-compile-output=1 
+				//   repl-save-tmp=1
+
+				// TODO: fix 'readable=1' so that the obtained code is working.
+				//const html_opts = "js-call-main=1 repl-no-quit=1 readable=1";
+				const html_opts = "js-call-main=1 repl-no-quit=1";
+				const request = should_be_rendered ? 
+					"compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
+					(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force\n" + code + "\n\nexec cell_" + cell.index + "\n"); 
+				//vscode.window.showInformationMessage("REQ1: " + escape(request));
+				this._kernelChannel.append(request);
+				if (!this._executor || !this._executor.stdin.write(request)) {
+					reject("Error while writing: \n" + request);
 				} else {
-					this.callback = (s: string) => { 
-						this.callback = this.makeTextOutCallback(wrap_resolve, wrap_reject, cell, execution);
-					};
+					// Wrappers, which clear the callback.
+					const wrap_resolve = () => { this._callback = (s: string) => { }; resolve(); }
+					const wrap_reject  = () => { this._callback = (s: string) => { }; reject(); }
+					if (is_repl_command) {
+						// Just perform a REPL command and print its output as plain text.
+						this._callback = this._makeTextOutCallback('', wrap_resolve, wrap_reject, cell, execution);
+					} else if (should_be_rendered) {
+						// REPL interpreter will compile the code to html, so a callback will pick it up.
+						this._callback = this._makeHtmlOutCallback(wrap_resolve, wrap_reject, cell, execution);
+					} else {
+						// This first message is comming from 'add cell_<i>', thus is not an output yet.
+						// So we pass it to the 'makeTextOutCallback' - it may be used as an error message,
+						// if current cell code contains errors.
+						this._callback = (msg: string) => { 
+							this._callback = this._makeTextOutCallback(msg, wrap_resolve, wrap_reject, cell, execution);
+						};
+					}
 				}
+			}
+			if (!this._executor) {
+				// Delay the execution util the executor is ready
+				this._startExecutor(exec);
+			} else {
+				exec();
 			}
 		});
 	}
-	private makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
+	// Here 'msg' is a message from a previuos command (i.e. 'add cell_<i>' with a piece of code)
+	private _makeTextOutCallback(msg : string, resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
 		return (buffer : string) => {
-			if (buffer.indexOf('Error:') == -1) {
-				this.setCellTextSuccess(cell, buffer, execution);
+			if (!buffer.startsWith('Error:')) {
+				this._setCellTextSuccess(cell, buffer, execution);
 				resolve();
 			} else {
-				this.setCellFail(cell, buffer, execution);
+				this._setCellFail(cell, msg, execution);
 				reject(buffer);
 			}
 		}
 	}
-	private makeHtmlOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
+	private _makeHtmlOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
 		return (buffer : string) => {
-			if (buffer.indexOf('Error:') == -1) {
-				//if (buffer.length > 10000) {
-				//    kernelChannel.appendLine("buffer.length: " + buffer.length);
-				//}
-				this.setCellHtmlSuccess(cell, buffer, execution);
+			if (!buffer.startsWith('Error:')) {
+				this._setCellHtmlSuccess(cell, buffer, execution);
 				resolve();
 			} else {
-				this.setCellFail(cell, buffer, execution);
+				this._setCellFail(cell, buffer, execution);
 				reject(buffer);
 			}
 		}
 	}
-	private prepareCellCode(cell: vscode.NotebookCell): string {
+	private _prepareCellCode(cell: vscode.NotebookCell): string {
 		const code = cell.document.getText();
 		// Leave only one new line after a line of code (remove extra newlines)
 		return code.replace(/(\r\n|\r|\n){2,}/g, '\n').trim();
 	}
-	private setCellTextSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
+	private _setCellTextSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
 		execution.replaceOutput(new vscode.NotebookCellOutput([
 			vscode.NotebookCellOutputItem.text(result)
 		]));
 		execution.end(true, Date.now());
 	}
-	private setCellHtmlSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
-		const js_file = readFileSync("www/cell_" + cell.index  + ".html.js").toString();
+	private _setCellHtmlSuccess(cell: vscode.NotebookCell, result: string, execution: vscode.NotebookCellExecution): void {
 		const html_file = readFileSync("www/cell_" + cell.index  + ".html").toString();
-		vscode.window.showInformationMessage("html_file: '" + html_file.slice(0, 128) + "'");
-		execution.replaceOutput(new vscode.NotebookCellOutput(
-			[
-				vscode.NotebookCellOutputItem.text("<!DOCTYPE html>\n" + html_file, 'text/html'),
-				vscode.NotebookCellOutputItem.text(result, 'text/plain'),
-				//vscode.NotebookCellOutputItem.text(js_file, 'application/javascript'),
-				//vscode.NotebookCellOutputItem.text(js_file, 'text/x-javascript'),
-			], 
-			{'enableScripts': true}
-		));
-		execution.end(true, Date.now());
-	}
-	private setCellFail(cell: vscode.NotebookCell, message: string, execution: vscode.NotebookCellExecution): void {
 		execution.replaceOutput(new vscode.NotebookCellOutput([
-			vscode.NotebookCellOutputItem.error(Error(message))
+			vscode.NotebookCellOutputItem.text("<!DOCTYPE html>\n" + html_file, 'text/html'),
+			vscode.NotebookCellOutputItem.text(result, 'text/plain')
 		]));
 		execution.end(true, Date.now());
 	}
-	private cellShouldBeRendered(cell: vscode.NotebookCell): boolean {
+	private _setCellFail(cell: vscode.NotebookCell, message: string, execution: vscode.NotebookCellExecution): void {
+		execution.replaceOutput(new vscode.NotebookCellOutput([
+			vscode.NotebookCellOutputItem.text(message)
+		]));
+		execution.end(false, Date.now());
+	}
+	private _cellShouldBeRendered(cell: vscode.NotebookCell): boolean {
 		const code = cell.document.getText();
 		return code.indexOf('render') != -1 || code.indexOf('material') != -1;
 	}
-	private isAReplCommand(cell: vscode.NotebookCell): boolean {
+	private _isAReplCommand(cell: vscode.NotebookCell): boolean {
 		const words = cell.document.getText().split(" ").filter((w) => w != '');
 		if (words.length == 0) {
 			return false;
@@ -216,20 +210,31 @@ export class FlowNotebookController {
 			return REPL_commands.findIndex((comm, ind, obj) => comm == command) != -1;
 		}
 	}
-	private killExecutor(): void {
-		if (this.executor) {
-			this.executor.stdin.write("exit\n");
-			this.executor = null;
+	private _killExecutor(): void {
+		if (this._executor) {
+			this._executor.stdin.write("exit\n");
+			this._executor = null;
 		}
+		// reset the callback, just in case.
+		this._callback = (arg: string) => { };
 	}
-	private startExecutor(): void {
-		if (!this.executor) {
+	private _startExecutor(after_start : () => void): void {
+		if (!this._executor) {
 			const flow_dir = tools.getFlowRoot();
-			this.executor = spawn("flowc1", ["repl=1", "repl-debug=1"]);
+			// Skip the first message from REPL interpreter.
+			// This callback will be called just after the initial '> ' with
+			// a greeting message from REPL interpreter is shown.
+			this._callback = (arg: string) => {
+				// Clear the callback.
+				this._callback = (arg: string) => { };
+				// Call a function after '> ' is read from stdout.
+				after_start();
+			};
+			this._executor = spawn("flowc1", ["repl=1", "repl-debug=1", "repl-output-imediately=0"]);
 			let buffer: string = "";
-			this.executor.stdout.on("data", (buf : any) => {
+			this._executor.stdout.on("data", (buf : any) => {
 				let out = buf.toString();
-				this.kernelChannel.append(out);
+				this._kernelChannel.append(out);
 				buffer += out;
 				// Check the end of execution of a previous command
 				if (buffer.endsWith("> ") || buffer.trim().endsWith("Bye.")) {
@@ -240,24 +245,24 @@ export class FlowNotebookController {
 						buffer = buffer.trim();
 					}
 					// remove grabage messages '"No carrier"'
-					buffer.replace("\"No carrier\"", "");
-					vscode.window.showInformationMessage("BUFFER: " + buffer);
-					this.callback(buffer);
+					buffer = buffer.replace("\"No carrier\"", "");
+					this._callback(buffer);
 					buffer = "";
 				}
 			});
-			this.executor.stdout.on("error", (out : string) => this.kernelChannel.append(out.toString()));
-			this.executor.stderr.on("data", (out : string) => this.kernelChannel.append(out.toString()));
-			this.executor.stderr.on("error", (out : string) => this.kernelChannel.append(out.toString()));
+			this._executor.stdout.on("error", (out : string) => this._kernelChannel.append(out.toString()));
+			this._executor.stderr.on("data", (out : string) => this._kernelChannel.append(out.toString()));
+			this._executor.stderr.on("error", (out : string) => this._kernelChannel.append(out.toString()));
 			// Exit callbacks for executor
-			this.executor.on("close", (code : number, signal : string) => this.executor = null);
-			this.executor.on("disconnect", () => this.executor = null);
-			this.executor.on("error", (err : Error) => vscode.window.showErrorMessage(err.message));
-			this.executor.on("exit", (code : number, signal : string) => this.executor = null);
+			this._executor.on("close", (code : number, signal : string) => this._executor = null);
+			this._executor.on("disconnect", () => this._executor = null);
+			this._executor.on("error", (err : Error) => vscode.window.showErrorMessage(err.message));
+			this._executor.on("exit", (code : number, signal : string) => this._executor = null);
 		}
 	}
-	private callback = (arg: string) => { };
-	private executor : ChildProcess = null;
-	private kernelChannel: vscode.OutputChannel = vscode.window.createOutputChannel("Flow Notebook");
+	// The callback, which is called when a new message is received from the REPL interpreter.
+	private _callback = (arg: string) => { };
+	// REPL interpreter process.
+	private _executor : ChildProcess = null;
+	private _kernelChannel: vscode.OutputChannel = vscode.window.createOutputChannel("Flow Notebook");
 }
-
