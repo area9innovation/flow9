@@ -8,7 +8,7 @@ import text/blueprint;
 export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool) -> Form;
-	renderParagraphEx(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>) -> Form;
+	renderParagraphEx(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>, paragraphRenderingInfoB : DynamicBehaviour<Maybe<ParagraphRenderingInfo>>) -> Form;
 	getLineIndent(paraIndent : double, isFirstLine : bool) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement;
@@ -29,6 +29,10 @@ export {
 	WigiRenderedLinesInfoStyle(baselines : DynamicBehaviour<[DynamicBehaviour<[WigiRenderedLinesInfo]>]>);
 		WigiRenderedLinesInfo(height : double, baseline : double);
 		dummyWigiRenderedLinesInfo = WigiRenderedLinesInfo(0.0, 0.0);
+
+	ParagraphRenderingInfo(
+		lineMaxWidth : double
+	);
 }
 
 // TODO:
@@ -150,7 +154,7 @@ renderParagraph(
 	s : [ParagraphStyle],
 	rtl : bool
 ) -> Form {
-	renderParagraphEx(p, s, rtl, None());
+	renderParagraphEx(p, s, rtl, None(), make(None()));
 }
 
 extractParaAtomicForm = \word1 : ParaWord, pos : int -> {
@@ -229,7 +233,8 @@ renderParagraphEx(
 	p : [ParagraphElement],
 	s : [ParagraphStyle],
 	rtl : bool,
-	renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>
+	renderedLinesInfoM : Maybe<DynamicBehaviour<[WigiRenderedLinesInfo]>>,
+	paragraphRenderingInfoB : DynamicBehaviour<Maybe<ParagraphRenderingInfo>>
 ) -> Form {
 
 	trace = if (isUrlParameterTrue("trace_wigi_render")) {
@@ -285,6 +290,11 @@ renderParagraphEx(
 		word,
 		i + 1 == length(gluedArr) || containsStruct(s, IgnoreLetterspacingOnReflow())
 	));
+
+	// If there is less or equal than upper limit of dynamic elements, we do not need to postpone updates
+	dynamicWords = filter(words, \w -> !isFConst(w.metrics));
+	ndynamic = length(dynamicWords);
+	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
 	keepFormTogetherOrWithMark = \form1, i -> keepFormTogether(form1) || (isParagraphMarked && i <= 1);
 	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word));
@@ -377,11 +387,6 @@ renderParagraphEx(
 		rendered
 	});
 
-	// If there is less or equal than upper limit of dynamic elements, we do not need to postpone updates
-	dynamicWords = filter(words, \w -> !isFConst(w.metrics));
-	ndynamic = length(dynamicWords);
-	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
-
 	contentGroup = Group(concat(
 		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
 		filtermap(words, \word -> {
@@ -412,18 +417,21 @@ renderParagraphEx(
 			}
 		),
 		\ -> {
-			resetTimer = ref nop;
+			// resetTimer = ref nop;
 			restartReflow = \reason -> {
-				^resetTimer();
-				trace(\-> "SET intAw " + toString(getValue(intAwB)) + " -> INF_METRICS because of " + reason);
+				// ^resetTimer();
+				trace(\-> "restartReflow("+reason+"). START intAw " + toString(getValue(intAwB)) + " -> INF_METRICS, paragraphRenderingInfoB -> None()");
+				nextDistinct(paragraphRenderingInfoB, None());
 				nextDistinct(intAwB, INF_METRICS);
-				resetTimer:= interruptibleTimer(0, \-> {
-					resetTimer:= nop;
-					trace(\-> "RESTORE intAw after " + reason + " to current extAw " + toString(getValue(extAwB)));
+				// resetTimer:= interruptibleTimer(0, \-> {
+					// resetTimer:= nop;
+					trace(\-> "restartReflow("+reason+"). RESTORE intAw to current extAw " + toString(getValue(extAwB)));
 					nextDistinct(intAwB, getValue(extAwB));
-				});
+					paragraphRenderingInfo = Some(ParagraphRenderingInfo(getValue(linesB).maxLineWidth));
+					trace(\-> "restartReflow("+reason+"). END. paragraphRenderingInfoB -> " + toString(paragraphRenderingInfo));
+					nextDistinct(paragraphRenderingInfoB, paragraphRenderingInfo);
+				// });
 			}
-
 			uns = concatA([
 				[
 					subscribe(intAwB, updateLines),
@@ -434,9 +442,16 @@ renderParagraphEx(
 							trace(\-> "IGNORE extAw change " + toString(extAw));
 							nextDistinct(intAwB, extAw)
 						}
-					})
+					}),
 				],
-				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
+				if (ndynamic == 0) [
+					connectSelectDistinctu(linesB, paragraphRenderingInfoB, \lines -> {
+						res = Some(ParagraphRenderingInfo(lines.maxLineWidth));
+						trace(\-> "paragraphRenderingInfo -> " + toString(res));
+						res
+					})
+				] else if (ndynamic == ndymamicUpper) []
+				else
 				[
 					subscribe2(update, \u -> {
 						// When an update from a dynamic element is requested, we do it in the next frame
@@ -448,7 +463,7 @@ renderParagraphEx(
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
 					if (tightWidth) {
-						restartReflow("dynamicWords["+i2s(i)+"] -> " + toString(m));
+						if (m.width != 0.0) restartReflow("dynamicWords["+i2s(i)+"] -> " + toString(m));
 					} else {
 						trace(\-> "dynamicWords["+i2s(i)+"] -> " + toString(m));
 						if (i < ndymamicUpper) updateLines(getValue(intAwB)) else nextDistinct(update, 1)
