@@ -5,23 +5,36 @@ import text/translationsimplestrings;
 
 export {
 	// Extract all () strings from program
-	saveXliffData(program : FiProgram, filename : string, xliffFilter : string) -> void;
+	saveXliffData(program : FiProgram, filename : string, xliffFilter : string, exportFilepaths : bool) -> void;
 }
 
-prepareXLiffData(program : FiProgram) -> [string] {
+prepareXLiffData(program : FiProgram, filepathTreeM : Maybe<ref Tree<string, Set<string>>>) -> [string] {
 	res = foldTree(program.modules, makeSet(), \modname : string, mo : FiModule, acc -> {
-		nfns = fold(mo.functions, acc, \acc2, fun ->
+		nfns = fold(mo.functions, makeSet(), \acc2, fun ->
 			fiextracttrstr0(fun.lambda, acc2, false)
 		);
 
-		fold(mo.globalVars, nfns, \acc2, gvar ->
+		moduleStrings = fold(mo.globalVars, nfns, \acc2, gvar ->
 			fiextracttrstr0(gvar.value, acc2, false)
 		);
+
+		maybeApply(filepathTreeM, \filepathTree -> {
+			filepath = mo.fileinfo.fullpath;
+			filepathTree := foldSet(moduleStrings, ^filepathTree, \tree, row -> {
+				setTree(tree, row, eitherFn(
+					lookupTree(tree, row),
+					\set -> insertSet(set, filepath),
+					\-> makeSet1(filepath)
+				))
+			})
+		})
+
+		mergeSets(acc, moduleStrings)
 	});
 	set2array(res)
 }
 
-saveXliffData(program : FiProgram, filename : string, xliffFilter : string) -> void {
+saveXliffData(program : FiProgram, filename : string, xliffFilter : string, exportFilepaths : bool) -> void {
 	if (program.config.verbose >= 1) {
 		fcPrintln("Extracting XLiff data...", program.config.threadId);
 	} 
@@ -39,9 +52,22 @@ saveXliffData(program : FiProgram, filename : string, xliffFilter : string) -> v
 		program
 	}
 
-	data0 = prepareXLiffData(program0);
-	data = mapi(data0, \ix, e -> {ContentUnit(ix, "_", e)});
-	setFileContent(filename, texts2XliffContent(data, changeFileExt(filename, "")));
+	xliffContent = if (exportFilepaths) {
+		filepathTree = ref TreeEmpty();
+		data0 = prepareXLiffData(program0, Some(filepathTree));
+		data = mapi(data0, \ix, e -> {
+			ContentUnitCustom(ix, "_", e, [
+				ContentUnitExtradata(strGlue(set2array(lookupTreeDef(^filepathTree, e, makeSet())), ","))
+			])
+		});
+		extendedTexts2XliffContent(data, changeFileExt(filename, ""), "EN-US", true, true);
+	} else {
+		data0 = prepareXLiffData(program0, None());
+		data = mapi(data0, \ix, e -> {ContentUnit(ix, "_", e)});
+		texts2XliffContent(data, changeFileExt(filename, ""));
+	}
+	setFileContent(filename, xliffContent);
+
 	if (program.config.verbose >= 1) {
 		fcPrintln("XLiff file '" + filename + "' saved.", program.config.threadId);
 	} 
