@@ -810,7 +810,7 @@ MDropDownOrAutoComplete(
 	isRequired = contains(style, MRequiredField());
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
-	changeOnClick = contains(style, MChangeOnClick());
+	changeOnlyOnClick = contains(style, MChangeOnClick());
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	anyItem = extractStruct(style, MCustomAnyItem(_("Any"))).text;
@@ -824,6 +824,7 @@ MDropDownOrAutoComplete(
 		);
 
 	makeMAutoCompleteControl = \ -> {
+		preventSelectedChange = ref false;
 		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
 
 		trimStr = \s -> trim(s) |> toLowerCase;
@@ -846,9 +847,18 @@ MDropDownOrAutoComplete(
 				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
 				st
 			))
-			|> (\st -> ifArrayPush(st, changeOnClick, MCompletionFn(\com, isSelected, setWordFn ->
+			|> (\st -> arrayPush(st, MCompletionFn(\com, isSelected, setWordFn ->
 					MGetManager(\manager -> MGetFocusGroup(\parent -> {
-						wrapSetWordFn = \sm -> {nextDistinct(selected, string2idxs(getValue(selectedStrB))); setWordFn(sm)};
+						wrapSetWordFn = \sm -> {
+							idx = switch(sm : SentenceMatch) {
+								SentenceHit(__, __, __, __) : string2idxs(getValue(selectedStrB));
+								SentenceHitExtended(__, __, __, __, idx) : idx;
+							}
+							nextDistinct(selected, idx);
+							preventSelectedChange := true;
+							setWordFn(sm);
+							preventSelectedChange := false;
+						};
 						defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
 					}))
 			)));
@@ -860,14 +870,21 @@ MDropDownOrAutoComplete(
 					replaceStruct(st, MInputError(error, [MRequiredField()]));
 				} else
 					st
-			);
+			)
+			|> (\st -> {
+				processKeyDown = extractStruct(st, MInputProcessKeyDown(\__ -> true)).fn;
+				replaceStruct(st, MInputProcessKeyDown(\ke -> processKeyDown(ke) && ke.keycode != 13))
+			});
 
 		MConstruct(
 			[
 				\ ->
 					eitherMap(multiSelection,
 						\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
-						bidirectionalLink(selected, selectedStrB, \idx -> idxs2string([idx]), \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str))
+						bidirectionalLink(selected, selectedStrB,
+							\idx -> idxs2string([idx]),
+							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idxs(str)
+						)
 					),
 				eitherMap(
 					tryExtractStruct(style, MInputInspector(make(""))),
