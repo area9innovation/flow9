@@ -84,7 +84,7 @@ ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : do
 
 OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>);
 ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
-ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double, aw : double);
+ParaLinesInfos(lines : [ParaLineInfo], aw : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
 makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
@@ -305,7 +305,7 @@ renderParagraphEx(
 
 	extAwB = make(if (tightWidth) INF_METRICS else 0.0);
 	update = make(0);
-	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0, INF_METRICS));
+	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], INF_METRICS));
 
 	wordGroups = foldi(words, makeList(), \i, acc : List<ParaWordGroup>, word -> {
 		wordForm = ParaWord(word with form =
@@ -347,9 +347,6 @@ renderParagraphEx(
 	}) |> list2array;
 
 	paragraphAccessibilityParent = ^accessibilityParent;
-	getMaxLineWidth = \infos -> {
-		fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))
-	}
 	updateLines = \wi-> {
 		// Ignore negative widths
 		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
@@ -367,17 +364,23 @@ renderParagraphEx(
 		maxWidth = getMaxLineWidth(infos);
 		trace(\-> "updateLines("+toString(w)+") => lines="+toString(length(infos)) + ", maxWidth=" + toString(maxWidth));
 
+		if (maxWidth > w) {
+			trace(\-> "***DOES NOT FIT***");
+			trace(\-> "  w:        " + toString(w));
+			trace(\-> "  maxWidth: " + toString(maxWidth));
+		}
+
 		nextDistinct(linesCountB, length(infos));
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		// we pass "w" as availableWidth for wich it was rendered because Select not always sees that the linesB was changed otherwise
-		next(linesB, ParaLinesInfos(infos, maxWidth, w));
+		next(linesB, ParaLinesInfos(infos, w));
 	};
 	// initialize linesB
 	updateLines(INF_METRICS);
 
 	renderedParagraph = Select(linesB, \lines -> {
 		aw = getValue(extAwB);
-		trace(\ -> "renderedParagraph: aw: " + toString(aw) + ", lines: " + toString(length(lines.lines)) + ", maxWidth: " + toString(lines.maxLineWidth) + ", rendered at " + toString(lines.aw));
+		trace(\ -> "renderedParagraph: aw: " + toString(aw) + ", lines: " + toString(length(lines.lines)) + ", maxWidth: " + toString(getMaxLineWidth(lines.lines)) + ", rendered at " + toString(lines.aw));
 		prevAccessibilityParent = ^accessibilityParent;
 		accessibilityParent := paragraphAccessibilityParent;
 		rendered = renderParaLines(
@@ -388,6 +391,8 @@ renderParagraphEx(
 		);
 
 		accessibilityParent := prevAccessibilityParent;
+		// if (lines.maxLineWidth > aw) resizeToWidth(aw, rendered)
+		// else rendered;
 		rendered
 	});
 
@@ -1017,7 +1022,7 @@ renderParaLines(
 		}
 	);
 
-	Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.maxLineWidth else max(availableWidth, lines.maxLineWidth), a.y)),
+	Baseline(const(a.baseline), Size2(const(WidthHeight(if (tightWidth) a.maxLineWidth else max(availableWidth, a.maxLineWidth), a.y)),
 		Group(list2array(a.lines))
 	))
 }
@@ -1389,6 +1394,11 @@ makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 		default: emptyParaWordGroup;
 	};
 }
+
+getMaxLineWidth(lines : [ParaLineInfo]) -> double {
+	fold(lines, 0.0, \acc, info -> max(info.lineWidth, acc))
+}
+
 
 // Not with others because referenced from flow9 repo.
 isUrlParameterEscUnescHTMLTrue() -> bool {
