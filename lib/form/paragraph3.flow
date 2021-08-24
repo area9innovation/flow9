@@ -373,8 +373,8 @@ renderParagraphEx(
 	updateLines(INF_METRICS);
 
 	renderedParagraph = Select(linesB, \lines -> {
-		aw = getValue(extAwB);
-		trace(\ -> "renderedParagraph: aw: " + toString(aw) + ", lines: " + toString(length(lines.lines)) + ", maxWidth: " + toString(getMaxLineWidth(lines.lines)) + ", rendered at " + toString(lines.aw));
+		aw = lines.aw;
+		trace(\ -> "renderedParagraph: aw: " + toString(getValue(extAwB)) + ", lines: " + toString(length(lines.lines)) + ", maxWidth: " + toString(getMaxLineWidth(lines.lines)) + ", rendered at " + toString(lines.aw));
 		prevAccessibilityParent = ^accessibilityParent;
 		accessibilityParent := paragraphAccessibilityParent;
 		rendered = renderParaLines(
@@ -424,7 +424,7 @@ renderParagraphEx(
 				) {
 					trace(\-> "restartReflow("+reason+"). IGNORE - already rendered at same AW. extAw(" + toString(getValue(extAwB)) + "), newAw(" + toString(newAw) + "), renderedAtAw("+toString(newAw)+")");
 				} else {
-					trace(\-> "restartReflow("+reason+"). AW = " + toString(newAw) + " START. paragraphRenderingInfoB -> None()");
+					trace(\-> "restartReflow("+reason+"). AW = " + toString(newAw) + " paragraphRenderingInfoB -> None()");
 					nextDistinct(paragraphRenderingInfoB, None());
 					updateLines(newAw);
 				}
@@ -460,7 +460,8 @@ renderParagraphEx(
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
 					if (tightWidth) {
 						if (m.width != 0.0) {
-							restartReflow("dynamicWords["+i2s(i)+"] -> " + toString(m), getValue(extAwB), true);
+							singleLineWidth = getWordsGroupSingleLineWidth(wordGroups, alignment, indent, true, 1.0);
+							restartReflow("dynamicWords["+i2s(i)+"] singleLineWidth = "+toString(singleLineWidth)+", m -> " + toString(m), max(getValue(extAwB), singleLineWidth), true);
 						}
 					} else {
 						trace(\-> "dynamicWords["+i2s(i)+"] -> " + toString(m));
@@ -484,6 +485,9 @@ renderParagraphEx(
 			Constructor(
 				Inspect([Width(wB)], f),
 				\-> subscribe(wB, \v -> {
+					// if (v == 84.0) {
+					// 	println("");
+					// }
 					trace(\-> "PARAGRAPH_WIDTH -> " + toString(v))
 				})
 			)
@@ -517,14 +521,11 @@ getParaLineInfos(
 ) -> [ParaLineInfo] {
 	textScale = if (shrinkLongWords && wordGroups != []) {
 		maxWidth = foldi(wordGroups, 0.0, \i, maxWidth, wg -> {
-			eitherMap(
+			width = getParaLineInfo(
 				wordGroups2ParaLine([wg], getLineIndent(indent, i == 0), 1.0),
-				\line -> {
-					width = getParaLineInfo(line, alignment).lineWidth;
-					if (maxWidth > width) maxWidth else width;
-				},
-				0.0
-			)
+				alignment
+			).lineWidth;
+			if (maxWidth > width) maxWidth else width;
 		})
 		if (maxWidth > availableWidth) {
 			availableWidth / maxWidth
@@ -788,10 +789,12 @@ reflowParaWords(
 	else reflowResult;
 }
 
-wordGroups2ParaLine(currentLine : [ParaWordGroup], lineIndent : double, textScale : double) -> Maybe<ParaLine> {
+wordGroups2ParaLine(currentLine : [ParaWordGroup], lineIndent : double, textScale : double) -> ParaLine {
 	cwords = concatA(mapi(currentLine, \i, g -> g.words));
 	cwordslasti = length(cwords)-1;
-	if (cwords == []) None() else Some(ParaLine({
+	words = if (cwords == []) {
+		[]
+	} else {
 		cw = mapi(cwords, \cwordi, cword -> {
 			switch(cword.word) {
 				LinePart(f, p, e):
@@ -800,7 +803,9 @@ wordGroups2ParaLine(currentLine : [ParaWordGroup], lineIndent : double, textScal
 			}
 		});
 
-		if (textScale == 1.0) cw else {
+		if (textScale == 1.0) {
+			cw
+		} else {
 			scale = \f -> Scale(const(textScale), const(textScale), f);
 			map(cw, \w -> {
 				switch (w.word) {
@@ -828,10 +833,20 @@ wordGroups2ParaLine(currentLine : [ParaWordGroup], lineIndent : double, textScal
 					}
 				}
 			})
-		}},
-		lineIndent
-	))
+		}
+	}
+
+	ParaLine(words, lineIndent)
 }
+
+getWordsGroupSingleLineWidth(wordGroups : [ParaWordGroup], align : ParaLineAlignment, paraIndent : double, isFirstLine : bool, textScale : double) -> double {
+	lineIndent = getLineIndent(paraIndent, isFirstLine);
+	getParaLineInfo(
+		wordGroups2ParaLine(wordGroups, lineIndent, textScale),
+		align
+	).lineWidth
+}
+
 
 // here availableWidth is an amount of width for current line
 reflowParaWords2(
@@ -846,12 +861,8 @@ reflowParaWords2(
 ) -> [ParaLine] {
 	lineIndent = getLineIndent(paraIndent, paraLines==[]);
 
-	getParalineLine : ([ParaWordGroup]) -> Maybe<ParaLine> = \currentLine2 -> {
-		wordGroups2ParaLine(currentLine2, lineIndent, textScale)
-	}
-
 	addLine = \ -> {
-		eitherMap(getParalineLine(currentLine), \line -> arrayPush(paraLines, line), paraLines)
+		arrayPush(paraLines, wordGroups2ParaLine(currentLine, lineIndent, textScale))
 	};
 
 	detachWord = \w : ParaWord, detach : bool -> {
@@ -883,11 +894,7 @@ reflowParaWords2(
 			default: {
 				// we have to measure current line with additional of the next word group
 				// and compare it with availableWidth to deside if we should make new line
-				nextWidth = eitherMap(
-					getParalineLine(arrayPush(currentLine, group)),
-					\line -> getParaLineInfo(line, align).lineWidth,
-					0.0
-				);
+				nextWidth = getWordsGroupSingleLineWidth(arrayPush(currentLine, group), align, paraIndent, paraLines == [], textScale);
 				nextWidth > availableWidth && (isSpc || currentLine != [])
 			}
 		};
