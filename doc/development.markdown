@@ -7,8 +7,9 @@ TABLE OF CONTENTS:
 * [My program crashes!](#crash)
 * [My GUI is slow!](#slow)
 * [Memory leaks](#leaks)
-* [Profiling](#profiling)
+* [Profiling with flowcpp](#profiling)
 * [Profiling the JS target](#profjs)
+* [Profiling the Java target](#profjava)
 * [Code coverage](#coverage)
 * [Analyzing code](#analyzing)
 
@@ -245,7 +246,7 @@ defer `examineSuspects` call, i.e.
 
 Also if you run `flowcpp` with `--debug` you can see a callstack for each of the suspect. Sometimes it's not easy to figure out as they all ends somewhere deep and it's not always the end of the callstack that is causing the problem. You can do a quick check to see if there are any selects in the callstack.
 
-<h2 id=profiling>Profiling</h2>
+<h2 id=profiling>Profiling with flowcpp</h2>
 
 There are various ways to profile flow code, both in terms of time and
 memory. The most precise way is:
@@ -351,8 +352,43 @@ In the profiling view, you can find some special nodes like <special 0> and so o
 <h2 id=profjs>Profiling the JS target</h2>
 
 This is easy: Just compile your program in debug mode to preserve all identifiers in the
-generated JS. Then use your browser's profiler available through developer tools. In Chrome,
+generated JS:
+
+	flowc1 my/program.flow js=program.js debug=1
+
+Then use your browser's profiler available through developer tools. In Chrome,
 start the program in JS, then use More Tools -> Developer Tools, and then the Profiles tab.
+
+<h2 id=profjava>Profiling the Java target</h2>
+
+Compile your program to a Jar file like this:
+
+	flowc1 my/program.flow jar=program.jar
+
+Now, run your flow program with something like:
+
+	java -jar program.jar -- <args>
+
+to verify that it works.
+Next, download VisualVM from https://visualvm.github.io/. 
+
+Start this program. Once it is ready, then run your flow program. As it runs, 
+it will appear in the list of running Java programs in VisualVM.
+Click it, and you can start a profiling session.
+
+If you wish to profile your program from startup, then follow the instructions from this
+site:
+
+https://visualvm.github.io/startupprofiler.html
+
+In short, install the plugin to VisualVM, click the last icon in the toolbar. 
+Use the defaults, except in the "<define classes to be profiled>", put
+"com.area9innovation.flow.**". Start the profiling, and then run something
+like 
+
+	java -agentpath:C:/Work/visualvm_21/visualvm/lib/deployed/jdk16/windows-amd64/profilerinterface.dll=C:\Work\visualvm_21\visualvm\lib,5140 -jar program.jar -- <args>
+
+to start your program, where "-agentpath" comes from VisualVM.
 
 <h2 id=coverage>Code coverage profiler</h2>
 
