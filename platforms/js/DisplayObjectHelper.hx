@@ -1814,8 +1814,10 @@ class DisplayObjectHelper {
 				};
 			} else {
 				nativeWidget.oncontextmenu = function (e) {
+					var preventContextMenu = untyped clip.isInput != true;
+					if (preventContextMenu) e.preventDefault();
 					e.stopPropagation();
-					return untyped clip.isInput == true;
+					return !preventContextMenu;
 				};
 			}
 		} else {
