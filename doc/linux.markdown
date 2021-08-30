@@ -52,9 +52,11 @@ sudo mysql --user="root" --execute="ALTER USER 'root'@'localhost' IDENTIFIED WIT
 ```
 Configure MySQL-server mode:
 ```bash
-printf '[mysqld]
+printf '[mysql]
 sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
+MySQL-server service may be called `mysql` or `mysqld` depending on your system.
+
 More details on mysql setup can be found in [innovation/doc/mysql.markdown](https://github.com/area9innovation/innovation/blob/master/doc/mysql.markdown)
 
 ## PHP7.2
