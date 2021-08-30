@@ -390,6 +390,9 @@ like
 
 to start your program, where "-agentpath" comes from VisualVM.
 
+Some suggest that https://www.oracle.com/java/technologies/jdk-mission-control.html might also
+be useful.
+
 <h2 id=coverage>Code coverage profiler</h2>
 
 The C++ runner supports collecting a code coverage profile. Run your program with the
