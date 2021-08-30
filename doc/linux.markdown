@@ -53,8 +53,10 @@ sudo mysql --user="root" --execute="ALTER USER 'root'@'localhost' IDENTIFIED WIT
 Configure MySQL-server mode:
 ```bash
 printf '[mysqld]
-sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO\n' | sudo tee -a /etc/mysql/my.cnf
+sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
+For MySQL8+ the option `NO_AUTO_CREATE_USER` isnt available, so it should not be present.
+
 More details on mysql setup can be found in [innovation/doc/mysql.markdown](https://github.com/area9innovation/innovation/blob/master/doc/mysql.markdown)
 
 ## PHP7.2
