@@ -74,7 +74,7 @@
 ;; 	    )
 ;; 	  )
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(require 'cl)
+(require 'cl-lib)
 
 ;;;; Syntax ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (require 'generic-x)
@@ -413,6 +413,7 @@ point currently is on, and the associated indentation rules."
 (defvar a9flow-flow-directory "../../flow9" "a9flow flow directory")
 (defvar a9flow-project-file nil "Current project file name")
 
+
 (defvar a9flow-proj-default-directory nil "a9flow default directory")
 (defvar a9flow-include-list () "a9flow include directories list")
 (defvar a9flow-target-list () "a9flow project targets list")
@@ -421,6 +422,23 @@ point currently is on, and the associated indentation rules."
 (defvar a9flow-goto-history '())
 (defvar a9flow-goto-hash '())
 
+(defun a9flow-add-compiler-opts (cmd)
+  (let* ((cmd-args (split-string (string-trim cmd)))
+	 (compiler (car  cmd-args))
+	 (args (string-join (cdr cmd-args) " "))
+	 (inc-dirs (string-join a9flow-include-list  ","))
+	 )
+    (if (or (string= compiler "flowc")
+	    (string= compiler "flowc1")
+	    (string= compiler "flowcpp"))
+	(concat compiler " "
+		"working-dir=" a9flow-proj-default-directory " "
+		"I=" inc-dirs " "
+		args)
+      cmd
+      )
+    ))
+
 (defun a9flow-add-target (name compile-cmd)
   "Add project (or replace) to project list"
   (interactive "sName:\nsCommand:")
@@ -428,8 +446,10 @@ point currently is on, and the associated indentation rules."
       (progn
 	(setq a9flow-default-target name) 
 	(setq a9flow-target-list
-	      (cons (list 'name name 'compile-cmd compile-cmd)
-	      (cl-delete name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))))
+	      (cons (list
+		     'name name
+		     'compile-cmd (a9flow-add-compiler-opts compile-cmd))
+		    (cl-delete name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))))
     (message "load project error: name:'%s'" name)))
 
 (defun a9flow-clear-target-list ()
@@ -445,17 +465,13 @@ point currently is on, and the associated indentation rules."
   "Load project file"
   (interactive	"fProject file: ")
   (setq a9flow-project-file project-file-name)
-  (let* ((proj-dir (file-name-directory project-file-name))
-	(dir (if proj-dir proj-dir default-directory)))
-    (message "a9flow project:%s" project-file-name)
-    (setq a9flow-proj-default-directory nil)
-    (setq a9flow-include-list nil)
-    (load-file project-file-name)
-    (when (not a9flow-proj-default-directory) (setq a9flow-proj-default-directory dir))
-    (a9flow-load-flow-config) ;; after project's load and set a9flow-proj-default-directory    
-    (message "a9flow default dir:%s" a9flow-proj-default-directory)
-    ;;(message "a9flow include list:\n%s" a9flow-include-list)
-    ))  
+  (setq a9flow-proj-default-directory (file-name-directory project-file-name))
+  (setq a9flow-include-list nil)
+  (a9flow-load-flow-config) ;; after project's load and set a9flow-proj-default-directory
+  (message "a9flow project:%s" project-file-name)
+  (message "a9flow default dir:%s" a9flow-proj-default-directory)
+  (message "a9flow include:%s" a9flow-include-list)
+  (load-file project-file-name))  
 
 (defun a9flow-compile-project-ido ()
   (interactive)
@@ -473,7 +489,6 @@ point currently is on, and the associated indentation rules."
     (if proj
 	(let ((compile-cmd (plist-get proj 'compile-cmd))
 	      (work-dir (plist-get proj 'work-dir)))
-	    (cd a9flow-proj-default-directory)
 	    (compile compile-cmd))
       (message "Target '%s' not found" target-name))))
 
@@ -497,15 +512,18 @@ point currently is on, and the associated indentation rules."
 
 
 (defun a9flow-find-file-in-include-paths (fname)
-  (let ((dir (seq-find (lambda (dir) (file-exists-p (concat dir "/" fname)))  a9flow-include-list)))
-    (if dir (concat dir "/" fname) nil)))
+;;  (message "find name '%s' in includes:%s" fname a9flow-include-list)
+  (let ((dir (seq-find
+	      (lambda (dir) (file-exists-p (concat a9flow-proj-default-directory "/" dir "/" fname)))
+	      a9flow-include-list)))
+    (message "found '%s' in dir '%s'" fname dir)
+    (if dir (concat a9flow-proj-default-directory "/"  dir "/" fname) nil)))
 
 
 (defun a9flow-load-flow-config ()
   (interactive)
-  (cd a9flow-proj-default-directory)
   (with-temp-buffer
-    (insert-file-contents "flow.config")
+    (insert-file-contents (concat a9flow-proj-default-directory "/flow.config"))
     (let ((include (when (string-match "include=\\(.*\\)" (buffer-string))
 	   	     (match-string 1 (buffer-string)))))
       (setq a9flow-include-list (append a9flow-include-list (split-string include ",")))
@@ -515,7 +533,6 @@ point currently is on, and the associated indentation rules."
   "Set default directory for find function definitions without project file or from project file"
   (interactive	"DDirectory: ")
   (setq a9flow-proj-default-directory dir)
-  (cd dir)
   (when (not a9flow-project-file) (a9flow-load-flow-config)))
 
 
@@ -558,41 +575,48 @@ point currently is on, and the associated indentation rules."
     
     )
 
+(defun a9flow-import-line ()
+  (let ((cv (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+    (when (string-match "import[ \t]+\\(.*\\);" cv) (match-string 1 cv))))
+
 (defun a9flow-goto-definition ()
   (interactive)
-  (setq cv (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
-  (if (string-match "import[ \\t]+\\(.*\\);" cv)
-      (a9flow-goto-import)
-    (a9flow-goto-function-definition)
-    )
-  (cd (file-name-directory (buffer-file-name))))
+  (let ((import-decl (a9flow-import-line)))
+    (message "a9flow-goto-definition:%s" import-decl)
+    (if import-decl
+	(a9flow-goto-import-intern import-decl)
+      	(a9flow-goto-function-definition))))
 
 (defun a9flow-goto-import ()
   (interactive)
+  (let (import-decl (a9flow-import-line))
+    (if import-decl
+	(a9flow-goto-import-intern import-decl)
+      (message "error: is not import line"))))
+
+(defun a9flow-goto-import-intern (import-decl)
   (setq current-position `(,(buffer-name) ,(point)))
   (push current-position a9flow-goto-history)
-  (let* ((proj (a9flow-proj-find a9flow-default-target))
-	 (cv (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
-    (string-match "import[ \\t]+\\(.*\\);" cv)
-    (let* ((rpath (match-string 1 cv))
-	   (fname (concat rpath ".flow"))
-	   (tmp-history a9flow-goto-history))
-      (message "goto import:%s" rpath)
-      (cd a9flow-proj-default-directory)     
-      (if (file-readable-p fname)
-	  (find-file fname)
-	(let ((lib-path (concat a9flow-flow-directory "/lib/" fname)))
-	      (message "lib:%s" lib-path)
-	      (if (file-readable-p lib-path)
-		  (find-file lib-path)
-		(let ((f (a9flow-find-file-in-include-paths fname)))
-		  (if f (find-file f) (message "file '%s' is not readable or not exists" fname))))))
-	  (setq a9flow-goto-history tmp-history))))
+  (let ((proj (a9flow-proj-find a9flow-default-target)))
+	(let ((fname (concat import-decl ".flow"))
+	      (tmp-history a9flow-goto-history))
+	  (message "goto import:%s" import-decl)
+	  (let ((proj-file (concat a9flow-proj-default-directory "/" fname)))
+	    (if (file-readable-p proj-file)
+		(find-file proj-file)
+	      (let ((lib-path (concat a9flow-proj-default-directory "/" a9flow-flow-directory "/lib/" fname)))
+		(message "import from lib:%s" lib-path)
+		(if (file-readable-p lib-path)
+		    (find-file lib-path)
+		  (let ((f (a9flow-find-file-in-include-paths fname)))
+		    (if f (find-file f) (message "file '%s' is not readable or not exists" fname))))))
+	    (setq a9flow-goto-history tmp-history)))
+      ))
 
 (defun a9flow-goto-compiled-definition(word initial-buffer initial-point)
+  (message "word%s; buffer:%s; point:%s; dir:%s" word  (buffer-file-name) initial-point a9flow-proj-default-directory)
   (setq a9flow-compiler-path "flowc1")
-  (cd a9flow-proj-default-directory)
-  (setq command-to-execute (concat a9flow-compiler-path  " find-definition=" word " " (buffer-file-name)))
+  (setq command-to-execute (concat a9flow-compiler-path  " working-dir=" a9flow-proj-default-directory " find-definition=" word " " (buffer-file-name)))
   (message command-to-execute)
   (setq res (shell-command-to-string command-to-execute))
   (message "cmd result:%s" res)
@@ -649,11 +673,6 @@ point currently is on, and the associated indentation rules."
   (push current-position a9flow-goto-history))
 
 
-(defun a9flow-cd-default ()
-  "Change directory to a9flow-proj-default-directory"
-  (interactive)
-  (cd a9flow-proj-default-directory))
-
     
 ;; (defun a9flow-compile-filter-hk ()
 ;;   (let ((str (buffer-substring compilation-filter-start (point-max)))
@@ -674,12 +693,28 @@ point currently is on, and the associated indentation rules."
     (let ((s (car kill-ring)))
       (insert (format "println(\"*** %s:\" + toString(%s));\n" s s)))))
 
+(defun a9flow-insert-dbg-trasform-print ()
+  "Insert debug print of Transform variable from kill-ring"
+  (interactive)
+  (when kill-ring
+    (let ((s (car kill-ring)))
+      (insert (format "println(\"*** %s:\" + toString(fgetValue(%s)));\n" s s)))))
+
+
 (defun a9flow-insert-dbg-name-print ()
   "Insert debug print name from kill-ring"
   (interactive)
   (when kill-ring
     (let ((s (car kill-ring)))
       (insert (format "println(\"*** %s\");\n" s)))))
+
+
+(defun a9flow-insert-dbg-map-print ()
+  "Insert debug print (map(arr, \v -> v.id)) from kill-ring"
+  (interactive)
+  (when kill-ring
+    (let ((s (car kill-ring)))
+      (insert (format "println(\"*** %s:\" + toString(map(%s, \\v ->v.id)));\n" s s)))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

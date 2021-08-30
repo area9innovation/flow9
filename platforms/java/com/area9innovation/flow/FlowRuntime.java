@@ -143,11 +143,23 @@ public abstract class FlowRuntime {
 	}
 
 	public static String toString(Object value) {
-		if (value == null)
+		if (value == null) {
 			return "{}";
+		} else if (value instanceof Function) {
+			return "<function>";
+		} else if (value instanceof Double) {
+			return doubleToString((Double)value);
+		}
 
-		if (value instanceof String) {
-			StringBuilder buf = new StringBuilder();
+		StringBuilder buf = new StringBuilder();
+		toStringAppend(value, buf);
+		return buf.toString();
+	}
+
+	public static void toStringAppend(Object value, StringBuilder buf) {
+		if (value == null) {
+			buf.append("{}");
+		} else if (value instanceof String) {
 			String sv = (String)value;
 
 			buf.append('"');
@@ -175,11 +187,7 @@ public abstract class FlowRuntime {
 
 			}
 			buf.append('"');
-			return buf.toString();
-		}
-
-		if (value instanceof Object[]) {
-			StringBuilder buf = new StringBuilder();
+		} else if (value instanceof Object[]) {
 			Object[] arr = (Object[])value;
 
 			buf.append("[");
@@ -190,16 +198,16 @@ public abstract class FlowRuntime {
 			}
 			buf.append("]");
 
-			return buf.toString();
+			buf.toString();
+		} else if (value instanceof Function) {
+			buf.append("<function>");
+		} else if (value instanceof Double) {
+			buf.append(doubleToString((Double)value));
+		} else if (value instanceof Struct) {
+			((Struct)value).toStringAppend(buf);
+		} else {
+			buf.append(value.toString());
 		}
-
-		if (value instanceof Function)
-			return "<function>";
-
-		if (value instanceof Double)
-			return doubleToString((Double)value);
-
-		return value.toString();
 	}
 
 	public static String doubleToString(double value) {
@@ -216,7 +224,7 @@ public abstract class FlowRuntime {
 
 			//rstr = ss.endsWith(".0") ? ss.substring(0, rstr.length()-2) : ss;
 		}
-		
+
 		return removeTrailingZeros(rstr);
 */
 	}
