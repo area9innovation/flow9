@@ -1025,8 +1025,8 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final String fromCharCode(int c) {
-		return new String(new char[] { (char)c });
+	public final String fromCharCode(int codePoint) {
+		return new String(Character.toChars(codePoint));
 	}
 
 	public final int getCharCodeAt(String s, int i) {
