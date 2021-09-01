@@ -14,6 +14,7 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 		DFalse(): d;
 		DString(s): d;
 		DIf(cond, then, else_): {
+			// Split any prefix in the condition out in front
 			oc = optimizeDOpCode(cond);
 			split = splitDSequence(oc);
 
@@ -30,7 +31,7 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 			else DSequence(seq)
 		}
 		DSequence(exps): {
-			DSequence(concatA(filtermapi(exps, \i, e -> {
+			seq = concatA(filtermapi(exps, \i, e -> {
 				co = optimizeDOpCode(e);
 				islast = i == length(exps) - 1;
 				if (!islast && (co == DSequence([]) || co == DTrue() || co == DFalse())) {
@@ -41,7 +42,9 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 						default: [co];
 					})
 				}
-			})));
+			}));
+			nseq = optimizeDMatchString(seq, 0, []);
+			DSequence(nseq);
 		}
 		DPushCheckpoint(): d;
 		DDiscardCheckpoint(): d;
@@ -81,5 +84,86 @@ isDOpCodeTrue(d : DOpCode) -> bool {
 			else isDOpCodeTrue(lastElement(ops, DTrue()))
 		}
 		default: false;
+	}
+}
+
+/*
+	DSequence([
+		...,
+		DPushCheckpoint(),
+		DIf(
+			DMatchString(<string>) or DMatchRange,
+			<exp>,
+			DRestoreCheckpoint()
+		),
+		...
+	])
+
+	can become
+
+		DIf(
+			DMatchString(<string>) or DMatchRange,
+			<exp>,
+			DFalse()
+		),
+
+in code:
+
+	pushDCheckpoint(acc);
+	if (matchString(acc, "\\uFEFF")) {
+		...
+		...
+	} else {
+		restoreDCheckpoint(acc)
+	};
+
+*/
+optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
+	rest = \ -> {
+		optimizeDMatchString(seq, i + 1, arrayPush(acc, seq[i]));
+	}
+	// TODO: This is not correct yet, since in the body of "then", there
+	// can be some discard and restore points, which are harder to handle.
+	if (false && i + 1 < length(seq)) {
+		if (seq[i] == DPushCheckpoint()) {
+			// OK, see if we have an DIf
+			after = seq[i + 1];
+			switch (after) {
+				DIf(cond, then, else_): {
+					if (else_ == DRestoreCheckpoint()) {
+						match = switch (cond) {
+							DMatchString(__): true;
+							DMatchRange(__, __): true;
+							default: false;
+						}
+						if (match) {
+							// OK, we have something of the given pattern.
+							/*
+							DIf(
+								DMatchString(<string>) or DMatchRange,
+								<exp>,
+								DFalse()
+							),
+							*/
+							con = DIf(
+								cond,
+								then,
+								DFalse()
+							);
+							optimizeDMatchString(seq, i + 2, arrayPush(acc, con));
+						} else {
+							rest();
+						}
+					} else rest();
+				}
+				default: rest();
+			}
+		} else {
+			rest();
+		}
+	} else {
+		if (i < length(seq)) {
+			rest();
+		} else acc
 	}
 }
