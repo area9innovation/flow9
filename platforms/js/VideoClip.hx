@@ -221,7 +221,7 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function setIsAudio() : Void {
-		this.isAudio = Util.getParameter("new") == "1" && Util.getParameter("video2audio") != "1";
+		this.isAudio = Util.getParameter("video2audio") != "0";
 	}
 
 	public function playVideo(filename : String, startPaused : Bool) : Void {
