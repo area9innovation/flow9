@@ -279,20 +279,9 @@ those to flow code.
 
 Optimizations possible in generated Gringo parser: 
 
-- Use && instead of nested ifs
 - Change NOT to be a sequence
 - Epsilon is probably correctly compiled to TRUE
 - Add a C++ or Rust backend for DCode and try to use Wasm
-- This pattern can be done much more efficiently:
-
-	pushDCheckpoint(acc);
-	if (matchString(acc, "\\uFEFF")) {
-		...
-	} else {
-		restoreDCheckpoint(acc)
-	};
-
-  with a custom helper for the common constant string matching.
 
 ## TODO for Gringo itself
 
