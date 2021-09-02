@@ -379,7 +379,7 @@ public class Native extends NativeHost {
 		return s.replace(old, _new);
 	}
 
-	public final int strRangeIndexOf(String str, String substr, Integer start, Integer end) {
+	public final int strRangeIndexOf(String str, String substr, int start, int end) {
 		if (str == "" || start < 0)
 			return -1;
 		end = (end > str.length() || end < 0) ? str.length() : end;
@@ -393,6 +393,10 @@ public class Native extends NativeHost {
 			if (str.startsWith(substr, i))
 				return i;
 		return -1;
+	}
+
+	public final boolean strContainsAt(String str, int index, String substr) {
+		return str.regionMatches(index, substr, 0, substr.length());
 	}
 
 	public final String substring(String str, int start, int len) {
