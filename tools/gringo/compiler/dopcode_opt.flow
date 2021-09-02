@@ -70,7 +70,6 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 }
 
 /*
-TODO:
 	if (<cond1>) {
 		if (<cond2>) {
 			<something>
@@ -92,10 +91,14 @@ can be rewritten to be
 optimizeNestedDIf(d : DIf) -> DIf {
 	switch (d.then) {
 		DIf(cond, then, else_): {
-			// TODO: This does not work for some unknown reason
-			if (false && else_ == d.else_) {
-				// OK, we can rewrite to use an and
-				DIf(DAnd([d.cond, cond]), then, else_)
+			if (else_ == d.else_) {
+				if (existsDOpCode(d.cond, isDNotAndable)
+					|| existsDOpCode(cond, isDNotAndable)) {
+					d;
+				} else {
+					// OK, we can rewrite to use an and
+					DIf(DAnd([d.cond, cond]), then, else_)
+				}
 			} else d;
 		}
 		default: d;
@@ -115,9 +118,25 @@ splitDSequence(f : DOpCode) -> Pair<[DOpCode], DOpCode> {
 }
 
 
+// Does this always return true?
 isDOpCodeTrue(d : DOpCode) -> bool {
 	switch (d) {
 		DTrue(): true;
+		DSequence(ops): {
+			if (ops == []) false
+			else isDOpCodeTrue(lastElement(ops, DTrue()))
+		}
+		default: false;
+	}
+}
+
+doesDOpCodeReturnTrue(d : DOpCode) -> bool {
+	switch (d) {
+		DTrue(): true;
+		DAddVerbatim(__): true;
+		DAddMatched(__): true;
+		DAddError(__): true;
+		DDiscardCheckpoint(): true;
 		DSequence(ops): {
 			if (ops == []) false
 			else isDOpCodeTrue(lastElement(ops, DTrue()))
@@ -175,7 +194,7 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 							DMatchRange(__, __): true;
 							default: false;
 						}
-						if (match && !hasDCheckpoint(then)) {
+						if (match && !existsDOpCode(then, isDPushCheckPoint)) {
 							// OK, we have something of the given pattern.
 							/*
 							DIf(
@@ -207,33 +226,33 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 	}
 }
 
-hasDCheckpoint(d : DOpCode) -> bool {
-	switch (d) {
-		DFunction(name, code, body): hasDCheckpoint(body);
+existsDOpCode(d : DOpCode, fn : (DOpCode) -> bool) -> bool {
+	fn(d) || switch (d) {
+		DFunction(name, code, body): existsDOpCode(body, fn);
 		DTrue(): false;
 		DFalse(): false;
 		DString(s): false;
-		DIf(cond, then, else_): hasDCheckpoints([cond, then, else_]);
-		DSequence(exps): hasDCheckpoints(exps);
-		DPushCheckpoint(): true;
+		DIf(cond, then, else_): existsDOpCodes([cond, then, else_], fn);
+		DSequence(exps): existsDOpCodes(exps, fn);
+		DPushCheckpoint(): false;
 		DDiscardCheckpoint(): false;
 		DRestoreCheckpoint(): false;
-		DParseStar(term): hasDCheckpoint(term);
+		DParseStar(term): existsDOpCode(term, fn);
 		DAddError(error): false;
 		DCaptureI(): false;
 		DMatched(): false;
 		DPosition(): false;
-		DAddVerbatim(e): hasDCheckpoint(e);
-		DAddMatched(e): hasDCheckpoint(e);
+		DAddVerbatim(e): existsDOpCode(e, fn);
+		DAddMatched(e): existsDOpCode(e, fn);
 		DMatchString(text): false;
 		DMatchRange(lower, upper): false;
-		DCall(id): true; // Conservatively
-		DAnd(ops): hasDCheckpoints(ops);
+		DCall(id): false;
+		DAnd(ops): existsDOpCodes(ops, fn);
 	}
 }
 
-hasDCheckpoints(d : [DOpCode]) -> bool {
-	fold(d, false, \acc, dd -> acc || hasDCheckpoint(dd))
+existsDOpCodes(d : [DOpCode], fn : (DOpCode) -> bool) -> bool {
+	fold(d, false, \acc, dd -> acc || existsDOpCode(dd, fn))
 }
 
 replaceDCheckpoints(d : DOpCode) -> DOpCode {
@@ -268,3 +287,19 @@ replaceDCheckpoints(d : DOpCode) -> DOpCode {
 }
 
 
+isDPushCheckPoint(d : DOpCode) -> bool {
+	switch (d) {
+		DPushCheckpoint(): true;
+		DCall(id): true;
+		default: false;
+	}
+}
+
+// Should this be avoided inside an && construct?
+isDNotAndable(d : DOpCode) -> bool {
+	switch (d) {
+		DCaptureI(): true;
+		DPosition(): true;
+		default: false;
+	}
+}
