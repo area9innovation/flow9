@@ -214,8 +214,6 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 	rest = \ -> {
 		optimizeDMatchString(seq, i + 1, arrayPush(acc, seq[i]));
 	}
-	// TODO: This is not correct yet, since in the body of "then", there
-	// can be some discard and restore points, which are harder to handle.
 	if (i + 1 < length(seq)) {
 		if (seq[i] == DPushCheckpoint()) {
 			// OK, see if we have an DIf
@@ -261,6 +259,14 @@ isDOpCodeMatch(d : DOpCode) -> bool {
 		DMatchRange(__, __): true;
 		DAnd(left, right): isDOpCodeMatch(left) && isDOpCodeMatch(right);
 		DOr(left, right): isDOpCodeMatch(left) && isDOpCodeMatch(right);
+		DParseStar(t): isDOpCodeMatch(t);
+		DCall(__): true;
+		DAddError(__): true;
+		DAddVerbatim(e): isDOpCodeMatch(e);
+		DAddMatched(e): isDOpCodeMatch(e);
+		DTrue(): true;
+		DFalse(): true;
+
 		default: false;
 	}
 }
@@ -346,27 +352,39 @@ isDNotAndable(d : DOpCode) -> bool {
 }
 
 /*
-	TODO: for some reason, this does not work
 	{
 		pushDCheckpoint(acc);
-		pushDCheckpoint(acc);
-		<exps>
-		discardDCheckpoint(acc)
+		if ((matchRange(acc, 48, 57) && parseStar(acc, \ -> {
+			matchRange(acc, 48, 57)
+		}))) {
+			discardDCheckpoint(acc)
+		} else {
+			restoreDCheckpoint(acc)
+		}
 	}
 
 	can be optimized to just
 
-	{
-		pushDCheckpoint(acc);
-		<exps>
-	}
+	((matchRange(acc, 48, 57) && parseStar(acc, \ -> {
+		matchRange(acc, 48, 57)
+	})))
 */
 optimizeDPushDiscardSequence(d : [DOpCode]) -> DOpCode {
-	if (false && length(d) >= 3) {
-		if (d[0] == DPushCheckpoint() 
-			&& d[1] == DPushCheckpoint()
-			&& lastElement(d, DTrue()) == DDiscardCheckpoint()) {
-			DSequence(subrange(d, 1, length(d) - 2))
+	n = length(d);
+	if (n >= 2) {
+		if (d[n - 2] == DPushCheckpoint()) {
+			switch (d[n - 1]) {
+				DIf(cond, then, else_): {
+					if (!isDOpCodeMatch(cond)) {
+						DSequence(d);
+					} else if (then == DDiscardCheckpoint()
+						&& else_ == DRestoreCheckpoint()) {
+						pre = subrange(d, 0, n - 2);
+						DSequence(arrayPush(pre, cond));
+					} else DSequence(d);
+				}
+				default: DSequence(d);
+			}
 		} else DSequence(d);
 	} else {
 		DSequence(d);
