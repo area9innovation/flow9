@@ -279,7 +279,6 @@ those to flow code.
 
 Optimizations possible in generated Gringo parser: 
 
-- Change nested if to use || when possible
 - Change NOT to be a sequence
 - Epsilon is probably correctly compiled to TRUE
 - Add a C++ or Rust backend for DCode and try to use Wasm

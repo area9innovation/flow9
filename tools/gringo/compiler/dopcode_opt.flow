@@ -28,7 +28,7 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 					} else if (ot == DTrue() && oe == DFalse()) {
 						split.second
 					} else {
-						optimizeNestedDIf(DIf(split.second, ot, oe))
+						optimizeNestedDIfForOr(optimizeNestedDIfForAnd(DIf(split.second, ot, oe)))
 					}
 				);
 			if (length(seq) == 1) seq[0]
@@ -66,6 +66,9 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 		DAnd(left, right): {
 			DAnd(optimizeDOpCode(left), optimizeDOpCode(right));
 		}
+		DOr(left, right): {
+			DOr(optimizeDOpCode(left), optimizeDOpCode(right));
+		}
 	}
 }
 
@@ -87,23 +90,64 @@ can be rewritten to be
 	} else {
 		<else>
 	}
+
 */
-optimizeNestedDIf(d : DIf) -> DIf {
+optimizeNestedDIfForAnd(d : DIf) -> DIf {
 	switch (d.then) {
 		DIf(cond, then, else_): {
-			if (else_ == d.else_) {
-				if (existsDOpCode(d.cond, isDNotAndable)
-					|| existsDOpCode(cond, isDNotAndable)) {
-					d;
-				} else {
-					// OK, we can rewrite to use an and
-					DIf(DAnd(d.cond, cond), then, else_)
-				}
-			} else d;
+			if (existsDOpCode(d.cond, isDNotAndable)
+				|| existsDOpCode(cond, isDNotAndable)) {
+				d;
+			} else if (else_ == d.else_) {
+				// OK, we can rewrite to use an and
+				DIf(DAnd(d.cond, cond), then, else_)
+			} else {
+				d;
+			}
 		}
 		default: d;
 	}
 }
+
+/*
+Also,
+
+	if (<cond1>) {
+		<then>
+	} else {
+		if (<cond2>) {
+			<then>
+		} else {
+			<else>
+		}
+	}
+
+can be rewritten to be
+
+	if (<cond1> || <cond2>) {
+		<then>
+	} else {
+		<else>
+	}
+
+*/
+optimizeNestedDIfForOr(d : DIf) -> DIf {
+	switch (d.else_) {
+		DIf(cond, then, else_): {
+			if (existsDOpCode(d.cond, isDNotAndable)
+				|| existsDOpCode(cond, isDNotAndable)) {
+				d;
+			} else if (then == d.then) {
+				// OK, we can rewrite to use an or
+				DIf(DOr(d.cond, cond), then, else_)
+			} else {
+				d;
+			}
+		}
+		default: d;
+	}
+}
+
 
 // If this is a sequence, split into the head and the tail
 splitDSequence(f : DOpCode) -> Pair<[DOpCode], DOpCode> {
@@ -150,7 +194,7 @@ doesDOpCodeReturnTrue(d : DOpCode) -> bool {
 		...,
 		DPushCheckpoint(),
 		DIf(
-			DMatchString(<string>) or DMatchRange,
+			DMatchString(<string>) or DMatchRange or sequence of and|or of these,
 			<exp>,
 			DRestoreCheckpoint()
 		),
@@ -164,16 +208,6 @@ doesDOpCodeReturnTrue(d : DOpCode) -> bool {
 			<exp>,
 			DFalse()
 		),
-
-in code:
-
-	pushDCheckpoint(acc);
-	if (matchString(acc, "\\uFEFF")) {
-		...
-		...
-	} else {
-		restoreDCheckpoint(acc)
-	};
 
 */
 optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
@@ -189,12 +223,7 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 			switch (after) {
 				DIf(cond, then, else_): {
 					if (else_ == DRestoreCheckpoint()) {
-						match = switch (cond) {
-							DMatchString(__): true;
-							DMatchRange(__, __): true;
-							default: false;
-						}
-						if (match && !existsDOpCode(then, isDPushCheckPoint)) {
+						if (isDOpCodeMatch(cond) && !existsDOpCode(then, isDPushCheckPoint)) {
 							// OK, we have something of the given pattern.
 							/*
 							DIf(
@@ -226,6 +255,16 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 	}
 }
 
+isDOpCodeMatch(d : DOpCode) -> bool {
+	switch (d) {
+		DMatchString(__): true;
+		DMatchRange(__, __): true;
+		DAnd(left, right): isDOpCodeMatch(left) && isDOpCodeMatch(right);
+		DOr(left, right): isDOpCodeMatch(left) && isDOpCodeMatch(right);
+		default: false;
+	}
+}
+
 existsDOpCode(d : DOpCode, fn : (DOpCode) -> bool) -> bool {
 	fn(d) || switch (d) {
 		DFunction(name, code, body): existsDOpCode(body, fn);
@@ -248,6 +287,7 @@ existsDOpCode(d : DOpCode, fn : (DOpCode) -> bool) -> bool {
 		DMatchRange(lower, upper): false;
 		DCall(id): false;
 		DAnd(left, right): existsDOpCode(left, fn) || existsDOpCode(right, fn);
+		DOr(left, right): existsDOpCode(left, fn) || existsDOpCode(right, fn);
 	}
 }
 
@@ -283,6 +323,7 @@ replaceDCheckpoints(d : DOpCode) -> DOpCode {
 		DMatchRange(lower, upper): d;
 		DCall(id): d;
 		DAnd(left, right): DAnd(replaceDCheckpoints(left), replaceDCheckpoints(right));
+		DOr(left, right): DOr(replaceDCheckpoints(left), replaceDCheckpoints(right));
 	}
 }
 
