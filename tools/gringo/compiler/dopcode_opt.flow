@@ -23,8 +23,12 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 			seq = arrayPush(split.first,
 					if (isDOpCodeTrue(split.second)) {
 						ot
+					} else if (split.second == DFalse()) {
+						oe;
+					} else if (ot == DTrue() && oe == DFalse()) {
+						split.second
 					} else {
-						DIf(split.second, ot, oe)
+						optimizeNestedDIf(DIf(split.second, ot, oe))
 					}
 				);
 			if (length(seq) == 1) seq[0]
@@ -59,9 +63,44 @@ optimizeDOpCode(d : DOpCode) -> DOpCode {
 		DMatchString(text): d;
 		DMatchRange(lower, upper): d;
 		DCall(id): d;
+		DAnd(ops): {
+			DAnd(map(ops, optimizeDOpCode));
+		}
 	}
 }
 
+/*
+TODO:
+	if (<cond1>) {
+		if (<cond2>) {
+			<something>
+		} else {
+			<else>
+		}
+	} else {
+		<else>
+	}
+
+can be rewritten to be
+
+	if (<cond1> && <cond2>) {
+		<something>
+	} else {
+		<else>
+	}
+*/
+optimizeNestedDIf(d : DIf) -> DIf {
+	switch (d.then) {
+		DIf(cond, then, else_): {
+			// TODO: This does not work for some unknown reason
+			if (false && else_ == d.else_) {
+				// OK, we can rewrite to use an and
+				DIf(DAnd([d.cond, cond]), then, else_)
+			} else d;
+		}
+		default: d;
+	}
+}
 
 // If this is a sequence, split into the head and the tail
 splitDSequence(f : DOpCode) -> Pair<[DOpCode], DOpCode> {
@@ -124,7 +163,7 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 	}
 	// TODO: This is not correct yet, since in the body of "then", there
 	// can be some discard and restore points, which are harder to handle.
-	if (false && i + 1 < length(seq)) {
+	if (i + 1 < length(seq)) {
 		if (seq[i] == DPushCheckpoint()) {
 			// OK, see if we have an DIf
 			after = seq[i + 1];
@@ -136,7 +175,7 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 							DMatchRange(__, __): true;
 							default: false;
 						}
-						if (match) {
+						if (match && !hasDCheckpoint(then)) {
 							// OK, we have something of the given pattern.
 							/*
 							DIf(
@@ -144,12 +183,12 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 								<exp>,
 								DFalse()
 							),
+							where <exp> should not have a DPushCheckpoint,
+							and we replace all discardDCheckpoint with True
+							and restoreDCheckpoint with False
 							*/
-							con = DIf(
-								cond,
-								then,
-								DFalse()
-							);
+							nthen = replaceDCheckpoints(then);
+							con = if (nthen == DTrue()) cond else DIf(cond, nthen, DFalse());
 							optimizeDMatchString(seq, i + 2, arrayPush(acc, con));
 						} else {
 							rest();
@@ -167,3 +206,65 @@ optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
 		} else acc
 	}
 }
+
+hasDCheckpoint(d : DOpCode) -> bool {
+	switch (d) {
+		DFunction(name, code, body): hasDCheckpoint(body);
+		DTrue(): false;
+		DFalse(): false;
+		DString(s): false;
+		DIf(cond, then, else_): hasDCheckpoints([cond, then, else_]);
+		DSequence(exps): hasDCheckpoints(exps);
+		DPushCheckpoint(): true;
+		DDiscardCheckpoint(): false;
+		DRestoreCheckpoint(): false;
+		DParseStar(term): hasDCheckpoint(term);
+		DAddError(error): false;
+		DCaptureI(): false;
+		DMatched(): false;
+		DPosition(): false;
+		DAddVerbatim(e): hasDCheckpoint(e);
+		DAddMatched(e): hasDCheckpoint(e);
+		DMatchString(text): false;
+		DMatchRange(lower, upper): false;
+		DCall(id): true; // Conservatively
+		DAnd(ops): hasDCheckpoints(ops);
+	}
+}
+
+hasDCheckpoints(d : [DOpCode]) -> bool {
+	fold(d, false, \acc, dd -> acc || hasDCheckpoint(dd))
+}
+
+replaceDCheckpoints(d : DOpCode) -> DOpCode {
+	switch (d) {
+		DFunction(name, code, body): DFunction(name, code, replaceDCheckpoints(body));
+		DTrue(): d;
+		DFalse(): d;
+		DString(s): d;
+		DIf(cond, then, else_): {
+			tcond = replaceDCheckpoints(cond);
+			tthen = replaceDCheckpoints(then);
+			telse = replaceDCheckpoints(else_);
+			if (tthen == DTrue() && telse == DFalse()) tcond
+			else DIf(tcond, tthen, telse);
+		}
+		DSequence(exps): DSequence(map(exps, replaceDCheckpoints));
+		DPushCheckpoint(): d;
+		DDiscardCheckpoint(): DTrue();
+		DRestoreCheckpoint(): DFalse();
+		DParseStar(term): DParseStar(replaceDCheckpoints(term));
+		DAddError(error): d;
+		DCaptureI(): d;
+		DMatched(): d;
+		DPosition(): d;
+		DAddVerbatim(e): DAddVerbatim(replaceDCheckpoints(e));
+		DAddMatched(e): DAddMatched(replaceDCheckpoints(e));
+		DMatchString(text): d;
+		DMatchRange(lower, upper): d;
+		DCall(id): d;
+		DAnd(ops): DAnd(map(ops, replaceDCheckpoints));
+	}
+}
+
+
