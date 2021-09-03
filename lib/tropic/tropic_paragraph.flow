@@ -9,14 +9,16 @@ export {
 	TRenderDynamicParagraph(
 		words : ref [TParaWord],
 		s : [ParagraphStyle],
-		alignWidthM : Maybe<DynamicBehaviour<double>>
+		paragraphRenderingInfoB : DynamicBehaviour<Maybe<ParagraphRenderingInfo>>,
+		traceInfo : string
 	) -> TDynamicParagraph;
 
 	TRenderParagraph(
 		words : [TParaWord],
 		s : [ParagraphStyle],
-		alignWidthBM : Maybe<DynamicBehaviour<double>>,
-		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+		paragraphRenderingInfoB : DynamicBehaviour<Maybe<ParagraphRenderingInfo>>,
+		traceInfo : string
 	) -> Tropic;
 
 	TDynamicParagraph(
@@ -41,8 +43,23 @@ export {
 TRenderDynamicParagraph(
 	words : ref [TParaWord],
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>
+	paragraphRenderingInfoB : DynamicBehaviour<Maybe<ParagraphRenderingInfo>>,
+	traceInfo : string
 ) -> TDynamicParagraph {
+
+	trace = if (isUrlParameterTrue("trace_wigi_render")) {
+		if (traceInfo == "") nop1
+		else {
+			\fn -> {
+				text = fn();
+				println("TRenderDynamicParagraph[" + traceInfo + "] " + text);
+			}
+		}
+	} else {
+		nop1
+	}
+
+	trace(\-> "START");
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -59,7 +76,8 @@ TRenderDynamicParagraph(
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
-	awB = make(0.0);
+	initialAW = if (tightWidth) INF_METRICS else 0.0;
+	extAwB = make(initialAW);
 	update = make(0);
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
@@ -82,22 +100,27 @@ TRenderDynamicParagraph(
 
 	rtl = isParagraphRtl(s);
 
-	updateFn = \wi, alignWidthM -> {
+	updateLines = \wi -> {
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-		paragraphSizeBaselineAndChanges = reflowTParaWords(
+		reflowResult = reflowTParaWords(
 			^words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, false, false
+			genIndent, false, false
 		);
-		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
+
+		paragraphSizeAndBaseline = reflowResult.metrics;
+		trace(\-> "updateLines("+toString(w)+") => lines="+toString(getValue(linesCountB)) + ", metrics=" + toString(paragraphSizeAndBaseline.first));
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+		nextDistinct(linesCountB, length(reflowResult.lines.lines));
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 
+		nextDistinct(paragraphRenderingInfoB, Some(ParagraphRenderingInfo(paragraphSizeAndBaseline.first.width, w)));
+
 		// need to update words to show hyphenation point
-		changes = paragraphSizeBaselineAndChanges.words;
+		changes = reflowResult.lines.changes;
 		iteri(changes.words, \i, word -> {
 			index = changes.indexes[i];
 			words := concat3(
@@ -112,28 +135,51 @@ TRenderDynamicParagraph(
 		});
 	};
 
-	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+	updateLines(initialAW);
 
-	dynMetricsSubscription = \w -> {
+	restartReflow = \reason, newAw, requiredRestart -> {
+		if (
+			//TODO: we have to restart reflow even if we rendered with bigger AW and our width is single line because
+			// despite the lines are the same but alignment implemented as Translate in the given available so we should redo rendering
+			// maybe it worth to separate reflow and alignment code from performance point of view
+			!requiredRestart && eitherFn(getValue(paragraphRenderingInfoB), \paragraphRenderingInfo -> paragraphRenderingInfo.renderedAtAw == newAw, \-> false)
+		) {
+			trace(\-> "restartReflow("+reason+"). IGNORE - already rendered at same AW. extAw(" + toString(getValue(extAwB)) + "), newAw(" + toString(newAw) + "), renderedAtAw("+toString(newAw)+")");
+		} else {
+			trace(\-> "restartReflow("+reason+"). AW = " + toString(newAw) + " paragraphRenderingInfoB -> None()");
+			nextDistinct(paragraphRenderingInfoB, None());
+			updateLines(newAw);
+		}
+	}
+
+	dynMetricsSubscription = \i, w -> {
 		apply0(make2Subscribe2(
 			w.inspector.size,
 			w.inspector.baseline,
 			\size, ba -> {
-				if (ndynamic <= ndymamicUpper) {
-					// There is less or equal than upper limit of dynamic elements here, so just update immediately
-					executeReflow()
+				if (tightWidth) {
+					if (size.width != 0.0) {
+						singleLineWidth = INF_METRICS;
+						restartReflow("dynamicWords["+i2s(i)+"] singleLineWidth = "+toString(singleLineWidth)+", size -> " + toString(size), max(getValue(extAwB), singleLineWidth), true);
+					}
 				} else {
-					// There are more, so to prevent unnecessary work, delay the update
-					nextDistinct(update, 1);
+					trace(\-> "dynamicWords["+i2s(i)+"] -> " + toString(size));
+					if (ndynamic <= ndymamicUpper) {
+						// There is less or equal than upper limit of dynamic elements here, so just update immediately
+						updateLines(getValue(extAwB));
+					} else {
+						// There are more, so to prevent unnecessary work, delay the update
+						nextDistinct(update, 1);
+					}
 				}
 			}
 		))
 	}
 
-	subscribe2dynWord = \w -> {
+	subscribe2dynWord = \i, w -> {
 		switch (w.word : GeneralWrapElement) {
-			NonTextElement() : dynMetricsSubscription(w);
-			GeneralDynamicText(__): dynMetricsSubscription(w);
+			NonTextElement() : dynMetricsSubscription(i, w);
+			GeneralDynamicText(__): dynMetricsSubscription(i, w);
 			default: nop;
 		}
 	}
@@ -144,13 +190,17 @@ TRenderDynamicParagraph(
 		idx = max(min(index, length(^words)), 0);
 		iteri(newWords, \i, newWord -> {
 			words := insertArray(^words, idx + i, newWord);
-			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(newWord));
+			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(i, newWord));
 			dynArrayPush(
 				stackChanges,
 				TGroupAdd(translateWord(newWord, genIndent), idx + i)
 			);
 		});
-		executeReflow();
+		if (tightWidth) {
+			restartReflow("addWords["+i2s(index)+"]", getValue(extAwB), true)
+		} else {
+			updateLines(getValue(extAwB))
+		}
 	}
 
 	removeWords = \start, count, reflow -> {
@@ -161,33 +211,29 @@ TRenderDynamicParagraph(
 			dynamicWordsUns := removeIndex(^dynamicWordsUns, idx);
 			dynArrayPush(stackChanges, TGroupDelete(idx));
 		});
-		if (reflow) executeReflow();
+		if (reflow) {
+			if (tightWidth) {
+				restartReflow("removeWords", getValue(extAwB), true)
+			} else {
+				updateLines(getValue(extAwB))
+			}
+		}
 	}
 
 	tropic = TConstruct(
 		[
-			eitherFn(
-				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> {
-					updateFn(aw, Some(alw));
-					newAlw = getValue(alignWidthB);
-					if (newAlw != alw) {
-						updateFn(aw, Some(newAlw));
-					}
-				}),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
-			),
+			makeSubscribe(extAwB, updateLines),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
 					deferUntilNextFrameRendered(\ -> {
 						next(update, 0);
 						// Force an update
-						executeReflow()
+						updateLines(getValue(extAwB))
 					})
 				}
 			}),
 			\ -> {
-				dynamicWordsUns := map(^words, subscribe2dynWord);
+				dynamicWordsUns := mapi(^words, subscribe2dynWord);
 				\ -> {
 					applyall(^dynamicWordsUns);
 					dynamicWordsUns := [];
@@ -200,22 +246,53 @@ TRenderDynamicParagraph(
 			} else {
 				contentGroup;
 			},
-			awB
+			extAwB
 		)
-	) |> if (needIndent) {
+	)
+	|> (\f -> {
+		if (isUrlParameterTrue("trace_wigi_render")) {
+			wB = make(0.0);
+			TConstruct(
+				[
+					\-> subscribe(wB, \v -> {
+						trace(\-> "PARAGRAPH_WIDTH -> " + toString(v))
+					})
+				],
+				TInspect([Width(wB)], f)
+			)
+		} else {
+			f
+		}
+	})
+	|> if (needIndent) {
 		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
 	} else {
 		idfn
-	};
+	}
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	paragraphRenderingInfoB : DynamicBehaviour<Maybe<ParagraphRenderingInfo>>,
+	traceInfo : string
 ) -> Tropic {
+
+	trace = if (isUrlParameterTrue("trace_wigi_render")) {
+		if (traceInfo == "") nop1
+		else {
+			\fn -> {
+				text = fn();
+				println("TRenderDynamicParagraph[" + traceInfo + "] " + text);
+			}
+		}
+	} else {
+		nop1
+	}
+
+	trace(\-> "START");
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -237,7 +314,7 @@ TRenderParagraph(
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
-	awB = make(0.0);
+	extAwB = make(0.0);
 	update = make(0);
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
@@ -268,22 +345,23 @@ TRenderParagraph(
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 
-	updateFn = \wi, alignWidthM -> {
+	updateLines = \wi -> {
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-		paragraphSizeBaselineAndChanges = reflowTParaWords(
+		reflowResult = reflowTParaWords(
 			words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, fitLongWords,
+			genIndent, fitLongWords,
 			ignoreLetterSpacing
 		);
-		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
+		paragraphSizeAndBaseline = reflowResult.metrics;
+		nextDistinct(linesCountB, length(reflowResult.lines.lines));
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 		nextDistinct(scaleB, eitherMap(
-			paragraphSizeBaselineAndChanges.scaleM,
+			reflowResult.scaleM,
 			\scale -> Factor(scale, scale),
 			Factor(1., 1.)
 		));
@@ -291,7 +369,7 @@ TRenderParagraph(
 		deferred(\ -> updateBehaviour(reflowHappenedB, \t -> !t));
 	};
 
-	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+	executeReflow = \ -> updateLines(getValue(extAwB));
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
@@ -319,11 +397,7 @@ TRenderParagraph(
 
 	TConstruct(
 		[
-			eitherFn(
-				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
-			),
+			makeSubscribe(extAwB, updateLines),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
 					deferUntilNextFrameRendered(\ -> {
@@ -346,7 +420,7 @@ TRenderParagraph(
 			} else {
 				scaledContent;
 			},
-			awB
+			extAwB
 		)
 	) |> if (needIndent) {
 		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
@@ -694,7 +768,7 @@ TReflowResultAcc ::= TOverflowCase, TReflowedLinesAndChanges;
 	TReflowedLinesAndChanges(lines : [TParaLine], changes : WordsAndIndexes);
 	initialLines = TReflowedLinesAndChanges([], WordsAndIndexes([], []));
 // Return type for reflowTParaWords
-TReflowResult(metrics : Pair<WidthHeight, double>, words : WordsAndIndexes, scaleM : Maybe<double>);
+TReflowResult(metrics : Pair<WidthHeight, double>, lines : TReflowedLinesAndChanges, scaleM : Maybe<double>);
 
 // Given a bunch of words, a constant amount of width for paragraph, a first-line indent, this does the line breaking
 reflowTParaWords(
@@ -708,8 +782,6 @@ reflowTParaWords(
 	rtl : bool,
 	isMarked : bool,
 	generalIndent : double,
-	linesCountB : DynamicBehaviour<int>,
-	alignWidthM : Maybe<double>,
 	fitLongWords : bool,
 	ignoreLetterSpacing : bool
 ) -> TReflowResult {
@@ -740,8 +812,6 @@ reflowTParaWords(
 		)
 	else text;
 
-	nextDistinct(linesCountB, length(text));
-
 	widthAndBaseline = TAlignParaLines(
 		either(reflowAndWidth.second, availableParaWidth),
 		paraLines,
@@ -751,13 +821,12 @@ reflowTParaWords(
 		topLineBaseline,
 		rtl,
 		isMarked,
-		generalIndent,
-		alignWidthM
+		generalIndent
 	);
 
 	TReflowResult(
 		widthAndBaseline,
-		reflowAndWidth.first.changes,
+		reflowAndWidth.first,
 		maybeMap(reflowAndWidth.second, \overflowWidth -> availableParaWidth / overflowWidth)
 	);
 }
@@ -1099,8 +1168,7 @@ TAlignParaLines(
 	topLineBaseline : bool,
 	rtl : bool,
 	isMarked : bool,
-	generalIndent : double,
-	alignWidthM : Maybe<double>
+	generalIndent : double
 ) -> Pair<WidthHeight, double> {
 	lasti = length(lines) - 1;
 
@@ -1118,7 +1186,7 @@ TAlignParaLines(
 		f = TRenderLine(
 			acc.y, line.words, availableWidth,
 			lineAlignment, line.indent, generalIndent,
-			i, rtl, isMarked, alignWidthM
+			i, rtl, isMarked
 		);
 		nwidth = max(acc.width, f.width);
 		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
@@ -1147,8 +1215,7 @@ TRenderLine(
 	generalIndent : double,
 	lineNumber : int,
 	rtl : bool,
-	isMarked : bool,
-	alignWidthM : Maybe<double>
+	isMarked : bool
 ) -> TParaLineResult {
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
 	inspectors = map(words, \p -> p.inspector);
@@ -1162,7 +1229,7 @@ TRenderLine(
 	);
 
 	// Alignment offset
-	alignWidth = min(either(alignWidthM, width), width);
+	alignWidth = width;
 	startOffset = if (rtl) max(0.0, alignWidth - lineWidth) else 0.;
 	endOffset = if (rtl) 0.0 else max(0., alignWidth - lineWidth);
 	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
