@@ -395,6 +395,10 @@ public class Native extends NativeHost {
 		return -1;
 	}
 
+	public final boolean strContainsAt(String str, Integer index, String substr) {
+		return str.regionMatches(index, substr, 0, substr.length());
+	}
+
 	public final String substring(String str, int start, int len) {
 		int strlen = str.length();
 		if (len < 0) {
@@ -1025,8 +1029,8 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final String fromCharCode(int c) {
-		return new String(new char[] { (char)c });
+	public final String fromCharCode(int codePoint) {
+		return new String(Character.toChars(codePoint));
 	}
 
 	public final int getCharCodeAt(String s, int i) {

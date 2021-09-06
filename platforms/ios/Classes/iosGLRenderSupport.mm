@@ -1653,15 +1653,8 @@ StackSlot iosGLRenderSupport::setStatusBarColor(RUNNER_ARGS)
     RUNNER_PopArgs1(sbColor);
     RUNNER_CheckTag1(TInt, sbColor);
     
-    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"13.0")) {
-        CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
-        UIView *statusBar = [[UIView alloc]initWithFrame:frame];
-        statusBar.backgroundColor =  UIColorFromRGB(sbColor.GetInt());
-        [[UIApplication sharedApplication].keyWindow addSubview:statusBar];
-    } else {
-        UIView *bar = [[UIApplication sharedApplication] valueForKeyPath:@"statusBarWindow.statusBar"];
-        bar.backgroundColor = UIColorFromRGB(sbColor.GetInt());
-    }
+    UIColor* color = UIColorFromRGB(sbColor.GetInt());
+    [GLViewController setStatusBarColor: color];
     
     RETVOID;
 }

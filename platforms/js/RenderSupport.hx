@@ -2409,7 +2409,11 @@ class RenderSupport {
 			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
 			// When we register a right-click handler, we turn off the browser context menu.
-			PixiView.oncontextmenu = function (e) { e.stopPropagation(); return false; };
+			PixiView.oncontextmenu = function (e) {
+				e.preventDefault();
+				e.stopPropagation();
+				return false;
+			};
 
 			on(event, fn);
 			return function() { off(event, fn); }
@@ -2587,7 +2591,7 @@ class RenderSupport {
 		clip.invalidateLocalBounds();
 
 		var point = new Point(x, y);
-		return hittestMask(clip.parent, point) && doHitTest(clip, point);
+		return (untyped clip.skipHittestMask || hittestMask(clip.parent, point)) && doHitTest(clip, point);
 	}
 
 	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
@@ -3096,6 +3100,11 @@ class RenderSupport {
 
 	public static function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
 		return clip.setClipVisible(visible);
+	}
+
+	public static function setClipProtected(clip : DisplayObject) : Void {
+		untyped clip.skipHittestMask = true;
+		clip.updateKeepNativeWidgetParent(true);
 	}
 
 	public static function getClipRenderable(clip : DisplayObject) : Bool {
