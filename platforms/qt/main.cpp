@@ -173,6 +173,15 @@ FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, con
 
 int main(int argc, char *argv[])
 {
+#ifdef WIN32
+    {
+        // It enables ANSI escape codes https://en.wikipedia.org/wiki/ANSI_escape_code
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD m = 0;
+        GetConsoleMode(h, &m);
+        SetConsoleMode(h, m | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+#endif
 #ifdef DEBUG_FLOW
     qDebug() << "&Running the debug build.";
 #endif
