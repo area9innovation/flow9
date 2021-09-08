@@ -77,6 +77,9 @@ class FlowDebuggerBase;
 
 #define MIN_MMAP_SIZE (128*1024)
 
+extern unsigned int EPHEMERAL_HEAP_SIZE;
+extern unsigned int MAX_EPHEMERAL_ALLOC;
+
 class AddrIntervalSet
 {
 public:
@@ -358,13 +361,6 @@ private:
     }
 
     /* End of high-throughput vars */
-#if defined(ANDROID) || defined(IOS)
-    static const unsigned int EPHEMERAL_HEAP_SIZE = 2*1024*1024;
-    static const unsigned int MAX_EPHEMERAL_ALLOC = 32*1024;
-#else
-    static const unsigned int EPHEMERAL_HEAP_SIZE = 128*1024*1024;
-    static const unsigned int MAX_EPHEMERAL_ALLOC = 1*1024*1024;
-#endif
 
     /* Heap structure
 
