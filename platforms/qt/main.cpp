@@ -376,6 +376,12 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[1], "--min-heap")) {
             MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
             shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--ephemeral-heap")) {
+            EPHEMERAL_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--max-ephemeral-alloc")) {
+            MAX_EPHEMERAL_ALLOC = atoi(argv[2]) * 1048576;
+            shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--no-qglfb")) {
             // GUI cannot work without qglfb now
             // no_qglfb = true;
@@ -804,6 +810,8 @@ int main(int argc, char *argv[])
                        "--fixedscreen <w> <h>  Set these constant dimensions for the flow stage.\n"
                        "--max-heap <m>         Maximum size of the heap in mega-bytes.\n"
                        "--min-heap <m>         Starting size of the heap in mega-bytes.\n"
+                       "--ephemeral-heap <m>   Ephemeral heap size in mega-bytes.\n"
+                       "--max-ephemeral-alloc <m>  Max ephemeral allocation size in mega-bytes.\n"
                        "--fallback_font <font> Enables lookup of unknown glyphs in the <font>. <font> example - DejaVuSans.\n"
                        "--transparent          Enables GL transparency.\n"
 #endif
