@@ -263,8 +263,9 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	curPathOutAll = map(extractStructMany(styles, FbGetCurrentPathB(make(""))), \s -> s.path);
 	curPathOutArrB = tail(curPathOutAll);
 	currentPathInnerB = firstElement(curPathOutAll, make(""));
+	selectedFilesB = make([]);
 
-	doUpdateCallArr =  map(extractStructMany(styles, FbGetContentUpdateFn(\__ -> {})), \s -> s.fn);
+	doUpdateCallArr = map(extractStructMany(styles, FbGetContentUpdateFn(\__ -> {})), \s -> s.fn);
 	additionalText = extractStruct(styles, FbAdditionalText("")).text;
 	pathProcessing = extractStruct(styles, FbPathProcessing(\p -> p)).func;
 	folderSelection = contains(styles, FbFolderSelection());
@@ -274,7 +275,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	hideBottomPanel = contains(styles, FbHideBottomPanel());
 	allowPathInput = contains(styles, FbAllowPathInput());
 	fileFilterFn = extractStruct(styles, FbFileFilter(\__ -> true)).fn;
-	selectedFilesB = extractStruct(styles, FbSelectedNames(make([]))).filenamesB;
+	selectedFilesMany = map(extractStructMany(styles, FbSelectedNames(make([]))), \s -> s.filenamesB);
 	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
 	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
 	uploadMaxImageResolutionM = minA(map(extractStructMany(styles, FbUploadImageMaxResolution(0)), \s -> s.resolution));
@@ -1130,6 +1131,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		)
 	);
 
+	selectedFilesLockedUpdateR = ref false;
 	dialogContent = MDispose(concat(
 		map(getStateSubscribers(state, fileNameB, selectedFilesB, \cp -> {
 				iter(curPathOutArrB, \pB -> nextDistinct(pB, cp));
@@ -1168,6 +1170,35 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				})
 			}),
 			state.engine.subscribeOnUpdates(updateFilesView),
+			fBidirectionalLink(
+				selectedFilesB,
+				fmerge(selectedFilesMany),
+				\selectedFiles -> {
+					if (!^selectedFilesLockedUpdateR) {
+						selectedFilesLockedUpdateR := true;
+						iter(selectedFilesMany, \fileB -> nextDistinct(fileB, selectedFiles));
+						selectedFilesLockedUpdateR := false;
+					}
+					nextDistinct(
+						fileNameB,
+						if (selectedFiles == []) ""
+						else if (strContains(selectedFiles[0], "/") && endsWith(selectedFiles[0], "/")) takeAfterLast(selectedFiles[0], "/", "")
+						else if (!strContains(selectedFiles[0], "/")) selectedFiles[0]
+						else ""
+					);
+				},
+				\selectedFilesArr -> {
+					if (!^selectedFilesLockedUpdateR) {
+						selectedFilesLockedUpdateR := true;
+						selectedFilesOld = getValue(selectedFilesB);
+						selectedFiles = uniq(concatA(filter(selectedFilesArr, \arr -> arr != selectedFilesOld)));
+						iter(selectedFilesMany, \fileB -> nextDistinct(fileB, selectedFiles));
+						selectedFilesLockedUpdateR := false;
+
+						nextDistinct(selectedFilesB, selectedFiles);
+					}
+				}
+			),
 			// If smb wants to change a current folder from out of the MFileBrowser (Not tested)
 			/*subscribe(curPathOutArrB, \cp -> {
 				next(state.selectedElementsB, []);

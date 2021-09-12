@@ -323,6 +323,10 @@ class DisplayObjectHelper {
 				updateKeepNativeWidgetChildren(clip);
 			}
 
+			if (untyped clip.parent.keepNativeWidgetParent) {
+				updateKeepNativeWidgetParent(clip, untyped clip.parent.keepNativeWidgetParent);
+			}
+
 			clip.once('removed', function() { invalidate(clip); });
 		} else {
 			untyped clip.worldTransformChanged = false;
@@ -799,6 +803,18 @@ class DisplayObjectHelper {
 		}
 
 		invalidateTransform(clip, 'updateKeepNativeWidgetChildren');
+	}
+
+	public static function updateKeepNativeWidgetParent(clip : DisplayObject, keepNativeWidget : Bool) : Void {
+		if (untyped clip.keepNativeWidgetParent != keepNativeWidget) {
+			untyped clip.keepNativeWidget = keepNativeWidget;
+			untyped clip.keepNativeWidgetParent = keepNativeWidget;
+			updateKeepNativeWidgetChildren(clip);
+
+			for (child in getClipChildren(clip)) {
+				updateKeepNativeWidgetParent(child, keepNativeWidget);
+			}
+		}
 	}
 
 	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
@@ -1884,7 +1900,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function isClipOnStage(clip : DisplayObject) : Bool {
-		return untyped clip.onStage && clip.tansform != null;
+		return untyped clip.onStage && clip.transform != null;
 	}
 
 	public static function addNativeWidget(clip : DisplayObject) : Void {
