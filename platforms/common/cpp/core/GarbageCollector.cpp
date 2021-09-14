@@ -381,7 +381,7 @@ bool GarbageCollector::Collect(unsigned ensure_space)
     // Check if need to double the heap
     int live_bytes = ComputeLiveBytes() + ensure_space;
     int heap_bytes = hp_big_pos - hp_ref_end;
-    int ehlimit = heap_bytes - ByteCodeRunner::EPHEMERAL_HEAP_SIZE*3;
+    int ehlimit = heap_bytes - EPHEMERAL_HEAP_SIZE*3;
 
     if (live_bytes >= heap_bytes)
     {
