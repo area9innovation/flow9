@@ -53,7 +53,9 @@ class RenderSupport {
 	// Workaround is intended for using with SCORM Cloud
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0"
-		&& Platform.isIOS && Platform.isChrome && isInsideFrame() && Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
+		&& Platform.isIOS && Platform.isChrome && isInsideFrame()
+		&& Browser.window && Browser.window.top && Browser.window.top.document
+		&& Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
