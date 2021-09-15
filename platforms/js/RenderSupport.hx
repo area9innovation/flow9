@@ -54,7 +54,7 @@ class RenderSupport {
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0"
 		&& Platform.isIOS && Platform.isChrome && isInsideFrame()
-		&& Browser.window && Browser.window.top && Browser.window.top.document
+		&& Browser.window != null && Browser.window.top != null && Browser.window.top.document != null
 		&& Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
