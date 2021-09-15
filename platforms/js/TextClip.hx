@@ -1634,8 +1634,9 @@ class TextClip extends NativeWidgetClip {
 			if (range.getBoundingClientRect != null) {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
-					textNodeMetrics.width = rect.right - rect.left;
-					textNodeMetrics.height = rect.bottom - rect.top;
+					var viewportScale = RenderSupport.getViewportScale();
+					textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
+					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 				}
 			}
 		}
