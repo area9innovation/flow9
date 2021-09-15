@@ -911,7 +911,7 @@ class RenderSupport {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			if (Platform.isAndroid || (Platform.isIOS && ((Platform.isChrome && !isInsideFrame()) || ProgressiveWebTools.isRunningPWA()))) {
+			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
 
 				// Still send whole window size - without reducing by screen kbd
