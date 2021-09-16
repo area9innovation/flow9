@@ -347,6 +347,8 @@ class RenderSupport {
 				&& Browser.window != null && Browser.window.top != null && Browser.window.top.document != null
 				&& Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
 		} catch (e : Dynamic) {
+			untyped console.log("isViewportScaleWorkaroundEnabled error : ");
+			untyped console.log(e);
 			return false;
 		}
 	}
@@ -592,7 +594,10 @@ class RenderSupport {
 		if (viewportScaleWorkaroundEnabled) {
 			try {
 				onBrowserWindowResizeDelayed({target : Browser.window});
-			} catch (e : Dynamic) {}
+			} catch (e : Dynamic) {
+				untyped console.log("onBrowserWindowResizeDelayed error : ");
+				untyped console.log(e);
+			}
 		}
 	}
 
@@ -980,6 +985,8 @@ class RenderSupport {
 		try {
 			return viewportScaleWorkaroundEnabled ? untyped Browser.window.top.visualViewport.scale : 1.0;
 		} catch (e : Dynamic) {
+			untyped console.log("getViewportScale error : ");
+			untyped console.log(e);
 			return 1.0;
 		}
 	}
