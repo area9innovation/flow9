@@ -343,9 +343,7 @@ class RenderSupport {
 
 	public static function isViewportScaleWorkaroundEnabled() : Bool {
 		try {
-			return Platform.isIOS && Platform.isChrome && isInsideFrame()
-				&& Browser.window != null && Browser.window.top != null && Browser.window.top.document != null
-				&& Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
+			return Platform.isIOS && Platform.isChrome && isInsideFrame();
 		} catch (e : Dynamic) {
 			untyped console.log("isViewportScaleWorkaroundEnabled error : ");
 			untyped console.log(e);
