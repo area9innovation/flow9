@@ -52,10 +52,7 @@ class RenderSupport {
 	public static var browserZoom : Float = 1.0;
 	// Workaround is intended for using with SCORM Cloud
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
-	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0"
-		&& Platform.isIOS && Platform.isChrome && isInsideFrame()
-		&& Browser.window != null && Browser.window.top != null && Browser.window.top.document != null
-		&& Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
+	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -344,6 +341,16 @@ class RenderSupport {
 		}
 	}
 
+	public static function isViewportScaleWorkaroundEnabled() : Bool {
+		try {
+			return Platform.isIOS && Platform.isChrome && isInsideFrame()
+				&& Browser.window != null && Browser.window.top != null && Browser.window.top.document != null
+				&& Browser.window.top.document.querySelector('meta[name="viewport"]') == null;
+		} catch (e : Dynamic) {
+			return false;
+		}
+	}
+
 	public static function monitorUserStyleChanges() : Void -> Void {
 		return Native.setInterval(1000, emitUserStyleChanged);
 	}
@@ -582,7 +589,11 @@ class RenderSupport {
 			ctx.imageSmoothingEnabled = true;
 		}
 
-		if (viewportScaleWorkaroundEnabled) onBrowserWindowResizeDelayed({target : Browser.window});
+		if (viewportScaleWorkaroundEnabled) {
+			try {
+				onBrowserWindowResizeDelayed({target : Browser.window});
+			} catch (e : Dynamic) {}
+		}
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -966,7 +977,11 @@ class RenderSupport {
 	}
 
 	public static function getViewportScale() : Float {
-		return viewportScaleWorkaroundEnabled ? untyped Browser.window.top.visualViewport.scale : 1.0;
+		try {
+			return viewportScaleWorkaroundEnabled ? untyped Browser.window.top.visualViewport.scale : 1.0;
+		} catch (e : Dynamic) {
+			return 1.0;
+		}
 	}
 
 	private static function dropCurrentFocus() : Void {
