@@ -981,7 +981,7 @@ class RenderSupport {
 
 	public static function getViewportScale() : Float {
 		try {
-			return viewportScaleWorkaroundEnabled ? untyped Browser.window.top.visualViewport.scale : 1.0;
+			return viewportScaleWorkaroundEnabled ? (Browser.window.outerWidth / Browser.window.innerWidth) : 1.0;
 		} catch (e : Dynamic) {
 			untyped console.log("getViewportScale error : ");
 			untyped console.log(e);
