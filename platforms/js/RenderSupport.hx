@@ -512,6 +512,8 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
+		untyped console.log("createPixiRenderer", width, height);
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
@@ -742,12 +744,16 @@ class RenderSupport {
 	private static inline function calculateMobileTopHeight() {
 		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 
+		untyped console.log('A. screen height', getScreenSize().height);
+		untyped console.log('B. Browser inner height', Browser.window.innerHeight);
+		untyped console.log('topHeight', topHeight);
+
 		// Calculate top height only once for each orientation
 		if (isPortaitOrientation()) {
-			if (WindowTopHeightPortrait == -1)
+			if (WindowTopHeightPortrait == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightPortrait = topHeight;
 		} else {
-			if (WindowTopHeightLandscape == -1)
+			if (WindowTopHeightLandscape == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightLandscape = topHeight;
 		}
 	}
