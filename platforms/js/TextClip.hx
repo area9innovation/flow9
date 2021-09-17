@@ -532,11 +532,11 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
-		var background = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		if (textBackgroundWidget != null) {
-			textBackgroundWidget.style.background = background;
+			textBackgroundWidget.style.background = bg;
 		} else {
-			nativeWidget.style.background = background;
+			nativeWidget.style.background = bg;
 		}
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
@@ -568,7 +568,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public inline function updateTextBackgroundWidget() : Void {
-		if (useTextBackgroundWidget && nativeWidget.firstChild) {
+		if (useTextBackgroundWidget && nativeWidget.firstChild && textBackgroundWidget != null && textBackgroundWidget.style.background != '') {
 			nativeWidget.insertBefore(textBackgroundWidget, nativeWidget.firstChild);
 			textBackgroundWidget.style.top = '${getTextMargin()}px';
 		}
