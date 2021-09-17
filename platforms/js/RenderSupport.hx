@@ -934,14 +934,18 @@ class RenderSupport {
 			var win_height = e.target.innerHeight;
 
 			if (viewportScaleWorkaroundEnabled) {
+				untyped console.log("onBrowserWindowResize");
 				var viewportScale = getViewportScale();
+				untyped console.log("viewportScale", viewportScale);
 				calculateMobileTopHeight();
 				var screen_size = getScreenSize();
 				win_width = screen_size.width;
 				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
+				untyped console.log("win_width", win_width);
+				untyped console.log("win_height", win_height);
 
-				// Browser.document.documentElement.style.width = untyped __js__("`calc(100% * ${viewportScale})`");
-				// Browser.document.documentElement.style.height = untyped __js__("`calc(100% * ${viewportScale})`");
+				Browser.document.documentElement.style.width = untyped __js__("`calc(100% * ${viewportScale})`");
+				Browser.document.documentElement.style.height = untyped __js__("`calc(100% * ${viewportScale})`");
 				Browser.document.documentElement.style.transform = untyped __js__("`scale(${1/viewportScale})`");
 				Browser.document.documentElement.style.transformOrigin = "0 0";
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
