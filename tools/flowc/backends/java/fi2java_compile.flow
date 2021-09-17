@@ -11,14 +11,6 @@ export {
 	type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string;
 }
 
-javaKnownNatives = fold([
-	// There was some intention for this variable and complement function,
-	// but now in fact it simply prevent call of strRangeIndexOf() native.
-	// So disabling next line significantly decrease GC pressure and
-	// increase performance.
-	//	"Native.strRangeIndexOf"
-], makeTree(), \a,v -> setTree(a,v,true));
-
 indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]> {
 	init = Triple(makeTree(), makeTree(), []);
 
@@ -154,10 +146,13 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 					switch (type) {
 						FiTypeFunction(__, __): {
 							parts = strSplit(nname, ".");
-							if (length(parts) != 2)
+							if (length(parts) != 2) {
 								fail0("Invalid native identifier: " + nname);
+							}
+							native_host = parts[0];
+							native_name = parts[1];
 							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
-							switch (checkJavaKnownNative(gctx, fallback, s, nname)) {
+							switch (checkJavaKnownNative(gctx, fallback, s, native_host, native_name)) {
 								FiLambda(args, body, __, __): {
 									wrapper_t = emitJavaFnWrapper(
 										gctx, csm, type, "\t\t",
@@ -244,7 +239,13 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
 					}
 					FiNativeDec(__,__,__, nname, fallback,__,__): {
-						fbexp = checkJavaKnownNative(gctx, fallback, -1, nname);
+						parts = strSplit(nname, ".");
+						if (length(parts) != 2) {
+							fail0("Invalid native identifier: " + nname);
+						}
+						native_host = parts[0];
+						native_name = parts[1];
+						fbexp = checkJavaKnownNative(gctx, fallback, -1, native_host, native_name);
 						switch (fbexp) {
 							FiLambda(xs, body, __, __): {
 								addJavaExpressionWrappers(gctx, body);
@@ -308,14 +309,22 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
 					}
 					FiNativeDec(name, io, type, nname, fallback,__,__): {
-						fbexp = checkJavaKnownNative(gctx, fallback, -1, nname);
+						parts = strSplit(nname, ".");
+						if (length(parts) != 2) {
+							fail0("Invalid native identifier: " + nname);
+						}
+						native_host = parts[0];
+						native_name = parts[1];
+						fbexp = checkJavaKnownNative(gctx, fallback, -1, native_host, native_name);
 						switch (fbexp) {
 							FiLambda(xs, body, __, __): {
 								funcType = cast(type: FiType -> FiTypeFunction);
 								code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
 								pushstr(code);
 							}
-							default: {}
+							default: {
+								
+							}
 						}
 					}
 				}
@@ -1494,11 +1503,13 @@ javaStatementPullContext(local_counter : ref int) {
 	)
 }
 
-checkJavaKnownNative(gctx : JavaGlobalContext, fallback : FiExp, start : int, nname : string) -> FiExp {
-	if (lookupTreeDef(javaKnownNatives, nname, false))
+checkJavaKnownNative(gctx : JavaGlobalContext, fallback : FiExp, start : int, native_host : string, native_name : string) -> FiExp {
+	host_natives = lookupTreeDef(gctx.host_natives, native_host, makeSet());
+	if (containsSet(host_natives, native_name)) {
 		FiVoid(start)
-	else
+	} else {
 		fallback
+	}
 }
 
 javaNewLocalName(counter : ref int, name : string) {
