@@ -1107,11 +1107,12 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
+			var pointScaled = new Point(point.x * RenderSupport.getViewportScale(), point.y * RenderSupport.getViewportScale());
 
 			RenderSupport.MousePos.x = point.x;
 			RenderSupport.MousePos.y = point.y;
 
-			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, 0.16) != this) {
+			if (RenderSupport.getClipAt(RenderSupport.PixiStage, pointScaled, true, 0.16) != this) {
 				e.preventDefault();
 			}
 		}
