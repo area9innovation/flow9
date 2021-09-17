@@ -539,7 +539,7 @@ class AccessWidget extends EventEmitter {
 							"stagechanged",
 							function() {
 								if (focused) {
-									this.element.focus();
+									if (this.element != null) this.element.focus();
 									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 								}
 							}
@@ -563,7 +563,7 @@ class AccessWidget extends EventEmitter {
 							"stagechanged",
 							function() {
 								if (focused) {
-									this.element.focus();
+									if (this.element != null) this.element.focus();
 									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 								}
 							}

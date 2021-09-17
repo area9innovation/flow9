@@ -1183,7 +1183,7 @@ class TextClip extends NativeWidgetClip {
 		isFocused = true;
 
 		if (RenderSupport.Animating) {
-			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			RenderSupport.once("stagechanged", function() { if (nativeWidget != null && isFocused) nativeWidget.focus(); });
 			return;
 		}
 
@@ -1218,7 +1218,7 @@ class TextClip extends NativeWidgetClip {
 	private function onBlur(e : Event) : Void {
 		if (untyped RenderSupport.Animating || this.preventBlur) {
 			untyped this.preventBlur = false;
-			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			RenderSupport.once("stagechanged", function() { if (nativeWidget != null && isFocused) nativeWidget.focus(); });
 			return;
 		}
 
