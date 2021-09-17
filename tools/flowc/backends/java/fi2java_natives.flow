@@ -1,0 +1,94 @@
+import lingo/pegcode/driver;
+import tools/flowc/backends/common;
+import tools/flowc/backends/java/fi2java_defines;
+
+export {
+	// Parse all java files with classes derived from 'NativeHost' from config and find all their public methods.
+	fi2javaNatives(cfg : FiJavaConfig) -> Tree<string, Set<string>>;
+}
+
+fi2javaNatives(cfg : FiJavaConfig) -> Tree<string, Set<string>> {
+	flow_dir = getFlowDir();
+	lib_natives = pathCombineMany([flow_dir, "platforms", "java", "com", "area9innovation", "flow"]);
+	extern_native_dirs = filtermap(cfg.externNatives, \nat -> {
+		native_path = resolveRelativePath(nat);
+		if (isDirectory(native_path)) {
+			Some(native_path);
+		} else {
+			fcPrintln("Java external native directory '" + nat + "' does't exist", cfg.threadId);
+			None();
+		}
+	});
+	native_dirs = concat([lib_natives], extern_native_dirs);
+	fold(extern_native_dirs, makeTree(), \acc, native_dir ->
+		fold(readDirectory(native_dir), acc, \ac, file ->
+			if (!endsWith(file, ".java")) ac else {
+				path = pathCombine(native_dir, file);
+				code = getFileContent(path);
+				name = changeFileExt(fileNameOnly(file), "");
+				if (code == "") {
+					fcPrintln("empty source code for file: " + path, cfg.threadId);
+					ac;
+				} else {
+					if (name == "NativeHost" || !strContains(code, "NativeHost")) ac else {
+						natives = fi2javaNativesFromCode(code, file, cfg);
+						if (length(natives) == 0) ac else {
+							setTree(ac, name, buildSet(natives));
+						}
+					}
+				}
+			}
+		)
+	);
+}
+
+fi2java_natives_parser : ref Maybe<[PegOp]> = ref None();
+
+fi2javaNativesFromCode(code : string, file : string, cfg : FiJavaConfig) -> [string] {
+	depth = ref 0;
+	natives = ref [];
+	is_host = ref false;
+	ret = parsic3(
+		onlyOnce(fi2java_natives_parser, \->
+			compilePegGrammar("#include tools/flowc/backends/java/java_natives.lingo")
+		), 
+		code, 
+		SemanticActions(mergeTree(defaultPegActions.t, 
+			pairs2tree([
+				Pair("pushClass", \xs : [flow] -> {
+					extends = if (length(xs[0]) == 0) "" else trim2(xs[0][0], " \n\t\r");
+					if (extends == "NativeHost") {
+						is_host := true;
+					}
+					depth := ^depth + 1;
+					IllegalStruct();
+				}),
+				Pair("pushNewClass", \xs : [flow] -> {
+					depth := ^depth + 1;
+					IllegalStruct();
+				}),
+				Pair("popClass", \xs : [flow] -> {
+					depth := ^depth - 1;
+					IllegalStruct();
+				}),
+				Pair("registerMethod", \xs : [flow] -> {
+					modifiers = filtermap(xs[0], \m -> {
+						m1 = trim2(m, " \t\n\r");
+						if (isSpace(m1) || startsWith(m1, "@")) None() else Some(m1);
+					});
+					if (^is_host && contains(modifiers, "public") && ^depth == 1) {
+						refArrayPush(natives, trim2(xs[1], " \t\n\r"));
+					}
+					IllegalStruct();
+				}),
+			])
+		)),
+		IllegalStruct()
+	);
+	if (ret.third == "") {
+		^natives;
+	} else {
+		fcPrintln("Failed to parse file '" + file + "'", cfg.threadId);
+		[]
+	}
+}
