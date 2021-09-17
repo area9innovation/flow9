@@ -939,6 +939,12 @@ class RenderSupport {
 				untyped console.log("viewportScale", viewportScale);
 				calculateMobileTopHeight();
 				var screen_size = getScreenSize();
+				untyped console.log("screen_size", screen_size.width, screen_size.height);
+				untyped console.log("mobile top height", getMobileTopHeight());
+				untyped console.log("isPortaitOrientation", isPortaitOrientation());
+				untyped console.log("WindowTopHeightPortrait", WindowTopHeightPortrait);
+				untyped console.log("WindowTopHeightLandscape", WindowTopHeightLandscape);
+
 				win_width = screen_size.width;
 				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
 				untyped console.log("win_width", win_width);
