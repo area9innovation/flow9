@@ -593,7 +593,9 @@ class RenderSupport {
 
 		if (viewportScaleWorkaroundEnabled) {
 			try {
-				onBrowserWindowResizeDelayed({target : Browser.window});
+				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
+				// So let`s recalculate viewport sizes after some delay (10s) with real values 
+				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
 			} catch (e : Dynamic) {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
 				untyped console.log(e);
@@ -922,8 +924,8 @@ class RenderSupport {
 
 	// Delay is required due to issue in WKWebView
 	// https://bugs.webkit.org/show_bug.cgi?id=170595
-	private static inline function onBrowserWindowResizeDelayed(e : Dynamic) : Void {
-		Native.timer(100, function() {
+	private static inline function onBrowserWindowResizeDelayed(e : Dynamic, ?delay : Int = 100) : Void {
+		Native.timer(delay, function() {
 			onBrowserWindowResize(e);
 		});
 	}
