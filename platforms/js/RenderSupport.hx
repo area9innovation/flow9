@@ -512,7 +512,10 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
-		untyped console.log("createPixiRenderer", width, height);
+		if (viewportScaleWorkaroundEnabled) {
+			untyped console.log("createPixiRenderer", width, height);
+			untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+		}
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
@@ -926,6 +929,7 @@ class RenderSupport {
 	// https://bugs.webkit.org/show_bug.cgi?id=170595
 	private static inline function onBrowserWindowResizeDelayed(e : Dynamic, ?delay : Int = 100) : Void {
 		Native.timer(delay, function() {
+			untyped console.log("~~onBrowserWindowResizeDelayed~~");
 			onBrowserWindowResize(e);
 		});
 	}
@@ -952,6 +956,8 @@ class RenderSupport {
 				untyped console.log("isPortaitOrientation", isPortaitOrientation());
 				untyped console.log("WindowTopHeightPortrait", WindowTopHeightPortrait);
 				untyped console.log("WindowTopHeightLandscape", WindowTopHeightLandscape);
+				untyped console.log("innerHeight", Browser.window.innerHeight);
+				untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
 
 				win_width = screen_size.width;
 				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
