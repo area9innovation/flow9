@@ -596,9 +596,13 @@ class RenderSupport {
 
 		if (viewportScaleWorkaroundEnabled) {
 			try {
-				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
-				// So let`s recalculate viewport sizes after some delay (10s) with real values 
-				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
+				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep some meaningless value for some time after initialization
+				// So let`s trigger viewport sizes recalculation after some delay (10s) with real values 
+				Native.timer(10000, function() {
+					untyped console.log("Make custom resize");
+					var event = new js.html.Event('resize', {"bubbles":true});
+					Browser.document.dispatchEvent(event);
+				});
 			} catch (e : Dynamic) {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
 				untyped console.log(e);
