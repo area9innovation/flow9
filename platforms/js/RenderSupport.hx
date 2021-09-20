@@ -515,6 +515,7 @@ class RenderSupport {
 		if (viewportScaleWorkaroundEnabled) {
 			untyped console.log("createPixiRenderer", width, height);
 			untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+			untyped console.log("html height", Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("height"));
 		}
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
@@ -962,14 +963,15 @@ class RenderSupport {
 				untyped console.log("WindowTopHeightLandscape", WindowTopHeightLandscape);
 				untyped console.log("innerHeight", Browser.window.innerHeight);
 				untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+				untyped console.log("html height", Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("height"));
 
 				win_width = screen_size.width;
 				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
 				untyped console.log("win_width", win_width);
 				untyped console.log("win_height", win_height);
 
-				Browser.document.documentElement.style.width = 'calc(100% * ${viewportScale})';
-				Browser.document.documentElement.style.height = 'calc(100% * ${viewportScale})';
+				// Browser.document.documentElement.style.width = 'calc(100% * ${viewportScale})';
+				// Browser.document.documentElement.style.height = 'calc(100% * ${viewportScale})';
 				Browser.document.documentElement.style.transform = 'scale(${1/viewportScale})';
 				Browser.document.documentElement.style.transformOrigin = "0 0";
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
