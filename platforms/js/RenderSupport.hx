@@ -58,6 +58,7 @@ class RenderSupport {
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
+	private static var InnerHeightAtRenderTime : Float = -1.0;
 
 	public static var hadUserInteracted = false;
 
@@ -636,6 +637,10 @@ class RenderSupport {
 			PixiWorkarounds.workaroundIECustomEvent();
 		}
 
+		if (viewportScaleWorkaroundEnabled) {
+			InnerHeightAtRenderTime = Browser.window.innerHeight;
+		}
+
 		createPixiRenderer();
 
 		// Workaround to catch wheel events from trackpad on iPad in Safari
@@ -752,7 +757,17 @@ class RenderSupport {
 	}
 
 	private static inline function calculateMobileTopHeight() {
-		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
+		var screenSize = getScreenSize();
+		
+		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
+		// Dirty trick to fix this wrong innerHeight value
+		var innerHeightCompensation = (
+				viewportScaleWorkaroundEnabled
+				&& Browser.window.innerHeight == InnerHeightAtRenderTime
+				&& screenSize.height != Browser.window.innerHeight
+				&& (screenSize.height - Browser.window.innerHeight * getViewportScale()) < 100
+			) ? 95.0 / getViewportScale() : 0.0;
+		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
 
 		untyped console.log('A. screen height', getScreenSize().height);
 		untyped console.log('B. Browser inner height', Browser.window.innerHeight);
