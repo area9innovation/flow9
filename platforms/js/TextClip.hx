@@ -119,6 +119,7 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	public static var FullTextMeasurement = Util.getParameter("ftm") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
@@ -517,6 +518,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.color = style.fill;
 		}
 
+		nativeWidget.style.paddingLeft = '${metrics.maxPadding}px';
 		nativeWidget.style.letterSpacing = !this.isHTMLRenderer() || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
 		nativeWidget.style.wordSpacing = !this.isHTMLRenderer() || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
 		nativeWidget.style.fontFamily = !this.isHTMLRenderer() || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
@@ -1524,22 +1526,26 @@ class TextClip extends NativeWidgetClip {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
 				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
-				metrics = TextMetrics.measureText(contentGlyphsModified, style);
+				metrics = measureText(contentGlyphsModified, style);
 				if (this.isHTMLRenderer()) {
 					measureHTMLWidth();
 				}
 			} else {
-				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				metrics = untyped measureText(this.contentGlyphs.modified, style);
 			}
 
 			metrics.maxWidth = 0.0;
+			metrics.maxPadding = 0.0;
 			var lineWidths : Array<Float> = metrics.lineWidths;
 
-			for (lineWidth in lineWidths) {
-				metrics.maxWidth += lineWidth;
+			for (i in 0...lineWidths.length) {
+				var padding = (metrics.linePaddings != null && i < metrics.linePaddings.length) ? metrics.linePaddings[i] : 0.0;
+				metrics.maxPadding = Math.max(metrics.maxPadding, padding);
+				metrics.maxWidth += lineWidths[i] + padding;
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+			metrics.width += metrics.maxPadding;
 		}
 
 		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
@@ -1683,5 +1689,9 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			super.createNativeWidget(tagName);
 		}
+	}
+
+	private function measureText(text, style, ?wordWrap, ?canvas) {
+		return FullTextMeasurement ? untyped PixiWorkarounds.measureText(text, style, wordWrap, canvas) : TextMetrics.measureText(text, style, wordWrap, canvas);
 	}
 }

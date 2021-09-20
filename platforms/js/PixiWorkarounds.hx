@@ -615,94 +615,17 @@ class PixiWorkarounds {
 
 			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
-				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
-
-				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
-				const font = style.toFontString();
-				const fontProperties = PIXI.TextMetrics.measureFont(font);
-
-				// fallback in case UA disallow canvas data extraction
-				// (toDataURI, getImageData functions)
-				if (fontProperties.fontSize === 0)
-				{
-					fontProperties.fontSize = style.fontSize;
-					fontProperties.ascent = style.fontSize;
-				}
-
-				const context = canvas.getContext('2d');
-				context.font = font;
-				let widthContext = context;
-
-				let widthMulti = Platform.isIE ? 100 : 1;
-				if (Platform.isIE) {
-					// In IE, CanvasRenderingContext2D measure text with integer preceision
-					// it leads to cumulative errors in flow
-					// for example, if we counts width of words in the line
-					let widthCanvas = PIXI.TextMetrics._widthCanvas;
-					if (typeof widthCanvas === 'undefined') {
-						PIXI.TextMetrics._widthCanvas = document.createElement('canvas');
-						widthCanvas = PIXI.TextMetrics._widthCanvas;
-					}
-					let clonedStyle = style.clone();
-					clonedStyle.fontSize *= widthMulti;
-					widthContext = widthCanvas.getContext('2d');
-					widthContext.font = clonedStyle.toFontString();
-				} else if (Platform.isSamsung) {
-					const defaultFontSize = 16;
-					const currentFontSize = parseInt(window.getComputedStyle(document.body).getPropertyValue('font-size'));
-					const fontScale = currentFontSize / defaultFontSize;
-					const scaledFontSize = style.fontSize * fontScale;
-					fontProperties.fontSize = fontProperties.ascent = scaledFontSize;
-
-					let contextFontSize = /[\\d\\.]+px/.exec(widthContext.font);
-					if (contextFontSize) {
-						contextFontSize = parseFloat(contextFontSize[0]);
-						if (contextFontSize) {
-							widthMulti = contextFontSize / scaledFontSize;
-						}
-					}
-				}
-
-				const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
-				const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
-				const lineWidths = new Array(lines.length);
-				let maxLineWidth = 0;
-
-				for (let i = 0; i < lines.length; i++)
-				{
-					let lineWidth;
-					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
-
-					lineWidths[i] = lineWidth;
-					maxLineWidth = Math.max(maxLineWidth, lineWidth);
-				}
-				let width = maxLineWidth + style.strokeThickness;
-
-				if (style.dropShadow)
-				{
-					width += style.dropShadowDistance;
-				}
-
-				const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
-				let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
-					+ ((lines.length - 1) * (lineHeight + style.leading));
-
-				if (style.dropShadow)
-				{
-					height += style.dropShadowDistance;
-				}
-
+				const textMetrics = PixiWorkarounds.measureText(text, style, wordWrap, canvas);
 				return new PIXI.TextMetrics(
-					text,
-					style,
-					width,
-					height,
-					lines,
-					lineWidths,
-					lineHeight + style.leading,
-					maxLineWidth,
-					fontProperties
+					textMetrics.text,
+					textMetrics.style,
+					textMetrics.width,
+					textMetrics.height,
+					textMetrics.lines,
+					textMetrics.lineWidths,
+					textMetrics.lineHeight,
+					textMetrics.maxLineWidth,
+					textMetrics.fontProperties
 				);
 			}
 
@@ -1059,6 +982,104 @@ class PixiWorkarounds {
 					}
 				}
 			};
+		");
+	}
+
+	public static function measureText(text, style, ?wordWrap, ?canvas) {
+		untyped __js__("
+			canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
+
+			wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
+			const font = style.toFontString();
+			const fontProperties = PIXI.TextMetrics.measureFont(font);
+
+			// fallback in case UA disallow canvas data extraction
+			// (toDataURI, getImageData functions)
+			if (fontProperties.fontSize === 0)
+			{
+				fontProperties.fontSize = style.fontSize;
+				fontProperties.ascent = style.fontSize;
+			}
+
+			const context = canvas.getContext('2d');
+			context.font = font;
+			let widthContext = context;
+
+			let widthMulti = Platform.isIE ? 100 : 1;
+			if (Platform.isIE) {
+				// In IE, CanvasRenderingContext2D measure text with integer preceision
+				// it leads to cumulative errors in flow
+				// for example, if we counts width of words in the line
+				let widthCanvas = PIXI.TextMetrics._widthCanvas;
+				if (typeof widthCanvas === 'undefined') {
+					PIXI.TextMetrics._widthCanvas = document.createElement('canvas');
+					widthCanvas = PIXI.TextMetrics._widthCanvas;
+				}
+				let clonedStyle = style.clone();
+				clonedStyle.fontSize *= widthMulti;
+				widthContext = widthCanvas.getContext('2d');
+				widthContext.font = clonedStyle.toFontString();
+			} else if (Platform.isSamsung) {
+				const defaultFontSize = 16;
+				const currentFontSize = parseInt(window.getComputedStyle(document.body).getPropertyValue('font-size'));
+				const fontScale = currentFontSize / defaultFontSize;
+				const scaledFontSize = style.fontSize * fontScale;
+				fontProperties.fontSize = fontProperties.ascent = scaledFontSize;
+
+				let contextFontSize = /[\\d\\.]+px/.exec(widthContext.font);
+				if (contextFontSize) {
+					contextFontSize = parseFloat(contextFontSize[0]);
+					if (contextFontSize) {
+						widthMulti = contextFontSize / scaledFontSize;
+					}
+				}
+			}
+
+			const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
+			const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
+			const lineWidths = new Array(lines.length);
+			const linePaddings = new Array(lines.length);
+			let maxLineWidth = 0;
+
+			for (let i = 0; i < lines.length; i++)
+			{
+				let lineWidth;
+				const textMetrics = widthContext.measureText(lines[i]);
+				lineWidth = textMetrics.width / widthMulti;
+				lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
+
+				lineWidths[i] = lineWidth;
+				linePaddings[i] = textMetrics.actualBoundingBoxLeft;
+				maxLineWidth = Math.max(maxLineWidth, lineWidth);
+			}
+			let width = maxLineWidth + style.strokeThickness;
+
+			if (style.dropShadow)
+			{
+				width += style.dropShadowDistance;
+			}
+
+			const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
+			let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
+				+ ((lines.length - 1) * (lineHeight + style.leading));
+
+			if (style.dropShadow)
+			{
+				height += style.dropShadowDistance;
+			}
+
+			return ({
+				text : text,
+				style : style,
+				width : width,
+				height : height,
+				lines : lines,
+				lineWidths : lineWidths,
+				linePaddings : linePaddings,
+				lineHeight : lineHeight + style.leading,
+				maxLineWidth : maxLineWidth,
+				fontProperties : fontProperties
+			});
 		");
 	}
 }
