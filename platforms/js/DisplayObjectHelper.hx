@@ -2094,7 +2094,7 @@ class DisplayObjectHelper {
 		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) :
 			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxX : getWidth(clip);
 
-		return widgetWidth;
+		return widgetWidth - ((untyped clip.metrics != null && untyped clip.metrics.maxLeftPadding != null) ? untyped clip.metrics.maxLeftPadding : 0.0);
 	}
 
 	public static function getHeight(clip : DisplayObject) : Float {
