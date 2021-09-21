@@ -518,7 +518,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.color = style.fill;
 		}
 
-		nativeWidget.style.paddingLeft = '${metrics.maxPadding}px';
+		nativeWidget.style.paddingLeft = '${metrics.maxLeftPadding}px';
 		nativeWidget.style.letterSpacing = !this.isHTMLRenderer() || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
 		nativeWidget.style.wordSpacing = !this.isHTMLRenderer() || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
 		nativeWidget.style.fontFamily = !this.isHTMLRenderer() || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
@@ -1535,17 +1535,20 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			metrics.maxWidth = 0.0;
-			metrics.maxPadding = 0.0;
+			metrics.maxLeftPadding = 0.0;
+			metrics.maxRightBound = 0.0;
 			var lineWidths : Array<Float> = metrics.lineWidths;
 
 			for (i in 0...lineWidths.length) {
-				var padding = (metrics.linePaddings != null && i < metrics.linePaddings.length) ? metrics.linePaddings[i] : 0.0;
-				metrics.maxPadding = Math.max(metrics.maxPadding, padding);
-				metrics.maxWidth += lineWidths[i] + padding;
+				var leftPadding = (metrics.leftPaddings != null && i < metrics.leftPaddings.length) ? metrics.leftPaddings[i] : 0.0;
+				var rightBound = (metrics.rightBounds != null && i < metrics.rightBounds.length) ? metrics.rightBounds[i] : 0.0;
+				metrics.maxLeftPadding = Math.max(metrics.maxLeftPadding, leftPadding);
+				metrics.maxRightBound = Math.max(metrics.maxRightBound, rightBound);
+				metrics.maxWidth += Math.max(lineWidths[i] + leftPadding, rightBound);
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
-			metrics.width += metrics.maxPadding;
+			metrics.width = Math.max(metrics.width + metrics.maxLeftPadding, metrics.maxRightBound);
 		}
 
 		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {

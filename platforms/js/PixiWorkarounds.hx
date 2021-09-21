@@ -1038,7 +1038,8 @@ class PixiWorkarounds {
 			const outputText = wordWrap ? PIXI.TextMetrics.wordWrap(text, style, canvas) : text;
 			const lines = outputText.split(/(?:\\r\\n|\\r|\\n)/);
 			const lineWidths = new Array(lines.length);
-			const linePaddings = new Array(lines.length);
+			const leftPaddings = new Array(lines.length);
+			const rightBounds = new Array(lines.length);
 			let maxLineWidth = 0;
 
 			for (let i = 0; i < lines.length; i++)
@@ -1049,7 +1050,8 @@ class PixiWorkarounds {
 				lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
 
 				lineWidths[i] = lineWidth;
-				linePaddings[i] = textMetrics.actualBoundingBoxLeft;
+				leftPaddings[i] = textMetrics.actualBoundingBoxLeft;
+				rightBounds[i] = textMetrics.actualBoundingBoxRight;
 				maxLineWidth = Math.max(maxLineWidth, lineWidth);
 			}
 			let width = maxLineWidth + style.strokeThickness;
@@ -1075,7 +1077,8 @@ class PixiWorkarounds {
 				height : height,
 				lines : lines,
 				lineWidths : lineWidths,
-				linePaddings : linePaddings,
+				leftPaddings : leftPaddings,
+				rightBounds : rightBounds,
 				lineHeight : lineHeight + style.leading,
 				maxLineWidth : maxLineWidth,
 				fontProperties : fontProperties
