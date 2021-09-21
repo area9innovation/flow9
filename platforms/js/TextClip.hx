@@ -119,6 +119,8 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	// Use actualBoundingBoxLeft and actualBoundingBoxRight while measure text metrics
+	// As a result, width may be bigger, but parts of the glyphs will be inside bounding box.
 	public static var FullTextMeasurement = Util.getParameter("ftm") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
