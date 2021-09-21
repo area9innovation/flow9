@@ -520,7 +520,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.color = style.fill;
 		}
 
-		nativeWidget.style.paddingLeft = '${metrics.maxLeftPadding}px';
+		nativeWidget.style.paddingLeft = '${metrics != null && metrics.maxLeftPadding != null ? metrics.maxLeftPadding : 0.0}px';
 		nativeWidget.style.letterSpacing = !this.isHTMLRenderer() || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
 		nativeWidget.style.wordSpacing = !this.isHTMLRenderer() || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
 		nativeWidget.style.fontFamily = !this.isHTMLRenderer() || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
