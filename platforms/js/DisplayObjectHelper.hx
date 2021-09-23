@@ -2039,10 +2039,10 @@ class DisplayObjectHelper {
 				if (Platform.isIE) {
 					untyped clip.nativeWidget.blur();
 					RenderSupport.once("drawframe", function() {
-						untyped clip.nativeWidget.focus();
+						if (untyped clip.nativeWidget != null) untyped clip.nativeWidget.focus();
 					});
 				} else {
-					untyped clip.nativeWidget.focus();
+					if (untyped clip.nativeWidget != null) untyped clip.nativeWidget.focus();
 				}
 			}
 		}
