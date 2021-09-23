@@ -24,10 +24,11 @@ export {
 
 	parseCsvField(s : string, index : int, sep : string) -> Pair<string, int>;
 
-	ParseCsvOption ::= ParseCsvSeparator, ParseCsvDetectSeparator, ParseCsvRectangle;
+	ParseCsvOption ::= ParseCsvSeparator, ParseCsvDetectSeparator, ParseCsvRectangle, ParseCsvSkipEmpty;
 		ParseCsvSeparator(sep : string); // any character except double quotes or empty string
 		ParseCsvDetectSeparator(); // try to detect if separator is either of , ; \t 
 		ParseCsvRectangle(); // treat inconsistent number of columns as an error
+		ParseCsvSkipEmpty(); // ignore empty rows, can be used with ParseCsvRectangle
 
 	// By default uses ',' as a separator.
 	// If an error occurs the second element of the pair will contain an error message
@@ -36,6 +37,13 @@ export {
 }
 
 compiledGrammarsR : ref Tree<string, [PegOp]> = ref makeTree();
+csvGrammarActions = SemanticActions(setTree(defaultPegActions.t, "unescapeQ", \args : [flow] -> {
+	str = flow2s(args[0]);
+	trimmed = substring(str, 1, strlen(str) - 2);
+	strReplace(trimmed, "\"\"", "\"");
+}));
+
+CsvRowInfo(start : int, end : int, row : [string]);
 
 parseCsvData(data : string, styles : [ParseCsvOption]) -> Pair<[[string]], string> {
 	styleSepM = tryExtractStruct(styles, ParseCsvSeparator(""));
@@ -57,7 +65,7 @@ parseCsvData(data : string, styles : [ParseCsvOption]) -> Pair<[[string]], strin
 
 	// cannot have double quotes or empty string as a separator
 	if (strContains(sep, "\\u0022") || sepStr == "") {
-		Pair([[]], "invalid separator");
+		Pair([], "invalid separator");
 	} else {
 		grammarM = lookupTree(^compiledGrammarsR, sep);
 		grammar = eitherFn(grammarM, idfn, \ -> {
@@ -66,45 +74,41 @@ parseCsvData(data : string, styles : [ParseCsvOption]) -> Pair<[[string]], strin
 			newOps;
 		});
 
-		actions = SemanticActions(setTree(defaultPegActions.t, "unescapeQ", \args : [flow] -> {
-			str = flow2s(args[0]);
-			trimmed = substring(str, 1, strlen(str) - 2);
-			strReplace(trimmed, "\"\"", "\"");
-		}));
-		triple = parsic3(grammar, data, actions, [[]]);
-
+		triple = parsic3(grammar, data, csvGrammarActions, []);
 		if (triple.third != "") {
 			devtrace("parseCsvData: " + triple.third);
-			Pair([[]], "parsing error");
+			Pair([], "parsing error");
 		} else {
-			// trim empty rows at the end
-			result = triple.first;
-			idxM = lastfindi(result, \row -> row != [""]);
-			trimmedResult = eitherMap(idxM, \idx -> take(result, idx + 1), result);
+			array = map(triple.first, \info -> if (info.start == info.end) [] else info.row);
+			result = if (containsStruct(styles, ParseCsvSkipEmpty())) {
+				filter(array, \row -> row != []);
+			} else {
+				// trim empty rows at the end
+				idxM = lastfindi(array, \row -> row != []);
+				eitherMap(idxM, \idx -> take(array, idx + 1), array);
+			}
 
 			if (containsStruct(styles, ParseCsvRectangle())) {
-				numCols = uniq(map(trimmedResult, length));
+				numCols = uniq(map(result, length));
 				if (length(numCols) > 1) {
-					Pair(trimmedResult, "inconsistent number of columns");
+					Pair(result, "inconsistent number of columns");
 				} else {
-					Pair(trimmedResult, "");
+					Pair(result, "");
 				}
 			} else {
-				Pair(trimmedResult, "");
+				Pair(result, "");
 			}
 		}
 	}
 }
 
 detectCsvSeparator(s : string) -> Pair<int, string> {
-	s_part = strLeft(s, 2000);
-	count_cm = if (strCountOf(s_part, ",") > 0) getBestRowCount(s_part, ",") else 0;
-	count_sc = if (strCountOf(s_part, ";") > 0) getBestRowCount(s_part, ";") else 0;
-	count_tb = if (strCountOf(s_part, "\t") > 0) getBestRowCount(s_part, "\t") else 0;
-	if (count_cm == count_sc && count_sc == count_tb) Pair(count_cm, ",") else max3(
-		Pair(count_cm, ","),
-		Pair(count_sc, ";"),
-		Pair(count_tb, "\t"),
+	part = strLeft(s, 2000);
+	counts = map([",", ";", "\t"], \sep -> if (strCountOf(part, sep) > 0) getBestRowCount(part, sep) else 0);
+	if (counts[0] == counts[1] && counts[1] == counts[2]) Pair(counts[0], ",") else max3(
+		Pair(counts[0], ","),
+		Pair(counts[1], ";"),
+		Pair(counts[2], "\t"),
 	);
 }
 
