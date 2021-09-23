@@ -1663,8 +1663,8 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMetrics() : Array<Float> {
 		updateTextMetrics();
-		var advancedWidth = metrics != null ? metrics.maxAdvancedWidth : 0.0;
-		var leftPadding = metrics != null ? metrics.maxLeftPadding : 0.0;
+		var advancedWidth = metrics != null && metrics.maxAdvancedWidth != null ? metrics.maxAdvancedWidth : 0.0;
+		var leftPadding = metrics != null && metrics.maxLeftPadding != null ? metrics.maxLeftPadding : 0.0;
 		if (style.fontProperties == null) {
 			var ascent = 0.9 * style.fontSize;
 			var descent = 0.1 * style.fontSize;
