@@ -186,20 +186,9 @@ public class HttpSupport extends NativeHost {
 
 			int responseCode = con.getResponseCode();
 
-			// TODO: Make this asynchronous
-			BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-			String inputLine;
-			StringBuffer response = new StringBuffer();
-
-			while ((inputLine = in.readLine()) != null) {
-				response.append(inputLine);
-				response.append('\n');
-			}
-			in.close();
-
 			ArrayList<Object[]> responseHeaders = new ArrayList();
 			Map<String, List<String>> respHeaders = con.getHeaderFields();
-	        for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
+					for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
 				String key = entry.getKey();
 				if (key == null) key = "";
 
@@ -213,12 +202,29 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
-			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
-        } catch (MalformedURLException e) {
-        	onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
-        } catch (IOException e) {
-        	onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
-        }
+			if (responseCode != 200) {
+				String errorMessage = con.getResponseMessage();
+				onResponse.invoke(responseCode, errorMessage, responseHeaders.toArray());
+			} else {
+				// TODO: Make this asynchronous
+				BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+				String inputLine;
+				StringBuffer response = new StringBuffer();
+
+				while ((inputLine = in.readLine()) != null) {
+					response.append(inputLine);
+					response.append('\n');
+				}
+				in.close();
+
+				onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
+			}
+
+		} catch (MalformedURLException e) {
+			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
+		} catch (IOException e) {
+			onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
+		}	
 		return null;
 	}
 
