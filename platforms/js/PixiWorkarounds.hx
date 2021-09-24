@@ -677,7 +677,7 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing / 2 + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
+					lineWidth += ((style.letterSpacing > 0) ? Math.floor(lines[i].length / 2) : lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
 					console.log(lines[i], lineWidth, widthContext.measureText(lines[i]));
 
 					lineWidths[i] = lineWidth;
