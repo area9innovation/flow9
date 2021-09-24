@@ -10,6 +10,7 @@ import java.net.MalformedURLException;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.IOException;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -203,8 +204,19 @@ public class HttpSupport extends NativeHost {
 			}
 
 			if (responseCode != 200) {
-				String errorMessage = con.getResponseMessage();
-				onResponse.invoke(responseCode, errorMessage, responseHeaders.toArray());
+				InputStream errorstream = con.getErrorStream();
+				if (Objects.isNull(errorstream)) {
+					String errorMessage = con.getResponseMessage();
+					onResponse.invoke(responseCode, errorMessage, responseHeaders.toArray());
+				} else {
+					String response = "";
+					String line;
+					BufferedReader br = new BufferedReader(new InputStreamReader(errorstream));
+					while ((line = br.readLine()) != null) {
+							response += line;
+					}
+					onResponse.invoke(responseCode, response, responseHeaders.toArray());
+				}
 			} else {
 				// TODO: Make this asynchronous
 				BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
