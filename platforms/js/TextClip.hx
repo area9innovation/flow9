@@ -166,7 +166,9 @@ class TextClip extends NativeWidgetClip {
 	public var preventContextMenu : Bool = false;
 
 	private var textBackgroundWidget : Dynamic;
-	private var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html" && Util.getParameter("textBackgroundWidget") == "1";
+	private var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
+		&& Util.getParameter("new") == "1"
+		&& Util.getParameter("textBackgroundWidget") != "0";
 
 	private var baselineWidget : Dynamic;
 	private var needBaseline : Bool = true;
