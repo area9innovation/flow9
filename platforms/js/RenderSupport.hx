@@ -58,6 +58,7 @@ class RenderSupport {
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
+	private static var InnerHeightAtRenderTime : Float = -1.0;
 
 	public static var hadUserInteracted = false;
 
@@ -512,6 +513,11 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
+		if (viewportScaleWorkaroundEnabled) {
+			untyped console.log("createPixiRenderer", width, height);
+			untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+		}
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
@@ -591,7 +597,9 @@ class RenderSupport {
 
 		if (viewportScaleWorkaroundEnabled) {
 			try {
-				onBrowserWindowResizeDelayed({target : Browser.window});
+				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
+				// So let`s recalculate viewport sizes after some delay (10s) with real values 
+				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
 			} catch (e : Dynamic) {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
 				untyped console.log(e);
@@ -622,6 +630,10 @@ class RenderSupport {
 		if (Platform.isIE) {
 			PixiWorkarounds.workaroundIEArrayFromMethod();
 			PixiWorkarounds.workaroundIECustomEvent();
+		}
+
+		if (viewportScaleWorkaroundEnabled) {
+			InnerHeightAtRenderTime = Browser.window.innerHeight;
 		}
 
 		createPixiRenderer();
@@ -740,14 +752,28 @@ class RenderSupport {
 	}
 
 	private static inline function calculateMobileTopHeight() {
-		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
+		var screenSize = getScreenSize();
+		
+		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
+		// Dirty trick to fix this wrong innerHeight value
+		var innerHeightCompensation = (
+				viewportScaleWorkaroundEnabled
+				&& Browser.window.innerHeight == InnerHeightAtRenderTime
+				&& screenSize.height != Browser.window.innerHeight
+				&& (screenSize.height - Browser.window.innerHeight * getViewportScale()) < 100
+			) ? 95.0 / getViewportScale() : 0.0;
+		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
+
+		untyped console.log('A. screen height', getScreenSize().height);
+		untyped console.log('B. Browser inner height', Browser.window.innerHeight);
+		untyped console.log('topHeight', topHeight);
 
 		// Calculate top height only once for each orientation
 		if (isPortaitOrientation()) {
-			if (WindowTopHeightPortrait == -1)
+			if (WindowTopHeightPortrait == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightPortrait = topHeight;
 		} else {
-			if (WindowTopHeightLandscape == -1)
+			if (WindowTopHeightLandscape == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightLandscape = topHeight;
 		}
 	}
@@ -916,8 +942,9 @@ class RenderSupport {
 
 	// Delay is required due to issue in WKWebView
 	// https://bugs.webkit.org/show_bug.cgi?id=170595
-	private static inline function onBrowserWindowResizeDelayed(e : Dynamic) : Void {
-		Native.timer(100, function() {
+	private static inline function onBrowserWindowResizeDelayed(e : Dynamic, ?delay : Int = 100) : Void {
+		Native.timer(delay, function() {
+			untyped console.log("~~onBrowserWindowResizeDelayed~~");
 			onBrowserWindowResize(e);
 		});
 	}
@@ -939,14 +966,22 @@ class RenderSupport {
 				untyped console.log("viewportScale", viewportScale);
 				calculateMobileTopHeight();
 				var screen_size = getScreenSize();
+				untyped console.log("screen_size", screen_size.width, screen_size.height);
+				untyped console.log("mobile top height", getMobileTopHeight());
+				untyped console.log("isPortaitOrientation", isPortaitOrientation());
+				untyped console.log("WindowTopHeightPortrait", WindowTopHeightPortrait);
+				untyped console.log("WindowTopHeightLandscape", WindowTopHeightLandscape);
+				untyped console.log("innerHeight", Browser.window.innerHeight);
+				untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+
 				win_width = screen_size.width;
 				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
 				untyped console.log("win_width", win_width);
 				untyped console.log("win_height", win_height);
 
-				Browser.document.documentElement.style.width = untyped __js__("`calc(100% * ${viewportScale})`");
-				Browser.document.documentElement.style.height = untyped __js__("`calc(100% * ${viewportScale})`");
-				Browser.document.documentElement.style.transform = untyped __js__("`scale(${1/viewportScale})`");
+				Browser.document.documentElement.style.width = 'calc(100% * ${viewportScale})';
+				Browser.document.documentElement.style.height = 'calc(100% * ${viewportScale})';
+				Browser.document.documentElement.style.transform = 'scale(${1/viewportScale})';
 				Browser.document.documentElement.style.transformOrigin = "0 0";
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
@@ -3393,7 +3428,10 @@ class RenderSupport {
 		}
 	}
 
+	public static var clipSnapshotRequests : Int = 0;
 	public static function getClipSnapshot(clip : FlowContainer, cb : String -> Void) : Void {
+		clipSnapshotRequests++;
+
 		if (!printMode) {
 			printMode = true;
 			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
@@ -3415,7 +3453,9 @@ class RenderSupport {
 							Math.floor(clip.getHeight())
 						) : "";
 
-					if (printMode) {
+					clipSnapshotRequests--;
+
+					if (printMode && clipSnapshotRequests == 0) {
 						printMode = false;
 						DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
 						forceRender();

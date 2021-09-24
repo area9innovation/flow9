@@ -1,0 +1,76 @@
+import tools/gringo/compiler/dopcode;
+import ds/tree;
+
+export {
+	dopcodeEffect(env : Tree<string, DOpCodeEffect>, d : DOpCode) -> DOpCodeEffect;
+
+	DOpCodeEffect(i : bool, stack : bool, output : bool, errors : bool);
+}
+
+dopcodeEffect(env : Tree<string, DOpCodeEffect>, d : DOpCode) -> DOpCodeEffect {
+	switch (d) {
+		DFunction(name, code, body): {
+			codeEffect = dopcodeEffect(env, code);
+			nenv = setTree(env, name, codeEffect);
+			dopcodeEffect(env, body);
+		}
+		DTrue(): DOpCodeEffect(false, false, false, false);
+		DFalse(): DOpCodeEffect(false, false, false, false);
+		DString(s): DOpCodeEffect(false, false, false, false);
+		DIf(cond, then, else_): {
+			joinDOpCodeEffect(dopcodeEffect(env, cond), joinDOpCodeEffect(dopcodeEffect(env, then), dopcodeEffect(env, else_)));
+		}
+		DSequence(exps): {
+			fold(exps, DOpCodeEffect(false, false, false, false), \acc, ex -> {
+				joinDOpCodeEffect(acc, dopcodeEffect(env, ex));
+			})
+		}
+		DPushCheckpoint(): {
+			// Stack effect
+			DOpCodeEffect(false, true, false, false);
+		}
+		DDiscardCheckpoint(): {
+			// Stack effect
+			DOpCodeEffect(false, true, false, false);
+		}
+		DRestoreCheckpoint(): DOpCodeEffect(true, true, true, true);	// Become of the restore inside!
+		DParseStar(term): DOpCodeEffect(true, true, true, true);		// Become of the restore inside!
+		DAddError(error): DOpCodeEffect(false, true, false, true);
+		DCaptureI(): DOpCodeEffect(false, false, false, false);
+		DMatched(): DOpCodeEffect(false, false, true, false);
+		DPosition(): DOpCodeEffect(false, false, false, false);
+		DAddVerbatim(e): {
+			joinDOpCodeEffect(
+				DOpCodeEffect(false, false, true, false),
+				dopcodeEffect(env, e)
+			);
+		}
+		DAddMatched(e): {
+			joinDOpCodeEffect(
+				DOpCodeEffect(false, false, true, false),
+				dopcodeEffect(env, e)
+			);
+		}
+		DMatchString(text): DOpCodeEffect(true, false, false, false);
+		DMatchRange(lower, upper): DOpCodeEffect(true, false, false, false);
+		DCall(id): {
+			lookupTreeDef(env, id, DOpCodeEffect(true, true, true, true));
+		}
+		DAnd(left, right): {
+			joinDOpCodeEffect(
+				dopcodeEffect(env, left),
+				dopcodeEffect(env, right)
+			);
+		}
+		DOr(left, right): {
+			joinDOpCodeEffect(
+				dopcodeEffect(env, left),
+				dopcodeEffect(env, right)
+			);
+		}
+	}
+}
+
+joinDOpCodeEffect(l : DOpCodeEffect, r : DOpCodeEffect) -> DOpCodeEffect {
+	DOpCodeEffect(l.i || r.i, l.stack || r.stack, l.output || r.output, l.errors || r.errors);
+}
