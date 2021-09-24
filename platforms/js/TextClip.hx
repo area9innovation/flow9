@@ -1545,7 +1545,7 @@ class TextClip extends NativeWidgetClip {
 			for (i in 0...lineWidths.length) {
 				var leftPadding = (metrics.leftPaddings != null && i < metrics.leftPaddings.length) ? metrics.leftPaddings[i] : 0.0;
 				var rightBound = (metrics.rightBounds != null && i < metrics.rightBounds.length) ? metrics.rightBounds[i] : 0.0;
-				var advancedWidth = leftPadding + rightBound;
+				var advancedWidth = Math.max(lineWidths[i], leftPadding + rightBound);
 				metrics.maxLeftPadding = Math.max(metrics.maxLeftPadding, leftPadding);
 				metrics.maxAdvancedWidth = Math.max(metrics.maxAdvancedWidth, advancedWidth);
 
