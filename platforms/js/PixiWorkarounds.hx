@@ -613,8 +613,13 @@ class PixiWorkarounds {
 				nativeSetProperty.call(this, propertyName, value, priority);
 			}
 
-			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
+			PIXI.TextMetrics.measureText = function(text0, style, wordWrap, canvas)
 			{
+				// We can't set letterspacing into Canvas so ligatures will affect measured width
+				// we emulate letterspacing here by interleaving letters with \u200c
+				// note that we return modified text to caller and we should not count inserted symbols
+				// to add extra width because of letterspacing below twice
+				var text = (style.letterSpacing > 0)? text0.split('').join('\u200c') : text0;
 				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
 
 				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
@@ -672,7 +677,8 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
+					lineWidth += (lines[i].length - 1) * style.letterSpacing / 2 + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
+					console.log(lines[i], lineWidth, widthContext.measureText(lines[i]));
 
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);
