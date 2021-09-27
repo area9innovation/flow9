@@ -165,6 +165,11 @@ class TextClip extends NativeWidgetClip {
 	public var isInteractive : Bool = false;
 	public var preventContextMenu : Bool = false;
 
+	private var textBackgroundWidget : Dynamic;
+	private var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
+		&& Util.getParameter("new") == "1"
+		&& Util.getParameter("textBackgroundWidget") != "0";
+
 	private var baselineWidget : Dynamic;
 	private var needBaseline : Bool = true;
 
@@ -487,6 +492,9 @@ class TextClip extends NativeWidgetClip {
 					}
 
 					nativeWidget.textContent = textContent;
+					if (textBackgroundWidget != null) {
+						textBackgroundWidget.textContent = textContent;
+					}
 				}
 
 				nativeWidget.style.whiteSpace = "pre";
@@ -497,6 +505,9 @@ class TextClip extends NativeWidgetClip {
 				}
 			} else {
 				nativeWidget.innerHTML = this.contentGlyphs.modified;
+				if (textBackgroundWidget != null) {
+					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
+				}
 				nativeWidget.style.whiteSpace = "pre-wrap";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
@@ -523,7 +534,12 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
-		nativeWidget.style.background = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		if (textBackgroundWidget != null) {
+			textBackgroundWidget.style.background = bg;
+		} else {
+			nativeWidget.style.background = bg;
+		}
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
@@ -536,6 +552,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		updateBaselineWidget();
+		updateTextBackgroundWidget();
 	}
 
 	public inline function updateBaselineWidget() : Void {
@@ -544,11 +561,23 @@ class TextClip extends NativeWidgetClip {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
 		}
+
+	}
+
+	public inline function updateTextBackgroundWidget() : Void {
+		if (useTextBackgroundWidget && nativeWidget.firstChild && textBackgroundWidget != null && textBackgroundWidget.style.background != '') {
+			nativeWidget.insertBefore(textBackgroundWidget, nativeWidget.firstChild);
+			textBackgroundWidget.style.top = '${getTextMargin()}px';
+		}
+	}
+
+	public function getTextMargin() : Float {
+		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
 	}
 
 	public static function bidiDecorate(text : String, dir : String) : String {
@@ -1678,6 +1707,11 @@ class TextClip extends NativeWidgetClip {
 
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
+
+			if (useTextBackgroundWidget) {
+				textBackgroundWidget = Browser.document.createElement('span');
+				textBackgroundWidget.classList.add('textBackgroundWidget');
+			}
 
 			isNativeWidget = true;
 		} else {
