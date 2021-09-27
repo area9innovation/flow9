@@ -205,14 +205,14 @@ public class HttpSupport extends NativeHost {
 			}
 
 			InputStream inputStream = null;
-			StringBuilder response = new StringBuilder();
-
-			if (responseCode == 200) {
+			try {
 				inputStream = con.getInputStream();
-			} else {
+			} catch (IOException e) {
+			}
+			if (Objects.isNull(inputStream)) {
 				inputStream = con.getErrorStream();
 			}
-
+			StringBuilder response = new StringBuilder();
 			if (Objects.nonNull(inputStream)) {
 				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
 				for (String line; (line = reader.readLine()) != null; ) {
