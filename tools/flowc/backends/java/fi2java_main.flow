@@ -36,7 +36,7 @@ generateJavaMainClass(gctx : JavaGlobalContext) -> void {
 
 	// Constructor
 	pushstr("\tpublic " + gctx.config.mainClassName  + "(String[] args) {\n");
-	pushstr("\t\tsuper(Structs.structList(), args);\n");
+	pushstr("\t\tsuper(Structs.struct_prototypes, args);\n");
 	pushstr("\t}\n");
 
 	// General init function
@@ -309,30 +309,48 @@ generateJavaStructs(gctx : JavaGlobalContext) -> void {
 	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
 		fcPrintln("Structs: " + i2s(length(struct_list)), config.threadId);
 	}
-	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Structs {\n");
-	pushstr("\n\t// Structs array\n");
+	pushstr("import java.util.concurrent.ConcurrentHashMap;\n\n");
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Structs {\n\n");
+	pushstr("\t// Structs array\n");
+	pushstr("\tpublic static final Struct[] struct_prototypes;\n");
+	pushstr("\tpublic static final ConcurrentHashMap<String,Integer> struct_ids = new ConcurrentHashMap<String,Integer>();\n");
+	pushstr("\tstatic {\n");
 	if (length(struct_list) < 512) {
 		// All structs array
-		pushstr("\tstatic final private Struct[] struct_list = {\n");
+		pushstr("\t\tstruct_prototypes = {\n");
 		pushstr(strGlue(struct_list, ",\n") + "\n");
-		pushstr("\t};\n");
-
-		pushstr("\tstatic final Struct[] structList() {\n");
-		pushstr("\t\treturn struct_list;\n");
-		pushstr("\t}\n");
+		pushstr("\t\t}\n");
 	} else {
 		struct_list_chunks = splitByNumber(struct_list, 512);
 		// All structs array
 		iteri(struct_list_chunks, \i, chunk -> generateJavaStructsChunk(gctx, chunk, i));
-		pushstr("\tstatic final Struct[] structList() {\n");
-		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
+		pushstr("\t\tstruct_prototypes = new Struct[" + i2s(length(struct_list)) + "];\n");
 		pushstr("\t\tint k = 0;\n");
 		iteri(struct_list_chunks, \i, __ ->
-			pushstr("\t\tfor (Struct s : Structs_" + i2s(i) +  ".structList()) structs[k++] = s;\n")
+			pushstr("\t\tfor (Struct s : Structs_" + i2s(i) +  ".structList()) struct_prototypes[k++] = s;\n")
 		);
-		pushstr("\t\treturn structs;\n");
-		pushstr("\t}\n");
 	}
+	pushstr("\t\tfor (int i = 0; i < struct_prototypes.length; i++) {\n");
+	pushstr("\t\t\tstruct_ids.put(struct_prototypes[i].getTypeName(), i);\n");
+	pushstr("\t\t}\n");
+	pushstr("\t}\n");
+	pushstr("\tpublic static final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
+		Integer id = struct_ids.get(name);
+		if (id == null)
+			return default_value;
+
+		return makeStructValue(id, fields, default_value);
+	}
+	public static final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
+		try {
+			Struct copy = struct_prototypes[id].clone();
+			copy.setFields(fields);
+			return copy;
+		} catch (Exception e) {
+			return default_value;
+		}
+	}\n");
+
 	fname = pathCombine(gctx.package_path, "Structs.java");
 	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
 }
