@@ -217,10 +217,8 @@ public class HttpSupport extends NativeHost {
 				String newLine = System.getProperty("line.separator");
 				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
 				for (String line; (line = reader.readLine()) != null; ) {
-						if (response.length() > 0) {
-								response.append(newLine);
-						}
 						response.append(line);
+						response.append(newLine);
 				}
 			}
 			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
