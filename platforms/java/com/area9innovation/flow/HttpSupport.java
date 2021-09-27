@@ -205,6 +205,8 @@ public class HttpSupport extends NativeHost {
 			}
 
 			InputStream inputStream = null;
+			/* getInputStream returns exception when status is not 200 and some other cases
+			If status is 400/500 -> we should call getErrorStream*/
 			try {
 				inputStream = con.getInputStream();
 			} catch (IOException e) {
@@ -213,6 +215,7 @@ public class HttpSupport extends NativeHost {
 				inputStream = con.getErrorStream();
 			}
 			StringBuilder response = new StringBuilder();
+			// inputStream might be null, if body is empty
 			if (Objects.nonNull(inputStream)) {
 				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
 				for (String line; (line = reader.readLine()) != null; ) {
