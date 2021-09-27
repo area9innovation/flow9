@@ -152,49 +152,54 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 							native_host = parts[0];
 							native_name = parts[1];
 							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
-							switch (checkJavaKnownNative(gctx, fallback, s, native_host, native_name)) {
-								FiLambda(args, body, __, __): {
-									wrapper_t = emitJavaFnWrapper(
-										gctx, csm, type, "\t\t",
-										\wargs, rt -> "return m_" + csm.id + ".nf_" + name + "(" + wargs + ");"
-									);
-									tstr = wrapper_t.second;
-									rlistPush(gctx.native_wrapper_code, JavaWrapperCode(name, tstr, wrapper_t.first));
+							if (!checkJavaNativeExists(gctx, fallback, s, native_host, native_name)) {
+								switch (fallback) {
+									FiLambda(args, body, __, __): {
+										wrapper_t = emitJavaFnWrapper(
+											gctx, csm, type, "\t\t",
+											\wargs, rt -> "return m_" + csm.id + ".nf_" + name + "(" + wargs + ");"
+										);
+										tstr = wrapper_t.second;
+										rlistPush(gctx.native_wrapper_code, JavaWrapperCode(name, tstr, wrapper_t.first));
 
-									ginfo = JavaGlobalInfo("n_" + name, csm, type, true);
-									gctx.globals ::= setTree(gctx.globals, name, ginfo);
+										ginfo = JavaGlobalInfo("n_" + name, csm, type, true);
+										gctx.globals ::= setTree(gctx.globals, name, ginfo);
 
-									aclasses = map(type.args, \arg -> type2javaObjType(gctx, arg.type, false, true, false) + ".class");
-									cstr = if (aclasses == []) "" else ", " + strGlue(aclasses, ", ");
+										aclasses = map(type.args, \arg -> type2javaObjType(gctx, arg.type, false, true, false) + ".class");
+										cstr = if (aclasses == []) "" else ", " + strGlue(aclasses, ", ");
 
-									wrapper_r = emitJavaFnWrapper(
-										gctx, csm, type, "\t\t\t",
-										\wargs,rt -> {
-											astr = if (wargs == "") {
-												"";
-											} else if (aclasses == ["Object[].class"]) {
-												// the signature of method.invoke is (Object obj, Object... args), in fact only have one parameter is Object[], so should pass the parameter [Object[]]
-												// https://stackoverflow.com/questions/8189782/wrong-number-of-arguments-error-when-invoking-a-method
-												", new Object[] {" + wargs + "}";
-											} else {
-												", " + wargs;
+										wrapper_r = emitJavaFnWrapper(
+											gctx, csm, type, "\t\t\t",
+											\wargs,rt -> {
+												astr = if (wargs == "") {
+													"";
+												} else if (aclasses == ["Object[].class"]) {
+													// the signature of method.invoke is (Object obj, Object... args), in fact only have one parameter is Object[], so should pass the parameter [Object[]]
+													// https://stackoverflow.com/questions/8189782/wrong-number-of-arguments-error-when-invoking-a-method
+													", new Object[] {" + wargs + "}";
+												} else {
+													", " + wargs;
+												}
+												"try { return (" + rt + ")method.invoke(h_" + parts[0] + astr + "); } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }";
 											}
-											"try { return (" + rt + ")method.invoke(h_" + parts[0] + astr + "); } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }";
-										}
-									);
+										);
 
-									pushistr(
-										"\t\ttry {\n"+
-										"\t\t\tfinal java.lang.reflect.Method method = " + parts[0] + ".class.getMethod(\"" + parts[1] + "\"" + cstr + ");\n" +
-										"\t\t\tn_" + name + " = " + wrapper_r.first + ";\n" +
-										"\t\t} catch (ReflectiveOperationException e) {};\n"
-									);
+										pushistr(
+											"\t\ttry {\n"+
+											"\t\t\tfinal java.lang.reflect.Method method = " + parts[0] + ".class.getMethod(\"" + parts[1] + "\"" + cstr + ");\n" +
+											"\t\t\tn_" + name + " = " + wrapper_r.first + ";\n" +
+											"\t\t} catch (ReflectiveOperationException e) {};\n"
+										);
+									}
+									default: {
+										ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
+										gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+										//gctx.globals ::= setTree(gctx.globals, name, ginfo);
+									}
 								}
-								default: {
-									ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
-									gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
-									//gctx.globals ::= setTree(gctx.globals, name, ginfo);
-								}
+							} else {
+								ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
+								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
 							}
 						}
 						default: {
@@ -246,12 +251,15 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						}
 						native_host = parts[0];
 						native_name = parts[1];
-						fbexp = checkJavaKnownNative(gctx, fallback, -1, native_host, native_name);
-						switch (fbexp) {
-							FiLambda(xs, body, __, __): {
-								addJavaExpressionWrappers(gctx, body);
+						if (!checkJavaNativeExists(gctx, fallback, -1, native_host, native_name)) {
+							switch (fallback) {
+								FiLambda(xs, body, __, __): {
+									addJavaExpressionWrappers(gctx, body);
+								}
+								default: {}
 							}
-							default: {}
+						} else {
+							// ??
 						}
 					}
 				}
@@ -316,16 +324,17 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						}
 						native_host = parts[0];
 						native_name = parts[1];
-						fbexp = checkJavaKnownNative(gctx, fallback, -1, native_host, native_name);
-						switch (fbexp) {
-							FiLambda(xs, body, __, __): {
-								funcType = cast(type: FiType -> FiTypeFunction);
-								code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
-								pushstr(code);
+						if (!checkJavaNativeExists(gctx, fallback, -1, native_host, native_name)) {
+							switch (fallback) {
+								FiLambda(xs, body, __, __): {
+									funcType = cast(type: FiType -> FiTypeFunction);
+									code = emitJavaFunction(gctx, csm, name, "nf_" + name, fallback, None(), "\t", funcType);
+									pushstr(code);
+								}
+								default: { }
 							}
-							default: {
-								
-							}
+						} else {
+							// ?? 
 						}
 					}
 				}
@@ -1503,14 +1512,10 @@ javaStatementPullContext(local_counter : ref int) {
 	)
 }
 
-checkJavaKnownNative(gctx : JavaGlobalContext, fallback : FiExp, start : int, native_host : string, native_name : string) -> FiExp {
-	if (!gctx.config.useLambdas) fallback else {
+checkJavaNativeExists(gctx : JavaGlobalContext, fallback : FiExp, start : int, native_host : string, native_name : string) -> bool {
+	if (!gctx.config.useLambdas) false else {
 		host_natives = lookupTreeDef(gctx.host_natives, native_host, makeSet());
-		if (containsSet(host_natives, native_name)) {
-			FiVoid(start)
-		} else {
-			fallback
-		}
+		containsSet(host_natives, native_name);
 	}
 }
 
