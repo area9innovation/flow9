@@ -10,6 +10,7 @@ import java.net.MalformedURLException;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.File;
@@ -203,34 +204,26 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
-			if (responseCode != 200) {
-				InputStream errorstream = con.getErrorStream();
-				if (Objects.isNull(errorstream)) {
-					String errorMessage = con.getResponseMessage();
-					onResponse.invoke(responseCode, errorMessage, responseHeaders.toArray());
-				} else {
-					String response = "";
-					String line;
-					BufferedReader br = new BufferedReader(new InputStreamReader(errorstream));
-					while ((line = br.readLine()) != null) {
-							response += line;
-					}
-					onResponse.invoke(responseCode, response, responseHeaders.toArray());
-				}
+			InputStream inputStream = null;
+			String response = "";
+
+			if (responseCode == 200) {
+				inputStream = con.getInputStream();
 			} else {
-				// TODO: Make this asynchronous
-				BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-				String inputLine;
-				StringBuffer response = new StringBuffer();
-
-				while ((inputLine = in.readLine()) != null) {
-					response.append(inputLine);
-					response.append('\n');
-				}
-				in.close();
-
-				onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
+				inputStream = con.getErrorStream();
 			}
+
+			if (Objects.isNull(inputStream)) {
+				response = con.getResponseMessage();
+			} else {
+				ByteArrayOutputStream result = new ByteArrayOutputStream();
+				byte[] buffer = new byte[1024];
+				for (int length; (length = inputStream.read(buffer)) != -1; ) {
+						result.write(buffer, 0, length);
+				}
+				response = result.toString("UTF-8");
+			}
+			onResponse.invoke(responseCode, response, responseHeaders.toArray());
 
 		} catch (MalformedURLException e) {
 			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
