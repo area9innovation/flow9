@@ -205,7 +205,7 @@ public class HttpSupport extends NativeHost {
 			}
 
 			InputStream inputStream = null;
-			String response = "";
+			StringBuilder response = new StringBuilder();
 
 			if (responseCode == 200) {
 				inputStream = con.getInputStream();
@@ -214,14 +214,16 @@ public class HttpSupport extends NativeHost {
 			}
 
 			if (Objects.nonNull(inputStream)) {
-				ByteArrayOutputStream result = new ByteArrayOutputStream();
-				byte[] buffer = new byte[1024];
-				for (int length; (length = inputStream.read(buffer)) != -1; ) {
-						result.write(buffer, 0, length);
+				String newLine = System.getProperty("line.separator");
+				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+				for (String line; (line = reader.readLine()) != null; ) {
+						if (response.length() > 0) {
+								response.append(newLine);
+						}
+						response.append(line);
 				}
-				response = result.toString("UTF-8");
 			}
-			onResponse.invoke(responseCode, response, responseHeaders.toArray());
+			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
 
 		} catch (MalformedURLException e) {
 			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
