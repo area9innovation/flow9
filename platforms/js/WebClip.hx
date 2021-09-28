@@ -83,6 +83,7 @@ class WebClip extends NativeWidgetClip {
 		iframe.frameBorder = "no";
 		iframe.callflow = cb; // Store for crossdomain calls
 
+		iframe.id = nativeWidget.id + "_iframe";
 		nativeWidget.appendChild(iframe);
 
 		if (reloadBlock) {

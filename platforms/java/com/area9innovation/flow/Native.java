@@ -50,6 +50,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
 import com.sun.management.OperatingSystemMXBean;
+import java.lang.reflect.InvocationTargetException;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -395,6 +396,10 @@ public class Native extends NativeHost {
 		return -1;
 	}
 
+	public final boolean strContainsAt(String str, Integer index, String substr) {
+		return str.regionMatches(index, substr, 0, substr.length());
+	}
+
 	public final String substring(String str, int start, int len) {
 		int strlen = str.length();
 		if (len < 0) {
@@ -579,23 +584,33 @@ public class Native extends NativeHost {
 	}
 
 	public final String list2string(Struct list) {
-		String rv = "";
-		LinkedList<String> ll = new LinkedList<String>();
 		int len = 0;
+		int cnt = 0;
+		String rv = "";
 		for (Struct cur = list;;) {
 			Object[] data = cur.getFields();
 			if (data.length == 0) break;
 
-			rv = ((String)data[0]);
+			rv = (String)data[0];
 			len += rv.length();
-			ll.add(rv);
+			cnt++;
 			cur = (Struct)data[1];
 		}
-		StringBuilder sb = new StringBuilder(len);
-		// Load data from Cons'es to String builder in direct order
-		for (Iterator i = ll.descendingIterator(); i.hasNext();) {
-			String x = (String)i.next();
-			sb.append(x);
+
+		// It's worth to define this string buffer before ll array
+		// to reserve a good block of memory when result string is longer than 300M
+		// And that is why we use a string buffer instead of String.join("", ll)
+		StringBuffer sb = new StringBuffer(len); // StringBuffer uses less memory than a StringBuilder
+		String[] ll = new String[cnt];
+		Struct cur = list;
+		// Load data from Cons'es to array in direct order
+		for (int i = cnt-1; i >= 0; i--) {
+			Object[] data = cur.getFields();
+			ll[i] = (String)data[0];
+			cur = (Struct)data[1];
+		}
+		for (int i = 0; i < cnt; i++) {
+			sb.append(ll[i]);
 		}
 		return sb.toString();
 	}
@@ -1025,8 +1040,8 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final String fromCharCode(int c) {
-		return new String(new char[] { (char)c });
+	public final String fromCharCode(int codePoint) {
+		return new String(Character.toChars(codePoint));
 	}
 
 	public final int getCharCodeAt(String s, int i) {
@@ -1673,6 +1688,12 @@ public class Native extends NativeHost {
 					completableFuture.complete(res);
 					return null;
 				});
+			} catch (RuntimeException ex) {
+				Throwable e = ex.getCause();
+				while (e.getClass().equals(InvocationTargetException.class)) {
+					e = e.getCause();
+				}
+				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
 			} catch (Exception e) {
 				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
 			}

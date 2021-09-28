@@ -50,11 +50,15 @@ class RenderSupport {
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
 	public static var browserZoom : Float = 1.0;
+	// Workaround is intended for using with SCORM Cloud
+	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
+	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
+	private static var InnerHeightAtRenderTime : Float = -1.0;
 
 	public static var hadUserInteracted = false;
 
@@ -338,6 +342,16 @@ class RenderSupport {
 		}
 	}
 
+	public static function isViewportScaleWorkaroundEnabled() : Bool {
+		try {
+			return Platform.isIOS && Platform.isChrome && isInsideFrame();
+		} catch (e : Dynamic) {
+			untyped console.log("isViewportScaleWorkaroundEnabled error : ");
+			untyped console.log(e);
+			return false;
+		}
+	}
+
 	public static function monitorUserStyleChanges() : Void -> Void {
 		return Native.setInterval(1000, emitUserStyleChanged);
 	}
@@ -499,6 +513,11 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
+		if (viewportScaleWorkaroundEnabled) {
+			untyped console.log("createPixiRenderer", width, height);
+			untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+		}
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
@@ -575,6 +594,17 @@ class RenderSupport {
 			ctx.msImageSmoothingEnabled = true;
 			ctx.imageSmoothingEnabled = true;
 		}
+
+		if (viewportScaleWorkaroundEnabled) {
+			try {
+				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
+				// So let`s recalculate viewport sizes after some delay (10s) with real values 
+				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
+			} catch (e : Dynamic) {
+				untyped console.log("onBrowserWindowResizeDelayed error : ");
+				untyped console.log(e);
+			}
+		}
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -600,6 +630,10 @@ class RenderSupport {
 		if (Platform.isIE) {
 			PixiWorkarounds.workaroundIEArrayFromMethod();
 			PixiWorkarounds.workaroundIECustomEvent();
+		}
+
+		if (viewportScaleWorkaroundEnabled) {
+			InnerHeightAtRenderTime = Browser.window.innerHeight;
 		}
 
 		createPixiRenderer();
@@ -718,14 +752,28 @@ class RenderSupport {
 	}
 
 	private static inline function calculateMobileTopHeight() {
-		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
+		var screenSize = getScreenSize();
+		
+		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
+		// Dirty trick to fix this wrong innerHeight value
+		var innerHeightCompensation = (
+				viewportScaleWorkaroundEnabled
+				&& Browser.window.innerHeight == InnerHeightAtRenderTime
+				&& screenSize.height != Browser.window.innerHeight
+				&& (screenSize.height - Browser.window.innerHeight * getViewportScale()) < 100
+			) ? 95.0 / getViewportScale() : 0.0;
+		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
+
+		untyped console.log('A. screen height', getScreenSize().height);
+		untyped console.log('B. Browser inner height', Browser.window.innerHeight);
+		untyped console.log('topHeight', topHeight);
 
 		// Calculate top height only once for each orientation
 		if (isPortaitOrientation()) {
-			if (WindowTopHeightPortrait == -1)
+			if (WindowTopHeightPortrait == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightPortrait = topHeight;
 		} else {
-			if (WindowTopHeightLandscape == -1)
+			if (WindowTopHeightLandscape == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightLandscape = topHeight;
 		}
 	}
@@ -894,8 +942,9 @@ class RenderSupport {
 
 	// Delay is required due to issue in WKWebView
 	// https://bugs.webkit.org/show_bug.cgi?id=170595
-	private static inline function onBrowserWindowResizeDelayed(e : Dynamic) : Void {
-		Native.timer(100, function() {
+	private static inline function onBrowserWindowResizeDelayed(e : Dynamic, ?delay : Int = 100) : Void {
+		Native.timer(delay, function() {
+			untyped console.log("~~onBrowserWindowResizeDelayed~~");
 			onBrowserWindowResize(e);
 		});
 	}
@@ -911,7 +960,30 @@ class RenderSupport {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
+			if (viewportScaleWorkaroundEnabled) {
+				untyped console.log("onBrowserWindowResize");
+				var viewportScale = getViewportScale();
+				untyped console.log("viewportScale", viewportScale);
+				calculateMobileTopHeight();
+				var screen_size = getScreenSize();
+				untyped console.log("screen_size", screen_size.width, screen_size.height);
+				untyped console.log("mobile top height", getMobileTopHeight());
+				untyped console.log("isPortaitOrientation", isPortaitOrientation());
+				untyped console.log("WindowTopHeightPortrait", WindowTopHeightPortrait);
+				untyped console.log("WindowTopHeightLandscape", WindowTopHeightLandscape);
+				untyped console.log("innerHeight", Browser.window.innerHeight);
+				untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
+
+				win_width = screen_size.width;
+				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
+				untyped console.log("win_width", win_width);
+				untyped console.log("win_height", win_height);
+
+				Browser.document.documentElement.style.width = 'calc(100% * ${viewportScale})';
+				Browser.document.documentElement.style.height = 'calc(100% * ${viewportScale})';
+				Browser.document.documentElement.style.transform = 'scale(${1/viewportScale})';
+				Browser.document.documentElement.style.transformOrigin = "0 0";
+			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
 
 				// Still send whole window size - without reducing by screen kbd
@@ -944,6 +1016,16 @@ class RenderSupport {
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
+	}
+
+	public static function getViewportScale() : Float {
+		try {
+			return viewportScaleWorkaroundEnabled ? (Browser.window.outerWidth / Browser.window.innerWidth) : 1.0;
+		} catch (e : Dynamic) {
+			untyped console.log("getViewportScale error : ");
+			untyped console.log(e);
+			return 1.0;
+		}
 	}
 
 	private static function dropCurrentFocus() : Void {
@@ -2409,7 +2491,11 @@ class RenderSupport {
 			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
 			// When we register a right-click handler, we turn off the browser context menu.
-			PixiView.oncontextmenu = function (e) { e.stopPropagation(); return false; };
+			PixiView.oncontextmenu = function (e) {
+				e.preventDefault();
+				e.stopPropagation();
+				return false;
+			};
 
 			on(event, fn);
 			return function() { off(event, fn); }
@@ -2541,17 +2627,19 @@ class RenderSupport {
 	}
 
 	public static function getMouseX(?clip : DisplayObject) : Float {
+		var viewportScale = getViewportScale();
 		if (clip == null || clip == PixiStage)
-			return MousePos.x;
+			return MousePos.x * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x');
+			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x * viewportScale');
 	}
 
 	public static function getMouseY(?clip : DisplayObject) : Float {
+		var viewportScale = getViewportScale();
 		if (clip == null || clip == PixiStage)
-			return MousePos.y;
+			return MousePos.y * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y');
+			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y * viewportScale');
 	}
 
 	public static function getTouchPoints(?clip : DisplayObject) : Array<Array<Float>> {
@@ -2572,11 +2660,11 @@ class RenderSupport {
 	}
 
 	public static function setMouseX(x : Float) {
-		MousePos.x = x;
+		MousePos.x = x / getViewportScale();
 	}
 
 	public static function setMouseY(y : Float) {
-		MousePos.y = y;
+		MousePos.y = y / getViewportScale();
 	}
 
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
@@ -2587,7 +2675,7 @@ class RenderSupport {
 		clip.invalidateLocalBounds();
 
 		var point = new Point(x, y);
-		return hittestMask(clip.parent, point) && doHitTest(clip, point);
+		return (untyped clip.skipHittestMask || hittestMask(clip.parent, point)) && doHitTest(clip, point);
 	}
 
 	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
@@ -3096,6 +3184,11 @@ class RenderSupport {
 
 	public static function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
 		return clip.setClipVisible(visible);
+	}
+
+	public static function setClipProtected(clip : DisplayObject) : Void {
+		untyped clip.skipHittestMask = true;
+		clip.updateKeepNativeWidgetParent(true);
 	}
 
 	public static function getClipRenderable(clip : DisplayObject) : Bool {
