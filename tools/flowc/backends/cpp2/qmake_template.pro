@@ -159,9 +159,13 @@ SOURCES += \
     %FLOWDIR/platforms/qt/qt-backend/QtGeolocationSupport.cpp \
     %FLOWDIR/platforms/qt/qt-backend/qfilesysteminterface.cpp \
     %FLOWDIR/platforms/qt/qt-backend/RunParallel.cpp \
-    %FLOWDIR/platforms/qt/qt-backend/QWebSocketSupport.cpp \
-    %FLOWDIR/platforms/qt/qt-gui/VideoWidget.cpp \
-    %FLOWDIR/platforms/qt/qt-gui/mainwindow.cpp
+    %FLOWDIR/platforms/qt/qt-backend/QWebSocketSupport.cpp
+
+CONFIG(use_gui) {
+    SOURCES += \
+        %FLOWDIR/platforms/qt/qt-gui/VideoWidget.cpp \
+        %FLOWDIR/platforms/qt/qt-gui/mainwindow.cpp
+}
 
 HEADERS += \
     %FLOWDIR/platforms/qt/pcheader.h \
@@ -191,10 +195,14 @@ HEADERS += \
     %FLOWDIR/platforms/qt/qt-backend/QtGeolocationSupport.h \
     %FLOWDIR/platforms/qt/qt-backend/qfilesysteminterface.h \
     %FLOWDIR/platforms/qt/qt-backend/RunParallel.h \
-    %FLOWDIR/platforms/qt/qt-backend/QWebSocketSupport.h \
-    %FLOWDIR/platforms/qt/qt-gui/VideoWidget.h \
-    %FLOWDIR/platforms/qt/qt-gui/testopengl.h \
-    %FLOWDIR/platforms/qt/qt-gui/mainwindow.h
+    %FLOWDIR/platforms/qt/qt-backend/QWebSocketSupport.h
+
+CONFIG(use_gui) {
+	HEADERS += \
+    	%FLOWDIR/platforms/qt/qt-gui/VideoWidget.h \
+    	%FLOWDIR/platforms/qt/qt-gui/testopengl.h \
+    	%FLOWDIR/platforms/qt/qt-gui/mainwindow.h
+}
 
 # Asmjit
 
