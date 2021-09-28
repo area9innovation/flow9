@@ -5,20 +5,15 @@ import java.util.Locale;
 
 public abstract class FlowRuntime {
 	private IHostFactory host_factory;
-	public Struct[] struct_prototypes;
-	public ConcurrentHashMap<String,Integer> struct_ids;
+	public static Struct[] struct_prototypes;
+	public static ConcurrentHashMap<String,Integer> struct_ids;
 	private ConcurrentHashMap<Class,NativeHost> hosts;
 
 	private String[] str_args;
 
 	protected FlowRuntime(Struct[] structs, String[] args) {
-		struct_prototypes = structs;
-		struct_ids = new ConcurrentHashMap<String,Integer>();
 		hosts = new ConcurrentHashMap<Class,NativeHost>();
 		str_args = args;
-
-		for (int i = 0; i < structs.length; i++)
-			struct_ids.put(structs[i].getTypeName(), i);
 	}
 
 	public synchronized void start(IHostFactory factory) {
@@ -227,25 +222,6 @@ public abstract class FlowRuntime {
 
 		return removeTrailingZeros(rstr);
 */
-	}
-
-	private static String removeTrailingZeros(String s) {
-		int j = s.length();
-		for (int i = s.length() - 1; i > 1; i--) {
-			char c = s.charAt(i);
-
-			if (c != '0') {
-				break;
-			} else {
-				char pc = s.charAt(i-1);
-
-				if (c == '0' && (pc != '.' && pc != ',')) {
-					j = i;
-				}
-			}
-		}
-
-		return s.substring(0, j);
 	}
 
 	public final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
