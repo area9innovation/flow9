@@ -3428,7 +3428,10 @@ class RenderSupport {
 		}
 	}
 
+	public static var clipSnapshotRequests : Int = 0;
 	public static function getClipSnapshot(clip : FlowContainer, cb : String -> Void) : Void {
+		clipSnapshotRequests++;
+
 		if (!printMode) {
 			printMode = true;
 			prevInvalidateRenderable = DisplayObjectHelper.InvalidateRenderable;
@@ -3450,7 +3453,9 @@ class RenderSupport {
 							Math.floor(clip.getHeight())
 						) : "";
 
-					if (printMode) {
+					clipSnapshotRequests--;
+
+					if (printMode && clipSnapshotRequests == 0) {
 						printMode = false;
 						DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
 						forceRender();
