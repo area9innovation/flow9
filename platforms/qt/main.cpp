@@ -228,6 +228,8 @@ int main(int argc, char *argv[])
     bool fixed_screen = false;
     int msaa_samples = 16;
     QString fallback_font = "";
+#else
+	Q_UNUSED(gui_prof_cost)
 #endif
     QString media_path = "";
     QStringList flowArgs;

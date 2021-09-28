@@ -68,6 +68,12 @@ void QtNotificationsSupport::doScheduleLocalNotification(double time, int notifi
     int timerId = startTimer(qMax(0.0, time - GetCurrentTime() * 1000.0));
     scheduledTimers.insert(timerId, notificationId);
     notificationInfo.insert(notificationId, NotificationInfo(timerId, notificationCallbackArgs, notificationTitle, notificationText));
+#else
+	Q_UNUSED(time)
+	Q_UNUSED(notificationId)
+	Q_UNUSED(notificationCallbackArgs)
+	Q_UNUSED(notificationTitle)
+	Q_UNUSED(notificationText)
 #endif
 }
 
@@ -83,6 +89,8 @@ void QtNotificationsSupport::doCancelLocalNotification(int notificationId) {
         }
         notificationInfo.erase(itNotificationInfo);
     }
+#else
+	Q_UNUSED(notificationId)
 #endif
 }
 
