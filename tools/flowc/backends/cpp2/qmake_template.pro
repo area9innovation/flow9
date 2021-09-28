@@ -19,6 +19,9 @@ unix:contains(QMAKE_HOST.arch,x86_64) {
 
 DEFINES += FLOW_COMPACT_STRUCTS
 
+#  Exclude some deprecated classes from Qt4
+DEFINES += QT_NO_BEARERMANAGEMENT
+
 CONFIG(use_gui) {
     QT += gui opengl multimedia multimediawidgets
 

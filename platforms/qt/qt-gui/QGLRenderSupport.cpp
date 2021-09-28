@@ -171,7 +171,7 @@ bool QGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *in
     int yoff = (header->tile_size - rect.height()) / 2;
 
     info->unicode_char = code;
-    info->advance = metrics.width(qchar) * coeff;
+    info->advance = metrics.horizontalAdvance(qchar) * coeff;
     info->bearing_x = rect.left() * coeff;
     info->bearing_y = rect.top() * coeff;
     info->size_x = rect.width() * coeff;
