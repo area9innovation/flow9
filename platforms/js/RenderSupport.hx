@@ -764,9 +764,11 @@ class RenderSupport {
 			) ? 95.0 / getViewportScale() : 0.0;
 		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
 
-		untyped console.log('A. screen height', getScreenSize().height);
-		untyped console.log('B. Browser inner height', Browser.window.innerHeight);
-		untyped console.log('topHeight', topHeight);
+		if (viewportScaleWorkaroundEnabled) {
+			untyped console.log('A. screen height', getScreenSize().height);
+			untyped console.log('B. Browser inner height', Browser.window.innerHeight);
+			untyped console.log('topHeight', topHeight);
+		}
 
 		// Calculate top height only once for each orientation
 		if (isPortaitOrientation()) {
