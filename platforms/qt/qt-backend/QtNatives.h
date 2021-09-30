@@ -18,6 +18,7 @@ private:
     ByteCodeRunner* Runner;
 
     DECLARE_NATIVE_METHOD(quit)
+	DECLARE_NATIVE_METHOD(availableProcessors)
 };
 
 #endif // NATIVES_H
