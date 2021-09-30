@@ -137,7 +137,7 @@ Qt::ItemFlags QGLClipTreeModel::flags(const QModelIndex &index) const
 {
     GLClip *item = getItem(index);
     if (!item)
-        return 0;
+        return Qt::ItemFlags();
 
     Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
     switch (index.column()) {

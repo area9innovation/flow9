@@ -23,6 +23,9 @@ QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QObject *windo
         , window(window)
 #endif
 {
+#ifndef QT_GUI_LIB
+	Q_UNUSED(window)
+#endif
     mimeDatabase = new QMimeDatabase();
 }
 
@@ -113,6 +116,10 @@ void QFileSystemInterface::doOpenFileDialog(int maxFilesCount, std::vector<std::
     #endif
 
     dialog->show();
+#else
+	Q_UNUSED(maxFilesCount)
+	Q_UNUSED(fileTypes)
+	Q_UNUSED(callback)
 #endif
 }
 
