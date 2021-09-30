@@ -10,6 +10,8 @@ import java.net.MalformedURLException;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -186,20 +188,9 @@ public class HttpSupport extends NativeHost {
 
 			int responseCode = con.getResponseCode();
 
-			// TODO: Make this asynchronous
-			BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-			String inputLine;
-			StringBuffer response = new StringBuffer();
-
-			while ((inputLine = in.readLine()) != null) {
-				response.append(inputLine);
-				response.append('\n');
-			}
-			in.close();
-
 			ArrayList<Object[]> responseHeaders = new ArrayList();
 			Map<String, List<String>> respHeaders = con.getHeaderFields();
-	        for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
+					for (Map.Entry<String, List<String>> entry : respHeaders.entrySet()) {
 				String key = entry.getKey();
 				if (key == null) key = "";
 
@@ -213,12 +204,32 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
+			InputStream inputStream = null;
+			/* getInputStream returns exception when status is not 200 and some other cases
+			If status is 400/500 -> we should call getErrorStream*/
+			try {
+				inputStream = con.getInputStream();
+			} catch (IOException e) {
+			}
+			if (Objects.isNull(inputStream)) {
+				inputStream = con.getErrorStream();
+			}
+			StringBuilder response = new StringBuilder();
+			// inputStream might be null, if body is empty
+			if (Objects.nonNull(inputStream)) {
+				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+				for (String line; (line = reader.readLine()) != null; ) {
+						response.append(line);
+						response.append("\n");
+				}
+			}
 			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
-        } catch (MalformedURLException e) {
-        	onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
-        } catch (IOException e) {
-        	onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
-        }
+
+		} catch (MalformedURLException e) {
+			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
+		} catch (IOException e) {
+			onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
+		}	
 		return null;
 	}
 
