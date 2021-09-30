@@ -1025,7 +1025,7 @@ public class Native extends NativeHost {
 	}
 
 	public final Object makeStructValue(String name, Object[] args, Object defval) {
-		return runtime.makeStructValue(name, args, (Struct)defval);
+		return FlowRuntime.makeStructValue(name, args, (Struct)defval);
 	}
 
 	public static final Object[] extractStructArguments(Object val) {
@@ -1054,7 +1054,7 @@ public class Native extends NativeHost {
 
 	public final Struct getCurrentDate() {
 		GregorianCalendar date = new GregorianCalendar();
-		return runtime.makeStructValue(
+		return FlowRuntime.makeStructValue(
 				"Date",
 				new Object[] {
 					date.get(Calendar.YEAR),

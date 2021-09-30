@@ -6,11 +6,11 @@ import java.util.Locale;
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
 	public static ConcurrentHashMap<String,Integer> struct_ids;
-	private ConcurrentHashMap<Class,NativeHost> hosts = new ConcurrentHashMap<Class,NativeHost>();
 	public static String[] program_args;
+	private static ConcurrentHashMap<Class,NativeHost> hosts = new ConcurrentHashMap<Class,NativeHost>();
 
 	@SuppressWarnings("unchecked")
-	protected final <T extends NativeHost> T getNativeHost(Class<T> cls) {
+	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
 		T host = (T)hosts.get(cls);
 		if (host != null) {
 			return host;
@@ -20,7 +20,6 @@ public abstract class FlowRuntime {
 				if (!cls.isInstance(host)) {
 					throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
 				}
-				host.runtime = this;
 				hosts.put(cls, host);
 				host.initialize();
 				return host;
@@ -193,7 +192,7 @@ public abstract class FlowRuntime {
 		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
 	}
 
-	public final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
+	public static final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
 		Integer id = struct_ids.get(name);
 		if (id == null)
 			return default_value;
@@ -201,7 +200,7 @@ public abstract class FlowRuntime {
 		return makeStructValue(id, fields, default_value);
 	}
 
-	public final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
+	public static final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
 		try {
 			Struct copy = struct_prototypes[id].clone();
 			copy.setFields(fields);

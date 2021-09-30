@@ -177,7 +177,7 @@ public class HttpSupport extends NativeHost {
 	 		// Add data
 			if (data != null & data != "") {
 				try {
-					byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), data);
+					byte[] converted = (byte[])string2utf8Bytes.invoke(FlowRuntime.getNativeHost(Native.class), data);
 					con.getOutputStream().write(converted/*data.getBytes("UTF8")*/);
 				} catch (IllegalAccessException e) {
 					System.out.println("At data string conversion: " + e.getMessage());
