@@ -10,7 +10,7 @@
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/RunParallel.h"
 #include "qt-backend/QWebSocketSupport.h"
-#include "qt-backend/QtQuitSupport.h"
+#include "qt-backend/QtNatives.h"
 
 #ifdef FLOW_MEDIARECORDER
 #include "qt-backend/QMediaStreamSupport.h"
@@ -647,7 +647,7 @@ int main(int argc, char *argv[])
 	QFileSystemInterface FileSystem(&FlowRunner);
 	QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
     RunParallelHost RunParallel(&FlowRunner);
-	QtQuitSupport quitSupport(&FlowRunner);
+	QtNatives qtNatives(&FlowRunner);
 #endif // QT_GUI_LIB
 
 #if !COMPILED

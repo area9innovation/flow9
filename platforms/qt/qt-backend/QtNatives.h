@@ -1,15 +1,15 @@
-#ifndef QUITSUPPORT_H
-#define QUITSUPPORT_H
+#ifndef NATIVES_H
+#define NATIVES_H
 
 #include "core/ByteCodeRunner.h"
 
 #include <QObject>
 
-class QtQuitSupport : public QObject, public NativeMethodHost
+class QtNatives : public QObject, public NativeMethodHost
 {
     Q_OBJECT
 public:
-    QtQuitSupport(ByteCodeRunner *Runner);
+    QtNatives(ByteCodeRunner *Runner);
 
 protected:
     NativeFunction *MakeNativeFunction(const char *name, int num_args);
@@ -20,4 +20,4 @@ private:
     DECLARE_NATIVE_METHOD(quit)
 };
 
-#endif // QUITSUPPORT_H
+#endif // NATIVES_H

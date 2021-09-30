@@ -1,21 +1,21 @@
-#include "QtQuitSupport.h"
+#include "QtNatives.h"
 #include "core/RunnerMacros.h"
 
-QtQuitSupport::QtQuitSupport(ByteCodeRunner *Runner)
+QtNatives::QtNatives(ByteCodeRunner *Runner)
     : NativeMethodHost(Runner), Runner(Runner)
 {
 }
 
-NativeFunction *QtQuitSupport::MakeNativeFunction(const char *name, int num_args)
+NativeFunction *QtNatives::MakeNativeFunction(const char *name, int num_args)
 {
     #undef NATIVE_NAME_PREFIX
     #define NATIVE_NAME_PREFIX "Native."
-    TRY_USE_NATIVE_METHOD_NAME(QtQuitSupport, quit, "quit", 1);
+    TRY_USE_NATIVE_METHOD_NAME(QtNatives, quit, "quit", 1);
 
     return nullptr;
 }
 
-StackSlot QtQuitSupport::quit(RUNNER_ARGS)
+StackSlot QtNatives::quit(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(rawcode);
     RUNNER_CheckTag(TInt, rawcode);

@@ -160,7 +160,7 @@ SOURCES += \
     %FLOWDIR/platforms/qt/qt-backend/qfilesysteminterface.cpp \
     %FLOWDIR/platforms/qt/qt-backend/RunParallel.cpp \
     %FLOWDIR/platforms/qt/qt-backend/QWebSocketSupport.cpp \
-	%FLOWDIR/platforms/qt/qt-backend/QtQuitSupport.cpp
+	%FLOWDIR/platforms/qt/qt-backend/QtNatives.cpp
 
 CONFIG(use_gui) {
     SOURCES += \
@@ -197,7 +197,7 @@ HEADERS += \
     %FLOWDIR/platforms/qt/qt-backend/qfilesysteminterface.h \
     %FLOWDIR/platforms/qt/qt-backend/RunParallel.h \
     %FLOWDIR/platforms/qt/qt-backend/QWebSocketSupport.h \
-	%FLOWDIR/platforms/qt/qt-backend/QtQuitSupport.h
+	%FLOWDIR/platforms/qt/qt-backend/QtNatives.h
 
 CONFIG(use_gui) {
 	HEADERS += \
