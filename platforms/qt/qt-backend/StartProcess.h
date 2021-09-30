@@ -58,6 +58,7 @@ private:
     void provideStdout(FlowProcess *p);
     void provideStderr(FlowProcess *p);
     void endProcess(FlowProcess *p, int code);
+	DECLARE_NATIVE_METHOD(execSystemProcess);
     DECLARE_NATIVE_METHOD(startProcess);
     DECLARE_NATIVE_METHOD(runSystemProcess);
     DECLARE_NATIVE_METHOD(writeProcessStdin);
@@ -73,4 +74,4 @@ private slots:
     void processFailed(QProcess::ProcessError);
 };
 
-#endif // CGISUPPORT_H
+#endif // STARTPROCESS_H
