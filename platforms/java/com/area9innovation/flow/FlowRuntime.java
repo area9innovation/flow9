@@ -4,46 +4,35 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
 
 public abstract class FlowRuntime {
-	private IHostFactory host_factory;
 	public static Struct[] struct_prototypes;
 	public static ConcurrentHashMap<String,Integer> struct_ids;
 	private ConcurrentHashMap<Class,NativeHost> hosts;
 
 	private String[] str_args;
 
-	protected FlowRuntime(Struct[] structs, String[] args) {
+	protected FlowRuntime(String[] args) {
 		hosts = new ConcurrentHashMap<Class,NativeHost>();
 		str_args = args;
 	}
 
-	public synchronized void start(IHostFactory factory) {
-		host_factory = factory;
-		main();
-	}
-
-	protected abstract void main();
-
 	@SuppressWarnings("unchecked")
 	protected final <T extends NativeHost> T getNativeHost(Class<T> cls) {
 		T host = (T)hosts.get(cls);
-		if (host != null)
+		if (host != null) {
 			return host;
-
-		try {
-			if (host_factory != null)
-				host = (T)host_factory.allocateHost(cls);
-			if (host == null)
+		} else {
+			try {
 				host = cls.getDeclaredConstructor().newInstance();
-
-			if (!cls.isInstance(host))
-				throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
-
-			host.runtime = this;
-			hosts.put(cls, host);
-			host.initialize();
-			return host;
-		} catch (ReflectiveOperationException e) {
-			throw new RuntimeException("Could not instantiate native method host "+cls.getName(), e);
+				if (!cls.isInstance(host)) {
+					throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
+				}
+				host.runtime = this;
+				hosts.put(cls, host);
+				host.initialize();
+				return host;
+			} catch (ReflectiveOperationException e) {
+				throw new RuntimeException("Could not instantiate native method host "+cls.getName(), e);
+			}
 		}
 	}
 	public static boolean compareEqual(Object a, Object b) {
