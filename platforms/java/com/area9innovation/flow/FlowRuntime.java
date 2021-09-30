@@ -6,14 +6,8 @@ import java.util.Locale;
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
 	public static ConcurrentHashMap<String,Integer> struct_ids;
-	private ConcurrentHashMap<Class,NativeHost> hosts;
-
-	private String[] str_args;
-
-	protected FlowRuntime(String[] args) {
-		hosts = new ConcurrentHashMap<Class,NativeHost>();
-		str_args = args;
-	}
+	private ConcurrentHashMap<Class,NativeHost> hosts = new ConcurrentHashMap<Class,NativeHost>();
+	public static String[] program_args;
 
 	@SuppressWarnings("unchecked")
 	protected final <T extends NativeHost> T getNativeHost(Class<T> cls) {
@@ -197,20 +191,6 @@ public abstract class FlowRuntime {
 	public static String doubleToString(double value) {
 		String rstr = Double.toString(value);
 		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
-/*
-		String rstr = "";
-
-		if (value > 1.0) {
-			rstr = String.format(Locale.US, "%f", value);
-		} else {
-			rstr = String.format(Locale.US, "%g", value);
-			//String ss = Double.toString(value);
-
-			//rstr = ss.endsWith(".0") ? ss.substring(0, rstr.length()-2) : ss;
-		}
-
-		return removeTrailingZeros(rstr);
-*/
 	}
 
 	public final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
@@ -266,9 +246,5 @@ public abstract class FlowRuntime {
 		if (o1 instanceof Double || o2 instanceof Double)
 			return Double.valueOf(((Number)o1).doubleValue() % ((Number)o2).doubleValue());
 		return Integer.valueOf(((Number)o1).intValue() % ((Number)o2).intValue());
-	}
-
-	public String[] getUrlArgs() {
-		return str_args;
 	}
 }

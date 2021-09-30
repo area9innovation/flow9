@@ -920,7 +920,7 @@ public class Native extends NativeHost {
 	}
 
 	public Object[][] getAllUrlParameters() {
-		String[] args = runtime.getUrlArgs();
+		String[] args = FlowRuntime.program_args;
 
 		Object[][] parameters = new Object[args.length][2];
 
@@ -941,7 +941,7 @@ public class Native extends NativeHost {
 	}
 
 	public String getUrlParameter(String name) {
-		String[] args = runtime.getUrlArgs();
+		String[] args = FlowRuntime.program_args;
 
 		for (String p : args) {
 			if (p.startsWith(name + "=")) {
