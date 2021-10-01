@@ -5,9 +5,9 @@ import java.util.Locale;
 
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
-	public static ConcurrentHashMap<String,Integer> struct_ids;
+	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
 	public static String[] program_args;
-	private static ConcurrentHashMap<Class,NativeHost> hosts = new ConcurrentHashMap<Class,NativeHost>();
+	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
 
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
