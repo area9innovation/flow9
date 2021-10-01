@@ -9,10 +9,9 @@ import java.security.KeyStore;
 import javax.net.ssl.*;
 import java.util.concurrent.*;
 
-public class HttpServerSupport extends NativeHost
-{
+public class HttpServerSupport extends NativeHost {
 
-	public Object createHttpServerNative(
+	public static Object createHttpServerNative(
 		int port,
 		boolean isHttps,
 		String pfxPath,
@@ -28,12 +27,9 @@ public class HttpServerSupport extends NativeHost
 			Func2<Object,String,Object[]>,
 			Func1<Object,Integer>
 		> onMessage
-	)
-	{
-		try
-		{
-			if (isHttps)
-			{
+	) {
+		try {
+			if (isHttps) {
 				HttpsServer server = HttpsServer.create();
 				server.setExecutor(Executors.newCachedThreadPool());
 				SSLContext sslContext = setupSSLContext(pfxPath, pfxPassword);
@@ -41,38 +37,32 @@ public class HttpServerSupport extends NativeHost
 
 				server.bind(new InetSocketAddress(port), 0);
 
-				HttpContext context =
-					server.createContext("/", new EchoHandler(onMessage));
+				//HttpContext context = server.createContext("/", new EchoHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
 
 				return server;
-			}
-			else
-			{
+			} else {
 				HttpServer server = HttpServer.create();
 				server.bind(new InetSocketAddress(port), 0);
 				server.setExecutor(Executors.newCachedThreadPool());
 
-				HttpContext context =
-					server.createContext("/", new EchoHandler(onMessage));
+				//HttpContext context = server.createContext("/", new EchoHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
 
 				return server;
 			}
-		}
-		catch (Exception e)
-		{
+		} catch (Exception e) {
 			System.out.println(e);
 			System.out.println("Failed to create HTTPS server");
 			return null;
 		}
 	}
 
-	public Object createHttpChunkedServerNative(
+	public static Object createHttpChunkedServerNative(
 		int port,
 		boolean isHttps,
 		String pfxPath,
@@ -89,12 +79,9 @@ public class HttpServerSupport extends NativeHost
 			Func2<String, Integer, Boolean>,
 			Func2<Object, String, Object[]>
 		> onMessage
-	)
-	{
-		try
-		{
-			if (isHttps)
-			{
+	) {
+		try {
+			if (isHttps) {
 				HttpsServer server = HttpsServer.create();
 				server.setExecutor(Executors.newCachedThreadPool());
 				SSLContext sslContext = setupSSLContext(pfxPath, pfxPassword);
@@ -102,40 +89,33 @@ public class HttpServerSupport extends NativeHost
 
 				server.bind(new InetSocketAddress(port), 0);
 
-				HttpContext context =
-					server.createContext("/", new ChunkedHandler(onMessage));
+				//HttpContext context = server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
 
 				return server;
-			}
-			else
-			{
+			} else {
 				HttpServer server = HttpServer.create();
 				server.bind(new InetSocketAddress(port), 0);
 				server.setExecutor(Executors.newCachedThreadPool());
 
-				HttpContext context =
-					server.createContext("/", new ChunkedHandler(onMessage));
+				//HttpContext context = server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
 
 				return server;
 			}
-		}
-		catch (Exception e)
-		{
+		} catch (Exception e) {
 			System.out.println(e);
 			System.out.println("Failed to create HTTPS server");
 			return null;
 		}
 	}
 
-	public Object closeHttpServerNative(Object server)
-	{
-		( (HttpServer)server ).stop(0);
+	public static Object closeHttpServerNative(Object server) {
+		((HttpServer)server).stop(0);
 		return null;
 	}
 

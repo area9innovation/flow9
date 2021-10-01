@@ -13,9 +13,9 @@ import javax.net.ssl.SSLContext;
 
 public class WebSocketServerSupport extends NativeHost {
 
-    private Map<WebSocket, FlowWebSocketListeners> webSocketListeners = new HashMap<>();
+    private static Map<WebSocket, FlowWebSocketListeners> webSocketListeners = new HashMap<>();
 
-    public Func0<Object> createWsServerNative(
+    public static Func0<Object> createWsServerNative(
             int port,
             boolean isHttps,
             String pfxPath,
@@ -79,7 +79,7 @@ public class WebSocketServerSupport extends NativeHost {
         };
     }
 
-    public Object embedListeners(
+    public static Object embedListeners(
             Object webSocket,
             Func1<Object, Integer> onClose,
             Func1<Object, String> onError,
@@ -90,7 +90,7 @@ public class WebSocketServerSupport extends NativeHost {
         return null;
     }
 
-    public boolean send(
+    public static boolean send(
             Object webSocket,
             String msg
     ) {
@@ -102,7 +102,7 @@ public class WebSocketServerSupport extends NativeHost {
         return false;
     }
 
-    public Object close(
+    public static Object close(
             Object webSocket,
             int code,
             String reason
@@ -112,7 +112,7 @@ public class WebSocketServerSupport extends NativeHost {
         return null;
     }
 
-    public int getBufferedAmount(
+    public static int getBufferedAmount(
             Object webSocket
     ) {
         WebSocket socket = (WebSocket) webSocket;

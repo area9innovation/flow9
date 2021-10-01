@@ -66,6 +66,11 @@ public class Native extends NativeHost {
 		}
 	}
 
+	public void initialize() {
+		Integer emptyList_id = FlowRuntime.struct_ids.get("EmptyList");
+		emptyList = FlowRuntime.struct_prototypes[emptyList_id];
+	}
+
 	public static final Object println(Object arg) {
 		String s = "";
 		if (arg instanceof String) {
@@ -624,12 +629,14 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public static final Object tailList(Struct list, Object _default) {
+	public static Struct emptyList;
+
+	public static final Struct tailList(Struct list) {
 		Object[] data = list.getFields();
 		if (data.length == 0) {
-			return _default;
+			return emptyList;
 		} else {
-			return data[1];
+			return (Struct)data[1];
 		}
 	}
 
@@ -791,9 +798,9 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private Map<Long, Timer> timers = new HashMap<Long, Timer>();
+	private static Map<Long, Timer> timers = new HashMap<Long, Timer>();
 
-	private Timer getTimer() {
+	private static Timer getTimer() {
 		Long threadId = Thread.currentThread().getId();
 		if (timers.containsKey(threadId)) {
 			return timers.get(threadId);
@@ -824,7 +831,7 @@ public class Native extends NativeHost {
 		cb.run();
 	}
 
-	public final Object timer(int ms, final Func0<Object> cb) {
+	public static final Object timer(int ms, final Func0<Object> cb) {
 		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
@@ -840,7 +847,7 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
+	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
 		Timer timer = new Timer(false);
 		TimerTask task = new TimerTask() {
 			public void run() {
@@ -856,7 +863,7 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
+	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
 		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
@@ -919,7 +926,7 @@ public class Native extends NativeHost {
 		return System.currentTimeMillis();
 	}
 
-	public Object[][] getAllUrlParameters() {
+	public static Object[][] getAllUrlParameters() {
 		String[] args = FlowRuntime.program_args;
 
 		Object[][] parameters = new Object[args.length][2];
@@ -940,7 +947,7 @@ public class Native extends NativeHost {
 		return parameters;
 	}
 
-	public String getUrlParameter(String name) {
+	public static String getUrlParameter(String name) {
 		String[] args = FlowRuntime.program_args;
 
 		for (String p : args) {
@@ -1024,7 +1031,7 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final Object makeStructValue(String name, Object[] args, Object defval) {
+	public static final Object makeStructValue(String name, Object[] args, Object defval) {
 		return FlowRuntime.makeStructValue(name, args, (Struct)defval);
 	}
 

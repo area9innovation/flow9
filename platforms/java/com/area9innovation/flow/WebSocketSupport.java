@@ -7,7 +7,7 @@ import org.java_websocket.handshake.ServerHandshake;
 import java.net.URI;
 
 public class WebSocketSupport extends NativeHost{
-    public Object open(
+    public static Object open(
             String url,
             Func3<Object, Integer, String, Boolean> onClose,
             Func1<Object, String> onError,
@@ -38,7 +38,7 @@ public class WebSocketSupport extends NativeHost{
         return webSocketClient;
     }
 
-    public Boolean send(Object webSocketClient, String message) {
+    public static Boolean send(Object webSocketClient, String message) {
         WebSocketClient client = (WebSocketClient) webSocketClient;
 		
         boolean isConnected = client.getReadyState() == org.java_websocket.enums.ReadyState.OPEN;
@@ -47,12 +47,12 @@ public class WebSocketSupport extends NativeHost{
         return isConnected;
     }
 
-    public Boolean hasBufferedData(Object webSocketClient) {
+    public static Boolean hasBufferedData(Object webSocketClient) {
         WebSocketClient client = (WebSocketClient) webSocketClient;
         return client.getConnection().hasBufferedData();
     }
 
-    public Object close(Object webSocketClient, int code, String reason) {
+    public static Object close(Object webSocketClient, int code, String reason) {
         WebSocketClient client = (WebSocketClient) webSocketClient;
         client.getConnection().close(code, reason);
         return null;

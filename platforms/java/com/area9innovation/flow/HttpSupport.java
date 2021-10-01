@@ -25,7 +25,7 @@ import java.nio.file.Files;
 
 @SuppressWarnings("unchecked")
 public class HttpSupport extends NativeHost {
-	public Object httpRequest(String url, boolean post,Object[] headers,
+	public static Object httpRequest(String url, boolean post,Object[] headers,
 				Object[] params,Func1<Object,String> onData,Func1<Object,String> onError,Func1<Object,Integer> onStatus) {
 		// TODO
 		try {
@@ -38,7 +38,7 @@ public class HttpSupport extends NativeHost {
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
+	 			urlParameters = urlParameters + encodeUrlParameter(key, value);
 			}
 
 			HttpURLConnection con = null;
@@ -50,7 +50,7 @@ public class HttpSupport extends NativeHost {
 				URL obj = new URL(url);
 
 				con = (HttpURLConnection) obj.openConnection();
-				this.addHeaders(con, headers);
+				addHeaders(con, headers);
 				con.setDoOutput(true); // Triggers POST.
 				con.setRequestMethod("POST");
 
@@ -73,7 +73,7 @@ public class HttpSupport extends NativeHost {
 				URL obj = new URL(urlWithParams);
 				// GET
 				con = (HttpURLConnection) obj.openConnection();
-				this.addHeaders(con, headers);
+				addHeaders(con, headers);
 				con.setRequestMethod("GET");
 			}
 
@@ -100,7 +100,7 @@ public class HttpSupport extends NativeHost {
 		return null;
 	}
 
-	private final static java.lang.reflect.Method string2utf8Bytes;
+	private static final java.lang.reflect.Method string2utf8Bytes;
 	static {
 		java.lang.reflect.Method method = null;
 		try {
@@ -113,12 +113,12 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
-	public final Object httpCustomRequestNative(String url, String method, Object[] headers,
+	public static  final Object httpCustomRequestNative(String url, String method, Object[] headers,
 		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
 		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
 	}
 
-	public final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
+	public static final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
 		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
 		try {
@@ -132,7 +132,7 @@ public class HttpSupport extends NativeHost {
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters = urlParameters + this.encodeUrlParameter(key, value);
+	 			urlParameters = urlParameters + encodeUrlParameter(key, value);
 			}
 			HttpURLConnection con = null;
 			byte[] postData = null;
@@ -147,7 +147,7 @@ public class HttpSupport extends NativeHost {
 					con.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 				};
 				int postDataLength = postData.length;
-				this.addHeaders(con, headers);
+				addHeaders(con, headers);
 				con.setRequestProperty("charset", "utf-8");
 				con.setRequestMethod(method);
 				con.setDoOutput(true);
@@ -233,7 +233,7 @@ public class HttpSupport extends NativeHost {
 		return null;
 	}
 
-	private final String encodeUrlParameter(String key, String value) {
+	private static final String encodeUrlParameter(String key, String value) {
 		try {
 			String encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8.toString()).replace("+", "%20");
 			String encodedValue = URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20");
@@ -245,7 +245,7 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
-	private final void addHeaders(HttpURLConnection connection, Object[] headers) {
+	private static final void addHeaders(HttpURLConnection connection, Object[] headers) {
 		for (Object header : headers) {
 			Object [] heads = (Object []) header;
 			String key = (String) heads[0];
@@ -254,20 +254,20 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
-	public final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,
+	public static final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,
 			Object [] attachments, Func1<Object,String> onDataFn, Func1<Object,String> onErrorFn) {
 		// NOP
 		System.out.println("sendHttpRequestWithAttachments not implemented");
 		return null;
 	}
 
-	public final Object downloadFile(String url, Func1<Object, String> onData, Func1<Object, String> onError, Func2<Object, Double, Double> onProgress) {
+	public static final Object downloadFile(String url, Func1<Object, String> onData, Func1<Object, String> onError, Func2<Object, Double, Double> onProgress) {
 		// TODO
 		System.out.println("downloadFile not implemented");
 		return null;
 	}
 
-	public final Func0<Object> uploadFile(String url,
+	public static final Func0<Object> uploadFile(String url,
 			Object[] params,
 			Object[] headers,
 			Object[] fileTypes,
@@ -283,7 +283,7 @@ public class HttpSupport extends NativeHost {
 		return no_op;
 	}
 
-	public final Func0<Object> uploadNativeFile(
+	public static final Func0<Object> uploadNativeFile(
 			Object file,
 			String url,
 			Object[] params,
@@ -318,7 +318,7 @@ public class HttpSupport extends NativeHost {
 			con = (HttpURLConnection) urlObj.openConnection();
 			onOpen.invoke();
 
-			this.addHeaders(con, headers);
+			addHeaders(con, headers);
 			con.setDoOutput(true);
 			con.setRequestMethod("POST");
 
@@ -390,23 +390,23 @@ public class HttpSupport extends NativeHost {
 		return null;
 	}
 
-	private Func0<Object> no_op = new Func0<Object>() {
+	private static Func0<Object> no_op = new Func0<Object>() {
 		public Object invoke() { return null; }
 	};
 
-	public final Object doPreloadMediaUrl(String url, Func0<Object> onSuccess, Func1<Object, String> onError) {
+	public static final Object doPreloadMediaUrl(String url, Func0<Object> onSuccess, Func1<Object, String> onError) {
 		// NOP
 		System.out.println("doPreloadMediaUrl not implemented");
 		return null;
 	}
 
-	public final Object removeUrlFromCache(String url) {
+	public static final Object removeUrlFromCache(String url) {
 		// NOP
 		System.out.println("removeUrlFromCache not implemented");
 		return null;
 	}
 
-	public final Object clearUrlCache() {
+	public static final Object clearUrlCache() {
 		// NOP
 		System.out.println("clearUrlCache not implemented");
 		return null;

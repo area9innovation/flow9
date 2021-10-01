@@ -7,9 +7,9 @@ import java.text.DateFormat;
 
 public class Database extends NativeHost {
 
-    protected Struct illegal = null;
+    protected static Struct illegal = null;
 
-    protected Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+    protected static Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
 
     /*
       This two classes intended to store relations between
@@ -124,21 +124,17 @@ public class Database extends NativeHost {
         }
     }
 
-	public void initializeDatabase() {
+	public void initialize() {
 		try {
 			Class.forName("com.mysql.cj.jdbc.Driver").getConstructor().newInstance();
 		} catch (Exception e) {
 			printException(e);
 		}
-		Integer strid = runtime.struct_ids.get("IllegalStruct"); // IllegalStruct() could be not used in the code
-		illegal = runtime.struct_prototypes[strid];
+		Integer strid = FlowRuntime.struct_ids.get("IllegalStruct"); // IllegalStruct() could be not used in the code
+		illegal = FlowRuntile.struct_prototypes[strid];
 	}
 
-	public void initialize() {
-		initializeDatabase();
-	}
-
-    public final Object connectDb(String host, Integer port, String socket, String user, String password, String database) {
+    public static final Object connectDb(String host, Integer port, String socket, String user, String password, String database) {
         DBObject db = new DBObject();
         try {
 			if (socket.isEmpty()) {
@@ -162,19 +158,19 @@ public class Database extends NativeHost {
         }
     }
 
-    public final String connectExceptionDb(Object database) {
+    public static final String connectExceptionDb(Object database) {
         if (database == null) return "Empty database object";
         return ((DBObject) database).err;
     }
 
-    public final Object closeDb(Object database) {
+    public static final Object closeDb(Object database) {
         if (database != null) {
             ((DBObject) database).close();
         }
         return null;
     }
 
-    public final String escapeDb(Object database, String s) {
+    public static final String escapeDb(Object database, String s) {
         return s.replace("\\", "\\\\")
                 .replace("\b", "\\b")
                 .replace("\n", "\\n")
@@ -186,12 +182,12 @@ public class Database extends NativeHost {
                 .replace("\"", "\\\"");
     }
 
-    public final Object requestDb(Object database, String query) {
+    public static final Object requestDb(Object database, String query) {
         Object[] params = {};
         return requestDbWithQueryParams(database, query, params);
     }
 
-    public final Object requestDbWithQueryParams(Object database, String query, Object[] queryParams) {
+    public static final Object requestDbWithQueryParams(Object database, String query, Object[] queryParams) {
         if (database == null) return null;
         try {
             DBObject dbObj = (DBObject) database;
@@ -213,7 +209,7 @@ public class Database extends NativeHost {
         }
     }
 
-    public final String requestExceptionDb(Object database) {
+    public static final String requestExceptionDb(Object database) {
         try {
             if (database != null && ((DBObject) database).err != null) {
                 return ((DBObject) database).err;
@@ -226,7 +222,7 @@ public class Database extends NativeHost {
         }
     }
 
-    public final Integer lastInsertIdDb(Object database) {
+    public static final Integer lastInsertIdDb(Object database) {
         DBObject db = (DBObject) database;
         if (db == null) return -1;
         if (db.lrurs == null) return -1;
@@ -267,7 +263,7 @@ public class Database extends NativeHost {
     }
     */
 
-    public final Boolean hasNextResultDb(Object result) {
+    public static final Boolean hasNextResultDb(Object result) {
         RSObject res = (RSObject) result;
         try {
             if (res == null || res.rs == null) return false;
@@ -281,11 +277,11 @@ public class Database extends NativeHost {
         }
     }
 
-    protected Boolean notEmptyResultSet(ResultSet rs) throws SQLException {
+    protected static Boolean notEmptyResultSet(ResultSet rs) throws SQLException {
         return (rs.isBeforeFirst() || rs.getRow() > 0) && !(rs.isLast() || rs.isAfterLast());
     }
 
-    protected String[] getFieldNames(ResultSet rs) throws SQLException {
+    protected static String[] getFieldNames(ResultSet rs) throws SQLException {
         ResultSetMetaData rsmd = rs.getMetaData();
         int columnCount = rsmd.getColumnCount();
         String[] fieldNames = new String[columnCount];
@@ -295,7 +291,7 @@ public class Database extends NativeHost {
         return fieldNames;
     }
 
-    protected int[] getFieldTypes(ResultSet rs) throws SQLException {
+    protected static int[] getFieldTypes(ResultSet rs) throws SQLException {
         ResultSetMetaData rsmd = rs.getMetaData();
         int columnCount = rsmd.getColumnCount();
         int[] fieldtypes = new int[columnCount];
@@ -307,7 +303,7 @@ public class Database extends NativeHost {
 
     // Collect single row of nulls in order to preserve columns names
     // Can be used as a special case for empty tables
-    private Struct[] getNullRowValues(ResultSet rs, String[] fieldNames) throws SQLException {
+    private static Struct[] getNullRowValues(ResultSet rs, String[] fieldNames) throws SQLException {
         int columnCount = fieldNames.length;
         Struct[] values = new Struct[columnCount];
         for (int i = 0; i < columnCount; i++) {
@@ -316,7 +312,7 @@ public class Database extends NativeHost {
         return values;
     }
 
-    private Struct[] getRowValues(ResultSet rs, String[] fieldNames, int[] fieldtypes, Struct[] nulls, DBObject dbObj) throws SQLException {
+    private static Struct[] getRowValues(ResultSet rs, String[] fieldNames, int[] fieldtypes, Struct[] nulls, DBObject dbObj) throws SQLException {
         int columnCount = fieldNames.length;
         Struct[] values = new Struct[columnCount];
         for (int i = 0; i < columnCount; i++) {
@@ -386,7 +382,7 @@ public class Database extends NativeHost {
         return values;
     }
 
-    public final Struct[][][] requestDbMulti(Object database, Object[] queries) {
+    public static final Struct[][][] requestDbMulti(Object database, Object[] queries) {
         Struct[][][] empty = new Struct[0][][];
         if (database == null || queries.length == 0) return empty;
 
@@ -446,7 +442,7 @@ public class Database extends NativeHost {
         }
     }
 
-    public final Struct[] nextResultDb(Object result) {
+    public static final Struct[] nextResultDb(Object result) {
         RSObject res = (RSObject) result;
 
         if (res == null || res.rs == null) return new Struct[0];
