@@ -18,14 +18,27 @@ public abstract class FlowRuntime {
 			try {
 				host = cls.getDeclaredConstructor().newInstance();
 				if (!cls.isInstance(host)) {
-					throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
+					throw new RuntimeException("Invalid host: " + cls.getName() + " expected, " + host.getClass().getName() + " allocated");
 				}
 				hosts.put(cls, host);
 				host.initialize();
 				return host;
 			} catch (ReflectiveOperationException e) {
-				throw new RuntimeException("Could not instantiate native method host "+cls.getName(), e);
+				throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
 			}
+		}
+	}
+	@SuppressWarnings("unchecked")
+	protected static final <T extends NativeHost> void registerNativeHost(Class<T> cls) {
+		try {
+			T host = cls.getDeclaredConstructor().newInstance();
+			if (!cls.isInstance(host)) {
+				throw new RuntimeException("Invalid host: " + cls.getName() + " expected, " + host.getClass().getName() + " allocated");
+			}
+			hosts.put(cls, host);
+			host.initialize();
+		} catch (ReflectiveOperationException e)  {
+			throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
 		}
 	}
 	public static boolean compareEqual(Object a, Object b) {
