@@ -391,10 +391,11 @@ public class Database extends NativeHost {
             if (query == "") return empty;
         }
 
+        DBObject dbo = (DBObject) database;
         ArrayList<Struct[][]> res = new ArrayList<Struct[][]>();
-        try {
-
-            DBObject dbo = (DBObject) database;
+        try (
+            Statement stmt = dbo.con.createStatement();
+        ) {
             String[] q1 = new String[queries.length];
 
             for (int i = 0; i < queries.length; i++) {
@@ -402,7 +403,6 @@ public class Database extends NativeHost {
             }
             String sql = String.join(";", q1);
 
-            Statement stmt = dbo.con.createStatement();
             boolean isResultSet = stmt.execute(sql);
             Integer updateCount = stmt.getUpdateCount();
             while (isResultSet || updateCount != -1) {
