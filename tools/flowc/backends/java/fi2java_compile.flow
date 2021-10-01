@@ -132,14 +132,30 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 		iter(csm.decl_order, \decl -> {
 			switch (decl : FiDeclaration) {
 				FiFunctionDec(name, lambda, type, __, __): {
-					ginfo = JavaGlobalInfo("f_" + name, csm, type, false);
-					gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+					switch (find(csm.module.natives, \n -> n.name == name)) {
+						Some(nat): {
+							// May be a native function. Check if it is the case.
+							parts = strSplit(nat.nativeName, ".");
+							native_host = parts[0];
+							native_name = parts[1];
+							if (!checkJavaNativeExists(gctx, native_host, native_name)) {
+								// This is a fallback for a native, which dosn't exist - use it
+								ginfo = JavaGlobalInfo("f_" + name, csm, type, JavaGlobalModule());
+								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+							}
+						}
+						None(): {
+							// Not a fallback - use directly
+							ginfo = JavaGlobalInfo("f_" + name, csm, type, JavaGlobalModule());
+							gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+						}
+					}
 				}
 				FiGlobalVar(name, expr, type,__,__): {
 					tstr = type2javaObjType(gctx, type, true, false, false);
 					rlistPush(csm.vars, "\tpublic static " + tstr + " g_" + name + ";\n");
 
-					ginfo = JavaGlobalInfo("g_" + name, csm, type, false);
+					ginfo = JavaGlobalInfo("g_" + name, csm, type, JavaGlobalModule());
 					gctx.globals ::= setTree(gctx.globals, name, ginfo);
 				}
 				FiNativeDec(name, io, type, nname, fallback, __, s): {
@@ -152,8 +168,8 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 							native_host = parts[0];
 							native_name = parts[1];
 							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
-							if (!checkJavaNativeExists(gctx, fallback, s, native_host, native_name)) {
-								switch (fallback) {
+							if (!checkJavaNativeExists(gctx, native_host, native_name)) {
+								/*switch (fallback) {
 									FiLambda(args, body, __, __): {
 										wrapper_t = emitJavaFnWrapper(
 											gctx, csm, type, "\t\t",
@@ -192,13 +208,13 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 										);
 									}
 									default: {
-										ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
+										ginfo = JavaGlobalInfo(nname, csm, type, true);
 										gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
-										//gctx.globals ::= setTree(gctx.globals, name, ginfo);
 									}
-								}
+								}*/
 							} else {
-								ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
+								// Use a native name as a real native from appropriate host.
+								ginfo = JavaGlobalInfo(nname, csm, type, JavaGlobalNative());
 								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
 							}
 						}
@@ -245,13 +261,13 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						pushistr("\t\tModule_" + csm.id + ".init_" + name + "();\n");
 					}
 					FiNativeDec(__,__,__, nname, fallback,__,__): {
-						parts = strSplit(nname, ".");
+						/*parts = strSplit(nname, ".");
 						if (length(parts) != 2) {
 							fail0("Invalid native identifier: " + nname);
 						}
 						native_host = parts[0];
 						native_name = parts[1];
-						if (!checkJavaNativeExists(gctx, fallback, -1, native_host, native_name)) {
+						if (!checkJavaNativeExists(gctx, native_host, native_name)) {
 							switch (fallback) {
 								FiLambda(xs, body, __, __): {
 									addJavaExpressionWrappers(gctx, body);
@@ -260,7 +276,7 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 							}
 						} else {
 							// ??
-						}
+						}*/
 					}
 				}
 			);
@@ -319,7 +335,7 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						}
 						native_host = parts[0];
 						native_name = parts[1];
-						if (!checkJavaNativeExists(gctx, fallback, -1, native_host, native_name)) {
+						if (!checkJavaNativeExists(gctx, native_host, native_name)) {
 							switch (fallback) {
 								FiLambda(xs, body, __, __): {
 									funcType = cast(type: FiType -> FiTypeFunction);
@@ -836,7 +852,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 					switch (lookupTree(gctx.globals, name)) {
 						Some(ginfo): {
 							tstr = type2javaObjType(gctx, ginfo.type, true, false, startsWith(name, "h_"));
-							wrapJavaCast(jctxWrapModuleRef(ctx, ginfo), tstr, rtype);
+							wrapJavaCast(jctxWrapModuleRef(ctx.func, ginfo), tstr, rtype);
 						}
 						None():
 							switch (lookupTree(gctx.globalFuncs, name)) {
@@ -846,17 +862,13 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 
 									wrapper_t = emitJavaFnWrapper(
 										gctx, finfo.csmodule, ftype, "\t\t",
-										\args, rt -> {
-											"return "+
-												(if (finfo.global_scope) "" else "Module_" + finfo.csmodule.id + ".")
-												+ finfo.name + "(" + args + ");"
-										}
+										\args, rt -> "return " + jctxWrapModuleRef(ctx.func, finfo) + "(" + args + ");"
 									);
 									tstr = wrapper_t.second;
 
 									rlistPush(gctx.wrapper_code, JavaWrapperCode(id, tstr, wrapper_t.first));
 
-									fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, true);
+									fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, JavaGlobalRuntime());
 									gctx.globals ::= setTree(gctx.globals, name, fglobal);
 									wrapJavaCast(gctx.config.mainClassName + ".gfw_" + name, tstr, rtype);
 								}
@@ -887,7 +899,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 				Some(finfo): {
 					is_native = startsWith(finfo.name, "h_");
 					ftype = cast(finfo.type : FiType -> FiTypeFunction);
-					rname = jctxWrapModuleRef(ctx, finfo);
+					rname = jctxWrapModuleRef(ctx.func, finfo);
 					aexprs = mapi(es, \j, expr ->
 						emitJavaExpression(ctx, expr, type2javaObjType(gctx, ftype.args[j].type, true, false, is_native))
 					);
@@ -1316,14 +1328,29 @@ type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : b
 	}
 }
 
-jctxWrapModuleRef(ctx : JavaScopeContext, global : JavaGlobalInfo) {
-	if (global.csmodule == ctx.func.csm && !global.global_scope) {
+jctxWrapModuleRef(func : JavaFunctionContext, global : JavaGlobalInfo) {
+	switch (global.scope) {
+		JavaGlobalRuntime(): {
+			func.gctx.config.mainClassName + "." + global.name;
+		}
+		JavaGlobalNative(): {
+			global.name;
+		}
+		JavaGlobalModule(): {
+			//if (global.csmodule == func.csm) {
+			//	global.name
+			//} else {
+				"Module_" + global.csmodule.id + "." + global.name;
+			//}
+		}
+	}
+	/*if (global.csmodule == ctx.func.csm && !global.global_scope) {
 		global.name
 	} else if (global.global_scope) {
 		ctx.func.gctx.config.mainClassName + "." + global.name;
 	} else {
 		"Module_" + global.csmodule.id + "." + global.name;
-	}
+	}*/
 }
 
 javaRequireFunction(gctx : JavaGlobalContext, arity : int) -> string {
@@ -1402,10 +1429,11 @@ wrapJavaCast(expr : string, srct : string, dstt : string) {
 		expr
 	} else {
 		igen = strIndexOf(dstt, "<");
-		if (igen > 0 && strlen(srct) > igen && startsWith(srct, substring(dstt, 0, igen)))
+		if (igen > 0 && strlen(srct) > igen && startsWith(srct, substring(dstt, 0, igen))) {
 			"((" + dstt + ")(" + substring(dstt, 0, igen) + ")" + expr + ")"
-		else
+		} else {
 			"((" + dstt + ")" + expr + ")";
+		}
 	}
 }
 
@@ -1503,11 +1531,11 @@ javaStatementPullContext(local_counter : ref int) {
 	)
 }
 
-checkJavaNativeExists(gctx : JavaGlobalContext, fallback : FiExp, start : int, native_host : string, native_name : string) -> bool {
-	if (!gctx.config.useLambdas) false else {
+checkJavaNativeExists(gctx : JavaGlobalContext, native_host : string, native_name : string) -> bool {
+	//if (!gctx.config.useLambdas) false else {
 		host_natives = lookupTreeDef(gctx.host_natives, native_host, makeSet());
 		containsSet(host_natives, native_name);
-	}
+	//}
 }
 
 javaNewLocalName(counter : ref int, name : string) {
@@ -1522,7 +1550,7 @@ addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
 		FiSeq(es, __, __):
 			iter(es, \e -> addJavaExpressionWrappers(gctx, e));
 		FiVar(name, __, __): {
-			switch (lookupTree(gctx.globals, name)) {
+			/*switch (lookupTree(gctx.globals, name)) {
 				Some(__): { }
 				None():
 					switch (lookupTree(gctx.globalFuncs, name)) {
@@ -1544,7 +1572,7 @@ addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
 						}
 						None(): { }
 					}
-			}
+			}*/
 		}
 		FiCall(f, es, __, __): {
 			global = switch (f) {
