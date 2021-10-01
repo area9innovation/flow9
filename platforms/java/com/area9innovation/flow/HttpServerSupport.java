@@ -36,8 +36,7 @@ public class HttpServerSupport extends NativeHost {
 				configureHttpsServer(server, sslContext);
 
 				server.bind(new InetSocketAddress(port), 0);
-
-				//HttpContext context = server.createContext("/", new EchoHandler(onMessage));
+				server.createContext("/", new EchoHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
@@ -47,8 +46,7 @@ public class HttpServerSupport extends NativeHost {
 				HttpServer server = HttpServer.create();
 				server.bind(new InetSocketAddress(port), 0);
 				server.setExecutor(Executors.newCachedThreadPool());
-
-				//HttpContext context = server.createContext("/", new EchoHandler(onMessage));
+				server.createContext("/", new EchoHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
@@ -89,7 +87,7 @@ public class HttpServerSupport extends NativeHost {
 
 				server.bind(new InetSocketAddress(port), 0);
 
-				//HttpContext context = server.createContext("/", new ChunkedHandler(onMessage));
+				server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
@@ -100,7 +98,7 @@ public class HttpServerSupport extends NativeHost {
 				server.bind(new InetSocketAddress(port), 0);
 				server.setExecutor(Executors.newCachedThreadPool());
 
-				//HttpContext context = server.createContext("/", new ChunkedHandler(onMessage));
+				server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
