@@ -393,12 +393,6 @@ int main(int argc, char *argv[])
            screen_w = max(320, atoi(argv[2]));
            screen_h = max(200, atoi(argv[3]));
            shift_args(argc, argv, 3);
-        } else if (!strcmp(argv[1], "--max-heap")) {
-            MAX_HEAP_SIZE = atoi(argv[2]) * 1048576;
-            shift_args(argc, argv, 2);
-        } else if (!strcmp(argv[1], "--min-heap")) {
-            MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
-            shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--ephemeral-heap")) {
             EPHEMERAL_HEAP_SIZE = atoi(argv[2]) * 1048576;
             shift_args(argc, argv, 2);
@@ -416,6 +410,12 @@ int main(int argc, char *argv[])
             transparent = true;
             shift_args(argc, argv, 1);
 #endif
+        } else if (!strcmp(argv[1], "--max-heap")) {
+            MAX_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--min-heap")) {
+            MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            shift_args(argc, argv, 2);
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
             exit(1);
