@@ -68,7 +68,9 @@ public class Native extends NativeHost {
 
 	public void initialize() {
 		Integer emptyList_id = FlowRuntime.struct_ids.get("EmptyList");
-		emptyList = FlowRuntime.struct_prototypes[emptyList_id];
+		if (emptyList_id != null) {
+			emptyList = FlowRuntime.struct_prototypes[emptyList_id];
+		}
 	}
 
 	public static final Object println(Object arg) {
