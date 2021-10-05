@@ -1061,7 +1061,7 @@ public class Native extends NativeHost {
 		return ((Number)n).doubleValue();
 	}
 
-	public final Struct getCurrentDate() {
+	public static final Struct getCurrentDate() {
 		GregorianCalendar date = new GregorianCalendar();
 		return FlowRuntime.makeStructValue(
 				"Date",

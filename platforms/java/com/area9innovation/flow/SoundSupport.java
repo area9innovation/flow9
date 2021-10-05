@@ -4,7 +4,7 @@ import java.util.*;
 import java.nio.charset.Charset;
 
 @SuppressWarnings("unchecked")
-public static class SoundSupport extends NativeHost {
+public class SoundSupport extends NativeHost {
 	public static Object noSound() {
 		return null;
 	}
