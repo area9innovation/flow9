@@ -89,19 +89,21 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
     QString base = fileinfo.baseName();
     QString bytecode = base + ".bytecode";
     QString compilerCmd = flowCompiler == 1 ? "flowcompiler1" : "flowc1";
-	QString cmd = flowCompiler > 0 ? QLatin1String("%1/bin/%6%5").arg(flow_path, compilerCmd, EXECUTABLE_SCRIPT_EXT) : QLatin1String("neko");
+	QString cmd = flowCompiler > 0 ? 
+        flow_path + QLatin1String("/bin/") + compilerCmd + EXECUTABLE_SCRIPT_EXT : 
+        QLatin1String("neko");
 	QStringList arg_list;
 	if (flowCompiler > 0) {
-		arg_list << QLatin1String("file=%2").arg(flow);
-		arg_list << QLatin1String("bytecode=%3.bytecode").arg(base);
+		arg_list << QLatin1String("file=") + flow;
+		arg_list << QLatin1String("bytecode=") + base + QLatin1String(".bytecode");
 		arg_list << QLatin1String("debug=1");
 		arg_list << args;
 	} else {
-		arg_list << QLatin1String("%1/bin/flow.n").arg(flow_path);
+		arg_list << flow_path + QLatin1String("/bin/flow.n");
 		arg_list << QLatin1String("--compile");
 		arg_list << bytecode;
 		arg_list << QLatin1String("--debuginfo");
-		arg_list << QLatin1String("%1.debug").arg(base);
+		arg_list << base + QLatin1String(".debug");
 		arg_list << args;
 		arg_list << flow;
 	};
