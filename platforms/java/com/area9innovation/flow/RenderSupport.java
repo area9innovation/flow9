@@ -75,7 +75,7 @@ public class RenderSupport extends NativeHost {
 	public static Object createTextNode(String text) {
 		return null;
 	}
-	public static Object setAttribute(Object element, String name, String value) {
+	public static Object setAttribute(Object element, String name, String value, Boolean safe) {
 		return null;
 	}
 	public static Object appendChild(Object element, Object child) {

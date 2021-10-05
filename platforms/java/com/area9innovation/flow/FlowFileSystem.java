@@ -127,7 +127,7 @@ public class FlowFileSystem extends NativeHost {
 		double d = _file.lastModified() / 1000;
 		return Math.round(d) * 1000;
 	}
-	public static Object makeFileByBlobUrl(String url, String fileName, Func1<Object,File> onFile, Func1<Object,String> onError) {
+	public static Object makeFileByBlobUrl(String url, String fileName, Func1<Object,Object> onFile, Func1<Object,String> onError) {
 		try (
 			ReadableByteChannel readableByteChannel = Channels.newChannel(new URL(url).openStream());
 			FileOutputStream fileOutputStream = new FileOutputStream(fileName);

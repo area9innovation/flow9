@@ -1808,7 +1808,7 @@ public class Native extends NativeHost {
 		// not implemented yet for java
 		return null;
 	}
-	public static final Func0<Object> addCameraVideoEventListener(Func5<Object, Integer, String, String, Integer, Integer> cb) {
+	public static final Func0<Object> addCameraVideoEventListener(Func7<Object, Integer, String, String, Integer, Integer, Integer, Integer> cb) {
 		// not implemented yet for java
 		return null;
 	}
