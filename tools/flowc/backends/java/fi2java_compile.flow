@@ -257,21 +257,7 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			pushstr(javaList2String(csm.vars, ""));
 
 			if (length(csm.module.globalVars) > 0) {
-				pushstr("\tpublic static void init() {\n");
-				local_counter = ref 0;
-				iter(csm.module.globalVars, \var -> {
-					fctx = JavaFunctionContext(
-						gctx, csm, None(), ref makeList(), local_counter,
-						javaStatementPullContext(local_counter),
-						"", false, []
-					);
-					ctx = JavaScopeContext(fctx, "\t\t", makeTree());
-					tstr = type2javaObjType(gctx, var.type, true, false, false);
-					emitJavaStatement(ctx, var.value, JavaReturnLocal("g_" + var.name, tstr));
-					body = javaList2String(fctx.text, "");
-					pushstr(body);
-				});
-				pushstr("\t}\n");
+				pushstr(generateJavaModuleInit(gctx, csm));
 				pushistr("\t\tModule_" + csm.id + ".init();\n");
 			}
 
@@ -307,6 +293,38 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 		fcPrintln("Max code lines: " + i2s(^max_code_lines) + " at function " + ^max_code_lines_fun + ", size: " + i2s(^max_code_lines_size), config.threadId);
 		fcPrintln("Max code size: " + i2s(^max_code_size) + " at function " + ^max_code_size_fun + " , lines: " + i2s(^max_code_size_lines), config.threadId);
 	}
+}
+
+generateJavaModuleInit(gctx : JavaGlobalContext, csm : JavaModule) -> string {
+	local_counter = ref 0;
+	globals_init = map(csm.module.globalVars, \var -> {
+		fctx = JavaFunctionContext(
+			gctx, csm, None(), ref makeList(), local_counter,
+			javaStatementPullContext(local_counter),
+			"", false, []
+		);
+		ctx = JavaScopeContext(fctx, "\t\t", makeTree());
+		tstr = type2javaObjType(gctx, var.type, true, false, false);
+		emitJavaStatement(ctx, var.value, JavaReturnLocal("g_" + var.name, tstr));
+		Pair(var.name, javaList2String(fctx.text, ""));
+	});
+	// Initialize large global variables separately in order to limit java code size per function.
+	is_large_global = \p -> strlen(p.second) > 1024;
+	large_globals = concatStrings(filtermap(globals_init, \p ->
+		if (!is_large_global(p)) None() else {
+			Some("\tpublic static void init_" + p.first + "() {\n" + p.second + "\t}\n");
+		}
+	));
+	all_globals = "\tpublic static void init() {\n" + 
+			concatStrings(map(globals_init, \p -> 
+				if (is_large_global(p)) {
+					"\t\tinit_" + p.first + "();\n";
+				} else {
+					p.second;
+				}
+			)) + 
+	"\t}\n";
+	large_globals + all_globals;
 }
 
 generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
