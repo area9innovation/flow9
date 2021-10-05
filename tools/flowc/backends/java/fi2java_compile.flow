@@ -140,13 +140,13 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 							native_name = parts[1];
 							if (!checkJavaNativeExists(gctx, native_host, native_name)) {
 								// This is a fallback for a native, which dosn't exist - use it
-								ginfo = JavaGlobalInfo("Module_" + csm.id, "f_" + name, csm, type);
+								ginfo = JavaGlobalInfo("Module_" + csm.id, "f_" + name, csm, type, "");
 								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
 							}
 						}
 						None(): {
 							// Not a fallback - use directly
-							ginfo = JavaGlobalInfo("Module_" + csm.id, "f_" + name, csm, type);
+							ginfo = JavaGlobalInfo("Module_" + csm.id, "f_" + name, csm, type, "");
 							gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
 						}
 					}
@@ -155,7 +155,7 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 					tstr = type2javaObjType(gctx, type, true, false, false);
 					rlistPush(csm.vars, "\tpublic static " + tstr + " g_" + name + ";\n");
 
-					ginfo = JavaGlobalInfo("Module_" + csm.id, "g_" + name, csm, type);
+					ginfo = JavaGlobalInfo("Module_" + csm.id, "g_" + name, csm, type, "");
 					gctx.globals ::= setTree(gctx.globals, name, ginfo);
 				}
 				FiNativeDec(name, io, type, nname, fallback, __, s): {
@@ -165,12 +165,28 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 							if (length(parts) != 2) {
 								fail("Invalid native identifier: " + nname);
 							}
+							cast = switch (type) {
+								FiTypeFunction(ats, rt): {
+									switch (rt) {
+										FiTypeName(nm,__): {
+											switch(lookupTree(gctx.cstructs, nm)) {
+												Some(cstruct):
+													if (length(cstruct.fields) > 0) "(Struct_" + cstruct.name + ")"
+													else "";
+												None(): "";
+											}
+										}
+										default: "";
+									}
+								}
+								default: "";
+							}
 							native_host = parts[0];
 							native_name = parts[1];
 							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
 							if (checkJavaNativeExists(gctx, native_host, native_name)) {
 								// Use a native name as a real native from appropriate host.
-								ginfo = JavaGlobalInfo(native_host, native_name, csm, type);
+								ginfo = JavaGlobalInfo(native_host, native_name, csm, type, cast);
 								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
 							} else {
 								switch (fallback) {
@@ -459,7 +475,9 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	reslist = ref makeList();
 
 	if (is_closure) {
-		rlistPush(reslist, "(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
+		func_type = "Func" + i2s(length(arg_locals)) + "<" + rtypestr + concatStrings(map(arg_locals, \loc -> ", " + loc.type)) + ">";
+		rlistPush(reslist, "(" + func_type + ")(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
+		//rlistPush(reslist, "(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
 	} else {
 		rlistPush(reslist, prefix + "(" + strGlue(arg_text, ", ") + ") {\n");
 	}
@@ -784,7 +802,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 									id = "w_" + name;
 									wrapper_type = type2javaObjType(gctx, ftype, false, false, false);
 									rlistPush(gctx.wrapper_code, JavaWrapperCode(id, wrapper_type, finfo.class + "::" + finfo.name));
-									fglobal = JavaGlobalInfo("Wrappers", id, finfo.csmodule, finfo.type);
+									fglobal = JavaGlobalInfo("Wrappers", id, finfo.csmodule, finfo.type, "");
 									gctx.globals ::= setTree(gctx.globals, name, fglobal);
 									wrapJavaCast("Wrappers." + id, wrapper_type, rtype);
 								}
@@ -819,7 +837,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 				Some(finfo): {
 					is_native = startsWith(finfo.name, "h_");
 					ftype = cast(finfo.type : FiType -> FiTypeFunction);
-					rname = finfo.class + "." + finfo.name;
+					rname = finfo.cast + finfo.class + "." + finfo.name;
 					aexprs = mapi(es, \j, expr ->
 						emitJavaExpression(ctx, expr, type2javaObjType(gctx, ftype.args[j].type, true, false, is_native))
 					);
