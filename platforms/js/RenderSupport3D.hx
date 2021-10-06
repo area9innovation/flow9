@@ -539,7 +539,11 @@ class RenderSupport3D {
 			}
 
 			var onLoad = function() {
-				loader.load(url, onLoadFn);
+				if (loadingCache.exists(url)) {
+					onLoadFn(loadingCache[url]);
+				} else {
+					loader.load(url, onLoadFn);
+				}
 			};
 
 			untyped texture.load = onLoad;
