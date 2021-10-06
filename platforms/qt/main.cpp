@@ -10,6 +10,7 @@
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/RunParallel.h"
 #include "qt-backend/QWebSocketSupport.h"
+#include "qt-backend/QtNatives.h"
 
 #ifdef FLOW_MEDIARECORDER
 #include "qt-backend/QMediaStreamSupport.h"
@@ -88,13 +89,26 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
     QString base = fileinfo.baseName();
     QString bytecode = base + ".bytecode";
     QString compilerCmd = flowCompiler == 1 ? "flowcompiler1" : "flowc1";
-    QString cmd = flowCompiler > 0 ?
-        QString("%1/bin/%6%5 file=%2 bytecode=%3.bytecode debug=1 %4").arg(
-            flow_path, flow, base, args.join(" "), EXECUTABLE_SCRIPT_EXT, compilerCmd
-        ) : "neko " + flow_path + "/bin/flow.n --compile " + bytecode + " --debuginfo " + base + ".debug " + args.join(" ") + " " + flow;
-
-    QProcess p;
-    p.start(cmd);
+	QString cmd = flowCompiler > 0 ? 
+        flow_path + QLatin1String("/bin/") + compilerCmd + EXECUTABLE_SCRIPT_EXT : 
+        QLatin1String("neko");
+	QStringList arg_list;
+	if (flowCompiler > 0) {
+		arg_list << QLatin1String("file=") + flow;
+		arg_list << QLatin1String("bytecode=") + base + QLatin1String(".bytecode");
+		arg_list << QLatin1String("debug=1");
+		arg_list << args;
+	} else {
+		arg_list << flow_path + QLatin1String("/bin/flow.n");
+		arg_list << QLatin1String("--compile");
+		arg_list << bytecode;
+		arg_list << QLatin1String("--debuginfo");
+		arg_list << base + QLatin1String(".debug");
+		arg_list << args;
+		arg_list << flow;
+	};
+	QProcess p;
+    p.start(cmd, arg_list);
     p.waitForFinished(-1);
     QString output = p.readAllStandardOutput() + p.readAllStandardError();
     qDebug().noquote() << output;
@@ -217,6 +231,8 @@ int main(int argc, char *argv[])
     bool fixed_screen = false;
     int msaa_samples = 16;
     QString fallback_font = "";
+#else
+	Q_UNUSED(gui_prof_cost)
 #endif
     QString media_path = "";
     QStringList flowArgs;
@@ -455,9 +471,9 @@ int main(int argc, char *argv[])
     QDir flowdir;
 
     if (qEnvironmentVariableIsSet("FLOW")) {
-        flowdir = qEnvironmentVariable("FLOW", QString(""));
+        flowdir.setPath(qEnvironmentVariable("FLOW", QString("")));
     } else {
-        flowdir = QCoreApplication::applicationDirPath();
+        flowdir.setPath(QCoreApplication::applicationDirPath());
 #if __APPLE__
         // Also need to move out of the app bundle directory structure on Mac OS
         flowdir.cd("../../../../../../../");
@@ -553,7 +569,7 @@ int main(int argc, char *argv[])
         }
 
         if (screen_pos_set) {
-            QRect screen = QApplication::desktop()->screenGeometry();
+            QRect screen = QApplication::primaryScreen()->geometry();
             screen_x = min(screen_x, screen.width() - screen_w);
             screen_y = min(screen_y, screen.height() - screen_h);
 
@@ -628,8 +644,12 @@ int main(int argc, char *argv[])
         }
 #endif
     }
-#else
+#else // no-gui:
     QtHttpSupport HttpManager(&FlowRunner);
+	QFileSystemInterface FileSystem(&FlowRunner);
+	QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
+    RunParallelHost RunParallel(&FlowRunner);
+	QtNatives qtNatives(&FlowRunner);
 #endif // QT_GUI_LIB
 
 #if !COMPILED
