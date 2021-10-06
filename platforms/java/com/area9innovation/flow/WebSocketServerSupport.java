@@ -119,7 +119,7 @@ public class WebSocketServerSupport extends NativeHost {
         return socket.hasBufferedData() ? 1 : 0;
     }
 
-    class FlowWebSocketListeners {
+    static class FlowWebSocketListeners {
         Func1<Object, Integer> onClose;
         Func1<Object, String> onError;
         Func1<Object, String> onMessage;

@@ -34,8 +34,8 @@ class BluetoothSupport {
         return null;
     }
 
-    private Func0<Object> no_op = new Func0<Object>() {
-		public static Object invoke() { return null; }
+    private static Func0<Object> no_op = new Func0<Object>() {
+		public Object invoke() { return null; }
 	};
 
     public static Func0<Object> addGattCharacteristicValueListener(Object characteristicNative, Func1<Object, Integer[]> callback) {
