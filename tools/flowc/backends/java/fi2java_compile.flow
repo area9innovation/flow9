@@ -11,14 +11,6 @@ export {
 	type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string;
 }
 
-javaKnownNatives = fold([
-	// There was some intention for this variable and complement function,
-	// but now in fact it simply prevent call of strRangeIndexOf() native.
-	// So disabling next line significantly decrease GC pressure and
-	// increase performance.
-	//	"Native.strRangeIndexOf"
-], makeTree(), \a,v -> setTree(a,v,true));
-
 indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]> {
 	init = Triple(makeTree(), makeTree(), []);
 
@@ -140,69 +132,76 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 		iter(csm.decl_order, \decl -> {
 			switch (decl : FiDeclaration) {
 				FiFunctionDec(name, lambda, type, __, __): {
-					ginfo = JavaGlobalInfo("f_" + name, csm, type, false);
-					gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+					switch (find(csm.module.natives, \n -> n.name == name)) {
+						Some(nat): {
+							// May be a native function. Check if it is the case.
+							parts = strSplit(nat.nativeName, ".");
+							native_host = parts[0];
+							native_name = parts[1];
+							if (!checkJavaNativeExists(gctx, native_host, native_name)) {
+								// This is a fallback for a native, which dosn't exist - use it
+								ginfo = JavaGlobalInfo("Module_" + csm.id, "f_" + name, csm, type, "");
+								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+							}
+						}
+						None(): {
+							// Not a fallback - use directly
+							ginfo = JavaGlobalInfo("Module_" + csm.id, "f_" + name, csm, type, "");
+							gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+						}
+					}
 				}
 				FiGlobalVar(name, expr, type,__,__): {
 					tstr = type2javaObjType(gctx, type, true, false, false);
-					rlistPush(csm.vars, "\tpublic " + tstr + " g_" + name + ";\n");
+					rlistPush(csm.vars, "\tpublic static " + tstr + " g_" + name + ";\n");
 
-					ginfo = JavaGlobalInfo("g_" + name, csm, type, false);
+					ginfo = JavaGlobalInfo("Module_" + csm.id, "g_" + name, csm, type, "");
 					gctx.globals ::= setTree(gctx.globals, name, ginfo);
 				}
 				FiNativeDec(name, io, type, nname, fallback, __, s): {
 					switch (type) {
 						FiTypeFunction(__, __): {
 							parts = strSplit(nname, ".");
-							if (length(parts) != 2)
-								fail0("Invalid native identifier: " + nname);
-							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
-							switch (checkJavaKnownNative(fallback, s, nname)) {
-								FiLambda(args, body, __, __): {
-									wrapper_t = emitJavaFnWrapper(
-										gctx, csm, type, "\t\t",
-										\wargs, rt -> "return m_" + csm.id + ".nf_" + name + "(" + wargs + ");"
-									);
-									tstr = wrapper_t.second;
-									rlistPush(gctx.native_wrapper_code, JavaWrapperCode(name, tstr, wrapper_t.first));
-
-									ginfo = JavaGlobalInfo("n_" + name, csm, type, true);
-									gctx.globals ::= setTree(gctx.globals, name, ginfo);
-
-									aclasses = map(type.args, \arg -> type2javaObjType(gctx, arg.type, false, true, false) + ".class");
-									cstr = if (aclasses == []) "" else ", " + strGlue(aclasses, ", ");
-
-									wrapper_r = emitJavaFnWrapper(
-										gctx, csm, type, "\t\t\t",
-										\wargs,rt -> {
-											astr = if (wargs == "") {
-												"";
-											} else if (aclasses == ["Object[].class"]) {
-												// the signature of method.invoke is (Object obj, Object... args), in fact only have one parameter is Object[], so should pass the parameter [Object[]]
-												// https://stackoverflow.com/questions/8189782/wrong-number-of-arguments-error-when-invoking-a-method
-												", new Object[] {" + wargs + "}";
-											} else {
-												", " + wargs;
+							if (length(parts) != 2) {
+								fail("Invalid native identifier: " + nname);
+							}
+							cast = switch (type) {
+								FiTypeFunction(ats, rt): {
+									switch (rt) {
+										FiTypeName(nm,__): {
+											switch(lookupTree(gctx.cstructs, nm)) {
+												Some(cstruct):
+													if (length(cstruct.fields) > 0) "(Struct_" + cstruct.name + ")"
+													else "";
+												None(): "";
 											}
-											"try { return (" + rt + ")method.invoke(h_" + parts[0] + astr + "); } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }";
 										}
-									);
-
-									pushistr(
-										"\t\ttry {\n"+
-										"\t\t\tfinal java.lang.reflect.Method method = " + parts[0] + ".class.getMethod(\"" + parts[1] + "\"" + cstr + ");\n" +
-										"\t\t\tn_" + name + " = " + wrapper_r.first + ";\n" +
-										"\t\t} catch (ReflectiveOperationException e) {};\n"
-									);
+										default: "";
+									}
 								}
-								default: {
-									ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
-									gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+								default: "";
+							}
+							native_host = parts[0];
+							native_name = parts[1];
+							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
+							if (checkJavaNativeExists(gctx, native_host, native_name)) {
+								// Use a native name as a real native from appropriate host.
+								ginfo = JavaGlobalInfo(native_host, native_name, csm, type, cast);
+								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+							} else {
+								switch (fallback) {
+									FiLambda(__,__,__,__): {
+										// ok, using a fallback
+									}
+									default: {
+										// no fallback neither native.
+										gctx.missing_natives ::= insertSet(gctx.missing_natives, name);
+									}
 								}
 							}
 						}
 						default: {
-							fcPrintln("this should never happen: indexJavaGlobals", gctx.program.config.threadId)
+							fail("this should never happen: indexJavaGlobals");
 						}
 					}
 				}
@@ -241,17 +240,9 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						addJavaExpressionWrappers(gctx, lambda);
 					FiGlobalVar(name, value, __, __, __): {
 						addJavaExpressionWrappers(gctx, value);
-						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
+						pushistr("\t\tModule_" + csm.id + ".init_" + name + "();\n");
 					}
-					FiNativeDec(__,__,__, nname, fallback,__,__): {
-						fbexp = checkJavaKnownNative(fallback, -1, nname);
-						switch (fbexp) {
-							FiLambda(xs, body, __, __): {
-								addJavaExpressionWrappers(gctx, body);
-							}
-							default: {}
-						}
-					}
+					FiNativeDec(__,__,__, nname, fallback,__,__): { }
 				}
 			);
 		} else {
@@ -263,12 +254,12 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 
 			pushstr("@SuppressWarnings(\"unchecked\")\n");
 			pushstr("final class Module_" + csm.id + " {\n");
-			pushstr("\tfinal " + gctx.main_class + " runtime;\n");
-			pushstr("\tModule_" + csm.id + "(" + gctx.main_class + " runtime) {\n");
-			pushstr("\t\tthis.runtime = runtime;\n");
-			pushstr("\t}\n");
-
 			pushstr(javaList2String(csm.vars, ""));
+
+			if (length(csm.module.globalVars) > 0) {
+				pushstr(generateJavaModuleInit(gctx, csm));
+				pushistr("\t\tModule_" + csm.id + ".init();\n");
+			}
 
 			iter(csm.decl_order, \decl -> {
 				switch (decl : FiDeclaration) {
@@ -291,33 +282,8 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 						}
 						pushstr(code);
 					}
-					FiGlobalVar(name, expr, type, __, __): {
-						local_counter = ref 0;
-						fctx = JavaFunctionContext(
-							gctx, csm, None(), ref makeList(), local_counter,
-							javaStatementPullContext(local_counter),
-							"", false, []
-						);
-						ctx = JavaScopeContext(fctx, "\t\t", makeTree());
-						tstr = type2javaObjType(gctx, type, true, false, false);
-						emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
-						body = javaList2String(fctx.text, "");
-						pushstr("\tpublic void init_" + name + "() {\n");
-						pushstr(body);
-						pushstr("\t}\n");
-						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
-					}
-					FiNativeDec(name, io, type, nname, fallback,__,__): {
-						fbexp = checkJavaKnownNative(fallback, -1, nname);
-						switch (fbexp) {
-							FiLambda(xs, body, __, __): {
-								funcType = cast(type: FiType -> FiTypeFunction);
-								code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
-								pushstr(code);
-							}
-							default: {}
-						}
-					}
+					FiGlobalVar(name, expr, type, __, __): { }
+					FiNativeDec(name, io, type, nname, fallback,__,__): { }
 				}
 			});
 			writeJavaSource(gctx, module_path, javaList2String(module_text, "}\n"));
@@ -327,6 +293,38 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 		fcPrintln("Max code lines: " + i2s(^max_code_lines) + " at function " + ^max_code_lines_fun + ", size: " + i2s(^max_code_lines_size), config.threadId);
 		fcPrintln("Max code size: " + i2s(^max_code_size) + " at function " + ^max_code_size_fun + " , lines: " + i2s(^max_code_size_lines), config.threadId);
 	}
+}
+
+generateJavaModuleInit(gctx : JavaGlobalContext, csm : JavaModule) -> string {
+	local_counter = ref 0;
+	globals_init = map(csm.module.globalVars, \var -> {
+		fctx = JavaFunctionContext(
+			gctx, csm, None(), ref makeList(), local_counter,
+			javaStatementPullContext(local_counter),
+			"", false, []
+		);
+		ctx = JavaScopeContext(fctx, "\t\t", makeTree());
+		tstr = type2javaObjType(gctx, var.type, true, false, false);
+		emitJavaStatement(ctx, var.value, JavaReturnLocal("g_" + var.name, tstr));
+		Pair(var.name, javaList2String(fctx.text, ""));
+	});
+	// Initialize large global variables separately in order to limit java code size per function.
+	is_large_global = \p -> strlen(p.second) > 1024;
+	large_globals = concatStrings(filtermap(globals_init, \p ->
+		if (!is_large_global(p)) None() else {
+			Some("\tpublic static void init_" + p.first + "() {\n" + p.second + "\t}\n");
+		}
+	));
+	all_globals = "\tpublic static void init() {\n" + 
+			concatStrings(map(globals_init, \p -> 
+				if (is_large_global(p)) {
+					"\t\tinit_" + p.first + "();\n";
+				} else {
+					p.second;
+				}
+			)) + 
+	"\t}\n";
+	large_globals + all_globals;
 }
 
 generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
@@ -450,8 +448,7 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	}
 
 	arg_locals = mapi(tree.args, \i, arg -> {
-		aname2 = "a" + (if (arg.name == "__") i2s(i) else arg.name);
-		//aname2 = javaNewLocalName(local_counter, aname);
+		aname2 = "a" + (if (arg.name == "__") javaNewLocalName(local_counter, i2s(i)) else arg.name);
 		atypestr = type2javaObjType(gctx, atypes[i], !is_closure, false, false);
 		JavaLocalInfo(arg.name, aname2, atypestr, is_closure, is_closure);
 	});
@@ -472,7 +469,7 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 		arg_locals
 	);
 
-	indent = if (is_closure) indent0 + "\t" else indent0;
+	indent = if (is_closure) indent0 else indent0 + "\t";
 
 	ctx = JavaScopeContext(
 		fctx, indent + "\t",
@@ -483,9 +480,9 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	emitJavaStatement(ctx, tree.body, JavaReturnStmt(rtypestr));
 
 	prefix = if (is_closure)
-		indent + "final public " + rtypestr + " invoke"
+		indent0 + "public final " + rtypestr + " invoke"
 	else
-		indent + rtypestr + " " + name;
+		indent0 + "public static final " + rtypestr + " " + name;
 
 	arg_text = map(arg_locals, \loc -> {
 		(if (is_closure) "final " else "") + loc.type + " " + loc.id
@@ -496,25 +493,25 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	reslist = ref makeList();
 
 	if (is_closure) {
-		rlistPush(reslist, "new Func" + i2s(length(arg_locals)) + "<" + rtypestr);
-		iter(arg_locals, \loc -> rlistPush(reslist, "," + loc.type));
-		rlistPush(reslist, ">() {\n");
+		func_type = "Func" + i2s(length(arg_locals)) + "<" + rtypestr + concatStrings(map(arg_locals, \loc -> ", " + loc.type)) + ">";
+		rlistPush(reslist, "(" + func_type + ")(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
+		//rlistPush(reslist, "(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
+	} else {
+		rlistPush(reslist, prefix + "(" + strGlue(arg_text, ", ") + ") {\n");
 	}
 
-	rlistPush(reslist, prefix + "(" + strGlue(arg_text, ", ") + ") {\n");
-
 	if (fctx.has_tail_call) {
-		rlistPush(reslist, indent + " TAIL_CALL: for(;;) {\n");
+		rlistPush(reslist, indent + "TAIL_CALL: for(;;) {\n");
 		rlistPush(reslist, body);
-		rlistPush(reslist, indent + " }\n");
+		rlistPush(reslist, indent + "}\n");
 	} else {
 		rlistPush(reslist, body);
 	}
 
-	rlistPush(reslist, indent + "}\n");
-
 	if (is_closure) {
 		rlistPush(reslist, indent0 + "}");
+	} else {
+		rlistPush(reslist, indent + "}\n");
 	}
 
 	list2string(^reslist);
@@ -814,37 +811,26 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 					switch (lookupTree(gctx.globals, name)) {
 						Some(ginfo): {
 							tstr = type2javaObjType(gctx, ginfo.type, true, false, startsWith(name, "h_"));
-							wrapJavaCast(jctxWrapModuleRef(ctx, ginfo), tstr, rtype);
+							wrapJavaCast(ginfo.class + "." + ginfo.name, tstr, rtype);
 						}
 						None():
 							switch (lookupTree(gctx.globalFuncs, name)) {
 								Some(finfo): {
 									ftype = cast(finfo.type : FiType -> FiTypeFunction);
-									id = "gfw_" + name;
-
-									wrapper_t = emitJavaFnWrapper(
-										gctx, finfo.csmodule, ftype, "\t\t",
-										\args, rt -> {
-											"return "+
-												(if (finfo.global_scope) "" else "m_" + finfo.csmodule.id + ".")
-												+ finfo.name + "(" + args + ");"
-										}
-									);
-									tstr = wrapper_t.second;
-
-									rlistPush(gctx.wrapper_code, JavaWrapperCode(id, tstr, wrapper_t.first));
-
-									fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, true);
+									id = "w_" + name;
+									wrapper_type = type2javaObjType(gctx, ftype, false, false, false);
+									rlistPush(gctx.wrapper_code, JavaWrapperCode(id, wrapper_type, finfo.class + "::" + finfo.name));
+									fglobal = JavaGlobalInfo("Wrappers", id, finfo.csmodule, finfo.type, "");
 									gctx.globals ::= setTree(gctx.globals, name, fglobal);
-									wrapJavaCast("runtime.gfw_" + name, tstr, rtype);
+									wrapJavaCast("Wrappers." + id, wrapper_type, rtype);
 								}
-								None():
-									switch (lookupTree(gctx.cstructs, name)) {
-										Some(cstruct):
-											wrapJavaCast("runtime.str_" + name, "SingletonStruct", rtype);
-										None():
-											"$UNKNOWN_NAME_" + name + "$";
+								None(): {
+									if (containsSet(gctx.missing_natives, name)) {
+										fail0("native: '" + name + "' is not implemented and has no fallback");
+									} else {
+										fail0("unknown var: '" + name + "'");
 									}
+								}
 							}
 					}
 				}
@@ -869,7 +855,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 				Some(finfo): {
 					is_native = startsWith(finfo.name, "h_");
 					ftype = cast(finfo.type : FiType -> FiTypeFunction);
-					rname = jctxWrapModuleRef(ctx, finfo);
+					rname = finfo.cast + finfo.class + "." + finfo.name;
 					aexprs = mapi(es, \j, expr ->
 						emitJavaExpression(ctx, expr, type2javaObjType(gctx, ftype.args[j].type, true, false, is_native))
 					);
@@ -1044,24 +1030,6 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 		default:
 			"/*TODO*/"
 	}
-}
-
-emitJavaFnWrapper(gctx : JavaGlobalContext, csmodule : JavaModule, ftype : FiTypeFunction, indent : string, body : (string,string) -> string) -> Pair<string,string> {
-	tstr = type2javaObjType(gctx, ftype, false, false, false);
-
-	atypes = ftype.args;
-	anames = mapi(atypes, \j, t -> type2javaObjType(gctx, t.type, false, false, false) + " a" + i2s(j));
-	auses = mapi(atypes, \j, t -> "a" + i2s(j));
-	rtypestr = type2javaObjType(gctx, ftype.returnType, false, false, false);
-
-	wrapper = (
-		"new " + tstr + "() {\n" +
-		(indent + "\tfinal public " + rtypestr + " invoke(" + strGlue(anames, ", ") + ") {\n") +
-		(indent + "\t\t" + body(strGlue(auses, ", "), rtypestr) + "\n") +
-		indent + "\t}\n" + indent + "}"
-	);
-
-	Pair(wrapper, tstr);
 }
 
 emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rtype : string) -> string {
@@ -1294,16 +1262,6 @@ type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : b
 	}
 }
 
-jctxWrapModuleRef(ctx : JavaScopeContext, global : JavaGlobalInfo) {
-	if (global.csmodule == ctx.func.csm && !global.global_scope)
-		global.name
-	else {
-		"runtime." +
-		(if (global.global_scope) "" else "m_" + global.csmodule.id + ".") +
-		global.name;
-	}
-}
-
 javaRequireFunction(gctx : JavaGlobalContext, arity : int) -> string {
 	ftypestr = "Func" + i2s(arity);
 
@@ -1380,10 +1338,11 @@ wrapJavaCast(expr : string, srct : string, dstt : string) {
 		expr
 	} else {
 		igen = strIndexOf(dstt, "<");
-		if (igen > 0 && strlen(srct) > igen && startsWith(srct, substring(dstt, 0, igen)))
+		if (igen > 0 && strlen(srct) > igen && startsWith(srct, substring(dstt, 0, igen))) {
 			"((" + dstt + ")(" + substring(dstt, 0, igen) + ")" + expr + ")"
-		else
+		} else {
 			"((" + dstt + ")" + expr + ")";
+		}
 	}
 }
 
@@ -1481,11 +1440,9 @@ javaStatementPullContext(local_counter : ref int) {
 	)
 }
 
-checkJavaKnownNative(fallback : FiExp, start : int, nname : string) -> FiExp {
-	if (lookupTreeDef(javaKnownNatives, nname, false))
-		FiVoid(start)
-	else
-		fallback
+checkJavaNativeExists(gctx : JavaGlobalContext, native_host : string, native_name : string) -> bool {
+	host_natives = lookupTreeDef(gctx.host_natives, native_host, makeSet());
+	containsSet(host_natives, native_name);
 }
 
 javaNewLocalName(counter : ref int, name : string) {
@@ -1499,30 +1456,7 @@ addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
 		FiConst(__): { }
 		FiSeq(es, __, __):
 			iter(es, \e -> addJavaExpressionWrappers(gctx, e));
-		FiVar(name, __, __):
-			switch (lookupTree(gctx.globals, name)) {
-				Some(__): { }
-				None():
-					switch (lookupTree(gctx.globalFuncs, name)) {
-						Some(finfo): {
-							ftype = cast(finfo.type : FiType -> FiTypeFunction);
-							id = "gfw_" + name;
-							wrapper_t = emitJavaFnWrapper(
-								gctx, finfo.csmodule, ftype, "\t\t",
-								\args, rt -> {
-									"return "+
-										(if (finfo.global_scope) "" else "m_" + finfo.csmodule.id + ".")
-										+ finfo.name + "(" + args + ");"
-								}
-							);
-							tstr = wrapper_t.second;
-							rlistPush(gctx.wrapper_code, JavaWrapperCode(id, tstr, wrapper_t.first));
-							fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, true);
-							gctx.globals ::= setTree(gctx.globals, name, fglobal);
-						}
-						None(): { }
-					}
-			}
+		FiVar(name, __, __): { }
 		FiCall(f, es, __, __): {
 			global = switch (f) {
 				FiVar(fname, tp, __): {

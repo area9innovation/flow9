@@ -16,7 +16,7 @@ import java.nio.channels.ReadableByteChannel;
 import java.lang.reflect.InvocationTargetException;
 
 public class FlowFileSystem extends NativeHost {
-	public String createDirectory(String path) {
+	public static String createDirectory(String path) {
 		try {
 			File file = new File(path);
 			if (file.mkdirs()) {
@@ -28,7 +28,7 @@ public class FlowFileSystem extends NativeHost {
 			return "Security exception when making " + path;
 		}
 	}
-	public String deleteDirectory(String path) {
+	public static String deleteDirectory(String path) {
 		File file = new File(path);
 		if (file.delete()) {
 			return "";
@@ -36,7 +36,7 @@ public class FlowFileSystem extends NativeHost {
 			return "Could not delete " + path;
 		}
 	}
-	public String deleteFile(String path) {
+	public static String deleteFile(String path) {
 		File file = new File(path);
 		if (file.delete()) {
 			return "";
@@ -44,7 +44,7 @@ public class FlowFileSystem extends NativeHost {
 			return "Could not delete " + path;
 		}
 	}
-	public String renameFile(String old, String newname) {
+	public static String renameFile(String old, String newname) {
 		File file = new File(old);
 		File newfile = new File(newname);
 		if (file.renameTo(newfile)) {
@@ -53,15 +53,15 @@ public class FlowFileSystem extends NativeHost {
 			return "Could not rename " + old + " to " + newname;
 		}
 	}
-	public boolean fileExists(String path) {
+	public static boolean fileExists(String path) {
 		File file = new File(path);
 		return file.exists();
 	}
-	public boolean isDirectory(String path) {
+	public static boolean isDirectory(String path) {
 		File file = new File(path);
 		return file.isDirectory();
 	}
-	public Object[] readDirectory(String path) {
+	public static Object[] readDirectory(String path) {
 		File file = new File(path);
 		String[] fileNames = file.list();
 		if (fileNames == null) {
@@ -70,21 +70,21 @@ public class FlowFileSystem extends NativeHost {
 			return fileNames;
 		}
 	}
-	public double fileSize(String path) {
+	public static double fileSize(String path) {
 		File file = new File(path);
 		return file.length();
 	}
-	public double fileModified(String path) {
+	public static double fileModified(String path) {
 		File file = new File(path);
 		double d = file.lastModified() / 1000;
 		return Math.round(d) * 1000;
 	}
-	public double fileModifiedPrecise(String path) {
+	public static double fileModifiedPrecise(String path) {
 		File file = new File(path);
 		return file.lastModified();
 	}
 
-	public String resolveRelativePath(String path) {
+	public static String resolveRelativePath(String path) {
 		File file = new File(path);
 		try {
 			return file.getCanonicalPath();
@@ -93,41 +93,41 @@ public class FlowFileSystem extends NativeHost {
 		}
 	}
 
-    public Object openFileDialog(Integer maxFiles, Object[] fileTypes, Func1<Object, Object[]> callback) {
+    public static Object openFileDialog(Integer maxFiles, Object[] fileTypes, Func1<Object, Object[]> callback) {
 		return null;
     }
 
-    public String fileName(Object file) {
+    public static String fileName(Object file) {
 		File _file = (File)file;
 		return _file.getAbsolutePath();
     }
 
-    public Object readFile(Object file, String as, Func1<Object,String> onData, Func1<Object, String> onError) {
+    public static Object readFile(Object file, String as, Func1<Object,String> onData, Func1<Object, String> onError) {
 		return null;
     }
 
-    public Object readFileEnc(Object file, String as, String enc, Func1<Object,String> onData, Func1<Object, String> onError) {
+    public static Object readFileEnc(Object file, String as, String enc, Func1<Object,String> onData, Func1<Object, String> onError) {
 		return null;
     }
 
-    public Object saveFileClient(String filename, String data, String type) {
+    public static Object saveFileClient(String filename, String data, String type) {
 		return null;
 	}
 
-	public Object getFileByPath(String path) {
+	public static Object getFileByPath(String path) {
 		return new File(path);
 	}
 
-	public double fileSizeNative(Object file) {
+	public static double fileSizeNative(Object file) {
 		File _file = (File)file;
 		return (double)_file.length();
 	}
-	public double fileModifiedNative(Object file) {
+	public static double fileModifiedNative(Object file) {
 		File _file = (File)file;
 		double d = _file.lastModified() / 1000;
 		return Math.round(d) * 1000;
 	}
-	public Object makeFileByBlobUrl(String url, String fileName, Func1<Object,File> onFile, Func1<Object,String> onError) {
+	public static Object makeFileByBlobUrl(String url, String fileName, Func1<Object,Object> onFile, Func1<Object,String> onError) {
 		try (
 			ReadableByteChannel readableByteChannel = Channels.newChannel(new URL(url).openStream());
 			FileOutputStream fileOutputStream = new FileOutputStream(fileName);
@@ -145,7 +145,7 @@ public class FlowFileSystem extends NativeHost {
 		return null;
 	}
 
-	public File createTempFile(String name, String content) {
+	public static File createTempFile(String name, String content) {
 		File tmpdir = new File(System.getProperty("java.io.tmpdir"));
 		File newFile = new File(tmpdir, name);
 		try {
@@ -155,7 +155,7 @@ public class FlowFileSystem extends NativeHost {
 		}
 		if (content != null & content != "") {
 			try {
-				byte[] converted = (byte[])string2utf8Bytes.invoke(runtime.getNativeHost(Native.class), content);
+				byte[] converted = (byte[])string2utf8Bytes.invoke(FlowRuntime.getNativeHost(Native.class), content);
 				try (
 					FileOutputStream fileOutputStream = new FileOutputStream(newFile);
 				) {
@@ -185,7 +185,7 @@ public class FlowFileSystem extends NativeHost {
 		}
 	}
 
-	public Object extractZipFile(String zipFileName, String outputDir, Func0<Object> onDone, Func1<Object,String> onError) {
+	public static Object extractZipFile(String zipFileName, String outputDir, Func0<Object> onDone, Func1<Object,String> onError) {
 		File destDir = new File(outputDir);
 		try (
 			ZipFile zipFile = new ZipFile(zipFileName)
