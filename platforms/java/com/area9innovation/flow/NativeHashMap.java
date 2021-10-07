@@ -77,12 +77,23 @@ public class NativeHashMap extends NativeHost {
 		HashMap<Object, Object> hashMap2 = (HashMap<Object, Object>) map2;
 		return hashMap1.equals(hashMap2);
 	}
-
+/*
 	@SuppressWarnings (value="unchecked")
 	public static final Object merge(Object map1, Object map2) {
 		HashMap<Object, Object> hashMap1 = (HashMap<Object, Object>) map1;
 		HashMap<Object, Object> hashMap2 = (HashMap<Object, Object>) map2;
 		hashMap1.putAll(hashMap2);
+		return null;
+	}
+*/
+	@SuppressWarnings (value="unchecked")
+	public static final Object iter(Object map, Func2<Object, Object, Object> fn) {
+		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
+		hashMap.forEach(new java.util.function.BiConsumer() {
+			public void accept(Object k, Object v) {
+				fn.invoke(k, v);
+			}
+		});
 		return null;
 	}
 }
