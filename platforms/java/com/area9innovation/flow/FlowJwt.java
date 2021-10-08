@@ -16,15 +16,15 @@ public class FlowJwt extends NativeHost {
 
 	// value parameter - supposed to be a string representation of ISO date without milliseconds,
 	// so we need to multiply the parsed value to 1000
-	private Date getDateFromIsoString(String value) throws NumberFormatException {
+	private static Date getDateFromIsoString(String value) throws NumberFormatException {
 		return new Date(Long.parseLong(value) * 1000);
 	}
 
-	private SecretKeySpec getSecretKey(String key) {
+	private static SecretKeySpec getSecretKey(String key) {
 		return new SecretKeySpec(key.getBytes(), algorithm.getJcaName());
 	}
 
-	public String verifyJwt(String jwt, String key) {
+	public static String verifyJwt(String jwt, String key) {
 		try {
 			Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt);
 			return "OK";
@@ -46,7 +46,7 @@ public class FlowJwt extends NativeHost {
 		}
 	}
 
-	public Object decodeJwt(String jwt, String key, Func7<Object, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+	public static Object decodeJwt(String jwt, String key, Func7<Object, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
 		String verify = verifyJwt(jwt, key);
 		if (verify == "OK") {
 			String iss;
@@ -85,7 +85,7 @@ public class FlowJwt extends NativeHost {
 		return null;
 	}
 
-	public String createJwt(String key, String issuer, String subject, String audience, String expiration, String notBefore, String issuedAt, String id) {
+	public static String createJwt(String key, String issuer, String subject, String audience, String expiration, String notBefore, String issuedAt, String id) {
 		JwtBuilder builder = Jwts.builder();
 		try {
 			if (!issuer.isEmpty()) {
@@ -124,8 +124,7 @@ public class FlowJwt extends NativeHost {
 		}
 	}
 
-
-	public String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
+	public static String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
 		JwtBuilder builder = Jwts.builder();
 
 		for (int i = 0; i < keys.length; i++) {
