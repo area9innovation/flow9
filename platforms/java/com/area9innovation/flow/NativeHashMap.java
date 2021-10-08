@@ -4,93 +4,88 @@ import java.util.HashMap;
 
 public class NativeHashMap extends NativeHost {
 
-	public static final Object init() {
-		return new HashMap<Object, Object>();
+	private static Struct some = null;
+	private static Struct none = null;
+
+	public void initialize() {
+		Integer some_id = FlowRuntime.struct_ids.get("Some"); 
+		if (some_id == null) {
+			System.out.println("'Some' struct is not found");
+			System.exit(-1);
+		}
+		some = FlowRuntime.struct_prototypes[some_id];
+		Integer none_id = FlowRuntime.struct_ids.get("None"); 
+		if (none_id == null) {
+			System.out.println("'None' struct is not found");
+			System.exit(-1);
+		}
+		none = FlowRuntime.struct_prototypes[none_id];
+	}
+
+	public static final <K, V> HashMap<K, V> init(Func1<Integer, K> hash, int cap, double load) {
+		return new HashMap<K, V>(cap, (float)load);
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Object set(Object map, Object key, Object val) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		hashMap.put(key, val);
+	public static final <K, V> Func1<Integer, K> hash(Object map) {
+		return new Func1<Integer, K>() {
+			public Integer invoke(K k) {
+				return k.hashCode();
+			}
+		};
+	}
+
+	@SuppressWarnings (value="unchecked")
+	public static final <K, V> Object set(Object map, K key, V val) {
+		((HashMap<K, V>) map).put(key, val);
 		return null;
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Object get(Object map, Object key, Object val) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.getOrDefault(key, val);
+	public static final <K, V> Struct get(Object map, K key) {
+		V val = ((HashMap<K, V>) map).get(key);
+		if (val != null) {
+			final Struct copy = some.clone();
+			final Object[] fields = {val};
+			copy.setFields(fields);
+			return copy;
+		} else {
+			return none;
+		}
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Boolean contains(Object map, Object key) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.containsKey(key);
+	public static final <K, V> Boolean contains(Object map, K key) {
+		return ((HashMap<K, V>) map).containsKey(key);
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Object remove(Object map, Object key) {
+	public static final <K, V> Object remove(Object map, Object key) {
 		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
 		hashMap.remove(key);
 		return null;
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Object[] values(Object map) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.values().toArray();
+	public static final <K, V> int size(Object map) {
+		return ((HashMap<K, V>) map).size();
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Object[] keys(Object map) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.keySet().toArray();
-	}
-
-	@SuppressWarnings (value="unchecked")
-	public static final int size(Object map) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.size();
-	}
-
-	@SuppressWarnings (value="unchecked")
-	public static final Object clear(Object map) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		hashMap.clear();
+	public static final <K, V> Object clear(Object map) {
+		((HashMap<K, V>) map).clear();
 		return null;
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Object clone(Object map) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.clone();
+	public static final <K, V> Object clone(Object map) {
+		return ((HashMap<K, V>) map).clone();
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final Boolean isEmpty(Object map) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		return hashMap.isEmpty();
-	}
-
-	@SuppressWarnings (value="unchecked")
-	public static final Boolean equals(Object map1, Object map2) {
-		HashMap<Object, Object> hashMap1 = (HashMap<Object, Object>) map1;
-		HashMap<Object, Object> hashMap2 = (HashMap<Object, Object>) map2;
-		return hashMap1.equals(hashMap2);
-	}
-/*
-	@SuppressWarnings (value="unchecked")
-	public static final Object merge(Object map1, Object map2) {
-		HashMap<Object, Object> hashMap1 = (HashMap<Object, Object>) map1;
-		HashMap<Object, Object> hashMap2 = (HashMap<Object, Object>) map2;
-		hashMap1.putAll(hashMap2);
-		return null;
-	}
-*/
-	@SuppressWarnings (value="unchecked")
-	public static final Object iter(Object map, Func2<Object, Object, Object> fn) {
-		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
-		hashMap.forEach(new java.util.function.BiConsumer() {
-			public void accept(Object k, Object v) {
+	public static final <K, V> Object iter(Object map, Func2<Object, K, V> fn) {
+		((HashMap<K, V>) map).forEach(new java.util.function.BiConsumer<K, V>() {
+			public void accept(K k, V v) {
 				fn.invoke(k, v);
 			}
 		});
