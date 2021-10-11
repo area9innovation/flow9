@@ -1090,7 +1090,7 @@ public class Native extends NativeHost {
 	public static final double local2utc(double stamp) {
 		final long millis = Double.valueOf(stamp).longValue();
 		final int tzOffset = TimeZone.getDefault().getOffset(millis);
-		return millis - timeZoneOffset(millis);
+		return millis - tzOffset;
 	}
 
 	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyy-MM-dd HH:mm:ss");
