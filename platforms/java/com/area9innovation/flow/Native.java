@@ -1082,13 +1082,15 @@ public class Native extends NativeHost {
 	}
 
 	public static final double utc2local(double stamp) {
-		// TODO
-		return 0;
+		final long millis = Double.valueOf(stamp).longValue();
+		final int tzOffset = TimeZone.getDefault().getOffset(millis);
+		return millis + tzOffset;
 	}
 
 	public static final double local2utc(double stamp) {
-		// TODO
-		return 0;
+		final long millis = Double.valueOf(stamp).longValue();
+		final int tzOffset = TimeZone.getDefault().getOffset(millis);
+		return millis - timeZoneOffset(millis);
 	}
 
 	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyy-MM-dd HH:mm:ss");
