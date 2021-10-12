@@ -431,6 +431,9 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
+		// We sacrifice code elegance here in the name of efficiency
+		var styleText = nativeWidget.style.cssText;
+
 		super.updateNativeWidgetStyle();
 		var alpha = this.getNativeWidgetAlpha();
 
@@ -441,12 +444,13 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.setAttribute("type", type);
 			}
 			nativeWidget.value = text;
-			nativeWidget.style.whiteSpace = "pre-wrap";
-			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
+			styleText += ' white-space: pre;';
+			styleText += ' pointer-events: ${readOnly ? 'none' : 'auto'};';
+
 			nativeWidget.readOnly = readOnly;
 
 			if (cursorColor >= 0) {
-				nativeWidget.style.caretColor = RenderSupport.makeCSSColor(cursorColor, cursorOpacity);
+				styleText += ' caret-color: ${RenderSupport.makeCSSColor(cursorColor, cursorOpacity)};';
 			}
 
 			if (type == 'number') {
@@ -460,24 +464,24 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			if (multiline) {
-				nativeWidget.style.resize = 'none';
+				styleText += ' resize: none;';
 			}
 
-			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-			nativeWidget.style.direction = switch (textDirection) {
+			styleText += ' cursor: ${isFocused ? 'text' : 'inherit'};';
+			styleText += ' direction: ' + (switch (textDirection) {
 				case 'RTL' : 'rtl';
 				case 'rtl' : 'rtl';
 				default : null;
-			}
+			}) + ";";
 
 			if (Platform.isEdge || Platform.isIE) {
 				var slicedColor : Array<String> = style.fill.split(",");
 				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
 
-				nativeWidget.style.color = newColor;
+				styleText += ' color: ${newColor};';
 			} else {
-				nativeWidget.style.opacity = (RenderSupport.RendererType != "canvas" || isFocused) ? alpha : 0;
-				nativeWidget.style.color = style.fill;
+				styleText += ' opacity: ${(RenderSupport.RendererType != "canvas" || isFocused) ? alpha : 0};';
+				styleText += ' color: ${style.fill};';
 			}
 		} else {
 			if (escapeHTML) {
@@ -497,18 +501,18 @@ class TextClip extends NativeWidgetClip {
 					}
 				}
 
-				nativeWidget.style.whiteSpace = "pre";
-				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+				styleText += ' white-space: pre;';
+				styleText += ' direction: ' + (switch (this.contentGlyphsDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
 					default : null;
-				}
+				}) + ";";
 			} else {
 				nativeWidget.innerHTML = this.contentGlyphs.modified;
 				if (textBackgroundWidget != null) {
 					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
 				}
-				nativeWidget.style.whiteSpace = "pre-wrap";
+				styleText += ' white-space: pre-wrap;';
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
@@ -517,39 +521,49 @@ class TextClip extends NativeWidgetClip {
 					}
 				}
 
-				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+				styleText += ' direction: ' + (switch (this.contentGlyphsDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
 					default : null;
-				}
+				}) + ";";
 			}
 
-			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
-			nativeWidget.style.color = style.fill;
+			styleText += ' opacity: ${alpha != 1 || Platform.isIE ? alpha : null};';
+			styleText += ' color: ${style.fill};';
 		}
+		var letterSpacing = !this.isHTMLRenderer() || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
+		var wordSpacing = !this.isHTMLRenderer() || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
+		var fontFamily = !this.isHTMLRenderer() || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
+		var fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
+		var fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 
-		nativeWidget.style.letterSpacing = !this.isHTMLRenderer() || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
-		nativeWidget.style.wordSpacing = !this.isHTMLRenderer() || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
-		nativeWidget.style.fontFamily = !this.isHTMLRenderer() || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
-		nativeWidget.style.fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
-		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
-		nativeWidget.style.fontSize = '${style.fontSize}px';
+		styleText += ' letter-spacing: ${letterSpacing};';
+		styleText += ' word-spacing: ${wordSpacing};';
+		if (fontFamily != null) {
+			styleText += ' font-family: ${fontFamily};';
+		}
+		styleText += ' font-weight: ${fontWeight};';
+		styleText += ' font-style: ${fontStyle};';
+		styleText += ' font-size: ${style.fontSize}px;';
+
 		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		if (textBackgroundWidget != null) {
 			textBackgroundWidget.style.background = bg;
 		} else {
-			nativeWidget.style.background = bg;
+			styleText += ' background: ${bg};';
 		}
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
+		styleText += ' line-height: ${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px;';
 
-		nativeWidget.style.textAlign = switch (autoAlign) {
+		styleText += ' text-align: ' + (switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
 			case 'AutoAlignRight' : 'right';
 			case 'AutoAlignCenter' : 'center';
 			case 'AutoAlignNone' : 'none';
 			default : null;
-		}
+		}) + ";";
+
+		nativeWidget.style.cssText = styleText;
 
 		updateBaselineWidget();
 		updateTextBackgroundWidget();
