@@ -17,6 +17,7 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var CheckNodeOrder : Bool = Util.getParameter("find_node_order") == "1";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -2002,7 +2003,8 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var nextWidget = findNextNativeWidget(child, clip);
+			var shouldCheckNodeOrder = CheckNodeOrder || !HaxeRuntime.instanceof(child, TextClip);
+
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
@@ -2010,9 +2012,20 @@ class DisplayObjectHelper {
 					untyped clip.nativeWidget.appendChild(cont);
 				}
 
-				untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				if (shouldCheckNodeOrder) {
+					var nextWidget = findNextNativeWidget(child, clip);
+					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				} else {
+					untyped clip.nativeWidget.firstChild.appendChild(childWidget);
+				}
+
 			} else {
-				untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				if (shouldCheckNodeOrder) {
+					var nextWidget = findNextNativeWidget(child, clip);
+					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				} else {
+					untyped clip.nativeWidget.appendChild(childWidget);
+				}
 			}
 
 			applyScrollFnChildren(child);
