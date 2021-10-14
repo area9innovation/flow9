@@ -28,7 +28,8 @@ This compiler has these representations:
 1. Have complete AST after parsing, using typed Gringo grammar.
       PExp = Parsed Expressions
    `parsePExp` converts a string to `PExp`.
-   Status: Done. Can parse all code we have.
+   Status: Done. Can parse all code we have. The grammar is found in 
+   `pexp/pexp.gringo`.
 
 2. Once files and dependents are parsed, desugar the program to DExp:
    DExp = Desugared Expressions.
@@ -42,7 +43,8 @@ This compiler has these representations:
    BExp = Backend, Typed Expressions.
    Status: Mostly done. Fixing bugs in type checker.
 
-4. Then plug into the backends. Initial JS backend exists. js=1
+4. Then plug into the backends. Initial JS backend exists. js=1. We can also use
+   flowc backends, such as Java.
 
 This pipeline is exposed by 
 
@@ -63,9 +65,6 @@ The type system is extended with two constructs:
 
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
-
-TODO: Review the lower/upper types from
-https://gilmi.me/blog/post/2021/04/13/giml-typing-polymorphic-variants
 
 # Name and type lookups
 
@@ -259,6 +258,19 @@ The compiler has decent speed, but could be faster.
 
 - Add a compile server
   - Add option to only type check given ids
+
+## Type inference inspriation
+
+Review the lower/upper types from
+https://gilmi.me/blog/post/2021/04/13/giml-typing-polymorphic-variants
+
+- It seems we could consider to enhance our supertypes construct to
+  record whether the type is exact (closed), an upper-bound (not sure where
+  this happens) or a lower-bound (from a switch with a "default"), and
+  then it would match their system to a substantial degree.
+
+Unify of two closed variants is easy: They have to match both sides.
+
 
 # Proposal: Rewrite syntax
 

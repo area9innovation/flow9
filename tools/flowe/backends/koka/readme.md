@@ -12,8 +12,8 @@ reduction in memory.
 
 To test, compile some program to koka:
 
-	flowcpp plow/plow.flow -- file=demos/euler/euler1.flow koka=koka.kk
-	flowcpp plow/plow.flow -- file=tools/gringo/gringo.flow koka=koka.kk
+	flowcpp flowe/flowe.flow -- file=demos/euler/euler1.flow koka=koka.kk
+	flowcpp flowe/flowe.flow -- file=tools/gringo/gringo.flow koka=koka.kk
 
 In Ubuntu, then use this to compile with Koka:
 
