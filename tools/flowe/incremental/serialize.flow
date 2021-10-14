@@ -1,0 +1,113 @@
+import tools/flowe/bexp/bmodule;
+import tools/flowe/tracing;
+import tools/flowe/flow_path;
+import fs/filesystem;
+import text/serialize;
+
+export {
+	readBModule(tracing : Tracing, fullpath : string, flowpath : string) -> Maybe<BModule>;
+	writeBModule(tracing : Tracing, bmod : BModule) -> void;
+	deleteBModule(tracing : Tracing, flowpath : string) -> void;
+}
+
+bincrementalVersion : int = 1;
+
+BIncremental(
+	version : int,
+	fullpath : string,
+	modifiedTimestamp : double,
+	checksum : string,
+	fileSize : double,
+	serialized : string // A serialized bmodule
+);
+
+readBModule(tracing : Tracing, fullpath : string, flowpath : string) -> Maybe<BModule> {
+	path = getBIncrementalPath(flowpath);
+	if (isUrlParameterFalse("incremental")) {
+		deleteBModule(tracing, flowpath);
+		None();
+	} else if (fileExists(path)) {
+		finc = getFileContent(path);
+		flinc = deserialize(finc, IllegalStruct());
+		if (flinc == IllegalStruct()) {
+			None();
+		} else {
+			inc : BIncremental = flinc;
+			if (inc.version == bincrementalVersion) {
+				binc = makeBIncremental(fullpath, "");
+				if (isBIncrementalSame(inc, binc)) {
+					bmod = deserialize(inc.serialized, IllegalStruct());
+					if (bmod != IllegalStruct()) {
+						if (isTracingId(tracing, StageParse(), 0, flowpath)) {
+							println("Using incremental file for " + flowpath);
+						}
+						// println("Reusing incremental " + flowpath);
+						Some(bmod)
+					} else {
+						// Something wrong with the incremental file. Remove it
+						deleteBModule(tracing, flowpath);
+						None();
+					}
+				} else {
+					// OK, the cache is obsolete. Remove it
+					deleteBModule(tracing, flowpath);
+					None();
+				}
+			} else {
+				deleteBModule(tracing, flowpath);
+				None();
+			}
+		}
+	} else {
+		None();
+	}
+}
+
+writeBModule(tracing : Tracing, bmod : BModule) -> void {
+	path = getBIncrementalPath(bmod.flowpath);
+	ser = toString(bmod);
+	binc = makeBIncremental(bmod.fullpath, ser);
+	ensureDirectoryExists(dirName(path));
+	if (setFileContent(path, serialize(binc))) {
+		if (isTracingId(tracing, StageParse(), 0, bmod.flowpath)) {
+			println("Saved incremental for "+ bmod.flowpath);
+		}
+	} else {
+		 println("Could not save incremental for "+ bmod.flowpath);
+	}
+}
+
+// Get the file timestamp and md5 of the file content
+makeBIncremental(fullpath : string, ser : string) -> BIncremental {
+	// println(fullpath);
+	BIncremental(
+		bincrementalVersion,
+		fullpath,
+		fileModified(fullpath),
+		fileChecksum(fullpath),
+		fileSize(fullpath),
+		ser,
+	);
+}
+
+isBIncrementalSame(a : BIncremental, b : BIncremental) -> bool {
+	a.fullpath == b.fullpath
+	&& equalDoubles2(a.modifiedTimestamp, b.modifiedTimestamp, 12)
+	&& a.checksum == b.checksum
+	&& a.fileSize == b.fileSize
+}
+
+getBIncrementalPath(flowpath : string) -> string {
+	changeFileExt(pathCombine(pathCombine(getFlowDirectory(), "objp"), flowpath), ".objp");
+}	
+
+deleteBModule(tracing : Tracing, flowpath : string) -> void {
+	path = getBIncrementalPath(flowpath);
+	if (isTracingId(tracing, StageParse(), 0, flowpath)) {
+		if (fileExists(path)) {
+			println("Removing incremental file " + path);
+		}		
+	}
+	deleteFile(path);
+	{}
+}
