@@ -17,7 +17,6 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
-	public static var CheckNodeOrder : Bool = Util.getParameter("find_node_order") == "1";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -2003,7 +2002,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var shouldCheckNodeOrder = CheckNodeOrder || !HaxeRuntime.instanceof(child, TextClip);
+			var shouldCheckNodeOrder = Util.getParameter("find_node_order") == "1" || !HaxeRuntime.instanceof(child, TextClip);
 
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
