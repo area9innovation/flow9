@@ -2002,8 +2002,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var shouldCheckNodeOrder = Util.getParameter("find_node_order") == "1" || !HaxeRuntime.instanceof(child, TextClip);
-
+			var nextWidget = findNextNativeWidget(child, clip);
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
@@ -2011,20 +2010,9 @@ class DisplayObjectHelper {
 					untyped clip.nativeWidget.appendChild(cont);
 				}
 
-				if (shouldCheckNodeOrder) {
-					var nextWidget = findNextNativeWidget(child, clip);
-					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
-				} else {
-					untyped clip.nativeWidget.firstChild.appendChild(childWidget);
-				}
-
+				untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
 			} else {
-				if (shouldCheckNodeOrder) {
-					var nextWidget = findNextNativeWidget(child, clip);
-					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
-				} else {
-					untyped clip.nativeWidget.appendChild(childWidget);
-				}
+				untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
 			}
 
 			applyScrollFnChildren(child);
