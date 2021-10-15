@@ -17,6 +17,7 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -2002,7 +2003,9 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var nextWidget = findNextNativeWidget(child, clip);
+			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck;
+
+			var nextWidget = skipOrderCheck ? null : findNextNativeWidget(child, clip);
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");

@@ -1914,6 +1914,10 @@ class RenderSupport {
 		clip.setTextDirection(direction);
 	}
 
+	public static function setTextSkipOrderCheck(clip : TextClip, skip : Bool) : Void {
+		clip.setTextSkipOrderCheck(skip);
+	}
+
 	public static function setAutoAlign(clip : TextClip, autoalign : String) : Void {
 		clip.setAutoAlign(autoalign);
 	}
