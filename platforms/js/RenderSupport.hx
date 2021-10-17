@@ -21,10 +21,11 @@ using DisplayObjectHelper;
 class RenderSupport {
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1";
+	public static var RenderRoot : Element = null;
 	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
 	public static var PixiView : Dynamic;
-	public static var PixiStage : FlowContainer = new FlowContainer(true);
+	public static var PixiStage : FlowContainer;
 	public static var PixiRenderer : Dynamic;
 
 	public static var TouchPoints : Dynamic;
@@ -110,6 +111,36 @@ class RenderSupport {
 
 			createPixiRenderer();
 		}
+	}
+
+	public static function setRenderRoot(rootId : String) : Void {
+		var renderRoot = Browser.document.getElementById(rootId);
+		if (renderRoot != RenderRoot) {
+			RenderRoot = renderRoot;
+			RenderRoot.style.position = 'relative';
+			
+			setupPixiStage();
+			createPixiRenderer();
+
+			appendEmbeddedFlowStyles();
+		}
+	}
+
+	public static function appendEmbeddedFlowStyles() : Void {
+		var mainStyle = Browser.document.createElement('link');
+		mainStyle.setAttribute("rel", "stylesheet");
+		mainStyle.setAttribute("type", "text/css");
+		mainStyle.setAttribute("href", "flowjspixi.css");
+		Browser.document.head.appendChild(mainStyle);
+
+		var style = Browser.document.createElement('style');
+		style.setAttribute('type', 'text/css');
+		style.innerHTML = "*:not(body):not(html) {position: initial;}";
+		Browser.document.head.appendChild(style);
+	}
+
+	public static function setupPixiStage() : Void {
+		PixiStage = new FlowContainer(true);
 	}
 
 	public static function setKeepTextClips(keep : Bool) : Void {
@@ -444,6 +475,10 @@ class RenderSupport {
 	//	Pixi renderer initialization
 	//
 	public static function init() : Bool {
+		if (PixiStage == null) {
+			setupPixiStage();
+		}
+
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
 		} else {
@@ -583,7 +618,7 @@ class RenderSupport {
 		}
 
 		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
+		PixiStage.nativeWidget.insertBefore(PixiView, PixiStage.nativeWidget.firstChild);
 
 		// Enable browser canvas rendered image smoothing
 		var ctx = untyped PixiRenderer.context;

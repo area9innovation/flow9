@@ -49,7 +49,7 @@ class FlowContainer extends Container {
 		isNativeWidget = (this.isHTMLRenderer() && RenderSupport.RenderContainers) || worldVisible;
 
 		if (worldVisible) {
-			nativeWidget = Browser.document.body;
+			nativeWidget = RenderSupport.RenderRoot != null ? RenderSupport.RenderRoot : Browser.document.body;
 		} else if (this.isHTMLRenderer()) {
 			createNativeWidget();
 		}
