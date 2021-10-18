@@ -18,6 +18,7 @@ class DisplayObjectHelper {
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
+	public static var UseOptimization : Bool = Util.getParameter("new") == "1" && Util.getParameter("remove_listener_optimization") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -1887,11 +1888,17 @@ class DisplayObjectHelper {
 					untyped clip.nativeWidget.style.display = 'none';
 				}
 
-				RenderSupport.once("drawframe", function() {
+				var removeFn = function() {
 					if (untyped isNativeWidget(clip) && !clip.onStage && (!clip.visible || clip.parent == null)) {
 						removeNativeWidget(clip);
 					}
-				});
+				}
+
+				if (UseOptimization) {
+					removeFn();
+				} else {
+					RenderSupport.once("drawframe", removeFn);
+				}
 			}
 		}
 	}
@@ -1914,7 +1921,9 @@ class DisplayObjectHelper {
 				} else {
 					appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
 				}
-				RenderSupport.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
+				if (!UseOptimization || (untyped clip.skipOrderCheck == null || !clip.skipOrderCheck)) {
+					RenderSupport.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
+				}
 			}
 		} else {
 			clip.once('removed', function() { deleteNativeWidget(clip); });
