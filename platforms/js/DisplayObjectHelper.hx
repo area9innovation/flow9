@@ -17,6 +17,7 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -321,6 +322,10 @@ class DisplayObjectHelper {
 
 			if (untyped clip.keepNativeWidgetChildren || clip.keepNativeWidget) {
 				updateKeepNativeWidgetChildren(clip);
+			}
+
+			if (untyped clip.parent.keepNativeWidgetParent) {
+				updateKeepNativeWidgetParent(clip, untyped clip.parent.keepNativeWidgetParent);
 			}
 
 			clip.once('removed', function() { invalidate(clip); });
@@ -799,6 +804,18 @@ class DisplayObjectHelper {
 		}
 
 		invalidateTransform(clip, 'updateKeepNativeWidgetChildren');
+	}
+
+	public static function updateKeepNativeWidgetParent(clip : DisplayObject, keepNativeWidget : Bool) : Void {
+		if (untyped clip.keepNativeWidgetParent != keepNativeWidget) {
+			untyped clip.keepNativeWidget = keepNativeWidget;
+			untyped clip.keepNativeWidgetParent = keepNativeWidget;
+			updateKeepNativeWidgetChildren(clip);
+
+			for (child in getClipChildren(clip)) {
+				updateKeepNativeWidgetParent(child, keepNativeWidget);
+			}
+		}
 	}
 
 	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
@@ -1771,7 +1788,7 @@ class DisplayObjectHelper {
 			}
 
 			nativeWidget.style.pointerEvents =
-				(Platform.isIOS && Platform.isSafari && !untyped clip.isInput && Util.getParameter("trackpad_scroll") != "0")
+				(Platform.isIOS && (Platform.isSafari || Platform.isChrome) && !(untyped clip.isInput) && Util.getParameter("trackpad_scroll") != "0")
 				? 'unset' // It allows to catch wheel events from trackpad on iPad in Safari
 				: 'auto';
 
@@ -1814,8 +1831,10 @@ class DisplayObjectHelper {
 				};
 			} else {
 				nativeWidget.oncontextmenu = function (e) {
+					var preventContextMenu = untyped clip.isInput != true;
+					if (preventContextMenu) e.preventDefault();
 					e.stopPropagation();
-					return untyped clip.isInput == true;
+					return !preventContextMenu;
 				};
 			}
 		} else {
@@ -1882,7 +1901,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function isClipOnStage(clip : DisplayObject) : Bool {
-		return untyped clip.onStage && clip.tansform != null;
+		return untyped clip.onStage && clip.transform != null;
 	}
 
 	public static function addNativeWidget(clip : DisplayObject) : Void {
@@ -1984,7 +2003,9 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var nextWidget = findNextNativeWidget(child, clip);
+			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck;
+
+			var nextWidget = skipOrderCheck ? null : findNextNativeWidget(child, clip);
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
@@ -2021,10 +2042,10 @@ class DisplayObjectHelper {
 				if (Platform.isIE) {
 					untyped clip.nativeWidget.blur();
 					RenderSupport.once("drawframe", function() {
-						untyped clip.nativeWidget.focus();
+						if (untyped clip.nativeWidget != null) untyped clip.nativeWidget.focus();
 					});
 				} else {
-					untyped clip.nativeWidget.focus();
+					if (untyped clip.nativeWidget != null) untyped clip.nativeWidget.focus();
 				}
 			}
 		}

@@ -48,6 +48,9 @@ export {
 	MRealHTMLCrossDomain2(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>,
 		receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, onError : (string) -> void,
 		zoomEnabled : Transform<bool>, noScroll : bool) -> Material;
+	MRealHTMLCrossDomain3(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>,
+		receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, onError : (string) -> void,
+		zoomEnabled : Transform<bool>, noScroll : bool, style : [FRealHTMLStyle]) -> Material;
 
 	// Changes items on every dragging ends
 	MReorderCols(items : DynamicBehaviour<[?]>, materialize : (?) -> Material, style : [MReorderStyle]) -> Material;
@@ -391,6 +394,23 @@ MRealHTMLCrossDomain2(
 	zoomEnabled : Transform<bool>,
 	noScroll : bool
 ) -> Material {
+	MRealHTMLCrossDomain3(url, domain, wh, sendChannel, receiveChannel, targetOrigin, key, onLoaded, ignore, zoomEnabled, noScroll, []);
+}
+
+MRealHTMLCrossDomain3(
+	url : string,
+	domain : string,
+	wh : Transform<WidthHeight>,
+	sendChannel : DynamicBehaviour<string>,
+	receiveChannel : DynamicBehaviour<string>,
+	targetOrigin : string,
+	key : string,
+	onLoaded : () -> void,
+	onError : (string) -> void,
+	zoomEnabled : Transform<bool>,
+	noScroll : bool,
+	style : [FRealHTMLStyle]
+) -> Material {
 	sendToJS = ref nop1;
 	getHostCall = \hc -> sendToJS := \msg -> hc("postMessage", [msg, targetOrigin]) |> ignore;
 	flowCallBack = \args -> {
@@ -410,7 +430,7 @@ MRealHTMLCrossDomain2(
 			MRealHTML(
 				url,
 				wh,
-				[
+				concat(style, [
 					FlowCallback(flowCallBack),
 					PageHostcallSetter(getHostCall),
 					OverridePageDomain(domain),
@@ -418,7 +438,7 @@ MRealHTMLCrossDomain2(
 					OnPageLoaded(onLoaded),
 					OnError(onError),
 					ZoomEnabled(zoomEnabledB)
-				]
+				])
 				|> (\st -> ifArrayPush(st, noScroll, NoScroll()))
 			)
 		)
@@ -810,7 +830,7 @@ MDropDownOrAutoComplete(
 	isRequired = contains(style, MRequiredField());
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
-	changeOnClick = contains(style, MChangeOnClick());
+	changeOnlyOnClick = contains(style, MChangeOnClick());
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	anyItem = extractStruct(style, MCustomAnyItem(_("Any"))).text;
@@ -824,6 +844,7 @@ MDropDownOrAutoComplete(
 		);
 
 	makeMAutoCompleteControl = \ -> {
+		preventSelectedChange = ref false;
 		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
 
 		trimStr = \s -> trim(s) |> toLowerCase;
@@ -846,9 +867,22 @@ MDropDownOrAutoComplete(
 				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
 				st
 			))
-			|> (\st -> ifArrayPush(st, changeOnClick, MCompletionFn(\com, isSelected, setWordFn ->
+			|> (\st -> arrayPush(st, MCompletionFn(\com, isSelected, setWordFn ->
 					MGetManager(\manager -> MGetFocusGroup(\parent -> {
-						wrapSetWordFn = \sm -> {nextDistinct(selected, string2idxs(getValue(selectedStrB))); setWordFn(sm)};
+						wrapSetWordFn = \sm -> {
+							switch(sm : SentenceMatch) {
+								SentenceHit(__, __, __, __) : {
+									nextDistinct(selected, string2idxs(getValue(selectedStrB)));
+									setWordFn(sm);
+								}
+								SentenceHitExtended(__, __, __, __, idx) : {
+									preventSelectedChange := true;
+									setWordFn(sm);
+									preventSelectedChange := false;
+									nextDistinct(selected, idx);
+								};
+							}
+						};
 						defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
 					}))
 			)));
@@ -860,14 +894,21 @@ MDropDownOrAutoComplete(
 					replaceStruct(st, MInputError(error, [MRequiredField()]));
 				} else
 					st
-			);
+			)
+			|> (\st -> {
+				processKeyDown = extractStruct(st, MInputProcessKeyDown(\__ -> true)).fn;
+				replaceStruct(st, MInputProcessKeyDown(\ke -> processKeyDown(ke) && ke.keycode != 13))
+			});
 
 		MConstruct(
 			[
 				\ ->
 					eitherMap(multiSelection,
 						\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
-						bidirectionalLink(selected, selectedStrB, \idx -> idxs2string([idx]), \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str))
+						bidirectionalLink(selected, selectedStrB,
+							\idx -> idxs2string([idx]),
+							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idxs(str)
+						)
 					),
 				eitherMap(
 					tryExtractStruct(style, MInputInspector(make(""))),

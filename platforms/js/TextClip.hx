@@ -132,6 +132,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
 	private var escapeHTML : Bool = true;
+	private var skipOrderCheck : Bool = false;
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -164,6 +165,11 @@ class TextClip extends NativeWidgetClip {
 	private var isFocused : Bool = false;
 	public var isInteractive : Bool = false;
 	public var preventContextMenu : Bool = false;
+
+	private var textBackgroundWidget : Dynamic;
+	private var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
+		&& Util.getParameter("new") == "1"
+		&& Util.getParameter("textBackgroundWidget") != "0";
 
 	private var baselineWidget : Dynamic;
 	private var needBaseline : Bool = true;
@@ -487,6 +493,9 @@ class TextClip extends NativeWidgetClip {
 					}
 
 					nativeWidget.textContent = textContent;
+					if (textBackgroundWidget != null) {
+						textBackgroundWidget.textContent = textContent;
+					}
 				}
 
 				nativeWidget.style.whiteSpace = "pre";
@@ -497,6 +506,9 @@ class TextClip extends NativeWidgetClip {
 				}
 			} else {
 				nativeWidget.innerHTML = this.contentGlyphs.modified;
+				if (textBackgroundWidget != null) {
+					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
+				}
 				nativeWidget.style.whiteSpace = "pre-wrap";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
@@ -523,7 +535,12 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
-		nativeWidget.style.background = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+		if (textBackgroundWidget != null) {
+			textBackgroundWidget.style.background = bg;
+		} else {
+			nativeWidget.style.background = bg;
+		}
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
 		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
@@ -536,6 +553,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		updateBaselineWidget();
+		updateTextBackgroundWidget();
 	}
 
 	public inline function updateBaselineWidget() : Void {
@@ -544,11 +562,23 @@ class TextClip extends NativeWidgetClip {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${-DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d)}px';
+				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
 		}
+
+	}
+
+	public inline function updateTextBackgroundWidget() : Void {
+		if (useTextBackgroundWidget && nativeWidget.firstChild && textBackgroundWidget != null && textBackgroundWidget.style.background != '') {
+			nativeWidget.insertBefore(textBackgroundWidget, nativeWidget.firstChild);
+			textBackgroundWidget.style.top = '${getTextMargin()}px';
+		}
+	}
+
+	public function getTextMargin() : Float {
+		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
 	}
 
 	public static function bidiDecorate(text : String, dir : String) : String {
@@ -940,6 +970,10 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public function setTextSkipOrderCheck(skip : Bool) : Void {
+		this.skipOrderCheck = skip;
+	}
+
 	public function getTextDirection() : String {
 		return this.textDirection != '' ? this.textDirection : this.contentGlyphsDirection;
 	}
@@ -1107,11 +1141,12 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
+			var pointScaled = new Point(point.x * RenderSupport.getViewportScale(), point.y * RenderSupport.getViewportScale());
 
 			RenderSupport.MousePos.x = point.x;
 			RenderSupport.MousePos.y = point.y;
 
-			if (RenderSupport.getClipAt(RenderSupport.PixiStage, RenderSupport.MousePos, true, 0.16) != this) {
+			if (RenderSupport.getClipAt(RenderSupport.PixiStage, pointScaled, true, 0.16) != this) {
 				e.preventDefault();
 			}
 		}
@@ -1182,7 +1217,7 @@ class TextClip extends NativeWidgetClip {
 		isFocused = true;
 
 		if (RenderSupport.Animating) {
-			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			RenderSupport.once("stagechanged", function() { if (nativeWidget != null && isFocused) nativeWidget.focus(); });
 			return;
 		}
 
@@ -1217,7 +1252,7 @@ class TextClip extends NativeWidgetClip {
 	private function onBlur(e : Event) : Void {
 		if (untyped RenderSupport.Animating || this.preventBlur) {
 			untyped this.preventBlur = false;
-			RenderSupport.once("stagechanged", function() { if (isFocused) nativeWidget.focus(); });
+			RenderSupport.once("stagechanged", function() { if (nativeWidget != null && isFocused) nativeWidget.focus(); });
 			return;
 		}
 
@@ -1634,8 +1669,9 @@ class TextClip extends NativeWidgetClip {
 			if (range.getBoundingClientRect != null) {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
-					textNodeMetrics.width = rect.right - rect.left;
-					textNodeMetrics.height = rect.bottom - rect.top;
+					var viewportScale = RenderSupport.getViewportScale();
+					textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
+					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 				}
 			}
 		}
@@ -1676,6 +1712,11 @@ class TextClip extends NativeWidgetClip {
 
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
+
+			if (useTextBackgroundWidget) {
+				textBackgroundWidget = Browser.document.createElement('span');
+				textBackgroundWidget.classList.add('textBackgroundWidget');
+			}
 
 			isNativeWidget = true;
 		} else {

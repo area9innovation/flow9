@@ -507,7 +507,7 @@ joinGroupedWords(
 					lookupTreeDef(
 						joinedWordsConstructors,
 						getValue(firstWord.id),
-						\t, s -> TText(t, s)
+						\t, s -> TText(t, makeSkipOrderCheck(s))
 					)
 				)
 			)
@@ -869,7 +869,7 @@ reflowTParaWordsRec(
 
 				makeLinePartWord = \txt : string -> {
 					newView = inspectWordView(
-						TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style)),
+						TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style) |> makeSkipOrderCheck),
 						word.inspector,
 						if (ignoreLetterSpacing || rest == []) 0.0 else extractStruct(word.style, LetterSpacing(0.0)).spacing
 					);
@@ -982,7 +982,7 @@ reflowTParaWordsRec(
 				form = getWordView(word);
 
 				// Number of words that should be on the same line
-				wordsCount = if (keepWordsTogether(form)) {
+				wordsCount = if (keepWordsTogether(form, word, dummyTParaWord)) {
 					iteriUntil(words, \i, _word -> {
 						switch (_word.word) {
 							NewLine(): true;
@@ -993,7 +993,7 @@ reflowTParaWordsRec(
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if ((isMarked && i <= 1) || keepWordsTogether(f) || ^width == 0.0) {
+								if ((isMarked && i <= 1) || keepWordsTogether(f, word, if (i < 1) dummyTParaWord else words[i - 1]) || ^width == 0.0) {
 									width := ^width + getWordWidth(_word);
 									false;
 								} else {
@@ -1048,42 +1048,48 @@ reflowTParaWordsRec(
 }
 
 // This function gets the form and decides, should the next form kept together in the same line or should it be placed on the next line
-keepWordsTogether(tr : Tropic) -> bool {
+keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord) -> bool {
+	firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
+	lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
+	if (lastChr == nonBreakableSpace || firstChr == nonBreakableSpace) true else keepWordsTogetherRec(tr)
+}
+
+keepWordsTogetherRec(tr : Tropic) -> bool {
 	switch (tr) {
 		TEmpty(): true;
 		TText(t, s): t !=  spaceStr;
-		TCols2(left, right): keepWordsTogether(left) && keepWordsTogether(right);
-		TBaselineCols2(left, right): keepWordsTogether(left) && keepWordsTogether(right);
-		TBaselineLines2(top, bottom): keepWordsTogether(top) && keepWordsTogether(bottom);
-		TLines2(up, down): keepWordsTogether(up) && keepWordsTogether(down);
-		TGroup2(down, up): keepWordsTogether(up) && keepWordsTogether(down);
-		TMinimumGroup2(down, up): keepWordsTogether(up) && keepWordsTogether(down);
-		TScale(fac, t): keepWordsTogether(t);
-		TConstruct(__, t): keepWordsTogether(t);
-		TCrop2(__, __, __, t): keepWordsTogether(t);
-		TTag(__, t): keepWordsTogether(t);
+		TCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
+		TBaselineCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
+		TBaselineLines2(top, bottom): keepWordsTogetherRec(top) && keepWordsTogetherRec(bottom);
+		TLines2(up, down): keepWordsTogetherRec(up) && keepWordsTogetherRec(down);
+		TGroup2(down, up): keepWordsTogetherRec(up) && keepWordsTogetherRec(down);
+		TMinimumGroup2(down, up): keepWordsTogetherRec(up) && keepWordsTogetherRec(down);
+		TScale(fac, t): keepWordsTogetherRec(t);
+		TConstruct(__, t): keepWordsTogetherRec(t);
+		TCrop2(__, __, __, t): keepWordsTogetherRec(t);
+		TTag(__, t): keepWordsTogetherRec(t);
 		TFormIn(f, b): keepFormTogether(f);
 		TForm(f): keepFormTogether(f);
 		TFormAvailable(f, __) : keepFormTogether(f); // mos likely this is recursive, so we need to keep forms together
-		TTranslate(__, t): keepWordsTogether(t);
-		TRotate(__, t): keepWordsTogether(t);
-		TInteractive(__, t): keepWordsTogether(t);
-		TAccess(__, t): keepWordsTogether(t);
-		TAlpha(__, t): keepWordsTogether(t);
-		TCursor(__, t): keepWordsTogether(t);
-		TCropSize(size, t): keepWordsTogether(size);
-		TSize(size, t): keepWordsTogether(t);
-		TDispose(__, t): keepWordsTogether(t);
-		TRounded(__, __, __, __, __, t): keepWordsTogether(t);
-		TBorder(left, top, right, bottom, t): keepWordsTogether(t);
-		TSubtractGroup2(t1, t2): keepWordsTogether(t1) && keepWordsTogether(t2);
+		TTranslate(__, t): keepWordsTogetherRec(t);
+		TRotate(__, t): keepWordsTogetherRec(t);
+		TInteractive(__, t): keepWordsTogetherRec(t);
+		TAccess(__, t): keepWordsTogetherRec(t);
+		TAlpha(__, t): keepWordsTogetherRec(t);
+		TCursor(__, t): keepWordsTogetherRec(t);
+		TCropSize(size, t): keepWordsTogetherRec(size);
+		TSize(size, t): keepWordsTogetherRec(t);
+		TDispose(__, t): keepWordsTogetherRec(t);
+		TRounded(__, __, __, __, __, t): keepWordsTogetherRec(t);
+		TBorder(left, top, right, bottom, t): keepWordsTogetherRec(t);
+		TSubtractGroup2(t1, t2): keepWordsTogetherRec(t1) && keepWordsTogetherRec(t2);
 		TTweak(style, content, s): false;
 		TAttach(ghost, fn): false;
-		TFilter(__, t): keepWordsTogether(t);
-		TDebug(__, t): keepWordsTogether(t);
+		TFilter(__, t): keepWordsTogetherRec(t);
+		TDebug(__, t): keepWordsTogetherRec(t);
 		TransformTAcc(__) : false;
 		TMutable(__) : false;
-		TInspect(__, f) : keepWordsTogether(f);
+		TInspect(__, f) : keepWordsTogetherRec(f);
 		default : true;
 	}
 }
@@ -1186,11 +1192,11 @@ TRenderLine(
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
 		elemBaseline = getValue(inspector.baseline);
-		prevElemHeight = prevWordHeight(inspectors, words, i);
+		prevElemHeight = prevWordHeight(inspectors, words, i - 1);
 		dy = eitherMap(
 			words[i].scriptM,
 			\script -> switch(script) {
-				ParaElementSuperscript() : if (i==0) -1.0 else lineAsc - elemBaseline - prevElemHeight * 0.25;
+				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else lineAsc - elemBaseline - prevElemHeight * 0.25;
 				ParaElementSubscript() : lineAsc - elemBaseline / 2.0;
 			},
 			lineAsc - getValue(inspector.baseline)
@@ -1249,7 +1255,7 @@ tParaWordsTextSetter(ignoreLetterSpacing: bool) -> (TParaWord, string) -> TParaW
 	\w: TParaWord, t: string -> switch(w.word) {
 		GeneralText(__): {
 			view = inspectWordView(
-				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)),
+				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style) |> makeSkipOrderCheck),
 				w.inspector,
 				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
 			);
@@ -1257,7 +1263,7 @@ tParaWordsTextSetter(ignoreLetterSpacing: bool) -> (TParaWord, string) -> TParaW
 		}
 		GeneralDynamicText(__): {
 			view = inspectWordView(
-				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style)),
+				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style) |> makeSkipOrderCheck),
 				w.inspector,
 				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
 			);

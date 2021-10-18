@@ -106,10 +106,10 @@ export {
 	);
 
 	MInputAutocompleteState(
-		matchers : [Transform<SentenceMatcher>],
+		matchers : [Transform<Pair<int, SentenceMatcher>>],
 		sentenceMatcher : MSentenceMatcher,
 		completionFn : MCompletionFn,
-		sentences : DynamicBehaviour<[SentenceHit]>,
+		sentences : DynamicBehaviour<[SentenceMatch]>,
 		selected : DynamicBehaviour<int>,
 		showAllOnEmpty : bool,
 		maxResults : int,
@@ -463,8 +463,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	iconSize = extractStruct(style, MIconSize(if (condensed) 20. else 24.)).size;
 	iconBorders = extractStruct(style, MIconButtonBorder(8.)).border;
 	showDropDownArrow = !readOnly && extractStruct(style, MShowDropDownArrow(false)).show;
-	mClearIcon = extractStruct(style, MShowClearIcon(mobile && (width <= 0. || width > 96.), false));
-	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover) && !readOnly;
+	mClearIcon = extractStruct(style, MShowClearIcon2(mobile && (width <= 0. || width > 96.), false, false));
+	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover || mClearIcon.always) && !readOnly;
 
 	// Left icon
 	leftIcon = extractStruct(style, MLeftIcon("", []));
@@ -487,15 +487,18 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			Some(
 				fif(
 					fand(
-						fand(
-							mfocus.enabled,
-							fthrottle2(
-								fOr(
-									if (mClearIcon.onHover) mfocus.hover else const(false),
-									if (mClearIcon.onFocus) mfocus.focused else const(false),
-								),
-								10
-							)
+						fOr(
+							fand(
+								mfocus.enabled,
+								fthrottle2(
+									fOr(
+										if (mClearIcon.onHover) mfocus.hover else const(false),
+										if (mClearIcon.onFocus) mfocus.focused else const(false)
+									),
+									10
+								)
+							),
+							const(mClearIcon.always)
 						),
 						fneq(content, "")
 					),
@@ -638,10 +641,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	matchers =
 		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
-			[preparedSentenceMatcher.matcher]
+			[fpair(const(0), preparedSentenceMatcher.matcher)]
 		} else {
-			map(extractStruct(style, MDictionary([])).dictionaries, \mdictionary ->
-				sentenceMatcher.matcher(filter(concatA(map(strSplit(mdictionary, "\n"), \s -> strSplit(s, fromCharCode(0x000D)))), \s -> strlen(s) > 0))
+			mapi(extractStruct(style, MDictionary([])).dictionaries, \i, mdictionary ->
+				Pair(i, sentenceMatcher.matcher(filter(concatA(map(strSplit(mdictionary, "\n"), \s -> strSplit(s, fromCharCode(0x000D)))), \s -> strlen(s) > 0)))
 				|> const
 			)
 		};
@@ -671,7 +674,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					\inline -> MAutoCompleteInLineState(
 						fselect(sentences, FLift(\sent -> {
 							cont = getValue(content);
-							findmap(sent, \s ->
+							findmap(sent, \s : SentenceMatch ->
 								if (startsWith(toLowerCase(s.sentence), toLowerCase(cont)))
 									Some(Pair(s.sentence, strRight(s.sentence, strlen(cont))))
 								else None()
@@ -779,7 +782,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	autocompleteHandlerUns = initUnsM();
 	showMoreHandlerUns = initUnsM();
-	updateFocusContent = \c : string, foc : bool, mtch : [SentenceMatcher] -> {
+	updateFocusContent = \c : string, foc : bool, mtch : [Pair<int, SentenceMatcher>] -> {
 		dispUnsM(showMoreHandlerUns);
 		maybeApply(editIcon, \ei -> nextDistinct(ei, !foc));
 		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, foc || c != ""));
@@ -804,17 +807,20 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					\chunk, fulfill, __ -> {
 						mapConcat(
 							chunk,
-							\matcher -> {
+							\matcherPair -> {
 								if (showAll)
 									filtermap(
-										matcher.sentences, 
+										matcherPair.second.sentences, 
 										\s -> {
-											if (s != "") Some(SentenceHit(matcher, s, 0., makeSet()))
+											if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
 											else None()
 										}
 									)
 								else
-									ac.sentenceMatcher.fn(matcher, c2, intMax, true, false, getValue(position))
+									map(
+										ac.sentenceMatcher.fn(matcherPair.second, c2, intMax, true, false, getValue(position)),
+										\h -> SentenceHitExtended(h.matcher, h.sentence, h.score, h.origWords, matcherPair.first)
+									)
 							}
 						) |> fulfill
 					},
@@ -828,8 +834,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								\cm ->
 									map(sentences, \ns -> {
 										sen = ns.sentence;
-										dictId = findiDef(mtch, \mch -> contains(mch.sentences, sen), -1);
-										senId = if (dictId >= 0) findiDef(mtch[dictId].sentences, \sn -> sn == sen, -1) else -1;
+										dictId = switch(ns) {
+											SentenceHit(__, __, __, __) : findiDef(mtch, \mch -> contains(mch.second.sentences, sen), -1);
+											SentenceHitExtended(__, __, __, __, idx) : idx;
+										}
+										senId = if (dictId >= 0) findiDef(mtch[dictId].second.sentences, \sn -> sn == sen, -1) else -1;
 
 										Triple(dictId, senId, ns)
 									})
@@ -1557,12 +1566,12 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 			prevSlength = strlen(prevS);
 			newSlength = strlen(newS);
 
-			newPosition = position2pair(pair2position(getValue(cursorPosition)) + newSlength - prevSlength);
-
 			if (newSlength > prevSlength) {
 				next(inputState.content, newS);
+				newPosition = position2pair(pair2position(getValue(cursorPosition)) + newSlength - prevSlength);
 				nextDistinct(cursorPosition, newPosition);
 			} else {
+				newPosition = position2pair(pair2position(getValue(cursorPosition)) + newSlength - prevSlength);
 				nextDistinct(cursorPosition, newPosition);
 				next(inputState.content, newS);
 			}
@@ -2615,7 +2624,12 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 
 	MCompletionFn(\com, isSelected, setWordFn ->
 		MGetMaterial2Tropic(\m2t -> MGetFocusGroup(\p -> {
-			focusState = [MOnClick(\ -> setWordFn(com)), MRippleType(const(MRippleFill())), MFocusEnabled(const(false))];
+			focusState = [
+				MOnClick(\ -> setWordFn(com)),
+				MRippleType(const(MRippleFill())),
+				MFocusEnabled(const(false)),
+				MShortcut(if (isSelected) "enter" else "")
+			];
 			isRTL = p.rtl;
 
 			face =

@@ -1,0 +1,147 @@
+import tools/flowe/types/ugraph/debug;
+
+export {
+	// Given two type names, figure it if they are compatible
+	incompatibleTNodeNames(tmap : TMap, node : TNodeName, overload : TNodeName) -> bool;
+
+	// Is this a union with a single struct inside? That is a special case: I.e. an alias
+	isSingleUnionName(tmap : TMap, name1 : string, name2 : string) -> bool;
+
+	// What potential typenames could resolve this super type?
+	getPossibleTSupers(tmap : TMap, super : TNodeSupertype) -> Set<string>;
+
+	isFlowNode(node : TNode) -> bool;
+}
+
+// Are these node names incompatible forever?
+incompatibleTNodeNames(tmap : TMap, node : TNodeName, overload : TNodeName) -> bool {
+	if (isEmptyTNode(node) || isEmptyTNode(overload) ) {
+		false
+	} else if (node.name == "flow" || overload.name == "flow") {
+		// This is always ok
+		false
+	} else if (node.name == overload.name) {
+		length(node.typars) != length(overload.typars)
+		|| exists(mapi(node.typars, \i, tp -> {
+			incompatibleEClasses(tmap, tp, overload.typars[i])
+		}), idfn)
+	} else if (isBuiltinDirectTypeName(node.name) || isBuiltinDirectTypeName(overload.name)) {
+		// The names are different, but built-in types, so there is a problem
+		true;
+	} else {
+		!isSingleUnionName(tmap, node.name, overload.name);
+	}
+}
+
+builtinDirectTypeNames = ["void", "bool", "int", "double", "string", "?", "??", "???", "????"];
+
+isBuiltinDirectTypeName(id : string) -> bool {
+	contains(builtinDirectTypeNames, id);
+}
+
+incompatibleEClasses(tmap : TMap, left : int, right : int) -> bool {
+	lroot = findUnionMapRoot(tmap.tmap, left);
+	rroot = findUnionMapRoot(tmap.tmap, right);
+	lroot != rroot
+	&& {
+		lnode = getUnionMapValue(tmap.tmap, lroot);
+		rnode = getUnionMapValue(tmap.tmap, rroot);
+		incompatibleTNodes(tmap, lnode, rnode);
+	}
+}
+
+incompatibleTNodes(tmap : TMap, left : TNode, right : TNode) -> bool {
+	todo = \ -> {
+		println("TODO: Check if node " + prettyTNode(tmap, left) + " is compatible with node " + prettyTNode(tmap, right));
+		false;
+	}
+	if (isEmptyTNode(left) || isEmptyTNode(right)) false
+	else switch (left) {
+		TNodeName(lname, ltypars, lpos): {
+			switch (right) {
+				TNodeName(rname, rtypars, rpos): {
+					incompatibleTNodeNames(tmap, left, right)
+				}
+				default: incompatibleTNodes(tmap, right, left);
+			}
+		}
+		TNodeOverload(lunique, loverloads, pos): {
+			if (exists(loverloads, isFlowNode)) false
+			else todo();
+		}
+		TNodeSupertype(luniques, lsubtypes, usubs, pos): {
+			if (existsSet(usubs, \s -> {
+				isEmptyEClass(tmap, s);
+			})) {
+				// OK, we have some unknown subtypes, so it can be anything
+				false
+			} else {
+				switch (right) {
+					TNodeName(rname, rtypars, rpos): {
+						supers = getPossibleTSupers(tmap, left);
+						if (containsSet(supers, rname)) {
+							false;
+						} else {
+							existsSet(usubs, \st -> {
+								unode = getUnionMapValue(tmap.tmap, st);
+								incompatibleTNodes(tmap, unode, right)
+							});
+						}
+					}
+					default: {
+						todo();
+					}
+				}
+			}
+		}
+	}
+}
+
+isEmptyEClass(tmap : TMap, eclass : int) -> bool {
+	node = getUnionMapValue(tmap.tmap, eclass);
+	isEmptyTNode(node);
+}
+
+
+// It could be that we have a union with just one struct
+isSingleUnionName(tmap : TMap, name1 : string, name2 : string) -> bool {
+	// Are these names compatible
+	muname1 = ^(tmap.resolveUnionName)(name1);
+	switch (muname1) {
+		None(): {
+			muname2 = ^(tmap.resolveUnionName)(name2);
+			switch (muname2) {
+				None(): false;
+				Some(u): {
+					if (length(u.types) == 1) {
+						u.types[0].id == name1
+					} else false;
+				}
+			}
+		}
+		Some(u): {
+			if (length(u.types) == 1) {
+				u.types[0].id == name2
+			} else false;
+		}
+	}
+}
+
+getPossibleTSupers(tmap : TMap, super : TNodeSupertype) -> Set<string> {
+	foldi(super.subtypes, makeSet(), \i, acc, t : TNodeName -> {
+		id = t.name;
+		supers0 = ^(tmap.resolveSupertypes)(id);
+		supers = arrayPush(supers0, id);
+		supset = buildSet(supers);
+		if (i == 0) supset
+		else intersectSets(supset, acc)
+	});
+}
+
+isFlowNode(node : TNode) -> bool {
+	switch (node) {
+		TNodeName(name, typars, pos): name == "flow";
+		TNodeOverload(unique, overloads, pos): false;
+		TNodeSupertype(uniques, subtypes, unknownSubtypes, pos): false;
+	}
+}
