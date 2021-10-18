@@ -702,3 +702,230 @@ fcReplLog(message : string, conf : CompilerConfig) -> void {
 		}
 	}
 }
+
+fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
+	switch (ex) {
+		FiLambda(args, body,__,__): {
+			Some(FiFuncVal(\as ->
+				fcReplEval(prog, body,
+					foldi(args, vars, \i, acc, arg -> setTree(acc, args[i].name, as[i]))
+				)
+			));
+		}
+		FiCall(f, args,__,__): {
+			maybeBind(fcReplEval(prog, f, vars),
+				\f1 -> {
+					switch (f1) {
+						FiFuncVal(fn): {
+							args1 = filtermap(args, \a -> fcReplEval(prog, a, vars));
+							if (length(args) != length(args1)) None() else fn(args1);
+						}
+						default: None();
+					}
+				}
+			);
+		}
+		FiVar(x,__,__): {
+			switch (lookupTree(vars, x)) {
+				Some(val): Some(val);
+				None(): {
+					maybeBind(lookupTree(prog.names.toplevel, x),
+						\decl -> {
+							switch (decl) {
+								FiFunctionDec(__,lambda, __,__,__): {
+									fcReplEval(prog, lambda, makeTree());
+								}
+								FiGlobalVar(__,value, __,__,__): {
+									fcReplEval(prog, value, makeTree());
+								}
+								FiNativeDec(__,__,__,nativeName, fallback,__,__): {
+									Some(FiFuncVal(\as ->
+										hostCall(nativeName, map(as, \a -> 
+											fcUnwrapFiVal(a)
+										))
+									));
+								}
+							}
+						}
+					);
+				}
+			}
+		}
+		FiLet(x, __, e1, e2,__,__): {
+			maybeBind(fcReplEval(prog, e1, vars),
+				\v -> fcReplEval(prog, e2, setTree(vars, x, v))
+			);
+		}
+		FiIf(e1, e2, e3, __,__): {
+			maybeBind(fcReplEval(prog, e1, vars),
+				\c -> switch (c) {
+					FiBoolVal(v): {
+						if (v) fcReplEval(prog, e2, vars) else fcReplEval(prog, e3, vars);
+					}
+					default: None();
+				}
+			);
+		}
+		FiSwitch(v,__,cs,__,__): {
+			maybeBind(fcReplEval(prog, v, vars),
+				\w -> {
+					switch (w) {
+						FiStructVal(n, es): {
+							maybeBind(
+								find(cs, \c -> c.struct == n),
+								\c : FiCase -> {
+									fcReplEval(prog, c.body, 
+										foldi(es, vars, \i, acc, e -> setTree(acc, c.argNames[i], e))
+									)
+								}
+							);
+						}
+						default: None();
+					}
+				}
+			);
+		}
+		FiCast(e, __,__,__,__): {
+			fcReplEval(prog, e, vars);
+		}
+		FiSeq(es,__,__): {
+			if (length(es) == 0) Some(FiVoidVal()) else {
+				ret : ref Maybe<FiVal> = ref None();
+				iteri(es, \i, e -> {
+					v = fcReplEval(prog, e, vars);
+					if (i + 1 == length(es)) {
+						ret := v;
+					}
+				});
+				^ret;
+			}
+		}
+		FiCallPrim(op, es, __,__): {
+			fcReplEvalCallPrim(prog, ex, vars);
+		}
+		FiString(s,__): Some(FiStringVal(s));
+		FiBool(b,__):   Some(FiBoolVal(b));
+		FiDouble(d,__): Some(FiDoubleVal(d));
+		FiVoid(__):     Some(FiVoidVal());
+		FiInt(i,__):    Some(FiIntVal(i));
+		FiRequire(flowfile, __,__,__): {
+			None();
+		}
+		FiUnsafe(name, __,__,__): {
+			None();
+		}
+	}
+}
+
+FiVal ::= FiConstVal, FiStructVal, FiArrayVal, FiRefVal, FiFlowVal, FiNativeVal, FiFuncVal; 
+
+	FiConstVal ::= FiVoidVal, FiBoolVal, FiIntVal, FiDoubleVal, FiStringVal;
+	FiStructVal(name : string, args : [FiVal]);
+	FiArrayVal(val : [FiVal]);
+	FiRefVal(val : ref FiVal);
+	FiFlowVal(val : flow);
+	FiNativeVal(val : native);
+	FiFuncVal(fn : ([FiVal]) -> Maybe<FiVal>);
+
+	FiVoidVal();
+	FiBoolVal(val : bool);
+	FiIntVal(val : int);
+	FiDoubleVal(val : double);
+	FiStringVal(val : string);
+
+fcReplEvalCallPrim(prog : FiProgram, call : FiCallPrim, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
+	args = filtermap(call.es, \e -> fcReplEval(prog, e, vars));
+	if (length(args) != length(call.es)) None() else {
+		switch (call.op) {
+			FcOrPrim(): {
+				switch (args[0]) {
+					FiBoolVal(b1): {
+						switch (args[1]) {
+							FiBoolVal(b2): {
+								Some(FiBoolVal(b1 || b2))
+							}
+							default: None();
+						}
+					}
+					default: None();
+				}
+			}
+			FcAndPrim(): {
+				switch (args[0]) {
+					FiBoolVal(b1): {
+						switch (args[1]) {
+							FiBoolVal(b2): {
+								Some(FiBoolVal(b1 && b2))
+							}
+							default: None();
+						}
+					}
+					default: None();
+				}
+			}
+			FcNotPrim(): {
+				switch (args[0]) {
+					FiBoolVal(b): {
+						Some(FiBoolVal(!b));
+					}
+					default: None();
+				}
+			}
+			FcEqPrim(): {
+				None();
+			}
+			default: None();
+			/*FcNePrim(); 
+			FcLePrim(); 
+			FcGePrim(); 
+			FcLtPrim(); 
+			FcGtPrim(); 
+			FcPlusPrim(); 
+			FcMinusPrim(); 
+			FcMulPrim(); 
+			FcDivPrim(); 
+			FcModPrim(); 
+			FcNegPrim();
+			FcArrayPrim(); 
+			FcIndexPrim();
+			FcDerefPrim(); 
+			FcAssignPrim(); 
+			FcRefPrim(); 
+			FcStructPrim(struct_name); 
+			FcFieldPrim(name); 
+			FcSetMutablePrim(name);
+			// creates a closure explicitly - appears after lambda lifting
+			FcCreateClosurePrim(structName, functionName;
+			FcQuote();
+			FcUnquote();*/
+		}
+	}
+}
+
+fcUnwrapFiVal(ex : FiVal) -> flow {
+	switch (ex) {
+		FiStructVal(name, args): {
+			makeStructValue(name, map(args, fcUnwrapFiVal), IllegalStruct());
+		}
+		FiArrayVal(val): {
+			map(val, fcUnwrapFiVal)
+		}
+		FiRefVal(val): {
+			val;
+		}
+		FiFlowVal(val): {
+			val;
+		}
+		FiNativeVal(val): {
+			val;
+		}
+		FiFuncVal(fn): {
+			fn;
+		}
+		FiStringVal(s): s;
+		FiBoolVal(b):   b;
+		FiDoubleVal(d): d;
+		FiVoidVal():    ex;
+		FiIntVal(i):    i;
+	}
+}
