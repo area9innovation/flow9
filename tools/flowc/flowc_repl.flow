@@ -2,6 +2,7 @@ import sys/system;
 import string_utils;
 import tools/flowc/flowc_typecheck;
 import tools/common/utils;
+import tools/flowc/flow_parser;
 
 export {
 	// Runs REPL loop for flow. Console help is available by 'help' command.
@@ -375,6 +376,11 @@ fcPreparePieceSource(env : FcReplEnv, piece : FcReplPiece, args : [string]) -> s
 	code;
 }
 
+fcIsFlowProgram(src : string) -> bool {
+	p = parse_flow(src);
+	p.first.end == strlen(src);
+}
+
 fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplPiece> {
 	env_code = fcReplJoinCode(env, false);
 	code1 = trim2(code0, " \t\n\r");
@@ -388,18 +394,26 @@ fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplP
 		// At last, try to treat code as a set of toplevel definitions 
 		FcReplDecls(name, cur_code),
 	];
-	silent_conf = CompilerConfig(env.config with verbose = 0);
-	find(code_variants, \piece -> {
-		code = fcPreparePieceSource(env, piece, []);
-		fcReplDebug("REPL TRYING TO TYPECHECK: \n" + code + "\n\n", env.config, 2);
-		// Disable any output, otherwise the output will be polluted with trial errors
-		fcSetSkipPrinting(env.config.threadId, true);
-		ret = parseAndTypecheckProgram(silent_conf, initFcTypeEnvGlobal(), "___tmp___").second == 0;
-		// Enable the output back
-		fcSetSkipPrinting(env.config.threadId, false);
-		fcReplDebug("REPL TYPECHECK RESULT: " + b2s(ret) + "\n", env.config, 2);
-		ret;
-	});
+	maybeBind(
+		find(code_variants, \piece -> {
+			code = fcPreparePieceSource(env, piece, []);
+			fcReplDebug("REPL TRYING TO PARSE: \n" + piece.code + "\n\n" + code, env.config, 2);
+			ret = fcIsFlowProgram(code);
+			fcReplDebug("WAS PARSED: " + b2s(ret), env.config, 2);
+			ret;
+		}),
+		\variant -> {
+			code = fcPreparePieceSource(env, variant, []);
+			fcReplDebug("REPL TRYING TO TYPECHECK: \n" + variant.code + "\n\n" + code, env.config, 2);
+			if (parseAndTypecheckProgram(env.config, initFcTypeEnvGlobal(), "___tmp___").second == 0) {
+				fcReplDebug("WAS TYPECHECKED", env.config, 2);
+				Some(variant);
+			} else {
+				fcReplDebug("WAS NOT TYPECEHECKED", env.config, 2);
+				None();
+			}
+		}
+	);
 }
 
 fcReplAdd(env0 : FcReplEnv, name : string, code : string) -> FcReplEnv {
