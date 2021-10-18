@@ -1,0 +1,45 @@
+import tools/flowe/backends/rename_ids;
+import tools/flowe/backends/bprogram_lower;
+import tools/flowe/driver;
+
+export {
+	linkBExpProgram(cache : FlowCache, flowpath : string, shorten_ids : bool, spec : BackendSpec) -> BExpProgram;
+	linkBProgram(cache : FlowCache, flowpath : string, shorten_ids : bool, spec : BackendSpec) -> BProgram;
+	programBModules(cache : FlowCache, file : string, acc : List<BModule>, visited : Set<string>) -> Pair<List<BModule>, Set<string>>;
+}
+
+linkBExpProgram(cache : FlowCache, flowpath : string, shorten_ids : bool, spec : BackendSpec) -> BExpProgram {
+	modules = list2array(programBModules(cache, flowpath, makeList(), makeSet()).first);
+	renameIdsBExpProgram(bmodules2BExpProgram(modules, spec), spec, shorten_ids).first;
+}
+
+linkBProgram(cache : FlowCache, flowpath : string, shorten_ids : bool, spec : BackendSpec) -> BProgram {
+	bexp_program = linkBExpProgram(cache, flowpath, shorten_ids, spec);
+	bexpProgram2BProgram(bexp_program);
+}
+
+programBModules(cache : FlowCache, file : string, acc : List<BModule>, visited : Set<string>) -> Pair<List<BModule>, Set<string>> {
+	module = getCachedBModule(cache.modules, file);
+	imported_visited : Pair<List<BModule>, Set<string>> = fold(module.imports, Pair(acc, insertSet(visited, file)), \ac : Pair<List<BModule>, Set<string>>, imp : DImport -> {
+		if (containsSet(ac.second, imp.path)) ac else {
+			programBModules(cache, imp.path, ac.first, ac.second)
+		}
+	});
+	Pair(Cons(module, imported_visited.first), imported_visited.second);
+}
+
+mergeBModules(b1 : BModule, b2 : BModule) -> BModule {
+	BModule("", "", [], [],
+		DExport(
+			mergeSets(b1.exported.exportedTypeNames, b2.exported.exportedTypeNames),
+			mergeSets(b1.exported.exportedTypes, b2.exported.exportedTypes),
+			mergeSets(b1.exported.exportedGlobals, b2.exported.exportedGlobals), -1
+		),
+		mergeTree(b1.structs, b2.structs),
+		mergeTree(b1.unions, b2.unions),
+		mergeTree(b1.fields, b2.fields),
+		mergeTree(b1.natives, b2.natives),
+		mergeTree(b1.globals, b2.globals),
+		concat(b1.order, b2.order)
+	);
+}

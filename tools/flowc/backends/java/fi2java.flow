@@ -1,5 +1,6 @@
 import tools/flowc/backends/java/fi2java_compile;
 import tools/flowc/backends/java/fi2java_main;
+import tools/flowc/backends/java/fi2java_natives;
 import tools/flowc/backends/java/fi2jar_raw;
 import tools/flowc/backends/java/fi2jar_gradle;
 
@@ -28,7 +29,7 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> vo
 		package_path = if (cfg.builder != "gradle") {
 			pathCombineMany(concat([cfg.generatedir], strSplit(cfg.packageName, ".")));
 		} else {
-			pathCombineMany(concat([cfg.generatedir, changeFileExt(cfg.jarfile, ""), "src", "main", "java"], strSplit(cfg.packageName, ".")));
+			pathCombineMany(concat([cfg.generatedir, fileNameOnly(changeFileExt(cfg.jarfile, "")), "src", "main", "java"], strSplit(cfg.packageName, ".")));
 		}
 		ensureDirectoryExists(package_path);
 		gcontext = fi2javaTranslate(program, cfg, package_path);
@@ -71,10 +72,12 @@ fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string)
 	};
 
 	gcontext = JavaGlobalContext(
-		program, package_path, cfg.mainClassName,
+		cfg, program, package_path,
 		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
 		makeTree(), // globals
 		makeTree(), // globalFuncs
+		fi2javaNatives(cfg), // natives
+		makeSet(), // missing_natives
 		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)), // has_func_def
 		makeTree(), // has_field_accessor
 		makeTree(), // uses_host
@@ -90,9 +93,10 @@ fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string)
 	indexJavaGlobals(gcontext);
 	generateJavaModules(gcontext, package_path);
 	generateJavaStructDefs(gcontext, package_path);
-	generateJavaMainClass(gcontext, cfg);
+	generateJavaMainClass(gcontext);
 	generateJavaSingletonStructs(gcontext);
 	generateJavaStructs(gcontext);
+	generateJavaWrappers(gcontext);
 
 	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
 		if (has) {

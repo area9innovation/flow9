@@ -539,7 +539,7 @@ class AccessWidget extends EventEmitter {
 							"stagechanged",
 							function() {
 								if (focused) {
-									this.element.focus();
+									if (this.element != null) this.element.focus();
 									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 								}
 							}
@@ -563,7 +563,7 @@ class AccessWidget extends EventEmitter {
 							"stagechanged",
 							function() {
 								if (focused) {
-									this.element.focus();
+									if (this.element != null) this.element.focus();
 									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 								}
 							}
@@ -812,7 +812,12 @@ class AccessWidget extends EventEmitter {
 				element.onpointerup = onpointerup;
 			}
 
-			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
+			element.oncontextmenu = function (e) {
+				var preventContextMenu = untyped clip.isInput != true;
+				if (preventContextMenu) e.preventDefault();
+				e.stopPropagation();
+				return !preventContextMenu;
+			};
 		} else if (role == "textbox") {
 			element.onkeyup = function(e) {
 				if (e.keyCode == 13 && untyped clip.accessCallback != null) {
