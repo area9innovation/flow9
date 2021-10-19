@@ -34,9 +34,9 @@ fcReplLoop(config : CompilerConfig) -> void {
 }
 
 FcReplPiece ::= FcReplDecls, FcReplStats, FcReplExp;
-	FcReplDecls(name : string, code : string);
-	FcReplStats(name : string, code : string);
-	FcReplExp(name : string, code : string);
+	FcReplDecls(name : string, code : string, program : Maybe<FiProgram>);
+	FcReplStats(name : string, code : string, program : Maybe<FiProgram>);
+	FcReplExp(name : string, code : string, program : Maybe<FiProgram>);
 
 FcReplCommand ::= FcReplEval, FcReplExec, FcReplCompile, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplConfig, FcReplExit;
 	FcReplEval(expr : string);
@@ -237,14 +237,14 @@ fcReplLoopStep(env : FcReplEnv) -> FcReplEnv {
 		}
 		FcReplExec(piece): {
 			switch (piece) {
-				FcReplDecls(name, code): {
+				FcReplDecls(name, code, program): {
 					// evaluation of a declaration makes no effect
 					env;
 				}
-				FcReplStats(name, src): {
+				FcReplStats(name, src, program): {
 					run(src);
 				}
-				FcReplExp(name, src): {
+				FcReplExp(name, src, program): {
 					run(src);
 				}
 			}
@@ -368,9 +368,9 @@ fcPrepareDeclsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 
 fcPreparePieceSource(env : FcReplEnv, piece : FcReplPiece, args : [string]) -> string {
 	code = switch (piece) {
-		FcReplDecls(name, code): fcPrepareDeclsSource(env, code, args);
-		FcReplStats(name, code): fcPrepareStatsSource(env, code, args);
-		FcReplExp(name, code):   fcPrepareExpSource(env, code, args);
+		FcReplDecls(name, code, prog): fcPrepareDeclsSource(env, code, args);
+		FcReplStats(name, code, prog): fcPrepareStatsSource(env, code, args);
+		FcReplExp(name, code, prog):   fcPrepareExpSource(env, code, args);
 	}
 	setFileContent("___tmp___.flow", code);
 	code;
@@ -388,11 +388,11 @@ fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplP
 	cur_unwrapped = fcReplUnwrapfcReplPrintln(cur_code);
 	code_variants = [
 		// At first, try to treat code as an expression
-		FcReplExp(name, cur_unwrapped),
+		FcReplExp(name, cur_unwrapped, None()),
 		// Then, try to treat code as a set of statements
-		FcReplStats(name, cur_code),
+		FcReplStats(name, cur_code, None()),
 		// At last, try to treat code as a set of toplevel definitions 
-		FcReplDecls(name, cur_code),
+		FcReplDecls(name, cur_code, None()),
 	];
 	maybeBind(
 		find(code_variants, \piece -> {
@@ -405,9 +405,14 @@ fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplP
 		\variant -> {
 			code = fcPreparePieceSource(env, variant, []);
 			fcReplDebug("REPL TRYING TO TYPECHECK: \n" + variant.code + "\n\n" + code, env.config, 2);
-			if (parseAndTypecheckProgram(env.config, initFcTypeEnvGlobal(), "___tmp___").second == 0) {
+			pair = parseAndTypecheckProgram(env.config, initFcTypeEnvGlobal(), "___tmp___");
+			if (pair.second == 0) {
 				fcReplDebug("WAS TYPECHECKED", env.config, 2);
-				Some(variant);
+				Some(switch(variant) {
+					FcReplExp(__, __, __): FcReplExp(variant with program = Some(pair.first));
+					FcReplStats(__,__,__): FcReplStats(variant with program = Some(pair.first));
+					FcReplDecls(__,__,__): FcReplDecls(variant with program = Some(pair.first));
+				});
 			} else {
 				fcReplDebug("WAS NOT TYPECEHECKED", env.config, 2);
 				None();
@@ -465,48 +470,75 @@ fcReplCompile(env : FcReplEnv, code0 : string, args : [string]) -> bool {
 fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 	r = switch (fcReplMakePiece(env, "", code0)) {
 		Some(piece): {
-			code = fcPreparePieceSource(env, piece, []);
-			fcReplDebug("REPL running:\n" + code, env.config, 1);
-			output = FcReplOutput(ref [], ref [], ref []);
-			print_out = fcReplOnOut(output, env);
-			print_err = fcReplOnErr(output, env);
-			engine = getConfigParameterDef(env.config.config, "repl-engine", "bc");
-			flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
-			flowcpp = "flowcpp" + (if (hasTargetName("windows")) ".bat" else "");
-			compile_code = 
-				if (engine == "jar") {
-					cmp_code = execSystemProcess(flowc, ["jar=1", "___tmp___.flow"], ".", print_out, print_err);
-					if (cmp_code == 0) {
-						execSystemProcess("java", ["-jar", "___tmp___.jar"], ".", print_out, print_out);
-						{ }
-					} 
-					fcDeleteGently("___tmp___.jar", env.config);
-					cmp_code
-				} else if (engine == "js") {
-					cmp_code = execSystemProcess(flowc, ["es6=___tmp___.js", "nodejs=1", "___tmp___.flow"], ".", print_out, print_err);
-					if (cmp_code == 0) {
-						execSystemProcess("js", ["___tmp___.js"], ".", print_out, print_out);
-						{ }
+			run_external = \ -> {
+				code = fcPreparePieceSource(env, piece, []);
+				fcReplDebug("REPL running:\n" + code, env.config, 1);
+				output = FcReplOutput(ref [], ref [], ref []);
+				print_out = fcReplOnOut(output, env);
+				print_err = fcReplOnErr(output, env);
+				engine = getConfigParameterDef(env.config.config, "repl-engine", "bc");
+				flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
+				flowcpp = "flowcpp" + (if (hasTargetName("windows")) ".bat" else "");
+				compile_code = 
+					if (engine == "jar") {
+						cmp_code = execSystemProcess(flowc, ["jar=1", "___tmp___.flow"], ".", print_out, print_err);
+						if (cmp_code == 0) {
+							execSystemProcess("java", ["-jar", "___tmp___.jar"], ".", print_out, print_out);
+							{ }
+						} 
+						fcDeleteGently("___tmp___.jar", env.config);
+						cmp_code
+					} else if (engine == "js") {
+						cmp_code = execSystemProcess(flowc, ["es6=___tmp___.js", "nodejs=1", "___tmp___.flow"], ".", print_out, print_err);
+						if (cmp_code == 0) {
+							execSystemProcess("js", ["___tmp___.js"], ".", print_out, print_out);
+							{ }
+						}
+						fcDeleteGently("___tmp___.js", env.config);
+						cmp_code
+					} else if (engine == "bc") {
+						cmp_code = execSystemProcess(flowc, ["bytecode=1", "___tmp___.flow"], ".", print_out, print_err);
+						if (cmp_code == 0) {
+							execSystemProcess(flowcpp, ["--batch", "___tmp___.bytecode"], ".", print_out, print_out);
+							{ }
+						}
+						fcDeleteGently("___tmp___.bytecode", env.config);
+						cmp_code
+					} else {
+						fcReplPrintln("unknown execution engine: " + engine, false, env.config);
+						-1;
 					}
-					fcDeleteGently("___tmp___.js", env.config);
-					cmp_code
-				} else if (engine == "bc") {
-					cmp_code = execSystemProcess(flowc, ["bytecode=1", "___tmp___.flow"], ".", print_out, print_err);
-					if (cmp_code == 0) {
-						execSystemProcess(flowcpp, ["--batch", "___tmp___.bytecode"], ".", print_out, print_out);
-						{ }
-					}
-					fcDeleteGently("___tmp___.bytecode", env.config);
-					cmp_code
-				} else {
-					fcReplPrintln("unknown execution engine: " + engine, false, env.config);
-					-1;
+				ret = (length(^(output.errs)) == 0) && (compile_code == 0);
+				if (getConfigParameterDef(env.config.config, "repl-output-imediately", "1") == "0") {
+					fcReplPrintln(strGlue(^(output.all), "\n"), ret, env.config);
 				}
-			ret = (length(^(output.errs)) == 0) && (compile_code == 0);
-			if (getConfigParameterDef(env.config.config, "repl-output-imediately", "1") == "0") {
-				fcReplPrintln(strGlue(^(output.all), "\n"), ret, env.config);
+				ret;
 			}
-			ret;
+			switch (piece.program) {
+				Some(program): {
+					// fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<FiVal>
+					/*switch (lookupTree(program.names.toplevel, "main")) {
+						Some(main): {
+							switch (main) {
+								FiFunctionDec(__,lambda, type,__,__): {
+									ret = fcReplEval(program, FiCall(FiVar()), makeTree());
+									isSome(ret);
+								}
+								default: false;
+							}
+						}
+						None(): {
+							// No main function
+							false;
+						}
+					}*/
+					ret = fcReplEval(program, FiCall(FiVar("main", FiTypeVoid(), -1), [], FiTypeVoid(), -1), makeTree());
+					isSome(ret);
+				}
+				None(): {
+					run_external();
+				}
+			}
 		}
 		None(): {
 			fcReplDebug("REPL ERROR IN CODE:\n" + code0, env.config, 0);
@@ -561,9 +593,9 @@ fcReplJoinCode(env : FcReplEnv, all : bool) -> string {
 			sortCustom(tree2pairs(env.pieces), \p -> p.first, true), 
 			\pair -> 
 				switch (pair.second) {
-					FcReplDecls(name, code): "// " + name + "\n" + code + "\n";
-					FcReplStats(name, code): if (all) "// " + name + "\n/* \n" + strIndent(code) + "\n*/\n" else "";
-					FcReplExp(name, code):   if (all) "// " + name + "\n//" + strReplace(code, "\n", "\\n") + "\n" else "";
+					FcReplDecls(name, code, prog): "// " + name + "\n" + code + "\n";
+					FcReplStats(name, code, prog): if (all) "// " + name + "\n/* \n" + strIndent(code) + "\n*/\n" else "";
+					FcReplExp(name, code, prog):   if (all) "// " + name + "\n//" + strReplace(code, "\n", "\\n") + "\n" else "";
 				}
 		))
 	) +
@@ -677,9 +709,9 @@ fcReplCommand2s(command : FcReplCommand, full : bool) -> string {
 
 fcReplPiece2s(piece : FcReplPiece, full : bool) -> string {
 	switch (piece) {
-		FcReplDecls(name, code): name + " decls" + (if (full) " \n" + code else ""); 
-		FcReplStats(name, code): name + " stats" + (if (full) " \n" + code else "");
-		FcReplExp(name, code):   name + " exp" + (if (full) " \n" + code else "");
+		FcReplDecls(name, code, prog): name + " decls" + (if (full) " \n" + code else ""); 
+		FcReplStats(name, code, prog): name + " stats" + (if (full) " \n" + code else "");
+		FcReplExp(name, code, prog):   name + " exp" + (if (full) " \n" + code else "");
 	}
 }
 
@@ -848,6 +880,7 @@ fiFiledVal(field : FiFieldVal) -> FiVal {
 }
 
 fcReplEvalCallPrim(prog : FiProgram, call : FiCallPrim, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
+	println("fcReplEvalCallPrim: " + toString(call));
 	args = filtermap(call.es, \e -> fcReplEval(prog, e, vars));
 	if (length(args) != length(call.es)) None() else {
 		switch (call.op) {
