@@ -314,13 +314,11 @@ fcPrepareExpSource(env : FcReplEnv, code : string, args : [string]) -> string {
 		main() -> void {
 			tmp_var = %expr_code%;
 			println2(tmp_var);
-			%quit%
 		}
 		",
 		[
 			"env_code", fcReplJoinCode(env, false),
 			"expr_code", code,
-			"quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"
 		]
 	);
 }
@@ -331,13 +329,11 @@ fcPrepareStatsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 		
 		main() -> void {
 			%main_code%
-			%quit%
 		}
 		",
 		[
 			"env_code", fcReplJoinCode(env, false),
-			"main_code", code,
-			"quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"
+			"main_code", code
 		]
 	);
 }
@@ -346,7 +342,6 @@ fcPrepareDeclsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 	main = if (strContains(code, "main()")) "" else 
 	blueprint("
 		main() -> void {
-			%quit%
 		}
 		",
 		["quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"]
@@ -736,11 +731,15 @@ fcReplLog(message : string, conf : CompilerConfig) -> void {
 	}
 }
 
+trace = false;
+
 fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
-	/*println2(^aaa + "fcReplEval: " + toString(ex)
-		//+ "\nvars:\n-------\n" +
-		//concatStrings(map(tree2pairs(vars), \p -> "\t" + p.first + " => " + fiVal2s(p.second) + "\n")) + "\n--------\n"
-	);*/
+	if (trace) {
+		println2(^aaa + "fcReplEval: " + toString(ex)
+			//+ "\nvars:\n-------\n" +
+			//concatStrings(map(tree2pairs(vars), \p -> "\t" + p.first + " => " + fiVal2s(p.second) + "\n")) + "\n--------\n"
+		);
+	}
 	a0 = ^aaa;
 	aaa := ^aaa + "\t";
 	/*args1 = map(call.es, \e -> {
@@ -787,16 +786,20 @@ fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<Fi
 									fcReplEval(prog, value, makeTree());
 								}
 								FiNativeDec(__,__,__,nativeName, fallback,__,__): {
-									//println("Creating native: " + nativeName);
-									Some(FiFuncVal(\as -> {
-										//println("Calling native: " + nativeName + 
-										//	" with args: " + strGlue(map(as, fiVal2s), ", ") + 
-										//	" unwrapped: " + strGlue(map(as, \a -> toString(fcUnwrapFiVal(a))), ", ")
-										//);
-										Some(fcWrapFiVal(hostCall(nativeName, map(as, \a -> 
-											fcUnwrapFiVal(a)
-										))));
-									}));
+									if (hostCallExists(nativeName, )) {
+										//println("Creating native: " + nativeName);
+										Some(FiFuncVal(\as -> {
+											//println("Calling native: " + nativeName + 
+											//	" with args: " + strGlue(map(as, fiVal2s), ", ") + 
+											//	" unwrapped: " + strGlue(map(as, \a -> toString(fcUnwrapFiVal(a))), ", ")
+											//);
+											Some(fcWrapFiVal(hostCall(nativeName, map(as, \a -> 
+												fcUnwrapFiVal(a)
+											))));
+										}));
+									} else {
+										fcReplEval(prog, fallback, makeTree());
+									}
 								}
 							}
 						}
@@ -842,8 +845,26 @@ fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<Fi
 				}
 			);
 		}
-		FiCast(e, __,__,__,__): {
-			fcReplEval(prog, e, vars);
+		FiCast(e, __,to,__,__): {
+			maybeMap(fcReplEval(prog, e, vars), \ev -> 
+				switch (ev) {
+					FiIntVal(v): {
+						switch (to) {
+							FiTypeDouble(): FiDoubleVal(i2d(v));
+							FiTypeString(): FiStringVal(i2s(v));
+							default: ev; 
+						}
+					}
+					FiDoubleVal(v): {
+						switch (to) {
+							FiTypeInt(): FiIntVal(round(v));
+							FiTypeString(): FiStringVal(d2s(v));
+							default: ev; 
+						}
+					}
+					default: ev;
+				}
+			);
 		}
 		FiSeq(es,__,__): {
 			ret : ref Maybe<FiVal> = ref Some(FiVoidVal());
@@ -866,7 +887,9 @@ fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<Fi
 		}
 	}
 	aaa := a0;
-	//println2(^aaa + "ret (**): " + toString(ret));
+	if (trace) {
+		println2(^aaa + "ret (**): " + toString(ret));
+	}
 	ret;
 }
 
