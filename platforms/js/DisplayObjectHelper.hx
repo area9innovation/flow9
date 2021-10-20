@@ -2012,7 +2012,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck;
+			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
 
 			var nextWidget = skipOrderCheck ? null : findNextNativeWidget(child, clip);
 			if (untyped clip.mask != null) {
