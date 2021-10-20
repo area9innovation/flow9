@@ -313,7 +313,7 @@ fcPrepareExpSource(env : FcReplEnv, code : string, args : [string]) -> string {
 
 		main() -> void {
 			tmp_var = %expr_code%;
-			println(tmp_var);
+			println2(tmp_var);
 			%quit%
 		}
 		",
@@ -532,6 +532,7 @@ fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 							false;
 						}
 					}*/
+					//println("CODE:\n" + piece.code);
 					ret = fcReplEval(program, FiCall(FiVar("main", FiTypeVoid(), -1), [], FiTypeVoid(), -1), makeTree());
 					isSome(ret);
 				}
@@ -736,7 +737,22 @@ fcReplLog(message : string, conf : CompilerConfig) -> void {
 }
 
 fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
-	switch (ex) {
+	/*println2(^aaa + "fcReplEval: " + toString(ex)
+		//+ "\nvars:\n-------\n" +
+		//concatStrings(map(tree2pairs(vars), \p -> "\t" + p.first + " => " + fiVal2s(p.second) + "\n")) + "\n--------\n"
+	);*/
+	a0 = ^aaa;
+	aaa := ^aaa + "\t";
+	/*args1 = map(call.es, \e -> {
+		println2(^aaa + "call.es, e: " + toString(e));
+		a0 = ^aaa;
+		aaa := ^aaa + "\t";
+		ret = fcReplEval(prog, e, vars);
+		aaa := a0;
+		//println2(^aaa + "ret (!!): " + toString(ret));
+		ret;
+	});*/
+	ret = switch (ex) {
 		FiLambda(args, body,__,__): {
 			Some(FiFuncVal(\as ->
 				fcReplEval(prog, body,
@@ -771,11 +787,16 @@ fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<Fi
 									fcReplEval(prog, value, makeTree());
 								}
 								FiNativeDec(__,__,__,nativeName, fallback,__,__): {
-									Some(FiFuncVal(\as ->
-										hostCall(nativeName, map(as, \a -> 
+									//println("Creating native: " + nativeName);
+									Some(FiFuncVal(\as -> {
+										//println("Calling native: " + nativeName + 
+										//	" with args: " + strGlue(map(as, fiVal2s), ", ") + 
+										//	" unwrapped: " + strGlue(map(as, \a -> toString(fcUnwrapFiVal(a))), ", ")
+										//);
+										Some(fcWrapFiVal(hostCall(nativeName, map(as, \a -> 
 											fcUnwrapFiVal(a)
-										))
-									));
+										))));
+									}));
 								}
 							}
 						}
@@ -825,16 +846,9 @@ fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<Fi
 			fcReplEval(prog, e, vars);
 		}
 		FiSeq(es,__,__): {
-			if (length(es) == 0) Some(FiVoidVal()) else {
-				ret : ref Maybe<FiVal> = ref None();
-				iteri(es, \i, e -> {
-					v = fcReplEval(prog, e, vars);
-					if (i + 1 == length(es)) {
-						ret := v;
-					}
-				});
-				^ret;
-			}
+			ret : ref Maybe<FiVal> = ref Some(FiVoidVal());
+			iter(es, \e -> ret := fcReplEval(prog, e, vars));
+			^ret;
 		}
 		FiCallPrim(op, es, __,__): {
 			fcReplEvalCallPrim(prog, ex, vars);
@@ -851,9 +865,48 @@ fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<Fi
 			None();
 		}
 	}
+	aaa := a0;
+	//println2(^aaa + "ret (**): " + toString(ret));
+	ret;
 }
 
-FiVal ::= FiConstVal, FiStructVal, FiArrayVal, FiRefVal, FiFlowVal, FiNativeVal, FiFuncVal; 
+FiEvalEnv(
+	funcs : Tree<string, FiFuncVal>,
+	globals : Tree<string, FiVal>,
+	locals : Tree<string, FiVal>
+);
+/*
+fcInitEvalEnv(prog : FiProgram) -> FiEvalEnv {
+	fold(prog.traversal, FiEvalEnv(makeTree(), makeTree(), makeTree()), \acc, mod_name ->
+		switch (lookupTree(prog.modules, mod_name)) {
+			Some(module): {
+				fold(module.initOrder, acc, \ac, decl_name ->
+					switch (lookupTree(module.functions, decl_name)) {
+						Some(func): {
+							FiEvalEnv(ac with 
+								funcs = setTree(ac.funcs, decl_name, FiFuncVal(
+									\as ->
+										fcReplEval(prog, body,
+											foldi(args, vars, \i, acc, arg -> setTree(acc, args[i].name, as[i]))
+										)
+								))
+							);
+						}
+						None(): {
+
+						}
+					}
+				);
+			}
+			None(): {
+				// Never should be
+				acc;
+			}
+		}
+	);
+}
+*/
+FiVal ::= FiConstVal, FiStructVal, FiArrayVal, FiRefVal, /*FiFlowVal,*/ FiNativeVal, FiFuncVal; 
 
 	FiConstVal ::= FiVoidVal, FiBoolVal, FiIntVal, FiDoubleVal, FiStringVal;
 	FiStructVal(name : string, fields : [FiFieldVal]);
@@ -862,7 +915,7 @@ FiVal ::= FiConstVal, FiStructVal, FiArrayVal, FiRefVal, FiFlowVal, FiNativeVal,
 		FiMutableField(name : string, val : ref FiVal);
 	FiArrayVal(val : [FiVal]);
 	FiRefVal(val : ref FiVal);
-	FiFlowVal(val : flow);
+	//FiFlowVal(val : flow);
 	FiNativeVal(val : native);
 	FiFuncVal(fn : ([FiVal]) -> Maybe<FiVal>);
 
@@ -879,10 +932,72 @@ fiFiledVal(field : FiFieldVal) -> FiVal {
 	}
 }
 
+fiVal2s(v : FiVal) -> string {
+	switch (v) {
+		FiStructVal(name, fields): {
+			name + "(" + 
+			strGlue(map(fields, \field ->
+				switch (field) {
+					FiConstField(__, val): fiVal2s(val);
+					FiMutableField(__, val): fiVal2s(^val);
+				}
+			), ", ")
+			+ ")";
+		}
+		FiArrayVal(arr): "[" + strGlue(map(arr, fiVal2s), ", ") + "]";
+		FiRefVal(val): "ref " + fiVal2s(^val);
+		FiFuncVal(fn): "<func>";
+		FiNativeVal(val): "<native>: " + toString(val);
+		FiVoidVal(): "{void}";
+		FiBoolVal(val): b2s(val);
+		FiIntVal(val): i2s(val);
+		FiDoubleVal(val): d2s(val);
+		FiStringVal(val): "\"" + val + "\"";
+	}
+}
+
+
+aaa = ref "";
+
 fcReplEvalCallPrim(prog : FiProgram, call : FiCallPrim, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
-	println("fcReplEvalCallPrim: " + toString(call));
-	args = filtermap(call.es, \e -> fcReplEval(prog, e, vars));
-	if (length(args) != length(call.es)) None() else {
+	/*println2(^aaa + "fcReplEvalCallPrim: " + toString(call)
+		//+ "\nvars:\n-------\n" +
+		//concatStrings(map(tree2pairs(vars), \p -> "\t" + p.first + " => " + fiVal2s(p.second) + "\n")) + "\n--------\n"
+	);*/
+	args1 = map(call.es, \e -> {
+		//println2(^aaa + "call.es, e: " + toString(e));
+		//a0 = ^aaa;
+		//aaa := ^aaa + "\t";
+		ret = fcReplEval(prog, e, vars);
+		//aaa := a0;
+		//println2(^aaa + "ret (!!): " + toString(ret));
+		ret;
+	});
+	//println2(^aaa + "args1 - done, len: " + i2s(length(call.es)) + " ?=" + i2s(length(args1)) + ": " + toString(args1));
+	//println2(^aaa + "args1: ");
+	//iter(args1, println);
+	/*	"[" + 
+			strGlue(map(args1, \arg ->
+				switch (arg) {
+					Some(v): fiVal2s(v);
+					None(): "<NONE>";
+				}
+			), ", ") + 
+		"]"
+	);*/
+
+	args = filtermap(args1, idfn);
+	/*args = filtermap(call.es, \e -> {
+		println2(^aaa + "call.es, e: " + toString(e));
+		a0 = ^aaa;
+		aaa := ^aaa + "\t";
+		ret = fcReplEval(prog, e, vars);
+		aaa := a0;
+		//println2(^aaa + "ret (!!): " + toString(ret));
+		ret;
+	});*/
+	//println2(^aaa + "args done");
+	ret = if (length(args) != length(call.es)) None() else {
 		switch (call.op) {
 			FcOrPrim(): {
 				switch (args[0]) {
@@ -1108,6 +1223,7 @@ fcReplEvalCallPrim(prog : FiProgram, call : FiCallPrim, vars : Tree<string, FiVa
 				);
 			}
 			FcFieldPrim(name): {
+				//println("Field: " + name + ", call: " + toString(call) + ", args: " + toString(args));
 				switch (args[0]) {
 					FiStructVal(str, fields): {
 						findmap(fields, \field -> 
@@ -1157,6 +1273,8 @@ fcReplEvalCallPrim(prog : FiProgram, call : FiCallPrim, vars : Tree<string, FiVa
 			}
 		}
 	}
+	//println2(^aaa + "ret: " + toString(ret));
+	ret
 }
 
 fcUnwrapFiVal(ex : FiVal) -> flow {
@@ -1168,25 +1286,56 @@ fcUnwrapFiVal(ex : FiVal) -> flow {
 				IllegalStruct()
 			);
 		}
-		FiArrayVal(val): {
-			map(val, fcUnwrapFiVal)
-		}
-		FiRefVal(val): {
-			val;
-		}
-		FiFlowVal(val): {
-			val;
-		}
-		FiNativeVal(val): {
-			val;
-		}
-		FiFuncVal(fn): {
-			fn;
-		}
+		FiArrayVal(val): map(val, fcUnwrapFiVal);
+		FiRefVal(val): ref fcUnwrapFiVal(^val);
+		FiFuncVal(fn): \as -> maybeMap(fn(map(as, fcWrapFiVal)), fcUnwrapFiVal);
 		FiStringVal(s): s;
 		FiBoolVal(b):   b;
 		FiDoubleVal(d): d;
 		FiVoidVal():    ex;
 		FiIntVal(i):    i;
+		FiNativeVal(v): v;
+	}
+}
+
+fcWrapFiVal(v : flow) -> FiVal {
+	// What is the type tag for this value? Supported only in cpp
+	// 0: void, 1: bool, 2: int, 3: double, 4 : string, 5: array, 6: struct, 12: code pointer, 20: native function
+	// 31: reference, 32: native value, 34: closure pointer, 48: captured frame
+	type_tag = getDataTagForValue(v);
+	if (type_tag == 0) {
+		FiVoidVal();
+	} else if (type_tag == 1) {
+		FiBoolVal(cast(v : flow -> bool));
+	} else if (type_tag == 2) {
+		FiIntVal(cast(v : flow -> int));
+	} else if (type_tag == 3) {
+		FiDoubleVal(cast(v : flow -> double));
+	} else if (type_tag == 4) {
+		FiStringVal(cast(v : flow -> string));
+	} else if (type_tag == 5) {
+		FiArrayVal(map(cast(v : flow -> [flow]), fcWrapFiVal));
+	} else if (type_tag == 6) {
+		fields = extractStructFieldNames(v);
+		FiStructVal(
+			extractStructName(v),
+			mapi(extractStructArguments(v), \i, w -> 
+				FiConstField(fields[i], fcWrapFiVal(w))
+			)
+		);
+	} else if (type_tag == 31) {
+		FiRefVal(
+			ref fcWrapFiVal(^cast(v : flow -> ref flow))
+		);
+	} else if (type_tag == 34) {
+		fn = cast(v : flow -> (([flow]) -> flow));
+		FiFuncVal(\as -> {
+			ret = fn(map(as, fcUnwrapFiVal));
+			if (getDataTagForValue(ret) == 0) None() else {
+				Some(fcWrapFiVal(ret));
+			}
+		});
+	} else {
+		FiNativeVal(v);
 	}
 }
