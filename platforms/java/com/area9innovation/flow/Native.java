@@ -1043,6 +1043,17 @@ public class Native extends NativeHost {
 		} else return new Object[0];
 	}
 
+	public static final String extractStructName(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getTypeName();
+		} else return "";
+	}
+
+	public static final String[] extractStructFieldNames(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getFieldNames();
+		} else return new String[0];
+	}
 
 	public static final Object quit(int c) {
 		System.exit(c);
@@ -2007,6 +2018,33 @@ public class Native extends NativeHost {
 		} catch (UnsupportedEncodingException | IllegalArgumentException e) {
 			System.out.println(e.toString());
 			return "";
+		}
+	}
+
+	// What is the type tag for this value?
+	// 0: void, 1: bool, 2: int, 3: double, 4 : string, 5: array, 6: struct, 12: code pointer, 20: native function
+	// 31: reference, 32: native value, 34: closure pointer, 48: captured frame
+	public static final int getDataTagForValue(Object x) {
+		if (x == null) {
+			return 0;
+		} else if (x.getClass().getSimpleName().equals("Boolean")) {
+			return 1;
+		} else if (x.getClass().getSimpleName().equals("Integer")) {
+			return 2;
+		} else if (x.getClass().getSimpleName().equals("Double")) {
+			return 3;
+		} else if (x.getClass().getSimpleName().equals("String")) {
+			return 4;
+		} else if (x.getClass().isArray()) {
+			return 5;
+		} else if (x.getClass().getSuperclass().getSimpleName().equals("Struct")) {
+			return 6;
+		} else if (x.getClass().getSimpleName().equals("Reference")) {
+			return 31;
+		} else if (x.getClass().getSimpleName().contains("$$Lambda$")) {
+			return 34;
+		} else {
+			return 32;
 		}
 	}
 }
