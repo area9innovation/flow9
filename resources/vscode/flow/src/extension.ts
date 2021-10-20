@@ -64,6 +64,7 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.flowConsole', flowConsole),
 		reg_comm('flow.execCommand', execCommand),
 		reg_comm('flow.runUI', runUI),
+		reg_comm('flow.restartLspClient', startLspClient),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
 		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
 		new notebook.FlowNotebookController()
@@ -71,7 +72,8 @@ export function activate(context: vscode.ExtensionContext) {
 	editors.forEach(editor => context.subscriptions.push(editor.register(context)));
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
-	flowChannel.show();
+	flowChannel.show(true);
+
 
 	// Create an LSP client
 	startLspClient();
@@ -87,15 +89,15 @@ function runUI() {
 	const file_name = path.basename(file_path, path.extname(file_path));
 	const file_dir = path.dirname(file_path);
 	const file_conf = findConfigDir();
-	const html_file = file_conf ? 
-		path.join(file_conf, "www2", file_name + ".html") : 
+	const html_file = file_conf ?
+		path.join(file_conf, "www2", file_name + ".html") :
 		path.join(file_dir, "www2", file_name + ".html");
-	compileCurrentFile(["html=" + html_file], 
+	compileCurrentFile(["html=" + html_file],
 		() => {
 			const panel = vscode.window.createWebviewPanel(
 				'flowUI',
 				file_name + ".html",
-				vscode.ViewColumn.One, { 
+				vscode.ViewColumn.One, {
 					enableScripts: true
 				}
 			);
@@ -128,8 +130,8 @@ function checkHttpServerStatus(initial : boolean) {
 }
 
 function outputHttpServerMemStats() {
-	client.sendRequest("workspace/executeCommand", { 
-		command : "command", 
+	client.sendRequest("workspace/executeCommand", {
+		command : "command",
 		arguments : ["server-mem-info=1", "do_not_log_this=1"]
 	}).then(
 		(out : string) => {
@@ -147,7 +149,7 @@ function flowConsole() {
 	let terminal = vscode.window.createTerminal("Flow console");
 	terminal.sendText("cd " + dir, true);
 	terminal.sendText("flowc1 repl=1 file=" + file, true);
-	terminal.show();
+	terminal.show(true);
 }
 
 function toggleHttpServer() {
@@ -162,11 +164,11 @@ function startHttpServer() {
     if (!httpServerOnline) {
 		if (!serverChannel) {
 			serverChannel = vscode.window.createOutputChannel("Flow server");
-			serverChannel.show();
+			serverChannel.show(true);
 		}
 		httpServer = tools.launchFlowcHttpServer(
-			tools.getFlowRoot(), 
-			showHttpServerOnline, 
+			getFlowRoot(),
+			showHttpServerOnline,
 			showHttpServerOffline,
 			(msg : any) => serverChannel.appendLine(msg)
 		);
@@ -225,9 +227,9 @@ function startLspClient() {
 
 function showHttpServerOnline(mem_stats : string = null) {
 	if (mem_stats) {
-		serverStatusBarItem.text = `$(vm-active) flow http server: online (` + mem_stats + ")"; 
+		serverStatusBarItem.text = `$(vm-active) flow http server: online (` + mem_stats + ")";
 	} else {
-		serverStatusBarItem.text = `$(vm-active) flow http server: online`; 
+		serverStatusBarItem.text = `$(vm-active) flow http server: online`;
 	}
 }
 
@@ -242,8 +244,8 @@ export function deactivate() {
 		tools.shutdownFlowcHttpServer().on("exit", (code, msg) => httpServer = null);
 	}
     // kill all child processed we launched
-    childProcesses.forEach(child => { 
-        child.kill('SIGKILL'); 
+    childProcesses.forEach(child => {
+        child.kill('SIGKILL');
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
     });
@@ -259,7 +261,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
     if (null == flowRepoUpdateChannel) {
         flowRepoUpdateChannel = vscode.window.createOutputChannel("Flow Update");
     }
-    const flowRoot = tools.getFlowRoot();
+    const flowRoot = getFlowRoot();
     if (!fs.existsSync(flowRoot)) {
         await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
         return;
@@ -357,21 +359,21 @@ function resolveProjectRoot(uri : string | vscode.Uri) : string {
 	return getPath(config.get("root"));
 }
 
-interface CommandWithArgs { 
-    cmd: string, 
-    args: string[], 
+interface CommandWithArgs {
+    cmd: string,
+    args: string[],
     matcher: string
 }
 
 function runCurrentFile(extra_args : string[] = []) {
     processFile(
 		function (flowBinPath, flowpath) {
-			return { 
-				cmd : path.join(flowBinPath, "flowcpp"), 
+			return {
+				cmd : path.join(flowBinPath, "flowcpp"),
 				args : [flowpath],
 				matcher: 'flowc'
 			}
-		}, 
+		},
 		false, extra_args
 	);
 }
@@ -379,13 +381,23 @@ function runCurrentFile(extra_args : string[] = []) {
 function compileCurrentFile(extra_args : string[] = [], on_compiled : () => void = () => {}, compilerHint: string = "") {
 	const use_lsp = vscode.workspace.getConfiguration("flow").get("lspMode") != "None";
     processFile(
-		function(flowBinPath, flowpath) { 
+		function(flowBinPath, flowpath) {
         	return getCompilerCommand(compilerHint, flowBinPath, flowpath);
-		}, 
-		use_lsp, 
-		extra_args, 
+		},
+		use_lsp,
+		extra_args,
 		on_compiled
 	);
+}
+
+function getFlowRoot(): string {
+    const config = vscode.workspace.getConfiguration("flow");
+	let root: string = config.get("root");
+	if (!fs.existsSync(root)) {
+		root = tools.run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
+		config.update("root", root, vscode.ConfigurationTarget.Global);
+	}
+	return root;
 }
 
 function processFile(
@@ -401,7 +413,7 @@ function processFile(
         let current = ++counter;
         flowChannel.clear();
         flowChannel.show(true);
-        let flowpath: string = tools.getFlowRoot();
+        let flowpath: string = getFlowRoot();
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
@@ -422,7 +434,7 @@ function processFile(
 			//flowChannel.appendLine("Compiling '" + getPath(document.uri) + "'");
 			//let start = performance.now();
 			client.sendRequest("workspace/executeCommand", {
-					command : "compile", 
+					command : "compile",
 					arguments: ["file=" + getPath(document.uri), "working-dir=" + rootPath].concat(extra_args)
 				}
 			).then(
@@ -487,7 +499,7 @@ function getFlowCompilerFamily(): string {
         return "flowcompiler";
     if (flowcompiler == "2")
         return "flowc";
-    else 
+    else
         return flowcompiler.toString();
 }
 

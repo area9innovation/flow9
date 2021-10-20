@@ -11,14 +11,11 @@ class FontLoader {
 		var fontFields = ["google", "custom"];
 		for (i in 0...names.length) untyped loadCSSFileInternal("fonts/"+names[i]+"/def.css");
 
-		// 400italic, 400 - examples of valid strings to parse
-		var wsReg = ~/([0-9]+)([A-Za-z]*)/;
-
 		for (i in 0...fontFields.length) {
 			var fontFieldsConfig = Reflect.field(config, fontFields[i]);
 			var fonts = Reflect.field(fontFieldsConfig, "families");
 			if (fonts != null) for (j in 0...fonts.length) {
-				var font = untyped fonts[i];
+				var font = untyped fonts[j];
 				var parts : Array<String> = font.split(":");
 				var family = parts[0];
 				var testString : String = null;
@@ -28,8 +25,8 @@ class FontLoader {
 						testString = Reflect.field(testStrings, family);
 						if (testString == null) testString = "русский العصور english";
 					}
+					addStyledTexts(family, parts.length > 1? parts[1] : null, testString);
 				}
-				addStyledTexts(family, parts.length > 1? parts[1] : null);
 			}
 		}
 		untyped __js__("setTimeout(onDone, 25)");
