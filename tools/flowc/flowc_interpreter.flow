@@ -1,0 +1,40 @@
+import tools/flowc/eval;
+import tools/flowc/manipulation/deadcode;
+
+export {
+	fcInterpret(config : CompilerConfig) -> void;
+}
+
+fcInterpret(conf : CompilerConfig) -> void {
+	working_dir = getConfigParameter(conf.config, "working-dir");
+	run_file = getConfigParameter(conf.config, "run");
+	run_flowfile = trimFlowfile(findFlowPath(run_file, true, conf.includes, working_dir), conf.includes, working_dir);
+
+	run_config = CompilerConfig(conf with 
+		config = setTree(conf.config, "file", run_file),
+		flowfile = run_flowfile
+	);
+	globEnv = initFcTypeEnvGlobal();
+	pair = parseAndTypecheckProgram(run_config, globEnv, run_config.flowfile);
+	program = deadFiCode(pair.first, collectFiEffects(pair.first), makeSet(), makeSet(), false, true, conf.verbose);
+	if (pair.second == 0) {
+		vals = fcInitEvalEnv(program);
+		switch (fcCallFunction("main", [], vals)) {
+			Some(ret): {
+				switch (ret) {
+					FiVoidVal(): { 
+						quit(0);
+					}
+					default: {
+						fcPrintln("Strage, main function must return void, but returned " + fiVal2s(ret), conf.threadId);
+						quit(2);
+					}
+				}
+			}
+			None(): {
+				fcPrintln("Runtime error occured", conf.threadId);
+				quit(1);
+			}
+		}
+	}
+}
