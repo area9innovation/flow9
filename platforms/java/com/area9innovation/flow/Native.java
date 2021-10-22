@@ -959,6 +959,31 @@ public class Native extends NativeHost {
 		return "";
 	}
 
+	public static boolean removeUrlParameter(String name) {
+		String[] args = FlowRuntime.program_args;
+		int index = 0;
+		for (String p : args) {
+			if (p.startsWith(name + "=")) {
+				break;
+			} else {
+				++index;
+			}
+		}
+		if (index == args.length) {
+			return false;
+		} else {
+			FlowRuntime.program_args = new String[args.length - 1];
+			for (int i = 0; i < args.length; ++ i) {
+				if (i < index) {
+					FlowRuntime.program_args[i] = args[i];
+				} else if (index < i){
+					FlowRuntime.program_args[i - 1] = args[i];
+				}
+			}
+			return true;
+		}
+	}
+
 	public static final String loaderUrl() {
 		return "";
 	}
@@ -2156,7 +2181,10 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2164,8 +2192,17 @@ public class Native extends NativeHost {
 					host_call_funcs.put(name, (Func1)((Object a1) -> {
 						try {
 							return meth.invoke(null, a1);
+						} catch (RuntimeException e) {
+							System.err.println(name + "\n" + e.getMessage() + "\na1: " + a1);
+							System.err.println(exceptionStackTrace(e));
+							//System.exit(10);
+							return null;
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2174,7 +2211,12 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2185,10 +2227,16 @@ public class Native extends NativeHost {
 						} catch (RuntimeException e) {
 							System.err.println(name + "\n" + e.getMessage() + "\na1: " + a1 + "\na2: " + a2 + "\na3: " + a3 + "\n");
 							System.err.println(exceptionStackTrace(e));
-							System.exit(10);
+							//System.exit(10);
 							return null;
 						} catch (ReflectiveOperationException e) {
-							System.err.println(name + "\n" + e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2196,8 +2244,20 @@ public class Native extends NativeHost {
 					host_call_funcs.put(name, (Func4)((Object a1, Object a2, Object a3, Object a4) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4);
+						} catch (RuntimeException e) {
+							System.err.println(name + "\n" + e.getMessage() + "\na1: " + a1 + "\na2: " + a2 + "\na3: " + a3 + "\na4: " + a4 + "\n");
+							System.err.println(exceptionStackTrace(e));
+							//System.exit(10);
+							return null;
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2206,7 +2266,15 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
