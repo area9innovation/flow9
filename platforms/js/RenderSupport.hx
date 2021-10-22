@@ -513,11 +513,6 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
-		if (viewportScaleWorkaroundEnabled) {
-			untyped console.log("createPixiRenderer", width, height);
-			untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
-		}
-
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
@@ -764,12 +759,6 @@ class RenderSupport {
 			) ? 95.0 / getViewportScale() : 0.0;
 		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
 
-		if (viewportScaleWorkaroundEnabled) {
-			untyped console.log('A. screen height', getScreenSize().height);
-			untyped console.log('B. Browser inner height', Browser.window.innerHeight);
-			untyped console.log('topHeight', topHeight);
-		}
-
 		// Calculate top height only once for each orientation
 		if (isPortaitOrientation()) {
 			if (WindowTopHeightPortrait == -1 || viewportScaleWorkaroundEnabled)
@@ -946,7 +935,6 @@ class RenderSupport {
 	// https://bugs.webkit.org/show_bug.cgi?id=170595
 	private static inline function onBrowserWindowResizeDelayed(e : Dynamic, ?delay : Int = 100) : Void {
 		Native.timer(delay, function() {
-			untyped console.log("~~onBrowserWindowResizeDelayed~~");
 			onBrowserWindowResize(e);
 		});
 	}
@@ -963,23 +951,12 @@ class RenderSupport {
 			var win_height = e.target.innerHeight;
 
 			if (viewportScaleWorkaroundEnabled) {
-				untyped console.log("onBrowserWindowResize");
 				var viewportScale = getViewportScale();
-				untyped console.log("viewportScale", viewportScale);
 				calculateMobileTopHeight();
 				var screen_size = getScreenSize();
-				untyped console.log("screen_size", screen_size.width, screen_size.height);
-				untyped console.log("mobile top height", getMobileTopHeight());
-				untyped console.log("isPortaitOrientation", isPortaitOrientation());
-				untyped console.log("WindowTopHeightPortrait", WindowTopHeightPortrait);
-				untyped console.log("WindowTopHeightLandscape", WindowTopHeightLandscape);
-				untyped console.log("innerHeight", Browser.window.innerHeight);
-				untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
 
 				win_width = screen_size.width;
 				win_height = untyped (screen_size.height - cast getMobileTopHeight()) * viewportScale;
-				untyped console.log("win_width", win_width);
-				untyped console.log("win_height", win_height);
 
 				Browser.document.documentElement.style.width = 'calc(100% * ${viewportScale})';
 				Browser.document.documentElement.style.height = 'calc(100% * ${viewportScale})';
@@ -1912,6 +1889,10 @@ class RenderSupport {
 
 	public static function setTextDirection(clip : TextClip, direction : String) : Void {
 		clip.setTextDirection(direction);
+	}
+
+	public static function setTextSkipOrderCheck(clip : TextClip, skip : Bool) : Void {
+		clip.setTextSkipOrderCheck(skip);
 	}
 
 	public static function setAutoAlign(clip : TextClip, autoalign : String) : Void {

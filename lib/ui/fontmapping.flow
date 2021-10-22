@@ -77,7 +77,7 @@ export {
 	apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [CharacterStyle]) -> [CharacterStyle];
 	applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle];
 
-	setDefaultMathFontFaces(fontFaces : [string]) -> void; 
+	setDefaultMathFontFaces(fontFaces : [string]) -> void;
 	isMathFontFace(fontFace : string) -> bool ;
 
 	// DEPRECATED. Use ifArrayReverseA.
@@ -405,7 +405,7 @@ setReverseMappedFontFamilyMap(mapping : [Pair<string, string>]) -> void {
 	reverseFontFamilyMappingTree := pairs2tree(mapping);
 }
 
-setDefaultFontMappingFnHelper(mapping : [Pair<string, string>], fallback : bool) -> (string, double) -> Pair<string, double> {
+setDefaultFontMappingFnHelper(mapping : [Pair<string, string>]) -> (string, double) -> Pair<string, double> {
 	directTree = pairs2tree(mapping);
 	setReverseMappedFontFamilyMap(map(mapping, \p -> Pair(p.second, p.first)));
 
@@ -413,7 +413,7 @@ setDefaultFontMappingFnHelper(mapping : [Pair<string, string>], fallback : bool)
 		\family, size -> Pair(family, size)
 	} else {
 		\family, size -> Pair(
-			eitherMap(lookupTree(directTree, family), \ff -> if (fallback && js && getRendererType() == "html") family + "," + ff else ff, family),
+			either(lookupTree(directTree, family), family),
 			size
 		)
 	}
@@ -425,7 +425,7 @@ setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -
 }
 
 setDefaultFontMappingFn(mapping : [Pair<string, string>]) -> void {
-	mapper = setDefaultFontMappingFnHelper(mapping, false);
+	mapper = setDefaultFontMappingFnHelper(mapping);
 
 	setDefaultFontMappingFn2(mapper);
 }
@@ -444,7 +444,7 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 		Pair(makeFontSloped(font1), makeFontSloped(font2)),
 		Pair(makeFontSloped(makeFontMedium(font1)), makeFontSloped(makeFontBold(font2))),
 	]};
-	nativeFontParams : Maybe<FontParams> = 
+	nativeFontParams : Maybe<FontParams> =
 		if (lang == "ja")
 			Some(japaneseFontParams)
 		else if (lang == "ko")
@@ -471,11 +471,15 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 						Pair("Book", font),
 						Pair("Bold", makeFontBold(font)),
 						Pair("BoldItalic", makeFontSloped(makeFontBold(font))),
-						Pair("Italic", makeFontSloped(font))
+						Pair("Italic", makeFontSloped(font)),
+						Pair("MathFontItalic", makeFontSloped("Amiri")),
+						Pair("MathFont", "Amiri"),
+						Pair("MathSymbolFont", "StixTwoMath"),
+						Pair("MathGreekFont", makeFontSloped("Amiri")),
 					],
 				);
 
-				mapper = setDefaultFontMappingFnHelper(mappingPairs, true);
+				mapper = setDefaultFontMappingFnHelper(mappingPairs);
 				mapper(family, size) |> (\fm -> FontParams(fm.first, fm.first))
 			},
 			^defaultFontMappingFn(family, size) |> (\fm -> FontParams(fm.first, fm.first))
@@ -633,12 +637,22 @@ apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [Charact
 }
 
 applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle] {
-	ffam = extractStruct(styles, FontFamily(defaultFontFamily_)).name;
-	fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
-	ratio = getAlphabetScaling(alphabet, ffam);
-	fontSize = fsz * getAlphabetScaling(alphabet, ffam);
-	fontFamily = if (alphabet == "arb") strReplace(ffam, "RobotoMedium", "RobotoBold") else ffam;
-	replaceStructMany(styles, [FontFamily(fontFamily), FontSize(fontSize)])
+	getFontSize = \ffam -> {
+		fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
+		ratio = getAlphabetScaling(alphabet, ffam);
+		FontSize(fsz * getAlphabetScaling(alphabet, ffam));
+	}
+	eitherFn(
+		tryExtractStruct(styles, FontFamily("")),
+		\ff -> {
+			ffam = ff.name;
+			fontFamily = if (alphabet == "arb") strReplace(ffam, "RobotoMedium", "RobotoBold") else ffam;
+			replaceStructMany(styles, [FontFamily(fontFamily), getFontSize(ffam)])
+		},
+		\-> {
+			replaceStructMany(styles, [getFontSize(defaultFontFamily_)])
+		}
+	)
 }
 
 arrayRTL(arr : [?]) -> [?] {

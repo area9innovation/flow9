@@ -133,6 +133,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
 	private var escapeHTML : Bool = true;
+	private var skipOrderCheck : Bool = false;
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -968,6 +969,10 @@ class TextClip extends NativeWidgetClip {
 			invalidateMetrics();
 			layoutText();
 		}
+	}
+
+	public function setTextSkipOrderCheck(skip : Bool) : Void {
+		this.skipOrderCheck = skip;
 	}
 
 	public function getTextDirection() : String {

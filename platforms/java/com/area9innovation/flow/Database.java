@@ -153,6 +153,7 @@ public class Database extends NativeHost {
             System.out.println("Error on connect db: " + db.err);
             return null;
         } catch (Exception e) {
+            db.err = e.getMessage();
             printException(e);
             return null;
         }
@@ -189,21 +190,23 @@ public class Database extends NativeHost {
 
     public static final Object requestDbWithQueryParams(Object database, String query, Object[] queryParams) {
         if (database == null) return null;
+		DBObject dbObj = (DBObject) database;
         try {
-            DBObject dbObj = (DBObject) database;
             RSObject rso = null;
             if (queryParams.length == 0) {
                 rso = new RSObject(dbObj, query);
             } else {
                 rso = new RSObject(dbObj, query, queryParams);
             }
+			dbObj.err = "";
             return (Object) rso;
         } catch (SQLException se) {
             String err = getSqlErrorMessage(se);
             System.out.println("Error on request db: " + err);
-            ((DBObject) database).err = err;
+            dbObj.err = err;
             return null;
         } catch (Exception e) {
+			dbObj.err = e.getMessage();
             printException(e);
             return null;
         }
@@ -267,11 +270,13 @@ public class Database extends NativeHost {
         RSObject res = (RSObject) result;
         try {
             if (res == null || res.rs == null) return false;
+			res.err = "";
             return notEmptyResultSet(res.rs);
         } catch (SQLException se) {
             res.err = getSqlErrorMessage(se);
             return false;
         } catch (Exception e) {
+			res.err = e.getMessage();
             printException(e);
             return false;
         }
@@ -384,7 +389,9 @@ public class Database extends NativeHost {
 
     public static final Struct[][][] requestDbMulti(Object database, Object[] queries) {
         Struct[][][] empty = new Struct[0][][];
-        if (database == null || queries.length == 0) return empty;
+        if (database == null || queries.length == 0) {
+			return empty;
+		}
 
         // Do not allow empty queries at all
         for (Object query : queries) {
@@ -430,14 +437,15 @@ public class Database extends NativeHost {
             }
 
             dbo.checkIntOverflow();
+			dbo.err = "";
 
             return res.toArray(new Struct[res.size()][][]);
         } catch (SQLException e) {
-            ((DBObject) database).err = getSqlErrorMessage(e);
+            dbo.err = getSqlErrorMessage(e);
             return empty;
         } catch (Exception e) {
             printException(e);
-            ((DBObject) database).err = e.getMessage();
+            dbo.err = e.getMessage();
             return empty;
         }
     }

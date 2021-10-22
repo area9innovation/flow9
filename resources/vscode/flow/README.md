@@ -24,14 +24,9 @@ Text Editor, Font, change the Font family to "Fira code" and make sure "Font Lig
 
 https://github.com/tonsky/FiraCode/releases
 
-# Useful extensions
+# Useful extensions and settings
 
-Install these extensions by clicking extentions in the sidebar, and typing these names:
-
-- GitLens
-- Bracket Pair Colorizer 2
-
-# Useful settings
+GitLens is an recommended extension. Click extensions in the sidebar, and type "GitLens"
 
 To change the tabs and line endings globally, use the following settings:
 ```
@@ -39,6 +34,14 @@ To change the tabs and line endings globally, use the following settings:
         "editor.tabSize" : 4,
         "files.eol": "\n" 
 ```
+
+To get nice colors use: 
+
+```
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": true
+```
+
 You can put it to your user settings (File -> Preferences -> Settings), or to workspace settings.
 
 You can also consider to turn off File Preview, where files open with italics in the tab, and are lost again
