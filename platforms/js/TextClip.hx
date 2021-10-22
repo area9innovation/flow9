@@ -122,7 +122,8 @@ class TextClip extends NativeWidgetClip {
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
-	private var contentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private static var dummyContentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private var contentGlyphs : TextMappedModification = dummyContentGlyphs;
 	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
@@ -167,7 +168,7 @@ class TextClip extends NativeWidgetClip {
 	public var preventContextMenu : Bool = false;
 
 	private var textBackgroundWidget : Dynamic;
-	private var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
+	private static var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
 		&& Util.getParameter("new") == "1"
 		&& Util.getParameter("textBackgroundWidget") != "0";
 
