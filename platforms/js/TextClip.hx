@@ -122,8 +122,8 @@ class TextClip extends NativeWidgetClip {
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
-	private static var dunmmyContentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
-	private var contentGlyphs : TextMappedModification = dunmmyContentGlyphs;
+	private static var dummyContentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
+	private var contentGlyphs : TextMappedModification = dummyContentGlyphs;
 	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
