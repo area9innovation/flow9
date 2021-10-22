@@ -53,6 +53,15 @@ fcFuncArity(fn : FiType) -> int {
 	}
 }
 
+fcFiValIllegal(v : FiVal) -> bool {
+	switch (v) {
+		FiStructVal(name, as): {
+			name == "IllegalStruct";
+		}
+		default: false;
+	}
+}
+
 fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal> {
 	vals = ref makeTree();
 	add_native = \nat : FiNativeDec -> {
@@ -60,6 +69,10 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal
 			//println("Added native : " + nat.nativeName);
 			FiFuncVal(
 				\as -> {
+					if (nat.nativeName != "Native.makeStructValue" && nat.nativeName != "Native.fromBinary" && exists(as, fcFiValIllegal)) {
+						println("Calling native : " + nat.nativeName + ", args:\n" + concatStrings(map(as, \a -> "\t" + fiVal2s(a) + "\n")));
+						printCallstack();
+					}
 					args = map(as, \a -> fcUnwrapFiVal(a));
 					/*println("Calling native : " + nat.nativeName + ", args:\n" + concatStrings(map(as, \a -> "\t" + fiVal2s(a) + "\n")));
 					if (nat.nativeName == "Native.fold") {
@@ -108,38 +121,33 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
 			Some(module): {
+				iter(module.natives, add_native);
 				iter(module.initOrder, \name ->
 					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
 						switch (decl) {
 							FiFunctionDec(__, lambda, __,__,__): {
-								//println("Added function : " + name);
 								vals := setTree(^vals, name, FiFuncVal(
 									\as -> fcReplEval(lambda.body,
 										foldi(lambda.args, ^vals, \i, a, arg -> 
 											setTree(a, lambda.args[i].name, as[i])
 										), onError
 									),
-									length(lambda.args), Some(lambda), ""
+									length(lambda.args), 
+									Some(lambda), 
+									""
 								));
 							}
 							FiGlobalVar(__, value, __,__,__): {
-								//println("Added global var : " + name);
 								maybeApply(fcReplEval(value, ^vals, onError),
 									\v -> vals := setTree(^vals, name, v)
 								);
 							}
 							FiNativeDec(__,__,__, nativeName, fallback, __,__): {
-								add_native(decl);
+								//add_native(decl);
 							}
 						}
 					)
 				);
-				iter(module.natives, \nat ->
-					if (!containsKeyTree(^vals, nat.name)) {
-						//println("native : " + nat.nativeName + " is missing in initOrder");
-						add_native(nat);
-					}
-				)
 			}
 			None(): {
 				// Never should be
@@ -186,7 +194,9 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 						setTree(acc, args[i].name, as[i])
 					), onError
 				),
-				length(args), Some(ex), ""
+				length(args), 
+				Some(ex), 
+				""
 			));
 		}
 		FiCall(f, args,__,__): {
@@ -195,7 +205,13 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 					switch (f1) {
 						FiFuncVal(fn,ari,__,__): {
 							args1 = filtermap(args, \a -> fcReplEval(a, vals, onError));
-							if (length(args) != length(args1)) None() else fn(args1);
+							if (length(args) != length(args1)) None() else {
+								ret = fn(args1);
+								if (isNone(ret)) {
+									onError("error while applying function:\n" + fiVal2s(f1) + "\nto args:\n" + strGlue(map(args1, fiVal2s), "\n") + "\n");
+								}
+								ret;
+							}
 						}
 						default: {
 							onError("not a function is called: " + fiVal2s(f1));
@@ -206,7 +222,11 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 			);
 		}
 		FiVar(x,__,__): {
-			lookupTree(vals, x);
+			val = lookupTree(vals, x);
+			if (isNone(val)) {
+				onError("variable " + x + " is not defined");
+			}
+			val;
 		}
 		FiLet(x, __, e1, e2,__,__): {
 			maybeBind(fcReplEval(e1, vals, onError),
@@ -231,16 +251,25 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 				\w -> {
 					switch (w) {
 						FiStructVal(n, fields): {
-							maybeBind(
-								find(cs, \c -> c.struct == n),
+							case = find(cs, \c -> c.struct == n || c.struct == "default");
+							if (isNone(case)) {
+								onError("case " + n + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + fiVal2s(w));
+							}
+							maybeBind(case,
 								\c : FiCase -> {
-									fcReplEval(c.body, 
-										foldi(
-											map(fields, \field -> ^(field.val)), 
-											vals, 
-											\i, acc, e -> setTree(acc, c.argNames[i], e)
-										), onError
-									)
+									if (c.struct != "default" && length(fields) != length(c.argNames)) {
+										onError("number of fields " + i2s(length(fields)) + " in struct " + n + " misfits the number of argument in case: " + i2s(length(c.argNames)) + ", switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + fiVal2s(w));
+										None();
+									} else {
+										case_vals = if (c.struct == "default") vals else {
+											foldi(
+												map(fields, \field -> ^(field.val)), 
+												vals, 
+												\i, acc, e -> setTree(acc, c.argNames[i], e)
+											);
+										}
+										fcReplEval(c.body, case_vals, onError);
+									}
 								}
 							);
 						}
@@ -327,44 +356,8 @@ fiVal2s(v : FiVal) -> string {
 aaa = ref "";
 
 fcReplEvalCallPrim(call : FiCallPrim, vals : Tree<string, FiVal>, onError : (string) -> void) -> Maybe<FiVal> {
-	/*println2(^aaa + "fcReplEvalCallPrim: " + toString(call)
-		//+ "\nvals:\n-------\n" +
-		//concatStrings(map(tree2pairs(vals), \p -> "\t" + p.first + " => " + fiVal2s(p.second) + "\n")) + "\n--------\n"
-	);*/
-	args1 = map(call.es, \e -> {
-		//println2(^aaa + "call.es, e: " + toString(e));
-		//a0 = ^aaa;
-		//aaa := ^aaa + "\t";
-		ret = fcReplEval(e, vals, onError);
-		//aaa := a0;
-		//println2(^aaa + "ret (!!): " + toString(ret));
-		ret;
-	});
-	//println2(^aaa + "args1 - done, len: " + i2s(length(call.es)) + " ?=" + i2s(length(args1)) + ": " + toString(args1));
-	//println2(^aaa + "args1: ");
-	//iter(args1, println);
-	/*	"[" + 
-			strGlue(map(args1, \arg ->
-				switch (arg) {
-					Some(v): fiVal2s(v);
-					None(): "<NONE>";
-				}
-			), ", ") + 
-		"]"
-	);*/
-
-	args = filtermap(args1, idfn);
-	/*args = filtermap(call.es, \e -> {
-		println2(^aaa + "call.es, e: " + toString(e));
-		a0 = ^aaa;
-		aaa := ^aaa + "\t";
-		ret = fcReplEval(prog, e, vals);
-		aaa := a0;
-		//println2(^aaa + "ret (!!): " + toString(ret));
-		ret;
-	});*/
-	//println2(^aaa + "args done");
-	ret = if (length(args) != length(call.es)) None() else {
+	args = filtermap(call.es, \e -> fcReplEval(e, vals, onError));
+	if (length(args) != length(call.es)) None() else {
 		switch (call.op) {
 			FcOrPrim(): {
 				switch (args[0]) {
@@ -674,9 +667,13 @@ fcReplEvalCallPrim(call : FiCallPrim, vals : Tree<string, FiVal>, onError : (str
 			FcFieldPrim(name): {
 				switch (args[0]) {
 					FiStructVal(str, fields): {
-						findmap(fields, \field -> 
+						val = findmap(fields, \field -> 
 							if (field.name == name) Some(^(field.val)) else None()
 						);
+						if (isNone(val)) {
+							onError("field " + name + " is not found in struct " + str);
+						}
+						val;
 					}
 					default: {
 						onError("field access operator argument must be a struct, but is: " + fiVal2s(args[0]));
@@ -687,15 +684,18 @@ fcReplEvalCallPrim(call : FiCallPrim, vals : Tree<string, FiVal>, onError : (str
 			FcSetMutablePrim(name): {
 				switch (args[0]) {
 					FiStructVal(str, fields): {
-						findmap(fields, \field -> 
+						val = findmap(fields, \field -> 
 							if (field.name == name) {
 								field.val := args[1];
 								Some(FiVoidVal());
 							} else {
-								onError("field " + name + " is not found in struct " + str);
 								None()
 							}
 						);
+						if (isNone(val)) {
+							onError("field " + name + " is not found in struct " + str);
+						}
+						val;
 					}
 					default: {
 						onError("field assignment operator argument must be a struct, but is: " + fiVal2s(args[0]));
@@ -721,8 +721,6 @@ fcReplEvalCallPrim(call : FiCallPrim, vals : Tree<string, FiVal>, onError : (str
 			}
 		}
 	}
-	//println2(^aaa + "ret: " + toString(ret));
-	ret
 }
 
 fcUnwrapFiVal(ex : FiVal) -> flow {
@@ -741,6 +739,7 @@ fcUnwrapFiVal(ex : FiVal) -> flow {
 			unwrap_ret = \r -> switch (r) {
 				Some(v): fcUnwrapFiVal(v);
 				None(): {
+					println("Runtime error while calling " + fiVal2s(ex));
 					// Runtime error;
 					IllegalStruct();
 				}
@@ -823,7 +822,7 @@ fcWrapFiVal(v : flow) -> FiVal {
 					//println("CALLING WRAPPED: " + toString(fn));
 					Some(fcWrapFiVal(fn()))
 				},
-				0, None(), toString(fn)
+				0, None(), "<func>" //, toString(fn)
 			);
 		} else if (arity == 1) {
 			fn = cast(v : flow -> ((flow) -> flow));
@@ -833,7 +832,7 @@ fcWrapFiVal(v : flow) -> FiVal {
 					//println("CALLING WRAPPED: " + toString(fn));
 					Some(fcWrapFiVal(fn(fcUnwrapFiVal(as[0]))));
 				},
-				1, None(), toString(fn)
+				1, None(), "<func>" //, toString(fn)
 			);
 		} else if (arity == 2) {
 			fn = cast(v : flow -> ((flow, flow) -> flow));
@@ -843,7 +842,7 @@ fcWrapFiVal(v : flow) -> FiVal {
 					//println("CALLING WRAPPED: " + toString(fn));
 					Some(fcWrapFiVal(fn(fcUnwrapFiVal(as[0]), fcUnwrapFiVal(as[1]))));
 				},
-				2, None(), toString(fn)
+				2, None(), "<func>" //, toString(fn)
 			);
 		} else if (arity == 3) {
 			fn = cast(v : flow -> ((flow, flow, flow) -> flow));
@@ -853,7 +852,7 @@ fcWrapFiVal(v : flow) -> FiVal {
 					//println("CALLING WRAPPED: " + toString(fn));
 					Some(fcWrapFiVal(fn(fcUnwrapFiVal(as[0]), fcUnwrapFiVal(as[1]), fcUnwrapFiVal(as[2]))));
 				},
-				3, None(), toString(fn)
+				3, None(), "<func>" //, toString(fn)
 			);
 		} else if (arity == 4) {
 			fn = cast(v : flow -> ((flow, flow, flow, flow) -> flow));
@@ -863,17 +862,17 @@ fcWrapFiVal(v : flow) -> FiVal {
 					//println("CALLING WRAPPED: " + toString(fn));
 					Some(fcWrapFiVal(fn(fcUnwrapFiVal(as[0]), fcUnwrapFiVal(as[1]), fcUnwrapFiVal(as[2]), fcUnwrapFiVal(as[3]))));
 				},
-				4, None(), toString(fn)
+				4, None(), "<func>" //, toString(fn)
 			);
 		} else if (arity == 5) {
 			fn = cast(v : flow -> ((flow, flow, flow, flow, flow) -> flow));
-			println("WRAPPING: " + toString(fn));
+			//println("WRAPPING: " + toString(fn));
 			FiFuncVal(
 				\as -> {
 					//println("CALLING WRAPPED: " + toString(fn));
 					Some(fcWrapFiVal(fn(fcUnwrapFiVal(as[0]), fcUnwrapFiVal(as[1]), fcUnwrapFiVal(as[2]), fcUnwrapFiVal(as[3]), fcUnwrapFiVal(as[4]))));
 				},
-				5, None(), toString(fn)
+				5, None(), "<func>" //, toString(fn)
 			);
 		} else {
 			// TODO: add more arities
