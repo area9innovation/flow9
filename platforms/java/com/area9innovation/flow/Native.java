@@ -1112,6 +1112,51 @@ public class Native extends NativeHost {
 		}
 	}
 
+	private static ConcurrentHashMap<String, Method> field_setters = null;
+
+	//@SuppressWarnings("unchecked")
+	public static final Object setMutableField(Object obj, String field, Object value) {
+		if (field_setters == null) {
+			field_setters = new ConcurrentHashMap<String, Method>();
+		}
+		try {
+			if (obj instanceof Struct) {
+				Struct struct = (Struct)obj;
+				String key = struct.getTypeName() + "-" + field;
+				Method setter = null;
+				if (!field_setters.contains(key)) {
+					for (Method meth : struct.getClass().getMethods()) {
+						if (meth.getName().equals("set_" + field)) {
+							setter = meth;
+							break;
+						}
+					}
+					if (setter != null) {
+						field_setters.put(key, setter);
+					}
+				} else {
+					setter = field_setters.get(key);
+				}
+				if (setter != null) {
+					setter.invoke(struct, value);
+				} else {
+					System.out.println("Failed to set a field " + field + " in struct " + struct.getTypeName());
+					System.exit(255);
+				}
+			}
+		} /*catch (NoSuchMethodException ex) {
+			System.out.println(ex.getMessage());
+			System.exit(255);
+		} */catch (IllegalAccessException ex) {
+			System.out.println(ex.getMessage());
+			System.exit(255);
+		} catch (InvocationTargetException ex) {
+			System.out.println(ex.getMessage());
+			System.exit(255);
+		}
+		return null;
+	}
+
 	public static final Object quit(int c) {
 		System.exit(c);
 		return null;
