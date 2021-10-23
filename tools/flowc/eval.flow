@@ -1,5 +1,8 @@
+import ds/hashmap;
 import sys/system;
+import math/hash;
 import string_utils;
+
 import tools/flowc/flowc_typecheck;
 import tools/common/utils;
 import tools/flowc/flow_parser;
@@ -31,11 +34,11 @@ export {
 		FiErrorVal(msg : string);
 
 	// Setup the global variables and toplevel functions
-	fcInitEvalEnv(program: FiProgram, onError : (string) -> void) -> Tree<string, FiVal>;
+	fcInitEvalEnv(program: FiProgram, onError : (string) -> void) -> HashMap<string, FiVal>;
 
 	// Perform the evaluation of function 'name'. 
 	// 'None()' as a return value means a runtime error. Normally 'Some(retval)' is returned.
-	fcCallFunction(name : string, args : [FiVal], vals : Tree<string, FiVal>) -> Maybe<FiVal>;
+	fcCallFunction(name : string, args : [FiVal], globals : HashMap<string, FiVal>) -> Maybe<FiVal>;
 
 	// Convert any value to FiVal
 	fcWrapFiVal(v : flow) -> FiVal;
@@ -62,8 +65,8 @@ fcFiValIllegal(v : FiVal) -> bool {
 	}
 }
 
-fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal> {
-	vals = ref makeTree();
+fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> HashMap<string, FiVal> {
+	globals = makeHashMap(fastHashString);
 	add_native = \nat : FiNativeDec -> {
 		fn = if (hostCallExists(nat.nativeName)) {
 			//println("Added native : " + nat.nativeName);
@@ -100,11 +103,7 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal
 			switch (nat.fallbackLambda) {
 				FiLambda(args, body,__,__): {
 					FiFuncVal(
-						\as -> fcReplEval(body,
-							foldi(args, ^vals, \i, a, arg -> 
-								setTree(a, args[i].name, as[i])
-							), onError
-						),
+						\as -> fcReplEval(body, globals, fcEvalCallLocals(args, as, None()), onError),
 						length(args),
 						Some(nat.fallbackLambda),
 						""
@@ -116,7 +115,7 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal
 				}
 			}
 		}
-		vals := setTree(^vals, nat.name, fn);
+		setHashMap(globals, nat.name, fn);
 	}
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
@@ -126,20 +125,16 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal
 					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
 						switch (decl) {
 							FiFunctionDec(__, lambda, __,__,__): {
-								vals := setTree(^vals, name, FiFuncVal(
-									\as -> fcReplEval(lambda.body,
-										foldi(lambda.args, ^vals, \i, a, arg -> 
-											setTree(a, lambda.args[i].name, as[i])
-										), onError
-									),
+								setHashMap(globals, name, FiFuncVal(
+									\as -> fcReplEval(lambda.body, globals, fcEvalCallLocals(lambda.args, as, None()), onError),
 									length(lambda.args), 
 									Some(lambda), 
 									""
 								));
 							}
 							FiGlobalVar(__, value, __,__,__): {
-								maybeApply(fcReplEval(value, ^vals, onError),
-									\v -> vals := setTree(^vals, name, v)
+								maybeApply(fcReplEval(value,  globals, makeHashMap(fastHashString), onError),
+									\v -> setHashMap(globals, name, v)
 								);
 							}
 							FiNativeDec(__,__,__, nativeName, fallback, __,__): {
@@ -154,11 +149,11 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> Tree<string, FiVal
 			}
 		}
 	);
-	^vals;
+	globals;
 }
 
-fcCallFunction(name : string, args : [FiVal], vals : Tree<string, FiVal>) ->  Maybe<FiVal> {
-	maybeBind(lookupTree(vals, name), \val -> 
+fcCallFunction(name : string, args : [FiVal], globals : HashMap<string, FiVal>) ->  Maybe<FiVal> {
+	maybeBind(lookupHashMap(globals, name), \val -> 
 		switch (val) {
 			FiFuncVal(fn,__,__,__): fn(args);
 			default: None();
@@ -168,7 +163,16 @@ fcCallFunction(name : string, args : [FiVal], vals : Tree<string, FiVal>) ->  Ma
 
 trace = false;
 
-fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -> Maybe<FiVal> {
+fcEvalCallLocals(args : [FiFunArg], vals : [FiVal], closure : Maybe<HashMap<string, FiVal>>) -> HashMap<string, FiVal> {
+	locals = switch (closure) {
+		Some(cl): copyHashMap(cl);
+		None(): makeHashMap(fastHashString);
+	}
+	iteri(args, \i, arg -> setHashMap(locals, arg.name, vals[i]));
+	locals;
+}
+
+fcReplEval(ex : FiExp, globals : HashMap<string, FiVal>, locals : HashMap<string, FiVal>, onError : (string) -> void) -> Maybe<FiVal> {
 	if (trace) {
 		println2(^aaa + "fcReplEval: " + toString(ex)
 			//+ "\nvals:\n-------\n" +
@@ -188,23 +192,20 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 	});*/
 	ret = switch (ex) {
 		FiLambda(args, body,__,__): {
+			closure = copyHashMap(locals);
 			Some(FiFuncVal(
-				\as -> fcReplEval(body,
-					foldi(args, vals, \i, acc, arg -> 
-						setTree(acc, args[i].name, as[i])
-					), onError
-				),
+				\as -> fcReplEval(body, globals, fcEvalCallLocals(args, as, Some(closure)), onError),
 				length(args), 
 				Some(ex), 
 				""
 			));
 		}
 		FiCall(f, args,__,__): {
-			maybeBind(fcReplEval(f, vals, onError),
+			maybeBind(fcReplEval(f, globals, locals, onError),
 				\f1 -> {
 					switch (f1) {
 						FiFuncVal(fn,ari,__,__): {
-							args1 = filtermap(args, \a -> fcReplEval(a, vals, onError));
+							args1 = filtermap(args, \a -> fcReplEval(a, globals, locals, onError));
 							if (length(args) != length(args1)) None() else {
 								ret = fn(args1);
 								if (isNone(ret)) {
@@ -222,22 +223,34 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 			);
 		}
 		FiVar(x,__,__): {
-			val = lookupTree(vals, x);
-			if (isNone(val)) {
-				onError("variable " + x + " is not defined");
+			switch (lookupHashMap(globals, x)) {
+				Some(v): Some(v);
+				None(): {
+					switch (lookupHashMap(locals, x)) {
+						Some(v): Some(v);
+						None(): {
+							onError("variable " + x + " is not defined");
+							None();
+						}
+					}
+				}
 			}
-			val;
 		}
 		FiLet(x, __, e1, e2,__,__): {
-			maybeBind(fcReplEval(e1, vals, onError),
-				\v -> fcReplEval(e2, setTree(vals, x, v), onError)
+			maybeBind(fcReplEval(e1, globals, locals, onError),
+				\v -> {
+					setHashMap(locals, x, v);
+					ret = fcReplEval(e2, globals, locals, onError);
+					removeFromHashMap(locals, x);
+					ret;
+				}
 			);
 		}
 		FiIf(e1, e2, e3, __,__): {
-			maybeBind(fcReplEval(e1, vals, onError),
+			maybeBind(fcReplEval(e1, globals, locals, onError),
 				\c -> switch (c) {
 					FiBoolVal(v): {
-						if (v) fcReplEval(e2, vals, onError) else fcReplEval(e3, vals, onError);
+						if (v) fcReplEval(e2, globals, locals, onError) else fcReplEval(e3, globals, locals, onError);
 					}
 					default: {
 						onError("not a boolean condition: " + fiVal2s(c));
@@ -247,7 +260,7 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 			);
 		}
 		FiSwitch(v,__,cs,__,__): {
-			maybeBind(fcReplEval(v, vals, onError),
+			maybeBind(fcReplEval(v, globals, locals, onError),
 				\w -> {
 					switch (w) {
 						FiStructVal(n, fields): {
@@ -261,14 +274,25 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 										onError("number of fields " + i2s(length(fields)) + " in struct " + n + " misfits the number of argument in case: " + i2s(length(c.argNames)) + ", switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + fiVal2s(w));
 										None();
 									} else {
-										case_vals = if (c.struct == "default") vals else {
+										/*case_locals = if (c.struct == "default") locals else {
 											foldi(
 												map(fields, \field -> ^(field.val)), 
-												vals, 
+												globals, locals, 
 												\i, acc, e -> setTree(acc, c.argNames[i], e)
 											);
+										}*/
+										if (c.struct != "default") {
+											iteri(fields, \i, field -> 
+												setHashMap(locals, c.argNames[i], ^(field.val))
+											);
 										}
-										fcReplEval(c.body, case_vals, onError);
+										ret = fcReplEval(c.body, globals, locals, onError);
+										if (c.struct != "default") {
+											iteri(fields, \i, field -> 
+												removeFromHashMap(locals, c.argNames[i])
+											);
+										}
+										ret;
 									}
 								}
 							);
@@ -282,7 +306,7 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 			);
 		}
 		FiCast(e, __,to,__,__): {
-			maybeMap(fcReplEval(e, vals, onError), \ev -> 
+			maybeMap(fcReplEval(e, globals, locals, onError), \ev -> 
 				switch (ev) {
 					FiIntVal(v): {
 						switch (to) {
@@ -304,11 +328,14 @@ fcReplEval(ex : FiExp, vals : Tree<string, FiVal>, onError : (string) -> void) -
 		}
 		FiSeq(es,__,__): {
 			ret : ref Maybe<FiVal> = ref Some(FiVoidVal());
-			iter(es, \e -> ret := fcReplEval(e, vals, onError));
+			iter(es, \e -> ret := fcReplEval(e, globals, locals, onError));
 			^ret;
 		}
 		FiCallPrim(op, es, __,__): {
-			fcReplEvalCallPrim(ex, vals, onError);
+			args = filtermap(es, \e -> fcReplEval(e, globals, locals, onError));
+			if (length(args) != length(es)) None() else {
+				fcReplEvalCallPrim(ex, args, onError);
+			}
 		}
 		FiString(s,__): Some(FiStringVal(s));
 		FiBool(b,__):   Some(FiBoolVal(b));
@@ -355,370 +382,367 @@ fiVal2s(v : FiVal) -> string {
 
 aaa = ref "";
 
-fcReplEvalCallPrim(call : FiCallPrim, vals : Tree<string, FiVal>, onError : (string) -> void) -> Maybe<FiVal> {
-	args = filtermap(call.es, \e -> fcReplEval(e, vals, onError));
-	if (length(args) != length(call.es)) None() else {
-		switch (call.op) {
-			FcOrPrim(): {
-				switch (args[0]) {
-					FiBoolVal(b1): {
-						switch (args[1]) {
-							FiBoolVal(b2): {
-								Some(FiBoolVal(b1 || b2));
-							}
-							default: {
-								onError("not a boolen argument of ||: " + fiVal2s(args[1]));
-								None();
-							}
+fcReplEvalCallPrim(call : FiCallPrim, args : [FiVal], onError : (string) -> void) -> Maybe<FiVal> {
+	switch (call.op) {
+		FcOrPrim(): {
+			switch (args[0]) {
+				FiBoolVal(b1): {
+					switch (args[1]) {
+						FiBoolVal(b2): {
+							Some(FiBoolVal(b1 || b2));
 						}
-					}
-					default: {
-						onError("not a boolean argument of ||: " + fiVal2s(args[0]));
-						None();
+						default: {
+							onError("not a boolen argument of ||: " + fiVal2s(args[1]));
+							None();
+						}
 					}
 				}
-			}
-			FcAndPrim(): {
-				switch (args[0]) {
-					FiBoolVal(b1): {
-						switch (args[1]) {
-							FiBoolVal(b2): {
-								Some(FiBoolVal(b1 && b2));
-							}
-							default: {
-								onError("not a boolen argument of &&: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not a boolen argument of &&: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcNotPrim(): {
-				switch (args[0]) {
-					FiBoolVal(b): {
-						Some(FiBoolVal(!b));
-					}
-					default: {
-						onError("not a boolen argument of !: " + fiVal2s(args[0]));
-						None()
-					}
-				}
-			}
-			FcEqPrim(): {
-				Some(FiBoolVal(args[0] == args[1]));
-			}
-			FcNePrim(): {
-				Some(FiBoolVal(args[0] != args[1]));
-			}
-			FcLePrim(): {
-				Some(FiBoolVal(args[0] <= args[1]));
-			}
-			FcGePrim(): {
-				Some(FiBoolVal(args[0] >= args[1]));
-			}
-			FcLtPrim(): {
-				Some(FiBoolVal(args[0] < args[1]));
-			}
-			FcGtPrim(): {
-				Some(FiBoolVal(args[0] > args[1]));
-			}
-			FcPlusPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 + i2));
-							}
-							default: {
-								onError("not an integer argument of +: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 + d2));
-							}
-							default: {
-								onError("not a double argument of +: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					FiStringVal(s1): {
-						switch (args[1]) {
-							FiStringVal(s2): {
-								Some(FiStringVal(s1 + s2));
-							}
-							default: {
-								onError("not a string argument of +: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not an integer, double or string argument of +: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcMinusPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 - i2));
-							}
-							default: {
-								onError("not an integer argument of -: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 - d2));
-							}
-							default: {
-								onError("not a double argument of -: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not an integer or double argument of -: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcMulPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 * i2));
-							}
-							default: {
-								onError("not an integer argument of *: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 * d2));
-							}
-							default: {
-								onError("not a double argument of *: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not an integer or double argument of *: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcDivPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 / i2));
-							}
-							default: {
-								onError("not an integer argument of /: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 / d2));
-							}
-							default: {
-								onError("not a double argument of /: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not an integer or double argument of /: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcModPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 % i2));
-							}
-							default: {
-								onError("not an integer argument of %: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 % d2));
-							}
-							default: {
-								onError("not a double argument of %: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not an integer or double argument of %: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcNegPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						Some(FiIntVal(-i1));
-					}
-					FiDoubleVal(d1): {
-						Some(FiDoubleVal(-d1));
-					}
-					default: {
-						onError("not an integer or double argument of -: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcArrayPrim(): {
-				Some(FiArrayVal(args));
-			}
-			FcIndexPrim(): {
-				switch (args[0]) {
-					FiArrayVal(arr): {
-						switch (args[1]) {
-							FiIntVal(i): {
-								if (0 <= i && i + 1 <= length(arr)) {
-									Some(arr[i]);
-								} else {
-									onError("array index is out of bounds: " + i2s(i) + " not in [0 - " + i2s(length(arr) - 1) + "]");
-									None();
-								}
-							}
-							default: {
-								onError("not an integer argument of array access: " + fiVal2s(args[1]));
-								None();
-							}
-						}
-					}
-					default: {
-						onError("not an array argument of array access: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcDerefPrim(): {
-				switch (args[0]) {
-					FiRefVal(rf): {
-						Some(^rf);
-					}
-					default: {
-						onError("deref argument must be a ref, but is: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcAssignPrim(): {
-				switch (args[0]) {
-					FiRefVal(rf): {
-						rf := args[1];
-						Some(FiVoidVal());
-					}
-					default: {
-						onError("assign operator argument must be a ref, but is: " + fiVal2s(args[0]));
-						None();
-					}
-				}
-			}
-			FcRefPrim(): {
-				Some(FiRefVal(ref args[0]));
-			}
-			FcStructPrim(name): {
-				//if (makeStructValue(name, ))
-				fields = structFieldNames(name);
-				if (length(fields) != length(args)) {
-					onError("number " + i2s(length(fields)) + " of fields of struct " + name + " mismatch number of arguments " + i2s(length(args)));
+				default: {
+					onError("not a boolean argument of ||: " + fiVal2s(args[0]));
 					None();
-				} else {
-					Some(FiStructVal(name, mapi(args, \i, arg -> FiFieldVal(fields[i], ref arg))));
 				}
 			}
-			FcFieldPrim(name): {
-				switch (args[0]) {
-					FiStructVal(str, fields): {
-						val = findmap(fields, \field -> 
-							if (field.name == name) Some(^(field.val)) else None()
-						);
-						if (isNone(val)) {
-							onError("field " + name + " is not found in struct " + str);
+		}
+		FcAndPrim(): {
+			switch (args[0]) {
+				FiBoolVal(b1): {
+					switch (args[1]) {
+						FiBoolVal(b2): {
+							Some(FiBoolVal(b1 && b2));
 						}
-						val;
-					}
-					default: {
-						onError("field access operator argument must be a struct, but is: " + fiVal2s(args[0]));
-						None();
+						default: {
+							onError("not a boolen argument of &&: " + fiVal2s(args[1]));
+							None();
+						}
 					}
 				}
+				default: {
+					onError("not a boolen argument of &&: " + fiVal2s(args[0]));
+					None();
+				}
 			}
-			FcSetMutablePrim(name): {
-				switch (args[0]) {
-					FiStructVal(str, fields): {
-						val = findmap(fields, \field -> 
-							if (field.name == name) {
-								field.val := args[1];
-								Some(FiVoidVal());
+		}
+		FcNotPrim(): {
+			switch (args[0]) {
+				FiBoolVal(b): {
+					Some(FiBoolVal(!b));
+				}
+				default: {
+					onError("not a boolen argument of !: " + fiVal2s(args[0]));
+					None()
+				}
+			}
+		}
+		FcEqPrim(): {
+			Some(FiBoolVal(args[0] == args[1]));
+		}
+		FcNePrim(): {
+			Some(FiBoolVal(args[0] != args[1]));
+		}
+		FcLePrim(): {
+			Some(FiBoolVal(args[0] <= args[1]));
+		}
+		FcGePrim(): {
+			Some(FiBoolVal(args[0] >= args[1]));
+		}
+		FcLtPrim(): {
+			Some(FiBoolVal(args[0] < args[1]));
+		}
+		FcGtPrim(): {
+			Some(FiBoolVal(args[0] > args[1]));
+		}
+		FcPlusPrim(): {
+			switch (args[0]) {
+				FiIntVal(i1): {
+					switch (args[1]) {
+						FiIntVal(i2): {
+							Some(FiIntVal(i1 + i2));
+						}
+						default: {
+							onError("not an integer argument of +: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				FiDoubleVal(d1): {
+					switch (args[1]) {
+						FiDoubleVal(d2): {
+							Some(FiDoubleVal(d1 + d2));
+						}
+						default: {
+							onError("not a double argument of +: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				FiStringVal(s1): {
+					switch (args[1]) {
+						FiStringVal(s2): {
+							Some(FiStringVal(s1 + s2));
+						}
+						default: {
+							onError("not a string argument of +: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				default: {
+					onError("not an integer, double or string argument of +: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcMinusPrim(): {
+			switch (args[0]) {
+				FiIntVal(i1): {
+					switch (args[1]) {
+						FiIntVal(i2): {
+							Some(FiIntVal(i1 - i2));
+						}
+						default: {
+							onError("not an integer argument of -: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				FiDoubleVal(d1): {
+					switch (args[1]) {
+						FiDoubleVal(d2): {
+							Some(FiDoubleVal(d1 - d2));
+						}
+						default: {
+							onError("not a double argument of -: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				default: {
+					onError("not an integer or double argument of -: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcMulPrim(): {
+			switch (args[0]) {
+				FiIntVal(i1): {
+					switch (args[1]) {
+						FiIntVal(i2): {
+							Some(FiIntVal(i1 * i2));
+						}
+						default: {
+							onError("not an integer argument of *: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				FiDoubleVal(d1): {
+					switch (args[1]) {
+						FiDoubleVal(d2): {
+							Some(FiDoubleVal(d1 * d2));
+						}
+						default: {
+							onError("not a double argument of *: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				default: {
+					onError("not an integer or double argument of *: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcDivPrim(): {
+			switch (args[0]) {
+				FiIntVal(i1): {
+					switch (args[1]) {
+						FiIntVal(i2): {
+							Some(FiIntVal(i1 / i2));
+						}
+						default: {
+							onError("not an integer argument of /: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				FiDoubleVal(d1): {
+					switch (args[1]) {
+						FiDoubleVal(d2): {
+							Some(FiDoubleVal(d1 / d2));
+						}
+						default: {
+							onError("not a double argument of /: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				default: {
+					onError("not an integer or double argument of /: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcModPrim(): {
+			switch (args[0]) {
+				FiIntVal(i1): {
+					switch (args[1]) {
+						FiIntVal(i2): {
+							Some(FiIntVal(i1 % i2));
+						}
+						default: {
+							onError("not an integer argument of %: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				FiDoubleVal(d1): {
+					switch (args[1]) {
+						FiDoubleVal(d2): {
+							Some(FiDoubleVal(d1 % d2));
+						}
+						default: {
+							onError("not a double argument of %: " + fiVal2s(args[1]));
+							None();
+						}
+					}
+				}
+				default: {
+					onError("not an integer or double argument of %: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcNegPrim(): {
+			switch (args[0]) {
+				FiIntVal(i1): {
+					Some(FiIntVal(-i1));
+				}
+				FiDoubleVal(d1): {
+					Some(FiDoubleVal(-d1));
+				}
+				default: {
+					onError("not an integer or double argument of -: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcArrayPrim(): {
+			Some(FiArrayVal(args));
+		}
+		FcIndexPrim(): {
+			switch (args[0]) {
+				FiArrayVal(arr): {
+					switch (args[1]) {
+						FiIntVal(i): {
+							if (0 <= i && i + 1 <= length(arr)) {
+								Some(arr[i]);
 							} else {
-								None()
+								onError("array index is out of bounds: " + i2s(i) + " not in [0 - " + i2s(length(arr) - 1) + "]");
+								None();
 							}
-						);
-						if (isNone(val)) {
-							onError("field " + name + " is not found in struct " + str);
 						}
-						val;
-					}
-					default: {
-						onError("field assignment operator argument must be a struct, but is: " + fiVal2s(args[0]));
-						None();
+						default: {
+							onError("not an integer argument of array access: " + fiVal2s(args[1]));
+							None();
+						}
 					}
 				}
+				default: {
+					onError("not an array argument of array access: " + fiVal2s(args[0]));
+					None();
+				}
 			}
-			// creates a closure explicitly - appears after lambda lifting
-			FcCreateClosurePrim(structName, functionName): {
-				onError("operator FcCreateClosurePrim is not implemented yet");
-				// TODO
+		}
+		FcDerefPrim(): {
+			switch (args[0]) {
+				FiRefVal(rf): {
+					Some(^rf);
+				}
+				default: {
+					onError("deref argument must be a ref, but is: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcAssignPrim(): {
+			switch (args[0]) {
+				FiRefVal(rf): {
+					rf := args[1];
+					Some(FiVoidVal());
+				}
+				default: {
+					onError("assign operator argument must be a ref, but is: " + fiVal2s(args[0]));
+					None();
+				}
+			}
+		}
+		FcRefPrim(): {
+			Some(FiRefVal(ref args[0]));
+		}
+		FcStructPrim(name): {
+			//if (makeStructValue(name, ))
+			fields = structFieldNames(name);
+			if (length(fields) != length(args)) {
+				onError("number " + i2s(length(fields)) + " of fields of struct " + name + " mismatch number of arguments " + i2s(length(args)));
 				None();
+			} else {
+				Some(FiStructVal(name, mapi(args, \i, arg -> FiFieldVal(fields[i], ref arg))));
 			}
-			FcQuote(): {
-				onError("operator FcQuote is not implemented yet");
-				// TODO
-				None();
+		}
+		FcFieldPrim(name): {
+			switch (args[0]) {
+				FiStructVal(str, fields): {
+					val = findmap(fields, \field -> 
+						if (field.name == name) Some(^(field.val)) else None()
+					);
+					if (isNone(val)) {
+						onError("field " + name + " is not found in struct " + str);
+					}
+					val;
+				}
+				default: {
+					onError("field access operator argument must be a struct, but is: " + fiVal2s(args[0]));
+					None();
+				}
 			}
-			FcUnquote(): {
-				onError("operator FcUnquote is not implemented yet");
-				// TODO
-				None();
+		}
+		FcSetMutablePrim(name): {
+			switch (args[0]) {
+				FiStructVal(str, fields): {
+					val = findmap(fields, \field -> 
+						if (field.name == name) {
+							field.val := args[1];
+							Some(FiVoidVal());
+						} else {
+							None()
+						}
+					);
+					if (isNone(val)) {
+						onError("field " + name + " is not found in struct " + str);
+					}
+					val;
+				}
+				default: {
+					onError("field assignment operator argument must be a struct, but is: " + fiVal2s(args[0]));
+					None();
+				}
 			}
+		}
+		// creates a closure explicitly - appears after lambda lifting
+		FcCreateClosurePrim(structName, functionName): {
+			onError("operator FcCreateClosurePrim is not implemented yet");
+			// TODO
+			None();
+		}
+		FcQuote(): {
+			onError("operator FcQuote is not implemented yet");
+			// TODO
+			None();
+		}
+		FcUnquote(): {
+			onError("operator FcUnquote is not implemented yet");
+			// TODO
+			None();
 		}
 	}
 }
@@ -726,11 +750,15 @@ fcReplEvalCallPrim(call : FiCallPrim, vals : Tree<string, FiVal>, onError : (str
 fcUnwrapFiVal(ex : FiVal) -> flow {
 	switch (ex) {
 		FiStructVal(name, fields): {
-			makeStructValue(
+			ret = makeStructValue(
 				name, 
 				map(fields, \field -> fcUnwrapFiVal(^(field.val))), 
 				IllegalStruct()
 			);
+			if (name != "IllegalStruct" && ret == IllegalStruct()) {
+				println("Runtime error: cannot create struct " + fiVal2s(ex));
+			}
+			ret;
 		}
 		FiArrayVal(val): map(val, fcUnwrapFiVal);
 		FiRefVal(val): ref fcUnwrapFiVal(^val);
@@ -759,6 +787,7 @@ fcUnwrapFiVal(ex : FiVal) -> flow {
 			} else if (arity == 6) {
 				flow(\a1, a2, a3, a4, a5, a6 -> unwrap_ret(fn([fcWrapFiVal(a1), fcWrapFiVal(a2), fcWrapFiVal(a3), fcWrapFiVal(a4), fcWrapFiVal(a5), fcWrapFiVal(a6)])));
 			} else {
+				println("Runtime error: arity " + i2s(arity) + " is not supported yet");
 				flow(IllegalStruct());
 			}
 			/*func : ([flow]) -> flow = \as -> {
