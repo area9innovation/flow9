@@ -10,7 +10,7 @@ import fonts_repo;
 
 export {
 	FcRuntimeError(message : string);
-	// Struct which represents a void value.
+	// Struct which represents a void value, since it can't be expressed and returned explicitly as flow value.
 	FcRuntimeVoid();
 
 	FcEvalGlobal(
@@ -19,18 +19,459 @@ export {
 	);
 
 	// Setup the global variables and toplevel functions
-	fcInitEvalEnv(program: FiProgram, onError : (string) -> void) -> HashMap<string, FcEvalGlobal>;
+	fcInitEvalGlobals(program: FiProgram, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal>;
 
 	// Perform the evaluation of function 'name'. 
-	// 'FcRuntimeError()' as a return value for a runtime error.
+	// Returns the return value, if no errors occur, or 'FcRuntimeError()' as a return value for a runtime error.
 	fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow;
+}
+
+fcInitEvalGlobals(prog: FiProgram, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal> {
+	globals = makeHashMap(fastHashString);
+	iter(prog.traversal, \mod_name ->
+		switch (lookupTree(prog.modules, mod_name)) {
+			Some(module): {
+				onError = \message, pos -> {
+					where = makeLocation(prog.config, env, module.fileinfo, pos, -1);
+					fail(where + " " + message);
+				}
+				iter(module.natives, \nat : FiNativeDec -> {
+					fn = if (hostCallExists(nat.nativeName)) {
+						fcMakeFnFromNative(nat, onError);
+					} else {
+						switch (nat.fallbackLambda) {
+							FiLambda(args, body, type,__): {
+								fcMakeFnFromLambda(nat.fallbackLambda, globals, None(), onError);
+							}
+							default: {
+								err_message = "No native : " + nat.nativeName;
+								onError(err_message, nat.declStart);
+								flow(FcRuntimeError(err_message));
+							}
+						}
+					}
+					setHashMap(globals, nat.name, FcEvalGlobal(fn, module.fileinfo));
+				});
+				iter(module.initOrder, \name ->
+					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
+						switch (decl) {
+							FiFunctionDec(__, lambda, type,__,__): {
+								fn = fcMakeFnFromLambda(lambda, globals, None(), onError);
+								setHashMap(globals, name, FcEvalGlobal(fn, module.fileinfo));
+							}
+							FiGlobalVar(__, value, __,__,__): {
+								gv = fcReplEval(value, globals, makeHashMap(fastHashString), onError); 
+								setHashMap(globals, name, FcEvalGlobal(gv, module.fileinfo));
+							}
+							FiNativeDec(__,__,__, nativeName, fallback, __,__): { 
+								// are already added
+							}
+						}
+					)
+				);
+			}
+			None(): {
+				// Never should be
+			}
+		}
+	);
+	globals;
+}
+
+fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow {
+	switch (lookupHashMap(globals, name)) {
+		Some(global): {
+			fv = global.value;
+			if (getDataTagForValue(fv) != 34) {
+				FcRuntimeError("not a function is called: " + toString(fv));
+			} else {
+				arity = extractFuncArity(fv);
+				if (length(args) != arity) {
+					FcRuntimeError("called function arity mismatch: " + i2s(arity) + " != " + i2s(length(args)));
+				} else {
+					if (arity == 0) {
+						cast(fv : flow -> (() -> flow))();
+					} else if (arity == 1) {
+						cast(fv : flow -> ((flow) -> flow))(args[0]);
+					} else if (arity == 2) {
+						cast(fv : flow -> ((flow, flow) -> flow))(args[0], args[1]);
+					} else if (arity == 3) {
+						cast(fv : flow -> ((flow, flow, flow) -> flow))(args[0], args[1], args[2]);
+					} else if (arity == 4) {
+						cast(fv : flow -> ((flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3]);
+					} else if (arity == 5) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4]);
+					} else if (arity == 6) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5]);
+					} else if (arity == 7) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+					} else if (arity == 8) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
+					} else if (arity == 9) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]);
+					} else if (arity == 10) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]);
+					} else if (arity == 11) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]);
+					} else if (arity == 12) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
+					} else {
+						// TODO: add more arities
+						FcRuntimeError("unsupported arity " + i2s(arity));
+					}
+				}
+			}
+		}
+		None(): {
+			FcRuntimeError("function " + name + " is not found");
+		}
+	};
+}
+
+fcReplEval(ex : FiExp, globals : HashMap<string, FcEvalGlobal>, locals : HashMap<string, flow>, onError : (string, int) -> void) -> flow {
+	make_err = \msg, pos -> {
+		onError(msg, pos);
+		flow(FcRuntimeError(msg));
+	}
+	switch (ex) {
+		FiLambda(args, body,__,__): {
+			arity = length(args);
+			closure = copyHashMap(locals);
+			fcMakeFnFromLambda(ex, globals, Some(closure), onError);
+		}
+		FiCall(f, args,__,pos): {
+			fv = fcReplEval(f, globals, locals, onError);
+			arity = length(args);
+			argsv = map(args, \a -> fcReplEval(a, globals, locals, onError));
+			if (arity == 0) {
+				cast(fv : flow -> (() -> flow))();
+			} else if (arity == 1) {
+				cast(fv : flow -> ((flow) -> flow))(argsv[0]);
+			} else if (arity == 2) {
+				cast(fv : flow -> ((flow, flow) -> flow))(argsv[0], argsv[1]);
+			} else if (arity == 3) {
+				cast(fv : flow -> ((flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2]);
+			} else if (arity == 4) {
+				cast(fv : flow -> ((flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3]);
+			} else if (arity == 5) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4]);
+			} else if (arity == 6) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5]);
+			} else if (arity == 7) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6]);
+			} else if (arity == 8) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7]);
+			} else if (arity == 9) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8]);
+			} else if (arity == 10) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9]);
+			} else if (arity == 11) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9], argsv[10]);
+			} else if (arity == 12) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9], argsv[10], argsv[11]);
+			} else {
+				// TODO: add more arities
+				make_err("unsupported arity " + i2s(arity), pos);
+			}
+		}
+		FiVar(x,__,pos): {
+			switch (lookupHashMap(locals, x)) {
+				Some(v): v;
+				None(): {
+					switch (lookupHashMap(globals, x)) {
+						Some(global): global.value;
+						None(): make_err("variable " + x + " is not defined", pos);
+					}
+				}
+			}
+		}
+		FiLet(x, __, e1, e2,__,__): {
+			xv = fcReplEval(e1, globals, locals, onError);
+			setHashMap(locals, x, xv);
+			ret = fcReplEval(e2, globals, locals, onError);
+			removeFromHashMap(locals, x);
+			ret;
+		}
+		FiIf(e1, e2, e3, __,__): {
+			if (cast(fcReplEval(e1, globals, locals, onError) : flow -> bool)) {
+				fcReplEval(e2, globals, locals, onError);
+			} else {
+				fcReplEval(e3, globals, locals, onError);
+			}
+		}
+		FiSwitch(v,__,cs,__,pos): {
+			w = fcReplEval(v, globals, locals, onError);
+			name = extractStructName(w);
+			switch (find(cs, \c -> c.struct == name|| c.struct == "default")) {
+				Some(case): {
+					args = extractStructArguments(w);
+					if (case.struct != "default") {
+						iteri(case.argNames, \i, arg -> 
+							setHashMap(locals, arg, args[i])
+						);
+					}
+					ret = fcReplEval(case.body, globals, locals, onError);
+					if (case.struct != "default") {
+						iter(case.argNames, \arg -> 
+							removeFromHashMap(locals, arg)
+						);
+					}
+					ret;
+				}
+				None(): {
+					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w), pos);
+				}
+			}
+		}
+		FiCast(e, __,to,__,__): {
+			ev = fcReplEval(e, globals, locals, onError);
+			if (getDataTagForValue(ev) == 2) {
+				// int case
+				switch (to) {
+					FiTypeDouble(): flow(i2d(cast(ev : flow -> int)));
+					FiTypeString(): flow(i2s(cast(ev : flow -> int)));
+					default: ev; 
+				}
+			} else if (getDataTagForValue(ev) == 3) {
+				// double case
+				switch (to) {
+					FiTypeInt(): flow(round(cast(ev : flow -> double)));
+					FiTypeString(): flow(d2s(cast(ev : flow -> double)));
+					default: ev; 
+				}
+			} else {
+				ev;
+			}
+		}
+		FiSeq(es,__,__): {
+			ret : ref flow = ref flow(FcRuntimeVoid());
+			iter(es, \e -> ret := fcReplEval(e, globals, locals, onError));
+			^ret;
+		}
+		FiCallPrim(op, es, __,__): {
+			fcReplEvalCallPrim(ex, es, globals, locals, onError);
+		}
+		FiString(s,__): flow(s);
+		FiBool(b,__):   flow(b);
+		FiDouble(d,__): flow(d);
+		FiVoid(__):     flow(FcRuntimeVoid());
+		FiInt(i,__):    flow(i);
+		FiRequire(flowfile, __,__,pos): {
+			make_err("FiRequire is not implemented yet", pos);
+		}
+		FiUnsafe(name, __,__,pos): {
+			make_err("FiUnsafe is not implemented yet", pos);
+		}
+	}
+}
+
+fcReplEvalCallPrim(call : FiCallPrim, es : [FiExp], globals : HashMap<string, FcEvalGlobal>, locals : HashMap<string, flow>, onError : (string, int) -> void) -> flow {
+	make_err = \msg -> {
+		onError(msg, call.start);
+		flow(FcRuntimeError(msg));
+	}
+	switch (call.op) {
+		FcOrPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(cast(a0 : flow -> bool) || cast(a1 : flow -> bool));
+		}
+		FcAndPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			if (!cast(a0 : flow -> bool)) flow(false) else {
+				fcReplEval(es[1], globals, locals, onError);
+			}
+		}
+		FcNotPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			flow(!cast(a0 : flow -> bool));
+		}
+		FcEqPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(a0 == a1);
+		}
+		FcNePrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(a0 != a1);
+		}
+		FcLePrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(a0 <= a1);
+		}
+		FcGePrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(a0 >= a1);
+		}
+		FcLtPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(a0 < a1);
+		}
+		FcGtPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			flow(a0 > a1);
+		}
+		FcPlusPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			if (getDataTagForValue(a0) == 2) {
+				// int case
+				flow(cast(a0 : flow -> int) + cast(a1 : flow -> int));
+			} else if (getDataTagForValue(a0) == 3) {
+				// double case
+				flow(cast(a0 : flow -> double) + cast(a1 : flow -> double));
+			} else {
+				// string case
+				flow(cast(a0 : flow -> string) + cast(a1 : flow -> string));
+			}
+		}
+		FcMinusPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			if (getDataTagForValue(a0) == 2) {
+				// int case
+				flow(cast(a0 : flow -> int) - cast(a1 : flow -> int));
+			} else {
+				// double case
+				flow(cast(a0 : flow -> double) - cast(a1 : flow -> double));
+			}
+		}
+		FcMulPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			if (getDataTagForValue(a0) == 2) {
+				// int case
+				flow(cast(a0 : flow -> int) * cast(a1 : flow -> int));
+			} else {
+				// double case
+				flow(cast(a0 : flow -> double) * cast(a1 : flow -> double));
+			}
+		}
+		FcDivPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			if (getDataTagForValue(a0) == 2) {
+				// int case
+				d = cast(a1 : flow -> int);
+				if (d == 0) {
+					make_err("division by zero");
+				} else {
+ 					flow(cast(a0 : flow -> int) / d);
+				}
+			} else {
+				// double case
+				d = cast(a1 : flow -> double);
+				if (d == 0.0) {
+					make_err("division by zero");
+				} else {
+					flow(cast(a0 : flow -> double) / d);
+				}
+			}
+		}
+		FcModPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			if (getDataTagForValue(a0) == 2) {
+				// int case
+				d = cast(a1 : flow -> int);
+				if (d == 0) {
+					make_err("division by zero");
+				} else {
+ 					flow(cast(a0 : flow -> int) % d);
+				}
+			} else {
+				// double case
+				d = cast(a1 : flow -> double);
+				if (d == 0.0) {
+					make_err("division by zero");
+				} else {
+					flow(cast(a0 : flow -> double) % d);
+				}
+			}
+		}
+		FcNegPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			if (getDataTagForValue(a0) == 2) {
+				// int case
+				flow(-cast(a0 : flow -> int));
+			} else {
+				// double case
+				flow(-cast(a0 : flow -> double));
+			}
+		}
+		FcArrayPrim(): {
+			args = map(es, \e -> fcReplEval(e, globals, locals, onError));
+			flow(args);
+		}
+		FcIndexPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			arr = cast(a0 : flow -> [flow]);
+			ind = cast(a1 : flow -> int);
+			if (0 <= ind && ind < length(arr)) {
+				arr[ind];
+			} else {
+				make_err("index " + i2s(ind) + " is out of bounds, array length: " + i2s(length(arr)));
+			}
+		}
+		FcDerefPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			flow(^cast(a0 : flow -> ref flow));
+		}
+		FcAssignPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			cast(a0 : flow -> ref flow) := a1;
+			flow(FcRuntimeVoid());
+		}
+		FcRefPrim(): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			ref a0;
+		}
+		FcStructPrim(name): {
+			args = map(es, \e -> fcReplEval(e, globals, locals, onError));
+			makeStructValue(name, args, FcRuntimeError("Struct " + name + " is not found"));
+		}
+		FcFieldPrim(field): {
+			struct = fcReplEval(es[0], globals, locals, onError);
+			name = extractStructName(struct); 
+			fields = structFieldNames(name);
+			i = elemIndex(fields, field, -1);
+			struct_args = extractStructArguments(struct);
+			struct_args[i];
+		}
+		FcSetMutablePrim(field): {
+			a0 = fcReplEval(es[0], globals, locals, onError);
+			a1 = fcReplEval(es[1], globals, locals, onError);
+			setMutableField(a0, field, a1);
+			flow(FcRuntimeVoid());
+		}
+		// creates a closure explicitly - appears after lambda lifting
+		FcCreateClosurePrim(structName, functionName): {
+			make_err("operator FcCreateClosurePrim is not implemented yet");
+			// TODO
+		}
+		FcQuote(): {
+			make_err("operator FcQuote is not implemented yet");
+			// TODO
+		}
+		FcUnquote(): {
+			make_err("operator FcUnquote is not implemented yet");
+			// TODO
+		}
+	}
 }
 
 fcMakeFnFromLambda(
 	lambda : FiLambda, 
 	globals : HashMap<string, FcEvalGlobal>, 
 	closure : Maybe<HashMap<string, flow>>,
-	onError : (string) -> void
+	onError : (string, int) -> void
 ) -> flow {
 	arity = length(lambda.args);
 	if (arity == 0) {
@@ -232,12 +673,13 @@ fcMakeFnFromLambda(
 			fcReplEval(lambda.body, globals, locals, onError);
 		});
 	} else {
-		onError("unsupproted arity: " + i2s(arity) + " for lambda\n" + prettyFiExp(dummyPretty, lambda));
-		flow(\ -> FcRuntimeError("unsupproted arity: " + i2s(arity) + " for lambda\n" + prettyFiExp(dummyPretty, lambda)))
+		err_message = "unsupproted arity: " + i2s(arity) + " for lambda\n" + prettyFiExp(dummyPretty, lambda);
+		onError(err_message, lambda.start);
+		flow(FcRuntimeError(err_message))
 	}
 }
 
-fcMakeFnFromNative(nat : FiNativeDec, onError : (string) -> void) -> flow {
+fcMakeFnFromNative(nat : FiNativeDec, onError : (string, int) -> void) -> flow {
 	arity = switch (nat.type) {
 		FiTypeFunction(arg_types,__): {
 			length(arg_types);
@@ -271,492 +713,8 @@ fcMakeFnFromNative(nat : FiNativeDec, onError : (string) -> void) -> flow {
 	} else if (arity == 12) {
 		flow(\a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12]));
 	} else {
-		onError("unsupproted arity: " + i2s(arity) + " for native " + nat.nativeName);
-		flow(\ -> FcRuntimeError("unsupproted arity: " + i2s(arity) + " for native " + nat.nativeName))
-	}
-}
-
-fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> HashMap<string, FcEvalGlobal> {
-	globals = makeHashMap(fastHashString);
-	iter(prog.traversal, \mod_name ->
-		switch (lookupTree(prog.modules, mod_name)) {
-			Some(module): {
-				iter(module.natives, \nat : FiNativeDec -> {
-					fn = if (hostCallExists(nat.nativeName)) {
-						fcMakeFnFromNative(nat, onError);
-					} else {
-						switch (nat.fallbackLambda) {
-							FiLambda(args, body, type,__): {
-								fcMakeFnFromLambda(nat.fallbackLambda, globals, None(), onError);
-							}
-							default: {
-								onError("NO native : " + nat.nativeName);
-								flow(\ __-> FcRuntimeError("NO native : " + nat.nativeName))
-							}
-						}
-					}
-					setHashMap(globals, nat.name, FcEvalGlobal(fn, module.fileinfo));
-				});
-				iter(module.initOrder, \name ->
-					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
-						switch (decl) {
-							FiFunctionDec(__, lambda, type,__,__): {
-								fn = fcMakeFnFromLambda(lambda, globals, None(), onError);
-								setHashMap(globals, name, FcEvalGlobal(fn, module.fileinfo));
-							}
-							FiGlobalVar(__, value, __,__,__): {
-								gv = fcReplEval(value, globals, makeHashMap(fastHashString), onError); 
-								setHashMap(globals, name, FcEvalGlobal(gv, module.fileinfo));
-							}
-							FiNativeDec(__,__,__, nativeName, fallback, __,__): { 
-								// are already added
-							}
-						}
-					)
-				);
-			}
-			None(): {
-				// Never should be
-			}
-		}
-	);
-	globals;
-}
-
-fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow {
-	switch (lookupHashMap(globals, name)) {
-		Some(global): {
-			fv = global.value;
-			if (getDataTagForValue(fv) != 34) {
-				FcRuntimeError("not a function is called: " + toString(fv));
-			} else {
-				arity = extractFuncArity(fv);
-				if (arity == 0) {
-					cast(fv : flow -> (() -> flow))();
-				} else if (arity == 1) {
-					cast(fv : flow -> ((flow) -> flow))(args[0]);
-				} else if (arity == 2) {
-					cast(fv : flow -> ((flow, flow) -> flow))(args[0], args[1]);
-				} else if (arity == 3) {
-					cast(fv : flow -> ((flow, flow, flow) -> flow))(args[0], args[1], args[2]);
-				} else if (arity == 4) {
-					cast(fv : flow -> ((flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3]);
-				} else if (arity == 5) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4]);
-				} else if (arity == 6) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5]);
-				} else if (arity == 7) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
-				} else if (arity == 8) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
-				} else if (arity == 9) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]);
-				} else if (arity == 10) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]);
-				} else if (arity == 11) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]);
-				} else if (arity == 12) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
-				} else {
-					// TODO: add more arities
-					FcRuntimeError("unsupported arity " + i2s(arity));
-				}
-			}
-		}
-		None(): {
-			FcRuntimeError("function " + name + " is not found");
-		}
-	};
-}
-
-trace = false;
-
-trace_list : ref List<FiExp> = ref makeList();
-
-printTrace() -> void {
-	dpPrintTrace(10, ^trace_list);
-}
-
-dpPrintTrace(c : int, l : List<FiExp>) -> void {
-	if (c > 0) {
-		switch (l) {
-			Cons(ex, t): {
-				//println(fcShortFiExp(ex));
-				println(prettyFiExp(dummyPretty, ex));
-				dpPrintTrace(c - 1, t);
-			}
-			EmptyList(): {}
-		}
-	}
-}
-
-fcReplEval(ex : FiExp, globals : HashMap<string, FcEvalGlobal>, locals : HashMap<string, flow>, onError : (string) -> void) -> flow {
-	if (trace) {
-		rlistPush(trace_list, ex);
-	}
-	make_err = \msg -> {
-		onError(msg);
-		flow(FcRuntimeError(msg));
-	}
-	ret = switch (ex) {
-		FiLambda(args, body,__,__): {
-			arity = length(args);
-			closure = copyHashMap(locals);
-			fcMakeFnFromLambda(ex, globals, Some(closure), onError);
-		}
-		FiCall(f, args,__,__): {
-			fv = fcReplEval(f, globals, locals, onError);
-			if (getDataTagForValue(fv) != 34) {
-				make_err("not a function is called: " + toString(fv));
-			} else {
-				arity = length(args);
-				argsv = map(args, \a -> fcReplEval(a, globals, locals, onError));
-				if (arity == 0) {
-					cast(fv : flow -> (() -> flow))();
-				} else if (arity == 1) {
-					cast(fv : flow -> ((flow) -> flow))(argsv[0]);
-				} else if (arity == 2) {
-					cast(fv : flow -> ((flow, flow) -> flow))(argsv[0], argsv[1]);
-				} else if (arity == 3) {
-					cast(fv : flow -> ((flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2]);
-				} else if (arity == 4) {
-					cast(fv : flow -> ((flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3]);
-				} else if (arity == 5) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4]);
-				} else if (arity == 6) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5]);
-				} else if (arity == 7) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6]);
-				} else if (arity == 8) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7]);
-				} else if (arity == 9) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8]);
-				} else if (arity == 10) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9]);
-				} else if (arity == 11) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9], argsv[10]);
-				} else if (arity == 12) {
-					cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9], argsv[10], argsv[11]);
-				} else {
-					// TODO: add more arities
-					make_err("unsupported arity " + i2s(arity));
-				}
-			}
-		}
-		FiVar(x,__,__): {
-			switch (lookupHashMap(locals, x)) {
-				Some(v): v;
-				None(): {
-					switch (lookupHashMap(globals, x)) {
-						Some(global): global.value;
-						None(): {
-							printTrace();
-							fail("variable " + x + " is not defined");
-							make_err("variable " + x + " is not defined");
-						}
-					}
-				}
-			}
-		}
-		FiLet(x, __, e1, e2,__,__): {
-			xv = fcReplEval(e1, globals, locals, onError);
-			setHashMap(locals, x, xv);
-			ret = fcReplEval(e2, globals, locals, onError);
-			removeFromHashMap(locals, x);
-			ret;
-		}
-		FiIf(e1, e2, e3, __,__): {
-			if (cast(fcReplEval(e1, globals, locals, onError) : flow -> bool)) {
-				fcReplEval(e2, globals, locals, onError);
-			} else {
-				fcReplEval(e3, globals, locals, onError);
-			}
-		}
-		FiSwitch(v,__,cs,__,__): {
-			w = fcReplEval(v, globals, locals, onError);
-			name = extractStructName(w);
-			switch (find(cs, \c -> c.struct == name|| c.struct == "default")) {
-				Some(case): {
-					args = extractStructArguments(w);
-					if (case.struct != "default") {
-						iteri(case.argNames, \i, arg -> 
-							setHashMap(locals, arg, args[i])
-						);
-					}
-					ret = fcReplEval(case.body, globals, locals, onError);
-					if (case.struct != "default") {
-						iter(case.argNames, \arg -> 
-							removeFromHashMap(locals, arg)
-						);
-					}
-					ret;
-				}
-				None(): {
-					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w));
-				}
-			}
-		}
-		FiCast(e, __,to,__,__): {
-			ev = fcReplEval(e, globals, locals, onError);
-			if (getDataTagForValue(ev) == 2) {
-				// int case
-				switch (to) {
-					FiTypeDouble(): flow(i2d(cast(ev : flow -> int)));
-					FiTypeString(): flow(i2s(cast(ev : flow -> int)));
-					default: ev; 
-				}
-			} else if (getDataTagForValue(ev) == 3) {
-				// double case
-				switch (to) {
-					FiTypeInt(): flow(round(cast(ev : flow -> double)));
-					FiTypeString(): flow(d2s(cast(ev : flow -> double)));
-					default: ev; 
-				}
-			} else {
-				ev;
-			}
-		}
-		FiSeq(es,__,__): {
-			ret : ref flow = ref flow(FcRuntimeVoid());
-			iter(es, \e -> ret := fcReplEval(e, globals, locals, onError));
-			^ret;
-		}
-		FiCallPrim(op, es, __,__): {
-			fcReplEvalCallPrim(ex, es, globals, locals, onError);
-		}
-		FiString(s,__): flow(s);
-		FiBool(b,__):   flow(b);
-		FiDouble(d,__): flow(d);
-		FiVoid(__):     flow(FcRuntimeVoid());
-		FiInt(i,__):    flow(i);
-		FiRequire(flowfile, __,__,__): {
-			make_err("FiRequire is not implemented yet");
-		}
-		FiUnsafe(name, __,__,__): {
-			make_err("FiUnsafe is not implemented yet");
-		}
-	}
-	if (trace) {
-		trace_list := tailList(^trace_list);
-	}
-	ret;
-}
-
-fcReplEvalCallPrim(call : FiCallPrim, es : [FiExp], globals : HashMap<string, FcEvalGlobal>, locals : HashMap<string, flow>, onError : (string) -> void) -> flow {
-	make_err = \msg -> {
-		onError(msg);
-		flow(FcRuntimeError(msg));
-	}
-	switch (call.op) {
-		FcOrPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(cast(a0 : flow -> bool) || cast(a1 : flow -> bool));
-		}
-		FcAndPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			if (!cast(a0 : flow -> bool)) flow(false) else {
-				fcReplEval(es[1], globals, locals, onError);
-			}
-		}
-		FcNotPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			flow(!cast(a0 : flow -> bool));
-		}
-		FcEqPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(a0 == a1);
-		}
-		FcNePrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(a0 != a1);
-		}
-		FcLePrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(a0 <= a1);
-		}
-		FcGePrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(a0 >= a1);
-		}
-		FcLtPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(a0 < a1);
-		}
-		FcGtPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			flow(a0 > a1);
-		}
-		FcPlusPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			if (getDataTagForValue(a0) == 2) {
-				// int case
-				flow(cast(a0 : flow -> int) + cast(a1 : flow -> int));
-			} else if (getDataTagForValue(a0) == 3) {
-				// double case
-				flow(cast(a0 : flow -> double) + cast(a1 : flow -> double));
-			} else if (getDataTagForValue(a0) == 4) {
-				// string case
-				flow(cast(a0 : flow -> string) + cast(a1 : flow -> string));
-			} else {
-				make_err("not an integer, double or string argument of +: " + toString(a0));
-			}
-		}
-		FcMinusPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			if (getDataTagForValue(a0) == 2) {
-				// int case
-				flow(cast(a0 : flow -> int) - cast(a1 : flow -> int));
-			} else if (getDataTagForValue(a0) == 3) {
-				// double case
-				flow(cast(a0 : flow -> double) - cast(a1 : flow -> double));
-			} else {
-				make_err("not an integer or double argument of -: " + toString(a0));
-			}
-		}
-		FcMulPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			if (getDataTagForValue(a0) == 2) {
-				// int case
-				flow(cast(a0 : flow -> int) * cast(a1 : flow -> int));
-			} else if (getDataTagForValue(a0) == 3) {
-				// double case
-				flow(cast(a0 : flow -> double) * cast(a1 : flow -> double));
-			} else {
-				make_err("not an integer or double argument of *: " + toString(a0));
-			}
-		}
-		FcDivPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			if (getDataTagForValue(a0) == 2) {
-				// int case
-				d = cast(a1 : flow -> int);
-				if (d == 0) {
-					printTrace();
-					make_err("division by zero");
-				} else {
- 					flow(cast(a0 : flow -> int) / d);
-				}
-			} else if (getDataTagForValue(a0) == 3) {
-				// double case
-				d = cast(a1 : flow -> double);
-				if (d == 0.0) {
-					printTrace();
-					make_err("division by zero");
-				} else {
-					flow(cast(a0 : flow -> double) / d);
-				}
-			} else {
-				make_err("not an integer or double argument of /: " + toString(a0));
-			}
-		}
-		FcModPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			if (getDataTagForValue(a0) == 2) {
-				// int case
-				d = cast(a1 : flow -> int);
-				if (d == 0) {
-					printTrace();
-					make_err("division by zero");
-				} else {
- 					flow(cast(a0 : flow -> int) % d);
-				}
-			} else if (getDataTagForValue(a0) == 3) {
-				// double case
-				d = cast(a1 : flow -> double);
-				if (d == 0.0) {
-					printTrace();
-					make_err("division by zero");
-				} else {
-					flow(cast(a0 : flow -> double) % d);
-				}
-			} else {
-				make_err("not an integer or double argument of %: " + toString(a0));
-			}
-		}
-		FcNegPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			if (getDataTagForValue(a0) == 2) {
-				// int case
-				flow(-cast(a0 : flow -> int));
-			} else if (getDataTagForValue(a0) == 3) {
-				// double case
-				flow(-cast(a0 : flow -> double));
-			} else {
-				make_err("not an integer or double argument of -: " + toString(a0));
-			}
-		}
-		FcArrayPrim(): {
-			args = map(es, \e -> fcReplEval(e, globals, locals, onError));
-			flow(args);
-		}
-		FcIndexPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			cast(a0 : flow -> [flow])[cast(a1 : flow -> int)];
-		}
-		FcDerefPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			flow(^cast(a0 : flow -> ref flow));
-		}
-		FcAssignPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			cast(a0 : flow -> ref flow) := a1;
-			flow(FcRuntimeVoid());
-		}
-		FcRefPrim(): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			ref a0;
-		}
-		FcStructPrim(name): {
-			args = map(es, \e -> fcReplEval(e, globals, locals, onError));
-			makeStructValue(name, args, FcRuntimeError("Struct " + name + " is not found"));
-		}
-		FcFieldPrim(field): {
-			struct = fcReplEval(es[0], globals, locals, onError);
-			name = extractStructName(struct); 
-			fields = structFieldNames(name);
-			i = elemIndex(fields, field, -1);
-			if (i == -1) {
-				printTrace();
-				fail("field " + field + " is not found in struct '" + name + "' " + toString(struct) + "\n" +
-				toString(es));
-				make_err("field " + field + " is not found in struct '" + name + "' " + toString(struct));
-			} else {
-				struct_args = extractStructArguments(struct);
-				struct_args[i];
-			}
-		}
-		FcSetMutablePrim(field): {
-			a0 = fcReplEval(es[0], globals, locals, onError);
-			a1 = fcReplEval(es[1], globals, locals, onError);
-			setMutableField(a0, field, a1);
-			flow(FcRuntimeVoid());
-		}
-		// creates a closure explicitly - appears after lambda lifting
-		FcCreateClosurePrim(structName, functionName): {
-			make_err("operator FcCreateClosurePrim is not implemented yet");
-			// TODO
-		}
-		FcQuote(): {
-			make_err("operator FcQuote is not implemented yet");
-			// TODO
-		}
-		FcUnquote(): {
-			make_err("operator FcUnquote is not implemented yet");
-			// TODO
-		}
+		err_message = "unsupproted arity: " + i2s(arity) + " for native " + nat.nativeName;
+		onError(err_message, nat.declStart);
+		flow(FcRuntimeError(err_message))
 	}
 }
