@@ -1096,6 +1096,8 @@ public class Native extends NativeHost {
 			return 10;
 		} else if (fn instanceof Func11) {
 			return 11;
+		} else if (fn instanceof Func12) {
+			return 12;
 		} else {
 			// TODO: add more arities
 			return -1;
