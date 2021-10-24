@@ -13,17 +13,22 @@ export {
 	// Struct which represents a void value.
 	FcRuntimeVoid();
 
+	FcEvalGlobal(
+		value : flow,
+		fileinfo : FiFileInfo
+	);
+
 	// Setup the global variables and toplevel functions
-	fcInitEvalEnv(program: FiProgram, onError : (string) -> void) -> HashMap<string, flow>;
+	fcInitEvalEnv(program: FiProgram, onError : (string) -> void) -> HashMap<string, FcEvalGlobal>;
 
 	// Perform the evaluation of function 'name'. 
 	// 'FcRuntimeError()' as a return value for a runtime error.
-	fcCallFunction(name : string, args : [flow], globals : HashMap<string, flow>) -> flow;
+	fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow;
 }
 
 fcMakeFnFromLambda(
 	lambda : FiLambda, 
-	globals : HashMap<string, flow>, 
+	globals : HashMap<string, FcEvalGlobal>, 
 	closure : Maybe<HashMap<string, flow>>,
 	onError : (string) -> void
 ) -> flow {
@@ -271,7 +276,7 @@ fcMakeFnFromNative(nat : FiNativeDec, onError : (string) -> void) -> flow {
 	}
 }
 
-fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> HashMap<string, flow> {
+fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> HashMap<string, FcEvalGlobal> {
 	globals = makeHashMap(fastHashString);
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
@@ -290,20 +295,22 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> HashMap<string, fl
 							}
 						}
 					}
-					setHashMap(globals, nat.name, fn);
+					setHashMap(globals, nat.name, FcEvalGlobal(fn, module.fileinfo));
 				});
 				iter(module.initOrder, \name ->
 					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
 						switch (decl) {
 							FiFunctionDec(__, lambda, type,__,__): {
 								fn = fcMakeFnFromLambda(lambda, globals, None(), onError);
-								setHashMap(globals, name, fn);
+								setHashMap(globals, name, FcEvalGlobal(fn, module.fileinfo));
 							}
 							FiGlobalVar(__, value, __,__,__): {
 								gv = fcReplEval(value, globals, makeHashMap(fastHashString), onError); 
-								setHashMap(globals, name, gv);
+								setHashMap(globals, name, FcEvalGlobal(gv, module.fileinfo));
 							}
-							FiNativeDec(__,__,__, nativeName, fallback, __,__): { }
+							FiNativeDec(__,__,__, nativeName, fallback, __,__): { 
+								// are already added
+							}
 						}
 					)
 				);
@@ -316,9 +323,10 @@ fcInitEvalEnv(prog: FiProgram, onError : (string) -> void) -> HashMap<string, fl
 	globals;
 }
 
-fcCallFunction(name : string, args : [flow], globals : HashMap<string, flow>) -> flow {
+fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow {
 	switch (lookupHashMap(globals, name)) {
-		Some(fv): {
+		Some(global): {
+			fv = global.value;
 			if (getDataTagForValue(fv) != 34) {
 				FcRuntimeError("not a function is called: " + toString(fv));
 			} else {
@@ -382,7 +390,7 @@ dpPrintTrace(c : int, l : List<FiExp>) -> void {
 	}
 }
 
-fcReplEval(ex : FiExp, globals : HashMap<string, flow>, locals : HashMap<string, flow>, onError : (string) -> void) -> flow {
+fcReplEval(ex : FiExp, globals : HashMap<string, FcEvalGlobal>, locals : HashMap<string, flow>, onError : (string) -> void) -> flow {
 	if (trace) {
 		rlistPush(trace_list, ex);
 	}
@@ -440,7 +448,7 @@ fcReplEval(ex : FiExp, globals : HashMap<string, flow>, locals : HashMap<string,
 				Some(v): v;
 				None(): {
 					switch (lookupHashMap(globals, x)) {
-						Some(v): v;
+						Some(global): global.value;
 						None(): {
 							printTrace();
 							fail("variable " + x + " is not defined");
@@ -534,7 +542,7 @@ fcReplEval(ex : FiExp, globals : HashMap<string, flow>, locals : HashMap<string,
 	ret;
 }
 
-fcReplEvalCallPrim(call : FiCallPrim, es : [FiExp], globals : HashMap<string, flow>, locals : HashMap<string, flow>, onError : (string) -> void) -> flow {
+fcReplEvalCallPrim(call : FiCallPrim, es : [FiExp], globals : HashMap<string, FcEvalGlobal>, locals : HashMap<string, flow>, onError : (string) -> void) -> flow {
 	make_err = \msg -> {
 		onError(msg);
 		flow(FcRuntimeError(msg));
