@@ -1120,7 +1120,6 @@ public class Native extends NativeHost {
 
 	private static ConcurrentHashMap<String, Method> field_setters = null;
 
-	//@SuppressWarnings("unchecked")
 	public static final Object setMutableField(Object obj, String field, Object value) {
 		if (field_setters == null) {
 			field_setters = new ConcurrentHashMap<String, Method>();
@@ -1150,10 +1149,7 @@ public class Native extends NativeHost {
 					System.exit(255);
 				}
 			}
-		} /*catch (NoSuchMethodException ex) {
-			System.out.println(ex.getMessage());
-			System.exit(255);
-		} */catch (IllegalAccessException ex) {
+		} catch (IllegalAccessException ex) {
 			System.out.println(ex.getMessage());
 			System.exit(255);
 		} catch (InvocationTargetException ex) {
@@ -1161,6 +1157,33 @@ public class Native extends NativeHost {
 			System.exit(255);
 		}
 		return null;
+	}
+
+	// What is the type tag for this value?
+	// 0: void, 1: bool, 2: int, 3: double, 4 : string, 5: array, 6: struct, 12: code pointer, 20: native function
+	// 31: reference, 32: native value, 34: closure pointer, 48: captured frame
+	public static final int getDataTagForValue(Object x) {
+		if (x == null) {
+			return 0;
+		} else if (x instanceof Boolean) {
+			return 1;
+		} else if (x instanceof Integer) {
+			return 2;
+		} else if (x instanceof Double) {
+			return 3;
+		} else if (x instanceof String) {
+			return 4;
+		} else if (x.getClass().isArray()) {
+			return 5;
+		} else if (x instanceof Struct) {
+			return 6;
+		} else if (x instanceof Reference) {
+			return 31;
+		} else if (x.getClass().getName().contains("$$Lambda$")) {
+			return 34;
+		} else {
+			return 32;
+		}
 	}
 
 	public static final Object voidValue() {
@@ -2393,33 +2416,6 @@ public class Native extends NativeHost {
 			} catch (java.lang.IllegalArgumentException ex) {
 				System.err.println("AAAA\n" + name + "\n" + ex.getMessage());
 			}
-		}
-	}
-
-	// What is the type tag for this value?
-	// 0: void, 1: bool, 2: int, 3: double, 4 : string, 5: array, 6: struct, 12: code pointer, 20: native function
-	// 31: reference, 32: native value, 34: closure pointer, 48: captured frame
-	public static final int getDataTagForValue(Object x) {
-		if (x == null) {
-			return 0;
-		} else if (x instanceof Boolean) {
-			return 1;
-		} else if (x instanceof Integer) {
-			return 2;
-		} else if (x instanceof Double) {
-			return 3;
-		} else if (x instanceof String) {
-			return 4;
-		} else if (x.getClass().isArray()) {
-			return 5;
-		} else if (x instanceof Struct) {
-			return 6;
-		} else if (x instanceof Reference) {
-			return 31;
-		} else if (x.getClass().getName().contains("$$Lambda$")) {
-			return 34;
-		} else {
-			return 32;
 		}
 	}
 }
