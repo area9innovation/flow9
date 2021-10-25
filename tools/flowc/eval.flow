@@ -9,10 +9,6 @@ import tools/flowc/flow_parser;
 import fonts_repo;
 
 export {
-	FcRuntimeError(message : string);
-	// Struct which represents a void value, since it can't be expressed and returned explicitly as flow value.
-	FcRuntimeVoid();
-
 	FcEvalGlobal(
 		value : flow,
 		fileinfo : FiFileInfo
@@ -22,13 +18,20 @@ export {
 	fcInitEvalGlobals(program: FiProgram, onError : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal>;
 
 	// Perform the evaluation of function 'name'. 
-	// Returns the return value, if no errors occur, or 'FcRuntimeError()' as a return value for a runtime error.
+	// Returns the return value, if no errors occur, or 'flow()' as a return value for a runtime error.
 	fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow;
 }
 
-FiRuntimeStruct(
+// Struct, which are not used in flowc compiler are not present in runtime explicitly, 
+// so we use a general data structure, which represents struct in runtime.
+FcRuntimeStruct(
+	fields : [FcRuntimeField]
+);
+// Struct, which represents a field. 
+// Uses a ref to a value in order to model mutable fields.
+FcRuntimeField(
 	name : string,
-	fields : [flow]
+	value : ref flow
 );
 
 fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal> {
@@ -55,7 +58,7 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlob
 							default: {
 								err_message = "No native : " + nat.nativeName;
 								onError(err_message, nat.declStart);
-								flow(FcRuntimeError(err_message));
+								flow(err_message);
 							}
 						}
 					}
@@ -92,11 +95,11 @@ fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlo
 		Some(global): {
 			fv = global.value;
 			if (getDataTagForValue(fv) != 34) {
-				FcRuntimeError("not a function is called: " + toString(fv));
+				flow("not a function is called: " + toString(fv));
 			} else {
 				arity = extractFuncArity(fv);
 				if (length(args) != arity) {
-					FcRuntimeError("called function arity mismatch: " + i2s(arity) + " != " + i2s(length(args)));
+					flow("called function arity mismatch: " + i2s(arity) + " != " + i2s(length(args)));
 				} else {
 					if (arity == 0) {
 						cast(fv : flow -> (() -> flow))();
@@ -126,13 +129,13 @@ fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlo
 						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
 					} else {
 						// TODO: add more arities
-						FcRuntimeError("unsupported arity " + i2s(arity));
+						flow("unsupported arity " + i2s(arity));
 					}
 				}
 			}
 		}
 		None(): {
-			FcRuntimeError("function " + name + " is not found");
+			flow("function " + name + " is not found");
 		}
 	};
 }
@@ -146,7 +149,7 @@ fcReplEval(
 ) -> flow {
 	make_err = \msg, pos -> {
 		onError(msg, pos);
-		flow(FcRuntimeError(msg));
+		flow(msg);
 	}
 	switch (ex) {
 		FiLambda(args, body,__,__): {
@@ -259,7 +262,7 @@ fcReplEval(
 			}
 		}
 		FiSeq(es,__,__): {
-			ret : ref flow = ref flow(FcRuntimeVoid());
+			ret : ref flow = ref voidValue();
 			iter(es, \e -> ret := fcReplEval(e, structs, globals, locals, onError));
 			^ret;
 		}
@@ -269,7 +272,7 @@ fcReplEval(
 		FiString(s,__): flow(s);
 		FiBool(b,__):   flow(b);
 		FiDouble(d,__): flow(d);
-		FiVoid(__):     flow(FcRuntimeVoid());
+		FiVoid(__):     voidValue();
 		FiInt(i,__):    flow(i);
 		FiRequire(flowfile, __,__,pos): {
 			make_err("FiRequire is not implemented yet", pos);
@@ -289,7 +292,7 @@ fcReplEvalCallPrim(
 ) -> flow {
 	make_err = \msg -> {
 		onError(msg, call.start);
-		flow(FcRuntimeError(msg));
+		flow(msg);
 	}
 	switch (call.op) {
 		FcOrPrim(): {
@@ -448,7 +451,7 @@ fcReplEvalCallPrim(
 			a0 = fcReplEval(es[0], structs, globals, locals, onError);
 			a1 = fcReplEval(es[1], structs, globals, locals, onError);
 			cast(a0 : flow -> ref flow) := a1;
-			flow(FcRuntimeVoid());
+			voidValue();
 		}
 		FcRefPrim(): {
 			a0 = fcReplEval(es[0], structs, globals, locals, onError);
@@ -456,28 +459,58 @@ fcReplEvalCallPrim(
 		}
 		FcStructPrim(name): {
 			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
-			makeStructValue(name, args, map(args, \arg -> ref arg));
+			if (isStructName(name)) {
+				makeStructValue(name, args, IllegalStruct());
+			} else {
+				switch (lookupHashMap(structs, name)) {
+					Some(struct): {
+						FcRuntimeStruct(
+							mapi(args, \i, val -> FcRuntimeField(struct.args[i].name, ref val))
+						);
+					}
+					None(): {
+						make_err("unknown struct " + name);
+					}
+				}
+			}
 		}
 		FcFieldPrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
 			name = extractStructName(struct); 
-			if (name != "") {
+			if (name != "FcRuntimeStruct") {
 				fields = structFieldNames(name);
 				i = elemIndex(fields, field, -1);
 				struct_args = extractStructArguments(struct);
 				struct_args[i];
 			} else {
-				fields = structFieldNames(name);
-				i = elemIndex(fields, field, -1);
-				struct_args = extractStructArguments(struct);
-				struct_args[i];
+				runtime_struct = cast(struct : flow -> FcRuntimeStruct);
+				switch (find(runtime_struct.fields, \f -> f.name == field)) {
+					Some(f): ^(f.value);
+					None(): {
+						make_err("unknown field " + field + " in struct");
+					}
+				}
 			}
 		}
 		FcSetMutablePrim(field): {
-			a0 = fcReplEval(es[0], structs, globals, locals, onError);
-			a1 = fcReplEval(es[1], structs, globals, locals, onError);
-			setMutableField(a0, field, a1);
-			flow(FcRuntimeVoid());
+			struct = fcReplEval(es[0], structs, globals, locals, onError);
+			value = fcReplEval(es[1], structs, globals, locals, onError);
+			name = extractStructName(struct); 
+			if (name != "FcRuntimeStruct") {
+				setMutableField(struct, field, value);
+				voidValue();
+			} else {
+				runtime_struct = cast(struct : flow -> FcRuntimeStruct);
+				switch (find(runtime_struct.fields, \f -> f.name == field)) {
+					Some(f): {
+						f.value := value;
+						voidValue();
+					}
+					None(): {
+						make_err("unknown field " + field + " in struct");
+					}
+				}
+			}
 		}
 		// creates a closure explicitly - appears after lambda lifting
 		FcCreateClosurePrim(structName, functionName): {
@@ -704,7 +737,7 @@ fcMakeFnFromLambda(
 	} else {
 		err_message = "unsupproted arity: " + i2s(arity) + " for lambda\n" + prettyFiExp(dummyPretty, lambda);
 		onError(err_message, lambda.start);
-		flow(FcRuntimeError(err_message))
+		flow(err_message)
 	}
 }
 
@@ -744,6 +777,6 @@ fcMakeFnFromNative(nat : FiNativeDec, onError : (string, int) -> void) -> flow {
 	} else {
 		err_message = "unsupproted arity: " + i2s(arity) + " for native " + nat.nativeName;
 		onError(err_message, nat.declStart);
-		flow(FcRuntimeError(err_message))
+		flow(err_message);
 	}
 }
