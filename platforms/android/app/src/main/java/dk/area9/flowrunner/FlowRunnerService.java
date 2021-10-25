@@ -76,7 +76,7 @@ public class FlowRunnerService extends Service {
                 intents.onCancelIntent.cancel();
             }
         }
-        if (!removeFromNotificationManager) {
+        if (removeFromNotificationManager) {
             NotificationManager notifyManager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
             notifyManager.cancel(notificationId);
         }
