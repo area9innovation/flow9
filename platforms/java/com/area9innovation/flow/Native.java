@@ -1071,6 +1071,10 @@ public class Native extends NativeHost {
 		} else return "";
 	}
 
+	public static final boolean isStructName(String name) {
+		return FlowRuntime.struct_ids.containsKey(name);
+	}
+
 	public static final int extractFuncArity(Object fn) {
 		if (fn instanceof Func0) {
 			return 0;
@@ -1156,6 +1160,10 @@ public class Native extends NativeHost {
 			System.out.println(ex.getMessage());
 			System.exit(255);
 		}
+		return null;
+	}
+
+	public static final Object voidValue() {
 		return null;
 	}
 
