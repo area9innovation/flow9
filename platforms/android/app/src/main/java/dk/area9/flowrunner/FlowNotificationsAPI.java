@@ -117,7 +117,7 @@ public class FlowNotificationsAPI {
         wrapper.ExecuteNotificationCallbacks(notificationId, notificationCallbackArgs);
         // false, because already removed from notification center
 
-        // Delay for service to have a chance to be created and binded
+        // Delay for service to have a chance to be created and bound
         Handler handler = new Handler();
         handler.postDelayed(new Runnable() {
 

@@ -42,13 +42,15 @@ public class FlowRunnerService extends Service {
     public void scheduleNotification(double time, int notificationId, String notificationCallbackArgs,
             String notificationTitle, String notificationText, boolean withSound, boolean pinNotification, boolean afterBoot) {
 
-        //Log.e(Utils.LOG_TAG, "TAG: Inside Service.scheduleNotification");
+        Log.i(Utils.LOG_TAG, "TAG: Inside Service.scheduleNotification");
         if (!afterBoot) {
             cancelLocalNotification(notificationId, true);
             FlowNotificationsAPI.saveNotificationInfo(this, time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification);
         }
 
         FlowLocalNotificationIntents pendingIntents = FlowNotificationsAPI.getNotificationIntents(this, 0, time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification);
+
+        Log.i(Utils.LOG_TAG, "Schedule local notification with id " + notificationId);
 
         AlarmManager alarmManager = (AlarmManager)getSystemService(Context.ALARM_SERVICE);
         alarmManager.set(AlarmManager.RTC, (long)time, pendingIntents.alarmIntent);
@@ -63,11 +65,11 @@ public class FlowRunnerService extends Service {
         if (info != null) {
             FlowLocalNotificationIntents intents = FlowNotificationsAPI.getNotificationIntents(context, PendingIntent.FLAG_NO_CREATE, info.time, notificationId, info.notificationCallbackArgs, info.notificationTitle, info.notificationText, info.withSound, info.pinned);
             
-            AlarmManager alarmManager = (AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
-            alarmManager.cancel(intents.alarmIntent);
-            
             if (intents.alarmIntent != null) {
                 intents.alarmIntent.cancel();
+
+                AlarmManager alarmManager = (AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
+                alarmManager.cancel(intents.alarmIntent);
             }
             if (intents.onClickIntent != null) {
                 intents.onClickIntent.cancel();
