@@ -31,13 +31,12 @@ RUN addgroup --gid=${gid} flow \
              --shell=/bin/bash \
              flow
 
-# Expecting flow here
-USER flow
-
-WORKDIR /flow
-
 COPY flow /flow
 COPY xflowcpp /flow/bin/
+RUN chown flow:flow /flow -R
+
+USER flow
+WORKDIR /flow
 
 env FLOW=/flow
 env PATH=$PATH:$FLOW/bin
