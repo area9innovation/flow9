@@ -548,6 +548,11 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
+		if (RenderRoot != null) {
+			width = getRenderRootWidth();
+			height = getRenderRootHeight();
+		}
+
 		if (viewportScaleWorkaroundEnabled) {
 			untyped console.log("createPixiRenderer", width, height);
 			untyped console.log("clientHeight", Browser.document.documentElement.clientHeight);
@@ -640,6 +645,34 @@ class RenderSupport {
 				untyped console.log(e);
 			}
 		}
+	}
+
+	private static function getRenderRootWidth() {
+		var width = 0;
+		var rWidth = Std.parseInt(RenderRoot.getAttribute('width'));
+
+		if (rWidth != null && !Math.isNaN(rWidth)) {
+			width = rWidth;
+		} else {
+			width = Math.floor(Browser.window.innerWidth - RenderRoot.getBoundingClientRect().x);
+		}
+
+		RenderRoot.style.width = width + 'px';
+		return width;
+	}
+
+	private static function getRenderRootHeight() {
+		var height = 0;
+		var rHeight = Std.parseInt(RenderRoot.getAttribute('height'));
+
+		if (rHeight != null && !Math.isNaN(rHeight)) {
+			height = rHeight;
+		} else {
+			height = Math.floor(Browser.window.innerHeight - RenderRoot.getBoundingClientRect().y);
+		}
+
+		RenderRoot.style.height = height + 'px';
+		return height;
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -1037,6 +1070,11 @@ class RenderSupport {
 					// Assume other mobile browsers do it theirselves
 					ensureCurrentInputVisible(); // Test overlap and shift if needed
 				}
+			}
+
+			if (RenderRoot != null) {
+				win_width = getRenderRootWidth();
+				win_height = getRenderRootHeight();
 			}
 
 			PixiView.width = win_width * backingStoreRatio;
