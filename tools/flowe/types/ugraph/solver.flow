@@ -7,12 +7,12 @@ export {
 
 solveTNodes(tmap : TMap, visited : ref Set<int>, eclass : int) -> void {
 	if (eclass < ^(tmap.nextEClass)
-		&& doSolveTNodes(tmap, visited, eclass)) {
+		&& solveEClass(tmap, visited, eclass)) {
 		solveTNodes(tmap, visited, eclass + 1);
 	} else {}
 }
 
-doSolveTNodes(tmap : TMap, visited : ref Set<int>, eclass : int) -> bool {
+solveEClass(tmap : TMap, visited : ref Set<int>, eclass : int) -> bool {
 	if (!containsSet(^visited, eclass)) {
 		root = rootTTypeEClass(tmap, eclass);
 		if (root == eclass) {
@@ -21,7 +21,7 @@ doSolveTNodes(tmap : TMap, visited : ref Set<int>, eclass : int) -> bool {
 			tnode = getUnionMapValue(tmap.tmap, root);
 			snode = simplifyTNode(tmap, tnode, makeErrorReason([0], "Solving"));
 			// OK, here try to resolve this node
-			if (solveTNode(tmap, eclass, snode)) {
+			if (solveTNode(tmap, visited, eclass, snode)) {
 				mergeTNodes(tmap, tnode, snode, makeErrorReason([0], "Simplified"));
 				true;
 			} else {
@@ -31,34 +31,53 @@ doSolveTNodes(tmap : TMap, visited : ref Set<int>, eclass : int) -> bool {
 	} else true;
 }
 
-solveTNode(tmap : TMap, eclass : int, tnode : TNode) -> bool {
+solveTNode(tmap : TMap, visited : ref Set<int>, eclass : int, tnode : TNode) -> bool {
 	if (isEmptyTNode(tnode)) true
 	else {
-		todo = \ -> {
-			println("TODO: Try to solve each of these " + prettyEClass(tmap, eclass));
-			false;
-		}
 		switch (tnode) {
 			TNodeName(name, typars, pos): true;
 			TNodeOverload(unique, overloads, pos): {
-				todo();
-			}
-			TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {
-				// TODO: We should arguably visit all the unknownSubtypes first
-				iterSet(unknownSubtypes, \st -> {
-					unode = getUnionMapValue(tmap.tmap, st);
-					if (!isEmptyTNode(unode)) {
-						println("TODO: Unknown subtype is not empty: " + prettyEClass(tmap, st));
-					}
-				});
-				supers = getPossibleTSupers(tmap, tnode);
-				if (isEmptySet(supers)) {
-					// OK, it is polymorphic or decided elsewhere
+				nonflows = filter(overloads, \n -> !isFlowNode(n));
+				if (length(nonflows) == 1) {
+					// println("Resolved to " + prettyTNode(tmap, nonflows[0]));
+					mergeTNodes(tmap, tnode, nonflows[0], makeErrorReason([0], "Simplified away from flow"));
 					true;
 				} else {
-					println("TODO: Try these " + strGlue(set2array(supers), ",") + " for " + prettyEClass(tmap, eclass));
+					println("TODO: Try to solve each of these " + prettyEClass(tmap, eclass));
 					false;
 				}
+			}
+			TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {
+				def = \ -> {
+					supers = getPossibleTSupers(tmap, tnode);
+					if (isEmptySet(supers)) {
+						// OK, it is polymorphic or decided elsewhere
+						true;
+					} else {
+						println("TODO: Try these " + strGlue(set2array(supers), ",") + " for " + prettyEClass(tmap, eclass));
+						false;
+					}
+				}
+				if (isEmptySet(unknownSubtypes)) {
+					def();
+				} else {
+					us = foldSet(unknownSubtypes, true, \acc, st -> {
+						acc && solveEClass(tmap, visited, st)
+					});
+					if (us) {
+						// OK, we resolved these somehow
+						nnode = getUnionMapValue(tmap.tmap, eclass);
+						snode = simplifyTNode(tmap, nnode, makeErrorReason([0], "Solving after unknnown"));
+						mergeTNodes(tmap, tnode, snode, makeErrorReason([0], "Simplified"));
+						if (snode == nnode) {
+							def();
+						} else {
+							solveTNode(tmap, visited, eclass, snode);
+						}
+					} else {
+						us;
+					}
+				};
 			}
 		}
 	}
