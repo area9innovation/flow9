@@ -8,6 +8,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 
@@ -58,6 +60,8 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
         if (withSound) {
             mBuilder.setDefaults(Notification.DEFAULT_SOUND);
         }
+
+        Log.i(Utils.LOG_TAG, "Show local notification with id " + notificationId);
 
         NotificationManager notifyManager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
         notifyManager.notify(notificationId, mBuilder.build());
