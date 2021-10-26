@@ -104,7 +104,7 @@ public class FlowRunnerServiceWrapper {
     
     public void scheduleNotification(double time, int notificationId, String notificationCallbackArgs,
             String notificationTitle, String notificationText, boolean withSound, boolean pinNotification, boolean afterBoot) {
-        //Log.e(Utils.LOG_TAG, "TAG: Inside wrapper.scheduleNotification. serviceBound: " + serviceBound);
+        Log.i(Utils.LOG_TAG, "TAG: Inside wrapper.scheduleNotification. serviceBound: " + serviceBound);
         if (serviceBound) {
             flowRunnerService.scheduleNotification(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification, afterBoot);
         }
