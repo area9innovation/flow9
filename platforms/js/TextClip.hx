@@ -169,7 +169,6 @@ class TextClip extends NativeWidgetClip {
 
 	private var textBackgroundWidget : Dynamic;
 	private static var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
-		&& Util.getParameter("new") == "1"
 		&& Util.getParameter("textBackgroundWidget") != "0";
 
 	private var baselineWidget : Dynamic;

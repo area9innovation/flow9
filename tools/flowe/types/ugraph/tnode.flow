@@ -55,12 +55,17 @@ export {
 	// It constructs type classes for each typar
 	instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) -> TNodeName;
 
-	// Resolve the node against a supertype. Does NOT unify the top-level, but the subtypes are merged.
-	// TODO: Check whether this should indeed merge at the toplevel or not
-	unifyTNodeNameWithSuper(tmap : TMap, node : TNodeName, super : TNodeSupertype, reason : ErrorReason) -> TNode;
+	// Resolve the node against a supertype. Does NOT unify the top-level, but information about
+	// the subtypes are merged.
+	mergeTNodeNameWithSuper(tmap : TMap, node : TNodeName, super : TNodeSupertype, reason : ErrorReason) -> TNode;
 
-	// Calculates the result of merging nodes. Does not update the tmap at the top level!
+	// Unifies these nodes
+	unifyTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> void;
+
+	// This propagates all info between these nodes, but does not unify them at the top level
 	mergeTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> TNode;
+
+	makeEClassForTNode(tmap : TMap, node : TNode, reason : ErrorReason) -> int;
 
 	// We known that sub is a subtype of the super, so unify as much as possible for that
 	subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void;
@@ -384,7 +389,7 @@ extractSupers(tmap : TMap, acc : TNodeSupertype, t : TType) -> TNodeSupertype {
 				}
 				TNodeOverload(unique, overloads, pos): {
 					if (exists(overloads, isFlowNode)) {
-						println("REVIEW: Somehow, we extract flow here");
+						// OK, we are adding a flow to a supertype.
 						TNodeSupertype(acc with subtypes = arrayPush(acc.subtypes, TNodeName("flow", [], pos)));
 					} else {
 						println("TODO: Figure out how to represent this overload as a named type: " + prettyTType(t));
@@ -526,7 +531,7 @@ simplifyTNodeSupertype(tmap : TMap, node : TNodeSupertype, reason : ErrorReason)
 		// Here we have the names that are possible
 		if (nnamed == 1) {
 			fnode = instantiateTNodeName(tmap, set2array(named)[0], subtypes, pos);
-			unifyTNodeNameWithSuper(tmap, fnode, node, 
+			mergeTNodeNameWithSuper(tmap, fnode, node, 
 				joinReasons(reason,
 					makeErrorReason(pos, "simplify supertype")
 				)
@@ -614,6 +619,23 @@ instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int
 	}
 }
 
+unifyTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> void {
+	if (isEmptyTNode(left) || isEmptyTNode(right)) {
+	} else {
+		lclass = findTNodeClass(tmap, left);
+		rclass = findTNodeClass(tmap, right);
+		if (lclass == -1) {
+			println("could not find " + prettyTNode(tmap, left));
+		} else if (rclass == -1) {
+			println("could not find " + prettyTNode(tmap, right));
+		} else {
+			joinTNodes(tmap, lclass, rclass, reason);
+			{}
+		}
+	}
+}
+
+
 //
 // The pure unification - just calculates the resulting type, does not update the direct node
 //
@@ -692,7 +714,7 @@ mergeTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> T
 					mergeTNodes(tmap, right, left, reason);
 				}
 				TNodeSupertype(unique, subtypes, __, __, __): {
-					unifyTNodeNameWithSuper(tmap, left, right, reason);
+					mergeTNodeNameWithSuper(tmap, left, right, reason);
 				}
 			}
 		}
@@ -762,7 +784,7 @@ mergeTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> T
 		TNodeSupertype(lunique, lsubtypes, lusub, lmaxed, lpos): {
 			switch (right) {
 				TNodeName(name, typars, pos): {
-					unifyTNodeNameWithSuper(tmap, right, left, reason);
+					mergeTNodeNameWithSuper(tmap, right, left, reason);
 				}
 				TNodeOverload(runique, roverloads, pos): {
 					if (true) {
@@ -801,7 +823,7 @@ mergeTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> T
 // There are a range of cases:
 // The name can be a supertype of the right hand side.
 // The name can be the same as the supertype
-unifyTNodeNameWithSuper(tmap : TMap, node : TNodeName, super : TNodeSupertype, reason : ErrorReason) -> TNode {
+mergeTNodeNameWithSuper(tmap : TMap, node : TNodeName, super : TNodeSupertype, reason : ErrorReason) -> TNode {
 	// println(^uindent + "Unifying " + prettyTNode(tmap, node) + " vs " + prettyTNode(tmap, super));
 	found = ref false;
 	iter(super.subtypes, \st -> {
@@ -946,14 +968,15 @@ unifyTNodeNameAgainstSubtype(tmap : TMap, unionNode : TNodeName, subNode : TNode
 	msubInstantiated : Maybe<TNodeName>= instantiateTNodeNameAgainstSubtype(tmap, unionNode, subNode, 
 		unionDef, subDef);
 	msubInstantiated ?? {
-		subtypes = msubInstantiated.typars;
+		sub : TNodeName = msubInstantiated;
+		subtypes = sub.typars;
 		if (length(subtypes) == length(subNode.typars)) {
-			// println("    " + prettyTNode(tmap, msubInstantiated) + " vs " + prettyTNode(tmap, subNode));
+			// println("    " + prettyTNode(tmap, sub) + " vs " + prettyTNode(tmap, subNode));
 			iteri(subtypes, \i, tp -> {
 				if (tp != -1) {
 					joinTNodes(tmap, tp, subNode.typars[i], 
 						makeErrorReason(concat(unionNode.pos, subNode.pos), 
-						"TODO: Typar #" + i2s(i + 1) + " from " + prettyTNode(tmap, subNode) + " vs " + prettyTNode(tmap, unionNode) + " from " + prettyTNode(tmap, msubInstantiated))
+						"TODO: Typar #" + i2s(i + 1) + " from " + prettyTNode(tmap, subNode) + " vs " + prettyTNode(tmap, unionNode) + " from " + prettyTNode(tmap, sub))
 					);
 					{}
 				} else {
@@ -1017,122 +1040,131 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 	}
 	supernode = getUnionMapValue(tmap.tmap, super);
 	subnode = getUnionMapValue(tmap.tmap, sub);
-	// println(^uindent + "Subtyping " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode) + "  // e" + i2s(sub) + " vs e" + i2s(super));
-	switch (subnode) {
-		TNodeSupertype(__, __, __, __, spos): {
-			if (isEmptyTNode(supernode)) {
-				postpone();
-			} else {
-				// This is optimistic, but we just take the chance
-				println("REVIEW: Optimistic subtyping against super");
-				joinTNodes(tmap, sub, super, 
-					joinReasons(reason, makeErrorReason(concat(supernode.pos, spos), "optimistic sub vs super"))
-				);
-				{}
-			}
-		}
-		TNodeName(name, typars, npos): {
-			if (hasSupertype(tmap, subnode)) {
-				// We have a direct supertype
-				switch (supernode) {
-					TNodeName(__, __, __): {
-						if (isEmptyTNode(supernode)) {
-							supertype = TNodeSupertype(makeSet(), [subnode], makeSet(), false, []);
-							supers = getPossibleTSupers(tmap, supertype);
-							nsupers = sizeSet(supers);
-							if (nsupers == 1) {
-								println("TODO: We could infer that sub is " + toString(set2array(supers)));
+	if (supernode != subnode) {
+		// println(^uindent + "Subtyping " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode) + "  // e" + i2s(sub) + " vs e" + i2s(super));
+		switch (subnode) {
+			TNodeSupertype(__, __, __, __, spos): {
+				if (isEmptyTNode(supernode)) {
+					postpone();
+				} else {
+					// This is optimistic, but we just take the chance
+					switch (supernode) {
+						TNodeName(name, typars, pos): {
+							if (^(tmap.resolveSubtypes)(name) != []) {
+								// println("REVIEW: Optimistic subtyping against super " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
 							}
+						}
+						TNodeOverload(unique, overloads, pos): {}
+						TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {}
+					}
+					joinTNodes(tmap, sub, super, 
+						joinReasons(reason, makeErrorReason(concat(supernode.pos, spos), "optimistic sub vs super"))
+					);
+					{}
+				}
+			}
+			TNodeName(name, typars, npos): {
+				if (hasSupertype(tmap, subnode)) {
+					// We have a direct supertype
+					switch (supernode) {
+						TNodeName(__, __, __): {
+							if (isEmptyTNode(supernode)) {
+								supertype = TNodeSupertype(makeSet(), [subnode], makeSet(), false, []);
+								supers = getPossibleTSupers(tmap, supertype);
+								nsupers = sizeSet(supers);
+								if (nsupers == 1) {
+									println("TODO: We could infer that sub is " + toString(set2array(supers)));
+								}
+								postpone();
+							} else {
+								// println("Unifying subtype for e" + i2s(sub) + ": " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
+								unifyTNodeNameWithSubtype(tmap, supernode, subnode, reason);
+								{}
+							}
+						}
+						TNodeSupertype(suniques, stypes, seclass, smaxed, spos): {
+							mega = TNodeSupertype(suniques, arrayPush(stypes, subnode), seclass, smaxed, spos);
+							unifyTNodes(tmap, supernode, mega, joinReasons(reason, makeErrorReason(concat(npos, spos), "subtype")));
+							{}
+						}
+						TNodeOverload(unique, overloads, __): postpone();
+					}
+				} else {
+					def = \ -> {
+						if (!isEClassResolved(tmap, sub) && !isEClassResolved(tmap, super)) {
+							// println(^(tmap.topid) + ": Postpone. TODO: We could maybe stub the type up " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
 							postpone();
 						} else {
-							// println("Unifying subtype for e" + i2s(sub) + ": " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
-							unifyTNodeNameWithSubtype(tmap, supernode, subnode, reason);
+							joinTNodes(tmap, sub, super, 
+								joinReasons(
+									reason,
+									makeErrorReason(
+										concat(subnode.pos, supernode.pos),
+										prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode)
+									)
+								)
+							);
 							{}
 						}
 					}
-					TNodeSupertype(suniques, stypes, seclass, smaxed, spos): {
-						mega = TNodeSupertype(suniques, arrayPush(stypes, subnode), seclass, smaxed, spos);
-						// TODO: This should be unify
-						merged = mergeTNodes(tmap, supernode, mega, joinReasons(reason, makeErrorReason(concat(npos, spos), "subtype")));
-						// TODO: Update the tmap with this resulting node
-						{}
-					}
-					TNodeOverload(unique, overloads, __): postpone();
-				}
-			} else {
-				def = \ -> {
-					if (!isEClassResolved(tmap, sub) && !isEClassResolved(tmap, super)) {
-						// println(^(tmap.topid) + ": Postpone. TODO: We could maybe stub the type up " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
-						postpone();
-					} else {
-						joinTNodes(tmap, sub, super, 
-							joinReasons(
-								reason,
-								makeErrorReason(
-									concat(subnode.pos, supernode.pos),
-									prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode)
-								)
-							)
-						);
-						{}
-					}
-				}
-				switch (supernode) {
-					TNodeName(supername, stypars, spos): {
-						if (name == supername && length(typars) == length(stypars)) {
-							// OK, we subtype the typars
-							// println("Subtyping the typars");
-							if (name == "") {
-								// Function
-								def();
+					switch (supernode) {
+						TNodeName(supername, stypars, spos): {
+							if (name == supername && length(typars) == length(stypars)) {
+								// OK, we subtype the typars
+								// println("Subtyping the typars");
+								if (name == "") {
+									// Function
+									def();
+								} else {
+									iteri(typars, \i, tp -> {
+										if (i < length(stypars)) {
+											subtypeTNodes(tmap, tp, stypars[i], 
+												joinReasons(reason,
+													makeErrorReason(concat(npos, spos), "Subtyping typars for " + name)
+												)
+											)
+										}
+									});
+								}
 							} else {
-								iteri(typars, \i, tp -> {
-									if (i < length(stypars)) {
+								if (isEmptyTNode(subnode) && !isEmptyTNode(supernode) && !hasSubtype(tmap, supernode)) {
+									subtype = TNodeName(supername, mapi(stypars, \i, lt -> {
+										makeTNodeClass(tmap)
+									}), supernode.pos);
+									setTNodeClass(tmap, sub, subtype);
+									// println(^(tmap.topid) + ": We stub the subtype up " + prettyTNode(tmap, subtype) + " vs " + prettyTNode(tmap, supernode));
+									iteri(subtype.typars, \i, tp -> {
 										subtypeTNodes(tmap, tp, stypars[i], 
-											joinReasons(reason,
-												makeErrorReason(concat(npos, spos), "Subtyping typars for " + name)
+											joinReasons(
+												reason,
+												makeErrorReason(concat(npos, spos), "stub subtype up " + prettyTNode(tmap, subtype) + " vs " + prettyTNode(tmap, supernode))
 											)
 										)
-									}
-								});
-							}
-						} else {
-							if (isEmptyTNode(subnode) && !isEmptyTNode(supernode) && !hasSubtype(tmap, supernode)) {
-								subtype = TNodeName(supername, mapi(stypars, \i, lt -> {
-									makeTNodeClass(tmap)
-								}), supernode.pos);
-								setTNodeClass(tmap, sub, subtype);
-								// println(^(tmap.topid) + ": We stub the subtype up " + prettyTNode(tmap, subtype) + " vs " + prettyTNode(tmap, supernode));
-								iteri(subtype.typars, \i, tp -> {
-									subtypeTNodes(tmap, tp, stypars[i], 
-										joinReasons(
-											reason,
-											makeErrorReason(concat(npos, spos), "stub subtype up " + prettyTNode(tmap, subtype) + " vs " + prettyTNode(tmap, supernode))
+									});
+								} else if (!isEmptyTNode(subnode) && isEmptyTNode(supernode)) {
+									suptype = TNodeName(name, mapi(typars, \i, lt -> {
+										makeTNodeClass(tmap)
+									}), subnode.pos);
+									setTNodeClass(tmap, super, suptype);
+									// println(^(tmap.topid) + ": We stub the supertype up " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
+									iteri(suptype.typars, \i, tp -> {
+										subtypeTNodes(tmap, typars[i], tp, 
+											joinReasons(reason, 
+												makeErrorReason(concat(npos, spos), "stub the supertype up " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode))
+											)
 										)
-									)
-								});
-							} else if (!isEmptyTNode(subnode) && isEmptyTNode(supernode)) {
-								suptype = TNodeName(name, mapi(typars, \i, lt -> {
-									makeTNodeClass(tmap)
-								}), subnode.pos);
-								setTNodeClass(tmap, super, suptype);
-								// println(^(tmap.topid) + ": We stub the supertype up " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
-								iteri(suptype.typars, \i, tp -> {
-									subtypeTNodes(tmap, typars[i], tp, 
-										joinReasons(reason, 
-											makeErrorReason(concat(npos, spos), "stub the supertype up " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode))
-										)
-									)
-								});
-							} else {
-								def();
+									});
+								} else {
+									def();
+								}
 							}
 						}
+						default: def();
 					}
-					default: def();
 				}
 			}
+			TNodeOverload(__, __, __): postpone();
 		}
-		TNodeOverload(__, __, __): postpone();
+
 	}
 }
