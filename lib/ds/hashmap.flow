@@ -1,8 +1,5 @@
 import ds/arrayutils;
 import ds/tree;
-import ds/dlist;
-import string;
-import math/math;
 
 export {
 
@@ -31,19 +28,20 @@ Lookup      4.9       3.6       2.6    1.7   1.3   0.9
 	// Tests (tools/flowc/tests/ds/hashmap_test) show, that it is approx. 
 	// 5 times faster for integer and string keys, then Tree<?, ??>.
 	//
-	// Hash collisions are handled with conventional Tree<?, ??> data structure. 
-	HashMap(
-		data : ref [ref Tree<?, ??>],
-		hash : (?) -> int,
-		size : ref int,
-		loadFactor : double // By default is 0.75
-	);
+	// Hash collisions are handled with conventional Tree<?, ??> data structure.
+	//
+	// The second parameter is dummy - is used to make the HashMap data structure polymorphic.
+	// So, it may be always set to the empty array. 
+	HashMap : (map : native, __ : [Pair<?, ??>]);
 
 	// Creates a hash map with a given hash function.
 	makeHashMap(hash : (?) -> int) -> HashMap<?, ??>;
 
-	// Creates a hash map with a given hash function and specific load factor
-	makeHashMapWithLoadFactor(hash : (?) -> int, loadFactor : double) -> HashMap<?, ??>;
+	// Creates a hash map with a given inital capacity
+	makeHashMapCap(hash : (?) -> int, init_capacity : int) -> HashMap<?, ??>;
+
+	// Creates a hash map with a given initial capacity and specific load factor
+	makeHashMapCapLoad(hash : (?) -> int, init_capacity : int, loadFactor : double) -> HashMap<?, ??>;
 
 	lookupHashMap : (hashMap : HashMap<?, ??>, key : ?) -> Maybe<??>;
 	lookupHashMapDef : (hashMap : HashMap<?, ??>, key : ?, defaultValue : ??) -> ??;
@@ -53,6 +51,8 @@ Lookup      4.9       3.6       2.6    1.7   1.3   0.9
 	setHashMap : (hashMap : HashMap<?, ??>, key : ?, value : ??) -> void;
 
 	removeFromHashMap : (tree : HashMap<?, ??>, key : ?) -> void;
+
+	clearHashMap(hashMap : HashMap<?, ??>) -> void;
 
 	// count the number of nodes in tree. Complexity is O(1).
 	sizeHashMap : (HashMap<?, ??>) -> int;
@@ -65,70 +65,243 @@ Lookup      4.9       3.6       2.6    1.7   1.3   0.9
 
 	// Merges two hash maps. t2 overrides t1 on duplicate entries.
 	// (complexity is O(t1+t2))
-	mergeHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> HashMap<?, ??>;
+	mergeHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> void;
+
+	// Merges two hash maps with resolving of common keys.
+	mergeHashMapCustom(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>, resolve : (?, ??, ??) -> ??) -> void;
 
 	// Collect all it's keys in an array
-	getHashMapKeys(hashMap : HashMap<?, ??>) -> [?];
+	hashMapKeys(hashMap : HashMap<?, ??>) -> [?];
 
 	// Collect all it's values in an array
-	getHashMapValues(hashMap : HashMap<?, ??>) -> [??];
+	hashMapValues(hashMap : HashMap<?, ??>) -> [??];
 
 	pairs2hashMap : (pairs : [Pair<?, ??>], hash : (?) -> int) -> HashMap<?, ??>;
-	pairs2hashMapWithLoadFactor : (pairs : [Pair<?, ??>], hash : (?) -> int, loadFactor : double) -> HashMap<?, ??>;
+	pairs2hashMapLoad : (pairs : [Pair<?, ??>], hash : (?) -> int, loadFactor : double) -> HashMap<?, ??>;
+	pairs2hashMapArray(pairs : [Pair<?, [??]>], hash : (?) -> int) -> HashMap<?, [??]>;
 	hashMap2pairs : (hashMap : HashMap<?, ??>) -> [Pair<?, ??>];
-	pairs2hashMapArray : (pairs : [Pair<?, [??]>], hash : (?) -> int) -> HashMap<?, [??]>;
-
-	// Get bucket (data) index for a given key; returns -1 if there are no buckets
-	hashMapIndex(hashMap : HashMap<?, ??>, key : ?) -> int;
-
-	// If hash map contains any par (x,y), pops it and returns Some(Pair(x, y)), otherwise returns None(). O(n) complexity.
-	popHashMap(hashMap : HashMap<?, ??>) -> Maybe<Pair<?, ??>>;
+	tree2hashMap : (tree : Tree<?, ??>, hash : (?) -> int) -> HashMap<?, ??>;
 
 	// Make a copy of hash map. Since HashMap is mutable, it may make sense.
 	copyHashMap(hashMap : HashMap<?, ??>) -> HashMap<?, ??>;
+
+	// Make an empty copy of hash map. 
+	// This function makes sense in operations with descendant data structures like HashSet<?> (i.e. intersectHashSets)
+	prototypeHashMap(hashMap : HashMap<?, ??>) -> HashMap<?, ??>;
+
+	equalsHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> bool;
 }
 
+// On java: wrapper around HashMap - has native implementation. NOT thread-safe. 
+//    About x2 of performance, compared with flow implementation (x10 compared with Tree).
+// On other platforms: flow implementation of hash map.
+//    About x5 of performance, compared with Tree<int, ?> or Tree<string, ?>
+
+native makeNativeHashMap : (hash :(?) -> int, cap : int, load : double) -> native = NativeHashMap.init;
+native setNativeHashMap : (m : native, key : ?, value : ??) -> void = NativeHashMap.set;
+native getNativeHashMap : (m : native, key : ?) -> Maybe<??> = NativeHashMap.get;
+native removeNativeHashMap : (m : native, key : ?) -> void = NativeHashMap.remove;
+native containsNativeHashMap : (m : native, key : ?) -> bool = NativeHashMap.contains;
+native sizeNativeHashMap : (m : native) -> int = NativeHashMap.size;
+native clearNativeHashMap : (m : native) -> void = NativeHashMap.clear;
+native cloneNativeHashMap : (m : native) -> native = NativeHashMap.clone;
+native iterNativeHashMap : (m : native, f : (?, ??) -> void) -> void = NativeHashMap.iter;
+native funcNativeHashMap : (m : native) -> (?) -> int = NativeHashMap.hash;
+
 sizeHashMap(hashMap : HashMap<?, ??>) -> int {
-	^(hashMap.size)
+	sizeNativeHashMap(hashMap.map);
 }
 
 makeHashMap(hash : (?) -> int) -> HashMap<?, ??> {
-	// The default capacity of hash map is 4
-	makeHashMapOfVolume(hash, defaultHashMapCapacity, defaultHashMapLoadFactor)
+	makeHashMapCapLoad(hash, 16, 0.75);
 }
 
-makeHashMapWithLoadFactor(hash : (?) -> int, loadFactor : double) -> HashMap<?, ??> {
-	// The default capacity of hash map is 4
-	makeHashMapOfVolume(hash, defaultHashMapCapacity, loadFactor)
+makeHashMapCap(hash : (?) -> int, init_capacity : int) -> HashMap<?, ??> {
+	makeHashMapCapLoad(hash, init_capacity, 0.75)
 }
 
-defaultHashMapLoadFactor = 0.75;
-defaultHashMapCapacity = 4;
-
-makeHashMapOfVolume(hash : (?) -> int, volume : int, loadFactor : double) -> HashMap<?, ??> {
-	// The initial size of hash map is 0
-	HashMap(ref arrayRepeatDeferred(\ -> ref makeTree(), volume), hash, ref 0, loadFactor)
+makeHashMapCapLoad(hash : (?) -> int, init_capacity : int, loadFactor : double) -> HashMap<?, ??> {
+	HashMap(makeNativeHashMap(hash, init_capacity, loadFactor), []);
 }
 
 lookupHashMap(hashMap : HashMap<?, ??>, key : ?) -> Maybe<??> {
-	index = hashMapIndex(hashMap, key);
-	if (index >= 0) {
-		lookupTree(^(^(hashMap.data)[index]), key)
-	} else {
-		None()
-	}
+	getNativeHashMap(hashMap.map, key);
 }
 
 lookupHashMapDef(hashMap : HashMap<?, ??>, key : ?, defaultValue : ??) -> ?? {
-	either(lookupHashMap(hashMap, key), defaultValue)
+	switch (getNativeHashMap(hashMap.map, key)) {
+		Some(v): v;
+		None(): defaultValue;
+	}
 }
 
 containsKeyHashMap(hashMap : HashMap<?, ??>, key : ?) -> bool {
-	index = hashMapIndex(hashMap, key);
-	index >= 0 && containsKeyTree(^(^(hashMap.data)[index]), key)
+	containsNativeHashMap(hashMap.map, key);
 }
 
 setHashMap(hashMap : HashMap<?, ??>, key : ?, value : ??) -> void {
+	setNativeHashMap(hashMap.map, key, value);
+}
+
+removeFromHashMap(hashMap : HashMap<?, ??>, key : ?) -> void {
+	removeNativeHashMap(hashMap.map, key);
+}
+
+clearHashMap(hashMap : HashMap<?, ??>) -> void {
+	clearNativeHashMap(hashMap.map);
+}
+
+iterHashMap(hashMap : HashMap<?, ??>, fn : (key : ?, value : ??) -> void) -> void {
+	iterNativeHashMap(hashMap.map, fn);
+}
+
+foldHashMap(hashMap : HashMap<?, ??>, acc: ???, f: (key: ?, value: ??, acc: ???) -> ???) -> ??? {
+	ac = ref acc;
+	iterNativeHashMap(hashMap.map, \k, v -> ac := f(k, v, ^ac));
+	^ac;
+}
+
+mapHashMap(hashMap : HashMap<?, ??>, f: (key: ?, value: ??) -> ???) -> HashMap<?, ???> {
+	mapped = cloneNativeHashMap(hashMap.map);
+	iterNativeHashMap(hashMap.map, \key, value -> setNativeHashMap(mapped, key, f(key, value)));
+	HashMap(mapped, []);
+}
+
+mergeHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> void {
+	iterNativeHashMap(h2.map, \k, v -> setNativeHashMap(h1.map, k, v));
+}
+
+mergeHashMapCustom(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>, resolve : (?, ??, ??) -> ??) -> void {
+	iterNativeHashMap(h2.map, \k, v2 -> {
+		switch (getNativeHashMap(h1.map, k)) {
+			Some(v1): setNativeHashMap(h1.map, k, resolve(k, v1, v2));
+			None(): setNativeHashMap(h1.map, k, v2);
+		}
+	});
+}
+
+hashMapKeys(hashMap : HashMap<?, ??>) -> [?] {
+	res = ref [];
+	iterNativeHashMap(hashMap.map, \k, __ -> refArrayPush(res, k));
+	^res
+}
+
+hashMapValues(hashMap : HashMap<?, ??>) -> [??] {
+	res = ref [];
+	iterNativeHashMap(hashMap.map, \__, v -> refArrayPush(res, v));
+	^res
+}
+
+pairs2hashMap(pairs : [Pair<?, ??>], hash : (?) -> int) -> HashMap<?, ??> {
+	pairs2hashMapLoad(pairs, hash, 0.75)
+}
+
+pairs2hashMapLoad(pairs : [Pair<?, ??>], hash : (?) -> int, loadFactor : double) -> HashMap<?, ??> {
+	len = floor(i2d(length(pairs)) / loadFactor) * 2;
+	m = makeNativeHashMap(hash, len, loadFactor);
+	iter(pairs, \pair -> setNativeHashMap(m, pair.first, pair.second));
+	HashMap(m, []);
+}
+
+pairs2hashMapArray(pairs : [Pair<?, [??]>], hash : (?) -> int) -> HashMap<?, [??]> {
+	len = floor(i2d(length(pairs)) / 0.75) * 2;
+	m = makeNativeHashMap(hash, len, 0.75);
+	iter(pairs, \pair -> {
+		n_arr = switch (getNativeHashMap(m, pair.first)) {
+			Some(arr): concat(arr, [pair.second]);
+			None(): [pair.second];
+		}
+		setNativeHashMap(m, pair.first, n_arr);
+	});
+	HashMap(m, []);
+}
+
+hashMap2pairs(hashMap : HashMap<?, ??>) -> [Pair<?, ??>] {
+	if (sizeHashMap(hashMap) >= 10) {
+		list2array(foldHashMap(hashMap, makeList(), \k, v, a -> Cons(Pair(k, v), a)))
+	} else {
+		foldHashMap(hashMap, [], \k, v, a -> arrayPush(a, Pair(k, v)))
+	}
+}
+
+tree2hashMap(tree : Tree<?, ??>, hash : (?) -> int) -> HashMap<?, ??> {
+	m = makeNativeHashMap(hash, sizeTree(tree), 0.75);
+	traverseInOrder(tree, \k, v -> setNativeHashMap(m, k, v));
+	HashMap(m, []);
+}
+
+copyHashMap(hashMap : HashMap<?, ??>) -> HashMap<?, ??> {
+	HashMap(cloneNativeHashMap(hashMap.map), []);
+}
+
+prototypeHashMap(hashMap : HashMap<?, ??>) -> HashMap<?, ??> {
+	makeHashMap(funcNativeHashMap(hashMap.map));
+}
+
+equalsHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> bool {
+	if (sizeHashMap(h1) != sizeHashMap(h2)) false else {
+		ret = ref true;
+		iterNativeHashMap(h1.map, \k, v1 ->
+			switch (getNativeHashMap(h2.map, k)) {
+				Some(v2): if (v1 != v2) ret := false;
+				None(): ret := false;
+			}
+		);
+		^ret;
+	}
+}
+
+// FALLBACKS FOR NON-NATIVE IMPLEMENTATION
+
+// A hash table, containing key-value pairs: HashMapImpl<?, ??>.
+// USE WITH CAUTION, because it is a mutable data structure,
+// so calls of set/remove functions change their arguments.
+//
+// Tests (tools/flowc/tests/ds/hashmap_test) show, that it is approx. 
+// 5 times faster for integer and string keys, then Tree<?, ??>.
+//
+// Hash collisions are handled with conventional Tree<?, ??> data structure. 
+HashMapImpl(
+	data : ref [ref Tree<?, ??>],
+	hash : (?) -> int,
+	size : ref int,
+	loadFactor : double // By default is 0.75
+);
+
+
+sizeNativeHashMap(hm : native) -> int {
+	impl = cast(flow(hm) : flow -> HashMapImpl);
+	^(impl.size);
+}
+
+clearNativeHashMap(hm : native) -> void {
+	impl = cast(flow(hm) : flow -> HashMapImpl);
+	impl.size := 0;
+	impl.data := arrayRepeatDeferred(\ -> ref makeTree(), length(^(impl.data)));
+}
+
+makeNativeHashMap(hash : (?) -> int, init_capacity : int, loadFactor : double) -> native {
+	flow(HashMapImpl(ref arrayRepeatDeferred(\ -> ref makeTree(), init_capacity), hash, ref 0, loadFactor));
+}
+
+getNativeHashMap(hm : native, key : ?) -> Maybe<??> {
+	hashMap = cast(flow(hm) : flow -> HashMapImpl);
+	index = hashMapIndex(hashMap, key);
+	if (index >= 0) {
+		lookupTree(^(^(hashMap.data)[index]), key);
+	} else {
+		None();
+	}
+}
+
+containsNativeHashMap(hm : native, key : ?) -> bool {
+	hashMap = cast(flow(hm) : flow -> HashMapImpl);
+	index = hashMapIndex(hashMap, key);
+	index >= 0 && containsKeyTree(^(^(hashMap.data)[index]), key);
+}
+
+setNativeHashMap(hm : native, key : ?, value : ??) -> void {
+	hashMap = cast(flow(hm) : flow -> HashMapImpl);
 	resizeHashMapOnDemand(hashMap);
 	i = hashMapIndex(hashMap, key);
 	if (i >= 0) {
@@ -141,7 +314,7 @@ setHashMap(hashMap : HashMap<?, ??>, key : ?, value : ??) -> void {
 	}
 }
 
-resizeHashMapOnDemand(hashMap : HashMap<?, ??>) -> void {
+resizeHashMapOnDemand(hashMap : HashMapImpl<?, ??>) -> void {
 	if (i2d(^(hashMap.size) + 1) > i2d(length(^(hashMap.data))) * hashMap.loadFactor) {
 		// Double the size of the data vector
 		resized_data = arrayRepeatDeferred(\ -> ref makeTree(), length(^(hashMap.data)) * 2);
@@ -159,7 +332,8 @@ resizeHashMapOnDemand(hashMap : HashMap<?, ??>) -> void {
 	}
 }
 
-removeFromHashMap(hashMap : HashMap<?, ??>, key : ?) -> void {
+removeNativeHashMap(hm : native, key : ?) -> void {
+	hashMap = cast(flow(hm) : flow -> HashMapImpl);
 	i = hashMapIndex(hashMap, key);
 	if (i >= 0) {
 		bucket = ^(^(hashMap.data)[i]);
@@ -171,82 +345,14 @@ removeFromHashMap(hashMap : HashMap<?, ??>, key : ?) -> void {
 	}
 }
 
-iterHashMap(hashMap : HashMap<?, ??>, fn : (key : ?, value : ??) -> void) -> void {
-	iter(^(hashMap.data), 
-		\tree -> traverseInOrder(^tree, \key, value -> fn(key, value))
-	)
+iterNativeHashMap(hm : native, fn : (key : ?, value : ??) -> void) -> void {
+	hashMap = cast(flow(hm) : flow -> HashMapImpl);
+	iter(^(hashMap.data), \tree -> traverseInOrder(^tree, \key, value -> fn(key, value)));
 }
 
-foldHashMap(hashMap : HashMap<?, ??>, acc: ???, f: (key: ?, value: ??, acc: ???) -> ???) -> ??? {
-	fold(^(hashMap.data), acc,
-		\ac, tree -> foldTree(^tree, ac, \key, value, a -> f(key, value, a))
-	)
-}
-
-mapHashMap(hashMap : HashMap<?, ??>, f: (key: ?, value: ??) -> ???) -> HashMap<?, ???> {
-	mapped = makeHashMapOfVolume(hashMap.hash, length(^(hashMap.data)), hashMap.loadFactor);
-	iterHashMap(hashMap,
-		\key, value -> setHashMap(mapped, key, f(key, value))
-	);
-	mapped
-}
-
-mergeHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> HashMap<?, ??> {
-	merged = makeHashMapOfVolume(h1.hash, (sizeHashMap(h1) + sizeHashMap(h2)) * 2, (h1.loadFactor + h2.loadFactor) / 2.0);
-	add2merged = \key, value -> { setHashMap(merged, key, value); { }};
-	iterHashMap(h1, add2merged);
-	iterHashMap(h2, add2merged);
-	merged
-}
-
-getHashMapKeys(hashMap : HashMap<?, ??>) -> [?] {
-	res = ref [];
-	iterHashMap(hashMap, \k, __ -> refArrayPush(res, k));
-	^res
-}
-
-getHashMapValues(hashMap : HashMap<?, ??>) -> [??] {
-	res = ref [];
-	iterHashMap(hashMap, \__, v -> refArrayPush(res, v));
-	^res
-}
-
-pairs2hashMap(pairs : [Pair<?, ??>], hash : (?) -> int) -> HashMap<?, ??> {
-	pairs2hashMapWithLoadFactor(pairs, hash, defaultHashMapLoadFactor)
-}
-
-pairs2hashMapWithLoadFactor(pairs : [Pair<?, ??>], hash : (?) -> int, loadFactor : double) -> HashMap<?, ??> {
-	len = floor(i2d(length(pairs)) / loadFactor) * 2;
-	hashMap = makeHashMapOfVolume(hash, len, loadFactor);
-	iter(pairs, \pair -> { setHashMap(hashMap, pair.first, pair.second); { }});
-	hashMap
-}
-
-pairs2hashMapArray(pairs : [Pair<?, [??]>], hash : (?) -> int) -> HashMap<?, [??]> {
-	len = floor(i2d(length(pairs)) / defaultHashMapLoadFactor) * 2;
-	hashMap = makeHashMapOfVolume(hash, len, defaultHashMapLoadFactor);
-	iter(pairs, \pair -> {
-		setHashMap(
-			hashMap,
-			pair.first,
-			concat(lookupHashMapDef(hashMap, pair.first, []), pair.second)
-		);
-	});
-	hashMap
-}
-
-hashMap2pairs(hashMap : HashMap<?, ??>) -> [Pair<?, ??>] {
-	if (sizeHashMap(hashMap) >= 10) {
-		list2array(foldHashMap(hashMap, makeList(), \k, v, a -> Cons(Pair(k, v), a)))
-	} else {
-		foldHashMap(hashMap, [], \k, v, a -> arrayPush(a, Pair(k, v)))
-	}
-}
-
-hashMapIndex(hashMap : HashMap<?, ??>, key : ?) -> int {
+hashMapIndex(hashMap : HashMapImpl<?, ??>, key : ?) -> int {
 	hashMapDataIndex(^(hashMap.data), hashMap.hash, key);
 }
-
 
 hashMapDataIndex(data : [ref Tree<?,??>], hash : (?) -> int, key : ?) -> int {
 	len = length(data);
@@ -262,27 +368,7 @@ hashMapDataIndex(data : [ref Tree<?,??>], hash : (?) -> int, key : ?) -> int {
 	}
 }
 
-popHashMap(hashMap : HashMap<?, ??>) -> Maybe<Pair<?, ??>> {
-	doPopHashMap(hashMap, 0);
-}
-
-doPopHashMap(hashMap : HashMap<?, ??>, i : int) -> Maybe<Pair<?, ??>> {
-	if (i == length(^(hashMap.data))) None() else {
-		switch (^(^(hashMap.data)[i])) {
-			TreeEmpty(): {
-				doPopHashMap(hashMap, i + 1);
-			}
-			TreeNode(k, v, __,__,__): {
-				^(hashMap.data)[i] := removeFromTree(^(^(hashMap.data)[i]), k);
-				hashMap.size := ^(hashMap.size) - 1;
-				Some(Pair(k, v));
-			}
-		}
-	}
-}
-
-copyHashMap(hashMap : HashMap<?, ??>) -> HashMap<?, ??> {
-	copied = makeHashMapOfVolume(hashMap.hash, length(^(hashMap.data)), hashMap.loadFactor);
-	iterHashMap(hashMap, \key, value -> { setHashMap(copied, key, value); { }});
-	copied
+funcNativeHashMap(hm : native) -> (?) -> int {
+	hashMap = cast(flow(hm) : flow -> HashMapImpl);
+	hashMap.hash;
 }

@@ -4,51 +4,41 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
 
 public abstract class FlowRuntime {
-	private IHostFactory host_factory;
-	public Struct[] struct_prototypes;
-	public ConcurrentHashMap<String,Integer> struct_ids;
-	private ConcurrentHashMap<Class,NativeHost> hosts;
-
-	private String[] str_args;
-
-	protected FlowRuntime(Struct[] structs, String[] args) {
-		struct_prototypes = structs;
-		struct_ids = new ConcurrentHashMap<String,Integer>();
-		hosts = new ConcurrentHashMap<Class,NativeHost>();
-		str_args = args;
-
-		for (int i = 0; i < structs.length; i++)
-			struct_ids.put(structs[i].getTypeName(), i);
-	}
-
-	public synchronized void start(IHostFactory factory) {
-		host_factory = factory;
-		main();
-	}
-
-	protected abstract void main();
+	public static Struct[] struct_prototypes;
+	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
+	public static String[] program_args;
+	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
 
 	@SuppressWarnings("unchecked")
-	protected final <T extends NativeHost> T getNativeHost(Class<T> cls) {
+	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
 		T host = (T)hosts.get(cls);
-		if (host != null)
+		if (host != null) {
 			return host;
-
-		try {
-			if (host_factory != null)
-				host = (T)host_factory.allocateHost(cls);
-			if (host == null)
+		} else {
+			try {
 				host = cls.getDeclaredConstructor().newInstance();
-
-			if (!cls.isInstance(host))
-				throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
-
-			host.runtime = this;
+				if (!cls.isInstance(host)) {
+					throw new RuntimeException("Invalid host: " + cls.getName() + " expected, " + host.getClass().getName() + " allocated");
+				}
+				hosts.put(cls, host);
+				host.initialize();
+				return host;
+			} catch (ReflectiveOperationException e) {
+				throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
+			}
+		}
+	}
+	@SuppressWarnings("unchecked")
+	protected static final <T extends NativeHost> void registerNativeHost(Class<T> cls) {
+		try {
+			T host = cls.getDeclaredConstructor().newInstance();
+			if (!cls.isInstance(host)) {
+				throw new RuntimeException("Invalid host: " + cls.getName() + " expected, " + host.getClass().getName() + " allocated");
+			}
 			hosts.put(cls, host);
 			host.initialize();
-			return host;
-		} catch (ReflectiveOperationException e) {
-			throw new RuntimeException("Could not instantiate native method host "+cls.getName(), e);
+		} catch (ReflectiveOperationException e)  {
+			throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
 		}
 	}
 	public static boolean compareEqual(Object a, Object b) {
@@ -213,42 +203,9 @@ public abstract class FlowRuntime {
 	public static String doubleToString(double value) {
 		String rstr = Double.toString(value);
 		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
-/*
-		String rstr = "";
-
-		if (value > 1.0) {
-			rstr = String.format(Locale.US, "%f", value);
-		} else {
-			rstr = String.format(Locale.US, "%g", value);
-			//String ss = Double.toString(value);
-
-			//rstr = ss.endsWith(".0") ? ss.substring(0, rstr.length()-2) : ss;
-		}
-
-		return removeTrailingZeros(rstr);
-*/
 	}
 
-	private static String removeTrailingZeros(String s) {
-		int j = s.length();
-		for (int i = s.length() - 1; i > 1; i--) {
-			char c = s.charAt(i);
-
-			if (c != '0') {
-				break;
-			} else {
-				char pc = s.charAt(i-1);
-
-				if (c == '0' && (pc != '.' && pc != ',')) {
-					j = i;
-				}
-			}
-		}
-
-		return s.substring(0, j);
-	}
-
-	public final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
+	public static final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
 		Integer id = struct_ids.get(name);
 		if (id == null)
 			return default_value;
@@ -256,7 +213,7 @@ public abstract class FlowRuntime {
 		return makeStructValue(id, fields, default_value);
 	}
 
-	public final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
+	public static final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
 		try {
 			Struct copy = struct_prototypes[id].clone();
 			copy.setFields(fields);
@@ -301,9 +258,5 @@ public abstract class FlowRuntime {
 		if (o1 instanceof Double || o2 instanceof Double)
 			return Double.valueOf(((Number)o1).doubleValue() % ((Number)o2).doubleValue());
 		return Integer.valueOf(((Number)o1).intValue() % ((Number)o2).intValue());
-	}
-
-	public String[] getUrlArgs() {
-		return str_args;
 	}
 }
