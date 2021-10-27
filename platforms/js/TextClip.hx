@@ -1308,28 +1308,32 @@ class TextClip extends NativeWidgetClip {
 			if ((Platform.isChrome || Platform.isEdge) && decimalSeparatorFix) {
 				nativeWidget.value = '';
 			}
-			nativeWidget.value = newValue;
+			nativeWidget.value = val;
 		}
 
-		if (newValue != nativeWidgetValue) {
-			if (e != null && e.data != null && e.data.length != null) {
-				var newCursorPosition : Int = untyped cursorPosition + newValue.length - nativeWidget.value.length + e.data.length;
-				setNewValue(newValue);
-				setSelection(newCursorPosition, newCursorPosition);
-			} else {
-				setNewValue(newValue);
-			}
-		} else {
-			var selectionStart = getSelectionStart();
-			var selectionEnd = getSelectionEnd();
+		var emitChanges = function() {
 
-			setSelection(selectionStart, selectionEnd);
+			if (newValue != nativeWidgetValue) {
+				if (e != null && e.data != null && e.data.length != null) {
+					var newCursorPosition : Int = untyped cursorPosition + newValue.length - nativeWidget.value.length + e.data.length;
+					setNewValue(newValue);
+					setSelection(newCursorPosition, newCursorPosition);
+				} else {
+					setNewValue(newValue);
+				}
+			} else {
+				var selectionStart = getSelectionStart();
+				var selectionEnd = getSelectionEnd();
+
+				setSelection(selectionStart, selectionEnd);
+			}
+			emit('input', newValue);
 		}
 
 		this.text = newValue;
 		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
-		emit('input', newValue);
+		untyped setTimeout(emitChanges, 0);
 	}
 
 	private function onScroll(e : Dynamic) {
@@ -1344,22 +1348,25 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onKeyDown(e : Dynamic) {
-		if (TextInputKeyDownFilters.length > 0) {
-			var ke : Dynamic = RenderSupport.parseKeyEvent(e);
+		var handler = function() {
+			if (isFocused) {
+				// Deferred to get updated selection and cursor position.
+				checkPositionSelection();
+			}
+			if (TextInputKeyDownFilters.length > 0) {
+				var ke : Dynamic = RenderSupport.parseKeyEvent(e);
 
-			for (f in TextInputKeyDownFilters) {
-				if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
-					ke.preventDefault();
-					e.stopPropagation();
-					RenderSupport.emit('keydown', ke);
-					break;
+				for (f in TextInputKeyDownFilters) {
+					if (!f(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode)) {
+						ke.preventDefault();
+						e.stopPropagation();
+						RenderSupport.emit('keydown', ke);
+						break;
+					}
 				}
 			}
-		}
-
-		if (isFocused) {
-			checkPositionSelection();
-		}
+		};
+		untyped setTimeout(handler, 0);
 	}
 
 	private function onKeyUp(e : Dynamic) {
