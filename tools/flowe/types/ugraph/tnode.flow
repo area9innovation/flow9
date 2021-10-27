@@ -55,12 +55,17 @@ export {
 	// It constructs type classes for each typar
 	instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) -> TNodeName;
 
-	// Resolve the node against a supertype. Does NOT unify the top-level, but the subtypes are merged.
-	// TODO: Check whether this should indeed merge at the toplevel or not
+	// Resolve the node against a supertype. Does NOT unify the top-level, but information about
+	// the subtypes are merged.
 	mergeTNodeNameWithSuper(tmap : TMap, node : TNodeName, super : TNodeSupertype, reason : ErrorReason) -> TNode;
 
-	// Calculates the result of merging nodes. Does not update the tmap at the top level!
+	// Unifies these nodes
+	unifyTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> void;
+
+	// This propagates all info between these nodes, but does not unify them at the top level
 	mergeTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> TNode;
+
+	makeEClassForTNode(tmap : TMap, node : TNode, reason : ErrorReason) -> int;
 
 	// We known that sub is a subtype of the super, so unify as much as possible for that
 	subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void;
@@ -384,7 +389,7 @@ extractSupers(tmap : TMap, acc : TNodeSupertype, t : TType) -> TNodeSupertype {
 				}
 				TNodeOverload(unique, overloads, pos): {
 					if (exists(overloads, isFlowNode)) {
-						println("REVIEW: Somehow, we extract flow here");
+						// OK, we are adding a flow to a supertype.
 						TNodeSupertype(acc with subtypes = arrayPush(acc.subtypes, TNodeName("flow", [], pos)));
 					} else {
 						println("TODO: Figure out how to represent this overload as a named type: " + prettyTType(t));
@@ -613,6 +618,23 @@ instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int
 		}
 	}
 }
+
+unifyTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> void {
+	if (isEmptyTNode(left) || isEmptyTNode(right)) {
+	} else {
+		lclass = findTNodeClass(tmap, left);
+		rclass = findTNodeClass(tmap, right);
+		if (lclass == -1) {
+			println("could not find " + prettyTNode(tmap, left));
+		} else if (rclass == -1) {
+			println("could not find " + prettyTNode(tmap, right));
+		} else {
+			joinTNodes(tmap, lclass, rclass, reason);
+			{}
+		}
+	}
+}
+
 
 //
 // The pure unification - just calculates the resulting type, does not update the direct node
@@ -1027,7 +1049,7 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 				switch (supernode) {
 					TNodeName(name, typars, pos): {
 						if (^(tmap.resolveSubtypes)(name) != []) {
-							println("REVIEW: Optimistic subtyping against super " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
+							// println("REVIEW: Optimistic subtyping against super " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
 						}
 					}
 					TNodeOverload(unique, overloads, pos): {}
@@ -1060,9 +1082,7 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 					}
 					TNodeSupertype(suniques, stypes, seclass, smaxed, spos): {
 						mega = TNodeSupertype(suniques, arrayPush(stypes, subnode), seclass, smaxed, spos);
-						// TODO: This should be unify
-						merged = mergeTNodes(tmap, supernode, mega, joinReasons(reason, makeErrorReason(concat(npos, spos), "subtype")));
-						// TODO: Update the tmap with this resulting node
+						unifyTNodes(tmap, supernode, mega, joinReasons(reason, makeErrorReason(concat(npos, spos), "subtype")));
 						{}
 					}
 					TNodeOverload(unique, overloads, __): postpone();
