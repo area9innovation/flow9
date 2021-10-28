@@ -1,0 +1,53 @@
+import tools/flow9/backends/bprogram;
+import tools/flow9/dexp/types;
+
+export {
+	// Resolve our type hierarchy into a simpler one
+	// where we have no struct nor union reuse.
+	resolveBTypeHierarchy(
+		structs : Tree<string, DStruct>,
+		unions : Tree<string, DUnion>,
+	) -> Triple<[DUnion], [DStruct], Tree<string, DStruct>>;
+
+	extractPolymorphism(acc : Set<BTypePar>, b : BType) -> Set<BTypePar>;
+}
+
+resolveBTypeHierarchy(
+	bstructs : Tree<string, DStruct>,
+	bunions : Tree<string, DUnion>,
+) -> Triple<[DUnion], [DStruct], Tree<string, DStruct>> {
+	// Build a map from a type name to the super types it might have
+	supers : Tree<string, [string]> = makeDSupers(bunions);
+
+	// Build a map from a type name to the subtypes it might have
+	subs : Tree<string, [string]> = makeDSubtypes(bunions);
+
+	structs = getTreeValues(bstructs);
+	bareStructs = filter(structs, \s -> {
+		!containsKeyTree(supers, s.id)
+	});
+
+	unionedStructs = fold(structs, makeTree(), \acc, st -> {
+		if (containsKeyTree(supers, st.id)) {
+			setTree(acc, st.id, st)
+		} else acc;
+	});
+
+	// TODO: Find only top unions and resolve them
+	unions = getTreeValues(bunions);
+
+	Triple(unions, bareStructs, unionedStructs)
+}
+
+extractPolymorphism(acc : Set<BTypePar>, b : BType) -> Set<BTypePar> {
+	switch (b) {
+		BTypePar(id): insertSet(acc, b);
+		BTypeName(id, typars): {
+			fold(typars, acc, extractPolymorphism);
+		}
+		BTypeFunction(args, returnType): {
+			fold(args, extractPolymorphism(acc, returnType), extractPolymorphism)
+		}
+
+	}
+}
