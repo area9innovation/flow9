@@ -551,6 +551,57 @@ StackSlot ByteCodeRunner::filter(RUNNER_ARGS)
     return retarr;
 }
 
+/*
+StackSlot ByteCodeRunner::filtermapi(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(arr, clos);
+    RUNNER_CheckTag(TArray, arr);
+    RUNNER_DefSlots2(retarr, val);
+
+    int len = RUNNER->GetArraySize(arr);
+    if (len == 0) {
+        return StackSlot::MakeEmptyArray();
+    }
+
+    // Compute the result length and an inclusion mask
+    std::vector<StackSlot> filtered;
+	filtered.reserve(len);
+
+    RUNNER_DefSlotArray(fn_args, 3);
+    fn_args[0] = clos;
+
+    for (int i = 0; i < len; ++i) {
+        fn_args[1] = StackSlot::MakeInt(i);
+		fn_args[2] = RUNNER->GetArraySlot(arr, i);
+        val = RUNNER->FastEvalFunction(fn_args, 2);
+		RUNNER_CheckTag(TStruct, val);
+		static int some_struct_id = -1;
+		if (some_struct_id == -1) {
+			std::cout << "some_struct_id: " << some_struct_id << std::endl;
+			some_struct_id = RUNNER->FindStructId("Some", 1);
+		}
+		if (val.GetStructId() == some_struct_id) {
+			// Some has exactly one field. Just get it.
+			filtered.push_back(RUNNER->GetStructSlot(val, 0));
+		}
+    }
+
+	std::cout << "Was filtermapped: " << filtered.size() << " out of: " << len << std::endl;
+
+    // Allocate output and copy data
+    retarr = RUNNER->AllocateArray(filtered.size());
+
+    if (RUNNER->IsErrorReported()) {
+		std::cout << "ByteCodeRunner::filtermapi: !!!!!" << std::endl;
+        return StackSlot::MakeVoid();
+	}
+	int i = 0;
+    for (auto val : filtered) {
+        RUNNER->SetArraySlot(retarr, i++, val);
+	}
+    return retarr;
+}
+*/
 StackSlot ByteCodeRunner::gc(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
