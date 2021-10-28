@@ -1,0 +1,255 @@
+import tools/flow9/backends/js/js;
+import tools/flow9/backends/wasm/wasm;
+import tools/flow9/backends/koka/koka;
+import tools/flow9/backends/cpp/cpp;
+import tools/flow9/backends/flowc/flowc;
+import tools/flow9/pexp/parse;
+import tools/flow9/pexp/pretty;
+import tools/flow9/dexp/desugar;
+import tools/flow9/dexp/pretty;
+import tools/flow9/driver;
+import fs/filesystem;
+import math/stringmath;
+import tools/flowc/backends/build;
+
+main() {
+	test = getUrlParameter("test");
+	file = if (test != "") {
+		if (test == "1") "tools/flow9/tests/"
+		else if (strContains(test, "/")) {
+			test
+		} else "tools/flow9/tests/" + test;
+	} else "";
+
+	includes = strSplit(getUrlParameter("I"), ",");
+	allincludes = uniq(filter(concat([".", getFlowDirectory() + "/lib", getFlowDirectory()], includes), neq("")));
+	verbose = isUrlParameterTrue("verbose");
+
+	errors = ref 0;
+	t = timestamp();
+
+	// OK, set up tracking of pending asynchronous stuff
+	pending = ref 0;
+	startPending = \ -> {
+		p = ^pending;
+		pending := p + 1;
+	};
+	completePending = \ec -> {
+		p = ^pending;
+		pending := p - 1;
+		if (p <= 0) {
+			println(d2st((timestamp() - t) / 1000.0, 2) + "s");
+			quit(ec);
+		} else {
+			println("pending: " + i2s(^pending) + " (must be 0), done in " + d2st((timestamp() - t) / 1000.0, 2) + "s");
+			quit(ec);
+		}
+	};
+
+	// This is how we compile a file
+	process_file = \src_file, ver, onDone : () -> void -> {
+		compileFlowe(allincludes, startPending, completePending, errors, src_file, verbose || ver, onDone);
+	};
+
+	thefile = if (isUrlParameterTrue("flowc-tests")) {
+		tests_dir = pathCombineMany(["tests", "with_main"]);
+		if (verbose) {
+			println("Going to run tests in '" + tests_dir + "'\n====================\n");
+		}
+		tests_dir;
+	} else {
+		getUrlParameterDef("file", file);
+	}
+
+	if (thefile == "") {
+		printFlowUsage();
+		quit(1);
+	} else if (!isDirectory(thefile)) {
+		process_file(thefile, false, \ -> {
+			completePending(0);
+		});
+	} else {
+		files0 = if (isUrlParameterTrue("rec")) readDirectoryRecursively(thefile) else map(readDirectory(thefile), \f -> pathCombine(thefile, f));
+		files = sort(filter(files0, \f -> endsWith(f, ".flow")));
+		applyAllSync(
+			map(files, \f -> {
+				\onDone -> {
+					process_file(f, true, onDone)
+				}
+			}),
+			\ -> {
+				completePending(0);
+			}
+		);
+	};
+}
+
+
+// This is how we compile a file.
+// TODO: Consolidate completePending and onDone
+compileFlowe(allincludes : [string], startPending : () -> void, completePending : (int) -> void, errors : ref int, src_file : string, verbose : bool, onDone : () -> void) -> void {
+	flow_file = path2flowPath(allincludes, src_file);
+	if (verbose) {
+		println("compiling file '" + src_file + "' (" + flow_file + ")");
+	}
+	cache = makeFlowCache(\e -> {
+		errors := ^errors + 1;
+		println(e);
+	}, allincludes);
+
+	b = compileFlow(cache, flow_file);
+	if (isUrlParameterTrue("js")) {
+		buildJsTarget(cache, b, src_file);
+	}
+	if (isUrlParameterTrue("wasm")) {
+		startPending();
+		buildWasmTarget(cache,b, src_file, completePending);
+	}
+	if (isUrlParameterTrue("koka")) {
+		buildKokaTarget(cache, b, src_file);
+	}
+	if (isUrlParameterTrue("cpp")) {
+		buildCppTarget(cache, b, src_file);
+	}
+	if (isUrlParameterTrue("flowc")) {
+		mfiprogram = bmodule2fiprogram(cache, b.flowpath);
+		switch (mfiprogram) {
+			None(): {
+				onDone();
+			}
+			Some(fiprogram): {
+				buildFiProgram(fiprogram, initFcTypeEnvGlobal(), \done -> onDone());
+			}
+		}
+	} else {
+		onDone();
+	}
+}
+
+buildJsTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
+	verbose = isUrlParameterTrue("verbose");
+	run_tests = isUrlParameterTrue("run-tests");
+	if (verbose) {
+		println("building JS target");
+	}
+	js_src = bmodule2js(cache, b.flowpath, isUrlParameterTrue("shorten-ids"));
+	js_file = changeFileExt(src_file, ".js");
+	setFileContent(js_file, js_src);
+	if (verbose) {
+		println("JS target '" + js_file + "' is built.");
+	}
+	if (run_tests) {
+		if (verbose) {
+			println("Running test '" + js_file + "'");
+		}
+		exit_code = execSystemProcess("node", [js_file], ".", println, println);
+		if (exit_code != 0 || verbose) {
+			println("Test '" + js_file + "' " +
+				(if (exit_code == 0) "COMPLETED" else  "FAILED with code: " + i2s(exit_code))
+			);
+		}
+		if (!isUrlParameterTrue("leave-js")) {
+			del_err = deleteFile(js_file);
+			if (del_err != "") {
+				println(del_err);
+			}
+		}
+	}
+	if (verbose) {
+		println("\n-------------------\n");
+	}
+}
+
+buildWasmTarget(cache : FlowCache, b : BModule, src_file : string, onComplete : (int) -> void) -> void {
+	wasm_src = bmodule2wasm(cache, b.flowpath);
+	wasm_file = changeFileExt(src_file, ".wat");
+	if (setFileContent(wasm_file, wasm_src)) {
+		println("Saved " + wasm_file);
+		startProcess("wasm-as.exe", [wasm_file], ".", "", \ec, stdout, stderr -> {
+			println("Compiled " + wasm_file);
+			if (stdout != "") {
+				println(stdout);
+			}
+			if (stderr != "") {
+				println(stderr);
+			}
+			onComplete(ec);
+		});
+	} else {
+		println("Could not save " + wasm_file);
+		onComplete(1);
+	}
+}
+
+
+buildKokaTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
+	verbose = isUrlParameterTrue("verbose");
+	if (verbose) {
+		println("building Koka target");
+	}
+	koka_src = bmodule2koka(cache, b.flowpath, isUrlParameterTrue("shorten-ids"));
+	kokaArg = getUrlParameter("koka");
+	koka_file = if (strlen(kokaArg) > 1) kokaArg else changeFileExt(src_file, ".kk");
+	if (setFileContent(koka_file, koka_src)) {
+		println("Koka target '" + koka_file + "' is built.");
+	} else {
+		println("Error: Could NOT save '" + koka_file + "'");
+	}
+	if (verbose) {
+		println("\n-------------------\n");
+	}
+}
+
+buildCppTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
+	verbose = isUrlParameterTrue("verbose");
+	if (verbose) {
+		println("building Cpp target");
+	}
+	cpp_src = bmodule2cpp(cache, b.flowpath, isUrlParameterTrue("shorten-ids"));
+	cppArg = getUrlParameter("cpp");
+	cpp_file = if (strlen(cppArg) > 1) cppArg else changeFileExt(src_file, ".cpp");
+	if (setFileContent(cpp_file, cpp_src)) {
+		println("C++ target '" + cpp_file + "' is built.");
+	} else {
+		println("Error: Could NOT save '" + cpp_file + "'");
+	}
+	if (verbose) {
+		println("\n-------------------\n");
+	}
+}
+
+printFlowUsage() -> void {
+	printl2 = \s -> {
+		if (isUrlParameterTrue("help")) {
+			println(s);
+		}
+	}
+	println("Usage:");
+	println("flow9 <args>");
+	println("java -jar flow9.jar -- <args>");
+	println("");
+	println("Args:");
+	println("file=<path>,<folder>  File (or folder) to compile");
+	printl2("  rec=1               Compile all files recursively in the folder given");
+	printl2("flowc-tests=1         Compile the tests in flowc compiler");
+	println("");
+
+	println("I=<path>,<path>       Include paths");
+	println("js=1 or <path>        Compile to JS");
+	println("  shorten-ids=1       Whether to shorten the ids in the output");
+	printl2("  run-tests=1         Execute the resulting JS with node");
+	println("cpp=1 or <path>       Compile to C++");
+	printl2("wasm=1 or <path>      Compile to WASM");
+	printl2("koka=1 or <path>      Compile to Koka");
+	printl2("flowc=1 or <path>     Use the flowc backends for code generation");
+	printl2("  koka-int=1          Use int32 as int instead of int in Koka");
+	println("");
+	println("debug=1,id,path,eclass           Debug compilation of the relevant piece");
+	println("verbose=0,1,2                    Amount of debugging information");
+	println("stages=parse,type,resolve,lower  What stages to debug");
+	println("");
+
+	if (!isUrlParameterTrue("help")) {
+		println("\nAdd help=1 for complete usage");
+	}
+}
