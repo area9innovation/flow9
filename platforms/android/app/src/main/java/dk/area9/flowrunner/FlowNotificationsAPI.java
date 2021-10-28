@@ -12,6 +12,8 @@ import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.content.pm.ApplicationInfo;
 import androidx.annotation.Nullable;
+
+import android.os.Handler;
 import android.util.Log;
 
 public class FlowNotificationsAPI {
@@ -114,7 +116,17 @@ public class FlowNotificationsAPI {
     public void onLocalNotificationClick(int notificationId, String notificationCallbackArgs) {
         wrapper.ExecuteNotificationCallbacks(notificationId, notificationCallbackArgs);
         // false, because already removed from notification center
-        cancelLocalNotification(notificationId, false);
+
+        // Delay for service to have a chance to be created and bound
+        Handler handler = new Handler();
+        handler.postDelayed(new Runnable() {
+
+            @Override
+            public void run() {
+                cancelLocalNotification(notificationId, true);
+            }
+
+        }, 500);
     }
     
     public static FlowLocalNotificationIntents getNotificationIntents(Context context, int pendingIntentFlags, double time, int notificationId, String notificationCallbackArgs,

@@ -31,9 +31,8 @@ RUN addgroup --gid=${gid} flow \
              --shell=/bin/bash \
              flow
 
-COPY flow /flow
-COPY xflowcpp /flow/bin/
-RUN chown flow:flow /flow -R
+COPY --chown=flow:flow flow /flow
+COPY --chown=flow:flow xflowcpp /flow/bin/
 
 USER flow
 WORKDIR /flow
