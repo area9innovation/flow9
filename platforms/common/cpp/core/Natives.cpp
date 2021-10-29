@@ -551,7 +551,6 @@ StackSlot ByteCodeRunner::filter(RUNNER_ARGS)
     return retarr;
 }
 
-/*
 StackSlot ByteCodeRunner::filtermapi(RUNNER_ARGS)
 {
     RUNNER_PopArgs2(arr, clos);
@@ -577,7 +576,6 @@ StackSlot ByteCodeRunner::filtermapi(RUNNER_ARGS)
 		RUNNER_CheckTag(TStruct, val);
 		static int some_struct_id = -1;
 		if (some_struct_id == -1) {
-			std::cout << "some_struct_id: " << some_struct_id << std::endl;
 			some_struct_id = RUNNER->FindStructId("Some", 1);
 		}
 		if (val.GetStructId() == some_struct_id) {
@@ -585,8 +583,6 @@ StackSlot ByteCodeRunner::filtermapi(RUNNER_ARGS)
 			filtered.push_back(RUNNER->GetStructSlot(val, 0));
 		}
     }
-
-	std::cout << "Was filtermapped: " << filtered.size() << " out of: " << len << std::endl;
 
     // Allocate output and copy data
     retarr = RUNNER->AllocateArray(filtered.size());
@@ -601,7 +597,7 @@ StackSlot ByteCodeRunner::filtermapi(RUNNER_ARGS)
 	}
     return retarr;
 }
-*/
+
 StackSlot ByteCodeRunner::gc(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
