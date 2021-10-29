@@ -1,8 +1,4 @@
-import sys/system;
-import string_utils;
 import tools/flowc/flowc_typecheck;
-import tools/common/utils;
-import tools/flowc/flow_parser;
 import tools/flowc/eval;
 
 export {
@@ -39,10 +35,9 @@ FcReplPiece ::= FcReplDecls, FcReplStats, FcReplExp;
 	FcReplStats(name : string, code : string, program : Maybe<FiProgram>);
 	FcReplExp(name : string, code : string, program : Maybe<FiProgram>);
 
-FcReplCommand ::= FcReplEval, FcReplExec, FcReplCompile, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplConfig, FcReplExit;
+FcReplCommand ::= FcReplEval, FcReplExec, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplConfig, FcReplExit;
 	FcReplEval(expr : string);
 	FcReplExec(piece : FcReplPiece);
-	FcReplCompile(code : string, args : [string]);
 	FcReplAdd(name : string, code : string);
 	FcReplDel(name : string);
 	FcReplSave(file : string);
@@ -93,16 +88,12 @@ fcReplReadCommand(env : FcReplEnv) -> FcReplCommand {
 			fcReplPrintln("Bye.", true, env.config);
 			FcReplExit();
 		} else if (comm == "show") {
-			if (length(args) == 0) {
-				fcReplPrintln("show command must take an argument: the name of a code piece", false, env.config);
+			if (length(args) == 0 || args[0] == "all") {
+				fcReplPrintln(fcReplJoinCode(env, true), true, env.config);
 			} else {
-				if (args[0] == "all") {
-					fcReplPrintln(fcReplJoinCode(env, true), true, env.config);
-				} else {
-					switch (lookupTree(env.pieces, args[0])) {
-						Some(piece): fcReplPrintln(piece.code, true, env.config);
-						None(): fcReplPrintln("There's no piece of code with the name " + args[0], false, env.config);
-					}
+				switch (lookupTree(env.pieces, args[0])) {
+					Some(piece): fcReplPrintln(piece.code, true, env.config);
+					None(): fcReplPrintln("There's no piece of code with the name " + args[0], false, env.config);
 				}
 			}
 			fcReplReadCommand(env);
@@ -135,8 +126,6 @@ fcReplReadCommand(env : FcReplEnv) -> FcReplCommand {
 					}
 				}
 			}
-		} else if (comm == "compile") {
-			FcReplCompile(fcReadCode(env.config), args); 
 		} else if (comm == "add") {
 			if (length(args) == 0) {
 				fcReplPrintln("add command must take an argument: the name of a code piece", false, env.config);
@@ -228,15 +217,6 @@ fcReplLoopStep(env : FcReplEnv) -> FcReplEnv {
 		FcReplEval(src): {
 			run(src);
 		}
-		FcReplCompile(src, args): {
-			code = fcReplSplitCode(env.config, src);
-			fcReplCompile(
-				FcReplEnv(env with imports = concat(env.imports, code.imports)), 
-				code.source, 
-				args
-			);
-			env;
-		}
 		FcReplExec(piece): {
 			switch (piece) {
 				FcReplDecls(name, code, program): {
@@ -287,16 +267,6 @@ fcReplLoopStep(env : FcReplEnv) -> FcReplEnv {
 	}
 	fcReplDebug("REPL command: " + fcReplCommand2s(command, false) + " completed", env.config, 0);
 	ret;
-}
-
-fcDeleteGently(file : string, config : CompilerConfig) -> void {
-	if (fileExists(file) && getConfigParameterDef(config.config, "repl-save-tmp", "0") == "0") {
-		err = deleteFile(file);
-		if (err != "") {
-			fcReplDebug("REPL error while deleting: " + file + "\n" + err, config, 0);
-			fcReplPrintln(err, false, config);
-		}
-	}
 }
 
 fcReplUnwrapfcReplPrintln(expr : string) -> string {
@@ -364,21 +334,11 @@ fcPrepareDeclsSource(env : FcReplEnv, code : string, args : [string]) -> string 
 }
 
 fcPreparePieceSource(env : FcReplEnv, piece : FcReplPiece, args : [string]) -> string {
-	code = switch (piece) {
+	switch (piece) {
 		FcReplDecls(name, code, prog): fcPrepareDeclsSource(env, code, args);
 		FcReplStats(name, code, prog): fcPrepareStatsSource(env, code, args);
 		FcReplExp(name, code, prog):   fcPrepareExpSource(env, code, args);
 	}
-	//if (isNone(piece.program)) {
-		setFileContent("___tmp___.flow", code);
-		{}
-	//}
-	code;
-}
-
-fcIsFlowProgram(src : string) -> bool {
-	p = parse_flow(src);
-	p.first.end == strlen(src);
 }
 
 fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplPiece> {
@@ -394,33 +354,24 @@ fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplP
 		// At last, try to treat code as a set of toplevel definitions 
 		FcReplDecls(name, cur_code, None()),
 	];
-	maybeBind(
-		find(code_variants, \piece -> {
-			code = fcPreparePieceSource(env, piece, []);
-			fcReplDebug("REPL TRYING TO PARSE: \n" + piece.code + "\n\n" + code, env.config, 2);
-			println("REPL TRYING TO PARSE: \n-----------\n" + piece.code + "\n-----------\n\n" + code);
-			ret = fcIsFlowProgram(code);
-			fcReplDebug("WAS PARSED: " + b2s(ret), env.config, 2);
-			println("WAS PARSED: " + b2s(ret));
-			ret;
-		}),
-		\variant -> {
-			code = fcPreparePieceSource(env, variant, []);
-			fcReplDebug("REPL TRYING TO TYPECHECK: \n" + variant.code + "\n\n" + code, env.config, 2);
-			pair = parseAndTypecheckProgram(env.config, initFcTypeEnvGlobal(), "___tmp___");
-			if (pair.second == 0) {
-				fcReplDebug("WAS TYPECHECKED", env.config, 2);
-				Some(switch(variant) {
-					FcReplExp(__, __, __): FcReplExp(variant with program = Some(pair.first));
-					FcReplStats(__,__,__): FcReplStats(variant with program = Some(pair.first));
-					FcReplDecls(__,__,__): FcReplDecls(variant with program = Some(pair.first));
-				});
-			} else {
-				fcReplDebug("WAS NOT TYPECEHECKED", env.config, 2);
-				None();
-			}
+	findmap(code_variants, \variant -> {
+		code = fcPreparePieceSource(env, variant, []);
+		fcReplDebug("REPL TRYING TO TYPECHECK: \n" + variant.code + "\n\n" + code, env.config, 2);
+		fcSetSkipPrinting(env.config.threadId, true);
+		pair = parseAndTypecheckProgram(env.config, initFcTypeEnvGlobal(), "___tmp___");
+		fcSetSkipPrinting(env.config.threadId, false);
+		if (pair.second == 0) {
+			fcReplDebug("WAS TYPECHECKED", env.config, 2);
+			Some(switch(variant) {
+				FcReplExp(__, __, __): FcReplExp(variant with program = Some(pair.first));
+				FcReplStats(__,__,__): FcReplStats(variant with program = Some(pair.first));
+				FcReplDecls(__,__,__): FcReplDecls(variant with program = Some(pair.first));
+			});
+		} else {
+			fcReplDebug("WAS NOT TYPECEHECKED", env.config, 2);
+			None();
 		}
-	);
+	});
 }
 
 fcReplAdd(env0 : FcReplEnv, name : string, code : string) -> FcReplEnv {
@@ -442,103 +393,13 @@ fcReplAdd(env0 : FcReplEnv, name : string, code : string) -> FcReplEnv {
 	}
 }
 
-fcReplCompile(env : FcReplEnv, code0 : string, args : [string]) -> bool {
-	r = switch (fcReplMakePiece(env, "", code0)) {
-		Some(piece): {
-			code = fcPreparePieceSource(env, piece, args);
-			fcReplDebug("REPL compiling args: '" + strGlue(args, " ") + "'", env.config, 1);
-			fcReplDebug("REPL compiling code:\n" + code, env.config, 2);
-			flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
-			output = FcReplOutput(ref [], ref [], ref []);
-			print_out = fcReplOnOut(output, env);
-			print_err = fcReplOnErr(output, env);
-			compile_code = execSystemProcess(flowc, concat(args, ["___tmp___.flow"]), ".", print_out, print_err);
-			ret = (length(^(output.errs)) == 0) && (compile_code == 0);
-			if (getConfigParameterDef(env.config.config, "repl-output-imediately", "1") == "0") {
-				fcReplPrintln(strGlue(^(output.all), "\n"), ret, env.config);
-			}
-			ret;
-		}
-		None(): {
-			fcReplDebug("REPL ERROR IN CODE:\n" + code0, env.config, 0);
-			fcReplPrintln("the entered code contains errors and cannot be compiled.", false, env.config);
-			false;
-		}
-	}
-	fcDeleteGently("___tmp___.js", env.config);
-	r;
-}
-
 fcReplRun(env : FcReplEnv, code0 : string) -> bool {
-	r = switch (fcReplMakePiece(env, "", code0)) {
+	switch (fcReplMakePiece(env, "", code0)) {
 		Some(piece): {
-			run_external = \ -> {
-				code = fcPreparePieceSource(env, piece, []);
-				fcReplDebug("REPL running:\n" + code, env.config, 1);
-				output = FcReplOutput(ref [], ref [], ref []);
-				print_out = fcReplOnOut(output, env);
-				print_err = fcReplOnErr(output, env);
-				engine = getConfigParameterDef(env.config.config, "repl-engine", "bc");
-				flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
-				flowcpp = "flowcpp" + (if (hasTargetName("windows")) ".bat" else "");
-				compile_code = 
-					if (engine == "jar") {
-						cmp_code = execSystemProcess(flowc, ["jar=1", "___tmp___.flow"], ".", print_out, print_err);
-						if (cmp_code == 0) {
-							execSystemProcess("java", ["-jar", "___tmp___.jar"], ".", print_out, print_out);
-							{ }
-						} 
-						fcDeleteGently("___tmp___.jar", env.config);
-						cmp_code
-					} else if (engine == "js") {
-						cmp_code = execSystemProcess(flowc, ["es6=___tmp___.js", "nodejs=1", "___tmp___.flow"], ".", print_out, print_err);
-						if (cmp_code == 0) {
-							execSystemProcess("js", ["___tmp___.js"], ".", print_out, print_out);
-							{ }
-						}
-						fcDeleteGently("___tmp___.js", env.config);
-						cmp_code
-					} else if (engine == "bc") {
-						cmp_code = execSystemProcess(flowc, ["bytecode=1", "___tmp___.flow"], ".", print_out, print_err);
-						if (cmp_code == 0) {
-							execSystemProcess(flowcpp, ["--batch", "___tmp___.bytecode"], ".", print_out, print_out);
-							{ }
-						}
-						fcDeleteGently("___tmp___.bytecode", env.config);
-						cmp_code
-					} else {
-						fcReplPrintln("unknown execution engine: " + engine, false, env.config);
-						-1;
-					}
-				ret = (length(^(output.errs)) == 0) && (compile_code == 0);
-				if (getConfigParameterDef(env.config.config, "repl-output-imediately", "1") == "0") {
-					fcReplPrintln(strGlue(^(output.all), "\n"), ret, env.config);
-				}
-				ret;
-			}
 			switch (piece.program) {
 				Some(program): {
-					// fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<FiVal>
-					/*switch (lookupTree(program.names.toplevel, "main")) {
-						Some(main): {
-							switch (main) {
-								FiFunctionDec(__,lambda, type,__,__): {
-									ret = fcReplEval(program, FiCall(FiVar()), makeTree());
-									isSome(ret);
-								}
-								default: false;
-							}
-						}
-						None(): {
-							// No main function
-							false;
-						}
-					}*/
-					//println("CODE:\n" + piece.code);
 					globals = fcInitEvalGlobals(program, println, env.globEnv);
 					ret = fcCallFunction("main", [], globals);
-					//println("RET: " + toString(ret));
-					//maybeApply(ret, \v -> println("RET: " + fiVal2s(v)));
 					if (getDataTagForValue(ret) == 4) {
 						err = cast(ret : flow -> string);
 						println("Runtime error occured: " + err);
@@ -548,12 +409,11 @@ fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 						true;
 					} else {
 						println("Strage, main function must return void, but returned '" + toString(ret) + "'");
-						//quit(1);
 						false;
 					}
 				}
 				None(): {
-					run_external();
+					false;
 				}
 			}
 		}
@@ -561,41 +421,6 @@ fcReplRun(env : FcReplEnv, code0 : string) -> bool {
 			fcReplDebug("REPL ERROR IN CODE:\n" + code0, env.config, 0);
 			fcReplPrintln("the entered code contains errors and cannot be compiled.", false, env.config);
 			false;
-		}
-	}
-	fcDeleteGently("___tmp___.js", env.config);
-	r;
-}
-
-FcReplOutput(
-	all  : ref [string],
-	errs : ref [string],
-	outs : ref [string]
-);
-
-fcReplOnErr(output : FcReplOutput, env : FcReplEnv) -> (string) -> void {
-	\err -> {
-		if (err != "") {
-			refArrayPush(output.all, err);
-			refArrayPush(output.errs, err);
-			fcReplDebug("REPL err:\n" + err, env.config, 0);
-			if (getConfigParameterDef(env.config.config, "repl-output-imediately", "1") == "1") {
-				fcReplPrintln(err, false, env.config);
-			}
-		}
-	}
-}
-
-fcReplOnOut(output : FcReplOutput, env : FcReplEnv) -> (string) -> void {
-	\o -> {
-		out = trimFlowcHeaderFromOutput(o);
-		if (out != "") {
-			refArrayPush(output.all, out);
-			refArrayPush(output.outs, out);
-			fcReplDebug("REPL out:\n" + out, env.config, 1);
-			if (getConfigParameterDef(env.config.config, "repl-output-imediately", "1") == "1") {
-				fcReplPrintln(out, true, env.config);
-			}
 		}
 	}
 }
@@ -714,7 +539,6 @@ fcReplCommand2s(command : FcReplCommand, full : bool) -> string {
 	switch (command) {
 		FcReplEval(expr):          "eval" + if (full) " " + expr else "";
 		FcReplExec(piece):         "exec " + fcReplPiece2s(piece, full);
-		FcReplCompile(code, args): "compile" + if (full) " " + strGlue(args, " ") else "";
 		FcReplAdd(name, code):     "add " + name + if (full) "\n" + code else "";
 		FcReplDel(name):           "del " + name;
 		FcReplSave(file):          "save " + file;
@@ -751,567 +575,3 @@ fcReplLog(message : string, conf : CompilerConfig) -> void {
 		}
 	}
 }
-
-
-/*
-trace = false;
-
-fcReplEval(prog : FiProgram, ex : FiExp, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
-	a0 = ^aaa;
-	aaa := ^aaa + "\t";
-	ret = switch (ex) {
-		FiLambda(args, body,__,__): {
-			Some(FiFuncVal(\as ->
-				fcReplEval(prog, body,
-					foldi(args, vars, \i, acc, arg -> setTree(acc, args[i].name, as[i]))
-				)
-			));
-		}
-		FiCall(f, args,__,__): {
-			maybeBind(fcReplEval(prog, f, vars),
-				\f1 -> {
-					switch (f1) {
-						FiFuncVal(fn): {
-							args1 = filtermap(args, \a -> fcReplEval(prog, a, vars));
-							if (length(args) != length(args1)) None() else fn(args1);
-						}
-						default: None();
-					}
-				}
-			);
-		}
-		FiVar(x,__,__): {
-			switch (lookupTree(vars, x)) {
-				Some(val): Some(val);
-				None(): {
-					maybeBind(lookupTree(prog.names.toplevel, x),
-						\decl -> {
-							switch (decl) {
-								FiFunctionDec(__,lambda, __,__,__): {
-									fcReplEval(prog, lambda, makeTree());
-								}
-								FiGlobalVar(__,value, __,__,__): {
-									fcReplEval(prog, value, makeTree());
-								}
-								FiNativeDec(__,__,__,nativeName, fallback,__,__): {
-									if (hostCallExists(nativeName, )) {
-										//println("Creating native: " + nativeName);
-										Some(FiFuncVal(\as -> {
-											//println("Calling native: " + nativeName + 
-											//	" with args: " + strGlue(map(as, fiVal2s), ", ") + 
-											//	" unwrapped: " + strGlue(map(as, \a -> toString(fcUnwrapFiVal(a))), ", ")
-											//);
-											Some(fcWrapFiVal(hostCall(nativeName, map(as, \a -> 
-												fcUnwrapFiVal(a)
-											))));
-										}));
-									} else {
-										fcReplEval(prog, fallback, makeTree());
-									}
-								}
-							}
-						}
-					);
-				}
-			}
-		}
-		FiLet(x, __, e1, e2,__,__): {
-			maybeBind(fcReplEval(prog, e1, vars),
-				\v -> fcReplEval(prog, e2, setTree(vars, x, v))
-			);
-		}
-		FiIf(e1, e2, e3, __,__): {
-			maybeBind(fcReplEval(prog, e1, vars),
-				\c -> switch (c) {
-					FiBoolVal(v): {
-						if (v) fcReplEval(prog, e2, vars) else fcReplEval(prog, e3, vars);
-					}
-					default: None();
-				}
-			);
-		}
-		FiSwitch(v,__,cs,__,__): {
-			maybeBind(fcReplEval(prog, v, vars),
-				\w -> {
-					switch (w) {
-						FiStructVal(n, fields): {
-							maybeBind(
-								find(cs, \c -> c.struct == n),
-								\c : FiCase -> {
-									fcReplEval(prog, c.body, 
-										foldi(
-											map(fields, fiFiledVal), 
-											vars, 
-											\i, acc, e -> setTree(acc, c.argNames[i], e)
-										)
-									)
-								}
-							);
-						}
-						default: None();
-					}
-				}
-			);
-		}
-		FiCast(e, __,to,__,__): {
-			maybeMap(fcReplEval(prog, e, vars), \ev -> 
-				switch (ev) {
-					FiIntVal(v): {
-						switch (to) {
-							FiTypeDouble(): FiDoubleVal(i2d(v));
-							FiTypeString(): FiStringVal(i2s(v));
-							default: ev; 
-						}
-					}
-					FiDoubleVal(v): {
-						switch (to) {
-							FiTypeInt(): FiIntVal(round(v));
-							FiTypeString(): FiStringVal(d2s(v));
-							default: ev; 
-						}
-					}
-					default: ev;
-				}
-			);
-		}
-		FiSeq(es,__,__): {
-			ret : ref Maybe<FiVal> = ref Some(FiVoidVal());
-			iter(es, \e -> ret := fcReplEval(prog, e, vars));
-			^ret;
-		}
-		FiCallPrim(op, es, __,__): {
-			fcReplEvalCallPrim(prog, ex, vars);
-		}
-		FiString(s,__): Some(FiStringVal(s));
-		FiBool(b,__):   Some(FiBoolVal(b));
-		FiDouble(d,__): Some(FiDoubleVal(d));
-		FiVoid(__):     Some(FiVoidVal());
-		FiInt(i,__):    Some(FiIntVal(i));
-		FiRequire(flowfile, __,__,__): {
-			None();
-		}
-		FiUnsafe(name, __,__,__): {
-			None();
-		}
-	}
-	aaa := a0;
-	if (trace) {
-		println2(^aaa + "ret (**): " + toString(ret));
-	}
-	ret;
-}
-
-
-FiVal ::= FiConstVal, FiStructVal, FiArrayVal, FiRefVal, FiNativeVal, FiFuncVal; 
-
-	FiConstVal ::= FiVoidVal, FiBoolVal, FiIntVal, FiDoubleVal, FiStringVal;
-	FiStructVal(name : string, fields : [FiFieldVal]);
-		FiFieldVal ::= FiConstField, FiMutableField;
-		FiConstField(name : string, val : FiVal);
-		FiMutableField(name : string, val : ref FiVal);
-	FiArrayVal(val : [FiVal]);
-	FiRefVal(val : ref FiVal);
-	FiNativeVal(val : native);
-	FiFuncVal(fn : ([FiVal]) -> Maybe<FiVal>);
-
-	FiVoidVal();
-	FiBoolVal(val : bool);
-	FiIntVal(val : int);
-	FiDoubleVal(val : double);
-	FiStringVal(val : string);
-
-fiFiledVal(field : FiFieldVal) -> FiVal {
-	switch (field) {
-		FiConstField(__,val): val;
-		FiMutableField(__,val): ^val;
-	}
-}
-
-fiVal2s(v : FiVal) -> string {
-	switch (v) {
-		FiStructVal(name, fields): {
-			name + "(" + 
-			strGlue(map(fields, \field ->
-				switch (field) {
-					FiConstField(__, val): fiVal2s(val);
-					FiMutableField(__, val): fiVal2s(^val);
-				}
-			), ", ")
-			+ ")";
-		}
-		FiArrayVal(arr): "[" + strGlue(map(arr, fiVal2s), ", ") + "]";
-		FiRefVal(val): "ref " + fiVal2s(^val);
-		FiFuncVal(fn): "<func>";
-		FiNativeVal(val): "<native>: " + toString(val);
-		FiVoidVal(): "{void}";
-		FiBoolVal(val): b2s(val);
-		FiIntVal(val): i2s(val);
-		FiDoubleVal(val): d2s(val);
-		FiStringVal(val): "\"" + val + "\"";
-	}
-}
-
-
-aaa = ref "";
-
-fcReplEvalCallPrim(prog : FiProgram, call : FiCallPrim, vars : Tree<string, FiVal>) -> Maybe<FiVal> {
-
-	args1 = map(call.es, \e -> {
-		//println2(^aaa + "call.es, e: " + toString(e));
-		//a0 = ^aaa;
-		//aaa := ^aaa + "\t";
-		ret = fcReplEval(prog, e, vars);
-		//aaa := a0;
-		//println2(^aaa + "ret (!!): " + toString(ret));
-		ret;
-	});
-	//println2(^aaa + "args1 - done, len: " + i2s(length(call.es)) + " ?=" + i2s(length(args1)) + ": " + toString(args1));
-	//println2(^aaa + "args1: ");
-	//iter(args1, println);
-
-	args = filtermap(args1, idfn);
-	//println2(^aaa + "args done");
-	ret = if (length(args) != length(call.es)) None() else {
-		switch (call.op) {
-			FcOrPrim(): {
-				switch (args[0]) {
-					FiBoolVal(b1): {
-						switch (args[1]) {
-							FiBoolVal(b2): {
-								Some(FiBoolVal(b1 || b2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcAndPrim(): {
-				switch (args[0]) {
-					FiBoolVal(b1): {
-						switch (args[1]) {
-							FiBoolVal(b2): {
-								Some(FiBoolVal(b1 && b2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcNotPrim(): {
-				switch (args[0]) {
-					FiBoolVal(b): {
-						Some(FiBoolVal(!b));
-					}
-					default: None();
-				}
-			}
-			FcEqPrim(): {
-				Some(FiBoolVal(args[0] == args[1]));
-			}
-			FcNePrim(): {
-				Some(FiBoolVal(args[0] != args[1]));
-			}
-			FcLePrim(): {
-				Some(FiBoolVal(args[0] <= args[1]));
-			}
-			FcGePrim(): {
-				Some(FiBoolVal(args[0] >= args[1]));
-			}
-			FcLtPrim(): {
-				Some(FiBoolVal(args[0] < args[1]));
-			}
-			FcGtPrim(): {
-				Some(FiBoolVal(args[0] > args[1]));
-			}
-			FcPlusPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 + i2));
-							}
-							default: None();
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 + d2));
-							}
-							default: None();
-						}
-					}
-					FiStringVal(s1): {
-						switch (args[1]) {
-							FiStringVal(s2): {
-								Some(FiStringVal(s1 + s2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcMinusPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 - i2));
-							}
-							default: None();
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 - d2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcMulPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 * i2));
-							}
-							default: None();
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 * d2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcDivPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 / i2));
-							}
-							default: None();
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 / d2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcModPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						switch (args[1]) {
-							FiIntVal(i2): {
-								Some(FiIntVal(i1 % i2));
-							}
-							default: None();
-						}
-					}
-					FiDoubleVal(d1): {
-						switch (args[1]) {
-							FiDoubleVal(d2): {
-								Some(FiDoubleVal(d1 % d2));
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcNegPrim(): {
-				switch (args[0]) {
-					FiIntVal(i1): {
-						Some(FiIntVal(-i1));
-					}
-					FiDoubleVal(d1): {
-						Some(FiDoubleVal(-d1));
-					}
-					default: None();
-				}
-			}
-			FcArrayPrim(): {
-				Some(FiArrayVal(args));
-			}
-			FcIndexPrim(): {
-				switch (args[0]) {
-					FiArrayVal(arr): {
-						switch (args[1]) {
-							FiIntVal(i): {
-								if (0 <= i && i + 1 <= length(arr)) {
-									Some(arr[i]);
-								} else {
-									None();
-								}
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FcDerefPrim(): {
-				switch (args[0]) {
-					FiRefVal(rf): {
-						Some(^rf);
-					}
-					default: None();
-				}
-			}
-			FcAssignPrim(): {
-				switch (args[0]) {
-					FiRefVal(rf): {
-						rf := args[1];
-						Some(FiVoidVal());
-					}
-					default: None();
-				}
-			}
-			FcRefPrim(): {
-				Some(FiRefVal(ref args[0]));
-			}
-			FcStructPrim(struct_name): {
-				maybeMap(lookupTree(prog.names.structs, struct_name),
-					\struct -> FiStructVal(struct_name, mapi(struct.args, \i, arg -> 
-						if (arg.ismutable) FiMutableField(arg.name, ref args[i]) else FiConstField(arg.name, args[i])
-					))
-				);
-			}
-			FcFieldPrim(name): {
-				//println("Field: " + name + ", call: " + toString(call) + ", args: " + toString(args));
-				switch (args[0]) {
-					FiStructVal(str, fields): {
-						findmap(fields, \field -> 
-							if (field.name == name) {
-								switch (field) {
-									FiConstField(__,val): Some(val);
-									FiMutableField(__,val): Some(^val);
-								}
-							} else None()
-						);
-					}
-					default: None();
-				}
-			}
-			FcSetMutablePrim(name): {
-				switch (args[0]) {
-					FiStructVal(str, fields): {
-						findmap(fields, \field -> 
-							if (field.name == name) {
-								switch (field) {
-									FiMutableField(__, val): {
-										val := args[1];
-										Some(FiVoidVal());
-									}
-									default: None();
-								}
-							} else {
-								None()
-							}
-						);
-					}
-					default: None();
-				}
-			}
-			// creates a closure explicitly - appears after lambda lifting
-			FcCreateClosurePrim(structName, functionName): {
-				// TODO
-				None();
-			}
-			FcQuote(): {
-				// TODO
-				None();
-			}
-			FcUnquote(): {
-				// TODO
-				None();
-			}
-		}
-	}
-	//println2(^aaa + "ret: " + toString(ret));
-	ret
-}
-
-fcUnwrapFiVal(ex : FiVal) -> flow {
-	switch (ex) {
-		FiStructVal(name, fields): {
-			makeStructValue(
-				name, 
-				map(fields, \field -> fcUnwrapFiVal(fiFiledVal(field))), 
-				IllegalStruct()
-			);
-		}
-		FiArrayVal(val): map(val, fcUnwrapFiVal);
-		FiRefVal(val): ref fcUnwrapFiVal(^val);
-		FiFuncVal(fn): \as -> maybeMap(fn(map(as, fcWrapFiVal)), fcUnwrapFiVal);
-		FiStringVal(s): s;
-		FiBoolVal(b):   b;
-		FiDoubleVal(d): d;
-		FiVoidVal():    ex;
-		FiIntVal(i):    i;
-		FiNativeVal(v): v;
-	}
-}
-
-fcWrapFiVal(v : flow) -> FiVal {
-	// What is the type tag for this value? Supported only in cpp and java
-	// 0: void, 1: bool, 2: int, 3: double, 4 : string, 5: array, 6: struct, 12: code pointer, 20: native function
-	// 31: reference, 32: native value, 34: closure pointer, 48: captured frame
-	type_tag = getDataTagForValue(v);
-	if (type_tag == 0) {
-		FiVoidVal();
-	} else if (type_tag == 1) {
-		FiBoolVal(cast(v : flow -> bool));
-	} else if (type_tag == 2) {
-		FiIntVal(cast(v : flow -> int));
-	} else if (type_tag == 3) {
-		FiDoubleVal(cast(v : flow -> double));
-	} else if (type_tag == 4) {
-		FiStringVal(cast(v : flow -> string));
-	} else if (type_tag == 5) {
-		FiArrayVal(map(cast(v : flow -> [flow]), fcWrapFiVal));
-	} else if (type_tag == 6) {
-		name = extractStructName(v);
-		fields = structFieldNames(name);
-		FiStructVal(
-			name,
-			mapi(extractStructArguments(v), \i, w -> 
-				FiConstField(fields[i], fcWrapFiVal(w))
-			)
-		);
-	} else if (type_tag == 31) {
-		FiRefVal(
-			ref fcWrapFiVal(^cast(v : flow -> ref flow))
-		);
-	} else if (type_tag == 34) {
-		fn = cast(v : flow -> (([flow]) -> flow));
-		FiFuncVal(\as -> {
-			ret = fn(map(as, fcUnwrapFiVal));
-			if (getDataTagForValue(ret) == 0) None() else {
-				Some(fcWrapFiVal(ret));
-			}
-		});
-	} else {
-		FiNativeVal(v);
-	}
-}
-*/
