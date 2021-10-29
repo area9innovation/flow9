@@ -66,6 +66,9 @@ The type system is extended with two constructs:
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
+TODO:
+- Review how we postpone, and see if we can avoid that
+
 # Name and type lookups
 
 A key problem is to find names, types, sub- and supertypes from the context 
