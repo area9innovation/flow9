@@ -74,7 +74,7 @@ StackSlot StartProcess::execSystemProcess(RUNNER_ARGS)
     // Allocate the process
     FlowProcess *p = new FlowProcess(this);
 
-    p->controlled_process = true;
+    p->controlled_process = false;
     p->out_pos = p->stdout_pos = p->stderr_pos = 0;
     p->stdout_cb = onstdout;
     p->stderr_cb = onstderr;
@@ -373,10 +373,13 @@ void StartProcess::endProcess(FlowProcess *p, int code)
         p->stdout_buf.append(p->process->readAllStandardOutput());
         p->stderr_buf.append(p->process->readAllStandardError());
 
-        RUNNER->EvalFunction(p->exit_cb, 3,
-                             StackSlot::MakeInt(code),
-                             RUNNER->AllocateString(parseUtf8(p->stdout_buf.data(), p->stdout_buf.size())),
-                             RUNNER->AllocateString(parseUtf8(p->stderr_buf.data(), p->stderr_buf.size())));
+		// Exit callback is not called when 'execSystemProcess' is done.
+		if (p->exit_cb.slot_private.Tag != 0) {
+			RUNNER->EvalFunction(p->exit_cb, 3,
+								StackSlot::MakeInt(code),
+								RUNNER->AllocateString(parseUtf8(p->stdout_buf.data(), p->stdout_buf.size())),
+								RUNNER->AllocateString(parseUtf8(p->stderr_buf.data(), p->stderr_buf.size())));
+		}
 
         process_set.erase(p->process);
         RUNNER->DeleteNative(p);

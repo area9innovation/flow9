@@ -135,7 +135,8 @@ cpp2Writer(config : FcCpp2Config, program : FiProgram, amain : FiFunctionDec) ->
 		1, // next_closure_id : int,
 		known_natives, // known_natives : Tree<string, Cpp2NativeDescr>,
 		makeTree(),
-		foldSet(dependencies.all_decls, makeSet1("main"), \acc, d -> insertSet(acc, d.name))
+		foldSet(dependencies.all_decls, makeSet1("main"), \acc, d -> insertSet(acc, d.name)),
+		dummyFiFileInfo
 	);
 	iter(structs_order,
 		\s -> cpp2GenerateStructCode(writer, s, lookupTreeDef(structs, s.name, dummyCpp2StructInfo))
@@ -151,6 +152,7 @@ cpp2WriterTranslateGlobalFunctions(writer : Cpp2Writer) -> void {
 			if (writer.config.verbose > 0) {
 				fcPrintln("translating module: " + module.fileinfo.flowfile, writer.config.threadId);
 			}
+			writer.fileinfo ::= module.fileinfo;
 			iter(module.initOrder, 
 				\glob_name -> {
 					if (containsSet(writer.dependencies, glob_name)) {
@@ -945,7 +947,7 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 				None(): { }
 			}
 		}
-		FiCast(value, fromtype, totype, type, __): {
+		FiCast(value, fromtype, totype, type, pos): {
 			aref = fetch_ref(value, false);
 			rexpr = cpp2PlaceInfoGetRValue(aref, ctx);
 			switch (fromtype) {
@@ -963,8 +965,17 @@ cpp2WriterCompileExpression(writer : Cpp2Writer, code : FiExp, ctx : Cpp2Context
 							cpp2WriterEmitValue(ctx, out, "ByteCodeRunner::DoInt2String(RUNNER," + rexpr + ")", Cpp2TString(), false, true, true);
 							{}
 						}
+						FiTypeFlow(): {
+							cpp2WriterCopyValue(ctx, out, aref);
+							{}
+						}
 						default: {
-							cpp2_error("Not implemented 1: " + prettyFiExp(dummyPretty, value));
+							cpp2_error(
+								"Not implemented 1: cast value " + prettyFiExp(dummyPretty, value) + 
+								" from type " + prettyFiType(dummyPretty, fromtype, makeSet()) + 
+								" to type " + prettyFiType(dummyPretty, totype, makeSet())
+								+ makeLocation(writer.program.config, initFcTypeEnvGlobal(), writer.fileinfo, pos, -1)
+							);
 						}
 					}
 				}
