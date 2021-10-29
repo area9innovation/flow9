@@ -1273,7 +1273,6 @@ private:
     static StackSlot fold(ByteCodeRunner*,StackSlot*);
     static StackSlot foldi(ByteCodeRunner*,StackSlot*);
     static StackSlot filter(ByteCodeRunner*,StackSlot*);
-    static StackSlot filtermapi(ByteCodeRunner*,StackSlot*);
     static StackSlot gc(ByteCodeRunner*,StackSlot*);
     static StackSlot subrange(ByteCodeRunner*,StackSlot*);
     static StackSlot length(ByteCodeRunner*,StackSlot*);
