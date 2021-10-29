@@ -67,7 +67,8 @@ We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
 TODO:
-- Review how we postpone, and see if we can avoid that
+- Review postpones, and see if we can resolve some of those
+- Replace the unknown subtypes in supertype with postponing?
 
 # Name and type lookups
 

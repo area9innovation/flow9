@@ -23,6 +23,7 @@ export {
 
 	// Define the resolvers we need. Required before unification works
 	setTMapResolvers(t : TMap, 
+		resolveStructName : (string) -> Maybe<DStruct>,
 		resolveUnionName : (string) -> Maybe<DUnion>,
 		resolveSupertypes : (string) -> [string], 
 		resolveSubtypes : (string) -> [string], 
@@ -94,6 +95,10 @@ makeTMap(onError : (int, string) -> void, nextEClass : ref int,
 		},
 		ref \__ -> {
 			println("TODO: The resolvers are not set");
+			None();
+		},
+		ref \__ -> {
+			println("TODO: The resolvers are not set");
 			[];
 		},
 		ref \__ -> {
@@ -115,10 +120,12 @@ makeTMap(onError : (int, string) -> void, nextEClass : ref int,
 }
 
 setTMapResolvers(t : TMap, 
+	resolveStructName : (string) -> Maybe<DStruct>,
 	resolveUnionName : (string) -> Maybe<DUnion>,
 	resolveSupertypes : (string) -> [string], 
 	resolveSubtypes : (string) -> [string], 
 ) -> TMap {
+	t.resolveStructName := resolveStructName;
 	t.resolveUnionName := resolveUnionName;
 	t.resolveSupertypes := resolveSupertypes;
 	t.resolveSubtypes := resolveSubtypes;
@@ -609,9 +616,10 @@ instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int
 		munion = ^(tmap.resolveUnionName)(name);
 		switch (munion) {
 			None(): {
-				typars = if (name == "array" || name == "ref") 1 else {
-					// println("Unknown node name " + name + ". Assuming 0 type pars");
-					0;
+				mstruct = ^(tmap.resolveStructName)(name);
+				typars = switch (mstruct) {
+					None(): if (name == "array" || name == "ref") 1 else 0;
+					Some(st): length(st.typars);
 				}
 				TNodeName(name, generate(0, typars, \__ -> makeTNodeClass(tmap)), pos);
 			}
@@ -624,7 +632,7 @@ instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int
 }
 
 unifyTNodes(tmap : TMap, left : TNode, right : TNode, reason : ErrorReason) -> void {
-	if (isEmptyTNode(left) || isEmptyTNode(right)) {
+	if (isEmptyTNode(left) && isEmptyTNode(right)) {
 	} else {
 		lclass = findTNodeClass(tmap, left);
 		rclass = findTNodeClass(tmap, right);
@@ -1049,26 +1057,6 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 	supernode = getUnionMapValue(tmap.tmap, super);
 	subnode = getUnionMapValue(tmap.tmap, sub);
 	postpone = \ -> {
-		if (isEmptyTNode(subnode) && !isEmptyTNode(supernode)) {
-			switch (supernode) {
-				TNodeName(name, typars, pos): {
-					// In cases like this:
-					// - ε vs Maybe<super215{e1144}>  // e1157 vs e1160
-					//   we could make an overload for the subtype: 
-					// Either it is None<super215{e1144}>, Some<super215{e1144}> or Maybe<super215{e1144}>
-
-					subnames = ^(tmap.resolveSubtypes)(name);
-					subtypes = map(subnames, \sn -> {
-						// TODO: This does not work for structs yet.
-						instantiateTNodeName(tmap, sn, [], pos);
-					});
-					overload = TNodeOverload(makeSet1(tmap.mkUnique()), arrayPush(subtypes, supernode), pos);
-
-					println("TODO: We could maybe do an overload " + prettyTNode(tmap, overload) + " from subtyping " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
-				}
-				default: {}
-			}
-		}
 		// println(^uindent + "Postponing subtyping " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode) + "  // e" + i2s(sub) + " vs e" + i2s(super));
 		tmap.pendingSubtypes := Cons(Triple(sub, super, reason), ^(tmap.pendingSubtypes));
 	}
@@ -1090,7 +1078,28 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 		// println(^uindent + "Subtyping " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode) + "  // e" + i2s(sub) + " vs e" + i2s(super));
 		switch (subnode) {
 			TNodeName(name, typars, npos): {
-				if (hasSupertype(tmap, subnode)) {
+				// TODO: There is some potential here, but it does not seem to help
+				if (false && isEmptyTNode(subnode) && !isEmptyTNode(supernode)) {
+					switch (supernode) {
+						TNodeName(sname, stypars, pos): {
+							// In cases like this:
+							// - ε vs Maybe<super215{e1144}>  // e1157 vs e1160
+							//   we could make an overload for the subtype: 
+							// None<super215{e1144}>, Some<super215{e1144}> or Maybe<super215{e1144}>
+							subnames = ^(tmap.resolveSubtypes)(sname);
+							subtypes = map(subnames, \sn -> {
+								instantiateTNodeName(tmap, sn, [], pos);
+							});
+							overload = TNodeOverload(makeSet1(tmap.mkUnique()), arrayPush(subtypes, supernode), pos);
+
+							setTNodeClass(tmap, sub, overload);
+							reason1 = elaborateReason(reason, "lower super to sub");
+							subtypeTNodes(tmap, sub, super, reason1);
+							{}
+						}
+						default: {}
+					}
+				} else if (hasSupertype(tmap, subnode)) {
 					// We have a direct supertype
 					switch (supernode) {
 						TNodeName(__, __, __): {
@@ -1190,20 +1199,24 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 				}
 			}
 			TNodeSupertype(__, subs, unknowns, maxed, spos): {
-				if (isEmptyTNode(supernode)) {
+				if (false && isEmptyTNode(supernode)) {
 					// - super0{EmptyList<e32>} vs ε  // e34 vs e36
 					//   This is hard, since the subtype could grow, and then our choice would be invalid
 					//   Maybe we could do an overload.  EmptyList<e32>, Cons<e32>, List<e32>
 					if (isEmptySet(unknowns)) {
 						supers = getPossibleTSupers(tmap, subnode);
 						supertypes = map(set2array(supers), \sn -> {
+							// TODO: We should have another one, so we can
+							// instantiate the correct type parameters
 							instantiateTNodeName(tmap, sn, [], spos);
 						});
 						overload = TNodeOverload(makeSet1(tmap.mkUnique()), supertypes, spos);
-						println("TODO: Review if this is correct: " + prettyTNode(tmap, overload) + " from " + prettyTNode(tmap, subnode) + " vs " + prettyTNode(tmap, supernode));
+						setTNodeClass(tmap, super, overload);
+						reason1 = elaborateReason(reason, "lift subtype to super");
+						subtypeTNodes(tmap, sub, super, reason1);
+					} else {
+						postpone();
 					}
-
-					postpone();
 				} else {
 					// This is optimistic, but we just take the chance
 					switch (supernode) {
@@ -1221,7 +1234,9 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 					{}
 				}
 			}
-			TNodeOverload(__, __, __): postpone();
+			TNodeOverload(__, __, __): {
+				postpone();
+			}
 		}
 	}
 }
