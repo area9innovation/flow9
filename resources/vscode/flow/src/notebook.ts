@@ -115,8 +115,7 @@ export class FlowNotebookController {
 				const html_opts = "js-call-main=1 repl-no-quit=1";
 				const request = should_be_rendered ? 
 					"compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
-					(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force\n" + code + "\n\nexec cell_" + cell.index + "\n"); 
-				//vscode.window.showInformationMessage("REQ1: " + escape(request));
+					(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force\n" + code + "\n\nexec cell_" + cell.index + "\n");
 				this._kernelChannel.append(request);
 				if (!this._executor || !this._executor.stdin.write(request)) {
 					reject("Error while writing: \n" + request);
@@ -230,7 +229,7 @@ export class FlowNotebookController {
 				// Call a function after '> ' is read from stdout.
 				after_start();
 			};
-			this._executor = spawn("flowc1", ["repl=1", "repl-debug=1", "repl-output-imediately=0"]);
+			this._executor = spawn("flowc1", ["repl=1"]);
 			let buffer: string = "";
 			this._executor.stdout.on("data", (buf : any) => {
 				let out = buf.toString();
