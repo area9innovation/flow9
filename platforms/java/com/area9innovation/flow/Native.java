@@ -2297,11 +2297,6 @@ public class Native extends NativeHost {
 					host_call_funcs.put(name, (Func1)((Object a1) -> {
 						try {
 							return meth.invoke(null, a1);
-						} catch (RuntimeException e) {
-							System.err.println(name + "\n" + e.getMessage() + "\na1: " + a1);
-							System.err.println(exceptionStackTrace(e));
-							//System.exit(10);
-							return null;
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" + 
@@ -2329,11 +2324,6 @@ public class Native extends NativeHost {
 					host_call_funcs.put(name, (Func3)((Object a1, Object a2, Object a3) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3);
-						} catch (RuntimeException e) {
-							System.err.println(name + "\n" + e.getMessage() + "\na1: " + a1 + "\na2: " + a2 + "\na3: " + a3 + "\n");
-							System.err.println(exceptionStackTrace(e));
-							//System.exit(10);
-							return null;
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" + 
@@ -2349,11 +2339,6 @@ public class Native extends NativeHost {
 					host_call_funcs.put(name, (Func4)((Object a1, Object a2, Object a3, Object a4) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4);
-						} catch (RuntimeException e) {
-							System.err.println(name + "\n" + e.getMessage() + "\na1: " + a1 + "\na2: " + a2 + "\na3: " + a3 + "\na4: " + a4 + "\n");
-							System.err.println(exceptionStackTrace(e));
-							//System.exit(10);
-							return null;
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" + 
@@ -2388,7 +2373,16 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2397,7 +2391,17 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2406,7 +2410,18 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2415,7 +2430,19 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2424,7 +2451,20 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								"arg 10: " + a10 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2433,7 +2473,45 @@ public class Native extends NativeHost {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
 						} catch (ReflectiveOperationException e) {
-							System.err.println(e.getMessage());
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								"arg 10: " + a10 + "\n" +
+								"arg 11: " + a11 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 12) {
+					host_call_funcs.put(name, (Func12)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10, Object a11, Object a12) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								"arg 10: " + a10 + "\n" +
+								"arg 11: " + a11 + "\n" +
+								"arg 12: " + a12 + "\n" +
+								exceptionStackTrace(e)
+							);
 							return null;
 						}
 					}));
@@ -2441,8 +2519,9 @@ public class Native extends NativeHost {
 					// Not implemented yet
 				}
 			} catch (java.lang.IllegalArgumentException ex) {
-				System.err.println("AAAA\n" + name + "\n" + ex.getMessage());
+				System.err.println("While adding a function: " + name + "\n" + ex.getMessage());
 			}
 		}
 	}
 }
+
