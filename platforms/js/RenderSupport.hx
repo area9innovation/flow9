@@ -117,6 +117,7 @@ class RenderSupport {
 	public static function setRenderRoot(rootId : String) : Void {
 		var renderRoot = Browser.document.getElementById(rootId);
 		if (renderRoot != RenderRoot) {
+			previousRoot = PixiStage.nativeWidget;
 			RenderRoot = renderRoot;
 			RenderRoot.style.position = 'relative';
 			
@@ -125,6 +126,9 @@ class RenderSupport {
 			initPixiStageEventListeners();
 
 			appendEmbeddedFlowStyles();
+			if (UserStyleTestElement != null && UserStyleTestElement.parentElement != PixiStage.nativeWidget) {
+				PixiStage.nativeWidget.appendChild(UserStyleTestElement);
+			}
 		}
 	}
 
@@ -1342,8 +1346,6 @@ class RenderSupport {
 
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnMouse(true);
-
-		previousRoot = root;
 	}
 
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
@@ -1819,7 +1821,10 @@ class RenderSupport {
 		}
 
 		// The first flow render call. Hide loading progress indicator.
-		Browser.document.body.style.backgroundImage = "none";
+		if (previousRoot != null) {
+			previousRoot.style.backgroundImage = null;
+		}
+		PixiStage.nativeWidget.style.backgroundImage = "none";
 		var indicator = Browser.document.getElementById("loading_js_indicator");
 		if (indicator != null) {
 			Browser.document.body.removeChild(indicator);
