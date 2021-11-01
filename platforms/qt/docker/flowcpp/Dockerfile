@@ -1,25 +1,10 @@
-FROM area9/qt:aqt-5.12.11
+ARG QT=5.15.2
+FROM area9/qt:aqt-${QT}
 
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libglu1-mesa \
-    libasound2 \
-    libpulse0 \
-    libpulse-mainloop-glib0 \
-    libglib2.0-0 \
-    libxcomposite1 \
-    libfontconfig1 \
-    libjpeg8 \
-    libpng16-16 \
-    libnss3 \
-    libxrender1 \
-    libxtst6 \
-    libxcursor1 \
-    libxi6 \
-    libxdamage1 \
-    xvfb \
-    zlib1g
+    xvfb
 
 ARG uid=1000
 ARG gid=1000
