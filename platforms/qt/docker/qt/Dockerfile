@@ -25,6 +25,7 @@ RUN apt-get -y update \
     libfontconfig1 \
     libglib2.0-0 \
     libglu1-mesa \
+    libgssapi-krb5-2 \
     libjpeg8 \
     libmysqlclient21 \
     libnss3 \
@@ -35,6 +36,8 @@ RUN apt-get -y update \
     libxcursor1 \
     libxdamage1 \
     libxi6 \
+    libxkbcommon0 \
+    libxrandr2 \
     libxrender1 \
     libxtst6 \
     python3-pip \
