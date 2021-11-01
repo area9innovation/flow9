@@ -28,7 +28,7 @@
 ;;
 ;; (a9flow-add-target "learner-js"  "flowc1 learner/learner.flow js=~/area9/lyceum/rhapsode/www2/learner.js")
 ;; (a9flow-add-target "educator" "flowcpp --no-jit educator/educator.flow -- devtrace=1 dev=1")
-;; 		 
+;; (a9flow-add-target "curator-js-dbg"  "flowc1  debug=1 js=$AREA9/lyceum/rhapsode/www2/curator.js  html=$AREA9/lyceum/rhapsode/www2/curator.html curator/curator.flow")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Load project:
 ;; M-x a9flow-open-project
@@ -284,14 +284,225 @@ point currently is on, and the associated indentation rules."
   "ref"
   "true"
   "false"
+  "native"
+  "cast"
+  "switch"
 ))
 
 (defconst a9flow-builtins '(
+  ;;  runtime
+
+  "for"
+  "fori"
+  "generate"
+  "countUntil"
+  "countUntilDown"
+  "bitNot"
+  "bitAnd"
+  "bitOr"
+  "bitXor"
+  "random"
+  "apply0"
+  "eq"
+  "neq"
+  "any"
+  "all"
+  "idfn"
+  "nop"
+  "nop1"
+  "nop2"
+  "nop3"
+  "nop4"
+  "nop5"
+  "nop6"
+  "executefn"
+  "v2a"
+  "quit"
+  "onQuit"
+  "setCurrentDirectory"
+  "getCurrentDirectory"
+  "getFileContent"
+  "setFileContent"
+  "setFileContentUTF16"
+  "splitBy"
+  "max"
+  "min"
+  "timestamp"
+  "string2time"
+  "time2string"
+  "timeit"
+  "timestampToDay"
+  "dayToTimestamp"
+  "ignore"
+  "assert"
+  "b2s"
+  "s2b"
+  "s2i"
+  "i2s"
+  "d2s"
+  "s2d"
+  "b2i"
+  "i2b"
+  "b2d"
+  "d2b"
+  "setKeyValue"
+  "getKeyValue"
+  "removeKeyValue"
+  "removeAllKeyValues"
+  "getKeysList"
+  "checkLocalStorageAvailability"
+  "disableLocalStorage"
+  "getLocalStorageStatus"
+  "setSessionKeyValue"
+  "getSessionKeyValue"
+  "removeSessionKeyValue"
+
   "println"
   "printCallstack"
+
+  ;; math
+  "sum"
+  "dsum"
+  "max3"
+  "min3"
+  "maxA"
+  "minA"
+  "abs"
+  "iabs"
+  "sign"
+  "isign"
+  "pow"
+  "sin"
+  "cos"
+  "asin"
+  "acos"
+  "tan"
+  "atan"
+  "sqrt"
+  "exp"
+  "log"
+  "floor"
+  "ceil"
+  "b2sign"
+  "dpow"
+  "pow2"
+  "dpow2"
+  "cot"
+  "atan2"
+  "acot"
+  "sinus"
+  "cosinus"
+  "tangent"
+  "cotangent"
+  "asinus"
+  "acosinus"
+  "atangent"
+  "acotangent"
+  "log10"
+  "s2dint"
+  "floorEq"
+  "roundTo"
+  "floorTo"
+  "ceilTo"
+  "dfloor"
+  "dceil"
+  "dround"
+  "mod"
+  "drem"
+  "dmod"
+  "frac"
+  ""
+  ""
+  "forceRange"
+  ;; maybe
+  "isNone"
+  "isSome"
+  "either"
+  "eitherMap"
+  "eitherFn"
+  "eitherFn2"
+  "maybeBind"
+  "maybeBind2"
+  "maybeMap"
+  "maybeMap2"
+  "maybeApply"
+  "onlyOnce"
+  "fn2some"
+
+  ;; behavior
   "make"
   "const"
   "next"
+  "nextDistinct"
+  "updateBehaviour"
+  "updateBehaviourDistinct"
+  "nextLegacy"
+  "isConst"
+  "cloneBehaviour"
+  "reverseBehaviour"
+  "makeWH"
+
+  ;; fusion
+  "fselect"
+  "fselect2"
+  "fselect3"
+  "fselect4"
+  "fselect5"
+  "fselect6"
+  "fselect7"
+  "fselect8"
+  "fselect9"
+  "fsubselect"
+  "fsubselect2"
+  "fsubselect3"
+  "makeSubscribe"
+  "makeSubscribe2"
+  "make2Subscribe"
+  "make2Subscribe2"
+  "make3Subscribe"
+  "make3Subscribe2"
+  "make4Subscribe"
+  "make4Subscribe2"
+  "make5Subscribe"
+  "make5Subscribe2"
+  "makeSubscribeUns"
+  "makeSubscribeUnsTimer"
+  "makeSubscribe2Uns"
+  "makeSubscribe2UnsTimer"
+  "fgetValue"
+  "fmax"
+  "fmin"
+  "fmax3"
+  "fmin3"
+  "fmaxA"
+  "fminA"
+  "farray"
+  "fconcat"
+  "farrayPush"
+  "fconcatA"
+  "fcontains"
+  "fif"
+  "feq"
+  "fneq"
+  "fequal"
+  "fnotequal"
+  "fnot"
+  "fand"
+  "fOr"
+  "fxor"
+  "fabs"
+  "fpair"
+  "fBidirectionalLink"
+  "fwidthheight"
+  "fwidth"
+  "fheight"
+  "fsumi"
+  "fsum"
+  "fmap"
+
+  
+  ""
+  "interruptibleTimerUns"
   "getValue"
   "select"
   "select2"
@@ -306,13 +517,160 @@ point currently is on, and the associated indentation rules."
   "d2s"
   "d2i"
   "round"
-  "length"
-  "assert"
-  "subrange"
-  "idfn"
-  "max"
-  "min"
+
   "render"
+
+  ;;ds/array
+  "length"
+  "concat"
+  "concat3"
+  "concatA"
+  "map"
+  "mapi"
+  "mapConcat"
+  "mapiConcat"
+  "mapWithPrevious"
+  "fold"
+  "foldi"
+  "foldr"
+  "replace"
+  "arrayPush"
+  "arrayPushMaybe"
+  "arrayRepeat"
+  "subrange"
+  "tail"
+  "tailFrom"
+  "take"
+  "firstElement"
+  "lastElement"
+  "elementAt"
+  "refArrayPush"
+  "refConcat"
+  "pushWithLimit"
+  "enumFromTo"
+  "iter"
+  "iteri"
+  "iteriUntil"
+  "zipWith"
+  "zipWith2"
+  "zip3With"
+  "filter"
+  "filtermap"
+  "filtermapi"
+  "insertArray"
+  "insertArray2"
+  "arrayResize"
+  "arrayAlign"
+  "removeFirst"
+  "removeAll"
+  "removeIndex"
+  "removeRange"
+  "elemIndex"
+  "contains"
+  "containsAny"
+  "exists"
+  "forall"
+  "countA"
+  "find"
+  "findDef"
+  "findi"
+  "findiDef"
+  "findiex"
+  "findiex2"
+  "lastfindi"
+  "lastfindiex"
+  "lastfindiex2"
+  "findmap"
+  "findmapi"
+  "findiExtreme"
+  "interleave"
+  "split"
+  "splitByNumber"
+  "extract"
+  "applyall"
+  "applyAllSync"
+  "applyAllAsync"
+  "applyall1"
+  "reverseA"
+  "iterArrayDeferred"
+  "stylesEqual"
+  "existsIndex"
+  "sameStartLength"
+  "swapIndexes"
+  "foldRange"
+  "peanoFold"
+  "moveElement"
+  "array2list"
+  "unzip"
+  "unzipi"
+  "unzipA"
+  "unzipA3"
+  "unzipA4"
+
+  ;;dynamic
+  "isArray"
+  "isSameStructType"
+  "isSameObj"
+  "makeStructValue"
+  "extractStructArguments"
+  "getDataTagForValue"
+  "number2double"
+  "flow"
+  "flow2b"
+  "flow2i"
+  "flow2d"
+  "flow2s"
+  "toString"
+
+  ;;date
+  "date2string"
+  "date2stringDef"
+  "time2stringDef"
+  "date2formatString"
+  "date2formatStringDef"
+  "formatString2date"
+  "formatString2dateDef"
+  "shortDateFormat"
+  "getDateString"
+  "getTimeString"
+  "getTimeOnlyString"
+  "timeStringConvert"
+
+  ;;tree
+  "makeTree"
+  "makeTree1"
+  "lookupTree"
+  "lookupTreeDef"
+  "lookupTreeSet"
+  "setTree"
+  "setTreeValues"
+  "removeFromTree"
+  "popmax"
+  "popmin"
+  "traversePreOrder"
+  "traverseInOrder"
+  "traverseRInOrder"
+  "findInOrder"
+  "findRInOrder"
+  "findPreOrder"
+  "foldTree"
+  "foldRTree"
+  "foldTreeBinary"
+  "foldMonoidalTree"
+  "mapTree"
+  "mapTree2"
+  "filterTree"
+  "isEmptyTree"
+  "containsKeyTree"
+  "getTreeKeys"
+  "getTreeValues"
+  "mergeTree"
+  "mergeTreeCustom"
+  "pairs2tree"
+  "tree2pairs"
+  "keys2tree"
+  "values2tree"
+  "values2treeEx"
 ))
 
 (defconst a9flow-types '(
@@ -397,7 +755,7 @@ point currently is on, and the associated indentation rules."
       (setq comment-end "")
       (setq parse-sexp-ignore-comments t)
       (set (make-local-variable 'indent-line-function) 'a9flow-indent-line)
-      (setq mode-line-format (append mode-line-format (list '(:eval 
+      (setq mode-line-format (append mode-line-format (list '(:eval
          (if a9flow-status-compiling
              (concat "Status: Compiling " a9flow-status-compiling "...")
              (if (eq a9flow-status-error-count 0)
@@ -426,14 +784,14 @@ point currently is on, and the associated indentation rules."
   (let* ((cmd-args (split-string (string-trim cmd)))
 	 (compiler (car  cmd-args))
 	 (args (string-join (cdr cmd-args) " "))
-	 (inc-dirs (string-join a9flow-include-list  ","))
+	 (inc-dirs (string-join (cons a9flow-proj-default-directory a9flow-include-list)  ","))
 	 )
     (if (or (string= compiler "flowc")
 	    (string= compiler "flowc1")
 	    (string= compiler "flowcpp"))
 	(concat compiler " "
 		"working-dir=" a9flow-proj-default-directory " "
-		"I=" inc-dirs " "
+		"I=" inc-dirs " " ;; need to compile project from any dir
 		args)
       cmd
       )
@@ -444,7 +802,7 @@ point currently is on, and the associated indentation rules."
   (interactive "sName:\nsCommand:")
   (if (stringp name)
       (progn
-	(setq a9flow-default-target name) 
+	(setq a9flow-default-target name)
 	(setq a9flow-target-list
 	      (cons (list
 		     'name name
@@ -471,7 +829,7 @@ point currently is on, and the associated indentation rules."
   (message "a9flow project:%s" project-file-name)
   (message "a9flow default dir:%s" a9flow-proj-default-directory)
   (message "a9flow include:%s" a9flow-include-list)
-  (load-file project-file-name))  
+  (load-file project-file-name))
 
 (defun a9flow-compile-project-ido ()
   (interactive)
@@ -487,9 +845,15 @@ point currently is on, and the associated indentation rules."
   ;;(setq compilation-filter-hook 'a9flow-compile-filter-hk)
   (let ((proj (a9flow-proj-find target-name)))
     (if proj
-	(let ((compile-cmd (plist-get proj 'compile-cmd))
-	      (work-dir (plist-get proj 'work-dir)))
-	    (compile compile-cmd))
+	(let (
+	      (compile-cmd (plist-get proj 'compile-cmd))
+	      (work-dir (plist-get proj 'work-dir))
+	      (curr-dir default-directory)
+	      )
+	  ;;(cd a9flow-proj-default-directory) ;; to compile resorces/fontconfig.json, remove after fix flowcpp working-dir opt
+	  (compile compile-cmd)
+	  ;;(cd curr-dir)
+	  )
       (message "Target '%s' not found" target-name))))
 
 (defun a9flow-compile-default-target ()
@@ -572,7 +936,7 @@ point currently is on, and the associated indentation rules."
               (let ((default-directory a9flow-basedir))
                 (a9flow-goto-compiled-definition cw current-buffer current-point))))))
     (a9flow-goto-compiled-definition cw current-buffer current-point))
-    
+
     )
 
 (defun a9flow-import-line ()
@@ -673,7 +1037,7 @@ point currently is on, and the associated indentation rules."
   (push current-position a9flow-goto-history))
 
 
-    
+
 ;; (defun a9flow-compile-filter-hk ()
 ;;   (let ((str (buffer-substring compilation-filter-start (point-max)))
 ;; 	err-msg)
@@ -693,14 +1057,6 @@ point currently is on, and the associated indentation rules."
     (let ((s (car kill-ring)))
       (insert (format "println(\"*** %s:\" + toString(%s));\n" s s)))))
 
-(defun a9flow-insert-dbg-trasform-print ()
-  "Insert debug print of Transform variable from kill-ring"
-  (interactive)
-  (when kill-ring
-    (let ((s (car kill-ring)))
-      (insert (format "println(\"*** %s:\" + toString(fgetValue(%s)));\n" s s)))))
-
-
 (defun a9flow-insert-dbg-name-print ()
   "Insert debug print name from kill-ring"
   (interactive)
@@ -714,9 +1070,69 @@ point currently is on, and the associated indentation rules."
   (interactive)
   (when kill-ring
     (let ((s (car kill-ring)))
-      (insert (format "println(\"*** %s:\" + toString(map(%s, \\v ->v.id)));\n" s s)))))
+      (insert (format "println(\"*** %s:\" + toString(map(%s, \\vvvvv ->vvvvv.id)));\n" s s)))))
+
+(defun a9flow-insert-dbg-transform-print ()
+  "Insert debug print of Transform variable from kill-ring"
+  (interactive)
+  (when kill-ring
+    (let ((s (car kill-ring)))
+      (insert (format "println(\"*** %s:\" + toString(fgetValue(%s)));\n" s s)))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun a9flow-compilation-hook (process)
+  (message "a9flow compilation start")
+  
+  )
+
+;; (defun a9flow-compilation-add-error-alist ()
+;;    (if (boundp 'compilation-error-regexp-alist-alist)
+;;     (progn
+;;       (add-to-list
+;;        'compilation-error-regexp-alist-alist
+;;        '(a9flow 
+;;          "\\(.+\\.flow\\):(\\([0-9]+\\):\\([0-9]+\\):)" 1 2 3))
+;;       (add-to-list
+;;        'compilation-error-regexp-alist
+;;        'a9flow)))
+;;     )
+
+;; (defun a9flow-compilation-add-error-alist ()
+;;    (if (boundp 'compilation-error-regexp-alist-alist)
+;;     (progn
+;;       (set
+;;        'compilation-error-regexp-alist-alist
+;;        '(a9flow 
+;;  ;;        "\\(.+\\.flow\\):\\(\\([0-9]+\\):\\([0-9]+\\)\\)" 1 2 3)
+;;        "^\\([_[:alnum:]-/]*.js\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):.*$" 1 2 3)
+;;        )
+;;       (set
+;;        'compilation-error-regexp-alist
+;;        '(a9flow))))
+;;     )
+
+
+(defun a9flow-compilation-add-error-alist ()
+  (make-local-variable 'compilation-error-regexp-alist)
+  (setq compilation-error-regexp-alist
+	'(("^\\([_[:alnum:]-/]*.js\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):.*$" 1 2 3)))
+  )
+
+
+
+
+
+(require 'compile)
+(a9flow-compilation-add-error-alist)
+(add-hook 'compilation-start-hook 'a9flow-compilation-hook)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (provide 'a9flow-mode2)
+
+
+;; compilation-start-hook
+;; 

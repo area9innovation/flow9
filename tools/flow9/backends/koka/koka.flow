@@ -1,0 +1,330 @@
+import tools/flow9/backends/link;
+import tools/flow9/backends/back_eval;
+import tools/flow9/backends/pretty;
+import tools/flow9/backends/koka/koka_backend;
+import tools/flow9/backends/type_hierarchy;
+import tools/flow9/backends/utils;
+
+export {
+	// Compiles the given flow path to Koka as a single string
+	bmodule2koka(cache : FlowCache, flowpath : string, shortenIds : bool) -> string;
+}
+
+bmodule2koka(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
+	bprogram2koka(linkBExpProgram(cache, flowpath, shortenIds, kokaBackendSpec()), flowpath);
+}
+
+bprogram2koka(b : BExpProgram, flowpath : string) -> string {
+	typeHierarcy = resolveBTypeHierarchy(b.structs, b.unions);
+
+	backend = kokaBackend();
+	unions = superglue(typeHierarcy.first, \u : DUnion -> dunion2koka(backend, typeHierarcy.third, u), "\n");
+	structs = superglue(typeHierarcy.second, \s : DStruct -> "struct " + dstruct2koka(backend, true, s), "\n");
+	body = superglue(b.declarations, \d : BExpDeclaration -> bdeclaration2koka(backend, d), "\n");
+
+	// The backend keeps track of what requirements are used by the various
+	// constructs used
+	strReplace(
+		(if (isKokaInt32()) {
+			"import std/num/int32\n"
+		} else "")
+		+ getBackendRequirements(backend)
+	//	+ "// RUNTIME\n"
+	//	+ runtime + "\n"
+		+ "// UNIONS\n"
+		+ unions + "\n"
+		+ "// STRUCTS\n"
+		+ structs + "\n"
+		+ "// BODY\n"
+		+ body
+		+ "fun main() { flow_main() }",
+		"\t",
+		"  "
+	)
+}
+
+bdeclaration2koka(backend : Backend<bool>, d : BExpDeclaration) -> string {
+	switch (d) {
+		BGlobalVar(id, body, type): {
+			if (id == "flow_securityModes") {
+				"val flow_securityModes = False;"
+			} else if (id == "flow_loggingEnabled") {
+				"val flow_loggingEnabled = False;"
+			} else {
+				"val " + id + /*" : " + btype2koka(backend, true, type)  + */ " = " + bexp2koka(backend, body) + ";";
+			}
+		}
+		BExpFunction(id, args, body, type): {
+			if (id == "flow_flow") {
+				"fun flow_flow(flow_i : a) : a { flow_i }"
+			} else if (id == "flow_isOWASPLevel1") {
+				"fun flow_isOWASPLevel1() : bool { False }"
+			} else if (id == "flow_isLoggingEnabled") {
+				"fun flow_isLoggingEnabled() : bool { False }"
+			} else if (id == "flow_extractStruct") {
+				"fun flow_extractStruct(flow_a : vector<a>, flow_e : b) : b { flow_e }"
+			} else if (id == "flow_println") {
+				blueprint("
+					fun flow_println(flow_str : string) : console () { println(flow_str) };
+
+					fun flow_println(flow_str : double) : console () { println(flow_str) };
+
+					fun flow_println(flow_str : %int%) : console () { println(show(flow_str)) }
+					", [
+						"int", if (isKokaInt32()) "int32" else "int"
+					]
+				)
+			} else if (id == "flow_i2s") {
+				blueprint("
+					fun flow_i2s(flow_i : %int%) : <> string {
+						show(flow_i)
+					}
+				", [
+						"int", if (isKokaInt32()) "int32" else "int"
+				])
+			} else if (id == "flow_i2d") {
+				blueprint("
+					fun flow_i2d(flow_i : %int%) : <> double {
+						double(flow_i)
+					}
+				", [
+						"int", if (isKokaInt32()) "int32" else "int"
+				])
+			} else {
+				argtypes = getBArgTypes(type);
+				rt0 = btype2koka(backend, false, getBReturnType(type));
+				// TODO: We only need "div" if this fn is recursive
+				rt = " : <console,div> " + rt0;
+				blueprint("
+					fun %id%(%args%)%rt% {
+						%body%
+					}
+				", [
+					"id", id,
+					// TODO: Add types and typars
+					"args", supergluei(args, \i, arg -> {
+						arg + " : " + btype2koka(backend, false, argtypes[i])
+					}, ", "),
+					"rt", rt,
+					"body", bexp2koka(backend, body)
+				])
+			}
+		}
+		BExpNative(id, isio, type, nativeName): {
+			if (id == "flow_fold") {
+				blueprint("
+				fun flow_fold(flow_a : vector<a>, flow_acc : b, flow_fn : (b, a) -> b) : <exn,div> b {
+					flow_do_fold(flow_a, 0, flow_acc, flow_fn)
+				}
+
+				fun flow_do_fold(flow_a : vector<a>, i : int, flow_acc : b, flow_fn : (b, a) -> b) : <exn,div> b {
+					if (i < length(flow_a)) {
+						flow_do_fold(flow_a, i + 1, flow_fn(flow_acc, flow_a[i]), flow_fn)
+					} else flow_acc
+				}", [])
+			} else if (id == "flow_isSameStructType") {
+				"fun flow_isSameStructType(a, b) { False }"
+			} else if (id == "flow_quit") {
+				if (isKokaInt32()) {
+					"fun flow_quit(ec : int32) { }"
+				} else {
+					"fun flow_quit(ec : int) { }"
+				}
+			} else if (id == "flow_substring") {
+				blueprint("
+					fun flow_substring(s : string, st : %int%, len : %int%) : string {
+   						string(string(slice(s).advance(int(st))).first(int(len)))
+					}
+					", [
+						"int", if (isKokaInt32()) "int32" else "int"
+					]
+				);
+			} else if (id == "flow_strlen") {
+				blueprint("
+					fun flow_strlen(s : string) : %int% {
+						%int%(count(s))
+					}
+					", [
+						"int", if (isKokaInt32()) "int32" else "int"
+					]
+				);
+			} else {
+				"// TODO: Native " + id;
+			}
+		}
+	}
+}
+
+dunion2koka(backend : Backend<bool>, structs : Tree<string, DStruct>, u : DUnion) -> string {
+	blueprint("
+		type %name% {
+			%members%
+		}", [
+			"name", decapitalize(u.id),
+			"members", superglue(u.types, \t : DTypeName -> {
+				// TODO: Lookup what specific struct types are here
+				// and "inline" those
+				mstruct = lookupTree(structs, t.id);
+				mstruct ?? {
+					dstruct2koka(backend, false, mstruct);
+				} : dtype2koka(backend, false, t);
+			}, "\n")
+		]
+	);
+}
+
+dstruct2koka(backend : Backend<bool>, decap : bool, s : DStruct) -> string {
+	(if (decap) decapitalize(s.id) else s.id) + "{"
+	+ superglue(s.structArgs, \sa -> {
+		sa.id + " : " + dtype2koka(backend, true, sa.type)
+	}, "; ") + "}";
+}
+
+
+dtype2koka(backend : Backend<bool>, decap : bool, type : DType) -> string {
+	btype2koka(backend, decap, dtype2btype(type));
+}
+
+btype2koka(backend : Backend<bool>, decap : bool, btype : BType) -> string {
+	switch (btype) {
+		BTypePar(id): {
+			// In Koka, we use a, b, c, ...
+			len = strlen(id) - 1;
+			fromCharCode(getCharCodeAt("a", 0) + len);
+		}
+		BTypeName(id, typars): {
+			if (id == "void") "()"
+			else if (id == "bool" || id == "double" || id == "string") id
+			else if (id == "int") { if (isKokaInt32()) "int32" else "int" }
+			else if (id == "flow") "_"
+			else if (id == "array") {
+				"vector<" + btype2koka(backend, true, typars[0]) + ">"
+			} else if (id == "ref") {
+				"forall<h> ref<h," + btype2koka(backend, true, typars[0]) + ">"
+			} else if (trim2(id, "?") == "") {
+				btype2koka(backend, decap, BTypePar(id));
+			} else {
+				(if (decap) decapitalize(id) else id)
+				+ (if (typars != []) {
+					"<" + superglue(typars, \tp -> btype2koka(backend, true, tp), ", ") + ">"
+				} else "")
+			}
+		}
+		BTypeFunction(args, returnType): {
+			"(" + superglue(args, \tp -> btype2koka(backend, true, tp), ", ") + ")"
+			+ " -> " + btype2koka(backend, true, returnType)
+		}
+	}
+}
+
+bexp2koka(backend : Backend<bool>, bexp : BExp) -> string {
+	rec = \ee -> bexp2koka(backend, ee);
+	switch (bexp) {
+		BVoid(): "()";
+		BBool(v): if (v) "True" else "False";
+		BInt(v): if (isKokaInt32()) "int32(" + i2s(v) + ")" else i2s(v);
+		BDouble(v): double2string(v);
+		BString(v): toString(v);
+		BVar(id, type): id;
+		BLet(id, value, body, type): {
+			blueprint("
+				val %id% = %value%
+				%body%", [
+				"id", id,
+				"value", rec(value),
+				"body", rec(body),
+			])
+		}
+		BIf(cond, then, else_, type): {
+			blueprint("
+					if (%c%) {
+						%then%
+					} else {
+						%else%
+					}",
+				[
+					"c", rec(cond),
+					"then", rec(then),
+					"else", rec(else_),
+			]);
+		}
+		BCall(fn, args, type): {
+			produceBackendCall(backend, bexp, bexp2koka);
+		}
+		BLambda(args, body, type): {
+			argtypes = getBArgTypes(type);
+			rt0 = btype2koka(backend, false, getBReturnType(type));
+			blueprint("
+					fn(%args%) {
+						%body%
+					}",
+				[
+					"args", supergluei(args, \i, arg -> {
+							arg + " : " + btype2koka(backend, false, argtypes[i])
+						}, ", "),
+					"body", rec(body),
+			]);
+		}
+		BSequence(exps, type): {
+			blueprint("
+					%exps%",
+				[
+					"exps", superglue(exps, rec, ";\n"),
+			]);
+		}
+		BConstruct(struct, args, type): {
+			blueprint("%struct%(%args%)",
+				[
+					"struct", struct,
+					"args", superglue(args, rec, ", "),
+			]);
+		}
+		BField(value, field, type): {
+			blueprint("
+					%value%.%field%",
+				[
+					"value", rec(value),
+					"field", field,
+			]);
+		}
+		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			/*
+			match(m) {
+				Nothing -> 0
+				Just(i) -> i
+				_ -> 2
+			}
+			*/
+			blueprint("
+					match (%value%) {
+						%cases%
+						%default%
+					}",
+				[
+					"value", rec(value),
+					"cases", superglue(cases, \case -> {
+						blueprint("
+							%id%() -> {
+								%body%
+							}",
+							[
+								"id", case.id,
+								"body", rec(case.body)
+							]);
+					}, ";\n"),
+					"default", defaultCase ?? ("_ -> " + rec(defaultCase)) : "",
+			]);
+		}
+		BArray(args, type): {
+			blueprint("vector([%args%])",
+				[
+					"args", superglue(args, rec, ", "),
+			]);
+		}
+	}
+}
+
+isKokaInt32() -> bool {
+	!isUrlParameterTrue("koka-int")
+}
