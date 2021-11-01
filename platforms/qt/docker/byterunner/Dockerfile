@@ -1,4 +1,5 @@
-FROM area9/qt:aqt-5.12.11
+ARG QT=5.12.11
+FROM area9/qt:aqt-${QT}
 
 # vim and less are just for convenience
 RUN apt-get update -y \
@@ -10,15 +11,6 @@ RUN apt-get update -y \
     libpng-dev \
     libpulse-dev \
     libglib2.0-dev \
-    libasound2 \
-    libxdamage1 \
-    libxcomposite1 \
-    libnss3 \
-    libfontconfig1 \
-    libxcursor1 \
-    libxi6 \
-    libxrender1 \
-    libxtst6 \
     libfcgi-dev \
     vim less
 
@@ -41,3 +33,4 @@ VOLUME /flow
 ENV FLOW="/flow"
 
 WORKDIR /flow/platforms/qt
+
