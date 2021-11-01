@@ -684,6 +684,14 @@ class RenderSupport {
 		return new Point(rootRect.x, rootRect.y);
 	}
 
+	public static function getMouseEventPosition(event : Dynamic, ?rootPosition : Point) : Point {
+		if (rootPosition == null) {
+			rootPosition = getRenderRootPos();
+		}
+
+		return new Point(event.pageX - rootPosition.x, event.pageY - rootPosition.y);
+	}
+
 	private static var webFontsLoadingStartAt : Float;
 	private static function initPixiRenderer() {
 		disablePixiPlugins();
@@ -1169,24 +1177,23 @@ class RenderSupport {
 			if (PreventDefault) e.preventDefault();
 
 			var rootPos = getRenderRootPos();
-			var mouseX = e.pageX - rootPos.x;
-			var mouseY = e.pageY - rootPos.y;
+			var mousePos = getMouseEventPosition(e, rootPos);
 
 			if (e.touches != null) {
 				TouchPoints = e.touches;
 				emit("touchstart");
 
 				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX - rootPos.x;
-					MousePos.y = e.touches[0].pageY - rootPos.y;
-
+					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
+					setMousePosition(touchPos);
 					if (MouseUpReceived) emit("mousedown");
 				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos); 
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos); 
+					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != mouseX || MousePos.y != mouseY) {
-				MousePos.x = mouseX;
-				MousePos.y = mouseY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightdown");
@@ -1205,8 +1212,7 @@ class RenderSupport {
 	public static function onpointerup(e : Dynamic) {
 		try {
 			var rootPos = getRenderRootPos();
-			var mouseX = e.pageX - rootPos.x;
-			var mouseY = e.pageY - rootPos.y;
+			var mousePos = getMouseEventPosition(e, rootPos);
 
 			if (e.touches != null) {
 				TouchPoints = e.touches;
@@ -1217,9 +1223,8 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != mouseX || MousePos.y != mouseY) {
-				MousePos.x = mouseX;
-				MousePos.y = mouseY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
 					emit("mouserightup");
@@ -1238,8 +1243,7 @@ class RenderSupport {
 	public static function onpointermove(e : Dynamic) {
 		try {
 			var rootPos = getRenderRootPos();
-			var mouseX = e.pageX - rootPos.x;
-			var mouseY = e.pageY - rootPos.y;
+			var mousePos = getMouseEventPosition(e, rootPos);
 
 			if (e.touches != null) {
 				e.preventDefault();
@@ -1248,16 +1252,16 @@ class RenderSupport {
 				emit("touchmove");
 
 				if (e.touches.length == 1) {
-					MousePos.x = e.touches[0].pageX - rootPos.x;
-					MousePos.y = e.touches[0].pageY - rootPos.y;
-
+					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
+					setMousePosition(touchPos);
 					emit("mousemove");
 				} else if (e.touches.length > 1) {
-					GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos);
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
+					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != mouseX || MousePos.y != mouseY) {
-				MousePos.x = mouseX;
-				MousePos.y = mouseY;
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
 
 				emit("mousemove");
 			}
@@ -2777,6 +2781,14 @@ class RenderSupport {
 
 	public static function setMouseY(y : Float) {
 		MousePos.y = y / getViewportScale();
+	}
+
+	public static function setMousePosition(pos : Point) {
+		MousePos = pos;
+	}
+
+	public static function isMousePositionEqual(pos : Point) {
+		return MousePos.x == pos.x && MousePos.y == pos.y;
 	}
 
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
