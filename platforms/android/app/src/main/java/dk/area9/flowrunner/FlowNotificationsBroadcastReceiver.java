@@ -61,7 +61,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
             mBuilder.setDefaults(Notification.DEFAULT_SOUND);
         }
 
-        Log.i(Utils.LOG_TAG, "Show local notification with id " + notificationId);
+//        Log.i(Utils.LOG_TAG, "Show local notification with id " + notificationId);
 
         NotificationManager notifyManager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
         notifyManager.notify(notificationId, mBuilder.build());
