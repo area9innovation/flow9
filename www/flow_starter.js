@@ -25,15 +25,27 @@ function appendJsScript(url) {
 scriptNode = document.head.querySelector("script[src*='" + starterScriptName + "']");
 
 if (scriptNode) {
-	const url = new URL(scriptNode.src);
+	let url;
+	try {
+		url = new URL(scriptNode.src);
+	} catch(e) {}
 	const prefix = scriptNode.src.split(starterScriptName)[0]
 
 	if (prefix) {
-		scripts.forEach(name => {
+		scripts.forEach(function(name) {
 			appendJsScript(prefix + "js/" + name)	
 		})
 
-		const mainScriptName = url.searchParams.get('name')
-		if (mainScriptName) appendJsScript(prefix + mainScriptName + ".js")
+		if (url) {
+			const mainScriptName = url.searchParams.get('name')
+			if (mainScriptName) appendJsScript(prefix + mainScriptName + ".js")
+		} else {
+			setTimeout(function() {
+				if (typeof getUrlParameter != "undefined") {
+					const mainScriptName = getUrlParameter("name", scriptNode.src)
+					if (mainScriptName) appendJsScript(prefix + mainScriptName + ".js")
+				}
+			}, 100)
+		}
 	}
 }
