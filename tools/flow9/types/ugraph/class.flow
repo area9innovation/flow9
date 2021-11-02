@@ -1,0 +1,174 @@
+import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/ugraph/debug;
+
+export {
+	// Given this eclass, what is the root equivalence class?
+	rootTTypeEClass(tg : TMap, eclass : int) -> int;
+
+	// Make a new type class (empty)
+	makeTNodeClass(tmap : TMap) -> int;
+
+	// Update a given class to a given node
+	setTNodeClass(tmap : TMap, eclass : int, node : TNode) -> void;
+
+	// What eclass is this node? -1 if not found
+	findTNodeClass(tmap : TMap, node : TNode) -> int;
+
+	// Find or construct an eclass for this node
+	findOrMakeTNode(tmap : TMap, node : TNode, reason : ErrorReason) -> int;
+
+	// Construct a new eclass for this node
+	makeEClassForTNode(tmap : TMap, node : TNode, reason : ErrorReason) -> int;
+
+	// Are these nodes the same?
+	isSameTNode(tmap : TMap, left : TNode, right : TNode) -> bool;
+
+	// Is this class resolved to a BType?
+	isEClassResolved(tmap : TMap, eclass : int) -> bool;
+
+	// Join these two equivalence classes
+	joinTNodes(tmap : TMap, left : int, right : int, reason : ErrorReason) -> int;
+}
+
+rootTTypeEClass(tg : TMap, eclass : int) -> int {
+	findUnionMapRoot(tg.tmap, eclass)
+}
+
+makeTNodeClass(tmap : TMap) -> int {
+	nclass = ^(tmap.nextEClass);
+	tmap.nextEClass := nclass + 1;
+	nclass;
+}
+
+setTNodeClass(tmap : TMap, eclass : int, node : TNode) -> void {
+	setUnionMapValue(tmap.tmap, eclass, node);
+}
+
+findOrMakeTNode(tmap : TMap, node : TNode, reason : ErrorReason) -> int {
+	// And see if we can find that node!
+
+	// println("\nLooking for " + prettyTNode(tmap, node));
+	// dumpTNodes(tmap);
+
+	sclass = switch (node) {
+		TNodeOverload(unique, overloads, pos): {
+			println("Not supposed to happen");
+			-1;
+		}
+		TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {
+			println("Not supposed to happen");
+			-1;
+		}
+		TNodeName(name, typars, pos): {
+			eclasses = getTreeArrayValue(^(tmap.typenameEClasses), name);
+			mclass = find(eclasses, \ec -> {
+				valnode = getUnionMapValue(tmap.tmap, ec);
+				isSameTNode(tmap, node, valnode);
+			});
+			mclass ?? mclass : -1;
+		}
+	};
+
+	if (sclass == -1) {
+		makeEClassForTNode(tmap, node, reason);
+	} else {
+ 		// println(^uindent + "Found it as an existing node " + i2s(sclass) + "\n");
+		sclass;
+	}
+}
+
+findTNodeClass(tmap : TMap, node : TNode) -> int {
+	switch (node) {
+		TNodeOverload(unique, overloads, pos): {
+			findUnionMap(tmap.tmap, \eclass, nn -> {
+				isSameTNode(tmap, node, nn)
+			}, -1);
+		}
+		TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {
+			findUnionMap(tmap.tmap, \eclass, nn -> {
+				isSameTNode(tmap, node, nn)
+			}, -1);
+		}
+		TNodeName(name, typars, pos): {
+			eclasses = getTreeArrayValue(^(tmap.typenameEClasses), name);
+			mclass = find(eclasses, \ec -> {
+				valnode = getUnionMapValue(tmap.tmap, ec);
+				isSameTNode(tmap, node, valnode);
+			});
+			mclass ?? mclass : -1;
+		}
+	};
+}
+
+makeEClassForTNode(tmap : TMap, node : TNode, reason : ErrorReason) -> int {
+	// OK, could not find it. We need a new class
+	nclass = makeTNodeClass(tmap);
+	if (isDebuggingTopid(tmap)) {
+		debugErrorReason(reason, "  Made e" + i2s(nclass) + " as " + prettyTNode(tmap, node) + ": ");
+	}
+	switch (node) {
+		TNodeName(name, __, __): {
+			tmap.typenameEClasses := treePushToArrayValue(^(tmap.typenameEClasses), name, nclass);
+		}
+		default: {}
+	}
+	setUnionMapValue(tmap.tmap, nclass, node);
+	nclass;
+}
+
+
+isSameTNode(tmap : TMap, left : TNode, right : TNode) -> bool {
+	// println(^uindent + "  Check " + prettyTNode(tmap, left) + " vs " + prettyTNode(tmap, right));
+	left == right
+	|| switch (left) {
+		TNodeName(lname, ltypars, __): {
+			switch (right) {
+				TNodeName(rname, rtypars, __): {
+					lname == rname 
+					&& length(ltypars) == length(rtypars)
+					&& forall(mapi(ltypars, \i, tp -> {
+						findUnionMapRoot(tmap.tmap, tp)
+						== findUnionMapRoot(tmap.tmap, rtypars[i])
+					}), idfn)
+				}
+				default: false;
+			}
+		}
+		TNodeOverload(uniques, overloads, __): {
+			switch (right) {
+				TNodeOverload(runiques, __, __): !isEmptySet(intersectSets(uniques, runiques));
+				default: false;
+			}
+		}
+		TNodeSupertype(uniques, __, __, __, __): {
+			switch (right) {
+				TNodeSupertype(runiques, __, __, __, __): !isEmptySet(intersectSets(uniques, runiques));
+				default: false;
+			}
+		}
+	}
+}
+
+isEClassResolved(tmap : TMap, eclass : int) -> bool {
+	node = getUnionMapValue(tmap.tmap, eclass);
+	switch (node) {
+		TNodeName(name, typars, pos): {
+			!isEmptyTNode(node) && forall(typars, \tp -> isEClassResolved(tmap, tp))
+		}
+		TNodeOverload(unique, overloads, pos): false;
+		TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): false;
+	}
+}
+
+joinTNodes(tmap : TMap, left : int, right : int, reason : ErrorReason) -> int {
+	root = unionUnionMap(tmap.tmap, left, right, reason);
+	
+	if (false) {
+		lnode = getUnionMapValue(tmap.tmap, left);
+		rnode = getUnionMapValue(tmap.tmap, right);
+		
+		println("  Joining e" + i2s(left) + " and e" + i2s(right) + " to e" + i2s(root) + ": " + debugTNode(tmap, root)
+			+ " from " + prettyTNode(tmap, lnode) + " and " + prettyTNode(tmap, rnode));
+	}
+	root;
+}

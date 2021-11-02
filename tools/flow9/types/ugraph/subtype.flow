@@ -1,4 +1,5 @@
 import tools/flow9/types/ugraph/debug;
+import tools/flow9/types/ugraph/class;
 
 export {
 	// Is this a union with a single struct inside? That is a special case: I.e. an alias
@@ -9,6 +10,17 @@ export {
 
 	// Expand this union to the raw structs
 	expandTypeName2Structs(tmap : TMap, name : string) -> [string];
+
+	// Are there any direct supertypes of this node?
+	hasSupertype(tmap : TMap, node : TNodeName) -> bool;
+
+	// Could there be a different subtype that this one?
+	hasSubtype(tmap : TMap, node : TNodeName) -> bool;
+
+	// We know we want a given name, and we have a set of candidates to pick from which.
+	// Help figure out the required number of type-parameters.
+	// It constructs type classes for each typar
+	instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) -> TNodeName;
 }
 
 // It could be that we have a union with just one struct
@@ -59,16 +71,59 @@ getPossibleTSupers(tmap : TMap, super : TNodeSupertype) -> Set<string> {
 }
 
 expandTypeName2Structs(tmap : TMap, name : string) -> [string] {
+	munion = ^(tmap.resolveUnionName)(name);
+	switch (munion) {
+		None(): [name];
+		Some(union): {
+			// OK, expand to the members of this union
+			concatA(
+				map(union.types, \tn -> {
+					expandTypeName2Structs(tmap, tn.id)
+				})
+			)
+		}
+	}
+}
+
+// Are there any direct supertypes of this node?
+hasSupertype(tmap : TMap, node : TNodeName) -> bool {
+	id = node.name;
+	supers0 = ^(tmap.resolveSupertypes)(id);
+	supers0 != [];
+}
+
+// Could there be a different subtype that this one?
+hasSubtype(tmap : TMap, node : TNodeName) -> bool {
+	subtypes = ^(tmap.resolveSubtypes)(node.name);
+	length(subtypes) > 1;
+}
+
+
+
+instantiateTNodeName(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) -> TNodeName {
+	node = filter(nodes, \n -> n.name == name);	
+	if (length(node) > 0) {
+		TNodeName(
+			name, map(node[0].typars, \tp : int -> {
+				 makeTNodeClass(tmap)
+			}), pos
+		)
+	} else {
+		// OK, it was not found, so let us construct a new one
 		munion = ^(tmap.resolveUnionName)(name);
 		switch (munion) {
-			None(): [name];
+			None(): {
+				mstruct = ^(tmap.resolveStructName)(name);
+				typars = switch (mstruct) {
+					None(): if (name == "array" || name == "ref") 1 else 0;
+					Some(st): length(st.typars);
+				}
+				TNodeName(name, generate(0, typars, \__ -> makeTNodeClass(tmap)), pos);
+			}
 			Some(union): {
-				// OK, expand to the members of this union
-				concatA(
-					map(union.types, \tn -> {
-						expandTypeName2Structs(tmap, tn.id)
-					})
-				)
+				typars = map(union.typars, \tp -> makeTNodeClass(tmap));
+				TNodeName(name, typars, pos);
 			}
 		}
+	}
 }

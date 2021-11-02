@@ -75,6 +75,10 @@ TODO:
 - Replace the unknown subtypes in supertype with postponing
 - Radical idea: Replace super with overload always?
 
+- Try to make sure ? translates to the same eclasses in more situations:
+   Push pending again (e569)->e561 to overload561{(Pair<e570,e571>)->e570, (Quadruple<e572,e573,e574,e575>)->e572, (Triple<e576,e577,e578>)->e576}
+
+
 # Name and type lookups
 
 A key problem is to find names, types, sub- and supertypes from the context 
