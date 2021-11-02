@@ -4,6 +4,7 @@ import tools/flow9/backends/pretty;
 import tools/flow9/backends/cpp/cpp_backend;
 import tools/flow9/backends/type_hierarchy;
 import tools/flow9/backends/utils;
+import tools/flow9/backends/struct_ids;
 
 /*
 
@@ -30,7 +31,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	info = CppInfo(
 		fold(b.declarations, makeSet(), \acc, d -> {
 			insertSet(acc, d.id)
-		})
+		}),
+		makeStructIds(b.structs, b.unions)
 	);
 
 	backend = cppBackend(info);
@@ -114,6 +116,33 @@ void flow_println(A d) {
 	std::cout << d << std::endl;
 }
 ";
+			} else if (id == "flow_isSameStructType") {
+				// UNION case : Complexity of visit: ? const?
+				// https://en.cppreference.com/w/cpp/utility/variant/visit
+				blueprint("template <typename A, typename ...Args2>
+bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
+	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
+	return struct1.%id% == id2;
+}
+template <typename ...Args1, typename B>
+bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
+	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
+	return id1 == struct2.%id%;
+}
+
+template <typename ...Args1, typename ...Args2>
+bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
+	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
+	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
+	return id1 == id2;
+}
+
+template <typename A, typename B>
+bool flow_isSameStructType(A struct1, B struct2) {
+	return struct1.%id% == struct2.%id%;
+}",
+					["id", getStructIdFieldName()]
+				);
 			} else {
 				"// TODO: Native " + id;
 			}
@@ -307,7 +336,9 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 	"struct " + s.id + "{"
 	+ superglue(s.structArgs, \sa -> {
 		dtype2cpp(backend, sa.type) + " " + sa.id + ";"
-	}, "; ") + "};";
+	}, "; ")
+	+ dstruct2id(backend, s) + ";" 
+	+ "};";
 }
 
 
@@ -346,4 +377,20 @@ btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
 			+ "(" + superglue(args, \tp -> btype2cpp(backend, tp), ", ") + ")>"
 		}
 	}
+}
+
+dstruct2id(backend : Backend<CppInfo>, s : DStruct) -> string {
+	eitherMap(
+		lookupTree(backend.info.structIds, s.id),
+		\id -> getStructIdMember() + " = " + i2s(id),
+		""
+	);
+}
+
+getStructIdMember() -> string {
+	" unsigned int " + getStructIdFieldName();
+}
+
+getStructIdFieldName() -> string {
+	"_id";
 }
