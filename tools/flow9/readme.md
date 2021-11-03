@@ -2,9 +2,18 @@
 
 Usage:
 
-flowcpp flowe/flowe.flow -- file=myfile.flow
+flow9 myfile.flow
 
 Options:
+	help=1
+		Print usage info
+
+	js=1
+		Compile to JS
+	
+	cpp=1
+		Compile to CPP
+
 	debug=<id>,<id>
 		Will trace the compilation process of the given ids.
 		The ids can be types, functions, globals, or files (without .flow).
@@ -12,8 +21,7 @@ Options:
 	verbose=0,1,2
 		Increasing amount of tracing information
 
-	help=1
-		Print usage info
+Run "flow9" for more basic options.
 
 # Goals and motivation
 
