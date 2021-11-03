@@ -119,6 +119,9 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	// Use actualBoundingBoxLeft and actualBoundingBoxRight while measure text metrics
+	// As a result, width may be bigger, but parts of the glyphs will be inside bounding box.
+	public static var FullTextMeasurement = Util.getParameter("ftm") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
@@ -132,6 +135,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = '';
+	private var leftPadding : Float = 0.0;
 	private var escapeHTML : Bool = true;
 	private var skipOrderCheck : Bool = false;
 	private var style : Dynamic = new TextStyle();
@@ -529,6 +533,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.color = style.fill;
 		}
 
+		nativeWidget.style.paddingLeft = '${this.leftPadding}px';
 		nativeWidget.style.letterSpacing = !this.isHTMLRenderer() || style.letterSpacing != 0 ? '${style.letterSpacing}px' : null;
 		nativeWidget.style.wordSpacing = !this.isHTMLRenderer() || style.wordSpacing != 0 ? '${style.wordSpacing}px' : null;
 		nativeWidget.style.fontFamily = !this.isHTMLRenderer() || Platform.isIE || style.fontFamily != "Roboto" ? style.fontFamily : null;
@@ -1558,22 +1563,34 @@ class TextClip extends NativeWidgetClip {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
 			if (!escapeHTML) {
 				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
-				metrics = TextMetrics.measureText(contentGlyphsModified, style);
+				metrics = measureText(contentGlyphsModified, style);
 				if (this.isHTMLRenderer()) {
 					measureHTMLWidth();
 				}
 			} else {
-				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				metrics = untyped measureText(this.contentGlyphs.modified, style);
 			}
 
 			metrics.maxWidth = 0.0;
+			metrics.maxLeftPadding = 0.0;
+			metrics.maxAdvancedWidth = 0.0;
 			var lineWidths : Array<Float> = metrics.lineWidths;
 
-			for (lineWidth in lineWidths) {
-				metrics.maxWidth += lineWidth;
+			for (i in 0...lineWidths.length) {
+				var leftPadding = (metrics.leftPaddings != null && i < metrics.leftPaddings.length) ? metrics.leftPaddings[i] : 0.0;
+				var rightBound = (metrics.rightBounds != null && i < metrics.rightBounds.length) ? metrics.rightBounds[i] : 0.0;
+				var advancedWidth = Math.max(lineWidths[i], leftPadding + rightBound);
+				metrics.maxLeftPadding = Math.max(metrics.maxLeftPadding, leftPadding);
+				metrics.maxAdvancedWidth = Math.max(metrics.maxAdvancedWidth, advancedWidth);
+
+				metrics.maxWidth += FullTextMeasurement ? advancedWidth : lineWidths[i];
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+			if (FullTextMeasurement) {
+				metrics.width = metrics.maxAdvancedWidth;
+				this.leftPadding = metrics.maxLeftPadding;
+			}
 		}
 
 		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
@@ -1679,17 +1696,22 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public function getTextMetrics() : Array<Float> {
+		updateTextMetrics();
+		var advancedWidth = metrics != null && metrics.maxAdvancedWidth != null ? metrics.maxAdvancedWidth : 0.0;
+		var leftPadding = metrics != null && metrics.maxLeftPadding != null ? metrics.maxLeftPadding : 0.0;
 		if (style.fontProperties == null) {
 			var ascent = 0.9 * style.fontSize;
 			var descent = 0.1 * style.fontSize;
 			var leading = 0.15 * style.fontSize;
 
-			return [ascent, descent, leading];
+			return [ascent, descent, leading, advancedWidth, leftPadding];
 		} else {
 			return [
 				style.fontProperties.ascent,
 				style.fontProperties.descent,
-				style.fontProperties.descent
+				style.fontProperties.descent,
+				advancedWidth,
+				leftPadding
 			];
 		}
 	}
@@ -1722,5 +1744,9 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			super.createNativeWidget(tagName);
 		}
+	}
+
+	private function measureText(text, style, ?wordWrap, ?canvas) {
+		return untyped PixiWorkarounds.measureText(text, style, wordWrap, canvas);
 	}
 }
