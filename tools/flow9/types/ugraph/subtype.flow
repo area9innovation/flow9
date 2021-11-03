@@ -1,5 +1,6 @@
 import tools/flow9/types/ugraph/debug;
 import tools/flow9/types/ugraph/class;
+import tools/flow9/dexp/types;
 
 export {
 	// Is this a union with a single struct inside? That is a special case: I.e. an alias
@@ -17,13 +18,18 @@ export {
 	// Could there be a different subtype that this one?
 	hasSubtype(tmap : TMap, node : TNodeName) -> bool;
 
-	// We know we want a given name, and we have a set of candidates to pick from which.
-	// Help figure out the required number of type-parameters.
-	// It constructs type classes for each typar.
-	instantiateTSuper(tmap : TMap, name : string, subtypes : [TNodeName], pos : [int]) -> TNodeName;
+	// Instantiate a known supertype from these subtypes.
+	// It constructs type classes for each typar. Caller should unify the typars in!
+	instantiateFreshTSuper(tmap : TMap, name : string, subtypes : [TNodeName], pos : [int]) -> TNodeName;
 
-	// The same to instantiate a subtype of a given super type
+	// Instantiate a possible supertype from this supertype.
+	// This should carry over the typras
+	instantiateTSuper(tmap : TMap, name : string, super : TNodeSupertype, pos : [int]) -> TNodeName;
+
+	// Instantiate a subtype of a given super type. This carries over type parameters
 	instantiateTSubtype(tmap : TMap, subname : string, super : TNode, pos : [int]) -> TNodeName;
+
+	convertTSuper2Overload(tmap : TMap, super : TNodeSupertype) -> TNodeOverload;
 }
 
 // It could be that we have a union with just one struct
@@ -63,7 +69,6 @@ getPossibleTSupers(tmap : TMap, super : TNodeSupertype) -> Set<string> {
 		supstructs = fold(super.subtypes, makeSet(), \acc, t : TNodeName -> {
 			mergeSets(acc, buildSet(expandTypeName2Structs(tmap, t.name)));
 		});
-
 		filterSet(supers, \s -> {
 			structs = expandTypeName2Structs(tmap, s);
 			sizeSet(supstructs) == length(structs);
@@ -101,9 +106,11 @@ hasSubtype(tmap : TMap, node : TNodeName) -> bool {
 	length(subtypes) > 1;
 }
 
-instantiateTSuper(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) -> TNodeName {
+// Notice: Does not have to carry over type parameters
+instantiateFreshTSuper(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) -> TNodeName {
 	node = filter(nodes, \n -> n.name == name);	
 	if (length(node) > 0) {
+		// This is really just an optimization. We could just do the thing below.
 		TNodeName(
 			name, map(node[0].typars, \tp : int -> {
 				 makeTNodeClass(tmap)
@@ -122,14 +129,170 @@ instantiateTSuper(tmap : TMap, name : string, nodes : [TNodeName], pos : [int]) 
 				TNodeName(name, generate(0, typars, \__ -> makeTNodeClass(tmap)), pos);
 			}
 			Some(union): {
-				typars = map(union.typars, \tp -> makeTNodeClass(tmap));
+				typars = map(union.typars, \__ -> makeTNodeClass(tmap));
 				TNodeName(name, typars, pos);
 			}
 		}
 	}
 }
 
+// Instantiate a possible supertype from this supertype.
+// This should carry over the typras
+instantiateTSuper(tmap : TMap, name : string, super : TNodeSupertype, pos : [int]) -> TNodeName {
+	stypars : [[int]] = filtermap(super.subtypes, \st -> {
+		extractTyparsFromSubtype(tmap, st, name)
+	});
+	if (stypars == []) {
+		println("TODO: Not supposed to happen: " + name + " is expected to be a subtype of " + prettyTNode(tmap, super));
+		instantiateFreshTSuper(tmap, name, [], pos);
+	} else {
+		TNodeName(name, stypars[0], pos);
+	}
+}
+
+// Instantiate a known subtype of the given supertype.
+// This one should carry over the type parameters
 instantiateTSubtype(tmap : TMap, subname : string, super : TNode, pos : [int]) -> TNodeName {
-	// TODO: Be smarter about this, so we can inherit type-pars from the super
-	instantiateTSuper(tmap, subname, [], pos);
+	res = switch (super) {
+		TNodeName(name, typars, __): {
+			// We assume it is a subtype
+			mtypars = extractTyparsFromSuper(tmap, super, subname);
+			mtypars ?? {
+				TNodeName(subname, mtypars, pos);
+			} : {
+				println("TODO: Not supposed to happen: " + subname + " is expected to be a subtype of " + name);
+				instantiateFreshTSuper(tmap, subname, [], pos);
+			}
+		}
+		TNodeOverload(unique, overloads, __): {
+			println("Do know expect an overload to be a supertype");
+			instantiateFreshTSuper(tmap, subname, [], pos);
+		}
+		TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, __): {
+			stypars : [[int]] = filtermap(subtypes, \st -> {
+				extractTyparsFromSuper(tmap, st, subname)
+			});
+			if (stypars == []) {
+				println("TODO: Not supposed to happen: " + subname + " is expected to be a subtype of " + prettyTNode(tmap, super));
+				instantiateFreshTSuper(tmap, subname, [], pos);
+			} else {
+				TNodeName(subname, stypars[0], pos);
+			}
+		}
+	};
+	println("Instantiate sub " + subname + " from "  + prettyTNode(tmap, super) + " to " + prettyTNode(tmap, res));
+	res
+}
+
+convertTSuper2Overload(tmap : TMap, super : TNodeSupertype) -> TNodeOverload {
+	supers = getPossibleTSupers(tmap, super);
+	// println("Finding supers for " + prettyTNode(tmap, super) + ": " + strGlue(set2array(supers), ", "));
+	supertypes = map(set2array(supers), \sn -> {
+		instantiateTSuper(tmap, sn, super, super.pos);
+	});
+	ov = TNodeOverload(makeSet1(tmap.mkUnique()), supertypes, super.pos);
+	// println("Gave " + prettyTNode(tmap, ov));
+	ov;
+}
+
+extractTyparsFromSuper(tmap : TMap, super : TNodeName, subname : string) -> Maybe<[int]> {
+	def = \ -> {
+		munion = ^(tmap.resolveUnionName)(super.name);
+		switch (munion) {
+			None(): {
+				println("Not supposed to happen: Extract typars from non-union " + super.name + " to " + subname);
+				None();
+			}
+			Some(union): {
+				stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == subname);
+				stype ?? {
+					// OK, we have the relation from the union to the struct in this union
+					// unifyTNodeNameAgainstSubtype(tmap, node, subtype, union, stype);
+					println("TODO: Match typars from " + toString(union) + " to " + toString(stype));
+					Some(super.typars);
+				} : {
+					// We could not find it, go look for it in the children
+					println("TODO: Look through the unions to find the right struct " + prettyTNode(tmap, super) + " vs "  + subname);
+					Some(super.typars);
+				}
+			}
+		}
+	};
+	if (super.name == subname) {
+		Some(super.typars)
+	} else {
+		mstruct = ^(tmap.resolveStructName)(subname);
+		switch (mstruct) {
+			None(): def();
+			Some(struct): {
+				if (struct.typars == []) Some([])
+				else def();
+			}
+		}
+	}
+}
+
+extractTyparsFromSubtype(tmap : TMap, sub : TNodeName, super : string) -> Maybe<[int]> {
+	def = \ -> {
+		munion = ^(tmap.resolveUnionName)(super);
+		switch (munion) {
+			None(): {
+				println("Not supposed to happen: Extract typars from non-union " + super + " to " + sub.name);
+				None();
+			}
+			Some(union): {
+				if (union.typars == []) Some([])
+				else {
+					stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == sub.name);
+					stype ?? {
+						// OK, we have the relation from the union to the struct in this union
+						Some(extractTyparsFromDTypename(union, stype, sub))
+					} : {
+						// We could not find it, go look for it in the union members
+						utypars = filtermap(union.types, \t : DTypeName -> {
+							usubtypars = extractTyparsFromDTypename(union, t, sub);
+							usub = TNodeName(t.id, usubtypars, sub.pos);
+							extractTyparsFromSubtype(tmap, usub, super)
+						});
+						println("TODO: Look through the unions to find the right struct " + super);
+						println(utypars);
+						Some(sub.typars);
+					}
+				}
+			}
+		}
+	};
+	if (super == sub.name) {
+		Some(sub.typars)
+	} else {
+		mstruct = ^(tmap.resolveStructName)(super);
+		switch (mstruct) {
+			None(): def();
+			Some(struct): {
+				if (struct.typars == []) Some([])
+				else def();
+			}
+		}
+	}
+}
+
+
+// OK, we have the relation from the union to the struct in this union
+// so go and extract the typars from this subtype
+extractTyparsFromDTypename(union : DUnion, stype : DTypeName, sub : TNodeName) -> [int] {
+	typars : Tree<DType, int> = foldi(stype.typars, makeTree(), \i, acc, tp -> {
+		val = sub.typars[i];
+		setTree(acc, cleanDType(tp), val);
+	});
+	mapi(union.typars, \i, tp -> {
+		ttp = lookupTree(typars, cleanDType(tp));
+		switch (ttp) {
+			None(): {
+				// Implicit typars in the struct
+				// Consider List<?> ::= EmptyList, Cons<?>;
+				sub.typars[i];
+			}
+			Some(tt): tt;
+		}
+	}); 
 }

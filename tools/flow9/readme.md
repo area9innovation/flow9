@@ -80,12 +80,24 @@ TODO:
     line 1082 + 1211 in tnode.flow
   - Implement unification of super against overload:
     - Convert the super to an overload and do intersect?
+
 - Replace the unknown subtypes in supertype with postponing
+
 - Radical idea: Replace super with overload always?
+  - Make sure unify
+  		overload5{Beh<?>, Const<?>} != Dyn<?> (e33 and e26)
+	does not happen: In this case, we have lifted a supertype,
+	which has the implicit requirement that the children are 
+	also supertypes, into an overload without supertype.
+	This happens further up in the chain, in a Pair<>.
+	See test tests/type13.flow with 983 in tnode.flow as true.
 
 - Try to make sure ? translates to the same eclasses in more situations:
    Push pending again (e569)->e561 to overload561{(Pair<e570,e571>)->e570, (Quadruple<e572,e573,e574,e575>)->e572, (Triple<e576,e577,e578>)->e576}
 
+- Remove TSuper completely. Replae with overload when there is info.
+  - Use pending and pendingSubtypes for all other cases
+    And these pending will be eclasses only
 
 # Name and type lookups
 
