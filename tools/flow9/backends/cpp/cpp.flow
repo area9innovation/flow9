@@ -26,22 +26,23 @@ bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
 }
 
 bprogram2cpp(b : BProgram, flowpath : string) -> string {
-	typeHierarcy = resolveBTypeHierarchy(b.structs, b.unions);
+	typeHierarchy = resolveBTypeHierarchy(b.structs, b.unions);
 
 	info = CppInfo(
 		fold(b.declarations, makeSet(), \acc, d -> {
 			insertSet(acc, d.id)
 		}),
-		makeStructIds(b.structs, b.unions)
+		makeStructIds(b.structs, b.unions),
+		typeHierarchy.unionTypes,
 	);
 
 	backend = cppBackend(info);
 	// Structs in unions
-	unionStructs = foldTree(typeHierarcy.third, "", \id, struct, acc -> {
+	unionStructs = foldTree(typeHierarchy.unionedStructs, "", \id, struct, acc -> {
 		acc + dstruct2cpp(backend, struct) + "\n"
 	});
-	unions = superglue(typeHierarcy.first, \u : DUnion -> dunion2cpp(backend, u), "\n");
-	structs = superglue(typeHierarcy.second, \s : DStruct -> dstruct2cpp(backend, s), "\n");
+	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u), "\n");
+	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
 	body = superglue(b.declarations, \d : BDeclaration -> bdeclaration2cpp(backend, d), "\n");
 
 	// The backend keeps track of what requirements are used by the various
@@ -117,32 +118,7 @@ void flow_println(A d) {
 }
 ";
 			} else if (id == "flow_isSameStructType") {
-				// UNION case : Complexity of visit: ? const?
-				// https://en.cppreference.com/w/cpp/utility/variant/visit
-				blueprint("template <typename A, typename ...Args2>
-bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
-	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
-	return struct1.%id% == id2;
-}
-template <typename ...Args1, typename B>
-bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
-	return id1 == struct2.%id%;
-}
-
-template <typename ...Args1, typename ...Args2>
-bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
-	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
-	return id1 == id2;
-}
-
-template <typename A, typename B>
-bool flow_isSameStructType(A struct1, B struct2) {
-	return struct1.%id% == struct2.%id%;
-}",
-					["id", getStructIdFieldName()]
-				);
+				makeNativeIsSameStructType();
 			} else {
 				"// TODO: Native " + id;
 			}
@@ -283,34 +259,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 			]);
 		}
 		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
-		BSwitch(value, switchType, cases, defaultCase, type): {
-			/*
-			match(m) {
-				Nothing -> 0
-				Just(i) -> i
-				_ -> 2
-			}
-			*/
-			blueprint("
-					switch (%value%.index()) {
-						%cases%
-						%default%
-					}",
-				[
-					"value", rec(value),
-					"cases", superglue(cases, \case -> {
-						blueprint("
-							case %id%: {
-								%body%
-							}",
-							[
-								"id", case.id, // TODO: This should be the int id
-								"body", rec(case.body)
-							]);
-					}, ";\n"),
-					"default", defaultCase ?? ("default: " + rec(defaultCase)) : "",
-			]);
-		}
+		BSwitch(value, switchType, allCases, defaultCaseM, type): makeBSwitchType(bexp, backend);
 		BArray(args, type): {
 			blueprint("%type%({ %args% })",
 				[
@@ -393,4 +342,106 @@ getStructIdMember() -> string {
 
 getStructIdFieldName() -> string {
 	"_id";
+}
+
+makeNativeIsSameStructType() -> string {
+	// UNION case : Complexity of visit: ? const?
+	// https://en.cppreference.com/w/cpp/utility/variant/visit
+	blueprint("template <typename A, typename ...Args2>
+bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
+	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
+	return struct1.%id% == id2;
+}
+template <typename ...Args1, typename B>
+bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
+	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
+	return id1 == struct2.%id%;
+}
+
+template <typename ...Args1, typename ...Args2>
+bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
+	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
+	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
+	return id1 == id2;
+}
+
+template <typename A, typename B>
+bool flow_isSameStructType(A struct1, B struct2) {
+	return struct1.%id% == struct2.%id%;
+}",
+		["id", getStructIdFieldName()]
+	);
+}
+
+makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
+	rec = \ee -> bexp2cpp(backend, ee);
+	len = length(bexp.cases);
+	expDefaultCase = bexp.defaultCase;
+
+	if (len < 1) { // error
+		""
+	} else if (len < 6) { // if
+		caseIndexes = switchType2caseIndexes(bexp.switchType, backend);
+		// cases should not be empty. otherwise let there be a crash.
+		defaultCase = expDefaultCase ?? expDefaultCase : bexp.cases[0].body;
+		cases = expDefaultCase ?? bexp.cases : tail(bexp.cases);
+		blueprint("
+				%cases%(
+					%default%
+				)",
+			[
+				"cases", superglue(cases, \case -> {
+					blueprint("
+						(%value%.index() == %id%) ? (
+							%body%
+						) : ",
+						[
+							"value", rec(bexp.value),
+							"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
+							"body", rec(case.body)
+						]
+					);
+				}, ""),
+				"default", " " + rec(defaultCase),
+		]);
+	} else { // switch + lambda
+		caseIndexes = switchType2caseIndexes(bexp.switchType, backend);
+		// cases should not be empty. otherwise let there be a crash.
+		// cpp needs a default case in the 'return' case
+		defaultCase = expDefaultCase ?? expDefaultCase : bexp.cases[0].body;
+		blueprint("
+				[&](int32_t ind){switch (ind) {
+					%cases%
+					%default%
+				}}(%value%.index())",
+			[
+				"value", rec(bexp.value),
+				"cases", superglue(bexp.cases, \case -> {
+					blueprint("
+						case %id%: {
+							return %body%;
+						}",
+						[
+							"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
+							"body", rec(case.body)
+						]);
+				}, ";\n"),
+				"default", "default: return " + rec(defaultCase) + ";",
+		]);
+	}
+}
+
+// todo : flat union?
+switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<string, int> {
+	switch (switchType : BType) {
+		BTypePar(__) : makeTree(); // error
+		BTypeName(id, __) : {
+			foldi(
+				lookupTreeDef(backend.info.unionTypes, id, []),
+				makeTree(),
+				\i, acc, itemId -> setTree(acc, itemId, i)
+			);
+		}
+		BTypeFunction(__, __) : makeTree(); // error
+	}
 }
