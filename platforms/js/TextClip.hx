@@ -710,7 +710,11 @@ class TextClip extends NativeWidgetClip {
 
 		// Force text value right away
 		if (nativeWidget != null && isInput) {
+			var keepSelectionRange = true;
+			var selectionStartPrev = nativeWidget.selectionStart;
+			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = text;
+			if (keepSelectionRange) setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
 		if (this.isHTMLRenderer()) {
