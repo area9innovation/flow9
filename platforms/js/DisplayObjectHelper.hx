@@ -1891,11 +1891,7 @@ class DisplayObjectHelper {
 					}
 				}
 
-				if (UseOptimization) {
-					removeFn();
-				} else {
-					RenderSupport.once("drawframe", removeFn);
-				}
+				RenderSupport.once("drawframe", removeFn);
 			}
 		}
 	}
