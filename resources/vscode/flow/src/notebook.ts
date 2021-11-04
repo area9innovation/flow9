@@ -227,7 +227,7 @@ export class FlowNotebookController {
 				// Call a function after '> ' is read from stdout.
 				after_start();
 			};
-			this._executor = spawn("flowc1", ["repl=1"]);
+			this._executor = spawn("flowc1", ["repl=1"], { shell : true });
 			let buffer: string = "";
 			this._executor.stdout.on("data", (buf : any) => {
 				let out = buf.toString();
