@@ -45,6 +45,7 @@ class RenderSupport {
 	public static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
 	public static var DropCurrentFocusOnMouse : Bool;
+	public static var ScrollCatcherEnabled : Bool = Platform.isIOS && Platform.isSafari && Platform.isMouseSupported && Util.getParameter("trackpad_scroll") != "0";
 	// Renders in a higher resolution backing store and then scales it down with css (e.g., ratio = 2 for retina displays)
 	// Resolution < 1.0 makes web fonts too blurry
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
@@ -634,7 +635,7 @@ class RenderSupport {
 		createPixiRenderer();
 
 		// Workaround to catch wheel events from trackpad on iPad in Safari
-		if (Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0") {
+		if (ScrollCatcherEnabled) {
 			appendScrollCatcher();
 		}
 
@@ -663,10 +664,36 @@ class RenderSupport {
 		catcherWrapper.style.overflow = 'scroll';
 		var catcher = Browser.document.createElement("div");
 		catcher.style.position = 'relative';
+		catcherWrapper.style.zIndex = "1000";
 		catcher.style.height = 'calc(100% + 1px)';
 
 		catcherWrapper.appendChild(catcher);
 		Browser.document.body.appendChild(catcherWrapper);
+
+		var onpointermove = function(e) {
+			var topClip = getClipAt(PixiStage, new Point(e.pageX, e.pageY), true, 0.16);
+			if (topClip != null && untyped topClip.cursor != null && untyped topClip.cursor != '') {
+				catcherWrapper.style.cursor = untyped topClip.cursor;
+			} else if (topClip != null && untyped topClip.isInput) {
+				catcherWrapper.style.cursor = "text";
+			} else {
+				catcherWrapper.style.cursor = null;
+			}
+		}
+
+		var onpointerdown = function(e) {
+			var topClip = getClipAt(PixiStage, new Point(e.pageX, e.pageY), true, 0.16);
+			if (topClip != null && untyped topClip.isInput) {
+				untyped topClip.nativeWidget.focus();
+				untyped catcherWrapper.style.pointerEvents = "none";
+				untyped topClip.nativeWidget.addEventListener("blur", function() {
+					untyped catcherWrapper.style.pointerEvents = "auto";
+				}, {once : true});
+			}
+		}
+
+		catcherWrapper.addEventListener("pointermove", onpointermove);
+		catcherWrapper.addEventListener("pointerdown", onpointerdown);
 	}
 
 	private static function appendDebugClip() {
@@ -676,7 +703,7 @@ class RenderSupport {
 		debugClip.textContent = "DEBUG";
 		debugClip.style.fontSize = "12px";
 		debugClip.style.zIndex = "1000";
-		debugClip.style.background = "#424242";
+		debugClip.style.background = "#42424277";
 		debugClip.style.color = "#FFFFFF";
 		debugClip.style.padding = "8px";
 		debugClip.style.paddingTop = "4px";
@@ -1253,7 +1280,7 @@ class RenderSupport {
 			}
 
 			// Fall-back if spin cannot be determined
-			if (!(Platform.isIOS && Platform.isSafari && Util.getParameter("trackpad_scroll") != "0")) {
+			if (!ScrollCatcherEnabled) {
 				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
 				if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
 			}

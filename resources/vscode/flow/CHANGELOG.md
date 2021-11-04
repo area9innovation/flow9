@@ -167,3 +167,6 @@
 
 ## 0.4.13
 - a test editor written in flow is added. Readme is updated with instructions how to implement a custom editor written in flow. 
+
+## 0.5.0
+ - flow notebook, based on Vscode Notebook API, is added.
