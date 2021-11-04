@@ -588,7 +588,6 @@ StackSlot ByteCodeRunner::filtermapi(RUNNER_ARGS)
     retarr = RUNNER->AllocateArray(filtered.size());
 
     if (RUNNER->IsErrorReported()) {
-		std::cout << "ByteCodeRunner::filtermapi: !!!!!" << std::endl;
         return StackSlot::MakeVoid();
 	}
 	int i = 0;
