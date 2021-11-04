@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.os.Binder;
+import android.os.Build;
 import android.os.IBinder;
 import androidx.annotation.NonNull;
 import android.util.Log;
@@ -35,14 +36,9 @@ public class FlowRunnerService extends Service {
     }
 
     public void scheduleNotification(double time, int notificationId, String notificationCallbackArgs,
-            String notificationTitle, String notificationText, boolean withSound) {
-        scheduleNotification(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, false, false);
-    }
-
-    public void scheduleNotification(double time, int notificationId, String notificationCallbackArgs,
             String notificationTitle, String notificationText, boolean withSound, boolean pinNotification, boolean afterBoot) {
 
-        Log.i(Utils.LOG_TAG, "TAG: Inside Service.scheduleNotification");
+//        Log.i(Utils.LOG_TAG, "TAG: Inside Service.scheduleNotification");
         if (!afterBoot) {
             cancelLocalNotification(notificationId, true);
             FlowNotificationsAPI.saveNotificationInfo(this, time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification);
@@ -50,10 +46,14 @@ public class FlowRunnerService extends Service {
 
         FlowLocalNotificationIntents pendingIntents = FlowNotificationsAPI.getNotificationIntents(this, 0, time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification);
 
-        Log.i(Utils.LOG_TAG, "Schedule local notification with id " + notificationId);
+//        Log.i(Utils.LOG_TAG, "Schedule local notification with id " + notificationId + " in " + (long)((time - System.currentTimeMillis()) / 1000) + " seconds");
 
         AlarmManager alarmManager = (AlarmManager)getSystemService(Context.ALARM_SERVICE);
-        alarmManager.set(AlarmManager.RTC, (long)time, pendingIntents.alarmIntent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            alarmManager.setExact(AlarmManager.RTC, (long)time, pendingIntents.alarmIntent);
+        } else {
+            alarmManager.set(AlarmManager.RTC, (long)time, pendingIntents.alarmIntent);
+        }
     }
 
     public void cancelLocalNotification(int notificationId, Boolean removeFromNotificationManager) {
