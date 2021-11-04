@@ -115,7 +115,7 @@ export class FlowNotebookController {
 				const html_opts = "js-call-main=1 repl-no-quit=1";
 				const request = should_be_rendered ? 
 					"compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
-					(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force\n" + code + "\n\nexec cell_" + cell.index + "\n");
+					(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force exec\n" + code + "\n\n");
 				this._kernelChannel.append(request);
 				if (!this._executor || !this._executor.stdin.write(request)) {
 					reject("Error while writing: \n" + request);
@@ -125,7 +125,7 @@ export class FlowNotebookController {
 					const wrap_reject  = () => { this._callback = (s: string) => { }; reject(); }
 					if (is_repl_command) {
 						// Just perform a REPL command and print its output as plain text.
-						this._callback = this._makeTextOutCallback('', wrap_resolve, wrap_reject, cell, execution);
+						this._callback = this._makeTextOutCallback(wrap_resolve, wrap_reject, cell, execution);
 					} else if (should_be_rendered) {
 						// REPL interpreter will compile the code to html, so a callback will pick it up.
 						this._callback = this._makeHtmlOutCallback(wrap_resolve, wrap_reject, cell, execution);
@@ -133,9 +133,7 @@ export class FlowNotebookController {
 						// This first message is comming from 'add cell_<i>', thus is not an output yet.
 						// So we pass it to the 'makeTextOutCallback' - it may be used as an error message,
 						// if current cell code contains errors.
-						this._callback = (msg: string) => { 
-							this._callback = this._makeTextOutCallback(msg, wrap_resolve, wrap_reject, cell, execution);
-						};
+						this._callback = this._makeTextOutCallback(wrap_resolve, wrap_reject, cell, execution);
 					}
 				}
 			}
@@ -148,13 +146,13 @@ export class FlowNotebookController {
 		});
 	}
 	// Here 'msg' is a message from a previuos command (i.e. 'add cell_<i>' with a piece of code)
-	private _makeTextOutCallback(msg : string, resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
+	private _makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
 		return (buffer : string) => {
 			if (!buffer.startsWith('Error:')) {
 				this._setCellTextSuccess(cell, buffer, execution);
 				resolve();
 			} else {
-				this._setCellFail(cell, msg, execution);
+				this._setCellFail(cell, buffer, execution);
 				reject(buffer);
 			}
 		}
