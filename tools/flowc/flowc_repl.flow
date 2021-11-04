@@ -1,118 +1,193 @@
-import sys/system;
-import tools/flowc/flowc_helpers;
+import tools/flowc/flowc_typecheck;
+import tools/flowc/eval;
+import string_utils;
 
 export {
 	// Runs REPL loop for flow. Console help is available by 'help' command.
+	// Help on particular commands is available with 'help <command>'.
 	fcReplLoop(config : CompilerConfig) -> void;
+}
+
+fcReplDebug(message : string, config : CompilerConfig, level : int) -> void {
+	debug_level = s2i(getConfigParameterDef(config.config, "repl-debug", "0"));
+	if (debug_level > level) {
+		fcReplLog(message, config);
+	}
 }
 
 fcReplLoop(config : CompilerConfig) -> void {
 	code = if (config.flowfile == "") "" else {
 		getFcFileInfo(config.flowfile, config).content
 	}
-	println("Type 'help' and press enter to get more information about REPL mode in flowc.");
-	println("A piece of code is input from a command line until an empty line (two enters pressed).");
+	fcReplDebug("REPL STARTED", config, 0);
+	fcReplPrintln("Type 'help' and press enter to get more information about REPL mode in flowc.", true, config);
+	fcReplPrintln("A piece of code is input from a command line until an empty line (two enters pressed).", true, config);
 	for(
-		FcReplEnv(code, [], makeTree(), false),
+		FcReplEnv(config, initFcTypeEnvGlobal(), code, [], makeTree(), false),
 		\env -> !env.exit,
-		\env -> fcReplLoopStep(config, env)
+		\env -> fcReplLoopStep(env)
 	);
+	fcReplDebug("REPL ENDED", config, 0);
 	quit(0);
 }
 
-FcReplCommand ::= FcReplEval, FcReplExec, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplExit;
+FcReplPiece ::= FcReplDecls, FcReplStats, FcReplExp;
+	FcReplDecls(name : string, code : string, program : Maybe<FiProgram>);
+	FcReplStats(name : string, code : string, program : Maybe<FiProgram>);
+	FcReplExp(name : string, code : string, program : Maybe<FiProgram>);
+
+FcReplCommand ::= FcReplEval, FcReplExec, FcReplAdd, FcReplDel, FcReplSave, FcReplImport, FcReplConfig, FcReplExit;
 	FcReplEval(expr : string);
-	FcReplExec(code : string);
-	FcReplAdd(name : string, code : string);
+	FcReplExec(piece : FcReplPiece);
+	FcReplAdd(name : string, code : string, exec : bool);
 	FcReplDel(name : string);
 	FcReplSave(file : string);
 	FcReplImport(file : string);
+	FcReplConfig(opts : [string]);
 	FcReplExit();
 
 FcReplEnv(
+	config : CompilerConfig,
+	globEnv : FcTypeEnvGlobal,
 	code : string,
 	imports : [string],
-	pieces : Tree<string, string>,
+	pieces : Tree<string, FcReplPiece>,
 	exit : bool
 );
 
-fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
-	print("> ");
+fcReplPrint(str : string, config : CompilerConfig) -> void {
+	fcReplDebug("REPL print: \n" + strIndent(str) + "\n", config, 3);
+	print(str);
+}
+
+fcReplPrintln(str : string, success : bool, config : CompilerConfig) -> void {
+	msg = (if (success) "" else "Error: ") + str;
+	fcReplDebug("REPL println: \n" + strIndent(msg) + "\n", config, 3);
+	println(msg);
+}
+
+fcReplReadCommand(env : FcReplEnv) -> FcReplCommand {
+	fcReplPrint("> ", env.config);
 	header = ltrim2(fcReadLine(), " \r\n\t");
 	comm = trim2({
 		i = strIndexOf(header, " ");
 		if (i == -1) header else strLeft(header, i);
 	}, " \r\n\t");
-	args = filtermap(strSplit(trim2(header, " \r\t\n"), " "), \arg -> 
+	splitted = filtermap(strSplit(trim2(header, " \r\t\n"), " "), \arg -> 
 		if (isNotSpace(arg)) Some(trim2(arg, " \r\n\t")) else None()
 	);
-	if (length(args) == 0) {
-		fcReplReadCommand(config, env);
+	args = tail(splitted);
+	if (length(splitted) == 0) {
+		fcReplReadCommand(env);
 	} else {
+		fcReplDebug("REPL have read command: " + comm + ", args: " + strGlue(args, ", "), env.config, 0);
 		if (comm == "help") {
-			details = if (length(args) == 1) "" else args[1];
-			println(fcReplPrintHelp(details));
-			fcReplReadCommand(config, env);
+			details = if (length(args) == 0) "" else args[0];
+			fcReplPrintln(fcReplPrintHelp(details), true, env.config);
+			fcReplReadCommand(env);
 		} else if (comm == "exit") {
-			println("Bye.");
+			fcReplPrintln("Bye.", true, env.config);
 			FcReplExit();
 		} else if (comm == "show") {
-			if (length(args) == 1) {
-				println("show command must take an argument: the name of a code piece");
+			if (length(args) == 0 || args[0] == "all") {
+				fcReplPrintln(
+					foldTree(env.pieces, "", \name, piece, acc -> 
+						(if (acc == "") "" else acc + "\n") + 
+						"// " + name + "\n" + piece.code + "\n"
+					),
+					true, env.config
+				);
 			} else {
-				if (args[1] == "all") {
-					println(fcReplJoinCode(env));
-				} else {
-					switch (lookupTree(env.pieces, args[1])) {
-						Some(code): println(code);
-						None(): println("There's no piece of code with the name " + args[1]);
+				switch (lookupTree(env.pieces, args[0])) {
+					Some(piece): fcReplPrintln(piece.code, true, env.config);
+					None(): fcReplPrintln("There's no piece of code with the name " + args[0], false, env.config);
+				}
+			}
+			fcReplReadCommand(env);
+		} else if (comm == "eval") {
+			if (length(args) == 0) {
+				FcReplEval(fcReadCode(env.config)); 
+			} else {
+				switch (lookupTree(env.pieces, args[0])) {
+					Some(p): {
+						FcReplExec(p); 
+					}
+					None(): {
+						fcReplPrintln("No piece of code with the name " + args[0] + " is found", false, env.config);
+						fcReplReadCommand(env);
 					}
 				}
 			}
-			fcReplReadCommand(config, env);
-		} else if (comm == "eval") {
-			FcReplEval(fcReadCode()); 
 		} else if (comm == "exec") {
-			FcReplExec(fcReadCode()); 
-		} else if (comm == "add") {
-			if (length(args) == 1) {
-				println("add command must take an argument: the name of a code piece");
-				fcReplReadCommand(config, env);
+			if (length(args) == 0) {
+				fcReplPrintln("show command must take an argument: the name of a code piece", false, env.config);
+				fcReplReadCommand(env);
 			} else {
-				switch (lookupTree(env.pieces, args[1])) {
-					Some(__): {
-						println("A piece of code with the name " + args[1] + " already exists");
-						fcReplReadCommand(config, env);
+				switch (lookupTree(env.pieces, args[0])) {
+					Some(p): {
+						FcReplExec(p); 
 					}
-					None(): FcReplAdd(args[1], fcReadCode()); 
+					None(): {
+						fcReplPrintln("No piece of code with the name " + args[0] + " is found", false, env.config);
+						fcReplReadCommand(env);
+					}
+				}
+			}
+		} else if (comm == "add") {
+			if (length(args) == 0) {
+				fcReplPrintln("add command must take an argument: the name of a code piece", false, env.config);
+				fcReplReadCommand(env);
+			} else {
+				comm_args = tail(args);
+				exec = contains(comm_args, "exec"); 
+				switch (lookupTree(env.pieces, args[0])) {
+					Some(__): {
+						force = contains(comm_args, "force");
+						if (!force) {
+							fcReplPrintln("A piece of code with the name " + args[0] + " already exists", false, env.config);
+							fcReplReadCommand(env);
+						} else { 
+							FcReplAdd(args[0], fcReadCode(env.config), exec); 
+						}
+					}
+					None(): {
+						FcReplAdd(args[0], fcReadCode(env.config), exec); 
+					}
 				}
 			}
 		} else if (comm == "del") {
-			if (length(args) == 1) {
-				println("del command must take an argument: the name of a code piece");
-				fcReplReadCommand(config, env);
+			if (length(args) == 0) {
+				fcReplPrintln("del command must take an argument: the name of a code piece", false, env.config);
+				fcReplReadCommand(env);
 			} else {
-				switch (lookupTree(env.pieces, args[1])) {
-					Some(__): FcReplDel(args[1]); 
+				switch (lookupTree(env.pieces, args[0])) {
+					Some(__): FcReplDel(args[0]); 
 					None(): {
-						println("There's no piece of code with the name " + args[1]);
-						fcReplReadCommand(config, env);
+						fcReplPrintln("There's no piece of code with the name " + args[0], false, env.config);
+						fcReplReadCommand(env);
 					}
 				}
 			}
 		} else if (comm == "save") {
-			if (length(args) == 1) {
-				println("save command must take an argument: the name of a file");
-				fcReplReadCommand(config, env);
+			if (length(args) == 0) {
+				fcReplPrintln("save command must take an argument: the name of a file", false, env.config);
+				fcReplReadCommand(env);
 			} else {
-				FcReplSave(args[1]);
+				FcReplSave(args[0]);
 			}
 		} else if (comm == "import") {
-			if (length(args) == 1) {
-				println("import command must take an argument: the name of a file");
-				fcReplReadCommand(config, env);
+			if (length(args) == 0) {
+				fcReplPrintln("import command must take an argument: the name of a file", false, env.config);
+				fcReplReadCommand(env);
 			} else {
-				FcReplImport(args[1]);
+				FcReplImport(args[0]);
+			}
+		} else if (comm == "config") {
+			if (length(args) == 0) {
+				fcReplPrintln("config command must take at least one argument", false, env.config);
+				fcReplReadCommand(env);
+			} else {
+				FcReplConfig(args);
 			}
 		} else {
 			FcReplEval(fcReadLines(header, ""));
@@ -120,43 +195,99 @@ fcReplReadCommand(config : CompilerConfig, env : FcReplEnv) -> FcReplCommand {
 	}
 }
 
-fcReplLoopStep(config : CompilerConfig, env : FcReplEnv) -> FcReplEnv {
-	switch (fcReplReadCommand(config, env)) {
-		FcReplEval(expr): {
-			fcReplRun(config, env, fcReplWrapExpr(expr));
+FcReplCode(
+	imports : [string],
+	source : string
+);
+
+fcReplSplitCode(config : CompilerConfig, src : string) -> FcReplCode {
+	lines = filtermap(strSplit(src, "\n"), \l -> 
+		if (isNotSpace(l)) Some(rtrim2(l, " \t\r")) else None()
+	);
+	FcReplCode(
+		filtermap(lines, \line ->
+			if (startsWith(line, "import ")) Some(rtrim2(strRight(line, 7), "; \t")) else None()
+		),
+		strGlue(filter(lines, \line -> !startsWith(line, "import")), "\n")
+	);
+}
+
+fcReplLoopStep(env : FcReplEnv) -> FcReplEnv {
+	command = fcReplReadCommand(env);
+	fcReplDebug("REPL command: " + fcReplCommand2s(command, true) + " have read", env.config, 0);
+	run_src = \src -> {
+		code = fcReplSplitCode(env.config, src);
+		fcReplRun( 
+			FcReplEnv(env with imports = concat(env.imports, code.imports)),
+			code.source
+		);
+	}
+	run_piece = \piece -> {
+		switch (piece) {
+			FcReplDecls(name, code, program): {
+				// evaluation of a declaration makes no effect
+			}
+			FcReplStats(name, src, program): {
+				run_src(src);
+			}
+			FcReplExp(name, src, program): {
+				run_src(src);
+			}
 		}
-		FcReplExec(code): {
-			fcReplRun(config, env, code);
+	}
+	ret = switch (command) {
+		FcReplEval(src): {
+			run_src(src);
+			env;
 		}
-		FcReplAdd(name, code): {
-			FcReplEnv(env with pieces = setTree(env.pieces, name, code));
+		FcReplExec(piece): {
+			run_piece(piece);
+			env;
+		}
+		FcReplAdd(name, src, exec): {
+			code = fcReplSplitCode(env.config, src);
+			env1 = fcReplAdd(
+				FcReplEnv(env with imports = concat(env.imports, code.imports)), 
+				name,
+				code.source
+			);
+			if (exec) {
+				piece = lookupTreeDef(env1.pieces, name, FcReplDecls("", "", None()));
+				run_piece(piece);
+			}
+			env1;
 		}
 		FcReplDel(name): {
 			FcReplEnv(env with pieces = removeFromTree(env.pieces, name));
 		}
 		FcReplSave(file): {
-			setFileContent(file, fcReplJoinCode(env));
+			setFileContent(file, fcReplJoinCode(env, true));
 			env;
 		}
 		FcReplImport(file): {
 			FcReplEnv(env with imports = concat(env.imports, [file]));
 		}
+		FcReplConfig(opts): {
+			FcReplEnv(env with 
+				config = setConfigOptions(env.config, filtermap(opts, \opt0 -> {
+					opt = trim2(opt0, " \t\r\n");
+					if (opt == "") None() else 
+					if (!strContains(opt, "=")) Some(Pair(opt, "")) else {
+						splitted = strSplit(opt, "=");
+						Some(Pair(splitted[0], splitted[1]))
+					}
+				}))
+			);
+		}
 		FcReplExit(): {
 			FcReplEnv(env with exit = true);
 		}
 	}
+	fcReplDebug("REPL command: " + fcReplCommand2s(command, false) + " completed", env.config, 0);
+	ret;
 }
 
-fcDeleteGently(file : string) -> void {
-	if (fileExists(file)) {
-		err = deleteFile(file);
-		if (err != "") {
-			println(err);
-		}
-	}
-}
-
-fcReplWrapExpr(expr : string) -> string {
+fcReplUnwrapfcReplPrintln(expr : string) -> string {
 	expr0 = trim2(expr, " \n\r\t");
 	expr1 = if (!endsWith(expr0, ";")) expr0 else strLeft(expr0, strlen(expr0) - 1);
 	expr2 = if (!startsWith(expr1, "println(")) expr1 else 
@@ -164,59 +295,186 @@ fcReplWrapExpr(expr : string) -> string {
 	expr3 = if (!startsWith(expr2, "print(")) expr2 else 
 		strRight(strLeft(expr2, strlen(expr2) - 1), 6);
 	expr3;
-	"println(" + expr3 + ");";
 }
 
-fcReplRun(config : CompilerConfig, env : FcReplEnv, code : string) -> FcReplEnv {
-	prog_code = 
-		"import runtime;\n\n" + 
-		fcReplJoinCode(env) + "\n" + 
-		"main() -> void {\n" + 
-		"\t" + (if (code != "" && !endsWith(code, ";")) code + ";" else code) + "\n" +
-		"\tquit(0);\n}\n\n";
-	setFileContent("___tmp___.flow", prog_code);
-	print_out = \out -> if (strContains(out, "Error:")) println(out);
-	engine = getConfigParameterDef(config.config, "repl-engine", "bc");
-	flowc = "flowc1" + (if (hasTargetName("windows")) ".bat" else "");
-	flowcpp = "flowcpp" + (if (hasTargetName("windows")) ".bat" else "");
-	if (engine == "jar") {
-		compile = execSystemProcess(flowc, ["jar=1", "___tmp___.flow"], ".", print_out, println);
-		if (compile == 0) {
-			execSystemProcess("java", ["-jar", "___tmp___.jar"], ".", println, println);
-			{ }
+fcPrepareExpSource(env : FcReplEnv, code : string, args : [string]) -> string {
+	blueprint("
+		%env_code%
+
+		main() -> void {
+			tmp_var = %expr_code%;
+			println(tmp_var);
 		}
-		fcDeleteGently("___tmp___.jar");
-	} else if (engine == "js") {
-		compile = execSystemProcess(flowc, ["es6=___tmp___.js", "nodejs=1", "___tmp___.flow"], ".", print_out, println);
-		if (compile == 0) {
-			execSystemProcess("js", ["___tmp___.js"], ".", println, println);
-			{ }
+		",
+		[
+			"env_code", fcReplJoinCode(env, false),
+			"expr_code", code,
+		]
+	);
+}
+
+fcPrepareStatsSource(env : FcReplEnv, code : string, args : [string]) -> string {
+	blueprint("
+		%env_code%
+		
+		main() -> void {
+			%main_code%
 		}
-		fcDeleteGently("___tmp___.js");
-	} else if (engine == "bc") {
-		compile = execSystemProcess(flowc, ["bytecode=1", "___tmp___.flow"], ".", print_out, println);
-		if (compile == 0) {
-			execSystemProcess(flowcpp, ["--batch", "___tmp___.bytecode"], ".", println, println);
-			{ }
+		",
+		[
+			"env_code", fcReplJoinCode(env, false),
+			"main_code", code
+		]
+	);
+}
+
+fcPrepareDeclsSource(env : FcReplEnv, code : string, args : [string]) -> string {
+	main = if (strContains(code, "main()")) "" else 
+	blueprint("
+		main() -> void {
 		}
-		fcDeleteGently("___tmp___.bytecode");
-	} else {
-		println("unknown execution engine: " + engine);
+		",
+		["quit", (if (contains(args, "repl-no-quit=1")) "//" else "") + "quit(0);"]
+	);
+	blueprint("
+		%env_code%
+
+		%cur_code%
+		
+		%main%
+		",
+		[
+			"env_code", fcReplJoinCode(env, false),
+			"cur_code", code,
+			"main", main
+		]
+	);
+}
+
+fcPreparePieceSource(env : FcReplEnv, piece : FcReplPiece, args : [string]) -> string {
+	code = switch (piece) {
+		FcReplDecls(name, code, prog): fcPrepareDeclsSource(env, code, args);
+		FcReplStats(name, code, prog): fcPrepareStatsSource(env, code, args);
+		FcReplExp(name, code, prog):   fcPrepareExpSource(env, code, args);
 	}
-	fcDeleteGently("___tmp___.flow");
-	env
+	setFileContent("___tmp___.flow", code);
+	code;
 }
 
-fcReplJoinCode(env : FcReplEnv) -> string {
-	(if (env.imports == []) "" else {
-		strGlue(map(env.imports, \imp -> "import " + 
-			(if (endsWith(imp, ";")) imp else imp + ";")
-		), "\n") + "\n"
-	}) +
-	(if (env.code == "") "" else env.code + "\n\n") + 
-	concatStrings(map(tree2pairs(env.pieces), 
-		\p -> "// " + p.first + "\n" + p.second
-	));
+fcDeleteGently(file : string, config : CompilerConfig) -> void {
+	if (fileExists(file) && getConfigParameterDef(config.config, "repl-save-tmp", "0") == "0") {
+		err = deleteFile(file);
+		if (err != "") {
+			fcReplDebug("REPL error while deleting: " + file + "\n" + err, config, 0);
+			fcReplPrintln(err, false, config);
+		}
+	}
+}
+
+fcReplMakePiece(env : FcReplEnv, name : string, code0 : string) -> Maybe<FcReplPiece> {
+	env_code = fcReplJoinCode(env, false);
+	code1 = trim2(code0, " \t\n\r");
+	cur_code = if (code1 != "" && !endsWith(code1, ";")) code1 + ";" else code1;
+	cur_unwrapped = fcReplUnwrapfcReplPrintln(cur_code);
+	code_variants = [
+		// At first, try to treat code as an expression
+		FcReplExp(name, cur_unwrapped, None()),
+		// Then, try to treat code as a set of statements
+		FcReplStats(name, cur_code, None()),
+		// At last, try to treat code as a set of toplevel definitions 
+		FcReplDecls(name, cur_code, None()),
+	];
+	make = \verb -> findmap(code_variants, \variant -> {
+		code = fcPreparePieceSource(env, variant, []);
+		fcReplDebug("REPL TRYING TO TYPECHECK: \n" + variant.code + "\n\n" + code, env.config, verb);
+		fcSetSkipPrinting(env.config.threadId, true);
+		variant_conf = CompilerConfig(env.config with flowfile = "___tmp___");
+		pair = parseAndTypecheckProgram(variant_conf, initFcTypeEnvGlobal(), "___tmp___");
+		fcSetSkipPrinting(env.config.threadId, false);
+		if (pair.second == 0) {
+			fcReplDebug("WAS TYPECHECKED", env.config, verb);
+			Some(switch(variant) {
+				FcReplExp(__, __, __): FcReplExp(variant with program = Some(pair.first));
+				FcReplStats(__,__,__): FcReplStats(variant with program = Some(pair.first));
+				FcReplDecls(__,__,__): FcReplDecls(variant with program = Some(pair.first));
+			});
+		} else {
+			fcReplDebug("WAS NOT TYPECEHECKED", env.config, verb);
+			None();
+		}
+	});
+	ret = make(1);
+	if (isNone(ret)) {
+		make(0); {}
+	}
+	ret;
+}
+
+fcReplAdd(env0 : FcReplEnv, name : string, code : string) -> FcReplEnv {
+	env = FcReplEnv(env0 with 
+		pieces = removeFromTree(env0.pieces, name)
+	);
+	switch (fcReplMakePiece(env, name, code)) {
+		Some(piece): {
+			fcReplDebug("REPL ADDED: \n" + toString(piece) + "\n\n", env.config, 1);
+			FcReplEnv(env with 
+				pieces = setTree(env.pieces, name, piece)
+			);
+		}
+		None(): {
+			fcReplDebug("REPL ERROR IN CODE:\n" + code, env.config, 0);
+			fcReplPrintln("the entered code contains errors and cannot be compiled.", false, env.config);
+			env;
+		}
+	}
+}
+
+fcReplRun(env : FcReplEnv, code0 : string) -> void {
+	switch (fcReplMakePiece(env, "", code0)) {
+		Some(piece): {
+			switch (piece.program) {
+				Some(program): {
+					globals = fcInitEvalGlobals(program, println, env.globEnv);
+					ret = fcCallFunction("main", [], globals);
+					if (getDataTagForValue(ret) == 4) {
+						err = cast(ret : flow -> string);
+						println("Runtime error occured: " + err);
+					} else if (ret == voidValue()) {
+						// Normal exit status
+					} else {
+						println("Strage, main function must return void, but returned '" + toString(ret) + "'");
+					}
+				}
+				None(): {
+				}
+			}
+		}
+		None(): {
+			fcReplDebug("REPL ERROR IN CODE:\n" + code0, env.config, 0);
+			fcReplPrintln("the entered code contains errors and cannot be compiled.", false, env.config);
+		}
+	}
+	fcDeleteGently("___tmp___.js", env.config);
+	fcDeleteGently("___tmp___.flow", env.config);
+}
+
+fcReplJoinCode(env : FcReplEnv, all : bool) -> string {
+	imports = uniq(concat(env.imports, ["string"]));
+	strGlue(map(imports, \imp -> "import " + 
+		(if (endsWith(imp, ";")) imp else imp + ";")
+	), "\n") + "\n\n" +
+	(if (sizeTree(env.pieces) == 0) "" else 
+		concatStrings(map(
+			sortCustom(tree2pairs(env.pieces), \p -> p.first, true), 
+			\pair -> 
+				switch (pair.second) {
+					FcReplDecls(name, code, prog): "// " + name + "\n" + code + "\n";
+					FcReplStats(name, code, prog): if (all) "// " + name + "\n/* \n" + strIndent(code) + "\n*/\n" else "";
+					FcReplExp(name, code, prog):   if (all) "// " + name + "\n//" + strReplace(code, "\n", "\\n") + "\n" else "";
+				}
+		))
+	) +
+	(if (env.code == "") "" else env.code + "\n\n");
 }
 
 fcReplPrintHelp(details : string) -> string {
@@ -224,9 +482,9 @@ fcReplPrintHelp(details : string) -> string {
 		"Adding a piece of code.\n" +
 		"-----------------------\n" +
 		"To add a piece of code enter the command:\n" +
-		"\t> add <name>\n" +
+		"\t> add <name> [force]\n" +
 		"where <name> is the name of a function/variable/struct/union/etc.\n" + 
-		"then press enter and start input of code.\n" + 
+		"then press enter and start input of code. Add a 'force' parameter to overwrite the existing code.\n" + 
 		"The empty line (double enter) will be considered the end of the code.\n";
 	} else if (details == "del") {
 		"Deleting a piece of code.\n" +
@@ -244,12 +502,11 @@ fcReplPrintHelp(details : string) -> string {
 		"the console is considered an expression to evaluate\n" +
 		"The empty line (double enter) means the end of the input.\n";
 	} else if (details == "exec") {
-		"Execute a code.\n" +
+		"Execute a named piece code.\n" +
 		"-----------------------\n" +
 		"To execute a piece of code the command:\n" +
-		"\t> exec \n" +
-		"and press enter. After that the stage of code input begins.\n" +
-		"The empty line (double enter) means the end of the input.\n";
+		"\t> exec <name>\n" +
+		"and press enter.\n";
 	} else if (details == "save") {
 		"Save entered code as a file.\n" +
 		"----------------------------\n" +
@@ -269,6 +526,11 @@ fcReplPrintHelp(details : string) -> string {
 		"To add an imported module use command:\n" +
 		"\t> import <module>\n" +
 		"where <module> is the name of a module.\n";
+	} else if (details == "config") {
+		"Set a config key-value pairs.\n" +
+		"----------------------------\n" +
+		"To set config options use a space separated key-value pairs (separated by =):\n" +
+		"\t> config <key_1>=<val_1> <key_2>=<val_2> ... <key_n>=<val_n>\n";
 	} else {
 		"Flowc REPL commands:\n" +
 		"--------------------\n" +
@@ -276,12 +538,13 @@ fcReplPrintHelp(details : string) -> string {
 		"help <command>  - print the help on a specific command\n" +
 		"exit            - exit from the interpreter\n" +
 		"eval            - eval an expression\n" +
-		"exec            - execute some code\n" +
+		"exec            - execute a named code fragment\n" +
 		"add <name>      - add a named code fragment \n" +
 		"show <name>     - show a named code fragment \n" +
 		"del <name>      - delete a named code fragment \n" +
 		"save <file>     - save to a file \n" +
-		"import <module> - add an import \n";
+		"import <module> - add an import \n" +
+		"config <pairs>  - set config key-value pairs \n";
 	}
 }
 
@@ -289,8 +552,10 @@ fcReadLine() -> string {
 	readUntil("\n");
 }
 
-fcReadCode() -> string {
-	fcReadLines("", "");
+fcReadCode(config : CompilerConfig) -> string {
+	code = fcReadLines("", "");
+	fcReplDebug("REPL code:\n" + code, config, 3);
+	code;
 }
 
 fcReadLines(prev : string, acc : string) -> string {
@@ -300,5 +565,46 @@ fcReadLines(prev : string, acc : string) -> string {
 		acc + two_lines
 	} else {
 		fcReadLines(line, acc + prev);
+	}
+}
+
+fcReplCommand2s(command : FcReplCommand, full : bool) -> string {
+	switch (command) {
+		FcReplEval(expr):            "eval" + if (full) " " + expr else "";
+		FcReplExec(piece):           "exec " + fcReplPiece2s(piece, full);
+		FcReplAdd(name, code, exec): "add " + name + (if (full) "\n" + code else "") + (if (!exec) "" else " exec");
+		FcReplDel(name):             "del " + name;
+		FcReplSave(file):            "save " + file;
+		FcReplImport(file):          "import " + file;
+		FcReplConfig(opts):          "config " + strGlue(opts, " ");
+		FcReplExit():                "exit";
+	}
+}
+
+fcReplPiece2s(piece : FcReplPiece, full : bool) -> string {
+	switch (piece) {
+		FcReplDecls(name, code, prog): name + " decls" + (if (full) " \n" + code else ""); 
+		FcReplStats(name, code, prog): name + " stats" + (if (full) " \n" + code else "");
+		FcReplExp(name, code, prog):   name + " exp" + (if (full) " \n" + code else "");
+	}
+}
+
+fcReplLog(message : string, conf : CompilerConfig) -> void {
+	log_file = getConfigParameterDef(conf.config, "repl-log", getFlowDir() + "/.log/flowc_repl.log");
+	log_dir = fcDirName(log_file);
+	if (log_dir != "") {
+		err = ensureDirectoryExists(log_dir);
+		if (err != "") {
+			fcPrintln(err, conf.threadId);
+		}
+	}
+	if (log_file != "") {
+		log_size = s2i(getConfigParameterDef(conf.config, "log-max-lines", "128"));
+		message_size = getConfigParameterDef(conf.config, "log-max-message", "4096");
+		if (isDigits(message_size)) {
+			writeLogMessage(fcCutLongStringUpTo(message, s2i(message_size)), log_file, log_size);
+		} else {
+			writeLogMessage(message, log_file, log_size);
+		}
 	}
 }

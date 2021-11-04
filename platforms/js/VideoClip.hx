@@ -236,8 +236,8 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {
-		startTime = start >= 0 ? start : 0;
-		endTime = end > startTime ? end : videoWidget.duration;
+		startTime = start >= 0 ? floorTime(start) : 0;
+		endTime = end > startTime ? floorTime(end) : videoWidget.duration;
 		checkTimeRange(videoWidget.currentTime, true);
 	}
 
@@ -569,6 +569,10 @@ class VideoClip extends FlowContainer {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		return localBounds.getRectangle(rect);
+	}
+
+	private function floorTime(time : Float) : Float {
+		return Math.floor(time * 100) / 100;
 	}
 
 	public function calculateWidgetBounds() : Void {

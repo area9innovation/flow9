@@ -51,6 +51,7 @@ import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
 import com.sun.management.OperatingSystemMXBean;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -985,6 +986,31 @@ public class Native extends NativeHost {
 		return "";
 	}
 
+	public static boolean removeUrlParameter(String name) {
+		String[] args = FlowRuntime.program_args;
+		int index = 0;
+		for (String p : args) {
+			if (p.startsWith(name + "=")) {
+				break;
+			} else {
+				++index;
+			}
+		}
+		if (index == args.length) {
+			return false;
+		} else {
+			FlowRuntime.program_args = new String[args.length - 1];
+			for (int i = 0; i < args.length; ++ i) {
+				if (i < index) {
+					FlowRuntime.program_args[i] = args[i];
+				} else if (index < i){
+					FlowRuntime.program_args[i - 1] = args[i];
+				}
+			}
+			return true;
+		}
+	}
+
 	public static final String loaderUrl() {
 		return "";
 	}
@@ -1066,6 +1092,130 @@ public class Native extends NativeHost {
 		} else return new Object[0];
 	}
 
+	public static final String extractStructName(Object val) {
+		if (val instanceof Struct) {
+			return ((Struct) val).getTypeName();
+		} else return "";
+	}
+
+	public static final boolean isStructName(String name) {
+		return FlowRuntime.struct_ids.containsKey(name);
+	}
+
+	public static final int extractFuncArity(Object fn) {
+		if (fn instanceof Func0) {
+			return 0;
+		} else if (fn instanceof Func1) {
+			return 1;
+		} else if (fn instanceof Func2) {
+			return 2;
+		} else if (fn instanceof Func3) {
+			return 3;
+		} else if (fn instanceof Func4) {
+			return 4;
+		} else if (fn instanceof Func5) {
+			return 5;
+		} else if (fn instanceof Func6) {
+			return 6;
+		} else if (fn instanceof Func7) {
+			return 7;
+		} else if (fn instanceof Func8) {
+			return 8;
+		} else if (fn instanceof Func9) {
+			return 9;
+		} else if (fn instanceof Func10) {
+			return 10;
+		} else if (fn instanceof Func11) {
+			return 11;
+		} else if (fn instanceof Func12) {
+			return 12;
+		} else {
+			// TODO: add more arities
+			return -1;
+		}
+	}
+
+	public static final String[] structFieldNames(String name) {
+		Integer struct_id = FlowRuntime.struct_ids.get(name);
+		if (struct_id == null) {
+			return new String[0];
+		} else {
+			Struct struct = FlowRuntime.struct_prototypes[struct_id];
+			return struct.getFieldNames();
+		}
+	}
+
+	private static ConcurrentHashMap<String, Method> field_setters = null;
+
+	public static final Object setMutableField(Object obj, String field, Object value) {
+		if (field_setters == null) {
+			field_setters = new ConcurrentHashMap<String, Method>();
+		}
+		try {
+			if (obj instanceof Struct) {
+				Struct struct = (Struct)obj;
+				String key = struct.getTypeName() + "-" + field;
+				Method setter = null;
+				if (!field_setters.contains(key)) {
+					for (Method meth : struct.getClass().getMethods()) {
+						if (meth.getName().equals("set_" + field)) {
+							setter = meth;
+							break;
+						}
+					}
+					if (setter != null) {
+						field_setters.put(key, setter);
+					}
+				} else {
+					setter = field_setters.get(key);
+				}
+				if (setter != null) {
+					setter.invoke(struct, value);
+				} else {
+					System.out.println("Failed to set a field " + field + " in struct " + struct.getTypeName());
+					System.exit(255);
+				}
+			}
+		} catch (IllegalAccessException ex) {
+			System.out.println(ex.getMessage());
+			System.exit(255);
+		} catch (InvocationTargetException ex) {
+			System.out.println(ex.getMessage());
+			System.exit(255);
+		}
+		return null;
+	}
+
+	// What is the type tag for this value?
+	// 0: void, 1: bool, 2: int, 3: double, 4 : string, 5: array, 6: struct, 12: code pointer, 20: native function
+	// 31: reference, 32: native value, 34: closure pointer, 48: captured frame
+	public static final int getDataTagForValue(Object x) {
+		if (x == null) {
+			return 0;
+		} else if (x instanceof Boolean) {
+			return 1;
+		} else if (x instanceof Integer) {
+			return 2;
+		} else if (x instanceof Double) {
+			return 3;
+		} else if (x instanceof String) {
+			return 4;
+		} else if (x.getClass().isArray()) {
+			return 5;
+		} else if (x instanceof Struct) {
+			return 6;
+		} else if (x instanceof Reference) {
+			return 31;
+		} else if (x.getClass().getName().contains("$$Lambda$")) {
+			return 34;
+		} else {
+			return 32;
+		}
+	}
+
+	public static final Object voidValue() {
+		return null;
+	}
 
 	public static final Object quit(int c) {
 		System.exit(c);
@@ -2042,7 +2192,7 @@ public class Native extends NativeHost {
 	@SuppressWarnings (value="unchecked")
 	public static final Object hostCall(String name, Object[] args) {
 		if (!host_call_funcs.containsKey(name)) {
-			findHostCall(name, args);
+			addHostCall(name, args);
 		}
 		Object fn = host_call_funcs.get(name);
 		if (fn == null) {
@@ -2080,6 +2230,14 @@ public class Native extends NativeHost {
 		}
 	}
 
+	public static final boolean hostCallExists(String name) {
+		if (host_call_funcs.containsKey(name)) {
+			return true;
+		} else {
+			return findHostCall(name) != null;
+		}
+	}
+
 	private static final Class loadHostCallClass(String class_path) {
 		try {
 			return Class.forName(class_path);
@@ -2093,7 +2251,7 @@ public class Native extends NativeHost {
 		}
 	}
 
-	private static final void findHostCall(String name, Object[] args) {
+	private static final Method findHostCall(String name) {
 		String[] parts = name.split("\\.");
 		if (parts.length < 2) {
 			// Wrong format: must have at least one . in name
@@ -2105,126 +2263,265 @@ public class Native extends NativeHost {
 			String meth_name = parts[parts.length - 1];
 			Class cls = loadHostCallClass(class_path);
 			if (cls != null) {
-				for (java.lang.reflect.Method meth : cls.getMethods()) {
-					if (meth.getName().equals(meth_name) && meth.getParameterCount() == args.length) {
+				for (Method meth : cls.getMethods()) {
+					if (meth.getName().equals(meth_name)) {
 						int modifiers = meth.getModifiers();
 						if (java.lang.reflect.Modifier.isStatic(modifiers) && java.lang.reflect.Modifier.isPublic(modifiers)) {
-							if (args.length == 0) {
-								host_call_funcs.put(name, (Func0)(() -> {
-									try {
-										return meth.invoke(cls);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 1) {
-								host_call_funcs.put(name, (Func1)((Object a1) -> {
-									try {
-										return meth.invoke(cls, a1);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 2) {
-								host_call_funcs.put(name, (Func2)((Object a1, Object a2) -> {
-									try {
-										return meth.invoke(cls, a1, a2);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 3) {
-								host_call_funcs.put(name, (Func3)((Object a1, Object a2, Object a3) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 4) {
-								host_call_funcs.put(name, (Func4)((Object a1, Object a2, Object a3, Object a4) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 5) {
-								host_call_funcs.put(name, (Func5)((Object a1, Object a2, Object a3, Object a4, Object a5) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 6) {
-								host_call_funcs.put(name, (Func6)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5, a6);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 7) {
-								host_call_funcs.put(name, (Func7)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5, a6, a7);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 8) {
-								host_call_funcs.put(name, (Func8)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5, a6, a7, a8);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 9) {
-								host_call_funcs.put(name, (Func9)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5, a6, a7, a8, a9);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 10) {
-								host_call_funcs.put(name, (Func10)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else if (args.length == 11) {
-								host_call_funcs.put(name, (Func11)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10, Object a11) -> {
-									try {
-										return meth.invoke(cls, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
-									} catch (ReflectiveOperationException e) {
-										System.err.println(e.getMessage());
-										return null;
-									}
-								}));
-							} else {
-								// Not implemented yet
-							}
-							break;
+							return meth;
 						}
 					}
 				}
 			}
 		}
+		// Method is not found
+		return null;
+	}
+
+	private static final void addHostCall(String name, Object[] args) {
+		Method meth = findHostCall(name);
+		if (meth != null && meth.getParameterCount() == args.length) {
+			try {
+				if (args.length == 0) {
+					host_call_funcs.put(name, (Func0)(() -> {
+						try {
+							return meth.invoke(null);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 1) {
+					host_call_funcs.put(name, (Func1)((Object a1) -> {
+						try {
+							return meth.invoke(null, a1);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 2) {
+					host_call_funcs.put(name, (Func2)((Object a1, Object a2) -> {
+						try {
+							return meth.invoke(null, a1, a2);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 3) {
+					host_call_funcs.put(name, (Func3)((Object a1, Object a2, Object a3) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 4) {
+					host_call_funcs.put(name, (Func4)((Object a1, Object a2, Object a3, Object a4) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 5) {
+					host_call_funcs.put(name, (Func5)((Object a1, Object a2, Object a3, Object a4, Object a5) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 6) {
+					host_call_funcs.put(name, (Func6)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 7) {
+					host_call_funcs.put(name, (Func7)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 8) {
+					host_call_funcs.put(name, (Func8)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 9) {
+					host_call_funcs.put(name, (Func9)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 10) {
+					host_call_funcs.put(name, (Func10)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								"arg 10: " + a10 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 11) {
+					host_call_funcs.put(name, (Func11)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10, Object a11) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								"arg 10: " + a10 + "\n" +
+								"arg 11: " + a11 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else if (args.length == 12) {
+					host_call_funcs.put(name, (Func12)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10, Object a11, Object a12) -> {
+						try {
+							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
+						} catch (ReflectiveOperationException e) {
+							System.err.println(
+								"at calling " + name + ":\n" + 
+								"arg 1: " + a1 + "\n" +
+								"arg 2: " + a2 + "\n" +
+								"arg 3: " + a3 + "\n" + 
+								"arg 4: " + a4 + "\n" + 
+								"arg 5: " + a5 + "\n" +
+								"arg 6: " + a6 + "\n" +
+								"arg 7: " + a7 + "\n" +
+								"arg 8: " + a8 + "\n" +
+								"arg 9: " + a9 + "\n" +
+								"arg 10: " + a10 + "\n" +
+								"arg 11: " + a11 + "\n" +
+								"arg 12: " + a12 + "\n" +
+								exceptionStackTrace(e)
+							);
+							return null;
+						}
+					}));
+				} else {
+					// Not implemented yet
+				}
+			} catch (java.lang.IllegalArgumentException ex) {
+				System.err.println("While adding a function: " + name + "\n" + ex.getMessage());
+			}
+		}
 	}
 }
+
