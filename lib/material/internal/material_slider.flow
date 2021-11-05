@@ -50,6 +50,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	sliderLabel = tryExtractStruct(m.style, MSliderLabel(\__ -> "", []));
 	sliderStepDescription = tryExtractStruct(m.style, MSliderStepDescription(\__ -> ""));
 	thumbRadius = extractStruct(m.style, MSliderThumbRadius(const(if (condensed) 6.0 else 8.0))).radius;
+	highlightedRanges = tryExtractStruct(m.style, MSliderHighlightedRanges(const([])));
+
 	mousePosition : MMousePosition = extractStruct(m.style, MMousePosition(make(zeroPoint)));
 	point = mousePosition.point;
 	hover = make(false);
@@ -64,7 +66,6 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	percent = make(0.);
 	editString = make("");
 	drag = ref false;
-	tooltipText = make("");
 	cursorPercent = fdivide(fsubtract(fpointX(point), const(12.0)), sliderWidth) |> (\p -> if (isRTL) fsubtract(const(1.), p) else p);
 
 	percent2value = \p -> sliderRange.min + p * minMax;
@@ -220,6 +221,68 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		])
 		|> (\t -> TTranslate(fselect(thumbRadiusT, FLift(\smallradius -> Point(-radius, -3. * radius - smallradius))), t))
 	}
+
+	makeRangeMarker = \par, range, start -> {
+		value = if (start) range.start else range.end;
+		anotherValue = if (start) range.end else range.start;
+		forceFn =
+			if (start) \v -> forceRange(v, 0., getValue(anotherValue))
+			else \v -> forceRange(v, getValue(anotherValue), 1.);
+
+		rColor = extractMColor(par, range.style, MPrimaryColor());
+		customMarker : MCustomMarker =
+			extractStruct(range.style, MCustomMarker(\hovered, __ -> {
+				TSelect(hovered, \hov ->
+					TCircle(6., [MFill(rColor), FillOpacity(if (hov) 1. else 0.87)])
+				)
+				|> TBorderLeft(-6.)
+				|> TBorderTop(-4.)
+			}));
+
+		markersEnabled = extractStruct(range.style, MMarkersEnabled(const(true))).enabled;
+
+		MComponent2T(manager, par, "MSliderHighlightedRangeMarker", [], \foc -> {
+				m2t(customMarker.fn(foc.hover, start), par)
+				|> (\t -> TConstruct([
+					makeSubscribeTrigger(foc.down, cursorPercent, \prc -> nextDistinct(value, forceFn(prc)))
+				], t))
+			},
+			m2t
+		)
+		|> (\marker -> TBorderT(fmultiply(sliderWidth, value), zero, zero, zero, marker))
+		|> (\marker -> TShow(markersEnabled, marker))
+	}
+
+	makeRangeBar = \par, range -> {
+		start = fmultiply(sliderWidth, range.start);
+		len = fmultiply(sliderWidth, fsubtract(range.end, range.start));
+
+		expandOnHover = extractStruct(range.style, TExpandOnHover(true)).expand;
+		tooltipText = extractStruct(range.style, MTooltipText(const("")));
+		rColor = extractMColor(par, range.style, MPrimaryColor());
+		MComponent2T(manager, par, "MSliderHighlightedRange", [MPassClicks(), tooltipText], \foc ->
+			TSelect(foc.hover, \hov ->
+				TRectangle(
+					[MFill(rColor), FillOpacity(if (hov) 1. else 0.7)],
+					TSizedWidthHeight(len, fmultiply(barHeight, const(if (hov && expandOnHover) 2. else 1.)))
+				)
+				|> TBorderTop(if (hov && expandOnHover) -2. else 0.)
+			),
+			m2t
+		)
+		|> (\r -> TBorderT(start, zero, zero, zero, r))
+	}
+
+	makeHighlightedRanges = \par, rangesT ->
+		TSelect(rangesT, \ranges -> map(ranges, \range -> {
+			rangeEnabled = extractStruct(range.style, MEnabled(const(true))).enabled;
+			TGroup([
+				makeRangeBar(par, range),
+				makeRangeMarker(par, range, true),
+				makeRangeMarker(par, range, false)
+			])
+			|> (\t -> TShow(rangeEnabled, t))
+		}) |> TGroup);
 
 	makeThumb = \thumb, sliderFoc, style -> {
 		name = "MSlider";
@@ -461,16 +524,17 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		rightBar =
 			sliderBar(foc, RightBar(), fsubtract(const(1.), rangeEndPercentU));
 
-		concat3(
+		concatA([
 			[
 				TColsDir([leftBar, activeBar, rightBar], isRTL)
 				|> addDiscreteValues(foc)
 			],
+			eitherMap(highlightedRanges, \highlighted -> [makeHighlightedRanges(foc, highlighted.ranges)], []),
 			eitherMap(chooseRange, \__ -> [makeThumb(startThumb, foc, activeItemStyle)], []),
 			[
 				makeThumb(endThumb, foc, activeItemStyle)
 			]
-		)
+		])
 		|> TGroupSameMetrics
 		|> TFixWidth(TSizedWidth(sliderWidth, 0.))
 		|> (\t -> if (!fullWidth) t else TAttachAvailableWidth(t, sliderWidth))
@@ -551,7 +615,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			contentW = make(0.);
 			posScale = make(zeroPositionScale);
 
-			tooltipText2 = fselect(cursorPercent, FLift(\prc ->
+			tooltipText = fselect(cursorPercent, FLift(\prc ->
 				tooltip.textFn(percent2value(snapPercent(prc)))
 			));
 			MTooltip2T(
@@ -559,12 +623,12 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				parent,
 				MTooltip(
 					TPositionScale(posScale, TAttachWidth(t, contentW)),
-					MSelect(tooltipText2, \txt -> MText(txt, [])),
+					MSelect(tooltipText, \txt -> MText(txt, [])),
 					[
 						MTooltipAlignment(MTop()),
 						MLightBackground(lightBackground),
 						MTranslatePosition(fselect3(point, contentW, posScale, \p, cw, ps -> Point((p.x - cw / 2.) * ps.scale.x, 0.))),
-						MEnabled(fneq(tooltipText2, ""))
+						MEnabled(fneq(tooltipText, ""))
 					]
 				),
 				m2t
