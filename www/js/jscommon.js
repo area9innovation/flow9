@@ -213,7 +213,7 @@ if (typeof htmlBundle == "undefined") {
 			xmlhttp.open("GET", "php/stamp.php?t=" + Date.now() + "&file=" + scriptName + ".js", true);
 			xmlhttp.send();
 		}
-	} else if (typeof starterScriptName == "undefined") {
+	} else if (typeof renderRoot == "undefined") {
 		document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
 	}
 } else if (typeof localStorage !== 'undefined') {

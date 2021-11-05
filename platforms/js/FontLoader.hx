@@ -112,10 +112,10 @@ class FontLoader {
 		if (weight != "") text.style.fontWeight = weight;
 		if (style != "") text.style.fontStyle = style;
 		text.style.visibility = "hidden";
-		Browser.document.body.appendChild(text);
+		RenderSupport.PixiStage.nativeWidget.appendChild(text);
 
 		Native.timer(FontLoadingTimeout, function() {
-			Browser.document.body.removeChild(text);
+			text.parentNode.removeChild(text);
 		});
 	}
 }

@@ -117,7 +117,6 @@ class RenderSupport {
 	public static function setRenderRoot(rootId : String) : Void {
 		var renderRoot = Browser.document.getElementById(rootId);
 		if (renderRoot != RenderRoot) {
-			previousRoot = PixiStage.nativeWidget;
 			RenderRoot = renderRoot;
 			RenderRoot.style.position = 'relative';
 			
@@ -285,7 +284,7 @@ class RenderSupport {
 			UserStyleTestElement = Browser.document.createElement("p");
 			UserStyleTestElement.setAttribute("role", "presentation");
 			UserStyleTestElement.style.visibility = "hidden";
-			Browser.document.body.appendChild(UserStyleTestElement);
+			PixiStage.nativeWidget.appendChild(UserStyleTestElement);
 		}
 	}
 	private static var UserDefinedFontSize : Float = null;
@@ -481,6 +480,10 @@ class RenderSupport {
 	//	Pixi renderer initialization
 	//
 	public static function init() : Bool {
+		if (untyped Browser.window.renderRoot != null && untyped Browser.window.renderRoot.shadowRoot != null) {
+			RenderRoot = untyped Browser.window.renderRoot;
+		}
+
 		if (PixiStage == null) {
 			setupPixiStage();
 		}
@@ -1167,14 +1170,6 @@ class RenderSupport {
 		untyped __js__("element.removeEventListener(event, fn, { passive : true })");
 	}
 
-	private static var previousRoot = null;
-	private static function updateNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
-		if (previousRoot != null) {
-			removeNonPassiveEventListener(previousRoot, event, fn);
-		}
-		addNonPassiveEventListener(element, event, fn);
-	}
-
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic) {
 		try {
@@ -1295,33 +1290,33 @@ class RenderSupport {
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-				updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
-				updateNonPassiveEventListener(root, "pointerup", onpointerup);
-				updateNonPassiveEventListener(root, "pointermove", onpointermove);
-				updateNonPassiveEventListener(root, "pointerout", onpointerout);
+				addNonPassiveEventListener(root, "pointerdown", onpointerdown);
+				addNonPassiveEventListener(root, "pointerup", onpointerup);
+				addNonPassiveEventListener(root, "pointermove", onpointermove);
+				addNonPassiveEventListener(root, "pointerout", onpointerout);
 			}
 
-			updateNonPassiveEventListener(root, "touchstart", onpointerdown);
-			updateNonPassiveEventListener(root, "touchend", onpointerup);
-			updateNonPassiveEventListener(root, "touchmove", onpointermove);
+			addNonPassiveEventListener(root, "touchstart", onpointerdown);
+			addNonPassiveEventListener(root, "touchend", onpointerup);
+			addNonPassiveEventListener(root, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			updateNonPassiveEventListener(root, "mousedown", onpointerdown);
-			updateNonPassiveEventListener(root, "mouseup", onpointerup);
-			updateNonPassiveEventListener(root, "mousemove", onpointermove);
-			updateNonPassiveEventListener(root, "mouseout", onpointerout);
+			addNonPassiveEventListener(root, "mousedown", onpointerdown);
+			addNonPassiveEventListener(root, "mouseup", onpointerup);
+			addNonPassiveEventListener(root, "mousemove", onpointermove);
+			addNonPassiveEventListener(root, "mouseout", onpointerout);
 		} else if (Platform.isIE) {
 			root.onpointerdown = onpointerdown;
 			root.onpointerup = onpointerup;
 			root.onpointermove = onpointermove;
 			root.onpointerout = onpointerout;
 		} else {
-			updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
-			updateNonPassiveEventListener(root, "pointerup", onpointerup);
-			updateNonPassiveEventListener(root, "pointermove", onpointermove);
-			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+			addNonPassiveEventListener(root, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(root, "pointerup", onpointerup);
+			addNonPassiveEventListener(root, "pointermove", onpointermove);
+			addNonPassiveEventListener(root, "pointerout", onpointerout);
 		}
 
-		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic) {
+		addNonPassiveEventListener(root, "keydown", function(e : Dynamic) {
 			if (RendererType == "html") {
 				onKeyDownAccessibilityZoom(e);
 			}
@@ -1332,7 +1327,7 @@ class RenderSupport {
 			emit("keydown", parseKeyEvent(e));
 		});
 
-		updateNonPassiveEventListener(root, "keyup", function(e : Dynamic) {
+		addNonPassiveEventListener(root, "keyup", function(e : Dynamic) {
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
@@ -1821,13 +1816,9 @@ class RenderSupport {
 		}
 
 		// The first flow render call. Hide loading progress indicator.
-		if (previousRoot != null) {
-			previousRoot.style.backgroundImage = null;
-		}
-		PixiStage.nativeWidget.style.backgroundImage = "none";
-		var indicator = Browser.document.getElementById("loading_js_indicator");
+		var indicator : Element = PixiStage.nativeWidget.querySelector("#loading_js_indicator");
 		if (indicator != null) {
-			Browser.document.body.removeChild(indicator);
+			indicator.parentNode.removeChild(indicator);
 		}
 	}
 
