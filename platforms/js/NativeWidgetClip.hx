@@ -104,7 +104,9 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function getFocus() : Bool {
-		return nativeWidget != null && Browser.document.activeElement == nativeWidget;
+		return nativeWidget != null && (Browser.document.activeElement == nativeWidget || (
+			Browser.document.activeElement == RenderSupport.RenderRoot && untyped RenderSupport.RenderRoot.shadowRoot.activeElement == nativeWidget
+		));
 	}
 
 	public function requestFullScreen() : Void {
