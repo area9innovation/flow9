@@ -22,6 +22,15 @@ function appendJsScript(url) {
 	document.head.appendChild(node);
 }
 
+function appendLink(url) {
+	var link = document.createElement("link");
+	link.setAttribute("rel", "preload");
+	link.setAttribute("as", "style");
+	link.setAttribute("type", "text/css");
+	link.setAttribute("href", url);
+	document.head.appendChild(link);
+}
+
 scriptNode = document.head.querySelector("script[src*='" + starterScriptName + "']");
 
 if (scriptNode) {
@@ -35,6 +44,9 @@ if (scriptNode) {
 		scripts.forEach(function(name) {
 			appendJsScript(prefix + "js/" + name)	
 		})
+
+		appendLink(prefix + "fonts/fonts.css")
+		appendLink(prefix + "flowjspixi.css")
 
 		if (url) {
 			const mainScriptName = url.searchParams.get('name')

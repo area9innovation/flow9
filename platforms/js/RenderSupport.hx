@@ -120,29 +120,30 @@ class RenderSupport {
 			previousRoot = PixiStage.nativeWidget;
 			RenderRoot = renderRoot;
 			RenderRoot.style.position = 'relative';
+			untyped RenderRoot.attachShadow({mode : 'open'});
 			
 			setupPixiStage();
 			createPixiRenderer();
 			initPixiStageEventListeners();
 
-			appendEmbeddedFlowStyles();
+			attachFlowStyles();
 			if (UserStyleTestElement != null && UserStyleTestElement.parentElement != PixiStage.nativeWidget) {
 				PixiStage.nativeWidget.appendChild(UserStyleTestElement);
 			}
 		}
 	}
 
-	public static function appendEmbeddedFlowStyles() : Void {
-		var mainStyle = Browser.document.createElement('link');
-		mainStyle.setAttribute("rel", "stylesheet");
-		mainStyle.setAttribute("type", "text/css");
-		mainStyle.setAttribute("href", "flowjspixi.css");
-		Browser.document.head.appendChild(mainStyle);
+	public static function attachFlowStyles() : Void {
+		attachFlowStyle("flowjspixi.css");
+		attachFlowStyle("fonts/fonts.css");
+	}
 
-		var style = Browser.document.createElement('style');
-		style.setAttribute('type', 'text/css');
-		style.innerHTML = "*:not(body):not(html) {position: initial;}";
-		Browser.document.head.appendChild(style);
+	public static function attachFlowStyle(url : String) : Void {
+		var flowStyle = Browser.document.head.querySelector("link[href*='" + url + "']");
+		if (flowStyle != null) {
+			PixiStage.nativeWidget.appendChild(flowStyle);
+			flowStyle.setAttribute("rel", "stylesheet");
+		}
 	}
 
 	public static function setupPixiStage() : Void {
@@ -1824,7 +1825,9 @@ class RenderSupport {
 		if (previousRoot != null) {
 			previousRoot.style.backgroundImage = null;
 		}
-		PixiStage.nativeWidget.style.backgroundImage = "none";
+		if (PixiStage.nativeWidget.style != null) {
+			PixiStage.nativeWidget.style.backgroundImage = "none";
+		}
 		var indicator = Browser.document.getElementById("loading_js_indicator");
 		if (indicator != null) {
 			Browser.document.body.removeChild(indicator);
