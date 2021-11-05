@@ -114,36 +114,6 @@ class RenderSupport {
 		}
 	}
 
-	public static function setRenderRoot(rootId : String) : Void {
-		var renderRoot = Browser.document.getElementById(rootId);
-		if (renderRoot != RenderRoot) {
-			RenderRoot = renderRoot;
-			RenderRoot.style.position = 'relative';
-			
-			setupPixiStage();
-			createPixiRenderer();
-			initPixiStageEventListeners();
-
-			appendEmbeddedFlowStyles();
-			if (UserStyleTestElement != null && UserStyleTestElement.parentElement != PixiStage.nativeWidget) {
-				PixiStage.nativeWidget.appendChild(UserStyleTestElement);
-			}
-		}
-	}
-
-	public static function appendEmbeddedFlowStyles() : Void {
-		var mainStyle = Browser.document.createElement('link');
-		mainStyle.setAttribute("rel", "stylesheet");
-		mainStyle.setAttribute("type", "text/css");
-		mainStyle.setAttribute("href", "flowjspixi.css");
-		Browser.document.head.appendChild(mainStyle);
-
-		var style = Browser.document.createElement('style');
-		style.setAttribute('type', 'text/css');
-		style.innerHTML = "*:not(body):not(html) {position: initial;}";
-		Browser.document.head.appendChild(style);
-	}
-
 	public static function setupPixiStage() : Void {
 		PixiStage = new FlowContainer(true);
 	}
