@@ -1825,7 +1825,7 @@ class RenderSupport {
 		}
 
 		// The first flow render call. Hide loading progress indicator.
-		if (previousRoot != null) {
+		if (previousRoot != null && previousRoot.style != null) {
 			previousRoot.style.backgroundImage = null;
 		}
 		if (PixiStage.nativeWidget.style != null) {
