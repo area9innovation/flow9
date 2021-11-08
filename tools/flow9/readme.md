@@ -76,8 +76,6 @@ dot on structs, which can be considered as an overloaded function.
 
 TODO:
 - Review postpones, and see if we can resolve some of those:
-  - Fix instantiation of subtypes from supertype typars in 
-    line 1082 + 1211 in tnode.flow
   - Implement unification of super against overload:
     - Convert the super to an overload and do intersect?
 
