@@ -689,7 +689,7 @@ class RenderSupport {
 			return new Point(0, 0);
 		}
 		var rootRect = RenderRoot.getBoundingClientRect();
-		return new Point(rootRect.x, rootRect.y);
+		return new Point(rootRect.x + Browser.window.scrollX, rootRect.y + Browser.window.scrollY);
 	}
 
 	public static function getMouseEventPosition(event : Dynamic, ?rootPosition : Point) : Point {
@@ -1361,13 +1361,14 @@ class RenderSupport {
 			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
 			'DOMMouseScroll'; // let's assume that remaining browsers are older Firefox");
 
+		var isRenderRoot = PixiStage.nativeWidget != Browser.document.body;
 
 		var wheel_cb = function(event) {
 			var sX = 0.0, sY = 0.0,	// spinX, spinY
 				pX = 0.0, pY = 0.0;	// pixelX, pixelY
 
 			// prevents swipe back for Safari
-			if (Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+			if (isRenderRoot || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
 				event.preventDefault();
 			}
 
@@ -1417,9 +1418,10 @@ class RenderSupport {
 			return false;
 		};
 
-		untyped __js__("window.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
+		var node = isRenderRoot ? PixiStage.nativeWidget : Browser.window;
+		untyped __js__("node.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
 		if ( event_name == "DOMMouseScroll" ) {
-			untyped __js__("window.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
+			untyped __js__("node.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
 		}
 	}
 
