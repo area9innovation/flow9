@@ -121,6 +121,7 @@ class RenderSupport {
 			RenderRoot = renderRoot;
 			if (RenderRoot != null) {
 				RenderRoot.style.position = 'relative';
+				untyped RenderRoot.style.touchAction = 'none';
 				untyped RenderRoot.attachShadow({mode : 'open'});
 			}
 			
