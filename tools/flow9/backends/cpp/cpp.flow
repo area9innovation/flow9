@@ -175,7 +175,32 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 			]);
 
 		}
-		BSwitchStatement(expr, cases, type): todo();
+		BSwitchStatement(expr, cases, type): {
+			switchType = getBType(expr);
+			caseIndexes = switchType2caseIndexes(switchType, backend);
+			// cases should not be empty. otherwise let there be a crash.
+			// cpp needs a default case in the 'return' case
+			defaultCase = cases[0].body;
+			blueprint("
+					switch (%value%.index()) {
+						%cases%
+						%default%
+					}",
+				[
+					"value", rece(expr, switchType),
+					"cases", superglue(cases, \case : BCaseStatement -> {
+						blueprint("
+							case %id%: {
+								%body%;
+							}",
+							[
+								"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
+								"body", rec(case.body)
+							]);
+					}, ";\n"),
+					"default", "default: " + rec(defaultCase) + ";",
+			]);
+		}
 	}
 }
 
@@ -192,19 +217,14 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, expectedType : BType) -> strin
 		BString(v): toString(v);
 		BVar(id, type): id;
 		BLet(id, value, body, type): {
-			// TODO: Find a list of globals here
-			globals = backend.info.globals;
-			freevars0 = extractFreeNamesBExp(makeSet(), globals, value);
-			freevars = set2array(removeSet(extractFreeNamesBExp(freevars0, globals, body), id));
 			blueprint("
-				[%capture%]() {
+				[&]() {
 					%type% %id% = %value%;
 					return %body%;
 				}()", [
 				"id", id,
 				"value", rec(value),
 				"body", rec(body),
-				"capture", strGlue(freevars, ","),
 				"type", either(btype2superType(getBType(value), type, backend), "auto"),
 			])
 		}
@@ -462,9 +482,15 @@ btype2superType(expectedType : BType, type : BType, backend : Backend<CppInfo>) 
 		BTypeFunction(__, returnType) : None();
 	}
 
+	makeExpectedType = \-> eitherFn(
+		expectedTypeId,
+		\id -> if (id == "void") None() else Some(btype2cpp(backend, expectedType)),
+		\-> Some(btype2cpp(backend, expectedType))
+	);
+
 	eitherFn(
 		typeId,
-		\id -> if (eitherMap(expectedTypeId, \eid -> eid == id, false)) None() else Some(btype2cpp(backend, expectedType)),
-		\-> Some(btype2cpp(backend, expectedType))
+		\id -> if (eitherMap(expectedTypeId, \eid -> eid == id, false)) None() else makeExpectedType(),
+		makeExpectedType
 	);
 }
