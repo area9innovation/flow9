@@ -620,7 +620,7 @@ class RenderSupport {
 		}
 
 		// Make absolute position for canvas for Safari to fix fullscreen API
-		if (Platform.isSafari) {
+		if (Platform.isSafari || PixiStage.nativeWidget != Browser.document.body) {
 			PixiView.style.position = "absolute";
 			PixiView.style.top = "0px";
 		}
