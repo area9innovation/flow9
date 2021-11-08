@@ -656,7 +656,10 @@ class RenderSupport {
 		if (rWidth != null && !Math.isNaN(rWidth)) {
 			width = rWidth;
 		} else {
-			width = Math.floor(Browser.window.innerWidth - RenderRoot.getBoundingClientRect().x);
+			width = Math.floor(Math.min(
+				Browser.document.body.getBoundingClientRect().width,
+				Browser.window.innerWidth - RenderRoot.getBoundingClientRect().x
+			));
 		}
 
 		RenderRoot.style.width = width + 'px';
