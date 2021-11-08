@@ -174,7 +174,7 @@ makeTNode(tmap : TMap, t : TType, reason : ErrorReason) -> TNode {
 		println("ERROR: Could not make TNode for " + prettyTType(t));
 		TNodeName("", [], []);
 	}
-	switch (t) {
+	res = switch (t) {
 		TTypeName(id, typars): makeTNodeName(tmap, t, reason);
 		TTypeEClass(eclass): {
 			getUnionMapValue(tmap.tmap, eclass);
@@ -203,6 +203,8 @@ makeTNode(tmap : TMap, t : TType, reason : ErrorReason) -> TNode {
 			}
 		}
 	}
+	// debugErrorReason(reason, "Type " + prettyTTypeNode(tmap, t) + " becomes " + prettyTNode(tmap, res) + ". ");
+	res;
 }
 
 makeTSuperFromTType(tmap : TMap, t : TTypeSupertype, reason : ErrorReason) -> TNode {
@@ -293,56 +295,81 @@ convertTTypeSupertype2TNode(tmap : TMap, super : TTypeSupertype, reason : ErrorR
 		};
 
 		todo = \ -> {
-			println("ERROR: Could not make TNodeName for " + prettyTType(st) + " which became " + prettyTNode(tmap, node));
+			println("TODO: Could not make TNodeName for " + prettyTTypeNode(tmap, st) + " which is part of " + prettyTTypeNode(tmap, super));
 			None();
 		}
 		switch (node) {
-			TNodeName(name, typars, pos): Some(node);
+			TNodeName(name, typars, pos): {
+				if (isEmptyTNode(node)) None() 
+				else Some(node);
+			}
 			TNodeOverload(unique, overloads, pos): {
 				todo();
 			}
-			TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): todo();
+			TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {
+				// OK: In this case, I guess we could go and find the supers to this super!
+				todo();
+			}
 		}
 	});
+
 	// OK, find out what named types are compatible with all
 	supers : Set<string> = getPossibleSupers(tmap, map(names, \n -> n.name), super.maxed);
 	pos = getTreeKeys(reason.reasons);
 
 	// Now, construct all the supers that are compatible
 	// Notice we will duplicate any overloads that differ in type parameters!
-	overloads = uniq(concatA(map(names, \node : TNodeName -> {
+	overloads : Tree<string, [TNodeName]> = fold(names, makeTree(), \acc, node : TNodeName -> {
+		// OK, construct all super types of this node, which are in the approved set
 		nodesupers = ^(tmap.resolveSupertypes)(node.name);
 		supersToMake = intersectSets(supers, buildSet(nodesupers));
 		// println("  Supers " +  strGlue(set2array(supers), ", ") + " overlaps " + strGlue(nodesupers, ", ") + " for " + prettyTNode(tmap, node));
-		supernodes = filtermap(set2array(supersToMake), \supername : string -> {
-			if (supername == node.name) Some(node)
+		nacc = foldSet(supersToMake, acc, \acc2, supername : string -> {
+			if (supername == node.name) treePushToArrayUnique(acc2, supername, node)
 			else {
 				// OK, some supertype
 				stypars = extractTyparsFromSubtype(tmap, node, supername);
 				switch (stypars) {
 					None(): {
 						println("Could not find typars for " + supername + " from " + prettyTNode(tmap, node));
-						None();
+						acc2;
 					}
 					Some(tps): {
-						Some(TNodeName(supername, tps, pos));
+						treePushToArrayUnique(acc2, supername, TNodeName(supername, tps, pos));
 					}
 				}
 			}
 		});
 		if (containsSet(supers, node.name)) {
-			arrayPush(supernodes, node)
-		} else supernodes;
-	})));
-	if (overloads == []) {
+			treePushToArrayUnique(nacc, node.name, node);
+		} else nacc;
+	});
+
+	if (isEmptyTree(overloads)) {
 		// Fall back to the old system
 		makeTSuperFromTType(tmap, super, reason);
-	} else if (length(overloads) == 1) {
-		overloads[0];
 	} else {
-		ov = TNodeOverload(makeSet1(tmap.mkUnique()), overloads, pos);
-		println("Gave " + prettyTNode(tmap, ov) + " for " + prettyTType(super) + " from " + strGlue(set2array(supers), ", "));
-		ov;
+		// OK, collapse each group using unification?
+		overloads2 = foldTree(overloads, [], \name, nodes, acc -> {
+			if (nodes == []) acc
+			else {
+				// Unify the matching type parameters for the groups
+				iter(tail(nodes), \nn -> {
+					iteri(nodes[0].typars, \i, tp : int -> {
+						joinTNodes(tmap, tp, nn.typars[i], elaborateReason(reason, "Multiple supers"));
+						{}
+					})
+				})
+				arrayPush(acc, nodes[0]);
+			}
+		});
+		if (length(overloads2) == 1) {
+			overloads2[0];
+		} else {
+			ov = TNodeOverload(makeSet1(tmap.mkUnique()), overloads2, pos);
+			// println("Gave " + prettyTNode(tmap, ov) + " for " + prettyTType(super) + " from " + strGlue(set2array(supers), ", "));
+			ov;
+		}
 	}
 }
 
@@ -959,6 +986,8 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 								TNodeOverload(makeSet1(tmap.mkUnique()), overloads, pos);
 							};
 							setTNodeClass(tmap, sub, node);
+							// println("Subtyping of supertype gave " + prettyTNode(tmap, node));
+							// Go again to transmit information?
 							reason1 = elaborateReason(reason, "lower super to sub");
 							subtypeTNodes(tmap, sub, super, reason1);
 							{}
