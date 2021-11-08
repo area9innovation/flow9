@@ -190,7 +190,7 @@ class RenderSupport {
 		debugLog('browserZoom', browserZoom);
 
 		if (accessibilityZoomTooltip != null) {
-			Browser.document.body.removeChild(accessibilityZoomTooltip);
+			accessibilityZoomTooltip.parentNode.removeChild(accessibilityZoomTooltip);
 			accessibilityZoomTooltip = null;
 		}
 
@@ -199,7 +199,7 @@ class RenderSupport {
 		}
 
 		var p = Browser.document.createElement("p");
-		Browser.document.body.appendChild(p);
+		PixiStage.nativeWidget.appendChild(p);
 
 		p.classList.add('nativeWidget');
 		p.classList.add('textWidget');
@@ -220,8 +220,8 @@ class RenderSupport {
 
 		Native.timer(2000, function() {
 			if (accessibilityZoomTooltip != null && accessibilityZoomTooltip == p) {
+				accessibilityZoomTooltip.parentNode.removeChild(accessibilityZoomTooltip);
 				accessibilityZoomTooltip = null;
-				Browser.document.body.removeChild(p);
 			}
 		});
 	}
