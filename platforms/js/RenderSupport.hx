@@ -141,8 +141,9 @@ class RenderSupport {
 	public static function attachFlowStyle(url : String) : Void {
 		var flowStyle = Browser.document.head.querySelector("link[href*='" + url + "']");
 		if (flowStyle != null) {
-			PixiStage.nativeWidget.appendChild(flowStyle);
-			flowStyle.setAttribute("rel", "stylesheet");
+			var clonedNode = flowStyle.cloneNode();
+			PixiStage.nativeWidget.appendChild(clonedNode);
+			untyped clonedNode.setAttribute("rel", "stylesheet");
 		}
 	}
 
