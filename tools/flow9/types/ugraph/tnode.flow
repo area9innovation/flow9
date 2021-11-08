@@ -196,28 +196,37 @@ makeTNode(tmap : TMap, t : TType, reason : ErrorReason) -> TNode {
 			simplifyTNode(tmap, ov, reason)
 		}
 		TTypeSupertype(unique, subtypes, maxed): {
-			emptySuper = TNodeSupertype(makeSet1(unique), [], makeSet(), maxed, getTreeKeys(reason.reasons));
-			super = fold(subtypes, emptySuper, \acc, st -> extractSupers(tmap, acc, st));
-			super2 = simplifyTNode(tmap, super, reason);
-			if (tmap.tracing.overload) {
-				// An attempt to lift supertypes to overloads
-				switch (super2) {
-					TNodeName(name, typars, pos): super2;
-					TNodeOverload(__, overloads, pos): super2;
-					TNodeSupertype(__, st, us, __, __): {
-						if (isEmptySet(us) && st != []) {
-							overload = convertTSuper2Overload(tmap, super2);
-							overload2 = simplifyTNode(tmap, overload, reason);
-							// println("We make " + prettyTNode(tmap, super2) + " as " + prettyTNode(tmap, overload2));
-							overload2
-						} else super2;
-					}
-				}
+			if (!tmap.tracing.overload) {
+				makeTSuperFromTType(tmap, t, reason)
 			} else {
-				super2;
+				convertTTypeSupertype2TNode(tmap, t, reason);
 			}
 		}
 	}
+}
+
+makeTSuperFromTType(tmap : TMap, t : TTypeSupertype, reason : ErrorReason) -> TNode {
+	emptySuper = TNodeSupertype(makeSet1(t.unique), [], makeSet(), t.maxed, getTreeKeys(reason.reasons));
+	super = fold(t.subtypes, emptySuper, \acc, st -> extractSupers(tmap, acc, st));
+	super2 = simplifyTNode(tmap, super, reason);
+	if (tmap.tracing.overload) {
+		// An attempt to lift supertypes to overloads
+		switch (super2) {
+			TNodeName(name, typars, pos): super2;
+			TNodeOverload(__, overloads, pos): super2;
+			TNodeSupertype(__, st, us, __, __): {
+				if (isEmptySet(us) && st != []) {
+					overload = convertTSuper2Overload(tmap, super2);
+					overload2 = simplifyTNode(tmap, overload, reason);
+					// println("We make " + prettyTNode(tmap, super2) + " as " + prettyTNode(tmap, overload2));
+					overload2
+				} else super2;
+			}
+		}
+	} else {
+		super2;
+	}
+
 }
 
 // Add t to this supertype as a subtype. If t is a supertype, add all members of that
@@ -249,7 +258,7 @@ extractSupers(tmap : TMap, acc : TNodeSupertype, t : TType) -> TNodeSupertype {
 						// OK, we are adding a flow to a supertype.
 						TNodeSupertype(acc with subtypes = arrayPush(acc.subtypes, TNodeName("flow", [], pos)));
 					} else {
-						println("TODO: Figure out how to represent this overload as a named type: " + prettyTType(t));
+						println("TODO: Figure out how to represent this overload as a named type: " + prettyTNode(tmap, node));
 						acc;
 					}
 				}
@@ -274,10 +283,73 @@ extractSupers(tmap : TMap, acc : TNodeSupertype, t : TType) -> TNodeSupertype {
 	}
 }
 
+convertTTypeSupertype2TNode(tmap : TMap, super : TTypeSupertype, reason : ErrorReason) -> TNode {
+	names : [TNodeName] = filtermap(super.subtypes, \st -> {
+		eclass = findTNode(tmap, st);
+		node = if (eclass == -1) {
+			makeTNode(tmap, st, reason);
+		} else {
+			getUnionMapValue(tmap.tmap, eclass);
+		};
+
+		todo = \ -> {
+			println("ERROR: Could not make TNodeName for " + prettyTType(st) + " which became " + prettyTNode(tmap, node));
+			None();
+		}
+		switch (node) {
+			TNodeName(name, typars, pos): Some(node);
+			TNodeOverload(unique, overloads, pos): {
+				todo();
+			}
+			TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): todo();
+		}
+	});
+	// OK, find out what named types are compatible with all
+	supers : Set<string> = getPossibleSupers(tmap, map(names, \n -> n.name), super.maxed);
+	pos = getTreeKeys(reason.reasons);
+
+	// Now, construct all the supers that are compatible
+	// Notice we will duplicate any overloads that differ in type parameters!
+	overloads = uniq(concatA(map(names, \node : TNodeName -> {
+		nodesupers = ^(tmap.resolveSupertypes)(node.name);
+		supersToMake = intersectSets(supers, buildSet(nodesupers));
+		// println("  Supers " +  strGlue(set2array(supers), ", ") + " overlaps " + strGlue(nodesupers, ", ") + " for " + prettyTNode(tmap, node));
+		supernodes = filtermap(set2array(supersToMake), \supername : string -> {
+			if (supername == node.name) Some(node)
+			else {
+				// OK, some supertype
+				stypars = extractTyparsFromSubtype(tmap, node, supername);
+				switch (stypars) {
+					None(): {
+						println("Could not find typars for " + supername + " from " + prettyTNode(tmap, node));
+						None();
+					}
+					Some(tps): {
+						Some(TNodeName(supername, tps, pos));
+					}
+				}
+			}
+		});
+		if (containsSet(supers, node.name)) {
+			arrayPush(supernodes, node)
+		} else supernodes;
+	})));
+	if (overloads == []) {
+		// Fall back to the old system
+		makeTSuperFromTType(tmap, super, reason);
+	} else if (length(overloads) == 1) {
+		overloads[0];
+	} else {
+		ov = TNodeOverload(makeSet1(tmap.mkUnique()), overloads, pos);
+		println("Gave " + prettyTNode(tmap, ov) + " for " + prettyTType(super) + " from " + strGlue(set2array(supers), ", "));
+		ov;
+	}
+}
+
 // Ensure that we get a named type out of this type. Used for the args of overloads and supertypes
 makeTNodeName(tmap : TMap, t : TType, reason : ErrorReason) -> TNodeName {
 	error = \ -> {
-		println("ERROR: Could not make TNodeName for " + prettyTType(t));
+		println("ERROR: Could not make a TNodeName for " + prettyTType(t));
 		TNodeName("", [], getTreeKeys(reason.reasons));
 	};
 	switch (t) {
@@ -1033,8 +1105,19 @@ subtypeTNodes(tmap : TMap, sub : int, super : int, reason : ErrorReason) -> void
 					{}
 				}
 			}
-			TNodeOverload(__, __, __): {
-				postpone();
+			TNodeOverload(__, overloads, __): {
+				if (isEmptyTNode(supernode)) {
+					// overload vs epsilon
+					postpone();
+				} else {
+					if (contains(overloads, supernode)) {
+						// OK, we are good
+						setTNodeClass(tmap, sub, supernode);
+					} else {
+						println("TODO: Implement subtype of " + prettyTNode(tmap, subnode) + " vs "  + prettyTNode(tmap, supernode));
+						postpone();
+					}
+				}
 			}
 		}
 	}

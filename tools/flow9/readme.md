@@ -94,6 +94,8 @@ TODO:
    Push pending again (e569)->e561 to overload561{(Pair<e570,e571>)->e570, (Quadruple<e572,e573,e574,e575>)->e572, (Triple<e576,e577,e578>)->e576}
 
 - Remove TSuper completely. Replae with overload when there is info.
+  - Make sure we work with overloads where we have duplicates of the same name,
+    but different type parameters
   - Use pending and pendingSubtypes for all other cases
     And these pending will be eclasses only
 
