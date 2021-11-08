@@ -70,7 +70,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 	switch (d) {
 		BGlobalVar(id, body, type): {
-			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body) + ";";
+			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body, None()) + ";";
 		}
 		BStatFunction(id, args, body, tailCall, type): {
 			if (id == "flow_i2s") {
@@ -132,7 +132,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 		toString(s)
 	}
 	rec = \ss -> bstatement2cpp(backend, ss);
-	rece = \ee -> bexp2cpp(backend, ee);
+	rece = \ee -> bexp2cpp(backend, ee, None());
 	switch (s) {
 		BIfStatement(cond, then, else_): {
 			blueprint("
@@ -160,7 +160,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 				""
 			} else {
 				"return ";
-			}) + bexp2cpp(backend, val) + ";"
+			}) + bexp2cpp(backend, val, None()) + ";"
 		}
 		BTailCall(fn, args, values, type): {
 			fn  + "(" +superglue(values, rece, ", ") + ");"
@@ -180,8 +180,10 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 }
 
 
-bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
-	rec = \ee -> bexp2cpp(backend, ee);
+bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : Maybe<BType>) -> string {
+	rec = \ee -> bexp2cpp(backend, ee, None());
+	recReturn = \ee, returnType -> bexp2cpp(backend, ee, Some(returnType));
+	castType = \typeName : string -> "(" + typeName + ")";
 	switch (bexp) {
 		BVoid(): "{}";
 		BBool(v): if (v) "true" else "false";
@@ -214,12 +216,12 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 					)",
 				[
 					"c", rec(cond),
-					"then", rec(then),
-					"else", rec(else_),
+					"then", recReturn(then, type),
+					"else", recReturn(else_, type),
 			]);
 		}
 		BCall(fn, args, type): {
-			produceBackendCall(backend, bexp, bexp2cpp);
+			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, superType));
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
@@ -244,10 +246,11 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 			]);
 		}
 		BConstruct(struct, args, type): {
-			blueprint("(struct %struct%){%args%}",
+			blueprint("%superType%(struct %struct%){%args%}",
 				[
 					"struct", struct,
 					"args", superglue(args, rec, ", "),
+					"superType", eitherMap(maybeBind(superType, btype2superType), castType, ""),
 			]);
 		}
 		BField(value, field, type): {
@@ -374,7 +377,7 @@ bool flow_isSameStructType(A struct1, B struct2) {
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
-	rec = \ee -> bexp2cpp(backend, ee);
+	rec = \ee -> bexp2cpp(backend, ee, None());
 	len = length(bexp.cases);
 	expDefaultCase = bexp.defaultCase;
 
@@ -443,5 +446,13 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 			);
 		}
 		BTypeFunction(__, __) : makeTree(); // error
+	}
+}
+
+btype2superType(type : BType) -> Maybe<string> {
+	switch (type : BType) {
+		BTypePar(id) : None();
+		BTypeName(id, __) : Some(id);
+		BTypeFunction(__, returnType) : btype2superType(returnType);
 	}
 }
