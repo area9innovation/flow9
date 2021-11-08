@@ -119,8 +119,10 @@ class RenderSupport {
 		if (renderRoot != RenderRoot) {
 			previousRoot = PixiStage.nativeWidget;
 			RenderRoot = renderRoot;
-			RenderRoot.style.position = 'relative';
-			untyped RenderRoot.attachShadow({mode : 'open'});
+			if (RenderRoot != null) {
+				RenderRoot.style.position = 'relative';
+				untyped RenderRoot.attachShadow({mode : 'open'});
+			}
 			
 			setupPixiStage();
 			createPixiRenderer();
