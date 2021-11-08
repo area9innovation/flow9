@@ -14,6 +14,7 @@ import {
 import * as tools from "./tools";
 import * as updater from "./updater";
 import * as simplegit from 'simple-git/promise';
+import * as notebook from './notebook';
 //import { performance } from 'perf_hooks';
 import editors from './editors';
 const isPortReachable = require('is-port-reachable');
@@ -65,14 +66,14 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.runUI', runUI),
 		reg_comm('flow.restartLspClient', startLspClient),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
+		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
+		new notebook.FlowNotebookController()
 	);
 	editors.forEach(editor => context.subscriptions.push(editor.register(context)));
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show(true);
 
-	checkHttpServerStatus(true);
-	setInterval(checkHttpServerStatus, 3000, false);
 
 	// Create an LSP client
 	startLspClient();
@@ -217,7 +218,11 @@ function startLspClient() {
 	client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
 	// Start the client. This will also launch the server
 	client.start();
-	client.onReady().then(() => sendOutlineEnabledUpdate());
+	client.onReady().then(() => {
+		sendOutlineEnabledUpdate();
+		checkHttpServerStatus(true);
+		setInterval(checkHttpServerStatus, 3000, false);
+	});
 }
 
 function showHttpServerOnline(mem_stats : string = null) {
@@ -353,6 +358,7 @@ function resolveProjectRoot(uri : string | vscode.Uri) : string {
 
 	return getPath(config.get("root"));
 }
+
 interface CommandWithArgs {
     cmd: string,
     args: string[],

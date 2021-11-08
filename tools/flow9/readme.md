@@ -2,9 +2,18 @@
 
 Usage:
 
-flowcpp flowe/flowe.flow -- file=myfile.flow
+flow9 myfile.flow
 
 Options:
+	help=1
+		Print usage info
+
+	js=1
+		Compile to JS
+	
+	cpp=1
+		Compile to CPP
+
 	debug=<id>,<id>
 		Will trace the compilation process of the given ids.
 		The ids can be types, functions, globals, or files (without .flow).
@@ -12,8 +21,7 @@ Options:
 	verbose=0,1,2
 		Increasing amount of tracing information
 
-	help=1
-		Print usage info
+Run "flow9" for more basic options.
 
 # Goals and motivation
 
@@ -68,16 +76,26 @@ dot on structs, which can be considered as an overloaded function.
 
 TODO:
 - Review postpones, and see if we can resolve some of those:
-  - Fix instantiation of subtypes from supertype typars in 
-    line 1082 + 1211 in tnode.flow
   - Implement unification of super against overload:
     - Convert the super to an overload and do intersect?
+
 - Replace the unknown subtypes in supertype with postponing
+
 - Radical idea: Replace super with overload always?
+  - Make sure unify
+  		overload5{Beh<?>, Const<?>} != Dyn<?> (e33 and e26)
+	does not happen: In this case, we have lifted a supertype,
+	which has the implicit requirement that the children are 
+	also supertypes, into an overload without supertype.
+	This happens further up in the chain, in a Pair<>.
+	See test tests/type13.flow with 983 in tnode.flow as true.
 
 - Try to make sure ? translates to the same eclasses in more situations:
    Push pending again (e569)->e561 to overload561{(Pair<e570,e571>)->e570, (Quadruple<e572,e573,e574,e575>)->e572, (Triple<e576,e577,e578>)->e576}
 
+- Remove TSuper completely. Replae with overload when there is info.
+  - Use pending and pendingSubtypes for all other cases
+    And these pending will be eclasses only
 
 # Name and type lookups
 

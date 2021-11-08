@@ -1,4 +1,6 @@
 import { spawn, ChildProcess, spawnSync } from 'child_process';
+import * as vscode from 'vscode';
+import * as fs from "fs";
 
 export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]): ChildProcess {
     const options = wd && wd.length > 0 ? { cwd: wd, shell: true } : { shell : true};
@@ -58,4 +60,14 @@ export function launchFlowcHttpServer(projectRoot: string, on_start : () => void
 	httpServer.addListener("message", (msg, __) => on_msg(msg.toString()));
 	httpServer.addListener("error", (err) => on_msg(err.toString()));
     return httpServer
+}
+
+export function getFlowRoot(): string {
+    const config = vscode.workspace.getConfiguration("flow");
+	let root: string = config.get("root");
+	if (!fs.existsSync(root)) {
+		root = run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
+		config.update("root", root, vscode.ConfigurationTarget.Global);
+	}
+	return root;
 }
