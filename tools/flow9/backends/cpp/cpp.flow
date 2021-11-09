@@ -70,7 +70,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 	switch (d) {
 		BGlobalVar(id, body, type): {
-			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body, type, "") + ";";
+			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body, type) + ";";
 		}
 		BStatFunction(id, args, body, tailCall, type): {
 			if (id == "flow_i2s") {
@@ -106,7 +106,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 						btype2cpp(backend, argtypes[i]) + " " + arg
 					}, ", "),
 					"rt", rt,
-					"body", bstatement2cpp(backend, body, "")
+					"body", bstatement2cpp(backend, body)//, extractBLetStatementType(backend, body))
 				])
 			}
 		}
@@ -126,13 +126,13 @@ void flow_println(A d) {
 	}
 }
 
-bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : string) -> string {
+bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 	todo = \ -> {
 		println("TODO C++ statement: " + toString(s));
 		toString(s)
 	}
-	rec = \ss, caseType -> bstatement2cpp(backend, ss, caseType);
-	rece = \ee -> bexp2cpp(backend, ee, getBType(ee), "");
+	rec = \ss -> bstatement2cpp(backend, ss);//, caseType);
+	rece = \ee -> bexp2cpp(backend, ee, getBType(ee));
 	switch (s) {
 		BIfStatement(cond, then, else_): {
 			blueprint("
@@ -143,15 +143,15 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : strin
 					}",
 				[
 					"c", rece(cond),
-					"then", rec(then, ""),
-					"else", rec(else_, ""),
+					"then", rec(then),
+					"else", rec(else_),
 			]);
 
 		}
-		BLetStatement(id, value, body): {
-			btype2subType(extractedType)
-			+ " " + id + " = " + bexp2cpp(backend, value, getBType(value), extractedType) + ";\n"
-			+ bstatement2cpp(backend, body, "");
+		BLetStatement(id, value, body, type): {
+			btype2letType(backend, type)
+			+ " " + id + " = " + bexp2cpp(backend, value, getBType(value)) + ";\n"
+			+ bstatement2cpp(backend, body);
 		}
 		BSetMutableStatement(left, field, value): todo();
 		BReturnVoid(): "return;";
@@ -161,7 +161,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : strin
 				""
 			} else {
 				"return ";
-			}) + bexp2cpp(backend, val, type, "") + ";"
+			}) + bexp2cpp(backend, val, type) + ";"
 		}
 		BTailCall(fn, args, values, type): {
 			fn  + "(" +superglue(values, rece, ", ") + ");"
@@ -172,7 +172,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : strin
 						%exps%
 					}",
 				[
-					"exps", superglue(statements, \statement -> rec(statement, ""), "\n"),
+					"exps", superglue(statements, rec, "\n"),
 			]);
 
 		}
@@ -188,7 +188,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : strin
 						%default%
 					}",
 				[
-					"value", bexp2cpp(backend, expr, switchType, ""),
+					"value", bexp2cpp(backend, expr, switchType),
 					"cases", superglue(cases, \case : BCaseStatement -> {
 						blueprint("
 							case %id%: {
@@ -197,23 +197,23 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : strin
 							}",
 							[
 								"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
-								"body", rec(case.body, case.id)
+								"body", rec(case.body),// case.id)
 							]);
 					}, ";\n"),
-					"default", "default: " + rec(defaultCase.body, defaultCase.id) + ";",
+					"default", "default: " + rec(defaultCase.body) + ";",//, defaultCase.id) + ";",
 			]);
 		}
 	}
 }
 
 // superType is the type to which the result type will need to be casted (lifted).
-// extractedType is the real type of variable in the current branch
-bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedType : string) -> string {
-	rec = \ee -> bexp2cpp(backend, ee, getBType(ee), "");
-	recReturn = \ee, returnType -> bexp2cpp(backend, ee, returnType, "");
+bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType) -> string {
+	rec = \ee -> bexp2cpp(backend, ee, getBType(ee));
+	recReturn = \ee, returnType -> bexp2cpp(backend, ee, returnType);
 	addSuperType = \type : BType, expression : string -> {
 		newType = liftStructureType(superType, type, backend.info);
-		if (newType != type) println("supertype "+toString(superType)+" for " + toString(type)+" new_type="+toString(newType)+" :: "+strLeft(expression, 20)+"... "+toString(bexp));
+		//if (newType != type) println("supertype "+toString(superType)+" for " + toString(type)+" new_type="+toString(newType)+" :: "+strLeft(expression, 20)+"... "+toString(bexp));
+//println("supertype "+toString(superType)+" for " + toString(type)+" new_type="+toString(newType)+" :: "+strLeft(expression, 20)+"... "+toString(bexp));
 		blueprint(
 			"%superType%%expression%",
 			[
@@ -227,29 +227,29 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedTy
 		BInt(v): addSuperType(bintType, "int32_t(" + i2s(v) + ")");
 		BDouble(v): addSuperType(bdoubleType, double2string(v));
 		BString(v): addSuperType(bstringType, toString(v));
-		BVar(id, type): {
-			if (extractedType == "" || !isBTypeUnionType(type, backend.info)) {
+		BVar(id, type): addSuperType(type, id);/*{
+			if (!isBTypeUnionType(type, backend.info)) {
 				addSuperType(type, id)
 			} else {
 				blueprint(
 					"std::get<%type%>(%id%)",
 					[
-						"type", extractedType,
+						"type", btype2cpp(backend, type),//extractedType,
 						"id", id,
 					]
 				);
 			}
-		}
-		BLet(id, value, body, type): {
+		}*/
+		BLet(id, value, body, type, supertype): {
 			blueprint("
 				[&]() {
 					%type% %id% = %value%;
 					return %body%;
 				}()", [
 				"id", id,
-				"value", bexp2cpp(backend, value, getBType(value), extractedType),
+				"value", bexp2cpp(backend, value, getBType(value)),
 				"body", addSuperType(type, rec(body)),
-				"type", btype2subType(extractedType),
+				"type", btype2letType(backend, supertype),
 			])
 		}
 		BIf(cond, then, else_, type): {
@@ -269,7 +269,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedTy
 			);
 		}
 		BCall(fn, args, type): {
-			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, getBType(e), ""));
+			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, getBType(e)));
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
@@ -430,7 +430,7 @@ bool flow_isSameStructType(A struct1, B struct2) {
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
-	rec = \ee, superType, caseType : string -> bexp2cpp(backend, ee, superType, caseType);
+	rec = \ee, superType, caseType : string -> bexp2cpp(backend, ee, superType);
 	len = length(bexp.cases);
 	expDefaultCase = bexp.defaultCase;
 
@@ -542,4 +542,19 @@ liftStructureType(superType : BType, type : BType, info : CppInfo) -> BType {
 // down cast
 btype2subType(type : string) -> string {
 	if (type == "") "auto" else type;
+}
+
+btype2letType(backend : Backend<CppInfo>, type : BType) -> string {
+println("btype2letType: "+(if (type == bvoidType) "auto" else btype2cpp(backend, type)));
+	if (type == bvoidType) "auto" else btype2cpp(backend, type);
+}
+
+extractBLetStatementType(backend : Backend<CppInfo>, s : BStatement) -> string {
+	switch (s) {
+		BLetStatement(id, value, body, type) : { btype2cpp(backend, type);
+			// getBType(value) // auto = this
+			//eitherMap(bstatement2type(body, id), \type -> btype2cpp(backend, type), "")
+		}
+		default : "";
+	}
 }
