@@ -211,16 +211,25 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : strin
 bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedType : string) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, getBType(ee), "");
 	recReturn = \ee, returnType -> bexp2cpp(backend, ee, returnType, "");
-	castType = \typeName : string -> "(" + typeName + ")";
+	addSuperType = \type : BType, expression : string -> {
+		newType = liftStructureType(superType, type, backend.info);
+		if (newType != type) println("supertype "+toString(superType)+" for " + toString(type)+" new_type="+toString(newType)+" :: "+strLeft(expression, 20)+"... "+toString(bexp));
+		blueprint(
+			"%superType%%expression%",
+			[
+				"expression", expression,
+				"superType", if (newType == type) "" else "(" + btype2cpp(backend, newType) + ")"
+		]);
+	}
 	switch (bexp) {
 		BVoid(): "{}";
-		BBool(v): if (v) "true" else "false";
-		BInt(v): "int32_t(" + i2s(v) + ")";
-		BDouble(v): double2string(v);
-		BString(v): toString(v);
+		BBool(v): addSuperType(bboolType, if (v) "true" else "false");
+		BInt(v): addSuperType(bintType, "int32_t(" + i2s(v) + ")");
+		BDouble(v): addSuperType(bdoubleType, double2string(v));
+		BString(v): addSuperType(bstringType, toString(v));
 		BVar(id, type): {
 			if (extractedType == "" || !isBTypeUnionType(type, backend.info)) {
-				id
+				addSuperType(type, id)
 			} else {
 				blueprint(
 					"std::get<%type%>(%id%)",
@@ -239,25 +248,28 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedTy
 				}()", [
 				"id", id,
 				"value", bexp2cpp(backend, value, getBType(value), extractedType),
-				"body", rec(body),
+				"body", addSuperType(type, rec(body)),
 				"type", btype2subType(extractedType),
 			])
 		}
 		BIf(cond, then, else_, type): {
-			blueprint("
-					(%c%) ? (
-						%then%
-					) : (
-						%else%
-					)",
-				[
-					"c", rec(cond),
-					"then", recReturn(then, type),
-					"else", recReturn(else_, type),
-			]);
+			addSuperType(
+				type,
+				blueprint("
+						(%c%) ? (
+							%then%
+						) : (
+							%else%
+						)",
+					[
+						"c", rec(cond),
+						"then", recReturn(then, type),
+						"else", recReturn(else_, type),
+				])
+			);
 		}
 		BCall(fn, args, type): {
-			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, superType, ""));
+			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, getBType(e), ""));
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
@@ -270,7 +282,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedTy
 					"args", supergluei(args, \i, arg -> {
 							btype2cpp(backend, argtypes[i]) + " " + arg
 						}, ", "),
-					"body", rec(body),
+					"body", addSuperType(type, rec(body)),
 					"type", btype2cpp(backend, type),
 			]);
 		}
@@ -282,21 +294,25 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedTy
 			]);
 		}
 		BConstruct(struct, args, type): {
-			newType = liftType(superType, type);
-			blueprint("%superType%(struct %struct%){%args%}",
-				[
-					"struct", struct,
-					"args", superglue(args, rec, ", "),
-					"superType", if (newType == type) "" else castType(btype2cpp(backend, newType))
-			]);
+			addSuperType(
+				type,
+				blueprint("(struct %struct%){%args%}",
+					[
+						"struct", struct,
+						"args", superglue(args, rec, ", "),
+				])
+			);
 		}
 		BField(value, field, type): {
-			blueprint("
-					%value%.%field%",
-				[
-					"value", recReturn(value, type),
-					"field", field,
-			]);
+			addSuperType(
+				type,
+				blueprint("
+						%value%.%field%",
+					[
+						"value", recReturn(value, type),
+						"field", field,
+				])
+			);
 		}
 		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
 		BSwitch(value, switchType, allCases, defaultCaseM, type): makeBSwitchType(bexp, backend);
@@ -494,28 +510,32 @@ isBTypeUnionType(type : BType, info : CppInfo) -> bool {
 	}
 }
 
-liftType(superType : BType, type : BType) -> BType {
-	typeId = switch (type : BType) {
-		BTypePar(id) : Some(id);
-		BTypeName(id, __) : Some(id);
-		BTypeFunction(__, returnType) : None();
+liftStructureType(superType : BType, type : BType, info : CppInfo) -> BType {
+	upcast = \superTypeId -> {
+		typeId = switch (type : BType) {
+			BTypePar(id) : Some(id);
+			BTypeName(id, __) : Some(id);
+			BTypeFunction(__, returnType) : None();
+		}
+		makeSuperType = \-> if (superTypeId == "void") type else superType;
+
+		eitherFn(
+			typeId,
+			\id -> if (superTypeId == id) type else makeSuperType(),
+			makeSuperType
+		);
 	}
+
 	superTypeId = switch (superType : BType) {
 		BTypePar(id) : Some(id);
 		BTypeName(id, __) : Some(id);
 		BTypeFunction(__, returnType) : None();
 	}
 
-	makeSuperType = \-> eitherMap(
+	eitherMap(
 		superTypeId,
-		\id -> if (id == "void") type else superType,
-		superType
-	);
-
-	eitherFn(
-		typeId,
-		\id -> if (eitherMap(superTypeId, \eid -> eid == id, false)) type else makeSuperType(),
-		makeSuperType
+		\id -> if (containsKeyTree(info.structIds, id)) upcast(id) else type,
+		type
 	);
 }
 
