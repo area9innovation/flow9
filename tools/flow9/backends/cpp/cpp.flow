@@ -106,7 +106,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 						btype2cpp(backend, argtypes[i]) + " " + arg
 					}, ", "),
 					"rt", rt,
-					"body", bstatement2cpp(backend, body)//, extractBLetStatementType(backend, body))
+					"body", bstatement2cpp(backend, body)
 				])
 			}
 		}
@@ -131,7 +131,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 		println("TODO C++ statement: " + toString(s));
 		toString(s)
 	}
-	rec = \ss -> bstatement2cpp(backend, ss);//, caseType);
+	rec = \ss -> bstatement2cpp(backend, ss);
 	rece = \ee -> bexp2cpp(backend, ee, getBType(ee));
 	switch (s) {
 		BIfStatement(cond, then, else_): {
@@ -149,9 +149,10 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 
 		}
 		BLetStatement(id, value, body, type): {
-			btype2letType(backend, type)
-			+ " " + id + " = " + bexp2cpp(backend, value, getBType(value)) + ";\n"
-			+ bstatement2cpp(backend, body);
+			unpair(btype2letValues(backend, type, getBType(value)), \varType, castVar ->
+				varType+ " " + id + " = " + castVar(bexp2cpp(backend, value, getBType(value))) + ";\n"
+				+ bstatement2cpp(backend, body)
+			);
 		}
 		BSetMutableStatement(left, field, value): todo();
 		BReturnVoid(): "return;";
@@ -197,10 +198,10 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 							}",
 							[
 								"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
-								"body", rec(case.body),// case.id)
+								"body", rec(case.body),
 							]);
 					}, ";\n"),
-					"default", "default: " + rec(defaultCase.body) + ";",//, defaultCase.id) + ";",
+					"default", "default: " + rec(defaultCase.body) + ";",
 			]);
 		}
 	}
@@ -212,8 +213,6 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType) -> string {
 	recReturn = \ee, returnType -> bexp2cpp(backend, ee, returnType);
 	addSuperType = \type : BType, expression : string -> {
 		newType = liftStructureType(superType, type, backend.info);
-		//if (newType != type) println("supertype "+toString(superType)+" for " + toString(type)+" new_type="+toString(newType)+" :: "+strLeft(expression, 20)+"... "+toString(bexp));
-//println("supertype "+toString(superType)+" for " + toString(type)+" new_type="+toString(newType)+" :: "+strLeft(expression, 20)+"... "+toString(bexp));
 		blueprint(
 			"%superType%%expression%",
 			[
@@ -227,30 +226,20 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType) -> string {
 		BInt(v): addSuperType(bintType, "int32_t(" + i2s(v) + ")");
 		BDouble(v): addSuperType(bdoubleType, double2string(v));
 		BString(v): addSuperType(bstringType, toString(v));
-		BVar(id, type): addSuperType(type, id);/*{
-			if (!isBTypeUnionType(type, backend.info)) {
-				addSuperType(type, id)
-			} else {
-				blueprint(
-					"std::get<%type%>(%id%)",
-					[
-						"type", btype2cpp(backend, type),//extractedType,
-						"id", id,
-					]
-				);
-			}
-		}*/
+		BVar(id, type): addSuperType(type, id);
 		BLet(id, value, body, type, supertype): {
-			blueprint("
-				[&]() {
-					%type% %id% = %value%;
-					return %body%;
-				}()", [
-				"id", id,
-				"value", bexp2cpp(backend, value, getBType(value)),
-				"body", addSuperType(type, rec(body)),
-				"type", btype2letType(backend, supertype),
-			])
+			unpair(btype2letValues(backend, supertype, type), \varType, castVar ->
+				blueprint("
+					[&]() {
+						%type% %id% = %value%;
+						return %body%;
+					}()", [
+					"id", id,
+					"value", castVar(bexp2cpp(backend, value, getBType(value))),
+					"body", addSuperType(type, rec(body)),
+					"type", varType,
+				])
+			)
 		}
 		BIf(cond, then, else_, type): {
 			addSuperType(
@@ -502,14 +491,6 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 	}
 }
 
-isBTypeUnionType(type : BType, info : CppInfo) -> bool {
-	switch (type : BType) {
-		BTypePar(id) : false;
-		BTypeName(id, __) : containsKeyTree(info.unionTypes, id);
-		BTypeFunction(__, __) : false;
-	}
-}
-
 liftStructureType(superType : BType, type : BType, info : CppInfo) -> BType {
 	upcast = \superTypeId -> {
 		typeId = switch (type : BType) {
@@ -544,17 +525,46 @@ btype2subType(type : string) -> string {
 	if (type == "") "auto" else type;
 }
 
-btype2letType(backend : Backend<CppInfo>, type : BType) -> string {
-println("btype2letType: "+(if (type == bvoidType) "auto" else btype2cpp(backend, type)));
-	if (type == bvoidType) "auto" else btype2cpp(backend, type);
-}
-
-extractBLetStatementType(backend : Backend<CppInfo>, s : BStatement) -> string {
-	switch (s) {
-		BLetStatement(id, value, body, type) : { btype2cpp(backend, type);
-			// getBType(value) // auto = this
-			//eitherMap(bstatement2type(body, id), \type -> btype2cpp(backend, type), "")
-		}
-		default : "";
+btype2letValues(backend : Backend<CppInfo>, supertype : BType, type : BType) -> Pair<string, (string) -> string> {
+	varType = if (supertype == bvoidType || supertype == type) {
+		"auto"
+	} else {
+		btype2cpp(backend, supertype);
 	}
+	getStructTypeId = \structType : BType -> switch (structType : BType) {
+		BTypePar(__) : None();
+		BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) Some(typeId) else None();
+		BTypeFunction(__, __) : None();
+	}
+
+	// TODO: flat
+	isSubStruct = \struct : BType, union : BType -> {
+		eitherFn(
+			getStructTypeId(union),
+			\unionId -> eitherMap(
+				lookupTree(backend.info.unionTypes, unionId),
+				\subStructs -> eitherMap(
+					getStructTypeId(struct),
+					\structId -> contains(subStructs, structId),
+					false
+				),
+				false
+			),
+			\-> isSome(getStructTypeId(struct))
+		);
+	}
+
+	castVar = \id -> if (isSubStruct(supertype, type)) {
+		blueprint(
+			"std::get<%type%>(%id%)",
+			[
+				"type", btype2cpp(backend, supertype),
+				"id", id,
+			]
+		);
+	} else {
+		id
+	}
+
+	Pair(varType, castVar)
 }
