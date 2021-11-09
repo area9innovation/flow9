@@ -126,13 +126,13 @@ void flow_println(A d) {
 	}
 }
 
-bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, parsedType : string) -> string {
+bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, extractedType : string) -> string {
 	todo = \ -> {
 		println("TODO C++ statement: " + toString(s));
 		toString(s)
 	}
 	rec = \ss, caseType -> bstatement2cpp(backend, ss, caseType);
-	rece = \ee, resultType -> bexp2cpp(backend, ee, resultType, "");
+	rece = \ee -> bexp2cpp(backend, ee, getBType(ee), "");
 	switch (s) {
 		BIfStatement(cond, then, else_): {
 			blueprint("
@@ -142,15 +142,15 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, parsedType : string) 
 						%else%
 					}",
 				[
-					"c", rece(cond, getBType(cond)),
+					"c", rece(cond),
 					"then", rec(then, ""),
 					"else", rec(else_, ""),
 			]);
 
 		}
 		BLetStatement(id, value, body): {
-			btype2subType(parsedType)
-			+ " " + id + " = " + bexp2cpp(backend, value, getBType(value), parsedType) + ";\n"
+			btype2subType(extractedType)
+			+ " " + id + " = " + bexp2cpp(backend, value, getBType(value), extractedType) + ";\n"
 			+ bstatement2cpp(backend, body, "");
 		}
 		BSetMutableStatement(left, field, value): todo();
@@ -164,7 +164,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, parsedType : string) 
 			}) + bexp2cpp(backend, val, type, "") + ";"
 		}
 		BTailCall(fn, args, values, type): {
-			fn  + "(" +superglue(values, \v -> rece(v, type), ", ") + ");"
+			fn  + "(" +superglue(values, rece, ", ") + ");"
 		}
 		BSequenceStatement(statements): {
 			blueprint("
@@ -188,7 +188,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, parsedType : string) 
 						%default%
 					}",
 				[
-					"value", rece(expr, switchType),
+					"value", bexp2cpp(backend, expr, switchType, ""),
 					"cases", superglue(cases, \case : BCaseStatement -> {
 						blueprint("
 							case %id%: {
@@ -205,8 +205,9 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, parsedType : string) 
 	}
 }
 
-
-bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, resultType : BType, parsedType : string) -> string {
+// superType is the type to which the result type will need to be casted (lifted).
+// extractedType is the real type of variable in the current branch
+bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, superType : BType, extractedType : string) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, getBType(ee), "");
 	recReturn = \ee, returnType -> bexp2cpp(backend, ee, returnType, "");
 	castType = \typeName : string -> "(" + typeName + ")";
@@ -217,13 +218,13 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, resultType : BType, parsedType
 		BDouble(v): double2string(v);
 		BString(v): toString(v);
 		BVar(id, type): {
-			if (parsedType == "" || !isBTypeUnionType(type, backend)) {
+			if (extractedType == "" || !isBTypeUnionType(type, backend.info)) {
 				id
 			} else {
 				blueprint(
 					"std::get<%type%>(%id%)",
 					[
-						"type", parsedType,
+						"type", extractedType,
 						"id", id,
 					]
 				);
@@ -236,9 +237,9 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, resultType : BType, parsedType
 					return %body%;
 				}()", [
 				"id", id,
-				"value", bexp2cpp(backend, value, getBType(value), parsedType),
+				"value", bexp2cpp(backend, value, getBType(value), extractedType),
 				"body", rec(body),
-				"type", btype2subType(parsedType),
+				"type", btype2subType(extractedType),
 			])
 		}
 		BIf(cond, then, else_, type): {
@@ -255,7 +256,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, resultType : BType, parsedType
 			]);
 		}
 		BCall(fn, args, type): {
-			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, resultType, ""));
+			produceBackendCall(backend, bexp, \b, e -> bexp2cpp(b, e, superType, ""));
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
@@ -280,11 +281,12 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, resultType : BType, parsedType
 			]);
 		}
 		BConstruct(struct, args, type): {
+			newType = liftType(superType, type);
 			blueprint("%superType%(struct %struct%){%args%}",
 				[
 					"struct", struct,
 					"args", superglue(args, rec, ", "),
-					"superType", eitherMap(btype2superType(resultType, type, backend), castType, ""),
+					"superType", if (newType == type) "" else castType(btype2cpp(backend, newType))
 			]);
 		}
 		BField(value, field, type): {
@@ -411,7 +413,7 @@ bool flow_isSameStructType(A struct1, B struct2) {
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
-	rec = \ee, resultType, caseType : string -> bexp2cpp(backend, ee, resultType, caseType);
+	rec = \ee, superType, caseType : string -> bexp2cpp(backend, ee, superType, caseType);
 	len = length(bexp.cases);
 	expDefaultCase = bexp.defaultCase;
 
@@ -483,37 +485,36 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 	}
 }
 
-isBTypeUnionType(type : BType, backend : Backend<CppInfo>) -> bool {
+isBTypeUnionType(type : BType, info : CppInfo) -> bool {
 	switch (type : BType) {
-		BTypePar(id) : containsKeyTree(backend.info.unionTypes, id);
-		BTypeName(id, __) : containsKeyTree(backend.info.unionTypes, id);
+		BTypePar(id) : false;
+		BTypeName(id, __) : containsKeyTree(info.unionTypes, id);
 		BTypeFunction(__, __) : false;
 	}
 }
 
-//up cast
-btype2superType(resultType : BType, type : BType, backend : Backend<CppInfo>) -> Maybe<string> {
+liftType(superType : BType, type : BType) -> BType {
 	typeId = switch (type : BType) {
 		BTypePar(id) : Some(id);
 		BTypeName(id, __) : Some(id);
 		BTypeFunction(__, returnType) : None();
 	}
-	resultTypeId = switch (resultType : BType) {
+	superTypeId = switch (superType : BType) {
 		BTypePar(id) : Some(id);
 		BTypeName(id, __) : Some(id);
 		BTypeFunction(__, returnType) : None();
 	}
 
-	makeresultType = \-> eitherFn(
-		resultTypeId,
-		\id -> if (id == "void") None() else Some(btype2cpp(backend, resultType)),
-		\-> Some(btype2cpp(backend, resultType))
+	makeSuperType = \-> eitherMap(
+		superTypeId,
+		\id -> if (id == "void") type else superType,
+		superType
 	);
 
 	eitherFn(
 		typeId,
-		\id -> if (eitherMap(resultTypeId, \eid -> eid == id, false)) None() else makeresultType(),
-		makeresultType
+		\id -> if (eitherMap(superTypeId, \eid -> eid == id, false)) type else makeSuperType(),
+		makeSuperType
 	);
 }
 
