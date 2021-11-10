@@ -4,6 +4,7 @@ import tools/flow9/types/typeenv;
 import tools/flow9/types/builtin;
 import tools/flow9/bexp/bexp;
 import tools/flow9/types/util;
+import tools/flow9/dexp/implicit_casts;
 
 export {
 	dexp2bexp(env : BExpEnv, d : DExp) -> BExp;
@@ -79,9 +80,7 @@ dexp2bexp(env : BExpEnv, d : DExp) -> BExp {
 		}
 		DLet(id, value, body, pos, eclass): BLet(id, rec(value), rec(body), type(eclass));
 		DIf(cond, then, else_, pos, eclass): BIf(rec(cond), rec(then), rec(else_), type(eclass));
-		DCall(fn, args, pos, eclass): {
-			BCall(rec(fn), map(args, rec), type(eclass))
-		}
+		DCall(fn, args, pos, eclass): dcall2bexp(env, d);
 		DConstruct(structid, args, pos, eclass): {
 			BConstruct(structid, map(args, rec), type(eclass))
 		}
@@ -120,7 +119,7 @@ dexp2bexp(env : BExpEnv, d : DExp) -> BExp {
 			// We probably do not need this in the backends. It is purely a type checking thing
 			rec(value);
 		}
-		DDowncast(oldid, newid, subtype, supereclass, scope, pos, eclass): {
+		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
 			BLet(
 				newid, BVar(oldid, type(supereclass)),
 				rec(scope),
@@ -155,5 +154,32 @@ ttype2btype(env : BExpEnv, type : TType) -> BType {
 			println("ERROR: Supertype");
 			BTypeName("ERROR supertype", []);
 		}
+	}
+}
+
+dcall2bexp(env : BExpEnv, d : DCall) -> BExp {
+	rec = \ee -> dexp2bexp(env, ee);
+	type = \eclass : int -> resolveBType(env, d.pos, eclass);
+	dcall2bcall = \-> BCall(rec(d.fn), map(d.args, rec), type(d.eclass));
+	extractCastType = \exp -> {
+		eclass = switch (exp : DExp) {
+			DInt(v, pos): v;
+			default: -1;
+		}
+		type(eclass);
+	}
+
+	switch (d.fn : DExp) {
+		DVar(id, pos, eclass): {
+			if (id == makeImplicitCastId() && (length(d.args) == 3)) {
+				from = extractCastType(d.args[1]);
+				to = extractCastType(d.args[2]);
+				value = rec(d.args[0]);
+				if (from == to) value else BCast(value, from, to);
+			} else {
+				dcall2bcall();
+			}
+		}
+		default : dcall2bcall();
 	}
 }
