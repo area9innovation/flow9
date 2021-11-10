@@ -148,8 +148,8 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 			]);
 
 		}
-		BLetStatement(id, value, body, type): {
-			unpair(btype2letValues(backend, type, getBType(value)), \varType, castVar ->
+		BLetStatement(id, idType, value, body): {
+			unpair(btype2letValues(backend, idType, getBType(value)), \varType, castVar ->
 				varType+ " " + id + " = " + castVar(bexp2cpp(backend, value, getBType(value))) + ";\n"
 				+ bstatement2cpp(backend, body)
 			);
@@ -491,6 +491,7 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 	}
 }
 
+// replace superType with type if needed
 liftStructureType(superType : BType, type : BType, info : CppInfo) -> BType {
 	upcast = \superTypeId -> {
 		typeId = switch (type : BType) {
@@ -510,7 +511,7 @@ liftStructureType(superType : BType, type : BType, info : CppInfo) -> BType {
 	superTypeId = switch (superType : BType) {
 		BTypePar(id) : Some(id);
 		BTypeName(id, __) : Some(id);
-		BTypeFunction(__, returnType) : None();
+		BTypeFunction(__, __) : None();
 	}
 
 	eitherMap(
@@ -520,6 +521,8 @@ liftStructureType(superType : BType, type : BType, info : CppInfo) -> BType {
 	);
 }
 
+// get the type of the expression result
+// and get the function to extract a value(type) from a union.
 btype2letValues(backend : Backend<CppInfo>, supertype : BType, type : BType) -> Pair<string, (string) -> string> {
 	varType = if (supertype == bvoidType || supertype == type) {
 		"auto"
@@ -527,26 +530,21 @@ btype2letValues(backend : Backend<CppInfo>, supertype : BType, type : BType) -> 
 		btype2cpp(backend, supertype);
 	}
 	getStructTypeId = \structType : BType -> switch (structType : BType) {
-		BTypePar(__) : None();
-		BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) Some(typeId) else None();
-		BTypeFunction(__, __) : None();
+		BTypePar(__) : "";
+		BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
+		BTypeFunction(__, __) : "";
 	}
 
 	// TODO: flat
 	isSubStruct = \struct : BType, union : BType -> {
-		eitherFn(
-			getStructTypeId(union),
-			\unionId -> eitherMap(
-				lookupTree(backend.info.unionTypes, unionId),
-				\subStructs -> eitherMap(
-					getStructTypeId(struct),
-					\structId -> contains(subStructs, structId),
-					false
-				),
-				false
-			),
-			\-> isSome(getStructTypeId(struct))
-		);
+		unionId = getStructTypeId(union);
+		structId = getStructTypeId(struct);
+		if (unionId == "") {
+			structId != ""
+		} else {
+			subStructs = lookupTreeDef(backend.info.unionTypes, unionId, []);
+			contains(subStructs, structId);
+		}
 	}
 
 	castVar = \id -> if (isSubStruct(supertype, type)) {
