@@ -122,7 +122,9 @@ class RenderSupport {
 			if (RenderRoot != null) {
 				RenderRoot.style.position = 'relative';
 				untyped RenderRoot.style.touchAction = 'none';
-				untyped RenderRoot.attachShadow({mode : 'open'});
+				if (!Platform.isIE) {
+					untyped RenderRoot.attachShadow({mode : 'open'});
+				}
 			}
 			
 			setupPixiStage();
@@ -139,14 +141,31 @@ class RenderSupport {
 	public static function attachFlowStyles() : Void {
 		attachFlowStyle("flowjspixi.css");
 		attachFlowStyle("fonts/fonts.css");
+
+		// Workaround for styles in IE
+		if (Platform.isIE) {
+			PixiStage.nativeWidget.classList.add("renderRoot");
+			Native.timer(0, function() {
+				findFlowjspixiCss(function (pixijscss) {
+					try {
+						pixijscss.deleteRule(0); // *:not(body):not(html) {position: fixed;}
+						pixijscss.insertRule(".renderRoot * {position: fixed;}", 0);
+					} catch (e : Dynamic) {}
+				});
+			});
+		}
 	}
 
 	public static function attachFlowStyle(url : String) : Void {
 		var flowStyle = Browser.document.head.querySelector("link[href*='" + url + "']");
 		if (flowStyle != null) {
-			var clonedNode = flowStyle.cloneNode();
-			PixiStage.nativeWidget.appendChild(clonedNode);
-			untyped clonedNode.setAttribute("rel", "stylesheet");
+			if (Platform.isIE) {
+				flowStyle.setAttribute("rel", "stylesheet");
+			} else {
+				var clonedNode = flowStyle.cloneNode();
+				PixiStage.nativeWidget.appendChild(clonedNode);
+				untyped clonedNode.setAttribute("rel", "stylesheet");
+			}
 		}
 	}
 
@@ -660,9 +679,10 @@ class RenderSupport {
 		if (rWidth != null && !Math.isNaN(rWidth)) {
 			width = rWidth;
 		} else {
+			var bRect = RenderRoot.getBoundingClientRect();
 			width = Math.floor(Math.min(
 				Browser.document.body.getBoundingClientRect().width,
-				Browser.window.innerWidth - RenderRoot.getBoundingClientRect().x
+				Browser.window.innerWidth - (Platform.isIE ? bRect.left : bRect.x)
 			));
 		}
 
@@ -677,7 +697,8 @@ class RenderSupport {
 		if (rHeight != null && !Math.isNaN(rHeight)) {
 			height = rHeight;
 		} else {
-			height = Math.floor(Browser.window.innerHeight - RenderRoot.getBoundingClientRect().y);
+			var bRect = RenderRoot.getBoundingClientRect();
+			height = Math.floor(Browser.window.innerHeight - (Platform.isIE ? bRect.top : bRect.y));
 		}
 
 		RenderRoot.style.height = height + 'px';
@@ -689,7 +710,9 @@ class RenderSupport {
 			return new Point(0, 0);
 		}
 		var rootRect = RenderRoot.getBoundingClientRect();
-		return new Point(rootRect.x + Browser.window.scrollX, rootRect.y + Browser.window.scrollY);
+		return Platform.isIE
+			? new Point(rootRect.left + Browser.window.pageXOffset, rootRect.top + Browser.window.pageYOffset)
+			: new Point(rootRect.x + Browser.window.scrollX, rootRect.y + Browser.window.scrollY);
 	}
 
 	public static function getMouseEventPosition(event : Dynamic, ?rootPosition : Point) : Point {
@@ -1542,15 +1565,8 @@ class RenderSupport {
 	private static function switchFocusFramesShow(toShowFrames : Bool) : Void {
 		if (FocusFramesShown != toShowFrames) {
 			FocusFramesShown = toShowFrames;
-			// Interrupt of executing that not handle repeatable pressing tab key when focus frames are shown
-			var pixijscss : js.html.CSSStyleSheet = null;
 
-			// Get flowpixijs.css
-			for (css in Browser.document.styleSheets) {
-				if (css.href != null && css.href.indexOf("flowjspixi.css") >= 0) pixijscss = untyped css;
-			}
-
-			if (pixijscss != null) {
+			var onFound = function (pixijscss) {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
 					pixijscss.insertRule(".focused { outline: none !important; box-shadow: none !important; }", newRuleIndex);
@@ -1560,6 +1576,21 @@ class RenderSupport {
 					on("mousemove", pixiStageOnMouseMove);
 				}
 			}
+
+			findFlowjspixiCss(onFound);
+		}
+	}
+
+	private static function findFlowjspixiCss(onFound : (js.html.CSSStyleSheet) -> Void) : Void {
+		var pixijscss : js.html.CSSStyleSheet = null;
+
+		// Get flowpixijs.css
+		for (css in Browser.document.styleSheets) {
+			if (css.href != null && css.href.indexOf("flowjspixi.css") >= 0) pixijscss = untyped css;
+		}
+
+		if (pixijscss != null) {
+			onFound(pixijscss);
 		}
 	}
 
