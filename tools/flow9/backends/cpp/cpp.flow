@@ -12,7 +12,6 @@ flowcpp flowe\flowe.flow -- file=demos/euler/euler1.flow cpp=euler1.cpp
 g++ -std=c++2a euler1.cpp 2>out.flow
 
 TODO:
-- flow_isSameStructType
 - flow_fold
 */
 
@@ -175,7 +174,33 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 			]);
 
 		}
-		BSwitchStatement(expr, cases, type): todo();
+		BSwitchStatement(expr, cases, type): {
+			switchType = getBType(expr);
+			caseIndexes = switchType2caseIndexes(switchType, backend);
+			// cases should not be empty. otherwise let there be a crash.
+			// cpp needs a default case in the 'return' case
+			defaultCase = cases[0].body;
+			blueprint("
+					switch (%value%.index()) {
+						%cases%
+						%default%
+					}",
+				[
+					"value", rece(expr),
+					"cases", superglue(cases, \case : BCaseStatement -> {
+						blueprint("
+							case %id%: {
+								%body%
+								break;
+							}",
+							[
+								"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
+								"body", rec(case.body),
+							]);
+					}, ";\n"),
+					"default", "default: " + rec(defaultCase) + ";",
+			]);
+		}
 	}
 }
 
@@ -190,19 +215,14 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 		BString(v): toString(v);
 		BVar(id, type): id;
 		BLet(id, value, body, type): {
-			// TODO: Find a list of globals here
-			globals = backend.info.globals;
-			freevars0 = extractFreeNamesBExp(makeSet(), globals, value);
-			freevars = set2array(removeSet(extractFreeNamesBExp(freevars0, globals, body), id));
 			blueprint("
-				[%capture%]() {
+				[&]() {
 					auto %id% = %value%;
 					return %body%;
 				}()", [
 				"id", id,
 				"value", rec(value),
 				"body", rec(body),
-				"capture", strGlue(freevars, ",")
 			])
 		}
 		BIf(cond, then, else_, type): {
@@ -267,10 +287,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 					"args", superglue(args, rec, ", "),
 			]);
 		}
-		BCast(value, from, to): {
-			// TODO
-			bexp2cpp(backend, value);
-		}
+		BCast(value, from, to): castBexp2cpp(backend, bexp);
 	}
 }
 
@@ -447,5 +464,53 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 			);
 		}
 		BTypeFunction(__, __) : makeTree(); // error
+	}
+}
+
+// only for structs
+castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
+	getStructTypeId = \type : BType -> 
+		switch (type : BType) {
+			BTypePar(__) : "";
+			BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
+			BTypeFunction(__, __) : "";
+		}
+
+	isSubStruct = \unionId : string, subStructId : string -> {
+		contains(lookupTreeDef(backend.info.unionTypes, unionId, []), subStructId);
+	}
+
+	liftType = \value -> {
+		blueprint(
+			"(%type%)%value%",
+			[
+				"type", btype2cpp(backend, bcast.to),
+				"value", value,
+			]
+		);
+	}
+
+	downType = \value -> {
+		blueprint(
+			"std::get<%type%>(%id%)",
+			[
+				"type", btype2cpp(backend, bcast.to),
+				"id", value,
+			]
+		);
+	}
+
+	fromId = getStructTypeId(bcast.from);
+	toId =  getStructTypeId(bcast.to);
+	value = bexp2cpp(backend, bcast.value);
+
+	if (fromId == "" || toId == "") {
+		value;
+	} else if (isSubStruct(fromId, toId)) {
+		downType(value)
+	} else if (isSubStruct(toId, fromId)) {
+		liftType(value)
+	} else {
+		value;
 	}
 }
