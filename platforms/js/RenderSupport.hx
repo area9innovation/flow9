@@ -116,6 +116,9 @@ class RenderSupport {
 
 	public static function setRenderRoot(rootId : String) : Void {
 		var renderRoot = Browser.document.getElementById(rootId);
+		if (renderRoot == null) {
+			untyped console.warn('Warning! Element with id = "$rootId" has not been found');
+		}
 		if (renderRoot != RenderRoot) {
 			previousRoot = PixiStage.nativeWidget;
 			RenderRoot = renderRoot;
