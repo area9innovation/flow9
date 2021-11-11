@@ -7,7 +7,7 @@ import tools/flowc/incremental/fiprogram;
 import ds/list;
 import text/blueprint;
 import formats/json/json;
-import sys/system;
+import sys/process;
 
 // TODO:
 // This module requires grammar2code, which is forbidden
@@ -24,6 +24,10 @@ export {
 
 fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) {
 	if (cfg.haxeRuntime) {
+
+		println("extern natives:\n" + concatStrings(map(set2array(cfg.externNatives), \c -> "\t" + c + "\n")));
+		println("native classes:\n" + concatStrings(map(set2array(ovl.nativeClasses), \c -> "\t" + c + "\n")));
+
 		delfile = if (cfg.debug) \s -> "" else deleteFile;
 		deleteFiles = \filenames : [string] -> iter(filenames, \fn -> {delfile(fn); {}});
 
@@ -237,7 +241,7 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 	}
 }
 
-fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
+fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 	hasRequire = ovl.requireList != [];
 
 	// If we use modules or require, we do this
@@ -338,13 +342,116 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 	fcVerbose(cfg, 1, "Assembling done.");
 
 	fcVerbose(cfg, 1, "Saving output file...");
-	saveFileContent((if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile, fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, cfg.threadId);
+	outfile = (if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile;
+	dir = if (strContains(outfile, "/")) dirName(outfile) else ".";
+	imports = if (isEmptySet(cfg.externNatives)) "" else {
+		foldSet(cfg.externNatives, "", \acc, nat -> {
+			separated = strSplit(nat, ".");
+			if (length(separated) != 2) {
+				fcPrintln("ivalid native name: " + nat, cfg.threadId);
+				acc
+			} else {
+				host = separated[0];
+				name = separated[1];
+				dep_package_host = \dep0 -> {
+					println("DEP: " + dep0);
+					dep = trim2(dep0, " \t");
+					if (startsWith(dep, "npm")) {
+						parts = strSplit(substring(dep, 4, strlen(dep) - 5), ";");
+						if (length(parts) != 2) Pair("", "") else Pair(parts[0], parts[1]);
+					} else {
+						Pair("", "");
+					}
+				}
+				switch (find(cfg.dependencies, \dep -> dep_package_host(dep).second == host)) {
+					Some(dep): {
+						package = dep_package_host(dep).first;
+						ensureNpmPackageIsLoaded(package, dir, cfg);
+						acc + "import * as " + host + " from '" + package + "';\n";
+					}
+					None(): {
+						fcPrintln("host JS module for native: " + nat + " is not found", cfg.threadId);
+						acc
+					}
+				}
+			}
+		});
+	}
+	saved_ok = \ -> {
+		fcVerbose(cfg, 1, "File saved.");
+		jsmode = fiJavascriptMode(cfg);
+		fcVerbose(cfg, 0, "Javascript (" + jsmode+ ") '" + resolveRelativePath(cfg.outputfile) + "' saved.");
+	}
+	saved_failed = \msg -> {
+		fcPrintln("Javascript (" + fiJavascriptMode(cfg)+ ") '" + resolveRelativePath(cfg.outputfile) + "' was NOT saved:\n" + msg, cfg.threadId);
+	}
+	if (imports == "") {
+		saveFileContent(
+			outfile, 
+			fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, 
+			cfg.threadId
+		);
+		saved_ok();
+	} else {
+		if (esbuildVersion() == "") {
+			saved_failed("Cannot bundle dependencies. Install esbuild please: 'npm install -g esbuild'");
+		} else {
+			println("Esbuild: version: ::: " + esbuildVersion());
+			jsx_file = changeFileExt(outfile, ".jsx");
+			saveFileContent(
+				jsx_file, 
+				imports + fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, 
+				cfg.threadId
+			);
+			out = ref "";
+			err = ref "";
+			// --bundle --platform=node --outfile=test1.js
+			args0 = ["--bundle", "--outfile=" + outfile, jsx_file];
+			args = if (cfg.jsmode != NODEJS_MODE) args0 else concat(args0, ["--platform=node"]);
+			println("Going to run:\nesbuild " + strGlue(args, " "));
+			result = execSystemProcessOutput("esbuild", args, dir);
+			println("Finised with exit code: " + i2s(result.exitCode));
+			if (result.exitCode != 0 || result.stderr != "") {
+				saved_failed(result.stdall);
+			} else {
+				saved_ok();
+			}
+		}
+	}
 	if (cfg.code) {
 		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + "\n" + generatedContent, cfg.threadId);
+	}	
+}
+
+ensureNpmPackageIsLoaded(package : string, dir : string, cfg : FiJsConfig) -> void {
+	npm_list = execSystemProcessOutput("npm", ["list"], dir);
+	if (npm_list.exitCode != 0 || npm_list.stderr != "") {
+		fcPrintln("Failed to run 'npm list'. Check that npm is installed:\n" + npm_list.stdall, cfg.threadId);
+	} else {
+		if (strContains(npm_list.stdout, package)) {
+			fcVerbose(cfg, 1, "Package " + package + " is already downloaded.");
+		} else {
+			fcVerbose(cfg, 0, "Package " + package + " is not yet downloaded. Going to install it.");
+			npm_install = execSystemProcessOutput("npm", ["install", package], dir);
+			if (npm_install.exitCode != 0 || npm_install.stderr != "") {
+				fcPrintln("Failed to run 'npm install " + package + "'. Check that npm is installed:\n" + npm_install.stdall, cfg.threadId);
+			} else {
+				fcVerbose(cfg, 0, "Package " + package + " is successfully installed.\n" + npm_install.stdout);
+			}
+		}
 	}
-	fcVerbose(cfg, 1, "File saved.");
-	jsmode = fiJavascriptMode(cfg);
-	fcVerbose(cfg, 0, "Javascript (" + jsmode+ ") '" + resolveRelativePath(cfg.outputfile) + "' saved.");
+}
+
+
+
+esbuildVersion() -> string {
+	result = execSystemProcessOutput("esbuild", ["--version"], ".");
+	if (result.exitCode != 0 || result.stderr != "") "" else {
+		ver = trim2(result.stdout, " \n\t\r");
+		if (ver != "" && stringCharsFold(ver, true, \acc, char ->
+			if (!acc) acc else isDigit(char) || char == "."
+		)) ver else "";
+	}
 }
 
 fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) {
