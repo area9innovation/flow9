@@ -61,7 +61,7 @@ makeSearchState(engine : FilebrowserEngine<?, ??>, text : string, ext : [string]
 }
 
 // calls the content loading and view creating for the current path
-getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string]) -> void, folderSelection : bool) -> Material {
+getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool) -> Material {
 	currentPath = getValue(state.currentPathB);
 	viewB = make(MCenter(MLoading(_("Loading content, please wait..."))));
 	onError = \error -> next(viewB, MCenter(MText("Error: " + error, [])));
@@ -77,7 +77,7 @@ getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], fi
 				contains(dirs, ".."),
 				previewsB
 			));
-			checkWhatIsChanged(currentPath, dirs, files, changesCallback)
+			checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback)
 		},
 		onError
 	);
@@ -85,35 +85,79 @@ getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], fi
 	MMutable(viewB);
 }
 
+fileDatas(
+	fileName : string,
+	fileVersion : int
+);
+
 FSPathContent(
 	basePath : string,
 	dirs : [string],
-	files : [string]
+	files : [fileDatas]
 );
 
 lastCheckResultR : ref Maybe<FSPathContent> = ref None();
 
-checkWhatIsChanged(basePath : string, dirs : [string], files : [string], callback : ([string], [string]) -> void) -> void {
-	maybeApply(
+checkWhatIsChanged(basePath : string, dirs : [string], files : [string], engine : FilebrowserEngine<?, ??>, callback : ([string], [string], [string]) -> void) -> void {
+	updateLastCheckResult = \files3 -> {
+	eitherFn(
 		^lastCheckResultR,
 		\lcr -> {
 			if (basePath == lcr.basePath) {
+				files2 = map(lcr.files, \file -> file.fileName);
+
 				added = concat(
 					map(subtractA(dirs, lcr.dirs), \p -> basePath + p + "/"),
-					map(subtractA(files, lcr.files), \p -> basePath + p)
+					map(subtractA(files, files2), \p -> basePath + p)
 				);
+
 				removed = concat(
 					map(subtractA(lcr.dirs, dirs), \p -> basePath + p + "/"),
-					map(subtractA(lcr.files, files), \p -> basePath + p)
+					map(subtractA(files2, files), \p -> basePath + p)
 				);
 
-				if (added != [] || removed != [])
-					callback(added, removed);
-			}
-		}
-	);
+				updated = fold(
+					files3,
+					[],
+					\acc, f ->
+						eitherMap(
+							find(lcr.files, \f2 -> f2.fileName == f.fileName),
+							\f2 -> if(f2.fileVersion == f.fileVersion || f2.fileVersion == 0) acc else arrayPush(acc, f2),
+							acc
+						)
+				);
 
-	lastCheckResultR := Some(FSPathContent(basePath, dirs, files));
+				updatedNames = map(updated, \file -> file.fileName);
+				lastCheckResultR := Some(FSPathContent(basePath, dirs, files3));
+				if (added != [] || removed != []|| updatedNames != []) {
+					callback(added, removed, updatedNames);
+				}
+		}},
+		\-> lastCheckResultR := Some(FSPathContent(basePath, dirs, files3))
+	)}
+	mapAsync(
+		files,
+		\f, ff, rj -> engine.getExtraInfo(
+			basePath + f,
+			"version",
+			\m -> eitherFn(m, \m2 ->{ff(fileDatas(f, getJsonIntValue(m2, 0)))}, \-> rj("can't get version")),
+			rj
+		),
+
+
+		\files3 -> {
+			updateLastCheckResult(files3);
+		},
+		\__ ->{
+			updateLastCheckResult(
+				eitherMap(
+					^lastCheckResultR,
+					\lcr -> lcr.files,
+					[]
+				)
+			)
+		}
+	)
 }
 
 // loading content of the selected folder using API
@@ -276,7 +320,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	allowPathInput = contains(styles, FbAllowPathInput());
 	fileFilterFn = extractStruct(styles, FbFileFilter(\__ -> true)).fn;
 	selectedFilesMany = map(extractStructMany(styles, FbSelectedNames(make([]))), \s -> s.filenamesB);
-	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
+	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop4)), \s -> s.fn);
 	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
 	uploadMaxImageResolutionM = minA(map(extractStructMany(styles, FbUploadImageMaxResolution(0)), \s -> s.resolution));
 	uploadMaxVideoBitrateM = minA(map(extractStructMany(styles, FbUploadVideoMaxBitrate(0)), \s -> s.bitrate));
@@ -362,7 +406,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		fileFilterFn(fullName);
 	}
 
-	changesCallbackFn = \added, removed -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, closeMe));
+	changesCallbackFn = \added, removed, updated -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, updated, closeMe));
 
 	updateFilesView = \-> nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection));
 	iter(doUpdateCallArr, \fn -> fn(updateFilesView));
@@ -448,15 +492,15 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 											\lcr -> {
 												if (getValue(state.currentPathB) == lcr.basePath) {
 													pair = split2Name_Path(filename);
-													if (contains(lcr.files, pair.first)) {
-														lastCheckResultR := Some(FSPathContent(lcr.basePath, lcr.dirs, subtractA(lcr.files, [pair.first])));
-													} else {
-														lastCheckResultR := Some(FSPathContent(lcr.basePath, subtractA(lcr.dirs, [pair.first]), lcr.files));
-													}
+													eitherFn(
+														findi(lcr.files, \file -> file.fileName == pair.first),
+														\i -> lastCheckResultR := Some(FSPathContent(lcr.basePath, lcr.dirs, removeIndex(lcr.files, i))),
+														\ -> lastCheckResultR := Some(FSPathContent(lcr.basePath, subtractA(lcr.dirs, [pair.first]), lcr.files))
+													)	
 												}
 											}
 										);
-										changesCallbackFn([], [filename]);
+										changesCallbackFn([], [filename], []);
 									}, println
 								);
 								next(closeDialogB, true);
