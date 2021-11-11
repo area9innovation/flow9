@@ -124,6 +124,11 @@ void flow_println(std::u16string d) {
 ";
 			} else if (id == "flow_isSameStructType") {
 				makeNativeIsSameStructType();
+			} else if (id == "flow_quit") {
+				" void flow_quit(int32_t code) {
+	// TODO
+	exit(code);
+}"
 			} else {
 				"// TODO: Native " + id;
 			}
@@ -286,7 +291,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 			blueprint(
 				"(struct %struct%){%args%}",
 				[
-					"struct", struct,
+					"struct",  struct,//addTemplatesToStruct([], struct),
 					"args", superglue(args, recField, ", "),
 				]
 			);
@@ -313,25 +318,50 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 }
 
 dunion2cpp(backend : Backend<CppInfo>, u : DUnion) -> string {
-	blueprint("
-		using %name% = std::variant<%members%>;", [
-			"name", u.id,
-			"members", superglue(u.types, \t : DTypeName -> {
-				dtype2cpp(backend, t);
-			}, ", ")
-		]
+	addTemplatesToStruct(
+		mapConcat(u.types, \t -> t.typars),
+		blueprint("
+			using %name% = std::variant<%members%>;", [
+				"name", u.id,
+				"members", superglue(u.types, \t : DTypeName -> {
+					dtype2cpp(backend, t);
+				}, ", ")
+			]
+		)
 	);
 }
 
 dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
-	"struct " + s.id + "{"
-	+ superglue(s.structArgs, \sa -> {
-		dtype2cpp(backend, sa.type) + " " + sa.id + ";"
-	}, "; ")
-	+ dstruct2id(backend, s) + ";" 
-	+ "};";
+	addTemplatesToStruct(
+		map(s.structArgs, \arg -> arg.type),
+		"struct " + s.id + "{"
+		+ superglue(s.structArgs, \sa -> {
+			dtype2cpp(backend, sa.type) + " " + sa.id + ";"
+		}, "; ")
+		+ dstruct2id(backend, s) + ";" 
+		+ "};"
+	);
 }
 
+addTemplatesToStruct(types : [DType], body : string) -> string {
+	templates = makeStructTemplates(types);
+	if (templates == "") body else templates + "\n" + body;
+}
+
+makeStructTemplates(types : [DType]) -> string {
+	parameters = filtermap(types, \type -> {
+		parametr = bTypePar2cpp(dtype2btype(type));
+		if (parametr == "") None() else Some(parametr) 
+	});
+	if (parameters == []) {
+		""
+	} else {
+		blueprint(
+			"template <typename %types%>",
+			["types", strGlue(parameters, ", typename ")]
+		);
+	}
+}
 
 dtype2cpp(backend : Backend<CppInfo>, type : DType) -> string {
 	btype2cpp(backend, dtype2btype(type));
@@ -339,11 +369,7 @@ dtype2cpp(backend : Backend<CppInfo>, type : DType) -> string {
 
 btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
 	switch (btype) {
-		BTypePar(id): {
-			// In C++, we use a, b, c, ...
-			len = strlen(id) - 1;
-			fromCharCode(getCharCodeAt("A", 0) + len);
-		}
+		BTypePar(id): bTypeParId2cpp(id);
 		BTypeName(id, typars): {
 			if (id == "void") "void"
 			else if (id == "bool" || id == "double") id
@@ -541,4 +567,17 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 	} else {
 		value;
 	}
+}
+
+bTypePar2cpp(btype : BType) -> string {
+	switch (btype) {
+		BTypePar(id): bTypeParId2cpp(id);
+		default: "";
+	}
+}
+
+bTypeParId2cpp(id : string) -> string {
+	// In C++, we use a, b, c, ...
+	len = strlen(id) - 1;
+	fromCharCode(getCharCodeAt("A", 0) + len);
 }
