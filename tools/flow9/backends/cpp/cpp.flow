@@ -68,6 +68,20 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 }
 
 bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
+	makeTailCallBody = \body : BStatement, type -> {
+		blueprint(
+			"bool _end;
+do {
+	_end = true;
+	%body%
+} while (!_end);%return%",
+			[
+				"body", bstatement2cpp(backend, body, true),
+				// TODO
+				"return", if (type == "void") "" else ("\nreturn " + type + ";"),
+			]
+		)
+	}
 	switch (d) {
 		BGlobalVar(id, body, type): {
 			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body) + ";";
@@ -90,10 +104,10 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 			} else {
 				polyvars = extractPolymorphism(makeSet(), type);
 				argtypes = getBArgTypes(type);
-				rt = btype2cpp(backend, getBReturnType(type));
+				returnType = btype2cpp(backend, getBReturnType(type));
 
 				blueprint("
-					%polyvars%%rt% %id%(%args%) {
+					%polyvars%%returnType% %id%(%args%) {
 						%body%
 					}
 				", [
@@ -102,11 +116,12 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 						else "template <" + superglue(set2array(polyvars), \pv -> "typename " + btype2cpp(backend, pv), ", ") + "> "
 					},
 					"id", id,
+					// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 					"args", supergluei(args, \i, arg -> {
 						btype2cpp(backend, argtypes[i]) + " " + arg
 					}, ", "),
-					"rt", rt,
-					"body", bstatement2cpp(backend, body, true)
+					"returnType", returnType,
+					"body", if (tailCall) makeTailCallBody(body, returnType) else bstatement2cpp(backend, body, true)
 				])
 			}
 		}
@@ -185,7 +200,15 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 			getReturn(getBType(val)) + bexp2cpp(backend, val) + ";"
 		}
 		BTailCall(fn, args, values, type): {
-			getReturn(type) + fn  + "(" +superglue(values, rece, ", ") + ");"
+			"_end = false;\n"
+			+ supergluei(args, \i, arg -> {
+				"auto __" + arg + " = " + rece(values[i])
+			}, ";\n") + ";\n"
+			+ supergluei(args, \i, arg -> {
+				arg + " = " + "__" + arg
+			}, ";\n") + ";"
+			// getReturn(type) + // TODO
+			//fn  + "(" +superglue(values, rece, ", ") + ");"
 		}
 		BSequenceStatement(statements): {
 			blueprint("
