@@ -1,0 +1,84 @@
+import tools/flow9/types/ugraph/debug;
+import tools/flow9/types/pretty;
+
+export {
+	// See if we can find the equivalence class for this type.
+	// Returns -1 if not.
+	findTNode(tmap : TMap, type : TType) -> int;
+}
+
+findTNode(tmap : TMap, type : TType) -> int {
+	findNamed = \n -> {
+		eclasses = getTreeArrayValue(^(tmap.typenameEClasses), n);
+		mclass = find(eclasses, \ec -> {
+			node = getUnionMapValue(tmap.tmap, ec);
+			isTTypeInTNode(tmap, type, ec, node);
+		});
+		mclass ?? mclass : -1;
+	}
+	switch (type) {
+		TTypeEClass(eclass): {
+			findUnionMapRoot(tmap.tmap, eclass);
+		}
+		TTypeOverload(unique, overloads): -1;
+		TTypeSupertype(unique, subtypes, maxed): -1;
+		TTypeName(id, typars): findNamed(id);
+		TTypeFunction(args, returnType): findNamed("");
+	}
+}
+
+isTTypeInTNode(tmap : TMap, t : TType, nclass : int, n : TNode) -> bool {
+	todo = \ -> {
+		println("TODO: Check if type " + prettyTType(t) + " is node " + prettyTNode(tmap, n));
+		false;
+	}
+	isSameEClass = \ec -> {
+		findUnionMapRoot(tmap.tmap, ec) == findUnionMapRoot(tmap.tmap, nclass)
+	}
+	switch (n) {
+		TNodeName(name, typars, pos): {
+			switch (t) {
+				TTypeName(id, ttypars): {
+					if (id == name) areTTypesInTNodes(tmap, ttypars, typars) else false;
+				}
+				TTypeFunction(args, returnType): {
+					if (name == "" && length(typars) == length(args) + 1) {
+						areTTypesInTNodes(tmap, args, subrange(typars, 0, length(args)))
+						&& areTTypesInTNodes(tmap, [returnType], [typars[length(args)]])
+					} else {
+						false;
+					}
+				}
+				TTypeEClass(eclass): isSameEClass(eclass);
+				TTypeOverload(unique, overloads): false;
+				TTypeSupertype(unique, subtypes, maxed): false;
+			}
+		}
+		TNodeOverload(uniques, overloads, pos): {
+			switch (t) {
+				TTypeOverload(tunique, __): {
+					uid = findTNode(tmap, tunique);
+					containsSet(uniques, uid);
+				}
+				TTypeEClass(eclass): isSameEClass(eclass);
+				default: false;
+			}
+		}
+		TNodeSupertype(uniques, subtypes, __, __, pos): {
+			switch (t) {
+				TTypeSupertype(uid, __, maxed): containsSet(uniques, uid);
+				TTypeEClass(eclass): isSameEClass(eclass);
+				default: false;
+			}
+		}
+	}
+}
+
+areTTypesInTNodes(tmap : TMap, ts : [TType], ns : [int]) -> bool {
+	length(ts) == length(ns)
+	&& forall(mapi(ts, \i, t -> {
+		eclass = ns[i];
+		node = getUnionMapValue(tmap.tmap, eclass);
+		isTTypeInTNode(tmap, t, eclass, node)
+	}), idfn)
+}

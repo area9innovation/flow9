@@ -1788,10 +1788,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			nativeWidget.style.pointerEvents =
-				(Platform.isIOS && (Platform.isSafari || Platform.isChrome) && !(untyped clip.isInput) && Util.getParameter("trackpad_scroll") != "0")
-				? 'unset' // It allows to catch wheel events from trackpad on iPad in Safari
-				: 'auto';
+			nativeWidget.style.pointerEvents = 'auto';
 
 			if (untyped clip.isFileDrop) {
 				nativeWidget.ondragover = function(e) {
@@ -1894,11 +1891,7 @@ class DisplayObjectHelper {
 					}
 				}
 
-				if (UseOptimization) {
-					removeFn();
-				} else {
-					RenderSupport.once("drawframe", removeFn);
-				}
+				RenderSupport.once("drawframe", removeFn);
 			}
 		}
 	}
