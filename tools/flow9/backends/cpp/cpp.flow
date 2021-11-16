@@ -106,7 +106,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 						btype2cpp(backend, argtypes[i]) + " " + arg
 					}, ", "),
 					"rt", rt,
-					"body", bstatement2cpp(backend, body)
+					"body", bstatement2cpp(backend, body, true)
 				])
 			}
 		}
@@ -137,6 +137,14 @@ void flow_println(std::u16string d) {
 				"int32_t flow_strlen(std::u16string s) {
 	return s.size();
 }"
+			} else if (id == "flow_fold") {
+				"template <typename A, typename B> B flow_fold(const std::vector<A> flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
+  B _res = flow_b;
+  for (std::size_t i = 0; i != flow_a.size(); ++i) {
+    _res = flow_fn(_res, flow_a[i]);
+  }
+  return _res;
+}"
 			} else {
 				"// TODO: Native " + id;
 			}
@@ -144,12 +152,12 @@ void flow_println(std::u16string d) {
 	}
 }
 
-bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
+bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) -> string {
 	todo = \ -> {
 		println("TODO C++ statement: " + toString(s));
 		toString(s)
 	}
-	rec = \ss -> bstatement2cpp(backend, ss);
+	rec = \ss -> bstatement2cpp(backend, ss, withReturn);
 	rece = \ee -> bexp2cpp(backend, ee);
 	switch (s) {
 		BIfStatement(cond, then, else_): {
@@ -168,13 +176,13 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 		}
 		BLetStatement(id, value, body): {
 			"auto " + id + " = " + bexp2cpp(backend, value) + ";\n"
-			+ bstatement2cpp(backend, body);
+			+ bstatement2cpp(backend, body, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
 		BReturnVoid(): "return;";
 		BReturn(val): {
 			type = getBType(val);
-			(if (type == bvoidType) {
+			(if (type == bvoidType || !withReturn) {
 				""
 			} else {
 				"return ";
@@ -189,7 +197,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 						%exps%
 					}",
 				[
-					"exps", superglue(statements, rec, "\n"),
+					"exps", supergluei(statements, \i, v -> bstatement2cpp(backend, v, i == length(statements) - 1), "\n"),
 			]);
 
 		}
@@ -264,7 +272,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 			argtypes = getBArgTypes(type);
 			rt0 = btype2cpp(backend, getBReturnType(type));
 			blueprint("
-					%type%([](%args%) {
+					%type%([&](%args%) {
 						return %body%;
 					})",
 				[
