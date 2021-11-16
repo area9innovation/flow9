@@ -8,11 +8,8 @@ import tools/flow9/backends/struct_ids;
 
 /*
 
-flowcpp flowe\flowe.flow -- file=demos/euler/euler1.flow cpp=euler1.cpp
+flowcpp flow9\flow9.flow -- file=demos/euler/euler1.flow cpp=euler1.cpp
 g++ -std=c++2a euler1.cpp 2>out.flow
-
-TODO:
-- flow_fold
 */
 
 export {
@@ -51,7 +48,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		+ getBackendRequirements(backend) + "\n"
 	//	+ "// RUNTIME\n"
 	//	+ runtime + "\n"
-		+ "#include <codecvt>\n#include <string>\n#include <locale>\n" // for u16string
+		+ "#include <codecvt>\n#include <string>\n#include <locale>\n#include <cmath>\n" // for u16string, math
 		+ "// Structs for unions\n"
 		+ unionStructs
 		+ "// UNIONS\n"
@@ -68,6 +65,29 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 }
 
 bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
+	makeTailCallBody = \body : BStatement, type -> {
+		defaultReturn = if (type == bvoidType.id) {
+			"";
+		} else {
+			blueprint(
+				"%type% _defReturn;
+return _defReturn;",
+				["type", type,]
+			);
+		}
+		blueprint(
+			"bool _end;
+do {
+	_end = true;
+	%body%
+} while (!_end);
+%return%",
+			[
+				"body", bstatement2cpp(backend, body, true),
+				"return", defaultReturn,
+			]
+		)
+	}
 	switch (d) {
 		BGlobalVar(id, body, type): {
 			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body) + ";";
@@ -76,24 +96,25 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 			if (id == "flow_i2s") {
 				blueprint("
 					std::u16string flow_i2s(int32_t flow_i) {
-						std::to_string(flow_i)
+					  std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> convert;
+					  return convert.from_bytes(std::to_string(flow_i));
 					}
 				", [
 				])
 			} else if (id == "flow_i2d") {
 				blueprint("
 					double flow_i2d(int32_t flow_i) {
-						double(flow_i)
+						return double(flow_i);
 					}
 				", [
 				])
 			} else {
 				polyvars = extractPolymorphism(makeSet(), type);
 				argtypes = getBArgTypes(type);
-				rt = btype2cpp(backend, getBReturnType(type));
+				returnType = btype2cpp(backend, getBReturnType(type));
 
 				blueprint("
-					%polyvars%%rt% %id%(%args%) {
+					%polyvars%%returnType% %id%(%args%) {
 						%body%
 					}
 				", [
@@ -102,11 +123,12 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
 						else "template <" + superglue(set2array(polyvars), \pv -> "typename " + btype2cpp(backend, pv), ", ") + "> "
 					},
 					"id", id,
+					// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 					"args", supergluei(args, \i, arg -> {
 						btype2cpp(backend, argtypes[i]) + " " + arg
 					}, ", "),
-					"rt", rt,
-					"body", bstatement2cpp(backend, body, true)
+					"returnType", returnType,
+					"body", if (tailCall) makeTailCallBody(body, returnType) else bstatement2cpp(backend, body, true)
 				])
 			}
 		}
@@ -144,6 +166,14 @@ void flow_println(std::u16string d) {
     _res = flow_fn(_res, flow_a[i]);
   }
   return _res;
+}"
+			} else if (id == "flow_log") {
+				"double flow_log(double v) {
+	return std::log(v);
+}"
+			} else if (id == "flow_exp") {
+				"double flow_exp(double v) {
+	return std::exp(v);
 }"
 			} else {
 				"// TODO: Native " + id;
@@ -189,7 +219,13 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 			}) + bexp2cpp(backend, val) + ";"
 		}
 		BTailCall(fn, args, values, type): {
-			fn  + "(" +superglue(values, rece, ", ") + ");"
+			"_end = false;\n"
+			+ supergluei(args, \i, arg -> {
+				"auto __" + arg + " = " + rece(values[i])
+			}, ";\n") + ";\n"
+			+ supergluei(args, \i, arg -> {
+				arg + " = " + "__" + arg
+			}, ";\n") + ";"
 		}
 		BSequenceStatement(statements): {
 			blueprint("
@@ -198,7 +234,8 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 					}",
 				[
 					"exps", supergluei(statements, \i, v -> bstatement2cpp(backend, v, i == length(statements) - 1), "\n"),
-			]);
+				]
+			);
 
 		}
 		BSwitchStatement(expr, cases, type): {
