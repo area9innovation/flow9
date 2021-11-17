@@ -1,6 +1,7 @@
 import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/cgraph/pretty;
 import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/cgraph/constraint;
 import tools/flow9/types/pretty;
 import tools/flow9/bexp/bexp;
 
@@ -16,6 +17,51 @@ export {
 }
 
 resolveCNodes(tmap : TMap) -> Tree<int, TType> {
+	handlePostponed(tmap, 5);
+	doResolveCNodes(tmap);
+}
+
+handlePostponed(tmap : TMap, iteration : int) -> void {
+	constraints = ^(tmap.cmap.constraints);
+	if (isEmptyList(constraints) || iteration == 0) {
+		// TODO: We could unify at the end
+		debugTConstraints(tmap, constraints);
+	} else {
+		// OK, clear the list
+		tmap.cmap.constraints := makeList();
+		remaining = foldList(constraints, makeList(), \acc, c : TConstraint -> {
+			sub : CNode = getUnionMapValue(tmap.cmap.cmap, c.subtype);
+			super : CNode = getUnionMapValue(tmap.cmap.cmap, c.supertype);
+			if (sub != CEpsilon() || super != CEpsilon()) {
+				ok = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+				if (!ok) {
+					println("TODO: Error when resuming subtyping");
+					acc
+				} else {
+					acc;
+				}
+			} else {
+				Cons(c, acc)
+			}
+		});
+
+		new = ^(tmap.cmap.constraints);
+
+		tmap.cmap.constraints := concatList(remaining, new);
+		handlePostponed(tmap, iteration - 1);
+	}
+}
+
+debugTConstraints(tmap : TMap, c : List<TConstraint>) -> void {
+	if (!isEmptyList(c)) {
+		println("Remaining constraints:");
+		iterList(c, \cc -> {
+			println(prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype))
+		});
+	}
+}
+
+doResolveCNodes(tmap : TMap) -> Tree<int, TType> {
 	types = ref makeTree();
 	visited : ref Set<int> = ref makeSet();
 
