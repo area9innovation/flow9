@@ -1,65 +1,58 @@
 import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fiprettyprint;
 
 export {
-    //fcOptimizeTailCalls(prog : FiProgram) -> FiProgram;
-    fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp];
+    fcOptimizeTailCalls(prog : FiProgram) -> FiProgram;
     fcDetectTailCall(decl : FiFunctionDec) -> bool;
     fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec;
 }
-/*
+
 fcOptimizeTailCalls(prog : FiProgram) -> FiProgram {
     fold(prog.traversal, prog,
-        \acc, mod_name -> eitherMap(
-            lookupTree(prog.modules, mod_name),
-            \module -> {
-                fold(module.functions, acc, \ac, func ->
-                if (!fcDetectTailCall(func)) ac else {
-                    Cons(fcOptimizeTailCall(func), ac)
-                }
-            }),
-            acc
-        )
+        \acc, mod_name -> {
+            module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+			funcs_map = ref makeTree();
+            optimized_funcs = map(module.functions, \func ->
+				if (fcDetectTailCall(func) && func.name != "for") {
+					optimized_func = fcOptimizeTailCall(func);
+					funcs_map := setTree(^funcs_map, func.name, optimized_func);
+					optimized_func;
+				} else {
+					func;
+				}
+			);
+			optimized_module = FiModule(module with functions = optimized_funcs);
+			FiProgram(acc with 
+				modules = setTree(acc.modules, mod_name, optimized_module),
+				names = FiGlobalNames(acc.names with
+					toplevel = mergeTree(acc.names.toplevel, ^funcs_map)
+				)
+			);
+		}
     );
 }
-*/
 
-fact(n : int, acc : int) -> int {
-    if (n == 0) acc else fact(n - 1, n * acc);
+_fc_for_type_ref : ref Maybe<FiTypeFunction> = ref None();
+
+_fc_for_type_() -> FiTypeFunction {
+	onlyOnce(_fc_for_type_ref, \ -> 
+		FiTypeFunction(
+			[
+				FiFunArg("init", FiTypeBool()), 
+				FiFunArg("predicate", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool())), 
+				FiFunArg("f", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool()))
+			], 
+			FiTypeBool()
+		)
+	);
 }
-
-fact_tailed(n__ : int, acc__ : int) -> int {
-    __acc = ref acc__;
-    __n = ref n__;
-    __ret = ref acc__; 
-    for(true, idfn, \__ -> {
-        n = ^__n;
-        acc = ^__acc;
-        if (n == 0) {
-            //acc
-            __ret := acc;
-            false; 
-        } else {
-            //fact(n - 1, n * acc);
-            __n := n - 1;
-            __acc := n * acc;
-            true;
-        }
-    });
-    ^__ret;
-}
-
-
-_fc_for_type_ = FiTypeFunction([FiFunArg("init", FiTypeBool()), FiFunArg("predicate", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool())), FiFunArg("f", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool()))], FiTypeBool());
 
 fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec {
     ret_type = decl.type.returnType;
     new_args = map(decl.lambda.args, \arg -> FiFunArg(arg with name = arg.name + "__"));
-    ret_arg = decl.lambda.args[findiDef(decl.lambda.args, \arg -> arg.type == ret_type, -1)];
-
     modified_fn = fcConvertReturnExps(decl.lambda.body, decl.lambda.args, ret_type, decl.name);
-
     for_cycle = FiCall(
-        FiVar("for", _fc_for_type_, -1),
+        FiVar("for", _fc_for_type_(), -1),
         [
             FiBool(true, -1),
             FiLambda(
@@ -84,17 +77,23 @@ fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec {
         ],
         ret_type, -1
     );
+	wrap_return = if (ret_type == FiTypeVoid()) {
+		for_cycle;
+	} else {
+		ret_arg = decl.lambda.args[findiDef(decl.lambda.args, \arg -> arg.type == ret_type, -1)];
+		FiLet(
+			"__ret", 
+			FiTypeRef(ret_type), 
+			FiCallPrim(FcRefPrim(), [FiVar(ret_arg.name + "__", ret_arg.type, -1)], FiTypeRef(ret_arg.type), -1),
+			FiSeq([
+				for_cycle, 
+				FiCallPrim(FcDerefPrim(), [FiVar("__ret", FiTypeRef(ret_type), -1)], ret_type, -1)
+			], ret_type, -1),
+			ret_type, -1
+		);
+	}
     new_body = fold(reverseA(decl.lambda.args),
-        FiLet(
-            "__ret", 
-            FiTypeRef(ret_type), 
-            FiCallPrim(FcRefPrim(), [FiVar(ret_arg.name + "__", ret_arg.type, -1)], FiTypeRef(ret_arg.type), -1),
-            FiSeq([
-                for_cycle, 
-                FiCallPrim(FcDerefPrim(), [FiVar("__ret", FiTypeRef(ret_type), -1)], ret_type, -1)
-            ], ret_type, -1),
-            ret_type, -1
-        ), 
+        wrap_return, 
         \acc, arg -> FiLet(
             "__" + arg.name, 
             FiTypeRef(arg.type), 
@@ -110,22 +109,29 @@ fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec {
 
 fcDetectTailCall(decl : FiFunctionDec) -> bool { 
     ret_exps = fcReturnExps(decl.lambda.body, []);
-    fold(ret_exps, true, \acc, e -> {
+	b1 = ref false;
+    b2 = fold(ret_exps, true, \acc, e -> {
         if (!acc) acc else {
             switch (e) {
                 FiCall(f, args,__,__): {
                     switch (f) {
-                        FiVar(name,__,__): decl.name == name;
+                        FiVar(name,__,__): {
+							// Recursion detected
+							b1 := true;
+							decl.name == name;
+						}
                         default: false;
                     }
                 }
                 FiVar(name,__,__): {
                     exists(decl.lambda.args, \arg -> arg.name == name);
                 }
+				FiConst(): true;
                 default: false;
             }
         }
     });
+	^b1 && b2;
 }
 
 fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp] {
@@ -166,16 +172,20 @@ fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func :
         FiVar(name,__,__): {
             switch (find(args, \arg -> arg.name == name)) {
                 Some(arg): {
-                    FiSeq(
-                        [
-                            FiCallPrim(FcAssignPrim(), 
-                                [FiVar("__ret", ret_type, -1), e], 
-                                FiTypeVoid(), -1
-                            ),
-                            FiBool(false, -1)
-                        ],
-                        FiTypeBool(), -1
-                    );
+					if (ret_type == FiTypeVoid()) {
+						FiBool(false, -1);
+					} else {
+						FiSeq(
+							[
+								FiCallPrim(FcAssignPrim(), 
+									[FiVar("__ret", ret_type, -1), e], 
+									FiTypeVoid(), -1
+								),
+								FiBool(false, -1)
+							],
+							FiTypeBool(), -1
+						);
+					}
                 }
                 None(): e;
             }
@@ -202,6 +212,22 @@ fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func :
                 default: e;
             }
         }
+		FiConst(): {
+			if (ret_type == FiTypeVoid()) {
+				FiBool(false, -1);
+			} else {
+				FiSeq(
+					[
+						FiCallPrim(FcAssignPrim(), 
+							[FiVar("__ret", ret_type, -1), e], 
+							FiTypeVoid(), -1
+						),
+						FiBool(false, -1)
+					],
+					FiTypeBool(), -1
+				);
+			}
+		}
 		default: e;
     }
 }
