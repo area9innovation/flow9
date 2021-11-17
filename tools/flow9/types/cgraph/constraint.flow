@@ -13,7 +13,9 @@ export {
 	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TTypeEClass;
 
 	// We know we have to subtype here - TODO: Figure out what the result is?
-	subtypeCType(tmap : TMap, subtype : TType, supertype : TType, reason : ErrorReason) -> void;
+	// checkOnly defines whether we should update our types, or just do a check.
+	// Returns true if this is possible.
+	subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> bool;
 
 	// When we have a DType, we use this one. Instantiates polymorphism
 	dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass;
@@ -45,16 +47,16 @@ unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TT
 	TTypeEClass(root);
 }
 
-subtypeCType(tmap : TMap, subtype : TType, supertype : TType, reason : ErrorReason) -> void {
+subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> bool {
 	subClass = findOrMakeCNodeClass(tmap, subtype, reason);
 	superClass = findOrMakeCNodeClass(tmap, supertype, reason);
 
 	// prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super)
 
-	subtypeCEClass(tmap, subClass, superClass, reason);
+	subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
 }
 
-subtypeCEClass(tmap : TMap, subClass : int, superClass : int, reason : ErrorReason) -> void {
+subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> bool {
 	sub : CNode = getUnionMapValue(tmap.cmap.cmap, subClass);
 	super : CNode = getUnionMapValue(tmap.cmap.cmap, superClass);
 
@@ -62,64 +64,107 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, reason : ErrorReas
 		println("subtype " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass));
 	}
 
-	if (sub == CEpsilon() && super == CEpsilon()) {
-		// OK, postpone
-		println("TODO: Postpone subtype " + prettyCEClass(tmap.cmap, subClass) + " vs "  + prettyCEClass(tmap.cmap, superClass));
-	} else {
-		todo = \ -> {
-			println("TODO: Subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super));
-		};
-		error = \ -> {
+	todo = \ -> {
+		println("TODO: Subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super));
+		true;
+	};
+	error = \ -> {
+		if (!checkOnly) {
 			println("TODO: Report error on subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super));
 		}
+		false;
+	}
+
+	postpone = \ -> {
+		println("TODO: Postpone subtype " + prettyCEClass(tmap.cmap, subClass) + " vs "  + prettyCEClass(tmap.cmap, superClass));
+		true;
+	}
+
+	// If we have a subtype against an overload
+	subVsOverload = \ov : COverload -> {
+		potentials = filterSet(ov.options, \opt : int -> {
+			subtypeCEClass(tmap, subClass, opt, true, reason);
+		});
+		npot = sizeSet(potentials);
+		if (npot == 0) {
+			error();
+		} else if (npot == 1) {
+			// OK, exactly one is possible.
+			cand : int = set2array(potentials)[0];
+			if (!checkOnly) {
+				// We resolve the overload
+				setUnionMapValue(tmap.cmap.cmap, superClass, CEpsilon());
+				root = unionUnionMap(tmap.cmap.cmap, superClass, cand, reason);
+				subtypeCEClass(tmap, subClass, cand, checkOnly, reason);
+			} else true;
+		} else {
+			postpone();
+		}
+
+	}
+
+	if (sub == CEpsilon() && super == CEpsilon()) {
+		// OK, postpone
+		postpone();
+	} else {
 		switch (sub) {
 			CEpsilon(): {
-				// OK, we should find all subtypes of super, and make an overload for those
-				overload = makeSubtypeOverload(tmap, super, reason);
-				setUnionMapValue(tmap.cmap.cmap, subClass, overload);
+				if (!checkOnly) {
+					// OK, we should find all subtypes of super, and make an overload for those
+					overload = makeSubtypeOverload(tmap, super, reason);
+					setUnionMapValue(tmap.cmap.cmap, subClass, overload);
+				}
+				true;
 			}
 			CName(name, typars, subreason): {
 				switch (super) {
 					CEpsilon(): {
-						overload = makeSupertypeOverload(tmap, sub, reason);
-						setUnionMapValue(tmap.cmap.cmap, superClass, overload);
+						if (!checkOnly) {
+							overload = makeSupertypeOverload(tmap, sub, reason);
+							setUnionMapValue(tmap.cmap.cmap, superClass, overload);
+						}
+						true;
 					}
 					CName(sname, stypars, supreason): {
 						if (name == sname) {
 							if (length(typars) == length(stypars)) {
-								iteri(typars, \i, typar -> {
-									subtypeCEClass(tmap, typar, stypars[i], reason);	// TODO: Elaborate reason?
+								foldi(typars, true, \i, ok : bool, typar -> {
+									ok && subtypeCEClass(tmap, typar, stypars[i], checkOnly, reason);	// TODO: Elaborate reason?
 								});
 							} else {
 								error();
 							}
-
 						} else {
-							todo();
+							supers = ^(tmap.resolveSupertypes)(name);
+							if (contains(supers, sname)) {
+								todo()
+							} else error();
 						}
 					}
 					CFunction(sargs, return, supreason): todo();
-					COverload(sunique, options, supreason): todo();
+					COverload(sunique, options, supreason): subVsOverload(super);
 				}
 			}
 			CFunction(args, return, subreason): {
 				switch (super) {
 					CEpsilon(): {
-						overload = makeSupertypeOverload(tmap, sub, reason);
-						setUnionMapValue(tmap.cmap.cmap, superClass, overload);
+						if (!checkOnly) {
+							overload = makeSupertypeOverload(tmap, sub, reason);
+							setUnionMapValue(tmap.cmap.cmap, superClass, overload);
+						}
+						true;
 					}
 					CName(sname, stypars, supreason): todo();
 					CFunction(sargs, sreturn, supreason): {
 						if (length(args) == length(sargs)) {
-							iteri(args, \i, arg -> {
-								subtypeCEClass(tmap, sargs[i], arg, reason);	// TODO: Elaborate reason?
-							});
-							subtypeCEClass(tmap, return, sreturn, reason);	// TODO: Elaborate reason?
+							foldi(args, true, \i, ok : bool, arg -> {
+								ok && subtypeCEClass(tmap, sargs[i], arg, checkOnly, reason);	// TODO: Elaborate reason?
+							}) && subtypeCEClass(tmap, return, sreturn, checkOnly, reason);	// TODO: Elaborate reason?
 						} else {
 							error();
 						}
 					}
-					COverload(sunique, options, supreason): todo();
+					COverload(sunique, options, supreason): subVsOverload(super);
 				}
 			}
 			COverload(unique, options, subreason): todo();
