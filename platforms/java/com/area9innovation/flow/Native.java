@@ -734,6 +734,12 @@ public class Native extends NativeHost {
 	}
 
 	@SuppressWarnings("unchecked")
+	public static final <T> T for_(T v, Func1<Boolean,T> pred, Func1<T,T> fn) {
+		for (; pred.invoke(v); v = fn.invoke(v));
+		return v;
+	}
+
+	@SuppressWarnings("unchecked")
 	public static final <T> Object iteri(Object[] arr, Func2<Object,Integer,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			clos.invoke(i, (T)arr[i]);
