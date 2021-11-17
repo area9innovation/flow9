@@ -328,3 +328,8 @@ To link the flow code in JS, add something like this in the HTML:
 		...
 		</body>
 	</html>
+
+To use external natives from third-party packages you need to supply the flow.config file with section:
+
+	js-dependencies += yarn[@braintree/sanitize-url],yarn[@vendor/other-lib]
+	js-dependencies += yarn[abnther-lib]
