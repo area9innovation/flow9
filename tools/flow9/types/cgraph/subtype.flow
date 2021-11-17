@@ -2,6 +2,7 @@ import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/ugraph/class;
 import tools/flow9/types/cgraph/pretty;
 import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/typars;
 
 export {
 	// Find all subtypes of this (super) node
@@ -93,52 +94,139 @@ makeSupertypeOverload(tmap : TMap, node : CNode, reason0 : ErrorReason) -> CNode
 }
 
 makeSupertypeFromSub(tmap : TMap, sub : CName, super : string) -> int {
+	error = \ -> {
+		println("ERROR: Could not make supertype " + super + " from " + prettyCNode(tmap.cmap, sub));
+		node = CName(super, [], sub.reason);
+		nclass = makeTNodeClass(tmap);
+		setUnionMapValue(tmap.cmap.cmap, nclass, node);
+		nclass;
+	}	
 	msuperdef = ^(tmap.resolveUnionName)(super);
 	switch (msuperdef) {
-		None(): {
-			println("ERROR: Could not find " + super);
-			node = CName(super, [], sub.reason);
-			nclass = makeTNodeClass(tmap);
-			setUnionMapValue(tmap.cmap.cmap, nclass, node);
-			nclass;
-		}
+		None(): error()
 		Some(superdef): {
-			node = if (superdef.typars == []) {
-				CName(super, [], sub.reason);
-			} else {
-				println("TODO: Grab typars for " + super + " supertype from " + prettyCNode(tmap.cmap, sub));
-				CName(super, 
-					map(superdef.typars, \tp -> {
-						makeTNodeClass(tmap)
-					}),
-					sub.reason
-				);
-			};
-
-			nclass = makeTNodeClass(tmap);
-			setUnionMapValue(tmap.cmap.cmap, nclass, node);
-			nclass;
+			mtypars = extractTyparsFromSubtype2(tmap, sub, super);
+			switch (mtypars) {
+				None(): error();
+				Some(typars): {
+					node = CName(super, typars, sub.reason);
+					nclass = makeTNodeClass(tmap);
+					setUnionMapValue(tmap.cmap.cmap, nclass, node);
+					nclass;
+				}
+			}
 		}
 	}
 }
 
 makeSubtypeFromSuper(tmap : TMap, super : CName, sub : string) -> int {
+	error = \ -> {
+		println("ERROR: Could not make " + sub + " from " + prettyCNode(tmap.cmap, super));
+		node = CName(sub, [], super.reason);
+		nclass = makeTNodeClass(tmap);
+		setUnionMapValue(tmap.cmap.cmap, nclass, node);
+		nclass;
+	}
 	msuperdef = ^(tmap.resolveUnionName)(super.name);
 	switch (msuperdef) {
 		None(): {
-			println("ERROR: Could not find " + super.name);
-			node = CName(sub, [], super.reason);
-			nclass = makeTNodeClass(tmap);
-			setUnionMapValue(tmap.cmap.cmap, nclass, node);
-			nclass;
+			error();
 		}
 		Some(superdef): {
-			println("TODO: Grab typars for " + sub + " subtype from " + prettyCNode(tmap.cmap, super));
-			println(superdef);
-			node = CName(sub, [], super.reason);
-			nclass = makeTNodeClass(tmap);
-			setUnionMapValue(tmap.cmap.cmap, nclass, node);
-			nclass;
+			mtypars = extractTyparsFromSuper2(tmap, super, sub);
+			switch (mtypars) {
+				None(): {
+					error();
+				}
+				Some(tps): {
+					node = CName(sub, tps, super.reason);
+					nclass = makeTNodeClass(tmap);
+					setUnionMapValue(tmap.cmap.cmap, nclass, node);
+					nclass;
+				}
+			}
+		}
+	}
+}
+
+
+// This is basically identical to extractTyparsFromSubtype
+extractTyparsFromSubtype2(tmap : TMap, sub : CName, super : string) -> Maybe<[int]> {
+	def = \ -> {
+		munion = ^(tmap.resolveUnionName)(super);
+		switch (munion) {
+			None(): {
+				println("Not supposed to happen: Extract typars from non-union " + super + " to " + sub.name);
+				None();
+			}
+			Some(union): {
+				if (union.typars == []) Some([])
+				else {
+					stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == sub.name);
+					stype ?? {
+						// OK, we have the relation from the union to the struct in this union
+						Some(extractTyparsFromSubTypeDTypename(union, stype, sub.typars))
+					} : {
+						// We could not find it, go look for it in the union members
+						utypars = filtermap(union.types, \t : DTypeName -> {
+							usubtypars = extractTyparsFromSubTypeDTypename(union, t, sub.typars);
+							usub = CName(t.id, usubtypars, sub.reason);
+							extractTyparsFromSubtype2(tmap, usub, super)
+						});
+						println("TODO: Look through the unions to find the right struct " + super);
+						println(utypars);
+						Some(sub.typars);
+					}
+				}
+			}
+		}
+	};
+	if (super == sub.name) {
+		Some(sub.typars)
+	} else {
+		mstruct = ^(tmap.resolveStructName)(super);
+		switch (mstruct) {
+			None(): def();
+			Some(struct): {
+				if (struct.typars == []) Some([])
+				else def();
+			}
+		}
+	}
+}
+
+// This is basically identical to extractTyparsFromSuper
+extractTyparsFromSuper2(tmap : TMap, super : CName, subname : string) -> Maybe<[int]> {
+	def = \ -> {
+		munion = ^(tmap.resolveUnionName)(super.name);
+		switch (munion) {
+			None(): {
+				println("Not supposed to happen: Extract typars from non-union " + super.name + " to " + subname);
+				None();
+			}
+			Some(union): {
+				stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == subname);
+				stype ?? {
+					// OK, we have the relation from the union to the struct in this union
+					Some(extractTyparsFromSuperDTypename(union, stype, super.typars));
+				} : {
+					// We could not find it, go look for it in the children
+					println("TODO: Look through the unions to find the right struct " + prettyCNode(tmap.cmap, super) + " vs "  + subname);
+					Some(super.typars);
+				}
+			}
+		}
+	};
+	if (super.name == subname) {
+		Some(super.typars)
+	} else {
+		mstruct = ^(tmap.resolveStructName)(subname);
+		switch (mstruct) {
+			None(): def();
+			Some(struct): {
+				if (struct.typars == []) Some([])
+				else def();
+			}
 		}
 	}
 }
