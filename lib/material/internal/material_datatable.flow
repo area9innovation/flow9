@@ -1,6 +1,7 @@
 import material/internal/material_textinput;
 import material/internal/material_dropdown;
 import material/internal/material_list;
+import material/internal/material_dialog_internal;
 
 export {
 	MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -34,7 +35,7 @@ MDynamicDataTable2TInner(
 	reorderIconSpace = if (isReorderEnabled && reorderShowIcon) 40. else 0.;
 	reorderOnDragEnd = contains(style, MReorderOnDragEnd());
 
-	sorting = makeMSortingState(data, rowsFn, style, isSome(reorderList), lightweight);
+	sorting = makeMSortingState(data, rowsFn, style, isSome(reorderList), lightweight, manager, m2t);
 	paginationState = makeMPaginationState(style, isSome(reorderList));
 	page = paginationState.page;
 
@@ -1020,7 +1021,11 @@ MDataTableSorting(
 );
 dataTableSortingDef = MDataTableSorting(-1, true, None(), None(), false, false);
 
-makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDataTableStyle], isReorder : bool, lightweight : bool) -> MSortingState {
+skipSortingThreshold = 10000.; // ms
+
+makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDataTableStyle], isReorder : bool, lightweight : bool,
+	manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> MSortingState {
+
 	defaultParam : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
 	listSortedCallback = extractStruct(style, MListSorted(nop1)).newOrderCallback;
 	sortedBy : DynamicBehaviour<MDataTableSorting> = make(dataTableSortingDef);
@@ -1031,6 +1036,7 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 
 	updatingTrigger = make(true);
 	maybeApply(sortUpdating, \su -> updateTrigger(updatingTrigger, su.delay));
+	showWarningSnackbar = \ -> renderMSnackbar(manager, "Warning! Sorting lasted for too long and was skipped.", [], m2t, \t -> trender(t, manager.manager.renderStyle));
 
 	result = fsubselect(data, FLift(\dat : [?] ->
 		fselect2(sortedBy, updatingTrigger, FLift2(\sb : MDataTableSorting, __ -> {
@@ -1082,19 +1088,30 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 									st = if (sb.caseInsensitive) "MAutoSortCaseInsensitive()" else "MAutoSort()";
 									println("WARNING! You are going to sort on column with " + st + " style inside potentially big MLightweightDataTable. It can lead to noticeable freeze. Consider using MAutoSortByRowData() or MSortByValue() instead.");
 								}
+								skipSorting = ref false;
+								startSort = timestamp();
 								if (sb.caseInsensitive)
 									map(
 										sortCustom(
-											mapi(dat, \j, r ->
-												Pair({
-													cellM = elementAt(rowsFn(r), sb.column, TEmpty());
-													toLowerCase(toString(switch (cellM) {
-														MMutable(mutContent): fgetValue(mutContent);
-														TMutable(mutContent): fgetValue(mutContent);
-														default: cellM
-													}))
-												}, j)
-											),
+											mapi(dat, \j, r -> {
+												value =
+													if (^skipSorting) ""
+													else if (timestamp() - startSort > skipSortingThreshold) {
+														println("WARNING! Sorting was skipped " + d2s(skipSortingThreshold) + " ms after start. "
+															+ i2s(j) + " items out of " + i2s(length(dat)) + " were processed.");
+														skipSorting := true;
+														deferred(showWarningSnackbar);
+														""
+													} else {
+														cellM = elementAt(rowsFn(r), sb.column, TEmpty());
+														toLowerCase(toString(switch (cellM) {
+															MMutable(mutContent): fgetValue(mutContent);
+															TMutable(mutContent): fgetValue(mutContent);
+															default: cellM
+														}))
+													}
+												Pair(value, j)
+											}),
 											firstOfPair,
 											sb.ascending
 										),
@@ -1103,16 +1120,25 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 								else
 									map(
 										sortCustom(
-											mapi(dat, \j, r ->
-												Pair({
-													cellM = elementAt(rowsFn(r), sb.column, TEmpty());
-													switch (cellM) {
-														MMutable(mutContent): fgetValue(mutContent);
-														TMutable(mutContent): fgetValue(mutContent);
-														default: cellM
+											mapi(dat, \j, r -> {
+												value =
+													if (^skipSorting) TEmpty()
+													else if (timestamp() - startSort > skipSortingThreshold) {
+														println("WARNING! Sorting was skipped " + d2s(skipSortingThreshold) + " ms after start. "
+															+ i2s(j) + " items out of " + i2s(length(dat)) + " were processed.");
+														skipSorting := true;
+														deferred(showWarningSnackbar);
+														TEmpty()
+													} else {
+														cellM = elementAt(rowsFn(r), sb.column, TEmpty());
+														switch (cellM) {
+															MMutable(mutContent): fgetValue(mutContent);
+															TMutable(mutContent): fgetValue(mutContent);
+															default: cellM
+														}
 													}
-												}, j)
-											),
+												Pair(value, j)
+											}),
 											firstOfPair,
 											sb.ascending
 										),

@@ -1,6 +1,7 @@
 import tools/flow9/types/builtin;
 import tools/flow9/dexp/pretty;
 import tools/flow9/types/polymorphism;
+import tools/flow9/types/cgraph/constraint;
 
 export {
 	ttypeInferenceDExp(env : TTypeEnv, id : string, d : DExp) -> TTypeEClass;
@@ -29,12 +30,20 @@ ttypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 }
 
 doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
-	restype = \reason, tv, type : TTypeEClass -> {
-		TTypeEClass(joinTNodes(env.tmap, type.eclass, tv, makeErrorReason([d.pos], reason)));
+	restype = \reason, tv : int, type : TTypeEClass -> {
+		if (env.tracing.cmap) {
+			unifyCType(env.tmap, type, TTypeEClass(tv), makeErrorReason([d.pos], reason));
+		} else {
+			TTypeEClass(joinTNodes(env.tmap, type.eclass, tv, makeErrorReason([d.pos], reason)));
+		}
 	};
 	asEClass = \reason, type -> {
-		eclass = findOrMakeTNodeClass(env.tmap, type, makeErrorReason([d.pos], reason));
-		TTypeEClass(eclass);
+		if (env.tracing.cmap) {
+			resultCType(env.tmap, type, makeErrorReason([d.pos], reason));
+		} else {
+			eclass = findOrMakeTNodeClass(env.tmap, type, makeErrorReason([d.pos], reason));
+			TTypeEClass(eclass);
+		}
 	}
 
 	switch (d) {
@@ -83,9 +92,16 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 			if (isDTypeAuto(type)) {
 				restype("autotyped", eclass, valtype);
 			} else {
-				ttype = TTypeEClass(dtype2eclass(env.tmap, makeTree(), type));
-				subtypeTTypes(env, valtype, ttype, "typed", pos);
-				restype("typed", eclass, ttype);
+				if (env.tracing.cmap) {
+					reason = makeErrorReason([pos], "typed");
+					ttype = dtype2CType(env.tmap, type, reason);
+					subtypeTTypes(env, valtype, ttype, "typed", pos);
+					restype("typed", eclass, ttype);
+				} else {
+					ttype = TTypeEClass(dtype2eclass(env.tmap, makeTree(), type));
+					subtypeTTypes(env, valtype, ttype, "typed", pos);
+					restype("typed", eclass, ttype);
+				}
 			}
 		}
 		DLet(id, value, body, pos, eclass): {
@@ -96,12 +112,21 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 		}
 		DIf(cond, then, else_, pos, eclass): {
 			tcond = ttypeInferenceDExp(env, topid, cond);
-			unifyTTypes(env.tmap, tcond, TTypeName("bool", []), makeErrorReason([pos], "if-cond"));
-
 			tthen = ttypeInferenceDExp(env, topid, then);
 			telse = ttypeInferenceDExp(env, topid, else_);
-			type = makeTTypeSupertype(env, [tthen, telse], false, "if-body", pos);
-			restype("if-body", eclass, type);
+
+			if (env.tracing.cmap) {
+				unifyCType(env.tmap, tcond, TTypeName("bool", []), makeErrorReason([pos], "if-cond"));
+				res = TTypeEClass(eclass);
+				reason = makeErrorReason([pos], "if-body");
+				subtypeCType(env.tmap, tthen, res, reason);
+				subtypeCType(env.tmap, telse, res, reason);
+				res;
+			} else {
+				unifyTTypes(env.tmap, tcond, TTypeName("bool", []), makeErrorReason([pos], "if-cond"));
+				type = makeTTypeSupertype(env, [tthen, telse], false, "if-body", pos);
+				restype("if-body", eclass, type);
+			}
 		}
 		DCall(fn, args, pos, eclass): {
 			fntype1 = ttypeInferenceDExp(env, topid, fn);
@@ -110,24 +135,28 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 				default: "";
 			};
 
-			/*
-			TODO: 
-			- If fntype1 is not a function type, then we should stub it up
-			  and unify it with a stub
-			- Then, we should do subtyping on the args ourselves
-			*/
+			if (env.tracing.cmap) {
+				argtypes = map(args, \a -> {
+					ttypeInferenceDExp(env, topid, a);
+				});
+				rettype = TTypeEClass(eclass);
+				fntype2 = TTypeFunction(argtypes, rettype);
+				reason = makeErrorReason([pos], "call" + id + " : e" + i2s(eclass) + "=" + prettyTTypeNode(env.tmap, fntype2));
+				subtypeCType(env.tmap, fntype2, fntype1, reason);
+				rettype;
+			} else {
+				// println(summarizeDExp(env, fn) + " : " + prettyTType(fntype1));
+				argtypes = mapi(args, \i, a -> {
+					argtype = ttypeInferenceDExp(env, topid, a);
+					makeTTypeSupertype(env, [argtype], false, "call" + id + " arg#" + i2s(i), pos)
+				});
+				rettype = TTypeEClass(eclass);
+				fntype2 = TTypeFunction(argtypes, rettype);
+				// println(prettyTType(fntype1) + " vs " + prettyTType(fntype2));
+				unifyTTypes(env.tmap, fntype1, fntype2, makeErrorReason([pos], "call" + id + " : e" + i2s(eclass) + "=" + prettyTTypeNode(env.tmap, fntype2)));
 
-			// println(summarizeDExp(env, fn) + " : " + prettyTType(fntype1));
-			argtypes = mapi(args, \i, a -> {
-				argtype = ttypeInferenceDExp(env, topid, a);
-				makeTTypeSupertype(env, [argtype], false, "call" + id + " arg#" + i2s(i), pos)
-			});
-			rettype = TTypeEClass(env.mkEClass());
-			fntype2 = TTypeFunction(argtypes, rettype);
-			// println(prettyTType(fntype1) + " vs " + prettyTType(fntype2));
-			unifyTTypes(env.tmap, fntype1, fntype2, makeErrorReason([pos], "call" + id + " : e" + i2s(eclass) + "=" + prettyTTypeNode(env.tmap, fntype2)));
-
-			restype("call result", eclass, rettype);
+				restype("call result", eclass, rettype);
+			}
 		}
 		DConstruct(structid, args, pos, eclass): {
 			mstruct = env.resolveStructName(structid);
@@ -152,17 +181,30 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 		}
 		DLambda(args, body, pos, eclass): {
 			argTypes : [TTypeEClass] = map(args, \arg -> {
-				TTypeEClass(dtype2eclass(env.tmap, makeTree(), arg.type));
+				if (env.tracing.cmap) {
+					reason = makeErrorReason([pos], "lambda arg");
+					dtype2CType(env.tmap, arg.type, reason);
+				} else {
+					TTypeEClass(dtype2eclass(env.tmap, makeTree(), arg.type));
+				}
 			});
 			nenv = foldi(args, env, \i, acc, arg -> {
 				TTypeEnv(acc with localTypes = setTree(acc.localTypes, arg.id, argTypes[i]))
 			});
 			retType = ttypeInferenceDExp(nenv, topid, body);
-			// TODO: With this as true, we have a problem that super(fn-type) does not preserve
-			// the supertype of the return value
-			type = TTypeFunction(argTypes, if (false) retType else makeTTypeSupertype(env, [retType], false, "lambda-type", pos));
-			// println(prettyTType(type) + " for " + strGlue(map(args, \a -> a.id), ","));
-			restype("lambda", eclass, asEClass("lambda", type));
+			if (env.tracing.cmap) {
+				resType = TTypeEClass(env.mkEClass());
+				reason = makeErrorReason([pos], "lambda-type");
+				subtypeCType(env.tmap, retType, resType, reason);
+				type = TTypeFunction(argTypes, resType);
+				restype("lambda", eclass, asEClass("lambda", type));
+			} else {
+				// TODO: With this as true, we have a problem that super(fn-type) does not preserve
+				// the supertype of the return value
+				type = TTypeFunction(argTypes, if (false) retType else makeTTypeSupertype(env, [retType], false, "lambda-type", pos));
+				// println(prettyTType(type) + " for " + strGlue(map(args, \a -> a.id), ","));
+				restype("lambda", eclass, asEClass("lambda", type));
+			}
 		}
 		DRef(value, pos, eclass): {
 			vtype = ttypeInferenceDExp(env, topid, value);
@@ -178,8 +220,13 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 			rtype = TTypeEClass(eclass);
 			calltype = TTypeFunction([tvalue], rtype);
 
-			unifyTTypes(env.tmap, calltype, fntype, makeErrorReason([pos], "field " + field));
-			rtype;
+			if (env.tracing.cmap) {
+				unifyCType(env.tmap, calltype, fntype, makeErrorReason([pos], "field " + field));
+				rtype;
+			} else {
+				unifyTTypes(env.tmap, calltype, fntype, makeErrorReason([pos], "field " + field));
+				rtype;
+			}
 		}
 		DSetMutable(left, field, value, pos, eclass): {
 			ltype = ttypeInferenceDExp(env, topid, left);
@@ -187,22 +234,34 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 
 			fntype = getDFieldType(env, field, pos, eclass);
 
-			calltype = TTypeFunction([ltype], makeTTypeSupertype(env, [valtype], false, "setmutable", pos));
-
-			unifyTTypes(env.tmap, calltype, fntype, makeErrorReason([pos], "set field " + field));
-			restype("setmutable", eclass, asEClass("setmutable", voidTType))
+			if (env.tracing.cmap) {
+				println("TODO: Implement set mutable in CMap world");
+				TTypeEClass(eclass)
+			} else {
+				calltype = TTypeFunction([ltype], makeTTypeSupertype(env, [valtype], false, "setmutable", pos));
+				unifyTTypes(env.tmap, calltype, fntype, makeErrorReason([pos], "set field " + field));
+				restype("setmutable", eclass, asEClass("setmutable", voidTType))
+			}
 		}
 		DArray(exps, pos, eclass): {
 			vtypes = map(exps, \e -> {
 				ttypeInferenceDExp(env, topid, e);
 			});
-			type = if (vtypes == []) {
-				// OK, set up a type var for this thing
-				TTypeName("array", [TTypeEClass(env.mkEClass())]);
+			if (env.tracing.cmap) {
+				arraytype = TTypeEClass(env.mkEClass());
+				iteri(vtypes, \i, vtype -> {
+					subtypeCType(env.tmap, vtype, arraytype, makeErrorReason([pos], "array element #" + i2s(i)));
+				});
+				resultCType(env.tmap, TTypeName("array", [arraytype]), makeErrorReason([pos], "constant array"));
 			} else {
-				TTypeName("array", [makeTTypeSupertype(env, vtypes, false, "array", pos)]);
+				type = if (vtypes == []) {
+					// OK, set up a type var for this thing
+					TTypeName("array", [TTypeEClass(env.mkEClass())]);
+				} else {
+					TTypeName("array", [makeTTypeSupertype(env, vtypes, false, "array", pos)]);
+				}
+				restype("array", eclass, asEClass("array", type));
 			}
-			restype("array", eclass, asEClass("array", type));
 		}
 		DSequence(exps, pos, eclass): {
 			stype = fold(exps, voidTType, \acc, e -> {
@@ -214,12 +273,24 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 			tvalue = ttypeInferenceDExp(env, topid, value);
 			// Relate the type of the value with all structs mentioned
 			caseTypes = map(cases, \c -> instantiateTTypeName(env, c.id));
-			casetype = makeTTypeSupertype(env, caseTypes, defaultCase == None(), "cases", pos);
-			unifyTTypes(env.tmap, casetype, tvalue, makeErrorReason([pos], "switch cases"));
+
+			if (env.tracing.cmap) {
+				println("TODO: Implement DSwitch in CMap world");
+			} else {
+				casetype = makeTTypeSupertype(env, caseTypes, defaultCase == None(), "cases", pos);
+				unifyTTypes(env.tmap, casetype, tvalue, makeErrorReason([pos], "switch cases"));
+			}
 
 			if (!isDTypeAuto(type)) {
-				ttype = TTypeEClass(dtype2eclass(env.tmap, makeTree(), type));
-				unifyTTypes(env.tmap, tvalue, ttype, makeErrorReason([pos], "switch type"));
+				if (env.tracing.cmap) {
+					reason = makeErrorReason([pos], "switch type");
+					ttype = dtype2CType(env.tmap, type, reason);
+					unifyCType(env.tmap, tvalue, ttype, reason);
+					{}
+				} else {
+					ttype = TTypeEClass(dtype2eclass(env.tmap, makeTree(), type));
+					unifyTTypes(env.tmap, tvalue, ttype, makeErrorReason([pos], "switch type"));
+				}
 			}
 
 			// Find the resulting type of the bodies
@@ -233,21 +304,26 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 		}
 		DCast(value, target, pos): {
 			tvalue = ttypeInferenceDExp(env, topid, value);
-			ttarget = TTypeEClass(dtype2eclass(env.tmap, makeTree(), target));
-			// We allow casting a type to a supertype
-			unifyTTypes(env.tmap, 
-				makeTTypeSupertype(env, [tvalue], false, "cast-value", pos), 
-				if (true) {
-					// TODO: If things should be right, we would only allow downcasts
-					onlyDowncast = false;
-					makeTTypeSupertype(env, [ttarget], onlyDowncast, "cast-to", pos);
-				} else {
-					// If we do not allow downcasts, use this one
-					ttarget
-				}, makeErrorReason([pos], "cast")
-			);
-			// TODO: Add an eclass?
-			asEClass("cast", ttarget);
+			if (env.tracing.cmap) {
+				println("TODO: Implement CMap for DCast");
+				TTypeEClass(env.mkEClass());
+			} else {
+				ttarget = TTypeEClass(dtype2eclass(env.tmap, makeTree(), target));
+				// We allow casting a type to a supertype
+				unifyTTypes(env.tmap, 
+					makeTTypeSupertype(env, [tvalue], false, "cast-value", pos), 
+					if (true) {
+						// TODO: If things should be right, we would only allow downcasts
+						onlyDowncast = false;
+						makeTTypeSupertype(env, [ttarget], onlyDowncast, "cast-to", pos);
+					} else {
+						// If we do not allow downcasts, use this one
+						ttarget
+					}, makeErrorReason([pos], "cast")
+				);
+				// TODO: Add an eclass?
+				asEClass("cast", ttarget);
+			}
 		}
 		DDowncast(oldid, newid, subtype, __, __, scope, pos, eclass): {
 			moldtype = lookupTree(env.localTypes, oldid);
@@ -257,25 +333,33 @@ doTTtypeInferenceDExp(env : TTypeEnv, topid : string, d : DExp) -> TTypeEClass {
 				env.onError(pos, oldid + " in downcast unknown");
 			};
 
-			tsubtype = TTypeEClass(dtype2eclass(env.tmap, makeTree(), subtype));
+			tsubtype = {
+				if (env.tracing.cmap) {
+					reason = makeErrorReason([pos], "downcast");
+					dtype2CType(env.tmap, subtype, reason);
+				} else {
+					TTypeEClass(dtype2eclass(env.tmap, makeTree(), subtype));
+				}
+			}
 			teclass = asEClass("downcast", tsubtype);
 
 			d.subeclass ::= teclass.eclass;
 
 			nenv = TTypeEnv(env with 
-				localTypes = setTree(
-					env.localTypes,
-//					setTree(env.localTypes, oldid, tsubtype),
-					newid, teclass
-				)
+				localTypes = setTree(env.localTypes, newid, teclass)
 			);
 			dtype = ttypeInferenceDExp(nenv, topid, scope);
 
 			// Relate the subtype with the supertype
 			etype = TTypeEClass(d.supereclass);
-			subtypeTTypes(env, teclass, etype, "downcast", pos);
-
-			restype("downcast", eclass, dtype);
+			if (env.tracing.cmap) {
+				reason = makeErrorReason([pos], "downcast");
+				subtypeCType(env.tmap, teclass, etype, reason);
+				unifyCType(env.tmap, TTypeEClass(eclass), dtype, reason);
+			} else {
+				subtypeTTypes(env, teclass, etype, "downcast", pos);
+				restype("downcast", eclass, dtype);
+			}
 		}
 	}
 }
@@ -343,7 +427,11 @@ getDStructFieldType(env : TTypeEnv, struct : DStruct, field : string) -> Maybe<T
 }
 
 subtypeTTypes(env : TTypeEnv, sub : TType, super : TType, reason : string, pos : int) -> void {
-	unifyTTypes(env.tmap, makeTTypeSupertype(env, [sub], false, reason, pos), super, makeErrorReason([pos], reason));
+	if (env.tracing.cmap) {
+		subtypeCType(env.tmap, sub, super, makeErrorReason([pos], reason));
+	} else {
+		unifyTTypes(env.tmap, makeTTypeSupertype(env, [sub], false, reason, pos), super, makeErrorReason([pos], reason));
+	}
 }
 
 makeTTypeSupertype(env : TTypeEnv, subtypes : [TType], maxed : bool, reason : string, pos : int) -> TTypeEClass {
