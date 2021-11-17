@@ -1,0 +1,207 @@
+import tools/flowc/incremental/fiprogram;
+
+export {
+    //fcOptimizeTailCalls(prog : FiProgram) -> FiProgram;
+    fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp];
+    fcDetectTailCall(decl : FiFunctionDec) -> bool;
+    fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec;
+}
+/*
+fcOptimizeTailCalls(prog : FiProgram) -> FiProgram {
+    fold(prog.traversal, prog,
+        \acc, mod_name -> eitherMap(
+            lookupTree(prog.modules, mod_name),
+            \module -> {
+                fold(module.functions, acc, \ac, func ->
+                if (!fcDetectTailCall(func)) ac else {
+                    Cons(fcOptimizeTailCall(func), ac)
+                }
+            }),
+            acc
+        )
+    );
+}
+*/
+
+fact(n : int, acc : int) -> int {
+    if (n == 0) acc else fact(n - 1, n * acc);
+}
+
+fact_tailed(n__ : int, acc__ : int) -> int {
+    __acc = ref acc__;
+    __n = ref n__;
+    __ret = ref acc__; 
+    for(true, idfn, \__ -> {
+        n = ^__n;
+        acc = ^__acc;
+        if (n == 0) {
+            //acc
+            __ret := acc;
+            false; 
+        } else {
+            //fact(n - 1, n * acc);
+            __n := n - 1;
+            __acc := n * acc;
+            true;
+        }
+    });
+    ^__ret;
+}
+
+
+_fc_for_type_ = FiTypeFunction([FiFunArg("init", FiTypeBool()), FiFunArg("predicate", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool())), FiFunArg("f", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool()))], FiTypeBool());
+
+fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec {
+    ret_type = decl.type.returnType;
+    new_args = map(decl.lambda.args, \arg -> FiFunArg(arg with name = arg.name + "__"));
+    ret_arg = decl.lambda.args[findiDef(decl.lambda.args, \arg -> arg.type == ret_type, -1)];
+
+    modified_fn = fcConvertReturnExps(decl.lambda.body, decl.lambda.args, ret_type, decl.name);
+
+    for_cycle = FiCall(
+        FiVar("for", _fc_for_type_, -1),
+        [
+            FiBool(true, -1),
+            FiLambda(
+                [FiFunArg("x", FiTypeBool())],
+                FiVar("x", FiTypeBool(), -1),
+                FiTypeFunction([FiFunArg("x", FiTypeBool())], FiTypeBool()), -1
+            ),
+            FiLambda(
+                [FiFunArg("__", FiTypeBool())],
+                fold(reverseA(decl.lambda.args),
+                    modified_fn,
+                    \acc, arg -> FiLet(
+                        arg.name, 
+                        arg.type,
+                        FiCallPrim(FcDerefPrim(), [FiVar("__" + arg.name, FiTypeRef(arg.type), -1)], arg.type, -1),
+                        acc,
+                        FiTypeBool(), -1
+                    )
+                ),
+                FiTypeFunction([FiFunArg("__", FiTypeBool())], FiTypeBool()), -1
+            )
+        ],
+        ret_type, -1
+    );
+    new_body = fold(reverseA(decl.lambda.args),
+        FiLet(
+            "__ret", 
+            FiTypeRef(ret_type), 
+            FiCallPrim(FcRefPrim(), [FiVar(ret_arg.name + "__", ret_arg.type, -1)], FiTypeRef(ret_arg.type), -1),
+            FiSeq([
+                for_cycle, 
+                FiCallPrim(FcDerefPrim(), [FiVar("__ret", FiTypeRef(ret_type), -1)], ret_type, -1)
+            ], ret_type, -1),
+            ret_type, -1
+        ), 
+        \acc, arg -> FiLet(
+            "__" + arg.name, 
+            FiTypeRef(arg.type), 
+            FiCallPrim(FcRefPrim(), [FiVar(arg.name + "__", arg.type, -1)], FiTypeRef(arg.type), -1),
+            acc,
+            ret_type, -1
+        )
+    );
+    new_lambda_type = FiTypeFunction(new_args, ret_type);
+    new_lambda = FiLambda(decl.lambda with args = new_args, body = new_body, type = new_lambda_type);
+    FiFunctionDec(decl with lambda = new_lambda, type = new_lambda_type);
+}
+
+fcDetectTailCall(decl : FiFunctionDec) -> bool { 
+    ret_exps = fcReturnExps(decl.lambda.body, []);
+    fold(ret_exps, true, \acc, e -> {
+        if (!acc) acc else {
+            switch (e) {
+                FiCall(f, args,__,__): {
+                    switch (f) {
+                        FiVar(name,__,__): decl.name == name;
+                        default: false;
+                    }
+                }
+                FiVar(name,__,__): {
+                    exists(decl.lambda.args, \arg -> arg.name == name);
+                }
+                default: false;
+            }
+        }
+    });
+}
+
+fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp] {
+    switch (e) {
+		FiLet(__, __,e1,e2,__, __): fcReturnExps(e2, acc);
+		FiIf(__, e1, e2,__,__):     fcReturnExps(e1, fcReturnExps(e2, acc));
+		FiSwitch(__,__,cs,__,__):   fold(cs, acc, \ac, c -> fcReturnExps(c.body, ac));
+		FiSeq(es,__,__):            if (length(es) == 0) acc else concat(acc, [es[length(es) - 1]]);
+		default:                    concat(acc, [e]);
+    }
+}
+
+
+fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func : string) -> FiExp {
+    switch (e) {
+		FiLet(__,__,e1,e2,__, __): {
+            FiLet(e with e2 = fcConvertReturnExps(e2, args, ret_type, tail_func), type2 = FiTypeBool());
+        }
+		FiIf(c, e1, e2, __, p): {
+            FiIf(c,
+                fcConvertReturnExps(e1, args, ret_type, tail_func),
+                fcConvertReturnExps(e2, args, ret_type, tail_func), FiTypeBool(), p
+            );
+        }
+		FiSwitch(__,__,cs,__,__): {
+            FiSwitch(e with 
+                cases = map(cs, \c -> FiCase(c with body = fcConvertReturnExps(c.body, args, ret_type, tail_func))),
+                type = FiTypeBool()
+            );
+        }
+		FiSeq(es,__,__): {
+            last = length(es) - 1;
+            if (length(es) == 0) e else FiSeq(e with 
+                es = replace(es, last, fcConvertReturnExps(es[last], args, ret_type, tail_func)),
+                type = FiTypeBool()
+            );
+        }
+        FiVar(name,__,__): {
+            switch (find(args, \arg -> arg.name == name)) {
+                Some(arg): {
+                    FiSeq(
+                        [
+                            FiCallPrim(FcAssignPrim(), 
+                                [FiVar("__ret", ret_type, -1), e], 
+                                FiTypeVoid(), -1
+                            ),
+                            FiBool(false, -1)
+                        ],
+                        FiTypeBool(), -1
+                    );
+                }
+                None(): e;
+            }
+        }
+        FiCall(f, es,__,__): {
+            switch (f) {
+                FiVar(name,__,__): 
+                    if (tail_func != name) e else {
+                        updated_refs = mapi(args, \i, arg ->
+                            FiCallPrim(
+                                FcAssignPrim(),
+                                [
+                                    FiVar("__" + arg.name, arg.type, -1),
+                                    es[i]
+                                ],
+                                FiTypeVoid(), -1
+                            )
+                        );
+                        FiSeq(
+                            concat(updated_refs, [FiBool(true, -1)]),
+                            FiTypeBool(), -1
+                        );
+                    }
+                default: e;
+            }
+        }
+		default: e;
+    }
+}
