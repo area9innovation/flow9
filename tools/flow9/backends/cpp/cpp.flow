@@ -29,7 +29,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 			insertSet(acc, d.id)
 		}),
 		makeStructIds(b.structs, b.unions),
-		typeHierarchy.unionTypes,
+		flatUnionTypes(typeHierarchy.unionTypes),
 	);
 
 	backend = cppBackend(info);
@@ -37,7 +37,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	unionStructs = foldTree(typeHierarchy.unionedStructs, "", \id, struct, acc -> {
 		acc + dstruct2cpp(backend, struct) + "\n"
 	});
-	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u), "\n");
+	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
 	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
 	functions = map(b.declarations, \d : BDeclaration -> bdeclaration2cpp(backend, d));
 	body = superglue(functions, firstOfPair, "\n");
@@ -520,14 +520,14 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 	}
 }
 
-dunion2cpp(backend : Backend<CppInfo>, u : DUnion) -> string {
+dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BType]>,) -> string {
 	addTemplatesToStruct(
 		mapConcat(u.types, \t -> t.typars),
 		blueprint("
 			using %name% = std::variant<%members%>;", [
 				"name", u.id,
-				"members", superglue(u.types, \t : DTypeName -> {
-					dtype2cpp(backend, t);
+				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> {
+					btype2cpp(backend, t);
 				}, ", ")
 			]
 		)
@@ -732,7 +732,6 @@ makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
 	}
 }
 
-// todo : flat union?
 switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<string, int> {
 	switch (switchType : BType) {
 		BTypePar(__) : makeTree(); // error
@@ -740,7 +739,7 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 			foldi(
 				lookupTreeDef(backend.info.unionTypes, id, []),
 				makeTree(),
-				\i, acc, itemId -> setTree(acc, itemId, i)
+				\i, acc, item : BType -> setTree(acc, bType2id(item), i)
 			);
 		}
 		BTypeFunction(__, __) : makeTree(); // error
@@ -764,7 +763,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		}
 
 	isSubStruct = \unionId : string, subStructId : string -> {
-		contains(lookupTreeDef(backend.info.unionTypes, unionId, []), subStructId);
+		exists(lookupTreeDef(backend.info.unionTypes, unionId, []), \t : BType -> bType2id(t) == subStructId);
 	}
 
 	liftType = \value -> {
@@ -813,4 +812,39 @@ bTypeParId2cpp(id : string) -> string {
 	// In C++, we use a, b, c, ...
 	len = strlen(id) - 1;
 	fromCharCode(getCharCodeAt("A", 0) + len);
+}
+
+flatUnionTypes(unionTypes : Tree<string, [DTypeName]>) -> Tree<string, [BType]> {
+	mapTree(unionTypes, \subTypes -> flatUnions(subTypes, unionTypes, []));
+}
+
+flatUnions(types : [DTypeName], unionTypes : Tree<string, [DTypeName]>, acc : [BType]) -> [BType] {
+	if (types == []) {
+		acc
+	} else {
+		splittedTypes = fold2(types, acc, [], \structTypes, unionSubTypes, type -> {
+			eitherFn(
+				lookupTree(unionTypes, dType2id(type)),
+				\subTypes -> Pair(structTypes, concat(unionSubTypes, subTypes)),
+				\-> Pair(arrayPush(structTypes, dtype2btype(type)), unionSubTypes)
+			)
+		});
+		flatUnions(splittedTypes.second, unionTypes, splittedTypes.first);
+	}
+}
+
+bType2id(type : BType) -> string {
+	switch (type : BType) {
+		BTypePar(id) : id;
+		BTypeName(id, __) : id;
+		BTypeFunction(__, __) : "";
+	}
+}
+
+dType2id(type : DType) -> string {
+	switch (type : DType) {
+		DTypeName(id, __, __) : id;
+		DTypePar(id, __) : id;
+		DTypeFunction(__, __, __) : "";
+	}
 }
