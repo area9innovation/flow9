@@ -74,6 +74,10 @@ The type system is extended with two constructs:
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
+TODO CGraph:
+- dynamic. ? vs flow is not an error
+- list: TODO: Implement DSwitch in CMap world
+
 TODO:
 - Review postpones, and see if we can resolve some of those:
   - Implement unification of super against overload:
