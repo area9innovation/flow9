@@ -123,6 +123,11 @@ std::vector<A> flow_concat(const std::vector<A> flow_a, const std::vector<A> flo
 
 
 // flowstruct
+template <typename A, typename B>
+bool flow_isSameStructType(A struct1, B struct2) {
+	return struct1._id == struct2._id;
+}
+
 template <typename A, typename ...Args2>
 bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
 	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
@@ -140,11 +145,6 @@ bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...
 	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
 	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
 	return id1 == id2;
-}
-
-template <typename A, typename B>
-bool flow_isSameStructType(A struct1, B struct2) {
-	return struct1._id == struct2._id;
 }
 
 template <typename A, typename ...B> A _extractStructVal(std::variant<B...> v) { return std::get<A>(v); }
