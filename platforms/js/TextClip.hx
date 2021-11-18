@@ -574,7 +574,7 @@ class TextClip extends NativeWidgetClip {
 	private function makeBaselineWidgetAmiriItalicBugWorkaround() {
 		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
 		// Looks like a browser bug, so we need this workaround
-		if ((Platform.isChrome || Platform.isEdge || Platform.isIE) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic') {
+		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic') {
 			baselineWidget.style.display = "none";
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
