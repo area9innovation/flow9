@@ -70,8 +70,6 @@ int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
 	return s.at(i);
 }
 
-// array
-
 template <typename A, typename B> B
 flow_fold(const std::vector<A> flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
   B _res = flow_b;
@@ -93,13 +91,17 @@ std::vector<int32_t> flow_enumFromTo(int32_t start, int32_t end) {
 	}
 }
 
+
 template <typename A, typename B>
 std::vector<B> flow_map(const std::vector<A> flow_a, const std::function<B(A)> & flow_fn) {
-  std::vector<B> res(flow_a.size());
-  for (std::size_t i = 0; i != flow_a.size(); ++i) {
-    res[i] = flow_fn(flow_a[i]);
-  }
-  return res;
+  // std::vector<B> res(flow_a.size());
+  // for (std::size_t i = 0; i != flow_a.size(); ++i) {
+  //   res[i] = flow_fn(flow_a[i]);
+  // }
+  //return res;
+	std::vector<B> res;
+	std::transform(flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_fn);
+	return res;
 }
 
 template <typename A>
@@ -108,6 +110,7 @@ std::vector<A> flow_filter(const std::vector<A> flow_a, const std::function<bool
   std::copy_if (flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_test);
   return res;
 }
+
 
 template <typename A>
 std::vector<A> flow_concat(const std::vector<A> flow_a, const std::vector<A> flow_b) {
