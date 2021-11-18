@@ -32,6 +32,30 @@ double flow_exp(double v) {
 	return std::exp(v);
 }
 
+int32_t flow_bitNot(int32_t v) {
+	return ~v;
+}
+
+int32_t flow_bitAnd(int32_t a, int32_t b) {
+	return a & b;
+}
+
+int32_t flow_bitOr(int32_t a, int32_t b) {
+	return a | b;
+}
+
+int32_t flow_bitXor(int32_t a, int32_t b) {
+	return a ^ b;
+}
+
+int32_t flow_bitShl(int32_t a, int32_t n) {
+	return a << n;
+}
+
+int32_t flow_bitUshr(int32_t a, int32_t n) {
+	return ((unsigned int)a) >> n;
+}
+
 // string
 
 std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
