@@ -561,6 +561,7 @@ class TextClip extends NativeWidgetClip {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				makeBaselineWidgetAmiriItalicBugWorkaround();
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			} else if (baselineWidget.parentNode != null) {
@@ -568,6 +569,17 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
+	}
+
+	private function makeBaselineWidgetAmiriItalicBugWorkaround() {
+		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
+		// Looks like a browser bug, so we need this workaround
+		if ((Platform.isChrome || Platform.isEdge || Platform.isIE) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic') {
+			baselineWidget.style.display = "none";
+			Native.timer(0, function() {
+				baselineWidget.style.display = null;
+			});
+		}
 	}
 
 	public inline function updateTextBackgroundWidget() : Void {
