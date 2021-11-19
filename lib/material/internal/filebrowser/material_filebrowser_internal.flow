@@ -60,24 +60,38 @@ makeSearchState(engine : FilebrowserEngine<?, ??>, text : string, ext : [string]
 	)
 }
 
+startTimestampR : ref double = ref 0.0;
 // calls the content loading and view creating for the current path
 getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool) -> Material {
 	currentPath = getValue(state.currentPathB);
 	viewB = make(MCenter(MLoading(_("Loading content, please wait..."))));
 	onError = \error -> next(viewB, MCenter(MText("Error: " + error, [])));
 
+	curTimestamp = timestamp();
+	startTimestampR := curTimestamp;
 	getContentAPI(state.engine, currentPath, ext, filterFn,
 		\dirs : [string], files : [string] -> {
 			previewsB = make([]);
-			state.engine.getPathsPreview(map(files, \f -> currentPath + f), \pairs -> nextDistinct(previewsB, pairs), onError);
+			previewsLoadingStatusB = make(Some(_("Thumbnails updating, please wait...")));
 			next(viewB, prepareAndGetContentUI(
 				state,
 				map(dirs, \d -> Pair(d, true)),
 				if (folderSelection) [] else map(files, \d -> Pair(d, false)),
 				contains(dirs, ".."),
-				previewsB
+				previewsB,
+				previewsLoadingStatusB
 			));
-			checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback)
+			timer(100, \-> {
+				state.engine.getPathsPreview(
+					map(files, \f -> currentPath + f),
+					\pairs -> {
+						//nextDistinct(previewsLoadingStatusB, None());
+						nextDistinct(previewsB, pairs);
+					},
+					onError
+				);
+				checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback, previewsLoadingStatusB, curTimestamp)
+			});
 		},
 		onError
 	);
@@ -98,78 +112,91 @@ FSPathContent(
 
 lastCheckResultR : ref Maybe<FSPathContent> = ref None();
 
-checkWhatIsChanged(basePath : string, dirs : [string], files : [string], engine : FilebrowserEngine<?, ??>, callback : ([string], [string], [string]) -> void) -> void {
+checkWhatIsChanged(
+	basePath : string,
+	dirs : [string],
+	files : [string],
+	engine : FilebrowserEngine<?, ??>,
+	callback : ([string], [string], [string]) -> void,
+	previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
+	curTimestamp : double
+) -> void {
 	updateLastCheckResult = \files3 -> {
-	eitherFn(
-		^lastCheckResultR,
-		\lcr -> {
-			if (basePath == lcr.basePath) {
-				files2 = map(lcr.files, \file -> file.fileName);
+		eitherFn(
+			^lastCheckResultR,
+			\lcr -> {
+				if (basePath == lcr.basePath) {
+					files2 = map(lcr.files, \file -> file.fileName);
 
-				added = concat(
-					map(subtractA(dirs, lcr.dirs), \p -> basePath + p + "/"),
-					map(subtractA(files, files2), \p -> basePath + p)
-				);
+					added = concat(
+						map(subtractA(dirs, lcr.dirs), \p -> basePath + p + "/"),
+						map(subtractA(files, files2), \p -> basePath + p)
+					);
 
-				removed = concat(
-					map(subtractA(lcr.dirs, dirs), \p -> basePath + p + "/"),
-					map(subtractA(files2, files), \p -> basePath + p)
-				);
+					removed = concat(
+						map(subtractA(lcr.dirs, dirs), \p -> basePath + p + "/"),
+						map(subtractA(files2, files), \p -> basePath + p)
+					);
 
-				updated = filter(
-					files3,
-					\f -> 
-						eitherMap(
-							find(lcr.files, \f2 -> f2.fileName == f.fileName),
-							\f2 -> !(f2.fileVersion == f.fileVersion || f2.fileVersion == 0),
-							false
-						)
-				);
+					updated = filter(
+						files3,
+						\f -> 
+							eitherMap(
+								find(lcr.files, \f2 -> f2.fileName == f.fileName),
+								\f2 -> !(f2.fileVersion == f.fileVersion || f2.fileVersion == 0),
+								false
+							)
+					);
 
-				updatedNames = map(updated, \file -> file.fileName);
-				lastCheckResultR := Some(FSPathContent(basePath, dirs, files3));
-				if (added != [] || removed != []|| updatedNames != []) {
-					callback(added, removed, updatedNames);
-				}
-		}},
-		\-> lastCheckResultR := Some(FSPathContent(basePath, dirs, files3))
-	)}
+					updatedNames = map(updated, \file -> file.fileName);
+					lastCheckResultR := Some(FSPathContent(basePath, dirs, files3));
+					if (added != [] || removed != []|| updatedNames != []) {
+						callback(added, removed, updatedNames);
+					}
+			}},
+			\-> lastCheckResultR := Some(FSPathContent(basePath, dirs, files3))
+		);
+		nextDistinct(previewsLoadingStatusB, None());
+	}
+
+	nextDistinct(previewsLoadingStatusB, Some(_("Cache updating, please wait...")));
 	mapAsync(
 		files,
-		\f, ff, rj -> engine.getExtraInfo(
+		\f, ff, rj -> if (^startTimestampR == curTimestamp) engine.getExtraInfo(
 			basePath + f,
 			"version",
-			\m -> eitherFn(m, \m2 ->{ff(FSFileData(f, getJsonIntValue(m2, 0)))}, \-> rj("can't get version")),
+			\m -> eitherFn(m, \m2 -> ff(FSFileData(f, getJsonIntValue(m2, 0))), \-> rj("can't get version")),
 			rj
-		),
-
-
+		) else ff(FSFileData(f, 0)),
 		updateLastCheckResult,
-		\__ ->{
+		\__ -> {
 			updateLastCheckResult(
 				eitherMap(
 					^lastCheckResultR,
 					\lcr -> lcr.files,
 					[]
 				)
-			)
+			);
 		}
 	)
 }
 
 // loading content of the selected folder using API
 getContentAPI(engine : FilebrowserEngine<?, ??>, path : string, ext : [string], filterFn : (string) -> bool, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
-	engine.readDirectory(path, \dirs, files -> {
-		nonEmpty = neq("");
-		okExt = if (ext == []) \f -> true
-			else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
+	// A small delay to show empty filebrowser before content loading
+	deferUntilRender(\->
+		engine.readDirectory(path, \dirs, files -> {
+			nonEmpty = neq("");
+			okExt = if (ext == []) \f -> true
+				else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
 
-		callback(
-			filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
-			filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
-		);
+			callback(
+				filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
+				filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
+			);
 
-	}, onError);
+		}, onError)
+	);
 }
 
 // start the elements searching (which names contains searchText string) and updating the content view
@@ -198,7 +225,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state2, dirs, files, None(), make([]))
+						getContentUI(state2, dirs, files, None(), make([]), make(None()))
 					)
 			)
 		}
@@ -405,7 +432,13 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 
 	changesCallbackFn = \added, removed, updated -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, updated, closeMe));
 
-	updateFilesView = \-> nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection));
+	lastUpdateTimeMR = ref None();
+	updateFilesView = \-> {
+		if (eitherMap(^lastUpdateTimeMR, \t -> timestamp() - t, 10.0) > 1.0) {
+			nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection));
+			lastUpdateTimeMR := Some(timestamp());
+		}
+	}
 	iter(doUpdateCallArr, \fn -> fn(updateFilesView));
 
 	state.engine.isDirectory(
@@ -920,7 +953,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					MIconButton("edit", \-> { nextDistinct(inPathInputB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [])
 			)
 		)
-		|> (\m -> MFrame(1.0, 1.0, [Stroke(gray)], m));
+		|> (\m -> MFrame(1.0, 4.0, [Stroke(gray)], m));
 	}
 
 	menuIconB = make(MIcon("view_module", [MIconSize(32.0)]));
@@ -1118,7 +1151,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					]),
 					TFixed(200.0, 36.0)
 				)
-				|> (\m -> MFrame(1.0, 1.0, [Stroke(newOrangeColor)], m))
+				|> (\m -> MFrame(1.0, 4.0, [Stroke(newOrangeColor)], m))
 			} else {
 				MIconButton("search", \-> { nextDistinct(inSearchB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [MTooltipText(const("Search in filenames here and in sub-folders."))])
 			}
@@ -1252,7 +1285,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		]),
 		MMutable(dialogContentB)
 	)
-	|> (\m -> MFrame(1.0, 1.0, [Stroke(gray)], m));
+	|> (\m -> MFrame(1.0, 4.0, [Stroke(gray)], m));
 
 	dialogFileName = MFixSize(
 		MCols([
