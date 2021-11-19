@@ -371,9 +371,6 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 		} else {
 			fcVerbose(cfg, 1, "Linking output file...");
 			imports = concatStrings(map(extern_deps, \dep -> {
-				//if (dep.provider == "npm") {
-				//	ensurePackageIsLoaded(dep, dir, cfg);
-				//}
 				ensurePackageIsLoaded(dep, dir, cfg);
 				"import * as " + dep.host + " from '" + dep.package + "';\n"
 			}));
@@ -405,23 +402,30 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 }
 
 ensurePackageIsLoaded(dep : FiJsDependency, dir : string, cfg : FiJsConfig) -> void {
-	if (dep.provider == "file") {
-		// TODO
+	provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
+	if (provider_list.exitCode != 0) {
+		fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
 	} else {
-		provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
-		if (provider_list.exitCode != 0) {
-			fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
+		if (strContains(provider_list.stdout, dep.package)) {
+			fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
 		} else {
-			if (strContains(provider_list.stdout, dep.package)) {
-				fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
-			} else {
-				fcVerbose(cfg, 0, "Package " + dep.package + " is not yet installed. Going to install it.");
+			fcVerbose(cfg, 0, "Package " + dep.package + " is not yet installed. Going to install it.");
+			if (dep.provider != "file") {
 				install_command = if (dep.provider == "npm") "install" else if (dep.provider == "yarn") "add" else "";
 				provider_install = execSystemProcessOutput(dep.provider, [install_command, dep.package], dir);
 				if (provider_install.exitCode != 0) {
 					fcPrintln("Failed to run '" + dep.provider + " " + install_command + " " + dep.package + "'. Check that " + dep.provider + " is installed:\n" + provider_install.stdall, cfg.threadId);
 				} else {
 					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + provider_install.stdout);
+				}
+			} else {
+				// Installing a local dependency from file with yarn
+				args = ["add", "file:" + dep.package];
+				file_install = execSystemProcessOutput("yarn", args, dir);
+				if (file_install.exitCode != 0) {
+					fcPrintln("Failed to run '" + dep.provider + " " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + file_install.stdall, cfg.threadId);
+				} else {
+					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
 				}
 			}
 		}
@@ -442,7 +446,7 @@ checkProgramIsInstalled(cfg : FiJsConfig, prog : string) -> bool {
 		fcVerbose(cfg, 1, prog + " version is: " + prog_version.stdout);
 		true 
 	} else {
-		fcPrintln("Seems that " + prog + " is not installed. Please install it.", cfg.threadId);
+		fcPrintln("Seems that '" + prog + "' is not installed. Please install it.", cfg.threadId);
 		false;
 	}
 }
