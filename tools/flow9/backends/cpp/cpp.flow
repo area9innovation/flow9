@@ -32,6 +32,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		}),
 		makeStructIds(b.structs, b.unions),
 		flatUnionTypes(typeHierarchy.unionTypes),
+		getStatFunctionTypes(b.declarations),
 	);
 
 	backend = cppBackend(info);
@@ -290,12 +291,17 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, false);
 	switch (bexp) {
-		BVoid(): "{}";
+		BVoid(): "({})";
 		BBool(v): if (v) "true" else "false";
 		BInt(v): "int32_t(" + i2s(v) + ")";
 		BDouble(v): double2string(v);
 		BString(v): "std::u16string(u" + toString(v) + ")";
-		BVar(id, type): id;
+		BVar(id, type): {
+			// add function argument types to help the с++ compiler with polymorphism
+			// before : type12type2
+			// after : type12type2<Type1,Type2>
+			id + bVar2realFuncTypes(bexp, backend);
+		}
 		BLet(id, value, body, type): {
 			blueprint("
 				[%capture%]() {
@@ -326,10 +332,10 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
-			rt0 = btype2cpp(backend, getBReturnType(type));
+			returnType = btype2cpp(backend, getBReturnType(type));
 			blueprint("
 					%type%([%capture%](%args%) {
-						return %body%;
+						%return% %body%;
 					})",
 				[
 					"capture", if (isGlobalExp) "" else "&",
@@ -338,6 +344,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 						}, ", "),
 					"body", rec(body),
 					"type", btype2cpp(backend, type),
+					"return", if (returnType == bvoidType.id) "" else "return",
 			]);
 		}
 		BSequence(exps, type): {
@@ -660,5 +667,53 @@ dType2id(type : DType) -> string {
 		DTypeName(id, __, __) : id;
 		DTypePar(id, __) : id;
 		DTypeFunction(__, __, __) : "";
+	}
+}
+
+getStatFunctionTypes(declarations : [BDeclaration]) -> Tree<string, BType> {
+	// TODO: find a better way
+	// native functions can have multiple implementations (polimorphic)
+	// add fn to this array if it has only 1 implementation with template + std::function
+	nativesWhiteList = buildSet([
+		"flow_fold",
+		"flow_map",
+		"flow_filter",
+		"flow_isSameStructType",
+		"flow_extractStruct",
+	]);
+	fold(declarations, makeTree(), \acc, decl -> {
+		switch (decl) {
+			BGlobalVar(id, body, type): acc;
+			BStatFunction(id, args, body, tailCall, type): setTree(acc, id, type);
+			BExpNative(id, isio, type, nativeName): if (containsSet(nativesWhiteList, id)) setTree(acc, id, type) else acc;
+		}
+	});
+}
+
+// find the type of function arguments
+bVar2realFuncTypes(var : BVar, backend : Backend<CppInfo>) -> string {
+	switch (var.type : BType) {
+		BTypePar(__) : "";
+		BTypeName(__, __) : "";
+		BTypeFunction(args, returnType) : {
+			eitherMap(
+				lookupTree(backend.info.statFunctions, var.id),
+				\statFuncType -> {
+					switch (statFuncType : BType) {
+						BTypePar(__) : "";
+						BTypeName(__, __) : "";
+						BTypeFunction(sfArgs, afReturnType) : {
+							polyvars = extractPolyTypes(makeTree(), BTypeFunction(args, returnType), statFuncType);
+							if (isEmptyTree(polyvars)) {
+								""
+							} else {
+								"<" + superglue(getTreeValues(polyvars), \pv -> "" + btype2cpp(backend, pv), ", ") + "> "
+							}
+						}
+					}
+				},
+				""
+			)
+		}
 	}
 }

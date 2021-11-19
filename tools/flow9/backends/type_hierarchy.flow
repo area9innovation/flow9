@@ -17,6 +17,20 @@ export {
 	);
 
 	extractPolymorphism(acc : Set<BTypePar>, b : BType) -> Set<BTypePar>;
+
+	// find a match between polyType (BTypePar) and real type (BTypeName)
+	// example:
+	// we have : 
+	//	BTypeFunction(												BTypeFunction(
+	//		[															[
+	//			BTypePar("?"),												BTypeName("int", []),
+	//			BTypeFunction([BTypePar("?")], BTypePar("??")),				BTypeFunction([BTypeName("int", [])], BTypeName("int", [])),
+	//			BTypeFunction([BTypePar("??")], BTypePar("???"))			BTypeFunction([BTypeName("int", [])], BTypeName("string", []))
+	//		],															],
+	//		BTypePar("???")												BTypeName("string", [])
+	//	)															)
+	// the result is a Tree of values : [?=int, ??=int, ???=string]
+	extractPolyTypes(acc : Tree<BTypePar, BTypeName>, type : BType, polyType : BType) -> Tree<BTypePar, BTypeName>;
 }
 
 resolveBTypeHierarchy(
@@ -56,5 +70,63 @@ extractPolymorphism(acc : Set<BTypePar>, b : BType) -> Set<BTypePar> {
 			fold(args, extractPolymorphism(acc, returnType), extractPolymorphism)
 		}
 
+	}
+}
+
+extractPolyTypes(acc : Tree<BTypePar, BTypeName>, type : BType, polyType : BType) -> Tree<BTypePar, BTypeName> {
+	switch (polyType) {
+		BTypePar(id): eitherMap(extractBTypeName(type), \t -> setTree(acc, polyType, t), acc);
+		BTypeName(id, typars): {
+			foldi(typars, acc, \i, acc2, t -> 
+				eitherMap(
+					extractBTypeNameParam(type, i),
+					\tt -> extractPolyTypes(acc2, tt, t),
+					acc2
+				)
+			);
+		}
+		BTypeFunction(args, returnType): {
+			eitherMap(
+				extractBTypeFunctionReturn(type),
+				\t -> foldi(args, extractPolyTypes(acc, t, returnType), \i, acc2, arg -> 
+					eitherMap(
+						extractBTypeFunctionArg(type, i),
+						\argType -> extractPolyTypes(acc2, argType, arg),
+						acc2
+					)
+				),
+				acc
+			)
+		}
+
+	}
+}
+
+extractBTypeName(type : BType) -> Maybe<BTypeName> {
+	switch (type) {
+		BTypePar(id): None();
+		BTypeName(id, typars): Some(type);
+		BTypeFunction(args, returnType): None();
+	}
+}
+extractBTypeFunctionReturn(type : BType) -> Maybe<BType> {
+	switch (type) {
+		BTypePar(id): None();
+		BTypeName(id, typars): None();
+		BTypeFunction(args, returnType): Some(returnType);
+	}
+}
+extractBTypeFunctionArg(type : BType, i : int) -> Maybe<BType> {
+	switch (type) {
+		BTypePar(id): None();
+		BTypeName(id, typars): None();
+		BTypeFunction(args, returnType): if (existsIndex(args, i)) Some(args[i]) else None();
+	}
+}
+extractBTypeNameParam(type : BType, i : int) -> Maybe<BType> {
+	switch (type) {
+		BTypePar(id): None();
+		BTypeName(id, typars): if (existsIndex(typars, i)) Some(typars[i]) else None();
+		BTypeFunction(args, returnType): if (existsIndex(args, i)) Some(args[i]) else None();
 	}
 }
