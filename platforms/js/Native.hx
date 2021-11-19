@@ -145,6 +145,45 @@ class Native {
 		Browser.document.body.appendChild(textArea);
 		return textArea;
 	}
+
+	public static function evaluateObjectSize(object : Dynamic) : Int {
+		var bytes = 0;
+		untyped __js__("
+			var objectList = [];
+			var stack = [object];
+
+			while (stack.length) {
+				var value = stack.pop();
+
+				if (typeof value === 'boolean') {
+					bytes += 4;
+				}
+				else if ( typeof value === 'string' ) {
+					bytes += value.length * 2;
+				}
+				else if ( typeof value === 'number' ) {
+					bytes += 8;
+				}
+				else if
+				(
+					typeof value === 'object'
+					&& objectList.indexOf( value ) === -1
+				)
+				{
+					objectList.push( value );
+
+					if (Object.prototype.toString.call(value) != '[object Array]'){
+					   for(var key in value) bytes += 2 * key.length;
+					}
+
+					for( var i in value ) {
+						stack.push( value[ i ] );
+					}
+				}
+			}
+		");
+		return bytes;
+	}
 #end
 
 	private static function copyAction(textArea : Dynamic) {
