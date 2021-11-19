@@ -30,7 +30,11 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 
 		rt = "import HaxeRuntime;\n";
 
-		imports = foldSet(ovl.nativeClasses, "",  \acc, e -> {
+		// Filter those native classes (native hosts), which are not mentioned as external in config, i.e. come from runtime.
+		runtime_native_hosts = filter(set2array(ovl.nativeClasses), \native_host -> 
+			!exists(cfg.dependencies, \dep -> dep.host == native_host)
+		);
+		imports = fold(runtime_native_hosts, "",  \acc, e -> {
 			importName = if ((e == "RenderSupport" || e == "RenderSupport3D" || e == "MediaStreamSupport" || e == "MediaRecorderSupport") && (cfg.jsmode == NODEJS_MODE || !isEmptySet(cfg.jslibrary))) {
 				e + "NodeJs" 
 			} else {
@@ -350,7 +354,10 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 	saved_failed = \msg -> {
 		fcPrintln("Javascript (" + fiJavascriptMode(cfg)+ ") '" + resolveRelativePath(cfg.outputfile) + "' was NOT saved:\n" + msg, cfg.threadId);
 	}
-	if (isEmptySet(cfg.externNatives)) {
+
+	extern_deps = filter(cfg.dependencies, \p -> containsSet(ovl.nativeClasses, p.host));
+
+	if (length(extern_deps) == 0) {
 		fcVerbose(cfg, 1, "Saving output file...");
 		saveFileContent(
 			outfile, 
@@ -363,38 +370,12 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 			saved_failed("Cannot bundle dependencies.");
 		} else {
 			fcVerbose(cfg, 1, "Linking output file...");
-			imports = if (isEmptySet(cfg.externNatives)) "" else {
-				foldSet(cfg.externNatives, "", \acc, nat -> {
-					separated = strSplit(nat, ".");
-					if (length(separated) != 2) {
-						fcPrintln("ivalid native name: " + nat, cfg.threadId);
-						acc
-					} else {
-						host = separated[0];
-						name = separated[1];
-						dep_package_host = \dep0 -> {
-							dep = trim2(dep0, " \t");
-							if (startsWith(dep, "npm")) {
-								parts = strSplit(substring(dep, 4, strlen(dep) - 5), ";");
-								if (length(parts) != 2) Pair("", "") else Pair(parts[0], parts[1]);
-							} else {
-								Pair("", "");
-							}
-						}
-						switch (find(cfg.dependencies, \dep -> dep_package_host(dep).second == host)) {
-							Some(dep): {
-								package = dep_package_host(dep).first;
-								ensureNpmPackageIsLoaded(package, dir, cfg);
-								acc + "import * as " + host + " from '" + package + "';\n";
-							}
-							None(): {
-								fcPrintln("host JS module for native: " + nat + " is not found", cfg.threadId);
-								acc
-							}
-						}
-					}
-				});
-			}
+			imports = concatStrings(map(extern_deps, \dep -> {
+				if (dep.provider == "npm") {
+					ensureNpmPackageIsLoaded(dep.package, dir, cfg);
+				}
+				"import * as " + dep.host + " from '" + dep.package + "';\n"
+			}));
 			jsx_file = changeFileExt(outfile, ".jsx");
 			saveFileContent(
 				jsx_file, 
