@@ -2,6 +2,8 @@
 #include <codecvt>
 #include <string>
 #include <locale>
+#include <sstream>
+#include <iomanip>
 // math
 #include <cmath>
 
@@ -56,6 +58,10 @@ int32_t flow_bitUshr(int32_t a, int32_t n) {
 	return ((unsigned int)a) >> n;
 }
 
+int32_t flow_trunc(double v) {
+	return (int32_t)v;
+}
+
 // string
 
 std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
@@ -69,6 +75,18 @@ int32_t flow_strlen(std::u16string s) {
 int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
 	return s.at(i);
 }
+
+// precision = 20!
+std::u16string flow_d2s(double v) {
+	std::stringstream stream;
+	stream << std::fixed << std::setprecision(20) << v;
+	std::string s = stream.str();
+
+	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
+	return codecvt.from_bytes(s);
+}
+
+// array
 
 template <typename A, typename B> B
 flow_fold(const std::vector<A> flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
