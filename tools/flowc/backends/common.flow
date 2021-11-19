@@ -79,8 +79,16 @@ export {
 		externLib : string,
 		// Names from the external natives lib.
 		externNatives : Set<string>,
-		// like: "npm[@myorg/privatepackage@1.5.0]" - see 'npm help install' for package format
-		dependencies : [string],
+		// like: Pair("npm[@myorg/privatepackage@1.5.0]", "NativeHost") - see 'npm help install' for package format
+		dependencies : [FiJsDependency],
+	);
+
+	// Examples:
+	//    npm[@braintree/sanitize-url;SanitizeUrl]
+	FiJsDependency(
+		provider : string,  // one of: npm, yarn or file
+		host : string,      // native host name
+		package : string    // i.e. @myorg/privatepackage@1.5.0 or path to the file
 	);
 
 	FiNimConfig(
@@ -323,7 +331,32 @@ getFcBackendConfigs(config : CompilerConfig) {
 		buildSet(strSplit(getConfigParameter(config.config, "js-extern-natives"), ","));
 	}
 	js_dependencies = \-> if (!isConfigParameterSet(config.config, "js-dependencies")) [] else {
-		uniq(strSplit(getConfigParameter(config.config, "js-dependencies"), ","));
+		deps = uniq(strSplit(getConfigParameter(config.config, "js-dependencies"), ","));
+		// Dependecy look like: 
+		//    npm[@braintree/sanitize-url;SanitizeUrl]
+		filtermap(deps, \dep0 -> {
+			dep = trim2(dep0, " \t");
+			if (startsWith(dep, "npm")) {
+				parts = strSplit(substring(dep, 4, strlen(dep) - 5), ";");
+				println("NPM: " + parts[0] + " :: " + parts[1]);
+				if (length(parts) != 2) None() else Some(FiJsDependency("npm", parts[1], parts[0]));
+			} else if (startsWith(dep, "yarn")) {
+				parts = strSplit(substring(dep, 5, strlen(dep) - 6), ";");
+				if (length(parts) != 2) None() else Some(FiJsDependency("yarn", parts[1], parts[0]));
+			} else if (startsWith(dep, "file")) {
+				parts = strSplit(substring(dep, 5, strlen(dep) - 6), ";");
+				if (length(parts) != 2) None() else Some(FiJsDependency("file", parts[1], parts[0]));
+			} else {
+				fcPrintln(
+					"Wrong format of JS dependency. Should look like one of the following:\n" +
+					"\tnpm[@braintree/sanitize-url;NativeHost]\n" + 
+					"\tyarn[@braintree/sanitize-url;NativeHost]\n" + 
+					"\tfile[/home/user/TS/lib.ts;NativeHost]", 
+					config.threadId
+				);
+				None();
+			}
+		});
 	}
 	jsconfig = if (config.jsParams.jsfile != "") {
 			Some(FiJsConfig(
