@@ -332,4 +332,7 @@ To link the flow code in JS, add something like this in the HTML:
 To use external natives from third-party packages you need to supply the flow.config file with section:
 
 	js-dependencies += yarn[@braintree/sanitize-url],yarn[@vendor/other-lib]
-	js-dependencies += yarn[abnther-lib]
+	js-dependencies += npm[@another-src/another-lib]
+	js-dependencies += file[platforms/js/lib/SomeNativeHost.ts]
+
+Following source providers are available: npm, yarn and file. The latter just a file from a local filesystem.
