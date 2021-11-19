@@ -366,14 +366,15 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 		);
 		saved_ok("");
 	} else {
-		if (!checkNpmAndEsbuildAreInstalled(cfg)) {
+		if (!checkProvidersAreInstalled(cfg)) {
 			saved_failed("Cannot bundle dependencies.");
 		} else {
 			fcVerbose(cfg, 1, "Linking output file...");
 			imports = concatStrings(map(extern_deps, \dep -> {
-				if (dep.provider == "npm") {
-					ensureNpmPackageIsLoaded(dep.package, dir, cfg);
-				}
+				//if (dep.provider == "npm") {
+				//	ensurePackageIsLoaded(dep, dir, cfg);
+				//}
+				ensurePackageIsLoaded(dep, dir, cfg);
 				"import * as " + dep.host + " from '" + dep.package + "';\n"
 			}));
 			jsx_file = changeFileExt(outfile, ".jsx");
@@ -403,20 +404,25 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 	}	
 }
 
-ensureNpmPackageIsLoaded(package : string, dir : string, cfg : FiJsConfig) -> void {
-	npm_list = execSystemProcessOutput("npm", ["list"], dir);
-	if (npm_list.exitCode != 0 || npm_list.stderr != "") {
-		fcPrintln("Failed to run 'npm list'. Check that npm is installed:\n" + npm_list.stdall, cfg.threadId);
+ensurePackageIsLoaded(dep : FiJsDependency, dir : string, cfg : FiJsConfig) -> void {
+	if (dep.provider == "file") {
+		// TODO
 	} else {
-		if (strContains(npm_list.stdout, package)) {
-			fcVerbose(cfg, 1, "Package " + package + " is already installed.");
+		provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
+		if (provider_list.exitCode != 0) {
+			fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
 		} else {
-			fcVerbose(cfg, 0, "Package " + package + " is not yet installed. Going to install it.");
-			npm_install = execSystemProcessOutput("npm", ["install", package], dir);
-			if (npm_install.exitCode != 0 || npm_install.stderr != "") {
-				fcPrintln("Failed to run 'npm install " + package + "'. Check that npm is installed:\n" + npm_install.stdall, cfg.threadId);
+			if (strContains(provider_list.stdout, dep.package)) {
+				fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
 			} else {
-				fcVerbose(cfg, 0, "Package " + package + " is successfully installed.\n" + npm_install.stdout);
+				fcVerbose(cfg, 0, "Package " + dep.package + " is not yet installed. Going to install it.");
+				install_command = if (dep.provider == "npm") "install" else if (dep.provider == "yarn") "add" else "";
+				provider_install = execSystemProcessOutput(dep.provider, [install_command, dep.package], dir);
+				if (provider_install.exitCode != 0) {
+					fcPrintln("Failed to run '" + dep.provider + " " + install_command + " " + dep.package + "'. Check that " + dep.provider + " is installed:\n" + provider_install.stdall, cfg.threadId);
+				} else {
+					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + provider_install.stdout);
+				}
 			}
 		}
 	}
@@ -430,22 +436,21 @@ stringIsVersion(v : string) -> bool {
 	);
 }
 
-checkNpmAndEsbuildAreInstalled(cfg : FiJsConfig) -> bool {
-	npm_version = execSystemProcessOutput("npm", ["--version"], ".");
-	if (npm_version.exitCode != 0 || npm_version.stderr != "" || !stringIsVersion(npm_version.stdout)) {
-		fcPrintln("Seems that npm is not installed. Please install it.", cfg.threadId);
-		false 
+checkProgramIsInstalled(cfg : FiJsConfig, prog : string) -> bool {
+	prog_version = execSystemProcessOutput(prog, ["--version"], ".");
+	if (prog_version.exitCode == 0 && prog_version.stderr == "" && stringIsVersion(prog_version.stdout)) {
+		fcVerbose(cfg, 1, prog + " version is: " + prog_version.stdout);
+		true 
 	} else {
-		fcVerbose(cfg, 1, "npm version: " + npm_version.stdout);
-		esbuild_version = execSystemProcessOutput("esbuild", ["--version"], ".");
-		if (esbuild_version.exitCode == 0 && esbuild_version.stderr == "" && stringIsVersion(esbuild_version.stdout)) {
-			fcVerbose(cfg, 1, "esbuild version: " + esbuild_version.stdout);
-			true 
-		} else {
-			fcPrintln("esbuild is not installed. Please install with 'sudo npm install -g esbuild' command.", cfg.threadId);
-			false;
-		}
+		fcPrintln("Seems that " + prog + " is not installed. Please install it.", cfg.threadId);
+		false;
 	}
+}
+
+checkProvidersAreInstalled(cfg : FiJsConfig) -> bool {
+	providers = uniq(map(cfg.dependencies, \dep -> dep.provider));
+	all(map(providers, \provider -> if (provider == "file") true else checkProgramIsInstalled(cfg, provider))) &&
+	checkProgramIsInstalled(cfg, "esbuild");
 }
 
 fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) {
