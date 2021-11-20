@@ -22,8 +22,6 @@ resolveCNodes(tmap : TMap) -> Tree<int, TType> {
 handlePostponed(tmap : TMap, iteration : int) -> void {
 	constraints = ^(tmap.cmap.constraints);
 	if (isEmptyList(constraints) || iteration == 0) {
-		// TODO: We could unify at the end
-		debugTConstraints(tmap, constraints);
 	} else {
 		// OK, clear the list
 		tmap.cmap.constraints := makeList();
@@ -56,18 +54,13 @@ handlePostponed(tmap : TMap, iteration : int) -> void {
 
 unifyTConstraints(tmap : TMap) -> void {
 	constraints = ^(tmap.cmap.constraints);
-	tmap.cmap.constraints := makeList();
-	iterList(constraints, \cc -> {
-		unifyCEClass(tmap, cc.subtype, cc.supertype, cc.reason);
-		{}
-	});
-}
-
-debugTConstraints(tmap : TMap, c : List<TConstraint>) -> void {
-	if (!isEmptyList(c)) {
-		println("Remaining constraints:");
-		iterList(c, \cc -> {
-			println(prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype))
+	if (!isEmptyList(constraints)) {
+		tmap.cmap.constraints := makeList();
+		// println("Unifying the remaining constraints:");
+		iterList(constraints, \cc -> {
+			// println("  " + prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype));
+			unifyCEClass(tmap, cc.subtype, cc.supertype, cc.reason);
+			{}
 		});
 	}
 }
@@ -76,19 +69,21 @@ doResolveCNodes(tmap : TMap) -> Tree<int, TType> {
 	types = ref makeTree();
 	visited : ref Set<int> = ref makeSet();
 
-	verbose = isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid));
+	verbose = isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid));
 
 	iterUnionMap(tmap.cmap.cmap, \root, node -> {
 		if (node == CEpsilon()) {
 
 		} else {
 			if (verbose) {
-				println("e" + i2s(root) + " = " + prettyCNode(tmap.cmap, node));
+				println(debugCNode(tmap, root));
 			}
 			mtype = resolveCNode(tmap, ^types, /*visited,*/ root);
 			mtype ?? {
 				// println(mtype);
-			} : {}
+			} : {
+				// println("Error: Could not resolve e" + i2s(root));
+			}
 		}
 	});
 	^types;
@@ -135,9 +130,27 @@ resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BT
 				}
 			}
 			COverload(unique, options, reason): {
-				None();
+				mmin = popMinSet(options);
+				mmin ?? {
+					resolveCNode(tmap, eclasses, mmin.value);
+				}: {
+					None();
+				}
 			}
 		}
 	}
 }
 
+
+debugCNode(tmap : TMap, root : int) -> string {
+	node = getUnionMapValue(tmap.cmap.cmap, root);
+
+	childClasses = foldRange(0, ^(tmap.nextEClass), [], \acc2, ec -> {
+		r = findUnionMapRoot(tmap.cmap.cmap, ec);
+		if (r == root) {
+			arrayPush(acc2, ec)
+		} else acc2;
+	});
+
+	"e" + i2s(root) + "=" + rpad(prettyCNode(tmap.cmap, node), " ", 30) + "   covers " + superglue(childClasses, \c -> "e" + i2s(c), " ");
+}
