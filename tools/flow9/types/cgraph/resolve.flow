@@ -1,6 +1,7 @@
 import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/cgraph/pretty;
 import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/cgraph/constraint;
 import tools/flow9/types/pretty;
 import tools/flow9/bexp/bexp;
 
@@ -8,21 +9,72 @@ export {
 	// At the end, we use this to resolve the eclasses
 	resolveCNodes(tmap : TMap) -> Tree<int, TType>;
 
-	// After resolution, check if two eclasses are the same
-	isSameEClassInCMap(tmap : TMap, eclass1 : int, eclass2 : int) -> bool;
-
 	// Given the resolution map, and a given eclass, find the final type
 	resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType>;
 }
 
 resolveCNodes(tmap : TMap) -> Tree<int, TType> {
+	handlePostponed(tmap, 5);
+	doResolveCNodes(tmap);
+}
+
+handlePostponed(tmap : TMap, iteration : int) -> void {
+	constraints = ^(tmap.cmap.constraints);
+	if (isEmptyList(constraints) || iteration == 0) {
+		// TODO: We could unify at the end
+		debugTConstraints(tmap, constraints);
+	} else {
+		// OK, clear the list
+		tmap.cmap.constraints := makeList();
+		remaining = foldList(constraints, makeList(), \acc, c : TConstraint -> {
+			sub : CNode = getUnionMapValue(tmap.cmap.cmap, c.subtype);
+			super : CNode = getUnionMapValue(tmap.cmap.cmap, c.supertype);
+			if (sub != CEpsilon() || super != CEpsilon()) {
+				ok = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+				if (!ok) {
+					println("TODO: Error when resuming subtyping");
+					acc
+				} else {
+					acc;
+				}
+			} else {
+				Cons(c, acc)
+			}
+		});
+
+		new = ^(tmap.cmap.constraints);
+		tmap.cmap.constraints := concatList(remaining, new);
+		if (isEmptyList(new) && countList(remaining) == countList(constraints)) {
+			// No progress has been made - go directly to last iteration
+			handlePostponed(tmap, 0);
+		} else {
+			handlePostponed(tmap, iteration - 1);
+		}
+	}
+}
+
+debugTConstraints(tmap : TMap, c : List<TConstraint>) -> void {
+	if (!isEmptyList(c)) {
+		println("Remaining constraints:");
+		iterList(c, \cc -> {
+			println(prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype))
+		});
+	}
+}
+
+doResolveCNodes(tmap : TMap) -> Tree<int, TType> {
 	types = ref makeTree();
-	visited = ref makeSet();
+	visited : ref Set<int> = ref makeSet();
+
+	verbose = isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid));
+
 	iterUnionMap(tmap.cmap.cmap, \root, node -> {
 		if (node == CEpsilon()) {
 
 		} else {
-			println("e" + i2s(root) + " = " + prettyCNode(tmap.cmap, node));
+			if (verbose) {
+				println("e" + i2s(root) + " = " + prettyCNode(tmap.cmap, node));
+			}
 			mtype = resolveCNode(tmap, ^types, /*visited,*/ root);
 			mtype ?? {
 				// println(mtype);
@@ -30,12 +82,6 @@ resolveCNodes(tmap : TMap) -> Tree<int, TType> {
 		}
 	});
 	^types;
-}
-
-isSameEClassInCMap(tmap : TMap, eclass1 : int, eclass2 : int) -> bool {
-	root1 = findUnionMapRoot(tmap.cmap.cmap, eclass1);
-	root2 = findUnionMapRoot(tmap.cmap.cmap, eclass1);
-	root1 == root2;
 }
 
 resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType> {
@@ -48,7 +94,7 @@ resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BT
 		val = getUnionMapValue(tmap.cmap.cmap, root);
 		switch (val) {
 			CEpsilon(): {
-				println("TODO: Empty eclass " + i2s(eclass) + " as btype");
+				// println("TODO: Empty eclass " + i2s(eclass) + " as btype");
 				None();
 			}
 			CName(name, typars, reason): {
@@ -70,11 +116,11 @@ resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BT
 					mbret ?? {
 						Some(BTypeFunction(bargs, mbret));
 					} : {
-						println("Unknown return");
+						// println("Unknown return");
 						None();
 					}
 				} else {
-					println("Unknown args");
+					// println("Unknown args");
 					None();
 				}
 			}
