@@ -10,7 +10,7 @@ export {
 	makeSubtypeOverload(tmap : TMap, node : CNode, checkOnly : bool, reason : ErrorReason) -> Maybe<CNode>;
 
 	// Find all supertypes of this (sub)node. Constructs new eclasses as required
-	makeSupertypeOverload(tmap : TMap, node : CNode, reason : ErrorReason) -> CNode;
+	makeSupertypeOverload(tmap : TMap, node : CNode, reason : ErrorReason) -> Maybe<CNode>;
 
 	// Given a subtype, construct the corresponding supertype with the right type parameters
 	makeSupertypeFromSub(tmap : TMap, sub : CName, super : string) -> int;
@@ -43,13 +43,10 @@ makeSubtypeOverload(tmap : TMap, node : CNode, checkOnly : bool, reason0 : Error
 			retNode = getUnionMapValue(tmap.cmap.cmap, return);
 			subRet = makeSubtypeOverload(tmap, retNode, checkOnly, reason);
 			subRet ?? {
-				subClass = findCNode(tmap, subRet);
+				subClass = if (checkOnly) findCNode(tmap, subRet) else findOrMakeCNode(tmap, subRet);
 				if (subClass != -1) {
 					Some(CFunction(args, subClass, reason));
 				} else {
-					if (!checkOnly) {
-						println("TODO: Make an eclass for " + prettyCNode(tmap.cmap, subRet));
-					}
 					None();
 				}
 			} : None();
@@ -63,62 +60,65 @@ makeSubtypeOverload(tmap : TMap, node : CNode, checkOnly : bool, reason0 : Error
 	}
 }
 
-makeSupertypeOverload(tmap : TMap, node : CNode, reason0 : ErrorReason) -> CNode {
-	todo = \ -> {
-		println("TODO: Find all super types of " + prettyCNode(tmap.cmap, node));
-		node;
-	}
+makeSupertypeOverload(tmap : TMap, node : CNode, reason0 : ErrorReason) -> Maybe<CNode> {
 	switch (node) {
-		CEpsilon(): todo();
+		CEpsilon(): None();
 		CName(name, typars, reason): {
 			supers = ^(tmap.resolveSupertypes)(name);
-			if (supers == []) node
+			if (supers == []) Some(node)
 			else {
 				supertypes = map(supers, \super -> {
 					makeSupertypeFromSub(tmap, node, super);
 				});
-				nclass = findOrMakeCNode(tmap, node);
-				all = buildSet(arrayPush(supertypes, nclass));
-				COverload(
-					makeSet1(tmap.mkUnique()),
-					all,
-					node.reason
-				)
+				nclass = findCNode(tmap, node);
+				if (nclass == -1) {
+					println("Not Supposed to Happen in Super. Could not find eclass for " + prettyCNode(tmap.cmap, node));
+					None();
+				} else {
+					all = buildSet(arrayPush(supertypes, nclass));
+					Some(COverload(
+						makeSet1(tmap.mkUnique()),
+						all,
+						node.reason
+					))
+				}
 			}
 		}
 		CFunction(args, return, reason): {
 			returnNode = getUnionMapValue(tmap.cmap.cmap, return);
 			if (returnNode != CEpsilon()) {
 				// OK, find the supertype of the return type
-				superReturn : CNode = makeSupertypeOverload(tmap, returnNode, reason0);
-				if (superReturn != returnNode) {
-					// We overload on the returntype somehow
-					nclass = findOrMakeCNode(tmap, superReturn);
-					CFunction(args, nclass, reason);
-				} else node;
+				superReturn : Maybe<CNode> = makeSupertypeOverload(tmap, returnNode, reason0);
+				superReturn ?? {
+					supClass = findOrMakeCNode(tmap, superReturn);
+					if (supClass != -1) {
+						Some(CFunction(args, supClass, reason));
+					} else {
+						None();
+					}
+				} : {
+					None();
+				}
 			} else {
 				// OK, it is an unknown return type, so we should set up a type var
-				// and subtype it
-				supClass = makeTNodeClass(tmap);
-				// subtypeCEClass(tmap, return, supClass, false, reason);
-				CFunction(args, supClass, reason)
+				// and subtype it. Or maybe just postpone it?
+				None();
 			}
 		}
 		COverload(unique, options, reason): {
-			supers : Set<CNode> = mapSet(options, \op -> {
-				super = getUnionMapValue(tmap.cmap.cmap, op);
-				makeSupertypeOverload(tmap, super, reason);
+			supers : Set<int> = foldSet(options, makeSet(), \acc, opt -> {
+				super = getUnionMapValue(tmap.cmap.cmap, opt);
+				msup = makeSupertypeOverload(tmap, super, reason);
+				msup ?? {
+					eclass = findOrMakeCNode(tmap, msup);
+					insertSet(acc, eclass);
+				} : insertSet(acc, -1);
 			});
-			// OK, join them all up
-			superClasses = foldSet(supers, makeSet(), \acc, super -> {
-				switch (super) {
-					CEpsilon(): acc;
-					CName(__, __, __): insertSet(acc, findOrMakeCNode(tmap, super));
-					CFunction(__, __, __): insertSet(acc, findOrMakeCNode(tmap, super));
-					COverload(__, opts, __): mergeSets(acc, opts);
-				}
-			});
-			COverload(makeSet1(tmap.mkUnique()), superClasses, reason);
+			if (containsSet(supers, -1)) {
+				None()
+			} else {
+				Some(COverload(makeSet1(tmap.mkUnique()), supers, reason));
+			}
 		}
 	}
 }
