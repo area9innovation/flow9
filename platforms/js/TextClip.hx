@@ -119,7 +119,7 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
-	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") == "1";
+	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
