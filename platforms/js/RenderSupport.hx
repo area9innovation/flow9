@@ -27,6 +27,7 @@ class RenderSupport {
 	public static var PixiView : Dynamic;
 	public static var PixiStage : FlowContainer;
 	public static var PixiRenderer : Dynamic;
+	public static var FlowInstances : Array<FlowInstance> = [];
 
 	public static var TouchPoints : Dynamic;
 	public static var MousePos : Point = new Point(0.0, 0.0);
@@ -99,6 +100,12 @@ class RenderSupport {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
+	public static function emitForAll(event : String, ?value : Dynamic) {
+		for (instance in FlowInstances) {
+			instance.emit(event, value);
+		}
+	}
+
 	public static function setRendererType(rendererType : String) : Void {
 		if (RendererType != rendererType) {
 			RendererType = rendererType;
@@ -121,6 +128,8 @@ class RenderSupport {
 		}
 		if (renderRoot != RenderRoot) {
 			previousRoot = PixiStage.nativeWidget;
+			previousInstance = PixiStage.flowInstance;
+
 			RenderRoot = renderRoot;
 			if (RenderRoot != null) {
 				RenderRoot.style.position = 'relative';
@@ -548,15 +557,18 @@ class RenderSupport {
 	private static function createPixiRenderer() {
 		backingStoreRatio = getBackingStoreRatio();
 
-		if (PixiRenderer != null) {
+		if (PixiRenderer != null && (previousRoot == null || previousRoot == Browser.document.body)) {
 			if (untyped PixiRenderer.gl != null && PixiRenderer.gl.destroy != null) {
 				untyped PixiRenderer.gl.destroy();
 			}
 
 			PixiRenderer.destroy();
+			FlowInstances = FlowInstances.filter(function (value) {
+				return value.renderer != PixiRenderer;
+			});
 		}
 
-		if (PixiView != null && PixiView.parentNode != null) {
+		if (PixiView != null && PixiView.parentNode != null && previousRoot == Browser.document.body) {
 			PixiView.parentNode.removeChild(PixiView);
 		}
 
@@ -605,6 +617,13 @@ class RenderSupport {
 
 			RendererType = "canvas";
 		}
+		if (PixiStage.flowInstance == null) {
+			var newInstance = new FlowInstance(PixiStage, PixiRenderer);
+			PixiStage.flowInstance = newInstance;
+		} else {
+			PixiStage.flowInstance.renderer = PixiRenderer;
+		}
+		FlowInstances.push(PixiStage.flowInstance);
 
 		if (RendererType == "canvas") {
 			untyped PixiRenderer.context.fillStyle = "white";
@@ -708,11 +727,22 @@ class RenderSupport {
 		return height;
 	}
 
-	public static function getRenderRootPos() : Point {
-		if (RenderRoot == null) {
-			return new Point(0, 0);
+	public static function getRenderRootPos(?stage : Dynamic) : Point {
+		var root;
+		if (stage == null) {
+			if (RenderRoot == null) {
+				return new Point(0, 0);
+			}
+			root = RenderRoot;
+		} else {
+			root = stage.nativeWidget;
+			// check if root is shadowRoot
+			if (untyped root.host != null) {
+				root = untyped root.host;
+			}
 		}
-		var rootRect = RenderRoot.getBoundingClientRect();
+
+		var rootRect = root.getBoundingClientRect();
 		return Platform.isIE
 			? new Point(rootRect.left + Browser.window.pageXOffset, rootRect.top + Browser.window.pageYOffset)
 			: new Point(rootRect.x + Browser.window.scrollX, rootRect.y + Browser.window.scrollY);
@@ -824,6 +854,7 @@ class RenderSupport {
 		Browser.document.body.appendChild(debugClip);
 
 		debugClip.textContent = "DEBUG";
+		debugClip.style.position = "fixed";
 		debugClip.style.fontSize = "12px";
 		debugClip.style.zIndex = "1000";
 		debugClip.style.background = "#42424277";
@@ -1202,15 +1233,30 @@ class RenderSupport {
 	}
 
 	private static var previousRoot = null;
-	private static function updateNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> Void) : Void {
-		if (previousRoot != null) {
-			removeNonPassiveEventListener(previousRoot, event, fn);
+	private static var previousInstance = null;
+	private static function updateNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> FlowContainer -> Void) : Void {
+		if (previousInstance != null && previousInstance.stage.nativeWidget == Browser.document.body) {
+			var listenerFn = previousInstance.unregisterListener(event);
+			removeNonPassiveEventListener(previousRoot, event, listenerFn);
 		}
-		addNonPassiveEventListener(element, event, fn);
+
+		var stage = PixiStage;
+		var fn2 = function(e : Dynamic) {fn(e, stage);}
+
+		addNonPassiveEventListener(element, event, fn2);
+		stage.flowInstance.registerListener(event, fn2);
+	}
+
+	private static function emitKey(stage : FlowContainer, eventName : String, ke : Dynamic) : Void {
+		if (stage.nativeWidget == Browser.document.body) {
+			emitForAll(eventName, parseKeyEvent(ke));
+		} else {
+			stage.emit(eventName, parseKeyEvent(ke));
+		}
 	}
 
 	public static var PreventDefault : Bool = true;
-	public static function onpointerdown(e : Dynamic) {
+	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
@@ -1218,17 +1264,17 @@ class RenderSupport {
 			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
 			if (PreventDefault) e.preventDefault();
 
-			var rootPos = getRenderRootPos();
+			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
 
 			if (e.touches != null) {
 				TouchPoints = e.touches;
-				emit("touchstart");
+				stage.emit("touchstart");
 
 				if (e.touches.length == 1) {
 					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
 					setMousePosition(touchPos);
-					if (MouseUpReceived) emit("mousedown");
+					if (MouseUpReceived) stage.emit("mousedown");
 				} else if (e.touches.length > 1) {
 					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos); 
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos); 
@@ -1238,11 +1284,13 @@ class RenderSupport {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
-					emit("mouserightdown");
+					stage.emit("mouserightdown");
 				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddledown");
+					stage.emit("mousemiddledown");
 				} else if (e.which == 1 || e.button == 0) {
-					if (MouseUpReceived) emit("mousedown");
+					if (MouseUpReceived) {
+						stage.emit("mousedown");
+					};
 				}
 			}
 		} catch (e : Dynamic) {
@@ -1251,29 +1299,29 @@ class RenderSupport {
 		}
 	};
 
-	public static function onpointerup(e : Dynamic) {
+	public static function onpointerup(e : Dynamic, stage : FlowContainer) {
 		try {
-			var rootPos = getRenderRootPos();
+			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
 
 			if (e.touches != null) {
 				TouchPoints = e.touches;
-				emit("touchend");
+				stage.emit("touchend");
 
 				GesturesDetector.endPinch();
 
 				if (e.touches.length == 0) {
-					if (!MouseUpReceived) emit("mouseup");
+					if (!MouseUpReceived) stage.emit("mouseup");
 				}
 			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
-					emit("mouserightup");
+					stage.emit("mouserightup");
 				} else if (e.which == 2 || e.button == 1) {
-					emit("mousemiddleup");
+					stage.emit("mousemiddleup");
 				} else if (e.which == 1 || e.button == 0) {
-					if (!MouseUpReceived) emit("mouseup");
+					if (!MouseUpReceived) stage.emit("mouseup");
 				}
 			}
 		} catch (e : Dynamic) {
@@ -1282,21 +1330,21 @@ class RenderSupport {
 		}
 	};
 
-	public static function onpointermove(e : Dynamic) {
+	public static function onpointermove(e : Dynamic, stage : FlowContainer) {
 		try {
-			var rootPos = getRenderRootPos();
+			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
 
 			if (e.touches != null) {
 				e.preventDefault();
 
 				TouchPoints = e.touches;
-				emit("touchmove");
+				stage.emit("touchmove");
 
 				if (e.touches.length == 1) {
 					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
 					setMousePosition(touchPos);
-					emit("mousemove");
+					stage.emit("mousemove");
 				} else if (e.touches.length > 1) {
 					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos);
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
@@ -1305,7 +1353,7 @@ class RenderSupport {
 			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
-				emit("mousemove");
+				stage.emit("mousemove");
 			}
 		} catch (e : Dynamic) {
 			untyped console.log("onpointermove error : ");
@@ -1313,10 +1361,10 @@ class RenderSupport {
 		}
 	};
 
-	public static function onpointerout(e : Dynamic) {
+	public static function onpointerout(e : Dynamic, stage : FlowContainer) {
 		try {
 			if (e.relatedTarget == Browser.document.documentElement) {
-				if (!MouseUpReceived) emit("mouseup");
+				if (!MouseUpReceived) stage.emit("mouseup");
 			}
 		} catch (e : Dynamic) {
 			untyped console.log("onpointerout error : ");
@@ -1355,7 +1403,8 @@ class RenderSupport {
 			updateNonPassiveEventListener(root, "pointerout", onpointerout);
 		}
 
-		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic) {
+		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {
+			e.stopPropagation();
 			if (RendererType == "html") {
 				onKeyDownAccessibilityZoom(e);
 			}
@@ -1363,17 +1412,22 @@ class RenderSupport {
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
-			emit("keydown", parseKeyEvent(e));
+			emitKey(stage, "keydown", e);
 		});
 
-		updateNonPassiveEventListener(root, "keyup", function(e : Dynamic) {
+		updateNonPassiveEventListener(root, "keyup", function(e : Dynamic, stage : FlowContainer) {
+			e.stopPropagation();
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
-			emit("keyup", parseKeyEvent(e));
+			emitKey(stage, "keyup", e);
 		});
 
-		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
+		var stage = PixiStage;
+		setStageWheelHandler(function (p : Point) {
+			stage.emit("mousewheel", p);
+			emitMouseEvent(stage, "mousemove", MousePos.x, MousePos.y, true);
+		});
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
@@ -1396,6 +1450,9 @@ class RenderSupport {
 			// prevents swipe back for Safari
 			if (isRenderRoot || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
 				event.preventDefault();
+			}
+			if (isRenderRoot) {
+				event.stopPropagation();
 			}
 
 			// Legacy
@@ -1488,10 +1545,10 @@ class RenderSupport {
 			forceRollOverRollOutUpdate();
 		}
 
-		if (Util.isMouseEventName(event)) {
-			emit(event);
-		} else {
+		if (!Util.isMouseEventName(event) || isStage(clip)) {
 			clip.emit(event);
+		} else {
+			emit(event);
 		}
 	}
 
@@ -1633,8 +1690,16 @@ class RenderSupport {
 
 				AccessWidget.updateAccessTree();
 
-				for (child in PixiStage.children) {
-					untyped child.render(untyped PixiRenderer);
+				for (instances in FlowInstances) {
+					var stage = instances.stage;
+					var renderer = instances.renderer;
+					try {
+						for (child in stage.children) {
+							untyped child.render(renderer);
+						}
+					} catch (e : Dynamic) {
+						untyped console.log("Error in render children", e);
+					}
 				}
 			} else {
 				TransformChanged = false;
@@ -2453,6 +2518,16 @@ class RenderSupport {
 
 	public static function getStage() : Dynamic {
 		return PixiStage;
+	}
+
+	public static function getStageId(clip : FlowContainer) {
+		return untyped clip.id;
+	}
+
+	public static function isStage(clip : DisplayObject) {
+		return untyped FlowInstances.some(function (value) {
+			return value.stage == clip;
+		});
 	}
 
 	private static function modifierStatePresent(e : Dynamic, m : String) : Bool {
@@ -3900,5 +3975,34 @@ class RenderSupport {
 		// a lot of Graphics functions do not work correctly if color has alpha channel
 		// (all other targets ignore it as well)
 		return color & 0xFFFFFF;
+	}
+}
+
+class FlowInstance {
+	public var stage : FlowContainer;
+	public var renderer : Dynamic;
+	private var listeners : Map<String, Dynamic -> Void> = new Map();
+
+	public function new(stage, renderer) {
+		this.stage = stage;
+		this.renderer = renderer;
+	}
+
+	public function emit(event : String, ?value : Dynamic) {
+		stage.emit(event, value);
+	}
+
+	public function registerListener(event : String, listener : Dynamic -> Void) : Void {
+		listeners.set(event, listener);
+	}
+
+	public function getListener(event : String) : Dynamic -> Void {
+		return listeners.get(event);
+	}
+
+	public function unregisterListener(event : String) : Dynamic -> Void {
+		var listenerFn = getListener(event);
+		listeners.remove(event);
+		return listenerFn;
 	}
 }

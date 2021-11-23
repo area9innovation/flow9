@@ -105,7 +105,10 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function getFocus() : Bool {
 		return nativeWidget != null && (Browser.document.activeElement == nativeWidget || (
-			Browser.document.activeElement == RenderSupport.RenderRoot && untyped RenderSupport.RenderRoot.shadowRoot.activeElement == nativeWidget
+			untyped RenderSupport.FlowInstances.some(function(instance) {
+				var shadowRoot = instance.stage.nativeWidget; 
+				return shadowRoot.host == Browser.document.activeElement && shadowRoot.activeElement == nativeWidget;
+			})
 		));
 	}
 

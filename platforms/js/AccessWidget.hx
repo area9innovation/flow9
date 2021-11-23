@@ -735,12 +735,14 @@ class AccessWidget extends EventEmitter {
 				}
 			};
 
+			var stage = RenderSupport.PixiStage;
+
 			var onpointerdown = function(e : Dynamic) {
 				// Prevent default drop focus on canvas
 				// Works incorrectly in Edge
 				e.preventDefault();
 
-				var rootPos = RenderSupport.getRenderRootPos();
+				var rootPos = RenderSupport.getRenderRootPos(stage);
 				var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
 
 				if (e.touches != null) {
@@ -750,7 +752,7 @@ class AccessWidget extends EventEmitter {
 					if (e.touches.length == 1) {
 						var touchPos = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
 						RenderSupport.setMousePosition(touchPos);
-						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+						if (RenderSupport.MouseUpReceived) stage.emit("mousedown");
 					} else if (e.touches.length > 1) {
 						var touchPos1 = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
 						var touchPos2 = RenderSupport.getMouseEventPosition(e.touches[1], rootPos);
@@ -760,11 +762,11 @@ class AccessWidget extends EventEmitter {
 					RenderSupport.setMousePosition(mousePos);
 
 					if (e.which == 3 || e.button == 2) {
-						RenderSupport.PixiStage.emit("mouserightdown");
+						stage.emit("mouserightdown");
 					} else if (e.which == 2 || e.button == 1) {
-						RenderSupport.PixiStage.emit("mousemiddledown");
+						stage.emit("mousemiddledown");
 					} else if (e.which == 1 || e.button == 0) {
-						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+						if (RenderSupport.MouseUpReceived) stage.emit("mousedown");
 					}
 				}
 
@@ -773,7 +775,7 @@ class AccessWidget extends EventEmitter {
 			};
 
 			var onpointerup = function(e : Dynamic) {
-				var rootPos = RenderSupport.getRenderRootPos();
+				var rootPos = RenderSupport.getRenderRootPos(stage);
 				var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
 
 				if (e.touches != null) {
@@ -783,17 +785,17 @@ class AccessWidget extends EventEmitter {
 					GesturesDetector.endPinch();
 
 					if (e.touches.length == 0) {
-						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+						if (!RenderSupport.MouseUpReceived) stage.emit("mouseup");
 					}
 				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
 					RenderSupport.setMousePosition(mousePos);
 
 					if (e.which == 3 || e.button == 2) {
-						RenderSupport.PixiStage.emit("mouserightup");
+						stage.emit("mouserightup");
 					} else if (e.which == 2 || e.button == 1) {
-						RenderSupport.PixiStage.emit("mousemiddleup");
+						stage.emit("mousemiddleup");
 					} else if (e.which == 1 || e.button == 0) {
-						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+						if (!RenderSupport.MouseUpReceived) stage.emit("mouseup");
 					}
 				}
 
