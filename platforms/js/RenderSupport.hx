@@ -127,27 +127,45 @@ class RenderSupport {
 			untyped console.warn('Warning! Element with id = "$rootId" has not been found');
 		}
 		if (renderRoot != RenderRoot) {
-			previousRoot = PixiStage.nativeWidget;
-			previousInstance = PixiStage.flowInstance;
+			if (renderRoot.shadowRoot == null) {
+				previousRoot = PixiStage.nativeWidget;
+				previousInstance = PixiStage.flowInstance;
 
-			RenderRoot = renderRoot;
-			if (RenderRoot != null) {
-				RenderRoot.style.position = 'relative';
-				untyped RenderRoot.style.touchAction = 'none';
-				if (!Platform.isIE) {
-					untyped RenderRoot.attachShadow({mode : 'open'});
+				RenderRoot = renderRoot;
+				if (RenderRoot != null) {
+					RenderRoot.style.position = 'relative';
+					untyped RenderRoot.style.touchAction = 'none';
+					if (!Platform.isIE) {
+						untyped RenderRoot.attachShadow({mode : 'open'});
+					}
+				}
+				
+				setupPixiStage();
+				createPixiRenderer();
+				initPixiStageEventListeners();
+
+				attachFlowStyles();
+				if (UserStyleTestElement != null && UserStyleTestElement.parentElement != PixiStage.nativeWidget) {
+					PixiStage.nativeWidget.appendChild(UserStyleTestElement);
+				}
+			} else {
+				var existingInstance = untyped FlowInstances.find(function (instance) {
+					return instance.rootId == rootId;
+				});
+
+				if (existingInstance == null) {
+					untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
+				} else {
+					RenderRoot = renderRoot;
+					PixiStage = existingInstance.stage; 
 				}
 			}
-			
-			setupPixiStage();
-			createPixiRenderer();
-			initPixiStageEventListeners();
-
-			attachFlowStyles();
-			if (UserStyleTestElement != null && UserStyleTestElement.parentElement != PixiStage.nativeWidget) {
-				PixiStage.nativeWidget.appendChild(UserStyleTestElement);
-			}
 		}
+	}
+
+	public static function getRenderRoot() : String {
+		if (RenderRoot == null) return "";
+		return RenderRoot.id;
 	}
 
 	public static function attachFlowStyles() : Void {
@@ -618,7 +636,7 @@ class RenderSupport {
 			RendererType = "canvas";
 		}
 		if (PixiStage.flowInstance == null) {
-			var newInstance = new FlowInstance(PixiStage, PixiRenderer);
+			var newInstance = new FlowInstance(getRenderRoot(), PixiStage, PixiRenderer);
 			PixiStage.flowInstance = newInstance;
 		} else {
 			PixiStage.flowInstance.renderer = PixiRenderer;
@@ -1426,7 +1444,7 @@ class RenderSupport {
 		var stage = PixiStage;
 		setStageWheelHandler(function (p : Point) {
 			stage.emit("mousewheel", p);
-			emitMouseEvent(stage, "mousemove", MousePos.x, MousePos.y, true);
+			emitMouseEvent(stage, "mousemove", MousePos.x, MousePos.y);
 		});
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
@@ -3979,11 +3997,13 @@ class RenderSupport {
 }
 
 class FlowInstance {
+	public var rootId : String = "";
 	public var stage : FlowContainer;
 	public var renderer : Dynamic;
 	private var listeners : Map<String, Dynamic -> Void> = new Map();
 
-	public function new(stage, renderer) {
+	public function new(rootId, stage, renderer) {
+		this.rootId = rootId;
 		this.stage = stage;
 		this.renderer = renderer;
 	}
