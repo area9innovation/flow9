@@ -121,6 +121,7 @@ class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
+	private var renderStage : FlowContainer;
 	private var text : String = '';
 	private static var dummyContentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
 	private var contentGlyphs : TextMappedModification = dummyContentGlyphs;
@@ -1048,7 +1049,7 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		this.invalidateInteractive();
 
-		this.stage = RenderSupport.PixiStage;
+		this.renderStage = RenderSupport.PixiStage;
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
@@ -1113,7 +1114,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onMouseMove(e : Dynamic) {
-		var rootPos = RenderSupport.getRenderRootPos(this.stage);
+		var rootPos = RenderSupport.getRenderRootPos(this.renderStage);
 		var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
 
 		if (isFocused) {
@@ -1124,7 +1125,7 @@ class TextClip extends NativeWidgetClip {
 			if (e.touches.length == 1) {
 				var touchPos = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
 				RenderSupport.setMousePosition(touchPos);
-				this.stage.emit("mousemove");
+				this.renderStage.emit("mousemove");
 			} else if (e.touches.length > 1) {
 				var touchPos1 = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
 				var touchPos2 = RenderSupport.getMouseEventPosition(e.touches[1], rootPos);
@@ -1132,7 +1133,7 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
 			RenderSupport.setMousePosition(mousePos);
-			this.stage.emit("mousemove");
+			this.renderStage.emit("mousemove");
 		}
 
 		nativeWidget.style.cursor = RenderSupport.PixiView.style.cursor;
@@ -1141,7 +1142,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onMouseDown(e : Dynamic) {
-		var rootPos = RenderSupport.getRenderRootPos(this.stage);
+		var rootPos = RenderSupport.getRenderRootPos(this.renderStage);
 		var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
 
 		if (isFocused) {
@@ -1152,7 +1153,7 @@ class TextClip extends NativeWidgetClip {
 
 			RenderSupport.setMousePosition(point);
 
-			if (RenderSupport.getClipAt(this.stage, pointScaled, true, 0.16) != this) {
+			if (RenderSupport.getClipAt(this.renderStage, pointScaled, true, 0.16) != this) {
 				e.preventDefault();
 			}
 		}
@@ -1164,7 +1165,7 @@ class TextClip extends NativeWidgetClip {
 			if (e.touches.length == 1) {
 				var touchPos = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
 				RenderSupport.setMousePosition(touchPos);
-				if (RenderSupport.MouseUpReceived) this.stage.emit("mousedown");
+				if (RenderSupport.MouseUpReceived) this.renderStage.emit("mousedown");
 			} else if (e.touches.length > 1) {
 				var touchPos1 = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
 				var touchPos2 = RenderSupport.getMouseEventPosition(e.touches[1], rootPos);
@@ -1174,11 +1175,11 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.setMousePosition(mousePos);
 
 			if (e.which == 3 || e.button == 2) {
-				this.stage.emit("mouserightdown");
+				this.renderStage.emit("mouserightdown");
 			} else if (e.which == 2 || e.button == 1) {
-				this.stage.emit("mousemiddledown");
+				this.renderStage.emit("mousemiddledown");
 			} else if (e.which == 1 || e.button == 0) {
-				if (RenderSupport.MouseUpReceived) this.stage.emit("mousedown");
+				if (RenderSupport.MouseUpReceived) this.renderStage.emit("mousedown");
 			}
 		}
 
@@ -1186,7 +1187,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onMouseUp(e : Dynamic) {
-		var rootPos = RenderSupport.getRenderRootPos(this.stage);
+		var rootPos = RenderSupport.getRenderRootPos(this.renderStage);
 		var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
 
 		if (isFocused) {
@@ -1200,17 +1201,17 @@ class TextClip extends NativeWidgetClip {
 			GesturesDetector.endPinch();
 
 			if (e.touches.length == 0) {
-				if (!RenderSupport.MouseUpReceived) this.stage.emit("mouseup");
+				if (!RenderSupport.MouseUpReceived) this.renderStage.emit("mouseup");
 			}
 		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
 			RenderSupport.setMousePosition(mousePos);
 
 			if (e.which == 3 || e.button == 2) {
-				this.stage.emit("mouserightup");
+				this.renderStage.emit("mouserightup");
 			} else if (e.which == 2 || e.button == 1) {
-				this.stage.emit("mousemiddleup");
+				this.renderStage.emit("mousemiddleup");
 			} else if (e.which == 1 || e.button == 0) {
-				if (!RenderSupport.MouseUpReceived) this.stage.emit("mouseup");
+				if (!RenderSupport.MouseUpReceived) this.renderStage.emit("mouseup");
 			}
 		}
 
