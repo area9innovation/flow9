@@ -734,6 +734,12 @@ public class Native extends NativeHost {
 	}
 
 	@SuppressWarnings("unchecked")
+	public static final <T> T for_(T v, Func1<Boolean,T> pred, Func1<T,T> fn) {
+		for (; pred.invoke(v); v = fn.invoke(v));
+		return v;
+	}
+
+	@SuppressWarnings("unchecked")
 	public static final <T> Object iteri(Object[] arr, Func2<Object,Integer,T> clos) {
 		for (int i = 0; i < arr.length; i++)
 			clos.invoke(i, (T)arr[i]);
@@ -1872,6 +1878,9 @@ public class Native extends NativeHost {
 					completableFuture.complete(res);
 					return null;
 				});
+			} catch(StackOverflowError ex) {
+				ex.printStackTrace();
+				return onFail.invoke("Thread #" + threadId + " failed: " + ex.toString());
 			} catch (RuntimeException ex) {
 				Throwable e = ex.getCause();
 				while (e.getClass().equals(InvocationTargetException.class)) {
@@ -2287,7 +2296,7 @@ public class Native extends NativeHost {
 							return meth.invoke(null);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2299,7 +2308,7 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								exceptionStackTrace(e)
 							);
@@ -2312,7 +2321,7 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
 								exceptionStackTrace(e)
@@ -2326,10 +2335,10 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
+								"arg 3: " + a3 + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2341,11 +2350,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2357,11 +2366,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								exceptionStackTrace(e)
 							);
@@ -2374,11 +2383,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								exceptionStackTrace(e)
@@ -2392,11 +2401,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								"arg 7: " + a7 + "\n" +
@@ -2411,11 +2420,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								"arg 7: " + a7 + "\n" +
@@ -2431,11 +2440,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								"arg 7: " + a7 + "\n" +
@@ -2452,11 +2461,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								"arg 7: " + a7 + "\n" +
@@ -2474,11 +2483,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								"arg 7: " + a7 + "\n" +
@@ -2497,11 +2506,11 @@ public class Native extends NativeHost {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
-								"at calling " + name + ":\n" + 
+								"at calling " + name + ":\n" +
 								"arg 1: " + a1 + "\n" +
 								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" + 
-								"arg 4: " + a4 + "\n" + 
+								"arg 3: " + a3 + "\n" +
+								"arg 4: " + a4 + "\n" +
 								"arg 5: " + a5 + "\n" +
 								"arg 6: " + a6 + "\n" +
 								"arg 7: " + a7 + "\n" +

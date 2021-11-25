@@ -119,6 +119,7 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
@@ -1596,9 +1597,10 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
 			var textNodeMetrics = getTextNodeMetrics(nativeWidget);
-			var textNodeWidth = textNodeMetrics.width;
+			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
-			if (textNodeWidth != null && textNodeWidth > 0 && textNodeHeight != null && textNodeHeight > 0) {
+			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
+				var textNodeWidth = useLetterSpacingFix ? (textNodeWidth0 - style.letterSpacing) : textNodeWidth0;
 				var textWidth =
 					untyped this.transform
 						? (

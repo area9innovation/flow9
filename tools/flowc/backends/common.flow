@@ -78,7 +78,17 @@ export {
 		// Is inlined into the final assembled JS code.
 		externLib : string,
 		// Names from the external natives lib.
-		externNatives : Set<string>
+		externNatives : Set<string>,
+		// like: Pair("npm[@myorg/privatepackage@1.5.0]", "NativeHost") - see 'npm help install' for package format
+		dependencies : [FiJsDependency],
+	);
+
+	// Examples:
+	//    npm[@braintree/sanitize-url;SanitizeUrl]
+	FiJsDependency(
+		provider : string,  // one of: npm, yarn or file
+		host : string,      // native host name
+		package : string    // i.e. @myorg/privatepackage@1.5.0 or path to the file
 	);
 
 	FiNimConfig(
@@ -320,6 +330,51 @@ getFcBackendConfigs(config : CompilerConfig) {
 	js_external_natives = \-> if (!isConfigParameterSet(config.config, "js-extern-natives")) makeSet() else {
 		buildSet(strSplit(getConfigParameter(config.config, "js-extern-natives"), ","));
 	}
+	js_dependencies = \-> if (!isConfigParameterSet(config.config, "js-dependencies")) [] else {
+		deps = uniq(strSplit(getConfigParameter(config.config, "js-dependencies"), ","));
+		// Dependecy look like: 
+		//    npm[@braintree/sanitize-url;SanitizeUrl]
+		filtermap(deps, \dep0 -> {
+			dep = trim2(dep0, " \t");
+			if (startsWith(dep, "npm")) {
+				parts = strSplit(substring(dep, 4, strlen(dep) - 5), ";");
+				println("NPM: " + parts[0] + " :: " + parts[1]);
+				if (length(parts) != 2) None() else Some(FiJsDependency("npm", parts[1], parts[0]));
+			} else if (startsWith(dep, "yarn")) {
+				parts = strSplit(substring(dep, 5, strlen(dep) - 6), ";");
+				if (length(parts) != 2) None() else Some(FiJsDependency("yarn", parts[1], parts[0]));
+			} else if (startsWith(dep, "file")) {
+				parts = strSplit(substring(dep, 5, strlen(dep) - 6), ";");
+				if (length(parts) != 2) None() else {
+					file = parts[0];
+					// Try to find a full path, extending config.includes with a file postfix.
+					full_path = if (fileExists(file)) file else {
+						fold(config.includes, "", \acc, incl -> 
+							if (acc != "") acc else {
+								path = pathCombine(incl, file);
+								if (fileExists(path)) path else "";
+							}
+						);
+					}
+					if (full_path != "") {
+						Some(FiJsDependency("file", parts[1], full_path));
+					} else {
+						fcPrintln("Location of a JS dependency file: " + file + " cannot be resolved. Check the file and -I or 'include' config options.", config.threadId);
+						None();
+					}
+				}
+			} else {
+				fcPrintln(
+					"Wrong format of JS dependency. Should look like one of the following:\n" +
+					"\tnpm[@braintree/sanitize-url;NativeHost]\n" + 
+					"\tyarn[@braintree/sanitize-url;NativeHost]\n" + 
+					"\tfile[/home/user/TS/lib.ts;NativeHost]", 
+					config.threadId
+				);
+				None();
+			}
+		});
+	}
 	jsconfig = if (config.jsParams.jsfile != "") {
 			Some(FiJsConfig(
 				config.flowfile,
@@ -345,7 +400,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "js-call-main"),
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
-				js_external_natives()
+				js_external_natives(),
+				js_dependencies()
 			))
 		} else None();
 
@@ -381,7 +437,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "js-call-main"),
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
-				js_external_natives()
+				js_external_natives(),
+				js_dependencies()
 			))
 		} else None();
 
@@ -410,7 +467,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "js-call-main"),
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
-				js_external_natives()
+				js_external_natives(),
+				js_dependencies()
 			))
 		} else None();
 

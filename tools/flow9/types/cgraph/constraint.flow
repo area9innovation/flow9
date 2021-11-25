@@ -11,6 +11,7 @@ export {
 
 	// We know the result is a unification of these types
 	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TTypeEClass;
+	unifyCEClass(tmap : TMap, lclass : int, rclass : int, reason : ErrorReason) -> TTypeEClass;
 
 	// We know we have to subtype here - TODO: Figure out what the result is?
 	// checkOnly defines whether we should update our types, or just do a check.
@@ -25,7 +26,7 @@ export {
 resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
 	eclass = findOrMakeCNodeClass(tmap, t, reason);
 	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println(prettyCEClass(tmap.cmap, eclass) + " is same as ttype " + prettyTType(t));
+		println("  " + prettyCEClass(tmap.cmap, eclass) + " = ttype " + prettyTType(t));
 	}
 	
 	TTypeEClass(eclass);
@@ -34,15 +35,22 @@ resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
 unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TTypeEClass {
 	lclass = findOrMakeCNodeClass(tmap, left, reason);
 	rclass = findOrMakeCNodeClass(tmap, right, reason);
+	unifyCEClass(tmap, lclass, rclass, reason);
+}
 
-	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println("Unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass));
+unifyCEClass(tmap : TMap, lclass : int, rclass : int, reason : ErrorReason) -> TTypeEClass {
+	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
+		debugErrorReason(reason, "  Unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
 	}
+
+	// TODO: This might not work.
+	// In some cases, we have to postpone this.
+	// Especially if it is an overload, which can not be resolved.
 
 	root = unionUnionMap(tmap.cmap.cmap, lclass, rclass, reason);
 
 	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println("  to get root " + prettyCEClass(tmap.cmap, root));
+		println("   to get root " + prettyCEClass(tmap.cmap, root));
 	}
 
 	TTypeEClass(root);
@@ -51,10 +59,16 @@ unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TT
 subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> bool {
 	subClass = findOrMakeCNodeClass(tmap, subtype, reason);
 	superClass = findOrMakeCNodeClass(tmap, supertype, reason);
+	orig = prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass);
+	res = subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
 
-	// prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super)
-
-	subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
+	if (res) {
+		if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
+			debugErrorReason(reason, "  Subtype success " + orig + ". ");
+			debugErrorReason(reason, "  Subtype success " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass) + ". ");
+		}
+	}
+	res;
 }
 
 subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> bool {
@@ -65,10 +79,6 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 		println("subtype " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass));
 	}
 
-	todo = \ -> {
-		println("TODO: Subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super));
-		true;
-	};
 	error = \ -> {
 		if (!checkOnly) {
 			println("TODO: Report error on subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super));
@@ -77,12 +87,14 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	}
 
 	postpone = \ -> {
-		constraint = TConstraint(subClass, superClass, reason);
-		tmap.cmap.constraints := Cons(constraint, ^(tmap.cmap.constraints));
+		if (!checkOnly) {
+			constraint = TConstraint(subClass, superClass, reason);
+			tmap.cmap.constraints := Cons(constraint, ^(tmap.cmap.constraints));
+		}
 		true;
 	}
 
-	// If we have a subtype against an overload
+	// If we have a subtype against an overload. I.e. name or function against overload
 	subVsOverload = \ov : COverload -> {
 		potentials = filterSet(ov.options, \opt : int -> {
 			subtypeCEClass(tmap, subClass, opt, true, reason);
@@ -100,32 +112,84 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				subtypeCEClass(tmap, subClass, cand, checkOnly, reason);
 			} else true;
 		} else {
-			postpone();
+			if (sizeSet(ov.options) > npot) {
+				// OK, it is at least reduced
+				if (!checkOnly) {
+					nover = COverload(ov with options = potentials);
+					setUnionMapValue(tmap.cmap.cmap, superClass, nover);
+					true;
+				} else true;
+			} else {
+				postpone();
+			}
 		}
 	}
+
+	// overload vs name or function
+	overloadVsSuper = \ov : COverload -> {
+		potentials = filterSet(ov.options, \opt : int -> {
+			subtypeCEClass(tmap, opt, superClass, true, reason);
+		});
+		npot = sizeSet(potentials);
+		if (npot == 0) {
+			error();
+		} else if (npot == 1) {
+			// OK, exactly one is possible.
+			if (!checkOnly) {
+				// We resolve the overload
+				cand : int = set2array(potentials)[0];
+				setUnionMapValue(tmap.cmap.cmap, subClass, CEpsilon());
+				root = unionUnionMap(tmap.cmap.cmap, subClass, cand, reason);
+				subtypeCEClass(tmap, cand, superClass, checkOnly, reason);
+			} else true;
+		} else {
+			if (npot < sizeSet(ov.options)) {
+				if (!checkOnly) {
+					nover = COverload(ov with options = potentials);
+					setUnionMapValue(tmap.cmap.cmap, subClass, nover);
+					true;
+				} else true;
+			} else {
+				postpone();
+			}
+		}
+	}
+
+	anyVsEpsilon = \ -> {
+		if (!checkOnly) {
+			moverload = makeSupertypeOverload(tmap, sub, reason);
+			moverload ?? {
+				setUnionMapValue(tmap.cmap.cmap, superClass, moverload);
+			} : {
+				postpone();
+				{}
+			}
+		}
+		true;
+	};
 
 	if (sub == CEpsilon() && super == CEpsilon()) {
 		// OK, postpone
 		postpone();
+	} else if (isCFlow(sub) || isCFlow(super)) {
+		true;
 	} else {
 		switch (sub) {
 			CEpsilon(): {
-				if (!checkOnly) {
-					// OK, we should find all subtypes of super, and make an overload for those
-					overload = makeSubtypeOverload(tmap, super, reason);
-					setUnionMapValue(tmap.cmap.cmap, subClass, overload);
+				// OK, we should find all subtypes of super, and make an overload for those
+				moverload = makeSubtypeOverload(tmap, super, checkOnly, reason);
+				moverload ?? {
+					if (!checkOnly) {
+						setUnionMapValue(tmap.cmap.cmap, subClass, moverload);
+					}
+					true;
+				} : {
+					postpone();
 				}
-				true;
 			}
 			CName(name, typars, subreason): {
 				switch (super) {
-					CEpsilon(): {
-						if (!checkOnly) {
-							overload = makeSupertypeOverload(tmap, sub, reason);
-							setUnionMapValue(tmap.cmap.cmap, superClass, overload);
-						}
-						true;
-					}
+					CEpsilon(): anyVsEpsilon();
 					CName(sname, stypars, supreason): {
 						if (name == sname) {
 							if (length(typars) == length(stypars)) {
@@ -141,23 +205,19 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 								// OK, lift the sub to the superworld, and do it there
 								sub2super = makeSupertypeFromSub(tmap, sub, sname);
 								subtypeCEClass(tmap, sub2super, superClass, checkOnly, reason);
-							} else error();
+							} else {
+								error();
+							}
 						}
 					}
-					CFunction(sargs, return, supreason): todo();
+					CFunction(sargs, return, supreason): error();
 					COverload(sunique, options, supreason): subVsOverload(super);
 				}
 			}
 			CFunction(args, return, subreason): {
 				switch (super) {
-					CEpsilon(): {
-						if (!checkOnly) {
-							overload = makeSupertypeOverload(tmap, sub, reason);
-							setUnionMapValue(tmap.cmap.cmap, superClass, overload);
-						}
-						true;
-					}
-					CName(sname, stypars, supreason): todo();
+					CEpsilon(): anyVsEpsilon();
+					CName(sname, stypars, supreason): error();
 					CFunction(sargs, sreturn, supreason): {
 						if (length(args) == length(sargs)) {
 							foldi(args, true, \i, ok : bool, arg -> {
@@ -171,25 +231,35 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				}
 			}
 			COverload(unique, options, subreason): {
-				// TODO: If we have overload vs overload, we could maybe be smarter?
-
-				potentials = filterSet(options, \opt : int -> {
-					subtypeCEClass(tmap, opt, superClass, true, reason);
-				});
-				npot = sizeSet(potentials);
-				if (npot == 0) {
-					error();
-				} else if (npot == 1) {
-					// OK, exactly one is possible.
-					if (!checkOnly) {
-						// We resolve the overload
-						cand : int = set2array(potentials)[0];
-						setUnionMapValue(tmap.cmap.cmap, subClass, CEpsilon());
-						root = unionUnionMap(tmap.cmap.cmap, subClass, cand, reason);
-						subtypeCEClass(tmap, cand, superClass, checkOnly, reason);
-					} else true;
-				} else {
-					postpone();
+				switch (super) {
+					CEpsilon(): anyVsEpsilon();
+					CName(__, __, __): overloadVsSuper(sub);
+					CFunction(__, __, __): overloadVsSuper(sub);
+					COverload(sunique, soptions, supreason): {
+						// Find the supers that work for all subsets:
+						supPotentials = filterSet(soptions, \sopt -> {
+							forall(set2array(mapSet(options, \opt : int -> {
+								subtypeCEClass(tmap, opt, sopt, true, reason);
+							})), idfn)
+						});
+						if (isEmptySet(supPotentials)) {
+							println("TODO: No super works for all subs, but probably something works for " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super));
+							postpone();
+						} else {
+							// OK, we have the list of supers that work.
+							resSuper = if (sizeSet(supPotentials) == 1) {
+								cand = set2array(supPotentials)[0];
+								getUnionMapValue(tmap.cmap.cmap, cand);
+							} else {
+								COverload(sunique, supPotentials, supreason);
+							};
+							// println("Result of " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super) + " is " + prettyCNode(tmap.cmap, resSuper));
+							if (!checkOnly) {
+								setUnionMapValue(tmap.cmap.cmap, superClass, resSuper);
+								subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
+							} else true;
+						}
+					}
 				}
 			}
 		}
@@ -199,4 +269,11 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass {
 	tt = dtype2CType2(tmap, ref makeTree(), d);
 	resultCType(tmap, tt, reason);
+}
+
+isCFlow(c : CNode) -> bool {
+	switch (c) {
+		CName(n, tp, __): n == "flow" && tp == [];
+		default: false;
+	}
 }
