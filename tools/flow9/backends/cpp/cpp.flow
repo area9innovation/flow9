@@ -1,10 +1,10 @@
 import tools/flow9/backends/link;
 import tools/flow9/backends/back_eval;
 import tools/flow9/backends/pretty;
-import tools/flow9/backends/cpp/cpp_backend;
 import tools/flow9/backends/type_hierarchy;
 import tools/flow9/backends/utils;
 import tools/flow9/backends/struct_ids;
+import tools/flow9/backends/cpp/cpp_utils;
 
 /*
 
@@ -104,8 +104,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 			"";
 		} else {
 			blueprint(
-				"%type% _defReturn;
-return _defReturn;",
+				"%type% _defReturn;\nreturn _defReturn;",
 				["type", type,]
 			);
 		}
@@ -157,7 +156,7 @@ do {
 			} else {
 				polyvars = extractPolymorphism(makeSet(), type);
 				argtypes = getBArgTypes(type);
-				returnType = btype2cpp(backend, getBReturnType(type));
+				breturnType = getBReturnType(type);
 
 				declaration = blueprint(
 					"%polyvars%%returnType% %id%(%args%)",
@@ -169,9 +168,9 @@ do {
 						"id", id,
 						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 						"args", supergluei(args, \i, arg -> {
-							btype2cpp(backend, argtypes[i]) + " " + arg
+							argType2cpp(backend, argtypes[i], false) + " " + arg
 						}, ", "),
-						"returnType", returnType,
+						"returnType", argType2cpp(backend, breturnType, true),
 					]
 				);
 
@@ -184,7 +183,11 @@ do {
 				",
 						[
 							"declaration", declaration,
-							"body", if (tailCall) makeTailCallBody(body, returnType) else bstatement2cpp(backend, body, true)
+							"body", if (tailCall) {
+								makeTailCallBody(body, argType2cpp(backend, breturnType, false))
+							} else {
+								bstatement2cpp(backend, body, true)
+							}
 						]
 					),
 					declaration
@@ -234,8 +237,12 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 			(if (type == bvoidType || !withReturn) {
 				""
 			} else {
-				"return ";
-			}) + bexp2cpp(backend, val, false) + ";"
+				typeName = btype2cpp(backend, type);
+				typeNameWithSfx = argType2cpp(backend, type, false);
+				"return "
+				+ strReplace(typeNameWithSfx, typeName, "");
+			})
+			+ bexp2cpp(backend, val, false) + ";"
 		}
 		BTailCall(fn, args, values, type): {
 			"_end = false;\n"
@@ -328,6 +335,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 			]);
 		}
 		BCall(fn, args, type): {
+			// fn == BVar("__deref"
 			produceBackendCall(backend, bexp, \a1, a2 -> bexp2cpp(a1, a2, isGlobalExp));
 		}
 		BLambda(args, body, type): {
@@ -454,45 +462,49 @@ dtype2cpp(backend : Backend<CppInfo>, type : DType) -> string {
 	btype2cpp(backend, dtype2btype(type));
 }
 
+// function argument type
+// TODO: if (isReturnFnType) { if (creation) "" else "*"}
+argType2cpp(backend : Backend<CppInfo>, btype : BType, isReturnFnType : bool) -> string {
+	suffix = if (isReturnFnType) "*" else "&";
+	suffixes = setTree(makeTree1("ref", suffix), "", suffix); // ref, structure
+	btype2cppSfx(backend, btype, suffixes);
+}
+
 btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
+	btype2cppSfx(backend, btype, makeTree());
+}
+
+btype2cppSfx(backend : Backend<CppInfo>, btype : BType, suffixes : Tree</*id*/string, /*suffix*/string>) -> string {
+	addSuffix = \id, type -> type + lookupTreeDef(suffixes, id, "");
 	switch (btype) {
 		BTypePar(id): bTypeParId2cpp(id);
 		BTypeName(id, typars): {
-			if (id == "void") "void"
-			else if (id == "bool" || id == "double") id
-			else if (id == "int") { "int32_t" }
-			else if (id == "string") { "std::u16string" }
-			else if (id == "flow") "std::any"
+			if (id == "void") addSuffix(id, "void")
+			else if (id == "bool" || id == "double") addSuffix(id, id)
+			else if (id == "int") addSuffix(id, "int32_t")
+			else if (id == "string") addSuffix(id, "std::u16string")
+			else if (id == "flow") addSuffix(id, "std::any")
 			else if (id == "array") {
-				"std::vector<" + btype2cpp(backend, typars[0]) + ">"
+				addSuffix(id, "std::vector<" + btype2cppSfx(backend, typars[0], suffixes) + ">")
 			} else if (id == "ref") {
-				"std::tuple<" + btype2cpp(backend, typars[0]) + ">"
+				addSuffix(id, "std::tuple<" + btype2cppSfx(backend, typars[0], suffixes) + ">")
 			} else if (trim2(id, "?") == "") {
-				btype2cpp(backend, BTypePar(id));
+				btype2cppSfx(backend, BTypePar(id), suffixes);
 			} else {
-				id
-				+ (if (typars != []) {
-					"<" + superglue(typars, \tp -> btype2cpp(backend, tp), ", ") + ">"
-				} else "")
+				addSuffix(
+					"",
+					id
+					+ (if (typars != []) {
+						"<" + superglue(typars, \tp -> btype2cppSfx(backend, tp, suffixes), ", ") + ">"
+					} else "")
+				)
 			}
 		}
 		BTypeFunction(args, returnType): {
-			"std::function<" + btype2cpp(backend, returnType)
-			+ "(" + superglue(args, \tp -> btype2cpp(backend, tp), ", ") + ")>"
+			"std::function<" + btype2cppSfx(backend, returnType, suffixes)
+			+ "(" + superglue(args, \tp -> btype2cppSfx(backend, tp, suffixes), ", ") + ")>"
 		}
 	}
-}
-
-dstruct2id(backend : Backend<CppInfo>, s : DStruct) -> string {
-	eitherMap(
-		lookupTree(backend.info.structIds, s.id),
-		\id -> getStructIdMember() + " = " + i2s(id),
-		""
-	);
-}
-
-getStructIdMember() -> string {
-	" unsigned int _id";
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
@@ -567,13 +579,6 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 	}
 }
 
-isBExpStringValue(e : BExp) -> bool {
-	switch (e : BExp) {
-		BString(__) : true;
-		default : false;
-	}
-}
-
 // only for structs
 castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 	getStructTypeId = \type : BType -> 
@@ -622,19 +627,6 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 	}
 }
 
-bTypePar2cpp(btype : BType) -> string {
-	switch (btype) {
-		BTypePar(id): bTypeParId2cpp(id);
-		default: "";
-	}
-}
-
-bTypeParId2cpp(id : string) -> string {
-	// In C++, we use a, b, c, ...
-	len = strlen(id) - 1;
-	fromCharCode(getCharCodeAt("A", 0) + len);
-}
-
 flatUnionTypes(unionTypes : Tree<string, [DTypeName]>) -> Tree<string, [BType]> {
 	mapTree(unionTypes, \subTypes -> flatUnions(subTypes, unionTypes, []));
 }
@@ -651,22 +643,6 @@ flatUnions(types : [DTypeName], unionTypes : Tree<string, [DTypeName]>, acc : [B
 			)
 		});
 		flatUnions(splittedTypes.second, unionTypes, splittedTypes.first);
-	}
-}
-
-bType2id(type : BType) -> string {
-	switch (type : BType) {
-		BTypePar(id) : id;
-		BTypeName(id, __) : id;
-		BTypeFunction(__, __) : "";
-	}
-}
-
-dType2id(type : DType) -> string {
-	switch (type : DType) {
-		DTypeName(id, __, __) : id;
-		DTypePar(id, __) : id;
-		DTypeFunction(__, __, __) : "";
 	}
 }
 
