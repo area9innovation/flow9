@@ -810,6 +810,25 @@ public class Native extends NativeHost {
 	}
 
 	@SuppressWarnings("unchecked")
+	public static final <T> Struct mapiM(Object[] arr, Func2<Struct,Integer,T> test) {
+		if (some_struct_id == -1) {
+			// Init a 'Some' struct id, if it's not setup yet.
+			some_struct_id = FlowRuntime.struct_ids.get("Some");
+		}
+		Object[] res = new Object[arr.length];
+		for (int i = 0; i < arr.length; i++) {
+			Struct test_result = test.invoke(i, (T)arr[i]);
+			if (test_result.getTypeId() == some_struct_id) {
+				// 'Some' struct has only one field.
+				res[i] = test_result.getFields()[0];
+			} else {
+				return test_result;
+			}
+		}
+		return FlowRuntime.makeStructValue(some_struct_id, new Object[] { res }, null);
+	}
+
+	@SuppressWarnings("unchecked")
 	public static final <T> boolean exists(Object[] arr, Func1<Boolean,T> test) {
 		for (int i = 0; i < arr.length; i++)
 			if (test.invoke((T)arr[i]))
