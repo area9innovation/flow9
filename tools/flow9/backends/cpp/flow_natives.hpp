@@ -7,6 +7,15 @@
 // math
 #include <cmath>
 
+// service
+template <typename A>
+std::tuple<A*, A> makeFlowRef(A value) {
+	A * p = new A;
+    *p = value;
+    return std::make_tuple(p, value);
+}
+
+
 // common
 
 void flow_quit(int32_t code) {
