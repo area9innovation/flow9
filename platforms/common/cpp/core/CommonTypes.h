@@ -770,7 +770,7 @@ class FlowStack
 
 public:
     FlowStack() : buf(nullptr) { clear(); }
-    ~FlowStack() { free(buf); }
+    ~FlowStack() { delete buf; }
 
     void swap(FlowStack<T,MinSize> &other) {
         std::swap(buf, other.buf);
