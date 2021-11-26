@@ -3663,7 +3663,6 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fold, 3);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, foldi, 3);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, filter, 2);
-    TRY_USE_NATIVE_STATIC(ByteCodeRunner, filtermapi, 2);
 
     // optional
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, elemIndex, 3);
