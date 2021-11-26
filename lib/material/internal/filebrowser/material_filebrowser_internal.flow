@@ -60,6 +60,31 @@ makeSearchState(engine : FilebrowserEngine<?, ??>, text : string, ext : [string]
 	)
 }
 
+createRequestPreviewFn(state : FilebrowserState<?, ??, ???>, onError) -> Pair<(Material) -> Material, (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void> {
+	filesB : DynamicBehaviour<[Pair<string, DynamicBehaviour<Maybe<Material>>>]> = make([]);
+	
+	requestPreviews = \files -> state.engine.getPathsPreview(
+		map(files, \f -> f.first),
+		\pairs -> {
+			iter(pairs, \pair -> {maybeApply(find(files, \file -> file.first == pair.first), \file -> nextDistinct(file.second, Some(pair.second)))});
+		},
+		onError
+	);
+
+	materialWrapper = \m -> MConstruct(
+		[makeSubscribe(fstall(filesB, 0), \files -> if (length(files) > 0) {requestPreviews(files); nextDistinct(filesB, []);})],
+		m
+	);
+
+	requestPreviewfn = \file : Pair<string, DynamicBehaviour<Maybe<Material>>> -> {
+		currentFiles = fgetValue(filesB);
+		if(isNone(find(currentFiles, \f -> f.first == file.first))) nextDistinct(filesB, arrayPush(currentFiles, file))
+	};
+
+	Pair(materialWrapper, requestPreviewfn);
+
+}
+
 startTimestampR : ref double = ref 0.0;
 // calls the content loading and view creating for the current path
 getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool) -> Material {
@@ -71,27 +96,22 @@ getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], fi
 	startTimestampR := curTimestamp;
 	getContentAPI(state.engine, currentPath, ext, filterFn,
 		\dirs : [string], files : [string] -> {
-			previewsB = make([]);
+
 			previewsLoadingStatusB = make(Some(_("Thumbnails updating, please wait...")));
-			next(viewB, prepareAndGetContentUI(
+			previewRequestFn = createRequestPreviewFn(state, onError);
+
+			newView = prepareAndGetContentUI(
 				state,
 				map(dirs, \d -> Pair(d, true)),
 				if (folderSelection) [] else map(files, \d -> Pair(d, false)),
 				contains(dirs, ".."),
-				previewsB,
+				previewRequestFn.second,
 				previewsLoadingStatusB
-			));
-			timer(100, \-> {
-				state.engine.getPathsPreview(
-					map(files, \f -> currentPath + f),
-					\pairs -> {
-						//nextDistinct(previewsLoadingStatusB, None());
-						nextDistinct(previewsB, pairs);
-					},
-					onError
-				);
-				checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback, previewsLoadingStatusB, curTimestamp)
-			});
+			) |> previewRequestFn.first;
+			
+			next(viewB, newView);
+			deferUntilRender(\-> checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback, previewsLoadingStatusB, curTimestamp));
+
 		},
 		onError
 	);
@@ -218,6 +238,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 
 		if (!getValue(stateSearch.breakSearchB)) {
 			l = length(dirs) + length(files);
+			previewRequestFn = createRequestPreviewFn(state, nop1);
 			next(
 				itemB,
 				if (l == 0)
@@ -225,7 +246,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state2, dirs, files, None(), make([]), make(None()))
+						getContentUI(state2, dirs, files, None(), previewRequestFn.second , make(None()))|> previewRequestFn.first
 					)
 			)
 		}
