@@ -7,6 +7,11 @@
 // math
 #include <cmath>
 
+template <typename A>
+std::shared_ptr<A> makeFlowRef(A value) {
+  return std::make_shared<A>(value);
+}
+
 // common
 
 void flow_quit(int32_t code) {
