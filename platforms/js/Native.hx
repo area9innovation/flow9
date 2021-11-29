@@ -145,6 +145,45 @@ class Native {
 		Browser.document.body.appendChild(textArea);
 		return textArea;
 	}
+
+	public static function evaluateObjectSize(object : Dynamic) : Int {
+		var bytes = 0;
+		untyped __js__("
+			var objectList = [];
+			var stack = [object];
+
+			while (stack.length) {
+				var value = stack.pop();
+
+				if (typeof value === 'boolean') {
+					bytes += 4;
+				}
+				else if ( typeof value === 'string' ) {
+					bytes += value.length * 2;
+				}
+				else if ( typeof value === 'number' ) {
+					bytes += 8;
+				}
+				else if
+				(
+					typeof value === 'object'
+					&& objectList.indexOf( value ) === -1
+				)
+				{
+					objectList.push( value );
+
+					if (Object.prototype.toString.call(value) != '[object Array]'){
+					   for(var key in value) bytes += 2 * key.length;
+					}
+
+					for( var i in value ) {
+						stack.push( value[ i ] );
+					}
+				}
+			}
+		");
+		return bytes;
+	}
 #end
 
 	private static function copyAction(textArea : Dynamic) {
@@ -641,6 +680,29 @@ class Native {
 			}
 		}
 		return result;
+	}
+
+	public static function mapiM<T>(values : Array<T>, clos : Int -> T -> Dynamic) : Dynamic {
+		var result = new Array();
+		var n = values.length;
+		for (i in 0...n) {
+			var v = values[i];
+			var maybe = clos(i, v);
+			var fields = Reflect.fields(maybe);
+			// Check if there is both an _id and a value field of some kind: Then it is Some
+			if (fields.length == 2) {
+				for (f in fields) {
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "_id") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+				}
+			} else {
+				return maybe;
+			}
+		}
+		return makeStructValue("Some", [ result ], makeStructValue("IllegalStruct", [], null));
 	}
 
 	public static inline function random() : Float {

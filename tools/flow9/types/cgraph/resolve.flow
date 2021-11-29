@@ -1,0 +1,156 @@
+import tools/flow9/types/cgraph/cgraph;
+import tools/flow9/types/cgraph/pretty;
+import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/cgraph/constraint;
+import tools/flow9/types/pretty;
+import tools/flow9/bexp/bexp;
+
+export {
+	// At the end, we use this to resolve the eclasses
+	resolveCNodes(tmap : TMap) -> Tree<int, TType>;
+
+	// Given the resolution map, and a given eclass, find the final type
+	resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType>;
+}
+
+resolveCNodes(tmap : TMap) -> Tree<int, TType> {
+	handlePostponed(tmap, 5);
+	unifyTConstraints(tmap);
+	doResolveCNodes(tmap);
+}
+
+handlePostponed(tmap : TMap, iteration : int) -> void {
+	constraints = ^(tmap.cmap.constraints);
+	if (isEmptyList(constraints) || iteration == 0) {
+	} else {
+		// OK, clear the list
+		tmap.cmap.constraints := makeList();
+		remaining = foldList(constraints, makeList(), \acc, c : TConstraint -> {
+			sub : CNode = getUnionMapValue(tmap.cmap.cmap, c.subtype);
+			super : CNode = getUnionMapValue(tmap.cmap.cmap, c.supertype);
+			if (sub != CEpsilon() || super != CEpsilon()) {
+				ok = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+				if (!ok) {
+					println("TODO: Error when resuming subtyping");
+					acc
+				} else {
+					acc;
+				}
+			} else {
+				Cons(c, acc)
+			}
+		});
+
+		new = ^(tmap.cmap.constraints);
+		tmap.cmap.constraints := concatList(remaining, new);
+		if (isEmptyList(new) && countList(remaining) == countList(constraints)) {
+			// No progress has been made - go directly to last iteration
+			handlePostponed(tmap, 0);
+		} else {
+			handlePostponed(tmap, iteration - 1);
+		}
+	}
+}
+
+unifyTConstraints(tmap : TMap) -> void {
+	constraints = ^(tmap.cmap.constraints);
+	if (!isEmptyList(constraints)) {
+		tmap.cmap.constraints := makeList();
+		// println("Unifying the remaining constraints:");
+		iterList(constraints, \cc -> {
+			// println("  " + prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype));
+			unifyCEClass(tmap, cc.subtype, cc.supertype, cc.reason);
+			{}
+		});
+	}
+}
+
+doResolveCNodes(tmap : TMap) -> Tree<int, TType> {
+	types = ref makeTree();
+	visited : ref Set<int> = ref makeSet();
+
+	verbose = isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid));
+
+	iterUnionMap(tmap.cmap.cmap, \root, node -> {
+		if (node == CEpsilon()) {
+
+		} else {
+			if (verbose) {
+				println(debugCNode(tmap, root));
+			}
+			mtype = resolveCNode(tmap, ^types, /*visited,*/ root);
+			mtype ?? {
+				// println(mtype);
+			} : {
+				// println("Error: Could not resolve e" + i2s(root));
+			}
+		}
+	});
+	^types;
+}
+
+resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType> {
+	root = findUnionMapRoot(tmap.cmap.cmap, eclass);
+	mtype = lookupTree(eclasses, root);
+	mtype ?? {
+		println("TODO: Convert " + prettyTType(mtype) + " to btype");
+		None();
+	} : {
+		val = getUnionMapValue(tmap.cmap.cmap, root);
+		switch (val) {
+			CEpsilon(): {
+				// println("TODO: Empty eclass " + i2s(eclass) + " as btype");
+				None();
+			}
+			CName(name, typars, reason): {
+				btypars = filtermap(typars, \tp -> {
+					resolveCNode(tmap, eclasses, tp);
+				});
+				if (length(btypars) == length(typars)) {
+					Some(BTypeName(name, btypars));
+				} else {
+					None();
+				}
+			}
+			CFunction(args, return, reason): {
+				bargs = filtermap(args, \arg -> {
+					resolveCNode(tmap, eclasses, arg);
+				});
+				if (length(bargs) == length(args)) {
+					mbret = resolveCNode(tmap, eclasses, return);
+					mbret ?? {
+						Some(BTypeFunction(bargs, mbret));
+					} : {
+						// println("Unknown return");
+						None();
+					}
+				} else {
+					// println("Unknown args");
+					None();
+				}
+			}
+			COverload(unique, options, reason): {
+				mmin = popMinSet(options);
+				mmin ?? {
+					resolveCNode(tmap, eclasses, mmin.value);
+				}: {
+					None();
+				}
+			}
+		}
+	}
+}
+
+
+debugCNode(tmap : TMap, root : int) -> string {
+	node = getUnionMapValue(tmap.cmap.cmap, root);
+
+	childClasses = foldRange(0, ^(tmap.nextEClass), [], \acc2, ec -> {
+		r = findUnionMapRoot(tmap.cmap.cmap, ec);
+		if (r == root) {
+			arrayPush(acc2, ec)
+		} else acc2;
+	});
+
+	"e" + i2s(root) + "=" + rpad(prettyCNode(tmap.cmap, node), " ", 30) + "   covers " + superglue(childClasses, \c -> "e" + i2s(c), " ");
+}

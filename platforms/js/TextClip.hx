@@ -119,6 +119,7 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var text : String = '';
@@ -561,6 +562,7 @@ class TextClip extends NativeWidgetClip {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				makeBaselineWidgetAmiriItalicBugWorkaround();
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			} else if (baselineWidget.parentNode != null) {
@@ -568,6 +570,17 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
+	}
+
+	private function makeBaselineWidgetAmiriItalicBugWorkaround() {
+		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
+		// Looks like a browser bug, so we need this workaround
+		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic') {
+			baselineWidget.style.display = "none";
+			Native.timer(0, function() {
+				baselineWidget.style.display = null;
+			});
+		}
 	}
 
 	public inline function updateTextBackgroundWidget() : Void {
@@ -1584,9 +1597,10 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
 			var textNodeMetrics = getTextNodeMetrics(nativeWidget);
-			var textNodeWidth = textNodeMetrics.width;
+			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
-			if (textNodeWidth != null && textNodeWidth > 0 && textNodeHeight != null && textNodeHeight > 0) {
+			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
+				var textNodeWidth = useLetterSpacingFix ? (textNodeWidth0 - style.letterSpacing) : textNodeWidth0;
 				var textWidth =
 					untyped this.transform
 						? (

@@ -2,6 +2,7 @@ import tools/flow9/types/ugraph/tmap;
 import tools/flow9/types/ugraph/type;
 import tools/flow9/types/ugraph/find;
 import tools/flow9/types/ugraph/incompatible;
+import tools/flow9/types/cgraph/init;
 import tools/flow9/types/pretty;
 
 /*
@@ -61,7 +62,7 @@ makeTMap(onError : (int, string) -> void, nextEClass : ref int,
 		) -> TMap {
 	self = ref None();
 	tmap = TMap(
-		makeUnionFindMap(defaultTNode(), \l, r, cookie : ErrorReason -> {
+		makeUnionFindMap(defaultTNode(), \lc, l, rc, r, cookie : ErrorReason -> {
 			switch (^self) {
 				None(): {
 					println("NOT SUPPOSED TO HAPPEN");
@@ -70,6 +71,7 @@ makeTMap(onError : (int, string) -> void, nextEClass : ref int,
 				Some(s): mergeTNodes(s, l, r, cookie);
 			}
 		}),
+		makeCMap(),
 		ref makeTree(),
 		ref \__ -> {
 			println("TODO: The resolvers are not set");
@@ -319,17 +321,17 @@ convertTTypeSupertype2TNode(tmap : TMap, super : TTypeSupertype, reason : ErrorR
 	});
 
 	// OK, find out what named types are compatible with all
-	supers : Set<string> = getPossibleSupers(tmap, map(names, \n -> n.name), super.maxed);
+	supers : Set<string> = getPossibleSupers(tmap, map(names, \n : TNodeName -> n.name), super.maxed);
 	pos = getTreeKeys(reason.reasons);
 
 	// Now, construct all the supers that are compatible
 	// Notice we will duplicate any overloads that differ in type parameters!
-	overloads : Tree<string, [TNodeName]> = fold(names, makeTree(), \acc, node : TNodeName -> {
+	overloads : Tree<string, [TNodeName]> = fold(names, makeTree(), \acc : Tree<string, [TNodeName]>, node : TNodeName -> {
 		// OK, construct all super types of this node, which are in the approved set
 		nodesupers = ^(tmap.resolveSupertypes)(node.name);
 		supersToMake = intersectSets(supers, buildSet(nodesupers));
 		// println("  Supers " +  strGlue(set2array(supers), ", ") + " overlaps " + strGlue(nodesupers, ", ") + " for " + prettyTNode(tmap, node));
-		nacc = foldSet(supersToMake, acc, \acc2, supername : string -> {
+		nacc = foldSet(supersToMake, acc, \acc2 : Tree<string, [TNodeName]>, supername : string -> {
 			if (supername == node.name) treePushToArrayUnique(acc2, supername, node)
 			else {
 				// OK, some supertype
@@ -355,17 +357,18 @@ convertTTypeSupertype2TNode(tmap : TMap, super : TTypeSupertype, reason : ErrorR
 		makeTSuperFromTType(tmap, super, reason);
 	} else {
 		// OK, collapse each group using unification?
-		overloads2 = foldTree(overloads, [], \name, nodes, acc -> {
+		overloads2 = foldTree(overloads, [], \name : string, nodes : [TNodeName], acc : [TNodeName] -> {
 			if (nodes == []) acc
 			else {
+				node : TNodeName = nodes[0];
 				// Unify the matching type parameters for the groups
-				iter(tail(nodes), \nn -> {
-					iteri(nodes[0].typars, \i, tp : int -> {
+				iter(tail(nodes), \nn : TNodeName -> {
+					iteri(node.typars, \i, tp : int -> {
 						joinTNodes(tmap, tp, nn.typars[i], elaborateReason(reason, "Multiple supers"));
 						{}
 					})
 				})
-				arrayPush(acc, nodes[0]);
+				arrayPush(acc, node);
 			}
 		});
 		if (length(overloads2) == 1) {

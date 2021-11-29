@@ -8,11 +8,10 @@ import tools/flow9/backends/struct_ids;
 
 /*
 
-flowcpp flowe\flowe.flow -- file=demos/euler/euler1.flow cpp=euler1.cpp
+flowcpp flow9\flow9.flow -- file=demos/euler/euler1.flow cpp=euler1.cpp
 g++ -std=c++2a euler1.cpp 2>out.flow
-
-TODO:
-- flow_fold
+-I for path to flow9
+g++ -std=c++2a /mnt/d/a9/flow9/demos/euler/euler8.cpp -o euler8 -I/mnt/d/a9/flow9/
 */
 
 export {
@@ -32,7 +31,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 			insertSet(acc, d.id)
 		}),
 		makeStructIds(b.structs, b.unions),
-		typeHierarchy.unionTypes,
+		flatUnionTypes(typeHierarchy.unionTypes),
+		getStatFunctionTypes(b.declarations),
 	);
 
 	backend = cppBackend(info);
@@ -40,24 +40,29 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	unionStructs = foldTree(typeHierarchy.unionedStructs, "", \id, struct, acc -> {
 		acc + dstruct2cpp(backend, struct) + "\n"
 	});
-	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u), "\n");
+	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
 	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
-	body = superglue(b.declarations, \d : BDeclaration -> bdeclaration2cpp(backend, d), "\n");
+	functions = map(b.declarations, \d : BDeclaration -> bdeclaration2cpp(backend, d));
+	body = superglue(functions, firstOfPair, "\n");
+	declarations = superglue(filter(functions, \p -> p.second != ""), secondOfPair, ";\n");
 
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
-		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <tuple>\n#include <iostream>"
+		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <tuple>\n#include <iostream>\n"
+		// TODO: fix in the future path to flow9
+		"#include \"" + "tools/flow9/backends/cpp/flow_natives.hpp\" \n"
 		+ getBackendRequirements(backend) + "\n"
 	//	+ "// RUNTIME\n"
 	//	+ runtime + "\n"
-		+ "#include <codecvt>\n#include <string>\n#include <locale>\n" // for u16string
 		+ "// Structs for unions\n"
 		+ unionStructs
 		+ "// UNIONS\n"
 		+ unions + "\n"
 		+ "// STRUCTS\n"
 		+ structs + "\n"
+		+ "// DECLARATIONS\n"
+		+ declarations + ";\n"
 		+ "// BODY\n"
 		+ body
 		// TODO: If flow_main returns int, do something else
@@ -67,90 +72,142 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	)
 }
 
-bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> string {
+// TODO: filter fns in the correct order ?
+// result : body, declaration
+bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, string> {
+	// TODO: calculate form 'flow_natives.hpp' or cppBackendSpec()
+	implementedNatives = buildSet([
+		"flow_println",
+		"flow_println2",
+		"flow_quit",
+		"flow_substring",
+		"flow_isSameStructType",
+		"flow_strlen",
+		"flow_fold",
+		"flow_log",
+		"flow_exp",
+		"flow_enumFromTo",
+		"flow_map",
+		"flow_filter",
+		"flow_concat",
+		"flow_getCharCodeAt",
+		"flow_extractStruct",
+		"flow_bitNot",
+		"flow_bitAnd",
+		"flow_bitOr",
+		"flow_bitXor",
+		"flow_bitShl",
+		"flow_bitUshr",
+	]);
+	makeTailCallBody = \body : BStatement, type -> {
+		defaultReturn = if (type == bvoidType.id) {
+			"";
+		} else {
+			blueprint(
+				"%type% _defReturn;
+return _defReturn;",
+				["type", type,]
+			);
+		}
+		blueprint(
+			"bool _end;
+do {
+	_end = true;
+	%body%
+} while (!_end);
+%return%",
+			[
+				"body", bstatement2cpp(backend, body, true),
+				"return", defaultReturn,
+			]
+		)
+	}
 	switch (d) {
 		BGlobalVar(id, body, type): {
-			btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body) + ";";
+			Pair(btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body, true) + ";", "");
 		}
 		BStatFunction(id, args, body, tailCall, type): {
 			if (id == "flow_i2s") {
-				blueprint("
-					std::u16string flow_i2s(int32_t flow_i) {
-						std::to_string(flow_i)
+				declaration = "std::u16string flow_i2s(int32_t flow_i)";
+				Pair(
+					blueprint(
+						"
+					%declaration% {
+					  std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> convert;
+					  return convert.from_bytes(std::to_string(flow_i));
 					}
-				", [
-				])
+				",
+						[ "declaration", declaration,]
+					),
+					declaration
+				)
 			} else if (id == "flow_i2d") {
-				blueprint("
-					double flow_i2d(int32_t flow_i) {
-						double(flow_i)
+				declaration = "double flow_i2d(int32_t flow_i)";
+				Pair(
+					blueprint(
+						"
+					%declaration% {
+						return double(flow_i);
 					}
-				", [
-				])
+				",
+						[ "declaration", declaration,]
+					),
+					declaration
+				)
 			} else {
 				polyvars = extractPolymorphism(makeSet(), type);
 				argtypes = getBArgTypes(type);
-				rt = btype2cpp(backend, getBReturnType(type));
+				returnType = btype2cpp(backend, getBReturnType(type));
 
-				blueprint("
-					%polyvars%%rt% %id%(%args%) {
+				declaration = blueprint(
+					"%polyvars%%returnType% %id%(%args%)",
+					[
+						"polyvars", {
+							if (isEmptySet(polyvars)) ""
+							else "template <" + superglue(set2array(polyvars), \pv -> "typename " + btype2cpp(backend, pv), ", ") + "> "
+						},
+						"id", id,
+						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
+						"args", supergluei(args, \i, arg -> {
+							btype2cpp(backend, argtypes[i]) + " " + arg
+						}, ", "),
+						"returnType", returnType,
+					]
+				);
+
+				Pair(
+					blueprint(
+						"
+					%declaration% {
 						%body%
 					}
-				", [
-					"polyvars", {
-						if (isEmptySet(polyvars)) ""
-						else "template <" + superglue(set2array(polyvars), \pv -> "typename " + btype2cpp(backend, pv), ", ") + "> "
-					},
-					"id", id,
-					"args", supergluei(args, \i, arg -> {
-						btype2cpp(backend, argtypes[i]) + " " + arg
-					}, ", "),
-					"rt", rt,
-					"body", bstatement2cpp(backend, body)
-				])
+				",
+						[
+							"declaration", declaration,
+							"body", if (tailCall) makeTailCallBody(body, returnType) else bstatement2cpp(backend, body, true)
+						]
+					),
+					declaration
+				)
 			}
 		}
 		BExpNative(id, isio, type, nativeName): {
-			if (id == "flow_println") {
-				"template <typename A>
-void flow_println(A d) {
-	std::cout << d << std::endl;
-}
-
-void flow_println(std::u16string d) {
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	std::cout << codecvt.to_bytes(d) << std::endl;
-}
-";
-			} else if (id == "flow_isSameStructType") {
-				makeNativeIsSameStructType();
-			} else if (id == "flow_quit") {
-				" void flow_quit(int32_t code) {
-	// TODO
-	exit(code);
-}"
-			} else if (id == "flow_substring") {
-				"std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
-	return s.substr(start, length);
-}"
-			} else if (id == "flow_strlen") {
-				"int32_t flow_strlen(std::u16string s) {
-	return s.size();
-}"
+			if (containsSet(implementedNatives, id)) {
+				Pair("", "")
 			} else {
-				"// TODO: Native " + id;
+				Pair("// TODO: Native " + id, "");
 			}
 		}
 	}
 }
 
-bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
+bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) -> string {
 	todo = \ -> {
 		println("TODO C++ statement: " + toString(s));
 		toString(s)
 	}
-	rec = \ss -> bstatement2cpp(backend, ss);
-	rece = \ee -> bexp2cpp(backend, ee);
+	rec = \ss -> bstatement2cpp(backend, ss, withReturn);
+	rece = \ee -> bexp2cpp(backend, ee, false);
 	switch (s) {
 		BIfStatement(cond, then, else_): {
 			blueprint("
@@ -167,21 +224,27 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 
 		}
 		BLetStatement(id, value, body): {
-			"auto " + id + " = " + bexp2cpp(backend, value) + ";\n"
-			+ bstatement2cpp(backend, body);
+			"auto " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
+			+ bstatement2cpp(backend, body, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
 		BReturnVoid(): "return;";
 		BReturn(val): {
 			type = getBType(val);
-			(if (type == bvoidType) {
+			(if (type == bvoidType || !withReturn) {
 				""
 			} else {
 				"return ";
-			}) + bexp2cpp(backend, val) + ";"
+			}) + bexp2cpp(backend, val, false) + ";"
 		}
 		BTailCall(fn, args, values, type): {
-			fn  + "(" +superglue(values, rece, ", ") + ");"
+			"_end = false;\n"
+			+ supergluei(args, \i, arg -> {
+				"auto __" + arg + " = " + rece(values[i])
+			}, ";\n") + ";\n"
+			+ supergluei(args, \i, arg -> {
+				arg + " = " + "__" + arg
+			}, ";\n") + ";"
 		}
 		BSequenceStatement(statements): {
 			blueprint("
@@ -189,8 +252,9 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 						%exps%
 					}",
 				[
-					"exps", superglue(statements, rec, "\n"),
-			]);
+					"exps", supergluei(statements, \i, v -> bstatement2cpp(backend, v, i == length(statements) - 1), "\n"),
+				]
+			);
 
 		}
 		BSwitchStatement(expr, cases, type): {
@@ -224,21 +288,27 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement) -> string {
 }
 
 
-bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
-	rec = \ee -> bexp2cpp(backend, ee);
+bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string {
+	rec = \ee -> bexp2cpp(backend, ee, false);
 	switch (bexp) {
-		BVoid(): "{}";
+		BVoid(): "({})";
 		BBool(v): if (v) "true" else "false";
 		BInt(v): "int32_t(" + i2s(v) + ")";
 		BDouble(v): double2string(v);
 		BString(v): "std::u16string(u" + toString(v) + ")";
-		BVar(id, type): id;
+		BVar(id, type): {
+			// add function argument types to help the с++ compiler with polymorphism
+			// before : type12type2
+			// after : type12type2<Type1,Type2>
+			id + bVar2realFuncTypes(bexp, backend);
+		}
 		BLet(id, value, body, type): {
 			blueprint("
-				[&]() {
+				[%capture%]() {
 					auto %id% = %value%;
 					return %body%;
 				}()", [
+				"capture", if (isGlobalExp) "" else "&",
 				"id", id,
 				"value", rec(value),
 				"body", rec(body),
@@ -258,21 +328,23 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 			]);
 		}
 		BCall(fn, args, type): {
-			produceBackendCall(backend, bexp, bexp2cpp);
+			produceBackendCall(backend, bexp, \a1, a2 -> bexp2cpp(a1, a2, isGlobalExp));
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
-			rt0 = btype2cpp(backend, getBReturnType(type));
+			returnType = btype2cpp(backend, getBReturnType(type));
 			blueprint("
-					%type%([](%args%) {
-						return %body%;
+					%type%([%capture%](%args%) {
+						%return% %body%;
 					})",
 				[
+					"capture", if (isGlobalExp) "" else "&",
 					"args", supergluei(args, \i, arg -> {
 							btype2cpp(backend, argtypes[i]) + " " + arg
 						}, ", "),
 					"body", rec(body),
 					"type", btype2cpp(backend, type),
+					"return", if (returnType == bvoidType.id) "" else "return",
 			]);
 		}
 		BSequence(exps, type): {
@@ -312,14 +384,14 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp) -> string {
 	}
 }
 
-dunion2cpp(backend : Backend<CppInfo>, u : DUnion) -> string {
+dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BType]>,) -> string {
 	addTemplatesToStruct(
 		mapConcat(u.types, \t -> t.typars),
 		blueprint("
 			using %name% = std::variant<%members%>;", [
 				"name", u.id,
-				"members", superglue(u.types, \t : DTypeName -> {
-					dtype2cpp(backend, t);
+				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> {
+					btype2cpp(backend, t);
 				}, ", ")
 			]
 		)
@@ -420,44 +492,11 @@ dstruct2id(backend : Backend<CppInfo>, s : DStruct) -> string {
 }
 
 getStructIdMember() -> string {
-	" unsigned int " + getStructIdFieldName();
-}
-
-getStructIdFieldName() -> string {
-	"_id";
-}
-
-makeNativeIsSameStructType() -> string {
-	// UNION case : Complexity of visit: ? const?
-	// https://en.cppreference.com/w/cpp/utility/variant/visit
-	blueprint("template <typename A, typename ...Args2>
-bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
-	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
-	return struct1.%id% == id2;
-}
-template <typename ...Args1, typename B>
-bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
-	return id1 == struct2.%id%;
-}
-
-template <typename ...Args1, typename ...Args2>
-bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x.%id%;}, struct1);
-	unsigned int id2 = std::visit([&](auto&& x) {return x.%id%;}, struct2);
-	return id1 == id2;
-}
-
-template <typename A, typename B>
-bool flow_isSameStructType(A struct1, B struct2) {
-	return struct1.%id% == struct2.%id%;
-}",
-		["id", getStructIdFieldName()]
-	);
+	" unsigned int _id";
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
-	rec = \ee -> bexp2cpp(backend, ee);
+	rec = \ee -> bexp2cpp(backend, ee, false);
 	len = length(bexp.cases);
 	expDefaultCase = bexp.defaultCase;
 
@@ -514,7 +553,6 @@ makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
 	}
 }
 
-// todo : flat union?
 switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<string, int> {
 	switch (switchType : BType) {
 		BTypePar(__) : makeTree(); // error
@@ -522,7 +560,7 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 			foldi(
 				lookupTreeDef(backend.info.unionTypes, id, []),
 				makeTree(),
-				\i, acc, itemId -> setTree(acc, itemId, i)
+				\i, acc, item : BType -> setTree(acc, bType2id(item), i)
 			);
 		}
 		BTypeFunction(__, __) : makeTree(); // error
@@ -546,7 +584,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		}
 
 	isSubStruct = \unionId : string, subStructId : string -> {
-		contains(lookupTreeDef(backend.info.unionTypes, unionId, []), subStructId);
+		exists(lookupTreeDef(backend.info.unionTypes, unionId, []), \t : BType -> bType2id(t) == subStructId);
 	}
 
 	liftType = \value -> {
@@ -571,7 +609,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 
 	fromId = getStructTypeId(bcast.from);
 	toId =  getStructTypeId(bcast.to);
-	value = bexp2cpp(backend, bcast.value);
+	value = bexp2cpp(backend, bcast.value, false);
 
 	if (fromId == "" || toId == "") {
 		value;
@@ -595,4 +633,87 @@ bTypeParId2cpp(id : string) -> string {
 	// In C++, we use a, b, c, ...
 	len = strlen(id) - 1;
 	fromCharCode(getCharCodeAt("A", 0) + len);
+}
+
+flatUnionTypes(unionTypes : Tree<string, [DTypeName]>) -> Tree<string, [BType]> {
+	mapTree(unionTypes, \subTypes -> flatUnions(subTypes, unionTypes, []));
+}
+
+flatUnions(types : [DTypeName], unionTypes : Tree<string, [DTypeName]>, acc : [BType]) -> [BType] {
+	if (types == []) {
+		acc
+	} else {
+		splittedTypes = fold2(types, acc, [], \structTypes, unionSubTypes, type -> {
+			eitherFn(
+				lookupTree(unionTypes, dType2id(type)),
+				\subTypes -> Pair(structTypes, concat(unionSubTypes, subTypes)),
+				\-> Pair(arrayPush(structTypes, dtype2btype(type)), unionSubTypes)
+			)
+		});
+		flatUnions(splittedTypes.second, unionTypes, splittedTypes.first);
+	}
+}
+
+bType2id(type : BType) -> string {
+	switch (type : BType) {
+		BTypePar(id) : id;
+		BTypeName(id, __) : id;
+		BTypeFunction(__, __) : "";
+	}
+}
+
+dType2id(type : DType) -> string {
+	switch (type : DType) {
+		DTypeName(id, __, __) : id;
+		DTypePar(id, __) : id;
+		DTypeFunction(__, __, __) : "";
+	}
+}
+
+getStatFunctionTypes(declarations : [BDeclaration]) -> Tree<string, BType> {
+	// TODO: find a better way
+	// native functions can have multiple implementations (polimorphic)
+	// add fn to this array if it has only 1 implementation with template + std::function
+	nativesWhiteList = buildSet([
+		"flow_fold",
+		"flow_map",
+		"flow_filter",
+		"flow_isSameStructType",
+		"flow_extractStruct",
+	]);
+	fold(declarations, makeTree(), \acc, decl -> {
+		switch (decl) {
+			BGlobalVar(id, body, type): acc;
+			BStatFunction(id, args, body, tailCall, type): setTree(acc, id, type);
+			BExpNative(id, isio, type, nativeName): if (containsSet(nativesWhiteList, id)) setTree(acc, id, type) else acc;
+		}
+	});
+}
+
+// find the type of function arguments
+bVar2realFuncTypes(var : BVar, backend : Backend<CppInfo>) -> string {
+	switch (var.type : BType) {
+		BTypePar(__) : "";
+		BTypeName(__, __) : "";
+		BTypeFunction(args, returnType) : {
+			eitherMap(
+				lookupTree(backend.info.statFunctions, var.id),
+				\statFuncType -> {
+					switch (statFuncType : BType) {
+						BTypePar(__) : "";
+						BTypeName(__, __) : "";
+						BTypeFunction(sfArgs, afReturnType) : {
+							polyvars = extractPolyTypes(makeTree(), BTypeFunction(args, returnType), statFuncType);
+							if (isEmptyTree(polyvars)) {
+								""
+							} else {
+								"<" + superglue(getTreeValues(polyvars), \pv -> "" + btype2cpp(backend, pv), ", ") + "> "
+							}
+						}
+					}
+				},
+				""
+			)
+		}
+	}
 }

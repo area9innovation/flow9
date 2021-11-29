@@ -1,0 +1,133 @@
+import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/cgraph/cgraph;
+import tools/flow9/types/pretty;
+
+import tools/flow9/types/ugraph/class;
+
+export {
+	findOrMakeCNodeClass(tmap : TMap, type : TType, reason : ErrorReason) -> int;
+
+	// Find a node. -1 if not found
+	findCNode(tmap : TMap, cnode : CNode) -> int;
+
+	// Given a node, find out what eclass it is, or make a new one
+	findOrMakeCNode(tmap : TMap, cnode : CNode) -> int;
+
+
+	isSameEClassInCMap(cmap : CMap, left : int, right : int) -> bool;
+}
+
+// Find a node
+findCNode(tmap : TMap, cnode : CNode) -> int {
+	findUnionMap(tmap.cmap.cmap, \el, nn -> {
+		isSameCNode(tmap, cnode, nn)
+	}, -1);
+}
+
+findOrMakeCNode(tmap : TMap, node : CNode) -> int {
+	eclass = findCNode(tmap, node);
+	if (eclass == -1) {
+		nclass = makeTNodeClass(tmap);
+		setUnionMapValue(tmap.cmap.cmap, nclass, node);
+		nclass;
+	} else eclass;
+}
+
+makeCNodeClass(tmap : TMap, node : CNode) -> int {
+	nclass = makeTNodeClass(tmap);
+	setUnionMapValue(tmap.cmap.cmap, nclass, node);
+	nclass;
+}
+
+findOrMakeCNodeClass(tmap : TMap, type : TType, reason : ErrorReason) -> int {
+	switch (type) {
+		TTypeEClass(eclass): eclass;
+		default: {
+			node = makeCNode(tmap, type, reason);
+			findOrMakeCNode(tmap, node);
+		}
+	}
+}
+
+// We know this type does not exist in the union map
+makeCNode(tmap : TMap, type : TType, reason : ErrorReason) -> CNode {
+	todo = \ -> {
+		println("TODO: Make cnode for " + prettyTType(type));
+		CEpsilon();
+	}
+	error = \ -> {
+		todo();
+	}
+
+	switch (type) {
+		TTypeName(id, typars): {
+			CName(id,
+				map(typars, \tp -> {
+					findOrMakeCNodeClass(tmap, tp, reason)
+				}),
+				reason
+			);
+		}
+		TTypeEClass(eclass): todo();
+		TTypeFunction(args, returnType): {
+			// A function type
+			CFunction(
+				map(args, \arg -> {
+					findOrMakeCNodeClass(tmap, arg, reason)
+				}),
+				findOrMakeCNodeClass(tmap, returnType, reason),
+				reason
+			);
+		}
+		TTypeOverload(unique, overloads): {
+			children = map(overloads, \overload -> {
+				findOrMakeCNodeClass(tmap, overload, reason)
+			});
+			uid = findOrMakeCNodeClass(tmap, unique, reason);
+			COverload(makeSet1(uid), buildSet(children), reason)
+		}
+		TTypeSupertype(unique, subtypes, maxed): todo();
+	}
+}
+
+isSameCNode(tmap : TMap, left : CNode, right : CNode) -> bool {
+	switch (left) {
+		CEpsilon(): right == left;
+		CName(name, typars, reason): {
+			switch (right) {
+				CName(rname, rtypars, rreason): {
+					name == rname
+					&& areSameEClasses(tmap, typars, rtypars)
+				}
+				default: false;
+			}
+		}
+		CFunction(args, return, reason): {
+			switch (right) {
+				CFunction(rargs, rreturn, rreason): {
+					areSameEClasses(tmap, args, rargs)
+					&& isSameEClassInCMap(tmap.cmap, return, rreturn)
+				}
+				default: false;
+			}
+		}
+		COverload(unique, options, reason): {
+			switch (right) {
+				COverload(runique, roptions, rreason): {
+					!isEmptySet(intersectSets(unique, runique))
+				}
+				default: false;
+			}
+		}
+	}
+}
+
+areSameEClasses(tmap : TMap, left : [int], right : [int]) -> bool {
+	length(left) == length(right)
+	&& forall(mapi(left, \i, l -> isSameEClassInCMap(tmap.cmap, l, right[i])), idfn)
+}
+
+isSameEClassInCMap(cmap : CMap, left : int, right : int) -> bool {
+	findUnionMapRoot(cmap.cmap, left) == findUnionMapRoot(cmap.cmap, right)
+}
+

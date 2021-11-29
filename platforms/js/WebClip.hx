@@ -93,47 +93,52 @@ class WebClip extends NativeWidgetClip {
 		iframe.onload = function() {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
-
-				if (!this.isHTMLRenderer()) {
-					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
-					if (Native.isTouchScreen()) {
-						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+				try {
+					if (!this.isHTMLRenderer()) {
+						iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+						if (Native.isTouchScreen()) {
+							iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+						}
 					}
-				}
 
-				if (this.noScroll) {
-					untyped iframeDocument.body.style["overflow"] = "hidden";
-					iframeDocument.addEventListener('wheel', function (e) {
-						RenderSupport.provideEvent(e);
-					}, true);
-				}
-
-				if (shrinkToFit) {
-					try {
-						this.htmlPageWidth = iframeDocument.body.scrollWidth;
-						this.htmlPageHeight = iframeDocument.body.scrollHeight;
-						applyShrinkToFit();
-					} catch(e : Dynamic) {
-						// if we can't get the size of the html page, we can't do shrink so disable it
-						this.shrinkToFit = false;
-						Errors.report(e);
-						applyNativeWidgetSize();
+					if (this.noScroll) {
+						untyped iframeDocument.body.style["overflow"] = "hidden";
+						iframeDocument.addEventListener('wheel', function (e) {
+							RenderSupport.provideEvent(e);
+						}, true);
 					}
-				}
 
+					if (shrinkToFit) {
+						try {
+							this.htmlPageWidth = iframeDocument.body.scrollWidth;
+							this.htmlPageHeight = iframeDocument.body.scrollHeight;
+							applyShrinkToFit();
+						} catch(e : Dynamic) {
+							// if we can't get the size of the html page, we can't do shrink so disable it
+							this.shrinkToFit = false;
+							Errors.report(e);
+							applyNativeWidgetSize();
+						}
+					}
+
+					ondone("OK");
+
+					if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) {
+						iframe.scrolling = "no";
+					}
+					iframe.contentWindow.callflow = cb;
+					if (iframe.contentWindow.pushCallflowBuffer) {
+						iframe.contentWindow.pushCallflowBuffer();
+					}
+					if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
+						iframe.scrolling = "no"; // Obviousely it is flow page.
+					}
+				} catch(e : Dynamic) { Errors.report(e); ondone(e);}
+			} catch(e : Dynamic) {
+				// Keep working in case of CORS error
+				Errors.report(e);
 				ondone("OK");
-
-				if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) {
-					iframe.scrolling = "no";
-				}
-				iframe.contentWindow.callflow = cb;
-				if (iframe.contentWindow.pushCallflowBuffer) {
-					iframe.contentWindow.pushCallflowBuffer();
-				}
-				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
-					iframe.scrolling = "no"; // Obviousely it is flow page.
-				}
-			} catch(e : Dynamic) { Errors.report(e); ondone(e);}
+			}
 		};
 	}
 
