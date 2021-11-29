@@ -93,8 +93,8 @@ std::u16string flow_d2s(double v) {
 
 // array
 
-template <typename A, typename B> B
-flow_fold(const std::vector<A> flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
+template <typename A, typename B>
+B flow_fold(const std::vector<A> flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
   B _res = flow_b;
   for (std::size_t i = 0; i != flow_a.size(); ++i) {
     _res = flow_fn(_res, flow_a[i]);
@@ -144,6 +144,28 @@ std::vector<A> flow_concat(const std::vector<A> flow_a, const std::vector<A> flo
   return res;
 }
 
+template <typename A>
+int32_t flow_length(const std::vector<A>& flow_a) {
+  return flow_a.size();
+}
+
+template <typename A>
+std::vector<A> flow_replace(const std::vector<A>& flow_a, int32_t i, A value) {
+  auto len = flow_a.size();
+  if (i >= len || i < 0) {
+  	std::vector<A> res;
+    std::copy(flow_a.begin(), flow_a.end(), std::back_inserter(res));
+    res.push_back(value);
+    return res;
+  } else {
+  	std::vector<A> res(len);
+  	res[i] = value;
+  	for (int j = 0; j < len; j++) {
+		if (i != j) res[j] = flow_a[j];
+	}
+  	return res;
+  }
+}
 
 // flowstruct
 template <typename A, typename B>
