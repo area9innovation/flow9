@@ -682,6 +682,29 @@ class Native {
 		return result;
 	}
 
+	public static function mapiM<T>(values : Array<T>, clos : Int -> T -> Dynamic) : Dynamic {
+		var result = new Array();
+		var n = values.length;
+		for (i in 0...n) {
+			var v = values[i];
+			var maybe = clos(i, v);
+			var fields = Reflect.fields(maybe);
+			// Check if there is both an _id and a value field of some kind: Then it is Some
+			if (fields.length == 2) {
+				for (f in fields) {
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "_id") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+				}
+			} else {
+				return maybe;
+			}
+		}
+		return makeStructValue("Some", [ result ], makeStructValue("IllegalStruct", [], null));
+	}
+
 	public static inline function random() : Float {
 		return Math.random();
 	}
