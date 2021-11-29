@@ -7,14 +7,10 @@
 // math
 #include <cmath>
 
-// service
 template <typename A>
-std::tuple<A*, A> makeFlowRef(A value) {
-	A * p = new A;
-    *p = value;
-    return std::make_tuple(p, value);
+std::shared_ptr<A> makeFlowRef(A value) {
+  return std::make_shared<A>(value);
 }
-
 
 // common
 
