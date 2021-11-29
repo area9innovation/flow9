@@ -136,7 +136,6 @@ class WebClip extends NativeWidgetClip {
 				} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 			} catch(e : Dynamic) {
 				// Keep working in case of CORS error
-				Errors.report(e);
 				ondone("OK");
 			}
 		};
