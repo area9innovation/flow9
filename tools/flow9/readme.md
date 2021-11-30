@@ -76,10 +76,10 @@ dot on structs, which can be considered as an overloaded function.
 
 TODO CGraph:
 - We need a subtype with multiple types when the max is closed
-- Consider to do the merge in unify, not in unionmap.
-    Unify e19=(e13) -> e3 with e25=overload_3{e22=(e20=DynamicBehaviour<e17>) -> e21=ref<e17>,e24=(e23=Some<e18>) -> e18}. field value
-  can not be done, so it should be postponed
 
+- Make it so that unify can postpone when it does not work.
+  - Replace matchesCNode with unify with checkOnly flag
+  - Fix it so that mergeCNodes always expects one side to be CEpsilon
 
 TODO:
 - Review postpones, and see if we can resolve some of those:

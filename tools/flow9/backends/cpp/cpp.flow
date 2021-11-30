@@ -49,7 +49,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
-		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <tuple>\n#include <iostream>\n"
+		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <iostream>\n#include <memory>\n"
 		// TODO: fix in the future path to flow9
 		"#include \"" + "tools/flow9/backends/cpp/flow_natives.hpp\" \n"
 		+ getBackendRequirements(backend) + "\n"
@@ -98,6 +98,8 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 		"flow_bitXor",
 		"flow_bitShl",
 		"flow_bitUshr",
+		"flow_length",
+		"flow_replace",
 	]);
 	makeTailCallBody = \body : BStatement, type -> {
 		defaultReturn = if (type == bvoidType.id) {
@@ -411,7 +413,7 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 }
 
 addTemplatesToStruct(types : [DType], body : string) -> string {
-	templates = makeStructTemplates(types);
+	templates = makeStructTemplates(extractDTypes(types, []));
 	if (templates == "") body else templates + "\n" + body;
 }
 
@@ -430,6 +432,20 @@ makeStructTemplates(types : [DType]) -> string {
 	}
 }
 
+extractDTypes(types : [DType], acc : [DType]) -> [DType] {
+	if (types == []) {
+		acc
+	} else {
+		children = mapConcat(types, \type -> 
+			switch (type : DType) {
+				DTypeName(__, typars, __): typars;
+				DTypePar(__, __) : [];
+				DTypeFunction(args, returnType, __): arrayPush(args, returnType);
+			}
+		);
+		extractDTypes(children, concat(acc, types));
+	}
+}
 addTyparsToStruct(backend : Backend<CppInfo>, type : BType, body : string) -> string {
 	switch (type : BType) {
 		BTypePar(id) : body;
@@ -466,7 +482,10 @@ btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
 			else if (id == "array") {
 				"std::vector<" + btype2cpp(backend, typars[0]) + ">"
 			} else if (id == "ref") {
-				"std::tuple<" + btype2cpp(backend, typars[0]) + ">"
+				blueprint(
+					"std::shared_ptr<%valueType%>",
+					["valueType", btype2cpp(backend, typars[0]),]
+				);
 			} else if (trim2(id, "?") == "") {
 				btype2cpp(backend, BTypePar(id));
 			} else {
@@ -680,6 +699,7 @@ getStatFunctionTypes(declarations : [BDeclaration]) -> Tree<string, BType> {
 		"flow_filter",
 		"flow_isSameStructType",
 		"flow_extractStruct",
+		"flow_replace",
 	]);
 	fold(declarations, makeTree(), \acc, decl -> {
 		switch (decl) {
