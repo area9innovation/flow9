@@ -94,7 +94,7 @@ std::u16string flow_d2s(double v) {
 // array
 
 template <typename A, typename B>
-B flow_fold(const std::vector<A> flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
+B flow_fold(const std::vector<A>& flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
   B _res = flow_b;
   for (std::size_t i = 0; i != flow_a.size(); ++i) {
     _res = flow_fn(_res, flow_a[i]);
@@ -116,7 +116,7 @@ std::vector<int32_t> flow_enumFromTo(int32_t start, int32_t end) {
 
 
 template <typename A, typename B>
-std::vector<B> flow_map(const std::vector<A> flow_a, const std::function<B(A)> & flow_fn) {
+std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(A)> & flow_fn) {
   // std::vector<B> res(flow_a.size());
   // for (std::size_t i = 0; i != flow_a.size(); ++i) {
   //   res[i] = flow_fn(flow_a[i]);
@@ -128,7 +128,7 @@ std::vector<B> flow_map(const std::vector<A> flow_a, const std::function<B(A)> &
 }
 
 template <typename A>
-std::vector<A> flow_filter(const std::vector<A> flow_a, const std::function<bool(A)> & flow_test) {
+std::vector<A> flow_filter(const std::vector<A>& flow_a, const std::function<bool(A)> & flow_test) {
   std::vector<A> res;
   std::copy_if (flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_test);
   return res;
@@ -136,7 +136,7 @@ std::vector<A> flow_filter(const std::vector<A> flow_a, const std::function<bool
 
 
 template <typename A>
-std::vector<A> flow_concat(const std::vector<A> flow_a, const std::vector<A> flow_b) {
+std::vector<A> flow_concat(const std::vector<A>& flow_a, const std::vector<A> flow_b) {
   std::vector<A> res;
   res.reserve(flow_a.size() + flow_b.size());
   res.insert(res.end(), flow_a.cbegin(), flow_a.cend());
