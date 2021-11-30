@@ -3,6 +3,7 @@ import tools/flow9/types/cgraph/dtype;
 import tools/flow9/types/cgraph/unionmap;
 import tools/flow9/types/ugraph/tmap;
 import tools/flow9/types/cgraph/subtype;
+import tools/flow9/types/cgraph/merge;
 import tools/flow9/types/pretty;
 
 export {
@@ -26,7 +27,7 @@ export {
 resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
 	eclass = findOrMakeCNodeClass(tmap, t, reason);
 	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println("  " + prettyCEClass(tmap.cmap, eclass) + " = ttype " + prettyTType(t));
+		println("  Set " + prettyCEClass(tmap.cmap, eclass) + " = ttype " + prettyTType(t));
 	}
 	
 	TTypeEClass(eclass);
@@ -38,20 +39,70 @@ unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TT
 	unifyCEClass(tmap, lclass, rclass, reason);
 }
 
+cindent = ref "";
+
 unifyCEClass(tmap : TMap, lclass : int, rclass : int, reason : ErrorReason) -> TTypeEClass {
+	indent = ^cindent;
 	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
-		debugErrorReason(reason, "  Unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+		debugErrorReason(reason, indent + "  Unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+		cindent := indent + "  ";
 	}
 
-	// TODO: This might not work.
-	// In some cases, we have to postpone this.
-	// Especially if it is an overload, which can not be resolved.
+	left : CNode = getUnionMapValue(tmap.cmap.cmap, lclass);
+	right : CNode = getUnionMapValue(tmap.cmap.cmap, rclass);
+
+	todo =  \ -> {
+		debugErrorReason(reason, "TODO: Figure out how to unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+	}
+
+	error = \ -> {
+		debugErrorReason(reason, "ERROR: Could not unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+	}
+
+	switch (left) {
+		CEpsilon(): {} // This is fine
+		CName(name, typars, lreason): {
+			switch (right) {
+				CEpsilon(): {} // This is fine
+				CName(rname, rtypars, rreason): {
+					// TODO: Check that they are compatible
+
+				}
+				CFunction(args, return, rreason): error();
+				COverload(unique, options, rreason): {
+					if (!resolveCOverload(tmap.cmap, rclass, right, left)) {
+						todo();
+					}
+				}
+			}
+		}
+		CFunction(args, return, lreason): {
+			switch (right) {
+				CEpsilon(): {} // This is fine
+				CName(name, typars, rreason): error();
+				CFunction(rargs, rreturn, rreason): {} // This is fine
+				COverload(unique, options, rreason): {
+					if (!resolveCOverload(tmap.cmap, rclass, right, left)) {
+						todo();
+					}
+				}
+			}
+		}
+		COverload(unique, options, lreason): {
+			if (right != CEpsilon()) {
+				if (!resolveCOverload(tmap.cmap, lclass, left, right)) {
+					todo();
+				}
+			}
+		}
+	}
 
 	root = unionUnionMap(tmap.cmap.cmap, lclass, rclass, reason);
 
 	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println("   to get root " + prettyCEClass(tmap.cmap, root));
+		println(indent + "   to get root " + prettyCEClass(tmap.cmap, root));
 	}
+	cindent := indent;
 
 	TTypeEClass(root);
 }
@@ -64,7 +115,7 @@ subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, 
 
 	if (res) {
 		if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
-			debugErrorReason(reason, "  Subtype success " + orig + ". ");
+			// debugErrorReason(reason, "  Subtype success " + orig + ". ");
 			debugErrorReason(reason, "  Subtype success " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass) + ". ");
 		}
 	}
@@ -75,8 +126,10 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	sub : CNode = getUnionMapValue(tmap.cmap.cmap, subClass);
 	super : CNode = getUnionMapValue(tmap.cmap.cmap, superClass);
 
-	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println("subtype " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass));
+	indent = ^cindent;
+	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid)) && !checkOnly) {
+		debugErrorReason(reason, indent + "  Subtype " + prettyCEClass(tmap.cmap, subClass) + "\n" + indent + "    with  " + prettyCEClass(tmap.cmap, superClass) + ". ");
+		cindent := indent + "  ";
 	}
 
 	error = \ -> {
@@ -97,7 +150,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	// If we have a subtype against an overload. I.e. name or function against overload
 	subVsOverload = \ov : COverload -> {
 		potentials = filterSet(ov.options, \opt : int -> {
-			subtypeCEClass(tmap, subClass, opt, true, reason);
+			subtypeCEClass(tmap, subClass, opt, true, elaborateReason(reason, " overloads"));
 		});
 		npot = sizeSet(potentials);
 		if (npot == 0) {
@@ -109,7 +162,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				cand : int = set2array(potentials)[0];
 				setUnionMapValue(tmap.cmap.cmap, superClass, CEpsilon());
 				root = unionUnionMap(tmap.cmap.cmap, superClass, cand, reason);
-				subtypeCEClass(tmap, subClass, cand, checkOnly, reason);
+				subtypeCEClass(tmap, subClass, cand, checkOnly, elaborateReason(reason, "resolve overload"));
 			} else true;
 		} else {
 			if (sizeSet(ov.options) > npot) {
@@ -168,7 +221,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 		true;
 	};
 
-	if (sub == CEpsilon() && super == CEpsilon()) {
+	end = if (sub == CEpsilon() && super == CEpsilon()) {
 		// OK, postpone
 		postpone();
 	} else if (isCFlow(sub) || isCFlow(super)) {
@@ -194,7 +247,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 						if (name == sname) {
 							if (length(typars) == length(stypars)) {
 								foldi(typars, true, \i, ok : bool, typar -> {
-									ok && subtypeCEClass(tmap, typar, stypars[i], checkOnly, reason);	// TODO: Elaborate reason?
+									ok && subtypeCEClass(tmap, typar, stypars[i], checkOnly, elaborateReason(reason, "typar #" + i2s(i + 1)));
 								});
 							} else {
 								error();
@@ -204,7 +257,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 							if (contains(supers, sname)) {
 								// OK, lift the sub to the superworld, and do it there
 								sub2super = makeSupertypeFromSub(tmap, sub, sname);
-								subtypeCEClass(tmap, sub2super, superClass, checkOnly, reason);
+								subtypeCEClass(tmap, sub2super, superClass, checkOnly, elaborateReason(reason, "sub vs super"));
 							} else {
 								error();
 							}
@@ -221,8 +274,8 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 					CFunction(sargs, sreturn, supreason): {
 						if (length(args) == length(sargs)) {
 							foldi(args, true, \i, ok : bool, arg -> {
-								ok && subtypeCEClass(tmap, sargs[i], arg, checkOnly, reason);	// TODO: Elaborate reason?
-							}) && subtypeCEClass(tmap, return, sreturn, checkOnly, reason);	// TODO: Elaborate reason?
+								ok && subtypeCEClass(tmap, sargs[i], arg, checkOnly, elaborateReason(reason, "arg #" + i2s(i + 1)));
+							}) && subtypeCEClass(tmap, return, sreturn, checkOnly, elaborateReason(reason, "fn ret"));
 						} else {
 							error();
 						}
@@ -263,7 +316,10 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				}
 			}
 		}
-	}
+	};
+
+	cindent := indent;
+	end;
 }
 
 dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass {
