@@ -26,19 +26,29 @@ bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
 bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	typeHierarchy = resolveBTypeHierarchy(b.structs, b.unions);
 
+	unionTypes = flatUnionTypes(typeHierarchy.unionTypes);
+	unionedStructs = splitUnionedStructs(unionTypes, typeHierarchy.unionedStructs, b.structs, b.unions);
+
 	info = CppInfo(
 		fold(b.declarations, makeSet(), \acc, d -> {
 			insertSet(acc, d.id)
 		}),
 		makeStructIds(b.structs, b.unions),
-		flatUnionTypes(typeHierarchy.unionTypes),
+		unionTypes,
 		getStatFunctionTypes(b.declarations),
+		values2treeEx(unionedStructs.second, \struct -> struct.struct.id, recursiveDStruct2recursiveStruct)
 	);
 
 	backend = cppBackend(info);
 	// Structs in unions
-	unionStructs = foldTree(typeHierarchy.unionedStructs, "", \id, struct, acc -> {
+	simpleUnionStructs = fold(unionedStructs.first, "", \acc, struct -> {
 		acc + dstruct2cpp(backend, struct) + "\n"
+	});
+	unionStructs = fold(unionedStructs.second, simpleUnionStructs, \acc, struct -> {
+		acc + recursiveDstruct2cpp(backend, struct, false) + "\n"
+	});
+	recursiveStructs = fold(unionedStructs.second, "", \acc, struct -> {
+		acc + recursiveDstruct2cpp(backend, struct, true) + "\n"
 	});
 	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
 	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
@@ -59,6 +69,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		+ unionStructs
 		+ "// UNIONS\n"
 		+ unions + "\n"
+		+ "// RECURSIVE STRUCTURES\n"
+		+ recursiveStructs + "\n"
 		+ "// STRUCTS\n"
 		+ structs + "\n"
 		+ "// DECLARATIONS\n"
@@ -157,7 +169,7 @@ do {
 					declaration
 				)
 			} else {
-				polyvars = extractPolymorphism(makeSet(), type);
+				polyvars = uniq(map(set2array(extractPolymorphism(makeSet(), type)),  \pv -> btype2cpp(backend, pv)));
 				argtypes = getBArgTypes(type);
 				returnType = btype2cpp(backend, getBReturnType(type));
 
@@ -165,8 +177,8 @@ do {
 					"%polyvars%%returnType% %id%(%args%)",
 					[
 						"polyvars", {
-							if (isEmptySet(polyvars)) ""
-							else "template <" + superglue(set2array(polyvars), \pv -> "typename " + btype2cpp(backend, pv), ", ") + "> "
+							if (polyvars == []) ""
+							else "template <" + superglue(polyvars, \pv -> "typename " + pv, ", ") + "> "
 						},
 						"id", id,
 						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
@@ -401,15 +413,37 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 }
 
 dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
+	dstruct2cppEx(backend, s, \__, type -> dtype2cpp(backend, type), "");
+}
+
+dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType) -> string, dstructFns : string) -> string {
 	addTemplatesToStruct(
 		map(s.structArgs, \arg -> arg.type),
 		"struct " + s.id + "{"
-		+ superglue(s.structArgs, \sa -> {
-			dtype2cpp(backend, sa.type) + " " + sa.id + ";"
+		+ supergluei(s.structArgs, \i, sa -> {
+			argType2cpp(i, sa.type) + " " + sa.id + ";"
 		}, "; ")
 		+ dstruct2id(backend, s) + ";" 
+		+ dstructFns
 		+ "};"
 	);
+}
+
+recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody : bool) -> string {
+	if (withBody) {
+		dstruct2cppEx(
+			backend,
+			s.struct,
+			\ind, type -> {
+				isRecursiveField = elementAt(s.recursiveArgs, ind, false);
+				cppType = dtype2cpp(backend, type);
+				if (isRecursiveField) "std::unique_ptr<" + cppType + ">" else cppType;
+			},
+			makeStructConstructors(backend, s)
+		);
+	} else {
+		"struct " + s.struct.id + ";";
+	}
 }
 
 addTemplatesToStruct(types : [DType], body : string) -> string {
@@ -418,10 +452,10 @@ addTemplatesToStruct(types : [DType], body : string) -> string {
 }
 
 makeStructTemplates(types : [DType]) -> string {
-	parameters = filtermap(types, \type -> {
+	parameters = uniq(filtermap(types, \type -> {
 		parametr = bTypePar2cpp(dtype2btype(type));
 		if (parametr == "") None() else Some(parametr) 
-	});
+	}));
 	if (parameters == []) {
 		""
 	} else {
@@ -727,7 +761,7 @@ bVar2realFuncTypes(var : BVar, backend : Backend<CppInfo>) -> string {
 							if (isEmptyTree(polyvars)) {
 								""
 							} else {
-								"<" + superglue(getTreeValues(polyvars), \pv -> "" + btype2cpp(backend, pv), ", ") + "> "
+								"<" + strGlue(uniq(map(getTreeValues(polyvars), \pv -> btype2cpp(backend, pv))), ", ") + "> "
 							}
 						}
 					}
@@ -736,4 +770,150 @@ bVar2realFuncTypes(var : BVar, backend : Backend<CppInfo>) -> string {
 			)
 		}
 	}
+}
+
+RecursiveDStruct(
+	struct : DStruct,
+	recursiveArgs : [bool], // len(recursiveArgs) = len(structArgs)
+);
+
+recursiveDStruct2recursiveStruct(struct : RecursiveDStruct) -> RecursiveStruct {
+	RecursiveStruct(
+		filtermapi(struct.struct.structArgs, \i, arg -> {
+			isRecursiveField = elementAt(struct.recursiveArgs, i, false);
+			if (isRecursiveField) Some(arg.id) else None()
+			
+		})
+	)
+}
+
+splitUnionedStructs(unionTypes : Tree<string, [BType]>, unionedStructs : Tree<string, DStruct>, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>,) -> Pair<[DStruct], [RecursiveDStruct]> {
+	foldTree(unionedStructs, Pair([], []), \id, struct, acc -> {
+		recFields = getRecursiveDStructureArgs(struct, structs, unions);
+		if (exists(recFields, idfn)) {
+			Pair(acc.first, arrayPush(acc.second, RecursiveDStruct(struct, recFields)))
+		} else {
+			Pair(arrayPush(acc.first, struct), acc.second)
+		}
+	});
+}
+
+getRecursiveDStructureArgs(
+	struct : DStruct,
+	allStructs : Tree<string, DStruct>,
+	allUnions : Tree<string, DUnion>,
+) -> [bool] {
+	map(struct.structArgs, \arg -> 
+		switch (arg.type : DType) {
+			DTypeName(id, __, __) : {
+				eitherFn(
+					lookupTree(allStructs, id),
+					\st -> isRecursiveDStructure(st.id, [st], [], allStructs, allUnions),
+					\-> eitherMap(
+						lookupTree(allUnions, id),
+						\un -> isRecursiveDStructure(un.id, [], [un], allStructs, allUnions),
+						false
+					)
+				)
+			}
+			DTypePar(id, __) : false;
+			DTypeFunction(__, __, __) : false;
+		}
+	);
+}
+
+isRecursiveDStructure(
+	structId : string,
+	structs : [DStruct],
+	unions : [DUnion],
+	allStructs : Tree<string, DStruct>,
+	allUnions : Tree<string, DUnion>,
+) -> bool {
+	structIds : [string] = mapConcat(structs, \struct -> filtermap(struct.structArgs, \arg -> 
+		switch (arg.type : DType) {
+			DTypeName(id, __, __) : Some(id);
+			DTypePar(id, __) : None();
+			DTypeFunction(__, __, __) : None();
+		}
+	));
+	unionIds : [string] = mapConcat(unions, \union -> map(union.types, \arg -> arg.id));
+	argIds = concat(structIds, unionIds);
+
+	if (argIds == []) {
+		false
+	} else if (exists(argIds, \id -> id == structId)) {
+		true
+	} else {
+		argStructs = filtermap(argIds, \id -> lookupTree(allStructs, id));
+		argUnions = filtermap(argIds, \id -> lookupTree(allUnions, id));
+		isRecursiveDStructure(structId, argStructs, argUnions, allStructs, allUnions)
+	}
+}
+
+// TODO
+makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct) -> string {	
+	args = unzipi(struct.struct.structArgs, \i, arg -> elementAt(struct.recursiveArgs, i, false));
+	simpleArgs = args.second;
+	recArgs = args.first;
+	copyConstructor = blueprint(
+		"%type%(const %type%& a) {
+		%simpleTypes%
+		%recTypes%
+	}",
+		[
+			"type", struct.struct.id,
+			"simpleTypes", concatStrings(map(simpleArgs, \arg -> 
+				blueprint(
+					"%field% = a.%field%;\n",
+					["field", arg.id]
+				)
+			)),
+			"recTypes", concatStrings(map(recArgs, \arg -> 
+				blueprint(
+					"%field% = std::make_unique<%ptype%>(*a.%field%);\n",
+					[
+						"field", arg.id,
+						"ptype", dtype2cpp(backend, arg.type)
+					]
+				)
+			))
+		]
+	);
+	initConstructor = blueprint(
+		"%type%(%fields%) {
+		%simpleTypes%
+		%recTypes%
+	}",
+		[
+			"type", struct.struct.id,
+			"fields", superglue(
+				struct.struct.structArgs,
+				\arg -> blueprint(
+					"%type% _%field%",
+					[
+						"field", arg.id,
+						"type", dtype2cpp(backend, arg.type),
+					]
+				),
+				", "
+			),
+			"simpleTypes", concatStrings(map(simpleArgs, \arg -> 
+				blueprint(
+					"%field% = _%field%;\n",
+					["field", arg.id]
+				)
+			)),
+			"recTypes", concatStrings(map(recArgs, \arg -> 
+				blueprint(
+					"%field% = std::make_unique<%ptype%>(_%field%);\n",
+					[
+						"field", arg.id,
+						"ptype", dtype2cpp(backend, arg.type)
+					]
+				)
+			))
+		]
+	);
+
+	"\n" + initConstructor + "\n" + copyConstructor + "\n";
 }
