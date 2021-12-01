@@ -562,9 +562,9 @@ class TextClip extends NativeWidgetClip {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				makeBaselineWidgetAmiriItalicBugWorkaround();
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
@@ -577,8 +577,10 @@ class TextClip extends NativeWidgetClip {
 		// Looks like a browser bug, so we need this workaround
 		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic') {
 			baselineWidget.style.display = "none";
+			nativeWidget.style.marginTop = '0px';
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
+				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			});
 		}
 	}
