@@ -461,15 +461,19 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 }
 
 addTemplatesToStruct(types : [DType], body : string) -> string {
-	templates = makeStructTemplates(extractDTypes(types, []));
+	templates = makeStructTemplates(types);
 	if (templates == "") body else templates + "\n" + body;
 }
 
-makeStructTemplates(types : [DType]) -> string {
-	parameters = uniq(filtermap(types, \type -> {
+dtypes2parameters(types : [DType]) -> [string] {
+	uniq(filtermap(extractDTypes(types, []), \type -> {
 		parametr = bTypePar2cpp(dtype2btype(type));
 		if (parametr == "") None() else Some(parametr) 
 	}));
+}
+
+makeStructTemplates(types : [DType]) -> string {
+	parameters = dtypes2parameters(types);
 	if (parameters == []) {
 		""
 	} else {
@@ -872,22 +876,26 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 		recArgs = args.first;
 		initDeclaration = declarations.first;
 		copyDeclaration = declarations.second;
+		argTypes = map(struct.struct.structArgs, \arg -> arg.type);
+		typeParams = strGlue(dtypes2parameters(argTypes), ", ");
+		typars = if (typeParams == "") "" else "<" + typeParams + ">";
 		
 		copyConstructor = blueprint(
-			"%type%::%declaration% {
+			"%type%%typars%::%declaration% {
 	%simpleTypes%
 	%recTypes%
 }",
 			[
 				"type", struct.struct.id,
+				"typars", typars,
 				"declaration", copyDeclaration,
-				"simpleTypes", concatStrings(map(simpleArgs, \arg -> 
+				"simpleTypes", strGlue(map(simpleArgs, \arg -> 
 					blueprint(
 						"%field% = a.%field%;",
 						["field", arg.id]
 					)
-				)),
-				"recTypes", concatStrings(map(recArgs, \arg -> 
+				), "\n"),
+				"recTypes", strGlue(map(recArgs, \arg -> 
 					blueprint(
 						"%field% = std::make_unique<%ptype%>(*a.%field%);",
 						[
@@ -895,24 +903,25 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 							"ptype", dtype2cpp(backend, arg.type)
 						]
 					)
-				))
+				), "\n")
 			]
 		);
 		initConstructor = blueprint(
-			"%type%::%declaration% {
+			"%type%%typars%::%declaration% {
 	%simpleTypes%
 	%recTypes%
 }",
 			[
 				"type", struct.struct.id,
+				"typars", typars,
 				"declaration", initDeclaration,
-				"simpleTypes", concatStrings(map(simpleArgs, \arg -> 
+				"simpleTypes", strGlue(map(simpleArgs, \arg -> 
 					blueprint(
 						"%field% = _%field%;",
 						["field", arg.id]
 					)
-				)),
-				"recTypes", concatStrings(map(recArgs, \arg -> 
+				), "\n"),
+				"recTypes", strGlue(map(recArgs, \arg -> 
 					blueprint(
 						"%field% = std::make_unique<%ptype%>(_%field%);",
 						[
@@ -920,11 +929,11 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 							"ptype", dtype2cpp(backend, arg.type)
 						]
 					)
-				))
+				), "\n")
 			]
 		);
 
-		initConstructor + "\n" + copyConstructor + "\n";
+		addTemplatesToStruct(argTypes, initConstructor) + "\n" + addTemplatesToStruct(argTypes, copyConstructor) + "\n";
 	} else {
 		unpair(declarations, \initConstructor, copyConstructor ->
 			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n"
