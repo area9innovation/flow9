@@ -425,7 +425,18 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 }
 
 dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
-	dstruct2cppEx(backend, s, \__, type -> dtype2cpp(backend, type), "");
+	dstruct2cppEx(
+		backend,
+		s,
+		\__, type -> dtype2cpp(backend, type),
+		blueprint(
+			"\nbool operator==(const %type%& a) const {return %equalFields%;}\n",
+			[
+				"type", s.id,
+				"equalFields", makeEqualStructArgsBody(backend, s.structArgs, []),
+			]
+		)
+	);
 }
 
 dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType) -> string, dstructFns : string) -> string {
@@ -444,7 +455,8 @@ dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType
 recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody : bool) -> string {
 	if (withBody) {
 		overloadedOperators = blueprint(
-			"%type%& operator=(const %type%& a);",
+			"%type%& operator=(const %type%& a);
+	bool operator==(const %type%& a) const;",
 			["type", s.struct.id,]
 		);
 		dstruct2cppEx(
@@ -455,7 +467,7 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 				cppType = dtype2cpp(backend, type);
 				if (isRecursiveField) "std::unique_ptr<" + cppType + ">" else cppType;
 			},
-			makeStructConstructors(backend, s, false) + "\n	" + overloadedOperators + "\n"
+			makeStructConstructors(backend, s, false) + "\n	"+ overloadedOperators + "\n"
 		);
 	} else {
 		addTemplatesToStruct(
@@ -909,6 +921,15 @@ makeStructCopyConstructorBody(backend : Backend<CppInfo>, simpleArgs : [DStructA
 		);
 }
 
+makeEqualStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	recursiveArgs = superglue(recArgs, \arg -> "*" + arg.id + " == *a." + arg.id, " && ");
+	superglue(simpleArgs, \arg -> arg.id + " == a." + arg.id, " && ")
+	+ (if (recursiveArgs == "") "" else " && ")
+	+ recursiveArgs;
+	/* std::equal(flow_right.begin(), flow_right.end(), a.flow_right.begin()) // vector
+  	*/
+}
+
 makeTyparsForConstructorHeader(argTypes : [string]) -> string {
 	typeParams = strGlue(argTypes, ", ");
 	if (typeParams == "") "" else "<" + typeParams + ">";
@@ -973,6 +994,9 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 
 makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string {
 	argTypes = lookupTreeDef(backend.info.usedTypars, s.struct.id, []);
+	splittedArgs = unzipi(s.struct.structArgs, \i, arg -> elementAt(s.recursiveArgs, i, false));
+	typars = makeTyparsForConstructorHeader(argTypes);
+
 	copyOp = blueprint(
 			"%type%%typar%& %type%%typar%::operator=(const %type%& a) {
 	if (this != &a) {
@@ -982,15 +1006,24 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
 }",
 		[
 			"type", s.struct.id,
-			"typar", makeTyparsForConstructorHeader(argTypes),
-			"copyFields", unpair(
-				unzipi(s.struct.structArgs, \i, arg -> elementAt(s.recursiveArgs, i, false)),
-				\recArgs, simpleArgs -> makeStructCopyConstructorBody(backend, simpleArgs, recArgs)
-			)
+			"typar", typars,
+			"copyFields", unpair(splittedArgs, \recArgs, simpleArgs -> makeStructCopyConstructorBody(backend, simpleArgs, recArgs)),
 		]
-    );
+	);
 
-    addTemplatesToStruct(argTypes, copyOp) + "\n";
+    equalOp = blueprint(
+			"bool %type%%typar%::operator==(const %type%& a) const {
+  return %equalFields%;
+}",
+		[
+			"type", s.struct.id,
+			"typar", typars,
+			"equalFields", unpair(splittedArgs, \recArgs, simpleArgs -> makeEqualStructArgsBody(backend, simpleArgs, recArgs)),
+		]
+	);
+
+    addTemplatesToStruct(argTypes, copyOp) + "\n"
+    + addTemplatesToStruct(argTypes, equalOp) + "\n";
 }
 
 // init-con — copy-con
