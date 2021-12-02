@@ -124,7 +124,7 @@ unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason :
 					} else error();
 				}
 				COverload(unique, options, rreason): {
-					unifyCOverloadFunction(tmap.cmap, rclass, right, left, checkOnly);
+					unifyCOverloadFunction(tmap, rclass, right, lclass, left, checkOnly);
 				}
 			}
 		}
@@ -137,7 +137,7 @@ unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason :
 					true;
 				}
 				CName(name, typars, freason): unifyCOverload(tmap.cmap, lclass, left, right, checkOnly);
-				CFunction(args, return, rreason): unifyCOverloadFunction(tmap.cmap, lclass, left, right, checkOnly);
+				CFunction(args, return, rreason): unifyCOverloadFunction(tmap, lclass, left, rclass, right, checkOnly);
 				COverload(runique, roptions, rreason): todo();
 			}
 		}
@@ -167,10 +167,12 @@ resolveCOverload(cmap : CMap, overload : COverload, other : CNode) -> Maybe<CNod
 		matchesCNode(cmap, onode, other);
 	});
 
-	println("TODO: Result of " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other) + " is");
-	iterSet(matches, \match -> {
-		println("  " + prettyCEClass(cmap, match));
-	});
+	if (false) {
+		println("TODO: Result of " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other) + " is");
+		iterSet(matches, \match -> {
+			println("  " + prettyCEClass(cmap, match));
+		});
+	}
 
 	nmatches = sizeSet(matches);
 	if (nmatches == 1) {
@@ -196,7 +198,8 @@ extractCNodes(cmap : CMap, class : int, acc : Set<int>) -> Set<int> {
 	}
 }
 
-unifyCOverloadFunction(cmap : CMap, overloadClass : int, overload : COverload, fn : CFunction, checkOnly : bool) -> bool {
+unifyCOverloadFunction(tmap : TMap, overloadClass : int, overload : COverload, fnClass : int, fn : CFunction, checkOnly : bool) -> bool {
+	cmap = tmap.cmap;
 	options : Set<int> = foldSet(overload.options, makeSet(), \acc, opt -> {
 		extractCNodes(cmap, opt, acc)
 	});
@@ -225,21 +228,22 @@ unifyCOverloadFunction(cmap : CMap, overloadClass : int, overload : COverload, f
 		false;
 	} else {
 		// OK, we have a bunch of functions. Deconstruct the args and returns
-		println("TODO: Verify function overload " + prettyCNode(cmap, overload) + " vs " + prettyCNode(cmap, fn));
+		// println("Verify function overload " + prettyCNode(cmap, overload) + " vs " + prettyCNode(cmap, fn));
 		// Unify the args
 		args : [int] = filtermapi(fn.args, \i, arg : int -> {
-			println(arg);
 			argOptions : [int] = map(fns, \ofn -> ofn.args[i]);
 			aoverload = COverload(overload.unique, buildSet(argOptions), overload.reason);
 			argNode = getUnionMapValue(cmap.cmap, arg);
-			println("Result of " + prettyCNode(cmap, aoverload) + " vs " + prettyCNode(cmap, argNode));
+			// println("Result of " + prettyCNode(cmap, aoverload) + " vs " + prettyCNode(cmap, argNode));
 			moverload = resolveCOverload(cmap, aoverload, argNode);
 			switch (moverload) {
 				None(): None();
 				Some(ov): {
-					// TODO: We should merge this in
-					println("TODO: Unify e" + i2s(arg) + " and " + prettyCNode(cmap, ov));
-					Some(arg);
+					// OK, merge the args
+					nodeClass = findOrMakeCNode(tmap, ov);
+					if (unifyCEClass(tmap, arg, nodeClass, checkOnly, overload.reason)) {
+						Some(arg);
+					} else None();
 				}
 			}
 		});
@@ -248,12 +252,14 @@ unifyCOverloadFunction(cmap : CMap, overloadClass : int, overload : COverload, f
 			retNode = getUnionMapValue(cmap.cmap, fn.return);
 			uret = resolveCOverload(cmap, ret, retNode);
 			uret ?? {
-				// OK, we have the args and ret type
-				rfn = CFunction(args, fn.return, overload.reason);
-
-				println("TODO: We constructed this overload fn to unify " + prettyCNode(cmap, rfn) + " vs " + prettyCNode(cmap, fn) + " from " + prettyCNode(cmap, overload));
-				//unifyCOverload(cmap, overloadClass, rfn, fn, checkOnly);
-				true;
+				// OK, we have the ret type
+				retClass = findOrMakeCNode(tmap, uret);
+				if (unifyCEClass(tmap, fn.return, retClass, checkOnly, overload.reason)) {
+					// and resolve the overload
+					setUnionMapValue(cmap.cmap, overloadClass, CEpsilon());
+					unionUnionMap(cmap.cmap, overloadClass, fnClass, overload.reason);
+					true;
+				} else false;
 			} : {
 				false;
 			}

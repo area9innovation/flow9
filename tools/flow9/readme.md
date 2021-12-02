@@ -80,6 +80,8 @@ TODO CGraph:
 - Make it so that unify can postpone when it does not work.
   - Replace matchesCNode with unify with checkOnly flag
   - Fix it so that mergeCNodes always expects one side to be CEpsilon
+- type12 crashes. Figure out why. It is in prettyEClass, probably because
+  of a recursive type
 
 TODO:
 - Review postpones, and see if we can resolve some of those:
