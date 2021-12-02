@@ -169,8 +169,7 @@ class TextClip extends NativeWidgetClip {
 	public var preventContextMenu : Bool = false;
 
 	private var textBackgroundWidget : Dynamic;
-	private static var useTextBackgroundWidget : Bool = RenderSupport.RendererType == "html"
-		&& Util.getParameter("textBackgroundWidget") != "0";
+	private static var useTextBackgroundWidget : Bool = false;
 
 	private var baselineWidget : Dynamic;
 	private var needBaseline : Bool = true;
@@ -187,6 +186,10 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrapWidth = 2048.0;
 
 		this.keepNativeWidget = KeepTextClips;
+	}
+
+	public static function recalculateUseTextBackgroundWidget() {
+		useTextBackgroundWidget = RenderSupport.RendererType == "html" && Util.getParameter("textBackgroundWidget") != "0";
 	}
 
 	public static function isRtlChar(ch: String) {
