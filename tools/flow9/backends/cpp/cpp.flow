@@ -50,8 +50,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	recursiveStructs = fold(unionedStructs.second, "", \acc, struct -> {
 		acc + recursiveDstruct2cpp(backend, struct, true) + "\n"
 	});
-	constrRecursiveStructs = fold(unionedStructs.second, "", \acc, struct -> {
-		acc + makeStructConstructors(backend, struct, true) + "\n"
+	methodRecursiveStructs = fold(unionedStructs.second, "", \acc, struct -> {
+		acc + makeStructConstructors(backend, struct, true) + "\n" + makeStructOperators(backend, struct)
 	});
 	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
 	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
@@ -74,8 +74,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		+ unions + "\n"
 		+ "// RECURSIVE STRUCTURES\n"
 		+ recursiveStructs + "\n"
-		+ "// CONSTRUCTORS OF RECURSIVE STRUCTURES\n"
-		+ constrRecursiveStructs + "\n"
+		+ "// METHODS OF RECURSIVE STRUCTURES\n"
+		+ methodRecursiveStructs + "\n"
 		+ "// STRUCTS\n"
 		+ structs + "\n"
 		+ "// DECLARATIONS\n"
@@ -443,22 +443,9 @@ dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType
 recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody : bool) -> string {
 	if (withBody) {
 		overloadedOperators = blueprint(
-			"%type%& operator=(const %type%& a)
-    {
-        if (this != &a)
-        {
-           %copyFields%
-        }
-        return *this;
-    }",
-    		[
-    			"type", s.struct.id,
-    			"copyFields", unpair(
-    				unzipi(s.struct.structArgs, \i, arg -> elementAt(s.recursiveArgs, i, false)),
-    				\recArgs, simpleArgs -> makeStructCopyConstructorBody(backend, simpleArgs, recArgs)
-    			)
-    		]
-    	);
+			"%type%& operator=(const %type%& a);",
+			["type", s.struct.id,]
+		);
 		dstruct2cppEx(
 			backend,
 			s.struct,
@@ -909,7 +896,12 @@ makeStructCopyConstructorBody(backend : Backend<CppInfo>, simpleArgs : [DStructA
 		);
 }
 
-makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {	
+makeTyparsForConstructorHeader(argTypes : [DType]) -> string {
+	typeParams = strGlue(dtypes2parameters(argTypes), ", ");
+	if (typeParams == "") "" else "<" + typeParams + ">";
+}
+
+makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
 	declarations = makeStructConstructorDeclarations(backend, struct);
 	if (withBody) {
 		args = unzipi(struct.struct.structArgs, \i, arg -> elementAt(struct.recursiveArgs, i, false));
@@ -918,8 +910,7 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 		initDeclaration = declarations.first;
 		copyDeclaration = declarations.second;
 		argTypes = map(struct.struct.structArgs, \arg -> arg.type);
-		typeParams = strGlue(dtypes2parameters(argTypes), ", ");
-		typars = if (typeParams == "") "" else "<" + typeParams + ">";
+		typars = makeTyparsForConstructorHeader(argTypes);
 		
 		copyConstructor = blueprint(
 			"%type%%typars%::%declaration% {
@@ -965,6 +956,28 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n"
 		);
 	}
+}
+
+makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string {
+	argTypes = map(s.struct.structArgs, \arg -> arg.type);
+	copyOp = blueprint(
+			"%type%%typar%& %type%%typar%::operator=(const %type%& a) {
+	if (this != &a) {
+		%copyFields%
+	}
+	return *this;
+}",
+		[
+			"type", s.struct.id,
+			"typar", makeTyparsForConstructorHeader(argTypes),
+			"copyFields", unpair(
+				unzipi(s.struct.structArgs, \i, arg -> elementAt(s.recursiveArgs, i, false)),
+				\recArgs, simpleArgs -> makeStructCopyConstructorBody(backend, simpleArgs, recArgs)
+			)
+		]
+    );
+
+    addTemplatesToStruct(argTypes, copyOp) + "\n";
 }
 
 // init-con — copy-con
