@@ -9,10 +9,8 @@ export {
 	makeInitOrder(config : CompilerConfig, module : FcModule, initOrder : [string]) -> [[string]];
 }
 
-
 makeInitOrder(config : CompilerConfig, module : FcModule, initOrder : [string]) -> [[string]] {
 	names = buildSet(initOrder);
-
 	track = fold(initOrder, makeDependencyTracker(), \acc, o -> {
 		gvar = lookupTree(module.globalVars, o);
 		mexp : Maybe<FcExp> = switch (gvar) {
@@ -41,11 +39,11 @@ makeInitOrder(config : CompilerConfig, module : FcModule, initOrder : [string]) 
 		addDependencies(acc, o, set2array(norec));
 	});
 
-	order = makeOrder(config, track, []);
+	order = makeOrder(config, module, track, []);
 	order;
 }
 
-makeOrder(config : CompilerConfig, d : DependencyTracker<string>, acc : [[string]]) -> [[string]] {
+makeOrder(config : CompilerConfig, module : FcModule, d : DependencyTracker<string>, acc : [[string]]) -> [[string]] {
 	n = extractNonDependent(d);
 	resolved = set2array(n.second);
 	if (resolved == []) {
@@ -55,13 +53,26 @@ makeOrder(config : CompilerConfig, d : DependencyTracker<string>, acc : [[string
 			// TODO: Check that these have reasonable types declared
 			fcPrintln("There is a loop amongst these names: " + strGlue(unresolved, ", "), config.threadId);
 		}
-		// When there is a loop, we will have to do them one by one to avoid any problems
-		concat(acc, map(unresolved, \u -> [u]));
+		// When there is a loop, we will have to do them one by one to avoid any problems,
+		// but we have to put:
+		//  1) all variables before functions.
+		//  2) in each group (vars and funcs) order names by dependency relation
+		vars_funcs = unzip(unresolved, \nm -> containsKeyTree(module.globalVars, nm));
+		vars = vars_funcs.first;
+		funcs = vars_funcs.second;
+		if (length(vars) == 0) {
+			concat(acc, map(unresolved, \fn -> [fn]));
+		} else {
+			concat3(acc,
+				makeInitOrder(config, module, vars),
+				if (length(funcs) == 0) [] else makeInitOrder(config, module, funcs)
+			);
+		}
 	} else {
 		nacc = arrayPush(acc, resolved);
 		nd = fold(resolved, n.first, \acc2, res -> {
 			resolveDependency(acc2, res);
 		});
-		makeOrder(config, nd, nacc)
+		makeOrder(config, module, nd, nacc)
 	}
 }

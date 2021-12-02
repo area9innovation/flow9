@@ -4,7 +4,7 @@ import tools/flowc/incremental/fiprettyprint;
 export {
     fcOptimizeTailCalls(prog : FiProgram) -> FiProgram;
     fcDetectTailCall(decl : FiFunctionDec) -> bool;
-    fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec;
+    fcOptimizeTailCall(decl : FiFunctionDec, names : FiGlobalNames) -> FiFunctionDec;
 }
 
 fcOptimizeTailCalls(prog : FiProgram) -> FiProgram {
@@ -14,7 +14,7 @@ fcOptimizeTailCalls(prog : FiProgram) -> FiProgram {
 			funcs_map = ref makeTree();
             optimized_funcs = map(module.functions, \func ->
 				if (fcDetectTailCall(func) && func.name != "for") {
-					optimized_func = fcOptimizeTailCall(func);
+					optimized_func = fcOptimizeTailCall(func, prog.names);
 					funcs_map := setTree(^funcs_map, func.name, optimized_func);
 					optimized_func;
 				} else {
@@ -47,7 +47,7 @@ _fc_for_type_() -> FiTypeFunction {
 	);
 }
 
-fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec {
+fcOptimizeTailCall(decl : FiFunctionDec, names : FiGlobalNames) -> FiFunctionDec {
     ret_type = decl.type.returnType;
     new_args = map(decl.lambda.args, \arg -> FiFunArg(arg with name = arg.name + "__"));
     modified_fn = fcConvertReturnExps(decl.lambda.body, decl.lambda.args, ret_type, decl.name);
@@ -80,11 +80,17 @@ fcOptimizeTailCall(decl : FiFunctionDec) -> FiFunctionDec {
 	wrap_return = if (ret_type == FiTypeVoid()) {
 		for_cycle;
 	} else {
-		ret_arg = decl.lambda.args[findiDef(decl.lambda.args, \arg -> arg.type == ret_type, -1)];
+		ret_arg_ind = findiDef(decl.lambda.args, \arg -> arg.type == ret_type, -1);
+		ret_val = if (ret_arg_ind == -1) {
+			fcMakeDefaultValueOfType(ret_type, names);
+		} else {
+			ret_arg = decl.lambda.args[ret_arg_ind];
+			FiVar(ret_arg.name + "__", ret_type, -1);
+		}
 		FiLet(
 			"__ret", 
 			FiTypeRef(ret_type), 
-			FiCallPrim(FcRefPrim(), [FiVar(ret_arg.name + "__", ret_arg.type, -1)], FiTypeRef(ret_arg.type), -1),
+			FiCallPrim(FcRefPrim(), [ret_val], FiTypeRef(ret_type), -1),
 			FiSeq([
 				for_cycle, 
 				FiCallPrim(FcDerefPrim(), [FiVar("__ret", FiTypeRef(ret_type), -1)], ret_type, -1)
@@ -230,4 +236,56 @@ fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func :
 		}
 		default: e;
     }
+}
+
+fcMakeDefaultValueOfType(type : FiType, names : FiGlobalNames) -> FiExp {
+	switch (type) {
+		FiTypeArray(__): {
+			FiCallPrim(FcArrayPrim(), [], type, -1);
+		}
+		FiTypeFunction(args, rt): {
+			FiLambda(args, fcMakeDefaultValueOfType(rt, names), type, -1);
+		}
+		FiTypeRef(tp): {
+			FiCallPrim(FcRefPrim(), [fcMakeDefaultValueOfType(tp, names)], type, -1);
+		}
+		FiTypeParameter(n): {
+			fail("Trying to make value of type: " + prettyFiType(dummyPretty, type, makeSet()));
+			FiVoid(-1);
+		}
+		FiTypeBool():   FiBool(false, -1);
+		FiTypeInt():    FiInt(0, -1);
+		FiTypeDouble(): FiDouble(0.0, -1);
+		FiTypeString(): FiString("", -1);
+		FiTypeFlow():   FiInt(0, -1);
+		FiTypeVoid():   FiVoid(-1);
+		FiTypeNative(): {
+			// TODO: is there a way to make a value of native type?
+			fail("Trying to make value of type: " + prettyFiType(dummyPretty, type, makeSet()) + " - is not supported");
+			FiVoid(-1);
+		}
+		FiTypeName(name, typars): {
+			switch (lookupTree(names.structs, name)) {
+				Some(struct): {
+					FiCallPrim(
+						FcStructPrim(name), 
+						map(struct.args, \arg -> fcMakeDefaultValueOfType(arg.type, names)),
+						type,
+						-1
+					);
+				}
+				None(): {
+					switch (lookupTree(names.unions, name)) {
+						Some(union): {
+							fcMakeDefaultValueOfType(union.typenames[0], names);
+						}
+						None(): {
+							fail("Named type: " + name + " is not found");
+							FiVoid(-1);
+						}
+					}
+				}
+			}
+		}
+	}
 }
