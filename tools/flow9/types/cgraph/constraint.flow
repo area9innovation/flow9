@@ -11,8 +11,8 @@ export {
 	resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass;
 
 	// We know the result is a unification of these types
-	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TTypeEClass;
-	unifyCEClass(tmap : TMap, lclass : int, rclass : int, reason : ErrorReason) -> TTypeEClass;
+	unifyCType(tmap : TMap, left : TType, right : TType, checkOnly : bool, reason : ErrorReason) -> bool;
+	unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool;
 
 	// We know we have to subtype here - TODO: Figure out what the result is?
 	// checkOnly defines whether we should update our types, or just do a check.
@@ -33,15 +33,19 @@ resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
 	TTypeEClass(eclass);
 }
 
-unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> TTypeEClass {
+unifyCType(tmap : TMap, left : TType, right : TType, checkOnly : bool, reason : ErrorReason) -> bool {
 	lclass = findOrMakeCNodeClass(tmap, left, reason);
 	rclass = findOrMakeCNodeClass(tmap, right, reason);
-	unifyCEClass(tmap, lclass, rclass, reason);
+	res = unifyCEClass(tmap, lclass, rclass, checkOnly, reason);
+	if (!res) {
+		debugErrorReason(reason, ^cindent + "  TODO: Postpone " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+	}
+	res;
 }
 
 cindent = ref "";
 
-unifyCEClass(tmap : TMap, lclass : int, rclass : int, reason : ErrorReason) -> TTypeEClass {
+unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool {
 	indent = ^cindent;
 	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
 		debugErrorReason(reason, indent + "  Unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
@@ -53,66 +57,215 @@ unifyCEClass(tmap : TMap, lclass : int, rclass : int, reason : ErrorReason) -> T
 
 	todo =  \ -> {
 		debugErrorReason(reason, "TODO: Figure out how to unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+		false;
 	}
 
 	error = \ -> {
 		debugErrorReason(reason, "ERROR: Could not unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+		false;
 	}
 
-	switch (left) {
-		CEpsilon(): {} // This is fine
+	def = \ -> {
+		if (!checkOnly) {
+			root = unionUnionMap(tmap.cmap.cmap, lclass, rclass, reason);
+			if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
+				println(indent + "   to get root " + prettyCEClass(tmap.cmap, root));
+			}
+		}
+		true;
+	}
+
+	join = \ -> {
+		if (!checkOnly) {
+			setUnionMapValue(tmap.cmap.cmap, lclass, right);
+		}
+		def();
+	}
+
+	res = switch (left) {
+		CEpsilon(): def();
 		CName(name, typars, lreason): {
 			switch (right) {
-				CEpsilon(): {} // This is fine
+				CEpsilon(): def();
 				CName(rname, rtypars, rreason): {
 					// TODO: Check that they are compatible
 					if (name == rname) {
 						if (length(typars) == length(rtypars)) {
-							iteri(typars, \i, typar -> {
-								unifyCEClass(tmap, typar, rtypars[i], elaborateReason(reason, name + " arg#" + i2s(i + 1)));
-								{}
-							});
+							join();
+							forall(
+								mapi(typars, \i, typar -> {
+									unifyCEClass(tmap, typar, rtypars[i], checkOnly, elaborateReason(reason, name + " arg#" + i2s(i + 1)));
+								}),
+								idfn
+							);
 						} else todo();
 					} else error();
 				}
 				CFunction(args, return, rreason): error();
 				COverload(unique, options, rreason): {
-					if (!resolveCOverload(tmap.cmap, rclass, right, left)) {
-						todo();
-					}
+					unifyCOverload(tmap.cmap, rclass, right, left, checkOnly);
 				}
 			}
 		}
 		CFunction(args, return, lreason): {
 			switch (right) {
-				CEpsilon(): {} // This is fine
+				CEpsilon(): def();
 				CName(name, typars, rreason): error();
-				CFunction(rargs, rreturn, rreason): {} // This is fine
+				CFunction(rargs, rreturn, rreason): {
+					if (length(args) == length(rargs)) {
+						join();
+						unifyCEClass(tmap, return, rreturn, checkOnly, elaborateReason(reason, "call ret"))
+						&& forall(
+							mapi(args, \i, typar -> {
+								unifyCEClass(tmap, typar, rargs[i], checkOnly, elaborateReason(reason, "call arg#" + i2s(i + 1)));
+							}),
+							idfn
+						);
+					} else error();
+				}
 				COverload(unique, options, rreason): {
-					if (!resolveCOverload(tmap.cmap, rclass, right, left)) {
-						todo();
-					}
+					unifyCOverloadFunction(tmap.cmap, rclass, right, left, checkOnly);
 				}
 			}
 		}
 		COverload(unique, options, lreason): {
-			if (right != CEpsilon()) {
-				if (!resolveCOverload(tmap.cmap, lclass, left, right)) {
-					todo();
+			switch (right) {
+				CEpsilon(): {
+					if (!checkOnly) {
+						setUnionMapValue(tmap.cmap.cmap, rclass, left);
+					}
+					true;
 				}
+				CName(name, typars, freason): unifyCOverload(tmap.cmap, lclass, left, right, checkOnly);
+				CFunction(args, return, rreason): unifyCOverloadFunction(tmap.cmap, lclass, left, right, checkOnly);
+				COverload(runique, roptions, rreason): todo();
 			}
 		}
-	}
-
-	root = unionUnionMap(tmap.cmap.cmap, lclass, rclass, reason);
-
-	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
-		println(indent + "   to get root " + prettyCEClass(tmap.cmap, root));
-	}
+	};
 	cindent := indent;
-
-	TTypeEClass(root);
+	res;
 }
+
+
+unifyCOverload(cmap : CMap, overloadClass : int, overload : COverload, other : CNode, checkOnly : bool) -> bool {
+	moverload = resolveCOverload(cmap, overload, other);
+	moverload ?? {
+		if (!checkOnly) {
+			// println("  Reducing overload " + prettyCEClass(cmap, overloadClass) + " to " + prettyCNode(cmap, nover));
+			setUnionMapValue(cmap.cmap, overloadClass, moverload);
+		}
+		true;
+	} : false;
+}
+
+resolveCOverload(cmap : CMap, overload : COverload, other : CNode) -> Maybe<CNode> {
+	options = foldSet(overload.options, makeSet(), \acc, opt -> {
+		extractCNodes(cmap, opt, acc)
+	});
+	matches = filterSet(options, \opt -> {
+		onode = getUnionMapValue(cmap.cmap, opt);
+		matchesCNode(cmap, onode, other);
+	});
+
+	println("TODO: Result of " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other) + " is");
+	iterSet(matches, \match -> {
+		println("  " + prettyCEClass(cmap, match));
+	});
+
+	nmatches = sizeSet(matches);
+	if (nmatches == 1) {
+		class = set2array(matches)[0];
+		winner = getUnionMapValue(cmap.cmap, class);
+		Some(winner);
+	} else {
+		if (nmatches != 0) {
+			Some(COverload(overload with options = matches));
+		} else {
+			None();
+		}
+	}
+}
+
+extractCNodes(cmap : CMap, class : int, acc : Set<int>) -> Set<int> {
+	onode = getUnionMapValue(cmap.cmap, class);
+	switch (onode) {
+		CEpsilon(): insertSet(acc, class);
+		CName(__, __, __): insertSet(acc, class);
+		CFunction(__, __, __): insertSet(acc, class);
+		COverload(uniques, options, reason): foldSet(options, acc, \acc2, ee -> extractCNodes(cmap, ee, acc2));
+	}
+}
+
+unifyCOverloadFunction(cmap : CMap, overloadClass : int, overload : COverload, fn : CFunction, checkOnly : bool) -> bool {
+	options : Set<int> = foldSet(overload.options, makeSet(), \acc, opt -> {
+		extractCNodes(cmap, opt, acc)
+	});
+	nodes : Set<CNode> = mapSet(options, \opt -> {
+		getUnionMapValue(cmap.cmap, opt);
+	});
+	errors = ref false;
+	fns : [CFunction] = filtermap(set2array(nodes), \node -> {
+		error = \ -> {
+			errors := true;
+			None();
+		}
+		switch (node) {
+			CEpsilon(): error();
+			CName(name, typars, reason): error();
+			CFunction(args, return, reason): {
+				if (length(args) == length(fn.args)) {
+					Some(node);
+				} else None();
+			}
+			COverload(unique, __, reason): error();
+		}
+	});
+	if (^errors) {
+		println("ERROR: Could not resolve function overload " + prettyCNode(cmap, overload) + " vs " + prettyCNode(cmap, fn));
+		false;
+	} else {
+		// OK, we have a bunch of functions. Deconstruct the args and returns
+		println("TODO: Verify function overload " + prettyCNode(cmap, overload) + " vs " + prettyCNode(cmap, fn));
+		// Unify the args
+		args : [int] = filtermapi(fn.args, \i, arg : int -> {
+			println(arg);
+			argOptions : [int] = map(fns, \ofn -> ofn.args[i]);
+			aoverload = COverload(overload.unique, buildSet(argOptions), overload.reason);
+			argNode = getUnionMapValue(cmap.cmap, arg);
+			println("Result of " + prettyCNode(cmap, aoverload) + " vs " + prettyCNode(cmap, argNode));
+			moverload = resolveCOverload(cmap, aoverload, argNode);
+			switch (moverload) {
+				None(): None();
+				Some(ov): {
+					// TODO: We should merge this in
+					println("TODO: Unify e" + i2s(arg) + " and " + prettyCNode(cmap, ov));
+					Some(arg);
+				}
+			}
+		});
+		if (length(args) == length(fn.args)) {
+			ret : COverload = COverload(overload.unique, buildSet(map(fns, \ofn -> ofn.return)), overload.reason);
+			retNode = getUnionMapValue(cmap.cmap, fn.return);
+			uret = resolveCOverload(cmap, ret, retNode);
+			uret ?? {
+				// OK, we have the args and ret type
+				rfn = CFunction(args, fn.return, overload.reason);
+
+				println("TODO: We constructed this overload fn to unify " + prettyCNode(cmap, rfn) + " vs " + prettyCNode(cmap, fn) + " from " + prettyCNode(cmap, overload));
+				//unifyCOverload(cmap, overloadClass, rfn, fn, checkOnly);
+				true;
+			} : {
+				false;
+			}
+		} else {
+			false;
+		}
+	}
+}
+ 
+
+
+
 
 subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> bool {
 	subClass = findOrMakeCNodeClass(tmap, subtype, reason);
