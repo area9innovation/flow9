@@ -36,7 +36,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		makeStructIds(b.structs, b.unions),
 		unionTypes,
 		getStatFunctionTypes(b.declarations),
-		values2treeEx(unionedStructs.second, \struct -> struct.struct.id, recursiveDStruct2recursiveStruct)
+		values2treeEx(unionedStructs.second, \struct -> struct.struct.id, recursiveDStruct2recursiveStruct),
+		makeUsedStructTypars(b.structs)
 	);
 
 	backend = cppBackend(info);
@@ -411,7 +412,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 
 dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BType]>,) -> string {
 	addTemplatesToStruct(
-		mapConcat(u.types, \t -> t.typars),
+		dtypes2parameters(mapConcat(u.types, \t -> t.typars)),
 		blueprint("
 			using %name% = std::variant<%members%>;", [
 				"name", u.id,
@@ -429,7 +430,7 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 
 dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType) -> string, dstructFns : string) -> string {
 	addTemplatesToStruct(
-		map(s.structArgs, \arg -> arg.type),
+		lookupTreeDef(backend.info.usedTypars, s.id, []),
 		"struct " + s.id + "{"
 		+ supergluei(s.structArgs, \i, sa -> {
 			argType2cpp(i, sa.type) + " " + sa.id + ";"
@@ -458,13 +459,13 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 		);
 	} else {
 		addTemplatesToStruct(
-			map(s.struct.structArgs, \arg -> arg.type),
+			lookupTreeDef(backend.info.usedTypars, s.struct.id, []),
 			"struct " + s.struct.id + ";"
 		);
 	}
 }
 
-addTemplatesToStruct(types : [DType], body : string) -> string {
+addTemplatesToStruct(types : [string], body : string) -> string {
 	templates = makeStructTemplates(types);
 	if (templates == "") body else templates + "\n" + body;
 }
@@ -476,8 +477,7 @@ dtypes2parameters(types : [DType]) -> [string] {
 	}));
 }
 
-makeStructTemplates(types : [DType]) -> string {
-	parameters = dtypes2parameters(types);
+makeStructTemplates(parameters : [string]) -> string {
 	if (parameters == []) {
 		""
 	} else {
@@ -527,6 +527,18 @@ dtype2cpp(backend : Backend<CppInfo>, type : DType) -> string {
 }
 
 btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
+	btype2cppEx(backend, btype, \type -> typars2cpp(backend, type.typars));
+}
+
+typars2cpp(backend : Backend<CppInfo>, typars : [BType]) -> string {
+	if (typars != []) {
+		"<" + superglue(typars, \tp -> btype2cpp(backend, tp), ", ") + ">"
+	} else {
+		""
+	}
+}
+
+btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BTypeName) -> string) -> string {
 	switch (btype) {
 		BTypePar(id): bTypeParId2cpp(id);
 		BTypeName(id, typars): {
@@ -545,10 +557,7 @@ btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
 			} else if (trim2(id, "?") == "") {
 				btype2cpp(backend, BTypePar(id));
 			} else {
-				id
-				+ (if (typars != []) {
-					"<" + superglue(typars, \tp -> btype2cpp(backend, tp), ", ") + ">"
-				} else "")
+				id + structTypars2cpp(btype)
 			}
 		}
 		BTypeFunction(args, returnType): {
@@ -673,10 +682,14 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 	}
 
 	downType = \value -> {
+		type = btype2cppEx(backend, bcast.to, \sType -> {
+			usedTypars = lookupTreeDef(backend.info.usedTypars, sType.id, []);
+			if (usedTypars == []) "" else typars2cpp(backend, sType.typars);
+		});
 		blueprint(
 			"std::get<%type%>(%id%)",
 			[
-				"type", btype2cpp(backend, bcast.to),
+				"type", type,
 				"id", value,
 			]
 		);
@@ -896,8 +909,8 @@ makeStructCopyConstructorBody(backend : Backend<CppInfo>, simpleArgs : [DStructA
 		);
 }
 
-makeTyparsForConstructorHeader(argTypes : [DType]) -> string {
-	typeParams = strGlue(dtypes2parameters(argTypes), ", ");
+makeTyparsForConstructorHeader(argTypes : [string]) -> string {
+	typeParams = strGlue(argTypes, ", ");
 	if (typeParams == "") "" else "<" + typeParams + ">";
 }
 
@@ -909,7 +922,7 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 		recArgs = args.first;
 		initDeclaration = declarations.first;
 		copyDeclaration = declarations.second;
-		argTypes = map(struct.struct.structArgs, \arg -> arg.type);
+		argTypes = lookupTreeDef(backend.info.usedTypars, struct.struct.id, []);
 		typars = makeTyparsForConstructorHeader(argTypes);
 		
 		copyConstructor = blueprint(
@@ -959,7 +972,7 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 }
 
 makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string {
-	argTypes = map(s.struct.structArgs, \arg -> arg.type);
+	argTypes = lookupTreeDef(backend.info.usedTypars, s.struct.id, []);
 	copyOp = blueprint(
 			"%type%%typar%& %type%%typar%::operator=(const %type%& a) {
 	if (this != &a) {
@@ -1007,4 +1020,11 @@ makeStructConstructorDeclarations(backend : Backend<CppInfo>, struct : Recursive
 	);
 
 	Pair(initConstructor, copyConstructor);
+}
+
+// supertype (union) can have templates, but struct can't
+// TreeEmpty has no types in the following example:
+//     Tree<?, ??> ::= TreeNode<?, ??>, TreeEmpty;
+makeUsedStructTypars(structs : Tree<string, DStruct>) -> Tree<string, [string]> {
+	mapTree(structs, \struct -> dtypes2parameters(map(struct.structArgs, \arg -> arg.type)))
 }
