@@ -77,11 +77,10 @@ dot on structs, which can be considered as an overloaded function.
 TODO CGraph:
 - We need a subtype with multiple types when the max is closed
 
-- Make it so that unify can postpone when it does not work.
-  - Replace matchesCNode with unify with checkOnly flag
-  - Fix it so that mergeCNodes always expects one side to be CEpsilon
-- type12 crashes. Figure out why. It is in prettyEClass, probably because
-  of a recursive type
+- Fix it so that mergeCNodes always expects one side to be CEpsilon
+
+- In addition to makeSupertype, also have a makeSubtype to restrict the
+  overloads more
 
 TODO:
 - Review postpones, and see if we can resolve some of those:
