@@ -81,8 +81,6 @@ TODO CGraph:
 
 - types.flow: implicit None type-parameter
 
-- string
-
 TODO:
 - Review postpones, and see if we can resolve some of those:
   - Implement unification of super against overload:
