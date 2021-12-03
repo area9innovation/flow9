@@ -118,6 +118,8 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 		"flow_bitUshr",
 		"flow_length",
 		"flow_replace",
+		"flow_iter",
+		"flow_iteri",
 	]);
 	makeTailCallBody = \body : BStatement, type -> {
 		defaultReturn = if (type == bvoidType.id) {
@@ -430,10 +432,21 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 		s,
 		\__, type -> dtype2cpp(backend, type),
 		blueprint(
-			"\nbool operator==(const %type%& a) const {return %equalFields%;}\n",
+			"\nbool operator==(const %type%& a) const {return %equalFields%;}
+			bool operator!=(const %type%& a) const {return %nequalFields%;}
+			bool operator>(const %type%& a) const {return %gFields%;}
+			bool operator<(const %type%& a) const {return %lFields%;}
+			bool operator>=(const %type%& a) const {return %geFields%;}
+			bool operator<=(const %type%& a) const {return %leFields%;}
+			\n",
 			[
 				"type", s.id,
 				"equalFields", makeEqualStructArgsBody(backend, s.structArgs, []),
+				"nequalFields", makeNotEqualStructArgsBody(backend, s.structArgs, []),
+				"gFields", makeGreaterStructArgsBody(backend, s.structArgs, []),
+				"lFields", makeLessStructArgsBody(backend, s.structArgs, []),
+				"leFields", makeLessEqStructArgsBody(backend, s.structArgs, []),
+				"geFields", makeGreaterEqStructArgsBody(backend, s.structArgs, []),
 			]
 		)
 	);
@@ -456,7 +469,13 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 	if (withBody) {
 		overloadedOperators = blueprint(
 			"%type%& operator=(const %type%& a);
-	bool operator==(const %type%& a) const;",
+	bool operator==(const %type%& a) const;
+	bool operator!=(const %type%& a) const;
+	bool operator>(const %type%& a) const;
+	bool operator<(const %type%& a) const;
+	bool operator>=(const %type%& a) const;
+	bool operator<=(const %type%& a) const;
+	",
 			["type", s.struct.id,]
 		);
 		dstruct2cppEx(
@@ -781,6 +800,8 @@ getStatFunctionTypes(declarations : [BDeclaration]) -> Tree<string, BType> {
 		//"flow_isSameStructType",
 		"flow_extractStruct",
 		"flow_replace",
+		"flow_iter",
+		"flow_iteri",
 	]);
 	fold(declarations, makeTree(), \acc, decl -> {
 		switch (decl) {
@@ -921,13 +942,42 @@ makeStructCopyConstructorBody(backend : Backend<CppInfo>, simpleArgs : [DStructA
 		);
 }
 
-makeEqualStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
-	recursiveArgs = superglue(recArgs, \arg -> "*" + arg.id + " == *a." + arg.id, " && ");
-	superglue(simpleArgs, \arg -> arg.id + " == a." + arg.id, " && ")
-	+ (if (recursiveArgs == "") "" else " && ")
+makeOperatorStructArgsBody(
+	backend : Backend<CppInfo>,
+	simpleArgs : [DStructArg],
+	recArgs : [DStructArg],
+	operator : string,
+	anyField : bool, // true = OR, false = AND
+) -> string {
+	join = if (anyField) " || " else " && ";
+	recursiveArgs = superglue(recArgs, \arg -> "*" + arg.id + " " + operator + " *a." + arg.id, join);
+	superglue(simpleArgs, \arg -> arg.id + " " + operator + " a." + arg.id, join)
+	+ (if (recursiveArgs == "") "" else join)
 	+ recursiveArgs;
-	/* std::equal(flow_right.begin(), flow_right.end(), a.flow_right.begin()) // vector
-  	*/
+	/* std::equal(flow_right.begin(), flow_right.end(), a.flow_right.begin()) // vector*/
+}
+
+makeEqualStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "==", false);
+}
+
+makeNotEqualStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "!=", true);
+}
+
+makeGreaterStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, ">", true);
+}
+makeLessStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "<", true);
+}
+makeLessEqStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	"(" + makeEqualStructArgsBody(backend, simpleArgs, recArgs)
+	+ ") || (" + makeLessStructArgsBody(backend, simpleArgs, recArgs) + ")"
+}
+makeGreaterEqStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
+	"(" + makeEqualStructArgsBody(backend, simpleArgs, recArgs)
+	+ ") || (" + makeGreaterStructArgsBody(backend, simpleArgs, recArgs) + ")"
 }
 
 makeTyparsForConstructorHeader(argTypes : [string]) -> string {
@@ -1011,19 +1061,25 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
 		]
 	);
 
-    equalOp = blueprint(
-			"bool %type%%typar%::operator==(const %type%& a) const {
-  return %equalFields%;
+	makeOperator = \op : string, fn -> blueprint(
+			"bool %type%%typar%::operator%op%(const %type%& a) const {
+  return %cmpFields%;
 }",
 		[
+			"op", op,
 			"type", s.struct.id,
 			"typar", typars,
-			"equalFields", unpair(splittedArgs, \recArgs, simpleArgs -> makeEqualStructArgsBody(backend, simpleArgs, recArgs)),
+			"cmpFields", unpair(splittedArgs, \recArgs, simpleArgs -> fn(backend, simpleArgs, recArgs)),
 		]
 	);
 
     addTemplatesToStruct(argTypes, copyOp) + "\n"
-    + addTemplatesToStruct(argTypes, equalOp) + "\n";
+    + addTemplatesToStruct(argTypes, makeOperator("==", makeEqualStructArgsBody)) + "\n"
+    + addTemplatesToStruct(argTypes, makeOperator("!=", makeNotEqualStructArgsBody)) + "\n"
+    + addTemplatesToStruct(argTypes, makeOperator(">", makeGreaterStructArgsBody)) + "\n"
+    + addTemplatesToStruct(argTypes, makeOperator("<", makeLessStructArgsBody)) + "\n"
+    + addTemplatesToStruct(argTypes, makeOperator("<=", makeLessEqStructArgsBody)) + "\n"
+    + addTemplatesToStruct(argTypes, makeOperator(">=", makeGreaterEqStructArgsBody)) + "\n";
 }
 
 // init-con — copy-con

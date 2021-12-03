@@ -167,6 +167,18 @@ std::vector<A> flow_replace(const std::vector<A>& flow_a, int32_t i, A value) {
   }
 }
 
+template <typename A>
+void flow_iter(const std::vector<A>& flow_a, const std::function<void(A)> & flow_fn) {
+  std::for_each(flow_a.begin(), flow_a.end(), flow_fn);
+}
+
+template <typename A>
+void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, A)> & flow_fn) {
+	for (std::size_t i = 0; i != flow_a.size(); ++i) {
+		flow_fn(i, flow_a[i]);
+	}
+}
+
 // flowstruct
 template <typename A, typename B>
 bool flow_isSameStructType(A struct1, B struct2) {
