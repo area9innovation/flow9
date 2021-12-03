@@ -1,4 +1,4 @@
-
+import * as typenames from "./test";
   export interface User {
 	name: string;
 	id: number;
@@ -37,6 +37,10 @@
 
   export function makeUser(name: string, id : number): User {
 	return new UserAccount(name, id);
+  }
+
+  export function makeUser1(pair: typenames.Pair<string, number>): User {
+	return new UserAccount(pair.first, pair.second);
   }
 
   export function userName(user: User): string {
