@@ -76,16 +76,12 @@ dot on structs, which can be considered as an overloaded function.
 
 TODO CGraph:
 - We need a subtype with multiple types when the max is closed
-
-- types.flow
-- 
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more
 
-- sys/concurrent
-- Fix error reporting to work correctly
+- types.flow: implicit None type-parameter
 
-- type10
+- string
 
 TODO:
 - Review postpones, and see if we can resolve some of those:
