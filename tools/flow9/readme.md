@@ -82,6 +82,8 @@ TODO CGraph:
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more
 
+- type10
+
 TODO:
 - Review postpones, and see if we can resolve some of those:
   - Implement unification of super against overload:
