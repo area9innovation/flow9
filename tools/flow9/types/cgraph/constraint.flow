@@ -70,7 +70,7 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 
 	error = \ -> {
 		if (!checkOnly) {
-			debugErrorReason(reason, "ERROR: Could not unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+			tmap.onError(elaborateReason(reason, "Could not unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + "."));
 		}
 		false;
 	}
@@ -437,8 +437,30 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 							})), idfn)
 						});
 						if (isEmptySet(supPotentials)) {
-							println("Postposning because super works for all subs, but probably something works for " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super));
-							postpone();
+							// OK, look for subs that at least have something that works
+							subPotentials = filterSet(options, \opt -> {
+								exists(set2array(mapSet(soptions, \sopt : int -> {
+									subtypeCEClass(tmap, opt, sopt, true, reason);
+								})), idfn);
+							});
+							if (isEmptySet(subPotentials)) {
+								println("Postponing: Could not find something that works for " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super));
+								postpone();
+							} else {
+								// OK, we have the list of subs that work.
+								resSub = if (sizeSet(subPotentials) == 1) {
+									cand = set2array(subPotentials)[0];
+									getUnionMapValue(tmap.cmap.cmap, cand);
+								} else {
+									COverload(unique, subPotentials, subreason);
+								};
+								// println("Result of " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super) + " is " + prettyCNode(tmap.cmap, resSuper));
+								if (!checkOnly) {
+									setUnionMapValue(tmap.cmap.cmap, subClass, resSub);
+									subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
+								} else true;
+
+							}
 						} else {
 							// OK, we have the list of supers that work.
 							resSuper = if (sizeSet(supPotentials) == 1) {

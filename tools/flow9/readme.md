@@ -77,8 +77,8 @@ dot on structs, which can be considered as an overloaded function.
 TODO CGraph:
 - We need a subtype with multiple types when the max is closed
 
-- Fix it so that mergeCNodes always expects one side to be CEpsilon
-
+- types.flow
+- 
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more
 
