@@ -43,6 +43,10 @@ export {
 		"RenderSupport","HaxeRuntime.compareByValue","HaxeRuntime.mul_32",
 		"HaxeRuntime.initStruct","HaxeRuntime._structnames_","FlowJsProgram.globals__"
 	];
+
+	// Convert flow types to TypeScipt
+	fiType2TsType(cfg : FiJsConfig, program : FiProgram, type : FiType) -> string;
+	fiProgramTypes2Ts(cfg : FiJsConfig, program : FiProgram) -> string;
 }
 
 fiJsPrefixedName(cfg, ctx, name) {
@@ -395,7 +399,7 @@ fiJsRename(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string) -> string
 	}
 }
 
-fiType2JsType(cfg : FiJsConfig, program : FiProgram, type : FiType) {
+fiType2JsType(cfg : FiJsConfig, program : FiProgram, type : FiType) -> string {
 	if (cfg.haxeRuntime) {
 		switch (type) {
 			FiTypeArray(t) :           "RuntimeType.RTArray(" + fiType2JsType(cfg, program, t) + ")";
@@ -426,4 +430,65 @@ fcJsStrict(cfg : FiJsConfig) {
 	if ((cfg.jsmode == STANDARD_ES6) || (cfg.jsmode == NODEJS_MODE) || (cfg.jsmode == NWJS_MODE)) 
 	"'use strict';\n" 
 	else "";
+}
+
+fiType2TsType(cfg : FiJsConfig, program : FiProgram, type : FiType) -> string {
+	switch (type) {
+		FiTypeArray(t): {
+			fiType2TsType(cfg, program, t) + "[]";
+		}
+		FiTypeFunction(args, rt): {
+			"(" + superglue(args, \arg -> fiType2TsType(cfg, program, arg.type), ", ") + ") => " + fiType2TsType(cfg, program, rt);
+		}
+		FiTypeRef(t): {
+			"Ref<" + fiType2TsType(cfg, program, t) + ">";
+		}
+		FiTypeParameter(n): "P_" + i2s(strlen(n));
+		FiTypeBool():    "boolean";
+		FiTypeInt():     "number";
+		FiTypeDouble():  "number";
+		FiTypeString():  "string";
+		FiTypeFlow():    "any";
+		FiTypeVoid():    "void";
+		FiTypeNative():  "any";
+		FiTypeName(n, typars): {
+			n + fiTypars2Ts(cfg, program, typars);
+		}
+	}
+}
+
+fiTypars2Ts(cfg : FiJsConfig, program : FiProgram, typars : [FiType]) -> string {
+	if (length(typars) == 0) "" else 
+		"<" + superglue(typars, \t -> fiType2TsType(cfg, program, t), ", ") + ">";
+}
+
+fiTypeStruct2Ts(cfg : FiJsConfig, program : FiProgram, type : FiTypeStruct) -> string {
+	"type " + type.name + fiTypars2Ts(cfg, program, type.typars) + " = {\n" +
+	"\tname: string;\n" + 
+	"\t_id: number;\n" + 
+	concatStrings(map(type.args, \arg -> "\t" + arg.name + ": " + fiType2TsType(cfg, program, arg.type) + ";\n")) +
+	"}\n";
+}
+
+fiTypeUnion2Ts(cfg : FiJsConfig, program : FiProgram, type : FiTypeUnion) -> string {
+	"type " + type.name + fiTypars2Ts(cfg, program, type.typeparameters) + " = " +
+	superglue(type.typenames, \tn -> fiType2TsType(cfg, program, tn), " | ") +
+	";";
+}
+
+fiProgramTypes2Ts(cfg : FiJsConfig, program : FiProgram) -> string {
+	structs = superglue(
+		getTreeValues(program.names.structs), 
+		\struct -> "export " + fiTypeStruct2Ts(cfg, program, struct), 
+		"\n"
+	);
+	unions = superglue(
+		getTreeValues(program.names.unions), 
+		\union -> "export " + fiTypeUnion2Ts(cfg, program, union), 
+		"\n"
+	);
+	"export type Ref<T> = {\n" +
+	"\t __v: T;\n" +
+	"}\n" +
+	structs + "\n\n" + unions;
 }
