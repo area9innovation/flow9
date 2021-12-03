@@ -98,7 +98,7 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 			switch (right) {
 				CEpsilon(): def();
 				CName(rname, rtypars, rreason): {
-					// TODO: Check that they are compatible
+					// Check that they are compatible
 					if (name == rname) {
 						if (length(typars) == length(rtypars)) {
 							join();
@@ -108,10 +108,19 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 								}),
 								idfn
 							);
-						} else todo();
+						} else error();
+					} else if (isCFlow(left) || isCFlow(right)) {
+						// TODO: Should we just merge these groups?
+						true;
 					} else error();
 				}
-				CFunction(args, return, rreason): error();
+				CFunction(args, return, rreason): {
+					if (isCFlow(left)) {
+						true;
+					} else {
+						error();
+					}
+				}
 				COverload(unique, options, rreason): {
 					unifyCOverload(tmap, rclass, right, lclass, left, checkOnly);
 				}
@@ -120,7 +129,11 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 		CFunction(args, return, lreason): {
 			switch (right) {
 				CEpsilon(): def();
-				CName(name, typars, rreason): error();
+				CName(name, typars, rreason): {
+					if (isCFlow(right)) {
+						true;
+					} else error();
+				}
 				CFunction(rargs, rreturn, rreason): {
 					if (length(args) == length(rargs)) {
 						join();
@@ -148,7 +161,9 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 				}
 				CName(name, typars, freason): unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
 				CFunction(args, return, rreason): unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
-				COverload(runique, roptions, rreason): todo();
+				COverload(runique, roptions, rreason): {
+					unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
+				}
 			}
 		}
 	};
@@ -339,8 +354,6 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	end = if (sub == CEpsilon() && super == CEpsilon()) {
 		// OK, postpone
 		postpone();
-	} else if (isCFlow(sub) || isCFlow(super)) {
-		true;
 	} else {
 		switch (sub) {
 			CEpsilon(): {
@@ -367,6 +380,8 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 							} else {
 								error();
 							}
+						} else if (isCFlow(sub) || isCFlow(super)) {
+							true;
 						} else {
 							supers = ^(tmap.resolveSupertypes)(name);
 							if (contains(supers, sname)) {
@@ -378,14 +393,22 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 							}
 						}
 					}
-					CFunction(sargs, return, supreason): error();
+					CFunction(sargs, return, supreason): {
+						if (isCFlow(sub)) {
+							true;
+						} else error();
+					}
 					COverload(sunique, options, supreason): subVsOverload(super);
 				}
 			}
 			CFunction(args, return, subreason): {
 				switch (super) {
 					CEpsilon(): anyVsEpsilon();
-					CName(sname, stypars, supreason): error();
+					CName(sname, stypars, supreason): {
+						if (isCFlow(super)) {
+							true;
+						} else error();
+					}
 					CFunction(sargs, sreturn, supreason): {
 						if (length(args) == length(sargs)) {
 							foldi(args, true, \i, ok : bool, arg -> {
@@ -414,7 +437,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 							})), idfn)
 						});
 						if (isEmptySet(supPotentials)) {
-							println("TODO: No super works for all subs, but probably something works for " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super));
+							println("Postposning because super works for all subs, but probably something works for " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super));
 							postpone();
 						} else {
 							// OK, we have the list of supers that work.

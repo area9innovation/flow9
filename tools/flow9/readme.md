@@ -82,6 +82,9 @@ TODO CGraph:
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more
 
+- sys/concurrent
+- Fix error reporting to work correctly
+
 - type10
 
 TODO:
