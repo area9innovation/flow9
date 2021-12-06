@@ -88,15 +88,11 @@ Need decision:
   and them make implicit type-pars flow?
 - ds/array_diff.flow:119:25: Add type annotation. Unresolved type (equivalence class e369)
 		ArrayNop(i-1, j-1)
-
-- type38:
-  e12=overload_0{e1=TreeEmpty<e9, e10>,e13=Tree<e9, e10>} sub e15=overload_1{e19=Tree<e5=?, e6=??>,e22=TreeEmpty<e17=?, e18=??>}
-	is postponed.
-	In principle I guess we could extract the type parameters and match those up
-  Alternatively, we should have a phase where we pick the smallest overloads for each eclass
-  and run the subtypes after that.
-  Arguably, we should scan the pending subtypes where we have the small ones, and then
-  resolve the small ones for those first?  
+- tests/type26.flow
+	C:/flow9/tools/flow9/tests/type26.flow:40:37: ERROR: construct FMaxConst, Not enough typars from FMaxConst<e199> to FFn expecting 2 type parameters
+							fselect(b2, FMaxConst(v1));
+									^
+	ERROR: Could not make supertype FFn from FMaxConst<e199>
 
 - Do prolog-style search when all possible unifications and subtypes
   have completed
