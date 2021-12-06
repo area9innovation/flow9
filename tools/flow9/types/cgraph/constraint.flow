@@ -442,50 +442,30 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 					CName(__, __, __): overloadVsSuper(sub);
 					CFunction(__, __, __): overloadVsSuper(sub);
 					COverload(sunique, soptions, supreason): {
-						// Find the supers that work for all subsets:
+						// OK, look for subs that at least have something that works
+						subPotentials = filterSet(options, \opt -> {
+							exists(set2array(mapSet(soptions, \sopt : int -> {
+								UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
+							})), idfn);
+						});
+
+						// Find the supers that at least have something that works
 						supPotentials = filterSet(soptions, \sopt -> {
-							forall(set2array(mapSet(options, \opt : int -> {
+							exists(set2array(mapSet(options, \opt : int -> {
 								UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
 							})), idfn)
 						});
-						if (isEmptySet(supPotentials)) {
-							// OK, look for subs that at least have something that works
-							subPotentials = filterSet(options, \opt -> {
-								exists(set2array(mapSet(soptions, \sopt : int -> {
-									UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
-								})), idfn);
-							});
-							if (isEmptySet(subPotentials)) {
-								println("Postponing: Could not find something that works for " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super));
-								postpone();
-							} else {
-								// OK, we have the list of subs that work.
-								resSub = if (sizeSet(subPotentials) == 1) {
-									cand = set2array(subPotentials)[0];
-									getUnionMapValue(tmap.cmap.cmap, cand);
-								} else {
-									COverload(unique, subPotentials, subreason);
-								};
-								// println("Result of " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super) + " is " + prettyCNode(tmap.cmap, resSuper));
-								if (!checkOnly) {
-									setUnionMapValue(tmap.cmap.cmap, subClass, resSub);
-									subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
-								} else UnifyOK();
 
+						subUpdate = updateCOverload(tmap, subClass, sub, subPotentials, "" /*" subtype to " + prettyCEClass(tmap.cmap, superClass)*/, checkOnly);
+						supUpdate = updateCOverload(tmap, superClass, super, supPotentials, "" /*" super type to " + prettyCEClass(tmap.cmap, subClass)*/, checkOnly);
+						if (subUpdate || supUpdate) {
+							if (!checkOnly) {
+								subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
+							} else {
+								UnifyOK();
 							}
 						} else {
-							// OK, we have the list of supers that work.
-							resSuper = if (sizeSet(supPotentials) == 1) {
-								cand = set2array(supPotentials)[0];
-								getUnionMapValue(tmap.cmap.cmap, cand);
-							} else {
-								COverload(sunique, supPotentials, supreason);
-							};
-							// println("Result of " + prettyCNode(tmap.cmap, sub) + " sub " + prettyCNode(tmap.cmap, super) + " is " + prettyCNode(tmap.cmap, resSuper));
-							if (!checkOnly) {
-								setUnionMapValue(tmap.cmap.cmap, superClass, resSuper);
-								subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
-							} else UnifyOK();
+							postpone();
 						}
 					}
 				}
@@ -496,6 +476,27 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	cindent := indent;
 	end;
 }
+
+// Returns true if we have some update.
+updateCOverload(tmap : TMap, eclass : int, orig : COverload, newOptions : Set<int>, reason : string, checkOnly : bool) -> bool {
+	if (sizeSet(newOptions) < sizeSet(orig.options) || sizeSet(newOptions) == 1) {
+		// OK, we have some update
+		resSub = if (sizeSet(newOptions) == 1) {
+			cand = set2array(newOptions)[0];
+			getUnionMapValue(tmap.cmap.cmap, cand);
+		} else {
+			COverload(orig with options = newOptions);
+		};
+		if (false) {
+			println("We reduced " + prettyCNode(tmap.cmap, orig) + " to " + prettyCNode(tmap.cmap, resSub) + " " + reason);
+		}
+		if (!checkOnly) {
+			setUnionMapValue(tmap.cmap.cmap, eclass, resSub);
+		}
+		true;
+	} else false;
+}
+
 
 dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass {
 	tt = dtype2CType2(tmap, ref makeTree(), d);

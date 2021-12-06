@@ -89,7 +89,14 @@ Need decision:
 - ds/array_diff.flow:119:25: Add type annotation. Unresolved type (equivalence class e369)
 		ArrayNop(i-1, j-1)
 
-- type37: Based on formats/xml
+- type38:
+  e12=overload_0{e1=TreeEmpty<e9, e10>,e13=Tree<e9, e10>} sub e15=overload_1{e19=Tree<e5=?, e6=??>,e22=TreeEmpty<e17=?, e18=??>}
+	is postponed.
+	In principle I guess we could extract the type parameters and match those up
+  Alternatively, we should have a phase where we pick the smallest overloads for each eclass
+  and run the subtypes after that.
+  Arguably, we should scan the pending subtypes where we have the small ones, and then
+  resolve the small ones for those first?  
 
 - Do prolog-style search when all possible unifications and subtypes
   have completed
