@@ -81,6 +81,9 @@ TODO CGraph:
 
 - types.flow: implicit None type-parameter
 
+- Do prolog-style search when all possible unifications and subtypes
+  have completed
+
 TODO:
 - Review postpones, and see if we can resolve some of those:
   - Implement unification of super against overload:
