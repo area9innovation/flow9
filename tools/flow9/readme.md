@@ -79,12 +79,20 @@ TODO CGraph:
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more
 
+- ds/array_diff.flow
+
+- fusion: FFn and FMaxConst type par mismatch
+
 - types.flow: implicit None type-parameter
+- ds/sparsearray: implicit type parameter in empty array
+
+- ds/vector: flow(ref []). Maybe we should postpone flow vs others
+  and them make implicit type-pars flow?
 
 - Do prolog-style search when all possible unifications and subtypes
   have completed
 
-- subtype and unify should have a way to telling if they were postponed
+- unify should have a way to telling if they were postponed
   so resolution knows how to handle it
 
 TODO:
