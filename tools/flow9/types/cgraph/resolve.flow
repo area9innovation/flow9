@@ -7,86 +7,133 @@ import tools/flow9/bexp/bexp;
 
 export {
 	// At the end, we use this to resolve the eclasses
-	resolveCNodes(tmap : TMap) -> Tree<int, TType>;
+	resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType>;
 
 	// Given the resolution map, and a given eclass, find the final type
 	resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType>;
 }
 
-resolveCNodes(tmap : TMap) -> Tree<int, TType> {
-	handlePostponed(tmap, 5);
-	handlePostponedUnifications(tmap, 3);
-	handlePostponed(tmap, 5);
-	unifyTConstraints(tmap);
+resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
+	if (verbose) dumpPostponed(tmap, "Starting resolution of " + ^(tmap.topid));
+
+	// Do all subtypes that work
+	remainingSubtypes(tmap, verbose);
+
+	// Do all the unifications that work
+	remainingUnifications(tmap, verbose);
+
+	if (verbose) {
+		dumpPostponed(tmap, "Remaining subs become unifications for " + ^(tmap.topid));
+	}
+
+	// Do all subtypes that work as unification
+	repeatList(tmap.cmap.constraints, \c : TConstraint -> {
+		subok = subtypeCEClass(tmap, c.subtype, c.supertype, true, c.reason);
+		if (subok == UnifyOK()) {
+			ok2 = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+			if (verbose && ok2 == UnifyOK()) {
+				println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked");
+			}
+			true;
+		} else {
+			ok = unifyCEClass(tmap, c.subtype, c.supertype, true, c.reason);
+			if (ok) {
+				// OK, then do it
+				ok2 = unifyCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+				if (verbose && ok2) {
+					println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked as unify");
+				}
+				ok2;
+			} else ok;
+
+		}
+	}, 5);
+
+	// Do all the unifications that work
+	remainingUnifications(tmap, verbose);
+
+	if (verbose) {
+		println("At the end");
+		dumpPostponed(tmap, "Finished resolution " + ^(tmap.topid));
+	}
+
 	doResolveCNodes(tmap);
 }
 
-handlePostponed(tmap : TMap, iteration : int) -> void {
-	constraints = ^(tmap.cmap.constraints);
-	if (isEmptyList(constraints) || iteration == 0) {
-	} else {
-		// OK, clear the list
-		tmap.cmap.constraints := makeList();
-		remaining = foldList(constraints, makeList(), \acc, c : TConstraint -> {
-			sub : CNode = getUnionMapValue(tmap.cmap.cmap, c.subtype);
-			super : CNode = getUnionMapValue(tmap.cmap.cmap, c.supertype);
-			if (sub != CEpsilon() || super != CEpsilon()) {
-				ok = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
-				if (!ok) {
-					println("TODO: Error when resuming subtyping  " + prettyCEClass(tmap.cmap, c.subtype) + "  vs  " + prettyCEClass(tmap.cmap, c.supertype));
-					acc
-				} else {
-					acc;
-				}
-			} else {
-				Cons(c, acc)
+remainingSubtypes(tmap : TMap, verbose : bool) -> void {
+	repeatList(tmap.cmap.constraints, \c : TConstraint -> {
+		ok = subtypeCEClass(tmap, c.subtype, c.supertype, true, c.reason);
+		if (ok == UnifyOK()) {
+			// OK, then do it
+			ok2 = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+			if (verbose && ok2 == UnifyOK()) {
+				println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked");
 			}
-		});
+			ok2 == UnifyOK();
+		} else false;
+	}, 5);
+}
 
-		new = ^(tmap.cmap.constraints);
-		tmap.cmap.constraints := concatList(remaining, new);
-		if (isEmptyList(new) && countList(remaining) == countList(constraints)) {
-			// No progress has been made - go directly to last iteration
-			handlePostponed(tmap, 0);
-		} else {
-			handlePostponed(tmap, iteration - 1);
+remainingUnifications(tmap : TMap, verbose : bool) -> void {
+	repeatList(tmap.cmap.unifications, \c : TUnification -> {
+		ok = unifyCEClass(tmap, c.left, c.right, true, c.reason);
+		if (ok) {
+			// OK, then do it
+			ok2 = unifyCEClass(tmap, c.left, c.right, false, c.reason);
+			if (verbose && ok2) {
+				println("  " + prettyCEClass(tmap.cmap, c.left) + " unify " + prettyCEClass(tmap.cmap, c.right) + " worked");
+			}
+			ok2;
+		} else ok;
+	}, 5);
+}
+
+dumpPostponed(tmap : TMap, stage : string) -> void {
+	constraints = ^(tmap.cmap.constraints);
+	unifications = ^(tmap.cmap.unifications);
+
+	if (!isEmptyList(constraints) || !isEmptyList(unifications)) {
+		println(stage);
+	}
+	if (!isEmptyList(constraints)) {
+		println("Postponed subtypes:");
+		iterList(constraints, \cc -> {
+			println("  " + prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype));
+		});
+		println("");
+	}
+	if (!isEmptyList(unifications)) {
+		println("Postponed unifications:");
+		iterList(unifications, \cc -> {
+			println("  " + prettyCEClass(tmap.cmap, cc.left) + " vs " + prettyCEClass(tmap.cmap, cc.right));
+		});
+		println("");
+	}
+
+}
+
+repeatList(rlist : ref List<?>, fn : (?) -> bool, iter : int) -> void {
+	if (iter == 0) {}
+	else {
+		workDone = processList(rlist, fn);
+		if (workDone) {
+			repeatList(rlist, fn, iter - 1);
 		}
 	}
 }
 
-handlePostponedUnifications(tmap : TMap, iteration : int) -> void {
-	unifications = ^(tmap.cmap.unifications);
-	if (isEmptyList(unifications) || iteration == 0) {
-	} else {
-		// OK, clear the list
-		tmap.cmap.unifications := makeList();
-		iterList(unifications, \c : TUnification -> {
-			ok = unifyCEClass(tmap, c.left, c.right, false, c.reason);
-			if (!ok) {
-				tmap.onError(elaborateReason(c.reason, "Could not resolve unification   " + prettyCEClass(tmap.cmap, c.left) + "   vs   " + prettyCEClass(tmap.cmap, c.right)));
-			}
-		});
-
-		handlePostponedUnifications(tmap, iteration - 1);
-	}
-}
-
-
-
-unifyTConstraints(tmap : TMap) -> void {
-	constraints = ^(tmap.cmap.constraints);
-	if (!isEmptyList(constraints)) {
-		tmap.cmap.constraints := makeList();
-		// println("Unifying the remaining constraints:");
-		iterList(constraints, \cc -> {
-			// println("  " + prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype));
-			if (unifyCEClass(tmap, cc.subtype, cc.supertype, false, cc.reason)) {
-			} else {
-				println("  Giving up on " + prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype));
-			}
-			{}
-		});
-	}
+// Returns true if we did something
+processList(rlist : ref List<?>, fn : (?) -> bool) -> bool {
+	list = ^rlist;
+	rlist := makeList();
+	newList = foldList(list, makeList(), \acc, e -> {
+		didWork = fn(e);
+		if (didWork) {
+			acc;
+		} else Cons(e, acc);
+	});
+	rlist := concatList(newList, ^rlist);
+	!isEmptyList(^rlist);
 }
 
 doResolveCNodes(tmap : TMap) -> Tree<int, TType> {
@@ -133,6 +180,7 @@ resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BT
 				if (length(btypars) == length(typars)) {
 					Some(BTypeName(name, btypars));
 				} else {
+					// println("Missing type pars for " + name);
 					None();
 				}
 			}
@@ -149,11 +197,12 @@ resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BT
 						None();
 					}
 				} else {
-					// println("Unknown args");
+					// println("Missing args for function");
 					None();
 				}
 			}
 			COverload(unique, options, reason): {
+				// We just randomly pick the smallest one
 				mmin = popMinSet(options);
 				mmin ?? {
 					resolveCNode(tmap, eclasses, mmin.value);
@@ -163,18 +212,4 @@ resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BT
 			}
 		}
 	}
-}
-
-
-debugCNode(tmap : TMap, root : int) -> string {
-	node = getUnionMapValue(tmap.cmap.cmap, root);
-
-	childClasses = foldRange(0, ^(tmap.nextEClass), [], \acc2, ec -> {
-		r = findUnionMapRoot(tmap.cmap.cmap, ec);
-		if (r == root) {
-			arrayPush(acc2, ec)
-		} else acc2;
-	});
-
-	"e" + i2s(root) + "=" + rpad(prettyCNode(tmap.cmap, node), " ", 30) + "   covers " + superglue(childClasses, \c -> "e" + i2s(c), " ");
 }

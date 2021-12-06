@@ -9,6 +9,14 @@ export {
 	// When we know the type, find or make an eclass for this type
 	resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass;
 
+	// When we have a DType, we use this one as the result. Instantiates polymorphism
+	dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass;
+
+	UnifyResult ::= UnifyFail, UnifyOK, UnifyPostponed;
+		UnifyFail();
+		UnifyOK();
+		UnifyPostponed();
+
 	// We know the result is a unification of these types
 	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> bool;
 	unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool;
@@ -16,11 +24,8 @@ export {
 	// We know we have to subtype here - TODO: Figure out what the result is?
 	// checkOnly defines whether we should update our types, or just do a check.
 	// Returns true if this is possible.
-	subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> bool;
-	subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> bool;
-
-	// When we have a DType, we use this one. Instantiates polymorphism
-	dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass;
+	subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> UnifyResult;
+	subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult;
 }
 
 resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
@@ -237,13 +242,13 @@ extractCNodes(cmap : CMap, class : int, acc : Set<int>) -> Set<int> {
 
 
 
-subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> bool {
+subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
 	subClass = findOrMakeCNodeClass(tmap, subtype, reason);
 	superClass = findOrMakeCNodeClass(tmap, supertype, reason);
 	orig = prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass);
 	res = subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
 
-	if (res) {
+	if (res == UnifyOK()) {
 		if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
 			// debugErrorReason(reason, "  Subtype success " + orig + ". ");
 			debugErrorReason(reason, "  Subtype success " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass) + ". ");
@@ -252,7 +257,7 @@ subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, 
 	res;
 }
 
-subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> bool {
+subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
 	sub : CNode = getUnionMapValue(tmap.cmap.cmap, subClass);
 	super : CNode = getUnionMapValue(tmap.cmap.cmap, superClass);
 
@@ -264,9 +269,9 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 
 	error = \ -> {
 		if (!checkOnly) {
-			println("TODO: Report error on subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super));
+			tmap.onError(elaborateReason(reason, "Could not subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super)));
 		}
-		false;
+		UnifyFail();
 	}
 
 	postpone = \ -> {
@@ -274,13 +279,13 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 			constraint = TConstraint(subClass, superClass, reason);
 			tmap.cmap.constraints := Cons(constraint, ^(tmap.cmap.constraints));
 		}
-		true;
+		UnifyPostponed();
 	}
 
 	// If we have a subtype against an overload. I.e. name or function against overload
 	subVsOverload = \ov : COverload -> {
 		potentials = filterSet(ov.options, \opt : int -> {
-			subtypeCEClass(tmap, subClass, opt, true, elaborateReason(reason, " overloads"));
+			UnifyFail() != subtypeCEClass(tmap, subClass, opt, true, elaborateReason(reason, " overloads"));
 		});
 		npot = sizeSet(potentials);
 		if (npot == 0) {
@@ -293,15 +298,15 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				setUnionMapValue(tmap.cmap.cmap, superClass, CEpsilon());
 				root = unionUnionMap(tmap.cmap.cmap, superClass, cand, reason);
 				subtypeCEClass(tmap, subClass, cand, checkOnly, elaborateReason(reason, "resolve overload"));
-			} else true;
+			} else UnifyOK();
 		} else {
 			if (sizeSet(ov.options) > npot) {
 				// OK, it is at least reduced
 				if (!checkOnly) {
 					nover = COverload(ov with options = potentials);
 					setUnionMapValue(tmap.cmap.cmap, superClass, nover);
-					true;
-				} else true;
+				};
+				UnifyOK();
 			} else {
 				postpone();
 			}
@@ -311,7 +316,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	// overload vs name or function
 	overloadVsSuper = \ov : COverload -> {
 		potentials = filterSet(ov.options, \opt : int -> {
-			subtypeCEClass(tmap, opt, superClass, true, reason);
+			UnifyFail() != subtypeCEClass(tmap, opt, superClass, true, reason);
 		});
 		npot = sizeSet(potentials);
 		if (npot == 0) {
@@ -324,14 +329,14 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				setUnionMapValue(tmap.cmap.cmap, subClass, CEpsilon());
 				root = unionUnionMap(tmap.cmap.cmap, subClass, cand, reason);
 				subtypeCEClass(tmap, cand, superClass, checkOnly, reason);
-			} else true;
+			} else UnifyOK();
 		} else {
 			if (npot < sizeSet(ov.options)) {
 				if (!checkOnly) {
 					nover = COverload(ov with options = potentials);
 					setUnionMapValue(tmap.cmap.cmap, subClass, nover);
-					true;
-				} else true;
+				}
+				UnifyOK();
 			} else {
 				postpone();
 			}
@@ -339,16 +344,15 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	}
 
 	anyVsEpsilon = \ -> {
-		if (!checkOnly) {
-			moverload = makeSupertypeOverload(tmap, sub, reason);
-			moverload ?? {
+		moverload = makeSupertypeOverload(tmap, sub, reason);
+		moverload ?? {
+			if (!checkOnly) {
 				setUnionMapValue(tmap.cmap.cmap, superClass, moverload);
-			} : {
-				postpone();
-				{}
 			}
+			UnifyOK();
+		} : {
+			postpone();
 		}
-		true;
 	};
 
 	end = if (sub == CEpsilon() && super == CEpsilon()) {
@@ -363,7 +367,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 					if (!checkOnly) {
 						setUnionMapValue(tmap.cmap.cmap, subClass, moverload);
 					}
-					true;
+					UnifyOK();
 				} : {
 					postpone();
 				}
@@ -374,14 +378,18 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 					CName(sname, stypars, supreason): {
 						if (name == sname) {
 							if (length(typars) == length(stypars)) {
-								foldi(typars, true, \i, ok : bool, typar -> {
-									ok && subtypeCEClass(tmap, typar, stypars[i], checkOnly, elaborateReason(reason, "typar #" + i2s(i + 1)));
+								foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar -> {
+									if (ok == UnifyFail()) {
+										ok
+									} else {
+										subtypeCEClass(tmap, typar, stypars[i], checkOnly, elaborateReason(reason, "typar #" + i2s(i + 1)));
+									}
 								});
 							} else {
 								error();
 							}
 						} else if (isCFlow(sub) || isCFlow(super)) {
-							true;
+							UnifyOK();
 						} else {
 							supers = ^(tmap.resolveSupertypes)(name);
 							if (contains(supers, sname)) {
@@ -395,7 +403,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 					}
 					CFunction(sargs, return, supreason): {
 						if (isCFlow(sub)) {
-							true;
+							UnifyOK();
 						} else error();
 					}
 					COverload(sunique, options, supreason): subVsOverload(super);
@@ -406,14 +414,18 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 					CEpsilon(): anyVsEpsilon();
 					CName(sname, stypars, supreason): {
 						if (isCFlow(super)) {
-							true;
+							UnifyOK();
 						} else error();
 					}
 					CFunction(sargs, sreturn, supreason): {
 						if (length(args) == length(sargs)) {
-							foldi(args, true, \i, ok : bool, arg -> {
-								ok && subtypeCEClass(tmap, sargs[i], arg, checkOnly, elaborateReason(reason, "arg #" + i2s(i + 1)));
-							}) && subtypeCEClass(tmap, return, sreturn, checkOnly, elaborateReason(reason, "fn ret"));
+							retok = subtypeCEClass(tmap, return, sreturn, checkOnly, elaborateReason(reason, "fn ret"));
+							foldi(args, retok, \i, ok : UnifyResult, arg -> {
+								if (ok == UnifyFail()) ok
+								else {
+									subtypeCEClass(tmap, sargs[i], arg, checkOnly, elaborateReason(reason, "arg #" + i2s(i + 1)));
+								}
+							});
 						} else {
 							error();
 						}
@@ -433,14 +445,14 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 						// Find the supers that work for all subsets:
 						supPotentials = filterSet(soptions, \sopt -> {
 							forall(set2array(mapSet(options, \opt : int -> {
-								subtypeCEClass(tmap, opt, sopt, true, reason);
+								UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
 							})), idfn)
 						});
 						if (isEmptySet(supPotentials)) {
 							// OK, look for subs that at least have something that works
 							subPotentials = filterSet(options, \opt -> {
 								exists(set2array(mapSet(soptions, \sopt : int -> {
-									subtypeCEClass(tmap, opt, sopt, true, reason);
+									UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
 								})), idfn);
 							});
 							if (isEmptySet(subPotentials)) {
@@ -458,7 +470,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 								if (!checkOnly) {
 									setUnionMapValue(tmap.cmap.cmap, subClass, resSub);
 									subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
-								} else true;
+								} else UnifyOK();
 
 							}
 						} else {
@@ -473,7 +485,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 							if (!checkOnly) {
 								setUnionMapValue(tmap.cmap.cmap, superClass, resSuper);
 								subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
-							} else true;
+							} else UnifyOK();
 						}
 					}
 				}
