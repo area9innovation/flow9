@@ -28,6 +28,11 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 
 	unionTypes = flatUnionTypes(typeHierarchy.unionTypes);
 	unionedStructs = splitUnionedStructs(unionTypes, typeHierarchy.unionedStructs, b.structs, b.unions);
+	allRecursiveDStructs = concat3(
+		unionedStructs.second,
+		map(unionedStructs.first, \s -> RecursiveDStruct(s, [])),
+		map(typeHierarchy.structs, \s -> RecursiveDStruct(s, []))
+	);
 
 	info = CppInfo(
 		fold(b.declarations, makeSet(), \acc, d -> {
@@ -42,28 +47,25 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 
 	backend = cppBackend(info);
 	// Structs in unions
-	simpleUnionStructs = fold(unionedStructs.first, "", \acc, struct -> {
-		acc + dstruct2cpp(backend, struct) + "\n"
-	});
-	unionStructs = fold(unionedStructs.second, simpleUnionStructs, \acc, struct -> {
+	unionStructs = fold(allRecursiveDStructs, "", \acc, struct -> {
 		acc + recursiveDstruct2cpp(backend, struct, false) + "\n"
 	});
-	recursiveStructs = fold(unionedStructs.second, "", \acc, struct -> {
+	recursiveStructs = fold(allRecursiveDStructs, "", \acc, struct -> {
 		acc + recursiveDstruct2cpp(backend, struct, true) + "\n"
 	});
-	methodRecursiveStructs = fold(unionedStructs.second, "", \acc, struct -> {
+	methodRecursiveStructs = fold(allRecursiveDStructs, "", \acc, struct -> {
 		acc + makeStructConstructors(backend, struct, true) + "\n" + makeStructOperators(backend, struct)
 	});
 	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
-	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
 	functions = map(b.declarations, \d : BDeclaration -> bdeclaration2cpp(backend, d));
 	body = superglue(functions, firstOfPair, "\n");
 	declarations = superglue(filter(functions, \p -> p.second != ""), secondOfPair, ";\n");
 
+	cppFlowType = makeCppFlowType(b.structs, b.unions);
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
-		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <iostream>\n#include <memory>\n"
+		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <iostream>\n#include <memory>\n"
 		// TODO: fix in the future path to flow9
 		"#include \"" + "tools/flow9/backends/cpp/flow_natives.hpp\" \n"
 		+ getBackendRequirements(backend) + "\n"
@@ -73,13 +75,13 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		+ unionStructs
 		+ "// UNIONS\n"
 		+ unions + "\n"
-		+ "// RECURSIVE STRUCTURES\n"
+		+ "// Flow Type\n"
+		+ cppFlowType + "\n"
+		+ "// STRUCTURE DECLARATIONS\n"
 		+ recursiveStructs + "\n"
-		+ "// METHODS OF RECURSIVE STRUCTURES\n"
+		+ "// IMPLEMENTATION OF STRUCTURES\n"
 		+ methodRecursiveStructs + "\n"
-		+ "// STRUCTS\n"
-		+ structs + "\n"
-		+ "// DECLARATIONS\n"
+		+ "// FN DECLARATIONS\n"
 		+ declarations + ";\n"
 		+ "// BODY\n"
 		+ body
@@ -390,7 +392,7 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 	addTemplatesToStruct(
 		dtypes2parameters(mapConcat(u.types, \t -> t.typars)),
 		blueprint("
-			using %name% = std::variant<%members%>;", [
+			using %name% = std::variant<std::monostate, %members%>;", [
 				"name", u.id,
 				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> {
 					btype2cpp(backend, t);
@@ -551,7 +553,7 @@ btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BType
 			else if (id == "bool" || id == "double") id
 			else if (id == "int") { "int32_t" }
 			else if (id == "string") { "std::u16string" }
-			else if (id == "flow") "std::any"
+			else if (id == "flow") "_FlowType"
 			else if (id == "array") {
 				"std::vector<" + btype2cpp(backend, typars[0]) + ">"
 			} else if (id == "ref") {
@@ -649,7 +651,7 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 			foldi(
 				lookupTreeDef(backend.info.unionTypes, id, []),
 				makeTree(),
-				\i, acc, item : BType -> setTree(acc, bType2id(item), i)
+				\i, acc, item : BType -> setTree(acc, bType2id(item), i + 1)
 			);
 		}
 		BTypeFunction(__, __) : makeTree(); // error
@@ -817,6 +819,7 @@ recursiveDStruct2recursiveStruct(struct : RecursiveDStruct) -> RecursiveStruct {
 	)
 }
 
+// simple - recirsive
 splitUnionedStructs(unionTypes : Tree<string, [BType]>, unionedStructs : Tree<string, DStruct>, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>,) -> Pair<[DStruct], [RecursiveDStruct]> {
 	foldTree(unionedStructs, Pair([], []), \id, struct, acc -> {
 		recFields = getRecursiveDStructureArgs(struct, structs, unions);
@@ -1002,8 +1005,16 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 
 		addTemplatesToStruct(argTypes, initConstructor) + "\n" + addTemplatesToStruct(argTypes, copyConstructor) + "\n";
 	} else {
+		defaultConstructor = if (struct.struct.structArgs == []) {
+			""
+		} else {
+			blueprint(
+				"	%type%() = default;\n",
+				["type", struct.struct.id,]
+			);
+		}
 		unpair(declarations, \initConstructor, copyConstructor ->
-			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n"
+			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n" + defaultConstructor
 		);
 	}
 }
@@ -1082,4 +1093,13 @@ makeStructConstructorDeclarations(backend : Backend<CppInfo>, struct : Recursive
 //     Tree<?, ??> ::= TreeNode<?, ??>, TreeEmpty;
 makeUsedStructTypars(structs : Tree<string, DStruct>) -> Tree<string, [string]> {
 	mapTree(structs, \struct -> dtypes2parameters(map(struct.structArgs, \arg -> arg.type)))
+}
+
+// TODO: do not create a type if not in use
+makeCppFlowType(structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> string {
+	ids = concat(getTreeKeys(structs), getTreeKeys(unions));
+	blueprint(
+		"using _FlowType = std::variant<std::monostate, int32_t, double_t, bool, std::u16string%types%>;",
+		["types", if (ids == []) "" else (", " + strGlue(ids, ", "))]
+	);
 }

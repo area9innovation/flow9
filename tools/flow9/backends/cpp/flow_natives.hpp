@@ -59,6 +59,11 @@ void flow_println2(std::u16string d) {
 	std::cout << codecvt.to_bytes(d) << std::endl;
 }
 
+template <typename ...Args>
+void flow_println2(std::variant<Args...>& v) {
+	std::visit([](const auto &x) { flow_println2(x);}, v);
+}
+
 template <typename A>
 bool flow_isArray(A v) {
 	return false;
