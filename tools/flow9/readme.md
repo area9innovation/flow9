@@ -79,8 +79,6 @@ TODO CGraph:
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more?
 
-- ds/array_diff.flow: Something with nested unions. Managable
-
 - fusion: FFn and FMaxConst type par mismatch. Need simpler test case
 
 Need decision:
@@ -88,6 +86,10 @@ Need decision:
 - ds/sparsearray: implicit type parameter in empty array
 - ds/vector: flow(ref []). Maybe we should postpone flow vs others
   and them make implicit type-pars flow?
+- ds/array_diff.flow:119:25: Add type annotation. Unresolved type (equivalence class e369)
+		ArrayNop(i-1, j-1)
+
+- type37: Based on formats/xml
 
 - Do prolog-style search when all possible unifications and subtypes
   have completed
