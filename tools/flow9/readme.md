@@ -84,6 +84,9 @@ TODO CGraph:
 - Do prolog-style search when all possible unifications and subtypes
   have completed
 
+- subtype and unify should have a way to telling if they were postponed
+  so resolution knows how to handle it
+
 TODO:
 - Review postpones, and see if we can resolve some of those:
   - Implement unification of super against overload:
