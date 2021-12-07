@@ -159,7 +159,8 @@ SOURCES += \
     qt-backend/QtGeolocationSupport.cpp \
     qt-backend/qfilesysteminterface.cpp \
     qt-backend/RunParallel.cpp \
-    qt-backend/QWebSocketSupport.cpp
+    qt-backend/QWebSocketSupport.cpp \
+    qt-backend/QtNatives.cpp
 
 HEADERS  += \
     pcheader.h \
@@ -190,6 +191,7 @@ HEADERS  += \
     qt-backend/qfilesysteminterface.h \
     qt-backend/RunParallel.h \
     qt-backend/QWebSocketSupport.h \
+    qt-backend/QtNatives.h \
     qt-gui/testopengl.h
 
 # Asmjit
