@@ -35,7 +35,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	);
 	usedTypars = makeUsedStructTypars(b.structs);
 	cppFlowType = makeCppFlowType(usedTypars, b.structs);
-	usedTyparsWithFlowType = addFlowTypars(b.structs, unionTypes, usedTypars, cppFlowType);
+	structArgFlow = makeStructArgFlow(b.structs, unionTypes, cppFlowType);
 
 	info = CppInfo(
 		fold(b.declarations, makeSet(), \acc, d -> {
@@ -45,8 +45,9 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		unionTypes,
 		getStatFunctionTypes(b.declarations),
 		values2treeEx(allRecursiveDStructs, \struct -> struct.struct.id, recursiveDStruct2recursiveStruct),
-		usedTyparsWithFlowType,
-		addTemplatesToDeclarationFlowType(cppFlowType, usedTyparsWithFlowType, b.structs),
+		usedTypars,
+		structArgFlow,
+		addTemplatesToDeclarationFlowType(cppFlowType, usedTypars, structArgFlow, b.structs),
 	);
 
 	backend = cppBackend(info);
@@ -396,8 +397,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BType]>,) -> string {
 	structIds = dtypes2parameters(mapConcat(u.types, \t -> t.typars));
 	members = lookupTreeDef(unionTypes, u.id, []);
-	defValue = Pair([], false);
-	withFlowType = exists(members, \t -> lookupTreeDef(backend.info.usedTypars, bType2id(t), defValue).second);
+	withFlowType = exists(members, \t -> eitherMap(lookupTree(backend.info.structArgFlow, bType2id(t)), \f -> !isEmptySet(f), false));
 	member2cpp = if (withFlowType) btype2cppWithFlow else btype2cpp;
 	addTemplatesToStruct(
 		if (withFlowType) concat(structIds, backend.info.flowType.templates) else structIds,
@@ -516,16 +516,17 @@ extractDTypes(types : [DType], acc : [DType]) -> [DType] {
 }
 
 addTyparsToStruct(backend : Backend<CppInfo>, type : BType, body : string) -> string {
-	getFlowTypars = \id -> eitherMap(
-		lookupTree(backend.info.usedTypars, id),
-		unpairC(\__, isFlowType -> if (isFlowType) backend.info.flowType.templates else []),
+	getFlowTypars = \id -> lookupTreeDef(backend.info.structArgFlow, id, makeSet());/*eitherMap(
+		lookupTree(backend.info.structArgFlow, id),
+		\flowFields -> if (isFlowType) backend.info.flowType.templates else [],
 		[]
-	);
+	);*/
 
 	switch (type : BType) {
 		BTypePar(id) : body;
 		BTypeName(id, typars) : {
 			flowTemplates = getFlowTypars(id);
+println("id:"+id+" "+toString(set2array(flowTemplates)));
 			if (typars == []) {
 				body
 			} else {
@@ -557,7 +558,7 @@ btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
 
 typars2cpp(backend : Backend<CppInfo>, typars : [BType], typeId : string) -> string {
 	btype2cppWithId = \tp -> if (typeId == "") btype2cpp(backend, tp) else btype2cppWithFlow(backend, tp);
-	withFlowType = typeId != "" && lookupTreeDef(backend.info.usedTypars, typeId, Pair([], false)).second;
+	withFlowType = typeId != "" && eitherMap(lookupTree(backend.info.structArgFlow, typeId), \f -> !isEmptySet(f), false);
 	if (typars != [] || withFlowType) {
 		blueprint(
 			"<%typars%%flowTypars%>",
@@ -1115,28 +1116,28 @@ makeUsedStructTypars(structs : Tree<string, DStruct>) -> Tree<string, [string]> 
 // TODO: do not create a type if not in use
 makeCppFlowType(usedTypars : Tree<string, [string]>, structs : Tree<string, DStruct>) -> FlowType {
 	typeName = "_FlowType";
-	allUsedTypars = makeFlowTypeTypars(usedTypars, idfn);
+	allUsedTypars = makeFlowTypeTypars(usedTypars);
 	typars = uniq(mapConcat(getTreeKeys(structs), \id -> lookupTreeDef(allUsedTypars, id, [])));
 
 	FlowType(typeName, "", typars);
 }
 
-makeFlowTypeTypars(usedTypars : Tree<string, ?>, getTyparNames : (?) -> [string]) -> Tree<string, [string]> {
+makeFlowTypeTypars(usedTypars : Tree<string, [string]>) -> Tree<string, [string]> {
 	i = ref 0;
 	makeTyparName = \t, ind -> "_FlowP" + i2s(ind) + "_" + t;
 	mapTree(usedTypars, \typars -> {
-		map(getTyparNames(typars), \t -> { i := ^i + 1; makeTyparName(t, ^i) });
+		map(typars, \t -> { i := ^i + 1; makeTyparName(t, ^i) });
 	});
 }
 
-addTemplatesToDeclarationFlowType(type : FlowType, usedTypars : Tree<string, Pair<[string], bool>>, structs : Tree<string, DStruct>) -> FlowType {
+addTemplatesToDeclarationFlowType(type : FlowType, usedTypars : Tree<string, [string]>, structArgFlow : Tree<string, Set<string>>, structs : Tree<string, DStruct>) -> FlowType {
 	simpleTypes = ["int32_t", "double_t", "bool", "std::u16string"];
-	allUsedTypars = makeFlowTypeTypars(usedTypars, unpairC(\typars, __ -> typars));
+	allUsedTypars = makeFlowTypeTypars(usedTypars);
 	structTypes = map(getTreeKeys(structs), \id -> {
 		realTypars = lookupTreeDef(allUsedTypars, id, []);
 		typars = eitherMap(
-			lookupTree(usedTypars, id),
-			unpairC(\__, withFlowType -> strGlue(if (withFlowType) concat(realTypars, type.templates) else realTypars, ", ")),
+			lookupTree(structArgFlow, id),
+			\flowFields -> strGlue(if (!isEmptySet(flowFields)) concat(realTypars, type.templates) else realTypars, ", "),
 			""
 		);
 		id + (if (typars == "") "" else ("<" + typars + ">"))
@@ -1159,53 +1160,48 @@ addTemplatesToDeclarationFlowType(type : FlowType, usedTypars : Tree<string, Pai
 }
 
 // TODO: optimization, refactoring
-addFlowTypars(structs : Tree<string, DStruct>, unions : Tree<string, [BType]>, usedTypars : Tree<string, [string]>, type : FlowType) -> Tree<string, Pair<[string], bool>> {
-	isFlowType = \t : DType -> dType2id(t) == "flow";
+makeStructArgFlow(structs : Tree<string, DStruct>, unions : Tree<string, [BType]>, type : FlowType) -> Tree<string, Set<string>> {
+	isFlowType = \id -> id == "flow";
 
-	terminalTypes = foldTree(usedTypars, makeSet(), \id, __, acc -> eitherMap(
-		lookupTree(structs, id),
-		\struct -> {
-			foundFlowArg = exists(struct.structArgs, \arg -> isFlowType(arg.type));
-			if (foundFlowArg) insertSet(acc, id) else acc;
-		},
-		acc
-	));
+	// structs with 'arg : flow'
+	terminalStructs = foldTree(structs, makeSet(), \id, struct, acc -> 
+		if (exists(struct.structArgs, \arg -> isFlowType(dType2id(arg.type)))) insertSet(acc, id) else acc
+	);
 
-	structUsedTypars = mapTree2(usedTypars, \id, pars -> eitherFn(
-		lookupTree(structs, id),
-		\struct -> {
-			isFlowStruct = containsSet(terminalTypes, id)
-			|| {
-				allDTypes = extractDTypes(map(struct.structArgs, \arg -> arg.type), []);
-				exists(allDTypes, \t -> containsSet(terminalTypes, dType2id(t)))
-			}
-			Pair(pars, isFlowStruct);
-		},
-		\-> Pair(pars, false)
-	));
+	structWithFlowStructs = mapTree2(structs, \id, struct -> {
+		fold(struct.structArgs, makeSet(), \acc, arg -> {
+			allDTypes = extractDTypes([arg.type], []);
+			isFlowArg = exists(allDTypes, \t -> {
+				argId = dType2id(t);
+				isFlowType(argId) || containsSet(terminalStructs, argId)
+			});
+			if (isFlowArg) insertSet(acc, arg.id) else acc
+		});
+	});
 
-	isFlowStructType = \t -> eitherMap(lookupTree(structUsedTypars, bType2id(t)), secondOfPair, false);
-	unionUsedTypars = mapTree(unions, \pars -> Pair([], exists(pars, isFlowStructType)));
+	isFlowStructType = \tree, id -> eitherMap(lookupTree(tree, id), \s -> !isEmptySet(s), false);
+	unionUsedTypars = mapTree(unions, \pars -> 
+		fold(pars, makeSet(), \acc, p -> {
+			id = bType2id(p);
+			if (id != "" && isFlowStructType(structWithFlowStructs, id)) insertSet(acc, id) else acc
+		})
+	);
 
-	fixedStructUsedTypars = mapTree2(structUsedTypars, \id, p -> unpair(p, \pars, withFlowType -> 
-		if (withFlowType) {
-			Pair(pars, withFlowType)
-		} else {
-			structArgs = eitherMap(lookupTree(structs, id), \struct -> struct.structArgs, []);
-			allDTypes = extractDTypes(map(structArgs, \arg -> arg.type), []);
-			unionWithFlowType = exists(allDTypes, \t -> eitherMap(lookupTree(unionUsedTypars, dType2id(t)), secondOfPair, false));
-			Pair(pars, unionWithFlowType)
-		}
-	));
+	fixedStructs = mapTree2(structWithFlowStructs, \id, fields -> {
+		structArgs = eitherMap(lookupTree(structs, id), \struct -> struct.structArgs, []);
+		fold(structArgs, fields, \acc, arg -> {
+			allDTypes = extractDTypes([arg.type], []);
+			if (exists(allDTypes, \t -> isFlowStructType(unionUsedTypars, dType2id(t)))) insertSet(acc, arg.id) else acc
+		});
+	});
 
-	mergeTree(fixedStructUsedTypars, unionUsedTypars)
+	mergeTree(fixedStructs, unionUsedTypars)
 }
 
 extractStructAllTypars(info : CppInfo, structId : string) -> [string] {
-	unpair(
-		lookupTreeDef(info.usedTypars, structId, Pair([], false)),
-		\typars, withFlowType -> if (withFlowType) concat(typars, info.flowType.templates) else typars
-	);
+	typars = lookupTreeDef(info.usedTypars, structId, []);
+	withFlowType = eitherMap(lookupTree(info.structArgFlow, structId), \f -> !isEmptySet(f), false);
+	if (withFlowType) concat(typars, info.flowType.templates) else typars;
 }
 
 // default value for variant.
