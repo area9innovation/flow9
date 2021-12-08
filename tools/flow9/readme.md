@@ -92,6 +92,8 @@ Need decision:
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
 		Triple(flow(None()), start, "");
 		      ^
+   when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
+   Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
 
 - Do prolog-style search when all possible unifications and subtypes
   have completed
