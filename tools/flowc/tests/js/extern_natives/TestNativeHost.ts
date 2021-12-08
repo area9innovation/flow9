@@ -1,4 +1,5 @@
-import * as typenames from "./test";
+import * as typenames from "TestNativeHost-types.d";
+
   export interface User {
 	name: string;
 	id: number;
@@ -42,6 +43,15 @@ import * as typenames from "./test";
   export function makeUser1(pair: typenames.Pair<string, number>): User {
 	return new UserAccount(pair.first, pair.second);
   }
+/*
+  export function makeUser2(pair: typenames.Pair<string, number>): User {
+	return new UserAccount(pair.aaa, pair.bbb);
+  }
+
+  export function makeUser3(pair: typenames.Pairss<string, number>): User {
+	return new UserAccount(pair.first, pair.second);
+ }
+*/
 
   export function userName(user: User): string {
 	return user.name;
