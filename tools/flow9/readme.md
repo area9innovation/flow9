@@ -83,11 +83,6 @@ TODO CGraph:
 
 Need decision:
 - types.flow: implicit None type-parameter
-- tests/type26.flow
-	C:/flow9/tools/flow9/tests/type26.flow:40:37: ERROR: construct FMaxConst, Not enough typars from FMaxConst<e199> to FFn expecting 2 type parameters
-							fselect(b2, FMaxConst(v1));
-									^
-	ERROR: Could not make supertype FFn from FMaxConst<e199>
 
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
 		Triple(flow(None()), start, "");
