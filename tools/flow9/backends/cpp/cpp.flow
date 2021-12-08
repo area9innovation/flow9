@@ -60,15 +60,49 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	body = superglue(functions, firstOfPair, "\n");
 	declarations = superglue(filter(functions, \p -> p.second != ""), secondOfPair, ";\n");
 
+	flowType = "struct _FlowType : std::any {
+  void(*print)(_FlowType const&) = nullptr;
+
+  friend std::ostream& operator<<( std::ostream& os, _FlowType const& a ) {
+    a.print( a );
+    return os;
+  }
+
+  template<typename T>
+  _FlowType( T&& t ):
+    std::any( std::forward<T>(t) ),
+    print([](_FlowType const& self ) { flow_println2(std::any_cast<std::decay_t<T>>(self)); } )
+  {}
+
+  template<typename T>
+  _FlowType( T& t ):
+    std::any( std::forward<T>(t) ),
+    print([](_FlowType const& self ) { flow_println2(std::any_cast<std::decay_t<T>>(self)); } )
+  {}
+
+  bool operator==(const _FlowType& a) const { return a == *this; }
+  bool operator!=(const _FlowType& a) const { return a != *this; }
+  bool operator>(const _FlowType& a) const {return a > *this;}
+  bool operator<(const _FlowType& a) const {return a < *this;}
+  bool operator>=(const _FlowType& a) const {return (a == *this) || (a > *this);}
+  bool operator<=(const _FlowType& a) const {return (a == *this) || (a < *this);}
+
+ /* template<typename ...T>
+  T getValue() {
+    return std::any_cast<std::decay_t<T>>(*this);
+  }*/
+};";
+
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
-		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <iostream>\n#include <memory>\n"
+		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <iostream>\n#include <memory>\n#include <type_traits>\n"
 		// TODO: fix in the future path to flow9
 		"#include \"" + "tools/flow9/backends/cpp/flow_natives.hpp\" \n"
 		+ getBackendRequirements(backend) + "\n"
 	//	+ "// RUNTIME\n"
 	//	+ runtime + "\n"
+		+ flowType + "\n"
 		+ "// Structs for unions\n"
 		+ unionStructs
 		+ "// UNIONS\n"
@@ -551,7 +585,7 @@ btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BType
 			else if (id == "bool" || id == "double") id
 			else if (id == "int") { "int32_t" }
 			else if (id == "string") { "std::u16string" }
-			else if (id == "flow") "std::any"
+			else if (id == "flow") "_FlowType"
 			else if (id == "array") {
 				"std::vector<" + btype2cpp(backend, typars[0]) + ">"
 			} else if (id == "ref") {
