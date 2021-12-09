@@ -12,17 +12,17 @@ export {
 	// Setup the global variables and toplevel functions
 	fcInitEvalGlobals(program: FiProgram, onError : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal>;
 
-	// Perform the evaluation of function 'name'. 
+	// Perform the evaluation of function 'name'.
 	// Returns the return value, if no errors occur, or 'flow()' as a return value for a runtime error.
 	fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow;
 }
 
-// Struct, which are not used in flowc compiler are not present in runtime explicitly, 
+// Struct, which are not used in flowc compiler are not present in runtime explicitly,
 // so we use a general data structure, which represents struct in runtime.
 FcRuntimeStruct(
 	fields : [FcRuntimeField]
 );
-// Struct, which represents a field. 
+// Struct, which represents a field.
 // Uses a ref to a value in order to model mutable fields.
 FcRuntimeField(
 	name : string,
@@ -43,7 +43,9 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlob
 					onErr(where + " " + message);
 				}
 				iter(module.natives, \nat : FiNativeDec -> {
-					fn = if (hostCallExists(nat.nativeName)) {
+					fn = if (nat.name == "makeStructValue") {
+						flow(\n, args, def -> fcMakeStruct(n, args, structs, \__ -> def));
+					} else if (hostCallExists(nat.nativeName)) {
 						fcMakeFnFromNative(nat, onError);
 					} else {
 						switch (nat.fallbackLambda) {
@@ -67,10 +69,10 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlob
 								setHashMap(globals, name, FcEvalGlobal(fn, module.fileinfo));
 							}
 							FiGlobalVar(__, value, __,__,__): {
-								gv = fcReplEval(value, structs, globals, makeHashMap(fastHashString), onError); 
+								gv = fcReplEval(value, structs, globals, makeHashMap(fastHashString), onError);
 								setHashMap(globals, name, FcEvalGlobal(gv, module.fileinfo));
 							}
-							FiNativeDec(__,__,__, nativeName, fallback, __,__): { 
+							FiNativeDec(__,__,__, nativeName, fallback, __,__): {
 								// are already added
 							}
 						}
@@ -136,10 +138,10 @@ fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlo
 }
 
 fcReplEval(
-	ex : FiExp, 
-	structs : HashMap<string, FiTypeStruct>, 
-	globals : HashMap<string, FcEvalGlobal>, 
-	locals : HashMap<string, flow>, 
+	ex : FiExp,
+	structs : HashMap<string, FiTypeStruct>,
+	globals : HashMap<string, FcEvalGlobal>,
+	locals : HashMap<string, flow>,
 	onError : (string, int) -> void
 ) -> flow {
 	make_err = \msg, pos -> {
@@ -219,13 +221,13 @@ fcReplEval(
 				Some(case): {
 					args = extractStructArguments(w);
 					if (case.struct != "default") {
-						iteri(case.argNames, \i, arg -> 
+						iteri(case.argNames, \i, arg ->
 							setHashMap(locals, arg, args[i])
 						);
 					}
 					ret = fcReplEval(case.body, structs, globals, locals, onError);
 					if (case.struct != "default") {
-						iter(case.argNames, \arg -> 
+						iter(case.argNames, \arg ->
 							removeFromHashMap(locals, arg)
 						);
 					}
@@ -243,14 +245,14 @@ fcReplEval(
 				switch (to) {
 					FiTypeDouble(): flow(i2d(cast(ev : flow -> int)));
 					FiTypeString(): flow(i2s(cast(ev : flow -> int)));
-					default: ev; 
+					default: ev;
 				}
 			} else if (getDataTagForValue(ev) == double_data_tag) {
 				// double case
 				switch (to) {
 					FiTypeInt(): flow(round(cast(ev : flow -> double)));
 					FiTypeString(): flow(d2s(cast(ev : flow -> double)));
-					default: ev; 
+					default: ev;
 				}
 			} else {
 				ev;
@@ -280,9 +282,9 @@ fcReplEval(
 
 fcReplEvalCallPrim(
 	call : FiCallPrim, es : [FiExp],
-	structs : HashMap<string, FiTypeStruct>, 
-	globals : HashMap<string, FcEvalGlobal>, 
-	locals : HashMap<string, flow>, 
+	structs : HashMap<string, FiTypeStruct>,
+	globals : HashMap<string, FcEvalGlobal>,
+	locals : HashMap<string, flow>,
 	onError : (string, int) -> void
 ) -> flow {
 	make_err = \msg -> {
@@ -455,24 +457,11 @@ fcReplEvalCallPrim(
 		}
 		FcStructPrim(name): {
 			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
-			if (isStructName(name)) {
-				makeStructValue(name, args, IllegalStruct());
-			} else {
-				switch (lookupHashMap(structs, name)) {
-					Some(struct): {
-						FcRuntimeStruct(
-							mapi(args, \i, val -> FcRuntimeField(struct.args[i].name, ref val))
-						);
-					}
-					None(): {
-						make_err("unknown struct " + name);
-					}
-				}
-			}
+			fcMakeStruct(name, args, structs, make_err);
 		}
 		FcFieldPrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
-			name = extractStructName(struct); 
+			name = extractStructName(struct);
 			if (name != "FcRuntimeStruct") {
 				fields = structFieldNames(name);
 				i = elemIndex(fields, field, -1);
@@ -491,7 +480,7 @@ fcReplEvalCallPrim(
 		FcSetMutablePrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
 			value = fcReplEval(es[1], structs, globals, locals, onError);
-			name = extractStructName(struct); 
+			name = extractStructName(struct);
 			if (name != "FcRuntimeStruct") {
 				setMutableField(struct, field, value);
 				voidValue();
@@ -524,10 +513,32 @@ fcReplEvalCallPrim(
 	}
 }
 
+fcMakeStruct(
+	name : string,
+	args : [flow],
+	structs : HashMap<string, FiTypeStruct>,
+	onError : (string) -> flow
+) -> flow {
+	if (isStructName(name)) {
+		makeStructValue(name, args, IllegalStruct());
+	} else {
+		switch (lookupHashMap(structs, name)) {
+			Some(struct): {
+				FcRuntimeStruct(
+					mapi(args, \i, val -> FcRuntimeField(struct.args[i].name, ref val))
+				);
+			}
+			None(): {
+				onError("unknown struct " + name);
+			}
+		}
+	}
+}
+
 fcMakeFnFromLambda(
-	lambda : FiLambda, 
-	structs : HashMap<string, FiTypeStruct>, 
-	globals : HashMap<string, FcEvalGlobal>, 
+	lambda : FiLambda,
+	structs : HashMap<string, FiTypeStruct>,
+	globals : HashMap<string, FcEvalGlobal>,
 	closure : Maybe<HashMap<string, flow>>,
 	onError : (string, int) -> void
 ) -> flow {
