@@ -57,6 +57,10 @@ std::u16string flow_d2s(double v) {
 }
 
 // common
+template <typename T, typename TT>
+T flow_cast(const TT& oth) {
+	return T(reinterpret_cast<const T&>(oth));
+}
 
 // compare unions by address
 template <typename ...Args1, typename ...Args2>
