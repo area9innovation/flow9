@@ -83,23 +83,21 @@ TODO CGraph:
 
 Need decision:
 - types.flow: implicit None type-parameter
-- tests/type26.flow
-	C:/flow9/tools/flow9/tests/type26.flow:40:37: ERROR: construct FMaxConst, Not enough typars from FMaxConst<e199> to FFn expecting 2 type parameters
-							fselect(b2, FMaxConst(v1));
-									^
-	ERROR: Could not make supertype FFn from FMaxConst<e199>
 
+- type39: flow
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
 		Triple(flow(None()), start, "");
 		      ^
    when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
    Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
 
+- type40: function-level polymorphism does not work.
+
 - Do prolog-style search when all possible unifications and subtypes
   have completed
 
 - unify should have a way to telling if they were postponed
-  so resolution knows how to handle it
+  so resolution knows how to handle it?
 
 # Name and type lookups
 
