@@ -184,6 +184,26 @@ class Native {
 		");
 		return bytes;
 	}
+
+	public static function usedJSHeapSize() : Int {
+		try {
+			return untyped Browser.window.performance.memory.usedJSHeapSize;
+		} catch (e : Dynamic) {
+			untyped console.log("Warning! performance.memory.usedJSHeapSize is not implemented in this target");
+			return 0;
+		}
+	}
+
+	public static function totalJSHeapSize() : Int {
+		try {
+			return untyped Browser.window.performance.memory.totalJSHeapSize;
+		} catch (e : Dynamic) {
+			untyped console.log("Warning! performance.memory.totalJSHeapSize is not implemented in this target");
+			return 0;
+		}
+	}
+
+	// TODO : Implement native for performance.measureUserAgentSpecificMemory() as well, when it will be supported by browsers.
 #end
 
 	private static function copyAction(textArea : Dynamic) {

@@ -2,171 +2,17 @@ import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/cgraph/pretty;
 
 export {
-	// This propagates all info between these nodes, but does not unify them at the top level
 	mergeCNodes(cmap : CMap, leftClass : int, left : CNode, rightClass : int, right : CNode, reason : ErrorReason) -> CNode;
 
 	resolveCOverload(tmap : CMap, overloadClass : int, overload : COverload, other : CNode) -> bool;
 }
 
 mergeCNodes(cmap : CMap, leftClass : int, left : CNode, rightClass : int, right : CNode, reason : ErrorReason) -> CNode {
-	if (right == CEpsilon() || right == left) left
+	if (right == CEpsilon()) left
+	else if (left == CEpsilon() || right == left) right
 	else {
-		error = \r2 -> {
-			println(
-				joinReasons(reason,
-					elaborateReason(r2, 
-						prettyCNode(cmap, left) + " != " + prettyCNode(cmap, right)
-					)
-				)
-			);
-			left;
-		};
-		todo = \ -> {
-			println("TODO: Merge " + prettyCNode(cmap, left) + " and " + prettyCNode(cmap, right));
-			left;
-		}
-		switch (left) {
-			CEpsilon(): right;
-			CName(name, typars, nreason): {
-				switch (right) {
-					CName(rname, rtypars, rnreason): {
-						if (name == rname) {
-							if (length(typars) == length(rtypars)) {
-								CName(
-									name,
-									mapi(typars, \i, typar -> {
-										unionUnionMap(cmap.cmap, typar, rtypars[i], reason);
-									}),
-									joinReasons(nreason, rnreason)
-								);
-							} else todo();
-						} else todo();
-					}
-					default: todo();
-				}
-			}
-			CFunction(largs, lreturn, lreason): {
-				switch (right) {
-					CFunction(rargs, rreturn, rreason): {
-						if (length(largs) == length(rargs)) {
-							nargs = mapi(largs, \i, larg : int -> {
-								unionUnionMap(cmap.cmap, larg, rargs[i], reason);
-							});
-							CFunction(
-								nargs,
-								unionUnionMap(cmap.cmap, lreturn, rreturn, reason),
-								joinReasons(lreason, rreason)
-							);
-						} else {
-							error(joinReasons(lreason, rreason));
-						}
-					}
-					COverload(unique, options, oreason): {
-						todo();
-					}
-					default: error(lreason);
-				}
-			}
-			COverload(unique, options, oreason): {
-				switch (right) {
-					CEpsilon(): left;
-					CName(name, typars, rreason): {
-						println("TODO: Is this really supposed to happen?");
-						if (false) {
-							matches = set2array(filterSet(options, \opt -> {
-								onode = getUnionMapValue(cmap.cmap, opt);
-								matchesCNode(cmap, onode, right);
-							}));
-							if (length(matches) != 1) {
-								println("TODO: Merge result " + prettyCNode(cmap, right) + " into "  + prettyCNode(cmap, left));
-							} else {
-								unionUnionMap(cmap.cmap, rightClass, matches[0], oreason);
-								{}
-							}
-						}
-						// OK, restrict the options to this
-						right;
-					}
-					CFunction(args, return, rreason): {
-						todo();
-					}
-					COverload(runique, roptions, rreason): {
-						// find the intersection
-						todo();
-					}
-				}
-			}
-		}
-	}
-}
-
-resolveCOverload(cmap : CMap, overloadClass : int, overload : COverload, other : CNode) -> bool {
-	options = foldSet(overload.options, makeSet(), \acc, opt -> {
-		extractCNodes(cmap, opt, acc)
-	});
-	matches = filterSet(options, \opt -> {
-		onode = getUnionMapValue(cmap.cmap, opt);
-		matchesCNode(cmap, onode, other);
-	});
-	nmatches = sizeSet(matches);
-	if (nmatches != 1) {
-		if (nmatches != sizeSet(options) && nmatches != 0) {
-			nover = COverload(overload with options = matches);
-			// println("  Reducing overload " + prettyCEClass(cmap, overloadClass) + " to " + prettyCNode(cmap, nover));
-			setUnionMapValue(cmap.cmap, overloadClass, nover);
-			true;
-		} else {
-			println("TODO: Result of " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other) + " is");
-			iterSet(matches, \match -> {
-				println("  " + prettyCEClass(cmap, match));
-			})
-			false;
-		}
-	} else {
-		nodeClass = set2array(matches)[0];
-		if (findUnionMapRoot(cmap.cmap, nodeClass) != findUnionMapRoot(cmap.cmap, overloadClass)) {
-			winner = getUnionMapValue(cmap.cmap, nodeClass);
-			// println("  Resolving overload " + prettyCEClass(cmap, overloadClass) + " to " + prettyCNode(cmap, winner));
-			setUnionMapValue(cmap.cmap, overloadClass, winner);
-		}
-		true;
-	}
-}
-
-extractCNodes(cmap : CMap, class : int, acc : Set<int>) -> Set<int> {
-	onode = getUnionMapValue(cmap.cmap, class);
-	switch (onode) {
-		CEpsilon(): insertSet(acc, class);
-		CName(__, __, __): insertSet(acc, class);
-		CFunction(__, __, __): insertSet(acc, class);
-		COverload(uniques, options, reason): foldSet(options, acc, \acc2, ee -> extractCNodes(cmap, ee, acc2));
-	}
-}
-
-matchesCNode(cmap : CMap, left : CNode, right : CNode) -> bool {
-	left == right || right == CEpsilon()
-	|| switch (left) {
-		CEpsilon(): true;
-		CName(name, typars, reason): {
-			switch (right) {
-				CName(rname, rtypars, rreason): {
-					name == rname && matchesEClasses(cmap, typars, rtypars);
-				}
-				default: false;
-			}
-		}
-		CFunction(args, return, reason): {
-			switch (right) {
-				CFunction(rargs, rreturn, rreason): {
-					matchesEClasses(cmap, args, rargs)
-					&& matchesEClass(cmap, return, rreturn);
-				}
-				default: false;
-			}
-		}
-		COverload(unique, options, reason): {
-			false;
-		}
+		println("ERROR: WE should not be merging inside this monster");
+		right;
 	}
 }
 

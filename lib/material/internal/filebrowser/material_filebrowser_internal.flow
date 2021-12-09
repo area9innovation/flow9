@@ -60,9 +60,34 @@ makeSearchState(engine : FilebrowserEngine<?, ??>, text : string, ext : [string]
 	)
 }
 
+createRequestPreviewFn(state : FilebrowserState<?, ??, ???>, onError) -> Pair<(Material) -> Material, (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void> {
+	filesB : DynamicBehaviour<[Pair<string, DynamicBehaviour<Maybe<Material>>>]> = make([]);
+	
+	requestPreviews = \files -> state.engine.getPathsPreview(
+		map(files, \f -> f.first),
+		\pairs -> {
+			iter(pairs, \pair -> {maybeApply(find(files, \file -> file.first == pair.first), \file -> nextDistinct(file.second, Some(pair.second)))});
+		},
+		onError
+	);
+
+	materialWrapper = \m -> MConstruct(
+		[makeSubscribe(fstall(filesB, 100), \files -> if (length(files) > 0) { requestPreviews(files); nextDistinct(filesB, []);})],
+		m
+	);
+
+	requestPreviewfn = \file : Pair<string, DynamicBehaviour<Maybe<Material>>> -> {
+		currentFiles = fgetValue(filesB);
+		if(isNone(find(currentFiles, \f -> f.first == file.first))) nextDistinct(filesB, arrayPush(currentFiles, file))
+	};
+
+	Pair(materialWrapper, requestPreviewfn);
+
+}
+
 startTimestampR : ref double = ref 0.0;
 // calls the content loading and view creating for the current path
-getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool) -> Material {
+getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool, scrollPosition : DynamicBehaviour<Point>, setPosM : Maybe<(DynamicBehaviour<Point>) -> void>) -> Material {
 	currentPath = getValue(state.currentPathB);
 	viewB = make(MCenter(MLoading(_("Loading content, please wait..."))));
 	onError = \error -> next(viewB, MCenter(MText("Error: " + error, [])));
@@ -71,27 +96,25 @@ getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], fi
 	startTimestampR := curTimestamp;
 	getContentAPI(state.engine, currentPath, ext, filterFn,
 		\dirs : [string], files : [string] -> {
-			previewsB = make([]);
+
 			previewsLoadingStatusB = make(Some(_("Thumbnails updating, please wait...")));
-			next(viewB, prepareAndGetContentUI(
-				state,
-				map(dirs, \d -> Pair(d, true)),
-				if (folderSelection) [] else map(files, \d -> Pair(d, false)),
-				contains(dirs, ".."),
-				previewsB,
-				previewsLoadingStatusB
-			));
-			timer(100, \-> {
-				state.engine.getPathsPreview(
-					map(files, \f -> currentPath + f),
-					\pairs -> {
-						//nextDistinct(previewsLoadingStatusB, None());
-						nextDistinct(previewsB, pairs);
-					},
-					onError
-				);
-				checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback, previewsLoadingStatusB, curTimestamp)
-			});
+			previewRequestFn = createRequestPreviewFn(state, onError);
+
+			next(
+				viewB,
+				prepareAndGetContentUI(
+					state,
+					map(dirs, \d -> Pair(d, true)),
+					if (folderSelection) [] else map(files, \d -> Pair(d, false)),
+					contains(dirs, ".."),
+					previewRequestFn.second,
+					previewsLoadingStatusB,
+					scrollPosition,
+					setPosM
+				) |> previewRequestFn.first
+			);
+			deferUntilRender(\-> checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback, previewsLoadingStatusB, curTimestamp));
+
 		},
 		onError
 	);
@@ -200,7 +223,7 @@ getContentAPI(engine : FilebrowserEngine<?, ??>, path : string, ext : [string], 
 }
 
 // start the elements searching (which names contains searchText string) and updating the content view
-getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : string, ext : [string], filterFn : (string) -> bool) -> Material {
+getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : string, ext : [string], filterFn : (string) -> bool, scrollPosition : DynamicBehaviour<Point>) -> Material {
 	// Special state2 for search case to have tooltips in result view.
 	// Without dummy `currentPathB` files in the current folder will be without tooltips.
 	state2 = FilebrowserState(state with currentPathB=make("-1"));
@@ -218,6 +241,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 
 		if (!getValue(stateSearch.breakSearchB)) {
 			l = length(dirs) + length(files);
+			previewRequestFn = createRequestPreviewFn(state, nop1);
 			next(
 				itemB,
 				if (l == 0)
@@ -225,7 +249,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state2, dirs, files, None(), make([]), make(None()))
+						getContentUI(state2, dirs, files, None(), previewRequestFn.second , make(None()), scrollPosition, None())|> previewRequestFn.first
 					)
 			)
 		}
@@ -327,6 +351,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	dialogContentB = make(TEmpty());
 	closeMe = \-> next(closeB, true);
 	normalExts = uniq(map(ext, toLowerCase));
+	scrollPositionB = make(zeroPoint);
 
 	curPathOutAll = map(extractStructMany(styles, FbGetCurrentPathB(make(""))), \s -> s.path);
 	curPathOutArrB = tail(curPathOutAll);
@@ -433,13 +458,17 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	changesCallbackFn = \added, removed, updated -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, updated, closeMe));
 
 	lastUpdateTimeMR = ref None();
-	updateFilesView = \-> {
+	updateFilesView = \setPosM-> {
 		if (eitherMap(^lastUpdateTimeMR, \t -> timestamp() - t, 10.0) > 1.0) {
-			nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection));
+			nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection, scrollPositionB, setPosM));
 			lastUpdateTimeMR := Some(timestamp());
 		}
 	}
-	iter(doUpdateCallArr, \fn -> fn(updateFilesView));
+
+	updateFilesViewWithZeroScrollPosition = \-> updateFilesView(None());
+	updateFilesViewWithSameScrollPosition = \-> {sp0 = getValue(scrollPositionB); updateFilesView(Some(\sp -> nextDistinct(sp, sp0)))};
+
+	iter(doUpdateCallArr, \fn -> fn(updateFilesViewWithSameScrollPosition));
 
 	state.engine.isDirectory(
 		state.startDir,
@@ -479,7 +508,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 								MTextButton(_("CREATE"), \-> {
 									state.engine.createDirectory(
 										getValue(state.currentPathB) + getValue(nameB) + "/",
-										updateFilesView,
+										updateFilesViewWithSameScrollPosition,
 										println
 									);
 									next(closeDialogB, true);
@@ -615,7 +644,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 							[copied.first],
 							copyTo,
 							\-> {
-								updateFilesView();
+								updateFilesViewWithSameScrollPosition();
 								if (copied.second) next(state.copiedElementsB, Pair("", false));
 							},
 							println
@@ -868,7 +897,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				initClickB(5, nop);
 
 				MTextButton(cap |> toUpperCase, \->
-					func(getValue(state.currentPathB), getValue(state.selectedElementsB), updateFilesView),
+					func(getValue(state.currentPathB), getValue(state.selectedElementsB), updateFilesViewWithSameScrollPosition),
 					[],
 					[]
 				)
@@ -1104,7 +1133,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 											onContentError
 										);
 									},
-									updateFilesView,
+									updateFilesViewWithSameScrollPosition,
 									println
 								),
 								println
@@ -1233,19 +1262,19 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			}),
 			subscribe(zoomValueB, \zoomValue -> nextDistinct(state.iconSizeB, 20.0 + zoomValue * 100.0)),
 			// Update content if the current path changed
-			subscribe(state.currentPathB, \__ -> updateFilesView()),
+			subscribe(state.currentPathB, \__ -> updateFilesViewWithZeroScrollPosition()),
 			// Update content if the "searchText" changed. Updating starts if the "searchText" has not changed during one sec.
 			subscribe2(state.searchTextB, \searchText -> {
 				// clear selection on search start
 				nextDistinct(state.selectedElementsB, []);
 
-				if (strlen(searchText) == 0) updateFilesView()
+				if (strlen(searchText) == 0) updateFilesViewWithZeroScrollPosition()
 				else timer(1000, \-> {
 					if (searchText == getValue(state.searchTextB))
-						next(dialogContentB, getSearchResultUI(state, searchText, normalExts, filterFn))
+						next(dialogContentB, getSearchResultUI(state, searchText, normalExts, filterFn, scrollPositionB))
 				})
 			}),
-			state.engine.subscribeOnUpdates(updateFilesView),
+			state.engine.subscribeOnUpdates(updateFilesViewWithSameScrollPosition),
 			fBidirectionalLink(
 				selectedFilesB,
 				fmerge(selectedFilesMany),

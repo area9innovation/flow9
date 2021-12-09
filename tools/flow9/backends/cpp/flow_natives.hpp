@@ -6,6 +6,31 @@
 #include <iomanip>
 // math
 #include <cmath>
+// getStructName
+#ifdef __GNUG__
+#include <cstdlib>
+#include <memory>
+#include <cxxabi.h>
+std::string demangle(const char* name) {
+    int status = -4; // some arbitrary value to eliminate the compiler warning
+    // enable c++11 by passing the flag -std=c++11 to g++
+    std::unique_ptr<char, void(*)(void*)> res {
+        abi::__cxa_demangle(name, NULL, NULL, &status),
+        std::free
+    };
+    return (status==0) ? res.get() : name ;
+}
+#else
+// does nothing if not g++
+std::string demangle(const char* name) {
+    return name;
+}
+#endif
+
+template <typename A>
+std::shared_ptr<A> makeFlowRef(A value) {
+  return std::make_shared<A>(value);
+}
 
 template <typename A>
 std::shared_ptr<A> makeFlowRef(A value) {
@@ -13,6 +38,16 @@ std::shared_ptr<A> makeFlowRef(A value) {
 }
 
 // common
+// compare unions by address
+template <typename ...Args1, typename ...Args2>
+bool operator==(std::variant<Args1...>& struct1, std::variant<Args2...>& struct2) {
+	return &struct1 == &struct2;
+}
+// for structs ( Struct1 == Struct2). (Struct1 == Struct1) is overloaded inside the struct
+template <typename A, typename B>
+bool operator==(const A& lhs, const B& rhs) {
+	return lhs._id == rhs._id;
+}
 
 void flow_quit(int32_t code) {
 	// TODO
@@ -27,6 +62,30 @@ void flow_println2(A d) {
 void flow_println2(std::u16string d) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
 	std::cout << codecvt.to_bytes(d) << std::endl;
+}
+
+template <typename A>
+bool flow_isArray(A v) {
+	return false;
+}
+
+template <typename A>
+bool flow_isArray(const std::vector<A>& v) {
+	return true;
+}
+
+template <typename A, typename B>
+bool flow_isSameObj(const A& v1, const B& v2) {
+	if (typeid(v2) == typeid(v2)) {
+		return v1 == v2;
+	} else {
+		return false;
+	}
+}
+
+template <typename A, typename B>
+bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
+	return &v1 == &v2;
 }
 
 // math
@@ -167,6 +226,18 @@ std::vector<A> flow_replace(const std::vector<A>& flow_a, int32_t i, A value) {
   }
 }
 
+template <typename A>
+void flow_iter(const std::vector<A>& flow_a, const std::function<void(A)> & flow_fn) {
+  std::for_each(flow_a.begin(), flow_a.end(), flow_fn);
+}
+
+template <typename A>
+void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, A)> & flow_fn) {
+	for (std::size_t i = 0; i != flow_a.size(); ++i) {
+		flow_fn(i, flow_a[i]);
+	}
+}
+
 // flowstruct
 template <typename A, typename B>
 bool flow_isSameStructType(A struct1, B struct2) {
@@ -203,4 +274,12 @@ B flow_extractStruct(const std::vector<A> flow_a, B flow_b) {
   } else {
     return _extractStructVal<B>(*item);
   }
+}
+
+template <typename T> std::string type_name();
+
+template <typename A>
+std::u16string flow_getStructName(A st) {
+	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
+	return codecvt.from_bytes(demangle(typeid(st).name()));
 }
