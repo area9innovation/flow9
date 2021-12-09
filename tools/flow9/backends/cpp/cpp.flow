@@ -60,39 +60,6 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	body = superglue(functions, firstOfPair, "\n");
 	declarations = superglue(filter(functions, \p -> p.second != ""), secondOfPair, ";\n");
 
-	flowType = "struct _FlowType : std::any {
-  void(*print)(_FlowType const&) = nullptr;
-
-  friend std::ostream& operator<<( std::ostream& os, _FlowType const& a ) {
-    a.print( a );
-    return os;
-  }
-
-  template<typename T>
-  _FlowType( T&& t ):
-    std::any( std::forward<T>(t) ),
-    print([](_FlowType const& self ) { flow_println2(std::any_cast<std::decay_t<T>>(self)); } )
-  {}
-
-  template<typename T>
-  _FlowType( T& t ):
-    std::any( std::forward<T>(t) ),
-    print([](_FlowType const& self ) { flow_println2(std::any_cast<std::decay_t<T>>(self)); } )
-  {}
-
-  bool operator==(const _FlowType& a) const { return a == *this; }
-  bool operator!=(const _FlowType& a) const { return a != *this; }
-  bool operator>(const _FlowType& a) const {return a > *this;}
-  bool operator<(const _FlowType& a) const {return a < *this;}
-  bool operator>=(const _FlowType& a) const {return (a == *this) || (a > *this);}
-  bool operator<=(const _FlowType& a) const {return (a == *this) || (a < *this);}
-
- /* template<typename ...T>
-  T getValue() {
-    return std::any_cast<std::decay_t<T>>(*this);
-  }*/
-};";
-
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
@@ -102,7 +69,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		+ getBackendRequirements(backend) + "\n"
 	//	+ "// RUNTIME\n"
 	//	+ runtime + "\n"
-		+ flowType + "\n"
+		+ makeFlowTypeCpp() + "\n"
 		+ "// Structs for unions\n"
 		+ unionStructs
 		+ "// UNIONS\n"
@@ -435,18 +402,31 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 }
 
 dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
+	argTypes = lookupTreeDef(backend.info.usedTypars, s.id, []);
+	operatorPrint = addTemplatesToStruct(
+		argTypes,
+		blueprint(
+			"std::ostream& operator<<(std::ostream& os, const %type%%typar%& a){os << \"%type%{\"; %fields% os <<\"}\"; return os;}\n",
+			[
+				"type", s.id,
+				"typar", makeTyparsForConstructorHeader(argTypes),
+				"fields", superglue(s.structArgs, \a -> "flow_print2(a." + a.id + ");", "")
+			]
+		)
+	);
+
 	dstruct2cppEx(
 		backend,
 		s,
 		\__, type -> dtype2cpp(backend, type),
 		blueprint(
-			"\nbool operator==(const %type%& a) const {return %equalFields%;}
+			"
+			bool operator==(const %type%& a) const {return %equalFields%;}
 			bool operator!=(const %type%& a) const {return %nequalFields%;}
 			bool operator>(const %type%& a) const {return %gFields%;}
 			bool operator<(const %type%& a) const {return %lFields%;}
 			bool operator>=(const %type%& a) const {return %geFields%;}
-			bool operator<=(const %type%& a) const {return %leFields%;}
-			\n",
+			bool operator<=(const %type%& a) const {return %leFields%;}\n",
 			[
 				"type", s.id,
 				"equalFields", makeEqualStructArgsBody(backend, s.structArgs, []),
@@ -457,7 +437,7 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 				"geFields", makeGreaterEqStructArgsBody(backend, s.structArgs, []),
 			]
 		)
-	);
+	) + "\n" + operatorPrint;
 }
 
 dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType) -> string, dstructFns : string) -> string {
@@ -615,7 +595,7 @@ dstruct2id(backend : Backend<CppInfo>, s : DStruct) -> string {
 }
 
 getStructIdMember() -> string {
-	" unsigned int _id";
+	" static const unsigned int _id";
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
@@ -1061,6 +1041,21 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
 		]
 	);
 
+	printOperator = blueprint(
+		"std::ostream& operator<<(std::ostream& os, const %type%%typar%& a){
+    os << \"%type%{\"; %fields% os <<\"}\";
+    return os;
+}",
+		[
+			"type", s.struct.id,
+			"typar", typars,
+			"fields", unpair(splittedArgs, \recArgs, simpleArgs -> 
+				superglue(simpleArgs, \a -> "flow_print2(a." + a.id + ");", "")
+				+ superglue(recArgs, \a -> "flow_print2(*a." + a.id + ");", "")
+			)
+		]
+	);
+
 	makeOperator = \op : string, fn -> blueprint(
 			"bool %type%%typar%::operator%op%(const %type%& a) const {
   return %cmpFields%;
@@ -1079,7 +1074,8 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
     + addTemplatesToStruct(argTypes, makeOperator(">", makeGreaterStructArgsBody)) + "\n"
     + addTemplatesToStruct(argTypes, makeOperator("<", makeLessStructArgsBody)) + "\n"
     + addTemplatesToStruct(argTypes, makeOperator("<=", makeLessEqStructArgsBody)) + "\n"
-    + addTemplatesToStruct(argTypes, makeOperator(">=", makeGreaterEqStructArgsBody)) + "\n";
+    + addTemplatesToStruct(argTypes, makeOperator(">=", makeGreaterEqStructArgsBody)) + "\n"
+    + addTemplatesToStruct(argTypes, printOperator) + "\n";
 }
 
 // init-con — copy-con
@@ -1116,4 +1112,42 @@ makeStructConstructorDeclarations(backend : Backend<CppInfo>, struct : Recursive
 //     Tree<?, ??> ::= TreeNode<?, ??>, TreeEmpty;
 makeUsedStructTypars(structs : Tree<string, DStruct>) -> Tree<string, [string]> {
 	mapTree(structs, \struct -> dtypes2parameters(map(struct.structArgs, \arg -> arg.type)))
+}
+
+makeFlowTypeCpp() -> string {
+	"struct _FlowType : std::any {
+  void(*print)(_FlowType const&) = nullptr;
+
+  friend std::ostream& operator<<( std::ostream& os, _FlowType const& a ) {
+    a.print( a );
+    return os;
+  }
+
+  template<typename T>
+  _FlowType( T&& t ):
+    std::any( std::forward<T>(t) ),
+    print([](_FlowType const& self ) { flow_println2(std::any_cast<std::decay_t<T>>(self)); } )
+  {}
+
+  template<typename T>
+  _FlowType( T& t ):
+    std::any( std::forward<T>(t) ),
+    print([](_FlowType const& self ) { 
+      try {
+        flow_print2(std::any_cast<std::decay_t<T>>(self));
+      }
+      catch(const std::bad_any_cast& e) {
+        flow_print2(\" Wrong type in _flow_ \");
+      }
+    } )
+  {}
+
+  bool operator==(const _FlowType& a) const { return a == *this; }
+  bool operator!=(const _FlowType& a) const { return a != *this; }
+  bool operator>(const _FlowType& a) const {return a > *this;}
+  bool operator<(const _FlowType& a) const {return a < *this;}
+  bool operator>=(const _FlowType& a) const {return (a == *this) || (a > *this);}
+  bool operator<=(const _FlowType& a) const {return (a == *this) || (a < *this);}
+
+};";
 }
