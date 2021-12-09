@@ -264,6 +264,13 @@ void flow_iter(const std::vector<A>& flow_a, const std::function<void(A)> & flow
 }
 
 template <typename A>
+void flow_iter(const std::vector<A>& flow_a, void(*fn)(A) ) {
+	for (std::size_t i = 0; i != flow_a.size(); ++i) {
+		(*fn)(flow_a[i]);
+	}
+}
+
+template <typename A>
 void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, A)> & flow_fn) {
 	for (std::size_t i = 0; i != flow_a.size(); ++i) {
 		flow_fn(i, flow_a[i]);
