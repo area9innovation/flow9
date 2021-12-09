@@ -79,10 +79,10 @@ TODO CGraph:
 - In addition to makeSupertype, also have a makeSubtype to restrict the
   overloads more?
 
-- fusion: FFn and FMaxConst type par mismatch. Need simpler test case
-
 Need decision:
 - types.flow: implicit None type-parameter
+
+- type41: Something wrong in inference
 
 - type39: flow
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
@@ -90,8 +90,6 @@ C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (e
 		      ^
    when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
    Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
-
-- type40: function-level polymorphism does not work.
 
 - Do prolog-style search when all possible unifications and subtypes
   have completed
