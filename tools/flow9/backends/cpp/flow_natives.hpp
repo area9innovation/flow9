@@ -63,12 +63,6 @@ T flow_cast(const TT& val) {
 	return T(reinterpret_cast<const T&>(val));
 }
 
-/*template <typename ...T, typename ...TT>
-T flow_cast(std::variant<TT...> val) {
-	//std::cout<< "Casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
-	return T(reinterpret_cast<const T&>(val));
-}*/
-
 template <typename T, typename ...TT>
 T flow_cast_variant(std::variant<TT...> val) {
 	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
