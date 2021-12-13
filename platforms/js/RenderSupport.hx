@@ -149,9 +149,7 @@ class RenderSupport {
 					PixiStage.nativeWidget.appendChild(UserStyleTestElement);
 				}
 			} else {
-				var existingInstance = untyped FlowInstances.find(function (instance) {
-					return instance.rootId == rootId;
-				});
+				var existingInstance = getInstanceByRootId(rootId);
 
 				if (existingInstance == null) {
 					untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
@@ -1966,6 +1964,32 @@ class RenderSupport {
 
 	public static function getStageHeight() : Float {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
+	}
+
+	public static function getStageWidthOf(renderRootId : String) : Float {
+		if (renderRootId == "") return getStageWidth();
+
+		var existingInstance = getInstanceByRootId(renderRootId);
+
+		if (existingInstance == null) {
+			untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
+			return getStageWidth();
+		} else {
+			return existingInstance.renderer.width / backingStoreRatio / getAccessibilityZoom();
+		}
+	}
+
+	public static function getStageHeightOf(renderRootId : String) : Float {
+		if (renderRootId == "") return getStageHeight();
+
+		var existingInstance = getInstanceByRootId(renderRootId);
+
+		if (existingInstance == null) {
+			untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
+			return getStageHeight();
+		} else {
+			return existingInstance.renderer.height / backingStoreRatio / getAccessibilityZoom();
+		}
 	}
 
 	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
@@ -3993,6 +4017,12 @@ class RenderSupport {
 		// a lot of Graphics functions do not work correctly if color has alpha channel
 		// (all other targets ignore it as well)
 		return color & 0xFFFFFF;
+	}
+
+	public static function getInstanceByRootId(rootId : String) : FlowInstance {
+		return untyped FlowInstances.find(function (instance) {
+			return instance.rootId == rootId;
+		});
 	}
 }
 
