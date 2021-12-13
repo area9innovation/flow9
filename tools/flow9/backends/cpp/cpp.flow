@@ -105,18 +105,24 @@ return _defReturn;",
 				["type", type,]
 			);
 		}
-		blueprint(
-			"bool _end;
+
+		recursiveBody = bstatement2cpp(backend, body, true);
+		if (recursiveBody == "") {
+			defaultReturn
+		} else {
+			blueprint(
+				"bool _end;
 do {
 	_end = true;
 	%body%
 } while (!_end);
 %return%",
-			[
-				"body", bstatement2cpp(backend, body, true),
-				"return", defaultReturn,
-			]
-		)
+				[
+					"body", recursiveBody,
+					"return", defaultReturn,
+				]
+			)
+		}
 	}
 	switch (d) {
 		BGlobalVar(id, body, type): {
@@ -791,19 +797,26 @@ bvar2cpp(bexp : BVar, backend : Backend<CppInfo>) -> string {
 	if (bexp.id == "__cast") {
 		// From : __cast(flow_var)
 		// To : flow_cast<TypeName>(flow_var)
-		toType = switch (bexp.type : BType) {
-			BTypePar(__) : "";
-			BTypeName(__, __) : "";
-			BTypeFunction(__, returnType) : btype2cpp(backend, returnType);
+		fromToType = switch (bexp.type : BType) {
+			BTypePar(__) : Triple("", false, false);
+			BTypeName(__, __) : Triple("", false, false);
+			BTypeFunction(args, returnType) : Triple(
+				btype2cpp(backend, returnType),
+				containsKeyTree(backend.info.unionTypes, bType2id(returnType)),
+				args != [] && containsKeyTree(backend.info.unionTypes, bType2id(args[0]))
+			)
 		}
-		if ((toType) == "") {
+		if (fromToType.first == "") {
 			// something is wrong
 			bexp.id
 		} else {
-			blueprint(
-				"flow_cast<%type%>",
-				["type", toType]
-			)
+			untriple(fromToType, \toType, isToUnion, isFromUnion -> blueprint(
+				"%castFn%<%type%>",
+				[
+					"type", toType,
+					"castFn", if (!isToUnion && isFromUnion) "flow_cast_variant" else "flow_cast",
+				]
+			))
 		}
 	} else {
 		// add function argument types to help the с++ compiler with polymorphism

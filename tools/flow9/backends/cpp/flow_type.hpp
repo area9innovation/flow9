@@ -32,11 +32,13 @@ struct _FlowType : std::any {
 
 template <typename T>
 T flow_cast(const _FlowType& val) {
+	//std::cout<< "Casting from '" << demangle(val.type().name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
   try {
     return std::any_cast<std::decay_t<T>>(val);
   }
-  catch(const std::bad_any_cast& e) {
+  catch (const std::bad_any_cast& e) {
     std::cout<< "ERROR casting from '" << demangle(val.type().name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
+    //throw std::invalid_argument("ERROR casting from '" + demangle(val.type().name()) + "' to '" + demangle(typeid(T).name()) + "'");
     T res;
     return res;
   }
