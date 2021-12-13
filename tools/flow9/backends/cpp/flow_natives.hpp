@@ -119,6 +119,28 @@ void flow_print2(const std::variant<Args...> v) {
 	std::visit([](auto&& x) { flow_print2(x); }, v);
 }
 
+template <typename A>
+void flow_print2(const std::vector<A>& v) {
+	int32_t lastInd = v.size() - 1;
+
+    flow_print2("[");
+    for (std::size_t i = 0; i < v.size(); ++i) {
+    	flow_print2(v[i]);
+    	if (i != lastInd) flow_print2(", ");
+	}
+	flow_print2("]");
+}
+
+template <typename A, typename B>
+bool areValuesEqual(const std::vector<A>& v1, const std::vector<B>& v2) {
+	return v1.size() == v2.size() && std::equal(v1.begin(), v1.end(), v2.begin());
+}
+
+template <typename A, typename B>
+bool areValuesEqual(const A& v1, const B& v2) {
+	return v1 == v2;
+}
+
 // for println
 template <typename A>
 std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){

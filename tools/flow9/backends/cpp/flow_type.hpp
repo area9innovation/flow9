@@ -3,6 +3,9 @@
 
 struct _FlowType : std::any {
   void(*print)(_FlowType const&) = nullptr;
+  bool(*equal)(_FlowType const&, _FlowType const&) = nullptr;
+  bool(*greater)(_FlowType const&, _FlowType const&) = nullptr;
+  bool(*less)(_FlowType const&, _FlowType const&) = nullptr;
 
   friend std::ostream& operator<<( std::ostream& os, _FlowType const& a ) {
     a.print( a );
@@ -18,15 +21,30 @@ struct _FlowType : std::any {
   template<typename T>
   _FlowType( T t ):
     std::any( std::forward<T>(t) ),
-    print([](_FlowType const& self ) { flow_print2(std::any_cast<std::decay_t<T>>(self)); } )
+    print([](_FlowType const& self ) { flow_print2(std::any_cast<std::decay_t<T>>(self)); } ),
+    equal([](_FlowType const& a, _FlowType const& b) {
+    	auto tmp1 = std::any_cast<std::decay_t<T>>(a);
+    	auto tmp2 = std::any_cast<std::decay_t<T>>(b);
+    	return areValuesEqual(tmp1, tmp2);//tmp1 == tmp2;
+    } ),
+    greater([](_FlowType const& a, _FlowType const& b) {
+    	auto tmp1 = std::any_cast<std::decay_t<T>>(a);
+    	auto tmp2 = std::any_cast<std::decay_t<T>>(b);
+    	return tmp1 > tmp2;
+    } ),
+    less([](_FlowType const& a, _FlowType const& b) {
+    	auto tmp1 = std::any_cast<std::decay_t<T>>(a);
+    	auto tmp2 = std::any_cast<std::decay_t<T>>(b);
+    	return tmp1 < tmp2;
+    } )
   {}
 
-  bool operator==(const _FlowType& a) const { return a == *this; }
-  bool operator!=(const _FlowType& a) const { return a != *this; }
-  bool operator>(const _FlowType& a) const {return a > *this;}
-  bool operator<(const _FlowType& a) const {return a < *this;}
-  bool operator>=(const _FlowType& a) const {return (a == *this) || (a > *this);}
-  bool operator<=(const _FlowType& a) const {return (a == *this) || (a < *this);}
+  bool operator==(const _FlowType& a) const { return equal(a, *this); }
+  bool operator!=(const _FlowType& a) const { return !equal(a, *this); }
+  bool operator>(const _FlowType& a) const { return greater(*this, a); }
+  bool operator<(const _FlowType& a) const { return less(*this, a); }
+  bool operator>=(const _FlowType& a) const {return equal(a, *this) || greater(*this, a);}
+  bool operator<=(const _FlowType& a) const {return equal(a, *this) || less(*this, a);}
 };
 
 
