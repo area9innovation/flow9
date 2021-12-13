@@ -57,6 +57,24 @@ std::u16string flow_d2s(double v) {
 }
 
 // common
+template <typename T, typename TT>
+T flow_cast(const TT& val) {
+	//std::cout<< "Casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
+	return T(reinterpret_cast<const T&>(val));
+}
+
+template <typename T, typename ...TT>
+T flow_cast_variant(std::variant<TT...> val) {
+	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
+	if (const T* pval = std::get_if<T>(&val)) {
+		return *pval; 
+	} else  {
+		std::cout<< "ERROR casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
+		T res;
+		return res;
+		//throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" +  demangle(typeid(val).name()) + "]");
+	}
+}
 
 // compare unions by address
 template <typename ...Args1, typename ...Args2>
@@ -99,6 +117,28 @@ void flow_print2(const double d) {
 template <typename ...Args>
 void flow_print2(const std::variant<Args...> v) {
 	std::visit([](auto&& x) { flow_print2(x); }, v);
+}
+
+template <typename A>
+void flow_print2(const std::vector<A>& v) {
+	int32_t lastInd = v.size() - 1;
+
+    flow_print2("[");
+    for (std::size_t i = 0; i < v.size(); ++i) {
+    	flow_print2(v[i]);
+    	if (i != lastInd) flow_print2(", ");
+	}
+	flow_print2("]");
+}
+
+template <typename A, typename B>
+bool areValuesEqual(const std::vector<A>& v1, const std::vector<B>& v2) {
+	return v1.size() == v2.size() && std::equal(v1.begin(), v1.end(), v2.begin());
+}
+
+template <typename A, typename B>
+bool areValuesEqual(const A& v1, const B& v2) {
+	return v1 == v2;
 }
 
 // for println
@@ -275,6 +315,17 @@ void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, 
 	for (std::size_t i = 0; i != flow_a.size(); ++i) {
 		flow_fn(i, flow_a[i]);
 	}
+}
+
+template <typename A>
+int flow_iteriUntil(const std::vector<A>& flow_a, const std::function<bool(int32_t, A)> & flow_fn) {
+	int32_t i = 0;
+	bool found = false;
+	while (i < flow_a.size() && !found) {
+		found = flow_fn(i, flow_a[i]);
+		if (!found) i++;
+	}
+	return i;
 }
 
 // flowstruct

@@ -63,13 +63,12 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
-		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <any>\n#include <iostream>\n#include <memory>\n#include <type_traits>\n"
+		"#include <cstdint>\n#include <variant>\n#include <functional>\n#include <iostream>\n#include <memory>\n#include <type_traits>\n"
 		// TODO: fix in the future path to flow9
-		"#include \"" + "tools/flow9/backends/cpp/flow_natives.hpp\" \n"
+		"#include \"" + "tools/flow9/backends/cpp/flow_type.hpp\" \n"
 		+ getBackendRequirements(backend) + "\n"
 	//	+ "// RUNTIME\n"
 	//	+ runtime + "\n"
-		+ makeFlowTypeCpp() + "\n"
 		+ "// Structs for unions\n"
 		+ unionStructs
 		+ "// UNIONS\n"
@@ -106,18 +105,24 @@ return _defReturn;",
 				["type", type,]
 			);
 		}
-		blueprint(
-			"bool _end;
+
+		recursiveBody = bstatement2cpp(backend, body, true);
+		if (recursiveBody == "") {
+			defaultReturn
+		} else {
+			blueprint(
+				"bool _end;
 do {
 	_end = true;
 	%body%
 } while (!_end);
 %return%",
-			[
-				"body", bstatement2cpp(backend, body, true),
-				"return", defaultReturn,
-			]
-		)
+				[
+					"body", recursiveBody,
+					"return", defaultReturn,
+				]
+			)
+		}
 	}
 	switch (d) {
 		BGlobalVar(id, body, type): {
@@ -293,12 +298,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 		BInt(v): "int32_t(" + i2s(v) + ")";
 		BDouble(v): double2string(v);
 		BString(v): "std::u16string(u" + toString(v) + ")";
-		BVar(id, type): {
-			// add function argument types to help the с++ compiler with polymorphism
-			// before : type12type2
-			// after : type12type2<Type1,Type2>
-			id + bVar2realFuncTypes(bexp, backend);
-		}
+		BVar(id, type): bvar2cpp(bexp, backend);
 		BLet(id, value, body, type): {
 			blueprint("
 				[%capture%]() {
@@ -793,6 +793,39 @@ getStatFunctionTypes(declarations : [BDeclaration]) -> Tree<string, BType> {
 	});
 }
 
+bvar2cpp(bexp : BVar, backend : Backend<CppInfo>) -> string {
+	if (bexp.id == "__cast") {
+		// From : __cast(flow_var)
+		// To : flow_cast<TypeName>(flow_var)
+		fromToType = switch (bexp.type : BType) {
+			BTypePar(__) : Triple("", false, false);
+			BTypeName(__, __) : Triple("", false, false);
+			BTypeFunction(args, returnType) : Triple(
+				btype2cpp(backend, returnType),
+				containsKeyTree(backend.info.unionTypes, bType2id(returnType)),
+				args != [] && containsKeyTree(backend.info.unionTypes, bType2id(args[0]))
+			)
+		}
+		if (fromToType.first == "") {
+			// something is wrong
+			bexp.id
+		} else {
+			untriple(fromToType, \toType, isToUnion, isFromUnion -> blueprint(
+				"%castFn%<%type%>",
+				[
+					"type", toType,
+					"castFn", if (!isToUnion && isFromUnion) "flow_cast_variant" else "flow_cast",
+				]
+			))
+		}
+	} else {
+		// add function argument types to help the с++ compiler with polymorphism
+		// before : typeA2typeB
+		// after : typeA2typeB<TypeA,TypeB>
+		bexp.id + bVar2realFuncTypes(bexp, backend);
+	}
+}
+
 // find the type of function arguments
 bVar2realFuncTypes(var : BVar, backend : Backend<CppInfo>) -> string {
 	switch (var.type : BType) {
@@ -928,33 +961,54 @@ makeOperatorStructArgsBody(
 	simpleArgs : [DStructArg],
 	recArgs : [DStructArg],
 	operator : string,
+	function : string,
 	anyField : bool, // true = OR, false = AND
 ) -> string {
 	if (recArgs == [] && simpleArgs == []) {
 		"true"
 	} else {
+		makeCompareValue = \id : string, withPrefix : bool -> {
+			if (operator != "") {
+				blueprint(
+					"%prefix%%id% %operator% %prefix%a.%id%",
+					[
+						"id", id,
+						"operator", operator,
+						"prefix", if (withPrefix) "*" else "",
+					]
+				)
+			} else {
+				blueprint(
+					"%fn%(%prefix%%id%, %prefix%a.%id%)",
+					[
+						"id", id,
+						"fn", function,
+						"prefix", if (withPrefix) "*" else "",
+					]
+				)
+			}
+		} 
 		join = if (anyField) " || " else " && ";
-		recursiveArgs = superglue(recArgs, \arg -> "*" + arg.id + " " + operator + " *a." + arg.id, join);
-		superglue(simpleArgs, \arg -> arg.id + " " + operator + " a." + arg.id, join)
+		recursiveArgs = superglue(recArgs, \arg -> makeCompareValue(arg.id, true), join);
+		superglue(simpleArgs, \arg -> makeCompareValue(arg.id, false), join)
 		+ (if (recursiveArgs == "" || simpleArgs == []) "" else join)
 		+ recursiveArgs;
-		/* std::equal(flow_right.begin(), flow_right.end(), a.flow_right.begin()) // vector*/
 	}
 }
 
 makeEqualStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
-	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "==", false);
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "", "areValuesEqual", false);
 }
 
 makeNotEqualStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
-	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "!=", true);
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "!=", "", true);
 }
 
 makeGreaterStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
-	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, ">", true);
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, ">", "", true);
 }
 makeLessStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
-	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "<", true);
+	makeOperatorStructArgsBody(backend, simpleArgs, recArgs, "<", "", true);
 }
 makeLessEqStructArgsBody(backend : Backend<CppInfo>, simpleArgs : [DStructArg], recArgs : [DStructArg]) -> string {
 	"(" + makeEqualStructArgsBody(backend, simpleArgs, recArgs)
@@ -1045,7 +1099,7 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
 			"copyFields", unpair(splittedArgs, \recArgs, simpleArgs -> makeStructCopyConstructorBody(backend, simpleArgs, recArgs)),
 		]
 	);
-
+	// TODO: order
 	printOperator = blueprint(
 		"std::ostream& operator<<(std::ostream& os, const %type%%typar%& a){
     os << \"%type%{\"; %fields% os <<\"}\";
@@ -1117,34 +1171,4 @@ makeStructConstructorDeclarations(backend : Backend<CppInfo>, struct : Recursive
 //     Tree<?, ??> ::= TreeNode<?, ??>, TreeEmpty;
 makeUsedStructTypars(structs : Tree<string, DStruct>) -> Tree<string, [string]> {
 	mapTree(structs, \struct -> dtypes2parameters(map(struct.structArgs, \arg -> arg.type)))
-}
-
-makeFlowTypeCpp() -> string {
-	"struct _FlowType : std::any {
-  void(*print)(_FlowType const&) = nullptr;
-
-  friend std::ostream& operator<<( std::ostream& os, _FlowType const& a ) {
-    a.print( a );
-    return os;
-  }
-
-  /*template<typename T>
-  _FlowType( T&& t ):
-    std::any( std::forward<T>(t) ),
-    print([](_FlowType const& self ) { flow_print2(std::any_cast<std::decay_t<T>>(self)); } )
-  {}*/
-
-  template<typename T>
-  _FlowType( T t ):
-    std::any( std::forward<T>(t) ),
-    print([](_FlowType const& self ) { flow_print2(std::any_cast<std::decay_t<T>>(self)); } )
-  {}
-
-  bool operator==(const _FlowType& a) const { return a == *this; }
-  bool operator!=(const _FlowType& a) const { return a != *this; }
-  bool operator>(const _FlowType& a) const {return a > *this;}
-  bool operator<(const _FlowType& a) const {return a < *this;}
-  bool operator>=(const _FlowType& a) const {return (a == *this) || (a > *this);}
-  bool operator<=(const _FlowType& a) const {return (a == *this) || (a < *this);}
-};";
 }
