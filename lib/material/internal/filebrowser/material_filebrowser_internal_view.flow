@@ -43,7 +43,10 @@ export {
 		dirs : [?],
 		files : [?],
 		addBackButton : bool,
-		previewsB : DynamicBehaviour<[Pair<string, Material>]>
+		requestPreview : (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void,
+		previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
+		scrollPosition : DynamicBehaviour<Point>,
+		setPosM : Maybe<(DynamicBehaviour<Point>) -> void>
 	) -> Material;
 
 	getContentUI(
@@ -51,7 +54,10 @@ export {
 		dirs : [FBContentPath],
 		files : [FBContentPath],
 		backButtonM : Maybe<Material>,
-		previewsB : DynamicBehaviour<[Pair<string, Material>]>
+		requestPreview : (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void,
+		previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
+		scrollPosition : DynamicBehaviour<Point>,
+		setPosM : Maybe<(DynamicBehaviour<Point>) -> void>
 	) -> Material;
 
 	getStateSubscribers(
@@ -121,7 +127,16 @@ __dblClickCatch = ref false;
 __catchDblClickDispose = ref nop;
 
 // preparing filebrowser content view
-prepareAndGetContentUI(state : FilebrowserState<?, ??, ???>, dirs : [?], files : [?], addBackButton : bool, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
+prepareAndGetContentUI(
+	state : FilebrowserState<?, ??, ???>,
+	dirs : [?],
+	files : [?],
+	addBackButton : bool,
+	requestPreview : (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void,
+	previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
+	scrollPosition : DynamicBehaviour<Point>,
+	setPosM : Maybe<(DynamicBehaviour<Point>) -> void>
+) -> Material {
 	correctCurPath = addSlash2pathEnd(getValue(state.currentPathB));
 	curPath = if (strlen(correctCurPath) > 0) strLeft(correctCurPath, strlen(correctCurPath) - 1) else correctCurPath;
 
@@ -138,13 +153,25 @@ prepareAndGetContentUI(state : FilebrowserState<?, ??, ???>, dirs : [?], files :
 		map(dirs, \d -> FBContentPath(d, ref makeTree(), true, correctCurPath, state.item2name(d))),
 		map(files, \f -> FBContentPath(f, ref makeTree(), false, correctCurPath, state.item2name(f))),
 		backButtonM,
-		previewsB
+		requestPreview,
+		previewsLoadingStatusB,
+		scrollPosition,
+		setPosM
 	);
 }
 
 // creating filebrowser content view
-getContentUI(state : FilebrowserState<?, ??, ???>, dirsCP : [FBContentPath], filesCP : [FBContentPath], backButtonM : Maybe<Material>, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Material {
-	createContentItemWrapper = \itemCP -> createContentItem(state, itemCP, previewsB);
+getContentUI(
+	state : FilebrowserState<?, ??, ???>,
+	dirsCP : [FBContentPath],
+	filesCP : [FBContentPath],
+	backButtonM : Maybe<Material>,
+	requestPreview : (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void,
+	previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
+	scrollPosition : DynamicBehaviour<Point>,
+	setPosM : Maybe<(DynamicBehaviour<Point>) -> void>
+) -> Material {
+	createContentItemWrapper = \itemCP -> createContentItem(state, itemCP, requestPreview);
 
 	ddItems = map(
 		filter(dirsCP, \dir -> dir.filename != ".." && dir.filename != "."),
@@ -166,24 +193,39 @@ getContentUI(state : FilebrowserState<?, ??, ???>, dirsCP : [FBContentPath], fil
 	};
 
 	boxSize = make(zeroWH);
+	sp = make(zeroPoint);
 	view = MConstruct([
 			make3Subscribe(fmerge(ddItems), fmerge(ffItems), state.contentSortTypeB, onSortChanged)
 		],
-		MDynamicGrid(
-			fconcat(
-				const(eitherMap(backButtonM, \b -> [b], [])),
-				itemsListB
+		MLines([
+			MConstruct(
+				eitherMap(setPosM, \setFn -> [\-> {timer(100, \-> {setFn(sp)}); nop}], []),
+				MDynamicGrid(
+					fconcat(
+						const(eitherMap(backButtonM, \b -> [b], [])),
+						itemsListB
+					),
+					[
+						MBoxSize(boxSize),
+						MItemSize(fselect4(boxSize, state.contentViewIconsB, state.iconSizeB, state.thumbnailSize, \bs, ic, is, thumbnailSize -> {
+							if (ic)
+								WidthHeight(is + 20., is + 37.)
+							else
+								WidthHeight(bs.width, thumbnailSize + 12.)
+						})),
+						TScrollPosition(sp),
+						TScrollInspectVisible(scrollPosition, makeWH())
+					]
+				)
 			),
-			[
-				MBoxSize(boxSize),
-				MItemSize(fselect4(boxSize, state.contentViewIconsB, state.iconSizeB, state.thumbnailSize, \bs, ic, is, thumbnailSize -> {
-					if (ic)
-						WidthHeight(is + 20., is + 37.)
-					else
-						WidthHeight(bs.width, thumbnailSize + 12.)
-				}))
-			]
-		)
+			MSelect(previewsLoadingStatusB, \loadingStatusM -> {
+				eitherMap(
+					loadingStatusM,
+					\loadingStatus -> MBorderTop(8.)(MLoadingBoxWidth(loadingStatus, boxSize)),
+					MEmpty()
+				)
+			})
+		])
 	);
 	wrapWithSubscribers(state, view);
 }
@@ -216,7 +258,7 @@ wrapWithSubscribers(state : FilebrowserState<?, ??, ???>, content : Material) ->
 	|> (\m -> MBorder4(4.0, m));
 }
 
-createContentItem(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, previewsB : DynamicBehaviour<[Pair<string, Material>]>) -> Transform<Maybe<FBContentItem>> {
+createContentItem(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, requestPreview : (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void) -> Transform<Maybe<FBContentItem>> {
 	itemItemMB = make(Some(itemCP.item));
 	changeItem = \value -> nextDistinct(itemItemMB, value);
 
@@ -227,7 +269,7 @@ createContentItem(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, 
 				newCPItem = FBContentPath(itemItem, itemCP.propertiesR, itemCP.isFolder, itemCP.dirPath, state.item2name(itemItem));
 				FBContentItem(
 					newCPItem,
-					createItemUI(state, newCPItem, changeItem, fif(state.contentViewIconsB, previewsB, const([])))
+					createItemUI(state, newCPItem, changeItem, requestPreview)
 				)
 			}
 		);
@@ -235,17 +277,24 @@ createContentItem(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, 
 }
 
 // creating material view of the file/folder
-createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, changeItem : (Maybe<?>) -> void, previewsB : Transform<[Pair<string, Material>]>) -> Material {
+createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, changeItem : (Maybe<?>) -> void, requestPreview : (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void) -> Material {
+	renderableB = make(false);
 	fullName = getItemFullname(itemCP);
 	isSelectedB = fselect(state.selectedElementsB, FLift(\elements -> contains(elements, fullName)));
 	tooltip = if (itemCP.dirPath != getValue(state.currentPathB)) fullName else "";
 
-	fContent = MSelect(previewsB, \previews ->
-		eitherMap(
-			find(previews, \p -> p.first == fullName),
-			\p -> p.second,
-			state.getDefaultIcon(itemCP.isFolder, itemCP.filename)
-		)
+	previewBM = make(None());
+	fContent = MSelect2(
+		state.contentViewIconsB,
+		previewBM, 
+		\showPreview, previewM -> {
+			icon = state.getDefaultIcon(itemCP.isFolder, itemCP.filename);
+			if(showPreview) {
+				either(previewM, icon)
+			} else {
+				icon
+			}
+		}
 	);
 
 	// We release item click if it is a folder or if the CTRL button is not down
@@ -259,7 +308,16 @@ createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, chang
 		\-> onDownElementFn(state, fullName);
 	}
 
-	fsCustomElement(state, fContent, itemCP.filename, tooltip, isSelectedB, onDown, onClick, onLongClick);
+	item = 	fsCustomElement(state, fContent, itemCP.filename, tooltip, isSelectedB, onDown, onClick, onLongClick);
+	
+	MConstruct(
+		[make2Subscribe(renderableB, state.contentViewIconsB, \renderable, showPreview -> {
+			if(renderable && showPreview) {
+				requestPreview(Pair(fullName, previewBM));
+			}
+		})],
+		MRenderable(renderableB, item)
+	)
 }
 
 // creating material view of the filebrowser element using own "icon"
@@ -356,7 +414,7 @@ fsCustomElement(
 					MIf(
 						isSelectedB,
 						MAvailable(
-							TRounded(2.0, 2.0, 2.0, 2.0, [Fill(lightBlue), FillOpacity(0.7)], TFillXY()),
+							TRounded(4.0, 4.0, 4.0, 4.0, [Fill(lightBlue), FillOpacity(0.7)], TFillXY()),
 							MSizeOf(content)
 						),
 						TEmpty()
@@ -364,7 +422,7 @@ fsCustomElement(
 					MIf(
 						hoverB,
 						MAvailable(
-							MFrame(0.0, 1.0, [Stroke(gray), StrokeWidth(0.5)], TFillXY()),
+							MFrame(0.0, 4.0, [Stroke(gray), StrokeWidth(0.5)], TFillXY()),
 							MSizeOf(content)
 						),
 						TEmpty()
@@ -510,4 +568,22 @@ getStateSubscribers(
 			}
 		})
 	]
+}
+
+MLoadingBoxWidth(text : string, boxSizeB : DynamicBehaviour<WidthHeight>) -> Material {
+	MSelect(boxSizeB, \boxSize -> {
+		MLet("Label",
+			MCenterXIn(MText(text, []) |> MBorderLeftRight(8.), TFixed(boxSize.width, 1.0)),
+			MGroup2(
+				MAvailable(
+					MZoom(
+						MProgressBar([MBlue(200), MProgressBackgroundColor(MWhite()), WidthHeight(boxSize.width, 10.0)]),
+						TFillXY(), false
+					),
+					TGhost("Label")
+				),
+				TDisplay("Label")
+			)
+		)
+	})
 }

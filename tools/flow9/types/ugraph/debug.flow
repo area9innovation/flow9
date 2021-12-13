@@ -1,4 +1,5 @@
 import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/cgraph/pretty;
 import tools/flow9/types/type;
 import text/blueprint;
 
@@ -6,6 +7,9 @@ export {
 	prettyTTypeNode(tmap : TMap, t : TType) -> string;
 	debugTNode(tmap : TMap, root : int) -> string;
 	prettyTNode(tmap : TMap, t : TNode) -> string;
+
+	debugCNode(tmap : TMap, root : int) -> string;
+
 	prettyEClass(tmap : TMap, eclass : int) -> string;
 	dumpTNodes(tmap : TMap) -> void;
 
@@ -22,13 +26,17 @@ prettyTTypeNode(tmap : TMap, t : TType) -> string {
 	rec = \tt -> prettyTTypeNode(tmap, tt);
 	switch (t) {
 		TTypeEClass(eclass): {
-			node = getUnionMapValue(tmap.tmap, eclass);
-			root = findUnionMapRoot(tmap.tmap, eclass);
-			"e" + i2s(root) 
-			+ (if (isEmptyTNode(node)) {""}
-			else {
-				"=" + prettyEClass(tmap, root);
-			});
+			if (tmap.tracing.cmap) {
+				"e" + i2s(eclass)
+			} else {
+				node = getUnionMapValue(tmap.tmap, eclass);
+				root = findUnionMapRoot(tmap.tmap, eclass);
+				"e" + i2s(root) 
+				+ (if (isEmptyTNode(node)) {""}
+				else {
+					"=" + prettyEClass(tmap, root);
+				});
+			}
 		}
 		TTypeName(id, typars): id + (if (typars == []) "" else "<" + superglue(typars, rec, ", ") + ">");
 		TTypeFunction(args, returnType): "(" + superglue(args, rec, ", ") + ") -> " + rec(returnType);
@@ -66,7 +74,7 @@ prettyTNode(tmap : TMap, t : TNode) -> string {
 			+ (if (isEmptySet(usub)) "" else 
 				superglue(set2array(usub), \st -> {
 					root = findUnionMapRoot(tmap.tmap, st);
-					"e" + i2s(root)
+					"e" + i2s(root) /*+ "=" + prettyEClass(tmap, root) */
 				}, ", ")
 			)
 			+ "}" 
@@ -76,10 +84,14 @@ prettyTNode(tmap : TMap, t : TNode) -> string {
 }
 
 prettyEClass(tmap : TMap, eclass : int) -> string {
-	root = findUnionMapRoot(tmap.tmap, eclass);
-	node = getUnionMapValue(tmap.tmap, eclass);
-	if (isEmptyTNode(node)) "e" + i2s(root)
-	else prettyTNode(tmap, node)
+	if (tmap.tracing.cmap) {
+		"e" + i2s(eclass)
+	} else {
+		root = findUnionMapRoot(tmap.tmap, eclass);
+		node = getUnionMapValue(tmap.tmap, eclass);
+		if (isEmptyTNode(node)) "e" + i2s(root)
+		else prettyTNode(tmap, node)
+	}
 }
 
 debugTNode(tmap : TMap, root : int) -> string {
@@ -98,18 +110,32 @@ debugTNode(tmap : TMap, root : int) -> string {
 dumpTNodes(tmap : TMap) -> void {
 	roots = getTNodes(tmap);
 	iterSet(roots, \root -> {
-		node = getUnionMapValue(tmap.tmap, root);
-		if (!isEmptyTNode(node)) {
-			println("e" + i2s(root) + " = " + debugTNode(tmap, root));
+		if (tmap.tracing.cmap) {
+			node = getUnionMapValue(tmap.cmap.cmap, root);
+			if (node != CEpsilon()) {
+				println(prettyCEClass(tmap.cmap, root));
+			}
+		} else {
+			node = getUnionMapValue(tmap.tmap, root);
+			if (!isEmptyTNode(node)) {
+				println("e" + i2s(root) + " = " + debugTNode(tmap, root));
+			}
 		}
 	});
 }
 
 getTNodes(tmap : TMap) -> Set<int> {
-	aroots = getUnionMapRoots(tmap.tmap);
-	filterSet(aroots, \r -> {
-		r < ^(tmap.nextEClass)
-	});
+	if (tmap.tracing.cmap) {
+		aroots = getUnionMapRoots(tmap.cmap.cmap);
+		filterSet(aroots, \r -> {
+			r < ^(tmap.nextEClass)
+		});
+	} else {
+		aroots = getUnionMapRoots(tmap.tmap);
+		filterSet(aroots, \r -> {
+			r < ^(tmap.nextEClass)
+		});
+	}
 }
 
 
@@ -138,7 +164,7 @@ isDebuggingEClass(tmap : TMap, eclass : int, seen : Set<int>) -> bool {
 						isDebuggingEClass(tmap, tp, seen2)
 					});
 					TNodeOverload(unique, overloads, pos): {
-						exists(overloads, \ol -> {
+						exists(overloads, \ol : TNodeName -> {
 							exists(ol.typars, \tp -> {
 								isDebuggingEClass(tmap, tp, seen2)
 							})
@@ -147,7 +173,7 @@ isDebuggingEClass(tmap : TMap, eclass : int, seen : Set<int>) -> bool {
 					TNodeSupertype(uniques, subtypes, unknownSubtypes, maxed, pos): {
 						existsSet(unknownSubtypes, \st -> {
 							isDebuggingEClass(tmap, st, seen2)
-						}) || exists(subtypes, \ol -> {
+						}) || exists(subtypes, \ol : TNodeName -> {
 							exists(ol.typars, \tp -> {
 								isDebuggingEClass(tmap, tp, seen2)
 							})
@@ -171,11 +197,32 @@ dumpDebugEClasses(tmap : TMap) -> void {
 	if (isDebuggingTopid(tmap)) {
 		println("\nDebug e-classes for " + ^(tmap.topid) + ":");
 		roots = getTNodes(tmap);
-		iterSet(roots, \root -> {
-			node = getUnionMapValue(tmap.tmap, root);
-			if (isDebuggingEClass2(tmap, root)) {
-				println("e" + i2s(root) + " = " + debugTNode(tmap, root));
-			}
-		});
+		if (tmap.tracing.cmap) {
+			iterSet(roots, \root -> {
+				node = getUnionMapValue(tmap.cmap.cmap, root);
+				println("e" + i2s(root) + " = " + debugCNode(tmap, root));
+			});
+			println("");
+		} else {
+			iterSet(roots, \root -> {
+				node = getUnionMapValue(tmap.tmap, root);
+				if (isDebuggingEClass2(tmap, root)) {
+					println("e" + i2s(root) + " = " + debugTNode(tmap, root));
+				}
+			});
+		}
 	}
+}
+
+debugCNode(tmap : TMap, root : int) -> string {
+	node = getUnionMapValue(tmap.cmap.cmap, root);
+
+	childClasses = foldRange(0, ^(tmap.nextEClass), [], \acc2, ec -> {
+		r = findUnionMapRoot(tmap.cmap.cmap, ec);
+		if (r == root) {
+			arrayPush(acc2, ec)
+		} else acc2;
+	});
+
+	"e" + i2s(root) + "=" + rpad(prettyCNode(tmap.cmap, node), " ", 30) + "   covers " + superglue(childClasses, \c -> "e" + i2s(c), " ");
 }

@@ -1,0 +1,177 @@
+import tools/flow9/dexp/dexp;
+import tools/flow9/dexp/pretty;
+import tools/flow9/types/ugraph/tnode;
+import tools/flow9/types/cgraph/resolve;
+import tools/flow9/types/builtin;
+
+export {
+	// This introduces explicit __cast__ cast where we have implicit ones.
+	// It also converts DDowncasts to __cast__ calls
+	implicitCasts(tmap : TMap, global : DGlobal) -> DGlobal;
+
+	// return __cast__
+	makeImplicitCastId() -> string;
+}
+
+implicitCasts(tmap : TMap, global : DGlobal) -> DGlobal {
+	DGlobal(global with value = implicitDExpCasts(tmap, global.value, global.eclass));
+}
+
+implicitDExpCasts(tmap : TMap, e : DExp, expectedEClass : int) -> DExp {
+	if (false && expectedEClass != -1) {
+		println("We expect " + prettyEClass(tmap, expectedEClass) + " for " + summarizeDExp(e));
+	}
+	// Adds a cast if we do not have the type that is expected
+	wrap = \hasEClass : int, ee : DExp -> {
+		// Check if these eclasses correspond to the same type in the eclass world:
+		if (expectedEClass == -1 || hasEClass == -1 || isSameEClassInTMap(tmap, expectedEClass, hasEClass)) ee
+		else {
+			// OK, we need a cast.
+			makeImplicitCast(tmap, ee, hasEClass, expectedEClass)
+		}
+	}
+	// The same, but with a TType as the interface
+	wrapType = \type : TType, ee : DExp -> {
+		eclass = findTNode(tmap, type);
+		wrap(eclass, ee);
+	}
+	switch (e) {
+		DVoid(pos): wrapType(voidTType, e);
+		DBool(v, pos): wrapType(boolTType, e);
+		DInt(v, pos): wrapType(intTType, e);
+		DDouble(v, pos): wrapType(doubleTType, e);
+		DString(v, pos): wrapType(stringTType, e);
+		DStringInclude(path, pos): wrapType(stringTType, e);
+		DVar(id, pos, eclass): wrap(eclass, e);
+		DLet(id, value, body, pos, eclass): {
+			// TODO: We should probably record the value type
+			evalue = implicitDExpCasts(tmap, value, -1);
+			ebody = implicitDExpCasts(tmap, body, eclass);
+			wrap(eclass, DLet(e with value = evalue, body = ebody));
+		}
+		DIf(cond, then, else_, pos, eclass): {
+			boolEClass = findTNode(tmap, boolTType);
+			econd = implicitDExpCasts(tmap, cond, boolEClass);
+			ethen = implicitDExpCasts(tmap, then, eclass);
+			eelse = implicitDExpCasts(tmap, else_, eclass);
+			wrap(eclass, DIf(e with cond = econd, then = ethen, else_ = eelse));
+		}
+		DCall(fn, args, pos, eclass): {
+			// TODO: We should maybe record the expected type for the fn and args?
+			efn = implicitDExpCasts(tmap, fn, -1);
+			eargs = map(args, \a -> {
+				implicitDExpCasts(tmap, a, -1);
+			});
+			wrap(eclass, DCall(e with fn = efn, args = eargs));
+		}
+		DConstruct(structid, args, pos, eclass): {
+			eargs = map(args, \a -> {
+				// TODO: Based on the structid, we can find the expected
+				// types for each field
+				implicitDExpCasts(tmap, a, -1);
+			});
+			wrap(eclass, DConstruct(e with args = eargs));
+		}
+		DLambda(args, body, pos, eclass): {
+			// TODO: We should probably extract the return type from the DLambda here
+			ebody = implicitDExpCasts(tmap, body, -1);
+			wrap(eclass, DLambda(e with body = ebody));
+		}
+		DRef(value, pos, eclass): {
+			// TODO: We should probably extract the type of the ref
+			evalue = implicitDExpCasts(tmap, value, -1);
+			wrap(eclass, DRef(e with value = evalue));
+		}
+		DField(value, field, pos, eclass): {
+			// TODO: Should we record the value type?
+			evalue = implicitDExpCasts(tmap, value, -1);
+			wrap(eclass, DField(e with value = evalue));
+		}
+		DSetMutable(lhs, field, value, pos, eclass): {
+			// println("Set mutable " + prettyEClass(tmap, eclass) + " " + summarizeDExp(lhs) + " ::= " + summarizeDExp(value));
+			// TODO: Maybe we should record this type in the DSetMutable?
+			elhs = implicitDExpCasts(tmap, lhs, -1);
+			// TODO: Maybe we should record this type in the DSetMutable?
+			evalue = implicitDExpCasts(tmap, value, -1);
+			DSetMutable(e with lhs = elhs, value = evalue);
+		}
+		DArray(exps, pos, eclass): {
+			// TODO: We should probably extract the type of the array elements
+			eexps = mapi(exps, \i, ee -> {
+				implicitDExpCasts(tmap, ee, -1);
+			});
+			wrap(eclass, DArray(e with exps = eexps));
+		}
+		DSequence(exps, pos, eclass): {
+			voidEclass = findTNode(tmap, voidTType);
+			eexps = mapi(exps, \i, ee -> {
+				implicitDExpCasts(tmap, ee, if (i + 1 == length(exps)) eclass else voidEclass);
+			});
+			wrap(eclass, DSequence(e with exps = eexps));
+		}
+		DSwitch(value, type, cases, defaultCase, pos, eclass): {
+			ecases = map(cases, \case -> {
+				DCase(case with body = implicitDExpCasts(tmap, case.body, eclass));
+			});
+			edef = defaultCase ?? {
+				Some(implicitDExpCasts(tmap, defaultCase, eclass))
+			} : None();
+			eswitch = DSwitch(e with cases = ecases, defaultCase = edef);
+			wrap(eclass, eswitch);
+		}
+		DCast(value, target, pos): {
+			// TODO: Maybe we should record the original type?
+			evalue = implicitDExpCasts(tmap, value, -1);
+			DCast(e with value = evalue);
+		}
+		DDowncast(id, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
+			escope = implicitDExpCasts(tmap, scope, eclass);
+			// OK, we can make this into a DLet with a cast instead!
+			ecast = makeImplicitCast(tmap, DVar(id, pos, supereclass), supereclass, subeclass);
+			let = DLet(newid, ecast, escope, pos, eclass);
+			if (false) {
+				println("We turn "  + summarizeDExp(e) + " into " + prettyEClass(tmap, supereclass) + " -> " + prettyEClass(tmap, subeclass) + " as " + toString(let));
+			}
+			let;
+		}
+		DTyped(value, supertype, pos, eclass): {
+			evalue = implicitDExpCasts(tmap, value, eclass);
+			wrap(eclass, DTyped(e with value = evalue));
+		}
+	}
+}
+
+makeImplicitCast(tmap : TMap, d : DExp, gotEClass : int, expectedEClass : int) -> DExp {
+	// Do a call to a special fn __cast__ for this conversion.
+	call = DCall(
+		DVar(makeImplicitCastId(), d.pos, gotEClass),
+		[d, DInt(gotEClass, d.pos), DInt(expectedEClass, d.pos)], // expression, from, to
+		d.pos,
+		expectedEClass
+	);
+	if (false) {
+		println("Added an explicit cast from " + prettyEClass(tmap, gotEClass) + " to " + prettyEClass(tmap, expectedEClass) + " of " + summarizeDExp(d));
+		// println(call);
+	}
+	call;
+}
+
+isSameEClassInTMap(tmap : TMap, eclass1 : int, eclass2 : int) -> bool {
+	if (tmap.tracing.cmap) {
+		isSameEClassInCMap(tmap.cmap, eclass1, eclass2);
+	} else {
+		// Check if these eclasses correspond to the same type in the eclass world:
+		root1 = rootTTypeEClass(tmap, eclass1);
+		root2 = rootTTypeEClass(tmap, eclass2);
+		root1 == root2 || {
+			// We might sometimes have to look at the nodes
+			node1 = getUnionMapValue(tmap.tmap, root1);
+			node2 = getUnionMapValue(tmap.tmap, root2);
+			isSameTNode(tmap, node1, node2);
+		}
+	}
+}
+
+makeImplicitCastId() -> string {
+	"__cast__"
+}

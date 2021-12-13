@@ -9,7 +9,7 @@ export {
 		RMAlphaAnimation, MSameZorder, RMSameFocus, RMScrollArea, MFixPosition,
 		MBackgroundStyle, // Transparency only works in combination with RMNoShadow
 		RMNoScrollbars, TScrollPersistent, TScrollPosition, RMCurrentHeight, RMCurrentWidth, RMCurrentMaxSize, RMDontHandle, RMNoSnapSize,
-		RMNoShadow, TScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive;
+		RMNoShadow, TScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive, MVirtualScreen;
 
 		RMWidth(width : Transform<double>);
 		RMWidthLimits(min : Transform<double>, max : Transform<double>);
@@ -54,9 +54,16 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 
 	dpiScale = extractStruct(manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
 	elevation = extractStruct(style, MElevation(const(8.))).elevation;
+	virtualScreen = tryExtractStruct(style, MVirtualScreen(makeWH(), make(zeroPositionScale)));
 	customScale = tryExtractStruct(style, MCustomScale(const(Factor(1., 1.))));
-	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale0, cus.factor, FLift2(\ps, cs ->
-		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale0);
+	positionScale1 = eitherMap(virtualScreen, \vs ->
+		fselect2(vs.position, positionScale0, FLift2(\vsp, ps ->
+			PositionScale(Point(ps.pos.x - vsp.pos.x, ps.pos.y - vsp.pos.y), ps.scale)
+		)),
+		positionScale0
+	);
+	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale1, cus.factor, FLift2(\ps, cs ->
+		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale1);
 
 	offset = extractStruct(style, RMOffset(const(Pair(WidthHeight(0., 0.), 0.)))).offset;
 	mWidth = extractStruct(style, RMWidth(const(-1.))).width;
@@ -179,7 +186,8 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 						)
 					)
 			})
-		);
+		)
+		|> (\sp -> eitherMap(virtualScreen, \vs -> fpointaddition(sp, fselect(vs.position, FLift(\vsp -> vsp.pos))), sp));
 
 	popupDownFn = \h, mi : MouseDownInfo -> {
 			if (mi.inside()) {
@@ -204,14 +212,14 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			h || blockClicks
 		};
 
-	contentWH =
+	contentWH : Transform<WidthHeight> =
 		fselect4(sizesB, mWidth, mWidthLimits.min, mWidthLimits.max, \szs, w, minW, maxW ->
 			fold(szs, WidthHeight(0., 0.), \acc, sz ->
 				WidthHeight(if (w > 0.) w else max(sz.width, acc.width), sz.height + acc.height)
 			)
-			|> (\wh -> WidthHeight(max(minW, wh.width), wh.height))
-			|> (\wh -> if (maxW > 0.) WidthHeight(min(maxW, wh.width), wh.height) else wh)
-			|> (\wh ->
+			|> (\wh : WidthHeight -> WidthHeight(max(minW, wh.width), wh.height))
+			|> (\wh : WidthHeight -> if (maxW > 0.) WidthHeight(min(maxW, wh.width), wh.height) else wh)
+			|> (\wh : WidthHeight ->
 				if (contains(style, RMNoSnapSize()) || w > 0. || minW > 0. || maxW > 0.) wh
 				else WidthHeight(
 					(if (mobile) 56. else 64.)
@@ -300,7 +308,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 						stageWH,
 						offset,
 						positionDpiScale,
-						\realSize, wh, offs, ps -> {
+						\realSize : WidthHeight, wh : WidthHeight, offs : Pair<WidthHeight, double>, ps : PositionScale -> {
 							maxSize =
 								WidthHeight(
 									max(wh.width / ps.scale.x, 0.),
@@ -447,6 +455,12 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 		)
 	)
 	|> (\t -> TAttachAvailable(t, stageWH))
+	|> (\t -> eitherMap(virtualScreen, \vs ->
+		TAvailable(t, TSized(fselect2(vs.size, vs.position, FLift2(\vss, vsp ->
+			WidthHeight(vss.width * vsp.scale.x, vss.height * vsp.scale.y)))
+		)),
+		t
+	))
 	|> (\t -> TShow(parent.ready, t))
 	|> (\f -> {
 		renderFn = \ -> trender(f, manager.manager.renderStyle);

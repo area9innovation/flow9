@@ -1,14 +1,22 @@
 import tools/flow9/backends/backend;
 import text/blueprint;
+import tools/flow9/backends/cpp/cpp_natives;
 
 export {
 	CppInfo(
 		globals : Set<string>,
 		structIds : Tree<string, int>, // id - globalIndex
-		unionTypes : Tree<string, [string]>,
+		unionTypes : Tree<string, [BType]>,
+		statFunctions : Tree<string, BType>, // id - type
+		recursiveStructs : Tree<string, RecursiveStruct>, // typeId - fieldId
+		usedTypars : Tree<string, [string]>, // structId - typars
 	);
 	cppBackend(info : CppInfo) -> Backend<CppInfo>;
 	cppBackendSpec() -> BackendSpec;
+
+	RecursiveStruct(
+		recursiveFields : Set<string>,
+	);
 }
 
 cppBackend(info : CppInfo) -> Backend<CppInfo> {
@@ -52,31 +60,24 @@ cppBackend(info : CppInfo) -> Backend<CppInfo> {
 		BackGen("/", bdoubleType, BackBinOp(" / ", 50, BackArg(0), BackArg(1))),
 
 		BackGen("%", bintType, BackBinOp(" % ", 50, BackArg(0), BackArg(1))),
-		BackGen("%", bdoubleType, BackBinOp(" % ", 50, BackArg(0), BackArg(1))),
+		BackGen("%", bdoubleType, BackCall("std::fmod", [BackArg(0), BackArg(1)])),
 
 		BackGen("__negate", BTypeFunction([bintType], bintType), BackPreOp(" -", 60, BackArg(0))),
 		BackGen("__negate", BTypeFunction([bdoubleType], bdoubleType), BackPreOp(" -", 60, BackArg(0))),
 		BackGen("__not", bvoidType, BackPreOp(" !", 60, BackArg(0))),
 
-		BackGen("__ref", bvoidType, BackCall("std::make_tuple", [BackArg(0)])),
-		BackGen("__deref", bvoidType, BackCall("std::get<0>", [BackArg(0)])),
+		BackGen("__ref", bvoidType, BackCall("makeFlowRef", [BackArg(0)])),
+		BackGen("__deref", bvoidType, BackConcat([BackText("("), BackCall("*", [BackArg(0)]), BackText(")"), ])),
+		BackGen(":=", bvoidType, BackBinOp(" = ", 70, BackConcat([BackText("*"), BackArg(0)]), BackArg(1))),
+
+		BackGen("__index", bvoidType, BackConcat([BackBinOp("[", 80, BackArg(0), BackArg(1)), BackText("]")])),
 	], info);
 }
 
 cppBackendSpec() -> BackendSpec {
 	makeBackendSpec(
-		cppBackend(CppInfo(makeSet(), makeTree(), makeTree())),
+		cppBackend(CppInfo(makeSet(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
 		"", "flow_", "",
-		[
-			// Natives
-			"Native.fold",
-			"Native.println",
-			"Native.quit",
-			"Native.isSameStructType",
-			"Native.exp",
-			"Native.log",
-			"Native.strlen",
-			"Native.substring",
-		]
+		getNativeNames()
 	)
 }

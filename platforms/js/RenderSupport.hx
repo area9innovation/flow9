@@ -118,6 +118,7 @@ class RenderSupport {
 			PixiWorkarounds.workaroundGetContext();
 
 			createPixiRenderer();
+			TextClip.recalculateUseTextBackgroundWidget();
 		}
 	}
 

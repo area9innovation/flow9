@@ -74,28 +74,28 @@ The type system is extended with two constructs:
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
-TODO:
-- Review postpones, and see if we can resolve some of those:
-  - Implement unification of super against overload:
-    - Convert the super to an overload and do intersect?
+TODO CGraph:
+- We need a subtype with multiple types when the max is closed?
+- In addition to makeSupertype, also have a makeSubtype to restrict the
+  overloads more?
 
-- Replace the unknown subtypes in supertype with postponing
+Need decision:
+- types.flow: implicit None type-parameter
 
-- Radical idea: Replace super with overload always?
-  - Make sure unify
-  		overload5{Beh<?>, Const<?>} != Dyn<?> (e33 and e26)
-	does not happen: In this case, we have lifted a supertype,
-	which has the implicit requirement that the children are 
-	also supertypes, into an overload without supertype.
-	This happens further up in the chain, in a Pair<>.
-	See test tests/type13.flow with 983 in tnode.flow as true.
+- type41: Something wrong in inference
 
-- Try to make sure ? translates to the same eclasses in more situations:
-   Push pending again (e569)->e561 to overload561{(Pair<e570,e571>)->e570, (Quadruple<e572,e573,e574,e575>)->e572, (Triple<e576,e577,e578>)->e576}
+- type39: flow
+C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
+		Triple(flow(None()), start, "");
+		      ^
+   when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
+   Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
 
-- Remove TSuper completely. Replae with overload when there is info.
-  - Use pending and pendingSubtypes for all other cases
-    And these pending will be eclasses only
+- Do prolog-style search when all possible unifications and subtypes
+  have completed
+
+- unify should have a way to telling if they were postponed
+  so resolution knows how to handle it?
 
 # Name and type lookups
 

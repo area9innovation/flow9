@@ -145,6 +145,65 @@ class Native {
 		Browser.document.body.appendChild(textArea);
 		return textArea;
 	}
+
+	public static function evaluateObjectSize(object : Dynamic) : Int {
+		var bytes = 0;
+		untyped __js__("
+			var objectList = [];
+			var stack = [object];
+
+			while (stack.length) {
+				var value = stack.pop();
+
+				if (typeof value === 'boolean') {
+					bytes += 4;
+				}
+				else if ( typeof value === 'string' ) {
+					bytes += value.length * 2;
+				}
+				else if ( typeof value === 'number' ) {
+					bytes += 8;
+				}
+				else if
+				(
+					typeof value === 'object'
+					&& objectList.indexOf( value ) === -1
+				)
+				{
+					objectList.push( value );
+
+					if (Object.prototype.toString.call(value) != '[object Array]'){
+					   for(var key in value) bytes += 2 * key.length;
+					}
+
+					for( var i in value ) {
+						stack.push( value[ i ] );
+					}
+				}
+			}
+		");
+		return bytes;
+	}
+
+	public static function usedJSHeapSize() : Int {
+		try {
+			return untyped Browser.window.performance.memory.usedJSHeapSize;
+		} catch (e : Dynamic) {
+			untyped console.log("Warning! performance.memory.usedJSHeapSize is not implemented in this target");
+			return 0;
+		}
+	}
+
+	public static function totalJSHeapSize() : Int {
+		try {
+			return untyped Browser.window.performance.memory.totalJSHeapSize;
+		} catch (e : Dynamic) {
+			untyped console.log("Warning! performance.memory.totalJSHeapSize is not implemented in this target");
+			return 0;
+		}
+	}
+
+	// TODO : Implement native for performance.measureUserAgentSpecificMemory() as well, when it will be supported by browsers.
 #end
 
 	private static function copyAction(textArea : Dynamic) {
@@ -641,6 +700,29 @@ class Native {
 			}
 		}
 		return result;
+	}
+
+	public static function mapiM<T>(values : Array<T>, clos : Int -> T -> Dynamic) : Dynamic {
+		var result = new Array();
+		var n = values.length;
+		for (i in 0...n) {
+			var v = values[i];
+			var maybe = clos(i, v);
+			var fields = Reflect.fields(maybe);
+			// Check if there is both an _id and a value field of some kind: Then it is Some
+			if (fields.length == 2) {
+				for (f in fields) {
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "_id") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+				}
+			} else {
+				return maybe;
+			}
+		}
+		return makeStructValue("Some", [ result ], makeStructValue("IllegalStruct", [], null));
 	}
 
 	public static inline function random() : Float {

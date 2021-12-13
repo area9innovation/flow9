@@ -5,7 +5,7 @@ This folder contains Visual Studio Code extension for flow and lingo.
 ## INSTALLATION and UPDATE
 1. Launch Visual Studio Code
 2. Click the Extensions bar on the left (ctrl+shift+x)
-3. Click `More -> Install from VSIX...` and choose `flow.vsix`
+3. Click `More -> Install from VSIX...` and choose `resources/vscode/flow.vsix`
 
 Alternatively, run the following command line: `code --install-extension flow.vsix` or one of the `install-or-update` scripts provided. 
 

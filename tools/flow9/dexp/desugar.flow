@@ -174,8 +174,22 @@ desugarPExp(dd : DDesugar, flowpath : string, fullpath : string, pexp : PExp) ->
 				// See if there is a type definition. If so, also extract polymorphism from that
 				mtypedef = lookupTree(typedefs, id);
 				typars = mtypedef ?? {
-					extractDTypars(typars0, mtypedef)
-				} : typars0;
+					extractDTypars(makeSet(), mtypedef);
+				} : {
+					// OK, check if we have implicit type parameters
+					switch (dexp) {
+						DTyped(tvalue, stype, tpos, __): {
+							typeTypars = extractDTypars(makeSet(), stype);
+							valTypars = extractDTyparsFromDExp(tvalue);
+							undeclared = differenceSets(valTypars, typeTypars);
+							if (!isEmptySet(undeclared)) {
+								dd.onError(tpos, id + ": Implicit polymorphism. Body has " + toString(set2array(valTypars)) + " while type has " + toString(set2array(typeTypars)));
+							}
+						}
+						default: {}
+					}
+					typars0;
+				};
 
 				// If we have a type def, add it
 				dexp1 = mtypedef ?? {
@@ -593,7 +607,7 @@ desugarDSwitchWithVar(dd : DDesugar, s : PSwitch, switchvar : DVar, type : DType
 							// Add a downcast
 							typars = map(struct.typars, \__ -> DTypeName("auto", [], c.pos));
 							stype = DTypeName(c.id, typars, c.pos);
-							desugarDowncast(dd, DDowncast(switchvar.id, "", stype, switchvar.eclass,
+							desugarDowncast(dd, DDowncast(switchvar.id, "", stype, -1, switchvar.eclass,
 								body1, c.pos, -1));
 						} else body1;
 					} else {
@@ -721,11 +735,11 @@ renameDVar(old : string, new : DVar, d : DExp) -> DExp {
 			}
 		}
 		DCast(value, target, pos): DCast(rec(value), target, pos);
-		DDowncast(oldid, newid, subtype, supereclass, scope, pos, eclass): {
+		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
 			if (oldid == old) {
-				DDowncast(new.id, newid, subtype, supereclass, rec(scope), pos, eclass);
+				DDowncast(new.id, newid, subtype, subeclass, supereclass, rec(scope), pos, eclass);
 			} else {
-				DDowncast(oldid, newid, subtype, supereclass, rec(scope), pos, eclass);
+				DDowncast(oldid, newid, subtype, subeclass, supereclass, rec(scope), pos, eclass);
 			}
 		}
 		DTyped(value, subtype, pos, eclass): DTyped(rec(value), subtype, pos, eclass);
