@@ -96,6 +96,8 @@ C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (e
 - Do prolog-style search when all possible unifications and subtypes
   have completed
 
+- Add explicit error case to string syntax "foo" "bar"
+
 - unify should have a way to telling if they were postponed
   so resolution knows how to handle it?
 
