@@ -43,11 +43,6 @@ export {
 		"RenderSupport","HaxeRuntime.compareByValue","HaxeRuntime.mul_32",
 		"HaxeRuntime.initStruct","HaxeRuntime._structnames_","FlowJsProgram.globals__"
 	];
-
-	// Convert flow types to TypeScipt
-	fiType2TsType(type : FiType) -> string;
-	fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string;
-	fiStructOrUnionsInNatives(program : FiProgram, module : FiModule) -> [FiStructOrUnion];
 }
 
 fiJsPrefixedName(cfg, ctx, name) {
@@ -433,107 +428,4 @@ fcJsStrict(cfg : FiJsConfig) {
 	if ((cfg.jsmode == STANDARD_ES6) || (cfg.jsmode == NODEJS_MODE) || (cfg.jsmode == NWJS_MODE)) 
 	"'use strict';\n" 
 	else "";
-}
-
-fiType2TsType(type : FiType) -> string {
-	switch (type) {
-		FiTypeArray(t): {
-			fiType2TsType(t) + "[]";
-		}
-		FiTypeFunction(args, rt): {
-			"(" + superglue(args, \arg -> fiType2TsType(arg.type), ", ") + ") => " + fiType2TsType(rt);
-		}
-		FiTypeRef(t): {
-			"Ref<" + fiType2TsType(t) + ">";
-		}
-		FiTypeParameter(n): "P_" + i2s(strlen(n));
-		FiTypeBool():    "boolean";
-		FiTypeInt():     "number";
-		FiTypeDouble():  "number";
-		FiTypeString():  "string";
-		FiTypeFlow():    "any";
-		FiTypeVoid():    "void";
-		FiTypeNative():  "any";
-		FiTypeName(n, typars): {
-			n + fiTypars2Ts(typars);
-		}
-	}
-}
-
-fiTypars2Ts(typars : [FiType]) -> string {
-	if (length(typars) == 0) "" else 
-		"<" + superglue(typars, \t -> fiType2TsType(t), ", ") + ">";
-}
-
-fiTypeStruct2Ts(type : FiTypeStruct) -> string {
-	"type " + type.name + fiTypars2Ts(type.typars) + " = {\n" +
-	"\tname: string;\n" + 
-	"\t_id: number;\n" + 
-	concatStrings(map(type.args, \arg -> "\t" + arg.name + ": " + fiType2TsType(arg.type) + ";\n")) +
-	"}\n";
-}
-
-fiTypeUnion2Ts(type : FiTypeUnion) -> string {
-	"type " + type.name + fiTypars2Ts(type.typeparameters) + " = " +
-	superglue(type.typenames, \tn -> fiType2TsType(tn), " | ") +
-	";";
-}
-
-fiStructOrUnionsInNatives(program : FiProgram, module : FiModule) -> [FiStructOrUnion] {
-	map(
-		list2array(fold(module.natives, makeList(), \acc, nat -> 
-			fiTypenamesInType(acc, nat.type)
-		)),
-		\name -> {
-			switch (lookupTree(program.names.structs, name)) {
-				Some(str): str;
-				None(): 
-					switch (lookupTree(program.names.unions, name)) {
-						Some(un): un;
-						None(): {
-							fail("never must happen");
-							dummyFiTypeStruct;
-						}
-					}
-			}
-		}
-	);
-}
-
-fiTypenamesInType(acc : List<string>, tp : FiType) -> List<string> {
-	switch (tp) {
-		FiTypeArray(t): 
-			fiTypenamesInType(acc, t);
-		FiTypeFunction(args, rt): 
-			fold(args, fiTypenamesInType(acc, rt), \ac, arg -> fiTypenamesInType(ac, arg.type));
-		FiTypeRef(t): 
-			fiTypenamesInType(acc, t);
-		FiTypeName(name, typars): 
-			fold(typars, Cons(name, acc), fiTypenamesInType);
-		default: 
-			acc;
-	}
-}
-
-fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string {
-	structs = filtermap(types, \tp -> switch (tp) {
-		FiTypeStruct(__,__,__,__): Some(tp);
-		FiTypeUnion(__,__,__,__): None();
-	});
-	unions = filtermap(types, \tp -> switch (tp) {
-		FiTypeStruct(__,__,__,__): None();
-		FiTypeUnion(__,__,__,__): Some(tp);
-	});
-	ts_structs = superglue(structs, 
-		\struct -> "export " + fiTypeStruct2Ts(struct), 
-		"\n"
-	);
-	ts_unions = superglue(unions, 
-		\union -> "export " + fiTypeUnion2Ts(union), 
-		"\n"
-	);
-	"export type Ref<T> = {\n" +
-	"\t __v: T;\n" +
-	"}\n" +
-	ts_structs + (if (ts_unions == "") "" else "\n\n" + ts_unions);
 }
