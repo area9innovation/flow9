@@ -259,6 +259,19 @@ std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(cons
 	return res;*/
 }
 
+template <typename A, typename B>
+std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&)> & flow_fn) {
+	std::vector<B> res(flow_a.size());
+
+	for (std::size_t i = flow_a.size(); i > 0; i = flow_a.size()) {
+		res[res.size() - i] = flow_fn(flow_a[i - 1]);
+		flow_a.pop_back(); // Complexity O(1)
+		// flow_a.erase(...); // Complexity = O( N(destr) + (size - N)(constr) )
+	}
+
+  return res;
+}
+
 template <typename A>
 std::vector<A> flow_filter(const std::vector<A>& flow_a, const std::function<bool(A)> & flow_test) {
   std::vector<A> res;
