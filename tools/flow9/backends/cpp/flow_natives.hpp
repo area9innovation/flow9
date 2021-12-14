@@ -272,9 +272,10 @@ void dupVectItem(std::vector<A>& flow_a, std::vector<int32_t>& cntr_flow_a, std:
 		// free item
 		// flow_a.pop_back(); // Complexity O(1) // we can use if we will remove all items
 		flow_a.erase(flow_a.begin() + i, flow_a.begin() + i + 1); // Complexity = O( N(destr) + (size - N)(constr) )
-		// decrement counter
-		cntr_flow_a[i - 1]--;
 	}
+	// decrement counter
+	cntr_flow_a[i - 1]--;
+	
 	// change index
 	// i = flow_a.size();
 	i--;
@@ -303,7 +304,7 @@ std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&, int
 	std::vector<B> res(flow_a.size());
 
 	for (std::size_t i = flow_a.size(); i > 0; ) {
-		res[res.size() - i] = flow_fn(flow_a[i - 1], cntr_flow_a[i - 1]);
+		res[i-1/*res.size() - i*/] = flow_fn(flow_a[i - 1], cntr_flow_a[i - 1]);
 		dupVectItem(flow_a, cntr_flow_a, i);
 	}
 	
