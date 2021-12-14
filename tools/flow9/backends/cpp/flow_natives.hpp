@@ -289,21 +289,21 @@ void dupVectCounter(std::vector<A>& flow_a, std::vector<int32_t>& cntr_flow_a) {
 	}
 	std::cout<<"dupVectCounter: " << (!isUsed ? "free values " : "values are used. Counter=") << (!isUsed ? "" : (flow_print2(cntr_flow_a), "")) << std::endl;
 	if (!isUsed) {
-		// drop(flow_a) == ??, resize for now
+		// drop(flow_a) == ??, resize for now // Complexity = O( N )
 		flow_a.shrink_to_fit(); // resize to 0
 		cntr_flow_a.clear();
-		cntr_flow_a.shrink_to_fit(); // resize to 0
+		cntr_flow_a.shrink_to_fit(); // resize to 0 
 	}
 }
 
 // we don't increase the counter because the vector values are not used in this function.
 // function is const&. -> counter is redundant.
 template <typename A, typename B>
-std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&)> & flow_fn, std::vector<int32_t>& cntr_flow_a) {
+std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&, int32_t&)> & flow_fn, std::vector<int32_t>& cntr_flow_a) {
 	std::vector<B> res(flow_a.size());
 
 	for (std::size_t i = flow_a.size(); i > 0; ) {
-		res[res.size() - i] = flow_fn(flow_a[i - 1]);
+		res[res.size() - i] = flow_fn(flow_a[i - 1], cntr_flow_a[i - 1]);
 		dupVectItem(flow_a, cntr_flow_a, i);
 	}
 	
