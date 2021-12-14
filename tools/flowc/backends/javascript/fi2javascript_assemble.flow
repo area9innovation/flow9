@@ -5,6 +5,7 @@ import tools/flowc/backends/javascript/fi2javascript_webfont;
 import tools/flowc/backends/javascript/fi2javascript_sourcemap;
 import tools/flowc/incremental/fiprogram;
 import ds/list;
+import string_utils;
 import text/blueprint;
 import formats/json/json;
 import sys/process;
@@ -442,11 +443,18 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 							struct_unions = fiStructOrUnionsInNatives(program, natives_module);
 							if (!setFileContent(ts_d_file, fiStructOrUnions2Ts(struct_unions))) {
 								success := false;
+								fcPrintln("Failed to save file: '" + ts_d_file + "'", cfg.threadId);
+							} else {
+								fcVerbose(cfg, 1, "File '" + ts_d_file + "' is saved.");
 							}
 							import_str = "import * as typenames from \"" + fileNameOnly(changeFileExt(ts_d_file, "")) + "\";\n";
 							if (!startsWith(ts_natives, import_str)) {
-								setFileContent(dep.package, import_str + ts_natives);
-								fcVerbose(cfg, 0, "Types definitions are added to '" + dep.package + "'");
+								if (!setFileContent(dep.package, import_str + ts_natives)) {
+									fcPrintln("Failed to update file '" + dep.package + "' with '" + import_str + "'", cfg.threadId);
+									success := false;
+								} else {
+									fcVerbose(cfg, 1, "File '" + dep.package + "' is updated with '" + import_str + "'");
+								}
 							}
 							// Check typescript files
 							if (endsWith(dep.package, ".ts")) {
@@ -460,12 +468,16 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 							}
 							if (^success) {
 								// Installing a local dependency from file with yarn
-								args = ["add", "file:" + dep.package];
+								args = ["add", "file:" + dirName(dep.package)];
 								//args = ["add", "file:" + dep_file];
 								file_install = execSystemProcessOutput("yarn", args, dir);
 								if (file_install.exitCode != 0) {
 									success := false;
-									fcPrintln("Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:<<<\n" + file_install.stdall + "\n>>>", cfg.threadId);
+									fcPrintln(
+										"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + 
+										"<<<\n" + strIndent(file_install.stdall) + "\n>>>", 
+										cfg.threadId
+									);
 								} else {
 									fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
 								}
@@ -514,8 +526,32 @@ checkProvidersAreInstalled(cfg : FiJsConfig, conf_dir : string) -> bool {
 		if (provider == "yarn") {
 			if (!checkProgramIsInstalled(cfg, provider)) false else {
 				if (fileExists(pathCombine(conf_dir, "yarn.lock"))) true else {
+					/*
+					{
+						"name": "my-existing-package",
+						"version": "0.1",
+						"description": "I exist therefore I am.",
+						"repository": {
+							"url": "https://github.com/yarnpkg/example-yarn-package",
+							"type": "git"
+						},
+						"license": "BSD-2-Clause"
+						}
+					*/
+					package_json = JsonObject([
+						Pair("name", JsonString(cfg.flowfile)),
+						Pair("version", JsonString("0.0.1")),
+						Pair("description", JsonString(cfg.flowfile)),
+						Pair("license", JsonString("MIT"))
+					]);
+					setFileContent(pathCombine(conf_dir, "package.json"), json2string(package_json));
 					yarn_install = execSystemProcessOutput("yarn", ["install"], conf_dir);
-					yarn_install.exitCode == 0;
+					ret = yarn_install.exitCode == 0;
+					if (!ret) {
+						fcPrintln("Failed to run 'yarn install':\n" + yarn_install.stdall, cfg.threadId);
+					}
+					fcVerbose(cfg, 1, "Command 'yarn install' is completed.");
+					ret;
 				}
 			}
 		} else {
