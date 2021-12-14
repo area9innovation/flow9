@@ -282,91 +282,143 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				concat(ba1.disposers, ba2.disposers)
 			)
 		}
-		TDynamicGroup2(stackChanges, currentStack, combiner) : {
+		TDynamicGroup2(stackChanges, currentStack, combiner0) : {
 			fgroupChanges : DynamicBehaviour<[FGroupChange]> = make([]);
 			tropicItems : DynamicBehaviour<[TDynamicGroupItem]> = make([]);
-			isVertical = switch (combiner) {
-				TLinesCombiner() : true;
-				TLinesACombiner() : true;
-				TBaselineLinesCombiner() : true;
-				TBaselineLinesACombiner() : true;
-				default : false;
-			}
-			verticalCombiner = if (isVertical) FAddition() else FMax();
-			horizontalCombiner = if (combiner == TColsCombiner() || combiner == TColsACombiner()) FAddition() else FMax();
-
 			rtl = getDefaultRtl();
-			rtlCols = combiner == TColsACombiner() && rtl;
-			rtlLines = (combiner == TLinesACombiner() || combiner == TBaselineLinesACombiner()) && rtl;
-			maxWidth = if (rtlLines) fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0) else const(0.0);
+			maxWidth = fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0);
+
+			itemPositionFn = \previousItem, isVertical ->
+				fsubselect(previousItem, FLift(\prevItem ->
+					fselect2(
+						prevItem.position,
+						if (isVertical)
+							prevItem.acc.metrics.height
+						else
+							prevItem.acc.metrics.width,
+						FLift2(\p : Point, metric : double ->
+							if (isVertical)
+								Point(
+									0.0,
+									p.y + metric
+								)
+							else
+								Point(
+									p.x + metric,
+									0.0
+								)
+						)
+					)
+				));
+
+			itemPositionRtlFn = \previousItem, tropicWidth ->
+				fsubselect(previousItem, FLift(\prevItem ->
+					fselect4(
+						prevItem.position,
+						prevItem.acc.metrics.height,
+						maxWidth,
+						tropicWidth,
+						\p : Point, prevHeight : double, containerWidth, currentWidth : double ->
+							Point(
+								max(containerWidth - currentWidth, 0.),
+								p.y + prevHeight
+							)
+					)
+				));
+
+			firstItemBaselineFn =
+				\items : [TDynamicGroupItem] ->
+					if (length(items) > 0) items[0].acc.metrics.baseline
+					else const(0.0);
+
+			lastItemBaselineFn =
+				\items : [TDynamicGroupItem] ->
+					foldi(items, const(0.0), \i, acc, it ->
+						faddition(acc, 
+							if (i < length(items) - 1) it.acc.metrics.height
+							else it.acc.metrics.baseline
+						)
+					);
+
+			combiner : TCustomCombiner = switch (combiner0) {
+				TCustomCombiner(__, __, __, __, __) : combiner0;
+				TGroupCombiner() : TCustomCombiner(
+					\__, __ -> const(zeroPoint),
+					None(),
+					None(),
+					false,
+					false
+				);
+				TLinesCombiner() : TCustomCombiner(
+					\previousItem, __ -> itemPositionFn(previousItem, true),
+					None(),
+					Some(lastItemBaselineFn),
+					true,
+					false
+				);
+				TLinesACombiner() : TCustomCombiner(
+					\previousItem, tropicWidth ->
+						if (rtl) itemPositionRtlFn(previousItem, tropicWidth)
+						else itemPositionFn(previousItem, true),
+					None(),
+					Some(lastItemBaselineFn),
+					true,
+					false
+				)
+				TBaselineLinesCombiner() : TCustomCombiner(
+					\previousItem, __ -> itemPositionFn(previousItem, true),
+					None(),
+					Some(firstItemBaselineFn),
+					true,
+					false
+				);
+				TBaselineLinesACombiner() : TCustomCombiner(
+					\previousItem, tropicWidth ->
+						if (rtl) itemPositionRtlFn(previousItem, tropicWidth)
+						else itemPositionFn(previousItem, true),
+					None(),
+					Some(firstItemBaselineFn),
+					true,
+					false
+				);
+				TColsCombiner() : TCustomCombiner(
+					\previousItem, __ -> itemPositionFn(previousItem, false),
+					None(),
+					None(),
+					false,
+					true
+				);
+				TColsACombiner() : TCustomCombiner(
+					\previousItem, __ -> itemPositionFn(previousItem, false),
+					if (rtl) Some(\i -> i + 1) else None(),
+					None(),
+					false,
+					true
+				);
+			}
+
+			makeMetricsCombiner = \v -> if (v) FAddition() else FMax();
+			verticalCombiner = makeMetricsCombiner(combiner.vertical);
+			horizontalCombiner = makeMetricsCombiner(combiner.horizontal);
 
 			createNewTAcc = \itemIndex, tropic -> {
-				if (combiner == TGroupCombiner()) {
-					Pair(
-						const(zeroPoint),
-						tropic2Acc(
-							tropic,
-							parent,
-							sheet,
-							metricsOnly
-						)
-					)
-				} else {
-					previousItem : Transform<TDynamicGroupItem> =
-						fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
-							elementAt(ti, if (rtlCols) i + 1 else i - 1, zeroTDynamicGroupItem)
-						));
+				previousItem : Transform<TDynamicGroupItem> =
+					fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
+						elementAt(ti, eitherMap(combiner.getPrevItemIndex, \fn -> fn(i), i - 1), zeroTDynamicGroupItem)
+					));
+				tropicWidth = make(0.);
 
-					tropicWidth = make(0.0);
-					itemPosition =
-						fsubselect(
-							previousItem,
-							FLift(\prevItem ->
-								if (rtlLines)
-									fselect4(
-										prevItem.position,
-										prevItem.acc.metrics.height,
-										maxWidth,
-										tropicWidth,
-										\p : Point, prevHeight : double, containerWidth, currentWidth : double ->
-											Point(
-												if (containerWidth > currentWidth) containerWidth - currentWidth else 0.0,
-												p.y + prevHeight
-											)
-									)
-								else
-									fselect2(
-										prevItem.position,
-										if (isVertical)
-											prevItem.acc.metrics.height
-										else
-											prevItem.acc.metrics.width,
-										FLift2(\p : Point, metric : double ->
-											if (isVertical)
-												Point(
-													0.0,
-													p.y + metric
-												)
-											else
-												Point(
-													p.x + metric,
-													0.0
-												)
-										)
-									)
-							)
-						);
+				itemPosition = combiner.itemPositionFn(previousItem, tropicWidth);
 
-					Pair(
-						itemPosition,
-						tropic2Acc(
-							TTranslate(itemPosition, TAttachWidth(tropic, tropicWidth)),
-							parent,
-							sheet,
-							metricsOnly
-						)
+				Pair(
+					itemPosition,
+					tropic2Acc(
+						TTranslate(itemPosition, TAttachWidth(tropic, tropicWidth)),
+						parent,
+						sheet,
+						metricsOnly
 					)
-				}
+				)
 			}
 
 			handleAdd = \tropic, z -> {
@@ -507,23 +559,10 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			};
 
 			baseline =
-				if (combiner == TBaselineLinesCombiner() || combiner == TBaselineLinesACombiner()) {
-					fsubselect(tropicItems, FLift(\items : [TDynamicGroupItem] ->
-						if (length(items) > 0) items[0].acc.metrics.baseline
-						else const(0.0)
-					))
-				} else if (combiner == TLinesCombiner() || combiner == TLinesACombiner()) {
-					fsubselect(tropicItems, FLift(\items : [TDynamicGroupItem] ->
-						foldi(items, const(0.0), \i, acc, it ->
-							faddition(acc, 
-								if (i < length(items) - 1) it.acc.metrics.height
-								else it.acc.metrics.baseline
-							)
-						)
-					))
-				} else {
-					fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
-				}
+				eitherFn(combiner.baselineFn,
+					\fn -> fsubselect(tropicItems, FLift(fn)),
+					\ -> fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
+				);
 
 			TAcc(
 				if (metricsOnly)
@@ -3421,16 +3460,6 @@ distributeAsks(
 	)
 	|> (\f -> Pair(fFirstOfPair(f), fSecondOfPair(f)))
 }
-
-// TDynamicGroup tools
-
-TDynamicGroupItem : (
-	acc : TAcc,
-	index : DynamicBehaviour<int>,
-	position : Transform<Point>
-);
-
-zeroTDynamicGroupItem = TDynamicGroupItem(zeroTAcc, make(0), const(zeroPoint));
 
 fsubselectFn(
 	array : Transform<[?]>,
