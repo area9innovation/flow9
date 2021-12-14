@@ -43,7 +43,10 @@ import * as typenames from "TestNativeHost-types.d";
   export function makeUser1(pair: typenames.Pair<string, number>): User {
 	return new UserAccount(pair.first, pair.second);
   }
+
 /*
+  //Uncomment to see the errors while checking types with typescript:
+
   export function makeUser2(pair: typenames.Pair<string, number>): User {
 	return new UserAccount(pair.aaa, pair.bbb);
   }
