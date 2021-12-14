@@ -247,7 +247,7 @@ std::vector<int32_t> flow_enumFromTo(int32_t start, int32_t end) {
 
 
 template <typename A, typename B>
-std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(A)> & flow_fn) {
+std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(const A&)> & flow_fn) {
   std::vector<B> res(flow_a.size());
   for (std::size_t i = 0; i != flow_a.size(); ++i) {
     res[i] = flow_fn(flow_a[i]);
