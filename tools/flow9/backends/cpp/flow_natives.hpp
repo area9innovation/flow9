@@ -93,7 +93,7 @@ void flow_quit(int32_t code) {
 }
 
 template <typename A>
-void flow_print2(A v) {
+void flow_print2(A&& v) {
 	std::cout << v;
 }
 
@@ -155,7 +155,7 @@ std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){
 }
 
 template <typename A>
-void flow_println2(A v) {
+void flow_println2(A&& v) {
 	flow_print2(v);
 	std::cout << std::endl;
 }
@@ -248,14 +248,15 @@ std::vector<int32_t> flow_enumFromTo(int32_t start, int32_t end) {
 
 template <typename A, typename B>
 std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(A)> & flow_fn) {
-  // std::vector<B> res(flow_a.size());
-  // for (std::size_t i = 0; i != flow_a.size(); ++i) {
-  //   res[i] = flow_fn(flow_a[i]);
-  // }
-  //return res;
-	std::vector<B> res;
+  std::vector<B> res(flow_a.size());
+  for (std::size_t i = 0; i != flow_a.size(); ++i) {
+    res[i] = flow_fn(flow_a[i]);
+  }
+  return res;
+
+	/*std::vector<B> res;
 	std::transform(flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_fn);
-	return res;
+	return res;*/
 }
 
 template <typename A>
