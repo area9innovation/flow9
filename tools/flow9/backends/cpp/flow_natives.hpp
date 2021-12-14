@@ -97,6 +97,11 @@ void flow_print2(A&& v) {
 	std::cout << v;
 }
 
+template <typename A>
+void flow_print2(std::shared_ptr<A> v) {
+	std::cout << "ref " << *v;
+}
+
 void flow_print2(std::u16string d) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
 	std::cout << codecvt.to_bytes(d);
@@ -264,10 +269,16 @@ std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&)> & 
 	std::vector<B> res(flow_a.size());
 
 	for (std::size_t i = flow_a.size(); i > 0; i = flow_a.size()) {
+		// if (!uniq(flow_a[i - 1])) dup(flow_a[i - 1]); 
+		// dup(flow_fn) is redundant because we are using const&
 		res[res.size() - i] = flow_fn(flow_a[i - 1]);
+		// if (uniq(flow_a[i - 1])) drop else decref(flow_a[i - 1])
+		// drop(flow_a[i - 1]) == flow_a.pop_back()
 		flow_a.pop_back(); // Complexity O(1)
 		// flow_a.erase(...); // Complexity = O( N(destr) + (size - N)(constr) )
 	}
+	// drop(flow_a) == ??, resize for now
+	flow_a.shrink_to_fit(); // resize to 0
 
   return res;
 }
