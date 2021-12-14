@@ -264,7 +264,55 @@ std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(cons
 	return res;*/
 }
 
+template <typename A>
+void dupVectItem(std::vector<A>& flow_a, std::vector<int32_t>& cntr_flow_a, std::size_t& i) {
+	std::cout<<"dupVectItem: i="<< i << "; count=" << cntr_flow_a[i - 1] << (cntr_flow_a[i - 1] == 0 ? " :: free value " : " :: value is used ") << std::endl;
+	
+	if (cntr_flow_a[i - 1] == 0) {
+		// free item
+		// flow_a.pop_back(); // Complexity O(1) // we can use if we will remove all items
+		flow_a.erase(flow_a.begin() + i, flow_a.begin() + i + 1); // Complexity = O( N(destr) + (size - N)(constr) )
+		// decrement counter
+		cntr_flow_a[i - 1]--;
+	}
+	// change index
+	// i = flow_a.size();
+	i--;
+}
+
+template <typename A>
+void dupVectCounter(std::vector<A>& flow_a, std::vector<int32_t>& cntr_flow_a) {
+	bool isUsed = false;
+	for (std::size_t i = 0; i != cntr_flow_a.size(); ++i) {
+		isUsed = isUsed || (cntr_flow_a[i] > 0);
+		if (isUsed) break;
+	}
+	std::cout<<"dupVectCounter: " << (!isUsed ? "free values " : "values are used. Counter=") << (!isUsed ? "" : (flow_print2(cntr_flow_a), "")) << std::endl;
+	if (!isUsed) {
+		// drop(flow_a) == ??, resize for now
+		flow_a.shrink_to_fit(); // resize to 0
+		cntr_flow_a.clear();
+		cntr_flow_a.shrink_to_fit(); // resize to 0
+	}
+}
+
+// we don't increase the counter because the vector values are not used in this function.
+// function is const&. -> counter is redundant.
 template <typename A, typename B>
+std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&)> & flow_fn, std::vector<int32_t>& cntr_flow_a) {
+	std::vector<B> res(flow_a.size());
+
+	for (std::size_t i = flow_a.size(); i > 0; ) {
+		res[res.size() - i] = flow_fn(flow_a[i - 1]);
+		dupVectItem(flow_a, cntr_flow_a, i);
+	}
+	
+	dupVectCounter(flow_a, cntr_flow_a);
+
+  return res;
+}
+
+/*template <typename A, typename B>
 std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&)> & flow_fn) {
 	std::vector<B> res(flow_a.size());
 
@@ -281,7 +329,7 @@ std::vector<B> gc_flow_map(std::vector<A>& flow_a, const std::function<B(A&)> & 
 	flow_a.shrink_to_fit(); // resize to 0
 
   return res;
-}
+}*/
 
 template <typename A>
 std::vector<A> flow_filter(const std::vector<A>& flow_a, const std::function<bool(A)> & flow_test) {
