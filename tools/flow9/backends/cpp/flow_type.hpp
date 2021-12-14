@@ -55,9 +55,9 @@ T flow_cast(const _FlowType& val) {
     return std::any_cast<std::decay_t<T>>(val);
   }
   catch (const std::bad_any_cast& e) {
-    std::cout<< "ERROR casting from '" << demangle(val.type().name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
-    //throw std::invalid_argument("ERROR casting from '" + demangle(val.type().name()) + "' to '" + demangle(typeid(T).name()) + "'");
+    throw std::invalid_argument("ERROR casting from '" + demangle(val.type().name()) + "' to '" + demangle(typeid(T).name()) + "'");
+   /* std::cout<< "ERROR casting from '" << demangle(val.type().name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
     T res;
-    return res;
+    return res;*/
   }
 }
