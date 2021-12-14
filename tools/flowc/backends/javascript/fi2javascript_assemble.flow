@@ -3,6 +3,7 @@ import tools/flowc/backends/javascript/fi2javascript_defines;
 import tools/flowc/backends/javascript/fi2javascript_utils;
 import tools/flowc/backends/javascript/fi2javascript_webfont;
 import tools/flowc/backends/javascript/fi2javascript_sourcemap;
+import tools/flowc/backends/javascript/fi2javascript_extern;
 import tools/flowc/incremental/fiprogram;
 import ds/list;
 import string_utils;
@@ -343,217 +344,18 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> bool {
 						Cons(separatedHeaderCode,
 							Cons(ovl.rModuleItem, reverseList(ovl.requireModulesList))))))
 		) else list2string(Cons(exportOrMain, code));
-	fcVerbose(cfg, 1, "Assembling done.");
-
-	outfile = (if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile;
-	dir = if (strContains(outfile, "/")) dirName(outfile) else ".";
-	success = ref true;
-	saved_ok = \msg -> {
-		fcVerbose(cfg, 1, "File saved." + (if (msg == "") "" else "\n" + msg));
-		jsmode = fiJavascriptMode(cfg);
-		fcVerbose(cfg, 0, "Javascript (" + jsmode+ ") '" + resolveRelativePath(cfg.outputfile) + "' saved.");
-	}
-	saved_failed = \msg -> {
-		fcPrintln("Javascript (" + fiJavascriptMode(cfg)+ ") '" + resolveRelativePath(cfg.outputfile) + "' was NOT saved:\n" + msg, cfg.threadId);
-		success := false;
-	}
-
-	extern_deps = filter(cfg.dependencies, \p -> containsSet(ovl.nativeClasses, p.host));
-
-	if (length(extern_deps) == 0) {
-		fcVerbose(cfg, 1, "Saving output file...");
-		saveFileContent(
-			outfile, 
-			fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, 
-			cfg.threadId
-		);
-		saved_ok("");
-	} else {
-		conf_dir = lookupTreeDef(program.config.config, "confdir", "");
-		if (!checkProvidersAreInstalled(cfg, conf_dir)) {
-			saved_failed("Cannot bundle dependencies.");
-			success := false;
-		} else {
-			fcVerbose(cfg, 1, "Linking output file...");
-
-			extern_imports = map(extern_deps, \dep -> {
-				ensurePackageIsLoaded(program, dep, dir, cfg, success, conf_dir);
-				"import * as " + dep.host + " from '" + dep.package + "';\n"
-			});
-			if (^success) {
-				imports = concatStrings(extern_imports);
-				jsx_file = changeFileExt(outfile, ".jsx");
-				saveFileContent(
-					jsx_file, 
-					imports + fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, 
-					cfg.threadId
-				);
-				args0 = ["--bundle", "--outfile=" + outfile, 
-					// this option is added to suppress warnings about using 'this' in ECMAScript module
-					"--define:this=undefined",
-					jsx_file];
-				args = if (cfg.jsmode != NODEJS_MODE) args0 else concat(args0, ["--platform=node"]);
-				fcVerbose(cfg, 0, "Linking the package with esbuild ...");
-				result = execSystemProcessOutput("esbuild", args, dir);
-				if (result.exitCode != 0) {
-					saved_failed(result.stdall);
-				} else {
-					saved_ok(result.stdall);
-				}
-			}
-		}
-	}
 	if (cfg.code) {
 		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + "\n" + generatedContent, cfg.threadId);
 	}
-	^success;
-}
+	fcVerbose(cfg, 1, "Assembling done.");
 
-ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, cfg : FiJsConfig, success : ref bool, conf_dir : string) -> void {
-	provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
-	if (provider_list.exitCode != 0) {
-		fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
-		success := false;
-	} else {
-		if (strContains(provider_list.stdout, dep.package)) {
-			fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
-		} else {
-			if (dep.provider != "file") {
-				fcVerbose(cfg, 0, "Package " + dep.package + " is not yet installed. Going to install it.");
-				install_command = if (dep.provider == "npm") "install" else if (dep.provider == "yarn") "add" else "";
-				provider_install = execSystemProcessOutput(dep.provider, [install_command, dep.package], dir);
-				if (provider_install.exitCode != 0) {
-					fcPrintln("Failed to run '" + dep.provider + " " + install_command + " " + dep.package + "'. Check that " + dep.provider + " is installed:\n" + provider_install.stdall, cfg.threadId);
-					success := false;
-				} else {
-					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + provider_install.stdout);
-				}
-			} else {
-				dep_file = relatingPath(dep.package, conf_dir);
-				if (!fileExists(dep.package)) {
-					fcPrintln("File with natives definitions: '" + dep.package + "' doesn't exist", cfg.threadId);
-					success := false;
-				} else {
-					ts_natives = getFileContent(dep.package);
-					switch (findModuleWithNativeHost(program, dep.host)) {
-						Some(natives_module): {
-							// Save the *.d.ts - definitions of TypeSctipt types, corresponding to flow types in natives_module.
-							ts_d_file = changeFileExt(dep_file, "-types.d.ts");
-							struct_unions = fiStructOrUnionsInNatives(program, natives_module);
-							if (!setFileContent(ts_d_file, fiStructOrUnions2Ts(struct_unions))) {
-								success := false;
-								fcPrintln("Failed to save file: '" + ts_d_file + "'", cfg.threadId);
-							} else {
-								fcVerbose(cfg, 1, "File '" + ts_d_file + "' is saved.");
-							}
-							import_str = "import * as typenames from \"" + fileNameOnly(changeFileExt(ts_d_file, "")) + "\";\n";
-							if (!startsWith(ts_natives, import_str)) {
-								if (!setFileContent(dep.package, import_str + ts_natives)) {
-									fcPrintln("Failed to update file '" + dep.package + "' with '" + import_str + "'", cfg.threadId);
-									success := false;
-								} else {
-									fcVerbose(cfg, 1, "File '" + dep.package + "' is updated with '" + import_str + "'");
-								}
-							}
-							// Check typescript files
-							if (endsWith(dep.package, ".ts")) {
-								tsc_check = execSystemProcessOutput("tsc", ["-t", "es6", dep.package], dir);
-								if (tsc_check.exitCode != 0) {
-									fcPrintln("Failed to check types in '" + dep.package + "':\n" + tsc_check.stdall, cfg.threadId);
-									success := false;
-								} else {
-									fcVerbose(cfg, 0, "Types in '" + dep.package + "' are checked successfully.");
-								}
-							}
-							if (^success) {
-								// Installing a local dependency from file with yarn
-								args = ["add", "file:" + dirName(dep.package)];
-								//args = ["add", "file:" + dep_file];
-								file_install = execSystemProcessOutput("yarn", args, dir);
-								if (file_install.exitCode != 0) {
-									success := false;
-									fcPrintln(
-										"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + 
-										"<<<\n" + strIndent(file_install.stdall) + "\n>>>", 
-										cfg.threadId
-									);
-								} else {
-									fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
-								}
-							}
-						}
-						None(): {
-							fcPrintln("No natives flow module for native host '" + dep.host + " are found.", cfg.threadId);
-							success := false;
-						}
-					}
-				}
-			}
-		}
-	}
-}
+	outfile = (if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile;
 
-findModuleWithNativeHost(prog: FiProgram, host : string) -> Maybe<FiModule> {
-	find(getTreeValues(prog.modules), \module ->
-		exists(module.natives, \nat -> startsWith(nat.nativeName, host + "."))
-	);
-}
+	// Prepare the program code: all components, generated code and runtime.
+	program_code = fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent;
 
-// Checks if a string has a form of groups of digits, separated by dots like: 8.1.2 or 0.13.13
-stringIsVersion(v : string) -> bool {
-	ver = trim2(v, " \n\t\r");
-	ver != "" && stringCharsFold(ver, true, \acc, char ->
-		if (!acc) acc else isDigit(char) || char == "."
-	);
-}
-
-checkProgramIsInstalled(cfg : FiJsConfig, prog : string) -> bool {
-	prog_version = execSystemProcessOutput(prog, ["--version"], ".");
-	if (prog_version.exitCode == 0 && prog_version.stderr == "" && stringIsVersion(prog_version.stdout)) {
-		fcVerbose(cfg, 1, prog + " version is: " + prog_version.stdout);
-		true 
-	} else {
-		fcPrintln("Seems that '" + prog + "' is not installed. Please install it.", cfg.threadId);
-		false;
-	}
-}
-
-checkProvidersAreInstalled(cfg : FiJsConfig, conf_dir : string) -> bool {
-	providers = uniq(map(cfg.dependencies, \dep -> dep.provider));
-	all(map(providers, \provider -> {
-		if (provider == "file") true else 
-		if (provider == "yarn") {
-			if (!checkProgramIsInstalled(cfg, provider)) false else {
-				if (fileExists(pathCombine(conf_dir, "yarn.lock"))) true else {
-					/*
-					Make a package.json with a format like that: (no repository)
-					{
-						"name": "my-existing-package",
-						"version": "0.1",
-						"description": "I exist therefore I am.",
-						"license": "BSD-2-Clause"
-						}
-					*/
-					package_json = JsonObject([
-						Pair("name", JsonString(cfg.flowfile)),
-						Pair("version", JsonString("0.0.1")),
-						Pair("description", JsonString(cfg.flowfile)),
-						Pair("license", JsonString("MIT"))
-					]);
-					setFileContent(pathCombine(conf_dir, "package.json"), json2string(package_json));
-					yarn_install = execSystemProcessOutput("yarn", ["install"], conf_dir);
-					ret = yarn_install.exitCode == 0;
-					if (!ret) {
-						fcPrintln("Failed to run 'yarn install':\n" + yarn_install.stdall, cfg.threadId);
-					}
-					fcVerbose(cfg, 1, "Command 'yarn install' is completed.");
-					ret;
-				}
-			}
-		} else {
-			checkProgramIsInstalled(cfg, provider);
-		}
-	})) && checkProgramIsInstalled(cfg, "esbuild");
+	// Finally link the external dependencies and bundle a single file.
+	fiLinkExternalJsDependencies(program, cfg, ovl, program_code);
 }
 
 fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) {
