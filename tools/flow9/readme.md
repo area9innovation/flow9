@@ -91,6 +91,8 @@ C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (e
    when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
    Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
 
+- tools/flowc/backends/java/parser/java_parser takes a very long time to compile.
+
 - Do prolog-style search when all possible unifications and subtypes
   have completed
 
