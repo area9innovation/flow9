@@ -115,22 +115,17 @@ makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
 
 generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 	GeneralInspectElement(
-		ParaElementInspector(make(id), make(0.), make(0.), makeWH(), make(0.), make(0.), make(0), make(false)),
+		ParaElementInspector(make(id), make(0.), make(0.), make(false), makeWH(), make(0.), make(0.), make(0), make(false)),
 		EmptyLineElement()
 	)
 }
 
 general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement {
+	generateText = \txt, st -> Text(txt, st |> makeSkipOrderCheck) |> wordDecorator;
 	switch (elem) {
-		GeneralText(txt) : {
-			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style) |> makeSkipOrderCheck) |> wordDecorator;
-		}
-		GeneralDynamicText(txt) : {
-			Text(txt, applyAlphabetStyles(detectAlphabet(txt), style) |> makeSkipOrderCheck) |> wordDecorator;
-		}
-		GeneralSpace(txt, alBef, alAft) : {
-			Space(Text(txt, apply2AlphabetsScaling(alBef, alAft, style) |> makeSkipOrderCheck) |> wordDecorator);
-		}
+		GeneralText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
+		GeneralDynamicText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
+		GeneralSpace(txt, alBef, alAft) : generateText(txt, apply2AlphabetsScaling(alBef, alAft, style));
 		NewLine() : NewLine();
 		GeneralLinePart(f, m, e) : {
 			st =  makeSkipOrderCheck(style);
@@ -309,22 +304,16 @@ renderParagraphEx(
 	update = make(0);
 	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
 
-	renderParaLinesFn = \lines, storyWidth -> {
-		renderParaLines(
-			storyWidth, lines, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-			interLineHighlighting,
-			renderedLinesInfoM
-		);
-	}
 	paragraphAccessibilityParent = ^accessibilityParent;
 	renderWrapper = \updaterWrapper ->
 		\lines, storyWidth -> {
 			prevAccessibilityParent = ^accessibilityParent;
 			accessibilityParent := paragraphAccessibilityParent;
-			rendered = renderParaLinesFn(
-				lines,
+			rendered = renderParaLines(
 				if (storyWidth > 0.0) storyWidth else getValue(aw),
+				lines, tightWidth, alignment, interlineSpacing,
+				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
+				interLineHighlighting, renderedLinesInfoM
 			);
 			updaterWrapper(\-> nextDistinct(widthManager.width, lines.maxLineWidth));
 			accessibilityParent := prevAccessibilityParent;
@@ -609,6 +598,7 @@ makeInteractiveParaWord(
 						make(0),
 						make(0.),
 						make(0.),
+						make(false),
 						makeWH(),
 						make(0.),
 						make(0.),
@@ -778,7 +768,7 @@ reflowParaWords(
 	if (rtl)
 		zipWith(
 			reflowResult,
-			reflowTextToBiDi(map(reflowResult, \l -> l.words), isWordEmpty, getWordText, setWordText, idfn, rtl),
+			reflowTextToBiDi(map(reflowResult, \l -> l.words), isWordEmpty, getWordText, setWordText, setWordRTL, rtl),
 			\l, ws -> ParaLine(ws, l.indent),
 		)
 	else reflowResult;
@@ -1332,6 +1322,24 @@ setWordText(w : ParaWord, t : string) -> ParaWord {
 					Text(t, getFormTextStyle(form))
 				);
 				Text(__, fs): Text(t, fs);
+				default: w.form;
+			},
+			w.interactivityIdM
+		);
+		default: w;
+	};
+}
+
+setWordRTL(w : ParaWord, rtl : bool) -> ParaWord {
+	switch(w.word) {
+		Text(t, s): ParaWord(
+			Text(t, s), w.metrics, w.ghosted,
+			switch(w.form) {
+				CoordinateInspectElement(inspector, form): CoordinateInspectElement(
+					inspector,
+					Text(t, replaceStruct(getFormTextStyle(form), SetRTL(rtl)))
+				);
+				Text(__, fs): Text(t, replaceStruct(fs, SetRTL(rtl)));
 				default: w.form;
 			},
 			w.interactivityIdM
