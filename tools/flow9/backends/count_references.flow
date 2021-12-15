@@ -1,0 +1,92 @@
+import tools/flow9/backends/bprogram;
+
+export {
+
+	// Count the number of uses of the variable and update the counter.
+	updateRefCounters(prog : BExpProgram) -> BExpProgram;
+
+}
+
+updateRefCounters(prog : BExpProgram) -> BExpProgram {
+	fixedDeclarations : [BExpDeclaration] = prog.declarations;
+	BExpProgram(prog with declarations = map(prog.declarations, updateRefCounterInDeclaration));
+}
+
+updateRefCounterInDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
+	switch (decl) {
+		BGlobalVar(id, body, type): BGlobalVar(id, updateRefCounterInBExp(body), type);
+		BExpFunction(id, args, body, type): BExpFunction(id, args, updateRefCounterInBExp(body), type);
+		BExpNative(id, isio, type, nativeName): decl;
+	}
+}
+
+updateRefCounterInBExp(exp : BExp) -> BExp {
+	switch (exp) {
+		BValue(): exp;
+		BVar(id, type): exp;
+		BLet(id, val, body, type, refCount): {
+			BLet(id, updateRefCounterInBExp(val), updateRefCounterInBExp(body), type, countLinksInBExp(body, id, refCount));
+		}
+		BLambda(args, body, type): {
+			BLambda(args, updateRefCounterInBExp(body), type)
+		}
+		BCall(fn, args, type): {
+			BCall(updateRefCounterInBExp(fn), map(args, updateRefCounterInBExp), type)
+		}
+		BIf(cond, then, else_, type): {
+			BIf(updateRefCounterInBExp(cond), updateRefCounterInBExp(then), updateRefCounterInBExp(else_), type)
+		}
+		BSequence(exps, type): {
+			BSequence(map(exps, updateRefCounterInBExp), type);
+		}
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			BSwitch(value, switchType, map(cases, \c -> BCase(c.id, updateRefCounterInBExp(c.body))), maybeMap(defaultCase, updateRefCounterInBExp), type)
+		}
+		BConstruct(struct, args, type): {
+			BConstruct(struct, map(args, updateRefCounterInBExp), type);
+		}
+		BField(value, field, type): {
+			BField(updateRefCounterInBExp(value), field, type);
+		}
+		BSetMutable(left, field, value, type): {
+			BSetMutable(updateRefCounterInBExp(left), field, updateRefCounterInBExp(value), type)
+		}
+		BArray(args, type): {
+			BArray(map(args, updateRefCounterInBExp), type)
+		}
+		BCast(value, from, to): {
+			BCast(updateRefCounterInBExp(value), from, to)
+		}
+	}
+}
+
+countLinksInBExp(exp : BExp, varName : string, counter : int) -> int {
+	calc0 = \value -> countLinksInBExp(value, varName, 0);
+	calc = \value -> countLinksInBExp(value, varName, counter);
+	calcA = \values -> fold(values, counter, \acc, v -> acc + calc0(v));
+	switch (exp) {
+		BValue(): counter;
+		BVar(id, type) : if (id == varName) counter + 1 else counter; 
+		BLet(id, val, body, type, refCount): calc(val) + calc0(body);
+		BLambda(args, body, type): calc(body);
+		BCall(fn, args, type): calc0(fn) + calcA(args);
+		// TODO: see BSwitch
+		BIf(cond, then, else_, type): calc(cond) + calc0(then) + calc0(else_);
+		BSequence(exps, type): calcA(exps);
+		// TODO : optimization
+		// Find the maximum number of uses among the branches and take it.
+		// Because we don't know which branch we need.
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			calc(value)
+			+ fold(cases, defaultCase ?? calc0(defaultCase) : 0, \acc, c -> {
+				cnt = calc0(c.body);
+				if (cnt > acc) cnt else acc;
+			});
+		}
+		BConstruct(struct, args, type): calcA(args);
+		BField(value, field, type): calc(value);
+		BSetMutable(left, field, value, type): calc(left) + calc0(value);
+		BArray(args, type): calcA(args);
+		BCast(value, from, to): calc(value);
+	}
+}
