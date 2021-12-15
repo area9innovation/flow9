@@ -24,13 +24,12 @@ export {
 	idsArrayToRanges(ids : [int]) -> RequestIds;
 	RequestIds ::= RequestIdsArray, RequestIdsRanges;
 		RequestIdsArray(ids : [int]);
-		// ranges - an array of arrays containing the start and end of the range
-		RequestIdsRanges(ranges : [[int]]);
+		// ranges - an array of Pairs containing the start and end of the range
+		RequestIdsRanges(ranges : [Pair<int, int>]);
+	requestIdsToJson(fieldName : string, requestIds : RequestIds) -> Json;
 	
 	// For x == Some(v) it returns fn(v)
 	// For x == None(x) it returns alternative
-	// For x == RequestIdsArray(v) it returns fn(v)
-	// For x == RequestIdsRanges(v) it returns fn(v)
 	// For other values it returns fn(x)
 	eitherMapAnyType(x : flow, fn : (?) -> ??, alternative : ??) -> ??;
 }
@@ -45,17 +44,24 @@ isTest() -> bool {
 eitherMapAnyType(x : flow, fn : (?) -> ??, alternative : ??) -> ?? {
 	if (isSameStructType(x, None()) || isSameStructType(x, Some(0))) {
 		eitherMap(x, fn, alternative);
-	} else if (isSameStructType(x, RequestIdsArray([]))) {
-		fn(x.ids);
-	} else if (isSameStructType(x, RequestIdsRanges([]))) {
-		fn(x.ranges);
 	} else {
 		fn(x)
 	}
 }
 
 buildKeyValueForPhp(key : string, value : ?) -> [KeyValue] {
-	eitherMapAnyType(value, \v -> [KeyValue(key, toStringNoExtraQuotes(v))], [])
+	switch (flow(value)) {
+		RequestIdsArray(ids): [KeyValue(key, toStringNoExtraQuotes(ids))];
+		RequestIdsRanges(ranges): buildRangesKeyValueForPhp(key, ranges);
+		default: eitherMapAnyType(value, \v -> [KeyValue(key, toStringNoExtraQuotes(v))], []);
+	}
+}
+
+buildRangesKeyValueForPhp(key : string, ranges : [Pair<int, int>]) -> [KeyValue] {
+	values = map(ranges, \range -> {
+		if (range.first == range.second) flow(range.first) else flow([range.first, range.second])
+	});
+	[KeyValue(key, toStringNoExtraQuotes(values))];
 }
 
 idsArrayToRanges(ids : [int]) -> RequestIds {
@@ -63,14 +69,14 @@ idsArrayToRanges(ids : [int]) -> RequestIds {
 		sorted = sort(ids);
 		if (foldi(sorted, false, \i, acc, id -> acc || i > 0 && id - 1 == sorted[i - 1])) {
 			last = length(sorted) - 1;
-			list = foldi(sorted, makeList(), \i : int, acc : List<[int]>, id : int -> {
+			list = foldi(sorted, makeList(), \i : int, acc : List<Pair<int, int>>, id : int -> {
 				if (i == 0 || (id - 1 != sorted[i - 1] && id != sorted[i - 1])) {
-					Cons([id], acc);
+					Cons(Pair(id, id), acc);
 				} else if (i < last && (id + 1 == sorted[i + 1] || id == sorted[i + 1])) {
 					acc;
 				} else {
-					head = headList(acc, [id]);
-					Cons(ifArrayPush(head, head != [id], id), tailList(acc));
+					head = headList(acc, Pair(id, id));
+					Cons(Pair(head.first, id), tailList(acc));
 				}
 			});
 			RequestIdsRanges(list2array(list));
@@ -79,5 +85,31 @@ idsArrayToRanges(ids : [int]) -> RequestIds {
 		}
 	} else {
 		RequestIdsArray(ids);
+	}
+}
+
+requestIdsToJson(fieldName : string, requestIds : RequestIds) -> Json {
+	switch (requestIds) {
+		RequestIdsArray(idsArray): {
+			JsonArray(map(idsArray, \id ->
+				JsonObject([
+					Pair(fieldName, JsonDouble(i2d(id))),
+				])
+			));
+		};
+		RequestIdsRanges(requestIdsRanges): {
+			JsonArray(filtermap(requestIdsRanges, \range -> {
+				fromId = range.first;
+				toId = range.second;
+				idJson = if (fromId == toId) {
+					JsonDouble(i2d(fromId));
+				} else {
+					JsonArray([JsonDouble(i2d(fromId)), JsonDouble(i2d(toId))]);
+				}
+				Some(JsonObject([
+					Pair(fieldName, idJson),
+				]));
+			}));
+		};
 	}
 }
