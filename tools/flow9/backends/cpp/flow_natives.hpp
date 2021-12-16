@@ -69,10 +69,10 @@ T flow_cast_variant(std::variant<TT...> val) {
 	if (const T* pval = std::get_if<T>(&val)) {
 		return *pval; 
 	} else  {
-		std::cout<< "ERROR casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
+		/*std::cout<< "ERROR casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
 		T res;
-		return res;
-		//throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" +  demangle(typeid(val).name()) + "]");
+		return res;*/
+		throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" +  demangle(typeid(val).name()) + "]");
 	}
 }
 
