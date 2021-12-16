@@ -82,6 +82,8 @@ TODO CGraph:
 Need decision:
 - types.flow: implicit None type-parameter
 
+- MTree is polymorphic, but Material is not
+
 - type39: flow
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
 		Triple(flow(None()), start, "");
