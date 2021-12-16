@@ -82,8 +82,6 @@ TODO CGraph:
 Need decision:
 - types.flow: implicit None type-parameter
 
-- type41: Something wrong in inference
-
 - type39: flow
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
 		Triple(flow(None()), start, "");
