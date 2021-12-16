@@ -229,7 +229,7 @@ class RenderSupport {
 			accessibilityZoom = zoom;
 			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
 
-			PixiStage.broadcastEvent("resize", backingStoreRatio);
+			broadcastResizeEvent();
 			InvalidateLocalStages();
 
 			showAccessibilityZoomTooltip();
@@ -611,8 +611,8 @@ class RenderSupport {
 		var height : Int = Browser.window.innerHeight;
 
 		if (RenderRoot != null) {
-			width = getRenderRootWidth();
-			height = getRenderRootHeight();
+			width = getRenderRootWidth(RenderRoot);
+			height = getRenderRootHeight(RenderRoot);
 		}
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
@@ -711,36 +711,36 @@ class RenderSupport {
 		}
 	}
 
-	private static function getRenderRootWidth() {
+	private static function getRenderRootWidth(root : Element) {
 		var width = 0;
-		var rWidth = Std.parseInt(RenderRoot.getAttribute('width'));
+		var rWidth = Std.parseInt(root.getAttribute('width'));
 
 		if (rWidth != null && !Math.isNaN(rWidth)) {
 			width = rWidth;
 		} else {
-			var bRect = RenderRoot.getBoundingClientRect();
+			var bRect = root.getBoundingClientRect();
 			width = Math.floor(Math.min(
 				Browser.document.body.getBoundingClientRect().width,
 				Browser.window.innerWidth - (Platform.isIE ? bRect.left : bRect.x)
 			));
 		}
 
-		RenderRoot.style.width = width + 'px';
+		root.style.width = width + 'px';
 		return width;
 	}
 
-	private static function getRenderRootHeight() {
+	private static function getRenderRootHeight(root : Element) {
 		var height = 0;
-		var rHeight = Std.parseInt(RenderRoot.getAttribute('height'));
+		var rHeight = Std.parseInt(root.getAttribute('height'));
 
 		if (rHeight != null && !Math.isNaN(rHeight)) {
 			height = rHeight;
 		} else {
-			var bRect = RenderRoot.getBoundingClientRect();
+			var bRect = root.getBoundingClientRect();
 			height = Math.floor(Browser.window.innerHeight - (Platform.isIE ? bRect.top : bRect.y));
 		}
 
-		RenderRoot.style.height = height + 'px';
+		root.style.height = height + 'px';
 		return height;
 	}
 
@@ -1180,24 +1180,42 @@ class RenderSupport {
 			}
 
 			if (RenderRoot != null) {
-				win_width = getRenderRootWidth();
-				win_height = getRenderRootHeight();
+				for (instance in FlowInstances) {
+					var renderRoot = instance.stage.nativeWidget.host;
+					var pixiView = instance.renderer.view;
+					win_width = getRenderRootWidth(renderRoot);
+					win_height = getRenderRootHeight(renderRoot);
+
+					pixiView.width = win_width * backingStoreRatio;
+					pixiView.height = win_height * backingStoreRatio;
+
+					pixiView.style.width = win_width;
+					pixiView.style.height = win_height;
+
+					instance.renderer.resize(win_width, win_height);
+				}
+			} else {
+				PixiView.width = win_width * backingStoreRatio;
+				PixiView.height = win_height * backingStoreRatio;
+
+				PixiView.style.width = win_width;
+				PixiView.style.height = win_height;
+
+				PixiRenderer.resize(win_width, win_height);
 			}
-
-			PixiView.width = win_width * backingStoreRatio;
-			PixiView.height = win_height * backingStoreRatio;
-
-			PixiView.style.width = win_width;
-			PixiView.style.height = win_height;
-
-			PixiRenderer.resize(win_width, win_height);
 		}
 
-		PixiStage.broadcastEvent("resize", backingStoreRatio);
+		broadcastResizeEvent();
 		InvalidateLocalStages();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
+	}
+
+	public static function broadcastResizeEvent() : Void {
+		for (instance in FlowInstances) {
+			instance.stage.broadcastEvent("resize", backingStoreRatio);
+		}
 	}
 
 	public static function getViewportScale() : Float {
@@ -3526,11 +3544,25 @@ class RenderSupport {
 		}
 	}
 
+	private static var FullScreenTargetClip : DisplayObject = null;
+	public static function setFullScreenTarget(clip : DisplayObject) : Void {
+		if (FullScreenTargetClip != clip) {
+			if (IsFullScreen && FullScreenTargetClip != null) {
+				toggleFullScreen(false);
+			}
+			FullScreenTargetClip = clip;
+		}
+	}
+
 	public static function setFullScreenRectangle(x : Float, y : Float, w : Float, h : Float) : Void {
 	}
 
 	public static function resetFullWindowTarget() : Void {
 		setFullWindowTarget(null);
+	}
+
+	public static function resetFullScreenTarget() : Void {
+		setFullScreenTarget(null);
 	}
 
 	private static var regularStageChildren : Array<DisplayObject> = null;
@@ -3539,7 +3571,7 @@ class RenderSupport {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
+			var mainStage : FlowContainer = cast(getClipPixiStage(FullWindowTargetClip).children[0], FlowContainer);
 
 			if (fw) {
 				setShouldPreventFromBlur(FullWindowTargetClip);
@@ -3600,8 +3632,16 @@ class RenderSupport {
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!hadUserInteracted) return;
 
-		if (fs)
-			requestFullScreen(Browser.document.body);
+		if (fs) {
+			var mainStage = getClipPixiStage(FullScreenTargetClip);
+			var root =
+				mainStage.nativeWidget == null
+				? Browser.document.body
+				: mainStage.nativeWidget.host != null
+					? mainStage.nativeWidget.host
+					: untyped mainStage.nativeWidget;
+			requestFullScreen(root);
+		}
 		else
 			exitFullScreen(Browser.document);
 	}
@@ -4024,6 +4064,16 @@ class RenderSupport {
 		return untyped FlowInstances.find(function (instance) {
 			return instance.rootId == rootId;
 		});
+	}
+
+	public static function getClipPixiStage(clip : DisplayObject) : Dynamic {
+		if (untyped clip.flowInstance != null) {
+			return clip;
+		}
+		if (untyped clip.parentClip != null) {
+			return getClipPixiStage(untyped clip.parentClip);
+		}
+		return null;
 	}
 }
 
