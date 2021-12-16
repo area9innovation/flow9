@@ -613,6 +613,11 @@ class RenderSupport {
 		if (RenderRoot != null) {
 			width = getRenderRootWidth(RenderRoot);
 			height = getRenderRootHeight(RenderRoot);
+			Native.timer(0, function() {
+				if (width != getRenderRootWidth(RenderRoot) || height != getRenderRootHeight(RenderRoot)) {
+					onBrowserWindowResize({target : Browser.window});
+				}
+			});
 		}
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
