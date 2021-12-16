@@ -571,7 +571,11 @@ Built-in rendering
 In JS by default both Tropic and Material are rendered, using `<body>` as a root. You can make it via `trender` and `mrender`, respectively.
 
 But there is also an option to render them inside some specific element on a page. To make it, you should have static HTML page and
-add `<script type="text/javascript" src="flow_starter.js?name=<script_name>"></script>` to it. On flow side use `trenderTo` / `mrenderTo` with id of some html element on a page, which you want to be considered as renderRoot. It would be nice to set width/height attributes for this element, but default case is also handled. You will be able to find all flow stuff inside shadow DOM.
+add `<script type="text/javascript" src="flow_starter.js?name=<script_name>"></script>` to it. On flow side use `RenderRoot` style in `makeMaterialManager` with id of some html element on a page, which you want to be considered as renderRoot. It would be nice to set width/height attributes for this element, but default case is also handled.
+
+Multiple render roots are also supported, but in this case you have to create separate MaterialManager for each root.
+
+You will be able to find all flow stuff inside shadow DOM.
 
 Check [html](../www/test/test_flow_builtin.html) + [flow](../lib/material/test/test_flow_builtin.flow) for a tescase.
 
