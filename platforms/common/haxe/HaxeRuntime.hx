@@ -34,7 +34,7 @@ class HaxeRuntime {
 	// Do not use 'eval' directly here: https://esbuild.github.io/content-types/#direct-eval
 	// Using 'new Function('arg', 'code')' instead
 #if (readable)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') +'){return {name:'+ name+',' + a + '};}'))($global)}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') +'){return {name:\"'+ name+'\",' + a + '};}'))($global)}");
 #else
 	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}'))($global)}");
 #end
