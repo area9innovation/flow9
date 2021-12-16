@@ -188,11 +188,11 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 // TODO
 
 // variables
-template <typename T>
+/*template <typename T>
 T dup(T& a) {
 	return a;
-}
-// TODO
+}*/
+
 template <typename T>
 T drop(T& a) {
 	return a;
@@ -203,12 +203,12 @@ template <typename T>
 T dup(T a) {
 	return a;
 }
-// TODO
-template <typename T>
+
+/*template <typename T>
 T drop(T a) {
 	return a;
 }
-
+*/
 // math
 
 double flow_log(double v) {

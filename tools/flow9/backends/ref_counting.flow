@@ -5,57 +5,69 @@ export {
 }
 
 addRefCounting(prog : BExpProgram) -> BExpProgram {
+println("AFTER REFCNT");
+println(toString(map(prog.declarations, refCountingBExpDeclaration)));
 	BExpProgram(prog with declarations = map(prog.declarations, refCountingBExpDeclaration));
 }
 
 refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
 	switch (decl) {
-		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(body), type);
-		BExpFunction(id, args, body, type): BExpFunction(id, args, refCountingBExp(body), type);
+		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(body, false, []), type);
+		BExpFunction(id, args, body, type): {
+//println("BExpFunction::: "+toString(args) +"  "+toString(body));
+			BExpFunction(id, args, refCountingBExp(body, false, args), type);
+		}
 		BExpNative(id, isio, type, nativeName): decl;
 	}
 }
 
-refCountingBExp(exp : BExp) -> BExp {
+// if this is not the last line in the sequence, it does not mean that the variable will be used later in the code.
+// the variable can be used only 1 time on the first line, and then not.
+refCountingBExp(exp : BExp, isLastExp : bool, dropVars : [string]) -> BExp {
+	dup = \e -> if (isLastExp) e else BDupValue(e);
+	drop = \e -> BDropValue(e);
+	rec = \e -> refCountingBExp(e, isLastExp, dropVars);
 	switch (exp) {
 		BVoid() : exp;
 		BBool(v) : exp;
 		BInt(v) : exp;
 		BDouble(v) : exp;
-		BString(v): BDupValue(exp);
-		BVar(id, type): BDupValue(exp);
+		BString(v): dup(exp);
+		BVar(id, type): if (contains(dropVars, id)) drop(dup(exp)) else dup(exp);
 		BArray(args, type): {
-			BDupValue(BArray(map(args, refCountingBExp), type));
+			dup(BArray(map(args, rec), type));
 		}
 		BLet(id, val, body, type): {
-			BLet(id, refCountingBExp(val), refCountingBExp(body), type);
+			BLet(id, rec(val), rec(body), type);
 		}
 		BLambda(args, body, type): {
-			BLambda(args, refCountingBExp(body), type)
+			BLambda(args, rec(body), type)
 		}
 		BCall(fn, args, type): {
-			BCall(refCountingBExp(fn), map(args, refCountingBExp), type)
+			BCall(fn, map(args, rec), type)
 		}
 		BIf(cond, then, else_, type): {
-			BIf(refCountingBExp(cond), refCountingBExp(then), refCountingBExp(else_), type)
+			BIf(rec(cond), rec(then), rec(else_), type)
 		}
+		// TODO: isLastExp
 		BSequence(exps, type): {
-			BSequence(map(exps, refCountingBExp), type);
+			lastInd = length(exps) - 1;
+			BSequence(mapi(exps, \i, e -> refCountingBExp(e, false/*i == lastInd*/, dropVars)), type);
 		}
 		BSwitch(value, switchType, cases, defaultCase, type): {
-			BSwitch(value, switchType, map(cases, \c -> BCase(c.id, refCountingBExp(c.body))), maybeMap(defaultCase, refCountingBExp), type)
+			BSwitch(value, switchType, map(cases, \c -> BCase(c.id, rec(c.body))), maybeMap(defaultCase, rec), type)
 		}
 		BConstruct(struct, args, type): {
-			BConstruct(struct, map(args, refCountingBExp), type);
+			BConstruct(struct, map(args, rec), type);
 		}
 		BField(value, field, type): {
-			BField(refCountingBExp(value), field, type);
+			BField(rec(value), field, type);
 		}
 		BSetMutable(left, field, value, type): {
-			BSetMutable(refCountingBExp(left), field, refCountingBExp(value), type)
+			BSetMutable(rec(left), field, rec(value), type)
 		}
 		BCast(value, from, to): {
-			BCast(refCountingBExp(value), from, to)
+			BCast(rec(value), from, to)
 		}
 		BCounter(): exp; // shouldn't happen
 	}
