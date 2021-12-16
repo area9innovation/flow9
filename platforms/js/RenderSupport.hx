@@ -720,7 +720,9 @@ class RenderSupport {
 		var width = 0;
 		var rWidth = Std.parseInt(root.getAttribute('width'));
 
-		if (rWidth != null && !Math.isNaN(rWidth)) {
+		if (IsFullScreen) {
+			width = Browser.window.innerWidth;
+		} else if (rWidth != null && !Math.isNaN(rWidth)) {
 			width = rWidth;
 		} else {
 			var bRect = root.getBoundingClientRect();
@@ -738,7 +740,9 @@ class RenderSupport {
 		var height = 0;
 		var rHeight = Std.parseInt(root.getAttribute('height'));
 
-		if (rHeight != null && !Math.isNaN(rHeight)) {
+		if (IsFullScreen) {
+			height = Browser.window.innerHeight;
+		} else if (rHeight != null && !Math.isNaN(rHeight)) {
 			height = rHeight;
 		} else {
 			var bRect = root.getBoundingClientRect();
@@ -1471,6 +1475,12 @@ class RenderSupport {
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
+
+		if (root != Browser.document.body) {
+			on("fullscreen", function () {
+				onBrowserWindowResize({target: Browser.window});
+			});
+		}
 
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnMouse(true);
