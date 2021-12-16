@@ -20,6 +20,7 @@ updateRefCounterInDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
 	}
 }
 
+// TODO: optimization. we traverse the branches several times. (for counting and for correction.)
 updateRefCounterInBExp(exp : BExp) -> BExp {
 	switch (exp) {
 		BValue(): exp;
@@ -68,20 +69,35 @@ countLinksInBExp(exp : BExp, varName : string, counter : int) -> int {
 		BValue(): counter;
 		BVar(id, type) : if (id == varName) counter + 1 else counter; 
 		BLet(id, val, body, type, refCount): calc(val) + calc0(body);
-		BLambda(args, body, type): calc(body);
+		// if (notUsed) dx = 0 else dx = 1
+		BLambda(args, body, type): {
+			usedVar = calc(body) > 0;
+			if (usedVar) counter + 1 else counter;
+		}
 		BCall(fn, args, type): calc0(fn) + calcA(args);
-		// TODO: see BSwitch
-		BIf(cond, then, else_, type): calc(cond) + calc0(then) + calc0(else_);
+		// if (notUsed) dx = 0
+		// if (used only in Condition) dx = 1
+		// if (used only in Then/Else) dx = 1
+		// if (used in Condition and Then/Else) dx = 2
+		BIf(cond, then, else_, type): {
+			usedVar = (calc0(then) > 0) || (calc0(else_) > 0);
+			counter + (if (calc0(cond) > 0) 1 else 0) + (if (usedVar) 1 else 0);
+		}
 		BSequence(exps, type): calcA(exps);
-		// TODO : optimization
-		// Find the maximum number of uses among the branches and take it.
-		// Because we don't know which branch we need.
+		// if (notUsed) dx = 0
+		// if (used only in Value) dx = 1
+		// if (used only in Cases) dx = 1
+		// if (used in Value and Cases) dx = 2
 		BSwitch(value, switchType, cases, defaultCase, type): {
-			calc(value)
-			+ fold(cases, defaultCase ?? calc0(defaultCase) : 0, \acc, c -> {
-				cnt = calc0(c.body);
-				if (cnt > acc) cnt else acc;
-			});
+			usedVar = fold(cases, defaultCase ?? calc0(defaultCase) : 0, \acc, c -> 
+				if (acc < 1) {
+					cnt = calc0(c.body);
+					if (cnt > acc) cnt else acc;
+				} else {
+					acc
+				}
+			) > 0;
+			counter + (if (calc0(value) > 0) 1 else 0) + (if (usedVar) 1 else 0);
 		}
 		BConstruct(struct, args, type): calcA(args);
 		BField(value, field, type): calc(value);
