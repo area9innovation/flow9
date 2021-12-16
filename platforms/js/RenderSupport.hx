@@ -173,6 +173,7 @@ class RenderSupport {
 
 		// Workaround for styles in IE
 		if (Platform.isIE) {
+			Browser.document.body.style.overflow = 'auto';
 			PixiStage.nativeWidget.classList.add("renderRoot");
 			Native.timer(0, function() {
 				findFlowjspixiCss(function (pixijscss) {
@@ -611,10 +612,10 @@ class RenderSupport {
 		var height : Int = Browser.window.innerHeight;
 
 		if (RenderRoot != null) {
-			width = getRenderRootWidth(RenderRoot);
-			height = getRenderRootHeight(RenderRoot);
+			width = getRenderRootWidth();
+			height = getRenderRootHeight();
 			Native.timer(0, function() {
-				if (width != getRenderRootWidth(RenderRoot) || height != getRenderRootHeight(RenderRoot)) {
+				if (width != getRenderRootWidth() || height != getRenderRootHeight()) {
 					onBrowserWindowResize({target : Browser.window});
 				}
 			});
@@ -716,7 +717,10 @@ class RenderSupport {
 		}
 	}
 
-	private static function getRenderRootWidth(root : Element) {
+	private static function getRenderRootWidth(?root : Element) {
+		if (root == null) {
+			root = RenderRoot;
+		}
 		var width = 0;
 		var rWidth = Std.parseInt(root.getAttribute('width'));
 
@@ -736,7 +740,10 @@ class RenderSupport {
 		return width;
 	}
 
-	private static function getRenderRootHeight(root : Element) {
+	private static function getRenderRootHeight(?root : Element) {
+		if (root == null) {
+			root = RenderRoot;
+		}
 		var height = 0;
 		var rHeight = Std.parseInt(root.getAttribute('height'));
 
@@ -1436,10 +1443,11 @@ class RenderSupport {
 			updateNonPassiveEventListener(root, "mousemove", onpointermove);
 			updateNonPassiveEventListener(root, "mouseout", onpointerout);
 		} else if (Platform.isIE) {
-			root.onpointerdown = onpointerdown;
-			root.onpointerup = onpointerup;
-			root.onpointermove = onpointermove;
-			root.onpointerout = onpointerout;
+			var stage = PixiStage;
+			root.onpointerdown = function(e : Dynamic) {onpointerdown(e, stage);};
+			root.onpointerup = function(e : Dynamic) {onpointerup(e, stage);};
+			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
+			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 		} else {
 			updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
 			updateNonPassiveEventListener(root, "pointerup", onpointerup);
@@ -1740,9 +1748,9 @@ class RenderSupport {
 
 				AccessWidget.updateAccessTree();
 
-				for (instances in FlowInstances) {
-					var stage = instances.stage;
-					var renderer = instances.renderer;
+				for (instance in FlowInstances) {
+					var stage = instance.stage;
+					var renderer = instance.renderer;
 					try {
 						for (child in stage.children) {
 							untyped child.render(renderer);
@@ -4076,9 +4084,18 @@ class RenderSupport {
 	}
 
 	public static function getInstanceByRootId(rootId : String) : FlowInstance {
-		return untyped FlowInstances.find(function (instance) {
-			return instance.rootId == rootId;
-		});
+		if (Platform.isIE) {
+			for (instance in FlowInstances) {
+				if (instance.rootId == rootId) {
+					return instance;
+				}
+			}
+			return null;
+		} else {
+			return untyped FlowInstances.find(function (instance) {
+				return instance.rootId == rootId;
+			});
+		}
 	}
 
 	public static function getClipPixiStage(clip : DisplayObject) : Dynamic {
