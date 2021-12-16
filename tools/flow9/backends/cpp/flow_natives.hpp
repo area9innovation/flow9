@@ -184,6 +184,31 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 	return &v1 == &v2;
 }
 
+// memory
+// TODO
+
+// variables
+template <typename T>
+T dup(T& a) {
+	return a;
+}
+// TODO
+template <typename T>
+T drop(T& a) {
+	return a;
+}
+
+// consts : string, array
+template <typename T>
+T dup(T a) {
+	return a;
+}
+// TODO
+template <typename T>
+T drop(T a) {
+	return a;
+}
+
 // math
 
 double flow_log(double v) {
