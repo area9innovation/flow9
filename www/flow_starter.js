@@ -31,7 +31,7 @@ function appendLink(url) {
 	document.head.appendChild(link);
 }
 
-scriptNode = document.head.querySelector("script[src*='" + starterScriptName + "']");
+scriptNode = document.currentScript || document.head.querySelector("script[src*='" + starterScriptName + "']");
 
 if (scriptNode) {
 	let url;
