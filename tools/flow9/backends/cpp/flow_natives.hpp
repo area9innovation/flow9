@@ -32,7 +32,50 @@ std::shared_ptr<A> makeFlowRef(A value) {
   return std::make_shared<A>(value);
 }
 
+// string
+
+std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
+	return s.substr(start, length);
+}
+
+int32_t flow_strlen(std::u16string s) {
+	return s.size();
+}
+
+int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
+	return s.at(i);
+}
+
+// precision = 20!
+std::u16string flow_d2s(double v) {
+	std::stringstream stream;
+	stream << std::fixed << std::setprecision(20) << v;
+	std::string s = stream.str();
+
+	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
+	return codecvt.from_bytes(s);
+}
+
 // common
+template <typename T, typename TT>
+T flow_cast(const TT& val) {
+	//std::cout<< "Casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
+	return T(reinterpret_cast<const T&>(val));
+}
+
+template <typename T, typename ...TT>
+T flow_cast_variant(std::variant<TT...> val) {
+	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
+	if (const T* pval = std::get_if<T>(&val)) {
+		return *pval; 
+	} else  {
+		/*std::cout<< "ERROR casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
+		T res;
+		return res;*/
+		throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" +  demangle(typeid(val).name()) + "]");
+	}
+}
+
 // compare unions by address
 template <typename ...Args1, typename ...Args2>
 bool operator==(std::variant<Args1...>& struct1, std::variant<Args2...>& struct2) {
@@ -50,13 +93,71 @@ void flow_quit(int32_t code) {
 }
 
 template <typename A>
-void flow_println2(A d) {
-	std::cout << d << std::endl;
+void flow_print2(A v) {
+	std::cout << v;
 }
 
-void flow_println2(std::u16string d) {
+void flow_print2(std::u16string d) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	std::cout << codecvt.to_bytes(d) << std::endl;
+	std::cout << codecvt.to_bytes(d);
+}
+
+void flow_print2(const bool d) {
+	std::cout << (d ? "true" : "false");
+}
+
+void flow_print2(const int d) {
+	std::cout << d;
+}
+
+void flow_print2(const double d) {
+	flow_print2(flow_d2s(d));
+}
+
+template <typename ...Args>
+void flow_print2(const std::variant<Args...> v) {
+	std::visit([](auto&& x) { flow_print2(x); }, v);
+}
+
+template <typename A>
+void flow_print2(const std::vector<A>& v) {
+	int32_t lastInd = v.size() - 1;
+
+    flow_print2("[");
+    for (std::size_t i = 0; i < v.size(); ++i) {
+    	flow_print2(v[i]);
+    	if (i != lastInd) flow_print2(", ");
+	}
+	flow_print2("]");
+}
+
+template <typename A, typename B>
+bool areValuesEqual(const std::vector<A>& v1, const std::vector<B>& v2) {
+	return v1.size() == v2.size() && std::equal(v1.begin(), v1.end(), v2.begin());
+}
+
+template <typename A, typename B>
+bool areValuesEqual(const A& v1, const B& v2) {
+	return v1 == v2;
+}
+
+// for println
+template <typename A>
+std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){
+    auto size = v.size() - 1;
+    os << "[";
+    for (std::size_t i = 0; i <= size; ++i) {
+    	flow_print2(v[i]);
+    	if (i != size) os << ", ";
+	}
+	os << "]";
+    return os;
+}
+
+template <typename A>
+void flow_println2(A v) {
+	flow_print2(v);
+	std::cout << std::endl;
 }
 
 template <typename A>
@@ -119,30 +220,6 @@ int32_t flow_bitUshr(int32_t a, int32_t n) {
 
 int32_t flow_trunc(double v) {
 	return (int32_t)v;
-}
-
-// string
-
-std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
-	return s.substr(start, length);
-}
-
-int32_t flow_strlen(std::u16string s) {
-	return s.size();
-}
-
-int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
-	return s.at(i);
-}
-
-// precision = 20!
-std::u16string flow_d2s(double v) {
-	std::stringstream stream;
-	stream << std::fixed << std::setprecision(20) << v;
-	std::string s = stream.str();
-
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return codecvt.from_bytes(s);
 }
 
 // array
@@ -227,10 +304,28 @@ void flow_iter(const std::vector<A>& flow_a, const std::function<void(A)> & flow
 }
 
 template <typename A>
+void flow_iter(const std::vector<A>& flow_a, void(*fn)(A) ) {
+	for (std::size_t i = 0; i != flow_a.size(); ++i) {
+		(*fn)(flow_a[i]);
+	}
+}
+
+template <typename A>
 void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, A)> & flow_fn) {
 	for (std::size_t i = 0; i != flow_a.size(); ++i) {
 		flow_fn(i, flow_a[i]);
 	}
+}
+
+template <typename A>
+int flow_iteriUntil(const std::vector<A>& flow_a, const std::function<bool(int32_t, A)> & flow_fn) {
+	int32_t i = 0;
+	bool found = false;
+	while (i < flow_a.size() && !found) {
+		found = flow_fn(i, flow_a[i]);
+		if (!found) i++;
+	}
+	return i;
 }
 
 // flowstruct

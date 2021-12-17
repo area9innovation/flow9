@@ -1,13 +1,5 @@
-import tools/flowc/backends/common;
-import tools/flowc/backends/javascript/fi2javascript_defines;
-import tools/flowc/backends/javascript/fi2javascript_utils;
 import tools/flowc/backends/javascript/fi2javascript_webfont;
-import tools/flowc/backends/javascript/fi2javascript_sourcemap;
-import tools/flowc/incremental/fiprogram;
-import ds/list;
-import text/blueprint;
-import formats/json/json;
-import sys/process;
+import tools/flowc/backends/javascript/fi2javascript_extern;
 
 // TODO:
 // This module requires grammar2code, which is forbidden
@@ -15,7 +7,7 @@ import sys/process;
 
 export {
 	fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) -> void;
-	fiAssembleJsFile(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, code : List<string>) -> void;
+	fiAssembleJsFile(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, code : List<string>) -> bool;
 	fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) -> List<string>;
 	fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : (int) -> void) -> void;
 	fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : (int) -> void) -> void;
@@ -244,7 +236,7 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 	}
 }
 
-fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
+fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> bool {
 	hasRequire = ovl.requireList != [];
 
 	// If we use modules or require, we do this
@@ -342,119 +334,18 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) -> void {
 						Cons(separatedHeaderCode,
 							Cons(ovl.rModuleItem, reverseList(ovl.requireModulesList))))))
 		) else list2string(Cons(exportOrMain, code));
+	if (cfg.code) {
+		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + "\n" + generatedContent, cfg.threadId);
+	}
 	fcVerbose(cfg, 1, "Assembling done.");
 
 	outfile = (if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile;
-	dir = if (strContains(outfile, "/")) dirName(outfile) else ".";
-	saved_ok = \msg -> {
-		fcVerbose(cfg, 1, "File saved." + (if (msg == "") "" else "\n" + msg));
-		jsmode = fiJavascriptMode(cfg);
-		fcVerbose(cfg, 0, "Javascript (" + jsmode+ ") '" + resolveRelativePath(cfg.outputfile) + "' saved.");
-	}
-	saved_failed = \msg -> {
-		fcPrintln("Javascript (" + fiJavascriptMode(cfg)+ ") '" + resolveRelativePath(cfg.outputfile) + "' was NOT saved:\n" + msg, cfg.threadId);
-	}
 
-	extern_deps = filter(cfg.dependencies, \p -> containsSet(ovl.nativeClasses, p.host));
+	// Prepare the program code: all components, generated code and runtime.
+	program_code = fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent;
 
-	if (length(extern_deps) == 0) {
-		fcVerbose(cfg, 1, "Saving output file...");
-		saveFileContent(
-			outfile, 
-			fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, 
-			cfg.threadId
-		);
-		saved_ok("");
-	} else {
-		if (!checkProvidersAreInstalled(cfg)) {
-			saved_failed("Cannot bundle dependencies.");
-		} else {
-			fcVerbose(cfg, 1, "Linking output file...");
-			imports = concatStrings(map(extern_deps, \dep -> {
-				ensurePackageIsLoaded(dep, dir, cfg);
-				"import * as " + dep.host + " from '" + dep.package + "';\n"
-			}));
-			jsx_file = changeFileExt(outfile, ".jsx");
-			saveFileContent(
-				jsx_file, 
-				imports + fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + "\n" + generatedContent, 
-				cfg.threadId
-			);
-			out = ref "";
-			err = ref "";
-			args0 = ["--bundle", "--outfile=" + outfile, 
-				// this option is added to suppress warnings about using 'this' in ECMAScript module
-				"--define:this=undefined",
-				jsx_file];
-			args = if (cfg.jsmode != NODEJS_MODE) args0 else concat(args0, ["--platform=node"]);
-			fcVerbose(cfg, 0, "Linking the package with esbuild ...");
-			result = execSystemProcessOutput("esbuild", args, dir);
-			if (result.exitCode != 0) {
-				saved_failed(result.stdall);
-			} else {
-				saved_ok(result.stdall);
-			}
-		}
-	}
-	if (cfg.code) {
-		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + "\n" + generatedContent, cfg.threadId);
-	}	
-}
-
-ensurePackageIsLoaded(dep : FiJsDependency, dir : string, cfg : FiJsConfig) -> void {
-	provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
-	if (provider_list.exitCode != 0) {
-		fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
-	} else {
-		if (strContains(provider_list.stdout, dep.package)) {
-			fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
-		} else {
-			fcVerbose(cfg, 0, "Package " + dep.package + " is not yet installed. Going to install it.");
-			if (dep.provider != "file") {
-				install_command = if (dep.provider == "npm") "install" else if (dep.provider == "yarn") "add" else "";
-				provider_install = execSystemProcessOutput(dep.provider, [install_command, dep.package], dir);
-				if (provider_install.exitCode != 0) {
-					fcPrintln("Failed to run '" + dep.provider + " " + install_command + " " + dep.package + "'. Check that " + dep.provider + " is installed:\n" + provider_install.stdall, cfg.threadId);
-				} else {
-					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + provider_install.stdout);
-				}
-			} else {
-				// Installing a local dependency from file with yarn
-				args = ["add", "file:" + dep.package];
-				file_install = execSystemProcessOutput("yarn", args, dir);
-				if (file_install.exitCode != 0) {
-					fcPrintln("Failed to run '" + dep.provider + " " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + file_install.stdall, cfg.threadId);
-				} else {
-					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
-				}
-			}
-		}
-	}
-}
-
-// Checks if a string has a form of groups of digits, separated by dots like: 8.1.2 or 0.13.13
-stringIsVersion(v : string) -> bool {
-	ver = trim2(v, " \n\t\r");
-	ver != "" && stringCharsFold(ver, true, \acc, char ->
-		if (!acc) acc else isDigit(char) || char == "."
-	);
-}
-
-checkProgramIsInstalled(cfg : FiJsConfig, prog : string) -> bool {
-	prog_version = execSystemProcessOutput(prog, ["--version"], ".");
-	if (prog_version.exitCode == 0 && prog_version.stderr == "" && stringIsVersion(prog_version.stdout)) {
-		fcVerbose(cfg, 1, prog + " version is: " + prog_version.stdout);
-		true 
-	} else {
-		fcPrintln("Seems that '" + prog + "' is not installed. Please install it.", cfg.threadId);
-		false;
-	}
-}
-
-checkProvidersAreInstalled(cfg : FiJsConfig) -> bool {
-	providers = uniq(map(cfg.dependencies, \dep -> dep.provider));
-	all(map(providers, \provider -> if (provider == "file") true else checkProgramIsInstalled(cfg, provider))) &&
-	checkProgramIsInstalled(cfg, "esbuild");
+	// Finally link the external dependencies and bundle a single file.
+	fiLinkExternalJsDependencies(program, cfg, ovl, program_code);
 }
 
 fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) {
