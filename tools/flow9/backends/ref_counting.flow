@@ -21,38 +21,63 @@ refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
 	}
 }
 
+// TODO: isLastExp!
+// TODO: dropVars. we have to drop all args of the fn
+
 // if this is not the last line in the sequence, it does not mean that the variable will be used later in the code.
 // the variable can be used only 1 time on the first line, and then not.
 refCountingBExp(exp : BExp, isLastExp : bool, dropVars : [string]) -> BExp {
 	dup = \e -> if (isLastExp) e else BDupValue(e);
 	drop = \e -> BDropValue(e);
 	rec = \e -> refCountingBExp(e, isLastExp, dropVars);
+	fnType = BTypeFunction([], BTypePar(""));
+	isFn = \type -> isSameStructType(type, fnType);
+	/*
+	// flow_val + 1;
+	BCall(
+		BVar("+", BTypeFunction([BTypeName("int", []), BTypeName("int", [])], BTypeName("int", []))),
+		[
+			BVar("flow_val", BTypeName("int", [])),
+			BInt(1)
+		],
+		BTypeName("int", [])
+	)
+	// println(flow_val)
+	BCall(
+		BVar("flow_println2", BTypeFunction([BTypeName("int", [])], BTypeName("void", []))),
+		[BVar("flow_val", BTypeName("int", []))],
+		BTypeName("void", [])
+	)
+	*/
 	switch (exp) {
 		BVoid() : exp;
 		BBool(v) : exp;
 		BInt(v) : exp;
 		BDouble(v) : exp;
-		BString(v): dup(exp);
-		BVar(id, type): if (contains(dropVars, id)) drop(dup(exp)) else dup(exp);
+		BString(v): exp;//dup(exp);
+		BVar(id, type): if (isFn(type)) exp else drop(dup(exp));//if (contains(dropVars, id)) drop(dup(exp)) else dup(exp);
 		BArray(args, type): {
-			dup(BArray(map(args, rec), type));
+			BArray(map(args, rec), type);
+			//dup(BArray(map(args, rec), type));
 		}
 		BLet(id, val, body, type): {
-			BLet(id, rec(val), rec(body), type);
+			dup(BLet(id, rec(val), rec(body), type));
 		}
 		BLambda(args, body, type): {
 			BLambda(args, rec(body), type)
 		}
+		// BCall(fn : BExp, args : [BExp], type : BType);
 		BCall(fn, args, type): {
-			BCall(fn, map(args, rec), type)
+			BCall(rec(fn), map(args, \arg -> dup(rec(arg))), type)
 		}
 		BIf(cond, then, else_, type): {
 			BIf(rec(cond), rec(then), rec(else_), type)
 		}
 		// TODO: isLastExp
 		BSequence(exps, type): {
-			lastInd = length(exps) - 1;
-			BSequence(mapi(exps, \i, e -> refCountingBExp(e, false/*i == lastInd*/, dropVars)), type);
+			BSequence(map(exps, rec), type);
+			// lastInd = length(exps) - 1;
+			// BSequence(mapi(exps, \i, e -> refCountingBExp(e, false/*i == lastInd*/, dropVars)), type);
 		}
 		BSwitch(value, switchType, cases, defaultCase, type): {
 			BSwitch(value, switchType, map(cases, \c -> BCase(c.id, rec(c.body))), maybeMap(defaultCase, rec), type)
