@@ -1,0 +1,59 @@
+//import tools/flowc/backends/cpp2/fi2cpp_compile;
+//import tools/flowc/backends/cpp2/fi2exe;
+import tools/flowc/backends/common;
+import tools/flowc/backends/cpp3/fi2cpp3_compile;
+
+export {
+	fi2cpp3(program : FiProgram, cfg : FcCpp3Config, callback : (int) -> void) -> void;
+}
+
+
+fi2cpp3(program : FiProgram, cfg : FcCpp3Config, callback : (int) -> void) -> void {
+	structs = getTreeValues(program.names.structs);
+	struct_decls = concatStrings(map(structs, 
+		\struct -> fi2cpp3Struct(struct, true)
+	));
+	structs_s = concatStrings(map(structs, 
+		\struct -> fi2cpp3Struct(struct, false)
+	));
+	unions_s = concatStrings(map(getTreeValues(program.names.unions), 
+		\union -> fi2cpp3Union(union)
+	));
+	modules = concatStrings(map(program.traversal, \name ->
+		eitherMap(lookupTree(program.modules, name), \module -> 
+			fi2cpp3Module(module, program.names.toplevel),
+			"// unknown module: " + name + "\n\n"
+		)
+	));
+	code = blueprint("
+		#include \"./runtime.h\"
+		#include <iostream>
+
+		using namespace flowc;
+
+		// Decls
+		%struct_decls%
+
+		// Unions
+		%unions%
+
+		// Structs
+		%structs%
+
+		// Modules
+		%modules%
+
+		int main(int argc, const char* argv[]) {
+			main_f();
+			return 0;
+		}
+		", [
+			"struct_decls", struct_decls,
+			"structs", structs_s,
+			"unions", unions_s,
+			"modules", modules,
+		]
+	);
+	setFileContent(changeFileExt(cfg.outputFile, ".cpp"), code);
+	callback(0);
+}

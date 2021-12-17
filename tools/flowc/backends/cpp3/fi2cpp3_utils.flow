@@ -1,0 +1,93 @@
+import tools/flowc/incremental/fiexp;
+import ds/set;
+
+export {
+	fi2cpp3freevars(e : FiExp, bound : Set<string>) -> [FiVar];
+	fi2cpp3DerefType(type : FiType) -> FiType;
+	fi2cpp3DearrayType(type : FiType) -> FiType;
+	fi2cpp3TypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter>;
+	fi2cpp3Type2RuntimeType(type : FiType) -> string;
+}
+
+fi2cpp3freevars(e : FiExp, bound : Set<string>) -> [FiVar] {
+	set2array(fi2cpp3freevarsBoundFree(e, bound, makeSet()));
+}
+
+fi2cpp3freevarsBoundFree(expr : FiExp, bound : Set<string>, free : Set<FiVar>) -> Set<FiVar> {
+	fold_freevars = \es, b, f -> fold(es, f, \acc, e -> fi2cpp3freevarsBoundFree(e, b, acc));
+	switch (expr) {
+		FiLambda(args, e, __, __):    fi2cpp3freevarsBoundFree(e, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), free);
+		FiCall(f, es, __, __):        fold_freevars(es, bound, fi2cpp3freevarsBoundFree(f, bound, free));
+		FiVar(x, __, __):             if (containsSet(bound, x)) free else insertSet(free, expr);
+		FiLet(x, __, e1, e2, __, __): fi2cpp3freevarsBoundFree(e2, insertSet(bound, x), fi2cpp3freevarsBoundFree(e1, bound, free));
+		FiIf(e1, e2, e3, __, __):     fold_freevars([e1, e2, e3], bound, free);
+		FiSwitch(e, __, cs, __, __):  fold(cs, fi2cpp3freevarsBoundFree(e, bound, free), \acc, c -> fi2cpp3freevarsBoundFree(c.body, bound, acc));
+		FiCast(e, __, __, __, __):    fi2cpp3freevarsBoundFree(e, bound, free);
+		FiSeq(es, __, __):            fold_freevars(es, bound, free);
+		FiCallPrim(__, es, __, __):   fold_freevars(es, bound, free);
+		FiString(__, __):             free; // here I would want to match simply on union FcConst
+		FiBool(__, __):               free;
+		FiDouble(__, __):             free;
+		FiVoid(__):                   free;
+		FiInt(__, __):                free;
+        FiRequire(__, e, __, __):     fi2cpp3freevarsBoundFree(e, bound, free);
+        FiUnsafe(__, fb, __, __):     fi2cpp3freevarsBoundFree(fb, bound, free);
+	}
+}
+
+fi2cpp3DerefType(type : FiType) -> FiType {
+	switch (type) {
+		FiTypeRef(r): r;
+		default: {
+			fail("derefing type: " + toString(type));
+			FiTypeVoid();
+		}
+	}
+}
+
+fi2cpp3DearrayType(type : FiType) -> FiType {
+	switch (type) {
+		FiTypeArray(a): a;
+		default: {
+			fail("dearraying type: " + toString(type));
+			FiTypeVoid();
+		}
+	}
+}
+
+fi2cpp3TypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter> {
+	switch (type) {
+		FiTypeVoid():   acc;
+		FiTypeBool():   acc;
+		FiTypeInt():    acc;
+		FiTypeDouble(): acc;
+		FiTypeString(): acc;
+		FiTypeFlow():   acc;
+		FiTypeNative(): acc;
+		FiTypeParameter(n): insertSet(acc, type);
+		FiTypeFunction(args, rt): 
+			fold(args, fi2cpp3TypeTypars(acc, rt), \ac, arg -> fi2cpp3TypeTypars(ac, arg.type));
+		FiTypeName(n, tps):
+			fold(tps, acc, fi2cpp3TypeTypars);
+		FiTypeArray(t): fi2cpp3TypeTypars(acc, t);
+		FiTypeRef(t): fi2cpp3TypeTypars(acc, t);
+	}
+}
+
+fi2cpp3Type2RuntimeType(type : FiType) -> string {
+	wrap_const = \c -> "flowc::RuntimeType::" + c;
+	switch (type) {
+		FiTypeVoid():   wrap_const("VOID");
+		FiTypeBool():   wrap_const("BOOL");
+		FiTypeInt():    wrap_const("INT");
+		FiTypeDouble(): wrap_const("DOUBLE");
+		FiTypeString(): wrap_const("STRING");
+		FiTypeFlow():   wrap_const("FLOW");
+		FiTypeNative(): wrap_const("NATIVE");
+		FiTypeParameter(n): "flowc::runtimeType<T_" + i2s(strlen(n)) + ">()";
+		FiTypeFunction(args, rt): wrap_const("FUNC");
+		FiTypeName(n, tps): wrap_const("NAME");
+		FiTypeArray(t): wrap_const("ARRAY");
+		FiTypeRef(t): wrap_const("REF");
+	}
+}

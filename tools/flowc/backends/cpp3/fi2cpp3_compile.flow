@@ -1,0 +1,234 @@
+//import tools/flowc/backends/cpp2/fi2cpp_compile;
+//import tools/flowc/backends/cpp2/fi2exe;
+import tools/flowc/backends/common;
+import text/blueprint;
+import string_utils;
+import tools/flowc/backends/cpp3/fi2cpp3_utils;
+
+export {
+	fiType2cpp3(type : FiType) -> string;
+	fi2cpp3Struct(struct : FiTypeStruct, only_decl : bool) -> string;
+	fi2cpp3Union(union : FiTypeUnion) -> string;
+
+	fi2cpp3Module(module : FiModule, toplevel : Tree<string, FiDeclaration>,) -> string;
+	fi2cpp3Decl(decl : FiDeclaration) -> string;
+	fi2cpp3Exp(e : FiExp, returns : bool) -> string;
+}
+
+
+fiType2cpp3(type : FiType) -> string {
+	switch (type) {
+		FiTypeVoid():   "void";
+		FiTypeBool():   "bool";
+		FiTypeInt():    "int";
+		FiTypeDouble(): "double";
+		FiTypeString(): "std::string";
+		FiTypeFlow():   "flowc::FlowVal";
+		FiTypeNative(): "void*";
+		FiTypeParameter(n): "T_" + i2s(strlen(n));
+		FiTypeFunction(args, rt): 
+			"std::function<" + fiType2cpp3(rt) + "(" + superglue(args, \arg -> fiType2cpp3(arg.type), ", ") + ")>";
+		FiTypeName(n, tps): n + if (length(tps) == 0) "" else "<" + superglue(tps, fiType2cpp3, ", ") + ">";
+		FiTypeArray(at): "std::vector<" + fiType2cpp3(at) + ">";
+		FiTypeRef(at): "flowc::Ref<" + fiType2cpp3(at) + ">";
+	}
+}
+
+fi2cpp3Struct(struct : FiTypeStruct, only_decl) -> string {
+	typars = filtermap(struct.typars, \tp ->
+		switch (tp) {
+			FiTypeParameter(__): Some(tp);
+			default: {
+				fail("must be a type parameter, got: " + toString(tp));
+				None();
+			}
+		}
+	);
+	(if (length(typars) == 0) "" else {
+		"template<" + strGlue(map(typars, \tp -> "typename T_" + i2s(strlen(tp.n))), ", ") + ">\n"
+	}) +
+	"struct " + struct.name + 
+	(if (only_decl) ";" else
+	"{\n" +
+		concatStrings(map(struct.args, \arg -> "\t" + fiType2cpp3(arg.type) + " " + arg.name + ";\n")) +
+	"};") + "\n\n";
+}
+
+fi2cpp3Union(union : FiTypeUnion) -> string {
+	typars = filtermap(union.typeparameters, \tp ->
+		switch (tp) {
+			FiTypeParameter(__): Some(tp);
+			default: {
+				fail("must be a type parameter, got: " + toString(tp));
+				None();
+			}
+		}
+	);
+	(if (length(typars) == 0) "" else {
+		"template<" + strGlue(map(typars, \tp -> "typename T_" + i2s(strlen(tp.n))), ", ") + ">\n"
+	}) +
+	"using " + union.name  +" = std::variant<" + 
+		superglue(union.typenames, \tp -> 
+			tp.name + (if (length(tp.typeparameters) == 0) "" else 
+				"<" + superglue(tp.typeparameters, fiType2cpp3, ", ") + ">"
+			), 
+			", "
+		) + 
+	">;\n\n";
+}
+
+fi2cpp3Module(module : FiModule, toplevel : Tree<string, FiDeclaration>,) -> string {
+	code = concatStrings(map(module.initOrder, \name ->
+		eitherMap(lookupTree(toplevel, name), fi2cpp3Decl, "// unknown name: " + name + "\n\n")
+	));
+	if (code == "") "" else {
+		"// Module " + module.fileinfo.flowfile + "\n\n" + code;
+	}
+}
+
+fi2cpp3Decl(decl : FiDeclaration) -> string {
+	switch (decl) {
+		FiFunctionDec(name0, lambda, type, __,__): {
+			name = if (name0 != "main") name0 else "main_f";
+			typars = set2array(fi2cpp3TypeTypars(makeSet(), type));
+			template = if (length(typars) == 0) "" else {
+				"template<" + superglue(typars, \t -> "typename " + fiType2cpp3(t), ", ") + ">\n";
+			}
+			args = superglue(type.args, \arg -> fiType2cpp3(arg.type) + " " + arg.name, ", ");
+			template + 
+			fiType2cpp3(type.returnType) + " " + name + "(" + args + ") {\n" + 
+				strIndent(
+						fi2cpp3Exp(lambda.body, type.returnType != FiTypeVoid())
+				) + "\n"
+			+ "}\n";
+		}
+		FiGlobalVar(name, value, type, __,__): {
+			fiType2cpp3(type) + " " + name + " = " + fi2cpp3Exp(value, false) + ";\n";
+		}
+		FiNativeDec(name, io, type, nativeName, fallback, __,__): {
+			"// Native: " + name; // TODO
+		}
+	}
+}
+
+fi2cpp3Exp(e : FiExp, returns : bool) -> string {
+	wrap_return = \s -> if (returns) "return " + s + ";" else s;
+	switch (e) {
+		FiVoid(__):      wrap_return("{}");
+		FiBool(b, __):   wrap_return(if (b) "true" else "false");
+		FiInt(i, __):    wrap_return(i2s(i));
+		FiDouble(d, __): wrap_return(d2s(d));
+		FiString(s, __): wrap_return("std::string(\"" + s + "\")");
+		FiSeq(es, __,__): {
+			"{\n" + 
+				strIndent(strGlue(mapi(es, \i, ex -> fi2cpp3Exp(ex, returns && i + 1 == length(es))),";\n")) + ";" +
+			"\n}";
+		}
+		FiCast(ex, tFrom, tTo, info, start): {
+			wrap_return(fi2cpp3Cast(e, fi2cpp3Exp(ex, false)));
+		};
+		FiCall(f, args, type, start): {
+			wrap_return(fi2cpp3Exp(f, false) + "(" + superglue(args, \arg -> fi2cpp3Exp(arg, false), ", ") + ")");
+		}
+		FiSwitch(x, switchType, cases, type, start): {
+			"//TODO: switch"; // TODO
+		}
+		FiLambda(args, body, __,__): {
+			free_vars = fi2cpp3freevars(body, buildSet(map(args, \arg -> arg.name)));
+			closure = "[" + superglue(free_vars, \var -> var.name, ", ") + "]";
+			wrap_return(closure + "(" + superglue(args, \arg -> fiType2cpp3(arg.type) + " " + arg.name, ", ") + "){\n" +
+				strIndent(fi2cpp3Exp(body, true)) + 
+			"\n}");
+		}
+		FiLet(name, stype, e1, e2, type, start): {
+			"auto " + name + " = " + fi2cpp3Exp(e1, false) + ";\n" + fi2cpp3Exp(e2, returns);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			if (type != FiTypeVoid()) {
+				wrap_return("("	+ fi2cpp3Exp(e1, false) + "?" + fi2cpp3Exp(e2, false) + ":" + fi2cpp3Exp(e3, false) + ")");
+			} else {
+				"if (" + fi2cpp3Exp(e1, false) + "){" + fi2cpp3Exp(e2, false) + ";} else {" + fi2cpp3Exp(e3, false) + ";};";
+			}
+		}
+		FiCallPrim(op, es, type, start): {
+			wrap_return(fi2cpp3CallPrim(op, es, map(es, \ex -> fi2cpp3Exp(ex, false)), type));
+		}
+		FiVar(name, __, start): wrap_return(name);
+		FiRequire(__,__,__,__): "//TODO: FiRequire"; // TODO
+		FiUnsafe(__,__,__,__): "//TODO: FiUnsafe"; // TODO
+	};
+}
+
+fi2cpp3CallPrim(op : FcPrim, fs : [FiExp], es : [string], type : FiType) -> string {
+	switch (op) {
+		FcOrPrim():    "(" + es[0] + "||" + es[1] + ")";
+		FcAndPrim():   "(" + es[0] + "&&" + es[1] + ")";
+		FcNotPrim():   "!" + es[0];
+		FcEqPrim():    "(" + es[0] + "==" + es[1] + ")";
+		FcNePrim():    "(" + es[0] + "!=" + es[1] + ")";
+		FcLePrim():    "(" + es[0] + "<=" + es[1] + ")";
+		FcGePrim():    "(" + es[0] + ">=" + es[1] + ")";
+		FcLtPrim():    "(" + es[0] + "<" + es[1] + ")";
+		FcGtPrim():    "(" + es[0] + ">" + es[1] + ")";
+		FcPlusPrim():  "(" + es[0] + "+" + es[1] + ")";
+		FcMinusPrim(): "(" + es[0] + "-" + es[1] + ")";
+		FcMulPrim():   "(" + es[0] + "*" + es[1] + ")";
+		FcDivPrim():   "(" + es[0] + "/" + es[1] + ")";
+		FcModPrim():   "(" + es[0] + "%" + es[1] + ")";
+		FcNegPrim():   "-" + es[0];
+		FcArrayPrim(): {
+			dearrayed_type = fi2cpp3DearrayType(type);
+			"std::vector<" + fiType2cpp3(dearrayed_type) + ">({" + strGlue(es, ", ") + "})";
+		}
+		FcIndexPrim(): es[0] + "[" + es[1] + "]";
+		FcDerefPrim(): "(" + es[0] + ".ref)";
+		FcAssignPrim(): "(" + es[0] + " = " + es[1] + ")";
+		FcRefPrim(): {
+			/*switch (fs[0]) {
+				FiVoid(__):      { fail("ref void !! (sic!)"); ""; };
+				FiBool(b, __):   { "flowc::Ref({b})"; };
+				FiInt(i, __):    { "flowc::Ref({i})"; };
+				FiDouble(d, __): { "flowc::Ref({d})"; };
+				FiString(s, __): { "flowc::Ref({s})"; };
+				default: "flowc::Ref({" +  "}})";
+			}*/
+			derefed_type = fi2cpp3DerefType(type);
+			"flowc::Ref<" + fiType2cpp3(derefed_type) + ">({" + es[0] + "})";
+			//derefed_type = fi2cpp3DerefType(type);
+			//"{auto __r__=" + es[0] + ";flowc::Ref(&__r__)}";
+		}
+		FcStructPrim(name): name + "({" + strGlue(es, ", ") + "})";
+		FcFieldPrim(name): es[0] + "." + name;
+		FcSetMutablePrim(name): "(" + es[0] + "." + name + " = " + es[1] + ")";
+		FcCreateClosurePrim(structName, functionName): ""; //TODO
+		FcQuote(): ""; //TODO
+		FcUnquote(): ""; //TODO
+	}
+}
+
+fi2cpp3Cast(cast : FiCast, s : string) -> string {
+	switch (cast.tFrom) {
+		FiTypeFlow(): {
+			switch (cast.tTo) {
+				FiTypeFlow(): {
+					s;
+				}
+				default: {
+					"((" + fiType2cpp3(cast.tTo) + "*)" + s + ".data)";
+				}
+			}
+		}
+		default: {
+			switch (cast.tTo) {
+				FiTypeFlow(): {
+					"flowc::FlowVal({copyValue<" + fiType2cpp3(cast.tFrom) + ">(" + s + ")," + fi2cpp3Type2RuntimeType(cast.tFrom) + "})";
+				}
+				default: {
+					"(" + fiType2cpp3(cast.tTo) + ")" + s;
+				}
+			}
+		}
+	}
+}
+
+
