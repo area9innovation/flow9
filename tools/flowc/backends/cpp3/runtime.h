@@ -5,13 +5,20 @@
 #include <sstream>
 #include <ostream>
 #include <iostream>
+#include <memory>
 
 namespace flowc {
 
-template<class T>
-struct Ref {
-	T ref;
-};
+
+template <typename T>
+std::shared_ptr<T> makeRef(T value) {
+  return std::make_shared<T>(value);
+}
+
+template <typename T>
+std::shared_ptr<T> copyValue(T value) {
+  return std::make_shared<T>(value);
+}
 
 enum class RuntimeType {
 	VOID, BOOL, INT, DOUBLE, STRING, NATIVE, 
@@ -27,12 +34,32 @@ template<> RuntimeType runtimeType<double>() { return RuntimeType::DOUBLE; }
 template<> RuntimeType runtimeType<std::string>() { return RuntimeType::STRING; }
 //template<class T> RuntimeType runtimeType<std::vector<T>>() { return RuntimeType::ARRAY; }
 
-template<class T> void* copyValue(T v);
+template<class T> T* copyScalar(T v);
 
-template<> void* copyValue<bool>(bool v) { return new bool({v}); }
-template<> void* copyValue<int>(int v) { return new int({v}); }
-template<> void* copyValue<double>(double v) { return new double({v}); }
-template<> void* copyValue<std::string>(std::string s) { return new std::string(s); }
+template<> bool* copyScalar<bool>(bool v) { return new bool({v}); }
+template<> int* copyScalar<int>(int v) { return new int({v}); }
+template<> double* copyScalar<double>(double v) { return new double({v}); }
+template<> std::string* copyScalar<std::string>(std::string s) { return new std::string(s); }
+
+template<class T, class F> std::shared_ptr<T> copyValue(F v) { return std::make_shared<bool>(v); }
+//template<> std::shared_ptr<bool> copyValue<bool>(bool v) { return std::make_shared<bool>(v); }
+//template<> int* copyScalar<int>(int v) { return new int({v}); }
+//template<> double* copyScalar<double>(double v) { return new double({v}); }
+//template<> std::string* copyScalar<std::string>(std::string s) { return new std::string(s); }
+
+template<class T, class F>
+inline typename std::enable_if<std::is_same<F, std::vector<T>>::value, std::shared_ptr<std::vector<T>>>::type
+copyValue(F v) {
+	return new std::vector(v);
+}
+
+template<class T> std::vector<T>* copyArray(std::vector<T> v) { return new std::vector(v); }
+
+//template<class R, class ... AS>
+//std::function<R(AS...)>& funcRef(std::function<R(AS...)> fn) {
+//	R(&ret)(AS);
+//}
+
 
 struct FlowVal {
 	void* data;
@@ -88,6 +115,8 @@ std::string toString(const FlowVal& val) {
 	}
 	return os.str();
 }
+
+// Natives:
 
 void println2(const FlowVal& val) {
 	std::cout << toString(val) << std::endl;

@@ -22,17 +22,19 @@ fiType2cpp3(type : FiType) -> string {
 		FiTypeBool():   "bool";
 		FiTypeInt():    "int";
 		FiTypeDouble(): "double";
-		FiTypeString(): "std::string";
-		FiTypeFlow():   "flowc::FlowVal";
+		FiTypeString(): "std::u16string";
+		FiTypeFlow():   "_FlowType";
 		FiTypeNative(): "void*";
 		FiTypeParameter(n): "T_" + i2s(strlen(n));
 		FiTypeFunction(args, rt): 
 			"std::function<" + fiType2cpp3(rt) + "(" + superglue(args, \arg -> fiType2cpp3(arg.type), ", ") + ")>";
 		FiTypeName(n, tps): n + if (length(tps) == 0) "" else "<" + superglue(tps, fiType2cpp3, ", ") + ">";
 		FiTypeArray(at): "std::vector<" + fiType2cpp3(at) + ">";
-		FiTypeRef(at): "flowc::Ref<" + fiType2cpp3(at) + ">";
+		FiTypeRef(at): "std::shared_ptr<" + fiType2cpp3(at) + ">";
 	}
 }
+
+named_type_ind = ref 0;
 
 fi2cpp3Struct(struct : FiTypeStruct, only_decl) -> string {
 	typars = filtermap(struct.typars, \tp ->
@@ -44,12 +46,16 @@ fi2cpp3Struct(struct : FiTypeStruct, only_decl) -> string {
 			}
 		}
 	);
+	named_type_ind := ^named_type_ind + 1;
 	(if (length(typars) == 0) "" else {
 		"template<" + strGlue(map(typars, \tp -> "typename T_" + i2s(strlen(tp.n))), ", ") + ">\n"
 	}) +
 	"struct " + struct.name + 
 	(if (only_decl) ";" else
 	"{\n" +
+		"\tconst int _id = " + i2s(^named_type_ind) + ";\n" +
+		"\t" + struct.name + "(" + superglue(struct.args, \arg -> fiType2cpp3(arg.type) + " " + arg.name + "__", ", ") + ")\n" +
+		(if (length(struct.args) == 0) "" else "\t: " + superglue(struct.args, \arg -> arg.name + "(" + arg.name + "__)", ", ")) +"{ }\n" +
 		concatStrings(map(struct.args, \arg -> "\t" + fiType2cpp3(arg.type) + " " + arg.name + ";\n")) +
 	"};") + "\n\n";
 }
@@ -118,7 +124,7 @@ fi2cpp3Exp(e : FiExp, returns : bool) -> string {
 		FiBool(b, __):   wrap_return(if (b) "true" else "false");
 		FiInt(i, __):    wrap_return(i2s(i));
 		FiDouble(d, __): wrap_return(d2s(d));
-		FiString(s, __): wrap_return("std::string(\"" + s + "\")");
+		FiString(s, __): wrap_return("string2u16string(\"" + s + "\")");
 		FiSeq(es, __,__): {
 			"{\n" + 
 				strIndent(strGlue(mapi(es, \i, ex -> fi2cpp3Exp(ex, returns && i + 1 == length(es))),";\n")) + ";" +
@@ -181,23 +187,32 @@ fi2cpp3CallPrim(op : FcPrim, fs : [FiExp], es : [string], type : FiType) -> stri
 			"std::vector<" + fiType2cpp3(dearrayed_type) + ">({" + strGlue(es, ", ") + "})";
 		}
 		FcIndexPrim(): es[0] + "[" + es[1] + "]";
-		FcDerefPrim(): "(" + es[0] + ".ref)";
+		FcDerefPrim(): "*" + es[0];
 		FcAssignPrim(): "(" + es[0] + " = " + es[1] + ")";
 		FcRefPrim(): {
-			/*switch (fs[0]) {
-				FiVoid(__):      { fail("ref void !! (sic!)"); ""; };
-				FiBool(b, __):   { "flowc::Ref({b})"; };
-				FiInt(i, __):    { "flowc::Ref({i})"; };
-				FiDouble(d, __): { "flowc::Ref({d})"; };
-				FiString(s, __): { "flowc::Ref({s})"; };
-				default: "flowc::Ref({" +  "}})";
-			}*/
 			derefed_type = fi2cpp3DerefType(type);
-			"flowc::Ref<" + fiType2cpp3(derefed_type) + ">({" + es[0] + "})";
-			//derefed_type = fi2cpp3DerefType(type);
-			//"{auto __r__=" + es[0] + ";flowc::Ref(&__r__)}";
+			derefed_type_cpp = fiType2cpp3(derefed_type);
+			/*rf = switch (derefed_type) {
+				FiTypeScalar(): {
+					"*copyValue<" + derefed_type_cpp + ">(" + es[0] + ")";
+				}
+				FiTypeArray(ar): {
+					"*copyValue<" + fiType2cpp3(ar) + ">(" + es[0] + ")"
+				}
+				FiTypeFunction(args, rt): {
+					es[0];
+				}
+				default: {
+					fail("not implemented FcRefPrim for: " + toString(fs[0]));
+					"";
+				}
+			}
+			"flowc::Ref<" + derefed_type_cpp + ">({" + rf +"})";
+			*/
+
+			"makeFlowRef<" + derefed_type_cpp + ">(" + es[0] + ")";
 		}
-		FcStructPrim(name): name + "({" + strGlue(es, ", ") + "})";
+		FcStructPrim(name): name + "(" + strGlue(es, ", ") + ")";
 		FcFieldPrim(name): es[0] + "." + name;
 		FcSetMutablePrim(name): "(" + es[0] + "." + name + " = " + es[1] + ")";
 		FcCreateClosurePrim(structName, functionName): ""; //TODO
@@ -218,15 +233,42 @@ fi2cpp3Cast(cast : FiCast, s : string) -> string {
 				}
 			}
 		}
-		default: {
+		FiTypeScalar(): {
 			switch (cast.tTo) {
 				FiTypeFlow(): {
-					"flowc::FlowVal({copyValue<" + fiType2cpp3(cast.tFrom) + ">(" + s + ")," + fi2cpp3Type2RuntimeType(cast.tFrom) + "})";
+					"_FlowType(" + s + ")";
 				}
 				default: {
 					"(" + fiType2cpp3(cast.tTo) + ")" + s;
 				}
 			}
+		}
+		FiTypeArray(at): {
+			switch (cast.tTo) {
+				FiTypeFlow(): {
+					"_FlowType(" + s + ")";
+				}
+				default: {
+					"(" + fiType2cpp3(cast.tTo) + ")" + s;
+				}
+			}
+		}
+		FiTypeParameter(n): {
+			switch (cast.tTo) {
+				FiTypeFlow(): {
+					"_FlowType(" + s + ")";
+					//"_FlowType({copyValue<" + fiType2cpp3(cast.tFrom) + ">(" + s + ")," + fi2cpp3Type2RuntimeType(cast.tFrom) + "})";
+				}
+				default: {
+					"(" + fiType2cpp3(cast.tTo) + ")" + s;
+				}
+			}
+		}
+		FiTypeFunction(args, rt): {
+			"(" + fiType2cpp3(cast.tTo) + ")" + s;
+		}
+		default: {
+			"/*AA*/(" + fiType2cpp3(cast.tTo) + ")" + s;
 		}
 	}
 }
