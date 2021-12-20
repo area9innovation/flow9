@@ -6,103 +6,117 @@ export {
 }
 
 addRefCounting(prog : BExpProgram) -> BExpProgram {
-println("AFTER REFCNT");
-println(toString(map(prog.declarations, refCountingBExpDeclaration)));
 	BExpProgram(prog with declarations = map(prog.declarations, refCountingBExpDeclaration));
 }
 
 refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
 	switch (decl) {
-		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(body, false, []), type);
+		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(body, makeSet()).first, type);
 		BExpFunction(id, typars, args, body, type): {
-//println("BExpFunction::: "+toString(args) +"  "+toString(body));
-			BExpFunction(id, typars, args, refCountingBExp(body, false, args), type);
+			BExpFunction(id, typars, args, refCountingBExp(body, makeSet()).first, type);
 		}
 		BExpNative(id, isio, type, nativeName): decl;
 	}
 }
 
-// TODO: isLastExp!
-// TODO: dropVars. we have to drop all args of the fn
-
-// if this is not the last line in the sequence, it does not mean that the variable will be used later in the code.
-// the variable can be used only 1 time on the first line, and then not.
-refCountingBExp(exp : BExp, isLastExp : bool, dropVars : [string]) -> BExp {
-	dup = \e -> if (isLastExp) e else BDupValue(e);
-	drop = \e -> BDropValue(e);
-	rec = \e -> refCountingBExp(e, isLastExp, dropVars);
+// TODO: optimization : dup(drop(dup(var))) -> dup(var)
+refCountingBExp(exp : BExp, tails : Set<string>) -> Pair<BExp, Set<string>> {
+	dup = \e -> {
+		id = switch (e) {
+			BVar(id, type) : id;
+			default : "";
+		}
+		// TODO:
+		Pair(BDupValue(e), tails);
+		//if (id != "" && !containsSet(tails, id)) Pair(e, insertSet(tails, id)) else Pair(BDupValue(e), tails);
+	}
+	drop = unpairC(\e, newTails -> Pair(BDropValue(e), newTails));
+	rec = \e -> refCountingBExp(e, tails);
 	fnType = BTypeFunction([], BTypePar(""));
 	isFn = \type -> isSameStructType(type, fnType);
-	/*
-	// flow_val + 1;
-	BCall(
-		BVar("+", BTypeFunction([BTypeName("int", []), BTypeName("int", [])], BTypeName("int", []))),
-		[
-			BVar("flow_val", BTypeName("int", [])),
-			BInt(1)
-		],
-		BTypeName("int", [])
-	)
-	// println(flow_val)
-	BCall(
-		BVar("flow_println2", BTypeFunction([BTypeName("int", [])], BTypeName("void", []))),
-		[BVar("flow_val", BTypeName("int", []))],
-		BTypeName("void", [])
-	)
-	*/
+	mapExpA = \args -> fold(args, Pair([], makeSet()), \acc, arg -> unpair(acc, \newArgs, newTails -> 
+		unpair(rec(arg), \newArg, newTail -> Pair(arrayPush(newArgs, newArg), mergeSets(newTails, newTail)))
+	));
 	switch (exp) {
-		BVoid() : exp;
-		BBool(v) : exp;
-		BInt(v) : exp;
-		BDouble(v) : exp;
-		BString(v): exp;//dup(exp);
-		BVar(id, type): if (isFn(type)) exp else drop(dup(exp));
-						//if (contains(dropVars, id)) drop(dup(exp)) else dup(exp);
+		BVoid() : Pair(exp, tails);
+		BBool(v) : Pair(exp, tails);
+		BInt(v) : Pair(exp, tails);
+		BDouble(v) : Pair(exp, tails);
+		BString(v): Pair(exp, tails); // TODO: ?? dup(exp);
+		BVar(id, type): if (isFn(type)) Pair(exp, tails) else drop(dup(exp));
 		BArray(args, type): {
-			BArray(map(args, rec), type);
-			//dup(BArray(map(args, rec), type));
+			values = mapExpA(args);
+			Pair(BArray(values.first, type), values.second);
+			// TODO: dup(BArray(map(args, rec), type));
 		}
 		BLet(id, val, body, type): {
-			bodyWithDup = BSequence(
-				[
-					dup(BVar(id, getBType(val))),
-					rec(body)
-				],
-				type
+			newBody = rec(body);
+			newValue = rec(val);
+			dupExp = dup(BVar(id, getBType(val)));
+			bodyWithDup = BSequence([dupExp.first, newBody.first], type);
+			Pair(
+				BLet(id, newValue.first, bodyWithDup, type),
+				mergeSets(mergeSets(newBody.second, newValue.second), dupExp.second)
 			);
-			BLet(id, rec(val), bodyWithDup, type);
 		}
 		BLambda(args, body, type): {
-			BLambda(args, rec(body), type)
+			unpair(rec(body), \newBody, newTails -> Pair(BLambda(args, newBody, type), newTails))
 		}
 		// BCall(fn : BExp, args : [BExp], type : BType);
 		BCall(fn, args, type): {
-			BCall(rec(fn), map(args, \arg -> dup(rec(arg))), type)
+			newFn = rec(fn);
+			newArgs = fold(args, Pair([], makeSet()), \acc, arg -> unpair(acc, \newArgs, newTails -> 
+				unpair(rec(arg), \newArg, newTail -> {
+					// todo: pass newTail
+					unpair(dup(newArg), \dupedArg, newTail2 ->
+						Pair(arrayPush(newArgs, dupedArg), mergeSets(mergeSets(newTails, newTail), newTail))
+					)
+				})
+			));
+			Pair(BCall(newFn.first, newArgs.first, type), mergeSets(newFn.second, newArgs.second))
 		}
 		BIf(cond, then, else_, type): {
-			BIf(rec(cond), rec(then), rec(else_), type)
+			newCond = rec(cond);
+			newThen = rec(then);
+			newElse = rec(else_);
+			Pair(
+				BIf(newCond.first, newThen.first, newElse.first, type),
+				mergeSets(mergeSets(newCond.second, newThen.second), newElse.second)
+			);
 		}
-		// TODO: isLastExp
 		BSequence(exps, type): {
-			BSequence(map(exps, rec), type);
-			// lastInd = length(exps) - 1;
-			// BSequence(mapi(exps, \i, e -> refCountingBExp(e, false/*i == lastInd*/, dropVars)), type);
+			// order? reverse
+			values = mapExpA(exps);
+			Pair(BSequence(values.first, type), values.second);
 		}
 		BSwitch(value, switchType, cases, defaultCase, type): {
-			BSwitch(value, switchType, map(cases, \c -> BCase(c.id, rec(c.body))), maybeMap(defaultCase, rec), type)
+			newCases = fold(cases, Pair([], makeSet()), \acc, case -> unpair(acc, \newArgs, newTails -> 
+				unpair(rec(case.body), \newArg, newTail -> Pair(arrayPush(newArgs, BCase(case.id, newArg)), mergeSets(newTails, newTail)))
+			));
+			newDefCase = maybeMap(defaultCase, rec);
+			Pair(
+				BSwitch(value, switchType, newCases.first, maybeMap(newDefCase, firstOfPair), type),
+				eitherMap(newDefCase, \c -> mergeSets(newCases.second, c.second), newCases.second)
+			);
 		}
 		BConstruct(struct, args, type): {
-			BConstruct(struct, map(args, rec), type);
+			values = mapExpA(args);
+			Pair(BConstruct(struct, values.first, type), values.second);
 		}
 		BField(value, field, type): {
-			BField(rec(value), field, type);
+			unpair(rec(value), \newValue, newTails -> Pair(BField(newValue, field, type), newTails))
 		}
 		BSetMutable(left, field, value, type): {
-			BSetMutable(rec(left), field, rec(value), type)
+			newLeft = rec(left);
+			newValue = rec(value);
+			Pair(
+				BSetMutable(newLeft.first, field, newValue.first, type),
+				mergeSets(newLeft.second, newValue.second)
+			)
 		}
 		BCast(value, from, to): {
-			BCast(rec(value), from, to)
+			unpair(rec(value), \newValue, newTails -> Pair(BCast(newValue, from, to), newTails));
 		}
-		BCounter(): exp; // shouldn't happen
+		BCounter(): Pair(exp, tails); // shouldn't happen
 	}
 }
