@@ -195,12 +195,20 @@ T dup(T& a) {
 
 template <typename T>
 T drop(T& a) {
+	a._counter -= 1;
+	std::cout<<"DROP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
 	return a;
 }
 
 // consts : string, array
 template <typename T>
-T dup(T a) {
+T dup(T& a) {
+	a._counter += 1;
+	std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
+	return a;
+}
+
+int32_t dup(int32_t a) {
 	return a;
 }
 
