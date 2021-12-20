@@ -1,7 +1,7 @@
-import tools/flow9/types/cgraph/cgraph;
+import tools/flow9/types/cgraph/cmap;
 import tools/flow9/types/cgraph/unionmap;
-import tools/flow9/types/ugraph/class;
 import tools/flow9/types/cgraph/pretty;
+import tools/flow9/types/ugraph/class;
 import tools/flow9/types/ugraph/tmap;
 import tools/flow9/types/typars;
 
@@ -23,19 +23,32 @@ makeSubtypeOverload(tmap : TMap, node : CNode, checkOnly : bool, reason0 : Error
 			subs = ^(tmap.resolveSubtypes)(name);
 			if (subs == []) Some(node)
 			else {
-				subtypes = map(subs, \sub -> {
+				msubtypes = map(subs, \sub -> {
 					makeSubtypeFromSuper(tmap, node, sub);
 				});
-				nclass = findCNode(tmap.cmap, node);
-				if (nclass == -1) {
-					println("Not Supposed to Happen. Could not find eclass for " + prettyCNode(tmap.cmap, node));
+				subtypes = filtermap(msubtypes, idfn);
+				if (length(subtypes) < length(subs)) {
+					if (!checkOnly) {
+						problematic = filtermapi(subs, \i, sub -> {
+							if (msubtypes[i] == None()) {
+								Some(sub)
+							} else None();
+						});
+						tmap.onError(elaborateReason(reason, "Could not expand " + name + " to subtypes. Typar mismatch for " + strGlue(problematic, ", ")));
+					}
+					None();
+				} else {
+					nclass = findCNode(tmap.cmap, node);
+					if (nclass == -1) {
+						println("Not Supposed to Happen. Could not find eclass for " + prettyCNode(tmap.cmap, node));
+					}
+					all = buildSet(arrayPush(subtypes, nclass));
+					Some(COverload(
+						if (checkOnly) makeSet() else makeSet1(tmap.mkUnique()),
+						all,
+						reason
+					))
 				}
-				all = buildSet(arrayPush(subtypes, nclass));
-				Some(COverload(
-					if (checkOnly) makeSet() else makeSet1(tmap.mkUnique()),
-					all,
-					node.reason
-				))
 			}
 		}
 		CFunction(args, return, reason): {
@@ -173,27 +186,22 @@ makeSupertypeFromSub(tmap : TMap, sub : CName, super : string) -> int {
 	}
 }
 
-makeSubtypeFromSuper(tmap : TMap, super : CName, sub : string) -> int {
-	error = \ -> {
-		println("ERROR: Could not make " + sub + " from " + prettyCNode(tmap.cmap, super));
-		node = CName(sub, [], super.reason);
-		findOrMakeCNode(tmap, node);
-	}
+makeSubtypeFromSuper(tmap : TMap, super : CName, sub : string) -> Maybe<int> {
 	msuperdef = ^(tmap.resolveUnionName)(super.name);
 	switch (msuperdef) {
 		None(): {
-			error();
+			None();
 		}
 		Some(superdef): {
 			mtypars = extractTyparsFromSuper2(tmap, super, sub);
 			switch (mtypars) {
 				None(): {
-					error();
+					None();
 				}
 				Some(tps): {
 					// TODO: Arguably, we should do subtypes for these typars
 					node = CName(sub, tps, super.reason);
-					findOrMakeCNode(tmap, node);
+					Some(findOrMakeCNode(tmap, node));
 				}
 			}
 		}
@@ -261,7 +269,12 @@ extractTyparsFromSuper2(tmap : TMap, super : CName, subname : string) -> Maybe<[
 				stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == subname);
 				stype ?? {
 					// OK, we have the relation from the union to the struct in this union
-					Some(extractTyparsFromSuperDTypename(union, stype, super.typars));
+					if (length(super.typars) < length(union.typars) || length(super.typars) < length(stype.typars)) {
+						println("TODO: Missing typars for converting " + union.id + ": " + toString(union.typars) + " with " + toString(super.typars) + " with " + toString(stype));
+						None();
+					} else {
+						Some(extractTyparsFromSuperDTypename(union, stype, super.typars));
+					}
 				} : {
 					// We could not find it, go look for it in the children
 					utypars = filtermap(union.types, \t : DTypeName -> {
