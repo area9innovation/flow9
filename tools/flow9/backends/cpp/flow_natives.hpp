@@ -201,6 +201,7 @@ T drop(T& a) {
 }
 
 // consts : string, array
+// recursive DUP // v1 = struct1(struct2(...))
 template <typename T>
 T dup(T& a) {
 	a._counter += 1;
