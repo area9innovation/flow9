@@ -93,9 +93,16 @@ void flow_quit(int32_t code) {
 }
 
 template <typename A>
-void flow_print2(A v) {
+void flow_print2(A&& v) {
+	drop(v);
 	std::cout << v;
 }
+
+template <typename A>
+void flow_print2(std::shared_ptr<A> v) {
+	std::cout << "ref " << *v;
+}
+
 
 void flow_print2(std::u16string d) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
@@ -155,7 +162,7 @@ std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){
 }
 
 template <typename A>
-void flow_println2(A v) {
+void flow_println2(A&& v) {
 	flow_print2(v);
 	std::cout << std::endl;
 }
@@ -194,7 +201,7 @@ T dup(T& a) {
 }*/
 
 template <typename T>
-T drop(T& a) {
+T& drop(T& a) {
 	a._counter -= 1;
 	std::cout<<"DROP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
 	return a;
@@ -203,7 +210,7 @@ T drop(T& a) {
 // consts : string, array
 // recursive DUP // v1 = struct1(struct2(...))
 template <typename T>
-T dup(T& a) {
+T& dup(T& a) {
 	a._counter += 1;
 	std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
 	return a;
@@ -291,6 +298,16 @@ std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(A)> 
 	std::transform(flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_fn);
 	return res;
 }
+
+// TODO: fix cpp and uncomment this
+/*std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(const A&)> & flow_fn) {
+  std::vector<B> res(flow_a.size());
+  for (std::size_t i = 0; i != flow_a.size(); ++i) {
+    res[i] = flow_fn(flow_a[i]);
+  }
+  return res;
+}
+*/
 
 template <typename A>
 std::vector<A> flow_filter(const std::vector<A>& flow_a, const std::function<bool(A)> & flow_test) {

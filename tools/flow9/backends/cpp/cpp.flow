@@ -171,7 +171,7 @@ do {
 						"id", id,
 						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 						"args", supergluei(args, \i, arg -> {
-							btype2cpp(backend, argtypes[i]) + " " + arg
+							btype2cpp(backend, argtypes[i]) + "& " + arg
 						}, ", "),
 						"returnType", returnType,
 					]
@@ -228,6 +228,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 		BLetStatement(id, value, body): {
 			// TODO: dup drop
 			"auto " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
++ "std::cout<<\"FN : &"+id+" = \"<< &"+id+" <<std::endl;\n"
 			+ bstatement2cpp(backend, body, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
@@ -294,8 +295,8 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, false);
 	bCounter2cpp = \ee, funName -> {
-		type = getBReturnType(getBType(ee));
 		isSimpleBType = \type -> type == bvoidType || type  == bboolType || type  == bintType || type  == bdoubleType || type  == bstringType;
+		type = getBReturnType(getBType(ee));
 		/*bletExp = extractStruct([ee], BLet("", BVoid(), BVoid(), BTypePar("")));
 println(funName +" :: "+toString(ee)+"   isLet="+b2s(bletExp.id != ""));
 		// TODO: type in BCounterValue
@@ -444,7 +445,6 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 		blueprint(
 			"std::ostream& operator<<(std::ostream& os, const %type%%typar%& a){
 	os << \"%type%{\"; %fields% os <<\"}\";
-	%drop%
 	return os;
 }\n",
 			[
@@ -454,11 +454,12 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 					s.structArgs,
 					\i, a ->  "flow_print2(a." + a.id + "); " + (if (i == lastInd) "" else "os<<\", \";"),
 					""
-				).
-				"drop", "drop<Struct&>(a);"
+				)
 			]
 		)
 	);
+
+	recStruct = RecursiveDStruct(s, map(s.structArgs, \__ ->false));
 
 	dstruct2cppEx(
 		backend,
@@ -471,7 +472,9 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 			bool operator>(const %type%& a) const {return %gFields%;}
 			bool operator<(const %type%& a) const {return %lFields%;}
 			bool operator>=(const %type%& a) const {return %geFields%;}
-			bool operator<=(const %type%& a) const {return %leFields%;}\n",
+			bool operator<=(const %type%& a) const {return %leFields%;}
+			~%type%(){std::cout<<\" ~destroy %type%(\"; %printFields%; std::cout<<\") counter=\"<<_counter<<\" &=\" << this <<\" ~ \"<<std::endl;}
+			%constructors%\n",
 			[
 				"type", s.id,
 				"equalFields", makeEqualStructArgsBody(backend, s.structArgs, []),
@@ -480,9 +483,11 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 				"lFields", makeLessStructArgsBody(backend, s.structArgs, []),
 				"leFields", makeLessEqStructArgsBody(backend, s.structArgs, []),
 				"geFields", makeGreaterEqStructArgsBody(backend, s.structArgs, []),
+				"printFields", superglue(s.structArgs, \a -> "flow_print2(" + a.id + ")", "; "),
+				"constructors", makeStructConstructors(backend, recStruct, false),
 			]
 		)
-	) + "\n" + operatorPrint;
+	) + "\n" + operatorPrint + makeStructConstructors(backend, recStruct, true) + "\n";
 }
 
 dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType) -> string, dstructFns : string) -> string {
