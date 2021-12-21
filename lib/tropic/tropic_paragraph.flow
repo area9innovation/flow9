@@ -7,7 +7,7 @@ import text/bidi_text;
 
 export {
 	TRenderDynamicParagraph(
-		words : DynamicBehaviour<[TParaWord]>,
+		words : ref [TParaWord],
 		s : [ParagraphStyle],
 		alignWidthM : Maybe<DynamicBehaviour<double>>
 	) -> TDynamicParagraph;
@@ -39,7 +39,7 @@ export {
 }
 
 TRenderDynamicParagraph(
-	wordsB : DynamicBehaviour<[TParaWord]>,
+	words : ref [TParaWord],
 	s : [ParagraphStyle],
 	alignWidthBM : Maybe<DynamicBehaviour<double>>
 ) -> TDynamicParagraph {
@@ -64,7 +64,7 @@ TRenderDynamicParagraph(
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	ndynamic = fold(getValue(wordsB), 0, \acc, w -> switch (w.word) {
+	ndynamic = fold(^words, 0, \acc, w -> switch (w.word) {
 		NonTextElement() : acc + 1;
 		default : acc;
 	});
@@ -73,7 +73,7 @@ TRenderDynamicParagraph(
 	rtl = isParagraphRtl(s);
 
 	stackChanges = make([]);
-	initialWords = ref map(getValue(wordsB), \w -> translateWord(w, if (rtl) 0.0 else genIndent));
+	initialWords = ref map(^words, \w -> translateWord(w, if (rtl) 0.0 else genIndent));
 	paragraphWHB = makeWH();
 	paragraphBaselineB = make(0.0);
 
@@ -87,7 +87,7 @@ TRenderDynamicParagraph(
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
-			getValue(wordsB), w, indent, tightWidth, alignment, interlineSpacing,
+			^words, w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
 			genIndent, linesCountB, alignWidthM, false, false
 		);
@@ -100,12 +100,11 @@ TRenderDynamicParagraph(
 		changes = paragraphSizeBaselineAndChanges.words;
 		iteri(changes.words, \i, word -> {
 			index = changes.indexes[i];
-			words = getValue(wordsB);
-			next(wordsB, concat3(
-				subrange(words, 0, index),
+			words := concat3(
+				subrange(^words, 0, index),
 				[word],
-				subrange(words, index + 1, length(words) - index - 1)
-			));
+				subrange(^words, index + 1, length(^words) - index - 1)
+			);
 			dynArrayPush(
 				stackChanges,
 				TGroupReplace(translateWord(word, if (rtl) 0.0 else genIndent), index)
@@ -142,10 +141,9 @@ TRenderDynamicParagraph(
 	dynamicWordsUns = ref [];
 
 	addWords = \index, newWords -> {
-		words = getValue(wordsB);
-		idx = max(min(index, length(words)), 0);
+		idx = max(min(index, length(^words)), 0);
 		iteri(newWords, \i, newWord -> {
-			next(wordsB, insertArray(words, idx + i, newWord));
+			words := insertArray(^words, idx + i, newWord);
 			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(newWord));
 			dynArrayPush(
 				stackChanges,
@@ -156,10 +154,9 @@ TRenderDynamicParagraph(
 	}
 
 	removeWords = \start, count, reflow -> {
-		words = getValue(wordsB);
-		idx = min(start, length(words) - 1);
+		idx = min(start, length(^words) - 1);
 		fori(1, count, \__ -> {
-			next(wordsB, removeIndex(words, idx));
+			words := removeIndex(^words, idx);
 			apply0(elementAt(^dynamicWordsUns, idx, nop));
 			dynamicWordsUns := removeIndex(^dynamicWordsUns, idx);
 			dynArrayPush(stackChanges, TGroupDelete(idx));
@@ -190,7 +187,7 @@ TRenderDynamicParagraph(
 				}
 			}),
 			\ -> {
-				dynamicWordsUns := map(getValue(wordsB), subscribe2dynWord);
+				dynamicWordsUns := map(^words, subscribe2dynWord);
 				\ -> {
 					applyall(^dynamicWordsUns);
 					dynamicWordsUns := [];
