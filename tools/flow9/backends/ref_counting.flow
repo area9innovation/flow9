@@ -1,20 +1,21 @@
 import tools/flow9/backends/bprogram;
 import tools/flow9/bexp/type;
+import tools/flow9/backends/cpp/cpp_backend;
 
 export {
 	addRefCounting(prog : BExpProgram) -> BExpProgram;
 }
 
 addRefCounting(prog : BExpProgram) -> BExpProgram {
-//ntv = BExpNative("", false, BTypePar(""), "");println(toString(filter(prog.declarations, \d -> isSameStructType(d, ntv))));
 	BExpProgram(prog with declarations = map(prog.declarations, refCountingBExpDeclaration));
 }
 
 refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
+	generators = fold(cppGenerators(), makeSet(), \acc, g -> insertSet(acc, g.name));
 	switch (decl) {
-		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(BExpUsedVars(body, makeSet())).exp, type);
+		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(BExpUsedVars(body, makeSet()), generators).exp, type);
 		BExpFunction(id, typars, args, body, type): {
-			BExpFunction(id, typars, args, refCountingBExp(BExpUsedVars(body, makeSet())).exp, type);
+			BExpFunction(id, typars, args, refCountingBExp(BExpUsedVars(body, makeSet()), generators).exp, type);
 		}
 		BExpNative(id, isio, type, nativeName): decl;
 	}
@@ -25,7 +26,7 @@ BExpUsedVars(
 	usedVars : Set<string>,
 );
 
-refCountingBExp(exp : BExpUsedVars) -> BExpUsedVars {
+refCountingBExp(exp : BExpUsedVars, generators : Set<string>) -> BExpUsedVars {
 	dupEx = \e, newTails -> {
 		id = extractBVarId(e);
 		if (id != "") {
@@ -36,7 +37,7 @@ refCountingBExp(exp : BExpUsedVars) -> BExpUsedVars {
 	}
 	dup = \e -> dupEx(e.exp, e.usedVars);
 	drop = \e -> BExpUsedVars(BDropValue(e.exp), e.usedVars);
-	recInc = \e, tails -> refCountingBExp(BExpUsedVars(e, tails));
+	recInc = \e, tails -> refCountingBExp(BExpUsedVars(e, tails), generators);
 	rec = \e -> recInc(e, exp.usedVars);
 	fnType = BTypeFunction([], BTypePar(""));
 	isFn = \type -> isSameStructType(type, fnType);
@@ -84,7 +85,7 @@ refCountingBExp(exp : BExpUsedVars) -> BExpUsedVars {
 			newFn = rec(fn);
 			newArgs = foldr(args, Pair([], newFn.usedVars), \acc, arg -> unpair(acc, \newArgs, newTails -> {
 				newArg = recInc(arg, newTails);
-				if (isNativeWithoutDropFn(fn)) {
+				if (isNativeWithoutDropFn(fn, generators)) {
 					Pair(arrayPush(newArgs, reduceBCounter(newArg.exp)), newArg.usedVars);
 				} else {
 					// drop is inside the FN
@@ -157,9 +158,9 @@ extractBVarId(exp : BExp) -> string {
 }
 
 // TODO
-isNativeWithoutDropFn(exp : BExp) -> bool {
+isNativeWithoutDropFn(exp : BExp, generators : Set<string>) -> bool {
 	switch (exp) {
-		BVar(id, __) : id == "+" || id == "-" || id == "*" || id == "/";
+		BVar(id, __) : containsSet(generators, id);
 		default : false;
 	}
 }
