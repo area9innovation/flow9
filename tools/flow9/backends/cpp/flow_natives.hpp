@@ -203,8 +203,15 @@ T dup(T& a) {
 template <typename T>
 T& drop(T& a) {
 	a._counter -= 1;
-	std::cout<<"DROP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
-	return a;
+	if (a._counter < 1) {
+		std::cout<<"DROP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
+		//(a).~T();
+		delete &a;
+		//T res = a;
+		return a;
+	} else {
+		return a;
+	}
 }
 
 // consts : string, array
@@ -212,7 +219,7 @@ T& drop(T& a) {
 template <typename T>
 T& dup(T& a) {
 	a._counter += 1;
-	std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
+	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
 	return a;
 }
 
@@ -223,6 +230,11 @@ int32_t dup(int32_t a) {
 
 int32_t drop(int32_t a) {
 	std::cout<<"DROP:: int value "<< a <<std::endl;
+	return a;
+}
+
+std::u16string dup(std::u16string a) {
+	std::cout<<"DUP:: string value ";flow_print2(a); std::cout <<std::endl;
 	return a;
 }
 

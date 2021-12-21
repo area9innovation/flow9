@@ -28,9 +28,11 @@ BExpUsedVars(
 refCountingBExp(exp : BExpUsedVars) -> BExpUsedVars {
 	dupEx = \e, newTails -> {
 		id = extractBVarId(e);
-		//if (id != "") Pair(BDupValue(e), insertSet(newTails, id)) else Pair(e, newTails);
-		// TODO:
-		if (id != "" && !containsSet(newTails, id)) BExpUsedVars(e, insertSet(newTails, id)) else BExpUsedVars(BDupValue(e), newTails);
+		if (id != "") {
+			if (!containsSet(newTails, id)) BExpUsedVars(e, insertSet(newTails, id)) else BExpUsedVars(BDupValue(e), newTails);
+		} else {
+			BExpUsedVars(e, newTails);
+		}
 	}
 	dup = \e -> dupEx(e.exp, e.usedVars);
 	drop = \e -> BExpUsedVars(BDropValue(e.exp), e.usedVars);
@@ -64,9 +66,13 @@ refCountingBExp(exp : BExpUsedVars) -> BExpUsedVars {
 			newBody = rec(body);
 			newValue = recInc(val, newBody.usedVars);
 			dupExp = drop(dupEx(BVar(id, getBType(val)), newValue.usedVars));
-			bodyWithDup = BSequence([reduceBCounter(dupExp.exp), newBody.exp], type);
+			reducedBCounter = reduceBCounter(dupExp.exp);
+			bodyWithDup = switch (reducedBCounter : BExp) {
+				BCounter(): BSequence([reducedBCounter, newBody.exp], type);
+				default: newBody.exp;
+			}
 			BExpUsedVars(
-				BLet(id, newValue.exp, bodyWithDup, type),
+				BLet(id, reduceBCounter(newValue.exp), bodyWithDup, type),
 				dupExp.usedVars
 			);
 		}
@@ -79,7 +85,7 @@ refCountingBExp(exp : BExpUsedVars) -> BExpUsedVars {
 			newArgs = foldr(args, Pair([], newFn.usedVars), \acc, arg -> unpair(acc, \newArgs, newTails -> {
 				newArg = recInc(arg, newTails);
 				if (isNativeWithoutDropFn(fn)) {
-					Pair(arrayPush(newArgs, newArg.exp), newArg.usedVars);
+					Pair(arrayPush(newArgs, reduceBCounter(newArg.exp)), newArg.usedVars);
 				} else {
 					// drop is inside the FN
 					dupedArg = dupEx(newArg.exp, newArg.usedVars);
@@ -163,8 +169,8 @@ reduceBCounter(counter : BCounter) -> BExp {
 		cnt = min(dupCnt, dropCnt);
 		reducedDupCnt = dupCnt - cnt;
 		reducedDropCnt = dropCnt - cnt;
-		newValue = fold(enumFromTo(1, dupCnt), exp, \newExp, __ -> BDupValue(newExp));
-		fold(enumFromTo(1, dropCnt), newValue, \newExp, __ -> BDropValue(newExp));
+		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> BDupValue(newExp));
+		fold(enumFromTo(1, reducedDropCnt), newValue, \newExp, __ -> BDropValue(newExp));
 	});
 }
 
