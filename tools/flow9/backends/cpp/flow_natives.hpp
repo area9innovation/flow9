@@ -201,16 +201,14 @@ T dup(T& a) {
 }*/
 
 template <typename T>
-T& drop(T& a) {
+T* drop(T& a) {
 	a._counter -= 1;
 	if (a._counter < 1) {
-		std::cout<<"DROP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
-		//(a).~T();
-		delete &a;
-		//T res = a;
-		return a;
+		std::cout<<"FREE:: &=" << &a <<"; counter = "<< a._counter <<std::endl;
+		a.~T();
+		return nullptr;
 	} else {
-		return a;
+		return &a;
 	}
 }
 
