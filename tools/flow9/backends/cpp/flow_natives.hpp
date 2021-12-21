@@ -212,6 +212,16 @@ T* drop(T& a) {
 	}
 }
 
+// TODO
+template <typename T>
+T& reuse(T& a) {
+	T* tmp;
+	std::cout<<"REUSE:: from &=" << &a <<" to &="<< tmp <<std::endl;
+	tmp = &a;
+	drop<T>(a);
+	return *tmp;
+}
+
 // consts : string, array
 // recursive DUP // v1 = struct1(struct2(...))
 template <typename T>
@@ -228,6 +238,11 @@ int32_t dup(int32_t a) {
 
 int32_t drop(int32_t a) {
 	std::cout<<"DROP:: int value "<< a <<std::endl;
+	return a;
+}
+
+int32_t reuse(int32_t a) {
+	std::cout<<"REUSE:: int value "<< a <<std::endl;
 	return a;
 }
 
