@@ -6,6 +6,7 @@ export {
 }
 
 addRefCounting(prog : BExpProgram) -> BExpProgram {
+//ntv = BExpNative("", false, BTypePar(""), "");println(toString(filter(prog.declarations, \d -> isSameStructType(d, ntv))));
 	BExpProgram(prog with declarations = map(prog.declarations, refCountingBExpDeclaration));
 }
 
@@ -21,15 +22,14 @@ refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
 
 // TODO: optimization : dup(drop(dup(var))) -> dup(var)
 refCountingBExp(exp : BExp, tails : Set<string>) -> Pair<BExp, Set<string>> {
-	dup = \e -> {
-		id = switch (e) {
-			BVar(id, type) : id;
-			default : "";
-		}
+//println(toString(set2array(tails)));
+	dupEx = \e, newTails -> {
+		id = extractBVarId(e);
+		if (id != "") Pair(BDupValue(e), insertSet(newTails, id)) else Pair(e, newTails);
 		// TODO:
-		Pair(BDupValue(e), tails);
-		//if (id != "" && !containsSet(tails, id)) Pair(e, insertSet(tails, id)) else Pair(BDupValue(e), tails);
+		//if (id != "" && !containsSet(tails, id)) Pair(e, insertSet(newTails, id)) else Pair(BDupValue(e), newTails);
 	}
+	dup = \e -> dupEx(e, tails);
 	drop = unpairC(\e, newTails -> Pair(BDropValue(e), newTails));
 	rec = \e -> refCountingBExp(e, tails);
 	fnType = BTypeFunction([], BTypePar(""));
@@ -52,7 +52,7 @@ refCountingBExp(exp : BExp, tails : Set<string>) -> Pair<BExp, Set<string>> {
 		BLet(id, val, body, type): {
 			newBody = rec(body);
 			newValue = rec(val);
-			dupExp = dup(BVar(id, getBType(val)));
+			dupExp = drop(dup(BVar(id, getBType(val))));
 			bodyWithDup = BSequence([dupExp.first, newBody.first], type);
 			Pair(
 				BLet(id, newValue.first, bodyWithDup, type),
@@ -62,15 +62,18 @@ refCountingBExp(exp : BExp, tails : Set<string>) -> Pair<BExp, Set<string>> {
 		BLambda(args, body, type): {
 			unpair(rec(body), \newBody, newTails -> Pair(BLambda(args, newBody, type), newTails))
 		}
-		// BCall(fn : BExp, args : [BExp], type : BType);
 		BCall(fn, args, type): {
 			newFn = rec(fn);
 			newArgs = fold(args, Pair([], makeSet()), \acc, arg -> unpair(acc, \newArgs, newTails -> 
 				unpair(rec(arg), \newArg, newTail -> {
-					// todo: pass newTail
-					unpair(dup(newArg), \dupedArg, newTail2 ->
-						Pair(arrayPush(newArgs, dupedArg), mergeSets(mergeSets(newTails, newTail), newTail))
-					)
+					if (isNativeWithoutDropFn(fn)) {
+						Pair(arrayPush(newArgs, newArg), mergeSets(newTails, newTail))
+					} else {
+						// drop is inside the FN
+						unpair(dupEx(newArg, mergeSets(newTails, newTail)), \dupedArg, newTail2 ->
+							Pair(arrayPush(newArgs, dupedArg), newTail2)
+						)
+					}
 				})
 			));
 			Pair(BCall(newFn.first, newArgs.first, type), mergeSets(newFn.second, newArgs.second))
@@ -118,5 +121,22 @@ refCountingBExp(exp : BExp, tails : Set<string>) -> Pair<BExp, Set<string>> {
 			unpair(rec(value), \newValue, newTails -> Pair(BCast(newValue, from, to), newTails));
 		}
 		BCounter(): Pair(exp, tails); // shouldn't happen
+	}
+}
+
+extractBVarId(exp : BExp) -> string {
+	switch (exp) {
+		BVar(id, __) : id;
+		BDupValue(value) : extractBVarId(value);
+		BDropValue(value) : extractBVarId(value);
+		default : "";
+	}
+}
+
+// TODO
+isNativeWithoutDropFn(exp : BExp) -> bool {
+	switch (exp) {
+		BVar(id, __) : id == "+" || id == "-" || id == "*" || id == "/";
+		default : false;
 	}
 }

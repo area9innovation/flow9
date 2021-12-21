@@ -217,6 +217,12 @@ T& dup(T& a) {
 }
 
 int32_t dup(int32_t a) {
+	std::cout<<"DUP:: int value "<< a <<std::endl;
+	return a;
+}
+
+int32_t drop(int32_t a) {
+	std::cout<<"DROP:: int value "<< a <<std::endl;
 	return a;
 }
 
