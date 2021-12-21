@@ -1,2 +1,2 @@
 cd ../..
-gringo file=flowe/pexp/pexp.gringo compile=1 prefix=g_
+gringo file=flow9/pexp/pexp.gringo compile=1 prefix=g_
