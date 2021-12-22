@@ -154,10 +154,11 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 					]
 				);
 
+				argIds = buildSet(args);
 				fnBody = if (tailCall) {
-					tailCallBody2cpp(backend, body, returnType, isSimpleReturnType);
+					tailCallBody2cpp(backend, body, returnType, isSimpleReturnType, argIds);
 				} else {
-					bstatement2cpp(backend, body, true);
+					bstatement2cpp(backend, body, argIds, true);
 				}
 
 				Pair(
@@ -186,7 +187,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 	}
 }
 
-tailCallBody2cpp(backend : Backend<CppInfo>, body : BStatement, type : string, simpleType : bool) -> string {
+tailCallBody2cpp(backend : Backend<CppInfo>, body : BStatement, type : string, simpleType : bool, fnArgs : Set<string>) -> string {
 	defaultReturn = if (type == bvoidType.id) {
 		"";
 	} else if (simpleType) {
@@ -203,7 +204,7 @@ return *_defReturn;",
 		);
 	}
 
-	recursiveBody = bstatement2cpp(backend, body, true);
+	recursiveBody = bstatement2cpp(backend, body, fnArgs, true);
 	if (recursiveBody == "") {
 		defaultReturn
 	} else {
@@ -222,12 +223,19 @@ _end = true;
 	}
 }
 
-bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) -> string {
+bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>, withReturn : bool) -> string {
+	isLocalVar = \val: BExp -> {
+		isBConstruct(val)
+		|| {
+			varId = getBVarId(val);
+			varId != "" && !containsSet(fnArgs, varId)
+		}
+	}
 	todo = \ -> {
 		println("TODO C++ statement: " + toString(s));
 		toString(s)
 	}
-	rec = \ss -> bstatement2cpp(backend, ss, withReturn);
+	rec = \ss -> bstatement2cpp(backend, ss, fnArgs, withReturn);
 	rece = \ee -> bexp2cpp(backend, ee, false);
 	switch (s) {
 		BIfStatement(cond, then, else_): {
@@ -247,7 +255,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 		BLetStatement(id, value, body): {
 			"auto " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
 			+ (if (debugMode) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " <<std::endl;\n") else "")
-			+ bstatement2cpp(backend, body, withReturn);
+			+ bstatement2cpp(backend, body, fnArgs, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
 		BReturnVoid(): "return;";
@@ -256,7 +264,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 			value = bexp2cpp(backend, val, false) + ";";
 			if (type == bvoidType || !withReturn) {
 				value
-			} else if (isSimpleBType(type) || !isBConstruct(val)) {
+			} else if (isSimpleBType(type) || !isLocalVar(val)) {
 				"return " + value;
 			} else {
 				// TODO: think about. this is not recommended
@@ -265,16 +273,29 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 				// the right solution is : 
 				// a) unique_ptr . ( it will be implemented for reuse() )
 				// b) return const val + overloading ?
-				blueprint(
-					"%type%* _tmp_return = new %value%;
+				if (isBConstruct(val)) {
+					blueprint(
+						"%type%* _tmp_return = new %value%;
 "
-					+ (if (debugMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
-					+ "return *_tmp_return;",
-					[
-						"type", btype2cpp(backend, type),
-						"value", value,
-					]
-				);
+						+ (if (debugMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
+						+ "return *_tmp_return;",
+						[
+							"type", btype2cpp(backend, type),
+							"value", value,
+						]
+					);
+				} else {
+					blueprint(
+						"%type%* _tmp_return = &%value%;
+"
+						+ (if (debugMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
+						+ "return *_tmp_return;",
+						[
+							"type", btype2cpp(backend, type),
+							"value", value,
+						]
+					);
+				}
 			}
 		}
 		BTailCall(fn, args, values, type): {
@@ -292,7 +313,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 						%exps%
 					}",
 				[
-					"exps", supergluei(statements, \i, v -> bstatement2cpp(backend, v, i == length(statements) - 1), "\n"),
+					"exps", supergluei(statements, \i, v -> bstatement2cpp(backend, v, fnArgs, i == length(statements) - 1), "\n"),
 				]
 			);
 
@@ -1313,5 +1334,12 @@ isBConstruct(exp : BExp) -> bool {
 	switch (exp : BExp) {
 		BConstruct(__, __, __) : true;
 		default : false;
+	}
+}
+
+getBVarId(exp : BExp) -> string {
+	switch (exp : BExp) {
+		BVar(id, __) : id;
+		default : "";
 	}
 }
