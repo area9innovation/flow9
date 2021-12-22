@@ -11,13 +11,43 @@ addRefCounting(prog : BExpProgram) -> BExpProgram {
 }
 
 refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
-	generators = fold(cppGenerators(), makeSet(), \acc, g -> insertSet(acc, g.name));
 	switch (decl) {
-		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(BExpUsedVars(body, makeSet()), generators, true).exp, type);
-		BExpFunction(id, typars, args, body, type): {
-			BExpFunction(id, typars, args, refCountingBExp(BExpUsedVars(body, makeSet()), generators, isReturnBType(type)).exp, type);
-		}
+		BGlobalVar(id, body, type): BGlobalVar(id, addBCounterToBExp(body, [], type), type);
+		BExpFunction(id, typars, args, body, type): BExpFunction(id, typars, args, addBCounterToBExp(body, args, type), type);
 		BExpNative(id, isio, type, nativeName): decl;
+	}
+}
+
+addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType) -> BExp {
+	generators = fold(cppGenerators(), makeSet(), \acc, g -> insertSet(acc, g.name));
+	newBody = refCountingBExp(BExpUsedVars(exp, makeSet()), generators, isReturnBType(type));
+	usedVars = map(capturedVarIds, \id -> containsSet(newBody.usedVars, id));
+	if (forall(usedVars, idfn)) {
+		newBody.exp;
+	} else {
+		capturedVarTypes : [BType] = switch (type : BType) {
+			BTypePar(__) : [];
+			BTypeName(__, __) : [];
+			BTypeFunction(args, __) : args;
+		}
+		unusedVars = filtermapi(usedVars, \i, isUsed -> {
+			if (isUsed) {
+				None()
+			} else {
+				maybeBind(
+					elementAtM(capturedVarTypes, i),
+					\varType -> maybeMap(
+						elementAtM(capturedVarIds, i),
+						\id -> BDropValue(BVar(id, varType))
+					)
+				);
+			}
+		});
+		if (unusedVars == []) {
+			newBody.exp;
+		} else {
+			BSequence(arrayPush(unusedVars, newBody.exp), getBType(newBody.exp));
+		}
 	}
 }
 
@@ -26,7 +56,6 @@ BExpUsedVars(
 	usedVars : Set<string>,
 );
 
-// i is an item index
 foldri(cs : [?], acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
 	doFoldri(cs, length(cs) - 1, acc, fn);
 }

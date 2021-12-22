@@ -213,6 +213,8 @@ T* drop(T& a) {
 }
 
 // TODO
+// memory leak (?)
+// use std::unique_ptr
 template <typename T>
 T& reuse(T& a) {
 	T* tmp;
