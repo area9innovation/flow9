@@ -222,14 +222,15 @@ T& reuse(T& a) {
 	return *tmp;
 }
 
-// consts : string, array
-// recursive DUP // v1 = struct1(struct2(...))
+// TODO: recursive DUP // v1 = struct1(struct2(...)) (??)
 template <typename T>
 T& dup(T& a) {
 	a._counter += 1;
 	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
 	return a;
 }
+
+// TODO: vector (array)
 
 int32_t dup(int32_t a) {
 	std::cout<<"DUP:: int value "<< a <<std::endl;
@@ -251,11 +252,46 @@ std::u16string dup(std::u16string a) {
 	return a;
 }
 
-/*template <typename T>
-T drop(T a) {
+std::u16string drop(std::u16string a) {
+	std::cout<<"DROP:: string value ";flow_print2(a); std::cout <<std::endl;
 	return a;
 }
-*/
+
+std::u16string reuse(std::u16string a) {
+	std::cout<<"REUSE:: string value ";flow_print2(a); std::cout <<std::endl;
+	return a;
+}
+
+bool dup(bool a) {
+	std::cout<<"DUP:: bool value "<< a <<std::endl;
+	return a;
+}
+
+bool drop(bool a) {
+	std::cout<<"DROP:: bool value "<< a <<std::endl;
+	return a;
+}
+
+bool reuse(bool a) {
+	std::cout<<"REUSE:: bool value "<< a <<std::endl;
+	return a;
+}
+
+double dup(double a) {
+	std::cout<<"DUP:: double value "<< a <<std::endl;
+	return a;
+}
+
+double drop(double a) {
+	std::cout<<"DROP:: double value "<< a <<std::endl;
+	return a;
+}
+
+double reuse(double a) {
+	std::cout<<"REUSE:: double value "<< a <<std::endl;
+	return a;
+}
+
 // math
 
 double flow_log(double v) {
