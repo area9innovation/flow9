@@ -220,6 +220,11 @@ T& reuse(T& a) {
 	tmp = &a;
 	drop<T>(a);
 	return *tmp;
+	// does not transfer ownership
+	// does not work as expected because it does not break the link to the variable.
+	/*std::cout<<"REUSE:: &=" << &a << std::endl;
+	a._counter = 1;
+	return a;*/
 }
 
 // TODO: recursive DUP // v1 = struct1(struct2(...)) (??)
