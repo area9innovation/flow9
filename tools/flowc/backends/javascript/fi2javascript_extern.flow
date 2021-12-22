@@ -21,8 +21,9 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 		success := false;
 	}
 
-	extern_deps = filter(cfg.dependencies, \p -> containsSet(ovl.nativeClasses, p.host));
-	println("extern_deps:\n" + toString(extern_deps));
+	extern_deps = filter(cfg.dependencies, \p -> 
+		containsSet(ovl.nativeClasses, p.host) || p.provider != "file"
+	);
 
 	if (length(extern_deps) == 0) {
 		// Just save a resulting file.
@@ -53,7 +54,7 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 				args = if (cfg.jsmode != NODEJS_MODE) args0 else concat(args0, ["--platform=node"]);
 				fcVerbose(cfg, 0, "Linking the package with esbuild ...");
 				result = execSystemProcessOutput("esbuild", args, dir);
-				if (fileExists(js_file)) {
+				if (fileExists(js_file) && !cfg.debug) {
 					err = deleteFile(js_file);
 					if (err != "") {
 						fcPrintln(err, cfg.threadId);
@@ -71,12 +72,15 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 }
 
 ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, cfg : FiJsConfig, success : ref bool, conf_dir : string) -> void {
-	provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
-	if (provider_list.exitCode != 0) {
-		fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
+	provider_why = execSystemProcessOutput(dep.provider, ["why", dep.package], dir);
+	if (provider_why.exitCode != 0) {
+		fcPrintln("Failed to run '" + dep.provider + " why " + dep.package + "'. Check that " + dep.provider + " is installed:\n" + provider_why.stdall, cfg.threadId);
 		success := false;
 	} else {
-		if (strContains(provider_list.stdout, dep.package)) {
+		if (
+			(dep.provider == "yarn" && !strContains(provider_why.stdall, "error")) ||
+			(dep.provider == "npm" && !strContains(provider_why.stdall, "ERR!"))
+		) {
 			fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
 		} else {
 			if (dep.provider != "file") {
