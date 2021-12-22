@@ -130,7 +130,7 @@ do {
 	}
 	switch (d) {
 		BGlobalVar(id, body, type): {
-			Pair(btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body, true, true) + ";", "");
+			Pair(btype2cpp(backend, type) + " " + id + " = " + bexp2cpp(backend, body, true) + ";", "");
 		}
 		BStatFunction(id, typars, args, body, tailCall, type): {
 			if (id == "flow_i2s") {
@@ -214,7 +214,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 		toString(s)
 	}
 	rec = \ss -> bstatement2cpp(backend, ss, withReturn);
-	rece = \ee -> bexp2cpp(backend, ee, false, true);
+	rece = \ee -> bexp2cpp(backend, ee, false);
 	switch (s) {
 		BIfStatement(cond, then, else_): {
 			blueprint("
@@ -231,7 +231,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 
 		}
 		BLetStatement(id, value, body): {
-			"auto " + id + " = " + bexp2cpp(backend, value, false, true) + ";\n"
+			"auto " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
 			+ (if (debugMode) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " <<std::endl;\n") else "")
 			+ bstatement2cpp(backend, body, withReturn);
 		}
@@ -243,7 +243,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 				""
 			} else {
 				"return ";
-			}) + bexp2cpp(backend, val, false, withReturn) + ";"
+			}) + bexp2cpp(backend, val, false) + ";"
 		}
 		BTailCall(fn, args, values, type): {
 			"_end = false;\n"
@@ -296,9 +296,8 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, withReturn : bool) ->
 }
 
 
-bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturnValue : bool) -> string {
-	rec = \ee -> bexp2cpp(backend, ee, false, withReturnValue);
-	recReturn = \ee -> bexp2cpp(backend, ee, false, true);
+bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string {
+	rec = \ee -> bexp2cpp(backend, ee, false);
 	switch (bexp) {
 		BVoid(): "({})";
 		BBool(v): if (v) "true" else "false";
@@ -314,8 +313,8 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturn
 				}()", [
 				"capture", if (isGlobalExp) "" else "&",
 				"id", id,
-				"value", recReturn(value),
-				"body", recReturn(body),
+				"value", rec(value),
+				"body", rec(body),
 			])
 		}
 		BIf(cond, then, else_, type): {
@@ -326,13 +325,13 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturn
 						%else%
 					)",
 				[
-					"c", recReturn(cond),
-					"then", recReturn(then),
-					"else", recReturn(else_),
+					"c", rec(cond),
+					"then", rec(then),
+					"else", rec(else_),
 			]);
 		}
 		BCall(fn, args, type): {
-			produceBackendCall(backend, bexp, \a1, a2 -> bexp2cpp(a1, a2, isGlobalExp, withReturnValue));
+			produceBackendCall(backend, bexp, \a1, a2 -> bexp2cpp(a1, a2, isGlobalExp));
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
@@ -346,7 +345,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturn
 					"args", supergluei(args, \i, arg -> {
 							btype2cpp(backend, argtypes[i]) + " " + arg
 						}, ", "),
-					"body", recReturn(body),
+					"body", rec(body),
 					"type", btype2cpp(backend, type),
 					"return", if (returnType == bvoidType.id) "" else "return",
 			]);
@@ -356,7 +355,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturn
 			blueprint("
 					(%exps%)",
 				[
-					"exps", supergluei(exps, \i, e -> if (i == lastInd) rec(e) else bexp2cpp(backend, e, false, false), ", "),
+					"exps", superglue(exps, rec, ", "),
 			]);
 		}
 		BConstruct(struct, args, type): {
@@ -364,7 +363,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturn
 				"(struct %struct%){%args%}",
 				[
 					"struct", if (args == []) struct else addTyparsToStruct(backend, type, struct),
-					"args", superglue(args, recReturn, ", "),
+					"args", superglue(args, rec, ", "),
 				]
 			);
 		}
@@ -388,12 +387,13 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool, withReturn
 			blueprint("%type%({ %args% })",
 				[
 					"type", btype2cpp(backend, type),
-					"args", superglue(args, recReturn, ", "),
+					"args", superglue(args, rec, ", "),
 			]);
 		}
 		BCast(value, from, to): castBexp2cpp(backend, bexp);
-		BDupValue(value) : bCounter2cpp(backend, bexp, withReturnValue);
-		BDropValue(value) : bCounter2cpp(backend, bexp, withReturnValue);
+		BDupValue(value) : bCounter2cpp(backend, bexp);
+		BDropValue(value) : bCounter2cpp(backend, bexp);
+		BReuseValue(value) : bCounter2cpp(backend, bexp);
 	}
 }
 
@@ -630,7 +630,7 @@ dstruct2counter(backend : Backend<CppInfo>, s : DStruct) -> string {
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
-	rec = \ee -> bexp2cpp(backend, ee, false, true);
+	rec = \ee -> bexp2cpp(backend, ee, false);
 	len = length(bexp.cases);
 	expDefaultCase = bexp.defaultCase;
 
@@ -740,7 +740,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 
 	fromId = getStructTypeId(bcast.from);
 	toId =  getStructTypeId(bcast.to);
-	value = bexp2cpp(backend, bcast.value, false, true); // true?
+	value = bexp2cpp(backend, bcast.value, false);
 
 	if (fromId == "" || toId == "") {
 		value;
@@ -1221,19 +1221,22 @@ isSimpleBType(type : BType) -> bool {
 	type == bvoidType || type  == bboolType || type  == bintType || type  == bdoubleType || type  == bstringType;
 }
 
-bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter, withReturnValue : bool) -> string {
-	rec = \ee -> bexp2cpp(backend, ee, false, withReturnValue);
-	isDrop = \-> switch (exp : BCounter) {
-		BDupValue(__) : false;
-		BDropValue(__) : true;
+bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
+	rec = \ee -> bexp2cpp(backend, ee, false);
+	isDup = \-> switch (exp : BCounter) {
+		BDupValue(__) : true;
+		BDropValue(__) : false;
+		BReuseValue(__) : false;
 	}
 	bcounter2fnName = \-> switch (exp : BCounter) {
 		BDupValue(__) : "dup";
-		BDropValue(__) : if (withReturnValue) "reuse" else "drop";
+		BDropValue(__) : "drop";
+		BReuseValue(__) : "reuse";
 	}
 
 	value = exp.value;
 	type = getBReturnType(getBType(value));
+
 	if (type == bvoidType && !isSameStructType(value, BVar("", type))) {
 		rec(value)
 	} else {
@@ -1242,7 +1245,7 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter, withReturnValue : bool)
 			[
 				"fn", bcounter2fnName(),
 				"val", rec(value),
-				"type", if (isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDrop()) "" else "&") + ">"),
+				"type", if (isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
 			]
 		);
 	}

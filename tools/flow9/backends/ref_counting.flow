@@ -13,9 +13,9 @@ addRefCounting(prog : BExpProgram) -> BExpProgram {
 refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
 	generators = fold(cppGenerators(), makeSet(), \acc, g -> insertSet(acc, g.name));
 	switch (decl) {
-		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(BExpUsedVars(body, makeSet()), generators).exp, type);
+		BGlobalVar(id, body, type): BGlobalVar(id, refCountingBExp(BExpUsedVars(body, makeSet()), generators, true).exp, type);
 		BExpFunction(id, typars, args, body, type): {
-			BExpFunction(id, typars, args, refCountingBExp(BExpUsedVars(body, makeSet()), generators).exp, type);
+			BExpFunction(id, typars, args, refCountingBExp(BExpUsedVars(body, makeSet()), generators, false).exp, type);
 		}
 		BExpNative(id, isio, type, nativeName): decl;
 	}
@@ -26,13 +26,27 @@ BExpUsedVars(
 	usedVars : Set<string>,
 );
 
-refCountingBExp(exp : BExpUsedVars, generators : Set<string>) -> BExpUsedVars {
-	dupDrop = \e -> dropBExpUsedVars(dupBExpUsedVars(e));
-	recInc = \e, tails -> refCountingBExp(BExpUsedVars(e, tails), generators);
-	rec = \e -> recInc(e, exp.usedVars);
-	mapExpA = \args -> {
-		foldr(args, Pair([], exp.usedVars), \acc, arg -> unpair(acc, \newArgs, newTails -> {
-			newExp = recInc(arg, newTails);
+// i is an item index
+foldri(cs : [?], acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
+	doFoldri(cs, length(cs) - 1, acc, fn);
+}
+
+doFoldri(cs : [?], i : int, acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
+	if (i >= 0) {
+		doFoldri(cs, i - 1, fn(i, acc, cs[i]), fn);
+	} else {
+		acc;
+	}
+}
+
+refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool) -> BExpUsedVars {
+	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e), reuse);
+	recInc = \e, tails, recWithReturn -> refCountingBExp(BExpUsedVars(e, tails), generators, recWithReturn);
+	rec = \e, recWithReturn -> recInc(e, exp.usedVars, recWithReturn);
+	mapExpA = \args, lastWithReturn -> {
+		lastIndex = length(args) - 1;
+		foldri(args, Pair([], exp.usedVars), \i, acc, arg -> unpair(acc, \newArgs, newTails -> {
+			newExp = recInc(arg, newTails, lastWithReturn && i == lastIndex);
 			Pair(concat([reduceBCounter(newExp.exp)], newArgs), newExp.usedVars);
 		}));
 	}
@@ -43,16 +57,16 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>) -> BExpUsedVars {
 		BInt(v) : exp;
 		BDouble(v) : exp;
 		BString(v): exp; // TODO: ?? dupBExpUsedVars(exp);
-		BVar(id, type): if (isBTypeFunction(type)) exp else dupDrop(exp);
+		BVar(id, type): if (isBTypeFunction(type)) exp else dupDrop(exp, withReturn);
 		BArray(args, type): {
-			values = mapExpA(args);
+			values = mapExpA(args, false);
 			BExpUsedVars(BArray(values.first, type), values.second);
 			// TODO: dupBExpUsedVars(BArray(map(args, rec), type));
 		}
 		BLet(id, val, body, type): {
-			newBody = rec(body);
-			newValue = recInc(val, newBody.usedVars);
-			dupExp = dupDrop(BExpUsedVars(BVar(id, getBType(val)), newValue.usedVars));
+			newBody = rec(body, true);
+			newValue = recInc(val, newBody.usedVars, true);
+			dupExp = dupDrop(BExpUsedVars(BVar(id, getBType(val)), newValue.usedVars), false);
 			reducedBCounter = reduceBCounter(dupExp.exp);
 			bodyWithDup = switch (reducedBCounter : BExp) {
 				BCounter(): BSequence([reducedBCounter, newBody.exp], type);
@@ -64,13 +78,13 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>) -> BExpUsedVars {
 			);
 		}
 		BLambda(args, body, type): {
-			newBody = rec(body);
+			newBody = rec(body, withReturn);
 			BExpUsedVars(BLambda(args, newBody.exp, type), newBody.usedVars);
 		}
 		BCall(fn, args, type): {
-			newFn = rec(fn);
+			newFn = rec(fn, withReturn);
 			newArgs = foldr(args, Pair([], newFn.usedVars), \acc, arg -> unpair(acc, \newArgs, newTails -> {
-				newArg = recInc(arg, newTails);
+				newArg = recInc(arg, newTails, false);
 				if (isNativeWithoutDropFn(fn, generators)) {
 					Pair(concat([reduceBCounter(newArg.exp)], newArgs), newArg.usedVars);
 				} else {
@@ -82,60 +96,61 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>) -> BExpUsedVars {
 			BExpUsedVars(BCall(newFn.exp, newArgs.first, type), newArgs.second)
 		}
 		BIf(cond, then, else_, type): {
-			newCond = rec(cond);
-			newThen = recInc(then, newCond.usedVars);
-			newElse = recInc(else_, newThen.usedVars);
+			newCond = rec(cond, withReturn);
+			newThen = recInc(then, newCond.usedVars, withReturn);
+			newElse = recInc(else_, newThen.usedVars, withReturn);
 			BExpUsedVars(
 				BIf(newCond.exp, newThen.exp, newElse.exp, type),
 				newElse.usedVars
 			);
 		}
 		BSequence(exps, type): {
-			values = mapExpA(exps);
+			values = mapExpA(exps, true);
 			BExpUsedVars(BSequence(values.first, type), values.second);
 		}
 		BSwitch(value, switchType, cases, defaultCase, type): {
-			newValueExp = rec(value);
+			newValueExp = rec(value, withReturn);
 			newValue : BVar = switch (newValueExp.exp) {
 				BVar(id, t) : BVar(id, t);
 				default: BVar("", type);
 			}
 			newCases = foldr(cases, Pair([], newValueExp.usedVars), \acc, case -> unpair(acc, \newArgs, newTails -> {
-				newBody = recInc(case.body, newTails);
+				newBody = recInc(case.body, newTails, withReturn);
 				Pair(concat([BCase(case.id, newBody.exp)], newArgs), newBody.usedVars);
 			}));
-			newDefCase = maybeMap(defaultCase, \c -> recInc(c, newCases.second));
+			newDefCase = maybeMap(defaultCase, \c -> recInc(c, newCases.second, withReturn));
 			BExpUsedVars(
 				BSwitch(newValue, switchType, newCases.first, maybeMap(newDefCase, \c -> c.exp), type),
 				eitherMap(newDefCase, \c -> c.usedVars, newCases.second)
 			);
 		}
 		BConstruct(struct, args, type): {
-			values = mapExpA(args);
+			values = mapExpA(args, false);
 			BExpUsedVars(BConstruct(struct, values.first, type), values.second);
 		}
 		BField(value, field, type): {
-			newValue = rec(value);
+			// TODO: reuse only field
+			newValue = rec(value, true);
 			BExpUsedVars(BField(newValue.exp, field, type), newValue.usedVars);
 		}
 		BSetMutable(left, field, value, type): {
-			newLeft = rec(left);
-			newValue = recInc(value, newLeft.usedVars);
+			newLeft = rec(left, withReturn);
+			newValue = recInc(value, newLeft.usedVars, true);
 			BExpUsedVars(
 				BSetMutable(newLeft.exp, field, newValue.exp, type),
 				newValue.usedVars
 			)
 		}
 		BCast(value, from, to): {
-			newValue = rec(value);
+			newValue = rec(value, withReturn);
 			BExpUsedVars(BCast(newValue.exp, from, to), newValue.usedVars);
 		}
 		BCounter(): exp; // shouldn't happen
 	}
 }
 
-dropBExpUsedVars(exp : BExpUsedVars) -> BExpUsedVars {
-	BExpUsedVars(BDropValue(exp.exp), exp.usedVars);
+dropBExpUsedVars(exp : BExpUsedVars, reuse : bool) -> BExpUsedVars {
+	BExpUsedVars(if (reuse) BReuseValue(exp.exp) else BDropValue(exp.exp), exp.usedVars);
 }
 
 dupBExpUsedVars(exp : BExpUsedVars) -> BExpUsedVars {
@@ -154,6 +169,7 @@ extractBVarId(exp : BExp) -> string {
 		BVar(id, __) : id;
 		BDupValue(value) : extractBVarId(value);
 		BDropValue(value) : extractBVarId(value);
+		BReuseValue(value) : extractBVarId(value);
 		default : "";
 	}
 }
@@ -175,19 +191,20 @@ isNativeWithoutDropFn(exp : BExp, generators : Set<string>) -> bool {
 }
 
 reduceBCounter(counter : BCounter) -> BExp {
-	untriple(extractBExpFromBCounter(counter, 0, 0), \exp, dupCnt, dropCnt -> {
+	unquadruple(extractBExpFromBCounter(counter, 0, 0, false), \exp, dupCnt, dropCnt, reuse -> {
 		cnt = min(dupCnt, dropCnt);
 		reducedDupCnt = dupCnt - cnt;
 		reducedDropCnt = dropCnt - cnt;
 		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> BDupValue(newExp));
-		fold(enumFromTo(1, reducedDropCnt), newValue, \newExp, __ -> BDropValue(newExp));
+		fold(enumFromTo(1, reducedDropCnt), newValue, \newExp, __ -> if (reuse) BReuseValue(newExp) else BDropValue(newExp));
 	});
 }
 
-extractBExpFromBCounter(exp : BExp, dupCnt : int, dropCnt : int) -> Triple<BExp, int, int> {
+extractBExpFromBCounter(exp : BExp, dupCnt : int, dropCnt : int, reuse : bool) -> Quadruple<BExp, int, int, bool> {
 	switch (exp : BExp) {
-		BDupValue(value) : extractBExpFromBCounter(value, dupCnt + 1, dropCnt);
-		BDropValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1);
-		default : Triple(exp, dupCnt, dropCnt);
+		BDupValue(value) : extractBExpFromBCounter(value, dupCnt + 1, dropCnt, reuse);
+		BDropValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1, reuse);
+		BReuseValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1, true);
+		default : Quadruple(exp, dupCnt, dropCnt, reuse);
 	}
 }
