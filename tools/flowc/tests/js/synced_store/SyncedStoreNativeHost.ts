@@ -1,5 +1,4 @@
 import * as typenames from "SyncedStoreNativeHost-types.d";
-//import * as typenames from "TestNativeHost-types.d";
 
 import { syncedStore, getYjsValue } from "@syncedstore/core";
 import { WebrtcProvider } from "y-webrtc";
