@@ -194,21 +194,16 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 // memory
 // TODO
 
-// variables
-/*template <typename T>
-T dup(T& a) {
-	return a;
-}*/
+// Structs
 
 template <typename T>
-T* drop(T& a) {
+void drop(T& a) {
 	a._counter -= 1;
 	if (a._counter < 1) {
-		std::cout<<"FREE:: &=" << &a <<"; counter = "<< a._counter <<std::endl;
+		std::cout<<"FREE:: &=" << &a << "; counter = " << a._counter << std::endl;
 		a.~T();
-		return nullptr;
 	} else {
-		return &a;
+		std::cout<<"DEC COUNTER:: &=" << &a << "; counter = " << a._counter << std::endl;
 	}
 }
 
@@ -235,6 +230,16 @@ T& dup(T& a) {
 	a._counter += 1;
 	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
 	return a;
+}
+
+// Unions
+template <typename ...T>
+void drop(std::variant<T...>& v) {
+	std::cout<<"DROP VARIANT:: &=" << &v << std::endl;
+	return std::visit(
+		[](auto&& a) { return drop(a); },
+		v
+	);
 }
 
 // TODO: vector (array)

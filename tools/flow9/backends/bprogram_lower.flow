@@ -128,7 +128,7 @@ bexpDeclaration2Declaration(be : BExpDeclaration) -> BDeclaration {
 		BGlobalVar(name, body, type): be;
 		BExpFunction(name, typars, args, body, type): {
 			hasTailcall = ref false;
-			bbody = bexp2BStatement(name, args, hasTailcall, true, body);
+			bbody = bexp2BStatement(name, args, hasTailcall, true, body, idfn);
 			BStatFunction(
 				name, typars, args, bbody,
 				^hasTailcall,
@@ -168,18 +168,19 @@ bexp2BExpDeclaration(declid : string, typars : [string], b : BExp) -> BExpDeclar
 	}
 }
 
-bexp2BStatement(decl : string, fnargs : [string], hasTailcall : ref bool, tailcall : bool, b : BExp) -> BStatement {
+bexp2BStatement(decl : string, fnargs : [string], hasTailcall : ref bool, tailcall : bool, b : BExp, wrapReturn : (BExp) -> BExp) -> BStatement {
+	return = \v -> BReturn(wrapReturn(v));
 	switch (b : BExp) {
 		/*BInt(value): {
 			//if (type == BTypeName("void", [])) BReturnVoid() else 
-			BReturn(b);
+			return(b);
 		}*/
-		BValue(): BReturn(b);
-		BVar(name, type): BReturn(b);
+		BValue(): return(b);
+		BVar(name, type): return(b);
 		BLet(name, value, body, type): {
-			BLetStatement(name, value, bexp2BStatement(decl, fnargs, hasTailcall, tailcall, body));
+			BLetStatement(name, value, bexp2BStatement(decl, fnargs, hasTailcall, tailcall, body, wrapReturn));
 		}
-		BLambda(args, body, type): BReturn(b);
+		BLambda(args, body, type): return(b);
 		BCall(fn, args, type): {
 			if (tailcall) {
 				switch (fn) {
@@ -205,50 +206,49 @@ bexp2BStatement(decl : string, fnargs : [string], hasTailcall : ref bool, tailca
 						});
 						hasTailcall := true;
 						BTailCall(decl, newArgs.first, newArgs.second, type);
-					} else BReturn(b);
-					default: BReturn(b);
+					} else return(b);
+					default: return(b);
 				}
-			} else BReturn(b);
+			} else return(b);
 		}
 		BIf(cond, then, else_, type): {
 			BIfStatement(cond, 
-				bexp2BStatement(decl, fnargs, hasTailcall, tailcall, then), 
-				bexp2BStatement(decl, fnargs, hasTailcall, tailcall, else_)
+				bexp2BStatement(decl, fnargs, hasTailcall, tailcall, then, wrapReturn), 
+				bexp2BStatement(decl, fnargs, hasTailcall, tailcall, else_, wrapReturn)
 			);
 		}
 		BSequence(exps, type): {
 			if (exps == []) BReturnVoid()
 			else BSequenceStatement(mapi(exps, \i, e -> {
-				bexp2BStatement(decl, fnargs, hasTailcall, tailcall && i == length(exps) - 1, e)
+				bexp2BStatement(decl, fnargs, hasTailcall, tailcall && i == length(exps) - 1, e, wrapReturn)
 			}));
 		} 
 		BSwitch(val, s_type, cases, def_case, type): {
 			BSwitchStatement(val, map(cases, \case -> {
 					BCaseStatement(case.id, 
-						bexp2BStatement(decl, fnargs, hasTailcall, tailcall, case.body)
+						bexp2BStatement(decl, fnargs, hasTailcall, tailcall, case.body, wrapReturn)
 					)
 				}), type
 			);
 		}
 		BConstruct(struct, args, type):  {
-			BReturn(b);
+			return(b);
 		}
 		BField(value, field, type): {
-			BReturn(b);
+			return(b);
 		}
 		BSetMutable(left, field, value, type): {
 			BSetMutableStatement(left, field, value);
 		}
 		BArray(args, type): {
-			BReturn(b);
+			return(b);
 		}
 		BCast(value, from, to): {
-			// TODO ??
-			bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value);
+			bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value, \rv -> BCast(rv, from, to));
 		}
-		BDupValue(value) : addBCounterValue2BStatement(bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value), \e -> BDupValue(e));
-		BDropValue(value) : addBCounterValue2BStatement(bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value), \e -> BDropValue(e));
-		BReuseValue(value) : addBCounterValue2BStatement(bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value), \e -> BReuseValue(e));
+		BDupValue(value) : addBCounterValue2BStatement(bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value, wrapReturn), \e -> BDupValue(e));
+		BDropValue(value) : addBCounterValue2BStatement(bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value, wrapReturn), \e -> BDropValue(e));
+		BReuseValue(value) : addBCounterValue2BStatement(bexp2BStatement(decl, fnargs, hasTailcall, tailcall, value, wrapReturn), \e -> BReuseValue(e));
 	}
 }
 

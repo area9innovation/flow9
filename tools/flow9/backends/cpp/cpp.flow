@@ -23,7 +23,7 @@ bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
 	bprogram2cpp(linkBProgram(cache, flowpath, shortenIds, cppBackendSpec()), flowpath);
 }
 
-debugCppMode = true;
+debugCppMode = isUrlParameterTrue("mem");
 debugFlowMode = false;
 
 bprogram2cpp(b : BProgram, flowpath : string) -> string {
@@ -277,25 +277,19 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 				// b) return const val + overloading ?
 				if (isBConstruct(val)) {
 					blueprint(
-						"%type%* _tmp_return = new %value%;
+						"auto* _tmp_return = new %value%;
 "
 						+ (if (debugCppMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
 						+ "return *_tmp_return;",
-						[
-							"type", btype2cpp(backend, type),
-							"value", value,
-						]
+						["value", value,]
 					);
 				} else {
 					blueprint(
-						"%type%* _tmp_return = &%value%;
+						"auto* _tmp_return = &%value%;
 "
 						+ (if (debugCppMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
 						+ "return *_tmp_return;",
-						[
-							"type", btype2cpp(backend, type),
-							"value", value,
-						]
+						["value", value,]
 					);
 				}
 			}
@@ -765,7 +759,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		switch (type : BType) {
 			BTypePar(__) : "";
 			BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
-			BTypeFunction(__, __) : "";
+			BTypeFunction(__, returnType) : "";
 		}
 
 	isSubStruct = \unionId : string, subStructId : string -> {
@@ -774,7 +768,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 
 	liftType = \value -> {
 		blueprint(
-			"(%type%)%value%",
+			"(%type%)(%value%)",
 			[
 				"type", btype2cpp(backend, bcast.to),
 				"value", value,
@@ -1127,6 +1121,11 @@ makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, with
 
 makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
 	declarations = makeStructConstructorDeclarations(backend, struct);
+	moveConstructor =  blueprint(
+		"%type%(%type%&&) = default",
+		["type", struct.struct.id,]
+	);
+
 	if (withBody) {
 		args = unzipi(struct.struct.structArgs, \i, arg -> elementAt(struct.recursiveArgs, i, false));
 		simpleArgs = args.second;
@@ -1177,7 +1176,7 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 		addTemplatesToStruct(argTypes, initConstructor) + "\n" + addTemplatesToStruct(argTypes, copyConstructor) + "\n";
 	} else {
 		unpair(declarations, \initConstructor, copyConstructor ->
-			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n"
+			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n" + moveConstructor + ";\n"
 		);
 	}
 }
@@ -1286,6 +1285,11 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 		BDropValue(__) : false;
 		BReuseValue(__) : false;
 	}
+	isDrop = \-> switch (exp : BCounter) {
+		BDupValue(__) : false;
+		BDropValue(__) : true;
+		BReuseValue(__) : true;
+	}
 	bcounter2fnName = \-> switch (exp : BCounter) {
 		BDupValue(__) : "dup";
 		BDropValue(__) : "drop";
@@ -1303,7 +1307,7 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 			[
 				"fn", bcounter2fnName(),
 				"val", rec(value),
-				"type", if (isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
+				"type", if (isDrop() || isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
 			]
 		);
 	}
@@ -1335,6 +1339,7 @@ createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> 
 isBConstruct(exp : BExp) -> bool {
 	switch (exp : BExp) {
 		BConstruct(__, __, __) : true;
+		BCast(value, __, __) : isBConstruct(value);
 		default : false;
 	}
 }
@@ -1342,6 +1347,7 @@ isBConstruct(exp : BExp) -> bool {
 getBVarId(exp : BExp) -> string {
 	switch (exp : BExp) {
 		BVar(id, __) : id;
+		BCast(value, __, __) : getBVarId(value);
 		default : "";
 	}
 }
