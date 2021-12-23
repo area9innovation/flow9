@@ -163,22 +163,30 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 		BIf(cond, then, else_, type): {
 			newThen = rec(then, withReturn);
 			newElse = rec(else_, withReturn);
+			newCond = rec(cond, withReturn);
+			condTails : Pair<[BVar], [BExp]> = extractConstructedVars(newCond.exp);
 
 			thenTails = extractLastUsedVars(newThen, exp.usedVars);
 			elseTails = extractLastUsedVars(newElse, exp.usedVars);
 			thenUniqTails = subtractA(thenTails, elseTails);
 			elseUniqTails = subtractA(elseTails, thenTails);
 
-			fixedElse = addBDropVars(newElse, thenUniqTails);
-			fixedThen = addBDropVars(newThen, elseUniqTails);
+			fixedElse = addBDropVars(newElse, concat(thenUniqTails, condTails.first));
+			fixedThen = addBDropVars(newThen, concat(elseUniqTails, condTails.first));
 
 			// TODO: optimization : 1 rec instead of rec+recInc
-			condVars = intersectUsedVars(rec(cond, withReturn).usedVars, concat(thenUniqTails, elseUniqTails));
-			newCond = recInc(cond, mergeTree(exp.usedVars, condVars), withReturn);
+			condVars = intersectUsedVars(newCond.usedVars, concat(thenUniqTails, elseUniqTails));
+			fixedCond = recInc(cond, mergeTree(exp.usedVars, condVars), withReturn);
+
+			newBIf = BIf(fixedCond.exp, fixedThen.exp, fixedElse.exp, type);
 
 			BExpUsedVars(
-				BIf(newCond.exp, newThen.exp, fixedElse.exp, type),
-				mergeTree(mergeTree(fixedElse.usedVars, fixedThen.usedVars), newCond.usedVars)
+				if (condTails.first == []) {
+					newBIf
+				} else {
+					BSequence(arrayPush(condTails.second, newBIf), type)
+				},
+				mergeTree(mergeTree(fixedElse.usedVars, fixedThen.usedVars), fixedCond.usedVars)
 			);
 		}
 		BSequence(exps, type): {
@@ -323,4 +331,10 @@ extractSwitchVar(exp : BExp, defType : BType) -> BVar {
 		BReuseValue(value) : extractSwitchVar(value, defType);
 		default: BVar("", defType);
 	}
+}
+
+// TODO
+ // BConstruct + BCall_with_return
+extractConstructedVars(exp : BExp) -> Pair<[BVar], [BExp]> {
+	Pair([], [])
 }
