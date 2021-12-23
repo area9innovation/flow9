@@ -3,6 +3,7 @@ import tools/flow9/bexp/type;
 import tools/flow9/backends/cpp/cpp_backend;
 
 // Known issues:
+//
 // 1) IF
 // if the branch doesn't contain a terminal variable, we'll drop it, but it would be ideal if we could predict the branch and drop the variable early.
 // Example :
@@ -12,6 +13,28 @@ import tools/flow9/backends/cpp/cpp_backend;
 //  4:   return d;
 //  5: }
 // we'll free _var_ on line 3. but if c is false, it would be greate to free _var_ on line 2;
+//
+// 2) Dangling variables
+// Example :
+//  1: fn(b : int) -> int {
+//  2:   var = b * 10;
+//  3:   d = b;
+//  4:   var; // dangling variable
+//  5:   return d;
+//  6: }
+// we'll free _var_ on line 4. but it would be greate to free _var_ on line 2;
+//
+// 3) Dangling arguments
+// Example :
+//  1: c = "long_string";
+//  2: a = 2;
+//  3: b = a + 1;
+//  4: fn(c, 10);
+//  01: fn(c : string, b : int) -> int {
+//  02:   println("fn");
+//  03:   return b;
+//  04: }
+// we'll free _c_ on line 4 (02). but it would be greate to free _c_ on line 1;
 
 export {
 	addRefCounting(prog : BExpProgram) -> BExpProgram;
@@ -138,7 +161,6 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 			BExpUsedVars(BCall(newFn.exp, newArgs.first, type), newArgs.second)
 		}
 		BIf(cond, then, else_, type): {
-			newCond = rec(cond, withReturn);
 			newThen = rec(then, withReturn);
 			newElse = rec(else_, withReturn);
 
@@ -149,6 +171,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 
 			fixedElse = addDropVars(newElse, thenUniqTails);
 			fixedThen = addDropVars(newThen, elseUniqTails);
+
+			newCond = rec(cond, withReturn);
 
 			BExpUsedVars(
 				BIf(newCond.exp, newThen.exp, fixedElse.exp, type),
