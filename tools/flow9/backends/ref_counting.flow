@@ -1,6 +1,7 @@
 import tools/flow9/backends/bprogram;
 import tools/flow9/bexp/type;
 import tools/flow9/backends/cpp/cpp_backend;
+import sys/concurrent;
 
 // Known issues:
 //
@@ -164,7 +165,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 			newThen = rec(then, withReturn);
 			newElse = rec(else_, withReturn);
 			newCond = rec(cond, withReturn);
-			condTails : Pair<[BVar], [BExp]> = extractConstructedVars(newCond.exp);
+			condTails : Pair<[BVar], (BExp) -> BExp, BExp> = extractConstructedVars(newCond.exp, type);
 
 			thenTails = extractLastUsedVars(newThen, exp.usedVars);
 			elseTails = extractLastUsedVars(newElse, exp.usedVars);
@@ -176,7 +177,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 
 			// TODO: optimization : 1 rec instead of rec+recInc
 			condVars = intersectUsedVars(newCond.usedVars, concat(thenUniqTails, elseUniqTails));
-			fixedCond = recInc(cond, mergeTree(exp.usedVars, condVars), withReturn);
+			fixedCond = recInc(condTails.third, mergeTree(exp.usedVars, condVars), withReturn);
 
 			newBIf = BIf(fixedCond.exp, fixedThen.exp, fixedElse.exp, type);
 
@@ -184,7 +185,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 				if (condTails.first == []) {
 					newBIf
 				} else {
-					BSequence(arrayPush(condTails.second, newBIf), type)
+					//BSequence(arrayPush(condTails.second, newBIf), type)
+					condTails.second(newBIf)
 				},
 				mergeTree(mergeTree(fixedElse.usedVars, fixedThen.usedVars), fixedCond.usedVars)
 			);
@@ -335,6 +337,30 @@ extractSwitchVar(exp : BExp, defType : BType) -> BVar {
 
 // TODO
  // BConstruct + BCall_with_return
-extractConstructedVars(exp : BExp) -> Pair<[BVar], [BExp]> {
-	Pair([], [])
+tmpConstructedVarCounter = ref 0;
+extractConstructedVars(exp : BExp, resultType : BType) -> Triple<[BVar], (BExp) -> BExp, Exp> {
+	unpair(makeConstructedVars(exp, [], []), \vars, lets ->  {
+		Triple(
+			vars,
+			\tail -> fold(lets, tail, \acc, v -> BLet(v with body = acc)),
+			exp // TODO: replace with BConstruct with BVar
+		)
+	})
+}
+
+makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet]) -> Pair<[BVar], [BLet]> {
+	switch (exp) {
+		BConstruct(struct, args, type) : {
+			varName = "_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
+			Pair([BVar(varName, type)], [BLet(varName, exp, BBool(false), type)]);
+		}
+		BCall(fn, args, type) : {
+			fold(args, Pair(vars, exps), \acc, a -> {
+				v = makeConstructedVars(a, [], []);
+				Pair(concat(acc.first, v.first), concat(acc.second, v.second));
+			});
+		}
+		BField(value, fieldName, type) : makeConstructedVars(value, vars, exps);
+		default: Pair([], []);
+	}
 }
