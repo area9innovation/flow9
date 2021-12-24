@@ -21,6 +21,49 @@ export {
 bmodules2BExpProgram(modules : [BModule], spec : BackendSpec) -> BExpProgram {
 	names = bmodules2BNames(modules);
 	alive = aliveCode(names);
+
+	deadreport = getUrlParameter("dead");
+	if (deadreport != "") {
+		report = \type, thenames -> {
+			dead = set2array(differenceSets(buildSet(thenames), alive));
+			if (dead != []) {
+				println(type + " dead: " + strGlue(dead, ","));
+			}
+		}
+		mods = filter(modules, \m -> deadreport == "1" || startsWith(m.flowpath, deadreport));
+
+		structs = fold(mods, [], \acc, module -> {
+			concat(acc, getTreeKeys(module.structs))
+		});
+		report("Structs", structs);
+		unions = fold(mods, [], \acc, module -> {
+			concat(acc, getTreeKeys(module.unions))
+		});
+		report("Unions", unions);
+		natives = fold(mods, [], \acc, module -> {
+			concat(acc, getTreeKeys(module.natives))
+		});
+		report("Natives", natives);
+		globals = fold(mods, [], \acc, module -> {
+			concat(acc, getTreeKeys(module.globals))
+		});
+		report("Globals", globals);
+
+		// OK, something funky here: Find unused files
+		/* if (deadreport != "1") {
+			files = readDirectoryRecursively(deadreport);
+			aliveFiles = buildSet(fold(mods, [], \acc, m -> arrayPush(acc, m.flowpath)));
+			deadFiles = filter(files, \file -> {
+				endsWith(file, ".flow")
+				&& {
+					flowpath = strsubsmart(file, 0, -5);
+					!containsSet(aliveFiles, flowpath);
+				}
+			});
+			iter(deadFiles, println);
+		} */
+	}
+
 	BExpProgram(
 		filterTree(names.structs, \id, __ -> containsSet(alive, id)),
 		filterTree(names.unions, \id, __ -> containsSet(alive, id)),
@@ -53,12 +96,12 @@ bmodules2BExpProgram(modules : [BModule], spec : BackendSpec) -> BExpProgram {
 										ac;
 									} else {
 										// Use a fallback for a native, since it is not supported by a backend.
-										concat(ac, [bexp2BExpDeclaration(id, decl.value)]);
+										concat(ac, [bexp2BExpDeclaration(id, decl.typars, decl.value)]);
 									}
 								}
 								None(): {
 									// Ordinary global entity.
-									concat(ac, [bexp2BExpDeclaration(id, decl.value)]);
+									concat(ac, [bexp2BExpDeclaration(id, decl.typars, decl.value)]);
 								}
 							}
 						}
@@ -84,11 +127,11 @@ bexpProgram2BProgram(b : BExpProgram) -> BProgram {
 bexpDeclaration2Declaration(be : BExpDeclaration) -> BDeclaration {
 	switch (be) {
 		BGlobalVar(name, body, type): be;
-		BExpFunction(name, args, body, type): {
+		BExpFunction(name, typars, args, body, type): {
 			hasTailcall = ref false;
 			bbody = bexp2BStatement(name, args, hasTailcall, true, body);
 			BStatFunction(
-				name, args, bbody,
+				name, typars, args, bbody,
 				^hasTailcall,
 				type
 			);
@@ -97,7 +140,7 @@ bexpDeclaration2Declaration(be : BExpDeclaration) -> BDeclaration {
 	}
 }
 
-bexp2BExpDeclaration(declid : string, b : BExp) -> BExpDeclaration {
+bexp2BExpDeclaration(declid : string, typars : [string], b : BExp) -> BExpDeclaration {
 	var = \ -> {
 		BGlobalVar(declid, b, getBType(b));
 	};
@@ -107,7 +150,7 @@ bexp2BExpDeclaration(declid : string, b : BExp) -> BExpDeclaration {
 		BLet(__, __, __, __): var();
 		BLambda(args, body, type): {
 			BExpFunction(
-				declid, args, body,
+				declid, typars, args, body,
 				type
 			);
 		}

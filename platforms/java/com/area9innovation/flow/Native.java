@@ -37,6 +37,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.lang.Runtime;
+import java.lang.ClassCastException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.io.OutputStream;
 import java.io.InputStream;
 import java.math.BigInteger;
@@ -50,8 +53,6 @@ import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
 import com.sun.management.OperatingSystemMXBean;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -1843,42 +1844,41 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object[] concurrent(Boolean fine, Object[] tasks) {
+		List<Callable<Object>> tasks2 = new ArrayList<Callable<Object>>();
 
-	  List<Callable<Object>> tasks2 = new ArrayList<Callable<Object>>();
-
-	  for (int i = 0; i < tasks.length; i++) {
-		@SuppressWarnings("unchecked")
-		Func0<Object> task = (Func0<Object>) tasks[i];
-		tasks2.add(new Callable<Object>() {
-		  @Override
-		  public Object call() throws Exception {
-			  try {
-				return task.invoke();
-			  } catch (OutOfMemoryError e) {
-				// This is brutal, but there is no memory to print anything
-				// so better to stop than to hang in infinite loop.
-				System.exit(255);
-				return null;
-			  }
-			}
-		});
-	  }
-
-	  Object[] resArr = new Object[0];
-
-	  try {
-		List<Object> res = new ArrayList<Object>();
-		for (Future<Object> future : threadpool.invokeAll(tasks2)) {
-		  res.add(future.get());
+		for (int i = 0; i < tasks.length; i++) {
+			@SuppressWarnings("unchecked")
+			Func0<Object> task = (Func0<Object>) tasks[i];
+			tasks2.add(new Callable<Object>() {
+				@Override
+				public Object call() throws Exception {
+					try {
+						return task.invoke();
+					} catch (OutOfMemoryError e) {
+						// This is brutal, but there is no memory to print anything
+						// so better to stop than to hang in infinite loop.
+						System.exit(255);
+						return null;
+					}
+				}
+			});
 		}
-		resArr = res.toArray();
-	  } catch (InterruptedException e) {
-		e.printStackTrace();
-	  } catch (ExecutionException e) {
-		e.printStackTrace();
-	  }
 
-	  return resArr;
+		Object[] resArr = new Object[0];
+
+		try {
+			List<Object> res = new ArrayList<Object>();
+			for (Future<Object> future : threadpool.invokeAll(tasks2)) {
+				res.add(future.get());
+			}
+			resArr = res.toArray();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		} catch (ExecutionException e) {
+			e.printStackTrace();
+		}
+
+		return resArr;
 	}
 
 	public static final Object concurrentAsyncCallback(
@@ -1889,17 +1889,23 @@ public class Native extends NativeHost {
 		// thread #1
 		CompletableFuture.supplyAsync(() -> {
 			// thread #2
+			Thread thread = Thread.currentThread();
+			// For some reason it does not help catching exception (e.g. ClassCastException)
+			//setUncaughtExceptionHandler(thread, onFail);
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
-			String threadId = Long.toString(Thread.currentThread().getId());
+			String threadId = Long.toString(thread.getId());
 			try {
 				task.invoke(threadId, (res) -> {
 					// thread #2
 					completableFuture.complete(res);
 					return null;
 				});
-			} catch(StackOverflowError ex) {
+			} catch (StackOverflowError ex) {
 				ex.printStackTrace();
-				return onFail.invoke("Thread #" + threadId + " failed: " + ex.toString());
+				return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
+			} catch (ClassCastException ex) {
+				ex.printStackTrace();
+				return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
 			} catch (RuntimeException ex) {
 				Throwable e = ex.getCause();
 				while (e.getClass().equals(InvocationTargetException.class)) {
@@ -1924,6 +1930,20 @@ public class Native extends NativeHost {
 		});
 
 		return null;
+	}
+
+	private static final void setUncaughtExceptionHandler(Thread thread, Func1<Object, String> onException) {
+		Thread.UncaughtExceptionHandler h = new Thread.UncaughtExceptionHandler() {
+			@Override
+			public void uncaughtException(Thread th, Throwable ex) {
+				if (onException != null) {
+					onException.invoke(ex.toString());
+				} else {
+					System.out.println("Uncaught exception: " + ex);
+				}
+			}
+		};
+		thread.setUncaughtExceptionHandler(h);
 	}
 
 	public static final String getThreadId() {
