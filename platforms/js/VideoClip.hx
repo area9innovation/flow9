@@ -466,6 +466,22 @@ class VideoClip extends FlowContainer {
 		}
 	}
 
+	private function onStreamPlaying() : Void {
+		if (videoWidget != null) {
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Playing");
+			}
+		}
+	}
+
+	private function onStreamWaiting(e) : Void {
+		if (videoWidget != null) {
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Waiting");
+			}
+		}
+	}
+
 	private function onFullScreen() : Void {
 		if (videoWidget != null) {
 			RenderSupport.fullScreenTrigger();
@@ -509,6 +525,8 @@ class VideoClip extends FlowContainer {
 			videoWidget.addEventListener("error", onStreamError, false);
 			videoWidget.addEventListener("play", onStreamPlay, false);
 			videoWidget.addEventListener("pause", onStreamPause, false);
+			videoWidget.addEventListener("playing", onStreamPlaying, false);
+			videoWidget.addEventListener("waiting", onStreamWaiting, false);
 		}
 	}
 
@@ -521,6 +539,8 @@ class VideoClip extends FlowContainer {
 			videoWidget.removeEventListener("error", onStreamError);
 			videoWidget.removeEventListener("play", onStreamPlay);
 			videoWidget.removeEventListener("pause", onStreamPause);
+			videoWidget.removeEventListener("playing", onStreamPlaying, false);
+			videoWidget.removeEventListener("waiting", onStreamWaiting, false);
 		}
 	}
 
