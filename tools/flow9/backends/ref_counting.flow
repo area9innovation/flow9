@@ -165,7 +165,9 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 			newThen = rec(then, withReturn);
 			newElse = rec(else_, withReturn);
 			newCond = rec(cond, withReturn);
-			condTails : Pair<[BVar], (BExp) -> BExp, BExp> = extractConstructedVars(newCond.exp, type);
+			// TODO: think about : 
+			// Which is cheaper: create a variable and free the memory earlier, or not bind the variable and let c++ do it itself?
+			condTails : Triple<[BVar], (BExp) -> BExp, BExp> = extractConstructedVars(newCond.exp, type, generators);
 
 			thenTails = extractLastUsedVars(newThen, exp.usedVars);
 			elseTails = extractLastUsedVars(newElse, exp.usedVars);
@@ -177,7 +179,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 
 			// TODO: optimization : 1 rec instead of rec+recInc
 			condVars = intersectUsedVars(newCond.usedVars, concat(thenUniqTails, elseUniqTails));
-			fixedCond = recInc(condTails.third, mergeTree(exp.usedVars, condVars), withReturn);
+			condUsedVars = fold(condTails.first, mergeTree(exp.usedVars, condVars), \acc, cvar -> setTree(acc, cvar.id, cvar.type));
+			fixedCond = recInc(condTails.third, condUsedVars, withReturn);
 
 			newBIf = BIf(fixedCond.exp, fixedThen.exp, fixedElse.exp, type);
 
@@ -185,8 +188,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 				if (condTails.first == []) {
 					newBIf
 				} else {
-					//BSequence(arrayPush(condTails.second, newBIf), type)
-					condTails.second(newBIf)
+			// TODO: don't create a lambda
+					condTails.second(newBIf) // this is BLet -> lambda if var=if(...)
 				},
 				mergeTree(mergeTree(fixedElse.usedVars, fixedThen.usedVars), fixedCond.usedVars)
 			);
@@ -335,32 +338,68 @@ extractSwitchVar(exp : BExp, defType : BType) -> BVar {
 	}
 }
 
-// TODO
- // BConstruct + BCall_with_return
-tmpConstructedVarCounter = ref 0;
-extractConstructedVars(exp : BExp, resultType : BType) -> Triple<[BVar], (BExp) -> BExp, Exp> {
-	unpair(makeConstructedVars(exp, [], []), \vars, lets ->  {
+// bind a variable to each data creation.
+// this way we'll free memory immediately after checking the condition, and not at the end of the if/switch block.
+extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>) -> Triple<[BVar], (BExp) -> BExp, BExp> {
+	untriple(makeConstructedVars(exp, [], [], generators), \vars, lets, newExp -> {
 		Triple(
 			vars,
-			\tail -> fold(lets, tail, \acc, v -> BLet(v with body = acc)),
-			exp // TODO: replace with BConstruct with BVar
+			\tail -> foldr(lets, tail, \acc, v -> BLet(v with body = acc)),
+			either(newExp, exp)
 		)
 	})
 }
 
-makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet]) -> Pair<[BVar], [BLet]> {
+tmpConstructedVarCounter = ref 1;
+makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<string>) -> Triple<[BVar], [BLet], Maybe<BExp>> {
+	makeTmpVar = \varType, expType -> {
+		varName = "_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
+		Triple([BVar(varName, varType)], [BLet(varName, exp, BVoid(), varType)], Some(BVar(varName, expType)));
+	}
 	switch (exp) {
-		BConstruct(struct, args, type) : {
-			varName = "_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
-			Pair([BVar(varName, type)], [BLet(varName, exp, BBool(false), type)]);
-		}
+		BConstruct(struct, args, type) : makeTmpVar(type, type);
 		BCall(fn, args, type) : {
-			fold(args, Pair(vars, exps), \acc, a -> {
-				v = makeConstructedVars(a, [], []);
-				Pair(concat(acc.first, v.first), concat(acc.second, v.second));
+			newArgs = fold(args, Triple(vars, exps, []), \acc, a -> {
+				v = makeConstructedVars(a, [], [], generators);
+				Triple(concat(acc.first, v.first), concat(acc.second, v.second), arrayPush(acc.third, v.third));
+			});
+			newFn = makeConstructedVars(fn, [], [], generators);
+			Triple(
+				concat(newFn.first, newArgs.first),
+				concat(
+					eitherMap(
+						newFn.third,
+						\__ -> if (newFn.second == []) {
+							[]
+						} else {
+							newValue = BCall(newFn.second[0].value, mapi(args, \i, arg -> either(newArgs.third[i], arg)), type);
+							replace(newFn.second, 0, BLet(newFn.second[0] with value = newValue))
+						},
+						newFn.second
+					),
+					newArgs.second
+				),
+				eitherFn(
+					newFn.third,
+					\varFn -> Some(varFn),
+					\-> Some(BCall(fn, mapi(args, \i, arg -> either(newArgs.third[i], arg)), type))
+				)
+			);
+		}
+		BField(value, fieldName, type) : {
+			untriple(makeConstructedVars(value, vars, exps, generators), \newVars, lets, newExp -> {
+				Triple(newVars, lets, Some(BField(either(newExp, value), fieldName, type)))
 			});
 		}
-		BField(value, fieldName, type) : makeConstructedVars(value, vars, exps);
-		default: Pair([], []);
+		BVar(id, type) : switch (type : BType) {
+			BTypePar(__) : Triple([], [], None());
+			BTypeName(__, __) : Triple([], [], None());
+			BTypeFunction(__, returnType) : if (isNativeWithoutDropFn(exp, generators)) {
+				Triple([], [], None())
+			} else {
+				makeTmpVar(returnType, type);
+			}
+		}
+		default: Triple([], [], None());
 	}
 }
