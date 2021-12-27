@@ -177,15 +177,24 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool)
 			BExpUsedVars(BSequence(values.first, type), values.second);
 		}
 		BSwitch(value, switchType, cases, defaultCase, type): {
-			newValueExp = rec(value, withReturn);
-			newCases = foldr(cases, Pair([], newValueExp.usedVars), \acc, case -> unpair(acc, \newArgs, newTails -> {
-				newBody = recInc(case.body, newTails, withReturn);
-				Pair(concat([BCase(case.id, newBody.exp)], newArgs), newBody.usedVars);
-			}));
-			newDefCase = maybeMap(defaultCase, \c -> recInc(c, newCases.second, withReturn));
-			BExpUsedVars(
-				BSwitch(extractSwitchVar(newValueExp.exp, type), switchType, newCases.first, maybeMap(newDefCase, \c -> c.exp), type),
-				eitherMap(newDefCase, \c -> c.usedVars, newCases.second)
+			addDupDropToCmpr(
+				BExpUsedVars(value, rec(value, withReturn).usedVars),
+				arrayPushMaybe(map(cases, \c -> rec(c.body, withReturn)), maybeMap(defaultCase, \c -> rec(c, withReturn))),
+				type,
+				exp.usedVars,
+				generators,
+				\newCond : BExp, condUsedVars : Tree<string, BType> -> recInc(newCond, condUsedVars, withReturn),
+				\newCond : BExp, newCases : [BExp] -> if (length(newCases) == (length(cases) + eitherMap(defaultCase, \__ -> 1, 0))) {
+					BSwitch(
+						extractSwitchVar(newCond, type),
+						switchType,
+						mapi(cases, \i, c -> BCase(c.id, newCases[i])),
+						maybeMap(defaultCase, \c -> lastElement(newCases, c)),
+						type
+					)
+				} else {
+					exp.exp
+				}
 			);
 		}
 		BConstruct(struct, args, type): {
@@ -412,7 +421,7 @@ addDupDropToCmpr(
 	newCondUsedVars = fold(condTmpVars.first, cond.usedVars, \acc, cvar -> setTree(acc, cvar.id, cvar.type));
 	fixedCond = updateCond(condTmpVars.third, newCondUsedVars);
 
-	newExpr = updateExpr(fixedCond.exp, map(casesWithDrop, \c -> c.exp));
+	newExpr = updateExpr(reduceBCounter(fixedCond.exp), map(casesWithDrop, \c -> c.exp));
 	BExpUsedVars(
 		if (condTmpVars.first == []) {
 			newExpr
