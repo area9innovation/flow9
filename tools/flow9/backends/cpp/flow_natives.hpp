@@ -94,7 +94,6 @@ void flow_quit(int32_t code) {
 
 template <typename A>
 void flow_print2(A&& v) {
-	drop(v);
 	std::cout << v;
 }
 
@@ -159,12 +158,6 @@ std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){
 	}
 	os << "]";
     return os;
-}
-
-template <typename A>
-void flow_println2(A&& v) {
-	flow_print2(v);
-	std::cout << std::endl;
 }
 
 template <typename A>
@@ -302,6 +295,14 @@ double drop(double a) {
 double reuse(double a) {
 	std::cout<<"REUSE:: double value "<< a <<std::endl;
 	return a;
+}
+
+// print with drop
+template <typename A>
+void flow_println2(A&& v) {
+	flow_print2(v);
+	std::cout << std::endl;
+	drop(v);
 }
 
 // math
