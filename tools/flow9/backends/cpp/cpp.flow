@@ -24,7 +24,7 @@ bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
 }
 
 debugCppMode = isUrlParameterTrue("mem");
-debugFlowMode = true;
+debugFlowMode = false;
 
 bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	typeHierarchy = resolveBTypeHierarchy(b.structs, b.unions);
@@ -1121,18 +1121,12 @@ makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, with
 }
 
 makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
-	declarations = makeStructConstructorDeclarations(backend, struct);
-	moveConstructor =  blueprint(
-		"%type%(%type%&&) = default",
-		["type", struct.struct.id,]
-	);
-
 	if (withBody) {
 		args = unzipi(struct.struct.structArgs, \i, arg -> elementAt(struct.recursiveArgs, i, false));
 		simpleArgs = args.second;
 		recArgs = args.first;
-		initDeclaration = declarations.first;
-		copyDeclaration = declarations.second;
+		initDeclaration = makeStructInitCtorDeclaration(backend, struct);
+		copyDeclaration = makeStructCopyCtorDeclaration(struct);
 		argTypes = lookupTreeDef(backend.info.usedTypars, struct.struct.id, []);
 		typars = makeTyparsForConstructorHeader(argTypes);
 		
@@ -1176,9 +1170,10 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 
 		addTemplatesToStruct(argTypes, initConstructor) + "\n" + addTemplatesToStruct(argTypes, copyConstructor) + "\n";
 	} else {
-		unpair(declarations, \initConstructor, copyConstructor ->
-			"\n	" + initConstructor + ";\n	" + copyConstructor + ";\n" + moveConstructor + ";\n"
-		);
+		"\n	" + makeStructInitCtorDeclaration(backend, struct)
+		+ ";\n	" + makeStructCopyCtorDeclaration(struct)
+		+ ";\n	" + makeStructDefConstructor(struct)
+		+ ";\n" ;
 	}
 }
 
@@ -1238,15 +1233,8 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
     + addTemplatesToStruct(argTypes, printOperator) + "\n";
 }
 
-// init-con — copy-con
-makeStructConstructorDeclarations(backend : Backend<CppInfo>, struct : RecursiveDStruct) -> Pair<string, string> {	
-	copyConstructor = blueprint(
-		"%type%(const %type%& a)",
-		[
-			"type", struct.struct.id,
-		]
-	);
-	initConstructor = blueprint(
+makeStructInitCtorDeclaration(backend : Backend<CppInfo>, struct : RecursiveDStruct) -> string {	
+	blueprint(
 		"%type%(%fields%)",
 		[
 			"type", struct.struct.id,
@@ -1263,8 +1251,22 @@ makeStructConstructorDeclarations(backend : Backend<CppInfo>, struct : Recursive
 			),
 		]
 	);
+}
 
-	Pair(initConstructor, copyConstructor);
+makeStructCopyCtorDeclaration(struct : RecursiveDStruct) -> string {
+	blueprint(
+		"%type%(const %type%& a)",
+		[
+			"type", struct.struct.id,
+		]
+	);
+}
+
+makeStructDefConstructor(struct : RecursiveDStruct) -> string {
+	blueprint(
+		"%type%() = default",
+		["type", struct.struct.id,]
+	);
 }
 
 // supertype (union) can have templates, but struct can't
