@@ -121,7 +121,7 @@ void flow_print2(const double d) {
 }
 
 template <typename ...Args>
-void flow_print2(const std::variant<Args...> v) {
+void flow_print2(std::variant<Args...>& v) {
 	std::visit([](auto&& x) { flow_print2(x); }, v);
 }
 
@@ -189,6 +189,7 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 
 // Structs
 
+// TODO: recursive DROP (example : struct inside struct)
 template <typename T>
 void drop(T& a) {
 	a._counter -= 1;
@@ -233,6 +234,17 @@ void drop(std::variant<T...>& v) {
 		[](auto&& a) { return drop(a); },
 		v
 	);
+}
+
+template <typename ...T>
+std::variant<T...>& reuse(std::variant<T...>& v) {
+	std::variant<T...>* tmp = new std::variant<T...>;
+	std::cout<<"REUSE VARIANT:: from &=" << &v <<" to &="<< tmp <<std::endl;
+	// make a copy (+1 tmp value)
+	*tmp = std::visit([](auto&& a) {return std::variant<T...>(a);}, v);
+	// drop value
+	std::visit([](auto&& a) {drop(a);}, v);
+	return *tmp;
 }
 
 // TODO: vector (array)
