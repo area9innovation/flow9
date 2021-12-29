@@ -119,13 +119,13 @@ doFoldri(cs : [?], i : int, acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
 
 refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool, isDownDrop : bool) -> BExpUsedVars {
 	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e), reuse);
-	recInc = \e, tails, drops, recWithReturn, recisDownDrop -> refCountingBExp(BExpUsedVars(e, tails, drops), generators, recWithReturn, recisDownDrop);
-	rec = \e, recWithReturn, recisDownDrop -> recInc(e, exp.usedVars, exp.downDrops, recWithReturn, recisDownDrop);
-	mapExpA = \args, lastWithReturn, recisDownDrop -> {
+	recInc = \e, tails, drops, recWithReturn, recIsDownDrop -> refCountingBExp(BExpUsedVars(e, tails, drops), generators, recWithReturn, recIsDownDrop);
+	rec = \e, recWithReturn, recIsDownDrop -> recInc(e, exp.usedVars, exp.downDrops, recWithReturn, recIsDownDrop);
+	mapExpA = \args, lastWithReturn, recIsDownDrop -> {
 		lastIndex = length(args) - 1;
 		foldri(args, Triple([], exp.usedVars, exp.downDrops), \i, acc, arg -> untriple(acc, \newArgs, newTails, newDrops -> {
-			newExp = recInc(arg, newTails, newDrops, lastWithReturn && i == lastIndex, recisDownDrop);
-			reducedExp = reduceBCounter(newExp.exp, recisDownDrop);
+			newExp = recInc(arg, newTails, newDrops, lastWithReturn && i == lastIndex, recIsDownDrop);
+			reducedExp = reduceBCounter(newExp.exp, recIsDownDrop);
 			Triple(concat([reducedExp.first], newArgs), newExp.usedVars, arrayPushMaybe(newExp.downDrops, reducedExp.second));
 		}));
 	}
@@ -223,7 +223,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			values = mapExpA(args, false, true);
 			downDrops = values.third;
 			newConstruct = BConstruct(struct, values.first, type);
-			newExp = makeBConstructWithDrops(newConstruct, downDrops);
+			newExp = makeBConstructWithDrops(newConstruct, downDrops, withReturn || isDownDrop);
 			BExpUsedVars(newExp, values.second, []);
 		}
 		BField(value, field, type): {
@@ -472,11 +472,21 @@ addDupDropToCmpr(
 }
 
 // TODO: remove lambda (tmpVar + BLet), down dropExps
-makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter]) -> BExp {
+// c++ doesn't guarantee the order of initialization of the structure fields (?)
+// we add drop to the last arg, but should after construction
+// example : Struct3(Struct(a.v + a.v), Struct(a.v * a.v));
+// -> Struct3(Struct(a.v + a.v), { Struct(a.v * a.v), drop(a)});
+// => Struct3(...), drop(a)
+makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn : bool) -> BExp {
 	if (dropExps == []) {
 		constr;
 	} else {
 		tmpVar = BVar("_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1)), constr.type);
-		BLet(tmpVar.id, constr, BSequence(arrayPush(dropExps, tmpVar), tmpVar.type), tmpVar.type)
+		BLet(
+			tmpVar.id,
+			constr,
+			BSequence(arrayPush(dropExps, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
+			tmpVar.type
+		)
 	}
 }
