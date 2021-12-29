@@ -24,7 +24,7 @@ bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
 }
 
 debugCppMode = isUrlParameterTrue("mem");
-debugFlowMode = false;
+debugFlowMode = true;
 
 bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	typeHierarchy = resolveBTypeHierarchy(b.structs, b.unions);
@@ -262,6 +262,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 		BSetMutableStatement(left, field, value): todo();
 		BReturnVoid(): "return;";
 		BReturn(val): {
+			// TODO: replace reuse with drop , extract real value (isBConstruct)
 			type = getBType(val);
 			value = bexp2cpp(backend, val, false) + ";";
 			if (type == bvoidType || !withReturn) {
@@ -275,7 +276,15 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 				// the right solution is : 
 				// a) unique_ptr . ( it will be implemented for reuse() )
 				// b) return const val + overloading ?
-				if (isBConstruct(val)) {
+				if (isBReuse(val)) {
+					blueprint(
+						"/*REUSE*/ auto* _tmp_return = new %value%;
+"
+						+ (if (debugCppMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
+						+ "return *_tmp_return;",
+						["value", value,]
+					);
+				} else if (isBConstruct(val)) {
 					blueprint(
 						"auto* _tmp_return = new %value%;
 "
@@ -1349,6 +1358,14 @@ getBVarId(exp : BExp) -> string {
 	switch (exp : BExp) {
 		BVar(id, __) : id;
 		BCast(value, __, __) : getBVarId(value);
+		BReuseValue(value) : getBVarId(value);
 		default : "";
+	}
+}
+
+isBReuse(exp : BExp) -> bool {
+	switch (exp : BExp) {
+		BReuseValue(value) : true;
+		default : false;
 	}
 }
