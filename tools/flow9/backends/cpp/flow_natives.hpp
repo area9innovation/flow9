@@ -198,10 +198,11 @@ template <typename T>
 void dropStruct(T& a) {
 	a._counter -= 1;
 	if (a._counter < 1) {
-		std::cout<<"FREE:: &=" << &a << "; counter = " << a._counter << std::endl;
-		a.~T();
+		std::cout<<"FREE:: &=" << &a << "; counter = " << a._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+		// we will free the memory of the fields inside struct.drop();
+		//a.~T();
 	} else {
-		std::cout<<"DEC COUNTER:: &=" << &a << "; counter = " << a._counter << std::endl;
+		std::cout<<"DEC COUNTER:: &=" << &a << "; counter = " << a._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 	}
 }
 
