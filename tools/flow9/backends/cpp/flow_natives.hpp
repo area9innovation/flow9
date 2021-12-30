@@ -189,9 +189,13 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 
 // Structs
 
-// TODO: recursive DROP (example : struct inside struct)
 template <typename T>
 void drop(T& a) {
+	a.drop();
+}
+
+template <typename T>
+void dropStruct(T& a) {
 	a._counter -= 1;
 	if (a._counter < 1) {
 		std::cout<<"FREE:: &=" << &a << "; counter = " << a._counter << std::endl;
@@ -200,6 +204,7 @@ void drop(T& a) {
 		std::cout<<"DEC COUNTER:: &=" << &a << "; counter = " << a._counter << std::endl;
 	}
 }
+
 
 // TODO
 // memory leak (?)
