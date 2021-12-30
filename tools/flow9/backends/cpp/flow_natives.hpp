@@ -252,8 +252,6 @@ std::variant<T...>& reuse(std::variant<T...>& v) {
 	return *tmp;
 }
 
-// TODO: vector (array)
-
 int32_t dup(int32_t a) {
 	std::cout<<"DUP:: int value "<< a <<std::endl;
 	return a;
@@ -312,6 +310,15 @@ double drop(double a) {
 double reuse(double a) {
 	std::cout<<"REUSE:: double value "<< a <<std::endl;
 	return a;
+}
+
+// TODO: vector (array)
+template <typename T>
+void drop(std::vector<T>& a) {
+	std::cout<<"DROP VECTOR:: &=" << &a << std::endl;
+	/*for (std::size_t i = 0; i != a.size(); ++i) {
+		drop(a[i]);
+	}*/
 }
 
 // print with drop

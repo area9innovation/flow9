@@ -58,7 +58,8 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		acc 
 		+ makeStructConstructors(backend, struct, true) + "\n" 
 		+ makeStructDestructor(backend, struct, true) + "\n"
-		+ makeStructOperators(backend, struct)
+		+ makeStructOperators(backend, struct) + "\n"
+		+ makeRecursiveStructDrop(struct, backend.info.structIds) + "\n"
 	});
 	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
 	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
@@ -514,7 +515,7 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 				"geFields", makeGreaterEqStructArgsBody(backend, s.structArgs, []),
 				"constructors", makeStructConstructors(backend, recStruct, false),
 				"destructor", makeStructDestructor(backend, recStruct, false),
-				"dropFn", makeStructDrop(s.structArgs, [], backend.info.structIds),
+				"dropFn", makeStructDrop(s.structArgs, [], backend.info.structIds, ""),
 			]
 		)
 	) + "\n"
@@ -548,6 +549,7 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 	bool operator<(const %type%& a) const;
 	bool operator>=(const %type%& a) const;
 	bool operator<=(const %type%& a) const;
+	void drop();
 	",
 			["type", s.struct.id,]
 		);
@@ -1102,6 +1104,7 @@ makeTyparsForConstructorHeader(argTypes : [string]) -> string {
 // TODO
 makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
 	if (withBody) {
+		isRecursiveField = \i -> elementAt(struct.recursiveArgs, i, false);
 		blueprint(
 			"%type%::~%type%(){\n"
 			+ ( if (debugCppMode) "  std::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %type%(\"; %printFields%; std::cout<<\") counter=\"<<_counter<<\" &=\" << this <<\" ~ \"<<std::endl;\n" else "")
@@ -1109,7 +1112,7 @@ makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, with
 }",
 			[
 				"type", struct.struct.id,
-				"printFields", superglue(struct.struct.structArgs, \a -> "flow_print2(" + a.id + ")", "; "),
+				"printFields", supergluei(struct.struct.structArgs, \i, a -> "flow_print2(" + (if (isRecursiveField(i)) "*" else "") + a.id + ")", "; "),
 				"fields", "", // TODO: free structs, vectors
 			]
 		)
@@ -1144,32 +1147,36 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 				"body", makeStructCopyConstructorBody(backend, simpleArgs, recArgs)
 			]
 		);
-		initConstructor = blueprint(
-			"%type%%typars%::%declaration% {
+		initConstructor = if (initDeclaration == "") {
+			""
+		} else {
+			blueprint(
+				"%type%%typars%::%declaration% {
 	%simpleTypes%
 	%recTypes%
 }",
-			[
-				"type", struct.struct.id,
-				"typars", typars,
-				"declaration", initDeclaration,
-				"simpleTypes", strGlue(map(simpleArgs, \arg -> 
-					blueprint(
-						"%field% = _%field%;",
-						["field", arg.id]
-					)
-				), "\n"),
-				"recTypes", strGlue(map(recArgs, \arg -> 
-					blueprint(
-						"%field% = std::make_unique<%ptype%>(_%field%);",
-						[
-							"field", arg.id,
-							"ptype", dtype2cpp(backend, arg.type)
-						]
-					)
-				), "\n")
-			]
-		);
+				[
+					"type", struct.struct.id,
+					"typars", typars,
+					"declaration", initDeclaration,
+					"simpleTypes", strGlue(map(simpleArgs, \arg -> 
+						blueprint(
+							"%field% = _%field%;",
+							["field", arg.id]
+						)
+					), "\n"),
+					"recTypes", strGlue(map(recArgs, \arg -> 
+						blueprint(
+							"%field% = std::make_unique<%ptype%>(_%field%);",
+							[
+								"field", arg.id,
+								"ptype", dtype2cpp(backend, arg.type)
+							]
+						)
+					), "\n")
+				]
+			);
+		}
 
 		addTemplatesToStruct(argTypes, initConstructor) + "\n" + addTemplatesToStruct(argTypes, copyConstructor) + "\n";
 	} else {
@@ -1236,24 +1243,29 @@ makeStructOperators(backend : Backend<CppInfo>, s : RecursiveDStruct) -> string 
     + addTemplatesToStruct(argTypes, printOperator) + "\n";
 }
 
-makeStructInitCtorDeclaration(backend : Backend<CppInfo>, struct : RecursiveDStruct) -> string {	
-	blueprint(
-		"%type%(%fields%)",
-		[
-			"type", struct.struct.id,
-			"fields", superglue(
-				struct.struct.structArgs,
-				\arg -> blueprint(
-					"%type% _%field%",
-					[
-						"field", arg.id,
-						"type", dtype2cpp(backend, arg.type),
-					]
+makeStructInitCtorDeclaration(backend : Backend<CppInfo>, struct : RecursiveDStruct) -> string {
+	if (struct.struct.structArgs == []) {
+		// we have the default constructor
+		""
+	} else {
+		blueprint(
+			"%type%(%fields%)",
+			[
+				"type", struct.struct.id,
+				"fields", superglue(
+					struct.struct.structArgs,
+					\arg -> blueprint(
+						"%type% _%field%",
+						[
+							"field", arg.id,
+							"type", dtype2cpp(backend, arg.type),
+						]
+					),
+					", "
 				),
-				", "
-			),
-		]
-	);
+			]
+		);
+	}
 }
 
 makeStructCopyCtorDeclaration(struct : RecursiveDStruct) -> string {
@@ -1365,13 +1377,14 @@ isBCast(exp : BExp) -> bool {
 	}
 }
 
-makeStructDrop(simpleArgs : [DStructArg], recArgs : [DStructArg], structIds : Tree<string, int>) -> string {
+makeStructDrop(simpleArgs : [DStructArg], recArgs : [DStructArg], structIds : Tree<string, int>, typeId : string) -> string {
 	makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple) "" else "*") + field.id + ");";
 	blueprint(
-		"void drop() {
+		"void %type%drop() {
 	%fields%::dropStruct(*this);
 }",
 		[
+			"type", if (typeId == "") "" else (typeId + "::"),
 			"fields",
 			superglue(simpleArgs, \f -> makeDropField(f, true), "\n")
 			+ (if (simpleArgs == []) "" else "\n")
@@ -1379,4 +1392,10 @@ makeStructDrop(simpleArgs : [DStructArg], recArgs : [DStructArg], structIds : Tr
 			+ (if (recArgs == []) "" else "\n")
 		]
 	);
+}
+
+makeRecursiveStructDrop(s : RecursiveDStruct, structIds : Tree<string, int>) -> string {
+	isRecursiveField = \i -> elementAt(s.recursiveArgs, i, false);
+	structArgs = unzipi(s.struct.structArgs, \i, arg -> isRecursiveField(i));
+	makeStructDrop(structArgs.second, structArgs.first, structIds, s.struct.id);
 }
