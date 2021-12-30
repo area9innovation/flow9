@@ -45,13 +45,13 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 				imports = concatStrings(extern_imports);
 				js_file = changeFileExt(outfile, "") + "__1.js";
 				saveFileContent(js_file, imports + programCode, cfg.threadId);
-				args0 = ["--bundle", "--outfile=" + outfile, 
+				args0 = ["--bundle", "--outfile=" + outfile,
 					// this option is added to suppress warnings about using 'this' in ECMAScript module
 					"--define:this=undefined",
 					js_file];
 				args = if (cfg.jsmode != NODEJS_MODE) args0 else concat(args0, ["--platform=node"]);
 				fcVerbose(cfg, 0, "Linking the package with esbuild ...");
-				result = execSystemProcessOutput("esbuild", args, dir);
+				result = execSystemCommandOutput(cfg, "esbuild", args, dir);
 				if (fileExists(js_file)) {
 					err = deleteFile(js_file);
 					if (err != "") {
@@ -70,7 +70,7 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 }
 
 ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, cfg : FiJsConfig, success : ref bool, conf_dir : string) -> void {
-	provider_list = execSystemProcessOutput(dep.provider, ["list"], dir);
+	provider_list = execSystemCommandOutput(cfg, dep.provider, ["list"], dir);
 	if (provider_list.exitCode != 0) {
 		fcPrintln("Failed to run '" + dep.provider + " list'. Check that " + dep.provider + " is installed:\n" + provider_list.stdall, cfg.threadId);
 		success := false;
@@ -82,7 +82,7 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 				// Install an external dependency via a package manager
 				fcVerbose(cfg, 0, "Package " + dep.package + " is not yet installed. Going to install it.");
 				install_command = if (dep.provider == "npm") "install" else if (dep.provider == "yarn") "add" else "";
-				provider_install = execSystemProcessOutput(dep.provider, [install_command, dep.package], dir);
+				provider_install = execSystemCommandOutput(cfg, dep.provider, [install_command, dep.package], dir);
 				if (provider_install.exitCode != 0) {
 					fcPrintln("Failed to run '" + dep.provider + " " + install_command + " " + dep.package + "'. Check that " + dep.provider + " is installed:\n" + provider_install.stdall, cfg.threadId);
 					success := false;
@@ -121,7 +121,7 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 								if (^success) {
 									// Check typescript files with tsc compiler
 									if (endsWith(dep.package, ".ts")) {
-										tsc_check = execSystemProcessOutput("tsc", ["--noEmit", "-t", "es6", dep.package], dir);
+										tsc_check = execSystemCommandOutput(cfg, "tsc", ["--noEmit", "-t", "es6", dep.package], dir);
 										if (tsc_check.exitCode != 0) {
 											fcPrintln("Failed to check types in '" + dep.package + "':\n" + tsc_check.stdall, cfg.threadId);
 											success := false;
@@ -132,12 +132,12 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 									if (^success) {
 										// Installing a local dependency from file with yarn
 										args = ["add", "file:" + dirName(dep.package)];
-										file_install = execSystemProcessOutput("yarn", args, dir);
+										file_install = execSystemCommandOutput(cfg, "yarn", args, dir);
 										if (file_install.exitCode != 0) {
 											success := false;
 											fcPrintln(
-												"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + 
-												strIndent(file_install.stdall), 
+												"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" +
+												strIndent(file_install.stdall),
 												cfg.threadId
 											);
 										} else {
@@ -174,20 +174,37 @@ stringIsVersion(v0 : string) -> bool {
 }
 
 checkProgramIsInstalled(cfg : FiJsConfig, prog : string) -> bool {
-	prog_version = execSystemProcessOutput(prog, ["--version"], ".");
+	prog_version = execSystemCommandOutput(cfg, prog, ["--version"], ".");
 	if (prog_version.exitCode == 0 && prog_version.stderr == "" && stringIsVersion(prog_version.stdout)) {
 		fcVerbose(cfg, 1, prog + " version is: " + prog_version.stdout);
-		true 
+		true
 	} else {
 		fcPrintln("Seems that '" + prog + "' is not installed. Please install it.", cfg.threadId);
 		false;
 	}
 }
 
+execSystemCommandOutput(cfg : FiJsConfig, command : string, args : [string], currentWorkingDirectory : string) -> SystemProcessOutput {
+	result = if (windows()) {
+		execSystemProcessOutput("cmd", concat(["/c", command], args), currentWorkingDirectory);
+	} else {
+		execSystemProcessOutput(command, args, currentWorkingDirectory);
+	}
+	if (result.exitCode != 0 || result.stderr != "") {
+		fcPrintln(
+			"error code: " + i2s(result.exitCode) + "\n"
+			"stdout: " + result.stdout + "\n"
+			"stderr: " + result.stderr,
+			cfg.threadId
+		);
+	}
+	result;
+}
+
 checkProvidersAreInstalled(cfg : FiJsConfig, conf_dir : string) -> bool {
 	providers = uniq(map(cfg.dependencies, \dep -> dep.provider));
 	all(map(providers, \provider -> {
-		if (provider == "file") true else 
+		if (provider == "file") true else
 		if (provider == "yarn") {
 			if (!checkProgramIsInstalled(cfg, provider)) false else {
 				if (fileExists(pathCombine(conf_dir, "yarn.lock"))) true else {
@@ -207,7 +224,7 @@ checkProvidersAreInstalled(cfg : FiJsConfig, conf_dir : string) -> bool {
 						Pair("license", JsonString("MIT"))
 					]);
 					setFileContent(pathCombine(conf_dir, "package.json"), json2string(package_json));
-					yarn_install = execSystemProcessOutput("yarn", ["install"], conf_dir);
+					yarn_install = execSystemCommandOutput(cfg, "yarn", ["install"], conf_dir);
 					ret = yarn_install.exitCode == 0;
 					if (!ret) {
 						fcPrintln("Failed to run 'yarn install':\n" + yarn_install.stdall, cfg.threadId);
@@ -249,14 +266,14 @@ fiType2TsType(type : FiType) -> string {
 }
 
 fiTypars2Ts(typars : [FiType]) -> string {
-	if (length(typars) == 0) "" else 
+	if (length(typars) == 0) "" else
 		"<" + superglue(typars, \t -> fiType2TsType(t), ", ") + ">";
 }
 
 fiTypeStruct2Ts(type : FiTypeStruct) -> string {
 	"type " + type.name + fiTypars2Ts(type.typars) + " = {\n" +
-	"\tname: string;\n" + 
-	"\t_id: number;\n" + 
+	"\tname: string;\n" +
+	"\t_id: number;\n" +
 	concatStrings(map(type.args, \arg -> "\t" + arg.name + ": " + fiType2TsType(arg.type) + ";\n")) +
 	"}\n";
 }
@@ -269,13 +286,13 @@ fiTypeUnion2Ts(type : FiTypeUnion) -> string {
 
 fiStructOrUnionsInNatives(program : FiProgram, module : FiModule) -> [FiStructOrUnion] {
 	map(
-		list2array(fold(module.natives, makeList(), \acc, nat -> 
+		list2array(fold(module.natives, makeList(), \acc, nat ->
 			fiTypenamesInType(acc, nat.type)
 		)),
 		\name -> {
 			switch (lookupTree(program.names.structs, name)) {
 				Some(str): str;
-				None(): 
+				None():
 					switch (lookupTree(program.names.unions, name)) {
 						Some(un): un;
 						None(): {
@@ -290,15 +307,15 @@ fiStructOrUnionsInNatives(program : FiProgram, module : FiModule) -> [FiStructOr
 
 fiTypenamesInType(acc : List<string>, tp : FiType) -> List<string> {
 	switch (tp) {
-		FiTypeArray(t): 
+		FiTypeArray(t):
 			fiTypenamesInType(acc, t);
-		FiTypeFunction(args, rt): 
+		FiTypeFunction(args, rt):
 			fold(args, fiTypenamesInType(acc, rt), \ac, arg -> fiTypenamesInType(ac, arg.type));
-		FiTypeRef(t): 
+		FiTypeRef(t):
 			fiTypenamesInType(acc, t);
-		FiTypeName(name, typars): 
+		FiTypeName(name, typars):
 			fold(typars, Cons(name, acc), fiTypenamesInType);
-		default: 
+		default:
 			acc;
 	}
 }
@@ -312,12 +329,12 @@ fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string {
 		FiTypeStruct(__,__,__,__): None();
 		FiTypeUnion(__,__,__,__): Some(tp);
 	});
-	ts_structs = superglue(structs, 
-		\struct -> "export " + fiTypeStruct2Ts(struct), 
+	ts_structs = superglue(structs,
+		\struct -> "export " + fiTypeStruct2Ts(struct),
 		"\n"
 	);
-	ts_unions = superglue(unions, 
-		\union -> "export " + fiTypeUnion2Ts(union), 
+	ts_unions = superglue(unions,
+		\union -> "export " + fiTypeUnion2Ts(union),
 		"\n"
 	);
 	"export type Ref<T> = {\n" +
