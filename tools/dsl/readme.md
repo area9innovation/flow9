@@ -149,3 +149,94 @@ TODO:
 - Define type system?
 - Figure out precedence for blueprint/text output?
 
+## Speedrun towards DB
+
+- DSL language v0.1
+ - Add multi-pattern rules. https://arxiv.org/pdf/2101.01332.pdf
+
+- Data structures suitable for databases
+  - Postgres has 1 GB big files with blocks of fixed size.
+  - Each block has an array of pointers to tuples inside it.
+  - Thus, pointing to something is a block number and then the line number for it. This is called a TID
+  - B-tree for indexes
+  - Linear scan follows pointers
+  - Bitmap scan first builds a bitmap of what rows match a condition, and then run through the bitmap to retrieve them
+    - Useful when we do not want duplicates, or if there are multiple conditions in which case "or" and "and" of the bitmaps
+      can be helpful
+  - Hash tables for keys
+    - Has buckets for hash code and TID.
+    - There is an overflow area for collisions
+    - There is a bitmap for what overflow areas are free
+  - The choice of algorithm for doing a query depends on whether the data is physically sorted on disk similar to the data
+    or not
+So a query is converted into a set of operations of specific data structures.
+
+Postgres has a notion of partial indexes. Basically, we only index rows that obey some condition.
+
+Bloom filters allow false positives, but not false negatives.
+
+Idea:
+- Have multiple data structures depending on the schema of the data, and automatically construct
+  the corresponding algorithms to use them
+
+The data structures need to support insert, update, delete, and retrieval.
+
+Queries can be mathematically simplified using adjunctions:
+https://dl.acm.org/doi/pdf/10.1145/3236781
+
+The core idea is that we can use set comprehension syntax to implement all relational
+operations, including joins, but with bag semantics and efficiency. Also, since this
+is highly mathematical, a lot of optimizations are possible on this DSL.
+
+So concisely, relational algebra can be translated into bag-comprehensions. The key
+operator is an indexing step, which can build (or reuse an existing) index over a table.
+
+Here is an implementation of relational algebra, probably using this approach:
+http://hjemmesider.diku.dk/~henglein/src/
+
+
+Pipeline:
+Relational algebra
+ (optimizations)
+Bag-comprehensions
+ (optimizations)
+Compile bag-comprehensions into tight code.
+
+# Journal logging for persistence
+
+Memory database with replication
+CRDTs
+
+# CRDTs
+
+Reflexivity
+Commutativity
+Idemponence
+
+Operation required: Less or equal to be defined (leq)
+
+With a map CRDT defined, we get counters (map from unique id to counter),
+and sets (map to null).
+
+Deletion: Model it by ordering: undefined, defined, deleted.
+
+Time: Relies on less than (rather than less or equal). If machine A sends
+a message to machine B, we can deduce that the sending happened before receiving it.
+That defines a lattice/partial ordering.
+
+The core convergence is defined by three kinds of operations:
+1) Doing some update on a CRDT data structure
+2) Sending an update to another machine
+3) Receiving an update from another machine
+These three things imply that things are good.
+
+Last Write Wins is a CRDT for storing any opaque value without comparison.
+
+With a LWW and a deletion ordering combined, we can get a cell that support deleting and readding.
+
+# Challenge
+
+Design a programming language which can define all the basic algorithms
+and CRDTs.
+
+https://github.com/automerge/automerge
