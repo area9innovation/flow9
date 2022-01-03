@@ -1,9 +1,14 @@
 // strings
+// TODO: fix u16 for win (c++ 17)
+//#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING //or _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS
+
 #include <codecvt>
 #include <string>
 #include <locale>
 #include <sstream>
 #include <iomanip>
+
+#include <algorithm>
 // math
 #include <cmath>
 // getStructName
