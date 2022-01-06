@@ -18,7 +18,7 @@ class DisplayObjectHelper {
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
-	public static var UseOptimization : Bool = Util.getParameter("new") == "1" && Util.getParameter("remove_listener_optimization") != "0";
+	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
