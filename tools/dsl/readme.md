@@ -98,44 +98,42 @@ We still need a default value, which could be the basic value.
 OK, so the above example can be expressed using this syntax:
 
 	// The grammar of the language where arity of actions is a naming convention
-	grammar mylang {
+	mylang = grammar(<< 
 		exp = exp "+" exp $"plus_2" 
 			|> exp "*" exp $"mul_2") 
 			|> $int $"int_1"
 			|> $id $"bind_1";	// For pattern matching
 		int = '0'-'9'+;
 		id = 'a'-'z';
-	}
+	>>);
 
 	// The set of rewriting rules we want
-	rules mylang {
+	rules = rules(mylang, <<
 		a + b => b + a;
 		a * b => b * a;
 		a + 0 => a;
 		a * 0 => 0;
 		a * 1 => a;
-	}
+	>>);
 
 	// For the plumbing to work, we need a default value (in the language syntax)
-	default mylang {
-		0
-	}
+	default = mylang(mylang, << 0 >>);
 
 	// These costs refer to the semantic actions without arity
 	// so we can figure out what the costs are. This is used to extract the best reduction
-	cost mylang {
+	costs = mapCosts(<<
 		int => 1;
 		plus => 2;
 		mul => 3;
-	}
+	>>);
 
 	// This is a prototype for how to define an compiler/evaluator of a language.
 	// Probably, we need some conversion method for instantiation
-	compile mylang => text {
+	compiler = makeCompiler("text", <<
 		plus(a, b) => plus_int($a, $b);
 		mul(a, b) = mul_int($a, $b);
 		int(n) = n;
-	}
+	>>);
 
 And with that, we could attempt to make a saturating rewrite engine and
 extraction method, as well as a compiler.
