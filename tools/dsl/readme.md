@@ -3,7 +3,51 @@
 This is a system to try to define syntax & semantics for languages, including
 rewrite rules.
 
-# E-graph matching library
+## Syntax
+
+The grammar is specified using gringo, and called with `defineGrammar(name, grammar)`.
+
+The semantics actions are defined using actions like "plus_2", "negate_1", where
+the suffix defines the arity of the semantic action.
+
+Here is a simple grammar for expressions:
+
+	// The grammar of the language where arity of actions is a naming convention
+	mylang = defineGrammar("mylang", <<
+		exp = exp "+" exp $"plus_2" 
+			|> exp "*" exp $"mul_2"
+			|> $int $"s2d"
+			|> $id $"bind_1";	// For pattern matching
+		int = '0'-'9'+;
+		id = 'a'-'z'+;
+		exp
+	>>);
+
+Built in actions include:
+- nil for the empty array
+- cons for appending to an array
+- null for JSON null
+- object for making a singleton key-value pair of the top two elements on the stack
+- swap for swapping two elements on the stack
+- drop for dropping an element on the stack
+- true for JsonBool(true)
+- false for JsonBool(false)
+- s2d for converting the top string on the stack to a JsonDouble
+
+## Parsing
+
+The `parseProgram` will parse a string using a given grammar from `defineGrammar`:
+
+	defaultValue : Json = parseProgram(mylang, <<123+0*434+abd>>);
+	println(defaultValue);
+
+The result is the Json representation of the semantic actions. The semantic actions
+with arity results in a "JsonArray([name, args])" structure. If the arity is 0, it is
+just "JsonArray([name])".
+
+# Plans for future enhancements
+
+## E-graph matching library
 
 makeEGraph requires a function to split a value into the head and the children.
 
@@ -24,48 +68,6 @@ To extract the best value,
 	extractEGraph(e : EGraph<?>, benefitFn : (ENode<?>, [EClassBenefit<?>]) -> EClassBenefit<?>) -> Tree<int, EClassBenefit<?>>;
 
 # Example
-
-    SimpleLanguage {
-        Num(i32),
-        "+" = Add([Id; 2]),
-        "*" = Mul([Id; 2]),
-    }
-
-    rewrite!("commute-add"; "(+ ?a ?b)" => "(+ ?b ?a)"),
-    rewrite!("commute-mul"; "(* ?a ?b)" => "(* ?b ?a)"),
-    rewrite!("add-0"; "(+ ?a 0)" => "?a"),
-    rewrite!("mul-0"; "(* ?a 0)" => "0"),
-    rewrite!("mul-1"; "(* ?a 1)" => "?a"),
-
-We could attempt to write that as Gringo with a simple grammar like this:
-
-	exp = exp "+" exp $"plus" |> exp "*" exp $"mul") |> int $"int";
-	int = $('0'-'9'+);
-
-and for
-
-	0 + 2 * 1
-
-we would get a stack like
-
-	0
-	"int"
-	2
-	"int"
-	1
-	"int"
-	"mul"
-	"plus"
-
-To turn that into a tree, we would need the arity of the operators:
-
-	"int" -> 1
-	"mul" -> 2
-	"plus" -> 2
-
-With that, we would get a tree
-
-	plus(int(0), mul(int(2), int(1)))
 
 We could express the rewrite rules with this
 
@@ -95,45 +97,7 @@ We still need a default value, which could be the basic value.
 
 ## Rewriting engine syntax proposal
 
-OK, so the above example can be expressed using this syntax:
-
-	// The grammar of the language where arity of actions is a naming convention
-	mylang = grammar(<< 
-		exp = exp "+" exp $"plus_2" 
-			|> exp "*" exp $"mul_2") 
-			|> $int $"int_1"
-			|> $id $"bind_1";	// For pattern matching
-		int = '0'-'9'+;
-		id = 'a'-'z';
-	>>);
-
-	// The set of rewriting rules we want
-	rules = rules(mylang, <<
-		a + b => b + a;
-		a * b => b * a;
-		a + 0 => a;
-		a * 0 => 0;
-		a * 1 => a;
-	>>);
-
-	// For the plumbing to work, we need a default value (in the language syntax)
-	default = mylang(mylang, << 0 >>);
-
-	// These costs refer to the semantic actions without arity
-	// so we can figure out what the costs are. This is used to extract the best reduction
-	costs = mapCosts(<<
-		int => 1;
-		plus => 2;
-		mul => 3;
-	>>);
-
-	// This is a prototype for how to define an compiler/evaluator of a language.
-	// Probably, we need some conversion method for instantiation
-	compiler = makeCompiler("text", <<
-		plus(a, b) => plus_int($a, $b);
-		mul(a, b) = mul_int($a, $b);
-		int(n) = n;
-	>>);
+OK, so the above example is found in ther test.flow file.
 
 And with that, we could attempt to make a saturating rewrite engine and
 extraction method, as well as a compiler.

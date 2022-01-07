@@ -1,5 +1,6 @@
 import tools/gringo/gringo_embed;
 import tools/gringo/json_actions;
+import tools/dsl/replace_gringo;
 import ds/egraph_matching;
 
 export {
@@ -7,6 +8,8 @@ export {
 	defineGrammar(name : string, grammar : string) -> DslGrammar;
 
 	// Parses a set of EGraph rewriting rules in the given language grammar
+	// Make sure the grammar has a "bind_1" semantic action for variables
+	// also, the grammar should have a "ws" rule for whitespace
 	parseRules(grammar : DslGrammar, rules : string) -> DslRules;
 
 	// Parses a program in the given language
@@ -42,17 +45,94 @@ defineGrammar(name : string, grammar : string) -> DslGrammar {
 	DslGrammar(name, parseAndCheckGringoGrammar(name, grammar));
 }
 
-parseRules(grammar : DslGrammar, rules : string) -> DslRules {
-	// TODO: Build a new grammar where we have
-	// grammar on each side of the rules
-	// and <exp> => <exp> as the result
+parseRules(exp : DslGrammar, rules : string) -> DslRules {
+	mainRule = mainRule(exp.term);
+	/*
+	println(
+		parseAndCheckGringoGrammar("rules",
+			<<
+			rules = ws $"nil" (rule $"cons")*;
+			rule = exp "=>" ws exp ";" ws $"rule";
+			exp = "replace";
+			ws = " "?;
+			rules
+			>>
+		)
+	);
+	*/
+	ruleGrammar = GRule("rules", GSeq(GVar("ws"), GSeq(GUnquote(GString("nil")), GStar(GSeq(GVar("rule"), GUnquote(GString("cons")))))), 
+		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(mainRule), GString("=>")), GVar("ws")), GVar(mainRule)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
+			// Merge with the existing grammar
+			replaceLastGringo(exp.term, GVar("rules"))
+		));
+
+	ruleDsl = DslGrammar(exp.language + "_rules", ruleGrammar);
+
+	jsonRules = parseProgram(ruleDsl, rules);
+
+	// TODO: Conver the JSON to patterns and replacements
+	// println(json2stringFormatted(jsonRules));
+
 	DslRules(
 		[]
 	);
 }
 
+dslAction = GringoAction(
+		\acc : List<Json>, v -> {
+			if (v == "nil") {
+				Cons(JsonArray([]), acc);
+			} else if (v == "null") {
+				Cons(JsonNull(), acc);
+			} else if (v == "cons") {
+				elm = popJsonStack(acc);
+				list = popJsonStack(elm.second);
+				narray = pushJsonValue(list.first, elm.first);
+				Cons(narray, list.second);
+			} else if (v == "object") {
+				val = popJsonStack(acc);
+				key = popJsonStack(val.second);
+				Cons(JsonObject([Pair(getJsonStringValue(key.first, ""), val.first)]), key.second);
+			} else if (v == "swap") {
+				top = popJsonStack(acc);
+				other = popJsonStack(top.second);
+				Cons(
+					top.first, Cons(other.first, other.second)
+				)
+			} else if (v == "drop") {
+				popJsonStack(acc).second;
+			} else if (v == "true") {
+				Cons(JsonBool(true), acc);
+			} else if (v == "false") {
+				Cons(JsonBool(false), acc);
+			} else if (v == "s2d") {
+				elm = popJsonStack(acc);
+				Cons(JsonDouble(s2d(getJsonStringValue(elm.first, ""))), elm.second);
+			} else {
+				parts = strSplit(v, "_");
+				if (length(parts) == 2 && i2s(s2i(parts[1])) == parts[1]) {
+					arity = s2i(parts[1]);
+					name = parts[0];
+					args : Pair<[Json], List<Json>> = fold(enumFromTo(1, arity), Pair([], acc), \acc2, arg -> {
+						e = popJsonStack(acc2.second);
+						Pair(arrayPush(acc2.first, e.first), e.second)
+					});
+					val = JsonArray(concat([JsonString(name)], args.first));
+					Cons(val, args.second)
+				} else {
+					println("Unknown grammar operation " + v);
+					acc;
+				}
+			}
+		},
+		\acc : List<Json>, m -> {
+			Cons(JsonString(m), acc)
+		}
+	);
+
+
 parseProgram(grammar : DslGrammar, program : string) -> Json {
-	genv = doGringoParse(grammar.term, jsonAction, makeList(), program, false, false);
+	genv = doGringoParse(grammar.term, dslAction, makeList(), program, false, false);
 	getJsonGringo(genv.output);
 }
 
