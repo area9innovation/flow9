@@ -1,5 +1,5 @@
 import tools/gringo/gringo_embed;
-import tools/gringo/json_actions;
+import tools/dsl/dsl_ast;
 import tools/dsl/replace_gringo;
 import ds/egraph_matching;
 
@@ -13,7 +13,7 @@ export {
 	parseRules(grammar : DslGrammar, rules : string) -> DslRules;
 
 	// Parses a program in the given language
-	parseProgram(grammar : DslGrammar, program : string) -> Json;
+	parseProgram(grammar : DslGrammar, program : string) -> DslAst;
 
 	// Builds the cost structure for graph rewriting
 	rewriteCosts(costs : string) -> DslCosts;
@@ -28,11 +28,11 @@ DslGrammar(
 );
 
 DslRules(
-	replacements : [EReplacement<Json>]
+	replacements : [EReplacement<DslAst>]
 );
 
 DslCosts(
-	costs : Tree<Json, int>
+	costs : Tree<DslAst, int>
 );
 
 DslCompiler(
@@ -68,56 +68,82 @@ parseRules(exp : DslGrammar, rules : string) -> DslRules {
 
 	ruleDsl = DslGrammar(exp.language + "_rules", ruleGrammar);
 
-	jsonRules = parseProgram(ruleDsl, rules);
+	astRules = parseProgram(ruleDsl, rules);
 
-	// TODO: Conver the JSON to patterns and replacements
-	// println(json2stringFormatted(jsonRules));
+	// TODO: Convert the DSL ast to patterns and replacements
+	// println(dsl2stringFormatted(astRules));
 
 	DslRules(
 		[]
 	);
 }
 
+popDslStack(a : List<DslAst>) -> Pair<DslAst, List<DslAst>> {
+	switch (a) {
+		EmptyList(): {
+			println("Stack underflow");
+			Pair(DslNode("Stack underflow", [], 0), a);
+		}
+		Cons(head, tailL): {
+			Pair(head, tailL)
+		}
+	}
+}
+
+pushDslValue(list : DslAst, value : DslAst) -> DslList {
+	switch (list) {
+		DslList(av): DslList(Cons(value, av));
+		default: {
+			// Well, we drop whatever we had before
+			DslList(makeList1(value));
+		}
+	}
+}
+
+getDslString(a : DslAst) -> string {
+	switch (a) {
+		DslString(s): s;
+		default: "";
+	}
+}
+
 dslAction = GringoAction(
-		\acc : List<Json>, v -> {
+		\acc : List<DslAst>, v -> {
 			if (v == "nil") {
-				Cons(JsonArray([]), acc);
-			} else if (v == "null") {
-				Cons(JsonNull(), acc);
+				Cons(DslList(makeList()), acc);
 			} else if (v == "cons") {
-				elm = popJsonStack(acc);
-				list = popJsonStack(elm.second);
-				narray = pushJsonValue(list.first, elm.first);
+				elm = popDslStack(acc);
+				list = popDslStack(elm.second);
+				narray = pushDslValue(list.first, elm.first);
 				Cons(narray, list.second);
-			} else if (v == "object") {
-				val = popJsonStack(acc);
-				key = popJsonStack(val.second);
-				Cons(JsonObject([Pair(getJsonStringValue(key.first, ""), val.first)]), key.second);
 			} else if (v == "swap") {
-				top = popJsonStack(acc);
-				other = popJsonStack(top.second);
+				top = popDslStack(acc);
+				other = popDslStack(top.second);
 				Cons(
 					top.first, Cons(other.first, other.second)
 				)
 			} else if (v == "drop") {
-				popJsonStack(acc).second;
+				popDslStack(acc).second;
 			} else if (v == "true") {
-				Cons(JsonBool(true), acc);
+				Cons(DslBool(true), acc);
 			} else if (v == "false") {
-				Cons(JsonBool(false), acc);
+				Cons(DslBool(false), acc);
+			} else if (v == "s2i") {
+				elm = popDslStack(acc);
+				Cons(DslInt(s2i(getDslString(elm.first))), elm.second);
 			} else if (v == "s2d") {
-				elm = popJsonStack(acc);
-				Cons(JsonDouble(s2d(getJsonStringValue(elm.first, ""))), elm.second);
+				elm = popDslStack(acc);
+				Cons(DslDouble(s2d(getDslString(elm.first))), elm.second);
 			} else {
 				parts = strSplit(v, "_");
 				if (length(parts) == 2 && i2s(s2i(parts[1])) == parts[1]) {
 					arity = s2i(parts[1]);
 					name = parts[0];
-					args : Pair<[Json], List<Json>> = fold(enumFromTo(1, arity), Pair([], acc), \acc2, arg -> {
-						e = popJsonStack(acc2.second);
+					args : Pair<[DslAst], List<DslAst>> = fold(enumFromTo(1, arity), Pair([], acc), \acc2, arg -> {
+						e = popDslStack(acc2.second);
 						Pair(arrayPush(acc2.first, e.first), e.second)
 					});
-					val = JsonArray(concat([JsonString(name)], args.first));
+					val = DslNode(name, args.first, 0);
 					Cons(val, args.second)
 				} else {
 					println("Unknown grammar operation " + v);
@@ -125,15 +151,15 @@ dslAction = GringoAction(
 				}
 			}
 		},
-		\acc : List<Json>, m -> {
-			Cons(JsonString(m), acc)
+		\acc : List<DslAst>, m -> {
+			Cons(DslString(m), acc)
 		}
 	);
 
 
-parseProgram(grammar : DslGrammar, program : string) -> Json {
+parseProgram(grammar : DslGrammar, program : string) -> DslAst {
 	genv = doGringoParse(grammar.term, dslAction, makeList(), program, false, false);
-	getJsonGringo(genv.output);
+	popDslStack(genv.output).first;
 }
 
 rewriteCosts(costs : string) -> DslCosts {
