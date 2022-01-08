@@ -1,0 +1,85 @@
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_util;
+import ds/egraph_matching;
+
+export {
+	dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>];
+}
+
+dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>] {
+	error = \ -> {
+		println("Expected rule, got " + prettyDsl(rules));
+		[];
+	}
+	switch (rules) {
+		DslBool(value): error();
+		DslInt(value): error()
+		DslDouble(value): error()
+		DslString(value): error()
+		DslList(value): {
+			foldList(value, [], \acc, val -> {
+				concat(acc, dslRules2replacements(val))
+			});
+		}
+		DslNode(name, args, pos): {
+			if (name == "rule") {
+				pattern = dsl2pattern(args[0]);
+				replacement = args[1];
+				[
+					EReplacement(pattern, \bindings : Tree<string, DslAst> -> {
+						replaceDsl(bindings, replacement)
+					})
+				];
+			} else error();
+		}
+	}
+}
+
+dsl2pattern(ast : DslAst) -> EPattern<DslAst> {
+	switch (ast) {
+		DslBool(value): EPatternTerm(ast, []);
+		DslInt(value): EPatternTerm(ast, []);
+		DslDouble(value): EPatternTerm(ast, []);
+		DslString(value): EPatternTerm(ast, []);
+		DslList(value): EPatternTerm(DslList(makeList()), map(list2array(value), dsl2pattern));
+		DslNode(name, args, pos): {
+			if (name == "bind") {
+				bind = getDslString(args[0]);
+				EPatternVar(bind)
+			} else {
+				EPatternTerm(
+					DslNode(name, [], pos),
+					map(args, dsl2pattern)
+				)
+			}
+		}
+	}
+}
+
+replaceDsl(bindings : Tree<string, DslAst>, ast : DslAst) -> DslAst {
+	switch (ast) {
+		DslBool(value): ast;
+		DslInt(value): ast;
+		DslDouble(value): ast;
+		DslString(value): ast;
+		DslList(value): {
+			DslList(mapList(value, \val : DslAst -> {
+				replaceDsl(bindings, val)
+			}))
+		}
+		DslNode(name, args, pos): {
+			if (name == "bind") {
+				bind = getDslString(args[0]);
+				mvalue = lookupTree(bindings, bind);
+				mvalue ?? {
+					mvalue;
+				} : {
+					println("Unknown binding in replacement " + bind);
+					ast;
+				}
+			} else {
+				DslNode(name, map(args, \a -> replaceDsl(bindings, a)), pos);
+			}
+		}
+	}
+}
