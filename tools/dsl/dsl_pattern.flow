@@ -3,7 +3,7 @@ import tools/dsl/dsl_util;
 import ds/egraph_matching;
 
 export {
-	dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>];
+	egraphDslReplacements(program : DslAst, def : DslAst, rules : DslAst, iterations : int) -> DslAst;
 }
 
 dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>] {
@@ -72,6 +72,7 @@ replaceDsl(bindings : Tree<string, DslAst>, ast : DslAst) -> DslAst {
 				bind = getDslString(args[0]);
 				mvalue = lookupTree(bindings, bind);
 				mvalue ?? {
+					// println("Replaced " + bind + " with " + prettyDsl(mvalue));
 					mvalue;
 				} : {
 					println("Unknown binding in replacement " + bind);
@@ -82,4 +83,44 @@ replaceDsl(bindings : Tree<string, DslAst>, ast : DslAst) -> DslAst {
 			}
 		}
 	}
+}
+
+
+buildDslEGraph(ast : DslAst) -> Pair<EGraph<DslAst>, int> {
+	splitChildren = \a : DslAst -> switch (a) {
+		DslBool(value): Pair(a, []);
+		DslInt(value): Pair(a, []);
+		DslDouble(value): Pair(a, []);
+		DslString(value): Pair(a, []);
+		DslList(value): Pair(DslList(makeList()), list2array(value));
+		DslNode(name, args, pos): Pair(DslNode(name, [], pos), args);
+	};
+	egraph = makeEGraph(splitChildren);
+	Pair(egraph, addEExp(egraph, ast));
+}
+
+buildDslEMatchEngine(program : DslAst, def : DslAst) -> Pair<EMatchEngine<DslAst>, int> {
+	egraph = buildDslEGraph(program);
+	combine = \head : DslAst, args : [DslAst] -> {
+		switch (head) {
+			DslBool(value): head;
+			DslInt(value): head;
+			DslDouble(value): head;
+			DslString(value): head;
+			DslList(value): DslList(array2list(args));
+			DslNode(name, __, pos): DslNode(name, args, pos);
+		}
+	};
+	Pair(makeEMatchEngine(egraph.first, def, combine), egraph.second);
+}
+
+egraphDslReplacements(program : DslAst, def : DslAst, rules : DslAst, iterations : int) -> DslAst {
+	match = buildDslEMatchEngine(program, def);
+
+	replacements = dslRules2replacements(rules);
+
+	performEReplacements(match.first, iterations, match.second, replacements);
+
+	// TODO: Do extraction
+	program;
 }
