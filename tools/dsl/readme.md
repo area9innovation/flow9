@@ -5,7 +5,7 @@ rewrite rules.
 
 ## Syntax
 
-The grammar is specified using gringo, and called with `defineGrammar(name, grammar)`.
+The grammar is specified using gringo, and called with `defineGrammar(name, grammar, addWs)`.
 
 The semantics actions are defined using actions like "plus_2", "negate_1", where
 the suffix defines the arity of the semantic action.
@@ -14,102 +14,108 @@ Here is a simple grammar for expressions:
 
 	// The grammar of the language where arity of actions is a naming convention
 	mylang = defineGrammar("mylang", <<
-		exp = exp "+" exp $"plus_2" 
-			|> exp "*" exp $"mul_2"
-			|> $int $"s2d"
-			|> $id $"bind_1";	// For pattern matching
+		exp = exp "+" ws exp $"plus_2" 
+			|> exp "*" ws exp $"mul_2"
+			|> $int ws $"s2i"
+			|> $id ws $"bind_1";	// For pattern matching
 		int = '0'-'9'+;
 		id = 'a'-'z'+;
-		exp
-	>>);
+		ws exp
+	>>, true); // true adds definitions for whitespace
+
+### Semantic actions in Gringo
 
 Built in actions include:
-- nil for the empty array
-- cons for appending to an array
-- null for JSON null
-- object for making a singleton key-value pair of the top two elements on the stack
+- nil for the empty list
+- cons for appending to a list
 - swap for swapping two elements on the stack
 - drop for dropping an element on the stack
-- true for JsonBool(true)
-- false for JsonBool(false)
-- s2d for converting the top string on the stack to a JsonDouble
+- true for DslBool(true)
+- false for DslBool(false)
+- s2i for converting the top string on the stack to a DslInt
+- s2d for converting the top string on the stack to a DslDouble
 
 ## Parsing
 
 The `parseProgram` will parse a string using a given grammar from `defineGrammar`:
 
-	defaultValue : Json = parseProgram(mylang, <<123+0*434+abd>>);
-	println(defaultValue);
+	defaultValue : DslAst = parseProgram(mylang, <<123+0*434+abd>>);
+	println(prettyDsl(defaultValue));
 
-The result is the Json representation of the semantic actions. The semantic actions
-with arity results in a "JsonArray([name, args])" structure. If the arity is 0, it is
-just "JsonArray([name])".
+The result is a DslAst representation of the semantic actions. 
 
-# Plans for future enhancements
+## E-graph rewriting
 
-## E-graph matching library
-
-makeEGraph requires a function to split a value into the head and the children.
-
-makeEMatchEngine requires a default value, as well as a function to combine a head
-and children, as well as an expression to start from.
-
-To do replacements, we need a pattern which is:
-
-	EPattern<?> ::= EPatternVar, EPatternTerm<?>;
-		EPatternVar(id : string);
-		EPatternTerm(head : ?, args : [EPattern<?>]);
-
-and then a replacement, which takes bindings and produces a new value, as well
-as the root class to start out with. So when constructing the graph, we have to
-remember the root class to do the replacement from.
-
-To extract the best value,
-	extractEGraph(e : EGraph<?>, benefitFn : (ENode<?>, [EClassBenefit<?>]) -> EClassBenefit<?>) -> Tree<int, EClassBenefit<?>>;
+The DSL library comes with support for doing semantic term-rewriting using an
+e-graph.
 
 # Example
 
-We could express the rewrite rules with this
+	// The set of rewriting rules we want
+	rules = parseRules(mylang, <<
+		a + b => b + a;
+		a * b => b * a;
+		a + a => 2 * a;
+		2 * a => a + a;
+		a + 0 => a;
+		a * 0 => 0;
+		a * 1 => a;
+	>>);
 
-	a + b => b + a
-	a * b => b * a
-	a + 0 => a
-	a * 0 => 0
-	a * 1 => a
+	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
+	defaultValue : DslAst = parseProgram(mylang, << 0 >>);
 
-With that, and a grammar to have patterns like this:
+	// These costs refer to the semantic actions without arity
+	// so we can figure out what the costs are. This is used to extract the best reduction
+	costs = rewriteCosts(<<
+		int => 1;
+		plus => 2;
+		mul => 3;
+	>>);
 
-	rules = rule*;
-	rule = pattern "=>" pattern $"rule";
-	pattern = (exp += |> id $"bind");	// This extends the exp grammar with a new case at the end of the grammar
-	id = 'a'-'z';
+	testValue = parseProgram(mylang, << 0 + 123 + 0 * 23 + 1 * 23 + 34 * 2 >>);
 
-and define "bind" to have arity of 1, and "rule" to have arity of 2,
-we would get the rules out as trees:
+	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
+	println(prettyDsl(testValue));
+	println("is optimized to\n");
+	println(prettyDsl(replaced));
 
-	rule(plus(bind(a), bind(b)), plus(bind(b), bind(a)),
-	rule(mul(bind(a), bind(b)), mul(bind(b), bind(a)),
-	rule(plus(bind(a), int(0)), bind(a)),
-	rule(mul(bind(a), int(0)), int(0)),
-	rule(mul(bind(a), int(1)), bind(a)),
+gives this output:
 
-We still need a default value, which could be the basic value.
+	plus(
+		0,
+		plus(
+			123,
+			plus(
+				mul(0, 23),
+				plus(
+					mul(1, 23),
+					mul(34, 2)
+				)
+			)
+		)
+	)
 
-## Rewriting engine syntax proposal
+	is optimized to
 
-OK, so the above example is found in ther test.flow file.
+	plus(
+		123,
+		plus(
+			23,
+			plus(34, 34)
+		)
+	)
 
-And with that, we could attempt to make a saturating rewrite engine and
-extraction method, as well as a compiler.
+# Future plans
 
-For the compiler, we could attempt to have built-in set of natives to get an evaluator
-out.
-
-TODO:
-- Pretty-printing as a special case of compilation?
-- Test cases for both reduction, evaluation and compilation?
-- Define type system?
-- Figure out precedence for blueprint/text output?
+- Add DSL for lowering one language to another
+- Add DSL for blueprint-like string expansion to make compilers/prettyprinters simpler.
+  - Figure out precedence for blueprint/text output. $a(100) could be precedence syntax?
+- Add DSL for evaluation with a given set of "natives".
+- Add DSL for type checking
+- Add DSL for test cases for all of the above
+- Add DSL for grammar rewriting
+- Add DSL for macros/compile evaluation
 
 ## Speedrun towards DB
 
