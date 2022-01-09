@@ -1,6 +1,7 @@
 import tools/dsl/dsl_pretty;
 import tools/dsl/dsl_util;
 import ds/egraph_matching;
+import ds/egraph_extract;
 
 export {
 	egraphDslReplacements(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst;
@@ -86,7 +87,7 @@ replaceDsl(bindings : Tree<string, DslAst>, ast : DslAst) -> DslAst {
 }
 
 
-buildDslEGraph(ast : DslAst) -> Pair<EGraph<DslAst>, int> {
+buildDslEGraph() -> EGraph<DslAst> {
 	splitChildren = \a : DslAst -> switch (a) {
 		DslBool(value): Pair(a, []);
 		DslInt(value): Pair(a, []);
@@ -95,34 +96,77 @@ buildDslEGraph(ast : DslAst) -> Pair<EGraph<DslAst>, int> {
 		DslList(value): Pair(DslList(makeList()), list2array(value));
 		DslNode(name, args, pos): Pair(DslNode(name, [], pos), args);
 	};
-	egraph = makeEGraph(splitChildren);
-	Pair(egraph, addEExp(egraph, ast));
+	makeEGraph(splitChildren);
 }
 
-buildDslEMatchEngine(program : DslAst, def : DslAst) -> Pair<EMatchEngine<DslAst>, int> {
-	egraph = buildDslEGraph(program);
-	combine = \head : DslAst, args : [DslAst] -> {
-		switch (head) {
-			DslBool(value): head;
-			DslInt(value): head;
-			DslDouble(value): head;
-			DslString(value): head;
-			DslList(value): DslList(array2list(args));
-			DslNode(name, __, pos): DslNode(name, args, pos);
-		}
-	};
-	Pair(makeEMatchEngine(egraph.first, def, combine), egraph.second);
+buildDslEMatchEngine(egraph : EGraph<DslAst>, def : DslAst) -> EMatchEngine<DslAst> {
+	makeEMatchEngine(egraph, def, combineDsl);
 }
+
+combineDsl(head : DslAst, args : [DslAst]) -> DslAst {
+	switch (head) {
+		DslBool(value): head;
+		DslInt(value): head;
+		DslDouble(value): head;
+		DslString(value): head;
+		DslList(value): DslList(array2list(args));
+		DslNode(name, __, pos): DslNode(name, args, pos);
+	}
+};
 
 egraphDslReplacements(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst {
-	match = buildDslEMatchEngine(program, def);
+	egraph = buildDslEGraph();
+	root = addEExp(egraph, program);
+	match = buildDslEMatchEngine(egraph, def);
 
 	replacements = dslRules2replacements(rules);
 
-	performEReplacements(match.first, iterations, match.second, replacements);
+	performEReplacements(match, iterations, root, replacements);
 
-	
+	if (false) {
+		iterEGraph(egraph, \eclass, nodes : Set<ENode<DslAst>> -> {
+			println(i2s(eclass) + ": " + superglue(set2array(nodes), \n : ENode<DslAst> -> prettyDsl(n.head), ", "));
+		});
+	}
 
-	// TODO: Do extraction
-	program;
+	extracts : Tree<int, EClassCost<DslAst>> = extractEGraph(egraph,
+		\node : ENode<DslAst>, ccosts : [EClassCost<DslAst>] -> {
+			childcosts = fold(ccosts, 0, \acc, c -> {
+				acc + c.cost
+			});
+			headCost = dslCost(costs, node.head);
+			// println("'" + prettyDsl(node.head) + "' cost " + i2s(headCost) + " with child cost " + i2s(childcosts));
+			headCost  + childcosts;
+		}
+	);
+
+	reduced = extractDsl(egraph, extracts, root);
+	reduced;
+}
+
+dslCost(costs : Tree<string, int>, a : DslAst) -> int {
+	switch (a) {
+		DslBool(value): lookupTreeDef(costs, "bool", 1);
+		DslInt(value): lookupTreeDef(costs, "int", 1);
+		DslDouble(value): lookupTreeDef(costs, "double", 1);
+		DslString(value): lookupTreeDef(costs, "string", 1);
+		DslList(value): lookupTreeDef(costs, "list", 1);
+		DslNode(name, args, pos): lookupTreeDef(costs, name, 1);
+	}
+}
+
+extractDsl(egraph : EGraph<DslAst>, extracts : Tree<int, EClassCost<DslAst>>, eclass : int) -> DslAst {
+	root = getEClassRoot(egraph, eclass);
+	mextract = lookupTree(extracts, root);
+	mextract ?? {
+		node : ENode<DslAst> = mextract.node;
+		children = map(node.args, \a : int -> {
+			extractDsl(egraph, extracts, a);
+		});
+		combineDsl(node.head, children)
+	} : {
+		nodes : Set<ENode<DslAst>> = getUnionMapValue(egraph.eclass, eclass);
+		println("Could not resolve " + i2s(eclass) + " with " + superglue(set2array(nodes), \n : ENode<DslAst> -> prettyDsl(n.head), ", "));
+		DslNode("Could not resolve " + i2s(eclass), [], 0)
+	}
 }
