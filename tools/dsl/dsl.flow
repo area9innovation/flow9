@@ -1,0 +1,194 @@
+import tools/gringo/gringo_embed;
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_util;
+import tools/dsl/replace_gringo;
+import ds/egraph_matching;
+
+export {
+	// Prepares a grammar for a language "name"
+	defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar;
+
+	// Parses a set of EGraph rewriting rules in the given language grammar
+	// Make sure the grammar has a "bind_1" semantic action for variables
+	// also, the grammar should have a "ws" rule for whitespace
+	parseRules(grammar : DslGrammar, rules : string) -> DslRules;
+
+	// Parses a program in the given language
+	parseProgram(grammar : DslGrammar, program : string) -> DslAst;
+
+	// Builds the cost structure for graph rewriting
+	rewriteCosts(costs : string) -> DslCosts;
+
+	// Prepares a compiler from the given language to the target language
+	makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslCompiler;
+}
+
+DslGrammar(
+	language : string,
+	term : GTerm
+);
+
+DslRules(
+	rules : DslAst
+);
+
+DslCosts(
+	costs : Tree<string, int>
+);
+
+DslCompiler(
+	language : DslGrammar,
+	target : string,
+	blueprints : [EReplacement<string>]
+);
+
+defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar {
+	// We have a standard white-space grammar ready for embedding
+	text = if (addWs) <<
+		ws = s*;
+		s = cs+;
+		anychar = '0x0000'-'0xffff';
+		cs = " " | "\t" | "\n" | "//" (!"\n" anychar)* "\n" | "/*" (!"*/" anychar)* "*/" | "\r";
+		lastLineComment = "//" (!"\n" anychar)*;
+	>> + grammar else grammar;
+	DslGrammar(name, parseAndCheckGringoGrammar(name, text));
+}
+
+parseRules(exp : DslGrammar, rules : string) -> DslRules {
+	mainRule = mainRule(exp.term);
+	/*
+	TODO: Figure out how to do a "extension" of the existing grammar
+	buildGrammar(
+		<<
+			rules = ws $"nil" (rule $"cons")*;
+			rule = @name "=>" ws @name ";" ws $"rule";
+			@grammar
+		>>,
+		[
+			"name", mainRule
+			"grammar", replaceLastGringo(exp.term, GVar("rules")),
+		]
+	)
+
+	The required operations are:
+		find main rule of grammar
+		replace last gringo and insert grammar
+	*/
+	ruleGrammar = GRule("rules", GSeq(GVar("ws"), GSeq(GUnquote(GString("nil")), GStar(GSeq(GVar("rule"), GUnquote(GString("cons")))))), 
+		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(mainRule), GString("=>")), GVar("ws")), GVar(mainRule)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
+			// Merge with the existing grammar
+			replaceLastGringo(exp.term, GVar("rules"))
+		));
+
+	ruleDsl = DslGrammar(exp.language + "_rules", ruleGrammar);
+	astRules = parseProgram(ruleDsl, rules);
+	DslRules(astRules);
+}
+
+popDslStack(a : List<DslAst>) -> Pair<DslAst, List<DslAst>> {
+	switch (a) {
+		EmptyList(): {
+			println("Stack underflow");
+			Pair(DslNode("Stack underflow", [], 0), a);
+		}
+		Cons(head, tailL): {
+			Pair(head, tailL)
+		}
+	}
+}
+
+pushDslValue(list : DslAst, value : DslAst) -> DslList {
+	switch (list) {
+		DslList(av): DslList(Cons(value, av));
+		default: {
+			// Well, we drop whatever we had before
+			DslList(makeList1(value));
+		}
+	}
+}
+
+dslAction = GringoAction(
+		\acc : List<DslAst>, v -> {
+			if (v == "nil") {
+				Cons(DslList(makeList()), acc);
+			} else if (v == "cons") {
+				elm = popDslStack(acc);
+				list = popDslStack(elm.second);
+				narray = pushDslValue(list.first, elm.first);
+				Cons(narray, list.second);
+			} else if (v == "swap") {
+				top = popDslStack(acc);
+				other = popDslStack(top.second);
+				Cons(
+					top.first, Cons(other.first, other.second)
+				)
+			} else if (v == "drop") {
+				popDslStack(acc).second;
+			} else if (v == "true") {
+				Cons(DslBool(true), acc);
+			} else if (v == "false") {
+				Cons(DslBool(false), acc);
+			} else if (v == "s2i") {
+				elm = popDslStack(acc);
+				Cons(DslInt(s2i(getDslString(elm.first))), elm.second);
+			} else if (v == "s2d") {
+				elm = popDslStack(acc);
+				Cons(DslDouble(s2d(getDslString(elm.first))), elm.second);
+			} else {
+				parts = strSplit(v, "_");
+				if (length(parts) == 2 && i2s(s2i(parts[1])) == parts[1]) {
+					arity = s2i(parts[1]);
+					name = parts[0];
+					args : Pair<[DslAst], List<DslAst>> = fold(enumFromTo(1, arity), Pair([], acc), \acc2, arg -> {
+						e = popDslStack(acc2.second);
+						Pair(concat([e.first], acc2.first), e.second)
+					});
+					val = DslNode(name, args.first, 0);
+					Cons(val, args.second)
+				} else {
+					println("Unknown grammar operation " + v);
+					acc;
+				}
+			}
+		},
+		\acc : List<DslAst>, m -> {
+			Cons(DslString(m), acc)
+		}
+	);
+
+
+parseProgram(grammar : DslGrammar, program : string) -> DslAst {
+	genv = doGringoParse(grammar.term, dslAction, makeList(), program, false, false);
+	popDslStack(genv.output).first;
+}
+
+rewriteCosts(costs : string) -> DslCosts {
+	costlang = defineGrammar("cost", <<
+		costs = ws $"nil" (cost $"cons")*;
+		cost = $id ws "=>" ws $int $"s2i" ws ";" ws $"cost_2";
+
+		int = '0'-'9'+;
+		id = 'a'-'z'+;
+		costs
+	>>, true);
+
+	thecosts : List<DslAst> = getDslList(parseProgram(costlang, costs));
+	costMap = foldList(thecosts, makeTree(), \acc, ast -> {
+		node = getDslNode(ast);
+		if (length(node.args) == 2) {
+			name = getDslString(node.args[0]);
+			cost = getDslInt(node.args[1]);
+			setTree(acc, name, cost)
+		} else acc;
+	});
+
+	DslCosts(costMap);
+}
+
+makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslCompiler {
+	DslCompiler(
+		grammar,
+		target,
+		[],
+	);
+}
