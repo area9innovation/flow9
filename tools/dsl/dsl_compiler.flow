@@ -8,8 +8,14 @@ export {
 DslCompiler(
 	language : DslGrammar,
 	target : string,
-	blueprints : DslAst
+	blueprints : [DslTranslation]
 );
+
+DslTranslation(pattern : DslPattern, output : [DslBlueprint]);
+	DslPattern(id : string, args : [DslPattern]);
+
+	DslBlueprint ::= DslString, DslSubstitute;
+		DslSubstitute(bind : string, precedence : int);
 
 makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslCompiler {
 	blueprintlang = defineGrammar("blueprint", <<
@@ -17,19 +23,20 @@ makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslC
 
 		translation = pattern "=>" ws output ";" ws $"translation_2";
 
+		// TODO: Should we distinguish between nodes and ids even better?
 		pattern = id "(" ws args ")" ws $"pattern_2"
-			| id $"id_1";
+			| id;
 
 		args = $"nil" pattern $"cons" ("," ws pattern $"cons")*
 			| $"nil";
 
-		output = $"nil" (blueprint $"cons")* $"output_1";
+		output = $"nil" (blueprint $"cons")*;
 
 		blueprint = 
 			bind 
 			| string;
-		bind = "$" id "(" ws int ")" ws $"bindprec_2"
-			| "$" id $"bind_1";
+		bind = "$" id "(" ws int ")" ws $"bind_2"
+			| "$" id $"0" $"s2i" $"bind_2";
 
 		string = $('"' onechar_* '"') ws;
 
@@ -56,6 +63,61 @@ makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslC
 	DslCompiler(
 		grammar,
 		target,
-		prints,
+		dsl2Translations(prints),
 	);
+}
+
+dsl2Translations(a : DslAst) -> [DslTranslation] {
+	trans = getDslList(a);
+	filtermap(list2array(trans), dsl2Translation)
+}
+
+dsl2Translation(a : DslAst) -> Maybe<DslTranslation> {
+	node = getDslNode(a);
+	if (length(node.args) == 2) {
+		pattern = dsl2Pattern(node.args[0]);
+		blueprints = getDslList(node.args[1]);
+		
+		translation = DslTranslation(pattern,
+			map(list2array(blueprints), dsl2Blueprint)
+		);
+		Some(translation);
+	} else {
+		None();
+	}
+}
+
+dsl2Pattern(a : DslAst) -> DslPattern {
+	error = \ -> {
+		println("ERROR: Expected pattern, got " + prettyDsl(a));
+		DslPattern("ERROR: Expected pattern", [])
+	}
+	switch (a) {
+		DslNode(name, args, pos): {
+			if (length(args) > 0) {
+				aargs = getDslList(args[1]);
+				DslPattern(getDslString(args[0]), map(list2array(aargs), dsl2Pattern))
+			} else {
+				error();
+			}
+		}
+		DslString(n): DslPattern(n, []);
+		DslBool(value): error();
+		DslInt(value): error();
+		DslDouble(value): error();
+		DslList(value): error();
+	}
+}
+
+dsl2Blueprint(a : DslAst) -> DslBlueprint {
+	switch (a) {
+		DslString(__): a;
+		DslNode(name, args, __): {
+			DslSubstitute(getDslString(args[0]), getDslInt(args[1]));
+		}
+		default: {
+			println("ERROR: Expected string or substitute, not " + prettyDsl(a));
+			DslString("ERROR");
+		}
+	}
 }
