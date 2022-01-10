@@ -180,7 +180,7 @@ The compiler has decent speed, but could be faster.
   free ids. If not, no need to chunk it. (see unicodeToLowerTable and others
   in text/unicodecharacters.flow)
 
-## Improvements
+## Improvements to be done
 
 - Imports that start with "lib/" are almost surely wrong, and do not work.
 
@@ -188,20 +188,6 @@ The compiler has decent speed, but could be faster.
 
 - Add a compile server
   - Add option to only type check given ids
-
-# Proposal: Rewrite syntax
-
-We could extend Flow9 with a rewriting feature.
-
-	flow-exp: $id = $val; $body
-	=>
-	js-statement: 
-	var $id = $val(100);
-	$body
-
-	flow-exp: $l + $r
-	=>
-	js-exp: $l(100) + $r(99)
 
 # C++ backend
 
@@ -219,3 +205,8 @@ https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/render
 
 The best solution is to go for Perceus:
 https://www.microsoft.com/en-us/research/uploads/prod/2020/11/perceus-tr-v1.pdf
+
+# Extension of syntax
+
+We support a special kind of string surrounded by << anything >>, which is hoped
+to help make mixing muliple languages easier.
