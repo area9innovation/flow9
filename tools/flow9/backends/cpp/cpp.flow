@@ -23,7 +23,6 @@ bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
 	bprogram2cpp(linkBProgram(cache, flowpath, shortenIds, cppBackendSpec()), flowpath);
 }
 
-debugCppMode = isUrlParameterTrue("mem");
 debugFlowMode = false;
 
 bprogram2cpp(b : BProgram, flowpath : string) -> string {
@@ -72,7 +71,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	strReplace(
 		"#inc" + "lude <cstdint>\n#include <variant>\n#include <functional>\n#include <iostream>\n#include <memory>\n#include <type_traits>\n"
 		// TODO: fix in the future path to flow9
-		+ "#inc" + "lude \"" + "tools/flow9/backends/cpp/flow_type.hpp\" \n"
+		+ "#inc" + "lude \"" + (if (memoryManagement) "tools/flow9/backends/cpp/flow_type.hpp\" \n" else "tools/flow9/backends/cpp/flow_type_old.hpp\" \n")
 		+ getBackendRequirements(backend) + "\n"
 	//	+ "// RUNTIME\n"
 	//	+ runtime + "\n"
@@ -138,7 +137,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 				polyvars = uniq(map(typars, \pv -> btype2cpp(backend, BTypePar(pv))));
 				argtypes = getBArgTypes(type);
 				breturnType = getBReturnType(type);
-				isSimpleReturnType = isSimpleBType(breturnType);
+				isSimpleReturnType = isSimpleBType(breturnType) || !memoryManagement;
 				returnType = btype2cpp(backend, breturnType) + (if (isSimpleReturnType) "" else "&");
 
 				declaration = blueprint(
@@ -151,7 +150,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 						"id", id,
 						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 						"args", supergluei(args, \i, arg -> {
-							btype2cpp(backend, argtypes[i]) + "& " + arg
+							btype2cpp(backend, argtypes[i]) +(if (memoryManagement) "& " else " ") + arg
 						}, ", "),
 						"returnType", returnType,
 					]
@@ -257,7 +256,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 		}
 		BLetStatement(id, value, body): {
 			"auto " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
-			+ (if (debugCppMode) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " <<std::endl;\n") else "")
+			+ (if (memoryManagement) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " <<std::endl;\n") else "")
 			+ bstatement2cpp(backend, body, fnArgs, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
@@ -268,7 +267,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 			value = bexp2cpp(backend, val, false) + ";";
 			if (type == bvoidType || !withReturn) {
 				value
-			} else if (isSimpleBType(type) || !isLocalVar(val)) {
+			} else if (isSimpleBType(type) || !isLocalVar(val) || !memoryManagement) {
 				"return " + value;
 			} else {
 				// TODO: think about. this is not recommended
@@ -281,7 +280,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 					blueprint(
 						"auto* _tmp_return = new %value%;
 "
-						+ (if (debugCppMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
+						+ (if (memoryManagement) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
 						+ "return *_tmp_return;",
 						["value", value,]
 					);
@@ -289,7 +288,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 					blueprint(
 						"auto* _tmp_return = &%value%;
 "
-						+ (if (debugCppMode) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
+						+ (if (memoryManagement) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
 						+ "return *_tmp_return;",
 						["value", value,]
 					);
@@ -549,9 +548,12 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 	bool operator<(const %type%& a) const;
 	bool operator>=(const %type%& a) const;
 	bool operator<=(const %type%& a) const;
-	void drop();
+	%drop%
 	",
-			["type", s.struct.id,]
+			[
+				"type", s.struct.id,
+				"drop", if (memoryManagement) "void drop();" else "",
+			]
 		);
 		dstruct2cppEx(
 			backend,
@@ -684,7 +686,8 @@ dstruct2id(backend : Backend<CppInfo>, s : DStruct) -> string {
 }
 
 dstruct2counter(backend : Backend<CppInfo>, s : DStruct) -> string {
-	" int _counter = 1;"
+	if (memoryManagement) " int _counter = 1;"
+	else "";
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
@@ -1103,6 +1106,7 @@ makeTyparsForConstructorHeader(argTypes : [string]) -> string {
 
 // TODO
 makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
+	if (memoryManagement) {
 	if (withBody) {
 		printField = \id, isRecursive -> {
 			if (isRecursive) {
@@ -1114,7 +1118,7 @@ makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, with
 		isRecursiveField = \i -> elementAt(struct.recursiveArgs, i, false);
 		blueprint(
 			"%type%::~%type%(){\n"
-			+ ( if (debugCppMode) "  std::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %type%(\"; %printFields%; std::cout<<\") counter=\"<<_counter<<\" &=\" << this <<\" ~ \"<<std::endl;\n" else "")
+			+ ( if (memoryManagement) "  std::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %type%(\"; %printFields%; std::cout<<\") counter=\"<<_counter<<\" &=\" << this <<\" ~ \"<<std::endl;\n" else "")
 			+"%fields%
 }",
 			[
@@ -1131,6 +1135,7 @@ makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, with
 			]
 		)
 	}
+	} else "";
 }
 
 makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
@@ -1323,7 +1328,7 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 
 	value = exp.value;
 	type = getBReturnType(getBType(value));
-	if (type == bvoidType && getBVarId(value) == "") {
+	if (type == bvoidType && getBVarId(value) == "" || !memoryManagement) {
 		rec(value)
 	} else {
 		blueprint(
@@ -1339,6 +1344,7 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 
 tmpVarCounter = ref 0;
 createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> Pair<[string], [BExp]> {
+	if (memoryManagement) {
 	newArgs = map(args, \arg -> {
 		if (!isBConstruct(arg)) {
 			Pair(None(), arg)
@@ -1346,7 +1352,7 @@ createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> 
 			varName = "_tmp" + i2s(atomicRefIntAddition(tmpVarCounter, 1));
 			tmpVarCpp = blueprint(
 				"auto %varName% = %exp%;\n"
-				+ (if (debugCppMode) ("std::cout<<\"FN : &%varName% = \"<< &%varName% <<std::endl;\n") else ""),
+				+ (if (memoryManagement) ("std::cout<<\"FN : &%varName% = \"<< &%varName% <<std::endl;\n") else ""),
 				[
 					"varName", varName,
 					"exp", bexp2cpp(backend, arg, isGlobalExp),
@@ -1357,6 +1363,9 @@ createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> 
 	});
 
 	Pair(filtermap(newArgs, firstOfPair), map(newArgs, secondOfPair));
+	} else {
+		Pair([], args)
+	}
 }
 
 isBConstruct(exp : BExp) -> bool {
@@ -1389,6 +1398,7 @@ makeStructDrop(simpleArgs : [DStructArg], recArgs : [DStructArg], structIds : Tr
 	makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple) "" else "*") + field.id + ");";
 	makeReleasePtr = \field : DStructArg -> field.id + ".release();";
 
+	if (memoryManagement) {
 	blueprint(
 		"void %type%drop() {
 	%fields%::dropStruct(*this);
@@ -1402,10 +1412,13 @@ makeStructDrop(simpleArgs : [DStructArg], recArgs : [DStructArg], structIds : Tr
 			+ (if (recArgs == []) "" else "\n")
 		]
 	);
+	} else "";
 }
 
 makeRecursiveStructDrop(s : RecursiveDStruct, structIds : Tree<string, int>) -> string {
-	isRecursiveField = \i -> elementAt(s.recursiveArgs, i, false);
-	structArgs = unzipi(s.struct.structArgs, \i, arg -> isRecursiveField(i));
-	makeStructDrop(structArgs.second, structArgs.first, structIds, s.struct.id);
+	if (memoryManagement) {
+		isRecursiveField = \i -> elementAt(s.recursiveArgs, i, false);
+		structArgs = unzipi(s.struct.structArgs, \i, arg -> isRecursiveField(i));
+		makeStructDrop(structArgs.second, structArgs.first, structIds, s.struct.id);
+	} else "";
 }
