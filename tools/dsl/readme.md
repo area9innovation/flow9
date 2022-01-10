@@ -1,11 +1,11 @@
 # DSL & Rewriting engine
 
-This is a system to try to define syntax & semantics for languages, including
+This is a system to define syntax & semantics for languages, including
 rewrite rules.
 
 ## Syntax
 
-The grammar is specified using gringo, and called with `defineGrammar(name, grammar, addWs)`.
+The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, addWs)`.
 
 The semantics actions are defined using actions like "plus_2", "negate_1", where
 the suffix defines the arity of the semantic action.
@@ -34,6 +34,7 @@ Built in actions include:
 - false for DslBool(false)
 - s2i for converting the top string on the stack to a DslInt
 - s2d for converting the top string on the stack to a DslDouble
+- dump for printing the contents of the stack - helpful for debugging
 
 ## Parsing
 
@@ -105,6 +106,48 @@ gives this output:
 			plus(34, 34)
 		)
 	)
+
+## Blueprints for compilers
+
+The `makeCompiler` call can prepare a compiler, which compiles a language to
+a string.
+
+It uses a syntax like
+
+	plus(a,b) => $a(50) "+" $b(49);
+	mul(a,b) => $a(40) "*" $b(39);
+	int(n) => $n;
+
+where the left-hand side is a pattern to match in the source program, and
+the right hand side is a "blueprint". $n means expand the string representation
+of the matched node.
+The number in parenthesis is to help with precedence and associativity.
+If it is omitted, it is understood to be 0.
+
+This way, we can model precedence and associativity.
+
+Consider 
+
+	(1 - 2) - 3 == 1 - 2 -3
+
+while
+
+	1 - (2 - 3) == 1 - (2 - 3)
+
+We can get this if we have this rule
+
+	minus(a,b) => $a(50) "-" $b(49);
+
+and then the expansion goes like this:
+
+	minus(minus(1, 2), 3) =>
+		minus(minus("1":0, "2":0):50, "3":0) =>
+		minus("1-2":50, "3":0) =>
+		"1-2-3" // because 50 <= 50
+
+	minus(1, minus(2,3)) =>
+		minus("1":0, "2-3":50) =>
+		"1-(2-3)":50 because 50 > 49
 
 # Future plans
 
