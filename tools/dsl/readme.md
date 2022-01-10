@@ -141,12 +141,12 @@ We can get this if we have this rule
 and then the expansion goes like this:
 
 	minus(minus(1, 2), 3) =>
-		minus(minus("1":0, "2":0):50, "3":0) =>
-		minus("1-2":50, "3":0) =>
+		minus(minus("1":100, "2":100):50, "3":100) =>
+		minus("1-2":50, "3":100) =>
 		"1-2-3" // because 50 <= 50
 
 	minus(1, minus(2,3)) =>
-		minus("1":0, "2-3":50) =>
+		minus("1":100, "2-3":50) =>
 		"1-(2-3)":50 because 50 > 49
 
 # Future plans
