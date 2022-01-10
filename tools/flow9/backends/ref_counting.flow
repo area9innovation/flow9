@@ -48,8 +48,14 @@ import sys/concurrent;
 //   5: }
 // we'll free the memory for the result of fn1() on line 2 or 4. but we have to free on line 1 after || .
 
+// Think about:
+// 1) BTailCall
+// BTailCall = loop . should we move the creation of local variables out of the loop?
+
 export {
 	addRefCounting(prog : BExpProgram) -> BExpProgram;
+
+	addRefCounting2BProgram(prog : BProgram) -> BProgram;
 }
 
 optimization = true;
@@ -170,7 +176,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 					reducedValue = reduceBCounter(newArg.exp, isDownDrop);
 					Triple(concat([reducedValue.first], newArgs), newArg.usedVars, arrayPushMaybe(newArg.downDrops, reducedValue.second));
 				} else {
-					newArg = recInc(arg, newTails, newDrops, false, isDownDrop);
+					newArg = recInc(arg, newTails, newDrops, true, isDownDrop);
 					// drop is inside the FN
 					dupedArg = dupBExpUsedVars(newArg);
 					reducedValue = reduceBCounter(dupedArg.exp, isDownDrop);
@@ -488,5 +494,95 @@ makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn :
 			BSequence(arrayPush(dropExps, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
 			tmpVar.type
 		)
+	}
+}
+
+addRefCounting2BProgram(prog : BProgram) -> BProgram {
+	BProgram(
+		prog.structs,
+		prog.unions,
+		map(prog.declarations, addRefCounting2BDeclaration)
+	)
+}
+
+addRefCounting2BDeclaration(decl : BDeclaration) -> BDeclaration {
+	switch (decl : BDeclaration) {
+		BGlobalVar(__, __, __) : decl;
+		BExpNative(__, __, __, __) : decl;
+		BStatFunction(id, typars, args, body, tailCall, type) : addRefCounting2BStatFunction(decl);
+	}
+}
+
+addRefCounting2BStatFunction(fn : BStatFunction) -> BStatFunction {
+	if (fn.tailCall) {
+		BStatFunction(fn.id, fn.typars, fn.args, addRefCounting2BStatement(fn.body), fn.tailCall, fn.type)
+	} else {
+		fn
+	}
+}
+
+addRefCounting2BStatement(s : BStatement) -> BStatement {
+	switch (s : BStatement) {
+		BIfStatement(cond, then, else_): BIfStatement(cond, addRefCounting2BStatement(then), addRefCounting2BStatement(else_));
+		BLetStatement(name, value, body): BLetStatement(name, value, addRefCounting2BStatement(body));
+		BReturnVoid(): s;
+		BReturn(val): s;
+		BTailCall(fn, args, values, type): {
+			fnArgs = buildSet(args);
+			BTailCall(fn, args, map(values, \v -> removeBDropValueForVariables(v, fnArgs).first), type);
+		}
+		BSequenceStatement(statements): BSequenceStatement(map(statements, addRefCounting2BStatement));
+		BSwitchStatement(expr, cases, type): BSwitchStatement(expr, map(cases, \c -> BCaseStatement(c.id, addRefCounting2BStatement(c.body))), type);
+		BSetMutableStatement(left, field, value): s;
+	}
+}
+
+// we should not drop(argument) in a loop
+removeBDropValueForVariables(exp : BExp, vars : Set<string>) -> Pair<BExp, bool> {
+	switch (exp) {
+		BValue(): Pair(exp, false);
+		BVar(name, type): Pair(exp, containsSet(vars, name));
+		BLet(name, value, body, type): Pair(BLet(
+			name,
+			removeBDropValueForVariables(value, vars).first,
+			removeBDropValueForVariables(body, vars).first,
+			type
+		), false);
+		BLambda(args, body, type): Pair(BLambda(args, removeBDropValueForVariables(body, vars).first, type), false);
+		BCall(fn, args, type): Pair(BCall(
+			removeBDropValueForVariables(fn, vars).first,
+			map(args, \a -> removeBDropValueForVariables(a, vars).first),
+			type
+		), false);
+		BIf(cond, then, else_, type): Pair(BIf(
+			removeBDropValueForVariables(cond, vars).first,
+			removeBDropValueForVariables(then, vars).first,
+			removeBDropValueForVariables(else_, vars).first,
+			type
+		), false);
+		BSequence(exps, type): Pair(BSequence(map(exps, \a -> removeBDropValueForVariables(a, vars).first), type), false);
+		BSwitch(val, switchType, cases, defaultCase, type): Pair(BSwitch(
+			val,
+			switchType,
+			map(cases, \case -> BCase(case.id, removeBDropValueForVariables(case.body, vars).first)),
+			maybeMap(defaultCase, \c -> removeBDropValueForVariables(c, vars).first),
+			type
+		), false);
+		BConstruct(struct, args, type): Pair(BConstruct(struct, map(args, \a -> removeBDropValueForVariables(a, vars).first), type), false);
+		BField(value, field, type): Pair(BField(removeBDropValueForVariables(value, vars).first, field, type), false);
+		BSetMutable(left, field, value, type): Pair(BSetMutable(
+			removeBDropValueForVariables(left, vars).first,
+			field,
+			removeBDropValueForVariables(value, vars).first,
+			type
+		), false);
+		BArray(args, type): Pair(BArray(map(args, \a -> removeBDropValueForVariables(a, vars).first), type), false);
+		BCast(value, from, to): Pair(BCast(removeBDropValueForVariables(value, vars).first, from, to), false);
+		BDupValue(value) : Pair(BDupValue(removeBDropValueForVariables(value, vars).first), false);
+		BDropValue(value) : unpair(
+			removeBDropValueForVariables(value, vars),
+			\newValue, removeDrop -> Pair(if (removeDrop) newValue else BDropValue(newValue), false)
+		);
+		BReuseValue(value) : Pair(BReuseValue(removeBDropValueForVariables(value, vars).first), false);
 	}
 }
