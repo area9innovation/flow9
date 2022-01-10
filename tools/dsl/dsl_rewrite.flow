@@ -1,10 +1,84 @@
 import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_parse;
 import tools/dsl/dsl_util;
 import ds/egraph_matching;
 import ds/egraph_extract;
 
 export {
+	// Parses a set of EGraph rewriting rules in the given language grammar
+	// Make sure the grammar has a "bind_1" semantic action for variables
+	// also, the grammar should have a "ws" rule for whitespace
+	parseRules(grammar : DslGrammar, rules : string) -> DslRules;
+
+	// Builds the cost structure for graph rewriting
+	rewriteCosts(costs : string) -> DslCosts;
+
+	// Perform N iterations of rewrites, and extract the best result
 	rewriteDsl(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst;
+}
+
+DslRules(
+	rules : DslAst
+);
+
+parseRules(exp : DslGrammar, rules : string) -> DslRules {
+	mainRule = mainRule(exp.term);
+	/*
+	TODO: Figure out how to do a "extension" of the existing grammar
+	buildGrammar(
+		<<
+			rules = ws $"nil" (rule $"cons")*;
+			rule = @name "=>" ws @name ";" ws $"rule";
+			@grammar
+		>>,
+		[
+			"name", mainRule
+			"grammar", replaceLastGringo(exp.term, GVar("rules")),
+		]
+	)
+
+	The required operations are:
+		find main rule of grammar
+		replace last gringo and insert grammar
+	*/
+	ruleGrammar = GRule("rules", GSeq(GVar("ws"), GSeq(GUnquote(GString("nil")), GStar(GSeq(GVar("rule"), GUnquote(GString("cons")))))), 
+		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(mainRule), GString("=>")), GVar("ws")), GVar(mainRule)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
+			// Merge with the existing grammar
+			replaceLastGringo(exp.term, GVar("rules"))
+		));
+
+	ruleDsl = DslGrammar(exp.language + "_rules", ruleGrammar);
+	astRules = parseProgram(ruleDsl, rules);
+	DslRules(astRules);
+}
+
+
+DslCosts(
+	costs : Tree<string, int>
+);
+
+
+rewriteCosts(costs : string) -> DslCosts {
+	costlang = defineGrammar("cost", <<
+		costs = ws $"nil" (cost $"cons")*;
+		cost = $id ws "=>" ws $int $"s2i" ws ";" ws $"cost_2";
+
+		int = '0'-'9'+;
+		id = 'a'-'z'+;
+		costs
+	>>, true);
+
+	thecosts : List<DslAst> = getDslList(parseProgram(costlang, costs));
+	costMap = foldList(thecosts, makeTree(), \acc, ast -> {
+		node = getDslNode(ast);
+		if (length(node.args) == 2) {
+			name = getDslString(node.args[0]);
+			cost = getDslInt(node.args[1]);
+			setTree(acc, name, cost)
+		} else acc;
+	});
+
+	DslCosts(costMap);
 }
 
 dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>] {

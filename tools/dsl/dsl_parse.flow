@@ -2,45 +2,20 @@ import tools/gringo/gringo_embed;
 import tools/dsl/dsl_pretty;
 import tools/dsl/dsl_util;
 import tools/dsl/replace_gringo;
-import ds/egraph_matching;
 
 export {
 	// Prepares a grammar for a language "name"
 	defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar;
 
-	// Parses a set of EGraph rewriting rules in the given language grammar
-	// Make sure the grammar has a "bind_1" semantic action for variables
-	// also, the grammar should have a "ws" rule for whitespace
-	parseRules(grammar : DslGrammar, rules : string) -> DslRules;
-
 	// Parses a program in the given language
 	parseProgram(grammar : DslGrammar, program : string) -> DslAst;
 
-	// Builds the cost structure for graph rewriting
-	rewriteCosts(costs : string) -> DslCosts;
-
-	// Prepares a compiler from the given language to the target language
-	makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslCompiler;
+	DslGrammar(
+		language : string,
+		term : GTerm
+	);
 }
 
-DslGrammar(
-	language : string,
-	term : GTerm
-);
-
-DslRules(
-	rules : DslAst
-);
-
-DslCosts(
-	costs : Tree<string, int>
-);
-
-DslCompiler(
-	language : DslGrammar,
-	target : string,
-	blueprints : [EReplacement<string>]
-);
 
 defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar {
 	// We have a standard white-space grammar ready for embedding
@@ -52,37 +27,6 @@ defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar {
 		lastLineComment = "//" (!"\n" anychar)*;
 	>> + grammar else grammar;
 	DslGrammar(name, parseAndCheckGringoGrammar(name, text));
-}
-
-parseRules(exp : DslGrammar, rules : string) -> DslRules {
-	mainRule = mainRule(exp.term);
-	/*
-	TODO: Figure out how to do a "extension" of the existing grammar
-	buildGrammar(
-		<<
-			rules = ws $"nil" (rule $"cons")*;
-			rule = @name "=>" ws @name ";" ws $"rule";
-			@grammar
-		>>,
-		[
-			"name", mainRule
-			"grammar", replaceLastGringo(exp.term, GVar("rules")),
-		]
-	)
-
-	The required operations are:
-		find main rule of grammar
-		replace last gringo and insert grammar
-	*/
-	ruleGrammar = GRule("rules", GSeq(GVar("ws"), GSeq(GUnquote(GString("nil")), GStar(GSeq(GVar("rule"), GUnquote(GString("cons")))))), 
-		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(mainRule), GString("=>")), GVar("ws")), GVar(mainRule)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
-			// Merge with the existing grammar
-			replaceLastGringo(exp.term, GVar("rules"))
-		));
-
-	ruleDsl = DslGrammar(exp.language + "_rules", ruleGrammar);
-	astRules = parseProgram(ruleDsl, rules);
-	DslRules(astRules);
 }
 
 popDslStack(a : List<DslAst>) -> Pair<DslAst, List<DslAst>> {
@@ -160,35 +104,4 @@ dslAction = GringoAction(
 parseProgram(grammar : DslGrammar, program : string) -> DslAst {
 	genv = doGringoParse(grammar.term, dslAction, makeList(), program, false, false);
 	popDslStack(genv.output).first;
-}
-
-rewriteCosts(costs : string) -> DslCosts {
-	costlang = defineGrammar("cost", <<
-		costs = ws $"nil" (cost $"cons")*;
-		cost = $id ws "=>" ws $int $"s2i" ws ";" ws $"cost_2";
-
-		int = '0'-'9'+;
-		id = 'a'-'z'+;
-		costs
-	>>, true);
-
-	thecosts : List<DslAst> = getDslList(parseProgram(costlang, costs));
-	costMap = foldList(thecosts, makeTree(), \acc, ast -> {
-		node = getDslNode(ast);
-		if (length(node.args) == 2) {
-			name = getDslString(node.args[0]);
-			cost = getDslInt(node.args[1]);
-			setTree(acc, name, cost)
-		} else acc;
-	});
-
-	DslCosts(costMap);
-}
-
-makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslCompiler {
-	DslCompiler(
-		grammar,
-		target,
-		[],
-	);
 }
