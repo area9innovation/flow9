@@ -3,16 +3,19 @@ import tools/dsl/dsl_parse;
 export {
 	// Prepares a compiler from the given language to the target language
 	makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslCompiler;
+
+	compileDsl(compiler : DslCompiler, program : DslAst) -> string;
 }
 
 DslCompiler(
 	language : DslGrammar,
 	target : string,
-	blueprints : [DslTranslation]
+	// Per AST node, how to translate it
+	blueprints : Tree<string, DslTranslation>
 );
 
 DslTranslation(pattern : DslPattern, output : [DslBlueprint]);
-	DslPattern(id : string, args : [DslPattern]);
+	DslPattern(id : string, args : [string]);
 
 	DslBlueprint ::= DslString, DslSubstitute;
 		DslSubstitute(bind : string, precedence : int);
@@ -27,7 +30,7 @@ makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslC
 		pattern = id "(" ws args ")" ws $"pattern_2"
 			| id;
 
-		args = $"nil" pattern $"cons" ("," ws pattern $"cons")*
+		args = $"nil" id $"cons" ("," ws id $"cons")*
 			| $"nil";
 
 		output = $"nil" (blueprint $"cons")*;
@@ -38,7 +41,7 @@ makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslC
 		bind = "$" id "(" ws int ")" ws $"bind_2"
 			| "$" id $"0" $"s2i" $"bind_2";
 
-		string = $('"' onechar_* '"') ws;
+		string = '"' $(onechar_*) '"' ws;
 
 		onechar_ = backslash "u" hexdigit hexdigit hexdigit hexdigit
 			| backslash "x" hexdigit hexdigit
@@ -60,10 +63,17 @@ makeCompiler(grammar : DslGrammar, target : string, blueprints : string) -> DslC
 	prints = parseProgram(blueprintlang, blueprints);
 	// println(prettyDsl(prints));
 
+	translations = dsl2Translations(prints);
+
 	DslCompiler(
 		grammar,
 		target,
-		dsl2Translations(prints),
+		fold(translations, makeTree(), \acc, translation : DslTranslation -> {
+			if (containsKeyTree(acc, translation.pattern.id)) {
+				println("ERROR: We only allow one pattern per node. " + translation.pattern.id);
+				acc;
+			} else setTree(acc, translation.pattern.id, translation)
+		})
 	);
 }
 
@@ -96,7 +106,7 @@ dsl2Pattern(a : DslAst) -> DslPattern {
 		DslNode(name, args, pos): {
 			if (length(args) > 0) {
 				aargs = getDslList(args[1]);
-				DslPattern(getDslString(args[0]), map(list2array(aargs), dsl2Pattern))
+				DslPattern(getDslString(args[0]), map(list2array(aargs), getDslString))
 			} else {
 				error();
 			}
@@ -120,4 +130,86 @@ dsl2Blueprint(a : DslAst) -> DslBlueprint {
 			DslString("ERROR");
 		}
 	}
+}
+
+compileDsl(compiler : DslCompiler, program : DslAst) -> string {
+	list2string(doCompileDsl(compiler, makeList(), program).second);
+}
+
+doCompileDsl(compiler : DslCompiler, acc : List<string>, program : DslAst) -> Pair<int, List<string>> {
+	// println("Compiling " + prettyDsl(program));
+	wrap = \name -> {
+		mtranslation = lookupTree(compiler.blueprints, name);
+		mtranslation ?? {
+			// println("TODO: Figure out how to handle this later " + name);
+			Pair(100, Cons(prettyDsl(program), acc));
+		} : {
+			Pair(100, Cons(prettyDsl(program), acc));
+		}
+	}
+	switch (program) {
+		DslBool(value): wrap("bool");
+		DslInt(value): wrap("int");
+		DslDouble(value): wrap("double");
+		DslString(value): Pair(100, Cons(value, acc));
+		DslList(value): {
+			if (containsKeyTree(compiler.blueprints, "list")) {
+				wrap("list");
+			} else {
+				foldList(value, Pair(100, acc), \acc2, val -> {
+					lp = doCompileDsl(compiler, acc2.second, val);
+					Pair(max(acc2.first, lp.first), lp.second)
+				})
+			}
+		}
+		DslNode(name, args, pos): {
+			mtranslation = lookupTree(compiler.blueprints, name);
+			mtranslation ?? {
+				bindings : Tree<string, DslOutput> = bindDslPattern(compiler, program, mtranslation.pattern, makeTree());
+				fold(mtranslation.output, Pair(100, acc), \acc2, bluepr -> {
+					instantiateDslBlueprint(acc2, bindings, bluepr)
+				})
+			} : {
+				Pair(100, Cons(prettyDsl(program), acc));
+			}
+		}
+	}
+}
+
+DslOutput(
+	precedence : int,
+	output : string
+);
+
+instantiateDslBlueprint(acc : Pair<int, List<string>>, bindings : Tree<string, DslOutput>, blueprint : DslBlueprint) -> Pair<int, List<string>> {
+	switch (blueprint) {
+		DslString(value): Pair(acc.first, Cons(value, acc.second));
+		DslSubstitute(bind, precedence): {
+			mterm = lookupTree(bindings, bind);
+			mterm ?? {
+				if (mterm.precedence >= precedence) {
+					Pair(max(acc.first, precedence), Cons(mterm.output, acc.second))
+				} else {
+					Pair(max(acc.first, mterm.precedence), Cons("(" + mterm.output + ")", acc.second))
+				}
+			} : {
+				println("Unknown blueprint binding: " + bind);
+				acc;
+			}
+		}
+	}
+}
+
+bindDslPattern(compiler : DslCompiler, node : DslNode, pattern : DslPattern, bindings : Tree<string, DslOutput>) -> Tree<string, DslOutput> {
+	if (node.name == pattern.id) {
+		if (length(node.args) == length(pattern.args)) {
+			foldi(pattern.args, bindings, \i, acc : Tree<string, DslOutput>, arg : string -> {
+				pp : Pair<int, List<string>>= doCompileDsl(compiler, makeList(), node.args[i]);
+				setTree(acc, arg, DslOutput(pp.first, list2string(pp.second)));
+			});
+		} else {
+			println("Expected " + i2s(length(pattern.args)) + " arguments, but got " + prettyDsl(node));
+			bindings;
+		}
+	} else bindings;
 }
