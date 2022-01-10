@@ -263,9 +263,8 @@ int32_t dup(int32_t a) {
 	return a;
 }
 
-int32_t drop(int32_t a) {
+void drop(int32_t a) {
 	std::cout<<"DROP:: int value "<< a <<std::endl;
-	return a;
 }
 
 int32_t reuse(int32_t a) {
@@ -278,9 +277,9 @@ std::u16string dup(std::u16string a) {
 	return a;
 }
 
-std::u16string drop(std::u16string a) {
+void drop(std::u16string& a) {
 	std::cout<<"DROP:: string value ";flow_print2(a); std::cout <<std::endl;
-	return a;
+	a = u"";
 }
 
 std::u16string reuse(std::u16string a) {
@@ -293,9 +292,8 @@ bool dup(bool a) {
 	return a;
 }
 
-bool drop(bool a) {
+void drop(bool a) {
 	std::cout<<"DROP:: bool value "<< a <<std::endl;
-	return a;
 }
 
 bool reuse(bool a) {
@@ -308,9 +306,8 @@ double dup(double a) {
 	return a;
 }
 
-double drop(double a) {
+void drop(double a) {
 	std::cout<<"DROP:: double value "<< a <<std::endl;
-	return a;
 }
 
 double reuse(double a) {
