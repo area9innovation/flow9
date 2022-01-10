@@ -114,46 +114,21 @@ a string.
 
 It uses a syntax like
 
-	plus(a,b) => $a(50) "+" $b(49);
-	mul(a,b) => $a(40) "*" $b(39);
-	int(n) => $n;
+	plus(a, b)  => $a(40) "+" $b(39);
+	minus(a, b) => $a(40) "-" $b(39);
+	mul(a, b)   => $a(50) "*" $b(49);
 
 where the left-hand side is a pattern to match in the source program, and
-the right hand side is a "blueprint". $n means expand the string representation
-of the matched node.
-The number in parenthesis is to help with precedence and associativity.
-If it is omitted, it is understood to be 0.
+the right hand side is a "blueprint". $a(50) means expand the string 
+representation of the matched node. The number in parenthesis is to 
+help with precedence and associativity. If it is omitted, it is 
+understood to be intMax.
 
 This way, we can model precedence and associativity.
-
-Consider 
-
-	(1 - 2) - 3 == 1 - 2 -3
-
-while
-
-	1 - (2 - 3) == 1 - (2 - 3)
-
-We can get this if we have this rule
-
-	minus(a,b) => $a(50) "-" $b(49);
-
-and then the expansion goes like this:
-
-	minus(minus(1, 2), 3) =>
-		minus(minus("1":100, "2":100):50, "3":100) =>
-		minus("1-2":50, "3":100) =>
-		"1-2-3" // because 50 <= 50
-
-	minus(1, minus(2,3)) =>
-		minus("1":100, "2-3":50) =>
-		"1-(2-3)":50 because 50 > 49
 
 # Future plans
 
 - Add DSL for lowering one language to another
-- Add DSL for blueprint-like string expansion to make compilers/prettyprinters simpler.
-  - Figure out precedence for blueprint/text output. $a(100) could be precedence syntax?
 - Add DSL for evaluation with a given set of "natives".
 - Add DSL for type checking
 - Add DSL for test cases for all of the above
