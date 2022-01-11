@@ -135,6 +135,10 @@ TODO:
 - Add more native functions, as well as syntax for more complicated expressions
   on the right hand side
 
+- let, var, lambda, call
+- or, and, equal, not_equal, less, less_equal, greater, greater_equal
+- not, negate, dot, index, brace
+
 ## Blueprints for compilers
 
 The `makeCompiler` call can prepare a compiler, which compiles a language to
@@ -154,20 +158,17 @@ understood to be intMax.
 
 This way, we can model precedence and associativity.
 
+TODO:
+- Add a mode where we get warnings about missing AST nodes
+
 # Future plans
 
 - Add DSL for lowering one language to another
-- Add DSL for evaluation with a given set of "natives".
 - Add DSL for type checking
 - Add DSL for test cases for all of the above
 - Add DSL for grammar rewriting
 - Add DSL for macros/compile evaluation
 - Add DSL for layout
-
-Reltable:
-
-- Operators: col, line, paragraph, "bubble up" for headings
-- Context: Some grid, table or similar
 
 ## Speedrun towards DB
 

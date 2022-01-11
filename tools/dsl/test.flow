@@ -6,29 +6,68 @@ import tools/dsl/dsl_eval;
 main() {
 	// The grammar of the language where arity of actions is a naming convention
 	mylang = defineGrammar("mylang", <<
-		exp = exp "+" ws exp $"plus_2" 
-			| exp "-" ws exp $"minus_2"
-			|> exp "*" ws exp $"mul_2"
+		exp = 
+			id "=" ws exp ";" ws expsemi $"let_3"
+			|> exp "||" ws exp $"or_2"
+			|> exp "&&" ws exp $"and_2"
+			|> exp "==" exp $"equal_2" | exp "!=" ws exp $"not_equal_2"
+			|> exp ("<=" ws exp $"less_equal_2" | "<" ws exp $"less_2" | ">=" ws exp $"greater_equal_2" | ">=" ws exp $"greater_2")
+
+			|> exp < ("+" ws exp $"plus_2" | "-" ws exp $"minus_2")*
+			|> exp ("*" ws exp $"mul_2" | "/" ws exp $"div_2" | "%"  ws exp $"mod_2")*
+
+			|> (
+				'!' ws exp $"not_1"
+				| "-" ws exp $"negate_1"
+				| lambda
+				| exp (
+					( "(" ws exps ")" ws $"call_2")
+					| "." ws id $"dot_2"
+					| "[" ws exp "]" ws $"index_2"
+				)*
+			)
+
+			|> "{" ws expsemi "}" ws $"brace_1"
 			|> "(" ws exp ")" ws
-			|> "if" ws exp exp "else" ws exp $"ifelse_3"
-			|> "true" $"true" ws
-			|> "false" $"false" ws
-			|> $int ws $"s2i"
-			|> $id ws $"bind_1";	// For pattern matching
+			|> (
+				"if" !letterOrDigit ws exp exp "else" ws exp $"ifelse_3"
+				| "true" !letterOrDigit $"true" ws
+				| "false" !letterOrDigit $"false" ws
+				| id $"var_1"
+				|> $int ws $"s2i"
+				|> "$" ws id $"bind_1"	// For pattern matching
+			);
+
+		lambda = '\' ws lambdaargs "->" ws exp "" $"lambda_2"; // The "" makes right-recursion disappear
+			lambdaargs = $"nil" id $"cons" ("," ws id $"cons")*
+				| $"nil";
+
+		exps = $"nil" exp $"cons" ("," ws exp $"cons")* ("," ws)? 
+			| $"nil";
+
+		expsemi = $"nil" exp $"cons" (";" ws exp $"cons")* (";" ws)? 
+			| $"nil";
+	
 		int = '0'-'9'+;
-		id = 'a'-'z'+;
+		id = $(('a'-'z' | 'A'-'Z' | '_') letterOrDigit*) ws;
+
+		letterOrDigit = 'a'-'z'
+			| 'A'-'Z'
+			| '_'
+			| '0'-'9';
+
 		ws exp
 	>>, true); // true adds definitions for whitespace
 
 	// The set of rewriting rules we want
 	rules = parseRules(mylang, <<
-		a + b => b + a;
-		a * b => b * a;
-		a + a => 2 * a;
-		2 * a => a + a;
-		a + 0 => a;
-		a * 0 => 0;
-		a * 1 => a;
+		$a + $b => $b + $a;
+		$a * $b => $b * $a;
+		$a + $a => 2 * $a;
+		2 * $a => $a + $a;
+		$a + 0 => $a;
+		$a * 0 => 0;
+		$a * 1 => $a;
 	>>);
 
 	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
@@ -42,7 +81,11 @@ main() {
 		mul => 3;
 	>>);
 
-	testValue = parseProgram(mylang, << if true 3 * 1 - (1 * 2 - 3 + 0 * 4) else 0>>);
+	testValue = parseProgram(mylang, << 
+		a = \b, c -> b + c;
+		a(2);
+		if true 3 * 1 - (1 * 2 - 3 + 0 * 4) else 0
+	>>);
 
 	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
 
