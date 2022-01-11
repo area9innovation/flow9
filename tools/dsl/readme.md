@@ -107,6 +107,34 @@ gives this output:
 		)
 	)
 
+TODO:
+- Add stopping criteria for rewriting in the sense of specific eclasses: If the root
+  contains a given eclass, we can stop
+- Add pulsing: After N iterations, extract the best, and then rerun rules again from
+  that point. These two things is what Caviar does https://arxiv.org/abs/2111.12116
+  Is verified against Halide
+- Do a DSL for pattern matching, maybe like https://arxiv.org/pdf/1807.01872v1.pdf
+
+# Evaluator
+
+A runtime evaluator in the form on an interpreter can be made by mapping each AST node
+to a set of builtin natives.
+
+	eval = makeDslEvaluator(<<
+		plus => add;
+		minus => sub;
+		zero => 0;
+	>>);
+	println(prettyDsl(evaluateDsl(eval, testValue)));
+
+The natives defined include:
+
+	add, sub, mul
+
+TODO:
+- Add more native functions, as well as syntax for more complicated expressions
+  on the right hand side
+
 ## Blueprints for compilers
 
 The `makeCompiler` call can prepare a compiler, which compiles a language to
@@ -134,6 +162,12 @@ This way, we can model precedence and associativity.
 - Add DSL for test cases for all of the above
 - Add DSL for grammar rewriting
 - Add DSL for macros/compile evaluation
+- Add DSL for layout
+
+Reltable:
+
+- Operators: col, line, paragraph, "bubble up" for headings
+- Context: Some grid, table or similar
 
 ## Speedrun towards DB
 
