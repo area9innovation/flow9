@@ -1,0 +1,71 @@
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_rewrite;
+import tools/dsl/dsl_compiler;
+
+main() {
+	// The grammar of the language where arity of actions is a naming convention
+	mylang = defineGrammar("mylang", <<
+		exp = exp "+" ws exp $"plus_2" 
+			| exp "-" ws exp $"minus_2"
+			|> exp "*" ws exp $"mul_2"
+			|> "(" ws exp ")" ws
+			|> $int ws $"s2i"
+			|> $id ws $"bind_1";	// For pattern matching
+		int = '0'-'9'+;
+		id = 'a'-'z'+;
+		ws exp
+	>>, true); // true adds definitions for whitespace
+
+	// The set of rewriting rules we want
+	rules = parseRules(mylang, <<
+		a + b => b + a;
+		a * b => b * a;
+		a + a => 2 * a;
+		2 * a => a + a;
+		a + 0 => a;
+		a * 0 => 0;
+		a * 1 => a;
+	>>);
+
+	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
+	defaultValue : DslAst = parseProgram(mylang, << 0 >>);
+
+	// These costs refer to the semantic actions without arity
+	// so we can figure out what the costs are. This is used to extract the best reduction
+	costs = rewriteCosts(<<
+		int => 1;
+		plus => 2;
+		mul => 3;
+	>>);
+
+	testValue = parseProgram(mylang, << 3 * 1 - (1 * 2 - 3 + 0 * 4) >>);
+
+	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
+
+	if (false) {
+		println(prettyDsl(testValue));
+		println("is optimized to\n");
+		println(prettyDsl(replaced));
+		// 123 + 23 + 34 + 34
+	}
+
+	// This is a prototype for how to define an compiler/evaluator of a language.
+	// Probably, we need some conversion method for instantiation
+	compiler = makeCompiler(mylang, "text", <<
+		plus(a, b) => $a(40) "+" $b(39);
+		minus(a, b) => $a(40) "-" $b(39);
+		mul(a, b)  => $a(50) "*" $b(49);
+	>>);
+
+	program = compileDsl(compiler, replaced);
+	println("The program   " + prettyDsl(testValue) + "   compiles to " + program);
+
+	programs = [<< 1 + 2 * 3 >>, << (1 + 2) * 3 >>, << 1 - 2 - 3 >>, << (1 - 2) - 3 >>, << 1 - (2 - 3) >>];
+	iter(programs, \p -> {
+		program2 = parseProgram(mylang, p);
+		println("Testing precedence and associativity: " + p + " => " + compileDsl(compiler, program2));
+	});
+
+	println("Done");
+	quit(0);
+}

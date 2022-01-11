@@ -4,12 +4,13 @@ import math/math;
 export {
 	// Extracts the best enode for each class
 	extractEGraph(e : EGraph<?>, 
-		benefitFn : (ENode<?>, [EClassBenefit<?>]) -> EClassBenefit<?>
-	) -> Tree<int, EClassBenefit<?>>;
+		// Given a node, and the cost of the children, what is the cost of this node?
+		costFn : (ENode<?>, [EClassCost<?>]) -> int
+	) -> Tree<int, EClassCost<?>>;
 
-	EClassBenefit(
-		// The benefit of this. The bigger, the better
-		benefit : int,
+	EClassCost(
+		// The cost of this. The smaller, the better
+		cost : int,
 		// The node that wins
 		node : ENode<?>
 	);
@@ -17,55 +18,57 @@ export {
 
 ExtractorEnv(
 	egraph : EGraph<?>,
-	// Function to extract the best alternative and the benefit of that
-	benefitFn : (ENode<?>, [EClassBenefit<?>]) -> EClassBenefit<?>,
-	// The highest benefit so far per class
-	benefits : ref Tree<int, EClassBenefit<?>>,
+	// Function to extract the best alternative and the cost of that
+	costFn : (ENode<?>, [EClassCost<?>]) -> int,
+	// The lowest cost so far per class
+	costs : ref Tree<int, EClassCost<?>>,
 	// What eclasses are we currently extracting? Attempt to avoid infinite loops
 	extracting : ref Set<int>,
 );
 
 // https://github.com/egraphs-good/egg/blob/main/src/extract.rs
-extractEGraph(e : EGraph<?>, benefitFn : (ENode<?>, [EClassBenefit<?>]) -> EClassBenefit<?>) -> Tree<int,  EClassBenefit<?>> {
-	env = ExtractorEnv(e, benefitFn, ref makeTree(), ref makeSet());
-	calcEClassBenefits(env);
-	^(env.benefits);
+extractEGraph(e : EGraph<?>, costFn : (ENode<?>, [EClassCost<?>]) -> int) -> Tree<int,  EClassCost<?>> {
+	env = ExtractorEnv(e, costFn, ref makeTree(), ref makeSet());
+	calcEClassCosts(env);
+	^(env.costs);
 }
 
-calcEClassBenefits(e : ExtractorEnv<?>) -> void {
+calcEClassCosts(e : ExtractorEnv<?>) -> void {
 	work = ref false;
 	iterEGraph(e.egraph, \eclass : int, nodes : Set<ENode<?>> -> {
-		getEClassBenefit(e, eclass);
+		getEClassCost(e, eclass);
 		{}
 	});
 	if (^work) {
-		calcEClassBenefits(e);
+		calcEClassCosts(e);
 	}
 }
 
-getEClassBenefit(env : ExtractorEnv<?>, eclass : int) -> Maybe<EClassBenefit<?>> {
-	mbenefit = lookupTree(^(env.benefits), eclass);
-	mbenefit ?? {
-		Some(mbenefit)
+getEClassCost(env : ExtractorEnv<?>, eclass : int) -> Maybe<EClassCost<?>> {
+	mcost = lookupTree(^(env.costs), eclass);
+	mcost ?? {
+		Some(mcost)
 	} : {
 		if (containsSet(^(env.extracting), eclass)) None()
 		else {
 			env.extracting := insertSet(^(env.extracting), eclass);
 			nodes = getEClassNodes(env.egraph, eclass);
-			res = foldSet(nodes, mbenefit, \acc, node -> {
-				nbenefit = getENodeBenefit(env, node);
-				switch (nbenefit) {
+			res = foldSet(nodes, mcost, \acc, node -> {
+				ncost = getENodeCost(env, node);
+				switch (ncost) {
 					None(): acc;
-					Some(benefit): {
+					Some(cost): {
 						switch (acc) {
 							None(): {
-								env.benefits := setTree(^(env.benefits), eclass, benefit);
-								Some(benefit);
+								classCost = EClassCost(cost, node);
+								env.costs := setTree(^(env.costs), eclass, classCost);
+								Some(classCost);
 							}
 							Some(ec): {
-								if (benefit.benefit > ec.benefit) {
-									env.benefits := setTree(^(env.benefits), eclass, benefit);
-									Some(benefit);
+								if (cost < ec.cost) {
+									classCost = EClassCost(cost, node);
+									env.costs := setTree(^(env.costs), eclass, classCost);
+									Some(classCost);
 								} else acc;
 							}
 						}
@@ -79,12 +82,12 @@ getEClassBenefit(env : ExtractorEnv<?>, eclass : int) -> Maybe<EClassBenefit<?>>
 	}
 }
 
-getENodeBenefit(env : ExtractorEnv<?>, node : ENode<?>) -> Maybe<EClassBenefit<?>> {
-	childbenefits = filtermap(node.args, \arg -> {
-		getEClassBenefit(env, arg)
+getENodeCost(env : ExtractorEnv<?>, node : ENode<?>) -> Maybe<int> {
+	childcosts = filtermap(node.args, \arg -> {
+		getEClassCost(env, arg)
 	});
-	if (length(childbenefits) == length(node.args)) {
-		benefit = env.benefitFn(node, map(childbenefits, \cc -> cc));
-		Some(benefit);
+	if (length(childcosts) == length(node.args)) {
+		cost = env.costFn(node, map(childcosts, \cc -> cc));
+		Some(cost);
 	} else None();
 }

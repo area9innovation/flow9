@@ -16,9 +16,9 @@ export {
 	// Find all matches to this pattern to a given class. Calls the onMatch function
 	// for each. Traverses all down recursive
 	findAllEClassMatches(
-		acc : EMatchEngine<?>, class : int, pattern : EPattern<?>,
+		acc : EMatchEngine<?>, class : int, pattern : EPattern<?>, visited : Set<int>,
 		onMatch : (bindings : Tree<string, ?>, ?) -> void
-	) -> void;
+	) -> Set<int>;
 
 	// Performs all replacements possible, repeatedly up to the given number of iterations
 	performEReplacements(e : EMatchEngine<?>, iterations : int, class : int, 
@@ -68,31 +68,35 @@ makeEMatchEngine(e : EGraph<?>, def : ?,
 
 // Looks transitively throughout the entire graph and find all matches to the
 // given pattern
-findAllEClassMatches(acc : EMatchEngine<?>, class : int, pattern : EPattern<?>,
+findAllEClassMatches(acc : EMatchEngine<?>, class : int, pattern : EPattern<?>, visited : Set<int>,
 		onMatch : (bindings : Tree<string, ?>, ?) -> void
-) -> void {
-	nodes = getEClassNodes(acc.egraph, class);
-	iterSet(nodes, \node -> {
-		match = epatternENodeMatch(acc, node, pattern);
-		if (!match.fail) {
-			expr = egraphMatch2Exp(acc.egraph, acc.def, acc.combine, match.matchNode);
-			bindings = mapTree(match.bindings, \mat -> {
-				egraphMatch2Exp(acc.egraph, acc.def, acc.combine, mat)
-			});
-			onMatch(bindings, expr)
-		}
-	
-		// OK, look at the children
-		iter(node.args, \arg -> {
-			findAllEClassMatches(acc, arg, pattern, onMatch)
-		})
-	});
+) -> Set<int> {
+	if (containsSet(visited, class)) visited
+	else {
+		nodes = getEClassNodes(acc.egraph, class);
+		foldSet(nodes, insertSet(visited, class), \nacc, node -> {
+			match = epatternENodeMatch(acc, node, pattern);
+			if (!match.fail) {
+				expr = egraphMatch2Exp(acc.egraph, acc.def, acc.combine, match.matchNode);
+				bindings = mapTree(match.bindings, \mat -> {
+					egraphMatch2Exp(acc.egraph, acc.def, acc.combine, mat)
+				});
+				onMatch(bindings, expr)
+			}
+		
+			// OK, look at the children
+			fold(node.args, nacc, \acc2, arg -> {
+				findAllEClassMatches(acc, arg, pattern, acc2, onMatch)
+			})
+		});
+	}
 }
 
 // Will match the pattern against this node, and bind as specific bindings
 // as possible
 epatternENodeMatch(acc : EMatchEngine, term : ENode<?>, pattern : EPattern<?>) -> EMatchEngine {
-	switch (pattern) {
+	if (acc.fail) acc
+	else switch (pattern) {
 		EPatternVar(id): {
 			mbind = lookupTree(acc.bindings, id);
 			mbind ?? {
@@ -121,7 +125,7 @@ epatternENodeMatch(acc : EMatchEngine, term : ENode<?>, pattern : EPattern<?>) -
 			}
 		}
 		EPatternTerm(head, pargs): {
-			if (!acc.fail && term.head == head && length(term.args) == length(pargs)) {
+			if (term.head == head && length(term.args) == length(pargs)) {
 				// OK, the head and # args match
 				res = foldi(term.args, Pair(acc, []), \i, acc2 : Pair<EMatchEngine, [EGraphMatch<?>]>, class : int -> {
 					if (acc2.first.fail) acc2
@@ -237,7 +241,7 @@ egraphClass2Exp(
 	class : int, 
 ) -> ? {
 	nodes = getEClassNodes(e, class);
-	mnode = popMaxSet(nodes);
+	mnode = popMinSet(nodes);
 	mnode ?? {
 		egraphMatch2Exp(e, def, combine, ENodeMatch(mnode.value))
 	} : def
@@ -251,10 +255,11 @@ performEReplacements(e : EMatchEngine<?>, iterations : int, class : int, replace
 	// Here, we record all the unifications to be done
 	unifications = ref makeSet();
 	iter(replacements, \replacement -> {
-		findAllEClassMatches(e, class, replacement.pattern, \bindings, match : ? -> {
+		findAllEClassMatches(e, class, replacement.pattern, makeSet(), \bindings, match : ? -> {
 			rep = replacement.rewrite(bindings);
 			unifications := insertSet(^unifications, Pair(match, rep))
 		});
+		{}
 	});
 
 	if (!isEmptySet(^unifications)) {

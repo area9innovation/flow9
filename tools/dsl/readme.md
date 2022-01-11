@@ -1,153 +1,139 @@
 # DSL & Rewriting engine
 
-This is a system to try to define syntax & semantics for languages, including
+This is a system to define syntax & semantics for languages, including
 rewrite rules.
 
-# E-graph matching library
+## Syntax
 
-makeEGraph requires a function to split a value into the head and the children.
+The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, addWs)`.
 
-makeEMatchEngine requires a default value, as well as a function to combine a head
-and children, as well as an expression to start from.
+The semantics actions are defined using actions like "plus_2", "negate_1", where
+the suffix defines the arity of the semantic action.
 
-To do replacements, we need a pattern which is:
+Here is a simple grammar for expressions:
 
-	EPattern<?> ::= EPatternVar, EPatternTerm<?>;
-		EPatternVar(id : string);
-		EPatternTerm(head : ?, args : [EPattern<?>]);
+	// The grammar of the language where arity of actions is a naming convention
+	mylang = defineGrammar("mylang", <<
+		exp = exp "+" ws exp $"plus_2" 
+			|> exp "*" ws exp $"mul_2"
+			|> $int ws $"s2i"
+			|> $id ws $"bind_1";	// For pattern matching
+		int = '0'-'9'+;
+		id = 'a'-'z'+;
+		ws exp
+	>>, true); // true adds definitions for whitespace
 
-and then a replacement, which takes bindings and produces a new value, as well
-as the root class to start out with. So when constructing the graph, we have to
-remember the root class to do the replacement from.
+### Semantic actions in Gringo
 
-To extract the best value,
-	extractEGraph(e : EGraph<?>, benefitFn : (ENode<?>, [EClassBenefit<?>]) -> EClassBenefit<?>) -> Tree<int, EClassBenefit<?>>;
+Built in actions include:
+- nil for the empty list
+- cons for appending to a list
+- swap for swapping two elements on the stack
+- drop for dropping an element on the stack
+- true for DslBool(true)
+- false for DslBool(false)
+- s2i for converting the top string on the stack to a DslInt
+- s2d for converting the top string on the stack to a DslDouble
+- dump for printing the contents of the stack - helpful for debugging
+
+## Parsing
+
+The `parseProgram` will parse a string using a given grammar from `defineGrammar`:
+
+	defaultValue : DslAst = parseProgram(mylang, <<123+0*434+abd>>);
+	println(prettyDsl(defaultValue));
+
+The result is a DslAst representation of the semantic actions. 
+
+## E-graph rewriting
+
+The DSL library comes with support for doing semantic term-rewriting using an
+e-graph.
 
 # Example
 
-    SimpleLanguage {
-        Num(i32),
-        "+" = Add([Id; 2]),
-        "*" = Mul([Id; 2]),
-    }
-
-    rewrite!("commute-add"; "(+ ?a ?b)" => "(+ ?b ?a)"),
-    rewrite!("commute-mul"; "(* ?a ?b)" => "(* ?b ?a)"),
-    rewrite!("add-0"; "(+ ?a 0)" => "?a"),
-    rewrite!("mul-0"; "(* ?a 0)" => "0"),
-    rewrite!("mul-1"; "(* ?a 1)" => "?a"),
-
-We could attempt to write that as Gringo with a simple grammar like this:
-
-	exp = exp "+" exp $"plus" |> exp "*" exp $"mul") |> int $"int";
-	int = $('0'-'9'+);
-
-and for
-
-	0 + 2 * 1
-
-we would get a stack like
-
-	0
-	"int"
-	2
-	"int"
-	1
-	"int"
-	"mul"
-	"plus"
-
-To turn that into a tree, we would need the arity of the operators:
-
-	"int" -> 1
-	"mul" -> 2
-	"plus" -> 2
-
-With that, we would get a tree
-
-	plus(int(0), mul(int(2), int(1)))
-
-We could express the rewrite rules with this
-
-	a + b => b + a
-	a * b => b * a
-	a + 0 => a
-	a * 0 => 0
-	a * 1 => a
-
-With that, and a grammar to have patterns like this:
-
-	rules = rule*;
-	rule = pattern "=>" pattern $"rule";
-	pattern = (exp += |> id $"bind");	// This extends the exp grammar with a new case at the end of the grammar
-	id = 'a'-'z';
-
-and define "bind" to have arity of 1, and "rule" to have arity of 2,
-we would get the rules out as trees:
-
-	rule(plus(bind(a), bind(b)), plus(bind(b), bind(a)),
-	rule(mul(bind(a), bind(b)), mul(bind(b), bind(a)),
-	rule(plus(bind(a), int(0)), bind(a)),
-	rule(mul(bind(a), int(0)), int(0)),
-	rule(mul(bind(a), int(1)), bind(a)),
-
-We still need a default value, which could be the basic value.
-
-## Rewriting engine syntax proposal
-
-OK, so the above example can be expressed using this syntax:
-
-	// The grammar of the language where arity of actions is a naming convention
-	grammar mylang {
-		exp = exp "+" exp $"plus_2" 
-			|> exp "*" exp $"mul_2") 
-			|> $int $"int_1"
-			|> $id $"bind_1";	// For pattern matching
-		int = '0'-'9'+;
-		id = 'a'-'z';
-	}
-
 	// The set of rewriting rules we want
-	rules mylang {
+	rules = parseRules(mylang, <<
 		a + b => b + a;
 		a * b => b * a;
+		a + a => 2 * a;
+		2 * a => a + a;
 		a + 0 => a;
 		a * 0 => 0;
 		a * 1 => a;
-	}
+	>>);
 
-	// For the plumbing to work, we need a default value (in the language syntax)
-	default mylang {
-		0
-	}
+	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
+	defaultValue : DslAst = parseProgram(mylang, << 0 >>);
 
 	// These costs refer to the semantic actions without arity
 	// so we can figure out what the costs are. This is used to extract the best reduction
-	cost mylang {
+	costs = rewriteCosts(<<
 		int => 1;
 		plus => 2;
 		mul => 3;
-	}
+	>>);
 
-	// This is a prototype for how to define an compiler/evaluator of a language.
-	// Probably, we need some conversion method for instantiation
-	compile mylang => text {
-		plus(a, b) => plus_int($a, $b);
-		mul(a, b) = mul_int($a, $b);
-		int(n) = n;
-	}
+	testValue = parseProgram(mylang, << 0 + 123 + 0 * 23 + 1 * 23 + 34 * 2 >>);
 
-And with that, we could attempt to make a saturating rewrite engine and
-extraction method, as well as a compiler.
+	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
+	println(prettyDsl(testValue));
+	println("is optimized to\n");
+	println(prettyDsl(replaced));
 
-For the compiler, we could attempt to have built-in set of natives to get an evaluator
-out.
+gives this output:
 
-TODO:
-- Pretty-printing as a special case of compilation?
-- Test cases for both reduction, evaluation and compilation?
-- Define type system?
-- Figure out precedence for blueprint/text output?
+	plus(
+		0,
+		plus(
+			123,
+			plus(
+				mul(0, 23),
+				plus(
+					mul(1, 23),
+					mul(34, 2)
+				)
+			)
+		)
+	)
+
+	is optimized to
+
+	plus(
+		123,
+		plus(
+			23,
+			plus(34, 34)
+		)
+	)
+
+## Blueprints for compilers
+
+The `makeCompiler` call can prepare a compiler, which compiles a language to
+a string.
+
+It uses a syntax like
+
+	plus(a, b)  => $a(40) "+" $b(39);
+	minus(a, b) => $a(40) "-" $b(39);
+	mul(a, b)   => $a(50) "*" $b(49);
+
+where the left-hand side is a pattern to match in the source program, and
+the right hand side is a "blueprint". $a(50) means expand the string 
+representation of the matched node. The number in parenthesis is to 
+help with precedence and associativity. If it is omitted, it is 
+understood to be intMax.
+
+This way, we can model precedence and associativity.
+
+# Future plans
+
+- Add DSL for lowering one language to another
+- Add DSL for evaluation with a given set of "natives".
+- Add DSL for type checking
+- Add DSL for test cases for all of the above
+- Add DSL for grammar rewriting
+- Add DSL for macros/compile evaluation
 
 ## Speedrun towards DB
 

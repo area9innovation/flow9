@@ -1,0 +1,246 @@
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_util;
+import ds/egraph_matching;
+import ds/egraph_extract;
+
+export {
+	// Parses a set of EGraph rewriting rules in the given language grammar
+	// Make sure the grammar has a "bind_1" semantic action for variables
+	// also, the grammar should have a "ws" rule for whitespace
+	parseRules(grammar : DslGrammar, rules : string) -> DslRules;
+
+	// Builds the cost structure for graph rewriting
+	rewriteCosts(costs : string) -> DslCosts;
+
+	// Perform N iterations of rewrites, and extract the best result
+	rewriteDsl(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst;
+}
+
+DslRules(
+	rules : DslAst
+);
+
+parseRules(exp : DslGrammar, rules : string) -> DslRules {
+	mainRule = mainRule(exp.term);
+	/*
+	TODO: Figure out how to do a "extension" of the existing grammar
+	buildGrammar(
+		<<
+			rules = ws $"nil" (rule $"cons")*;
+			rule = @name "=>" ws @name ";" ws $"rule";
+			@grammar
+		>>,
+		[
+			"name", mainRule
+			"grammar", replaceLastGringo(exp.term, GVar("rules")),
+		]
+	)
+
+	The required operations are:
+		find main rule of grammar
+		replace last gringo and insert grammar
+	*/
+	ruleGrammar = GRule("rules", GSeq(GVar("ws"), GSeq(GUnquote(GString("nil")), GStar(GSeq(GVar("rule"), GUnquote(GString("cons")))))), 
+		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(mainRule), GString("=>")), GVar("ws")), GVar(mainRule)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
+			// Merge with the existing grammar
+			replaceLastGringo(exp.term, GVar("rules"))
+		));
+
+	ruleDsl = DslGrammar(exp.language + "_rules", ruleGrammar);
+	astRules = parseProgram(ruleDsl, rules);
+	DslRules(astRules);
+}
+
+
+DslCosts(
+	costs : Tree<string, int>
+);
+
+
+rewriteCosts(costs : string) -> DslCosts {
+	costlang = defineGrammar("cost", <<
+		costs = ws $"nil" (cost $"cons")*;
+		cost = $id ws "=>" ws $int $"s2i" ws ";" ws $"cost_2";
+
+		int = '0'-'9'+;
+		id = 'a'-'z'+;
+		costs
+	>>, true);
+
+	thecosts : List<DslAst> = getDslList(parseProgram(costlang, costs));
+	costMap = foldList(thecosts, makeTree(), \acc, ast -> {
+		node = getDslNode(ast);
+		if (length(node.args) == 2) {
+			name = getDslString(node.args[0]);
+			cost = getDslInt(node.args[1]);
+			setTree(acc, name, cost)
+		} else acc;
+	});
+
+	DslCosts(costMap);
+}
+
+dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>] {
+	error = \ -> {
+		println("Expected rule, got " + prettyDsl(rules));
+		[];
+	}
+	switch (rules) {
+		DslBool(value): error();
+		DslInt(value): error()
+		DslDouble(value): error()
+		DslString(value): error()
+		DslList(value): {
+			foldList(value, [], \acc, val -> {
+				concat(acc, dslRules2replacements(val))
+			});
+		}
+		DslNode(name, args, pos): {
+			if (name == "rule") {
+				pattern = dsl2pattern(args[0]);
+				replacement = args[1];
+				[
+					EReplacement(pattern, \bindings : Tree<string, DslAst> -> {
+						replaceDsl(bindings, replacement)
+					})
+				];
+			} else error();
+		}
+	}
+}
+
+dsl2pattern(ast : DslAst) -> EPattern<DslAst> {
+	switch (ast) {
+		DslBool(value): EPatternTerm(ast, []);
+		DslInt(value): EPatternTerm(ast, []);
+		DslDouble(value): EPatternTerm(ast, []);
+		DslString(value): EPatternTerm(ast, []);
+		DslList(value): EPatternTerm(DslList(makeList()), map(list2array(value), dsl2pattern));
+		DslNode(name, args, pos): {
+			if (name == "bind") {
+				bind = getDslString(args[0]);
+				EPatternVar(bind)
+			} else {
+				EPatternTerm(
+					DslNode(name, [], pos),
+					map(args, dsl2pattern)
+				)
+			}
+		}
+	}
+}
+
+replaceDsl(bindings : Tree<string, DslAst>, ast : DslAst) -> DslAst {
+	switch (ast) {
+		DslBool(value): ast;
+		DslInt(value): ast;
+		DslDouble(value): ast;
+		DslString(value): ast;
+		DslList(value): {
+			DslList(mapList(value, \val : DslAst -> {
+				replaceDsl(bindings, val)
+			}))
+		}
+		DslNode(name, args, pos): {
+			if (name == "bind") {
+				bind = getDslString(args[0]);
+				mvalue = lookupTree(bindings, bind);
+				mvalue ?? {
+					// println("Replaced " + bind + " with " + prettyDsl(mvalue));
+					mvalue;
+				} : {
+					println("Unknown binding in replacement " + bind);
+					ast;
+				}
+			} else {
+				DslNode(name, map(args, \a -> replaceDsl(bindings, a)), pos);
+			}
+		}
+	}
+}
+
+
+buildDslEGraph() -> EGraph<DslAst> {
+	splitChildren = \a : DslAst -> switch (a) {
+		DslBool(value): Pair(a, []);
+		DslInt(value): Pair(a, []);
+		DslDouble(value): Pair(a, []);
+		DslString(value): Pair(a, []);
+		DslList(value): Pair(DslList(makeList()), list2array(value));
+		DslNode(name, args, pos): Pair(DslNode(name, [], pos), args);
+	};
+	makeEGraph(splitChildren);
+}
+
+buildDslEMatchEngine(egraph : EGraph<DslAst>, def : DslAst) -> EMatchEngine<DslAst> {
+	makeEMatchEngine(egraph, def, combineDsl);
+}
+
+combineDsl(head : DslAst, args : [DslAst]) -> DslAst {
+	switch (head) {
+		DslBool(value): head;
+		DslInt(value): head;
+		DslDouble(value): head;
+		DslString(value): head;
+		DslList(value): DslList(array2list(args));
+		DslNode(name, __, pos): DslNode(name, args, pos);
+	}
+};
+
+rewriteDsl(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst {
+	egraph = buildDslEGraph();
+	root = addEExp(egraph, program);
+	match = buildDslEMatchEngine(egraph, def);
+
+	replacements = dslRules2replacements(rules);
+
+	performEReplacements(match, iterations, root, replacements);
+
+	if (false) {
+		iterEGraph(egraph, \eclass, nodes : Set<ENode<DslAst>> -> {
+			println(i2s(eclass) + ": " + superglue(set2array(nodes), \n : ENode<DslAst> -> prettyDsl(n.head), ", "));
+		});
+	}
+
+	extracts : Tree<int, EClassCost<DslAst>> = extractEGraph(egraph,
+		\node : ENode<DslAst>, ccosts : [EClassCost<DslAst>] -> {
+			childcosts = fold(ccosts, 0, \acc, c -> {
+				acc + c.cost
+			});
+			headCost = dslCost(costs, node.head);
+			// println("'" + prettyDsl(node.head) + "' cost " + i2s(headCost) + " with child cost " + i2s(childcosts));
+			headCost  + childcosts;
+		}
+	);
+
+	reduced = extractDsl(egraph, extracts, root);
+	reduced;
+}
+
+dslCost(costs : Tree<string, int>, a : DslAst) -> int {
+	switch (a) {
+		DslBool(value): lookupTreeDef(costs, "bool", 1);
+		DslInt(value): lookupTreeDef(costs, "int", 1);
+		DslDouble(value): lookupTreeDef(costs, "double", 1);
+		DslString(value): lookupTreeDef(costs, "string", 1);
+		DslList(value): lookupTreeDef(costs, "list", 1);
+		DslNode(name, args, pos): lookupTreeDef(costs, name, 1);
+	}
+}
+
+extractDsl(egraph : EGraph<DslAst>, extracts : Tree<int, EClassCost<DslAst>>, eclass : int) -> DslAst {
+	root = getEClassRoot(egraph, eclass);
+	mextract = lookupTree(extracts, root);
+	mextract ?? {
+		node : ENode<DslAst> = mextract.node;
+		children = map(node.args, \a : int -> {
+			extractDsl(egraph, extracts, a);
+		});
+		combineDsl(node.head, children)
+	} : {
+		nodes : Set<ENode<DslAst>> = getUnionMapValue(egraph.eclass, eclass);
+		println("Could not resolve " + i2s(eclass) + " with " + superglue(set2array(nodes), \n : ENode<DslAst> -> prettyDsl(n.head), ", "));
+		DslNode("Could not resolve " + i2s(eclass), [], 0)
+	}
+}

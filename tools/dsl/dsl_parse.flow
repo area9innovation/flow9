@@ -1,0 +1,110 @@
+import tools/gringo/gringo_embed;
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_util;
+import tools/dsl/replace_gringo;
+
+export {
+	// Prepares a grammar for a language "name"
+	defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar;
+
+	// Parses a program in the given language
+	parseProgram(grammar : DslGrammar, program : string) -> DslAst;
+
+	DslGrammar(
+		language : string,
+		term : GTerm
+	);
+}
+
+
+defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar {
+	// We have a standard white-space grammar ready for embedding
+	text = if (addWs) <<
+		ws = s*;
+		s = cs+;
+		anychar = '0x0000'-'0xffff';
+		cs = " " | "\t" | "\n" | "//" (!"\n" anychar)* "\n" | "/*" (!"*/" anychar)* "*/" | "\r";
+		lastLineComment = "//" (!"\n" anychar)*;
+	>> + grammar else grammar;
+	DslGrammar(name, parseAndCheckGringoGrammar(name, text));
+}
+
+popDslStack(a : List<DslAst>, op : string) -> Pair<DslAst, List<DslAst>> {
+	switch (a) {
+		EmptyList(): {
+			println("Stack underflow for " + op);
+			Pair(DslNode("Stack underflow", [], 0), a);
+		}
+		Cons(head, tailL): {
+			Pair(head, tailL)
+		}
+	}
+}
+
+pushDslValue(list : DslAst, value : DslAst) -> DslList {
+	switch (list) {
+		DslList(av): DslList(Cons(value, av));
+		default: {
+			// Well, we drop whatever we had before
+			DslList(makeList1(value));
+		}
+	}
+}
+
+dslAction = GringoAction(
+		\acc : List<DslAst>, v -> {
+			if (v == "nil") {
+				Cons(DslList(makeList()), acc);
+			} else if (v == "cons") {
+				elm = popDslStack(acc, v);
+				list = popDslStack(elm.second, v);
+				narray = pushDslValue(list.first, elm.first);
+				Cons(narray, list.second);
+			} else if (v == "swap") {
+				top = popDslStack(acc, v);
+				other = popDslStack(top.second, v);
+				Cons(
+					top.first, Cons(other.first, other.second)
+				)
+			} else if (v == "drop") {
+				popDslStack(acc, v).second;
+			} else if (v == "true") {
+				Cons(DslBool(true), acc);
+			} else if (v == "false") {
+				Cons(DslBool(false), acc);
+			} else if (v == "s2i") {
+				elm = popDslStack(acc, v);
+				Cons(DslInt(s2i(getDslString(elm.first))), elm.second);
+			} else if (v == "s2d") {
+				elm = popDslStack(acc, v);
+				Cons(DslDouble(s2d(getDslString(elm.first))), elm.second);
+			} else if (v == "dump") {
+				iterList(acc, \a -> println(prettyDsl(a)));
+				acc;
+			} else {
+				parts = strSplit(v, "_");
+				if (length(parts) == 2 && i2s(s2i(parts[1])) == parts[1]) {
+					arity = s2i(parts[1]);
+					name = parts[0];
+					args : Pair<[DslAst], List<DslAst>> = fold(enumFromTo(1, arity), Pair([], acc), \acc2, arg -> {
+						e = popDslStack(acc2.second, v);
+						Pair(concat([e.first], acc2.first), e.second)
+					});
+					val = DslNode(name, args.first, 0);
+					Cons(val, args.second)
+				} else {
+					println("Unknown grammar operation " + v);
+					acc;
+				}
+			}
+		},
+		\acc : List<DslAst>, m -> {
+			Cons(DslString(m), acc)
+		}
+	);
+
+
+parseProgram(grammar : DslGrammar, program : string) -> DslAst {
+	genv = doGringoParse(grammar.term, dslAction, makeList(), program, false, false);
+	popDslStack(genv.output, "").first;
+}
