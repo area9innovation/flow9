@@ -1,69 +1,52 @@
 import tools/dsl/dsl_parse;
 
 export {
-	makeDslEvaluator(spec : string) -> DslEvaluator;
-
-	evaluateDsl(evaluator : DslEvaluator, p : DslAst) -> DslAst;
-
-	DslEvaluator(env : Tree<string, DslExp>);
+	makeDslEnv() -> DslEnv;
+	evaluateDsl(env : DslEnv, p : DslAst) -> DslAst;
 }
 
-DslExp ::= DslAst, DslNativeFn;
-	DslNativeFn(id : string);
+DslEnv(env : Tree<string, DslAst>);
 
-makeDslEvaluator(spec : string) -> DslEvaluator {
-	evalLang = defineGrammar("eval", <<
-		evals = ws $"nil" (eval $"cons")*;
-		eval = id ws "=>" ws exp ";" ws $"eval_2";
-
-		exp = id $"native_1" | $double $"s2d" | int $"s2i";
-
-		double = int "." int | int "." | "." int;
-		int = $('0'-'9'+) ws;
-		id = $('a'-'z'+) ws;
-		evals
-	>>, true);
-
-	theEvals : List<DslAst> = getDslList(parseProgram(evalLang, spec));
-
-	env : Tree<string, DslExp> = foldList(theEvals, makeTree(), \acc, eval : DslAst -> {
-		node = getDslNode(eval);
-		name = getDslString(node.args[0]);
-		def = dsl2exp(node.args[1]);
-		// println("Setting " + name + " to " + toString(def));
-		setTree(acc, name, def);
-	});
-
-	DslEvaluator(env);
+makeDslEnv() -> DslEnv {
+	DslEnv(makeTree());
 }
 
-dsl2exp(d : DslAst) -> DslExp {
-	switch (d) {
-		DslNode(name, args, pos): {
-			if (name == "native") {
-				DslNativeFn(getDslString(args[0]));
-			} else {
-				println("Unknown EXP node");
-				d;
-			}
-		}
-		default: d;
-	}
-}
-
-evaluateDsl(env : DslEvaluator, p : DslAst) -> DslAst {
+evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 	switch (p) {
 		DslNode(name, args, pos): {
 			if (name == "ifelse") {
 				cond = evaluateDsl(env, args[0]);
 				evaluateDsl(env, if (getDslBool(cond)) args[1] else args[2]);
+			} else if (name == "let") {
+				let = getDslString(args[0]);
+				val = evaluateDsl(env, args[1]);
+				nenv = DslEnv(setTree(env.env, let, val));
+				evaluateDsl(nenv, args[2]);
+			} else if (name == "var") {
+				lookupTreeDef(env.env, getDslString(args[0]), args[0]);
+			} else if (name == "and") {
+				// Shortcircut
+				left = evaluateDsl(env, args[0]);
+				if (getDslBool(left)) {
+					evaluateDsl(env, args[1]);
+				} else left;
+			} else if (name == "or") {
+				// Shortcircut
+				left = evaluateDsl(env, args[0]);
+				if (getDslBool(left)) {
+					left
+				} else evaluateDsl(env, args[1]);
 			} else {
-				exp = lookupTreeDef(env.env, name, DslNativeFn(name));
 				eargs = map(args, \a -> {
 					evaluateDsl(env, a);
 				});
-				evaluateDslExpCall(env, exp, eargs);
-
+				mnative = getDslNative(name);
+				mnative ?? {
+					mnative.fn(eargs)
+				} : {
+					// OK, we fallback to construction
+					DslNode(name, eargs, pos);
+				}
 			}
 		}
 		DslList(value): {
@@ -74,22 +57,6 @@ evaluateDsl(env : DslEvaluator, p : DslAst) -> DslAst {
 		DslDouble(value): p;
 		DslString(value): p;
 	}
-}
-
-evaluateDslExpCall(env : DslEvaluator, e : DslExp, args : [DslAst]) -> DslAst {
-	switch (e) {
-		DslAst(): e;
-		DslNativeFn(id): {
-			mnative = getDslNative(id);
-			mnative ?? {
-				mnative.fn(args)
-			} : {
-				// OK, we fallback to construction
-				DslNode(id, args, 0);
-			}
-		}
-	}
-	
 }
 
 DslNativeBuiltin(
@@ -107,6 +74,8 @@ getDslNative(name : string) -> Maybe<DslNativeBuiltin> {
 			Pair("add", two(addDsl)),
 			Pair("sub", two(subDsl)),
 			Pair("mul", two(mulDsl)),
+			Pair("div", two(divDsl)),
+			Pair("mod", two(modDsl)),
 		])
 	});
 	lookupTree(n, name);
@@ -193,6 +162,60 @@ mulDsl(left : DslAst, right : DslAst) -> DslAst {
 			switch (right) {
 				DslInt(rvalue): DslDouble(lvalue * i2d(rvalue));
 				DslDouble(rvalue): DslDouble(lvalue * rvalue);
+				default: error();
+			}
+		}
+		DslString(lvalue): error();
+		DslList(lvalue): error();
+		DslNode(name, args, pos): error();
+	}
+}
+
+divDsl(left : DslAst, right : DslAst) -> DslAst {
+	error = \ -> {
+		println("Can not multiply " + prettyDsl(left) + " and " + prettyDsl(right));
+		DslString("ERROR");
+	}
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue / rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) / rvalue);
+				default: error();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue / i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue / rvalue);
+				default: error();
+			}
+		}
+		DslString(lvalue): error();
+		DslList(lvalue): error();
+		DslNode(name, args, pos): error();
+	}
+}
+
+modDsl(left : DslAst, right : DslAst) -> DslAst {
+	error = \ -> {
+		println("Can not multiply " + prettyDsl(left) + " and " + prettyDsl(right));
+		DslString("ERROR");
+	}
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue % rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) % rvalue);
+				default: error();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue % i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue % rvalue);
 				default: error();
 			}
 		}
