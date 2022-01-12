@@ -135,9 +135,9 @@ TODO:
 - Add more native functions, as well as syntax for more complicated expressions
   on the right hand side
 
-- lambda, call
-- equal, not_equal, less, less_equal, greater, greater_equal
-- not, negate, dot, index, brace
+- lambda
+- not, negate
+- dot, index, brace
 
 ## Blueprints for compilers
 
