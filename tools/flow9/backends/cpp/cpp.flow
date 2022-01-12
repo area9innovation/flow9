@@ -151,9 +151,9 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 						"args", supergluei(args, \i, arg -> {
 							argType = argtypes[i];
-							btype2cpp(backend, argType) +(if (!isSimpleBType(argType) && memoryManagement) "& " else " ") + arg
+							btype2cpp(backend, argType) +(if (!isSimpleBType(argType) && memoryManagement) "* " else " ") + arg
 						}, ", "),
-						"returnType", returnType + (if (isSimpleReturnType) "" else "&"),
+						"returnType", returnType + (if (isSimpleReturnType) "" else "*"),
 					]
 				);
 
@@ -256,9 +256,10 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 
 		}
 		BLetStatement(id, value, body): {
-			varType = if (memoryManagement) btype2cpp(backend, getBType(value)) else "auto";
+			valueType = getBType(value);
+			varType = if (memoryManagement && !isSimpleBType(valueType)) (btype2cpp(backend, valueType) + "*") else "auto";
 			varType + " " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
-			+ (if (memoryManagement) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " <<std::endl;\n") else "")
+			+ (if (memoryManagement) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " << \" : value=\" << " + id + " <<std::endl;\n") else "")
 			+ bstatement2cpp(backend, body, fnArgs, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
@@ -437,7 +438,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 		BConstruct(struct, args, type): {
 			if (memoryManagement) {
 				blueprint(
-					"%struct%{%args%}",
+					"new %struct%{%args%}",
 					[
 						"struct", if (args == []) struct else addTyparsToStruct(backend, type, struct),
 						"args", superglue(args, rec, ", "),
@@ -453,18 +454,21 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 				);
 			}
 		}
+		// TODO: reuse field : (*reuse(variable)).field  -> ~ reuseField()
 		BField(value, field, type): {
+			structType = getBType(value);
+			isSimpleStructType = memoryManagement && !isSimpleBType(structType);
 			isRecursiveField = eitherMap(
-				lookupTree(backend.info.recursiveStructs, bType2id(getBType(value))),
+				lookupTree(backend.info.recursiveStructs, bType2id(structType)),
 				\s -> containsSet(s.recursiveFields, field),
 				false
 			);
 			blueprint("
 					%ptr%%value%.%field%",
 				[
-					"value", rec(value),
+					"value", rec(value) + (if (isSimpleStructType) ")" else ""),
 					"field", field,
-					"ptr", if (isRecursiveField) "*" else ""
+					"ptr", if (isRecursiveField) "*" else if (isSimpleStructType) "(*" else ""
 			]);
 		}
 		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
@@ -1372,7 +1376,8 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 			[
 				"fn", bcounter2fnName(),
 				"val", rec(value),
-				"type", if (isDrop() || isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
+				//"type", if (isDrop() || isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
+				"type", "",
 			]
 		);
 	}

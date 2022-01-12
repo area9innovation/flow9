@@ -211,6 +211,30 @@ void dropStruct(T& a) {
 	}
 }
 
+template <typename T>
+void drop(T* a) {
+	if (a == nullptr) {
+		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
+	// TODO: fix: 2 pointers, 1 object. delete ptr1 - OK. delete ptr2 - Error (wrong the cell)
+	} else {
+		(*a)._counter -= 1;
+		if ((*a)._counter < 1) {
+			std::cout << "FREE:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			delete a;
+			a = nullptr;
+		}
+		else {
+			std::cout << "DEC COUNTER:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+		}
+	}
+}
+
+// TODO: reuse field
+template <typename T>
+T* reuse(T* a) {
+	std::cout << "REUSE PTR:: &=" << &a << "; counter = " << (*a)._counter << std::endl;
+	return a;
+}
 
 // TODO
 // memory leak (?)
@@ -239,6 +263,14 @@ template <typename T>
 T& dup(T& a) {
 	a._counter += 1;
 	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
+	return a;
+}
+
+// TODO: recursive ?
+template <typename T>
+T* dup(T* a) {
+	(*a)._counter += 1;
+	std::cout<<"DUP:: cnt after: "<< (*a)._counter << "; &=" << a <<" " << &a << " " << *a << std::endl;
 	return a;
 }
 

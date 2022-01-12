@@ -163,6 +163,10 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		}));
 	}
 
+	// TODO: result of the function?
+	isAlias = \val : BExp -> extractBVarId(val) != "";
+	dupAlias = \val : BExp -> if (!isBCounter(val) && isAlias(val)) BDupValue(val) else val;
+
 	switch (exp.exp) {
 		BVoid() : exp;
 		BBool(v) : exp;
@@ -180,13 +184,14 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			newValue = recInc(val, newBody.usedVars, newBody.createdVars, newBody.downDrops, true, isDownDrop);
 			dupExp = dupDrop(BExpUsedVars(BVar(id, getBType(val)), newValue.usedVars, insertSet(newValue.createdVars, id), newValue.downDrops), false);
 			reducedBCounter = reduceBCounter(dupExp.exp, isDownDrop);
-			bodyWithDup = switch (reducedBCounter.first : BExp) {
-				BCounter(): BSequence([reducedBCounter.first, newBody.exp], type);
-				default: newBody.exp;
+			bodyWithDup = if (isBCounter(reducedBCounter.first)) {
+				BSequence([reducedBCounter.first, newBody.exp], type);
+			} else {
+				newBody.exp;
 			}
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
 			BExpUsedVars(
-				BLet(id, reducedValue.first, bodyWithDup, type),
+				BLet(id, dupAlias(reducedValue.first), bodyWithDup, type),
 				dupExp.usedVars,
 				dupExp.createdVars,
 				arrayPushMaybe(arrayPushMaybe(dupExp.downDrops, reducedBCounter.second), reducedValue.second)
@@ -337,6 +342,13 @@ extractBVarId(exp : BExp) -> string {
 	}
 }
 
+isBCounter(exp : BExp) -> bool {
+	switch (exp : BExp) {
+		BCounter(): true;
+		default: false;
+	}
+}
+
 isBTypeFunction(type : BType) -> bool {
 	switch (type) {
 		BTypePar(__) : false;
@@ -361,7 +373,7 @@ isNativeWithoutDropFn(exp : BExp, generators : Set<string>) -> bool {
 	}
 }
 
-reduceBCounter(counter : BCounter, isDownDrop : bool) -> Pair<BExp, Maybe<BCounter>> {
+reduceBCounter(counter : BExp, isDownDrop : bool) -> Pair<BExp, Maybe<BCounter>> {
 	if (optimization) {
 	unquadruple(extractBExpFromBCounter(counter, 0, 0, false), \exp, dupCnt, dropCnt, reuse -> {
 		cnt = min(dupCnt, dropCnt);
