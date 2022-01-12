@@ -23,12 +23,18 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				nenv = DslEnv(setTree(env.env, let, val));
 				evaluateDsl(nenv, args[2]);
 			} else if (name == "var") {
-				lookupTreeDef(env.env, getDslString(args[0]), args[0]);
+				mvar = lookupTree(env.env, getDslString(args[0]));
+				mvar ?? {
+					mvar;
+				} : {
+					p;
+				}
 			} else if (name == "lambda") {
 				// TODO: Instantiate closures
 				p;
 			} else if (name == "call") {
-				lambda : DslNode = getDslNode(evaluateDsl(env, args[0]));
+				fn = evaluateDsl(env, args[0]);
+				lambda : DslNode = getDslNode(fn);
 				eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
 				if (lambda.name == "lambda") {
 					nargs = list2array(getDslList(lambda.args[0]));
@@ -38,6 +44,16 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 						setTree(acc, getDslString(nargs[i]), arg)
 					}));
 					evaluateDsl(nenv, body);
+				} else if (lambda.name == "var") {
+					// Normal functions
+					mnative = getDslNative(getDslString(lambda.args[0]));
+					mnative ?? {
+						mnative.fn(list2array(eargs));
+					} : {
+						println("ERROR: Can not call " + prettyDsl(lambda));
+						p;
+					}
+
 				} else {
 					println("ERROR: Can not call " + prettyDsl(lambda));
 					p;
@@ -88,6 +104,9 @@ getDslNative(name : string) -> Maybe<DslNativeBuiltin> {
 	two = \fn : (DslAst, DslAst) -> DslAst -> {
 		DslNativeBuiltin(\args -> fn(args[0], args[1]))
 	};
+	one = \fn : (DslAst) -> DslAst -> {
+		DslNativeBuiltin(\args -> fn(args[0]));
+	};
 	n : Tree<string, DslNativeBuiltin> = onlyOnce(builtinNativeDsls, \ -> {
 		pairs2tree([
 			Pair("add", two(addDsl)),
@@ -101,6 +120,15 @@ getDslNative(name : string) -> Maybe<DslNativeBuiltin> {
 			Pair("less_equal", two(lessEqualDsl)),
 			Pair("greater", two(greaterDsl)),
 			Pair("greater_equal", two(greaterEqualDsl)),
+			Pair("cons", two(consDsl)),
+			Pair("nil", DslNativeBuiltin(\args -> {
+				println("Calling nil with " + toString(args));
+				DslList(makeList())
+			})),
+			Pair("head", one(headDsl)),
+			Pair("tail", one(tailDsl)),
+			Pair("not", one(notDsl)),
+			Pair("negate", one(negateDsl)),
 		])
 	});
 	lookupTree(n, name);
@@ -276,4 +304,44 @@ greaterDsl(left : DslAst, right : DslAst) -> DslAst {
 
 greaterEqualDsl(left : DslAst, right : DslAst) -> DslAst {
 	DslBool(compareDsl(left, right) >= 0);
+}
+
+notDsl(val : DslAst) -> DslAst {
+	DslBool(!getDslBool(val));
+}
+
+negateDsl(val : DslAst) -> DslAst {
+	error = \ -> {
+		println("Can not negate " + prettyDsl(val));
+		DslString("ERROR");
+	}
+	switch (val){
+		DslBool(value): error();
+		DslInt(value): DslInt(-value);
+		DslDouble(value): DslDouble(-value);
+		DslString(value): error();
+		DslList(value): error();
+		DslNode(name, args, pos): error();
+	}
+}
+
+consDsl(left : DslAst, right : DslAst) -> DslAst {
+	rlist = getDslList(right);
+	DslList(Cons(left, rlist));
+}
+
+headDsl(val : DslAst) -> DslAst {
+	list = getDslList(val);
+	switch (list) {
+		EmptyList(): DslList(list);
+		Cons(head, __): head;
+	}
+}
+
+tailDsl(val : DslAst) -> DslAst {
+	list = getDslList(val);
+	DslList(switch (list) {
+		EmptyList(): list;
+		Cons(head, tail_): tail_;
+	})
 }

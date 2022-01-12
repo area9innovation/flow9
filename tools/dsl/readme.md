@@ -117,27 +117,22 @@ TODO:
 
 # Evaluator
 
-A runtime evaluator in the form on an interpreter can be made by mapping each AST node
-to a set of builtin natives.
+A runtime evaluator in the form on an interpreter will evaluate programs using a
+pre-defined set of natives, which correspond to a simple functional language:
 
-	eval = makeDslEvaluator(<<
-		plus => add;
-		minus => sub;
-		zero => 0;
-	>>);
-	println(prettyDsl(evaluateDsl(eval, testValue)));
+	println(prettyDsl(evaluateDsl(makeDslEnv(), program)));
 
 The natives defined include:
 
-	add, sub, mul
+	ifelse, let, var, call, lambda
+	equal, not_equal, less, less_equal, greater, greater_equal
+	and, or, not
+	add, sub, mul, div, mod, negate
+	nil, cons, head, tail
 
 TODO:
-- Add more native functions, as well as syntax for more complicated expressions
-  on the right hand side
-
-- lambda
-- not, negate
-- dot, index, brace
+- lambda should support closures and recursion
+- brace
 
 ## Blueprints for compilers
 
