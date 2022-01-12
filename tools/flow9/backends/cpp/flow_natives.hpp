@@ -217,11 +217,16 @@ void dropStruct(T& a) {
 // use std::unique_ptr
 template <typename T>
 T& reuse(T& a) {
-	T* tmp;
-	std::cout<<"REUSE:: from &=" << &a <<" to &="<< tmp <<std::endl;
-	tmp = &a;
-	drop<T>(a);
-	return *tmp;
+	if (a._counter > 1) {
+		std::cout<<"REUSE:: &=" << &a << "; counter = " << a._counter << std::endl;
+		return a;
+	} else {
+		T* tmp;
+		std::cout<<"REUSE:: from &=" << &a <<" to &="<< tmp << std::endl;
+		tmp = &a;
+		drop<T>(a);
+		return *tmp;
+	}
 	// does not transfer ownership
 	// does not work as expected because it does not break the link to the variable.
 	/*std::cout<<"REUSE:: &=" << &a << std::endl;
@@ -313,6 +318,11 @@ void drop(double a) {
 double reuse(double a) {
 	std::cout<<"REUSE:: double value "<< a <<std::endl;
 	return a;
+}
+
+template <typename A, typename ...B>
+void drop(std::function<A(B...)>& fn) {
+	std::cout<<"DROP:: function &="<< &fn << std::endl;
 }
 
 // TODO: vector (array)

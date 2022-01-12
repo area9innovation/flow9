@@ -47,6 +47,18 @@ import sys/concurrent;
 //   4: 	println("no")
 //   5: }
 // we'll free the memory for the result of fn1() on line 2 or 4. but we have to free on line 1 after || .
+//
+// 2) unused result of functions
+// Example :
+// 01: SomeStruct makeStruct();
+// ...
+// 1: a = 1;
+// 2: makeStruct();
+// 3: b = 2;
+// 4: c = makeStruct();
+// 4 - OK; 2 - Error
+// We do not free the memory of the result (line 2). a simple option is to add a drop.
+// The correct solution is to pass 'unused : bool' to the function.
 
 // Think about:
 // 1) BTailCall
@@ -61,20 +73,29 @@ export {
 optimization = true;
 
 addRefCounting(prog : BExpProgram) -> BExpProgram {
-	BExpProgram(prog with declarations = map(prog.declarations, refCountingBExpDeclaration));
+	fnIds = extractExpFnIds(prog);
+	BExpProgram(prog with declarations = map(prog.declarations, \d -> refCountingBExpDeclaration(d, fnIds)));
 }
 
-refCountingBExpDeclaration(decl : BExpDeclaration) -> BExpDeclaration {
+extractExpFnIds(prog : BExpProgram) -> Set<string> {
+	fold(prog.declarations, makeSet(), \acc, decl -> switch (decl) {
+		BGlobalVar(id, body, type): acc;
+		BExpFunction(id, typars, args, body, type): insertSet(acc, id);
+		BExpNative(id, isio, type, nativeName): insertSet(acc, id);
+	});
+}
+
+refCountingBExpDeclaration(decl : BExpDeclaration, fnIds : Set<string>) -> BExpDeclaration {
 	switch (decl) {
-		BGlobalVar(id, body, type): BGlobalVar(id, addBCounterToBExp(body, [], type), type);
-		BExpFunction(id, typars, args, body, type): BExpFunction(id, typars, args, addBCounterToBExp(body, args, type), type);
+		BGlobalVar(id, body, type): BGlobalVar(id, addBCounterToBExp(body, [], type, fnIds), type);
+		BExpFunction(id, typars, args, body, type): BExpFunction(id, typars, args, addBCounterToBExp(body, args, type, fnIds), type);
 		BExpNative(id, isio, type, nativeName): decl;
 	}
 }
 
-addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType) -> BExp {
+addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType, fnIds : Set<string>) -> BExp {
 	generators = fold(cppGenerators(), makeSet(), \acc, g -> insertSet(acc, g.name));
-	newBody = refCountingBExp(BExpUsedVars(exp, makeTree(), makeSet(), []), generators, isReturnBType(type), false);
+	newBody = refCountingBExp(BExpUsedVars(exp, makeTree(), makeSet(), []), generators, isReturnBType(type), false, fnIds);
 	usedVars = map(capturedVarIds, \id -> containsKeyTree(newBody.usedVars, id));
 	if (forall(usedVars, idfn)) {
 		newBody.exp;
@@ -108,8 +129,8 @@ addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType) -> BExp {
 BExpUsedVars(
 	exp : BExp,
 	usedVars : Tree<string, BType>, // id - type
-	createdVars : Set<string>,
-	downDrops : [BCounter],
+	createdVars : Set<string>, // local variables
+	downDrops : [BCounter], // variables we want to delete later (in the parent expression)
 );
 
 foldri(cs : [?], acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
@@ -124,9 +145,9 @@ doFoldri(cs : [?], i : int, acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
 	}
 }
 
-refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool, isDownDrop : bool) -> BExpUsedVars {
+refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool, isDownDrop : bool, fnIds : Set<string>) -> BExpUsedVars {
 	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e), reuse);
-	recInc = \e, tails, createdVars, drops, recWithReturn, recIsDownDrop -> refCountingBExp(BExpUsedVars(e, tails, createdVars, drops), generators, recWithReturn, recIsDownDrop);
+	recInc = \e, tails, createdVars, drops, recWithReturn, recIsDownDrop -> refCountingBExp(BExpUsedVars(e, tails, createdVars, drops), generators, recWithReturn, recIsDownDrop, fnIds);
 	rec = \e, recWithReturn, recIsDownDrop -> recInc(e, exp.usedVars, exp.createdVars, exp.downDrops, recWithReturn, recIsDownDrop);
 	mapExpA = \args, lastWithReturn, recIsDownDrop -> {
 		lastIndex = length(args) - 1;
@@ -176,9 +197,12 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			BExpUsedVars(BLambda(args, newBody.exp, type), newBody.usedVars, newBody.createdVars, newBody.downDrops);
 		}
 		BCall(fn, args, type): {
+			lambdaFn = getLambdaId(fn, fnIds);
+			isNativeFn = isNativeWithoutDropFn(fn, generators);
+			isLambda = lambdaFn.first != "" && !isNativeFn;
 			newFn = rec(fn, withReturn || isReturnBType(type), isDownDrop);
 			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, newFn.downDrops), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
-				if (isNativeWithoutDropFn(fn, generators)) {
+				if (isNativeFn) {
 					newArg = recInc(arg, newTails, exp.createdVars, newDrops, withReturn, isDownDrop);
 					reducedValue = reduceBCounter(newArg.exp, isDownDrop);
 					Quadruple(concat([reducedValue.first], newArgs), newArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(newArg.downDrops, reducedValue.second));
@@ -190,7 +214,16 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 					Quadruple(concat([reducedValue.first], newArgs), dupedArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(dupedArg.downDrops, reducedValue.second));
 				}
 			}));
-			BExpUsedVars(BCall(newFn.exp, newArgs.first, type), newArgs.second, newArgs.third, newArgs.fourth)
+			newBCall = BCall(newFn.exp, newArgs.first, type);
+			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, lambdaType)) else newArgs.second;
+			// TODO: drop unused result of the fn
+			newExp = BExpUsedVars(/*if (withReturn) newBCall else BDropValue(newBCall)*/newBCall, newUsedVars, newArgs.third, newArgs.fourth);
+			if (isLambda) {
+				//newExp = makeBConstructWithDrops(newConstruct, newDrops, withReturn || isDownDrop);
+				newExp; //dupDrop(newExp, withReturn)
+			} else {
+				newExp;
+			}
 		}
 		BIf(cond, then, else_, type): {
 			origCond = rec(cond, withReturn, isDownDrop);
@@ -233,6 +266,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			);
 		}
 		BConstruct(struct, args, type): unquadruple(
+			// isDownDrop = true for args (we will remove the values after the whole structure has been constructed.)
 			mapExpA(args, false, true),
 			\newValues, newUsedVars, newCreatedVars, newDrops -> {
 				newConstruct = BConstruct(struct, newValues, type);
@@ -262,6 +296,18 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			BExpUsedVars(BCast(reducedValue.first, from, to), newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
 		BCounter(): exp; // shouldn't happen
+	}
+}
+
+// TODO: alias ?
+getLambdaId(fn : BExp, functionIds : Set<string>) -> Pair<string, BType> {
+	switch (fn) {
+		BVar(id, type) : if (!containsSet(functionIds, id)) Pair(id, type) else Pair("", bvoidType);
+		BDupValue(value) : getLambdaId(value, functionIds);
+		BDropValue(value) : getLambdaId(value, functionIds);
+		BReuseValue(value) : getLambdaId(value, functionIds);
+		BCast(value, __, __) : getLambdaId(value, functionIds);
+		default : Pair("", bvoidType);
 	}
 }
 

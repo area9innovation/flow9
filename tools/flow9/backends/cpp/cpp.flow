@@ -383,25 +383,47 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 		}
 		BCall(fn, args, type): {
 			unpair(createTmpVars(backend, args, isGlobalExp), \newStatements, newArgs -> {
-				concatStrings(newStatements)
-				+ produceBackendCall(backend, BCall(fn, newArgs, type), \a1, a2 -> bexp2cpp(a1, a2, isGlobalExp))
+				createdTmpVars = newStatements != [];
+				newBCall = BCall(fn, newArgs, type);
+				// TODO: find a better solution!!
+				// and we only need lambda for BLetStatement
+				// TODO: drop tmp vars
+				if (createdTmpVars) {
+					blueprint(" ([%capture%]() {
+	%tmpVars%return %body%;
+})()",
+					[
+						"capture", if (isGlobalExp) "" else "&",
+						"tmpVars", concatStrings(newStatements),
+						"body", produceBackendCall(backend, newBCall, \newBackend, newExp -> bexp2cpp(newBackend, newExp, isGlobalExp)),
+				]);
+				} else {
+					produceBackendCall(backend, newBCall, \newBackend, newExp -> bexp2cpp(newBackend, newExp, isGlobalExp))
+				}
+				// it works with linux, but not with VS
+				/*(if (createdTmpVars) "({\n" else "")
+				+ concatStrings(newStatements)
+				+ produceBackendCall(backend, BCall(fn, newArgs, type), \newBackend, newExp -> bexp2cpp(newBackend, newExp, isGlobalExp))
+				+ (if (createdTmpVars) ";\n})" else "")*/
 			});
 		}
 		BLambda(args, body, type): {
 			argtypes = getBArgTypes(type);
-			returnType = btype2cpp(backend, getBReturnType(type));
+			returnBType = getBReturnType(type);
+			returnType = btype2cpp(backend, returnBType);
 			blueprint("
-					%type%([%capture%](%args%) {
+					%type%([%capture%](%args%)%returnType% {
 						%return% %body%;
 					})",
 				[
 					"capture", if (isGlobalExp) "" else "&",
 					"args", supergluei(args, \i, arg -> {
-							btype2cpp(backend, argtypes[i]) + " " + arg
-						}, ", "),
+						btype2cpp(backend, argtypes[i]) + (if (!isSimpleBType(argtypes[i]) && memoryManagement) "& " else " ") + arg
+					}, ", "),
 					"body", rec(body),
 					"type", btype2cpp(backend, type),
 					"return", if (returnType == bvoidType.id) "" else "return",
+					"returnType", if (returnType == bvoidType.id) "" else (" -> " + returnType + (if (!isSimpleBType(returnBType) && memoryManagement) "& " else " ")),
 			]);
 		}
 		BSequence(exps, type): {
@@ -681,8 +703,12 @@ btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BType
 			}
 		}
 		BTypeFunction(args, returnType): {
-			"std::function<" + btype2cpp(backend, returnType)
-			+ "(" + superglue(args, \tp -> btype2cpp(backend, tp), ", ") + ")>"
+			fnType2cpp = \type -> {
+				btype2cpp(backend, type)
+				+ (if (!isSimpleBType(type) && memoryManagement) "&" else "")
+			}
+			"std::function<" + fnType2cpp(returnType)
+			+ "(" + superglue(args, fnType2cpp, ", ") + ")>"
 		}
 	}
 }
@@ -1352,15 +1378,21 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 	}
 }
 
+// TODO: drop tmp vars! or replace this fn with ? (* with unique_ptr ?)
+// Test case #1: refcnt12.flow : test5() 
+// fn3(Struct(v), end)
+// tmp_var = Struct(v)
+// Test case #1: refcnt17.flow : test8() 
+// useVars8 = \v, v2 -> v;
+// a = useVars8(Struct(8), Struct(11));
+// tmp_var_1 = Struct(8);
 tmpVarCounter = ref 0;
 createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> Pair<[string], [BExp]> {
 	if (memoryManagement) {
 	newArgs = map(args, \arg -> {
-		if (!isBConstruct(arg) && !isBLet(arg)) {
-			Pair(None(), arg)
-		} else {
+		if (isBLet(arg) || isBConstruct(arg)) {
 			varName = "_tmp" + i2s(atomicRefIntAddition(tmpVarCounter, 1));
-			tmpVarCpp = blueprint(
+			tmpVar = blueprint(
 				"auto %varName% = %exp%;\n"
 				+ (if (memoryManagement) ("std::cout<<\"FN : &%varName% = \"<< &%varName% <<std::endl;\n") else ""),
 				[
@@ -1368,7 +1400,9 @@ createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> 
 					"exp", bexp2cpp(backend, arg, isGlobalExp),
 				]
 			);
-			Pair(Some(tmpVarCpp), BVar(varName,  getBType(arg)));
+			Pair(Some(tmpVar), BVar(varName, getBType(arg)));
+		} else {
+			Pair(None(), arg);
 		}
 	});
 
