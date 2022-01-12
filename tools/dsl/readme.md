@@ -35,6 +35,7 @@ Built in actions include:
 - s2i for converting the top string on the stack to a DslInt
 - s2d for converting the top string on the stack to a DslDouble
 - dump for printing the contents of the stack - helpful for debugging
+- unescape will unescape escaped chars in a string with quotes
 
 ## Parsing
 
