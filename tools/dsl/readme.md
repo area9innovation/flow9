@@ -144,6 +144,7 @@ It uses a syntax like
 	plus(a, b)  => $a(40) "+" $b(39);
 	minus(a, b) => $a(40) "-" $b(39);
 	mul(a, b)   => $a(50) "*" $b(49);
+	call(args)  => $glue(args, ",");
 
 where the left-hand side is a pattern to match in the source program, and
 the right hand side is a "blueprint". $a(50) means expand the string 
@@ -153,8 +154,13 @@ understood to be intMax.
 
 This way, we can model precedence and associativity.
 
-TODO:
-- Add a mode where we get warnings about missing AST nodes
+
+To expand lists, we have this construct:
+
+	$glue(<binding>, sep-string)
+
+which will expand the binding (which is a List) and separate each element
+using the sep-string.
 
 # Future plans
 
