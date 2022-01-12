@@ -1437,7 +1437,7 @@ public class Native extends NativeHost {
 			return aa; else return ab;
 	}
 
-	private final static String exceptionStackTrace(Exception ex) {
+	private final static String exceptionStackTrace(Throwable ex) {
 		StringWriter stackTrace = new StringWriter();
 		ex.printStackTrace(new PrintWriter(stackTrace));
 		return stackTrace.toString();
@@ -1900,19 +1900,18 @@ public class Native extends NativeHost {
 					completableFuture.complete(res);
 					return null;
 				});
-			} catch (StackOverflowError ex) {
-				ex.printStackTrace();
-				return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
-			} catch (ClassCastException ex) {
-				ex.printStackTrace();
-				return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
 			} catch (RuntimeException ex) {
 				Throwable e = ex.getCause();
+				if (e == null) {
+					e = ex;
+				}
 				while (e.getClass().equals(InvocationTargetException.class)) {
 					e = e.getCause();
 				}
+				e.printStackTrace();
 				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
 			} catch (Exception e) {
+				e.printStackTrace();
 				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
 			}
 			Object result = null;
@@ -1924,7 +1923,14 @@ public class Native extends NativeHost {
 				e.printStackTrace();
 			}
 			return result;
-		}, threadpool).thenApply(result -> {
+		}, threadpool)
+		.exceptionally(ex -> {
+			ex.printStackTrace();
+			Thread thread = Thread.currentThread();
+			String threadId = Long.toString(thread.getId());
+			return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
+		})
+		.thenApply(result -> {
 			// thread #2
 			return onDone.invoke(result);
 		});
