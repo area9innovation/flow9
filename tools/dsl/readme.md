@@ -129,10 +129,10 @@ The natives defined include:
 	and, or, not
 	add, sub, mul, div, mod, negate
 	nil, cons, head, tail
+	brace (keeps last value)
 
 TODO:
 - lambda should support closures and recursion
-- brace
 
 ## Blueprints for compilers
 
