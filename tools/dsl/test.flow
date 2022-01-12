@@ -1,108 +1,17 @@
-import tools/dsl/dsl_parse;
+import tools/dsl/lambda;
 import tools/dsl/dsl_rewrite;
 import tools/dsl/dsl_compiler;
 import tools/dsl/dsl_eval;
 import tools/dsl/gringo_actions;
 
 main() {
-	// The grammar of the language where arity of actions is a naming convention
-	lambda = defineGrammar("lambda", <<
-		exp = 
-			id "=" ws exp ";" ws expsemi $"brace_1" $"let_3"
-			|> exp "||" ws exp $"or_2"
-			|> exp "&&" ws exp $"and_2"
-			|> exp "==" ws exp $"equal_2" | exp "!=" ws exp $"not_equal_2"
-			|> exp ("<=" ws exp $"less_equal_2" | "<" ws exp $"less_2" | ">=" ws exp $"greater_equal_2" | ">=" ws exp $"greater_2")
-
-			|> exp < ("+" ws exp $"add_2" | "-" ws exp $"sub_2")*
-			|> exp ("*" ws exp $"mul_2" | "/" ws exp $"div_2" | "%"  ws exp $"mod_2")*
-
-			|> (
-				'!' ws exp $"not_1"
-				| "-" ws exp $"negate_1"
-				| lambda
-				| exp (
-					postfix
-				)*
-			)
-
-			|> "{" ws expsemi "}" ws $"brace_1"
-			|> "(" ws exp ")" ws
-			|> (
-				"if" !letterOrDigit ws exp exp "else" ws exp $"ifelse_3"
-				| "true" !letterOrDigit $"true" ws
-				| "false" !letterOrDigit $"false" ws
-				| id $"var_1"
-				| double
-				| int
-				| "$" ws id $"bind_1"	// For pattern matching
-			);
-
-		lambda = '\' ws lambdaargs "->" ws exp "" $"lambda_2"; // The "" makes right-recursion disappear
-			lambdaargs = $"nil" id $"cons" ("," ws id $"cons")*
-				| $"nil";
-
-		// Give this a name, so it can be extended
-		postfix = ( "(" ws exps ")" ws $"call_2");
-			// | "." ws id $"dot_2"   // This can be done with syntactic sugar
-			// | "[" ws exp "]" ws $"index_2"
-
-		exps = $"nil" exp $"cons" ("," ws exp $"cons")* ("," ws)? 
-			| $"nil";
-
-		expsemi = $"nil" exp $"cons" (";" ws exp $"cons")* (";" ws)? 
-			| $"nil";
-	
-		double = $(digits '.' digits?) ws $"s2d"
-			| $('.' digits) ws $"s2d";
-		int = $(digits) ws $"s2i";
-		digits = '0'-'9'+;
-		id = $(('a'-'z' | 'A'-'Z' | '_') letterOrDigit*) ws;
-
-		letterOrDigit = 'a'-'z'
-			| 'A'-'Z'
-			| '_'
-			| '0'-'9';
-
-		ws exp
-	>>, true); // true adds definitions for whitespace
-
-	actions : Set<string> = extractGringoActions(makeSet(), lambda.term);
-	// println(set2array(actions));
-
-	// The set of rewriting rules we want
-	rules = parseRules(lambda, <<
-		$a + $b => $b + $a;
-		$a * $b => $b * $a;
-		$a + $a => 2 * $a;
-		2 * $a => $a + $a;
-		$a + 0 => $a;
-		$a * 0 => 0;
-		$a * 1 => $a;
-	>>);
-
-	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
-	defaultValue : DslAst = parseProgram(lambda, << 0 >>);
-
-	// These costs refer to the semantic actions without arity
-	// so we can figure out what the costs are. This is used to extract the best reduction
-	costs = rewriteCosts(<<
-		int => 1;
-		add => 2;
-		sub => 2;
-		mul => 3;
-		div => 4;
-	>>);
-
-	if (true) {
-		missingDslCosts(actions, costs);
-	}
+	lambda = defineLambda();
 
 	//
 	// This is the program to test
 	//
 
-	testValue = parseProgram(lambda, << 
+	testValue = parseProgram(lambda.grammar, << 
 		{
 			foo = \a, b, c -> {
 				a + b + c
@@ -114,7 +23,7 @@ main() {
 		}
 	>>);
 
-	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
+	replaced = rewriteDsl(testValue, lambda.rewritings[0], 2);
 
 	if (false) {
 		println(prettyDsl(testValue));
@@ -123,45 +32,7 @@ main() {
 		// 123 + 23 + 34 + 34
 	}
 
-	// This is a prototype for how to define an compiler/evaluator of a language.
-	// Probably, we need some conversion method for instantiation
-	compiler = makeCompiler(lambda, "text", <<
-		ifelse(a, b, c) => $a(5) "?" $b(5) ":" $c(5);
-		or(a, b) => $a(10) "||" $b(9);
-		and(a, b) => $a(20) "&&" $b(19);
-
-		equal(a, b) => $a(30) "==" $b(30);
-		notequal(a, b) => $a(30) "!=" $b(30);
-
-		less(a, b) => $a(35) "<" $b(35);
-		lessequal(a, b) => $a(35) "<=" $b(35);
-		greater(a, b) => $a(35) ">" $b(35);
-		greaterequal(a, b) => $a(35) ">=" $b(35);
-
-		add(a, b) => $a(40) "+" $b(39);
-		sub(a, b) => $a(40) "-" $b(39);
-		mul(a, b)  => $a(50) "*" $b(49);
-		div(a, b)  => $a(50) "/" $b(49);
-		mod(a, b)  => $a(50) "%" $b(49);
-		let(id, v, b) => $id(1) "=" $v(1) ";" $b(1);
-		lambda(args, body) => "\\" $glue(args, ",") "->" $body(4);
-		var(id) => $id(100);
-		call(fn, args) => $fn(80) "(" $glue(args, ",") ")";
-		brace(a) => "{" $glue(a, ";") "}";
-		false() => "false";
-		true() => "true";
-		not(a) => "!" $a(90); // Check precedence
-		negate(a) => "-" $a(90); // Check precedence
-
-		// bind, cons, nil
-		// s2d, s2i
-	>>);
-
-	if (true) {
-		missingDslCompiler(actions, compiler);
-	}
-
-	program = compileDsl(compiler, replaced);
+	program = compileDsl(lambda.compilers[0], replaced);
 	println("The program   " /*+ prettyDsl(testValue) */ + "   compiles to " + program);
 
 	println("It evaluates to " + prettyDsl(evaluateDsl(makeDslEnv(), testValue)));
@@ -169,8 +40,8 @@ main() {
 	if (true) {
 		programs = [<< 1 + 2 * 3 >>, << (1 + 2) * 3 >>, << 1 - 2 - 3 >>, << (1 - 2) - 3 >>, << 1 - (2 - 3) >>];
 		iter(programs, \p -> {
-			program2 = parseProgram(lambda, p);
-			println("Testing precedence and associativity: " + p + " => " + compileDsl(compiler, program2) + "  =  " + prettyDsl(evaluateDsl(makeDslEnv(), program2)));
+			program2 = parseProgram(lambda.grammar, p);
+			println("Testing precedence and associativity: " + p + " => " + compileDsl(lambda.compilers[0], program2) + "  =  " + prettyDsl(evaluateDsl(makeDslEnv(), program2)));
 		});
 	}
 
