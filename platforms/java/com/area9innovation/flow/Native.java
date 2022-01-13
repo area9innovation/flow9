@@ -850,7 +850,7 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private static Map<Long, Timer> timers = new HashMap<Long, Timer>();
+	private static Map<Long, Timer> timers = new ConcurrentHashMap<Long, Timer>();
 
 	private static Timer getTimer() {
 		Long threadId = Thread.currentThread().getId();
@@ -879,23 +879,44 @@ public class Native extends NativeHost {
 		}
 	}
 
+	private static void cancelTimer(Timer timer) {
+		timer.cancel();
+		timers.forEach((key, value) -> {
+			if (value.equals(timer)) {
+				synchronized (timers) {
+					timers.remove(key);
+				}
+			}
+		});
+	}
+
 	public static void invokeCallback(Runnable cb) {
 		cb.run();
 	}
 
-	public static final Object timer(int ms, final Func0<Object> cb) {
+	public static final Timer scheduleTimerTask(int ms, final Func0<Object> cb) {
 		Timer timer = getTimer();
 		TimerTask task = new TimerTask() {
 			public void run() {
 				invokeCallback(new Runnable() {
 					public void run() {
-						cb.invoke();
+						try {
+							cb.invoke();
+						} catch (Exception ex) {
+							System.err.println(ex.getMessage());
+							cancelTimer(timer);
+							throw ex;
+						}
 					}
 				});
 			}
 		};
 		timer.schedule(task, ms);
+		return timer;
+	}
 
+	public static final Object timer(int ms, final Func0<Object> cb) {
+		scheduleTimerTask(ms, cb);
 		return null;
 	}
 
@@ -916,21 +937,11 @@ public class Native extends NativeHost {
 	}
 
 	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		Timer timer = getTimer();
-		TimerTask task = new TimerTask() {
-			public void run() {
-				invokeCallback(new Runnable() {
-					public void run() {
-						cb.invoke();
-					}
-				});
-			}
-		};
-		timer.schedule(task, ms);
+		Timer timer = scheduleTimerTask(ms, cb);
 
 		return new Func0<Object>() {
 			public Object invoke() {
-				timer.cancel();
+				cancelTimer(timer);
 				return null;
 			}
 		};
