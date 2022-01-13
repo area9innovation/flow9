@@ -46,6 +46,10 @@ The `parseProgram` will parse a string using a given grammar from `defineGrammar
 
 The result is a DslAst representation of the semantic actions. 
 
+TODO:
+- Predefine common lexer-like rules like ws, int, string, double, ... 
+- Provide way to replace a given rule in a grammar to get a new grammar
+
 ## E-graph rewriting
 
 The DSL library comes with support for doing semantic term-rewriting using an
@@ -155,7 +159,6 @@ understood to be intMax.
 
 This way, we can model precedence and associativity.
 
-
 To expand lists, we have this construct:
 
 	$glue(<binding>, sep-string)
@@ -165,7 +168,6 @@ using the sep-string.
 
 # Future plans
 
-- Add DSL for lowering one language to another
 - Add DSL for type checking
 - Add DSL for test cases for all of the above
 - Add DSL for grammar rewriting

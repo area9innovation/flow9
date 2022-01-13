@@ -5,9 +5,24 @@ import tools/dsl/replace_gringo;
 import tools/dsl/dsl_language;
 
 export {
-	// Prepares a grammar for a language "name"
-	// TODO: Change addWs to be an array of strings with common productions we want
-	defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar;
+	// Prepares a grammar for a language "name". A set of common rules can be
+	// added by being listed in the "add" list. These are:
+	// ws - whitespace
+	// id - flow-like identifier
+	// int - integer with whitespace
+	// string - flow-like string
+	defineGrammar(name : string, grammar : string, add : [string]) -> DslGrammar;
+
+	/*
+	Override productions in a grammar. Example:
+
+		extendGrammar(lambda, <<
+			postfix = postfix | "." ws id $"dot_2";
+		>>)
+
+	which extends the postfix production with the . syntax
+	*/
+	extendGrammar(grammar : DslGrammar, extension : string) -> DslGrammar;
 
 	// Parses a program in the given language
 	parseProgram(file : string, grammar : DslGrammar, program : string) -> DslAst;
@@ -16,17 +31,74 @@ export {
 	splitDslAction(v : string) -> Pair<string, int>;
 }
 
+defineGrammar(name : string, grammar : string, add : [string]) -> DslGrammar {
+	predefined = [
+		Pair("ws", <<
+				ws = s*;
+				s = cs+;
+				anychar = '0x0000'-'0xffff';
+				cs = " " | "\t" | "\n" | "//" (!"\n" anychar)* "\n" | "/*" (!"*/" anychar)* "*/" | "\r";
+				lastLineComment = "//" (!"\n" anychar)*;
+			>>
+		),
+		Pair("int", << int = $('0'-'9'+) ws $"s2i"; >>),
+		Pair("double", << 
+			double = $(digits '.' digits?) ws $"s2d"
+				| $('.' digits) ws $"s2d";
+			digits = '0'-'9'+;
+		>>),
+		Pair("string", <<
+			string = $('"' onechar_* '"') $"unescape" ws;
 
-defineGrammar(name : string, grammar : string, addWs : bool) -> DslGrammar {
+			onechar_ = backslash "u" hexdigit hexdigit hexdigit hexdigit
+				| backslash "x" hexdigit hexdigit
+				| backslash escapedchar_
+				| !'"' !backslash anychar;
+
+			hexdigit = '0'-'9'
+				| 'a'-'f'
+				| 'A'-'F';
+
+			escapedchar_ = backslash | '"' | "n" | "t" | "r";
+			backslash = '\';
+		>>),
+		Pair("id", << 
+			id = $(('a'-'z' | 'A'-'Z' | '_') letterOrDigit*) ws;
+
+			letterOrDigit = 'a'-'z'
+				| 'A'-'Z'
+				| '_'
+				| '0'-'9';
+		>>),
+	];
+	additions = fold(predefined, "", \acc, pre -> {
+		if (contains(add, pre.first)) acc + pre.second
+		else acc;
+	});
+
 	// We have a standard white-space grammar ready for embedding
-	text = if (addWs) <<
-		ws = s*;
-		s = cs+;
-		anychar = '0x0000'-'0xffff';
-		cs = " " | "\t" | "\n" | "//" (!"\n" anychar)* "\n" | "/*" (!"*/" anychar)* "*/" | "\r";
-		lastLineComment = "//" (!"\n" anychar)*;
-	>> + grammar else grammar;
-	DslGrammar(parseAndCheckGringoGrammar(name, text));
+	text = additions + grammar;
+	DslGrammar(parseAndCheckGringoGrammar(name, text, true));
+}
+
+extendGrammar(grammar : DslGrammar, extension : string) -> DslGrammar {
+	extend = defineGrammar("grammar_extension", <<
+		extensions = ws $"nil" (extension $"cons")+;
+		extension = id "=" $(!";" anychar)* ";" ws $"extension_2";
+		extensions
+	>>, ["ws", "id"]);
+
+	extensions : List<DslAst> = getDslList(parseProgram("extension", extend, extension));
+	newTerms : Tree<string, GTerm> = foldList(extensions, makeTree(), \acc, ex : DslAst -> {
+		node = getDslNode(ex);
+		name = getDslString(node.args[0]);
+		snippet = getDslString(node.args[1]);
+		term = parseAndCheckGringoGrammar("extension", snippet, false);
+		// println(name + ": " + gterm2string(term));
+		setTree(acc, name, term);
+	});
+	
+	DslGrammar(extendGringoRules(grammar.term, newTerms))
 }
 
 popDslStack(a : List<DslAst>, op : string) -> Pair<DslAst, List<DslAst>> {
