@@ -103,6 +103,15 @@ void flow_print2(A&& v) {
 }
 
 template <typename A>
+void flow_print2(A* v) {
+	if (v == nullptr) {
+		std::cout << "NULL Pointer " << std::endl;
+	} else {
+		flow_print2(*v);
+	}
+}
+
+template <typename A>
 void flow_print2(std::shared_ptr<A> v) {
 	std::cout << "ref " << *v;
 }
@@ -300,10 +309,6 @@ int32_t dup(int32_t a) {
 	return a;
 }
 
-void drop(int32_t a) {
-	std::cout<<"DROP:: int value "<< a <<std::endl;
-}
-
 int32_t reuse(int32_t a) {
 	std::cout<<"REUSE:: int value "<< a <<std::endl;
 	return a;
@@ -329,10 +334,6 @@ bool dup(bool a) {
 	return a;
 }
 
-void drop(bool a) {
-	std::cout<<"DROP:: bool value "<< a <<std::endl;
-}
-
 bool reuse(bool a) {
 	std::cout<<"REUSE:: bool value "<< a <<std::endl;
 	return a;
@@ -341,10 +342,6 @@ bool reuse(bool a) {
 double dup(double a) {
 	std::cout<<"DUP:: double value "<< a <<std::endl;
 	return a;
-}
-
-void drop(double a) {
-	std::cout<<"DROP:: double value "<< a <<std::endl;
 }
 
 double reuse(double a) {
@@ -372,6 +369,17 @@ void flow_println2(A&& v) {
 	flow_print2(v);
 	std::cout << std::endl;
 	drop(v);
+}
+// print with drop
+template <typename A>
+void flow_println2(A* v) {
+	if (v == nullptr) {
+		std::cout << "NULL Pointer " << std::endl;
+	} else {
+		flow_print2(*v);
+		std::cout << std::endl;
+		drop(v);
+	}
 }
 
 // math
