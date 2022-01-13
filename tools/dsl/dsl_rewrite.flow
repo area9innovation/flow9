@@ -5,10 +5,10 @@ import ds/egraph_matching;
 import ds/egraph_extract;
 
 export {
-	// Parses a set of EGraph rewriting rules in the given language grammar
-	// Make sure the grammar has a "bind_1" semantic action for variables
-	// also, the grammar should have a "ws" rule for whitespace.
-	prepareDslRewriting(grammar : DslGrammar, rules : string, costs : string, defaultVal : string) -> DslRewriting;
+	// Parses a set of EGraph rewriting rules in the given language grammars.
+	// Make sure the grammars have a "bind_1" semantic action for variables.
+	// Also, the grammar should have a "ws" rule for whitespace.
+	prepareDslRewriting(from : DslGrammar, to : DslGrammar, rules : string, costs : string, defaultVal : string) -> DslRewriting;
 
 	// Perform N iterations of rewrites, and extract the best result
 	rewriteDsl(program : DslAst, rewriting : DslRewriting, iterations : int) -> DslAst;
@@ -17,42 +17,41 @@ export {
 	missingDslCosts(actions : Set<string>, costs : DslCosts) -> void;
 }
 
-prepareDslRewriting(grammar : DslGrammar, rules : string, costs : string, defaultVal : string) -> DslRewriting {
+prepareDslRewriting(from : DslGrammar, to : DslGrammar, rules : string, costs : string, defaultVal : string) -> DslRewriting {
 	DslRewriting(
-		parseRules(grammar, rules),
+		parseRules(from, to, rules),
 		rewriteCosts(costs),
-		parseProgram(grammar, defaultVal)
+		parseProgram("Default value", to, defaultVal)
 	)
 }
 
-parseRules(exp : DslGrammar, rules : string) -> DslRules {
-	mainRule = mainRule(exp.term);
-	/*
-	TODO: Figure out how to do a "extension" of the existing grammar
-	buildGrammar(
-		<<
-			rules = ws $"nil" (rule $"cons")*;
-			rule = @name "=>" ws @name ";" ws $"rule";
-			@grammar
-		>>,
-		[
-			"name", mainRule
-			"grammar", replaceLastGringo(exp.term, GVar("rules")),
-		]
-	)
+parseRules(from : DslGrammar, to : DslGrammar, rules : string) -> DslRules {
+	fromMain = mainRule(from.term);
+	toMain = mainRule(to.term);
 
-	The required operations are:
-		find main rule of grammar
-		replace last gringo and insert grammar
+	grammar = if (from == to) {
+		replaceLastGringo(from.term, GVar("rules"))
+	} else {
+		replaceLastGringo(mergeGringos(from.term, to.term), GVar("rules"))
+	};
+
+	/*
+	ruleGrammar0 = defineGrammar("rules", << 
+		rules = ws $"nil" (rule $"cons")*;
+		rule = from "=>" ws to ";" ws $"rule";
+		rules
+	>>, false);
 	*/
+
 	ruleGrammar = GRule("rules", GSeq(GVar("ws"), GSeq(GUnquote(GString("nil")), GStar(GSeq(GVar("rule"), GUnquote(GString("cons")))))), 
-		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(mainRule), GString("=>")), GVar("ws")), GVar(mainRule)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
-			// Merge with the existing grammar
-			replaceLastGringo(exp.term, GVar("rules"))
+		GRule("rule", GSeq(GSeq(GSeq(GSeq(GSeq(GSeq(GVar(fromMain), GString("=>")), GVar("ws")), GVar(toMain)), GString(";")), GVar("ws")), GUnquote(GString("rule_2"))), 
+			grammar
 		));
 
+	// println(gterm2string(ruleGrammar));
+
 	ruleDsl = DslGrammar(ruleGrammar);
-	astRules = parseProgram(ruleDsl, rules);
+	astRules = parseProgram("Rewriting", ruleDsl, rules);
 	DslRules(astRules);
 }
 
@@ -66,7 +65,7 @@ rewriteCosts(costs : string) -> DslCosts {
 		costs
 	>>, true);
 
-	thecosts : List<DslAst> = getDslList(parseProgram(costlang, costs));
+	thecosts : List<DslAst> = getDslList(parseProgram("Costs", costlang, costs));
 	costMap = foldList(thecosts, makeTree(), \acc, ast -> {
 		node = getDslNode(ast);
 		if (length(node.args) == 2) {
