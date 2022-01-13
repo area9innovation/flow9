@@ -145,6 +145,11 @@ doFoldri(cs : [?], i : int, acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
 	}
 }
 
+existsi(a : [?], fn : (int, ?) -> bool) -> bool {
+	foundIndex = iteriUntil(a, \i, e -> fn(i, e));
+	foundIndex != length(a);
+}
+
 refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool, isDownDrop : bool, fnIds : Set<string>) -> BExpUsedVars {
 	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e), reuse);
 	recInc = \e, tails, createdVars, drops, recWithReturn, recIsDownDrop -> refCountingBExp(BExpUsedVars(e, tails, createdVars, drops), generators, recWithReturn, recIsDownDrop, fnIds);
@@ -205,7 +210,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			lambdaFn = getLambdaId(fn, fnIds);
 			isNativeFn = isNativeWithoutDropFn(fn, generators);
 			isLambda = lambdaFn.first != "" && !isNativeFn;
-			newFn = rec(fn, withReturn || isReturnBType(type), isDownDrop);
+			hasResult = type != bvoidType; //isReturnBType(type);
+			newFn = rec(fn, withReturn || hasResult, isDownDrop);
 			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, newFn.downDrops), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
 				if (isNativeFn) {
 					newArg = recInc(arg, newTails, exp.createdVars, newDrops, withReturn, isDownDrop);
@@ -221,8 +227,9 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			}));
 			newBCall = BCall(newFn.exp, newArgs.first, type);
 			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, lambdaType)) else newArgs.second;
-			// TODO: drop unused result of the fn
-			newExp = BExpUsedVars(/*if (withReturn) newBCall else BDropValue(newBCall)*/newBCall, newUsedVars, newArgs.third, newArgs.fourth);
+			// TODO: reuse only the result from which we use the part (field). otherwise you don't need to add BReuse.
+			dropedBCall = if (!hasResult) newBCall else if (withReturn) BReuseValue(newBCall) else BDropValue(newBCall);
+			newExp = BExpUsedVars(dropedBCall, newUsedVars, newArgs.third, newArgs.fourth);
 			if (isLambda) {
 				//newExp = makeBConstructWithDrops(newConstruct, newDrops, withReturn || isDownDrop);
 				newExp; //dupDrop(newExp, withReturn)
@@ -283,7 +290,14 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			// TODO: reuse only field
 			newValue = rec(value, withReturn, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
-			BExpUsedVars(BField(reducedValue.first, field, type), newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+			reusedVal = getReusedValue(reducedValue.first);
+			//newField = BField(reducedValue.first, field, type);
+			newExp = if (reusedVal != reducedValue.first) {
+				reuseBField(BField(reusedVal, field, type));
+			} else {
+				BDupValue(BField(reducedValue.first, field, type));
+			}
+			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
 		BSetMutable(left, field, value, type): {
 			newLeft = rec(left, withReturn, isDownDrop);
@@ -349,6 +363,13 @@ isBCounter(exp : BExp) -> bool {
 	}
 }
 
+getReusedValue(exp : BExp) -> BExp {
+	switch (exp : BExp) {
+		BReuseValue(value): value;
+		default: exp;
+	}
+}
+
 isBTypeFunction(type : BType) -> bool {
 	switch (type) {
 		BTypePar(__) : false;
@@ -381,7 +402,8 @@ reduceBCounter(counter : BExp, isDownDrop : bool) -> Pair<BExp, Maybe<BCounter>>
 		reducedDropCnt = dropCnt - cnt;
 		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> BDupValue(newExp));
 		addReuseDrop = \newExp -> if (reuse) BReuseValue(newExp) else BDropValue(newExp);
-		if (isDownDrop) {
+		// we can only move drop() for variables
+		if (isDownDrop && extractBVarId(exp) != "") {
 			Pair(newValue, if (reducedDropCnt > 0) Some(fold(enumFromTo(1, reducedDropCnt - 1), addReuseDrop(newValue), \newExp, __ -> if (reuse) BReuseValue(newExp) else BDropValue(newExp))) else None())
 		} else {
 			Pair(fold(enumFromTo(1, reducedDropCnt), newValue, \newExp, __ -> addReuseDrop(newExp)), None());
@@ -444,7 +466,7 @@ extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>)
 tmpConstructedVarCounter = ref 1;
 makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<string>) -> Triple<[BVar], [BLet], Maybe<BExp>> {
 	makeTmpVar = \varType, expType -> {
-		varName = "_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
+		varName = makeTmpVariableName();
 		Triple([BVar(varName, varType)], [BLet(varName, exp, BVoid(), varType)], Some(BVar(varName, expType)));
 	}
 	switch (exp) {
@@ -493,11 +515,6 @@ makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<s
 		}
 		default: Triple([], [], None());
 	}
-}
-
-existsi(a : [?], fn : (int, ?) -> bool) -> bool {
-	foundIndex = iteriUntil(a, \i, e -> fn(i, e));
-	foundIndex != length(a);
 }
 
 addDupDropToCmpr(
@@ -558,14 +575,47 @@ makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn :
 	if (dropExps == []) {
 		constr;
 	} else {
-		tmpVar = BVar("_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1)), constr.type);
-		BLet(
-			tmpVar.id,
-			constr,
-			BSequence(arrayPush(dropExps, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
-			tmpVar.type
-		)
+		addTempVar(constr, dropExps, constr.type, withReturn);
 	}
+}
+
+//
+// Before: auto flow_a = (*reuse(flow_makeStruct())).flow_val;
+// After : auto _tmp = flow_makeStruct(); auto _tmp2 = dup((*_tmp).flow_val); drop(_tmp); _tmp2;
+reuseBField(field : BField) -> BExp {
+	tmpVarStruct = BVar(makeTmpVariableName(), getBType(field.value));
+	tmpVarField = BVar(makeTmpVariableName(), field.type);
+	BLet(
+		tmpVarStruct.id,
+		field.value,
+		BLet(
+			tmpVarField.id,
+			BDupValue(BField(tmpVarStruct, field.field, field.type)),
+			BSequence(
+				[
+					BDropValue(tmpVarStruct),
+					tmpVarField
+				],
+				tmpVarField.type
+			),
+			tmpVarField.type
+		),
+		tmpVarField.type
+	);
+}
+
+addTempVar(exp : BExp, body : [BExp], type : BType, withReturn : bool) -> BLet {
+	tmpVar = BVar(makeTmpVariableName(), type);
+	BLet(
+		tmpVar.id,
+		exp,
+		BSequence(arrayPush(body, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
+		tmpVar.type
+	);
+}
+
+makeTmpVariableName() -> string {
+	"_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
 }
 
 addRefCounting2BProgram(prog : BProgram) -> BProgram {

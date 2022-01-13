@@ -14,6 +14,14 @@ g++ -std=c++2a euler1.cpp 2>out.flow
 g++ -std=c++2a /mnt/d/a9/flow9/demos/euler/euler8.cpp -o euler8 -I/mnt/d/a9/flow9/
 */
 
+// Known issues:
+//
+// 1) Aliases
+// Example :
+// 1: Struct* a = new Struct();
+// 2: Struct* b = a;
+// -> drop(a); drop(b); If we miss the additional dup(a), there will be an attempt to double free the memory.
+
 export {
 	// Compiles the given flow path to C++ as a single string
 	bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string;
@@ -280,13 +288,16 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 				// a) unique_ptr . ( it will be implemented for reuse() )
 				// b) return const val + overloading ?
 				if (isBConstruct(val) || isBCast(val)) {
-					blueprint(
-						"auto* _tmp_return = new %value%;
+					if (memoryManagement) {
+						"return " + value;
+					} else {
+						blueprint(
+							"auto* _tmp_return = new %value%
 "
-						+ (if (memoryManagement) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
-						+ "return *_tmp_return;",
-						["value", value,]
-					);
+							+ "return *_tmp_return;",
+							["value", value,]
+						);
+					}
 				} else {
 					blueprint(
 						"auto* _tmp_return = &%value%;
@@ -464,11 +475,11 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 				false
 			);
 			blueprint("
-					%ptr%%value%.%field%",
+				%ptr%%value%.%field%",
 				[
 					"value", rec(value) + (if (isSimpleStructType) ")" else ""),
 					"field", field,
-					"ptr", if (isRecursiveField) "*" else if (isSimpleStructType) "(*" else ""
+					"ptr",  (if (isSimpleStructType) "(*" else "") + (if (isRecursiveField) "*" else "")
 			]);
 		}
 		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
@@ -1348,6 +1359,7 @@ isSimpleBType(type : BType) -> bool {
 	type == bvoidType || type  == bboolType || type  == bintType || type  == bdoubleType || type  == bstringType;
 }
 
+// TODO: ignore simple types (remove all dup/drop/reuse) ?
 bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, false);
 	isDup = \-> switch (exp : BCounter) {
@@ -1368,7 +1380,7 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 
 	value = exp.value;
 	type = getBReturnType(getBType(value));
-	if (type == bvoidType && getBVarId(value) == "" || !memoryManagement) {
+	if (isSimpleBType(type) && getBVarId(value) == "" || !memoryManagement) {
 		rec(value)
 	} else {
 		blueprint(
@@ -1439,6 +1451,7 @@ getBVarId(exp : BExp) -> string {
 		BCast(value, __, __) : getBVarId(value);
 		BReuseValue(value) : getBVarId(value);
 		BDropValue(value) : getBVarId(value);
+		BField(value, __, __) : getBVarId(value);
 		default : "";
 	}
 }
