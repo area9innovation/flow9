@@ -41,10 +41,9 @@ TODO:
 	listof(exp, sep) = $"nil" exp $"cons" (sep exp $"cons")* sep? | $"nil";
 	keyword(name : string) = name !letterOrDigit ws;
 
-- Add functions to Gringo?
+  We have the dsl2flow thing now, which should make it relatively simple
 
-- Add a phase which adds whitespace after lexical elements
-  Maybe we should use some other separator for strings that need ws after them
+- Add a function which adds whitespace after lexical elements
 
 	addws(id "=" exp ";" expsemi $"brace_1" $"let_3") =>
 		id "=" ws exp ";" ws expsemi $"brace_1" $"let_3"
@@ -56,7 +55,9 @@ TODO:
 
 	if we have natural evaluation order.
 	Maybe that can be fixed in practice by having a "ws !letterOrDigit ws" => "!letterOrDigit ws"
-	rule.
+	rule, or we should have a guard against 'string !term' so we do not process that.
+
+- Add functions to Gringo?
 
 ## Parsing
 
@@ -135,7 +136,32 @@ TODO:
 - Add pulsing: After N iterations, extract the best, and then rerun rules again from
   that point. These two things is what Caviar does https://arxiv.org/abs/2111.12116
   Is verified against Halide
+
+## Patterns
+
+Our patterns are simple matching only, but we should allow guards written in Lambda.
+
+TODO:
+- Figure out how patterns can be reused from e-graph to compiling to lowering.
+  Should we do an egraph implementation directly on DslAst?
+
+- Figure out how to work with AST directly in Lambda. Maybe it is trivial?
+
 - Do a DSL for pattern matching, maybe like https://arxiv.org/pdf/1807.01872v1.pdf
+
+## Lowering
+
+In addition to rewriting using the e-graph, we should have a more predictable
+rewriting system for lowering phases where we do not have any costs.
+
+- TODO: Make it so we can write the Gringo lowering like this:
+
+  	lowering= prepareDslLowering(gringo, ".",
+		<<
+			list(@t @s) => $"nil" @t $"cons" (@s @t $"cons")* @s? | $"nil".
+			list(@t) => $"nil" (@t $"cons")*.
+			keyword(@k) => @k !letterOrDigit ws.
+		>>);
 
 # Evaluator
 
@@ -182,6 +208,10 @@ To expand lists, we have this construct:
 
 which will expand the binding (which is a List) and separate each element
 using the sep-string.
+
+- Compiling Gringo is a problem, since "string" is wrong. Solutions: 
+  - Add guards for patterns, so we can check if the string contains " or '. 
+  - Add escape for strings when expanding
 
 # Future plans
 
