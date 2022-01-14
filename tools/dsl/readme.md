@@ -5,7 +5,7 @@ rewrite rules.
 
 ## Syntax
 
-The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, addWs)`.
+The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, additions)`.
 
 The semantics actions are defined using actions like "plus_2", "negate_1", where
 the suffix defines the arity of the semantic action.
@@ -16,12 +16,10 @@ Here is a simple grammar for expressions:
 	mylang = defineGrammar("mylang", <<
 		exp = exp "+" ws exp $"plus_2" 
 			|> exp "*" ws exp $"mul_2"
-			|> $int ws $"s2i"
-			|> $id ws $"bind_1";	// For pattern matching
-		int = '0'-'9'+;
-		id = 'a'-'z'+;
+			|> int
+			|> id $"bind_1";	// For pattern matching
 		ws exp
-	>>, true); // true adds definitions for whitespace
+	>>, ["ws", "id", "int"]); // adds the expected definitions for these
 
 ### Semantic actions in Gringo
 
@@ -37,6 +35,29 @@ Built in actions include:
 - dump for printing the contents of the stack - helpful for debugging
 - unescape will unescape escaped chars in a string with quotes
 
+TODO:
+- Integrate the higher-level gringo which has these constructs:
+	list(exp) = $"nil" (exp $"cons")*
+	listof(exp, sep) = $"nil" exp $"cons" (sep exp $"cons")* sep? | $"nil";
+	keyword(name : string) = name !letterOrDigit ws;
+
+- Add functions to Gringo?
+
+- Add a phase which adds whitespace after lexical elements
+  Maybe we should use some other separator for strings that need ws after them
+
+	addws(id "=" exp ";" expsemi $"brace_1" $"let_3") =>
+		id "=" ws exp ";" ws expsemi $"brace_1" $"let_3"
+
+	This would almost work, except we would have a problem with keywords:
+
+		addws(keyword(true) => addws("true" !letterOrDigit ws)
+			=> "true" ws !letterOrDigit ws
+
+	if we have natural evaluation order.
+	Maybe that can be fixed in practice by having a "ws !letterOrDigit ws" => "!letterOrDigit ws"
+	rule.
+
 ## Parsing
 
 The `parseProgram` will parse a string using a given grammar from `defineGrammar`:
@@ -45,10 +66,6 @@ The `parseProgram` will parse a string using a given grammar from `defineGrammar
 	println(prettyDsl(defaultValue));
 
 The result is a DslAst representation of the semantic actions. 
-
-TODO:
-- Predefine common lexer-like rules like ws, int, string, double, ... 
-- Provide way to replace a given rule in a grammar to get a new grammar
 
 ## E-graph rewriting
 
