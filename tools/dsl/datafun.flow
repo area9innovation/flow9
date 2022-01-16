@@ -1,4 +1,5 @@
 import tools/dsl/dsl_parse;
+import tools/dsl/dsl_rewrite;
 
 export {
 	// This adds bag comprehensions to a language
@@ -6,7 +7,7 @@ export {
 }
 
 defineDataFun(language : DslLanguage) -> DslLanguage {
-	// OK, extend this language with the "dot" syuntax
+	// OK, extend this language with the "bag comprehension" syntax
 	bag = extendGrammar(language.grammar, << 
 		atom = atom | datafun;
 
@@ -15,15 +16,40 @@ defineDataFun(language : DslLanguage) -> DslLanguage {
 		datafun_exps = // listof(datafun_exp, ",")
 			$"nil" datafun_exp $"cons" ("," ws datafun_exp $"cons")*;
 
-		datafun_exp = id ws "in" ws exp $"datafun_in_2" 
-			| exp; // This is just a filter
+		datafun_exp = id ws "in" ws exp $"datafun_in_2" // This is a loop
+			| exp $"datafun_filter_1"; 					// This is just a filter
 	>>);
 
-	println(prettyDsl(parseProgram("bag", bag, << 
-		[ a | a in list, a != 2]
-	>>)));
+	// TODO: This works if we can match the id, but we can not
+	// Figure out a solution for that
+	// Also figure out how to handle an arbitrary list of conditions
+	// in the loop part
+	rewrite = defineDslRewriting(bag, language.grammar, ";", << 
+			[ $e | a in $c ] => fold($c, nil(), \acc, a -> cons($e, acc) );
+			[ $e | a in $c, $f ] => fold($c, nil(), \acc, a -> 
+				if ($f) cons($e, acc) else acc
+			);
 
-	// TODO: Implement this language
+			[ $e | a in $c, b in $d ] => fold($c, nil(), \acc, a -> 
+				fold($d, acc, \acc2, b -> cons($e, acc2))
+			);
+
+			[ $e | a in $c, b in $d, $f ] => fold($c, nil(), \acc, a -> 
+				fold($d, acc, \acc2, b -> if ($f) cons($e, acc2) else acc2)
+			);
+		>>, <<
+			datafun => 1000000;
+		>>,
+		<< 0 >>);
+
+	if (true) {
+		test = parseProgram("bag", bag, << 
+			[ cons(a, cons(b, nil())) | a in list, b in list, a != b]
+		>>);
+		r = rewriteDsl(test, rewrite, 2);
+		println(prettyDsl(test));
+		println(prettyDsl(r));
+	}
 
 	DslLanguage(
 		language with grammar = bag;
