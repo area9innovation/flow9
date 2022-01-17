@@ -480,7 +480,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 				[
 					"value", rec(value) + (if (isSimpleStructType) ")" else ""),
 					"field", field,
-					"ptr",  (if (isSimpleStructType) "(*" else "") + (if (isRecursiveField) "*" else "")
+					"ptr",  (if (isSimpleStructType) "(*" else "") + (if (isRecursiveField && !memoryManagement) "*" else "")
 			]);
 		}
 		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
@@ -602,7 +602,7 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 			\ind, type -> {
 				isRecursiveField = elementAt(s.recursiveArgs, ind, false);
 				cppType = dtype2cpp(backend, type);
-				if (isRecursiveField) "std::unique_ptr<" + cppType + ">" else cppType;
+				if (isRecursiveField && !memoryManagement) "std::unique_ptr<" + cppType + ">" else cppType;
 			},
 			makeStructConstructors(backend, s, false) + "\n	"
 			+ makeStructDestructor(backend, s, false) + "\n"
@@ -841,7 +841,7 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		blueprint(
 			"std::get<%type%>(%id%)",
 			[
-				"type", type,
+				"type", type + (if (memoryManagement) "*" else ""),
 				"id", value,
 			]
 		);
@@ -1065,13 +1065,13 @@ makeStructCopyConstructorBody(backend : Backend<CppInfo>, simpleArgs : [DStructA
 			"%simpleTypes%
 	%recTypes%",
 			[
-				"simpleTypes", strGlue(map(simpleArgs, \arg -> 
+				"simpleTypes", strGlue(map(if (memoryManagement) concat(simpleArgs, recArgs) else simpleArgs, \arg -> 
 					blueprint(
 						"%field% = a.%field%;",
 						["field", arg.id]
 					)
 				), "\n"),
-				"recTypes", strGlue(map(recArgs, \arg -> 
+				"recTypes", strGlue(map(if (memoryManagement) [] else recArgs, \arg -> 
 					blueprint(
 						"%field% = std::make_unique<%ptype%>(*a.%field%);",
 						[
@@ -1156,11 +1156,11 @@ makeTyparsForConstructorHeader(argTypes : [string]) -> string {
 makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
 	if (memoryManagement) {
 	if (withBody) {
-		makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple) "" else "*") + field.id + ");";
-		makeReleasePtr = \field : DStructArg -> "delete " + field.id + ".release();";
+		makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple || memoryManagement) "" else "*") + field.id + ");";
+		makeReleasePtr = \field : DStructArg -> "delete " + field.id + (if (memoryManagement) ";" else ".release();");
 
 		printField = \id, isRecursive -> {
-			if (isRecursive) {
+			if (isRecursive && !memoryManagement) {
 				"if (" + id + " != nullptr) flow_print2(*" + id + "); else std::cout <<\"DELETED\""
 			} else {
 				"flow_print2(" + id + ")"
@@ -1231,13 +1231,13 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 					"type", struct.struct.id,
 					"typars", typars,
 					"declaration", initDeclaration,
-					"simpleTypes", strGlue(map(simpleArgs, \arg -> 
+					"simpleTypes", strGlue(map(if (memoryManagement) struct.struct.structArgs else simpleArgs, \arg -> 
 						blueprint(
 							"%field% = _%field%;",
 							["field", arg.id]
 						)
 					), "\n"),
-					"recTypes", strGlue(map(recArgs, \arg -> 
+					"recTypes", strGlue(map(if (memoryManagement) [] else recArgs, \arg -> 
 						blueprint(
 							"%field% = std::make_unique<%ptype%>(_%field%);",
 							[
