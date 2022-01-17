@@ -34,6 +34,8 @@ Built in actions include:
 - s2d for converting the top string on the stack to a DslDouble
 - dump for printing the contents of the stack - helpful for debugging
 - unescape will unescape escaped chars in a string with quotes
+- make_node will construct a node with args from the top, and the name
+  from the second top 
 
 TODO:
 - Integrate the higher-level gringo which has these constructs:
@@ -56,6 +58,8 @@ TODO:
 	if we have natural evaluation order.
 	Maybe that can be fixed in practice by having a "ws !letterOrDigit ws" => "!letterOrDigit ws"
 	rule, or we should have a guard against 'string !term' so we do not process that.
+
+- Figure out how to add position to all nodes for better error reporting
 
 - Add functions to Gringo?
 
