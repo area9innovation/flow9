@@ -24,14 +24,9 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				evaluateDsl(nenv, args[2]);
 			} else if (name == "var") {
 				mvar = lookupTree(env.env, getDslString(args[0]));
-				mvar ?? {
-					mvar;
-				} : {
-					p;
-				}
+				mvar ?? mvar : p;
 			} else if (name == "lambda") {
-				// TODO: Instantiate closures
-				p;
+				instantiateDslLocals(env, p);
 			} else if (name == "call") {
 				fn = evaluateDsl(env, args[0]);
 				lambda : DslNode = getDslNode(fn);
@@ -94,6 +89,48 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 	}
 }
 
+instantiateDslLocals(env : DslEnv, p : DslAst) -> DslAst {
+	var = \id : string -> {
+		DslNode("var", [DslString(id)], 0)
+	};
+	switch (p) {
+		DslNode(name, args, pos): {
+			if (name == "let") {
+				let = getDslString(args[0]);
+				val = instantiateDslLocals(env, args[1]);
+				nenv = DslEnv(setTree(env.env, let, var(let)));
+				DslNode(name, [args[0], val, 
+					instantiateDslLocals(nenv, args[2])
+				], pos);
+			} else if (name == "var") {
+				lookupTreeDef(env.env, getDslString(args[0]), p);
+			} else if (name == "lambda") {
+				largs = getDslList(args[0]);
+				nenv : Tree<string, DslAst> = foldList(largs, env.env, \acc, darg -> {
+					arg = getDslString(darg);
+					setTree(acc, arg, DslNode("var", [darg], pos))
+				});
+				newBody = instantiateDslLocals(DslEnv(nenv), args[1]);
+				DslNode(name, [args[0], newBody], pos)
+			} else {
+				// Normal functions
+				eargs = map(args, \a -> {
+					instantiateDslLocals(env, a);
+				});
+				DslNode(name, eargs, pos);
+			}
+		}
+		DslList(value): {
+			DslList(mapList(value, \v -> instantiateDslLocals(env, v)));
+		}
+		DslBool(value): p;
+		DslInt(value): p;
+		DslDouble(value): p;
+		DslString(value): p;
+	}
+}
+
+
 DslNativeBuiltin(
 	fn : (([DslAst]) -> DslAst)
 );
@@ -138,7 +175,7 @@ getDslNative(name : string) -> Maybe<DslNativeBuiltin> {
 addDsl(left : DslAst, right : DslAst) -> DslAst {
 	error = \ -> {
 		println("Can not add " + prettyDsl(left) + " and " + prettyDsl(right));
-		DslString("ERROR");
+		DslNode("add", [left, right], 0);
 	}
 	switch (left) {
 		DslBool(value): error();
@@ -174,7 +211,7 @@ addDsl(left : DslAst, right : DslAst) -> DslAst {
 subDsl(left : DslAst, right : DslAst) -> DslAst {
 	error = \ -> {
 		println("Can not subtract " + prettyDsl(left) + " and " + prettyDsl(right));
-		DslString("ERROR");
+		DslNode("sub", [left, right], 0);
 	}
 	switch (left) {
 		DslBool(value): error();
@@ -201,7 +238,7 @@ subDsl(left : DslAst, right : DslAst) -> DslAst {
 mulDsl(left : DslAst, right : DslAst) -> DslAst {
 	error = \ -> {
 		println("Can not multiply " + prettyDsl(left) + " and " + prettyDsl(right));
-		DslString("ERROR");
+		DslNode("mul", [left, right], 0);
 	}
 	switch (left) {
 		DslBool(value): error();
@@ -228,7 +265,7 @@ mulDsl(left : DslAst, right : DslAst) -> DslAst {
 divDsl(left : DslAst, right : DslAst) -> DslAst {
 	error = \ -> {
 		println("Can not multiply " + prettyDsl(left) + " and " + prettyDsl(right));
-		DslString("ERROR");
+		DslNode("div", [left, right], 0);
 	}
 	switch (left) {
 		DslBool(value): error();
@@ -255,7 +292,7 @@ divDsl(left : DslAst, right : DslAst) -> DslAst {
 modDsl(left : DslAst, right : DslAst) -> DslAst {
 	error = \ -> {
 		println("Can not multiply " + prettyDsl(left) + " and " + prettyDsl(right));
-		DslString("ERROR");
+		DslNode("mod", [left, right], 0);
 	}
 	switch (left) {
 		DslBool(value): error();
@@ -314,7 +351,7 @@ notDsl(val : DslAst) -> DslAst {
 negateDsl(val : DslAst) -> DslAst {
 	error = \ -> {
 		println("Can not negate " + prettyDsl(val));
-		DslString("ERROR");
+		DslNode("negate", [val], 0);
 	}
 	switch (val){
 		DslBool(value): error();

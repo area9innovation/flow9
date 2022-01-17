@@ -183,9 +183,6 @@ The natives defined include:
 	nil, cons, head, tail
 	brace (keeps last value)
 
-TODO:
-- lambda should support closures and recursion
-
 ## Blueprints for compilers
 
 The `makeCompiler` call can prepare a compiler, which compiles a language to
