@@ -172,7 +172,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 	dupAlias = \val : BExp -> {
 		varId = extractBVarId(val);
 		isAlias = varId != "";
-		if (!isBCounter(val) && isAlias /*&& containsKeyTree(exp.usedVars, varId)*/) BDupValue(val) else val;
+		if (!isBCounter(val) && isAlias) addBCounterToExp(val, \e -> BDupValue(e)) else val;
 	}
 
 	switch (exp.exp) {
@@ -348,9 +348,13 @@ getLambdaId(fn : BExp, functionIds : Set<string>) -> Pair<string, BType> {
 	}
 }
 
-// TODO: if reuse+cast = sequence([cast, drop])
 dropBExpUsedVars(exp : BExpUsedVars, reuse : bool) -> BExpUsedVars {
-	BExpUsedVars(if (reuse) BReuseValue(exp.exp) else BDropValue(exp.exp), exp.usedVars, exp.createdVars, exp.downDrops);
+	BExpUsedVars(
+		addBCounterToExp(exp.exp, \e -> if (reuse) BReuseValue(e) else BDropValue(e)),
+		exp.usedVars,
+		exp.createdVars,
+		exp.downDrops
+	);
 }
 
 dupBExpUsedVars(exp : BExpUsedVars) -> BExpUsedVars {
@@ -360,7 +364,14 @@ dupBExpUsedVars(exp : BExpUsedVars) -> BExpUsedVars {
 	} else if (!containsKeyTree(exp.usedVars, id)){
 		BExpUsedVars(exp.exp, setTree(exp.usedVars, id, getBType(exp.exp)), exp.createdVars, exp.downDrops);
 	} else {
-		BExpUsedVars(BDupValue(exp.exp), exp.usedVars, exp.createdVars, exp.downDrops);
+		BExpUsedVars(addBCounterToExp(exp.exp, \e -> BDupValue(e)), exp.usedVars, exp.createdVars, exp.downDrops);
+	}
+}
+
+addBCounterToExp(exp : BExp, addCounter : (BExp) -> BCounter) -> BExp {
+	switch (exp) {
+		BCast(value, from, to) : BCast(addBCounterToExp(value, addCounter), from, to);
+		default : addCounter(exp);
 	}
 }
 
@@ -370,6 +381,7 @@ extractBVarId(exp : BExp) -> string {
 		BDupValue(value) : extractBVarId(value);
 		BDropValue(value) : extractBVarId(value);
 		BReuseValue(value) : extractBVarId(value);
+		BCast(value, __, __) : extractBVarId(value);
 		default : "";
 	}
 }
@@ -418,11 +430,12 @@ reduceBCounter(counter : BExp, isDownDrop : bool) -> Pair<BExp, Maybe<BCounter>>
 		cnt = min(dupCnt, dropCnt);
 		reducedDupCnt = dupCnt - cnt;
 		reducedDropCnt = dropCnt - cnt;
-		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> BDupValue(newExp));
-		addReuseDrop = \newExp -> if (reuse) BReuseValue(newExp) else BDropValue(newExp);
+
+		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> addBCounterToExp(newExp, \e -> BDupValue(e)));
+		addReuseDrop = \newExp -> addBCounterToExp(newExp, \e -> if (reuse) BReuseValue(e) else BDropValue(e));
 		// we can only move drop() for variables
 		if (isDownDrop && extractBVarId(exp) != "") {
-			Pair(newValue, if (reducedDropCnt > 0) Some(fold(enumFromTo(1, reducedDropCnt - 1), BDropValue(newValue), \newExp, __ -> if (reuse) BReuseValue(newExp) else BDropValue(newExp))) else None())
+			Pair(newValue, if (reducedDropCnt > 0) Some(fold(enumFromTo(1, reducedDropCnt - 1), BDropValue(newValue), \newExp, __ -> addReuseDrop(newExp))) else None())
 		} else {
 			Pair(fold(enumFromTo(1, reducedDropCnt), newValue, \newExp, __ -> addReuseDrop(newExp)), None());
 		}
@@ -435,6 +448,10 @@ extractBExpFromBCounter(exp : BExp, dupCnt : int, dropCnt : int, reuse : bool) -
 		BDupValue(value) : extractBExpFromBCounter(value, dupCnt + 1, dropCnt, reuse);
 		BDropValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1, reuse);
 		BReuseValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1, true);
+		BCast(value, from, to) : unquadruple(
+			extractBExpFromBCounter(value, dupCnt, dropCnt, reuse),
+			\newExp, newDupCnt, newDropCnt, newReuse -> Quadruple(BCast(newExp, from, to), newDupCnt, newDropCnt, newReuse)
+		);
 		default : Quadruple(exp, dupCnt, dropCnt, reuse);
 	}
 }
