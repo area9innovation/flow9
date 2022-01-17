@@ -238,6 +238,20 @@ void drop(T* a) {
 	}
 }
 
+// Unions
+template <typename ...T>
+void drop(std::variant<T...>* v) {
+	if (v == nullptr) {
+		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
+	}
+	else {
+		std::cout << "DROP VARIANT:: &=" << &v << std::endl;
+		std::visit([](auto&& a) { drop(a); }, *v);
+		delete v;
+		v = nullptr;
+	}
+}
+
 // TODO: reuse field
 template <typename T>
 T* reuse(T* a) {
@@ -538,26 +552,37 @@ int flow_iteriUntil(const std::vector<A>& flow_a, const std::function<bool(int32
 
 // flowstruct
 template <typename A, typename B>
-bool flow_isSameStructType(A struct1, B struct2) {
-	return struct1._id == struct2._id;
+bool flow_isSameStructType(A* struct1, B* struct2) {
+	bool res = (*struct1)._id == (*struct2)._id;
+	drop(struct1);
+	drop(struct2);
+	return res;
 }
 
 template <typename A, typename ...Args2>
-bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
-	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
-	return struct1._id == id2;
+bool flow_isSameStructType(A* struct1, std::variant<Args2...>* struct2) {
+	unsigned int id2 = std::visit([&](auto&& x) {return (*x)._id;}, *struct2);
+	bool res = (*struct1)._id == id2;
+	drop(struct1);
+	drop(struct2);
+	return res;
 }
 
 template <typename ...Args1, typename B>
-bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
-	return id1 == struct2._id;
+bool flow_isSameStructType(std::variant<Args1...>* struct1, B* struct2) {
+	unsigned int id1 = std::visit([&](auto&& x) {return (*x)._id;}, *struct1);
+	bool res = id1 == (*struct2)._id;
+	drop(struct1);
+	drop(struct2);
+	return res;
 }
 
 template <typename ...Args1, typename ...Args2>
-bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
-	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
+bool flow_isSameStructType(std::variant<Args1...>* struct1, std::variant<Args2...>* struct2) {
+	unsigned int id1 = std::visit([&](auto&& x) {return (*x)._id;}, *struct1);
+	unsigned int id2 = std::visit([&](auto&& x) {return (*x)._id;}, *struct2);
+	drop(struct1);
+	drop(struct2);
 	return id1 == id2;
 }
 
