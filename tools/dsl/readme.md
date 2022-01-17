@@ -5,7 +5,7 @@ rewrite rules.
 
 ## Syntax
 
-The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, addWs)`.
+The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, additions)`.
 
 The semantics actions are defined using actions like "plus_2", "negate_1", where
 the suffix defines the arity of the semantic action.
@@ -16,12 +16,10 @@ Here is a simple grammar for expressions:
 	mylang = defineGrammar("mylang", <<
 		exp = exp "+" ws exp $"plus_2" 
 			|> exp "*" ws exp $"mul_2"
-			|> $int ws $"s2i"
-			|> $id ws $"bind_1";	// For pattern matching
-		int = '0'-'9'+;
-		id = 'a'-'z'+;
+			|> int
+			|> id $"bind_1";	// For pattern matching
 		ws exp
-	>>, true); // true adds definitions for whitespace
+	>>, ["ws", "id", "int"]); // adds the expected definitions for these
 
 ### Semantic actions in Gringo
 
@@ -35,6 +33,35 @@ Built in actions include:
 - s2i for converting the top string on the stack to a DslInt
 - s2d for converting the top string on the stack to a DslDouble
 - dump for printing the contents of the stack - helpful for debugging
+- unescape will unescape escaped chars in a string with quotes
+- make_node will construct a node with args from the top, and the name
+  from the second top 
+
+TODO:
+- Integrate the higher-level gringo which has these constructs:
+	list(exp) = $"nil" (exp $"cons")*
+	listof(exp, sep) = $"nil" exp $"cons" (sep exp $"cons")* sep? | $"nil";
+	keyword(name : string) = name !letterOrDigit ws;
+
+  We have the dsl2flow thing now, which should make it relatively simple
+
+- Add a function which adds whitespace after lexical elements
+
+	addws(id "=" exp ";" expsemi $"brace_1" $"let_3") =>
+		id "=" ws exp ";" ws expsemi $"brace_1" $"let_3"
+
+	This would almost work, except we would have a problem with keywords:
+
+		addws(keyword(true) => addws("true" !letterOrDigit ws)
+			=> "true" ws !letterOrDigit ws
+
+	if we have natural evaluation order.
+	Maybe that can be fixed in practice by having a "ws !letterOrDigit ws" => "!letterOrDigit ws"
+	rule, or we should have a guard against 'string !term' so we do not process that.
+
+- Figure out how to add position to all nodes for better error reporting
+
+- Add functions to Gringo?
 
 ## Parsing
 
@@ -113,7 +140,32 @@ TODO:
 - Add pulsing: After N iterations, extract the best, and then rerun rules again from
   that point. These two things is what Caviar does https://arxiv.org/abs/2111.12116
   Is verified against Halide
+
+## Patterns
+
+Our patterns are simple matching only, but we should allow guards written in Lambda.
+
+TODO:
+- Figure out how patterns can be reused from e-graph to compiling to lowering.
+  Should we do an egraph implementation directly on DslAst?
+
+- Figure out how to work with AST directly in Lambda. Maybe it is trivial?
+
 - Do a DSL for pattern matching, maybe like https://arxiv.org/pdf/1807.01872v1.pdf
+
+## Lowering
+
+In addition to rewriting using the e-graph, we should have a more predictable
+rewriting system for lowering phases where we do not have any costs.
+
+- TODO: Make it so we can write the Gringo lowering like this:
+
+  	lowering= prepareDslLowering(gringo, ".",
+		<<
+			list(@t @s) => $"nil" @t $"cons" (@s @t $"cons")* @s? | $"nil".
+			list(@t) => $"nil" (@t $"cons")*.
+			keyword(@k) => @k !letterOrDigit ws.
+		>>);
 
 # Evaluator
 
@@ -144,6 +196,7 @@ It uses a syntax like
 	plus(a, b)  => $a(40) "+" $b(39);
 	minus(a, b) => $a(40) "-" $b(39);
 	mul(a, b)   => $a(50) "*" $b(49);
+	call(args)  => $glue(args, ",");
 
 where the left-hand side is a pattern to match in the source program, and
 the right hand side is a "blueprint". $a(50) means expand the string 
@@ -153,12 +206,19 @@ understood to be intMax.
 
 This way, we can model precedence and associativity.
 
-TODO:
-- Add a mode where we get warnings about missing AST nodes
+To expand lists, we have this construct:
+
+	$glue(<binding>, sep-string)
+
+which will expand the binding (which is a List) and separate each element
+using the sep-string.
+
+- Compiling Gringo is a problem, since "string" is wrong. Solutions: 
+  - Add guards for patterns, so we can check if the string contains " or '. 
+  - Add escape for strings when expanding
 
 # Future plans
 
-- Add DSL for lowering one language to another
 - Add DSL for type checking
 - Add DSL for test cases for all of the above
 - Add DSL for grammar rewriting
