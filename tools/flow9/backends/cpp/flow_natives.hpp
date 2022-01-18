@@ -222,18 +222,27 @@ void dropStruct(T& a) {
 
 template <typename T>
 void drop(T* a) {
+	dropValue(a);
+}
+
+template <typename T>
+bool dropValue(T* a) {
 	if (a == nullptr) {
 		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
-	// TODO: fix: 2 pointers, 1 object. delete ptr1 - OK. delete ptr2 - Error (wrong the cell)
-	} else {
+		// TODO: fix: 2 pointers, 1 object. delete ptr1 - OK. delete ptr2 - Error (wrong the cell)
+		return false;
+	}
+	else {
 		(*a)._counter -= 1;
 		if ((*a)._counter < 1) {
 			std::cout << "FREE:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 			delete a;
 			a = nullptr;
+			return true;
 		}
 		else {
 			std::cout << "DEC COUNTER:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			return false;
 		}
 	}
 }
@@ -246,9 +255,11 @@ void drop(std::variant<T...>* v) {
 	}
 	else {
 		std::cout << "DROP VARIANT:: &=" << &v << std::endl;
-		std::visit([](auto&& a) { drop(a); }, *v);
-		delete v;
-		v = nullptr;
+		bool isDropedValue = std::visit([](auto&& a) { return dropValue(a); }, *v);
+		if (isDropedValue) {
+			delete v;
+			v = nullptr;
+		}
 	}
 }
 
@@ -295,6 +306,18 @@ T* dup(T* a) {
 	(*a)._counter += 1;
 	std::cout<<"DUP:: cnt after: "<< (*a)._counter << "; &=" << a <<" " << &a << " " << *a << std::endl;
 	return a;
+}
+
+template <typename ...T>
+std::variant<T*...>* dup(std::variant<T*...>* v) {
+	if (v == nullptr) {
+		std::cout << "ERROR :: can't dup memory for NULL" << std::endl;
+	}
+	else {
+		std::cout << "DUP VARIANT:: &=" << &v << std::endl;
+		std::visit([](auto&& a) { dup(a); }, *v);
+	}
+	return v;
 }
 
 // Unions
@@ -587,20 +610,27 @@ bool flow_isSameStructType(std::variant<Args1...>* struct1, std::variant<Args2..
 }
 
 template <typename A, typename B>
-B* flow_extractStruct(const std::vector<A>* vect, B* valType) {
-	auto item = std::find_if((*vect).begin(), (*vect).end(), [*valType](A v) { return flow_isSameStructType(v, valType); });
-	if (item == (*vect).end()) {
-		drop(vect);
+B* flow_extractStruct(std::vector<A*>* vect, B* valType) {
+	B* res = nullptr;
+	for (auto i = 0; i != (*vect).size(); i++) {
+		auto tmp1 = dup((*vect)[i]);
+		if (flow_isSameStructType(tmp1, dup(valType))) {
+			res = _extractStructVal<B>((*vect)[i]);
+			break;
+		}
+	}
+	if (res == nullptr) {
+		// drop(vect); // TODO
 		return reuse(valType);
 	}
 	else {
 		drop(valType);
-		drop(vect);
-		return _extractStructVal<B*>(item);
+		// drop(vect); // TODO
+		return res;
 	}
 }
 
-template <typename A, typename ...B> A* _extractStructVal(std::variant<B...>* v) { return std::get<A*>(v); }
+template <typename A, typename ...B> A* _extractStructVal(std::variant<B*...>* v) { return std::get<A*>(*v); }
 template <typename A> A* _extractStructVal(A* v) { return v; }
 
 template <typename A, typename ...B> A _extractStructVal(std::variant<B...> v) { return std::get<A>(v); }
