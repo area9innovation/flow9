@@ -1,0 +1,90 @@
+import text/gringo/gringo_ast;
+import tools/gringo/utils;
+import tools/gringo/gringo_pretty;
+import ds/tree;
+
+export {
+	// Replace the last term in a gringo grammar
+	replaceLastGringo(term : GTerm, newLast : GTerm) -> GTerm;
+
+	// Merges two grammars together, preferring productions from the first
+	// when there are duplicates, and using the second grammars main rule
+	mergeGringos(first : GTerm, second : GTerm) -> GTerm;
+
+	// Rewrite the named rules in the grammar with new productions.
+	// The new terms can refer to the old name to extend the old rule
+	extendGringoRules(grammar : GTerm, extensions : Tree<string, GTerm>) -> GTerm;
+}
+
+replaceLastGringo(t : GTerm, newLast : GTerm) -> GTerm {
+	rec = \tt -> replaceLastGringo(tt, newLast);
+	switch (t) {
+		GRule(id, term, body): GRule(id, term, rec(body));
+		GPrecedence(left, right): GPrecedence(left, rec(right));
+		GChoice(left, right): GChoice(left, rec(right));
+		GSeq(left, right): GSeq(left, rec(right));
+		GStar(term): newLast;
+		GPlus(term): newLast;
+		GOpt(term): newLast;
+		GNegate(term): newLast;
+		GError(term): newLast;
+		GLower(term): newLast;
+		GUnquote(term): newLast;
+		GString(text): newLast;
+		GRange(lower, upper): newLast;
+		GVar(id): newLast;
+		GEpsilon(): newLast;
+	}
+}
+
+GringoSplit(
+	toplevel : Tree<string, GTerm>,
+	body : GTerm
+);
+
+splitGringo(t : GTerm) -> GringoSplit {
+	switch (t) {
+		GRule(id, term, body): {
+			rec = splitGringo(body);
+			GringoSplit(
+				setTree(rec.toplevel, id, term),
+				rec.body
+			);
+		}
+		default: GringoSplit(makeTree(), t);
+	}
+}
+
+mergeGringos(first : GTerm, second : GTerm) -> GTerm {
+	firstSplit = splitGringo(first);
+	secondSplit = splitGringo(second);
+	combined = foldTree(firstSplit.toplevel, secondSplit.toplevel, \n, t, acc -> {
+		setTree(acc, n, t)
+	});
+	combineGringo(GringoSplit(combined, secondSplit.body));
+}
+
+combineGringo(split : GringoSplit) -> GTerm {
+	foldTree(split.toplevel, split.body, \n, t, acc -> {
+		GRule(n, t, acc)
+	})
+}
+
+extendGringoRules(grammar : GTerm, extensions : Tree<string, GTerm>) -> GTerm {
+	split = splitGringo(grammar);
+	extended = ref false;
+	combined = foldTree(extensions, split.toplevel, \name, term, acc -> {
+		existing = lookupTreeDef(split.toplevel, name, GEpsilon());
+		extended := ^extended || existing != GEpsilon();
+		self = replaceTerm(GVar(name), existing, "", term);
+		// println(gterm2string(self));
+		setTree(acc, name, self);
+	});
+
+	// Check that at least one extensions made it
+	if (!^extended) {
+		println("The extension did not extend anything: " + toString(getTreeKeys(extensions)));
+	}
+
+	combineGringo(GringoSplit(combined, split.body));
+}

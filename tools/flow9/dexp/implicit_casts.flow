@@ -57,23 +57,36 @@ implicitDExpCasts(tmap : TMap, e : DExp, expectedEClass : int) -> DExp {
 		}
 		DCall(fn, args, pos, eclass): {
 			// TODO: We should maybe record the expected type for the fn and args?
+
+			fnEclass = getDExpEClass(fn);
+			argEClasses = if (fnEclass != -1) {
+				fnType = getUnionMapValue(tmap.cmap.cmap, fnEclass);
+				switch (fnType) {
+					CFunction(fnargs, return, reason): fnargs;
+					default: map(args, \a -> -1);
+				}
+			} else map(args, \a -> -1);
+
 			efn = implicitDExpCasts(tmap, fn, -1);
-			eargs = map(args, \a -> {
-				implicitDExpCasts(tmap, a, -1);
+			eargs = mapi(args, \i, a -> {
+				implicitDExpCasts(tmap, a, argEClasses[i]);
 			});
 			wrap(eclass, DCall(e with fn = efn, args = eargs));
 		}
 		DConstruct(structid, args, pos, eclass): {
-			eargs = map(args, \a -> {
-				// TODO: Based on the structid, we can find the expected
-				// types for each field
-				implicitDExpCasts(tmap, a, -1);
+			mstruct = ^(tmap.resolveStructName)(structid);
+			argEClasses = mstruct ?? {
+				map(mstruct.structArgs, \sa -> {
+					dtype2eclass(tmap, sa.type, pos);
+				})
+			} : map(args, \__ -> -1);
+			eargs = mapi(args, \i, a -> {
+				implicitDExpCasts(tmap, a, argEClasses[i]);
 			});
 			wrap(eclass, DConstruct(e with args = eargs));
 		}
 		DLambda(args, body, pos, eclass): {
-			// TODO: We should probably extract the return type from the DLambda here
-			ebody = implicitDExpCasts(tmap, body, -1);
+			ebody = implicitDExpCasts(tmap, body, eclass);
 			wrap(eclass, DLambda(e with body = ebody));
 		}
 		DRef(value, pos, eclass): {
@@ -95,9 +108,17 @@ implicitDExpCasts(tmap : TMap, e : DExp, expectedEClass : int) -> DExp {
 			DSetMutable(e with lhs = elhs, value = evalue);
 		}
 		DArray(exps, pos, eclass): {
-			// TODO: We should probably extract the type of the array elements
+			elmClasses = 
+				if (eclass != -1) {
+					arrayType = getUnionMapValue(tmap.cmap.cmap, eclass);
+					switch (arrayType) {
+						CName(name, typars, reason): typars[0];
+						default: -1;
+					} 
+				} else -1;
+
 			eexps = mapi(exps, \i, ee -> {
-				implicitDExpCasts(tmap, ee, -1);
+				implicitDExpCasts(tmap, ee, elmClasses);
 			});
 			wrap(eclass, DArray(e with exps = eexps));
 		}
@@ -138,6 +159,37 @@ implicitDExpCasts(tmap : TMap, e : DExp, expectedEClass : int) -> DExp {
 			wrap(eclass, DTyped(e with value = evalue));
 		}
 	}
+}
+
+getDExpEClass(d : DExp) -> int {
+	switch (d) {
+		DVoid(pos): -1;
+		DBool(v, pos): -1;
+		DInt(v, pos): -1;
+		DDouble(v, pos): -1;
+		DString(v, pos): -1;
+		DStringInclude(path, pos): -1;
+		DVar(id, pos, eclass): eclass;
+		DLet(id, value, body, pos, eclass): eclass;
+		DIf(cond, then, else_, pos, eclass): eclass;
+		DCall(fn, args, pos, eclass): eclass;
+		DConstruct(structid, args, pos, eclass): eclass;
+		DLambda(args, body, pos, eclass): eclass;
+		DRef(value, pos, eclass): eclass;
+		DField(value, field, pos, eclass): eclass;
+		DSetMutable(lhs, field, value, pos, eclass): eclass;
+		DArray(exps, pos, eclass): eclass;
+		DSequence(exps, pos, eclass): eclass;
+		DSwitch(value, type, cases, defaultCase, pos, eclass): eclass;
+		DCast(value, target, pos): -1;
+		DDowncast(id, newid, subtype, subeclass, supereclass, scope, pos, eclass): eclass;
+		DTyped(value, supertype, pos, eclass): eclass;
+	}
+}
+
+dtype2eclass(tmap : TMap, d : DType, pos : int) -> int {
+	tt = dtype2CType2(tmap, ref makeTree(), d);
+	findOrMakeCNodeClass(tmap, tt, makeErrorReason([pos], ""));
 }
 
 makeImplicitCast(tmap : TMap, d : DExp, gotEClass : int, expectedEClass : int) -> DExp {

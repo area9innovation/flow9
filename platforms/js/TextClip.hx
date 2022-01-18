@@ -1594,7 +1594,7 @@ class TextClip extends NativeWidgetClip {
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 
-		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
@@ -1613,7 +1613,7 @@ class TextClip extends NativeWidgetClip {
 							+ Math.abs(textNodeHeight * untyped this.transform.worldTransform.c)
 						)
 						: textNodeWidth;
-				if (textWidth != metrics.width) {
+				if (textWidth > 0 && textWidth != metrics.width) {
 					metrics.width = textWidth;
 					this.emitEvent('textwidthchanged');
 				}
