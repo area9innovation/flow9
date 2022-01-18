@@ -214,6 +214,17 @@ using the sep-string.
   - Add guards for patterns, so we can check if the string contains " or '. 
   - Add escape for strings when expanding
 
+## Composition of languages
+
+Right now, it is a manual process to extend the languages together. Figure out a way
+to make it more automatic, so you can just parse/eval/run any language combination.
+
+## Runtime
+
+Some language constructs require a runtime, such as fold, map for list-comprehensions,
+first, second and third for tuples, and so on.
+Implement a mechanism for these.
+
 # Future plans
 
 - Add DSL for type checking
