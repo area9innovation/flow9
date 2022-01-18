@@ -586,6 +586,23 @@ bool flow_isSameStructType(std::variant<Args1...>* struct1, std::variant<Args2..
 	return id1 == id2;
 }
 
+template <typename A, typename B>
+B* flow_extractStruct(const std::vector<A>* vect, B* valType) {
+	auto item = std::find_if((*vect).begin(), (*vect).end(), [*valType](A v) { return flow_isSameStructType(v, valType); });
+	if (item == (*vect).end()) {
+		drop(vect);
+		return reuse(valType);
+	}
+	else {
+		drop(valType);
+		drop(vect);
+		return _extractStructVal<B*>(item);
+	}
+}
+
+template <typename A, typename ...B> A* _extractStructVal(std::variant<B...>* v) { return std::get<A*>(v); }
+template <typename A> A* _extractStructVal(A* v) { return v; }
+
 template <typename A, typename ...B> A _extractStructVal(std::variant<B...> v) { return std::get<A>(v); }
 template <typename A> A _extractStructVal(A v) { return v; }
 
@@ -598,8 +615,6 @@ B flow_extractStruct(const std::vector<A> flow_a, B flow_b) {
     return _extractStructVal<B>(*item);
   }
 }
-
-template <typename T> std::string type_name();
 
 template <typename A>
 std::u16string flow_getStructName(A st) {
