@@ -876,35 +876,14 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 
 // only for structs
 castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
-	getStructTypeId = \type : BType -> 
-		switch (type : BType) {
-			BTypePar(__) : "";
-			BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
-			BTypeFunction(__, returnType) : "";
-		}
-
-	isSubStruct = \unionId : string, subStructId : string -> {
-		exists(lookupTreeDef(backend.info.unionTypes, unionId, []), \t : BType -> bType2id(t) == subStructId);
-	}
-
 	liftType = \value -> {
-		if (memoryManagement) {
-			blueprint(
-				"new %type%{%value%}",
-				[
-					"type", btype2cpp(backend, bcast.to),
-					"value", value,
-				]
-			);
-		} else {
-			blueprint(
-				"(%type%)(%value%)",
-				[
-					"type", btype2cpp(backend, bcast.to),
-					"value", value,
-				]
-			);
-		}
+		 blueprint(
+			if (memoryManagement) "new %type%{%value%}" else "(%type%)(%value%)",
+			[
+				"type", btype2cpp(backend, bcast.to),
+				"value", value,
+			]
+		);
 	}
 
 	downType = \value -> {
@@ -921,18 +900,44 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		);
 	}
 
+	value = bexp2cpp(backend, bcast.value, false);
+	switch (getBCastType(backend, bcast) : BCastType) {
+		BCastUp() : liftType(value);
+		BCastDown() : downType(value);
+		BCastNone() : value;
+
+	}
+}
+
+// only for structs
+BCastType ::= BCastUp, BCastDown, BCastNone;
+	BCastUp();
+	BCastDown();
+	BCastNone();
+
+getBCastType(backend : Backend<CppInfo>, bcast : BCast) -> BCastType {
+	getStructTypeId = \type : BType -> 
+		switch (type : BType) {
+			BTypePar(__) : "";
+			BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
+			BTypeFunction(__, returnType) : "";
+		}
+
+	isSubStruct = \unionId : string, subStructId : string -> {
+		exists(lookupTreeDef(backend.info.unionTypes, unionId, []), \t : BType -> bType2id(t) == subStructId);
+	}
+
 	fromId = getStructTypeId(bcast.from);
 	toId =  getStructTypeId(bcast.to);
-	value = bexp2cpp(backend, bcast.value, false);
 
 	if (fromId == "" || toId == "") {
-		value;
+		BCastNone();
 	} else if (isSubStruct(fromId, toId)) {
-		downType(value)
+		BCastDown();
 	} else if (isSubStruct(toId, fromId)) {
-		liftType(value)
+		BCastUp();
 	} else {
-		value;
+		BCastNone();
 	}
 }
 
@@ -1445,15 +1450,14 @@ isSimpleBType(type : BType) -> bool {
 // TODO: ignore simple types (remove all dup/drop/reuse) ?
 bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, false);
-	isDup = \-> switch (exp : BCounter) {
-		BDupValue(__) : true;
-		BDropValue(__) : false;
-		BReuseValue(__) : false;
+	extractValueFromBDup = \e -> switch (e : BCounter) {
+		BDupValue(value) : value;
+		BDropValue(__) : exp;
+		BReuseValue(__) : exp;
 	}
-	isDrop = \-> switch (exp : BCounter) {
-		BDupValue(__) : false;
-		BDropValue(__) : true;
-		BReuseValue(__) : true;
+	extractCastUpFromExp = \e -> switch (e : BExp) {
+		BCast(__, __, __) : if (getBCastType(backend, e) == BCastUp()) Some(e) else None();
+		default : None();
 	}
 	bcounter2fnName = \-> switch (exp : BCounter) {
 		BDupValue(__) : "dup";
@@ -1463,18 +1467,31 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 
 	value = exp.value;
 	type = getBReturnType(getBType(value));
+	makeCppCounter = \-> blueprint(
+		"%fn%(%val%)",
+		[
+			"fn", bcounter2fnName(),
+			"val", rec(value),
+		]
+	);
+
 	if (isSimpleBType(type) || !memoryManagement) {
 		rec(value)
+	// TODO: move to ref_counting ?
+	// replace dup(liftType(val)) with liftType(dup(val)) // swap BCast and BDup
+	} else if (memoryManagement) {
+		newVal = extractValueFromBDup(exp);
+		if (newVal == exp) {
+			makeCppCounter()
+		} else {
+			eitherFn(
+				extractCastUpFromExp(newVal),
+				\bcast -> bexp2cpp(backend, BCast(BDupValue(bcast.value), bcast.from, bcast.to), false),
+				makeCppCounter
+			)
+		}
 	} else {
-		blueprint(
-			"%fn%%type%(%val%)",
-			[
-				"fn", bcounter2fnName(),
-				"val", rec(value),
-				//"type", if (isDrop() || isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
-				"type", "",
-			]
-		);
+		makeCppCounter()
 	}
 }
 
