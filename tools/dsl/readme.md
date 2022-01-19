@@ -180,8 +180,11 @@ The natives defined include:
 	equal, not_equal, less, less_equal, greater, greater_equal
 	and, or, not
 	add, sub, mul, div, mod, negate
-	nil, cons, head, tail
 	brace (keeps last value)
+	nil, cons, head, tail		// For lists
+	name, child					// For nodes
+
+TODO: Add "construct" for node construction.
 
 ## Blueprints for compilers
 
