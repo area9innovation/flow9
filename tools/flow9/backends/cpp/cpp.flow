@@ -503,22 +503,31 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 	addTemplatesToStruct(
 		dtypes2parameters(mapConcat(u.types, \t -> t.typars)),
 		if (memoryManagement) {
+			// std::visit() doesn't work with 'g++ -std=c++2a ...'. so i added own visit()
 			// TODO: think about: do we need _id for variant?
 			blueprint("
 				struct %name% : std::variant<%members%> {
 					\tint _counter = 1;
 					\t~%name%() {
 					    std::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %name%; counter=\" << _counter << \" &=\" << this << \" ~ \" << std::endl;
-					    std::visit([](auto&& a) { drop(a); }, *this);
-				    }
+					    dropFields();
+					\t}
+				    bool operator==(const %name%& a) const {return areValuesEqual (*this, a);}
+
+				    using base_%name% = typename %name%::variant;
+					template <typename F>
+					decltype(auto) visit(F&& f)& {
+					    return std::visit(std::forward<F>(f), static_cast<base_%name%&>(*this));
+					}
+
 					\tvoid dupFields() {
-				    	std::visit([](auto&& a) { dup(a); }, *this);
-				    }
+					    // std::visit([](auto&& a) { dup(a); }, *this);
+					    (*this).visit([&](auto&& v) { ::dup(v); });
+					\t}
 					\tvoid dropFields() {
-				    	std::visit([](auto&& a) { drop(a); }, *this);
-				    }
-				    bool operator==(const %name%& a) const {return areValuesEqual (*this, a);}"
-					+ "
+					    // std::visit([](auto&& a) { drop(a); }, *this);
+					    (*this).visit([&](auto&& v) { ::drop(v); });
+					\t}
 				};
 				std::ostream& operator<<(std::ostream& os, const %name%& a){
 					  \tos << \"%name% [union type]\";
@@ -527,7 +536,6 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 				[
 					"name", u.id,
 					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", "),
-					"equalFields", "false",
 				]
 			)
 		} else {
@@ -608,8 +616,8 @@ dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType
 		+ dstruct2id(backend, s)
 		+ dstruct2counter(backend, s) + "\n"
 		+ dstructFns
-		+ dstruct2DupDropFields(backend, s)
-		+ "};"
+		+ dstruct2DupDropFields(s)
+		+ "};\n"
 	);
 }
 
@@ -767,18 +775,28 @@ dstruct2counter(backend : Backend<CppInfo>, s : DStruct) -> string {
 	else "";
 }
 
-dstruct2DupDropFields(backend : Backend<CppInfo>, s : DStruct) -> string {
+dstruct2DupDropFields(s : DStruct) -> string {
 	if (memoryManagement) {
-		makeFn = \name, sa -> if (isSimpleBType(dtype2btype(sa.type))) "" else ("::" + name + "(" + sa.id + ");");
-		blueprint(
-			"void dupFields() {%dupFields%}
-			void dropFields() {%dropFields%}
+		//if (withBody) {
+			makeFn = \name, sa -> if (isSimpleBType(dtype2btype(sa.type))) "" else ("::" + name + "(" + sa.id + ");");
+			blueprint(
+				"void dupFields() {%dupFields%}
+				void dropFields() {%dropFields%}
 ",
-			[
-				"dupFields", superglue(s.structArgs, \sa -> makeFn("dup", sa), " "),
-				"dropFields", superglue(s.structArgs, \sa -> makeFn("drop", sa), " "),
-			]
-		)
+				[
+					"type", s.id,
+					"dupFields", superglue(s.structArgs, \sa -> makeFn("dup", sa), " "),
+					"dropFields", superglue(s.structArgs, \sa -> makeFn("drop", sa), " "),
+				]
+			)
+		/*} else {
+			blueprint(
+				"void dupFields(%type%* v);
+				void dropFields(%type%* v);
+",
+				["type", s.id,]
+			)
+		}*/
 	} else {
 		""
 	}
