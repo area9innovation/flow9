@@ -88,11 +88,13 @@ getCharCatSplitPos(t: string, i: int, endPos: int) -> int {
 BiDiWrapper(word: ?, dm: DirectionAndMajority);
 BiDiWord<?> ::= LineTerminal, BiDiWrapper<?>;
 BiDiLine(words: [BiDiWord<?>], startDM: DirectionAndMajority, endDM: DirectionAndMajority);
-BiDiFormatting(kind : BiDiFormattingKind, dir : int);
+BiDiFormatting(kind : BiDiFormattingKind, dmf : () -> DirectionAndMajority);
 	BiDiFormattingKind ::=
+		BiDiPairedChar,
 		BiDiDirectionMark, BiDiDirectionEmbedded,
 		BiDiDirectionIsolated, BiDiDirectionOverridden;
 
+		BiDiPairedChar();
 		BiDiDirectionMark();
 		BiDiDirectionEmbedded();
 		BiDiDirectionIsolated();
@@ -143,6 +145,26 @@ fold2DMs(first: DirectionAndMajority, second: DirectionAndMajority) -> Direction
 	DirectionAndMajority(if (first.d == uc_dir_rtl || first.d == uc_dir_ltr) first.d else second.d, max(first.m, second.m));
 }
 
+// Makes one DM pair from three, third is default when first two are conflicting.
+// Assuming third has RTL or LTR direction so the case is solved.
+fold3DMs(first: DirectionAndMajority, second: DirectionAndMajority, third: DirectionAndMajority) -> DirectionAndMajority {
+	if (first.m > second.m) first else
+	if (second.m > first.m) second else
+	DirectionAndMajority(
+		if (first.d == uc_dir_rtl || first.d == uc_dir_ltr)
+			if (second.d == uc_dir_rtl || second.d == uc_dir_ltr)
+				third.d
+			else
+				first.d
+		else 
+			if (second.d == uc_dir_rtl || second.d == uc_dir_ltr)
+				second.d
+			else
+				third.d,
+		max(first.m, second.m)
+	);
+}
+
 // Returns word direction and majority flag (meaning this direction to be inherited
 // by adjacent words with no majority).
 getTextDirectionAndMajority(t: string) -> DirectionAndMajority {
@@ -164,16 +186,17 @@ getWordsDirectionAndMajority(ws: [BiDiWord<?>]) -> DirectionAndMajority {
 }
 
 debugWord(w: BiDiWord<?>, getText: (?) -> string) -> string {
+	ddm = \dm -> getCharAt("→~←:", dm.d) + toString(dm.m);
 	switch(w) {
-		BiDiWrapper(ww, dm): toString(getText(ww));
-		LineTerminal(__): "<>";
+		BiDiWrapper(ww, dm): getText(ww) + ddm(dm);
+		LineTerminal(dm): "<" + ddm(dm) + ">";
 	};
 }
 
-groupByCounterDirReverse(ws: [BiDiWord<?>], rtl: bool) -> [[BiDiWord<?>]] {
+groupByCounterDirReverse(ws: [BiDiWord<?>], rtl: bool, getText: (?) -> string) -> [[BiDiWord<?>]] {
 	defaultDir = if (rtl) uc_dir_rtl else uc_dir_ltr;
 	counterDir = if (rtl) uc_dir_ltr else uc_dir_rtl;
-	if (length(ws) < 2) [ws] else fold(
+	(if (length(ws) < 2) [ws] else fold(
 		tail(ws), Pair([[ws[0]]], getWordDirectionAndMajority(ws[0])), \acc: Pair<[[BiDiWord<?>]], DirectionAndMajority>, w: BiDiWord<?> -> {
 			wdm = getWordDirectionAndMajority(w);
 			Pair(
@@ -184,15 +207,18 @@ groupByCounterDirReverse(ws: [BiDiWord<?>], rtl: bool) -> [[BiDiWord<?>]] {
 				if (wdm.m > 1) wdm else acc.second
 			)
 		}
-	).first;
+	).first) |> \q -> {
+		println(map(q, \r -> map(r, \s -> debugWord(s, getText))));
+		q
+	};
 }
 
 reflowWordsToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, rtl: bool) -> [BiDiWord<?>] {
 	// Grouping words with counter-direction into subarrays, and reversing order.
-	ltrGrouping = groupByCounterDirReverse(ws, rtl);
+	ltrGrouping = groupByCounterDirReverse(ws, rtl, getText);
 
 	// Repeating same for each group and reverse them back — to cut group trailing punctuation, and counter-directed groups now in reverse order.
-	ltrCleanGrouping = concatA(map(ltrGrouping, \lgws -> reverseA(groupByCounterDirReverse(lgws, rtl))));
+	ltrCleanGrouping = concatA(map(ltrGrouping, \lgws -> reverseA(groupByCounterDirReverse(lgws, rtl, getText))));
 
 	// Filtering out empty fragments and joining all groups back together.
 	r = filter(
@@ -214,7 +240,7 @@ reflowWordsToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> strin
 	);
 
 	// Globally, text remains in reverse order after first operation, which only good for RTL.
-	if (rtl) r else reverseA(r);
+	if (rtl) r else reverseA(r)
 }
 
 makeBiDiLine(words: [BiDiWord<?>]) -> BiDiLine<?> {
@@ -234,39 +260,48 @@ unwrapLine(l: [BiDiWord<?>], setRTL: (?, bool) -> ?) -> [?] {
 }
 
 reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, setRTL: (?, bool) -> ?, rtl: bool) -> [[?]] {
+	defaultDM = DirectionAndMajority(if (rtl) uc_dir_rtl else uc_dir_ltr, 2);
+	previousDM = ref DirectionAndMajority(defaultDM.d, 2);
+
 	context = makeBiDiContext(Some(rtl));
 	stackPasser = \keyChar, dir, kind : [BiDiFormattingKind], fn -> Pair(
 		keyChar,
 		\ stack -> fn(dir, kind, stack)
 	);
-	formattingMark = \dir, __, stack : List<BiDiFormatting> -> Cons(BiDiFormatting(BiDiDirectionMark(), dir), switch(stack) {
+	formattingMark = \dmf, __, stack : List<BiDiFormatting> -> Cons(BiDiFormatting(BiDiDirectionMark(), dmf), switch(stack) {
 		Cons(head, t): switch(head.kind) {
 			BiDiDirectionMark(): t;
 			default: stack
 		};
 		EmptyList(): stack
 	});
-	formattingPush = \dir, kind : [BiDiFormattingKind], stack -> Cons(BiDiFormatting(kind[0], dir), stack);
-	formattingPop = \__, kind : [BiDiFormattingKind], stack -> tailList(updateWhile(stack, \s -> switch(s : List<BiDiFormatting>) {
+	formattingPush = \dmf, kind : [BiDiFormattingKind], stack -> Cons(BiDiFormatting(kind[0], dmf), stack);
+	formattingPop = \dmf, kind : [BiDiFormattingKind], stack -> tailList(updateWhile(stack, \s -> switch(s : List<BiDiFormatting>) {
 		EmptyList(): None();
-		Cons(head, t): if (contains(kind, head.kind)) None() else Some(t);
+		Cons(head, t): if (contains(kind, head.kind)) {
+			if (head.kind == BiDiPairedChar()) previousDM := dmf();
+			None()
+		} else Some(t);
 	}));
-	formatHandlers = pairs2tree([
-		// Implemented isolated and marks as most useful yet.
-		stackPasser("\u200E", uc_dir_ltr, [BiDiDirectionMark()], formattingMark),
-		stackPasser("\u200F", uc_dir_rtl, [BiDiDirectionMark()], formattingMark),
-		stackPasser("\u2066", uc_dir_ltr, [BiDiDirectionIsolated()], formattingPush),
-		stackPasser("\u2067", uc_dir_rtl, [BiDiDirectionIsolated()], formattingPush),
-		stackPasser("\u2069", uc_dir_flow, [BiDiDirectionIsolated()], formattingPop),
-		// TODO no good support yet, the Overridden behaves the same, but also shows chars in memory order,
-		//      Embedded must also somehow differ from Isolated.
-		//stackPasser("\u202A", uc_dir_ltr, [BiDiDirectionEmbedded()], formattingPush),
-		//stackPasser("\u202B", uc_dir_rtl, [BiDiDirectionEmbedded()], formattingPush),
-		//stackPasser("\u202C", uc_dir_flow, [BiDiDirectionEmbedded(), BiDiDirectionOverridden()], formattingPop),
-		//stackPasser("\u202D", uc_dir_ltr, [BiDiDirectionOverridden()], formattingPush),
-		//stackPasser("\u202E", uc_dir_rtl, [BiDiDirectionOverridden()], formattingPush),
-	]);
-	defaultDir = if (getDefaultRtl()) uc_dir_rtl else uc_dir_ltr;
+	formatHandlers = pairs2tree(concat3(
+		stringCharsFold("([{", [], \a, c -> arrayPush(a, stackPasser(c, \-> DirectionAndMajority((^previousDM).d, 1), [BiDiPairedChar()], formattingPush))),
+		stringCharsFold(")]}", [], \a, c -> arrayPush(a, stackPasser(c, \-> DirectionAndMajority((^previousDM).d, 2), [BiDiPairedChar()], formattingPop))),
+		[
+			// Implemented isolated and marks as most useful yet.
+			stackPasser("\u200E", \-> DirectionAndMajority(uc_dir_ltr, 3), [BiDiDirectionMark()], formattingMark),
+			stackPasser("\u200F", \-> DirectionAndMajority(uc_dir_rtl, 3), [BiDiDirectionMark()], formattingMark),
+			stackPasser("\u2066", \-> DirectionAndMajority(uc_dir_ltr, 3), [BiDiDirectionIsolated()], formattingPush),
+			stackPasser("\u2067", \-> DirectionAndMajority(uc_dir_rtl, 3), [BiDiDirectionIsolated()], formattingPush),
+			stackPasser("\u2069", \-> DirectionAndMajority(uc_dir_flow, 3), [BiDiDirectionIsolated()], formattingPop),
+			// TODO no good support yet, the Overridden behaves the same, but also shows chars in memory order,
+			//      Embedded must also somehow differ from Isolated.
+			//stackPasser("\u202A", uc_dir_ltr, [BiDiDirectionEmbedded()], formattingPush),
+			//stackPasser("\u202B", uc_dir_rtl, [BiDiDirectionEmbedded()], formattingPush),
+			//stackPasser("\u202C", uc_dir_flow, [BiDiDirectionEmbedded(), BiDiDirectionOverridden()], formattingPop),
+			//stackPasser("\u202D", uc_dir_ltr, [BiDiDirectionOverridden()], formattingPush),
+			//stackPasser("\u202E", uc_dir_rtl, [BiDiDirectionOverridden()], formattingPush),
+		]
+	));
 	lines = map(text, \l -> makeBiDiLine(map(l, \w -> BiDiWrapper(w, {
 		t = getText(w);
 		// Splitters go into separate word, so the following is safe we don't miss any char.
@@ -275,23 +310,56 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 				t, ^(context.formattingStack), \s, c -> lookupTreeDef(formatHandlers, c, idfn)(s)
 			);
 		};
-		switch(^(context.formattingStack)) {
-			Cons(head, __): DirectionAndMajority(head.dir, 3);
+		tdm = switch(^(context.formattingStack)) {
+			Cons(head, __): fold2DMs(head.dmf(), ^previousDM);
 			EmptyList(): getTextDirectionAndMajority(t);
 		};
+		if (contains([uc_dir_ltr, uc_dir_rtl], tdm.d)) previousDM := tdm;
+		if (tdm.d == uc_dir_coupled) ^previousDM else tdm;
 	}))));
+	forwardMajorWords = ref foldi(
+		reverseA(lines),
+		Cons(Triple(length(lines), 0, DirectionAndMajority(1, 0)), EmptyList()),
+		\rlno, lacc, line -> {
+			lno = length(lines) - 1 - rlno;
+			foldi(reverseA(line.words), lacc, \rwno, wacc : Cons<Triple<int, int, DirectionAndMajority>>, word -> {
+				wno = length(line.words) - 1 - rwno;
+				curr = getWordDirectionAndMajority(word);
+				if (curr.m >= 2 && contains([uc_dir_ltr, uc_dir_rtl], curr.d)/*wacc.head.third.m*/) Cons(Triple(lno, wno, curr), wacc) else wacc
+			})
+		}
+	);
+
 	mapi(
-		lines, \i,
-		line -> unwrapLine(
+		lines, \lno, line -> unwrapLine(
 			reflowWordsToBiDi(
 				concat3(
-					[LineTerminal(fold(
-						reverseA(take(lines, i)), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineAbove -> fold2DMs(acc, lineAbove.endDM)
-					))],
-					line.words,
-					[LineTerminal(fold(
-						tailFrom(lines, i+1), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineBelow -> fold2DMs(acc, lineBelow.startDM)
-					))]
+					[
+						LineTerminal(fold(
+							reverseA(take(lines, lno)), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineAbove -> fold2DMs(acc, lineAbove.endDM)
+						)),
+						LineTerminal(line.startDM)
+					],
+					mapi(line.words, \wno, word -> {
+						forwardMajorWords := switch(^forwardMajorWords) {
+							EmptyList(): EmptyList();
+							Cons(h, t): if (lno > h.first || (lno == h.first && wno == h.second)) t else ^forwardMajorWords;
+						};
+						majorDM = switch(^forwardMajorWords) {
+							EmptyList(): DirectionAndMajority(1, 0);
+							Cons(h, t): h.third; //DirectionAndMajority(1, 0);
+						};
+						switch (word) {
+							LineTerminal(dm): LineTerminal(fold3DMs(dm, majorDM, defaultDM));
+							BiDiWrapper(w, dm): BiDiWrapper(w, fold2DMs(dm, majorDM));
+						}
+					}),
+					[
+						LineTerminal(line.endDM),
+						LineTerminal(fold(
+							tailFrom(lines, lno+1), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineBelow -> fold2DMs(acc, lineBelow.startDM)
+						))
+					]
 				),
 				isEmpty, getText, setText, rtl
 			), setRTL
