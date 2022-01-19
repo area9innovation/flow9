@@ -6,6 +6,8 @@ import tools/flow9/types/cgraph/constraint;
 import tools/flow9/bexp/bexp;
 import tools/flow9/types/util;
 import tools/flow9/dexp/implicit_casts;
+import tools/flow9/bexp/dtype2btype;
+import tools/flow9/bexp/type;
 
 export {
 	dexp2bexp(env : BExpEnv, d : DExp) -> BExp;
@@ -17,36 +19,21 @@ export {
 		resolveStructName : (string) -> Maybe<DStruct>,
 	);
 
-	ttype2btype(env : BExpEnv, type : TType) -> BType;
-
 	resolveBType(env : BExpEnv, pos : int, eclass : int) -> BType;
 }
 
 resolveBType(env : BExpEnv, pos : int, eclass : int) -> BType {
-	if (env.tmap.tracing.cmap) {
-		mtype = resolveCNode(env.tmap, env.eclassType, eclass);
-		mtype ?? {
-			mtype;
-		} : {
-			// These are already reported
+	mtype = resolveCNode(env.tmap, env.eclassType, eclass);
+	mtype ?? {
+		mtype;
+	} : {
+		// These are already reported
+		if (false) {
 			env.onError(pos, "Add type annotation. Unresolved type (equivalence class e" + i2s(eclass) + ")");
-			BTypeName("Error!", []);
+		} else {
+			println("Implicit typar or flow cast. Ignore this unresolved type (equivalence class e" + i2s(eclass) + ")");
 		}
-	} else {
-		root = rootTTypeEClass(env.tmap, eclass);
-		mtype = lookupTree(env.eclassType, root);
-		mtype ?? {
-			if (unresolvedTType(mtype)) {
-				if (reportErrorOnType(env, mtype)) {
-					env.onError(pos, "Add type parameter. Implicit polymorphism in " + prettyTType(mtype));
-				}
-			}
-			ttype2btype(env, mtype)
-		} : {
-			// These are already reported
-			env.onError(pos, "Add type annotation. Unresolved type (equivalence class e" + i2s(root) + ")");
-			BTypeName("Error!", []);
-		}
+		BTypeName("auto", []);
 	}
 }
 
@@ -128,8 +115,8 @@ dexp2bexp(env : BExpEnv, d : DExp) -> BExp {
 			);
 		}
 		DCast(value, target, pos): {
-			// We probably do not need this in the backends. It is purely a type checking thing
-			rec(value);
+			// casting of types by cast(variable : Type1 -> Type2)
+			castFn2bexp(env, d);
 		}
 		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
 			println("INTERAL ERROR: Downcasts should be converted to casts by implicit_casts");
@@ -143,33 +130,6 @@ dexp2bexp(env : BExpEnv, d : DExp) -> BExp {
 	}
 }
 
-ttype2btype(env : BExpEnv, type : TType) -> BType {
-	switch (type) {
-		TTypeName(id, typars): {
-			if (trim2(id, "?") == "" && typars == []) {
-				BTypePar(id);
-			} else {
-				BTypeName(id, map(typars, \tp -> ttype2btype(env, tp)));
-			}
-		}
-		TTypeEClass(eclass): {
-			// println("ERROR: Tyvar");
-			BTypeName("bool", []);
-		}
-		TTypeFunction(args, returnType): {
-			BTypeFunction(map(args, \a -> ttype2btype(env, a)), ttype2btype(env, returnType));
-		}
-		TTypeOverload(tt, overloads): {
-			println("ERROR: Overload");
-			BTypeName("ERROR overload " + toString(tt), []);
-		}
-		TTypeSupertype(__, subtypes, maxed): {
-			println("ERROR: Supertype");
-			BTypeName("ERROR supertype", []);
-		}
-	}
-}
-
 dcall2bexp(env : BExpEnv, d : DCall) -> BExp {
 	rec = \ee -> dexp2bexp(env, ee);
 	type = \eclass : int -> resolveBType(env, d.pos, eclass);
@@ -179,7 +139,12 @@ dcall2bexp(env : BExpEnv, d : DCall) -> BExp {
 			DInt(v, pos): v;
 			default: -1;
 		}
-		type(eclass);
+		castType = type(eclass);
+		switch (castType : BType) {
+			BTypePar(__) : castType;
+			BTypeName(typeId, __) : castType;
+			BTypeFunction(__, returnType) : returnType; // lambda
+		}
 	}
 
 	switch (d.fn : DExp) {
@@ -195,4 +160,14 @@ dcall2bexp(env : BExpEnv, d : DCall) -> BExp {
 		}
 		default : dcall2bcall();
 	}
+}
+
+castFn2bexp(env : BExpEnv, d : DCast) -> BExp {
+	returnType = dtype2btype(d.target);
+	value = dexp2bexp(env, d.value);
+	BCall(
+		BVar("__cast", BTypeFunction([getBType(value)], returnType)),
+		[value],
+		returnType
+	)
 }

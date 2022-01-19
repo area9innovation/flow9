@@ -1,3 +1,4 @@
+import * as typenames from "TestNativeHost-types.d";
 
   export interface User {
 	name: string;
@@ -38,6 +39,22 @@
   export function makeUser(name: string, id : number): User {
 	return new UserAccount(name, id);
   }
+
+  export function makeUser1(pair: typenames.Pair<string, number>): User {
+	return new UserAccount(pair.first, pair.second);
+  }
+
+/*
+  //Uncomment to see the errors while checking types with typescript:
+
+  export function makeUser2(pair: typenames.Pair<string, number>): User {
+	return new UserAccount(pair.aaa, pair.bbb);
+  }
+
+  export function makeUser3(pair: typenames.Pairss<string, number>): User {
+	return new UserAccount(pair.first, pair.second);
+ }
+*/
 
   export function userName(user: User): string {
 	return user.name;

@@ -1,5 +1,5 @@
-import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/cgraph/pretty;
+import tools/flow9/types/ugraph/debug;
 import tools/flow9/types/ugraph/tmap;
 import tools/flow9/types/cgraph/constraint;
 import tools/flow9/types/pretty;
@@ -52,7 +52,7 @@ resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
 	// Pick smallest overloads for subtypes
 	iterList(^(tmap.cmap.constraints), \c : TConstraint -> {
 		// OK, let us reduce this one
-		pickSmallestOverload(tmap, c.subtype);
+		pickSmallestOverload(tmap, c.subtype, None());
 	});
 
 	// Then do the subtypes that work after that
@@ -62,10 +62,9 @@ resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
 	remainingUnifications(tmap, verbose);
 
 	// Now, resolve any other overloads we might have
-	roots = getUnionMapRoots(tmap.cmap.cmap);
-	iterSet(roots, \tp : int -> {
+	iterUnionMap(tmap.cmap.cmap, \tp : int, node : CNode -> {
 		// OK, let us reduce this one
-		pickSmallestOverload(tmap, tp);
+		pickSmallestOverload(tmap, tp, Some(node));
 	});
 	// Then do the subtypes that work after that
 	remainingSubtypes(tmap, verbose);
@@ -156,15 +155,15 @@ processList(rlist : ref List<?>, fn : (?) -> bool) -> bool {
 	!isEmptyList(^rlist);
 }
 
-pickSmallestOverload(tmap : TMap, eclass : int) -> void {
-	node = getUnionMapValue(tmap.cmap.cmap, eclass);
+pickSmallestOverload(tmap : TMap, eclass : int, mnode : Maybe<CNode>) -> void {
+	node = mnode ?? mnode : getUnionMapValue(tmap.cmap.cmap, eclass);
 	switch (node : CNode) {
 		CEpsilon(): {}
 		CName(name, typars, reason): {}
 		CFunction(args, return, reason): {}
 		COverload(unique, options, reason): {
 			// OK, let us reduce this one
-			smallest = foldSet(node.options, Pair(CEpsilon(), intMax), \acc, opt -> {
+			smallest : Pair<CNode, int> = foldSet(node.options, Pair(CEpsilon(), intMax), \acc, opt -> {
 				onode = getUnionMapValue(tmap.cmap.cmap, opt);
 				size = countSubtypes(tmap, onode);
 				if (size == intMax || size > acc.second) {

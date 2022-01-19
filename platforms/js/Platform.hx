@@ -62,7 +62,7 @@ class Platform {
 	public static var SupportsVideoTexture = !Platform.isIEMobile;
 	public static var AccessiblityAllowed =
 		Util.getParameter("accessenabled") == "1" ||
-		((Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isMobile && !Platform.isEdge);
+		((Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isEdge);
 
 	private static function getIsRetinaDisplay() : Bool {
 		if (Platform.isMacintosh && Browser.window.matchMedia != null) {

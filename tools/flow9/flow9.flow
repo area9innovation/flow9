@@ -1,6 +1,4 @@
 import tools/flow9/backends/js/js;
-import tools/flow9/backends/wasm/wasm;
-import tools/flow9/backends/koka/koka;
 import tools/flow9/backends/cpp/cpp;
 import tools/flow9/backends/flowc/flowc;
 import tools/flow9/pexp/parse;
@@ -21,9 +19,21 @@ main() {
 		} else "tools/flow9/tests/" + test;
 	} else "";
 
-	includes = strSplit(getUrlParameter("I"), ",");
-	allincludes = uniq(filter(concat([".", getFlowDirectory() + "/lib", getFlowDirectory()], includes), neq("")));
-	verbose = isUrlParameterTrue("verbose");
+	config = switch (getCompilerConfig(fcCurrentWorkingDir())) {
+		Failed(msg): {
+			println(msg + "\nUsing a default config.");
+			includes = strSplit(getUrlParameter("I"), ",");
+			allincludes = uniq(filter(concat([".", getFlowDirectory() + "/lib", getFlowDirectory()], includes), neq("")));
+			verbose = s2i(getUrlParameterDef("verbose", "0"));
+			CompilerConfig(file, allincludes, [], verbose, JSCliParams_dummy, makeTree(), s2i(getThreadId()));
+		}
+		Some(config): {
+			config;
+		}
+	}
+
+	allincludes = config.includes;
+	verbose = config.verbose > 0;
 
 	errors = ref 0;
 	t = timestamp();
@@ -99,13 +109,6 @@ compileFlowe(allincludes : [string], startPending : () -> void, completePending 
 	if (isUrlParameterTrue("js")) {
 		buildJsTarget(cache, b, src_file);
 	}
-	if (isUrlParameterTrue("wasm")) {
-		startPending();
-		buildWasmTarget(cache,b, src_file, completePending);
-	}
-	if (isUrlParameterTrue("koka")) {
-		buildKokaTarget(cache, b, src_file);
-	}
 	if (isUrlParameterTrue("cpp")) {
 		buildCppTarget(cache, b, src_file);
 	}
@@ -158,46 +161,6 @@ buildJsTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
 	}
 }
 
-buildWasmTarget(cache : FlowCache, b : BModule, src_file : string, onComplete : (int) -> void) -> void {
-	wasm_src = bmodule2wasm(cache, b.flowpath);
-	wasm_file = changeFileExt(src_file, ".wat");
-	if (setFileContent(wasm_file, wasm_src)) {
-		println("Saved " + wasm_file);
-		startProcess("wasm-as.exe", [wasm_file], ".", "", \ec, stdout, stderr -> {
-			println("Compiled " + wasm_file);
-			if (stdout != "") {
-				println(stdout);
-			}
-			if (stderr != "") {
-				println(stderr);
-			}
-			onComplete(ec);
-		});
-	} else {
-		println("Could not save " + wasm_file);
-		onComplete(1);
-	}
-}
-
-
-buildKokaTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
-	verbose = isUrlParameterTrue("verbose");
-	if (verbose) {
-		println("building Koka target");
-	}
-	koka_src = bmodule2koka(cache, b.flowpath, isUrlParameterTrue("shorten-ids"));
-	kokaArg = getUrlParameter("koka");
-	koka_file = if (strlen(kokaArg) > 1) kokaArg else changeFileExt(src_file, ".kk");
-	if (setFileContent(koka_file, koka_src)) {
-		println("Koka target '" + koka_file + "' is built.");
-	} else {
-		println("Error: Could NOT save '" + koka_file + "'");
-	}
-	if (verbose) {
-		println("\n-------------------\n");
-	}
-}
-
 buildCppTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
 	verbose = isUrlParameterTrue("verbose");
 	if (verbose) {
@@ -234,19 +197,17 @@ printFlowUsage() -> void {
 	println("");
 
 	println("I=<path>,<path>       Include paths");
-	println("js=1 or <path>        Compile to JS");
+	println("js=1 or <path>        Compile to JS. Combine with flowc=1 to get full support");
 	printl2("  shorten-ids=1       Whether to shorten the ids in the output");
 	printl2("  run-tests=1         Execute the resulting JS with node");
 	println("cpp=1 or <path>       Compile to C++");
-	printl2("wasm=1 or <path>      Compile to WASM");
-	printl2("koka=1 or <path>      Compile to Koka");
-	printl2("flowc=1 or <path>     Use the flowc backends for code generation");
-	printl2("  koka-int=1          Use int32 as int instead of int in Koka");
+	printl2("flowc=1 or <path>     Use the flowc backends for code generation. Java and more comes into play");
 	println("");
 	printl2("incremental=0         Turn off incremental compilation");
-	println("debug=1,id,path,eclass           Debug compilation of the relevant piece");
-	println("verbose=0,1,2                    Amount of debugging information");
-	println("stages=parse,type,resolve,lower  What stages to debug");
+	printl2("debug=1,id,path       Debug compilation of the relevant piece");
+	printl2("verbose=0,1,2         Amount of debugging information");
+	printl2("stages=parse,type,resolve,lower  What stages to debug");
+	printl2("dead=1 or <path>      Report what names are dead.");
 	println("");
 
 	if (!isUrlParameterTrue("help")) {
