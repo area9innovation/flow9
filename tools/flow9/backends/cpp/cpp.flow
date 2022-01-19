@@ -466,7 +466,6 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 				);
 			}
 		}
-		// TODO: reuse field : (*reuse(variable)).field  -> ~ reuseField()
 		BField(value, field, type): {
 			structType = getBType(value);
 			isSimpleStructType = memoryManagement && !isSimpleBType(structType);
@@ -509,17 +508,26 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 				struct %name% : std::variant<%members%> {
 					\tint _counter = 1;
 					\t~%name%() {
-				        \t\tstd::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %name%; counter=\" << _counter << \" &=\" << this << \" ~ \" << std::endl;
-				        \t\tstd::visit([](auto&& a) { return drop(a); }, *this);
+					    std::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %name%; counter=\" << _counter << \" &=\" << this << \" ~ \" << std::endl;
+					    std::visit([](auto&& a) { drop(a); }, *this);
 				    }
+					\tvoid dupFields() {
+				    	std::visit([](auto&& a) { dup(a); }, *this);
+				    }
+					\tvoid dropFields() {
+				    	std::visit([](auto&& a) { drop(a); }, *this);
+				    }
+				    bool operator==(const %name%& a) const {return areValuesEqual (*this, a);}"
+					+ "
 				};
 				std::ostream& operator<<(std::ostream& os, const %name%& a){
-				  \tos << \"%name% [union type]\";
-				  \treturn os;
-				}",
+					  \tos << \"%name% [union type]\";
+					  \treturn os;
+					}",
 				[
 					"name", u.id,
-					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", ")
+					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", "),
+					"equalFields", "false",
 				]
 			)
 		} else {
@@ -600,6 +608,7 @@ dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType
 		+ dstruct2id(backend, s)
 		+ dstruct2counter(backend, s) + "\n"
 		+ dstructFns
+		+ dstruct2DupDropFields(backend, s)
 		+ "};"
 	);
 }
@@ -756,6 +765,23 @@ dstruct2id(backend : Backend<CppInfo>, s : DStruct) -> string {
 dstruct2counter(backend : Backend<CppInfo>, s : DStruct) -> string {
 	if (memoryManagement) " int _counter = 1;"
 	else "";
+}
+
+dstruct2DupDropFields(backend : Backend<CppInfo>, s : DStruct) -> string {
+	if (memoryManagement) {
+		makeFn = \name, sa -> if (isSimpleBType(dtype2btype(sa.type))) "" else ("::" + name + "(" + sa.id + ");");
+		blueprint(
+			"void dupFields() {%dupFields%}
+			void dropFields() {%dropFields%}
+",
+			[
+				"dupFields", superglue(s.structArgs, \sa -> makeFn("dup", sa), " "),
+				"dropFields", superglue(s.structArgs, \sa -> makeFn("drop", sa), " "),
+			]
+		)
+	} else {
+		""
+	}
 }
 
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {

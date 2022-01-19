@@ -243,23 +243,8 @@ bool dropValue(T* a) {
 		}
 		else {
 			std::cout << "DEC COUNTER:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			(*a).dropFields();
 			return false;
-		}
-	}
-}
-
-// Unions
-template <typename ...T>
-void drop(std::variant<T...>* v) {
-	if (v == nullptr) {
-		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
-	}
-	else {
-		std::cout << "DROP VARIANT:: &=" << &v << std::endl;
-		bool isDropedValue = std::visit([](auto&& a) { return dropValue(a); }, *v);
-		if (isDropedValue) {
-			delete v;
-			v = nullptr;
 		}
 	}
 }
@@ -306,19 +291,8 @@ template <typename T>
 T* dup(T* a) {
 	(*a)._counter += 1;
 	std::cout<<"DUP:: cnt after: "<< (*a)._counter << "; &=" << a <<" " << &a << " " << *a << std::endl;
+	(*a).dupFields();
 	return a;
-}
-
-template <typename ...T>
-std::variant<T*...>* dup(std::variant<T*...>* v) {
-	if (v == nullptr) {
-		std::cout << "ERROR :: can't dup memory for NULL" << std::endl;
-	}
-	else {
-		std::cout << "DUP VARIANT:: &=" << &v << std::endl;
-		std::visit([](auto&& a) { dup(a); }, *v);
-	}
-	return v;
 }
 
 // Unions
