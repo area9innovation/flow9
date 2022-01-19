@@ -172,7 +172,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 	dupAlias = \val : BExp -> {
 		varId = extractBVarId(val);
 		isAlias = varId != "";
-		if (!isBCounter(val) && isAlias) addBCounterToExp(val, \e -> BDupValue(e)) else val;
+		// dup the result (e.g. result of cast()), but not the init value
+		if (!isBCounter(val) && isAlias) BDupValue(val) else val;
 	}
 
 	switch (exp.exp) {
@@ -291,11 +292,9 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			}
 		);
 		BField(value, field, type): {
-			// TODO: reuse only field
 			newValue = rec(value, withReturn, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
 			reusedVal = getReusedValue(reducedValue.first);
-			//newField = BField(reducedValue.first, field, type);
 			newExp = if (reusedVal != reducedValue.first) {
 				reuseBField(BField(reusedVal, field, type));
 			} else {
@@ -316,7 +315,13 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BCast(value, from, to): {
 			newValue = rec(value, withReturn, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
-			BExpUsedVars(BCast(reducedValue.first, from, to), newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+			reusedVal = getReusedValue(reducedValue.first);
+			newExp = if (reusedVal != reducedValue.first) {
+				reuseBCast(BCast(reusedVal, from, to));
+			} else {
+				BCast(reducedValue.first, from, to);
+			}
+			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
 		BDupValue(value) : {
 			newValue = rec(value, withReturn, isDownDrop);
@@ -618,11 +623,15 @@ makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn :
 // Before: auto flow_a = (*reuse(flow_makeStruct())).flow_val;
 // After : auto _tmp = flow_makeStruct(); auto _tmp2 = dup((*_tmp).flow_val); drop(_tmp); _tmp2;
 reuseBField(field : BField) -> BExp {
+	replaceReuseWithDrop(field.value, field.type, \val -> BField(val, field.field, field.type));
+}
+
+replaceReuseWithDrop(value : BExp, type : BType, makeExp : (BExp) -> BExp) -> BExp {
 	addFieldTmpVar = \val -> {
-		tmpVarField = BVar(makeTmpVariableName(), field.type);
+		tmpVarField = BVar(makeTmpVariableName(), type);
 		BLet(
 			tmpVarField.id,
-			BDupValue(BField(val, field.field, field.type)),
+			BDupValue(makeExp(val)),
 			BSequence(
 				[
 					BDropValue(val),
@@ -633,18 +642,22 @@ reuseBField(field : BField) -> BExp {
 			tmpVarField.type
 		);
 	}
-	if (extractBVarId(field.value) != "") {
-		addFieldTmpVar(field.value);
+	if (extractBVarId(value) != "") {
+		addFieldTmpVar(value);
 	} else {
-		tmpVarStruct = BVar(makeTmpVariableName(), getBType(field.value));
-		tmpVarField = BVar(makeTmpVariableName(), field.type);
+		tmpVarStruct = BVar(makeTmpVariableName(), getBType(value));
+		tmpVarField = BVar(makeTmpVariableName(), type);
 		BLet(
 			tmpVarStruct.id,
-			field.value,
+			value,
 			addFieldTmpVar(tmpVarStruct),
 			tmpVarField.type
 		);
 	}
+}
+
+reuseBCast(exp : BCast) -> BExp {
+	replaceReuseWithDrop(exp.value, exp.to, \val -> BCast(val, exp.from, exp.to));
 }
 
 addTempVar(exp : BExp, body : [BExp], type : BType, withReturn : bool) -> BLet {

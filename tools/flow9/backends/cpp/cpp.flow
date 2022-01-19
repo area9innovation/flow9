@@ -503,12 +503,33 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 	ptr = if (memoryManagement) "*" else "";
 	addTemplatesToStruct(
 		dtypes2parameters(mapConcat(u.types, \t -> t.typars)),
-		blueprint("
-			using %name% = std::variant<%members%>;", [
-				"name", u.id,
-				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", ")
-			]
-		)
+		if (memoryManagement) {
+			// TODO: think about: do we need _id for variant?
+			blueprint("
+				struct %name% : std::variant<%members%> {
+					\tint _counter = 1;
+					\t~%name%() {
+				        \t\tstd::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %name%; counter=\" << _counter << \" &=\" << this << \" ~ \" << std::endl;
+				        \t\tstd::visit([](auto&& a) { return drop(a); }, *this);
+				    }
+				};
+				std::ostream& operator<<(std::ostream& os, const %name%& a){
+				  \tos << \"%name% [union type]\";
+				  \treturn os;
+				}",
+				[
+					"name", u.id,
+					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", ")
+				]
+			)
+		} else {
+			blueprint("
+				using %name% = std::variant<%members%>;", [
+					"name", u.id,
+					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", ")
+				]
+			)
+		}
 	);
 }
 
@@ -823,14 +844,23 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 	}
 
 	liftType = \value -> {
-		blueprint(
-			"%createOp%(%type%)(%value%)",
-			[
-				"type", btype2cpp(backend, bcast.to),
-				"value", value,
-				"createOp", if (memoryManagement) "new " else ""
-			]
-		);
+		if (memoryManagement) {
+			blueprint(
+				"new %type%{%value%}",
+				[
+					"type", btype2cpp(backend, bcast.to),
+					"value", value,
+				]
+			);
+		} else {
+			blueprint(
+				"(%type%)(%value%)",
+				[
+					"type", btype2cpp(backend, bcast.to),
+					"value", value,
+				]
+			);
+		}
 	}
 
 	downType = \value -> {

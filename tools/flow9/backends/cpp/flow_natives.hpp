@@ -225,6 +225,7 @@ void drop(T* a) {
 	dropValue(a);
 }
 
+// TODO: recursive?
 template <typename T>
 bool dropValue(T* a) {
 	if (a == nullptr) {
