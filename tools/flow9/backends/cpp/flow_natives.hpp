@@ -7,30 +7,10 @@
 #include <locale>
 #include <sstream>
 #include <iomanip>
-
 #include <algorithm>
+#include "flow_union.hpp"
 // math
 #include <cmath>
-// getStructName
-#ifdef __GNUG__
-#include <cstdlib>
-#include <memory>
-#include <cxxabi.h>
-std::string demangle(const char* name) {
-    int status = -4; // some arbitrary value to eliminate the compiler warning
-    // enable c++11 by passing the flag -std=c++11 to g++
-    std::unique_ptr<char, void(*)(void*)> res {
-        abi::__cxa_demangle(name, NULL, NULL, &status),
-        std::free
-    };
-    return (status==0) ? res.get() : name ;
-}
-#else
-// does nothing if not g++
-std::string demangle(const char* name) {
-    return name;
-}
-#endif
 
 template <typename A>
 std::shared_ptr<A> makeFlowRef(A value) {
@@ -68,6 +48,7 @@ T flow_cast(const TT& val) {
 	return T(reinterpret_cast<const T&>(val));
 }
 
+// TODO: delete ?
 template <typename T, typename ...TT>
 T flow_cast_variant(std::variant<TT...> val) {
 	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
@@ -80,10 +61,23 @@ T flow_cast_variant(std::variant<TT...> val) {
 		throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" +  demangle(typeid(val).name()) + "]");
 	}
 }
+template <typename T, typename ...TT>
+T flow_cast_variant(_FlowUnion<TT...>* val) {
+	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
+	if (const T* pval = std::get_if<T>(val)) {
+		return *pval;
+	}
+	else {
+		/*std::cout<< "ERROR casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
+		T res;
+		return res;*/
+		throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" + demangle(typeid(val).name()) + "]");
+	}
+}
 
 // compare unions by address
 template <typename ...Args1, typename ...Args2>
-bool operator==(std::variant<Args1...>& struct1, std::variant<Args2...>& struct2) {
+bool operator==(const _FlowUnion<Args1...>& struct1, const _FlowUnion<Args2...>& struct2) {
 	return &struct1 == &struct2;
 }
 // for structs ( Struct1 == Struct2). (Struct1 == Struct1) is overloaded inside the struct
@@ -100,6 +94,15 @@ void flow_quit(int32_t code) {
 template <typename A>
 void flow_print2(A&& v) {
 	std::cout << v;
+}
+
+template <typename A>
+void flow_print2(A* v) {
+	if (v == nullptr) {
+		std::cout << "NULL Pointer " << std::endl;
+	} else {
+		flow_print2(*v);
+	}
 }
 
 template <typename A>
@@ -125,9 +128,14 @@ void flow_print2(const double d) {
 	flow_print2(flow_d2s(d));
 }
 
+// TODO: delete ?
 template <typename ...Args>
 void flow_print2(std::variant<Args...>& v) {
 	std::visit([](auto&& x) { flow_print2(x); }, v);
+}
+template <typename ...T>
+void flow_print2(_FlowUnion<T...>* v) {
+	(*v).visit([](auto&& x) { flow_print2(x); });
 }
 
 template <typename A>
@@ -189,157 +197,23 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 	return &v1 == &v2;
 }
 
-// memory
-// TODO
-
-// Structs
-
-template <typename T>
-void drop(T& a) {
-	a.drop();
-}
-
-template <typename T>
-void dropStruct(T& a) {
-	a._counter -= 1;
-	if (a._counter < 1) {
-		std::cout<<"FREE:: &=" << &a << "; counter = " << a._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
-		// we will free the memory of the fields inside struct.drop();
-		//a.~T();
-	} else {
-		std::cout<<"DEC COUNTER:: &=" << &a << "; counter = " << a._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
-	}
-}
-
-
-// TODO
-// memory leak (?)
-// use std::unique_ptr
-template <typename T>
-T& reuse(T& a) {
-	if (a._counter > 1) {
-		std::cout<<"REUSE:: &=" << &a << "; counter = " << a._counter << std::endl;
-		return a;
-	} else {
-		T* tmp;
-		std::cout<<"REUSE:: from &=" << &a <<" to &="<< tmp << std::endl;
-		tmp = &a;
-		drop<T>(a);
-		return *tmp;
-	}
-	// does not transfer ownership
-	// does not work as expected because it does not break the link to the variable.
-	/*std::cout<<"REUSE:: &=" << &a << std::endl;
-	a._counter = 1;
-	return a;*/
-}
-
-// TODO: recursive DUP // v1 = struct1(struct2(...)) (??)
-template <typename T>
-T& dup(T& a) {
-	a._counter += 1;
-	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
-	return a;
-}
-
-// Unions
-template <typename ...T>
-void drop(std::variant<T...>& v) {
-	std::cout<<"DROP VARIANT:: &=" << &v << std::endl;
-	return std::visit(
-		[](auto&& a) { return drop(a); },
-		v
-	);
-}
-
-template <typename ...T>
-std::variant<T...>& reuse(std::variant<T...>& v) {
-	std::variant<T...>* tmp = new std::variant<T...>;
-	std::cout<<"REUSE VARIANT:: from &=" << &v <<" to &="<< tmp <<std::endl;
-	// make a copy (+1 tmp value)
-	*tmp = std::visit([](auto&& a) {return std::variant<T...>(a);}, v);
-	// drop value
-	std::visit([](auto&& a) {drop(a);}, v);
-	return *tmp;
-}
-
-int32_t dup(int32_t a) {
-	std::cout<<"DUP:: int value "<< a <<std::endl;
-	return a;
-}
-
-void drop(int32_t a) {
-	std::cout<<"DROP:: int value "<< a <<std::endl;
-}
-
-int32_t reuse(int32_t a) {
-	std::cout<<"REUSE:: int value "<< a <<std::endl;
-	return a;
-}
-
-std::u16string dup(std::u16string a) {
-	std::cout<<"DUP:: string value ";flow_print2(a); std::cout <<std::endl;
-	return a;
-}
-
-void drop(std::u16string& a) {
-	std::cout<<"DROP:: string value ";flow_print2(a); std::cout <<std::endl;
-	a = u"";
-}
-
-std::u16string reuse(std::u16string a) {
-	std::cout<<"REUSE:: string value ";flow_print2(a); std::cout <<std::endl;
-	return a;
-}
-
-bool dup(bool a) {
-	std::cout<<"DUP:: bool value "<< a <<std::endl;
-	return a;
-}
-
-void drop(bool a) {
-	std::cout<<"DROP:: bool value "<< a <<std::endl;
-}
-
-bool reuse(bool a) {
-	std::cout<<"REUSE:: bool value "<< a <<std::endl;
-	return a;
-}
-
-double dup(double a) {
-	std::cout<<"DUP:: double value "<< a <<std::endl;
-	return a;
-}
-
-void drop(double a) {
-	std::cout<<"DROP:: double value "<< a <<std::endl;
-}
-
-double reuse(double a) {
-	std::cout<<"REUSE:: double value "<< a <<std::endl;
-	return a;
-}
-
-template <typename A, typename ...B>
-void drop(std::function<A(B...)>& fn) {
-	std::cout<<"DROP:: function &="<< &fn << std::endl;
-}
-
-// TODO: vector (array)
-template <typename T>
-void drop(std::vector<T>& a) {
-	std::cout<<"DROP VECTOR:: &=" << &a << std::endl;
-	/*for (std::size_t i = 0; i != a.size(); ++i) {
-		drop(a[i]);
-	}*/
-}
-
 // print with drop
 template <typename A>
 void flow_println2(A&& v) {
 	flow_print2(v);
 	std::cout << std::endl;
 	drop(v);
+}
+// print with drop
+template <typename A>
+void flow_println2(A* v) {
+	if (v == nullptr) {
+		std::cout << "NULL Pointer " << std::endl;
+	} else {
+		flow_print2(*v);
+		std::cout << std::endl;
+		drop(v);
+	}
 }
 
 // math
@@ -498,30 +372,65 @@ int flow_iteriUntil(const std::vector<A>& flow_a, const std::function<bool(int32
 
 // flowstruct
 template <typename A, typename B>
-bool flow_isSameStructType(A struct1, B struct2) {
-	return struct1._id == struct2._id;
+bool flow_isSameStructType(A* struct1, B* struct2) {
+	bool res = (*struct1)._id == (*struct2)._id;
+	drop(struct1);
+	drop(struct2);
+	return res;
 }
 
-template <typename A, typename ...Args2>
-bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
-	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
-	return struct1._id == id2;
-}
-
-template <typename ...Args1, typename B>
-bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
-	return id1 == struct2._id;
-}
-
-template <typename ...Args1, typename ...Args2>
-bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
-	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
+template <typename A, typename ...B>
+bool flow_isSameStructType(A* struct1, _FlowUnion<B...>* struct2) {
+	unsigned int id1 = (*struct1)._id;
+	drop(struct1);
+	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct2);
 	return id1 == id2;
 }
 
-template <typename A, typename ...B> A _extractStructVal(std::variant<B...> v) { return std::get<A>(v); }
+template <typename ...A, typename B>
+bool flow_isSameStructType(_FlowUnion<A...>* struct1, B* struct2) {
+	unsigned int id2 = (*struct2)._id;
+	drop(struct2);
+	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct1);
+	return id1 == id2;
+}
+
+template <typename ...A, typename ...B>
+bool flow_isSameStructType(_FlowUnion<A...>* struct1, _FlowUnion<B...>* struct2) {
+	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct1);
+	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct2);
+	return id1 == id2;
+}
+
+template <typename A, typename B>
+B* flow_extractStruct(std::vector<A*>* vect, B* valType) {
+	B* res = nullptr;
+	for (auto i = 0; i != (*vect).size(); i++) {
+		auto tmp1 = dup((*vect)[i]);
+		if (flow_isSameStructType(tmp1, dup(valType))) {
+			res = _extractStructVal<B>((*vect)[i]);
+			break;
+		}
+	}
+	if (res == nullptr) {
+		// drop(vect); // TODO
+		return reuse(valType);
+	}
+	else {
+		drop(valType);
+		// drop(vect); // TODO
+		return res;
+	}
+}
+
+template <typename A, typename ...B> A* _extractStructVal(_FlowUnion<B*...>* v) { return std::get<A*>(*v); }
+template <typename A> A* _extractStructVal(A* v) { return v; }
+
+template <typename A, typename ...B> A _extractStructVal(_FlowUnion<B...> v) { return std::get<A>(v); }
 template <typename A> A _extractStructVal(A v) { return v; }
 
 template <typename A, typename B>
@@ -533,8 +442,6 @@ B flow_extractStruct(const std::vector<A> flow_a, B flow_b) {
     return _extractStructVal<B>(*item);
   }
 }
-
-template <typename T> std::string type_name();
 
 template <typename A>
 std::u16string flow_getStructName(A st) {
