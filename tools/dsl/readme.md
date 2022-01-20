@@ -158,6 +158,12 @@ TODO:
 In addition to rewriting using the e-graph, we should have a more predictable
 rewriting system for lowering phases where we do not have any costs.
 
+TODO:
+- Document the lowering step with code on the right hand side
+
+- Rewrite the compiler to be a lowering with blueprint as the language to run
+  on the right hand side
+
 - TODO: Make it so we can write the Gringo lowering like this:
 
   	lowering= prepareDslLowering(gringo, ".",
@@ -181,10 +187,9 @@ The natives defined include:
 	and, or, not
 	add, sub, mul, div, mod, negate
 	brace (keeps last value)
-	nil, cons, head, tail		// For lists
-	name, child					// For nodes
-
-TODO: Add "construct" for node construction.
+	nil, cons, head, tail			// For lists
+	nodeName, nodeChild, makeNode	// For nodes
+	println
 
 ## Blueprints for compilers
 
