@@ -1,4 +1,4 @@
-import * as typenames from "TestNativeHost-types.d";
+import * as typenames from "./TestNativeHost-types.d";
 
   export interface User {
 	name: string;
