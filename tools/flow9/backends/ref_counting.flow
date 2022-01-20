@@ -506,8 +506,9 @@ extractSwitchVar(exp : BExp, defType : BType) -> BVar {
 
 // bind a variable to each data creation.
 // this way we'll free memory immediately after checking the condition, and not at the end of the if/switch block.
-extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>) -> Triple<[BVar], (BExp, (BExp) -> BExp) -> BExp, BExp> {
-	untriple(makeConstructedVars(exp, [], [], generators), \vars, lets, newExp -> {
+extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>) -> Triple<[Pair<BVar, bool>], (BExp, (BExp) -> BExp) -> BExp, BExp> {
+	// false ? fn(if (fn())) ?
+	untriple(makeConstructedVars(exp, [], [], generators, false), \vars, lets, newExp -> {
 		Triple(
 			vars,
 			\tail, updateCondBody -> foldr(lets, tail, \acc, v -> BLet(v with value = updateCondBody(v.value), body = acc)),
@@ -517,22 +518,24 @@ extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>)
 }
 
 tmpConstructedVarCounter = ref 1;
-makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<string>) -> Triple<[BVar], [BLet], Maybe<BExp>> {
+// create tmp vars for expressions
+makeConstructedVars(exp : BExp, vars : [Pair<BVar, bool>], exps : [BLet], generators : Set<string>, externalDrop : bool) -> Triple<[Pair<BVar, bool>], [BLet], Maybe<BExp>> {
 	makeTmpVar = \varType, expType -> {
 		varName = makeTmpVariableName();
-		Triple([BVar(varName, varType)], [BLet(varName, exp, BVoid(), varType)], Some(BVar(varName, expType)));
+		Triple([Pair(BVar(varName, varType), externalDrop)], [BLet(varName, exp, BVoid(), varType)], Some(BVar(varName, expType)));
 	}
 	switch (exp) {
 		BConstruct(struct, args, type) : makeTmpVar(type, type);
 		BCall(fn, args, type) : {
 			newArgs = fold(args, Triple(vars, exps, []), \acc, a -> {
-				v = makeConstructedVars(a, [], [], generators);
+				v = makeConstructedVars(a, [], [], generators, true);
 				Triple(concat(acc.first, v.first), concat(acc.second, v.second), arrayPush(acc.third, v.third));
 			});
-			newFn = makeConstructedVars(fn, [], [], generators);
+			newFn = makeConstructedVars(fn, [], [], generators, false);
 			Triple(
 				concat(newFn.first, newArgs.first),
 				concat(
+					newArgs.second,
 					eitherMap(
 						newFn.third,
 						\__ -> if (newFn.second == []) {
@@ -542,8 +545,7 @@ makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<s
 							replace(newFn.second, 0, BLet(newFn.second[0] with value = newValue))
 						},
 						newFn.second
-					),
-					newArgs.second
+					)
 				),
 				eitherFn(
 					newFn.third,
@@ -553,7 +555,7 @@ makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<s
 			);
 		}
 		BField(value, fieldName, type) : {
-			untriple(makeConstructedVars(value, vars, exps, generators), \newVars, lets, newExp -> {
+			untriple(makeConstructedVars(value, vars, exps, generators, externalDrop), \newVars, lets, newExp -> {
 				Triple(newVars, lets, Some(BField(either(newExp, value), fieldName, type)))
 			});
 		}
@@ -583,10 +585,10 @@ addDupDropToCmpr(
 ) -> BExpUsedVars {
 	// TODO: think about : 
 	// Which is cheaper: create a variable and free the memory earlier, or not bind the variable and let c++ do it itself?
-	condTmpVars : Triple<[BVar], (BExp, (BExp) -> BExp) -> BExp, BExp> = extractConstructedVars(cond.exp, type, generators);
+	condTmpVars : Triple<[Pair<BVar, bool>], (BExp, (BExp) -> BExp) -> BExp, BExp> = extractConstructedVars(cond.exp, type, generators);
+	condTmpCreatedVars = condTmpVars.first;
 
 	condUsedVars = extractLastUsedVars(cond, usedVars);
-// println("condUsedVars: "+toString(condUsedVars));
 	caseUsedVars = map(cases, \c -> extractLastUsedVars(c, usedVars));
 	isVarUsedInOtherCases = \id : string, ind : int -> existsi(caseUsedVars, \j, case -> ind != j && containsKeyTree(case, id));
 	caseUniqueUsedVars = mapi(caseUsedVars, \i, c -> foldTree(c, [], \id, v, acc -> unpair(v, \var, isExternalDrop -> {
@@ -599,16 +601,17 @@ addDupDropToCmpr(
 	}));
 
 	// drop vars, that are last used in this If/Switch
-	casesWithDrop = mapi(cases, \i, c -> 
-		addBDropVars(c, concat(condUniqueUsedVars, foldi(caseUniqueUsedVars, condTmpVars.first, \j, acc, a -> if (i == j) acc else concat(acc, a))))
-	);
-	newCondUsedVars = fold(condTmpVars.first, cond.usedVars, \acc, cvar -> setTree(acc, cvar.id, BExpUsedVar(cvar.type, false)));
-	fixedCond = updateCond(condTmpVars.third, newCondUsedVars, fold(condTmpVars.first, makeSet(), \acc, v -> insertSet(acc, v.id)));
+	casesWithDrop = mapi(cases, \i, c -> {
+		tmpVars = filtermap(condTmpCreatedVars, unpairC(\cvar, externalDrop -> if (externalDrop) None() else Some(cvar)));
+		addBDropVars(c, concat(condUniqueUsedVars, foldi(caseUniqueUsedVars, tmpVars, \j, acc, a -> if (i == j) acc else concat(acc, a))))
+	});
+	newCondUsedVars = fold(condTmpCreatedVars, cond.usedVars, \acc, cvar -> setTree(acc, cvar.first.id, BExpUsedVar(cvar.first.type, false)));
+	fixedCond = updateCond(condTmpVars.third, newCondUsedVars, fold(condTmpCreatedVars, makeSet(), \acc, v -> insertSet(acc, v.first.id)));
 
 	reducedCond = reduceBCounter(fixedCond.exp, isDownDrop);
 	newExpr = updateCases(reducedCond.first, map(casesWithDrop, \c -> c.exp));
 	BExpUsedVars(
-		if (condTmpVars.first == []) {
+		if (condTmpCreatedVars == []) {
 			newExpr
 		} else {
 	// TODO: don't create a lambda
