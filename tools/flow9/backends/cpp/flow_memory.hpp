@@ -116,27 +116,6 @@ T* dup(T* a) {
 	return a;
 }
 
-// Unions
-//template <typename ...T>
-//void drop(std::variant<T...>& v) {
-//	std::cout<<"DROP VARIANT:: &=" << &v << std::endl;
-//	return std::visit(
-//		[](auto&& a) { return drop(a); },
-//		v
-//	);
-//}
-//
-//template <typename ...T>
-//std::variant<T...>& reuse(std::variant<T...>& v) {
-//	std::variant<T...>* tmp = new std::variant<T...>;
-//	std::cout<<"REUSE VARIANT:: from &=" << &v <<" to &="<< tmp <<std::endl;
-//	// make a copy (+1 tmp value)
-//	*tmp = std::visit([](auto&& a) {return std::variant<T...>(a);}, v);
-//	// drop value
-//	std::visit([](auto&& a) {drop(a);}, v);
-//	return *tmp;
-//}
-
 int32_t dup(int32_t a) {
 	std::cout<<"DUP:: int value "<< a <<std::endl;
 	return a;
@@ -148,17 +127,17 @@ int32_t reuse(int32_t a) {
 }
 
 std::u16string dup(std::u16string a) {
-	std::cout<<"DUP:: string value ";/*flow_print2(a);*/ std::cout <<std::endl;
+	std::cout<<"DUP:: string value " <<std::endl;
 	return a;
 }
 
 void drop(std::u16string& a) {
-	std::cout<<"DROP:: string value ";/*flow_print2(a);*/ std::cout <<std::endl;
+	std::cout<<"DROP:: string value " <<std::endl;
 	a = u"";
 }
 
 std::u16string reuse(std::u16string a) {
-	std::cout<<"REUSE:: string value ";/*flow_print2(a);*/ std::cout <<std::endl;
+	std::cout<<"REUSE:: string value " <<std::endl;
 	return a;
 }
 

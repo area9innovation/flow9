@@ -6,7 +6,7 @@ template <typename ...T>
 struct _FlowUnion : std::variant<T...> {
 	int _counter = 1;
 	~_FlowUnion() {
-		std::cout << (_counter == 0 ? "" : " !!ERROR!! ") << " ~ destroy Uni_FlowUnionon1; counter=" << _counter << " &=" << this << " ~ " << std::endl;
+		std::cout << (_counter == 0 ? "" : " !!ERROR!! ") << " ~ destroy _FlowUnion; counter=" << _counter << " &=" << this << " ~ " << std::endl;
 		dropFields();
 	}
 	//bool operator==(const _FlowUnion& a) const { return areValuesEqual(*this, a); }
