@@ -1,58 +1,106 @@
-import tools/dsl/dsl;
-import tools/dsl/dsl_pattern;
+import tools/dsl/languages/lambda;
+import tools/dsl/languages/gringo;
+import tools/dsl/languages/ast_syntax;
+import tools/dsl/languages/datafun;
+import tools/dsl/languages/dot;
+import tools/dsl/languages/tuples;
+import tools/dsl/languages/records;
+import tools/dsl/languages/arrays;
+
+import tools/dsl/dsl2flow;
+import tools/dsl/dsl_api;
+
+import tools/dsl/gringo_actions;
 
 main() {
-	// The grammar of the language where arity of actions is a naming convention
-	mylang = defineGrammar("mylang", <<
-		exp = exp "+" ws exp $"plus_2" 
-			|> exp "*" ws exp $"mul_2"
-			|> $int ws $"s2i"
-			|> $id ws $"bind_1";	// For pattern matching
-		int = '0'-'9'+;
-		id = 'a'-'z'+;
-		ws exp
-	>>, true); // true adds definitions for whitespace
-
-	// The set of rewriting rules we want
-	rules = parseRules(mylang, <<
-		a + b => b + a;
-		a * b => b * a;
-		a + a => 2 * a;
-		2 * a => a + a;
-		a + 0 => a;
-		a * 0 => 0;
-		a * 1 => a;
-	>>);
-
-	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
-	defaultValue : DslAst = parseProgram(mylang, << 0 >>);
-
-	// These costs refer to the semantic actions without arity
-	// so we can figure out what the costs are. This is used to extract the best reduction
-	costs = rewriteCosts(<<
-		int => 1;
-		plus => 2;
-		mul => 3;
-	>>);
-
-	testValue = parseProgram(mylang, << 0 + 123 + 0 * 23 + 1 * 23 + 34 * 2 >>);
-
-	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
-
 	if (false) {
-		println(prettyDsl(testValue));
-		println("is optimized to\n");
-		println(prettyDsl(replaced));
-		// 123 + 23 + 34 + 34
+		gringo = defineGringo();
+		testGringo = parseDsl("test-gringo", gringo, << 
+			truth = listof(keyword('true'), "," ws);
+			truth
+		>>);
+		gr = dsl2flow(testGringo);
+		println(gterm2string(gr));
+		println(compileDsl(gringo.compilers[0], testGringo));
 	}
 
-	// This is a prototype for how to define an compiler/evaluator of a language.
-	// Probably, we need some conversion method for instantiation
-	compiler = makeCompiler(mylang, "text", <<
-		plus(a, b) => plus_int($a, $b);
-		mul(a, b) = mul_int($a, $b);
-			int(n) = n;
-	>>);
+	lambda = defineLambda();
+
+	if (false) {
+		datafun = defineDataFun(lambda);
+		res = runDsl("data-test", datafun, <<
+			[ 2 * a | a in cons(15, cons(27, nil())) ]
+		>>);
+		println(prettyDsl(res));
+		{}
+	}
+
+	if (false) {
+		// OK, define . and tuple syntax
+		dot = defineDot(lambda);
+		tuples = defineTuples(dot);
+		if (false) {
+			res = runDsl("tuple-test", tuples, <<
+				a = ();
+				b = (1,);
+				p = (2,3);
+				t = (4,5,6);
+				b.first + p.second + t.third
+			>>);
+			println(prettyDsl(res));
+		}
+		// Next, add records
+		records = defineRecords(tuples);
+		if (true) {
+			res = runDsl("record-test", records, <<
+				r = { pair : 1, second : 2.3 };
+				field(r, "second")
+			>>);
+			println(prettyDsl(res));
+		}
+		{}
+	}
+
+	if (true) {
+		arrays = defineArrays(lambda);
+		if (true) {
+			res = runDsl("array-test", arrays, <<
+				r = [1, 2, 4];
+				r[1]
+			>>);
+			println(prettyDsl(res));
+		}
+	}
+
+	if (false) {
+		testValue = parseDsl("test-program", lambda, << 
+			{
+				fact = \n -> if (n <= 1) n else n * fact(n - 1);
+				fact(3)
+			}
+		>>);
+
+		optimized = optimizeDsl(lambda, testValue);
+		if (false) {
+			println(prettyDsl(testValue));
+			println("is optimized to\n");
+			println(prettyDsl(optimized));
+			// 123 + 23 + 34 + 34
+		}
+
+		program = compileDsl(lambda.compilers[0], optimized);
+		println("The program   " /*+ prettyDsl(testValue) */ + "   compiles to " + program);
+
+		println("It evaluates to " + prettyDsl(evaluateDsl(makeDslEnv(), testValue)));
+	}
+
+	if (false) {
+		programs = [<< 1 + 2 * 3 >>, << (1 + 2) * 3 >>, << 1 - 2 - 3 >>, << (1 - 2) - 3 >>, << 1 - (2 - 3) >>];
+		iter(programs, \p -> {
+			program2 = parseProgram("test-programs", lambda.grammar, p);
+			println("Testing precedence and associativity: " + p + " => " + compileDsl(lambda.compilers[0], program2) + "  =  " + prettyDsl(evaluateDsl(makeDslEnv(), program2)));
+		});
+	}
 
 	println("Done");
 	quit(0);

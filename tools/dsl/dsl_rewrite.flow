@@ -1,10 +1,48 @@
 import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_rules;
 import tools/dsl/dsl_util;
 import ds/egraph_matching;
 import ds/egraph_extract;
 
 export {
-	rewriteDsl(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst;
+	// Parses a set of EGraph rewriting rules in the given language grammars.
+	// Make sure the grammars have a "bind_1" semantic action for variables.
+	// Also, the grammar should have a "ws" rule for whitespace.
+	defineDslRewriting(from : DslGrammar, to : DslGrammar, sep : string, rules : string, costs : string, defaultVal : string) -> DslRewriting;
+
+	// Perform N iterations of rewrites, and extract the best result
+	rewriteDsl(program : DslAst, rewriting : DslRewriting, iterations : int) -> DslAst;
+
+	// This reports any nodes with missing costs, for debugging
+	missingDslCosts(actions : Set<string>, costs : DslCosts) -> void;
+}
+
+defineDslRewriting(from : DslGrammar, to : DslGrammar, sep : string, rules : string, costs : string, defaultVal : string) -> DslRewriting {
+	DslRewriting(
+		parseRules(from, to, rules, sep),
+		rewriteCosts(costs),
+		parseProgram("Default value", to, defaultVal)
+	)
+}
+
+rewriteCosts(costs : string) -> DslCosts {
+	costlang = defineGrammar("cost", <<
+		costs = ws $"nil" (cost $"cons")*;
+		cost = id "=>" ws int ";" ws $"cost_2";
+		costs
+	>>, ["ws", "int", "id"]);
+
+	thecosts : List<DslAst> = getDslList(parseProgram("Costs", costlang, costs));
+	costMap = foldList(thecosts, makeTree(), \acc, ast -> {
+		node = getDslNode(ast);
+		if (length(node.args) == 2) {
+			name = getDslString(node.args[0]);
+			cost = getDslInt(node.args[1]);
+			setTree(acc, name, cost)
+		} else acc;
+	});
+
+	DslCosts(costMap);
 }
 
 dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>] {
@@ -36,6 +74,15 @@ dslRules2replacements(rules : DslAst) -> [EReplacement<DslAst>] {
 	}
 }
 
+/*
+This could be:
+
+		bind(a)     => EPatternVar(a);
+		node(args)  => EPatternTerm(a, args)
+		e		   	=> EPatternTerm(e, $nil);
+	
+and then recursive application of this in some lowering system, followed by dsl2flow.
+*/
 dsl2pattern(ast : DslAst) -> EPattern<DslAst> {
 	switch (ast) {
 		DslBool(value): EPatternTerm(ast, []);
@@ -86,7 +133,6 @@ replaceDsl(bindings : Tree<string, DslAst>, ast : DslAst) -> DslAst {
 	}
 }
 
-
 buildDslEGraph() -> EGraph<DslAst> {
 	splitChildren = \a : DslAst -> switch (a) {
 		DslBool(value): Pair(a, []);
@@ -114,12 +160,12 @@ combineDsl(head : DslAst, args : [DslAst]) -> DslAst {
 	}
 };
 
-rewriteDsl(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, int>, iterations : int) -> DslAst {
+rewriteDsl(program : DslAst, rewriting : DslRewriting, iterations : int) -> DslAst {
 	egraph = buildDslEGraph();
 	root = addEExp(egraph, program);
-	match = buildDslEMatchEngine(egraph, def);
+	match = buildDslEMatchEngine(egraph, rewriting.defaultValue);
 
-	replacements = dslRules2replacements(rules);
+	replacements = dslRules2replacements(rewriting.rules.rules);
 
 	performEReplacements(match, iterations, root, replacements);
 
@@ -134,7 +180,7 @@ rewriteDsl(program : DslAst, def : DslAst, rules : DslAst, costs : Tree<string, 
 			childcosts = fold(ccosts, 0, \acc, c -> {
 				acc + c.cost
 			});
-			headCost = dslCost(costs, node.head);
+			headCost = dslCost(rewriting.costs.costs, node.head);
 			// println("'" + prettyDsl(node.head) + "' cost " + i2s(headCost) + " with child cost " + i2s(childcosts));
 			headCost  + childcosts;
 		}
@@ -168,5 +214,14 @@ extractDsl(egraph : EGraph<DslAst>, extracts : Tree<int, EClassCost<DslAst>>, ec
 		nodes : Set<ENode<DslAst>> = getUnionMapValue(egraph.eclass, eclass);
 		println("Could not resolve " + i2s(eclass) + " with " + superglue(set2array(nodes), \n : ENode<DslAst> -> prettyDsl(n.head), ", "));
 		DslNode("Could not resolve " + i2s(eclass), [], 0)
+	}
+}
+
+missingDslCosts(actions : Set<string>, costs : DslCosts) -> void {
+	missing = differenceSets(actions,
+		buildSet(getTreeKeys(costs.costs))
+	);
+	if (!isEmptySet(missing)) {
+		println("Actions with missing costs: " + strGlue(set2array(missing), ", "))
 	}
 }
