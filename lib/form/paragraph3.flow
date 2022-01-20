@@ -676,7 +676,7 @@ getJoinableTextMetrics(
 			letterSpacing = extractStruct(st, LetterSpacing(0.0)).spacing;
 			staticMetrics = getStaticFormSizeCached2(form, getExactTopPoint);
 
-			metrics : Pair<Form, Transform<FormMetrics>> = if (isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics")) {
+			metrics : Pair<Form, Transform<FormMetrics>> = if (use_dynamic_text_metrics) {
 				textWidth = make(staticMetrics.width);
 				Pair(
 					Text(text, arrayPush(st, TextWidthInspector(textWidth))),
@@ -1253,6 +1253,8 @@ applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> F
 }
 
 // Joins texts together to a single text element, along with the new metrics
+dummyTextWidthInspector = TextWidthInspector(make(0.0));
+
 optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
 	fold(words, makeList(), \acc : List<OptimizedLineElement>, word : ParaWord -> {
 		f = word.form;
@@ -1265,19 +1267,37 @@ optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
 					Text(t1, s1) : {
 						switch (f : GhostForm) {
 							Text(t2, s2) : {
-								join = joinText(t1, s1, t2, s2);
+								join = if (use_dynamic_text_metrics) {
+									joinText(
+										t1,
+										removeAllStructs(s1, dummyTextWidthInspector),
+										t2,
+										removeAllStructs(s1, dummyTextWidthInspector)
+									);
+								} else {
+									joinText(t1, s1, t2, s2);
+								}
+
 								if (length(join) == 1 && intIdM == p.interactivityIdM) {
 									t : Form = join[0];
-									// TODO: Do not do this until at the end of the joining fest
-									m = getStaticFormSize(t);
 
-									joinedWordMetrics = FormMetrics(m with
-										width = m.width + extractStruct(s2, LetterSpacing(0.0)).spacing
-									);
+									jtf : Pair<Form, Transform<FormMetrics>> = if (use_dynamic_text_metrics) {
+										getJoinableTextMetrics(t, false, false)
+									} else {
+										// TODO: Do not do this until at the end of the joining fest
+										m = getStaticFormSize(t);
+
+										Pair(
+											t,
+											FormMetrics(m with
+												width = m.width + extractStruct(s2, LetterSpacing(0.0)).spacing
+											) |> const
+										)
+									}
 
 									// Replace the last element with the newly joined
 									Cons(
-										OptimizedLineElement(t, const(joinedWordMetrics), intIdM),
+										OptimizedLineElement(jtf.first, jtf.second, intIdM),
 										tail_
 									);
 								} else Cons(OptimizedLineElement(f, metrics, intIdM), acc);
@@ -1408,3 +1428,5 @@ isUrlParameterEscUnescHTMLTrue() -> bool {
 makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle] {
 	replaceStruct(st, SkipOrderCheck());
 }
+
+use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics");
