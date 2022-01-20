@@ -9,7 +9,7 @@ export {
 }
 
 defineDslLowering(from : DslGrammar, to : DslLanguage, sep : string, rules : string) -> DslLowering {
-	trules = parseRules(from, to.grammar, sep, rules);
+	trules = parseRules(from, to.grammar, rules, sep);
 	patterns : List<DslReplacement> = mapList(getDslList(trules.rules), \rule -> {
 		node = getDslNode(rule);
 		pattern = node.args[0];
@@ -21,38 +21,23 @@ defineDslLowering(from : DslGrammar, to : DslLanguage, sep : string, rules : str
 }
 
 lowerDsl(lowering : DslLowering, program : DslAst) -> DslAst {
-	engine = DslMatchingEngine(lowering, makeTree(), program, false);
-	doDslLowering(engine, program)
-}
-
-DslMatchingEngine(
-	lowering : DslLowering,
-	// Any bindings we have from a pattern
-	bindings : Tree<string, DslAst>,
-	// What is the node currently?
-	term : DslAst,
-	// Did we fail the matching?
-	fail : bool,
-);
-
-doDslLowering(engine : DslMatchingEngine, program : DslAst) -> DslAst {
-	nengine = foldList(engine.lowering.replacements, engine, \acc, replacement : DslReplacement -> {
-		dslNodeReplacement(engine, program, replacement)
+	nprogram = foldList(lowering.replacements, program, \acc, replacement : DslReplacement -> {
+		dslNodeReplacement(lowering, acc, replacement)
 	});
 	switch (program) {
-		DslBool(value): nengine.term;
-		DslInt(value): nengine.term;
-		DslDouble(value): nengine.term;
-		DslString(value): nengine.term;
+		DslBool(value): nprogram;
+		DslInt(value): nprogram;
+		DslDouble(value): nprogram;
+		DslString(value): nprogram;
 		DslList(value): {
 			DslList(mapList(value, \tt -> {
-				doDslLowering(nengine, tt);
+				lowerDsl(lowering, tt);
 			}))
 		}
 		DslNode(name, args, pos): {
 			DslNode(name,
 				map(args, \arg -> {
-					doDslLowering(nengine, arg);
+					lowerDsl(lowering, arg);
 				}),
 				pos
 			)
@@ -60,7 +45,74 @@ doDslLowering(engine : DslMatchingEngine, program : DslAst) -> DslAst {
 	}
 }
 
-dslNodeReplacement(engine : DslMatchingEngine, term : DslAst, replacement : DslReplacement) -> DslMatchingEngine {
-	// TODO. Check if the pattern matches
-	engine
+DslMatchingEngine(
+	lowering : DslLowering,
+	// Any bindings we have from a pattern
+	bindings : Tree<string, DslAst>,
+	// Did we fail the matching?
+	fail : bool,
+);
+
+
+dslNodeReplacement(lowering : DslLowering, term : DslAst, replacement : DslReplacement) -> DslAst {
+	engine = DslMatchingEngine(lowering, makeTree(), false);
+
+	match = dslNodeMatch(engine, term, replacement.pattern);
+	if (match.fail) {
+		term;
+	} else {
+		// TODO. Do the replacement;
+		println("TODO: Replace " + prettyDsl(replacement.replacement) + " with bindings");
+		traverseInOrder(match.bindings, \id, t -> {
+			println("  "  + id + " = " + prettyDsl(t));
+		});
+		term
+	}
+}
+
+
+dslNodeMatch(acc : DslMatchingEngine, term : DslAst, pattern : DslAst) -> DslMatchingEngine {
+	if (acc.fail) acc
+	else {
+		def = \ -> {
+			DslMatchingEngine(acc with fail = term != pattern);
+		}
+		switch (pattern) {
+			DslBool(value): def();
+			DslInt(value): def();
+			DslDouble(value): def();
+			DslString(value): def();
+			DslList(value): def();
+			DslNode(name, args, pos): {
+				if (name == "bind") {
+					id = getDslString(args[0]);
+					mbind = lookupTree(acc.bindings, id);
+					mbind ?? {
+						// OK, already is bound. Check that it is consistent
+						if (mbind == term) {
+							acc;
+						} else {
+							DslMatchingEngine(acc with fail = true);
+						}
+					} : {
+						DslMatchingEngine(acc with 
+							bindings = setTree(acc.bindings, id, term)
+						);
+					}
+				} else {
+					node = getDslNode(term);
+					if (node.name == name && length(node.args) == length(args)) {
+						foldi(node.args, acc, \i, acc2 : DslMatchingEngine, arg : DslAst -> {
+							if (acc2.fail) acc2
+							else {
+								dslNodeMatch(acc2, arg, args[i]);
+							}
+						});
+					} else {
+						DslMatchingEngine(acc with fail = true);
+					}
+				}
+			}
+		}
+	}
 }
