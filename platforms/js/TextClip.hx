@@ -745,6 +745,14 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public function setTextWordSpacing(spacing : Float) : Void {
+		if (this.style.wordSpacing != spacing) {
+			this.style.wordSpacing = spacing;
+			invalidateMetrics();
+			this.emitEvent('textwidthchanged');
+		}
+	}
+
 	public function setNeedBaseline(need : Bool) : Void {
 		if (this.needBaseline != need) {
 			this.needBaseline = need;
