@@ -77,7 +77,7 @@ T flow_cast_variant(_FlowUnion<TT...>* val) {
 
 // compare unions by address
 template <typename ...Args1, typename ...Args2>
-bool operator==(_FlowUnion<Args1...>& struct1, _FlowUnion<Args2...>& struct2) {
+bool operator==(const _FlowUnion<Args1...>& struct1, const _FlowUnion<Args2...>& struct2) {
 	return &struct1 == &struct2;
 }
 // for structs ( Struct1 == Struct2). (Struct1 == Struct1) is overloaded inside the struct
@@ -381,27 +381,27 @@ bool flow_isSameStructType(A* struct1, B* struct2) {
 
 template <typename A, typename ...B>
 bool flow_isSameStructType(A* struct1, _FlowUnion<B...>* struct2) {
-	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
-	bool res = (*struct1)._id == id2;
+	unsigned int id1 = (*struct1)._id;
 	drop(struct1);
+	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
 	drop(struct2);
-	return res;
+	return id1 == id2;
 }
 
 template <typename ...A, typename B>
 bool flow_isSameStructType(_FlowUnion<A...>* struct1, B* struct2) {
-	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
-	bool res = id1 == (*struct2)._id;
-	drop(struct1);
+	unsigned int id2 = (*struct2)._id;
 	drop(struct2);
-	return res;
+	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct1);
+	return id1 == id2;
 }
 
 template <typename ...A, typename ...B>
 bool flow_isSameStructType(_FlowUnion<A...>* struct1, _FlowUnion<B...>* struct2) {
 	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
-	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
 	drop(struct1);
+	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
 	drop(struct2);
 	return id1 == id2;
 }
