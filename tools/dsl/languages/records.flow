@@ -1,0 +1,83 @@
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_runtime;
+import tools/dsl/dsl_lowering;
+import tools/dsl/languages/ast_syntax;
+
+export {
+	// This adds records to a language
+
+	// Syntax:
+	// { a: 2, b : 3 } constructs a record
+
+	// From this, we should generate these
+	//  => a(record) -> int;	 == field(record, "a")
+	//  => b(record) -> int;	 == field(record, "b")
+	//
+	// a.b => b(a); 	from the dot notation
+
+	// a.b = b; 		is another extension possible
+	//					which is 	a = record(a.a, b);
+	//					or maybe it is named parameters with some kind of defaults
+	//					a = record(b = b);
+	//				    or probably, it is "with" a la flow:
+	//					a = record(a with b = b)
+	defineRecords(language : DslLanguage) -> DslLanguage;
+}
+
+defineRecords(language : DslLanguage) -> DslLanguage {
+	records = extendGrammar(language.grammar, << 
+		atom = atom | '{' ws recordFields '}' ws $"record_1";
+
+		// listOf(recordfield, ",")
+		recordFields = $"nil" recordField $"cons" ("," ws recordField $"cons")* ("," ws)? | $"nil";
+		recordField = id ":" ws exp $"field_2";
+
+		// Extend any type syntax with record types
+		type = '{' recordTypeFields '}' ws $"record_type_2" | type;
+
+		// listOf(recordfield, ",")
+		recordTypeFields = $"nil" recordTypeField $"cons" ("," ws recordTypeField $"cons") ("," ws)? | $"nil";
+		recordTypeField = id ":" ws type $"field_type_2";
+	>>);
+
+	// After parsing, we should have a phase where we construct new runtime
+	// functions for the field accessors after parsing and desugaring.
+	lowering = defineDslLowering(defineDslAst().grammar, language, ";", <<
+			record($fields) => 
+				registerRuntime(
+					map($fields, \f -> {
+						name = child(f, 0);
+						args = cons("r", nil());
+						l = lambda(args, field("r", name));
+						cons(l, cons(name, nil()));
+					})
+				);
+//			record([$f:$e]) => $f = \r -> field(r, $f)
+		>>);
+//	println(prettyDsl(rewriting.rules.rules));
+
+	// If a named type is defined, we should construct constructor functions for it
+	// as well
+	DslLanguage("records", records, None(), Some(lowering), None(),
+		defineDslRuntime(language, [
+			// TODO: Figure out how we can avoid having a duplicate in the code?
+			Pair("fold", <<
+				\c, acc, fn -> {
+					if (c == nil()) acc else fold(tail(c), fn(acc, head(c)), fn)
+				}
+			>>),
+			Pair("field", <<
+				\record, field -> {
+					fields = child(record, 0);
+					fold(fields, nil(), \acc, f -> {
+						name = child(f, 0);
+						if (name == field) {
+							child(f, 1);
+						} else acc;
+					})
+				}
+			>>)
+		]),
+		[], Some(language)
+	);
+}
