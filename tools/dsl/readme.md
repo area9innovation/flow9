@@ -289,6 +289,9 @@ TODO:
 
 - Figure out good syntax for stepped range: 1, 3, ... , 9, "1..9 in steps of 2", "1..9 (+2)", ...
 
+- Add default values to function calls
+  - Overloading
+
 - Add default values to structs
   - struct Circle(radius = 1), and then "Circle()" gives that
 
