@@ -271,7 +271,8 @@ There are a number of language extensions available:
 - datafun provides list comprehension syntax for folds: [ 2 * a | a in list, a != 3 ]
 - records provides { a: 1, b: 2 } syntax and accessor functions for the fields
 - structs provides "struct Circle(radius)" syntax for making constructors of records
-- default_args provides "foo(a, b) { body}" syntax for defining lambdas
+- default_args provides "foo(a, b) { body}" syntax for defining lambdas, as well as
+  default arguments like foo(a, b = 2) { body }) 
 
 TODO:
 - Add some central facility to register languages and extensions, and allow dependencies
@@ -282,8 +283,7 @@ TODO:
 
 - Figure out good syntax for stepped range: 1, 3, ... , 9, "1..9 in steps of 2", "1..9 (+2)", ...
 
-- Add default values to function calls
-  - Overloading
+- Add named function calls in combination with defaults
 
 - Add default values to structs
   - struct Circle(radius = 1), and then "Circle()" gives that
