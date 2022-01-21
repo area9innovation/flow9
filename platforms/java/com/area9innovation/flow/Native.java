@@ -911,7 +911,14 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		timer.schedule(task, ms);
+		try {
+			timer.schedule(task, ms);
+		} catch (java.lang.IllegalStateException ex) {
+			// if the timer is canceled, then recreate it and use a new one
+			cancelTimer(timer);
+			Timer timer2 = getTimer();
+			timer2.schedule(task, ms);
+		}
 		return timer;
 	}
 
@@ -1912,14 +1919,13 @@ public class Native extends NativeHost {
 					return null;
 				});
 			} catch (RuntimeException ex) {
-				Throwable e = ex.getCause();
-				if (e == null) {
-					e = ex;
-				}
-				while (e.getClass().equals(InvocationTargetException.class)) {
-					e = e.getCause();
-				}
+				Throwable e = ex;
 				e.printStackTrace();
+				while (e.getCause() != null) {
+					e = e.getCause();
+					System.out.println("Cause:");
+					e.printStackTrace();
+				}
 				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
 			} catch (Exception e) {
 				e.printStackTrace();
