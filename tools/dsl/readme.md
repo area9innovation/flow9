@@ -205,6 +205,8 @@ The natives defined include:
 	nodeName, nodeChild, makeNode	// For nodes
 	println
 
+The language is a very basic, although it does have function overloading.
+
 ## Blueprints for compilers
 
 The `makeCompiler` call can prepare a compiler, which compiles a language to
@@ -252,16 +254,6 @@ Some language constructs require a runtime, such as fold, map for list-comprehen
 first, second and third for tuples, and so on. There is a mechanism to define these,
 and there is a small common library in `dsl_runtime_common.flow` that is often used.
 
-# Future plans
-
-- Improve debugging of language extensions. Right now, it is hard to figure out why
-  a parser, rewrite rule or lowering does not work.
-- Add DSL for type checking
-- Add DSL for test cases for all of the above
-- Add DSL for grammar rewriting
-- Add DSL for macros/compile evaluation
-- Add DSL for layout
-
 # Languages
 
 We have a bunch of languages implemented:
@@ -279,6 +271,7 @@ There are a number of language extensions available:
 - datafun provides list comprehension syntax for folds: [ 2 * a | a in list, a != 3 ]
 - records provides { a: 1, b: 2 } syntax and accessor functions for the fields
 - structs provides "struct Circle(radius)" syntax for making constructors of records
+- default_args provides "foo(a, b) { body}" syntax for defining lambdas
 
 TODO:
 - Add some central facility to register languages and extensions, and allow dependencies
@@ -317,6 +310,16 @@ TODO:
 - Add GLSL compiler
 
 - Build raymarching DSL for geometry
+
+# Future plans
+
+- Improve debugging of language extensions. Right now, it is hard to figure out why
+  a parser, rewrite rule or lowering does not work.
+- Add DSL for type checking
+- Add DSL for test cases for all of the above
+- Add DSL for grammar rewriting
+- Add DSL for macros/compile evaluation
+- Add DSL for layout
 
 # Use cases
 
