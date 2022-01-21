@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <algorithm>
 #include "flow_union.hpp"
+#include "flow_array.hpp"
 // math
 #include <cmath>
 
