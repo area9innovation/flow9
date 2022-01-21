@@ -488,8 +488,9 @@ getParaLineInfos(
 		} else 1.0
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
-	map(reflowResult, \line -> {
-		optimizedLine = getOptimizedLine(line.words, alignment);
+	lines = length(reflowResult) - 1;
+	mapi(reflowResult, \i, line -> {
+		optimizedLine = getOptimizedLine(line.words, alignment, availableWidth, indent, i == lines);
 		metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
 		lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
 		ParaLineInfo(
@@ -953,7 +954,7 @@ renderParaLines(
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
 		lineAlignment =
-			if (alignment == Justify() && lastLine) {
+			if (alignment == Justify() && lastLine && !newJustifyfyRenderEnabled) {
 				StartAlign()
 			} else {
 				alignment;
@@ -989,11 +990,11 @@ renderParaLines(
 	))
 }
 
-getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
-	if (isBiDiEnabled() || alignment == Justify()) {
+getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement]{
+	if (isBiDiEnabled() || alignment == Justify() && !newJustifyfyRenderEnabled) {
 		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM));
 	} else {
-		optimizeLine(words);
+		optimizeLine(words, alignment, availableWidth, indent, lastLine);
 	};
 }
 
@@ -1255,7 +1256,7 @@ applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> F
 // Joins texts together to a single text element, along with the new metrics
 dummyTextWidthInspector = TextWidthInspector(make(0.0));
 
-optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
+optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement] {
 	fold(words, makeList(), \acc : List<OptimizedLineElement>, word : ParaWord -> {
 		f = word.form;
 		metrics = word.metrics;
@@ -1312,6 +1313,34 @@ optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
 			}
 		}
 	}) |> list2array
+	|> (\arr -> {
+		if (newJustifyfyRenderEnabled && alignment == Justify() && !lastLine) {
+			spacesAndWordsWidth = fold(words, Pair(0, indent), \acc, w -> {
+				switch (w.word) {
+					Space(__): Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
+					default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+				}
+			});
+
+			if (spacesAndWordsWidth.first > 0) {
+				wordSpacing = WordSpacing(const((availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first)));
+				map(arr, \e -> {
+					switch (e.f) {
+						Text(t, s): {
+							OptimizedLineElement(
+								e with f = Text(t, arrayPush(s, wordSpacing))
+							)
+						}
+						default: e;
+					}
+				})
+			} else {
+				arr
+			}
+		} else {
+			arr
+		}
+	})
 }
 
 isWordEmpty(w : ParaWord) -> bool {
@@ -1430,3 +1459,4 @@ makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle] {
 }
 
 use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics");
+newJustifyfyRenderEnabled = js && isUrlParameterTrue("js_justify")
