@@ -159,16 +159,17 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e, false), reuse);
 	recInc = \e, tails, createdVars, drops, recWithReturn, recIsDownDrop -> refCountingBExp(BExpUsedVars(e, tails, createdVars, drops), generators, recWithReturn, recIsDownDrop, fnIds);
 	rec = \e, recWithReturn, recIsDownDrop -> recInc(e, exp.usedVars, exp.createdVars, exp.downDrops, recWithReturn, recIsDownDrop);
-	mapExpA = \args, lastWithReturn, allWithReturn, recIsDownDrop -> {
+	mapExpA = \args, lastWithReturn : bool, allWithReturn : bool, recIsDownDrop : bool, dupItem : bool -> {
 		lastIndex = length(args) - 1;
 		foldri(args, Quadruple([], exp.usedVars, exp.createdVars, exp.downDrops), \i, acc, arg -> unquadruple(acc, \newArgs, newTails, newCreatedVars, newDrops -> {
 			newExp = recInc(arg, newTails, exp.createdVars, newDrops, allWithReturn || lastWithReturn && (i == lastIndex), recIsDownDrop);
-			reducedExp = reduceBCounter(newExp.exp, recIsDownDrop);
+			newArg = if (dupItem) dupBExpUsedVars(newExp, false) else newExp;
+			reducedExp = reduceBCounter(newArg.exp, recIsDownDrop);
 			Quadruple(
 				concat([reducedExp.first], newArgs),
-				newExp.usedVars,
-				mergeSets(newCreatedVars, newExp.createdVars),
-				arrayPushMaybe(newExp.downDrops, reducedExp.second)
+				newArg.usedVars,
+				mergeSets(newCreatedVars, newArg.createdVars),
+				arrayPushMaybe(newArg.downDrops, reducedExp.second)
 			);
 		}));
 	}
@@ -192,9 +193,11 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BString(v): exp; // TODO: ?? dupBExpUsedVars(exp);
 		BVar(id, type): if (isBTypeFunction(type)) exp else dupDrop(exp, withReturn);
 		BArray(args, type): unquadruple(
-			mapExpA(args, false, true, isDownDrop),
-			\newValues, newUsedVars, newCreatedVars, newDrops -> BExpUsedVars(BArray(newValues, type), newUsedVars, newCreatedVars, newDrops)
-			// TODO: dupBExpUsedVars(BArray(map(args, rec), type));
+			mapExpA(args, false, true, isDownDrop, true),
+			\newValues, newUsedVars, newCreatedVars, newDrops -> {
+				newArray = BArray(newValues, type);
+				BExpUsedVars(if (withReturn) newArray else BDropValue(newArray), newUsedVars, newCreatedVars, newDrops)
+			}
 		);
 		BLet(id, val, body, type): {
 			newBody = rec(body, true, isDownDrop);
@@ -266,7 +269,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			);
 		}
 		BSequence(exps, type): unquadruple(
-			mapExpA(exps, withReturn, false, isDownDrop),
+			mapExpA(exps, withReturn, false, isDownDrop, false),
 			\newValues, newUsedVars, newCreatedVars, newDrops -> BExpUsedVars(BSequence(newValues, type), newUsedVars, newCreatedVars, newDrops)
 		);
 		BSwitch(value, switchType, cases, defaultCase, type): {
@@ -298,7 +301,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BConstruct(struct, args, type): unquadruple(
 			// allWithReturn = true
 			// isDownDrop = true for args (we will remove the values after the whole structure has been constructed.)
-			mapExpA(map(args, dupAlias), false, true, true),
+			mapExpA(map(args, dupAlias), false, true, true, false),
 			\newValues, newUsedVars, newCreatedVars, newDrops -> {
 				newConstruct = BConstruct(struct, newValues, type);
 				newExp = makeBConstructWithDrops(newConstruct, newDrops, withReturn || isDownDrop);

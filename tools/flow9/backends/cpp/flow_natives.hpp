@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <algorithm>
 #include "flow_union.hpp"
+#include "flow_array.hpp"
 // math
 #include <cmath>
 
@@ -407,22 +408,21 @@ bool flow_isSameStructType(_FlowUnion<A...>* struct1, _FlowUnion<B...>* struct2)
 }
 
 template <typename A, typename B>
-B* flow_extractStruct(std::vector<A*>* vect, B* valType) {
+B* flow_extractStruct(_FlowArray<A*>* vect, B* valType) {
 	B* res = nullptr;
 	for (auto i = 0; i != (*vect).size(); i++) {
-		auto tmp1 = dup((*vect)[i]);
-		if (flow_isSameStructType(tmp1, dup(valType))) {
-			res = _extractStructVal<B>((*vect)[i]);
+		if (flow_isSameStructType(dup((*vect)[i]), dup(valType))) {
+			res = dup(_extractStructVal<B>((*vect)[i]));
 			break;
 		}
 	}
 	if (res == nullptr) {
-		// drop(vect); // TODO
+		drop(vect);
 		return reuse(valType);
 	}
 	else {
 		drop(valType);
-		// drop(vect); // TODO
+		drop(vect);
 		return res;
 	}
 }
@@ -432,16 +432,6 @@ template <typename A> A* _extractStructVal(A* v) { return v; }
 
 template <typename A, typename ...B> A _extractStructVal(_FlowUnion<B...> v) { return std::get<A>(v); }
 template <typename A> A _extractStructVal(A v) { return v; }
-
-template <typename A, typename B>
-B flow_extractStruct(const std::vector<A> flow_a, B flow_b) {
-  auto item = std::find_if(flow_a.begin(), flow_a.end(), [flow_b](A v){ return flow_isSameStructType(v, flow_b); });
-  if (item == flow_a.end()) {
-    return flow_b;
-  } else {
-    return _extractStructVal<B>(*item);
-  }
-}
 
 template <typename A>
 std::u16string flow_getStructName(A st) {
