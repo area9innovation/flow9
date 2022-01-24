@@ -10,6 +10,7 @@
 #include <algorithm>
 #include "flow_union.hpp"
 #include "flow_array.hpp"
+#include "flow_string.hpp"
 // math
 #include <cmath>
 
@@ -20,26 +21,26 @@ std::shared_ptr<A> makeFlowRef(A value) {
 
 // string
 
-std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
-	return s.substr(start, length);
+_FlowString* flow_substring(_FlowString* s, int32_t start, int32_t length) {
+	return new _FlowString();//(*s).value.substr(start, length));
 }
 
-int32_t flow_strlen(std::u16string s) {
-	return s.size();
+int32_t flow_strlen(_FlowString* s) {
+	return static_cast<int>((*s).value.size());
 }
 
-int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
-	return s.at(i);
+int32_t flow_getCharCodeAt(_FlowString* s, int32_t i) {
+	return (*s).value.at(i);
 }
 
 // precision = 20!
-std::u16string flow_d2s(double v) {
+_FlowString* flow_d2s(double v) {
 	std::stringstream stream;
 	stream << std::fixed << std::setprecision(20) << v;
 	std::string s = stream.str();
 
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return codecvt.from_bytes(s);
+	return new _FlowString();//codecvt.from_bytes(s));
 }
 
 // common
@@ -112,9 +113,9 @@ void flow_print2(std::shared_ptr<A> v) {
 }
 
 
-void flow_print2(std::u16string d) {
+void flow_print2(_FlowString* d) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	std::cout << codecvt.to_bytes(d);
+	std::cout << codecvt.to_bytes((*d).value);
 }
 
 void flow_print2(const bool d) {
@@ -410,9 +411,9 @@ bool flow_isSameStructType(_FlowUnion<A...>* struct1, _FlowUnion<B...>* struct2)
 template <typename A, typename B>
 B* flow_extractStruct(_FlowArray<A*>* vect, B* valType) {
 	B* res = nullptr;
-	for (auto i = 0; i != (*vect).size(); i++) {
-		if (flow_isSameStructType(dup((*vect)[i]), dup(valType))) {
-			res = dup(_extractStructVal<B>((*vect)[i]));
+	for (auto i = 0; i != (*vect).value.size(); i++) {
+		if (flow_isSameStructType(dup((*vect).value[i]), dup(valType))) {
+			res = dup(_extractStructVal<B>((*vect).value[i]));
 			break;
 		}
 	}
@@ -434,7 +435,7 @@ template <typename A, typename ...B> A _extractStructVal(_FlowUnion<B...> v) { r
 template <typename A> A _extractStructVal(A v) { return v; }
 
 template <typename A>
-std::u16string flow_getStructName(A st) {
+_FlowString flow_getStructName(A st) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
 	return codecvt.from_bytes(demangle(typeid(st).name()));
 }
