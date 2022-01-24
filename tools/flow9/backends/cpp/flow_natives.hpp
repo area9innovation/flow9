@@ -408,7 +408,7 @@ bool flow_isSameStructType(_FlowUnion<A...>* struct1, _FlowUnion<B...>* struct2)
 }
 
 template <typename A, typename B>
-B* flow_extractStruct(std::vector<A*>* vect, B* valType) {
+B* flow_extractStruct(_FlowArray<A*>* vect, B* valType) {
 	B* res = nullptr;
 	for (auto i = 0; i != (*vect).size(); i++) {
 		auto tmp1 = dup((*vect)[i]);
@@ -418,12 +418,12 @@ B* flow_extractStruct(std::vector<A*>* vect, B* valType) {
 		}
 	}
 	if (res == nullptr) {
-		// drop(vect); // TODO
+		drop(vect);
 		return reuse(valType);
 	}
 	else {
 		drop(valType);
-		// drop(vect); // TODO
+		drop(vect);
 		return res;
 	}
 }

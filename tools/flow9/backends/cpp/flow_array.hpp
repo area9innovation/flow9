@@ -10,7 +10,6 @@ struct _FlowArray : std::vector<T> {
 	_FlowArray(std::initializer_list<T> il) : std::vector<T>(il) {}
 	~_FlowArray() {
 		std::cout << (_counter == 0 ? "" : " !!ERROR!! ") << " ~ destroy _FlowArray; counter=" << _counter << " &=" << this << " ~ " << std::endl;
-		dropFields();
 	}
 	//bool operator==(const _FlowUnion& a) const { return areValuesEqual(*this, a); }
 
@@ -27,3 +26,23 @@ struct _FlowArray : std::vector<T> {
 		}
 	}
 };
+
+template <typename T>
+void drop(_FlowArray<T>* a) {
+	if (a == nullptr) {
+		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
+	}
+	else {
+		(*a)._counter -= 1;
+		(*a).dropFields();
+
+		if ((*a)._counter < 1) {
+			std::cout << "FREE vector:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			delete a;
+			a = nullptr;
+		}
+		else {
+			std::cout << "DEC COUNTER vector:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+		}
+	}
+}
