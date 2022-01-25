@@ -3112,6 +3112,10 @@ class RenderSupport {
 		return new DropShadowFilter(angle, distance, radius, color, alpha);
 	}
 
+	public static function setUseBoxShadow(dropShadow : DropShadowFilter) : Void {
+		untyped dropShadow.useBoxShadow = true;
+	}
+
 	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic {
 		return null;
 	}

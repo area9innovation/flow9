@@ -1297,7 +1297,7 @@ class DisplayObjectHelper {
 				var filter = filters[0];
 
 				if (untyped HaxeRuntime.instanceof(filter, DropShadowFilter)) {
-					if (untyped BoxShadow || clip.isGraphics()) {
+					if (untyped BoxShadow || filter.useBoxShadow || clip.isGraphics()) {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
 						var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
