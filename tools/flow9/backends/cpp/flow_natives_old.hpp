@@ -373,3 +373,8 @@ std::u16string flow_getStructName(A st) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
 	return codecvt.from_bytes(demangle(typeid(st).name()));
 }
+
+template <typename T>
+T getFlowArrayItem(const std::vector<T>& a, int32_t index) {
+	return a[index];
+}

@@ -6,6 +6,7 @@ struct _FlowArray {
 	std::vector<T> value;
 	_FlowArray(std::initializer_list<T> il) { value = std::vector<T>(il); }
 
+	// todo: simple types (remove dup)
 	void dupFields() {
 		for (std::size_t i = 0; i < value.size(); ++i) {
 			dup(value[i]);
@@ -54,4 +55,29 @@ void drop(_FlowArray<T*>* a) {
 			std::cout << "DEC COUNTER vector of structs:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 		}
 	}
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const _FlowArray<T>& a) {
+  os << "[";
+  for (std::size_t i = 0; i < a.value.size(); ++i) {
+	  os << a.value[i] << ",";
+  }
+  os <<"]";
+  return os;
+}
+
+template <typename T>
+T* getFlowArrayItem(_FlowArray<T*>* a, int32_t index) {
+	T* res = dup((*(a)).value[index]);
+	drop(a);
+	return res;
+}
+
+// simple types
+template <typename T>
+T getFlowArrayItem(_FlowArray<T>* a, int32_t index) {
+	T res = (*(a)).value[index];
+	drop(a);
+	return res;
 }
