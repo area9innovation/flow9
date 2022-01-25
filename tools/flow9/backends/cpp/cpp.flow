@@ -14,6 +14,20 @@ g++ -std=c++2a euler1.cpp 2>out.flow
 g++ -std=c++2a /mnt/d/a9/flow9/demos/euler/euler8.cpp -o euler8 -I/mnt/d/a9/flow9/
 */
 
+// Known issues:
+//
+// 1) Aliases
+// Example :
+// 1: Struct* a = new Struct();
+// 2: Struct* b = a;
+// -> drop(a); drop(b); If we miss the additional dup(a), there will be an attempt to double free the memory.
+//
+// 2) Struct inside Struct
+// Example :
+// 1: Struct* a = new Struct();
+// 2: Struct2* b = new Struct2(a);
+// -> drop(a); drop(b); If we miss the additional dup(a), there will be 1)wrong data in b; 2) an attempt to double free the memory.
+
 export {
 	// Compiles the given flow path to C++ as a single string
 	bmodule2cpp(cache : FlowCache, flowpath : string, shortenIds : bool) -> string;
@@ -58,7 +72,6 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 		+ makeStructConstructors(backend, struct, true) + "\n" 
 		+ makeStructDestructor(backend, struct, true) + "\n"
 		+ makeStructOperators(backend, struct) + "\n"
-		+ makeRecursiveStructDrop(struct, backend.info.structIds) + "\n"
 	});
 	unions = superglue(typeHierarchy.unions, \u : DUnion -> dunion2cpp(backend, u, info.unionTypes), "\n");
 	structs = superglue(typeHierarchy.structs, \s : DStruct -> dstruct2cpp(backend, s), "\n");
@@ -69,7 +82,7 @@ bprogram2cpp(b : BProgram, flowpath : string) -> string {
 	// The backend keeps track of what requirements are used by the various
 	// constructs used
 	strReplace(
-		"#inc" + "lude <cstdint>\n#include <variant>\n#include <functional>\n#include <iostream>\n#include <memory>\n#include <type_traits>\n"
+		"#inc" + "lude <cstdint>\n#include <functional>\n#include <iostream>\n#include <memory>\n#include <type_traits>\n"
 		// TODO: fix in the future path to flow9
 		+ "#inc" + "lude \"" + (if (memoryManagement) "tools/flow9/backends/cpp/flow_type.hpp\" \n" else "tools/flow9/backends/cpp/flow_type_old.hpp\" \n")
 		+ getBackendRequirements(backend) + "\n"
@@ -151,9 +164,9 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
 						"args", supergluei(args, \i, arg -> {
 							argType = argtypes[i];
-							btype2cpp(backend, argType) +(if (!isSimpleBType(argType) && memoryManagement) "& " else " ") + arg
+							btype2cpp(backend, argType) +(if (!isSimpleBType(argType) && memoryManagement) "* " else " ") + arg
 						}, ", "),
-						"returnType", returnType + (if (isSimpleReturnType) "" else "&"),
+						"returnType", returnType + (if (isSimpleReturnType) "" else "*"),
 					]
 				);
 
@@ -256,9 +269,10 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 
 		}
 		BLetStatement(id, value, body): {
-			varType = if (memoryManagement) btype2cpp(backend, getBType(value)) else "auto";
+			valueType = getBType(value);
+			varType = if (memoryManagement && !isSimpleBType(valueType)) (btype2cpp(backend, valueType) + "*") else "auto";
 			varType + " " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
-			+ (if (memoryManagement) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " <<std::endl;\n") else "")
+			+ (if (memoryManagement) ("std::cout<<\"FN : &" + id + " = \"<< &" + id + " << \" : value=\" << " + id + " <<std::endl;\n") else "")
 			+ bstatement2cpp(backend, body, fnArgs, withReturn);
 		}
 		BSetMutableStatement(left, field, value): todo();
@@ -269,31 +283,30 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 			value = bexp2cpp(backend, val, false) + ";";
 			if (type == bvoidType || !withReturn) {
 				value
-			} else if (isSimpleBType(type) || !isLocalVar(val) || !memoryManagement) {
+			} else if (isSimpleBType(type) || !isLocalVar(val) && !memoryManagement) {
 				"return " + value;
 			} else {
 				// TODO: think about. this is not recommended
 				//    Effective C++, Scott Meyers:
 				//    Never return a pointer or a reference to a local stack object or a reference to a heap-allocated object
-				// the right solution is : 
-				// a) unique_ptr . ( it will be implemented for reuse() )
-				// b) return const val + overloading ?
-				if (isBConstruct(val) || isBCast(val)) {
-					blueprint(
-						"auto* _tmp_return = new %value%;
-"
-						+ (if (memoryManagement) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
-						+ "return *_tmp_return;",
-						["value", value,]
-					);
+				if (memoryManagement) {
+					"return " + value;
 				} else {
-					blueprint(
-						"auto* _tmp_return = &%value%;
+					if (isBConstruct(val) || isBCast(val)) {
+						blueprint(
+							"auto* _tmp_return = new %value%
 "
-						+ (if (memoryManagement) ("std::cout<<\"FN : &_tmp_return = \"<< _tmp_return <<std::endl;\n") else "")
-						+ "return *_tmp_return;",
-						["value", value,]
-					);
+							+ "return *_tmp_return;",
+							["value", value,]
+						);
+					} else {
+						blueprint(
+							"auto* _tmp_return = &%value%;
+	"
+							+ "return *_tmp_return;",
+							["value", value,]
+						);
+					}
 				}
 			}
 		}
@@ -325,7 +338,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 						%default%
 					}",
 				[
-					"value", rece(expr),
+					"value", if (memoryManagement) ("(*" + rece(expr) + ")") else rece(expr),
 					"cases", superglue(cases, \case : BCaseStatement -> {
 						blueprint("
 							case %id%: {
@@ -337,7 +350,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 								"body", rec(case.body),
 							]);
 					}, ";\n"),
-					"default", "default: " + rec(defaultCase) + ";",
+					"default", "default: {" + (if (type == bvoidType) "" else rec(defaultCase)) + ";break;}",
 			]);
 		}
 	}
@@ -437,7 +450,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 		BConstruct(struct, args, type): {
 			if (memoryManagement) {
 				blueprint(
-					"%struct%{%args%}",
+					"new %struct%{%args%}",
 					[
 						"struct", if (args == []) struct else addTyparsToStruct(backend, type, struct),
 						"args", superglue(args, rec, ", "),
@@ -454,27 +467,37 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 			}
 		}
 		BField(value, field, type): {
+			structType = getBType(value);
+			isSimpleStructType = memoryManagement && !isSimpleBType(structType);
 			isRecursiveField = eitherMap(
-				lookupTree(backend.info.recursiveStructs, bType2id(getBType(value))),
+				lookupTree(backend.info.recursiveStructs, bType2id(structType)),
 				\s -> containsSet(s.recursiveFields, field),
 				false
 			);
 			blueprint("
-					%ptr%%value%.%field%",
+				%ptr%%value%.%field%",
 				[
-					"value", rec(value),
+					"value", rec(value) + (if (isSimpleStructType) ")" else ""),
 					"field", field,
-					"ptr", if (isRecursiveField) "*" else ""
+					"ptr",  (if (isSimpleStructType) "(*" else "") + (if (isRecursiveField && !memoryManagement) "*" else "")
 			]);
 		}
 		BSetMutable(left, field, value, type): "TODO-set-mutable(" + rec(left) + "." + field + ", " + rec(value);
 		BSwitch(value, switchType, allCases, defaultCaseM, type): makeBSwitchType(bexp, backend);
 		BArray(args, type): {
-			blueprint("%type%({ %args% })",
-				[
-					"type", btype2cpp(backend, type),
-					"args", superglue(args, rec, ", "),
-			]);
+			if (memoryManagement) {
+				blueprint("new %type%({ %args% })",
+					[
+						"type", btype2cpp(backend, type),
+						"args", superglue(args, rec, ", "),
+				]);
+				} else {
+					blueprint("%type%({ %args% })",
+						[
+							"type", btype2cpp(backend, type),
+							"args", superglue(args, rec, ", "),
+					]);
+				}
 		}
 		BCast(value, from, to): castBexp2cpp(backend, bexp);
 		BDupValue(value) : bCounter2cpp(backend, bexp);
@@ -484,16 +507,29 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 }
 
 dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BType]>,) -> string {
+	ptr = if (memoryManagement) "*" else "";
 	addTemplatesToStruct(
 		dtypes2parameters(mapConcat(u.types, \t -> t.typars)),
-		blueprint("
-			using %name% = std::variant<%members%>;", [
-				"name", u.id,
-				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> {
-					btype2cpp(backend, t);
-				}, ", ")
-			]
-		)
+		if (memoryManagement) {
+			blueprint("
+				using %name% = _FlowUnion<%members%>;
+				std::ostream& operator<<(std::ostream& os, const %name%& a){
+					\tos << \"%name% [union type]\";
+					\treturn os;
+				}",
+				[
+					"name", u.id,
+					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", ")
+				]
+			)
+		} else {
+			blueprint("
+				using %name% = std::variant<%members%>;", [
+					"name", u.id,
+					"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + ptr, ", ")
+				]
+			)
+		}
 	);
 }
 
@@ -534,8 +570,7 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 			bool operator>=(const %type%& a) const {return %geFields%;}
 			bool operator<=(const %type%& a) const {return %leFields%;}
 			%destructor%
-			%constructors%
-			%dropFn%\n",
+			%constructors%\n",
 			[
 				"type", s.id,
 				"equalFields", makeEqualStructArgsBody(backend, s.structArgs, []),
@@ -546,7 +581,6 @@ dstruct2cpp(backend : Backend<CppInfo>, s : DStruct) -> string {
 				"geFields", makeGreaterEqStructArgsBody(backend, s.structArgs, []),
 				"constructors", makeStructConstructors(backend, recStruct, false),
 				"destructor", makeStructDestructor(backend, recStruct, false),
-				"dropFn", makeStructDrop(s.structArgs, [], backend.info.structIds, ""),
 			]
 		)
 	) + "\n"
@@ -566,7 +600,8 @@ dstruct2cppEx(backend : Backend<CppInfo>, s : DStruct, argType2cpp : (int, DType
 		+ dstruct2id(backend, s)
 		+ dstruct2counter(backend, s) + "\n"
 		+ dstructFns
-		+ "};"
+		+ dstruct2DupDropFields(s)
+		+ "};\n"
 	);
 }
 
@@ -580,12 +615,8 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 	bool operator<(const %type%& a) const;
 	bool operator>=(const %type%& a) const;
 	bool operator<=(const %type%& a) const;
-	%drop%
 	",
-			[
-				"type", s.struct.id,
-				"drop", if (memoryManagement) "void drop();" else "",
-			]
+			["type", s.struct.id,]
 		);
 		dstruct2cppEx(
 			backend,
@@ -593,7 +624,7 @@ recursiveDstruct2cpp(backend : Backend<CppInfo>, s : RecursiveDStruct, withBody 
 			\ind, type -> {
 				isRecursiveField = elementAt(s.recursiveArgs, ind, false);
 				cppType = dtype2cpp(backend, type);
-				if (isRecursiveField) "std::unique_ptr<" + cppType + ">" else cppType;
+				if (isRecursiveField && !memoryManagement) "std::unique_ptr<" + cppType + ">" else cppType;
 			},
 			makeStructConstructors(backend, s, false) + "\n	"
 			+ makeStructDestructor(backend, s, false) + "\n"
@@ -665,7 +696,9 @@ addTyparsToStruct(backend : Backend<CppInfo>, type : BType, body : string) -> st
 }
 
 dtype2cpp(backend : Backend<CppInfo>, type : DType) -> string {
-	btype2cpp(backend, dtype2btype(type));
+	btype = dtype2btype(type);
+	btype2cpp(backend, btype)
+	+ (if (isSimpleBType(btype)) "" else "*");
 }
 
 btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
@@ -690,7 +723,11 @@ btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BType
 			else if (id == "string") { "std::u16string" }
 			else if (id == "flow") "_FlowType"
 			else if (id == "array") {
-				"std::vector<" + btype2cpp(backend, typars[0]) + ">"
+				if (memoryManagement) {
+					"_FlowArray<" + btype2cpp(backend, typars[0]) + (if (isSimpleBType(typars[0])) "" else "*") + ">"
+				} else {
+					"std::vector<" + btype2cpp(backend, typars[0]) + ">"
+				}
 			} else if (id == "ref") {
 				blueprint(
 					"std::shared_ptr<%valueType%>",
@@ -726,6 +763,24 @@ dstruct2counter(backend : Backend<CppInfo>, s : DStruct) -> string {
 	else "";
 }
 
+dstruct2DupDropFields(s : DStruct) -> string {
+	if (memoryManagement) {
+		makeFn = \name, sa -> if (isSimpleBType(dtype2btype(sa.type))) "" else ("::" + name + "(" + sa.id + ");");
+		blueprint(
+			"void dupFields() {%dupFields%}
+			void dropFields() {%dropFields%}
+",
+			[
+				"type", s.id,
+				"dupFields", superglue(s.structArgs, \sa -> makeFn("dup", sa), " "),
+				"dropFields", superglue(s.structArgs, \sa -> makeFn("drop", sa), " "),
+			]
+		)
+	} else {
+		""
+	}
+}
+
 makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, false);
 	len = length(bexp.cases);
@@ -749,7 +804,7 @@ makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
 							%body%
 						) : ",
 						[
-							"value", rec(bexp.value),
+							"value", if (memoryManagement) ("(*" + rec(bexp.value) + ")") else rec(bexp.value),
 							"id", eitherMap(lookupTree(caseIndexes, case.id), i2s, ""),
 							"body", rec(case.body)
 						]
@@ -768,7 +823,7 @@ makeBSwitchType(bexp : BSwitch, backend : Backend<CppInfo>) -> string {
 					%default%
 				}}(%value%.index())",
 			[
-				"value", rec(bexp.value),
+				"value", if (memoryManagement) ("(*" + rec(bexp.value) + ")") else rec(bexp.value),
 				"cases", superglue(bexp.cases, \case -> {
 					blueprint("
 						case %id%: {
@@ -800,20 +855,9 @@ switchType2caseIndexes(switchType : BType, backend : Backend<CppInfo>) -> Tree<s
 
 // only for structs
 castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
-	getStructTypeId = \type : BType -> 
-		switch (type : BType) {
-			BTypePar(__) : "";
-			BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
-			BTypeFunction(__, returnType) : "";
-		}
-
-	isSubStruct = \unionId : string, subStructId : string -> {
-		exists(lookupTreeDef(backend.info.unionTypes, unionId, []), \t : BType -> bType2id(t) == subStructId);
-	}
-
 	liftType = \value -> {
-		blueprint(
-			"(%type%)(%value%)",
+		 blueprint(
+			if (memoryManagement) "new %type%{%value%}" else "(%type%)(%value%)",
 			[
 				"type", btype2cpp(backend, bcast.to),
 				"value", value,
@@ -829,24 +873,50 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		blueprint(
 			"std::get<%type%>(%id%)",
 			[
-				"type", type,
-				"id", value,
+				"type", type + (if (memoryManagement) "*" else ""),
+				"id", (if (memoryManagement) "*" else "") + value,
 			]
 		);
 	}
 
+	value = bexp2cpp(backend, bcast.value, false);
+	switch (getBCastType(backend, bcast) : BCastType) {
+		BCastUp() : liftType(value);
+		BCastDown() : downType(value);
+		BCastNone() : value;
+
+	}
+}
+
+// only for structs
+BCastType ::= BCastUp, BCastDown, BCastNone;
+	BCastUp();
+	BCastDown();
+	BCastNone();
+
+getBCastType(backend : Backend<CppInfo>, bcast : BCast) -> BCastType {
+	getStructTypeId = \type : BType -> 
+		switch (type : BType) {
+			BTypePar(__) : "";
+			BTypeName(typeId, __) : if (containsKeyTree(backend.info.structIds, typeId)) typeId else "";
+			BTypeFunction(__, returnType) : "";
+		}
+
+	isSubStruct = \unionId : string, subStructId : string -> {
+		exists(lookupTreeDef(backend.info.unionTypes, unionId, []), \t : BType -> bType2id(t) == subStructId);
+	}
+
 	fromId = getStructTypeId(bcast.from);
 	toId =  getStructTypeId(bcast.to);
-	value = bexp2cpp(backend, bcast.value, false);
 
 	if (fromId == "" || toId == "") {
-		value;
+		BCastNone();
 	} else if (isSubStruct(fromId, toId)) {
-		downType(value)
+		BCastDown();
 	} else if (isSubStruct(toId, fromId)) {
-		liftType(value)
+		BCastUp();
 	} else {
-		value;
+		BCastNone();
 	}
 }
 
@@ -1053,13 +1123,13 @@ makeStructCopyConstructorBody(backend : Backend<CppInfo>, simpleArgs : [DStructA
 			"%simpleTypes%
 	%recTypes%",
 			[
-				"simpleTypes", strGlue(map(simpleArgs, \arg -> 
+				"simpleTypes", strGlue(map(if (memoryManagement) concat(simpleArgs, recArgs) else simpleArgs, \arg -> 
 					blueprint(
 						"%field% = a.%field%;",
 						["field", arg.id]
 					)
 				), "\n"),
-				"recTypes", strGlue(map(recArgs, \arg -> 
+				"recTypes", strGlue(map(if (memoryManagement) [] else recArgs, \arg -> 
 					blueprint(
 						"%field% = std::make_unique<%ptype%>(*a.%field%);",
 						[
@@ -1144,14 +1214,22 @@ makeTyparsForConstructorHeader(argTypes : [string]) -> string {
 makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
 	if (memoryManagement) {
 	if (withBody) {
+		makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple || memoryManagement) "" else "*") + field.id + ");";
+		makeReleasePtr = \field : DStructArg -> if (memoryManagement) "" else ("delete " + field.id + ".release();");
+
 		printField = \id, isRecursive -> {
-			if (isRecursive) {
+			if (isRecursive && !memoryManagement) {
 				"if (" + id + " != nullptr) flow_print2(*" + id + "); else std::cout <<\"DELETED\""
 			} else {
 				"flow_print2(" + id + ")"
 			}
 		}
 		isRecursiveField = \i -> elementAt(struct.recursiveArgs, i, false);
+		structArgs = unzipi(struct.struct.structArgs, \i, arg -> isRecursiveField(i));
+		isNotSimpleArgType = \arg -> !isSimpleBType(dtype2btype(arg.type));
+		simpleArgs = filter(structArgs.second, isNotSimpleArgType);
+		recArgs = filter(structArgs.first, isNotSimpleArgType);
+
 		blueprint(
 			"%type%::~%type%(){\n"
 			+ ( if (memoryManagement) "  std::cout << (_counter == 0 ? \"\" : \" !!ERROR!! \") << \" ~ destroy %type%(\"; %printFields%; std::cout<<\") counter=\"<<_counter<<\" &=\" << this <<\" ~ \"<<std::endl;\n" else "")
@@ -1160,9 +1238,13 @@ makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, with
 			[
 				"type", struct.struct.id,
 				"printFields", supergluei(struct.struct.structArgs, \i, a -> printField(a.id, isRecursiveField(i)), "; "),
-				"fields", "", // TODO: free structs, vectors
+				"fields", superglue(simpleArgs, \f -> makeDropField(f, true), "\n")
+						+ (if (simpleArgs == []) "" else "\n")
+						+ superglue(recArgs, \f -> makeDropField(f, false) + "\n" + makeReleasePtr(f), "\n")
+						+ (if (recArgs == []) "" else "\n")
+				// TODO: free vectors, etc
 			]
-		)
+		);
 	} else {
 		blueprint(
 			"~%type%();",
@@ -1207,13 +1289,13 @@ makeStructConstructors(backend : Backend<CppInfo>, struct : RecursiveDStruct, wi
 					"type", struct.struct.id,
 					"typars", typars,
 					"declaration", initDeclaration,
-					"simpleTypes", strGlue(map(simpleArgs, \arg -> 
+					"simpleTypes", strGlue(map(if (memoryManagement) struct.struct.structArgs else simpleArgs, \arg -> 
 						blueprint(
 							"%field% = _%field%;",
 							["field", arg.id]
 						)
 					), "\n"),
-					"recTypes", strGlue(map(recArgs, \arg -> 
+					"recTypes", strGlue(map(if (memoryManagement) [] else recArgs, \arg -> 
 						blueprint(
 							"%field% = std::make_unique<%ptype%>(_%field%);",
 							[
@@ -1344,17 +1426,17 @@ isSimpleBType(type : BType) -> bool {
 	type == bvoidType || type  == bboolType || type  == bintType || type  == bdoubleType || type  == bstringType;
 }
 
+// TODO: ignore simple types (remove all dup/drop/reuse) ?
 bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 	rec = \ee -> bexp2cpp(backend, ee, false);
-	isDup = \-> switch (exp : BCounter) {
-		BDupValue(__) : true;
-		BDropValue(__) : false;
-		BReuseValue(__) : false;
+	extractValueFromBDup = \e -> switch (e : BCounter) {
+		BDupValue(value) : value;
+		BDropValue(__) : exp;
+		BReuseValue(__) : exp;
 	}
-	isDrop = \-> switch (exp : BCounter) {
-		BDupValue(__) : false;
-		BDropValue(__) : true;
-		BReuseValue(__) : true;
+	extractCastUpFromExp = \e -> switch (e : BExp) {
+		BCast(__, __, __) : if (getBCastType(backend, e) == BCastUp()) Some(e) else None();
+		default : None();
 	}
 	bcounter2fnName = \-> switch (exp : BCounter) {
 		BDupValue(__) : "dup";
@@ -1364,17 +1446,31 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 
 	value = exp.value;
 	type = getBReturnType(getBType(value));
-	if (type == bvoidType && getBVarId(value) == "" || !memoryManagement) {
+	makeCppCounter = \-> blueprint(
+		"%fn%(%val%)",
+		[
+			"fn", bcounter2fnName(),
+			"val", rec(value),
+		]
+	);
+
+	if (isSimpleBType(type) || !memoryManagement) {
 		rec(value)
+	// TODO: move to ref_counting ?
+	// replace dup(liftType(val)) with liftType(dup(val)) // swap BCast and BDup
+	} else if (memoryManagement) {
+		newVal = extractValueFromBDup(exp);
+		if (newVal == exp) {
+			makeCppCounter()
+		} else {
+			eitherFn(
+				extractCastUpFromExp(newVal),
+				\bcast -> bexp2cpp(backend, BCast(BDupValue(bcast.value), bcast.from, bcast.to), false),
+				makeCppCounter
+			)
+		}
 	} else {
-		blueprint(
-			"%fn%%type%(%val%)",
-			[
-				"fn", bcounter2fnName(),
-				"val", rec(value),
-				"type", if (isDrop() || isSimpleBType(type)) "" else ("<" + btype2cpp(backend, type) + (if (isDup()) "&" else "") + ">"),
-			]
-		);
+		makeCppCounter()
 	}
 }
 
@@ -1434,6 +1530,7 @@ getBVarId(exp : BExp) -> string {
 		BCast(value, __, __) : getBVarId(value);
 		BReuseValue(value) : getBVarId(value);
 		BDropValue(value) : getBVarId(value);
+		BField(value, __, __) : getBVarId(value);
 		default : "";
 	}
 }
@@ -1443,33 +1540,4 @@ isBCast(exp : BExp) -> bool {
 		BCast(value, __, __) : true;
 		default : false;
 	}
-}
-
-makeStructDrop(simpleArgs : [DStructArg], recArgs : [DStructArg], structIds : Tree<string, int>, typeId : string) -> string {
-	makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple) "" else "*") + field.id + ");";
-	makeReleasePtr = \field : DStructArg -> "delete " + field.id + ".release();";
-
-	if (memoryManagement) {
-	blueprint(
-		"void %type%drop() {
-	%fields%::dropStruct(*this);
-}",
-		[
-			"type", if (typeId == "") "" else (typeId + "::"),
-			"fields",
-			superglue(simpleArgs, \f -> makeDropField(f, true), "\n")
-			+ (if (simpleArgs == []) "" else "\n")
-			+ superglue(recArgs, \f -> makeDropField(f, false) + "\n" + makeReleasePtr(f), "\n")
-			+ (if (recArgs == []) "" else "\n")
-		]
-	);
-	} else "";
-}
-
-makeRecursiveStructDrop(s : RecursiveDStruct, structIds : Tree<string, int>) -> string {
-	if (memoryManagement) {
-		isRecursiveField = \i -> elementAt(s.recursiveArgs, i, false);
-		structArgs = unzipi(s.struct.structArgs, \i, arg -> isRecursiveField(i));
-		makeStructDrop(structArgs.second, structArgs.first, structIds, s.struct.id);
-	} else "";
 }

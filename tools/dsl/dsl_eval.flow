@@ -3,12 +3,12 @@ import tools/dsl/dsl_parse;
 export {
 	makeDslEnv() -> DslEnv;
 	evaluateDsl(env : DslEnv, p : DslAst) -> DslAst;
+
+	DslEnv(globals : Tree<string, [DslAst]>, locals : Tree<string, DslAst>);
 }
 
-DslEnv(env : Tree<string, DslAst>);
-
 makeDslEnv() -> DslEnv {
-	DslEnv(makeTree());
+	DslEnv(makeTree(), makeTree());
 }
 
 evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
@@ -20,37 +20,69 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 			} else if (name == "let") {
 				let = getDslString(args[0]);
 				val = evaluateDsl(env, args[1]);
-				nenv = DslEnv(setTree(env.env, let, val));
-				evaluateDsl(nenv, args[2]);
+				node = getDslNode(val);
+				if (node.name == "lambda") {
+					nenv = DslEnv(treePushToArrayUnique(env.globals, let, val), env.locals);
+					evaluateDsl(nenv, args[2]);
+				} else {
+					nenv = DslEnv(env.globals, setTree(env.locals, let, val));
+					evaluateDsl(nenv, args[2]);
+				}
 			} else if (name == "var") {
-				mvar = lookupTree(env.env, getDslString(args[0]));
-				mvar ?? mvar : p;
+				mvar = lookupTree(env.locals, getDslString(args[0]));
+				mvar ?? mvar : {
+					p;
+				}
 			} else if (name == "lambda") {
 				instantiateDslLocals(env, p);
 			} else if (name == "call") {
 				fn = evaluateDsl(env, args[0]);
+				// println("Call to " + prettyDsl(fn));
 				lambda : DslNode = getDslNode(fn);
-				eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
 				if (lambda.name == "lambda") {
+					eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
 					nargs = list2array(getDslList(lambda.args[0]));
 					body = lambda.args[1];
-					nenv = DslEnv(foldi(list2array(eargs), env.env, \i, acc, arg -> {
+					nenv = DslEnv(env.globals, foldi(list2array(eargs), env.locals, \i, acc, arg -> {
 						// println("Setting par " + getDslString(nargs[i]) + " to " + prettyDsl(arg));
 						setTree(acc, getDslString(nargs[i]), arg)
 					}));
 					evaluateDsl(nenv, body);
 				} else if (lambda.name == "var") {
 					// Normal functions
-					mnative = getDslNative(getDslString(lambda.args[0]));
-					mnative ?? {
-						mnative.fn(list2array(eargs));
-					} : {
-						println("ERROR: Can not call " + prettyDsl(lambda));
-						p;
+					vname = getDslString(lambda.args[0]);
+					globals = getTreeArrayValue(env.globals, vname);
+					nargsCall = countList(getDslList(args[1]));
+					matches = filter(globals, \gl -> {
+						nargs = countList(getDslList(getDslNode(gl).args[0]));
+						nargs == nargsCall;
+					});
+					if (matches != []) {
+						if (length(matches) != 1) {
+							println("Can not resolve overloaded " + vname);
+							eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
+							DslNode(vname, list2array(eargs), pos);
+						} else {
+							evaluateDsl(env, DslNode("call", [matches[0], args[1]], pos));
+						}
+					} else {
+						eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
+						mnative = getDslNative(vname);
+						mnative ?? {
+							mnative.fn(list2array(eargs));
+						} : {
+							// We just make a node
+							node = DslNode(vname, list2array(eargs), pos);
+							if (globals != []) {
+								println("Can not find overload for " + vname + " with " + i2s(nargsCall) + " arguments");
+							} else {
+								println("Unknown var " + vname + ", just making a node" /* + prettyDsl(node)*/);
+							}
+							node;
+						}
 					}
-
 				} else {
-					println("ERROR: Can not call " + prettyDsl(lambda));
+					println("ERROR: Can not call " + prettyDsl(fn));
 					p;
 				}
 			} else if (name == "and") {
@@ -98,19 +130,19 @@ instantiateDslLocals(env : DslEnv, p : DslAst) -> DslAst {
 			if (name == "let") {
 				let = getDslString(args[0]);
 				val = instantiateDslLocals(env, args[1]);
-				nenv = DslEnv(setTree(env.env, let, var(let)));
+				nenv = DslEnv(env with locals = setTree(env.locals, let, var(let)));
 				DslNode(name, [args[0], val, 
 					instantiateDslLocals(nenv, args[2])
 				], pos);
 			} else if (name == "var") {
-				lookupTreeDef(env.env, getDslString(args[0]), p);
+				lookupTreeDef(env.locals, getDslString(args[0]), p);
 			} else if (name == "lambda") {
 				largs = getDslList(args[0]);
-				nenv : Tree<string, DslAst> = foldList(largs, env.env, \acc, darg -> {
+				nlocals : Tree<string, DslAst> = foldList(largs, env.locals, \acc, darg -> {
 					arg = getDslString(darg);
 					setTree(acc, arg, DslNode("var", [darg], pos))
 				});
-				newBody = instantiateDslLocals(DslEnv(nenv), args[1]);
+				newBody = instantiateDslLocals(DslEnv(env.globals, nlocals), args[1]);
 				DslNode(name, [args[0], newBody], pos)
 			} else {
 				// Normal functions
@@ -167,6 +199,14 @@ getDslNative(name : string) -> Maybe<DslNativeBuiltin> {
 			Pair("not", one(notDsl)),
 			Pair("negate", one(negateDsl)),
 			Pair("brace", one(braceDsl)),
+
+			// Get the name of a node
+			Pair("nodeName", one(nodeNameDsl)),
+			// Get child #n of a node
+			Pair("nodeChild", two(nodeChildDsl)),
+			// Make a node
+			Pair("makeNode", two(makeNodeDsl)),
+			Pair("println", one(printlnDsl)),
 		])
 	});
 	lookupTree(n, name);
@@ -391,4 +431,28 @@ braceDsl(val : DslAst) -> DslAst {
 		}
 		default: val;
 	}
+}
+
+nodeNameDsl(val : DslAst) -> DslAst {
+	node = getDslNode(val);
+	DslString(node.name);
+}
+
+nodeChildDsl(val : DslAst, n : DslAst) -> DslAst {
+	node = getDslNode(val);
+	i = getDslInt(n);
+	elementAt(node.args, i, val)
+}
+
+makeNodeDsl(name : DslAst, args : DslAst) -> DslAst {
+	DslNode(
+		getDslString(name),
+		list2array(getDslList(args)),
+		0
+	)
+}
+
+printlnDsl(val : DslAst) -> DslAst {
+	println(prettyDsl(val));
+	val;
 }

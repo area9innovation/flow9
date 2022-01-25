@@ -287,6 +287,19 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			tropicItems : DynamicBehaviour<[TDynamicGroupItem]> = make([]);
 			rtl = getDefaultRtl();
 			maxWidth = fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0);
+			isBaselineCols = combiner0 == TBaselineColsCombiner() || combiner0 == TBaselineColsACombiner();
+			maxBaseline =
+				if (isBaselineCols)
+					fsubselect(tropicItems, FLift(\itms ->
+						fmaxA(map(itms, \it : TDynamicGroupItem -> it.acc.metrics.baseline), 0.)
+					))
+				else zero;
+			maxOffset =
+				if (isBaselineCols)
+					fsubselect(tropicItems, FLift(\itms ->
+						fmaxA(map(itms, \it : TDynamicGroupItem -> fsubtract(maxBaseline, it.acc.metrics.baseline)), 0.)
+					))
+				else zero;
 
 			itemPositionFn = \previousItem, isVertical ->
 				fsubselect(previousItem, FLift(\prevItem ->
@@ -311,20 +324,35 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					)
 				));
 
-			itemPositionRtlFn = \previousItem, tropicWidth ->
-				fsubselect(previousItem, FLift(\prevItem ->
+			itemPositionRtlFn = \currentItem, previousItem ->
+				fsubselect2(currentItem, previousItem, \curItem : TDynamicGroupItem, prevItem ->
 					fselect4(
 						prevItem.position,
 						prevItem.acc.metrics.height,
 						maxWidth,
-						tropicWidth,
+						curItem.acc.metrics.width,
 						\p : Point, prevHeight : double, containerWidth, currentWidth : double ->
 							Point(
 								max(containerWidth - currentWidth, 0.),
 								p.y + prevHeight
 							)
 					)
-				));
+				);
+
+			itemPositionBaselineColsFn = \currentItem, previousItem ->
+				fsubselect2(currentItem, previousItem, \curItem : TDynamicGroupItem, prevItem ->
+					fselect4(
+						curItem.acc.metrics.baseline,
+						maxBaseline,
+						prevItem.position,
+						prevItem.acc.metrics.width,
+						\iBas, maxBas : double, p : Point, metric : double ->
+							Point(
+								p.x + metric,
+								maxBas - iBas
+							)
+					)
+				);
 
 			firstItemBaselineFn =
 				\items : [TDynamicGroupItem] ->
@@ -350,15 +378,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					false
 				);
 				TLinesCombiner() : TCustomCombiner(
-					\previousItem, __ -> itemPositionFn(previousItem, true),
+					\__, previousItem -> itemPositionFn(previousItem, true),
 					None(),
 					Some(lastItemBaselineFn),
 					true,
 					false
 				);
 				TLinesACombiner() : TCustomCombiner(
-					\previousItem, tropicWidth ->
-						if (rtl) itemPositionRtlFn(previousItem, tropicWidth)
+					\currentItem, previousItem ->
+						if (rtl) itemPositionRtlFn(currentItem, previousItem)
 						else itemPositionFn(previousItem, true),
 					None(),
 					Some(lastItemBaselineFn),
@@ -366,15 +394,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					false
 				);
 				TBaselineLinesCombiner() : TCustomCombiner(
-					\previousItem, __ -> itemPositionFn(previousItem, true),
+					\__, previousItem -> itemPositionFn(previousItem, true),
 					None(),
 					Some(firstItemBaselineFn),
 					true,
 					false
 				);
 				TBaselineLinesACombiner() : TCustomCombiner(
-					\previousItem, tropicWidth ->
-						if (rtl) itemPositionRtlFn(previousItem, tropicWidth)
+					\currentItem, previousItem ->
+						if (rtl) itemPositionRtlFn(currentItem, previousItem)
 						else itemPositionFn(previousItem, true),
 					None(),
 					Some(firstItemBaselineFn),
@@ -382,14 +410,28 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					false
 				);
 				TColsCombiner() : TCustomCombiner(
-					\previousItem, __ -> itemPositionFn(previousItem, false),
+					\__, previousItem -> itemPositionFn(previousItem, false),
 					None(),
 					None(),
 					false,
 					true
 				);
 				TColsACombiner() : TCustomCombiner(
-					\previousItem, __ -> itemPositionFn(previousItem, false),
+					\__, previousItem -> itemPositionFn(previousItem, false),
+					if (rtl) Some(\i -> i + 1) else None(),
+					None(),
+					false,
+					true
+				);
+				TBaselineColsCombiner() : TCustomCombiner(
+					\currentItem, previousItem -> itemPositionBaselineColsFn(currentItem, previousItem),
+					None(),
+					None(),
+					false,
+					true
+				);
+				TBaselineColsACombiner() : TCustomCombiner(
+					\currentItem, previousItem -> itemPositionBaselineColsFn(currentItem, previousItem),
 					if (rtl) Some(\i -> i + 1) else None(),
 					None(),
 					false,
@@ -402,18 +444,21 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			horizontalCombiner = makeMetricsCombiner(combiner.horizontal);
 
 			createNewTAcc = \itemIndex, tropic -> {
+				currentItem : Transform<TDynamicGroupItem> =
+					fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
+						elementAt(ti, i, zeroTDynamicGroupItem)
+					));
 				previousItem : Transform<TDynamicGroupItem> =
 					fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
 						elementAt(ti, eitherMap(combiner.getPrevItemIndex, \fn -> fn(i), i - 1), zeroTDynamicGroupItem)
 					));
-				tropicWidth = make(0.);
 
-				itemPosition = combiner.itemPositionFn(previousItem, tropicWidth);
+				itemPosition = combiner.itemPositionFn(currentItem, previousItem);
 
 				Pair(
 					itemPosition,
 					tropic2Acc(
-						TTranslate(itemPosition, TAttachWidth(tropic, tropicWidth)),
+						TTranslate(itemPosition, tropic),
 						parent,
 						sheet,
 						metricsOnly
@@ -574,13 +619,13 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					),
 				TFormMetrics(
 					fsubselectFn(tropicItems, \item -> item.acc.metrics.width, horizontalCombiner, 0.0),
-					fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0),
+					faddition(maxOffset, fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0)),
 					baseline
 				),
 				fsubselectFn(tropicItems, \item -> item.acc.minWidth, horizontalCombiner, 0.0),
-				fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0),
+				faddition(maxOffset, fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0)),
 				fsubselectFn(tropicItems, \item -> item.acc.maxWidth, horizontalCombiner, 0.0),
-				fsubselectFn(tropicItems, \item -> item.acc.maxHeight, verticalCombiner, 0.0),
+				faddition(maxOffset, fsubselectFn(tropicItems, \item -> item.acc.maxHeight, verticalCombiner, 0.0)),
 				fsubselectFn(tropicItems, \item -> item.acc.xFillers, horizontalCombiner, 0.0),
 				fsubselectFn(tropicItems, \item -> item.acc.yFillers, verticalCombiner, 0.0),
 				const(false),

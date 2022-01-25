@@ -93,9 +93,9 @@ refCountingBExpDeclaration(decl : BExpDeclaration, fnIds : Set<string>) -> BExpD
 	}
 }
 
-addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType, fnIds : Set<string>) -> BExp {
+addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType, userFnIds : Set<string>) -> BExp {
 	generators = fold(cppGenerators(), makeSet(), \acc, g -> insertSet(acc, g.name));
-	newBody = refCountingBExp(BExpUsedVars(exp, makeTree(), makeSet(), []), generators, isReturnBType(type), false, fnIds);
+	newBody = refCountingBExp(BExpUsedVars(exp, makeTree(), makeSet(), []), generators, isReturnBType(type), false, userFnIds);
 	usedVars = map(capturedVarIds, \id -> containsKeyTree(newBody.usedVars, id));
 	if (forall(usedVars, idfn)) {
 		newBody.exp;
@@ -128,9 +128,14 @@ addBCounterToBExp(exp : BExp, capturedVarIds : [string], type : BType, fnIds : S
 
 BExpUsedVars(
 	exp : BExp,
-	usedVars : Tree<string, BType>, // id - type
+	usedVars : Tree<string, BExpUsedVar>, // key is _id_
 	createdVars : Set<string>, // local variables
 	downDrops : [BCounter], // variables we want to delete later (in the parent expression)
+);
+
+BExpUsedVar(
+	type : BType,
+	externalDrop : bool, // used in a function
 );
 
 foldri(cs : [?], acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
@@ -145,22 +150,39 @@ doFoldri(cs : [?], i : int, acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
 	}
 }
 
+existsi(a : [?], fn : (int, ?) -> bool) -> bool {
+	foundIndex = iteriUntil(a, \i, e -> fn(i, e));
+	foundIndex != length(a);
+}
+
 refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool, isDownDrop : bool, fnIds : Set<string>) -> BExpUsedVars {
-	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e), reuse);
+	dupDrop = \e, reuse -> dropBExpUsedVars(dupBExpUsedVars(e, false), reuse);
 	recInc = \e, tails, createdVars, drops, recWithReturn, recIsDownDrop -> refCountingBExp(BExpUsedVars(e, tails, createdVars, drops), generators, recWithReturn, recIsDownDrop, fnIds);
 	rec = \e, recWithReturn, recIsDownDrop -> recInc(e, exp.usedVars, exp.createdVars, exp.downDrops, recWithReturn, recIsDownDrop);
-	mapExpA = \args, lastWithReturn, recIsDownDrop -> {
+	mapExpA = \args, lastWithReturn : bool, allWithReturn : bool, recIsDownDrop : bool, dupItem : bool -> {
 		lastIndex = length(args) - 1;
 		foldri(args, Quadruple([], exp.usedVars, exp.createdVars, exp.downDrops), \i, acc, arg -> unquadruple(acc, \newArgs, newTails, newCreatedVars, newDrops -> {
-			newExp = recInc(arg, newTails, exp.createdVars, newDrops, lastWithReturn && i == lastIndex, recIsDownDrop);
-			reducedExp = reduceBCounter(newExp.exp, recIsDownDrop);
+			newExp = recInc(arg, newTails, exp.createdVars, newDrops, allWithReturn || lastWithReturn && (i == lastIndex), recIsDownDrop);
+			newArg = if (dupItem) dupBExpUsedVars(newExp, false) else newExp;
+			reducedExp = reduceBCounter(newArg.exp, recIsDownDrop);
 			Quadruple(
 				concat([reducedExp.first], newArgs),
-				newExp.usedVars,
-				mergeSets(newCreatedVars, newExp.createdVars),
-				arrayPushMaybe(newExp.downDrops, reducedExp.second)
+				newArg.usedVars,
+				mergeSets(newCreatedVars, newArg.createdVars),
+				arrayPushMaybe(newArg.downDrops, reducedExp.second)
 			);
 		}));
+	}
+
+	// TODO: result of the function?
+	dupAlias = \val : BExp -> {
+		varId = extractBVarId(val);
+		isAlias = varId != "";
+		// TODO: we don't know the type of Cast
+		// should be:
+		// if downCast, then dup the result (e.g. result of cast())
+		// if upCast, dup the init value
+		if (!isBCounter(val) && isAlias) BDupValue(val)/*(addBCounterToExp(val, \e -> BDupValue(e)))*/ else val;
 	}
 
 	switch (exp.exp) {
@@ -171,22 +193,25 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BString(v): exp; // TODO: ?? dupBExpUsedVars(exp);
 		BVar(id, type): if (isBTypeFunction(type)) exp else dupDrop(exp, withReturn);
 		BArray(args, type): unquadruple(
-			mapExpA(args, false, isDownDrop),
-			\newValues, newUsedVars, newCreatedVars, newDrops -> BExpUsedVars(BArray(newValues, type), newUsedVars, newCreatedVars, newDrops)
-			// TODO: dupBExpUsedVars(BArray(map(args, rec), type));
+			mapExpA(args, false, true, isDownDrop, true),
+			\newValues, newUsedVars, newCreatedVars, newDrops -> {
+				newArray = BArray(newValues, type);
+				BExpUsedVars(if (withReturn) newArray else BDropValue(newArray), newUsedVars, newCreatedVars, newDrops)
+			}
 		);
 		BLet(id, val, body, type): {
 			newBody = rec(body, true, isDownDrop);
 			newValue = recInc(val, newBody.usedVars, newBody.createdVars, newBody.downDrops, true, isDownDrop);
 			dupExp = dupDrop(BExpUsedVars(BVar(id, getBType(val)), newValue.usedVars, insertSet(newValue.createdVars, id), newValue.downDrops), false);
 			reducedBCounter = reduceBCounter(dupExp.exp, isDownDrop);
-			bodyWithDup = switch (reducedBCounter.first : BExp) {
-				BCounter(): BSequence([reducedBCounter.first, newBody.exp], type);
-				default: newBody.exp;
+			bodyWithDup = if (isBCounter(reducedBCounter.first)) {
+				BSequence([reducedBCounter.first, newBody.exp], type);
+			} else {
+				newBody.exp;
 			}
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
 			BExpUsedVars(
-				BLet(id, reducedValue.first, bodyWithDup, type),
+				BLet(id, dupAlias(reducedValue.first), bodyWithDup, type),
 				dupExp.usedVars,
 				dupExp.createdVars,
 				arrayPushMaybe(arrayPushMaybe(dupExp.downDrops, reducedBCounter.second), reducedValue.second)
@@ -198,26 +223,28 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		}
 		BCall(fn, args, type): {
 			lambdaFn = getLambdaId(fn, fnIds);
-			isNativeFn = isNativeWithoutDropFn(fn, generators);
-			isLambda = lambdaFn.first != "" && !isNativeFn;
-			newFn = rec(fn, withReturn || isReturnBType(type), isDownDrop);
+			isNativeOperation = isNativeWithoutDropFn(fn, generators);
+			isLambda = lambdaFn.first != "" && !isNativeOperation;
+			hasResult = type != bvoidType; //isReturnBType(type);
+			newFn = rec(fn, withReturn || hasResult, isDownDrop);
 			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, newFn.downDrops), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
-				if (isNativeFn) {
+				if (isNativeOperation) {
 					newArg = recInc(arg, newTails, exp.createdVars, newDrops, withReturn, isDownDrop);
 					reducedValue = reduceBCounter(newArg.exp, isDownDrop);
 					Quadruple(concat([reducedValue.first], newArgs), newArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(newArg.downDrops, reducedValue.second));
 				} else {
 					newArg = recInc(arg, newTails, exp.createdVars, newDrops, true, isDownDrop);
 					// drop is inside the FN
-					dupedArg = dupBExpUsedVars(newArg);
+					dupedArg = dupBExpUsedVars(newArg, true);
 					reducedValue = reduceBCounter(dupedArg.exp, isDownDrop);
 					Quadruple(concat([reducedValue.first], newArgs), dupedArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(dupedArg.downDrops, reducedValue.second));
 				}
 			}));
 			newBCall = BCall(newFn.exp, newArgs.first, type);
-			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, lambdaType)) else newArgs.second;
-			// TODO: drop unused result of the fn
-			newExp = BExpUsedVars(/*if (withReturn) newBCall else BDropValue(newBCall)*/newBCall, newUsedVars, newArgs.third, newArgs.fourth);
+			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, BExpUsedVar(lambdaType, false))) else newArgs.second;
+			// TODO: reuse only the result from which we use the part (field). otherwise you don't need to add BReuse.
+			dropedBCall = if (!hasResult) newBCall else if (withReturn) BReuseValue(newBCall) else BDropValue(newBCall);
+			newExp = BExpUsedVars(dropedBCall, newUsedVars, newArgs.third, newArgs.fourth);
 			if (isLambda) {
 				//newExp = makeBConstructWithDrops(newConstruct, newDrops, withReturn || isDownDrop);
 				newExp; //dupDrop(newExp, withReturn)
@@ -226,32 +253,37 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			}
 		}
 		BIf(cond, then, else_, type): {
+			calculatedCases = [rec(then, withReturn, isDownDrop), rec(else_, withReturn, isDownDrop)];
+			calculatedCasesUsedVars = fold(calculatedCases, exp.usedVars, \acc, c -> mergeTree(acc, c.usedVars));
 			origCond = rec(cond, withReturn, isDownDrop);
 			addDupDropToCmpr(
 				BExpUsedVars(cond, origCond.usedVars, origCond.createdVars, origCond.downDrops),
-				[rec(then, withReturn, isDownDrop), rec(else_, withReturn, isDownDrop)],
+				calculatedCases,
 				type,
 				exp.usedVars,
 				generators,
 				isDownDrop,
-				\newCond : BExp, condUsedVars : Tree<string, BType> -> recInc(newCond, condUsedVars, exp.createdVars, exp.downDrops, withReturn, isDownDrop),
+				\newCond : BExp, condUsedVars : Tree<string, BExpUsedVar>, createdVars -> recInc(newCond, condUsedVars, mergeSets(exp.createdVars, createdVars), exp.downDrops, withReturn, isDownDrop),
 				\newCond : BExp, cases : [BExp] -> if (length(cases) == 2) BIf(newCond, cases[0], cases[1], type) else exp.exp,
+				\condBody : BExp -> recInc(condBody, calculatedCasesUsedVars, exp.createdVars, exp.downDrops, withReturn, isDownDrop).exp, 
 			);
 		}
 		BSequence(exps, type): unquadruple(
-			mapExpA(exps, withReturn, isDownDrop),
+			mapExpA(exps, withReturn, false, isDownDrop, false),
 			\newValues, newUsedVars, newCreatedVars, newDrops -> BExpUsedVars(BSequence(newValues, type), newUsedVars, newCreatedVars, newDrops)
 		);
 		BSwitch(value, switchType, cases, defaultCase, type): {
 			newValue = rec(value, withReturn, isDownDrop);
+			calculatedCases = arrayPushMaybe(map(cases, \c -> rec(c.body, withReturn, isDownDrop)), maybeMap(defaultCase, \c -> rec(c, withReturn, isDownDrop)));
+			calculatedCasesUsedVars = fold(calculatedCases, exp.usedVars, \acc, c -> mergeTree(acc, c.usedVars));
 			addDupDropToCmpr(
 				BExpUsedVars(value, newValue.usedVars, newValue.createdVars, newValue.downDrops),
-				arrayPushMaybe(map(cases, \c -> rec(c.body, withReturn, isDownDrop)), maybeMap(defaultCase, \c -> rec(c, withReturn, isDownDrop))),
+				calculatedCases,
 				type,
 				exp.usedVars,
 				generators,
 				isDownDrop,
-				\newCond : BExp, condUsedVars : Tree<string, BType> -> recInc(newCond, condUsedVars, exp.createdVars, exp.downDrops, withReturn, isDownDrop),
+				\newCond : BExp, condUsedVars : Tree<string, BExpUsedVar>, createdVars -> recInc(newCond, condUsedVars, mergeSets(exp.createdVars, createdVars), exp.downDrops, withReturn, isDownDrop),
 				\newCond : BExp, newCases : [BExp] -> if (length(newCases) == (length(cases) + eitherMap(defaultCase, \__ -> 1, 0))) {
 					BSwitch(
 						extractSwitchVar(newCond, type),
@@ -262,23 +294,30 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 					)
 				} else {
 					exp.exp
-				}
+				},
+				\condBody : BExp -> recInc(condBody, calculatedCasesUsedVars, exp.createdVars, exp.downDrops, withReturn, isDownDrop).exp, 
 			);
 		}
 		BConstruct(struct, args, type): unquadruple(
+			// allWithReturn = true
 			// isDownDrop = true for args (we will remove the values after the whole structure has been constructed.)
-			mapExpA(args, false, true),
+			mapExpA(map(args, dupAlias), false, true, true, false),
 			\newValues, newUsedVars, newCreatedVars, newDrops -> {
 				newConstruct = BConstruct(struct, newValues, type);
 				newExp = makeBConstructWithDrops(newConstruct, newDrops, withReturn || isDownDrop);
-				BExpUsedVars(newExp, newUsedVars, newCreatedVars, []);
+				BExpUsedVars(if (withReturn) newExp else BDropValue(newExp), newUsedVars, newCreatedVars, []);
 			}
 		);
 		BField(value, field, type): {
-			// TODO: reuse only field
 			newValue = rec(value, withReturn, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
-			BExpUsedVars(BField(reducedValue.first, field, type), newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+			reusedVal = getReusedValue(reducedValue.first);
+			newExp = if (reusedVal != reducedValue.first) {
+				reuseBField(BField(reusedVal, field, type));
+			} else {
+				BDupValue(BField(reducedValue.first, field, type));
+			}
+			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
 		BSetMutable(left, field, value, type): {
 			newLeft = rec(left, withReturn, isDownDrop);
@@ -293,9 +332,29 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BCast(value, from, to): {
 			newValue = rec(value, withReturn, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
-			BExpUsedVars(BCast(reducedValue.first, from, to), newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+			reusedVal = getReusedValue(reducedValue.first);
+			newExp = if (reusedVal != reducedValue.first) {
+				reuseBCast(BCast(reusedVal, from, to));
+			} else {
+				BCast(reducedValue.first, from, to);
+			}
+			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
-		BCounter(): exp; // shouldn't happen
+		BDupValue(value) : {
+			newValue = rec(value, withReturn, isDownDrop);
+			reducedValue = reduceBCounter(BDupValue(newValue.exp), isDownDrop);
+			BExpUsedVars(reducedValue.first, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+		}
+		BDropValue(value) : {
+			newValue = rec(value, withReturn, isDownDrop);
+			reducedValue = reduceBCounter(BDropValue(newValue.exp), isDownDrop);
+			BExpUsedVars(reducedValue.first, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+		}
+		BReuseValue(value) : {
+			newValue = rec(value, withReturn, isDownDrop);
+			reducedValue = reduceBCounter(BReuseValue(newValue.exp), isDownDrop);
+			BExpUsedVars(reducedValue.first, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
+		}
 	}
 }
 
@@ -311,19 +370,32 @@ getLambdaId(fn : BExp, functionIds : Set<string>) -> Pair<string, BType> {
 	}
 }
 
-// TODO: if reuse+cast = sequence([cast, drop])
 dropBExpUsedVars(exp : BExpUsedVars, reuse : bool) -> BExpUsedVars {
-	BExpUsedVars(if (reuse) BReuseValue(exp.exp) else BDropValue(exp.exp), exp.usedVars, exp.createdVars, exp.downDrops);
+	BExpUsedVars(
+		addBCounterToExp(exp.exp, \e -> if (reuse) BReuseValue(e) else BDropValue(e)),
+		exp.usedVars,
+		exp.createdVars,
+		exp.downDrops
+	);
 }
 
-dupBExpUsedVars(exp : BExpUsedVars) -> BExpUsedVars {
+dupBExpUsedVars(exp : BExpUsedVars, isExternalDrop : bool) -> BExpUsedVars {
 	id = extractBVarId(exp.exp);
 	if (id == "") {
 		exp;
-	} else if (!containsKeyTree(exp.usedVars, id)){
-		BExpUsedVars(exp.exp, setTree(exp.usedVars, id, getBType(exp.exp)), exp.createdVars, exp.downDrops);
 	} else {
-		BExpUsedVars(BDupValue(exp.exp), exp.usedVars, exp.createdVars, exp.downDrops);
+		eitherFn(
+			lookupTree(exp.usedVars, id),
+			\v -> BExpUsedVars(addBCounterToExp(exp.exp, \e -> BDupValue(e)), setTree(exp.usedVars, id, BExpUsedVar(v with externalDrop = isExternalDrop)), exp.createdVars, exp.downDrops),
+			\-> BExpUsedVars(exp.exp, setTree(exp.usedVars, id, BExpUsedVar(getBType(exp.exp), isExternalDrop)), exp.createdVars, exp.downDrops)
+		);
+	}
+}
+
+addBCounterToExp(exp : BExp, addCounter : (BExp) -> BCounter) -> BExp {
+	switch (exp) {
+		BCast(value, from, to) : BCast(addBCounterToExp(value, addCounter), from, to);
+		default : addCounter(exp);
 	}
 }
 
@@ -333,7 +405,22 @@ extractBVarId(exp : BExp) -> string {
 		BDupValue(value) : extractBVarId(value);
 		BDropValue(value) : extractBVarId(value);
 		BReuseValue(value) : extractBVarId(value);
+		BCast(value, __, __) : extractBVarId(value);
 		default : "";
+	}
+}
+
+isBCounter(exp : BExp) -> bool {
+	switch (exp : BExp) {
+		BCounter(): true;
+		default: false;
+	}
+}
+
+getReusedValue(exp : BExp) -> BExp {
+	switch (exp : BExp) {
+		BReuseValue(value): value;
+		default: exp;
 	}
 }
 
@@ -355,22 +442,21 @@ isReturnBType(type : BType) -> bool {
 
 // TODO
 isNativeWithoutDropFn(exp : BExp, generators : Set<string>) -> bool {
-	switch (exp) {
-		BVar(id, __) : containsSet(generators, id);
-		default : false;
-	}
+	containsSet(generators, extractBVarId(exp));
 }
 
-reduceBCounter(counter : BCounter, isDownDrop : bool) -> Pair<BExp, Maybe<BCounter>> {
+reduceBCounter(counter : BExp, isDownDrop : bool) -> Pair<BExp, Maybe<BCounter>> {
 	if (optimization) {
 	unquadruple(extractBExpFromBCounter(counter, 0, 0, false), \exp, dupCnt, dropCnt, reuse -> {
 		cnt = min(dupCnt, dropCnt);
 		reducedDupCnt = dupCnt - cnt;
 		reducedDropCnt = dropCnt - cnt;
-		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> BDupValue(newExp));
-		addReuseDrop = \newExp -> if (reuse) BReuseValue(newExp) else BDropValue(newExp);
-		if (isDownDrop) {
-			Pair(newValue, if (reducedDropCnt > 0) Some(fold(enumFromTo(1, reducedDropCnt - 1), addReuseDrop(newValue), \newExp, __ -> if (reuse) BReuseValue(newExp) else BDropValue(newExp))) else None())
+
+		newValue = fold(enumFromTo(1, reducedDupCnt), exp, \newExp, __ -> addBCounterToExp(newExp, \e -> BDupValue(e)));
+		addReuseDrop = \newExp -> addBCounterToExp(newExp, \e -> if (reuse) BReuseValue(e) else BDropValue(e));
+		// we can only move drop() for variables
+		if (isDownDrop && extractBVarId(exp) != "") {
+			Pair(newValue, if (reducedDropCnt > 0) Some(fold(enumFromTo(1, reducedDropCnt - 1), BDropValue(newValue), \newExp, __ -> addReuseDrop(newExp))) else None())
 		} else {
 			Pair(fold(enumFromTo(1, reducedDropCnt), newValue, \newExp, __ -> addReuseDrop(newExp)), None());
 		}
@@ -383,13 +469,17 @@ extractBExpFromBCounter(exp : BExp, dupCnt : int, dropCnt : int, reuse : bool) -
 		BDupValue(value) : extractBExpFromBCounter(value, dupCnt + 1, dropCnt, reuse);
 		BDropValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1, reuse);
 		BReuseValue(value) : extractBExpFromBCounter(value, dupCnt, dropCnt + 1, true);
+		BCast(value, from, to) : unquadruple(
+			extractBExpFromBCounter(value, dupCnt, dropCnt, reuse),
+			\newExp, newDupCnt, newDropCnt, newReuse -> Quadruple(BCast(newExp, from, to), newDupCnt, newDropCnt, newReuse)
+		);
 		default : Quadruple(exp, dupCnt, dropCnt, reuse);
 	}
 }
 
-extractLastUsedVars(exp : BExpUsedVars, usedVars : Tree<string, BType>) -> Tree</*id*/string, BVar> {
-	foldTree(exp.usedVars, makeTree(), \id : string, type : BType, acc -> {
-		if (containsKeyTree(usedVars, id)) acc else setTree(acc, id, BVar(id, type))
+extractLastUsedVars(exp : BExpUsedVars, usedVars : Tree<string, BExpUsedVar>) -> Tree</*id*/string, Pair<BVar, bool>> {
+	foldTree(exp.usedVars, makeTree(), \id : string, uv : BExpUsedVar, acc -> {
+		if (containsKeyTree(usedVars, id)) acc else setTree(acc, id, Pair(BVar(id, uv.type), uv.externalDrop))
 	});
 }
 
@@ -419,33 +509,36 @@ extractSwitchVar(exp : BExp, defType : BType) -> BVar {
 
 // bind a variable to each data creation.
 // this way we'll free memory immediately after checking the condition, and not at the end of the if/switch block.
-extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>) -> Triple<[BVar], (BExp) -> BExp, BExp> {
-	untriple(makeConstructedVars(exp, [], [], generators), \vars, lets, newExp -> {
+extractConstructedVars(exp : BExp, resultType : BType, generators : Set<string>) -> Triple<[Pair<BVar, bool>], (BExp, (BExp) -> BExp) -> BExp, BExp> {
+	// false ? fn(if (fn())) ?
+	untriple(makeConstructedVars(exp, [], [], generators, false), \vars, lets, newExp -> {
 		Triple(
 			vars,
-			\tail -> foldr(lets, tail, \acc, v -> BLet(v with body = acc)),
+			\tail, updateCondBody -> foldr(lets, tail, \acc, v -> BLet(v with value = updateCondBody(v.value), body = acc, type = getBType(acc))),
 			either(newExp, exp)
 		)
 	})
 }
 
 tmpConstructedVarCounter = ref 1;
-makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<string>) -> Triple<[BVar], [BLet], Maybe<BExp>> {
+// create tmp vars for expressions
+makeConstructedVars(exp : BExp, vars : [Pair<BVar, bool>], exps : [BLet], generators : Set<string>, externalDrop : bool) -> Triple<[Pair<BVar, bool>], [BLet], Maybe<BExp>> {
 	makeTmpVar = \varType, expType -> {
-		varName = "_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
-		Triple([BVar(varName, varType)], [BLet(varName, exp, BVoid(), varType)], Some(BVar(varName, expType)));
+		varName = makeTmpVariableName();
+		Triple([Pair(BVar(varName, varType), externalDrop)], [BLet(varName, exp, BVoid(), varType)], Some(BVar(varName, expType)));
 	}
 	switch (exp) {
 		BConstruct(struct, args, type) : makeTmpVar(type, type);
 		BCall(fn, args, type) : {
 			newArgs = fold(args, Triple(vars, exps, []), \acc, a -> {
-				v = makeConstructedVars(a, [], [], generators);
+				v = makeConstructedVars(a, [], [], generators, true);
 				Triple(concat(acc.first, v.first), concat(acc.second, v.second), arrayPush(acc.third, v.third));
 			});
-			newFn = makeConstructedVars(fn, [], [], generators);
+			newFn = makeConstructedVars(fn, [], [], generators, false);
 			Triple(
 				concat(newFn.first, newArgs.first),
 				concat(
+					newArgs.second,
 					eitherMap(
 						newFn.third,
 						\__ -> if (newFn.second == []) {
@@ -455,8 +548,7 @@ makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<s
 							replace(newFn.second, 0, BLet(newFn.second[0] with value = newValue))
 						},
 						newFn.second
-					),
-					newArgs.second
+					)
 				),
 				eitherFn(
 					newFn.third,
@@ -466,7 +558,7 @@ makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<s
 			);
 		}
 		BField(value, fieldName, type) : {
-			untriple(makeConstructedVars(value, vars, exps, generators), \newVars, lets, newExp -> {
+			untriple(makeConstructedVars(value, vars, exps, generators, externalDrop), \newVars, lets, newExp -> {
 				Triple(newVars, lets, Some(BField(either(newExp, value), fieldName, type)))
 			});
 		}
@@ -483,52 +575,50 @@ makeConstructedVars(exp : BExp, vars : [BVar], exps : [BLet], generators : Set<s
 	}
 }
 
-existsi(a : [?], fn : (int, ?) -> bool) -> bool {
-	foundIndex = iteriUntil(a, \i, e -> fn(i, e));
-	foundIndex != length(a);
-}
-
 addDupDropToCmpr(
 	cond : BExpUsedVars,
 	cases : [BExpUsedVars],
 	type : BType,
-	usedVars : Tree<string, BType>,
+	usedVars : Tree<string, BExpUsedVar>,
 	generators : Set<string>,
 	isDownDrop : bool,
-	updateCond : (BExp, Tree<string, BType>) -> BExpUsedVars,
-	updateExpr : (cond : BExp, cases : [BExp]) -> BExp,
+	updateCond : (BExp, Tree<string, BExpUsedVar>, Set<string>) -> BExpUsedVars,
+	updateCases : (cond : BExp, cases : [BExp]) -> BExp,
+	updateCondBody : (BExp) -> BExp,
 ) -> BExpUsedVars {
 	// TODO: think about : 
 	// Which is cheaper: create a variable and free the memory earlier, or not bind the variable and let c++ do it itself?
-	condTmpVars : Triple<[BVar], (BExp) -> BExp, BExp> = extractConstructedVars(cond.exp, type, generators);
+	condTmpVars : Triple<[Pair<BVar, bool>], (BExp, (BExp) -> BExp) -> BExp, BExp> = extractConstructedVars(cond.exp, type, generators);
+	condTmpCreatedVars = condTmpVars.first;
 
 	condUsedVars = extractLastUsedVars(cond, usedVars);
 	caseUsedVars = map(cases, \c -> extractLastUsedVars(c, usedVars));
 	isVarUsedInOtherCases = \id : string, ind : int -> existsi(caseUsedVars, \j, case -> ind != j && containsKeyTree(case, id));
-	caseUniqueUsedVars = mapi(caseUsedVars, \i, c -> foldTree(c, [], \id, var, acc -> {
-		isLocal = containsSet(cases[i].createdVars, id);
-		if (isLocal || isVarUsedInOtherCases(id, i)) acc else arrayPush(acc, var)
+	caseUniqueUsedVars = mapi(caseUsedVars, \i, c -> foldTree(c, [], \id, v, acc -> unpair(v, \var, isExternalDrop -> {
+		isLocal = \-> containsSet(cases[i].createdVars, id);
+		if (isExternalDrop || isLocal() || isVarUsedInOtherCases(id, i)) acc else arrayPush(acc, var)
+	})));
+	condUniqueUsedVars = foldTree(condUsedVars, [], \id, v, acc -> unpair(v, \var, isExternalDrop -> {
+		isLocal = \-> containsSet(cond.createdVars, id);
+		if (isExternalDrop || isLocal() || isVarUsedInOtherCases(id, -1)) acc else arrayPush(acc, var)
 	}));
-	condUniqueUsedVars = foldTree(condUsedVars, [], \id, var, acc -> {
-		isLocal = containsSet(cond.createdVars, id);
-		if (isLocal || isVarUsedInOtherCases(id, -1)) acc else arrayPush(acc, var)
-	});
 
 	// drop vars, that are last used in this If/Switch
-	casesWithDrop = mapi(cases, \i, c -> 
-		addBDropVars(c, concat(condUniqueUsedVars, foldi(caseUniqueUsedVars, condTmpVars.first, \j, acc, a -> if (i == j) acc else concat(acc, a))))
-	);
-	newCondUsedVars = fold(condTmpVars.first, cond.usedVars, \acc, cvar -> setTree(acc, cvar.id, cvar.type));
-	fixedCond = updateCond(condTmpVars.third, newCondUsedVars);
+	casesWithDrop = mapi(cases, \i, c -> {
+		tmpVars = filtermap(condTmpCreatedVars, unpairC(\cvar, externalDrop -> if (externalDrop) None() else Some(cvar)));
+		addBDropVars(c, concat(condUniqueUsedVars, foldi(caseUniqueUsedVars, tmpVars, \j, acc, a -> if (i == j) acc else concat(acc, a))))
+	});
+	newCondUsedVars = fold(condTmpCreatedVars, cond.usedVars, \acc, cvar -> setTree(acc, cvar.first.id, BExpUsedVar(cvar.first.type, false)));
+	fixedCond = updateCond(condTmpVars.third, newCondUsedVars, fold(condTmpCreatedVars, makeSet(), \acc, v -> insertSet(acc, v.first.id)));
 
 	reducedCond = reduceBCounter(fixedCond.exp, isDownDrop);
-	newExpr = updateExpr(reducedCond.first, map(casesWithDrop, \c -> c.exp));
+	newExpr = updateCases(reducedCond.first, map(casesWithDrop, \c -> c.exp));
 	BExpUsedVars(
-		if (condTmpVars.first == []) {
+		if (condTmpCreatedVars == []) {
 			newExpr
 		} else {
 	// TODO: don't create a lambda
-			condTmpVars.second(newExpr) // this is BLet -> lambda if var=if(...)
+			condTmpVars.second(newExpr, updateCondBody) // this is BLet -> lambda if var=if(...)
 		},
 		fold(cases, fixedCond.usedVars, \acc, c -> mergeTree(acc, c.usedVars)),
 		fold(cases, fixedCond.createdVars, \acc, c -> mergeSets(acc, c.createdVars)),
@@ -546,14 +636,66 @@ makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn :
 	if (dropExps == []) {
 		constr;
 	} else {
-		tmpVar = BVar("_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1)), constr.type);
-		BLet(
-			tmpVar.id,
-			constr,
-			BSequence(arrayPush(dropExps, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
-			tmpVar.type
-		)
+		addTempVar(constr, dropExps, constr.type, withReturn);
 	}
+}
+
+//
+// Before: auto flow_a = (*reuse(flow_makeStruct())).flow_val;
+// After : auto _tmp = flow_makeStruct(); auto _tmp2 = dup((*_tmp).flow_val); drop(_tmp); _tmp2;
+reuseBField(field : BField) -> BExp {
+	replaceReuseWithDrop(field.value, field.type, \val -> BField(val, field.field, field.type));
+}
+
+replaceReuseWithDrop(value : BExp, type : BType, makeExp : (BExp) -> BExp) -> BExp {
+	addFieldTmpVar = \val -> {
+		tmpVarField = BVar(makeTmpVariableName(), type);
+		BLet(
+			tmpVarField.id,
+			BDupValue(makeExp(val)),
+			BSequence(
+				[
+					BDropValue(val),
+					tmpVarField
+				],
+				tmpVarField.type
+			),
+			type
+		);
+	}
+	if (extractBVarId(value) != "") {
+		addFieldTmpVar(value);
+	} else {
+		tmpVarStruct = BVar(makeTmpVariableName(), getBType(value));
+		BLet(
+			tmpVarStruct.id,
+			value,
+			addFieldTmpVar(tmpVarStruct),
+			type
+		);
+	}
+}
+
+// TODO: we don't know the type of Cast
+// should be:
+// if downCast, then dup the result (e.g. result of cast())
+// if upCast, dup the init value
+reuseBCast(exp : BCast) -> BExp {
+	replaceReuseWithDrop(exp.value, exp.to, \val -> BCast(val, exp.from, exp.to));
+}
+
+addTempVar(exp : BExp, body : [BExp], type : BType, withReturn : bool) -> BLet {
+	tmpVar = BVar(makeTmpVariableName(), type);
+	BLet(
+		tmpVar.id,
+		exp,
+		BSequence(arrayPush(body, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
+		type
+	);
+}
+
+makeTmpVariableName() -> string {
+	"_tmp_con" + i2s(atomicRefIntAddition(tmpConstructedVarCounter, 1));
 }
 
 addRefCounting2BProgram(prog : BProgram) -> BProgram {

@@ -1,0 +1,125 @@
+import tools/dsl/dsl_rules;
+import tools/dsl/dsl_eval;
+import tools/dsl/dsl_runtime_common;
+
+export {
+	// Define a lowering from a given language to another, running the "to" program in the given language
+	defineDslLowering(from : DslGrammar, to : DslLanguage, sep : string, rules : string) -> DslLowering;
+
+	// Lower the DSL according to these rules
+	lowerDsl(lowering : DslLowering, program : DslAst) -> DslAst;
+}
+
+defineDslLowering(from : DslGrammar, to : DslLanguage, sep : string, rules : string) -> DslLowering {
+	trules = parseRules(from, to.grammar, rules, sep);
+	patterns : List<DslReplacement> = mapList(getDslList(trules.rules), \rule -> {
+		node = getDslNode(rule);
+		pattern = node.args[0];
+		replacement = node.args[1];
+		DslReplacement(pattern, replacement);
+	});
+
+	DslLowering(to, patterns);
+}
+
+lowerDsl(lowering : DslLowering, program : DslAst) -> DslAst {
+	nprogram = switch (program) {
+		DslBool(value): program;
+		DslInt(value): program;
+		DslDouble(value): program;
+		DslString(value): program;
+		DslList(value): {
+			DslList(mapList(value, \tt -> {
+				lowerDsl(lowering, tt);
+			}))
+		}
+		DslNode(name, args, pos): {
+			DslNode(name,
+				map(args, \arg -> {
+					lowerDsl(lowering, arg);
+				}),
+				pos
+			)
+		}
+	};
+
+	foldList(lowering.replacements, nprogram, \acc, replacement : DslReplacement -> {
+		dslNodeReplacement(lowering, acc, replacement)
+	});
+}
+
+DslMatchingEngine(
+	lowering : DslLowering,
+	// Any bindings we have from a pattern
+	bindings : Tree<string, DslAst>,
+	// Did we fail the matching?
+	fail : bool,
+);
+
+
+dslNodeReplacement(lowering : DslLowering, term : DslAst, replacement : DslReplacement) -> DslAst {
+	engine = DslMatchingEngine(lowering, makeTree(), false);
+
+	match = dslNodeMatch(engine, term, replacement.pattern);
+	if (match.fail) {
+		term;
+	} else {
+		// Do the replacement;
+		env = DslEnv(makeTree(), addCommonDslRuntime(["fold", "map", "length", "range", "listAt"], match.bindings));
+		res = evaluateDsl(env, replacement.replacement);
+		if (false) {
+			println("Running replacement code");
+			println(prettyDsl(replacement.replacement));
+			println("with result");
+			println(prettyDsl(res));
+		}
+		res;
+	}
+}
+
+
+dslNodeMatch(acc : DslMatchingEngine, term : DslAst, pattern : DslAst) -> DslMatchingEngine {
+	if (acc.fail) acc
+	else {
+		def = \ -> {
+			DslMatchingEngine(acc with fail = term != pattern);
+		}
+		switch (pattern) {
+			DslBool(value): def();
+			DslInt(value): def();
+			DslDouble(value): def();
+			DslString(value): def();
+			DslList(value): def();
+			DslNode(name, args, pos): {
+				if (name == "bind") {
+					id = getDslString(args[0]);
+					mbind = lookupTree(acc.bindings, id);
+					mbind ?? {
+						// OK, already is bound. Check that it is consistent
+						if (mbind == term) {
+							acc;
+						} else {
+							DslMatchingEngine(acc with fail = true);
+						}
+					} : {
+						DslMatchingEngine(acc with 
+							bindings = setTree(acc.bindings, id, term)
+						);
+					}
+				} else {
+					node = getDslNode(term);
+					if (node.name == name && length(node.args) == length(args)) {
+						foldi(node.args, acc, \i, acc2 : DslMatchingEngine, arg : DslAst -> {
+							if (acc2.fail) acc2
+							else {
+								dslNodeMatch(acc2, arg, args[i]);
+							}
+						});
+					} else {
+						DslMatchingEngine(acc with fail = true);
+					}
+				}
+			}
+		}
+	}
+}

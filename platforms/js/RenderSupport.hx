@@ -1747,6 +1747,10 @@ class RenderSupport {
 		clip.setEscapeHTML(escapeHTML);
 	}
 
+	public static function setTextWordSpacing(clip : TextClip, spacing : Float) : Void {
+		clip.setTextWordSpacing(spacing);
+	}
+
 	public static function setAdvancedText(clip : TextClip, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
 		// NOP
 	}
