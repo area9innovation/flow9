@@ -26,9 +26,27 @@ struct _FlowString {
 		std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
 		return codecvt.to_bytes(value);
 	}
-
-	// TODO: operator+
 };
+
+_FlowString* concatFlowStrings(_FlowString* s1, _FlowString* s2) {
+	// reuse
+	if (s1->_counter == 1) {
+		s1->value += s2->value;
+		drop(s2);
+		return s1;
+	// reuse
+	} else if (s2->_counter == 1) {
+		s2->value += s1->value;
+		drop(s1);
+		return s2;
+	// drop
+	} else {
+		_FlowString* res = new _FlowString(s1->value + s2->value);
+		drop(s1);
+		drop(s2);
+		return res;
+	}
+}
 
 std::ostream& operator<<(std::ostream& os, const _FlowString& s) {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;

@@ -16,15 +16,15 @@ std::shared_ptr<A> makeFlowRef(A value) {
 // string
 
 _FlowString* flow_substring(_FlowString* s, int32_t start, int32_t length) {
-	return new _FlowString((*s).value.substr(start, length));
+	return new _FlowString(s->value.substr(start, length));
 }
 
 int32_t flow_strlen(_FlowString* s) {
-	return static_cast<int>((*s).value.size());
+	return static_cast<int32_t>(s->value.size());
 }
 
 int32_t flow_getCharCodeAt(_FlowString* s, int32_t i) {
-	return (*s).value.at(i);
+	return s->value.at(i);
 }
 
 // precision = 20!
