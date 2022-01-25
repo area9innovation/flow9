@@ -47,6 +47,7 @@ import sys/concurrent;
 //   4: 	println("no")
 //   5: }
 // we'll free the memory for the result of fn1() on line 2 or 4. but we have to free on line 1 after || .
+// take lazy comparison into account (&&, ||). example : c = Struct(-1); if (c.i > 0 && c.i < 10) ...
 //
 // 2) unused result of functions
 // Example :
@@ -57,7 +58,7 @@ import sys/concurrent;
 // 3: b = 2;
 // 4: c = makeStruct();
 // 4 - OK; 2 - Error
-// We do not free the memory of the result (line 2). a simple option is to add a drop.
+// We free the memory of the result on line 2.
 // The correct solution is to pass 'unused : bool' to the function.
 
 // Think about:
@@ -223,28 +224,28 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		}
 		BCall(fn, args, type): {
 			lambdaFn = getLambdaId(fn, fnIds);
-			isNativeOperation = isNativeWithoutDropFn(fn, generators);
+			isNativeOperation = isNativeWithoutDropFn(fn, generators); // +, -, *, etc.
 			isLambda = lambdaFn.first != "" && !isNativeOperation;
-			hasResult = type != bvoidType; //isReturnBType(type);
+			hasResult = type != bvoidType;
 			newFn = rec(fn, withReturn || hasResult, isDownDrop);
 			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, newFn.downDrops), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
-				if (isNativeOperation) {
-					newArg = recInc(arg, newTails, exp.createdVars, newDrops, withReturn, isDownDrop);
-					reducedValue = reduceBCounter(newArg.exp, isDownDrop);
-					Quadruple(concat([reducedValue.first], newArgs), newArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(newArg.downDrops, reducedValue.second));
-				} else {
-					newArg = recInc(arg, newTails, exp.createdVars, newDrops, true, isDownDrop);
-					// drop is inside the FN
-					dupedArg = dupBExpUsedVars(newArg, true);
-					reducedValue = reduceBCounter(dupedArg.exp, isDownDrop);
-					Quadruple(concat([reducedValue.first], newArgs), dupedArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(dupedArg.downDrops, reducedValue.second));
-				}
+				newArg = recInc(arg, newTails, exp.createdVars, newDrops, true, isDownDrop);
+				// drop is inside the FN
+				dupedArg = dupBExpUsedVars(newArg, true);
+				reducedValue = reduceBCounter(dupedArg.exp, isDownDrop);
+				Quadruple(concat([reducedValue.first], newArgs), dupedArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(dupedArg.downDrops, reducedValue.second));
 			}));
 			newBCall = BCall(newFn.exp, newArgs.first, type);
 			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, BExpUsedVar(lambdaType, false))) else newArgs.second;
 			// TODO: reuse only the result from which we use the part (field). otherwise you don't need to add BReuse.
 			dropedBCall = if (!hasResult) newBCall else if (withReturn) BReuseValue(newBCall) else BDropValue(newBCall);
-			newExp = BExpUsedVars(dropedBCall, newUsedVars, newArgs.third, newArgs.fourth);
+			expWithDownDrop = if (newArgs.fourth == []) {
+				dropedBCall;
+			} else {
+				addTempVar(dropedBCall, newArgs.fourth, type, withReturn);
+			}
+			newExp = BExpUsedVars(expWithDownDrop, newUsedVars, newArgs.third, []);
+
 			if (isLambda) {
 				//newExp = makeBConstructWithDrops(newConstruct, newDrops, withReturn || isDownDrop);
 				newExp; //dupDrop(newExp, withReturn)
@@ -642,7 +643,7 @@ makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn :
 
 //
 // Before: auto flow_a = (*reuse(flow_makeStruct())).flow_val;
-// After : auto _tmp = flow_makeStruct(); auto _tmp2 = dup((*_tmp).flow_val); drop(_tmp); _tmp2;
+// After : auto _tmp_con = flow_makeStruct(); auto _tmp_con2 = dup((*_tmp_con).flow_val); drop(_tmp_con); _tmp_con2;
 reuseBField(field : BField) -> BExp {
 	replaceReuseWithDrop(field.value, field.type, \val -> BField(val, field.field, field.type));
 }
