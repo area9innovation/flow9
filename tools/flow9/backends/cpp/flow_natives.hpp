@@ -22,7 +22,7 @@ std::shared_ptr<A> makeFlowRef(A value) {
 // string
 
 _FlowString* flow_substring(_FlowString* s, int32_t start, int32_t length) {
-	return new _FlowString();//(*s).value.substr(start, length));
+	return new _FlowString((*s).value.substr(start, length));
 }
 
 int32_t flow_strlen(_FlowString* s) {
@@ -40,7 +40,7 @@ _FlowString* flow_d2s(double v) {
 	std::string s = stream.str();
 
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return new _FlowString();//codecvt.from_bytes(s));
+	return new _FlowString(codecvt.from_bytes(s));
 }
 
 // common
