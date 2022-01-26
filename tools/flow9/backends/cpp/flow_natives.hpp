@@ -1,15 +1,10 @@
-// strings
-// TODO: fix u16 for win (c++ 17)
-//#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING //or _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS
-
-#include <codecvt>
-#include <string>
 #include <locale>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include "flow_union.hpp"
 #include "flow_array.hpp"
+#include "flow_string.hpp"
 // math
 #include <cmath>
 
@@ -20,26 +15,27 @@ std::shared_ptr<A> makeFlowRef(A value) {
 
 // string
 
-std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
-	return s.substr(start, length);
+_FlowString* flow_substring(_FlowString* s, int32_t start, int32_t length) {
+	_FlowString* res = new _FlowString(s->value.substr(start, length));
+	drop(s);
+	return res;
 }
 
-int32_t flow_strlen(std::u16string s) {
-	return s.size();
+int32_t flow_strlen(_FlowString* s) {
+	auto res = s->value.size();
+	drop(s);
+	return static_cast<int32_t>(res);
 }
 
-int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
-	return s.at(i);
+int32_t flow_getCharCodeAt(_FlowString* s, int32_t i) {
+	return s->value.at(i);
 }
 
 // precision = 20!
-std::u16string flow_d2s(double v) {
+_FlowString* flow_d2s(double v) {
 	std::stringstream stream;
 	stream << std::fixed << std::setprecision(20) << v;
-	std::string s = stream.str();
-
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return codecvt.from_bytes(s);
+	return new _FlowString(stream.str());
 }
 
 // common
@@ -112,9 +108,8 @@ void flow_print2(std::shared_ptr<A> v) {
 }
 
 
-void flow_print2(std::u16string d) {
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	std::cout << codecvt.to_bytes(d);
+void flow_print2(_FlowString* d) {
+	std::cout << d->toString();
 }
 
 void flow_print2(const bool d) {
@@ -129,26 +124,9 @@ void flow_print2(const double d) {
 	flow_print2(flow_d2s(d));
 }
 
-// TODO: delete ?
-template <typename ...Args>
-void flow_print2(std::variant<Args...>& v) {
-	std::visit([](auto&& x) { flow_print2(x); }, v);
-}
 template <typename ...T>
 void flow_print2(_FlowUnion<T...>* v) {
 	(*v).visit([](auto&& x) { flow_print2(x); });
-}
-
-template <typename A>
-void flow_print2(const std::vector<A>& v) {
-	int32_t lastInd = v.size() - 1;
-
-    flow_print2("[");
-    for (std::size_t i = 0; i < v.size(); ++i) {
-    	flow_print2(v[i]);
-    	if (i != lastInd) flow_print2(", ");
-	}
-	flow_print2("]");
 }
 
 template <typename A, typename B>
@@ -161,26 +139,13 @@ bool areValuesEqual(const A& v1, const B& v2) {
 	return v1 == v2;
 }
 
-// for println
-template <typename A>
-std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){
-    auto size = v.size() - 1;
-    os << "[";
-    for (std::size_t i = 0; i <= size; ++i) {
-    	flow_print2(v[i]);
-    	if (i != size) os << ", ";
-	}
-	os << "]";
-    return os;
-}
-
 template <typename A>
 bool flow_isArray(A v) {
 	return false;
 }
 
 template <typename A>
-bool flow_isArray(const std::vector<A>& v) {
+bool flow_isArray(_FlowArray<A>* v) {
 	return true;
 }
 
@@ -434,7 +399,6 @@ template <typename A, typename ...B> A _extractStructVal(_FlowUnion<B...> v) { r
 template <typename A> A _extractStructVal(A v) { return v; }
 
 template <typename A>
-std::u16string flow_getStructName(A st) {
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return codecvt.from_bytes(demangle(typeid(st).name()));
+_FlowString flow_getStructName(A st) {
+	return _FlowString(demangle(typeid(st).name()));
 }
