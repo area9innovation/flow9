@@ -1,0 +1,74 @@
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_lowering;
+import tools/dsl/languages/ast_syntax;
+
+export {
+	/*
+		Adds syntax for named arguments in function calls
+		with "top-level" function syntax
+
+		foo(a = 1, b = 2) {
+			exp
+		}
+		scope
+
+		becomes
+
+		foo = \record -> {
+			a = if (hasField(record, "a")) record.a else 1;
+			b = if (hasField(record, "b")) record.b else 2;
+			exp
+		}
+		scope
+
+		and
+
+		foo(b: 1)
+		becomes 
+		foo({b:1})
+	*/
+	defineNamedArgs(language : DslLanguage) -> DslLanguage;
+}
+
+defineNamedArgs(language : DslLanguage) -> DslLanguage {
+	functions = extendGrammar(language.grammar, << 
+		atom = id "(" ws fundef_args ")" ws "{" ws expsemi "}" ws expsemi $"brace_1" $"function_4" | atom;
+
+		fundef_args = $"nil" fundef_arg $"cons" ("," ws fundef_arg $"cons")* ("," ws)? | $"nil";
+		fundef_arg = id "=" ws exp $"funargdef_2" | id $"funarg_1";
+	>>);
+
+	// function(id, args, body) => id = \args -> body
+	lowering = defineDslLowering(defineDslAst().grammar, language, ";;", <<
+			function($id, $args, $body, $scope) => {
+				tmp = "tmp2"; // TODO: Make temporary
+				hasDefVal = \node -> { nodeName(node) == "funargdef" };
+
+				newbody = fold(args, body, \acc, arg -> {
+					argName = nodeChild(arg, 0);
+					defVal = nodeChild(arg, 1);
+					if (hasDefVal(arg)) {
+						// a = if (hasField(tmp, "a")) a(tmp) else defVal;
+						let(argName, 
+							ifelse(
+								call(var("hasField"), cons(argName, cons(var(tmp), nil()))),
+								call(var(argName), cons(var(tmp), nil())), 
+								defVal
+							),
+							acc
+						);
+					} else {
+						// a = a(tmp);
+						let(argName, call(var(argName), cons(var(tmp), nil())), acc);
+					}
+				});
+				main = let(id, lambda(cons(tmp, nil()), newbody), scope);
+				main
+			} ;;
+		>>);
+
+	DslLanguage("named-calls", functions, None(), Some(lowering), None(),
+		makeTree(),
+		[], Some(language)
+	);
+}
