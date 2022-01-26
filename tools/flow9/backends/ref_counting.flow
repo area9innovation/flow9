@@ -69,6 +69,8 @@ export {
 	addRefCounting(prog : BExpProgram) -> BExpProgram;
 
 	addRefCounting2BProgram(prog : BProgram) -> BProgram;
+
+	isComparisonFn(fn : BExp) -> bool;
 }
 
 optimization = true;
@@ -225,14 +227,15 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BCall(fn, args, type): {
 			lambdaFn = getLambdaId(fn, fnIds);
 			isNativeOperation = isNativeWithoutDropFn(fn, generators); // +, -, *, etc.
+			isComparison = isComparisonFn(fn);
 			isLambda = lambdaFn.first != "" && !isNativeOperation;
 			hasResult = type != bvoidType;
 			newFn = rec(fn, withReturn || hasResult, isDownDrop);
 			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, newFn.downDrops), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
-				newArg = recInc(arg, newTails, exp.createdVars, newDrops, true, isDownDrop);
-				// drop is inside the FN
-				dupedArg = dupBExpUsedVars(newArg, true);
-				reducedValue = reduceBCounter(dupedArg.exp, isDownDrop);
+				newArg = recInc(arg, newTails, exp.createdVars, newDrops, true, isDownDrop || isComparison);
+				// if (!isComparison) drop is inside the FN
+				dupedArg = if (isComparison) newArg else dupBExpUsedVars(newArg, true);
+				reducedValue = reduceBCounter(dupedArg.exp, isDownDrop || isComparison);
 				Quadruple(concat([reducedValue.first], newArgs), dupedArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(dupedArg.downDrops, reducedValue.second));
 			}));
 			newBCall = BCall(newFn.exp, newArgs.first, type);
@@ -787,4 +790,12 @@ removeBDropValueForVariables(exp : BExp, vars : Set<string>) -> Pair<BExp, bool>
 		);
 		BReuseValue(value) : Pair(BReuseValue(removeBDropValueForVariables(value, vars).first), false);
 	}
+}
+
+isComparisonFn(fn : BExp) -> bool {
+	fnName = switch (fn : BExp) {
+		BVar(id, __) : id;
+		default : "";
+	}
+	fnName == "==" || fnName == "!=" || fnName == ">" || fnName == ">=" || fnName == "<" || fnName == "<=";
 }

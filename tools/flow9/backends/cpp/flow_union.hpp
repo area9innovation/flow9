@@ -9,7 +9,7 @@ struct _FlowUnion : std::variant<T...> {
 		std::cout << (_counter == 0 ? "" : " !!ERROR!! ") << " ~ destroy _FlowUnion; counter=" << _counter << " &=" << this << " ~ " << std::endl;
 		dropFields();
 	}
-	//bool operator==(const _FlowUnion& a) const { return areValuesEqual(*this, a); }
+	bool operator!=(const _FlowUnion& a) const { return *this != a; }
 
 	template <typename F>
 	decltype(auto) visit(F&& f)& {
@@ -25,3 +25,82 @@ struct _FlowUnion : std::variant<T...> {
 	}
 };
 
+// TODO: fix it!
+template <typename ...A, typename ...B>
+bool operator==(const _FlowUnion<A*...>& a, const _FlowUnion<B*...>& b) {	
+	bool res = false;
+	// works. VS, win
+	//std::visit(
+	//	[&b, &res](auto&& v1) { std::visit(
+	//		[&v1, &res](auto&& v2) { res= (*v1 == *v2);/*std::cout<< "INSIDE!!! "<< (*v1 == *v2)<<std::endl;*/ },
+	//		b
+	//	); },
+	//	a
+	//);
+
+	_FlowUnion<A*...>& a1 = const_cast <_FlowUnion<A*...>&>(a);
+	_FlowUnion<B*...>& b1 = const_cast <_FlowUnion<B*...>&>(b);
+	a1.visit(
+		[&b1, &res](auto&& v1) { b1.visit(
+			[&v1, &res](auto&& v2) { res = (*v1 == *v2);}
+		); }
+	);
+
+	return res;
+}
+
+template <typename ...A, typename ...B>
+bool operator<(const _FlowUnion<A*...>& a, const _FlowUnion<B*...>& b) {
+	bool res = false;
+	_FlowUnion<A*...>& a1 = const_cast <_FlowUnion<A*...>&>(a);
+	_FlowUnion<B*...>& b1 = const_cast <_FlowUnion<B*...>&>(b);
+	a1.visit(
+		[&b1, &res](auto&& v1) { b1.visit(
+			[&v1, &res](auto&& v2) { res = (*v1) < (*v2);}
+	); }
+	);
+
+	return res;
+}
+
+template <typename ...A, typename ...B>
+bool operator>(const _FlowUnion<A*...>& a, const _FlowUnion<B*...>& b) {
+	bool res = false;
+	_FlowUnion<A*...>& a1 = const_cast <_FlowUnion<A*...>&>(a);
+	_FlowUnion<B*...>& b1 = const_cast <_FlowUnion<B*...>&>(b);
+	a1.visit(
+		[&b1, &res](auto&& v1) { b1.visit(
+			[&v1, &res](auto&& v2) { res = (*v1 > *v2);}
+	); }
+	);
+
+	return res;
+}
+
+template <typename ...A, typename ...B>
+bool operator<=(const _FlowUnion<A*...>& a, const _FlowUnion<B*...>& b) {
+	bool res = false;
+	_FlowUnion<A*...>& a1 = const_cast <_FlowUnion<A*...>&>(a);
+	_FlowUnion<B*...>& b1 = const_cast <_FlowUnion<B*...>&>(b);
+	a1.visit(
+		[&b1, &res](auto&& v1) { b1.visit(
+			[&v1, &res](auto&& v2) { res = (*v1 <= *v2);}
+	); }
+	);
+
+	return res;
+}
+
+template <typename ...A, typename ...B>
+bool operator>=(const _FlowUnion<A*...>& a, const _FlowUnion<B*...>& b) {
+	bool res = false;
+	_FlowUnion<A*...>& a1 = const_cast <_FlowUnion<A*...>&>(a);
+	_FlowUnion<B*...>& b1 = const_cast <_FlowUnion<B*...>&>(b);
+	a1.visit(
+		[&b1, &res](auto&& v1) { b1.visit(
+			[&v1, &res](auto&& v2) { res = (*v1 >= *v2);}
+	); }
+	);
+
+	return res;
+}

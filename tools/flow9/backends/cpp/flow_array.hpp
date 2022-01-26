@@ -67,6 +67,111 @@ std::ostream& operator<<(std::ostream& os, const _FlowArray<T>& a) {
   return os;
 }
 
+template <typename A, typename B>
+bool operator==(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
+	if (b.value.size() == a.value.size()) {
+		bool eq = b.value.empty();
+		for (std::size_t i = 0; i != b.value.size(); ++i) {
+			eq = (*b.value[i]) == (*a.value[i]);
+			if (!eq) break;
+		}
+		return eq;
+	}
+	else {
+		return false;
+	}
+}
+
+template <typename A, typename B>
+bool operator==(const _FlowArray<A>& a, const _FlowArray<B>& b) {
+	if (b.value.size() == a.value.size()) {
+		bool eq = false;
+		for (std::size_t i = 0; i != b.value.size(); ++i) {
+			eq = b.value[i] == a.value[i];
+			if (eq) break;
+		}
+		return eq;
+	}
+	else {
+		return false;
+	}
+}
+
+template <typename A, typename B>
+bool operator<(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
+	return std::lexicographical_compare(a.value.begin(), a.value.end(), b.value.begin(), b.value.end(), [](auto const& p1, auto const& p2) { return (*p1) < (*p2);});
+}
+
+template <typename A, typename B>
+bool operator<(const _FlowArray<A>& a, const _FlowArray<B>& b) {
+	return a < b;
+}
+
+template <typename A, typename B>
+bool operator>(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
+	return b < a;
+}
+
+template <typename A, typename B>
+bool operator>(const _FlowArray<A>& a, const _FlowArray<B>& b) {
+	return b < a;
+}
+
+template <typename A, typename B>
+bool operator<=(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
+	return a == b || a < b;
+}
+
+template <typename A, typename B>
+bool operator>=(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
+	return a == b || a < b;
+}
+
+template <typename A, typename B>
+bool operator==(const _FlowArray<A*>& a, const _FlowArray<B>& b) {
+	return false;
+}
+template <typename A, typename B>
+bool operator==(const _FlowArray<A>& a, const _FlowArray<B*>& b) {
+	return false;
+}
+
+template <typename A, typename B>
+bool operator<(const _FlowArray<A*>& a, const _FlowArray<B>& b) {
+	return false;
+}
+template <typename A, typename B>
+bool operator<(const _FlowArray<A>& a, const _FlowArray<B*>& b) {
+	return false;
+}
+
+template <typename A, typename B>
+bool operator>(const _FlowArray<A*>& a, const _FlowArray<B>& b) {
+	return false;
+}
+template <typename A, typename B>
+bool operator>(const _FlowArray<A>& a, const _FlowArray<B*>& b) {
+	return false;
+}
+
+template <typename A, typename B>
+bool operator<=(const _FlowArray<A*>& a, const _FlowArray<B>& b) {
+	return false;
+}
+template <typename A, typename B>
+bool operator<=(const _FlowArray<A>& a, const _FlowArray<B*>& b) {
+	return false;
+}
+
+template <typename A, typename B>
+bool operator>=(const _FlowArray<A*>& a, const _FlowArray<B>& b) {
+	return false;
+}
+template <typename A, typename B>
+bool operator>=(const _FlowArray<A>& a, const _FlowArray<B*>& b) {
+	return false;
+}
+
 template <typename T>
 T* getFlowArrayItem(_FlowArray<T*>* a, int32_t index) {
 	T* res = dup((*(a)).value[index]);

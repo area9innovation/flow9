@@ -19,6 +19,13 @@ struct _FlowString {
 		value = codecvt.from_bytes(s);
 	}
 
+	bool operator==(const _FlowString& a) const { return value == a.value; }
+	bool operator!=(const _FlowString& a) const { return value != a.value; }
+	bool operator<(const _FlowString& a) const { return value < a.value; }
+	bool operator>(const _FlowString& a) const { return value > a.value; }
+	bool operator<=(const _FlowString& a) const { return value <= a.value; }
+	bool operator>=(const _FlowString& a) const { return value >= a.value; }
+
 	void dupFields() {}
 	void dropFields() {}
 

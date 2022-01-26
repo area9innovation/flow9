@@ -72,15 +72,20 @@ T flow_cast_variant(_FlowUnion<TT...>* val) {
 	}
 }
 
-// compare unions by address
-template <typename ...Args1, typename ...Args2>
-bool operator==(const _FlowUnion<Args1...>& struct1, const _FlowUnion<Args2...>& struct2) {
-	return &struct1 == &struct2;
-}
 // for structs ( Struct1 == Struct2). (Struct1 == Struct1) is overloaded inside the struct
 template <typename A, typename B>
 bool operator==(const A& lhs, const B& rhs) {
 	return lhs._id == rhs._id;
+}
+// compare by names
+template <typename A, typename B>
+bool operator<(const A& lhs, const B& rhs) {
+	return demangle(typeid(lhs).name()) < demangle(typeid(rhs).name());
+}
+// compare by names
+template <typename A, typename B>
+bool operator>(const A& lhs, const B& rhs) {
+	return demangle(typeid(lhs).name()) > demangle(typeid(rhs).name());
 }
 
 void flow_quit(int32_t code) {
@@ -130,15 +135,16 @@ void flow_print2(_FlowUnion<T...>* v) {
 }
 
 template <typename A, typename B>
-bool areValuesEqual(const std::vector<A>& v1, const std::vector<B>& v2) {
-	return v1.size() == v2.size() && std::equal(v1.begin(), v1.end(), v2.begin());
-}
-
-template <typename A, typename B>
 bool areValuesEqual(const A& v1, const B& v2) {
 	return v1 == v2;
 }
 
+template <typename A, typename B>
+bool areValuesEqual(A* v1, B* v2) {
+	return (*v1) == (*v2);
+}
+
+// for println
 template <typename A>
 bool flow_isArray(A v) {
 	return false;
@@ -163,12 +169,11 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 	return &v1 == &v2;
 }
 
-// print with drop
+// simple types
 template <typename A>
 void flow_println2(A&& v) {
 	flow_print2(v);
 	std::cout << std::endl;
-	drop(v);
 }
 // print with drop
 template <typename A>
