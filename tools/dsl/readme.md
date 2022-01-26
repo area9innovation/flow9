@@ -271,8 +271,10 @@ There are a number of language extensions available:
 - datafun provides list comprehension syntax for folds: [ 2 * a | a in list, a != 3 ]
 - records provides { a: 1, b: 2 } syntax and accessor functions for the fields
 - structs provides "struct Circle(radius)" syntax for making constructors of records
-- default_args provides "foo(a, b) { body}" syntax for defining lambdas, as well as
-  default arguments like foo(a, b = 2) { body }) 
+- default_args provides "foo(a, b) { body }" syntax for defining lambdas, as well as
+  default arguments like foo(a, b = 2) { body }). These are like C++.
+- named_args provides "foo(a =2, b = 3) { body}; foo(a:4, b: 4)" syntax. It is an
+  alternative to the C++ convention, which is easier to read.
 
 TODO:
 - Add some central facility to register languages and extensions, and allow dependencies
@@ -283,13 +285,28 @@ TODO:
 
 - Add default values to structs
   - struct Circle(radius = 1), and then "Circle()" gives that
+  The goal is to can combine that with named_args and get constructors with named
+  parameters: Rect(height: 5)
 
-- Add named constructor calls:
-  - struct Rect(width = 1, height = 1), and then "Rect(height=10)" gives Rect(1, 10)
+- Optimize min/max/count/sum/product things for set comprehensions
 
-- Add "with"
+- Add "guess", "require", and "encourage" constructs for a simple solver:
+
+		guess a in 1..10, b in 1..5;
+		require a < b;
+		cost (a + b) - 5;
+		scope
+
+	which can be converted to something like this:
+
+		best = min([ ((a + b) - 5, a, b) | a in 1..10, b in 1..5, a < b ]);
+		a = best.second;
+		b = best.third;
+		scope;
+
+- Add "with" for structs
     r = Rect(1, 2);
-     Rect(r with height = 3)  => Rect(1,3)
+    Rect(r with height = 3)  => Rect(1, 3).
 
 - Add field updates:
     r = Rect(1, 2);
