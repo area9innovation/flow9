@@ -279,11 +279,7 @@ TODO:
   between them. So if I want structs, I would just ask for that, and automatically would
   get records (and maybe dots) as part of the package.
 
-- Add ranges: 1..10
-
 - Figure out good syntax for stepped range: 1, 3, ... , 9, "1..9 in steps of 2", "1..9 (+2)", ...
-
-- Add named function calls in combination with defaults
 
 - Add default values to structs
   - struct Circle(radius = 1), and then "Circle()" gives that
