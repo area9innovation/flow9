@@ -28,10 +28,6 @@ export {
 	markListToBiDiReverse(list: List<?>, getText: (?) -> string) -> List<Pair<?, int>>;
 }
 
-// Appears when automatic line break takes place, disappears on no more need.
-// Probably no more needed.
-LineTerminal(dm: DirectionAndMajority);
-
 BiDiContext(rtl: bool, formattingStack : ref List<BiDiFormatting>);
 
 nextValidStrPos(left: int, right: int) -> int {
@@ -86,9 +82,7 @@ getCharCatSplitPos(t: string, i: int, endPos: int) -> int {
 	});
 }
 
-BiDiWrapper(word: ?, dm: DirectionAndMajority);
-BiDiWord<?> ::= LineTerminal, BiDiWrapper<?>;
-BiDiLine(words: [BiDiWord<?>], startDM: DirectionAndMajority, endDM: DirectionAndMajority);
+BiDiWord(word: ?, dm: DirectionAndMajority);
 BiDiFormatting(kind : BiDiFormattingKind, dmf : () -> DirectionAndMajority);
 	BiDiFormattingKind ::=
 		BiDiPairedChar,
@@ -175,12 +169,7 @@ getTextDirectionAndMajority(t: string) -> DirectionAndMajority {
 	);
 }
 
-getWordDirectionAndMajority(w: BiDiWord<?>) -> DirectionAndMajority {
-	switch (w) {
-		BiDiWrapper(nativeW, dm): dm;
-		LineTerminal(dm): dm;
-	}
-}
+getWordDirectionAndMajority(w: BiDiWord<?>) -> DirectionAndMajority {w.dm}
 
 getWordsDirectionAndMajority(ws: [BiDiWord<?>]) -> DirectionAndMajority {
 	fold(map(ws, \w -> getWordDirectionAndMajority(w)), DirectionAndMajority(uc_dir_flow, 0), fold2DMs);
@@ -188,10 +177,7 @@ getWordsDirectionAndMajority(ws: [BiDiWord<?>]) -> DirectionAndMajority {
 
 debugWord(w: BiDiWord<?>, getText: (?) -> string) -> string {
 	ddm = \dm -> getCharAt("→~←:", dm.d) + toString(dm.m);
-	switch(w) {
-		BiDiWrapper(ww, dm): getText(ww) + ddm(dm);
-		LineTerminal(dm): "<" + ddm(dm) + ">";
-	};
+	getText(w.word) + ddm(w.dm);
 }
 
 groupByCounterDirReverse(ws: [BiDiWord<?>], rtl: bool, getText: (?) -> string) -> [[BiDiWord<?>]] {
@@ -226,38 +212,20 @@ reflowWordsToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> strin
 		concatA(
 			map(ltrCleanGrouping, \grp -> {
 				grpdm = DirectionAndMajority(if ((length(unwrapLine(grp, \x, __ -> x)) == 1) == rtl) uc_dir_rtl else uc_dir_ltr, 0);
-				map(grp, \w -> switch(w) {
-					BiDiWrapper(nativeW, dm): {
-						BiDiWrapper(setText(nativeW, mirrorWordGlyphsForRtl(getText(nativeW), (fold2DMs(grpdm, dm).d!=uc_dir_ltr) == rtl)), dm);
-					}
-					LineTerminal(__): w;
-				});
+				map(grp, \w -> BiDiWord(setText(w.word, mirrorWordGlyphsForRtl(getText(w.word), (fold2DMs(grpdm, w.dm).d != uc_dir_ltr) == rtl)), w.dm));
 			})
 		),
-		\re -> switch(re) {
-			BiDiWrapper(w, __): !isEmpty(w);
-			LineTerminal(__): false;
-		}
+		\w -> !isEmpty(w.word)
 	);
 
 	// Globally, text remains in reverse order after first operation, which only good for RTL.
 	if (rtl) r else reverseA(r)
 }
 
-makeBiDiLine(words: [BiDiWord<?>]) -> BiDiLine<?> {
-	sdm = getWordsDirectionAndMajority(words);
-	edm = getWordsDirectionAndMajority(reverseA(words));
-	BiDiLine(words, sdm, edm);
-}
-
 unwrapLine(l: [BiDiWord<?>], setRTL: (?, bool) -> ?) -> [?] {
-	fold(l, [], \acc, w -> switch (w) {
-		BiDiWrapper(nativeW, dm): arrayPush(
-			acc,
-			if (contains([uc_dir_ltr, uc_dir_rtl], dm.d)) setRTL(nativeW, dm.d == uc_dir_rtl) else nativeW
-		);
-		LineTerminal(__): acc;
-	});
+	map(l, \w ->
+		if (contains([uc_dir_ltr, uc_dir_rtl], w.dm.d)) setRTL(w.word, w.dm.d == uc_dir_rtl) else w.word
+	);
 }
 
 reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, setRTL: (?, bool) -> ?, rtl: bool) -> [[?]] {
@@ -267,7 +235,7 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 	context = makeBiDiContext(Some(rtl));
 	stackPasser = \keyChar, dir, kind : [BiDiFormattingKind], fn -> Pair(
 		keyChar,
-		\ stack -> fn(dir, kind, stack)
+		\stack -> fn(dir, kind, stack)
 	);
 	formattingMark = \dmf, __, stack : List<BiDiFormatting> -> Cons(BiDiFormatting(BiDiDirectionMark(), dmf), switch(stack) {
 		Cons(head, t): switch(head.kind) {
@@ -277,20 +245,19 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 		EmptyList(): stack
 	});
 	formattingPush = \dmf, kind : [BiDiFormattingKind], stack -> {
-		if (contains(kind, BiDiPairedChar())) previousDM := DirectionAndMajority(1, 0);
 		Cons(BiDiFormatting(kind[0], dmf), stack);
 	}
 	formattingPop = \dmf, kind : [BiDiFormattingKind], stack -> tailList(updateWhile(stack, \s -> switch(s : List<BiDiFormatting>) {
 		EmptyList(): None();
 		Cons(head, t): if (contains(kind, head.kind)) {
 			if (head.kind == BiDiPairedChar()) {
-				previousDM := head.dmf();
+				previousDM := DirectionAndMajority(head.dmf() with m=3);
 				Some(t);
 			} else None()
 		} else Some(t);
 	}));
 	formatHandlers = pairs2tree(concat3(
-		stringCharsFold("([{", [], \a, c -> arrayPush(a, stackPasser(c, \-> ^previousDM, [BiDiPairedChar()], formattingPush))),
+		stringCharsFold("([{", [], \a, c -> {saved = ^previousDM; arrayPush(a, stackPasser(c, \-> saved, [BiDiPairedChar()], formattingPush))}),
 		stringCharsFold(")]}", [], \a, c -> arrayPush(a, stackPasser(c, \-> DirectionAndMajority(uc_dir_flow, 0), [BiDiPairedChar()], formattingPop))),
 		[
 			// Implemented isolated and marks as most useful yet.
@@ -308,7 +275,7 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 			//stackPasser("\u202E", uc_dir_rtl, [BiDiDirectionOverridden()], formattingPush),
 		]
 	));
-	lines = map(text, \l -> makeBiDiLine(map(l, \w -> BiDiWrapper(w, {
+	lines0 = map(text, \l -> map(l, \w -> BiDiWord(w, {
 		t = getText(w);
 		// Splitters go into separate word, so the following is safe we don't miss any char.
 		if (containsKeyTree(formatHandlers, strsubsmart(t, 0, 1))) {
@@ -318,47 +285,42 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 		};
 		tdm = getTextDirectionAndMajority(t);
 		tdmAgg = switch(^(context.formattingStack)) {
-			Cons(head, __): fold3DMs(head.dmf(), tdm, ^previousDM);
+			Cons(head, __): if (((^previousDM)).m == 3) DirectionAndMajority(^previousDM with m=2) else if (tdm.m == 2) tdm else fold3DMs(head.dmf(), ^previousDM, tdm);
 			EmptyList(): tdm;
 		};
 		if (contains([uc_dir_ltr, uc_dir_rtl], tdmAgg.d)) previousDM := tdmAgg;
 		if (tdmAgg.d == uc_dir_coupled) ^previousDM else tdmAgg;
-	}))));
+	})));
+	lines = lines0;
 	// TODO: accumulate only those, which change the direction, not each major word.
 	forwardMajorWords = ref foldi(
 		reverseA(lines),
 		Cons(Triple(length(lines), 0, defaultDM), EmptyList()),
 		\rlno, lacc, line -> {
 			lno = length(lines) - 1 - rlno;
-			foldi(reverseA(line.words), lacc, \rwno, wacc : Cons<Triple<int, int, DirectionAndMajority>>, word -> {
-				wno = length(line.words) - 1 - rwno;
+			foldi(reverseA(line), lacc, \rwno, wacc : Cons<Triple<int, int, DirectionAndMajority>>, word -> {
+				wno = length(line) - 1 - rwno;
 				curr = getWordDirectionAndMajority(word);
 				if (curr.m == 2 && contains([uc_dir_ltr, uc_dir_rtl], curr.d)) Cons(Triple(lno, wno, curr), wacc) else wacc
 			})
 		}
 	);
 
- 	previousDM := defaultDM;
+	previousDM := defaultDM;
 	mapi(
 		lines, \lno, line -> unwrapLine(
 			reflowWordsToBiDi(
-				mapi(line.words, \wno, word -> {
+				mapi(line, \wno, word -> {
 					forwardMajorWords := switch(^forwardMajorWords) {
 						EmptyList(): EmptyList();
 						Cons(h, t): if (lno > h.first || (lno == h.first && wno > h.second)) t else ^forwardMajorWords;
 					};
-					previousDM := switch (word) {
-						LineTerminal(dm): if (dm.m >= 2) dm else ^previousDM;
-						BiDiWrapper(w, dm): if (dm.m >= 2) dm else ^previousDM;
-					};
+					previousDM := if (word.dm.m >= 2) word.dm else ^previousDM;
 					majorDM = switch(^forwardMajorWords) {
 						EmptyList(): DirectionAndMajority(1, 0);
-						Cons(h, t): h.third; //DirectionAndMajority(1, 0);
+						Cons(h, t): h.third;
 					};
-					switch (word) {
-						LineTerminal(dm): LineTerminal(fold3DMs(majorDM, ^previousDM, fold2DMs(dm, defaultDM)));
-						BiDiWrapper(w, dm): BiDiWrapper(w, fold3DMs(majorDM, ^previousDM, fold2DMs(dm, defaultDM)));
-					}
+					BiDiWord(word.word, fold3DMs(majorDM, ^previousDM, fold2DMs(word.dm, defaultDM)));
 				}),
 				isEmpty, getText, setText, rtl
 			), setRTL
