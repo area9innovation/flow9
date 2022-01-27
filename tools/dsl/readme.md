@@ -3,12 +3,84 @@
 This is a system to define syntax & semantics for languages, including
 rewrite rules and compilers.
 
+## Architecture
+
+This system is designed to make programming languages and language features
+"first-class". The goal is to separate out the various aspects of programming
+languages, make them easy to define, and importantly, to make them compositional.
+
+The result is a system where you can define new programming languages by picking
+a base language, and then adding language features on top. The library will then
+figure out how to build a combined parser, desugaring, type checker, optimizer, 
+evaluator and even compilers for this new combination.
+
+Thus, language features and capabilities become multiplicative: A given language 
+feature can be added to many languages, and any new optimization or code generator
+will work for many languages.
+
+## Lambda core
+
+There is a special core, basic language called Lambda. This is a very simple, pure, 
+untyped expression-based lambda calculus with syntax like flow expressions. It contains
+bools, ints, doubles, string and lists, plus AST nodes. These language has the property
+that the AST of Lambda itself (and all other languages in scope) can be represented
+in the language itself. So you can also think of Lambda as a kind of Lisp where
+programs = data. This property is maintained, so that the system itself can use Lambda 
+as the grounding  layer for defining new languages and extensions in this language.
+
+Thus, when you stack language extensions on top of each others, they will lower themselves
+down to lower languages until they reach Lambda. That in turn means that the end result
+can be evaluated, compiled and so forth, since Lambda itself can do all these things.
+
+You do not have to use Lambda as the base language. You will not directly benefit from existing
+evaluation and compilation targets for Lambda if you do, but since languages are easy
+to define and extend, this framework still helps in case you want to implement some other
+language.
+
+## Philosophy
+
+The system is designed around some core ideas, which together provide a lot of expressive
+power:
+
+- Syntax is important, and defined by the composable PEG-based Gringo parser
+- Well designed, functional semantics of the languages and features
+- Pure expression-based languages rather than statement based
+- Term-rewriting rules for desugaring, lowering and optimizations
+
+Flow itself is NOT expression based. Consider "import", "export", types and top-level functions
+as examples. This turns out to be somewhat problematic for various aspects. So in this
+library, the design has been changed to be based around pure expression-based languages.
+
+This property means that rewriting rules become much simpler to reason about and will work
+in general. Experience shows that this approach is much superior for compositionality.
+
+## Status
+
+This system is still in early development. The core features are present, and in the
+`test.flow` file and `tests` folder, a number of examples of languages and combinations
+can be seem.
+
+# Aspects of languages
+
+The system is architectured around some core aspects of programming languages:
+
+- Syntax and parsing. Results in ASTs represented as the `DslAst` type in flow.
+- Rewriting and lowering. Term-rewriting rules to transform ASTs to other ASTs,
+  both for desugaring, lowering and optimizations through e-graphs. 
+- Runtime. Language extensions can provide runtime functions to help implement
+  the langauge features.
+- Evaluation. Lambda comes with an evaluator, and a small runtime
+- Compilation. Using pattern matching and a blueprint-like language, compilation
+  to text formats is easy to specify
+
 ## Syntax
 
-The grammar is specified using gringo, and prepared with `defineGrammar(name, grammar, additions)`.
+The grammar of langugages is specified using Gringo, and will be prepared 
+with `defineGrammar(name, grammar, additions)`.
 
 The semantics actions are defined using actions like "plus_2", "negate_1", where
-the suffix defines the arity of the semantic action.
+the suffix defines the arity of the semantic action, i.e. the number of arguments
+that AST node should take.
 
 Here is a simple grammar for expressions:
 
@@ -20,6 +92,16 @@ Here is a simple grammar for expressions:
 			|> id $"bind_1";	// For pattern matching
 		ws exp
 	>>, ["ws", "id", "int"]); // adds the expected definitions for these
+
+The `parseProgram` call will now parse a string using a given grammar:
+
+	defaultValue : DslAst = parseProgram(mylang, <<1+2*a>>);
+	println(prettyDsl(defaultValue));
+
+The result is a DslAst representation of the semantic actions, here
+pretty-printed:
+
+	plus(int(1), mul(int(2), bind(a)))
 
 ### Semantic actions in Gringo
 
@@ -59,46 +141,46 @@ TODO:
 
 - Figure out how to add position to all nodes for better error reporting
 
-- Add functions/conditions to Gringo?
-
-## Parsing
-
-The `parseProgram` will parse a string using a given grammar from `defineGrammar`:
-
-	defaultValue : DslAst = parseProgram(mylang, <<123+0*434+abd>>);
-	println(prettyDsl(defaultValue));
-
-The result is a DslAst representation of the semantic actions.
+- Add functions/conditions to Gringo, so we can do the rules grammar
+  at a higher level
 
 ## E-graph rewriting
 
 The DSL library comes with support for doing semantic term-rewriting using an
 e-graph.
 
-# Example
+### Example
 
-	// The set of rewriting rules we want
-	rules = parseRules(mylang, <<
-		a + b => b + a;
-		a * b => b * a;
-		a + a => 2 * a;
-		2 * a => a + a;
-		a + 0 => a;
-		a * 0 => 0;
-		a * 1 => a;
-	>>);
+Here we define some rewriting rules to optimize simple math expressions in Lambda:
 
-	// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
-	defaultValue : DslAst = parseProgram(mylang, << 0 >>);
+	// The set of rewriting rules we want for optimizations
+	rewriting = defineDslRewriting(lambda, lambda, ";",
+		<<
+			$a + $b => $b + $a;
+			$a * $b => $b * $a;
+			$a + $a => 2 * $a;
+			2 * $a => $a + $a;
+			$a + 0 => $a;
+			$a * 0 => 0;
+			$a * 1 => $a;
+			if (true) $a else $b => $a;
+			if (false) $a else $b => $b;
+		>>,
+		// These costs refer to the semantic actions without arity
+		// so we can figure out what the costs are. This is used to extract the best reduction
+		<<
+			int => 1;
+			add => 2;
+			sub => 2;
+			mul => 3;
+			div => 4;
+		>>,
+		// For the plumbing to work with the rewrite engine, we need a default value (in the language syntax)
+		<< 0 >>
+	);
 
-	// These costs refer to the semantic actions without arity
-	// so we can figure out what the costs are. This is used to extract the best reduction
-	costs = rewriteCosts(<<
-		int => 1;
-		plus => 2;
-		mul => 3;
-	>>);
-
+Now, these rules can be applied using the `rewriteDsl` call:
+	
 	testValue = parseProgram(mylang, << 0 + 123 + 0 * 23 + 1 * 23 + 34 * 2 >>);
 
 	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
@@ -144,12 +226,15 @@ TODO:
 
 ## Patterns
 
-Our patterns are simple matching only, but we should allow guards written in Lambda.
+The patterns on the left-hand side of rewriting rules are simple pattern matching
+only for now, but later, we should allow guards written in Lambda.
 
 TODO:
 - Do a DSL for pattern matching, maybe like https://arxiv.org/pdf/1807.01872v1.pdf
 
 - Add multi-pattern rules. https://arxiv.org/pdf/2101.01332.pdf
+
+- Add rules for equality (i.e. bidirectional rules), evaluations and stopping
 
 ## Lowering
 
@@ -160,7 +245,9 @@ a lambda program on the right hand side with the bindings.
 
 Lambda evaluation has a "strange" semantics that calls to unknown ids will
 construct an AST node, and in that way, the programs in the lowering can
-construct new AST nodes.
+construct new AST nodes. Later, we want to replace this with quoting and
+unquoting, but for now, construction of AST nodes in evaluations exploits
+that quirk.
 
 As a special feature, there is support to add "global_let" in the rewritings.
 Those will be lifted to the top-level by the lowering mechanism. In this way,
@@ -187,7 +274,7 @@ TODO:
 			keyword(@k) => @k !letterOrDigit ws.
 		>>);
 
-# Evaluator
+## Evaluator
 
 A runtime evaluator in the form on an interpreter will evaluate programs using a
 pre-defined set of natives, which correspond to a simple functional language:
@@ -234,6 +321,7 @@ To expand lists, we have this construct:
 which will expand the binding (which is a List) and separate each element
 using the sep-string.
 
+TODO:
 - Compiling Gringo is a problem, since "string" is wrong. Solutions: 
   - Add guards for patterns, so we can check if the string contains " or '. 
   - Add escape for strings when expanding
