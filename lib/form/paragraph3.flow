@@ -1033,7 +1033,7 @@ RenderLine(
 	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
 
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1) {
+	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1 && !newJustifyEnabled) {
 		nwords = length(info.optimizedLine);
 		min(10.0, remaining / i2d(nwords - 1));
 	} else 0.0;
@@ -1261,10 +1261,18 @@ applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> F
 dummyTextWidthInspector = TextWidthInspector(make(0.0));
 
 optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement] {
-	fold(words, makeList(), \acc : List<OptimizedLineElement>, word : ParaWord -> {
+	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
+		calcWordSpacing(words, availableWidth, indent)
+	} else 0.0;
+
+	wordsCount = length(words) - 1;
+
+	foldi(words, makeList(), \i, acc : List<OptimizedLineElement>, word : ParaWord -> {
 		f = word.form;
+		w = word.word;
 		metrics = word.metrics;
 		intIdM = word.interactivityIdM;
+		lastWord = i == wordsCount;
 		switch(acc){
 			EmptyList() : Cons(OptimizedLineElement(f, metrics, intIdM), acc);
 			Cons(p, tail_) : {
@@ -1292,17 +1300,29 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										// TODO: Do not do this until at the end of the joining fest
 										m = getStaticFormSize(t);
 
+										additionalWidth = switch (w) {
+											Space(__): if (lastWord) 0.0 else wordSpacing;
+											default: 0.0;
+										} 
+
 										Pair(
 											t,
 											FormMetrics(m with
-												width = m.width + extractStruct(s2, LetterSpacing(0.0)).spacing
+												width = m.width + extractStruct(s2, LetterSpacing(0.0)).spacing + additionalWidth
 											) |> const
 										)
 									}
 
+									formWithWordSpasing = switch (jtf.first) {
+										Text(txt, s): {
+											Text(txt, ifArrayPush(s, wordSpacing != 0.0, WordSpacing(const(wordSpacing))))
+										}
+										default: jtf.first;
+									}
+
 									// Replace the last element with the newly joined
 									Cons(
-										OptimizedLineElement(jtf.first, jtf.second, intIdM),
+										OptimizedLineElement(formWithWordSpasing, jtf.second, intIdM),
 										tail_
 									);
 								} else Cons(OptimizedLineElement(f, metrics, intIdM), acc);
@@ -1317,35 +1337,19 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 			}
 		}
 	}) |> list2array
-	|> (\arr : [OptimizedLineElement] -> {
-		if (newJustifyEnabled && alignment == Justify() && !lastLine) {
+}
+
+calcWordSpacing(words : [ParaWord], availableWidth : double, indent : double) -> double {
 			spacesAndWordsWidth : Pair<int, double> = fold(words, Pair(0, indent), \acc : Pair<int, double>, w -> {
 				switch (w.word) {
 					Space(__): Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
 					default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
 				}
 			});
-
 			if (spacesAndWordsWidth.first > 0) {
-				wordSpacing = WordSpacing(const((availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first)));
-				map(arr, \e -> {
-					switch (e.f) {
-						Text(t, s): {
-							OptimizedLineElement(
-								e with f = Text(t, arrayPush(s, wordSpacing))
-							)
-						}
-						default: e;
-					}
-				})
-			} else {
-				arr
-			}
-		} else {
-			arr
-		}
-	})
-}
+				(availableWidth - spacesAndWordsWidth.second) / i2d(max(spacesAndWordsWidth.first - 1, 1))
+			} else 0.0
+};
 
 isWordEmpty(w : ParaWord) -> bool {
 	switch(w.word) {
