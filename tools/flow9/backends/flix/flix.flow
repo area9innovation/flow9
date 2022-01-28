@@ -1,0 +1,151 @@
+import tools/flow9/backends/link;
+import string_utils;
+import text/blueprint;
+
+export {
+	// Compiles the given flow path to Flix as a single string
+	bmodule2flix(cache : FlowCache, flowpath : string, shortenIds : bool) -> string;
+}
+
+bmodule2flix(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
+	p : BExpProgram = linkBExpProgram(cache, flowpath, shortenIds, flixBackendSpec());
+
+	// Unions are enums in flix
+	enums = foldTree(p.unions, "", \name, uniondef, acc -> {
+		acc + dunion2flix(p, uniondef) + "\n"
+	});
+
+	structs = foldTree(p.structs, "", \name, structdef, acc -> {
+		acc + dstruct2flix(p, structdef) + "\n"
+	});
+
+	decls = superglue(p.declarations, \d -> dexpDeclaration2flix(p, d), "\n");
+
+	enums + structs + decls;
+}
+
+
+flixBackendSpec() {
+	BackendSpec(
+		// Keywords
+		buildSet(
+			strSplit(
+         	   "case|def|else|enum|if|lat|let|match|rel|select|spawn|with|namespace|pub|not|opaque|type|alias|use|import|get|set|new|as|ref|deref|project|into|from|where|query|solve|instance", 
+				"|"
+			)
+		),
+		"", // For remaining types
+		"", // For renaming top-level ids
+		"", // For renaming top-level ids
+		makeSet(), // A set of all supported natives
+		println, // onError
+	);
+}
+
+
+dunion2flix(p : BExpProgram, d : DUnion) -> string {
+	/*
+	enum Shape {
+		case Circle(Int),        // circle radius
+		case Square(Int),        // side length
+		case Rectangle(Int, Int) // height and width
+	}
+	*/
+	blueprint("
+		enum %id% {
+			%cases%
+		}
+	", [
+		"id", capitalize(d.id),
+		"cases", superglue(d.types, \tn : DTypeName -> {
+			// case MySome({x::Int32})
+			"case " + dtype2flix(p, tn) 
+			+ {
+				mstruct = lookupTree(p.structs, tn.id);
+				mstruct ?? {
+					"({"
+					+ superglue(mstruct.structArgs, \sa: DStructArg -> {
+						sa.id + " :: " + dtype2flix(p, sa.type)
+					}, ",")
+					+ "})";
+				} : "";
+			}
+		}, ",\n")
+	])
+}
+
+dtype2flix(p : BExpProgram, d : DType) -> string {
+	switch (d) {
+		DTypePar(id, pos): ["a", "b", "c", "d", "e", "f", "g", "h"][strlen(id)];
+		DTypeName(id, typars, pos): {
+			capitalize(id) 
+			+ if (typars == []) "" else "[" + superglue(typars, \tp -> dtype2flix(p, tp), ", ") + "]";
+		}
+		DTypeFunction(args, returnType, pos): {
+			sargs = superglue(args, \a -> dtype2flix(p, a), ", ");
+			(if (args == []) "Unit" else if (length(args) != 1) "(" + sargs + ")" else sargs) 
+			+ " -> " + dtype2flix(p, returnType)
+		}
+	}
+}
+
+// opaque type MyRecord = {x::Int32}
+dstruct2flix(p : BExpProgram, d : DStruct) -> string {
+	"opaque type " + d.id + " = {" 
+	+ superglue(d.structArgs, \sa: DStructArg -> {
+			sa.id + " :: " + dtype2flix(p, sa.type)
+		}, ",")
+	+ "}";
+}
+
+dexpDeclaration2flix(p : BExpProgram, d : BExpDeclaration) -> string {
+	switch (d) {
+		BGlobalVar(id, body, type): "TODO: GLOBALS NOT SUPPORTED";
+		BExpFunction(id, typars, args, body, type): {
+			blueprint("
+				def %id%(%args%) =
+					%body%
+			", [
+				"id", id,
+				"args", strGlue(args, ", "),
+				"body", bexp2flix(p, body)
+			])
+		}
+		BExpNative(id, isio, type, nativeName): "TODO: Native " + id;
+	}
+}
+
+bexp2flix(p : BExpProgram, e : BExp) -> string {
+	rec = \ee -> bexp2flix(p, ee);
+	todo = \ -> {
+		prettyBExp(e);
+	}
+	switch (e) {
+		BVoid(): "()";
+		BBool(v): b2s(v);
+		BInt(v): i2s(v);
+		BDouble(v): d2s(v);
+		BString(v): toString(v);
+		BVar(id, type): id;
+		BLet(id, value, body, type): blueprint("
+			let %id% = %val%;
+			%body%
+		", ["id", id,
+			"val", rec(value),
+			"body", rec(body)
+		]);
+		BIf(cond, then, else_, type): todo();
+		BCall(fn, args, type): todo();
+		BLambda(args, body, type): todo();
+		BSequence(exps, type): todo();
+		BConstruct(struct, args, type): todo();
+		BField(value, field, type): todo();
+		BSetMutable(left, field, value, type): todo();
+		BSwitch(value, switchType, cases, defaultCase, type): todo();
+		BArray(args, type): todo();
+		BCast(value, from, to): todo();
+		BDupValue(value): todo();
+		BDropValue(value): todo();
+		BReuseValue(value): todo();
+	}
+}
