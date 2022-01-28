@@ -61,7 +61,8 @@ template <typename T>
 std::ostream& operator<<(std::ostream& os, const _FlowArray<T>& a) {
   os << "[";
   for (std::size_t i = 0; i < a.value.size(); ++i) {
-	  os << a.value[i] << ",";
+	  flow_print2(a.value[i]);
+	  os << ",";
   }
   os <<"]";
   return os;
