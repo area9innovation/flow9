@@ -27,8 +27,6 @@ So we convert a language with the suffix to a language without the part after th
 
 - Challenge: If we compile lambda+array to flow, we might have special rules that work for array.
 
-- Hook up rewrite systems
-
 - Hook up compilers
 
 - Redo all languages to use this registry

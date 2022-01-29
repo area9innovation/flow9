@@ -1,37 +1,79 @@
 import tools/dsl/registry/dsl_transformation;
 import tools/dsl/registry/dsl_parser;
 import tools/dsl/registry/dsl_registry;
+import tools/dsl/registry/dsl_run;
 import tools/dsl/dsl_lowering;
 
 export {
 	// Build a lowering transformation which can implement the given spefication
 	registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string) -> void;
+
+	registerDslRewriting(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string, costs : string, defaultVal : string) -> void;
 }
 
 registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string) -> void {
+	mrules = parseDslRules(fromLanguage, toLanguage, sep, rules);
+	mrules ?? {
+		patterns : List<DslReplacement> = mapList(getDslList(mrules.rules), \rule -> {
+			node = getDslNode(rule);
+			pattern = node.args[0];
+			replacement = node.args[1];
+			DslReplacement(pattern, replacement);
+		});
+
+		lowering = DslLowering(patterns);
+		transformation = DslTransformation(
+			phase,
+			specification,
+			\astenv -> {
+				// TODO: Here, we can in fact evaluate the program using the registry
+				// for the right hand sides
+				ast = lowerDsl(lowering, astenv.ast);
+				DslAstEnv(astenv with ast = ast);
+			}
+		);
+		registerDslTransformation(transformation);
+	} : {
+		println("Could not parse rules for lowering " + specification);
+	}
+}
+
+registerDslRewriting(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string, costs : string, defaultVal : string) -> void {
+	mrules = parseDslRules(fromLanguage, toLanguage, sep, rules);
+	mrules ?? {
+		defValue = parseDslProgram(toLanguage, defaultVal);
+		if (defValue.error != "") {
+			println("Could not parse default value in " + specification + ": " + defValue.error);
+		} else {
+			rewriting = DslRewriting(
+				mrules,
+				rewriteCosts(costs),
+				defValue.ast
+			);
+			transformation = DslTransformation(
+				phase,
+				specification,
+				\astenv -> {
+					ast = rewriteDsl(astenv.ast, rewriting, 5);
+					DslAstEnv(astenv with ast = ast);
+				}
+			);
+			registerDslTransformation(transformation);
+		}
+	} : {
+		println("Could not parse rules for rewriting " + specification);
+	}
+}
+
+parseDslRules(fromLanguage : string, toLanguage : string, sep : string, rules : string) -> Maybe<DslRules> {
 	fromGrammar = buildDslGrammar(fromLanguage);
 	fromGrammar ?? {
 		mtoGrammar = buildDslGrammar(toLanguage);
 		switch (mtoGrammar) {
-			None(): {
-				println("Unknown to-language " + toLanguage + " for lowering " + specification);
-			}
-			Some(toGrammar): {
-				lowering : DslLowering = defineDslLowering(fromGrammar, toGrammar, sep, rules);
-				transformation = DslTransformation(
-					phase,
-					specification,
-					\astenv -> {
-						// TODO: Here, we can in fact evaluate the program using the registry
-						// for the right hand sides
-						ast = lowerDsl(lowering, astenv.ast);
-						DslAstEnv(astenv with ast = ast);
-					}
-				);
-				registerDslTransformation(transformation);
-			}
+			None(): None();
+			Some(toGrammar): Some(parseRules(fromGrammar, toGrammar, rules, sep))
 		}
 	} : {
-		println("Unknown from-language " + fromLanguage + " for lowering " + specification);
+		None();
 	}
 }
