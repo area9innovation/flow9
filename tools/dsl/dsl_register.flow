@@ -1,0 +1,98 @@
+import tools/dsl/dsl_registry;
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_util;
+
+export {
+	// Register a pure Gringo grammar for a language
+	registerDslParser(language : string, grammar : string, requires : [string]) -> void;
+
+	// Extend an existing grammar with a new language syntax
+	registerDslParserExtension(language : string, grammar : string) -> void;
+
+	// Build a parser for this language "lambda+dot-syntax" as an example
+	buildDslParserTransformation(language : string) -> DslTransformation;
+}
+
+// From language without "-syntax" suffix to the grammar
+dslGrammars : ref Tree<string, DslGrammar> = ref makeTree();
+
+registerDslParser(language : string, grammar : string, requires : [string]) -> void {
+	dslgrammar = defineGrammar(language, grammar, requires);
+	dslGrammars := setTree(^dslGrammars, language, dslgrammar);
+}
+
+// From language extension name to the grammar
+dslGrammarExtensions : ref Tree<string, Tree<string, GTerm>> = ref makeTree();
+
+registerDslParserExtension(language : string, grammar : string) -> void {
+	extension = parseGrammarExtension(grammar);
+	dslGrammarExtensions := setTree(^dslGrammarExtensions, language, extension);
+}
+
+buildDslParserTransformation(language : string) -> DslTransformation {
+	lang = takeBefore(language, "-syntax", language);
+	mgrammar = lookupTree(^dslGrammars, lang);
+	mgrammar ?? {
+		DslTransformation(
+			"parse",
+			lang + "|-syntax",
+			\astenv -> {
+				program = getDslString(astenv.ast);
+				// TODO: We could do error handling better
+				ast = parseProgram(astenv.language, mgrammar, program);
+				DslAstEnv(astenv with ast = ast);
+			}
+		)
+	} : {
+		// Could not find it. Let us build one
+		mgram = buildDslGrammar(language);
+		switch (mgram) {
+			None(): {
+				DslTransformation(
+					"parse",
+					lang + "|-syntax",
+					\astenv -> {
+						DslAstEnv(astenv with error = "Can not parse " + language);
+					}
+				)
+			}
+			Some(gram): {
+				// Register the new, combined grammar
+				dslGrammars := setTree(^dslGrammars, language, gram);
+				// And go pick it up
+				buildDslParserTransformation(language);
+			}
+		}
+	}
+}
+
+buildDslGrammar(language : string) -> Maybe<DslGrammar> {
+	mgram = lookupTree(^dslGrammars, language);
+	mgram ?? {
+		Some(mgram);
+	} : {
+		foldTree(^dslGrammarExtensions, None(), \name, extension, acc : Maybe<DslGrammar> -> {
+			if (endsWith(language, name)) {
+				// OK, we got it
+				core = takeBefore(language, "-" + name, language);
+				if (core == language) {
+					println("Could not find base language from " + language + " for " + name);
+					None();
+				} else {
+					mbase = buildDslGrammar(core);
+					switch (mbase) {
+						None(): {
+							println("Could not find base grammar for " + core + " from " + language);
+							None();
+						}
+						Some(base): {
+							Some(DslGrammar(extendGringoRules(base.term, extension)))
+						}
+					}
+				}
+			} else {
+				acc;
+			}
+		});
+	}
+}
