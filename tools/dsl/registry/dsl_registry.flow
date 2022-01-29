@@ -1,13 +1,11 @@
-import tools/dsl/dsl_transformation;
+import tools/dsl/registry/dsl_transformation;
+import tools/dsl/registry/dsl_parser;
 import ds/tree;
 import string;
 
 export {
 	// Facility to register transformations for the language facility
 	registerDslTransformation(d : DslTransformation) -> void;
-
-	// For extensions of transformations, this provides a way to find existing ones
-	findDslTransformations(phase : string, specification : string) -> [DslTransformation];
 
 	// Perform this transformations to this input, doing all that is required
 	performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv;
@@ -17,14 +15,8 @@ export {
 dslTransformationsPhases : ref Tree<string, [DslTransformation]> = ref makeTree();
 
 registerDslTransformation(d : DslTransformation) -> void {
+	// println("Register '" + d.phase + "' for " + d.specification);
 	dslTransformationsPhases := treePushToArrayValue(^dslTransformationsPhases, d.phase, d);
-}
-
-findDslTransformations(phase : string, specification : string) -> [DslTransformation] {
-	transforms = getTreeArrayValue(^dslTransformationsPhases, phase);
-	filter(transforms, \tr -> {
-		tr.specification == specification
-	});
 }
 
 performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv {
@@ -48,8 +40,22 @@ performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv
 		// OK, continue
 		performDslTransformations(phase, toLanguage, iterate)
 	} else {
-		println("Could not transform to " + toLanguage + ". Only got to " + iterate.language);
-		iterate;
+		if (phase == "parse" && endsWith(iterate.language, "-syntax")) {
+			// println("OK, looking to make a parser for " + iterate.language);
+			mtransformation = buildDslParserTransformation(iterate.language);
+			mtransformation ?? {
+				registerDslTransformation(mtransformation);
+				performDslTransformations(phase, toLanguage, iterate)
+			} : {
+				DslAstEnv(
+					iterate with error = "Could not parse " + iterate.language + " starting from " + input.language
+				)
+			}
+		} else {
+			DslAstEnv(
+				iterate with error = "Could not transform to " + toLanguage + ". Only got to " + iterate.language
+			)
+		}
 	}
 }
 

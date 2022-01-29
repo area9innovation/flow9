@@ -1,4 +1,4 @@
-import tools/dsl/dsl_registry;
+import tools/dsl/registry/dsl_transformation;
 import tools/dsl/dsl_parse;
 import tools/dsl/dsl_util;
 
@@ -9,8 +9,9 @@ export {
 	// Extend an existing grammar with a new language syntax
 	registerDslParserExtension(language : string, grammar : string) -> void;
 
-	// Build a parser for this language "lambda+dot-syntax" as an example
-	buildDslParserTransformation(language : string) -> DslTransformation;
+	// Build a parser for this language "lambda+dot-syntax" as an example 
+	// from base grammars and extension
+	buildDslParserTransformation(language : string) -> Maybe<DslTransformation>;
 }
 
 // From language without "-syntax" suffix to the grammar
@@ -29,38 +30,35 @@ registerDslParserExtension(language : string, grammar : string) -> void {
 	dslGrammarExtensions := setTree(^dslGrammarExtensions, language, extension);
 }
 
-buildDslParserTransformation(language : string) -> DslTransformation {
-	lang = takeBefore(language, "-syntax", language);
+buildDslParserTransformation(langsyntax : string) -> Maybe<DslTransformation> {
+	lang = takeBefore(langsyntax, "-syntax", langsyntax);
 	mgrammar = lookupTree(^dslGrammars, lang);
 	mgrammar ?? {
-		DslTransformation(
-			"parse",
-			lang + "|-syntax",
-			\astenv -> {
-				program = getDslString(astenv.ast);
-				// TODO: We could do error handling better
-				ast = parseProgram(astenv.language, mgrammar, program);
-				DslAstEnv(astenv with ast = ast);
-			}
+		Some(
+			DslTransformation(
+				"parse",
+				lang + "|-syntax",
+				\astenv -> {
+					program = getDslString(astenv.ast);
+					// TODO: We could do error handling better
+					ast = parseProgram(astenv.language, mgrammar, program);
+					DslAstEnv(astenv with ast = ast);
+				}
+			)
 		)
 	} : {
 		// Could not find it. Let us build one
-		mgram = buildDslGrammar(language);
+		mgram = buildDslGrammar(lang);
 		switch (mgram) {
 			None(): {
-				DslTransformation(
-					"parse",
-					lang + "|-syntax",
-					\astenv -> {
-						DslAstEnv(astenv with error = "Can not parse " + language);
-					}
-				)
+				println("Could not build grammar for " + langsyntax);
+				None();
 			}
 			Some(gram): {
 				// Register the new, combined grammar
-				dslGrammars := setTree(^dslGrammars, language, gram);
+				dslGrammars := setTree(^dslGrammars, lang, gram);
 				// And go pick it up
-				buildDslParserTransformation(language);
+				buildDslParserTransformation(langsyntax);
 			}
 		}
 	}
