@@ -1,0 +1,92 @@
+import tools/dsl/registry/dsl_registry;
+import tools/dsl/registry/dsl_parser;
+import tools/dsl/dsl_eval;
+import ds/tree;
+import string;
+
+export {
+	// Parse this program in this language using the registry
+	parseDslProgram(language : string, program : string) -> DslAstEnv;
+
+	// Perform this transformations to this input, doing all that is required
+	performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv;
+
+	// Parse and run this program in the given language
+	evalDslProgram(language : string, program : string) -> DslAst;
+}
+
+performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv {
+	transforms = getDslTransformations(phase);
+	iterate = fold(transforms, input, \acc, transformation -> {
+		// Are we done?
+		if (acc.language == toLanguage) acc
+		else {
+			// What would be the result?
+			result = resultDslTransformation(acc.language, transformation.specification);
+			if (result != acc.language) {
+				// OK, it does something
+				performDslTransformation(acc, transformation);
+			} else acc;
+		}
+	});
+	if (iterate.language == toLanguage) {
+		// We made it!
+		iterate
+	} else if (iterate.language != input.language) {
+		// OK, continue
+		performDslTransformations(phase, toLanguage, iterate)
+	} else {
+		if (phase == "parse" && endsWith(iterate.language, "-syntax")) {
+			// println("OK, looking to make a parser for " + iterate.language);
+			mtransformation = buildDslParserTransformation(iterate.language);
+			mtransformation ?? {
+				registerDslTransformation(mtransformation);
+				performDslTransformations(phase, toLanguage, iterate)
+			} : {
+				DslAstEnv(
+					iterate with error = "Could not parse " + iterate.language + " starting from " + input.language
+				)
+			}
+		} else {
+			DslAstEnv(
+				iterate with error = "Could not transform to " + toLanguage + ". Only got to " + iterate.language
+			)
+		}
+	}
+}
+
+// Applies the given transformation
+performDslTransformation(input : DslAstEnv, transformation : DslTransformation) -> DslAstEnv {
+	res = transformation.fn(input);
+	// Make sure to update the language as well
+	result = resultDslTransformation(input.language, transformation.specification);
+	DslAstEnv(
+		res
+		with language = result
+	)		
+}
+
+// Calculate the effect of this specification to this language
+// See dsl_transformation.flow for a description of these specs
+// and their effects
+resultDslTransformation(language : string, specification : string) -> string {
+	spec = strReplace(specification, "|", "");
+	if (endsWith(language, spec)) {
+		// OK, it matches
+		// Introduce the cut point
+		cut = strReplace(language, spec, specification);
+		takeBefore(cut, "|", cut)
+	} else language;
+}
+
+parseDslProgram(language : string, program : string) -> DslAstEnv {
+	input = DslAstEnv(language + "-syntax", DslString(program), makeTree(), "");
+	performDslTransformations("parse", language, input);
+}
+
+evalDslProgram(language : string, program : string) -> DslAst {
+	parsed = parseDslProgram(language, program);
+	desugared = performDslTransformations("desugar", "lambda", parsed);
+	env = DslEnv(mapTree(desugared.env, \a -> [a]), makeTree());
+	evaluateDsl(env, desugared.ast);
+}

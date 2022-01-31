@@ -314,11 +314,38 @@ _FlowArray<B>* flow_map_memory(_FlowArray<A>* arr, const std::function<B(A)>& fl
 	}
 }
 
+// simple types
 template <typename A>
-std::vector<A> flow_filter(const std::vector<A>& flow_a, const std::function<bool(A)> & flow_test) {
-  std::vector<A> res;
-  std::copy_if (flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_test);
-  return res;
+_FlowArray<A>* flow_filter(_FlowArray<A>* arr, const std::function<bool(A)>& flow_fn) {
+	return flow_filter_memory(arr, flow_fn);
+}
+
+template <typename A>
+_FlowArray<A*>* flow_filter(_FlowArray<A*>* arr, const std::function<bool(A*)>& flow_fn) {
+	return flow_filter_memory(arr, flow_fn);
+}
+template <typename A>
+_FlowArray<A>* flow_filter_memory(_FlowArray<A>* arr, const std::function<bool(A)>& flow_test) {
+	if (arr->_counter == 1) {
+		arr->value.erase(std::remove_if(
+			arr->value.begin(),
+			arr->value.end(),
+			[&flow_test](auto& item) { 
+				bool unused = !flow_test(dup(item));
+				if (unused) { drop(item); }
+				return unused;
+			}
+		));
+		return arr;
+	}
+	else {
+		_FlowArray<A>* res = new _FlowArray<A>{};
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if (flow_test(dup(arr->value[i]))) res->value.push_back(dup(arr->value[i]));
+		}
+		drop(arr);
+		return res;
+	}
 }
 
 
@@ -436,27 +463,47 @@ void flow_iter_memory(_FlowArray<A>* arr, const std::function<void(A)>& flow_fn)
 }
 
 template <typename A>
-void flow_iter(const std::vector<A>& flow_a, void(*fn)(A) ) {
-	for (std::size_t i = 0; i != flow_a.size(); ++i) {
-		(*fn)(flow_a[i]);
-	}
+void flow_iteri(_FlowArray<A*>* arr, const std::function<void(int32_t, A*)>& flow_fn) {
+	flow_iteri_memory(arr, flow_fn);
+}
+template <typename A>
+void flow_iteri(_FlowArray<A>* arr, const std::function<void(int32_t, A)>& flow_fn) {
+	flow_iteri_memory(arr, flow_fn);
 }
 
 template <typename A>
-void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, A)> & flow_fn) {
-	for (std::size_t i = 0; i != flow_a.size(); ++i) {
-		flow_fn(i, flow_a[i]);
+void flow_iteri_memory(_FlowArray<A>* arr, const std::function<void(int32_t, A)>& flow_fn) {
+	bool unusedItem;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		flow_fn(i, unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
 	}
+	drop(arr);
 }
 
 template <typename A>
-int flow_iteriUntil(const std::vector<A>& flow_a, const std::function<bool(int32_t, A)> & flow_fn) {
-	int32_t i = 0;
+int32_t flow_iteriUntil(_FlowArray<A*>* arr, const std::function<bool(int32_t, A*)>& flow_fn) {
+	return flow_iteriUntil_memory(arr, flow_fn);
+}
+template <typename A>
+int32_t flow_iteriUntil(_FlowArray<A>* arr, const std::function<bool(int32_t, A)>& flow_fn) {
+	return flow_iteriUntil_memory(arr, flow_fn);
+}
+
+template <typename A>
+int32_t flow_iteriUntil_memory(_FlowArray<A>* arr, const std::function<bool(int32_t, A)>& flow_fn) {
+	bool unusedItem;
 	bool found = false;
-	while (i < flow_a.size() && !found) {
-		found = flow_fn(i, flow_a[i]);
+	std::size_t i = 0;
+	//for ( i != arr->value.size(); ++i) {
+	while (i < arr->value.size() && !found) {
+		unusedItem = arr->value[i]->_counter == 1;
+		found = flow_fn(i, unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
 		if (!found) i++;
 	}
+	drop(arr);
 	return i;
 }
 

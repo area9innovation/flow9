@@ -94,7 +94,7 @@ getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], fi
 
 	curTimestamp = timestamp();
 	startTimestampR := curTimestamp;
-	getContentAPI(state.engine, currentPath, ext, filterFn,
+	getContentAPI(state.engine, currentPath, ext, filterFn, make(false),
 		\dirs : [string], files : [string] -> {
 
 			previewsLoadingStatusB = make(Some(_("Thumbnails updating, please wait...")));
@@ -201,20 +201,22 @@ checkWhatIsChanged(
 }
 
 // loading content of the selected folder using API
-getContentAPI(engine : FilebrowserEngine<?, ??>, path : string, ext : [string], filterFn : (string) -> bool, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
+getContentAPI(engine : FilebrowserEngine<?, ??>, path : string, ext : [string], filterFn : (string) -> bool, stopReadingB : DynamicBehaviour<bool>, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
 	// A small delay to show empty filebrowser before content loading
 	deferUntilRender(\->
-		engine.readDirectory(path, \dirs, files -> {
-			nonEmpty = neq("");
-			okExt = if (ext == []) \f -> true
-				else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
+		if (!getValue(stopReadingB)) engine.readDirectory(path, \dirs, files -> {
+				nonEmpty = neq("");
+				okExt = if (ext == []) \f -> true
+					else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
 
-			callback(
-				filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
-				filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
-			);
+				callback(
+					filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
+					filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
+				);
 
-		}, onError)
+			},
+			onError
+		) else callback([], [])
 	);
 }
 
@@ -227,7 +229,8 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 	next(stateSearch.counterB, getValue(stateSearch.counterB) + 1);
 	currentPath = getValue(state.currentPathB);
 
-	itemB = make(MLoading(_("Searching, please wait...")));
+	itemB = make(MEmpty());
+	searchProgressTextB = make(Some(_("Searching, please wait...")));
 	resD = ref [];
 	resF = ref [];
 
@@ -245,7 +248,7 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state2, dirs, files, None(), previewRequestFn.second , make(None()), scrollPosition, None())|> previewRequestFn.first
+						getContentUI(state2, dirs, files, None(), previewRequestFn.second, searchProgressTextB, scrollPosition, None())|> previewRequestFn.first
 					)
 			)
 		}
@@ -257,12 +260,13 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 			resD := concat(^resD, dirs);
 			resF := concat(^resF, files);
 		}
-	};
+	}
 
 	// a bit of time to render MLoading()
 	deferUntilRender(\-> {
-		getContentRecursive(stateSearch, currentPath, filterFn, addResult, \error ->
-			next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
+		getContentRecursive(stateSearch, currentPath, filterFn, addResult,
+			\-> nextDistinct(searchProgressTextB, None()),
+			\error -> next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
 		);
 
 		next(stateSearch.counterB, getValue(stateSearch.counterB) - 1);
@@ -270,54 +274,62 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 
 	MConstruct([
 			\-> subscribe(state.searchTextB, \text -> nextDistinct(stateSearch.breakSearchB, text != searchText)),
-			\-> subscribe(stateSearch.counterB, \count -> if (count == 0) resultScreen())
+			\-> subscribe(stateSearch.counterB, \count -> if (count == 0) resultScreen()),
+			\-> \-> nextDistinct(stateSearch.breakSearchB, true)
 		],
 		MMutable(itemB)
 	);
 }
 
 // files and folders searching in the "currentPath", including subfolders
-getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onError : (string) -> void) -> void {
+getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onDone : () -> void, onError : (string) -> void) -> void {
 	//start search in the currentPath
 	next(state.counterB, getValue(state.counterB) + 1);
 	correctedCurPath = addSlash2pathEnd(currentPath);
 
-	getContentAPI(state.engine, currentPath, state.ext, filterFn, \dirs, files -> {
-		dirs2 = filtermap(dirs, \dir -> {
-			r = takeAfterLast(dir, "/", dir);
-			if (r != "..") Some(r)
-			else None();
-		});
+	if (!getValue(state.breakSearchB)) {
+		getContentAPI(state.engine, currentPath, state.ext, filterFn, state.breakSearchB, \dirs, files -> {
+				dirs2 = filtermap(dirs, \dir -> {
+					r = takeAfterLast(dir, "/", dir);
+					if (r != "..") Some(r)
+					else None();
+				});
 
-		if (!getValue(state.breakSearchB)) {
-			resD = filtermap(dirs2, \dir -> {
-				r = takeAfterLast(dir, "/", dir);
-				if (strContains(toLowerCase(r), state.text)) Some(r)
-				else None();
-			});
-			resF = filtermap(files, \file -> {
-				r = takeAfterLast(file, "/", file);
-				if (strContains(toLowerCase(r), state.text)) Some(r)
-				else None();
-			});
+				if (!getValue(state.breakSearchB)) {
+					resD = filtermap(dirs2, \dir -> {
+						r = takeAfterLast(dir, "/", dir);
+						if (strContains(toLowerCase(r), state.text)) Some(r)
+						else None();
+					});
+					resF = filtermap(files, \file -> {
+						r = takeAfterLast(file, "/", file);
+						if (strContains(toLowerCase(r), state.text)) Some(r)
+						else None();
+					});
 
-			if (length(resD) + length(resF) > 0)
-				onOK(
-					map(resD, \d -> correctedCurPath + d + "/"),
-					map(resF, \f -> correctedCurPath + f)
-				);
-		}
+					onOK(
+						map(resD, \d -> correctedCurPath + d + "/"),
+						map(resF, \f -> correctedCurPath + f)
+					);
+				}
 
-		// currentPath processing complete
-		next(state.counterB, getValue(state.counterB) - 1);
+				// currentPath processing complete
+				next(state.counterB, getValue(state.counterB) - 1);
 
-		// go to in the sub folders
-		if (!getValue(state.breakSearchB))
-			iter(dirs2, \dir -> {
-				getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, onError)
-			});
-	}, onError
-	);
+				// go to in the sub folders
+				if (!getValue(state.breakSearchB))
+					if (dirs2 == []) onDone()
+					else {
+						counterR = ref length(dirs2);
+						addCounter = \-> {
+							counterR := ^counterR - 1;
+							if (^counterR == 0) onDone();
+						}
+						iter(dirs2, \dir -> getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, addCounter, onError));
+					}
+			}, onError
+		);
+	}
 }
 
 //
@@ -329,7 +341,7 @@ getPathExistsNames(engine : FilebrowserEngine<?, ??>, currentPath : string, ext 
 		)
 	};
 
-	getContentAPI(engine, currentPath, [ext], filterFn, callback2, onError);
+	getContentAPI(engine, currentPath, [ext], filterFn, make(false), callback2, onError);
 }
 
 // file browser dialod view
