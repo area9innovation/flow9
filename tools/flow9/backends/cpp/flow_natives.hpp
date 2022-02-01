@@ -136,6 +136,17 @@ void flow_print2(_FlowUnion<T...>* v) {
 	(*v).visit([](auto&& x) { flow_print2(x); });
 }
 
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const _FlowArray<T>& a) {
+	os << "[";
+	for (std::size_t i = 0; i < a.value.size(); ++i) {
+		flow_print2(a.value[i]);
+		os << ",";
+	}
+	os << "]";
+	return os;
+}
+
 template <typename A, typename B>
 bool areValuesEqual(const A& v1, const B& v2) {
 	return v1 == v2;

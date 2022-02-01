@@ -125,8 +125,7 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 					blueprint(
 						"
 					%declaration% {
-					  std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> convert;
-					  return convert.from_bytes(std::to_string(flow_i));
+					  return new _FlowString(std::to_string(flow_i));
 					}
 				",
 						[ "declaration", declaration,]
@@ -151,22 +150,20 @@ bdeclaration2cpp(backend : Backend<CppInfo>, d : BDeclaration) -> Pair<string, s
 				argtypes = getBArgTypes(type);
 				breturnType = getBReturnType(type);
 				isSimpleReturnType = isSimpleBType(breturnType);
-				returnType = btype2cpp(backend, breturnType);
+				polyvarIds = fold(typars, buildSet(polyvars), insertSet);
+				btypeFn2cpp = \btype -> btype2cppEx(backend, btype, \atype -> typars2cpp(backend, atype.typars), polyvarIds);
+				returnType = btypeFn2cpp(breturnType);
 
 				declaration = blueprint(
 					"%polyvars%%returnType% %id%(%args%)",
 					[
 						"polyvars", {
 							if (polyvars == []) ""
-							else "template <" + superglue(polyvars, \pv -> "typename " + pv, ", ") + "> "
+							else "template <" + superglue(polyvars, \pv -> "typename " + pv, ", ") + "> \n"
 						},
 						"id", id,
-						// TODO: if (tailCall) byValue (as it is now) else byRef (add &)
-						"args", supergluei(args, \i, arg -> {
-							argType = argtypes[i];
-							btype2cpp(backend, argType) +(if (!isSimpleBType(argType)) "* " else " ") + arg
-						}, ", "),
-						"returnType", returnType + (if (isSimpleReturnType) "" else "*"),
+						"args", supergluei(args, \i, arg -> btypeFn2cpp(argtypes[i]) + " " + arg, ", "),
+						"returnType", returnType,
 					]
 				);
 
@@ -263,7 +260,7 @@ bstatement2cpp(backend : Backend<CppInfo>, s : BStatement, fnArgs : Set<string>,
 		}
 		BLetStatement(id, value, body): {
 			valueType = getBType(value);
-			varType = if (!isSimpleBType(valueType)) (btype2cpp(backend, valueType) + "*") else "auto";
+			varType = if (!isSimpleBType(valueType)) btype2cpp(backend, valueType) else "auto";
 			varType + " " + id + " = " + bexp2cpp(backend, value, false) + ";\n"
 			+ (if (debugFlowMode) "std::cout<<\"FN : &" + id + " = \"<< &" + id + " << \" : value=\" << " + id + " <<std::endl;\n" else "")
 			+ bstatement2cpp(backend, body, fnArgs, withReturn);
@@ -365,7 +362,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 			]);
 		}
 		BCall(fn, args, type): {
-			unpair(createTmpVars(backend, args, isGlobalExp), \newStatements, newArgs -> {
+			untriple(createTmpVars(backend, args, isGlobalExp), \newStatements, newArgs, drops -> {
 				createdTmpVars = newStatements != [];
 				isComparison = isComparisonFn(fn);
 				newBCall = BCall(fn, newArgs, type);
@@ -373,20 +370,22 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 				bcallExp2cpp = \newBackend, newExp -> {
 					cppExp = bexp2cpp(newBackend, newExp, isGlobalExp);
 					// we have to compare values, not pointers
-					if (isComparison && isStructArg(newExp)) ("(*" + cppExp + ")") else cppExp;
+					if (isComparison && isStructArg(newExp)) ("(*(" + cppExp + "))") else cppExp;
 				}
 				// TODO: find a better solution!!
 				// and we only need lambda for BLetStatement
-				// TODO: drop tmp vars
 				if (createdTmpVars) {
-					blueprint(" ([%capture%]() {
-	%tmpVars%return %body%;
-})()",
-					[
-						"capture", if (isGlobalExp) "" else "&",
-						"tmpVars", concatStrings(newStatements),
-						"body", produceBackendCall(backend, newBCall, bcallExp2cpp),
-				]);
+					returnVarName = "_tmp" + i2s(atomicRefIntAddition(tmpVarCounter, 1));
+					blueprint(
+						if (type == bvoidType) "{\n%tmpVars% %body%;\n%drops%\n}"
+						else " ([%capture%]() {\n	%tmpVars%auto %returnVarName% = %body%;\n	%drops%\n	return %returnVarName%;\n})()",
+						[
+							"capture", if (isGlobalExp) "" else "&",
+							"tmpVars", concatStrings(newStatements),
+							"body", produceBackendCall(backend, newBCall, bcallExp2cpp),
+							"drops", if (isNativeFnWithoutDrop(fn)) concatStrings(map(drops, \v -> bexp2cpp(backend, v, isGlobalExp)+";")) else "",
+							"returnVarName", returnVarName,
+					]);
 				} else {
 					produceBackendCall(backend, newBCall, bcallExp2cpp)
 				}
@@ -458,7 +457,7 @@ bexp2cpp(backend : Backend<CppInfo>, bexp : BExp, isGlobalExp : bool) -> string 
 		BArray(args, type): {
 			blueprint("new %type%({ %args% })",
 				[
-					"type", btype2cpp(backend, type),
+					"type", btype2cppConstruct(backend, type),
 					"args", superglue(args, rec, ", "),
 			]);
 		}
@@ -480,7 +479,7 @@ dunion2cpp(backend : Backend<CppInfo>, u : DUnion, unionTypes : Tree<string, [BT
 			}",
 			[
 				"name", u.id,
-				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t) + "*", ", ")
+				"members", superglue(lookupTreeDef(unionTypes, u.id, []), \t : BType -> btype2cpp(backend, t), ", ")
 			]
 		)
 	);
@@ -645,13 +644,12 @@ addTyparsToStruct(backend : Backend<CppInfo>, type : BType, body : string) -> st
 }
 
 dtype2cpp(backend : Backend<CppInfo>, type : DType) -> string {
-	btype = dtype2btype(type);
-	btype2cpp(backend, btype)
-	+ (if (isSimpleBType(btype)) "" else "*");
+	btype2cpp(backend, dtype2btype(type));
 }
 
+// todo: polyvars ?
 btype2cpp(backend : Backend<CppInfo>, btype : BType) -> string {
-	btype2cppEx(backend, btype, \type -> typars2cpp(backend, type.typars));
+	btype2cppEx(backend, btype, \type -> typars2cpp(backend, type.typars), makeSet());
 }
 
 typars2cpp(backend : Backend<CppInfo>, typars : [BType]) -> string {
@@ -662,17 +660,23 @@ typars2cpp(backend : Backend<CppInfo>, typars : [BType]) -> string {
 	}
 }
 
-btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BTypeName) -> string) -> string {
+btype2cppConstruct(backend : Backend<CppInfo>, btype : BType) -> string {
+	btype2cppEx(backend, btype, \type -> typars2cpp(backend, type.typars), makeSet1(bType2id(btype)));
+}
+
+btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BTypeName) -> string, polyvars : Set<string>) -> string {
+	isPolymorphicType = \type : BType -> containsSet(polyvars, bType2id(type));
+	getPtr = \type -> if (!isSimpleBType(type) && !isPolymorphicType(type)) "*" else "";
 	switch (btype) {
 		BTypePar(id): bTypeParId2cpp(id);
 		BTypeName(id, typars): {
 			if (id == "void") "void"
 			else if (id == "bool" || id == "double") id
 			else if (id == "int") { "int32_t" }
-			else if (id == "string") { "_FlowString" }
+			else if (id == "string") { "_FlowString" + getPtr(btype) }
 			else if (id == "flow") "_FlowType"
 			else if (isArrayTypeId(id)) {
-				"_FlowArray<" + btype2cpp(backend, typars[0]) + (if (isSimpleBType(typars[0])) "" else "*") + ">"
+				"_FlowArray<" + btype2cpp(backend, typars[0]) + ">" + getPtr(btype)
 			} else if (id == "ref") {
 				blueprint(
 					"std::shared_ptr<%valueType%>",
@@ -681,16 +685,13 @@ btype2cppEx(backend : Backend<CppInfo>, btype : BType, structTypars2cpp : (BType
 			} else if (trim2(id, "?") == "") {
 				btype2cpp(backend, BTypePar(id));
 			} else {
-				id + structTypars2cpp(btype)
+				id + structTypars2cpp(btype) + getPtr(btype)
 			}
 		}
 		BTypeFunction(args, returnType): {
-			fnType2cpp = \type -> {
-				btype2cpp(backend, type)
-				+ (if (!isSimpleBType(type)) "&" else "")
-			}
+			fnType2cpp = \type -> btype2cpp(backend, type) + getPtr(type);
 			"std::function<" + fnType2cpp(returnType)
-			+ "(" + superglue(args, fnType2cpp, ", ") + ")>"
+			+ "(" + superglue(args, fnType2cpp, ", ") + ")>&&"
 		}
 	}
 }
@@ -802,21 +803,22 @@ castBexp2cpp(backend : Backend<CppInfo>, bcast : BCast) -> string {
 		blueprint(
 			if (newVal != value) "%value%" else "new %type%{%value%}",
 			[
-				"type", btype2cpp(backend, bcast.to),
+				"type", btype2cppConstruct(backend, bcast.to),
 				"value", value2cpp(newVal),
 			]
 		);
 	}
 
 	downType = \value : string -> {
+		// todo: polyvars ?
 		type = btype2cppEx(backend, bcast.to, \sType -> {
 			usedTypars = lookupTreeDef(backend.info.usedTypars, sType.id, []);
 			if (usedTypars == []) "" else typars2cpp(backend, sType.typars);
-		});
+		}, makeSet());
 		blueprint(
 			"std::get<%type%>(%id%)",
 			[
-				"type", type + "*",
+				"type", type,
 				"id", "*" + value,
 			]
 		);
@@ -975,9 +977,7 @@ bvar2cpp(bexp : BVar, backend : Backend<CppInfo>) -> string {
 
 // find the type of function arguments
 bVar2realFuncTypes(var : BVar, backend : Backend<CppInfo>) -> string {
-	// todo: arg= getPolymorphicNatives
-	isPolymorphicFn = containsSet(getPolymorphicNatives(), var.id);
-	polyvarType2cpp = \type -> btype2cpp(backend, type) + (if (!isPolymorphicFn && !isSimpleBType(type)) "*" else "");
+	polyvarType2cpp = if (containsSet(getPolymorphicNatives(), var.id)) {\type -> btype2cppConstruct(backend, type);} else {\type -> btype2cpp(backend, type);}
 	switch (var.type : BType) {
 		BTypePar(__) : "";
 		BTypeName(__, __) : "";
@@ -1168,7 +1168,7 @@ makeTyparsForConstructorHeader(argTypes : [string]) -> string {
 // TODO
 makeStructDestructor(backend : Backend<CppInfo>, struct : RecursiveDStruct, withBody : bool) -> string {
 	if (withBody) {
-		makeDropField = \field : DStructArg, simple : bool -> "::drop(" + (if (simple) "" else "*") + field.id + ");";
+		makeDropField = \field : DStructArg, simple : bool -> "::drop(" + field.id + ");";
 
 		printField = \id -> "flow_print2(" + id + ")";
 		isRecursiveField = \i -> elementAt(struct.recursiveArgs, i, false);
@@ -1359,7 +1359,8 @@ makeUsedStructTypars(structs : Tree<string, DStruct>) -> Tree<string, [string]> 
 
 // TODO: 
 isSimpleBType(type : BType) -> bool {
-	type == bvoidType || type  == bboolType || type  == bintType || type  == bdoubleType;
+	type == bvoidType || type  == bboolType || type  == bintType || type  == bdoubleType
+	|| isSameStructType(type, BTypeFunction([], bvoidType));
 }
 
 // TODO: ignore simple types (remove all dup/drop/reuse) ?
@@ -1408,7 +1409,6 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 	}
 }
 
-// TODO: drop tmp vars! or replace this fn with ? (* with unique_ptr ?)
 // Test case #1: refcnt12.flow : test5() 
 // fn3(Struct(v), end)
 // tmp_var = Struct(v)
@@ -1417,10 +1417,10 @@ bCounter2cpp(backend : Backend<CppInfo>, exp : BCounter) -> string {
 // a = useVars8(Struct(8), Struct(11));
 // tmp_var_1 = Struct(8);
 tmpVarCounter = ref 0;
-createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> Pair<[string], [BExp]> {
+createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> Triple<[string], [BExp], [BExp]> {
 	newArgs = map(args, \arg -> {
 		if (isBLet(arg)) { // temp vars
-			Pair(Some(""), arg); // ~= BCall
+			Pair(Some(Pair("", BVoid())), arg); // ~= BCall
 		} else if (isBConstruct(arg)) {
 			varName = "_tmp" + i2s(atomicRefIntAddition(tmpVarCounter, 1));
 			tmpVar = blueprint(
@@ -1431,17 +1431,25 @@ createTmpVars(backend : Backend<CppInfo>, args : [BExp], isGlobalExp : bool) -> 
 					"exp", bexp2cpp(backend, arg, isGlobalExp),
 				]
 			);
-			Pair(Some(tmpVar), BVar(varName, getBType(arg)));
+			type = getBType(arg);
+			dropTmpVar = BDropValue(BVar(varName, type));
+			Pair(Some(Pair(tmpVar, dropTmpVar)), BVar(varName, type));
 		} else {
 			Pair(None(), arg);
 		}
 	});
 
-	Pair(filtermap(newArgs, firstOfPair), map(newArgs, secondOfPair));
+	Triple(
+		filtermap(newArgs, unpairC(\tmpVarM, __ -> maybeMap(tmpVarM, firstOfPair))),
+		map(newArgs, secondOfPair),
+		filtermap(newArgs, unpairC(\tmpVarM, __ -> maybeMap(tmpVarM, secondOfPair)))
+	);
 }
 
 isBConstruct(exp : BExp) -> bool {
 	switch (exp : BExp) {
+		BString(__) : true;
+		BArray(__, __) : true;
 		BConstruct(__, __, __) : true;
 		BCast(value, __, __) : isBConstruct(value);
 		default : false;

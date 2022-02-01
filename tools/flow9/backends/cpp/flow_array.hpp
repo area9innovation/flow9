@@ -57,17 +57,6 @@ void drop(_FlowArray<T*>* a) {
 	}
 }
 
-template <typename T>
-std::ostream& operator<<(std::ostream& os, const _FlowArray<T>& a) {
-  os << "[";
-  for (std::size_t i = 0; i < a.value.size(); ++i) {
-	  flow_print2(a.value[i]);
-	  os << ",";
-  }
-  os <<"]";
-  return os;
-}
-
 template <typename A, typename B>
 bool operator==(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
 	if (b.value.size() == a.value.size()) {
@@ -105,7 +94,7 @@ bool operator<(const _FlowArray<A*>& a, const _FlowArray<B*>& b) {
 
 template <typename A, typename B>
 bool operator<(const _FlowArray<A>& a, const _FlowArray<B>& b) {
-	return a < b;
+	return std::lexicographical_compare(a.value.begin(), a.value.end(), b.value.begin(), b.value.end(), [](auto const& p1, auto const& p2) { return (p1) < (p2);});
 }
 
 template <typename A, typename B>
