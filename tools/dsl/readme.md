@@ -26,14 +26,14 @@ bools, ints, doubles, string and lists, plus AST nodes. These language has the p
 that the AST of Lambda itself (and all other languages in scope) can be represented
 in the language itself. So you can also think of Lambda as a kind of Lisp where
 programs = data. This property is maintained, so that the system itself can use Lambda 
-as the grounding  layer for defining new languages and extensions in this language.
+as the grounding layer for defining new languages and extensions in this language.
 
 Thus, when you stack language extensions on top of each others, they will lower themselves
 down to lower languages until they reach Lambda. That in turn means that the end result
 can be evaluated, compiled and so forth, since Lambda itself can do all these things.
 
 You do not have to use Lambda as the base language. You will not directly benefit from existing
-evaluation and compilation targets for Lambda if you do, but since languages are easy
+evaluation and compilation targets for Lambda if you don't, but since languages are easy
 to define and extend, this framework still helps in case you want to implement some other
 language.
 
@@ -47,9 +47,10 @@ power:
 - Pure expression-based languages rather than statement based
 - Term-rewriting rules for desugaring, lowering and optimizations
 
-Flow itself is NOT expression based. Consider "import", "export", types and top-level functions
-as examples. This turns out to be somewhat problematic for various aspects. So in this
-library, the design has been changed to be based around pure expression-based languages.
+Consider Flow. Flow itself is NOT expression based. Top-level things like "import", "export", 
+types and top-level functions are examples that break the expression condition. This turns out 
+to be somewhat problematic for various aspects. So in this library, the design has been 
+changed to be based around pure expression-based languages.
 
 This property means that rewriting rules become much simpler to reason about and will work
 in general. Experience shows that this approach is much superior for compositionality.
@@ -64,11 +65,11 @@ can be seem.
 
 The system is architectured around some core aspects of programming languages:
 
-- Syntax and parsing. Results in ASTs represented as the `DslAst` type in flow.
+- Syntax and parsing. Results of parsing is an AST represented as the `DslAst` type in flow.
 - Rewriting and lowering. Term-rewriting rules to transform ASTs to other ASTs,
   both for desugaring, lowering and optimizations through e-graphs. 
 - Runtime. Language extensions can provide runtime functions to help implement
-  the langauge features.
+  the language features.
 - Evaluation. Lambda comes with an evaluator, and a small runtime
 - Compilation. Using pattern matching and a blueprint-like language, compilation
   to text formats is easy to specify
