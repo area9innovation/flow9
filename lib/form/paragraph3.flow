@@ -1033,7 +1033,7 @@ RenderLine(
 	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
 
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1) {
+	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1 && !newJustifyEnabled) {
 		nwords = length(info.optimizedLine);
 		min(10.0, remaining / i2d(nwords - 1));
 	} else 0.0;
@@ -1261,12 +1261,45 @@ applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> F
 dummyTextWidthInspector = TextWidthInspector(make(0.0));
 
 optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement] {
-	fold(words, makeList(), \acc : List<OptimizedLineElement>, word : ParaWord -> {
+	wordsCount = length(words) - 1;
+
+	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
+		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
+			lastWord = i == wordsCount;
+			switch (w.word) {
+				Space(__): if (lastWord) acc else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);						
+				default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+			}
+		});
+		if (spacesAndWordsWidth.first > 0) {
+			(availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
+		} else 0.0
+	} else 0.0;
+
+	foldi(words, makeList(), \i, acc : List<OptimizedLineElement>, word : ParaWord -> {
 		f = word.form;
+		w = word.word;
 		metrics = word.metrics;
 		intIdM = word.interactivityIdM;
+		lastWord = i == wordsCount;
 		switch(acc){
-			EmptyList() : Cons(OptimizedLineElement(f, metrics, intIdM), acc);
+			EmptyList() : {
+				formMetrics = switch (w) {	
+					Space(__): {
+						if (newJustifyEnabled && alignment == Justify()) {
+							switch (f : GhostForm) {
+								Text(__, __) : {
+									spaceSize = getStaticFormSize(f);
+									FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
+								}
+								default: metrics
+							}
+						} else metrics
+					};
+					default: metrics;
+				};
+				Cons(OptimizedLineElement(f, formMetrics, intIdM), acc)
+			};
 			Cons(p, tail_) : {
 				switch (p.f : GhostForm) {
 					Text(t1, s1) : {
@@ -1291,13 +1324,24 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 									} else {
 										// TODO: Do not do this until at the end of the joining fest
 										m = getStaticFormSize(t);
+										optimizedLineElementMetrics : FormMetrics = fgetValue(p.metrics);
+										wordWidth = getStaticFormSize(f).width;
+
+										additionalWidth = switch (w) {
+											Space(__): {
+												if (newJustifyEnabled && alignment == Justify()) {
+													if (lastWord) 0.0 else wordSpacing;
+												} else 0.0;
+											} 
+											default: extractStruct(s2, LetterSpacing(0.0)).spacing;
+										};
 
 										Pair(
 											t,
 											FormMetrics(m with
-												width = m.width + extractStruct(s2, LetterSpacing(0.0)).spacing
+												width = optimizedLineElementMetrics.width + wordWidth + additionalWidth
 											) |> const
-										)
+										);
 									}
 
 									// Replace the last element with the newly joined
@@ -1318,29 +1362,18 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 		}
 	}) |> list2array
 	|> (\arr : [OptimizedLineElement] -> {
-		if (newJustifyEnabled && alignment == Justify() && !lastLine) {
-			spacesAndWordsWidth : Pair<int, double> = fold(words, Pair(0, indent), \acc : Pair<int, double>, w -> {
-				switch (w.word) {
-					Space(__): Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
-					default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+		if (wordSpacing != 0.0) {
+			wordSpacingStyle = WordSpacing(const(wordSpacing));
+			map(arr, \e -> {
+				switch (e.f : GhostForm) {
+					Text(t, s): {
+						OptimizedLineElement(
+							e with f = Text(t, arrayPush(s, wordSpacingStyle))
+						)
+					}
+					default: e;
 				}
 			});
-
-			if (spacesAndWordsWidth.first > 0) {
-				wordSpacing = WordSpacing(const((availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first)));
-				map(arr, \e -> {
-					switch (e.f) {
-						Text(t, s): {
-							OptimizedLineElement(
-								e with f = Text(t, arrayPush(s, wordSpacing))
-							)
-						}
-						default: e;
-					}
-				})
-			} else {
-				arr
-			}
 		} else {
 			arr
 		}
