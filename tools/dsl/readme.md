@@ -531,3 +531,105 @@ Design a programming language which can define all the basic algorithms
 and CRDTs.
 
 https://github.com/automerge/automerge
+
+# Prolog
+
+// https://www.swi-prolog.org/download/publications/A_Portable_Prolog_Compiler.pdf
+
+Instructions:
+
+enter - marks the change from head to body of a clause.
+call - call has an offset to the procedure to call
+exit - ends a clause
+
+Terms:
+const <offset> - pointer to an integer or atom
+var <number> - each variable is numbered
+
+function <offset>
+<code for first arg>
+<code for second arg>
+pop
+
+
+The paper has an interpreter for this VM, which looks pretty simple.
+
+There is a Java implementation here:
+https://github.com/arnobastenhof/prolog-jvm
+
+// WAM
+
+https://pdf.sciencedirectassets.com/271869/1-s2.0-S0743106600X00891/1-s2.0-0743106694900310/main.pdf?X-Amz-Security-Token=IQoJb3JpZ2luX2VjEPH%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCxASki9hl67E1oqllEM1lfsXQcKYChi1bPoWr26K%2F0UQIgIwxeoXpEiUBNzi6X3L4GwC%2BphjTNRjAhqG5sCuRkZzoq%2BgMIKRAEGgwwNTkwMDM1NDY4NjUiDCN7vttTBFXIovjGNCrXA3WbZBVnmNtl3BqVldzhpIZEahOjuaTe6nB5Afp4YUOlCwCrXj7Hw0LeC5O8T%2BVrkIoZYNl9cS%2BLnhze9m%2FEHPeLvuC0sCmiOZ5zhuFSV4YEpEVmJ%2Fc7n5%2FxrQDMCHsbIPmGVW3xBxepJS2Vj2lJ73gcVEOoIpBuQI5cSG%2BEQePMe2ovwyBhuGv8JyWJp%2Btroobd%2BujsurmWcrAp1oSBRxEHDY737wQdqMbDTJv4wXxBgDIoVjWj2Z4pRI%2B8z%2FzvfpJb%2BExnRIwG7VuLeL86%2FywU6atWlEyJRePh3%2Bpd%2FkWHx%2Fz6jxD%2B09plD2Hc1JlrDyBdkTIUTBfJQqI%2FtPHhghjGlEz6306SmvGHOwwrdN8uuSmp2hW2JRTbaC1mRVn4As4CprOEPGtWPJTMn3C4dNG5nku%2FGpriqji4%2B51Du%2F3DcgpaSVZkrAz2aSD592RiCBRhiP%2F3pV02pGRWOaxxWXsZu07z9r2TUueJLBZYzD%2BVXKVuvZ9lFXVdEYhHGGGUUMS%2Bx2ibbbaYAGBvoaeVJuloyQjbLzctVjrAnsYmss7Oo09yuzIFp4y7EIqHJwncz%2FG2vwU0G%2FVIL1pBxKYsn%2BktQEFRAQ%2BCAlZbFtbGUCSosqRPVFCQkzDut96PBjqlAZllgKH%2BQulc7RRxuvOec2VgP5V4NvgyBIDIorzVhKWQe%2FJiU%2B0j9%2BIHKaUnZp6PmAl%2B4piHlbhsiZtqfWS5kYsNeNu9EvUscQ7zu5a8aBnrLybjRTfQKzApk7S%2FnpWlo6DUsGRQAEO1EZrsH88mayG4c%2BInpUu88oSGMupxXfHoECjNhnSTDiHGZUIwLPO6PkUTZ6tqxQwWyfcA4TMURGF72oNYkg%3D%3D&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20220131T084944Z&X-Amz-SignedHeaders=host&X-Amz-Expires=300&X-Amz-Credential=ASIAQ3PHCVTY3ADRNLHN%2F20220131%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature=25033d6ea351b7d37ddaa4b902d8effabda6f93349f51547174a488af9bfadfe&hash=bb966ce3016168914f694189a48ee88aba436edd7ff80556c629882873272719&host=68042c943591013ac2b2430a89b270f6af2c76d8dfd086a07176afe7c76c2c61&pii=0743106694900310&tid=spdf-068bb2f6-720b-4d07-83f5-ee0088d755e0&sid=d0b923618409e84b5668a6b-a85181ce0962gxrqb&type=client
+
+Small implementation in simple Java
+https://drops.dagstuhl.de/opus/volltexte/2018/8453/pdf/OASIcs-ICLP-2017-10.pdf
+
+https://github.com/ptarau/iProlog/blob/master/IP/src/iProlog/Engine.java
+
+In clojure:
+https://github.com/nbyouri/miniprolog/tree/master/miniprolog
+
+In TS:
+https://github.com/nathsou/Picolog
+
+In Haskell with a nice AST:
+https://github.com/kfl/miniprolog
+
+In c++:
+https://www.cl.cam.ac.uk/~am21/research/funnel/prolog.c
+https://github.com/apaz-cli/Prolog-Interpreter/blob/master/prolog.c
+
+In Rust:
+https://github.com/julian-blaauboer/ergo
+
+
+
+# Other Ideas
+
+More language features:
+- references
+- import, export
+- native
+- "with" syntax
+- switch expressions
+- ?? maybe syntax
+
+More backends:
+- Kotlin
+- Java
+- C++
+
+Standard library:
+- string library
+- math functions
+- DS: Tree -> rewrite the flow one?
+
+- New layout for Material
+
+   [ Text("asdfasdf") | a in some-list ]  
+
+  ,  -> cols2
+  \n  -> lines2
+
+  "n-times".   , 3 \n
+    1   2   3
+	4   5   6
+	7   8   9
+ (if mobile , 2 \n else , 4 \n)
+
+- width = oracle(5 .. 10);
+  cost = overlap(this andet, ) < 0 && line-width < 70 chars per line;
+  optimize(sdf)
+
+- graphics library based on math, in particular raymarching
+
+- SSql new syntax based on set comprehensions
+
+	[ u.name | u in users, c in classes, cl in class_learners cl, cl.class_id == index(c.id), cl.user_id == u.id ]
+
+- math rule engine. Integrate that here
+ 
+- Compiler generator
+- master key
+- ssql
+- wigi, wigiexp
