@@ -403,9 +403,13 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
         }
 
         if (encodeUtf8(rq.method) == "GET") {
-            std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
-
-            rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
+			if (params.empty()) {
+				// Avoid adding the ? on requests without parameters
+				rq.url = parseUtf8(url);
+			} else {
+				std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
+				rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
+			}
         } else if (rq.payload.empty()) {
             std::string params_str = encodeUtf8(params);
             rq.payload = std::vector<uint8_t>(params_str.begin(), params_str.end());
