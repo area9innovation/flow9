@@ -13,7 +13,7 @@
 	>>);
 
 	registerDslRewriting("desugar", "|array", 
-		"array", "lambda", ";", <<
+		"ast", "lambda", ";", <<
 		// [ exps ] => exps - given the list representation
 		array($e) => $e;
 		// a[i] => listAt(a, i);

@@ -21,18 +21,21 @@ So we convert a language with the suffix to a language without the part after th
 
 # TODO
 
+- Redo all languages to use this registry
+
+- What about the common runtime, runtime and native fns?
+
 - What about compilers and typing?  We could do:
   - "lambda => flow-syntax" for compilers
   - "lambda => lambda+type" for typing
 
-- Challenge: If we compile lambda+array to flow, we might have special rules that work for array.
-
 - Hook up compilers
 
-- Redo all languages to use this registry
+- Challenge: If we compile lambda+array to flow, we might have special rules that work for array.
 
-- Rework the AstEnv to be the egraph
-  
 - Do we really need the phases?
 
 - Should we have another representation of languages that is not strings?
+
+- Rework the AstEnv to be the egraph
+  
