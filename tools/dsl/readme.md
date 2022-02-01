@@ -486,6 +486,8 @@ operator is an indexing step, which can build (or reuse an existing) index over 
 Here is an implementation of relational algebra, probably using this approach:
 http://hjemmesider.diku.dk/~henglein/src/
 
+See also this one:
+https://www.awelm.com/posts/simple-db/
 
 Pipeline:
 Relational algebra
