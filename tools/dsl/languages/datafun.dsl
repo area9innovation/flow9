@@ -36,7 +36,7 @@ syntax lambda+quotestring+array {
 
 	// [ u.name | u in users, c in classes, cl in class_learners cl, cl.class_id == index(c.id), cl.user_id == u.id ]
 
-	["fold", "map"]
+	registerDslRuntime("|datafun", "lambda+array", << ["fold", "map"] >>);
 
 /*
 			[ $e | a_1 in $c_1, a_2 in $c_2 ] => fold($c_1, nil(), \acc_1, a_1 -> 
