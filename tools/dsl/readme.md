@@ -59,7 +59,10 @@ in general. Experience shows that this approach is much superior for composition
 
 This system is still in early development. The core features are present, and in the
 `test.flow` file and `tests` folder, a number of examples of languages and combinations
-can be seem.
+can be seen.
+
+Most of the language extensions are written in .dsl files. See the `languages` folder
+for a range of examples.
 
 # Aspects of languages
 
@@ -77,7 +80,7 @@ The system is architectured around some core aspects of programming languages:
 ## Syntax
 
 The grammar of langugages is specified using Gringo, and will be prepared 
-with `defineGrammar(name, grammar, additions)`.
+with `registerDslParser(language : string, grammar : string, requires : [string])`.
 
 The semantics actions are defined using actions like "plus_2", "negate_1", where
 the suffix defines the arity of the semantic action, i.e. the number of arguments
@@ -86,7 +89,7 @@ that AST node should take.
 Here is a simple grammar for expressions:
 
 	// The grammar of the language where arity of actions is a naming convention
-	mylang = defineGrammar("mylang", <<
+	registerDslParser("mylang", <<
 		exp = exp "+" ws exp $"plus_2" 
 			|> exp "*" ws exp $"mul_2"
 			|> int
@@ -94,10 +97,10 @@ Here is a simple grammar for expressions:
 		ws exp
 	>>, ["ws", "id", "int"]); // adds the expected definitions for these
 
-The `parseProgram` call will now parse a string using a given grammar:
+The `parseDslProgram` call will now parse a string using a given grammar:
 
-	defaultValue : DslAst = parseProgram(mylang, <<1+2*a>>);
-	println(prettyDsl(defaultValue));
+	defaultValue : DslAstEnv = parseDslProgram("mylang", <<1+2*a>>);
+	println(prettyDsl(defaultValue.ast));
 
 The result is a DslAst representation of the semantic actions, here
 pretty-printed:
@@ -155,7 +158,7 @@ e-graph.
 Here we define some rewriting rules to optimize simple math expressions in Lambda:
 
 	// The set of rewriting rules we want for optimizations
-	rewriting = defineDslRewriting(lambda, lambda, ";",
+	registerDslRewriting("optimize", "lambda", "lambda", "lambda", ";",
 		<<
 			$a + $b => $b + $a;
 			$a * $b => $b * $a;
@@ -180,14 +183,14 @@ Here we define some rewriting rules to optimize simple math expressions in Lambd
 		<< 0 >>
 	);
 
-Now, these rules can be applied using the `rewriteDsl` call:
+Now, these rules can be applied using the `performDslTransformations` call:
 	
-	testValue = parseProgram(mylang, << 0 + 123 + 0 * 23 + 1 * 23 + 34 * 2 >>);
+	value : DslAstEnv = parseDslProgram("mylang", << 0 + 123 + 0 * 23 + 1 * 23 + 34 * 2>>);
+	replaced = performDslTransformations("optimize", "lambda", value);
 
-	replaced = rewriteDsl(testValue, defaultValue, rules.rules, costs.costs, 2);
-	println(prettyDsl(testValue));
+	println(prettyDsl(value.ast));
 	println("is optimized to\n");
-	println(prettyDsl(replaced));
+	println(prettyDsl(replaced.ast));
 
 gives this output:
 
@@ -280,7 +283,7 @@ TODO:
 A runtime evaluator in the form on an interpreter will evaluate programs using a
 pre-defined set of natives, which correspond to a simple functional language:
 
-	println(prettyDsl(evaluateDsl(makeDslEnv(), program)));
+	println(prettyDsl(evalDslProgram(makeDslEnv(), "lambda", program).ast));
 
 The natives defined include:
 
@@ -293,7 +296,7 @@ The natives defined include:
 	nodeName, nodeChild, makeNode	// For nodes
 	println
 
-The language is a very basic, although it does have function overloading.
+The Lambda language is a very basic, although it does have function overloading.
 
 ## Blueprints for compilers
 
@@ -326,22 +329,22 @@ TODO:
 - Compiling Gringo is a problem, since "string" is wrong. Solutions: 
   - Add guards for patterns, so we can check if the string contains " or '. 
   - Add escape for strings when expanding
+- Add API to the registry for compiling
 
-## Composition of languages
+## Language registry
 
-The dsl_api file provides a mechanism to evaluate programs in languages that
-are build on top of each others.
-
-This means that any language combinatino can be parsed & evaluated.
-
-TODO:
-- Expose API for compiling
+The `populateDsls(folder)` call will read all .dsl files in a folder, and
+register them into the language registry. That makes them available for
+use in the basic apis.
 
 ## Runtime
 
 Some language constructs require a runtime, such as fold, map for list-comprehensions,
 first, second and third for tuples, and so on. There is a mechanism to define these,
 and there is a small common library in `dsl_runtime_common.flow` that is often used.
+
+See `languages/tuples.dsl` for an example of how to reuse common functions, as well
+as define custom runtime functions.
 
 # Languages
 
@@ -364,11 +367,12 @@ There are a number of language extensions available:
   default arguments like foo(a, b = 2) { body }). These are like C++.
 - named_args provides "foo(a =2, b = 3) { body}; foo(a:4, b: 4)" syntax. It is an
   alternative to the C++ convention, which is easier to read.
+- ternary_if provides "a ? t : e" syntax for if-then-else
+- assign_operators provides "a += 1; a" syntax for "updates"
+
 
 TODO:
-- Add some central facility to register languages and extensions, and allow dependencies
-  between them. So if I want structs, I would just ask for that, and automatically would
-  get records (and maybe dots) as part of the package.
+- Allow dependencies between extensions: named_args relies on records.
 
 - Figure out good syntax for stepped range: 1, 3, ... , 9, "1..9 in steps of 2", "1..9 (+2)", ...
 
@@ -401,8 +405,6 @@ TODO:
     r = Rect(1, 2);
 	r.height = 3;  -> Rect(r with height = 3) => Rect(1, 3)
 
-- Add +=, *=, -= and similar syntax
-
 - Add type declaration syntax: 
   - "int a" C style
   - "a : int" flow style
@@ -412,6 +414,14 @@ TODO:
 - Add GLSL compiler
 
 - Build raymarching DSL for geometry
+
+# Change to egraph as base
+
+- Change lowering to allow any language on the right hand side
+  Keep the environment around, so lower should work with DslAstEnv
+  and accept a "runtime" language
+
+- Introduce the egraph in DslAstEnv
 
 # Future plans
 

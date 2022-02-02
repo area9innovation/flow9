@@ -1,9 +1,4 @@
-import tools/dsl/dsl_parse;
-import tools/dsl/dsl_runtime;
-import tools/dsl/dsl_lowering;
-import tools/dsl/languages/ast_syntax;
-
-export {
+syntax lambda+quotestring+array {
 	// This adds records to a language
 
 	// Syntax:
@@ -21,11 +16,8 @@ export {
 	//					a = record(b = b);
 	//				    or probably, it is "with" a la flow:
 	//					a = record(a with b = b)
-	defineRecords(language : DslLanguage) -> DslLanguage;
-}
 
-defineRecords(language : DslLanguage) -> DslLanguage {
-	records = extendGrammar(language.grammar, << 
+	registerDslParserExtension("records", << 
 		atom = atom | '{' ws recordFields '}' ws $"record_1";
 
 		// listOf(recordfield, ",")
@@ -48,47 +40,37 @@ defineRecords(language : DslLanguage) -> DslLanguage {
 	// Given a record like { myfield : 1, second : 2} , this constructs functions like 
 	// 	myfield = \r -> field(r, "myfield");
 	// 	second = \r -> field(r, "second");
-	lowering = defineDslLowering(defineDslAst().grammar, language.grammar, ";;", <<
+	registerDslLowering("desugar", "|records", "ast", "lambda+array", ";;", <<
 			record($fields) => 
 				fold(fields, record(fields), \acc, f -> {
-					// TODO: This does not work well. We have to have a better way to produce the nodes
 					name = nodeChild(f, 0);
-					args = cons("r", nil());
-					pars = cons(name, cons(r, nil()));
-					global_let(name, lambda(args, call(var("field"), pars)), acc)
+					// TODO: We should lift this directly into the environment so
+					// the helpers become accessible in code like "a = { foo : 1}; foo(a)"
+					let(name, lambda(["r"], call(var("field"), [r, name])), acc)
 				}) ;;
 		>>);
 
 	// If a named type is defined, we should construct constructor functions for it
 	// as well
-	DslLanguage("records", records, None(), Some(lowering), None(),
-		addCommonDslRuntime(
-			["fold"],
-			defineDslRuntime(language, [
-				Pair("field", <<
-					\record, fieldname -> {
-						fields = nodeChild(record, 0);
-						fold(fields, nil(), \acc, f -> {
-							name = nodeChild(f, 0);
-							if (name == fieldname) {
-								nodeChild(f, 1);
-							} else acc;
-						})
-					}
-				>>),
-				Pair("hasField", <<
-					\record, fieldname -> {
-						fields = nodeChild(record, 0);
-						fold(fields, false, \acc, f -> {
-							acc || {
-								name = nodeChild(f, 0);
-								name == fieldname
-							}
-						})
-					}
-				>>)
-			]),
-		),
-		[], Some(language)
-	);
+	registerDslRuntime("|records", "lambda+array", <<
+		field = \record, fieldname -> {
+			fields = nodeChild(record, 0);
+			fold(fields, nil(), \acc, f -> {
+				name = nodeChild(f, 0);
+				if (name == fieldname) {
+					nodeChild(f, 1);
+				} else acc;
+			})
+		};
+		hasField = \record, fieldname -> {
+			fields = nodeChild(record, 0);
+			fold(fields, false, \acc, f -> {
+				acc || {
+					name = nodeChild(f, 0);
+					name == fieldname
+				}
+			})
+		};
+		["fold"]
+	>>);
 }
