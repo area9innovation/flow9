@@ -13,9 +13,9 @@ is fundamentally a function from (AST, environment) to (AST, environment).
 The specification is a pattern or rule that describes what this transformation does to a language. 
 
 Read | as "cut" in these:
-"lambda|-syntax" means "lambda-syntax" is converted to "lambda", i.e. parsed
-"dot|-syntax" means "*dot-syntax" is converted to "dot", i.e. parsed
-"|-comprehension" means "lang-comprehension" is lowered to "lang"
+"lambda|+syntax" means "lambda+syntax" is converted to "lambda", i.e. parsed
+"dot|+syntax" means "*dot+syntax" is converted to "dot", i.e. parsed
+"|+comprehension" means "lang+comprehension" is lowered to "lang"
 
 So we convert a language with the suffix to a language without the part after the |.
 
@@ -25,7 +25,7 @@ So we convert a language with the suffix to a language without the part after th
 
 - What about the common runtime, runtime and native fns?
 
-- What about compilers and typing?  We could do:
+- What about specifications for compilers and typing?  We could do:
   - "lambda => flow-syntax" for compilers
   - "lambda => lambda+type" for typing
 

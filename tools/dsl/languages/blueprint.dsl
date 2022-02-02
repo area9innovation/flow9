@@ -1,4 +1,4 @@
-syntax lambda-quotestring-array {
+syntax lambda+quotestring+array {
 
 registerDslParser("blueprint", <<
 	output = ws $"nil" (blueprint $"cons")* $"blueprint_1";
