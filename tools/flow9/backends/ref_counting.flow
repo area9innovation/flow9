@@ -197,7 +197,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BInt(v) : exp;
 		BDouble(v) : exp;
 		BString(v): if (withReturn) exp else BExpUsedVars(exp with exp = BDropValue(exp.exp));
-		BVar(id, type): if (isBTypeFunction(type)) exp else dupDrop(exp, withReturn);
+		BVar(id, type): if (isBTypeFunction(type) || containsSet(fnIds, id)) exp else dupDrop(exp, withReturn);
 		BArray(args, type): unquadruple(
 			mapExpA(args, false, true, isDownDrop, true),
 			\newValues, newUsedVars, newCreatedVars, newDrops -> {
@@ -234,7 +234,8 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			isLambda = lambdaFn.first != "" && !isNativeOperation;
 			hasResult = type != bvoidType;
 			newFn = rec(fn, withReturn || hasResult, isDownDrop);
-			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, newFn.downDrops), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
+			newFnExp = reduceBCounter(newFn.exp, isDownDrop || isComparison);
+			newArgs = foldr(args, Quadruple([], newFn.usedVars, newFn.createdVars, maybeArrayPush(newFn.downDrops, newFnExp.second)), \acc, arg -> unquadruple(acc, \newArgs, newTails, createdVars, newDrops -> {
 				newArg = recInc(arg, newTails, exp.createdVars, newDrops, true, isDownDrop || isComparison);
 				// if (!isComparison) drop is inside the FN
 				dupedArg = if (isComparison) newArg else dupBExpUsedVars(newArg, true);
@@ -243,9 +244,9 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			}));
 
 			newBCall = if (isNativeOperation) {
-				BCall(newFn.exp, newArgs.first, type);
+				BCall(newFnExp.first, newArgs.first, type);
 			} else {
-				addTmpVars(newArgs.first, \tmpVars : [BExp] -> BCall(newFn.exp, tmpVars, type));
+				addTmpVars(newArgs.first, \tmpVars : [BExp] -> BCall(newFnExp.first, tmpVars, type));
 			}
 			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, BExpUsedVar(lambdaType, false))) else newArgs.second;
 			// TODO: reuse only the result from which we use the part (field). otherwise you don't need to add BReuse.

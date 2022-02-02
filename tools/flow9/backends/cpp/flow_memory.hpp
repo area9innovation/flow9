@@ -20,7 +20,11 @@ std::string demangle(const char* name) {
 #endif
 
 // memory
-// TODO
+// 
+// templates
+void drop(int32_t a) {}
+void drop(double a) {}
+void drop(bool a) {}
 
 // Structs
 
