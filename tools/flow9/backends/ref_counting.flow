@@ -73,6 +73,7 @@ export {
 	isComparisonFn(fn : BExp) -> bool;
 
 	isNativeFnWithoutDrop(exp : BExp) -> bool;
+	isBLet(exp : BExp) -> bool;
 }
 
 optimization = true;
@@ -240,14 +241,20 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 				reducedValue = reduceBCounter(dupedArg.exp, isDownDrop || isComparison);
 				Quadruple(concat([reducedValue.first], newArgs), dupedArg.usedVars, mergeSets(createdVars, newArg.createdVars), arrayPushMaybe(dupedArg.downDrops, reducedValue.second));
 			}));
-			newBCall = BCall(newFn.exp, newArgs.first, type);
+
+			newBCall = if (isNativeOperation) {
+				BCall(newFn.exp, newArgs.first, type);
+			} else {
+				addTmpVars(newArgs.first, \tmpVars : [BExp] -> BCall(newFn.exp, tmpVars, type));
+			}
 			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, BExpUsedVar(lambdaType, false))) else newArgs.second;
 			// TODO: reuse only the result from which we use the part (field). otherwise you don't need to add BReuse.
 			dropedBCall = if (!hasResult) newBCall else if (withReturn) BReuseValue(newBCall) else BDropValue(newBCall);
-			expWithDownDrop = if (newArgs.fourth == []) {
+			newDownDrops = newArgs.fourth;
+			expWithDownDrop = if (newDownDrops == []) {
 				dropedBCall;
 			} else {
-				addTempVar(dropedBCall, newArgs.fourth, type, withReturn);
+				addTempVar(dropedBCall, newDownDrops, type, withReturn);
 			}
 			newExp = BExpUsedVars(expWithDownDrop, newUsedVars, newArgs.third, []);
 
@@ -677,8 +684,11 @@ replaceReuseWithDrop(value : BExp, type : BType, makeExp : (BExp) -> BExp) -> BE
 			type
 		);
 	}
-	if (extractBVarId(value) != "") {
+	varId = extractBVarId(value);
+	if (varId != "") {
 		addFieldTmpVar(value);
+	} else if (isBLet(value)) {
+		value;
 	} else {
 		tmpVarStruct = BVar(makeTmpVariableName(), getBType(value));
 		BLet(
@@ -706,6 +716,46 @@ addTempVar(exp : BExp, body : [BExp], type : BType, withReturn : bool) -> BLet {
 		BSequence(arrayPush(body, if (withReturn) tmpVar else BDropValue(tmpVar)), tmpVar.type),
 		type
 	);
+}
+
+// first exp = top exp
+addTmpVars(exps : [BExp], makeBody : ([BExp]) -> BExp) -> BExp {
+	if (length(exps) < 2) {
+		makeBody(exps);
+	} else {
+		// TODO: optimization. this is only needed if the variable uses multiple times and needs to be removed.
+		isExpForTmpVar = \exp -> {
+			switch (exp : BExp) {
+				BVoid(): false;
+				BBool(__): false;
+				BInt(__): false;
+				BDouble(__): false;
+				BString(__): false;
+				BLet(id, __, __, __): !startsWith(id, "_tmp_con");
+				default : true;
+				}
+		}
+		tmpVars = map(exps, \exp -> {
+			if (isExpForTmpVar(exp)) {
+				tmpVar = BVar(makeTmpVariableName(), getBType(exp));
+				Pair(Some(tmpVar), tmpVar);
+			} else {
+				Pair(None(), exp);
+			}
+		});
+
+		newBody = makeBody(map(tmpVars, secondOfPair));
+		bodyType = getBType(newBody);
+
+		foldri(exps, newBody, \i, acc, exp -> {
+			eitherMap(
+				tmpVars[i].first, 
+				\tmpVar -> BLet(tmpVar.id, exp, acc, getBType(acc)),
+				acc
+			)
+		});
+
+	}
 }
 
 makeTmpVariableName() -> string {
@@ -808,4 +858,12 @@ isComparisonFn(fn : BExp) -> bool {
 		default : "";
 	}
 	fnName == "==" || fnName == "!=" || fnName == ">" || fnName == ">=" || fnName == "<" || fnName == "<=";
+}
+
+isBLet(exp : BExp) -> bool {
+	switch (exp : BExp) {
+		BLet(__, __, __, __) : true;
+		BCast(value, __, __) : isBLet(value);
+		default : false;
+	}
 }

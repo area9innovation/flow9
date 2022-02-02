@@ -43,7 +43,7 @@ _FlowString* concatFlowStrings(_FlowString* s1, _FlowString* s2) {
 		return s1;
 	// reuse
 	} else if (s2->_counter == 1) {
-		s2->value += s1->value;
+		s2->value = s1->value + s2->value;
 		drop(s1);
 		return s2;
 	// drop
