@@ -1,16 +1,5 @@
-import tools/dsl/dsl_parse;
-import tools/dsl/dsl_rewrite;
-import tools/dsl/dsl_lowering;
-import tools/dsl/dsl_runtime_common;
-import tools/dsl/languages/ast_syntax;
-
-export {
-	// Adds +=, -=, *=, /= and %= assignment operators.
-	defineAssignOperators(language : DslLanguage) -> DslLanguage;
-}
-
-defineAssignOperators(language : DslLanguage) -> DslLanguage {
-	grammar = extendGrammar(language.grammar, <<
+syntax lambda+quotestring {
+	registerDslParserExtension("assign_operators", <<
 		atom = assign_add | assign_sub | assign_mul | assign_div | assign_mod | atom;
 		assign_add = idbind "+=" ws exp ";" ws expsemi $"brace_1" $"letadd_3";
 		assign_sub = idbind "-=" ws exp ";" ws expsemi $"brace_1" $"letsub_3";
@@ -19,7 +8,7 @@ defineAssignOperators(language : DslLanguage) -> DslLanguage {
 		assign_mod = idbind "%=" ws exp ";" ws expsemi $"brace_1" $"letmod_3";
 	>>);
 
-	desugaring = defineDslRewriting(defineDslAst().grammar, defineDslAst().grammar, ";", <<
+	registerDslRewriting("desugar", "|assign_operators", "ast", "ast", ";", <<
 			letadd($e1, $e2, $e3) => let($e1, add(var($e1), $e2), $e3);
 			letsub($e1, $e2, $e3) => let($e1, sub(var($e1), $e2), $e3);
 			letmul($e1, $e2, $e3) => let($e1, mul(var($e1), $e2), $e3);
@@ -33,14 +22,5 @@ defineAssignOperators(language : DslLanguage) -> DslLanguage {
 			letmod => 10000 ;
 		>>,
 		<< 0 >>
-	);
-	DslLanguage("assignopers",
-		grammar,
-		Some(desugaring),
-		None(), // lowering
-		None(), // optimization
-		makeTree(), // runtime
-		[], // compilers
-		Some(language)
 	);
 }
