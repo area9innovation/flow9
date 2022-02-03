@@ -23,8 +23,6 @@ So we convert a language with the suffix to a language without the part after th
 
 - Redo all languages to use this registry
 
-- What about the common runtime, runtime and native fns?
-
 - What about specifications for compilers and typing?  We could do:
   - "lambda => flow-syntax" for compilers
   - "lambda => lambda+type" for typing
@@ -38,4 +36,3 @@ So we convert a language with the suffix to a language without the part after th
 - Should we have another representation of languages that is not strings?
 
 - Rework the AstEnv to be the egraph
-  

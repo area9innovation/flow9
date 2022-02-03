@@ -5,7 +5,7 @@
 	>>);
 
 	registerDslRewriting("desugar", "|range", "lambda+range", "lambda", ";", <<
-			[ $e1 .. $e2 ] => range($e1, $e2);
+			$e1 .. $e2 => range($e1, $e2);
 		>>, <<
 			range => 1000000;
 		>>,

@@ -226,8 +226,6 @@ TODO:
   that point. These two things is what Caviar does https://arxiv.org/abs/2111.12116
   Is verified against Halide
 
-- Should we do an egraph implementation directly on DslAst?
-
 ## Patterns
 
 The patterns on the left-hand side of rewriting rules are simple pattern matching
@@ -239,6 +237,10 @@ TODO:
 - Add multi-pattern rules. https://arxiv.org/pdf/2101.01332.pdf
 
 - Add rules for equality (i.e. bidirectional rules), evaluations and stopping
+   -> would be evaluation
+   => is substitution
+   = is equality (substituion both way)
+   != is stopping
 
 ## Lowering
 
@@ -375,6 +377,7 @@ TODO:
 - Allow dependencies between extensions: named_args relies on records.
 
 - Figure out good syntax for stepped range: 1, 3, ... , 9, "1..9 in steps of 2", "1..9 (+2)", ...
+  stepped(1..9, 2) could be an option
 
 - Add default values to structs
   - struct Circle(radius = 1), and then "Circle()" gives that
@@ -420,8 +423,6 @@ TODO:
 - Change lowering to allow any language on the right hand side
   Keep the environment around, so lower should work with DslAstEnv
   and accept a "runtime" language
-
-- Introduce the egraph in DslAstEnv
 
 # Future plans
 
@@ -562,7 +563,6 @@ function <offset>
 <code for first arg>
 <code for second arg>
 pop
-
 
 The paper has an interpreter for this VM, which looks pretty simple.
 
