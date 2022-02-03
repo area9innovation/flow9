@@ -190,8 +190,13 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 }
 
 // simple types
+//template <typename A>
+//void flow_println2(A&& v) {
+//	flow_print2(v);
+//	std::cout << std::endl;
+//}
 template <typename A>
-void flow_println2(A&& v) {
+void flow_println2(A v) {
 	flow_print2(v);
 	std::cout << std::endl;
 }
@@ -299,6 +304,36 @@ _FlowArray<int32_t>* flow_enumFromTo(int32_t start, int32_t end) {
 template <typename A, typename B>
 _FlowArray<B>* flow_map(_FlowArray<A>* arr, const std::function<B(A)>& flow_fn) {
 	return flow_map_memory(arr, flow_fn);
+}
+
+// struct to simple
+template <typename A, typename B>
+_FlowArray<B>* flow_map(_FlowArray<A*>* arr, const std::function<B(A*)>& flow_fn) {
+	_FlowArray<B>* res = new _FlowArray<B>{};
+	res->value.reserve(arr->value.size());
+	bool lastUse = arr->_counter == 1;
+
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		res->value.push_back(flow_fn(lastUse ? arr->value[i] : dup(arr->value[i])));
+		if (lastUse) arr->value[i] = nullptr;
+	}
+	drop(arr);
+
+	return res;
+}
+
+// simple to struct
+template <typename A, typename B>
+_FlowArray<B*>* flow_map(_FlowArray<A>* arr, const std::function<B*(A)>& flow_fn) {
+	_FlowArray<B*>* res = new _FlowArray<B*>{};
+	res->value.reserve(arr->value.size());
+
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		res->value.push_back(flow_fn(arr->value[i]));
+	}
+	drop(arr);
+
+	return res;
 }
 
 template <typename A, typename B>
@@ -455,15 +490,31 @@ _FlowArray<A>* flow_replace_memory(_FlowArray<A>* arr, int32_t i, A value) {
 
 template <typename A>
 void flow_iter(_FlowArray<A*>* arr, const std::function<void(A*)> & flow_fn) {
-	flow_iter_memory(arr, flow_fn);
+	bool unusedItem;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		flow_fn(unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(arr);
 }
 template <typename A>
 void flow_iter(_FlowArray<A>* arr, const std::function<void(A)>& flow_fn) {
-	flow_iter_memory(arr, flow_fn);
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		flow_fn(arr->value[i]);
+	}
+	drop(arr);
 }
-
+// for println2
 template <typename A>
-void flow_iter_memory(_FlowArray<A>* arr, const std::function<void(A)>& flow_fn) {
+void flow_iter(_FlowArray<A>* arr, void (*flow_fn)(A)) {
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		flow_fn(arr->value[i]);
+	}
+	drop(arr);
+}
+template <typename A>
+void flow_iter(_FlowArray<A*>* arr, void (*flow_fn)(A*)) {
 	bool unusedItem;
 	for (std::size_t i = 0; i != arr->value.size(); ++i) {
 		unusedItem = arr->value[i]->_counter == 1;
@@ -475,15 +526,6 @@ void flow_iter_memory(_FlowArray<A>* arr, const std::function<void(A)>& flow_fn)
 
 template <typename A>
 void flow_iteri(_FlowArray<A*>* arr, const std::function<void(int32_t, A*)>& flow_fn) {
-	flow_iteri_memory(arr, flow_fn);
-}
-template <typename A>
-void flow_iteri(_FlowArray<A>* arr, const std::function<void(int32_t, A)>& flow_fn) {
-	flow_iteri_memory(arr, flow_fn);
-}
-
-template <typename A>
-void flow_iteri_memory(_FlowArray<A>* arr, const std::function<void(int32_t, A)>& flow_fn) {
 	bool unusedItem;
 	for (std::size_t i = 0; i != arr->value.size(); ++i) {
 		unusedItem = arr->value[i]->_counter == 1;
@@ -492,26 +534,34 @@ void flow_iteri_memory(_FlowArray<A>* arr, const std::function<void(int32_t, A)>
 	}
 	drop(arr);
 }
+template <typename A>
+void flow_iteri(_FlowArray<A>* arr, const std::function<void(int32_t, A)>& flow_fn) {
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		flow_fn(i, arr->value[i]);
+	}
+	drop(arr);
+}
 
 template <typename A>
 int32_t flow_iteriUntil(_FlowArray<A*>* arr, const std::function<bool(int32_t, A*)>& flow_fn) {
-	return flow_iteriUntil_memory(arr, flow_fn);
-}
-template <typename A>
-int32_t flow_iteriUntil(_FlowArray<A>* arr, const std::function<bool(int32_t, A)>& flow_fn) {
-	return flow_iteriUntil_memory(arr, flow_fn);
-}
-
-template <typename A>
-int32_t flow_iteriUntil_memory(_FlowArray<A>* arr, const std::function<bool(int32_t, A)>& flow_fn) {
 	bool unusedItem;
 	bool found = false;
 	std::size_t i = 0;
-	//for ( i != arr->value.size(); ++i) {
 	while (i < arr->value.size() && !found) {
 		unusedItem = arr->value[i]->_counter == 1;
 		found = flow_fn(i, unusedItem ? arr->value[i] : dup(arr->value[i]));
 		if (unusedItem) arr->value[i] = nullptr;
+		if (!found) i++;
+	}
+	drop(arr);
+	return i;
+}
+template <typename A>
+int32_t flow_iteriUntil(_FlowArray<A>* arr, const std::function<bool(int32_t, A)>& flow_fn) {
+	bool found = false;
+	std::size_t i = 0;
+	while (i < arr->value.size() && !found) {
+		found = flow_fn(i, arr->value[i]);
 		if (!found) i++;
 	}
 	drop(arr);

@@ -246,7 +246,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			newBCall = if (isNativeOperation) {
 				BCall(newFnExp.first, newArgs.first, type);
 			} else {
-				addTmpVars(newArgs.first, \tmpVars : [BExp] -> BCall(newFnExp.first, tmpVars, type));
+				addTmpVars(newArgs.first, \tmpVars : [BExp] -> BCall(newFnExp.first, tmpVars, type), fnIds);
 			}
 			newUsedVars = if (isLambda) unpair(lambdaFn, \id, lambdaType -> setTree(newArgs.second, id, BExpUsedVar(lambdaType, false))) else newArgs.second;
 			// TODO: reuse only the result from which we use the part (field). otherwise you don't need to add BReuse.
@@ -376,6 +376,15 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 }
 
 // TODO: alias ?
+// case 1:
+// onError = println;
+// onError("error");
+// case 2:
+// l = \-> {};
+// fn = l;
+// fn();
+// case 3:
+// (if (1 > 0) fn1 else fn2)();
 getLambdaId(fn : BExp, functionIds : Set<string>) -> Pair<string, BType> {
 	switch (fn) {
 		BVar(id, type) : if (!containsSet(functionIds, id)) Pair(id, type) else Pair("", bvoidType);
@@ -719,25 +728,29 @@ addTempVar(exp : BExp, body : [BExp], type : BType, withReturn : bool) -> BLet {
 	);
 }
 
+isExpForTmpVar(exp : BExp, fnIds : Set<string>) -> bool {
+	switch (exp : BExp) {
+		BVoid(): false;
+		BBool(__): false;
+		BInt(__): false;
+		BDouble(__): false;
+		BString(__): false;
+		BLet(id, __, __, __): !startsWith(id, "_tmp_con");
+		BVar(id, __): !containsSet(fnIds, id); // TODO: isLambda ?
+		BDupValue(value): isExpForTmpVar(value, fnIds);
+		BReuseValue(value): isExpForTmpVar(value, fnIds);
+		default : true;
+	}
+}
+
 // first exp = top exp
-addTmpVars(exps : [BExp], makeBody : ([BExp]) -> BExp) -> BExp {
+addTmpVars(exps : [BExp], makeBody : ([BExp]) -> BExp, fnIds : Set<string>) -> BExp {
 	if (length(exps) < 2) {
 		makeBody(exps);
 	} else {
 		// TODO: optimization. this is only needed if the variable uses multiple times and needs to be removed.
-		isExpForTmpVar = \exp -> {
-			switch (exp : BExp) {
-				BVoid(): false;
-				BBool(__): false;
-				BInt(__): false;
-				BDouble(__): false;
-				BString(__): false;
-				BLet(id, __, __, __): !startsWith(id, "_tmp_con");
-				default : true;
-				}
-		}
 		tmpVars = map(exps, \exp -> {
-			if (isExpForTmpVar(exp)) {
+			if (isExpForTmpVar(exp, fnIds)) {
 				tmpVar = BVar(makeTmpVariableName(), getBType(exp));
 				Pair(Some(tmpVar), tmpVar);
 			} else {
