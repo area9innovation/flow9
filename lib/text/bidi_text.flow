@@ -3,7 +3,6 @@ import text/unicodecharacters;
 import ui/fontmapping;
 import formats/html/html;
 import loop;
-import text/blueprint;
 
 export {
 	// TODO refactor due these are used to partial functionality, do not bring
@@ -169,12 +168,6 @@ getTextDirectionAndMajority(t: string) -> DirectionAndMajority {
 	);
 }
 
-getWordDirectionAndMajority(w: BiDiWord<?>) -> DirectionAndMajority {w.dm}
-
-getWordsDirectionAndMajority(ws: [BiDiWord<?>]) -> DirectionAndMajority {
-	fold(map(ws, \w -> getWordDirectionAndMajority(w)), DirectionAndMajority(uc_dir_flow, 0), fold2DMs);
-}
-
 debugWord(w: BiDiWord<?>, getText: (?) -> string) -> string {
 	ddm = \dm -> getCharAt("→~←:", dm.d) + toString(dm.m);
 	getText(w.word) + ddm(w.dm);
@@ -184,8 +177,8 @@ groupByCounterDirReverse(ws: [BiDiWord<?>], rtl: bool, getText: (?) -> string) -
 	defaultDir = if (rtl) uc_dir_rtl else uc_dir_ltr;
 	counterDir = if (rtl) uc_dir_ltr else uc_dir_rtl;
 	if (length(ws) < 2) [ws] else fold(
-		tail(ws), Pair([[ws[0]]], getWordDirectionAndMajority(ws[0])), \acc: Pair<[[BiDiWord<?>]], DirectionAndMajority>, w: BiDiWord<?> -> {
-			wdm = getWordDirectionAndMajority(w);
+		tail(ws), Pair([[ws[0]]], ws[0].dm), \acc: Pair<[[BiDiWord<?>]], DirectionAndMajority>, w: BiDiWord<?> -> {
+			wdm = w.dm;
 			Pair(
 				if (acc.second.d == counterDir && acc.second.m > 1 && wdm.d != defaultDir)
 					insertArray(tail(acc.first), 0, if (rtl) arrayPush(acc.first[0], w) else insertArray(acc.first[0], 0, w))
@@ -225,10 +218,13 @@ unwrapLine(l: [BiDiWord<?>], setRTL: (?, bool) -> ?) -> [?] {
 	);
 }
 
+PairingStackItem(kind : int, addr : BiDiWordAddress, foundDirections : int);
+
 reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?, setRTL: (?, bool) -> ?, rtl: bool) -> [[?]] {
 	are2AddrsOrdered = \a: BiDiWordAddress, b: BiDiWordAddress -> a.lno < b.lno || (a.lno == b.lno && a.wno <= b.wno);
 
 	defaultDM = DirectionAndMajority(if (rtl) uc_dir_rtl else uc_dir_ltr, 2);
+	oppositeDM = DirectionAndMajority(if (rtl) uc_dir_ltr else uc_dir_rtl, 2);
 
 	context = makeBiDiContext(Some(rtl));
 	pairings : ref Tree<BiDiWordAddress, Pair<DirectionAndMajority, BiDiWordAddress>> = ref makeTree();
@@ -250,6 +246,7 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 		EmptyList(): None();
 		Cons(head, t): if (contains(kind, head.kind)) None() else Some(t);
 	}));
+	foundDirections = ref 0;  // Bit will be set for each character direction encountered.
 	formatHandlers = pairs2tree([
 		// Implemented isolated and marks as most useful yet.
 		stackPasser("\u200E", DirectionAndMajority(uc_dir_ltr, 3), [BiDiDirectionMark()], formattingMark),
@@ -268,49 +265,41 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 	pairingO = ["{", "(", "["];
 	pairingL = length(pairingO);
 	pairingC = ["}", ")", "]"];
-	pairingStack : ref List<Pair<BiDiWordAddress, int>> = ref makeList();
+	pairingStack : ref List<PairingStackItem> = ref makeList();
 
 	previousDM = ref defaultDM;
 	lines0 = mapi(text, \lno, l -> mapi(l, \wno, w -> {
 		t = getText(w);
 		currentAddr = BiDiWordAddress(lno, wno);
+		tdm = getTextDirectionAndMajority(t);
+		foundDirections := bitOr(^foundDirections, bitShl(1, tdm.d));
 
-		nearestCloser = switch (^pairingStack) {
-			EmptyList(): Triple("", BiDiWordAddress(length(text), 0), ^pairingStack);
-			Cons(hd, tl): Triple(pairingC[hd.second], hd.first, tl);
+		nearestCloser : Pair<[string], Cons<PairingStackItem>> = switch (^pairingStack) {
+			EmptyList(): Pair(pairingO, Cons(PairingStackItem(-1, BiDiWordAddress(length(text), 0), 0), ^pairingStack));
+			Cons(hd, tl): Pair(arrayPush(pairingO, pairingC[hd.kind]), cast(^pairingStack : List -> Cons));
 		};
 		// Assuming word splitting avoided more than one paired character in a word.
-		switch(strFindFirstOfStrings(t, arrayPush(pairingO, nearestCloser.first))) {
+		switch(strFindFirstOfStrings(t, nearestCloser.first)) {
 			Some(p): pairingStack := if (p.second == pairingL) {
-				pairings := setTree(^pairings, nearestCloser.second, Pair(^previousDM, currentAddr));
-				nearestCloser.third
-			} else
-				Cons(Pair(currentAddr, p.second), ^pairingStack);
+				// http://www.unicode.org/reports/tr9/#Resolving_Neutral_Types
+				// previous strong direction checked in passes below.
+				dm = if (i2b(bitAnd(bitUshr(^foundDirections, defaultDM.d), 1))) defaultDM
+					else if (i2b(bitAnd(bitUshr(^foundDirections, oppositeDM.d), 1))) oppositeDM
+					else tdm;
+				pairings := setTree(^pairings, nearestCloser.second.head.addr, Pair(dm, currentAddr));
+				foundDirections := bitOr(^foundDirections, nearestCloser.second.head.foundDirections);
+				nearestCloser.second.tail
+			} else {
+				newStack = Cons(PairingStackItem(p.second, currentAddr, ^foundDirections), ^pairingStack);
+				foundDirections := 0;
+				newStack
+			}
 			None(): {};
 		};
 
-		tdm = getTextDirectionAndMajority(t);
 		previousDM := if (tdm.d == uc_dir_coupled) ^previousDM else tdm;
 		Pair(t, BiDiWord(w, tdm))
 	}));
-	// TODO: accumulate only those, which change the direction, not each major word.
-	forwardMajorWords : ref List<Pair<BiDiWordAddress, DirectionAndMajority>> = ref foldi(
-		reverseA(lines0),
-		Cons(Pair(BiDiWordAddress(length(lines0), 0), defaultDM), EmptyList()),
-		\rlno, lacc, line -> {
-			lno = length(lines0) - 1 - rlno;
-			foldi(reverseA(line), lacc, \rwno, wacc : Cons<Pair<BiDiWordAddress, DirectionAndMajority>>, word -> {
-				wno = length(line) - 1 - rwno;
-				curr = getWordDirectionAndMajority(word.second);
-				if (curr.m == 2 && contains([uc_dir_ltr, uc_dir_rtl], curr.d)) Cons(Pair(BiDiWordAddress(lno, wno), curr), wacc) else wacc
-			})
-		}
-	);
-	/*findMajor : ref (List<Pair<BiDiWordAddress, DirectionAndMajority>>, BiDiWordAddress) -> DirectionAndMajority = ref \__, __ -> defaultDM;
-	findMajor := \stk : List<Pair<BiDiWordAddress, DirectionAndMajority>>, adr : BiDiWordAddress -> switch(stk) {
-		EmptyList(): defaultDM;
-		Cons(h, t): if (h.first.lno > adr.lno || (h.first.lno == adr.lno && h.first.wno >= adr.wno)) h.second else (^findMajor)(t, adr);
-	};*/
 
 	previousDM := defaultDM;
 	lines1 = mapi(lines0, \lno, l -> mapi(l, \wno, tw -> BiDiWord(tw.second with dm = {
@@ -322,17 +311,13 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 				t, ^(context.formattingStack), \s, c -> lookupTreeDef(formatHandlers, c, \__, stack -> stack)(BiDiWordAddress(lno, wno), s)
 			);
 		};
-		major = switch(^forwardMajorWords) {
-			EmptyList(): Pair(BiDiWordAddress(length(lines0), 0), defaultDM);
-			Cons(hd, tl): hd;
-		};
 		tdm = eitherMap(
 			lookupTree(^pairings, currentAddr),
 			\pair -> {
 				pairings := removeFromTree(^pairings, currentAddr);
 				if (are2AddrsOrdered(currentAddr, pair.second)) {
-					// Opening pair, aggregate next major with already known previous major for closing one.
-					dm = if (are2AddrsOrdered(major.first, pair.second)) pair.first else fold2DMs(pair.first, major.second);
+					// Opening pair
+					dm = if(pair.first == oppositeDM && ^previousDM.d == oppositeDM.d) oppositeDM else pair.first;
 					pairings := setTree(^pairings, pair.second, Pair(dm, currentAddr));
 					dm
 				} else {
@@ -349,10 +334,23 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 		if (contains([uc_dir_ltr, uc_dir_rtl], tdmAgg.d)) previousDM := tdmAgg;
 		if (tdmAgg.d == uc_dir_coupled) ^previousDM else tdmAgg;
 	})));
-	println("lines1: \n"+superglue(lines1, \l -> superglue(l, \w -> debugWord(w, getText), ", "), "\n"));
+
+	// TODO: accumulate only those, which change the direction, not each major word.
+	forwardMajorWords : ref List<Pair<BiDiWordAddress, DirectionAndMajority>> = ref foldi(
+		reverseA(lines1),
+		Cons(Pair(BiDiWordAddress(length(lines1), 0), defaultDM), EmptyList()),
+		\rlno, lacc, line -> {
+			lno = length(lines0) - 1 - rlno;
+			foldi(reverseA(line), lacc, \rwno, wacc : Cons<Pair<BiDiWordAddress, DirectionAndMajority>>, word -> {
+				wno = length(line) - 1 - rwno;
+				curr = word.dm;
+				if (curr.m == 2 && contains([uc_dir_ltr, uc_dir_rtl], curr.d)) Cons(Pair(BiDiWordAddress(lno, wno), curr), wacc) else wacc
+			})
+		}
+	);
 
 	previousDM := defaultDM;
-	lines = mapi(
+	mapi(
 		lines1, \lno, line -> unwrapLine(
 			reflowWordsToBiDi(
 				mapi(line, \wno, word -> {
@@ -366,19 +364,12 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 						EmptyList(): defaultDM;
 						Cons(h, t): h.second;
 					};
-					BiDiWord(word with dm=elementAt([
-						\-> fold3DMs(^previousDM, majorDM, defaultDM),
-						\-> fold2DMs(majorDM, ^previousDM),
-					], word.dm.m, \-> word.dm)());
-				}) |> \q -> {
-					println(superglue(q, \w -> debugWord(w, getText), ", "));
-					q
-				},
+					if (word.dm.m == 2) word else BiDiWord(word with dm=fold3DMs(^previousDM, majorDM, defaultDM));
+				}),
 				isEmpty, getText, setText, rtl
 			), setRTL
 		)
 	);
-	lines
 }
 
 findListMajor(list: List<?>, getText: (?) -> string) -> List<?> {
