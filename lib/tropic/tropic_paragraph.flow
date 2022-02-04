@@ -30,6 +30,7 @@ export {
 		tr : Tropic,
 		id : int,
 		style : [CharacterStyle],
+		rtl : DynamicBehaviour<bool>,
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>,
 		ignoreLetterSpacing : bool
@@ -202,11 +203,7 @@ TRenderDynamicParagraph(
 			},
 			awB
 		)
-	) |> if (needIndent) {
-		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
-	} else {
-		idfn
-	};
+	) |> if (needIndent) TBorderStart(genIndent, rtl) else idfn;
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
@@ -645,6 +642,7 @@ commonWordConstructor(
 	tr : Tropic,
 	id : int,
 	style : [CharacterStyle],
+	rtl : DynamicBehaviour<bool>,
 	inspectorM : Maybe<ParaElementInspector>,
 	scriptM : Maybe<ParaElementScriptType>,
 	ignoreLetterSpacing : bool
@@ -661,6 +659,7 @@ commonWordConstructor(
 		wordView,
 		make(id),
 		style,
+		rtl,
 		make(false),
 		scriptM
 	);
@@ -710,7 +709,7 @@ reflowTParaWords(
 	ignoreLetterSpacing : bool
 ) -> TReflowResult {
 	setTParaWordText = tParaWordsTextSetter(ignoreLetterSpacing);
-	setTParaWordRTL = \w, wrtl -> {nextDistinct(w.inspector.rtl, wrtl); w};
+	setTParaWordRTL = \w, wrtl -> {nextDistinct(w.rtl, wrtl); w};
 
 	reflowAndWidth = reflowAndFitTParaWords(
 		words,
@@ -722,7 +721,7 @@ reflowTParaWords(
 	);
 
 	text = reflowAndWidth.first.lines;
-	paraLines = if (rtl)
+	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
 			reflowTextToBiDi(
@@ -864,14 +863,7 @@ reflowTParaWordsRec(
 			}
 			GeneralLinePart(first, mid, end): {
 
-				makeLinePartWord = \txt : string -> {
-					newView = inspectWordView(
-						TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style) |> makeSkipOrderCheck),
-						word.inspector,
-						if (ignoreLetterSpacing || rest == []) 0.0 else extractStruct(word.style, LetterSpacing(0.0)).spacing
-					);
-					TParaWord(word with ghostView = newView);
-				};
+				makeLinePartWord = \txt : string -> inspectedTWord(txt, word, ignoreLetterSpacing || rest == []);
 				width = getWordWidth(word);
 				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
 
@@ -1248,23 +1240,21 @@ getTParaWordText(w: TParaWord) -> string {
 	}
 }
 
+inspectedTWord(t: string, w: TParaWord, ignoreLetterSpacing: bool) -> TParaWord {
+	TParaWord(w with ghostView = inspectWordView(
+		TSelect(w.rtl, \rtl -> TText(t, applyAlphabetStyles(detectAlphabet(t), replaceStruct(w.style, SetRTL(rtl)) |> makeSkipOrderCheck))),
+		w.inspector,
+		if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
+	))
+}
+
 tParaWordsTextSetter(ignoreLetterSpacing: bool) -> (TParaWord, string) -> TParaWord {
 	\w: TParaWord, t: string -> switch(w.word) {
 		GeneralText(__): {
-			view = inspectWordView(
-				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style) |> makeSkipOrderCheck),
-				w.inspector,
-				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
-			);
-			TParaWord(w with ghostView = view);
+			inspectedTWord(t, w, ignoreLetterSpacing);
 		}
 		GeneralDynamicText(__): {
-			view = inspectWordView(
-				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style) |> makeSkipOrderCheck),
-				w.inspector,
-				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
-			);
-			TParaWord(w with ghostView = view);
+			inspectedTWord(t, w, ignoreLetterSpacing);
 		}
 		default: w;
 	};
