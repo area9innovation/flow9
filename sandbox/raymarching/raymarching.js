@@ -53,6 +53,7 @@ gl.enableVertexAttribArray(coord);
 var projection = glm.ortho(0, canvas.width, 0, canvas.height);
 var locP = gl.getUniformLocation(shaderProgram, "projection");
 gl.uniformMatrix4fv(locP, false, new Float32Array(projection.elements));
+gl.uniform2f(gl.getUniformLocation(shaderProgram, "screenSize"), canvas.width, canvas.height);
 
 gl.clearColor(0.1, 0.1, 0.1, 0.9);
 gl.enable(gl.DEPTH_TEST);
