@@ -59,10 +59,11 @@ var rayOrigin = glm.vec3(6, 8, 12);
 var defaultCameraDirection = glm.vec3(0, 0, 1);
 var cameraDirection = glm.vec3(0, 1, 6);
 var cameraDirectionFromOrigin = glm.normalize(cameraDirection['-'](rayOrigin));
-var mult = cameraDirectionFromOrigin.x > 0. ? 1. : -1.;
-var yRotationAngle = mult*Math.acos(glm.dot(defaultCameraDirection.xz, glm.normalize(cameraDirectionFromOrigin.xz)));
+var rotationDirectionY  = cameraDirectionFromOrigin.x > 0. ? 1 : -1;
+var yRotationAngle = rotationDirectionY * Math.acos(glm.dot(defaultCameraDirection.xz, glm.normalize(cameraDirectionFromOrigin.xz)));
 var updatedCameraDirection = glm.rotate(glm.mat4(1), yRotationAngle, glm.vec3(0, 1, 0))['*'](glm.vec4(defaultCameraDirection, 1.)).xyz;
-var xRotationAngle = Math.acos(glm.dot(updatedCameraDirection, cameraDirectionFromOrigin));
+var rotationDirectionX = cameraDirectionFromOrigin.y > 0. ? -1 : 1;
+var xRotationAngle = rotationDirectionX * Math.acos(glm.dot(updatedCameraDirection, cameraDirectionFromOrigin));
 
 var view = glm.mat4(1);
 view = glm.rotate(view, yRotationAngle, glm.vec3(0, 1, 0));
