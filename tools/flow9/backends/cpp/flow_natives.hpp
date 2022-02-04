@@ -1,36 +1,12 @@
-// strings
-// TODO: fix u16 for win (c++ 17)
-//#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING //or _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS
-
-#include <codecvt>
-#include <string>
 #include <locale>
 #include <sstream>
 #include <iomanip>
-
 #include <algorithm>
+#include "flow_union.hpp"
+#include "flow_array.hpp"
+#include "flow_string.hpp"
 // math
 #include <cmath>
-// getStructName
-#ifdef __GNUG__
-#include <cstdlib>
-#include <memory>
-#include <cxxabi.h>
-std::string demangle(const char* name) {
-    int status = -4; // some arbitrary value to eliminate the compiler warning
-    // enable c++11 by passing the flag -std=c++11 to g++
-    std::unique_ptr<char, void(*)(void*)> res {
-        abi::__cxa_demangle(name, NULL, NULL, &status),
-        std::free
-    };
-    return (status==0) ? res.get() : name ;
-}
-#else
-// does nothing if not g++
-std::string demangle(const char* name) {
-    return name;
-}
-#endif
 
 template <typename A>
 std::shared_ptr<A> makeFlowRef(A value) {
@@ -39,26 +15,29 @@ std::shared_ptr<A> makeFlowRef(A value) {
 
 // string
 
-std::u16string flow_substring(std::u16string s, int32_t start, int32_t length) {
-	return s.substr(start, length);
+_FlowString* flow_substring(_FlowString* s, int32_t start, int32_t length) {
+	_FlowString* res = new _FlowString(s->value.substr(start, length));
+	drop(s);
+	return res;
 }
 
-int32_t flow_strlen(std::u16string s) {
-	return s.size();
+int32_t flow_strlen(_FlowString* s) {
+	auto res = s->value.size();
+	drop(s);
+	return static_cast<int32_t>(res);
 }
 
-int32_t flow_getCharCodeAt(std::u16string s, int32_t i) {
-	return s.at(i);
+int32_t flow_getCharCodeAt(_FlowString* s, int32_t i) {
+	int32_t res = s->value.at(i);
+	drop(s);
+	return res;
 }
 
 // precision = 20!
-std::u16string flow_d2s(double v) {
+_FlowString* flow_d2s(double v) {
 	std::stringstream stream;
 	stream << std::fixed << std::setprecision(20) << v;
-	std::string s = stream.str();
-
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return codecvt.from_bytes(s);
+	return new _FlowString(stream.str());
 }
 
 // common
@@ -68,6 +47,7 @@ T flow_cast(const TT& val) {
 	return T(reinterpret_cast<const T&>(val));
 }
 
+// TODO: delete ?
 template <typename T, typename ...TT>
 T flow_cast_variant(std::variant<TT...> val) {
 	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
@@ -80,16 +60,34 @@ T flow_cast_variant(std::variant<TT...> val) {
 		throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" +  demangle(typeid(val).name()) + "]");
 	}
 }
-
-// compare unions by address
-template <typename ...Args1, typename ...Args2>
-bool operator==(std::variant<Args1...>& struct1, std::variant<Args2...>& struct2) {
-	return &struct1 == &struct2;
+template <typename T, typename ...TT>
+T flow_cast_variant(_FlowUnion<TT...>* val) {
+	//std::cout<< "Casting VARIANT from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "' ..." << std::endl;
+	if (const T* pval = std::get_if<T>(val)) {
+		return *pval;
+	}
+	else {
+		/*std::cout<< "ERROR casting from '" << demangle(typeid(val).name()) << "' to '" << demangle(typeid(T).name()) << "'" << std::endl;
+		T res;
+		return res;*/
+		throw std::invalid_argument("variant type is not equal '" + demangle(typeid(T).name()) + "' [" + demangle(typeid(val).name()) + "]");
+	}
 }
+
 // for structs ( Struct1 == Struct2). (Struct1 == Struct1) is overloaded inside the struct
 template <typename A, typename B>
 bool operator==(const A& lhs, const B& rhs) {
 	return lhs._id == rhs._id;
+}
+// compare by names
+template <typename A, typename B>
+bool operator<(const A& lhs, const B& rhs) {
+	return demangle(typeid(lhs).name()) < demangle(typeid(rhs).name());
+}
+// compare by names
+template <typename A, typename B>
+bool operator>(const A& lhs, const B& rhs) {
+	return demangle(typeid(lhs).name()) > demangle(typeid(rhs).name());
 }
 
 void flow_quit(int32_t code) {
@@ -103,14 +101,22 @@ void flow_print2(A&& v) {
 }
 
 template <typename A>
+void flow_print2(A* v) {
+	if (v == nullptr) {
+		std::cout << "NULL Pointer " << std::endl;
+	} else {
+		flow_print2(*v);
+	}
+}
+
+template <typename A>
 void flow_print2(std::shared_ptr<A> v) {
 	std::cout << "ref " << *v;
 }
 
 
-void flow_print2(std::u16string d) {
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	std::cout << codecvt.to_bytes(d);
+void flow_print2(_FlowString* d) {
+	std::cout << d->toString();
 }
 
 void flow_print2(const bool d) {
@@ -125,26 +131,20 @@ void flow_print2(const double d) {
 	flow_print2(flow_d2s(d));
 }
 
-template <typename ...Args>
-void flow_print2(std::variant<Args...>& v) {
-	std::visit([](auto&& x) { flow_print2(x); }, v);
+template <typename ...T>
+void flow_print2(_FlowUnion<T...>* v) {
+	(*v).visit([](auto&& x) { flow_print2(x); });
 }
 
-template <typename A>
-void flow_print2(const std::vector<A>& v) {
-	int32_t lastInd = v.size() - 1;
-
-    flow_print2("[");
-    for (std::size_t i = 0; i < v.size(); ++i) {
-    	flow_print2(v[i]);
-    	if (i != lastInd) flow_print2(", ");
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const _FlowArray<T>& a) {
+	os << "[";
+	for (std::size_t i = 0; i < a.value.size(); ++i) {
+		flow_print2(a.value[i]);
+		os << ",";
 	}
-	flow_print2("]");
-}
-
-template <typename A, typename B>
-bool areValuesEqual(const std::vector<A>& v1, const std::vector<B>& v2) {
-	return v1.size() == v2.size() && std::equal(v1.begin(), v1.end(), v2.begin());
+	os << "]";
+	return os;
 }
 
 template <typename A, typename B>
@@ -152,17 +152,16 @@ bool areValuesEqual(const A& v1, const B& v2) {
 	return v1 == v2;
 }
 
+template <typename A, typename B>
+bool areValuesEqual(A* v1, B* v2) {
+	return (*v1) == (*v2);
+}
+
 // for println
 template <typename A>
-std::ostream& operator<<(std::ostream& os, const std::vector<A>& v){
-    auto size = v.size() - 1;
-    os << "[";
-    for (std::size_t i = 0; i <= size; ++i) {
-    	flow_print2(v[i]);
-    	if (i != size) os << ", ";
-	}
-	os << "]";
-    return os;
+bool flow_isArray(A* v) {
+	drop(v);
+	return false;
 }
 
 template <typename A>
@@ -171,7 +170,8 @@ bool flow_isArray(A v) {
 }
 
 template <typename A>
-bool flow_isArray(const std::vector<A>& v) {
+bool flow_isArray(_FlowArray<A>* v) {
+	drop(v);
 	return true;
 }
 
@@ -189,157 +189,27 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 	return &v1 == &v2;
 }
 
-// memory
-// TODO
-
-// Structs
-
-template <typename T>
-void drop(T& a) {
-	a.drop();
-}
-
-template <typename T>
-void dropStruct(T& a) {
-	a._counter -= 1;
-	if (a._counter < 1) {
-		std::cout<<"FREE:: &=" << &a << "; counter = " << a._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
-		// we will free the memory of the fields inside struct.drop();
-		//a.~T();
-	} else {
-		std::cout<<"DEC COUNTER:: &=" << &a << "; counter = " << a._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
-	}
-}
-
-
-// TODO
-// memory leak (?)
-// use std::unique_ptr
-template <typename T>
-T& reuse(T& a) {
-	if (a._counter > 1) {
-		std::cout<<"REUSE:: &=" << &a << "; counter = " << a._counter << std::endl;
-		return a;
-	} else {
-		T* tmp;
-		std::cout<<"REUSE:: from &=" << &a <<" to &="<< tmp << std::endl;
-		tmp = &a;
-		drop<T>(a);
-		return *tmp;
-	}
-	// does not transfer ownership
-	// does not work as expected because it does not break the link to the variable.
-	/*std::cout<<"REUSE:: &=" << &a << std::endl;
-	a._counter = 1;
-	return a;*/
-}
-
-// TODO: recursive DUP // v1 = struct1(struct2(...)) (??)
-template <typename T>
-T& dup(T& a) {
-	a._counter += 1;
-	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
-	return a;
-}
-
-// Unions
-template <typename ...T>
-void drop(std::variant<T...>& v) {
-	std::cout<<"DROP VARIANT:: &=" << &v << std::endl;
-	return std::visit(
-		[](auto&& a) { return drop(a); },
-		v
-	);
-}
-
-template <typename ...T>
-std::variant<T...>& reuse(std::variant<T...>& v) {
-	std::variant<T...>* tmp = new std::variant<T...>;
-	std::cout<<"REUSE VARIANT:: from &=" << &v <<" to &="<< tmp <<std::endl;
-	// make a copy (+1 tmp value)
-	*tmp = std::visit([](auto&& a) {return std::variant<T...>(a);}, v);
-	// drop value
-	std::visit([](auto&& a) {drop(a);}, v);
-	return *tmp;
-}
-
-int32_t dup(int32_t a) {
-	std::cout<<"DUP:: int value "<< a <<std::endl;
-	return a;
-}
-
-void drop(int32_t a) {
-	std::cout<<"DROP:: int value "<< a <<std::endl;
-}
-
-int32_t reuse(int32_t a) {
-	std::cout<<"REUSE:: int value "<< a <<std::endl;
-	return a;
-}
-
-std::u16string dup(std::u16string a) {
-	std::cout<<"DUP:: string value ";flow_print2(a); std::cout <<std::endl;
-	return a;
-}
-
-void drop(std::u16string& a) {
-	std::cout<<"DROP:: string value ";flow_print2(a); std::cout <<std::endl;
-	a = u"";
-}
-
-std::u16string reuse(std::u16string a) {
-	std::cout<<"REUSE:: string value ";flow_print2(a); std::cout <<std::endl;
-	return a;
-}
-
-bool dup(bool a) {
-	std::cout<<"DUP:: bool value "<< a <<std::endl;
-	return a;
-}
-
-void drop(bool a) {
-	std::cout<<"DROP:: bool value "<< a <<std::endl;
-}
-
-bool reuse(bool a) {
-	std::cout<<"REUSE:: bool value "<< a <<std::endl;
-	return a;
-}
-
-double dup(double a) {
-	std::cout<<"DUP:: double value "<< a <<std::endl;
-	return a;
-}
-
-void drop(double a) {
-	std::cout<<"DROP:: double value "<< a <<std::endl;
-}
-
-double reuse(double a) {
-	std::cout<<"REUSE:: double value "<< a <<std::endl;
-	return a;
-}
-
-template <typename A, typename ...B>
-void drop(std::function<A(B...)>& fn) {
-	std::cout<<"DROP:: function &="<< &fn << std::endl;
-}
-
-// TODO: vector (array)
-template <typename T>
-void drop(std::vector<T>& a) {
-	std::cout<<"DROP VECTOR:: &=" << &a << std::endl;
-	/*for (std::size_t i = 0; i != a.size(); ++i) {
-		drop(a[i]);
-	}*/
-}
-
-// print with drop
+// simple types
+//template <typename A>
+//void flow_println2(A&& v) {
+//	flow_print2(v);
+//	std::cout << std::endl;
+//}
 template <typename A>
-void flow_println2(A&& v) {
+void flow_println2(A v) {
 	flow_print2(v);
 	std::cout << std::endl;
-	drop(v);
+}
+// print with drop
+template <typename A>
+void flow_println2(A* v) {
+	if (v == nullptr) {
+		std::cout << "NULL Pointer " << std::endl;
+	} else {
+		flow_print2(*v);
+		std::cout << std::endl;
+		drop(v);
+	}
 }
 
 // math
@@ -383,161 +253,384 @@ int32_t flow_trunc(double v) {
 // array
 
 template <typename A, typename B>
-B flow_fold(const std::vector<A>& flow_a, const B flow_b, const std::function<B(B, A)> & flow_fn) {
-  B _res = flow_b;
-  for (std::size_t i = 0; i != flow_a.size(); ++i) {
-    _res = flow_fn(_res, flow_a[i]);
-  }
-  return _res;
+B flow_fold(_FlowArray<A*>* arr, const B initVal, const std::function<B(B, A*)> & flow_fn) {
+  return flow_fold_memory(arr, initVal, flow_fn);
 }
 
-std::vector<int32_t> flow_enumFromTo(int32_t start, int32_t end) {
+template <typename A, typename B>
+B* flow_fold(_FlowArray<A*>* arr, B* initVal, const std::function<B* (B*, A*)>& flow_fn) {
+	return flow_fold_memory(arr, initVal, flow_fn);
+}
+
+template <typename A, typename B>
+B flow_fold_memory(_FlowArray<A*>* arr, const B initVal, const std::function<B(B, A*)>& flow_fn) {
+	B _res = initVal;
+	bool unusedItem = false; // free in the loop
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		_res = flow_fn(_res, unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(arr);
+	return _res;
+}
+
+// simple types
+template <typename A, typename B>
+B flow_fold(_FlowArray<A>* arr, const B flow_b, const std::function<B(B, A)>& flow_fn) {
+	B _res = flow_b;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		_res = flow_fn(_res, arr->value[i]);
+	}
+	drop(arr);
+	return _res;
+}
+
+_FlowArray<int32_t>* flow_enumFromTo(int32_t start, int32_t end) {
 	if (end < start) {
-		std::vector<int> res;
-		return res;
+		return new _FlowArray<int32_t>{};
 	} else {
 		int32_t len = end - start + 1;
-		std::vector<int> res(len);
-		std::generate(res.begin(), res.end(), [i = start] () mutable { return i++; });
+		_FlowArray<int32_t>* res = new _FlowArray<int32_t>{};
+		res->value.resize(end - start + 1);
+		for (int32_t i = start; i <= end; i++) {
+			res->value[i - start] = i;
+		}
 		return res;
 	}
 }
 
-
+// simple types
 template <typename A, typename B>
-std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(A)> & flow_fn) {
-  // std::vector<B> res(flow_a.size());
-  // for (std::size_t i = 0; i != flow_a.size(); ++i) {
-  //   res[i] = flow_fn(flow_a[i]);
-  // }
-  //return res;
-	std::vector<B> res;
-	std::transform(flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_fn);
+_FlowArray<B>* flow_map(_FlowArray<A>* arr, const std::function<B(A)>& flow_fn) {
+	return flow_map_memory(arr, flow_fn);
+}
+
+// struct to simple
+template <typename A, typename B>
+_FlowArray<B>* flow_map(_FlowArray<A*>* arr, const std::function<B(A*)>& flow_fn) {
+	_FlowArray<B>* res = new _FlowArray<B>{};
+	res->value.reserve(arr->value.size());
+	bool lastUse = arr->_counter == 1;
+
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		res->value.push_back(flow_fn(lastUse ? arr->value[i] : dup(arr->value[i])));
+		if (lastUse) arr->value[i] = nullptr;
+	}
+	drop(arr);
+
 	return res;
 }
 
-// TODO: fix cpp and uncomment this
-/*std::vector<B> flow_map(const std::vector<A>& flow_a, const std::function<B(const A&)> & flow_fn) {
-  std::vector<B> res(flow_a.size());
-  for (std::size_t i = 0; i != flow_a.size(); ++i) {
-    res[i] = flow_fn(flow_a[i]);
-  }
-  return res;
-}
-*/
+// simple to struct
+template <typename A, typename B>
+_FlowArray<B*>* flow_map(_FlowArray<A>* arr, const std::function<B*(A)>& flow_fn) {
+	_FlowArray<B*>* res = new _FlowArray<B*>{};
+	res->value.reserve(arr->value.size());
 
-template <typename A>
-std::vector<A> flow_filter(const std::vector<A>& flow_a, const std::function<bool(A)> & flow_test) {
-  std::vector<A> res;
-  std::copy_if (flow_a.begin(), flow_a.end(), std::back_inserter(res), flow_test);
-  return res;
-}
-
-
-template <typename A>
-std::vector<A> flow_concat(const std::vector<A>& flow_a, const std::vector<A> flow_b) {
-  std::vector<A> res;
-  res.reserve(flow_a.size() + flow_b.size());
-  res.insert(res.end(), flow_a.cbegin(), flow_a.cend());
-  res.insert(res.end(), flow_b.cbegin(), flow_b.cend());
-  return res;
-}
-
-template <typename A>
-int32_t flow_length(const std::vector<A>& flow_a) {
-  return flow_a.size();
-}
-
-template <typename A>
-std::vector<A> flow_replace(const std::vector<A>& flow_a, int32_t i, A value) {
-  auto len = flow_a.size();
-  if (i >= len || i < 0) {
-  	std::vector<A> res;
-    std::copy(flow_a.begin(), flow_a.end(), std::back_inserter(res));
-    res.push_back(value);
-    return res;
-  } else {
-  	std::vector<A> res(len);
-  	res[i] = value;
-  	for (int j = 0; j < len; j++) {
-		if (i != j) res[j] = flow_a[j];
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		res->value.push_back(flow_fn(arr->value[i]));
 	}
-  	return res;
-  }
+	drop(arr);
+
+	return res;
 }
 
-template <typename A>
-void flow_iter(const std::vector<A>& flow_a, const std::function<void(A)> & flow_fn) {
-  std::for_each(flow_a.begin(), flow_a.end(), flow_fn);
+template <typename A, typename B>
+_FlowArray<B*>* flow_map(_FlowArray<A*>* arr, const std::function<B*(A*)>& flow_fn) {
+	return flow_map_memory(arr, flow_fn);
 }
 
-template <typename A>
-void flow_iter(const std::vector<A>& flow_a, void(*fn)(A) ) {
-	for (std::size_t i = 0; i != flow_a.size(); ++i) {
-		(*fn)(flow_a[i]);
+template <typename A, typename B>
+_FlowArray<B>* flow_map_memory(_FlowArray<A>* arr, const std::function<B(A)>& flow_fn) {
+	if (arr->_counter == 1) {
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			arr->value[i] = flow_fn(arr->value[i]);
+		}
+		return arr;
+	}
+	else {
+		_FlowArray<B>* res = new _FlowArray<B>{};
+		res->value.reserve(arr->value.size());
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			res->value.push_back(flow_fn(dup(arr->value[i])));
+		}
+		drop(arr);
+		return res;
 	}
 }
 
+// simple types
 template <typename A>
-void flow_iteri(const std::vector<A>& flow_a, const std::function<void(int32_t, A)> & flow_fn) {
-	for (std::size_t i = 0; i != flow_a.size(); ++i) {
-		flow_fn(i, flow_a[i]);
+_FlowArray<A>* flow_filter(_FlowArray<A>* arr, const std::function<bool(A)>& flow_fn) {
+	return flow_filter_memory(arr, flow_fn);
+}
+
+template <typename A>
+_FlowArray<A*>* flow_filter(_FlowArray<A*>* arr, const std::function<bool(A*)>& flow_fn) {
+	return flow_filter_memory(arr, flow_fn);
+}
+template <typename A>
+_FlowArray<A>* flow_filter_memory(_FlowArray<A>* arr, const std::function<bool(A)>& flow_test) {
+	if (arr->_counter == 1) {
+		arr->value.erase(std::remove_if(
+			arr->value.begin(),
+			arr->value.end(),
+			[&flow_test](auto& item) { 
+				bool unused = !flow_test(dup(item));
+				if (unused) { drop(item); }
+				return unused;
+			}
+		));
+		return arr;
+	}
+	else {
+		_FlowArray<A>* res = new _FlowArray<A>{};
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if (flow_test(dup(arr->value[i]))) res->value.push_back(dup(arr->value[i]));
+		}
+		drop(arr);
+		return res;
+	}
+}
+
+
+template <typename A>
+_FlowArray<A>* flow_concat(_FlowArray<A>* arr1, _FlowArray<A>* arr2) {
+	if (arr1->_counter == 1) {
+		arr1->value.reserve(arr1->value.size() + arr2->value.size());
+		arr2->dupFields();
+		arr1->value.insert(arr1->value.end(), arr2->value.cbegin(), arr2->value.cend());
+		drop(arr2);
+		return arr1;
+	}
+	else if (arr2->_counter == 1) {
+		arr2->value.reserve(arr1->value.size() + arr2->value.size());
+		arr1->dupFields();
+		arr2->value.insert(arr2->value.end(), arr1->value.cbegin(), arr1->value.cend());
+		drop(arr1);
+		return arr2;
+	}
+	else {
+		_FlowArray<A>* res = new _FlowArray<A>{};
+		res->value.reserve(arr1->value.size() + arr2->value.size());
+		arr1->dupFields();
+		res->value.insert(res->value.end(), arr1->value.cbegin(), arr1->value.cend());
+		drop(arr1);
+		arr2->dupFields();
+		res->value.insert(res->value.end(), arr2->value.cbegin(), arr2->value.cend());
+		drop(arr2);
+		return res;
 	}
 }
 
 template <typename A>
-int flow_iteriUntil(const std::vector<A>& flow_a, const std::function<bool(int32_t, A)> & flow_fn) {
-	int32_t i = 0;
+int32_t flow_length(_FlowArray<A>* arr) {
+  auto res = arr->value.size();
+  drop(arr);
+  return static_cast<int32_t>(res);
+}
+
+template <typename A>
+_FlowArray<A*>* flow_replace(_FlowArray<A*>* arr, int32_t i, A* value) {
+	return flow_replace_memory(arr, i, value);
+}
+
+// simple types
+template <typename A>
+_FlowArray<A>* flow_replace(_FlowArray<A>* arr, int32_t i, A value) {
+	return flow_replace_memory(arr, i, value);
+}
+
+template <typename A>
+_FlowArray<A>* flow_replace_memory(_FlowArray<A>* arr, int32_t i, A value) {
+	auto len = arr->value.size();
+	// push
+	if (i >= len || i < 0) {
+		// reuse
+		if (arr->_counter == 1) {
+			arr->value.push_back(value);
+			return arr;
+		}
+		// new allocation
+		else {
+			_FlowArray<A>* res = new _FlowArray<A>{};
+			arr->dupFields();
+			std::copy(arr->value.begin(), arr->value.end(), std::back_inserter(res->value));
+			drop(arr);
+			res->value.push_back(value);
+			return res;
+		}
+	}
+	// replace
+	else {
+		// reuse
+		if (arr->_counter == 1) {
+			drop(arr->value[i]);
+			arr->value[i] = value;
+			return arr;
+		}
+		// new allocation
+		else {
+			_FlowArray<A>* res = new _FlowArray<A>{};
+			res->value.reserve(len);
+			for (int j = 0; j < len; j++) {
+				if (i == j) {
+					res->value.push_back(value);
+				}
+				else {
+					res->value.push_back(dup(arr->value[j]));
+				}
+			}
+			drop(arr);
+			return res;
+		}
+	}
+}
+
+template <typename A>
+void flow_iter(_FlowArray<A*>* arr, const std::function<void(A*)> & flow_fn) {
+	bool unusedItem;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		flow_fn(unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(arr);
+}
+template <typename A>
+void flow_iter(_FlowArray<A>* arr, const std::function<void(A)>& flow_fn) {
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		flow_fn(arr->value[i]);
+	}
+	drop(arr);
+}
+// for println2
+template <typename A>
+void flow_iter(_FlowArray<A>* arr, void (*flow_fn)(A)) {
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		flow_fn(arr->value[i]);
+	}
+	drop(arr);
+}
+template <typename A>
+void flow_iter(_FlowArray<A*>* arr, void (*flow_fn)(A*)) {
+	bool unusedItem;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		flow_fn(unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(arr);
+}
+
+template <typename A>
+void flow_iteri(_FlowArray<A*>* arr, const std::function<void(int32_t, A*)>& flow_fn) {
+	bool unusedItem;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		flow_fn(i, unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(arr);
+}
+template <typename A>
+void flow_iteri(_FlowArray<A>* arr, const std::function<void(int32_t, A)>& flow_fn) {
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		flow_fn(i, arr->value[i]);
+	}
+	drop(arr);
+}
+
+template <typename A>
+int32_t flow_iteriUntil(_FlowArray<A*>* arr, const std::function<bool(int32_t, A*)>& flow_fn) {
+	bool unusedItem;
 	bool found = false;
-	while (i < flow_a.size() && !found) {
-		found = flow_fn(i, flow_a[i]);
+	std::size_t i = 0;
+	while (i < arr->value.size() && !found) {
+		unusedItem = arr->value[i]->_counter == 1;
+		found = flow_fn(i, unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
 		if (!found) i++;
 	}
+	drop(arr);
+	return i;
+}
+template <typename A>
+int32_t flow_iteriUntil(_FlowArray<A>* arr, const std::function<bool(int32_t, A)>& flow_fn) {
+	bool found = false;
+	std::size_t i = 0;
+	while (i < arr->value.size() && !found) {
+		found = flow_fn(i, arr->value[i]);
+		if (!found) i++;
+	}
+	drop(arr);
 	return i;
 }
 
 // flowstruct
 template <typename A, typename B>
-bool flow_isSameStructType(A struct1, B struct2) {
-	return struct1._id == struct2._id;
+bool flow_isSameStructType(A* struct1, B* struct2) {
+	bool res = (*struct1)._id == (*struct2)._id;
+	drop(struct1);
+	drop(struct2);
+	return res;
 }
 
-template <typename A, typename ...Args2>
-bool flow_isSameStructType(A struct1, std::variant<Args2...> struct2) {
-	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
-	return struct1._id == id2;
-}
-
-template <typename ...Args1, typename B>
-bool flow_isSameStructType(std::variant<Args1...> struct1, B struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
-	return id1 == struct2._id;
-}
-
-template <typename ...Args1, typename ...Args2>
-bool flow_isSameStructType(std::variant<Args1...> struct1, std::variant<Args2...> struct2) {
-	unsigned int id1 = std::visit([&](auto&& x) {return x._id;}, struct1);
-	unsigned int id2 = std::visit([&](auto&& x) {return x._id;}, struct2);
+template <typename A, typename ...B>
+bool flow_isSameStructType(A* struct1, _FlowUnion<B...>* struct2) {
+	unsigned int id1 = (*struct1)._id;
+	drop(struct1);
+	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct2);
 	return id1 == id2;
 }
 
-template <typename A, typename ...B> A _extractStructVal(std::variant<B...> v) { return std::get<A>(v); }
-template <typename A> A _extractStructVal(A v) { return v; }
-
-template <typename A, typename B>
-B flow_extractStruct(const std::vector<A> flow_a, B flow_b) {
-  auto item = std::find_if(flow_a.begin(), flow_a.end(), [flow_b](A v){ return flow_isSameStructType(v, flow_b); });
-  if (item == flow_a.end()) {
-    return flow_b;
-  } else {
-    return _extractStructVal<B>(*item);
-  }
+template <typename ...A, typename B>
+bool flow_isSameStructType(_FlowUnion<A...>* struct1, B* struct2) {
+	unsigned int id2 = (*struct2)._id;
+	drop(struct2);
+	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct1);
+	return id1 == id2;
 }
 
-template <typename T> std::string type_name();
+template <typename ...A, typename ...B>
+bool flow_isSameStructType(_FlowUnion<A...>* struct1, _FlowUnion<B...>* struct2) {
+	unsigned int id1 = (*struct1).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct1);
+	unsigned int id2 = (*struct2).visit([&](auto&& x) { return (*x)._id; });
+	drop(struct2);
+	return id1 == id2;
+}
+
+template <typename A, typename B>
+B* flow_extractStruct(_FlowArray<A*>* vect, B* valType) {
+	B* res = nullptr;
+	for (auto i = 0; i != (*vect).value.size(); i++) {
+		if (flow_isSameStructType(dup((*vect).value[i]), dup(valType))) {
+			res = dup(_extractStructVal<B>((*vect).value[i]));
+			break;
+		}
+	}
+	if (res == nullptr) {
+		drop(vect);
+		return reuse(valType);
+	}
+	else {
+		drop(valType);
+		drop(vect);
+		return res;
+	}
+}
+
+template <typename A, typename ...B> A* _extractStructVal(_FlowUnion<B*...>* v) { return std::get<A*>(*v); }
+template <typename A> A* _extractStructVal(A* v) { return v; }
+
+template <typename A, typename ...B> A _extractStructVal(_FlowUnion<B...> v) { return std::get<A>(v); }
+template <typename A> A _extractStructVal(A v) { return v; }
 
 template <typename A>
-std::u16string flow_getStructName(A st) {
-	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codecvt;
-	return codecvt.from_bytes(demangle(typeid(st).name()));
+_FlowString flow_getStructName(A st) {
+	return _FlowString(demangle(typeid(st).name()));
 }

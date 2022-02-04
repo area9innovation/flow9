@@ -1,0 +1,116 @@
+import tools/dsl/registry/dsl_transformation;
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_util;
+
+export {
+	// Register a pure Gringo grammar for a language
+	registerDslParser(language : string, grammar : string, requires : [string]) -> DslGrammar;
+
+	// Extend an existing grammar with a new language syntax
+	registerDslParserExtension(language : string, grammar : string) -> void;
+
+	// Build a grammar for this language (without the +syntax suffix)
+	buildDslGrammar(language : string) -> Maybe<DslGrammar>;
+
+	// Build a parser for this language "lambda+dot+syntax" as an example 
+	// from base grammars and extension
+	buildDslParserTransformation(language : string) -> Maybe<DslTransformation>;
+}
+
+// From language without "+syntax" suffix to the grammar
+dslGrammars : ref Tree<string, DslGrammar> = ref makeTree();
+
+registerDslParser(language : string, grammar : string, requires : [string]) -> DslGrammar {
+	dslgrammar = defineGrammar(language, grammar, requires);
+	println("Registered parser for " + language);
+	dslGrammars := setTree(^dslGrammars, language, dslgrammar);
+	dslgrammar
+}
+
+// From language extension name to the grammar
+dslGrammarExtensions : ref Tree<string, Tree<string, GTerm>> = ref makeTree();
+
+registerDslParserExtension(language : string, grammar : string) -> void {
+	extension = parseGrammarExtension(grammar);
+	println("Registered parser extension for " + language);
+	dslGrammarExtensions := setTree(^dslGrammarExtensions, language, extension);
+}
+
+buildDslParserTransformation(langsyntax : string) -> Maybe<DslTransformation> {
+	lang = takeBefore(langsyntax, "+syntax", langsyntax);
+	mgrammar = lookupTree(^dslGrammars, lang);
+	mgrammar ?? {
+		Some(
+			DslTransformation(
+				"parse",
+				lang + "|+syntax",
+				\astenv -> {
+					program = getDslString(astenv.ast);
+					// TODO: We could do error handling better
+					// TODO: We could insert directly into the egraph as well
+					ast = parseProgram(astenv.language, mgrammar, program);
+
+					// This does side effects.
+					root = addDslAst(astenv.egraph, lang, ast);
+					if (false) {
+						iterDslEGraph(astenv.egraph, \class, nodes -> {
+							println(i2s(class) + " " + superglue(set2array(nodes), \node -> {
+								node.language + ":" + prettyDsl(node.value)
+								+ "(" + superglue(node.args, i2s, ",") + ")"
+							}, ", "));
+						});
+					}
+
+					DslAstEnv(astenv with ast = ast, root = root);
+				}
+			)
+		)
+	} : {
+		// Could not find it. Let us build one
+		mgram = buildDslGrammar(lang);
+		switch (mgram) {
+			None(): {
+				println("Could not build grammar for " + langsyntax);
+				None();
+			}
+			Some(gram): {
+				// And go pick it up
+				buildDslParserTransformation(langsyntax);
+			}
+		}
+	}
+}
+
+buildDslGrammar(language : string) -> Maybe<DslGrammar> {
+	mgram = lookupTree(^dslGrammars, language);
+	mgram ?? {
+		Some(mgram);
+	} : {
+		foldTree(^dslGrammarExtensions, None(), \name, extension, acc : Maybe<DslGrammar> -> {
+			if (endsWith(language, name)) {
+				// OK, we got it
+				core = takeBefore(language, "+" + name, language);
+				if (core == language) {
+					println("Could not find base language from " + language + " for " + name + ". Did you mean lambda+" + name + "?");
+					None();
+				} else {
+					mbase = buildDslGrammar(core);
+					switch (mbase) {
+						None(): {
+							println("Could not find base grammar for " + core + " from " + language);
+							None();
+						}
+						Some(base): {
+							extend = DslGrammar(extendGringoRules(base.term, extension));
+							// Register the new, combined grammar
+							dslGrammars := setTree(^dslGrammars, language, extend);
+							Some(extend)
+						}
+					}
+				}
+			} else {
+				acc;
+			}
+		});
+	}
+}
