@@ -2,6 +2,8 @@ precision mediump float;
 varying vec3 FragPos;
 
 uniform vec2 screenSize;
+uniform vec3 rayOrigin;
+uniform mat4 view;
 
 #define MAX_STEPS 100
 #define MAX_DIST 100.
@@ -61,38 +63,15 @@ mat2 makeRotationMatrix2(float a) {
 
 void main() {
 	vec2 uv = (FragPos.xy - 0.5 * screenSize.xy)/screenSize.y;
-	//vec3 rayOrigin = vec3(0, 8, 0);
-	//vec3 rayOrigin = vec3(-6, 4, 6);
-	//vec3 rayOrigin = vec3(-6, 4, 0);
-	//vec3 rayOrigin = vec3(6, 4, 0);
-	//vec3 rayOrigin = vec3(0, 4, 12);
-	//vec3 rayOrigin = vec3(6, 8, 12);
-	vec3 rayOrigin = vec3(10, 10, 10);
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
-
-	vec3 defaultCameraDirection = vec3(0, 0, 1);
-	vec3 cameraDirection = vec3(0, 1, 6);
-	vec3 cameraDirectionFromOrigin = normalize(cameraDirection - rayOrigin);
-
-	float mult = cameraDirectionFromOrigin.x > 0. ? 1. : -1.;
-	mat2 yRotation = makeRotationMatrix2(mult*acos(dot(defaultCameraDirection.xz, normalize(cameraDirectionFromOrigin.xz))));
-	vec3 updatedCameraDirection = defaultCameraDirection;
-	updatedCameraDirection.xz = normalize(yRotation*defaultCameraDirection.xz);
-	mat2 xRotation = makeRotationMatrix2(acos(dot(updatedCameraDirection, cameraDirectionFromOrigin)));
-	rayDirection.yz *= xRotation;
-	rayDirection.xz = yRotation * rayDirection.xz;
-	
+	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
 	float d = RayMarch(rayOrigin, rayDirection);
 	vec3 col = vec3(0);
 	vec3 p = rayOrigin + rayDirection * d;
 	float dif = GetLight(p);
-		
-	//d/=6.;
-	//col = vec3(d);
+
 	col = vec3(dif);
 	col = pow(col, vec3(.4545));
-	//col *= vec3(FragPos.xy, d*100.)/200.;
-
 	gl_FragColor = vec4(col, 1.0);
 }
