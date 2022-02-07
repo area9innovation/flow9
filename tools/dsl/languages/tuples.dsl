@@ -1,4 +1,4 @@
-syntax lambda+quotestring {
+syntax lambda+quotestring+array {
 	registerDslParserExtension("tuples", << 
 		atom = atom | '(' ws ')' ws $"nil" $"tuple_1" 
 			| '(' ws $"nil" exp "," ws $"cons" ')' $"tuple_1"
