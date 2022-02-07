@@ -42,53 +42,137 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 	)
 }
 
-RMCoordinate(x : double, y : double, z : double);
+RMObjects ::= RMSphere, RMTranslate, RMAdd, RMPlane;
+	RMSphere(radius : double);
+	RMPlane(normal : RMXYZ, height : double);
+	RMTranslate(object : RMObjects, d : RMCoordinate);
+	RMAdd(object1 : RMObjects, object2 : RMObjects);
 
-RMFigure ::= RMSphere;
-	RMSphere(position : RMCoordinate, radius : double);
+RMCoordinate ::= RMXYZ, RMX, RMY, RMZ, RMXY, RMXZ, RMYZ;
+	RMXYZ(x : double, y : double, z : double);
+	RMXY(x : double, y : double);
+	RMXZ(x : double, z : double);
+	RMYZ(y : double, z : double);
+	RMX(x : double);
+	RMY(y : double);
+	RMZ(z : double);
 
-RMScene(figures : [RMFigure]);
+RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ;
+	RMICall(fn : RMC, args : [RMIExp]);
+	RMC ::= RMIOp, RMIFn;
+		RMIOp(opName : string);
+		RMIFn(fnName : string);
+	RMIP();
+	RMIDouble(num : double);
+	RMIXYZ(x : double, y : double, z : double);
 
-generateSpheres(spheres : [RMSphere]) -> string {
-	amount = length(spheres);
-	initSpheres =  formatString("vec4 spheres[%1];", [i2s(amount)]);
-	sphereData = generate(
-		0, amount,
-		\i -> formatString(
-			"spheres[%1] = vec4(%2, %3, %4, %5);",
+addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
+	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
+}
+
+RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ {
+	switch(c) {
+		RMXYZ(x, y, z): RMIXYZ(x, y, z);
+		RMXY(x, y): RMIXYZ(x, y, 0.);
+		RMXZ(x, z): RMIXYZ(x, 0., z);
+		RMYZ(y, z): RMIXYZ(0., y, z);
+		RMX(x): RMIXYZ(x, 0., 0.);
+		RMY(y): RMIXYZ(0., y, 0.);
+		RMZ(z): RMIXYZ(0., 0., z);
+	}
+}
+
+
+RMObjects2RMIExp(obj : RMObjects, acc : RMIXYZ) -> RMIExp {
+	switch(obj) {
+		RMSphere(radius): RMICall(RMIOp("-"), [
+			RMICall(RMIFn("length"), [
+				RMICall(RMIOp("-"), [RMIP(), acc])
+			]),
+			RMIDouble(radius)
+		]);
+		RMPlane(normal, height): RMICall(RMIOp("+"), [
+			RMICall(RMIFn("dot"), [
+				RMIP(),
+				RMICall(RMIFn("normalize"), [
+					RMCoordinate2RMIXYZ(normal)
+				])
+			]),
+			RMIDouble(height)]
+		);
+		RMTranslate(object, d): RMObjects2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)));
+		RMAdd(object1, object2): RMICall(
+			RMIFn("min"),
 			[
-				i2s(i),
-				d2s(spheres[i].position.x),
-				d2s(spheres[i].position.y),
-				d2s(spheres[i].position.z),
-				d2s(spheres[i].radius)
+				RMObjects2RMIExp(object1, acc),
+				RMObjects2RMIExp(object2, acc),
 			]
-		)
-	);
-	minDistance = formatString("for (int i = 0; i < %1; i++) {
-		minSphereDist = min(minSphereDist, length (p - spheres[i].xyz) - spheres[i].w);
-	}", [i2s(amount)]);
-	strGlue(concat3([initSpheres], sphereData, [minDistance]), "\n");
+		);
+	}
+}
+
+d2GLSLfloat(num : double) {
+	s = d2s(num);
+	if (strContains(s, ".")) s else s + ".";
+}
+
+RMIExp2GLSL(exp : RMIExp) -> string {
+	switch(exp) {
+		RMICall(fn, args): switch(fn) {
+			RMIOp(opName): if (length(args) == 1) {
+				opName + RMIExp2GLSL(args[0])
+			} else if (length(args) == 2) {
+				RMIExp2GLSL(args[0]) + opName + RMIExp2GLSL(args[1])
+			} else if (length(args) == 3) {
+				RMIExp2GLSL(args[0]) + "?" + RMIExp2GLSL(args[1]) + ":" + RMIExp2GLSL(args[2])
+			} else "";
+			RMIFn(fnName): fnName + "(" + strGlue(map(args, RMIExp2GLSL), ", ") + ")";
+		};
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+	}
 }
 
 main() {
 	setRendererType("html");
 
-	spheres = [
-		RMSphere(RMCoordinate(0., 1., 6.), 1.),
-		RMSphere(RMCoordinate(2., 2., 8.), 0.5),
-		RMSphere(RMCoordinate(-2., 2., 8.), 0.5),
-		RMSphere(RMCoordinate(0., 0., 3.), 0.5),
-		RMSphere(RMCoordinate(-2., 0., 3.), 0.5),
-		RMSphere(RMCoordinate(2., 0., 3.), 0.5),
-	];
+	spheres1 = RMTranslate(
+		RMAdd(
+			RMTranslate(RMSphere(1.), RMY(1.)),
+			RMTranslate(
+				RMAdd(
+					RMTranslate(RMSphere(0.5), RMX(2.)),
+					RMTranslate(RMSphere(0.5), RMX(-2.))
+				),
+				RMYZ(2., 2.)
+			)
+		),
+		RMZ(3.)
+	);
+
+	spheres2 = RMAdd(
+		RMSphere(0.5),
+		RMAdd(
+			RMTranslate(RMSphere(0.5), RMX(2.)),
+			RMTranslate(RMSphere(0.5), RMX(-2.))
+		),
+	);
+
+	scene = RMAdd(
+		RMTranslate(RMAdd(spheres1, spheres2), RMZ(3.)),
+		RMPlane(RMXYZ(0., 1., 0.), 0.)
+	);
+
+	rmiexp = RMObjects2RMIExp(scene, RMIXYZ(0., 0., 0.));
+	glsl = RMIExp2GLSL(rmiexp);
 
 	mrender(makeMaterialManager([]), true, MLines([
 		MText("Hello", []),
 		displayHtml(
-			"#include raymarching.vert",
-			blueprint("#include raymarching.frag", ["spheres", generateSpheres(spheres)]),
-			"function RayMain(){"+"#include raymarching.js"+"}"
+			"#include sandbox/raymarching/raymarching.vert",
+			blueprint("#include sandbox/raymarching/raymarching.frag", ["distanceFunction", glsl]),
+			"function RayMain(){"+"#include sandbox/raymarching/raymarching.js"+"}"
 		)
 	]));
 }

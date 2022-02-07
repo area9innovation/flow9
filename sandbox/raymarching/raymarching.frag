@@ -9,13 +9,11 @@ uniform mat4 view;
 #define MAX_DIST 100.
 #define SURF_DIST .01
 
-float GetDist(vec3 p){
-	float minSphereDist = MAX_DIST;
+float GetDist(vec3 p) {
+	float d = MAX_DIST;
 
-	%spheres%
+	d = %distanceFunction%;
 
-	float planeDist = p.y;
-	float d = min(minSphereDist, planeDist);
 	return d;
 }
 
@@ -49,15 +47,6 @@ float GetLight(vec3 p){
 	float d = RayMarch(p+n*SURF_DIST*2., l);
 	if (p.y < SURF_DIST && d < length(lightPos - p)) dif *= .5;
 	return dif;
-}
-
-mat2 makeRotationMatrix2(float a) {
-    float s = sin(a);
-    float c = cos(a);
-    return mat2(
-		c, -s,
-		s, c
-	);
 }
 
 void main() {
