@@ -43,12 +43,11 @@ vec3 GetNormal(vec3 p){
 
 float GetLight(vec3 p){
 	vec3 lightPos = vec3 (0, 5, 6);
-	//lightPos.xz += vec2(sin(iTime),cos(iTime))*2.;
-	vec3 l = normalize (lightPos-p);
+	vec3 l = normalize(lightPos - p);
 	vec3 n = GetNormal(p);
-	float dif = clamp(dot(n,l),0.,1.);
-	float d = RayMarch(p+n*SURF_DIST*2.,l);
-	if (d<length(lightPos-p)) dif *= .1;
+	float dif = clamp(dot(n, l) * 0.5 + 0.3, 0., 1.);
+	float d = RayMarch(p+n*SURF_DIST*2., l);
+	if (p.y < SURF_DIST && d < length(lightPos - p)) dif *= .5;
 	return dif;
 }
 
