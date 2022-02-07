@@ -17,14 +17,37 @@ populateDsls(folder : string) -> void {
 	files = readDirectory(folder);
 	dsls = filter(files, \f -> endsWith(f, ".dsl"));
 
-	iter(dsls, \dsl -> {
-		registerDslFile(pathCombine(folder, dsl));
+	lang_dependencies = fold(dsls, makeTree(), \acc, f -> {
+		content = trim2(getFileContent(pathCombine(folder, f)), " \n\t\r");
+		lang = changeFileExt(f, "");
+		deps0 = if (startsWith(content, "syntax ")) {
+			deps1 = takeAfter(content, "syntax ", content);
+			deps = trim(takeBefore(deps1, "{", deps1));
+			map(strSplit(deps, "+"), trim);
+		} else [];
+		// Filter out the base/preloaded syntax extensions
+		deps = filter(deps0, \dep -> dep != "lambda" && dep != "ast" && dep != "quotestring" && dep != "gringo");
+		setTree(acc, f, map(deps, \dep -> changeFileExt(dep, ".dsl")));
 	});
-	println("Populating languages done.\n");
+
+	// Sort languages, respecting dependencies.
+	mdsls_ordered = topoSort(dsls, \f -> lookupTreeDef(lang_dependencies, f, []));
+
+	switch (mdsls_ordered) {
+		Some(dsls_ordered): {
+			iter(dsls_ordered, \dsl -> {
+				registerDslFile(pathCombine(folder, dsl));
+			});
+			println("Populating languages done.\n");
+		}
+		None(): {
+			println("Cyclic dependency between language syntaxes is detected.\n");
+		}
+	}
 }
 
 registerDslFile(file : string) -> void {
-	content = getFileContent(file);
+	content = trim2(getFileContent(file), " \n\t\r");
 	println("Registering " + file);
 
 	expect = \fn, args, n -> if (length(args) != n) {
