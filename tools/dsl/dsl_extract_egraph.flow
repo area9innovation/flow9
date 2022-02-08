@@ -1,27 +1,19 @@
-
 import tools/dsl/dsl_egraph;
+import tools/dsl/registry/dsl_transformation;
+import tools/dsl/registry/dsl_specification;
 import math/math;
 
 export {
-	// Extracts the best AST node for each class
-	extractDslEGraph(
-		e : DslEGraph,
-		// What language are we looking at?
-		specification : string,
-		// The cost per AST node name
-		costs : Tree<string, int>,
-	) -> Tree<int, DslEClassCost>;
+	// Extract the cheapest top level value
+	extractDslAst(astenv : DslAstEnv, specification : string, costs : Tree<string, int>) -> DslAst;
 
-	DslEClassCost(
-		// The cost of this. The smaller, the better
-		cost : int,
-		// The node that wins
-		node : DslENode
-	);
+	// TODO: Add a version of this, which removes all but the cheapest nodes in the relevant scope
 }
 
 DslExtractorEnv(
 	egraph : DslEGraph,
+	// What language are we extracting?
+	specification : string,
 	// Function to extract the best alternative and the cost of that
 	nodeCosts : Tree<string, int>,
 	// The lowest cost so far per class
@@ -29,6 +21,15 @@ DslExtractorEnv(
 	// What eclasses are we currently extracting? Attempt to avoid infinite loops
 	extracting : ref Set<int>,
 );
+
+DslEClassCost(
+	// The cost of this. The smaller, the better
+	cost : int,
+	// The node that wins
+	node : DslENode
+);
+
+
 
 // https://github.com/egraphs-good/egg/blob/main/src/extract.rs
 extractDslEGraph(
@@ -38,7 +39,7 @@ extractDslEGraph(
 		// The cost per AST node name
 		costs : Tree<string, int>,
 	) -> Tree<int, DslEClassCost> {
-	env = DslExtractorEnv(e, costs, ref makeTree(), ref makeSet());
+	env = DslExtractorEnv(e, specification, costs, ref makeTree(), ref makeSet());
 	calcDslEClassCosts(env);
 	^(env.costs);
 }
@@ -93,19 +94,19 @@ getDslEClassCost(env : DslExtractorEnv, eclass : int) -> Maybe<DslEClassCost> {
 }
 
 getDslENodeCost(env : DslExtractorEnv, node : DslENode) -> Maybe<int> {
-	childcosts : [DslEClassCost] = filtermap(node.args, \arg -> {
-		getDslEClassCost(env, arg)
-	});
-	if (length(childcosts) == length(node.args)) {
-		// if (matchDslSpecification)
-		nodeCost = dslCost(env.nodeCosts, node.value);
-		totalCost = fold(childcosts, nodeCost, \acc, cc -> {
-			acc + cc.cost;
+	if (matchDslSpecification(node.language, env.specification)) {
+		childcosts : [DslEClassCost] = filtermap(node.args, \arg -> {
+			getDslEClassCost(env, arg)
 		});
-		Some(totalCost)
+		if (length(childcosts) == length(node.args)) {
+			nodeCost = dslCost(env.nodeCosts, node.value);
+			totalCost = fold(childcosts, nodeCost, \acc, cc -> {
+				acc + cc.cost;
+			});
+			Some(totalCost)
+		} else None();
 	} else None();
 }
-
 
 dslCost(costs : Tree<string, int>, a : DslAst) -> int {
 	switch (a) {
@@ -118,22 +119,20 @@ dslCost(costs : Tree<string, int>, a : DslAst) -> int {
 	}
 }
 
-/*
+extractDslAst(astenv : DslAstEnv, specification : string, costs : Tree<string, int>) -> DslAst {
+	extracts = extractDslEGraph(astenv.egraph, specification, costs);
+	doExtractDslAst(extracts, astenv.root);
+}
 
-extractDsl(egraph : EGraph<DslAst>, extracts : Tree<int, EClassCost<DslAst>>, eclass : int) -> DslAst {
-	root = getEClassRoot(egraph, eclass);
-	mextract = lookupTree(extracts, root);
+doExtractDslAst(extracts : Tree<int, DslEClassCost>, eclass : int) -> DslAst {
+	mextract = lookupTree(extracts, eclass);
 	mextract ?? {
-		node : ENode<DslAst> = mextract.node;
+		node : DslENode = mextract.node;
 		children = map(node.args, \a : int -> {
-			extractDsl(egraph, extracts, a);
+			DslENode(node with value = doExtractDslAst(extracts, a))
 		});
-		combineDsl(node.head, children)
+		combineENode(node, children)
 	} : {
-		nodes : Set<ENode<DslAst>> = getUnionMapValue(egraph.eclass, eclass);
-		println("Could not resolve " + i2s(eclass) + " with " + superglue(set2array(nodes), \n : ENode<DslAst> -> prettyDsl(n.head), ", "));
 		DslNode("Could not resolve " + i2s(eclass), [], 0)
 	}
 }
-
-*/
