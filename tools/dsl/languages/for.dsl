@@ -4,8 +4,8 @@ syntax lambda+quotestring+array {
 		atom = "for" ws idbind "in" ws exp exp $"for_3" | atom;
 	>>);
 
-	registerDslRewriting("desugar", "|for", "lambda+for", "lambda", ";", <<
-			for $id in $e1 $e2 => iter($e1, \$id -> $e2) ;
+	registerDslRewriting("desugar", "|for", "ast", "lambda", ";", <<
+			for($id, $e1, $e2) => iter($e1, \$id -> $e2);
 		>>, <<
 			for => 1000000;
 		>>,
