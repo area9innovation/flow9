@@ -672,7 +672,7 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
+					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(/[\\s]+/).length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);

@@ -20,7 +20,11 @@ std::string demangle(const char* name) {
 #endif
 
 // memory
-// TODO
+// 
+// templates
+void drop(int32_t a) {}
+void drop(double a) {}
+void drop(bool a) {}
 
 // Structs
 
@@ -98,15 +102,6 @@ T& reuse(T& a) {
 	return a;*/
 }
 
-// TODO: recursive DUP // v1 = struct1(struct2(...)) (??)
-template <typename T>
-T& dup(T& a) {
-	a._counter += 1;
-	//std::cout<<"DUP:: cnt after: "<< a._counter << "; &=" << &a <<std::endl;
-	return a;
-}
-
-// TODO: recursive ?
 template <typename T>
 T* dup(T* a) {
 	(*a)._counter += 1;
@@ -164,12 +159,4 @@ double reuse(double a) {
 //void drop(std::function<A(B...)>& fn) {
 //	std::cout<<"DROP:: function &="<< &fn << std::endl;
 //}
-//
-//// TODO: vector (array)
-//template <typename T>
-//void drop(std::vector<T>& a) {
-//	std::cout<<"DROP VECTOR:: &=" << &a << std::endl;
-//	/*for (std::size_t i = 0; i != a.size(); ++i) {
-//		drop(a[i]);
-//	}*/
-//}
+
