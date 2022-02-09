@@ -17,7 +17,7 @@ syntax lambda+quotestring+array {
 	>>);
 
 	// struct(id, args, scope) => struct = \*args -> {args[0]}; scope
-	registerDslLowering("desugar", "|structs", "ast", "lambda", ";;", <<
+	registerDslLowering("desugar", "structs", "ast", "lambda", ";;", <<
 		struct($id, $fields, $scope) => {
 			let(id, lambda(fields,
 				record(

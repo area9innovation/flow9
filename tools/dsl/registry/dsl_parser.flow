@@ -1,4 +1,5 @@
 import tools/dsl/registry/dsl_transformation;
+import tools/dsl/dsl_extract_egraph;
 import tools/dsl/dsl_parse;
 import tools/dsl/dsl_util;
 
@@ -9,15 +10,14 @@ export {
 	// Extend an existing grammar with a new language syntax
 	registerDslParserExtension(language : string, grammar : string) -> void;
 
-	// Build a grammar for this language (without the +syntax suffix)
+	// Build a grammar for this language
 	buildDslGrammar(language : string) -> Maybe<DslGrammar>;
 
-	// Build a parser for this language "lambda+dot+syntax" as an example 
-	// from base grammars and extension
-	buildDslParserTransformation(language : string) -> Maybe<DslTransformation>;
+	// Parse this program in this language using the registry
+	parseDslProgram(language : string, program : string) -> DslAstEnv;
 }
 
-// From language without "+syntax" suffix to the grammar
+// From complete language to the grammar
 dslGrammars : ref Tree<string, DslGrammar> = ref makeTree();
 
 registerDslParser(language : string, grammar : string, requires : [string]) -> DslGrammar {
@@ -36,46 +36,34 @@ registerDslParserExtension(language : string, grammar : string) -> void {
 	dslGrammarExtensions := setTree(^dslGrammarExtensions, language, extension);
 }
 
-buildDslParserTransformation(langsyntax : string) -> Maybe<DslTransformation> {
-	lang = takeBefore(langsyntax, "+syntax", langsyntax);
+parseDslProgram(lang : string, program : string) -> DslAstEnv {
+	astenv = DslAstEnv(lang, DslString(program), makeTree(), makeDslEGraph(), 0, "");
+
 	mgrammar = lookupTree(^dslGrammars, lang);
 	mgrammar ?? {
-		Some(
-			DslTransformation(
-				"parse",
-				lang + "|+syntax",
-				\astenv -> {
-					program = getDslString(astenv.ast);
-					// TODO: We could do error handling better
-					// TODO: We could insert directly into the egraph as well
-					ast = parseProgram(astenv.language, mgrammar, program);
+		// TODO: We could do error handling better
+		// TODO: We could insert directly into the egraph as well
+		ast = parseProgram(lang, mgrammar, program);
 
-					// This does side effects.
-					root = addDslAst(astenv.egraph, lang, ast);
-					if (false) {
-						iterDslEGraph(astenv.egraph, \class, nodes -> {
-							println(i2s(class) + " " + superglue(set2array(nodes), \node -> {
-								node.language + ":" + prettyDsl(node.value)
-								+ "(" + superglue(node.args, i2s, ",") + ")"
-							}, ", "));
-						});
-					}
+		// This does side effects.
+		root = addDslAst(astenv.egraph, lang, ast);
 
-					DslAstEnv(astenv with ast = ast, root = root);
-				}
-			)
-		)
+		if (false) {
+			println("We parsed " + astenv.language + " to " + prettyDsl(ast));
+			printDslEGraph(astenv.egraph, root, "");
+		}
+		DslAstEnv(astenv with ast = ast, root = root);
 	} : {
 		// Could not find it. Let us build one
 		mgram = buildDslGrammar(lang);
 		switch (mgram) {
 			None(): {
-				println("Could not build grammar for " + langsyntax);
-				None();
+				println("Could not build grammar for " + lang);
+				DslAstEnv(astenv with error = "Could not build grammar for " + lang);
 			}
 			Some(gram): {
 				// And go pick it up
-				buildDslParserTransformation(langsyntax);
+				parseDslProgram(lang, program);
 			}
 		}
 	}
