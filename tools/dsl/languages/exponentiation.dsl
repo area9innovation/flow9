@@ -1,4 +1,4 @@
-syntax lambda+quotestring {
+syntax lambda+quotestring+array {
 	registerDslParserExtension("exponentiation", <<
 		postfix = postfix | '^' ws exp $"exponent_2";
 	>>);
