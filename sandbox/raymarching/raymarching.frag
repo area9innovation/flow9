@@ -68,16 +68,11 @@ vec3 getColor(vec2 uv) {
 
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
-	const int NUM_POINT_LIGHTS = 2;
-	vec3 lights[NUM_POINT_LIGHTS]; 
-	lights[0] = vec3(0, 5, 9);
-	lights[1] = vec3(0, 5, 3);
+
 	vec3 col = vec3(0);
-	for(int i = 0; i < NUM_POINT_LIGHTS; i++)
-        col += getLight(p, lights[i]);
+	col = %light%;
 	col *= d.col;
 	return col;
-	return d.col;
 }
 
 void main() {

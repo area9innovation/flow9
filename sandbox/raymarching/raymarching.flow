@@ -12,7 +12,7 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 			script = createElement("script");
 
 			setAttribute(scriptGLM, "src", "js/glm-js.min.js", true);
-			setAttribute(scriptGLM, "onload", "RayMain()", true);
+			setAttribute(scriptGLM, "onload", "rayMain()", true);
 			setAttribute(canvas, "id", "rayCanvas", true);
 			setAttribute(canvas, "width", "1080", true);
 			setAttribute(canvas, "height", "600", true);
@@ -42,12 +42,16 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 	)
 }
 
-RMObject ::= RMSphere, RMTranslate, RMAdd, RMPlane, RMColor;
+RMObject ::= RMSphere, RMTranslate, RMAdd, RMPlane, RMColor, RMLight, RMPlus;
 	RMSphere(radius : double);
 	RMPlane(normal : RMXYZ, height : double);
 	RMTranslate(object : RMObject, d : RMCoordinate);
 	RMAdd(object1 : RMObject, object2 : RMObject);
 	RMColor(object : RMObject, color : int);
+	RMLight();
+	RMPlus(object1 : RMObject, object2 : RMObject);
+
+RMCamera(position : RMXYZ, direction : RMXYZ);
 
 RMCoordinate ::= RMXYZ, RMX, RMY, RMZ, RMXY, RMXZ, RMYZ;
 	RMXYZ(x : double, y : double, z : double);
@@ -115,8 +119,7 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 			color
 		);
 		RMTranslate(object, d): RMObject2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
-		RMAdd(object1, object2): RMICall(
-			RMIFn("minOI"),
+		RMAdd(object1, object2): RMICall(RMIFn("minOI"),
 			[
 				RMObject2RMIExp(object1, acc, color),
 				RMObject2RMIExp(object2, acc, color),
@@ -126,6 +129,21 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 			object,
 			acc,
 			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
+		);
+		RMLight(): RMICall(RMIOp("*"),
+			[
+				RMICall(RMIFn("getLight"), [
+					RMIP(),
+					acc
+				]),
+				color
+			]
+		);
+		RMPlus(object1, object2): RMICall(RMIOp("+"),
+			[
+				RMObject2RMIExp(object1, acc, color),
+				RMObject2RMIExp(object2, acc, color),
+			]
 		);
 	}
 }
@@ -183,15 +201,49 @@ main() {
 		RMColor(RMPlane(RMXYZ(0., 1., 0.), 0.), 0x765432)
 	);
 
-	rmiexp = RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.));
-	glsl = RMIExp2GLSL(rmiexp);
+	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+
+	light = RMPlus(
+		RMTranslate(RMColor(RMLight(), 0xFFFFFF), RMYZ(5., 3.)),
+		RMTranslate(RMColor(RMLight(), 0xFFFFFF), RMYZ(5., 9.))
+	);
+	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+
+	camera = RMCamera(RMXYZ(6., 8., 12.), RMXYZ(0., 1., 6.));
+	setCameraString = formatString(
+		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
+		[
+			d2s(camera.position.x),
+			d2s(camera.position.y),
+			d2s(camera.position.z),
+			d2s(camera.direction.x),
+			d2s(camera.direction.y),
+			d2s(camera.direction.z),
+		]
+	);
+	cameraPositionX = make(camera.position.x);
+	cameraPositionY = make(camera.position.y);
+	cameraPositionZ = make(camera.position.z);
 
 	mrender(makeMaterialManager([]), true, MLines([
-		MText("Hello", []),
-		displayHtml(
-			"#include sandbox/raymarching/raymarching.vert",
-			blueprint("#include sandbox/raymarching/raymarching.frag", ["distanceFunction", glsl]),
-			"function RayMain(){"+"#include sandbox/raymarching/raymarching.js"+"}"
+		MCols2(MText("X:", []), MSlider(cameraPositionX, [MSliderRange(-20., 20.)])),
+		MCols2(MText("Y:", []), MSlider(cameraPositionY, [MSliderRange(-20., 20.)])),
+		MCols2(MText("Z:", []), MSlider(cameraPositionZ, [MSliderRange(-20., 20.)])),
+		MConstruct(
+			[
+				make3Subscribe2(
+					cameraPositionX, cameraPositionY, cameraPositionZ,
+					\x, y, z -> {
+						hostCall("setCameraPosition", [x, y, z]);
+						hostCall("drawFrame", [])|>ignore;
+					}
+				)
+			],
+			displayHtml(
+				"#include sandbox/raymarching/raymarching.vert",
+				blueprint("#include sandbox/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl]),
+				blueprint("#include sandbox/raymarching/raymarching.js", ["setCamera", setCameraString])
+			)
 		)
 	]));
 }
