@@ -42,11 +42,12 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 	)
 }
 
-RMObject ::= RMSphere, RMTranslate, RMAdd, RMPlane;
+RMObject ::= RMSphere, RMTranslate, RMAdd, RMPlane, RMColor;
 	RMSphere(radius : double);
 	RMPlane(normal : RMXYZ, height : double);
 	RMTranslate(object : RMObject, d : RMCoordinate);
 	RMAdd(object1 : RMObject, object2 : RMObject);
+	RMColor(object : RMObject, color : int);
 
 RMCoordinate ::= RMXYZ, RMX, RMY, RMZ, RMXY, RMXZ, RMYZ;
 	RMXYZ(x : double, y : double, z : double);
@@ -86,31 +87,45 @@ RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ {
 	}
 }
 
+addColorToRMIExp(exp : RMIExp, color : RMIXYZ) -> RMICall {
+	RMICall(RMIFn("ObjectInfo"), [color, exp])
+}
 
-RMObject2RMIExp(obj : RMObject, acc : RMIXYZ) -> RMIExp {
+RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 	switch(obj) {
-		RMSphere(radius): RMICall(RMIOp("-"), [
-			RMICall(RMIFn("length"), [
-				RMICall(RMIOp("-"), [RMIP(), acc])
+		RMSphere(radius): addColorToRMIExp(
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("length"), [
+					RMICall(RMIOp("-"), [RMIP(), acc])
+				]),
+				RMIDouble(radius)
 			]),
-			RMIDouble(radius)
-		]);
-		RMPlane(normal, height): RMICall(RMIOp("+"), [
-			RMICall(RMIFn("dot"), [
-				RMIP(),
-				RMICall(RMIFn("normalize"), [
-					RMCoordinate2RMIXYZ(normal)
-				])
-			]),
-			RMIDouble(height)]
+			color
 		);
-		RMTranslate(object, d): RMObject2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)));
+		RMPlane(normal, height): addColorToRMIExp(
+			RMICall(RMIOp("+"), [
+				RMICall(RMIFn("dot"), [
+					RMIP(),
+					RMICall(RMIFn("normalize"), [
+						RMCoordinate2RMIXYZ(normal)
+					])
+				]),
+				RMIDouble(height)]
+			),
+			color
+		);
+		RMTranslate(object, d): RMObject2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
 		RMAdd(object1, object2): RMICall(
-			RMIFn("min"),
+			RMIFn("minOI"),
 			[
-				RMObject2RMIExp(object1, acc),
-				RMObject2RMIExp(object2, acc),
+				RMObject2RMIExp(object1, acc, color),
+				RMObject2RMIExp(object2, acc, color),
 			]
+		);
+		RMColor(object, col): RMObject2RMIExp(
+			object,
+			acc,
+			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
 		);
 	}
 }
@@ -143,11 +158,11 @@ main() {
 
 	spheres1 = RMTranslate(
 		RMAdd(
-			RMTranslate(RMSphere(1.), RMY(1.)),
+			RMColor(RMTranslate(RMSphere(1.), RMY(1.)), 0xFFFF00),
 			RMTranslate(
 				RMAdd(
-					RMTranslate(RMSphere(0.5), RMX(2.)),
-					RMTranslate(RMSphere(0.5), RMX(-2.))
+					RMColor(RMTranslate(RMSphere(0.5), RMX(2.)), 0xFF00FF),
+					RMColor(RMTranslate(RMSphere(0.5), RMX(-2.)), 0x00FFFF)
 				),
 				RMYZ(2., 2.)
 			)
@@ -156,19 +171,19 @@ main() {
 	);
 
 	spheres2 = RMAdd(
-		RMSphere(0.5),
+		RMColor(RMSphere(0.5), 0x00FF00),
 		RMAdd(
-			RMTranslate(RMSphere(0.5), RMX(2.)),
-			RMTranslate(RMSphere(0.5), RMX(-2.))
+			RMColor(RMTranslate(RMSphere(0.5), RMX(2.)), 0x0000FF),
+			RMColor(RMTranslate(RMSphere(0.5), RMX(-2.)), 0xFF0000)
 		),
 	);
 
 	scene = RMAdd(
 		RMTranslate(RMAdd(spheres1, spheres2), RMZ(3.)),
-		RMPlane(RMXYZ(0., 1., 0.), 0.)
+		RMColor(RMPlane(RMXYZ(0., 1., 0.), 0.), 0x765432)
 	);
 
-	rmiexp = RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.));
+	rmiexp = RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.));
 	glsl = RMIExp2GLSL(rmiexp);
 
 	mrender(makeMaterialManager([]), true, MLines([
