@@ -56,9 +56,9 @@ vec3 getObjectNormal(vec3 p) {
 float getLight(vec3 p, vec3 lightPos) {
 	vec3 l = normalize(lightPos - p);
 	vec3 n = getObjectNormal(p);
-	float dif = clamp(dot(n, l) * 0.5 + 0.3, 0., 1.);
+	float dif = clamp(dot(n, l) + 0.2, 0., 1.);
 	float d = RayMarch(p+n*SURF_DIST*2., l).d;
-	if (p.y < SURF_DIST && d < length(lightPos - p)) dif *= .5;
+	if (d < length(lightPos - p)) dif *= .1;
 	return dif;
 }
 
@@ -69,9 +69,9 @@ vec3 getColor(vec2 uv) {
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
 
-	vec3 col = vec3(0);
-	col = %light%;
-	col *= d.col;
+	vec3 col = vec3(0.3);
+	col += %light%;
+	if (d.d < MAX_DIST -1.) col *= d.col; else col = vec3(0.5, 0.5, 0.7);
 	return col;
 }
 

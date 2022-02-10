@@ -1,15 +1,17 @@
 var cameraPosition;
 var cameraDirection;
 var shaderProgram;
+var yRotationAngle;
+var xRotationAngle;
 
 function getCameraRotationMatrix(cameraPosition, cameraDirection) {
 	var defaultCameraDirection = glm.vec3(0, 0, 1);
 	var cameraDirectionFromOrigin = glm.normalize(cameraDirection['-'](cameraPosition));
 	var rotationDirectionY  = cameraDirectionFromOrigin.x > 0. ? 1 : -1;
-	var yRotationAngle = rotationDirectionY * Math.acos(glm.dot(defaultCameraDirection.xz, glm.normalize(cameraDirectionFromOrigin.xz)));
+	yRotationAngle = rotationDirectionY * Math.acos(glm.dot(defaultCameraDirection.xz, glm.normalize(cameraDirectionFromOrigin.xz)));
 	var updatedCameraDirection = glm.rotate(glm.mat4(1), yRotationAngle, glm.vec3(0, 1, 0))['*'](glm.vec4(defaultCameraDirection, 1.)).xyz;
 	var rotationDirectionX = cameraDirectionFromOrigin.y > 0. ? -1 : 1;
-	var xRotationAngle = rotationDirectionX * Math.acos(glm.dot(updatedCameraDirection, cameraDirectionFromOrigin));
+	xRotationAngle = rotationDirectionX * Math.acos(glm.dot(updatedCameraDirection, cameraDirectionFromOrigin));
 
 	var view = glm.mat4(1);
 	view = glm.rotate(view, yRotationAngle, glm.vec3(0, 1, 0));
@@ -54,7 +56,78 @@ function rayMain() {
 		canvas.width,0.0,0.0,
 		canvas.width,canvas.height,0.0, 
 	];
-	
+
+	var mouseLeftDown = false,
+		mouseMiddleDown = false,
+		mouseRightDown = false,
+        mouseX = 0,
+        mouseY = 0;
+
+	canvas.addEventListener('mousemove', function (evt) {
+		evt.preventDefault();
+		if (mouseLeftDown) {
+			var deltaX = evt.clientX - mouseX,
+				deltaY = evt.clientY - mouseY;
+			mouseX = evt.clientX;
+			mouseY = evt.clientY;
+			cameraPosition = glm.vec3(
+				cameraPosition.x - deltaX * Math.cos(yRotationAngle)/ 100,
+				cameraPosition.y,
+				cameraPosition.z + deltaX * Math.sin(yRotationAngle)/ 100
+			);
+			drawFrame();
+		}
+		else if (mouseMiddleDown) {
+			var deltaX = evt.clientX - mouseX,
+			deltaY = evt.clientY - mouseY;
+			mouseX = evt.clientX;
+			mouseY = evt.clientY;
+			cameraPosition = glm.vec3(
+				cameraPosition.x + (deltaY * Math.sin(yRotationAngle) + deltaX * Math.cos(yRotationAngle + Math.PI/2))/ 100,
+				cameraPosition.y,
+				cameraPosition.z + (deltaX * Math.sin(yRotationAngle + Math.PI/2) + deltaY * Math.cos(yRotationAngle))/ 100
+			);
+			cameraDirection = glm.vec3(
+				cameraDirection.x + (deltaY * Math.sin(yRotationAngle) + deltaX * Math.cos(yRotationAngle + Math.PI/2))/ 100,
+				cameraDirection.y,
+				cameraDirection.z + (deltaX * Math.sin(yRotationAngle + Math.PI/2) + deltaY * Math.cos(yRotationAngle))/ 100
+			);
+			drawFrame();
+		} else if (mouseRightDown) {
+			var deltaX = evt.clientX - mouseX,
+			deltaY = evt.clientY - mouseY;
+			mouseX = evt.clientX;
+			mouseY = evt.clientY;
+			cameraPosition = glm.vec3(
+				cameraPosition.x,
+				cameraPosition.y + deltaY / 100,
+				cameraPosition.z
+			);
+			cameraDirection = glm.vec3(
+				cameraDirection.x,
+				cameraDirection.y + deltaY / 100,
+				cameraDirection.z
+			);
+			drawFrame();
+		}
+	}, false);
+        
+    canvas.addEventListener('mousedown', function (evt) {
+        evt.preventDefault();
+        if (evt.button == 0) mouseLeftDown = true;
+		if (evt.button == 1) mouseMiddleDown = true;
+		if (evt.button == 2) mouseRightDown = true;
+        mouseX = evt.clientX;
+        mouseY = evt.clientY;
+    }, false);
+    
+    canvas.addEventListener('mouseup', function (evt) {
+        evt.preventDefault();
+        mouseLeftDown = false;
+		mouseMiddleDown = false;
+		mouseRightDown = false;
+    }, false);
+
 	var vertex_buffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
 	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
