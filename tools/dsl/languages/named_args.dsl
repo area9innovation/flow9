@@ -33,7 +33,7 @@ syntax lambda+quotestring+array {
 	>>);
 
 	// function(id, args, body) => id = \args -> body
-	registerDslLowering("desugar", "|named_args", "ast", "lambda+array", ";;", <<
+	registerDslLowering("desugar", "named_args", "ast", "lambda+array", ";;", <<
 		function($id, $args, $body, $scope) => {
 			tmp = "tmp2"; // TODO: Make temporary
 			hasDefVal = \node -> { nodeName(node) == "funargdef" };

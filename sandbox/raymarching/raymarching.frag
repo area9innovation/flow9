@@ -53,24 +53,30 @@ vec3 getObjectNormal(vec3 p) {
 	return normalize(n);
 }
 
-vec3 getLight(vec3 p, vec3 col) {
-	vec3 lightPos = vec3 (0, 5, 6);
+float getLight(vec3 p, vec3 lightPos) {
 	vec3 l = normalize(lightPos - p);
 	vec3 n = getObjectNormal(p);
 	float dif = clamp(dot(n, l) * 0.5 + 0.3, 0., 1.);
 	float d = RayMarch(p+n*SURF_DIST*2., l).d;
 	if (p.y < SURF_DIST && d < length(lightPos - p)) dif *= .5;
-	return dif*col;
+	return dif;
 }
 
-void main() {
-	vec2 uv = (FragPos.xy - 0.5 * screenSize.xy)/screenSize.y;
+vec3 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
-	vec3 col = getLight(p, d.col);
-	col = pow(col, vec3(.4545));
+
+	vec3 col = vec3(0);
+	col = %light%;
+	col *= d.col;
+	return col;
+}
+
+void main() {
+	vec2 uv = (FragPos.xy - 0.5 * screenSize.xy)/screenSize.y;
+	vec3 col = getColor(uv);
 	gl_FragColor = vec4(col, 1.0);
 }
