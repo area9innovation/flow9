@@ -39,7 +39,11 @@ lowerDslEGraph(env : DslAstEnv, eclass : int,
 	root = getDslEClassRoot(e, eclass);
 	nodes = getDslEClassNodes(e, root);
 	matching = set2array(filterSet(nodes, \n -> matchDslSpecification(n.language, specification)));
-	fold(matching, None(), \acc, preferred -> {
+	if (length(matching) > 1) {
+		println("We have more nodes than one");
+	}
+	rewritten = ref false;
+	best = fold(matching, None(), \acc, preferred : DslENode -> {
 		children = filtermap(preferred.args, \childClass -> {
 			lowerDslEGraph(env, childClass, specification, lowering)
 		});
@@ -50,8 +54,7 @@ lowerDslEGraph(env : DslAstEnv, eclass : int,
 			term = combineENode(preferred, children);
 
 			resultLanguage = resultDslTransformation(preferred.language, specification);
-			lowerDslENode(env, specification, resultLanguage, lowering, eclass, term);
-
+			rewritten := lowerDslENode(env, specification, resultLanguage, lowering, root, preferred, term) || ^rewritten;
 			node = DslENode(
 					resultLanguage,
 					term,
@@ -59,18 +62,30 @@ lowerDslEGraph(env : DslAstEnv, eclass : int,
 				);
 			Some(node);
 		}
-	})
+	});
+	if (!^rewritten && matching != []) {
+		// println("Alright, we have to just directly lower for e" + i2s(eclass));
+		// OK, we have to just lower it immediately
+		node = matching[0];
+		resultLanguage = resultDslTransformation(node.language, specification);
+		newENode = DslENode(node with language = resultLanguage);
+		newEclass = addDslENode(env.egraph, newENode);
+		unionDslEClass(env.egraph, eclass, newEclass);
+		{}
+	}
+	best;
 }
 
 // OK, we know this node is the right language. Process it
-lowerDslENode(e : DslAstEnv, specification : string, resultLanguage : string, lowering : DslLowering, eclass : int, term : DslAst) -> void {
-	iterList(lowering.replacements, \r : DslReplacement -> {
-		lowerDslENodeWithReplacement(e, specification, resultLanguage, lowering.toLanguage, r, eclass, term)
-	})
+lowerDslENode(e : DslAstEnv, specification : string, resultLanguage : string, 
+			lowering : DslLowering, eclass : int, node : DslENode, term : DslAst) -> bool {
+	foldList(lowering.replacements, false, \acc, r : DslReplacement -> {
+		acc || lowerDslENodeWithReplacement(e, specification, resultLanguage, lowering.toLanguage, r, eclass, term)
+	});
 }
 
-lowerDslENodeWithReplacement(e : DslAstEnv, specification : string, resultLanguage, toLanguage : string, replacement : DslReplacement, 
-	eclass : int, term : DslAst) -> void {
+lowerDslENodeWithReplacement(e : DslAstEnv, specification : string, resultLanguage : string, 
+		toLanguage : string, replacement : DslReplacement, eclass : int, term : DslAst) -> bool {
 	acc = DslENodeMatch(makeTree(), false);
 	bindings = dslENodeMatch(acc, term, replacement.pattern);
 	if (!bindings.fail) {
@@ -99,7 +114,8 @@ lowerDslENodeWithReplacement(e : DslAstEnv, specification : string, resultLangua
 
 		newEclass = addDslAst(e.egraph, resultLanguage, result);
 		unionDslEClass(e.egraph, eclass, newEclass);
-		{}
+		true
+	} else {
+		false;
 	}
 }
-
