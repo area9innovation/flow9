@@ -1,6 +1,7 @@
 import tools/dsl/registry/dsl_registry;
 import tools/dsl/registry/dsl_parser;
 import tools/dsl/registry/dsl_specification;
+import tools/dsl/dsl_tracing;
 import tools/dsl/dsl_eval;
 import ds/tree;
 import string;
@@ -34,10 +35,35 @@ performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv
 		// OK, continue
 		performDslTransformations(phase, toLanguage, iterate)
 	} else {
-		DslAstEnv(
-			iterate with error = "Could not transform to " + toLanguage + ". Only got to " + iterate.language
-		)
+		// OK, maybe it is just a pure syntax extension without rewrite rules?
+		lastExtension = takeAfterLast(iterate.language, "+", iterate.language);
+		if (lastExtension == "") {
+			println("Could not transform to " + toLanguage + ". Only got to " + iterate.language + ". Extension " + lastExtension);
+			DslAstEnv(
+				iterate with error = "Could not transform to " + toLanguage + ". Only got to " + iterate.language
+			)
+		} else {
+			implicitDropped = takeBeforeLast(iterate.language, "+", iterate.language);
+			implicit = doImplicitExtensionDrop(iterate, lastExtension, implicitDropped);
+			performDslTransformations(phase, toLanguage, implicit);
+		}
 	}
+}
+
+doImplicitExtensionDrop(env : DslAstEnv, extension : string, remaining : string) -> DslAstEnv {
+	// println("Doing an implicit drop of " + extension);
+	language = remaining + "+" + extension;
+	iterDslEGraph(env.egraph, \eclass, nodes : Set<DslENode> -> {
+		iterSet(nodes, \node : DslENode -> {
+			if (node.language == language) {
+				// OK, just lowering it directly
+				newEclass = addDslAst(env.egraph, remaining, node.value);
+				unionDslEClass(env.egraph, eclass, newEclass);
+				{}
+			}
+		})
+	});
+	DslAstEnv(env with language = remaining);
 }
 
 // Applies the given transformation
@@ -45,7 +71,11 @@ performDslTransformation(input : DslAstEnv, transformation : DslTransformation) 
 	res = transformation.fn(input);
 	// Make sure to update the language as well
 	result = resultDslTransformation(input.language, transformation.specification);
-	// println("  Running " + transformation.phase + " for " + transformation.specification + " to go from " + input.language + " to " + result);
+
+	if (isDslTracing(input.language, transformation.phase)) {
+		println("  Running " + transformation.phase + " for " + transformation.specification + " to go from " + input.language + " to " + result);
+		println(prettyDsl(res.ast));
+	}
 
 	runtime = getDslLanguageRuntime(transformation.specification);
 
