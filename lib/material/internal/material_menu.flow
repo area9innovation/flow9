@@ -1413,7 +1413,8 @@ MMenuLinesState(
 	nearTitle : bool,
 	popupId : string,
 	activeDescendantId : DynamicBehaviour<string>,
-	makeTitle : (MFocusGroup, [MTextStyle], Transform<string>, bool, bool, Maybe<DynamicBehaviour<double>>, Maybe<DynamicBehaviour<double>>) -> Tropic
+	makeTitle : (MFocusGroup, [MTextStyle], Transform<string>, bool, bool, Maybe<DynamicBehaviour<double>>, Maybe<DynamicBehaviour<double>>) -> Tropic,
+	singleSelectionToggle : bool
 );
 
 MMenuLines2Material(
@@ -1477,17 +1478,45 @@ MMenuLines2Material(
 		|> (\m -> MCenterYIn(m, TFixed(0., lineHeight)));
 
 	shiftGap = if (indexShift) 2 else 0;
-	onItemClick = \i, click -> \ -> {
+
+	unselectPrevious = \ss -> {
+		prevSelected = getValue(ss.selected);
+		if (prevSelected >= 0 && prevSelected + shiftGap < length(items1)) {
+			switch(items1[prevSelected + shiftGap]) {
+				MMenuSingleLine(__, ___style): {
+					nextDistinct(extractStruct(___style, MSelected(make(false))).selected, false);
+				}
+				MMenuCustomLine(__, ___style):{
+					nextDistinct(extractStruct(___style, MSelected(make(false))).selected, false);
+				}
+				default : {}
+			}
+		}
+	}
+
+	onItemClick = \i, click, isSelected -> \ -> {
 		nextDistinct(openMenu.opened, false);
 		closeBelow();
 
 		if (i >= shiftGap) {
 			timer(50, \ ->
-				maybeApply(singleSelection, \ss -> nextFn(ss.selected, i - shiftGap))
+				maybeApply(singleSelection, \ss -> {
+					unselectPrevious(ss);
+					if (state.singleSelectionToggle && getValue(ss.selected) == i - shiftGap) {
+						nextFn(ss.selected, -1);
+						nextDistinct(isSelected, false)
+					} else {
+						nextFn(ss.selected, i - shiftGap);
+						nextDistinct(isSelected, true)
+					}
+				})
 			);
 			if (fgetValue(onListClick.enabled)) onListClick.onClick(i - shiftGap);
 			click(); // action is moved outside delayed code - to solve issue with copying something to clipboard in a firefox.
-		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> nextFn(ss.selected, -1))
+		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> {
+			unselectPrevious(ss);
+			nextFn(ss.selected, -1)
+		})
 	};
 
 	itemOnTop = \i -> {
@@ -1540,7 +1569,8 @@ MMenuLines2Material(
 		MGetFocusGroup(\parent -> {
 			style = getLineStyle(_style, i);
 			hgt = extractStruct(style, MHeight(lineHeight)).height;
-			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click);
+			selectedInspector = extractStruct(style, MSelected(make(false))).selected;
+			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector);
 			selected = selectedId == i && !indexShift;
 			id = state.popupId + "_menuitem" + i2s(i);
 			focusState =
@@ -1850,6 +1880,7 @@ MMenuLines2MPopup(
 	widthByButton = contains(style0, MWidthByButton());
 	mWidthLimits = tryExtractStruct(style0, MMenuWidthLimits(zero, zero));
 	singleSelection = tryExtractStruct(style0, MSingleSelection(make(-1)));
+	singleSelectionToggle = contains(style0, MSingleSelectionToggle());
 	selectedId = eitherMap(singleSelection, \ss -> getValue(ss.selected), -1);
 	selectedColor : (MFocusGroup) -> MColor = \parent -> MThemeColor2MColor(parent, extractStruct(style0, MSelectedColor(MAccentColor())).color);
 	openMenu = extractStruct(style0, MOpenMenu(make(false)));
@@ -1909,7 +1940,7 @@ MMenuLines2MPopup(
 			t
 		);
 
-	menuLinesState = MMenuLinesState(manager, m2t, lineHeight, elevation, nearTitle, popupId, activeDescendantId, makeTitle);
+	menuLinesState = MMenuLinesState(manager, m2t, lineHeight, elevation, nearTitle, popupId, activeDescendantId, makeTitle, singleSelectionToggle);
 
 	items = MMenuLines2Material(items0, style0, lineBorders, closeBelow, focusedItem, menuLinesState);
 
