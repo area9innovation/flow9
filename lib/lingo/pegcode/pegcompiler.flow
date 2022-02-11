@@ -43,6 +43,7 @@ main() {
 	grammarName = getUrlParameter("grammarname");
 	needsPreprocess = isUrlParameterTrue("preprocess");
 	definitions = strSplit(getUrlParameter("definitions"), ",");
+	prefixRules = getUrlParameter("prefix_rules");
 
 	files = strSplit(grammarfile, ",");
 	grammar = fold(files, "", \content, file -> {
@@ -65,6 +66,7 @@ main() {
 
         flowfile=<file> produces a flow file with a parsing driver for the pegcode parser.
        	parsetype=MyAstType makes the parsing driver use a strongly typed return type.
+		prefix_rules=<pref> change rule names from 'name' to 'pref_name'
 
         grammar=1 prints the optimized grammar for inspection.
         opcodes=1 prints the resulting pegcodes.
@@ -105,7 +107,7 @@ main() {
 				println("Could not parse grammar file `" + grammarfile + "`");
 				quit(1);
 			}
-			Some(gr): {
+			Some(gr0): {
 				if (r.pos < strlen(preprocessed)) {
 					println("Could not parse all of grammar file `" + grammarfile + "`:");
 					printParseError(preprocessed, r);
@@ -119,6 +121,7 @@ main() {
 						println("Input file should have .lingo suffix");
 						quit(1);
 					} else {
+						gr = if (prefixRules == "") gr0 else prefixRulesInGrammar(gr0, prefixRules);
 						arrayName =
 							if (grammarName != "") {
 								grammarName
@@ -464,6 +467,41 @@ removePegActions(pa : Parsing) -> Parsing {
 		ActionIndex(): pa;
 		BindResult(name, v): BindResult(name, removePegActions(v));
 		BindMatched(name, v): BindMatched(name, removePegActions(v));
+		LingoValue(value): pa;
+	}
+}
+
+prefixRulesInGrammar(gr : Grammar, prefix : string) -> Grammar {
+	Grammar(map(gr.productions, \prod ->
+		Production(prod with
+			name = prefix + "_" + prod.name,
+			choices = map(prod.choices, \choice ->
+				Seq(map(choice.seq, \p -> prefixRulesInParsing(p, prefix)))
+			)
+		)
+	));
+}
+
+prefixRulesInParsing(pa : Parsing, prefix : string) -> Parsing {
+	switch (pa) {
+		Choices(ps): Choices(map(ps, \p -> prefixRulesInParsing(p, prefix)));
+		Seq(seq): Seq(map(seq, \p -> prefixRulesInParsing(p, prefix)));
+		Star(p): Star(prefixRulesInParsing(p, prefix));
+		Plus(p): Plus(prefixRulesInParsing(p, prefix));
+		Opt(p): Opt(prefixRulesInParsing(p, prefix));
+		Negation(p): Negation(prefixRulesInParsing(p, prefix));
+		CutUp(p): CutUp(prefixRulesInParsing(p, prefix));
+		CutDown(p): CutDown(prefixRulesInParsing(p, prefix));
+		Rule(name): Rule(prefix + "_" + name);
+		iRule(i): pa;
+		Term(name): pa;
+		CharRange(first, last): pa;
+		Epsilon(): pa;
+		Action(fn): Epsilon();
+		Action2(e): Epsilon();
+		ActionIndex(): pa;
+		BindResult(name, v): BindResult(name, prefixRulesInParsing(v, prefix));
+		BindMatched(name, v): BindMatched(name, prefixRulesInParsing(v, prefix));
 		LingoValue(value): pa;
 	}
 }
