@@ -66,8 +66,8 @@ function rayMain() {
 	var mouseLeftDown = false,
 		mouseMiddleDown = false,
 		mouseRightDown = false,
-        mouseX = 0,
-        mouseY = 0;
+		mouseX = 0,
+		mouseY = 0;
 
 	canvas.addEventListener('mousedown', function (evt) {
 		if (evt.button == 0) mouseLeftDown = true;
@@ -103,12 +103,12 @@ function rayMain() {
 			drawFrame();
 		}
 	}, false);
-    
-    canvas.addEventListener('mouseup', function (evt) {
-        mouseLeftDown = false;
+		
+	canvas.addEventListener('mouseup', function (evt) {
+		mouseLeftDown = false;
 		mouseMiddleDown = false;
 		mouseRightDown = false;
-    }, false);
+	}, false);
 
 	canvas.addEventListener('wheel', function (evt) {
 		var direction = getCameraVector();
@@ -118,7 +118,7 @@ function rayMain() {
 			cameraPosition['-='](glm.normalize(direction)['*'](step));
 			drawFrame();
 		}
-    }, false);
+	}, false);
 
 	var vertex_buffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
