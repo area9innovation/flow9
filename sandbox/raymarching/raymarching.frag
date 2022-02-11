@@ -53,12 +53,34 @@ vec3 getObjectNormal(vec3 p) {
 	return normalize(n);
 }
 
+float shadow( in vec3 ro, in vec3 rd/*, const float mint,  const float maxt */, float k)
+{	
+	float t=0.;
+	float h;
+	float res = 1.0;
+   // for( float t=0.; t<10.;  t += h)
+   for (int i=0; i< MAX_STEPS; i++)
+    {
+        float h = getObjectInfo(ro + rd*t).d;
+        if( h<0.001 )
+            return 0.0;
+		res = min( res, k*h/t );
+        t += h;
+		if (/*t < 10. ||*/ t>MAX_DIST || h<SURF_DIST) break;
+    }
+    //return 1.0;
+	return res;
+}
+
 float getLight(vec3 p, vec3 lightPos) {
 	vec3 l = normalize(lightPos - p);
 	vec3 n = getObjectNormal(p);
 	float dif = clamp(dot(n, l) + 0.2, 0., 1.);
 	float d = RayMarch(p+n*SURF_DIST*2., l).d;
+	//float d = shadow(p+n*SURF_DIST*2., l/*, 0., 10.*/, 2.);
 	if (d < length(lightPos - p)) dif *= .1;
+	//if (d < 1.0) dif *= .1;
+	//dif *= d;
 	return dif;
 }
 
