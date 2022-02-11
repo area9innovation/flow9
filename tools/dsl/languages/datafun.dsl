@@ -13,7 +13,7 @@ syntax lambda+quotestring+array {
 	>>);
 
 	// TODO: Figure out how to handle an arbitrary list of conditions in the loop part
-	registerDslRewriting("desugar", "datafun", "lambda+datafun", "lambda", ";", << 
+	registerDslLowering("desugar", "datafun", "lambda+datafun", "@lambda", ";", << 
 			// 1-d loop
 			[ $e | $a in $c ] 					=> map($c, \$a -> $e);
 			[ $e | $a in $c, $f ] 				=> fold($c, nil(), \acc, $a -> if ($f) cons($e, acc) else acc);
@@ -29,10 +29,7 @@ syntax lambda+quotestring+array {
 			[ $e | $a in $c, $f, $b in $d, $g ] => fold($c, nil(), \acc, $a -> 
 													if ($f) fold($d, acc, \acc2, $b -> if ($g) cons($e, acc2) else acc2) else acc
 												);
-		>>, <<
-			datafun => 1000000;
-		>>,
-		<< 0 >>);
+		>>);
 
 	// [ u.name | u in users, c in classes, cl in class_learners cl, cl.class_id == index(c.id), cl.user_id == u.id ]
 
