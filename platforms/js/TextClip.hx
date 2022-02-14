@@ -728,7 +728,11 @@ class TextClip extends NativeWidgetClip {
 
 		// Force text value right away
 		if (nativeWidget != null && isInput) {
+			var keepSelectionRange = true;
+			var selectionStartPrev = nativeWidget.selectionStart;
+			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = text;
+			if (keepSelectionRange) setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
 		if (this.isHTMLRenderer()) {
@@ -1333,7 +1337,7 @@ class TextClip extends NativeWidgetClip {
 			if ((Platform.isChrome || Platform.isEdge) && decimalSeparatorFix) {
 				nativeWidget.value = '';
 			}
-			nativeWidget.value = newValue;
+			nativeWidget.value = val;
 		}
 
 		if (newValue != nativeWidgetValue) {
