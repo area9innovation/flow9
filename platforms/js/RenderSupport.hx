@@ -1747,6 +1747,10 @@ class RenderSupport {
 		clip.setEscapeHTML(escapeHTML);
 	}
 
+	public static function setTextWordSpacing(clip : TextClip, spacing : Float) : Void {
+		clip.setTextWordSpacing(spacing);
+	}
+
 	public static function setAdvancedText(clip : TextClip, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
 		// NOP
 	}
@@ -3106,6 +3110,10 @@ class RenderSupport {
 
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
 		return new DropShadowFilter(angle, distance, radius, color, alpha);
+	}
+
+	public static function setUseBoxShadow(dropShadow : DropShadowFilter) : Void {
+		untyped dropShadow.useBoxShadow = true;
 	}
 
 	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic {

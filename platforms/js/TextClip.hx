@@ -728,7 +728,11 @@ class TextClip extends NativeWidgetClip {
 
 		// Force text value right away
 		if (nativeWidget != null && isInput) {
+			var keepSelectionRange = true;
+			var selectionStartPrev = nativeWidget.selectionStart;
+			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = text;
+			if (keepSelectionRange) setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
 		if (this.isHTMLRenderer()) {
@@ -742,6 +746,14 @@ class TextClip extends NativeWidgetClip {
 		if (this.escapeHTML != escapeHTML) {
 			this.escapeHTML = escapeHTML;
 			invalidateMetrics();
+		}
+	}
+
+	public function setTextWordSpacing(spacing : Float) : Void {
+		if (this.style.wordSpacing != spacing) {
+			this.style.wordSpacing = spacing;
+			invalidateMetrics();
+			this.emitEvent('textwidthchanged');
 		}
 	}
 
@@ -1325,7 +1337,7 @@ class TextClip extends NativeWidgetClip {
 			if ((Platform.isChrome || Platform.isEdge) && decimalSeparatorFix) {
 				nativeWidget.value = '';
 			}
-			nativeWidget.value = newValue;
+			nativeWidget.value = val;
 		}
 
 		if (newValue != nativeWidgetValue) {
