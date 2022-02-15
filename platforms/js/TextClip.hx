@@ -552,8 +552,12 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignLeft' : null;
 			case 'AutoAlignRight' : 'right';
 			case 'AutoAlignCenter' : 'center';
+			case 'AutoAlignJustify' : 'justify';
 			case 'AutoAlignNone' : 'none';
 			default : null;
+		}
+		if (nativeWidget.style.textAlign == 'justify') {
+			nativeWidget.style.whiteSpace = "normal";
 		}
 
 		updateBaselineWidget();
