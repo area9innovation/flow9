@@ -1,16 +1,7 @@
-import tools/dsl/dsl_parse;
-import tools/dsl/dsl_rewrite;
-import tools/dsl/dsl_compiler;
-import tools/dsl/dsl_eval;
-import tools/dsl/gringo_actions;
+{
 
-export {
-	defineOpenSCAD(lambda : DslLanguage) -> DslLanguage;
-}
-
-defineOpenSCAD(lambda : DslLanguage) -> DslLanguage {
 	// See https://files.openscad.org/grammar.xhtml
-	openscad = extendGrammar(lambda.grammar, <<
+	registerDslParserExtension("openscad", <<
 		package = ws $"nil" (statement $"cons")+ $"package_1";
 		statement = include | use | assignment | named_function_definition | named_module_definition | module_instantiation;
 		include = "include" !letterOrDigit ws filename ";" ws $"include_1";
@@ -52,7 +43,4 @@ defineOpenSCAD(lambda : DslLanguage) -> DslLanguage {
 	/*
 	The most important is the call syntax with argument names.
 	*/
-
-	DslLanguage("openscad", openscad, [], []);
 }
-

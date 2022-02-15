@@ -6,9 +6,9 @@ syntax lambda+quotestring+array {
 	>>);
 
 	// TODO: We register a dummy lowering so the runtime can be activated
-	registerDslLowering("desugar", "|tuples", "ast", "ast", ";", "");
+	registerDslLowering("desugar", "tuples", "ast", "ast", ";", "");
 
-	registerDslRuntime("|tuples", "lambda+array", <<
+	registerDslRuntime("tuples", "lambda+array", <<
 		nth = \l, n -> {
 				// Extract from the tuple wrapper
 				// TODO: We could do an optimization where we just
