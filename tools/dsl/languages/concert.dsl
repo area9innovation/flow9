@@ -13,7 +13,7 @@
 
 		and($a, $b)	=> CCallBuiltin("&&", [$a,$b], ConcertPos("", 0, 0));;
 		or($a, $b)	=> CCallBuiltin("||", [$a,$b], ConcertPos("", 0, 0));;
-		not($a)	=> CCallBuiltin("not", [$a], ConcertPos("", 0, 0));;
+		not($a)		=> CCallBuiltin("not", [$a], ConcertPos("", 0, 0));;
 
 		less($a, $b)			=> CCallBuiltin("<", [$a,$b], ConcertPos("", 0, 0));;		
 		greater($a, $b) 		=> CCallBuiltin(">", [$a,$b], ConcertPos("", 0, 0));;		
@@ -34,8 +34,17 @@
 
 		lambda($args, $body) => CLambda($args, $body);;
 
+		call(CVar("nil", ConcertPos("", 0, 0)), $children) => CArray(CArrayView(0, 0), []);;
+		call(CVar("cons", ConcertPos("", 0, 0)), [$value, $array]) => CCall(
+			CVar("arrayPush", ConcertPos("", 0, 0)), 
+			[
+				$array,
+				$value
+			],
+			ConcertPos("", 0, 0)
+		);;
 		call($fn, $children) => CCall($fn, $children, ConcertPos("", 0, 0));;	
 
-		ifelse($cond, $then, $else) => CIf($cond, $then, else, ConcertPos("", 0, 0));;
+		ifelse($cond, $then, $else) => CIf($cond, $then, $else, ConcertPos("", 0, 0));;
 	>>)
 }
