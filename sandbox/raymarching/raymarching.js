@@ -85,8 +85,10 @@ function rayMain() {
 			mouseY = evt.clientY;
 			if (mouseLeftDown) {
 				var rotateCamera= glm.mat4(1);
+				var dX = deltaY / 100.;
+				var dAngleX = xRotationAngle + dX > - Math.PI / 2 && xRotationAngle + dX < Math.PI / 2 ? dX : 0;
 				rotateCamera = glm.rotate(rotateCamera, yRotationAngle + deltaX / 100., glm.vec3(0, 1, 0));
-				rotateCamera = glm.rotate(rotateCamera, xRotationAngle + deltaY / 100., glm.vec3(1, 0, 0));
+				rotateCamera = glm.rotate(rotateCamera, xRotationAngle + dAngleX, glm.vec3(1, 0, 0));
 				cameraDirection = rotateCamera['*'](defaultCameraDirection).xyz['*'](glm.length(getCameraVector()))['+'](cameraPosition);
 			} else if (mouseMiddleDown) {
 				var dX = (deltaX * Math.cos(yRotationAngle + Math.PI) + deltaY * Math.sin(yRotationAngle)) / 100;
