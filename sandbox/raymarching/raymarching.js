@@ -99,6 +99,8 @@ function rayMain() {
 				var dY = deltaY / 100;
 				cameraPosition.y += dY;
 				cameraDirection.y += dY;
+				cameraPosition.x -= deltaX * Math.cos(yRotationAngle) / 100;
+				cameraPosition.z += deltaX * Math.sin(yRotationAngle) / 100;
 			}
 			drawFrame();
 		}
