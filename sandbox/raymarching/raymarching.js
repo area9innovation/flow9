@@ -4,6 +4,8 @@ var shaderProgram;
 var yRotationAngle;
 var xRotationAngle;
 var defaultCameraDirection;
+var frameDrawn = false;
+var vertices;
 
 function getCameraVector() {
 	return cameraDirection['-'](cameraPosition);
@@ -31,7 +33,6 @@ function setCameraDirection(x, y, z) {
 	cameraDirection = glm.vec3(x, y, z);
 }
 
-var frameDrawn = false;
 function drawFrame() {
 	gl.clearColor(1.0, 0.0, 0.0, 1.0);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -51,19 +52,24 @@ function drawLoop(timestamp)
 	window.requestAnimationFrame(drawLoop);
 }
 
-function rayMain() {
-	var canvas = document.getElementById('rayCanvas');
-	gl = canvas.getContext('webgl');
-	
-	var vertices = [
-		0.0,canvas.height,0.0,
-		0.0,0.0,0.0,
-		canvas.width,0.0,0.0,
-		canvas.width,canvas.height,0.0, 
-	];
+function resizeCanvas(canvas) {
+	vertices = new Float32Array([
+		0.0, canvas.height,
+		0.0, 0.0,
+		canvas.width, 0.0,
+		canvas.width, canvas.height,
+	]);
 
-	defaultCameraDirection = glm.vec4(0, 0, 1, 1);
+	gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
 
+	var projection = glm.ortho(0, canvas.width, 0, canvas.height);
+	gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "projection"), false, projection.elements);
+	gl.uniform2f(gl.getUniformLocation(shaderProgram, "screenSize"), canvas.width, canvas.height);
+
+	gl.viewport(0, 0, canvas.width, canvas.height);
+}
+
+function initializeMouseEvents(canvas) {
 	var mouseLeftDown = false,
 		mouseMiddleDown = false,
 		mouseRightDown = false,
@@ -124,12 +130,9 @@ function rayMain() {
 			cameraPosition['-='](glm.normalize(direction)['*'](step));
 		}
 	}, {passive: true});
+}
 
-	var vertex_buffer = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
-	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
-	gl.bindBuffer(gl.ARRAY_BUFFER, null);
-	
+function createShader() {
 	var vertCode = document.getElementById("vertex-shader").text;
 	var vertShader = gl.createShader(gl.VERTEX_SHADER);
 	gl.shaderSource(vertShader, vertCode);
@@ -150,21 +153,27 @@ function rayMain() {
 	gl.attachShader(shaderProgram, fragShader);
 	gl.linkProgram(shaderProgram);
 	gl.useProgram(shaderProgram);
-	
+}
+
+function rayMain() {
+	var canvas = document.getElementById('rayCanvas');
+	gl = canvas.getContext('webgl');
+	defaultCameraDirection = glm.vec4(0, 0, 1, 1);
+
+	createShader();
+
+	var vertex_buffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
 
 	var coord = gl.getAttribLocation(shaderProgram, "coordinates");
-	gl.vertexAttribPointer(coord, 3, gl.FLOAT, false, 0, 0); 
+	gl.vertexAttribPointer(coord, 2, gl.FLOAT, false, 0, 0); 
 	gl.enableVertexAttribArray(coord);
-	
-	var projection = glm.ortho(0, canvas.width, 0, canvas.height);
-	gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "projection"), false, projection.elements);
-	gl.uniform2f(gl.getUniformLocation(shaderProgram, "screenSize"), canvas.width, canvas.height);
 
-	gl.enable(gl.DEPTH_TEST);
-	gl.viewport(0,0,canvas.width,canvas.height);
+	resizeCanvas(canvas);
 	
 	%setCamera%;
+
+	initializeMouseEvents(canvas);
 
 	window.requestAnimationFrame(drawLoop);
 }
