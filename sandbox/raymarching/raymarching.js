@@ -31,6 +31,7 @@ function setCameraDirection(x, y, z) {
 	cameraDirection = glm.vec3(x, y, z);
 }
 
+var frameDrawn = false;
 function drawFrame() {
 	gl.clearColor(1.0, 0.0, 0.0, 1.0);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -40,14 +41,14 @@ function drawFrame() {
 	gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "view"), false, view.elements);
 
 	gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+	frameDrawn = true;
 }
 
-function drawAnimate(timestamp)
+function drawLoop(timestamp)
 {
-	cameraPosition = glm.vec3(12*Math.sin(timestamp/150), 8, 12*Math.cos(timestamp/150));
 	drawFrame();
 
-	window.requestAnimationFrame(drawAnimate);
+	window.requestAnimationFrame(drawLoop);
 }
 
 function rayMain() {
@@ -76,15 +77,14 @@ function rayMain() {
 		mouseX = evt.clientX;
 		mouseY = evt.clientY;
 	}, false);
-
 	canvas.addEventListener('mousemove', function (evt) {
-		if (mouseLeftDown || mouseMiddleDown || mouseRightDown) {
+		if (frameDrawn && (mouseLeftDown || mouseMiddleDown || mouseRightDown)) {
 			var deltaX = evt.clientX - mouseX,
 				deltaY = evt.clientY - mouseY;
 			mouseX = evt.clientX;
 			mouseY = evt.clientY;
 			if (mouseLeftDown) {
-				var rotateCamera= glm.mat4(1);
+				var rotateCamera = glm.mat4(1);
 				var dX = deltaY / 100.;
 				var dAngleX = xRotationAngle + dX > - Math.PI / 2 && xRotationAngle + dX < Math.PI / 2 ? dX : 0;
 				rotateCamera = glm.rotate(rotateCamera, yRotationAngle + deltaX / 100., glm.vec3(0, 1, 0));
@@ -99,12 +99,14 @@ function rayMain() {
 				cameraDirection.z += dZ;
 			} else if (mouseRightDown) {
 				var dY = deltaY / 100;
+				var dX = deltaX / 100;
+				var cd = cameraPosition['-'](cameraDirection);
 				cameraPosition.y += dY;
 				cameraDirection.y += dY;
-				cameraPosition.x -= deltaX * Math.cos(yRotationAngle) / 100;
-				cameraPosition.z += deltaX * Math.sin(yRotationAngle) / 100;
+				cameraPosition.x = cameraDirection.x + cd.x * Math.cos(dX) - cd.z * Math.sin(dX);
+				cameraPosition.z = cameraDirection.z + cd.z * Math.cos(dX) + cd.x * Math.sin(dX);
 			}
-			drawFrame();
+			frameDrawn = false;
 		}
 	}, false);
 		
@@ -118,11 +120,10 @@ function rayMain() {
 		var direction = getCameraVector();
 		var step = evt.deltaY / 100;
 		var zoomLimitCheck = glm.length(direction) + step;
-		if (zoomLimitCheck > 2 && zoomLimitCheck < 20) {
+		if (zoomLimitCheck > 2 && (zoomLimitCheck < 20 || step < 0)) {
 			cameraPosition['-='](glm.normalize(direction)['*'](step));
-			drawFrame();
 		}
-	}, false);
+	}, {passive: true});
 
 	var vertex_buffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
@@ -165,6 +166,5 @@ function rayMain() {
 	
 	%setCamera%;
 
-	//window.requestAnimationFrame(drawAnimate);
-	drawFrame();
+	window.requestAnimationFrame(drawLoop);
 }
