@@ -53,10 +53,9 @@ vec3 getObjectNormal(vec3 p) {
 	return normalize(n);
 }
 
-float getShadow(vec3 p, vec3 lightPos, float maxDist) {
+float getShadow(vec3 p, vec3 lightPos, float maxDist, float lightSize) {
 	float result = 1.0;
 	float dist = 0.001;
-	float lightSize = 0.05;
 	for (int i = 0; i < MAX_STEPS; i++) {
 		float hit = getObjectInfo(p + lightPos * dist).d;
 		result = min(result, hit / (dist * lightSize));
@@ -66,7 +65,7 @@ float getShadow(vec3 p, vec3 lightPos, float maxDist) {
 	return clamp(result, 0.0, 1.0);
 }
 
-vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 color, vec3 lightColor) {
+vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, float lightSize) {
 	vec3 lightDir = normalize(lightPos - p);
 	vec3 norm = getObjectNormal(p);
 	vec3 viewDir = -rayDirection;
@@ -79,7 +78,7 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 color, vec3 lightCo
 	float diffuseStrength = 0.9;
 	vec3 diffuse = diffuseStrength * lightColor * clamp(dot(lightDir, norm), 0.0, 1.0);
 
-	float shadow = getShadow(p + norm * SURF_DIST, lightDir, length(lightPos - p));
+	float shadow = getShadow(p + norm * SURF_DIST, lightDir, length(lightPos - p), lightSize);
 
 	return (specular + diffuse) * shadow;
 }
