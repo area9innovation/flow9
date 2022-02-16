@@ -22,7 +22,7 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 			setAttribute(scriptShaderF, "type", "text/plain", true);
 			setAttribute(scriptShaderF, "id", "fragment-shader", true);
 			setAttribute(scriptShaderF, "innerHTML", shaderF, false);
-			setAttribute(script, "innerHTML", scriptContent, true);
+			setAttribute(script, "innerHTML", scriptContent, false);
 
 			setClipStyle(stage, "overflow", "auto");
 
@@ -42,11 +42,11 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 	)
 }
 
-RMObject ::= RMSphere, RMTranslate, RMAdd, RMPlane, RMColor, RMLight, RMPlus;
+RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMColor, RMLight, RMPlus;
 	RMSphere(radius : double);
 	RMPlane(normal : RMXYZ, height : double);
 	RMTranslate(object : RMObject, d : RMCoordinate);
-	RMAdd(object1 : RMObject, object2 : RMObject);
+	RMUnion(object1 : RMObject, object2 : RMObject);
 	RMColor(object : RMObject, color : int);
 	RMLight();
 	RMPlus(object1 : RMObject, object2 : RMObject);
@@ -62,7 +62,7 @@ RMCoordinate ::= RMXYZ, RMX, RMY, RMZ, RMXY, RMXZ, RMYZ;
 	RMY(y : double);
 	RMZ(z : double);
 
-RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ;
+RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ, RMIVar;
 	RMICall(fn : RMC, args : [RMIExp]);
 	// A function, either an operator or function call
 	RMC ::= RMIOp, RMIFn;
@@ -74,6 +74,7 @@ RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ;
 	RMIP();
 	RMIDouble(num : double);
 	RMIXYZ(x : double, y : double, z : double);
+	RMIVar(name : string);
 
 addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
@@ -119,7 +120,7 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 			color
 		);
 		RMTranslate(object, d): RMObject2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
-		RMAdd(object1, object2): RMICall(RMIFn("minOI"),
+		RMUnion(object1, object2): RMICall(RMIFn("minOI"),
 			[
 				RMObject2RMIExp(object1, acc, color),
 				RMObject2RMIExp(object2, acc, color),
@@ -134,7 +135,10 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 			[
 				RMICall(RMIFn("getLight"), [
 					RMIP(),
-					acc
+					RMIVar("rayDirection"),
+					acc,
+					RMIVar("d.col"),
+					color,
 				]),
 				color
 			]
@@ -168,6 +172,7 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
 	}
 }
 
@@ -175,10 +180,10 @@ main() {
 	setRendererType("html");
 
 	spheres1 = RMTranslate(
-		RMAdd(
+		RMUnion(
 			RMColor(RMTranslate(RMSphere(1.), RMY(1.)), 0xFFFF00),
 			RMTranslate(
-				RMAdd(
+				RMUnion(
 					RMColor(RMTranslate(RMSphere(0.5), RMX(2.)), 0xFF00FF),
 					RMColor(RMTranslate(RMSphere(0.5), RMX(-2.)), 0x00FFFF)
 				),
@@ -188,30 +193,33 @@ main() {
 		RMZ(3.)
 	);
 
-	spheres2 = RMAdd(
+	spheres2 = RMUnion(
 		RMColor(RMSphere(0.5), 0x00FF00),
-		RMAdd(
+		RMUnion(
 			RMColor(RMTranslate(RMSphere(0.5), RMX(2.)), 0x0000FF),
 			RMColor(RMTranslate(RMSphere(0.5), RMX(-2.)), 0xFF0000)
 		),
 	);
 
-	scene = RMTranslate(RMAdd(spheres1, spheres2), RMZ(3.));
-	/*scene = RMAdd(
-		RMTranslate(RMAdd(spheres1, spheres2), RMZ(3.)),
-		RMColor(RMPlane(RMXYZ(0., 1., 0.), 0.), 0x765432)
-	);*/
+	//scene = RMTranslate(RMUnion(spheres1, spheres2), RMZ(3.));
+	scene = RMUnion(
+		RMTranslate(RMUnion(spheres1, spheres2), RMZ(3.)),
+		RMColor(RMPlane(RMXYZ(0., 1., 0.), 0.), 0xBBBBBB)
+	);
 
 	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 
-	/*light = RMPlus(
-		RMTranslate(RMColor(RMLight(), 0xAAAAAA), RMYZ(5., 3.)),
-		RMTranslate(RMColor(RMLight(), 0xAAAAAA), RMYZ(5., 9.))
-	);*/
-	light = RMTranslate(RMColor(RMLight(), 0xFFFFFF), RMYZ(2., 9.));
+	light = RMPlus(
+		RMPlus(
+			RMTranslate(RMColor(RMLight(), 0x00AAAA), RMXYZ(-2., 8., 3.)),
+			RMTranslate(RMColor(RMLight(), 0xAA00AA), RMXYZ(0., 8., 6.))
+		),
+		RMTranslate(RMColor(RMLight(), 0xAAAA00), RMXYZ(2., 8., 3.))
+	);
+	//light = RMTranslate(RMColor(RMLight(), 0xFFFFFF), RMYZ(2., 9.));
 	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 	
-	camera = RMCamera(RMXYZ(6., 8., 12.), RMXYZ(0., 1., 6.));
+	camera = RMCamera(RMXYZ(6., 8., 6.), RMXYZ(0., 0., 6.));
 	setCameraString = formatString(
 		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
 		[
@@ -223,29 +231,29 @@ main() {
 			d2s(camera.direction.z),
 		]
 	);
-	cameraPositionX = make(camera.position.x);
-	cameraPositionY = make(camera.position.y);
-	cameraPositionZ = make(camera.position.z);
 
 	mrender(makeMaterialManager([]), true, MLines([
-		MCols2(MText("X:", []), MSlider(cameraPositionX, [MSliderRange(-20., 20.)])),
-		MCols2(MText("Y:", []), MSlider(cameraPositionY, [MSliderRange(-20., 20.)])),
-		MCols2(MText("Z:", []), MSlider(cameraPositionZ, [MSliderRange(-20., 20.)])),
-		MConstruct(
-			[
-				make3Subscribe2(
-					fthrottle(cameraPositionX, 30), fthrottle(cameraPositionY, 30), fthrottle(cameraPositionZ, 30),
-					\x, y, z -> {
-						hostCall("setCameraPosition", [x, y, z]);
-						hostCall("drawFrame", [])|>ignore;
-					}
-				)
-			],
-			displayHtml(
-				"#include sandbox/raymarching/raymarching.vert",
-				blueprint("#include sandbox/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl]),
-				blueprint("#include sandbox/raymarching/raymarching.js", ["setCamera", setCameraString])
-			)
+		MTextButton(
+			"RESET CAMERA", 
+			\ -> {
+				hostCall("setCameraPosition", [
+					camera.position.x,
+					camera.position.y,
+					camera.position.z
+				]);
+				hostCall("setCameraDirection", [
+					camera.direction.x,
+					camera.direction.y,
+					camera.direction.z
+				]);
+				hostCall("drawFrame", []) |> ignore;
+			},
+			[], []
+		),
+		displayHtml(
+			"#include sandbox/raymarching/raymarching.vert",
+			blueprint("#include sandbox/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl]),
+			blueprint("#include sandbox/raymarching/raymarching.js", ["setCamera", setCameraString])
 		)
 	]));
 }
