@@ -105,7 +105,7 @@ T& reuse(T& a) {
 template <typename T>
 T* dup(T* a) {
 	(*a)._counter += 1;
-	std::cout<<"DUP:: cnt after: "<< (*a)._counter << "; &=" << a <<" " << &a << " " << *a << std::endl;
+	std::cout<<"DUP:: cnt after: "<< (*a)._counter/* << "; &=" << a <<" " << &a << " " << *a */<< std::endl;
 	(*a).dupFields();
 	return a;
 }
