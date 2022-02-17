@@ -5,6 +5,7 @@
 #include "flow_union.hpp"
 #include "flow_array.hpp"
 #include "flow_string.hpp"
+#include "flow_function.hpp"
 // math
 #include <cmath>
 
@@ -183,7 +184,7 @@ bool flow_isSameObj(const A& v1, const B& v2) {
 		return false;
 	}
 }
-
+// TODO ?
 template <typename A, typename B>
 bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 	return &v1 == &v2;
@@ -196,13 +197,13 @@ bool flow_isSameObj(const std::vector<A>& v1, const std::vector<B>& v2) {
 //	std::cout << std::endl;
 //}
 template <typename A>
-void flow_println2(A v) {
+void flow_println3(A v) {
 	flow_print2(v);
 	std::cout << std::endl;
 }
 // print with drop
 template <typename A>
-void flow_println2(A* v) {
+void flow_println3(A* v) {
 	if (v == nullptr) {
 		std::cout << "NULL Pointer " << std::endl;
 	} else {
@@ -210,6 +211,11 @@ void flow_println2(A* v) {
 		std::cout << std::endl;
 		drop(v);
 	}
+}
+
+template <typename A>
+void flow_println2(A v) {
+	flow_println3(v);
 }
 
 // math
@@ -253,6 +259,31 @@ int32_t flow_trunc(double v) {
 // array
 
 template <typename A, typename B>
+B flow_fold(_FlowArray<A*>* arr, const B initVal, _FlowFunction<B, B,A*>* flow_fn) {
+	return flow_fold_memory(arr, initVal, flow_fn);
+}
+
+template <typename A, typename B>
+B* flow_fold(_FlowArray<A*>* arr, B* initVal, _FlowFunction<B*, B*,A*>* flow_fn) {
+	return flow_fold_memory(arr, initVal, flow_fn);
+}
+
+template <typename A, typename B>
+B flow_fold_memory(_FlowArray<A*>* arr, const B initVal, _FlowFunction<B, B,A*>* flow_fn) {
+	B _res = initVal;
+	bool unusedItem = false; // free in the loop
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+		_res = (*flow_fn)(_res, unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(flow_fn);
+	drop(arr);
+	return _res;
+}
+// TODO: delete ? ---------------------------------------------------------------------------
+template <typename A, typename B>
 B flow_fold(_FlowArray<A*>* arr, const B initVal, const std::function<B(B, A*)> & flow_fn) {
   return flow_fold_memory(arr, initVal, flow_fn);
 }
@@ -274,7 +305,8 @@ B flow_fold_memory(_FlowArray<A*>* arr, const B initVal, const std::function<B(B
 	drop(arr);
 	return _res;
 }
-
+// ---------------------------------------------------------------------------------------------
+// 
 // simple types
 template <typename A, typename B>
 B flow_fold(_FlowArray<A>* arr, const B flow_b, const std::function<B(B, A)>& flow_fn) {
@@ -300,6 +332,103 @@ _FlowArray<int32_t>* flow_enumFromTo(int32_t start, int32_t end) {
 	}
 }
 
+
+// map(array)
+
+// simple types
+template <typename A, typename B>
+_FlowArray<B>* flow_map(_FlowArray<A>* arr, _FlowFunction<B,A>* flow_fn) {
+	return flow_map_memory(arr, flow_fn);
+}
+
+// struct to simple
+template <typename A, typename B>
+_FlowArray<B>* flow_map(_FlowArray<A*>* arr, _FlowFunction<B,A*>* flow_fn) {
+	_FlowArray<B>* res = new _FlowArray<B>{};
+	res->value.reserve(arr->value.size());
+	bool lastUse = arr->_counter == 1;
+
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+		res->value.push_back((*flow_fn)(lastUse ? arr->value[i] : dup(arr->value[i])));
+		if (lastUse) arr->value[i] = nullptr;
+	}
+	drop(flow_fn);
+	drop(arr);
+
+	return res;
+}
+
+// simple to struct
+template <typename A, typename B>
+_FlowArray<B*>* flow_map(_FlowArray<A>* arr, _FlowFunction<B*,A>* flow_fn) {
+	_FlowArray<B*>* res = new _FlowArray<B*>{};
+	res->value.reserve(arr->value.size());
+
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+		res->value.push_back((*flow_fn)(arr->value[i]));
+	}
+	drop(flow_fn);
+	drop(arr);
+
+	return res;
+}
+
+template <typename A, typename B>
+_FlowArray<B*>* flow_map(_FlowArray<A*>* arr, _FlowFunction<B*,A*>* flow_fn) {
+	return flow_map_memory(arr, flow_fn);
+}
+
+template <typename A, typename B>
+_FlowArray<B>* flow_map_memory(_FlowArray<A>* arr, _FlowFunction<B,A>* flow_fn) {
+	_FlowArray<B>* res = new _FlowArray<B>{};
+	res->value.reserve(arr->value.size());
+	if (arr->_counter == 1) {
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+			res->value.push_back((*flow_fn)(arr->value[i]));
+			arr->value[i] = nullptr;
+		}
+		drop(flow_fn);
+		drop(arr);
+		return res;
+	}
+	else {
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+			res->value.push_back((*flow_fn)(dup(arr->value[i])));
+		}
+		drop(flow_fn);
+		drop(arr);
+		return res;
+	}
+}
+
+template <typename A>
+_FlowArray<A>* flow_map_memory(_FlowArray<A>* arr, _FlowFunction<A, A>* flow_fn) {
+	if (arr->_counter == 1) {
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+			arr->value[i] = (*flow_fn)(arr->value[i]);
+		}
+		drop(flow_fn);
+		return arr;
+	}
+	else {
+		_FlowArray<A>* res = new _FlowArray<A>{};
+		res->value.reserve(arr->value.size());
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+			res->value.push_back((*flow_fn)(dup(arr->value[i])));
+		}
+		drop(flow_fn);
+		drop(arr);
+		return res;
+	}
+}
+
+// TODO: delete ? ---------------------------------------------------------------------------
 // simple types
 template <typename A, typename B>
 _FlowArray<B>* flow_map(_FlowArray<A>* arr, const std::function<B(A)>& flow_fn) {
@@ -359,7 +488,50 @@ _FlowArray<B>* flow_map_memory(_FlowArray<A>* arr, const std::function<B(A)>& fl
 		return res;
 	}
 }
+// _______________---------------------------------------------------------------------------
+// 
 
+// simple types
+template <typename A>
+_FlowArray<A>* flow_filter(_FlowArray<A>* arr, _FlowFunction<bool, A>* flow_fn) {
+	return flow_filter_memory(arr, flow_fn);
+}
+
+template <typename A>
+_FlowArray<A*>* flow_filter(_FlowArray<A*>* arr, _FlowFunction<bool, A*>* flow_fn) {
+	return flow_filter_memory(arr, flow_fn);
+}
+template <typename A>
+_FlowArray<A>* flow_filter_memory(_FlowArray<A>* arr, _FlowFunction<bool, A>* flow_test) {
+	if (arr->_counter == 1) {
+		auto i = arr->value.size();
+		auto it = std::remove_if(
+			arr->value.begin(),
+			arr->value.end(),
+			[&flow_test, &i](auto& item) {
+				i--;
+				if (i > 0) flow_test->dupFields();
+				bool unused = !(*flow_test)(dup(item));
+				if (unused) { drop(item); }
+				return unused;
+			}
+		);
+		drop(flow_test);
+		arr->value.erase(it);
+		return arr;
+	}
+	else {
+		_FlowArray<A>* res = new _FlowArray<A>{};
+		for (std::size_t i = 0; i != arr->value.size(); ++i) {
+			if ((arr->value.size() - i) > 1) flow_test->dupFields();
+			if ((*flow_test)(dup(arr->value[i]))) res->value.push_back(dup(arr->value[i]));
+		}
+		drop(flow_test);
+		drop(arr);
+		return res;
+	}
+}
+// TODO: delete ? ---------------------------------------------------------------------------
 // simple types
 template <typename A>
 _FlowArray<A>* flow_filter(_FlowArray<A>* arr, const std::function<bool(A)>& flow_fn) {
@@ -393,7 +565,7 @@ _FlowArray<A>* flow_filter_memory(_FlowArray<A>* arr, const std::function<bool(A
 		return res;
 	}
 }
-
+// ------------------------------------------------------------------------------------------
 
 template <typename A>
 _FlowArray<A>* flow_concat(_FlowArray<A>* arr1, _FlowArray<A>* arr2) {
@@ -489,6 +661,28 @@ _FlowArray<A>* flow_replace_memory(_FlowArray<A>* arr, int32_t i, A value) {
 }
 
 template <typename A>
+void flow_iter(_FlowArray<A*>* arr, _FlowFunction<void, A*>* flow_fn) {
+	bool unusedItem;
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		unusedItem = arr->value[i]->_counter == 1;
+		if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+		(*flow_fn)(unusedItem ? arr->value[i] : dup(arr->value[i]));
+		if (unusedItem) arr->value[i] = nullptr;
+	}
+	drop(flow_fn);
+	drop(arr);
+}
+template <typename A>
+void flow_iter(_FlowArray<A>* arr, _FlowFunction<void,A>* flow_fn) {
+	for (std::size_t i = 0; i != arr->value.size(); ++i) {
+		if ((arr->value.size() - i) > 1) flow_fn->dupFields();
+		(*flow_fn)(arr->value[i]);
+	}
+	drop(flow_fn);
+	drop(arr);
+}
+// TODO: delete ? ---------------------------------------------------------------------------
+template <typename A>
 void flow_iter(_FlowArray<A*>* arr, const std::function<void(A*)> & flow_fn) {
 	bool unusedItem;
 	for (std::size_t i = 0; i != arr->value.size(); ++i) {
@@ -505,6 +699,7 @@ void flow_iter(_FlowArray<A>* arr, const std::function<void(A)>& flow_fn) {
 	}
 	drop(arr);
 }
+// ----------------------------------------------------------------------------------------
 // for println2
 template <typename A>
 void flow_iter(_FlowArray<A>* arr, void (*flow_fn)(A)) {
