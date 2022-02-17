@@ -6,6 +6,7 @@ var xRotationAngle;
 var defaultCameraDirection;
 var frameDrawn = false;
 var vertices;
+var view;
 
 function getCameraVector() {
 	return cameraDirection['-'](cameraPosition);
@@ -19,7 +20,7 @@ function getCameraRotationMatrix() {
 	var rotationDirectionX = cameraDirectionFromOrigin.y > 0. ? -1 : 1;
 	xRotationAngle = rotationDirectionX * Math.acos(glm.dot(updatedCameraDirection, cameraDirectionFromOrigin));
 
-	var view = glm.mat4(1);
+	view = glm.mat4(1);
 	view = glm.rotate(view, yRotationAngle, glm.vec3(0, 1, 0));
 	view = glm.rotate(view, xRotationAngle, glm.vec3(1, 0, 0));
 	return view;
@@ -69,6 +70,31 @@ function resizeCanvas(canvas) {
 	gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
+const MAX_STEPS = 100;
+const MAX_DIST = 100;
+const SURF_DIST = 0.001;
+var objIntersection;
+
+function getDistance(p) {
+	var d = MAX_DIST;
+
+	d = %distanceFunction%;
+
+	return d;
+}
+
+function rayMarch(ro, rd) {
+	var dO = 0.;
+	var d;
+	for (var i=0; i< MAX_STEPS; i++){
+		var p = ro['+'](rd['*'](dO));
+		d = getDistance(p);
+		dO += d;
+		if (dO>MAX_DIST || d<SURF_DIST) break;
+	}
+	return dO; 
+}
+
 function initializeMouseEvents(canvas) {
 	var mouseLeftDown = false,
 		mouseMiddleDown = false,
@@ -82,6 +108,13 @@ function initializeMouseEvents(canvas) {
 		if (evt.button == 2) mouseRightDown = true;
 		mouseX = evt.clientX;
 		mouseY = evt.clientY;
+
+		var uv = glm.vec2((mouseX - 0.5 * canvas.width)/canvas.height, ((canvas.height - mouseY) - 0.5 * canvas.height)/canvas.height);
+		var rd = glm.normalize(glm.vec3 (uv.x, uv.y, 1));
+		rd = (view['*'](glm.vec4(rd, 1))).xyz;
+		//TODO: check d for max distance to prevent weird rotations
+		var d = rayMarch(cameraPosition, rd);
+		objIntersection = cameraPosition['+'](rd['*'](d));
 	}, false);
 	canvas.addEventListener('mousemove', function (evt) {
 		if (frameDrawn && (mouseLeftDown || mouseMiddleDown || mouseRightDown)) {
@@ -106,11 +139,13 @@ function initializeMouseEvents(canvas) {
 			} else if (mouseRightDown) {
 				var dY = deltaY / 100;
 				var dX = deltaX / 100;
-				var cd = cameraPosition['-'](cameraDirection);
+				var cd = cameraPosition['-'](objIntersection);
 				cameraPosition.y += dY;
 				cameraDirection.y += dY;
-				cameraPosition.x = cameraDirection.x + cd.x * Math.cos(dX) - cd.z * Math.sin(dX);
-				cameraPosition.z = cameraDirection.z + cd.z * Math.cos(dX) + cd.x * Math.sin(dX);
+				cameraPosition.x = objIntersection.x + cd.x * Math.cos(dX) - cd.z * Math.sin(dX);
+				cameraPosition.z = objIntersection.z + cd.z * Math.cos(dX) + cd.x * Math.sin(dX);
+				cameraDirection.x = objIntersection.x;
+				cameraDirection.z = objIntersection.z;
 			}
 			frameDrawn = false;
 		}
