@@ -123,12 +123,14 @@ function initializeMouseEvents(canvas) {
 			mouseX = evt.clientX;
 			mouseY = evt.clientY;
 			if (mouseLeftDown) {
+				var angleX = - xRotationAngle - deltaY / 100.;
+				angleX = angleX > - Math.PI / 2 && angleX < Math.PI / 2 ? angleX :  -xRotationAngle;
+				var angleY = Math.PI + yRotationAngle + deltaX / 100;
 				var rotateCamera = glm.mat4(1);
-				var dX = deltaY / 100.;
-				var dAngleX = xRotationAngle + dX > - Math.PI / 2 && xRotationAngle + dX < Math.PI / 2 ? dX : 0;
-				rotateCamera = glm.rotate(rotateCamera, yRotationAngle + deltaX / 100., glm.vec3(0, 1, 0));
-				rotateCamera = glm.rotate(rotateCamera, xRotationAngle + dAngleX, glm.vec3(1, 0, 0));
-				cameraDirection = rotateCamera['*'](defaultCameraDirection).xyz['*'](glm.length(getCameraVector()))['+'](cameraPosition);
+				rotateCamera = glm.rotate(rotateCamera, angleY, glm.vec3(0, 1, 0));
+				rotateCamera = glm.rotate(rotateCamera, angleX, glm.vec3(1, 0, 0));
+				cameraPosition = rotateCamera['*'](glm.vec4(0, 0, -1, 1)).xyz['*'](glm.length(getCameraVector()) * -1)['+'](objIntersection);
+				cameraDirection = objIntersection;
 			} else if (mouseMiddleDown) {
 				var dX = (deltaX * Math.cos(yRotationAngle + Math.PI) + deltaY * Math.sin(yRotationAngle)) / 100;
 				var dZ = (deltaY * Math.cos(yRotationAngle) + deltaX * Math.sin(yRotationAngle)) / 100;
@@ -138,14 +140,8 @@ function initializeMouseEvents(canvas) {
 				cameraDirection.z += dZ;
 			} else if (mouseRightDown) {
 				var dY = deltaY / 100;
-				var dX = deltaX / 100;
-				var cd = cameraPosition['-'](objIntersection);
 				cameraPosition.y += dY;
 				cameraDirection.y += dY;
-				cameraPosition.x = objIntersection.x + cd.x * Math.cos(dX) - cd.z * Math.sin(dX);
-				cameraPosition.z = objIntersection.z + cd.z * Math.cos(dX) + cd.x * Math.sin(dX);
-				cameraDirection.x = objIntersection.x;
-				cameraDirection.z = objIntersection.z;
 			}
 			frameDrawn = false;
 		}
