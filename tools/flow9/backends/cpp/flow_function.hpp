@@ -1,13 +1,12 @@
 #include <functional>
 
 template< class R, class... Args >
-struct _FlowFunction : std::function<R(Args...)> {
+struct _FlowFunction {
 	int _counter = 1;
 	int _captured_counter = 1;
 	std::function<R(Args...)> value;
 	std::function<void()> dupCapturedVars;
 	std::function<void()> dropCapturedVars;
-	bool executedFn = false;
 
 	_FlowFunction(std::function<R(Args...)>&& _value) {
 		value = _value;
@@ -21,12 +20,17 @@ struct _FlowFunction : std::function<R(Args...)> {
 		dropCapturedVars = _dropCapturedVars;
 	}
 
+	_FlowFunction(R (_value)(Args...) ) {
+		value = _value;
+		dupCapturedVars = []() {};
+		dropCapturedVars = []() {};
+	}
+
 	~_FlowFunction() {
 		if (_captured_counter > 0) dropCapturedVars();
 	}
 
 	R operator()(Args... args) {
-		executedFn = true;
 		_captured_counter--;
 		return value(args...);
 	}

@@ -46,6 +46,8 @@ import tools/flow9/backends/ref_counting_lambda;
 // we'll free _c_ on line 4. but it would be greate to free _c_ on line 2;
 
 // TODO:
+// 0) delete reuse()
+//
 // 1) condition
 // Example : 
 //   1: if (fn1() > 1 || fn2(1)) {
@@ -400,11 +402,10 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 		BField(value, field, type): {
 			newValue = rec(value, withReturn, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
-			reusedVal = getReusedValue(reducedValue.first);
-			newExp = if (reusedVal != reducedValue.first) {
-				reuseBField(BField(reusedVal, field, type)).first;
-			} else {
-				BDupValue(BField(reducedValue.first, field, type));
+			newExp = switch (reducedValue.first : BExp) {
+				BDropValue(dropValue): reuseBField(BField(dropValue, field, type)); // the last use of the struct (value)
+				BReuseValue(reusedVal): reuseBField(BField(reusedVal, field, type));
+				default : BDupValue(BField(reducedValue.first, field, type));
 			}
 			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
@@ -700,40 +701,34 @@ makeBConstructWithDrops(constr : BConstruct, dropExps : [BCounter], withReturn :
 //
 // Before: auto flow_a = (*reuse(flow_makeStruct())).flow_val;
 // After : auto _tmp_con = flow_makeStruct(); auto _tmp_con2 = dup((*_tmp_con).flow_val); drop(_tmp_con); _tmp_con2;
-reuseBField(field : BField) -> Pair<BExp, [BCounter]> {
+reuseBField(field : BField) -> BExp {
 	replaceReuseWithDrop(field.value, field.type, \val -> BField(val, field.field, field.type));
 }
 
-replaceReuseWithDrop(value : BExp, type : BType, makeExp : (BExp) -> BExp) -> Pair<BExp, [BCounter]> {
+replaceReuseWithDrop(value : BExp, type : BType, makeExp : (BExp) -> BExp) -> BExp {
 	addFieldTmpVar = \val -> {
 		tmpVarField = BVar(makeTmpVariableName(), type);
-		Pair(
-			BLet(
-				tmpVarField.id,
-				BDupValue(makeExp(val)),
-				BSequence(
-					[
-						BDropValue(val),
-						tmpVarField
-					],
-					tmpVarField.type
-				),
-				type
+		BLet(
+			tmpVarField.id,
+			BDupValue(makeExp(val)),
+			BSequence(
+				[
+					BDropValue(val),
+					tmpVarField
+				],
+				tmpVarField.type
 			),
-			BDropValue(tmpVarField)
+			type
 		);
 	}
 	varId = extractBVarId(value);
 	if (varId != "") {
-		unpair(addFieldTmpVar(value), \exp, tmpVar -> Pair(exp, [tmpVar]));
+		addFieldTmpVar(value);
 	} else if (isBLet(value)) {
-		Pair(value, []);
+		value;
 	} else {
 		tmpVarStruct = BVar(makeTmpVariableName(), getBType(value));
-		unpair(addFieldTmpVar(tmpVarStruct), \exp, tmpVar -> Pair(
-			BLet(tmpVarStruct.id, value, exp, type),
-			[tmpVar, BDropValue(tmpVarStruct)]
-		));
+		BLet(tmpVarStruct.id, value, addFieldTmpVar(tmpVarStruct), type);
 	}
 }
 
@@ -743,7 +738,7 @@ replaceReuseWithDrop(value : BExp, type : BType, makeExp : (BExp) -> BExp) -> Pa
 // if upCast, dup the init value
 // TODO: second ?
 reuseBCast(exp : BCast) -> BExp {
-	replaceReuseWithDrop(exp.value, exp.to, \val -> BCast(val, exp.from, exp.to)).first;
+	replaceReuseWithDrop(exp.value, exp.to, \val -> BCast(val, exp.from, exp.to));
 }
 
 addTempVar(exp : BExp, body : [BExp], type : BType, withReturn : bool) -> BExp {
