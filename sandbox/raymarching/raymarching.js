@@ -123,14 +123,28 @@ function initializeMouseEvents(canvas) {
 			mouseX = evt.clientX;
 			mouseY = evt.clientY;
 			if (mouseLeftDown) {
-				var angleX = - xRotationAngle - deltaY / 100.;
-				angleX = angleX > - Math.PI / 2 && angleX < Math.PI / 2 ? angleX :  -xRotationAngle;
-				var angleY = Math.PI + yRotationAngle + deltaX / 100;
+				var angleX = xRotationAngle + deltaY / 100.;
+				angleX = angleX > - Math.PI / 2 && angleX < Math.PI / 2 ? deltaY / 100 : 0;
+				var angleY = deltaX / 100;
+				var xRotatationAxis = glm.rotate(glm.mat4(1), yRotationAngle, glm.vec3(0, 1, 0))['*'](glm.vec4(1, 0, 0, 1)).xyz;
+
 				var rotateCamera = glm.mat4(1);
 				rotateCamera = glm.rotate(rotateCamera, angleY, glm.vec3(0, 1, 0));
-				rotateCamera = glm.rotate(rotateCamera, angleX, glm.vec3(1, 0, 0));
-				cameraPosition = rotateCamera['*'](glm.vec4(0, 0, -1, 1)).xyz['*'](glm.length(getCameraVector()) * -1)['+'](objIntersection);
-				cameraDirection = objIntersection;
+				rotateCamera = glm.rotate(rotateCamera, angleX, xRotatationAxis);
+
+				var pd = cameraDirection['-'](cameraPosition);
+				var po = objIntersection['-'](cameraPosition);
+				//M is projection of O on PD
+				var m = cameraPosition['+'](pd['*'](glm.dot(pd, po)/glm.dot(pd, pd)));
+				var md = cameraDirection['-'](m);
+				var mp = cameraPosition['-'](m);
+				var om = m['-'](objIntersection);
+				var mdNew = rotateCamera['*'](glm.vec4(glm.normalize(md), 1)).xyz['*'](glm.length(md));
+				var mpNew = rotateCamera['*'](glm.vec4(glm.normalize(mp), 1)).xyz['*'](glm.length(mp));
+				var omNew = rotateCamera['*'](glm.vec4(glm.normalize(om), 1)).xyz['*'](glm.length(om));
+
+				cameraDirection = omNew['+'](mdNew)['+'](objIntersection);
+				cameraPosition = omNew['+'](mpNew)['+'](objIntersection);
 			} else if (mouseMiddleDown) {
 				var dX = (deltaX * Math.cos(yRotationAngle + Math.PI) + deltaY * Math.sin(yRotationAngle)) / 100;
 				var dZ = (deltaY * Math.cos(yRotationAngle) + deltaX * Math.sin(yRotationAngle)) / 100;
