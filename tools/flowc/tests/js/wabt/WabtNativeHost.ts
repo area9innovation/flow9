@@ -61,3 +61,19 @@ export function readWasm(buffer: number[], read_options: typenames.ReadWasmOptio
 		on_module(module);
 	});
 }
+
+export function runAdd(bin : typenames.ToBinaryResult, a1 : number, a2 : number, callback: (r: number) => void): void {
+	//var importObject = { imports: { i: arg => console.log(arg) } };
+	WebAssembly.instantiate(new Uint8Array(bin.buffer)).then(instance => {
+		let addition: any = instance.instance.exports.add;
+		callback(addition(a1, a2));
+	});
+}
+
+export function runFunc(bin : typenames.ToBinaryResult, fn_name : string, as : any[], callback: (r: any) => void): void {
+	//var importObject = { imports: { i: arg => console.log(arg) } };
+	WebAssembly.instantiate(new Uint8Array(bin.buffer)).then(instance => {
+		let fn: any = instance.instance.exports[fn_name];
+		callback(fn(...as));
+	});
+}
