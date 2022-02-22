@@ -1,13 +1,15 @@
 # DSL & Rewriting engine
 
 This is a system to define syntax & semantics for languages, including
-rewrite rules and compilers.
+rewrite rules and compilers. In other words, a toolbox for making programming
+languages.
 
 ## Architecture
 
 This system is designed to make programming languages and language features
 "first-class". The goal is to separate out the various aspects of programming
-languages, make them easy to define, and importantly, to make them compositional.
+languages, make them easy to define in isolation, and importantly, to make them 
+compositional so a language can be build from independent pieces.
 
 The result is a system where you can define new programming languages by picking
 a base language, and then adding language features on top. The library will then
@@ -21,8 +23,8 @@ will work for many languages.
 ## Lambda core
 
 There is a special core, basic language called Lambda. This is a very simple, pure, 
-untyped expression-based lambda calculus with syntax like flow expressions. It contains
-bools, ints, doubles, string and lists, plus AST nodes. These language has the property
+untyped expression-based lambda calculus with syntax like *flow* expressions. It contains
+bools, ints, doubles, string and lists, plus AST nodes. This language has the property
 that the AST of Lambda itself (and all other languages in scope) can be represented
 in the language itself. So you can also think of Lambda as a kind of Lisp where
 programs = data. This property is maintained, so that the system itself can use Lambda 
@@ -32,10 +34,10 @@ Thus, when you stack language extensions on top of each others, they will lower 
 down to lower languages until they reach Lambda. That in turn means that the end result
 can be evaluated, compiled and so forth, since Lambda itself can do all these things.
 
-You do not have to use Lambda as the base language. You will not directly benefit from existing
-evaluation and compilation targets for Lambda if you don't, but since languages are easy
-to define and extend, this framework still helps in case you want to implement some other
-language.
+You do not have to use Lambda as the base language. You will not directly benefit from 
+existing evaluation and compilation targets for Lambda if you don't, but since languages 
+are easy to define and extend, this framework still helps in case you want to implement 
+some other language.
 
 ## Philosophy
 
@@ -46,14 +48,15 @@ power:
 - Well designed, functional semantics of the languages and features
 - Pure expression-based languages rather than statement based
 - Term-rewriting rules for desugaring, lowering and optimizations
+- Representing the program AST as an e-graph of equivalent AST nodes in different languages
 
-Consider Flow. Flow itself is NOT expression based. Top-level things like "import", "export", 
+Consider Flow. Flow itself is NOT expression based. Top-level syntax like "import", "export", 
 types and top-level functions are examples that break the expression condition. This turns out 
 to be somewhat problematic for various aspects. So in this library, the design has been 
 changed to be based around pure expression-based languages.
 
 This property means that rewriting rules become much simpler to reason about and will work
-in general. Experience shows that this approach is much superior for compositionality.
+more generally. Experience shows that this approach is superior for compositionality.
 
 ## Status
 
@@ -61,7 +64,7 @@ This system is still in early development. The core features are present, and in
 `test.flow` file and `tests` folder, a number of examples of languages and combinations
 can be seen.
 
-Most of the language extensions are written in .dsl files. See the `languages` folder
+Most of the language extensions are written in `.dsl` files. See the `languages` folder
 for a range of examples.
 
 # Aspects of languages
@@ -69,7 +72,7 @@ for a range of examples.
 The system is architectured around some core aspects of programming languages:
 
 - Syntax and parsing. Results of parsing is an AST represented as the `DslAst` type in flow.
-- Rewriting and lowering. Term-rewriting rules to transform ASTs to other ASTs,
+- Rewriting/lowering. Term-rewriting rules to transform ASTs to other ASTs,
   both for desugaring, lowering and optimizations through e-graphs. 
 - Runtime. Language extensions can provide runtime functions to help implement
   the language features.
