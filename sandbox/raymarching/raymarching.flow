@@ -2,20 +2,28 @@ import material/material2tropic;
 import material/material_ui;
 
 displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Material {
-	wh = make(WidthHeight(0.0, 0.0));
-	MInspect([IAvailable(wh)], 
-		MHTMLStage(wh, \stage -> {
+	whB = make(WidthHeight(0.0, 0.0));
+	MInspect([IAvailable(whB)], 
+		MHTMLStage(whB, \stage -> {
 			canvas = createElement("canvas");
 			scriptGLM = createElement("script");
 			scriptShaderV = createElement("script");
 			scriptShaderF = createElement("script");
 			script = createElement("script");
 
+			setCanvasSize = \wh -> {
+				setAttribute(canvas, "width", d2s(wh.width), true);
+				setAttribute(canvas, "height", d2s(wh.height), true);
+			};
+
 			setAttribute(scriptGLM, "src", "js/glm-js.min.js", true);
 			setAttribute(scriptGLM, "onload", "rayMain()", true);
 			setAttribute(canvas, "id", "rayCanvas", true);
-			setAttribute(canvas, "width", "1080", true);
-			setAttribute(canvas, "height", "600", true);
+			setCanvasSize(fgetValue(whB));
+			unsSize = makeSubscribe2(whB, \wh -> {
+				setCanvasSize(wh);
+				hostCall("resizeCanvas", [canvas])|>ignore;
+			})();
 			setAttribute(scriptShaderV, "type", "text/plain", true);
 			setAttribute(scriptShaderV, "id", "vertex-shader", true);
 			setAttribute(scriptShaderV, "innerHTML", shaderV, true);
@@ -32,6 +40,7 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 			appendChild(stage, scriptShaderF);
 			appendChild(stage, script);
 			\ -> {
+				unsSize();
 				removeElementChild(stage, scriptGLM);
 				removeElementChild(stage, canvas);
 				removeElementChild(stage, scriptShaderV);
@@ -42,14 +51,15 @@ displayHtml(shaderV : string, shaderF : string, scriptContent : string) -> Mater
 	)
 }
 
-RMObject ::= RMSphere, RMTranslate, RMAdd, RMPlane, RMColor, RMLight, RMPlus;
+RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMColor, RMLight, RMPlus, RMEmpty;
 	RMSphere(radius : double);
 	RMPlane(normal : RMXYZ, height : double);
 	RMTranslate(object : RMObject, d : RMCoordinate);
-	RMAdd(object1 : RMObject, object2 : RMObject);
+	RMUnion(object1 : RMObject, object2 : RMObject);
 	RMColor(object : RMObject, color : int);
-	RMLight();
+	RMLight(size : double);
 	RMPlus(object1 : RMObject, object2 : RMObject);
+	RMEmpty();
 
 RMCamera(position : RMXYZ, direction : RMXYZ);
 
@@ -62,7 +72,7 @@ RMCoordinate ::= RMXYZ, RMX, RMY, RMZ, RMXY, RMXZ, RMYZ;
 	RMY(y : double);
 	RMZ(z : double);
 
-RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ;
+RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ, RMIVar, RMIConcat, RMIEmpty;
 	RMICall(fn : RMC, args : [RMIExp]);
 	// A function, either an operator or function call
 	RMC ::= RMIOp, RMIFn;
@@ -74,6 +84,9 @@ RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ;
 	RMIP();
 	RMIDouble(num : double);
 	RMIXYZ(x : double, y : double, z : double);
+	RMIVar(name : string);
+	RMIConcat(exp1 : RMIExp, exp2 : RMIExp);
+	RMIEmpty();
 
 addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
@@ -119,7 +132,7 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 			color
 		);
 		RMTranslate(object, d): RMObject2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
-		RMAdd(object1, object2): RMICall(RMIFn("minOI"),
+		RMUnion(object1, object2): RMICall(RMIFn("minOI"),
 			[
 				RMObject2RMIExp(object1, acc, color),
 				RMObject2RMIExp(object2, acc, color),
@@ -130,11 +143,14 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 			acc,
 			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
 		);
-		RMLight(): RMICall(RMIOp("*"),
+		RMLight(size): RMICall(RMIOp("*"),
 			[
 				RMICall(RMIFn("getLight"), [
 					RMIP(),
-					acc
+					RMIVar("rayDirection"),
+					acc,
+					color,
+					RMIDouble(size)
 				]),
 				color
 			]
@@ -145,6 +161,49 @@ RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 				RMObject2RMIExp(object2, acc, color),
 			]
 		);
+		RMEmpty(): RMIEmpty();
+	}
+}
+
+RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
+	switch(obj) {
+		RMSphere(radius): 
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("glm.length"), [
+					RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [acc]))
+				]),
+				RMIDouble(radius)
+			]);
+		RMPlane(normal, height): 
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("glm.dot"), [
+					RMIP(),
+					RMICall(RMIFn("glm.normalize"), [
+						RMCoordinate2RMIXYZ(normal)
+					])
+				]),
+				RMIDouble(height)]
+			);
+		RMTranslate(object, d): RMObject2RMIExpJS(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+		RMUnion(object1, object2): RMICall(RMIFn("Math.min"),
+			[
+				RMObject2RMIExpJS(object1, acc, color),
+				RMObject2RMIExpJS(object2, acc, color),
+			]
+		);
+		RMColor(object, col): RMObject2RMIExpJS(
+			object,
+			acc,
+			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
+		);
+		RMLight(size): RMIEmpty();
+		RMPlus(object1, object2): RMICall(RMIOp("+"),
+			[
+				RMObject2RMIExpJS(object1, acc, color),
+				RMObject2RMIExpJS(object2, acc, color),
+			]
+		);
+		RMEmpty(): RMIEmpty();
 	}
 }
 
@@ -168,6 +227,30 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2GLSL(exp1) + RMIExp2GLSL(exp2);
+		RMIEmpty(): "";
+	}
+}
+
+RMIExp2JS(exp : RMIExp) -> string {
+	switch(exp) {
+		RMICall(fn, args): switch(fn) {
+			RMIOp(opName): if (length(args) == 1) {
+				opName + RMIExp2JS(args[0])
+			} else if (length(args) == 2) {
+				RMIExp2JS(args[0]) + " " + opName + " " + RMIExp2JS(args[1])
+			} else if (length(args) == 3) {
+				RMIExp2JS(args[0]) + "?" + RMIExp2JS(args[1]) + ":" + RMIExp2JS(args[2])
+			} else "";
+			RMIFn(fnName): fnName + "(" + strGlue(map(args, RMIExp2JS), ", ") + ")";
+		};
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIXYZ(x, y, z): formatString("glm.vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2JS(exp1) + RMIExp2JS(exp2);
+		RMIEmpty(): "";
 	}
 }
 
@@ -175,10 +258,10 @@ main() {
 	setRendererType("html");
 
 	spheres1 = RMTranslate(
-		RMAdd(
+		RMUnion(
 			RMColor(RMTranslate(RMSphere(1.), RMY(1.)), 0xFFFF00),
 			RMTranslate(
-				RMAdd(
+				RMUnion(
 					RMColor(RMTranslate(RMSphere(0.5), RMX(2.)), 0xFF00FF),
 					RMColor(RMTranslate(RMSphere(0.5), RMX(-2.)), 0x00FFFF)
 				),
@@ -188,30 +271,34 @@ main() {
 		RMZ(3.)
 	);
 
-	spheres2 = RMAdd(
+	spheres2 = RMUnion(
 		RMColor(RMSphere(0.5), 0x00FF00),
-		RMAdd(
+		RMUnion(
 			RMColor(RMTranslate(RMSphere(0.5), RMX(2.)), 0x0000FF),
 			RMColor(RMTranslate(RMSphere(0.5), RMX(-2.)), 0xFF0000)
 		),
 	);
 
-	scene = RMTranslate(RMAdd(spheres1, spheres2), RMZ(3.));
-	/*scene = RMAdd(
-		RMTranslate(RMAdd(spheres1, spheres2), RMZ(3.)),
-		RMColor(RMPlane(RMXYZ(0., 1., 0.), 0.), 0x765432)
-	);*/
+	//scene = RMTranslate(RMUnion(spheres1, spheres2), RMZ(3.));
+	scene = RMUnion(
+		RMTranslate(RMUnion(spheres1, spheres2), RMZ(3.)),
+		RMColor(RMPlane(RMXYZ(0., 1., 0.), 0.), 0xBBBBBB)
+	);
 
 	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	jsScene = RMIExp2JS(RMObject2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 
-	/*light = RMPlus(
-		RMTranslate(RMColor(RMLight(), 0xAAAAAA), RMYZ(5., 3.)),
-		RMTranslate(RMColor(RMLight(), 0xAAAAAA), RMYZ(5., 9.))
-	);*/
-	light = RMTranslate(RMColor(RMLight(), 0xFFFFFF), RMYZ(2., 9.));
+	light = RMPlus(
+		RMPlus(
+			RMTranslate(RMColor(RMLight(0.03), 0x00AAAA), RMXYZ(-2., 8., 3.)),
+			RMTranslate(RMColor(RMLight(0.05), 0xAA00AA), RMXYZ(0., 8., 6.))
+		),
+		RMTranslate(RMColor(RMLight(0.07), 0xAAAA00), RMXYZ(2., 8., 3.))
+	);
+	//light = RMTranslate(RMColor(RMLight(), 0xFFFFFF), RMYZ(2., 9.));
 	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 	
-	camera = RMCamera(RMXYZ(6., 8., 12.), RMXYZ(0., 1., 6.));
+	camera = RMCamera(RMXYZ(6., 8., 6.), RMXYZ(0., 0., 6.));
 	setCameraString = formatString(
 		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
 		[
@@ -238,14 +325,14 @@ main() {
 					camera.direction.y,
 					camera.direction.z
 				]);
-				hostCall("drawFrame", []) |> ignore;
+				{}
 			},
 			[], []
 		),
 		displayHtml(
 			"#include sandbox/raymarching/raymarching.vert",
 			blueprint("#include sandbox/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl]),
-			blueprint("#include sandbox/raymarching/raymarching.js", ["setCamera", setCameraString])
+			blueprint("#include sandbox/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene])
 		)
 	]));
 }

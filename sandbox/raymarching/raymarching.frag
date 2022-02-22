@@ -7,7 +7,7 @@ uniform mat4 view;
 
 #define MAX_STEPS 100
 #define MAX_DIST 100.
-#define SURF_DIST .01
+#define SURF_DIST .001
 
 struct ObjectInfo {
 	vec3 col;
@@ -53,13 +53,34 @@ vec3 getObjectNormal(vec3 p) {
 	return normalize(n);
 }
 
-float getLight(vec3 p, vec3 lightPos) {
-	vec3 l = normalize(lightPos - p);
-	vec3 n = getObjectNormal(p);
-	float dif = clamp(dot(n, l) + 0.2, 0., 1.);
-	float d = RayMarch(p+n*SURF_DIST*2., l).d;
-	if (d < length(lightPos - p)) dif *= .1;
-	return dif;
+float getShadow(vec3 p, vec3 lightPos, float maxDist, float lightSize) {
+	float result = 1.0;
+	float dist = 0.001;
+	for (int i = 0; i < MAX_STEPS; i++) {
+		float hit = getObjectInfo(p + lightPos * dist).d;
+		result = min(result, hit / (dist * lightSize));
+		dist += hit;
+		if (hit < SURF_DIST/100. || dist > maxDist) break;
+	}
+	return clamp(result, 0.0, 1.0);
+}
+
+vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, float lightSize) {
+	vec3 lightDir = normalize(lightPos - p);
+	vec3 norm = getObjectNormal(p);
+	vec3 viewDir = -rayDirection;
+	vec3 reflectDir = reflect(-lightDir, norm);
+
+	float specularStrength = 0.25;
+	float specularShininess = 8.0;
+	vec3 specular = specularStrength * lightColor * pow(clamp(dot(reflectDir, viewDir), 0.0, 1.0), specularShininess);  
+
+	float diffuseStrength = 0.9;
+	vec3 diffuse = diffuseStrength * lightColor * clamp(dot(lightDir, norm), 0.0, 1.0);
+
+	float shadow = getShadow(p + norm * SURF_DIST, lightDir, length(lightPos - p), lightSize);
+
+	return (specular + diffuse) * shadow;
 }
 
 vec3 getColor(vec2 uv) {
@@ -69,9 +90,14 @@ vec3 getColor(vec2 uv) {
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
 
-	vec3 col = vec3(0.3);
-	col += %light%;
-	if (d.d < MAX_DIST -1.) col *= d.col; else col = vec3(0.5, 0.5, 0.7);
+	vec3 ambientColor = 0.1 * d.col;
+	vec3 col = vec3(ambientColor);
+	if (d.d < MAX_DIST) {
+		col = col + (%light%) * d.col;
+	} else {
+		col = vec3(0.5, 0.5, 0.7);
+	}
+	col = pow(col, vec3(0.4545));
 	return col;
 }
 

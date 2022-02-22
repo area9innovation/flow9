@@ -14,11 +14,12 @@ export {
 	evalDslProgram(env : DslEnv, language : string, program : string) -> DslAst;
 }
 
+// TODO: Rewrite this language manipulation
 performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv {
 	transforms = getDslTransformations(phase);
 	iterate = fold(transforms, input, \acc, transformation -> {
 		// Are we done?
-		if (acc.language == toLanguage) acc
+		if (acc.language == parseDslLanguage(toLanguage)) acc
 		else {
 			// What would be the result?
 			result = resultDslTransformation(acc.language, transformation.specification);
@@ -28,15 +29,8 @@ performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv
 			} else acc;
 		}
 	});
-
-	// No "if" condition below is met, so we go to the last "else" and have infinite recursion (Concert case)
-	if (false) {
-		println("iterate:" + iterate.language);
-		println("to:	" + toLanguage);
-		println("input:	" + input.language);
-	}
 	
-	if (iterate.language == toLanguage) {
+	if (iterate.language == parseDslLanguage(toLanguage)) {
 		// We made it!
 		iterate
 	} else if (iterate.language != input.language) {
@@ -44,14 +38,14 @@ performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv
 		performDslTransformations(phase, toLanguage, iterate)
 	} else {
 		// OK, maybe it is just a pure syntax extension without rewrite rules?
-		lastExtension = takeAfterLast(iterate.language, "+", iterate.language);
+		lastExtension = takeAfterLast(iterate.language.language, "+", iterate.language.language);
 		if (lastExtension == "") {
-			println("Could not transform to " + toLanguage + ". Only got to " + iterate.language + ". Extension " + lastExtension);
+			println("Could not transform to " + toLanguage + ". Only got to " + dslLanguage2string(iterate.language) + ". Extension " + lastExtension);
 			DslAstEnv(
-				iterate with error = "Could not transform to " + toLanguage + ". Only got to " + iterate.language
+				iterate with error = "Could not transform to " + toLanguage + ". Only got to " + dslLanguage2string(iterate.language)
 			)
 		} else {
-			implicitDropped = takeBeforeLast(iterate.language, "+", iterate.language);
+			implicitDropped = takeBeforeLast(iterate.language.language, "+", iterate.language.language);
 			implicit = doImplicitExtensionDrop(iterate, lastExtension, implicitDropped);
 			performDslTransformations(phase, toLanguage, implicit);
 		}
@@ -63,15 +57,15 @@ doImplicitExtensionDrop(env : DslAstEnv, extension : string, remaining : string)
 	language = remaining + "+" + extension;
 	iterDslEGraph(env.egraph, \eclass, nodes : Set<DslENode> -> {
 		iterSet(nodes, \node : DslENode -> {
-			if (node.language == language) {
+			if (node.language == parseDslLanguage(language)) {
 				// OK, just lowering it directly
-				newEclass = addDslAst(env.egraph, remaining, node.value);
+				newEclass = addDslAst(env.egraph, parseDslLanguage(remaining), node.value);
 				unionDslEClass(env.egraph, eclass, newEclass);
 				{}
 			}
 		})
 	});
-	DslAstEnv(env with language = remaining);
+	DslAstEnv(env with language = parseDslLanguage(remaining));
 }
 
 // Applies the given transformation
@@ -80,7 +74,7 @@ performDslTransformation(input : DslAstEnv, transformation : DslTransformation) 
 	result = resultDslTransformation(input.language, transformation.specification);
 
 	if (isDslTracing(input.language, transformation.phase)) {
-		println("  Running " + transformation.phase + " for " + transformation.specification + " to go from " + input.language + " to " + result);
+		println("  Running " + transformation.phase + " for " + dslLanguage2string(transformation.specification) + " to go from " + dslLanguage2string(input.language) + " to " + dslLanguage2string(result));
 	}
 	res = transformation.fn(input);
 
