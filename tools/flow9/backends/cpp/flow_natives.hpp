@@ -17,9 +17,15 @@ std::shared_ptr<A> makeFlowRef(A value) {
 // string
 
 _FlowString* flow_substring(_FlowString* s, int32_t start, int32_t length) {
-	_FlowString* res = new _FlowString(s->value.substr(start, length));
-	drop(s);
-	return res;
+	if (s->_counter == 1) {
+		s->value.erase(0, start).resize(length);
+		//s->value = s->value.substr(start, length);
+		return s;
+	} else {
+		_FlowString* res = new _FlowString(s->value.substr(start, length));
+		drop(s);
+		return res;
+	}
 }
 
 int32_t flow_strlen(_FlowString* s) {
