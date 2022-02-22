@@ -1,0 +1,300 @@
+import material/material_ui;
+
+export {
+	MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
+
+	RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMColor, RMLight, RMPlus, RMEmpty;
+		RMSphere(radius : double);
+		RMPlane(normal : RMXYZ, height : double);
+		RMTranslate(object : RMObject, d : RMCoordinate);
+		RMUnion(object1 : RMObject, object2 : RMObject);
+		RMColor(object : RMObject, color : int);
+		RMLight(size : double);
+		RMPlus(object1 : RMObject, object2 : RMObject);
+		RMEmpty();
+
+	RMCamera(position : RMXYZ, direction : RMXYZ);
+
+	RMCoordinate ::= RMXYZ, RMX, RMY, RMZ, RMXY, RMXZ, RMYZ;
+		RMXYZ(x : double, y : double, z : double);
+		RMXY(x : double, y : double);
+		RMXZ(x : double, z : double);
+		RMYZ(y : double, z : double);
+		RMX(x : double);
+		RMY(y : double);
+		RMZ(z : double);
+
+	RMIExp ::= RMICall, RMIP, RMIDouble, RMIXYZ, RMIVar, RMIConcat, RMIEmpty;
+		RMICall(fn : RMC, args : [RMIExp]);
+		// A function, either an operator or function call
+		RMC ::= RMIOp, RMIFn;
+			// Operators are unary (prefix notation), binary operators, or the ? operator for ternary in GLSL syntax
+			RMIOp(opName : string);
+			// Function call syntax for these functions
+			RMIFn(fnName : string);
+		// The point to which we have to measure the distance
+		RMIP();
+		RMIDouble(num : double);
+		RMIXYZ(x : double, y : double, z : double);
+		RMIVar(name : string);
+		RMIConcat(exp1 : RMIExp, exp2 : RMIExp);
+		RMIEmpty();
+}
+
+MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material {
+	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	jsScene = RMIExp2JS(RMObject2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	setCameraString = formatString(
+		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
+		[
+			d2s(camera.position.x),
+			d2s(camera.position.y),
+			d2s(camera.position.z),
+			d2s(camera.direction.x),
+			d2s(camera.direction.y),
+			d2s(camera.direction.z),
+		]
+	);
+
+	MLines([
+		MTextButton(
+			"RESET CAMERA", 
+			\ -> {
+				hostCall("setCameraPosition", [
+					camera.position.x,
+					camera.position.y,
+					camera.position.z
+				]);
+				hostCall("setCameraDirection", [
+					camera.direction.x,
+					camera.direction.y,
+					camera.direction.z
+				]);
+				{}
+			},
+			[], []
+		),
+		displayRaymarchingCanvas(
+			blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
+			"#include material/extra/raymarching/raymarching.vert",
+			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl])
+		)
+	])
+}
+
+displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
+	whB = make(WidthHeight(0.0, 0.0));
+	MInspect([IAvailable(whB)], 
+		MHTMLStage(whB, \stage -> {
+			canvas = createElement("canvas");
+			scriptGLM = createElement("script");
+			scriptShaderVertex = createElement("script");
+			scriptShaderFragment = createElement("script");
+			script = createElement("script");
+
+			setCanvasSize = \wh -> {
+				setAttribute(canvas, "width", d2s(wh.width), true);
+				setAttribute(canvas, "height", d2s(wh.height), true);
+			};
+
+			setAttribute(scriptGLM, "src", "js/glm-js.min.js", true);
+			setAttribute(scriptGLM, "onload", "rayMain()", true);
+			setAttribute(canvas, "id", "rayCanvas", true);
+			setCanvasSize(fgetValue(whB));
+			unsSize = makeSubscribe2(whB, \wh -> {
+				setCanvasSize(wh);
+				hostCall("resizeCanvas", [canvas])|>ignore;
+			})();
+			setAttribute(scriptShaderVertex, "type", "text/plain", true);
+			setAttribute(scriptShaderVertex, "id", "vertex-shader", true);
+			setAttribute(scriptShaderVertex, "innerHTML", shaderVertex, true);
+			setAttribute(scriptShaderFragment, "type", "text/plain", true);
+			setAttribute(scriptShaderFragment, "id", "fragment-shader", true);
+			setAttribute(scriptShaderFragment, "innerHTML", shaderFragment, false);
+			setAttribute(script, "innerHTML", scriptContent, false);
+
+			setClipStyle(stage, "overflow", "auto");
+
+			appendChild(stage, scriptGLM);
+			appendChild(stage, canvas);
+			appendChild(stage, scriptShaderVertex);
+			appendChild(stage, scriptShaderFragment);
+			appendChild(stage, script);
+			\ -> {
+				unsSize();
+				removeElementChild(stage, scriptGLM);
+				removeElementChild(stage, canvas);
+				removeElementChild(stage, scriptShaderVertex);
+				removeElementChild(stage, scriptShaderFragment);
+				removeElementChild(stage, script);
+			}
+		})
+	)
+}
+
+RMObject2RMIExp(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
+	switch(obj) {
+		RMSphere(radius): addColorToRMIExp(
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("length"), [
+					RMICall(RMIOp("-"), [RMIP(), acc])
+				]),
+				RMIDouble(radius)
+			]),
+			color
+		);
+		RMPlane(normal, height): addColorToRMIExp(
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("dot"), [
+					RMIP(),
+					RMICall(RMIFn("normalize"), [
+						RMCoordinate2RMIXYZ(normal)
+					])
+				]),
+				RMIDouble(height)]
+			),
+			color
+		);
+		RMTranslate(object, d): RMObject2RMIExp(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+		RMUnion(object1, object2): RMICall(RMIFn("minOI"),
+			[
+				RMObject2RMIExp(object1, acc, color),
+				RMObject2RMIExp(object2, acc, color),
+			]
+		);
+		RMColor(object, col): RMObject2RMIExp(
+			object,
+			acc,
+			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
+		);
+		RMLight(size): RMICall(RMIOp("*"),
+			[
+				RMICall(RMIFn("getLight"), [
+					RMIP(),
+					RMIVar("rayDirection"),
+					acc,
+					color,
+					RMIDouble(size)
+				]),
+				color
+			]
+		);
+		RMPlus(object1, object2): RMICall(RMIOp("+"),
+			[
+				RMObject2RMIExp(object1, acc, color),
+				RMObject2RMIExp(object2, acc, color),
+			]
+		);
+		RMEmpty(): RMIEmpty();
+	}
+}
+
+RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
+	switch(obj) {
+		RMSphere(radius): 
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("glm.length"), [
+					RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [acc]))
+				]),
+				RMIDouble(radius)
+			]);
+		RMPlane(normal, height): 
+			RMICall(RMIOp("-"), [
+				RMICall(RMIFn("glm.dot"), [
+					RMIP(),
+					RMICall(RMIFn("glm.normalize"), [
+						RMCoordinate2RMIXYZ(normal)
+					])
+				]),
+				RMIDouble(height)]
+			);
+		RMTranslate(object, d): RMObject2RMIExpJS(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+		RMUnion(object1, object2): RMICall(RMIFn("Math.min"),
+			[
+				RMObject2RMIExpJS(object1, acc, color),
+				RMObject2RMIExpJS(object2, acc, color),
+			]
+		);
+		RMColor(object, col): RMObject2RMIExpJS(
+			object,
+			acc,
+			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
+		);
+		RMLight(size): RMIEmpty();
+		RMPlus(object1, object2): RMICall(RMIOp("+"),
+			[
+				RMObject2RMIExpJS(object1, acc, color),
+				RMObject2RMIExpJS(object2, acc, color),
+			]
+		);
+		RMEmpty(): RMIEmpty();
+	}
+}
+
+RMIExp2GLSL(exp : RMIExp) -> string {
+	switch(exp) {
+		RMICall(fn, args): switch(fn) {
+			RMIOp(opName): if (length(args) == 1) {
+				opName + RMIExp2GLSL(args[0])
+			} else if (length(args) == 2) {
+				RMIExp2GLSL(args[0]) + " " + opName + " " + RMIExp2GLSL(args[1])
+			} else if (length(args) == 3) {
+				RMIExp2GLSL(args[0]) + "?" + RMIExp2GLSL(args[1]) + ":" + RMIExp2GLSL(args[2])
+			} else "";
+			RMIFn(fnName): fnName + "(" + strGlue(map(args, RMIExp2GLSL), ", ") + ")";
+		};
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2GLSL(exp1) + RMIExp2GLSL(exp2);
+		RMIEmpty(): "";
+	}
+}
+
+RMIExp2JS(exp : RMIExp) -> string {
+	switch(exp) {
+		RMICall(fn, args): switch(fn) {
+			RMIOp(opName): if (length(args) == 1) {
+				opName + RMIExp2JS(args[0])
+			} else if (length(args) == 2) {
+				RMIExp2JS(args[0]) + " " + opName + " " + RMIExp2JS(args[1])
+			} else if (length(args) == 3) {
+				RMIExp2JS(args[0]) + "?" + RMIExp2JS(args[1]) + ":" + RMIExp2JS(args[2])
+			} else "";
+			RMIFn(fnName): fnName + "(" + strGlue(map(args, RMIExp2JS), ", ") + ")";
+		};
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIXYZ(x, y, z): formatString("glm.vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2JS(exp1) + RMIExp2JS(exp2);
+		RMIEmpty(): "";
+	}
+}
+
+RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ {
+	switch(c) {
+		RMXYZ(x, y, z): RMIXYZ(x, y, z);
+		RMXY(x, y): RMIXYZ(x, y, 0.);
+		RMXZ(x, z): RMIXYZ(x, 0., z);
+		RMYZ(y, z): RMIXYZ(0., y, z);
+		RMX(x): RMIXYZ(x, 0., 0.);
+		RMY(y): RMIXYZ(0., y, 0.);
+		RMZ(z): RMIXYZ(0., 0., z);
+	}
+}
+
+addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
+	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
+}
+
+addColorToRMIExp(exp : RMIExp, color : RMIXYZ) -> RMICall {
+	RMICall(RMIFn("ObjectInfo"), [color, exp])
+}
+
+d2GLSLfloat(num : double) {
+	s = d2s(num);
+	if (strContains(s, ".")) s else s + ".";
+}
