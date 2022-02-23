@@ -13,20 +13,20 @@ syntax lambda+quotestring+array {
 	>>);
 
 	// TODO: Figure out how to handle an arbitrary list of conditions in the loop part
-	registerDslLowering("desugar", "datafun", "lambda+datafun", "@lambda", ";", << 
+	registerDslLowering("desugar", "datafun", "lambda+datafun", "lambda", ";", << 
 			// 1-d loop
-			[ $e | $a in $c ] 					=> map($c, \$a -> $e);
-			[ $e | $a in $c, $f ] 				=> fold($c, nil(), \acc, $a -> if ($f) cons($e, acc) else acc);
+			[ $e | $a in $c ] 					=> @map($c, \$a -> $e);
+			[ $e | $a in $c, $f ] 				=> @fold($c, nil(), \acc, $a -> if ($f) cons($e, acc) else acc);
 
 			// 2-d loops
-			[ $e | $a in $c, $b in $d ] 		=> fold($c, nil(), \acc, $a -> fold($d, acc, \acc2, $b -> cons($e, acc2)));
-			[ $e | $a in $c, $b in $d, $f ] 	=> fold($c, nil(), \acc, $a -> 
+			[ $e | $a in $c, $b in $d ] 		=> @fold($c, nil(), \acc, $a -> fold($d, acc, \acc2, $b -> cons($e, acc2)));
+			[ $e | $a in $c, $b in $d, $f ] 	=> @fold($c, nil(), \acc, $a -> 
 													fold($d, acc, \acc2, $b -> if ($f) cons($e, acc2) else acc2)
 												);
-			[ $e | $a in $c, $f, $b in $d ] 	=> fold($c, nil(), \acc, $a -> 
+			[ $e | $a in $c, $f, $b in $d ] 	=> @fold($c, nil(), \acc, $a -> 
 													if ($f) fold($d, acc, \acc2, $b -> cons($e, acc2)) else acc
 												);
-			[ $e | $a in $c, $f, $b in $d, $g ] => fold($c, nil(), \acc, $a -> 
+			[ $e | $a in $c, $f, $b in $d, $g ] => @fold($c, nil(), \acc, $a -> 
 													if ($f) fold($d, acc, \acc2, $b -> if ($g) cons($e, acc2) else acc2) else acc
 												);
 		>>);

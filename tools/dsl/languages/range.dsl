@@ -4,8 +4,8 @@
 		postfix = postfix | ".." ws exp $"range_2";
 	>>);
 
-	registerDslLowering("desugar", "range", "lambda+range", "@lambda", ";", <<
-		$e1 .. $e2 => range($e1, $e2);
+	registerDslLowering("desugar", "range", "lambda+range", "lambda", ";", <<
+		$e1 .. $e2 => @range($e1, $e2);
 	>>);
 
 	registerDslRuntime("range", "lambda", << "range" >>);
