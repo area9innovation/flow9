@@ -22,7 +22,7 @@ will work for many languages.
 
 ## Lambda core
 
-There is a special core, basic language called Lambda. This is a very simple, pure, 
+There is a special core, basic language called Lambda. This is a simple, pure, 
 untyped expression-based lambda calculus with syntax like *flow* expressions. It contains
 bools, ints, doubles, string and lists, plus AST nodes. This language has the property
 that the AST of Lambda itself (and all other languages in scope) can be represented
@@ -30,7 +30,19 @@ in the language itself. So you can also think of Lambda as a kind of Lisp where
 programs = data. This property is maintained, so that the system itself can use Lambda 
 as the grounding layer for defining new languages and extensions in this language.
 
-Thus, when you stack language extensions on top of each others, they will lower themselves
+### Quoting and unquoting in Lambda
+
+To make working with code as data easy, Lambda includes quoting and unquoting constructs:
+
+	a = 2;
+	@1 + $a
+
+evaluates to an value "plus(int(1), int(2))", which represents the program "1+2" in natural
+syntax.
+
+### Lowering to Lambda
+
+When you stack language extensions on top of each others, they will lower themselves
 down to lower languages until they reach Lambda. That in turn means that the end result
 can be evaluated, compiled and so forth, since Lambda itself can do all these things.
 
