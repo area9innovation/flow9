@@ -1,6 +1,10 @@
 syntax lambda+quotestring+array {
 	// This adds records to a language
 
+	// TODO: This is wrong. If you construct more than one
+	// record of the same type, we will get multiple accessor functions.
+	// Also, the scope of the record is not defined.
+
 	// Syntax:
 	// { a: 2, b : 3 } constructs a record/object a la js
 
