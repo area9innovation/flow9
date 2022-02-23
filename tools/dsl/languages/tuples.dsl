@@ -5,9 +5,9 @@ syntax lambda+quotestring+array {
 			| '(' ws exps  ')' $"tuple_1";
 	>>);
 
-	registerDslLowering("desugar", "tuples", "ast", "ast", ";", <<
+	registerDslLowering("desugar", "tuples", "ast", "lambda", ";", <<
 		// We strip the tuple
-		tuple($l) => $l;
+		tuple($l) => reverse(l);
 	>>);
 
 	registerDslRuntime("tuples", "lambda+array", <<
@@ -20,6 +20,6 @@ syntax lambda+quotestring+array {
 		fourth = \l -> nth(l, 3);
 		fifth = \l -> nth(l, 4);
 		sixth = \l -> nth(l, 5);
-		["listAt"]
+		["listAt", "reverse"]
 	>>)
 }

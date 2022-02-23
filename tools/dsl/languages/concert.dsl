@@ -1,6 +1,4 @@
 {
-	registerDslParserExtension("concert", "");
-
 	registerDslLowering("compile", "concert", "ast", "ast", ";;", <<
 		var($id) => CVar($id, ConcertPos("", 0, 0));;		
 
