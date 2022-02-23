@@ -224,39 +224,27 @@ left hand side to a Lambda program on the right hand side:
 The effect of this rule is to "strip" away any "array" nodes, and replaces them with the 
 child.
 
-Often, the goal is not to evaluate the right hand side, but rather do substitution.
-This can be done by using the quoted Lambda language called @lambda. In this example,
-we match an AST syntax on the left, and substitute using @lanbda on the right:
+Often, the goal is not to just evaluate the right hand side, but rather do substitution.
+This can be done using quoting. In this example, we match an AST syntax on the left, and 
+substitute using lanbda on the right:
 
-	for($id, $e1, $e2) => iter($e1, \$id -> $e2);
-
-In this case, the "iter" runtime function is NOT called at substitution time. Instead,
-we will construct a call to that function with the given expression for the list, as
-well as construct a new lambda for the iter function.
-
-As a more implicit example, consider this example matching AST on the left hand side, 
-but with "normal", unquoted lambda on the right hand side:
-
-	exponent($x, $y) => power(x, y);
+	exponent($x, $y) => @power($x, $y);
 
 The left hand side matches an AST node called exponent, and binds the two variables into
-x and y, while the right hand side is a function call to a function called power, with 
-the two arguments.
+x and y, while the right hand side constructs a function call to a function called power, 
+with the two arguments instantiated.
 
-If "power" was defined in Lambda, this would mean that we evaluate the power function
-at substitution time and get the resulting value out. But since the "power" function is 
-not defined in the normal runtime of Lambda, the effect is that this introduces a function 
-call, thus effectively replacing "exponent(x,y)" in the AST with a call to a function 
-called "power". This is a convenient shortcut that is useful in situations where there
-is a mix of evaluation at substitution time, and construction of AST nodes dependent
-on those evaluations.
+A similar example is this one:
+
+	for($id, $e1, $e2) => @iter($e1, \$id -> $e2);
+
+In this case, the "iter" runtime function is NOT called at substitution time, since it is quoted. 
+Instead, we will construct a call to that function with the given expression for the list, as
+well as construct a new lambda for the iter function.
 
 TODO:
 - Rewrite the compiler component to be a lowering with blueprint as the language to run
   on the right hand side
-
-- Consider to drop the implicit quoting of unknown functions and replace it with some other
-  more explicit quoting mechanism.
 
 - TODO: Make it so we can write the Gringo lowering like this:
 
