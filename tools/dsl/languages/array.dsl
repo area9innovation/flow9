@@ -17,7 +17,7 @@
 		// [ exps ] => exps - given the list representation
 		array($e) => e;
 		// a[i] => listAt(a, i);
-		array_index($a, $i) => listAt(a, i);
+		array_index($a, $i) => @listAt($a, $i);
 	>>);
 
 	registerDslRuntime("array", "lambda", << "listAt" >>)
