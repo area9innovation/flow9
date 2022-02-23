@@ -10,9 +10,17 @@ uniform mat4 view;
 #define SURF_DIST .001
 
 struct ObjectInfo {
-	vec3 col;
 	float d;
+	int id;
 };
+
+vec3 getMaterial(int id) {
+	vec3 result;
+
+	%materialFunction%
+
+	return result;
+}
 
 ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
 	if (obj1.d < obj2.d)
@@ -22,7 +30,7 @@ ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
 }
 
 ObjectInfo getObjectInfo(vec3 p) {
-	ObjectInfo d = ObjectInfo(vec3(1, 1, 1), MAX_DIST);
+	ObjectInfo d = ObjectInfo(MAX_DIST, -1);
 
 	d = %distanceFunction%;
 
@@ -90,10 +98,12 @@ vec3 getColor(vec2 uv) {
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
 
-	vec3 ambientColor = 0.1 * d.col;
+	vec3 materialColor = getMaterial(d.id);
+
+	vec3 ambientColor = 0.1 * materialColor;
 	vec3 col = vec3(ambientColor);
-	if (d.d < MAX_DIST) {
-		col = col + (%light%) * d.col;
+	if (d.id >= 0) {
+		col = col + (%light%) * materialColor;
 	} else {
 		col = vec3(0.5, 0.5, 0.7);
 	}
