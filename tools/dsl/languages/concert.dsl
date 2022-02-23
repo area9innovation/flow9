@@ -1,6 +1,4 @@
 {
-	registerDslParserExtension("concert", "");
-
 	registerDslLowering("compile", "concert", "ast", "ast", ";;", <<
 		var($id) => CVar($id, ConcertPos("", 0, 0));;		
 
@@ -33,6 +31,9 @@
 		brace($s) => CSequence($s);;
 
 		lambda($args, $body) => CLambda($args, $body);;
+
+		bind($e) => CUnquote($e);;
+		quote($e) => CQuote($e);;
 
 		call(CVar("nil", ConcertPos("", 0, 0)), $children) => CArray(CArrayView(0, 0), []);;
 		call(CVar("cons", ConcertPos("", 0, 0)), [$value, $array]) => CCall(

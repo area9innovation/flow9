@@ -1,13 +1,15 @@
 # DSL & Rewriting engine
 
 This is a system to define syntax & semantics for languages, including
-rewrite rules and compilers.
+rewrite rules and compilers. In other words, a toolbox for making programming
+languages.
 
 ## Architecture
 
 This system is designed to make programming languages and language features
 "first-class". The goal is to separate out the various aspects of programming
-languages, make them easy to define, and importantly, to make them compositional.
+languages, make them easy to define in isolation, and importantly, to make them 
+compositional so a language can be build from independent pieces.
 
 The result is a system where you can define new programming languages by picking
 a base language, and then adding language features on top. The library will then
@@ -20,22 +22,34 @@ will work for many languages.
 
 ## Lambda core
 
-There is a special core, basic language called Lambda. This is a very simple, pure, 
-untyped expression-based lambda calculus with syntax like flow expressions. It contains
-bools, ints, doubles, string and lists, plus AST nodes. These language has the property
+There is a special core, basic language called Lambda. This is a simple, pure, 
+untyped expression-based lambda calculus with syntax like *flow* expressions. It contains
+bools, ints, doubles, string and lists, plus AST nodes. This language has the property
 that the AST of Lambda itself (and all other languages in scope) can be represented
 in the language itself. So you can also think of Lambda as a kind of Lisp where
 programs = data. This property is maintained, so that the system itself can use Lambda 
 as the grounding layer for defining new languages and extensions in this language.
 
-Thus, when you stack language extensions on top of each others, they will lower themselves
+### Quoting and unquoting in Lambda
+
+To make working with code as data easy, Lambda includes quoting and unquoting constructs:
+
+	a = 2;
+	@1 + $a
+
+evaluates to an value "plus(int(1), int(2))", which represents the program "1+2" in natural
+syntax.
+
+### Lowering to Lambda
+
+When you stack language extensions on top of each others, they will lower themselves
 down to lower languages until they reach Lambda. That in turn means that the end result
 can be evaluated, compiled and so forth, since Lambda itself can do all these things.
 
-You do not have to use Lambda as the base language. You will not directly benefit from existing
-evaluation and compilation targets for Lambda if you don't, but since languages are easy
-to define and extend, this framework still helps in case you want to implement some other
-language.
+You do not have to use Lambda as the base language. You will not directly benefit from 
+existing evaluation and compilation targets for Lambda if you don't, but since languages 
+are easy to define and extend, this framework still helps in case you want to implement 
+some other language.
 
 ## Philosophy
 
@@ -46,14 +60,15 @@ power:
 - Well designed, functional semantics of the languages and features
 - Pure expression-based languages rather than statement based
 - Term-rewriting rules for desugaring, lowering and optimizations
+- Representing the program AST as an e-graph of equivalent AST nodes in different languages
 
-Consider Flow. Flow itself is NOT expression based. Top-level things like "import", "export", 
+Consider Flow. Flow itself is NOT expression based. Top-level syntax like "import", "export", 
 types and top-level functions are examples that break the expression condition. This turns out 
 to be somewhat problematic for various aspects. So in this library, the design has been 
 changed to be based around pure expression-based languages.
 
 This property means that rewriting rules become much simpler to reason about and will work
-in general. Experience shows that this approach is much superior for compositionality.
+more generally. Experience shows that this approach is superior for compositionality.
 
 ## Status
 
@@ -61,7 +76,7 @@ This system is still in early development. The core features are present, and in
 `test.flow` file and `tests` folder, a number of examples of languages and combinations
 can be seen.
 
-Most of the language extensions are written in .dsl files. See the `languages` folder
+Most of the language extensions are written in `.dsl` files. See the `languages` folder
 for a range of examples.
 
 # Aspects of languages
@@ -69,7 +84,7 @@ for a range of examples.
 The system is architectured around some core aspects of programming languages:
 
 - Syntax and parsing. Results of parsing is an AST represented as the `DslAst` type in flow.
-- Rewriting and lowering. Term-rewriting rules to transform ASTs to other ASTs,
+- Rewriting/lowering. Term-rewriting rules to transform ASTs to other ASTs,
   both for desugaring, lowering and optimizations through e-graphs. 
 - Runtime. Language extensions can provide runtime functions to help implement
   the language features.
@@ -151,9 +166,108 @@ TODO:
 ## E-graph rewriting
 
 The DSL library comes with support for doing semantic term-rewriting using an
-e-graph.
+e-graph. A rewrite is a pattern on the left hand side that matches AST nodes,
+and a rewrite on the right hand side in some language.
 
-### Example
+	<pattern> => <rewrite>;
+
+Each side is defined using a given syntax. Thus, the language on the left hand 
+side can be different from the language on the right hand side. If the language
+is the same on both sides, it is often used for optimizations.
+When the languages are different, it is often a lowering from a high-level language
+to a lower-level language, or it can be a compilation from one language to another.
+
+## Patterns
+
+The patterns on the left-hand side of rewriting rules are simple pattern matching.
+They define the AST nodes to match on, and will "bind" variables in the pattern to
+an environment.
+
+The pattern can be defined in different syntaxes, as long as the corresponding grammar
+for the language has a "bind_1" AST node.
+
+The most general pattern matching language is called "ast", and it matches any AST
+node. This pattern:
+
+	plus($l, $r)
+
+will match any "plus" node in the AST, and bind the left hand side to a variable called
+"l", and the right hand side to "r".
+
+The same pattern can be written in more natural Lambda syntax like this:
+
+	$l + $r
+
+since the grammar for Lambda will construct a "plus" node for the + sign.
+
+Patterns can have deeper structure, so rewrite rules like this are possible:
+
+	$l + $l + $l => 3 * $l
+
+which will transform expressions like 2 + 2 + 2 to 3 * 2.
+
+TODO:
+- Introduce guards in patterns written in some language, maybe with a syntax like this:
+
+	<pattern> => <rewrite> when <condition>
+
+- Add multi-pattern rules. This will allow two separate nodes in the AST to be found,
+  and thus things like common-expressions can be found. This is best done if the e-graph
+  is represented as a relational structure. https://arxiv.org/pdf/2101.01332.pdf
+
+- Do a DSL for pattern matching itself, maybe like https://arxiv.org/pdf/1807.01872v1.pdf
+
+- Generalize rules for equality (i.e. bidirectional rules), and stopping
+   = is equality (substituion both way)
+   != is a stopping condition for rewriting.
+
+### Substitutions or the right hand side of rules
+
+The syntax used for the right hand side can be chosen freely. The right hand side
+is typically code that will be evaluated with the environment bound. So the code
+on the right hand side is typically code, which is evaluated to give the resulting
+AST node that will be defined as an equivalent value in the given language.
+
+As the most simple example, look at this pattern which goes from a AST pattern on the 
+left hand side to a Lambda program on the right hand side:
+
+	array($e) => e;
+
+The effect of this rule is to "strip" away any "array" nodes, and replaces them with the 
+child.
+
+Often, the goal is not to just evaluate the right hand side, but rather do substitution.
+This can be done using quoting. In this example, we match an AST syntax on the left, and 
+substitute using lanbda on the right:
+
+	exponent($x, $y) => @power($x, $y);
+
+The left hand side matches an AST node called exponent, and binds the two variables into
+x and y, while the right hand side constructs a function call to a function called power, 
+with the two arguments instantiated.
+
+A similar example is this one:
+
+	for($id, $e1, $e2) => @iter($e1, \$id -> $e2);
+
+In this case, the "iter" runtime function is NOT called at substitution time, since it is quoted. 
+Instead, we will construct a call to that function with the given expression for the list, as
+well as construct a new lambda for the iter function.
+
+TODO:
+- Rewrite the compiler component to be a lowering with blueprint as the language to run
+  on the right hand side
+
+- TODO: Make it so we can write the Gringo lowering like this:
+
+  	lowering= prepareDslLowering(gringo, ".",
+		<<
+			list(@t @s) => $"nil" @t $"cons" (@s @t $"cons")* @s? | $"nil".
+			list(@t) => $"nil" (@t $"cons")*.
+			keyword(@k) => @k !letterOrDigit ws.
+		>>);
+
+### Example of rewriting
 
 Here we define some rewriting rules to optimize simple math expressions in Lambda:
 
@@ -218,6 +332,9 @@ gives this output:
 		)
 	)
 
+Thus, the transitive application of these rules will simplify the math as much
+as possible.
+
 TODO:
 - Add stopping criteria for rewriting in the sense of specific eclasses: If the root
   contains a given eclass, we can stop
@@ -225,60 +342,6 @@ TODO:
 - Add pulsing: After N iterations, extract the best, and then rerun rules again from
   that point. These two things is what Caviar does https://arxiv.org/abs/2111.12116
   Is verified against Halide
-
-## Patterns
-
-The patterns on the left-hand side of rewriting rules are simple pattern matching
-only for now, but later, we should allow guards written in Lambda.
-
-TODO:
-- Do a DSL for pattern matching, maybe like https://arxiv.org/pdf/1807.01872v1.pdf
-
-- Add multi-pattern rules. https://arxiv.org/pdf/2101.01332.pdf
-
-- Add rules for equality (i.e. bidirectional rules), evaluations and stopping
-   -> would be evaluation
-   => is substitution
-   = is equality (substituion both way)
-   != is stopping
-
-## Lowering
-
-In addition to rewriting using the e-graph, we have a more predictable
-rewriting system for lowering phases where we do not have any costs.
-This works by matching patterns on the left hand side, and then evaluating
-a lambda program on the right hand side with the bindings.
-
-Lambda evaluation has a "strange" semantics that calls to unknown ids will
-construct an AST node, and in that way, the programs in the lowering can
-construct new AST nodes. Later, we want to replace this with quoting and
-unquoting, but for now, construction of AST nodes in evaluations exploits
-that quirk.
-
-As a special feature, there is support to add "global_let" in the rewritings.
-Those will be lifted to the top-level by the lowering mechanism. In this way,
-it is possible to have "global" effects for language constructs.
-
-A good example is the "record" language feature, where the occurence of a record
-means that accessor functions are generated to extract the fields.
-
-TODO:
-- Generalize the right hand side to allow more languages
- 
-- Add new AST syntax language for the right hand side, in addition to lambda,
-  to replace rewrites such as the one in array with the more predictable lowering.
-
-- Rewrite the compiler component to be a lowering with blueprint as the language to run
-  on the right hand side
-
-- TODO: Make it so we can write the Gringo lowering like this:
-
-  	lowering= prepareDslLowering(gringo, ".",
-		<<
-			list(@t @s) => $"nil" @t $"cons" (@s @t $"cons")* @s? | $"nil".
-			list(@t) => $"nil" (@t $"cons")*.
-			keyword(@k) => @k !letterOrDigit ws.
-		>>);
 
 ## Evaluator
 
@@ -328,9 +391,13 @@ which will expand the binding (which is a List) and separate each element
 using the sep-string.
 
 TODO:
+- Introduce blueprint as a right-hand side language, so we can express compilations
+  as lowerings
+
 - Compiling Gringo is a problem, since "string" is wrong. Solutions: 
   - Add guards for patterns, so we can check if the string contains " or '. 
   - Add escape for strings when expanding
+
 - Add API to the registry for compiling
 
 ## Language registry
@@ -371,7 +438,6 @@ There are a number of language extensions available:
   alternative to the C++ convention, which is easier to read.
 - ternary_if provides "a ? t : e" syntax for if-then-else
 - assign_operators provides "a += 1; a" syntax for "updates"
-
 
 TODO:
 - Allow dependencies between extensions: named_args relies on records.
@@ -415,14 +481,6 @@ TODO:
 - Add OpenSCAD compiler
 
 - Add GLSL compiler
-
-- Build raymarching DSL for geometry
-
-# Change to egraph as base
-
-- Change lowering to allow any language on the right hand side
-  Keep the environment around, so lower should work with DslAstEnv
-  and accept a "runtime" language
 
 # Future plans
 

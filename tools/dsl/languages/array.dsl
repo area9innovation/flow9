@@ -14,11 +14,11 @@
 
 	registerDslLowering("desugar", "array", 
 		"ast", "lambda", ";", <<
-		// [ exps ] => exps - given the list representation
-		array($e) => e;
+		// [ exps ] => exps - given the list representation is reversed
+		array($e) => reverse(e);
 		// a[i] => listAt(a, i);
-		array_index($a, $i) => listAt(a, i);
+		array_index($a, $i) => @listAt($a, $i);
 	>>);
 
-	registerDslRuntime("array", "lambda", << "listAt" >>)
+	registerDslRuntime("array", "lambda", << {"listAt"; "reverse"} >>)
 }

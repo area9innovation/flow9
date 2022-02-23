@@ -5,24 +5,21 @@ syntax lambda+quotestring+array {
 			| '(' ws exps  ')' $"tuple_1";
 	>>);
 
-	// TODO: We register a dummy lowering so the runtime can be activated
-	registerDslLowering("desugar", "tuples", "ast", "ast", ";", "");
+	registerDslLowering("desugar", "tuples", "ast", "lambda", ";", <<
+		// We strip the tuple
+		tuple($l) => reverse(l);
+	>>);
 
 	registerDslRuntime("tuples", "lambda+array", <<
 		nth = \l, n -> {
-				// Extract from the tuple wrapper
-				// TODO: We could do an optimization where we just
-				// remove the tuple wrapper instead?
-
-				li = nodeChild(l, 0);
-				listAt(li, length(li) - n)
+				listAt(l, n)
 			};
-		first = \l -> nth(l, 1);
-		second = \l -> nth(l, 2);
-		third = \l -> nth(l, 3);
-		fourth = \l -> nth(l, 4);
-		fifth = \l -> nth(l, 5);
-		sixth = \l -> nth(l, 6);
-		["listAt", "length"]
+		first = \l -> nth(l, 0);
+		second = \l -> nth(l, 1);
+		third = \l -> nth(l, 2);
+		fourth = \l -> nth(l, 3);
+		fifth = \l -> nth(l, 4);
+		sixth = \l -> nth(l, 5);
+		["listAt", "reverse"]
 	>>)
 }

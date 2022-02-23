@@ -4,7 +4,7 @@ syntax lambda+quotestring+array {
 	>>);
 
 	registerDslLowering("desugar", "exponentiation", "ast", "lambda", ";", <<
-			exponent($x, $y) => power(x, y);
+			exponent($x, $y) => @power($x, $y);
 		>>);
 
 	registerDslRuntime("exponentiation", "lambda+array", <<
