@@ -60,3 +60,33 @@ std::ostream& operator<<(std::ostream& os, const _FlowString& s) {
 	os << codecvt.to_bytes(s.value);
 	return os;
 }
+
+#ifdef __GNUG__
+#include <charconv>
+
+#include <cuchar>
+#include <cstring>
+_FlowString* flow_i2s(int32_t flow_i) {
+	//return new _FlowString(std::to_string(flow_i)); // or this
+	std::array<char, 11> str;
+	if (auto [ptr, ec] = std::to_chars(str.data(), str.data() + str.size(), flow_i);
+		ec == std::errc())
+	{
+		auto v = new _FlowString(u"");
+		auto len = ptr - str.data();
+		for (long i = 0; i < len; i++) {
+			v->value.push_back(str[i]);
+		}
+		return v;
+
+	}
+	else
+	{
+		return nullptr;
+	}
+}
+#else
+_FlowString* flow_i2s(int32_t flow_i) {
+	return new _FlowString(std::_Integral_to_string<char16_t>(flow_i));
+}
+#endif
