@@ -413,14 +413,18 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			}
 		);
 		BField(value, field, type): {
-			newValue = rec(value, withReturn, isDownDrop);
+			// newValue = rec(value, true /* withReturn */, true /* isDownDrop */);
+			// reducedValue = reduceBCounter(newValue.exp, true /* isDownDrop */);
+			newValue = rec(value, true /* withReturn */, isDownDrop);
 			reducedValue = reduceBCounter(newValue.exp, isDownDrop);
-			newExp = switch (reducedValue.first : BExp) {
-				BDropValue(dropValue): reuseBField(BField(dropValue, field, type)); // the last use of the struct (value)
-				BReuseValue(reusedVal): reuseBField(BField(reusedVal, field, type));
-				//BLet(__, __, __, __): reuseBField(BField(reducedValue.first, field, type)); // this is temp var
-				default : BDupValue(BField(reducedValue.first, field, type));
-			}
+			newExp = eitherFn(
+				extractReusableValue(reducedValue.first),
+				unpairC(\v, seqM -> {
+					newField = reuseBField(BField(v, field, type));
+					eitherMap(seqM, \e -> BSequence([e, newField], type), newField);
+				}),
+				\-> BDupValue(BField(reducedValue.first, field, type))
+			);
 			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
 		}
 		BSetMutable(left, field, value, type): {
@@ -994,5 +998,16 @@ markUsedVarsAsDroped(usedVars : Tree<string, BExpUsedVar>, downDrops : [BCounter
 	} else {
 		varIds = fold(downDrops, makeSet(), \acc, v -> insertSet(acc, extractBVarId(v)));
 		mapTree2(usedVars, \id, val -> if (containsSet(varIds, id)) BExpUsedVar(val with externalDrop = true) else val);
+	}
+}
+
+extractReusableValue(exp : BExp) -> Maybe<Pair<BExp, Maybe<BExp>>> {
+	switch (exp : BExp) {
+		BDropValue(value): Some(Pair(value, None())); // the last use of the struct (value)
+		BReuseValue(value): Some(Pair(value, None()));
+		BLet(id, value, body, type): maybeMap(extractReusableValue(body), unpairC(\v, newBody -> {
+			Pair(v, Some(BLet(id, value, either(newBody, BVoid()), type)))
+		})); // this is temp var
+		default : None();
 	}
 }
