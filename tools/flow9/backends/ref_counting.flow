@@ -418,6 +418,7 @@ refCountingBExp(exp : BExpUsedVars, generators : Set<string>, withReturn : bool,
 			newExp = switch (reducedValue.first : BExp) {
 				BDropValue(dropValue): reuseBField(BField(dropValue, field, type)); // the last use of the struct (value)
 				BReuseValue(reusedVal): reuseBField(BField(reusedVal, field, type));
+				//BLet(__, __, __, __): reuseBField(BField(reducedValue.first, field, type)); // this is temp var
 				default : BDupValue(BField(reducedValue.first, field, type));
 			}
 			BExpUsedVars(newExp, newValue.usedVars, newValue.createdVars, arrayPushMaybe(newValue.downDrops, reducedValue.second));
@@ -673,11 +674,16 @@ addDupDropToCmpr(
 
 	condUsedVars = extractLastUsedVars(cond, usedVars);
 	caseUsedVars = map(cases, \c -> extractLastUsedVars(c, usedVars));
-	isVarUsedInOtherCases = \id : string, ind : int -> existsi(caseUsedVars, \j, case -> ind != j && containsKeyTree(case, id));
+	
+	isLocalVarCase = \id, caseInd -> containsSet(cases[caseInd].createdVars, id);
+	isVarUsedInOtherCases = \id : string, ind : int -> existsi(caseUsedVars, \j, case -> ind != j && containsKeyTree(case, id) && !isLocalVarCase(id, j));
+	isVarUsedInAllCases = \id : string -> foldi(caseUsedVars, true, \i, acc, case -> acc && containsKeyTree(case, id) && !isLocalVarCase(id, i));
+
+	usedInAllCases = set2array(fold(caseUsedVars, makeSet(), \acc, c -> foldTree(c, acc, \id, v, acc2 -> unpair(v, \var, isExternalDrop -> {
+		if (isVarUsedInAllCases(id)) insertSet(acc2, var) else acc2;
+	}))));
 	caseUniqueUsedVars = mapi(caseUsedVars, \i, c -> foldTree(c, [], \id, v, acc -> unpair(v, \var, isExternalDrop -> {
-		isLocal = containsSet(cases[i].createdVars, id);
-		// TODO: isVarUsedInAllCases (switch)
-		if (isLocal || isVarUsedInOtherCases(id, i)) acc else arrayPush(acc, var)
+		if (isLocalVarCase(id, i) || isVarUsedInOtherCases(id, i)) acc else arrayPush(acc, var)
 	})));
 	condUniqueUsedVars = foldTree(condUsedVars, [], \id, v, acc -> unpair(v, \var, isExternalDrop -> {
 		isLocal = \-> containsSet(cond.createdVars, id);
@@ -692,7 +698,7 @@ addDupDropToCmpr(
 	newCondTmpUsedVars = fold(condTmpCreatedVars, makeTree(), \acc, p -> unpair(p, \cvar, externalDropVar -> 
 		if (externalDropVar) acc else setTree(acc, cvar.id, BExpUsedVar(cvar.type, false))
 	));
-	newCondUsedVars = fold(caseUniqueUsedVars, mergeTree(newCondTmpUsedVars, usedVars), \acc, vars -> fold(vars, acc, \acc2, caseUsedVar -> {
+	newCondUsedVars = fold(arrayPush(caseUniqueUsedVars, usedInAllCases), mergeTree(newCondTmpUsedVars, usedVars), \acc, vars -> fold(vars, acc, \acc2, caseUsedVar -> {
 		setTree(acc2, caseUsedVar.id, BExpUsedVar(caseUsedVar.type, true))
 	}));
 	fixedCond = updateCond(condTmpVars.third, newCondUsedVars, fold(condTmpCreatedVars, makeSet(), \acc, v -> insertSet(acc, v.first.id)));
