@@ -90,10 +90,11 @@ TODO CGraph:
 - Consider to avoid implicit typars for None and friends.
 
 Need decision:
-- types.flow: implicit None type-parameter
+- types.flow: implicit None type-parameter is correct, but add a location to the error
+
 - MTree is polymorphic, but Material is not. Add better warning
 
-- type13: Implicit type pars
+- type24: implicit
 
 - type39: flow
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
