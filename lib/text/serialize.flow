@@ -76,7 +76,6 @@ serialize(v) {
 
 deserializeArray(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
 	t = deserializeListUntil(s, "]", options, Triple(makeList(), start+1, ""));
-
 	Triple(t with first = t.first |> list2array)
 }
 
@@ -100,22 +99,27 @@ deserializeListUntil(s : string, endChar : string, options: [DeserializeOptions]
 		Triple(acc.first, start + 1, "");
 	} else {
 		head : Triple<flow, int, string> = deserializeNext(s, start, options);
-		nextCharIdx = findNextNonSpaceCharIndex(s, head.second);
-		nextChar = getCharAt(s, nextCharIdx);
-		if (nextChar == endChar) {
-			Triple(Cons(head.first, acc.first), nextCharIdx + 1, head.third);
-		} else if (nextChar == ",") {
-			deserializeListUntil(
-				s, endChar, options,
-				Triple(Cons(head.first, acc.first), nextCharIdx + 1, acc.third)
-			)
+		if (head.third != "") {
+			// Abort when there is an error
+			Triple(acc.first, head.second, head.third)
 		} else {
-			nearestString = substring(s, start, nextCharIdx - start + 1);
-			sLen = strlen(s);
-			errMsg = "Expected , or " + endChar;
-			maybeApply(extractStruct(options, DeserializeOptionFailProc(None())).onFailProc, \proc -> proc(s, nextCharIdx, errMsg));
-			// There is a bug! We expected , or ]. Just ignore
-			Triple(acc.first, nextCharIdx, errMsg);
+			nextCharIdx = findNextNonSpaceCharIndex(s, head.second);
+			nextChar = getCharAt(s, nextCharIdx);
+			if (nextChar == endChar) {
+				Triple(Cons(head.first, acc.first), nextCharIdx + 1, head.third);
+			} else if (nextChar == ",") {
+				deserializeListUntil(
+					s, endChar, options,
+					Triple(Cons(head.first, acc.first), nextCharIdx + 1, head.third)
+				)
+			} else {
+				nearestString = substring(s, start, nextCharIdx - start + 1);
+				sLen = strlen(s);
+				errMsg = "Expected , or " + endChar;
+				maybeApply(extractStruct(options, DeserializeOptionFailProc(None())).onFailProc, \proc -> proc(s, nextCharIdx, errMsg));
+				// There is a bug! We expected , or ]. Just ignore
+				Triple(acc.first, nextCharIdx, errMsg);
+			}
 		}
 	}
 }
@@ -212,7 +216,6 @@ deserializeIdentifier(s : string) -> Pair<string, string> {
 }
 
 deserializeStruct(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
-
 	paren = strRangeIndexOf(s, "(", start, strlen(s));
 	if (paren == -1) {
 		errMsg = "Expected (";
@@ -282,8 +285,6 @@ deserializeStruct(s : string, start : int, options: [DeserializeOptions]) -> Tri
 
 // Eats as much as possible, and returns the value and the remaining part
 deserializeNext(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
-
-	trip = \p : Pair<string, int> -> Triple(flow(p.first), p.second, "");
 	limit = strlen(s);
 	if (start >= limit) {
 		Triple(flow(None()), start, "");
@@ -294,7 +295,8 @@ deserializeNext(s : string, start : int, options: [DeserializeOptions]) -> Tripl
 		} else if (isDigit(firstChar)) {
 			deserializeNumber2(s, start, false);
 		} else if (firstChar == "\"") {
-			trip(deserializeString2(s, start));
+			p = deserializeString2(s, start);
+			Triple(flow(p.first), p.second, "");
 		} else if (firstChar == "f" && substring(s, start, 5) == "false") {
 			Triple(flow(false), start+5, "");
 		} else if (firstChar == "t" && substring(s, start, 4) == "true") {
@@ -310,10 +312,11 @@ deserializeNext(s : string, start : int, options: [DeserializeOptions]) -> Tripl
 			Triple(flow(ref r.first), r.second, r.third);
 		} else {
 			r = deserializeStruct(s, start, options);
-			if (r.third == "" && r.first == IllegalStruct() && extractStruct(options, DeserializeOptionThrowErrors(false)).opt)
+			if (r.third == "" && r.first == IllegalStruct() && extractStruct(options, DeserializeOptionThrowErrors(false)).opt) {
 				Triple(r.first, r.second, "Illegal struct deserialized.")
-			else
+			} else {
 				r;
+			}
 		}
 	}
 }
