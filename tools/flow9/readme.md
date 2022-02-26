@@ -72,6 +72,14 @@ The type system is extended with just one construct:
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
+When doing type inference, the language constructs result in unification
+of equivalence classes as well as subtyping relations. Subtyping relations
+are resolved into unifications with overloads when possible.
+
+If a unification or subtyping is not possible to complete, it is pushed
+to a queue for later processing, when more information is expected to be
+available.
+
 TODO CGraph:
 - We need a subtype with multiple types when the max is closed?
 
@@ -85,6 +93,8 @@ Need decision:
 - types.flow: implicit None type-parameter
 - MTree is polymorphic, but Material is not. Add better warning
 
+- type13: Implicit type pars
+
 - type39: flow
 C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
 		Triple(flow(None()), start, "");
@@ -95,7 +105,8 @@ C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (e
 # Name and type lookups
 
 A key problem is to find names, types, sub- and supertypes from the context 
-of a given module. We would like this lookup to be precise in terms of the import graph.
+of a given module. We would like this lookup to be precise in terms of the
+import graph.
 
 This is not easy. Consider the problem of transitive supertypes:
 
