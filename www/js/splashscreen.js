@@ -62,7 +62,11 @@ function setSplashScreen() {
 		c.style.transform = "translate(-50%, -50%) scale("+s+")";
 	};
 	window.onresize = scale;
-	document.body.appendChild(wrap);
-	scale();
+	if (window.renderRoot) {
+		window.renderRoot.shadowRoot.appendChild(wrap);
+	} else {
+		document.body.appendChild(wrap);
+		scale();
+	}
 }
 setSplashScreen();

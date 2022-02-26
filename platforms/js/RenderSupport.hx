@@ -21,10 +21,11 @@ using DisplayObjectHelper;
 class RenderSupport {
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1";
+	public static var RenderRoot : Element = null;
 	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
 	public static var PixiView : Dynamic;
-	public static var PixiStage : FlowContainer = new FlowContainer(true);
+	public static var PixiStage : FlowContainer;
 	public static var PixiRenderer : Dynamic;
 
 	public static var TouchPoints : Dynamic;
@@ -112,6 +113,10 @@ class RenderSupport {
 			createPixiRenderer();
 			TextClip.recalculateUseTextBackgroundWidget();
 		}
+	}
+
+	public static function setupPixiStage() : Void {
+		PixiStage = new FlowContainer(true);
 	}
 
 	public static function setKeepTextClips(keep : Bool) : Void {
@@ -250,7 +255,7 @@ class RenderSupport {
 			UserStyleTestElement = Browser.document.createElement("p");
 			UserStyleTestElement.setAttribute("role", "presentation");
 			UserStyleTestElement.style.visibility = "hidden";
-			Browser.document.body.appendChild(UserStyleTestElement);
+			PixiStage.nativeWidget.appendChild(UserStyleTestElement);
 		}
 	}
 	private static var UserDefinedFontSize : Float = null;
@@ -446,6 +451,14 @@ class RenderSupport {
 	//	Pixi renderer initialization
 	//
 	public static function init() : Bool {
+		if (untyped Browser.window.renderRoot != null && untyped Browser.window.renderRoot.shadowRoot != null) {
+			RenderRoot = untyped Browser.window.renderRoot;
+		}
+
+		if (PixiStage == null) {
+			setupPixiStage();
+		}
+
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
 		} else {
@@ -515,6 +528,11 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
+		if (RenderRoot != null) {
+			width = getRenderRootWidth();
+			height = getRenderRootHeight();
+		}
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
@@ -580,7 +598,7 @@ class RenderSupport {
 		}
 
 		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
+		PixiStage.nativeWidget.insertBefore(PixiView, PixiStage.nativeWidget.firstChild);
 
 		// Enable browser canvas rendered image smoothing
 		var ctx = untyped PixiRenderer.context;
@@ -602,6 +620,50 @@ class RenderSupport {
 				untyped console.log(e);
 			}
 		}
+	}
+
+	private static function getRenderRootWidth() {
+		var width = 0;
+		var rWidth = Std.parseInt(RenderRoot.getAttribute('width'));
+
+		if (rWidth != null && !Math.isNaN(rWidth)) {
+			width = rWidth;
+		} else {
+			width = Math.floor(Browser.window.innerWidth - RenderRoot.getBoundingClientRect().x);
+		}
+
+		RenderRoot.style.width = width + 'px';
+		return width;
+	}
+
+	private static function getRenderRootHeight() {
+		var height = 0;
+		var rHeight = Std.parseInt(RenderRoot.getAttribute('height'));
+
+		if (rHeight != null && !Math.isNaN(rHeight)) {
+			height = rHeight;
+		} else {
+			height = Math.floor(Browser.window.innerHeight - RenderRoot.getBoundingClientRect().y);
+		}
+
+		RenderRoot.style.height = height + 'px';
+		return height;
+	}
+
+	public static function getRenderRootPos() : Point {
+		if (RenderRoot == null) {
+			return new Point(0, 0);
+		}
+		var rootRect = RenderRoot.getBoundingClientRect();
+		return new Point(rootRect.x, rootRect.y);
+	}
+
+	public static function getMouseEventPosition(event : Dynamic, ?rootPosition : Point) : Point {
+		if (rootPosition == null) {
+			rootPosition = getRenderRootPos();
+		}
+
+		return new Point(event.pageX - rootPosition.x, event.pageY - rootPosition.y);
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -1009,6 +1071,11 @@ class RenderSupport {
 				}
 			}
 
+			if (RenderRoot != null) {
+				win_width = getRenderRootWidth();
+				win_height = getRenderRootHeight();
+			}
+
 			PixiView.width = win_width * backingStoreRatio;
 			PixiView.height = win_height * backingStoreRatio;
 
@@ -1075,142 +1142,152 @@ class RenderSupport {
 	}
 
 	public static var PreventDefault : Bool = true;
-	private static inline function initPixiStageEventListeners() {
-		var onpointerdown = function(e : Dynamic) {
-			try {
-				// Prevent default drop focus on canvas
-				// Works incorrectly in Edge
-				// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
-				// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-				if (PreventDefault) e.preventDefault();
+	public static function onpointerdown(e : Dynamic) {
+		try {
+			// Prevent default drop focus on canvas
+			// Works incorrectly in Edge
+			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
+			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
+			if (PreventDefault) e.preventDefault();
 
-				if (e.touches != null) {
-					TouchPoints = e.touches;
-					emit("touchstart");
+			var rootPos = getRenderRootPos();
+			var mousePos = getMouseEventPosition(e, rootPos);
 
-					if (e.touches.length == 1) {
-						MousePos.x = e.touches[0].pageX;
-						MousePos.y = e.touches[0].pageY;
+			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchstart");
 
-						if (MouseUpReceived) emit("mousedown");
-					} else if (e.touches.length > 1) {
-						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
-					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					if (e.which == 3 || e.button == 2) {
-						emit("mouserightdown");
-					} else if (e.which == 2 || e.button == 1) {
-						emit("mousemiddledown");
-					} else if (e.which == 1 || e.button == 0) {
-						if (MouseUpReceived) emit("mousedown");
-					}
+				if (e.touches.length == 1) {
+					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
+					setMousePosition(touchPos);
+					if (MouseUpReceived) emit("mousedown");
+				} else if (e.touches.length > 1) {
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos); 
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos); 
+					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointerdown error : ");
-				untyped console.log(e);
-			}
-		};
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
 
-		var onpointerup = function(e : Dynamic) {
-			try {
-				if (e.touches != null) {
-					TouchPoints = e.touches;
-					emit("touchend");
-
-					GesturesDetector.endPinch();
-
-					if (e.touches.length == 0) {
-						if (!MouseUpReceived) emit("mouseup");
-					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					if (e.which == 3 || e.button == 2) {
-						emit("mouserightup");
-					} else if (e.which == 2 || e.button == 1) {
-						emit("mousemiddleup");
-					} else if (e.which == 1 || e.button == 0) {
-						if (!MouseUpReceived) emit("mouseup");
-					}
+				if (e.which == 3 || e.button == 2) {
+					emit("mouserightdown");
+				} else if (e.which == 2 || e.button == 1) {
+					emit("mousemiddledown");
+				} else if (e.which == 1 || e.button == 0) {
+					if (MouseUpReceived) emit("mousedown");
 				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointerup error : ");
-				untyped console.log(e);
 			}
-		};
+		} catch (e : Dynamic) {
+			untyped console.log("onpointerdown error : ");
+			untyped console.log(e);
+		}
+	};
 
-		var onpointermove = function(e : Dynamic) {
-			try {
-				if (e.touches != null) {
-					e.preventDefault();
+	public static function onpointerup(e : Dynamic) {
+		try {
+			var rootPos = getRenderRootPos();
+			var mousePos = getMouseEventPosition(e, rootPos);
 
-					TouchPoints = e.touches;
-					emit("touchmove");
+			if (e.touches != null) {
+				TouchPoints = e.touches;
+				emit("touchend");
 
-					if (e.touches.length == 1) {
-						MousePos.x = e.touches[0].pageX;
-						MousePos.y = e.touches[0].pageY;
+				GesturesDetector.endPinch();
 
-						emit("mousemove");
-					} else if (e.touches.length > 1) {
-						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
-					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					emit("mousemove");
-				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointermove error : ");
-				untyped console.log(e);
-			}
-		};
-
-		var onpointerout = function(e : Dynamic) {
-			try {
-				if (e.relatedTarget == Browser.document.documentElement) {
+				if (e.touches.length == 0) {
 					if (!MouseUpReceived) emit("mouseup");
 				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointerout error : ");
-				untyped console.log(e);
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
+
+				if (e.which == 3 || e.button == 2) {
+					emit("mouserightup");
+				} else if (e.which == 2 || e.button == 1) {
+					emit("mousemiddleup");
+				} else if (e.which == 1 || e.button == 0) {
+					if (!MouseUpReceived) emit("mouseup");
+				}
 			}
-		};
+		} catch (e : Dynamic) {
+			untyped console.log("onpointerup error : ");
+			untyped console.log(e);
+		}
+	};
+
+	public static function onpointermove(e : Dynamic) {
+		try {
+			var rootPos = getRenderRootPos();
+			var mousePos = getMouseEventPosition(e, rootPos);
+
+			if (e.touches != null) {
+				e.preventDefault();
+
+				TouchPoints = e.touches;
+				emit("touchmove");
+
+				if (e.touches.length == 1) {
+					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
+					setMousePosition(touchPos);
+					emit("mousemove");
+				} else if (e.touches.length > 1) {
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos);
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
+					GesturesDetector.processPinch(touchPos1, touchPos2);
+				}
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
+
+				emit("mousemove");
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("onpointermove error : ");
+			untyped console.log(e);
+		}
+	};
+
+	public static function onpointerout(e : Dynamic) {
+		try {
+			if (e.relatedTarget == Browser.document.documentElement) {
+				if (!MouseUpReceived) emit("mouseup");
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("onpointerout error : ");
+			untyped console.log(e);
+		}
+	};
+
+	private static inline function initPixiStageEventListeners() {
+		var root = PixiStage.nativeWidget;
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-				addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
-				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
-				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
-				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+				addNonPassiveEventListener(root, "pointerdown", onpointerdown);
+				addNonPassiveEventListener(root, "pointerup", onpointerup);
+				addNonPassiveEventListener(root, "pointermove", onpointermove);
+				addNonPassiveEventListener(root, "pointerout", onpointerout);
 			}
 
-			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
+			addNonPassiveEventListener(root, "touchstart", onpointerdown);
+			addNonPassiveEventListener(root, "touchend", onpointerup);
+			addNonPassiveEventListener(root, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
-			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
+			addNonPassiveEventListener(root, "mousedown", onpointerdown);
+			addNonPassiveEventListener(root, "mouseup", onpointerup);
+			addNonPassiveEventListener(root, "mousemove", onpointermove);
+			addNonPassiveEventListener(root, "mouseout", onpointerout);
 		} else if (Platform.isIE) {
-			Browser.document.body.onpointerdown = onpointerdown;
-			Browser.document.body.onpointerup = onpointerup;
-			Browser.document.body.onpointermove = onpointermove;
-			Browser.document.body.onpointerout = onpointerout;
+			root.onpointerdown = onpointerdown;
+			root.onpointerup = onpointerup;
+			root.onpointermove = onpointermove;
+			root.onpointerout = onpointerout;
 		} else {
-			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
-			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+			addNonPassiveEventListener(root, "pointerdown", onpointerdown);
+			addNonPassiveEventListener(root, "pointerup", onpointerup);
+			addNonPassiveEventListener(root, "pointermove", onpointermove);
+			addNonPassiveEventListener(root, "pointerout", onpointerout);
 		}
 
-		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
+		addNonPassiveEventListener(root, "keydown", function(e : Dynamic) {
 			if (RendererType == "html") {
 				onKeyDownAccessibilityZoom(e);
 			}
@@ -1221,7 +1298,7 @@ class RenderSupport {
 			emit("keydown", parseKeyEvent(e));
 		});
 
-		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
+		addNonPassiveEventListener(root, "keyup", function(e : Dynamic) {
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
@@ -1710,10 +1787,9 @@ class RenderSupport {
 		}
 
 		// The first flow render call. Hide loading progress indicator.
-		Browser.document.body.style.backgroundImage = "none";
-		var indicator = Browser.document.getElementById("loading_js_indicator");
+		var indicator : Element = PixiStage.nativeWidget.querySelector("#loading_js_indicator");
 		if (indicator != null) {
-			Browser.document.body.removeChild(indicator);
+			indicator.parentNode.removeChild(indicator);
 		}
 	}
 
@@ -2680,6 +2756,14 @@ class RenderSupport {
 
 	public static function setMouseY(y : Float) {
 		MousePos.y = y / getViewportScale();
+	}
+
+	public static function setMousePosition(pos : Point) {
+		MousePos = pos;
+	}
+
+	public static function isMousePositionEqual(pos : Point) {
+		return MousePos.x == pos.x && MousePos.y == pos.y;
 	}
 
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {

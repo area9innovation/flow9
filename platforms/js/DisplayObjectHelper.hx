@@ -796,7 +796,7 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (isHTMLRenderer(clip) && isNativeWidget(clip)) {
+		if (isHTMLRenderer(clip) && isNativeWidget(clip) && untyped clip.nativeWidget.style != null) {
 			untyped clip.nativeWidget.style.visibility = untyped clip.keepNativeWidget ? "visible" : clip.keepNativeWidgetChildren ? "inherit" : null;
 		}
 
