@@ -83,12 +83,14 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, float l
 	return (specular + diffuse) * shadow;
 }
 
+vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
+
 vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
 	ObjectInfo d = RayMarch(newRayOrigin + getObjectNormal(newRayOrigin) * SURF_DIST * 2., rayDirection);
 	vec3 p = newRayOrigin + rayDirection * d.d;
 
 	int id = d.id;
-	vec3 materialColor = vec3(0.5, 0.5, 0.7);
+	vec3 materialColor = backgroundColor;
 	%materialFunction2%
 
 	vec3 ambientColor = 0.1 * materialColor;
@@ -96,7 +98,7 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
 	if (d.d < MAX_DIST) {
 		col = col + (%light%) * materialColor;
 	} else {
-		col = vec3(0.5, 0.5, 0.7);
+		col = backgroundColor;
 	}
 	return col;
 }
@@ -108,15 +110,15 @@ vec3 getColor(vec2 uv) {
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
 	int id = d.id;
-	vec3 materialColor;
+	vec3 materialColor = backgroundColor;
 	%materialFunction1%
 
 	vec3 ambientColor = 0.1 * materialColor;
 	vec3 col = vec3(ambientColor);
-	if (d.id >= 0) {
+	if (d.d < MAX_DIST) {
 		col = col + (%light%) * materialColor;
 	} else {
-		col = vec3(0.5, 0.5, 0.7);
+		col = backgroundColor;
 	}
 	col = pow(col, vec3(0.4545));
 	return col;
