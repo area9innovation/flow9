@@ -552,8 +552,12 @@ class TextClip extends NativeWidgetClip {
 			case 'AutoAlignLeft' : null;
 			case 'AutoAlignRight' : 'right';
 			case 'AutoAlignCenter' : 'center';
+			case 'AutoAlignJustify' : 'justify';
 			case 'AutoAlignNone' : 'none';
 			default : null;
+		}
+		if (nativeWidget.style.textAlign == 'justify') {
+			nativeWidget.style.whiteSpace = "normal";
 		}
 
 		updateBaselineWidget();
@@ -728,7 +732,11 @@ class TextClip extends NativeWidgetClip {
 
 		// Force text value right away
 		if (nativeWidget != null && isInput) {
+			var keepSelectionRange = true;
+			var selectionStartPrev = nativeWidget.selectionStart;
+			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = text;
+			if (keepSelectionRange) setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
 		if (this.isHTMLRenderer()) {
@@ -1333,7 +1341,7 @@ class TextClip extends NativeWidgetClip {
 			if ((Platform.isChrome || Platform.isEdge) && decimalSeparatorFix) {
 				nativeWidget.value = '';
 			}
-			nativeWidget.value = newValue;
+			nativeWidget.value = val;
 		}
 
 		if (newValue != nativeWidgetValue) {

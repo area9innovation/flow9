@@ -8,7 +8,7 @@ import js.html.Blob;
 class MediaRecorderSupport {
 
 	public static function loadPolyFill(cb : Void -> Void) {
-		if (untyped __js__("typeof window['AudioRecorder'] === 'undefined'")) {
+		if (untyped __js__("typeof window['MediaRecorder'] === 'undefined'")) {
 			Util.loadJS('js/audio/polyfill.js').then(function (d) {
 				untyped window.MediaRecorder = untyped window.AudioRecorder;
 				cb();
@@ -76,7 +76,7 @@ class MediaRecorderSupport {
 					}
 				});
 			}
-			
+
 			var videoParts = [];
 
 			mediaRecorder.addEventListener("stop", function() {
@@ -95,7 +95,7 @@ class MediaRecorderSupport {
 					videoParts.push(event.data);
 				}
 			});
-			
+
 			onReady(mediaRecorder);
 		});
 	#end

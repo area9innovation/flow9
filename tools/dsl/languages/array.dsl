@@ -12,15 +12,13 @@
 		postfix = postfix | '[' ws exp ']' ws $"array_index_2";
 	>>);
 
-	registerDslLowering("desugar", "|array", 
+	registerDslLowering("desugar", "array", 
 		"ast", "lambda", ";", <<
-		// [ exps ] => exps - given the list representation
-		array($e) => e;
+		// [ exps ] => exps - given the list representation is reversed
+		array($e) => reverse(e);
 		// a[i] => listAt(a, i);
-		array_index($a, $i) => listAt(a, i);
+		array_index($a, $i) => @listAt($a, $i);
 	>>);
 
-	registerDslRuntime("|array", "lambda+array", << 
-		"listAt"
-	>>)
+	registerDslRuntime("array", "lambda", << {"listAt"; "reverse"} >>)
 }

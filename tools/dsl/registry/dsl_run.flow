@@ -1,14 +1,12 @@
 import tools/dsl/registry/dsl_registry;
 import tools/dsl/registry/dsl_parser;
 import tools/dsl/registry/dsl_specification;
+import tools/dsl/dsl_tracing;
 import tools/dsl/dsl_eval;
 import ds/tree;
 import string;
 
 export {
-	// Parse this program in this language using the registry
-	parseDslProgram(language : string, program : string) -> DslAstEnv;
-
 	// Perform this transformations to this input, doing all that is required
 	performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv;
 
@@ -16,7 +14,9 @@ export {
 	evalDslProgram(env : DslEnv, language : string, program : string) -> DslAst;
 }
 
-performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv {
+// TODO: Rewrite this language manipulation
+performDslTransformations(phase : string, toLang : string, input : DslAstEnv) -> DslAstEnv {
+	toLanguage = parseDslLanguage(toLang);
 	transforms = getDslTransformations(phase);
 	iterate = fold(transforms, input, \acc, transformation -> {
 		// Are we done?
@@ -30,52 +30,67 @@ performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv
 			} else acc;
 		}
 	});
+	
 	if (iterate.language == toLanguage) {
 		// We made it!
 		iterate
 	} else if (iterate.language != input.language) {
 		// OK, continue
-		performDslTransformations(phase, toLanguage, iterate)
+		performDslTransformations(phase, toLang, iterate)
 	} else {
-		if (phase == "parse" && endsWith(iterate.language, "+syntax")) {
-			// println("OK, looking to make a parser for " + iterate.language);
-			mtransformation = buildDslParserTransformation(iterate.language);
-			mtransformation ?? {
-				registerDslTransformation(mtransformation);
-				performDslTransformations(phase, toLanguage, iterate)
-			} : {
-				DslAstEnv(
-					iterate with error = "Could not parse " + iterate.language + " starting from " + input.language
-				)
-			}
-		} else {
+		// OK, maybe it is just a pure syntax extension without rewrite rules?
+		lastExtension = takeAfterLast(iterate.language.language, "+", iterate.language.language);
+		if (lastExtension == "") {
+			println("Could not transform to " + toLang + ". Only got to " + dslLanguage2string(iterate.language) + ". Extension " + lastExtension);
 			DslAstEnv(
-				iterate with error = "Could not transform to " + toLanguage + ". Only got to " + iterate.language
+				iterate with error = "Could not transform to " + toLang + ". Only got to " + dslLanguage2string(iterate.language)
 			)
+		} else {
+			implicitDropped = takeBeforeLast(iterate.language.language, "+", iterate.language.language);
+			implicit = doImplicitExtensionDrop(iterate, lastExtension, implicitDropped);
+			performDslTransformations(phase, toLang, implicit);
 		}
 	}
 }
 
+doImplicitExtensionDrop(env : DslAstEnv, extension : string, remaining : string) -> DslAstEnv {
+	// println("Doing an implicit drop of " + extension);
+	language = remaining + "+" + extension;
+	iterDslEGraph(env.egraph, \eclass, nodes : Set<DslENode> -> {
+		iterSet(nodes, \node : DslENode -> {
+			if (node.language == parseDslLanguage(language)) {
+				// OK, just lowering it directly
+				newEclass = addDslAst(env.egraph, parseDslLanguage(remaining), node.value);
+				unionDslEClass(env.egraph, eclass, newEclass);
+				{}
+			}
+		})
+	});
+	DslAstEnv(env with language = parseDslLanguage(remaining));
+}
+
 // Applies the given transformation
 performDslTransformation(input : DslAstEnv, transformation : DslTransformation) -> DslAstEnv {
-	
-	// println("  Running " + transformation.phase + " for " + transformation.specification);
-	res = transformation.fn(input);
 	// Make sure to update the language as well
 	result = resultDslTransformation(input.language, transformation.specification);
+
+	if (isDslTracing(input.language, transformation.phase)) {
+		println("  Running " + transformation.phase + " for " + dslLanguage2string(transformation.specification) + " to go from " + dslLanguage2string(input.language) + " to " + dslLanguage2string(result));
+	}
+	res = transformation.fn(input);
+
+	if (isDslTracing(input.language, transformation.phase)) {
+		println(prettyDsl(res.ast));
+	}
 
 	runtime = getDslLanguageRuntime(transformation.specification);
 
 	DslAstEnv(
 		res
-		with language = result,
+		with 
+		language = result,
 		env = mergeTree(res.env, runtime)
 	)		
-}
-
-parseDslProgram(language : string, program : string) -> DslAstEnv {
-	input = DslAstEnv(language + "+syntax", DslString(program), makeTree(), makeDslEGraph(), 0, "");
-	performDslTransformations("parse", language, input);
 }
 
 evalDslProgram(env : DslEnv, language : string, program : string) -> DslAst {

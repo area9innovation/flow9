@@ -1,6 +1,7 @@
 import tools/flow9/bexp/type;
 import ds/set;
 import ds/arrayutils;
+import sys/concurrent;
 
 export {
 	addCapturedVarsToLambdas(exp : BExp, fnIds : Set<string>) -> BExp;
@@ -9,8 +10,6 @@ export {
 	extractBVarId(exp : BExp) -> string;
 	extractSwitchVar(exp : BExp, defType : BType) -> BVar;
 
-	getCapturedLambdaVarIds(args : [string]) -> Set<string>;
-	removeCapturedLambdaVars(args : [string]) -> [string];
 	getLambdaId(fn : BExp, functionIds : Set<string>) -> Pair<string, BType>;
 	isBCallLambda(exp : BCall) -> bool;
 	markCapturedArgs(args : [BExp]) -> [Triple<BExp, bool, bool>];
@@ -74,7 +73,7 @@ getLambdaId(fn : BExp, functionIds : Set<string>) -> Pair<string, BType> {
  // TODO : native fn ?
 isBLambda(exp : BExp, functionIds : Set<string>) -> bool {
 	switch (exp) {
-		BLambda(__, __, __) : true;
+		BLambda(__, __, __, __) : true;
 		default : isSameStructType(getBType(exp), BTypeFunction([], bvoidType));
 	}
 }
@@ -85,18 +84,8 @@ makeCapturedLambdaVar(v : BVar) -> BVar {
 	BVar(capturedVarPrefix + v.id, v.type);
 }
 
-removeCapturedLambdaVars(args : [string]) -> [string] {
-	filter(args, \arg -> !startsWith(arg, capturedVarPrefix));
-}
-
 getCapturedLambdaVarId(arg : string) -> Maybe<Pair<string, string>> {
 	if (startsWith(arg, capturedVarPrefix)) Some(Pair(ltrim2(arg, capturedVarPrefix), arg)) else None();
-}
-
-getCapturedLambdaVarIds(args : [string]) -> Set<string> {
-	fold(args, makeSet(), \acc, arg -> 
-		eitherMap(getCapturedLambdaVarId(arg), \p -> insertSet(insertSet(acc, p.first), p.second), acc)
-	);
 }
 
 getCapturedLambdaVars(args : [BVar]) -> [BVar] {
@@ -160,22 +149,22 @@ addCapturedVarsToBLambdas(exp : BExp, fnIds : Set<string>, usedVars : Tree<strin
 			newBody = addCapturedVarsToBLambdas(body, fnIds, treePushToArrayValue(newVal.second, newLambdaId, BVar(id, type)), newLambdaId, insertSet(createdVarIds, id));
 			Triple(BLet(id, newVal.first, newBody.first, type), newBody.second, newBody.third);
 		}
-		BLambda(args, body, type): {
+		BLambda(args, body, type, cvars): {
 			// reset used vars to arrange drop() correctly
 			newBody = addCapturedVarsToBLambdas(body, fnIds, makeTree(), lambdaId, createdVarIds);
 			argIds = buildSet(args);
-			capturedVars = fold2(concatA(getTreeValues(newBody.second)), [], [], \acc1, acc2, usedVar -> 
-				if (!containsSet(createdVarIds, usedVar.id) || containsSet(argIds, usedVar.id) ) {
+			capturedVars = fold2(
+				map(concatA(getTreeValues(newBody.second)), \v -> eitherMap(getCapturedLambdaVarId(v.id), \r -> BVar(r.first, v.type), v)),
+				[], [],
+				\acc1, acc2, usedVar ->  if (!containsSet(createdVarIds, usedVar.id) || containsSet(argIds, usedVar.id) ) {
 					Pair(acc1, acc2) // local var
 				} else {
-					capturedVar = makeCapturedLambdaVar(usedVar);
-					Pair(arrayPush(acc1, capturedVar.id), arrayPush(acc2, capturedVar));
+					Pair(arrayPush(acc1, usedVar.id), arrayPush(acc2, makeCapturedLambdaVar(usedVar)));
 				}
 			);
 			Triple(
-				// don't change BLambda ?
-				BLambda(concat(args, capturedVars.first), newBody.first, type),
-				setTree(newBody.second, lambdaId, concat(lookupTreeDef(newBody.second, lambdaId, []), capturedVars.second)),
+				BLambda(args, newBody.first, type, capturedVars.first),
+				setTree(usedVars, lambdaId, concat(lookupTreeDef(usedVars, lambdaId, []), capturedVars.second)),
 				mergeSets(newBody.third, createdVarIds)
 			);
 		}
@@ -187,7 +176,7 @@ addCapturedVarsToBLambdas(exp : BExp, fnIds : Set<string>, usedVars : Tree<strin
 			capturedLambdaVars = if (isLambda) [] else getCapturedLambdaVars(lookupTreeDef(usedVars, execLambdaId, []));
 			newFn = addCapturedVarsToBLambdas(fn, fnIds, usedVars, lambdaId, createdVarIds);
 			newArgs = map(args, \arg -> {
-				newLambdaId = if (isBLambda(arg, fnIds)) "_anonymous_lambda" else lambdaId;
+				newLambdaId = if (isBLambda(arg, fnIds)) makeAnonymousLambdaId() else lambdaId;
 				lambdaArgId = getBVarLambdaId(arg, createdVarIds);
 				capturedLambdaArgVars = if (lambdaArgId == "") [] else getCapturedLambdaVars(lookupTreeDef(usedVars, lambdaArgId, []));
 				newArg = addCapturedVarsToBLambdas(arg, fnIds, newFn.second, newLambdaId, newFn.third);
@@ -197,7 +186,7 @@ addCapturedVarsToBLambdas(exp : BExp, fnIds : Set<string>, usedVars : Tree<strin
 			allArgs = if (allCapturedVars == []) {
 				map(newArgs, firstOfQuadruple);
 			} else {
-				concat(map(newArgs, firstOfQuadruple), capturedLambdaVars);
+				concat(map(newArgs, firstOfQuadruple), allCapturedVars);
 			}
 			Triple(
 				BCall(newFn.first, if (isLambda) allArgs else addLambdaFlag(allArgs), type),
@@ -284,4 +273,9 @@ addCapturedVarsToBLambdas(exp : BExp, fnIds : Set<string>, usedVars : Tree<strin
 			Triple(BReuseValue(newValue.first), newValue.second, newValue.third);
 		}
 	}
+}
+
+AnonymousLambdaId = ref 1;
+makeAnonymousLambdaId() -> string {
+	"_anonymous_lambda" + i2s(atomicRefIntAddition(AnonymousLambdaId, 1));
 }

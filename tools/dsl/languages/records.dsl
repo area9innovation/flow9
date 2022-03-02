@@ -1,6 +1,10 @@
 syntax lambda+quotestring+array {
 	// This adds records to a language
 
+	// TODO: This is wrong. If you construct more than one
+	// record of the same type, we will get multiple accessor functions.
+	// Also, the scope of the record is not defined.
+
 	// Syntax:
 	// { a: 2, b : 3 } constructs a record/object a la js
 
@@ -40,7 +44,7 @@ syntax lambda+quotestring+array {
 	// Given a record like { myfield : 1, second : 2} , this constructs functions like 
 	// 	myfield = \r -> field(r, "myfield");
 	// 	second = \r -> field(r, "second");
-	registerDslLowering("desugar", "|records", "ast", "lambda+array", ";;", <<
+	registerDslLowering("desugar", "records", "ast", "lambda+array", ";;", <<
 			record($fields) => 
 				fold(fields, record(fields), \acc, f -> {
 					name = nodeChild(f, 0);
@@ -52,7 +56,7 @@ syntax lambda+quotestring+array {
 
 	// If a named type is defined, we should construct constructor functions for it
 	// as well
-	registerDslRuntime("|records", "lambda+array", <<
+	registerDslRuntime("records", "lambda+array", <<
 		field = \record, fieldname -> {
 			fields = nodeChild(record, 0);
 			fold(fields, nil(), \acc, f -> {

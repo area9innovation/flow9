@@ -4,12 +4,14 @@ import tools/flow9/types/cgraph/pretty;
 import tools/flow9/types/ugraph/class;
 import tools/flow9/types/ugraph/tmap;
 import tools/flow9/types/typars;
+import tools/flow9/types/cgraph/dtype;
 
 export {
 	// Find all subtypes of this (super) node
 	makeSubtypeOverload(tmap : TMap, nodeClass : int, node : CNode, checkOnly : bool, reason : ErrorReason) -> Maybe<CNode>;
 
 	// Find all supertypes of this (sub)node. Constructs new eclasses as required
+	// Required: The node is the cmap value of nodeClass.
 	makeSupertypeOverload(tmap : TMap, nodeClass : int, node : CNode, reason : ErrorReason) -> Maybe<CNode>;
 
 	// Given a subtype, construct the corresponding supertype with the right type parameters
@@ -72,6 +74,7 @@ makeSubtypeOverload(tmap : TMap, nodeClass : int, node : CNode, checkOnly : bool
 	}
 }
 
+// Find all supertypes of this (sub)node. Constructs new eclasses as required
 makeSupertypeOverload(tmap : TMap, nodeClass : int, node : CNode, reason0 : ErrorReason) -> Maybe<CNode> {
 	switch (node) {
 		CEpsilon(): None();
@@ -128,18 +131,31 @@ makeSupertypeOverload(tmap : TMap, nodeClass : int, node : CNode, reason0 : Erro
 			}
 		}
 		COverload(unique, options, reason): {
-			supers : Set<int> = foldSet(options, makeSet(), \acc, opt -> {
-				super = getUnionMapValue(tmap.cmap.cmap, opt);
-				msup = makeSupertypeOverload(tmap, opt, super, reason);
-				msup ?? {
-					eclass = findOrMakeCNode(tmap, msup);
-					insertSet(acc, eclass);
-				} : insertSet(acc, -1);
-			});
-			if (containsSet(supers, -1)) {
-				None()
+			if (true) {
+				// println("OK, asked to make an overload of an overload " + prettyCEClass(tmap.cmap, nodeClass));
+				// println("We just keep it as is");
+				Some(node);
 			} else {
-				Some(COverload(makeSet1(tmap.mkUnique()), supers, reason));
+				println("OK, asked to make an overload of an overload " + prettyCEClass(tmap.cmap, nodeClass));
+				supers : Set<int> = foldSet(options, makeSet(), \acc, opt -> {
+					super = getUnionMapValue(tmap.cmap.cmap, opt);
+					// TODO: Check if this is already a subtype of another option in our own overload
+					// and if so, ignore it
+					println("  TODO: Check if " + prettyCEClass(tmap.cmap, opt) + " is already a subtype of another option");
+					msup = makeSupertypeOverload(tmap, opt, super, reason);
+					msup ?? {
+						eclass = findOrMakeCNode(tmap, msup);
+						insertSet(acc, eclass);
+					} : insertSet(acc, -1);
+				});
+				if (containsSet(supers, -1)) {
+					None()
+				} else {
+					ov = COverload(makeSet1(tmap.mkUnique()), supers, reason);
+					println("And it is " + prettyCNode(tmap.cmap, ov));
+					Some(ov);
+				}
+
 			}
 		}
 	}
@@ -267,9 +283,21 @@ extractTyparsFromSuper2(tmap : TMap, super : CName, subname : string) -> Maybe<[
 				stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == subname);
 				stype ?? {
 					// OK, we have the relation from the union to the struct in this union
-					if (length(super.typars) < length(union.typars) || length(super.typars) < length(stype.typars)) {
-						println("TODO: Missing typars for converting " + union.id + ": " + toString(union.typars) + " with " + toString(super.typars) + " with " + toString(stype));
+					if (length(super.typars) < length(union.typars)) {
+						println("Error: Missing typars for converting " + union.id + " to " + subname + ": " + toString(union.typars) + " with " + toString(super.typars) + " with " + toString(stype));
 						None();
+					} else if (length(super.typars) < length(stype.typars)) {
+						if (super.typars == []) {
+							types = map(stype.typars, \tp : DType -> {
+								tt = dtype2CType2(tmap, tp);
+								findOrMakeCNodeClass(tmap, tt, makeErrorReason([-1], ""));
+							});
+							Some(types);
+						} else {
+							// OK, there is some complicated relation between the super and sub with implicit typars
+							println("TODO: Missing typars for converting " + union.id + " to " + subname + ": " + toString(union.typars) + " with " + toString(super.typars) + " with " + toString(stype));
+							None();
+						}
 					} else {
 						Some(extractTyparsFromSuperDTypename(union, stype, super.typars));
 					}

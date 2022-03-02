@@ -4,20 +4,20 @@ import tools/dsl/registry/dsl_registry;
 import tools/dsl/registry/dsl_run;
 import tools/dsl/dsl_lower_egraph;
 import tools/dsl/dsl_extract_egraph;
+import tools/dsl/dsl_runtime_common;
 
 export {
 	// Build a lowering transformation which can implement the given spefication
 	// This one runs the program in the to-language
 	registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string) -> void;
 
-	// Using an egraph to rewrite the program. This one uses substitution on the right hand side only
-	registerDslRewriting(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string, costs : string, defaultVal : string) -> void;
-
 	// Register a set of functions to add to the runtime
 	registerDslRuntime(language : string, codeLanguage : string, runtime : string) -> void;
 }
 
-registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string) -> void {
+registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage1 : string, sep : string, rules : string) -> void {
+	quoted = startsWith(toLanguage1, "@");
+	toLanguage = if (quoted) strRight(toLanguage1, 1) else toLanguage1;
 	mrules = parseDslRules(fromLanguage, toLanguage, sep, rules);
 	mrules ?? {
 		patterns : List<DslReplacement> = mapList(getDslList(mrules.rules), \rule -> {
@@ -27,22 +27,31 @@ registerDslLowering(phase : string, specification : string, fromLanguage : strin
 			DslReplacement(pattern, replacement);
 		});
 
-		lowering = DslLowering(patterns, toLanguage);
+		lowering = DslLowering(patterns, parseDslLanguage(if (quoted) "ast" else toLanguage));
 		
+		lang = parseDslLanguage(specification);
+
 		transformation = DslTransformation(
 			phase,
-			specification,
+			lang,
 			\astenv -> {
-				// println("Before lowering");
-				// println(prettyDsl(astenv.ast));
+				if (isDslTracing(astenv.language, phase)) {
+					println("Before lowering '" + specification + "' on " + dslLanguage2string(astenv.language));
+					println(prettyDsl(astenv.ast));
+				}
 
-				lowerDslEGraph(astenv, astenv.root, specification, lowering);
+				lowerDslEGraph(astenv, astenv.root, lang, lowering);
 
-				ast = extractDslAst(astenv, toLanguage, makeTree());
-				// println("After lowering " + specification);
-				// println(prettyDsl(ast));
+				resultLanguage = resultDslTransformation(astenv.language, lang);
 
-				// printDslEGraph(astenv.egraph, astenv.root, "");
+				if (isDslTracing(astenv.language, phase)) {
+					println("After lowering '" + specification + "' we get the language '" + dslLanguage2string(resultLanguage) + "':");
+					// printDslEGraph(astenv.egraph, astenv.root);
+				}
+				ast = extractDslAst(astenv, resultLanguage, makeTree());
+				if (isDslTracing(astenv.language, phase)) {
+					println(prettyDsl(ast));
+				}
 
 				DslAstEnv(astenv with ast = ast);
 			}
@@ -50,43 +59,6 @@ registerDslLowering(phase : string, specification : string, fromLanguage : strin
 		registerDslTransformation(transformation);
 	} : {
 		println("Could not parse rules for lowering " + specification);
-	}
-}
-
-registerDslRewriting(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string, costs : string, defaultVal : string) -> void {
-	mrules = parseDslRules(fromLanguage, toLanguage, sep, rules);
-	mrules ?? {
-		defValue = parseDslProgram(toLanguage, defaultVal);
-		if (defValue.error != "") {
-			println("Could not parse default value in " + specification + ": " + defValue.error);
-		} else {
-			rewriting = DslRewriting(
-				mrules,
-				rewriteCosts(costs),
-				defValue.ast
-			);
-
-			transformation = DslTransformation(
-				phase,
-				specification,
-				\astenv -> {
-					// lowerDslEGraph(astenv, astenv.root, specification, lowering);
-
-					ast = rewriteDsl(astenv.ast, rewriting, 5);
-					if (false) {
-						println("Rewriting");
-						println(prettyDsl(mrules.rules));
-						println(rewriting.costs);
-						println(prettyDsl(astenv.ast));
-						println(prettyDsl(ast));
-					}
-					DslAstEnv(astenv with ast = ast);
-				}
-			);
-			registerDslTransformation(transformation);
-		}
-	} : {
-		println("Could not parse rules for rewriting " + specification);
 	}
 }
 
@@ -104,8 +76,11 @@ parseDslRules(fromLanguage : string, toLanguage : string, sep : string, rules : 
 }
 
 registerDslRuntime(language : string, codeLanguage : string, runtime : string) -> void {
+	println("Registering runtime for " + language + " in " + codeLanguage);
 	parsed = parseDslProgram(codeLanguage, runtime);
+	// println(prettyDsl(parsed.ast));
 	desugared = performDslTransformations("desugar", "lambda", parsed);
+	// println(prettyDsl(desugared.ast));
 
 	// OK, extract the runtime
 	functions = extractDslRuntime(makeTree(), desugared.ast);
@@ -115,7 +90,7 @@ registerDslRuntime(language : string, codeLanguage : string, runtime : string) -
 			println(n + "=" + prettyDsl(code));
 		});
 	}
-	registerDslLanguageRuntime(language, functions);
+	registerDslLanguageRuntime(parseDslLanguage(language), functions);
 }
 
 
@@ -131,12 +106,18 @@ extractDslRuntime(acc : Tree<string, DslAst>, code : DslAst) -> Tree<string, Dsl
 		fold(codes, acc, \acc2, cod -> {
 			extractDslRuntime(acc2, cod)
 		});
+	} else if (node.name == "string") {
+		str = getDslString(node.args[0]);
+		addCommonDslRuntime([str], acc);
 	} else {
 		if (node.name != "") {
 			println("Unexpected runtime: " + prettyDsl(node));
 		}
 		list = getDslList(code);
-		commons = map(list2array(list), getDslString);
+		commons = map(list2array(list), \child -> {
+			cnode = getDslNode(child);
+			getDslString(cnode.args[0])
+		});
 
 		addCommonDslRuntime(commons, acc);
 	}

@@ -1652,6 +1652,7 @@ public class Native extends NativeHost {
 		private StreamReader stderr;
 		private ExitHandler  exit;
 		private Process process;
+		private int exitCode = 0;
 
 		public ProcessStarter(
 			String[] cmd,
@@ -1729,7 +1730,8 @@ public class Native extends NativeHost {
 					}
 					err.close();
 					out.close();
-					callback.invoke(process.exitValue());
+					exitCode = process.exitValue();
+					callback.invoke(exitCode);
 				} catch (InterruptedException ex) {
 					onErr.invoke(exceptionStackTrace(ex));
 				}
@@ -1769,6 +1771,7 @@ public class Native extends NativeHost {
 		@Override
 		public void run() {
 			try {
+				exitCode = 0;
 				process = Runtime.getRuntime().exec(this.cmd, null, new File(this.cwd));
 				stdout = new StreamReader("stdout", process.getInputStream(), onOut, onOut);
 				stderr = new StreamReader("stderr", process.getErrorStream(), onErr, onOut);
@@ -1779,7 +1782,8 @@ public class Native extends NativeHost {
 					cmd_str += c + " ";
 				}
 				onErr.invoke("while executing:\n" + cmd_str + "\n" + exceptionStackTrace(ex));
-				onExit.invoke(-200);
+				exitCode = -200;
+				onExit.invoke(exitCode);
 			}
 		}
 
@@ -1795,14 +1799,13 @@ public class Native extends NativeHost {
 					exit.thread.join();
 				}
 				if (process != null) {
-					return process.waitFor();
-				} else {
-					return 0;
+					exitCode = process.waitFor();
 				}
 			} catch (InterruptedException e) {
 				e.printStackTrace();
-				return 1;
+				exitCode = 1;
 			}
+			return exitCode;
 		}
 	}
 

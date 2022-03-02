@@ -4,13 +4,9 @@
 		postfix = postfix | ".." ws exp $"range_2";
 	>>);
 
-	registerDslRewriting("desugar", "|range", "lambda+range", "lambda", ";", <<
-			$e1 .. $e2 => range($e1, $e2);
-		>>, <<
-			range => 1000000;
-		>>,
-		<< 0 >>
-	);
+	registerDslLowering("desugar", "range", "lambda+range", "lambda", ";", <<
+		$e1 .. $e2 => @range($e1, $e2);
+	>>);
 
-	registerDslRuntime("|range", "lambda+array", << ["range"] >>);
+	registerDslRuntime("range", "lambda", << "range" >>);
 }

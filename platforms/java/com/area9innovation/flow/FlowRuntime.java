@@ -184,11 +184,9 @@ public abstract class FlowRuntime {
 			for (int i = 0; i < arr.length; i++) {
 				if (i > 0)
 					buf.append(", ");
-				buf.append(toString(arr[i]));
+				toStringAppend(arr[i], buf);
 			}
 			buf.append("]");
-
-			buf.toString();
 		} else if (value instanceof Function) {
 			buf.append("<function>");
 		} else if (value instanceof Double) {

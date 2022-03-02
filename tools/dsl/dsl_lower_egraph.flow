@@ -1,87 +1,97 @@
 import tools/dsl/registry/dsl_registry;
 import tools/dsl/registry/dsl_specification;
 import tools/dsl/dsl_match_egraph;
-import tools/dsl/dsl_lowering;
 import tools/dsl/registry/dsl_run;
+import tools/dsl/dsl_rules;
+import tools/dsl/dsl_rightside;
 
 export {
 	// Does a bottom-up visit of the e-graph, visiting the nodes that
-	// match the specification, and then applying those nodes with the
+	// match the language suffix, and then applying those nodes with the
 	// result of their children
 	lowerDslEGraph(e : DslAstEnv, eclass : int,
-		specification : string,
+		specification : DslLanguage,
 		lowering : DslLowering,
-	) -> Maybe<DslENode>;
+	) -> Maybe<DslAst>;
 }
 
 lowerDslEGraph(env : DslAstEnv, eclass : int, 
-	specification : string,
+	specification : DslLanguage,
 	lowering : DslLowering,
-) -> Maybe<DslENode> {
+) -> Maybe<DslAst> {
 	e = env.egraph;
 	root = getDslEClassRoot(e, eclass);
 	nodes = getDslEClassNodes(e, root);
 	matching = set2array(filterSet(nodes, \n -> matchDslSpecification(n.language, specification)));
-	fold(matching, None(), \acc, preferred -> {
-		children = filtermap(preferred.args, \childClass -> {
-			lowerDslEGraph(env, childClass, specification, lowering)
-		});
-		if (length(children) != length(preferred.args)) {
-			println("ERROR: Expected more children in lowering");
-			acc
-		} else {
-			term = combineENode(preferred, children);
-
-			resultLanguage = resultDslTransformation(preferred.language, specification);
-			lowerDslENode(env, specification, resultLanguage, lowering, eclass, term);
-
-			node = DslENode(
-					resultLanguage,
-					term,
-					preferred.args
-				);
-			Some(node);
+	if (matching == []) None()
+	else {
+		if (length(matching) > 1) {
+			println("We have more nodes than one");
 		}
-	})
+		resultLanguage = resultDslTransformation(matching[0].language, specification);
+
+		best : Maybe<DslAst> = fold(matching, None(), \acc, preferred : DslENode -> {
+			children = filtermap(preferred.args, \childClass -> {
+				lowerDslEGraph(env, childClass, specification, lowering)
+			});
+			if (length(children) != length(preferred.args)) {
+				println("ERROR: Expected more children in lowering");
+				acc
+			} else {
+				term = combineDslAst(preferred.value, children);
+				// println("e" + i2s(eclass) + " is combined to " + prettyDsl(term));
+
+				result = lowerDslENode(env, specification, resultLanguage, lowering, root, preferred, term);
+				switch (result) {
+					None(): if (acc == None()) Some(term) else None();
+					Some(new): result
+				}
+			}
+		});
+
+		switch (best) {
+			None(): {
+				// OK, we have to just lower it immediately
+				node = matching[0];
+				// println("No rewrite for e" + i2s(eclass) + " " + prettyDsl(node.value));
+
+				newENode = DslENode(node with language = resultLanguage);
+				newEclass = addDslENode(env.egraph, newENode);
+				unionDslEClass(env.egraph, eclass, newEclass);
+				Some(node.value);
+			}
+			Some(new): {
+				//println("e" + i2s(eclass) + " is rewritten " + prettyDsl(new));
+				newEClass = addDslAst(env.egraph, resultLanguage, new);
+				unionDslEClass(env.egraph, eclass, newEClass);
+				best;
+			}
+		}
+	}
 }
 
 // OK, we know this node is the right language. Process it
-lowerDslENode(e : DslAstEnv, specification : string, resultLanguage : string, lowering : DslLowering, eclass : int, term : DslAst) -> void {
-	iterList(lowering.replacements, \r : DslReplacement -> {
-		lowerDslENodeWithReplacement(e, specification, resultLanguage, lowering.toLanguage, r, eclass, term)
-	})
+lowerDslENode(e : DslAstEnv, specification : DslLanguage, resultLanguage : DslLanguage, 
+			lowering : DslLowering, eclass : int, node : DslENode, term : DslAst) -> Maybe<DslAst> {
+	foldList(lowering.replacements, None(), \acc, r : DslReplacement -> {
+		res = lowerDslENodeWithReplacement(e, specification, resultLanguage, lowering.toLanguage, r, eclass, term);
+		res ?? Some(res) : acc;
+	});
 }
 
-lowerDslENodeWithReplacement(e : DslAstEnv, specification : string, resultLanguage, toLanguage : string, replacement : DslReplacement, 
-	eclass : int, term : DslAst) -> void {
+lowerDslENodeWithReplacement(e : DslAstEnv, specification : DslLanguage, resultLanguage : DslLanguage, 
+		toLanguage : DslLanguage, replacement : DslReplacement, eclass : int, term : DslAst) -> Maybe<DslAst> {
 	acc = DslENodeMatch(makeTree(), false);
 	bindings = dslENodeMatch(acc, term, replacement.pattern);
 	if (!bindings.fail) {
-		astEnv = DslAstEnv(e with language = toLanguage, ast = replacement.replacement);
-		
-		// println("Lowering to " + toLanguage);
-		desugared = performDslTransformations("desugar", "lambda", astEnv);
-		// println(prettyDsl(desugared.ast));
+		result = evalDslRightSide(e, bindings.bindings, specification, toLanguage, replacement.replacement);
 
-		env = makeDslEnv();
-		runtime = getDslLanguageRuntime(specification);
-		nenv = DslEnv(env 
-			with globals = mapTree(desugared.env, \a -> [a]), 
-			locals = mergeTree(mergeTree(astEnv.env, bindings.bindings), runtime)
-		);
-
-		result = evaluateDsl(nenv, desugared.ast);
-
-		if (false) {
-			println("This match: " + prettyDsl(term) + " against " + prettyDsl(replacement.pattern));
-			/*traverseInOrder(bindings.bindings, \name, val -> {
-				println("  " + name + " = " + prettyDsl(val));
-			});*/
+		if (isDslTracing(specification, "desugar")) {
+			println("This term " + prettyDsl(term) + " against " + prettyDsl(replacement.pattern));
 			println("gives " + prettyDsl(result));
 		}
-
-		newEclass = addDslAst(e.egraph, resultLanguage, result);
-		unionDslEClass(e.egraph, eclass, newEclass);
-		{}
+		Some(result);
+	} else {
+		None()
 	}
 }
