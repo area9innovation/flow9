@@ -3226,17 +3226,16 @@ testInputMethodPinyinData : [Pair<string, [Pair<string, [Pair<string, [Pair<stri
 
 	intOr = \a, b -> if (a != 0) a else b;
 
-getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool, def : ?) -> [?] {
+getSubset(set : [Pair<string, [?]>], prefix : string, needOthers : bool) -> [Pair<string, [?]>] {
 	prefixLen = strlen(prefix);
 
 	expandKey = \i, a, t -> if (i < 0) Triple(bitNot(i), t, a) else Triple(i, t, arrayPush(a, set[i]));
-	setCmp = \d : ?, k : string -> {
-		dkey : string = getKey(d);
-		intOr(strlen(dkey) - strlen(k), genericCompare(dkey, k));
+	setCmp = \d : Pair<string, [?]>, k : string -> {
+		intOr(strlen(d.first) - strlen(k), genericCompare(d.first, k));
 	};
 
 	setLast = length(set)-1;
-	maxLen = strlen(getKey(lastElement(set, def)));
+	maxLen = strlen(lastElement(set, Pair("", [])).first);
 	mainKey = expandKey(binarySearch2(set, prefix, setCmp), [], prefix);
 
 	// Collecting possible strings that start from what «prefix» contains.
@@ -3250,7 +3249,7 @@ getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool,
 		// Collecting possible strings of same length
 		Some(updateWhile(nextKey, \nkeyTextKeys -> if (nkeyTextKeys.first > setLast) None() else {
 			nsetElem = set[nkeyTextKeys.first];
-			if (startsWith(getKey(nsetElem), keyTextKeys.second)) Some(Triple(
+			if (startsWith(nsetElem.first, prefix)) Some(Triple(
 				nkeyTextKeys.first+1, nkeyTextKeys.second, arrayPush(nkeyTextKeys.third, nsetElem)
 			)) else None() // We expect them to be in a single piece.
 		}))
@@ -3260,7 +3259,7 @@ getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool,
 		updateWhile(Triple(mainKey.first-1, prefix, keys.third), \keyTextKeys -> if (keyTextKeys.first < 0) None() else {
 			key = keyTextKeys.first;
 			setElem = set[keyTextKeys.first];
-			elemText = getKey(setElem);
+			elemText = setElem.first;
 			Some(Triple(
 				key-1, elemText,
 				if (startsWith(prefix, elemText))
@@ -3272,7 +3271,7 @@ getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool,
 };
 
 getTestPinyin(lang : string) -> InputMethodAPI<int> {
-	cache : ref Triple<string, string, [string]> = ref Triple("", "", []);
+	cache : ref Triple<string, string, [Pair<string, string>]> = ref Triple("", "", []);
 	InputMethodAPI(
 		\context : string, current : string, packId : Maybe<int>, count : int -> {
 			currentLen = strlen(current);
@@ -3280,11 +3279,12 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 				cache := Triple(context, current, {
 					reverseContext = reverse(context);
 					langData : [Pair<string, [Pair<string, [Pair<string, int>]>]>] = findDef(testInputMethodPinyinData, \d -> d.first == lang, Pair(lang, [])).second;
-					candidates : [Pair<string, [int]>] = tree2pairs(fold(getSubset(langData, firstOfPair, current, false, Pair("", [])), makeTree(), \keyAcc : Tree<string, [int]>, key : Pair<string, [Pair<string, [Pair<string, int>]>]> -> {
+					candidates : [Pair<Pair<string, string>, [int]>] = tree2pairs(fold(getSubset(langData, current, false), makeTree(), \keyAcc : Tree<Pair<string, string>, [int]>, key : Pair<string, [Pair<string, [Pair<string, int>]>]> -> {
 						keylen = strlen(key.first);
-						fold(key.second, keyAcc, \contextCandidateAcc : Tree<string, [int]>, contextCandidate : Pair<string, [Pair<string, int>]> -> {
-							fold(contextCandidate.second, contextCandidateAcc, \insertionAcc : Tree<string, [int]>, insertion : Pair<string, int> -> {
-								oldValue = lookupTreeDef(insertionAcc, insertion.first, [0, 0, 0]);
+						fold(key.second, keyAcc, \contextCandidateAcc : Tree<Pair<string, string>, [int]>, contextCandidate : Pair<string, [Pair<string, int>]> -> {
+							fold(contextCandidate.second, contextCandidateAcc, \insertionAcc : Tree<Pair<string, string>, [int]>, insertion : Pair<string, int> -> {
+								treeKey = Pair(insertion.first, key.first);
+								oldValue = lookupTreeDef(insertionAcc, treeKey, [0, 0, 0]);
 								// Listing exact length match first, then superstrings, and substrings last.
 								newValue = if (keylen == currentLen)
 									[oldValue[0]+insertion.second, oldValue[1], oldValue[2]]
@@ -3292,7 +3292,7 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 									[oldValue[0], oldValue[1]+insertion.second, oldValue[2]]
 								else
 									[oldValue[0], oldValue[1], oldValue[2]+insertion.second];
-								setTree(insertionAcc, insertion.first, newValue)
+								setTree(insertionAcc, treeKey, newValue)
 							})
 						});
 					}));
@@ -3310,7 +3310,7 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 				Some(if (start + count >= cacheLen) 0 else start + count),
 				map(
 					subrange((^cache).third, start, count),
-					\s -> InputMethodPredictionChoice(s, "")
+					\s -> InputMethodPredictionChoice(s.first, "", s.second)
 				)
 			)
 		}
@@ -3321,6 +3321,7 @@ main() {
 	PAGE_SIZE = 5;
 	currentB = make("");
 	textStyle = [MFont(32.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
+	tipStyle = [MFont(12.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
 	inputB = make("");
 	pinyin = getTestPinyin("zh-hans");
 	predictionsB = make(InputMethodPredictionChoices(None(), None(), []));
@@ -3330,7 +3331,11 @@ main() {
 		MColsA([
 			MTextButton("<", \ -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).previousId, PAGE_SIZE)), [], []),
 			MSelect(predictionsB, \predictions -> {
-				MColsA(map(predictions.choices, \p -> MTextButton(p.text, nop, [], [])))
+				MColsA(map(predictions.choices, \p -> MLinesXCenter([
+					MText(p.hotkey, tipStyle),
+					MTextButton(p.text, nop, [], []),
+					MText(p.caption, tipStyle),
+				])))
 			}),
 			MTextButton(">", \ -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).nextId, PAGE_SIZE)), [], []),
 		])
