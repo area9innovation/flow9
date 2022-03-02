@@ -3,12 +3,15 @@ import material/material_ui;
 export {
 	MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
 
-	RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMColor, RMLight, RMPlus, RMEmpty;
+	RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMMaterial, RMLight, RMPlus, RMEmpty;
 		RMSphere(radius : double);
 		RMPlane(normal : RMXYZ, height : double);
 		RMTranslate(object : RMObject, d : RMCoordinate);
 		RMUnion(object1 : RMObject, object2 : RMObject);
-		RMColor(object : RMObject, color : int);
+		RMMaterial(object : RMObject, color : RMMaterials);
+		RMMaterials ::= RMColor, RMReflect;
+			RMColor(color : int);
+			RMReflect(color : int, mixCoef : double);
 		RMLight(size : double);
 		RMPlus(object1 : RMObject, object2 : RMObject);
 		RMEmpty();
@@ -44,10 +47,11 @@ export {
 }
 
 MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material {
-	glsl = RMIExp2GLSL(RMObject2RMIExp(scene));
-	material = RMIExp2GLSLMaterial(RMObject2RMIExp(scene));
+	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, true));
+	material1 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, true));
+	material2 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, false));
 	jsScene = RMIExp2JS(RMObject2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
-	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light));
+	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, true));
 
 	setCameraString = formatString(
 		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
@@ -82,7 +86,7 @@ MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material 
 		displayRaymarchingCanvas(
 			blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
 			"#include material/extra/raymarching/raymarching.vert",
-			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction", material])
+			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
 		)
 	])
 }
@@ -137,11 +141,11 @@ displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFr
 	)
 }
 
-RMObject2RMIExp(obj : RMObject) -> RMIExp {
-	RMObject2RMIExp0(obj, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.), 0).second
+RMObject2RMIExp(obj : RMObject, reflect : bool) -> RMIExp {
+	RMObject2RMIExp0(obj, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.), 0, reflect).second
 }
 
-RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIXYZ, id : int) -> Pair<int, RMIExp> {
+RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect : bool) -> Pair<int, RMIExp> {
 	switch(obj) {
 		RMSphere(radius): addColorToRMIExp(
 			RMICall(RMIOp("-"), [
@@ -166,10 +170,10 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIXYZ, id : int) -> Pair
 			id,
 			color
 		);
-		RMTranslate(object, d): RMObject2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id);
+		RMTranslate(object, d): RMObject2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
 		RMUnion(object1, object2): {
-			exp1 = RMObject2RMIExp0(object1, acc, color, id);
-			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first);
+			exp1 = RMObject2RMIExp0(object1, acc, color, id, reflect);
+			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first, reflect);
 			Pair(exp2.first, RMICall(RMIFn("minOI"),
 				[
 					exp1.second,
@@ -177,12 +181,28 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIXYZ, id : int) -> Pair
 				]
 			))
 		};
-		RMColor(object, col): RMObject2RMIExp0(
-			object,
-			acc,
-			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.)),
-			id
-		);
+		RMMaterial(object, mat): {
+			switch(mat) {
+				RMColor(col): RMObject2RMIExp0(
+					object,
+					acc,
+					hexColor2RMI(col),
+					id,
+					reflect
+				);
+				RMReflect(col, mixCoef): if (reflect) {
+					RMObject2RMIExp0(
+						object,
+						acc,
+						RMICall(RMIFn("mix"), [hexColor2RMI(col), RMICall(RMIFn("getColorReflect"), [RMIP(), RMICall(RMIFn("reflect"), [RMIVar("rayDirection"), RMICall(RMIFn("getObjectNormal"), [RMIP()])])]), RMIDouble(mixCoef)]),
+						id,
+						reflect
+					)
+				} else {
+					Pair(id + 1, RMIEmpty());
+				}
+			}
+		}
 		RMLight(size): Pair(id, RMICall(RMIOp("*"),
 			[
 				RMICall(RMIFn("getLight"), [
@@ -196,8 +216,8 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIXYZ, id : int) -> Pair
 			]
 		));
 		RMPlus(object1, object2): {
-			exp1 = RMObject2RMIExp0(object1, acc, color, id);
-			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first);
+			exp1 = RMObject2RMIExp0(object1, acc, color, id, reflect);
+			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first, reflect);
 			Pair(exp2.first, RMICall(RMIOp("+"),
 				[
 					exp1.second,
@@ -235,11 +255,7 @@ RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 				RMObject2RMIExpJS(object2, acc, color),
 			]
 		);
-		RMColor(object, col): RMObject2RMIExpJS(
-			object,
-			acc,
-			RMIXYZ(i2d(col/0x10000)/255., i2d(col/0x100%0x100)/255., (i2d(col%0x100)/255.))
-		);
+		RMMaterial(object, col): RMObject2RMIExpJS(object, acc, color);
 		RMLight(size): RMIEmpty();
 		RMPlus(object1, object2): RMICall(RMIOp("+"),
 			[
@@ -276,14 +292,14 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 
 RMIExp2GLSLMaterial(exp : RMIExp) -> string {
 	switch(exp) {
-		RMICall(fn, args): strGlue(map(args, RMIExp2GLSLMaterial), " else ");
+		RMICall(fn, args): strGlue(filter(map(args, RMIExp2GLSLMaterial), \s -> s != ""), " else ");
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSLMaterial(exp1) + RMIExp2GLSLMaterial(exp2);
-		RMIProperty(exp2, id, property): formatString("if (id == %1) {\n\tresult = %2;\n}", [i2s(id), RMIExp2GLSLMaterial(property)])/* + RMIExp2GLSL(exp)*/;
+		RMIProperty(exp2, id, property): formatString("if (id == %1) {\n\tmaterialColor = %2;\n}", [i2s(id), RMIExp2GLSL(property)]);
 		RMIEmpty(): "";
 	}
 }
@@ -328,11 +344,15 @@ addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
 }
 
-addColorToRMIExp(exp : RMIExp, id : int, color : RMIXYZ) -> Pair<int, RMIProperty> {
+addColorToRMIExp(exp : RMIExp, id : int, color : RMIExp) -> Pair<int, RMIProperty> {
 	Pair(id + 1, RMIProperty(RMICall(RMIFn("ObjectInfo"), [exp, RMIInt(id)]), id, color))
 }
 
 d2GLSLfloat(num : double) {
 	s = d2s(num);
 	if (strContains(s, ".")) s else s + ".";
+}
+
+hexColor2RMI(color : int) -> RMIXYZ {
+	RMIXYZ(i2d(color/0x10000)/255., i2d(color/0x100%0x100)/255., (i2d(color%0x100)/255.))
 }
