@@ -15,28 +15,20 @@ bmodule2fiprogram(cache : FlowCache, flowpath : string) -> Maybe<FiProgram> {
 	switch (mconfig) {
 		Some(config): {
 			// This does DCE:
-			// program = linkBExpProgram(cache, flowpath, false, flowcBackend());
-			/*
-			BExpProgram(
-					structs : Tree<string, DStruct>,
-					unions : Tree<string, DUnion>,
-					declarations : [BExpDeclaration]
-					BExpDeclaration ::= BGlobalVar, BExpFunction, BExpNative;
-
-				);
-			*/
-
+			modules = list2array(programBModules(cache, flowpath, makeList(), makeSet()).first);
+			alive0 : Set<string> = aliveCode(bmodules2BNames(modules));
+			alive = differenceSets(alive0, buildSet(["bool", "void", "int", "double", "string", "ref", "array", "auto", "native"]));
 			bmodules = getBmodules(config, cache.modules);
 			names = fold(getTreeValues(bmodules), 
 				FiGlobalNames(
 					makeTree(), makeTree(), makeTree(), makeTree(),
 					makeTree(), makeTree(), makeTree(), makeTree(),
 				),
-				bmoduleGlobalNames
+				\acc, m -> bmoduleGlobalNames(alive, acc, m)
 			);
 			Some(FiProgram(
 				config,
-				mapTree(bmodules, \m -> bmodule2fimodule(config, m)),
+				mapTree(bmodules, \m -> bmodule2fimodule(alive, config, m)),
 				bmodulesTraversal(bmodules),
 				names
 			));
@@ -59,7 +51,7 @@ flowcBackend() -> BackendSpec {
 	);
 }
 
-bmoduleGlobalNames(acc : FiGlobalNames, m : BModule) -> FiGlobalNames {
+bmoduleGlobalNames(alive : Set<string>, acc : FiGlobalNames, m : BModule) -> FiGlobalNames {
 	FiGlobalNames(
 		foldTree(m.structs, acc.struct2module, \id, __, ac -> 
 			setTree(ac, id, m.flowpath)
@@ -68,13 +60,13 @@ bmoduleGlobalNames(acc : FiGlobalNames, m : BModule) -> FiGlobalNames {
 			setTree(ac, id, m.flowpath)
 		),
 		fold(bmoduleFunctions(m), acc.function2module, \ac, fn -> 
-			setTree(ac, fn.id, m.flowpath)
+			if (containsSet(alive, fn.id)) setTree(ac, fn.id, m.flowpath) else ac
 		),
 		fold(bmoduleGlobalVars(m), acc.globalVar2module, \ac, gv -> 
-			setTree(ac, gv.id, m.flowpath)
+			if (containsSet(alive, gv.id)) setTree(ac, gv.id, m.flowpath) else ac
 		),
 		foldTree(m.natives, acc.native2module, \id, __, ac -> 
-			setTree(ac, id, m.flowpath)
+			if (containsSet(alive, id)) setTree(ac, id, m.flowpath) else ac
 		),
 		foldTree(m.structs, acc.structs, \id, struct, ac -> 
 			setTree(ac, id, dstruct2FiTypeStruct(struct))
@@ -85,11 +77,11 @@ bmoduleGlobalNames(acc : FiGlobalNames, m : BModule) -> FiGlobalNames {
 		fold(bmoduleGlobalVars(m), 
 			fold(bmoduleFunctions(m), 
 				foldTree(m.natives, acc.toplevel, \id, nat, ac ->
-					setTree(ac, id, bnative2FiNativeDec(nat, m))
+					if (containsSet(alive, id)) setTree(ac, id, bnative2FiNativeDec(nat, m)) else ac
 				),
-				\ac, fn -> setTree(ac, fn.id, bfunction2FiFunctionDec(fn))
+				\ac, fn -> if (containsSet(alive, fn.id)) setTree(ac, fn.id, bfunction2FiFunctionDec(fn)) else ac
 			),
-			\ac, gv -> setTree(ac, gv.id, bglobalvar2FiGlobalVar(gv))
+			\ac, gv -> if (containsSet(alive, gv.id)) setTree(ac, gv.id, bglobalvar2FiGlobalVar(gv)) else ac
 		)
 	);
 }
@@ -172,22 +164,32 @@ bnative2FiNativeDec(nat : BNative, m : BModule) -> FiNativeDec {
 	);
 }
 
-bmodule2fimodule(config : CompilerConfig, m : BModule) -> FiModule {
+bmodule2fimodule(alive : Set<string>, config : CompilerConfig, m : BModule) -> FiModule {
+	exports = mergeSetsA([m.exported.exportedTypeNames, m.exported.exportedTypes, m.exported.exportedGlobals]);
+	// println(set2array(intersectSets(exports, alive)));
 	FiModule(
 		fcfileinfo2fi(getFcFileInfo(m.flowpath, config)),
 		map(m.imports, \imp -> FiImport(imp.path, false, imp.pos)),
 		map(m.forbids, \fbd -> FiForbid(fbd.path, fbd.pos)),
-		concat3(
-			set2array(m.exported.exportedTypeNames),
-			set2array(m.exported.exportedTypes),
-			set2array(m.exported.exportedGlobals),
-		),
+		set2array(intersectSets(exports, alive)),
 		map(getTreeValues(m.structs), dstruct2FiTypeStruct),
 		map(getTreeValues(m.unions), dunion2FiTypeUnion),
-		map(bmoduleFunctions(m), bfunction2FiFunctionDec),
-		map(bmoduleGlobalVars(m), bglobalvar2FiGlobalVar),
-		map(getTreeValues(m.natives), \nat -> bnative2FiNativeDec(nat, m)),
-		m.order,
+		filtermap(bmoduleFunctions(m), \global : BGlobal -> {
+			if (containsSet(alive, global.id)) {
+				Some(bfunction2FiFunctionDec(global))
+			} else None()
+		}),
+		filtermap(bmoduleGlobalVars(m), \global : BGlobal -> {
+			if (containsSet(alive, global.id)) {
+				Some(bglobalvar2FiGlobalVar(global))
+			} else None();
+		}), 
+		filtermap(getTreeValues(m.natives), \nat -> {
+			if (containsSet(alive, nat.id)) 
+				Some(bnative2FiNativeDec(nat, m))
+			else None()
+		}),
+		filter(m.order, \o -> containsSet(alive, o)),
 		[], 0, 0, makeSet(), true, 
 	)
 }
@@ -214,6 +216,7 @@ bop2fcop : Tree<string, FcPrim> = pairs2tree([
 	Pair("__deref", FcDerefPrim()),
 	Pair("__not", FcNotPrim()),
 	Pair("__negate", FcNegPrim()),
+	Pair("__structname", FcFieldPrim("structname")),
 ]);
 
 bexp2fiexp(e : BExp) -> FiExp {
@@ -270,27 +273,15 @@ bexp2fiexp(e : BExp) -> FiExp {
 							toType,
 							-1
 						)
-					} else if (id == "__structname") {
-						FiCallPrim(FcFieldPrim("structname"), fiargs, btype2fitype(type), -1);
-					} else if (id == "__deref") {
-						FiCallPrim(FcDerefPrim(), fiargs, btype2fitype(type), -1);
-					} else if (id == "__ref") {
-						FiCallPrim(FcRefPrim(), fiargs, btype2fitype(type), -1);
-					} else if (id == "__not") {
-						FiCallPrim(FcNotPrim(), fiargs, btype2fitype(type), -1);
-					} else if (id == "__index") {
-						FiCallPrim(FcIndexPrim(), fiargs, btype2fitype(type), -1);
-					} else if (id == "__negate") {
-						FiCallPrim(FcNegPrim(), fiargs, btype2fitype(type), -1);
-					} else if (startsWith(id, "__")) {
-						println("TODO: Convert " + id);
-						FiCall(bexp2fiexp(fn), fiargs, fitype, -1);
 					} else {
 						switch (lookupTree(bop2fcop, id)) {
 							Some(op): {
 								FiCallPrim(op, fiargs, btype2fitype(type), -1);
 							}
 							None(): {
+								if (startsWith(id, "__")) {
+									println("TODO: Convert " + id);
+								}
 								FiCall(bexp2fiexp(fn), fiargs, fitype, -1);
 							}
 						}
