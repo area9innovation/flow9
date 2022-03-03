@@ -1,3 +1,4 @@
+import sys/keycodes;
 import material/material_ui;
 
 export {
@@ -24,6 +25,7 @@ export {
 // No tree at second level to allow filter by substring.
 // No tree at third level to rank contexts.
 // No tree at fourth level because few keys.
+// TODO numbers I removed from keys here on test dicts parsing were tones, return them.
 testInputMethodPinyinData : [Pair<string, [Pair<string, [Pair<string, [Pair<string, int>]>]>]>] = [
 	Pair("zh-hant", [
 		Pair("a", [
@@ -3318,26 +3320,97 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 }
 
 main() {
+	pinyin = getTestPinyin("zh-hans");
 	PAGE_SIZE = 5;
 	currentB = make("");
+	inputB = make("");
+	inputFocusB = make(false);
+	predictionsB = make(InputMethodPredictionChoices(None(), None(), []));
+	currentPredictionIdxB = make(0);
+	predictionsFocusesB = generate(0, PAGE_SIZE, \i -> make(false));
+	goPreviousPage = \ -> {
+		nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).previousId, PAGE_SIZE));
+		true
+	};
+	goNextPage = \ -> {
+		nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).nextId, PAGE_SIZE));
+		true
+	}
+	goPreviousCandidate = \ -> {
+		lastIdx = length(getValue(predictionsB).choices)-1;
+		currentPredictionIdx = max(0, min(lastIdx, getValue(currentPredictionIdxB)));
+		if (currentPredictionIdx > 0) {
+			nextDistinct(currentPredictionIdxB, currentPredictionIdx-1);
+			true
+		} else {
+			r = goPreviousPage();
+			nextDistinct(currentPredictionIdxB, if (r) length(getValue(predictionsB).choices)-1 else 0);
+			r
+		}
+	};
+	goNextCandidate = \ -> {
+		lastIdx = length(getValue(predictionsB).choices)-1;
+		currentPredictionIdx = getValue(currentPredictionIdxB);
+		if (currentPredictionIdx < lastIdx) {
+			nextDistinct(currentPredictionIdxB, currentPredictionIdx+1);
+			true
+		} else {
+			r = goNextPage();
+			nextDistinct(currentPredictionIdxB, if (r) 0 else lastIdx);
+			r
+		}
+	};
+	commitCandidate = \ -> {
+		currentPredictionIdx = getValue(currentPredictionIdxB);
+		nextDistinct(inputB, getValue(inputB) + getValue(predictionsB).choices[currentPredictionIdx].text);
+		nextDistinct(currentB, "");
+		nextDistinct(inputFocusB, true);
+		nextDistinct(currentPredictionIdxB, 0);
+		true
+	};
+	KEYS_USED = [KEY_UP, KEY_DOWN, KEY_PAGEUP, KEY_PAGEDOWN, KEY_SPACE];
+	KEYS_HANDLERS = [\-> false, goPreviousCandidate, goNextCandidate, goPreviousPage, goNextPage, commitCandidate];
 	textStyle = [MFont(32.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
 	tipStyle = [MFont(12.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
-	inputB = make("");
-	pinyin = getTestPinyin("zh-hans");
-	predictionsB = make(InputMethodPredictionChoices(None(), None(), []));
+	keypressB = make(noKey);
 	uns1 = fsubscribe(currentB, \current -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), current, None(), PAGE_SIZE)));
+	uns2 = fsubscribe(keypressB, \keypress -> ignore(KEYS_HANDLERS[elemIndex(KEYS_USED, keypress.keycode, -1)+1]()));
 	material = MLines2A(
-		MCols2A(MDynamicText(inputB, textStyle), MTextInput(currentB, [MDynamicTextStyle(const(textStyle))], [])),
+		MCols2A(
+			MDynamicText(inputB, textStyle),
+			MInteractive(
+				[
+					TKey(keypressB, \ke : KeyEvent -> contains(KEYS_USED, ke.keycode))
+				],
+				MTextInput(currentB, [MDynamicTextStyle(const(textStyle))], [MFocused(inputFocusB)])
+			)
+		),
 		MColsA([
-			MTextButton("<", \ -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).previousId, PAGE_SIZE)), [], []),
-			MSelect(predictionsB, \predictions -> {
-				MColsA(map(predictions.choices, \p -> MLinesXCenter([
-					MText(p.hotkey, tipStyle),
-					MTextButton(p.text, nop, [], []),
-					MText(p.caption, tipStyle),
-				])))
-			}),
-			MTextButton(">", \ -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).nextId, PAGE_SIZE)), [], []),
+			MTextButton("<", \-> ignore(goPreviousPage()), [], []),
+			MSelect(predictionsB, \predictions ->
+				MConstruct(
+					[
+						\-> selectWithLastu(currentPredictionIdxB, \l, n -> {
+							lastIdx = length(getValue(predictionsB).choices)-1;
+							nextDistinct(predictionsFocusesB[l], false);
+							nextDistinct(predictionsFocusesB[max(0, min(n, lastIdx))], true);
+						}).second,
+						\-> {
+							nextDistinct(predictionsFocusesB[getValue(currentPredictionIdxB)], true);
+							nop
+						}
+					],
+					MColsA(mapi(predictions.choices, \i, p -> MLinesXCenter([
+						MText(p.hotkey, tipStyle),
+						MTextButton(p.text, \ -> {
+							nextDistinct(currentPredictionIdxB, i);
+							ignore(commitCandidate());
+						}, [], [MFocused(predictionsFocusesB[i])]),
+						MText(p.caption, tipStyle),
+					])))
+				)
+			),
+			MTextButton(">", \-> ignore(goNextPage()), [], []),
 		])
 	);
 	mrender(makeMaterialManager([]), true, material);
