@@ -81,6 +81,14 @@ to a queue for later processing, when more information is expected to be
 available.
 
 TODO CGraph:
+- C:/flow9/tools/flowc/type_helpers.flow:846:29: Add type annotation. Unresolved type (equivalence class e6913)
+					spars = length(structdef.typars);
+ checkSufficientPolymorphism unresolved type
+
+ flow9 tools/flow9/flow9.flow strict=1 incremental=0 >out.flow
+
+ TODO: Change unifyCEClass to return UnifyResult, and postpone itself rather than unifyCType
+
 - We need a subtype with multiple types when the max is closed?
 
 - Exhaustiveness check of switch

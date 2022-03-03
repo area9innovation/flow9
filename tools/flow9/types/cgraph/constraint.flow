@@ -21,6 +21,7 @@ export {
 
 	// We know the result is a unification of these types
 	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> bool;
+	// TODO: Change this to return UnifyResult
 	unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool;
 
 	// We know we have to subtype here - TODO: Figure out what the result is?
@@ -51,6 +52,7 @@ unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> bo
 	lclass = findOrMakeCNodeClass(tmap, left, reason);
 	rclass = findOrMakeCNodeClass(tmap, right, reason);
 	res = unifyCEClass(tmap, lclass, rclass, false, reason);
+	// TODO: Rewrite so we do not postpone here, but inside unifyCEClass
 	if (!res) {
 		// OK, we postpone it
 		uni = TUnification(lclass, rclass, reason);
@@ -61,6 +63,7 @@ unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> bo
 
 cindent = ref "";
 
+// Check if we can unify these. If not, we postpone
 unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool {
 	left : CNode = getUnionMapValue(tmap.cmap.cmap, lclass);
 	right : CNode = getUnionMapValue(tmap.cmap.cmap, rclass);
@@ -76,11 +79,6 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 
 	if (!checkOnly && (lclass == -1 || rclass == -1)) {
 		println("INTERNAL ERROR: We need a real class when unifying " + prettyCNode(tmap.cmap, left) + " with " + prettyCNode(tmap.cmap, right));
-	}
-
-	todo =  \ -> {
-		debugErrorReason(reason, "TODO: Figure out how to unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
-		false;
 	}
 
 	error = \ -> {
@@ -191,7 +189,7 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 	res;
 }
 
-
+// Return false if we need to postpone, or failed
 unifyCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherClass : int, other : CNode, checkOnly : bool) -> bool {
 	moverload = resolveCOverload(tmap, overloadClass, overload, otherClass, other);
 	moverload ?? {
@@ -210,9 +208,11 @@ canUnify(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, r
 // Returns None unless we manage to simplify the overload
 resolveCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherClass : int, other : CNode) -> Maybe<CNode> {
 	cmap = tmap.cmap;
-	options = foldSet(overload.options, makeSet(), \acc, opt -> {
+	// The total set of potential overloads
+	options : Set<int> = foldSet(overload.options, makeSet(), \acc, opt -> {
 		extractCNodes(cmap, opt, acc)
 	});
+	// Reduce to those that are alive
 	matches = filterSet(options, \opt -> {
 		onode = getUnionMapValue(cmap.cmap, opt);
 		canUnify(tmap, opt, onode, otherClass, other, overload.reason);
@@ -228,19 +228,87 @@ resolveCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherCl
 	}
 
 	if (nmatches == 1) {
+		// We have a unique winner
 		class = set2array(matches)[0];
 		winner = getUnionMapValue(cmap.cmap, class);
 		Some(winner);
 	} else if (nmatches != 0 && nmatches != sizeSet(options)) {
 		// OK: This is a reduction, but might not be a solution
-		/* fctypeenv.flow fcAddToCache can not complete with this */
-		// Some(COverload(overload with options = matches));
-		None();
+		unifyOverloadTypars(tmap, matches, other, \ -> {
+			println("TODO: Find out why we have to postpone typars for " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other));
+			UnifyPostponed()
+		}, overload.reason);
+
+		Some(COverload(overload with options = matches));
 	} else {
+		// No reduction, so postpone
 		None();
 	}
 }
 
+// We have a set of potentials with typars that need to be unified against the other side
+unifyOverloadTypars(tmap : TMap, potentials : Set<int>, other : CNode, postpone : () -> UnifyResult, reason : ErrorReason) -> UnifyResult {
+	// OK, find the children typar options
+	mtypars : Maybe<[int]> = getOverloadTypars(tmap, potentials, reason);
+	mtypars ?? {
+		// OK, let us do the typars
+		switch (other) {
+			CEpsilon(): postpone();
+			CName(__, typars, __): {
+				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+						res = unifyCEClass(tmap, typar, supTypar, false, ereason);
+						if (res) UnifyOK() else UnifyPostponed();
+					}
+				});
+			}
+			CFunction(args, return, __): {
+				retOk = unifyCEClass(tmap, lastElement(mtypars, return), return, false, elaborateReason(reason, "return"));
+				foldi(args, if (retOk) UnifyOK() else UnifyPostponed(), \i, ok : UnifyResult, arg -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
+						res = unifyCEClass(tmap, supTypar, arg, false, ereason);
+						if (res) UnifyOK() else UnifyPostponed();
+					}
+				});
+			}
+			COverload(unique, options, __): {
+				secondOptions : Maybe<[int]> = getOverloadTypars(tmap, options, reason);
+				switch (secondOptions) {
+					None(): postpone();
+					Some(so): {
+						if (length(so) != length(mtypars)) {
+							postpone();
+						} else {
+							foldi(mtypars, UnifyOK(), \i, ok : UnifyResult, tp -> {
+								if (ok != UnifyOK()) {
+									ok;
+								} else {
+									supTypar = so[i];
+									ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+									res = unifyCEClass(tmap, supTypar, tp, false, ereason);
+									if (res) UnifyOK() else UnifyPostponed();
+								}
+							})
+						}
+					}
+				}
+			}
+		}
+	} : {
+		postpone();
+	}
+}
+
+
+// Recursively pull out all eclasses this class could be (when overloaded)
 extractCNodes(cmap : CMap, class : int, acc : Set<int>) -> Set<int> {
 	onode = getUnionMapValue(cmap.cmap, class);
 	switch (onode) {
@@ -318,10 +386,8 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				if (!checkOnly) {
 					nover = COverload(ov with options = potentials);
 					setUnionMapValue(tmap.cmap.cmap, superClass, nover);
-				};
-				// We might not have propagated all type pars, so we postpone
-				postpone();
-				//UnifyOK();
+					subVsOverloadTypars(tmap, sub, potentials, postpone, reason);
+				} else UnifyOK();
 			} else {
 				postpone();
 			}
@@ -350,17 +416,8 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 				if (!checkOnly) {
 					nover = COverload(ov with options = potentials);
 					setUnionMapValue(tmap.cmap.cmap, subClass, nover);
-				}
-				// We might not have propagated all type parameters (see type43), 
-				// so we also postpone to make sure all info is propagated later
-				/*
-				We could attempt to detect this case better, where all the typars
-				in the overload are identical, so we did not have to postpone.
-
-				    Subtype e27=overload_0{e70=ConstBehaviour<e69=WidthHeight>,e75=Behaviour<e69=WidthHeight>,e76=Transform<e69=WidthHeight>}
-      				with  e144=Behaviour<e143>. call getValue, arg #1
-				*/
-				postpone();
+					overloadVsSupTypars(tmap, potentials, super, postpone, reason);
+				} else UnifyOK()
 			} else {
 				postpone();
 			}
@@ -552,6 +609,141 @@ updateCOverload(tmap : TMap, eclass : int, orig : COverload, newOptions : Set<in
 	} else false;
 }
 
+// overloadTypars(tmap : TMap)
+
+// We have a sub against a set of potentials. Do the typars if possible, or postpone
+subVsOverloadTypars(tmap : TMap, sub : CNode, potentials : Set<int>, postpone0 : () -> UnifyResult, reason : ErrorReason) -> UnifyResult {
+	postpone = \ -> {
+		println("TODO: Find out we have to postpone sub vs overload");
+		postpone0();
+	}
+	// OK, find the children typar options
+	mtypars : Maybe<[int]> = getOverloadTypars(tmap, potentials, reason);
+	mtypars ?? {
+		// OK, let us do the typars
+		switch (sub) {
+			CEpsilon(): postpone();
+			CName(__, typars, __): {
+				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+						subtypeCEClass(tmap, typar, supTypar, false, ereason);
+					}
+				});
+			}
+			CFunction(args, return, __): {
+				retOk = subtypeCEClass(tmap, lastElement(mtypars, return), return, false, elaborateReason(reason, "return"));
+				foldi(args, retOk, \i, ok : UnifyResult, arg -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
+						subtypeCEClass(tmap, supTypar, arg, false, ereason);
+					}
+				});
+			}
+			COverload(unique, options, __): postpone();
+		}
+	} : {
+		postpone();
+	}
+}
+
+// We have a sub against a set of potentials. Do the typars if possible, or postpone
+overloadVsSupTypars(tmap : TMap, potentials : Set<int>, sup : CNode, postpone0 : () -> UnifyResult, reason : ErrorReason) -> UnifyResult {
+	postpone = \ -> {
+		println("TODO: Find out we have to postpone overload vs super");
+		postpone0();
+	}
+	// OK, find the children typar options
+	mtypars : Maybe<[int]> = getOverloadTypars(tmap, potentials, reason);
+	mtypars ?? {
+		switch (sup) {
+			CEpsilon(): postpone();
+			CName(__, typars, __): {
+				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						subTypar = mtypars[i];
+						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+						subtypeCEClass(tmap, subTypar, typar, false, ereason);
+					}
+				});
+			}
+			CFunction(args, return, __): {
+				retOk = subtypeCEClass(tmap, return, lastElement(mtypars, return), false, elaborateReason(reason, "return"));
+				foldi(args, retOk, \i, ok : UnifyResult, arg -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						subTypar = mtypars[i];
+						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
+						subtypeCEClass(tmap, arg, subTypar, false, ereason);
+					}
+				});
+			}
+			COverload(unique, options, __): postpone();
+		}
+	} : {
+		postpone();
+	}
+}
+
+// Given a set of potentials, extract the (potentially overloaded) typars of these
+getOverloadTypars(tmap : TMap, potentials : Set<int>, reason : ErrorReason) -> Maybe<[int]> {
+	post = ref false;
+	typars = foldSet(potentials, [], \acc : [Set<int>], p : int -> {
+		pot : CNode = getUnionMapValue(tmap.cmap.cmap, p);
+		switch (pot) {
+			CName(__, stypars, __): {
+				if (length(stypars) < length(acc)) {
+					println("TODO: Mismatch in typar arity across options");
+				}
+				mapi(stypars, \i, as -> {
+					accI = elementAt(acc, i, makeSet());
+					insertSet(accI, stypars[i])
+				});
+			}
+			CEpsilon(): {
+				post := true;
+				acc;
+			}
+			CFunction(args, return, __): {
+				stypars = arrayPush(args, return);
+				mapi(stypars, \i, as -> {
+					accI = elementAt(acc, i, makeSet());
+					insertSet(accI, stypars[i])
+				});
+			}
+			COverload(__, options, __): {
+				println("TODO: Find children of overloads");
+				post := true;
+				acc;
+			}
+		}
+	});
+	if (^post) {
+		None();
+	} else {
+		// OK, construct a new eclass for each typar
+		Some(
+			mapi(typars, \i : int, tps : Set<int> -> {
+				if (sizeSet(tps) == 1) {
+					set2array(tps)[0];
+				} else {
+					ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+					noverload = COverload(makeSet1(tmap.mkUnique()), tps, ereason);
+					findOrMakeCNode(tmap, noverload);
+				};
+			})
+		)
+	}
+}
 
 dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass {
 	tt = dtype2CType2(tmap, d);
