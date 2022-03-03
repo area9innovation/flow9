@@ -20,9 +20,9 @@ export {
 		UnifyPostponed();
 
 	// We know the result is a unification of these types
-	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> bool;
+	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> void;
 	// TODO: Change this to return UnifyResult
-	unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool;
+	unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult;
 
 	// We know we have to subtype here - TODO: Figure out what the result is?
 	// checkOnly defines whether we should update our types, or just do a check.
@@ -48,31 +48,24 @@ resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
 	TTypeEClass(eclass);
 }
 
-unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> bool {
+unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> void {
 	lclass = findOrMakeCNodeClass(tmap, left, reason);
 	rclass = findOrMakeCNodeClass(tmap, right, reason);
 	res = unifyCEClass(tmap, lclass, rclass, false, reason);
-	// TODO: Rewrite so we do not postpone here, but inside unifyCEClass
-	if (!res) {
-		// OK, we postpone it
-		uni = TUnification(lclass, rclass, reason);
-		tmap.cmap.unifications := Cons(uni, ^(tmap.cmap.unifications));
-	}
-	res;
 }
 
 cindent = ref "";
 
 // Check if we can unify these. If not, we postpone
-unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> bool {
+unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
 	left : CNode = getUnionMapValue(tmap.cmap.cmap, lclass);
 	right : CNode = getUnionMapValue(tmap.cmap.cmap, rclass);
 	unifyCENodes(tmap, lclass, left, rclass, right, checkOnly, reason);
 }
 
-unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, checkOnly : bool, reason : ErrorReason) -> bool {
+unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
 	indent = ^cindent;
-	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
+	if (isTracingId(tmap.tracing, StageTypeInference(), if (checkOnly) 2 else 1, ^(tmap.topid))) {
 		debugErrorReason(reason, indent + (if (checkOnly) "  Check " else "  Unify ") + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
 		cindent := indent + "  ";
 	}
@@ -80,12 +73,19 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 	if (!checkOnly && (lclass == -1 || rclass == -1)) {
 		println("INTERNAL ERROR: We need a real class when unifying " + prettyCNode(tmap.cmap, left) + " with " + prettyCNode(tmap.cmap, right));
 	}
-
+/*
+	postpone = \ -> {
+		// OK, we postpone it
+		uni = TUnification(lclass, rclass, reason);
+		tmap.cmap.unifications := Cons(uni, ^(tmap.cmap.unifications));
+		UnifyPostponed();
+	}
+*/
 	error = \ -> {
 		if (!checkOnly) {
 			tmap.onError(elaborateReason(reason, "Could not unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + "."));
 		}
-		false;
+		UnifyFail();
 	}
 
 	def = \ -> {
@@ -95,7 +95,7 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 				println(indent + "   to get root " + prettyCEClass(tmap.cmap, root));
 			}
 		}
-		true;
+		UnifyOK();
 	}
 
 	join = \ -> {
@@ -115,21 +115,24 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 					if (name == rname) {
 						if (length(typars) == length(rtypars)) {
 							join();
-							forall(
-								mapi(typars, \i, typar -> {
-									unifyCEClass(tmap, typar, rtypars[i], checkOnly, elaborateReason(reason, name + " arg#" + i2s(i + 1)));
-								}),
-								idfn
+							foldi(typars, UnifyOK(),
+								\i, acc, typar -> {
+									if (acc == UnifyFail()) {
+										acc;
+									} else {
+										unifyCEClass(tmap, typar, rtypars[i], checkOnly, elaborateReason(reason, name + " arg#" + i2s(i + 1)));
+									}
+								}
 							);
 						} else error();
 					} else if (isCFlow(left) || isCFlow(right)) {
-						// TODO: Should we just merge these groups?
-						true;
+						// OK, we do not propgate flow out, so we are done
+						UnifyOK();
 					} else error();
 				}
 				CFunction(args, return, rreason): {
 					if (isCFlow(left)) {
-						true;
+						UnifyOK();
 					} else {
 						error();
 					}
@@ -144,19 +147,19 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 				CEpsilon(): def();
 				CName(name, typars, rreason): {
 					if (isCFlow(right)) {
-						true;
+						UnifyOK();
 					} else error();
 				}
 				CFunction(rargs, rreturn, rreason): {
 					if (length(args) == length(rargs)) {
 						join();
-						unifyCEClass(tmap, return, rreturn, checkOnly, elaborateReason(reason, "call ret"))
-						&& forall(
-							mapi(args, \i, typar -> {
-								unifyCEClass(tmap, typar, rargs[i], checkOnly, elaborateReason(reason, "call arg#" + i2s(i + 1)));
-							}),
-							idfn
-						);
+						foldi(args, 
+							unifyCEClass(tmap, return, rreturn, checkOnly, elaborateReason(reason, "call ret")),
+							\i, acc, arg -> {
+								if (acc == UnifyFail()) acc
+								else unifyCEClass(tmap, arg, rargs[i], checkOnly, elaborateReason(reason, "call arg#" + i2s(i + 1)));
+							}
+						)
 					} else error();
 				}
 				COverload(unique, options, rreason): {
@@ -166,12 +169,7 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 		}
 		COverload(unique, options, lreason): {
 			switch (right) {
-				CEpsilon(): {
-					if (!checkOnly) {
-						setUnionMapValue(tmap.cmap.cmap, rclass, left);
-					}
-					true;
-				}
+				CEpsilon(): def();
 				CName(name, typars, freason): unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
 				CFunction(args, return, rreason): unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
 				COverload(runique, roptions, rreason): {
@@ -181,32 +179,23 @@ unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNod
 		}
 	};
 
-	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
-		debugErrorReason(reason, indent + (if (checkOnly) "  Check " else "  Unify ") + (if (res) "OK" else "FAILED") + ". ");
+	if (isTracingId(tmap.tracing, StageTypeInference(), if (checkOnly) 2 else 1, ^(tmap.topid))) {
+		debugErrorReason(reason, indent + (if (checkOnly) "  Check " else "  Unify ") + (unifyResult2string(res)) + ". ");
 	}
 
 	cindent := indent;
 	res;
 }
 
-// Return false if we need to postpone, or failed
-unifyCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherClass : int, other : CNode, checkOnly : bool) -> bool {
-	moverload = resolveCOverload(tmap, overloadClass, overload, otherClass, other);
-	moverload ?? {
-		if (!checkOnly) {
-			// println("  Reducing overload " + prettyCEClass(tmap.cmap, overloadClass) + " to " + prettyCNode(tmap.cmap, moverload) + " vs " + prettyCNode(tmap.cmap, other));
-			setUnionMapValue(tmap.cmap.cmap, overloadClass, CEpsilon());
-			unifyCENodes(tmap, overloadClass, moverload, otherClass, other, checkOnly, overload.reason);
-		} else true;
-	} : false;
+unifyResult2string(e : UnifyResult) -> string {
+	switch (e) {
+		UnifyOK(): "OK";
+		UnifyPostponed(): "Postponed";
+		UnifyFail(): "Fail";
+	}
 }
 
-canUnify(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, reason : ErrorReason) -> bool {
-	unifyCENodes(tmap, lclass, left, rclass, right, true, reason);
-}
-
-// Returns None unless we manage to simplify the overload
-resolveCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherClass : int, other : CNode) -> Maybe<CNode> {
+unifyCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherClass : int, other : CNode, checkOnly : bool) -> UnifyResult {
 	cmap = tmap.cmap;
 	// The total set of potential overloads
 	options : Set<int> = foldSet(overload.options, makeSet(), \acc, opt -> {
@@ -217,6 +206,20 @@ resolveCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherCl
 		onode = getUnionMapValue(cmap.cmap, opt);
 		canUnify(tmap, opt, onode, otherClass, other, overload.reason);
 	});
+
+	set = \node -> {
+		if (!checkOnly) {
+			// println("  Reducing overload " + prettyCEClass(tmap.cmap, overloadClass) + " to " + prettyCNode(tmap.cmap, moverload) + " vs " + prettyCNode(tmap.cmap, other));
+			setUnionMapValue(tmap.cmap.cmap, overloadClass, CEpsilon());
+			unifyCENodes(tmap, overloadClass, node, otherClass, other, checkOnly, overload.reason);
+		} else UnifyOK();
+	}
+
+	postpone = \ -> {
+		uni = TUnification(overloadClass, otherClass, overload.reason);
+		tmap.cmap.unifications := Cons(uni, ^(tmap.cmap.unifications));
+		UnifyPostponed();
+	}
 
 	nmatches = sizeSet(matches);
 	if (false) {
@@ -231,19 +234,23 @@ resolveCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherCl
 		// We have a unique winner
 		class = set2array(matches)[0];
 		winner = getUnionMapValue(cmap.cmap, class);
-		Some(winner);
+		set(winner);
 	} else if (nmatches != 0 && nmatches != sizeSet(options)) {
 		// OK: This is a reduction, but might not be a solution
 		unifyOverloadTypars(tmap, matches, other, \ -> {
-			println("TODO: Find out why we have to postpone typars for " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other));
-			UnifyPostponed()
+			postpone();
 		}, overload.reason);
 
-		Some(COverload(overload with options = matches));
+		set(COverload(overload with options = matches));
 	} else {
-		// No reduction, so postpone
-		None();
+		// OK, we postpone it
+		postpone();
 	}
+}
+
+
+canUnify(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, reason : ErrorReason) -> bool {
+	unifyCENodes(tmap, lclass, left, rclass, right, true, reason) == UnifyOK();
 }
 
 // We have a set of potentials with typars that need to be unified against the other side
@@ -256,26 +263,24 @@ unifyOverloadTypars(tmap : TMap, potentials : Set<int>, other : CNode, postpone 
 			CEpsilon(): postpone();
 			CName(__, typars, __): {
 				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
-					if (ok != UnifyOK()) {
+					if (ok == UnifyFail()) {
 						ok
 					} else {
 						supTypar = mtypars[i];
 						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
-						res = unifyCEClass(tmap, typar, supTypar, false, ereason);
-						if (res) UnifyOK() else UnifyPostponed();
+						unifyCEClass(tmap, typar, supTypar, false, ereason);
 					}
 				});
 			}
 			CFunction(args, return, __): {
 				retOk = unifyCEClass(tmap, lastElement(mtypars, return), return, false, elaborateReason(reason, "return"));
-				foldi(args, if (retOk) UnifyOK() else UnifyPostponed(), \i, ok : UnifyResult, arg -> {
-					if (ok != UnifyOK()) {
+				foldi(args, retOk, \i, ok : UnifyResult, arg -> {
+					if (ok == UnifyFail()) {
 						ok
 					} else {
 						supTypar = mtypars[i];
 						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
-						res = unifyCEClass(tmap, supTypar, arg, false, ereason);
-						if (res) UnifyOK() else UnifyPostponed();
+						unifyCEClass(tmap, supTypar, arg, false, ereason);
 					}
 				});
 			}
@@ -293,8 +298,7 @@ unifyOverloadTypars(tmap : TMap, potentials : Set<int>, other : CNode, postpone 
 								} else {
 									supTypar = so[i];
 									ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
-									res = unifyCEClass(tmap, supTypar, tp, false, ereason);
-									if (res) UnifyOK() else UnifyPostponed();
+									unifyCEClass(tmap, supTypar, tp, false, ereason);
 								}
 							})
 						}
@@ -329,11 +333,8 @@ subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, 
 	orig = prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass);
 	res = subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
 
-	if (res == UnifyOK()) {
-		if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
-			// debugErrorReason(reason, "  Subtype success " + orig + ". ");
-			debugErrorReason(reason, "  Subtype success " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass) + ". ");
-		}
+	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
+		debugErrorReason(reason, "  Subtype " + unifyResult2string(res) + " " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass) + ". ");
 	}
 	res;
 }
@@ -343,7 +344,7 @@ subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, 
 	super : CNode = getUnionMapValue(tmap.cmap.cmap, superClass);
 
 	indent = ^cindent;
-	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid)) && !checkOnly) {
+	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid)) && !checkOnly) {
 		debugErrorReason(reason, indent + "  Subtype " + prettyCEClass(tmap.cmap, subClass) + "\n" + indent + "    with  " + prettyCEClass(tmap.cmap, superClass) + ". ");
 		cindent := indent + "  ";
 	}
