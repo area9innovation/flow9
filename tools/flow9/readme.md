@@ -81,13 +81,6 @@ to a queue for later processing, when more information is expected to be
 available.
 
 TODO CGraph:
-C:/flow9/tools/flowc/fctypeenv.flow:137:31: Add type annotation. Unresolved type (equivalence class e356)
-- fcAddToCache has unresolved type
-
-  flow9 tools/flow9/flow9 incremental=0 strict=1
-
-- type43: has unresolved type.
-
 - We need a subtype with multiple types when the max is closed?
 
 - Exhaustiveness check of switch
