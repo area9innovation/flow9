@@ -81,6 +81,12 @@ to a queue for later processing, when more information is expected to be
 available.
 
 TODO CGraph:
+C:/flow9/tools/flowc/typechecker/typechecker.flow:1281:91: Add type annotation. Unresolved type (equivalence class e9455)
+
+ flow9 tools/flow9/flow9.flow strict=1 incremental=0 >out.flow
+
+ Check overload sub overload typars.
+
 - We need a subtype with multiple types when the max is closed?
 
 - Exhaustiveness check of switch

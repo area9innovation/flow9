@@ -46,7 +46,7 @@ public class FlowJwt extends NativeHost {
 		}
 	}
 
-	public static Object decodeJwt(String jwt, String key, Func7<Object, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+	public static Object decodeJwt(String jwt, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
 		String verify = verifyJwt(jwt, key);
 		if (verify == "OK") {
 			String iss;
@@ -55,7 +55,8 @@ public class FlowJwt extends NativeHost {
 			Date exp;
 			Date nbf;
 			Date iat;
-			String jti;
+			Object jti;
+			Object impersonatedByUserId;
 			try {
 				Claims jws = Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt).getBody();
 				iss = jws.getIssuer();
@@ -64,7 +65,8 @@ public class FlowJwt extends NativeHost {
 				exp = jws.getExpiration();
 				nbf = jws.getNotBefore();
 				iat = jws.getIssuedAt();
-				jti = jws.get("id").toString();
+				jti = jws.get("id");
+				impersonatedByUserId = jws.get("iid");
 			} catch (Exception e) {
 				System.out.println(e.getMessage());
 				onError.invoke("Hash problems");
@@ -77,7 +79,8 @@ public class FlowJwt extends NativeHost {
 				(exp == null ? "" : DateFormats.formatIso8601(exp, false)),
 				(nbf == null ? "" : DateFormats.formatIso8601(nbf, false)),
 				(iat == null ? "" : DateFormats.formatIso8601(iat, false)),
-				(jti == null ? "" : jti)
+				jti == null ? "" : jti.toString(),
+				impersonatedByUserId == null ? "" : impersonatedByUserId.toString()
 			);
 		} else {
 			onError.invoke(verify);
