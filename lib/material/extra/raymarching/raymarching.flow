@@ -52,6 +52,7 @@ MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material 
 	material2 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, false));
 	jsScene = RMIExp2JS(RMObject2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, true));
+	lightB = make(light);
 
 	setCameraString = formatString(
 		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
@@ -65,30 +66,132 @@ MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material 
 		]
 	);
 
-	MLines([
-		MTextButton(
-			"RESET CAMERA", 
-			\ -> {
-				hostCall("setCameraPosition", [
-					camera.position.x,
-					camera.position.y,
-					camera.position.z
-				]);
-				hostCall("setCameraDirection", [
-					camera.direction.x,
-					camera.direction.y,
-					camera.direction.z
-				]);
-				{}
-			},
-			[], []
-		),
+	MSplitter(
+		MLines([
+			MTextButton(
+				"RESET CAMERA", 
+				\ -> {
+					hostCall("setCameraPosition", [
+						camera.position.x,
+						camera.position.y,
+						camera.position.z
+					]);
+					hostCall("setCameraDirection", [
+						camera.direction.x,
+						camera.direction.y,
+						camera.direction.z
+					]);
+					{}
+				},
+				[], []
+			),
+			MConstruct(
+				[
+					makeSubscribe2(
+						fthrottle(lightB, 200),
+						\l -> {
+							hostCall("recompileShader", [
+								blueprint(
+									"#include material/extra/raymarching/raymarching.frag",
+									[
+										"distanceFunction", glsl,
+										"light", RMIExp2GLSL(RMObject2RMIExp(l, true)),
+										"materialFunction1", material1,
+										"materialFunction2", material2
+									]
+								)
+							])|>ignore;
+						}
+					)
+				],
+				RMObject2Material(lightB)
+			)
+		]),
 		displayRaymarchingCanvas(
 			blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
 			"#include material/extra/raymarching/raymarching.vert",
 			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
-		)
-	])
+		),
+		MFillXY(),
+		[MSplitterValue(make(0.25))]
+	)
+}
+
+RMObject2Material(obj : DynamicBehaviour<RMObject>) -> Material {
+	MTree(
+		const([RMObject2MTreeNode(obj)]),
+		[]
+	)
+}
+
+RMObject2MTreeNode(obj : DynamicBehaviour<RMObject>) -> MTreeNode {
+	childrenBehaviours = map(getRMObjectChildren(getValue(obj)), make);
+	childrenMergeT = fmerge(childrenBehaviours);
+	children = map(childrenBehaviours, RMObject2MTreeNode);
+	MTreeNode(
+		obj,
+		\o -> {
+			switch(getValue(o)) {
+				RMSphere(radius): MEmpty();
+				RMPlane(normal, height): MEmpty();
+				RMTranslate(object, d): {
+					coords = RMCoordinate2RMXYZ(d);
+					xB = make(d2s(coords.x));
+					yB = make(d2s(coords.y));
+					zB = make(d2s(coords.z));
+
+					MConstruct(
+						[make4Subscribe2(childrenMergeT, xB, yB, zB, \c, x, y, z -> next(obj, RMTranslate(c[0], RMXYZ(s2d(x), s2d(y), s2d(z)))))],
+						MCols([
+							MTextInput(xB, [MLabel("X:"), MFloatingLabel()], []),
+							MTextInput(yB, [MLabel("Y:"), MFloatingLabel()], []),
+							MTextInput(zB, [MLabel("Z:"), MFloatingLabel()], []),
+						])
+					)
+				};
+				RMUnion(object1, object2): MText("Union", []);
+				RMMaterial(object, mat): switch(mat) {
+					RMColor(col): {
+						colB = make(colorInt2MColor(col));
+						MConstruct(
+							[make2Subscribe2(childrenMergeT, colB, \c, colNew -> next(obj, RMMaterial(c[0], RMColor(MColor2int(colNew)))))],
+							MColorPicker(colB, [])
+						)
+					};
+					RMReflect(col, coef): {
+						MEmpty();
+					}
+				};
+				RMLight(size): {
+					sizeB = make(d2s(size));
+					MConstruct(
+						[makeSubscribe2(sizeB, \s -> next(obj, RMLight(s2d(s))))],
+						MTextInput(sizeB, [MLabel("Size:"), MFloatingLabel()], [])
+					)
+				};
+				RMPlus(object1, object2): MConstruct(
+					[makeSubscribe2(childrenMergeT, \c -> next(obj, RMPlus(c[0], c[1])))],
+					MText("Plus", [])
+				);
+				RMEmpty(): MEmpty();
+			}
+		},
+		const(children),
+		[MExpanded(make(true))]
+	)
+}
+
+getRMObjectChildren(obj : RMObject) -> [RMObject] {
+	switch(obj) {
+		RMSphere(radius): [];
+		RMPlane(normal, height): [];
+		RMTranslate(object, d): [object];
+		RMUnion(object1, object2): [object1, object2];
+		RMMaterial(object, col): [object];
+		RMLight(size): [];
+		RMPlus(object1, object2): [object1, object2];
+		RMEmpty(): [];
+	}
 }
 
 displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
@@ -337,6 +440,18 @@ RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ {
 		RMX(x): RMIXYZ(x, 0., 0.);
 		RMY(y): RMIXYZ(0., y, 0.);
 		RMZ(z): RMIXYZ(0., 0., z);
+	}
+}
+
+RMCoordinate2RMXYZ(c : RMCoordinate) -> RMXYZ {
+	switch(c) {
+		RMXYZ(x, y, z): RMXYZ(x, y, z);
+		RMXY(x, y): RMXYZ(x, y, 0.);
+		RMXZ(x, z): RMXYZ(x, 0., z);
+		RMYZ(y, z): RMXYZ(0., y, z);
+		RMX(x): RMXYZ(x, 0., 0.);
+		RMY(y): RMXYZ(0., y, 0.);
+		RMZ(z): RMXYZ(0., 0., z);
 	}
 }
 
