@@ -7,10 +7,10 @@ import tools/flow9/backends/js/js_runtime;
 
 export {
 	// Compiles the given flow path to JS as a single string
-	bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool) -> Promise<string, string>;
+	bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool, jsmode : int) -> Promise<string, string>;
 }
 
-bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool) -> Promise<string, string> {
+bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool, jsmode : int) -> Promise<string, string> {
 	backend = jsBackend();
 	spec = makeBackendSpec(backend, "t_", "", "__",
 		// We consider a native is a generator for a named identifier (non arithmetic, comparison, etc.)
@@ -20,22 +20,22 @@ bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool) -> Promise<
 	bexp_program = renameIdsBExpProgram(bmodules2BExpProgram(modules, spec), spec, shorten_ids);
 	prog = bexpProgram2BProgram(bexp_program.first);
 	shortenIds = bexp_program.second;
-	bprogram2js(prog, flowpath, backend, shortenIds);
+	bprogram2js(prog, flowpath, backend, shortenIds, jsmode);
 }
 
-bprogram2js(b : BProgram, flowpath : string, backend : Backend<bool>, shorten_ids : RenameIds) -> Promise<string, string> {
+bprogram2js(b : BProgram, flowpath : string, backend : Backend<bool>, shorten_ids : RenameIds, jsmode : int) -> Promise<string, string> {
 	cfg = JsConfig(makeJsConfig(flowpath) with 
 		// The debugging configuration: while backend is under development.
 		verbose = 2,
-		jsmode = NODEJS_MODE,
+		jsmode = jsmode,
 		code = true
 	);
 
 	native_classes = ref makeSet();
 	native_names = collectBProgramNativeNames(b, \class_ -> native_classes := insertSet(^native_classes, class_));
 
-	Promise(\fulfill, reject -> {
-		linkHaxeRuntime(cfg, ^native_classes, "main", \runtime -> {
+	thenP(linkHaxeRuntime(cfg, ^native_classes, "main"),
+		\runtime -> {
 			structs = getTreeValues(b.structs);
 			original_ids = reverseRenameIds(shorten_ids);
 
@@ -45,7 +45,7 @@ bprogram2js(b : BProgram, flowpath : string, backend : Backend<bool>, shorten_id
 
 			// The backend keeps track of what requirements are used by the various
 			// constructs used
-			js = getBackendRequirements(backend)
+			getBackendRequirements(backend)
 			+ "// RUNTIME\n" 
 			+ runtime + "\n"
 			+ "// STRUCTS\n"
@@ -53,9 +53,8 @@ bprogram2js(b : BProgram, flowpath : string, backend : Backend<bool>, shorten_id
 			+ "// BODY\n"
 			+ body + "\n"
 			+ lookupTreeDef(shorten_ids.varRenamings, "main", "main") + "()";
-			fulfill(js)
-		});
-	});
+		}
+	);
 }
 
 collectBProgramNativeNames(b : BProgram, add_class : (string) -> void) -> Tree<string, string> {
