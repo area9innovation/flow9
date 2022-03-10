@@ -6,14 +6,13 @@ export {
 	evaluateDsl(env : DslEnv, p : DslAst) -> DslAst;
 
 	DslEnv(
-		globals : Tree<string, DslAst>, 
 		locals : Tree<string, DslAst>, 
 		natives : Tree<string, ([DslAst]) -> DslAst>
 	);
 }
 
 makeDslEnv() -> DslEnv {
-	DslEnv(makeTree(), makeTree(), makeTree());
+	DslEnv(makeTree(), makeTree());
 }
 
 evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
@@ -28,13 +27,8 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				let = getDslString(args[0]);
 				val = evaluateDsl(env, args[1]);
 				node = getDslNode(val);
-				if (node.name == "lambda") {
-					nenv = DslEnv(env with globals = setTree(env.globals, let, val));
-					evaluateDsl(nenv, args[2]);
-				} else {
-					nenv = DslEnv(env with locals = setTree(env.locals, let, val));
-					evaluateDsl(nenv, args[2]);
-				}
+				nenv = DslEnv(env with locals = setTree(env.locals, let, val));
+				evaluateDsl(nenv, args[2]);
 			} else if (name == "var") {
 				mvar = lookupTree(env.locals, getDslString(args[0]));
 				mvar ?? mvar : {
@@ -58,29 +52,21 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				} else if (lambda.name == "var") {
 					// Normal functions
 					vname = getDslString(lambda.args[0]);
-					mglobal = lookupTree(env.globals, vname);
-					switch (mglobal) {
+					eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
+					envNative = lookupTree(env.natives, vname);
+					switch (envNative) {
 						None(): {
-							eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
-							envNative = lookupTree(env.natives, vname);
-							switch (envNative) {
-								None(): {
-									mnative = getDslNative(vname);
-									mnative ?? {
-										mnative.fn(list2array(eargs));
-									} : {
-										// Unknown, so error out
-										node = DslNode(vname, list2array(eargs), pos);
-										println("Unknown var '" + vname + "'");
-										DslString("Unknown var " + vname);
-									}
-								}
-								Some(nativeFn): nativeFn(list2array(eargs));
+							mnative = getDslNative(vname);
+							mnative ?? {
+								mnative.fn(list2array(eargs));
+							} : {
+								// Unknown, so error out
+								node = DslNode(vname, list2array(eargs), pos);
+								println("Unknown var '" + vname + "'");
+								DslString("Unknown var " + vname);
 							}
 						}
-						Some(match): {
-							evaluateDsl(env, DslNode("call", [match, args[1]], pos));
-						}
+						Some(nativeFn): nativeFn(list2array(eargs));
 					}
 				} else {
 					println("ERROR: Can not call " + prettyDsl(fn));
