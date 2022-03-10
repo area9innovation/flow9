@@ -72,30 +72,35 @@ The type system is extended with just one construct:
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
+When doing type inference, the language constructs result in unification
+of equivalence classes as well as subtyping relations. Subtyping relations
+are resolved into unifications with overloads when possible.
+
+If a unification or subtyping is not possible to complete, it is pushed
+to a queue for later processing, when more information is expected to be
+available.
+
 TODO CGraph:
+C:/flow9/tools/flowc/typechecker/typechecker.flow:1281:91: Add type annotation. Unresolved type (equivalence class e9455)
+
+ flow9 tools/flow9/flow9.flow strict=1 incremental=0 >out.flow
+
+ Check overload sub overload typars.
+
 - We need a subtype with multiple types when the max is closed?
 
 - Exhaustiveness check of switch
 
 - Verify that we give useful errors for real errors
 
-- Consider to avoid implicit typars for None and friends.
-
 Need decision:
-- types.flow: implicit None type-parameter
 - MTree is polymorphic, but Material is not. Add better warning
-
-- type39: flow
-C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
-		Triple(flow(None()), start, "");
-		      ^
-   when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
-   Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
 
 # Name and type lookups
 
 A key problem is to find names, types, sub- and supertypes from the context 
-of a given module. We would like this lookup to be precise in terms of the import graph.
+of a given module. We would like this lookup to be precise in terms of the
+import graph.
 
 This is not easy. Consider the problem of transitive supertypes:
 
@@ -188,6 +193,20 @@ The compiler has decent speed, but could be faster.
 
 - Add a compile server
   - Add option to only type check given ids
+
+# JS backend/runtime
+
+According to this benchmark:
+
+https://jsben.ch/wY5fo
+
+This is the fastest way to iterate an array in JS:
+
+	var x = 0, l = arr.length;
+	while (x < l) {
+		dosmth = arr[x];
+		++x;
+	}
 
 # C++ backend
 

@@ -1,19 +1,18 @@
-import tools/dsl/dsl_parse;
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_util;
 
 export {
 	makeDslEnv() -> DslEnv;
 	evaluateDsl(env : DslEnv, p : DslAst) -> DslAst;
 
 	DslEnv(
-		// Overloaded globals (overload resolution based on arity only)
-		globals : Tree<string, [DslAst]>, 
 		locals : Tree<string, DslAst>, 
 		natives : Tree<string, ([DslAst]) -> DslAst>
 	);
 }
 
 makeDslEnv() -> DslEnv {
-	DslEnv(makeTree(), makeTree(), makeTree());
+	DslEnv(makeTree(), makeTree());
 }
 
 evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
@@ -28,13 +27,8 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				let = getDslString(args[0]);
 				val = evaluateDsl(env, args[1]);
 				node = getDslNode(val);
-				if (node.name == "lambda") {
-					nenv = DslEnv(env with globals = treePushToArrayUnique(env.globals, let, val));
-					evaluateDsl(nenv, args[2]);
-				} else {
-					nenv = DslEnv(env with locals = setTree(env.locals, let, val));
-					evaluateDsl(nenv, args[2]);
-				}
+				nenv = DslEnv(env with locals = setTree(env.locals, let, val));
+				evaluateDsl(nenv, args[2]);
 			} else if (name == "var") {
 				mvar = lookupTree(env.locals, getDslString(args[0]));
 				mvar ?? mvar : {
@@ -58,42 +52,21 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				} else if (lambda.name == "var") {
 					// Normal functions
 					vname = getDslString(lambda.args[0]);
-					globals = getTreeArrayValue(env.globals, vname);
-					nargsCall = countList(getDslList(args[1]));
-					matches = filter(globals, \gl -> {
-						nargs = countList(getDslList(getDslNode(gl).args[0]));
-						nargs == nargsCall;
-					});
-					if (matches != []) {
-						if (length(matches) != 1) {
-							println("Can not resolve overloaded " + vname);
-							eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
-							DslNode(vname, list2array(eargs), pos);
-						} else {
-							evaluateDsl(env, DslNode("call", [matches[0], args[1]], pos));
-						}
-					} else {
-						eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
-						envNative = lookupTree(env.natives, vname);
-						switch (envNative) {
-							None(): {
-								mnative = getDslNative(vname);
-								mnative ?? {
-									mnative.fn(list2array(eargs));
-								} : {
-									// Unknown, so error out
-									node = DslNode(vname, list2array(eargs), pos);
-									if (globals != []) {
-										println("Can not find overload for " + vname + " with " + i2s(nargsCall) + " arguments");
-										DslString("Can not find overload for " + vname + " with " + i2s(nargsCall) + " arguments");
-									} else {
-										println("Unknown var '" + vname + "'");
-										DslString("Unknown var " + vname);
-									}
-								}
+					eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
+					envNative = lookupTree(env.natives, vname);
+					switch (envNative) {
+						None(): {
+							mnative = getDslNative(vname);
+							mnative ?? {
+								mnative.fn(list2array(eargs));
+							} : {
+								// Unknown, so error out
+								node = DslNode(vname, list2array(eargs), pos);
+								println("Unknown var '" + vname + "'");
+								DslString("Unknown var " + vname);
 							}
-							Some(nativeFn): nativeFn(list2array(eargs));
 						}
+						Some(nativeFn): nativeFn(list2array(eargs));
 					}
 				} else {
 					println("ERROR: Can not call " + prettyDsl(fn));
@@ -207,7 +180,6 @@ unquoteDsl(env : DslEnv, p : DslAst) -> DslAst {
 		DslString(value): p;
 	}
 }
-
 
 DslNativeBuiltin(
 	fn : (([DslAst]) -> DslAst)

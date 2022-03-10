@@ -5,13 +5,13 @@ uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
-#define MAX_STEPS 100
-#define MAX_DIST 100.
+#define MAX_STEPS 1000
+#define MAX_DIST 1000.
 #define SURF_DIST .001
 
 struct ObjectInfo {
-	vec3 col;
 	float d;
+	int id;
 };
 
 ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
@@ -22,7 +22,7 @@ ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
 }
 
 ObjectInfo getObjectInfo(vec3 p) {
-	ObjectInfo d = ObjectInfo(vec3(1, 1, 1), MAX_DIST);
+	ObjectInfo d = ObjectInfo(MAX_DIST, -1);
 
 	d = %distanceFunction%;
 
@@ -83,19 +83,42 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, float l
 	return (specular + diffuse) * shadow;
 }
 
+vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
+
+vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
+	ObjectInfo d = RayMarch(newRayOrigin + getObjectNormal(newRayOrigin) * SURF_DIST * 2., rayDirection);
+	vec3 p = newRayOrigin + rayDirection * d.d;
+
+	int id = d.id;
+	vec3 materialColor = backgroundColor;
+	%materialFunction2%
+
+	vec3 ambientColor = 0.1 * materialColor;
+	vec3 col = vec3(ambientColor);
+	if (d.d < MAX_DIST) {
+		col = col + (%light%) * materialColor;
+	} else {
+		col = backgroundColor;
+	}
+	return col;
+}
+
 vec3 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
+	int id = d.id;
+	vec3 materialColor = backgroundColor;
+	%materialFunction1%
 
-	vec3 ambientColor = 0.1 * d.col;
+	vec3 ambientColor = 0.1 * materialColor;
 	vec3 col = vec3(ambientColor);
 	if (d.d < MAX_DIST) {
-		col = col + (%light%) * d.col;
+		col = col + (%light%) * materialColor;
 	} else {
-		col = vec3(0.5, 0.5, 0.7);
+		col = backgroundColor;
 	}
 	col = pow(col, vec3(0.4545));
 	return col;

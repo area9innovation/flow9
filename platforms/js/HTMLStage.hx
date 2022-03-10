@@ -16,14 +16,6 @@ class HTMLStage extends NativeWidgetClip {
 		setWidth(width);
 		setHeight(height);
 
-		on("pointerover", function() {
-			RenderSupport.PreventDefault = false;
-		});
-
-		on("pointerout", function() {
-			RenderSupport.PreventDefault = true;
-		});
-
 		once("removed", function() {
 			RenderSupport.PreventDefault = true;
 		});
@@ -32,6 +24,14 @@ class HTMLStage extends NativeWidgetClip {
 
 		nativeWidget.style.display = 'none';
 		nativeWidget.classList.add("stage");
+
+		nativeWidget.addEventListener("pointerenter", function() {
+			RenderSupport.PreventDefault = false;
+		});
+
+		nativeWidget.addEventListener("pointerleave", function() {
+			RenderSupport.PreventDefault = true;
+		});
 
 		Browser.document.body.appendChild(nativeWidget);
 		stageRect = untyped this.nativeWidget.getBoundingClientRect();
