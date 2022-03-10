@@ -7,12 +7,14 @@ export {
 
 	DslEnv(
 		locals : Tree<string, DslAst>, 
-		natives : Tree<string, ([DslAst]) -> DslAst>
+		natives : Tree<string, ([DslAst]) -> DslAst>,
+		// Set of variables that are dynamic
+		dynamic : Set<string>,
 	);
 }
 
 makeDslEnv() -> DslEnv {
-	DslEnv(makeTree(), makeTree());
+	DslEnv(makeTree(), makeTree(), makeSet());
 }
 
 evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
@@ -32,9 +34,10 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 					if (letnode.name == "dyn") {
 						// TODO: Make a tmp variable name for this
 						// and replace all occurences in the body with 
-						// this new var, as well as mark this new var
-						// as dynamic, and then evaluate the body
-						nbody = evaluateDsl(env, args[2]);
+						// this new var
+						varname = getDslString(letnode.args[0]);
+						nenv = DslEnv(env with dynamic = insertSet(env.dynamic, varname));
+						nbody = evaluateDsl(nenv, args[2]);
 						DslNode("let", [letnode.args[0], val, nbody], pos);
 					} else {
 						error = "Unsupported let-binding " + prettyDsl(args[0]);
@@ -61,17 +64,25 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 					eargs : [DslAst] = list2array(getDslList(evaluateDsl(env, args[1])));
 					nargs = list2array(getDslList(lambda.args[0]));
 					body = lambda.args[1];
-					nenv = DslEnv(env with locals = foldi(eargs, env.locals, \i, acc, arg -> {
+					nenv = foldi(eargs, env, \i, acc, arg -> {
 						// println("Setting par " + getDslString(nargs[i]) + " to " + prettyDsl(arg));
 						argname = getDslString(nargs[i]);
 						if (argname == "") {
-							// TODO: If this is dyn, we should mark this var as dynamic
-							acc
+							dynnode = getDslNode(nargs[i]);
+							if (dynnode.name == "dyn") {
+								dynarg = getDslString(dynnode.args[0]);
+								// If this is dyn, we should mark this var as dynamic
+								DslEnv(acc with dynamic = insertSet(acc.dynamic, dynarg))
+							} else {
+								acc
+							}
 						} else {
-							setTree(acc, argname, arg)
+							DslEnv(acc with locals = setTree(acc.locals, argname, arg))
 						}
-					}));
+					});
+					
 					nbody = evaluateDsl(nenv, body);
+
 					// TODO: We should do this in opposite order?
 					foldi(eargs, nbody, \i, acc, arg -> {
 						dynnode = getDslNode(nargs[i]);
