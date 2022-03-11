@@ -7,15 +7,17 @@ export {
 	evaluateDsl(env : DslEnv, p : DslAst) -> DslAst;
 
 	DslEnv(
-		locals : Tree<string, DslAst>, 
+		locals : Tree<string, DslAst>,
 		natives : Tree<string, ([DslAst]) -> DslAst>,
 		// Set of variables that are dynamic
 		dynamic : Set<string>,
+		// For generated functions by join, we need to have unique id counter
+		nextId : ref int
 	);
 }
 
 makeDslEnv() -> DslEnv {
-	DslEnv(makeTree(), makeTree(), makeSet());
+	DslEnv(makeTree(), makeTree(), makeSet(), ref 0);
 }
 
 evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
@@ -141,11 +143,31 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 				unquoteDsl(env, args[0])
 			} else if (name == "join") {
 				val = evaluateDsl(env, args[0]);
-				lambdaArgs = captureDynDsl(env, makeSet(), val);
-				println("TODO: Build a tmp_n = \\" + strGlue(set2array(lambdaArgs), ", ") + " -> ");
-				println(prettyDsl(val));
-				println(";tmp_n(");
-				val;
+				lambdaName = makeDslName(env);
+				lambdaArgs = foldSet(captureDynDsl(env, makeSet(), val), makeList(), \acc, argname -> {
+					Cons(DslString(argname), acc)
+				});
+				// We should probably have a map with the generated functions
+				// or maybe we should just deduplicate later.
+				// Seems like deduplication is the easiest option
+
+				lambda = DslNode(
+					"lambda", 
+					[DslList(lambdaArgs), val], 
+					pos
+				);
+
+				DslNode("let",
+					[	
+						DslString(lambdaName), lambda,
+						DslNode("call", [
+							DslNode("var", [DslString(lambdaName)], pos),
+							DslList(mapList(lambdaArgs, \arg -> {
+								DslNode("var", [arg], pos)
+							}))
+						], pos)
+					], pos
+				)
 			} else {
 				// Normal functions
 				eargs = map(args, \a -> {
@@ -174,6 +196,12 @@ evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
 		DslDouble(value): p;
 		DslString(value): p;
 	}
+}
+
+makeDslName(env : DslEnv) -> string {
+	tmp = ^(env.nextId);
+	env.nextId := tmp + 1;
+	"__tmp__" + i2s(tmp);
 }
 
 // For handling lambdas
