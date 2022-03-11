@@ -88,7 +88,7 @@ MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material 
 			MConstruct(
 				[
 					makeSubscribe2(
-						fthrottle(lightB, 200),
+						fthrottle(lightB, 500),
 						\l -> {
 							hostCall("recompileShader", [
 								blueprint(
@@ -124,61 +124,149 @@ RMObject2Material(obj : DynamicBehaviour<RMObject>) -> Material {
 	)
 }
 
+getRMObjectLightTypeIndex(obj : RMObject) -> Maybe<int> {
+	switch(obj) {
+		RMSphere(radius): None();
+		RMPlane(normal, height): None();
+		RMTranslate(object, d): Some(1);
+		RMUnion(object1, object2): None();
+		RMMaterial(object, mat): Some(2);
+		RMLight(size): Some(3);
+		RMPlus(object1, object2): Some(4);
+		RMEmpty(): Some(0);
+	}
+}
+
+getRMObjectDropDownLight(obj : DynamicBehaviour<RMObject>) -> Material {
+	currentB = make(either(getRMObjectLightTypeIndex(getValue(obj)), 0));
+	MConstruct(
+		[
+			makeSubscribe2(
+				currentB,
+				\c -> {nextDistinct(
+					obj,
+					if (c == 1)
+						RMTranslate(RMEmpty(), RMXYZ(0., 0., 0.))
+					else if (c == 2)
+						RMMaterial(RMEmpty(), RMColor(0xFFFFFF))
+					else if (c == 3)
+						RMLight(0.05)
+					else if (c == 4)
+						RMPlus(RMEmpty(), RMEmpty())
+					else
+						RMEmpty()
+				)}
+			)
+		],
+		MDropDown(currentB, "", ["Empty", "Translate", "Color", "Light", "Plus"], [])
+	)
+}
+
 RMObject2MTreeNode(obj : DynamicBehaviour<RMObject>) -> MTreeNode {
-	childrenBehaviours = map(getRMObjectChildren(getValue(obj)), make);
-	childrenMergeT = fmerge(childrenBehaviours);
-	children = map(childrenBehaviours, RMObject2MTreeNode);
+	childrenT = fselect(obj, FLift(getRMObjectChildren));
+	childrenBehavioursB = make(map(fgetValue(childrenT), make));
+	childrenMergeT = fsubselect(childrenBehavioursB, FLift(fmerge));
+	childrenNodesT = fmap(childrenBehavioursB, RMObject2MTreeNode);
+	viewB = make(MEmpty());
 	MTreeNode(
 		obj,
-		\o -> {
-			switch(getValue(o)) {
-				RMSphere(radius): MEmpty();
-				RMPlane(normal, height): MEmpty();
-				RMTranslate(object, d): {
-					coords = RMCoordinate2RMXYZ(d);
-					xB = make(d2s(coords.x));
-					yB = make(d2s(coords.y));
-					zB = make(d2s(coords.z));
-
-					MConstruct(
-						[make4Subscribe2(childrenMergeT, xB, yB, zB, \c, x, y, z -> next(obj, RMTranslate(c[0], RMXYZ(s2d(x), s2d(y), s2d(z)))))],
-						MCols([
-							MTextInput(xB, [MLabel("X:"), MFloatingLabel()], []),
-							MTextInput(yB, [MLabel("Y:"), MFloatingLabel()], []),
-							MTextInput(zB, [MLabel("Z:"), MFloatingLabel()], []),
-						])
-					)
-				};
-				RMUnion(object1, object2): MText("Union", []);
-				RMMaterial(object, mat): switch(mat) {
-					RMColor(col): {
-						colB = make(colorInt2MColor(col));
-						MConstruct(
-							[make2Subscribe2(childrenMergeT, colB, \c, colNew -> next(obj, RMMaterial(c[0], RMColor(MColor2int(colNew)))))],
-							MColorPicker(colB, [])
+		\__ -> {
+			prevTypeB = make(None());
+			MLines2(
+				MConstruct(
+					[
+						makeSubscribe2(
+							childrenT,
+							\children -> {
+								if (length(getValue(childrenBehavioursB)) != length(children)) {
+									nextDistinct(childrenBehavioursB, map(children, make));
+								}
+							}
+						),
+						makeSubscribe(
+							obj,
+							\o -> {
+								if (getValue(prevTypeB) != getRMObjectLightTypeIndex(o)) {
+									next(prevTypeB, getRMObjectLightTypeIndex(o));
+									next(viewB, RMObject2MaterialLine(o, obj, childrenMergeT));
+								}
+							}
 						)
-					};
-					RMReflect(col, coef): {
-						MEmpty();
-					}
-				};
-				RMLight(size): {
-					sizeB = make(d2s(size));
-					MConstruct(
-						[makeSubscribe2(sizeB, \s -> next(obj, RMLight(s2d(s))))],
-						MTextInput(sizeB, [MLabel("Size:"), MFloatingLabel()], [])
-					)
-				};
-				RMPlus(object1, object2): MConstruct(
-					[makeSubscribe2(childrenMergeT, \c -> next(obj, RMPlus(c[0], c[1])))],
-					MText("Plus", [])
-				);
-				RMEmpty(): MEmpty();
-			}
+					],
+					getRMObjectDropDownLight(obj)
+				),
+				MMutable(viewB)
+			)
 		},
-		const(children),
+		childrenNodesT,
 		[MExpanded(make(true))]
 	)
+}
+
+RMObject2MaterialLine(o : RMObject, obj : DynamicBehaviour<RMObject>, childrenMergeT : Transform<[RMObject]>) -> Material {
+	prevTypesB = make(fgetValue(fmap(childrenMergeT, getRMObjectLightTypeIndex)));
+	switch(o) {
+		RMSphere(radius): MEmpty();
+		RMPlane(normal, height): MEmpty();
+		RMTranslate(object, d): {
+			coords = RMCoordinate2RMXYZ(d);
+			xB = make(d2s(coords.x));
+			yB = make(d2s(coords.y));
+			zB = make(d2s(coords.z));
+
+			MConstruct(
+				[make4Subscribe2(childrenMergeT, xB, yB, zB, \c, x, y, z -> {
+					if (map(c, getRMObjectLightTypeIndex) == getValue(prevTypesB)) {
+						nextDistinct(obj, RMTranslate(c[0], RMXYZ(s2d(x), s2d(y), s2d(z))))
+					} else {
+						nextDistinct(prevTypesB, map(c, getRMObjectLightTypeIndex))
+					}
+				})],
+				MCols([
+					MTextInput(xB, [MLabel("X:"), MFloatingLabel()], []),
+					MTextInput(yB, [MLabel("Y:"), MFloatingLabel()], []),
+					MTextInput(zB, [MLabel("Z:"), MFloatingLabel()], []),
+				])
+			)
+		};
+		RMUnion(object1, object2): MText("Union", []);
+		RMMaterial(object, mat): switch(mat) {
+			RMColor(col): {
+				colB = make(colorInt2MColor(col));
+				MConstruct(
+					[make2Subscribe2(childrenMergeT, colB, \c, colNew -> {
+						if (map(c, getRMObjectLightTypeIndex) == getValue(prevTypesB)) {
+							nextDistinct(obj, RMMaterial(c[0], RMColor(MColor2int(colNew))))
+						} else {
+							nextDistinct(prevTypesB, map(c, getRMObjectLightTypeIndex))
+						}
+					})],
+					MColorPicker(colB, [])
+				)
+			};
+			RMReflect(col, coef): {
+				MEmpty();
+			}
+		};
+		RMLight(size): {
+			sizeB = make(d2s(size));
+			MConstruct(
+				[makeSubscribe2(sizeB, \s -> nextDistinct(obj, RMLight(s2d(s))))],
+				MTextInput(sizeB, [MLabel("Size:"), MFloatingLabel()], [])
+			)
+		};
+		RMPlus(object1, object2): MConstruct(
+			[makeSubscribe2(childrenMergeT, \c -> {
+				if (map(c, getRMObjectLightTypeIndex) == getValue(prevTypesB)) {
+					nextDistinct(obj, RMPlus(c[0], c[1]))
+				} else {
+					nextDistinct(prevTypesB, map(c, getRMObjectLightTypeIndex))
+				}
+			})],
+			MText("Plus", [])
+		);
+		RMEmpty(): MEmpty();
+	}
 }
 
 getRMObjectChildren(obj : RMObject) -> [RMObject] {

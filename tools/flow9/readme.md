@@ -194,6 +194,20 @@ The compiler has decent speed, but could be faster.
 - Add a compile server
   - Add option to only type check given ids
 
+# JS backend/runtime
+
+According to this benchmark:
+
+https://jsben.ch/wY5fo
+
+This is the fastest way to iterate an array in JS:
+
+	var x = 0, l = arr.length;
+	while (x < l) {
+		dosmth = arr[x];
+		++x;
+	}
+
 # C++ backend
 
 There is a C GC library here:

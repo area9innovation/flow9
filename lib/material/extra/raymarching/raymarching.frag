@@ -5,8 +5,8 @@ uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
-#define MAX_STEPS 100
-#define MAX_DIST 100.
+#define MAX_STEPS 1000
+#define MAX_DIST 1000.
 #define SURF_DIST .001
 
 struct ObjectInfo {
