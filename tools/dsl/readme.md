@@ -127,6 +127,7 @@ pretty-printed:
 Built in actions include:
 - nil for the empty list
 - cons for appending to a list
+- reverse for reversing a list on the stack
 - swap for swapping two elements on the stack
 - drop for dropping an element on the stack
 - true for DslBool(true)
