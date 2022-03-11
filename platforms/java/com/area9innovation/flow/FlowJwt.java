@@ -134,7 +134,14 @@ public class FlowJwt extends NativeHost {
 		Algorithm algorithm = Algorithm.HMAC256(jwtKey);
 		JWTCreator.Builder builder = JWT.create();
 		for (int i = 0; i < keys.length; i++) {
-			builder = builder.withClaim((String)keys[i], (String)values[i]);
+			if (values[i] instanceof Double) {
+				builder = builder.withClaim((String)keys[i], (Double)values[i]);
+			} else if (values[i] instanceof Boolean) {
+				builder = builder.withClaim((String)keys[i], (Boolean)values[i]);
+			} else {
+				// Assume string
+				builder = builder.withClaim((String)keys[i], (String)values[i]);
+			}
 		}
 		return builder.sign(algorithm);
 	}
