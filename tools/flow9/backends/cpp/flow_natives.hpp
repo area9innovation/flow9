@@ -40,11 +40,9 @@ int32_t flow_getCharCodeAt(_FlowString* s, int32_t i) {
 	return res;
 }
 
-// precision = 20!
+// TODO. u16 instead of string
 _FlowString* flow_d2s(double v) {
-	std::stringstream stream;
-	stream << std::fixed << std::setprecision(20) << v;
-	return new _FlowString(stream.str());
+	return new _FlowString(std::to_string(v));
 }
 
 // common
