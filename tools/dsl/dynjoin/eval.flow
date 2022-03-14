@@ -1,0 +1,49 @@
+import tools/dsl/dynjoin/grammar;
+import tools/dsl/dsl_eval;
+import tools/dsl/dsl2flow;
+import tools/dsl/dsl_runtime_common;
+
+import rendersupport;
+
+export {
+	parseDynJoin(filename : string, code : string) -> DslAst;
+	makeDynJoinEnv() -> DslEnv;
+}
+
+grammar = defineDynJoin();
+
+parseDynJoin(filename : string, code : string) -> DslAst {
+	parseProgram(filename, grammar, code);
+}
+
+makeDynJoinEnv() -> DslEnv {
+	env0 = makeDslEnv();
+	DslEnv(env0 with 
+		locals = addCommonDslRuntime([], env0.locals),
+		natives = dynJoinNatives(env0.natives)
+	);
+}
+
+
+dynJoinNatives(natives : Tree<string, ([DslAst]) -> DslAst>) ->  Tree<string, ([DslAst]) -> DslAst> {
+	mergeTree(
+		natives,
+		pairs2tree([
+			Pair("save", \args -> {
+				filename = getDslString(args[0]);
+				content = getDslString(args[1]);
+				DslBool(setFileContent(filename, content));
+			}),
+			Pair("evaljs", \args -> {
+				code = getDslString(args[0]);
+				result = hostCall("eval", [code]);
+				flow2dsl(result)
+			}),
+			Pair("calljs", \args -> {
+				name = getDslString(args[0]);
+				cargs = map(tail(args), dsl2flow);
+				flow2dsl(hostCall(name, cargs));
+			}),
+		])
+	)
+}
