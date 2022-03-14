@@ -147,37 +147,21 @@ ensureNativeHostIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string
 						}
 					}
 					if (^success) {
-						// Check typescript files with tsc compiler
-						if (endsWith(dep.package, ".ts")) {
-							tsc_check_args = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE) {
-								["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
-							} else {
-								["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
-							}
-							tsc_check = execSystemCommandOutput(cfg, "tsc", tsc_check_args, dir);
-							if (tsc_check.exitCode != 0) {
-								fcPrintln("Failed to check types in '" + dep.package + "':\n" + tsc_check.stdall, cfg.threadId);
+						// Install dependencies
+						dep_dir = dirName(dep_file);
+						if (fileExists(pathCombine(dir, "package.json")) && !isDirectory(pathCombine(dep_dir, "node_modules"))) {
+							fcVerbose(cfg, 0, "Going to install dependencies of '" + dep.package + "'...");
+							deps_install = execSystemCommandOutput(cfg, "npm", ["install"], dep_dir);
+							if (deps_install.exitCode != 0) {
+								fcPrintln("Failed to install dependencies of '" + dep.package + "':\n" + deps_install.stdall, cfg.threadId);
 								success := false;
 							} else {
-								fcVerbose(cfg, 0, "Types in '" + dep.package + "' are checked successfully.");
+								fcVerbose(cfg, 1, deps_install.stdall);
+								fcVerbose(cfg, 0, "Dependencies of '" + dep.package + "' are successfully installed.");
+								typecheckNativeHost(dep_file, dep, dir, cfg, success);
 							}
-						}
-						if (^success) {
-							// Installing a local dependency from file with yarn
-							file_dir0 = dirName(dep_file);
-							file_dir = if (file_dir0 == dep_file) "./" else file_dir0;
-							args = ["add", "file:" + file_dir];
-							file_install = execSystemCommandOutput(cfg, "yarn", args, dir);
-							if (file_install.exitCode != 0) {
-								success := false;
-								fcPrintln(
-									"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + 
-									strIndent(file_install.stdall), 
-									cfg.threadId
-								);
-							} else {
-								fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
-							}
+						} else {
+							typecheckNativeHost(dep_file, dep, dir, cfg, success);
 						}
 					}
 				}
@@ -186,6 +170,41 @@ ensureNativeHostIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string
 				fcPrintln("No natives flow module for native host '" + dep.host + " are found.", cfg.threadId);
 				success := false;
 			}
+		}
+	}
+}
+
+typecheckNativeHost(dep_file : string, dep : FiJsDependency, dir : string, cfg : FiJsConfig, success : ref bool) -> void {
+	// Check typescript files with tsc compiler
+	if (endsWith(dep.package, ".ts")) {
+		tsc_check_args = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE) {
+			["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
+		} else {
+			["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
+		}
+		tsc_check = execSystemCommandOutput(cfg, "tsc", tsc_check_args, dir);
+		if (tsc_check.exitCode != 0) {
+			fcPrintln("Failed to check types in '" + dep.package + "':\n" + tsc_check.stdall, cfg.threadId);
+			success := false;
+		} else {
+			fcVerbose(cfg, 0, "Types in '" + dep.package + "' are checked successfully.");
+		}
+	}
+	if (^success) {
+		// Installing a local dependency from file with yarn
+		file_dir0 = dirName(dep_file);
+		file_dir = if (file_dir0 == dep_file) "./" else file_dir0;
+		args = ["add", "file:" + file_dir];
+		file_install = execSystemCommandOutput(cfg, "yarn", args, dir);
+		if (file_install.exitCode != 0) {
+			success := false;
+			fcPrintln(
+				"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" +
+				strIndent(file_install.stdall),
+				cfg.threadId
+			);
+		} else {
+			fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
 		}
 	}
 }
