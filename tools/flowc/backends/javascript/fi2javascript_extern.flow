@@ -57,7 +57,10 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 					"--define:this=undefined",
 					js_file];
 				args = if (cfg.jsmode != NODEJS_MODE) args0 else concat(args0, ["--platform=node"]);
-				fcVerbose(cfg, 0, "Linking the package with esbuild ...");
+				fcVerbose(cfg, 0, 
+					"Linking the package with esbuild ...\n" + 
+					"esbuild " + strGlue(args, " ")
+				);
 				result = execSystemCommandOutput(cfg, "esbuild", args, dir);
 				if (fileExists(js_file) && !cfg.debug) {
 					err = deleteFile(js_file);
@@ -94,7 +97,7 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 			(dep.provider == "yarn" && !strContains(provider_why.stdall, "error")) ||
 			(dep.provider == "npm" && !strContains(provider_why.stdall, "ERR!"))
 		) {
-			fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.");
+			fcVerbose(cfg, 1, "Package " + dep.package + " is already installed.\n" + provider_why.stdall);
 		} else {
 			if (dep.provider != "file") {
 				// Install an external dependency via a package manager
@@ -108,76 +111,80 @@ ensurePackageIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, c
 					fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + provider_install.stdout);
 				}
 			} else {
-				dep_file = makeLocalPathToFile(dep.package, conf_dir);
-				if (!fileExists(dep.package)) {
-					fcPrintln("File with natives definitions: '" + dep.package + "' doesn't exist", cfg.threadId);
+				ensureNativeHostIsLoaded(program, dep, dir, cfg, success, conf_dir);
+			}
+		}
+	}
+}
+
+ensureNativeHostIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string, cfg : FiJsConfig, success : ref bool, conf_dir : string) -> void {
+	dep_file = makeLocalPathToFile(dep.package, conf_dir);
+	if (!fileExists(dep.package)) {
+		fcPrintln("File with natives definitions: '" + dep.package + "' doesn't exist", cfg.threadId);
+		success := false;
+	} else {
+		ts_natives = getFileContent(dep.package);
+		switch (findModuleWithNativeHost(program, dep.host)) {
+			Some(natives_module): {
+				// Save the *.d.ts - definitions of TypeSctipt types, corresponding to flow types in natives_module.
+				ts_d_file = changeFileExt(dep_file, "-types.d.ts");
+				struct_unions = fiStructOrUnionsInNatives(program, natives_module);
+				if (!setFileContent(ts_d_file, fiStructOrUnions2Ts(struct_unions))) {
 					success := false;
+					fcPrintln("Failed to save file: '" + ts_d_file + "'", cfg.threadId);
 				} else {
-					ts_natives = getFileContent(dep.package);
-					switch (findModuleWithNativeHost(program, dep.host)) {
-						Some(natives_module): {
-							// Save the *.d.ts - definitions of TypeSctipt types, corresponding to flow types in natives_module.
-							ts_d_file = changeFileExt(dep_file, "-types.d.ts");
-							struct_unions = fiStructOrUnionsInNatives(program, natives_module);
-							if (!setFileContent(ts_d_file, fiStructOrUnions2Ts(struct_unions))) {
-								success := false;
-								fcPrintln("Failed to save file: '" + ts_d_file + "'", cfg.threadId);
+					fcVerbose(cfg, 1, "File '" + ts_d_file + "' is saved.");
+				}
+				if (^success) {
+					// Insert the import of *.d.ts into the native host sources.
+					import_str = "import * as typenames from \"./" + fileNameOnly(changeFileExt(ts_d_file, "")) + "\";\n";
+					if (!startsWith(ts_natives, import_str)) {
+						if (!setFileContent(dep.package, import_str + ts_natives)) {
+							fcPrintln("Failed to update file '" + dep.package + "' with '" + import_str + "'", cfg.threadId);
+							success := false;
+						} else {
+							fcVerbose(cfg, 1, "File '" + dep.package + "' is updated with '" + import_str + "'");
+						}
+					}
+					if (^success) {
+						// Check typescript files with tsc compiler
+						if (endsWith(dep.package, ".ts")) {
+							tsc_check_args = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE) {
+								["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
 							} else {
-								fcVerbose(cfg, 1, "File '" + ts_d_file + "' is saved.");
+								["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
 							}
-							if (^success) {
-								// Insert the import of *.d.ts into the native host sources.
-								import_str = "import * as typenames from \"./" + fileNameOnly(changeFileExt(ts_d_file, "")) + "\";\n";
-								if (!startsWith(ts_natives, import_str)) {
-									if (!setFileContent(dep.package, import_str + ts_natives)) {
-										fcPrintln("Failed to update file '" + dep.package + "' with '" + import_str + "'", cfg.threadId);
-										success := false;
-									} else {
-										fcVerbose(cfg, 1, "File '" + dep.package + "' is updated with '" + import_str + "'");
-									}
-								}
-								if (^success) {
-									// Check typescript files with tsc compiler
-									if (endsWith(dep.package, ".ts")) {
-										tsc_check_args = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE) {
-											["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
-										} else {
-											["--allowSyntheticDefaultImports", "--esModuleInterop", "--noEmit", "--moduleResolution", "node", "-t", "es6", dep.package]
-										}
-										tsc_check = execSystemCommandOutput(cfg, "tsc", tsc_check_args, dir);
-										if (tsc_check.exitCode != 0) {
-											fcPrintln("Failed to check types in '" + dep.package + "':\n" + tsc_check.stdall, cfg.threadId);
-											success := false;
-										} else {
-											fcVerbose(cfg, 0, "Types in '" + dep.package + "' are checked successfully.");
-										}
-									}
-									if (^success) {
-										// Installing a local dependency from file with yarn
-										file_dir0 = dirName(dep_file);
-										file_dir = if (file_dir0 == dep_file) "./" else file_dir0;
-										args = ["add", "file:" + file_dir];
-										file_install = execSystemCommandOutput(cfg, "yarn", args, dir);
-										if (file_install.exitCode != 0) {
-											success := false;
-											fcPrintln(
-												"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + 
-												strIndent(file_install.stdall), 
-												cfg.threadId
-											);
-										} else {
-											fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
-										}
-									}
-								}
+							tsc_check = execSystemCommandOutput(cfg, "tsc", tsc_check_args, dir);
+							if (tsc_check.exitCode != 0) {
+								fcPrintln("Failed to check types in '" + dep.package + "':\n" + tsc_check.stdall, cfg.threadId);
+								success := false;
+							} else {
+								fcVerbose(cfg, 0, "Types in '" + dep.package + "' are checked successfully.");
 							}
 						}
-						None(): {
-							fcPrintln("No natives flow module for native host '" + dep.host + " are found.", cfg.threadId);
-							success := false;
+						if (^success) {
+							// Installing a local dependency from file with yarn
+							file_dir0 = dirName(dep_file);
+							file_dir = if (file_dir0 == dep_file) "./" else file_dir0;
+							args = ["add", "file:" + file_dir];
+							file_install = execSystemCommandOutput(cfg, "yarn", args, dir);
+							if (file_install.exitCode != 0) {
+								success := false;
+								fcPrintln(
+									"Failed to run 'yarn " + strGlue(args, " ") + "'. Check that yarn is installed:\n" + 
+									strIndent(file_install.stdall), 
+									cfg.threadId
+								);
+							} else {
+								fcVerbose(cfg, 0, "Package " + dep.package + " is successfully installed.\n" + file_install.stdout);
+							}
 						}
 					}
 				}
+			}
+			None(): {
+				fcPrintln("No natives flow module for native host '" + dep.host + " are found.", cfg.threadId);
+				success := false;
 			}
 		}
 	}
