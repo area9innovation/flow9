@@ -5,33 +5,51 @@ import wabt from 'wabt';
 export function parseWat(filename: string, buffer: string, options: typenames.WasmFeatures): typenames.Promise<typenames.WasmModule, string> {
 	let fn = (fulfill: (x: any) => void, reject: (x: any) => void) =>
 		wabt().then(w => {
-			const m = w.parseWat(filename, buffer, options);
-			if (m) {
-				const module : typenames.WasmModule = {
-					name: "WasmModule",
-					_id : -1,
-					validate: () => m.validate(),
-					resolveNames: () => m.resolveNames(),
-					generateNames: () => m.generateNames(),
-					applyNames: () => m.applyNames(),
-					toText: (options: typenames.ToTextOptions) => {
-						return m.toText(options);
-					},
-					toBinary: (options: typenames.ToBinaryOptions) => {
-						const res = m.toBinary(options);
-						const ret : typenames.ToBinaryResult = {
-							name : "ToBinaryResult",
-							_id : -1,
-							buffer: Array.from(res.buffer),
-							log: res.log
-						};
-						return ret;
-					},
-					destroy: () => m.destroy()
-				};
-				fulfill(module);
-			} else {
-				reject("Failed to load *.wat file: " + filename);
+			try {
+				const m = w.parseWat(filename, buffer, options);
+				if (m) {
+					const module : typenames.WasmModule = {
+						name: "WasmModule",
+						_id : -1,
+						validate: () => {
+							try {
+								m.validate();
+								return  "";
+							} catch (err) {
+								return err.toString();
+							}
+						},
+						resolveNames: () => m.resolveNames(),
+						generateNames: () => m.generateNames(),
+						applyNames: () => {
+							try {
+								m.applyNames();
+								return "";
+							} catch (err) {
+								return err.toString();
+							}
+						},
+						toText: (options: typenames.ToTextOptions) => {
+							return m.toText(options);
+						},
+						toBinary: (options: typenames.ToBinaryOptions) => {
+							const res = m.toBinary(options);
+							const ret : typenames.ToBinaryResult = {
+								name : "ToBinaryResult",
+								_id : -1,
+								buffer: Array.from(res.buffer),
+								log: res.log
+							};
+							return ret;
+						},
+						destroy: () => m.destroy()
+					};
+					fulfill(module);
+				} else {
+					reject("Failed to load *.wat file: " + filename);
+				}
+			} catch (err) {
+				reject(err.toString());
 			}
 		});
 	const ret: typenames.Promise<any, any> = {
@@ -47,33 +65,51 @@ export function readWasm(buffer: number[], read_options: typenames.ReadWasmOptio
 	let fn = (fulfill: (x: any) => void, reject: (x: any) => void) =>
 		wabt().then(w => {
 			const all_opts = {...read_options, ...options};
-			const m = w.readWasm(Uint8Array.from(buffer), all_opts);
-			if (m) {
-				const module : typenames.WasmModule = {
-					name: "WasmModule",
-					_id : -1,
-					validate: () => m.validate(),
-					resolveNames: () => m.resolveNames(),
-					generateNames: () => m.generateNames(),
-					applyNames: () => m.applyNames(),
-					toText: (options: typenames.ToTextOptions) => {
-						return m.toText(options);
-					},
-					toBinary: (options: typenames.ToBinaryOptions) => {
-						const res = m.toBinary(options);
-						const ret : typenames.ToBinaryResult = {
-							name : "ToBinaryResult",
-							_id : -1,
-							buffer: Array.from(res.buffer),
-							log: res.log
-						};
-						return ret;
-					},
-					destroy: () => m.destroy()
-				};
-				fulfill(module);
-			} else {
-				reject("Failed to load wasm binary");
+			try {
+				const m = w.readWasm(Uint8Array.from(buffer), all_opts);
+				if (m) {
+					const module : typenames.WasmModule = {
+						name: "WasmModule",
+						_id : -1,
+						validate: () => {
+							try {
+								m.validate();
+								return  "";
+							} catch (err) {
+								return err.toString();
+							}
+						},
+						resolveNames: () => m.resolveNames(),
+						generateNames: () => m.generateNames(),
+						applyNames: () => {
+							try {
+								m.applyNames();
+								return "";
+							} catch (err) {
+								return err.toString();
+							}
+						},
+						toText: (options: typenames.ToTextOptions) => {
+							return m.toText(options);
+						},
+						toBinary: (options: typenames.ToBinaryOptions) => {
+							const res = m.toBinary(options);
+							const ret : typenames.ToBinaryResult = {
+								name : "ToBinaryResult",
+								_id : -1,
+								buffer: Array.from(res.buffer),
+								log: res.log
+							};
+							return ret;
+						},
+						destroy: () => m.destroy()
+					};
+					fulfill(module);
+				} else {
+					reject("Failed to load wasm binary");
+				}
+			} catch (err) {
+				reject(err.toString());
 			}
 		});
 	const ret: typenames.Promise<any, any> = {
