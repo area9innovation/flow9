@@ -544,7 +544,7 @@ class PixiWorkarounds {
 					{
 						// word won't fit because of existing words
 						// start a new line
-						if (Math.floor((tokenWidth + width) * 100) / 100 > wordWrapWidth)
+						if (tokenWidth + width > wordWrapWidth)
 						{
 							// if its a space we don't want it
 							canPrependSpaces = false;
