@@ -124,12 +124,20 @@ export {
 		placementType : MSuggestionsPlacementType,
 		inLine : Maybe<MAutoCompleteInLineState>,
 		updateDelay : int,
-		showMoreResults : Maybe<DynamicBehaviour<Pair<int, int>>>
+		showMoreResults : Maybe<DynamicBehaviour<Pair<int, int>>>,
+		autoCompleteAsync : Maybe<MAutoCompleteAsyncState>
 	);
 
 	MAutoCompleteInLineState(
 		bestSuggestion : Transform<Maybe<Pair<string, string>>>,
 		showPopup : bool
+	);
+
+	MAutoCompleteAsyncState(
+		makeRequest : (txt : string, onResponse : ([string]) -> void) -> void,
+		minChars : int,
+		currentRequests : DynamicBehaviour<int>,
+		prevRequestText : DynamicBehaviour<Maybe<string>>
 	);
 
 	MInputPopupState(
@@ -654,8 +662,21 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			)
 		};
 
+	autoCompleteAsync =
+		maybeMap(
+			tryExtractStruct(style, MAutoCompleteAsync(nop2)),
+			\async -> {
+				MAutoCompleteAsyncState(
+					async.makeRequest,
+					startSearch.minChars,
+					make(0),
+					make(None())
+				)
+			}
+		);
+
 	autocomplete =
-		if (matchers != []) {
+		if (matchers != [] || isSome(autoCompleteAsync)) {
 			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
 			maxResults = extractStruct(style, MMaxResults(10)).results;
 
@@ -721,7 +742,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
 					inLine,
 					startSearch.wait,
-					showMoreResults
+					showMoreResults,
+					autoCompleteAsync
 				)
 			)
 		} else
@@ -795,42 +817,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		maybeApply(
 			autocomplete,
 			\ac -> {
-				c2 =
-					if (!ac.includeSpaces) {
-						linesN = strSplit(c, "\n");
-						words = strSplit(c, " ");
-						lastElement(words, "");
-					} else {
-						c
-					};
+				dispUnsM(autocompleteHandlerUns);
+				autoCompleteHandler = \ -> {
+					c2 =
+						if (!ac.includeSpaces) {
+							linesN = strSplit(c, "\n");
+							words = strSplit(c, " ");
+							lastElement(words, "");
+						} else {
+							c
+						};
 
-				showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
-				chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
-				simultaneous = max(length(mtch) / chunkSize, 50);
-				mapAsyncParallelChunked(
-					mtch, chunkSize, simultaneous,
-					\chunk, fulfill, __ -> {
-						mapConcat(
-							chunk,
-							\matcherPair -> {
-								if (showAll)
-									filtermap(
-										matcherPair.second.sentences, 
-										\s -> {
-											if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
-											else None()
-										}
-									)
-								else
-									map(
-										ac.sentenceMatcher.fn(matcherPair.second, c2, intMax, true, false, getValue(position)),
-										\h -> SentenceHitExtended(h.matcher, h.sentence, h.score, h.origWords, matcherPair.first)
-									)
-							}
-						) |> fulfill
-					},
-					\allCompl -> {
-						compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
+					onAllCompl = \allCompl : [SentenceMatch], needSort -> {
+						compl = if (needSort) mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score)) else allCompl;
 						maybeApply(ac.showMoreResults, \results -> nextDistinct(results, Pair(ac.maxResults, length(compl))));
 
 						updateFn = \sentences -> {
@@ -870,20 +869,71 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								eitherMap(suggest, \sg -> [sg], [])
 							};
 
-						dispUnsM(autocompleteHandlerUns);
-
-						if (ac.updateDelay == 0 || length(newSentences) == 0)
-							updateFn(newSentences)
-						else
-							setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, \ -> updateFn(newSentences)))
-
-					},
-					\localError -> {
-						devtrace("Something goes wrong building completions.");
-						devtrace(localError);
+						updateFn(newSentences)
 					}
-				);
-			},
+
+					eitherFn(
+						ac.autoCompleteAsync,
+						\async -> {
+							enabled = foc && eitherMap(getValue(async.prevRequestText), \prevText -> prevText != c2, true);
+							if (enabled) {
+								if (strlen(c2) < async.minChars) onAllCompl([], false)
+								else {
+									onResponse = \items -> {
+										mtchr = ac.sentenceMatcher.matcher([]);
+										allCompl = map(items, \it ->
+											SentenceHit(mtchr, it, 0., makeSet())
+										);
+										onAllCompl(allCompl, false);
+										nextDistinct(async.currentRequests, getValue(async.currentRequests) - 1);
+									};
+									nextDistinct(async.currentRequests, getValue(async.currentRequests) + 1);
+									nextDistinct(async.prevRequestText, Some(c2));
+									async.makeRequest(c2, onResponse)
+								}
+							}
+						},
+						\ -> {
+							showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
+							chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
+							simultaneous = max(length(mtch) / chunkSize, 50);
+							mapAsyncParallelChunked(
+								mtch, chunkSize, simultaneous,
+								\chunk, fulfill, __ -> {
+									mapConcat(
+										chunk,
+										\matcherPair -> {
+											if (showAll)
+												filtermap(
+													matcherPair.second.sentences, 
+													\s -> {
+														if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
+														else None()
+													}
+												)
+											else
+												map(
+													ac.sentenceMatcher.fn(matcherPair.second, c2, intMax, true, false, getValue(position)),
+													\h -> SentenceHitExtended(h.matcher, h.sentence, h.score, h.origWords, matcherPair.first)
+												)
+										}
+									) |> fulfill
+								},
+								\allCompl -> onAllCompl(allCompl, true),
+								\localError -> {
+									devtrace("Something goes wrong building completions.");
+									devtrace(localError);
+								}
+							);
+						}
+					)
+				}
+
+				if (ac.updateDelay == 0)
+					autoCompleteHandler()
+				else
+					setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, autoCompleteHandler))
+			}
 		);
 
 		newC =
@@ -2377,6 +2427,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 	inpWH = makeWH();
 
+	showInput = fOr(inputState.mfocus.focused, fand(const(inputState.multiline), inputState.mfocus.focusEnabled));
+
 	textInput = \ ->
 		TransformTAcc(\t2a, pi, ss, mo ->
 			t2a(
@@ -2491,7 +2543,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 		)
 		|> (\f -> TFixSize(f, TGhost("MTextInputSize")))
 		|> (\f -> disableScrollInsideEnabled(manager, f, inputState.mfocus.focused))
-		|> (\f -> TAlpha(fif(inputState.mfocus.focused, const(1.), zero), f))
+		|> (\f -> TAlpha(fif(showInput, const(1.), zero), f))
 		|> (\f ->
 			TransformTAcc2(\t2a -> {
 				acc = f |> t2a;
@@ -2521,7 +2573,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	|> (\f ->
 		TGroup2WithoutMetrics(
 			TVisible(
-				fnot(inputState.mfocus.focused),
+				fnot(showInput),
 				MScroll2T(
 					manager,
 					inputState.parent,
