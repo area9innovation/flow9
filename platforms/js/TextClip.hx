@@ -146,9 +146,9 @@ class TextClip extends NativeWidgetClip {
 	private var readOnly : Bool = false;
 	private var maxChars : Int = -1;
 
-	private var cursorPosition : Int = -1;
-	private var selectionStart : Int = -1;
-	private var selectionEnd : Int = -1;
+	private var cursorPosition : Int = 0;
+	private var selectionStart : Int = 0;
+	private var selectionEnd : Int = 0;
 
 	private var background : FlowGraphics = null;
 
@@ -1748,7 +1748,7 @@ class TextClip extends NativeWidgetClip {
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
 
-			if (useTextBackgroundWidget) {
+			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
 				textBackgroundWidget.classList.add('textBackgroundWidget');
 			}
