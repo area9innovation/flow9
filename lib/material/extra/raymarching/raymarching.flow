@@ -4,11 +4,13 @@ export {
 	MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
 	MRaymarchingSidePanel(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
 
-	RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMMaterial, RMLight, RMPlus, RMEmpty;
+	RMObject ::= RMCompositeObject, RMSphere, RMTranslate, RMUnion2, RMUnion, RMPlane, RMMaterial, RMLight, RMPlus, RMEmpty;
+		RMCompositeObject(object : RMObject, material : RMMaterials, position : RMCoordinate);
 		RMSphere(radius : double);
 		RMPlane(normal : RMXYZ, height : double);
 		RMTranslate(object : RMObject, d : RMCoordinate);
-		RMUnion(object1 : RMObject, object2 : RMObject);
+		RMUnion2(object1 : RMObject, object2 : RMObject);
+		RMUnion(objects : [RMObject]);
 		RMMaterial(object : RMObject, color : RMMaterials);
 		RMMaterials ::= RMColor, RMReflect;
 			RMColor(color : int);
@@ -132,10 +134,12 @@ RMObject2Material(obj : DynamicBehaviour<RMObject>) -> Material {
 
 getRMObjectLightTypeIndex(obj : RMObject) -> Maybe<int> {
 	switch(obj) {
+		RMCompositeObject(object, material, position): None();
 		RMSphere(radius): None();
 		RMPlane(normal, height): None();
 		RMTranslate(object, d): Some(1);
-		RMUnion(object1, object2): None();
+		RMUnion2(object1, object2): None();
+		RMUnion(objects): None();
 		RMMaterial(object, mat): Some(2);
 		RMLight(size): Some(3);
 		RMPlus(object1, object2): Some(4);
@@ -212,6 +216,7 @@ RMObject2MTreeNode(obj : DynamicBehaviour<RMObject>) -> MTreeNode {
 RMObject2MaterialLine(o : RMObject, obj : DynamicBehaviour<RMObject>, childrenMergeT : Transform<[RMObject]>) -> Material {
 	prevTypesB = make(fgetValue(fmap(childrenMergeT, getRMObjectLightTypeIndex)));
 	switch(o) {
+		RMCompositeObject(object, material, position): MEmpty();
 		RMSphere(radius): MEmpty();
 		RMPlane(normal, height): MEmpty();
 		RMTranslate(object, d): {
@@ -235,7 +240,8 @@ RMObject2MaterialLine(o : RMObject, obj : DynamicBehaviour<RMObject>, childrenMe
 				])
 			)
 		};
-		RMUnion(object1, object2): MText("Union", []);
+		RMUnion2(object1, object2): MText("Union", []);
+		RMUnion(objects): MText("Union", []);
 		RMMaterial(object, mat): switch(mat) {
 			RMColor(col): {
 				colB = make(colorInt2MColor(col));
@@ -277,10 +283,12 @@ RMObject2MaterialLine(o : RMObject, obj : DynamicBehaviour<RMObject>, childrenMe
 
 getRMObjectChildren(obj : RMObject) -> [RMObject] {
 	switch(obj) {
+		RMCompositeObject(object, material, position): [];
 		RMSphere(radius): [];
 		RMPlane(normal, height): [];
 		RMTranslate(object, d): [object];
-		RMUnion(object1, object2): [object1, object2];
+		RMUnion2(object1, object2): [object1, object2];
+		RMUnion(objects): objects;
 		RMMaterial(object, col): [object];
 		RMLight(size): [];
 		RMPlus(object1, object2): [object1, object2];
@@ -344,6 +352,10 @@ RMObject2RMIExp(obj : RMObject, reflect : bool) -> RMIExp {
 
 RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect : bool) -> Pair<int, RMIExp> {
 	switch(obj) {
+		RMCompositeObject(object, material, position): {
+			compositeObject = RMTranslate(RMMaterial(object, material), position);
+			RMObject2RMIExp0(compositeObject, acc, color, id, reflect);
+		};
 		RMSphere(radius): addColorToRMIExp(
 			RMICall(RMIOp("-"), [
 				RMICall(RMIFn("length"), [
@@ -368,7 +380,7 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 			color
 		);
 		RMTranslate(object, d): RMObject2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
-		RMUnion(object1, object2): {
+		RMUnion2(object1, object2): {
 			exp1 = RMObject2RMIExp0(object1, acc, color, id, reflect);
 			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first, reflect);
 			Pair(exp2.first, RMICall(RMIFn("minOI"),
@@ -377,6 +389,22 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 					exp2.second,
 				]
 			))
+		};
+		RMUnion(objects): {
+			if (length(objects) > 0 ) {
+				exp1 = RMObject2RMIExp0(objects[0], acc, color, id, reflect);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMObject2RMIExp0(obj2, acc, color, acc2.first, reflect);
+					Pair(exp2.first, RMICall(RMIFn("minOI"),
+						[
+							acc2.second,
+							exp2.second,
+						]
+					))
+				})
+			} else {
+				Pair(id, RMIEmpty());
+			}
 		};
 		RMMaterial(object, mat): {
 			switch(mat) {
@@ -428,6 +456,10 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 
 RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 	switch(obj) {
+		RMCompositeObject(object, material, position): {
+			compositeObject = RMTranslate(RMMaterial(object, material), position);
+			RMObject2RMIExpJS(compositeObject, acc, color);
+		};
 		RMSphere(radius): 
 			RMICall(RMIOp("-"), [
 				RMICall(RMIFn("glm.length"), [
@@ -446,12 +478,28 @@ RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 				RMIDouble(height)]
 			);
 		RMTranslate(object, d): RMObject2RMIExpJS(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
-		RMUnion(object1, object2): RMICall(RMIFn("Math.min"),
+		RMUnion2(object1, object2): RMICall(RMIFn("Math.min"),
 			[
 				RMObject2RMIExpJS(object1, acc, color),
 				RMObject2RMIExpJS(object2, acc, color),
 			]
 		);
+		RMUnion(objects): {
+			if (length(objects) > 0 ) {
+				exp1 = RMObject2RMIExpJS(objects[0], acc, color);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMObject2RMIExpJS(obj2, acc, color);
+					RMICall(RMIFn("Math.min"),
+						[
+							acc2,
+							exp2,
+						]
+					)
+				})
+			} else {
+				RMIEmpty();
+			}
+		};
 		RMMaterial(object, col): RMObject2RMIExpJS(object, acc, color);
 		RMLight(size): RMIEmpty();
 		RMPlus(object1, object2): RMICall(RMIOp("+"),
