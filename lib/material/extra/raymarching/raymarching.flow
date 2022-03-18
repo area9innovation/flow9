@@ -2,6 +2,7 @@ import material/material_ui;
 
 export {
 	MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
+	MDynamicRaymarching(scene : Transform<RMObject>, light : Transform<RMObject>, camera : Transform<RMCamera>) -> Material;
 	MRaymarchingSidePanel(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
 
 	RMObject ::= RMCompositeObject, RMSphere, RMTranslate, RMUnion2, RMUnion, RMPlane, RMMaterial, RMLight, RMPlus, RMEmpty;
@@ -72,6 +73,71 @@ MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material 
 		blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
 		"#include material/extra/raymarching/raymarching.vert",
 		blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
+	)
+}
+
+MDynamicRaymarching(sceneB : Transform<RMObject>, lightB : Transform<RMObject>, cameraB : Transform<RMCamera>) -> Material {
+	glsl = RMIExp2GLSL(RMObject2RMIExp(fgetValue(sceneB), true));
+	material1 = RMIExp2GLSLMaterial(RMObject2RMIExp(fgetValue(sceneB), true));
+	material2 = RMIExp2GLSLMaterial(RMObject2RMIExp(fgetValue(sceneB), false));
+	jsScene = RMIExp2JS(RMObject2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(fgetValue(lightB), true));
+
+	setCameraString = formatString(
+		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
+		[
+			d2s(fgetValue(cameraB).position.x),
+			d2s(fgetValue(cameraB).position.y),
+			d2s(fgetValue(cameraB).position.z),
+			d2s(fgetValue(cameraB).direction.x),
+			d2s(fgetValue(cameraB).direction.y),
+			d2s(fgetValue(cameraB).direction.z),
+		]
+	);
+
+	MConstruct(
+		[
+			make2Subscribe2(
+				fthrottle(sceneB, 500), fthrottle(lightB, 500),
+				\s, l -> {
+					hostCall("recompileShader", [
+						blueprint(
+							"#include material/extra/raymarching/raymarching.frag",
+							[
+								"distanceFunction", RMIExp2GLSL(RMObject2RMIExp(s, true)),
+								"light", RMIExp2GLSL(RMObject2RMIExp(l, true)),
+								"materialFunction1", RMIExp2GLSLMaterial(RMObject2RMIExp(s, true)),
+								"materialFunction2", RMIExp2GLSLMaterial(RMObject2RMIExp(s, false))
+							]
+						)
+					]) |> ignore;
+					hostCall(
+						"setDistanceFunction",
+						[formatString("(p) => {return %1;}", [RMIExp2JS(RMObject2RMIExpJS(s, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)))])]
+					) |> ignore;
+				}
+			),
+			makeSubscribe2(
+				fthrottle(cameraB, 500),
+				\c -> {
+					hostCall("setCameraPosition", [
+						c.position.x,
+						c.position.y,
+						c.position.z
+					]) |> ignore;
+					hostCall("setCameraDirection", [
+						c.direction.x,
+						c.direction.y,
+						c.direction.z
+					]) |> ignore;
+				}
+			)
+		],
+		displayRaymarchingCanvas(
+			blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
+			"#include material/extra/raymarching/raymarching.vert",
+			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
+		)
 	)
 }
 
