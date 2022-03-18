@@ -7,10 +7,10 @@ import tools/flow9/backends/js/js_runtime;
 
 export {
 	// Compiles the given flow path to JS as a single string
-	bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool) -> string;
+	bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool, jsmode : int) -> Promise<string, string>;
 }
 
-bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool) -> string {
+bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool, jsmode : int) -> Promise<string, string> {
 	backend = jsBackend();
 	spec = makeBackendSpec(backend, "t_", "", "__",
 		// We consider a native is a generator for a named identifier (non arithmetic, comparison, etc.)
@@ -20,38 +20,41 @@ bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool) -> string {
 	bexp_program = renameIdsBExpProgram(bmodules2BExpProgram(modules, spec), spec, shorten_ids);
 	prog = bexpProgram2BProgram(bexp_program.first);
 	shortenIds = bexp_program.second;
-	bprogram2js(prog, flowpath, backend, shortenIds);
+	bprogram2js(prog, flowpath, backend, shortenIds, jsmode);
 }
 
-bprogram2js(b : BProgram, flowpath : string, backend : Backend<bool>, shorten_ids : RenameIds) -> string {
+bprogram2js(b : BProgram, flowpath : string, backend : Backend<bool>, shorten_ids : RenameIds, jsmode : int) -> Promise<string, string> {
 	cfg = JsConfig(makeJsConfig(flowpath) with 
 		// The debugging configuration: while backend is under development.
 		verbose = 2,
-		jsmode = NODEJS_MODE,
+		jsmode = jsmode,
 		code = true
 	);
 
 	native_classes = ref makeSet();
 	native_names = collectBProgramNativeNames(b, \class_ -> native_classes := insertSet(^native_classes, class_));
 
-	runtime = linkRuntime(cfg, ^native_classes, "main");
-	structs = getTreeValues(b.structs);
-	original_ids = reverseRenameIds(shorten_ids);
+	thenP(linkHaxeRuntime(cfg, ^native_classes, "main"),
+		\runtime -> {
+			structs = getTreeValues(b.structs);
+			original_ids = reverseRenameIds(shorten_ids);
 
-	struct_names = buildSet(map(structs, \s -> s.id));
-	struct_funcs = supergluei(structs, \i, s : DStruct -> dstruct2js(i, backend, s, original_ids, struct_names), "\n");
-	body = superglue(b.declarations, \d : BDeclaration -> bdeclaration2js(backend, d), "\n");
+			struct_names = buildSet(map(structs, \s -> s.id));
+			struct_funcs = supergluei(structs, \i, s : DStruct -> dstruct2js(i, backend, s, original_ids, struct_names), "\n");
+			body = superglue(b.declarations, \d : BDeclaration -> bdeclaration2js(backend, d), "\n");
 
-	// The backend keeps track of what requirements are used by the various
-	// constructs used
-	getBackendRequirements(backend)
-	+ "// RUNTIME\n" 
-	+ runtime + "\n"
-	+ "// STRUCTS\n"
-	+ struct_funcs + "\n"
-	+ "// BODY\n"
-	+ body + "\n"
-	+ lookupTreeDef(shorten_ids.varRenamings, "main", "main") + "()";
+			// The backend keeps track of what requirements are used by the various
+			// constructs used
+			getBackendRequirements(backend)
+			+ "// RUNTIME\n" 
+			+ runtime + "\n"
+			+ "// STRUCTS\n"
+			+ struct_funcs + "\n"
+			+ "// BODY\n"
+			+ body + "\n"
+			+ lookupTreeDef(shorten_ids.varRenamings, "main", "main") + "()";
+		}
+	);
 }
 
 collectBProgramNativeNames(b : BProgram, add_class : (string) -> void) -> Tree<string, string> {
@@ -90,7 +93,7 @@ dstruct2js(i : int, backend : Backend<bool>, s : DStruct, original_ids : RenameI
 
 bdeclaration2js(backend : Backend<bool>, b : BDeclaration) -> string {
 	switch (b) {
-		BStatFunction(name, args, body, tailcall, __): {
+		BStatFunction(name, typars, args, body, tailcall, __): {
 			if (tailcall) {
 				blueprint("
 					function %name%(%args%) {
@@ -246,7 +249,7 @@ bexp2js(backend : Backend<bool>, b : BExp) -> string {
 					"body", bstatement2js(backend, bexp2BReturn(body), type != bvoidType),
 			])
 		}
-		BLambda(args, body, __): {
+		BLambda(args, body, __, __): {
 			"function(" 
 			+ strGlue(args, ", ") + ") {" 
 			+ bstatement2js(backend, bexp2BReturn(body), getBType(body) != bvoidType)
@@ -281,6 +284,9 @@ bexp2js(backend : Backend<bool>, b : BExp) -> string {
 			"[" + superglue(args, \arg -> bexp2js(backend, arg), ", ") + "]";
 		}
 		BCast(value, from, to) : bexp2js(backend, value);
+		BDupValue(value) : bexp2js(backend, value);
+		BDropValue(value) : bexp2js(backend, value);
+		BReuseValue(value) : bexp2js(backend, value);
 	}
 }
 

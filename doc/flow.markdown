@@ -707,8 +707,8 @@ Example:
 	a = Pair(1, "text");
 	switch (a : Pair) {
 		Pair(f, s):  {
-			println( f ); // Prints 1
-			println( s ); // Prints "text"
+			println(f); // Prints 1
+			println(s); // Prints "text"
 		}
 	}
 
@@ -719,8 +719,8 @@ This code is practically equivalent to
 	if (a.structname == "Pair") {
 		f = a.first;
 		s = a.second;
-		println( f ); // Prints 1
-		println( s ); // Prints "text"
+		println(f); // Prints 1
+		println(s); // Prints "text"
 	}
 
 although it is more efficient with the switch.

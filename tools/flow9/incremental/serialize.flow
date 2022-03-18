@@ -5,9 +5,17 @@ import fs/filesystem;
 import text/serialize;
 
 export {
+	getDummyBModule() -> BModule;
+
 	readBModule(tracing : Tracing, fullpath : string, flowpath : string) -> Maybe<BModule>;
 	writeBModule(tracing : Tracing, bmod : BModule) -> void;
 	deleteBModule(tracing : Tracing, flowpath : string) -> void;
+}
+
+getDummyBModule() -> BModule {
+	BModule("", "", [], [], DExport(makeSet(), makeSet(), makeSet(), -1), 
+		makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), []
+	);
 }
 
 bincrementalVersion : int = 1;
@@ -21,6 +29,10 @@ BIncremental(
 	serialized : string // A serialized bmodule
 );
 
+getDummyBIncremental() -> BIncremental {
+	BIncremental(0, "", 0.0, "", 0.0, "");
+}
+
 readBModule(tracing : Tracing, fullpath : string, flowpath : string) -> Maybe<BModule> {
 	path = getBIncrementalPath(flowpath);
 	if (isUrlParameterFalse("incremental")) {
@@ -28,23 +40,27 @@ readBModule(tracing : Tracing, fullpath : string, flowpath : string) -> Maybe<BM
 		None();
 	} else if (fileExists(path)) {
 		finc = getFileContent(path);
-		flinc = deserialize(finc, IllegalStruct());
-		if (flinc == IllegalStruct()) {
+		flinc = deserializeEx(finc, getDummyBIncremental(), [DeserializeOptionThrowErrors(true)]);
+		if (flinc.first == getDummyBIncremental() || flinc.second != "") {
+			println("Removing wrong incremental file for " + flowpath + ": " + flinc.second);
+			deleteBModule(tracing, flowpath);
 			None();
 		} else {
-			inc : BIncremental = flinc;
+			inc : BIncremental = flinc.first;
 			if (inc.version == bincrementalVersion) {
 				binc = makeBIncremental(fullpath, "");
 				if (isBIncrementalSame(inc, binc)) {
-					bmod = deserialize(inc.serialized, IllegalStruct());
-					if (bmod != IllegalStruct()) {
+					dummy = getDummyBModule();
+					bmod = deserializeEx(inc.serialized, dummy, [DeserializeOptionThrowErrors(true)]);
+					if (bmod.first != dummy && bmod.second == "") {
 						if (isTracingId(tracing, StageParse(), 0, flowpath)) {
 							println("Using incremental file for " + flowpath);
 						}
 						// println("Reusing incremental " + flowpath);
-						Some(bmod)
+						Some(bmod.first)
 					} else {
 						// Something wrong with the incremental file. Remove it
+						println("Removing wrong incremental file for " + flowpath + ": " + bmod.second);
 						deleteBModule(tracing, flowpath);
 						None();
 					}

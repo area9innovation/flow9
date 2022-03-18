@@ -530,7 +530,7 @@ MMenuPanel2T(manager : MaterialManager, parent : MFocusGroup, m : MMenuPanel, m2
 MDropDownMenu2T(
 	manager : MaterialManager, parent : MFocusGroup, m : MDropDownMenu, m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
-	items = m.items;
+	items : [MDropDownMenuLine] = m.items;
 	current = m.current;
 	style = m.style;
 
@@ -600,11 +600,15 @@ MDropDownMenu2T(
 		|> (\f2 ->
 			if (f2 != 0.)
 				f2
-			else
+			else {
+				mitems : [MMenuLine] = 
+					arrayPush(
+						if (isNone(customButton)) map(items, addIcons) else items,
+						nonSpecified
+					);
 				MMenuLines2MPopup(
 					manager,
-					arrayPush(items, nonSpecified)
-					|> (\f3 : [MDropDownMenuLine] -> if (isNone(customButton)) map(f3, addIcons) else f3),
+					mitems,
 					MDropDownMenuStyle2MMenuStyle(style),
 					m2t,
 					const(zeroPositionScale),
@@ -617,6 +621,8 @@ MDropDownMenu2T(
 				|> MGrid
 				|> (\f3 -> m2t(f3, parent))
 				|> (\f3 -> getTWordMetrics(f3, makeTree()).width) // TODO : Rework without using getTWordMetrics
+
+			}
 		);
 
 	popupId = getPopupId(manager);
@@ -1148,7 +1154,7 @@ MDropDownMenuButton2T(
 	TSelect(lineB, \line ->  // Display chosen item when not expanded
 		switch (line) {
 			MMenuSingleLine(title, style): {
-				lineTextStyle = extractStruct(style, MCustomTextStyle(textStyle)).style;
+				lineTextStyle : [MTextStyle] = extractStruct(style, MCustomTextStyle(textStyle)).style;
 				baseline = make(0.);
 				height = make(0.);
 
@@ -1167,6 +1173,7 @@ MDropDownMenuButton2T(
 
 						characterStyle = MTextStyle2CharacterStyle(parent, lineTextStyle);
 						labelSize = extractStruct(characterStyle, FontSize(14.)).size;
+						themeColor : Transform<MThemeColor> = dynColor;
 						TGroup2(
 							TVisible(showTitle, if (filled && !isNonSpec) TTranslate(const(Point(0., 8.)), t) else t),
 							TVisible(
@@ -1177,7 +1184,7 @@ MDropDownMenuButton2T(
 										const(characterStyle),
 										const(replaceStruct(characterStyle, FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))))
 									),
-									Some(MDynamicColor(cast(dynColor : DynamicBehaviour<MColor> -> Transform<MThemeColor>))),
+									Some(MDynamicColor(themeColor)),
 									labelWidth, m2t
 								)
 							)
@@ -1198,16 +1205,18 @@ MDropDownMenuButton2T(
 				|> TCenterY
 				|> (\t ->
 					if (plain) t
-					else
+					else {
+						themeColor : Transform<MThemeColor> = dynColor;
 						TGroup2(
 							if (filled) TTranslate(const(Point(0., 8.)), t) else t,
 							makeMFloatingLabel(manager, parent, nonSpecifiedLabel,
 								makeFloatingLabelState(style, const(true), 14.),
 								fif(active, const([]), const([FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))])),
-								Some(MDynamicColor(cast(dynColor : DynamicBehaviour<MColor> -> Transform<MThemeColor>))),
+								Some(MDynamicColor(themeColor)),
 								labelWidth, m2t
 							)
 						)
+					}
 				)
 				|> (\f -> if (iconNearTitle) f else TGroup2(TFillX(), f))
 				|> addActions(style)
@@ -1413,7 +1422,8 @@ MMenuLinesState(
 	nearTitle : bool,
 	popupId : string,
 	activeDescendantId : DynamicBehaviour<string>,
-	makeTitle : (MFocusGroup, [MTextStyle], Transform<string>, bool, bool, Maybe<DynamicBehaviour<double>>, Maybe<DynamicBehaviour<double>>) -> Tropic
+	makeTitle : (MFocusGroup, [MTextStyle], Transform<string>, bool, bool, Maybe<DynamicBehaviour<double>>, Maybe<DynamicBehaviour<double>>) -> Tropic,
+	singleSelectionToggle : bool
 );
 
 MMenuLines2Material(
@@ -1477,17 +1487,45 @@ MMenuLines2Material(
 		|> (\m -> MCenterYIn(m, TFixed(0., lineHeight)));
 
 	shiftGap = if (indexShift) 2 else 0;
-	onItemClick = \i, click -> \ -> {
+
+	unselectPrevious = \ss -> {
+		prevSelected = getValue(ss.selected);
+		if (prevSelected >= 0 && prevSelected + shiftGap < length(items1)) {
+			switch(items1[prevSelected + shiftGap]) {
+				MMenuSingleLine(__, ___style): {
+					nextDistinct(extractStruct(___style, MSelected(make(false))).selected, false);
+				}
+				MMenuCustomLine(__, ___style):{
+					nextDistinct(extractStruct(___style, MSelected(make(false))).selected, false);
+				}
+				default : {}
+			}
+		}
+	}
+
+	onItemClick = \i, click, isSelected -> \ -> {
 		nextDistinct(openMenu.opened, false);
 		closeBelow();
 
 		if (i >= shiftGap) {
 			timer(50, \ ->
-				maybeApply(singleSelection, \ss -> nextFn(ss.selected, i - shiftGap))
+				maybeApply(singleSelection, \ss -> {
+					unselectPrevious(ss);
+					if (state.singleSelectionToggle && getValue(ss.selected) == i - shiftGap) {
+						nextFn(ss.selected, -1);
+						nextDistinct(isSelected, false)
+					} else {
+						nextFn(ss.selected, i - shiftGap);
+						nextDistinct(isSelected, true)
+					}
+				})
 			);
 			if (fgetValue(onListClick.enabled)) onListClick.onClick(i - shiftGap);
 			click(); // action is moved outside delayed code - to solve issue with copying something to clipboard in a firefox.
-		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> nextFn(ss.selected, -1))
+		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> {
+			unselectPrevious(ss);
+			nextFn(ss.selected, -1)
+		})
 	};
 
 	itemOnTop = \i -> {
@@ -1510,7 +1548,7 @@ MMenuLines2Material(
 		else
 			style;
 
-	addActions = \parent, style, selected, addPlayArrow, primaryWidth, secondaryWidth -> \t ->
+	addActions = \parent, style : [flow], selected, addPlayArrow, primaryWidth, secondaryWidth -> \t ->
 		TColsDir([
 			MMenuPrimaryAction2T(state.manager, parent, style, lineHeight, lineBorders, getTextColor(parent),
 				selectedColor(parent), selected, indent, state.m2t, primaryWidth),
@@ -1540,7 +1578,8 @@ MMenuLines2Material(
 		MGetFocusGroup(\parent -> {
 			style = getLineStyle(_style, i);
 			hgt = extractStruct(style, MHeight(lineHeight)).height;
-			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click);
+			selectedInspector = extractStruct(style, MSelected(make(false))).selected;
+			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector);
 			selected = selectedId == i && !indexShift;
 			id = state.popupId + "_menuitem" + i2s(i);
 			focusState =
@@ -1850,6 +1889,7 @@ MMenuLines2MPopup(
 	widthByButton = contains(style0, MWidthByButton());
 	mWidthLimits = tryExtractStruct(style0, MMenuWidthLimits(zero, zero));
 	singleSelection = tryExtractStruct(style0, MSingleSelection(make(-1)));
+	singleSelectionToggle = contains(style0, MSingleSelectionToggle());
 	selectedId = eitherMap(singleSelection, \ss -> getValue(ss.selected), -1);
 	selectedColor : (MFocusGroup) -> MColor = \parent -> MThemeColor2MColor(parent, extractStruct(style0, MSelectedColor(MAccentColor())).color);
 	openMenu = extractStruct(style0, MOpenMenu(make(false)));
@@ -1909,7 +1949,7 @@ MMenuLines2MPopup(
 			t
 		);
 
-	menuLinesState = MMenuLinesState(manager, m2t, lineHeight, elevation, nearTitle, popupId, activeDescendantId, makeTitle);
+	menuLinesState = MMenuLinesState(manager, m2t, lineHeight, elevation, nearTitle, popupId, activeDescendantId, makeTitle, singleSelectionToggle);
 
 	items = MMenuLines2Material(items0, style0, lineBorders, closeBelow, focusedItem, menuLinesState);
 

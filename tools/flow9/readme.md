@@ -49,7 +49,7 @@ This compiler has these representations:
    ``BExp`. Typing happens in `ttypeInference` and then we get a bmodule from
    `dmodule2bmodule`.
    BExp = Backend, Typed Expressions.
-   Status: Mostly done. Fixing bugs in type checker.
+   Status: Done.
 
 4. Then plug into the backends. Initial JS backend exists. js=1. We can also use
    flowc backends, such as Java.
@@ -63,48 +63,44 @@ where `FlowCache` is a cache for modules.
 ## Type inference
 
 The type inference uses equivalence classes for the types.
-The type system is extended with two constructs:
+The type system is extended with just one construct:
 
 - Overloads. This defines a set of types, where we know the
   real type is exactly one of them. As type inference proceeds,
   we will eliminate options one by one until we have a winner.
-- Supertypes. This defines a type which is a supertype of all
-  the subtypes within.
 
 We use overload types to handle the overloading of +, - as well as
 dot on structs, which can be considered as an overloaded function.
 
+When doing type inference, the language constructs result in unification
+of equivalence classes as well as subtyping relations. Subtyping relations
+are resolved into unifications with overloads when possible.
+
+If a unification or subtyping is not possible to complete, it is pushed
+to a queue for later processing, when more information is expected to be
+available.
+
 TODO CGraph:
+C:/flow9/tools/flowc/typechecker/typechecker.flow:1281:91: Add type annotation. Unresolved type (equivalence class e9455)
+
+ flow9 tools/flow9/flow9.flow strict=1 incremental=0 >out.flow
+
+ Check overload sub overload typars.
+
 - We need a subtype with multiple types when the max is closed?
-- In addition to makeSupertype, also have a makeSubtype to restrict the
-  overloads more?
+
+- Exhaustiveness check of switch
+
+- Verify that we give useful errors for real errors
 
 Need decision:
-- types.flow: implicit None type-parameter
-
-- MTree is polymorphic, but Material is not
-
-- type39: flow
-C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
-		Triple(flow(None()), start, "");
-		      ^
-   when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
-   Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
-
-- tools/flowc/backends/java/parser/java_parser takes a very long time to compile.
-
-- Do prolog-style search when all possible unifications and subtypes
-  have completed
-
-- Add explicit error case to string syntax "foo" "bar"
-
-- unify should have a way to telling if they were postponed
-  so resolution knows how to handle it?
+- MTree is polymorphic, but Material is not. Add better warning
 
 # Name and type lookups
 
 A key problem is to find names, types, sub- and supertypes from the context 
-of a given module. We would like this lookup to be precise in terms of the import graph.
+of a given module. We would like this lookup to be precise in terms of the
+import graph.
 
 This is not easy. Consider the problem of transitive supertypes:
 
@@ -166,101 +162,15 @@ https://dl.acm.org/doi/abs/10.1145/99935.99944
 Try to understand that, and maybe implement it.
 
 Plan:
-- Implement prolog-style resolution.
-
-- Get it to work with global ids.
-  Place global ids in flowcache, which is the only thing which survives all files. Done for
-  sub-/super-types, but todo: Do this eagerly for structs & unions as well.
 - TODO: Implement the transitive closure check in a second step to filter the list of ids found.
   We should probably maintain a set of dependent ids for each global, so we can quickly check this
   also when incremental is going to be done on ids?
-
-# TODOs
-
-- Improve type error reporting: Probably, we should build a tyvar hierarchy with reference to where
-  they belong and what semantic check they are involved in. Also, we should not report more than one
-  error per tyvar.
-
-  The errors should be semantic.
-  Instead of "Could not merge FcTypeName and FcType", we should refer to the variable or other construct
-  where the type originates. For each eclass, we could have a "origin" story associated. Some origins
-  are more "understandable" than others, so that way, we could pick the most understandable one.
-
-  An alternative is just to extend makeUnionFindMap with a "reason" argument when merging, so the merging
-  can report a suitable error message.
-
-- Debug type errors
-  - test30: Somehow related to subscribe becoming a type with "flow" inside, and then
-    all hell breaks loose
-
-  - ds/dynamic_array.flow
-	TODO: Picking random supertype from ["ArrayOperation", "ArrayOperationWithSwapp"] for: super181{ArrayNop<?>, ArrayRemove<?>}
-	TODO: Picking random supertype from ["ArrayOperation", "ArrayOperationWithSwapp"] for: super182{ArrayInsert<?>, ArrayNop<?>, ArrayRemove<?>}
-	TODO: Picking random supertype from ["ArrayOperation", "ArrayOperationWithSwapp"] for: super183{ArrayInsert<?>, ArrayNop<?>, ArrayRemove<?>, ArrayReplace<?>}
-	C:/flow9/lib/ds/dynamic_array.flow:635:33: ERROR: Could not resolve supertype: super806{e1901}
-									HeckelInsert(i, v): {
-								^
-	C:/flow9/lib/ds/dynamic_array.flow:636:46: Add type annotation. Unresolved type (equivalence class e1662)
-										if (a.fn(v)) {
-												^
-	C:/flow9/lib/ds/dynamic_array.flow:638:103: Add type annotation. Unresolved type (equivalence class e1662)
-											insertDynamicArray(a, countA(subrange(^result , 0, i), idfn), v);
-																										^
-	C:/flow9/lib/ds/dynamic_array.flow:866:21: Add type parameter. Implicit polymorphism in (DList<(HeckelOperationSimple<e14564>) -> void>) -> int
-		if (a.linked && lengthDList(a.subscribers) == 0) {
-					^
-
-  - ds/vector.flow:178
-    
-
-  - forcelayout.flow:
-	C:/flow9/lib/forcelayout.flow:145:51: ERROR: overload889{(CubicBezierTo)->double, (Factor)->double, (ForceNode)->DynamicBehaviour<double>, (GCircle)->double, (GEllipse)->double, (GRect)->double, (GRoundedRect)->double, (LineTo)->double, (MouseDownInfo)->double, (MouseInfo)->double, (MoveTo)->double, (Point)->double, (QPoint)->double, (QuadraticBezierTo)->double, (Scale)->Behaviour<double>, (StaticGraphicShape)->double, (Translate)->Behaviour<double>, (V2)->double, (XYWeight)->double} != (ForceNode)->Behaviour<double> (e-1 and e1422), field x
-		nodes = map(f.nodes, \n -> XYWeight(getValue(n.x), getValue(n.y), n.weight));
-	                                             ^
-    Has some strange -1 for eclass. The conflict seems to be 
-		(ForceNode)->DynamicBehaviour<double> vs (ForceNode)->Behaviour<double>
-
-  - ds/array_diff.flow: Supertype resolution
-
-
-  - tools/flowc/type_helpers.flow:1108:9: ERROR: Merge FcTypeName and FcType (e12441 and e11628)
-		FcTypeName(n1, typars1,__):
-
-  - type25: it is fundamentally flow vs [flow]
-
-	- flowe/test/struct.flow
-	C:\fast\flowe\tests\struct.flow:11:9: Could not resolve supertype: super1{e96}
-			Some(v): v;
-		^
-	C:\fast\flowe\tests\struct.flow:9:5: Could not resolve supertype: super3{e96, e115}
-		switch (m : Maybe) {
-	^
-	This is somehow related to how "println" contaminates the rest with the "flow" type
-	there.
-
-  - form/renderform:
-	C:/flow9/lib/form/renderform.flow:367:13: and here
-			CameraID(id) : {
-			^
-	C:/flow9/lib/form/renderform.flow:262:31: ERROR: Merge int and WidthHeight (e736 and e1930)
-				if (length(texts) == 0) {
-								^
-	C:/flow9/lib/form/renderform.flow:262:31: and here
-				if (length(texts) == 0) {
-								^
-	C:/flow9/lib/form/renderform.flow:533:17: and here
-					ClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, false), fn
-				^
-	C:/flow9/lib/form/renderform.flow:712:33: and here
-			attachChildAndCapability(
-								^
-	Still unknown.
 
 ## Optimization of the compiler
 
 The compiler has decent speed, but could be faster.
 
-- Try vector in union_find_map, which might be faster at least in Java. 
+- Try vector in union_find_map, which might be faster at least in Java.
 
 - Try to reduce the active set of tyvars when doing chunks. Copy from one 
   tyvar space to a new one, to reduce max set.
@@ -271,21 +181,11 @@ The compiler has decent speed, but could be faster.
    1262ms in type inference
  	 	600ms in resolveTNodes
 
-- UnionFindMap total time (with some double counting, since they call each others):
-  588ms in iterUnionMap
-  529ms in findUnionMapRoot
-  468ms in unionEnsureMapCapacity
-  328ms in setUnionMapValue
-  184ms in getUnionMapValue
-  167ms in unionUnionMap
-  Main potential improvement is the reduce the number of live tyvars, next
-  try a different data structure.
-
 - When finding chunks, check if the code for a referenced piece of code has any
   free ids. If not, no need to chunk it. (see unicodeToLowerTable and others
   in text/unicodecharacters.flow)
 
-## Improvements
+## Improvements to be done
 
 - Imports that start with "lib/" are almost surely wrong, and do not work.
 
@@ -294,41 +194,21 @@ The compiler has decent speed, but could be faster.
 - Add a compile server
   - Add option to only type check given ids
 
-## Type inference inspriation
+# JS backend/runtime
 
-Review the lower/upper types from
-https://gilmi.me/blog/post/2021/04/13/giml-typing-polymorphic-variants
+According to this benchmark:
 
-- It seems we could consider to enhance our supertypes construct to
-  record whether the type is exact (closed), an upper-bound (not sure where
-  this happens) or a lower-bound (from a switch with a "default"), and
-  then it would match their system to a substantial degree.
+https://jsben.ch/wY5fo
 
-Unify of two closed variants is easy: They have to match both sides.
+This is the fastest way to iterate an array in JS:
 
-
-# Proposal: Rewrite syntax
-
-We could extend Flowe with a rewriting feature.
-
-	flow-exp: $id = $val; $body
-	=>
-	js-statement: 
-	var $id = $val(100);
-	$body
-
-	flow-exp: $l + $r
-	=>
-	js-exp: $l(100) + $r(99)
-
-# Integration with flowc:
-
-- Add a conversion to FiProgram from (modules : BModules, flowpath : string)
+	var x = 0, l = arr.length;
+	while (x < l) {
+		dosmth = arr[x];
+		++x;
+	}
 
 # C++ backend
-
-TODO:
-- We need struct id and unions to work
 
 There is a C GC library here:
 
@@ -345,3 +225,7 @@ https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/render
 The best solution is to go for Perceus:
 https://www.microsoft.com/en-us/research/uploads/prod/2020/11/perceus-tr-v1.pdf
 
+# Extension of syntax
+
+We support a special kind of string surrounded by << anything >>, which is hoped
+to help make mixing muliple languages easier.

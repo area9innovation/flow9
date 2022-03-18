@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 24;
+var SERVICE_WORKER_VERSION = 25;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -1383,7 +1383,10 @@ self.addEventListener('fetch', function(event) {
 
   checkOnlineStatus();
 
-  if (url.match(SHARED_DATA_ENDPOINT)) {
+  // do nothing for non http requests (like `chrome-extension` requests and others)
+  if(!event.request.url.startsWith('http')) {
+    return;
+  } else if (url.match(SHARED_DATA_ENDPOINT)) {
     event.respondWith(
       caches.open(SHARED_DATA_ENDPOINT).then(cache => {
         if (method == "POST") {

@@ -1,0 +1,217 @@
+import tools/dsl/dsl_language;
+import tools/dsl/dsl_pretty;
+import ds/union_find_map;
+
+export {
+	DslEGraph(
+		// From equivalence class (int) to set of DslNodes in that class
+		eclass : UnionFindMap<Set<DslENode>>,
+		// What eclass does this node belong to?
+		mutable memo : Tree<DslENode, int>,
+		// What is the next equivalence class?
+		mutable nextId : int,
+	);
+
+	DslENode(
+		language : DslLanguage,
+		value : DslAst, // Without children
+		args : [int]
+	);
+
+	// Start an empty egraph
+	makeDslEGraph() -> DslEGraph;
+	// Add a node to the graph in this language
+	addDslAst(g : DslEGraph, language : DslLanguage, ast : DslAst) -> int;
+	addDslENode(g : DslEGraph, f : DslENode) -> int;
+
+	combineDslAst(node : DslAst, children : [DslAst]) -> DslAst;
+	combineENode(node : DslENode, children : [DslENode]) -> DslAst;
+
+	getDslEClassRoot(g : DslEGraph, class : int) -> int;
+	getDslEClassNodes(g : DslEGraph, class : int) -> Set<DslENode>;
+	unionDslEClass(g : DslEGraph, a : int, b : int) -> int;
+
+	iterDslEGraph(e : DslEGraph, fn : (int, Set<DslENode>) -> void) -> void;
+
+	printDslEGraph(e : DslEGraph, root : int) -> void;
+}
+
+makeDslEGraph() -> DslEGraph {
+	DslEGraph(
+		makeUnionFindMap(makeSet(), mergeSets),
+		makeTree(),
+		0,
+	);
+}
+
+// As classes are joined, the enodes can become stale.
+// This will resolve them
+canonicalizeDslENode(g : DslEGraph, f : DslENode) -> DslENode {
+	DslENode(f with args = map(f.args, \a -> findUnionMapRoot(g.eclass, a)))
+}
+
+addDslENode(g : DslEGraph, f : DslENode) -> int {
+    f0 = canonicalizeDslENode(g, f);
+	mclass = lookupTree(g.memo, f0);
+	mclass ?? {
+		// We already have it
+		mclass;
+	} : {
+		id = g.nextId;
+		setUnionMapValue(g.eclass, id, makeSet1(f0));
+		g.memo ::= setTree(g.memo, f0, id);
+		g.nextId ::= id + 1;
+		id;
+	}
+}
+
+addDslAst(g : DslEGraph, language : DslLanguage, ast : DslAst) -> int {
+	rec = \ee -> addDslAst(g, language, ee);
+	addDslENode(g, switch (ast) {
+		DslBool(value): DslENode(language, ast, []);
+		DslInt(value): DslENode(language, ast, []);
+		DslDouble(value): DslENode(language, ast, []);
+		DslString(value): DslENode(language, ast, []);
+		DslList(value): DslENode(language, DslList(makeList()), map(list2array(value), rec));
+		DslNode(name, args, pos): DslENode(language, DslNode(name, [], pos), map(args, rec));
+	});
+}
+
+combineENode(node : DslENode, children : [DslENode]) -> DslAst {
+	val = node.value;
+	switch (node.value) {
+		DslBool(value): val;
+		DslInt(value): val;
+		DslDouble(value): val;
+		DslString(value): val;
+		DslList(value): DslList(array2list(map(children, \c -> c.value)));
+		DslNode(name, args, pos): DslNode(name, map(children, \c -> c.value), pos);
+	}
+}
+
+
+combineDslAst(node : DslAst, children : [DslAst]) -> DslAst {
+	switch (node) {
+		DslBool(value): node;
+		DslInt(value): node;
+		DslDouble(value): node;
+		DslString(value): node;
+		DslList(value): DslList(array2list(children));
+		DslNode(name, args, pos): DslNode(name, children, pos);
+	}
+}
+
+
+makeDslEClass(g : DslEGraph) -> int {
+	id = g.nextId;
+	setUnionMapValue(g.eclass, id, makeSet());
+	g.nextId ::= id + 1;
+	id;
+}
+
+unionDslEClass(g : DslEGraph, a : int, b : int) -> int {
+	if (a == b) {
+		a
+	} else {
+		id = unionUnionMap(g.eclass, a, b);
+		// Make sure the lookup are correct by finding the new
+		// representative node for this eclass, and clearing out
+		// the old ones
+		nodes : Set<DslENode> = getUnionMapValue(g.eclass, id);
+		eclass : Set<DslENode> = mapSet(nodes, \enode : DslENode -> {
+			g.memo ::= removeFromTree(g.memo, enode);
+			enode0 = canonicalizeDslENode(g, enode);
+			g.memo ::= setTree(g.memo, enode0, id);
+			enode0;
+		});
+		setUnionMapValue(g.eclass, id, eclass);
+		id;
+	}
+}
+
+
+// TODO: If we track the parents more precisely,
+// we can do this smarter.
+// Right now, it takes n * #depth of deepest merge.
+canonicalizeDslEGraph(e : DslEGraph) -> void {
+	joined = ref false;
+	iterUnionMap(e.eclass, \class : int, nodes : Set<DslENode> -> {
+		if (class < e.nextId) {
+			iterSet(nodes, \node : DslENode -> {
+				// OK, redo the node
+				c0 = canonicalizeDslENode(e, node);
+				cclass = lookupTreeDef(e.memo, c0, class);
+				if (cclass != class) {
+					// It changed, and now belongs to a new class.
+					// OK, these should be joined
+					joined := true;
+					n = unionDslEClass(e, class, cclass)
+				}
+			});
+		}
+	});
+	if (^joined) {
+		// OK, we have to do one more loop
+		canonicalizeDslEGraph(e);
+	}
+}
+
+getDslEClassNodes(g : DslEGraph, class : int) -> Set<DslENode> {
+	getUnionMapValue(g.eclass, class);
+}
+
+setDslEClassNodes(g : DslEGraph, class : int, node : Set<DslENode>) -> void {
+	setUnionMapValue(g.eclass, class, node);
+}
+
+getDslEClassRoot(g : DslEGraph, class : int) -> int {
+	findUnionMapRoot(g.eclass, class);
+}
+
+isSameDslEClass(e : DslEGraph, a : int, b : int) -> bool {
+	getDslEClassRoot(e, a) == getDslEClassRoot(e, b);
+}
+
+iterDslEGraph(e : DslEGraph, fn : (int, Set<DslENode>) -> void) -> void {
+	iterUnionMap(e.eclass, \root, nodes -> {
+		if (root < e.nextId) {
+			fn(root, mapSet(nodes, \node -> canonicalizeDslENode(e, node)))
+		}
+	});
+}
+
+getDslEClasses(e : DslEGraph) -> Set<int> {
+	getUnionMapRoots(e.eclass);
+}
+
+printDslEGraph(e : DslEGraph, root : int) -> void {
+	doPrintDslEGraph(e, root, "", makeSet());
+	{}
+}
+
+doPrintDslEGraph(e : DslEGraph, root : int, indent : string, seen : Set<int>) -> Set<int> {
+	if (!containsSet(seen, root)) {
+		nodes : Set<DslENode> = getDslEClassNodes(e, root);
+		nseen = insertSet(seen, root);
+		nindent = indent + "  ";
+
+		childClasses = foldRange(0, e.nextId, [], \acc2, ec -> {
+			r = findUnionMapRoot(e.eclass, ec);
+			if (r == root && ec != root) {
+				arrayPush(acc2, ec)
+			} else acc2;
+		});
+		covers = " e" + i2s(root) + " covers " + superglue(childClasses, \c -> "e" + i2s(c), ", ");
+		iterSet(nodes, \node : DslENode -> {
+			println(indent + prettyDsl(node.value) + " : " + dslLanguage2string(node.language) + ". e" + i2s(root) + "(" + superglue(node.args, \c -> "e" + i2s(c), ", ") + ")" + covers);
+		});
+
+		foldSet(nodes, nseen, \acc, node : DslENode -> {
+			fold(node.args, acc, \acc2, arg -> {
+				doPrintDslEGraph(e, arg, nindent, acc2)
+			})
+		});
+
+	} else seen
+}
+ 

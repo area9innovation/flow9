@@ -1,0 +1,385 @@
+import tools/dsl/dsl_util;
+import tools/dsl/dsl_pretty;
+
+export {
+	// For built-in nodes that work with fully evaluated arguments
+	getDslNative(name : string) -> Maybe<DslNativeBuiltin>;
+}
+
+DslNativeBuiltin(
+	fn : (([DslAst]) -> DslAst)
+);
+
+builtinNativeDsls : ref Maybe<Tree<string, DslNativeBuiltin>> = ref None();
+
+getDslNative(name : string) -> Maybe<DslNativeBuiltin> {
+	two = \fn : (DslAst, DslAst) -> DslAst -> {
+		DslNativeBuiltin(\args -> fn(args[0], args[1]))
+	};
+	one = \fn : (DslAst) -> DslAst -> {
+		DslNativeBuiltin(\args -> fn(args[0]));
+	};
+	n : Tree<string, DslNativeBuiltin> = onlyOnce(builtinNativeDsls, \ -> {
+		pairs2tree([
+			Pair("add", two(addDsl)),
+			Pair("sub", two(subDsl)),
+			Pair("mul", two(mulDsl)),
+			Pair("div", two(divDsl)),
+			Pair("mod", two(modDsl)),
+			Pair("equal", two(equalDsl)),
+			Pair("not_equal", two(notEqualDsl)),
+			Pair("less", two(lessDsl)),
+			Pair("less_equal", two(lessEqualDsl)),
+			Pair("greater", two(greaterDsl)),
+			Pair("greater_equal", two(greaterEqualDsl)),
+			Pair("not", one(notDsl)),
+			Pair("negate", one(negateDsl)),
+			Pair("brace", one(braceDsl)),
+
+			// Construction of lists
+			Pair("cons", two(consDsl)),
+			Pair("nil", DslNativeBuiltin(\args -> {
+				// println("Calling nil with " + toString(args));
+				DslList(makeList())
+			})),
+			// Introspection for lists
+			Pair("head", one(headDsl)),
+			Pair("tail", one(tailDsl)),
+
+			// Make a node
+			Pair("makeNode", two(makeNodeDsl)),
+			// Introspection for nodes
+			// Get the name of a node
+			Pair("nodeName", one(nodeNameDsl)),
+			// Get child #n of a node
+			Pair("nodeChild", two(nodeChildDsl)),
+
+			// Introspection of type: bool, int, double, string, list or node
+			Pair("typeof", one(typeOfDsl)),
+
+			// More useful than not
+			Pair("println", one(printlnDsl)),
+		])
+	});
+	lookupTree(n, name);
+}
+
+addDsl(left : DslAst, right : DslAst) -> DslAst {
+	keep = \ -> DslNode("add", [left, right], 0);
+	error = \ -> {
+		println("Can not add " + prettyDsl(left) + " and " + prettyDsl(right));
+		keep();
+	}
+
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue + rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) + rvalue);
+				DslString(rvalue): DslString(i2s(lvalue) + rvalue);
+				default: keep();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue + i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue + rvalue);
+				DslString(rvalue): DslString(d2s(lvalue) + rvalue);
+				default: keep();
+			}
+		}
+		DslString(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslString(lvalue + i2s(rvalue));
+				DslDouble(rvalue): DslString(lvalue + d2s(rvalue));
+				DslString(rvalue): DslString(lvalue + rvalue);
+				default: keep();
+			}
+		}
+		DslList(lvalue): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+subDsl(left : DslAst, right : DslAst) -> DslAst {
+	keep = \ -> DslNode("sub", [left, right], 0);
+	error = \ -> {
+		println("Can not subtract " + prettyDsl(left) + " and " + prettyDsl(right));
+		keep();
+	}
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue - rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) - rvalue);
+				default: keep();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue - i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue - rvalue);
+				default: keep();
+			}
+		}
+		DslString(lvalue): error();
+		DslList(lvalue): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+mulDsl(left : DslAst, right : DslAst) -> DslAst {
+	keep = \ -> DslNode("mul", [left, right], 0);
+	error = \ -> {
+		println("Can not multiply " + prettyDsl(left) + " and " + prettyDsl(right));
+		keep();
+	}
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue * rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) * rvalue);
+				default: keep();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue * i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue * rvalue);
+				default: keep();
+			}
+		}
+		DslString(lvalue): error();
+		DslList(lvalue): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+divDsl(left : DslAst, right : DslAst) -> DslAst {
+	keep = \ -> DslNode("div", [left, right], 0);
+	error = \ -> {
+		println("Can not divide " + prettyDsl(left) + " and " + prettyDsl(right));
+		keep();
+	}
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue / rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) / rvalue);
+				default: keep();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue / i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue / rvalue);
+				default: keep();
+			}
+		}
+		DslString(lvalue): error();
+		DslList(lvalue): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+modDsl(left : DslAst, right : DslAst) -> DslAst {
+	keep = \ -> DslNode("mod", [left, right], 0);
+	error = \ -> {
+		println("Can not modulo " + prettyDsl(left) + " and " + prettyDsl(right));
+		keep();
+	}
+	switch (left) {
+		DslBool(value): error();
+		DslInt(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslInt(lvalue % rvalue);
+				DslDouble(rvalue): DslDouble(i2d(lvalue) % rvalue);
+				default: keep();
+			}
+		}
+		DslDouble(lvalue): {
+			switch (right) {
+				DslInt(rvalue): DslDouble(lvalue % i2d(rvalue));
+				DslDouble(rvalue): DslDouble(lvalue % rvalue);
+				default: keep();
+			}
+		}
+		DslString(lvalue): error();
+		DslList(lvalue): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+compareDsl(left : DslAst, right : DslAst) -> int {
+	genericCompare(left, right);
+}
+
+// Is this a value that is comparable at compile time?
+isDslValue(e : DslAst) -> bool {
+	switch (e) {
+		DslBool(value): true;
+		DslInt(value): true;
+		DslDouble(value): true;
+		DslString(value): true;
+		DslList(value): foldList(value, true, \acc, l -> {
+			acc && isDslValue(l);
+		});
+		DslNode(name, args, pos): {
+			!contains([
+				"ifelse", "let", "var", "lambda", "call", "and", "or", "quote", "bind", "join"
+			], name)
+		}
+	}
+}
+
+equalDsl(left : DslAst, right : DslAst) -> DslAst {
+	if (isDslValue(left) && isDslValue(right)) {
+		DslBool(compareDsl(left, right) == 0);
+	} else {
+		DslNode("equal", [left, right], 0);
+	}
+}
+
+notEqualDsl(left : DslAst, right : DslAst) -> DslAst {
+	if (isDslValue(left) && isDslValue(right)) {
+		DslBool(compareDsl(left, right) != 0);
+	} else {
+		DslNode("not_equal", [left, right], 0);
+	}
+}
+
+lessDsl(left : DslAst, right : DslAst) -> DslAst {
+	if (isDslValue(left) && isDslValue(right)) {
+		DslBool(compareDsl(left, right) < 0);
+	} else {
+		DslNode("less", [left, right], 0);
+	}
+}
+
+lessEqualDsl(left : DslAst, right : DslAst) -> DslAst {
+	if (isDslValue(left) && isDslValue(right)) {
+		DslBool(compareDsl(left, right) <= 0);
+	} else {
+		DslNode("less_equal", [left, right], 0);
+	}
+}
+
+greaterDsl(left : DslAst, right : DslAst) -> DslAst {
+	if (isDslValue(left) && isDslValue(right)) {
+		DslBool(compareDsl(left, right) > 0);
+	} else {
+		DslNode("greater", [left, right], 0);
+	}
+}
+
+greaterEqualDsl(left : DslAst, right : DslAst) -> DslAst {
+	if (isDslValue(left) && isDslValue(right)) {
+		DslBool(compareDsl(left, right) >= 0);
+	} else {
+		DslNode("greater_equal", [left, right], 0);
+	}
+}
+
+notDsl(val : DslAst) -> DslAst {
+	keep = \ -> DslNode("not", [val], 0);
+	error = \ -> {
+		println("Can not not " + prettyDsl(val));
+		keep();
+	}
+	switch (val) {
+		DslBool(value): DslBool(!value);
+		DslInt(value): error();
+		DslDouble(value): error();
+		DslString(value): error();
+		DslList(value): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+negateDsl(val : DslAst) -> DslAst {
+	keep = \ -> DslNode("negate", [val], 0);
+	error = \ -> {
+		println("Can not negate " + prettyDsl(val));
+		keep();
+	}
+	switch (val){
+		DslBool(value): error();
+		DslInt(value): DslInt(-value);
+		DslDouble(value): DslDouble(-value);
+		DslString(value): error();
+		DslList(value): error();
+		DslNode(name, args, pos): keep();
+	}
+}
+
+consDsl(left : DslAst, right : DslAst) -> DslAst {
+	rlist = getDslList(right);
+	DslList(Cons(left, rlist));
+}
+
+headDsl(val : DslAst) -> DslAst {
+	list = getDslList(val);
+	switch (list) {
+		EmptyList(): DslList(list);
+		Cons(head, __): head;
+	}
+}
+
+tailDsl(val : DslAst) -> DslAst {
+	list = getDslList(val);
+	DslList(switch (list) {
+		EmptyList(): list;
+		Cons(head, tail_): tail_;
+	})
+}
+
+braceDsl(val : DslAst) -> DslAst {
+	switch (val) {
+		DslList(l): {
+			// There is debate as to whether to keep others
+			// when elements are not values, but it seems this
+			// is best after all
+			headList(l, val)
+		}
+		default: val;
+	}
+}
+
+nodeNameDsl(val : DslAst) -> DslAst {
+	node = getDslNode(val);
+	DslString(node.name);
+}
+
+nodeChildDsl(val : DslAst, n : DslAst) -> DslAst {
+	node = getDslNode(val);
+	i = getDslInt(n);
+	elementAt(node.args, i, val)
+}
+
+makeNodeDsl(name : DslAst, args : DslAst) -> DslAst {
+	DslNode(
+		getDslString(name),
+		list2array(getDslList(args)),
+		0
+	)
+}
+
+typeOfDsl(val : DslAst) -> DslAst {
+	DslString(switch (val) {
+		DslBool(value): "bool";
+		DslInt(value): "int";
+		DslDouble(value): "double";
+		DslString(value): "string";
+		DslList(value): "list";
+		DslNode(name, args, pos): "node";
+	})
+}
+
+printlnDsl(val : DslAst) -> DslAst {
+	println(prettyDsl(val));
+	val;
+}

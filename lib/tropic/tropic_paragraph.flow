@@ -7,7 +7,7 @@ import text/bidi_text;
 
 export {
 	TRenderDynamicParagraph(
-		words : ref [TParaWord],
+		words : DynamicBehaviour<[TParaWord]>,
 		s : [ParagraphStyle],
 		alignWidthM : Maybe<DynamicBehaviour<double>>
 	) -> TDynamicParagraph;
@@ -30,6 +30,7 @@ export {
 		tr : Tropic,
 		id : int,
 		style : [CharacterStyle],
+		rtl : DynamicBehaviour<bool>,
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>,
 		ignoreLetterSpacing : bool
@@ -39,7 +40,7 @@ export {
 }
 
 TRenderDynamicParagraph(
-	words : ref [TParaWord],
+	wordsB : DynamicBehaviour<[TParaWord]>,
 	s : [ParagraphStyle],
 	alignWidthBM : Maybe<DynamicBehaviour<double>>
 ) -> TDynamicParagraph {
@@ -64,7 +65,7 @@ TRenderDynamicParagraph(
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	ndynamic = fold(^words, 0, \acc, w -> switch (w.word) {
+	ndynamic = fold(getValue(wordsB), 0, \acc, w -> switch (w.word) {
 		NonTextElement() : acc + 1;
 		default : acc;
 	});
@@ -73,7 +74,7 @@ TRenderDynamicParagraph(
 	rtl = isParagraphRtl(s);
 
 	stackChanges = make([]);
-	initialWords = ref map(^words, \w -> translateWord(w, if (rtl) 0.0 else genIndent));
+	initialWords = ref map(getValue(wordsB), \w -> translateWord(w, if (rtl) 0.0 else genIndent));
 	paragraphWHB = makeWH();
 	paragraphBaselineB = make(0.0);
 
@@ -87,7 +88,7 @@ TRenderDynamicParagraph(
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
-			^words, w, indent, tightWidth, alignment, interlineSpacing,
+			getValue(wordsB), w, indent, tightWidth, alignment, interlineSpacing,
 			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
 			genIndent, linesCountB, alignWidthM, false, false
 		);
@@ -100,11 +101,11 @@ TRenderDynamicParagraph(
 		changes = paragraphSizeBaselineAndChanges.words;
 		iteri(changes.words, \i, word -> {
 			index = changes.indexes[i];
-			words := concat3(
-				subrange(^words, 0, index),
+			next(wordsB, concat3(
+				subrange(getValue(wordsB), 0, index),
 				[word],
-				subrange(^words, index + 1, length(^words) - index - 1)
-			);
+				subrange(getValue(wordsB), index + 1, length(getValue(wordsB)) - index - 1)
+			));
 			dynArrayPush(
 				stackChanges,
 				TGroupReplace(translateWord(word, if (rtl) 0.0 else genIndent), index)
@@ -141,9 +142,9 @@ TRenderDynamicParagraph(
 	dynamicWordsUns = ref [];
 
 	addWords = \index, newWords -> {
-		idx = max(min(index, length(^words)), 0);
+		idx = max(min(index, length(getValue(wordsB))), 0);
 		iteri(newWords, \i, newWord -> {
-			words := insertArray(^words, idx + i, newWord);
+			next(wordsB, insertArray(getValue(wordsB), idx + i, newWord));
 			dynamicWordsUns := insertArray(^dynamicWordsUns, idx + i, subscribe2dynWord(newWord));
 			dynArrayPush(
 				stackChanges,
@@ -154,9 +155,9 @@ TRenderDynamicParagraph(
 	}
 
 	removeWords = \start, count, reflow -> {
-		idx = min(start, length(^words) - 1);
+		idx = min(start, length(getValue(wordsB)) - 1);
 		fori(1, count, \__ -> {
-			words := removeIndex(^words, idx);
+			next(wordsB, removeIndex(getValue(wordsB), idx));
 			apply0(elementAt(^dynamicWordsUns, idx, nop));
 			dynamicWordsUns := removeIndex(^dynamicWordsUns, idx);
 			dynArrayPush(stackChanges, TGroupDelete(idx));
@@ -187,7 +188,7 @@ TRenderDynamicParagraph(
 				}
 			}),
 			\ -> {
-				dynamicWordsUns := map(^words, subscribe2dynWord);
+				dynamicWordsUns := map(getValue(wordsB), subscribe2dynWord);
 				\ -> {
 					applyall(^dynamicWordsUns);
 					dynamicWordsUns := [];
@@ -202,11 +203,7 @@ TRenderDynamicParagraph(
 			},
 			awB
 		)
-	) |> if (needIndent) {
-		if (rtl) TBorderRight(genIndent) else TBorderLeft(genIndent)
-	} else {
-		idfn
-	};
+	) |> if (needIndent) TBorderStart(genIndent, rtl) else idfn;
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
@@ -645,6 +642,7 @@ commonWordConstructor(
 	tr : Tropic,
 	id : int,
 	style : [CharacterStyle],
+	rtl : DynamicBehaviour<bool>,
 	inspectorM : Maybe<ParaElementInspector>,
 	scriptM : Maybe<ParaElementScriptType>,
 	ignoreLetterSpacing : bool
@@ -661,6 +659,7 @@ commonWordConstructor(
 		wordView,
 		make(id),
 		style,
+		rtl,
 		make(false),
 		scriptM
 	);
@@ -710,7 +709,7 @@ reflowTParaWords(
 	ignoreLetterSpacing : bool
 ) -> TReflowResult {
 	setTParaWordText = tParaWordsTextSetter(ignoreLetterSpacing);
-	setTParaWordRTL = \w, wrtl -> {nextDistinct(w.inspector.rtl, wrtl); w};
+	setTParaWordRTL = \w, wrtl -> {nextDistinct(w.rtl, wrtl); w};
 
 	reflowAndWidth = reflowAndFitTParaWords(
 		words,
@@ -722,7 +721,7 @@ reflowTParaWords(
 	);
 
 	text = reflowAndWidth.first.lines;
-	paraLines = if (rtl)
+	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
 			reflowTextToBiDi(
@@ -864,14 +863,7 @@ reflowTParaWordsRec(
 			}
 			GeneralLinePart(first, mid, end): {
 
-				makeLinePartWord = \txt : string -> {
-					newView = inspectWordView(
-						TText(txt, applyAlphabetStyles(detectAlphabet(txt), word.style) |> makeSkipOrderCheck),
-						word.inspector,
-						if (ignoreLetterSpacing || rest == []) 0.0 else extractStruct(word.style, LetterSpacing(0.0)).spacing
-					);
-					TParaWord(word with ghostView = newView);
-				};
+				makeLinePartWord = \txt : string -> inspectedTWord(txt, word, ignoreLetterSpacing || rest == []);
 				width = getWordWidth(word);
 				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
 
@@ -1226,19 +1218,9 @@ extractStyleForRectangle(style : [TCharacterStyle]) -> [GraphicsStyle] {
 }
 
 translateWord(word : TParaWord, genIndent : double) -> Tropic {
-	view = \w, t -> inspectWordView(
-		TText(t, applyAlphabetStyles(detectAlphabet(t), replaceStruct(w.style, SetRTL(getValue(w.inspector.rtl)))) |> makeSkipOrderCheck),
-		w.inspector,
-		0.0
-	);
-
 	TTranslate(
 		fpoint(fsubtract(word.inspector.x, const(genIndent)), word.inspector.y),
-		switch(word.word) {
-			GeneralText(t): view(word, t);
-			GeneralDynamicText(t): view(word, t);
-			default: word.ghostView;
-		}
+		word.ghostView
 	);
 }
 
@@ -1258,23 +1240,21 @@ getTParaWordText(w: TParaWord) -> string {
 	}
 }
 
+inspectedTWord(t: string, w: TParaWord, ignoreLetterSpacing: bool) -> TParaWord {
+	TParaWord(w with ghostView = inspectWordView(
+		TSelect(w.rtl, \rtl -> TText(t, applyAlphabetStyles(detectAlphabet(t), replaceStruct(w.style, SetRTL(rtl)) |> makeSkipOrderCheck))),
+		w.inspector,
+		if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
+	))
+}
+
 tParaWordsTextSetter(ignoreLetterSpacing: bool) -> (TParaWord, string) -> TParaWord {
 	\w: TParaWord, t: string -> switch(w.word) {
 		GeneralText(__): {
-			view = inspectWordView(
-				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style) |> makeSkipOrderCheck),
-				w.inspector,
-				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
-			);
-			TParaWord(w with ghostView = view);
+			inspectedTWord(t, w, ignoreLetterSpacing);
 		}
 		GeneralDynamicText(__): {
-			view = inspectWordView(
-				TText(t, applyAlphabetStyles(detectAlphabet(t), w.style) |> makeSkipOrderCheck),
-				w.inspector,
-				if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
-			);
-			TParaWord(w with ghostView = view);
+			inspectedTWord(t, w, ignoreLetterSpacing);
 		}
 		default: w;
 	};

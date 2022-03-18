@@ -6,13 +6,18 @@ import material/internal/material_dialog_internal;
 export {
 	MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 	MLightweightDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MLightweightDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MSpannableDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MSpannableDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
 MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	MDynamicDataTable2TInner(manager, parent, m.columns, m.rows, idfn, m.style, false, m2t)
+	MDynamicDataTable2TInner(manager, parent, m.columns, m.rows, \row -> map(row, \cell -> MCell(cell, 1, 1)), m.style, false, m2t)
 }
 
 MLightweightDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MLightweightDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MDynamicDataTable2TInner(manager, parent, m.columns, m.data, \v -> map(m.rowsFn(v), \cell -> MCell(cell, 1, 1)), m.style, true, m2t)
+}
+
+MSpannableDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MSpannableDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	MDynamicDataTable2TInner(manager, parent, m.columns, m.data, m.rowsFn, m.style, true, m2t)
 }
 
@@ -21,7 +26,7 @@ MDynamicDataTable2TInner(
 	parent : MFocusGroup,
 	columns : [MColumnDynamic],
 	data : Transform<[?]>,
-	rowsFn : (?) -> [Material], 
+	rowsFn : (?) -> [MCell],
 	style : [MDataTableStyle],
 	lightweight : bool,
 	m2t : (Material, MFocusGroup) -> Tropic
@@ -186,13 +191,24 @@ MDynamicDataTable2TInner(
 					fselect3(sorting.result, data, page, \sortRes, dat, pg ->
 						map(subrange(sortRes, pg.first, pg.second + 1), \i -> Pair(elementAtM(dat, i), i))
 					);
+
+				renderedRowspans : [DynamicBehaviour<[Pair<Transform<int>, int>]>] = generate(0, length(state.columnWidths), \__ -> make([]));
+
 				SelectTLinesA(rows, \idx, id, value -> {
-					cells = eitherMap(value.first, rowsFn, []);
+					row = eitherMap(value.first, rowsFn, []);
 					j = value.second;
-					
-					state.makeCells(p, j, cells)
-					|> wrapItemsForFirstColumnMode(p)
-					|> (\t -> TColsDir(t, p.rtl))
+
+					disp = initUnsM();
+					iteri(row, \i, cell -> if (cell.rowspan > 1) {
+						column = elementAt(renderedRowspans, i, make([]));
+						val = Pair(idx, cell.rowspan);
+						dynArrayPush(column, val);
+						setUnsM(disp, \ -> nextDistinct(column, removeFirst(getValue(column), val)))
+					});
+
+					TSelect(state.makeCells(p, j, row, false, Some(MTableRowspanInfo(renderedRowspans, idx))),
+						\cells -> TColsDir(cells |> wrapItemsForFirstColumnMode(p), p.rtl)
+					)
 					|> wrapIntoBorders(p)
 					|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
 					|> (\t -> MComponent2T(manager, p, "MDataTableLine" + i2s(j), [
@@ -227,6 +243,7 @@ MDynamicDataTable2TInner(
 						)
 					)
 					|> (\t -> if (state.separators) addSeparator(manager, p, t, false) else t)
+					|> (\t -> TDispose([\ -> dispUnsM(disp)], t));
 				})
 				|> (\t -> 
 					TGroup2(
@@ -256,7 +273,7 @@ MDynamicDataTable2TInner(
 				MSelect2T(manager, p, "MDynamicDataTableLines", [], expandRow, \er, p2 ->
 					eitherMap(
 						state.fixedRow,
-						\fr -> fconcat(const([fr.cols]), rows),
+						\fr -> fconcat(const([map(fr.cols, unitaryCell)]), rows),
 						rows
 					)
 					|> (\rc -> fmapi(rc, \j0, row -> {
@@ -264,10 +281,9 @@ MDynamicDataTable2TInner(
 							j = j0 - b2i(isSome(state.fixedRow));
 							
 							makeLineContent = \p3 : MFocusGroup ->
-								state.makeCells(p3, j, row)
-								|> (\cells : [Tropic] -> expandContent(cells, er))
-								|> wrapItemsForFirstColumnMode(p)
-								|> (\t -> TColsDir(t, p.rtl))
+								TSelect(state.makeCells(p3, j, row, false, None()),
+									\cells -> TColsDir(expandContent(cells, er) |> wrapItemsForFirstColumnMode(p), p.rtl)
+								)
 								|> wrapIntoBorders(p2)
 								|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
 								|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
@@ -607,8 +623,8 @@ MDTState(
 	isCheckboxColumn : (int) -> bool,
 	checkboxSelectAllPages : Transform<bool>,
 	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, Maybe<[MIconStyle]>, Maybe<Transform<string>>) -> Tropic,
-	makeCells : (MFocusGroup, int, [Material]) -> [Tropic],
-	cellBox : (int, bool) -> Tropic,
+	makeCells : (MFocusGroup, int, [MCell], bool, Maybe<MTableRowspanInfo>) -> Transform<[Tropic]>,
+	cellBox : (int, bool, int, int) -> Tropic,
 	enabled : Transform<bool>,
 	hoverEnabled : MHoverEnabled,
 	rowsBoxScrollPosition : TScrollPosition,
@@ -758,9 +774,12 @@ makeMDataTableState(
 			|> (\w -> fif(colEnabled, w, zero))
 		});
 
-	cellBox = \i, h -> TSizedWidth(columnWidths[i], lineHeight(h));
+	cellBox = \i, h, colspan, rowspan -> TSizedWidth(
+		if (colspan == 1) elementAt(columnWidths, i, zero) else fsum(subrange(columnWidths, i, colspan)),
+		lineHeight(h) * i2d(rowspan)
+	);
 
-	makeCells = \p, j, row -> {
+	makeCells = \p, j, row : [MCell], firstColumn : bool, rowspanInfo : Maybe<MTableRowspanInfo> -> {
 		checkbox = eitherMap(checkboxSelection, \__ ->
 			if (j >= 0) {
 				selRow = make(contains(getValue(selection.selected), j));
@@ -789,44 +808,79 @@ makeMDataTableState(
 				|> (\t -> TConstruct(
 					[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j))], t
 				))
+				|> unitaryCell
 				|> v2a
 			}
-			else [TFixed(checkboxColumnWidth, 0.)],
+			else [TFixed(checkboxColumnWidth, 0.) |> unitaryCell],
 			[]
 		);
 
-		fullRow = [
-			checkbox,
-			if (showRowNumbers) [MText(i2s(j + 1), [])] else [],
-			row
-		] |> concatA;
+		fullRow : Transform<[MCell]> = [
+			const(checkbox),
+			const(if (showRowNumbers) [MText(i2s(j + 1), []) |> unitaryCell] else []),
+			mapi(row, \i, cell -> fconcat(
+				eitherMap(rowspanInfo, \rsi ->
+					fif(
+						fsubselect(elementAt(rsi.renderedRowspans, i, const([])), FLift(\column ->
+							fOrs(
+								map(column, \pair : Pair<Transform<int>, int> ->
+									fselect2(pair.first, rsi.currentIndex, FLift2(\rsIdx, curIdx ->
+										curIdx - rsIdx > 0 && curIdx - rsIdx < pair.second
+									))
+								),
+								false
+							)
+						)),
+						const([
+							MCell(TSizedWidth(elementAt(columnWidths, i, zero), 0.), 1, 1),
+							cell
+						]),
+						const([cell])
+					),
+					const([cell])
+				),
+				const(if (firstColumn) [] else generate(0, cell.colspan - 1, \__ -> MCell(TEmpty(), 0, 1)))
+			))
+			|> fmerge
+			|> fconcatA
+		]
+		|> fmerge
+		|> fconcatA;
 
-		mapi(fullRow, \i, cell -> {
-			if (i >= columnsCount)
-				TEmpty()
-			else {
-				colStyle = columns[i].style;
-				colEnabled = extractStruct(colStyle, MEnabled(const(true))).enabled;
-				box = cellBox(i, false);
-				content =
-					eitherMap(
-						tryExtractStruct(colStyle, MWidthByContentLimited(const(-1.), const(-1.))), \wbcl ->
-						MSelect(fstall(cellWs, 0), \cws -> {
-							widthInspector = elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0));
-							if (fgetValue(wbcl.maxWidth) == -1.)
-								MAttachWidth(cell, widthInspector)
-							else
-								MInspect([IMaxWidth(widthInspector)], cell)
-						}),
-						cell
-					);
+		fselect(fullRow, FLift(\fr ->
+			mapi(fr, \i, cell : MCell -> {
+				if (i >= columnsCount)
+					TEmpty()
+				else {
+					colStyle = columns[i].style;
+					colEnabled = extractStruct(colStyle, MEnabled(const(true))).enabled;
+					box = cellBox(i, false, if (firstColumn) 1 else cell.colspan, cell.rowspan);
+					cellContent = cell.content;
+					content =
+						eitherMap(
+							tryExtractStruct(colStyle, MWidthByContentLimited(const(-1.), const(-1.))), \wbcl ->
+							MSelect(fstall(cellWs, 0), \cws -> {
+								widthInspector = elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0));
+								if (fgetValue(wbcl.maxWidth) == -1.)
+									MAttachWidth(cellContent, widthInspector)
+								else
+									MInspect([IMaxWidth(widthInspector)], cellContent)
+							}),
+							cellContent
+						);
 
-				MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
-				|> alignCellContent(p, cellBorder, colStyle, box)
-				|> (\t -> TAccess([TagName("td")], t))
-				|> (\t -> TShow(colEnabled, t))
-			}
-		})
+					MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
+					|> alignCellContent(p, cellBorder, colStyle, box)
+					|> TFixHeight(TFixed(0., lineHeight(false)))
+					|> (\t -> TAccess(concatA([
+							[TagName("td")],
+							if (cell.colspan > 1) [FAccessAttribute("colspan", const(i2s(cell.colspan)))] else [],
+							if (cell.rowspan > 1) [FAccessAttribute("rowspan", const(i2s(cell.rowspan)))] else [],
+						]), t))
+					|> (\t -> TShow(colEnabled, t))
+				}
+			})
+		))
 	};
 
 	subs = concatA([
@@ -1023,7 +1077,7 @@ dataTableSortingDef = MDataTableSorting(-1, true, None(), None(), false, false);
 
 skipSortingThreshold = 10000.; // ms
 
-makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MDataTableStyle], isReorder : bool, lightweight : bool,
+makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [MCell], style : [MDataTableStyle], isReorder : bool, lightweight : bool,
 	manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> MSortingState {
 
 	defaultParam : DynamicBehaviour<MSortingParam> = extractStruct(style, MSortingDefault(make(MSortingParam(0, true)))).sorting;
@@ -1103,7 +1157,7 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 														deferred(showWarningSnackbar);
 														""
 													} else {
-														cellM = elementAt(rowsFn(r), sb.column, TEmpty());
+														cellM = elementAt(map(rowsFn(r), \cell -> cell.content), sb.column, TEmpty());
 														toLowerCase(toString(switch (cellM) {
 															MMutable(mutContent): fgetValue(mutContent);
 															TMutable(mutContent): fgetValue(mutContent);
@@ -1130,7 +1184,7 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [Material], style : [MD
 														deferred(showWarningSnackbar);
 														TEmpty()
 													} else {
-														cellM = elementAt(rowsFn(r), sb.column, TEmpty());
+														cellM = elementAt(map(rowsFn(r), \cell -> cell.content), sb.column, TEmpty());
 														switch (cellM) {
 															MMutable(mutContent): fgetValue(mutContent);
 															TMutable(mutContent): fgetValue(mutContent);
@@ -1243,7 +1297,7 @@ MDTTitles(
 	rowsCountB : Transform<int>,
 	page : DynamicBehaviour<Pair<int, int>>,
 ) -> [Tropic] {
-	mapi(state.columns, \i0, c : MColumnDynamic -> if (state.replaceHeader) state.cellBox(i0, true) else {
+	mapi(state.columns, \i0, c : MColumnDynamic -> if (state.replaceHeader) state.cellBox(i0, true, 1, 1) else {
 		colHeaderStyle = tryExtractStruct(concat(c.style, eitherMap(headerStyle, \e -> [e], [])), defaultHS);
 		arrowStyle = eitherMap(colHeaderStyle, \chs -> style2MIconStyle(chs.textStyle), []);
 		rightAlign = isSameStructType(commonAlignment2abs(extractCommonAlignment(c.style), p.rtl), RightAlign());
@@ -1392,7 +1446,7 @@ MDTTitles(
 				)
 			} else t
 		)
-		|> alignCellContent(p, state.cellBorder, c.style, state.cellBox(i0, true))
+		|> alignCellContent(p, state.cellBorder, c.style, state.cellBox(i0, true, 1, 1))
 		|> (\t -> eitherMap(columnWidthInspector, \inspector ->
 				if (existsIndex(state.columnWidths, i0))
 					TConstruct(
@@ -1412,7 +1466,7 @@ MDTFirstColumn(
 	parent : MFocusGroup,
 	headers : [Tropic],
 	data : Transform<[?]>,
-	rowsFn : (?) -> [Material],
+	rowsFn : (?) -> [MCell],
 	sorting : MSortingState,
 	innerScrollState : Maybe<MInnerScrollState>,
 	expandRow : Transform<int>,
@@ -1443,9 +1497,9 @@ MDTFirstColumn(
 				|> implementExpandRow(true);
 
 			materializeRow = \row, j -> {
-				state.makeCells(parent, j, row)
-				|> (\cells -> colsHead(state, cells))
-				|> (\t -> TColsDir(t, parent.rtl))
+				TSelect(state.makeCells(parent, j, row, true, None()),
+					\cells -> TColsDir(colsHead(state, cells), parent.rtl)
+				)
 				|> (\t ->
 					if (is.lifted)
 						TAlpha(fselect(is.position, FLift(\isp -> max(0.5, 1. - abs(isp.x) / 100.))), t)
@@ -1509,7 +1563,7 @@ MDTFirstColumn(
 					cells =
 						fselect2(sorting.result, data, FLift2(\sortRes, dat ->
 							map(sortRes, \i -> elementAtMap(dat, i, rowsFn, []))
-							|> (\arr -> eitherMap(state.fixedRow, \fr -> concat([fr.cols], arr), arr))
+							|> (\arr -> eitherMap(state.fixedRow, \fr -> concat([map(fr.cols, unitaryCell)], arr), arr))
 							|> (\arr -> mapi(arr, \i, row -> {
 								j = sortRes[i - b2i(isSome(state.fixedRow))];
 								materializeRow(row, j)
@@ -1913,9 +1967,18 @@ TAvailableHeightPreventFillers(t : Tropic, avHeight : Transform<double>) -> Trop
 	TransformTAcc2(\t2a -> TAcc(t2a(TAvailableHeight(t, avHeight)) with yFillers = zero))
 }
 
+unitaryCell(content : Material) -> MCell {
+	MCell(content, 1, 1);
+}
+
 updateTrigger(trigger : DynamicBehaviour<bool>, delay : int) -> void {
 	timer(delay, \ -> {
 		reverseBehaviour(trigger);
 		updateTrigger(trigger, delay)
 	})
 }
+
+MTableRowspanInfo(
+	renderedRowspans : [DynamicBehaviour<[Pair<Transform<int>, int>]>],
+	currentIndex : Transform<int>
+);

@@ -13,7 +13,7 @@ export {
 	attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult;
 
 	// Override to set custom stage wh
-	stageWidthHeight = make(None());
+	stageWidthHeight : DynamicBehaviour<Maybe<WidthHeight>> = make(None());
 	fAccessibilityEnabled = ref false;
 	fSvg2GraphicsEnabled = ref !js;
 }
@@ -855,14 +855,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 									color = ref 0x000000;
 									alpha = ref 1.0;
 									inner = ref false;
+									useBoxShadow = ref false;
 									iter(params, \p -> switch (p : DropShadowParameter) {
 										Placement(a, ds): { angle := a; distance := ds; }
 										Radius(r): radius := r;
 										Spread(s): spread := s;
 										Color(c, a): { color := c; alpha := a; }
 										Inner(i): inner := i;
+										UseBoxShadow(): useBoxShadow := true;
 									});
-									makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+									ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+									if (^useBoxShadow) setUseBoxShadow(ds);
+									Some(ds);
 								}
 								Blur(params): {
 									radius = ref 3.0;
@@ -945,14 +949,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								color = ref 0x000000;
 								alpha = ref 1.0;
 								inner = ref false;
+								useBoxShadow = ref false;
 								iter(params, \p -> switch (p : DropShadowParameter) {
 									Placement(a, ds): { angle := a; distance := ds; }
 									Radius(r): radius := r;
 									Spread(s): spread := s;
 									Color(c, a): { color := c; alpha := a; }
 									Inner(i): inner := i;
+									UseBoxShadow(): useBoxShadow := true;
 								});
-								makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+								ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+								if (^useBoxShadow) setUseBoxShadow(ds);
+								Some(ds);
 							}
 							Blur(params): {
 								radius = ref 3.0;
@@ -1246,6 +1254,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			errorHandlerFn = extractStruct(style, OnVideoLoadingError(nop)).fn;
 			streamListenerFn = extractStruct(style, StreamStatus(nop1)).fn;
 			synchroCalls = extractStruct(style, SynchroCalls(nop, nop));
+			videoPlayStatus = extractStruct(style, FVideoPlayStatus(make(false)));
 			keepAspectRation = extractStruct(style, FVideoKeepAspectRatio(const(true))).keep;
 			coverBox = extractStruct(style, FVideoCoverBox(const(false), []));
 			coverBoxAlign = extractStruct(coverBox.style, FAlign(const(0.5), const(0.5)));
@@ -1277,6 +1286,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					\p -> {
 						streamListenerResponse := true;
 						nextDistinct(playing, p);
+						if (!p)
+							next(videoPlayStatus.playing, p);
 						streamListenerResponse := false;
 					},
 					\len -> {
@@ -1474,12 +1485,22 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					}
 				} else if (code == "FlowGL.User.Stop") {
 					synchroCalls.onStop();
+				} else if (code == "FlowGL.User.Playing") {
+					next(videoPlayStatus.playing, true)
+				} else if (code == "FlowGL.User.Waiting") {
+					next(videoPlayStatus.playing, false)
 				}
 
 				if (^dispR == []) {
 					dispR := [
 						makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
-							if (pl) resumeVideo(video) else pauseVideo(video);
+							if (pl) {
+								resumeVideo(video);
+							} else {
+								pauseVideo(video);
+
+								next(videoPlayStatus.playing, false);
+							}
 						})(),
 						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
 					];
@@ -1506,6 +1527,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			focus = extractStruct(style, FFocus(make(false))).focus;
 			position = extractStruct(style, FPosition(make(0))).position;
 			selection = extractStruct(style, FSelection(make(-1))).selection;
+			positionSelection = extractStruct(style, FPositionSelection(make(PositionSelection(0, -1)))).positionSelection;
 			onSelection = tryExtractStruct(style, FInputOnSelect(nop2));
 			onSelectAll = tryExtractStruct(style, FInputOnSelectAll(nop));
 			scrollInfo = extractStruct(style, FScrollInfo(make(ScrollInfo(0, 0, 0)))).info;
@@ -1555,6 +1577,16 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							} else {
 								setSelection(textfield, p, s);
 							}
+							textInputResponse := true;
+							nextDistinct(positionSelection, PositionSelection(p, s));
+							textInputResponse := false;
+						})(),
+						makeSubscribe(positionSelection, \ps -> if (!^textInputResponse) {
+							setSelection(textfield, ps.position, ps.selection);
+							textInputResponse := true;
+							nextDistinct(position, ps.position);
+							nextDistinct(selection, ps.selection);
+							textInputResponse := false;
 						})(),
 						makeSubscribe(inputType, \t -> setTextInputType(textfield,
 							switch (t : InputType) {
@@ -1589,8 +1621,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							textInputResponse := true;
 							nextDistinct(content, getContent(textfield));
 							// nextDistinct(wh, WidthHeight(getTextFieldWidth(textfield), getTextFieldHeight(textfield)));
-							nextDistinct(position, getCursorPosition(textfield));
-							nextDistinct(selection, getSelectionEnd(textfield));
+							pos = getCursorPosition(textfield);
+							sel = getSelectionEnd(textfield);
+							nextDistinct(position, pos);
+							nextDistinct(selection, sel);
+							nextDistinct(positionSelection, PositionSelection(pos, sel));
 							nextDistinct(focus, getFocus(textfield));
 							textInputResponse := false;
 						}),

@@ -1,5 +1,5 @@
-import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/cgraph/pretty;
+import tools/flow9/types/ugraph/debug;
 import tools/flow9/types/ugraph/tmap;
 import tools/flow9/types/cgraph/constraint;
 import tools/flow9/types/pretty;
@@ -37,14 +37,14 @@ resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
 			true;
 		} else {
 			ok = unifyCEClass(tmap, c.subtype, c.supertype, true, c.reason);
-			if (ok) {
+			if (ok == UnifyOK()) {
 				// OK, then do it
 				ok2 = unifyCEClass(tmap, c.subtype, c.supertype, false, c.reason);
-				if (verbose && ok2) {
+				if (verbose && ok2 == UnifyOK()) {
 					println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked as unify");
 				}
-				ok2;
-			} else ok;
+				ok2 == UnifyOK();
+			} else false;
 
 		}
 	}, 5);
@@ -52,7 +52,7 @@ resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
 	// Pick smallest overloads for subtypes
 	iterList(^(tmap.cmap.constraints), \c : TConstraint -> {
 		// OK, let us reduce this one
-		pickSmallestOverload(tmap, c.subtype);
+		pickSmallestOverload(tmap, c.subtype, None());
 	});
 
 	// Then do the subtypes that work after that
@@ -62,10 +62,9 @@ resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
 	remainingUnifications(tmap, verbose);
 
 	// Now, resolve any other overloads we might have
-	roots = getUnionMapRoots(tmap.cmap.cmap);
-	iterSet(roots, \tp : int -> {
+	iterUnionMap(tmap.cmap.cmap, \tp : int, node : CNode -> {
 		// OK, let us reduce this one
-		pickSmallestOverload(tmap, tp);
+		pickSmallestOverload(tmap, tp, Some(node));
 	});
 	// Then do the subtypes that work after that
 	remainingSubtypes(tmap, verbose);
@@ -97,15 +96,15 @@ remainingSubtypes(tmap : TMap, verbose : bool) -> void {
 
 remainingUnifications(tmap : TMap, verbose : bool) -> void {
 	repeatList(tmap.cmap.unifications, \c : TUnification -> {
-		ok = unifyCEClass(tmap, c.left, c.right, true, c.reason);
-		if (ok) {
+		res = unifyCEClass(tmap, c.left, c.right, true, c.reason);
+		if (res == UnifyOK()) {
 			// OK, then do it
-			ok2 = unifyCEClass(tmap, c.left, c.right, false, c.reason);
-			if (verbose && ok2) {
+			res2 = unifyCEClass(tmap, c.left, c.right, false, c.reason);
+			if (verbose && res2 == UnifyOK()) {
 				println("  " + prettyCEClass(tmap.cmap, c.left) + " unify " + prettyCEClass(tmap.cmap, c.right) + " worked");
 			}
-			ok2;
-		} else ok;
+			res2 == UnifyOK();
+		} else false;
 	}, 5);
 }
 
@@ -156,8 +155,8 @@ processList(rlist : ref List<?>, fn : (?) -> bool) -> bool {
 	!isEmptyList(^rlist);
 }
 
-pickSmallestOverload(tmap : TMap, eclass : int) -> void {
-	node = getUnionMapValue(tmap.cmap.cmap, eclass);
+pickSmallestOverload(tmap : TMap, eclass : int, mnode : Maybe<CNode>) -> void {
+	node = mnode ?? mnode : getUnionMapValue(tmap.cmap.cmap, eclass);
 	switch (node : CNode) {
 		CEpsilon(): {}
 		CName(name, typars, reason): {}

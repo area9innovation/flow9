@@ -1,0 +1,273 @@
+import tools/flow9/backends/link;
+import tools/flow9/backends/flix/flix_backend;
+import tools/flow9/backends/utils;
+import tools/flow9/backends/back_eval;
+import string_utils;
+import text/blueprint;
+
+/*
+TODO:
+- Do not produce structs for those in unions
+- switch should undo the desugaring into lets,
+  or at least do it differently to avoid the downcast
+- Handle globals somehow
+- Handle Flow somehow, or at least ignore it
+*/
+
+export {
+	// Compiles the given flow path to Flix as a single string
+	bmodule2flix(cache : FlowCache, flowpath : string, shortenIds : bool) -> string;
+}
+
+bmodule2flix(cache : FlowCache, flowpath : string, shortenIds : bool) -> string {
+	p : BExpProgram = linkBExpProgram(cache, flowpath, shortenIds, flixBackendSpec());
+
+	backend : Backend<BExpProgram> = flixBackend(p);
+
+	// Unions are enums in flix
+	enums = foldTree(p.unions, "", \name, uniondef, acc -> {
+		acc + dunion2flix(p, uniondef) + "\n"
+	});
+
+	structs = foldTree(p.structs, "", \name, structdef, acc -> {
+		acc + dstruct2flix(p, structdef) + "\n"
+	});
+
+	decls = superglue(p.declarations, \d -> dexpDeclaration2flix(backend, d), "\n");
+
+	enums + structs + decls;
+}
+
+dunion2flix(p : BExpProgram, d : DUnion) -> string {
+	/*
+	enum Shape {
+		case Circle(Int),        // circle radius
+		case Square(Int),        // side length
+		case Rectangle(Int, Int) // height and width
+	}
+	*/
+	blueprint("
+		enum Flow%id%%typars% {
+			%cases%
+		}
+	", [
+		"id", capitalize(d.id),
+		"typars", if (d.typars == []) "" else "[" + superglue(d.typars, \tp -> dtype2flix(tp), ", ") + "]",
+		"cases", superglue(d.types, \tn : DTypeName -> {
+			// case MySome({x::Int32})
+			"case " + dtype2flix(DTypeName(tn.id, [], tn.pos)) // We do not want the type pars in the structs
+			+ {
+				mstruct = lookupFlixStruct(p, tn.id);
+				mstruct ?? {
+					if (mstruct.structArgs == []) ""
+					else {
+						"({"
+						+ superglue(mstruct.structArgs, \sa: DStructArg -> {
+							sa.id + " :: " + dtype2flix(sa.type)
+						}, ",")
+						+ "})";
+					}
+				} : "";
+			}
+		}, ",\n")
+	])
+}
+
+dtype2flix(d : DType) -> string {
+	btype2flix(dtype2btype(d));
+}
+
+btype2flix(b : BType) -> string {
+	switch (b) {
+		BTypePar(id): typar2flix(id);
+		BTypeName(id, typars): {
+			if (id == "int") "Int32"
+			else if (id == "double") "Float64"
+			else if (trim2(id, "?") == "") typar2flix(id)
+			else {
+				capitalize(id) 
+				+ if (typars == []) "" else "[" + superglue(typars, \tp -> btype2flix(tp), ", ") + "]";
+			}
+		}
+		BTypeFunction(args, returnType): {
+			sargs = superglue(args, \a -> btype2flix(a), ", ");
+			(if (args == []) "Unit" else if (length(args) != 1) "(" + sargs + ")" else sargs) 
+			+ " -> " + btype2flix(returnType)
+		}
+	}
+}
+
+// opaque type MyRecord = {x::Int32}
+dstruct2flix(p : BExpProgram, d : DStruct) -> string {
+	"opaque type " + d.id 
+	+ (if (d.typars == []) "" else "[" + superglue(d.typars, typar2flix, ", ") + "]")
+	+ " = {" 
+	+ superglue(d.structArgs, \sa: DStructArg -> {
+			sa.id + " :: " + dtype2flix(sa.type)
+		}, ",")
+	+ "}";
+}
+
+typar2flix(typar : string) -> string {
+	["", "a", "b", "c", "d", "e", "f", "g", "h"][strlen(typar)]
+}
+
+dexpDeclaration2flix(backend : Backend<BExpProgram>, d : BExpDeclaration) -> string {
+	switch (d) {
+		BGlobalVar(id, body, type): "// TODO: GLOBALS NOT SUPPORTED";
+		BExpFunction(id, typars, args, body, type): {
+			if (id == "main") {
+				blueprint("
+					def main(_args: Array[String]): Int32 & Impure =
+						%body%
+				", [
+					"body", bexp2flix(backend, body)
+				])
+			} else {
+				rettype = switch (type) {
+					BTypePar(__): type;
+					BTypeName(__, __): type;
+					BTypeFunction(__, returnType): returnType;
+				};
+				argTypes = switch (type) {
+					BTypePar(__): [];
+					BTypeName(__, __): [];
+					BTypeFunction(at, __): at;
+				};
+				blueprint("
+					def %id%(%args%) : %type% =
+						%body%
+				", [
+					"id", id2flix(id),
+					"args", supergluei(argTypes, \i, at -> args[i] + " : " + btype2flix(at), ", "),
+					"type", btype2flix(rettype),
+					"body", bexp2flix(backend, body)
+				])
+
+			}
+		}
+		BExpNative(id, isio, type, nativeName): "// TODO: Native " + id;
+	}
+}
+
+bexp2flix(backend : Backend<BExpProgram>, e : BExp) -> string {
+	rec = \ee -> bexp2flix(backend, ee);
+	todo = \ -> {
+		println("TODO: Add flix generation for " + e.structname);
+		"/* TODO generate " + e.structname + " for " + prettyBExp(e) + "*/";
+	}
+	switch (e) {
+		BVoid(): "()";
+		BBool(v): b2s(v);
+		BInt(v): i2s(v);
+		BDouble(v): double2string(v);
+		BString(v): toString(v);
+		BVar(id, type): id2flix(id);
+		BLet(id, value, body, type): blueprint("
+			let %id% = %val%;
+			%body%", [
+			"id", id2flix(id),
+			"val", rec(value),
+			"body", rec(body)
+		]);
+		BIf(cond, then, else_, type): {
+			blueprint("
+				if (%cond%)
+					%then%
+				else
+					%else%", 
+			[
+				"cond", rec(cond),
+				"then", rec(then),
+				"else", rec(else_)
+			]);
+		}
+		BCall(fn, args, type): {
+			produceBackendCall(backend, e, bexp2flix)
+		}
+		BLambda(args, body, type, __): {
+			blueprint("%args% -> %body%",
+				[
+					"args", if (args == []) "()" else if (length(args) == 1) args[0] else "(" + strGlue(args, ", ") + ")",
+					"body", bexp2flix(backend, body)
+				]
+			);
+		}
+		BSequence(exps, type): {
+			superglue(exps, rec, ";\n")
+		}
+		BConstruct(struct, args, type): {
+			mstruct = lookupFlixStruct(backend.info, struct);
+			mstruct ?? {
+				struct + "("
+				+ (if (args != []) {
+					"{"
+					+ supergluei(args, \i, sarg -> {
+						arg = mstruct.structArgs[i];	
+						arg.id + "=" + rec(sarg)
+					}, ", ")
+					+ "}"
+				} else "")
+				+ ")"
+			} : todo();
+		}
+		BField(value, field, type): bfield2flix(backend, e);
+		BSetMutable(left, field, value, type): todo();
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			blueprint("
+				match %val% {
+					%cases%
+				}", [
+				"val", id2flix(value.id),
+				"cases", superglue(cases, \c : BCase -> {
+					mstruct = lookupFlixStruct(backend.info, c.id);
+					blueprint("
+						case %id%%args% => (
+							%body%
+						)",
+						[
+							"id", c.id,
+							"args", mstruct ?? "(_)" : "",
+							"body", rec(c.body)
+						]
+					)
+				}, "\n")
+			]);
+		}
+		BArray(args, type): todo();
+		BCast(value, from, to): {
+			rec(value);
+		}
+		BDupValue(value): rec(value);
+		BDropValue(value): rec(value);
+		BReuseValue(value): rec(value);
+	}
+}
+
+id2flix(id : string) -> string {
+	if (startsWith(id, "_")) "flow_" + id else id
+}
+
+lookupFlixStruct(p : BExpProgram, id : string) -> Maybe<DStruct> {
+	lookupTree(p.structs, strRight(id, 4))
+}
+
+bfield2flix(backend : Backend<BExpProgram>, f : BField) -> string {
+	valType = getBType(f.value);
+	structName = switch (valType) {
+		BTypeName(id, typars): id;
+		default: "";
+	};
+	mstruct = lookupFlixStruct(backend.info, structName);
+	mstruct ?? {
+		// (match a { case FlowSome(r) => r.value })
+		blueprint("
+			(match %value% {
+				case %id%(r) => r.%field%
+			})", [
+			"value", bexp2flix(backend, f.value),
+			"id", mstruct.id,
+			"field", f.field,
+		])
+	} : toString(f);
+}

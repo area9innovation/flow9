@@ -77,6 +77,7 @@ export {
 		leftButton : Maybe<MLeftCustomButton>,
 		editIcon : Maybe<DynamicBehaviour<bool>>,
 		rightButton : Maybe<Transform<string>>,
+		rightCustomButton : Maybe<Material>,
 		inputBorders : MInputBorders,
 		noLeftBorder : bool,
 		maxChars : int,
@@ -123,12 +124,20 @@ export {
 		placementType : MSuggestionsPlacementType,
 		inLine : Maybe<MAutoCompleteInLineState>,
 		updateDelay : int,
-		showMoreResults : Maybe<DynamicBehaviour<Pair<int, int>>>
+		showMoreResults : Maybe<DynamicBehaviour<Pair<int, int>>>,
+		autoCompleteAsync : Maybe<MAutoCompleteAsyncState>
 	);
 
 	MAutoCompleteInLineState(
 		bestSuggestion : Transform<Maybe<Pair<string, string>>>,
 		showPopup : bool
+	);
+
+	MAutoCompleteAsyncState(
+		makeRequest : (txt : string, onResponse : ([string]) -> void) -> void,
+		minChars : int,
+		currentRequests : DynamicBehaviour<int>,
+		prevRequestText : DynamicBehaviour<Maybe<string>>
 	);
 
 	MInputPopupState(
@@ -256,23 +265,23 @@ export {
 
 	defEatKeyDown(multiline : bool, readOnly : bool) -> (KeyEvent) -> bool {
 		\k : KeyEvent -> {
-			k.keycode == 37 ||
-			k.keycode == 39 ||
-			k.keycode == 38 ||
-			k.keycode == 40 ||
-			(k.keycode == 27 && !readOnly) ||
-			(k.keycode == 8 && !readOnly) ||
-			(k.keycode == 9 && !readOnly && multiline) ||
-			(k.keycode == 13) ||
-			(k.keycode == 46 && !k.shift && !readOnly) ||
-			(k.keycode == 13 && !readOnly) ||
-			(k.keycode == 65 && k.ctrl) ||
-			((k.keycode == 67 || k.keycode == 45) && k.ctrl) ||
-			(k.keycode == 88 && k.ctrl) ||
-			(k.keycode == 46 && k.shift) ||
+			k.keycode == KEY_LEFT ||
+			k.keycode == KEY_RIGHT ||
+			k.keycode == KEY_UP ||
+			k.keycode == KEY_DOWN ||
+			(k.keycode == KEY_ESCAPE && !readOnly) ||
+			(k.keycode == KEY_BACKSPACE && !readOnly) ||
+			(k.keycode == KEY_TAB && !readOnly && multiline) ||
+			(k.keycode == KEY_ENTER) ||
+			(k.keycode == KEY_DELETE && !k.shift && !readOnly) ||
+			(k.keycode == KEY_ENTER && !readOnly) ||
+			(k.keycode == KEY_A && k.ctrl) ||
+			((k.keycode == KEY_C || k.keycode == KEY_INSERT) && k.ctrl) ||
+			(k.keycode == KEY_X && k.ctrl) ||
+			(k.keycode == KEY_DELETE && k.shift) ||
 			(
 				strlen(k.utf) == 1 && !readOnly &&
-				k.keycode != 16777218 &&
+				k.keycode != KEY_BACKTAB &&
 				(k.keycode != 86 || !k.ctrl) &&
 				(k.keycode != 187 && k.utf != "=" && !k.ctrl) &&
 				(k.keycode != 95 && k.utf != "-" && !k.ctrl)
@@ -518,6 +527,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		else
 			None();
 
+	rightCustomButton = maybeMap(tryExtractStruct(style, MRightCustomButton(TEmpty())), \rb -> rb.button);
+
 	// Floating Label
 	inactiveColor = contrastingColor(parent);
 	inactiveOpacity = defaultInactiveItemLabelOpacity(MColor2int(color) == black);
@@ -651,8 +662,21 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			)
 		};
 
+	autoCompleteAsync =
+		maybeMap(
+			tryExtractStruct(style, MAutoCompleteAsync(nop2)),
+			\async -> {
+				MAutoCompleteAsyncState(
+					async.makeRequest,
+					startSearch.minChars,
+					make(0),
+					make(None())
+				)
+			}
+		);
+
 	autocomplete =
-		if (matchers != []) {
+		if (matchers != [] || isSome(autoCompleteAsync)) {
 			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
 			maxResults = extractStruct(style, MMaxResults(10)).results;
 
@@ -718,7 +742,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
 					inLine,
 					startSearch.wait,
-					showMoreResults
+					showMoreResults,
+					autoCompleteAsync
 				)
 			)
 		} else
@@ -792,42 +817,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		maybeApply(
 			autocomplete,
 			\ac -> {
-				c2 =
-					if (!ac.includeSpaces) {
-						linesN = strSplit(c, "\n");
-						words = strSplit(c, " ");
-						lastElement(words, "");
-					} else {
-						c
-					};
+				dispUnsM(autocompleteHandlerUns);
+				autoCompleteHandler = \ -> {
+					c2 =
+						if (!ac.includeSpaces) {
+							linesN = strSplit(c, "\n");
+							words = strSplit(c, " ");
+							lastElement(words, "");
+						} else {
+							c
+						};
 
-				showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
-				chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
-				simultaneous = max(length(mtch) / chunkSize, 50);
-				mapAsyncParallelChunked(
-					mtch, chunkSize, simultaneous,
-					\chunk, fulfill, __ -> {
-						mapConcat(
-							chunk,
-							\matcherPair -> {
-								if (showAll)
-									filtermap(
-										matcherPair.second.sentences, 
-										\s -> {
-											if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
-											else None()
-										}
-									)
-								else
-									map(
-										ac.sentenceMatcher.fn(matcherPair.second, c2, intMax, true, false, getValue(position)),
-										\h -> SentenceHitExtended(h.matcher, h.sentence, h.score, h.origWords, matcherPair.first)
-									)
-							}
-						) |> fulfill
-					},
-					\allCompl -> {
-						compl = mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score));
+					onAllCompl = \allCompl : [SentenceMatch], needSort -> {
+						compl = if (needSort) mergeSort(allCompl, \sm1, sm2 -> genericCompareDesc(sm1.score, sm2.score)) else allCompl;
 						maybeApply(ac.showMoreResults, \results -> nextDistinct(results, Pair(ac.maxResults, length(compl))));
 
 						updateFn = \sentences -> {
@@ -867,20 +869,71 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								eitherMap(suggest, \sg -> [sg], [])
 							};
 
-						dispUnsM(autocompleteHandlerUns);
-
-						if (ac.updateDelay == 0 || length(newSentences) == 0)
-							updateFn(newSentences)
-						else
-							setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, \ -> updateFn(newSentences)))
-
-					},
-					\localError -> {
-						devtrace("Something goes wrong building completions.");
-						devtrace(localError);
+						updateFn(newSentences)
 					}
-				);
-			},
+
+					eitherFn(
+						ac.autoCompleteAsync,
+						\async -> {
+							enabled = foc && eitherMap(getValue(async.prevRequestText), \prevText -> prevText != c2, true);
+							if (enabled) {
+								if (strlen(c2) < async.minChars) onAllCompl([], false)
+								else {
+									onResponse = \items -> {
+										mtchr = ac.sentenceMatcher.matcher([]);
+										allCompl = map(items, \it ->
+											SentenceHit(mtchr, it, 0., makeSet())
+										);
+										onAllCompl(allCompl, false);
+										nextDistinct(async.currentRequests, getValue(async.currentRequests) - 1);
+									};
+									nextDistinct(async.currentRequests, getValue(async.currentRequests) + 1);
+									nextDistinct(async.prevRequestText, Some(c2));
+									async.makeRequest(c2, onResponse)
+								}
+							}
+						},
+						\ -> {
+							showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
+							chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
+							simultaneous = max(length(mtch) / chunkSize, 50);
+							mapAsyncParallelChunked(
+								mtch, chunkSize, simultaneous,
+								\chunk, fulfill, __ -> {
+									mapConcat(
+										chunk,
+										\matcherPair -> {
+											if (showAll)
+												filtermap(
+													matcherPair.second.sentences, 
+													\s -> {
+														if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
+														else None()
+													}
+												)
+											else
+												map(
+													ac.sentenceMatcher.fn(matcherPair.second, c2, intMax, true, false, getValue(position)),
+													\h -> SentenceHitExtended(h.matcher, h.sentence, h.score, h.origWords, matcherPair.first)
+												)
+										}
+									) |> fulfill
+								},
+								\allCompl -> onAllCompl(allCompl, true),
+								\localError -> {
+									devtrace("Something goes wrong building completions.");
+									devtrace(localError);
+								}
+							);
+						}
+					)
+				}
+
+				if (ac.updateDelay == 0)
+					autoCompleteHandler()
+				else
+					setUnsM(autocompleteHandlerUns, interruptibleTimer(ac.updateDelay, autoCompleteHandler))
+			}
 		);
 
 		newC =
@@ -1185,6 +1238,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		leftButton,
 		editIcon,
 		rightButton,
+		rightCustomButton,
 		inputBorders,
 		noLeftBorder,
 		maxChars,
@@ -1947,41 +2001,41 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 				moveCursorHome(k);
 			} else if (k.utf == "end") {
 				moveCursorEnd(k);
-			} else if (k.keycode == 37) { // left
+			} else if (k.keycode == KEY_LEFT) {
 				moveCursorLeft(k);
-			} else if (k.keycode == 39) { // right
+			} else if (k.keycode == KEY_RIGHT) {
 				moveCursorRight(k);
-			} else if (k.keycode == 38) { // up
+			} else if (k.keycode == KEY_UP) {
 				if (multiline)
 					moveCursorUp()
 				else if (numeric)
 					updateContent(i2s(s2i(getValue(inputState.content)) + 1));
-			} else if (k.keycode == 40) { // down
+			} else if (k.keycode == KEY_DOWN) {
 				if (multiline)
 					moveCursorDown()
 				else if (numeric)
 					updateContent(i2s(s2i(getValue(inputState.content)) - 1));
-			} else if (k.keycode == 8 && !readOnly) { // backspace
+			} else if (k.keycode == KEY_BACKSPACE && !readOnly) {
 				editorDeletePreviousChar();
-			} else if ((k.keycode == 9 || k.keycode == 16777218 /* shift + tab */) && !readOnly) { // tab
+			} else if ((k.keycode == KEY_TAB || k.keycode == 16777218 /* shift + tab */) && !readOnly) {
 				if (multiline)
 					insertStr("\t");
-			} else if (k.keycode == 46 && !k.shift && !readOnly) { // delete
+			} else if (k.keycode == KEY_DELETE && !k.shift && !readOnly) {
 				editorDeleteNextChar();
-			} else if (k.keycode == 13 && !readOnly) { // enter
+			} else if (k.keycode == KEY_ENTER && !readOnly) {
 				if (multiline)
 					insertStr("\n");
-			} else if (k.keycode == 65 && k.ctrl) { // ctrl+a
+			} else if (k.keycode == KEY_A && k.ctrl) {
 				selectAll();
-			} else if (((k.keycode == 86 && k.ctrl) || (k.keycode == 45 && k.shift)) && !readOnly) { // ctrl+v | shift+ins
+			} else if (((k.keycode == KEY_V && k.ctrl) || (k.keycode == KEY_INSERT && k.shift)) && !readOnly) {
 				// handled in addPasteEventListener
-			} else if ((((k.keycode == 67 || k.keycode == 45) && k.ctrl) || (readOnly &&
-				((k.keycode == 88 && k.ctrl) || (k.keycode == 46 && k.shift))))) { // ctrl+c | ctrl+ins
+			} else if ((((k.keycode == KEY_C || k.keycode == KEY_INSERT) && k.ctrl) || (readOnly &&
+				((k.keycode == KEY_X && k.ctrl) || (k.keycode == KEY_DELETE && k.shift))))) {
 				if (isSelection()) {
 					sel = getFromTo(getValue(selectionPosition));
 					setClipboard(sel);
 				}
-			} else if (((k.keycode == 88 && k.ctrl) || (k.keycode == 46 && k.shift)) && !readOnly) { // ctrl+x | shift+del
+			} else if (((k.keycode == KEY_X && k.ctrl) || (k.keycode == KEY_DELETE && k.shift)) && !readOnly) {
 				if (isSelection()) {
 					sel = getFromTo(getValue(selectionPosition));
 					setClipboard(sel);
@@ -2277,7 +2331,7 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 		else
 			f
 	)
-	|> (\f -> TAttachWidth2(TFillX(), editorState.width, f))
+	|> (\f -> TAttachAvailableWidth(f, editorState.width))
 	|> (\f -> {
 		boxHeight =
 			if (inputState.linesCount > 0)
@@ -2373,6 +2427,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 	inpWH = makeWH();
 
+	showInput = fOr(inputState.mfocus.focused, fand(const(inputState.multiline), inputState.mfocus.focusEnabled));
+
 	textInput = \ ->
 		TransformTAcc(\t2a, pi, ss, mo ->
 			t2a(
@@ -2408,11 +2464,11 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 									filterKey =
 										eitherMap(inputState.processedKeyDown, \pk -> pk.fn(ke), true) &&
-										(js || (inputState.multiline && !ke.shift) || (ke.keycode != 9 && ke.keycode != 16777218)) &&
+										(js || (inputState.multiline && !ke.shift) || (ke.keycode != KEY_TAB && ke.keycode != KEY_BACKTAB)) &&
 										!((ke.ctrl && (ke.keycode  == 187 || ke.utf == "=")) || (ke.ctrl && (ke.keycode  == 95 || ke.utf == "-"))) &&
 										eitherMap(
 											inputState.autocomplete,
-											\ac -> (ke.keycode != 13 || getValue(ac.selected) < 0),
+											\ac -> (ke.keycode != KEY_ENTER || getValue(ac.selected) < 0),
 											true
 										);
 
@@ -2487,7 +2543,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 		)
 		|> (\f -> TFixSize(f, TGhost("MTextInputSize")))
 		|> (\f -> disableScrollInsideEnabled(manager, f, inputState.mfocus.focused))
-		|> (\f -> TAlpha(fif(inputState.mfocus.focused, const(1.), zero), f))
+		|> (\f -> TAlpha(fif(showInput, const(1.), zero), f))
 		|> (\f ->
 			TransformTAcc2(\t2a -> {
 				acc = f |> t2a;
@@ -2517,7 +2573,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	|> (\f ->
 		TGroup2WithoutMetrics(
 			TVisible(
-				fnot(inputState.mfocus.focused),
+				fnot(showInput),
 				MScroll2T(
 					manager,
 					inputState.parent,

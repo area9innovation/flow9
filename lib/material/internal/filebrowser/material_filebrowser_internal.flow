@@ -37,23 +37,29 @@ export {
 	) -> void;
 }
 
+FBItemInfo(
+	name : string,
+	dirPath : Maybe<string>,	// if dir is differ than current - it is stored here
+	isFolder : bool
+);
+
+makeFBItemInfo = \-> FBItemInfo("", None(), false);
+
 SearchState(
-	engine : FilebrowserEngine<?, ??>,
+	engine : FilesystemAsyncEngine<?, ??>,
 	text : string,
 	ext : [string],
-	counterB : DynamicBehaviour<int>,
 	breakSearchB : DynamicBehaviour<bool>,
 	currentPathB : DynamicBehaviour<string>,
 	selectedNameB : DynamicBehaviour<[string]>
 );
 
 //
-makeSearchState(engine : FilebrowserEngine<?, ??>, text : string, ext : [string], currentPathB : DynamicBehaviour<string>, selectedNameB : DynamicBehaviour<[string]>) -> SearchState {
+makeSearchState(engine : FilesystemAsyncEngine<?, ??>, text : string, ext : [string], currentPathB : DynamicBehaviour<string>, selectedNameB : DynamicBehaviour<[string]>) -> SearchState {
 	SearchState(
 		engine,
 		text,
 		ext,
-		make(0),
 		make(false),
 		currentPathB,
 		selectedNameB
@@ -82,19 +88,18 @@ createRequestPreviewFn(state : FilebrowserState<?, ??, ???>, onError) -> Pair<(M
 	};
 
 	Pair(materialWrapper, requestPreviewfn);
-
 }
 
 startTimestampR : ref double = ref 0.0;
 // calls the content loading and view creating for the current path
-getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool, scrollPosition : DynamicBehaviour<Point>, setPosM : Maybe<(DynamicBehaviour<Point>) -> void>) -> Material {
+getLibraryUI(state : FilebrowserState<FBItemInfo, ?, ??>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool, scrollPosition : DynamicBehaviour<Point>, setPosM : Maybe<(DynamicBehaviour<Point>) -> void>) -> Material {
 	currentPath = getValue(state.currentPathB);
 	viewB = make(MCenter(MLoading(_("Loading content, please wait..."))));
 	onError = \error -> next(viewB, MCenter(MText("Error: " + error, [])));
 
 	curTimestamp = timestamp();
 	startTimestampR := curTimestamp;
-	getContentAPI(state.engine, currentPath, ext, filterFn,
+	getContentAPI(state.engine, currentPath, ext, filterFn, make(false),
 		\dirs : [string], files : [string] -> {
 
 			previewsLoadingStatusB = make(Some(_("Thumbnails updating, please wait...")));
@@ -104,8 +109,8 @@ getLibraryUI(state : FilebrowserState<Pair<string, bool>, ?>, ext : [string], fi
 				viewB,
 				prepareAndGetContentUI(
 					state,
-					map(dirs, \d -> Pair(d, true)),
-					if (folderSelection) [] else map(files, \d -> Pair(d, false)),
+					map(dirs, \d -> FBItemInfo(d, None(), true)),
+					if (folderSelection) [] else map(files, \d -> FBItemInfo(d, None(), false)),
 					contains(dirs, ".."),
 					previewRequestFn.second,
 					previewsLoadingStatusB,
@@ -139,7 +144,7 @@ checkWhatIsChanged(
 	basePath : string,
 	dirs : [string],
 	files : [string],
-	engine : FilebrowserEngine<?, ??>,
+	engine : FilesystemAsyncEngine<?, ??>,
 	callback : ([string], [string], [string]) -> void,
 	previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
 	curTimestamp : double
@@ -183,7 +188,7 @@ checkWhatIsChanged(
 	}
 
 	nextDistinct(previewsLoadingStatusB, Some(_("Cache updating, please wait...")));
-	if (isUrlParameterTrue("fs_extra_info") && ^startTimestampR == curTimestamp)
+	if (^startTimestampR == curTimestamp) {
 		engine.getExtraInfo(
 			map(files, \f -> basePath + f),
 			"version",
@@ -193,71 +198,61 @@ checkWhatIsChanged(
 					\i, m -> FSFileData(files[i], getJsonIntValue(either(m, JsonDouble(0.)), 0))
 				));
 			},
-			\__ -> {
-				updateLastCheckResult(
-					eitherMap(
-						^lastCheckResultR,
-						\lcr -> lcr.files,
-						[]
-					)
-				);
-			}
+			\__ -> updateLastCheckResult(map(files, \f -> FSFileData(f, 0)))
 		)
-	else updateLastCheckResult(
-		eitherMap(
-			^lastCheckResultR,
-			\lcr -> lcr.files,
-			[]
-		)
-	);
+	} else {
+		updateLastCheckResult(map(files, \f -> FSFileData(f, 0)))
+	};
 }
 
 // loading content of the selected folder using API
-getContentAPI(engine : FilebrowserEngine<?, ??>, path : string, ext : [string], filterFn : (string) -> bool, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
+getContentAPI(engine : FilesystemAsyncEngine<?, ??>, path : string, ext : [string], filterFn : (string) -> bool, stopReadingB : DynamicBehaviour<bool>, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
 	// A small delay to show empty filebrowser before content loading
 	deferUntilRender(\->
-		engine.readDirectory(path, \dirs, files -> {
-			nonEmpty = neq("");
-			okExt = if (ext == []) \f -> true
-				else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
+		if (!getValue(stopReadingB)) engine.readDirectory(path, \dirs, files -> {
+				nonEmpty = neq("");
+				okExt = if (ext == []) \f -> true
+					else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
 
-			callback(
-				filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
-				filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
-			);
+				callback(
+					filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
+					filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
+				);
 
-		}, onError)
+			},
+			onError
+		) else callback([], [])
 	);
 }
 
 // start the elements searching (which names contains searchText string) and updating the content view
-getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : string, ext : [string], filterFn : (string) -> bool, scrollPosition : DynamicBehaviour<Point>) -> Material {
+getSearchResultUI(state : FilebrowserState<FBItemInfo, ?, ??>, searchText : string, ext : [string], filterFn : (string) -> bool, scrollPosition : DynamicBehaviour<Point>) -> Material {
 	// Special state2 for search case to have tooltips in result view.
 	// Without dummy `currentPathB` files in the current folder will be without tooltips.
 	state2 = FilebrowserState(state with currentPathB=make("-1"));
 	stateSearch = makeSearchState(state.engine, toLowerCase(searchText), ext, state.currentPathB, state.selectedElementsB);
-	next(stateSearch.counterB, getValue(stateSearch.counterB) + 1);
 	currentPath = getValue(state.currentPathB);
 
-	itemB = make(MLoading(_("Searching, please wait...")));
+	itemB = make(MEmpty());
+	searchProgressTextB = make(Some(_("Searching, please wait...")));
 	resD = ref [];
 	resF = ref [];
 
-	resultScreen = \-> {
-		dirs = map(^resD, \d -> { r = split2Name_Path(d); FBContentPath(Pair(r.first, true), ref makeTree(), true, r.second, r.first); });
-		files = map(^resF, \f -> { r = split2Name_Path(f); FBContentPath(Pair(r.first, false), ref makeTree(), false, r.second, r.first); });
+	resultScreen = \isDone -> {
+		dirs = map(^resD, \d -> { r = split2Name_Path(d); FBContentPath(FBItemInfo(r.first, Some(r.second), true), ref makeTree(), true, r.second, r.first); });
+		files = map(^resF, \f -> { r = split2Name_Path(f); FBContentPath(FBItemInfo(r.first, Some(r.second), false), ref makeTree(), false, r.second, r.first); });
 
 		if (!getValue(stateSearch.breakSearchB)) {
 			l = length(dirs) + length(files);
 			previewRequestFn = createRequestPreviewFn(state, nop1);
 			next(
 				itemB,
-				if (l == 0)
+				if (isDone && l == 0)
 					MCenter(MText(_("Files for criteria") + " \"" + searchText + "\" " + _("are not found."), []))
 				else
 					MLines2(
 						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state2, dirs, files, None(), previewRequestFn.second , make(None()), scrollPosition, None())|> previewRequestFn.first
+						getContentUI(state2, dirs, files, None(), previewRequestFn.second, searchProgressTextB, scrollPosition, None())|> previewRequestFn.first
 					)
 			)
 		}
@@ -269,71 +264,78 @@ getSearchResultUI(state : FilebrowserState<Pair<string, bool>, ?>, searchText : 
 			resD := concat(^resD, dirs);
 			resF := concat(^resF, files);
 		}
-	};
+
+		if (dirs != [] || files != []) resultScreen(false);
+	}
 
 	// a bit of time to render MLoading()
 	deferUntilRender(\-> {
-		getContentRecursive(stateSearch, currentPath, filterFn, addResult, \error ->
-			next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
+		getContentRecursive(stateSearch, currentPath, filterFn, addResult,
+			\-> { nextDistinct(searchProgressTextB, None()); resultScreen(true); },
+			\error -> next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
 		);
 
-		next(stateSearch.counterB, getValue(stateSearch.counterB) - 1);
+		resultScreen(false);
 	});
 
 	MConstruct([
 			\-> subscribe(state.searchTextB, \text -> nextDistinct(stateSearch.breakSearchB, text != searchText)),
-			\-> subscribe(stateSearch.counterB, \count -> if (count == 0) resultScreen())
+			\-> \-> nextDistinct(stateSearch.breakSearchB, true)
 		],
 		MMutable(itemB)
 	);
 }
 
 // files and folders searching in the "currentPath", including subfolders
-getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onError : (string) -> void) -> void {
+getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onDone : () -> void, onError : (string) -> void) -> void {
 	//start search in the currentPath
-	next(state.counterB, getValue(state.counterB) + 1);
 	correctedCurPath = addSlash2pathEnd(currentPath);
 
-	getContentAPI(state.engine, currentPath, state.ext, filterFn, \dirs, files -> {
-		dirs2 = filtermap(dirs, \dir -> {
-			r = takeAfterLast(dir, "/", dir);
-			if (r != "..") Some(r)
-			else None();
-		});
+	if (!getValue(state.breakSearchB)) {
+		getContentAPI(state.engine, currentPath, state.ext, filterFn, state.breakSearchB, \dirs, files -> {
+				dirs2 = filtermap(dirs, \dir -> {
+					r = takeAfterLast(dir, "/", dir);
+					if (r != "..") Some(r)
+					else None();
+				});
 
-		if (!getValue(state.breakSearchB)) {
-			resD = filtermap(dirs2, \dir -> {
-				r = takeAfterLast(dir, "/", dir);
-				if (strContains(toLowerCase(r), state.text)) Some(r)
-				else None();
-			});
-			resF = filtermap(files, \file -> {
-				r = takeAfterLast(file, "/", file);
-				if (strContains(toLowerCase(r), state.text)) Some(r)
-				else None();
-			});
+				if (!getValue(state.breakSearchB)) {
+					resD = filtermap(dirs2, \dir -> {
+						r = takeAfterLast(dir, "/", dir);
+						if (strContains(toLowerCase(r), state.text)) Some(r)
+						else None();
+					});
+					resF = filtermap(files, \file -> {
+						r = takeAfterLast(file, "/", file);
+						if (strContains(toLowerCase(r), state.text)) Some(r)
+						else None();
+					});
 
-			if (length(resD) + length(resF) > 0)
-				onOK(
-					map(resD, \d -> correctedCurPath + d + "/"),
-					map(resF, \f -> correctedCurPath + f)
-				);
-		}
+					onOK(
+						map(resD, \d -> correctedCurPath + d + "/"),
+						map(resF, \f -> correctedCurPath + f)
+					);
+				}
 
-		// currentPath processing complete
-		next(state.counterB, getValue(state.counterB) - 1);
-
-		// go to in the sub folders
-		if (!getValue(state.breakSearchB))
-			iter(dirs2, \dir -> {
-				getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, onError)
-			});
-	}, onError
-	);
+				// go to in the sub folders
+				if (!getValue(state.breakSearchB))
+					if (dirs2 == []) {
+						onDone()
+					} else {
+						counterR = ref length(dirs2);
+						addCounter = \-> {
+							counterR := ^counterR - 1;
+							if (^counterR == 0) onDone();
+						}
+						iter(dirs2, \dir -> getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, addCounter, onError));
+					}
+			}, onError
+		);
+	}
 }
 
 //
-getPathExistsNames(engine : FilebrowserEngine<?, ??>, currentPath : string, ext : string, isFolder : bool, filterFn : (string) -> bool, callback : (names : [string]) -> void, onError : (string) -> void) -> void {
+getPathExistsNames(engine : FilesystemAsyncEngine<?, ??>, currentPath : string, ext : string, isFolder : bool, filterFn : (string) -> bool, callback : (names : [string]) -> void, onError : (string) -> void) -> void {
 	callback2 = \dirs, files -> {
 		callback(
 			if (isFolder) dirs
@@ -341,7 +343,7 @@ getPathExistsNames(engine : FilebrowserEngine<?, ??>, currentPath : string, ext 
 		)
 	};
 
-	getContentAPI(engine, currentPath, [ext], filterFn, callback2, onError);
+	getContentAPI(engine, currentPath, [ext], filterFn, make(false), callback2, onError);
 }
 
 // file browser dialod view
@@ -403,7 +405,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				onOK2();
 			},
 			\itemCP1, itemCP2 -> genericCompare(itemCP1.filename, itemCP2.filename),
-			\itemCP -> itemCP.item.first
+			\itemCP -> itemCP.item.name
 		),
 		FBItemProperty(
 			_("Size"),
@@ -456,7 +458,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		)
 	];
 
-	state = makeFilebrowserState(firstOfPair, itemProperties, styles);
+	state = makeFilebrowserState(\item -> item.name, itemProperties, styles);
 
 	filterFn = \name -> {
 		fullName = getValue(state.currentPathB) + (if (name != "." && name != ".." && name != "/." && name != "/..")  name else "");
@@ -466,7 +468,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	changesCallbackFn = \added, removed, updated -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, updated, closeMe));
 
 	lastUpdateTimeMR = ref None();
-	updateFilesView = \setPosM-> {
+	updateFilesView = \setPosM -> {
 		if (eitherMap(^lastUpdateTimeMR, \t -> timestamp() - t, 10.0) > 1.0) {
 			nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection, scrollPositionB, setPosM));
 			lastUpdateTimeMR := Some(timestamp());
@@ -494,7 +496,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	);
 
 	openDialogMenu = \itemCP, clickPos, onUpdate, fileAccessRight -> {
-		filename = getItemFullname(either(itemCP, FBContentPath(Pair("", false), ref makeTree(), false, "", "")));
+		filename = getItemFullname(either(itemCP, FBContentPath(makeFBItemInfo(), ref makeTree(), false, "", "")));
 		curDirAccessRight = getValue(curDirAccessRightB);
 
 		MDialogMenu(manager, parent, [
@@ -555,19 +557,6 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 								deleteFn = if (endsWith(filename, "/")) state.engine.deleteDirectories else state.engine.deleteFiles;
 								deleteFn([filename], \-> {
 										onUpdate(None());
-										maybeApply(^lastCheckResultR,
-											\lcr -> {
-												if (getValue(state.currentPathB) == lcr.basePath) {
-													pair = split2Name_Path(filename);
-													eitherFn(
-														findi(lcr.files, \file -> file.fileName == pair.first),
-														\i -> lastCheckResultR := Some(FSPathContent(lcr.basePath, lcr.dirs, removeIndex(lcr.files, i))),
-														\ -> lastCheckResultR := Some(FSPathContent(lcr.basePath, subtractA(lcr.dirs, [pair.first]), lcr.files))
-													)	
-												}
-											}
-										);
-										changesCallbackFn([], [filename], []);
 									}, println
 								);
 								next(closeDialogB, true);
@@ -665,7 +654,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 
 	next(state.onRightClickB, \itemCP, clickPos, onUpdate -> {
 		state.engine.getAccessRight(
-			getItemFullname(either(itemCP, FBContentPath(Pair("", false), ref makeTree(), false, "", ""))),
+			getItemFullname(either(itemCP, FBContentPath(makeFBItemInfo(), ref makeTree(), false, "", ""))),
 			\fileAccessRight -> openDialogMenu(itemCP, clickPos, onUpdate, fileAccessRight),
 			\err -> openDialogMenu(itemCP, clickPos, onUpdate, PathAccessRight(false, false, false, false)),
 		);
@@ -790,8 +779,9 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			eitherFn(
 				itemM,
 				\item -> {
-					fullName = getItemFullname(FBContentPath(item, ref makeTree(), item.second, addSlash2pathEnd(getValue(state.currentPathB)), item.first));
-					if (item.second /*isFolder*/) {
+					fullName = getItemFullname(FBContentPath(item, ref makeTree(), item.isFolder, addSlash2pathEnd(either(item.dirPath, getValue(state.currentPathB))), item.name));
+					if (item.isFolder /*isFolder*/) {
+						nextDistinct(state.searchTextB, "");
 						nextDistinct(state.currentPathB, fullName);
 					} else if (isNone(state.maybeMultiselectB)) {
 						nextDistinct(state.selectedElementsB, [fullName]);
@@ -1927,7 +1917,7 @@ filterUploadedFilesForRestrictions(
 	);
 }
 
-checkIsDirectoryAll(engine : FilebrowserEngine<?, ??>, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
+checkIsDirectoryAll(engine : FilesystemAsyncEngine<?, ??>, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
 	if (paths == [] || !lastResult) {
 		callback(lastResult)
 	} else {
@@ -1935,7 +1925,7 @@ checkIsDirectoryAll(engine : FilebrowserEngine<?, ??>, paths : [string], lastRes
 	}
 }
 
-checkIsFilesAll(engine : FilebrowserEngine<?, ??>, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
+checkIsFilesAll(engine : FilesystemAsyncEngine<?, ??>, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
 	if (paths == [] || !lastResult) {
 		callback(lastResult)
 	} else {

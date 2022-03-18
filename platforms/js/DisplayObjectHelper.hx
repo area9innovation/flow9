@@ -18,7 +18,7 @@ class DisplayObjectHelper {
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
-	public static var UseOptimization : Bool = Util.getParameter("new") == "1" && Util.getParameter("remove_listener_optimization") != "0";
+	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
 
 	private static var InvalidateStage : Bool = true;
 
@@ -1278,7 +1278,7 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = untyped clip.isFocused ? alpha : 0;
+				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline ? alpha : 0;
 			}
 		} else {
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
@@ -1297,7 +1297,7 @@ class DisplayObjectHelper {
 				var filter = filters[0];
 
 				if (untyped HaxeRuntime.instanceof(filter, DropShadowFilter)) {
-					if (untyped BoxShadow || clip.isGraphics()) {
+					if (untyped BoxShadow || filter.useBoxShadow || clip.isGraphics()) {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
 						var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);

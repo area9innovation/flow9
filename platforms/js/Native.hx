@@ -106,7 +106,8 @@ class Native {
 		#if (js && !flow_nodejs)
 			try {
 				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
-				untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+				//untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+				untyped __js__("(new Function(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\"))()");
 			} catch( e : Dynamic) {
 				Errors.report(e);
 				cb(null);
@@ -2247,50 +2248,52 @@ class Native {
 
 	private static var parseJsonFirstCall = true;
 	public static function parseJson(json : String) : Dynamic {
-		try {
-			if (parseJsonFirstCall) {
-				Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
-				Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
+		if (parseJsonFirstCall) {
+			Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+			Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
 
-				Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
-				Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
+			Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+			Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
 
-				Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
-				Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
+			Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+			Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
 
-				Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
-				Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
+			Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
+			Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
 
-				Native.sidPair = HaxeRuntime._structids_.get("Pair");
-				Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
-				Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
+			Native.sidPair = HaxeRuntime._structids_.get("Pair");
+			Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
+			Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
 
-				Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
-				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
+			Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+			Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
 
-				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+			Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
 
-				Native.jsonDoubleZero =  HaxeRuntime.makeStructValue("JsonDouble", [0.0], null);
-				Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
-				parseJsonFirstCall = false;
-			}
-			if (json == "") return Native.jsonDoubleZero;
-
-			if (Platform.isIOS && json.length > 1024) {
-				// on IOS memory restriction is very tight so we try to not create duplicate strings if possible
-				// it might have advantages for quite long parsed string only
-				return Platform.isFirefox ?
-				object2JsonStructsCompacting_FF(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
-				object2JsonStructsCompacting(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
-			} else {
-				return Platform.isFirefox ?
-				object2JsonStructs_FF(haxe.Json.parse(json)) :
-				object2JsonStructs(haxe.Json.parse(json));
-			}
-
-		} catch (e : Dynamic) {
-			return Native.jsonDoubleZero;
+			Native.jsonDoubleZero =  HaxeRuntime.makeStructValue("JsonDouble", [0.0], null);
+			Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
+			parseJsonFirstCall = false;
 		}
+		if (json == "") return Native.jsonDoubleZero;
+
+		untyped __js__("
+			try {
+				if (Platform.isIOS && json.length > 1024) {
+					// on IOS memory restriction is very tight so we try to not create duplicate strings if possible
+					// it might have advantages for quite long parsed string only
+					return Platform.isFirefox ?
+					Native.object2JsonStructsCompacting_FF(JSON.parse(json), {}, {}, {}) :
+					Native.object2JsonStructsCompacting(JSON.parse(json), {}, {}, {});
+				} else {
+					return Platform.isFirefox ?
+					Native.object2JsonStructs_FF(JSON.parse(json)) :
+					Native.object2JsonStructs(JSON.parse(json));
+				}
+			} catch (e) {
+				return Native.jsonDoubleZero;
+			}
+		");
+		return Native.jsonDoubleZero;
 	}
 	#end
 

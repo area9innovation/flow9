@@ -1,42 +1,61 @@
 import tools/flow9/types/ugraph/tmap;
-import tools/flow9/types/cgraph/cgraph;
 import tools/flow9/types/pretty;
-
 import tools/flow9/types/ugraph/class;
+import ds/treeutils;
 
 export {
+	// Given this type, construct or find the eclass for it
 	findOrMakeCNodeClass(tmap : TMap, type : TType, reason : ErrorReason) -> int;
-
-	// Find a node. -1 if not found
-	findCNode(tmap : CMap, cnode : CNode) -> int;
 
 	// Given a node, find out what eclass it is, or make a new one
 	findOrMakeCNode(tmap : TMap, cnode : CNode) -> int;
 
-
+	// Check if these two eclasses are the same
 	isSameEClassInCMap(cmap : CMap, left : int, right : int) -> bool;
 }
 
-// Find a node
-findCNode(cmap : CMap, cnode : CNode) -> int {
-	findUnionMap(cmap.cmap, \el, nn -> {
-		isSameCNode(cmap, cnode, nn)
-	}, -1);
-}
-
 findOrMakeCNode(tmap : TMap, node : CNode) -> int {
-	eclass = findCNode(tmap.cmap, node);
-	if (eclass == -1) {
+	makeNew = \ -> {
 		nclass = makeTNodeClass(tmap);
 		setUnionMapValue(tmap.cmap.cmap, nclass, node);
 		nclass;
-	} else eclass;
+	}
+	switch (node) {
+		CEpsilon(): makeNew();
+		COverload(__, __, __): makeNew();
+		CName(name, __, __): {
+			classes = lookupMultimap(^(tmap.namedClasses), name);
+			eclass = findNodeInClasses(tmap, classes, node);
+			if (eclass == -1) {
+				nclass = makeNew();
+				tmap.namedClasses := insertMultimap(^(tmap.namedClasses), name, nclass);
+				nclass;
+			} else eclass;
+		}
+		CFunction(args, __, __): {
+			arity = length(args);
+			classes = lookupMultimap(^(tmap.functionClasses), arity);
+			eclass = findNodeInClasses(tmap, classes, node);
+			if (eclass == -1) {
+				nclass = makeNew();
+				tmap.functionClasses := insertMultimap(^(tmap.functionClasses), arity, nclass);
+				nclass;
+			} else {
+				eclass;
+			}
+		}
+	}
 }
 
-makeCNodeClass(tmap : TMap, node : CNode) -> int {
-	nclass = makeTNodeClass(tmap);
-	setUnionMapValue(tmap.cmap.cmap, nclass, node);
-	nclass;
+findNodeInClasses(tmap : TMap, classes : Set<int>, node : CNode) -> int {
+	foldSet(classes, -1, \found, class -> {
+		if (found != -1) found
+		else {
+			cnode = getUnionMapValue(tmap.cmap.cmap, class);
+			if (isSameCNode(tmap.cmap, node, cnode)) class
+			else found;
+		}
+	});
 }
 
 findOrMakeCNodeClass(tmap : TMap, type : TType, reason : ErrorReason) -> int {
@@ -86,7 +105,6 @@ makeCNode(tmap : TMap, type : TType, reason : ErrorReason) -> CNode {
 			uid = findOrMakeCNodeClass(tmap, unique, reason);
 			COverload(makeSet1(uid), buildSet(children), reason)
 		}
-		TTypeSupertype(unique, subtypes, maxed): todo();
 	}
 }
 
@@ -129,5 +147,10 @@ areSameEClasses(cmap : CMap, left : [int], right : [int]) -> bool {
 
 isSameEClassInCMap(cmap : CMap, left : int, right : int) -> bool {
 	findUnionMapRoot(cmap.cmap, left) == findUnionMapRoot(cmap.cmap, right)
+	|| {
+		// Unfortunately, it seems sometimes "void" gets different eclasses, for unknown reasons
+		ltype = getUnionMapValue(cmap.cmap, left);
+		rtype = getUnionMapValue(cmap.cmap, right);
+		ltype != CEpsilon() && ltype == rtype;
+	}
 }
-

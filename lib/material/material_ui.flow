@@ -63,16 +63,18 @@ export {
 	SelectMBaselineLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
+	SelectMBaselineCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
+	SelectMBaselineColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMGroup(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 
 	MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material;
 		MAudioPlayerStyle ::= MVideoPlayerStyle, MWidth;
 
 	// FVideoTimeRange style disabled
- 	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
- 		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist;
+	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
+		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist;
 
- 		// to switch files (samples) in multiplayer
+		// to switch files (samples) in multiplayer
 		IndexInPlaylist(index : DynamicBehaviour<int>);
 
 	// use to place material on top of placeholder over other elements
@@ -108,7 +110,7 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -119,6 +121,7 @@ export {
 		MCustomAnyItem(text : string);
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
 		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
+		MHideBrowseButton(); // Browse button is shown by default in autocomplete mode
 
 	MCollapsingBox(
 		content : Material,
@@ -489,6 +492,18 @@ SelectMColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>,
 	)
 }
 
+SelectMBaselineCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
+	MGetAll(\manager, parent, m2t ->
+		SelectMBaselineCols2T(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
+	)
+}
+
+SelectMBaselineColsA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
+	MGetAll(\manager, parent, m2t ->
+		SelectMBaselineColsA2T(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
+	)
+}
+
 SelectMGroup(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
 	MGetAll(\manager, parent, m2t ->
 		SelectMGroup2T(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
@@ -553,7 +568,6 @@ SampleStates(
 
 MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Material {
  	amount = length(filenames);
-
  	if (amount > 0) {
 	  	fvStyle = filtermap(removeAllStructs(mStyle, FVideoTimeRange(const(0.), const(0.))), \st ->
 			switch (st) {
@@ -568,6 +582,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 	playEx = extractStruct(fvStyle, FVideoPlay(make(false))).play;
 	 	loopEx = extractStruct(fvStyle, FVideoLoop(make(false))).loop;
 	 	synchrocallEx = extractStruct(fvStyle, SynchroCalls(nop, nop));
+		unstoppable = contains(fvStyle, MAudioUnstoppable());
 
 	  	// MMultiAudioPlayerStyle properties
 	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
@@ -693,6 +708,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 			],
 			MGroup(players)
 		)
+		|> (\m -> if (unstoppable) MVisible(make(false), m) else m)
 	} else {
 		MEmpty();
 	}
@@ -843,7 +859,7 @@ MDropDownOrAutoComplete(
 			feq(selected, -1)
 		);
 
-	makeMAutoCompleteControl = \ -> {
+	makeMAutoCompleteControl = \manager -> {
 		preventSelectedChange = ref false;
 		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
 
@@ -868,7 +884,7 @@ MDropDownOrAutoComplete(
 				st
 			))
 			|> (\st -> arrayPush(st, MCompletionFn(\com, isSelected, setWordFn ->
-					MGetManager(\manager -> MGetFocusGroup(\parent -> {
+					MGetFocusGroup(\parent -> {
 						wrapSetWordFn = \sm -> {
 							switch(sm : SentenceMatch) {
 								SentenceHit(__, __, __, __) : {
@@ -884,8 +900,62 @@ MDropDownOrAutoComplete(
 							}
 						};
 						defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
-					}))
-			)));
+					})
+			)))
+			|> (\st -> if (contains(style, MHideBrowseButton())) st else {
+				onClick = \ -> {
+					dialogClose = make(false);
+
+					filterText = make("");
+					filterInput = MBaselineCols2A(
+						MTooltip(MIcon("filter_list", []), MText("Filter", []), []) |> MBorderEnd(8.),
+						MTextInput(filterText, [], [])
+					);
+
+					matcher = simpleBuildSentenceMatcher(items);
+					filteredItems = fselect(filterText, FLift(\txt -> {
+						itms =
+							if (txt == "") items
+							else map(
+								simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
+								\hit -> hit.sentence
+							);
+						sortCustom(itms, \str -> toLowerCase(str), true)
+					}));
+					selectedItems = make([]);
+
+					list = MDynamicList(
+						fmap(filteredItems, \it -> MSingleLine(it, [
+							MOnClick(\ -> {
+								nextDistinct(selectedStrB, it);
+								nextDistinct(selected, string2idxs(it));
+								nextDistinct(dialogClose, true);
+							})
+						])),
+						[],
+						[MScrollCropByContent(), MListSelection(const(true), false, false, selectedItems)]
+					)
+					|> (\m -> MConstruct([
+						makeSubscribe(filteredItems, \fItems -> {
+							currentStr = fgetValue(selectedStrB);
+							nextDistinct(selectedItems, eitherMap(findi(fItems, \it -> it == currentStr), v2a, []))
+						})
+					], m));
+
+					dialogContent = MLines2A(filterInput, list);
+					
+					ShowMDialog(manager, dialogClose, [
+						MDialogUseFrame(),
+						MDialogClickOutToClose(),
+						MDialogActions([
+							MTextButton(_("CANCEL"), \ -> next(dialogClose, true), [], []),
+						])
+					], dialogContent)
+				};
+				concat(st, [MRightCustomButton(
+					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse content")))])
+				), MShowDropDownArrow(false)])
+			});
 		autoCompleteState =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
@@ -897,15 +967,15 @@ MDropDownOrAutoComplete(
 			)
 			|> (\st -> {
 				processKeyDown = extractStruct(st, MInputProcessKeyDown(\__ -> true)).fn;
-				replaceStruct(st, MInputProcessKeyDown(\ke -> processKeyDown(ke) && ke.keycode != 13))
+				replaceStruct(st, MInputProcessKeyDown(\ke -> processKeyDown(ke) && ke.keycode != KEY_ENTER))
 			});
 
 		MConstruct(
 			[
 				\ ->
-					eitherMap(multiSelection,
+					eitherFn(multiSelection,
 						\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
-						bidirectionalLink(selected, selectedStrB,
+						\ -> bidirectionalLink(selected, selectedStrB,
 							\idx -> idxs2string([idx]),
 							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idxs(str)
 						)
@@ -921,7 +991,7 @@ MDropDownOrAutoComplete(
 	}
 
 	if (length(items0) > limit)
-		makeMAutoCompleteControl()
+		MGetManager(makeMAutoCompleteControl)
 	else
 		eitherMap(
 			multiSelection,
@@ -1000,7 +1070,7 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 				),
 				MInteractive(
 					[KeyDown2(\h, k -> {
-						if (!h && active && k.keycode == 13) {
+						if (!h && active && k.keycode == KEY_ENTER) {
 							wrapSetWordFn();
 							true
 						} else h
@@ -1046,7 +1116,7 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 	], [
 		MFocused(focused),
 		MPositionOnFocus(\c, p -> strlen(c)),
-		MInputProcessKeyDown(\k -> k.keycode != 13)
+		MInputProcessKeyDown(\k -> k.keycode != KEY_ENTER)
 	])
 	|> (\m -> MConstruct(
 		[\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)],
