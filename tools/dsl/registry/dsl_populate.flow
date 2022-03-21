@@ -11,11 +11,18 @@ export {
 	// We get lambda, gringo, ast, quotestring explicitly.
 	// Requires filesystem access
 	populateDsls() -> void;
+
+	// Register all the parsing and rewriting features into the environment
+	// as natives
+	populateDslEnv(env : DslEnv) -> DslEnv;
 }
 
 populateDsls() -> void {
 	folders = filter(["languages", "tools/dsl/languages"], isDirectory);
 	folder = folders[0];
+	if (js) {
+		println("Can not populate in JS");
+	}
 
 	registerBasicDsls();
 
@@ -56,17 +63,12 @@ populateDsls() -> void {
 	registeringDslLanguage("test");
 }
 
-registerDslFile(file : string) -> void {
-	content = trim2(getFileContent(file), " \n\t\r");
-	println("\nRegistering " + file);
-
+populateDslEnv(env0 : DslEnv) -> DslEnv {
 	expect = \fn, args, n -> if (length(args) != n) {
 		println("Expected " + i2s(n) + " args to " + fn + ", got " + i2s(length(args)));
 	};
 
-	env0 = makeDslEnv();
-
-	env = DslEnv(env0 with natives = 
+	DslEnv(env0 with natives = 
 		pairs2tree([
 			Pair("registerDslParser", \args -> {
 				expect("registerDslParser", args, 3);
@@ -105,12 +107,37 @@ registerDslFile(file : string) -> void {
 			}),
 			Pair("eval", \args -> {
 				expect("eval", args, 2);
+				// What language to evaluate?
 				lang = getDslString(args[0]);
+				// What program to evaluate
 				program = getDslString(args[1]);
 				evalDslProgram(makeDslEnv(), lang, program)
 			}),
+			Pair("parse", \args -> {
+				expect("parse", args, 2);
+				// What language?
+				lang = getDslString(args[0]);
+				// What program?
+				program = getDslString(args[1]);
+				parseDslProgram(lang, program).ast
+			}),
+			Pair("compile", \args -> {
+				expect("compile", args, 2);
+				blueprints = getDslString(args[0]);
+				program = args[1];
+				compiler = makeCompiler("", blueprints);
+				result = compileDsl(compiler, program);
+				DslString(result)
+			}),
 		])
 	);
+}
+
+registerDslFile(file : string) -> void {
+	content = trim2(getFileContent(file), " \n\t\r");
+	println("\nRegistering " + file);
+
+	env = populateDslEnv(makeDslEnv());
 
 	splitLang = if (startsWith(content, "syntax ")) {
 		lang1 = takeAfter(content, "syntax ", content);
@@ -136,3 +163,4 @@ registerBasicDsls() {
 		atom = atom | '<<' $(!'>>' anychar)* '>>' ws;
 	");
 }
+

@@ -1,0 +1,62 @@
+import tools/dsl/dynjoin/grammar;
+import tools/dsl/dsl_eval;
+import tools/dsl/dsl2flow;
+import tools/dsl/dsl_runtime_common;
+import tools/dsl/registry/dsl_populate;
+
+export {
+	parseDynJoin(filename : string, code : string) -> DslAst;
+	makeDynJoinEnv() -> DslEnv;
+}
+
+grammar = defineDynJoin();
+
+parseDynJoin(filename : string, code : string) -> DslAst {
+	parseProgram(filename, grammar, code);
+}
+
+makeDynJoinEnv() -> DslEnv {
+	env0 = makeDslEnv();
+	env1 = populateDslEnv(env0);
+	DslEnv(env1 with 
+		locals = addCommonDslRuntime([], env1.locals),
+		natives = dynJoinNatives(env1.natives)
+	);
+}
+
+dynJoinNatives(natives : Tree<string, ([DslAst]) -> DslAst>) ->  Tree<string, ([DslAst]) -> DslAst> {
+	mergeTree(
+		natives,
+		pairs2tree([
+			Pair("save", \args -> {
+				filename = getDslString(args[0]);
+				if (js && !nodejs) {
+					println("Could not save " + filename + " in JS");
+					DslBool(false);
+				} else {
+					content = getDslString(args[1]);
+					DslBool(setFileContent(filename, content));
+				}
+			}),
+			Pair("load", \args -> {
+				filename = getDslString(args[0]);
+				if (js && !nodejs) {
+					println("Could not load " + filename + " in JS");
+					DslString("");
+				} else {
+					DslString(getFileContent(filename));
+				}
+			}),
+			Pair("evaljs", \args -> {
+				if (!js) {
+					println("Can not evaluate JS in non-JS target");
+					DslBool(false);
+				} else {
+					code = getDslString(args[0]);
+					result = hostCall("eval", [code]);
+					flow2dsl(result)
+				}
+			}),
+		])
+	)
+}
