@@ -1,50 +1,8 @@
-
-/*
-WasmModule(
-	types : [WasmFuncType],
-	imports : [WasmImport],
-	funcs : [WasmFunction],
-	table : [WasmTable],
-	memory : WasmMemory,
-	global : [WasmGlobal],
-	exports : [WasmExport],
-	data : [WasmData]
-);
-*/
-// https://webassembly.github.io/spec/core/binary/modules.html
-WasmSection(
-	id : int, // byte. 0 custom, 1 type, 2 import, 3 function, 4 table, 5 memory, 6 global, 7 export, 8 start, 9 element, 10 code, 11 data, 12 data count
-	size : int, // in bytes
-	contents : [int] // bytes
-);
-
-/*
-
-WasmCustomSection(
-	name : string,
-	bytes : [int]
-);
-
-
-WasmImport(jsmodule : string, jsfunction : string, wasmname : string, parameters : [Type], returns : Type);
-WasmMemory(jsmodule : string, jsfunction : string, pages : int);
-
-WasmData();
-
-WasmGlobal(name : string, jsmodule : string, jsfunction : string, mutable_ : bool, type : WasmValType);
-
-WasmFunction(name : string, exported : bool, parameters : [Type], returns : Type, body : [Instruction]);
-*/
-
 //
-// Values
+// This is the low-level binary representation
 //
 
-WasmI32(val : int);
-WasmI64(low : int, high : int);
-
-WasmF32(val : int);
-WasmF64(val : double);
+export {
 
 WasmName(name : string);
 
@@ -87,6 +45,235 @@ WasmGlobalType(
 	type : WasmValType,
 	ismutable : bool
 );
+
+
+//
+// Instructions
+//
+
+WasmInstruction ::= WasmControlInstruction, WasmRefInstruction, WasmParametricInstruction, 
+	WasmVariableInstruction, WasmMemoryInstruction;
+
+//
+// Control instructions
+//
+
+WasmBlockType ::= WasmEmptyType, WasmValType, WasmTypeIndex;
+	// Does not consume anything
+	WasmEmptyType();
+	// Type index to a function type which takes inputs and produces outputs
+	WasmTypeIndex(index : int);
+
+// These are low-level representations of the binary version
+WasmControlInstruction ::= WasmUnreachable, WasmNop, 
+	WasmBlock, WasmLoop, WasmIf, WasmIfElse,
+	WasmBr, WasmBrIf, WasmBrTable,
+	WasmReturn, WasmCall, WasmCallIndirect;
+
+	WasmUnreachable();
+	WasmNop();
+	// Introduces an implicit label 0, while label 1 is next outer block
+	WasmBlock(type : WasmBlockType, instructions : [WasmInstruction]);
+	// A break in this one goes back to the beginning of the loop.
+	// How do we break out of a loop? OK, you have to wrap with another
+	// block and then break to that outer one using break 1.
+	WasmLoop(type : WasmBlockType, instructions : [WasmInstruction]);
+	// OK, this is low level: The condition must be on the stack?
+	WasmIf(type : WasmBlockType, then : [WasmInstruction]);
+	WasmIfElse(type : WasmBlockType, then : [WasmInstruction], else_ : [WasmInstruction]);
+
+	// Unconditional branch. 0 is inner most block, 1 is next out, etc
+	WasmBr(label : int);
+	// Conditional branch
+	WasmBrIf(label : int);
+	// Indexing branch with a default value if the value is out of bounds
+	WasmBrTable(labels : [int], defaultLabel : int);
+	// Return from the function
+	WasmReturn();
+	
+	WasmCall(funcindex : int);
+	WasmCallIndirect(typeindex : int, tableindex : int);
+
+
+// Reference instructions
+
+WasmRefInstruction ::= WasmRefNull, WasmRefIsNull, WasmRefFunc;
+	// Produce a null reference
+	WasmRefNull(type : WasmRefType);
+	// Check if the stack has a null reference
+	WasmRefIsNull();
+	// Construct a reference to the given function
+	WasmRefFunc(funcIndex : int);
+
+
+// Parametric instructions
+
+WasmParametricInstruction ::= WasmDrop, WasmSelect, WasmSelectType;
+
+	WasmDrop();
+	// Pre-evaluated if-statement where both then and else are evaluated, but
+	// we just pick one. This is more efficient that if in simple cases
+	WasmSelect();
+	// If we have a type annotation, we use this one. Why, I'm not sure
+	WasmSelectType(types : [WasmValType]);
+
+// Variable Instructions
+
+WasmVariableInstruction ::= WasmLocalGet, WasmLocalSet, WasmLocalTee,
+	WasmGlobalGet, WasmGlobalSet;
+
+	WasmLocalGet(index : int);
+	WasmLocalSet(index : int);
+	WasmLocalTee(index : int);
+	WasmGlobalGet(index : int);
+	WasmGlobalSet(index : int);
+
+// Table Instructions
+
+WasmTableInstruction ::= WasmTableGet, WasmTableSet, WasmTableInit,
+	WasmElemDrop, WasmTableCopy, WasmTableGrow, WasmTableSize, WasmTableFill;
+
+	WasmTableGet(index : int);
+	WasmTableSet(index : int);
+
+	WasmTableInit(elemindex : int, index : int);
+	WasmElemDrop(elemindex : int);
+	WasmTableCopy(tablex : int, tabley : int);
+
+	WasmTableGrow(index : int);
+	WasmTableSize(index : int);
+	WasmTableFill(index : int);
+
+// Memory instructions
+
+WasmMemArg(align : int, offset : int);
+
+WasmMemoryInstruction ::= WasmI32Load, WasmI64Load, WasmF32Load, WasmF64Load,
+	WasmI32Load8_s, WasmI32Load8_u, WasmI32Load16_s, WasmI32Load16_u,
+	WasmI64Load8_s, WasmI64Load8_u, WasmI64Load16_s, WasmI64Load16_u, WasmI64Load32_s, WasmI64Load32_u,
+	WasmI32Store, WasmI64Store, WasmF32Store, WasmF64Store,
+	WasmI32Store8, WasmI32Store16,
+	WasmI64Store8, WasmI64Store16, WasmI64Store32,
+	WasmMemorySize, WasmMemoryGrow, WasmMemoryInit, WasmDataDrop, WasmMemoryCopy, WasmMemoryFill;
+
+	WasmI32Load(m : WasmMemArg);
+	WasmI64Load(m : WasmMemArg);
+	WasmF32Load(m : WasmMemArg);
+	WasmF64Load(m : WasmMemArg);
+
+	WasmI32Load8_s(m : WasmMemArg);
+	WasmI32Load8_u(m : WasmMemArg);
+	WasmI32Load16_s(m : WasmMemArg);
+	WasmI32Load16_u(m : WasmMemArg);
+
+	WasmI64Load8_s(m : WasmMemArg);
+	WasmI64Load8_u(m : WasmMemArg);
+	WasmI64Load16_s(m : WasmMemArg);
+	WasmI64Load16_u(m : WasmMemArg);
+	WasmI64Load32_s(m : WasmMemArg);
+	WasmI64Load32_u(m : WasmMemArg);
+
+	WasmI32Store(m : WasmMemArg);
+	WasmI64Store(m : WasmMemArg);
+	WasmF32Store(m : WasmMemArg);
+	WasmF64Store(m : WasmMemArg);
+
+	WasmI32Store8(m : WasmMemArg);
+	WasmI32Store16(m : WasmMemArg);
+
+	WasmI64Store8(m : WasmMemArg);
+	WasmI64Store16(m : WasmMemArg);
+	WasmI64Store32(m : WasmMemArg);
+
+	WasmMemorySize();
+	WasmMemoryGrow();
+	WasmMemoryInit(index : int);
+	WasmDataDrop(index : int);
+	WasmMemoryCopy();
+	WasmMemoryFill();
+
+// Numeric instructions
+
+WasmNumericInstruction ::= WasmI32Const, WasmI64Const, WasmF32Const, WasmF64Const,
+	WasmI32Eqz, WasmI32Eq, WasmI32Ne, WasmI32Lt_s, WasmI32Lt_u, WasmI32Gt_s, WasmI32Gt_u,
+ 	WasmI32Le_s, WasmI32Le_u, WasmI32Ge_s, WasmI32Ge_u, 
+	WasmI64Eqz, WasmI64Eq, WasmI64Ne, WasmI64Lt_s, WasmI64Lt_u, WasmI64Gt_s, WasmI64Gt_u,
+	WasmI64Le_s, WasmI64Le_u, WasmI64Ge_s, WasmI64Ge_u,
+	WasmF32Eq, WasmF32Ne, WasmF32Lt, WasmF32Gt, WasmF32Le,  WasmF32Ge,
+	WasmF64Eq, WasmF64Ne, WasmF64Lt, WasmF64Gt, WasmF64Le, WasmF64Ge
+	;
+
+	WasmI32Const(val : int);
+	WasmI64Const(low : int, high : int);
+
+	WasmF32Const(val : int);
+	WasmF64Const(val : double);
+
+	WasmI32Eqz();
+	WasmI32Eq();
+	WasmI32Ne();
+	WasmI32Lt_s();
+	WasmI32Lt_u();
+	WasmI32Gt_s();
+	WasmI32Gt_u();
+	WasmI32Le_s();
+	WasmI32Le_u();
+	WasmI32Ge_s();
+	WasmI32Ge_u();
+
+	WasmI64Eqz();
+	WasmI64Eq();
+	WasmI64Ne();
+	WasmI64Lt_s();
+	WasmI64Lt_u();
+	WasmI64Gt_s();
+	WasmI64Gt_u();
+	WasmI64Le_s();
+	WasmI64Le_u();
+	WasmI64Ge_s();
+	WasmI64Ge_u();
+
+	WasmF32Eq();
+	WasmF32Ne();
+	WasmF32Lt();
+	WasmF32Gt();
+	WasmF32Le();
+	WasmF32Ge();
+
+	WasmF64Eq();
+	WasmF64Ne();
+	WasmF64Lt();
+	WasmF64Gt();
+	WasmF64Le();
+	WasmF64Ge();
+
+
+
+// https://webassembly.github.io/spec/core/binary/modules.html
+WasmSection(
+	id : int, // byte. 0 custom, 1 type, 2 import, 3 function, 4 table, 5 memory, 6 global, 7 export, 8 start, 9 element, 10 code, 11 data, 12 data count
+	size : int, // in bytes
+	contents : [int] // bytes
+);
+
+/*
+
+WasmCustomSection(
+	name : string,
+	bytes : [int]
+);
+
+
+WasmImport(jsmodule : string, jsfunction : string, wasmname : string, parameters : [Type], returns : Type);
+WasmMemory(jsmodule : string, jsfunction : string, pages : int);
+
+WasmData();
+
+WasmGlobal(name : string, jsmodule : string, jsfunction : string, mutable_ : bool, type : WasmValType);
+
+WasmFunction(name : string, exported : bool, parameters : [Type], returns : Type, body : [Instruction]);
+*/
+
 
 /*
 Loop(
@@ -134,3 +321,18 @@ Block(label : string, parameters : [Type], returns : Type, instructions : [Instr
 		Wasm2Call(name : string);
 		Wasm2Br(dst : string);
 */
+
+/*
+WasmModule(
+	types : [WasmFuncType],
+	imports : [WasmImport],
+	funcs : [WasmFunction],
+	table : [WasmTable],
+	memory : WasmMemory,
+	global : [WasmGlobal],
+	exports : [WasmExport],
+	data : [WasmData]
+);
+*/
+
+}
