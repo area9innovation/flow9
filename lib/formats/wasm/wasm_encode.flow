@@ -1,0 +1,135 @@
+import formats/wasm/wasm_types;
+import ds/array;
+import math/bits;
+import text/binary;
+
+export {
+	WasmI322bytes(val : WasmI32) -> [int];
+	wasmI642bytes(val : WasmI64) -> [int];
+	wasmF322bytes(value : WasmF32) -> [int];
+	wasmF642bytes(val : WasmF64) -> [int];
+	wasmName2bytes(name : WasmName) -> [int];
+
+	wasmFuncType2bytes(t : WasmFuncType) -> [int];
+	wasmValType2bytes(v : WasmValType) -> [int];
+}
+
+//
+// Values
+//
+
+
+WasmI322bytes(val : WasmI32) -> [int] {
+	wasmEncodeU32(val.val);
+}
+
+wasmI642bytes(val : WasmI64) -> [int] {
+	if (val.high != 0) {
+		println("TODO: Support 64 bit integers");
+	}
+	wasmEncodeU32(val.low);
+}
+
+wasmF322bytes(value : WasmF32) -> [int] {
+	val = value.val;
+	[
+		bitAnd(val, 0xff),
+		bitAnd(bitUshr(val, 8), 0xff),
+		bitAnd(bitUshr(val, 16), 0xff),
+		bitAnd(bitUshr(val, 25), 0xff),
+	]
+}
+
+wasmF642bytes(val : WasmF64) -> [int] {
+	fold(subrange(s2a(toBinary(flow(val.val))), 3, 4), [], \acc, b -> {
+		concat(acc, [bitAnd(b, 0xff), bitUshr(b, 8)])
+	});
+}
+
+wasmName2bytes(name : WasmName) -> [int] {
+	wasmEncodeArray(string2utf8(name.name), \val -> [val])
+}
+
+
+//
+// Types
+//
+wasmFuncType2bytes(t : WasmFuncType) -> [int] {
+	// 0x70 #bytes(params) params #bytes(returns) returns
+	concat3(
+		[0x70],
+		wasmEncodeArray(t.params, wasmValType2bytes),
+		wasmEncodeArray(t.returns, wasmValType2bytes),
+	)
+}
+
+wasmValType2bytes(v : WasmValType) -> [int] {
+	switch (v) {
+		WasmI32Type(): [0x7f];
+		WasmI64Type(): [0x7e];
+		WasmF32Type(): [0x7d];
+		WasmF64Type(): [0x7c];
+		WasmVecType(): [0x7b];
+		WasmFuncRef(): [0x70];
+		WasmExternRef(): [0x6f];
+	}
+}
+
+wasmLimits2bytes(v : WasmLimits) -> [int] {
+	if (v.maximum == 0) {
+		concat(
+			[ 0x00 ],
+			wasmEncodeU32(v.minimum),
+		)
+	} else {
+		concat3(
+			[ 0x01 ],
+			wasmEncodeU32(v.minimum),
+			wasmEncodeU32(v.maximum),
+		)
+	}
+}
+
+wasmMemoryType2bytes(mem : WasmMemoryType) -> [int] {
+	wasmLimits2bytes(mem.limits)
+}
+
+wasmTableType2bytes(t : WasmTableType) -> [int] {
+	concat(
+		wasmValType2bytes(t.reftype),
+		wasmLimits2bytes(t.limits),
+	)
+}
+
+wasmGlobalType2bytes(g : WasmGlobalType) -> [int] {
+	concat(
+		wasmValType2bytes(g.type),
+		[b2i(g.ismutable)]
+	)
+}
+
+
+//
+// Helpers
+//
+
+wasmEncodeArray(a : [?], element2bytes : (?) -> [int]) -> [int] {
+	byteChunks : [[int]] = map(a, element2bytes);
+	bytes = fold(byteChunks, 0, \acc, chunk -> {
+		acc + length(chunk)
+	});
+	concat(
+		wasmEncodeU32(bytes),
+		concatA(byteChunks)
+	)
+}
+
+wasmEncodeU32(i : int) -> [int] {
+	if (0 <= i && i < 128) [i]
+	else {
+		concat(
+			[bitOr(bitAnd(i, 0x7f), 0x80)],
+			wasmEncodeU32(i / 128)
+		)
+	}
+}
