@@ -85,7 +85,6 @@ wasmF64Const2bytes(val : WasmF64Const) -> [int] {
 	});
 }
 
-
 wasmName2bytes(name : string) -> [int] {
 	wasmEncodeArray(string2utf8(name), \val -> [val])
 }
@@ -183,7 +182,7 @@ wasmImport2bytes(i : WasmImport) -> [int] {
 		wasmName2bytes(i.module),
 		wasmName2bytes(i.name),
 		switch (desc : WasmImportDesc) {
-			WasmImportType(typeindex): [0, typeindex];
+			WasmImportType(typeindex): concat([0], wasmEncodeU32(typeindex));
 			WasmImportTable(table): concat([1], wasmTableType2bytes(table));
 			WasmImportMemory(mem): concat([2], wasmMemoryType2bytes(mem));
 			WasmImportGlobal(global): concat([3], wasmGlobalType2bytes(global));
@@ -203,23 +202,23 @@ wasmExport2bytes(g : WasmExport) -> [int] {
 	concat(
 		wasmName2bytes(g.name),
 		switch (desc) {
-			WasmExportFunc(index): [0, index];
-			WasmExportTable(table): [1, table];
-			WasmExportMemory(memory): [2, memory];
-			WasmExportGlobal(global): [3, global];
+			WasmExportFunc(index): concat([0], wasmEncodeU32(index));
+			WasmExportTable(table): concat([1], wasmEncodeU32(table));
+			WasmExportMemory(memory): concat([2], wasmEncodeU32(memory));
+			WasmExportGlobal(global): concat([3], wasmEncodeU32(global));
 		}
 	)
 }
 
 wasmElement2bytes(e : WasmElement) -> [int] {
 	switch (e) {
-		WasmElement0(offset, funindexes): concat3([0], wasmExpr2bytes(offset), wasmEncodeArray(funindexes, \in -> [in]));
-		WasmElement1(funindexes): concat([1, 0x00], wasmEncodeArray(funindexes, \in -> [in]));
-		WasmElement2(tableIndex, offset, funindexes): concat3([2, tableIndex], wasmExpr2bytes(offset), wasmEncodeArray(funindexes, \in -> [in]));
-		WasmElement3(funindexes): concat([3, 0x00], wasmEncodeArray(funindexes, \in -> [in]));
+		WasmElement0(offset, funindexes): concat3([0], wasmExpr2bytes(offset), wasmEncodeArray(funindexes, wasmEncodeU32));
+		WasmElement1(funindexes): concat([1, 0x00], wasmEncodeArray(funindexes, wasmEncodeU32));
+		WasmElement2(tableIndex, offset, funindexes): concatA([[2], wasmEncodeU32(tableIndex), wasmExpr2bytes(offset), wasmEncodeArray(funindexes, wasmEncodeU32)]);
+		WasmElement3(funindexes): concat([3, 0x00], wasmEncodeArray(funindexes, wasmEncodeU32));
 		WasmElement4(offset, init): concat3([4], wasmExpr2bytes(offset), wasmEncodeArray(init, wasmExpr2bytes));
 		WasmElement5(et, init): concat3([5], wasmValType2bytes(et), wasmEncodeArray(init, wasmExpr2bytes));
-		WasmElement6(tableIndex, offset, et, init): concatA([[6, tableIndex], wasmExpr2bytes(offset), wasmValType2bytes(et), wasmEncodeArray(init, wasmExpr2bytes)]);
+		WasmElement6(tableIndex, offset, et, init): concatA([[6], wasmEncodeU32(tableIndex), wasmExpr2bytes(offset), wasmValType2bytes(et), wasmEncodeArray(init, wasmExpr2bytes)]);
 		WasmElement7(et, init): concat3([7], wasmValType2bytes(et), wasmEncodeArray(init, wasmExpr2bytes));
 	}
 }
@@ -246,7 +245,7 @@ wasmData2bytes(d : WasmData) -> [int] {
 	switch (d) {
 		WasmData0(offset, bytes): concat3([0], wasmExpr2bytes(offset), bytes);
 		WasmData1(bytes): concat([1], bytes);
-		WasmData2(memory, offset, bytes): concat3([2, memory], wasmExpr2bytes(offset), bytes);
+		WasmData2(memory, offset, bytes): concatA([[2], wasmEncodeU32(memory), wasmExpr2bytes(offset), bytes]);
 	}
 }
 
@@ -259,57 +258,60 @@ wasmInstruction2bytes(i : WasmInstruction) -> [int] {
 		println("TODO: " + toString(i));
 		[];
 	}
+	mem = \code, m : WasmMemArg -> {
+		concat3([code], wasmEncodeU32(m.align), wasmEncodeU32(m.offset))
+	};
 	switch (i) {
 		WasmUnreachable(): [0xf00];
 		WasmNop(): [0x01];
-		WasmBlock(type, instructions): todo();
-		WasmLoop(type, instructions): todo();
-		WasmIf(type, then): todo();
-		WasmIfElse(type, then, else_): todo();
-		WasmBr(label): todo();
-		WasmBrIf(label): todo();
-		WasmBrTable(labels, defaultLabel): todo();
+		WasmBlock(type, instructions): concat3([0x02], wasmBlockType2bytes(type), wasmInstructions(instructions, 0xb));
+		WasmLoop(type, instructions): concat3([0x03], wasmBlockType2bytes(type), wasmInstructions(instructions, 0xb));
+		WasmIf(type, then): concat3([0x04], wasmBlockType2bytes(type), wasmInstructions(then, 0xb));
+		WasmIfElse(type, then, else_): concatA([[0x04], wasmBlockType2bytes(type), wasmInstructions(then, 0x05), wasmInstructions(else_, 0xb)]);
+		WasmBr(label): concat([0x0c], wasmEncodeU32(label));
+		WasmBrIf(label): concat([0x0d], wasmEncodeU32(label));
+		WasmBrTable(labels, defaultLabel): concatA([[0x0e], wasmEncodeArray(labels, wasmEncodeU32), wasmEncodeU32(defaultLabel)]);
 		WasmReturn(): [0x0f];
-		WasmCall(funcindex): todo();
-		WasmCallIndirect(typeindex, tableindex): todo();
-		WasmRefNull(type): todo();
+		WasmCall(funcindex): concat([0x10], wasmEncodeU32(funcindex));
+		WasmCallIndirect(typeindex, tableindex): concat3([0x11], wasmEncodeU32(typeindex), wasmEncodeU32(tableindex));
+		WasmRefNull(type): concat([0xd0], wasmValType2bytes(type));
 		WasmRefIsNull(): [0xd1];
-		WasmRefFunc(funcIndex): todo();
+		WasmRefFunc(funcIndex): concat([0xd2], wasmEncodeU32(funcIndex));
 		WasmDrop(): [0x1a];
 		WasmSelect(): [0x1b];
-		WasmSelectType(types): todo();
-		WasmLocalGet(index): todo();
-		WasmLocalSet(index): todo();
-		WasmLocalTee(index): todo();
-		WasmGlobalGet(index): todo();
-		WasmGlobalSet(index): todo();
-		WasmI32Load(m): todo();
-		WasmI64Load(m): todo();
-		WasmF32Load(m): todo();
-		WasmF64Load(m): todo();
-		WasmI32Load8_s(m): todo();
-		WasmI32Load8_u(m): todo();
-		WasmI32Load16_s(m): todo();
-		WasmI32Load16_u(m): todo();
-		WasmI64Load8_s(m): todo();
-		WasmI64Load8_u(m): todo();
-		WasmI64Load16_s(m): todo();
-		WasmI64Load16_u(m): todo();
-		WasmI64Load32_s(m): todo();
-		WasmI64Load32_u(m): todo();
-		WasmI32Store(m): todo();
-		WasmI64Store(m): todo();
-		WasmF32Store(m): todo();
-		WasmF64Store(m): todo();
-		WasmI32Store8(m): todo();
-		WasmI32Store16(m): todo();
-		WasmI64Store8(m): todo();
-		WasmI64Store16(m): todo();
-		WasmI64Store32(m): todo();
+		WasmSelectType(types): concat([0x1c], wasmEncodeArray(types, wasmValType2bytes));
+		WasmLocalGet(index): concat([0x20], wasmEncodeU32(index));
+		WasmLocalSet(index): concat([0x21], wasmEncodeU32(index));
+		WasmLocalTee(index): concat([0x22], wasmEncodeU32(index));
+		WasmGlobalGet(index): concat([0x23], wasmEncodeU32(index));
+		WasmGlobalSet(index): concat([0x24], wasmEncodeU32(index));
+		WasmI32Load(m): mem(0x28, m);
+		WasmI64Load(m): mem(0x29, m);
+		WasmF32Load(m): mem(0x2a, m);
+		WasmF64Load(m): mem(0x2b, m);
+		WasmI32Load8_s(m): mem(0x2c, m);
+		WasmI32Load8_u(m): mem(0x2d, m);
+		WasmI32Load16_s(m): mem(0x2e, m);
+		WasmI32Load16_u(m): mem(0x2f, m);
+		WasmI64Load8_s(m): mem(0x30, m);
+		WasmI64Load8_u(m): mem(0x31, m);
+		WasmI64Load16_s(m): mem(0x32, m);
+		WasmI64Load16_u(m): mem(0x33, m);
+		WasmI64Load32_s(m): mem(0x34, m);
+		WasmI64Load32_u(m): mem(0x35, m);
+		WasmI32Store(m): mem(0x36, m);
+		WasmI64Store(m): mem(0x37, m);
+		WasmF32Store(m): mem(0x38, m);
+		WasmF64Store(m): mem(0x39, m);
+		WasmI32Store8(m): mem(0x3a, m);
+		WasmI32Store16(m): mem(0x3b, m);
+		WasmI64Store8(m): mem(0x3c, m);
+		WasmI64Store16(m): mem(0x3d, m);
+		WasmI64Store32(m): mem(0x3e, m);
 		WasmMemorySize(): [0x3f, 0x00];
 		WasmMemoryGrow(): [0x40, 0x00];
-		WasmMemoryInit(index): [0xfc, 8, index, 0x00];
-		WasmDataDrop(index): [0xfc, 9, index];
+		WasmMemoryInit(index): concat3([0xfc, 8], wasmEncodeU32(index), [0x00]);
+		WasmDataDrop(index): concat([0xfc, 9], wasmEncodeU32(index));
 		WasmMemoryCopy(): [0xfc, 10, 0x00, 0x00];
 		WasmMemoryFill(): [0xfc, 11, 0x00, 0x00];
 		WasmI32Const(val): concat([0x41], wasmI32Const2bytes(i));
@@ -452,6 +454,7 @@ wasmInstruction2bytes(i : WasmInstruction) -> [int] {
 		WasmI64Trunc_sat_f32_u(): [0xfc, 5];
 		WasmI64Trunc_sat_f64_s(): [0xfc, 6];
 		WasmI64Trunc_sat_f64_u(): [0xfc, 7];
+
 		WasmV128Load(m): todo();
 		WasmV128Load8x8_s(m): todo();
 		WasmV128Load8x8_u(m): todo();
@@ -694,14 +697,24 @@ wasmInstruction2bytes(i : WasmInstruction) -> [int] {
 }
 
 wasmExpr2bytes(e : WasmExpr) -> [int] {
+	wasmInstructions(e.instructions, 0x0b)
+}
+
+wasmInstructions(i : [WasmInstruction], post : int) -> [int] {
 	concat(
 		concatA(
-			map(e.instructions, wasmInstruction2bytes)
-		),
-		[ 0x0b ]
+			map(i, wasmInstruction2bytes)
+		), [post]
 	)
 }
 
+wasmBlockType2bytes(b : WasmBlockType) -> [int] {
+	switch (b) {
+		WasmEmptyType(): [0x40];
+		WasmTypeIndex(index): wasmEncodeU32(index);
+		WasmValType(): wasmValType2bytes(b);
+	}
+}
 
 //
 // Helpers
