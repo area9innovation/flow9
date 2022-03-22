@@ -238,44 +238,62 @@ getSearchResultUI(state : FilebrowserState<FBItemInfo, ?, ??>, searchText : stri
 	resD = ref [];
 	resF = ref [];
 
+	previewRequestFn = createRequestPreviewFn(state, nop1);
 	resultScreen = \isDone -> {
-		dirs = map(^resD, \d -> { r = split2Name_Path(d); FBContentPath(FBItemInfo(r.first, Some(r.second), true), ref makeTree(), true, r.second, r.first); });
-		files = map(^resF, \f -> { r = split2Name_Path(f); FBContentPath(FBItemInfo(r.first, Some(r.second), false), ref makeTree(), false, r.second, r.first); });
+		dirs = ^resD;
+		files = ^resF;
 
-		if (!getValue(stateSearch.breakSearchB)) {
-			l = length(dirs) + length(files);
-			previewRequestFn = createRequestPreviewFn(state, nop1);
-			next(
-				itemB,
-				if (isDone && l == 0)
-					MCenter(MText(_("Files for criteria") + " \"" + searchText + "\" " + _("are not found."), []))
-				else
-					MLines2(
-						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state2, dirs, files, None(), previewRequestFn.second, searchProgressTextB, scrollPosition, None())|> previewRequestFn.first
-					)
-			)
-		}
-	};
-
-	// adding new founded elenents to the result array
-	addResult = \dirs, files -> {
-		if (!getValue(stateSearch.breakSearchB)) {
-			resD := concat(^resD, dirs);
-			resF := concat(^resF, files);
-		}
-
-		if (dirs != [] || files != []) resultScreen(false);
+		l = length(dirs) + length(files);
+		next(
+			itemB,
+			if (isDone && l == 0)
+				MCenter(MText(_("Files for criteria") + " \"" + searchText + "\" " + _("are not found."), []))
+			else
+				MLines2(
+					MText(_("Elements found") + ": " + i2s(l), []),
+					getContentUI(state2, dirs, files, None(), previewRequestFn.second, searchProgressTextB, scrollPosition, None())|> previewRequestFn.first
+				)
+		);
 	}
 
+	makeF_B_C_P = \v, isFolder -> {
+		r = split2Name_Path(v);
+		FBContentPath(FBItemInfo(r.first, Some(r.second), isFolder), ref makeTree(), isFolder, r.second, r.first);
+	}
+
+	// adding new founded elenents to the result array
+	onDataPiece = \dirs, files, isDone -> {
+		if (!getValue(stateSearch.breakSearchB)) {
+			resD := concat(^resD, map(dirs, \d -> makeF_B_C_P(d, true)));
+			resF := concat(^resF, map(files, \f -> makeF_B_C_P(f, false)));
+
+			if (isDone || dirs != [] || files != []) resultScreen(isDone);
+			if (isDone) nextDistinct(searchProgressTextB, None());
+		}
+	}
+
+	resultScreen(false);
 	// a bit of time to render MLoading()
 	deferUntilRender(\-> {
-		getContentRecursive(stateSearch, currentPath, filterFn, addResult,
-			\-> { nextDistinct(searchProgressTextB, None()); resultScreen(true); },
+		nonEmpty = neq("");
+		okExt = if (ext == []) \f -> true
+			else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
+		
+		onDataPiece2 = \dirs, files, isDone -> {
+			onDataPiece(
+				filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
+				filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f)),
+				isDone
+			);
+		}
+		state.engine.search(
+			currentPath,
+			stateSearch.text,
+			false,
+			stateSearch.breakSearchB,
+			onDataPiece2,
 			\error -> next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
 		);
-
-		resultScreen(false);
 	});
 
 	MConstruct([
@@ -284,54 +302,6 @@ getSearchResultUI(state : FilebrowserState<FBItemInfo, ?, ??>, searchText : stri
 		],
 		MMutable(itemB)
 	);
-}
-
-// files and folders searching in the "currentPath", including subfolders
-getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onDone : () -> void, onError : (string) -> void) -> void {
-	//start search in the currentPath
-	correctedCurPath = addSlash2pathEnd(currentPath);
-
-	if (!getValue(state.breakSearchB)) {
-		getContentAPI(state.engine, currentPath, state.ext, filterFn, state.breakSearchB, \dirs, files -> {
-				dirs2 = filtermap(dirs, \dir -> {
-					r = takeAfterLast(dir, "/", dir);
-					if (r != "..") Some(r)
-					else None();
-				});
-
-				if (!getValue(state.breakSearchB)) {
-					resD = filtermap(dirs2, \dir -> {
-						r = takeAfterLast(dir, "/", dir);
-						if (strContains(toLowerCase(r), state.text)) Some(r)
-						else None();
-					});
-					resF = filtermap(files, \file -> {
-						r = takeAfterLast(file, "/", file);
-						if (strContains(toLowerCase(r), state.text)) Some(r)
-						else None();
-					});
-
-					onOK(
-						map(resD, \d -> correctedCurPath + d + "/"),
-						map(resF, \f -> correctedCurPath + f)
-					);
-				}
-
-				// go to in the sub folders
-				if (!getValue(state.breakSearchB))
-					if (dirs2 == []) {
-						onDone()
-					} else {
-						counterR = ref length(dirs2);
-						addCounter = \-> {
-							counterR := ^counterR - 1;
-							if (^counterR == 0) onDone();
-						}
-						iter(dirs2, \dir -> getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, addCounter, onError));
-					}
-			}, onError
-		);
-	}
 }
 
 //
