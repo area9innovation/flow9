@@ -2615,6 +2615,13 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
+		} else if (event == "resize") {
+			var eventFn = function() {
+				fn([clip._width, clip._height]);
+			};
+
+			clip.on(event, eventFn);
+			return function() { clip.off(event, eventFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -3740,5 +3747,13 @@ class RenderSupport {
 		// a lot of Graphics functions do not work correctly if color has alpha channel
 		// (all other targets ignore it as well)
 		return color & 0xFFFFFF;
+	}
+
+	public static function makeReactContainer(element, props) : ReactContainer {
+		return new ReactContainer(element, props);
+	}
+
+	public static function updateReactState(container, key, value) : Void {
+		container.updateReactState(key, value);
 	}
 }
