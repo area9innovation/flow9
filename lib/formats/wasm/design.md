@@ -28,7 +28,7 @@ Figure out how to define more advanced values:
 	}
 
 	// Function import from host
-	native id : (i32) -> i32 = module.name;
+	native println : (i32) -> void = console.log;
 
 	// Global import
 	native id : i32 = module.name;
@@ -37,37 +37,95 @@ Figure out how to define more advanced values:
 # Expressions
 
 a = 1; // let-binding
+<scope>
+
 a := 2; // set local or global
 
-Normal let binding and var ref, function call, block, loop, if, ifelse, 
-break <n>, return.
+Normal let binding and var ref, function call, if, ifelse, break<n>
+
+	return <exp>
+
+	block {
+		code;
+		break;
+		code;
+	}
+
+	loop {
+		code;
+		if (sadf) break
+		code
+	}
 
 "null : func" for null reference to function
 "null : extern" for null reference to extern
 "expr is null"
 
-"id ? then : else" for select, with eager eval of then and else.
-
+"choose(cond, then, else)"
 
 ## Load/store
 
 Load could be:
-	mem_i32[<offset>]					// i32.load
-	// TODO: Should the alginment be specified in bytes?
-	mem_i32[<offset> align <2>] : i8s	// i32.load8_s	
+	peek<i32, <offset>, s8>(index)		// i32.load
+	peek<i32, <offset>, <align>>(index)	// i32.load
 
 Store could be:
-	mem_i32[<offset>] := <exp>;			// i32.store
-	mem_i32[<offset>] := <exp> : i8;	// I32.store8 unless type inference defines exp to be i8
 
+	poke<i32, <offset>>(index, value)	// i32.store
 
+we infer the type of value to decide exactly which type it is.
+
+	localtee "a + tee<a>"?
 
 break-if
+	ifbreak(cond, n)
+
 break-table
+	breaktable<[3,2,1], 23>(index)
+
+	switch (index) {
+		0: {}
+		1: {}
+		2: {}
+		default: whatever;
+	}
+
 call-indirect
-localtee? a + tee?
+	calls : table< (i32) -> i32 > = fn1, fn2, fn3;
+	call_indirect<calls>(index)(args)
+
+	fnidx<calls, fn1>	= how to get a function pointer
 
 Table instruction
+
+Drop: Whether or not to have implicit drop in sequence or not:
+
+	// Stack means no implicit drop in sequence:
+	{
+		1;
+		2;
+		wasm<drop>;
+		3;
+		wasm<i32.add>
+	}
+
+	{
+		1;	// This is not type correct
+		2;
+	}
+
+	{
+		_ = <foo>;	// This is type correct and corresponds to drop
+		2
+	}
+
+## Data
+
+	data : data<i32> = 0, 1, 2, 3, 4;
+	data : data<i8> = "utf8 string is very comfortable";
+
+	meminit<data>(offset)
+	drop<data>();
 
 ## Advanced concepts
 
