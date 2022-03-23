@@ -4,12 +4,6 @@ It should have local type inference, but only support very basic types.
 
 Lexical scoping. No closures. No structures.
 
-Figure out how to define more advanced values:
-- array
-- tuples
-- either
-- maybe
-
 ## Syntax
 
 	// Globals
@@ -91,7 +85,7 @@ break-table
 	}
 
 call-indirect
-	calls : table< (i32) -> i32 > = fn1, fn2, fn3;
+	calls : table< (i32) -> i32 > = [fn1, fn2, fn3];
 	call_indirect<calls>(index)(args)
 
 	fnidx<calls, fn1>	= how to get a function pointer
@@ -99,21 +93,6 @@ call-indirect
 Table instruction
 
 Drop: Whether or not to have implicit drop in sequence or not:
-
-	// Stack means no implicit drop in sequence:
-	{
-		1;
-		2;
-		wasm<drop>;
-		3;
-		wasm<i32.add>
-	}
-
-	{
-		1;	// This is not type correct
-		2;
-	}
-
 	{
 		_ = <foo>;	// This is type correct and corresponds to drop
 		2
@@ -138,3 +117,12 @@ Drop: Whether or not to have implicit drop in sequence or not:
 
 	// Tables
 	import id : table(min, max?)<reftype> from module.name;
+
+# Future
+
+Figure out how to define more advanced values:
+- array
+- tuples
+- either
+- maybe
+
