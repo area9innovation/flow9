@@ -5,15 +5,8 @@ import ds/tree;
 export {
 	// This is an expression-based wrapper for Wasm to make it easier to produce 
 	// a valid WASM module
-	Wase ::= 
-		WaseImportFunction,
-		WaseImportGlobal,
-		WaseImportMemory,
-		WaseImportTable,
-
-		WaseMemory,
-
-		WaseGlobal,
+	Wase ::=  WaseImportFunction, WaseImportGlobal, WaseImportMemory, WaseImportTable,
+		WaseMemory, WaseGlobal, WaseFunction,
 
 		WaseEmpty
 		;
@@ -40,9 +33,17 @@ export {
 		scope : Wase);
 
 	// Declare a global. If exportid != "", we export this global with that name
-	// This index of this global will be bound to the id in the compilation environment
+	// The index of this global will be bound to the id in the compilation environment
 	WaseGlobal(id : string, exportid : string, type : WasmValType, isMutable : bool, 
 		init : WaseExpr, scope : Wase);
+
+	// Declare a function. If exportId != "", we export this function with that name
+	// The index of this function will be bound to the id in the compilation environment.
+	// If start is true, this function will be "main" and called as the first
+	WaseFunction(id : string, exportid : string, start : bool, type : WasmFuncType, 
+		locals : [WaseLocal], code : WaseExpr, scope : Wase);
+		// Should we extract these instead?
+		WaseLocal(name : string, type : WasmValType);
 
 	WaseExpr(instructions : [WaseInstruction]);
 		WaseInstruction ::= WasmInstruction;
@@ -58,15 +59,16 @@ export {
 
 TODO:
 - WasmCustomSection
-- WasmFunction/Code
 - WasmTableSection
-- WasmGlobalSection
+- WasmElementSection
+- WasmDataSection
+- WasmDataCountSection
 
-- WasmExport should be bool on funct, table, memory and globals that should
-  be exported
+- WasmExport should be bool on table that should be exported
 
-- If we have WASM at the top-level, that should probably be collected into a
-  constructed Main function marked as a start function?
+- Make WaseInstruction part of Wase? Then if we have Wase at the top-level, 
+  that should probably be collected into a constructed Main function marked as 
+  a start function?
 
 */
 
@@ -74,7 +76,8 @@ wase2wasm(wase : Wase) -> WasmModule {
 	context = WaseContext(ref makeTree(), ref [], ref makeTree(), 
 		ref 0, ref 0, ref 0, ref 0, ref 0, ref 0,
 		ref true,
-		ref [], ref [], ref [], ref []
+		ref [], ref [], ref [], ref [], ref [], ref [],
+		ref -1
 	);
 	compileWase(context, wase);
 
@@ -84,7 +87,7 @@ wase2wasm(wase : Wase) -> WasmModule {
 		// imports
 		[], WasmImportSection(^(context.imports)), 
 		// functions
-		[], WasmFunctionSection([]),
+		[], WasmFunctionSection(^(context.functionTypes)),
 		// tables
 		[], WasmTableSection([]),
 		// memories
@@ -94,13 +97,13 @@ wase2wasm(wase : Wase) -> WasmModule {
 		// exports
 		[], WasmExportSection(^(context.exports)),
 		// start function
-		[], WasmStartSection(-1), 
+		[], WasmStartSection(^(context.starts)), 
 		// elements
 		[], WasmElementSection([]), 
 		// datacounts
 		[], WasmDataCountSection(-1), 
 		// code
-		[], WasmCodeSection([]),
+		[], WasmCodeSection(^(context.codes)),
 		// data
 		[], WasmDataSection([]), 
 		[]		
@@ -127,6 +130,12 @@ WaseContext(
 	// Imports have to come before we see code
 	importsAllowed : ref bool,
 
+	// The func type ids of functions
+	functionTypes : ref [int],
+
+	// The code for functions
+	codes : ref [WasmCode],
+
 	// Globals
 	globals : ref [WasmGlobal],
 
@@ -138,6 +147,9 @@ WaseContext(
 
 	// Memories
 	memory : ref [WasmMemoryType],
+	
+	// Starting functions. -1 means none
+	starts : ref int
 );
 
 compileWase(context : WaseContext, w : Wase) -> void {
@@ -190,6 +202,7 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			memoryId = length(^(context.memory));
 			wmemory = WasmMemoryType(WasmLimits(minimumPages, maximumPages));
 			context.memory := arrayPush(^(context.memory), wmemory);
+
 			if (exportId != "") {
 				wexport = WasmExport(exportId, WasmExportMemory(memoryId));
 				context.exports := arrayPush(^(context.exports), wexport);
@@ -200,7 +213,7 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			// No more imports from this point on
 			context.importsAllowed := false;
 
-			// OK, what index does this function et?
+			// OK, what index does this global get?
 			globalIndex = ^(context.globalidx);
 			context.globalidx := globalIndex + 1;
 			context.env := setTree(^(context.env), id, globalIndex);
@@ -212,6 +225,42 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			// Should we export this thing?
 			if (exportId != "") {
 				wexport = WasmExport(exportId, WasmExportGlobal(globalIndex));
+				context.exports := arrayPush(^(context.exports), wexport);
+			}
+			compileWase(context, scope)
+		}
+		WaseFunction(id, exportId, start, type, locals, code, scope): {
+			// No more imports from this point on
+			context.importsAllowed := false;
+
+			// Find or make the index of the function types
+			fnTypeIndex = lookupWasmFuncTypeIndex(context, type);
+			// And register the function in the function section
+			context.functionTypes := arrayPush(^(context.functionTypes), fnTypeIndex);
+
+			// OK, what index does this global get?
+			funcIndex = ^(context.funcidx);
+			context.funcidx := funcIndex + 1;
+			context.env := setTree(^(context.env), id, funcIndex);
+	
+			// Register it
+			// TODO: Register local ids in the environment
+			wcode = WasmCode(map(locals, \local : WaseLocal -> WasmLocal(1, local.type)), waseExpr2wasm(context, code));
+			context.codes := arrayPush(^(context.codes), wcode);
+
+			if (start) {
+				if (^(context.starts) != -1) {
+					println("We only suppport one start section. " + id);
+				}
+				if (type.returns != []) {
+					println("Start function can not return anything. " + id);
+				}
+				context.starts := funcIndex;
+			}
+
+			// Should we export this thing?
+			if (exportId != "") {
+				wexport = WasmExport(exportId, WasmExportFunc(funcIndex));
 				context.exports := arrayPush(^(context.exports), wexport);
 			}
 			compileWase(context, scope)
