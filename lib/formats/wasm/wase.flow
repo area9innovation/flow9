@@ -13,6 +13,8 @@ export {
 
 		WaseMemory,
 
+		WaseGlobal,
+
 		WaseEmpty
 		;
 
@@ -36,6 +38,14 @@ export {
 	WaseMemory(minimumPages : int, maximumPages : int,
 		exportid : string,
 		scope : Wase);
+
+	// Declare a global. If exportid != "", we export this global with that name
+	// This index of this global will be bound to the id in the compilation environment
+	WaseGlobal(id : string, exportid : string, type : WasmValType, isMutable : bool, 
+		init : WaseExpr, scope : Wase);
+
+	WaseExpr(instructions : [WaseInstruction]);
+		WaseInstruction ::= WasmInstruction;
 
 	WaseEmpty();
 
@@ -64,7 +74,7 @@ wase2wasm(wase : Wase) -> WasmModule {
 	context = WaseContext(ref makeTree(), ref [], ref makeTree(), 
 		ref 0, ref 0, ref 0, ref 0, ref 0, ref 0,
 		ref true,
-		ref [], ref [], ref []
+		ref [], ref [], ref [], ref []
 	);
 	compileWase(context, wase);
 
@@ -80,7 +90,7 @@ wase2wasm(wase : Wase) -> WasmModule {
 		// memories
 		[], WasmMemorySection(^(context.memory)),
 		// globals
-		[], WasmGlobalSection([]),
+		[], WasmGlobalSection(^(context.globals)),
 		// exports
 		[], WasmExportSection(^(context.exports)),
 		// start function
@@ -116,6 +126,9 @@ WaseContext(
 
 	// Imports have to come before we see code
 	importsAllowed : ref bool,
+
+	// Globals
+	globals : ref [WasmGlobal],
 
 	// These will be collected into a WasmImportSection
 	imports : ref [WasmImport],
@@ -183,7 +196,39 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			}
 			compileWase(context, scope)
 		}
+		WaseGlobal(id, exportId, type, isMutable, init, scope): {
+			// No more imports from this point on
+			context.importsAllowed := false;
+
+			// OK, what index does this function et?
+			globalIndex = ^(context.globalidx);
+			context.globalidx := globalIndex + 1;
+			context.env := setTree(^(context.env), id, globalIndex);
+
+			// Register it
+			wglobal = WasmGlobal(WasmGlobalType(type, isMutable), waseExpr2wasm(context, init));
+			context.globals := arrayPush(^(context.globals), wglobal);
+
+			// Should we export this thing?
+			if (exportId != "") {
+				wexport = WasmExport(exportId, WasmExportGlobal(globalIndex));
+				context.exports := arrayPush(^(context.exports), wexport);
+			}
+			compileWase(context, scope)
+		}
 		WaseEmpty(): {}
+	}
+}
+
+waseExpr2wasm(context : WaseContext, w : WaseExpr) -> WasmExpr {
+	WasmExpr(
+		map(w.instructions, \i -> waseInstruction2wasm(context, i))
+	)
+}
+
+waseInstruction2wasm(context : WaseContext, i : WaseInstruction) -> WasmInstruction {
+	switch (i) {
+		WasmInstruction(): i;
 	}
 }
 
