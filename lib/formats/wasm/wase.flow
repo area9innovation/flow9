@@ -1,0 +1,182 @@
+
+import formats/wasm/wasm_types;
+import ds/tree;
+
+export {
+	// This is an expression-based wrapper for Wasm to make it easier to produce 
+	// a valid WASM module
+	Wase ::= 
+		WaseImportFunction,
+		WaseImportGlobal,
+		WaseImportMemory,
+		WaseImportTable,
+
+		WaseMemory
+		;
+
+	// This imported function will be bound to the id in the compilation environment
+	WaseImportFunction(id : string, module : string, name : string, type : WasmFuncType,
+		scope : Wase);
+
+	// This imported global will be bound to the id in the compilation environment
+	WaseImportGlobal(id : string, module : string, name : string, type : WasmValType, isMutable : bool,
+		scope : Wase);
+
+	// Short for WasmImport(module, name, WasmImportMemory(WasmLimits(min, max))))
+	WaseImportMemory(module : string, name : string, minimumPages : int, maximumPages : int,
+		scope : Wase);
+
+	// Short for WasmImport(module, name, WasmTableType(refType, WasmLimits(min, max)))
+	WaseImportTable(module : string, name : string, refType : WasmRefType, minimumPages : int, maximumPages : int,
+		scope : Wase);
+
+	// Declare our top-level memory
+	WaseMemory(minimumPages : int, maximumPages : int,
+		scope : Wase);
+
+	// Construct a WasmModule from our high-level structure
+	wase2wasm(wase : Wase) -> WasmModule;
+}
+
+
+/*
+
+TODO:
+- WasmCustomSection
+- WasmFunction/Code
+- WasmTableSection
+- WasmGlobalSection
+
+
+- If we have WASM at the top-level, that should probably be collected into a
+  constructed Main function marked as a start function?
+
+*/
+
+wase2wasm(wase : Wase) -> WasmModule {
+	context = WaseContext(ref makeTree(), ref [], ref makeTree(), 
+		ref 0, ref 0, ref 0, ref 0, ref 0, ref 0,
+		ref true,
+		ref [], ref []
+	);
+	compileWase(context, wase);
+
+	WasmModule(
+		// types
+		[], WasmTypeSection(^(context.funcTypes)),
+		// imports
+		[], WasmImportSection(^(context.imports)), 
+		// functions
+		[], WasmFunctionSection([]),
+		// tables
+		[], WasmTableSection([]),
+		// memories
+		[], WasmMemorySection(^(context.memory)),
+		// globals
+		[], WasmGlobalSection([]),
+		// exports
+		[], WasmExportSection([]),
+		// start function
+		[], WasmStartSection(-1), 
+		// elements
+		[], WasmElementSection([]), 
+		// datacounts
+		[], WasmDataCountSection(-1), 
+		// code
+		[], WasmCodeSection([]),
+		// data
+		[], WasmDataSection([]), 
+		[]		
+	);
+}
+
+WaseContext(
+	// As we construct functions, imports, etc, we record their indexes here
+	env : ref Tree<string, int>,
+
+	// These are also collected into WasmTypeSection and give the typeidx for function types
+	funcTypes : ref [WasmFuncType],
+	// From fn type to type index, so we reuse the same function types
+	funcTypeMap : ref Tree<WasmFuncType, int>,
+
+	// These give the funcidx for top-level functions
+	funcidx : ref int,
+	tableidx : ref int,
+	memidx : ref int,
+	globalidx : ref int,
+	elemidx : ref int,
+	dataidx : ref int,
+
+	// Imports have to come before we see code
+	importsAllowed : ref bool,
+
+	// These will be collected into a WasmImportSection
+	imports : ref [WasmImport],
+
+	// Memories
+	memory : ref [WasmMemoryType],
+);
+
+compileWase(context : WaseContext, w : Wase) -> void {
+	switch (w) {
+		WaseImportFunction(id, module, name, type, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import function " + id + " too late");
+			}
+			// Find or make the index of the function types
+			fnTypeIndex = lookupWasmFuncTypeIndex(context, type);
+			wimport = WasmImport(module, name, WasmImportType(fnTypeIndex));
+			context.imports := arrayPush(^(context.imports), wimport);
+
+			// OK, what index does this function et?
+			fnIndex = ^(context.funcidx);
+			context.funcidx := fnIndex + 1;
+			context.env := setTree(^(context.env), id, fnIndex);
+			compileWase(context, scope)
+		}
+		WaseImportGlobal(id, module, name, type, isMutable, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import global " + id + " too late");
+			}
+			wimport = WasmImport(module, name, WasmImportGlobal(WasmGlobalType(type, isMutable)));
+			context.imports := arrayPush(^(context.imports), wimport);
+
+			// OK, what index does this function et?
+			globalIndex = ^(context.globalidx);
+			context.globalidx := globalIndex + 1;
+			context.env := setTree(^(context.env), id, globalIndex);
+			compileWase(context, scope)
+		}
+		WaseImportMemory(module, name, minimumPages, maximumPages, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import memory " + module + "." + name + " too late");
+			}
+			wimport = WasmImport(module, name, WasmImportMemory(WasmMemoryType(WasmLimits(minimumPages, maximumPages))));
+			context.imports := arrayPush(^(context.imports), wimport);
+			compileWase(context, scope)
+		}
+		WaseImportTable(module, name, refType, minimumPages, maximumPages, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import table " + module + "." + name + " too late");
+			}
+			wimport = WasmImport(module, name, WasmImportTable(WasmTableType(refType, WasmLimits(minimumPages, maximumPages))));
+			context.imports := arrayPush(^(context.imports), wimport);
+			compileWase(context, scope)
+		}
+		WaseMemory(minimumPages, maximumPages, scope): {
+			wmemory = WasmMemoryType(WasmLimits(minimumPages, maximumPages));
+			context.memory := arrayPush(^(context.memory), wmemory);
+			compileWase(context, scope)
+		}
+	}
+}
+
+lookupWasmFuncTypeIndex(context : WaseContext, fn : WasmFuncType) -> int {
+	mindex = lookupTree(^(context.funcTypeMap), fn);
+	mindex ?? mindex : {
+		n = length(^(context.funcTypes));
+		context.funcTypes := arrayPush(^(context.funcTypes), fn);
+		context.funcTypeMap := setTree(^(context.funcTypeMap), fn, n);
+		n;
+	}
+}
