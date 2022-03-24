@@ -3749,8 +3749,8 @@ class RenderSupport {
 		return color & 0xFFFFFF;
 	}
 
-	public static function makeReactContainer(element, props) : ReactContainer {
-		return new ReactContainer(element, props);
+	public static function makeReactContainer(element, props, state, onStateChange) : ReactContainer {
+		return new ReactContainer(element, props, state, onStateChange);
 	}
 
 	public static function updateReactState(container, key, value) : Void {

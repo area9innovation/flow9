@@ -5,17 +5,21 @@ using DisplayObjectHelper;
 
 class ReactContainer extends NativeWidgetClip {
 	private var isReady : Bool = false;
+	private var onStateChangeEnabled : Bool = true;
 	private var component : Dynamic;
 	private var props : Dynamic;
+	private var stateInit : Dynamic;
 	private var mutationObserver : Dynamic;
 
-	public function new(element : String, propsStr : String) {
+	public function new(element : String, propsStr : String, stateInitStr : String, onStateChange : String -> Void) {
 		super();
 
 		this.initNativeWidget();
 		nativeWidget.classList.add("reactContainer");
 
 		props = Json.parse(propsStr);
+		stateInit = Json.parse(stateInitStr);
+		untyped this.onStateChange = onStateChange;
 		untyped console.log("props : ", props);
 
 		var reactBundleUrl = './js/react_bundle.js';
@@ -27,13 +31,40 @@ class ReactContainer extends NativeWidgetClip {
 	public function init(element : String) {
 		this.isReady = true;
 		this.detectReactComponent(element);
+		this.initRootContainer();
 		this.renderReact();
 	}
 
 	public function renderReact() {
 		if (this.isReady && this.component != null) {
-			untyped __js__("ReactDOM.render(React.createElement(this.component, this.props), this.nativeWidget)");
+			var app = untyped __js__("React.createElement(this.rootContainer)");
+			untyped __js__("ReactDOM.render(app, this.nativeWidget)");
 		}
+	}
+
+	public function initRootContainer() {
+		untyped this.rootContainer = untyped __js__("
+			() => {
+				const [rootContainerState, setRootContainerState] = React.useState(this.stateInit);
+
+				React.useEffect(() => {
+					this.setRootContainerState = setRootContainerState;
+				}, []);
+
+				React.useEffect(() => {
+					if (this.onStateChangeEnabled) {
+						this.onStateChange(JSON.stringify(rootContainerState))
+					};
+				}, [rootContainerState]);
+
+				return React.createElement(this.component, {
+					...this.props,
+					...rootContainerState,
+					// for test purposes
+					onClick : () => setRootContainerState(prev => ({...prev, count : (prev.count || 0) + 1}))
+				});
+			}
+		");
 	}
 
 	public function detectReactComponent(element : String) {
@@ -70,9 +101,17 @@ class ReactContainer extends NativeWidgetClip {
 
 	public function updateReactState(key : String, valueStr : String) : Void {
 		var value = Json.parse(valueStr);
-		untyped __js__("this.props[key] = value");
 
-		renderReact();
+		if (untyped this.setRootContainerState != null) {
+			onStateChangeEnabled = false;
+			untyped this.setRootContainerState(function (prev) {
+				return __js__("{...prev, [key] : value}");
+			});
+			// Shedule to call after state will update
+			Native.timer(0, function() {
+				onStateChangeEnabled = true;
+			});
+		}
 	}
 
 	public function addNativeWidget() : Void {
@@ -105,7 +144,7 @@ class ReactContainer extends NativeWidgetClip {
 
 					bRect = untyped this.nativeWidget.getBoundingClientRect();
 
-					if (this.width != bRect.width || this.height != bRect.height) {
+					if (untyped this._width != bRect.width || untyped this._height != bRect.height) {
 						this.width = bRect.width;
 						this.height = bRect.height;
 						this.emitEvent("resize");

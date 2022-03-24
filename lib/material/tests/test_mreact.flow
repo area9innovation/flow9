@@ -46,17 +46,20 @@ makeBootstrapButton() -> Material {
 	]);
 
 	isDisabled = make(JsonBool(true));
-	state = makeTree1("disabled", isDisabled);
+	clickCount = make(JsonDouble(0.));
+	fpprint("clickCount")(clickCount);
+
+	state = setTree(makeTree1("disabled", isDisabled), "count", clickCount);
 	timer(3000, \ -> nextDistinct(isDisabled, JsonBool(false)));
 
 	MReact(element, props, state);
 }
 
-MReact(element : string, props : Json, state : Tree<string, DynamicBehaviour<Json>>) -> Material {
+MReact(element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>) -> Material {
 	TReact(element, props, state)
 }
 
-TReact(element : string, props : Json, state : Tree<string, DynamicBehaviour<Json>>) -> Material {
+TReact(element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>) -> Material {
 	wh = makeWH();
 	TFForm(
 		FReact(wh, element, props, state),
@@ -68,21 +71,38 @@ TReact(element : string, props : Json, state : Tree<string, DynamicBehaviour<Jso
 	)
 }
 
-FReact(wh : DynamicBehaviour<WidthHeight>, element : string, props : Json, state : Tree<string, DynamicBehaviour<Json>>) -> FForm {
+FReact(wh : DynamicBehaviour<WidthHeight>, element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>) -> FForm {
 	metrics = make(FormMetrics(0., 0., 0., 0.));
+	blockResponse = ref false;
 
 	FNativeForm(
 		FEmpty(),
 		metrics,
 		\ -> FEmpty(),
 		\__, __, __ -> {
+			stateInit = foldTree(state, [], \k, v, acc -> arrayPush(acc, Pair(k, getValue(v))));
+			stateInitStr = json2string(JsonObject(stateInit));
 			propsStr = json2string(props);
-			container = makeReactContainer(element, propsStr);
+
+			onStateChange = \str -> {
+				blockResponse := true;
+				stateJson = parseJsonSafe(str);
+				fields = getJsonObjectValue(stateJson, []);
+				iter(fields, \field -> {
+					maybeApply(lookupTree(state, field.first), \stateValue -> nextDistinct(stateValue, field.second))
+				});
+				blockResponse := false;
+			}
+
+			container = makeReactContainer(element, propsStr, stateInitStr, onStateChange);
 			
 			uns = makeSubscribe(metrics, \mt -> nextDistinct(wh, WidthHeight(mt.width, mt.height)))();
 			unsTree = mapTree2(state, \key, val -> {
-				makeSubscribe(val, \v ->
-					updateReactState(container, key, json2string(v))
+				makeSubscribe2(val, \v -> {
+					if (!^blockResponse) {
+						updateReactState(container, key, json2string(v));
+					}
+				}
 				)()
 			});
 
