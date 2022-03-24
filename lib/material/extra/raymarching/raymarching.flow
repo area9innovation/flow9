@@ -1,8 +1,8 @@
 import material/material_ui;
 
 export {
-	MRaymarching(scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
-	MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
+	MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
+	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
 
 	RMScene ::= RMCompositeObject, RMPrimitive, RMTranslate, RMUnion2, RMUnion, RMMaterial, RMEmpty;
 	RMLights ::= RMCompositeLight, RMTranslate, RMLightMaterial, RMLight, RMPlus, RMEmpty;
@@ -56,50 +56,53 @@ export {
 		RMIEmpty();
 }
 
-MRaymarching(scene : RMScene, light : RMLights, camera : RMCamera) -> Material {
+MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material {
 	glsl = RMIExp2GLSL(RMScene2RMIExp(scene, true));
 	material1 = RMIExp2GLSLMaterial(RMScene2RMIExp(scene, true));
 	material2 = RMIExp2GLSLMaterial(RMScene2RMIExp(scene, false));
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(light));
 
-	setCameraString = formatString(
-		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
-		[
-			d2s(camera.position.x),
-			d2s(camera.position.y),
-			d2s(camera.position.z),
-			d2s(camera.direction.x),
-			d2s(camera.direction.y),
-			d2s(camera.direction.z),
-		]
-	);
+	cameraPositionStr = formatString("%1, %2, %3", [
+		d2s(camera.position.x),
+		d2s(camera.position.y),
+		d2s(camera.position.z)
+	]);
+	cameraDirectionStr = formatString("%1, %2, %3", [
+		d2s(camera.direction.x),
+		d2s(camera.direction.y),
+		d2s(camera.direction.z)
+	]);
 
 	displayRaymarchingCanvas(
-		blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
+		id,
+		blueprint("#include material/extra/raymarching/raymarching.js", [
+			"cameraPosition", cameraPositionStr,
+			"cameraDirection", cameraDirectionStr,
+			"distanceFunction", jsScene
+		]),
 		"#include material/extra/raymarching/raymarching.vert",
 		blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
 	)
 }
 
-MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
+MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
 	glsl = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true));
 	material1 = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), true));
 	material2 = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), false));
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
-	setCameraString = formatString(
-		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
-		[
-			d2s(fgetValue(cameraB).position.x),
-			d2s(fgetValue(cameraB).position.y),
-			d2s(fgetValue(cameraB).position.z),
-			d2s(fgetValue(cameraB).direction.x),
-			d2s(fgetValue(cameraB).direction.y),
-			d2s(fgetValue(cameraB).direction.z),
-		]
-	);
+	cameraPositionStr = formatString("%1, %2, %3", [
+		d2s(fgetValue(cameraB).position.x),
+		d2s(fgetValue(cameraB).position.y),
+		d2s(fgetValue(cameraB).position.z)
+	]);
+	cameraDirectionStr = formatString("%1, %2, %3", [
+		d2s(fgetValue(cameraB).direction.x),
+		d2s(fgetValue(cameraB).direction.y),
+		d2s(fgetValue(cameraB).direction.z)
+	]);
 
 	MConstruct(
 		[
@@ -107,6 +110,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, c
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
 					hostCall("recompileShader", [
+						i2s(id),
 						blueprint(
 							"#include material/extra/raymarching/raymarching.frag",
 							[
@@ -116,10 +120,13 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, c
 								"materialFunction2", RMIExp2GLSLMaterial(RMScene2RMIExp(s, false))
 							]
 						)
-					]) |> ignore;
+					]);
 					hostCall(
 						"setDistanceFunction",
-						[formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)))])]
+						[
+							i2s(id),
+							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)))])
+						]
 					) |> ignore;
 				}
 			),
@@ -127,11 +134,13 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, c
 				fthrottle(cameraB, 500),
 				\c -> {
 					hostCall("setCameraPosition", [
+						i2d(id),
 						c.position.x,
 						c.position.y,
 						c.position.z
 					]) |> ignore;
 					hostCall("setCameraDirection", [
+						i2d(id),
 						c.direction.x,
 						c.direction.y,
 						c.direction.z
@@ -140,13 +149,20 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, c
 			)
 		],
 		displayRaymarchingCanvas(
-			blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
+			id,
+			blueprint("#include material/extra/raymarching/raymarching.js", [
+				"cameraPosition", cameraPositionStr,
+				"cameraDirection", cameraDirectionStr,
+				"distanceFunction", jsScene
+			]),
 			"#include material/extra/raymarching/raymarching.vert",
 			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
 		)
 	)
 }
-displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
+
+sharedScriptInserted = ref false;
+displayRaymarchingCanvas(id : int, scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
 	whB = make(WidthHeight(0.0, 0.0));
 	MInspect([IAvailable(whB)], 
 		MHTMLStage(whB, \stage -> {
@@ -162,22 +178,30 @@ displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFr
 			};
 
 			setAttribute(scriptGLM, "src", "js/glm-js.min.js", true);
-			setAttribute(scriptGLM, "onload", "rayMain()", true);
-			setAttribute(canvas, "id", "rayCanvas", true);
+			setAttribute(scriptGLM, "onload", "rayMain(" + "\"" + i2s(id) + "\"" + ")", true);
+			setAttribute(canvas, "id", "rayCanvas" + i2s(id), true);
 			setCanvasSize(fgetValue(whB));
 			unsSize = makeSubscribe2(whB, \wh -> {
 				setCanvasSize(wh);
 				hostCall("resizeCanvas", [canvas])|>ignore;
 			})();
 			setAttribute(scriptShaderVertex, "type", "text/plain", true);
-			setAttribute(scriptShaderVertex, "id", "vertex-shader", true);
+			setAttribute(scriptShaderVertex, "id", "vertex-shader" + i2s(id), true);
 			setAttribute(scriptShaderVertex, "innerHTML", shaderVertex, true);
 			setAttribute(scriptShaderFragment, "type", "text/plain", true);
-			setAttribute(scriptShaderFragment, "id", "fragment-shader", true);
+			setAttribute(scriptShaderFragment, "id", "fragment-shader"  + i2s(id), true);
 			setAttribute(scriptShaderFragment, "innerHTML", shaderFragment, false);
 			setAttribute(script, "innerHTML", scriptContent, false);
 
 			setClipStyle(stage, "overflow", "auto");
+
+			// This script contains global sstrage to dipatch hostCalls between multiple contexts. So it is injected only once.
+			if (!^sharedScriptInserted) {
+				sharedScript = createElement("script");
+				setAttribute(sharedScript, "innerHTML", "#include material/extra/raymarching/raymarching_common.js", true);
+				appendChild(stage, sharedScript);
+				sharedScriptInserted := true;
+			};
 
 			appendChild(stage, scriptGLM);
 			appendChild(stage, canvas);
