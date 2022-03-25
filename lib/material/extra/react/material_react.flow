@@ -1,0 +1,81 @@
+import material/material2tropic;
+
+export {
+	MReact(
+		element : string,
+		props : JsonObject,
+		state : Tree<string, DynamicBehaviour<Json>>,
+		listeners : [ReactListener]
+	) -> Material;
+
+	ReactListener(
+		name : string,
+		fn : () -> void
+	);
+}
+
+MReact(element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>, listeners : [ReactListener]) -> Material {
+	wh = makeWH();
+	TFForm(
+		FReact(wh, element, props, state, listeners),
+		TFormMetrics(
+			fwidth(wh),
+			fheight(wh),
+			fheight(wh)
+		)
+	)
+}
+
+FReact(wh : DynamicBehaviour<WidthHeight>, element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>, listeners : [ReactListener]) -> FForm {
+	metrics = make(FormMetrics(0., 0., 0., 0.));
+	blockResponse = ref false;
+
+	FNativeForm(
+		FEmpty(),
+		metrics,
+		\ -> FEmpty(),
+		\__, __, __ -> {
+			propsStr = json2string(props);
+			stateInit = foldTree(state, [], \k, v, acc -> arrayPush(acc, Pair(k, getValue(v))));
+			stateInitStr = json2string(JsonObject(stateInit));
+
+			onStateChange = \str -> {
+				blockResponse := true;
+				stateJson = parseJsonSafe(str);
+				fields = getJsonObjectValue(stateJson, []);
+				iter(fields, \field -> {
+					maybeApply(lookupTree(state, field.first), \stateValue -> nextDistinct(stateValue, field.second))
+				});
+				blockResponse := false;
+			}
+
+			container = makeReactContainer(element, propsStr, stateInitStr, onStateChange);
+			
+			uns = makeSubscribe(metrics, \mt -> nextDistinct(wh, WidthHeight(mt.width, mt.height)))();
+			unsTree = mapTree2(state, \key, val -> {
+				makeSubscribe2(val, \v -> {
+					if (!^blockResponse) {
+						updateReactState(container, key, json2string(v));
+					}
+				}
+				)()
+			});
+
+			iter(listeners, \listener -> setReactListener(container, listener.name, listener.fn));
+
+			addExtendedEventListener(container, "resize", \met -> {
+				wd = met[0];
+				hgt = met[1];
+				nextDistinct(metrics, FormMetrics(wd, hgt, hgt, hgt));
+			});
+
+			NativeRenderResult(
+				[container],
+				\ -> {
+					uns();
+					traverseInOrder(unsTree, \__, unsFn -> unsFn());
+				}
+			)
+		}
+	)
+}
