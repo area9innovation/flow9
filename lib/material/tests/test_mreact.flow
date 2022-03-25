@@ -1,19 +1,22 @@
-import material/material2tropic;
+import material/extra/react/material_react;
 
 main() {
 	setRendererType("html");
-	text = "FLOW TEXT";
-
-	// reactComponent = makeSimpleParagraph();
-	// reactComponent = makeBootstrapSpinner();
-	// reactComponent = makeBootstrapButton();
-	reactComponent = makeBootstrapToggleButtonGroup();
 
 	content =
-		MLines([
-			reactComponent,
-			MText(text, []),
-		]);
+		[
+			// Case 1 : Just a DOM-element
+			makeSimpleParagraph(),
+			// Case 2 : Static element from a library
+			makeBootstrapSpinner(),
+			// Case 3 : Button element from a library, change state from flow, provide an onClick listener
+			makeBootstrapButton(),
+			// Case 4 : Customly created ToggleButtonGroupControlled elemnt, based on elements from library. State is changed from both flow and React sides.
+			makeBootstrapToggleButtonGroup(),
+			MText("FLOW TEXT", []),
+		]
+		|> (\arr -> map(arr, \el -> MBorder4(8., el)))
+		|> MLines;
 	
 	mrender(makeMaterialManager([]), true, content);
 }
@@ -47,10 +50,7 @@ makeBootstrapButton() -> Material {
 	]);
 
 	isDisabled = make(JsonBool(true));
-	clickCount = make(JsonDouble(0.));
-	fpprint("clickCount")(clickCount);
-
-	state = setTree(makeTree1("disabled", isDisabled), "count", clickCount);
+	state = makeTree1("disabled", isDisabled);
 	timer(3000, \ -> nextDistinct(isDisabled, JsonBool(false)));
 
 	MReact(element, props, state, [ReactListener("onClick", \ -> println("react onClick listener"))]);
@@ -72,87 +72,10 @@ makeBootstrapToggleButtonGroup() -> Material {
 	size = make(JsonString("sm"));
 	timer(6000, \ -> nextDistinct(size, JsonString("lg")));
 
-	state = setTree(
-		makeTree1("value", selected),
-		"size",
-		size
-	);
+	state = pairs2tree([
+		Pair("value", selected),
+		Pair("size", size)
+	]);
 
 	MReact(element, props, state, []);
-}
-
-ReactListener(
-	name : string,
-	fn : () -> void
-);
-
-MReact(element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>, listeners : [ReactListener]) -> Material {
-	TReact(element, props, state, listeners)
-}
-
-TReact(element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>, listeners : [ReactListener]) -> Material {
-	wh = makeWH();
-	TFForm(
-		FReact(wh, element, props, state, listeners),
-		TFormMetrics(
-			fwidth(wh),
-			fheight(wh),
-			fheight(wh)
-		)
-	)
-}
-
-FReact(wh : DynamicBehaviour<WidthHeight>, element : string, props : JsonObject, state : Tree<string, DynamicBehaviour<Json>>, listeners : [ReactListener]) -> FForm {
-	metrics = make(FormMetrics(0., 0., 0., 0.));
-	blockResponse = ref false;
-
-	FNativeForm(
-		FEmpty(),
-		metrics,
-		\ -> FEmpty(),
-		\__, __, __ -> {
-			stateInit = foldTree(state, [], \k, v, acc -> arrayPush(acc, Pair(k, getValue(v))));
-			stateInitStr = json2string(JsonObject(stateInit));
-			propsStr = json2string(props);
-
-			onStateChange = \str -> {
-				blockResponse := true;
-				stateJson = parseJsonSafe(str);
-				fields = getJsonObjectValue(stateJson, []);
-				iter(fields, \field -> {
-					maybeApply(lookupTree(state, field.first), \stateValue -> nextDistinct(stateValue, field.second))
-				});
-				blockResponse := false;
-			}
-
-			container = makeReactContainer(element, propsStr, stateInitStr, onStateChange);
-			
-			uns = makeSubscribe(metrics, \mt -> nextDistinct(wh, WidthHeight(mt.width, mt.height)))();
-			unsTree = mapTree2(state, \key, val -> {
-				makeSubscribe2(val, \v -> {
-					if (!^blockResponse) {
-						updateReactState(container, key, json2string(v));
-					}
-				}
-				)()
-			});
-
-			iter(listeners, \listener -> setReactListener(container, listener.name, listener.fn));
-
-			addExtendedEventListener(container, "resize", \met -> {
-				wd = met[0];
-				hgt = met[1];
-				nextDistinct(metrics, FormMetrics(wd, hgt, hgt, hgt));
-			});
-
-			NativeRenderResult(
-				[container],
-				\ -> {
-					uns();
-					traverseInOrder(unsTree, \__, unsFn -> unsFn());
-				}
-			)
-		}
-
-	)
 }
