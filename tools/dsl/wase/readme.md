@@ -145,7 +145,13 @@ statements, but only expressions. The syntax is pretty standard:
 	if (a) b;
 
 	// Function call
-	foo(1, 2)
+	foo(1, 2) 
+
+	// Arithmetic
+	1 + 2 / 3 * 4 % 5
+
+	// Unsigned divisions and remainder:
+	1 /u 2 %u 3
 
 	// Sequence
 	{
@@ -156,6 +162,8 @@ statements, but only expressions. The syntax is pretty standard:
 
 TODO: Get more stuff to work:
 - Implicit drops in sequence to work with tuples
+
+- Add unsigned comparisons for i32, i64
 
 	break <int>
 	return
