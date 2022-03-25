@@ -140,12 +140,28 @@ TODO: Define syntax for this
 
 ## Data
 
-TODO: Implement this
+This works:
 
-	data : data<i32> = 0, 1, 2, 3, 4;
-	data : data<i8> = "utf8 string is very comfortable";
+	// Strings are placed as UTF8 but with the length first
+	data "utf8 string is very comfortable";
+
+	// We can have a sequence of data
+	data 1, 2, 3, "text", 3.0;
+
+	// Moving the data into offset 32 of the memory
+	data "Hello, world!" offset 32;
+
+The result is that this data is copied into memory on startup.
+
+TODO:
+Add syntax for passive data, which is not automatically copied until
+memory.init is called.
+
+Add syntax for raw bytes?
 
 	meminit<data>(offset)
+
+	// This will drop the data given segment
 	drop<data>();
 
 # Expressions
