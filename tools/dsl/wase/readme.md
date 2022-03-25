@@ -91,6 +91,8 @@ Some examples:
 	counter : mutable i32 = 0;
 	export secret : i32 = 0xdeadbeaf;
 	export changes : mutable f32 = 3.1341;
+	// Exports this global to the host with the name "external"
+	export "external" internal : i32 = 1;
 
 TODO:
 - Extend the type checker to check mutability of globals
@@ -106,6 +108,11 @@ TODO:
 	// This function is exported to the host using the name "foo"
 	export foo(arg : i32) -> i32 {
 		arg
+	}
+
+	// Exports this function using the "_start" name to the host, in compliance with Wasi
+	export "_start" main() -> () {
+		...
 	}
 
 ## Imports of globals and functions
@@ -250,6 +257,19 @@ Store could be:
 	store<i32, <offset>>(index, value)	// i32.store
 
 We could probably infer the type of value to decide exactly which type it is?
+
+## Declaring memory
+
+To reserve memory, use:
+
+	// Reserves one page of 64k
+	memory 1;
+
+	// Reserves and exports memory under the name "memory"
+	export memory 1;
+
+	// Reserves and exports memory under the name "mymem"
+	export "mymem" memory 1;
 
 ## Advanced concepts
 
