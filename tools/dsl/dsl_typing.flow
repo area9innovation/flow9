@@ -35,8 +35,6 @@ DslTypeAcc(
 	tyvar : ref int,
 	env : ref Tree<string, DslAst>,
 	tyvars : UnionFindMap<DslAst>,
-	// Used when two types need to be merged
-	mergeTypes : (DslTypeAcc, DslAst, DslAst) -> DslAst,
 	// Provided by user to extract the type of a given node
 	typeFn : (DslTypeAcc, DslAst, getChildType : (int) -> DslAst) -> DslAst,
 	// Used by the user to merge classes
@@ -61,13 +59,17 @@ dslTypeInfer(d : DslAst,
 	acc = DslTypeAcc(ref 0, 
 		ref makeTree(), 
 		makeUnionFindMap(dummyDslNode, \left, right -> (^merger)(left, right)),
-		mergeTypes, typeFn, unifyDslTypes,
+		typeFn, unifyDslTypes,
 		\n, error -> {
 			println(error);
 		}, ref "",
 		false // Debugging
 	);
-	merger := \left, right -> mergeTypes(acc, left, right);
+	merger := \left, right -> {
+		if (left == dummyDslNode) right
+		else if (right == dummyDslNode) left
+		else mergeTypes(acc, left, right);
+	}
 
 	t : DslAstTyped = dsl2typed(acc, d);
 
@@ -106,7 +108,7 @@ typed2dsl(d : DslAstTyped) -> DslAst {
 dslTypeCheck(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 	indent = ^(acc.indent);
 	if (acc.debugging) {
-		println(indent + "Type checking " + prettyDsl(typed2dsl(node)));
+		println(indent + "Type checking " + summarizeDsl(typed2dsl(node)));
 		acc.indent := indent + "  ";
 	}
 	res = switch (node) {
@@ -137,10 +139,27 @@ dslTypeCheck(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 		}
 	};
 	if (acc.debugging) {
-		println(indent + "Type checked " + prettyDsl(typed2dsl(node)) + ": " + prettyDsl(res));
+		println(indent + "Type checked " + summarizeDsl(typed2dsl(node)) + ": " + prettyDsl(res));
 		acc.indent := indent;
 	}
 	res;
+}
+
+summarizeDsl(d : DslAst) -> string {
+	switch (d) {
+		DslBool(value): b2s(value);
+		DslInt(value): i2s(value);
+		DslDouble(value): d2s(value);
+		DslString(value): toString(value);
+		DslList(value): {
+			arr = reverseA(list2array(value));
+			"[" + superglue(arr, summarizeDsl, "::") + "]";
+		}
+		DslNode(name, args, pos): {
+			children = map(args, summarizeDsl);
+			name + "(" + strGlue(children, ", ") + ")"
+		}
+	}
 }
 
 makeDslTypeVar(acc : DslTypeAcc) -> DslAst {
@@ -155,10 +174,12 @@ nextDsltyvar(env : DslTypeAcc) -> int {
 
 setDslTypeVar(acc : DslTypeAcc, tyvar : int, type : DslAst) -> DslAst {
 	etype = getUnionMapValue(acc.tyvars, tyvar);
-	res = if (etype == dummyDslNode) {
+	res = if (etype == dummyDslNode || etype == type) {
 		type
 	} else {
-		acc.mergeTypes(acc, etype, type)
+		acc.onError(type, "Not supposed to happen: Updating " + i2s(tyvar));
+		type
+		// acc.mergeTypes(acc, etype, type)
 	}
 	setUnionMapValue(acc.tyvars, tyvar, res);
 	res;
@@ -240,9 +261,7 @@ resolveDslTypes(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 		DslListTyped(value, eclass): {
 			type = getUnionMapValue(acc.tyvars, eclass);
 			switch (type) {
-				DslList(__): {
-
-				}
+				DslList(__): {}
 				default: acc.onError(typed2dsl(node), "List type expected here");
 			}
 			DslList(mapList(value, \v -> {
@@ -252,7 +271,7 @@ resolveDslTypes(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 		DslNodeTyped(name, args, pos, eclass): {
 			type = getUnionMapValue(acc.tyvars, eclass);
 			DslNode(name, 
-			// We add the type
+				// We add the type as the last node
 				arrayPush(
 					map(args, \a -> {
 						resolveDslTypes(acc, a)
