@@ -163,10 +163,20 @@ statements, but only expressions. The syntax is pretty standard:
 		c
 	}
 
-TODO: Get more stuff to work:
-- Implicit drops in sequence to work with tuples
+	// Return from the function.
+	foo() {
+		return value;
+	}
+	bar() {
+		return;
+	}
 
+
+TODO: Get more stuff to work:
 - Add unsigned comparisons for i32, i64
+- Add instructions for shifts, clz, ctz, popcnt
+- Get this to type:
+  - a = if (b) return else 2;
 
 	break <int>
 	return
