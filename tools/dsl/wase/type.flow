@@ -13,22 +13,92 @@ mergeWaseTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> DslAst {
 	left;
 }
 
-typecheckWase(acc : DslTypeAcc, node : DslAst, getChildTypes : () -> [DslAst]) -> DslAst {
+typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -> DslAst {
 	switch (node) {
 		DslBool(__): DslString("i32");
 		DslInt(__): DslString("i32");
 		DslDouble(__): DslString("f64");
 		DslString(__): DslNode("array", [DslString("i16")], 0);
 		DslList(value): {
-			DslList(fold(getChildTypes(), makeList(), \acc2, t -> Cons(t, acc2)));
+			DslList(mapiList(value, \i, __ -> getChildType(i)));
 		}
 		DslNode(name, args, pos): {
 			if (name == "type") {
 				args[0];
+			} else if (name == "global") {
+				// (id, export : bool, type, mutable : bool, exp, body)
+				gname = getDslString(args[0]);
+				type = getChildType(2);
+				isMutable = getDslBool(args[3]);
+				// TODO: Record if it is mutable
+
+				acc.env := setTree(^(acc.env), gname, type);
+
+				etype = getChildType(4);
+				acc.unifyTypes(acc, type, etype);
+
+				getChildType(5);
+			} else if (name == "function") {
+				// function(id, export : bool, args : [idtype(id, type)], returnType, body, scope)
+				fname = getDslString(args[1]);
+
+				fargtypes = getChildType(2);
+				rettypes = getChildType(3);
+
+				fntype = DslNode("fntype", [fargtypes, rettypes], 0);
+				acc.env := setTree(^(acc.env), fname, fntype);
+
+				// OK, define the types of the arguments in the scope
+				fargs = list2array(getDslList(args[2]));
+				fargnames = map(fargs, \fa -> {
+					idtype = getDslNode(fa);
+					getDslString(idtype.args[0]);
+				});
+				prevTypes : [Maybe<DslAst>] = mapi(list2array(getDslList(fargtypes)), \i, fargtype : DslAst -> {
+					id = fargnames[i];
+					etype = lookupTree(^(acc.env), id);
+					acc.env := setTree(^(acc.env), id, fargtype);
+					etype;
+				});
+
+				// Check the type of the body
+				bodyType = getChildType(4);
+				acc.unifyTypes(acc, rettypes, bodyType);
+
+				// And unroll the existing types
+				iteri(prevTypes, \i, mpt -> {
+					mpt ?? {
+						acc.env := setTree(^(acc.env), fargnames[i], mpt)
+					} : {
+						acc.env := removeFromTree(^(acc.env), fargnames[i]);
+					}
+				});
+
+				getChildType(5);
 			} else if (name == "idtype") {
-				getChildTypes()[1]
+				// Used in functions. The type is the second child
+				getChildType(1)
+			} else if (name == "empty") {
+				DslList(makeList());
+
+			// OK, expression typing
+
+			} else if (name == "var") {
+				vname = getDslString(args[0]);
+				mtype = lookupTree(^(acc.env), vname);
+				mtype ?? {
+					mtype
+				} : {
+					acc.onError(node, "Unknown var " + vname);
+					DslNode("any", [], 0)
+				}
+			} else if (name == "add") {
+				left = getChildType(0);
+				right = getChildType(1);
+				acc.unifyTypes(acc, left, right);
+				left;
 			} else {
-				println("TODO: Type check " + prettyDsl(node));
+				acc.onError(node, "TODO: Type check " + prettyDsl(node));
 				DslNode("any", [], 0)
 			}
 		}
