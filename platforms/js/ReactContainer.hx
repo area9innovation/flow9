@@ -60,6 +60,7 @@ class ReactContainer extends NativeWidgetClip {
 				return React.createElement(this.component, {
 					...this.props,
 					...rootContainerState,
+					setRootContainerState: setRootContainerState
 					// for test purposes
 					// onClick : () => setRootContainerState(prev => ({...prev, count : (prev.count || 0) + 1}))
 				});
