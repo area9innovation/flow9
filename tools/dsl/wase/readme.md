@@ -153,6 +153,9 @@ statements, but only expressions. The syntax is pretty standard:
 	// Unsigned divisions and remainder:
 	1 /u 2 %u 3
 
+	// Bitwise operations
+	1 & 3 | 5 % 7
+
 	// Sequence
 	{
 		a();	// An implicit drop is added here
