@@ -1,42 +1,164 @@
-# Design of low-level C-like language for Wasm
+# Wase - a friendly, low-level language for Wasm
 
-It should have local type inference, but only support very basic types.
+This is a language, which maps one-to-one with WebAssembly, and compiles directly
+to Wasm bytecode. As such, it can be seen as an alternative to the WAT text format,
+but it is easier to use because of these things:
 
-Lexical scoping. No closures. No structures.
+- It uses more conventional syntax rather than Lisp
+- It has type inference
+- It handles all the index business for you
 
-## Syntax
+The language is lexically scoped, but does not have closures, and no real data structures.
+It provides direct access to the memory through load/stores, just like Wasm.
 
-	// Globals
+The language is designed to expose the full low-level flexibility of Wasm directly.
+
+# Status
+
+Only the most basic programs work and can compile directly from text to WASM binaries.
+A lot of instructions are not implemented yet. For each instruction, we need to define
+three different things:
+
+- Syntax. Done in grammar.flow.
+- Typing. Done in type.flow
+- Compilation. Done in compile.flow
+
+# Type system
+
+It supports the types of Wasm:
+
+	i32, i64, f32, f64, v128, func, extern
+
+At compile time, however, the compiler uses the real types for functions to ensure type
+checking is robust. The syntax for functions is like this:
+
+	// A function that takes an i32 and a f64, and returns a i32
+	foo(i32, f64) -> i32 { ... }
+	
+	// Does not take any arguments, does not return anything
+	foo() -> () { ... }
+
+	// Multi-values is supported with this syntax: This function returns both an i32 and a i64
+	foo(i32) -> (i32, i64) { ... }
+
+As a special type, there is also "auto", where the type will be inferred by
+the compiler: 
+
+	// The return type of this function is inferred to be "i32"
+	bar() -> auto {
+		1;
+	}
+
+This also works for locals:
+
+	bar() -> auto {
+		a : auto = 1;
+		a
+	}
+
+The type inference is Hindley-Milner, so it should be robust.
+
+## Top-level Syntax
+
+At the top-level, we have syntax for the different kinds of sections in
+Wasm. This includes globals, functions, imports, tables and data.
+
+The order of top-level declarations is important. The names of globals,
+functions and such only take effect from the point they are defined.
+
+TODO:
+- What about mutual recursion?
+
+## Global syntax
+
+The grammar for globals is like this:
+
+	// Constant global
 	<id> : <type> = <expr>;
+
+	// Mutable global
 	<id> : mutable <type> = <expr>;
+
+	// Exported global
 	export <id> : <type> = <expr>;
+
+	// Exported mutable global
+	export <id> : mutable <type> = <expr>;
+
+Some examples:
+
+	pi : f64 = 3.14159;
+	counter : mutable i32 = 0;
+	export secret : i32 = 0xdeadbeaf;
+	export changes : mutable f32 = 3.1341;
+
+## Function syntax
 
 	// Functions
 	foo(arg : i32) -> i32 {
-		a = 1;
+		a : i32 = 1;
 		a + arg
 	}
 
+	// This function is exported to the host using the name "foo"
 	export foo(arg : i32) -> i32 {
 		arg
 	}
 
-	// Function import from host
-	native println : (i32) -> void = console.log;
+## Imports of globals and functions
+
+TODO: Add syntax, typing and so forth for these:
 
 	// Global import
 	native id : i32 = module.name;
 	native id : mutable i32 = module.name;
 
+	// Function import from host
+	native println : (i32) -> void = console.log;
+
+## Tables
+
+TODO: Define syntax for this
+
+## Data
+
+TODO: Implement this
+
+	data : data<i32> = 0, 1, 2, 3, 4;
+	data : data<i8> = "utf8 string is very comfortable";
+
+	meminit<data>(offset)
+	drop<data>();
+
 # Expressions
 
-a = 1; // let-binding
-<scope>
+The body of globals and functions are expressions. There are no
+statements, but only expressions. The syntax is pretty standard:
 
-a := 2; // set local or global
+	// Let-binding have scope
+	a : i32 = 1;
+	<scope> // "a" is defined in this scope
 
-Normal let binding and var ref, function call, if, ifelse, break<n>
+	a := 2; // set local or global
 
+	if (a) b else c;
+	if (a) b;
+
+	// Function call
+	foo(1, 2)
+
+	// Sequence
+	{
+		a();	// An implicit drop is added here
+		b();	// An implicit drop is added here
+		c
+	}
+
+TODO: Get more stuff to work:
+- Implicit drops in sequence to work with tuples
+
+	break <int>
+	return
 	return <exp>
 
 	block {
@@ -51,23 +173,16 @@ Normal let binding and var ref, function call, if, ifelse, break<n>
 		code
 	}
 
-"null : func" for null reference to function
-"null : extern" for null reference to extern
-"expr is null"
+	// null reference to functino
+	null : func
+	// null reference to extern
+	null : extern
 
-"choose(cond, then, else)"
+	// Checking for nll
+	expr is null
 
-## Load/store
-
-Load could be:
-	peek<i32, <offset>, s8>(index)		// i32.load
-	peek<i32, <offset>, <align>>(index)	// i32.load
-
-Store could be:
-
-	poke<i32, <offset>>(index, value)	// i32.store
-
-we infer the type of value to decide exactly which type it is.
+	// Syntax for select:
+	select(cond, then, else)
 
 	localtee "a + tee<a>"?
 
@@ -90,23 +205,23 @@ call-indirect
 
 	fnidx<calls, fn1>	= how to get a function pointer
 
-Table instruction
+## Load/store
 
-Drop: Whether or not to have implicit drop in sequence or not:
-	{
-		_ = <foo>;	// This is type correct and corresponds to drop
-		2
-	}
+TODO: Implement this.
 
-## Data
+Load could be:
+	load<i32, <offset>, s8>(index)		// i32.load
+	load<i32, <offset>, <align>>(index)	// i32.load
 
-	data : data<i32> = 0, 1, 2, 3, 4;
-	data : data<i8> = "utf8 string is very comfortable";
+Store could be:
 
-	meminit<data>(offset)
-	drop<data>();
+	store<i32, <offset>>(index, value)	// i32.store
+
+We could probably infer the type of value to decide exactly which type it is?
 
 ## Advanced concepts
+
+TODO: Implement this.
 
 	// Memory import
 	import memory(min, max?) from module.name;
@@ -125,4 +240,3 @@ Figure out how to define more advanced values:
 - tuples
 - either
 - maybe
-
