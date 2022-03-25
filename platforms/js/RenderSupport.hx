@@ -3756,4 +3756,8 @@ class RenderSupport {
 	public static function updateReactState(container, key, value) : Void {
 		container.updateReactState(key, value);
 	}
+
+	public static function setReactListener(container, name, fn) : Void {
+		container.setReactListener(name, fn);
+	}
 }

@@ -61,7 +61,7 @@ class ReactContainer extends NativeWidgetClip {
 					...this.props,
 					...rootContainerState,
 					// for test purposes
-					onClick : () => setRootContainerState(prev => ({...prev, count : (prev.count || 0) + 1}))
+					// onClick : () => setRootContainerState(prev => ({...prev, count : (prev.count || 0) + 1}))
 				});
 			}
 		");
@@ -112,6 +112,10 @@ class ReactContainer extends NativeWidgetClip {
 				onStateChangeEnabled = true;
 			});
 		}
+	}
+
+	public function setReactListener(name : String, fn : Void -> Void) : Void {
+		untyped __js__("this.props[name] = fn");
 	}
 
 	public function addNativeWidget() : Void {
