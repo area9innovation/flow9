@@ -4,7 +4,7 @@ export {
 	MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
 	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
 
-	RMScene ::= RMCompositeObject, RMPrimitive, RMTranslate, RMUnion2, RMUnion, RMMaterial, RMEmpty;
+	RMScene ::= RMCompositeObject, RMPrimitive, RMTranslate, RMUnion2, RMUnion, RMSmoothUnion, RMMaterial, RMEmpty;
 	RMLights ::= RMCompositeLight, RMTranslate, RMLightMaterial, RMLight, RMPlus, RMEmpty;
 	RMObject ::= RMScene, RMLights;
 		RMPrimitive ::= RMSphere, RMPlane, RMBox, RMTorus;
@@ -17,6 +17,7 @@ export {
 		RMTranslate(object : RMObject, d : RMCoordinate);
 		RMUnion2(object1 : RMScene, object2 : RMScene);
 		RMUnion(objects : [RMScene]);
+		RMSmoothUnion(objects : [RMScene], k : double);
 		RMMaterial(object : RMScene, color : RMMaterials);
 		RMLightMaterial(object : RMLights, color : RMColor);
 		RMMaterials ::= RMColor, RMReflect;
@@ -37,7 +38,7 @@ export {
 		RMY(y : double);
 		RMZ(z : double);
 
-	RMIExp ::= RMICall, RMIP, RMIDouble, RMIInt, RMIXYZ, RMIVar, RMIConcat, RMIProperty, RMIEmpty;
+	RMIExp ::= RMICall, RMIP, RMIDouble, RMIInt, RMIBool, RMIXYZ, RMIVar, RMIConcat, RMIProperty, RMIEmpty;
 		RMICall(fn : RMC, args : [RMIExp]);
 		// A function, either an operator or function call
 		RMC ::= RMIOp, RMIFn;
@@ -49,6 +50,7 @@ export {
 		RMIP();
 		RMIDouble(num : double);
 		RMIInt(num : int);
+		RMIBool(num : bool);
 		RMIXYZ(x : double, y : double, z : double);
 		RMIVar(name : string);
 		RMIConcat(exp1 : RMIExp, exp2 : RMIExp);
@@ -302,6 +304,23 @@ RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect :
 				Pair(id, RMIEmpty());
 			}
 		};
+		RMSmoothUnion(objects, k): {
+			if (length(objects) > 0 ) {
+				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect);
+					Pair(exp2.first, RMICall(RMIFn("minOIS"),
+						[
+							acc2.second,
+							exp2.second,
+							RMIDouble(k)
+						]
+					))
+				})
+			} else {
+				Pair(id, RMIEmpty());
+			}
+		};
 		RMMaterial(object, mat): {
 			switch(mat) {
 				RMColor(col): RMScene2RMIExp0(
@@ -440,6 +459,23 @@ RMScene2RMIExpJS(obj : RMScene, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 				RMIEmpty();
 			}
 		};
+		RMSmoothUnion(objects, k): {
+			if (length(objects) > 0 ) {
+				exp1 = RMScene2RMIExpJS(objects[0], acc, color);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExpJS(obj2, acc, color);
+					RMICall(RMIFn("opSmoothUnion"),
+						[
+							acc2,
+							exp2,
+							RMIDouble(k)
+						]
+					)
+				})
+			} else {
+				RMIEmpty();
+			}
+		};
 		RMMaterial(object, col): RMScene2RMIExpJS(object, acc, color);
 		RMEmpty(): RMIEmpty();
 	}
@@ -460,6 +496,7 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSL(exp1) + RMIExp2GLSL(exp2);
@@ -470,10 +507,11 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 
 RMIExp2GLSLMaterial(exp : RMIExp) -> string {
 	switch(exp) {
-		RMICall(fn, args): strGlue(filter(map(args, RMIExp2GLSLMaterial), \s -> s != ""), " else ");
+		RMICall(fn, args): strGlue(filter(map(filterRMIBlock(args), RMIExp2GLSLMaterial), \s -> s != ""), " else ");
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSLMaterial(exp1) + RMIExp2GLSLMaterial(exp2);
@@ -482,6 +520,22 @@ RMIExp2GLSLMaterial(exp : RMIExp) -> string {
 	}
 }
 
+filterRMIBlock(exps : [RMIExp]) -> [RMIExp] {
+	filter(exps, \exp -> {
+		switch(exp) {
+			RMICall(fn, args): true;
+			RMIP(): false;
+			RMIDouble(num):false;
+			RMIInt(num): false;
+			RMIBool(num): false;
+			RMIXYZ(x, y, z): false;
+			RMIVar(name): false;
+			RMIConcat(exp1, exp2): true;
+			RMIProperty(exp2, id, property): true;
+			RMIEmpty(): false;
+		}
+	})
+}
 
 RMIExp2JS(exp : RMIExp) -> string {
 	switch(exp) {
@@ -498,6 +552,7 @@ RMIExp2JS(exp : RMIExp) -> string {
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
 		RMIXYZ(x, y, z): formatString("glm.vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2JS(exp1) + RMIExp2JS(exp2);
@@ -535,7 +590,35 @@ addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 }
 
 addColorToRMIExp(exp : RMIExp, id : int, color : RMIExp) -> Pair<int, RMIProperty> {
-	Pair(id + 1, RMIProperty(RMICall(RMIFn("ObjectInfo"), [exp, RMIInt(id)]), id, color))
+	plainColor = switch (color) {
+		RMIXYZ(x, y, z): Some(color);
+		default: None();
+	}
+	Pair(
+		id + 1,
+		RMIProperty(
+			RMICall(
+				RMIFn("ObjectInfo"),
+				[
+					exp,
+					RMIInt(id),
+					RMIBool(isSome(plainColor)),
+					eitherMap(plainColor, idfn, RMIXYZ(0., 0., 0.)),
+					RMIBool(false),
+					RMICall(
+						RMIFn("MixColor"),
+						[
+							RMIInt(-1),
+							RMIInt(-1),
+							RMIXYZ(0., 0., 0.),
+							RMIInt(0),
+							RMIDouble(0.0)
+						])
+				]
+			),
+			id, color
+		)
+	)
 }
 
 d2GLSLfloat(num : double) {
