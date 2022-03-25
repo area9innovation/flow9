@@ -13,7 +13,10 @@ export {
 		d : DslAst,
 		// Merge two types
 		mergeTypes : (DslTypeAcc, DslAst, DslAst) -> DslAst,
-		// Give the type of this node, provided the children have these types
+		// Give the type of this node, provided the children have these types.
+		// If you do not know the type yet, return DslInt(0), and it will be handled as a tyvar.
+		// For normal types, use DslString("i32"). For tuples, DslList() work, and for
+		// other composite types DlsNode(name, [args], 0) works as well
 		typeFn : (DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -> DslAst
 	) -> DslAst;
 }
@@ -99,19 +102,29 @@ dslTypeCheck(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 	}
 	res = switch (node) {
 		DslBool(b): acc.typeFn(acc, node, \__ -> node);
-		DslInt(b): acc.typeFn(acc, node, \__ -> node); // inttype()
-		DslDouble(b): acc.typeFn(acc, node, \__ -> node); // doubletype()
-		DslString(b): acc.typeFn(acc, node, \__ -> node); // stringtype()
+		DslInt(b): acc.typeFn(acc, node, \__ -> node);
+		DslDouble(b): acc.typeFn(acc, node, \__ -> node);
+		DslString(b): acc.typeFn(acc, node, \__ -> node);
 		DslListTyped(l, tyvar): {
 			children = list2array(l);
 			childType = \c -> dslTypeCheck(acc, children[c]);
 			res = acc.typeFn(acc, typed2dsl(node), childType);
-			setDslTypeVar(acc, tyvar, res);
+			if (res == DslInt(0)) {
+				// OK, it is not known yet
+				DslInt(tyvar);
+			} else {
+				setDslTypeVar(acc, tyvar, res);
+			}
 		}
 		DslNodeTyped(name, args, pos, tyvar): {
 			childType = \c -> dslTypeCheck(acc, args[c]);
 			res = acc.typeFn(acc, typed2dsl(node), childType);
-			setDslTypeVar(acc, tyvar, res);
+			if (res == DslInt(0)) {
+				// OK, it is not known yet
+				DslInt(tyvar);
+			} else {
+				setDslTypeVar(acc, tyvar, res);
+			}
 		}
 	};
 	if (acc.debugging) {
@@ -148,20 +161,43 @@ unifyDslTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> void {
 		error = \ -> {
 			acc.onError(left, "TYPE ERROR: " + prettyDsl(left) + " is not compatible with " + prettyDsl(right));
 		};
+		checkright = \ -> {
+			switch (right) {
+				DslInt(rvalue): {
+					// OK, we have a tyvar
+					setDslTypeVar(acc, rvalue, left);
+					{}
+				}
+				default: error();
+			}
+		}
 		switch (left) {
 			DslBool(value): error();
-			DslInt(value): error();
+			DslInt(lvalue): {
+				// This is a tyvar
+				switch (right) {
+					DslInt(rvalue): {
+						// OK, tyvar vs tyvar
+						unionUnionMap(acc.tyvars, lvalue, rvalue);
+						{}
+					}
+					default: {
+						setDslTypeVar(acc, lvalue, right);
+						{}
+					}
+				}
+			}
 			DslDouble(value): error();
 			DslString(value): {
 				if (getDslString(right) != value) {
-					error();
+					checkright();
 				}
 			}
 			DslList(value): {
 				llist = list2array(getDslList(left));
 				rlist = list2array(getDslList(right));
 				if (length(llist) != length(rlist)) {
-					error();
+					checkright();
 				} else {
 					iteri(llist, \i, ll -> {
 						unifyDslTypes(acc, ll, rlist[i])
@@ -171,7 +207,7 @@ unifyDslTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> void {
 			DslNode(lname, largs, __): {
 				rnode = getDslNode(right);
 				if (lname != rnode.name || length(largs) != length(rnode.args)) {
-					error();
+					checkright();
 				} else {
 					iteri(largs, \i, larg -> {
 						unifyDslTypes(acc, larg, rnode.args[i])

@@ -1,0 +1,102 @@
+import tools/dsl/dsl_runtime_common;
+import tools/dsl/registry/dsl_populate;
+
+import formats/wasm/wase;
+
+export {
+	// After type inference, we can lower to Wase
+	dsl2wase(d : DslAst) -> Wase;
+}
+
+dsl2wase(d : DslAst) -> Wase {
+	switch (d) {
+		DslNode(name, args, pos): {
+			b = \i -> getDslBool(args[i]);
+			s = \i -> getDslString(args[i]);
+			rec = \i -> dsl2wase(args[i]);
+			valtype = \i -> dsl2WasmValType(args[i]);
+			expr = \i -> dsl2WaseExpr(args[i]);
+			i = \n -> getDslInt(args[n]);
+			if (name == "global") WaseGlobal(s(0), if (b(1)) s(0) else "", valtype(2), b(3), expr(4), rec(5))
+			else if (name == "function") {
+				fnargs = list2array(getDslList(args[2]));
+				rets = list2array(getDslList(args[3]));
+
+				argTypes = map(fnargs, \fnarg -> {
+					node = getDslNode(fnarg);
+					dsl2WasmValType(node.args[1]);
+				});
+				retTypes = map(rets, dsl2WasmValType);
+				fntype = WasmFuncType(argTypes, retTypes);
+
+				body = expr(4);
+				// TODO: We should extract the locals from the body?
+				locals = [];
+
+				fnname = s(0);
+				WaseFunction(fnname, if (b(1)) fnname else "", fnname == "main", fntype, locals, expr(4), rec(5))
+			} else if (name == "empty") {
+				WaseEmpty()
+			} else {
+				println("TODO: Convert " + prettyDsl(d) + " to wase");
+				// For add, sub, ..., check that the types are numeric
+				WaseEmpty()
+			}
+		}
+		default: {
+			println("Expected node, not " + prettyDsl(d));
+			WaseEmpty()
+		}
+	}
+}
+
+dsl2WaseExpr(d : DslAst) -> WaseExpr {
+	WaseExpr(dsl2WaseInstruction([], d))
+}
+
+dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
+	todo = \ -> {
+		println("TODO: Convert " + prettyDsl(d) + " to wase expr");
+		acc
+	}
+	switch (d) {
+		DslBool(value): arrayPush(acc, WasmI32Const(b2i(value)));
+		DslInt(value): arrayPush(acc, WasmI32Const(value));
+		DslDouble(value): arrayPush(acc, WasmF64Const(value));
+		DslString(value): todo(); 
+		DslList(value): todo();
+		DslNode(name, args, pos): todo();
+	}
+}
+
+dsl2WasmValType(d : DslAst) -> WasmValType {
+	node = getDslNode(d);
+	if (node.name == "type") {
+		type = getDslString(node.args[0]);
+		if (type == "i32") WasmI32Type()
+		else if (type == "i64") WasmI64Type()
+		else if (type == "f32") WasmF32Type()
+		else if (type == "f64") WasmF64Type()
+		else if (type == "v128") WasmVecType()
+		else if (type == "func") WasmFuncRef()
+		else if (type == "extern") WasmExternRef()
+		else {
+			println("TODO: Convert " + prettyDsl(d) + " to wasm val type");
+			WasmI32Type();
+		}
+	} else {
+		println("TODO: Convert " + prettyDsl(d) + " to wasm val type");
+		WasmI32Type();
+	}
+}
+
+/*
+		type = "(" ws types ")" ws "->" ws type $"fntype_2"
+			| id "<" ws types ">" ws $"partype_2"
+
+*/
+
+
+isNumericWaseType(d : DslAst) -> bool {
+	contains([DslString("i32"), DslString("i64"), DslString("f32"), DslString("f64")], d)
+}
