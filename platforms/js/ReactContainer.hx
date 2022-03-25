@@ -20,7 +20,6 @@ class ReactContainer extends NativeWidgetClip {
 		props = Json.parse(propsStr);
 		stateInit = Json.parse(stateInitStr);
 		untyped this.onStateChange = onStateChange;
-		untyped console.log("props : ", props);
 
 		var reactBundleUrl = './js/react_bundle.js';
 		untyped __js__("import(reactBundleUrl).then(module => {
@@ -28,21 +27,42 @@ class ReactContainer extends NativeWidgetClip {
 		})");
 	}
 
-	public function init(element : String) {
+	private function init(element : String) {
 		this.isReady = true;
 		this.detectReactComponent(element);
 		this.initRootContainer();
 		this.renderReact();
 	}
 
-	public function renderReact() {
-		if (this.isReady && this.component != null) {
-			var app = untyped __js__("React.createElement(this.rootContainer)");
-			untyped __js__("ReactDOM.render(app, this.nativeWidget)");
+	private function detectReactComponent(element : String) {
+		if (element == "") return;
+		
+		if (element.charAt(0) != element.charAt(0).toUpperCase()) {
+			// it is a HTML tag, not a library
+			component = element;
+		} else {
+			var parts = element.split('.');
+			component = parts.length > 0 ? extractReactComponent(parts, Browser.window) : null;
 		}
 	}
 
-	public function initRootContainer() {
+	private function extractReactComponent(parts : Array<String>, from : Dynamic) : Dynamic {
+		if (parts.length > 0) {
+			var firstString : String = parts[0]; 
+			var extracted : Dynamic = null;
+			untyped __js__("extracted = from[firstString]");
+
+			if (extracted != null) {
+				return extractReactComponent(parts.splice(1, parts.length - 1), extracted);
+			} else {
+				return null;
+			}
+		}
+
+		return from;
+	}
+
+	private function initRootContainer() {
 		var setStates = {};
 		untyped this.rootContainer = untyped __js__("
 			() => {
@@ -65,43 +85,16 @@ class ReactContainer extends NativeWidgetClip {
 					...this.props,
 					...rootContainerState,
 					...setStates
-					// for test purposes
-					// onClick : () => setRootContainerState(prev => ({...prev, count : (prev.count || 0) + 1}))
 				});
 			}
 		");
 	}
 
-	public function detectReactComponent(element : String) {
-		if (element.charAt(0) != element.charAt(0).toUpperCase()) {
-			// it is a HTML tag, not a library
-			component = element;
-		} else {
-			component = extractReactComponent(element);
+	private function renderReact() {
+		if (this.isReady && this.component != null) {
+			var app = untyped __js__("React.createElement(this.rootContainer)");
+			untyped __js__("ReactDOM.render(app, this.nativeWidget)");
 		}
-	}
-
-	public function extractReactComponent(element : String) : Dynamic {
-		var parts = element.split('.');
-		if (parts.length == 0) return null;
-		var component = extractReactComponentRec(parts, Browser.window);
-		return component;
-	}
-
-	private function extractReactComponentRec(parts : Array<String>, from : Dynamic) : Dynamic {
-		if (parts.length > 0) {
-			var firstString : String = parts[0]; 
-			var extracted : Dynamic = null;
-			untyped __js__("extracted = from[firstString]");
-
-			if (extracted != null) {
-				return extractReactComponentRec(parts.splice(1, parts.length - 1), extracted);
-			} else {
-				return null;
-			}
-		}
-
-		return from;
 	}
 
 	public function updateReactState(key : String, valueStr : String) : Void {
@@ -137,7 +130,7 @@ class ReactContainer extends NativeWidgetClip {
 		removeNativeWidgetDefault();
 	}
 
-	public function observeSize() : Void {
+	private function observeSize() : Void {
 		untyped console.log('START OBSERVING');
 		var bRect = untyped this.nativeWidget.getBoundingClientRect();
 
@@ -168,7 +161,7 @@ class ReactContainer extends NativeWidgetClip {
 		this.mutationObserver.observe(nativeWidget, config);
 	}
 
-	function capitalizeFirstLetter(str : String) : String {
+	private function capitalizeFirstLetter(str : String) : String {
 	  return str.charAt(0).toUpperCase() + str.substring(1);
 	}
 }
