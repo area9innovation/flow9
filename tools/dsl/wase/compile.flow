@@ -17,8 +17,9 @@ dsl2wase(d : DslAst) -> Wase {
 			valtype = \i -> dsl2WasmValType(args[i]);
 			expr = \i -> dsl2WaseExpr(args[i]);
 			i = \n -> getDslInt(args[n]);
-			if (name == "global") WaseGlobal(s(0), if (b(1)) s(0) else "", valtype(2), b(3), expr(4), rec(5))
-			else if (name == "function") {
+			if (name == "global") {
+				WaseGlobal(s(0), if (b(1)) s(0) else "", valtype(2), b(3), expr(4), rec(5))
+			} else if (name == "function") {
 				fnargs = list2array(getDslList(args[2]));
 				rets = list2array(getDslList(args[3]));
 
@@ -30,16 +31,19 @@ dsl2wase(d : DslAst) -> Wase {
 				fntype = WasmFuncType(argTypes, retTypes);
 
 				body = expr(4);
+
+				fnname = s(0);
+
+				println("TODO: We should extract locals from the body of " + fnname);
 				// TODO: We should extract the locals from the body?
 				locals = [];
 
-				fnname = s(0);
 				WaseFunction(fnname, if (b(1)) fnname else "", fnname == "main", fntype, locals, expr(4), rec(5))
 			} else if (name == "empty") {
 				WaseEmpty()
+
 			} else {
 				println("TODO: Convert " + prettyDsl(d) + " to wase");
-				// For add, sub, ..., check that the types are numeric
 				WaseEmpty()
 			}
 		}
@@ -59,34 +63,69 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 		println("TODO: Convert " + prettyDsl(d) + " to wase expr");
 		acc
 	}
+	// println("Compiling " + prettyDsl(d));
 	switch (d) {
 		DslBool(value): arrayPush(acc, WasmI32Const(b2i(value)));
 		DslInt(value): arrayPush(acc, WasmI32Const(value));
 		DslDouble(value): arrayPush(acc, WasmF64Const(value));
 		DslString(value): todo(); 
-		DslList(value): todo();
-		DslNode(name, args, pos): todo();
+		DslList(value): {
+			foldList(value, acc, dsl2WaseInstruction)
+		}
+		DslNode(name, args, pos): {
+			if (name == "int" || name == "double") {
+				dsl2WaseInstruction(acc, args[0])
+			} else if (name == "brace") {
+				foldList(getDslList(args[0]), acc, dsl2WaseInstruction)
+			} else if (name == "var") {
+				arrayPush(acc, WaseGet(getDslString(args[0])))
+			} else if (name == "add") {
+				restype = dsl2WasmValType(args[2]);
+				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Add())
+				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Add())
+				else if (restype == WasmF32Type()) arrayPush(nacc, WasmF32Add())
+				else if (restype == WasmF64Type()) arrayPush(nacc, WasmF64Add())
+				else {
+					println("TODO: Figure out add of type " + toString(restype));
+					nacc;
+				}
+			} else {
+				// For add, sub, ..., check that the types are numeric
+				todo();
+				nacc = fold(args, acc, dsl2WaseInstruction);
+				nacc;
+			}
+		}
 	}
 }
 
 dsl2WasmValType(d : DslAst) -> WasmValType {
-	node = getDslNode(d);
-	if (node.name == "type") {
-		type = getDslString(node.args[1]);
-		if (type == "i32") WasmI32Type()
-		else if (type == "i64") WasmI64Type()
-		else if (type == "f32") WasmF32Type()
-		else if (type == "f64") WasmF64Type()
-		else if (type == "v128") WasmVecType()
-		else if (type == "func") WasmFuncRef()
-		else if (type == "extern") WasmExternRef()
-		else {
-			println("TODO: Convert " + prettyDsl(d) + " to wasm val type");
-			WasmI32Type();
-		}
-	} else {
+	todo = \ -> {
 		println("TODO: Convert " + prettyDsl(d) + " to wasm val type");
 		WasmI32Type();
+	}
+	switch (d) {
+		DslString(type): {
+			if (type == "i32") WasmI32Type()
+			else if (type == "i64") WasmI64Type()
+			else if (type == "f32") WasmF32Type()
+			else if (type == "f64") WasmF64Type()
+			else if (type == "v128") WasmVecType()
+			else if (type == "func") WasmFuncRef()
+			else if (type == "extern") WasmExternRef()
+			else {
+				todo();
+			}
+		}
+		DslNode(name, args, __): {
+			if (name == "type") {
+				dsl2WasmValType(args[1])
+			} else {
+				todo();
+			}
+		}
+		default: todo();
 	}
 }
 

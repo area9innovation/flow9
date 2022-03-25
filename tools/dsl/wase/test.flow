@@ -1,43 +1,59 @@
 import tools/dsl/wase/parse;
 import tools/dsl/wase/type;
 import tools/dsl/wase/compile;
+import formats/wasm/wasm_encode;
 
 // Test that evaluation of this testcase gives the expected program
-testWase(testname : string, testcase : string, expected : string) -> void {
-	program = parseWase(testname, testcase);
+compileWase2File(filename : string, testcase : string, onDone : () -> void) -> void {
+	program = parseWase(filename, testcase);
 
 	typed = typeWase(program);
-	println("Compiling");
-
+	println("Compiling " + filename);
 	wase = dsl2wase(typed);
 
 	got = prettyDsl(program);
-	if (expected != got) {
-		println(testname + " FAILED. Expected: ");
-		println(expected);
-		// println("Got after parse:");
-		// println(got);
+	if (true) {
 		println("Typed:");
 		println(prettyDsl(typed));
 		println("As wase:");
 		println(wase);
 	}
+
+	bytes = wasmModule2bytes(wase2wasm(wase));
+	
+	setFileContentBytes(filename + ".wasm", 
+		fold(bytes, "", \acc, byte -> {
+			acc + fromCharCode(byte)
+		})
+	);
+
+	startProcess("wasm2wat", [filename + ".wasm", "-o", filename + ".wat"], ".", "", \ec, so, se -> {
+		println(ec);
+		println(so);
+		println(se);
+		onDone();
+	});
+
 }
 
 main() {
-	// Shows that recursion of dynamic code does not work well at compile time
-	testWase("wase 1",
+	compileWase2File("wase1",
 		<< 
 			export foo : mutable f64 = 42.1;
 
 			bar(n : auto) -> auto {
 				foo + n + 1.0;
 			}
+
+			main() -> () {
+				bar(4.3);
+				{}
+			}
 			// table calls : (i32) -> i32 = [1, 2];
 //			calls : table<(i32) -> i32> = [1, 2];
 		>>,
-		<< >>
+		\ -> {
+			quit(0);
+		}
 	);
-
-	quit(0);
 }
