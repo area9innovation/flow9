@@ -92,6 +92,9 @@ Some examples:
 	export secret : i32 = 0xdeadbeaf;
 	export changes : mutable f32 = 3.1341;
 
+TODO:
+- Extend the type checker to check mutability of globals
+
 ## Function syntax
 
 	// Functions
@@ -114,7 +117,7 @@ Use this syntax to import a function from the host:
 
 Notice imports have to be the first thing in the program.
 
-TODO: Add typing and code gen for globals as well:
+The same works for globals:
 
 	// Global import
 	import id : i32 = module.name;
