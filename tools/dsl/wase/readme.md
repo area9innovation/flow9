@@ -107,14 +107,22 @@ Some examples:
 
 ## Imports of globals and functions
 
-TODO: Add syntax, typing and so forth for these:
-
-	// Global import
-	native id : i32 = module.name;
-	native id : mutable i32 = module.name;
+Use this syntax to import a function from the host:
 
 	// Function import from host
-	native println : (i32) -> void = console.log;
+	import println : (i32) -> void = console.log;
+
+Notice imports have to be the first thing in the program.
+
+TODO: Add typing and code gen for globals as well:
+
+	// Global import
+	import id : i32 = module.name;
+	import id : mutable i32 = module.name;
+
+TODO:
+- Do a two-phase declaration processing, so we can have imports in 
+  arbitrary order, and also try to support mutual recursion
 
 ## Tables
 
