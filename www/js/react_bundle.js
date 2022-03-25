@@ -291,16 +291,12 @@ null})}),!0):!1};M.unstable_batchedUpdates=ai;M.unstable_createPortal=function(a
 function ToggleButtonGroupControlled(_ref) {
   var size = _ref.size,
       value = _ref.value,
-      setRootContainerState = _ref.setRootContainerState;
+      setValue = _ref.setValue;
 
-  // const handleChange = (val) => setValue(val);
   var handleChange = function handleChange(val) {
-    return setRootContainerState(function (prev) {
-      return { ...prev,
-        value: val
-      };
-    });
+    return setValue(val);
   };
+
 
   return /*#__PURE__*/React.createElement(ReactBootstrap.ToggleButtonGroup, {
     type: "checkbox",

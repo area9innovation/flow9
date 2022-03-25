@@ -43,12 +43,16 @@ class ReactContainer extends NativeWidgetClip {
 	}
 
 	public function initRootContainer() {
+		var setStates = {};
 		untyped this.rootContainer = untyped __js__("
 			() => {
 				const [rootContainerState, setRootContainerState] = React.useState(this.stateInit);
 
 				React.useEffect(() => {
 					this.setRootContainerState = setRootContainerState;
+					Object.keys(rootContainerState).forEach(k => {
+						setStates['set' + this.capitalizeFirstLetter(k)] = (val) => setRootContainerState(prev => ({...prev, [k] : val}))
+					});
 				}, []);
 
 				React.useEffect(() => {
@@ -60,7 +64,7 @@ class ReactContainer extends NativeWidgetClip {
 				return React.createElement(this.component, {
 					...this.props,
 					...rootContainerState,
-					setRootContainerState: setRootContainerState
+					...setStates
 					// for test purposes
 					// onClick : () => setRootContainerState(prev => ({...prev, count : (prev.count || 0) + 1}))
 				});
@@ -162,5 +166,9 @@ class ReactContainer extends NativeWidgetClip {
 		callback();
 		this.mutationObserver = untyped __js__("new MutationObserver(callback)");
 		this.mutationObserver.observe(nativeWidget, config);
+	}
+
+	function capitalizeFirstLetter(str : String) : String {
+	  return str.charAt(0).toUpperCase() + str.substring(1);
 	}
 }

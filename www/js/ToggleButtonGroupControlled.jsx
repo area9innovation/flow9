@@ -1,6 +1,5 @@
-function ToggleButtonGroupControlled({size, value, setRootContainerState}) {
-  // const handleChange = (val) => setValue(val);
-  const handleChange = (val) => setRootContainerState(prev => ({...prev, value : val}));
+function ToggleButtonGroupControlled({size, value, setValue}) {
+  const handleChange = (val) => setValue(val);
 
   return (
     <ReactBootstrap.ToggleButtonGroup type="checkbox" size={size} value={value} onChange={handleChange}>
