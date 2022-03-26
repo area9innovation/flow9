@@ -4,12 +4,12 @@ This is a language, which maps one-to-one with WebAssembly, and compiles directl
 to Wasm bytecode. As such, it can be seen as an alternative to the WAT text format,
 but it is easier to use because of these things:
 
-- It uses more conventional syntax rather than Lisp
+- It uses more conventional syntax rather than S-expr
 - It has type inference
 - It handles all the index business for you
 
-The language is lexically scoped, but does not have closures, and no real data structures.
-It provides direct access to the memory through load/stores, just like Wasm.
+The language is lexically scoped, but does not have closures, and no real data structures, nor memory management. It provides direct access to the memory through
+load/stores, just like Wasm.
 
 The language is designed to expose the full low-level flexibility of Wasm directly.
 
@@ -30,7 +30,7 @@ It supports the types of Wasm:
 	i32, i64, f32, f64, v128, func, extern
 
 At compile time, however, the compiler uses the real types for functions to ensure type
-checking is robust. The syntax for functions is like this:
+checking is complete. The syntax for functions is like this:
 
 	// A function that takes an i32 and a f64, and returns a i32
 	foo(i32, f64) -> i32 { ... }
@@ -56,7 +56,7 @@ This also works for locals:
 		a
 	}
 
-The type inference is Hindley-Milner, so it should be robust.
+The type inference is Hindley-Milner unification, so it should be robust.
 
 ## Top-level Syntax
 
@@ -65,9 +65,6 @@ Wasm. This includes globals, functions, imports, tables and data.
 
 The order of top-level declarations is important. The names of globals,
 functions and such only take effect from the point they are defined.
-
-TODO:
-- What about mutual recursion?
 
 ## Global syntax
 
@@ -87,10 +84,12 @@ The grammar for globals is like this:
 
 Some examples:
 
-	pi : f64 = 3.14159;
+	pi : f64 = 3.14159265359;
 	counter : mutable i32 = 0;
+	// Exports this global to the host with the name "secret"
 	export secret : i32 = 0xdeadbeaf;
-	export changes : mutable f32 = 3.1341;
+	// Exports this mutable global with the name "changes"
+	export changes : mutable f32 = 6.1341;
 	// Exports this global to the host with the name "external"
 	export "external" internal : i32 = 1;
 
@@ -115,6 +114,9 @@ TODO:
 		...
 	}
 
+If the program contains a function called `main`, it is marked as the
+function that starts the program.
+
 ## Imports of globals and functions
 
 Use this syntax to import a function from the host:
@@ -132,20 +134,42 @@ The same works for globals:
 
 TODO:
 - Do a two-phase declaration processing, so we can have imports in 
-  arbitrary order, and also try to support mutual recursion
+  arbitrary order, and also try to support mutual recursion between functions
 
-## Tables
+## Memory
 
-TODO: Define syntax for this
+You have to explicitly define how much memory is available for the runtime.
+To reserve memory, use syntax like this:
+
+	export? memory <min> <max>?;
+
+Examples:
+
+	// Reserves one page of 64k
+	memory 1;
+
+	// Reserves 64k at first, but maximum 1mb
+	memory 1 4;
+
+	// Reserves 128k and exports this memory under the name "memory" to the host
+	export memory 2;
+
+	// Reserves and exports memory under the name "mymem"
+	export "mymem" memory 1 4;
+
+TODO: Implement importing memory:
+
+	// Memory import
+	import memory min max = module.name;
 
 ## Data
 
-This works:
+You can place constant data in the output file using syntax like this:
 
 	// Strings are placed as UTF8 but with the length first
 	data "utf8 string is very comfortable";
 
-	// We can have a sequence of data
+	// We can have a sequence of data. The ints are encoded as LEB-128
 	data 1, 2, 3, "text", 3.0;
 
 	// Moving the data into offset 32 of the memory
@@ -154,15 +178,26 @@ This works:
 The result is that this data is copied into memory on startup.
 
 TODO:
-Add syntax for passive data, which is not automatically copied until
-memory.init is called.
+- Add syntax for passive data, which is not automatically copied into memory
+  until memory.init is called.
 
-Add syntax for raw bytes?
+- Add syntax for raw bytes?
+
+- Capture the address of data segments?
+
+- Support opcodes:
 
 	meminit<data>(offset)
 
 	// This will drop the data given segment
 	drop<data>();
+
+## Tables
+
+TODO: Define syntax for this
+
+	// Tables
+	import id : table(min, max?)<reftype> from module.name;
 
 # Expressions
 
@@ -184,7 +219,7 @@ statements, but only expressions. The syntax is pretty standard:
 	// Arithmetic
 	1 + 2 / 3 * 4 % 5
 
-	// Unsigned divisions and remainder:
+	// Unsigned divisions and remainder. TODO: Reconsider this syntax and use functions instead
 	1 /u 2 %u 3
 
 	// Bitwise operations
@@ -205,16 +240,19 @@ statements, but only expressions. The syntax is pretty standard:
 		return;
 	}
 
+	// Tuples, aka multi-values
+	[1, 2.0, 45]
 
 TODO: Get more stuff to work:
+- Add syntax for u64 and f32 constants
+- Get hex constants to work
 - Add unsigned comparisons for i32, i64
 - Add instructions for shifts, clz, ctz, popcnt
 - Get this to type:
   - a = if (b) return else 2;
 
+- Add more instructions:
 	break <int>
-	return
-	return <exp>
 
 	block {
 		code;
@@ -228,10 +266,11 @@ TODO: Get more stuff to work:
 		code
 	}
 
-	// null reference to functino
-	null : func
+	// null reference to function
+	null_func
+
 	// null reference to extern
-	null : extern
+	null_extern
 
 	// Checking for nll
 	expr is null
@@ -265,46 +304,13 @@ call-indirect
 TODO: Implement this.
 
 Load could be:
-	load<i32, <offset>, s8>(index)		// i32.load
-	load<i32, <offset>, <align>>(index)	// i32.load
+	load(index, value);
+	load<<offset>, s8>(index, value)		// i32.load
+	load<<offset>, <align>>(index, value)	// i32.load
 
 Store could be:
 
-	store<i32, <offset>>(index, value)	// i32.store
+	store<<offset>>(index, value)	// i32.store
 
 We could probably infer the type of value to decide exactly which type it is?
 
-## Declaring memory
-
-To reserve memory, use:
-
-	// Reserves one page of 64k
-	memory 1;
-
-	// Reserves and exports memory under the name "memory"
-	export memory 1;
-
-	// Reserves and exports memory under the name "mymem"
-	export "mymem" memory 1;
-
-## Advanced concepts
-
-TODO: Implement this.
-
-	// Memory import
-	import memory(min, max?) from module.name;
-
-	// Memory and exporting memory
-	reserve_memory(min, max?);
-	reserve_memory(min, max?) export as <id>;
-
-	// Tables
-	import id : table(min, max?)<reftype> from module.name;
-
-# Future
-
-Figure out how to define more advanced values:
-- array
-- tuples
-- either
-- maybe
