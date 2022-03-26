@@ -44,18 +44,22 @@ export {
 	// The index of this function will be bound to the id in the compilation environment.
 	// If start is true, this function will be "main" and called as the first
 	WaseFunction(id : string, exportid : string, start : bool, type : WasmFuncType, 
-		locals : [WaseLocal], code : WaseExpr, scope : Wase);
+		args : [WaseLocal], code : WaseExpr, scope : Wase);
 		// Should we extract these instead?
 		WaseLocal(name : string, type : WasmValType);
 
 	WaseData(offset : WaseExpr, bytes : [int], scope : Wase);
 
 	WaseExpr(instructions : [WaseInstruction]);
-		WaseInstruction ::= WasmInstruction, WaseGet, WaseSet, WaseCall, 
+		WaseInstruction ::= WasmInstruction, WaseGet, WaseSet, WaseLet, WaseCall, 
 			WaseBlock, WaseLoop, WaseIfElse, WaseIf;
 			// Lookup in our compilation environment
 			WaseGet(id : string);
 			WaseSet(id : string);
+
+			// Introduce a new local variable
+			WaseLet(id : string, type : WasmValType);
+
 			WaseCall(fn : WaseInstruction);
 //			WaseResolveIndex(id : string, instruction : WasmIndexingInstruction);
 
@@ -268,7 +272,7 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			}
 			compileWase(context, scope)
 		}
-		WaseFunction(id, exportId, start, type, locals, code, scope): {
+		WaseFunction(id, exportId, start, type, args, code, scope): {
 			// No more imports from this point on
 			context.importsAllowed := false;
 
@@ -282,8 +286,10 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			context.funcidx := funcIndex + 1;
 			context.get := setTree(^(context.get), id, WasmRefFunc(funcIndex));
 	
+			locals = extractWasesLocals(context, [], code.instructions);
+
 			// Register local ids in the environment
-			iteri(locals, \i, local : WaseLocal -> {
+			iteri(concat(args, locals), \i, local : WaseLocal -> {
 				context.get := setTree(^(context.get), local.name, WasmLocalGet(i));
 				context.set := setTree(^(context.set), local.name, WasmLocalSet(i));
 			});
@@ -316,6 +322,30 @@ compileWase(context : WaseContext, w : Wase) -> void {
 	}
 }
 
+
+extractWaseLocals(context : WaseContext, acc : [WaseLocal], w : WaseInstruction) -> [WaseLocal] {
+	switch (w) {
+		WasmInstruction(): acc;
+		WaseGet(id): acc;
+		WaseSet(id): acc;
+		WaseLet(id, type): {
+			arrayPush(acc, WaseLocal(id, type));
+		}
+		WaseCall(fn): extractWaseLocals(context, acc, fn);
+		WaseBlock(blockType, instructions): extractWasesLocals(context, acc, instructions);
+		WaseLoop(blockType, instructions): extractWasesLocals(context, acc, instructions);
+		WaseIfElse(blockType, then, else_): {
+			acc1 = extractWasesLocals(context, acc, then);
+			extractWasesLocals(context, acc1, else_);
+		}
+		WaseIf(blockType, then): extractWasesLocals(context, acc, then);
+	}
+}
+
+extractWasesLocals(context : WaseContext, acc : [WaseLocal], ws : [WaseInstruction]) -> [WaseLocal] {
+	fold(ws, acc, \acc2, w -> extractWaseLocals(context, acc2, w));
+}
+
 waseExpr2wasm(context : WaseContext, w : WaseExpr) -> WasmExpr {
 	WasmExpr(
 		map(w.instructions, \i -> waseInstruction2wasm(context, i))
@@ -327,6 +357,15 @@ waseInstruction2wasm(context : WaseContext, i : WaseInstruction) -> WasmInstruct
 		WasmInstruction(): i;
 		WaseGet(id): {
 			mcode = lookupTree(^(context.get), id);
+			mcode ?? {
+				mcode
+			} : {
+				println("Unknown id " + id);
+				WasmUnreachable();
+			}
+		}
+		WaseLet(id, type): {
+			mcode = lookupTree(^(context.set), id);
 			mcode ?? {
 				mcode
 			} : {
