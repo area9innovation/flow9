@@ -240,6 +240,32 @@ statements, but only expressions. The syntax is pretty standard:
 		return;
 	}
 
+	block {
+		code;
+		// This breaks to the end of the block
+		if (earlyStop) break;
+		code;
+	}
+
+	loop {
+		code;
+		// This breaks to the top of the loop
+		if (continue) break;
+		code;
+	}
+
+	block {
+		loop {
+			code;
+			// This breaks to the top of the loop
+			if (continue) break;
+			code;
+			// This breaks out of the loop
+			if (earlyStop) break 1;
+			code;
+		}
+	}
+
 	// Tuples, aka multi-values
 	[1, 2.0, 45]
 
@@ -253,18 +279,6 @@ TODO: Get more stuff to work:
 
 - Add more instructions:
 	break <int>
-
-	block {
-		code;
-		break;
-		code;
-	}
-
-	loop {
-		code;
-		if (sadf) break
-		code
-	}
 
 	// null reference to function
 	null_func
