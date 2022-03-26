@@ -58,6 +58,9 @@ This also works for locals:
 
 The type inference is Hindley-Milner unification, so it should be robust.
 
+TODO:
+- Variable shadowing should give an error
+
 ## Top-level Syntax
 
 At the top-level, we have syntax for the different kinds of sections in
@@ -368,10 +371,10 @@ converting loads/stores.
 | `loop` | `loop { exp }` | X | Type is inferred
 | `if` | `if (cond) exp` | X | Type is inferred
 | `ifelse` | `if (cond) exp` | X  | Type is inferred
-| `unreachable` | `unreachable<>()` | -
-| `nop` | `nop<>()` | -
+| `unreachable` | `unreachable<>()` | X
+| `nop` | `nop<>()` | X
 | `br` | `break` or `break int` | X |  Default break is 0
-| `br_if` | `break_if<int>(cond)` | .
+| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X
 | `return` | `return` or `return exp` | X
 | `call` | `fn(args)` | X
 | `call_indirect` | `call_indirect<table>(args)` | -
@@ -380,16 +383,16 @@ converting loads/stores.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `ref.null` | `ref_null<func>()` or `ref_null<extern>()` | -
-| `ref.is_null` | `exp is null` | -
-| `ref_func` | `ref_func<id>` | -
+| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | -
+| `ref.is_null` | `exp is null` | X | Typing is not done
+| `ref.func` | `ref.func<id>` | -
 
 ##  Parametric Instructions
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `drop` | `drop<>` or implicit in sequence `{1;2}` | X* | `drop<>` is not implemented
-| `select` | `select<>(cond, then, else)` | -
+| `drop` | `drop<>` or implicit in sequence `{1;2}` | X
+| `select` | `select<>(cond, then, else)` | X | Automatically chooses the ref version based on the type
 
 ## Variable Instructions
 
