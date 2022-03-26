@@ -365,6 +365,8 @@ converting loads/stores.
 
 ## Control instructions
 
+9/10 implemented.
+
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `block` | `block { exp }`| X | Type is inferred
@@ -381,13 +383,17 @@ converting loads/stores.
 
 ## Reference Instructions
 
+2/3 implemented.
+
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | -
-| `ref.is_null` | `exp is null` | X | Typing is not done
+| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | X
+| `ref.is_null` | `exp is null` | X
 | `ref.func` | `ref.func<id>` | -
 
 ##  Parametric Instructions
+
+2/2 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -395,6 +401,8 @@ converting loads/stores.
 | `select` | `select<>(cond, then, else)` | X | Automatically chooses the ref version based on the type
 
 ## Variable Instructions
+
+4/5 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -405,6 +413,8 @@ converting loads/stores.
 | `global.set` | `id := exp` | X
 
 ## Table Instructions
+
+0/7 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -417,6 +427,8 @@ converting loads/stores.
 | `elem.drop` | `elem.drop<id>()` | -
 
 ## Memory Instructions
+
+2/7 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -431,6 +443,8 @@ converting loads/stores.
 | `data.drop` | `data.drop<id>()` | -
 
 ## Numeric Instructions
+
+19/52 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
