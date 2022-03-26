@@ -360,9 +360,10 @@ converting loads/stores.
 
 # Comparison of Wasm and Wase
 
+## Control instructions
+
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| <td colspan=1>**Control instructions**</td>
 | `block` | `block { exp }`| X | Type is inferred
 | `loop` | `loop { exp }` | X | Type is inferred
 | `if` | `if (cond) exp` | X | Type is inferred
@@ -374,23 +375,36 @@ converting loads/stores.
 | `return` | `return` or `return exp` | X
 | `call` | `fn(args)` | X
 | `call_indirect` | `call_indirect<table>(args)` | -
-| <td colspan=1>**Reference Instructions**</td>
-| `ref.null` | `ref_null<func>()` or `ref_null<extern>()` | -
-| `ref.is_null` | `exp is null` | -
-| `ref_func` | `ref_func<id>` | -
-| <td colspan=1>**Parametric Instructions**</td>
-| `drop` | `drop<>` or implicit in sequence `{1;2}` | X* | `drop<>` is not implemented
-| `select` | `select<>(cond, then, else)` | -
+
+## Reference Instructions
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| <td colspan=1>**Variable Instructions**</td>
+| `ref.null` | `ref_null<func>()` or `ref_null<extern>()` | -
+| `ref.is_null` | `exp is null` | -
+| `ref_func` | `ref_func<id>` | -
+
+##  Parametric Instructions
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
+| `drop` | `drop<>` or implicit in sequence `{1;2}` | X* | `drop<>` is not implemented
+| `select` | `select<>(cond, then, else)` | -
+
+## Variable Instructions
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
 | `local.get` | `id` | X
 | `local.set` | `id := exp` | X
 | `local.tee` | `local.tee<id>()` | -
 | `global.get` | `id` | X
 | `global.set` | `id := exp` | X
-| <td colspan=1>**Table Instructions**</td>
+
+## Table Instructions
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
 | `table.get` | `table.get<id>()` | - | The id should be omittable and default to 0
 | `table.set` | `table.set<id>()` | -
 | `table.size` | `table.size<id>()` | -
@@ -399,12 +413,13 @@ converting loads/stores.
 | `table.init` | `table.init<id, id>()` | -
 | `elem.drop` | `elem.drop<id>()` | -
 
+## Memory Instructions
+
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| <td colspan=1>**Memory Instructions**</td>
-| `*.load` | `load<>(address)` | X | The type is inferred from the use
+| `*.load` | `load<>(address)` | X | The type is inferred from the use. TODO: Support offset and alignment
 | `*.load*` | `load*<>(address)` | - | The type is inferred from the use
-| `*.store` | `store<>(address, value)` | X | The width is inferred from the value
+| `*.store` | `store<>(address, value)` | X | The width is inferred from the value.  TODO: Support offset and alignment
 | `*.store*` | `store*<>(address, value)` | - | The width is inferred from the value
 | `memory.size` | `memory.size<>(size)` | -
 | `memory.grow` | `memory.grow<>(size)` | -
@@ -412,9 +427,10 @@ converting loads/stores.
 | `memory.init` | `memory.init<id>()` | -
 | `data.drop` | `data.drop<id>()` | -
 
+## Numeric Instructions
+
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| <td colspan=1>**Numeric Instructions**</td>
 | `i32.const` | `1` | X
 | `i64.const` | `2l` | - | Syntax not decided
 | `f32.const` | `1.2f` | - | Syntax not decided
@@ -468,9 +484,9 @@ converting loads/stores.
 | `*.promote*` | `promote*<>(val)` | - | Maybe we can infer all types?
 | `*.reinterpret*` | `reinterpret*<>(val)` | - | Maybe we can infer all types?
 
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| <td colspan=1>**Vector Instructions**</td>
+## **Vector Instructions**
 
 None of these are implemented yet.
 
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
