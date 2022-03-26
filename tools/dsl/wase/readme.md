@@ -61,6 +61,11 @@ The type inference is Hindley-Milner unification, so it should be robust.
 TODO:
 - Variable shadowing should give an error
 
+- Get this to type:
+  - a = if (b) return else 2;
+
+- Check that the return value of a return matches the function return value
+
 ## Top-level Syntax
 
 At the top-level, we have syntax for the different kinds of sections in
@@ -190,13 +195,6 @@ TODO:
 
 - Capture the address of data segments?
 
-- Support opcodes:
-
-	meminit<data>(offset)
-
-	// This will drop the data given segment
-	drop<data>();
-
 ## Tables
 
 TODO: Define syntax for this
@@ -280,7 +278,7 @@ TODO: Get more stuff to work:
 
 # Low level instructions
 
-The low-level instrctions in Wase has the form
+The low-level instructions in Wase have the form
 
 	id<pars>(args)
 
@@ -291,31 +289,10 @@ TODO:
 - Add unsigned comparisons for i32, i64
 
 - Add instructions for shifts, clz, ctz, popcnt
-- Get this to type:
-  - a = if (b) return else 2;
 
-- Add more instructions:
+- Add more instructions from table below
 
-	// null reference to function
-	null_func
-
-	// null reference to extern
-	null_extern
-
-	// Checking for nll
-	expr is null
-
-	// Syntax for select:
-	select(cond, then, else)
-
-	localtee "a + tee<a>"?
-
-break-if
-	ifbreak(cond, n)
-
-break-table
-	breaktable<[3,2,1], 23>(index)
-
+- More natural switch syntax?
 	switch (index) {
 		0: {}
 		1: {}
@@ -323,7 +300,7 @@ break-table
 		default: whatever;
 	}
 
-call-indirect
+- More natural call-indirect syntax
 	calls : table< (i32) -> i32 > = [fn1, fn2, fn3];
 	call_indirect<calls>(index)(args)
 
@@ -362,6 +339,8 @@ TODO: Support WasmI32Load8_s, WasmI32Load8_u, WasmI32Store8 and such
 converting loads/stores.
 
 # Comparison of Wasm and Wase
+
+38/86 implemented.
 
 ## Control instructions
 
