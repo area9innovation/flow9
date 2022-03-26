@@ -278,7 +278,6 @@ TODO: Get more stuff to work:
   - a = if (b) return else 2;
 
 - Add more instructions:
-	break <int>
 
 	// null reference to function
 	null_func
@@ -311,7 +310,7 @@ call-indirect
 	calls : table< (i32) -> i32 > = [fn1, fn2, fn3];
 	call_indirect<calls>(index)(args)
 
-	fnidx<calls, fn1>	= how to get a function pointer
+	fnidx<calls, fn1>  = how to get a function pointer
 
 ## Load/store
 
