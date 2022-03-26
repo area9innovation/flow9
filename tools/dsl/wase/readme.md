@@ -183,6 +183,8 @@ TODO:
 
 - Add syntax for raw bytes?
 
+- Add support for naming the data index for memory.init and data.drop
+
 - Capture the address of data segments?
 
 - Support opcodes:
@@ -272,7 +274,19 @@ statements, but only expressions. The syntax is pretty standard:
 TODO: Get more stuff to work:
 - Add syntax for u64 and f32 constants
 - Get hex constants to work
+
+# Low level instructions
+
+The low-level instrctions in Wase has the form
+
+	id<pars>(args)
+
+where pars are parameters for the operation decided at compile time,
+while args are arguments to the instruction put on the stack.
+
+TODO:
 - Add unsigned comparisons for i32, i64
+
 - Add instructions for shifts, clz, ctz, popcnt
 - Get this to type:
   - a = if (b) return else 2;
@@ -312,18 +326,151 @@ call-indirect
 
 	fnidx<calls, fn1>  = how to get a function pointer
 
+- Have some "empty" that is not an instruction so
+
+	1; ? + 2;
+
+  will work to expose pure stack discipline.
+
 ## Load/store
 
-TODO: Implement this.
+Loads are written like this:
 
-Load could be:
-	load(index, value);
-	load<<offset>, s8>(index, value)		// i32.load
-	load<<offset>, <align>>(index, value)	// i32.load
+	load<>(index, value);
 
-Store could be:
+The width of the load is inferred from the use of the value.
 
-	store<<offset>>(index, value)	// i32.store
+TODO: Support offset and alignment:
 
-We could probably infer the type of value to decide exactly which type it is?
+	load<offset>(index, value)
+	load<offset, align>(index, value)
+
+Stores are written like this:
+
+	store(index, value);
+
+The width of the store is inferred from the type of the value.
+
+TODO: Support offset and alignment:
+	store<offset>(index, value)
+	store<offset, alignment>(index, value)
+
+TODO: Support WasmI32Load8_s, WasmI32Load8_u, WasmI32Store8 and such
+converting loads/stores.
+
+# Comparison of Wasm and Wase
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
+| <td colspan=1>**Control instructions**</td>
+| `block` | `block { exp }`| X | Type is inferred
+| `loop` | `loop { exp }` | X | Type is inferred
+| `if` | `if (cond) exp` | X | Type is inferred
+| `ifelse` | `if (cond) exp` | X  | Type is inferred
+| `unreachable` | `unreachable<>()` | -
+| `nop` | `nop<>()` | -
+| `br` | `break` or `break int` | X |  Default break is 0
+| `br_if` | `break_if<int>(cond)` | .
+| `return` | `return` or `return exp` | X
+| `call` | `fn(args)` | X
+| `call_indirect` | `call_indirect<table>(args)` | -
+| <td colspan=1>**Reference Instructions**</td>
+| `ref.null` | `ref_null<func>()` or `ref_null<extern>()` | -
+| `ref.is_null` | `exp is null` | -
+| `ref_func` | `ref_func<id>` | -
+| <td colspan=1>**Parametric Instructions**</td>
+| `drop` | `drop<>` or implicit in sequence `{1;2}` | X* | `drop<>` is not implemented
+| `select` | `select<>(cond, then, else)` | -
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
+| <td colspan=1>**Variable Instructions**</td>
+| `local.get` | `id` | X
+| `local.set` | `id := exp` | X
+| `local.tee` | `local.tee<id>()` | -
+| `global.get` | `id` | X
+| `global.set` | `id := exp` | X
+| <td colspan=1>**Table Instructions**</td>
+| `table.get` | `table.get<id>()` | - | The id should be omittable and default to 0
+| `table.set` | `table.set<id>()` | -
+| `table.size` | `table.size<id>()` | -
+| `table.grow` | `table.grow<id>()` | -
+| `table.copy` | `table.copy<id, id>()` | -
+| `table.init` | `table.init<id, id>()` | -
+| `elem.drop` | `elem.drop<id>()` | -
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
+| <td colspan=1>**Memory Instructions**</td>
+| `*.load` | `load<>(address)` | X | The type is inferred from the use
+| `*.load*` | `load*<>(address)` | - | The type is inferred from the use
+| `*.store` | `store<>(address, value)` | X | The width is inferred from the value
+| `*.store*` | `store*<>(address, value)` | - | The width is inferred from the value
+| `memory.size` | `memory.size<>(size)` | -
+| `memory.grow` | `memory.grow<>(size)` | -
+| `memory.fill` | `memory.fill<>(size)` | - | TODO: Check number of args
+| `memory.init` | `memory.init<id>()` | -
+| `data.drop` | `data.drop<id>()` | -
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
+| <td colspan=1>**Numeric Instructions**</td>
+| `i32.const` | `1` | X
+| `i64.const` | `2l` | - | Syntax not decided
+| `f32.const` | `1.2f` | - | Syntax not decided
+| `f64.const` | `3.1` | X
+| `*.clz` | `clz<>(exp)` | - | The width is inferred
+| `*.ctz` | `ctz<>(exp)` | - | The width is inferred
+| `*.popcnt` | `popcnt<>(exp)` | - | The width is inferred
+| `*.add` | `<exp> + <exp>` | X | The width is inferred
+| `*.sub` | `<exp> - <exp>` | X | The width is inferred
+| `*.mul` | `<exp> * <exp>` | X | The width is inferred
+| `*.div_s` | `<exp> / <exp>` | X | The width is inferred
+| `*.div_u` | `<exp> /u <exp>` | X | The width is inferred
+| `*.div` | `<exp> / <exp>` | X | The width is inferred
+| `*.rem_s` | `<exp> % <exp>` | X | The width is inferred
+| `*.rem_u` | `<exp> %u <exp>` | X | The width is inferred
+| `*.and` | `<exp> & <exp>` | X | The width is inferred
+| `*.or` | `<exp> | <exp>` | X | The width is inferred
+| `*.xor` | `<exp> ^ <exp>` | X | The width is inferred
+| `*.shl` | `shl<>(val, bits)` | - | The width is inferred
+| `*.shr_s` | `shr_s<>(val, bits)` | - | The width is inferred
+| `*.shr_u` | `shr_u<>(val, bits)` | - | The width is inferred
+| `*.rotl` | `rotl<>(val, bits)` | - | The width is inferred
+| `*.rotr` | `rotr<>(val, bits)` | - | The width is inferred
+| `*.abs` | `abs<>(val)` | - | The width is inferred
+| `*.neg` | `neg<>(val)` | - | The width is inferred
+| `*.ceil` | `ceil<>(val)` | - | The width is inferred
+| `*.floor` | `floor<>(val)` | - | The width is inferred
+| `*.trunc` | `trunc<>(val)` | - | The width is inferred
+| `*.nearest` | `nearest<>(val)` | - | The width is inferred
+| `*.sqrt` | `sqrt<>(val)` | - | The width is inferred
+| `*.min` | `min<>(val, val)` | - | The width is inferred
+| `*.max` | `max<>(val, val)` | - | The width is inferred
+| `*.copysign` | `copysign<>(val, val)` | - | The width is inferred
+| `*.eqz` | `eqz<>(val)` | - | The width is inferred
+| `*.eq` | `val == val` | X | The width is inferred
+| `*.ne` | `val != val` | X | The width is inferred
+| `*.lt_s` | `val < val` | X | The width is inferred
+| `*.lt_u` | `lt_u<>(val, val)` | - | The width is inferred
+| `*.gt_s` | `val > val` | X | The width is inferred
+| `*.gt_u` | `gt_u<>(val, val)` | - | The width is inferred
+| `*.le_s` | `val <= val` | X | The width is inferred
+| `*.le_u` | `le_u<>(val, val)` | - | The width is inferred
+| `*.ge_s` | `val >= val` | X | The width is inferred
+| `*.ge_u` | `ge_u<>(val, val)` | - | The width is inferred
+| `i32.wrap_i64` | `wrap_i64<>(val)` | - | Maybe we can infer all types?
+| `*.trunc*` | `trunc*<>(val)` | - | Maybe we can infer all types?
+| `*.trunc_sat*` | `trunc_sat*<>(val)` | - | Maybe we can infer all types?
+| `*.extend*` | `extend*<>(val)` | - | Maybe we can infer all types?
+| `*.convert*` | `convert*<>(val)` | - | Maybe we can infer all types?
+| `*.demote*` | `demote*<>(val)` | - | Maybe we can infer all types?
+| `*.promote*` | `promote*<>(val)` | - | Maybe we can infer all types?
+| `*.reinterpret*` | `reinterpret*<>(val)` | - | Maybe we can infer all types?
+
+| Wasm | Wase | Implemented | Comments |
+|-|-|-|-|
+| <td colspan=1>**Vector Instructions**</td>
+
+None of these are implemented yet.
 
