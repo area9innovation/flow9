@@ -483,8 +483,8 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `i64.const` | `2l` | - | Syntax not decided
 | `f32.const` | `1.2f` | - | Syntax not decided
 | `f64.const` | `3.1` | X
-| `*.clz` | `clz<>(exp)` | X | Returns the number of leading zeros. The width is inferred
-| `*.ctz` | `ctz<>(exp)` | X | Returns the number of trailing zeros. The width is inferred
+| `*.clz` | `clz<>(exp)` | X | Returns the number of leading zero bits. The width is inferred
+| `*.ctz` | `ctz<>(exp)` | X | Returns the number of trailing zero bits. The width is inferred
 | `*.popcnt` | `popcnt<>(exp)` | X | Returns the number of 1-bits. The width is inferred
 | `*.add` | `<exp> + <exp>` | X | The width is inferred
 | `*.sub` | `<exp> - <exp>` | X | The width is inferred
@@ -504,15 +504,15 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.rotr` | `rotr<>(val, bits)` | X | Rotate right. Bits "loop" around. The width is inferred
 | `*.abs` | `abs<>(val)` | X | Absolute value of floats. The width is inferred
 | `*.neg` | -2.0 | X | Negate floating point value. The width is inferred
-| `*.ceil` | `ceil<>(val)` | X | The width is inferred
-| `*.floor` | `floor<>(val)` | X | The width is inferred
-| `*.trunc` | `trunc<>(val)` | X | The width is inferred
-| `*.nearest` | `nearest<>(val)` | X | The width is inferred
-| `*.sqrt` | `sqrt<>(val)` | X | The width is inferred
-| `*.min` | `min<>(val, val)` | X | The width is inferred
-| `*.max` | `max<>(val, val)` | X | The width is inferred
+| `*.ceil` | `ceil<>(val)` | X | Rounds up to the nearest integer. The width is inferred
+| `*.floor` | `floor<>(val)` | X | Rounds down to the nearest integer. The width is inferred
+| `*.trunc` | `trunc<>(val)` | X | Discard the fractional part, rounding to integer towards zero. The width is inferred
+| `*.nearest` | `nearest<>(val)` | X | Round to the nearest integer, with ties rounded toward the value with an even least-significant digit. The width is inferred
+| `*.sqrt` | `sqrt<>(val)` | X | Square root. The width is inferred
+| `*.min` | `min<>(val, val)` | X | Minimum of two values. NaN wins. The width is inferred
+| `*.max` | `max<>(val, val)` | X | Maximum of two values. Nan wins. The width is inferred
 | `*.copysign` | `copysign<>(val, sign)` | X | Copies the sign from `sign` into the value of `val`. The width is inferred
-| `*.eqz` | `eqz<>(val)` | - | The width is inferred
+| `*.eqz` | `eqz<>(val)` | - | Is the value equal to 0? The width is inferred
 | `*.eq` | `val == val` | X | The width is inferred
 | `*.ne` | `val != val` | X | The width is inferred
 | `*.lt_s` | `val < val` | X | The width is inferred
