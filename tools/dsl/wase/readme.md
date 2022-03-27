@@ -363,7 +363,7 @@ converting loads/stores.
 
 # Comparison of Wasm and Wase
 
-38/86 implemented.
+42/86 implemented.
 
 ## Control instructions
 
@@ -446,7 +446,7 @@ converting loads/stores.
 
 ## Numeric Instructions
 
-19/52 implemented.
+23/52 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -454,27 +454,27 @@ converting loads/stores.
 | `i64.const` | `2l` | - | Syntax not decided
 | `f32.const` | `1.2f` | - | Syntax not decided
 | `f64.const` | `3.1` | X
-| `*.clz` | `clz<>(exp)` | - | The width is inferred
-| `*.ctz` | `ctz<>(exp)` | - | The width is inferred
-| `*.popcnt` | `popcnt<>(exp)` | - | The width is inferred
+| `*.clz` | `clz<>(exp)` | X | Returns the number of leading zeros. The width is inferred
+| `*.ctz` | `ctz<>(exp)` | X | Returns the number of trailing zeros. The width is inferred
+| `*.popcnt` | `popcnt<>(exp)` | X | Returns the number of 1-bits. The width is inferred
 | `*.add` | `<exp> + <exp>` | X | The width is inferred
 | `*.sub` | `<exp> - <exp>` | X | The width is inferred
 | `*.mul` | `<exp> * <exp>` | X | The width is inferred
-| `*.div_s` | `<exp> / <exp>` | X | The width is inferred
-| `*.div_u` | `<exp> /u <exp>` | X | The width is inferred
-| `*.div` | `<exp> / <exp>` | X | The width is inferred
-| `*.rem_s` | `<exp> % <exp>` | X | The width is inferred
-| `*.rem_u` | `<exp> %u <exp>` | X | The width is inferred
-| `*.and` | `<exp> & <exp>` | X | The width is inferred
-| `*.or` | `<exp> | <exp>` | X | The width is inferred
-| `*.xor` | `<exp> ^ <exp>` | X | The width is inferred
-| `*.shl` | `shl<>(val, bits)` | - | The width is inferred
-| `*.shr_s` | `shr_s<>(val, bits)` | - | The width is inferred
-| `*.shr_u` | `shr_u<>(val, bits)` | - | The width is inferred
-| `*.rotl` | `rotl<>(val, bits)` | - | The width is inferred
-| `*.rotr` | `rotr<>(val, bits)` | - | The width is inferred
-| `*.abs` | `abs<>(val)` | - | The width is inferred
-| `*.neg` | `neg<>(val)` | - | The width is inferred
+| `*.div_s` | `<exp> / <exp>` | X | Signed division. Rounds towards zero. The width is inferred
+| `*.div_u` | `<exp> /u <exp>` | X | Unsigned division. The width is inferred
+| `*.div` | `<exp> / <exp>` | X | Signed division. The width is inferred
+| `*.rem_s` | `<exp> % <exp>` | X | Signed remainder. The width is inferred
+| `*.rem_u` | `<exp> %u <exp>` | X | Unsigned remainder. The width is inferred
+| `*.and` | `<exp> & <exp>` | X | Bitwise and. The width is inferred
+| `*.or` | `<exp> | <exp>` | X | Bitwise or. The width is inferred
+| `*.xor` | `<exp> ^ <exp>` | X | Bitwise xord. The width is inferred
+| `*.shl` | `shl<>(val, bits)` | - | Shift left, i.e. multiplication of power of two. The width is inferred
+| `*.shr_s` | `shr_s<>(val, bits)` | - | Signed right shift. Division by power of two, rounding down. The width is inferred
+| `*.shr_u` | `shr_u<>(val, bits)` | - | Unsigned right shift. Division by power of two. The width is inferred
+| `*.rotl` | `rotl<>(val, bits)` | - | Rotate left. Bits "loop" around. The width is inferred
+| `*.rotr` | `rotr<>(val, bits)` | - | Rorate right. Bits "loop" around. The width is inferred
+| `*.abs` | `abs<>(val)` | - | Absolute value of floats. The width is inferred
+| `*.neg` | -2.0 | X | Negate floating point value. The width is inferred
 | `*.ceil` | `ceil<>(val)` | - | The width is inferred
 | `*.floor` | `floor<>(val)` | - | The width is inferred
 | `*.trunc` | `trunc<>(val)` | - | The width is inferred
