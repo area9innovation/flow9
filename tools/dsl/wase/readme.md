@@ -363,7 +363,7 @@ converting loads/stores.
 
 # Comparison of Wasm and Wase
 
-42/86 implemented.
+43/87 implemented.
 
 ## Control instructions
 
@@ -400,7 +400,7 @@ converting loads/stores.
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `drop` | `drop<>` or implicit in sequence `{1;2}` | X
-| `select` | `select<>(cond, then, else)` | X | Automatically chooses the ref version based on the type
+| `select` | `select<>(cond, then, else)` | X | This is an eager `if`, where both `then` and `else` are always evaluated, but only one chosen based on the condition. This is branch-less so can be more efficient than normal `if`. (Automatically chooses the ref instruction version based on the type.)
 
 ## Variable Instructions
 
@@ -420,25 +420,26 @@ converting loads/stores.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `table.get` | `table.get<id>()` | - | The id should be omittable and default to 0
-| `table.set` | `table.set<id>()` | -
-| `table.size` | `table.size<id>()` | -
-| `table.grow` | `table.grow<id>()` | -
-| `table.copy` | `table.copy<id, id>()` | -
-| `table.init` | `table.init<id, id>()` | -
-| `elem.drop` | `elem.drop<id>()` | -
+| `table.get` | `table.get<id>(index)` | - | Retrieves a value from a table slot. The id is omittable and default to 0
+| `table.set` | `table.set<id>(index, value)` | - | Sets a value in a table slot. id is default 0.
+| `table.size` | `table.size<id>()` | - | Returns the size of a table. id is default 0.
+| `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots. id is default 0.
+| `table.copy` | `table.copy<id, id>(i32, i32, i32)` | - | Copies from one table to another
+| `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements?
+| `elem.drop` | `elem.drop<id>()` | - | Discards the memory in an element segment.
 
 ## Memory Instructions
 
-2/7 implemented.
+3/8 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `*.load` | `load<>(address)` | X | The type is inferred from the use. TODO: Support offset and alignment
-| `*.load*` | `load*<>(address)` | - | The type is inferred from the use
+| `*.load(8|16|32)_(s|u)` | `load(8|16|32)_(s|u)<>(address)` | X | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
 | `*.store` | `store<>(address, value)` | X | The width is inferred from the value.  TODO: Support offset and alignment
 | `*.store*` | `store*<>(address, value)` | - | The width is inferred from the value
 | `memory.size` | `memory.size<>(size)` | -
+| `memory.copy` | `memory.copy<>(size)` | - | Copy from one region to another
 | `memory.grow` | `memory.grow<>(size)` | -
 | `memory.fill` | `memory.fill<>(size)` | - | TODO: Check number of args
 | `memory.init` | `memory.init<id>()` | -
