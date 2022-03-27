@@ -391,7 +391,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Comparison of Wasm and Wase
 
-49/87 implemented.
+62/87 implemented.
 
 ## Control instructions
 
@@ -475,7 +475,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Numeric Instructions
 
-28/52 implemented.
+41/52 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -502,27 +502,27 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.shr_u` | `shr_u<>(val, bits)` | X | Unsigned right shift. Division by power of two. The width is inferred
 | `*.rotl` | `rotl<>(val, bits)` | X | Rotate left. Bits "loop" around. The width is inferred
 | `*.rotr` | `rotr<>(val, bits)` | X | Rotate right. Bits "loop" around. The width is inferred
-| `*.abs` | `abs<>(val)` | - | Absolute value of floats. The width is inferred
+| `*.abs` | `abs<>(val)` | X | Absolute value of floats. The width is inferred
 | `*.neg` | -2.0 | X | Negate floating point value. The width is inferred
-| `*.ceil` | `ceil<>(val)` | - | The width is inferred
-| `*.floor` | `floor<>(val)` | - | The width is inferred
-| `*.trunc` | `trunc<>(val)` | - | The width is inferred
-| `*.nearest` | `nearest<>(val)` | - | The width is inferred
-| `*.sqrt` | `sqrt<>(val)` | - | The width is inferred
-| `*.min` | `min<>(val, val)` | - | The width is inferred
-| `*.max` | `max<>(val, val)` | - | The width is inferred
-| `*.copysign` | `copysign<>(val, val)` | - | The width is inferred
+| `*.ceil` | `ceil<>(val)` | X | The width is inferred
+| `*.floor` | `floor<>(val)` | X | The width is inferred
+| `*.trunc` | `trunc<>(val)` | X | The width is inferred
+| `*.nearest` | `nearest<>(val)` | X | The width is inferred
+| `*.sqrt` | `sqrt<>(val)` | X | The width is inferred
+| `*.min` | `min<>(val, val)` | X | The width is inferred
+| `*.max` | `max<>(val, val)` | X | The width is inferred
+| `*.copysign` | `copysign<>(val, sign)` | X | Copies the sign from `sign` into the value of `val`. The width is inferred
 | `*.eqz` | `eqz<>(val)` | - | The width is inferred
 | `*.eq` | `val == val` | X | The width is inferred
 | `*.ne` | `val != val` | X | The width is inferred
 | `*.lt_s` | `val < val` | X | The width is inferred
-| `*.lt_u` | `lt_u<>(val, val)` | - | The width is inferred
+| `*.lt_u` | `lt_u<>(val, val)` | X | Unsigned comparison. The width is inferred
 | `*.gt_s` | `val > val` | X | The width is inferred
-| `*.gt_u` | `gt_u<>(val, val)` | - | The width is inferred
+| `*.gt_u` | `gt_u<>(val, val)` | X | Unsigned comparison. The width is inferred
 | `*.le_s` | `val <= val` | X | The width is inferred
-| `*.le_u` | `le_u<>(val, val)` | - | The width is inferred
+| `*.le_u` | `le_u<>(val, val)` | X | Unsigned comparison. The width is inferred
 | `*.ge_s` | `val >= val` | X | The width is inferred
-| `*.ge_u` | `ge_u<>(val, val)` | - | The width is inferred
+| `*.ge_u` | `ge_u<>(val, val)` | X | Unsigned comparison. The width is inferred
 | `i32.wrap_i64` | `wrap_i64<>(val)` | - | Maybe we can infer all types?
 | `*.trunc*` | `trunc*<>(val)` | - | Maybe we can infer all types?
 | `*.trunc_sat*` | `trunc_sat*<>(val)` | - | Maybe we can infer all types?
