@@ -53,10 +53,11 @@ This also works for locals:
 
 	bar() -> auto {
 		a : auto = 1;
+		b = 2.0; // This is implicitly auto, and thus inferred
 		a
 	}
 
-The type inference is Hindley-Milner unification, so it should be robust.
+The type inference is based on Hindley-Milner style unification, so it should be robust.
 
 TODO:
 - Variable shadowing should give an error
@@ -118,7 +119,12 @@ TODO:
 	}
 
 	// Exports this function using the "_start" name to the host, in compliance with Wasi
-	export "_start" main() -> () {
+	export "_start" start() -> () {
+		...
+	}
+
+	main() -> () {
+		// This is the initial function automatically called otherwise
 		...
 	}
 
@@ -189,7 +195,7 @@ TODO:
 - Add syntax for passive data, which is not automatically copied into memory
   until memory.init is called.
 
-- Add syntax for raw bytes?
+- Add syntax for raw bytes, or change ints to be bytes?
 
 - Add support for naming the data index for memory.init and data.drop
 
@@ -213,34 +219,50 @@ statements, but only expressions. The syntax is pretty standard:
 
 	a := 2; // set local or global
 
-	if (a) b else c;
-	if (a) b;
-
-	// Function call
-	foo(1, 2) 
-
-	// Arithmetic
+	// Arithmetic, all signed.
 	1 + 2 / 3 * 4 % 5
 
 	// Unsigned divisions and remainder. TODO: Reconsider this syntax and use functions instead
 	1 /u 2 %u 3
 
 	// Bitwise operations
-	1 & 3 | 5 % 7
+	1 & 3 | 5 ^ 7
+
+	// Comparisons are signed. Use instructions for unsigned comparisons
+	1 < 5 | 5 >= 2 & a = 2.0
+
+	// Tuples, aka multi-values
+	[1, 2.0, 45]
+
+## Control flow
+
+	// Function call
+	foo(1, 2) 
+
+	if (a) b else c;
+	if (a) b;
 
 	// Sequence
 	{
 		a();	// An implicit drop is added here
 		b();	// An implicit drop is added here
+		[1, 2];  // Two implicit drops are added here
 		c
 	}
 
 	// Return from the function.
-	foo() {
-		return value;
+	foo() -> i32 {
+		if (early) {
+			return 1;	 // Has to match function return type
+		}
+		code;
 	}
-	bar() {
-		return;
+	bar() -> () {
+		if (early) {
+			// Matches no result from function return type
+			return;
+		}
+		code
 	}
 
 	block {
@@ -263,35 +285,14 @@ statements, but only expressions. The syntax is pretty standard:
 			// This breaks to the top of the loop
 			if (continue) break;
 			code;
-			// This breaks out of the loop
+			// This breaks out of the loop to endcode
 			if (earlyStop) break 1;
 			code;
 		}
-	}
-
-	// Tuples, aka multi-values
-	[1, 2.0, 45]
-
-TODO: Get more stuff to work:
-- Add syntax for u64 and f32 constants
-- Get hex constants to work
-
-# Low level instructions
-
-The low-level instructions in Wase have the form
-
-	id<pars>(args)
-
-where pars are parameters for the operation decided at compile time,
-while args are arguments to the instruction put on the stack.
+	};
+	endcode;
 
 TODO:
-- Add unsigned comparisons for i32, i64
-
-- Add instructions for shifts, clz, ctz, popcnt
-
-- Add more instructions from table below
-
 - More natural switch syntax?
 	switch (index) {
 		0: {}
@@ -306,36 +307,58 @@ TODO:
 
 	fnidx<calls, fn1>  = how to get a function pointer
 
-- Have some "empty" that is not an instruction so
+## Low level instructions
 
-	1; ? + 2;
+The low-level instructions in Wase have the form
+
+	id<pars>(args)
+
+where pars are parameters for the operation decided at compile time,
+while args are arguments to the instruction put on the stack.
+
+TODO:
+- Add more instructions from table below
+
+- Have some "hole" that is not an instruction so
+
+	[1, ? + 2];
 
   will work to expose pure stack discipline.
-
+  In a [1,2,3] context, we could have pure stack.
+ 
 ## Load/store
 
-Loads are written like this:
+Loads from memory are written like this:
 
-	load<>(index, value);
+	load<>(index);
 
 The width of the load is inferred from the use of the value.
 
+	// This is i32 load, since a is i32
+	a : i23 = load<>(0);
+
+	// This is f32 load, since f is f32
+	f : f32 = load<>(32):
+
 TODO: Support offset and alignment:
 
-	load<offset>(index, value)
-	load<offset, align>(index, value)
+	load<offset>(index)
+	load<offset, align>(index)
 
 Stores are written like this:
 
-	store(index, value);
+	store<>(index, value);
 
 The width of the store is inferred from the type of the value.
+
+	// This is f64.store, because 2.0 is f64
+	store<>(32, 2.0);
 
 TODO: Support offset and alignment:
 	store<offset>(index, value)
 	store<offset, alignment>(index, value)
 
-TODO: Support WasmI32Load8_s, WasmI32Load8_u, WasmI32Store8 and such
+TODO: Support I32.Load8_s, I32.Load8_u, I32.Store8 and such
 converting loads/stores.
 
 # Comparison of Wasm and Wase
@@ -351,7 +374,7 @@ converting loads/stores.
 | `block` | `block { exp }`| X | Type is inferred
 | `loop` | `loop { exp }` | X | Type is inferred
 | `if` | `if (cond) exp` | X | Type is inferred
-| `ifelse` | `if (cond) exp` | X  | Type is inferred
+| `ifelse` | `if (cond) exp else exp` | X  | Type is inferred
 | `unreachable` | `unreachable<>()` | X
 | `nop` | `nop<>()` | X
 | `br` | `break` or `break int` | X |  Default break is 0
