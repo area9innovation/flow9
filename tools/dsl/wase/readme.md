@@ -391,7 +391,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Comparison of Wasm and Wase
 
-44/87 implemented.
+49/87 implemented.
 
 ## Control instructions
 
@@ -406,7 +406,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `unreachable` | `unreachable<>()` | X
 | `nop` | `nop<>()` | X
 | `br` | `break` or `break int` | X |  Default break is 0
-| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X
+| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X | Default break is 0
 | `return` | `return` or `return exp` | X
 | `call` | `fn(args)` | X
 | `call_indirect` | `call_indirect<table>(args)` | -
@@ -452,7 +452,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `table.set` | `table.set<id>(index, value)` | - | Sets a value in a table slot. id is default 0.
 | `table.size` | `table.size<id>()` | - | Returns the size of a table. id is default 0.
 | `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots. id is default 0.
-| `table.copy` | `table.copy<id, id>(i32, i32, i32)` | - | Copies from one table to another
+| `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | - | Copies `elems` slots from one area of a table `id1` to another table `id2` 
 | `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements?
 | `elem.drop` | `elem.drop<id>()` | - | Discards the memory in an element segment.
 
@@ -463,19 +463,19 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `*.load` | `load<>(address)` | X | The type is inferred from the use. TODO: Support offset and alignment
-| `*.load(8|16|32)_(s|u)` | `load(8|16|32)_(s|u)<>(address)` | X | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
+| `*.load(8,16,32)_(s,u)` | `load(8,16,32)_(s,u)<>(address)` | X | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
 | `*.store` | `store<>(address, value)` | X | The width is inferred from the value.  TODO: Support offset and alignment
-| `*.store(8|16|32)` | `store(8|16|32)<>(address, value)` | X | Store the lower N bits of a value. The width is inferred from the value
-| `memory.size` | `memory.size<>(size)` | -
-| `memory.copy` | `memory.copy<>(size)` | - | Copy from one region to another
-| `memory.grow` | `memory.grow<>(size)` | -
-| `memory.fill` | `memory.fill<>(size)` | - | TODO: Check number of args
+| `*.store(8,16,32)` | `store(8,16,32)<>(address, value)` | X | Store the lower N bits of a value. The width is inferred from the value
+| `memory.size` | `memory.size<>()` | - | Returns the unsigned size of memory in terms of pages (64k)
+| `memory.grow` | `memory.grow<>(size)` | - | Increases the memory by `size` pages. Returns the previous size of memory, or -1 if memory can not increase
+| `memory.copy` | `memory.copy<>(bytes, source, dest)` | - | Copy `bytes` bytes from source to destination
+| `memory.fill` | `memory.fill<>(bytes, bytevalue, dest)` | - | Fills `bytes` bytes with the given bytevalue at `dest`
 | `memory.init` | `memory.init<id>()` | -
 | `data.drop` | `data.drop<id>()` | -
 
 ## Numeric Instructions
 
-23/52 implemented.
+28/52 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -495,13 +495,13 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.rem_s` | `<exp> % <exp>` | X | Signed remainder. The width is inferred
 | `*.rem_u` | `<exp> %u <exp>` | X | Unsigned remainder. The width is inferred
 | `*.and` | `<exp> & <exp>` | X | Bitwise and. The width is inferred
-| `*.or` | `<exp> | <exp>` | X | Bitwise or. The width is inferred
+| `*.or` | `<exp> \| <exp>` | X | Bitwise or. The width is inferred
 | `*.xor` | `<exp> ^ <exp>` | X | Bitwise xord. The width is inferred
-| `*.shl` | `shl<>(val, bits)` | - | Shift left, i.e. multiplication of power of two. The width is inferred
-| `*.shr_s` | `shr_s<>(val, bits)` | - | Signed right shift. Division by power of two, rounding down. The width is inferred
-| `*.shr_u` | `shr_u<>(val, bits)` | - | Unsigned right shift. Division by power of two. The width is inferred
-| `*.rotl` | `rotl<>(val, bits)` | - | Rotate left. Bits "loop" around. The width is inferred
-| `*.rotr` | `rotr<>(val, bits)` | - | Rorate right. Bits "loop" around. The width is inferred
+| `*.shl` | `shl<>(val, bits)` | X | Shift left, i.e. multiplication of power of two. The width is inferred
+| `*.shr_s` | `shr_s<>(val, bits)` | X | Signed right shift. Division by power of two, rounding down. The width is inferred
+| `*.shr_u` | `shr_u<>(val, bits)` | X | Unsigned right shift. Division by power of two. The width is inferred
+| `*.rotl` | `rotl<>(val, bits)` | X | Rotate left. Bits "loop" around. The width is inferred
+| `*.rotr` | `rotr<>(val, bits)` | X | Rotate right. Bits "loop" around. The width is inferred
 | `*.abs` | `abs<>(val)` | - | Absolute value of floats. The width is inferred
 | `*.neg` | -2.0 | X | Negate floating point value. The width is inferred
 | `*.ceil` | `ceil<>(val)` | - | The width is inferred
