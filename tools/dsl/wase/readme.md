@@ -358,12 +358,40 @@ TODO: Support offset and alignment:
 	store<offset>(index, value)
 	store<offset, alignment>(index, value)
 
-TODO: Support I32.Load8_s, I32.Load8_u, I32.Store8 and such
-converting loads/stores.
+Loads and stores also exist in versions that work with smaller bit-widths:
+
+	// Loads a byte from the given memory address, sign extending it into a i32 or i64
+	signedByteValue : i32 = load8_s<>(0);
+	signedByteValue64 : i64 = load8_s<>(0);
+
+	// Loads an unsigned byte from the given memory address into a i32 or i64
+	byteValue : i32 = load8_u<>(0);
+	byteValue64 : i64 = load8_u<>(0);
+
+	sword : i32 = load16_s<>(0);
+	sword64 : i64 = load16_s<>(0);
+	uword : i32 = load16_u<>(0);
+	uword64 : i64 = load16_u<>(0);
+
+	sint32 : i64 = load32_s<>(0);
+	uint32 : i64 = load32_u<>(0);
+
+	// Stores the byte "32" at address 0
+	store8<>(0, 32)
+
+	// The same, except it comes from an i64
+	int64 : i64 = big;
+	store8<>(0, big); // Only picks the lower 8 bits of "big"
+
+	// Stores the lower 16 bits of the value at the given address
+	store16<>(address, value);
+
+	// Stores the lower 32 bits of the value at the given address
+	store32<>(address, value);
 
 # Comparison of Wasm and Wase
 
-43/87 implemented.
+44/87 implemented.
 
 ## Control instructions
 
@@ -430,14 +458,14 @@ converting loads/stores.
 
 ## Memory Instructions
 
-3/8 implemented.
+4/8 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `*.load` | `load<>(address)` | X | The type is inferred from the use. TODO: Support offset and alignment
 | `*.load(8|16|32)_(s|u)` | `load(8|16|32)_(s|u)<>(address)` | X | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
 | `*.store` | `store<>(address, value)` | X | The width is inferred from the value.  TODO: Support offset and alignment
-| `*.store*` | `store*<>(address, value)` | - | The width is inferred from the value
+| `*.store(8|16|32)` | `store(8|16|32)<>(address, value)` | X | Store the lower N bits of a value. The width is inferred from the value
 | `memory.size` | `memory.size<>(size)` | -
 | `memory.copy` | `memory.copy<>(size)` | - | Copy from one region to another
 | `memory.grow` | `memory.grow<>(size)` | -
