@@ -67,6 +67,8 @@ TODO:
 
 - Check that the return value of a return matches the function return value
 
+- Check that we do not have let-binding of () type
+
 ## Top-level Syntax
 
 At the top-level, we have syntax for the different kinds of sections in
@@ -391,7 +393,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Comparison of Wasm and Wase
 
-63/87 implemented.
+67/89 implemented.
 
 ## Control instructions
 
@@ -418,7 +420,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | X | Construct a null function or extern reference
-| `ref.is_null` | `exp is null` | X | Is this function or extern refernce null?
+| `ref.is_null` | `exp is null` | X | Is this function or extern reference null?
 | `ref.func` | `ref.func<id>` | X | Constructs an opaque reference to a named function. Can be used in tables. Automatically constructs a element table for the referenced functions
 
 ##  Parametric Instructions
@@ -427,7 +429,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `drop` | `drop<>` or implicit in sequence `{1;2}` | X
+| `drop` | `drop<>` or implicit in sequence `{1;2}` | X | The explicit `drop<>()` variant causes stack errors, since Wase is designed to be stack-safe.
 | `select` | `select<>(cond, then, else)` | X | This is an eager `if`, where both `then` and `else` are always evaluated, but only one chosen based on the condition. This is branch-less so can be more efficient than normal `if`. (Automatically chooses the ref instruction version based on the type.)
 
 ## Variable Instructions
@@ -453,12 +455,12 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `table.size` | `table.size<id>()` | - | Returns the size of a table. id is default 0.
 | `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots. id is default 0.
 | `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | - | Copies `elems` slots from one area of a table `id1` to another table `id2` 
-| `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements?
+| `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements from an element section
 | `elem.drop` | `elem.drop<id>()` | - | Discards the memory in an element segment.
 
 ## Memory Instructions
 
-4/8 implemented.
+8/10 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -466,12 +468,12 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.load(8,16,32)_(s,u)` | `load(8,16,32)_(s,u)<>(address)` | X | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
 | `*.store` | `store<>(address, value)` | X | The width is inferred from the value.  TODO: Support offset and alignment
 | `*.store(8,16,32)` | `store(8,16,32)<>(address, value)` | X | Store the lower N bits of a value. The width is inferred from the value
-| `memory.size` | `memory.size<>()` | - | Returns the unsigned size of memory in terms of pages (64k)
-| `memory.grow` | `memory.grow<>(size)` | - | Increases the memory by `size` pages. Returns the previous size of memory, or -1 if memory can not increase
-| `memory.copy` | `memory.copy<>(bytes, source, dest)` | - | Copy `bytes` bytes from source to destination
-| `memory.fill` | `memory.fill<>(bytes, bytevalue, dest)` | - | Fills `bytes` bytes with the given bytevalue at `dest`
-| `memory.init` | `memory.init<id>()` | -
-| `data.drop` | `data.drop<id>()` | -
+| `memory.size` | `memory.size<>()` | X | Returns the unsigned size of memory in terms of pages (64k)
+| `memory.grow` | `memory.grow<>(size)` | X | Increases the memory by `size` pages. Returns the previous size of memory, or -1 if memory can not increase
+| `memory.copy` | `memory.copy<>(bytes, source, dest)` | X | Copy `bytes` bytes from source to destination
+| `memory.fill` | `memory.fill<>(bytes, bytevalue, dest)` | X | Fills `bytes` bytes with the given byte value at `dest`
+| `memory.init` | `memory.init<id>(bytes, source, dest)` | - | Copies `bytes` from a data section `<id>` at address `source` into memory starting at address `dest`
+| `data.drop` | `data.drop<id>()` | - | Frees the memory of data segment <id>
 
 ## Numeric Instructions
 
