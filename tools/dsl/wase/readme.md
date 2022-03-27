@@ -391,7 +391,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Comparison of Wasm and Wase
 
-62/87 implemented.
+63/87 implemented.
 
 ## Control instructions
 
@@ -409,17 +409,17 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X | Default break is 0
 | `return` | `return` or `return exp` | X
 | `call` | `fn(args)` | X
-| `call_indirect` | `call_indirect<table>(args)` | -
+| `call_indirect` | `call_indirect<table>(args, fnidx)` | -
 
 ## Reference Instructions
 
-2/3 implemented.
+3/3 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | X
-| `ref.is_null` | `exp is null` | X
-| `ref.func` | `ref.func<id>` | -
+| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | X | Construct a null function or extern reference
+| `ref.is_null` | `exp is null` | X | Is this function or extern refernce null?
+| `ref.func` | `ref.func<id>` | X | Constructs an opaque reference to a named function. Can be used in tables. Automatically constructs a element table for the referenced functions
 
 ##  Parametric Instructions
 

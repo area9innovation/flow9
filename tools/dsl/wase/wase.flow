@@ -1,6 +1,7 @@
 
 import formats/wasm/wasm_types;
 import ds/tree;
+import ds/set;
 
 export {
 	// This is an expression-based wrapper for Wasm to make it easier to produce 
@@ -52,7 +53,7 @@ export {
 
 	WaseExpr(instructions : [WaseInstruction]);
 		WaseInstruction ::= WasmInstruction, WaseGet, WaseSet, WaseLet, WaseCall, 
-			WaseBlock, WaseLoop, WaseIfElse, WaseIf;
+			WaseBlock, WaseLoop, WaseIfElse, WaseIf, WaseRefFunc;
 			// Lookup in our compilation environment
 			WaseGet(id : string);
 			WaseSet(id : string);
@@ -68,6 +69,9 @@ export {
 
 			WaseIfElse(blockType : WasmBlockType, then : [WaseInstruction], else_ : [WaseInstruction]);
 			WaseIf(blockType : WasmBlockType, then : [WaseInstruction]);
+
+			// Reference to a given function
+			WaseRefFunc(id : string);
 
 			// TODO: We need replacements for all the index-based instructions:
 			// local.tee, global.tee
@@ -108,9 +112,12 @@ wase2wasm(wase : Wase) -> WasmModule {
 		ref 0, ref 0, ref 0, ref 0, ref 0, ref 0,
 		ref true,
 		ref [], ref [], ref [], ref [], ref [], ref [], ref [],
-		ref -1
+		ref -1, ref makeSet(),
 	);
+
 	compileWase(context, wase);
+
+	elements = if (isEmptySet(^(context.refFuncs))) [] else [WasmElementFuncs(WasmExpr([WasmI32Const(0)]), set2array(^(context.refFuncs)))];
 
 	WasmModule(
 		// types
@@ -120,7 +127,9 @@ wase2wasm(wase : Wase) -> WasmModule {
 		// functions
 		[], WasmFunctionSection(^(context.functionTypes)),
 		// tables
-		[], WasmTableSection([]),
+		[], WasmTableSection(if (elements == []) [] else [
+			WasmTableType(WasmFuncRef(), WasmLimits(length(elements), 0))
+		]),
 		// memories
 		[], WasmMemorySection(^(context.memory)),
 		// globals
@@ -130,7 +139,7 @@ wase2wasm(wase : Wase) -> WasmModule {
 		// start function
 		[], WasmStartSection(^(context.starts)), 
 		// elements
-		[], WasmElementSection([]), 
+		[], WasmElementSection(elements), 
 		// datacounts
 		[], WasmDataCountSection(-1), 
 		// code
@@ -184,7 +193,10 @@ WaseContext(
 	data : ref [WasmData],
 	
 	// Starting functions. -1 means none
-	starts : ref int
+	starts : ref int,
+
+	// ref funcs
+	refFuncs : ref Set<int>,
 );
 
 compileWase(context : WaseContext, w : Wase) -> void {
@@ -339,6 +351,7 @@ extractWaseLocals(context : WaseContext, acc : [WaseLocal], w : WaseInstruction)
 			extractWasesLocals(context, acc1, else_);
 		}
 		WaseIf(blockType, then): extractWasesLocals(context, acc, then);
+		WaseRefFunc(id): acc;
 	}
 }
 
@@ -410,6 +423,27 @@ waseInstruction2wasm(context : WaseContext, i : WaseInstruction) -> WasmInstruct
 				bt,
 				map(t, \e -> waseInstruction2wasm(context, e)),
 			)
+		}
+		WaseRefFunc(id): {
+			mcode : Maybe<WasmInstruction> = lookupTree(^(context.get), id);
+			switch (mcode) {
+				Some(code): {
+					switch (code : WasmInstruction) {
+						WasmRefFunc(funcid): {
+							context.refFuncs := insertSet(^(context.refFuncs), funcid);
+							code;
+						}
+						default: {
+							println("Expected func for " + id + " in ref.func, not " + toString(code));
+							WasmUnreachable();
+						}
+					}
+				}
+				None(): {
+					println("Unknown func " + id + " in ref.func");
+					WasmUnreachable();
+				}
+			}
 		}
 	}
 }
