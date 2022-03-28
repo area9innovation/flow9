@@ -393,7 +393,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Comparison of Wasm and Wase
 
-67/89 implemented.
+68/89 implemented.
 
 ## Control instructions
 
@@ -411,7 +411,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X | Default break is 0
 | `return` | `return` or `return exp` | X
 | `call` | `fn(args)` | X
-| `call_indirect` | `call_indirect<table>(args, fnidx)` | -
+| `call_indirect` | `call_indirect<table>(fnidx, args)` | -
 
 ## Reference Instructions
 
@@ -434,13 +434,13 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Variable Instructions
 
-4/5 implemented.
+5/5 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `local.get` | `id` | X
 | `local.set` | `id := exp` | X
-| `local.tee` | `local.tee<id>()` | -
+| `local.tee` | `id ::= exp` | X | Sets the value like set, but returns the result as well, like in C
 | `global.get` | `id` | X
 | `global.set` | `id := exp` | X
 

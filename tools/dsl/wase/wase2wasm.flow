@@ -1,94 +1,11 @@
-
-import formats/wasm/wasm_types;
+import tools/dsl/wase/wase_types;
 import ds/tree;
 import ds/set;
 
 export {
-	// This is an expression-based wrapper for Wasm to make it easier to produce 
-	// a valid WASM module
-	Wase ::=  WaseImportFunction, WaseImportGlobal, WaseImportMemory, WaseImportTable,
-		WaseMemory, WaseGlobal, WaseFunction, WaseData,
-
-		WaseEmpty
-		;
-
-	// This imported function will be bound to the id in the compilation environment
-	// and can be referenced using WaseGet(id)
-	WaseImportFunction(id : string, module : string, name : string, type : WasmFuncType,
-		scope : Wase);
-
-	// This imported global will be bound to the id in the compilation environment
-	// and can be referenced using WaseGet(id)
-	WaseImportGlobal(id : string, module : string, name : string, type : WasmValType, isMutable : bool,
-		scope : Wase);
-
-	// Import memory from the host
-	WaseImportMemory(module : string, name : string, minimumPages : int, maximumPages : int,
-		scope : Wase);
-
-	// Import a table from the host. The table can be referenced using WaseGet(id)
-	WaseImportTable(id : string, module : string, name : string, refType : WasmRefType, minimumPages : int, maximumPages : int,
-		scope : Wase);
-
-	// Declare our top-level memory. If exportid != "", we export this memory with that name
-	// If maximumPages == 0, it is unbounded
-	WaseMemory(minimumPages : int, maximumPages : int,
-		exportid : string,
-		scope : Wase);
-
-	// Declare a global. If exportid != "", we export this global with that name
-	// The index of this global will be bound to the id in the compilation environment
-	WaseGlobal(id : string, exportid : string, type : WasmValType, isMutable : bool, 
-		init : WaseExpr, scope : Wase);
-
-	// Declare a function. If exportId != "", we export this function with that name
-	// The index of this function will be bound to the id in the compilation environment.
-	// If start is true, this function will be "main" and called as the first
-	WaseFunction(id : string, exportid : string, start : bool, type : WasmFuncType, 
-		args : [WaseLocal], code : WaseExpr, scope : Wase);
-		// Should we extract these instead?
-		WaseLocal(name : string, type : WasmValType);
-
-	WaseData(offset : WaseExpr, bytes : [int], scope : Wase);
-
-	WaseExpr(instructions : [WaseInstruction]);
-		WaseInstruction ::= WasmInstruction, WaseGet, WaseSet, WaseLet, WaseCall, 
-			WaseBlock, WaseLoop, WaseIfElse, WaseIf, WaseRefFunc;
-			// Lookup in our compilation environment
-			WaseGet(id : string);
-			WaseSet(id : string);
-
-			// Introduce a new local variable
-			WaseLet(id : string, type : WasmValType);
-
-			WaseCall(fn : WaseInstruction);
-//			WaseResolveIndex(id : string, instruction : WasmIndexingInstruction);
-
-			WaseBlock(blockType : WasmBlockType, instructions : [WaseInstruction]);
-			WaseLoop(blockType : WasmBlockType, instructions : [WaseInstruction]);
-
-			WaseIfElse(blockType : WasmBlockType, then : [WaseInstruction], else_ : [WaseInstruction]);
-			WaseIf(blockType : WasmBlockType, then : [WaseInstruction]);
-
-			// Reference to a given function
-			WaseRefFunc(id : string);
-
-			// TODO: We need replacements for all the index-based instructions:
-			// local.tee, global.tee
-
-			// Tables:
-			// table.init, table.copy, table.grow, table.size, table.fill
-			// call.indirect
-
-			// Data:
-			// memory.init, data.drop
-
-	WaseEmpty();
-
 	// Construct a WasmModule from our high-level structure
 	wase2wasm(wase : Wase) -> WasmModule;
 }
-
 
 /*
 
@@ -108,7 +25,8 @@ TODO:
 */
 
 wase2wasm(wase : Wase) -> WasmModule {
-	context = WaseContext(ref makeTree(), ref makeTree(), ref [], ref makeTree(),
+	context = WaseContext(ref makeTree(), ref makeTree(), ref makeTree(),
+		ref [], ref makeTree(), 
 		ref 0, ref 0, ref 0, ref 0, ref 0, ref 0,
 		ref true,
 		ref [], ref [], ref [], ref [], ref [], ref [], ref [],
@@ -154,6 +72,7 @@ WaseContext(
 	// As we construct functions, imports, etc, we record their indexes here
 	get : ref Tree<string, WasmInstruction>,
 	set : ref Tree<string, WasmInstruction>,
+	tee : ref Tree<string, WasmLocalTee>,
 
 	// These are also collected into WasmTypeSection and give the typeidx for function types
 	funcTypes : ref [WasmFuncType],
@@ -304,6 +223,7 @@ compileWase(context : WaseContext, w : Wase) -> void {
 			iteri(concat(args, locals), \i, local : WaseLocal -> {
 				context.get := setTree(^(context.get), local.name, WasmLocalGet(i));
 				context.set := setTree(^(context.set), local.name, WasmLocalSet(i));
+				context.tee := setTree(^(context.tee), local.name, WasmLocalTee(i));
 			});
 			// Register the code
 			wcode = WasmCode(map(locals, \local : WaseLocal -> WasmLocal(1, local.type)), waseExpr2wasm(context, code));
@@ -340,6 +260,7 @@ extractWaseLocals(context : WaseContext, acc : [WaseLocal], w : WaseInstruction)
 		WasmInstruction(): acc;
 		WaseGet(id): acc;
 		WaseSet(id): acc;
+		WaseTee(id): acc;
 		WaseLet(id, type): {
 			arrayPush(acc, WaseLocal(id, type));
 		}
@@ -392,6 +313,15 @@ waseInstruction2wasm(context : WaseContext, i : WaseInstruction) -> WasmInstruct
 				mcode
 			} : {
 				println("Unknown id " + id);
+				WasmUnreachable();
+			}
+		}
+		WaseTee(id): {
+			mcode = lookupTree(^(context.tee), id);
+			mcode ?? {
+				mcode
+			} : {
+				println("Unknown id for tee " + id);
 				WasmUnreachable();
 			}
 		}
