@@ -400,7 +400,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Correspondance between Wasm and Wase syntax
 
-73/90 implemented.
+73/92 implemented.
 
 ## Control instructions
 
@@ -485,7 +485,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Numeric Instructions
 
-41/52 implemented.
+46/54 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -533,9 +533,11 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.le_u` | `le_u<>(val, val)` | X | Unsigned comparison. The width is inferred
 | `*.ge_s` | `val >= val` | X | The width is inferred
 | `*.ge_u` | `ge_u<>(val, val)` | X | Unsigned comparison. The width is inferred
-| `i32.wrap_i64` | `wrap_i64<>(val)` | - | Maybe we can infer all types?
-| `*.trunc*` | `trunc*<>(val)` | - | Maybe we can infer all types?
-| `*.trunc_sat*` | `trunc_sat*<>(val)` | - | Maybe we can infer all types?
+| `i32.wrap_i64` | `wrap<>(val)` | X | Takes lower 32 bits of an i64.
+| `*.trunc*_s` | `trunc_s<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result signed.
+| `*.trunc*_u` | `trunc_u<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result unsigned.
+| `*.trunc_sat*_s` | `trunc_sat_s<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result signed, saturating.
+| `*.trunc_sat*_u` | `trunc_sat_u<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result unsigned, and saturating.
 | `*.extend*` | `extend*<>(val)` | - | Maybe we can infer all types?
 | `*.convert*` | `convert*<>(val)` | - | Maybe we can infer all types?
 | `*.demote*` | `demote*<>(val)` | - | Maybe we can infer all types?
