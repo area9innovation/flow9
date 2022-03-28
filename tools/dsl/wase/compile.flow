@@ -1,7 +1,7 @@
 import tools/dsl/dsl_runtime_common;
 import tools/dsl/registry/dsl_populate;
 
-import tools/dsl/wase/wase;
+import tools/dsl/wase/wase2wasm;
 import formats/wasm/wasm_encode;
 
 export {
@@ -53,6 +53,25 @@ dsl2wase(d : DslAst) -> Wase {
 				});
 
 				WaseFunction(fnname, exportid(1, fnname), fnname == "main", fntype, fargs, expr(4), rec(5))
+			} else if (name == "import_table") {
+				// id reftype min max module name space				
+				fname = s(0);
+				tabletype = waseType(args[1]);
+				minimum = i(2);
+				maximum = switch (args[3]) {
+					DslInt(m): m;
+					default: 0;
+				};
+				module = s(4);
+				mname = s(5);
+				tt = if (tabletype == DslString("func")) WasmFuncRef()
+					else if (tabletype == DslString("extern")) WasmExternRef()
+					else {
+						println("Only support func or extern in import table");WasmFuncRef()
+					};
+				
+				WaseImportTable(fname, module, mname, tt, minimum, maximum, rec(6))
+
 			} else if (name == "import_fun") {
 				// id type module name scope
 				fnname = s(0);
@@ -83,7 +102,16 @@ dsl2wase(d : DslAst) -> Wase {
 					switch (value) {
 						DslInt(v): {
 							concat(acc,
-								wasmI32Const2bytes(WasmI32Const(v))
+								if (v < 256) {[v]}
+								else {
+									// OK, we go for unsigned 32-bit
+									[
+										bitAnd(v, 0xff),
+										bitUshr(bitAnd(v, 0xff00), 8),
+										bitUshr(bitAnd(v, 0xff0000), 16),
+										bitUshr(bitAnd(v, 0xff000000), 24),
+									]
+								}
 							);
 						}
 						DslDouble(v): {
@@ -147,6 +175,21 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 		DslNode(name, args, pos): {
 			if (name == "int" || name == "double") {
 				dsl2WaseInstruction(acc, args[0])
+			} else if (name == "i64") {
+				uint = string2uint64(getDslString(args[0]));
+				arrayPush(acc, WasmI64Const(uint))
+			} else if (name == "hex32") {
+				hint = parseHex(getDslString(args[0]));
+				arrayPush(acc, WasmI32Const(hint))
+			} else if (name == "hex64") {
+				hint = hex2uint64(getDslString(args[0]));
+				arrayPush(acc, WasmI64Const(hint))
+			} else if (name == "hexf32") {
+				hint = parseHex(getDslString(args[0]));
+				arrayPush(acc, WasmF32Const(hint))
+			} else if (name == "hexf64") {
+				hint = hex2uint64(getDslString(args[0]));
+				arrayPush(acc, WasmF64ConstHex(hint))
 			} else if (name == "brace") {
 				dslBrace2WaseInstruction(acc, d);
 			} else if (name == "block") {
@@ -172,6 +215,11 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 				vname = getDslString(args[0]);
 				nacc = dsl2WaseInstruction(acc, args[1]);
 				arrayPush(nacc, WaseSet(vname));
+			} else if (name == "tee") {
+				// (id, exp)
+				vname = getDslString(args[0]);
+				nacc = dsl2WaseInstruction(acc, args[1]);
+				arrayPush(nacc, WaseTee(vname));
 
 			} else if (name == "call") {
 				fnadded = dsl2WaseInstruction(acc, args[0]);
@@ -225,15 +273,6 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 					println("TODO: Figure out div of type " + toString(restype));
 					nacc;
 				}
-			} else if (name == "divu") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
-				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Div_u())
-				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Div_u())
-				else {
-					println("TODO: Figure out unsigned div of type " + toString(restype));
-					nacc;
-				}
 			} else if (name == "mod") {
 				restype = dsl2WasmValType(args[2]);
 				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
@@ -241,15 +280,6 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Rem_s())
 				else {
 					println("TODO: Figure out modulo of type " + toString(restype));
-					nacc;
-				}
-			} else if (name == "modu") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
-				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Rem_u())
-				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Rem_u())
-				else {
-					println("TODO: Figure out unsigned modulo of type " + toString(restype));
 					nacc;
 				}
 			} else if (name == "negate") {
@@ -568,7 +598,76 @@ dslWasmOp2WaseInstruction(id : string, pars : [DslAst], types : [DslAst], retTyp
 		if (valType == WasmI32Type()) WasmI32Eqz()
 		else if (valType == WasmI64Type()) WasmI64Eqz()
 		else error();
-
+	} else if (id == "div_u") {
+		if (rtype == WasmI32Type()) WasmI32Div_u()
+		else if (rtype == WasmI64Type()) WasmI64Div_u()
+		else error();
+	} else if (id == "rem_u") {
+		if (rtype == WasmI32Type()) WasmI32Rem_u()
+		else if (rtype == WasmI64Type()) WasmI64Rem_u()
+		else error();
+	} else if (id == "wrap") { WasmI32WrapI64();
+	} else if (id == "trunc_s") {
+		valType = wtypes[0];
+		if (rtype == WasmI32Type() && valType == WasmF32Type()) WasmI32TruncF32_s()
+		else if (rtype == WasmI32Type() && valType == WasmF64Type()) WasmI32TruncF64_s()
+		else if (rtype == WasmI64Type() && valType == WasmF32Type()) WasmI64TruncF32_s()
+		else if (rtype == WasmI64Type() && valType == WasmF64Type()) WasmI64TruncF64_s()
+		else error();
+	} else if (id == "trunc_u") {
+		valType = wtypes[0];
+		if (rtype == WasmI32Type() && valType == WasmF32Type()) WasmI32TruncF32_u()
+		else if (rtype == WasmI32Type() && valType == WasmF64Type()) WasmI32TruncF64_u()
+		else if (rtype == WasmI64Type() && valType == WasmF32Type()) WasmI64TruncF32_u()
+		else if (rtype == WasmI64Type() && valType == WasmF64Type()) WasmI64TruncF64_u()
+		else error();
+	} else if (id == "trunc_sat_s") {
+		valType = wtypes[0];
+		if (rtype == WasmI32Type() && valType == WasmF32Type()) WasmI32Trunc_sat_f32_s()
+		else if (rtype == WasmI32Type() && valType == WasmF64Type()) WasmI32Trunc_sat_f64_s()
+		else if (rtype == WasmI64Type() && valType == WasmF32Type()) WasmI64Trunc_sat_f32_s()
+		else if (rtype == WasmI64Type() && valType == WasmF64Type()) WasmI64Trunc_sat_f64_s()
+		else error();
+	} else if (id == "trunc_sat_u") {
+		valType = wtypes[0];
+		if (rtype == WasmI32Type() && valType == WasmF32Type()) WasmI32Trunc_sat_f32_u()
+		else if (rtype == WasmI32Type() && valType == WasmF64Type()) WasmI32Trunc_sat_f64_u()
+		else if (rtype == WasmI64Type() && valType == WasmF32Type()) WasmI64Trunc_sat_f32_u()
+		else if (rtype == WasmI64Type() && valType == WasmF64Type()) WasmI64Trunc_sat_f64_u()
+		else error();
+	} else if (id == "extend_s") { WasmI64ExtendI32_s();
+	} else if (id == "extend_u") { WasmI64ExtendI32_u();
+	} else if (id == "extend8_s") {
+		if (rtype == WasmI32Type()) WasmI32Extend8_s()
+		else if (rtype == WasmI64Type()) WasmI64Extend8_s()
+		else error();
+	} else if (id == "extend16_s") {
+		if (rtype == WasmI32Type()) WasmI32Extend16_s()
+		else if (rtype == WasmI64Type()) WasmI64Extend16_s()
+		else error();
+	} else if (id == "convert_s") {
+		valType = wtypes[0];
+		if (rtype == WasmF32Type() && valType == WasmI32Type()) WasmF32ConvertI32_s()
+		else if (rtype == WasmF32Type() && valType == WasmI64Type()) WasmF32ConvertI64_s()
+		else if (rtype == WasmF64Type() && valType == WasmI32Type()) WasmF64ConvertI32_s()
+		else if (rtype == WasmF64Type() && valType == WasmI64Type()) WasmF64ConvertI64_s()
+		else error();
+	} else if (id == "convert_u") {
+		valType = wtypes[0];
+		if (rtype == WasmF32Type() && valType == WasmI32Type()) WasmF32ConvertI32_u()
+		else if (rtype == WasmF32Type() && valType == WasmI64Type()) WasmF32ConvertI64_u()
+		else if (rtype == WasmF64Type() && valType == WasmI32Type()) WasmF64ConvertI32_u()
+		else if (rtype == WasmF64Type() && valType == WasmI64Type()) WasmF64ConvertI64_u()
+		else error();
+	} else if (id == "promote") { WasmF64Promotef32();
+	} else if (id == "demote") { WasmF32Demotef64();
+	} else if (id == "reinterpret") {
+		valType = wtypes[0];
+		if (rtype == WasmF32Type() && valType == WasmI32Type()) WasmF32ReinterpretI32()
+		else if (rtype == WasmI32Type() && valType == WasmF32Type()) WasmI32ReinterpretF32()
+		else if (rtype == WasmF64Type() && valType == WasmI64Type()) WasmF64ReinterpretI64()
+		else if (rtype == WasmI64Type() && valType == WasmF64Type()) WasmI64ReinterpretF64()
+		else error();
 	} else if (id == "lt_u") { 
 		if (wtypes[0] != wtypes[1]) error()
 		else if (wtypes[0] == WasmI32Type()) WasmI32Lt_u()
@@ -664,6 +763,24 @@ dslWasmOp2WaseInstruction(id : string, pars : [DslAst], types : [DslAst], retTyp
 	} else if (id == "memory.copy") {
 		WasmMemoryCopy();
 
+	} else if (id == "table.get") {
+		tableid = getDslString(pars[0]);
+		valType = wtypes[0];
+		if (valType == WasmI32Type()) WaseGet(tableid)
+		else error();
+	} else if (id == "table.set") {
+		tableid = getDslString(pars[0]);
+		WaseSet(tableid)
+	} else if (id == "table.grow") {
+		WaseTableGrow(getDslString(pars[0]))
+	} else if (id == "table.size") {
+		WaseTableSize(getDslString(pars[0]))
+	} else if (id == "table.copy") {
+		WaseTableCopy(getDslString(pars[0]), getDslString(pars[1]))
+	} else if (id == "table.fill") {
+		WaseTableFill(getDslString(pars[0]))
+		
+		
 	} else {
 		println("TODO. Compile wasm op " + id);
 		WasmUnreachable();

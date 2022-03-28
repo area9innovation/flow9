@@ -92,6 +92,17 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 				// Used in functions. The type is the second child
 				getChildType(1)
 
+			} else if (name == "import_table") {
+				// id reftype min max module name space				
+				fname = getDslString(args[0]);
+				tabletype = getChildType(1);
+
+				getChildType(3);
+
+				// Record the table type
+				acc.env := setTree(^(acc.env), fname, tabletype);
+				getChildType(6);
+
 			} else if (name == "import_fun") {
 				// id type module name scope
 				fname = getDslString(args[0]);
@@ -133,6 +144,16 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 				DslString("i32");
 			} else if (name == "double") {
 				DslString("f64");
+			} else if (name == "i64") {
+				DslString("i64");
+			} else if (name == "hex32") {
+				DslString("i32");
+			} else if (name == "hexf32") {
+				DslString("f32");
+			} else if (name == "hex64") {
+				DslString("i64");
+			} else if (name == "hexf64") {
+				DslString("f64");
 
 			} else if (name == "let") {
 				// (id, type, exp, body)
@@ -167,6 +188,17 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 					acc.onError(node, "Unknown var " + vname + " when type checking");
 					DslInt(0);
 				}
+			} else if (name == "tee") {
+				vname = getDslString(args[0]);
+				mtype = lookupTree(^(acc.env), vname);
+				valtype = getChildType(1);
+				mtype ?? {
+					acc.unifyTypes(acc, mtype, valtype);
+					valtype;
+				} : {
+					acc.onError(node, "Unknown var " + vname + " when type checking");
+					DslInt(0);
+				}
 
 			} else if (name == "wasm_op") {
 				// id, parameters, args
@@ -175,7 +207,7 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 				getChildType(1);
 				opargs = getChildType(2);
 
-				typecheckWaseInstruction(acc, op, pars, opargs, getChildType);
+				typecheckWaseInstruction(acc, op, list2array(pars), opargs, getChildType);
 
 			} else if (name == "and" || name == "or" || name == "xor") {
 				left = getChildType(0);
@@ -187,7 +219,7 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 				getChildType(0);
 
 			} else if (name == "add" || name == "sub" || name == "mul" 
-					|| name == "divu" || name == "div" || name == "mod" || name == "modu") {
+					|| name == "div" || name == "mod") {
 				left = getChildType(0);
 				right = getChildType(1);
 				acc.unifyTypes(acc, left, right);
@@ -246,13 +278,15 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 	}
 }
 
-typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : List<DslAst>, opargs : DslAst, getChildType : (int) -> DslAst) -> DslAst {
+typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : [DslAst], opargs : DslAst, getChildType : (int) -> DslAst) -> DslAst {
 	i32 = DslString("i32");
+	i64 = DslString("i64");
 	infer = \ -> makeDslTypeVar(acc);
 	list0 = DslList(makeList());
 	list1 = \t1 -> DslList(makeList1(t1));
 	list2 = \t1, t2 -> DslList(Cons(t2, makeList1(t1)));
 	list3 = \t1, t2, t3 -> DslList(Cons(t3, Cons(t2, makeList1(t1))));
+
 	if (op == "store" || op == "store8" || op == "store16" || op == "store32") {
 		acc.unifyTypes(acc, opargs, list2(i32, infer()));
 		list0;
@@ -274,7 +308,7 @@ typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : List<DslAst>, opa
 		val = infer();
 		acc.unifyTypes(acc, opargs, list1(val));
 		val;
-	} else if (op == "shl" || op == "shr_s" || op == "shr_u" || op == "rotl" || op == "rotr"
+	} else if (op == "div_u" || op == "rem_u" || op == "shl" || op == "shr_s" || op == "shr_u" || op == "rotl" || op == "rotr"
 			|| op == "min" || op == "max" || op == "copysign") {
 		val = infer();
 		acc.unifyTypes(acc, opargs, list2(val, infer()));
@@ -290,6 +324,28 @@ typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : List<DslAst>, opa
 	} else if (op == "lt_u" || op == "gt_u" || op == "le_u" || op == "ge_u") {
 		acc.unifyTypes(acc, opargs, list2(infer(), infer()));
 		i32;
+	} else if (op == "wrap") {
+		acc.unifyTypes(acc, opargs, list1(i64));
+		i32;
+	} else if (op == "trunc_s" || op == "trunc_u" || op == "trunc_sat_s" || op == "trunc_sat_u") {
+		acc.unifyTypes(acc, opargs, list1(infer()));
+		infer();
+	} else if (op == "extend_s" || op == "extend_u") {
+		acc.unifyTypes(acc, opargs, list1(i32));
+		i64;
+	} else if (op == "extend8_s" || op == "extend16_s") {
+		val = infer();
+		acc.unifyTypes(acc, opargs, list1(val));
+		val;
+	} else if (op == "convert_s" || op == "convert_u" || op == "reinterpret") {
+		acc.unifyTypes(acc, opargs, list1(infer()));
+		infer();
+	} else if (op == "promote") {
+		acc.unifyTypes(acc, opargs, list1(DslString("f32")));
+		DslString("f64");
+	} else if (op == "demote") {
+		acc.unifyTypes(acc, opargs, list1(DslString("f64")));
+		DslString("f32");
 	} else if (op == "drop") {
 		acc.unifyTypes(acc, opargs, list0);
 		list0;
@@ -299,12 +355,11 @@ typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : List<DslAst>, opa
 		resType;
 	} else if (op == "ref.null") {
 		acc.unifyTypes(acc, opargs, list0);
-		par = list2array(pars);
-		if (length(par) != 1) {
+		if (length(pars) != 1) {
 			println("ref.null requires a parameter");
 			DslString("func");
 		} else {
-			tnode = getDslNode(par[0]);
+			tnode = getDslNode(pars[0]);
 			type = tnode.args[0];
 			type
 		}
@@ -321,7 +376,57 @@ typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : List<DslAst>, opa
 	} else if (op == "memory.fill" || op == "memory.copy") {
 		acc.unifyTypes(acc, opargs, list3(i32, i32, i32));
 		list0;
-	
+
+	} else if (op == "table.get") {
+		acc.unifyTypes(acc, opargs, list1(i32));
+
+		if (length(pars) != 1) {
+			println("table.get requires a table id parameter");
+			DslString("func");
+		} else {
+			tableid = getDslString(pars[0]);
+			mtype = lookupTree(^(acc.env), tableid);
+			mtype ?? {
+				mtype
+			} : {
+				println("Unknown table.get table id '" + tableid + "'");
+				DslString("func");
+			}
+		};
+	} else if (op == "table.grow") {
+		val = infer();
+		acc.unifyTypes(acc, opargs, list2(val, i32));
+		if (length(pars) != 1) {
+			println("table.grow requires a table id parameter");
+		}
+		i32;
+	} else if (op == "table.size") {
+		acc.unifyTypes(acc, opargs, list0);
+		if (length(pars) != 1) {
+			println("table.size requires a table id parameter");
+		}
+		i32;
+	} else if (op == "table.set") {
+		val = infer();
+		acc.unifyTypes(acc, opargs, list2(i32, val));
+		if (length(pars) != 1) {
+			println("table.set requires a table id parameter");
+		}
+		list0;
+	} else if (op == "table.copy") {
+		acc.unifyTypes(acc, opargs, list3(i32, i32, i32));
+		if (length(pars) != 2) {
+			println("table.copy requires 2 table id parameters");
+		}
+		list0;
+	} else if (op == "table.fill") {
+		val = infer();
+		acc.unifyTypes(acc, opargs, list3(i32, val, i32));
+		if (length(pars) != 1) {
+			println("table.fill requires a table id parameter");
+		}
+		list0;
+
 	} else {
 		println("TODO: What is the type of  '" + op  + "' " + toString(pars) + " : " + prettyDsl(opargs));
 		DslList(makeList());

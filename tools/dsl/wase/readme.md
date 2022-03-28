@@ -100,7 +100,7 @@ Some examples:
 	// Exports this global to the host with the name "secret"
 	export secret : i32 = 0xdeadbeaf;
 	// Exports this mutable global with the name "changes"
-	export changes : mutable f32 = 6.1341;
+	export changes : mutable f64 = 1.023;
 	// Exports this global to the host with the name "external"
 	export "external" internal : i32 = 1;
 
@@ -185,7 +185,7 @@ You can place constant data in the output file using syntax like this:
 	// Strings are placed as UTF8 but with the length first
 	data "utf8 string is very comfortable";
 
-	// We can have a sequence of data. The ints are encoded as LEB-128
+	// We can have a sequence of data. Each int is a byte.
 	data 1, 2, 3, "text", 3.0;
 
 	// Moving the data into offset 32 of the memory
@@ -197,23 +197,39 @@ TODO:
 - Add syntax for passive data, which is not automatically copied into memory
   until memory.init is called.
 
-- Add syntax for raw bytes, or change ints to be bytes?
-
 - Add support for naming the data index for memory.init and data.drop
 
 - Capture the address of data segments?
 
 ## Tables
 
-TODO: Define syntax for this
+Importing of tables is done like this:
 
-	// Tables
-	import id : table(min, max?)<reftype> from module.name;
+	// Table of functions of min size 1, named module.mytable in the host
+	import mytable : table<func>(1) = module.mytable;
+
+	// Table of externs of min size 5, max size 10, named module.myexterns in the host
+	import myexterns : table<extern>(5 10) = module.myexterns;
+
+TODO:
+- Document the implicit tables for ref.func 
+- Automatically construct table for indirect calls
 
 # Expressions
 
 The body of globals and functions are expressions. There are no
 statements, but only expressions. The syntax is pretty standard:
+
+	h32 : i32 = 1;	// Int constants are i32
+	h32 : i32 = 0xDEADBEEF; // Hex notation
+
+	h64 : i64 = 1w; // w suffix for i64
+	h64 : i64 = 0x12345678DEADBEEFw; // Hex notation with suffix w for i64
+
+	fl32 : f32 = 0xDEADBEEFn; // Binary representation
+
+	fl64 : f64 = 10.0; // Floats are f64 by default
+	fl64 : f64 = 0x2345678DEADBEEFh; // Binary representation
 
 	// Let-binding have scope
 	a : i32 = 1;
@@ -224,15 +240,15 @@ statements, but only expressions. The syntax is pretty standard:
 	// Arithmetic, all signed.
 	1 + 2 / 3 * 4 % 5
 
-	// Unsigned divisions and remainder. TODO: Reconsider this syntax and use functions instead
-	1 /u 2 %u 3
+	// f64 arithmetic
+	23.4 + 2.3 * 3.141
 
 	// Bitwise operations
 	1 & 3 | 5 ^ 7
 
 	// Comparisons are signed. Use instructions for unsigned comparisons
-	1 < 5 | 5 >= 2 & a = 2.0
-
+	1 < 5 | 5 >= 2 & a == 2.0 & lt_u<>(b, c) 
+	
 	// Tuples, aka multi-values
 	[1, 2.0, 45]
 
@@ -313,10 +329,12 @@ TODO:
 
 The low-level instructions in Wase have the form
 
-	id<pars>(args)
+	instruction<pars>(args)
 
 where pars are parameters for the operation decided at compile time,
 while args are arguments to the instruction put on the stack.
+
+The instruction has the same name as the corresponding Wasm WAT format.
 
 TODO:
 - Add more instructions from table below
@@ -391,152 +409,151 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 	// Stores the lower 32 bits of the value at the given address
 	store32<>(address, value);
 
-# Comparison of Wasm and Wase
+# Correspondance between Wasm and Wase syntax
 
-67/89 implemented.
+5 instructions plus all v128 SIMD instructions are not implemented yet.
 
 ## Control instructions
 
-9/10 implemented.
+call_indirect not implemented yet.
 
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `block` | `block { exp }`| X | Type is inferred
-| `loop` | `loop { exp }` | X | Type is inferred
-| `if` | `if (cond) exp` | X | Type is inferred
-| `ifelse` | `if (cond) exp else exp` | X  | Type is inferred
-| `unreachable` | `unreachable<>()` | X
-| `nop` | `nop<>()` | X
-| `br` | `break` or `break int` | X |  Default break is 0
-| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X | Default break is 0
-| `return` | `return` or `return exp` | X
-| `call` | `fn(args)` | X
-| `call_indirect` | `call_indirect<table>(args, fnidx)` | -
+| Wasm | Wase | Comments |
+|-|-|-|
+| `block` | `block { exp }`| Type is inferred
+| `loop` | `loop { exp }` | Type is inferred
+| `if` | `if (cond) exp` | Type is inferred
+| `ifelse` | `if (cond) exp else exp` | Type is inferred
+| `unreachable` | `unreachable<>()` |
+| `nop` | `nop<>()` | No operation
+| `br` | `break` or `break int` |  Default break is 0
+| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | Default break is 0
+| `return` | `return` or `return exp` |
+| `call` | `fn(args)` |
+| `call_indirect` | `call_indirect<>(fnidx<id>(), args)` | - | 
 
 ## Reference Instructions
 
-3/3 implemented.
-
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | X | Construct a null function or extern reference
-| `ref.is_null` | `exp is null` | X | Is this function or extern reference null?
-| `ref.func` | `ref.func<id>` | X | Constructs an opaque reference to a named function. Can be used in tables. Automatically constructs a element table for the referenced functions
+| Wasm | Wase | Comments |
+|-|-|-|
+| `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | Construct a null function or extern reference
+| `ref.is_null` | `exp is null` | Is this function or extern reference null?
+| `ref.func` | `ref.func<id>` | Constructs an opaque reference to a named function. Can be used in tables. Automatically constructs a element table for the referenced functions
 
 ##  Parametric Instructions
 
-2/2 implemented.
-
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `drop` | `drop<>` or implicit in sequence `{1;2}` | X | The explicit `drop<>()` variant causes stack errors, since Wase is designed to be stack-safe.
-| `select` | `select<>(cond, then, else)` | X | This is an eager `if`, where both `then` and `else` are always evaluated, but only one chosen based on the condition. This is branch-less so can be more efficient than normal `if`. (Automatically chooses the ref instruction version based on the type.)
+| Wasm | Wase | Comments |
+|-|-|-|
+| `drop` | `drop<>` or implicit in sequence `{1;2}` | The explicit `drop<>()` variant causes stack errors, since Wase is designed to be stack-safe.
+| `select` | `select<>(cond, then, else)` | This is an eager `if`, where both `then` and `else` are always evaluated, but only one chosen based on the condition. This is branch-less so can be more efficient than normal `if`. (Automatically chooses the ref instruction version based on the type.)
 
 ## Variable Instructions
 
-4/5 implemented.
-
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `local.get` | `id` | X
-| `local.set` | `id := exp` | X
-| `local.tee` | `local.tee<id>()` | -
-| `global.get` | `id` | X
-| `global.set` | `id := exp` | X
+| Wasm | Wase | Comments |
+|-|-|-|
+| `local.get` | `id`
+| `local.set` | `id := exp`
+| `local.tee` | `id ::= exp` | Sets the value like set, but returns the result as well, like in C
+| `global.get` | `id`
+| `global.set` | `id := exp`
 
 ## Table Instructions
 
-0/7 implemented.
+table.init and elem.drop not implemented yet. Requires elements first.
 
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `table.get` | `table.get<id>(index)` | - | Retrieves a value from a table slot. The id is omittable and default to 0
-| `table.set` | `table.set<id>(index, value)` | - | Sets a value in a table slot. id is default 0.
-| `table.size` | `table.size<id>()` | - | Returns the size of a table. id is default 0.
-| `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots. id is default 0.
-| `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | - | Copies `elems` slots from one area of a table `id1` to another table `id2` 
-| `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements from an element section
-| `elem.drop` | `elem.drop<id>()` | - | Discards the memory in an element segment.
+| Wasm | Wase| Comments |
+|-|-|-|
+| `table.get` | `table.get<id>(index : i32)` | Retrieves a value from a table slot. The id the name of a table given by import.table
+| `table.set` | `table.set<id>(index : i32, value : func/extern)` | Sets a value in a table slot.
+| `table.size` | `table.size<id>()` | Returns the size of a table.
+| `table.grow` | `table.grow<id>(init, size)` | Changes the size of a table, initializing with the `init` value in empty slots. Returns previous size.
+| `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | Copies `elems` slots from one area of a table `id1` to another table `id2` 
+| `table.fill` | `table.fill<id>(elements, value, dest)` | Sets `elements` slots start at `dest`to the  `value`
+| `table.init` | `table.init<tableid, elemid>(elements : i32, source : i32, dest : i32)` | Initializes a table with `elements` slots from an element section
+| `elem.drop` | `elem.drop<id>()` | Discards the memory in an element segment.
 
 ## Memory Instructions
 
-8/10 implemented.
+memory.init and data.drop not implemented yet. Requires data indexing.
 
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `*.load` | `load<>(address)` | X | The type is inferred from the use. TODO: Support offset and alignment
-| `*.load(8,16,32)_(s,u)` | `load(8,16,32)_(s,u)<>(address)` | X | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
-| `*.store` | `store<>(address, value)` | X | The width is inferred from the value.  TODO: Support offset and alignment
-| `*.store(8,16,32)` | `store(8,16,32)<>(address, value)` | X | Store the lower N bits of a value. The width is inferred from the value
-| `memory.size` | `memory.size<>()` | X | Returns the unsigned size of memory in terms of pages (64k)
-| `memory.grow` | `memory.grow<>(size)` | X | Increases the memory by `size` pages. Returns the previous size of memory, or -1 if memory can not increase
-| `memory.copy` | `memory.copy<>(bytes, source, dest)` | X | Copy `bytes` bytes from source to destination
-| `memory.fill` | `memory.fill<>(bytes, bytevalue, dest)` | X | Fills `bytes` bytes with the given byte value at `dest`
-| `memory.init` | `memory.init<id>(bytes, source, dest)` | - | Copies `bytes` from a data section `<id>` at address `source` into memory starting at address `dest`
-| `data.drop` | `data.drop<id>()` | - | Frees the memory of data segment <id>
+| Wasm | Wase | Comments |
+-|-|-|
+| `*.load` | `load<>(address)` | The type is inferred from the use. TODO: Support offset and alignment
+| `*.load(8,16,32)_(s,u)` | `load(8,16,32)_(s,u)<>(address)` | Load the lower N bits from a memory address. _s implies sign-extension. The type is inferred from the use
+| `*.store` | `store<>(address, value)` | The width is inferred from the value.  TODO: Support offset and alignment
+| `*.store(8,16,32)` | `store(8,16,32)<>(address, value)` | Store the lower N bits of a value. The width is inferred from the value
+| `memory.size` | `memory.size<>()` | Returns the unsigned size of memory in terms of pages (64k)
+| `memory.grow` | `memory.grow<>(size)` | Increases the memory by `size` pages. Returns the previous size of memory, or -1 if memory can not increase
+| `memory.copy` | `memory.copy<>(bytes, source, dest)` | Copy `bytes` bytes from source to destination
+| `memory.fill` | `memory.fill<>(bytes, bytevalue, dest)` | Fills `bytes` bytes with the given byte value at `dest`
+| `memory.init` | `memory.init<id>(bytes, source, dest)` | Copies `bytes` from a data section `<id>` at address `source` into memory starting at address `dest`
+| `data.drop` | `data.drop<id>()` | Frees the memory of data segment <id>
 
 ## Numeric Instructions
 
-41/52 implemented.
-
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
-| `i32.const` | `1` | X
-| `i64.const` | `2l` | - | Syntax not decided
-| `f32.const` | `1.2f` | - | Syntax not decided
-| `f64.const` | `3.1` | X
-| `*.clz` | `clz<>(exp)` | X | Returns the number of leading zero bits. The width is inferred
-| `*.ctz` | `ctz<>(exp)` | X | Returns the number of trailing zero bits. The width is inferred
-| `*.popcnt` | `popcnt<>(exp)` | X | Returns the number of 1-bits. The width is inferred
-| `*.add` | `<exp> + <exp>` | X | The width is inferred
-| `*.sub` | `<exp> - <exp>` | X | The width is inferred
-| `*.mul` | `<exp> * <exp>` | X | The width is inferred
-| `*.div_s` | `<exp> / <exp>` | X | Signed division. Rounds towards zero. The width is inferred
-| `*.div_u` | `<exp> /u <exp>` | X | Unsigned division. The width is inferred
-| `*.div` | `<exp> / <exp>` | X | Signed division. The width is inferred
-| `*.rem_s` | `<exp> % <exp>` | X | Signed remainder. The width is inferred
-| `*.rem_u` | `<exp> %u <exp>` | X | Unsigned remainder. The width is inferred
-| `*.and` | `<exp> & <exp>` | X | Bitwise and. The width is inferred
-| `*.or` | `<exp> \| <exp>` | X | Bitwise or. The width is inferred
-| `*.xor` | `<exp> ^ <exp>` | X | Bitwise xord. The width is inferred
-| `*.shl` | `shl<>(val, bits)` | X | Shift left, i.e. multiplication of power of two. The width is inferred
-| `*.shr_s` | `shr_s<>(val, bits)` | X | Signed right shift. Division by power of two, rounding down. The width is inferred
-| `*.shr_u` | `shr_u<>(val, bits)` | X | Unsigned right shift. Division by power of two. The width is inferred
-| `*.rotl` | `rotl<>(val, bits)` | X | Rotate left. Bits "loop" around. The width is inferred
-| `*.rotr` | `rotr<>(val, bits)` | X | Rotate right. Bits "loop" around. The width is inferred
-| `*.abs` | `abs<>(val)` | X | Absolute value of floats. The width is inferred
-| `*.neg` | -2.0 | X | Negate floating point value. The width is inferred
-| `*.ceil` | `ceil<>(val)` | X | Rounds up to the nearest integer. The width is inferred
-| `*.floor` | `floor<>(val)` | X | Rounds down to the nearest integer. The width is inferred
-| `*.trunc` | `trunc<>(val)` | X | Discard the fractional part, rounding to integer towards zero. The width is inferred
-| `*.nearest` | `nearest<>(val)` | X | Round to the nearest integer, with ties rounded toward the value with an even least-significant digit. The width is inferred
-| `*.sqrt` | `sqrt<>(val)` | X | Square root. The width is inferred
-| `*.min` | `min<>(val, val)` | X | Minimum of two values. NaN wins. The width is inferred
-| `*.max` | `max<>(val, val)` | X | Maximum of two values. Nan wins. The width is inferred
-| `*.copysign` | `copysign<>(val, sign)` | X | Copies the sign from `sign` into the value of `val`. The width is inferred
-| `*.eqz` | `eqz<>(val)` | - | Is the value equal to 0? The width is inferred
-| `*.eq` | `val == val` | X | The width is inferred
-| `*.ne` | `val != val` | X | The width is inferred
-| `*.lt_s` | `val < val` | X | The width is inferred
-| `*.lt_u` | `lt_u<>(val, val)` | X | Unsigned comparison. The width is inferred
-| `*.gt_s` | `val > val` | X | The width is inferred
-| `*.gt_u` | `gt_u<>(val, val)` | X | Unsigned comparison. The width is inferred
-| `*.le_s` | `val <= val` | X | The width is inferred
-| `*.le_u` | `le_u<>(val, val)` | X | Unsigned comparison. The width is inferred
-| `*.ge_s` | `val >= val` | X | The width is inferred
-| `*.ge_u` | `ge_u<>(val, val)` | X | Unsigned comparison. The width is inferred
-| `i32.wrap_i64` | `wrap_i64<>(val)` | - | Maybe we can infer all types?
-| `*.trunc*` | `trunc*<>(val)` | - | Maybe we can infer all types?
-| `*.trunc_sat*` | `trunc_sat*<>(val)` | - | Maybe we can infer all types?
-| `*.extend*` | `extend*<>(val)` | - | Maybe we can infer all types?
-| `*.convert*` | `convert*<>(val)` | - | Maybe we can infer all types?
-| `*.demote*` | `demote*<>(val)` | - | Maybe we can infer all types?
-| `*.promote*` | `promote*<>(val)` | - | Maybe we can infer all types?
-| `*.reinterpret*` | `reinterpret*<>(val)` | - | Maybe we can infer all types?
+| Wasm | Wase | Comments |
+|-|-|-|
+| `i32.const` | `1` or `0x1234`
+| `i64.const` | `2w` or `0x1234w`
+| `f32.const` | `0x1234n` | We do not have natural, number syntax for f32
+| `f64.const` | `3.1` or `0x123h`
+| `*.clz` | `clz<>(exp)` | Returns the number of leading zero bits. The width is inferred
+| `*.ctz` | `ctz<>(exp)` | Returns the number of trailing zero bits. The width is inferred
+| `*.popcnt` | `popcnt<>(exp)` | Returns the number of 1-bits. The width is inferred
+| `*.add` | `<exp> + <exp>` | The width is inferred
+| `*.sub` | `<exp> - <exp>` | The width is inferred
+| `*.mul` | `<exp> * <exp>` | The width is inferred
+| `*.div_s` | `<exp> / <exp>` | Signed division. Rounds towards zero. The width is inferred
+| `*.div_u` | `div_u<>(<exp>,  <exp>)` | Unsigned division. The width is inferred
+| `*.div` | `<exp> / <exp>` | Signed division. The width is inferred
+| `*.rem_s` | `<exp> % <exp>` | Signed remainder. The width is inferred
+| `*.rem_u` | `rem_u<>(<exp>,  <exp>)` | Unsigned remainder. The width is inferred
+| `*.and` | `<exp> & <exp>` | Bitwise and. The width is inferred
+| `*.or` | `<exp> \| <exp>` | Bitwise or. The width is inferred
+| `*.xor` | `<exp> ^ <exp>` | Bitwise xord. The width is inferred
+| `*.shl` | `shl<>(val, bits)` | Shift left, i.e. multiplication of power of two. The width is inferred
+| `*.shr_s` | `shr_s<>(val, bits)` | Signed right shift. Division by power of two, rounding down. The width is inferred
+| `*.shr_u` | `shr_u<>(val, bits)` | Unsigned right shift. Division by power of two. The width is inferred
+| `*.rotl` | `rotl<>(val, bits)` | Rotate left. Bits "loop" around. The width is inferred
+| `*.rotr` | `rotr<>(val, bits)` | Rotate right. Bits "loop" around. The width is inferred
+| `*.abs` | `abs<>(val)` | Absolute value of floats. The width is inferred
+| `*.neg` | -2.0 | Negate floating point value. The width is inferred
+| `*.ceil` | `ceil<>(val)` | Rounds up to the nearest integer. The width is inferred
+| `*.floor` | `floor<>(val)` | Rounds down to the nearest integer. The width is inferred
+| `*.trunc` | `trunc<>(val)` | Discard the fractional part, rounding to integer towards zero. The width is inferred
+| `*.nearest` | `nearest<>(val)` | Round to the nearest integer, with ties rounded toward the value with an even least-significant digit. The width is inferred
+| `*.sqrt` | `sqrt<>(val)` | Square root. The width is inferred
+| `*.min` | `min<>(val, val)` | Minimum of two values. NaN wins. The width is inferred
+| `*.max` | `max<>(val, val)` | Maximum of two values. Nan wins. The width is inferred
+| `*.copysign` | `copysign<>(val, sign)` | Copies the sign from `sign` into the value of `val`. The width is inferred
+| `*.eqz` | `eqz<>(val)` | Is the value equal to 0? The width is inferred
+| `*.eq` | `val == val` | The width is inferred
+| `*.ne` | `val != val` | The width is inferred
+| `*.lt_s` | `val < val` | The width is inferred
+| `*.lt_u` | `lt_u<>(val, val)` | Unsigned comparison. The width is inferred
+| `*.gt_s` | `val > val` | The width is inferred
+| `*.gt_u` | `gt_u<>(val, val)` | Unsigned comparison. The width is inferred
+| `*.le_s` | `val <= val` | The width is inferred
+| `*.le_u` | `le_u<>(val, val)` | Unsigned comparison. The width is inferred
+| `*.ge_s` | `val >= val` | The width is inferred
+| `*.ge_u` | `ge_u<>(val, val)` | Unsigned comparison. The width is inferred
+| `i32.wrap_i64` | `wrap<>(val)` | Takes lower 32 bits of an i64.
+| `*.trunc*_s` | `trunc_s<>(val)` | Converts f32 or f64 to i32 or i64, considering the result signed.
+| `*.trunc*_u` | `trunc_u<>(val)` | Converts f32 or f64 to i32 or i64, considering the result unsigned.
+| `*.trunc_sat*_s` | `trunc_sat_s<>(val)` | Converts f32 or f64 to i32 or i64, considering the result signed, saturating.
+| `*.trunc_sat*_u` | `trunc_sat_u<>(val)` | Converts f32 or f64 to i32 or i64, considering the result unsigned, and saturating.
+| `*.extend_i32_s` | `extend_s<>(val)` | Lifts a i32 to a i64, as signed.
+| `*.extend_i32_u` | `extend_u<>(val)` | Lifts a i32 to a i64, as unsigned.
+| `*.extend8_s` | `extend8_s<>(val)` | Lifts a byte to a i32/i64, as signed. The val is the same type as the result
+| `*.extend16_s` | `extend16_s<>(val)` | Lifts 16 bits to a i32/i64, as signed.  The val is the same type as the result
+| `*.convert*_s` | `convert_s<>(val)` | Lifts signed i32/i64 to f32/f64.
+| `*.convert*_u` | `convert_u<>(val)` | Lifts unsigned i32/i64 to d32/f64.
+| `*.demote_f64` | `demote*<>(val)` | Lowers a f64 to f32
+| `*.promote_f32` | `promote*<>(val)` | Lifts a f32 to a f64
+| `*.reinterpret*` | `reinterpret<>(val)` | Taking bit pattern of i32/i64/f32/f64 and interpret as f32/f64/i32/i64 correspondingly.
 
 ## **Vector Instructions**
 
 None of these are implemented yet.
 
-| Wasm | Wase | Implemented | Comments |
-|-|-|-|-|
+| Wasm | Wase | Comments |
+|-|-|-|
