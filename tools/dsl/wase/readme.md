@@ -229,15 +229,15 @@ statements, but only expressions. The syntax is pretty standard:
 	// Arithmetic, all signed.
 	1 + 2 / 3 * 4 % 5
 
-	// Unsigned divisions and remainder. TODO: Reconsider this syntax and use functions instead
-	1 /u 2 %u 3
+	// f64 arithmetic
+	23.4 + 2.3 * 3.141
 
 	// Bitwise operations
 	1 & 3 | 5 ^ 7
 
 	// Comparisons are signed. Use instructions for unsigned comparisons
-	1 < 5 | 5 >= 2 & a = 2.0
-
+	1 < 5 | 5 >= 2 & a == 2.0 & lt_u<>(b, c) 
+	
 	// Tuples, aka multi-values
 	[1, 2.0, 45]
 
@@ -318,10 +318,12 @@ TODO:
 
 The low-level instructions in Wase have the form
 
-	id<pars>(args)
+	instruction<pars>(args)
 
 where pars are parameters for the operation decided at compile time,
 while args are arguments to the instruction put on the stack.
+
+The instruction has the same name as the corresponding Wasm WAT format.
 
 TODO:
 - Add more instructions from table below
@@ -396,7 +398,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 	// Stores the lower 32 bits of the value at the given address
 	store32<>(address, value);
 
-# Comparison of Wasm and Wase
+# Correspondance between Wasm and Wase syntax
 
 73/90 implemented.
 
@@ -416,7 +418,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | X | Default break is 0
 | `return` | `return` or `return exp` | X
 | `call` | `fn(args)` | X
-| `call_indirect` | `call_indirect<table>(fnidx, args)` | -
+| `call_indirect` | `call_indirect<>(fnidx<id>(), args)` | - | 
 
 ## Reference Instructions
 
@@ -498,10 +500,10 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.sub` | `<exp> - <exp>` | X | The width is inferred
 | `*.mul` | `<exp> * <exp>` | X | The width is inferred
 | `*.div_s` | `<exp> / <exp>` | X | Signed division. Rounds towards zero. The width is inferred
-| `*.div_u` | `<exp> /u <exp>` | X | Unsigned division. The width is inferred
+| `*.div_u` | `div_u<>(<exp>,  <exp>)` | X | Unsigned division. The width is inferred
 | `*.div` | `<exp> / <exp>` | X | Signed division. The width is inferred
 | `*.rem_s` | `<exp> % <exp>` | X | Signed remainder. The width is inferred
-| `*.rem_u` | `<exp> %u <exp>` | X | Unsigned remainder. The width is inferred
+| `*.rem_u` | `rem_u<>(<exp>,  <exp>)` | X | Unsigned remainder. The width is inferred
 | `*.and` | `<exp> & <exp>` | X | Bitwise and. The width is inferred
 | `*.or` | `<exp> \| <exp>` | X | Bitwise or. The width is inferred
 | `*.xor` | `<exp> ^ <exp>` | X | Bitwise xord. The width is inferred
