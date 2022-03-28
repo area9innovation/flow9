@@ -400,11 +400,11 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Correspondance between Wasm and Wase syntax
 
-73/95 implemented.
+7 instructions plus all v128 SIMD instructions are not implemented yet.
 
 ## Control instructions
 
-9/10 implemented.
+call_indirect not implemented yet.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -422,8 +422,6 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Reference Instructions
 
-3/3 implemented.
-
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `ref.null` | `ref.null<func>()` or `ref_null<extern>()` | X | Construct a null function or extern reference
@@ -432,16 +430,12 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ##  Parametric Instructions
 
-2/2 implemented.
-
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
 | `drop` | `drop<>` or implicit in sequence `{1;2}` | X | The explicit `drop<>()` variant causes stack errors, since Wase is designed to be stack-safe.
 | `select` | `select<>(cond, then, else)` | X | This is an eager `if`, where both `then` and `else` are always evaluated, but only one chosen based on the condition. This is branch-less so can be more efficient than normal `if`. (Automatically chooses the ref instruction version based on the type.)
 
 ## Variable Instructions
-
-5/5 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -453,7 +447,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Table Instructions
 
-6/8 implemented.
+table.init and elem.drop not implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -468,7 +462,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Memory Instructions
 
-8/10 implemented.
+memory.init and data.drop not implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -485,7 +479,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Numeric Instructions
 
-48/57 implemented.
+i64 and f32 consts not implemented
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -522,7 +516,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.min` | `min<>(val, val)` | X | Minimum of two values. NaN wins. The width is inferred
 | `*.max` | `max<>(val, val)` | X | Maximum of two values. Nan wins. The width is inferred
 | `*.copysign` | `copysign<>(val, sign)` | X | Copies the sign from `sign` into the value of `val`. The width is inferred
-| `*.eqz` | `eqz<>(val)` | - | Is the value equal to 0? The width is inferred
+| `*.eqz` | `eqz<>(val)` | X | Is the value equal to 0? The width is inferred
 | `*.eq` | `val == val` | X | The width is inferred
 | `*.ne` | `val != val` | X | The width is inferred
 | `*.lt_s` | `val < val` | X | The width is inferred
@@ -542,10 +536,11 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.extend_i32_u` | `extend_u<>(val)` | X | Lifts a i32 to a i64, as unsigned.
 | `*.extend8_s` | `extend8_s<>(val)` | X | Lifts a byte to a i32/i64, as signed. The val is the same type as the result
 | `*.extend16_s` | `extend16_s<>(val)` | X | Lifts 16 bits to a i32/i64, as signed.  The val is the same type as the result
-| `*.convert*` | `convert*<>(val)` | - | Maybe we can infer all types?
-| `*.demote*` | `demote*<>(val)` | - | Maybe we can infer all types?
-| `*.promote*` | `promote*<>(val)` | - | Maybe we can infer all types?
-| `*.reinterpret*` | `reinterpret*<>(val)` | - | Maybe we can infer all types?
+| `*.convert*_s` | `convert_s<>(val)` | X | Lifts signed i32/i64 to f32/f64.
+| `*.convert*_u` | `convert_u<>(val)` | X | Lifts unsigned i32/i64 to d32/f64.
+| `*.demote_f64` | `demote*<>(val)` | X | Lowers a f64 to f32
+| `*.promote_f32` | `promote*<>(val)` | X | Lifts a f32 to a f64
+| `*.reinterpret*` | `reinterpret<>(val)` | X | Taking bit pattern of i32/i64/f32/f64 and interpret as f32/f64/i32/i64 correspondingly.
 
 ## **Vector Instructions**
 
