@@ -100,7 +100,7 @@ Some examples:
 	// Exports this global to the host with the name "secret"
 	export secret : i32 = 0xdeadbeaf;
 	// Exports this mutable global with the name "changes"
-	export changes : mutable f32 = 6.1341;
+	export changes : mutable f64 = 1.023;
 	// Exports this global to the host with the name "external"
 	export "external" internal : i32 = 1;
 
@@ -219,6 +219,17 @@ TODO:
 
 The body of globals and functions are expressions. There are no
 statements, but only expressions. The syntax is pretty standard:
+
+	h32 : i32 = 1;	// Int constants are i32
+	h32 : i32 = 0xDEADBEEF; // Hex notation
+
+	h64 : i64 = 1w; // w suffix for i64
+	h64 : i64 = 0x12345678DEADBEEFw; // Hex notation with suffix w for i64
+
+	fl32 : f32 = 0xDEADBEEFn; // Binary representation
+
+	fl64 : f64 = 10.0; // Floats are f64 by default
+	fl64 : f64 = 0x2345678DEADBEEFh; // Binary representation
 
 	// Let-binding have scope
 	a : i32 = 1;
@@ -400,7 +411,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Correspondance between Wasm and Wase syntax
 
-7 instructions plus all v128 SIMD instructions are not implemented yet.
+5 instructions plus all v128 SIMD instructions are not implemented yet.
 
 ## Control instructions
 
@@ -479,14 +490,12 @@ memory.init and data.drop not implemented yet. Requires data indexing.
 
 ## Numeric Instructions
 
-i64 and f32 consts not implemented.
-
 | Wasm | Wase | Comments |
 |-|-|-|
-| `i32.const` | `1`
-| `i64.const` | `2w` | Syntax not decided
-| `f32.const` | `1.2f` | Syntax not decided
-| `f64.const` | `3.1` | X
+| `i32.const` | `1` or `0x1234`
+| `i64.const` | `2w` or `0x1234w`
+| `f32.const` | `0x1234n` | We do not have natural, number syntax for f32
+| `f64.const` | `3.1` or `0x123h`
 | `*.clz` | `clz<>(exp)` | Returns the number of leading zero bits. The width is inferred
 | `*.ctz` | `ctz<>(exp)` | Returns the number of trailing zero bits. The width is inferred
 | `*.popcnt` | `popcnt<>(exp)` | Returns the number of 1-bits. The width is inferred
