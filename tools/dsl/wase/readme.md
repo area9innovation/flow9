@@ -36,7 +36,8 @@ TODO:
 The basics work, and the compiler can parse, type and compile most instructions
 directly to WASM binaries that validate and run correctly.
 
-The most important missing instruction is `call_indirect`.
+The most important missing instruction is `call_indirect`, the second most important
+is arguably `br_table`, plus all vector instructions.
 
 The biggest problem in daily use is that error messages are currently without 
 positions.
@@ -95,14 +96,15 @@ TODO:
 At the top-level, we have syntax for the different kinds of sections in
 Wasm. This includes globals, functions, imports, tables and data.
 
-The order of top-level declarations is important. The names of globals,
-functions and such only take effect from the point they are defined.
+The compiler will reorder the top-level, so imports, tables, memory and data
+come first in the original order, and then after that, globals and functions
+in their original order.
 
 TODO:
 - Support "include" so we can build a standard-library
 
-- Do a two-phase declaration processing, so we can have imports in 
-  arbitrary order, and also try to support mutual recursion between functions
+- Try to support mutual recursion by recording the types and indexes of all globals
+  and functions before type checking and code gen
 
 ## Global syntax
 
