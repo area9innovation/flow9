@@ -1,0 +1,83 @@
+import tools/dsl/wase/parse;
+import tools/dsl/wase/type;
+import tools/dsl/wase/compile;
+import tools/dsl/wase/pretty_wase;
+import formats/wasm/wasm_encode;
+
+// Test that evaluation of this testcase gives the expected program
+compileWase2File(filename : string, code : string) -> Promise<int, string> {
+	Promise(\onDone : (int) -> void, onError : (string) -> void -> {
+		program = parseWase(filename, code);
+		typed = typeWase(program);
+		println("Compiling " + filename);
+		wase = dsl2wase(typed);
+
+		if (isUrlParameterTrue("debug-wase")) {
+			// println("Typed:");
+			// println(prettyDsl(typed));
+			println("\nAs wase:");
+			println(prettyWase(wase));
+		}
+
+		wasm = wase2wasm(wase);
+		if (isUrlParameterTrue("debug-wasm")) {
+			println(wasm);
+		}
+		bytes = wasmModule2bytes(wasm);
+
+		filebase = changeFileExt(filename, "");
+		
+		setFileContentBytes(filebase + ".wasm", 
+			fold(bytes, "", \acc, byte -> {
+				acc + fromCharCode(byte)
+			})
+		);
+
+		startProcess("wasm2wat", [filebase + ".wasm", 
+			//"--no-check", 
+			//"--enable-all", 
+			"-o", filebase + ".wat"], ".", "", \ec : int, so, se -> {
+			println(ec);
+			println(so);
+			println(se);
+			if (ec == 0) {
+				onDone(ec);
+			} else {
+				onError(filename + ":\n" + so + se);
+			}
+		});
+	});
+}
+
+main() {
+	files0 : [string] = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+	files = if (files0 != []) files0 else {
+		if (isUrlParameterTrue("test")) {
+			tests = readDirectory("wase/tests");
+			filtermap(tests, \t -> if (endsWith(t, ".wase")) Some("wase/tests/" + t) else None());
+		} else [];
+	}
+	if (files == []) {
+		printWaseHelp();
+		quit(1);
+	} else {
+		compiles : [Promise<int, string>]= map(files, \file -> 
+			if (fileExists(file)) {
+				compileWase2File(file, getFileContent(file))
+			} else {
+				Promise(\__, onError -> onError(file + " not found"));
+			}
+		);
+		all : Promise<[int], string> = allP(compiles);
+		doneP(all, \__ -> quit(0), \error -> {
+			println(error);
+			quit(1);
+		});
+	}
+}
+
+printWaseHelp() -> void {
+	println("wase <file>");
+	println("Compiles the file to <file>.wasm file");
+	println("  test=1  Compiles all test cases in the tests/ folder");
+}
