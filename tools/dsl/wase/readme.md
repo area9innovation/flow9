@@ -28,7 +28,7 @@ Run all test cases and produce `.wat` output as well using `wasm2wat`:
 	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- test=1 wat=1
 
 TODO:
-- Support include path
+- Support include path for initial file, as well as `include`
 - Better parse errors
 
 # Status
@@ -101,7 +101,7 @@ come first in the original order, and then after that, globals and functions
 in their original order.
 
 TODO:
-- Support "include" so we can build a standard-library
+- Start a standard library to be used by `include`
 
 - Try to support mutual recursion by recording the types and indexes of all globals
   and functions before type checking and code gen
@@ -244,7 +244,20 @@ TODO:
 - Document the implicit tables for ref.func 
 - Automatically construct table for indirect calls
 - Add syntax for elements, which are pieces to initialize tables
- 
+
+# Include
+
+Wase code can be split into multiple files, and included using this syntax at the
+top-level:
+
+	include wase/lib/debug;
+
+The compiler will read the file "wase/lib/debug.wase", parse it, and splice the 
+result into that place in the code. If a file is included more than once (also 
+transitively), it is only included the first occurrence.
+
+The program is only type checked after includes are resolved.
+
 # Expressions
 
 The body of globals and functions are expressions. There are no

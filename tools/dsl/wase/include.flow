@@ -1,0 +1,60 @@
+import tools/dsl/dsl_ast;
+import tools/dsl/dsl_util;
+import ds/tree;
+import fs/filesystem;
+import tools/dsl/wase/parse;
+
+export {
+	// Process all wase includes
+	processWaseIncludes(included : ref Set<string>, d : DslAst) -> DslAst;
+}
+
+processWaseIncludes(included : ref Set<string>, d : DslAst) -> DslAst {
+	switch (d) {
+		DslBool(value): d;
+		DslInt(value): d;
+		DslDouble(value): d;
+		DslString(value): d;
+		DslList(value): DslList(mapList(value, \vv -> processWaseIncludes(included, vv)));
+		DslNode(name, args, pos): {
+			if (name == "wase_include") {
+				file = getDslString(args[0]);
+				filename = changeFileExt(file, ".wase");
+				if (containsSet(^included, filename)) {
+					// Already included. No need to do it again
+					args[1];
+				} else if (fileExists(filename)) {
+					included := insertSet(^included, filename);
+					code = getFileContent(filename);
+					program = parseWase(file, code);
+					if (isUrlParameterTrue("verbose")) {
+						println("  Included '" + filename + "' as " + resolveRelativePath(filename));
+					}
+					processWaseIncludes(included, replaceWaseEmpty(program, args[1]));
+				} else {
+					println("ERROR: Could not include " + file);
+					args[1];
+				}
+			} else {
+				DslNode(name, map(args, \a -> processWaseIncludes(included, a)), pos);
+			}
+		}
+	}
+}
+
+replaceWaseEmpty(d : DslAst, replacement : DslAst) {
+	switch (d) {
+		DslBool(value): d;
+		DslInt(value): d;
+		DslDouble(value): d;
+		DslString(value): d;
+		DslList(value): DslList(mapList(value, \vv -> replaceWaseEmpty(vv, replacement)));
+		DslNode(name, args, pos): {
+			if (name == "wase_empty") {
+				replacement;
+			} else {
+				DslNode(name, map(args, \a -> replaceWaseEmpty(a, replacement)), pos);
+			}
+		}
+	}
+}
