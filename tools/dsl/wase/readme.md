@@ -19,11 +19,11 @@ but in a friendly manner, which hides most of the complexity of the Wasm format.
 
 # Usage
 
-Example:
+Example compiles `myfile.wase` and produces `myfile.wasm`:
 
 	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- myfile.wase
 
-Run all test cases and produce .wat output as well using wasm2wat:
+Run all test cases and produce `.wat` output as well using `wasm2wat`:
 
 	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- test=1 wat=1
 
@@ -90,6 +90,12 @@ Wasm. This includes globals, functions, imports, tables and data.
 
 The order of top-level declarations is important. The names of globals,
 functions and such only take effect from the point they are defined.
+
+TODO:
+- Support "include" so we can build a standard-library
+
+- Do a two-phase declaration processing, so we can have imports in 
+  arbitrary order, and also try to support mutual recursion between functions
 
 ## Global syntax
 
@@ -161,10 +167,6 @@ The same works for globals:
 	// Global import
 	import id : i32 = module.name;
 	import id : mutable i32 = module.name;
-
-TODO:
-- Do a two-phase declaration processing, so we can have imports in 
-  arbitrary order, and also try to support mutual recursion between functions
 
 ## Memory
 
