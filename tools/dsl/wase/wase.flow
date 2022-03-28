@@ -4,48 +4,50 @@ import tools/dsl/wase/compile;
 import tools/dsl/wase/pretty_wase;
 import formats/wasm/wasm_encode;
 
-// Test that evaluation of this testcase gives the expected program
 compileWase2File(filename : string, code : string) -> Promise<int, string> {
 	Promise(\onDone : (int) -> void, onError : (string) -> void -> {
 		program = parseWase(filename, code);
 		typed = typeWase(program);
-		println("Compiling " + filename);
-		wase = dsl2wase(typed);
+		println("\nCompiling '" + filename + "'");
 
+		if (isUrlParameterTrue("debug-type")) {
+			println("Typed '" + filename + "'':");
+			println(prettyDsl(typed));
+		}
+
+		wase = dsl2wase(typed);
 		if (isUrlParameterTrue("debug-wase")) {
-			// println("Typed:");
-			// println(prettyDsl(typed));
 			println("\nAs wase:");
 			println(prettyWase(wase));
 		}
 
 		wasm = wase2wasm(wase);
-		if (isUrlParameterTrue("debug-wasm")) {
-			println(wasm);
-		}
 		bytes = wasmModule2bytes(wasm);
 
 		filebase = changeFileExt(filename, "");
-		
-		setFileContentBytes(filebase + ".wasm", 
+		ok = setFileContentBytes(filebase + ".wasm", 
 			fold(bytes, "", \acc, byte -> {
 				acc + fromCharCode(byte)
 			})
 		);
-
-		startProcess("wasm2wat", [filebase + ".wasm", 
-			//"--no-check", 
-			//"--enable-all", 
-			"-o", filebase + ".wat"], ".", "", \ec : int, so, se -> {
-			println(ec);
-			println(so);
-			println(se);
-			if (ec == 0) {
-				onDone(ec);
-			} else {
-				onError(filename + ":\n" + so + se);
-			}
-		});
+		if (ok) {
+			println("  '" + filebase + ".wasm' saved");
+			if (isUrlParameterTrue("wat")) {
+				startProcess("wasm2wat", [filebase + ".wasm", 
+					//"--no-check", 
+					//"--enable-all", 
+					"-o", filebase + ".wat"], ".", "", \ec : int, so, se -> {
+					if (ec == 0) {
+						println(filebase + ".wat generated");
+						onDone(ec);
+					} else {
+						onError(filename + ":\n" + so + se);
+					}
+				});
+			} else onDone(0);
+		} else {
+			onError("Could not save " + filebase + ".wasm saved")
+		}
 	});
 }
 
@@ -77,7 +79,13 @@ main() {
 }
 
 printWaseHelp() -> void {
-	println("wase <file>");
-	println("Compiles the file to <file>.wasm file");
-	println("  test=1  Compiles all test cases in the tests/ folder");
+	println("wase <files> - Compiles the files to <file>.wasm files");
+	println("  test=1         Compiles all test cases in the tests/ folder");
+	println("");
+	println("  wat=1          Produce .wat disassembly using wasm2wat");
+//	println("  wasm3=1        Runs the .wasm using wasm3");
+//	println("  wasmer=1       Runs the .wasm using wasmer");
+	println("");
+	println("  debug-type=1   Output the resulting typed AST");
+	println("  debug-wase=1   Output the internal intermediate WASE representation");
 }

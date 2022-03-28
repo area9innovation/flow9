@@ -1,31 +1,45 @@
 # Wase - a friendly, low-level language for Wasm
 
-This is a language, which maps one-to-one with WebAssembly, and compiles directly
+Make WebAssembly Easy. WASE is a language, which tries to make WASM easy to write
+directly. The language maps one-to-one with WebAssembly, and compiles directly
 to Wasm bytecode. As such, it can be seen as an alternative to the WAT text format,
 but it is easier to use because of these things:
 
 - It uses more conventional syntax rather than S-expr
 - It has type inference
-- It handles all the index business for you
+- It handles all the index and table business for you
 
-The language is lexically scoped, but does not have closures, and no real data structures, nor memory management. It provides direct access to the memory through
-load/stores, just like Wasm.
+The language is strongly typed, lexically scoped, and provides direct access 
+to memory through load/stores. This is a low-level language without real data 
+structures, lambdas/closures, nor memory management, but those can be written
+in this language.
 
-The language is designed to expose the full low-level flexibility of Wasm directly.
+The language is designed to expose the full low-level flexibility of Wasm directly
+but in a friendly manner, which hides most of the complexity of the Wasm format.
+
+# Usage
+
+Example:
+
+	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- myfile.wase
+
+Run all test cases and produce .wat output as well using wasm2wat:
+
+	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- test=1 wat=1
+
+TODO:
+- Support include path
 
 # Status
 
-Only the most basic programs work and can compile directly from text to WASM binaries.
-A lot of instructions are not implemented yet. For each instruction, we need to define
-three different things:
+The basics work, and the compiler can parse, type and compile most instructions
+directly to WASM binaries that validate and run correctly.
 
-- Syntax. Done in grammar.flow.
-- Typing. Done in type.flow
-- Compilation. Done in compile.flow
+The most important missing instruction is `call_indirect`.
 
 # Type system
 
-It supports the types of Wasm:
+Wase supports the types of Wasm:
 
 	i32, i64, f32, f64, v128, func, extern
 
@@ -557,3 +571,11 @@ None of these are implemented yet.
 
 | Wasm | Wase | Comments |
 |-|-|-|
+
+# Implementation notes
+
+For each instruction, we need to define three basic different things:
+
+- Syntax. Done in grammar.flow using Gringo.
+- Typing. Done in type.flow using DSL typing
+- Compilation. Done in compile.flow using the Wase intermediate AST
