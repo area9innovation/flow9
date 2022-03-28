@@ -400,7 +400,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Correspondance between Wasm and Wase syntax
 
-73/92 implemented.
+73/95 implemented.
 
 ## Control instructions
 
@@ -485,7 +485,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Numeric Instructions
 
-46/54 implemented.
+48/57 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
@@ -538,7 +538,10 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 | `*.trunc*_u` | `trunc_u<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result unsigned.
 | `*.trunc_sat*_s` | `trunc_sat_s<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result signed, saturating.
 | `*.trunc_sat*_u` | `trunc_sat_u<>(val)` | X | Converts f32 or f64 to i32 or i64, considering the result unsigned, and saturating.
-| `*.extend*` | `extend*<>(val)` | - | Maybe we can infer all types?
+| `*.extend_i32_s` | `extend_s<>(val)` | X | Lifts a i32 to a i64, as signed.
+| `*.extend_i32_u` | `extend_u<>(val)` | X | Lifts a i32 to a i64, as unsigned.
+| `*.extend8_s` | `extend8_s<>(val)` | X | Lifts a byte to a i32/i64, as signed. The val is the same type as the result
+| `*.extend16_s` | `extend16_s<>(val)` | X | Lifts 16 bits to a i32/i64, as signed.  The val is the same type as the result
 | `*.convert*` | `convert*<>(val)` | - | Maybe we can infer all types?
 | `*.demote*` | `demote*<>(val)` | - | Maybe we can infer all types?
 | `*.promote*` | `promote*<>(val)` | - | Maybe we can infer all types?
