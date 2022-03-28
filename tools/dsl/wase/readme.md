@@ -38,6 +38,9 @@ directly to WASM binaries that validate and run correctly.
 
 The most important missing instruction is `call_indirect`.
 
+The biggest problem in daily use is that error messages are currently without 
+positions.
+
 # Type system
 
 Wase supports the types of Wasm:
