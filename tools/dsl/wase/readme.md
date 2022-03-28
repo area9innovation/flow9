@@ -400,7 +400,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 # Comparison of Wasm and Wase
 
-68/89 implemented.
+73/90 implemented.
 
 ## Control instructions
 
@@ -453,16 +453,17 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Table Instructions
 
-1/7 implemented.
+6/8 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `table.get` | `table.get<id>(index)` | X | Retrieves a value from a table slot. The id the name of a table given by import.table
-| `table.set` | `table.set<id>(index, value)` | - | Sets a value in a table slot.
-| `table.size` | `table.size<id>()` | - | Returns the size of a table.
-| `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots.
-| `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | - | Copies `elems` slots from one area of a table `id1` to another table `id2` 
-| `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements from an element section
+| `table.get` | `table.get<id>(index : i32)` | X | Retrieves a value from a table slot. The id the name of a table given by import.table
+| `table.set` | `table.set<id>(index : i32, value : func/extern)` | X | Sets a value in a table slot.
+| `table.size` | `table.size<id>()` | X | Returns the size of a table.
+| `table.grow` | `table.grow<id>(init, size)` | X | Changes the size of a table, initializing with the `init` value in empty slots. Returns previous size.
+| `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | X | Copies `elems` slots from one area of a table `id1` to another table `id2` 
+| `table.fill` | `table.fill<id>(elements, value, dest)` | X | Sets `elements` slots start at `dest`to the  `value`
+| `table.init` | `table.init<tableid, elemid>(elements : i32, source : i32, dest : i32)` | - | Initializes a table with `elements` slots from an element section
 | `elem.drop` | `elem.drop<id>()` | - | Discards the memory in an element segment.
 
 ## Memory Instructions
