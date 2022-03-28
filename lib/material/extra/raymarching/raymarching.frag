@@ -72,6 +72,12 @@ ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k) {
 		bool isFirst = obj1.plainColor;
 		vec3 color = isFirst ? obj1.color : obj2.color;
 		int conf = isFirst ? 2 : 1;
+		
+		if (isFirst && obj2.isMixColor && obj2.mixColor.conf > 0) {
+			color = mix(obj2.mixColor.color, color, interpolation);
+		} else if (!isFirst && obj1.isMixColor && obj1.mixColor.conf > 0) {
+			color = mix(color, obj1.mixColor.color, interpolation);
+		}
 		return ObjectInfo(d, id, false, vec3(0), true, MixColor(id2, id1, color, conf, interpolation));
 	} else {
 		vec3 color = vec3(0);
@@ -81,10 +87,13 @@ ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k) {
 				color = mix(obj2.mixColor.color, obj1.mixColor.color, interpolation);
 				conf = interpolation < 0.5 ? obj2.mixColor.conf : obj1.mixColor.conf;
 			} else if(obj1.mixColor.conf > 0) {
-				color = obj1.mixColor.color;
+				color = mix(obj2.color, obj1.mixColor.color, interpolation);
 				conf = obj1.mixColor.conf;
+			} else if(obj2.mixColor.conf > 0) {
+				color = mix(obj2.mixColor.color, obj1.color, interpolation);
+				conf = obj2.mixColor.conf;
 			} else {
-				color = obj2.mixColor.color;
+				color = mix(obj2.mixColor.color, obj1.mixColor.color, interpolation);
 				conf = obj2.mixColor.conf;
 			}
 		}
