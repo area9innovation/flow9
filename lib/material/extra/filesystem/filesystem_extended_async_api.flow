@@ -93,6 +93,15 @@ export {
 			onDone : () -> void,
 			onError : (string) -> void
 		) -> void,
+		// Searching of files/folders by the key in the given path (recursively)
+		search : (
+			fromPath : string,
+			text : string,
+			exactMatch : bool,
+			stopSearchB : DynamicBehaviour<bool>,
+			onDataPiece : (peiceFolders : [string], peiceFiles : [string], isLastLiece : bool) -> void,
+			onError : (string) -> void
+		) -> void,
 		// make preview of the files for the given paths
 		getPathsPreview : (
 			[string] /* full path */,
@@ -137,6 +146,16 @@ export {
 		previewFnM : Maybe<(filesPaths : [string], ([Pair<string, Material>]) -> void) -> void>,
 		createFromNativesFnM : Maybe<([native]) -> void>
 	) -> FilesystemAsyncEngine<?, ??>;
+
+	// files and folders searching in the "currentPath", including subfolders
+	searchRecursiveApi(
+		readDirectory : (string, ([string], [string]) -> void) -> void,
+		currentPath : string,
+		textLowerCase : string,
+		exactMatch : bool,
+		stopSearchB : DynamicBehaviour<bool>,
+		onDataPiece : (peiceFolders : [string], peiceFiles : [string], isLastPiece : bool) -> void
+	) -> void;
 }
 
 isAsyncInitialized = ref false;
@@ -192,6 +211,8 @@ makeDummyFilesystemExtAsyncAPI(errorText : string) -> FilesystemAsyncEngine<?, ?
 		\paths, onDone, onError -> onError(errorText),
 		// deleteFiles
 		\paths, onDone, onError -> onError(errorText),
+		// search
+		\fromPath, text, exactMatch, stopSearchB, onDataPiece, onError -> onError(errorText),
 		// getPathsPreview
 		\paths, onDone, onError -> onError(errorText),
 		// resolveRelativePath
@@ -315,6 +336,10 @@ convertExtApi2asyncApi(
 		\paths, onDone, onError -> {
 			iterAsync(paths, api.deleteElement, onDone, onError);
 		},
+		// search
+		\fromPath, searchText, exactMatch, stopSearchB, onDataPiece, onError -> {
+			searchRecursiveApi(\a, b -> api.readDirectory(a, b, onError), fromPath, toLowerCase(searchText), exactMatch, stopSearchB, onDataPiece);
+		},
 		//getPathsPreview
 		\paths, onDone, onError -> {
 			eitherFn(
@@ -342,4 +367,82 @@ convertExtApi2asyncApi(
 		// UI should be updated
 		\onUpdated -> nop
 	);
+}
+
+searchRecursiveApi(
+	readDirectory : (string, ([string], [string]) -> void) -> void,
+	currentPath : string,
+	textLowerCase : string,
+	exactMatch : bool,
+	stopSearchB : DynamicBehaviour<bool>,
+	onDataPiece : (peiceFolders : [string], peiceFiles : [string], isLastPiece : bool) -> void
+) -> void {
+	//start search in the currentPath
+	correctedCurPath = if (currentPath == "") ""
+		else if (endsWith(currentPath, "/")) currentPath
+		else currentPath + "/";
+
+	// A small delay to update UI
+	deferUntilRender(\-> if (!getValue(stopSearchB)) {
+		readDirectory(currentPath, \dirs, files -> {
+				dirs2 = filtermap(dirs, \dir -> {
+					r = takeAfterLast(dir, "/", dir);
+					if (r != "..") Some(r)
+					else None();
+				});
+
+				if (!getValue(stopSearchB)) {
+					res = if (exactMatch) {
+						Pair(
+							filtermap(dirs2, \dir -> {
+								name = takeAfterLast(dir, "/", dir);
+								if (toLowerCase(name) ==  textLowerCase) Some(name)
+								else None();
+							}),
+							filtermap(files, \file -> {
+								name = takeAfterLast(file, "/", file);
+								if (toLowerCase(name) == textLowerCase) Some(name)
+								else None();
+							})
+						);
+					} else {
+						Pair(
+							filtermap(dirs2, \dir -> {
+								name = takeAfterLast(dir, "/", dir);
+								if (strContains(toLowerCase(name), textLowerCase)) Some(name)
+								else None();
+							}),
+							filtermap(files, \file -> {
+								name = takeAfterLast(file, "/", file);
+								if (strContains(toLowerCase(name), textLowerCase)) Some(name)
+								else None();
+							})
+						);
+					}
+
+					onDataPiece(
+						map(res.first, \d -> correctedCurPath + d + "/"),
+						map(res.second, \f -> correctedCurPath + f),
+						(dirs2 == [])
+					);
+				}
+
+				// go to in the sub folders
+				if (!getValue(stopSearchB) && dirs2 != []) {
+					counterR = ref length(dirs2);
+					iter(dirs2, \dir -> searchRecursiveApi(
+						readDirectory,
+						correctedCurPath + dir + "/",
+						textLowerCase,
+						exactMatch,
+						stopSearchB,
+						\dd, ff, isLast -> {
+							if (isLast) counterR := ^counterR - 1;
+							onDataPiece(dd, ff, (^counterR == 0))
+						}
+					));
+				}
+			}
+		);
+	})
 }

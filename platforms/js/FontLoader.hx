@@ -112,6 +112,7 @@ class FontLoader {
 		if (weight != "") text.style.fontWeight = weight;
 		if (style != "") text.style.fontStyle = style;
 		text.style.visibility = "hidden";
+		text.style.position = "fixed";
 		Browser.document.body.appendChild(text);
 
 		Native.timer(FontLoadingTimeout, function() {

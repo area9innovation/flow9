@@ -1,0 +1,459 @@
+
+import formats/wasm/wasm_types;
+import ds/tree;
+import ds/set;
+
+export {
+	// This is an expression-based wrapper for Wasm to make it easier to produce 
+	// a valid WASM module
+	Wase ::=  WaseImportFunction, WaseImportGlobal, WaseImportMemory, WaseImportTable,
+		WaseMemory, WaseGlobal, WaseFunction, WaseData,
+
+		WaseEmpty
+		;
+
+	// This imported function will be bound to the id in the compilation environment
+	// and can be referenced using WaseGet(id)
+	WaseImportFunction(id : string, module : string, name : string, type : WasmFuncType,
+		scope : Wase);
+
+	// This imported global will be bound to the id in the compilation environment
+	// and can be referenced using WaseGet(id)
+	WaseImportGlobal(id : string, module : string, name : string, type : WasmValType, isMutable : bool,
+		scope : Wase);
+
+	// Import memory from the host
+	WaseImportMemory(module : string, name : string, minimumPages : int, maximumPages : int,
+		scope : Wase);
+
+	// Import a table from the host. The table can be referenced using WaseGet(id)
+	WaseImportTable(id : string, module : string, name : string, refType : WasmRefType, minimumPages : int, maximumPages : int,
+		scope : Wase);
+
+	// Declare our top-level memory. If exportid != "", we export this memory with that name
+	// If maximumPages == 0, it is unbounded
+	WaseMemory(minimumPages : int, maximumPages : int,
+		exportid : string,
+		scope : Wase);
+
+	// Declare a global. If exportid != "", we export this global with that name
+	// The index of this global will be bound to the id in the compilation environment
+	WaseGlobal(id : string, exportid : string, type : WasmValType, isMutable : bool, 
+		init : WaseExpr, scope : Wase);
+
+	// Declare a function. If exportId != "", we export this function with that name
+	// The index of this function will be bound to the id in the compilation environment.
+	// If start is true, this function will be "main" and called as the first
+	WaseFunction(id : string, exportid : string, start : bool, type : WasmFuncType, 
+		args : [WaseLocal], code : WaseExpr, scope : Wase);
+		// Should we extract these instead?
+		WaseLocal(name : string, type : WasmValType);
+
+	WaseData(offset : WaseExpr, bytes : [int], scope : Wase);
+
+	WaseExpr(instructions : [WaseInstruction]);
+		WaseInstruction ::= WasmInstruction, WaseGet, WaseSet, WaseLet, WaseCall, 
+			WaseBlock, WaseLoop, WaseIfElse, WaseIf, WaseRefFunc;
+			// Lookup in our compilation environment
+			WaseGet(id : string);
+			WaseSet(id : string);
+
+			// Introduce a new local variable
+			WaseLet(id : string, type : WasmValType);
+
+			WaseCall(fn : WaseInstruction);
+//			WaseResolveIndex(id : string, instruction : WasmIndexingInstruction);
+
+			WaseBlock(blockType : WasmBlockType, instructions : [WaseInstruction]);
+			WaseLoop(blockType : WasmBlockType, instructions : [WaseInstruction]);
+
+			WaseIfElse(blockType : WasmBlockType, then : [WaseInstruction], else_ : [WaseInstruction]);
+			WaseIf(blockType : WasmBlockType, then : [WaseInstruction]);
+
+			// Reference to a given function
+			WaseRefFunc(id : string);
+
+			// TODO: We need replacements for all the index-based instructions:
+			// local.tee, global.tee
+
+			// Tables:
+			// table.init, table.copy, table.grow, table.size, table.fill
+			// call.indirect
+
+			// Data:
+			// memory.init, data.drop
+
+	WaseEmpty();
+
+	// Construct a WasmModule from our high-level structure
+	wase2wasm(wase : Wase) -> WasmModule;
+}
+
+
+/*
+
+TODO:
+- WasmCustomSection
+- WasmTableSection
+- WasmElementSection
+- WasmDataSection
+- WasmDataCountSection
+
+- WasmExport should be bool on table that should be exported
+
+- Make WaseInstruction part of Wase? Then if we have Wase at the top-level, 
+  that should probably be collected into a constructed Main function marked as 
+  a start function?
+
+*/
+
+wase2wasm(wase : Wase) -> WasmModule {
+	context = WaseContext(ref makeTree(), ref makeTree(), ref [], ref makeTree(),
+		ref 0, ref 0, ref 0, ref 0, ref 0, ref 0,
+		ref true,
+		ref [], ref [], ref [], ref [], ref [], ref [], ref [],
+		ref -1, ref makeSet(),
+	);
+
+	compileWase(context, wase);
+
+	elements = if (isEmptySet(^(context.refFuncs))) [] else [WasmElementFuncs(WasmExpr([WasmI32Const(0)]), set2array(^(context.refFuncs)))];
+
+	WasmModule(
+		// types
+		[], WasmTypeSection(^(context.funcTypes)),
+		// imports
+		[], WasmImportSection(^(context.imports)), 
+		// functions
+		[], WasmFunctionSection(^(context.functionTypes)),
+		// tables
+		[], WasmTableSection(if (elements == []) [] else [
+			WasmTableType(WasmFuncRef(), WasmLimits(length(elements), 0))
+		]),
+		// memories
+		[], WasmMemorySection(^(context.memory)),
+		// globals
+		[], WasmGlobalSection(^(context.globals)),
+		// exports
+		[], WasmExportSection(^(context.exports)),
+		// start function
+		[], WasmStartSection(^(context.starts)), 
+		// elements
+		[], WasmElementSection(elements), 
+		// datacounts
+		[], WasmDataCountSection(-1), 
+		// code
+		[], WasmCodeSection(^(context.codes)),
+		// data
+		[], WasmDataSection(^(context.data)), 
+		[]		
+	);
+}
+
+WaseContext(
+	// As we construct functions, imports, etc, we record their indexes here
+	get : ref Tree<string, WasmInstruction>,
+	set : ref Tree<string, WasmInstruction>,
+
+	// These are also collected into WasmTypeSection and give the typeidx for function types
+	funcTypes : ref [WasmFuncType],
+	// From fn type to type index, so we reuse the same function types
+	funcTypeMap : ref Tree<WasmFuncType, int>,
+
+	// These give the funcidx for top-level functions
+	funcidx : ref int,
+	tableidx : ref int,
+	memidx : ref int,
+	globalidx : ref int,
+	elemidx : ref int,
+	dataidx : ref int,
+
+	// Imports have to come before we see code
+	importsAllowed : ref bool,
+
+	// The func type ids of functions
+	functionTypes : ref [int],
+
+	// The code for functions
+	codes : ref [WasmCode],
+
+	// Globals
+	globals : ref [WasmGlobal],
+
+	// These will be collected into a WasmImportSection
+	imports : ref [WasmImport],
+
+	// Exports
+	exports : ref [WasmExport],
+
+	// Memories
+	memory : ref [WasmMemoryType],
+
+	// Data
+	data : ref [WasmData],
+	
+	// Starting functions. -1 means none
+	starts : ref int,
+
+	// ref funcs
+	refFuncs : ref Set<int>,
+);
+
+compileWase(context : WaseContext, w : Wase) -> void {
+	switch (w) {
+		WaseImportFunction(id, module, name, type, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import function " + id + " too late");
+			}
+			// Find or make the index of the function types
+			fnTypeIndex = lookupWasmFuncTypeIndex(context, type);
+			wimport = WasmImport(module, name, WasmImportType(fnTypeIndex));
+			context.imports := arrayPush(^(context.imports), wimport);
+
+			// OK, what index does this function et?
+			fnIndex = ^(context.funcidx);
+			context.funcidx := fnIndex + 1;
+			context.get := setTree(^(context.get), id, WasmRefFunc(fnIndex));
+			compileWase(context, scope)
+		}
+		WaseImportGlobal(id, module, name, type, isMutable, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import global " + id + " too late");
+			}
+			wimport = WasmImport(module, name, WasmImportGlobal(WasmGlobalType(type, isMutable)));
+			context.imports := arrayPush(^(context.imports), wimport);
+
+			// OK, what index does this function et?
+			globalIndex = ^(context.globalidx);
+			context.globalidx := globalIndex + 1;
+			context.get := setTree(^(context.get), id, WasmGlobalGet(globalIndex));
+			context.set := setTree(^(context.set), id, WasmGlobalSet(globalIndex));
+			compileWase(context, scope)
+		}
+		WaseImportMemory(module, name, minimumPages, maximumPages, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import memory " + module + "." + name + " too late");
+			}
+			wimport = WasmImport(module, name, WasmImportMemory(WasmMemoryType(WasmLimits(minimumPages, maximumPages))));
+			context.imports := arrayPush(^(context.imports), wimport);
+			compileWase(context, scope)
+		}
+		WaseImportTable(id, module, name, refType, minimumPages, maximumPages, scope): {
+			if (!^(context.importsAllowed)) {
+				println("Import table " + module + "." + name + " too late");
+			}
+
+			tableIndex = ^(context.tableidx);
+			context.tableidx := tableIndex + 1;
+			context.get := setTree(^(context.get), id, WasmTableGet(tableIndex));
+			context.set := setTree(^(context.set), id, WasmTableSet(tableIndex));
+
+			wimport = WasmImport(module, name, WasmImportTable(WasmTableType(refType, WasmLimits(minimumPages, maximumPages))));
+			context.imports := arrayPush(^(context.imports), wimport);
+			compileWase(context, scope)
+		}
+		WaseMemory(minimumPages, maximumPages, exportId, scope): {
+			memoryId = length(^(context.memory));
+			wmemory = WasmMemoryType(WasmLimits(minimumPages, maximumPages));
+			context.memory := arrayPush(^(context.memory), wmemory);
+
+			if (exportId != "") {
+				wexport = WasmExport(exportId, WasmExportMemory(memoryId));
+				context.exports := arrayPush(^(context.exports), wexport);
+			}
+			compileWase(context, scope)
+		}
+		WaseGlobal(id, exportId, type, isMutable, init, scope): {
+			// No more imports from this point on
+			context.importsAllowed := false;
+
+			// OK, what index does this global get?
+			globalIndex = ^(context.globalidx);
+			context.globalidx := globalIndex + 1;
+			context.get := setTree(^(context.get), id, WasmGlobalGet(globalIndex));
+			context.set := setTree(^(context.set), id, WasmGlobalSet(globalIndex));
+
+			// Register it
+			wglobal = WasmGlobal(WasmGlobalType(type, isMutable), waseExpr2wasm(context, init));
+			context.globals := arrayPush(^(context.globals), wglobal);
+
+			// Should we export this thing?
+			if (exportId != "") {
+				wexport = WasmExport(exportId, WasmExportGlobal(globalIndex));
+				context.exports := arrayPush(^(context.exports), wexport);
+			}
+			compileWase(context, scope)
+		}
+		WaseFunction(id, exportId, start, type, args, code, scope): {
+			// No more imports from this point on
+			context.importsAllowed := false;
+
+			// Find or make the index of the function types
+			fnTypeIndex = lookupWasmFuncTypeIndex(context, type);
+			// And register the function in the function section
+			context.functionTypes := arrayPush(^(context.functionTypes), fnTypeIndex);
+
+			// OK, what index does this global get?
+			funcIndex = ^(context.funcidx);
+			context.funcidx := funcIndex + 1;
+			context.get := setTree(^(context.get), id, WasmRefFunc(funcIndex));
+	
+			locals = extractWasesLocals(context, [], code.instructions);
+
+			// Register local ids in the environment
+			iteri(concat(args, locals), \i, local : WaseLocal -> {
+				context.get := setTree(^(context.get), local.name, WasmLocalGet(i));
+				context.set := setTree(^(context.set), local.name, WasmLocalSet(i));
+			});
+			// Register the code
+			wcode = WasmCode(map(locals, \local : WaseLocal -> WasmLocal(1, local.type)), waseExpr2wasm(context, code));
+			context.codes := arrayPush(^(context.codes), wcode);
+
+			if (start) {
+				if (^(context.starts) != -1) {
+					println("We only suppport one start section. " + id);
+				}
+				if (type.returns != []) {
+					println("Start function can not return anything. " + id);
+				}
+				context.starts := funcIndex;
+			}
+
+			// Should we export this thing?
+			if (exportId != "") {
+				wexport = WasmExport(exportId, WasmExportFunc(funcIndex));
+				context.exports := arrayPush(^(context.exports), wexport);
+			}
+			compileWase(context, scope)
+		}
+		WaseData(offset, bytes, scope): {
+			context.data := arrayPush(^(context.data), WasmData0(waseExpr2wasm(context, offset), bytes));
+			compileWase(context, scope)
+		}
+		WaseEmpty(): {}
+	}
+}
+
+
+extractWaseLocals(context : WaseContext, acc : [WaseLocal], w : WaseInstruction) -> [WaseLocal] {
+	switch (w) {
+		WasmInstruction(): acc;
+		WaseGet(id): acc;
+		WaseSet(id): acc;
+		WaseLet(id, type): {
+			arrayPush(acc, WaseLocal(id, type));
+		}
+		WaseCall(fn): extractWaseLocals(context, acc, fn);
+		WaseBlock(blockType, instructions): extractWasesLocals(context, acc, instructions);
+		WaseLoop(blockType, instructions): extractWasesLocals(context, acc, instructions);
+		WaseIfElse(blockType, then, else_): {
+			acc1 = extractWasesLocals(context, acc, then);
+			extractWasesLocals(context, acc1, else_);
+		}
+		WaseIf(blockType, then): extractWasesLocals(context, acc, then);
+		WaseRefFunc(id): acc;
+	}
+}
+
+extractWasesLocals(context : WaseContext, acc : [WaseLocal], ws : [WaseInstruction]) -> [WaseLocal] {
+	fold(ws, acc, \acc2, w -> extractWaseLocals(context, acc2, w));
+}
+
+waseExpr2wasm(context : WaseContext, w : WaseExpr) -> WasmExpr {
+	WasmExpr(
+		map(w.instructions, \i -> waseInstruction2wasm(context, i))
+	)
+}
+
+waseInstruction2wasm(context : WaseContext, i : WaseInstruction) -> WasmInstruction {
+	switch (i) {
+		WasmInstruction(): i;
+		WaseGet(id): {
+			mcode = lookupTree(^(context.get), id);
+			mcode ?? {
+				mcode
+			} : {
+				println("Unknown id " + id);
+				WasmUnreachable();
+			}
+		}
+		WaseLet(id, type): {
+			mcode = lookupTree(^(context.set), id);
+			mcode ?? {
+				mcode
+			} : {
+				println("Unknown id " + id);
+				WasmUnreachable();
+			}
+		}
+		WaseSet(id): {
+			mcode = lookupTree(^(context.set), id);
+			mcode ?? {
+				mcode
+			} : {
+				println("Unknown id " + id);
+				WasmUnreachable();
+			}
+		}
+		WaseCall(fn): {
+			child = waseInstruction2wasm(context, fn);
+			switch (child) {
+				WasmRefFunc(id): WasmCall(id);
+				default: {
+					println("Can not call " + toString(child));
+					WasmUnreachable();
+				}
+			}
+		}
+		WaseBlock(blockType, instructions): {
+			WasmBlock(blockType, map(instructions, \e -> waseInstruction2wasm(context, e)))
+		}
+		WaseLoop(blockType, instructions): {
+			WasmLoop(blockType, map(instructions, \e -> waseInstruction2wasm(context, e)))
+		}
+		WaseIfElse(bt, t, el): {
+			WasmIfElse(
+				bt,
+				map(t, \e -> waseInstruction2wasm(context, e)),
+				map(el, \e -> waseInstruction2wasm(context, e)),
+			)
+		}
+		WaseIf(bt, t): {
+			WasmIf(
+				bt,
+				map(t, \e -> waseInstruction2wasm(context, e)),
+			)
+		}
+		WaseRefFunc(id): {
+			mcode : Maybe<WasmInstruction> = lookupTree(^(context.get), id);
+			switch (mcode) {
+				Some(code): {
+					switch (code : WasmInstruction) {
+						WasmRefFunc(funcid): {
+							context.refFuncs := insertSet(^(context.refFuncs), funcid);
+							code;
+						}
+						default: {
+							println("Expected func for " + id + " in ref.func, not " + toString(code));
+							WasmUnreachable();
+						}
+					}
+				}
+				None(): {
+					println("Unknown func " + id + " in ref.func");
+					WasmUnreachable();
+				}
+			}
+		}
+	}
+}
+
+lookupWasmFuncTypeIndex(context : WaseContext, fn : WasmFuncType) -> int {
+	mindex = lookupTree(^(context.funcTypeMap), fn);
+	mindex ?? mindex : {
+		n = length(^(context.funcTypes));
+		context.funcTypes := arrayPush(^(context.funcTypes), fn);
+		context.funcTypeMap := setTree(^(context.funcTypeMap), fn, n);
+		n;
+	}
+}

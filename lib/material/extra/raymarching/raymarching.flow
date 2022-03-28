@@ -1,20 +1,30 @@
 import material/material_ui;
 
 export {
-	MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
-	MRaymarchingSidePanel(scene : RMObject, light : RMObject, camera : RMCamera) -> Material;
+	MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
+	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
 
-	RMObject ::= RMSphere, RMTranslate, RMUnion, RMPlane, RMMaterial, RMLight, RMPlus, RMEmpty;
-		RMSphere(radius : double);
-		RMPlane(normal : RMXYZ, height : double);
+	RMScene ::= RMCompositeObject, RMPrimitive, RMTranslate, RMUnion2, RMUnion, RMSmoothUnion, RMMaterial, RMEmpty;
+	RMLights ::= RMCompositeLight, RMTranslate, RMLightMaterial, RMLight, RMPlus, RMEmpty;
+	RMObject ::= RMScene, RMLights;
+		RMPrimitive ::= RMSphere, RMPlane, RMBox, RMTorus;
+			RMSphere(radius : double);
+			RMPlane(normal : RMXYZ, height : double);
+			RMBox(box : RMXYZ);
+			RMTorus(R : double, r : double);
+		RMCompositeObject(object : RMPrimitive, name : string, material : RMMaterials, position : RMCoordinate);
+		RMCompositeLight(size : double, name : string, color : RMColor, position : RMCoordinate);
 		RMTranslate(object : RMObject, d : RMCoordinate);
-		RMUnion(object1 : RMObject, object2 : RMObject);
-		RMMaterial(object : RMObject, color : RMMaterials);
+		RMUnion2(object1 : RMScene, object2 : RMScene);
+		RMUnion(objects : [RMScene]);
+		RMSmoothUnion(objects : [RMScene], k : double);
+		RMMaterial(object : RMScene, color : RMMaterials);
+		RMLightMaterial(object : RMLights, color : RMColor);
 		RMMaterials ::= RMColor, RMReflect;
 			RMColor(color : int);
 			RMReflect(color : int, mixCoef : double);
 		RMLight(size : double);
-		RMPlus(object1 : RMObject, object2 : RMObject);
+		RMPlus(object1 : RMLights, object2 : RMLights);
 		RMEmpty();
 
 	RMCamera(position : RMXYZ, direction : RMXYZ);
@@ -28,7 +38,7 @@ export {
 		RMY(y : double);
 		RMZ(z : double);
 
-	RMIExp ::= RMICall, RMIP, RMIDouble, RMIInt, RMIXYZ, RMIVar, RMIConcat, RMIProperty, RMIEmpty;
+	RMIExp ::= RMICall, RMIP, RMIDouble, RMIInt, RMIBool, RMIXYZ, RMIVar, RMIConcat, RMIProperty, RMIEmpty;
 		RMICall(fn : RMC, args : [RMIExp]);
 		// A function, either an operator or function call
 		RMC ::= RMIOp, RMIFn;
@@ -40,6 +50,7 @@ export {
 		RMIP();
 		RMIDouble(num : double);
 		RMIInt(num : int);
+		RMIBool(num : bool);
 		RMIXYZ(x : double, y : double, z : double);
 		RMIVar(name : string);
 		RMIConcat(exp1 : RMIExp, exp2 : RMIExp);
@@ -47,248 +58,113 @@ export {
 		RMIEmpty();
 }
 
-MRaymarching(scene : RMObject, light : RMObject, camera : RMCamera) -> Material {
-	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, true));
-	material1 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, true));
-	material2 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, false));
-	jsScene = RMIExp2JS(RMObject2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
-	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, true));
+MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material {
+	glsl = RMIExp2GLSL(RMScene2RMIExp(scene, true));
+	material1 = RMIExp2GLSLMaterial(RMScene2RMIExp(scene, true));
+	material2 = RMIExp2GLSLMaterial(RMScene2RMIExp(scene, false));
+	jsScene = RMIExp2JS(RMScene2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(light));
 
-	setCameraString = formatString(
-		"setCameraPosition(%1, %2, %3);\nsetCameraDirection(%4, %5, %6)",
-		[
-			d2s(camera.position.x),
-			d2s(camera.position.y),
-			d2s(camera.position.z),
-			d2s(camera.direction.x),
-			d2s(camera.direction.y),
-			d2s(camera.direction.z),
-		]
-	);
+	cameraPositionStr = formatString("%1, %2, %3", [
+		d2s(camera.position.x),
+		d2s(camera.position.y),
+		d2s(camera.position.z)
+	]);
+	cameraDirectionStr = formatString("%1, %2, %3", [
+		d2s(camera.direction.x),
+		d2s(camera.direction.y),
+		d2s(camera.direction.z)
+	]);
 
 	displayRaymarchingCanvas(
-		blueprint("#include material/extra/raymarching/raymarching.js", ["setCamera", setCameraString, "distanceFunction", jsScene]),
+		id,
+		blueprint("#include material/extra/raymarching/raymarching.js", [
+			"cameraPosition", cameraPositionStr,
+			"cameraDirection", cameraDirectionStr,
+			"distanceFunction", jsScene
+		]),
 		"#include material/extra/raymarching/raymarching.vert",
 		blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
 	)
 }
 
-MRaymarchingSidePanel(scene : RMObject, light : RMObject, camera : RMCamera) -> Material {
-	glsl = RMIExp2GLSL(RMObject2RMIExp(scene, true));
-	material1 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, true));
-	material2 = RMIExp2GLSLMaterial(RMObject2RMIExp(scene, false));
-	jsScene = RMIExp2JS(RMObject2RMIExpJS(scene, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
-	lightGlsl = RMIExp2GLSL(RMObject2RMIExp(light, true));
-	lightB = make(light);
+MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
+	glsl = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true));
+	material1 = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), true));
+	material2 = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), false));
+	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)));
+	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
-	MLines([
-		MTextButton(
-			"RESET CAMERA", 
-			\ -> {
-				hostCall("setCameraPosition", [
-					camera.position.x,
-					camera.position.y,
-					camera.position.z
-				]);
-				hostCall("setCameraDirection", [
-					camera.direction.x,
-					camera.direction.y,
-					camera.direction.z
-				]);
-				{}
-			},
-			[], []
-		),
-		MConstruct(
-			[
-				makeSubscribe2(
-					fthrottle(lightB, 500),
-					\l -> {
-						hostCall("recompileShader", [
-							blueprint(
-								"#include material/extra/raymarching/raymarching.frag",
-								[
-									"distanceFunction", glsl,
-									"light", RMIExp2GLSL(RMObject2RMIExp(l, true)),
-									"materialFunction1", material1,
-									"materialFunction2", material2
-								]
-							)
-						])|>ignore;
-					}
-				)
-			],
-			RMObject2Material(lightB)
-		)
-	])
-}
+	cameraPositionStr = formatString("%1, %2, %3", [
+		d2s(fgetValue(cameraB).position.x),
+		d2s(fgetValue(cameraB).position.y),
+		d2s(fgetValue(cameraB).position.z)
+	]);
+	cameraDirectionStr = formatString("%1, %2, %3", [
+		d2s(fgetValue(cameraB).direction.x),
+		d2s(fgetValue(cameraB).direction.y),
+		d2s(fgetValue(cameraB).direction.z)
+	]);
 
-RMObject2Material(obj : DynamicBehaviour<RMObject>) -> Material {
-	MTree(
-		const([RMObject2MTreeNode(obj)]),
-		[]
-	)
-}
-
-getRMObjectLightTypeIndex(obj : RMObject) -> Maybe<int> {
-	switch(obj) {
-		RMSphere(radius): None();
-		RMPlane(normal, height): None();
-		RMTranslate(object, d): Some(1);
-		RMUnion(object1, object2): None();
-		RMMaterial(object, mat): Some(2);
-		RMLight(size): Some(3);
-		RMPlus(object1, object2): Some(4);
-		RMEmpty(): Some(0);
-	}
-}
-
-getRMObjectDropDownLight(obj : DynamicBehaviour<RMObject>) -> Material {
-	currentB = make(either(getRMObjectLightTypeIndex(getValue(obj)), 0));
 	MConstruct(
 		[
+			make2Subscribe2(
+				fthrottle(sceneB, 500), fthrottle(lightB, 500),
+				\s, l -> {
+					hostCall("recompileShader", [
+						i2s(id),
+						blueprint(
+							"#include material/extra/raymarching/raymarching.frag",
+							[
+								"distanceFunction", RMIExp2GLSL(RMScene2RMIExp(s, true)),
+								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
+								"materialFunction1", RMIExp2GLSLMaterial(RMScene2RMIExp(s, true)),
+								"materialFunction2", RMIExp2GLSLMaterial(RMScene2RMIExp(s, false))
+							]
+						)
+					]);
+					hostCall(
+						"setDistanceFunction",
+						[
+							i2s(id),
+							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.)))])
+						]
+					) |> ignore;
+				}
+			),
 			makeSubscribe2(
-				currentB,
-				\c -> {nextDistinct(
-					obj,
-					if (c == 1)
-						RMTranslate(RMEmpty(), RMXYZ(0., 0., 0.))
-					else if (c == 2)
-						RMMaterial(RMEmpty(), RMColor(0xFFFFFF))
-					else if (c == 3)
-						RMLight(0.05)
-					else if (c == 4)
-						RMPlus(RMEmpty(), RMEmpty())
-					else
-						RMEmpty()
-				)}
+				fthrottle(cameraB, 500),
+				\c -> {
+					hostCall("setCameraPosition", [
+						i2d(id),
+						c.position.x,
+						c.position.y,
+						c.position.z
+					]) |> ignore;
+					hostCall("setCameraDirection", [
+						i2d(id),
+						c.direction.x,
+						c.direction.y,
+						c.direction.z
+					]) |> ignore;
+				}
 			)
 		],
-		MDropDown(currentB, "", ["Empty", "Translate", "Color", "Light", "Plus"], [])
+		displayRaymarchingCanvas(
+			id,
+			blueprint("#include material/extra/raymarching/raymarching.js", [
+				"cameraPosition", cameraPositionStr,
+				"cameraDirection", cameraDirectionStr,
+				"distanceFunction", jsScene
+			]),
+			"#include material/extra/raymarching/raymarching.vert",
+			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
+		)
 	)
 }
 
-RMObject2MTreeNode(obj : DynamicBehaviour<RMObject>) -> MTreeNode {
-	childrenT = fselect(obj, FLift(getRMObjectChildren));
-	childrenBehavioursB = make(map(fgetValue(childrenT), make));
-	childrenMergeT = fsubselect(childrenBehavioursB, FLift(fmerge));
-	childrenNodesT = fmap(childrenBehavioursB, RMObject2MTreeNode);
-	viewB = make(MEmpty());
-	MTreeNode(
-		obj,
-		\__ -> {
-			prevTypeB = make(None());
-			MLines2(
-				MConstruct(
-					[
-						makeSubscribe2(
-							childrenT,
-							\children -> {
-								if (length(getValue(childrenBehavioursB)) != length(children)) {
-									nextDistinct(childrenBehavioursB, map(children, make));
-								}
-							}
-						),
-						makeSubscribe(
-							obj,
-							\o -> {
-								if (getValue(prevTypeB) != getRMObjectLightTypeIndex(o)) {
-									next(prevTypeB, getRMObjectLightTypeIndex(o));
-									next(viewB, RMObject2MaterialLine(o, obj, childrenMergeT));
-								}
-							}
-						)
-					],
-					getRMObjectDropDownLight(obj)
-				),
-				MMutable(viewB)
-			)
-		},
-		childrenNodesT,
-		[MExpanded(make(true))]
-	)
-}
-
-RMObject2MaterialLine(o : RMObject, obj : DynamicBehaviour<RMObject>, childrenMergeT : Transform<[RMObject]>) -> Material {
-	prevTypesB = make(fgetValue(fmap(childrenMergeT, getRMObjectLightTypeIndex)));
-	switch(o) {
-		RMSphere(radius): MEmpty();
-		RMPlane(normal, height): MEmpty();
-		RMTranslate(object, d): {
-			coords = RMCoordinate2RMXYZ(d);
-			xB = make(d2s(coords.x));
-			yB = make(d2s(coords.y));
-			zB = make(d2s(coords.z));
-
-			MConstruct(
-				[make4Subscribe2(childrenMergeT, xB, yB, zB, \c, x, y, z -> {
-					if (map(c, getRMObjectLightTypeIndex) == getValue(prevTypesB)) {
-						nextDistinct(obj, RMTranslate(c[0], RMXYZ(s2d(x), s2d(y), s2d(z))))
-					} else {
-						nextDistinct(prevTypesB, map(c, getRMObjectLightTypeIndex))
-					}
-				})],
-				MCols([
-					MTextInput(xB, [MLabel("X:"), MFloatingLabel()], []),
-					MTextInput(yB, [MLabel("Y:"), MFloatingLabel()], []),
-					MTextInput(zB, [MLabel("Z:"), MFloatingLabel()], []),
-				])
-			)
-		};
-		RMUnion(object1, object2): MText("Union", []);
-		RMMaterial(object, mat): switch(mat) {
-			RMColor(col): {
-				colB = make(colorInt2MColor(col));
-				MConstruct(
-					[make2Subscribe2(childrenMergeT, colB, \c, colNew -> {
-						if (map(c, getRMObjectLightTypeIndex) == getValue(prevTypesB)) {
-							nextDistinct(obj, RMMaterial(c[0], RMColor(MColor2int(colNew))))
-						} else {
-							nextDistinct(prevTypesB, map(c, getRMObjectLightTypeIndex))
-						}
-					})],
-					MColorPicker(colB, [])
-				)
-			};
-			RMReflect(col, coef): {
-				MEmpty();
-			}
-		};
-		RMLight(size): {
-			sizeB = make(d2s(size));
-			MConstruct(
-				[makeSubscribe2(sizeB, \s -> nextDistinct(obj, RMLight(s2d(s))))],
-				MTextInput(sizeB, [MLabel("Size:"), MFloatingLabel()], [])
-			)
-		};
-		RMPlus(object1, object2): MConstruct(
-			[makeSubscribe2(childrenMergeT, \c -> {
-				if (map(c, getRMObjectLightTypeIndex) == getValue(prevTypesB)) {
-					nextDistinct(obj, RMPlus(c[0], c[1]))
-				} else {
-					nextDistinct(prevTypesB, map(c, getRMObjectLightTypeIndex))
-				}
-			})],
-			MText("Plus", [])
-		);
-		RMEmpty(): MEmpty();
-	}
-}
-
-getRMObjectChildren(obj : RMObject) -> [RMObject] {
-	switch(obj) {
-		RMSphere(radius): [];
-		RMPlane(normal, height): [];
-		RMTranslate(object, d): [object];
-		RMUnion(object1, object2): [object1, object2];
-		RMMaterial(object, col): [object];
-		RMLight(size): [];
-		RMPlus(object1, object2): [object1, object2];
-		RMEmpty(): [];
-	}
-}
-
-displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
+sharedScriptInserted : ref Maybe<native> = ref None();
+displayRaymarchingCanvas(id : int, scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
 	whB = make(WidthHeight(0.0, 0.0));
 	MInspect([IAvailable(whB)], 
 		MHTMLStage(whB, \stage -> {
@@ -304,22 +180,30 @@ displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFr
 			};
 
 			setAttribute(scriptGLM, "src", "js/glm-js.min.js", true);
-			setAttribute(scriptGLM, "onload", "rayMain()", true);
-			setAttribute(canvas, "id", "rayCanvas", true);
+			setAttribute(scriptGLM, "onload", "rayMain(" + "\"" + i2s(id) + "\"" + ")", true);
+			setAttribute(canvas, "id", "rayCanvas" + i2s(id), true);
 			setCanvasSize(fgetValue(whB));
 			unsSize = makeSubscribe2(whB, \wh -> {
 				setCanvasSize(wh);
-				hostCall("resizeCanvas", [canvas])|>ignore;
+				hostCall("resizeCanvas", [id])|>ignore;
 			})();
 			setAttribute(scriptShaderVertex, "type", "text/plain", true);
-			setAttribute(scriptShaderVertex, "id", "vertex-shader", true);
+			setAttribute(scriptShaderVertex, "id", "vertex-shader" + i2s(id), true);
 			setAttribute(scriptShaderVertex, "innerHTML", shaderVertex, true);
 			setAttribute(scriptShaderFragment, "type", "text/plain", true);
-			setAttribute(scriptShaderFragment, "id", "fragment-shader", true);
+			setAttribute(scriptShaderFragment, "id", "fragment-shader"  + i2s(id), true);
 			setAttribute(scriptShaderFragment, "innerHTML", shaderFragment, false);
 			setAttribute(script, "innerHTML", scriptContent, false);
 
 			setClipStyle(stage, "overflow", "auto");
+
+			// This script contains global storage to dipatch hostCalls between multiple contexts. So it is injected only once.
+			sharedScript = onlyOnce(sharedScriptInserted, \ -> {
+				shScript = createElement("script");
+				setAttribute(shScript, "innerHTML", "#include material/extra/raymarching/raymarching_common.js", true);
+				appendChild(stage, shScript);
+				shScript;
+			});
 
 			appendChild(stage, scriptGLM);
 			appendChild(stage, canvas);
@@ -333,17 +217,22 @@ displayRaymarchingCanvas(scriptContent : string, shaderVertex : string, shaderFr
 				removeElementChild(stage, scriptShaderVertex);
 				removeElementChild(stage, scriptShaderFragment);
 				removeElementChild(stage, script);
+				removeElementChild(stage, sharedScript);
 			}
 		})
 	)
 }
 
-RMObject2RMIExp(obj : RMObject, reflect : bool) -> RMIExp {
-	RMObject2RMIExp0(obj, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.), 0, reflect).second
+RMScene2RMIExp(obj : RMScene, reflect : bool) -> RMIExp {
+	RMScene2RMIExp0(obj, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.), 0, reflect).second
 }
 
-RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect : bool) -> Pair<int, RMIExp> {
+RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect : bool) -> Pair<int, RMIExp> {
 	switch(obj) {
+		RMCompositeObject(object, name, material, position): {
+			compositeObject = RMTranslate(RMMaterial(object, material), position);
+			RMScene2RMIExp0(compositeObject, acc, color, id, reflect);
+		};
 		RMSphere(radius): addColorToRMIExp(
 			RMICall(RMIOp("-"), [
 				RMICall(RMIFn("length"), [
@@ -357,7 +246,7 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 		RMPlane(normal, height): addColorToRMIExp(
 			RMICall(RMIOp("-"), [
 				RMICall(RMIFn("dot"), [
-					RMIP(),
+					RMICall(RMIOp("-"), [RMIP(), acc]),
 					RMICall(RMIFn("normalize"), [
 						RMCoordinate2RMIXYZ(normal)
 					])
@@ -367,10 +256,31 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 			id,
 			color
 		);
-		RMTranslate(object, d): RMObject2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
-		RMUnion(object1, object2): {
-			exp1 = RMObject2RMIExp0(object1, acc, color, id, reflect);
-			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first, reflect);
+		RMBox(box): addColorToRMIExp(
+			RMICall(RMIFn("sdBox"), [
+				RMICall(RMIOp("-"), [RMIP(), acc]),
+				RMCoordinate2RMIXYZ(box)
+			]),
+			id,
+			color
+		);
+		RMTorus(R, r): addColorToRMIExp(
+			RMICall(RMIFn("sdTorus"), [
+				RMICall(RMIOp("-"), [RMIP(), acc]),
+				RMICall(RMIFn("vec2"), [RMIDouble(R), RMIDouble(r)])
+			]),
+			id,
+			color
+		);
+		RMTranslate(object, d): switch(object) {
+			RMScene(): RMScene2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
+			RMLights(): Pair(id, RMIEmpty());
+			RMTranslate(__, __): RMScene2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
+			RMEmpty(): Pair(id, RMIEmpty());
+		};
+		RMUnion2(object1, object2): {
+			exp1 = RMScene2RMIExp0(object1, acc, color, id, reflect);
+			exp2 = RMScene2RMIExp0(object2, acc, color, exp1.first, reflect);
 			Pair(exp2.first, RMICall(RMIFn("minOI"),
 				[
 					exp1.second,
@@ -378,9 +288,42 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 				]
 			))
 		};
+		RMUnion(objects): {
+			if (length(objects) > 0 ) {
+				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect);
+					Pair(exp2.first, RMICall(RMIFn("minOI"),
+						[
+							acc2.second,
+							exp2.second,
+						]
+					))
+				})
+			} else {
+				Pair(id, RMIEmpty());
+			}
+		};
+		RMSmoothUnion(objects, k): {
+			if (length(objects) > 0 ) {
+				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect);
+					Pair(exp2.first, RMICall(RMIFn("minOIS"),
+						[
+							acc2.second,
+							exp2.second,
+							RMIDouble(k)
+						]
+					))
+				})
+			} else {
+				Pair(id, RMIEmpty());
+			}
+		};
 		RMMaterial(object, mat): {
 			switch(mat) {
-				RMColor(col): RMObject2RMIExp0(
+				RMColor(col): RMScene2RMIExp0(
 					object,
 					acc,
 					hexColor2RMI(col),
@@ -388,7 +331,7 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 					reflect
 				);
 				RMReflect(col, mixCoef): if (reflect) {
-					RMObject2RMIExp0(
+					RMScene2RMIExp0(
 						object,
 						acc,
 						RMICall(RMIFn("mix"), [hexColor2RMI(col), RMICall(RMIFn("getColorReflect"), [RMIP(), RMICall(RMIFn("reflect"), [RMIVar("rayDirection"), RMICall(RMIFn("getObjectNormal"), [RMIP()])])]), RMIDouble(mixCoef)]),
@@ -400,7 +343,35 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 				}
 			}
 		}
-		RMLight(size): Pair(id, RMICall(RMIOp("*"),
+		RMEmpty(): Pair(id, RMIEmpty());
+	}
+}
+
+
+RMLights2RMIExp(obj : RMLights) -> RMIExp {
+	RMLights2RMIExp0(obj, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.))
+}
+
+RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
+	switch(obj) {
+		RMCompositeLight(size, name, col, position): {
+			compositeObject = RMTranslate(RMLightMaterial(RMLight(size), col), position);
+			RMLights2RMIExp0(compositeObject, acc, color);
+		};
+		RMTranslate(object, d): switch(object) {
+			RMScene(): RMIEmpty();
+			RMLights(): RMLights2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+			RMTranslate(__, __): RMLights2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+			RMEmpty(): RMIEmpty();
+		}
+		RMLightMaterial(object, col): {
+			RMLights2RMIExp0(
+				object,
+				acc,
+				hexColor2RMI(col.color),
+			);
+		}
+		RMLight(size): RMICall(RMIOp("*"),
 			[
 				RMICall(RMIFn("getLight"), [
 					RMIP(),
@@ -411,23 +382,28 @@ RMObject2RMIExp0(obj : RMObject, acc : RMIXYZ, color : RMIExp, id : int, reflect
 				]),
 				color
 			]
-		));
+		);
 		RMPlus(object1, object2): {
-			exp1 = RMObject2RMIExp0(object1, acc, color, id, reflect);
-			exp2 = RMObject2RMIExp0(object2, acc, color, exp1.first, reflect);
-			Pair(exp2.first, RMICall(RMIOp("+"),
+			exp1 = RMLights2RMIExp0(object1, acc, color);
+			exp2 = RMLights2RMIExp0(object2, acc, color);
+			RMICall(RMIOp("+"),
 				[
-					exp1.second,
-					exp2.second,
+					exp1,
+					exp2,
 				]
-			))
+			)
 		};
-		RMEmpty(): Pair(id, RMIEmpty());
+		RMEmpty(): RMIEmpty();
 	}
 }
 
-RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
+
+RMScene2RMIExpJS(obj : RMScene, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 	switch(obj) {
+		RMCompositeObject(object, name, material, position): {
+			compositeObject = RMTranslate(RMMaterial(object, material), position);
+			RMScene2RMIExpJS(compositeObject, acc, color);
+		};
 		RMSphere(radius): 
 			RMICall(RMIOp("-"), [
 				RMICall(RMIFn("glm.length"), [
@@ -438,28 +414,69 @@ RMObject2RMIExpJS(obj : RMObject, acc : RMIXYZ, color : RMIXYZ) -> RMIExp {
 		RMPlane(normal, height): 
 			RMICall(RMIOp("-"), [
 				RMICall(RMIFn("glm.dot"), [
-					RMIP(),
+					RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [acc])),
 					RMICall(RMIFn("glm.normalize"), [
 						RMCoordinate2RMIXYZ(normal)
 					])
 				]),
 				RMIDouble(height)]
 			);
-		RMTranslate(object, d): RMObject2RMIExpJS(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
-		RMUnion(object1, object2): RMICall(RMIFn("Math.min"),
+		RMBox(box):
+			RMICall(RMIFn("sdBox"), [
+				RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [acc])),
+				RMCoordinate2RMIXYZ(box)
+			]);
+		RMTorus(R, r):
+			RMICall(RMIFn("sdTorus"), [
+				RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [acc])),
+				RMICall(RMIFn("glm.vec2"), [RMIDouble(R), RMIDouble(r)])
+			]);
+		RMTranslate(object, d): switch(object) {
+			RMScene(): RMScene2RMIExpJS(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+			RMLights(): RMIEmpty();
+			RMTranslate(__, __): RMScene2RMIExpJS(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+			RMEmpty(): RMIEmpty();
+		};
+		RMUnion2(object1, object2): RMICall(RMIFn("Math.min"),
 			[
-				RMObject2RMIExpJS(object1, acc, color),
-				RMObject2RMIExpJS(object2, acc, color),
+				RMScene2RMIExpJS(object1, acc, color),
+				RMScene2RMIExpJS(object2, acc, color),
 			]
 		);
-		RMMaterial(object, col): RMObject2RMIExpJS(object, acc, color);
-		RMLight(size): RMIEmpty();
-		RMPlus(object1, object2): RMICall(RMIOp("+"),
-			[
-				RMObject2RMIExpJS(object1, acc, color),
-				RMObject2RMIExpJS(object2, acc, color),
-			]
-		);
+		RMUnion(objects): {
+			if (length(objects) > 0 ) {
+				exp1 = RMScene2RMIExpJS(objects[0], acc, color);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExpJS(obj2, acc, color);
+					RMICall(RMIFn("Math.min"),
+						[
+							acc2,
+							exp2,
+						]
+					)
+				})
+			} else {
+				RMIEmpty();
+			}
+		};
+		RMSmoothUnion(objects, k): {
+			if (length(objects) > 0 ) {
+				exp1 = RMScene2RMIExpJS(objects[0], acc, color);
+				fold(objects, exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExpJS(obj2, acc, color);
+					RMICall(RMIFn("opSmoothUnion"),
+						[
+							acc2,
+							exp2,
+							RMIDouble(k)
+						]
+					)
+				})
+			} else {
+				RMIEmpty();
+			}
+		};
+		RMMaterial(object, col): RMScene2RMIExpJS(object, acc, color);
 		RMEmpty(): RMIEmpty();
 	}
 }
@@ -479,6 +496,7 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSL(exp1) + RMIExp2GLSL(exp2);
@@ -489,10 +507,11 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 
 RMIExp2GLSLMaterial(exp : RMIExp) -> string {
 	switch(exp) {
-		RMICall(fn, args): strGlue(filter(map(args, RMIExp2GLSLMaterial), \s -> s != ""), " else ");
+		RMICall(fn, args): strGlue(filter(map(filterRMIBlock(args), RMIExp2GLSLMaterial), \s -> s != ""), " else ");
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSLMaterial(exp1) + RMIExp2GLSLMaterial(exp2);
@@ -501,6 +520,22 @@ RMIExp2GLSLMaterial(exp : RMIExp) -> string {
 	}
 }
 
+filterRMIBlock(exps : [RMIExp]) -> [RMIExp] {
+	filter(exps, \exp -> {
+		switch(exp) {
+			RMICall(fn, args): true;
+			RMIP(): false;
+			RMIDouble(num):false;
+			RMIInt(num): false;
+			RMIBool(num): false;
+			RMIXYZ(x, y, z): false;
+			RMIVar(name): false;
+			RMIConcat(exp1, exp2): true;
+			RMIProperty(exp2, id, property): true;
+			RMIEmpty(): false;
+		}
+	})
+}
 
 RMIExp2JS(exp : RMIExp) -> string {
 	switch(exp) {
@@ -517,6 +552,7 @@ RMIExp2JS(exp : RMIExp) -> string {
 		RMIP(): "p";
 		RMIDouble(num): d2GLSLfloat(num);
 		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
 		RMIXYZ(x, y, z): formatString("glm.vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2JS(exp1) + RMIExp2JS(exp2);
@@ -554,7 +590,35 @@ addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 }
 
 addColorToRMIExp(exp : RMIExp, id : int, color : RMIExp) -> Pair<int, RMIProperty> {
-	Pair(id + 1, RMIProperty(RMICall(RMIFn("ObjectInfo"), [exp, RMIInt(id)]), id, color))
+	plainColor = switch (color) {
+		RMIXYZ(x, y, z): Some(color);
+		default: None();
+	}
+	Pair(
+		id + 1,
+		RMIProperty(
+			RMICall(
+				RMIFn("ObjectInfo"),
+				[
+					exp,
+					RMIInt(id),
+					RMIBool(isSome(plainColor)),
+					eitherMap(plainColor, idfn, RMIXYZ(0., 0., 0.)),
+					RMIBool(false),
+					RMICall(
+						RMIFn("MixColor"),
+						[
+							RMIInt(-1),
+							RMIInt(-1),
+							RMIXYZ(0., 0., 0.),
+							RMIInt(0),
+							RMIDouble(0.0)
+						])
+				]
+			),
+			id, color
+		)
+	)
 }
 
 d2GLSLfloat(num : double) {

@@ -1,0 +1,122 @@
+import tools/dsl/dsl_parse;
+
+export {
+	defineWase() -> DslGrammar;	
+}
+
+defineWase() -> DslGrammar {
+	/*
+	TODO:
+	switch at some point down the line
+
+	import table, memory
+
+	*/
+	grammar = defineGrammar("wase", <<
+		decl = memory | global | function | import | data | $"empty_0";
+
+		global = optexport id $"swap" 
+				":" ws optmutable type $"swap"
+				"=" ws exp ";" ws decl $"global_6"; // (id, export : bool, type, mutable : bool, exp, body, scope)
+
+		// function(id, export : bool, args : [idtype(id, type)], [returnTypes], body, scope)
+		function = optexport id $"swap" "(" ws lambdaargs ")" ws "->" ws typelist exp decl $"function_6"; // The "" makes right-recursion disappear
+			lambdaargs = $"nil" id ":" ws type $"idtype_2" $"cons" ("," ws id ":" ws type $"idtype_2" $"cons")*
+				| $"nil";
+
+		import = "import" ws id ":" ws optmutable type $"swap" "=" ws id "." id ";" ws decl $"import_global_6" // id, type, mutable, module, name, scope
+			| "import" ws id ":" ws fntype "=" ws id "." id ";" ws decl $"import_fun_5"; // id type module name scope
+
+		memory = optexport "memory" ws int (int | $"nil") ";" ws decl $"memory_4";
+
+		// TODO: Define syntax for whether the memory is passive (i.e. not copied into memory automatically)
+		data = "data" ws 
+			$"nil" datavalue $"cons" ("," ws datavalue $"cons")* 
+			("offset" ws exp | $$"0" $"s2i" $"int_1")
+			";" ws decl $"data_3";
+			datavalue = int | string | double;
+
+		exp = 
+			id (":" ws type | $$"auto" $"type_1") "=" ws exp ";" ws expsemi $"brace_1" $"let_4"
+			|> exp "|" ws exp $"or_2"
+			|> exp "&" ws exp $"and_2"
+			|> exp "^" ws exp $"xor_2"
+			|> exp "==" ws exp $"equal_2" | exp "!=" ws exp $"not_equal_2" | exp "is" ws "null" ws $"is_null_1"
+			|> exp ("<=" ws exp $"less_equal_2" | "<" ws exp $"less_2" | ">=" ws exp $"greater_equal_2" | ">" ws exp $"greater_2")
+
+			|> exp < ("+" ws exp $"add_2" | "-" ws exp $"sub_2")*
+			|> exp ("*" ws exp $"mul_2" | "/u" ws exp $"divu_2" | "/" ws exp $"div_2" 
+					| "%u"  ws exp $"modu_2" | "%"  ws exp $"mod_2")*
+			|> wasmop
+
+			|> (
+				// '!' ws exp $"not_1"
+				"-" ws exp $"negate_1" // Only for floats
+				| exp (
+					postfix
+				)*
+			)
+
+			|> brace $"brace_1"
+			|> "(" ws exp ")" ws
+			|> atom;
+
+		// Give this a name, so it can be extended
+		postfix = ( "(" ws exps ")" ws $"reverse" $"call_2");
+
+		brace = "{" ws expsemi "}" ws;
+
+		atom = "if" !letterOrDigit ws exp exp "else" ws exp $"ifelse_3"
+				| "if" !letterOrDigit ws exp exp $"if_2"
+				| "true" !letterOrDigit $$"1" $"s2i" $"int" ws
+				| "false" !letterOrDigit $$"0" $"s2i" $"int" ws
+				| instruction
+				| id ":=" ws exp $"set_2"
+				| id $"var_1"
+				| '[' ws exps ']' ws $"reverse"	// list
+//				| string $"string_1"
+				| double $"double_1"
+				| int $"int_1"
+				// | '<<' $(!('>' '>') anychar)* ('>' '>') ws
+				;
+
+		instruction = 
+			"block" !letterOrDigit ws brace $"block_1"
+			| "loop" !letterOrDigit ws brace $"loop_1"
+			| "return" !letterOrDigit ws (exp | $"nil") $"return_1"
+			| "break" !letterOrDigit ws (int | $$"0") $"s2i" $"break_1"
+			;
+
+		wasmop = $wasmid ws "<" ws wargs ">" ws "(" ws exps $"reverse" ")" ws $"wasm_op_3";
+			wargs = $"nil" warg $"cons"("," ws warg $"cons")* | $"nil";
+			warg = type | id | int;
+
+			wasmid = 'a'-'z' wasmidpart* ("." wasmidpart+)?;
+			wasmidpart = 'a'-'z' | '0'-'9' | "_";
+
+		exps = $"nil" exp $"cons" ("," ws exp $"cons")* ("," ws)? 
+			| $"nil";
+
+		expsemi = $"nil" exp $"cons" (";" ws exp $"cons")* (";" ws)? 
+			| $"nil";
+
+		optexport = "export" ws (string | $$"1" $"s2i") | ($$"0" $"s2i");
+
+		optmutable = ("mutable" ws $$"1" | $$"0" ) $"s2i";
+
+		type = $("i32" | "i64" | "f32" | "f64" | "v128" | "func" | "extern" | "auto") $"type_1" ws;
+
+		typelist = "(" ws types ")" ws | $"nil" type $"cons";
+
+		types = $"nil" type $"cons" ("," ws type $"cons")* | $"nil";
+
+		fntype = "(" ws types ")" ws "->" ws typelist $"fntype_2";
+
+//			| id "<" ws types ">" ws $"partype_2"
+//			| type;
+	
+		ws decl
+	>>, ["ws", "id", "int", "double", "string"]); // true adds definitions for whitespace
+
+	grammar;
+}
