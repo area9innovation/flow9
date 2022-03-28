@@ -1757,7 +1757,7 @@ class TextClip extends NativeWidgetClip {
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
 
-			if (useTextBackgroundWidget) {
+			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
 				textBackgroundWidget.classList.add('textBackgroundWidget');
 			}
