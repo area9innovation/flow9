@@ -185,7 +185,7 @@ You can place constant data in the output file using syntax like this:
 	// Strings are placed as UTF8 but with the length first
 	data "utf8 string is very comfortable";
 
-	// We can have a sequence of data. The ints are encoded as LEB-128
+	// We can have a sequence of data. Each int is a byte.
 	data 1, 2, 3, "text", 3.0;
 
 	// Moving the data into offset 32 of the memory
@@ -196,8 +196,6 @@ The result is that this data is copied into memory on startup.
 TODO:
 - Add syntax for passive data, which is not automatically copied into memory
   until memory.init is called.
-
-- Add syntax for raw bytes, or change ints to be bytes?
 
 - Add support for naming the data index for memory.init and data.drop
 
