@@ -29,6 +29,7 @@ Run all test cases and produce `.wat` output as well using `wasm2wat`:
 
 TODO:
 - Support include path
+- Better parse errors
 
 # Status
 
@@ -55,7 +56,7 @@ checking is complete. The syntax for functions is like this:
 	// Multi-values is supported with this syntax: This function returns both an i32 and a i64
 	foo(i32) -> (i32, i64) { ... }
 
-As a special type, there is also "auto", where the type will be inferred by
+As a special type, there is also `auto`, where the type will be inferred by
 the compiler: 
 
 	// The return type of this function is inferred to be "i32"
@@ -82,6 +83,9 @@ TODO:
 - Check that the return value of a return matches the function return value
 
 - Check that we do not have let-binding of () type
+
+- Better error messages when we have a type problem, like 
+   `i = load<>(0);` where there might not be enough info to infer the type
 
 ## Top-level Syntax
 
@@ -175,6 +179,10 @@ To reserve memory, use syntax like this:
 
 	export? memory <min> <max>?;
 
+or in case it is imported from the host:
+
+	import memory <min> <max>? = module.name;
+
 Examples:
 
 	// Reserves one page of 64k
@@ -189,10 +197,8 @@ Examples:
 	// Reserves and exports memory under the name "mymem"
 	export "mymem" memory 1 4;
 
-TODO: Implement importing memory:
-
-	// Memory import
-	import memory min max = module.name;
+	// 64k Memory import from the host
+	import memory 1 = module.name;
 
 ## Data
 
@@ -215,7 +221,9 @@ TODO:
 
 - Add support for naming the data index for memory.init and data.drop
 
-- Capture the address of data segments?
+	data id : 1, 23, ... ?
+
+- Capture the address or size of data segments?
 
 ## Tables
 
@@ -230,7 +238,8 @@ Importing of tables is done like this:
 TODO:
 - Document the implicit tables for ref.func 
 - Automatically construct table for indirect calls
-
+- Add syntax for elements, which are pieces to initialize tables
+ 
 # Expressions
 
 The body of globals and functions are expressions. There are no
@@ -431,7 +440,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Control instructions
 
-call_indirect not implemented yet.
+call_indirect and br_table not implemented yet.
 
 | Wasm | Wase | Comments |
 |-|-|-|
@@ -443,6 +452,7 @@ call_indirect not implemented yet.
 | `nop` | `nop<>()` | No operation
 | `br` | `break` or `break int` |  Default break is 0
 | `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | Default break is 0
+| `br_table` | TODO |
 | `return` | `return` or `return exp` |
 | `call` | `fn(args)` |
 | `call_indirect` | `call_indirect<>(fnidx<id>(), args)` | - | 
@@ -578,6 +588,8 @@ None of these are implemented yet.
 
 For each instruction, we need to define three basic different things:
 
-- Syntax. Done in grammar.flow using Gringo.
-- Typing. Done in type.flow using DSL typing
-- Compilation. Done in compile.flow using the Wase intermediate AST
+- Syntax. Done in `grammar.flow` using Gringo.
+- Typing. Done in `type.flow` using DSL typing
+- Compilation. Done in `compile.flow` using the Wase intermediate AST
+- Low-level compilation to bytecode is done in `tools/wasm/wasm_encode.flow`
+- 
