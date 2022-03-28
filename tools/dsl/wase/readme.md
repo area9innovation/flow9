@@ -205,10 +205,17 @@ TODO:
 
 ## Tables
 
-TODO: Define syntax for this
+Importing of tables is done like this:
 
-	// Tables
-	import id : table(min, max?)<reftype> from module.name;
+	// Table of functions of min size 1, named module.mytable in the host
+	import mytable : table<func>(1) = module.mytable;
+
+	// Table of externs of min size 5, max size 10, named module.myexterns in the host
+	import myexterns : table<extern>(5 10) = module.myexterns;
+
+TODO:
+- Document the implicit tables for ref.func 
+- Automatically construct table for indirect calls
 
 # Expressions
 
@@ -446,14 +453,14 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Table Instructions
 
-0/7 implemented.
+1/7 implemented.
 
 | Wasm | Wase | Implemented | Comments |
 |-|-|-|-|
-| `table.get` | `table.get<id>(index)` | - | Retrieves a value from a table slot. The id is omittable and default to 0
-| `table.set` | `table.set<id>(index, value)` | - | Sets a value in a table slot. id is default 0.
-| `table.size` | `table.size<id>()` | - | Returns the size of a table. id is default 0.
-| `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots. id is default 0.
+| `table.get` | `table.get<id>(index)` | X | Retrieves a value from a table slot. The id the name of a table given by import.table
+| `table.set` | `table.set<id>(index, value)` | - | Sets a value in a table slot.
+| `table.size` | `table.size<id>()` | - | Returns the size of a table.
+| `table.grow` | `table.grow<id>(init, size)` | - | Changes the size of a table, initializing with the `init` value in empty slots.
 | `table.copy` | `table.copy<id1, id2>(elems : i32, source : i32, dest : i32)` | - | Copies `elems` slots from one area of a table `id1` to another table `id2` 
 | `table.init` | `table.init<tableid, elemid>(i32, i32, i32)` | - | Initializes a table with elements from an element section
 | `elem.drop` | `elem.drop<id>()` | - | Discards the memory in an element segment.
