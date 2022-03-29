@@ -383,29 +383,28 @@ statements, but only expressions. The syntax is pretty standard:
 	block {
 		code;
 		// This breaks to the end of the block
-		if (earlyStop) break;
+		break_if<>(earlyStop);
 		code;
 	}
 
 	loop {
 		code;
 		// This breaks to the top of the loop
-		if (continue) break;
-		code;
+		break_if<1>(stop);
+		// This is really continue
+		break;
 	}
 
-	block {
-		loop {
-			code;
-			// This breaks to the top of the loop
-			if (continue) break;
-			code;
-			// This breaks out of the loop to endcode
-			if (earlyStop) break 1;
-			code;
-		}
-	};
-	endcode;
+	// Here is a simple do-while loop, which prints from 1 to 10
+	i = 1;
+	loop {
+		printi32(i);
+		printByte(10);
+		i := i + 1;
+		break_if<1>(i > 10);
+		// This is really continue
+		break;
+	}
 
 TODO:
 - More natural switch syntax?
