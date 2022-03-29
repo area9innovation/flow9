@@ -31,6 +31,53 @@ TODO:
 - Support include path for initial file, as well as `include`
 - Better parse errors
 
+# Example
+
+Here is a solution to the Project Euler challenge 1 (https://projecteuler.net/problem=1)
+written in Wase:
+
+	// This includes Wasi imports and a printi32 helper
+	include wase/lib/runtime;
+
+	// For Wasi, we have to export the memory
+	export memory 1;
+
+	// This is the core loop
+	foldRange(start : i32, end : i32, acc : i32) -> i32 {
+		if (start <= end) {
+			foldRange(start + 1, end, if (start % 3 == 0 | start % 5 == 0) {
+				acc + start;
+			} else acc)
+		} else {
+			acc;
+		}
+	}
+
+	euler1(limit : i32) -> i32 {
+		foldRange(1, limit - 1, 0);
+	}
+
+	// Wasi expects us to have a "_start" function exported
+	export "_start" start() -> () {
+		printi32(euler1(1000)); // Correct: 233168
+		{}
+	}
+
+Compile with
+
+	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- wase/tests/euler1.wase
+
+and run with
+
+	c:\flow9\tools\dsl> wasmer wase/tests/euler1.wasm
+	233168
+
+You can also run with wasm3, but it does not have as deep a stack, so the 
+recursion above causes a stack overflow.
+
+TODO:
+- Rewrite this example to use a loop instead.
+
 # Status
 
 The basics work, and the compiler can parse, type and compile most instructions
