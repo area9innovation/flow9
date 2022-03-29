@@ -79,7 +79,8 @@
     i32.const 0
     call 3)
   (func (;5;) (type 4)
-    i32.const -64
+    i32.const 1000
+    call 4
     call 2)
   (memory (;0;) 1)
   (export "memory" (memory 0))

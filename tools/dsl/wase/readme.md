@@ -141,6 +141,8 @@ Some examples:
 TODO:
 - Extend the type checker to check mutability of globals
 
+- Encode 64-bit constants as S64, rather than U64
+
 ## Function syntax
 
 	// Functions
