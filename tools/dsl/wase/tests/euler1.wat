@@ -23,22 +23,34 @@
     drop)
   (func (;2;) (type 1) (param i32)
     local.get 0
-    i32.const 10
-    i32.lt_u
+    i32.const 0
+    i32.lt_s
     if  ;; label = @1
-      i32.const 48
-      local.get 0
-      i32.add
+      i32.const 45
       call 1
+      i32.const 0
+      local.get 0
+      i32.sub
+      call 2
     else
       local.get 0
       i32.const 10
-      i32.div_u
-      call 2
-      local.get 0
-      i32.const 10
-      i32.rem_u
-      call 2
+      i32.lt_u
+      if  ;; label = @2
+        i32.const 48
+        local.get 0
+        i32.add
+        call 1
+      else
+        local.get 0
+        i32.const 10
+        i32.div_u
+        call 2
+        local.get 0
+        i32.const 10
+        i32.rem_u
+        call 2
+      end
     end)
   (func (;3;) (type 2) (param i32 i32 i32) (result i32)
     local.get 0
