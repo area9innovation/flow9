@@ -23,6 +23,25 @@
     drop)
   (func (;2;) (type 1) (param i32)
     local.get 0
+    i32.const 10
+    i32.lt_u
+    if  ;; label = @1
+      i32.const 48
+      local.get 0
+      i32.add
+      call 1
+    else
+      local.get 0
+      i32.const 10
+      i32.div_u
+      call 2
+      local.get 0
+      i32.const 10
+      i32.rem_u
+      call 2
+    end)
+  (func (;3;) (type 1) (param i32)
+    local.get 0
     i32.const 0
     i32.lt_s
     if  ;; label = @1
@@ -34,25 +53,9 @@
       call 2
     else
       local.get 0
-      i32.const 10
-      i32.lt_u
-      if  ;; label = @2
-        i32.const 48
-        local.get 0
-        i32.add
-        call 1
-      else
-        local.get 0
-        i32.const 10
-        i32.div_u
-        call 2
-        local.get 0
-        i32.const 10
-        i32.rem_u
-        call 2
-      end
+      call 2
     end)
-  (func (;3;) (type 2) (param i32 i32 i32) (result i32)
+  (func (;4;) (type 2) (param i32 i32 i32) (result i32)
     local.get 0
     local.get 1
     i32.le_s
@@ -79,21 +82,21 @@
       else
         local.get 2
       end
-      call 3
+      call 4
     else
       local.get 2
     end)
-  (func (;4;) (type 3) (param i32) (result i32)
+  (func (;5;) (type 3) (param i32) (result i32)
     i32.const 1
     local.get 0
     i32.const 1
     i32.sub
     i32.const 0
-    call 3)
-  (func (;5;) (type 4)
+    call 4)
+  (func (;6;) (type 4)
     i32.const 1000
-    call 4
-    call 2)
+    call 5
+    call 3)
   (memory (;0;) 1)
   (export "memory" (memory 0))
-  (export "_start" (func 5)))
+  (export "_start" (func 6)))
