@@ -1,0 +1,244 @@
+include wase/lib/runtime;
+
+/**
+ * Simple malloc implementation
+ *  - uses double-linked list of blocks
+ *  - uses first-fit approach to find the right one
+ */
+
+// What address does the heap start?
+malloc_heap_start : i32= 0;
+
+// block descriptor:
+// i32 next
+// i32 pre
+// i32 size, in bytes
+malloc_header_size : i32 = 12;
+
+// head is stored in memory[0]
+malloc_read_head() -> i32 {
+	load<>(malloc_heap_start)
+}
+
+malloc_write_head(address: i32) -> () {
+	store<>(malloc_heap_start, address)
+}
+
+// helper functions - block field navigation
+malloc_get_next_field(address: i32) -> i32 {
+	address;
+}
+
+malloc_get_prev_field(address: i32) -> i32 {
+	address + 4;
+}
+
+malloc_get_size_field(address: i32) -> i32 {
+	address + 8;
+}
+
+malloc_write_header(address: i32, next: i32, prev: i32, size: i32) -> () {
+	store<>(malloc_get_next_field(address), next);
+	store<>(malloc_get_prev_field(address), prev);
+	store<>(malloc_get_size_field(address), size)
+}
+
+// helper functions - read-write block fields
+malloc_get_next_block(address: i32) -> i32 {
+	load<>(malloc_get_next_field(address));
+}
+
+malloc_get_prev_block(address: i32) -> i32 {
+	load<>(malloc_get_prev_field(address));
+}
+
+malloc_get_block_size(address: i32) -> i32 {
+	load<>(malloc_get_size_field(address));
+}
+
+malloc_set_next_block(address: i32, next_block_offset: i32) -> () {
+	store<>(malloc_get_next_field(address), next_block_offset);
+}
+
+malloc_set_prev_block(address: i32, prev_block_offset: i32) -> () {
+	store<>(malloc_get_prev_field(address), prev_block_offset);
+}
+
+malloc_set_block_size(address: i32, size: i32) -> () {
+	store<>(malloc_get_size_field(address), size);
+}
+
+// return result block for address. i.e. if blocks was merged then return prev otherwise return address
+malloc_merge_block(prev : i32, address : i32) -> i32 {
+	// TODO: gt_u?
+	if (prev > 0 & address > 0) {
+		sz = malloc_get_block_size(prev);
+		if (prev + sz + malloc_header_size == address) {
+			// just increase size of previous block
+			next = malloc_get_next_block(address);
+			malloc_set_block_size(prev, sz + malloc_header_size + malloc_get_block_size(address));
+			malloc_set_next_block(prev, next);
+			if (next > 0) malloc_set_prev_block(next, prev);
+			prev;
+		} else {
+			address;
+		}
+	} else {
+		address;
+	}
+}
+
+// linked list management
+// insert between prev and next linking to them directly
+malloc_list_insert(prev: i32, next: i32, address: i32) -> () {
+	if (prev > 0) {
+		malloc_set_next_block(prev, address);
+	} else {
+		malloc_write_head(address)
+	};
+	malloc_set_prev_block(address, prev);
+
+	if (next > 0) {
+		malloc_set_prev_block(next, address);
+	};
+	malloc_set_next_block(address, next);
+
+	// try to merge current block with prev then with next
+	malloc_merge_block(malloc_merge_block(prev, address), next);
+	{}
+}
+
+// remove item from the list
+malloc_list_remove(address: i32) -> () {
+	prev = malloc_get_prev_block(address);
+	next = malloc_get_next_block(address);
+	if (prev > 0) {
+		malloc_set_next_block(prev, next);
+	} else {
+		malloc_write_head(next);
+	};
+
+	if (next > 0) {
+		malloc_set_prev_block(next, prev);
+	}
+}
+
+// splits block if needed, returns either newly created block or next block
+malloc_split_or_use_block(size: i32, address: i32) -> () {
+	if (malloc_get_block_size(address) - size >= malloc_header_size) {
+		next = malloc_get_next_block(address);
+		prev = malloc_get_prev_block(address);
+		// create a new block and 
+		next_free_block = address + malloc_header_size + size;
+		/*next_free_block = 
+			if (non_aligned % 4 == 0)
+				non_aligned
+			else
+				(non_aligned + 4) / 4 * 4;*/
+
+		// write its header and put pointers to prev and next
+		malloc_write_header(next_free_block, next, prev, malloc_get_block_size(address) - (next_free_block - address));
+
+		malloc_list_insert(prev, next, next_free_block);
+
+		// update address header
+		malloc_write_header(address, -1, -1, size);
+	} else {
+		malloc_list_remove(address);    
+	}
+}
+
+// recursive list traversal
+malloc_alloc_tail(size: i32, startAt: i32) -> i32 {
+	if (startAt <= 0) {
+		-1; // means out of memory
+	} else if (malloc_get_block_size(startAt) >= size) {
+		malloc_split_or_use_block(size, startAt);
+		startAt;
+	} else { 
+		malloc_alloc_tail(size, malloc_get_next_block(startAt));
+	}
+}
+
+malloc_free_tail(address: i32, startAt: i32) -> () {
+	if (address < startAt) // if we found a free higher than we need, insert before
+		malloc_list_insert(malloc_get_prev_block(startAt), startAt, address)
+	else if (malloc_get_next_block(startAt) > 0) // otherwise, iterate
+		malloc_free_tail(address, malloc_get_next_block(startAt))
+	else // otherwise, add to the end of free block list
+		malloc_list_insert(startAt, -1, address);
+}
+
+// a bit dangerous - here may be a situation when this size greater or close to total memory available for program
+malloc_smallobject_buffer_size() -> i32 { 512 * 1024 }
+malloc_smallobject_buffer_start() -> i32{ 65536 * memory.size<>() - malloc_smallobject_buffer_size() }
+
+malloc_available_memory() -> i32 {
+	65536 * memory.size<>() - malloc_header_size - malloc_heap_start - 4 - malloc_smallobject_buffer_size();
+}
+
+
+malloc_alloc(size: i32) -> i32 {
+	// printi32(1000000 + size);
+	if (size <= 16) {
+		start = malloc_smallobject_buffer_start();
+		top = load<>(start);
+		next = load<>(top);
+		store<>(start, next);
+		top
+	} else {
+		allocated = malloc_alloc_tail((size + 3) / 4 * 4, malloc_read_head());
+		if (allocated > 0) allocated + malloc_header_size else -1;
+	}
+}
+
+malloc_free(address: i32) -> () {
+	start = malloc_smallobject_buffer_start();
+	if (address >= start) {
+		top = load<>(start);
+		store<>(address, top);
+		// store<>(address + 4, 0xdeadbeaf);
+		// store<>(address + 8, 0xdeadbeaf);
+		// store<>(address + 12, 0xdeadbeaf);
+		store<>(start, address);
+	} else {
+		if (malloc_read_head() < 0) {
+			malloc_write_head(address);
+			malloc_set_next_block(address, -1);
+			malloc_set_prev_block(address, -1);
+		} else
+			malloc_free_tail(address - malloc_header_size, malloc_read_head());
+	}
+}
+
+malloc_smallobject_buffer_init(cur : i32, left : i32) -> () {
+	next = if (left == 16) 0 else cur + 16;
+	store<>(cur, next);
+	if (left > 16) malloc_smallobject_buffer_init(next, left - 16);
+}
+
+
+malloc_init_allocator() -> () {
+	printi32(111111);
+	printi32(malloc_smallobject_buffer_start());
+	printi32(malloc_smallobject_buffer_size());
+	printi32(malloc_smallobject_buffer_start() + malloc_smallobject_buffer_size());
+	malloc_smallobject_buffer_init(malloc_smallobject_buffer_start() + 4, malloc_smallobject_buffer_size() - 4);
+	store<>(malloc_smallobject_buffer_start(), malloc_smallobject_buffer_start() + 4);
+	printi32(malloc_available_memory());
+	malloc_write_head(malloc_heap_start + 4); // real memory starts from malloc_heap_start + 4
+    // count for header size for the first block plus constant storage plus 4 for head storage 
+	malloc_write_header(malloc_read_head(), -1, -1, malloc_available_memory());
+}
+
+
+malloc_do_free_memory(block : i32, acc : i32) -> i32 {
+	next = malloc_get_next_block(block);
+	nextAcc = malloc_get_block_size(block) + acc + malloc_header_size;
+
+	if (next > 0) malloc_do_free_memory(next, nextAcc) else nextAcc
+}
+
+malloc_free_memory() -> i32 {
+	malloc_do_free_memory(malloc_read_head(), 0);
+}
