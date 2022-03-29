@@ -92,6 +92,9 @@ positions.
 This compiler is not validating. For example, you can use dynamic code in constant
 contexts.
 
+TODO:
+- Add support for Dead Code Elimination?
+
 # Type system
 
 Wase supports the types of Wasm:
