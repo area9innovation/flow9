@@ -42,6 +42,9 @@ is arguably `br_table`, plus all vector instructions.
 The biggest problem in daily use is that error messages are currently without 
 positions.
 
+This compiler is not validating. For example, you can use dynamic code in constant
+contexts.
+
 # Type system
 
 Wase supports the types of Wasm:
@@ -90,6 +93,8 @@ TODO:
 
 - Better error messages when we have a type problem, like 
    `i = load<>(0);` where there might not be enough info to infer the type
+
+- Check function return type matches
 
 ## Top-level Syntax
 
