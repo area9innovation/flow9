@@ -3376,62 +3376,25 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 
 /*
 main() {
-	pinyin = getTestPinyin("zh-hans");
-	TODO: rewrite using InputMethodBrowser.
+	browserB = make(makeIMEBrowser(getTestPinyin("zh-hans"), "", "", 5));
 	PAGE_SIZE = 5;
 	currentB = make("");
 	inputB = make("");
 	inputFocusB = make(false);
-	predictionsB = make(InputMethodPredictionChoices(None(), None(), []));
-	currentPredictionIdxB = make(0);
 	predictionsFocusesB = generate(0, PAGE_SIZE, \i -> make(false));
-	goPreviousPage = \ -> {
-		nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).previousId, PAGE_SIZE));
-		true
-	};
-	goNextPage = \ -> {
-		nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).nextId, PAGE_SIZE));
-		true
-	}
-	goPreviousCandidate = \ -> {
-		lastIdx = length(getValue(predictionsB).choices)-1;
-		currentPredictionIdx = max(0, min(lastIdx, getValue(currentPredictionIdxB)));
-		if (currentPredictionIdx > 0) {
-			nextDistinct(currentPredictionIdxB, currentPredictionIdx-1);
-			true
-		} else {
-			r = goPreviousPage();
-			nextDistinct(currentPredictionIdxB, if (r) length(getValue(predictionsB).choices)-1 else 0);
-			r
-		}
-	};
-	goNextCandidate = \ -> {
-		lastIdx = length(getValue(predictionsB).choices)-1;
-		currentPredictionIdx = getValue(currentPredictionIdxB);
-		if (currentPredictionIdx < lastIdx) {
-			nextDistinct(currentPredictionIdxB, currentPredictionIdx+1);
-			true
-		} else {
-			r = goNextPage();
-			nextDistinct(currentPredictionIdxB, if (r) 0 else lastIdx);
-			r
-		}
-	};
-	commitCandidate = \ -> {
-		currentPredictionIdx = getValue(currentPredictionIdxB);
-		nextDistinct(inputB, getValue(inputB) + getValue(predictionsB).choices[currentPredictionIdx].text);
-		nextDistinct(currentB, "");
+	commitCandidate = \b -> {
+		chosenText = getValue(b.choicesB).choices[getValue(b.inPageIdxB)].text;
+		nextDistinct(browserB, makeIMEBrowser(b.api, b.context + chosenText, "", b.pageSize));
 		nextDistinct(inputFocusB, true);
-		nextDistinct(currentPredictionIdxB, 0);
 		true
 	};
 	KEYS_USED = [KEY_UP, KEY_DOWN, KEY_PAGEUP, KEY_PAGEDOWN, KEY_SPACE];
-	KEYS_HANDLERS = [\-> false, goPreviousCandidate, goNextCandidate, goPreviousPage, goNextPage, commitCandidate];
+	KEYS_HANDLERS = [\__ -> false, goPreviousCandidateIME, goNextCandidateIME, goPreviousPageIME, goNextPageIME, commitCandidate];
 	textStyle = [MFont(32.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
 	tipStyle = [MFont(12.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
 	keypressB = make(noKey);
-	uns1 = fsubscribe(currentB, \current -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), current, None(), PAGE_SIZE)));
-	uns2 = fsubscribe(keypressB, \keypress -> ignore(KEYS_HANDLERS[elemIndex(KEYS_USED, keypress.keycode, -1)+1]()));
+	uns1 = fsubscribe(currentB, \input -> nextDistinct(browserB, getValue(browserB) |> (\b -> makeIMEBrowser(b.api, b.context, input, b.pageSize))));
+	uns2 = fsubscribe(keypressB, \keypress -> ignore(KEYS_HANDLERS[elemIndex(KEYS_USED, keypress.keycode, -1)+1](getValue(browserB))));
 	material = MLines2A(
 		MCols2A(
 			MDynamicText(inputB, textStyle),
@@ -3443,31 +3406,41 @@ main() {
 			)
 		),
 		MColsA([
-			MTextButton("<", \-> ignore(goPreviousPage()), [], []),
-			MSelect(predictionsB, \predictions ->
+			MTextButton("<", \-> ignore(goPreviousPageIME(getValue(browserB))), [], []),
+			MSelect(browserB, \browser ->
 				MConstruct(
-					[
-						\-> selectWithLastu(currentPredictionIdxB, \l, n -> {
-							lastIdx = length(getValue(predictionsB).choices)-1;
-							nextDistinct(predictionsFocusesB[l], false);
+					concat([
+						\-> selectWithLastu(browser.inPageIdxB, \l, n -> {
+							lastIdx = length(getValue(browser.choicesB).choices)-1;
 							nextDistinct(predictionsFocusesB[max(0, min(n, lastIdx))], true);
+							nextDistinct(predictionsFocusesB[l], false);
 						}).second,
 						\-> {
-							nextDistinct(predictionsFocusesB[getValue(currentPredictionIdxB)], true);
+							nextDistinct(predictionsFocusesB[getValue(browser.inPageIdxB)], true);
 							nop
 						}
-					],
-					MColsA(mapi(predictions.choices, \i, p -> MLinesXCenter([
-						MText(p.hotkey, tipStyle),
-						MTextButton(p.text, \ -> {
-							nextDistinct(currentPredictionIdxB, i);
-							ignore(commitCandidate());
-						}, [], [MFocused(predictionsFocusesB[i])]),
-						MText(p.caption, tipStyle),
-					])))
+					], mapi(predictionsFocusesB, \predictionIdx, predictionFocusB -> \-> subscribe(predictionFocusB, \predictionFocus -> {
+						currentIdx = getValue(browser.inPageIdxB);
+						if (predictionIdx == currentIdx)
+							nextDistinct(predictionFocusB, true)
+						else if (predictionFocus) {
+							nextDistinct(predictionsFocusesB[currentIdx], false);
+							nextDistinct(browser.inPageIdxB, predictionIdx);
+						}
+					}))),
+					MSelect(browser.choicesB, \predictions ->
+						MColsA(mapi(predictions.choices, \i, p -> MLinesXCenter([
+							MText(p.hotkey, tipStyle),
+							MTextButton(p.text, \ -> {
+								nextDistinct(browser.inPageIdxB, i);
+								ignore(commitCandidate(browser));
+							}, [], [MFocused(predictionsFocusesB[i])]),
+							MText(p.caption, tipStyle),
+						])))
+					)
 				)
 			),
-			MTextButton(">", \-> ignore(goNextPage()), [], []),
+			MTextButton(">", \-> ignore(goNextPageIME(getValue(browserB))), [], []),
 		])
 	);
 	mrender(makeMaterialManager([]), true, material);
