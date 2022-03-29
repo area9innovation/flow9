@@ -58,7 +58,7 @@ written in Wase:
 	}
 
 	// Wasi expects us to have a "_start" function exported
-	export "_start" start() -> () {
+	export _start() -> () {
 		printi32(euler1(1000)); // Correct: 233168
 		{}
 	}
