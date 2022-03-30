@@ -1,31 +1,103 @@
 # Wase - a friendly, low-level language for Wasm
 
-This is a language, which maps one-to-one with WebAssembly, and compiles directly
+Make WebAssembly Easy. WASE is a language, which tries to make WASM easy to write
+directly. The language maps one-to-one with WebAssembly, and compiles directly
 to Wasm bytecode. As such, it can be seen as an alternative to the WAT text format,
 but it is easier to use because of these things:
 
 - It uses more conventional syntax rather than S-expr
 - It has type inference
-- It handles all the index business for you
+- It handles all the index and table business for you
 
-The language is lexically scoped, but does not have closures, and no real data structures, nor memory management. It provides direct access to the memory through
-load/stores, just like Wasm.
+The language is strongly typed, lexically scoped, and provides direct access 
+to memory through load/stores. This is a low-level language without real data 
+structures, lambdas/closures, nor memory management, but those can be written
+in this language.
 
-The language is designed to expose the full low-level flexibility of Wasm directly.
+The language is designed to expose the full low-level flexibility of Wasm directly
+but in a friendly manner, which hides most of the complexity of the Wasm format.
+
+# Usage
+
+Example compiles `myfile.wase` and produces `myfile.wasm`:
+
+	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- myfile.wase
+
+Run all test cases and produce `.wat` output as well using `wasm2wat`:
+
+	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- test=1 wat=1
+
+TODO:
+- Support include path for initial file, as well as `include`
+- Better parse errors
+
+# Example
+
+Here is a solution to the Project Euler challenge 1 (https://projecteuler.net/problem=1)
+written in Wase:
+
+	// This includes Wasi imports and a printi32 helper
+	include wase/lib/runtime;
+
+	// For Wasi, we have to export the memory
+	export memory 1;
+
+	// This is the core loop
+	foldRange(start : i32, end : i32, acc : i32) -> i32 {
+		if (start <= end) {
+			foldRange(start + 1, end, if (start % 3 == 0 | start % 5 == 0) {
+				acc + start;
+			} else acc)
+		} else {
+			acc;
+		}
+	}
+
+	euler1(limit : i32) -> i32 {
+		foldRange(1, limit - 1, 0);
+	}
+
+	// Wasi expects us to have a "_start" function exported
+	export _start() -> () {
+		printi32(euler1(1000)); // Correct: 233168
+		{}
+	}
+
+Compile with
+
+	c:\flow9\tools\dsl> flowcpp wase/wase.flow -- wase/tests/euler1.wase
+
+and run with
+
+	c:\flow9\tools\dsl> wasmer wase/tests/euler1.wasm
+	233168
+
+You can also run with wasm3, but it does not have as deep a stack, so the 
+recursion above causes a stack overflow.
+
+TODO:
+- Rewrite this example to use a loop instead.
 
 # Status
 
-Only the most basic programs work and can compile directly from text to WASM binaries.
-A lot of instructions are not implemented yet. For each instruction, we need to define
-three different things:
+The basics work, and the compiler can parse, type and compile most instructions
+directly to WASM binaries that validate and run correctly.
 
-- Syntax. Done in grammar.flow.
-- Typing. Done in type.flow
-- Compilation. Done in compile.flow
+The most important missing instruction is `call_indirect`, the second most important
+is arguably `br_table`, plus all vector instructions.
+
+The biggest problem in daily use is that error messages are currently without 
+positions.
+
+This compiler is not validating. For example, you can use dynamic code in constant
+contexts.
+
+TODO:
+- Add support for Dead Code Elimination?
 
 # Type system
 
-It supports the types of Wasm:
+Wase supports the types of Wasm:
 
 	i32, i64, f32, f64, v128, func, extern
 
@@ -41,7 +113,7 @@ checking is complete. The syntax for functions is like this:
 	// Multi-values is supported with this syntax: This function returns both an i32 and a i64
 	foo(i32) -> (i32, i64) { ... }
 
-As a special type, there is also "auto", where the type will be inferred by
+As a special type, there is also `auto`, where the type will be inferred by
 the compiler: 
 
 	// The return type of this function is inferred to be "i32"
@@ -69,13 +141,25 @@ TODO:
 
 - Check that we do not have let-binding of () type
 
+- Better error messages when we have a type problem, like 
+   `i = load<>(0);` where there might not be enough info to infer the type
+
+- Check function return type matches
+
 ## Top-level Syntax
 
 At the top-level, we have syntax for the different kinds of sections in
 Wasm. This includes globals, functions, imports, tables and data.
 
-The order of top-level declarations is important. The names of globals,
-functions and such only take effect from the point they are defined.
+The compiler will reorder the top-level, so imports, tables, memory and data
+come first in the original order, and then after that, globals and functions
+in their original order.
+
+TODO:
+- Start a standard library to be used by `include`
+
+- Try to support mutual recursion by recording the types and indexes of all globals
+  and functions before type checking and code gen
 
 ## Global syntax
 
@@ -106,6 +190,8 @@ Some examples:
 
 TODO:
 - Extend the type checker to check mutability of globals
+
+- Encode 64-bit constants as S64, rather than U64
 
 ## Function syntax
 
@@ -148,16 +234,16 @@ The same works for globals:
 	import id : i32 = module.name;
 	import id : mutable i32 = module.name;
 
-TODO:
-- Do a two-phase declaration processing, so we can have imports in 
-  arbitrary order, and also try to support mutual recursion between functions
-
 ## Memory
 
 You have to explicitly define how much memory is available for the runtime.
 To reserve memory, use syntax like this:
 
 	export? memory <min> <max>?;
+
+or in case it is imported from the host:
+
+	import memory <min> <max>? = module.name;
 
 Examples:
 
@@ -173,10 +259,8 @@ Examples:
 	// Reserves and exports memory under the name "mymem"
 	export "mymem" memory 1 4;
 
-TODO: Implement importing memory:
-
-	// Memory import
-	import memory min max = module.name;
+	// 64k Memory import from the host
+	import memory 1 = module.name;
 
 ## Data
 
@@ -199,7 +283,9 @@ TODO:
 
 - Add support for naming the data index for memory.init and data.drop
 
-- Capture the address of data segments?
+	data id : 1, 23, ... ?
+
+- Capture the address or size of data segments?
 
 ## Tables
 
@@ -214,6 +300,20 @@ Importing of tables is done like this:
 TODO:
 - Document the implicit tables for ref.func 
 - Automatically construct table for indirect calls
+- Add syntax for elements, which are pieces to initialize tables
+
+# Include
+
+Wase code can be split into multiple files, and included using this syntax at the
+top-level:
+
+	include wase/lib/debug;
+
+The compiler will read the file "wase/lib/debug.wase", parse it, and splice the 
+result into that place in the code. If a file is included more than once (also 
+transitively), it is only included the first occurrence.
+
+The program is only type checked after includes are resolved.
 
 # Expressions
 
@@ -286,29 +386,28 @@ statements, but only expressions. The syntax is pretty standard:
 	block {
 		code;
 		// This breaks to the end of the block
-		if (earlyStop) break;
+		break_if<>(earlyStop);
 		code;
 	}
 
 	loop {
 		code;
 		// This breaks to the top of the loop
-		if (continue) break;
-		code;
+		break_if<1>(stop);
+		// This is really continue
+		break;
 	}
 
-	block {
-		loop {
-			code;
-			// This breaks to the top of the loop
-			if (continue) break;
-			code;
-			// This breaks out of the loop to endcode
-			if (earlyStop) break 1;
-			code;
-		}
-	};
-	endcode;
+	// Here is a simple do-while loop, which prints from 1 to 10
+	i = 1;
+	loop {
+		printi32(i);
+		printByte(10);
+		i := i + 1;
+		break_if<1>(i > 10);
+		// This is really continue
+		break;
+	}
 
 TODO:
 - More natural switch syntax?
@@ -415,7 +514,7 @@ Loads and stores also exist in versions that work with smaller bit-widths:
 
 ## Control instructions
 
-call_indirect not implemented yet.
+call_indirect and br_table not implemented yet.
 
 | Wasm | Wase | Comments |
 |-|-|-|
@@ -427,6 +526,7 @@ call_indirect not implemented yet.
 | `nop` | `nop<>()` | No operation
 | `br` | `break` or `break int` |  Default break is 0
 | `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | Default break is 0
+| `br_table` | TODO |
 | `return` | `return` or `return exp` |
 | `call` | `fn(args)` |
 | `call_indirect` | `call_indirect<>(fnidx<id>(), args)` | - | 
@@ -557,3 +657,13 @@ None of these are implemented yet.
 
 | Wasm | Wase | Comments |
 |-|-|-|
+
+# Implementation notes
+
+For each instruction, we need to define three basic different things:
+
+- Syntax. Done in `grammar.flow` using Gringo.
+- Typing. Done in `type.flow` using DSL typing
+- Compilation. Done in `compile.flow` using the Wase intermediate AST
+- Low-level compilation to bytecode is done in `tools/wasm/wasm_encode.flow`
+- 

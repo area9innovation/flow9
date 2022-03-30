@@ -12,9 +12,7 @@ export {
 	// TODO: V128 vector SIMD is not done yet
 	wasmModule2bytes(m : WasmModule) -> [int];
 
-	wasmI32Const2bytes(val : WasmI32Const) -> [int];
-	wasmI64Const2bytes(val : WasmI64Const) -> [int];
-	wasmF32Const2bytes(value : WasmF32Const) -> [int];
+	wasmEncodeU32(i : int) -> [int];
 	wasmF64Const2bytes(val : WasmF64Const) -> [int];
 }
 
@@ -64,23 +62,6 @@ wasmModule2bytes(m : WasmModule) -> [int] {
 // Values
 //
 
-wasmI32Const2bytes(val : WasmI32Const) -> [int] {
-	wasmEncodeU32(val.val);
-}
-
-wasmI64Const2bytes(val : WasmI64Const) -> [int] {
-	wasmEncodeU64(val.val);
-}
-
-wasmEncodeU64(i : UInt64) -> [int] {
-	if (i.a == 0 && i.b < 128) [i.b]
-	else {
-		concat(
-			[bitOr(bitAnd(i.b, 0x7f), 0x80)],
-			wasmEncodeU64(shiftR64(i, 7))
-		)
-	}
-}
 
 
 wasmF32Const2bytes(value : WasmF32Const) -> [int] {
@@ -288,6 +269,9 @@ wasmInstruction2bytes(i : WasmInstruction) -> [int] {
 		WasmReturn(): [0x0f];
 		WasmCall(funcindex): concat([0x10], wasmEncodeU32(funcindex));
 		WasmCallIndirect(typeindex, tableindex): concat3([0x11], wasmEncodeU32(typeindex), wasmEncodeU32(tableindex));
+		// https://github.com/WebAssembly/tail-call/blob/main/proposals/tail-call/Overview.md
+		// return_call is 0x12
+		// return_call_indirect is 0x13
 		WasmRefNull(type): concat([0xd0], wasmValType2bytes(type));
 		WasmRefIsNull(): [0xd1];
 		WasmRefFunc(funcIndex): concat([0xd2], wasmEncodeU32(funcIndex));
@@ -336,8 +320,8 @@ wasmInstruction2bytes(i : WasmInstruction) -> [int] {
 		WasmDataDrop(index): concat([0xfc, 9], wasmEncodeU32(index));
 		WasmMemoryCopy(): [0xfc, 10, 0x00, 0x00];
 		WasmMemoryFill(): [0xfc, 11, 0x00];
-		WasmI32Const(val): concat([0x41], wasmI32Const2bytes(i));
-		WasmI64Const(val): concat([0x42], wasmI64Const2bytes(i));
+		WasmI32Const(val): concat([0x41], wasmEncodeS32(val));
+		WasmI64Const(val): concat([0x42], wasmEncodeU64(val)); // TODO: Should this be S64?
 		WasmF32Const(val): concat([0x43], i32tobytes(i.val));
 		WasmF64Const(val): concat([0x44], wasmF64Const2bytes(i));
 		WasmF64ConstHex(val): {
@@ -758,7 +742,24 @@ wasmEncodeU32(i : int) -> [int] {
 	else {
 		concat(
 			[bitOr(bitAnd(i, 0x7f), 0x80)],
-			wasmEncodeU32(i / 128)
+			wasmEncodeU32(bitUshr(i, 7))
+		)
+	}
+}
+
+wasmEncodeS32(val : int) -> [int] {
+	if (val >= -64 && val < 64) {
+		[bitAnd(val, 0x7f)]
+	} else {
+		// This is signed shift
+		rest = if (val < 0) {
+			bitOr(bitUshr(val, 7), 0xfe000000)
+		} else {
+			bitUshr(val, 7)
+		};
+		concat(
+			[bitOr(bitAnd(val, 0x7f), 0x80)],
+			wasmEncodeS32(rest)
 		)
 	}
 }
@@ -770,4 +771,14 @@ i32tobytes(v : int) -> [int] {
 		bitUshr(bitAnd(v, 0xff0000), 16),
 		bitUshr(bitAnd(v, 0xff000000), 24),
 	]
+}
+
+wasmEncodeU64(i : UInt64) -> [int] {
+	if (i.a == 0 && i.b < 128) [i.b]
+	else {
+		concat(
+			[bitOr(bitAnd(i.b, 0x7f), 0x80)],
+			wasmEncodeU64(shiftR64(i, 7))
+		)
+	}
 }

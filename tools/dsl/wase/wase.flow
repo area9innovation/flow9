@@ -1,0 +1,97 @@
+import tools/dsl/wase/parse;
+import tools/dsl/wase/include;
+import tools/dsl/wase/type;
+import tools/dsl/wase/compile;
+import tools/dsl/wase/pretty_wase;
+import formats/wasm/wasm_encode;
+
+compileWase2File(filename : string, code : string) -> Promise<int, string> {
+	Promise(\onDone : (int) -> void, onError : (string) -> void -> {
+		println("\nCompiling '" + filename + "'");
+		program = parseWase(filename, code);
+		extended = processWaseIncludes(ref makeSet(), program);
+		typed = typeWase(extended);
+
+		if (isUrlParameterTrue("debug-type")) {
+			println("Typed '" + filename + "'':");
+			println(prettyDsl(typed));
+		}
+
+		wase = dsl2wase(\node, error -> {
+			println(filename + ": " + error)
+		}, typed);
+		if (isUrlParameterTrue("debug-wase")) {
+			println("\nAs wase:");
+			println(prettyWase(wase));
+		}
+
+		wasm = wase2wasm(wase);
+		bytes = wasmModule2bytes(wasm);
+
+		filebase = changeFileExt(filename, "");
+		ok = setFileContentBytes(filebase + ".wasm", 
+			fold(bytes, "", \acc, byte -> {
+				acc + fromCharCode(byte)
+			})
+		);
+		if (ok) {
+			println("  '" + filebase + ".wasm' saved");
+			if (isUrlParameterTrue("wat")) {
+				startProcess("wasm2wat", [filebase + ".wasm", 
+					//"--no-check", 
+					//"--enable-all", 
+					"-o", filebase + ".wat"], ".", "", \ec : int, so, se -> {
+					if (ec == 0) {
+						println("  '" + filebase + ".wat' generated");
+						onDone(ec);
+					} else {
+						onError(filename + ":\n" + so + se);
+					}
+				});
+			} else onDone(0);
+		} else {
+			onError("Could not save " + filebase + ".wasm saved")
+		}
+	});
+}
+
+main() {
+	files0 : [string] = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+	files = if (files0 != []) files0 else {
+		if (isUrlParameterTrue("test")) {
+			tests = readDirectory("wase/tests");
+			filtermap(tests, \t -> if (endsWith(t, ".wase")) Some("wase/tests/" + t) else None());
+		} else [];
+	}
+	if (files == []) {
+		printWaseHelp();
+		quit(1);
+	} else {
+		compiles : [Promise<int, string>]= map(files, \file -> 
+			if (fileExists(file)) {
+				compileWase2File(file, getFileContent(file))
+			} else {
+				Promise(\__, onError -> onError(file + " not found"));
+			}
+		);
+		all : Promise<[int], string> = allP(compiles);
+		doneP(all, \__ -> quit(0), \error -> {
+			println(error);
+			quit(1);
+		});
+	}
+}
+
+printWaseHelp() -> void {
+	println("wase <files> - Compiles the files to <file>.wasm files");
+	println("  test=1         Compiles all test cases in the wase/tests/ folder");
+	println("");
+	println("  wat=1          Produce .wat disassembly using wasm2wat");
+//	println("  wasm3=1        Runs the .wasm using wasm3");
+//	println("  wasmer=1       Runs the .wasm using wasmer");
+	println("");
+	println("  verbose=1      Print how includes are resolved to files");
+	println("");
+	println("  debug-type=1   Output the resulting typed AST");
+	println("  debug-wase=1   Output the internal intermediate WASE representation");
+}

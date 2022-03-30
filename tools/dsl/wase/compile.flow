@@ -6,10 +6,10 @@ import formats/wasm/wasm_encode;
 
 export {
 	// After type inference, we can lower to Wase
-	dsl2wase(d : DslAst) -> Wase;
+	dsl2wase(onError : (DslAst, string) -> void, d : DslAst) -> Wase;
 }
 
-dsl2wase(d : DslAst) -> Wase {
+dsl2wase(onError : (DslAst, string) -> void, d : DslAst) -> Wase {
 	switch (d) {
 		DslNode(name, args, pos): {
 			b = \i -> getDslInt(args[i]) != 0;
@@ -23,9 +23,9 @@ dsl2wase(d : DslAst) -> Wase {
 				else ""
 			};
 
-			rec = \i -> dsl2wase(args[i]);
-			valtype = \i -> dsl2WasmValType(args[i]);
-			expr = \i -> dsl2WaseExpr(args[i]);
+			rec = \i -> dsl2wase(onError, args[i]);
+			valtype = \i -> dsl2WasmValType(onError, args[i]);
+			expr = \i -> dsl2WaseExpr(onError, args[i]);
 
 			i = \n -> getDslInt(args[n]);
 			if (name == "global") {
@@ -36,23 +36,32 @@ dsl2wase(d : DslAst) -> Wase {
 
 				argTypes = map(fnargs, \fnarg -> {
 					node = getDslNode(fnarg);
-					dsl2WasmValType(node.args[1]);
+					dsl2WasmValType(onError, node.args[1]);
 				});
-				retTypes = map(rets, dsl2WasmValType);
+				retTypes = map(rets, \rr -> dsl2WasmValType(onError, rr));
 				fntype = WasmFuncType(argTypes, retTypes);
 
-				body = expr(4);
-
 				fnname = s(0);
+
+				body = dsl2WaseExpr(\node, error -> onError(node, fnname + ": " + error), args[4]);
 
 				// Grab the arguments
 				fargs = map(fnargs, \fnarg -> {
 					node = getDslNode(fnarg);
 					argname = getDslString(node.args[0]);
-					WaseLocal(argname, dsl2WasmValType(node.args[1]));
+					WaseLocal(argname, dsl2WasmValType(onError, node.args[1]));
 				});
 
 				WaseFunction(fnname, exportid(1, fnname), fnname == "main", fntype, fargs, expr(4), rec(5))
+			} else if (name == "import_memory") {
+				minimum = i(0);
+				maximum = switch (args[1]) {
+					DslInt(m): m;
+					default: 0;
+				};
+				module = s(2);
+				mname = s(3);
+				WaseImportMemory(module, mname, minimum, maximum, rec(4));
 			} else if (name == "import_table") {
 				// id reftype min max module name space				
 				fname = s(0);
@@ -67,7 +76,8 @@ dsl2wase(d : DslAst) -> Wase {
 				tt = if (tabletype == DslString("func")) WasmFuncRef()
 					else if (tabletype == DslString("extern")) WasmExternRef()
 					else {
-						println("Only support func or extern in import table");WasmFuncRef()
+						onError(d, "Only support func or extern in import table");
+						WasmFuncRef()
 					};
 				
 				WaseImportTable(fname, module, mname, tt, minimum, maximum, rec(6))
@@ -78,14 +88,14 @@ dsl2wase(d : DslAst) -> Wase {
 				fntype = waseType(args[1]);
 				module = s(2);
 				mname = s(3);
-				WaseImportFunction(fnname, module, mname, dsl2WasmFuncType(fntype), rec(4))
+				WaseImportFunction(fnname, module, mname, dsl2WasmFuncType(onError, fntype), rec(4))
 			} else if (name == "import_global") {
 				// id type mutable module name scope
 				gname = s(0);
 				gtype = waseType(args[1]);
 				module = s(3);
 				mname = s(4);
-				WaseImportGlobal(gname, module, mname, dsl2WasmValType(gtype), b(2), rec(5))
+				WaseImportGlobal(gname, module, mname, dsl2WasmValType(onError, gtype), b(2), rec(5))
 
 			} else if (name == "memory") {
 				// optexport min max
@@ -125,12 +135,12 @@ dsl2wase(d : DslAst) -> Wase {
 						DslString(v): {
 							chars = string2utf8(v);
 							concat3(acc, 
-								wasmI32Const2bytes(WasmI32Const(length(chars))),
+								wasmEncodeU32(length(chars)),
 							 	chars
 							)
 						}
 						default: {
-							println("Unsupported data " + prettyDsl(value));
+							onError(d, "Unsupported data " + summarizeDsl(value));
 							acc
 						}
 					}
@@ -139,42 +149,43 @@ dsl2wase(d : DslAst) -> Wase {
 				offset = expr(1);
 				WaseData(offset, bytes, rec(2));
 
-			} else if (name == "empty") {
+			} else if (name == "wase_empty") {
 				WaseEmpty()
 
 			} else {
-				println("TODO: Compile " + prettyDsl(d) + " to wase");
+				onError(d, "TODO: Compile " + summarizeDsl(d) + " to wase");
 				WaseEmpty()
 			}
 		}
 		default: {
-			println("Expected node, not " + prettyDsl(d));
+			onError(d, "Expected node, not " + summarizeDsl(d));
 			WaseEmpty()
 		}
 	}
 }
 
-dsl2WaseExpr(d : DslAst) -> WaseExpr {
-	WaseExpr(dsl2WaseInstruction([], d))
+dsl2WaseExpr(onError : (DslAst, string) -> void, d : DslAst) -> WaseExpr {
+	WaseExpr(dsl2WaseInstruction(onError, [], d))
 }
 
-dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
+dsl2WaseInstruction(onError : (DslAst, string) -> void, acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 	todo = \ -> {
-		println("TODO: Compile " + prettyDsl(d) + " to wase expr");
+		onError(d, "TODO: Compile " + summarizeDsl(d) + " to wase expr");
 		acc
 	}
-	// println("Compiling " + prettyDsl(d));
+	// println("Compiling " + summarizeDsl(d));
 	switch (d) {
 		DslBool(value): arrayPush(acc, WasmI32Const(b2i(value)));
 		DslInt(value): arrayPush(acc, WasmI32Const(value));
 		DslDouble(value): arrayPush(acc, WasmF64Const(value));
 		DslString(value): todo(); 
 		DslList(value): {
-			foldList(value, acc, dsl2WaseInstruction)
+			elements = list2array(value);
+			fold(elements, acc, \a, e -> dsl2WaseInstruction(onError, a, e))
 		}
 		DslNode(name, args, pos): {
 			if (name == "int" || name == "double") {
-				dsl2WaseInstruction(acc, args[0])
+				dsl2WaseInstruction(onError, acc, args[0])
 			} else if (name == "i64") {
 				uint = string2uint64(getDslString(args[0]));
 				arrayPush(acc, WasmI64Const(uint))
@@ -191,226 +202,235 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 				hint = hex2uint64(getDslString(args[0]));
 				arrayPush(acc, WasmF64ConstHex(hint))
 			} else if (name == "brace") {
-				dslBrace2WaseInstruction(acc, d);
+				dslBrace2WaseInstruction(onError, acc, d);
 			} else if (name == "block") {
 				type = waseType(args[1]);
-				ins = dslBrace2WaseInstruction([], d);
-				arrayPush(acc, WaseBlock(dsl2WasmBlockType(type), ins));
+				ins = dslBrace2WaseInstruction(onError, [], d);
+				arrayPush(acc, WaseBlock(dsl2WasmBlockType(onError, type), ins));
 			} else if (name == "loop") {
 				type = waseType(args[1]);
-				ins = dslBrace2WaseInstruction([], d);
-				arrayPush(acc, WaseLoop(dsl2WasmBlockType(type), ins));
+				ins = dslBrace2WaseInstruction(onError, [], d);
+				arrayPush(acc, WaseLoop(dsl2WasmBlockType(onError, type), ins));
 			} else if (name == "var") {
 				arrayPush(acc, WaseGet(getDslString(args[0])))
 			} else if (name == "let") {
 				// (id, type, exp, body)
-				type = dsl2WasmValType(waseType(args[1]));
+				type = dsl2WasmValType(onError, waseType(args[1]));
 				vname = getDslString(args[0]);
-				nacc = dsl2WaseInstruction(acc, args[2]);
+				nacc = dsl2WaseInstruction(onError, acc, args[2]);
 				nacc2 = arrayPush(nacc, WaseLet(vname, type));
-				dsl2WaseInstruction(nacc2, args[3]);
+				dsl2WaseInstruction(onError, nacc2, args[3]);
 
 			} else if (name == "set") {
 				// (id, exp)
 				vname = getDslString(args[0]);
-				nacc = dsl2WaseInstruction(acc, args[1]);
+				nacc = dsl2WaseInstruction(onError, acc, args[1]);
 				arrayPush(nacc, WaseSet(vname));
 			} else if (name == "tee") {
 				// (id, exp)
 				vname = getDslString(args[0]);
-				nacc = dsl2WaseInstruction(acc, args[1]);
+				nacc = dsl2WaseInstruction(onError, acc, args[1]);
 				arrayPush(nacc, WaseTee(vname));
 
 			} else if (name == "call") {
-				fnadded = dsl2WaseInstruction(acc, args[0]);
+				fnadded = dsl2WaseInstruction(onError, acc, args[0]);
 				if (length(acc) + 1 != length(fnadded)) {
-					println("Can not call " + prettyDsl(d));
+					onError(d, "Can not call " + summarizeDsl(d));
 				}
 				fn = lastElement(fnadded, WasmUnreachable());
-				callargs = dsl2WaseInstruction(acc, args[1]);
+				callargs = dsl2WaseInstruction(onError, acc, args[1]);
 				arrayPush(callargs, WaseCall(fn));
 			} else if (name == "add") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				restype = dsl2WasmValType(onError, args[2]);
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Add())
 				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Add())
 				else if (restype == WasmF32Type()) arrayPush(nacc, WasmF32Add())
 				else if (restype == WasmF64Type()) arrayPush(nacc, WasmF64Add())
 				else {
-					println("TODO: Figure out add of type " + toString(restype));
+					onError(d, "Can not add type " + toString(restype));
 					nacc;
 				}
 			} else if (name == "sub") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				restype = dsl2WasmValType(onError, args[2]);
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Sub())
 				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Sub())
 				else if (restype == WasmF32Type()) arrayPush(nacc, WasmF32Sub())
 				else if (restype == WasmF64Type()) arrayPush(nacc, WasmF64Sub())
 				else {
-					println("TODO: Figure out sub of type " + toString(restype));
+					onError(d, "Can not subtract type " + toString(restype));
 					nacc;
 				}
 			} else if (name == "mul") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				restype = dsl2WasmValType(onError, args[2]);
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Mul())
 				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Mul())
 				else if (restype == WasmF32Type()) arrayPush(nacc, WasmF32Mul())
 				else if (restype == WasmF64Type()) arrayPush(nacc, WasmF64Mul())
 				else {
-					println("TODO: Figure out mul of type " + toString(restype));
+					onError(d, "Can not mul type " + toString(restype));
 					nacc;
 				}
 			} else if (name == "div") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				restype = dsl2WasmValType(onError, args[2]);
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Div_s())
 				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Div_s())
 				else if (restype == WasmF32Type()) arrayPush(nacc, WasmF32Div())
 				else if (restype == WasmF64Type()) arrayPush(nacc, WasmF64Div())
 				else {
-					println("TODO: Figure out div of type " + toString(restype));
+					onError(d, "Can not div type " + toString(restype));
 					nacc;
 				}
 			} else if (name == "mod") {
-				restype = dsl2WasmValType(args[2]);
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				restype = dsl2WasmValType(onError, args[2]);
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (restype == WasmI32Type()) arrayPush(nacc, WasmI32Rem_s())
 				else if (restype == WasmI64Type()) arrayPush(nacc, WasmI64Rem_s())
 				else {
-					println("TODO: Figure out modulo of type " + toString(restype));
+					onError(d, "Can not modulo type " + toString(restype));
 					nacc;
 				}
 			} else if (name == "negate") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = dsl2WaseInstruction(acc, args[0]);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = dsl2WaseInstruction(onError, acc, args[0]);
 				if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Neg())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Neg())
-				else {
-					println("Negate only defined for floats, not type " + toString(argtype));
+				else if (argtype == WasmI32Type()) {
+					// Check if the arg is an int const
+					node0 = getDslNode(args[0]);
+					if (node0.name == "int") {
+						val = getDslInt(node0.args[0]);
+						arrayPush(acc, WasmI32Const(-val));
+					} else {
+						onError(d, "Negate only defined for floats, not " + summarizeDsl(args[0]));
+						nacc;
+					}
+				} else {
+					onError(d, "Negate only defined for floats, not " + summarizeDsl(args[0]));
 					nacc;
 				}
-
 			} else if (name == "equal") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Eq())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Eq())
 				else if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Eq())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Eq())
 				else {
-					println("TODO: Figure out equality of type " + toString(argtype));
+					onError(d, "Can not == type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "not_equal") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Ne())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Ne())
 				else if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Ne())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Ne())
 				else {
-					println("TODO: Figure out != of type " + toString(argtype));
+					onError(d, "Can not != type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "less_equal") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Le_s())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Le_s())
 				else if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Le())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Le())
 				else {
-					println("TODO: Figure out <= of type " + toString(argtype));
+					onError(d, "Can not <= type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "less") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Lt_s())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Lt_s())
 				else if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Lt())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Lt())
 				else {
-					println("TODO: Figure out < of type " + toString(argtype));
+					onError(d, "Can not < type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "greater_equal") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Ge_s())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Ge_s())
 				else if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Ge())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Ge())
 				else {
-					println("TODO: Figure out >= of type " + toString(argtype));
+					onError(d, "Can not >= type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "greater") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Gt_s())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Gt_s())
 				else if (argtype == WasmF32Type()) arrayPush(nacc, WasmF32Lt())
 				else if (argtype == WasmF64Type()) arrayPush(nacc, WasmF64Lt())
 				else {
-					println("TODO: Figure out < of type " + toString(argtype));
+					onError(d, "Can not > type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "and") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32And())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64And())
 				else {
-					println("TODO: Figure out & of type " + toString(argtype));
+					onError(d, "Can not & type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "or") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Or())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Or())
 				else {
-					println("TODO: Figure out | of type " + toString(argtype));
+					onError(d, "Can not | type " + toString(argtype));
 					nacc;
 				}
 			} else if (name == "xor") {
-				argtype = dsl2WasmValType(waseType(args[0]));
-				nacc = fold(subrange(args, 0, 2), acc, dsl2WaseInstruction);
+				argtype = dsl2WasmValType(onError, waseType(args[0]));
+				nacc = fold(subrange(args, 0, 2), acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				if (argtype == WasmI32Type()) arrayPush(nacc, WasmI32Xor())
 				else if (argtype == WasmI64Type()) arrayPush(nacc, WasmI64Xor())
 				else {
-					println("TODO: Figure out xor of type " + toString(argtype));
+					onError(d, "Can not ^ type " + toString(argtype));
 					nacc;
 				}
 
 			} else if (name == "ifelse") {
-				blocktype = dsl2WasmBlockType(args[3]);
-				nacc = dsl2WaseInstruction(acc, args[0]);
+				blocktype = dsl2WasmBlockType(onError, args[3]);
+				nacc = dsl2WaseInstruction(onError, acc, args[0]);
 
-				thens = dsl2WaseInstruction([], args[1]);
-				elses = dsl2WaseInstruction([], args[2]);
+				thens = dsl2WaseInstruction(onError, [], args[1]);
+				elses = dsl2WaseInstruction(onError, [], args[2]);
 
 				arrayPush(nacc, WaseIfElse(blocktype, thens, elses));
 
 			} else if (name == "if") {
-				blocktype = dsl2WasmBlockType(args[2]);
-				nacc = dsl2WaseInstruction(acc, args[0]);
+				blocktype = dsl2WasmBlockType(onError, args[2]);
+				nacc = dsl2WaseInstruction(onError, acc, args[0]);
 
-				thens = dsl2WaseInstruction([], args[1]);
+				thens = dsl2WaseInstruction(onError, [], args[1]);
 
 				arrayPush(nacc, WaseIf(blocktype, thens));
 
 			} else if (name == "return") {
 				rettype = waseType(args[0]);
-				argtype = dsl2WasmBlockType(rettype);
+				argtype = dsl2WasmBlockType(onError, rettype);
 
 				// TODO: Check that our top-level function return type matches argtype
-				println("TODO: Check that the hosting function has " + prettyDsl(rettype) + " as the return type");
+				println("TODO: Check that the hosting function has " + summarizeDsl(rettype) + " as the return type");
 
-				nacc = dsl2WaseInstruction(acc, args[0]);
+				nacc = dsl2WaseInstruction(onError, acc, args[0]);
 				arrayPush(nacc, WasmReturn());
 
 			} else if (name == "break") {
@@ -418,37 +438,37 @@ dsl2WaseInstruction(acc : [WaseInstruction], d : DslAst) -> [WaseInstruction] {
 				arrayPush(acc, WasmBr(levels));
 
 			} else if (name == "is_null") {
-				type = dsl2WasmValType(waseType(args[0]));
+				type = dsl2WasmValType(onError, waseType(args[0]));
 				if (type == WasmFuncRef() || type == WasmExternRef()) {
 				} else {
-					println("is null: " + prettyDsl(d) + " is not func or extern type");
+					onError(d, "is null: " + summarizeDsl(d) + " is not func or extern type");
 				}
 
-				nacc = dsl2WaseInstruction(acc, args[0]);
+				nacc = dsl2WaseInstruction(onError, acc, args[0]);
 				arrayPush(nacc, WasmRefIsNull());
 
 			} else if (name == "wasm_op") {
 				id = getDslString(args[0]);
 				pars = getDslList(args[1]);
-				fargs = getDslList(args[2]);
 				type = args[3];
-				nacc = dsl2WaseInstruction(acc, args[2]);
-				argTypes = map(reverseA(list2array(fargs)), waseType);
-				arrayPush(nacc, dslWasmOp2WaseInstruction(id, list2array(pars), argTypes, type));
+				nacc = dsl2WaseInstruction(onError, acc, args[2]);
+				fargs = getDslList(args[2]);
+				argTypes = map(list2array(fargs), waseType);
+				arrayPush(nacc, dslWasmOp2WaseInstruction(onError, d, id, list2array(pars), argTypes, type));
 
 			} else {
 				todo();
-				nacc = fold(args, acc, dsl2WaseInstruction);
+				nacc = fold(args, acc, \a, aa -> dsl2WaseInstruction(onError, a, aa));
 				nacc;
 			}
 		}
 	}
 }
 
-dslBrace2WaseInstruction(acc : [WaseInstruction], d : DslNode) -> [WaseInstruction] {
+dslBrace2WaseInstruction(onError : (DslAst, string) -> void, acc : [WaseInstruction], d : DslNode) -> [WaseInstruction] {
 	exps = list2array(getDslList(d.args[0]));
 	foldi(exps, acc, \i, acc2, e -> {
-		res = dsl2WaseInstruction(acc2, e);
+		res = dsl2WaseInstruction(onError, acc2, e);
 		if (i + 1 != length(exps)) {
 			type = waseType(e);
 			switch (type) {
@@ -471,11 +491,11 @@ dslBrace2WaseInstruction(acc : [WaseInstruction], d : DslNode) -> [WaseInstructi
 	})
 }
 
-dslWasmOp2WaseInstruction(id : string, pars : [DslAst], types : [DslAst], retType : DslAst) -> WaseInstruction {
-	wtypes = map(types, dsl2WasmBlockType);
-	rtype = dsl2WasmBlockType(retType);
+dslWasmOp2WaseInstruction(onError : (DslAst, string) -> void, node : DslAst, id : string, pars : [DslAst], types : [DslAst], retType : DslAst) -> WaseInstruction {
+	wtypes = map(types, \t -> dsl2WasmBlockType(onError, t));
+	rtype = dsl2WasmBlockType(onError, retType);
 	error = \ -> {
-		println("Unknown instruction " + id + "(" + superglue(types, prettyDsl, ", ") + ") -> " + prettyDsl(retType) + ". Check the types");
+		onError(node, "Unknown instruction " + id + "(" + superglue(types, summarizeDsl, ", ") + ") -> " + summarizeDsl(retType) + ". Check the types");
 		WasmUnreachable();
 	}
 	if (id == "store") {
@@ -740,7 +760,7 @@ dslWasmOp2WaseInstruction(id : string, pars : [DslAst], types : [DslAst], retTyp
 		if (isNumericWaseType(retType)) {
 			WasmSelect();
 		} else {
-			WasmSelectType([dsl2WasmValType(retType)]);
+			WasmSelectType([dsl2WasmValType(onError, retType)]);
 		}
 	} else if (id == "ref.null") {
 		if (retType == DslString("func")) {
@@ -780,9 +800,8 @@ dslWasmOp2WaseInstruction(id : string, pars : [DslAst], types : [DslAst], retTyp
 	} else if (id == "table.fill") {
 		WaseTableFill(getDslString(pars[0]))
 		
-		
 	} else {
-		println("TODO. Compile wasm op " + id);
+		onError(node, "Can not compile wasm op " + id);
 		WasmUnreachable();
 	}
 }
@@ -800,9 +819,9 @@ waseType(d : DslAst) -> DslAst {
 	}
 }
 
-dsl2WasmValType(d : DslAst) -> WasmValType {
-	todo = \ -> {
-		println("TODO: Compile " + prettyDsl(d) + " to wasm val type");
+dsl2WasmValType(onError : (DslAst, string) -> void, d : DslAst) -> WasmValType {
+	error = \ -> {
+		onError(d, "Error: Can not compile " + summarizeDsl(d) + " to wasm val type");
 		WasmI32Type();
 	}
 	switch (d) {
@@ -815,24 +834,30 @@ dsl2WasmValType(d : DslAst) -> WasmValType {
 			else if (type == "func") WasmFuncRef()
 			else if (type == "extern") WasmExternRef()
 			else {
-				todo();
+				error();
 			}
 		}
 		DslNode(name, args, __): {
 			if (name == "type") {
-				dsl2WasmValType(args[1])
+				dsl2WasmValType(onError, args[1])
+			} else if (name == "") {
+				onError(d, "Could not resolve type. Add type annotation");
+				WasmI32Type();
 			} else {
-				todo();
+				error();
 			}
 		}
-		default: todo();
+		DslList(v): {
+			error();
+		}
+		default: error();
 	}
 }
 
-dsl2WasmFuncType(d : DslAst) -> WasmFuncType {
+dsl2WasmFuncType(onError : (DslAst, string) -> void, d : DslAst) -> WasmFuncType {
 	node : DslNode = getDslNode(d);
-	argTypes = map(list2array(getDslList(node.args[0])), dsl2WasmValType);
-	retTypes = map(list2array(getDslList(node.args[1])), dsl2WasmValType);
+	argTypes = map(list2array(getDslList(node.args[0])), \tt -> dsl2WasmValType(onError, tt));
+	retTypes = map(list2array(getDslList(node.args[1])), \tt -> dsl2WasmValType(onError, tt));
 	WasmFuncType(argTypes, retTypes);
 }
 
@@ -845,9 +870,9 @@ isEmptyDslType(d : DslAst) -> bool {
 	}
 }
 
-dsl2WasmBlockType(d : DslAst) -> WasmBlockType {
-	todo = \ -> {
-		println("TODO: Compile " + toString(d) + " to wasm block type");
+dsl2WasmBlockType(onError : (DslAst, string) -> void, d : DslAst) -> WasmBlockType {
+	error = \ -> {
+		onError(d, "Error: Could not compile " + summarizeDsl(d) + " to wasm block type");
 		WasmI32Type();
 	}
 	switch (d) {
@@ -860,15 +885,23 @@ dsl2WasmBlockType(d : DslAst) -> WasmBlockType {
 			else if (type == "func") WasmFuncRef()
 			else if (type == "extern") WasmExternRef()
 			else {
-				todo();
+				error();
 			}
 		}
 		DslList(l): {
 			if (isEmptyList(l)) {
 				WasmEmptyType()
-			} else todo();
+			} else error();
 		}
-		default: todo();
+		DslNode(name, __, __): {
+			if (name == "") {
+				onError(d, "Could not resolve type. Add type annotation");
+				WasmEmptyType();
+			} else {
+				error();
+			}			
+		}
+		default: error();
 	}
 }
 

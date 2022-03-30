@@ -1,0 +1,10 @@
+(module
+  (global (;0;) i32 (i32.const 64))
+  (global (;1;) i32 (i32.const -64))
+  (global (;2;) i32 (i32.const -1))
+  (global (;3;) i32 (i32.const 128))
+  (global (;4;) i32 (i32.const 1000))
+  (global (;5;) i32 (i32.const 305419896))
+  (global (;6;) i32 (i32.const 1985229328))
+  (global (;7;) i32 (i32.const -1995295658))
+  (global (;8;) i32 (i32.const -559038737)))
