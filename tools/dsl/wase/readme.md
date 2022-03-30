@@ -410,6 +410,12 @@ statements, but only expressions. The syntax is pretty standard:
 	}
 
 TODO:
+- Support return values in break and break_if:
+  - Change break to be break<>(exp?)
+  - Change break_if to break_if<int>(cond, exp?)
+
+- Keep track of function and block return types to check return, break and break_if
+
 - More natural switch syntax?
 	switch (index) {
 		0: {}
