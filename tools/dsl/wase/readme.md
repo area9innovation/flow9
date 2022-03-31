@@ -42,7 +42,23 @@ written in Wase:
 	// For Wasi, we have to export the memory
 	export memory 1;
 
-	// This is the core loop
+	euler1Loop(limit : i32) -> i32 {
+		start = 1;
+		acc = 0;
+		loop {
+			break_if<1>(acc, start >= limit);
+			if (start % 3 == 0 | start % 5 == 0) {
+				acc := acc + start;
+			};
+			start := start + 1;
+			break;
+		};
+		// This is strictly not required, but type inference is not smart
+		// enough to get the return type from the break_if yet.
+		acc
+	}
+
+	// A recursive implementation
 	foldRange(start : i32, end : i32, acc : i32) -> i32 {
 		if (start <= end) {
 			foldRange(start + 1, end, if (start % 3 == 0 | start % 5 == 0) {
@@ -59,7 +75,10 @@ written in Wase:
 
 	// Wasi expects us to have a "_start" function exported
 	export _start() -> () {
+		printi32(euler1Loop(1000)); // Correct: 233168
+		printByte(10); // New line
 		printi32(euler1(1000)); // Correct: 233168
+		printByte(10); // New line
 		{}
 	}
 
@@ -71,12 +90,11 @@ and run with
 
 	c:\flow9\tools\dsl> wasmer wase/tests/euler1.wasm
 	233168
+	233168
 
 You can also run with wasm3, but it does not have as deep a stack, so the 
-recursion above causes a stack overflow.
-
-TODO:
-- Rewrite this example to use a loop instead.
+recursion above causes a stack overflow unless you provide a bigger stack to
+wasm3.
 
 # Status
 
@@ -390,31 +408,51 @@ statements, but only expressions. The syntax is pretty standard:
 		code;
 	}
 
-	loop {
-		code;
-		// This breaks to the top of the loop
-		break_if<1>(stop);
-		// This is really continue
-		break;
+	foo() -> () {
+		loop {
+			code;
+			// This breaks to block above without a return value
+			break_if<1>(stopCondition);
+			// This is really continue
+			break;
+		}
 	}
 
-	// Here is a simple do-while loop, which prints from 1 to 10
-	i = 1;
-	loop {
-		printi32(i);
-		printByte(10);
-		i := i + 1;
-		break_if<1>(i > 10);
-		// This is really continue
-		break;
+	foo () -> f64 {
+		loop {
+			// Here, the break returns 3.141 from the function
+			// since block one level up is the function, which
+			// returns f64
+			break_if<1>(3.141, earlyStop)
+		}
 	}
+
+	// Here is a simple do-while loop, which prints from 1 to 10 and then F,
+	// but not E.
+	block {
+		i = 1;
+		loop {
+			printi32(i);
+			printByte(10);
+			i := i + 1;
+			// This breaks out of the upper loop
+			break_if<1>(i > 10);
+			// This is really continue inside this loop
+			break;
+		};
+		// Never reached "E"
+		printByte(69);
+		{}
+	};
+	// This is "F"
+	printByte(70);
 
 TODO:
-- Support return values in break and break_if:
-  - Change break to be break<>(exp?)
-  - Change break_if to break_if<int>(cond, exp?)
+- Support return values in break:
+  - Change break to be break<int>(exp?)
 
-- Keep track of function and block return types to check return, break and break_if
+- Keep track of function and block return types to check 
+  return, break and break_if
 
 - More natural switch syntax?
 	switch (index) {
