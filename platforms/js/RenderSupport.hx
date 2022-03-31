@@ -3760,4 +3760,13 @@ class RenderSupport {
 	public static function setReactListener(container, name, fn) : Void {
 		container.setReactListener(name, fn);
 	}
+
+	public static function getReactEventAttribute(event, name) : String {
+		try {
+			var attribute = untyped __js__("event[name]");
+			return attribute != null ? haxe.Json.stringify(attribute) : "";
+		} catch (e : Dynamic) {
+			return "";
+		}
+	}
 }

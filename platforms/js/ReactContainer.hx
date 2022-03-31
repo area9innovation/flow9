@@ -112,7 +112,7 @@ class ReactContainer extends NativeWidgetClip {
 		}
 	}
 
-	public function setReactListener(name : String, fn : Void -> Void) : Void {
+	public function setReactListener(name : String, fn : Dynamic -> Void) : Void {
 		untyped __js__("this.props[name] = fn");
 	}
 
