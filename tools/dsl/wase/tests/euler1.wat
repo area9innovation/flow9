@@ -163,7 +163,12 @@
     call 5
     call 3
     i32.const 10
+    call 1
+    i32.const 1000
+    call 7
+    call 3
+    i32.const 10
     call 1)
-  (memory (;0;) 1)
+  (memory (;0;) 32)
   (export "memory" (memory 0))
   (export "_start" (func 8)))

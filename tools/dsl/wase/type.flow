@@ -41,12 +41,13 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 			} else if (name == "global") {
 				// (id, export : bool, type, mutable : bool, exp, body)
 				gname = getDslString(args[0]);
-				acc.errorPrefix := gname;
+				acc.errorPrefix := gname + ": ";
 				type = getChildType(2);
 				isMutable = getDslBool(args[3]);
 				// TODO: Record if it is mutable
 
 				acc.env := setTree(^(acc.env), gname, type);
+				acc.blocks := [type];
 
 				etype = getChildType(4);
 				acc.unifyTypes(acc, type, etype);
@@ -55,13 +56,21 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 			} else if (name == "function") {
 				// function(id, export : bool, args : [idtype(id, type)], returnType, body, scope)
 				fname = getDslString(args[0]);
-				acc.errorPrefix := fname;
+				acc.errorPrefix := fname + ": ";
 
 				fargtypes = getChildType(2);
 				rettypes = getChildType(3);
 
 				fntype = DslNode("func", [fargtypes, rettypes], 0);
 				acc.env := setTree(^(acc.env), fname, fntype);
+
+				// OK, special handling if the rettype is a single one
+				rets = getDslList(rettypes);
+				if (countList(rets) == 1) {
+					acc.blocks := [list2array(rets)[0]];
+				} else {
+					acc.blocks := [rettypes];
+				}
 
 				// OK, define the types of the arguments in the scope
 				fargs = list2array(getDslList(args[2]));
@@ -207,6 +216,16 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 					DslInt(0);
 				}
 
+			} else if (name == "typeannotation") {
+				etype = getChildType(0);
+				type = getChildType(1);
+				// If it is a list with a single element, it is a pure type
+				rtype = if (countList(getDslList(type)) == 1) {
+					list2array(getDslList(type))[0]
+				} else type;
+				acc.unifyTypes(acc, etype, rtype);
+				etype;
+
 			} else if (name == "wasm_op") {
 				// id, parameters, args
 				op = getDslString(args[0]);
@@ -250,31 +269,71 @@ typecheckWase(acc : DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -
 				callType = DslNode("func", [argtype, retType], 0);
 				acc.unifyTypes(acc, fntype, callType);
 				retType;
-			} else if (name == "return" || name == "break") {
-				ignore = getChildType(0);
-				// TODO: In a case like if (a) return else 2;
-				// arguably, the type is somehow irrelevant
-				DslList(makeList());
+			} else if (name == "return") {
+				retType = getChildType(0);
 
-			} else if (name == "brace" || name == "block" || name == "loop") {
+				// We have to match the return type of the top block/function
+				if (^(acc.blocks) == []) {
+					println("Expected to know function type for return");
+				} else {
+					acc.unifyTypes(acc, ^(acc.blocks)[0], retType);
+				}
+
+				// The instruction itself does not have any type info
+				makeDslTypeVar(acc);
+
+			} else if (name == "brace") {
 				ctype = getChildType(0);
 				ltype = getDslList(ctype);
 				// It is the final element that is the type
 				foldList(ltype, DslList(makeList()), \__, t -> t);
 
+			} else if (name == "block" || name == "loop") {
+				blockType = makeDslTypeVar(acc);
+				prePrefix = ^(acc.errorPrefix);
+				preBlocks = ^(acc.blocks);
+				acc.errorPrefix := prePrefix + " " + name;
+				acc.blocks := arrayPush(preBlocks, blockType);
+
+				ctype = getChildType(0);
+				ltype = getDslList(ctype);
+				// It is the final element that is the type
+				lastType = foldList(ltype, DslList(makeList()), \__, t -> t);
+				acc.unifyTypes(acc, blockType, lastType);
+
+				acc.errorPrefix := prePrefix;
+				acc.blocks := preBlocks;
+
+				blockType;
+
 			} else if (name == "ifelse") {
 				cond = getChildType(0);
 				acc.unifyTypes(acc, cond, DslString("i32"));
+
+				blockType = makeDslTypeVar(acc);
+				preBlocks = ^(acc.blocks);
+				acc.blocks := arrayPush(preBlocks, blockType);
+
 				thenType = getChildType(1);
 				elseType = getChildType(2);
 				acc.unifyTypes(acc, thenType, elseType);
-				thenType;
+				acc.unifyTypes(acc, blockType, thenType);
+
+				acc.blocks := preBlocks;
+
+				blockType;
 			} else if (name == "if") {
 				cond = getChildType(0);
 				acc.unifyTypes(acc, cond, DslString("i32"));
+
+				blockType = DslList(makeList());
+				preBlocks = ^(acc.blocks);
+
 				thenType = getChildType(1);
-				acc.unifyTypes(acc, thenType, DslList(makeList()));
-				thenType;
+				acc.unifyTypes(acc, thenType, blockType);
+				acc.blocks := preBlocks;
+
+				blockType;
 
 			} else {
 				acc.onError(node, "TODO: Type check " + summarizeDsl(node));
@@ -308,15 +367,52 @@ typecheckWaseInstruction(acc : DslTypeAcc, op : string, pars : [DslAst], opargs 
 	} else if (op == "unreachable" || op == "nop") {
 		acc.unifyTypes(acc, opargs, list0);
 		list0;
+	} else if (op == "hole") {
+		// This can be anything
+		makeDslTypeVar(acc);
+	} else if (op == "break") {
+		aarg = list2array(getDslList(opargs));
+		levels = if (pars == []) 0 else getDslInt(pars[0]);
+
+		blocks = ^(acc.blocks);
+		if (levels < length(blocks)) {
+			blockType = ^(acc.blocks)[length(blocks) - (levels + 1)];
+			if (aarg == []) {
+				// No return value
+				acc.unifyTypes(acc, opargs, list0);
+				acc.unifyTypes(acc, blockType, list0);
+			} else {
+				// Some return value
+				acc.unifyTypes(acc, opargs, list1(blockType));
+			}
+		} else {
+			println("Expected to know block type");
+		}
+
+		// The instruction itself does not have any type info
+		makeDslTypeVar(acc);
 	} else if (op == "break_if") {
 		aarg = list2array(getDslList(opargs));
-		// TODO: Check that the return matches the corresponding block type
-		if (length(aarg) == 1) {
-			acc.unifyTypes(acc, opargs, list1(i32));
+		levels = if (pars == []) 0 else getDslInt(pars[0]);
+
+		blocks = ^(acc.blocks);
+		// println("Break_if " + i2s(levels) + " at " + i2s(length(blocks)));
+		if (levels < length(blocks)) {
+			blockType = ^(acc.blocks)[length(blocks) - (levels + 1)];
+			if (length(aarg) == 1) {
+				// No return value, but a condition
+				acc.unifyTypes(acc, opargs, list1(i32));
+				acc.unifyTypes(acc, blockType, list0);
+			} else {
+				// Some return value
+				acc.unifyTypes(acc, opargs, list2(blockType, i32));
+			}
 		} else {
-			acc.unifyTypes(acc, opargs, list2(infer(), i32));
+			println("Expected to know block type");
 		}
-		list0;
+
+		// The instruction itself does not have any type info
+		makeDslTypeVar(acc);
 	} else if (op == "clz" || op == "ctz" || op == "popcnt") {
 		val = infer();
 		acc.unifyTypes(acc, opargs, list1(val));

@@ -84,23 +84,29 @@
     end)
   (func (;5;) (type 2)
     (local i32)
-    i32.const 1
-    local.set 0
-    loop  ;; label = @1
-      local.get 0
-      call 3
-      i32.const 10
-      call 1
-      local.get 0
+    block  ;; label = @1
       i32.const 1
-      i32.add
       local.set 0
-      local.get 0
-      i32.const 10
-      i32.gt_s
-      br_if 1 (;@0;)
-      br 0 (;@1;)
-    end)
+      loop  ;; label = @2
+        local.get 0
+        call 3
+        i32.const 10
+        call 1
+        local.get 0
+        i32.const 1
+        i32.add
+        local.set 0
+        local.get 0
+        i32.const 10
+        i32.gt_s
+        br_if 1 (;@1;)
+        br 0 (;@2;)
+      end
+      i32.const 69
+      call 1
+    end
+    i32.const 70
+    call 1)
   (memory (;0;) 1)
   (export "memory" (memory 0))
   (export "_start" (func 5)))

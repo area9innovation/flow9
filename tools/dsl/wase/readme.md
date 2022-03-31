@@ -46,15 +46,16 @@ written in Wase:
 		start = 1;
 		acc = 0;
 		loop {
+			// Breaks out of the function when start >= limit with the value acc
 			break_if<1>(acc, start >= limit);
 			if (start % 3 == 0 | start % 5 == 0) {
 				acc := acc + start;
 			};
 			start := start + 1;
-			break;
+			// This is really continue and loops
+			break<>();
 		};
-		// This is strictly not required, but type inference is not smart
-		// enough to get the return type from the break_if yet.
+		// This is never reached, but we have to add this to get the right type
 		acc
 	}
 
@@ -149,20 +150,19 @@ This also works for locals:
 
 The type inference is based on Hindley-Milner style unification, so it should be robust.
 
+You can use type annotations to verify types:
+
+	foo() -> auto {
+		bar : i32
+	}
+
 TODO:
 - Variable shadowing should give an error
-
-- Get this to type:
-  - a = if (b) return else 2;
-
-- Check that the return value of a return matches the function return value
 
 - Check that we do not have let-binding of () type
 
 - Better error messages when we have a type problem, like 
    `i = load<>(0);` where there might not be enough info to infer the type
-
-- Check function return type matches
 
 ## Top-level Syntax
 
@@ -414,7 +414,7 @@ statements, but only expressions. The syntax is pretty standard:
 			// This breaks to block above without a return value
 			break_if<1>(stopCondition);
 			// This is really continue
-			break;
+			break<>();
 		}
 	}
 
@@ -438,7 +438,7 @@ statements, but only expressions. The syntax is pretty standard:
 			// This breaks out of the upper loop
 			break_if<1>(i > 10);
 			// This is really continue inside this loop
-			break;
+			break<>();
 		};
 		// Never reached "E"
 		printByte(69);
@@ -448,12 +448,6 @@ statements, but only expressions. The syntax is pretty standard:
 	printByte(70);
 
 TODO:
-- Support return values in break:
-  - Change break to be break<int>(exp?)
-
-- Keep track of function and block return types to check 
-  return, break and break_if
-
 - More natural switch syntax?
 	switch (index) {
 		0: {}
@@ -480,14 +474,14 @@ while args are arguments to the instruction put on the stack.
 The instruction has the same name as the corresponding Wasm WAT format.
 
 TODO:
-- Add more instructions from table below
+We support a special "hole<>()" instruction, which does nothing.
+- The hole construct could in principle allows stack-like code:
 
-- Have some "hole" that is not an instruction so
+	[1, hole<>() + 2 ]
 
-	[1, ? + 2];
-
-  will work to expose pure stack discipline.
-  In a [1,2,3] context, we could have pure stack.
+Right now, typing infer that type to (i32, i32), while it really is
+i32. So the code above compiles correctly, and works at runtime, but
+our type inference is not smart enough to know this.
  
 ## Load/store
 
@@ -568,8 +562,8 @@ call_indirect and br_table not implemented yet.
 | `ifelse` | `if (cond) exp else exp` | Type is inferred
 | `unreachable` | `unreachable<>()` |
 | `nop` | `nop<>()` | No operation
-| `br` | `break` or `break int` |  Default break is 0
-| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` | Default break is 0
+| `br` | `break<>()` or `break<int>()` or `break<>(val)`or `break<int>(val)` |  Default break is 0. If there is a val, that is what we return with this break
+| `br_if` | `break_if<int>(cond)` or `break_if<>(cond)` or `break_if<int>(val, cond)` or `break_if<>(val, cond)` | Default break level is 0. If there is a val, that is what the break returns
 | `br_table` | TODO |
 | `return` | `return` or `return exp` |
 | `call` | `fn(args)` |

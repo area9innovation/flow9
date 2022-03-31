@@ -34,6 +34,8 @@ export {
 DslTypeAcc(
 	tyvar : ref int,
 	env : ref Tree<string, DslAst>,
+	// For scoping - used by Wase to track the type of blocks
+	blocks : ref [DslAst],
 	tyvars : UnionFindMap<DslAst>,
 	// Provided by user to extract the type of a given node
 	typeFn : (DslTypeAcc, DslAst, getChildType : (int) -> DslAst) -> DslAst,
@@ -59,12 +61,15 @@ dslTypeInfer(d : DslAst,
 	// Do a dance to hook up the merge function
 	merger = ref \left : DslAst, right : DslAst -> left;
 	errorPrefix = ref "";
+	blocks = ref [];
 	acc = DslTypeAcc(ref 0, 
-		ref makeTree(), 
+		ref makeTree(), blocks,
 		makeUnionFindMap(dummyDslNode, \left, right -> (^merger)(left, right)),
 		typeFn, unifyDslTypes,
 		\n, error -> {
-			println(^errorPrefix + error);
+			levels = length(^(blocks));
+			// TODO: Use the position in the node if there is one
+			println(^errorPrefix + error + (if (levels > 1 ) " at nesting level " + i2s(levels) else "") + ". Context: " + summarizeDsl(n));
 		}, errorPrefix, ref "",
 		false // Debugging
 	);
@@ -122,22 +127,24 @@ dslTypeCheck(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 		DslListTyped(l, tyvar): {
 			children = list2array(l);
 			childType = \c -> dslTypeCheck(acc, children[c]);
-			res = acc.typeFn(acc, typed2dsl(node), childType);
+			context = typed2dsl(node);
+			res = acc.typeFn(acc, context, childType);
 			if (res == DslInt(0)) {
 				// OK, it is not known yet
 				DslInt(tyvar);
 			} else {
-				setDslTypeVar(acc, tyvar, res);
+				setDslTypeVar(acc, context, tyvar, res);
 			}
 		}
 		DslNodeTyped(name, args, pos, tyvar): {
 			childType = \c -> dslTypeCheck(acc, args[c]);
-			res = acc.typeFn(acc, typed2dsl(node), childType);
+			context = typed2dsl(node);
+			res = acc.typeFn(acc, context, childType);
 			if (res == DslInt(0)) {
 				// OK, it is not known yet
 				DslInt(tyvar);
 			} else {
-				setDslTypeVar(acc, tyvar, res);
+				setDslTypeVar(acc, context, tyvar, res);
 			}
 		}
 	};
@@ -158,7 +165,7 @@ nextDsltyvar(env : DslTypeAcc) -> int {
 	id;
 }
 
-setDslTypeVar(acc : DslTypeAcc, tyvar : int, type : DslAst) -> DslAst {
+setDslTypeVar(acc : DslTypeAcc, context : DslAst, tyvar : int, type : DslAst) -> DslAst {
 	switch (type) {
 		DslInt(tyvar2): {
 			DslInt(unionUnionMap(acc.tyvars, tyvar, tyvar2));
@@ -168,7 +175,7 @@ setDslTypeVar(acc : DslTypeAcc, tyvar : int, type : DslAst) -> DslAst {
 			res = if (etype == dummyDslNode || etype == type) {
 				type
 			} else {
-				acc.onError(type, "Type error: " + prettyDsl(type) + " != " + prettyDsl(etype) + " (tyvar " + i2s(tyvar) + ")");
+				acc.onError(context, "Type error: " + prettyDsl(type) + " != " + prettyDsl(etype) +  " (tyvar " + i2s(tyvar) + ")" );
 				type
 			}
 			if (acc.debugging) {
@@ -194,7 +201,7 @@ unifyDslTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> void {
 			switch (right) {
 				DslInt(rvalue): {
 					// OK, we have a tyvar
-					setDslTypeVar(acc, rvalue, left);
+					setDslTypeVar(acc, DslString("Unify"), rvalue, left);
 					{}
 				}
 				default: error();
@@ -204,7 +211,7 @@ unifyDslTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> void {
 			DslBool(value): error();
 			DslInt(lvalue): {
 				// This is a tyvar
-				setDslTypeVar(acc, lvalue, right);
+				setDslTypeVar(acc, DslString("Unify"), lvalue, right);
 				{}
 			}
 			DslDouble(value): error();

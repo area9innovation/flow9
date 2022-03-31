@@ -232,6 +232,10 @@ dsl2WaseInstruction(onError : (DslAst, string) -> void, acc : [WaseInstruction],
 				nacc = dsl2WaseInstruction(onError, acc, args[1]);
 				arrayPush(nacc, WaseTee(vname));
 
+			} else if (name == "typeannotation") {
+				// We ignore the type
+				dsl2WaseInstruction(onError, acc, args[0]);
+
 			} else if (name == "call") {
 				fnadded = dsl2WaseInstruction(onError, acc, args[0]);
 				if (length(acc) + 1 != length(fnadded)) {
@@ -433,10 +437,6 @@ dsl2WaseInstruction(onError : (DslAst, string) -> void, acc : [WaseInstruction],
 				nacc = dsl2WaseInstruction(onError, acc, args[0]);
 				arrayPush(nacc, WasmReturn());
 
-			} else if (name == "break") {
-				levels = getDslInt(args[0]);
-				arrayPush(acc, WasmBr(levels));
-
 			} else if (name == "is_null") {
 				type = dsl2WasmValType(onError, waseType(args[0]));
 				if (type == WasmFuncRef() || type == WasmExternRef()) {
@@ -449,12 +449,16 @@ dsl2WaseInstruction(onError : (DslAst, string) -> void, acc : [WaseInstruction],
 
 			} else if (name == "wasm_op") {
 				id = getDslString(args[0]);
-				pars = getDslList(args[1]);
-				type = args[3];
-				nacc = dsl2WaseInstruction(onError, acc, args[2]);
-				fargs = getDslList(args[2]);
-				argTypes = map(list2array(fargs), waseType);
-				arrayPush(nacc, dslWasmOp2WaseInstruction(onError, d, id, list2array(pars), argTypes, type));
+				if (id == "hole") {
+					acc;
+				} else {
+					pars = getDslList(args[1]);
+					type = args[3];
+					nacc = dsl2WaseInstruction(onError, acc, args[2]);
+					fargs = getDslList(args[2]);
+					argTypes = map(list2array(fargs), waseType);
+					arrayPush(nacc, dslWasmOp2WaseInstruction(onError, d, id, list2array(pars), argTypes, type));
+				}
 
 			} else {
 				todo();
@@ -471,19 +475,23 @@ dslBrace2WaseInstruction(onError : (DslAst, string) -> void, acc : [WaseInstruct
 		res = dsl2WaseInstruction(onError, acc2, e);
 		if (i + 1 != length(exps)) {
 			type = waseType(e);
-			switch (type) {
-				DslList(l): {
-					// Drop as many as the tuple has
-					foldList(l, res, \acc3, ee -> {
-						if (isEmptyDslType(ee)) {
-							acc3
-						} else {
-							arrayPush(acc3, WasmDrop())	
-						}
-					})
-				}
-				default: {
-					arrayPush(res, WasmDrop())
+			if (isEmptyDslType(type)) {
+				res;
+			} else {
+				switch (type) {
+					DslList(l): {
+						// Drop as many as the tuple has
+						foldList(l, res, \acc3, ee -> {
+							if (isEmptyDslType(ee)) {
+								acc3
+							} else {
+								arrayPush(acc3, WasmDrop())	
+							}
+						})
+					}
+					default: {
+						arrayPush(res, WasmDrop())
+					}
 				}
 			}
 		} else res
@@ -752,9 +760,12 @@ dslWasmOp2WaseInstruction(onError : (DslAst, string) -> void, node : DslAst, id 
 	} else if (id == "unreachable") { WasmUnreachable()
 	} else if (id == "nop") { WasmNop()
 	} else if (id == "drop") { WasmDrop()
+	} else if (id == "break") {
+		levels = if (pars == []) 0 else getDslInt(pars[0]);
+		WasmBr(levels);
 	} else if (id == "break_if") {
-		par = if (pars == []) 0 else getDslInt(pars[0]);
-		WasmBrIf(par);
+		levels = if (pars == []) 0 else getDslInt(pars[0]);
+		WasmBrIf(levels);
 	} else if (id == "select") {
 		if (isNumericWaseType(retType)) {
 			WasmSelect();
@@ -865,6 +876,7 @@ isEmptyDslType(d : DslAst) -> bool {
 		DslList(l): isEmptyList(l) || {
 			forall(list2array(l), isEmptyDslType)
 		}
+		DslNode(n, __, __): n == "";
 		default: false;
 	}
 }
@@ -894,7 +906,7 @@ dsl2WasmBlockType(onError : (DslAst, string) -> void, d : DslAst) -> WasmBlockTy
 		}
 		DslNode(name, __, __): {
 			if (name == "") {
-				onError(d, "Could not resolve type. Add type annotation");
+				// onError(d, "Could not resolve type. Add type annotation");
 				WasmEmptyType();
 			} else {
 				error();
