@@ -79,6 +79,18 @@ float sdCappedTorus(in vec3 p, in vec2 sc, in float ra, in float rb)
 	return sqrt( dot(p,p) + ra*ra - 2.0*ra*k ) - rb;
 }
 
+float sdCappedCylinder( vec3 p, float h, float r )
+{
+	vec2 d = abs(vec2(length(p.xz),p.y)) - vec2(r,h);
+	return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+}
+
+float sdRoundedCylinder( vec3 p, float ra, float rb, float h )
+{
+	vec2 d = vec2( length(p.xz)-2.0*ra+rb, abs(p.y) - h );
+	return min(max(d.x,d.y),0.0) + length(max(d,0.0)) - rb;
+}
+
 float opSmoothUnion( float d1, float d2, float k ) {
     float h = clamp( 0.5 + 0.5*(d2-d1)/k, 0.0, 1.0 );
     return mix( d2, d1, h ) - k*h*(1.0-h); 
