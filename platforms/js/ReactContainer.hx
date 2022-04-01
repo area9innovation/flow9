@@ -16,6 +16,13 @@ class ReactContainer extends NativeWidgetClip {
 
 		this.initNativeWidget();
 		nativeWidget.classList.add("reactContainer");
+		nativeWidget.addEventListener("pointerenter", function() {
+			RenderSupport.PreventDefault = false;
+		});
+
+		nativeWidget.addEventListener("pointerleave", function() {
+			RenderSupport.PreventDefault = true;
+		});
 
 		props = Json.parse(propsStr);
 		stateInit = Json.parse(stateInitStr);
