@@ -70,16 +70,18 @@ class ReactContainer extends NativeWidgetClip {
 	}
 
 	private function initRootContainer() {
-		var setStates = {};
 		untyped this.rootContainer = untyped __js__("
 			() => {
 				const [rootContainerState, setRootContainerState] = React.useState(this.stateInit);
+				const [setStates, setSetStates] = React.useState({});
 
 				React.useEffect(() => {
 					this.setRootContainerState = setRootContainerState;
+					let setStatesAcc = {};
 					Object.keys(rootContainerState).forEach(k => {
-						setStates['set' + this.capitalizeFirstLetter(k)] = (val) => setRootContainerState(prev => ({...prev, [k] : val}))
+						setStatesAcc['set' + this.capitalizeFirstLetter(k)] = (val) => setRootContainerState(prev => ({...prev, [k] : val}))
 					});
+					setSetStates(setStatesAcc);
 				}, []);
 
 				React.useEffect(() => {
