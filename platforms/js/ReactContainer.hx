@@ -132,7 +132,6 @@ class ReactContainer extends NativeWidgetClip {
 
 	public function removeNativeWidget() : Void {
 		if (this.mutationObserver != null) {
-			untyped console.log('DISCONNECT OBSERVER');
 			this.mutationObserver.disconnect();
 			this.mutationObserver = null;
 		}
@@ -140,7 +139,6 @@ class ReactContainer extends NativeWidgetClip {
 	}
 
 	private function observeSize() : Void {
-		untyped console.log('START OBSERVING');
 		var bRect = untyped this.nativeWidget.getBoundingClientRect();
 
 		var config = { attributes: true, childList: true, subtree: true };
