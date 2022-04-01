@@ -20,3 +20,14 @@ See what the web-site generates in test1_online.wat.
 
 The test1.wat is what WABT wasm2wat produces.
 
+test2.wasm is this one:
+
+	int fac(int i) {
+	if (i <= 1) return i;
+		else return i * fac(i - 1);
+	}
+
+	int main() {
+		return fac(2);
+	}
+

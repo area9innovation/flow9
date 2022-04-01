@@ -14,6 +14,7 @@ class FlowContainer extends Container {
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 
+	public var flowInstance : RenderSupport.FlowInstance;
 	private var stage : FlowContainer;
 	private var view : CanvasElement;
 	private var context : Dynamic;
@@ -39,6 +40,8 @@ class FlowContainer extends Container {
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
+	
+	private static var lastId : Int = 0;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
@@ -49,7 +52,8 @@ class FlowContainer extends Container {
 		isNativeWidget = (this.isHTMLRenderer() && RenderSupport.RenderContainers) || worldVisible;
 
 		if (worldVisible) {
-			nativeWidget = Browser.document.body;
+			nativeWidget = RenderSupport.RenderRoot != null ? (Platform.isIE ? RenderSupport.RenderRoot : RenderSupport.RenderRoot.shadowRoot) : Browser.document.body;
+			untyped this.id = lastId++ + 1;
 		} else if (this.isHTMLRenderer()) {
 			createNativeWidget();
 		}

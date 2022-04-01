@@ -122,6 +122,7 @@ class TextClip extends NativeWidgetClip {
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
+	private var renderStage : FlowContainer;
 	private var text : String = '';
 	private static var dummyContentGlyphs : TextMappedModification = new TextMappedModification("", "", [], []);
 	private var contentGlyphs : TextMappedModification = dummyContentGlyphs;
@@ -146,9 +147,9 @@ class TextClip extends NativeWidgetClip {
 	private var readOnly : Bool = false;
 	private var maxChars : Int = -1;
 
-	private var cursorPosition : Int = -1;
-	private var selectionStart : Int = -1;
-	private var selectionEnd : Int = -1;
+	private var cursorPosition : Int = 0;
+	private var selectionStart : Int = 0;
+	private var selectionEnd : Int = 0;
 
 	private var background : FlowGraphics = null;
 
@@ -1082,6 +1083,8 @@ class TextClip extends NativeWidgetClip {
 		isInteractive = true;
 		this.invalidateInteractive();
 
+		this.renderStage = RenderSupport.PixiStage;
+
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
 				nativeWidget.onpointermove = onMouseMove;
@@ -1145,24 +1148,26 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onMouseMove(e : Dynamic) {
+		var rootPos = RenderSupport.getRenderRootPos(this.renderStage);
+		var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
+
 		if (isFocused) {
 			checkPositionSelection();
 		}
 
 		if (e.touches != null) {
 			if (e.touches.length == 1) {
-				RenderSupport.MousePos.x = e.touches[0].pageX;
-				RenderSupport.MousePos.y = e.touches[0].pageY;
-
-				RenderSupport.PixiStage.emit("mousemove");
+				var touchPos = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
+				RenderSupport.setMousePosition(touchPos);
+				this.renderStage.emit("mousemove");
 			} else if (e.touches.length > 1) {
-				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+				var touchPos1 = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
+				var touchPos2 = RenderSupport.getMouseEventPosition(e.touches[1], rootPos);
+				GesturesDetector.processPinch(touchPos1, touchPos2);
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
-			RenderSupport.MousePos.x = e.pageX;
-			RenderSupport.MousePos.y = e.pageY;
-
-			RenderSupport.PixiStage.emit("mousemove");
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
+			RenderSupport.setMousePosition(mousePos);
+			this.renderStage.emit("mousemove");
 		}
 
 		nativeWidget.style.cursor = RenderSupport.PixiView.style.cursor;
@@ -1171,16 +1176,18 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onMouseDown(e : Dynamic) {
+		var rootPos = RenderSupport.getRenderRootPos(this.renderStage);
+		var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
+
 		if (isFocused) {
 			checkPositionSelection();
 		} else {
-			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
+			var point = e.touches != null && e.touches.length > 0 ? RenderSupport.getMouseEventPosition(e.touches[0], rootPos) : mousePos;
 			var pointScaled = new Point(point.x * RenderSupport.getViewportScale(), point.y * RenderSupport.getViewportScale());
 
-			RenderSupport.MousePos.x = point.x;
-			RenderSupport.MousePos.y = point.y;
+			RenderSupport.setMousePosition(point);
 
-			if (RenderSupport.getClipAt(RenderSupport.PixiStage, pointScaled, true, 0.16) != this) {
+			if (RenderSupport.getClipAt(this.renderStage, pointScaled, true, 0.16) != this) {
 				e.preventDefault();
 			}
 		}
@@ -1190,23 +1197,23 @@ class TextClip extends NativeWidgetClip {
 			RenderSupport.emit("touchstart");
 
 			if (e.touches.length == 1) {
-				RenderSupport.MousePos.x = e.touches[0].pageX;
-				RenderSupport.MousePos.y = e.touches[0].pageY;
-
-				if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+				var touchPos = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
+				RenderSupport.setMousePosition(touchPos);
+				if (RenderSupport.MouseUpReceived) this.renderStage.emit("mousedown");
 			} else if (e.touches.length > 1) {
-				GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+				var touchPos1 = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
+				var touchPos2 = RenderSupport.getMouseEventPosition(e.touches[1], rootPos);
+				GesturesDetector.processPinch(touchPos1, touchPos2);
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
-			RenderSupport.MousePos.x = e.pageX;
-			RenderSupport.MousePos.y = e.pageY;
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
+			RenderSupport.setMousePosition(mousePos);
 
 			if (e.which == 3 || e.button == 2) {
-				RenderSupport.PixiStage.emit("mouserightdown");
+				this.renderStage.emit("mouserightdown");
 			} else if (e.which == 2 || e.button == 1) {
-				RenderSupport.PixiStage.emit("mousemiddledown");
+				this.renderStage.emit("mousemiddledown");
 			} else if (e.which == 1 || e.button == 0) {
-				if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+				if (RenderSupport.MouseUpReceived) this.renderStage.emit("mousedown");
 			}
 		}
 
@@ -1214,6 +1221,9 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onMouseUp(e : Dynamic) {
+		var rootPos = RenderSupport.getRenderRootPos(this.renderStage);
+		var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
+
 		if (isFocused) {
 			checkPositionSelection();
 		}
@@ -1225,18 +1235,17 @@ class TextClip extends NativeWidgetClip {
 			GesturesDetector.endPinch();
 
 			if (e.touches.length == 0) {
-				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+				if (!RenderSupport.MouseUpReceived) this.renderStage.emit("mouseup");
 			}
-		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
-			RenderSupport.MousePos.x = e.pageX;
-			RenderSupport.MousePos.y = e.pageY;
+		} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
+			RenderSupport.setMousePosition(mousePos);
 
 			if (e.which == 3 || e.button == 2) {
-				RenderSupport.PixiStage.emit("mouserightup");
+				this.renderStage.emit("mouserightup");
 			} else if (e.which == 2 || e.button == 1) {
-				RenderSupport.PixiStage.emit("mousemiddleup");
+				this.renderStage.emit("mousemiddleup");
 			} else if (e.which == 1 || e.button == 0) {
-				if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+				if (!RenderSupport.MouseUpReceived) this.renderStage.emit("mouseup");
 			}
 		}
 
@@ -1748,7 +1757,7 @@ class TextClip extends NativeWidgetClip {
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
 
-			if (useTextBackgroundWidget) {
+			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
 				textBackgroundWidget.classList.add('textBackgroundWidget');
 			}

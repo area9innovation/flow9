@@ -21,11 +21,13 @@ using DisplayObjectHelper;
 class RenderSupport {
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 	public static var RenderContainers : Bool = Util.getParameter("containers") == "1";
+	public static var RenderRoot : Element = null;
 	public static var FiltersEnabled : Bool = Util.getParameter("filters") != "0";
 
 	public static var PixiView : Dynamic;
-	public static var PixiStage : FlowContainer = new FlowContainer(true);
+	public static var PixiStage : FlowContainer;
 	public static var PixiRenderer : Dynamic;
+	public static var FlowInstances : Array<FlowInstance> = [];
 
 	public static var TouchPoints : Dynamic;
 	public static var MousePos : Point = new Point(0.0, 0.0);
@@ -98,6 +100,12 @@ class RenderSupport {
 		return PixiStage.emit(event, a1, a2, a3, a4, a5);
 	}
 
+	public static function emitForAll(event : String, ?value : Dynamic) {
+		for (instance in FlowInstances) {
+			instance.emit(event, value);
+		}
+	}
+
 	public static function setRendererType(rendererType : String) : Void {
 		if (RendererType != rendererType) {
 			RendererType = rendererType;
@@ -112,6 +120,87 @@ class RenderSupport {
 			createPixiRenderer();
 			TextClip.recalculateUseTextBackgroundWidget();
 		}
+	}
+
+	public static function setRenderRoot(rootId : String) : Void {
+		var renderRoot = Browser.document.getElementById(rootId);
+		if (renderRoot == null) {
+			untyped console.warn('Warning! Element with id = "$rootId" has not been found');
+		}
+		if (renderRoot != RenderRoot) {
+			if (renderRoot.shadowRoot == null) {
+				previousRoot = PixiStage.nativeWidget;
+				previousInstance = PixiStage.flowInstance;
+
+				RenderRoot = renderRoot;
+				if (RenderRoot != null) {
+					RenderRoot.style.position = 'relative';
+					untyped RenderRoot.style.touchAction = 'none';
+					if (!Platform.isIE) {
+						untyped RenderRoot.attachShadow({mode : 'open'});
+					}
+				}
+				
+				setupPixiStage();
+				createPixiRenderer();
+				initPixiStageEventListeners();
+
+				attachFlowStyles();
+				if (UserStyleTestElement != null && UserStyleTestElement.parentElement != PixiStage.nativeWidget) {
+					PixiStage.nativeWidget.appendChild(UserStyleTestElement);
+				}
+			} else {
+				var existingInstance = getInstanceByRootId(rootId);
+
+				if (existingInstance == null) {
+					untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
+				} else {
+					RenderRoot = renderRoot;
+					PixiStage = existingInstance.stage; 
+				}
+			}
+		}
+	}
+
+	public static function getRenderRoot() : String {
+		if (RenderRoot == null) return "";
+		return RenderRoot.id;
+	}
+
+	public static function attachFlowStyles() : Void {
+		attachFlowStyle("flowjspixi.css");
+		attachFlowStyle("fonts/fonts.css");
+
+		// Workaround for styles in IE
+		if (Platform.isIE) {
+			Browser.document.body.style.overflow = 'auto';
+			PixiStage.nativeWidget.classList.add("renderRoot");
+			Native.timer(0, function() {
+				findFlowjspixiCss(function (pixijscss) {
+					try {
+						pixijscss.deleteRule(0); // *:not(body):not(html) {position: fixed;}
+						pixijscss.insertRule(".renderRoot * {position: fixed;}", 0);
+					} catch (e : Dynamic) {}
+				});
+			});
+		}
+	}
+
+	public static function attachFlowStyle(url : String) : Void {
+		var flowStyle = Browser.document.head.querySelector("link[href*='" + url + "']");
+		if (flowStyle != null) {
+			if (Platform.isIE) {
+				flowStyle.setAttribute("rel", "stylesheet");
+			} else {
+				var clonedNode = flowStyle.cloneNode();
+				PixiStage.nativeWidget.appendChild(clonedNode);
+				untyped clonedNode.setAttribute("rel", "stylesheet");
+			}
+		}
+	}
+
+	public static function setupPixiStage() : Void {
+		PixiStage = new FlowContainer(true);
 	}
 
 	public static function setKeepTextClips(keep : Bool) : Void {
@@ -141,7 +230,7 @@ class RenderSupport {
 			accessibilityZoom = zoom;
 			Native.setKeyValue("accessibility_zoom", Std.string(zoom));
 
-			PixiStage.broadcastEvent("resize", backingStoreRatio);
+			broadcastResizeEvent();
 			InvalidateLocalStages();
 
 			showAccessibilityZoomTooltip();
@@ -154,7 +243,7 @@ class RenderSupport {
 		debugLog('browserZoom', browserZoom);
 
 		if (accessibilityZoomTooltip != null) {
-			Browser.document.body.removeChild(accessibilityZoomTooltip);
+			accessibilityZoomTooltip.parentNode.removeChild(accessibilityZoomTooltip);
 			accessibilityZoomTooltip = null;
 		}
 
@@ -163,7 +252,7 @@ class RenderSupport {
 		}
 
 		var p = Browser.document.createElement("p");
-		Browser.document.body.appendChild(p);
+		PixiStage.nativeWidget.appendChild(p);
 
 		p.classList.add('nativeWidget');
 		p.classList.add('textWidget');
@@ -184,8 +273,8 @@ class RenderSupport {
 
 		Native.timer(2000, function() {
 			if (accessibilityZoomTooltip != null && accessibilityZoomTooltip == p) {
+				accessibilityZoomTooltip.parentNode.removeChild(accessibilityZoomTooltip);
 				accessibilityZoomTooltip = null;
-				Browser.document.body.removeChild(p);
 			}
 		});
 	}
@@ -446,6 +535,10 @@ class RenderSupport {
 	//	Pixi renderer initialization
 	//
 	public static function init() : Bool {
+		if (PixiStage == null) {
+			setupPixiStage();
+		}
+
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
 		} else {
@@ -482,15 +575,18 @@ class RenderSupport {
 	private static function createPixiRenderer() {
 		backingStoreRatio = getBackingStoreRatio();
 
-		if (PixiRenderer != null) {
+		if (PixiRenderer != null && (previousRoot == null || previousRoot == Browser.document.body)) {
 			if (untyped PixiRenderer.gl != null && PixiRenderer.gl.destroy != null) {
 				untyped PixiRenderer.gl.destroy();
 			}
 
 			PixiRenderer.destroy();
+			FlowInstances = FlowInstances.filter(function (value) {
+				return value.renderer != PixiRenderer;
+			});
 		}
 
-		if (PixiView != null && PixiView.parentNode != null) {
+		if (PixiView != null && PixiView.parentNode != null && previousRoot == Browser.document.body) {
 			PixiView.parentNode.removeChild(PixiView);
 		}
 
@@ -515,6 +611,16 @@ class RenderSupport {
 		var width : Int = Browser.window.innerWidth;
 		var height : Int = Browser.window.innerHeight;
 
+		if (RenderRoot != null) {
+			width = getRenderRootWidth();
+			height = getRenderRootHeight();
+			Native.timer(0, function() {
+				if (width != getRenderRootWidth() || height != getRenderRootHeight()) {
+					onBrowserWindowResize({target : Browser.window});
+				}
+			});
+		}
+
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && Native.detectDedicatedGPU() && !Platform.isIE)*/) {
 			PixiRenderer = new WebGLRenderer(width, height, options);
 
@@ -534,6 +640,13 @@ class RenderSupport {
 
 			RendererType = "canvas";
 		}
+		if (PixiStage.flowInstance == null) {
+			var newInstance = new FlowInstance(getRenderRoot(), PixiStage, PixiRenderer);
+			PixiStage.flowInstance = newInstance;
+		} else {
+			PixiStage.flowInstance.renderer = PixiRenderer;
+		}
+		FlowInstances.push(PixiStage.flowInstance);
 
 		if (RendererType == "canvas") {
 			untyped PixiRenderer.context.fillStyle = "white";
@@ -574,13 +687,13 @@ class RenderSupport {
 		}
 
 		// Make absolute position for canvas for Safari to fix fullscreen API
-		if (Platform.isSafari) {
+		if (Platform.isSafari || PixiStage.nativeWidget != Browser.document.body) {
 			PixiView.style.position = "absolute";
 			PixiView.style.top = "0px";
 		}
 
 		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
+		PixiStage.nativeWidget.insertBefore(PixiView, PixiStage.nativeWidget.firstChild);
 
 		// Enable browser canvas rendered image smoothing
 		var ctx = untyped PixiRenderer.context;
@@ -602,6 +715,78 @@ class RenderSupport {
 				untyped console.log(e);
 			}
 		}
+	}
+
+	private static function getRenderRootWidth(?root : Element) {
+		if (root == null) {
+			root = RenderRoot;
+		}
+		var width = 0;
+		var rWidth = Std.parseInt(root.getAttribute('width'));
+
+		if (IsFullScreen) {
+			width = Browser.window.innerWidth;
+		} else if (rWidth != null && !Math.isNaN(rWidth)) {
+			width = rWidth;
+		} else {
+			var bRect = root.getBoundingClientRect();
+			width = Math.floor(Math.min(
+				Browser.document.body.getBoundingClientRect().width,
+				Browser.window.innerWidth - (Platform.isIE ? bRect.left : bRect.x)
+			));
+		}
+
+		root.style.width = width + 'px';
+		return width;
+	}
+
+	private static function getRenderRootHeight(?root : Element) {
+		if (root == null) {
+			root = RenderRoot;
+		}
+		var height = 0;
+		var rHeight = Std.parseInt(root.getAttribute('height'));
+
+		if (IsFullScreen) {
+			height = Browser.window.innerHeight;
+		} else if (rHeight != null && !Math.isNaN(rHeight)) {
+			height = rHeight;
+		} else {
+			var bRect = root.getBoundingClientRect();
+			height = Math.floor(Browser.window.innerHeight - (Platform.isIE ? bRect.top : bRect.y));
+		}
+
+		root.style.height = height + 'px';
+		return height;
+	}
+
+	public static function getRenderRootPos(?stage : Dynamic) : Point {
+		var root;
+		if (stage == null) {
+			if (RenderRoot == null) {
+				return new Point(0, 0);
+			}
+			root = RenderRoot;
+		} else {
+			root = stage.nativeWidget;
+			// check if root is shadowRoot
+			if (untyped root.host != null) {
+				root = untyped root.host;
+			}
+		}
+
+		var rootRect = root.getBoundingClientRect();
+		return Platform.isIE
+			? new Point(rootRect.left + Browser.window.pageXOffset, rootRect.top + Browser.window.pageYOffset)
+			: new Point(rootRect.x + Browser.window.scrollX, rootRect.y + Browser.window.scrollY);
+	}
+
+	public static function getMouseEventPosition(event : Dynamic, ?rootPosition : Point) : Point {
+		if (rootPosition == null) {
+			rootPosition = getRenderRootPos();
+		}
+
+		return new Point(event.pageX - rootPosition.x, event.pageY - rootPosition.y);
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -702,6 +887,7 @@ class RenderSupport {
 		Browser.document.body.appendChild(debugClip);
 
 		debugClip.textContent = "DEBUG";
+		debugClip.style.position = "fixed";
 		debugClip.style.fontSize = "12px";
 		debugClip.style.zIndex = "1000";
 		debugClip.style.background = "#42424277";
@@ -1009,20 +1195,43 @@ class RenderSupport {
 				}
 			}
 
-			PixiView.width = win_width * backingStoreRatio;
-			PixiView.height = win_height * backingStoreRatio;
+			if (RenderRoot != null) {
+				for (instance in FlowInstances) {
+					var renderRoot = instance.stage.nativeWidget.host;
+					var pixiView = instance.renderer.view;
+					win_width = getRenderRootWidth(renderRoot);
+					win_height = getRenderRootHeight(renderRoot);
 
-			PixiView.style.width = win_width;
-			PixiView.style.height = win_height;
+					pixiView.width = win_width * backingStoreRatio;
+					pixiView.height = win_height * backingStoreRatio;
 
-			PixiRenderer.resize(win_width, win_height);
+					pixiView.style.width = win_width;
+					pixiView.style.height = win_height;
+
+					instance.renderer.resize(win_width, win_height);
+				}
+			} else {
+				PixiView.width = win_width * backingStoreRatio;
+				PixiView.height = win_height * backingStoreRatio;
+
+				PixiView.style.width = win_width;
+				PixiView.style.height = win_height;
+
+				PixiRenderer.resize(win_width, win_height);
+			}
 		}
 
-		PixiStage.broadcastEvent("resize", backingStoreRatio);
+		broadcastResizeEvent();
 		InvalidateLocalStages();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
+	}
+
+	public static function broadcastResizeEvent() : Void {
+		for (instance in FlowInstances) {
+			instance.stage.broadcastEvent("resize", backingStoreRatio);
+		}
 	}
 
 	public static function getViewportScale() : Float {
@@ -1074,143 +1283,180 @@ class RenderSupport {
 		untyped __js__("element.removeEventListener(event, fn, { passive : true })");
 	}
 
+	private static var previousRoot = null;
+	private static var previousInstance = null;
+	private static function updateNonPassiveEventListener(element : Element, event : String, fn : Dynamic -> FlowContainer -> Void) : Void {
+		if (previousInstance != null && previousInstance.stage.nativeWidget == Browser.document.body) {
+			var listenerFn = previousInstance.unregisterListener(event);
+			removeNonPassiveEventListener(previousRoot, event, listenerFn);
+		}
+
+		var stage = PixiStage;
+		var fn2 = function(e : Dynamic) {fn(e, stage);}
+
+		addNonPassiveEventListener(element, event, fn2);
+		stage.flowInstance.registerListener(event, fn2);
+	}
+
+	private static function emitKey(stage : FlowContainer, eventName : String, ke : Dynamic) : Void {
+		if (stage.nativeWidget == Browser.document.body) {
+			emitForAll(eventName, parseKeyEvent(ke));
+		} else {
+			stage.emit(eventName, parseKeyEvent(ke));
+		}
+	}
+
 	public static var PreventDefault : Bool = true;
+	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
+		try {
+			// Prevent default drop focus on canvas
+			// Works incorrectly in Edge
+			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
+			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
+			if (PreventDefault) e.preventDefault();
+
+			var rootPos = getRenderRootPos(stage);
+			var mousePos = getMouseEventPosition(e, rootPos);
+
+			if (e.touches != null) {
+				TouchPoints = e.touches;
+				stage.emit("touchstart");
+
+				if (e.touches.length == 1) {
+					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
+					setMousePosition(touchPos);
+					if (MouseUpReceived) stage.emit("mousedown");
+				} else if (e.touches.length > 1) {
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos); 
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos); 
+					GesturesDetector.processPinch(touchPos1, touchPos2);
+				}
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
+
+				if (e.which == 3 || e.button == 2) {
+					stage.emit("mouserightdown");
+				} else if (e.which == 2 || e.button == 1) {
+					stage.emit("mousemiddledown");
+				} else if (e.which == 1 || e.button == 0) {
+					if (MouseUpReceived) {
+						stage.emit("mousedown");
+					};
+				}
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("onpointerdown error : ");
+			untyped console.log(e);
+		}
+	};
+
+	public static function onpointerup(e : Dynamic, stage : FlowContainer) {
+		try {
+			var rootPos = getRenderRootPos(stage);
+			var mousePos = getMouseEventPosition(e, rootPos);
+
+			if (e.touches != null) {
+				TouchPoints = e.touches;
+				stage.emit("touchend");
+
+				GesturesDetector.endPinch();
+
+				if (e.touches.length == 0) {
+					if (!MouseUpReceived) stage.emit("mouseup");
+				}
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
+
+				if (e.which == 3 || e.button == 2) {
+					stage.emit("mouserightup");
+				} else if (e.which == 2 || e.button == 1) {
+					stage.emit("mousemiddleup");
+				} else if (e.which == 1 || e.button == 0) {
+					if (!MouseUpReceived) stage.emit("mouseup");
+				}
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("onpointerup error : ");
+			untyped console.log(e);
+		}
+	};
+
+	public static function onpointermove(e : Dynamic, stage : FlowContainer) {
+		try {
+			var rootPos = getRenderRootPos(stage);
+			var mousePos = getMouseEventPosition(e, rootPos);
+
+			if (e.touches != null) {
+				e.preventDefault();
+
+				TouchPoints = e.touches;
+				stage.emit("touchmove");
+
+				if (e.touches.length == 1) {
+					var touchPos = getMouseEventPosition(e.touches[0], rootPos);
+					setMousePosition(touchPos);
+					stage.emit("mousemove");
+				} else if (e.touches.length > 1) {
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos);
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
+					GesturesDetector.processPinch(touchPos1, touchPos2);
+				}
+			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+				setMousePosition(mousePos);
+
+				stage.emit("mousemove");
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("onpointermove error : ");
+			untyped console.log(e);
+		}
+	};
+
+	public static function onpointerout(e : Dynamic, stage : FlowContainer) {
+		try {
+			if (e.relatedTarget == Browser.document.documentElement) {
+				if (!MouseUpReceived) stage.emit("mouseup");
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("onpointerout error : ");
+			untyped console.log(e);
+		}
+	};
+
 	private static inline function initPixiStageEventListeners() {
-		var onpointerdown = function(e : Dynamic) {
-			try {
-				// Prevent default drop focus on canvas
-				// Works incorrectly in Edge
-				// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
-				// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-				if (PreventDefault) e.preventDefault();
-
-				if (e.touches != null) {
-					TouchPoints = e.touches;
-					emit("touchstart");
-
-					if (e.touches.length == 1) {
-						MousePos.x = e.touches[0].pageX;
-						MousePos.y = e.touches[0].pageY;
-
-						if (MouseUpReceived) emit("mousedown");
-					} else if (e.touches.length > 1) {
-						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
-					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					if (e.which == 3 || e.button == 2) {
-						emit("mouserightdown");
-					} else if (e.which == 2 || e.button == 1) {
-						emit("mousemiddledown");
-					} else if (e.which == 1 || e.button == 0) {
-						if (MouseUpReceived) emit("mousedown");
-					}
-				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointerdown error : ");
-				untyped console.log(e);
-			}
-		};
-
-		var onpointerup = function(e : Dynamic) {
-			try {
-				if (e.touches != null) {
-					TouchPoints = e.touches;
-					emit("touchend");
-
-					GesturesDetector.endPinch();
-
-					if (e.touches.length == 0) {
-						if (!MouseUpReceived) emit("mouseup");
-					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					if (e.which == 3 || e.button == 2) {
-						emit("mouserightup");
-					} else if (e.which == 2 || e.button == 1) {
-						emit("mousemiddleup");
-					} else if (e.which == 1 || e.button == 0) {
-						if (!MouseUpReceived) emit("mouseup");
-					}
-				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointerup error : ");
-				untyped console.log(e);
-			}
-		};
-
-		var onpointermove = function(e : Dynamic) {
-			try {
-				if (e.touches != null) {
-					e.preventDefault();
-
-					TouchPoints = e.touches;
-					emit("touchmove");
-
-					if (e.touches.length == 1) {
-						MousePos.x = e.touches[0].pageX;
-						MousePos.y = e.touches[0].pageY;
-
-						emit("mousemove");
-					} else if (e.touches.length > 1) {
-						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
-					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || MousePos.x != e.pageX || MousePos.y != e.pageY) {
-					MousePos.x = e.pageX;
-					MousePos.y = e.pageY;
-
-					emit("mousemove");
-				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointermove error : ");
-				untyped console.log(e);
-			}
-		};
-
-		var onpointerout = function(e : Dynamic) {
-			try {
-				if (e.relatedTarget == Browser.document.documentElement) {
-					if (!MouseUpReceived) emit("mouseup");
-				}
-			} catch (e : Dynamic) {
-				untyped console.log("onpointerout error : ");
-				untyped console.log(e);
-			}
-		};
+		var root = PixiStage.nativeWidget;
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-				addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
-				addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
-				addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
-				addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+				updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
+				updateNonPassiveEventListener(root, "pointerup", onpointerup);
+				updateNonPassiveEventListener(root, "pointermove", onpointermove);
+				updateNonPassiveEventListener(root, "pointerout", onpointerout);
 			}
 
-			addNonPassiveEventListener(Browser.document.body, "touchstart", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "touchend", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "touchmove", onpointermove);
+			updateNonPassiveEventListener(root, "touchstart", onpointerdown);
+			updateNonPassiveEventListener(root, "touchend", onpointerup);
+			updateNonPassiveEventListener(root, "touchmove", onpointermove);
 		} else if (Platform.isSafari) {
-			addNonPassiveEventListener(Browser.document.body, "mousedown", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "mouseup", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "mousemove", onpointermove);
-			addNonPassiveEventListener(Browser.document.body, "mouseout", onpointerout);
+			updateNonPassiveEventListener(root, "mousedown", onpointerdown);
+			updateNonPassiveEventListener(root, "mouseup", onpointerup);
+			updateNonPassiveEventListener(root, "mousemove", onpointermove);
+			updateNonPassiveEventListener(root, "mouseout", onpointerout);
 		} else if (Platform.isIE) {
-			Browser.document.body.onpointerdown = onpointerdown;
-			Browser.document.body.onpointerup = onpointerup;
-			Browser.document.body.onpointermove = onpointermove;
-			Browser.document.body.onpointerout = onpointerout;
+			var stage = PixiStage;
+			root.onpointerdown = function(e : Dynamic) {onpointerdown(e, stage);};
+			root.onpointerup = function(e : Dynamic) {onpointerup(e, stage);};
+			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
+			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 		} else {
-			addNonPassiveEventListener(Browser.document.body, "pointerdown", onpointerdown);
-			addNonPassiveEventListener(Browser.document.body, "pointerup", onpointerup);
-			addNonPassiveEventListener(Browser.document.body, "pointermove", onpointermove);
-			addNonPassiveEventListener(Browser.document.body, "pointerout", onpointerout);
+			updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
+			updateNonPassiveEventListener(root, "pointerup", onpointerup);
+			updateNonPassiveEventListener(root, "pointermove", onpointermove);
+			updateNonPassiveEventListener(root, "pointerout", onpointerout);
 		}
 
-		addNonPassiveEventListener(Browser.document.body, "keydown", function(e : Dynamic) {
+		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {
+			e.stopPropagation();
 			if (RendererType == "html") {
 				onKeyDownAccessibilityZoom(e);
 			}
@@ -1218,20 +1464,31 @@ class RenderSupport {
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
-			emit("keydown", parseKeyEvent(e));
+			emitKey(stage, "keydown", e);
 		});
 
-		addNonPassiveEventListener(Browser.document.body, "keyup", function(e : Dynamic) {
+		updateNonPassiveEventListener(root, "keyup", function(e : Dynamic, stage : FlowContainer) {
+			e.stopPropagation();
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
-			emit("keyup", parseKeyEvent(e));
+			emitKey(stage, "keyup", e);
 		});
 
-		setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
+		var stage = PixiStage;
+		setStageWheelHandler(function (p : Point) {
+			stage.emit("mousewheel", p);
+			emitMouseEvent(stage, "mousemove", MousePos.x, MousePos.y);
+		});
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
+
+		if (root != Browser.document.body) {
+			on("fullscreen", function () {
+				onBrowserWindowResize({target: Browser.window});
+			});
+		}
 
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnMouse(true);
@@ -1242,14 +1499,18 @@ class RenderSupport {
 			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
 			'DOMMouseScroll'; // let's assume that remaining browsers are older Firefox");
 
+		var isRenderRoot = PixiStage.nativeWidget != Browser.document.body;
 
 		var wheel_cb = function(event) {
 			var sX = 0.0, sY = 0.0,	// spinX, spinY
 				pX = 0.0, pY = 0.0;	// pixelX, pixelY
 
 			// prevents swipe back for Safari
-			if (Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+			if (isRenderRoot || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
 				event.preventDefault();
+			}
+			if (isRenderRoot) {
+				event.stopPropagation();
 			}
 
 			// Legacy
@@ -1298,9 +1559,10 @@ class RenderSupport {
 			return false;
 		};
 
-		untyped __js__("window.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
+		var node = isRenderRoot ? PixiStage.nativeWidget : Browser.window;
+		untyped __js__("node.addEventListener(event_name, wheel_cb, {passive : false, capture : false})");
 		if ( event_name == "DOMMouseScroll" ) {
-			untyped __js__("window.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
+			untyped __js__("node.addEventListener('MozMousePixelScroll', wheel_cb, {passive : false, capture : false})");
 		}
 	}
 
@@ -1341,10 +1603,10 @@ class RenderSupport {
 			forceRollOverRollOutUpdate();
 		}
 
-		if (Util.isMouseEventName(event)) {
-			emit(event);
-		} else {
+		if (!Util.isMouseEventName(event) || isStage(clip)) {
 			clip.emit(event);
+		} else {
+			emit(event);
 		}
 	}
 
@@ -1421,15 +1683,8 @@ class RenderSupport {
 	private static function switchFocusFramesShow(toShowFrames : Bool) : Void {
 		if (FocusFramesShown != toShowFrames) {
 			FocusFramesShown = toShowFrames;
-			// Interrupt of executing that not handle repeatable pressing tab key when focus frames are shown
-			var pixijscss : js.html.CSSStyleSheet = null;
 
-			// Get flowpixijs.css
-			for (css in Browser.document.styleSheets) {
-				if (css.href != null && css.href.indexOf("flowjspixi.css") >= 0) pixijscss = untyped css;
-			}
-
-			if (pixijscss != null) {
+			var onFound = function (pixijscss) {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
 					pixijscss.insertRule(".focused { outline: none !important; box-shadow: none !important; }", newRuleIndex);
@@ -1439,6 +1694,21 @@ class RenderSupport {
 					on("mousemove", pixiStageOnMouseMove);
 				}
 			}
+
+			findFlowjspixiCss(onFound);
+		}
+	}
+
+	private static function findFlowjspixiCss(onFound : (js.html.CSSStyleSheet) -> Void) : Void {
+		var pixijscss : js.html.CSSStyleSheet = null;
+
+		// Get flowpixijs.css
+		for (css in Browser.document.styleSheets) {
+			if (css.href != null && css.href.indexOf("flowjspixi.css") >= 0) pixijscss = untyped css;
+		}
+
+		if (pixijscss != null) {
+			onFound(pixijscss);
 		}
 	}
 
@@ -1478,8 +1748,16 @@ class RenderSupport {
 
 				AccessWidget.updateAccessTree();
 
-				for (child in PixiStage.children) {
-					untyped child.render(untyped PixiRenderer);
+				for (instance in FlowInstances) {
+					var stage = instance.stage;
+					var renderer = instance.renderer;
+					try {
+						for (child in stage.children) {
+							untyped child.render(renderer);
+						}
+					} catch (e : Dynamic) {
+						untyped console.log("Error in render children", e);
+					}
 				}
 			} else {
 				TransformChanged = false;
@@ -1710,7 +1988,12 @@ class RenderSupport {
 		}
 
 		// The first flow render call. Hide loading progress indicator.
-		Browser.document.body.style.backgroundImage = "none";
+		if (previousRoot != null && previousRoot.style != null) {
+			previousRoot.style.backgroundImage = null;
+		}
+		if (PixiStage.nativeWidget.style != null) {
+			PixiStage.nativeWidget.style.backgroundImage = "none";
+		}
 		var indicator = Browser.document.getElementById("loading_js_indicator");
 		if (indicator != null) {
 			Browser.document.body.removeChild(indicator);
@@ -1723,6 +2006,32 @@ class RenderSupport {
 
 	public static function getStageHeight() : Float {
 		return PixiRenderer.height / backingStoreRatio / getAccessibilityZoom();
+	}
+
+	public static function getStageWidthOf(renderRootId : String) : Float {
+		if (renderRootId == "") return getStageWidth();
+
+		var existingInstance = getInstanceByRootId(renderRootId);
+
+		if (existingInstance == null) {
+			untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
+			return getStageWidth();
+		} else {
+			return existingInstance.renderer.width / backingStoreRatio / getAccessibilityZoom();
+		}
+	}
+
+	public static function getStageHeightOf(renderRootId : String) : Float {
+		if (renderRootId == "") return getStageHeight();
+
+		var existingInstance = getInstanceByRootId(renderRootId);
+
+		if (existingInstance == null) {
+			untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
+			return getStageHeight();
+		} else {
+			return existingInstance.renderer.height / backingStoreRatio / getAccessibilityZoom();
+		}
 	}
 
 	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
@@ -2299,6 +2608,16 @@ class RenderSupport {
 		return PixiStage;
 	}
 
+	public static function getStageId(clip : FlowContainer) {
+		return untyped clip.id;
+	}
+
+	public static function isStage(clip : DisplayObject) {
+		return untyped FlowInstances.some(function (value) {
+			return value.stage == clip;
+		});
+	}
+
 	private static function modifierStatePresent(e : Dynamic, m : String) : Bool {
 		return e.getModifierState != null && e.getModifierState(m) != null;
 	}
@@ -2687,6 +3006,14 @@ class RenderSupport {
 
 	public static function setMouseY(y : Float) {
 		MousePos.y = y / getViewportScale();
+	}
+
+	public static function setMousePosition(pos : Point) {
+		MousePos = pos;
+	}
+
+	public static function isMousePositionEqual(pos : Point) {
+		return MousePos.x == pos.x && MousePos.y == pos.y;
 	}
 
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
@@ -3255,11 +3582,25 @@ class RenderSupport {
 		}
 	}
 
+	private static var FullScreenTargetClip : DisplayObject = null;
+	public static function setFullScreenTarget(clip : DisplayObject) : Void {
+		if (FullScreenTargetClip != clip) {
+			if (IsFullScreen && FullScreenTargetClip != null) {
+				toggleFullScreen(false);
+			}
+			FullScreenTargetClip = clip;
+		}
+	}
+
 	public static function setFullScreenRectangle(x : Float, y : Float, w : Float, h : Float) : Void {
 	}
 
 	public static function resetFullWindowTarget() : Void {
 		setFullWindowTarget(null);
+	}
+
+	public static function resetFullScreenTarget() : Void {
+		setFullScreenTarget(null);
 	}
 
 	private static var regularStageChildren : Array<DisplayObject> = null;
@@ -3268,7 +3609,7 @@ class RenderSupport {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			var mainStage : FlowContainer = cast(PixiStage.children[0], FlowContainer);
+			var mainStage : FlowContainer = cast(getClipPixiStage(FullWindowTargetClip).children[0], FlowContainer);
 
 			if (fw) {
 				setShouldPreventFromBlur(FullWindowTargetClip);
@@ -3329,8 +3670,16 @@ class RenderSupport {
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!hadUserInteracted) return;
 
-		if (fs)
-			requestFullScreen(Browser.document.body);
+		if (fs) {
+			var mainStage = getClipPixiStage(FullScreenTargetClip);
+			var root =
+				mainStage.nativeWidget == null
+				? Browser.document.body
+				: mainStage.nativeWidget.host != null
+					? mainStage.nativeWidget.host
+					: untyped mainStage.nativeWidget;
+			requestFullScreen(root);
+		}
 		else
 			exitFullScreen(Browser.document);
 	}
@@ -3772,5 +4121,61 @@ class RenderSupport {
 		} catch (e : Dynamic) {
 			return "";
 		}
+	}
+	
+	public static function getInstanceByRootId(rootId : String) : FlowInstance {
+		if (Platform.isIE) {
+			for (instance in FlowInstances) {
+				if (instance.rootId == rootId) {
+					return instance;
+				}
+			}
+			return null;
+		} else {
+			return untyped FlowInstances.find(function (instance) {
+				return instance.rootId == rootId;
+			});
+		}
+	}
+
+	public static function getClipPixiStage(clip : DisplayObject) : Dynamic {
+		if (untyped clip.flowInstance != null) {
+			return clip;
+		}
+		if (untyped clip.parentClip != null) {
+			return getClipPixiStage(untyped clip.parentClip);
+		}
+		return null;
+	}
+}
+
+class FlowInstance {
+	public var rootId : String = "";
+	public var stage : FlowContainer;
+	public var renderer : Dynamic;
+	private var listeners : Map<String, Dynamic -> Void> = new Map();
+
+	public function new(rootId, stage, renderer) {
+		this.rootId = rootId;
+		this.stage = stage;
+		this.renderer = renderer;
+	}
+
+	public function emit(event : String, ?value : Dynamic) {
+		stage.emit(event, value);
+	}
+
+	public function registerListener(event : String, listener : Dynamic -> Void) : Void {
+		listeners.set(event, listener);
+	}
+
+	public function getListener(event : String) : Dynamic -> Void {
+		return listeners.get(event);
+	}
+
+	public function unregisterListener(event : String) : Dynamic -> Void {
+		var listenerFn = getListener(event);
+		listeners.remove(event);
+		return listenerFn;
 	}
 }

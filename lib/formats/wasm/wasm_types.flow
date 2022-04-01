@@ -1,5 +1,7 @@
+import math/uint64;
+
 //
-// This represents the low-level binary representation
+// This represents the low-level binary representation of Wasm
 //
 export {
 	//
@@ -8,29 +10,29 @@ export {
 	WasmValType ::= WasmNumType, WasmVecType, WasmRefType;
 
 		WasmNumType ::= WasmI32Type, WasmI64Type, WasmF32Type, WasmF64Type;
-			WasmI32Type(); // 0x7f
-			WasmI64Type(); // 0x7e
-			WasmF32Type(); // 0x7d
-			WasmF64Type(); // 0x7c
+			WasmI32Type();
+			WasmI64Type();
+			WasmF32Type();
+			WasmF64Type();
 
 		// v128
-		WasmVecType();  // 0x7b
+		WasmVecType();
 
 		WasmRefType ::= WasmFuncRef, WasmExternRef;
+			WasmFuncRef();
+			WasmExternRef();
 
-			WasmFuncRef();   // 0x70
-			WasmExternRef(); // 0x6f
-
-	// 0x70 #bytes(params) params #bytes(returns) returns
 	WasmFuncType(
 		params : [WasmValType],
+		// Multi-value returns are allowed
 		returns : [WasmValType],
 	);
 
 	// Other types
-	WasmLimits(minimum : int, maximum : int); // If max is 0, then it is missing
 
 	WasmMemoryType(limits : WasmLimits);
+		// If max is 0, then it is missing
+		WasmLimits(minimum : int, maximum : int); 
 
 	WasmTableType(
 		reftype : WasmRefType,
@@ -48,7 +50,8 @@ export {
 	//
 
 	WasmInstruction ::= WasmControlInstruction, WasmRefInstruction, WasmParametricInstruction, 
-		WasmVariableInstruction, WasmMemoryInstruction, WasmNumericInstruction, WasmVectorInstruction;
+		WasmVariableInstruction, WasmTableInstruction, WasmMemoryInstruction, WasmNumericInstruction, 
+		WasmVectorInstruction;
 
 	//
 	// Control instructions
@@ -58,36 +61,43 @@ export {
 		// Does not consume anything
 		WasmEmptyType();
 		// Type index to a function type which takes inputs and produces outputs
-		WasmTypeIndex(index : int);
+		WasmTypeIndex(typeindex : int);
 
 	// These are low-level representations of the binary version
-	WasmControlInstruction ::= WasmUnreachable, WasmNop, 
-		WasmBlock, WasmLoop, WasmIf, WasmIfElse,
-		WasmBr, WasmBrIf, WasmBrTable,
-		WasmReturn, WasmCall, WasmCallIndirect;
+	WasmControlInstruction ::= WasmUnreachable, WasmNop, WasmBlock, WasmLoop, WasmIf, WasmIfElse,
+		WasmBr, WasmBrIf, WasmBrTable, WasmReturn, WasmCall, WasmCallIndirect;
 
 		WasmUnreachable();
 		WasmNop();
+
 		// Introduces an implicit label 0, while label 1 is next outer block
 		WasmBlock(type : WasmBlockType, instructions : [WasmInstruction]);
+
 		// A break in this one goes back to the beginning of the loop.
 		// How do we break out of a loop? OK, you have to wrap with another
 		// block and then break to that outer one using break 1.
 		WasmLoop(type : WasmBlockType, instructions : [WasmInstruction]);
-		// OK, this is low level: The condition must be on the stack?
+
+		// The condition is on the stack
 		WasmIf(type : WasmBlockType, then : [WasmInstruction]);
+		// The condition is on the stack
 		WasmIfElse(type : WasmBlockType, then : [WasmInstruction], else_ : [WasmInstruction]);
 
 		// Unconditional branch. 0 is inner most block, 1 is next out, etc
-		WasmBr(label : int);
-		// Conditional branch
-		WasmBrIf(label : int);
-		// Indexing branch with a default value if the value is out of bounds
+		WasmBr(labels : int);
+		// Conditional branch: Condition on the stack, if true, break
+		WasmBrIf(labels : int);
+
+		// Index from stack used for indexing branch with a default value if the index value is out of bounds.
 		WasmBrTable(labels : [int], defaultLabel : int);
+
 		// Return from the function
 		WasmReturn();
 		
+		// Call a given function, with args on the stack
 		WasmCall(funcindex : int);
+
+		// Call the function indexed from the stack, using the table of functions of the given type
 		WasmCallIndirect(typeindex : int, tableindex : int);
 
 
@@ -99,7 +109,7 @@ export {
 		// Check if the stack has a null reference
 		WasmRefIsNull();
 		// Construct a reference to the given function
-		WasmRefFunc(funcIndex : int);
+		WasmRefFunc(funcindex : int);
 
 
 	// Parametric instructions
@@ -107,10 +117,12 @@ export {
 	WasmParametricInstruction ::= WasmDrop, WasmSelect, WasmSelectType;
 
 		WasmDrop();
+
 		// Pre-evaluated if-statement where both then and else are evaluated, but
-		// we just pick one. This is more efficient that if in simple cases
+		// we just pick one from the stack. This is more efficient that if in simple cases
 		WasmSelect();
-		// If we have a type annotation, we use this one. Why, I'm not sure
+
+		// If you use select on a ref type, you need to use this rather than other select
 		WasmSelectType(types : [WasmValType]);
 
 	// Variable Instructions
@@ -118,30 +130,31 @@ export {
 	WasmVariableInstruction ::= WasmLocalGet, WasmLocalSet, WasmLocalTee,
 		WasmGlobalGet, WasmGlobalSet;
 
-		WasmLocalGet(index : int);
-		WasmLocalSet(index : int);
-		WasmLocalTee(index : int);
-		WasmGlobalGet(index : int);
-		WasmGlobalSet(index : int);
+		WasmLocalGet(localindex : int);
+		WasmLocalSet(localindex : int);
+		// Sets the value at index id, and returns the value
+		WasmLocalTee(localindex : int);
+		WasmGlobalGet(globalindex : int);
+		WasmGlobalSet(globalindex : int);
 
 	// Table Instructions
 
 	WasmTableInstruction ::= WasmTableGet, WasmTableSet, WasmTableInit,
 		WasmElemDrop, WasmTableCopy, WasmTableGrow, WasmTableSize, WasmTableFill;
 
-		WasmTableGet(index : int);
-		WasmTableSet(index : int);
+		WasmTableGet(tableindex : int);
+		WasmTableSet(tableindex : int);
 
-		WasmTableInit(elemindex : int, index : int);
+		WasmTableInit(elemindex : int, tableindex : int);
 		WasmElemDrop(elemindex : int);
-		WasmTableCopy(tablex : int, tabley : int);
+		WasmTableCopy(tableindexx : int, tableindexy : int);
 
-		WasmTableGrow(index : int);
-		WasmTableSize(index : int);
-		WasmTableFill(index : int);
+		WasmTableGrow(tableindex : int);
+		WasmTableSize(tableindex : int);
+		WasmTableFill(tableindex : int);
 
 	// Memory instructions
-
+	// The alignment is a power of 2
 	WasmMemArg(align : int, offset : int);
 
 	WasmMemoryInstruction ::= WasmI32Load, WasmI64Load, WasmF32Load, WasmF64Load,
@@ -183,14 +196,14 @@ export {
 
 		WasmMemorySize();
 		WasmMemoryGrow();
-		WasmMemoryInit(index : int);
-		WasmDataDrop(index : int);
+		WasmMemoryInit(dataindex : int);
+		WasmDataDrop(dataindex : int);
 		WasmMemoryCopy();
 		WasmMemoryFill();
 
 	// Numeric instructions
 
-	WasmNumericInstruction ::= WasmI32Const, WasmI64Const, WasmF32Const, WasmF64Const,
+	WasmNumericInstruction ::= WasmI32Const, WasmI64Const, WasmF32Const, WasmF64Const, WasmF64ConstHex,
 		WasmI32Eqz, WasmI32Eq, WasmI32Ne, WasmI32Lt_s, WasmI32Lt_u, WasmI32Gt_s, WasmI32Gt_u,
 		WasmI32Le_s, WasmI32Le_u, WasmI32Ge_s, WasmI32Ge_u, 
 		WasmI64Eqz, WasmI64Eq, WasmI64Ne, WasmI64Lt_s, WasmI64Lt_u, WasmI64Gt_s, WasmI64Gt_u,
@@ -218,10 +231,11 @@ export {
 		;
 
 		WasmI32Const(val : int);
-		WasmI64Const(low : int, high : int);
+		WasmI64Const(val : UInt64);
 
 		WasmF32Const(val : int);
 		WasmF64Const(val : double);
+		WasmF64ConstHex(val : UInt64);
 
 		WasmI32Eqz();
 		WasmI32Eq();
@@ -788,17 +802,24 @@ export {
 		start : int
 	);
 
+	// This defines some predefined tables
+	// https://webassembly.github.io/spec/core/syntax/modules.html#syntax-elemmode
 	WasmElementSection(
 		elements : [WasmElement]
 	);
-		WasmElement ::= WasmElement0, WasmElement1, WasmElement2, WasmElement3,
+		WasmElement ::= WasmElementFuncs, WasmElementPassive, WasmElementFuncs2, WasmElementDeclarative,
 			WasmElement4, WasmElement5, WasmElement6, WasmElement7;
 
-		WasmElement0(offset : WasmExpr, funindexes : [int]);
-		WasmElement1(funindexes : [int]);
-		WasmElement2(tableIndex : int, offset : WasmExpr, funindexes : [int]);
-		WasmElement3(funindexes : [int]);
+		// Initialize a table with function indexes, starting at index "offset" in table 0
+		WasmElementFuncs(offset : WasmExpr, funindexes : [int]);
+		// Prepare a passive table of elements of function indexes. Requires WasmTableInit to initialize, I think
+		WasmElementPassive(funindexes : [int]);
+		// Initialize table <index> starting at slot index, with the given function indexes
+		WasmElementFuncs2(tableIndex : int, offset : WasmExpr, funindexes : [int]);
+		// Defines fun indexes that can be used by ref.func, but they are not in a table
+		WasmElementDeclarative(funindexes : [int]);
 
+		// Tables for other kinds of elements
 		WasmElement4(offset : WasmExpr, init : [WasmExpr]);
 		WasmElement5(et : WasmRefType, init : [WasmExpr]);
 		WasmElement6(tableIndex : int, offset : WasmExpr, et : WasmRefType, init : [WasmExpr]);
@@ -818,10 +839,14 @@ export {
 
 		WasmData ::= WasmData0, WasmData1, WasmData2;
 			// init bytes, mode active {memory 0, offset e}
+			// I.e. this copies itself into memory on startup
 			WasmData0(offset : WasmExpr, bytes : [int]);
-			// init bytes, mode passive
+			// init bytes, mode passive. This is NOT copied at startup
+			// but can be with memory.init
 			WasmData1(bytes : [int]);
+
 			// init bytes. mode active { memory n, offset e}
+			// Copies itself into memory in startup
 			WasmData2(memory : int, offset : WasmExpr, bytes : [int]);
 
 	WasmDataCountSection(
