@@ -1,3 +1,4 @@
+import sys/keycodes;
 import material/material_ui;
 
 export {
@@ -17,15 +18,73 @@ export {
 		caption : string
 	);
 
+	InputMethodBrowser(
+		api : InputMethodAPI<?>,
+		context : string,
+		input : string,
+		pageSize : int,
+		choicesB : DynamicBehaviour<InputMethodPredictionChoices<?>>,
+		inPageIdxB : DynamicBehaviour<int>
+	);
+
+	makeIMEBrowser(api : InputMethodAPI, context : string, input : string, pageSize : int) -> InputMethodBrowser<?>;
+	goPreviousPageIME(b : InputMethodBrowser<?>) -> bool;
+	goNextPageIME(b : InputMethodBrowser<?>) -> bool;
+	goPreviousCandidateIME(b : InputMethodBrowser<?>) -> bool;
+	goNextCandidateIME(b : InputMethodBrowser<?>) -> bool;
+
 	getTestPinyin(lang : string) -> InputMethodAPI<int>;
 }
+
+makeIMEBrowser(api : InputMethodAPI, context : string, input : string, pageSize : int) -> InputMethodBrowser<?> {
+	InputMethodBrowser(api, context, input, pageSize, make(api.getPredictions(context, input, None(), pageSize)), make(0))
+}
+
+goPreviousPageIME(b : InputMethodBrowser<?>) {
+	nextDistinct(b.choicesB, b.api.getPredictions(b.context, b.input, getValue(b.choicesB).previousId, b.pageSize));
+	true
+}
+
+goNextPageIME(b : InputMethodBrowser<?>) {
+	nextDistinct(b.choicesB, b.api.getPredictions(b.context, b.input, getValue(b.choicesB).nextId, b.pageSize));
+	true
+}
+
+goPreviousCandidateIME(b : InputMethodBrowser<?>) {
+	lastIdx = length(getValue(b.choicesB).choices)-1;
+	currentPredictionIdx = max(0, min(lastIdx, getValue(b.inPageIdxB)));
+	if (currentPredictionIdx > 0) {
+		nextDistinct(b.inPageIdxB, currentPredictionIdx-1);
+		true
+	} else {
+		r = goPreviousPageIME(b);
+		nextDistinct(b.inPageIdxB, if (r) length(getValue(b.choicesB).choices)-1 else 0);
+		r
+	}
+}
+
+goNextCandidateIME(b : InputMethodBrowser<?>) {
+	lastIdx = length(getValue(b.choicesB).choices)-1;
+	currentPredictionIdx = getValue(b.inPageIdxB);
+	if (currentPredictionIdx < lastIdx) {
+		nextDistinct(b.inPageIdxB, currentPredictionIdx+1);
+		true
+	} else {
+		r = goNextPageIME(b);
+		nextDistinct(b.inPageIdxB, if (r) 0 else lastIdx);
+		r
+	}
+};
 
 // No tree at first level because only two keys.
 // No tree at second level to allow filter by substring.
 // No tree at third level to rank contexts.
 // No tree at fourth level because few keys.
+// TODO numbers I removed from keys here on test dicts parsing were tones, return them.
 testInputMethodPinyinData : [Pair<string, [Pair<string, [Pair<string, [Pair<string, int>]>]>]>] = [
-	Pair("zh-hant", [
+	testInputMethodPinyinData1, testInputMethodPinyinData2
+];
+	testInputMethodPinyinData1 = Pair("zh-hant", [
 		Pair("a", [
 			Pair("", [Pair("阿", 1)])
 		]),
@@ -1622,8 +1681,8 @@ testInputMethodPinyinData : [Pair<string, [Pair<string, [Pair<string, [Pair<stri
 		Pair("the ritz-carlton", [
 			Pair("", [Pair("麗思卡爾頓酒店", 1)])
 		])
-	]),
-	Pair("zh-hans", [
+	]);
+	testInputMethodPinyinData2 = Pair("zh-hans", [
 		Pair("a", [
 			Pair("", [Pair("阿", 1)])
 		]),
@@ -3220,23 +3279,20 @@ testInputMethodPinyinData : [Pair<string, [Pair<string, [Pair<string, [Pair<stri
 		Pair("the ritz-carlton", [
 			Pair("", [Pair("丽思卡尔顿酒店", 1)])
 		])
-	])
-];
+	]);
 
+intOr = \a, b -> if (a != 0) a else b;
 
-	intOr = \a, b -> if (a != 0) a else b;
-
-getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool, def : ?) -> [?] {
+getSubset(set : [Pair<string, [?]>], prefix : string, needOthers : bool) -> [Pair<string, [?]>] {
 	prefixLen = strlen(prefix);
 
 	expandKey = \i, a, t -> if (i < 0) Triple(bitNot(i), t, a) else Triple(i, t, arrayPush(a, set[i]));
-	setCmp = \d : ?, k : string -> {
-		dkey : string = getKey(d);
-		intOr(strlen(dkey) - strlen(k), genericCompare(dkey, k));
+	setCmp = \d : Pair<string, [?]>, k : string -> {
+		intOr(strlen(d.first) - strlen(k), genericCompare(d.first, k));
 	};
 
 	setLast = length(set)-1;
-	maxLen = strlen(getKey(lastElement(set, def)));
+	maxLen = strlen(lastElement(set, Pair("", [])).first);
 	mainKey = expandKey(binarySearch2(set, prefix, setCmp), [], prefix);
 
 	// Collecting possible strings that start from what «prefix» contains.
@@ -3250,17 +3306,17 @@ getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool,
 		// Collecting possible strings of same length
 		Some(updateWhile(nextKey, \nkeyTextKeys -> if (nkeyTextKeys.first > setLast) None() else {
 			nsetElem = set[nkeyTextKeys.first];
-			if (startsWith(getKey(nsetElem), keyTextKeys.second)) Some(Triple(
+			if (startsWith(nsetElem.first, prefix)) Some(Triple(
 				nkeyTextKeys.first+1, nkeyTextKeys.second, arrayPush(nkeyTextKeys.third, nsetElem)
 			)) else None() // We expect them to be in a single piece.
 		}))
 	});
-	(if (needOthers) 
+	(if (needOthers)
 		// Linear, since a few items suggested when «needOthers».
 		updateWhile(Triple(mainKey.first-1, prefix, keys.third), \keyTextKeys -> if (keyTextKeys.first < 0) None() else {
 			key = keyTextKeys.first;
 			setElem = set[keyTextKeys.first];
-			elemText = getKey(setElem);
+			elemText = setElem.first;
 			Some(Triple(
 				key-1, elemText,
 				if (startsWith(prefix, elemText))
@@ -3272,7 +3328,7 @@ getSubset(set : [?], getKey : (?) -> string, prefix : string, needOthers : bool,
 };
 
 getTestPinyin(lang : string) -> InputMethodAPI<int> {
-	cache : ref Triple<string, string, [string]> = ref Triple("", "", []);
+	cache : ref Triple<string, string, [Pair<string, string>]> = ref Triple("", "", []);
 	InputMethodAPI(
 		\context : string, current : string, packId : Maybe<int>, count : int -> {
 			currentLen = strlen(current);
@@ -3280,11 +3336,12 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 				cache := Triple(context, current, {
 					reverseContext = reverse(context);
 					langData : [Pair<string, [Pair<string, [Pair<string, int>]>]>] = findDef(testInputMethodPinyinData, \d -> d.first == lang, Pair(lang, [])).second;
-					candidates : [Pair<string, [int]>] = tree2pairs(fold(getSubset(langData, firstOfPair, current, false, Pair("", [])), makeTree(), \keyAcc : Tree<string, [int]>, key : Pair<string, [Pair<string, [Pair<string, int>]>]> -> {
+					candidates : [Pair<Pair<string, string>, [int]>] = tree2pairs(fold(getSubset(langData, current, false), makeTree(), \keyAcc : Tree<Pair<string, string>, [int]>, key : Pair<string, [Pair<string, [Pair<string, int>]>]> -> {
 						keylen = strlen(key.first);
-						fold(key.second, keyAcc, \contextCandidateAcc : Tree<string, [int]>, contextCandidate : Pair<string, [Pair<string, int>]> -> {
-							fold(contextCandidate.second, contextCandidateAcc, \insertionAcc : Tree<string, [int]>, insertion : Pair<string, int> -> {
-								oldValue = lookupTreeDef(insertionAcc, insertion.first, [0, 0, 0]);
+						fold(getSubset(key.second, reverseContext, true), keyAcc, \contextCandidateAcc : Tree<Pair<string, string>, [int]>, contextCandidate : Pair<string, [Pair<string, int>]> -> {
+							fold(contextCandidate.second, contextCandidateAcc, \insertionAcc : Tree<Pair<string, string>, [int]>, insertion : Pair<string, int> -> {
+								treeKey = Pair(insertion.first, key.first);
+								oldValue = lookupTreeDef(insertionAcc, treeKey, [0, 0, 0]);
 								// Listing exact length match first, then superstrings, and substrings last.
 								newValue = if (keylen == currentLen)
 									[oldValue[0]+insertion.second, oldValue[1], oldValue[2]]
@@ -3292,7 +3349,7 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 									[oldValue[0], oldValue[1]+insertion.second, oldValue[2]]
 								else
 									[oldValue[0], oldValue[1], oldValue[2]+insertion.second];
-								setTree(insertionAcc, insertion.first, newValue)
+								setTree(insertionAcc, treeKey, newValue)
 							})
 						});
 					}));
@@ -3310,30 +3367,82 @@ getTestPinyin(lang : string) -> InputMethodAPI<int> {
 				Some(if (start + count >= cacheLen) 0 else start + count),
 				map(
 					subrange((^cache).third, start, count),
-					\s -> InputMethodPredictionChoice(s, "")
+					\s -> InputMethodPredictionChoice(s.first, "", s.second)
 				)
 			)
 		}
 	)
 }
 
+/*
 main() {
+	browserB = make(makeIMEBrowser(getTestPinyin("zh-hans"), "", "", 5));
 	PAGE_SIZE = 5;
 	currentB = make("");
-	textStyle = [MFont(32.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
 	inputB = make("");
-	pinyin = getTestPinyin("zh-hans");
-	predictionsB = make(InputMethodPredictionChoices(None(), None(), []));
-	uns1 = fsubscribe(currentB, \current -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), current, None(), PAGE_SIZE)));
+	inputFocusB = make(false);
+	predictionsFocusesB = generate(0, PAGE_SIZE, \i -> make(false));
+	commitCandidate = \b -> {
+		chosenText = getValue(b.choicesB).choices[getValue(b.inPageIdxB)].text;
+		nextDistinct(browserB, makeIMEBrowser(b.api, b.context + chosenText, "", b.pageSize));
+		nextDistinct(inputFocusB, true);
+		true
+	};
+	KEYS_USED = [KEY_UP, KEY_DOWN, KEY_PAGEUP, KEY_PAGEDOWN, KEY_SPACE];
+	KEYS_HANDLERS = [\__ -> false, goPreviousCandidateIME, goNextCandidateIME, goPreviousPageIME, goNextPageIME, commitCandidate];
+	textStyle = [MFont(32.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
+	tipStyle = [MFont(12.0, "Roboto", 1.0, 1.0, ParagraphMargin(0.0, 0.0), InterlineSpacing(1.0))];
+	keypressB = make(noKey);
+	uns1 = fsubscribe(currentB, \input -> nextDistinct(browserB, getValue(browserB) |> (\b -> makeIMEBrowser(b.api, b.context, input, b.pageSize))));
+	uns2 = fsubscribe(keypressB, \keypress -> ignore(KEYS_HANDLERS[elemIndex(KEYS_USED, keypress.keycode, -1)+1](getValue(browserB))));
 	material = MLines2A(
-		MCols2A(MDynamicText(inputB, textStyle), MTextInput(currentB, [MDynamicTextStyle(const(textStyle))], [])),
+		MCols2A(
+			MDynamicText(inputB, textStyle),
+			MInteractive(
+				[
+					TKey(keypressB, \ke : KeyEvent -> contains(KEYS_USED, ke.keycode))
+				],
+				MTextInput(currentB, [MDynamicTextStyle(const(textStyle))], [MFocused(inputFocusB)])
+			)
+		),
 		MColsA([
-			MTextButton("<", \ -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).previousId, PAGE_SIZE)), [], []),
-			MSelect(predictionsB, \predictions -> {
-				MColsA(map(predictions.choices, \p -> MTextButton(p.text, nop, [], [])))
-			}),
-			MTextButton(">", \ -> nextDistinct(predictionsB, pinyin.getPredictions(getValue(inputB), getValue(currentB), getValue(predictionsB).nextId, PAGE_SIZE)), [], []),
+			MTextButton("<", \-> ignore(goPreviousPageIME(getValue(browserB))), [], []),
+			MSelect(browserB, \browser ->
+				MConstruct(
+					concat([
+						\-> selectWithLastu(browser.inPageIdxB, \l, n -> {
+							lastIdx = length(getValue(browser.choicesB).choices)-1;
+							nextDistinct(predictionsFocusesB[max(0, min(n, lastIdx))], true);
+							nextDistinct(predictionsFocusesB[l], false);
+						}).second,
+						\-> {
+							nextDistinct(predictionsFocusesB[getValue(browser.inPageIdxB)], true);
+							nop
+						}
+					], mapi(predictionsFocusesB, \predictionIdx, predictionFocusB -> \-> subscribe(predictionFocusB, \predictionFocus -> {
+						currentIdx = getValue(browser.inPageIdxB);
+						if (predictionIdx == currentIdx)
+							nextDistinct(predictionFocusB, true)
+						else if (predictionFocus) {
+							nextDistinct(predictionsFocusesB[currentIdx], false);
+							nextDistinct(browser.inPageIdxB, predictionIdx);
+						}
+					}))),
+					MSelect(browser.choicesB, \predictions ->
+						MColsA(mapi(predictions.choices, \i, p -> MLinesXCenter([
+							MText(p.hotkey, tipStyle),
+							MTextButton(p.text, \ -> {
+								nextDistinct(browser.inPageIdxB, i);
+								ignore(commitCandidate(browser));
+							}, [], [MFocused(predictionsFocusesB[i])]),
+							MText(p.caption, tipStyle),
+						])))
+					)
+				)
+			),
+			MTextButton(">", \-> ignore(goNextPageIME(getValue(browserB))), [], []),
 		])
 	);
 	mrender(makeMaterialManager([]), true, material);
 }
+*/

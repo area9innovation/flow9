@@ -81,27 +81,20 @@ to a queue for later processing, when more information is expected to be
 available.
 
 TODO CGraph:
+C:/flow9/tools/flowc/typechecker/typechecker.flow:1281:91: Add type annotation. Unresolved type (equivalence class e9455)
+
+ flow9 tools/flow9/flow9.flow strict=1 incremental=0 >out.flow
+
+ Check overload sub overload typars.
+
 - We need a subtype with multiple types when the max is closed?
 
 - Exhaustiveness check of switch
 
 - Verify that we give useful errors for real errors
 
-- Consider to avoid implicit typars for None and friends.
-
 Need decision:
-- types.flow: implicit None type-parameter is correct, but add a location to the error
-
 - MTree is polymorphic, but Material is not. Add better warning
-
-- type24: implicit
-
-- type39: flow
-C:/flow9/lib/text/serialize.flow:289:16: Add type annotation. Unresolved type (equivalence class e2119)
-		Triple(flow(None()), start, "");
-		      ^
-   when we cast something to flow, we could infer that the typars of the value can resolve to flow as well.
-   Maybe postpone reductions against flow, so we do that at the end when there is nothing else to do?
 
 # Name and type lookups
 
@@ -200,6 +193,20 @@ The compiler has decent speed, but could be faster.
 
 - Add a compile server
   - Add option to only type check given ids
+
+# JS backend/runtime
+
+According to this benchmark:
+
+https://jsben.ch/wY5fo
+
+This is the fastest way to iterate an array in JS:
+
+	var x = 0, l = arr.length;
+	while (x < l) {
+		dosmth = arr[x];
+		++x;
+	}
 
 # C++ backend
 

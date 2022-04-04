@@ -107,62 +107,77 @@ compileFlowe(allincludes : [string], startPending : () -> void, completePending 
 	}, allincludes);
 
 	b = compileFlow(cache, flow_file);
-	if (isUrlParameterTrue("js")) {
-		buildJsTarget(cache, b, src_file);
-	}
-	if (isUrlParameterTrue("cpp")) {
-		buildCppTarget(cache, b, src_file);
-	}
-	if (isUrlParameterTrue("flix")) {
-		buildFlixTarget(cache, b, src_file);
-	}
-	if (isUrlParameterTrue("flowc")) {
-		mfiprogram = bmodule2fiprogram(cache, b.flowpath);
-		switch (mfiprogram) {
-			None(): {
-				onDone();
-			}
-			Some(fiprogram): {
-				buildFiProgram(fiprogram, initFcTypeEnvGlobal(), \done -> onDone());
-			}
+
+	promises = allP(concatA([
+		if (isUrlParameterTrue("js")) [buildJsTarget(cache, b, src_file, STANDARD_JS)] else [],
+		if (isUrlParameterTrue("es6")) [buildJsTarget(cache, b, src_file, STANDARD_ES6)] else [],
+		if (isUrlParameterTrue("node")) [buildJsTarget(cache, b, src_file, NODEJS_MODE)] else [],
+		if (isUrlParameterTrue("nw")) [buildJsTarget(cache, b, src_file, NWJS_MODE)] else [],
+		if (isUrlParameterTrue("ts")) [buildJsTarget(cache, b, src_file, TS_MODE)] else [],
+	]));
+	doneP(promises, \ok -> {
+		if (isUrlParameterTrue("cpp")) {
+			buildCppTarget(cache, b, src_file);
 		}
-	} else {
+		if (isUrlParameterTrue("flix")) {
+			buildFlixTarget(cache, b, src_file);
+		}
+		if (isUrlParameterTrue("flowc") || getUrlParameter("bytecode") != "") {
+			mfiprogram = bmodule2fiprogram(cache, b.flowpath);
+			switch (mfiprogram) {
+				None(): {
+					onDone();
+				}
+				Some(fiprogram): {
+					buildFiProgram(fiprogram, initFcTypeEnvGlobal(), \done -> onDone());
+				}
+			}
+		} else {
+			onDone();
+		}
+	}, \error -> {
+		println("Failed");
 		onDone();
-	}
+	})
 }
 
-buildJsTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
+buildJsTarget(cache : FlowCache, b : BModule, src_file : string, jsmode : int) -> Promise<string, string> {
 	verbose = isUrlParameterTrue("verbose");
 	run_tests = isUrlParameterTrue("run-tests");
 	if (verbose) {
 		println("building JS target");
 	}
-	js_src = bmodule2js(cache, b.flowpath, isUrlParameterTrue("shorten-ids"));
-	js_file = changeFileExt(src_file, ".js");
-	setFileContent(js_file, js_src);
-	if (verbose) {
-		println("JS target '" + js_file + "' is built.");
-	}
-	if (run_tests) {
+
+	thenP(
+		bmodule2js(cache, b.flowpath, isUrlParameterTrue("shorten-ids"), jsmode), 
+		\js_src -> {
+		js_file = changeFileExt(src_file, ".js"); // TODO: If ts mode, use .ts
+		setFileContent(js_file, js_src);
 		if (verbose) {
-			println("Running test '" + js_file + "'");
+			println("JS target '" + js_file + "' is built.");
 		}
-		exit_code = execSystemProcess("node", [js_file], ".", println, println);
-		if (exit_code != 0 || verbose) {
-			println("Test '" + js_file + "' " +
-				(if (exit_code == 0) "COMPLETED" else  "FAILED with code: " + i2s(exit_code))
-			);
-		}
-		if (!isUrlParameterTrue("leave-js")) {
-			del_err = deleteFile(js_file);
-			if (del_err != "") {
-				println(del_err);
+		if (run_tests) {
+			if (verbose) {
+				println("Running test '" + js_file + "'");
+			}
+			exit_code = execSystemProcess("node", [js_file], ".", println, println);
+			if (exit_code != 0 || verbose) {
+				println("Test '" + js_file + "' " +
+					(if (exit_code == 0) "COMPLETED" else  "FAILED with code: " + i2s(exit_code))
+				);
+			}
+			if (!isUrlParameterTrue("leave-js")) {
+				del_err = deleteFile(js_file);
+				if (del_err != "") {
+					println(del_err);
+				}
 			}
 		}
-	}
-	if (verbose) {
-		println("\n-------------------\n");
-	}
+		if (verbose) {
+			println("\n-------------------\n");
+		};
+		js_file
+	});
 }
 
 buildCppTarget(cache : FlowCache, b : BModule, src_file : string) -> void {
@@ -220,8 +235,9 @@ printFlowUsage() -> void {
 	println("");
 
 	println("I=<path>,<path>       Include paths");
-	println("js=1 or <path>        Compile to JS. Combine with flowc=1 to get full support");
+	println("js=1 or <path>        Compile to JS for web. Combine with flowc=1 to get full support");
 	printl2("  shorten-ids=1       Whether to shorten the ids in the output");
+	printl2("node=1 or <path>      Compile to JS for nodejs.");
 	printl2("  run-tests=1         Execute the resulting JS with node");
 	println("cpp=1 or <path>       Compile to C++");
 	printl2("flowc=1 or <path>     Use the flowc backends for code generation. Java and more comes into play");

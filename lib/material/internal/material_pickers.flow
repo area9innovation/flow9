@@ -124,7 +124,7 @@ pickerLayout(
 				makeDialogButton(okButton, _("OK"))
 			]
 			|> concatA
-			|> (\t -> TColsDir(t, parent.rtl))
+			|> (\t -> TBaselineColsDir(t, parent.rtl))
 			|> (\t -> TAvailable(t, TFixed(pickerWidth, pickerButtonH)))
 		))
 		|> (\t -> TGroup2(mainSectionBack(), t));
@@ -170,6 +170,7 @@ datepickerCells(
 	mDateMin : Maybe<Date>,
 	mDateMax : Maybe<Date>,
 	isMarked : (Date) -> bool,
+	addMarkFn : Maybe<MCustomMark>,
 	enabled : Transform<bool>,
 	startFromMonday : bool,
 	yearDisabled : bool,
@@ -264,7 +265,7 @@ datepickerCells(
 										TTranslate(
 											const(o),
 											datepickerCell(manager, p2, color, month,
-												i * 7 + j + 1 - ^startOffset, date, mDateMin, mDateMax, isMarked, enabled, multipleDate, m2t)
+												i * 7 + j + 1 - ^startOffset, date, mDateMin, mDateMax, isMarked, addMarkFn, enabled, multipleDate, m2t)
 										)
 								}
 								)
@@ -292,6 +293,7 @@ datepickerCell(
 	mDateMin : Maybe<Date>,
 	mDateMax : Maybe<Date>,
 	isMarked : (Date) -> bool,
+	addMarkFn : Maybe<MCustomMark>,
 	enabled0 : Transform<bool>,
 	multipleDate : Maybe<MMultipleDate>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -299,52 +301,50 @@ datepickerCell(
 	hover = make(false);
 	focused = make(false);
 
-	makeDate = \mon, d -> Date(mon.year, mon.month, d);
+	thisDateT = fselect(thisMonth, FLift(\m -> Date(m.year, m.month, day)));
 
 	isEnabled = \thisDate -> {
 		compareDates(thisDate, either(mDateMin, thisDate)) != DateBefore()
 		&& compareDates(thisDate, either(mDateMax, thisDate)) != DateAfter()
 	};
 
-	getPickerTextColor = \month, date, hov -> {
-		thisDate = makeDate(month, day);
-
-		if (!isEnabled(thisDate) || !fgetValue(enabled0)) MGrey(500)
+	enabled = fselectLift(thisDateT, isEnabled);
+	markedT = fselectLift(thisDateT, isMarked);
+	textColor = fselect4(thisDateT, dateB, hover, enabled0, \thisDate, date, hov, en -> {
+		if (!isEnabled(thisDate) || !en) MGrey(500)
 		else if (hov || thisDate == date) MWhite()
 		else if (stamp2date(timestamp()) == thisDate) color
 		else MTextColor();
-	};
+	});
 
-	enabled = fselect(thisMonth, FLift(\m -> isEnabled(makeDate(m, day))));
-	marked = fselect(thisMonth, FLift(\month -> isMarked(makeDate(month, day))));
-	textColor = make(MBlack());
 	diam = 36.0;
 	bhoriz = if (day < 10) 14.0 else 10.5;
+	cellWidth = if (day < 10) 8.0 else 15.0;
+
 	bubble =
-		TIfLazy2(enabled0, \en ->
-			TGroup2(
-				TSelectConstantMetrics(textColor, \col ->
-					MText2T(parent, i2s(day), [MCaptionSolid(), col] |> addDisabledStyle(en))
-				)
-				|> (\f -> TCenterXIn(f, TFixed(if (day < 10) 8.0 else 15.0, 0.))),
-				TFixed(if (day < 10) 8.0 else 15.0, 14.4),
-			)
-			|> (\f ->
-				TIf(marked,
-					TLines2(f,
-						TSelectConstantMetrics(textColor, \col ->
-							TRectangle(if (en) [MThemeFill(manager, col)] else [MFill(MGrey(500))], TFixed(if (day < 10) 8.0 else 15.0, 1.0))
-						)
-					),
-					f
-				)
-			),
-			true
+		TGroup2(
+			TSelect(enabled0, \en -> TSelectConstantMetrics(textColor, \col ->
+				MText2T(parent, i2s(day), [MCaptionSolid(), col] |> addDisabledStyle(en))
+			))
+			|> (\f -> TCenterXIn(f, TFixed(cellWidth, 0.))),
+			TFixed(cellWidth, 14.4),
 		)
-		|> (\t -> TBorder(bhoriz + 0.5, 10.8, bhoriz - 0.5, 10.8, t))
-		|> (\t -> TConstruct([
-				\ -> connectSelect3u(thisMonth, dateB, hover, textColor, getPickerTextColor)
-			], t));
+		|> (\f ->
+			TIfLazy(markedT, \marked ->
+				if (marked)
+					eitherFn(addMarkFn,
+						\addMark -> m2t(addMark.addMark(thisDateT, textColor, f), parent),
+						\ -> TLines2(
+							f,
+							TSelectConstantMetrics(textColor, \col ->
+								TRectangle([MThemeFill(manager, col)], TFixed(cellWidth, 1.0))
+							)
+						)
+					)
+				else f
+			)
+		)
+		|> (\t -> TBorder(bhoriz + 0.5, 10.8, bhoriz - 0.5, 10.8, t));
 
 	bubbleAnimated =
 		TGroup2(
@@ -392,7 +392,7 @@ datepickerCell(
 
 	click = \ -> {
 		currentDate = getValue(dateB);
-		thisDate = makeDate(getValue(thisMonth), day);
+		thisDate = fgetValue(thisDateT);
 		if (isEnabled(thisDate)) next(dateB, thisDate);
 		eitherFn(
 			multipleDate,
@@ -437,6 +437,7 @@ datepickerCellsAnimated(
 	mDateMin : Maybe<Date>,
 	mDateMax : Maybe<Date>,
 	isMarked : (Date) -> bool,
+	addMarkFn : Maybe<MCustomMark>,
 	enabled : Transform<bool>,
 	startFromMonday : bool,
 	yearDisabled : bool,
@@ -455,7 +456,7 @@ datepickerCellsAnimated(
 
 	mapi(cards, \i, c ->
 		TGroup2(
-			datepickerCells(manager, parent, color, c.month, date, mDateMin, mDateMax, isMarked,
+			datepickerCells(manager, parent, color, c.month, date, mDateMin, mDateMax, isMarked, addMarkFn,
 				fand(enabled, feq(cardCur, i)), startFromMonday, yearDisabled, multipleDate, m2t),
 
 			TFixed(width, height)
@@ -535,6 +536,7 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 	album = extractStruct(m.style, MDialogAlbum(false)).album;
 	color = extractMColor(parent, m.style, MPrimaryColor());
 	isMarked = extractStruct(m.style, MMarkDays(\__ -> false)).isMarked;
+	addMarkFn = tryExtractStruct(m.style, MCustomMark(\__, __, __ -> TEmpty()));
 	buttonsM = tryExtractStruct(m.style, MDialogButtons([]));
 	buttons = eitherMap(buttonsM, \but -> but.buttons, []);
 	startFromMonday = extractStruct(m.style, MDatePickerFirstWeekDay(false)).monday;
@@ -615,6 +617,7 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 				mDateMin,
 				mDateMax,
 				isMarked,
+				addMarkFn,
 				enabled,
 				startFromMonday,
 				yearDisabled,
