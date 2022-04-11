@@ -5,6 +5,9 @@ import formats/svg/svg;
 
 export {
 	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void;
+	// In JS - looks for html element and renders form inside it
+	// The same as frender for other targets
+	frenderTo(form : FForm, awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void;
 	frenderStage : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void;
 	renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult;
 	attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult;
@@ -17,11 +20,11 @@ export {
 
 currentFFormCount = ref 0;
 
-frenderTo(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
+frenderToClip(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void {
 	renCt = ^globalRenderCount;
 	globalRenderCount := ^globalRenderCount + 1;
 
-	d1 = monitorFResize(awh);
+	d1 = monitorFResize(awh, rootId);
 	d2 = optimizeAndRenderFForm(parent, form, const([renCt]));
 
 	\ -> {d1(); applyall(d2.disposers); if (renCt == ^globalRenderCount - 1) globalRenderCount := renCt}
@@ -31,17 +34,25 @@ frenderStage(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
 	if (^globalRenderCount == 0)
 		println("Warning: Don't use overlay stage render as first layer render.");
 
-	frenderTo(currentClip(), form, awh);
+	frenderToClip(currentClip(), form, awh, "");
+}
+
+frenderTo(form : FForm, awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void {
+	if (rootId != "") {
+		if (js) setRenderRoot(rootId)
+		else println("Warning: no setRenderRoot implementation for this target");
+	}
+	frenderToClip(mainRenderClip(), form, awh, rootId);
 }
 
 frender(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
-	frenderTo(mainRenderClip(), form, awh);
+	frenderToClip(mainRenderClip(), form, awh, "");
 }
 
-monitorFResize(awh : DynamicBehaviour<WidthHeight>) -> () -> void {
+monitorFResize(awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void {
 	enableResize();
 	sendStageSize = \ -> {
-		nextDistinct(awh, WidthHeight(getStageWidth(), getStageHeight()));
+		nextDistinct(awh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
 	}
 
 	// We have to explicitly hold on to this function to keep it alive
@@ -116,20 +127,22 @@ attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapabilit
 
 fullScreenTarget : ref Maybe<native> = ref None();
 
-setFullScreenTarget(clip : native) -> void {
+setFullScreenTargetFlow(clip : native) -> void {
 	fullScreenTarget := Some(clip);
+	setFullScreenTarget(clip);
 }
 
 isFullScreenTarget(clip : native) -> bool {
-	eitherFn(^fullScreenTarget, \ft -> ft == clip, \ -> { setFullScreenTarget(clip); true; });
+	eitherFn(^fullScreenTarget, \ft -> ft == clip, \ -> { setFullScreenTargetFlow(clip); true; });
 };
 
 removeFullScreenTarget(clip : native) -> void {
 	if (isSome(^fullScreenTarget)) {
 		if (isFullScreenTarget(clip)) {
-			setFullScreenTarget(clip);
+			setFullScreenTargetFlow(clip);
 		}
 	}
+	resetFullScreenTarget();
 }
 
 renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
@@ -659,13 +672,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		FFullWindow(fullwindow, wh, form) : {
 			resize = ref nop;
 			container = makeClip();
+			rootId = getRenderRoot();
 
 			setResize = \fw -> {
 				^resize();
 
 				if (fw) {
-					nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
-					resize := monitorFResize(wh);
+					nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+					resize := monitorFResize(wh, rootId);
 				} else {
 					resize := nop;
 				}
@@ -716,7 +730,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				\clip -> {
 					changeFullscreen = \fsc -> {
 						if (fsc) {
-							setFullScreenTarget(clip);
+							setFullScreenTargetFlow(clip);
 						} else {
 							removeFullScreenTarget(clip);
 						}
@@ -1110,9 +1124,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				(js && (extractStruct(properties, ClassName("")).className != "" || extractStruct(properties, TagName("")).tagName != ""))) {
 				d = renderFForm(form, zorder);
 
+				role = extractStruct(properties, AccessRole("")).role;
+				tagName = extractStruct(properties, TagName("")).tagName;
+
 				makeAccessClip =
-					(!contains(["button", "checkbox", "textbox", "video", "iframe"], extractStruct(properties, AccessRole("")).role) &&
-						!contains(["button", "textarea", "input", "video", "iframe"], extractStruct(properties, TagName("")).tagName))
+					(
+						!contains(["button", "checkbox", "textbox", "video", "iframe"], role) &&
+						!contains(["button", "textarea", "input", "video", "iframe"], tagName) &&
+						!(role == "presentation" && tagName == "p")
+					)
 					|| isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
 
 				if (makeAccessClip) {
@@ -1384,6 +1404,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					\fs -> {
 						resize = ref nop;
 						prevWH = ref getValue(wh);
+						rootId = getRenderRoot();
 
 						[
 							onFullScreen(\v -> if (isFullScreenTarget(video) || !v) nextDistinct(fs.fullscreen, v)),
@@ -1393,10 +1414,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								^resize();
 
 								if (v) {
-									setFullScreenTarget(video);
+									setFullScreenTargetFlow(video);
 									prevWH := getValue(wh);
-									nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
-									resize := monitorFResize(wh);
+									nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+									resize := monitorFResize(wh, rootId);
 								} else {
 									removeFullScreenTarget(video);
 									nextDistinct(wh, ^prevWH);
@@ -1502,7 +1523,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		}
 		FTextInput(content, wh, style): {
 			textInputResponse = ref false;
-			characterStyle = extractStruct(style, FCharacterStyle(const(style2characterStyle(style)))).style;
+			constCharacterStyle = style2characterStyle(style);
+			characterStyle = fconcat(extractStruct(style, FCharacterStyle(const([]))).style, const(constCharacterStyle));
 			textfield = makeTextfield(getMappedFontFamily(fgetValue(characterStyle)));
 			rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 			setTextDirection(textfield, if (rtl) "rtl" else "ltr");
@@ -1537,6 +1559,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			interlineSpacing = extractStruct(style, InterlineSpacing(0.0)).d;
 
 			setTextFieldInterlineSpacing(textfield, interlineSpacing);
+			defineTextStyle(textfield, getValue(content), fgetValue(characterStyle));
 
 			disp =
 				concatA([
