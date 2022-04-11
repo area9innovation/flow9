@@ -44,12 +44,18 @@ class ReactContainer extends NativeWidgetClip {
 	private function detectReactComponent(element : String) {
 		if (element == "") return;
 		
-		if (element.charAt(0) != element.charAt(0).toUpperCase()) {
+		var parts = element.split('.');
+		if (parts.length == 0) {
+			component = null;
+		} else if (parts.length == 1 && element.charAt(0) != element.charAt(0).toUpperCase()) {
 			// it is a HTML tag, not a library
 			component = element;
 		} else {
-			var parts = element.split('.');
-			component = parts.length > 0 ? extractReactComponent(parts, Browser.window) : null;
+			component = extractReactComponent(parts, Browser.window);
+		}
+
+		if (component == null) {
+			untyped console.warn("ReactContainer : Didn't find " + element + " component");
 		}
 	}
 
