@@ -52,7 +52,8 @@ export {
 		CalendarHeaderTightWidth, CalendarHeaderAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacity, CalendarCustomHeader, CalendarHideContentFrame,
-		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends;
+		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends,
+		CalendarHideTimeInDayView, CalendarHideTimelineInDayView;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -142,6 +143,8 @@ export {
 		CalendarHideTabs();
 		// hide weekends in month, week & range (days) tabs
 		CalendarHideWeekends();
+		CalendarHideTimeInDayView();
+		CalendarHideTimelineInDayView();
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -1441,7 +1444,7 @@ MonthTable(
 	);
 
 	makeAdditionalEventsBlock = \additionalEventsCount, date, isEnable, events : [CalendarEvent] -> MComponent(
-		[MOnClick(\-> openDayEventsPopup(date, isEnable, events, true)), MEnabled(fnot(isReadOnlyB))],
+		[MOnClick(\-> openDayEventsPopup(date, isEnable, events, true))],
 		\__ -> getAdditionalEventsView(additionalEventsCount) |> MSetAddFillers(const(false))
 	);
 
@@ -2471,7 +2474,7 @@ showDatePickerDialog(
 CalendarDayEvent(index : int, event : CalendarEvent, type : CalendarEventDecription, heightB : DynamicBehaviour<double>);
 
 CalendarDayEventTimeType ::= CalendarDayAllDayEvent, CalendarDayPastEvent, CalendarDayCurrentEvent, CalendarDayFutureEvent;
-	CalendarDayAllDayEvent(isPastEvent : bool);
+	CalendarDayAllDayEvent(type : CalendarDayEventTimeType);
 	CalendarDayPastEvent();
 	CalendarDayCurrentEvent();
 	CalendarDayFutureEvent();
@@ -2545,7 +2548,7 @@ getCalendarDayEventTimeline(
 	MComponent([
 			THovering(isHoveringB),
 			MTooltipAlignment(MRight()),
-			MEnabled(const(!isSameStructType(timeType, CalendarDayAllDayEvent(false)))),
+			MEnabled(const(!isSameStructType(timeType, CalendarDayAllDayEvent(CalendarDayPastEvent())))),
 			MTooltipText(fselect(isHoveringB, FLift(\__ -> getTimeOnlyString(stamp2time2(timestamp()), false, false))))
 		],
 		\__ -> MGroup2(centerTimeline(timelineM), centerTimeline(timelineBordersM))
@@ -2555,6 +2558,7 @@ getCalendarDayEventTimeline(
 getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecription, timeType : CalendarDayEventTimeType, styles : [CalendarForEventsStyle]) -> Material {
 	eventsOpacity = extractStruct(styles, CalendarEventsOpacity(0.2)).opacity;
 	transparentBackColor = MCustomColor(mixColors(MColor2int(type.backColor), white, eventsOpacity, 1.0 - eventsOpacity));
+	hideTime = containsStruct(styles, CalendarHideTimeInDayView());
 
 	getEventView = \timeString, backColor, strokeColor, isPastEvent -> {
 		textColor = MTextMColor(backColor);
@@ -2564,10 +2568,14 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 		MFrame(16.0, 4.0, [MFill(backColor), StrokeWidth(1.0), MStroke(strokeColor)],
 			MColsYCenterA([
 				MLinesA([
-					MColsYCenterA([
-						MIcon("schedule", [textColor]) |> MBorderEnd(8.0),
-						MText(timeString, [textColor, MBodyBold()])
-					]) |> MBorderBottom(4.0),
+					if (hideTime) {
+						MEmpty()
+					} else {
+						MColsYCenterA([
+							MIcon("schedule", [textColor]) |> MBorderEnd(8.0),
+							MText(timeString, [textColor, MBodyBold()])
+						]) |> MBorderBottom(4.0)
+					},
 					getEventTitle(event, type) |> MBorderStart(2.0)
 				]),
 				MFillX(),
@@ -2586,11 +2594,11 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 	}
 
 	switch (timeType : CalendarDayEventTimeType) {
-		CalendarDayAllDayEvent(isPastEvent): {
-			if (isPastEvent) {
-				getEventView(_("All Day"), MWhite(), MGrey(400), true);
-			} else {
-				getEventView(_("All Day"), transparentBackColor, transparentBackColor, false);
+		CalendarDayAllDayEvent(allDayTimeType): {
+			switch (allDayTimeType) {
+				CalendarDayCurrentEvent(): getEventView(_("All Day"), type.backColor, type.backColor, false);
+				CalendarDayFutureEvent(): getEventView(_("All Day"), transparentBackColor, transparentBackColor, false);
+				default: getEventView(_("All Day"), MWhite(), MGrey(400), true);
 			}
 		}
 		CalendarDayCurrentEvent(): getEventView(geEventTimeString(), type.backColor, type.backColor, false);
@@ -2613,6 +2621,7 @@ getCalendarDayView(
 	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	hideContentViewFrame = containsStruct(styles, CalendarHideContentFrame());
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	hideTimeline = containsStruct(styles, CalendarHideTimelineInDayView());
 
 	getTime = \ -> stamp2time2(timestamp());
 	isToday = getCurrentDate() == date;
@@ -2625,7 +2634,6 @@ getCalendarDayView(
 	lastEventIdB = make(0);
 
 	getDayEventView = \timeType, dayEvent, isTimelineCircleVisible -> {
-		timelineM = getCalendarDayEventTimeline(dayEvent, timeType, currentTimeB, firstEventIdB, lastEventIdB, isTimelineCircleVisible, pastColor, futureColor);
 		getDefaultView = \event -> {
 			bottomMargin = MFixedY(4.0);
 			MLines2A(
@@ -2642,8 +2650,13 @@ getCalendarDayView(
 			[MOnClick(\ -> dayEvent.type.editAction(dayEvent.event.id)), MEnabled(enabledB)],
 			\__ -> getEventView(DayTab(), dayEvent.event, dayEvent.type, date, 1, getDefaultView)
 		);
-
-		MColsSameHeight([timelineM |> MBorderEnd(4.0), eventViewM]);
+		
+		if (hideTimeline) {
+			eventViewM |> MBorderStart(if (hideContentViewFrame) 16.0 else 12.0);
+		} else {
+			timelineM = getCalendarDayEventTimeline(dayEvent, timeType, currentTimeB, firstEventIdB, lastEventIdB, isTimelineCircleVisible, pastColor, futureColor);
+			MColsSameHeight([timelineM |> MBorderEnd(4.0), eventViewM]);
+		}
 	}
 
 	getDayEvent = \i, event -> maybeMap(find(dayEventTypes, \type -> type.name == event.eventType), \type -> CalendarDayEvent(i, event, type, make(0.0)));
@@ -2667,7 +2680,17 @@ getCalendarDayView(
 		MFrame(4.0, 0.0, [MStroke(MGrey(300)), StrokeWidth(1.0)], MGroup2(MFillXY(), m));
 	}
 
-	getAllDayEvent = \event -> getDayEventView(CalendarDayAllDayEvent(getValue(currentTimeB) > event.event.endDate), event, false);
+	getAllDayEvent = \event -> {
+		currentTime = getValue(currentTimeB);
+		type = if (currentTime > event.event.endDate) {
+			CalendarDayPastEvent();
+		} else if (currentTime > event.event.startDate) {
+			CalendarDayCurrentEvent();
+		} else {
+			CalendarDayFutureEvent();
+		}
+		getDayEventView(CalendarDayAllDayEvent(type), event, false);
+	}
 	getPastEvent = \event -> getDayEventView(CalendarDayPastEvent(), event, false);
 	getCurrentEvent = \event, isFirst -> getDayEventView(CalendarDayCurrentEvent(), event, isFirst);
 	getFutureEvent = \event, isFirst -> MSelect(currentEventsB, \currentEvents -> {
