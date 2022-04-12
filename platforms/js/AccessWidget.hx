@@ -580,6 +580,7 @@ class AccessWidget extends EventEmitter {
 				};
 
 				if (this.element.tagName.toLowerCase() == "iframe") {
+					this.element.tabIndex = tabindex;
 					var fn = function () {};
 
 					fn = function () {
