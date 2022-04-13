@@ -5,7 +5,9 @@ uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
-uniform sampler2D uSampler[10];
+const int numTextures = 10;
+uniform sampler2D uSampler[numTextures];
+uniform vec2 textureSizes[numTextures];
 
 #define MAX_STEPS 1000
 #define MAX_DIST 1000.
