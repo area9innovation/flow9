@@ -952,6 +952,7 @@ class AccessWidget extends EventEmitter {
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
 				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true");
+				case "nextWidgetId" : untyped clip.nextWidgetId = attributes.get(key);
 				default : {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
