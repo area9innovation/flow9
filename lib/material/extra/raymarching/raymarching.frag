@@ -36,6 +36,12 @@ struct ObjectInfo {
 	MixColor mixColor;
 };
 
+mat2 makeRotate2(float angle) {
+	float s = sin(angle);
+    float c = cos(angle);
+	return mat2(c, s, -s, c);
+}
+
 ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
 	if (obj1.d < obj2.d)
 		return obj1;
@@ -203,14 +209,8 @@ vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
 vec3 getMaterialReflect(int id, vec3 p) {
 	vec3 materialColor = backgroundColor;
 
-	vec3 normal = getObjectNormal(p);
-	normal = pow(normal, vec3(10.0));
-	normal /= normal.x + normal.y + normal.z;
-
-	vec3 p2 = p;
-	p2.y *= -1.;
-
 	%materialFunction2%
+
 	return materialColor;
 }
 
@@ -245,14 +245,9 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
 
 vec3 getMaterial(int id, vec3 p, vec3 rayDirection) {
 	vec3 materialColor = backgroundColor;
-	vec3 normal = getObjectNormal(p);
-	normal = pow(normal, vec3(10.0));
-	normal /= normal.x + normal.y + normal.z;
-
-	vec3 p2 = p;
-	p2.y *= -1.;
 
 	%materialFunction1%
+
 	return materialColor;
 }
 
