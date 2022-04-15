@@ -27,7 +27,61 @@ RMIExp2GLSL(exp : RMIExp) -> string {
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSL(exp1) + RMIExp2GLSL(exp2);
 		RMIProperty(exp2, id, property): RMIExp2GLSL(exp2);
+		RMITexture(id, texture, scale, translate, rotate, step): formatString("(
+			texture2D(
+				uSampler[%1],
+				vec2(
+					mod(p1 / (%2 * sizeX), %8).x,
+					mod(p2 / (%3 * sizeY), %9).y
+				)
+			) * normal.y +
+			texture2D(
+				uSampler[%1],
+				vec2(
+					mod(p3 / (%4 * sizeX), %10).x,
+					mod(p4 / (%5 * sizeY), %11).y
+				)
+			) * normal.z +
+			texture2D(
+				uSampler[%1],
+				vec2(
+					mod(p5 / (%6 * sizeX), %12).x,
+					mod(p6 / (%7 * sizeY), %13).y
+				)
+			) * normal.x
+		).rgb", concat3([i2s(id)], RMTextureTilingParameter2StringArray(scale), RMTextureTilingParameter2StringArray(step)));
 		RMIEmpty(): "";
+	}
+}
+
+RMITexturePrepareParameters(exp : RMIExp) -> string {
+	switch(exp) {
+		RMITexture(id, texture, scale, translate, rotate, step): formatString("vec3 normal = getObjectNormal(p);
+
+			vec2 py = p.zx;
+			py.x *= sign(normal.y);
+			vec2 pz = p.xy;
+			pz.x *= -1. * sign(normal.z);
+			pz.y *= -1.;
+			vec2 px = p.zy;
+			px.x *= sign(normal.x);
+			px.y *= -1.;
+
+			normal = pow(normal, vec3(10.0));
+			normal /= normal.x + normal.y + normal.z;
+
+			vec2 p1 = (py - 0.5) * makeRotate2(%8) + 0.5 - %2;
+			vec2 p2 = (py - 0.5) * makeRotate2(%9) + 0.5 - %3;
+			vec2 p3 = (pz - 0.5) * makeRotate2(%10) + 0.5 - %4;
+			vec2 p4 = (pz - 0.5) * makeRotate2(%11) + 0.5 - %5;
+			vec2 p5 = (px - 0.5) * makeRotate2(%12) + 0.5 - %6;
+			vec2 p6 = (px - 0.5) * makeRotate2(%13) + 0.5 - %7;
+
+			float maxTextureSize = max(textureSizes[%1].x, textureSizes[%1].y);
+			float sizeX = textureSizes[%1].x / maxTextureSize;
+			float sizeY = textureSizes[%1].y / maxTextureSize;
+		", concat3([i2s(id)], RMTextureTilingParameter2StringArray(translate), RMTextureTilingParameter2StringArray(rotate)));
+		default: "";
 	}
 }
 
@@ -41,7 +95,8 @@ RMIExp2GLSLMaterial(exp : RMIExp) -> string {
 		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2GLSLMaterial(exp1) + RMIExp2GLSLMaterial(exp2);
-		RMIProperty(exp2, id, property): formatString("if (id == %1) {\n\tmaterialColor = %2;\n}", [i2s(id), RMIExp2GLSL(property)]);
+		RMIProperty(exp2, id, property): formatString("if (id == %1) {\n%3\tmaterialColor = %2;\n}", [i2s(id), RMIExp2GLSL(property), RMITexturePrepareParameters(property)]);
+		RMITexture(id, texture, scale, translate, rotate, step): "";
 		RMIEmpty(): "";
 	}
 }
@@ -58,6 +113,7 @@ filterRMIBlock(exps : [RMIExp]) -> [RMIExp] {
 			RMIVar(name): false;
 			RMIConcat(exp1, exp2): true;
 			RMIProperty(exp2, id, property): true;
+			RMITexture(id, texture, scale, translate, rotate, step): false;
 			RMIEmpty(): false;
 		}
 	})
@@ -83,6 +139,7 @@ RMIExp2JS(exp : RMIExp) -> string {
 		RMIVar(name): name;
 		RMIConcat(exp1, exp2): RMIExp2JS(exp1) + RMIExp2JS(exp2);
 		RMIProperty(exp2, id, property): "";
+		RMITexture(id, texture, scale, translate, rotate, step): "";
 		RMIEmpty(): "";
 	}
 }
@@ -90,4 +147,15 @@ RMIExp2JS(exp : RMIExp) -> string {
 d2GLSLfloat(num : double) {
 	s = d2s(num);
 	if (strContains(s, ".")) s else s + ".";
+}
+
+RMTextureTilingParameter2StringArray(parameter : RMTextureTilingParameter) -> [string] {
+	[
+		d2GLSLfloat(parameter.zx_z),
+		d2GLSLfloat(parameter.zx_x),
+		d2GLSLfloat(parameter.xy_x),
+		d2GLSLfloat(parameter.xy_y),
+		d2GLSLfloat(parameter.zy_z),
+		d2GLSLfloat(parameter.zy_y)
+	]
 }
