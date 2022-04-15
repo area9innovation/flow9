@@ -33,10 +33,10 @@ class MediaStreamSupport {
 			mediaStream.on("attached", function () {
 				var canvas : Dynamic = Browser.document.createElement('canvas');
 				var ctx = canvas.getContext('2d');
-				
+
 				var scanVideoFrame = function () {
 					var video = mediaStream.videoClip.videoWidget;
-					
+
 					if (video.readyState != video.HAVE_ENOUGH_DATA) {
 						return;
 					}
@@ -58,7 +58,7 @@ class MediaStreamSupport {
 				}
 
 				RenderSupport.on("drawframe", scanVideoFrame);
-				
+
 				mediaStream.videoClip.on("removed", function () {
 					RenderSupport.off("drawframe", scanVideoFrame);
 				});
@@ -78,14 +78,16 @@ class MediaStreamSupport {
 
 	private static function requestDeviceInfoContstraints(constraints : Dynamic, onDeviceInfoReady : Array<Dynamic> -> Void) : Void {
 	#if (js && !flow_nodejs)
-		untyped navigator.mediaDevices.getUserMedia(constraints)
-		.then(function(mediaStream) {
-			untyped navigator.mediaDevices.enumerateDevices()
-			.then(function(devices) {
-				stopMediaStream(new FlowMediaStream(mediaStream));
-				onDeviceInfoReady(devices);
+		if (untyped __js__("typeof navigator.mediaDevices !== 'undefined'")) {
+			untyped navigator.mediaDevices.getUserMedia(constraints)
+			.then(function(mediaStream) {
+				untyped navigator.mediaDevices.enumerateDevices()
+				.then(function(devices) {
+					stopMediaStream(new FlowMediaStream(mediaStream));
+					onDeviceInfoReady(devices);
+				}, function() {});
 			}, function() {});
-		}, function() {});
+		}
 	#end
 	}
 

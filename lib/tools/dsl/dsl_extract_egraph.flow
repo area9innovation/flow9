@@ -1,0 +1,147 @@
+import tools/dsl/dsl_egraph;
+import tools/dsl/registry/dsl_transformation;
+import tools/dsl/registry/dsl_specification;
+import tools/dsl/dsl_tracing;
+import math/math;
+
+export {
+	// Extract the cheapest top level value
+	extractDslAst(astenv : DslAstEnv, specification : DslLanguage, costs : Tree<string, int>) -> DslAst;
+
+	// TODO: Add a version of this, which removes all but the cheapest nodes in the relevant scope
+}
+
+DslExtractorEnv(
+	egraph : DslEGraph,
+	// What language are we extracting?
+	specification : DslLanguage,
+	// Function to extract the best alternative and the cost of that
+	nodeCosts : Tree<string, int>,
+	// The lowest cost so far per class
+	costs : ref Tree<int, DslEClassCost>,
+	// What eclasses are we currently extracting? Attempt to avoid infinite loops
+	extracting : ref Set<int>,
+);
+
+DslEClassCost(
+	// The cost of this. The smaller, the better
+	cost : int,
+	// The node that wins
+	node : DslENode
+);
+
+// https://github.com/egraphs-good/egg/blob/main/src/extract.rs
+extractDslEGraph(
+		e : DslEGraph,
+		// What language are we looking at?
+		specification : DslLanguage,
+		// The cost per AST node name
+		costs : Tree<string, int>,
+	) -> Tree<int, DslEClassCost> {
+	env = DslExtractorEnv(e, specification, costs, ref makeTree(), ref makeSet());
+	calcDslEClassCosts(env);
+	^(env.costs);
+}
+
+calcDslEClassCosts(e : DslExtractorEnv) -> void {
+	work = ref false;
+	iterDslEGraph(e.egraph, \eclass : int, nodes : Set<DslENode> -> {
+		getDslEClassCost(e, eclass);
+		{}
+	});
+	if (^work) {
+		calcDslEClassCosts(e);
+	}
+}
+
+getDslEClassCost(env : DslExtractorEnv, eclass : int) -> Maybe<DslEClassCost> {
+	mcost = lookupTree(^(env.costs), eclass);
+	mcost ?? {
+		Some(mcost)
+	} : {
+		if (containsSet(^(env.extracting), eclass)) None()
+		else {
+			env.extracting := insertSet(^(env.extracting), eclass);
+			nodes = getDslEClassNodes(env.egraph, eclass);
+			res = foldSet(nodes, mcost, \acc, node : DslENode -> {
+				ncost = getDslENodeCost(env, node);
+				switch (ncost) {
+					None(): acc;
+					Some(cost): {
+						switch (acc) {
+							None(): {
+								classCost = DslEClassCost(cost, node);
+								env.costs := setTree(^(env.costs), eclass, classCost);
+								Some(classCost);
+							}
+							Some(ec): {
+								if (cost < ec.cost) {
+									classCost = DslEClassCost(cost, node);
+									env.costs := setTree(^(env.costs), eclass, classCost);
+									Some(classCost);
+								} else acc;
+							}
+						}
+					}
+				}
+			});
+			env.extracting := removeSet(^(env.extracting), eclass);
+
+			res;
+		}
+	}
+}
+
+getDslENodeCost(env : DslExtractorEnv, node : DslENode) -> Maybe<int> {
+	if (matchDslSpecification(node.language, env.specification)) {
+		childcosts : [DslEClassCost] = filtermap(node.args, \arg -> {
+			getDslEClassCost(env, arg)
+		});
+		if (length(childcosts) == length(node.args)) {
+			nodeCost = astCost(env.nodeCosts, node.value);
+			totalCost = fold(childcosts, nodeCost, \acc, cc -> {
+				acc + cc.cost;
+			});
+			Some(totalCost)
+		} else None();
+	} else None();
+}
+
+astCost(costs : Tree<string, int>, a : DslAst) -> int {
+	switch (a) {
+		DslBool(value): lookupTreeDef(costs, "bool", 1);
+		DslInt(value): lookupTreeDef(costs, "int", 1);
+		DslDouble(value): lookupTreeDef(costs, "double", 1);
+		DslString(value): lookupTreeDef(costs, "string", 1);
+		DslList(value): lookupTreeDef(costs, "list", 1);
+		DslNode(name, args, pos): lookupTreeDef(costs, name, 1);
+	}
+}
+
+extractDslAst(astenv : DslAstEnv, specification : DslLanguage, costs : Tree<string, int>) -> DslAst {
+	extracts = extractDslEGraph(astenv.egraph, specification, costs);
+	if (false && isDslTracing(specification, "desugar")) {
+		println("Extract costs:");
+		traverseInOrder(extracts, \class, solution -> {
+			println("e" + i2s(class) + ": " + prettyDsl(solution.node.value) + " : " + dslLanguage2string(solution.node.language) + " at cost " + i2s(solution.cost));
+		})
+	}
+	doExtractDslAst(astenv.egraph, specification, extracts, astenv.root);
+}
+
+doExtractDslAst(egraph : DslEGraph, specification : DslLanguage, extracts : Tree<int, DslEClassCost>, eclass : int) -> DslAst {
+	root = getDslEClassRoot(egraph, eclass);
+	mextract = lookupTree(extracts, root);
+	mextract ?? {
+		node : DslENode = mextract.node;
+		children = map(node.args, \a : int -> {
+			DslENode(node with value = doExtractDslAst(egraph, specification, extracts, a))
+		});
+		combineENode(node, children)
+	} : {
+		nodes = getDslEClassNodes(egraph, eclass);
+		debug = superglue(set2array(nodes), \n -> dslLanguage2string(n.language) + ":" + prettyDsl(n.value), ", ");
+		println("Could not resolve eclass " + i2s(eclass) + " when extracting " + dslLanguage2string(specification) + " with nodes " + debug);
+		DslNode("Could not resolve eclass " + i2s(eclass) + " when extracting " + dslLanguage2string(specification), [], 0)
+	}
+}

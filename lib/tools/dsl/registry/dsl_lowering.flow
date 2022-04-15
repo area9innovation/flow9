@@ -1,0 +1,124 @@
+import tools/dsl/registry/dsl_transformation;
+import tools/dsl/registry/dsl_parser;
+import tools/dsl/registry/dsl_registry;
+import tools/dsl/registry/dsl_run;
+import tools/dsl/dsl_lower_egraph;
+import tools/dsl/dsl_extract_egraph;
+import tools/dsl/dsl_runtime_common;
+
+export {
+	// Build a lowering transformation which can implement the given spefication
+	// This one runs the program in the to-language
+	registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage : string, sep : string, rules : string) -> void;
+
+	// Register a set of functions to add to the runtime
+	registerDslRuntime(language : string, codeLanguage : string, runtime : string) -> void;
+}
+
+registerDslLowering(phase : string, specification : string, fromLanguage : string, toLanguage1 : string, sep : string, rules : string) -> void {
+	quoted = startsWith(toLanguage1, "@");
+	toLanguage = if (quoted) strRight(toLanguage1, 1) else toLanguage1;
+	mrules = parseDslRules(fromLanguage, toLanguage, sep, rules);
+	mrules ?? {
+		patterns : List<DslReplacement> = mapList(getDslList(mrules.rules), \rule -> {
+			node = getDslNode(rule);
+			pattern = node.args[0];
+			replacement = node.args[1];
+			DslReplacement(pattern, replacement);
+		});
+
+		lowering = DslLowering(patterns, parseDslLanguage(if (quoted) "ast" else toLanguage));
+		
+		lang = parseDslLanguage(specification);
+
+		transformation = DslTransformation(
+			phase,
+			lang,
+			\astenv -> {
+				if (isDslTracing(astenv.language, phase)) {
+					println("Before lowering '" + specification + "' on " + dslLanguage2string(astenv.language));
+					println(prettyDsl(astenv.ast));
+				}
+
+				lowerDslEGraph(astenv, astenv.root, lang, lowering);
+
+				resultLanguage = resultDslTransformation(astenv.language, lang);
+
+				if (isDslTracing(astenv.language, phase)) {
+					println("After lowering '" + specification + "' we get the language '" + dslLanguage2string(resultLanguage) + "':");
+					// printDslEGraph(astenv.egraph, astenv.root);
+				}
+				ast = extractDslAst(astenv, resultLanguage, makeTree());
+				if (isDslTracing(astenv.language, phase)) {
+					println(prettyDsl(ast));
+				}
+
+				DslAstEnv(astenv with ast = ast);
+			}
+		);
+		registerDslTransformation(transformation);
+	} : {
+		println("Could not parse rules for lowering " + specification);
+	}
+}
+
+parseDslRules(fromLanguage : string, toLanguage : string, sep : string, rules : string) -> Maybe<DslRules> {
+	fromGrammar = buildDslGrammar(fromLanguage);
+	fromGrammar ?? {
+		mtoGrammar = buildDslGrammar(toLanguage);
+		switch (mtoGrammar) {
+			None(): None();
+			Some(toGrammar): Some(parseRules(fromGrammar, toGrammar, rules, sep))
+		}
+	} : {
+		None();
+	}
+}
+
+registerDslRuntime(language : string, codeLanguage : string, runtime : string) -> void {
+	println("Registering runtime for " + language + " in " + codeLanguage);
+	parsed = parseDslProgram(codeLanguage, runtime);
+	// println(prettyDsl(parsed.ast));
+	desugared = performDslTransformations("desugar", "lambda", parsed);
+	// println(prettyDsl(desugared.ast));
+
+	// OK, extract the runtime
+	functions = extractDslRuntime(makeTree(), desugared.ast);
+	if (false) {
+		println("\nRuntime for " + language + ":");
+		traverseInOrder(functions, \n, code -> {
+			println(n + "=" + prettyDsl(code));
+		});
+	}
+	registerDslLanguageRuntime(parseDslLanguage(language), functions);
+}
+
+
+extractDslRuntime(acc : Tree<string, DslAst>, code : DslAst) -> Tree<string, DslAst> {
+	node = getDslNode(code);
+	if (node.name == "let") {
+		name = getDslString(node.args[0]);
+		value = node.args[1];
+		nacc = setTree(acc, name, value);
+		extractDslRuntime(nacc, node.args[2]);
+	} else if (node.name == "brace") {
+		codes = list2array(getDslList(node.args[0]));
+		fold(codes, acc, \acc2, cod -> {
+			extractDslRuntime(acc2, cod)
+		});
+	} else if (node.name == "string") {
+		str = getDslString(node.args[0]);
+		addCommonDslRuntime([str], acc);
+	} else {
+		if (node.name != "") {
+			println("Unexpected runtime: " + prettyDsl(node));
+		}
+		list = getDslList(code);
+		commons = map(list2array(list), \child -> {
+			cnode = getDslNode(child);
+			getDslString(cnode.args[0])
+		});
+
+		addCommonDslRuntime(commons, acc);
+	}
+}

@@ -1,0 +1,887 @@
+import math/uint64;
+
+//
+// This represents the low-level binary representation of Wasm
+//
+export {
+	//
+	// Types
+	//
+	WasmValType ::= WasmNumType, WasmVecType, WasmRefType;
+
+		WasmNumType ::= WasmI32Type, WasmI64Type, WasmF32Type, WasmF64Type;
+			WasmI32Type();
+			WasmI64Type();
+			WasmF32Type();
+			WasmF64Type();
+
+		// v128
+		WasmVecType();
+
+		WasmRefType ::= WasmFuncRef, WasmExternRef;
+			WasmFuncRef();
+			WasmExternRef();
+
+	WasmFuncType(
+		params : [WasmValType],
+		// Multi-value returns are allowed
+		returns : [WasmValType],
+	);
+
+	// Other types
+
+	WasmMemoryType(limits : WasmLimits);
+		// If max is 0, then it is missing
+		WasmLimits(minimum : int, maximum : int); 
+
+	WasmTableType(
+		reftype : WasmRefType,
+		limits : WasmLimits,
+	);
+
+	WasmGlobalType(
+		type : WasmValType,
+		ismutable : bool
+	);
+
+
+	//
+	// Instructions
+	//
+
+	WasmInstruction ::= WasmControlInstruction, WasmRefInstruction, WasmParametricInstruction, 
+		WasmVariableInstruction, WasmTableInstruction, WasmMemoryInstruction, WasmNumericInstruction, 
+		WasmVectorInstruction;
+
+	//
+	// Control instructions
+	//
+
+	WasmBlockType ::= WasmEmptyType, WasmValType, WasmTypeIndex;
+		// Does not consume anything
+		WasmEmptyType();
+		// Type index to a function type which takes inputs and produces outputs
+		WasmTypeIndex(typeindex : int);
+
+	// These are low-level representations of the binary version
+	WasmControlInstruction ::= WasmUnreachable, WasmNop, WasmBlock, WasmLoop, WasmIf, WasmIfElse,
+		WasmBr, WasmBrIf, WasmBrTable, WasmReturn, WasmCall, WasmCallIndirect;
+
+		WasmUnreachable();
+		WasmNop();
+
+		// Introduces an implicit label 0, while label 1 is next outer block
+		WasmBlock(type : WasmBlockType, instructions : [WasmInstruction]);
+
+		// A break in this one goes back to the beginning of the loop.
+		// How do we break out of a loop? OK, you have to wrap with another
+		// block and then break to that outer one using break 1.
+		WasmLoop(type : WasmBlockType, instructions : [WasmInstruction]);
+
+		// The condition is on the stack
+		WasmIf(type : WasmBlockType, then : [WasmInstruction]);
+		// The condition is on the stack
+		WasmIfElse(type : WasmBlockType, then : [WasmInstruction], else_ : [WasmInstruction]);
+
+		// Unconditional branch. 0 is inner most block, 1 is next out, etc
+		WasmBr(labels : int);
+		// Conditional branch: Condition on the stack, if true, break
+		WasmBrIf(labels : int);
+
+		// Index from stack used for indexing branch with a default value if the index value is out of bounds.
+		WasmBrTable(labels : [int], defaultLabel : int);
+
+		// Return from the function
+		WasmReturn();
+		
+		// Call a given function, with args on the stack
+		WasmCall(funcindex : int);
+
+		// Call the function indexed from the stack, using the table of functions of the given type
+		WasmCallIndirect(typeindex : int, tableindex : int);
+
+
+	// Reference instructions
+
+	WasmRefInstruction ::= WasmRefNull, WasmRefIsNull, WasmRefFunc;
+		// Produce a null reference
+		WasmRefNull(type : WasmRefType);
+		// Check if the stack has a null reference
+		WasmRefIsNull();
+		// Construct a reference to the given function
+		WasmRefFunc(funcindex : int);
+
+
+	// Parametric instructions
+
+	WasmParametricInstruction ::= WasmDrop, WasmSelect, WasmSelectType;
+
+		WasmDrop();
+
+		// Pre-evaluated if-statement where both then and else are evaluated, but
+		// we just pick one from the stack. This is more efficient that if in simple cases
+		WasmSelect();
+
+		// If you use select on a ref type, you need to use this rather than other select
+		WasmSelectType(types : [WasmValType]);
+
+	// Variable Instructions
+
+	WasmVariableInstruction ::= WasmLocalGet, WasmLocalSet, WasmLocalTee,
+		WasmGlobalGet, WasmGlobalSet;
+
+		WasmLocalGet(localindex : int);
+		WasmLocalSet(localindex : int);
+		// Sets the value at index id, and returns the value
+		WasmLocalTee(localindex : int);
+		WasmGlobalGet(globalindex : int);
+		WasmGlobalSet(globalindex : int);
+
+	// Table Instructions
+
+	WasmTableInstruction ::= WasmTableGet, WasmTableSet, WasmTableInit,
+		WasmElemDrop, WasmTableCopy, WasmTableGrow, WasmTableSize, WasmTableFill;
+
+		WasmTableGet(tableindex : int);
+		WasmTableSet(tableindex : int);
+
+		WasmTableInit(elemindex : int, tableindex : int);
+		WasmElemDrop(elemindex : int);
+		WasmTableCopy(tableindexx : int, tableindexy : int);
+
+		WasmTableGrow(tableindex : int);
+		WasmTableSize(tableindex : int);
+		WasmTableFill(tableindex : int);
+
+	// Memory instructions
+	// The alignment is a power of 2
+	WasmMemArg(align : int, offset : int);
+
+	WasmMemoryInstruction ::= WasmI32Load, WasmI64Load, WasmF32Load, WasmF64Load,
+		WasmI32Load8_s, WasmI32Load8_u, WasmI32Load16_s, WasmI32Load16_u,
+		WasmI64Load8_s, WasmI64Load8_u, WasmI64Load16_s, WasmI64Load16_u, WasmI64Load32_s, WasmI64Load32_u,
+		WasmI32Store, WasmI64Store, WasmF32Store, WasmF64Store,
+		WasmI32Store8, WasmI32Store16,
+		WasmI64Store8, WasmI64Store16, WasmI64Store32,
+		WasmMemorySize, WasmMemoryGrow, WasmMemoryInit, WasmDataDrop, WasmMemoryCopy, WasmMemoryFill;
+
+		WasmI32Load(m : WasmMemArg);
+		WasmI64Load(m : WasmMemArg);
+		WasmF32Load(m : WasmMemArg);
+		WasmF64Load(m : WasmMemArg);
+
+		WasmI32Load8_s(m : WasmMemArg);
+		WasmI32Load8_u(m : WasmMemArg);
+		WasmI32Load16_s(m : WasmMemArg);
+		WasmI32Load16_u(m : WasmMemArg);
+
+		WasmI64Load8_s(m : WasmMemArg);
+		WasmI64Load8_u(m : WasmMemArg);
+		WasmI64Load16_s(m : WasmMemArg);
+		WasmI64Load16_u(m : WasmMemArg);
+		WasmI64Load32_s(m : WasmMemArg);
+		WasmI64Load32_u(m : WasmMemArg);
+
+		WasmI32Store(m : WasmMemArg);
+		WasmI64Store(m : WasmMemArg);
+		WasmF32Store(m : WasmMemArg);
+		WasmF64Store(m : WasmMemArg);
+
+		WasmI32Store8(m : WasmMemArg);
+		WasmI32Store16(m : WasmMemArg);
+
+		WasmI64Store8(m : WasmMemArg);
+		WasmI64Store16(m : WasmMemArg);
+		WasmI64Store32(m : WasmMemArg);
+
+		WasmMemorySize();
+		WasmMemoryGrow();
+		WasmMemoryInit(dataindex : int);
+		WasmDataDrop(dataindex : int);
+		WasmMemoryCopy();
+		WasmMemoryFill();
+
+	// Numeric instructions
+
+	WasmNumericInstruction ::= WasmI32Const, WasmI64Const, WasmF32Const, WasmF64Const, WasmF64ConstHex,
+		WasmI32Eqz, WasmI32Eq, WasmI32Ne, WasmI32Lt_s, WasmI32Lt_u, WasmI32Gt_s, WasmI32Gt_u,
+		WasmI32Le_s, WasmI32Le_u, WasmI32Ge_s, WasmI32Ge_u, 
+		WasmI64Eqz, WasmI64Eq, WasmI64Ne, WasmI64Lt_s, WasmI64Lt_u, WasmI64Gt_s, WasmI64Gt_u,
+		WasmI64Le_s, WasmI64Le_u, WasmI64Ge_s, WasmI64Ge_u,
+		WasmF32Eq, WasmF32Ne, WasmF32Lt, WasmF32Gt, WasmF32Le, WasmF32Ge,
+		WasmF64Eq, WasmF64Ne, WasmF64Lt, WasmF64Gt, WasmF64Le, WasmF64Ge,
+		WasmI32Clz, WasmI32Ctz, WasmI32Popcnt, WasmI32Add, WasmI32Sub, WasmI32Mul, WasmI32Div_s, 
+		WasmI32Div_u, WasmI32Rem_s, WasmI32Rem_u, WasmI32And, WasmI32Or, WasmI32Xor, WasmI32Shl, 
+		WasmI32Shr_s, WasmI32Shr_u, WasmI32Rotl, WasmI32Rotr, 
+		WasmI64Clz, WasmI64Ctz, WasmI64Popcnt, WasmI64Add, WasmI64Sub, WasmI64Mul, WasmI64Div_s, 
+		WasmI64Div_u, WasmI64Rem_s, WasmI64Rem_u, WasmI64And, WasmI64Or, WasmI64Xor, WasmI64Shl, 
+		WasmI64Shr_s, WasmI64Shr_u, WasmI64Rotl, WasmI64Rotr, 
+		WasmF32Abs, WasmF32Neg, WasmF32Ceil, WasmF32Floor, WasmF32Trunc, WasmF32Nearest, WasmF32Sqrt, 
+		WasmF32Add, WasmF32Sub, WasmF32Mul, WasmF32Div, WasmF32Min, WasmF32Max, WasmF32Copysign,
+		WasmF64Abs, WasmF64Neg, WasmF64Ceil, WasmF64Floor, WasmF64Trunc, WasmF64Nearest, WasmF64Sqrt, 
+		WasmF64Add, WasmF64Sub, WasmF64Mul, WasmF64Div, WasmF64Min, WasmF64Max, WasmF64Copysign,
+		WasmI32WrapI64, WasmI32TruncF32_s, WasmI32TruncF32_u, WasmI32TruncF64_s, WasmI32TruncF64_u,
+		WasmI64ExtendI32_s, WasmI64ExtendI32_u, WasmI64TruncF32_s, WasmI64TruncF32_u, WasmI64TruncF64_s, WasmI64TruncF64_u,
+		WasmF32ConvertI32_s, WasmF32ConvertI32_u, WasmF32ConvertI64_s, WasmF32ConvertI64_u, WasmF32Demotef64,
+		WasmF64ConvertI32_s, WasmF64ConvertI32_u, WasmF64ConvertI64_s, WasmF64ConvertI64_u, WasmF64Promotef32,
+		WasmI32ReinterpretF32, WasmI64ReinterpretF64, WasmF32ReinterpretI32, WasmF64ReinterpretI64,
+		WasmI32Extend8_s, WasmI32Extend16_s, WasmI64Extend8_s, WasmI64Extend16_s, WasmI64Extend32_s,
+		WasmI32Trunc_sat_f32_s, WasmI32Trunc_sat_f32_u, WasmI32Trunc_sat_f64_s, WasmI32Trunc_sat_f64_u,
+		WasmI64Trunc_sat_f32_s, WasmI64Trunc_sat_f32_u, WasmI64Trunc_sat_f64_s, WasmI64Trunc_sat_f64_u
+		;
+
+		WasmI32Const(val : int);
+		WasmI64Const(val : UInt64);
+
+		WasmF32Const(val : int);
+		WasmF64Const(val : double);
+		WasmF64ConstHex(val : UInt64);
+
+		WasmI32Eqz();
+		WasmI32Eq();
+		WasmI32Ne();
+		WasmI32Lt_s();
+		WasmI32Lt_u();
+		WasmI32Gt_s();
+		WasmI32Gt_u();
+		WasmI32Le_s();
+		WasmI32Le_u();
+		WasmI32Ge_s();
+		WasmI32Ge_u();
+
+		WasmI64Eqz();
+		WasmI64Eq();
+		WasmI64Ne();
+		WasmI64Lt_s();
+		WasmI64Lt_u();
+		WasmI64Gt_s();
+		WasmI64Gt_u();
+		WasmI64Le_s();
+		WasmI64Le_u();
+		WasmI64Ge_s();
+		WasmI64Ge_u();
+
+		WasmF32Eq();
+		WasmF32Ne();
+		WasmF32Lt();
+		WasmF32Gt();
+		WasmF32Le();
+		WasmF32Ge();
+
+		WasmF64Eq();
+		WasmF64Ne();
+		WasmF64Lt();
+		WasmF64Gt();
+		WasmF64Le();
+		WasmF64Ge();
+
+		WasmI32Clz();
+		WasmI32Ctz();
+		WasmI32Popcnt();
+		WasmI32Add();
+		WasmI32Sub();
+		WasmI32Mul();
+		WasmI32Div_s();
+		WasmI32Div_u();
+		WasmI32Rem_s();
+		WasmI32Rem_u();
+		WasmI32And();
+		WasmI32Or();
+		WasmI32Xor();
+		WasmI32Shl();
+		WasmI32Shr_s();
+		WasmI32Shr_u();
+		WasmI32Rotl();
+		WasmI32Rotr();
+
+		WasmI64Clz();
+		WasmI64Ctz();
+		WasmI64Popcnt();
+		WasmI64Add();
+		WasmI64Sub();
+		WasmI64Mul();
+		WasmI64Div_s();
+		WasmI64Div_u();
+		WasmI64Rem_s();
+		WasmI64Rem_u();
+		WasmI64And();
+		WasmI64Or();
+		WasmI64Xor();
+		WasmI64Shl();
+		WasmI64Shr_s();
+		WasmI64Shr_u();
+		WasmI64Rotl();
+		WasmI64Rotr();
+
+		WasmF32Abs();
+		WasmF32Neg();
+		WasmF32Ceil();
+		WasmF32Floor();
+		WasmF32Trunc();
+		WasmF32Nearest();
+		WasmF32Sqrt();
+		WasmF32Add();
+		WasmF32Sub();
+		WasmF32Mul();
+		WasmF32Div();
+		WasmF32Min();
+		WasmF32Max();
+		WasmF32Copysign();
+
+		WasmF64Abs();
+		WasmF64Neg();
+		WasmF64Ceil();
+		WasmF64Floor();
+		WasmF64Trunc();
+		WasmF64Nearest();
+		WasmF64Sqrt();
+		WasmF64Add();
+		WasmF64Sub();
+		WasmF64Mul();
+		WasmF64Div();
+		WasmF64Min();
+		WasmF64Max();
+		WasmF64Copysign();
+
+		WasmI32WrapI64();
+		WasmI32TruncF32_s();
+		WasmI32TruncF32_u();
+		WasmI32TruncF64_s();
+		WasmI32TruncF64_u();
+
+		WasmI64ExtendI32_s();
+		WasmI64ExtendI32_u();
+		WasmI64TruncF32_s();
+		WasmI64TruncF32_u();
+		WasmI64TruncF64_s();
+		WasmI64TruncF64_u();
+
+		WasmF32ConvertI32_s();
+		WasmF32ConvertI32_u();
+		WasmF32ConvertI64_s();
+		WasmF32ConvertI64_u();
+		WasmF32Demotef64();
+
+		WasmF64ConvertI32_s();
+		WasmF64ConvertI32_u();
+		WasmF64ConvertI64_s();
+		WasmF64ConvertI64_u();
+		WasmF64Promotef32();
+
+		WasmI32ReinterpretF32();
+		WasmI64ReinterpretF64();
+		WasmF32ReinterpretI32();
+		WasmF64ReinterpretI64();
+
+		WasmI32Extend8_s();
+		WasmI32Extend16_s();
+		WasmI64Extend8_s();
+		WasmI64Extend16_s();
+		WasmI64Extend32_s();
+
+		WasmI32Trunc_sat_f32_s();
+		WasmI32Trunc_sat_f32_u();
+		WasmI32Trunc_sat_f64_s();
+		WasmI32Trunc_sat_f64_u();
+		WasmI64Trunc_sat_f32_s();
+		WasmI64Trunc_sat_f32_u();
+		WasmI64Trunc_sat_f64_s();
+		WasmI64Trunc_sat_f64_u();
+
+	// Vector instructions
+
+	WasmVectorInstruction ::= WasmV128Load, WasmV128Load8x8_s, WasmV128Load8x8_u,
+		WasmV128Load16x4_s, WasmV128Load16x4_u, WasmV128Load32x2_s, WasmV128Load32x2_u,
+		WasmV128Load8_splat, WasmV128Load16_splat, WasmV128Load32_splat, WasmV128Load64_splat,
+		WasmV128Load32_zero, WasmV128Load64_zero,
+		WasmV128Store,
+		WasmV128Load8_lane, WasmV128Load16_lane, WasmV128Load32_lane, WasmV128Load64_lane,
+		WasmV128Store8_lane, WasmV128Store16_lane, WasmV128Store32_lane, WasmV128Store64_lane,
+		WasmV128Const, WasmV128Shuffle,
+		WasmI8x16ExtractLane_s, WasmI8x16ExtractLane_u, WasmI8x16ReplaceLane,
+		WasmI16x8ExtractLane_s, WasmI16x8ExtractLane_u, WasmI16x8ReplaceLane,
+		WasmI32x4ExtractLane, WasmI32x4ReplaceLane,
+		WasmI64x2ExtractLane, WasmI64x2ReplaceLane,
+		WasmF32x4ExtractLane, WasmF32x4ReplaceLane,
+		WasmF64x2ExtractLane, WasmF64x2ReplaceLane,
+		WasmI8x16Swizzle, WasmI8x16Splat, WasmI16x8Splat, WasmI32x4Splat, 
+		WasmI64x2Splat, WasmF32x4Splat, WasmF64x2Splat,
+		WasmI8x16Eq, WasmI8x16Ne, WasmI8x16Lt_s, WasmI8x16Lt_u, WasmI8x16Gt_s, WasmI8x16Gt_u, 
+		WasmI8x16Le_s, WasmI8x16Le_u, WasmI8x16Ge_s, WasmI8x16Ge_u,
+		WasmI16x8Eq, WasmI16x8Ne, WasmI16x8Lt_s, WasmI16x8Lt_u, WasmI16x8Gt_s, WasmI16x8Gt_u, 
+		WasmI16x8Le_s, WasmI16x8Le_u, WasmI16x8Ge_s, WasmI16x8Ge_u,
+		WasmI32x4Eq, WasmI32x4Ne, WasmI32x4Lt_s, WasmI32x4Lt_u, WasmI32x4Gt_s, WasmI32x4Gt_u, 
+		WasmI32x4Le_s, WasmI32x4Le_u, WasmI32x4Ge_s, WasmI32x4Ge_u,
+		WasmI64x2Eq, WasmI64x2Ne, WasmI64x2Lt_s, WasmI64x2Gt_s, WasmI64x2Le_s, WasmI64x2Ge_s,
+		WasmF32x4Eq, WasmF32x4Ne, WasmF32x4Lt, WasmF32x4Gt, WasmF32x4Le, WasmF32x4Ge,
+		WasmF64x2Eq, WasmF64x2Ne, WasmF64x2Lt, WasmF64x2Gt, WasmF64x2Le, WasmF64x2Ge,
+		WasmV128Not, WasmV128And, WasmV128AndNot, WasmV128Or, WasmV128Xor, WasmV128Bitselect, WasmV128AnyTrue,
+
+		WasmI8x16Abs, WasmI8x16Neg, WasmI8x16Popcnt, WasmI8x16AllTrue, WasmI8x16Bitmask, 
+		WasmI8x16NarrowI16x8_s, WasmI8x16NarrowI16x8_u, WasmI8x16Shl, WasmI8x16Shr_s, WasmI8x16Shr_u, 
+		WasmI8x16Add, WasmI8x16Add_sat_s, WasmI8x16Add_sat_u, WasmI8x16Sub, WasmI8x16Sub_sat_s, WasmI8x16Sub_sat_u,
+		WasmI8x16Min_s, WasmI8x16Min_u, WasmI8x16Max_s, WasmI8x16Max_u, WasmI8x16Avgr_u,
+
+		WasmI16x8ExtaddPairwiseI8x16_s, WasmI16x8ExtaddPairwiseI8x16_u, WasmI16x8Abs,
+		WasmI16x8Neg, WasmI16x8Q15mulrSat_s, WasmI16x8AllTrue, WasmI16x8Bitmask,
+		WasmI16x8NarrowI32x4_s, WasmI16x8NarrowI32x4_u, WasmI16x8ExtendLowI8x16_s,
+		WasmI16x8ExtendHighI8x16_s, WasmI16x8ExtendLowI8x16_u, WasmI16x8ExtendHighI8x16_u,
+		WasmI16x8Shl, WasmI16x8Shr_s, WasmI16x8Shr_u, WasmI16x8Add, WasmI16x8Add_sat_s,
+		WasmI16x8Add_sat_u, WasmI16x8Sub, WasmI16x8Sub_sat_s, WasmI16x8Sub_sat_u, WasmI16x8Mul,
+		WasmI16x8Min_s, WasmI16x8Min_u, WasmI16x8Max_s, WasmI16x8Max_u, WasmI16x8Avgr_u,
+		WasmI16x8ExtmulLowI8x16_s, WasmI16x8ExtmulHighI8x16_s, WasmI16x8ExtmulLowI8x16_u,
+		WasmI16x8ExtmulHighI8x16_u,
+
+		WasmI32x4ExtaddPairwiseI16x8_s, WasmI32x4ExtaddPairwiseI16x8_u, WasmI32x4Abs,
+		WasmI32x4Neg, WasmI32x4AllTrue, WasmI32x4Bitmask, WasmI32x4ExtendLowI16x8_s,
+		WasmI32x4ExtendHighI16x8_s, WasmI32x4ExtendLowI16x8_u, WasmI32x4ExtendHighI16x8_u,
+		WasmI32x4Shl, WasmI32x4Shr_s, WasmI32x4Shr_u, WasmI32x4Add, WasmI32x4Sub, WasmI32x4Mul,
+		WasmI32x4Min_s, WasmI32x4Min_u, WasmI32x4Max_s, WasmI32x4Max_u, WasmI32x4DotI16x8_s,
+		WasmI32x4ExtMulLowI16x8_s, WasmI32x4ExtMulHighI16x8_s, WasmI32x4ExtMulLowI16x8_u,
+		WasmI32x4ExtMulHighI16x8_u,
+
+		WasmI64x2Abs, WasmI64x2Neg, WasmI64x2AllTrue, WasmI64x2Bitmask, WasmI64x2ExtendLowI32x4_s,
+		WasmI64x2ExtendHighI32x4_s, WasmI64x2ExtendLowI32x4_u, WasmI64x2ExtendHighI32x4_u,
+		WasmI64x2Shl, WasmI64x2Shr_s, WasmI64x2Shr_u, WasmI64x2Add, WasmI64x2Sub, WasmI64x2Mul,
+		WasmI64x2ExtmulLowI32x4_s, WasmI64x2ExtmulHighI32x4_s, WasmI64x2ExtmulLowI32x4_u, 
+		WasmI64x2ExtmulHighI32x4_u,
+
+		WasmF32x4Ceil, WasmF32x4Floor, WasmF32x4Trunc, WasmF32x4Nearest, WasmF32x4Abs,
+		WasmF32x4Neg, WasmF32x4Sqrt, WasmF32x4Add, WasmF32x4Sub, WasmF32x4Mul, WasmF32x4Div,
+		WasmF32x4Min, WasmF32x4Max, WasmF32x4Pmin, WasmF32x4PMax,
+
+		WasmF64x2Ceil, WasmF64x2Floor, WasmF64x2Trunc, WasmF64x2Nearest, WasmF64x2Abs,
+		WasmF64x2Neg, WasmF64x2Sqrt, WasmF64x2Add, WasmF64x2Sub, WasmF64x2Mul, WasmF64x2Div,
+		WasmF64x2Min, WasmF64x2Max, WasmF64x2Pmin, WasmF64x2PMax,
+
+		WasmI32x4TruncSatF32x4_s, WasmI32x4TruncSatF32x4_u, WasmF32x4ConvertI32x4_s,
+		WasmF32x4ConvertI32x4_u, WasmI32x4TruncSatF64x2_s, WasmI32x4TruncSatF64x2_u,
+		WasmF64x2ConvertLowI32x4_s, WasmF64x2ConvertLowI32x4_u, WasmF32x4DemoteF64x2Zero,
+		WasmF64x2PromoteLowF32x4
+		;
+
+		WasmV128Load(m : WasmMemArg);
+		WasmV128Load8x8_s(m : WasmMemArg);
+		WasmV128Load8x8_u(m : WasmMemArg);
+		WasmV128Load16x4_s(m : WasmMemArg);
+		WasmV128Load16x4_u(m : WasmMemArg);
+		WasmV128Load32x2_s(m : WasmMemArg);
+		WasmV128Load32x2_u(m : WasmMemArg);
+
+		WasmV128Load8_splat(m : WasmMemArg);
+		WasmV128Load16_splat(m : WasmMemArg);
+		WasmV128Load32_splat(m : WasmMemArg);
+		WasmV128Load64_splat(m : WasmMemArg);
+
+		WasmV128Load32_zero(m : WasmMemArg);
+		WasmV128Load64_zero(m : WasmMemArg);
+
+		WasmV128Store(m : WasmMemArg);
+
+		WasmV128Load8_lane(m : WasmMemArg, lane : int);
+		WasmV128Load16_lane(m : WasmMemArg, lane : int);
+		WasmV128Load32_lane(m : WasmMemArg, lane : int);
+		WasmV128Load64_lane(m : WasmMemArg, lane : int);
+
+		WasmV128Store8_lane(m : WasmMemArg, lane : int);
+		WasmV128Store16_lane(m : WasmMemArg, lane : int);
+		WasmV128Store32_lane(m : WasmMemArg, lane : int);
+		WasmV128Store64_lane(m : WasmMemArg, lane : int);
+
+		// Requires 16 bytes
+		WasmV128Const(bytes : [int]);
+
+		// Requires 16 lane indexes
+		WasmV128Shuffle(lanes : [int]);
+
+		WasmI8x16ExtractLane_s(lane : int);
+		WasmI8x16ExtractLane_u(lane : int);
+		WasmI8x16ReplaceLane(lane : int);
+
+		WasmI16x8ExtractLane_s(lane : int);
+		WasmI16x8ExtractLane_u(lane : int);
+		WasmI16x8ReplaceLane(lane : int);
+
+		WasmI32x4ExtractLane(lane : int);
+		WasmI32x4ReplaceLane(lane : int);
+
+		WasmI64x2ExtractLane(lane : int);
+		WasmI64x2ReplaceLane(lane : int);
+
+		WasmF32x4ExtractLane(lane : int);
+		WasmF32x4ReplaceLane(lane : int);
+
+		WasmF64x2ExtractLane(lane : int);
+		WasmF64x2ReplaceLane(lane : int);
+
+		WasmI8x16Swizzle();
+		WasmI8x16Splat();
+		WasmI16x8Splat();
+		WasmI32x4Splat();
+		WasmI64x2Splat();
+		WasmF32x4Splat();
+		WasmF64x2Splat();
+
+		WasmI8x16Eq();
+		WasmI8x16Ne();
+		WasmI8x16Lt_s();
+		WasmI8x16Lt_u();
+		WasmI8x16Gt_s();
+		WasmI8x16Gt_u();
+		WasmI8x16Le_s();
+		WasmI8x16Le_u();
+		WasmI8x16Ge_s();
+		WasmI8x16Ge_u();
+
+		WasmI16x8Eq();
+		WasmI16x8Ne();
+		WasmI16x8Lt_s();
+		WasmI16x8Lt_u();
+		WasmI16x8Gt_s();
+		WasmI16x8Gt_u();
+		WasmI16x8Le_s();
+		WasmI16x8Le_u();
+		WasmI16x8Ge_s();
+		WasmI16x8Ge_u();
+
+		WasmI32x4Eq();
+		WasmI32x4Ne();
+		WasmI32x4Lt_s();
+		WasmI32x4Lt_u();
+		WasmI32x4Gt_s();
+		WasmI32x4Gt_u();
+		WasmI32x4Le_s();
+		WasmI32x4Le_u();
+		WasmI32x4Ge_s();
+		WasmI32x4Ge_u();
+
+		WasmI64x2Eq();
+		WasmI64x2Ne();
+		WasmI64x2Lt_s();
+		WasmI64x2Gt_s();
+		WasmI64x2Le_s();
+		WasmI64x2Ge_s();
+
+		WasmF32x4Eq();
+		WasmF32x4Ne();
+		WasmF32x4Lt();
+		WasmF32x4Gt();
+		WasmF32x4Le();
+		WasmF32x4Ge();
+
+		WasmF64x2Eq();
+		WasmF64x2Ne();
+		WasmF64x2Lt();
+		WasmF64x2Gt();
+		WasmF64x2Le();
+		WasmF64x2Ge();
+
+		WasmV128Not();
+		WasmV128And();
+		WasmV128AndNot();
+		WasmV128Or();
+		WasmV128Xor();
+		WasmV128Bitselect();
+		WasmV128AnyTrue();
+
+		WasmI8x16Abs();
+		WasmI8x16Neg();
+		WasmI8x16Popcnt();
+		WasmI8x16AllTrue();
+		WasmI8x16Bitmask();
+		WasmI8x16NarrowI16x8_s();
+		WasmI8x16NarrowI16x8_u();
+		WasmI8x16Shl();
+		WasmI8x16Shr_s();
+		WasmI8x16Shr_u();
+		WasmI8x16Add();
+		WasmI8x16Add_sat_s();
+		WasmI8x16Add_sat_u();
+		WasmI8x16Sub();
+		WasmI8x16Sub_sat_s();
+		WasmI8x16Sub_sat_u();
+		WasmI8x16Min_s();
+		WasmI8x16Min_u();
+		WasmI8x16Max_s();
+		WasmI8x16Max_u();
+		WasmI8x16Avgr_u();
+
+		WasmI16x8ExtaddPairwiseI8x16_s();
+		WasmI16x8ExtaddPairwiseI8x16_u();
+		WasmI16x8Abs();
+		WasmI16x8Neg();
+		WasmI16x8Q15mulrSat_s();
+		WasmI16x8AllTrue();
+		WasmI16x8Bitmask();
+		WasmI16x8NarrowI32x4_s();
+		WasmI16x8NarrowI32x4_u();
+		WasmI16x8ExtendLowI8x16_s();
+		WasmI16x8ExtendHighI8x16_s();
+		WasmI16x8ExtendLowI8x16_u();
+		WasmI16x8ExtendHighI8x16_u();
+		WasmI16x8Shl();
+		WasmI16x8Shr_s();
+		WasmI16x8Shr_u();
+		WasmI16x8Add();
+		WasmI16x8Add_sat_s();
+		WasmI16x8Add_sat_u();
+		WasmI16x8Sub();
+		WasmI16x8Sub_sat_s();
+		WasmI16x8Sub_sat_u();
+		WasmI16x8Mul();
+		WasmI16x8Min_s();
+		WasmI16x8Min_u();
+		WasmI16x8Max_s();
+		WasmI16x8Max_u();
+		WasmI16x8Avgr_u();
+		WasmI16x8ExtmulLowI8x16_s();
+		WasmI16x8ExtmulHighI8x16_s();
+		WasmI16x8ExtmulLowI8x16_u();
+		WasmI16x8ExtmulHighI8x16_u();
+
+		WasmI32x4ExtaddPairwiseI16x8_s();
+		WasmI32x4ExtaddPairwiseI16x8_u();
+		WasmI32x4Abs();
+		WasmI32x4Neg();
+		WasmI32x4AllTrue();
+		WasmI32x4Bitmask();
+		WasmI32x4ExtendLowI16x8_s();
+		WasmI32x4ExtendHighI16x8_s();
+		WasmI32x4ExtendLowI16x8_u();
+		WasmI32x4ExtendHighI16x8_u();
+		WasmI32x4Shl();
+		WasmI32x4Shr_s();
+		WasmI32x4Shr_u();
+		WasmI32x4Add();
+		WasmI32x4Sub();
+		WasmI32x4Mul();
+		WasmI32x4Min_s();
+		WasmI32x4Min_u();
+		WasmI32x4Max_s();
+		WasmI32x4Max_u();
+		WasmI32x4DotI16x8_s();
+		WasmI32x4ExtMulLowI16x8_s();
+		WasmI32x4ExtMulHighI16x8_s();
+		WasmI32x4ExtMulLowI16x8_u();
+		WasmI32x4ExtMulHighI16x8_u();
+
+		WasmI64x2Abs();
+		WasmI64x2Neg();
+		WasmI64x2AllTrue();
+		WasmI64x2Bitmask();
+		WasmI64x2ExtendLowI32x4_s();
+		WasmI64x2ExtendHighI32x4_s();
+		WasmI64x2ExtendLowI32x4_u();
+		WasmI64x2ExtendHighI32x4_u();
+		WasmI64x2Shl();
+		WasmI64x2Shr_s();
+		WasmI64x2Shr_u();
+		WasmI64x2Add();
+		WasmI64x2Sub();
+		WasmI64x2Mul();
+		WasmI64x2ExtmulLowI32x4_s();
+		WasmI64x2ExtmulHighI32x4_s();
+		WasmI64x2ExtmulLowI32x4_u();
+		WasmI64x2ExtmulHighI32x4_u();
+
+		WasmF32x4Ceil();
+		WasmF32x4Floor();
+		WasmF32x4Trunc();
+		WasmF32x4Nearest();
+		WasmF32x4Abs();
+		WasmF32x4Neg();
+		WasmF32x4Sqrt();
+		WasmF32x4Add();
+		WasmF32x4Sub();
+		WasmF32x4Mul();
+		WasmF32x4Div();
+		WasmF32x4Min();
+		WasmF32x4Max();
+		WasmF32x4Pmin();
+		WasmF32x4PMax();
+
+		WasmF64x2Ceil();
+		WasmF64x2Floor();
+		WasmF64x2Trunc();
+		WasmF64x2Nearest();
+		WasmF64x2Abs();
+		WasmF64x2Neg();
+		WasmF64x2Sqrt();
+		WasmF64x2Add();
+		WasmF64x2Sub();
+		WasmF64x2Mul();
+		WasmF64x2Div();
+		WasmF64x2Min();
+		WasmF64x2Max();
+		WasmF64x2Pmin();
+		WasmF64x2PMax();
+
+		WasmI32x4TruncSatF32x4_s();
+		WasmI32x4TruncSatF32x4_u();
+		WasmF32x4ConvertI32x4_s();
+		WasmF32x4ConvertI32x4_u();
+		WasmI32x4TruncSatF64x2_s();
+		WasmI32x4TruncSatF64x2_u();
+		WasmF64x2ConvertLowI32x4_s();
+		WasmF64x2ConvertLowI32x4_u();
+		WasmF32x4DemoteF64x2Zero();
+		WasmF64x2PromoteLowF32x4();
+
+
+	WasmExpr(instructions : [WasmInstruction]);
+
+	//
+	// Sections
+	//
+
+	// https://webassembly.github.io/spec/core/binary/modules.html
+	WasmSection ::=
+		WasmCustomSection, WasmTypeSection, WasmImportSection, WasmFunctionSection,
+		WasmTableSection, WasmMemorySection, WasmGlobalSection, WasmExportSection,
+		WasmStartSection, WasmElementSection, WasmCodeSection, WasmDataSection,
+		WasmDataCountSection;
+
+
+	WasmCustomSection(
+		name : string,
+		bytes : [int]
+	);
+
+	// All function types
+	WasmTypeSection(
+		funcTypes : [WasmFuncType]
+	);
+
+	WasmImportSection(
+		imports : [WasmImport]
+	);
+
+		WasmImport(module : string, name : string, desc : WasmImportDesc);
+			WasmImportDesc ::= WasmImportType, WasmImportTable, WasmImportMemory, WasmImportGlobal;
+				WasmImportType(typeindex : int);	// Function x
+				WasmImportTable(table : WasmTableType);
+				WasmImportMemory(mem : WasmMemoryType);
+				WasmImportGlobal(global : WasmGlobalType);
+
+	// Type declarations for each function in the code section
+	WasmFunctionSection(
+		// Function indexes
+		types : [int]
+	);
+
+	WasmTableSection(
+		tables : [WasmTableType]
+	);
+
+	WasmMemorySection(
+		memories : [WasmMemoryType]
+	);
+
+	WasmGlobalSection(
+		globals : [WasmGlobal]
+	);
+
+		WasmGlobal(type : WasmGlobalType, init : WasmExpr);
+
+	WasmExportSection(
+		exports : [WasmExport]
+	);
+
+		WasmExport(name : string, desc : WasmExportDesc);
+
+		WasmExportDesc ::= WasmExportFunc, WasmExportTable, WasmExportMemory, WasmExportGlobal;
+			WasmExportFunc(index : int);
+			WasmExportTable(table : int);
+			WasmExportMemory(memory : int);
+			WasmExportGlobal(global : int);
+
+	// An optional starting function to run. -1 means none
+	WasmStartSection(
+		start : int
+	);
+
+	// This defines some predefined tables
+	// https://webassembly.github.io/spec/core/syntax/modules.html#syntax-elemmode
+	WasmElementSection(
+		elements : [WasmElement]
+	);
+		WasmElement ::= WasmElementFuncs, WasmElementPassive, WasmElementFuncs2, WasmElementDeclarative,
+			WasmElement4, WasmElement5, WasmElement6, WasmElement7;
+
+		// Initialize a table with function indexes, starting at index "offset" in table 0
+		WasmElementFuncs(offset : WasmExpr, funindexes : [int]);
+		// Prepare a passive table of elements of function indexes. Requires WasmTableInit to initialize
+		WasmElementPassive(funindexes : [int]);
+		// Initialize table <index> starting at slot index, with the given function indexes
+		WasmElementFuncs2(tableIndex : int, offset : WasmExpr, funindexes : [int]);
+		// Defines fun indexes that can be used by ref.func, but they are not in a table
+		WasmElementDeclarative(funindexes : [int]);
+
+		// Tables for other kinds of elements
+		WasmElement4(offset : WasmExpr, init : [WasmExpr]);
+		WasmElement5(et : WasmRefType, init : [WasmExpr]);
+		WasmElement6(tableIndex : int, offset : WasmExpr, et : WasmRefType, init : [WasmExpr]);
+		WasmElement7(et : WasmRefType, init : [WasmExpr]);
+
+	WasmCodeSection(
+		codes : [WasmCode]
+	);
+
+		WasmCode(locals : [WasmLocal], code : WasmExpr);
+		// How many locals of this type?
+		WasmLocal(n : int, type : WasmValType);
+
+	WasmDataSection(
+		data : [WasmData]
+	);
+
+		WasmData ::= WasmData0, WasmData1, WasmData2;
+			// init bytes, mode active {memory 0, offset e}
+			// I.e. this copies itself into memory on startup
+			WasmData0(offset : WasmExpr, bytes : [int]);
+			// init bytes, mode passive. This is NOT copied at startup
+			// but can be with memory.init
+			WasmData1(bytes : [int]);
+
+			// init bytes. mode active { memory n, offset e}
+			// Copies itself into memory in startup
+			WasmData2(memory : int, offset : WasmExpr, bytes : [int]);
+
+	WasmDataCountSection(
+		// If count < 0, it means we omit this one
+		count : int
+	);
+
+
+	//
+	// Modules
+	//
+
+	WasmModule(
+		custom1 : [WasmCustomSection],
+		types : WasmTypeSection,
+		custom2 : [WasmCustomSection],
+		imports : WasmImportSection,
+		custom3 : [WasmCustomSection],
+		functions : WasmFunctionSection,
+		custom4 : [WasmCustomSection],
+		tables : WasmTableSection, 
+		custom5 : [WasmCustomSection],
+		memories : WasmMemorySection,
+		custom6 : [WasmCustomSection],
+		globals : WasmGlobalSection, 
+		custom7 : [WasmCustomSection],
+		exports : WasmExportSection,
+		custom8 : [WasmCustomSection],
+		starts : WasmStartSection, 
+		custom9 : [WasmCustomSection],
+		elements : WasmElementSection, 
+		custom10 : [WasmCustomSection],
+		datacounts : WasmDataCountSection,
+		custom11 : [WasmCustomSection],
+		codes : WasmCodeSection, 
+		custom12 : [WasmCustomSection],
+		data : WasmDataSection,
+		custom13 : [WasmCustomSection],
+	);
+}

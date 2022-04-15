@@ -22,17 +22,17 @@ struct _FlowArray {
 template <typename T>
 void drop(_FlowArray<T>* a) {
 	if (a == nullptr) {
-		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
+		//std::cout << "ERROR :: can't free memory for NULL" << std::endl;
 	} else {
 		(*a)._counter -= 1;
 
 		if ((*a)._counter < 1) {
-			std::cout << "FREE simple vector:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			//std::cout << "FREE simple vector:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 			delete a;
 			a = nullptr;
 		}
 		else {
-			std::cout << "DEC COUNTER simple vector:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			//std::cout << "DEC COUNTER simple vector:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 		}
 	}
 }
@@ -40,19 +40,19 @@ void drop(_FlowArray<T>* a) {
 template <typename T>
 void drop(_FlowArray<T*>* a) {
 	if (a == nullptr) {
-		std::cout << "ERROR :: can't free memory for NULL" << std::endl;
+		//std::cout << "ERROR :: can't free memory for NULL" << std::endl;
 	}
 	else {
 		(*a)._counter -= 1;
 		(*a).dropFields();
 
 		if ((*a)._counter < 1) {
-			std::cout << "FREE vector of structs:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			//std::cout << "FREE vector of structs:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 			delete a;
 			a = nullptr;
 		}
 		else {
-			std::cout << "DEC COUNTER vector of structs:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
+			//std::cout << "DEC COUNTER vector of structs:: &=" << &a << "; counter = " << (*a)._counter << "; type=" << demangle(typeid(a).name()) << std::endl;
 		}
 	}
 }
