@@ -111,7 +111,7 @@ ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p) {
 }
 
 ObjectInfo getObjectInfo(vec3 p) {
-	ObjectInfo d = ObjectInfo(MAX_DIST, -1, -1, Material(vec3(0), 0.0)/* true, vec3(0), false, MixColor(-1, -1, vec3(0), 0, 0.0)*/);
+	ObjectInfo d = ObjectInfo(MAX_DIST, -1, -1, Material(vec3(0), 0.0));
 
 	d = %distanceFunction%;
 
@@ -202,14 +202,6 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
 	return col;
 }
 
-vec3 getMaterial(int id, vec3 p, vec3 rayDirection) {
-	vec3 materialColor = backgroundColor;
-
-	%materialFunction1%
-
-	return materialColor;
-}
-
 vec3 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
@@ -218,9 +210,9 @@ vec3 getColor(vec2 uv) {
 	vec3 p = rayOrigin + rayDirection * d.d;
 	vec3 materialColor = backgroundColor;
 	if (d.material.reflection > 0.) {
-		materialColor = mix(d.material.color, getMaterial(d.id, p, rayDirection), d.material.reflection);
+		materialColor = mix(d.material.color, getColorReflect(p, reflect(rayDirection, getObjectNormal(p))), d.material.reflection);
 	} else if (d.textureId >=0) {
-		materialColor = getMaterial(d.id, p, rayDirection);
+		materialColor = getBaseMaterial(d.id, p);
 	} else {
 		materialColor = d.material.color;
 	}
