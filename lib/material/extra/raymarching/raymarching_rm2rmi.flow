@@ -1,32 +1,38 @@
 import material/extra/raymarching/raymarching_types;
 import math/math;
+import ds/arrayutils;
 
 export {
-	RMScene2RMIExp(obj : RMScene, reflect : bool) -> RMIExp;
+	RMScene2RMIExp(obj : RMScene, reflect : bool, simpleDistance : bool) -> RMIExp;
 	RMLights2RMIExp(obj : RMLights) -> RMIExp;
 	RMScene2RMIExpJS(obj : RMScene, acc : RMIXYZ) -> RMIExp;
 }
 
-RMScene2RMIExp(obj : RMScene, reflect : bool) -> RMIExp {
-	RMScene2RMIExp0(obj, RMIXYZ(0., 0., 0.), RMIXYZ(1., 1., 1.), 0, reflect).second
+RMObjectCounter(
+	objectId : int,
+	textureId : int,
+);
+
+RMScene2RMIExp(obj : RMScene, reflect : bool, simpleDistance : bool) -> RMIExp {
+	RMScene2RMIExp0(obj, RMIXYZ(0., 0., 0.), Triple(RMIXYZ(1., 1., 1.), RMIEmpty(), 0.0), RMObjectCounter(0, 0), reflect, simpleDistance).second
 }
 
-RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect : bool) -> Pair<int, RMIExp> {
+RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : Triple<RMIExp, RMIExp, double>, id : RMObjectCounter, reflect : bool, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
 		RMCompositeObject(object, name, material, position): {
 			compositeObject = RMTranslate(RMMaterial(object, material), position);
-			RMScene2RMIExp0(compositeObject, acc, color, id, reflect);
+			RMScene2RMIExp0(compositeObject, acc, color, id, reflect, simpleDistance);
 		};
-		RMPrimitive(): RMPrimitive2RMIExp(obj, acc, color, id);
+		RMPrimitive(): RMPrimitive2RMIExp(obj, acc, color, id, simpleDistance);
 		RMTranslate(object, d): switch(object) {
-			RMScene(): RMScene2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
+			RMScene(): RMScene2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect, simpleDistance);
 			RMLights(): Pair(id, RMIEmpty());
-			RMTranslate(__, __): RMScene2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect);
+			RMTranslate(__, __): RMScene2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color, id, reflect, simpleDistance);
 			RMEmpty(): Pair(id, RMIEmpty());
 		};
 		RMUnion2(object1, object2): {
-			exp1 = RMScene2RMIExp0(object1, acc, color, id, reflect);
-			exp2 = RMScene2RMIExp0(object2, acc, color, exp1.first, reflect);
+			exp1 = RMScene2RMIExp0(object1, acc, color, id, reflect, simpleDistance);
+			exp2 = RMScene2RMIExp0(object2, acc, color, exp1.first, reflect, simpleDistance);
 			Pair(exp2.first, RMICall(RMIFn("minOI"),
 				[
 					exp1.second,
@@ -36,10 +42,10 @@ RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect :
 		};
 		RMUnion(objects): {
 			if (length(objects) > 0 ) {
-				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect);
+				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect, simpleDistance);
 				fold(tail(objects), exp1, \acc2, obj2 -> {
-					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect);
-					Pair(exp2.first, RMICall(RMIFn("minOI"),
+					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect, simpleDistance);
+					Pair(exp2.first, RMICall(RMIFn(if (simpleDistance) "min" else "minOI"),
 						[
 							acc2.second,
 							exp2.second,
@@ -52,15 +58,18 @@ RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect :
 		};
 		RMSmoothUnion(objects, k): {
 			if (length(objects) > 0 ) {
-				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect);
+				exp1 = RMScene2RMIExp0(objects[0], acc, color, id, reflect, simpleDistance);
 				fold(tail(objects), exp1, \acc2, obj2 -> {
-					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect);
-					Pair(exp2.first, RMICall(RMIFn("minOIS"),
-						[
+					exp2 = RMScene2RMIExp0(obj2, acc, color, acc2.first, reflect, simpleDistance);
+					Pair(exp2.first, RMICall(RMIFn(if (simpleDistance) "opSmoothUnion" else "minOIS"),
+						ifArrayPush([
 							acc2.second,
 							exp2.second,
-							RMIDouble(k)
-						]
+							RMIDouble(k),
+						],
+						!simpleDistance,
+						RMIP()
+						)
 					))
 				})
 			} else {
@@ -69,41 +78,49 @@ RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect :
 		};
 		RMMaterial(object, mat): {
 			switch(mat) {
+				RMTexture(texture, scale, translate, rotate, step): RMScene2RMIExp0(
+					object,
+					acc,
+					Triple(RMITexture(id.textureId, texture, scale, translate, rotate, step), RMIEmpty(), 0.),
+					id,
+					reflect,
+					simpleDistance
+				);
 				RMColor(col): RMScene2RMIExp0(
 					object,
 					acc,
-					hexColor2RMI(col),
+					Triple(hexColor2RMI(col), RMIEmpty(), 0.),
 					id,
-					reflect
+					reflect,
+					simpleDistance
 				);
 				RMReflect(col, mixCoef): if (reflect) {
 					RMScene2RMIExp0(
 						object,
 						acc,
-						RMICall(
-							RMIFn("mix"),
-							[
-								hexColor2RMI(col),
-								RMICall(
-									RMIFn("getColorReflect"),
-									[
-										RMIP(),
-										RMICall(RMIFn("reflect"), [RMIVar("rayDirection"), RMICall(RMIFn("getObjectNormal"), [RMIP()])])
-									]
-								),
-								RMIDouble(mixCoef)
-							]
+						Triple(
+							hexColor2RMI(col),
+							RMICall(
+								RMIFn("getColorReflect"),
+								[
+									RMIP(),
+									RMICall(RMIFn("reflect"), [RMIVar("rayDirection"), RMICall(RMIFn("getObjectNormal"), [RMIP()])])
+								]
+							),
+							mixCoef
 						),
 						id,
-						reflect
+						reflect,
+						simpleDistance
 					)
 				} else {
 					RMScene2RMIExp0(
 						object,
 						acc,
-						hexColor2RMI(col),
+						Triple(hexColor2RMI(col), RMIEmpty(), 0.0),
 						id,
-						reflect
+						reflect,
+						simpleDistance
 					)
 				}
 			}
@@ -112,12 +129,13 @@ RMScene2RMIExp0(obj : RMScene, acc : RMIXYZ, color : RMIExp, id : int, reflect :
 	}
 }
 
-RMPrimitive2RMIExp(obj : RMPrimitive, acc : RMIXYZ, color : RMIExp, id : int) -> Pair<int, RMIExp> {
-	addColorToRMIExp(
+RMPrimitive2RMIExp(obj : RMPrimitive, acc : RMIXYZ, color : Triple<RMIExp, RMIExp, double>, id : RMObjectCounter, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp> {
+	wrapFn = if (simpleDistance) \e -> Pair(RMObjectCounter(id.objectId + 1, id.textureId), e) else \e -> addColorToRMIExp(e, id, color);
+	wrapFn(
 		switch(obj) {
 			RMSphere(radius): RMICall(RMIOp("-"), [
 				RMICall(RMIFn("length"), [
-					RMICall(RMIOp("-"), [RMIP(), acc])
+					RMICall(RMIOp("-"), [RMIP(), acc]),
 				]),
 				RMIDouble(radius)
 			]);
@@ -162,9 +180,7 @@ RMPrimitive2RMIExp(obj : RMPrimitive, acc : RMIXYZ, color : RMIExp, id : int) ->
 				RMIDouble(radiusRounded),
 				RMIDouble(height)
 			]);
-		},
-		id,
-		color
+		}
 	);
 }
 
@@ -337,34 +353,38 @@ addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
 }
 
-addColorToRMIExp(exp : RMIExp, id : int, color : RMIExp) -> Pair<int, RMIProperty> {
-	plainColor = switch (color) {
-		RMIXYZ(x, y, z): Some(color);
+addColorToRMIExp(exp : RMIExp, id : RMObjectCounter, color : Triple<RMIExp, RMIExp, double>) -> Pair<RMObjectCounter, RMIProperty> {
+	plainColor = switch (color.first) {
+		RMIXYZ(x, y, z): Some(color.first);
 		default: None();
 	}
+	isTexture = switch (color.first) {
+		RMITexture(__, __, __, __, __, __): true;
+		default: false;
+	}
 	Pair(
-		id + 1,
+		RMObjectCounter(
+			id.objectId + 1,
+			id.textureId + b2i(isTexture)
+		),
 		RMIProperty(
 			RMICall(
 				RMIFn("ObjectInfo"),
 				[
 					exp,
-					RMIInt(id),
-					RMIBool(isSome(plainColor)),
-					eitherMap(plainColor, idfn, RMIXYZ(0., 0., 0.)),
-					RMIBool(false),
+					RMIInt(id.objectId),
+					RMIInt(if (isTexture) id.textureId else -1),
 					RMICall(
-						RMIFn("MixColor"),
+						RMIFn("Material"),
 						[
-							RMIInt(-1),
-							RMIInt(-1),
-							RMIXYZ(0., 0., 0.),
-							RMIInt(0),
-							RMIDouble(0.0)
-						])
+							eitherMap(plainColor, idfn, RMIXYZ(0., 0., 0.)),
+							RMIDouble(color.third)
+						]
+					)
 				]
 			),
-			id, color
+			id.objectId,
+			if (color.second != RMIEmpty()) color.second else color.first
 		)
 	)
 }

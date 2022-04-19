@@ -5,38 +5,33 @@ uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
+const int numTextures = 10;
+uniform sampler2D uSampler[numTextures];
+uniform vec2 textureSizes[numTextures];
+
 #define MAX_STEPS 1000
 #define MAX_DIST 1000.
 #define SURF_DIST .001
 
-struct MixColor {
-	int id1;
-	int id2;
-	vec3 color;
-	/*
-		0 - id1 * id2
-		1 - id1 * color
-		2 - color * id2
-	*/
-	int conf;
-	float coef;
-};
+const vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
 
-struct HalfMixColor {
-	int id;
+struct Material {
 	vec3 color;
-	float coef;
-	bool order;
+	float reflection;
 };
 
 struct ObjectInfo {
 	float d;
 	int id;
-	bool plainColor;
-	vec3 color;
-	bool isMixColor;
-	MixColor mixColor;
+	int textureId;
+	Material material;
 };
+
+mat2 makeRotate2(float angle) {
+	float s = sin(angle);
+    float c = cos(angle);
+	return mat2(c, s, -s, c);
+}
 
 ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
 	if (obj1.d < obj2.d)
@@ -96,49 +91,27 @@ float opSmoothUnion( float d1, float d2, float k ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
 }
 
-ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k) {
+vec3 getObjectNormal(vec3 p);
+
+vec3 getBaseMaterial(int id, vec3 p) {
+	vec3 materialColor = vec3(0);
+
+	%materialFunction2%
+
+	return materialColor;
+}
+
+ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p) {
 	float interpolation = clamp(0.5 + 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
-	int id1 = obj1.isMixColor ? (obj1.mixColor.coef < 0.5 ? obj1.mixColor.id1 : obj1.mixColor.id2) : obj1.id;
-	int id2 = obj2.isMixColor ? (obj2.mixColor.coef < 0.5 ? obj2.mixColor.id1 : obj2.mixColor.id2) : obj2.id;
 	float d = opSmoothUnion(obj1.d, obj2.d, k);
-	int id = interpolation < 0.5 ? id2 : id1;
-	if (obj1.plainColor && obj2.plainColor) {
-		return ObjectInfo(d, id, true, mix(obj2.color, obj1.color, interpolation), false, MixColor(id2, id1, vec3(0), 0, interpolation));
-	} else if (obj1.plainColor || obj2.plainColor) {
-		bool isFirst = obj1.plainColor;
-		vec3 color = isFirst ? obj1.color : obj2.color;
-		int conf = isFirst ? 2 : 1;
-		
-		if (isFirst && obj2.isMixColor && obj2.mixColor.conf > 0) {
-			color = mix(obj2.mixColor.color, color, interpolation);
-		} else if (!isFirst && obj1.isMixColor && obj1.mixColor.conf > 0) {
-			color = mix(color, obj1.mixColor.color, interpolation);
-		}
-		return ObjectInfo(d, id, false, vec3(0), true, MixColor(id2, id1, color, conf, interpolation));
-	} else {
-		vec3 color = vec3(0);
-		int conf = 0;
-		if (obj1.mixColor.conf > 0 || obj2.mixColor.conf > 0) {
-			if (obj1.mixColor.conf > 0 && obj2.mixColor.conf > 0) {
-				color = mix(obj2.mixColor.color, obj1.mixColor.color, interpolation);
-				conf = interpolation < 0.5 ? obj2.mixColor.conf : obj1.mixColor.conf;
-			} else if(obj1.mixColor.conf > 0) {
-				color = mix(obj2.color, obj1.mixColor.color, interpolation);
-				conf = obj1.mixColor.conf;
-			} else if(obj2.mixColor.conf > 0) {
-				color = mix(obj2.mixColor.color, obj1.color, interpolation);
-				conf = obj2.mixColor.conf;
-			} else {
-				color = mix(obj2.mixColor.color, obj1.mixColor.color, interpolation);
-				conf = obj2.mixColor.conf;
-			}
-		}
-		return ObjectInfo(d, id, false, vec3(0), true, MixColor(id2, id1, color, conf, interpolation));
-	}
+	int id = interpolation < 0.5 ? obj2.id : obj1.id;
+	vec3 color1 = obj1.textureId >= 0 ? getBaseMaterial(obj1.id, p) : obj1.material.color;
+	vec3 color2 = obj2.textureId >= 0 ? getBaseMaterial(obj2.id, p) : obj2.material.color;
+	return ObjectInfo(d, id, -1, Material(mix(color2, color1, interpolation), mix(obj2.material.reflection, obj1.material.reflection, interpolation)));
 }
 
 ObjectInfo getObjectInfo(vec3 p) {
-	ObjectInfo d = ObjectInfo(MAX_DIST, -1, true, vec3(0), false, MixColor(-1, -1, vec3(0), 0, 0.0));
+	ObjectInfo d = ObjectInfo(MAX_DIST, -1, -1, Material(vec3(0), 0.0));
 
 	d = %distanceFunction%;
 
@@ -158,13 +131,21 @@ ObjectInfo RayMarch(vec3 ro, vec3 rd) {
 	return oi; 
 }
 
+float getObjectInfoSimple(vec3 p) {
+	float d = MAX_DIST;
+
+	d = %simpleDistance%;
+
+	return d;
+}
+
 vec3 getObjectNormal(vec3 p) {
-	float d = getObjectInfo(p).d;
+	float d = getObjectInfoSimple(p);
 	vec2 e = vec2(.01,0);
 	vec3 n = d - vec3(
-		getObjectInfo(p - e.xyy).d,
-		getObjectInfo(p - e.yxy).d,
-		getObjectInfo(p - e.yyx).d
+		getObjectInfoSimple(p - e.xyy),
+		getObjectInfoSimple(p - e.yxy),
+		getObjectInfoSimple(p - e.yyx)
 	);
 	return normalize(n);
 }
@@ -173,7 +154,7 @@ float getShadow(vec3 p, vec3 lightPos, float maxDist, float lightSize) {
 	float result = 1.0;
 	float dist = 0.001;
 	for (int i = 0; i < MAX_STEPS; i++) {
-		float hit = getObjectInfo(p + lightPos * dist).d;
+		float hit = getObjectInfoSimple(p + lightPos * dist);
 		result = min(result, hit / (dist * lightSize));
 		dist += hit;
 		if (hit < SURF_DIST/100. || dist > maxDist) break;
@@ -199,31 +180,16 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, float l
 	return (specular + diffuse) * shadow;
 }
 
-vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
-
-vec3 getMaterialReflect(int id) {
-	vec3 materialColor = backgroundColor;
-	%materialFunction2%
-	return materialColor;
-}
 
 vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
 	ObjectInfo d = RayMarch(newRayOrigin + getObjectNormal(newRayOrigin) * SURF_DIST * 2., rayDirection);
 	vec3 p = newRayOrigin + rayDirection * d.d;
 
 	vec3 materialColor = backgroundColor;
-	if (d.plainColor) {
-		materialColor = d.color;
-	} else if (d.isMixColor) {
-		if (d.mixColor.conf == 0) {
-			materialColor = mix(getMaterialReflect(d.mixColor.id1), getMaterialReflect(d.mixColor.id2), d.mixColor.coef);
-		} else if (d.mixColor.conf == 1) {
-			materialColor = mix(d.mixColor.color, getMaterialReflect(d.mixColor.id2), d.mixColor.coef);
-		} else {
-			materialColor = mix(getMaterialReflect(d.mixColor.id1), d.mixColor.color, d.mixColor.coef);
-		}
+	if (d.textureId >=0) {
+		materialColor = getBaseMaterial(d.id, p);
 	} else {
-		materialColor = getMaterialReflect(d.id);
+		materialColor = d.material.color;
 	}
 
 	vec3 ambientColor = 0.1 * materialColor;
@@ -236,12 +202,6 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
 	return col;
 }
 
-vec3 getMaterial(int id, vec3 p, vec3 rayDirection) {
-	vec3 materialColor = backgroundColor;
-	%materialFunction1%
-	return materialColor;
-}
-
 vec3 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
@@ -249,18 +209,12 @@ vec3 getColor(vec2 uv) {
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
 	vec3 materialColor = backgroundColor;
-	if (d.plainColor) {
-		materialColor = d.color;
-	} else if (d.isMixColor) {
-		if (d.mixColor.conf == 0) {
-			materialColor = mix(getMaterial(d.mixColor.id1, p, rayDirection), getMaterial(d.mixColor.id2, p, rayDirection), d.mixColor.coef);
-		} else if (d.mixColor.conf == 1) {
-			materialColor = mix(d.mixColor.color, getMaterial(d.mixColor.id2, p, rayDirection), d.mixColor.coef);
-		} else {
-			materialColor = mix(getMaterial(d.mixColor.id1, p, rayDirection), d.mixColor.color, d.mixColor.coef);
-		}
+	if (d.material.reflection > 0.) {
+		materialColor = mix(d.material.color, getColorReflect(p, reflect(rayDirection, getObjectNormal(p))), d.material.reflection);
+	} else if (d.textureId >=0) {
+		materialColor = getBaseMaterial(d.id, p);
 	} else {
-		materialColor = getMaterial(d.id, p, rayDirection);
+		materialColor = d.material.color;
 	}
 
 	vec3 ambientColor = 0.1 * materialColor;

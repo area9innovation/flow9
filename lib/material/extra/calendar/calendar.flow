@@ -53,7 +53,7 @@ export {
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacities, CalendarCustomHeader, CalendarHideContentFrame,
 		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends,
-		CalendarHideTimeInDayView, CalendarHideTimelineInDayView;
+		CalendarHideTimeInDayView, CalendarHideTimelineInDayView, CalendarReadOnlyEventDialog;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -145,6 +145,8 @@ export {
 		CalendarHideWeekends();
 		CalendarHideTimeInDayView();
 		CalendarHideTimelineInDayView();
+
+		CalendarReadOnlyEventDialog(open : (int) -> void);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -798,7 +800,7 @@ CalendarCell(
 
 	bubbleClickable = MGroup2(
 		MComponent(
-			[MOnClick(click2), MEnabled(fnot(isReadOnlyB)), THovering(isHoverB)],
+			[MOnClick(click2), THovering(isHoverB)],
 			\__ -> MFrame(0.0, 0.0, [Fill(green), FillOpacity(0.0)], bubbleAnimated)
 		),
 		TCursor(FingerCursor(), TRectangle([Fill(white), FillOpacity(0.0)], TFixed(calendarDateCellW, calendarDateCellH)))
@@ -1093,7 +1095,7 @@ dayEventsPopup(
 	}
 
 	makeEditButton = \event : CalendarEvent, eventType : CalendarEventDecription -> {
-		MIf(isReadOnlyEvent(event),
+		MIf(fOr(const(isReadOnly), isReadOnlyEvent(event)),
 			MEmpty(),
 			MCenterYIn(
 				MIconButton("mode_edit",
@@ -1110,7 +1112,7 @@ dayEventsPopup(
 	}
 
 	makeDeleteButton = \event : CalendarEvent, eventType : CalendarEventDecription -> {
-		MIf(isReadOnlyEvent(event),
+		MIf(fOr(const(isReadOnly), isReadOnlyEvent(event)),
 			MEmpty(),
 			MCenterYIn(
 				MIconButton("delete",
@@ -1238,14 +1240,12 @@ dayEventsPopup(
 	eitherFn(customPopupM, \customPopup -> {
 		customPopup.open(isGroupOfEvents, dateForAdd, dayEventsStatic);
 	}, \ -> {
-		if (!isReadOnly || dayEventsStatic != []) {
-			ShowMDialog(
-				manager,
-				close,
-				[MDialogClickOutToClose(), MDialogScroll()],
-				MShadow(const(20.0), popup)
-			);
-		}
+		ShowMDialog(
+			manager,
+			close,
+			[MDialogClickOutToClose(), MDialogScroll()],
+			MShadow(const(20.0), popup)
+		);
 	});
 }
 
@@ -1314,6 +1314,7 @@ MonthTable(
 	isDynamicNumberOfEvents = maxDisplayedEventsInOneDay == -1;
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 	hideWeekends = contains(styles, CalendarHideWeekends());
+	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
 
 	weekDayHeightB = make(0.0);
 	dayTitleHeightB = make(0.0);
@@ -1403,9 +1404,16 @@ MonthTable(
 				]);
 			}
 
-			isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
+			isEditAllowedT = fand(fnot(isReadOnlyEvent(item)), fand(fnot(isReadOnlyB), fselect(eventTypeB, FLift(\et -> et.editAction != nop1))));
+			onClick = \ -> {
+				if (fgetValue(isEditAllowedT)) {
+					fgetValue(eventTypeB).editAction(item.id);
+				} else {
+					openReadOnlyDialog(item.id);
+				}
+			}
 			MComponent(
-				[MOnClick(\-> fgetValue(eventTypeB).editAction(item.id)), MEnabled(fand(fnot(isReadOnlyEvent(item)), fand(fnot(isReadOnlyB), isEditActionNotEmptyB)))],
+				[MOnClick(onClick), MEnabled(fOr(const(openReadOnlyDialog != nop1), isEditAllowedT))],
 				\__ -> {
 					MSelect(eventTypeB, \eventType -> {
 						getEventView(MonthTab(), item, eventType, dayDate, 1, getDefaultView) |> MFixWidth(getDefaultView(item))
@@ -1806,6 +1814,7 @@ RangeView(
 	opacities = extractStruct(styles, CalendarEventsOpacities(None(), None(), None()));
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 	hideWeekends = contains(styles, CalendarHideWeekends());
+	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -1962,9 +1971,17 @@ RangeView(
 			);
 		}));
 
-		isEditActionNotEmptyB = fselect(eventTypeB, FLift(\et -> et.editAction != nop1));
+		isEditAllowedT = fand(fnot(isReadOnlyEvent(event)), fand(fnot(isReadOnlyB), fselect(eventTypeB, FLift(\et -> et.editAction != nop1))));
+		onClick = \ -> {
+			if (fgetValue(isEditAllowedT)) {
+				fgetValue(eventTypeB).editAction(event.id);
+			} else {
+				openReadOnlyDialog(event.id);
+			}
+		}
+
 		MComponent(
-			[MOnClick(\ -> fgetValue(eventTypeB).editAction(event.id)), MEnabled(fand(fnot(isReadOnlyEvent(event)), fand(fnot(isReadOnlyB), isEditActionNotEmptyB)))],
+			[MOnClick(onClick), MEnabled(fOr(const(openReadOnlyDialog != nop1), isEditAllowedT))],
 			\__ -> {
 				MSelect(eventTypeB, \eventType -> {
 					eventCells = getEventCells(eventType);
@@ -2238,7 +2255,7 @@ PlannedEventsTable(
 					TFixed(25., 0.),
 					MText(eventDate, [littleFont]) |> MFixWidth(MFixedX(80.0)),
 					if (eventType.icon != "") MAvatar(eventType.icon, [MIconSize(40.0)]) |> MBorderLeftRight(30.0) else MFixedX(100.0),
-					MAvailable(eventTitle, MFixed(200.0, lineHeight)),
+					eventTitle |> MFixWidth(MFixedX(200.0)),
 					TFixed(5., 0.),
 					MEllipsisText(event.description, [littleFont, MFullWidth()]),
 					TFixed(5., 0.),
@@ -2693,6 +2710,7 @@ getCalendarDayView(
 	hideContentViewFrame = containsStruct(styles, CalendarHideContentFrame());
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 	hideTimeline = containsStruct(styles, CalendarHideTimelineInDayView());
+	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
 
 	getTime = \ -> stamp2time2(timestamp());
 	isToday = getCurrentDate() == date;
@@ -2716,9 +2734,17 @@ getCalendarDayView(
 			);
 		}
 
-		enabledB = if (dayEvent.type.editAction == nop1) const(false) else fand(fnot(isReadOnlyEvent(dayEvent.event)), fnot(isReadOnlyB));
+		isEditAllowedT = fand(const(dayEvent.type.editAction != nop1), fand(fnot(isReadOnlyEvent(dayEvent.event)), fnot(isReadOnlyB)));
+		onClick = \ -> {
+			if (fgetValue(isEditAllowedT)) {
+				dayEvent.type.editAction(dayEvent.event.id);
+			} else {
+				openReadOnlyDialog(dayEvent.event.id);
+			}
+		}
+
 		eventViewM = MComponent(
-			[MOnClick(\ -> dayEvent.type.editAction(dayEvent.event.id)), MEnabled(enabledB)],
+			[MOnClick(onClick), MEnabled(fOr(const(openReadOnlyDialog != nop1), isEditAllowedT))],
 			\__ -> getEventView(DayTab(), dayEvent.event, dayEvent.type, date, 1, getDefaultView)
 		);
 		border = if (hideContentViewFrame) 0.0 else 12.0;
