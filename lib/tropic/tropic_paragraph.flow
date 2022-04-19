@@ -604,6 +604,7 @@ appendOrJoinWord(
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
 ) -> JoinTextAcc {
 	lineNumber = getValue(word.inspector.lineNumber);
+	lineWordSpacingB = word.inspector.lineWordSpacing;
 	wordString = switch (word.word) {
 		GeneralText(str) : str;
 		GeneralSpace(str, __, __) : str;
@@ -619,12 +620,12 @@ appendOrJoinWord(
 		// There are no words yet.
 		JoinTextAcc(
 			wordString,
-			word.style,
+			ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 			lineNumber,
 			wordOffset,
 			acc.acc
 		);
-	} else if (acc.lineNumber == getValue(word.inspector.lineNumber)) {
+	} else if (acc.lineNumber == lineNumber) {
 		// just concat to current string
 		JoinTextAcc(acc with
 			currentString = wordString + acc.currentString,
@@ -633,7 +634,7 @@ appendOrJoinWord(
 	} else {
 		JoinTextAcc(
 			wordString,
-			word.style,
+			ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 			lineNumber,
 			wordOffset,
 			addLastLine(acc, wordsViewConstructor)
@@ -1191,13 +1192,32 @@ TRenderLine(
 
 	// Inter-word spacing for justification
 	interWord = if (alignment == Justify() && length(inspectors) > 1) {
-		nwords = length(inspectors);
-		remaining = alignWidth - lineWidth;
-		min(10.0, remaining / i2d(nwords - 1));
+		if (newJustifyEnabled) {
+			wordsCount = length(words) - 1;
+			spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, lineIndent), \i, acc : Pair<int, double>, w -> {
+				lastWord = i == wordsCount;
+				wordWith = getValue(w.inspector.size).width;
+				switch (w.word : GeneralWrapElement) {
+					GeneralSpace(__, __, __): if (lastWord) acc else Pair(acc.first + 1, acc.second + wordWith);						
+					default: Pair(acc.first, acc.second + wordWith);
+				}
+			});
+			if (spacesAndWordsWidth.first > 0) {
+				(alignWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
+			} else 0.0
+		} else {
+			nwords = length(inspectors);
+			remaining = alignWidth - lineWidth;
+			min(10.0, remaining / i2d(nwords - 1));
+		}
 	} else 0.0;
 
 	// The width and the individual forms
 	iteri(inspectors, \i : int, inspector -> {
+		isSpace = switch (words[i].word : GeneralWrapElement) {
+			GeneralSpace(__, __, __): true;						
+			default: false;
+		};
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
 		elemBaseline = getValue(inspector.baseline);
@@ -1215,8 +1235,9 @@ TRenderLine(
 		nextDistinct(inspector.x, ^alignmentOffset + if (rtl) 0.0 else generalIndent);
 		nextDistinct(inspector.lineHeight, lineHeight);
 		nextDistinct(inspector.lineNumber, lineNumber);
+		nextDistinct(inspector.lineWordSpacing, interWord);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
-		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) elemWidth + justifyOffset else 0.0;
+		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) {elemWidth + if (isSpace) justifyOffset  else 0.0} else 0.0;
 	});
 
 	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
