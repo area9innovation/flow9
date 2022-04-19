@@ -588,7 +588,9 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.marginTop = '0px';
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
-				nativeWidget.style.marginTop = '${-getTextMargin()}px';
+				if (this.parent != null) {
+					nativeWidget.style.marginTop = '${-getTextMargin()}px';
+				}
 			});
 		}
 	}
