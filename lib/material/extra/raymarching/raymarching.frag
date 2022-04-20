@@ -9,8 +9,7 @@ uniform vec3 rayOrigin;
 uniform mat4 view;
 
 const int numTextures = 10;
-uniform sampler2D uSampler[numTextures];
-uniform vec2 textureSizes[numTextures];
+uniform sampler2D textures[numTextures];
 
 #define MAX_STEPS 1000
 #define MAX_DIST 1000.
@@ -120,25 +119,26 @@ ObjectInfo getObjectInfo(vec3 p) {
 	return d;
 }
 
-ObjectInfo RayMarch(vec3 ro, vec3 rd) {
-	float dO = 0.;
-	ObjectInfo oi;
-	for (int i=0; i< MAX_STEPS; i++){
-		vec3 p = ro +rd*dO;
-		oi = getObjectInfo(p);
-		dO += oi.d;
-		if (dO>MAX_DIST || oi.d<SURF_DIST) break;
-	}
-	oi.d = dO;
-	return oi; 
-}
-
 float getObjectInfoSimple(vec3 p) {
 	float d = MAX_DIST;
 
 	d = %simpleDistance%;
 
 	return d;
+}
+
+ObjectInfo RayMarch(vec3 ro, vec3 rd) {
+	float dO = 0.;
+	vec3 p;
+	for (int i=0; i< MAX_STEPS; i++){
+		p = ro + rd * dO;
+		float d = getObjectInfoSimple(p);
+		dO += d;
+		if (dO > MAX_DIST || d < SURF_DIST) break;
+	}
+	ObjectInfo oi = getObjectInfo(p);
+	oi.d = dO;
+	return oi; 
 }
 
 vec3 getObjectNormal(vec3 p) {
