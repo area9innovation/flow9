@@ -51,6 +51,10 @@ export {
 	wordJoiner : string = fromCharCode(wordJoinerCode);
 
 	makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle];
+
+	makeWigiTraceGeneric(functionName : string, words : [?], word2string : (?) -> string) -> (() -> string) -> void;
+
+	newJustifyEnabled = js && isUrlParameterTrue("js_justify");
 }
 
 // TODO:
@@ -117,7 +121,7 @@ makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
 
 generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 	GeneralInspectElement(
-		ParaElementInspector(make(id), make(0.), make(0.), makeWH(), make(0.), make(0.), make(0), make(false)),
+		ParaElementInspector(make(id), make(0.), make(0.), makeWH(), make(0.), make(0.), make(0), make(false), make(0.)),
 		EmptyLineElement()
 	)
 }
@@ -258,6 +262,7 @@ renderParagraphEx(
 	widthManager : ParagraphWidthManager,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Form {
+	traceFn = makeWigiTrace_Form("renderParagraphEx", p);
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -420,6 +425,9 @@ renderParagraphEx(
 		),
 		\ -> {
 			updateFn = \wi-> {
+				oldLines = getValue(linesCountB);
+				oldMaxLineWidth = getValue(linesB).maxLineWidth;
+				traceFn(\-> "updateFn START " + toString(wi) + "maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -441,24 +449,38 @@ renderParagraphEx(
 
 				nextDistinct(linesCountB, length(infos));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
+				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
+				next(linesB, ParaLinesInfos(infos, maxLineWidth));
+				traceFn(\-> "updateFn START " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
 				[
-					subscribe(aw, \v -> updateFn(v)),
+					subscribe(aw, \v -> {
+						traceFn(\-> "aw changed. calling updateFn. aw = " + toString(v));
+						updateFn(v);
+					}),
 				],
 				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
 					subscribe2(update, \u -> {
 						// When an update from a dynamic element is requested, we do it in the next frame
 						if (u == 1) deferUntilNextFrameRendered(\ -> {
+							traceFn(\-> "updateFn DEFERRED STARTED");
 							next(update, 0);
 							updateFn(getValue(aw))
 						})
 					})
 				],
-				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1))())
+				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
+					if (i < ndymamicUpper) {
+						traceFn(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
+						updateFn(getValue(aw))
+					} else {
+						traceFn(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
+						nextDistinct(update, 1)
+					}
+				})())
 			]);
 			\ -> applyall(uns)
 		}
@@ -615,7 +637,8 @@ makeInteractiveParaWord(
 						make(0.),
 						make(0.),
 						make(0),
-						make(false)
+						make(false),
+						make(0.)
 					),
 					dynFormSizePair.first,
 				),
@@ -1352,7 +1375,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 												if (newJustifyEnabled && alignment == Justify()) {
 													if (lastWord) 0.0 else wordSpacing;
 												} else 0.0;
-											} 
+											}
 											default: 0.0;
 										};
 
@@ -1516,4 +1539,41 @@ makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle] {
 }
 
 use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics");
-newJustifyEnabled = js && isUrlParameterTrue("js_justify");
+
+paragraphElement2string(e : ParagraphElement) -> string {
+	switch (e) {
+		TextFragments(list): {
+			foldList(list, "", \acc2, e2 -> {
+				switch (e2) {
+					WordWrapInteractive(e3, __): {
+						switch (e3) {
+							Text(text, __): acc2 + text;
+							Space(__): acc2 + " ";
+							Form(): acc2 + getFormText(e3);
+							default: acc2;
+						}
+					}
+					Text(text, __): acc2 + text;
+					Space(__): acc2 + " ";
+					Form(): acc2 + getFormText(e2);
+					default: acc2;
+				}
+			})
+		}
+		Form(): getFormText(e);
+		GlueFragments(): "";
+	}
+}
+
+makeWigiTraceGeneric(functionName : string, words : [?], word2string : (?) -> string) -> (() -> string) -> void {
+	if (isUrlParameterTrue("trace_wigi_render")) {
+		traceId = "[" + fold(words, "", \acc, w -> acc + word2string(w)) + "] " + functionName + ": ";
+		\messageFn -> println(traceId + messageFn());
+	} else {
+		nop1
+	}
+}
+
+makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> (() -> string) -> void {
+	makeWigiTraceGeneric(functionName, words, paragraphElement2string)
+}

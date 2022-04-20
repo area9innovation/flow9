@@ -780,7 +780,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function isHTMLStageContainer(clip : DisplayObject) : Bool {
-		return untyped clip.isHTMLStageContainer;
+		return untyped clip == null ? false : clip.isHTMLStageContainer;
 	}
 
 	public static inline function isHTMLRenderer(clip : DisplayObject) : Bool {
