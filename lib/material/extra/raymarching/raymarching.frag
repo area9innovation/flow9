@@ -1,5 +1,8 @@
+#version 300 es
 precision mediump float;
-varying vec2 FragPos;
+
+in vec2 FragPos;
+out vec4 fragColor;
 
 uniform vec2 screenSize;
 uniform vec3 rayOrigin;
@@ -231,5 +234,5 @@ vec3 getColor(vec2 uv) {
 void main() {
 	vec2 uv = (FragPos - 0.5 * screenSize)/screenSize.y;
 	vec3 col = getColor(uv);
-	gl_FragColor = vec4(col, 1.0);
+	fragColor = vec4(col, 1.0);
 }

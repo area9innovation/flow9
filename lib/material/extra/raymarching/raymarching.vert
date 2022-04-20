@@ -1,6 +1,8 @@
-attribute vec2 coordinates;
+#version 300 es
 
-varying vec2 FragPos;
+in vec2 coordinates;
+
+out vec2 FragPos;
 
 uniform mat4 projection;
 
