@@ -2007,7 +2007,18 @@ class DisplayObjectHelper {
 
 			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
 
-			var nextWidget = skipOrderCheck ? null : findNextNativeWidget(child, clip);
+			var nextWidget = null;
+			if (!skipOrderCheck) {
+				var nextWidgetId = untyped child.nextWidgetId;
+				if (nextWidgetId != null && nextWidgetId != "") {
+					nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
+				}
+
+				if (nextWidget == null) {
+					nextWidget = findNextNativeWidget(child, clip);
+				}
+			}
+
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
