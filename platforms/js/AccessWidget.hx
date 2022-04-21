@@ -445,6 +445,7 @@ class AccessWidget extends EventEmitter {
 
 	public var clip : DisplayObject;
 	public var tagName : String = "div";
+	private var keepTagName : Bool = false;
 	@:isVar public var element(get, set) : Element;
 
 	@:isVar public var nodeindex(get, set) : Array<Int>;
@@ -705,7 +706,7 @@ class AccessWidget extends EventEmitter {
 			this.clip.updateKeepNativeWidgetChildren();
 		}
 
-		if (RenderSupport.RendererType == "html" && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
+		if (RenderSupport.RendererType == "html" && !this.keepTagName && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
@@ -937,6 +938,10 @@ class AccessWidget extends EventEmitter {
 		for (key in attributes.keys()) {
 			switch (key) {
 				case "role" : role = attributes.get(key);
+				case "keepableTagName" : {
+					tagName = attributes.get(key);
+					keepTagName = true;
+				};
 				case "description" : description = attributes.get(key);
 				case "zorder" : {
 					if (zorder != null) {
