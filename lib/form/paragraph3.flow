@@ -52,7 +52,17 @@ export {
 
 	makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle];
 
-	makeWigiTraceGeneric(functionName : string, words : [?], word2string : (?) -> string) -> (() -> string) -> void;
+	WigiTraceApi(
+		trace : (() -> string) -> void,
+		traceAndNest : (() -> string) -> void,
+		traceAndUnnest : (() -> string) -> void,
+		unnestAndTrace : (() -> string) -> void,
+		nest : () -> void,
+		unnest : () -> void
+	);
+
+	makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string);
+	makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi;
 
 	newJustifyEnabled = js && isUrlParameterTrue("js_justify");
 }
@@ -262,7 +272,7 @@ renderParagraphEx(
 	widthManager : ParagraphWidthManager,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Form {
-	traceFn = makeWigiTrace_Form("renderParagraphEx", p);
+	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -351,7 +361,7 @@ renderParagraphEx(
 	contentGroup = Group(concat(
 		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
 		filtermap(words, \word -> {
-			applyStyles = \form0 -> 
+			applyStyles = \form0 ->
 				Access([AccessAttribute("nextWidgetId",
 					fselect(word.nextWidgetId, FLift(\idM -> eitherMap(idM, makeWigiWordId, "")))
 				)], form0)
@@ -427,7 +437,7 @@ renderParagraphEx(
 			updateFn = \wi-> {
 				oldLines = getValue(linesCountB);
 				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				traceFn(\-> "updateFn START " + toString(wi) + "maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+				traceApi.trace(\-> "updateFn START " + toString(wi) + "maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -451,13 +461,13 @@ renderParagraphEx(
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
 				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceFn(\-> "updateFn START " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.trace(\-> "updateFn START " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
 				[
 					subscribe(aw, \v -> {
-						traceFn(\-> "aw changed. calling updateFn. aw = " + toString(v));
+						traceApi.trace(\-> "aw changed. calling updateFn. aw = " + toString(v));
 						updateFn(v);
 					}),
 				],
@@ -466,7 +476,7 @@ renderParagraphEx(
 					subscribe2(update, \u -> {
 						// When an update from a dynamic element is requested, we do it in the next frame
 						if (u == 1) deferUntilNextFrameRendered(\ -> {
-							traceFn(\-> "updateFn DEFERRED STARTED");
+							traceApi.trace(\-> "updateFn DEFERRED STARTED");
 							next(update, 0);
 							updateFn(getValue(aw))
 						})
@@ -474,10 +484,10 @@ renderParagraphEx(
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
 					if (i < ndymamicUpper) {
-						traceFn(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
+						traceApi.trace(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
 						updateFn(getValue(aw))
 					} else {
-						traceFn(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
+						traceApi.trace(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
 						nextDistinct(update, 1)
 					}
 				})())
@@ -1092,7 +1102,7 @@ RenderLine(
 			if (prevElHeight == 0.0) -1.0 else info.lineAsc - m.baseline - prevElHeight * 0.25
 		} else info.lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
 		applyStylesAndOffset = \form : Form ->
-			(	
+			(
 				if (^useNextWordId) {
 					useNextWordId := false;
 					Access([AccessAttribute("id", const(wordId))], form);
@@ -1576,15 +1586,33 @@ paragraphElement2string(e : ParagraphElement) -> string {
 	}
 }
 
-makeWigiTraceGeneric(functionName : string, words : [?], word2string : (?) -> string) -> (() -> string) -> void {
+wigiTraceLevel : ref int = ref 0;
+
+dummyWigiTraceApi = WigiTraceApi(nop1, nop1, nop1, nop1, nop, nop);
+
+makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string) {
+	\-> fold(words(), "", \acc, w -> acc + word2string(w))
+}
+
+makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi {
 	if (isUrlParameterTrue("trace_wigi_render")) {
-		traceId = "[" + fold(words, "", \acc, w -> acc + word2string(w)) + "] " + functionName + ": ";
-		\messageFn -> println(traceId + messageFn());
+		traceId = "[" + idFn() + "] " + functionName + ": ";
+		traceFn = \messageFn -> println(strRepeat(" ", 2 * ^wigiTraceLevel) + traceId + messageFn());
+		nestFn = \-> wigiTraceLevel := ^wigiTraceLevel + 1;
+		unnestFn = \-> if (^wigiTraceLevel > 0) wigiTraceLevel := ^wigiTraceLevel - 1;
+		WigiTraceApi(
+			traceFn,
+			\messageFn -> { traceFn(messageFn); nestFn(); },
+			\messageFn -> { traceFn(messageFn); unnestFn(); },
+			\messageFn -> { unnestFn(); traceFn(messageFn); },
+			nestFn,
+			unnestFn
+		)
 	} else {
-		nop1
+		dummyWigiTraceApi
 	}
 }
 
-makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> (() -> string) -> void {
-	makeWigiTraceGeneric(functionName, words, paragraphElement2string)
+makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> WigiTraceApi {
+	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> words, paragraphElement2string))
 }
