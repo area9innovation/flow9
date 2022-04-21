@@ -85,11 +85,11 @@ public class FlowPassword extends NativeHost {
 		return ret;
 	}
 
-	public static byte[][] getComparables(String data, String hash) {
+	public static Boolean validateHash(String data, String hash) {
 		String[] params = hash.split(":");
 
-		if (params.length < HASH_SECTIONS)
-			return null;
+		if (params.length < HASH_SECTIONS) 
+			return false;
 
 		byte[] correctpbkdf2 = Base64.getDecoder().decode(params[HASH_PBKDF2_INDEX]);
 		byte[] requestedpbkdf2 = pbkdf2(
@@ -100,19 +100,6 @@ public class FlowPassword extends NativeHost {
 			correctpbkdf2.length
 		);
 			
-		byte[][] ret = {
-			correctpbkdf2,
-			requestedpbkdf2
-		};
-
-		return ret;
-	}
-
-	public static Boolean validateHash(String data, String hash) {
-		byte[][] comparables = getComparables(data, hash);
-
-		Boolean ret = comparables != null && Arrays.equals(comparables[0], comparables[1]);
-
-		return ret;
+		return Arrays.equals(correctpbkdf2, requestedpbkdf2);
 	}
 }
