@@ -1,13 +1,15 @@
+#version 300 es
 precision mediump float;
-varying vec3 FragPos;
+
+in vec2 FragPos;
+out vec4 fragColor;
 
 uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
 const int numTextures = 10;
-uniform sampler2D uSampler[numTextures];
-uniform vec2 textureSizes[numTextures];
+uniform sampler2D textures[numTextures];
 
 #define MAX_STEPS 1000
 #define MAX_DIST 1000.
@@ -17,7 +19,7 @@ const vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
 
 struct Material {
 	vec3 color;
-	float reflection;
+	float reflectiveness;
 };
 
 struct ObjectInfo {
@@ -104,10 +106,9 @@ vec3 getBaseMaterial(int id, vec3 p) {
 ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p) {
 	float interpolation = clamp(0.5 + 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
 	float d = opSmoothUnion(obj1.d, obj2.d, k);
-	int id = interpolation < 0.5 ? obj2.id : obj1.id;
 	vec3 color1 = obj1.textureId >= 0 ? getBaseMaterial(obj1.id, p) : obj1.material.color;
 	vec3 color2 = obj2.textureId >= 0 ? getBaseMaterial(obj2.id, p) : obj2.material.color;
-	return ObjectInfo(d, id, -1, Material(mix(color2, color1, interpolation), mix(obj2.material.reflection, obj1.material.reflection, interpolation)));
+	return ObjectInfo(d, -1, -1, Material(mix(color2, color1, interpolation), mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)));
 }
 
 ObjectInfo getObjectInfo(vec3 p) {
@@ -118,25 +119,26 @@ ObjectInfo getObjectInfo(vec3 p) {
 	return d;
 }
 
-ObjectInfo RayMarch(vec3 ro, vec3 rd) {
-	float dO = 0.;
-	ObjectInfo oi;
-	for (int i=0; i< MAX_STEPS; i++){
-		vec3 p = ro +rd*dO;
-		oi = getObjectInfo(p);
-		dO += oi.d;
-		if (dO>MAX_DIST || oi.d<SURF_DIST) break;
-	}
-	oi.d = dO;
-	return oi; 
-}
-
 float getObjectInfoSimple(vec3 p) {
 	float d = MAX_DIST;
 
 	d = %simpleDistance%;
 
 	return d;
+}
+
+ObjectInfo RayMarch(vec3 ro, vec3 rd) {
+	float dO = 0.;
+	vec3 p;
+	for (int i=0; i< MAX_STEPS; i++){
+		p = ro + rd * dO;
+		float d = getObjectInfoSimple(p);
+		dO += d;
+		if (dO > MAX_DIST || d < SURF_DIST) break;
+	}
+	ObjectInfo oi = getObjectInfo(p);
+	oi.d = dO;
+	return oi; 
 }
 
 vec3 getObjectNormal(vec3 p) {
@@ -209,12 +211,13 @@ vec3 getColor(vec2 uv) {
 	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
 	vec3 p = rayOrigin + rayDirection * d.d;
 	vec3 materialColor = backgroundColor;
-	if (d.material.reflection > 0.) {
-		materialColor = mix(d.material.color, getColorReflect(p, reflect(rayDirection, getObjectNormal(p))), d.material.reflection);
-	} else if (d.textureId >=0) {
+	if (d.textureId >=0) {
 		materialColor = getBaseMaterial(d.id, p);
 	} else {
 		materialColor = d.material.color;
+	}
+	if (d.material.reflectiveness > 0.) {
+		materialColor = mix(materialColor, getColorReflect(p, reflect(rayDirection, getObjectNormal(p))), d.material.reflectiveness);
 	}
 
 	vec3 ambientColor = 0.1 * materialColor;
@@ -229,7 +232,7 @@ vec3 getColor(vec2 uv) {
 }
 
 void main() {
-	vec2 uv = (FragPos.xy - 0.5 * screenSize.xy)/screenSize.y;
+	vec2 uv = (FragPos - 0.5 * screenSize)/screenSize.y;
 	vec3 col = getColor(uv);
-	gl_FragColor = vec4(col, 1.0);
+	fragColor = vec4(col, 1.0);
 }

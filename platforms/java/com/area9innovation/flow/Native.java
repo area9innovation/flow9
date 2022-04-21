@@ -47,7 +47,6 @@ import java.security.*;
 import java.util.Arrays;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
@@ -1310,7 +1309,7 @@ public class Native extends NativeHost {
 		return millis - tzOffset;
 	}
 
-	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyy-MM-dd HH:mm:ss");
+	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
 	public static final String time2string(double time) {
 		long millis = Double.valueOf(time).longValue();
@@ -1319,7 +1318,7 @@ public class Native extends NativeHost {
 
 	public static final double string2time(String tv) {
 		try {
-			return LocalDateTime.parse(tv, dateFormat).toInstant(ZoneOffset.ofHours(0)).toEpochMilli();
+			return LocalDateTime.parse(tv, dateFormat).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
 		} catch (DateTimeParseException  e) {
 			System.err.println(e.toString());
 			return 0;
