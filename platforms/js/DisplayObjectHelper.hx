@@ -780,7 +780,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function isHTMLStageContainer(clip : DisplayObject) : Bool {
-		return untyped clip.isHTMLStageContainer;
+		return untyped clip == null ? false : clip.isHTMLStageContainer;
 	}
 
 	public static inline function isHTMLRenderer(clip : DisplayObject) : Bool {
@@ -2007,7 +2007,18 @@ class DisplayObjectHelper {
 
 			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
 
-			var nextWidget = skipOrderCheck ? null : findNextNativeWidget(child, clip);
+			var nextWidget = null;
+			if (!skipOrderCheck) {
+				var nextWidgetId = untyped child.nextWidgetId;
+				if (nextWidgetId != null && nextWidgetId != "") {
+					nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
+				}
+
+				if (nextWidget == null) {
+					nextWidget = findNextNativeWidget(child, clip);
+				}
+			}
+
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
