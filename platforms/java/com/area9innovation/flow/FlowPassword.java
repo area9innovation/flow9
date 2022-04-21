@@ -36,7 +36,7 @@ public class FlowPassword extends NativeHost {
 		return Base64.getEncoder().encodeToString(bytes);
 	}
 
-	public static String createHash(String data) {
+	public static String createHash(String password) {
 		String salt = createSalt();
 
 		return PBKDF2_HASH_ALGORITHM + ":" + 
@@ -45,7 +45,7 @@ public class FlowPassword extends NativeHost {
 			Base64.getEncoder().encodeToString(
 				pbkdf2(
 					PBKDF2_HASH_ALGORITHM,
-					data,
+					password,
 					salt,
 					PBKDF2_ITERATIONS,
 					PBKDF2_HASH_BYTE_SIZE
@@ -53,12 +53,12 @@ public class FlowPassword extends NativeHost {
 			);
 	}
 
-	public static byte[] pbkdf2(String algorithm, String data, String salt, int iterations, int keyLength) {
+	public static byte[] pbkdf2(String algorithm, String password, String salt, int iterations, int keyLength) {
 		byte[] ret = null;
 
 		try {
 			KeySpec spec = new PBEKeySpec(
-				data.toCharArray(),
+				password.toCharArray(),
 				salt.getBytes(),
 				iterations,
 				keyLength * 8
@@ -85,7 +85,7 @@ public class FlowPassword extends NativeHost {
 		return ret;
 	}
 
-	public static Boolean validateHash(String data, String hash) {
+	public static Boolean validateHash(String password, String hash) {
 		String[] params = hash.split(":");
 
 		if (params.length < HASH_SECTIONS) 
@@ -94,7 +94,7 @@ public class FlowPassword extends NativeHost {
 		byte[] correctpbkdf2 = Base64.getDecoder().decode(params[HASH_PBKDF2_INDEX]);
 		byte[] requestedpbkdf2 = pbkdf2(
 			params[HASH_ALGORITHM_INDEX],
-			data,
+			password,
 			params[HASH_SALT_INDEX],
 			Integer.parseInt(params[HASH_ITERATION_INDEX]),
 			correctpbkdf2.length
