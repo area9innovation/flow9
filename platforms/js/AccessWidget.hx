@@ -695,7 +695,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function set_role(role : String) : String {
-		if (role != "") {
+		if (role != "" && role != "iframe") {
 			element.setAttribute("role", role);
 		} else {
 			element.removeAttribute("role");
