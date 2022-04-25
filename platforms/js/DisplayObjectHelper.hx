@@ -19,6 +19,8 @@ class DisplayObjectHelper {
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
 	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
+	public static var CheckUniqueClipID : Bool = Util.getParameter("check_unique_clip_id") == "1";
+	public static var UniqueClipIds : Array<String> = [];
 
 	private static var InvalidateStage : Bool = true;
 
@@ -1033,7 +1035,17 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null && nativeWidget.getAttribute("id") == null) {
-			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
+			var newId = untyped __js__("'_' + Math.random().toString(36).substr(2, 9)");
+			if (CheckUniqueClipID) {
+				if (untyped __js__("DisplayObjectHelper.UniqueClipIds.includes(newId)")) {
+					updateClipID(clip);
+				} else {
+					nativeWidget.setAttribute('id', newId);
+					UniqueClipIds.push(newId);
+				}
+			} else {
+				nativeWidget.setAttribute('id', newId);
+			}
 		}
 	}
 
