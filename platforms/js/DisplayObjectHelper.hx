@@ -1364,7 +1364,7 @@ class DisplayObjectHelper {
 			if (svgs.length > 0) {
 				var svg = svgs[0];
 				var elementId = untyped svg.parentNode.getAttribute('id');
-				var clipFilter : Element = Browser.document.getElementById(elementId + "filter");
+				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
