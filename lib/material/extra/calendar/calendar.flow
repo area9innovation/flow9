@@ -148,7 +148,7 @@ export {
 		CalendarHideTimelineInDayView();
 
 		CalendarReadOnlyEventDialog(open : (int) -> void);
-		CalendarCombinedEventsView(getCombinedEvents : ([CalendarEvent]) -> [CalendarEvent], getView : ([CalendarEvent], ([CalendarEvent]) -> void) -> Material);
+		CalendarCombinedEventsView(getCombinedEvents : (CalendarTab, [CalendarEvent]) -> [CalendarEvent], getView : (CalendarTab, [CalendarEvent], ([CalendarEvent]) -> void) -> Material);
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -1317,6 +1317,8 @@ MonthTable(
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 	hideWeekends = contains(styles, CalendarHideWeekends());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
+	// TODO: display combined events
+	combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__, __ -> [], \__, __, __ -> MEmpty()));
 
 	weekDayHeightB = make(0.0);
 	dayTitleHeightB = make(0.0);
@@ -1731,7 +1733,12 @@ MonthTable(
 		MIconToggle("view_module", style, [MToggleValue(byWeekViewB)]) |> (\m -> MCols2A(MFillX(), m))
 	}
 
-	monthViewB = fselect3(byWeekViewB, currentDateB, currentEvents, \byWeekView, currentDate, items -> {
+	eventsT = fselect(currentEvents, FLift(\events -> {
+		combinedEvents = combinedEventsView.getCombinedEvents(MonthTab(), events);
+		if (combinedEvents == []) events else filter(events, \event -> !exists(combinedEvents, \e -> e.id == event.id));
+	}));
+
+	monthViewB = fselect3(byWeekViewB, currentDateB, eventsT, \byWeekView, currentDate, items -> {
 		if (byWeekView) {
 			MonthViewByWeek(currentDate, items);
 		} else {
@@ -1741,7 +1748,7 @@ MonthTable(
 
 	CalendarTabView(
 		MConstruct([
-				make2Subscribe(currentEvents, maxDisplayedEventsInOneDayB, \events, maxEvents -> {
+				make2Subscribe(eventsT, maxDisplayedEventsInOneDayB, \events, maxEvents -> {
 					next(multiDayEventsPosition, []);
 					checkMultiDayEventsPosition(dateMin, dateMax, events, maxEvents, multiDayEventsPosition);
 				})
@@ -1849,7 +1856,7 @@ RangeView(
 	getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\event, type -> {
 		MEllipsisText(getEventTitleDefault(event), [type.mainColor, MShowTooltip(make(true))]);
 	})).getTitle;
-	combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__ -> [], \__, __ -> MEmpty()));
+	combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__, __ -> [], \__, __, __ -> MEmpty()));
 
 	byDayCellHeight = if (showDaysNames) 58.0 else 48.0;
 	byDayCellSize : Tropic = TFillXH(byDayCellHeight);
@@ -1912,8 +1919,8 @@ RangeView(
 		}
 	});
 
-	combinedEvents = combinedEventsView.getCombinedEvents(allRangeEvents);
-	rangeEvents = filter(allRangeEvents, \event -> !exists(combinedEvents, \e -> e.id == event.id));
+	combinedEvents = combinedEventsView.getCombinedEvents(tab, allRangeEvents);
+	rangeEvents = if (combinedEvents == []) allRangeEvents else filter(allRangeEvents, \event -> !exists(combinedEvents, \e -> e.id == event.id));
 
 	cellBorder = \colour : int, height : double -> TRectangle([Fill(colour)], TFillMax(2., height));
 
@@ -2081,7 +2088,7 @@ RangeView(
 			addGrid = \m -> if (isMobileView) MFrame(2.0, 0.0, [MStroke(MGrey(400))], m) else addTitleAndGrid(m);
 			rows = if (isMobileView) getEventRowsMobile() else getEventRows();
 			
-			MLet("combinedEvents", combinedEventsView.getView(combinedEvents, openDayEventsPopup),
+			MLet("combinedEvents", combinedEventsView.getView(tab, combinedEvents, openDayEventsPopup),
 				MGroup2(
 					addGrid(MLines2A(MGhost("combinedEvents"), addScroll(MLinesA(rows)))),
 					MLines2A(
@@ -2734,7 +2741,7 @@ getCalendarDayView(
 	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
 	hideTimeline = containsStruct(styles, CalendarHideTimelineInDayView());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
-	combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__ -> [], \__, __ -> MEmpty()));
+	combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__, __ -> [], \__, __, __ -> MEmpty()));
 
 	getTime = \ -> stamp2time2(timestamp());
 	isToday = getCurrentDate() == date;
@@ -2780,7 +2787,7 @@ getCalendarDayView(
 		}
 	}
 
-	combinedEvents = combinedEventsView.getCombinedEvents(dayEvents);
+	combinedEvents = combinedEventsView.getCombinedEvents(DayTab(), dayEvents);
 	getDayEvent = \i, event -> {
 		if (exists(combinedEvents, \e -> e.id == event.id)) {
 			None();
@@ -2882,7 +2889,7 @@ getCalendarDayView(
 
 	getEventsView = \ -> {
 		MLinesA([
-			combinedEventsView.getView(combinedEvents, openDayEventsPopup),
+			combinedEventsView.getView(DayTab(), combinedEvents, openDayEventsPopup),
 			MLinesA(map(allDayEvents, \event -> MAttachHeight(getAllDayEvent(event), event.heightB))),
 			MLinesA([
 				SelectMLinesA(pastEventsB, \__, i, event -> MAttachHeight(getPastEvent(event), event.heightB)),
@@ -2904,7 +2911,7 @@ getCalendarDayView(
 				makeSubscribe2(timer.value, \__ -> nextDistinct(currentTimeB, getTime())),
 				makeSubscribe2(currentTimeB, \time -> updateEvents(getValue(futureEventsB), time))
 			],
-			addFrame(if (allDayEvents == [] && nonAllDayEvents == []) getNoEventsView() else getEventsView())
+			addFrame(if (allDayEvents == [] && nonAllDayEvents == [] && combinedEvents == []) getNoEventsView() else getEventsView())
 		),
 		\availableSize -> {
 			rows = concatA([
@@ -3049,15 +3056,21 @@ CalendarForEvents(
 		openPopupForDay = \date : Date, dayEvents : [CalendarEvent] -> {
 			dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, dayEvents != [], styles);
 		}
+		// TODO: display combined events
+		combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__, __ -> [], \__, __, __ -> MEmpty()));
 
 		MColsA([
 			TFixed(calendarPickerMarginCells, 0.0),
 			MSelect(yearB, \year -> {
 				month = monthValue(year, monthNumber);
-				filteredEventsByMonthB = ffilter(filteredEvents, \item -> {
-					timeYearCheck(item.startDate.year, item.endDate.year, year)
-						&& timeMonthCheck(item.startDate, item.endDate, month)
-				});
+				filteredEventsByMonthB = fselect(filteredEvents, FLift(\events -> {
+					combinedEvents = combinedEventsView.getCombinedEvents(YearTab(), events);
+					filter(events, \event -> {
+						timeYearCheck(event.startDate.year, event.endDate.year, year)
+							&& timeMonthCheck(event.startDate, event.endDate, month)
+							&& !exists(combinedEvents, \e -> e.id == event.id)
+					});
+				}));
 				MSelect(filteredEventsByMonthB, \events -> {
 					MClickable(
 						MCrop(
