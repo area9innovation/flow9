@@ -98,7 +98,7 @@ vec3 getObjectNormal(vec3 p);
 vec3 getBaseMaterial(int id, vec3 p) {
 	vec3 materialColor = vec3(0);
 
-	%materialFunction2%
+	%baseMaterial%
 
 	return materialColor;
 }
