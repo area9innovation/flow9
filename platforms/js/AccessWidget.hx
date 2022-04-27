@@ -510,7 +510,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public inline function hasTabIndex() : Bool {
-		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider";
+		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider" || this.tagName == "iframe";
 	}
 
 	public function set_element(element : Element) : Element {
