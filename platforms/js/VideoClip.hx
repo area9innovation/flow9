@@ -516,6 +516,29 @@ class VideoClip extends FlowContainer {
 		}
 	}
 
+	public function setVideoExternalSubtitle(src : String, kind : String) : Void -> Void {
+		if (src == "") return function() {};
+
+		var track = Browser.document.createElement('track');
+		track.setAttribute('default', '');
+		track.setAttribute('src', src);
+		if (kind != "") {
+			track.setAttribute('kind', kind);
+		}
+
+		sources.push(track);
+		if (videoWidget != null) {
+			videoWidget.appendChild(track);
+		}
+
+		return function() {
+			sources.remove(track);
+			if (videoWidget != null) {
+				videoWidget.removeChild(track);
+			}
+		}
+	}
+
 	private function createStreamStatusListeners() {
 		if (videoWidget != null) {
 			videoWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
