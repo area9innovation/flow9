@@ -31,15 +31,27 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 		d2s(fgetValue(cameraB).lookAt.z)
 	]);
 
-	texturesB = make(extractTexturesFromRMI(RMScene2RMIExp(fgetValue(sceneB), false)));
+	texturesB = make(extractTexturesFromRMScene(fgetValue(sceneB)));
 	texturesStr = strGlue(
-		convertTreeToArray(
+		mapi(
 			getValue(texturesB),
 			\i, texture -> {
-				formatString("loadTexture(gl, %2, '%1', saveTexture);", [fgetValue(texture), i2s(i)]);
+				formatString("loadTexture(gl, %2, '%1', saveTexture);", [fgetValue(texture.texture), i2s(i)]);
 			}
 		), "\n"
 	);
+
+	textureParamsStr = formatString("state.textureParameters = new Float32Array([%1]);", [strGlue(mapConcat(
+			getValue(texturesB),
+			\texture -> concatA([
+				RMTextureTilingParameter2StringArray(fgetValue(texture.parameters).scale), ["0.", "0."], //allignment bits
+				RMTextureTilingParameter2StringArray(fgetValue(texture.parameters).translate), ["0.", "0."],
+				RMTextureTilingParameter2StringArray(fgetValue(texture.parameters).rotate), ["0.", "0."],
+				RMTextureTilingParameter2StringArray(fgetValue(texture.parameters).step), ["0.", "0."],
+			])
+		), ", ")]);
+
+	webglContextLoadedB = make(false);
 
 	MConstruct(
 		[
@@ -47,7 +59,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
 					rmiScene = RMScene2RMIExp(s, false);
-					next(texturesB, extractTexturesFromRMI(rmiScene));
+					next(texturesB, extractTexturesFromRMScene(s));
 					hostCall("recompileShader", [
 						i2s(id),
 						blueprint(
@@ -86,11 +98,12 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					]) |> ignore;
 				}
 			),
-			makeSubscribe2(
-				fsubselect(texturesB, FLift(\textures -> fmergeTree(textures))),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.texture)))),
 				\textures -> {
 					hostCall("resetTextures", [i2s(id)]) |> ignore;
-					convertTreeToArray(
+					mapi(
 						textures,
 						\i, texture -> {
 							hostCall("loadNewTexture", [i2s(id), texture])
@@ -98,6 +111,27 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					)|> ignore;
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.parameters)))),
+				\parameters -> {
+					textureParameters = mapConcat(
+						parameters,
+						\parameter -> concatA([
+							RMTextureTilingParameter2FloatArray(parameter.scale), [0., 0.], //allignment bits
+							RMTextureTilingParameter2FloatArray(parameter.translate), [0., 0.],
+							RMTextureTilingParameter2FloatArray(parameter.rotate), [0., 0.],
+							RMTextureTilingParameter2FloatArray(parameter.step), [0., 0.],
+						])
+					);
+					hostCall("loadNewTextureParameters", [flow(i2s(id)), flow(textureParameters)])|> ignore;
+				}
+			),
+			\ -> addMessageEventListener(\message, origin -> {
+				parsedMessage = parseJson(message);
+				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
+					next(webglContextLoadedB, true);
+			}),
 		],
 		displayRaymarchingCanvas(
 			id,
@@ -105,7 +139,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				"cameraPosition", cameraPositionStr,
 				"cameraLookAt", cameraLookAtStr,
 				"distanceFunction", jsScene,
-				"initialTextures", texturesStr,
+				"initialTextures", texturesStr + "\n" + textureParamsStr,
 			]),
 			"#include material/extra/raymarching/raymarching.vert",
 			blueprint("#include material/extra/raymarching/raymarching.frag", [
@@ -178,19 +212,22 @@ displayRaymarchingCanvas(id : int, scriptContent : string, shaderVertex : string
 	)
 }
 
-extractTexturesFromRMI(exp : RMIExp) -> Tree<int, Transform<string>> {
-	switch(exp) {
-		RMICall(fn, args): fold(args, makeTree(), \acc, e -> mergeTree(acc, extractTexturesFromRMI(e)));
-		RMIP(): makeTree();
-		RMIDouble(num): makeTree();
-		RMIInt(num): makeTree();
-		RMIBool(num): makeTree();
-		RMIXYZ(x, y, z): makeTree();
-		RMIVar(name): makeTree();
-		RMIConcat(exp1, exp2): mergeTree(extractTexturesFromRMI(exp1), extractTexturesFromRMI(exp2));
-		RMIProperty(exp2, id, property): mergeTree(extractTexturesFromRMI(exp2), extractTexturesFromRMI(property));
-		RMITexture(id, texture, __, __, __, __): makeTree1(id, texture);
-		RMIEmpty(): makeTree();
+extractTexturesFromRMScene(obj : RMScene) -> [RMTexture] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
+			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
+			RMColor(col): [];
+		};
+		RMPrimitive(): [];
+		RMSTranslate(object, d): extractTexturesFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractTexturesFromRMScene(object1), extractTexturesFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractTexturesFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractTexturesFromRMScene);
+		RMMaterial(object, color, materialProperties): switch(color) {
+			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
+			RMColor(col): [];
+		};
+		RMEmpty(): [];
 	}
 }
 
@@ -203,7 +240,7 @@ makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<s
 				maybeApply(
 					pfn,
 					\fn -> fn(\v -> {
-						deferUntilNextFrameRendered(\ -> next(isDisplayed, false));
+						timer(100,\ -> next(isDisplayed, false));
 						next(texture, v);
 					})
 				)

@@ -8,8 +8,28 @@ uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
-const int numTextures = 10;
+const int numTextures = gl_MaxTextureImageUnits; //16
 uniform sampler2D textures[numTextures];
+
+struct TextureTilingParameter {
+	float zx_z;
+	float zx_x;
+	float xy_x;
+	float xy_y;
+	float zy_z;
+	float zy_y;
+}; //4 * 6 = 24 => 32
+			
+struct TextureParamerters {
+	TextureTilingParameter scale;
+	TextureTilingParameter translate;
+	TextureTilingParameter rotate;
+	TextureTilingParameter step;
+};// 32 * 4 => 128
+
+uniform TextureParamertersBlock {
+	TextureParamerters textureParameters[numTextures];
+};
 
 #define MAX_STEPS 1000
 #define MAX_DIST 1000.
@@ -94,6 +114,60 @@ float opSmoothUnion( float d1, float d2, float k ) {
 }
 
 vec3 getObjectNormal(vec3 p);
+
+vec3 getTextureColor(int textureId, vec3 p, sampler2D txtr) {
+	vec3 normal = getObjectNormal(p);
+
+	vec2 py = p.zx;
+	py.x *= sign(normal.y);
+	vec2 pz = p.xy;
+	pz.x *= -1. * sign(normal.z);
+	pz.y *= -1.;
+	vec2 px = p.zy;
+	px.x *= sign(normal.x);
+	px.y *= -1.;
+
+	normal = pow(normal, vec3(10.0));
+	normal /= normal.x + normal.y + normal.z;
+
+	vec2 p1 = (py - 0.5) * makeRotate2(textureParameters[textureId].rotate.zx_z) + 0.5 - textureParameters[textureId].translate.zx_z;
+	vec2 p2 = (py - 0.5) * makeRotate2(textureParameters[textureId].rotate.zx_x) + 0.5 - textureParameters[textureId].translate.zx_x;
+	vec2 p3 = (pz - 0.5) * makeRotate2(textureParameters[textureId].rotate.xy_x) + 0.5 - textureParameters[textureId].translate.xy_x;
+	vec2 p4 = (pz - 0.5) * makeRotate2(textureParameters[textureId].rotate.xy_y) + 0.5 - textureParameters[textureId].translate.xy_y;
+	vec2 p5 = (px - 0.5) * makeRotate2(textureParameters[textureId].rotate.zy_z) + 0.5 - textureParameters[textureId].translate.zy_z;
+	vec2 p6 = (px - 0.5) * makeRotate2(textureParameters[textureId].rotate.zy_y) + 0.5 - textureParameters[textureId].translate.zy_y;
+
+	vec2 texSize = vec2(textureSize(txtr, 0));
+	float maxTextureSize = max(texSize.x, texSize.y);
+	float sizeX = texSize.x / maxTextureSize;
+	float sizeY = texSize.y / maxTextureSize;
+
+	vec3 color = (
+		texture(
+			txtr,
+			vec2(
+				mod(p1 / (textureParameters[textureId].scale.zx_z * sizeX), textureParameters[textureId].step.zx_z).x,
+				mod(p2 / (textureParameters[textureId].scale.zx_x * sizeY), textureParameters[textureId].step.zx_x).y
+			)
+		) * normal.y +
+		texture(
+			txtr,
+			vec2(
+				mod(p3 / (textureParameters[textureId].scale.xy_x * sizeX), textureParameters[textureId].step.xy_x).x,
+				mod(p4 / (textureParameters[textureId].scale.xy_y * sizeY), textureParameters[textureId].step.xy_y).y
+			)
+		) * normal.z +
+		texture(
+			txtr,
+			vec2(
+				mod(p5 / (textureParameters[textureId].scale.zy_z * sizeX), textureParameters[textureId].step.zy_z).x,
+				mod(p6 / (textureParameters[textureId].scale.zy_y * sizeY), textureParameters[textureId].step.zy_y).y
+			)
+		) * normal.x
+	).rgb;
+
+	return color;
+}
 
 vec3 getBaseMaterial(int id, vec3 p) {
 	vec3 materialColor = vec3(0);
