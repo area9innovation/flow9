@@ -18,60 +18,66 @@ export {
 
 	// Call this to prepare the typing environment
 	makeDslTypeAcc(
+		cookie : ?,
 		// Merge two types
-		mergeTypes : (DslTypeAcc, DslAst, DslAst) -> DslAst,
+		mergeTypes : (DslTypeAcc<?>, DslAst, DslAst) -> DslAst,
 		// Give the type of this node, provided the children have these types.
 		// If you do not know the type yet, return DslInt(0), and it will be handled as a tyvar.
-		typeFn : (DslTypeAcc, node : DslAst, getChildType : (int) -> DslAst) -> DslAst
-	) -> DslTypeAcc;
+		typeFn : (DslTypeAcc<?>, node : DslAst, getChildType : (int) -> DslAst) -> DslAst
+	) -> DslTypeAcc<?>;
 
 	// Call this to infer the type of the AST. If resolve is true, the
 	// types are annotated as an extra child on the DslNodes.
-	dslTypeInfer(acc : DslTypeAcc, d : DslAst, resolve : bool) -> DslAst;
+	dslTypeInfer(acc : DslTypeAcc<?>, d : DslAst, resolve : bool) -> DslAst;
 
 	// For composite types, you can construct a tyvar here
-	makeDslTypeVar(acc : DslTypeAcc) -> DslAst;
+	makeDslTypeVar(acc : DslTypeAcc<?>) -> DslAst;
+
+	DslTypeAcc(
+		// What is the next tyvar id?
+		tyvar : ref int,
+		// Type of variables
+		env : ref Tree<string, DslAst>,
+		// A place for other type systems to place some tracking info
+		cookie : ?,
+		// For scoping - used by Wase to track the type of blocks
+		blocks : ref [DslAst],
+		// For tracking mutation
+		constants : ref Set<string>,
+
+		// The binding of all tyvars
+		tyvars : UnionFindMap<DslAst>,
+		// Provided by user to extract the type of a given node
+		typeFn : (DslTypeAcc<?>, DslAst, getChildType : (int) -> DslAst) -> DslAst,
+		// Used by the user to merge classes
+		unifyTypes : (DslTypeAcc<?>, DslAst, DslAst) -> void,
+		// Error reporting
+		onError : (DslAst, error : string) -> void,
+		// For error reporting context
+		errorPrefix : ref string,
+		// For debugging
+		indent : ref string,
+		// Debugging?
+		debugging : bool,
+	);
+
+
 }
-
-DslTypeAcc(
-	// What is the next tyvar id?
-	tyvar : ref int,
-	// Type of variables
-	env : ref Tree<string, DslAst>,
-	// For scoping - used by Wase to track the type of blocks
-	blocks : ref [DslAst],
-	// For tracking mutation
-	constants : ref Set<string>,
-
-	// The binding of all tyvars
-	tyvars : UnionFindMap<DslAst>,
-	// Provided by user to extract the type of a given node
-	typeFn : (DslTypeAcc, DslAst, getChildType : (int) -> DslAst) -> DslAst,
-	// Used by the user to merge classes
-	unifyTypes : (DslTypeAcc, DslAst, DslAst) -> void,
-	// Error reporting
-	onError : (DslAst, error : string) -> void,
-	// For error reporting context
-	errorPrefix : ref string,
-	// For debugging
-	indent : ref string,
-	// Debugging?
-	debugging : bool,
-);
 
 dummyDslNode = DslNode("", [], 0);
 
 makeDslTypeAcc(
+	cookie : ?,
 	// Merge two types
-	mergeTypes : (DslTypeAcc, DslAst, DslAst) -> DslAst,
-	typeFn : (DslTypeAcc, DslAst, getChildType : (int) -> DslAst) -> DslAst
-) -> DslTypeAcc {
+	mergeTypes : (DslTypeAcc<?>, DslAst, DslAst) -> DslAst,
+	typeFn : (DslTypeAcc<?>, DslAst, getChildType : (int) -> DslAst) -> DslAst
+) -> DslTypeAcc<?> {
 	// Do a dance to hook up the merge function
 	merger = ref \left : DslAst, right : DslAst -> left;
 	errorPrefix = ref "";
 	blocks = ref [];
 	acc = DslTypeAcc(ref 0, 
-		ref makeTree(), blocks, ref makeSet(),
+		ref makeTree(), cookie, blocks, ref makeSet(),
 		makeUnionFindMap(dummyDslNode, \left, right -> (^merger)(left, right)),
 		typeFn, unifyDslTypes,
 		\n, error -> {
@@ -89,7 +95,7 @@ makeDslTypeAcc(
 	acc;
 }
 
-dslTypeInfer(acc : DslTypeAcc, d : DslAst, resolve : bool) -> DslAst {
+dslTypeInfer(acc : DslTypeAcc<?>, d : DslAst, resolve : bool) -> DslAst {
 	t : DslAstTyped = dsl2typed(acc, d);
 
 	type = dslTypeCheck(acc, t);
@@ -99,7 +105,7 @@ dslTypeInfer(acc : DslTypeAcc, d : DslAst, resolve : bool) -> DslAst {
 }
 
 // Decorate the AST with tyvars
-dsl2typed(env : DslTypeAcc, d : DslAst) -> DslAstTyped {
+dsl2typed(env : DslTypeAcc<?>, d : DslAst) -> DslAstTyped {
 	switch (d) {
 		DslBool(value): d;
 		DslInt(value): d;
@@ -125,7 +131,7 @@ typed2dsl(d : DslAstTyped) -> DslAst {
 	}
 }
 
-dslTypeCheck(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
+dslTypeCheck(acc : DslTypeAcc<?>, node : DslAstTyped) -> DslAst {
 	indent = ^(acc.indent);
 	if (acc.debugging) {
 		println(indent + "Type checking " + summarizeDsl(typed2dsl(node)));
@@ -167,17 +173,17 @@ dslTypeCheck(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
 	res;
 }
 
-makeDslTypeVar(acc : DslTypeAcc) -> DslAst {
+makeDslTypeVar(acc : DslTypeAcc<?>) -> DslAst {
 	DslInt(nextDslTyvar(acc))
 }
 
-nextDslTyvar(env : DslTypeAcc) -> int {
+nextDslTyvar(env : DslTypeAcc<?>) -> int {
 	id = ^(env.tyvar);
 	env.tyvar := id + 1;
 	id;
 }
 
-setDslTypeVar(acc : DslTypeAcc, context : DslAst, tyvar : int, type : DslAst) -> DslAst {
+setDslTypeVar(acc : DslTypeAcc<?>, context : DslAst, tyvar : int, type : DslAst) -> DslAst {
 	switch (type) {
 		DslInt(tyvar2): {
 			DslInt(unionUnionMap(acc.tyvars, tyvar, tyvar2));
@@ -199,7 +205,7 @@ setDslTypeVar(acc : DslTypeAcc, context : DslAst, tyvar : int, type : DslAst) ->
 	}
 }
 
-unifyDslTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> void {
+unifyDslTypes(acc : DslTypeAcc<?>, left : DslAst, right : DslAst) -> void {
 	if (acc.debugging) {
 		indent = ^(acc.indent);
 		println(indent + "Unifying " + prettyDsl(left) + " and " + prettyDsl(right));
@@ -257,7 +263,7 @@ unifyDslTypes(acc : DslTypeAcc, left : DslAst, right : DslAst) -> void {
 	}
 }
 
-resolveDslTypes(acc : DslTypeAcc, node : DslAstTyped) -> DslAst {
+resolveDslTypes(acc : DslTypeAcc<?>, node : DslAstTyped) -> DslAst {
 	indent = ^(acc.indent);
 	if (acc.debugging) {
 		println(indent + "Resolving " + summarizeDsl(typed2dsl(node)));
