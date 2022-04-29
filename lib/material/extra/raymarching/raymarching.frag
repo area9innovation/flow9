@@ -115,7 +115,7 @@ float opSmoothUnion( float d1, float d2, float k ) {
 
 vec3 getObjectNormal(vec3 p);
 
-vec3 getTextureColor(int textureId, vec3 p, sampler2D txtr) {
+vec3 getTextureColor(vec3 p, TextureParamerters textureParameter, sampler2D txtr) {
 	vec3 normal = getObjectNormal(p);
 
 	vec2 py = p.zx;
@@ -130,12 +130,12 @@ vec3 getTextureColor(int textureId, vec3 p, sampler2D txtr) {
 	normal = pow(normal, vec3(10.0));
 	normal /= normal.x + normal.y + normal.z;
 
-	vec2 p1 = (py - 0.5) * makeRotate2(textureParameters[textureId].rotate.zx_z) + 0.5 - textureParameters[textureId].translate.zx_z;
-	vec2 p2 = (py - 0.5) * makeRotate2(textureParameters[textureId].rotate.zx_x) + 0.5 - textureParameters[textureId].translate.zx_x;
-	vec2 p3 = (pz - 0.5) * makeRotate2(textureParameters[textureId].rotate.xy_x) + 0.5 - textureParameters[textureId].translate.xy_x;
-	vec2 p4 = (pz - 0.5) * makeRotate2(textureParameters[textureId].rotate.xy_y) + 0.5 - textureParameters[textureId].translate.xy_y;
-	vec2 p5 = (px - 0.5) * makeRotate2(textureParameters[textureId].rotate.zy_z) + 0.5 - textureParameters[textureId].translate.zy_z;
-	vec2 p6 = (px - 0.5) * makeRotate2(textureParameters[textureId].rotate.zy_y) + 0.5 - textureParameters[textureId].translate.zy_y;
+	vec2 p1 = (py - 0.5) * makeRotate2(textureParameter.rotate.zx_z) + 0.5 - textureParameter.translate.zx_z;
+	vec2 p2 = (py - 0.5) * makeRotate2(textureParameter.rotate.zx_x) + 0.5 - textureParameter.translate.zx_x;
+	vec2 p3 = (pz - 0.5) * makeRotate2(textureParameter.rotate.xy_x) + 0.5 - textureParameter.translate.xy_x;
+	vec2 p4 = (pz - 0.5) * makeRotate2(textureParameter.rotate.xy_y) + 0.5 - textureParameter.translate.xy_y;
+	vec2 p5 = (px - 0.5) * makeRotate2(textureParameter.rotate.zy_z) + 0.5 - textureParameter.translate.zy_z;
+	vec2 p6 = (px - 0.5) * makeRotate2(textureParameter.rotate.zy_y) + 0.5 - textureParameter.translate.zy_y;
 
 	vec2 texSize = vec2(textureSize(txtr, 0));
 	float maxTextureSize = max(texSize.x, texSize.y);
@@ -146,22 +146,22 @@ vec3 getTextureColor(int textureId, vec3 p, sampler2D txtr) {
 		texture(
 			txtr,
 			vec2(
-				mod(p1 / (textureParameters[textureId].scale.zx_z * sizeX), textureParameters[textureId].step.zx_z).x,
-				mod(p2 / (textureParameters[textureId].scale.zx_x * sizeY), textureParameters[textureId].step.zx_x).y
+				mod(p1 / (textureParameter.scale.zx_z * sizeX), textureParameter.step.zx_z).x,
+				mod(p2 / (textureParameter.scale.zx_x * sizeY), textureParameter.step.zx_x).y
 			)
 		) * normal.y +
 		texture(
 			txtr,
 			vec2(
-				mod(p3 / (textureParameters[textureId].scale.xy_x * sizeX), textureParameters[textureId].step.xy_x).x,
-				mod(p4 / (textureParameters[textureId].scale.xy_y * sizeY), textureParameters[textureId].step.xy_y).y
+				mod(p3 / (textureParameter.scale.xy_x * sizeX), textureParameter.step.xy_x).x,
+				mod(p4 / (textureParameter.scale.xy_y * sizeY), textureParameter.step.xy_y).y
 			)
 		) * normal.z +
 		texture(
 			txtr,
 			vec2(
-				mod(p5 / (textureParameters[textureId].scale.zy_z * sizeX), textureParameters[textureId].step.zy_z).x,
-				mod(p6 / (textureParameters[textureId].scale.zy_y * sizeY), textureParameters[textureId].step.zy_y).y
+				mod(p5 / (textureParameter.scale.zy_z * sizeX), textureParameter.step.zy_z).x,
+				mod(p6 / (textureParameter.scale.zy_y * sizeY), textureParameter.step.zy_y).y
 			)
 		) * normal.x
 	).rgb;
