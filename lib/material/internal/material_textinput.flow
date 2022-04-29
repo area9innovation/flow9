@@ -119,7 +119,7 @@ MAutoComplete2T(manager : MaterialManager, parent : MFocusGroup, m : MAutoComple
 
 checkInputStatic(style : [MAutoCompleteStyle], state : [MTextInputState]) -> (Tropic) -> Tropic {
 	wd = extractStruct(style, MWidth(-1.)).width;
-	isHgt = !contains(style, MDynamicSize()) && extractStruct(style, MMaxLines(1)).lines > 0 &&
+	isHgt = !contains(style, MDynamicSize()) && !contains(style, MSuggestionsSameZorderMode()) && extractStruct(style, MMaxLines(1)).lines > 0 &&
 		eitherFn(tryExtractStruct(state, MInputError(const(None()), [])), \ie -> extractStruct(ie.style, MMaxLines(1)).lines > 0, \ -> true);
 
 	if (wd != 0.) {
@@ -328,21 +328,26 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 				extractStruct(style, MCustomDisabledOpacity(const(defaultDisabledItemOpacity(getLightBackground(mfocus.parent))))).opacity
 			), f2));
 
-	makeTextInput = \p : MFocusGroup ->
+	textInput =
 		(if (inputState.useNativeInput)
-			makeNativeEditorView(manager, p, state, inputState, m2t)
+			makeNativeEditorView(manager, inputState.parent, state, inputState, m2t)
 		else
 			makeMTextEditorView(manager, inputState, m2t))
 		|> addMAutocompleteSuggestionInLine(inputState)
-		|> (\t -> TAlignStartDir(t, p.rtl))
+		|> (\t -> TAlignStartDir(t, inputState.parent.rtl))
 		|> (\f -> TCursor(DynamicCursor(inputState.cursorShape), f))
 		|> wrapInputField;
 
 	eitherFn(
 		inputState.popup,
-		\ps -> MTextInputWithPopup(inputState, ps, makeTextInput, addMTextInputBackground, addErrorText, m2t),
-		\ -> makeTextInput(inputState.parent) |> addErrorText
+		\ps -> MTextInputWithPopup(inputState, ps, textInput, addMTextInputBackground, addErrorText, m2t),
+		\ -> textInput |> addErrorText
 	)
+	|> (\t -> eitherMap(inputState.autocomplete, \ac -> {
+		if (ac.sameZorderMode)
+			TLines2Dir(t, MTextInputCompletionBox(inputState, inputState.parent, ac, None(), const(false), m2t), inputState.parent.rtl)
+		else t
+	}, t))
 	|> (\t -> if (inputState.width > 0.) TAvailableWidth(t, const(inputState.width)) else t)
 	|> (\f -> TConstruct(inputState.subs, f))
 }
@@ -885,7 +890,7 @@ makeRightIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic
 		));
 }
 
-MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, makeTextInput : (MFocusGroup) -> Tropic,
+MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, textInput : Tropic,
 	addMTextInputBackground : (Transform<bool>, bool) -> (Tropic) -> Tropic, addErrorText : (Tropic) -> Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	isTextInputInPopup = eitherMap(inputState.autocomplete, \ac -> ac.isTextInputInPopup, true);
@@ -933,82 +938,18 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 			inputState.autocomplete,
 			\ac -> if (eitherMap(ac.inLine, \inline -> inline.showPopup, true)) {
 				(\p -> {
-					items = fselect(ac.sentences, FLift(\compl -> {
-						next(ac.selected, -1);
-
-						res = mapi(compl, \i, com ->
-							MIfLazy2T(
-								inputState.manager,
-								p,
-								feq(ac.selected, i),
-								\sel, p3 ->
-									m2t(
-										ac.completionFn.fn(
-											com,
-											sel,
-											\w -> {
-												ac.setWord(w.sentence);
-												inputState.filterAction(getValue(inputState.content));
-											}
-										),
-										p3
-									),
-								false
-							)
+					maxHeight =
+						fselect3(
+							if (inputState.maxHeight > 0.) const(inputState.maxHeight) else fheight(inputState.manager.stageWH),
+							fheight(popupMaxSize),
+							inputHgt,
+							\maxH, pH, iH -> {
+								a = if (pH - 2. - iH > 0.) pH else maxH;
+								a - 2. - iH
+							}
 						);
 
-						if (ac.autoSelect && length(res) > 0)
-							next(ac.selected, 0);
-
-						res
-					}));
-
-					lines =
-						if (popupState.dynListMode) {
-							contentWH = makeWH();
-							maxHeight =
-								fselect3(
-									if (popupState.maxHeight > 0.) const(popupState.maxHeight) else fheight(inputState.manager.stageWH),
-									fheight(popupMaxSize),
-									inputHgt,
-									\maxH, pH, iH -> {
-										a = if (pH - 2. - iH > 0.) pH else maxH;
-										a - 2. - iH
-									}
-								);
-
-							avHeigth =
-								fif(
-									feq(flength(items), 0),
-									const(0.),
-									fselect2(fheight(contentWH), maxHeight, FLift2(\cH, maxH ->
-										if (cH > 0.) min(cH, maxH) else maxH
-									))
-								);
-
-							MDynamicList2T(
-								inputState.manager,
-								p,
-								MDynamicList(
-									fselect(items, FLift(\itms -> map(itms, \it -> MCustomLine(it, [])))),
-									[MSideBorders(const(0.))],
-									[
-										MItemsHeights(\__ -> const(48.)),
-										MScrollWidthHeight(contentWH, makeWH()),
-										MHoverEnabled(const(false)),
-									]
-								),
-								m2t
-							)
-							|> (\t -> TAvailableHeight(t, avHeigth))
-						} else 
-							MSelect2T(inputState.manager, p, "MTextInputCompletionItems", [MFocusEnabled(const(false))], items, \itms, p2 -> TLines(itms));
-					
-					TCopySize(lines, \tr ->
-						MShape(p, ac.fill, tr, "MAutoComplete")
-						|> TRotate180(fnot(onTop), tr),
-						false
-					)
+					MTextInputCompletionBox(inputState, p, ac, Some(maxHeight), onTop, m2t)
 					|> (\f ->
 						TConstruct(
 							[
@@ -1067,7 +1008,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 	textInputClip = ref TEmpty();
 
 	content =
-		TMoveClip(makeTextInput(inputState.parent), \ti -> textInputClip := ti)
+		TMoveClip(textInput, \ti -> textInputClip := ti)
 		|> (\t -> TAttachHeight(t, inputHgt))
 		|> addMTextInputBackground(onTop, false)
 		|> addErrorText;
@@ -1143,7 +1084,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 										zero
 									)
 								)),
-								RMHeight(0., popupState.maxHeight),
+								RMHeight(0., inputState.maxHeight),
 								MFixPosition(!ontop),
 								TScrollWidthHeight(popupState.contentWH, popupState.boxWH),
 								MBackgroundStyle(inputState.backgroundStyle.focused),
@@ -1573,55 +1514,99 @@ MTextInputHandleKeys(manager : MaterialManager, textInput : Tropic, inputState :
 	})
 }
 
-// MTextInputHandleTemplate(style : [MTextInputStyle], mfocus : MFocus, inputState : MInputState) -> [() -> () -> void] {
-// 	inputTemplate = extractStruct(style, MInputTemplate("", \__ -> true));
+MTextInputCompletionBox(
+	inputState : MInputState,
+	p : MFocusGroup,
+	ac : MInputAutocompleteState,
+	maxHeight : Maybe<Transform<double>>,
+	onTop : Transform<bool>,
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
-// 	if (inputTemplate.template != "") {
-// 		templ = s2a(inputTemplate.template);
-// 		prevS = ref "";
-// 		prevI = ref 0;
+	items = fselect(ac.sentences, FLift(\compl -> {
+		next(ac.selected, -1);
 
-// 		matchWithTempl = \s -> {
-// 			input = ref "";
-// 			lastCharacter = ref 0;
+		res = mapi(compl, \i, com ->
+			MIfLazy2T(
+				inputState.manager,
+				p,
+				feq(ac.selected, i),
+				\sel, p3 ->
+					m2t(
+						ac.completionFn.fn(
+							com,
+							sel,
+							\w -> {
+								ac.setWord(w.sentence);
+								inputState.filterAction(getValue(inputState.content));
+							}
+						),
+						p3
+					),
+				false
+			)
+		);
 
-// 			res =
-// 				concatStrings(mapi(templ, \i, t -> {
-// 					ct = fromCharCode(t);
-// 					ci = getCharAt(s, i);
+		if (ac.autoSelect && length(res) > 0)
+			next(ac.selected, 0);
 
-// 					if (ct == "_") {
-// 						if (ci != "_" && ci != "" && {input := ^input + ci; inputTemplate.check(^input)}) {
-// 							lastCharacter := i;
+		res
+	}));
 
-// 							ci
-// 						} else {
-// 							ct
-// 						}
-// 					} else
-// 						ct
-// 				}))
-// 				|> (\f ->
-// 					if (strlen(s) < strlen(^prevS) && strlen(^input) == ^prevI) {
-// 						strInsert(strRemove(f, ^lastCharacter, 1), "_", ^lastCharacter);
-// 					} else
-// 						f
-// 				);
+	lines =
+		if (ac.dynListMode) {
+			contentWH = makeWH();
+			maximumHeight = either(maxHeight,
+				if (inputState.maxHeight > 0.) const(inputState.maxHeight) else fheight(inputState.manager.stageWH)
+			);
 
-// 			prevS := res;
-// 			prevI := strlen(^input);
+			avHeigth =
+				fif(
+					feq(flength(items), 0),
+					const(0.),
+					fselect2(fheight(contentWH), maximumHeight, FLift2(\cH, maxH ->
+						if (cH > 0.) min(cH, maxH) else maxH
+					))
+				);
 
-// 			timer(20, \ -> strFindFirstOf(res, "_") |> (\f4 -> next(inputState.position, if (f4 >= 0) f4 else strlen(res))));
+			MDynamicList2T(
+				inputState.manager,
+				p,
+				MDynamicList(
+					fselect(items, FLift(\itms -> map(itms, \it -> MCustomLine(it, [])))),
+					[MSideBorders(const(0.))],
+					[
+						MItemsHeights(\__ -> const(48.)),
+						MScrollWidthHeight(contentWH, makeWH()),
+						MHoverEnabled(const(false)),
+					]
+				),
+				m2t
+			)
+			|> (\t -> TAvailableHeight(t, avHeigth))
+		} else 
+			MSelect2T(inputState.manager, p, "MTextInputCompletionItems", [MFocusEnabled(const(false))], items, \itms, p2 -> TLines(itms));
+	
+	popupDownFnUns = initUnsM();
+	
+	TCopySize2(lines, \sz, tr ->
+		TGroup([
+			MShape(p, ac.fill, sz, "MAutoComplete") |> TRotate180(fnot(onTop), sz),
+			tr,
+			TInteractive([MouseDown2(\h, mi : MouseDownInfo -> {
+				if (mi.inside()) {
+					dispUnsM(popupDownFnUns);
 
-// 			res;
-// 		};
+					(inputState.manager).downInsideFocus ::= Some(inputState.mfocus);
+					// Timeout to keep focus inside autocomplete popup
+					setUnsM(
+						popupDownFnUns,
+						interruptibleTimer(120, \ -> (inputState.manager).downInsideFocus ::= None())
+					);
+				}
 
-// 		next(inputState.content, matchWithTempl(getValue(inputState.content)));
-
-// 		[
-// 			\ -> subscribe2(inputState.content, \v -> if (v != ^prevS) nextDistinct(inputState.content, matchWithTempl(v))),
-// 			makeSubscribe(mfocus.focused, \v -> if (v) nextDistinct(inputState.content, matchWithTempl(getValue(inputState.content))))
-// 		]
-// 	} else
-// 		[]
-// }
+				h
+			})], sz)
+		])
+	)
+	|> (\t -> TShow(inputState.focus, t))
+}
