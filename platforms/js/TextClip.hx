@@ -1559,6 +1559,9 @@ class TextClip extends NativeWidgetClip {
 		// Chrome doesn't support this method for 'number' inputs
 		try {
 			nativeWidget.setSelectionRange(start, end);
+			if (start == nativeWidget.value.length && end == nativeWidget.value.length) {
+				nativeWidget.scrollLeft = nativeWidget.scrollWidth;
+			}
 			preventMouseUpEvent = true;
 		} catch (e : Dynamic) {
 			return;
