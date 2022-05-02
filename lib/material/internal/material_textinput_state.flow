@@ -373,6 +373,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				[firstOfTriple(f), secondOfTriple(f)],
 				if (thirdOfTriple(f)) [] else [MTextDisabled()],
 				extractStructMany(customTextStyle, LetterSpacing(0.0)),
+				extractStructMany(customTextStyle, EscapeHTML(true)),
 				extractStructMany(customTextStyle, MDynamicColor(const(MBlack()))),
 			])
 		);
@@ -1379,9 +1380,17 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 	)
 }
 
-MTextInputLine(visibleText : string, realText : string, length : int, newLine : bool);
+MTextInputFilteredTag(from : int, to : int, filteredTagText : string, fullText : string);
+MTextInputFilteredTagAcc(
+	openedTags : int,
+	openedBrackets : int,
+	filteredText : string,
+	currentFilteredTag : Maybe<MTextInputFilteredTag>,
+	tags : [MTextInputFilteredTag]
+);
+MTextInputLine(visibleText : string, realText : string, filteredTagsText : Triple<string, string, [MTextInputFilteredTag]>, length : int, newLine : bool);
 
-emptyMTextInputLine = MTextInputLine("", "", 0, false);
+emptyMTextInputLine = MTextInputLine("", "", Triple("", "", []), 0, false);
 
 MTextEditorState(
 	mousexy : DynamicBehaviour<Point>,
@@ -1467,6 +1476,62 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 	linesCache = ref Triple(-1., false, makeTree());
 
+	filterTags = \txt -> {
+		filtered = stringFoldi(txt, MTextInputFilteredTagAcc(0, 0, "", None(), []), \i, acc, c -> {
+			s = fromCharCode(c);
+			if (s == "<") {
+				if (i + 1 < strlen(txt) && getCharAt(txt, i + 1) == "/") {
+					MTextInputFilteredTagAcc(acc with
+						openedTags = acc.openedTags - 1,
+						openedBrackets = acc.openedBrackets + 1,
+						currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft -> MTextInputFilteredTag(ft with fullText = ft.fullText + s))
+					)
+				} else {
+					MTextInputFilteredTagAcc(acc with
+						openedTags = acc.openedTags + 1,
+						openedBrackets = acc.openedBrackets + 1,
+						currentFilteredTag =
+							if (isNone(acc.currentFilteredTag)) Some(MTextInputFilteredTag(strlen(acc.filteredText), 0, "", s))
+							else acc.currentFilteredTag
+					)
+				}
+			} else if (s == ">") {
+				if (acc.openedTags == 0) {
+					MTextInputFilteredTagAcc(acc with
+						openedBrackets = acc.openedBrackets - 1,
+						currentFilteredTag = None(),
+						tags = eitherMap(acc.currentFilteredTag, \ft ->
+							arrayPush(acc.tags, MTextInputFilteredTag(ft with to = strlen(acc.filteredText), fullText = ft.fullText + s)),
+							acc.tags
+						)
+					)
+				} else {
+					MTextInputFilteredTagAcc(acc with
+						openedBrackets = acc.openedBrackets - 1,
+						currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft -> MTextInputFilteredTag(ft with fullText = ft.fullText + s))
+					)
+				}
+			} else if (acc.openedBrackets > 0) {
+				MTextInputFilteredTagAcc(acc with
+					currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft -> MTextInputFilteredTag(ft with fullText = ft.fullText + s))
+				)
+			} else {
+				MTextInputFilteredTagAcc(acc with
+					filteredText = acc.filteredText + s,
+					currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft ->
+						MTextInputFilteredTag(ft with filteredTagText = ft.filteredTagText + s, fullText = ft.fullText + s)
+					)
+				)
+			}
+		});
+
+		Triple(
+			filtered.filteredText,
+			filtered.filteredText,
+			filtered.tags
+		)
+	}
+
 	content2lines = \c : string, sp : bool, wd : double -> {
 		map(strSplit(c, "\n"), \l ->
 			Pair(
@@ -1496,9 +1561,10 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 			mapi(splitted, \i, l ->
 				mapi(if (length(l) > 0) l else [Pair(0, "")], \j, ns -> {
 					addN = (i < length(splitted) - 1 && j == length(l) - 1);
-					visibleText = (if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022")));
+					visibleText = if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022"));
+					filteredTagsText = if (sp) filterTags(secondOfPair(ns)) else Triple(visibleText, secondOfPair(ns), []);
 
-					MTextInputLine(visibleText + "\n", secondOfPair(ns), firstOfPair(ns), addN)
+					MTextInputLine(visibleText + "\n", secondOfPair(ns), filteredTagsText, firstOfPair(ns), addN)
 				})
 			)
 			|> concatA
@@ -1537,20 +1603,27 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 		subLength = en.line - st.line;
 
-		foldi(subrange(getValue(lines), st.line, subLength + 1), "", \i, acc, s ->
-			acc + (
+		foldi(subrange(getValue(lines), st.line, subLength + 1), "", \i, acc, s -> {
+			textPart =
 				if (i > 0 && i < subLength)
-					s.realText + newLineSymbol(s)
+					s.filteredTagsText.second + newLineSymbol(s)
 				else if (i == 0 && i == subLength)
-					substring(s.realText, st.symbol, en.symbol - st.symbol)
+					substring(s.filteredTagsText.second, st.symbol, en.symbol - st.symbol)
 				else if (i == subLength)
-					substring(s.realText, 0, en.symbol)
+					substring(s.filteredTagsText.second, 0, en.symbol)
 				else if (i == 0)
-					substring(s.realText, st.symbol, s.length - st.symbol) + newLineSymbol(s)
+					substring(s.filteredTagsText.second, st.symbol, s.length - st.symbol) + newLineSymbol(s)
 				else
-					""
-			)
-		)
+					"";
+
+			if (textPart == "") {
+				acc
+			} else {
+				acc + fold(s.filteredTagsText.third, textPart, \acc2, ft ->
+					strReplace(acc2, ft.filteredTagText, ft.fullText)
+				)
+			}
+		})
 	}
 
 	checkPair = \p : MTextEditorPosition -> {
@@ -1799,7 +1872,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 		if (length(lns) > 0) {
 			y = adjustY(floor(xy.y / textHeight));
 
-			line = lns[y].visibleText |> (\f -> if (endsWith(f, "\n")) substring(f, 0, strlen(f) - 1) else f);
+			line = lns[y].filteredTagsText.first |> (\f -> if (endsWith(f, "\n")) substring(f, 0, strlen(f) - 1) else f);
 
 			x = if (xy.x < 2.) 0 else strlen(getTruncatedByWidthString(line, if (xy.x > 4.) xy.x + 4. else xy.x, textStyle, false));
 
@@ -1819,11 +1892,12 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 					TText(
 						substring(
 							(if (curs.line < 0)
-								lns[0].visibleText
+								lns[0].filteredTagsText.first
 							else if (curs.line >= lnsLength)
-								lastElement(lns, emptyMTextInputLine).visibleText
+								lastElement(lns, emptyMTextInputLine).filteredTagsText.first
 							else
-								lns[curs.line].visibleText)
+								lns[curs.line].filteredTagsText.first
+							)
 							|> (\f -> if (endsWith(f, "\n")) substring(f, 0, strlen(f) - 1) else f),
 							0,
 							curs.symbol
