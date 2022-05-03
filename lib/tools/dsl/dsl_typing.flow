@@ -23,7 +23,9 @@ export {
 		mergeTypes : (DslTypeAcc<?>, DslAst, DslAst) -> DslAst,
 		// Give the type of this node, provided the children have these types.
 		// If you do not know the type yet, use makeDslTypeVar to construct a typevar.
-		typeFn : (DslTypeAcc<?>, node : DslAst, getChildType : (int) -> DslAst) -> DslAst
+		typeFn : (DslTypeAcc<?>, node : DslAst, getChildType : (int) -> DslAst) -> DslAst,
+		// If types do not unify, how to unify? Return false if error
+		userUnification : (DslTypeAcc<?>, DslAst, DslAst) -> bool,
 	) -> DslTypeAcc<?>;
 
 	// Call this to infer the type of the AST. If resolve is true, the
@@ -49,8 +51,11 @@ export {
 		tyvars : UnionFindMap<DslAst>,
 		// Provided by user to extract the type of a given node
 		typeFn : (DslTypeAcc<?>, DslAst, getChildType : (int) -> DslAst) -> DslAst,
-		// Used by the user to merge classes
+		// Provided by the user to unify nodes that do not match. Return false if error
+		userUnification : (DslTypeAcc<?>, DslAst, DslAst) -> bool,
+		// Used by the user to unify nodes from the outside
 		unifyTypes : (DslTypeAcc<?>, DslAst, DslAst) -> void,
+
 		// Error reporting
 		onError : (DslAst, error : string) -> void,
 		// For error reporting context
@@ -60,8 +65,6 @@ export {
 		// Debugging?
 		debugging : bool,
 	);
-
-
 }
 
 dummyDslNode = DslNode("", [], 0);
@@ -70,7 +73,8 @@ makeDslTypeAcc(
 	cookie : ?,
 	// Merge two types
 	mergeTypes : (DslTypeAcc<?>, DslAst, DslAst) -> DslAst,
-	typeFn : (DslTypeAcc<?>, DslAst, getChildType : (int) -> DslAst) -> DslAst
+	typeFn : (DslTypeAcc<?>, DslAst, getChildType : (int) -> DslAst) -> DslAst,
+	userUnification : (DslTypeAcc<?>, DslAst, DslAst) -> bool,
 ) -> DslTypeAcc<?> {
 	// Do a dance to hook up the merge function
 	merger = ref \left : DslAst, right : DslAst -> left;
@@ -79,7 +83,7 @@ makeDslTypeAcc(
 	acc = DslTypeAcc(ref 0, 
 		ref makeTree(), cookie, blocks, ref makeSet(),
 		makeUnionFindMap(dummyDslNode, \left, right -> (^merger)(left, right)),
-		typeFn, unifyDslTypes,
+		typeFn, userUnification, unifyDslTypes,
 		\n, error -> {
 			levels = length(^(blocks));
 			// TODO: Use the position in the node if there is one
@@ -203,8 +207,11 @@ unifyDslTypes(acc : DslTypeAcc<?>, left : DslAst, right : DslAst) -> void {
 	}
 	if (left == right) {}
 	else {
-		error = \ -> {
-			acc.onError(left, "TYPE ERROR: " + prettyDsl(left) + " is not compatible with " + prettyDsl(right));
+		user = \ -> {
+			userOk = acc.userUnification(acc, left, right);
+			if (!userOk) {
+				acc.onError(left, "TYPE ERROR: " + prettyDsl(left) + " is not compatible with " + prettyDsl(right));
+			}
 		};
 		checkright = \ -> {
 			switch (right) {
@@ -213,31 +220,36 @@ unifyDslTypes(acc : DslTypeAcc<?>, left : DslAst, right : DslAst) -> void {
 					setDslTypeVar(acc, DslString("Unify"), rvalue, left);
 					{}
 				}
-				default: error();
+				default: user();
 			}
 		}
 		switch (left) {
-			DslBool(value): error();
+			DslBool(value): user();
 			DslInt(lvalue): {
 				// This is a tyvar
 				setDslTypeVar(acc, DslString("Unify"), lvalue, right);
 				{}
 			}
-			DslDouble(value): error();
+			DslDouble(value): user();
 			DslString(value): {
 				if (getDslString(right) != value) {
 					checkright();
 				}
 			}
-			DslList(value): {
-				llist = list2array(getDslList(left));
-				rlist = list2array(getDslList(right));
-				if (length(llist) != length(rlist)) {
-					checkright();
-				} else {
-					iteri(llist, \i, ll -> {
-						unifyDslTypes(acc, ll, rlist[i])
-					})
+			DslList(lvalue): {
+				switch (right) {
+					DslList(rvalue): {
+						llist = list2array(lvalue);
+						rlist = list2array(rvalue);
+						if (length(llist) != length(rlist)) {
+							checkright();
+						} else {
+							iteri(llist, \i, ll -> {
+								unifyDslTypes(acc, ll, rlist[i])
+							})
+						}
+					}
+					default: checkright();
 				}
 			}
 			DslNode(lname, largs, __): {
