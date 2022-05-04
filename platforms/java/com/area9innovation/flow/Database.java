@@ -25,6 +25,7 @@ public class Database extends NativeHost {
 
     public static class DBObject {
         public Connection con = null;
+        public Statement stmt = null;
         public String err = "";
         public RSObject lrurs = null;
         protected DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
@@ -52,6 +53,9 @@ public class Database extends NativeHost {
             cleanRS();
             if (con != null) {
                 try {
+                    if (stmt != null) {
+                        stmt.close();
+                    }
                     con.close();
                 } catch (SQLException e) {
                     printException(e);
@@ -138,7 +142,14 @@ public class Database extends NativeHost {
         DBObject db = new DBObject();
         try {
 			if (socket.isEmpty()) {
-	            db.con = DriverManager.getConnection(String.format("jdbc:mysql://%s:%d/%s?allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&autoReconnect=true&tcpKeepAlive=true&characterEncoding=UTF-8", host, port, database), user, password);
+				Properties props = new Properties();
+				props.put("user", user);
+				props.put("password", password);
+				db.con = DriverManager.getConnection(
+					String.format("jdbc:mysql://%s:%d/%s?allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&autoReconnect=true&tcpKeepAlive=true&characterEncoding=UTF-8", host, port, database),
+					props
+				);
+				db.stmt = db.con.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			} else {
 				// This makes H2 work
 				Class.forName("org.h2.Driver");
@@ -400,9 +411,7 @@ public class Database extends NativeHost {
 
         DBObject dbo = (DBObject) database;
         ArrayList<Struct[][]> res = new ArrayList<Struct[][]>();
-        try (
-            Statement stmt = dbo.con.createStatement();
-        ) {
+        try {
             String[] q1 = new String[queries.length];
 
             for (int i = 0; i < queries.length; i++) {
@@ -410,12 +419,12 @@ public class Database extends NativeHost {
             }
             String sql = String.join(";", q1);
 
-            boolean isResultSet = stmt.execute(sql);
-            Integer updateCount = stmt.getUpdateCount();
+            boolean isResultSet = dbo.stmt.execute(sql);
+            Integer updateCount = dbo.stmt.getUpdateCount();
             while (isResultSet || updateCount != -1) {
                 if (isResultSet) {
                     ArrayList<Struct[]> table = new ArrayList<Struct[]>();
-                    ResultSet rs = stmt.getResultSet();
+                    ResultSet rs = dbo.stmt.getResultSet();
                     String[] fieldNames = getFieldNames(rs);
                     int[] fieldTypes = getFieldTypes(rs);
                     Struct[] nulls = getNullRowValues(rs, fieldNames);
@@ -423,6 +432,7 @@ public class Database extends NativeHost {
                         rs.next();
                         table.add(getRowValues(rs, fieldNames, fieldTypes, nulls, dbo));
                     }
+                    rs.close();
                     if (table.isEmpty()) {
                         // The table is empty but we need to return columns names somehow
                         table.add(nulls);
@@ -432,8 +442,8 @@ public class Database extends NativeHost {
                     // We ignore updateCount here
                     res.add(new Struct[0][]);
                 }
-                isResultSet = stmt.getMoreResults();
-                updateCount = stmt.getUpdateCount();
+                isResultSet = dbo.stmt.getMoreResults(Statement.CLOSE_ALL_RESULTS);
+                updateCount = dbo.stmt.getUpdateCount();
             }
 
             dbo.checkIntOverflow();

@@ -70,6 +70,7 @@ export {
 		color : MColor,
 		width : double,
 		textWidth : DynamicBehaviour<double>,
+		maxHeight : double,
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
@@ -121,6 +122,8 @@ export {
 		fill : [TGraphicsStyle],
 		setWord : (word : string) -> void,
 		isTextInputInPopup : bool,
+		dynListMode : bool,
+		sameZorderMode : bool,
 		placementType : MSuggestionsPlacementType,
 		inLine : Maybe<MAutoCompleteInLineState>,
 		updateDelay : int,
@@ -143,7 +146,6 @@ export {
 
 	MInputPopupState(
 		openMenu : MOpenMenu,
-		maxHeight : double,
 		inputWH : DynamicBehaviour<WidthHeight>,
 		contentWH : DynamicBehaviour<WidthHeight>,
 		boxWH : DynamicBehaviour<WidthHeight>,
@@ -151,8 +153,7 @@ export {
 		positionScale : DynamicBehaviour<PositionScale>,
 		elevation : Transform<double>,
 		outterBorder : Maybe<RMOutterBorder>,
-		customMetrics : MCustomPopup,
-		dynListMode : bool
+		customMetrics : MCustomPopup
 	);
 
 	MInputErrorState(
@@ -330,6 +331,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	color = extractMColor(parent, style, MAccentColor());
 	width = extractStruct(style, MWidth(-1.)).width;
 	textWidth = make(0.);
+	maxHeight = extractStruct(style, MMaxHeight(-1.)).height;
 	align = extractStruct(style, AutoAlign(AutoAlignNone())).autoalign;
 	fontPadding = extractStruct(style, MInputFontPadding(0.)).padding;
 	filterAction = iScriptBehaviours.filterAction;
@@ -441,11 +443,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	// Popup
 	popup =
-		if (isPopup)
+		if (isPopup && !contains(style, MSuggestionsSameZorderMode()))
 			Some(
 				MInputPopupState(
 					MOpenMenu(make(false)),
-					extractStruct(style, MMaxHeight(-1.)).height,
 					makeWH(),
 					makeWH(),
 					makeWH(),
@@ -454,7 +455,6 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					either(elevation, MElevation(const(0.))).elevation,
 					maybeMap(tryExtractStruct(style, MPopupOutterBorder(0.)), \pob -> RMOutterBorder(pob.border)),
 					extractStruct(style, MCustomPopup(None(), None(), None())),
-					contains(style, MSuggestionsDynamicListMode())
 				)
 			)
 		else
@@ -745,6 +745,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
 					setWord,
 					iScriptBehaviours.isTextInputInPopup,
+					contains(style, MSuggestionsDynamicListMode()),
+					contains(style, MSuggestionsSameZorderMode()),
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
 					inLine,
 					startSearch.wait,
@@ -768,10 +770,13 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			maybeMap(autocomplete, \__ -> \c, p -> strlen(c))
 		);
 
+	onClearContent = tryExtractStruct(style, MOnClearIconClick(nop));
+
 	// Content functions
 	clearContent = \ -> {
 		next(content, if (inputType == TelType()) "+" else "");
 		nextDistinct(mfocus.focused, true);
+		maybeApply(onClearContent, \onClear -> onClear.onClick());
 
 		if (useNativeInput) {
 			if (mobile)
@@ -860,7 +865,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						};
 
 						newSentences =
-							if (isSome(popup)) {
+							if (isSome(popup) || ac.sameZorderMode) {
 								if (ac.maxResults >= 0) {
 									maybeApply(ac.showMoreResults, \results -> 
 										setUnsM(showMoreHandlerUns, subscribe2(results, \res ->
@@ -1238,6 +1243,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		color,
 		width,
 		textWidth,
+		maxHeight,
 		align,
 		iconSize,
 		iconBorders,
@@ -2804,6 +2810,12 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 							[MThemeFill(p, MAccentColor()), FillOpacity(0.4)]),
 					m2t
 				)
+				|> (\t -> if (isSelected) TInteractive([KeyDown2(\h, ke -> {
+						if (ke.keycode == KEY_ENTER) {
+							setWordFn(com);
+							true
+						} else false
+					})], t) else t)
 		}))
 	)
 }

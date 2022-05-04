@@ -51,6 +51,20 @@ export {
 	wordJoiner : string = fromCharCode(wordJoinerCode);
 
 	makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle];
+
+	WigiTraceApi(
+		trace : (() -> string) -> void,
+		traceAndNest : (() -> string) -> void,
+		traceAndUnnest : (() -> string) -> void,
+		unnestAndTrace : (() -> string) -> void,
+		nest : () -> void,
+		unnest : () -> void
+	);
+
+	makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string);
+	makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi;
+
+	newJustifyEnabled = js && isUrlParameterTrue("js_justify");
 }
 
 // TODO:
@@ -91,7 +105,8 @@ ParaWord(
 	metrics : Transform<FormMetrics>,
 	ghosted : Ghosted,
 	form : GhostForm,
-	interactivityIdM : Maybe<int>
+	interactivityIdM : Maybe<int>,
+	nextWidgetId : DynamicBehaviour<Maybe<int>>
 );
 
 ParaWordWidth(rigidWidth : double, softWidth : double, finalRigidWidthDelta : double, finalSoftWidthDelta : double);
@@ -100,7 +115,7 @@ ParaWordGroup(words : [ParaWord], width : ref ParaWordWidth);
 ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
 
-OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>);
+OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>, nextWidgetId : DynamicBehaviour<Maybe<int>>);
 ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
@@ -116,7 +131,7 @@ makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
 
 generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 	GeneralInspectElement(
-		ParaElementInspector(make(id), make(0.), make(0.), makeWH(), make(0.), make(0.), make(0), make(false)),
+		ParaElementInspector(make(id), make(0.), make(0.), makeWH(), make(0.), make(0.), make(0), make(false), make(0.)),
 		EmptyLineElement()
 	)
 }
@@ -200,29 +215,29 @@ getWordForm = \word1, pos -> {
 defaultFontSizeStyle = FontSize(14.0);
 zeroParaWordWidth = ParaWordWidth(0.0, 0.0, 0.0, 0.0);
 emptyParaWordGroup = ParaWordGroup([], ref zeroParaWordWidth);
-emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None());
+emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None(), make(None()));
 paraLinePartFRemake = isUrlParameterTrue("plpf");
 paraLinePartFRemakeD = b2d(paraLinePartFRemake);
 
 makeParaWord2(word2 : ParaWord, form2 : Form, pos : int) -> ParaWord {
-	g = word2.ghosted;
-	replaceWordGhosted = \ -> {
-		switch (g : Ghosted) {
+	ghosted =
+		switch (word2.ghosted : Ghosted) {
 			Empty() : Empty();
 			Ghost(xc, yc, __) : Ghost(xc, yc, form2);
 			InspectGhost(inspector, __) : InspectGhost(inspector, form2);
 			CoordinateInspectElement(inspector, __) : CoordinateInspectElement(inspector, form2);
 		}
-	};
-
-	ghosted = replaceWordGhosted();
 	ghostedForm = {
-		switch (g : Ghosted) {
+		switch (word2.ghosted : Ghosted) {
 			Empty() : extractParaAtomicForm(word2, pos);
 			default : ghosted;
 		};
 	};
-	ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm, word2.interactivityIdM)
+	ParaWord(word2 with
+		metrics = const(getStaticFormSize(form2)),
+		ghosted = ghosted,
+		form = ghostedForm
+	)
 };
 
 
@@ -257,6 +272,7 @@ renderParagraphEx(
 	widthManager : ParagraphWidthManager,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Form {
+	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -345,14 +361,20 @@ renderParagraphEx(
 	contentGroup = Group(concat(
 		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
 		filtermap(words, \word -> {
-			applyStyles = \form -> eitherMap(
-				lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
-				\wordStyles -> {
-					applyListenersAndModifiers(wordStyles, form)
-					|>(\f -> applyBlockHighlighting(wordStyles, f))
-				},
-				form
-			);
+			applyStyles = \form0 ->
+				Access([AccessAttribute("nextWidgetId",
+					fselect(word.nextWidgetId, FLift(\idM -> eitherMap(idM, makeWigiWordId, "")))
+				)], form0)
+				|> (\form ->
+					eitherMap(
+						lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
+						\wordStyles -> {
+							applyListenersAndModifiers(wordStyles, form)
+							|>(\f -> applyBlockHighlighting(wordStyles, f))
+						},
+						form
+					)
+				);
 			switch (word.ghosted : Ghosted) {
 				Empty() : None();
 				Ghost(x, y, f) : Some(Translate(x, y, applyStyles(f)));
@@ -413,6 +435,9 @@ renderParagraphEx(
 		),
 		\ -> {
 			updateFn = \wi-> {
+				oldLines = getValue(linesCountB);
+				oldMaxLineWidth = getValue(linesB).maxLineWidth;
+				traceApi.trace(\-> "updateFn START " + toString(wi) + "maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -434,24 +459,38 @@ renderParagraphEx(
 
 				nextDistinct(linesCountB, length(infos));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				next(linesB, ParaLinesInfos(infos, fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc))));
+				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
+				next(linesB, ParaLinesInfos(infos, maxLineWidth));
+				traceApi.trace(\-> "updateFn START " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
 				[
-					subscribe(aw, \v -> updateFn(v)),
+					subscribe(aw, \v -> {
+						traceApi.trace(\-> "aw changed. calling updateFn. aw = " + toString(v));
+						updateFn(v);
+					}),
 				],
 				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
 					subscribe2(update, \u -> {
 						// When an update from a dynamic element is requested, we do it in the next frame
 						if (u == 1) deferUntilNextFrameRendered(\ -> {
+							traceApi.trace(\-> "updateFn DEFERRED STARTED");
 							next(update, 0);
 							updateFn(getValue(aw))
 						})
 					})
 				],
-				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> if (i < ndymamicUpper) updateFn(getValue(aw)) else nextDistinct(update, 1))())
+				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
+					if (i < ndymamicUpper) {
+						traceApi.trace(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
+						updateFn(getValue(aw))
+					} else {
+						traceApi.trace(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
+						nextDistinct(update, 1)
+					}
+				})())
 			]);
 			\ -> applyall(uns)
 		}
@@ -584,15 +623,15 @@ makeInteractiveParaWord(
 ) -> ParaWord {
 	s2w = \s : Pair<Form, Transform<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
-			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM);
+			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM, make(None()));
 		} else {
 			x = make(0.0);
 			y = make(0.0);
-			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM);
+			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM, make(None()));
 		}
 	}
 	switch (w : ParaAtomic) {
-		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM);
+		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM, make(None()));
 		// We choose the middle part
 		LinePart(f, p, e) : {
 			dynFormSizePair = getDynamicFormSize2(p, true);
@@ -608,17 +647,19 @@ makeInteractiveParaWord(
 						make(0.),
 						make(0.),
 						make(0),
-						make(false)
+						make(false),
+						make(0.)
 					),
 					dynFormSizePair.first,
 				),
 				Empty(),
-				interactivityIdM
+				interactivityIdM,
+				make(None())
 			);
 		}
 		Space(s) : {
 			dynFormSizePair = getJoinableTextMetrics(s, true, ignoreLetterSpacing);
-			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM);
+			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()));
 		}
 		ParaOneWord(wd) : {
 			oc = optimizeCols(wd);
@@ -631,7 +672,8 @@ makeInteractiveParaWord(
 				getJoinableTextMetrics(form, false, ignoreLetterSpacing).second,
 				CoordinateInspectElement(inspector, form),
 				Empty(),
-				interactivityIdM
+				interactivityIdM,
+				make(None())
 			);
 			switch (e : InspectableElement) {
 				Text(t, s) : {
@@ -649,7 +691,7 @@ makeInteractiveParaWord(
 						false,
 						ignoreLetterSpacing
 					);
-					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM);
+					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM, make(None()));
 				}
 			}
 		}
@@ -813,22 +855,20 @@ reflowParaWords2(
 						default : {
 							// Text
 							wform = w.form;
-							ParaWord(
-								w.word,
-								fselect(w.metrics, FLift(\fm -> FormMetrics(fm.width*textScale, fm.height*textScale, fm.baseline*textScale, fm.dHeight*textScale))),
-								switch (w.ghosted : Ghosted) {
+							ParaWord(w with
+								metrics = fselect(w.metrics, FLift(\fm -> FormMetrics(fm.width*textScale, fm.height*textScale, fm.baseline*textScale, fm.dHeight*textScale))),
+								ghosted = switch (w.ghosted : Ghosted) {
 									Empty() : Empty();
 									Ghost(x, y, f) : Ghost(x, y, scale(f));
 									InspectGhost(inspector, f) : InspectGhost(inspector, scale(f));
 									CoordinateInspectElement(i, f) : CoordinateInspectElement(i, scale(f));
 								},
-								switch (wform) {
+								form = switch (wform) {
 									Ghost(xc, yc, form) : Ghost(xc, yc, scale(form));
 									CoordinateInspectElement(inspector, form) : CoordinateInspectElement(inspector, scale(form));
 									InspectGhost(inspector, form) : InspectGhost(inspector, scale(form));
 									Form() : scale(wform);
-								},
-								w.interactivityIdM
+								}
 							)
 						}
 					}
@@ -995,7 +1035,7 @@ renderParaLines(
 
 getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement]{
 	if (isBiDiEnabled() || alignment == Justify() && !newJustifyEnabled) {
-		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM));
+		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM, w.nextWidgetId));
 	} else {
 		optimizeLine(words, alignment, availableWidth, indent, lastLine);
 	};
@@ -1013,6 +1053,9 @@ calcParaLineAlignmentOffset(slack : double, lineIndent : double, rtl : bool, ali
 		Justify() : 0.0;
 	} + (if (rtl) 0. else lineIndent);
 }
+
+wordIds = ref 0;
+useNextWordId = ref false;
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
@@ -1043,6 +1086,13 @@ RenderLine(
 	lo : [Form] = filtermapi(info.optimizedLine, \i : int, elem : OptimizedLineElement -> {
 		f = elem.f;
 		m = fgetValue(elem.metrics);
+		wordIds := ^wordIds + 1;
+		wordId = makeWigiWordId(^wordIds);
+
+		setNextWidgetId = \ -> {
+			nextDistinct(elem.nextWidgetId, Some(^wordIds + 1));
+			useNextWordId := true;
+		};
 
 		isSuperscript = intStyleContains(ParaElementSuperscript(), elem, interactiveStyles);
 		isSubscript = intStyleContains(ParaElementSubscript(), elem, interactiveStyles);
@@ -1051,39 +1101,52 @@ RenderLine(
 			prevElHeight = prevElementHeight(info.optimizedLine, interactiveStyles, i - 1);
 			if (prevElHeight == 0.0) -1.0 else info.lineAsc - m.baseline - prevElHeight * 0.25
 		} else info.lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
-		applyStylesAndOffset = \fm : Form -> eitherMap(
-			elem.interactivityIdM,
-			\id -> applyIntStylesAndHighlighting(
-				fm,
-				lookupTreeDef(interactiveStyles, id, []),
-				^alignmentOffset,
-				y,
-				dy,
-				m.width,
-				info.lineHeight,
-				interWord,
-				highLightOffset,
-				interlineSpacing
-			),
-			Translate(const(^alignmentOffset), const(y + dy), fm)
-		);
+		applyStylesAndOffset = \form : Form ->
+			(
+				if (^useNextWordId) {
+					useNextWordId := false;
+					Access([AccessAttribute("id", const(wordId))], form);
+				} else form
+			)
+			|> (\fm ->
+				eitherMap(
+					elem.interactivityIdM,
+					\id -> applyIntStylesAndHighlighting(
+						fm,
+						lookupTreeDef(interactiveStyles, id, []),
+						^alignmentOffset,
+						y,
+						dy,
+						m.width,
+						info.lineHeight,
+						interWord,
+						highLightOffset,
+						interlineSpacing
+					),
+					Translate(const(^alignmentOffset), const(y + dy), fm)
+				)
+			);
 
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 
 		r = switch (f : GhostForm) {
 			Empty() : None();
 			Ghost(xc, yc, fm) : {
+				fo = applyStylesAndOffset(Empty());
 				nextDistinct(xc, ^alignmentOffset);
 				nextDistinct(yc, y + dy);
-				Some(applyStylesAndOffset(Empty()));
+				setNextWidgetId();
+				Some(fo);
 			}
 			InspectGhost(inspector, fm) : {
+				fo = applyStylesAndOffset(Empty());
 				nextDistinct(inspector.x, ^alignmentOffset);
 				nextDistinct(inspector.y, y + dy);
 				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
 				nextDistinct(inspector.lineHeight, info.lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
-				Some(applyStylesAndOffset(Empty()));
+				setNextWidgetId();
+				Some(fo);
 			}
 			CoordinateInspectElement(inspector, fm) : {
 				fo = applyStylesAndOffset(fm);
@@ -1092,6 +1155,7 @@ RenderLine(
 				nextDistinct(inspector.size, WidthHeight(m.width, m.height));
 				nextDistinct(inspector.lineHeight, info.lineHeight);
 				nextDistinct(inspector.lineNumber, lineNumber);
+				setNextWidgetId();
 				Some(fo);
 			}
 			default : Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
@@ -1280,6 +1344,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 		w = word.word;
 		metrics = word.metrics;
 		intIdM = word.interactivityIdM;
+		nextWidgetId = word.nextWidgetId;
 		lastWord = i == wordsCount;
 		switch(acc){
 			EmptyList() : {
@@ -1297,7 +1362,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 					};
 					default: metrics;
 				};
-				Cons(OptimizedLineElement(f, formMetrics, intIdM), acc)
+				Cons(OptimizedLineElement(f, formMetrics, intIdM, nextWidgetId), acc)
 			};
 			Cons(p, tail_) : {
 				switch (p.f : GhostForm) {
@@ -1331,7 +1396,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 												if (newJustifyEnabled && alignment == Justify()) {
 													if (lastWord) 0.0 else wordSpacing;
 												} else 0.0;
-											} 
+											}
 											default: 0.0;
 										};
 
@@ -1345,17 +1410,17 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 
 									// Replace the last element with the newly joined
 									Cons(
-										OptimizedLineElement(jtf.first, jtf.second, intIdM),
+										OptimizedLineElement(jtf.first, jtf.second, intIdM, nextWidgetId),
 										tail_
 									);
-								} else Cons(OptimizedLineElement(f, metrics, intIdM), acc);
+								} else Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
 							}
 							default : {
-								Cons(OptimizedLineElement(f, metrics, intIdM), acc);
+								Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
 							}
 						}
 					}
-					default : Cons(OptimizedLineElement(f, metrics, intIdM), acc);
+					default : Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
 				}
 			}
 		}
@@ -1400,17 +1465,16 @@ getWordText(w : ParaWord) -> string {
 
 setWordText(w : ParaWord, t : string) -> ParaWord {
 	switch(w.word) {
-		Text(__, s) : ParaWord(
-			Text(t, s), w.metrics, w.ghosted,
-			switch(w.form) {
+		Text(__, s) : ParaWord(w with
+			word = Text(t, s),
+			form = switch(w.form) {
 				CoordinateInspectElement(inspector, form) : CoordinateInspectElement(
 					inspector,
 					Text(t, getFormTextStyle(form))
 				);
 				Text(__, fs) : Text(t, fs);
 				default : w.form;
-			},
-			w.interactivityIdM
+			}
 		);
 		default : w;
 	};
@@ -1418,17 +1482,16 @@ setWordText(w : ParaWord, t : string) -> ParaWord {
 
 setWordRTL(w : ParaWord, rtl : bool) -> ParaWord {
 	switch(w.word) {
-		Text(t, s) : ParaWord(
-			Text(t, s), w.metrics, w.ghosted,
-			switch(w.form) {
+		Text(t, s) : ParaWord(w with
+			word = Text(t, s),
+			form = switch(w.form) {
 				CoordinateInspectElement(inspector, form) : CoordinateInspectElement(
 					inspector,
 					Text(t, replaceStruct(getFormTextStyle(form), SetRTL(rtl)))
 				);
 				Text(__, fs) : Text(t, replaceStruct(fs, SetRTL(rtl)));
 				default : w.form;
-			},
-			w.interactivityIdM
+			}
 		);
 		default : w;
 	};
@@ -1438,11 +1501,9 @@ makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 	makeParaWordGroup = \word -> ParaWordGroup([word], ref zeroParaWordWidth);
 	switch(w.word) {
 		Text(__, st) :
-			ParaWord(
-				LinePart(Text(s, st), Empty(), Empty()),
-				w.metrics,
-				w.ghosted,
-				switch(w.form) {
+			ParaWord(w with
+				word = LinePart(Text(s, st), Empty(), Empty()),
+				form = switch(w.form) {
 					CoordinateInspectElement(inspector, form) : CoordinateInspectElement(
 						inspector,
 						Text(s, getFormTextStyle(form))
@@ -1450,10 +1511,10 @@ makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 					Text(__, fs) : Text(s, fs);
 					default : w.form;
 				},
-				None()
+				interactivityIdM = None()
 			) |> makeParaWordGroup;
 		LinePart(sf, mf, ef) : {
-			swt = \f, t -> cast(setWordText(ParaWord(f, w.metrics, w.ghosted, w.form, w.interactivityIdM), t).word : ParaAtomic-> Form);
+			swt = \f, t -> cast(setWordText(ParaWord(w with word = f), t).word : ParaAtomic-> Form);
 			ParaWord(w with word=LinePart(swt(sf, s), swt(mf, ""), swt(ef, ""))) |> makeParaWordGroup;
 		};
 		default : emptyParaWordGroup;
@@ -1485,6 +1546,10 @@ makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager {
 	)
 }
 
+makeWigiWordId(id : int) {
+	"wigi_word_" + i2s(id);
+}
+
 // Not with others because referenced from flow9 repo.
 isUrlParameterEscUnescHTMLTrue() -> bool {
 	isUrlParameterTrue("753");
@@ -1495,4 +1560,59 @@ makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle] {
 }
 
 use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics");
-newJustifyEnabled = js && isUrlParameterTrue("js_justify");
+
+paragraphElement2string(e : ParagraphElement) -> string {
+	switch (e) {
+		TextFragments(list): {
+			foldList(list, "", \acc2, e2 -> {
+				switch (e2) {
+					WordWrapInteractive(e3, __): {
+						switch (e3) {
+							Text(text, __): acc2 + text;
+							Space(__): acc2 + " ";
+							Form(): acc2 + getFormText(e3);
+							default: acc2;
+						}
+					}
+					Text(text, __): acc2 + text;
+					Space(__): acc2 + " ";
+					Form(): acc2 + getFormText(e2);
+					default: acc2;
+				}
+			})
+		}
+		Form(): getFormText(e);
+		GlueFragments(): "";
+	}
+}
+
+wigiTraceLevel : ref int = ref 0;
+
+dummyWigiTraceApi = WigiTraceApi(nop1, nop1, nop1, nop1, nop, nop);
+
+makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string) {
+	\-> fold(words(), "", \acc, w -> acc + word2string(w))
+}
+
+makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi {
+	if (isUrlParameterTrue("trace_wigi_render")) {
+		traceId = "[" + idFn() + "] " + functionName + ": ";
+		traceFn = \messageFn -> println(strRepeat(" ", 2 * ^wigiTraceLevel) + traceId + messageFn());
+		nestFn = \-> wigiTraceLevel := ^wigiTraceLevel + 1;
+		unnestFn = \-> if (^wigiTraceLevel > 0) wigiTraceLevel := ^wigiTraceLevel - 1;
+		WigiTraceApi(
+			traceFn,
+			\messageFn -> { traceFn(messageFn); nestFn(); },
+			\messageFn -> { traceFn(messageFn); unnestFn(); },
+			\messageFn -> { unnestFn(); traceFn(messageFn); },
+			nestFn,
+			unnestFn
+		)
+	} else {
+		dummyWigiTraceApi
+	}
+}
+
+makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> WigiTraceApi {
+	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> words, paragraphElement2string))
+}

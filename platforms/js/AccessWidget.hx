@@ -445,6 +445,7 @@ class AccessWidget extends EventEmitter {
 
 	public var clip : DisplayObject;
 	public var tagName : String = "div";
+	private var keepTagName : Bool = false;
 	@:isVar public var element(get, set) : Element;
 
 	@:isVar public var nodeindex(get, set) : Array<Int>;
@@ -509,7 +510,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public inline function hasTabIndex() : Bool {
-		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider";
+		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider" || this.tagName == "iframe";
 	}
 
 	public function set_element(element : Element) : Element {
@@ -694,7 +695,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function set_role(role : String) : String {
-		if (role != "") {
+		if (role != "" && role != "iframe") {
 			element.setAttribute("role", role);
 		} else {
 			element.removeAttribute("role");
@@ -705,7 +706,7 @@ class AccessWidget extends EventEmitter {
 			this.clip.updateKeepNativeWidgetChildren();
 		}
 
-		if (RenderSupport.RendererType == "html" && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
+		if (RenderSupport.RendererType == "html" && !this.keepTagName && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
@@ -937,6 +938,10 @@ class AccessWidget extends EventEmitter {
 		for (key in attributes.keys()) {
 			switch (key) {
 				case "role" : role = attributes.get(key);
+				case "keepableTagName" : {
+					tagName = attributes.get(key);
+					keepTagName = true;
+				};
 				case "description" : description = attributes.get(key);
 				case "zorder" : {
 					if (zorder != null) {
@@ -952,6 +957,7 @@ class AccessWidget extends EventEmitter {
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
 				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true");
+				case "nextWidgetId" : untyped clip.nextWidgetId = attributes.get(key);
 				default : {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {

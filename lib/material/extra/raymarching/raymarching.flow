@@ -5,42 +5,18 @@ import material/extra/raymarching/raymarching_rmi2code;
 export {
 	MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
 	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
+
+	makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<string>) -> Material;
 }
 
 MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material {
-	glsl = RMIExp2GLSL(RMScene2RMIExp(scene, true));
-	material1 = RMIExp2GLSLMaterial(RMScene2RMIExp(scene, true));
-	material2 = RMIExp2GLSLMaterial(RMScene2RMIExp(scene, false));
-	jsScene = RMIExp2JS(RMScene2RMIExpJS(scene, RMIXYZ(0., 0., 0.)));
-	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(light));
-
-	cameraPositionStr = formatString("%1, %2, %3", [
-		d2s(camera.position.x),
-		d2s(camera.position.y),
-		d2s(camera.position.z)
-	]);
-	cameraLookAtStr = formatString("%1, %2, %3", [
-		d2s(camera.lookAt.x),
-		d2s(camera.lookAt.y),
-		d2s(camera.lookAt.z)
-	]);
-
-	displayRaymarchingCanvas(
-		id,
-		blueprint("#include material/extra/raymarching/raymarching.js", [
-			"cameraPosition", cameraPositionStr,
-			"cameraLookAt", cameraLookAtStr,
-			"distanceFunction", jsScene
-		]),
-		"#include material/extra/raymarching/raymarching.vert",
-		blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
-	)
+	MDynamicRaymarching(id, const(scene), const(light), const(camera))
 }
 
 MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
-	glsl = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true));
-	material1 = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), true));
-	material2 = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), false));
+	glsl = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), false));
+	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true));
+	baseMaterial = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), false));
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
@@ -55,20 +31,26 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 		d2s(fgetValue(cameraB).lookAt.z)
 	]);
 
+	texturesB = make(extractTexturesFromRMScene(fgetValue(sceneB)));
+
+	webglContextLoadedB = make(false);
+
 	MConstruct(
 		[
 			make2Subscribe2(
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
+					rmiScene = RMScene2RMIExp(s, false);
+					next(texturesB, extractTexturesFromRMScene(s));
 					hostCall("recompileShader", [
 						i2s(id),
 						blueprint(
 							"#include material/extra/raymarching/raymarching.frag",
 							[
-								"distanceFunction", RMIExp2GLSL(RMScene2RMIExp(s, true)),
+								"distanceFunction", RMIExp2GLSL(rmiScene),
+								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true)),
 								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
-								"materialFunction1", RMIExp2GLSLMaterial(RMScene2RMIExp(s, true)),
-								"materialFunction2", RMIExp2GLSLMaterial(RMScene2RMIExp(s, false))
+								"baseMaterial", RMIExp2GLSLMaterial(rmiScene)
 							]
 						)
 					]);
@@ -97,23 +79,63 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						c.lookAt.z
 					]) |> ignore;
 				}
-			)
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.texture)))),
+				\textures -> {
+					hostCall("resetTextures", [i2s(id)]) |> ignore;
+					mapi(
+						textures,
+						\i, texture -> {
+							hostCall("loadNewTexture", [i2s(id), texture])
+						}
+					)|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.parameters)))),
+				\parameters -> {
+					textureParameters = mapConcat(
+						parameters,
+						\parameter -> concatA([
+							RMTextureTilingParameter2FloatArray(parameter.scale), [0., 0.], //allignment bits
+							RMTextureTilingParameter2FloatArray(parameter.translate), [0., 0.],
+							RMTextureTilingParameter2FloatArray(parameter.rotate), [0., 0.],
+							RMTextureTilingParameter2FloatArray(parameter.step), [0., 0.],
+						])
+					);
+					hostCall("loadNewTextureParameters", [flow(i2s(id)), flow(textureParameters)])|> ignore;
+				}
+			),
+			\ -> addMessageEventListener(\message, origin -> {
+				parsedMessage = parseJson(message);
+				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
+					next(webglContextLoadedB, true);
+			}),
 		],
 		displayRaymarchingCanvas(
 			id,
+			webglContextLoadedB,
 			blueprint("#include material/extra/raymarching/raymarching.js", [
 				"cameraPosition", cameraPositionStr,
 				"cameraLookAt", cameraLookAtStr,
-				"distanceFunction", jsScene
+				"distanceFunction", jsScene,
 			]),
 			"#include material/extra/raymarching/raymarching.vert",
-			blueprint("#include material/extra/raymarching/raymarching.frag", ["distanceFunction", glsl, "light", lightGlsl, "materialFunction1", material1, "materialFunction2", material2])
+			blueprint("#include material/extra/raymarching/raymarching.frag", [
+				"distanceFunction", glsl,
+				"simpleDistance", glslSimple,
+				"light", lightGlsl,
+				"baseMaterial", baseMaterial
+			])
 		)
 	)
 }
 
 sharedScriptInserted : ref Maybe<native> = ref None();
-displayRaymarchingCanvas(id : int, scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
+displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
 	whB = make(WidthHeight(0.0, 0.0));
 	MInspect([IAvailable(whB)], 
 		MHTMLStage(whB, \stage -> {
@@ -132,7 +154,7 @@ displayRaymarchingCanvas(id : int, scriptContent : string, shaderVertex : string
 			setAttribute(scriptGLM, "onload", "rayMain(" + "\"" + i2s(id) + "\"" + ")", true);
 			setAttribute(canvas, "id", "rayCanvas" + i2s(id), true);
 			setCanvasSize(fgetValue(whB));
-			unsSize = makeSubscribe2(whB, \wh -> {
+			unsSize = makeSubscribeTrigger(webglContextLoadedB, whB, \wh -> {
 				setCanvasSize(wh);
 				hostCall("resizeCanvas", [id])|>ignore;
 			})();
@@ -169,5 +191,50 @@ displayRaymarchingCanvas(id : int, scriptContent : string, shaderVertex : string
 				removeElementChild(stage, sharedScript);
 			}
 		})
+	)
+}
+
+extractTexturesFromRMScene(obj : RMScene) -> [RMTexture] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
+			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
+			RMColor(col): [];
+		};
+		RMPrimitive(): [];
+		RMSTranslate(object, d): extractTexturesFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractTexturesFromRMScene(object1), extractTexturesFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractTexturesFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractTexturesFromRMScene);
+		RMMaterial(object, color, materialProperties): switch(color) {
+			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
+			RMColor(col): [];
+		};
+		RMEmpty(): [];
+	}
+}
+
+makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<string>) -> Material {
+	isDisplayed = make(true);
+	pngFn = make(None());
+	MConstruct(
+		[
+			makeSubscribe(pngFn, \pfn -> {
+				maybeApply(
+					pfn,
+					\fn -> fn(\v -> {
+						timer(100,\ -> next(isDisplayed, false));
+						next(texture, v);
+					})
+				)
+			})
+		],
+		MExtractPNG(
+			MIf(
+				isDisplayed,
+				material,
+				MEmpty()
+			),
+			\fn -> next(pngFn, fn)
+		)
 	)
 }

@@ -106,11 +106,20 @@ export {
 		separator : string
 	) -> Material;
 
+	MAutoCompleteMultiSelectionBase(
+		items : [string],
+		selected : DynamicBehaviour<[int]>,
+		separators : [string],
+		text : DynamicBehaviour<string>,
+		style : [MAutoCompleteStyle],
+		state : [MTextInputState]
+	) -> Material;
+
 	MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material;
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton, MBrowseDialogStyles;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -122,6 +131,8 @@ export {
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
 		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
 		MHideBrowseButton(); // Browse button is shown by default in autocomplete mode
+		MBrowseDialogStyles(style : [MBrowseDialogStyle]);
+			MBrowseDialogStyle ::= MDialogStyle, MDynamicListStyle;
 
 	MCollapsingBox(
 		content : Material,
@@ -872,11 +883,25 @@ MDropDownOrAutoComplete(
 
 		autoCompleteStyle0 =
 			extractStruct(style, MAutoCompleteStyles([])).style
+			|> (\st -> arrayPush(st, MSuggestionsDynamicListMode()))
 			|> (\st -> eitherMap(labelM,
 				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
 				st
 			))
 			|> (\st -> if (contains(style, MHideBrowseButton())) st else {
+				browseDialogStyle = extractStruct(style, MBrowseDialogStyles([MListWidth(-1., 700.)])).style;
+				dialogStyle = filtermap(browseDialogStyle, \bdst ->
+					switch (bdst) {
+						MDialogStyle() : {a : Maybe<MDialogStyle> = Some(bdst); a};
+						default : None()
+					}
+				);
+				dynamicListStyle = filtermap(browseDialogStyle, \bdst ->
+					switch (bdst) {
+						MDynamicListStyle() : {a : Maybe<MDynamicListStyle> = Some(bdst); a};
+						default : None()
+					}
+				);
 				onClick = \ -> {
 					dialogClose = make(false);
 
@@ -929,7 +954,7 @@ MDropDownOrAutoComplete(
 
 					list = MDynamicList(
 						fmap(filteredItems, \it -> MSingleLine(it.first, [MOnClick(onItemClick(it))])),
-						[],
+						dynamicListStyle,
 						[MScrollCropByContent(), MListSelection(const(true), isSome(multiSelection), true, selectedItems)]
 					)
 					|> (\m -> MConstruct([
@@ -949,15 +974,16 @@ MDropDownOrAutoComplete(
 						})
 					], m));
 
-					dialogContent = MLines2A(filterInput, list);
-					
-					ShowMDialog(manager, dialogClose, [
+					listWidth = make(0.);
+					dialogContent = MLines2A(MAvailableWidth(filterInput, listWidth), MAttachWidth(list, listWidth));
+
+					ShowMDialog(manager, dialogClose, concat(dialogStyle, [
 						MDialogUseFrame(),
 						MDialogClickOutToClose(),
 						MDialogActions([
 							MTextButton(_("CLOSE"), \ -> next(dialogClose, true), [], []),
 						])
-					], dialogContent)
+					]), dialogContent)
 				};
 				concat(st, [MRightCustomButton(
 					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse content")))])
@@ -1069,7 +1095,7 @@ MAutoCompleteMultiSelectionBase(
 	style : [MAutoCompleteStyle],
 	state : [MTextInputState]) -> Material {
 
-	focused = make(false);
+	focused = extractStruct(state, MFocused(make(false))).focused;
 	currentMatches = make([]);
 
 	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + elementAt(separators, 0, ", ")));
@@ -1234,7 +1260,8 @@ MFlippingCard(
 	duration = extractStruct(state, MDuration(const(0.4))).duration;
 	percent = extractStruct(state, FAnimationPercent(make(0.0))).percent;
 	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
-	isHovered = isSameStructType(triggerType, MTriggerHover());
+	isHoverTrigger = isSameStructType(triggerType, MTriggerHover());
+	isBackSide = make(false);
 	flipped = make(false);
 
 	keyframes = [
@@ -1247,11 +1274,18 @@ MFlippingCard(
 		FAnimationKeyframe([FScaleValue(Factor(1., 1.))]),
 	];
 
-	MComponent([], \foc -> {
-		trigger = if (isHovered) fstall(foc.hover, 0) else flipped;
+	MComponent([
+		MHighlightOnFocus(const(true)),
+		MButtonTitle(fselectLift(isBackSide, \isBack -> "Flipping card (" + (if (isBack) "back" else "front") + " side)")),
+		MOnClick(\ -> {
+			reverseBehaviour(flipped);
+			maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
+		})
+	], \foc -> {
+		trigger = if (isHoverTrigger) fstall(foc.hover, 0) else flipped;
 		MDynamicCard(
 			fif(
-				fequal(trigger, fOr(feq(percent, 0.), fgreater(percent, const(0.5)))),
+				isBackSide,
 				const(back),
 				const(front)
 			),
@@ -1259,15 +1293,9 @@ MFlippingCard(
 			extractMButtonState(state)
 			|> (\st ->
 				if (cpp) replaceStruct(st, MElevation(zero))
-				else st
+				else replaceStruct(st, extractStruct(st, MElevation(fif(fOr(foc.hover, foc.focused), const(6.), const(2.)))))
 			)
-			|> (\st ->
-				if (isHovered) st
-				else replaceStruct(st, MOnClick(\ -> {
-					reverseBehaviour(flipped);
-					maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
-				}))
-			)
+			|> (\st -> removeAllStructs(st, MOnClick(nop)))
 		)
 		|> (\m -> MAnimation(m, fif(trigger, const(keyframes), const([])), [FAnimationDuration(duration), FAnimationPercent(percent), FAnimationOnFinish(\ -> nextDistinct(percent, 0.0))]))
 		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
@@ -1276,6 +1304,7 @@ MFlippingCard(
 		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
 		|> (\m -> MAnimation(m, fif(fselectWithLast(trigger, FLift2(\old, new -> (old == new) || new)), const([]), const(keyframes)), [FAnimationDuration(duration), FAnimationPercent(percent), FAnimationOnFinish(\ -> nextDistinct(percent, 0.0))]))
 		|> (\m -> MOrigin(const(Factor(-0.5, -0.5)), m))
+		|> (\m -> MConstruct([\ -> fconnect(fequal(trigger, fOr(feq(percent, 0.), fgreater(percent, const(0.5)))), isBackSide)], m))
 	})
 }
 

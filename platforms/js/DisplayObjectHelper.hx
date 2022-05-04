@@ -19,6 +19,8 @@ class DisplayObjectHelper {
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
 	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
+	public static var CheckUniqueClipID : Bool = Util.getParameter("check_unique_clip_id") == "1";
+	public static var UniqueClipIds : Array<String> = [];
 
 	private static var InvalidateStage : Bool = true;
 
@@ -780,7 +782,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function isHTMLStageContainer(clip : DisplayObject) : Bool {
-		return untyped clip.isHTMLStageContainer;
+		return untyped clip == null ? false : clip.isHTMLStageContainer;
 	}
 
 	public static inline function isHTMLRenderer(clip : DisplayObject) : Bool {
@@ -1033,7 +1035,17 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null && nativeWidget.getAttribute("id") == null) {
-			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
+			var newId = untyped __js__("'_' + Math.random().toString(36).substr(2, 9)");
+			if (CheckUniqueClipID) {
+				if (untyped __js__("DisplayObjectHelper.UniqueClipIds.includes(newId)")) {
+					updateClipID(clip);
+				} else {
+					nativeWidget.setAttribute('id', newId);
+					UniqueClipIds.push(newId);
+				}
+			} else {
+				nativeWidget.setAttribute('id', newId);
+			}
 		}
 	}
 
@@ -1352,7 +1364,7 @@ class DisplayObjectHelper {
 			if (svgs.length > 0) {
 				var svg = svgs[0];
 				var elementId = untyped svg.parentNode.getAttribute('id');
-				var clipFilter : Element = Browser.document.getElementById(elementId + "filter");
+				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
@@ -2007,7 +2019,18 @@ class DisplayObjectHelper {
 
 			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
 
-			var nextWidget = skipOrderCheck ? null : findNextNativeWidget(child, clip);
+			var nextWidget = null;
+			if (!skipOrderCheck) {
+				var nextWidgetId = untyped child.nextWidgetId;
+				if (nextWidgetId != null && nextWidgetId != "") {
+					nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
+				}
+
+				if (nextWidget == null) {
+					nextWidget = findNextNativeWidget(child, clip);
+				}
+			}
+
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");

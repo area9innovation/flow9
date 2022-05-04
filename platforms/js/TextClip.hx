@@ -588,7 +588,9 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.marginTop = '0px';
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
-				nativeWidget.style.marginTop = '${-getTextMargin()}px';
+				if (this.parent != null) {
+					nativeWidget.style.marginTop = '${-getTextMargin()}px';
+				}
 			});
 		}
 	}
@@ -1557,6 +1559,9 @@ class TextClip extends NativeWidgetClip {
 		// Chrome doesn't support this method for 'number' inputs
 		try {
 			nativeWidget.setSelectionRange(start, end);
+			if (start == nativeWidget.value.length && end == nativeWidget.value.length) {
+				nativeWidget.scrollLeft = nativeWidget.scrollWidth;
+			}
 			preventMouseUpEvent = true;
 		} catch (e : Dynamic) {
 			return;

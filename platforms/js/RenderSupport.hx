@@ -2796,6 +2796,10 @@ class RenderSupport {
 		clip.addVideoSource(src, type);
 	}
 
+	public static function setVideoExternalSubtitle(clip : VideoClip, src : String, kind : String) : Void -> Void {
+		return clip.setVideoExternalSubtitle(src, kind);
+	}
+
 	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "userstylechanged" || event == "beforeprint" || event == "afterprint") {
 			on(event, fn);
