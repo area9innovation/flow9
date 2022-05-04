@@ -3,6 +3,7 @@ import tools/gringo/utils;
 import tools/gringo/gringo_pretty;
 import ds/tree;
 import algorithms;
+import string_utils;
 
 export {
 	// Determine the types of each rule, when they use the DSL protocol
@@ -23,8 +24,11 @@ export {
 		stack : [GType]
 	);
 
-	// Do a type evaluation
+	// Do a type evaluation and discover the types of the productions
+	// TODO: Simplify trivial types that do not have constructors or unions inside, and inline them
 	gringoType(d : GTerm) -> GTypeEnv;
+
+	prettyGType(t : GType) -> string;
 }
 
 gringoType(d : GTerm) -> GTypeEnv {
@@ -174,8 +178,12 @@ gringoTypeEval(env : GTypeEnv, d : GTerm) -> GTypeEnv {
 				if (length(result) > 1) {
 					println("ERROR: " + id + " produces more than one result");
 				}
-				// Then update the type, and push the result on the stack
-				GTypeEnv(type with env = setTree(nenv.env, id, result), stack = concat(env.stack, type.stack));
+				if (result == []) {
+					GTypeEnv(type with env = setTree(nenv.env, id, result), stack = env.stack);
+				} else {
+					// Then update the type, and push the result on the stack
+					GTypeEnv(type with env = setTree(nenv.env, id, result), stack = arrayPush(env.stack, GTypeResult(id)));
+				}
 			}
 		}
 		GEpsilon(): env;
@@ -183,20 +191,20 @@ gringoTypeEval(env : GTypeEnv, d : GTerm) -> GTypeEnv {
 }
 
 handleMultiGType(env : GTypeEnv, term : GTerm) -> GTypeEnv {
-	prod = gringoTypeEval(GTypeEnv(env with stack = [GTypeNil()]), term);
+	prod = gringoTypeEval(env, term);
+	// Revert the stack
 	nenv = GTypeEnv(prod with stack = env.stack);
-	if (prod.stack == [GTypeNil()]) {
+	if (prod.stack == env.stack) {
 		// Takes nothing, and produces nothing
 		nenv;
 	} else {
 		// OK, does it transform or produce?
-		if (prod.stack[0] == GTypeNil() && length(prod.stack) == 2) {
+		if (length(prod.stack) - length(env.stack) == 1) {
 			// It produces one element
-			product = prod.stack[1];
-			GTypeEnv(prod with stack = arrayPush(env.stack, GTypeStar(product)));
-		} else if (length(prod.stack) == 1) {
+			prod;
+		} else if (length(prod.stack) == length(env.stack)) {
 			// It transforms
-			product = prod.stack[0];
+			product = lastElement(prod.stack, GTypeResult("EMPTY STACK"));
 			// println("  The star transforms to " + toString(product));
 			replaceLastGType(nenv, product);
 		} else {
@@ -284,5 +292,19 @@ popGTypeStack(e : GTypeEnv) -> Pair<GTypeEnv, GType> {
 	} else {
 		nenv = GTypeEnv(e with stack = subrange(e.stack, 0, length(e.stack) - 1));
 		Pair(nenv, lastElement(e.stack, GTypeResult("EMPTY STACK")));
+	}
+}
+
+
+prettyGType(t : GType) -> string {
+	switch (t) {
+		GTypeResult(rule): capitalize(rule);
+		GTypeNil(): "nil";
+		GTypeInt(): "int"
+		GTypeDouble(): "double";
+		GTypeString(): "string";
+		GTypeAction(name, args): capitalize(name) + "(" + superglue(args, prettyGType, ", ") + ")";
+		GTypeStar(type): "[" + prettyGType(type) + "]";
+		GTypeUnion(types): superglue(types, prettyGType, " | ");
 	}
 }
