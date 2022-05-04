@@ -115,7 +115,7 @@ export {
 		TScrollBarTop();
 		TScrollBarStart();
 
-		TScrollCropByContent();
+		TScrollCropByContent(xEnabled : Transform<bool>, yEnabled : Transform<bool>);
 		TScrollOutOfBounds(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>);
 
 		TScrollWidthHeight(content : DynamicBehaviour<WidthHeight>, box : DynamicBehaviour<WidthHeight>);
@@ -152,7 +152,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	// Current scroll offset
 	scrollPosition = make(zeroPoint);
 	scrollPercent = tryExtractStruct(style, TScrollPercent(make(zeroPoint)));
-	cropByContent = contains(style, TScrollCropByContent());
+	cropByContent = tryExtractStruct(style, TScrollCropByContent(const(false), const(false)));
 	inspectVisible = tryExtractStruct(style, makeTScrollInspectVisible());
 	setPosition = tryExtractStruct(style, TScrollSetPosition(const(zeroPoint)));
 	// Do we restrict dragging "out" of bounds? Setting to false will allow swiping content over of bound.
@@ -226,10 +226,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 
 	TransformTAcc2(\t2a -> {
 		boxWH =
-			if (cropByContent)
-				fwhmin(boxWHCutted, contentWH)
-			else
-				boxWHCutted;
+			eitherMap(cropByContent, \crop ->
+				fselect4(boxWHCutted, contentWH, crop.xEnabled, crop.yEnabled, \b, c, xEn, yEn ->
+					WidthHeight(
+						if (xEn) min(b.width, c.width) else b.width,
+						if (yEn) min(b.height, c.height) else b.height
+					)
+				),
+				boxWHCutted
+			);
 
 		rend = make(false);
 		printMode = make(false);
@@ -281,7 +286,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					else TSized(boxWHCutted)
 				));
 
-			if (cropByContent)
+			if (isSome(cropByContent))
 				TransformTAcc2(\t2a2 -> {
 					cAcc2 := cont |> t2a2;
 					^cAcc2;
@@ -592,12 +597,16 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 			])
 			|> t2a;
 
-		if (cropByContent)
+		eitherMap(cropByContent, \crop ->
 			TAcc(
 				c.form,
-				minMetrics(b.metrics, ^cAcc2.metrics),
-				fif(xEnabled, fmin(b.minWidth, ^cAcc2.minWidth), ^cAcc.minWidth),
-				fif(yEnabled, fmin(b.minHeight, ^cAcc2.minHeight), ^cAcc.minHeight),
+				TFormMetrics(
+					fif(crop.xEnabled, fmin(b.metrics.width, ^cAcc2.metrics.width), b.metrics.width),
+					fif(crop.yEnabled, fmin(b.metrics.height, ^cAcc2.metrics.height), b.metrics.height),
+					fif(crop.yEnabled, fmin(b.metrics.baseline, ^cAcc2.metrics.baseline), b.metrics.baseline),
+				),
+				fif(xEnabled, fif(crop.xEnabled, fmin(b.minWidth, ^cAcc2.minWidth), b.minWidth), ^cAcc.minWidth),
+				fif(yEnabled, fif(crop.yEnabled, fmin(b.minHeight, ^cAcc2.minHeight), b.minHeight), ^cAcc.minHeight),
 				b.maxWidth,
 				b.maxHeight,
 				fif(xEnabled, b.xFillers, ^cAcc.xFillers),
@@ -606,8 +615,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				false,
 				false,
 				concat(b.disposers, c.disposers)
-			)
-		else
+			),
 			TAcc(
 				c.form,
 				b.metrics,
@@ -622,6 +630,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				b.yConstant,
 				concat(b.disposers, c.disposers)
 			)
+		)
 	})
 }
 
