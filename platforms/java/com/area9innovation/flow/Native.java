@@ -1511,8 +1511,8 @@ public class Native extends NativeHost {
 				}
 			}
 			public void close() {
-				thread.interrupt();
 				try {
+					thread.join(250);
 					is.close();
 				} catch (Exception ex) {
 					errReader.contents += exceptionStackTrace(ex) + "\n";
@@ -1696,8 +1696,8 @@ public class Native extends NativeHost {
 				}
 			}
 			public void close() {
-				thread.interrupt();
 				try {
+					thread.join(250);
 					is.close();
 				} catch (Exception ex) {
 					onErr.invoke("Problem closing stream " + name + ":\n" + exceptionStackTrace(ex));
