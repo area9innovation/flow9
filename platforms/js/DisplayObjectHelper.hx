@@ -2037,10 +2037,19 @@ class DisplayObjectHelper {
 					cont.className = 'nativeWidget';
 					untyped clip.nativeWidget.appendChild(cont);
 				}
-
-				untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				try {
+					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				} catch (e : Dynamic) {
+					nextWidget = findNextNativeWidget(child, clip);
+					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				}
 			} else {
-				untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				try {
+					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				} catch (e : Dynamic) {
+					nextWidget = findNextNativeWidget(child, clip);
+					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				}
 			}
 
 			applyScrollFnChildren(child);
