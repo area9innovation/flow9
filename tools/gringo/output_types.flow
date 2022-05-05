@@ -1,5 +1,6 @@
 import tools/gringo/type_eval;
 import ds/arrayutils;
+import net/url_parameter;
 
 export {
 	produceGringoTypes(file : string, grammar : GTerm) -> void;
@@ -7,6 +8,7 @@ export {
 
 produceGringoTypes(file : string, grammar : GTerm) -> void {
 	typeenv = gringoType(grammar);
+	// OK, map of what GTypes each rule produces
 	types : Tree<string, [GType]> = typeenv.env;
 
 	if (false) {
@@ -19,7 +21,8 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 	}	
 
 	// OK, extract the unions and structs, and the type of each rule
-	typeacc = foldTree(types, GTypeAcc(makeTree(), makeTree(), makeTree(), "Prefix_", GfTypeName("ERROR")), \rule, rtypes, acc -> {
+	typeacc = foldTree(types, GTypeAcc(makeTree(), makeTree(), makeTree(), 
+		getUrlParameter("prefix"), GfTypeName("error", "ERROR")), \rule, rtypes, acc -> {
 		if (length(rtypes) == 1) {
 			acc2 = processRuleGType(acc, rule, rtypes[0]);
 			ruletype = acc2.type;
@@ -27,31 +30,45 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 		} else acc;
 	});
 
-	println("\nConverted to flow types:");
-	// And report on the result
-	traverseInOrder(typeacc.named, \name, undef -> {
-		println(name + " : " + toString(undef));
+	// At this point, we have a translation of each rule to what type it results in
+
+	if (false) {
+		println("\nConverted to flow types:");
+		// And report on the result
+		traverseInOrder(typeacc.named, \name, undef -> {
+			println(name + " : " + toString(undef));
+		});
+
+		traverseInOrder(typeacc.unions, \un, undef -> {
+			println(toString(undef));
+		});
+
+		traverseInOrder(typeacc.structs, \un, undef -> {
+			println(toString(undef));
+		});
+	}
+
+	// Problem: There can be unions that are trivial
+	typeacc2 = foldTree(typeacc.unions, typeacc, \un, undef, acc -> {
+		stypes = sortUnique(map(undef.subtypes, \st -> {
+			simplifyUnionName(acc, st);
+		}));
+		if (stypes != sortUnique(undef.subtypes)) {
+			GTypeAcc(acc with
+				unions = setTree(acc.unions, un, GfTypeUnion(un, stypes))
+			);
+		} else acc;
 	});
 
-	traverseInOrder(typeacc.unions, \un, undef -> {
-		println(toString(undef));
+	// OK, generate the code for these guys
+	start = "// Automatically generated from Gringo grammar\nexport {\n";
+	unions = foldTree(typeacc2.unions, start, \un, undef, acc -> {
+		acc + "\t" + gfUnion2Flow(typeacc2, undef)
 	});
-
-	traverseInOrder(typeacc.structs, \un, undef -> {
-		println(toString(undef));
-	});
-
-	// OK, the unions might require some structs that we do not have
-	
-
-
-	unions = foldTree(typeacc.unions, "", \un, undef, acc -> {
-		acc + gfUnion2Flow(typeacc, undef)
-	});
-	result = foldTree(typeacc.structs, unions, \st, stdef, acc -> {
-		acc + gfStruct2Flow(typeacc, stdef)
-	});
-	println(result);
+	result = foldTree(typeacc2.structs, unions, \st, stdef, acc -> {
+		acc + "\t" + gfStruct2Flow(typeacc2, stdef)
+	}) + "}\n";
+	// println(result);
 	setFileContent(file, result);
 	{}
 }
@@ -64,11 +81,40 @@ GTypeAcc(
 	type : GfType
 );
 
+makeGfTypeName(acc : GTypeAcc, name : string) -> GfTypeName {
+	GfTypeName(name, acc.prefix + humpCase(name, true));
+}	
+
+simplifyUnionName(acc : GTypeAcc, type : GfType) -> GfType {
+	switch (type) {
+		GfTypeName(fieldName, typename): {
+			if (containsKeyTree(acc.unions, typename)) {
+				type;
+			} else if (containsKeyTree(acc.structs, typename)) {
+				type;
+			} else {
+				mresolve = lookupTree(acc.named, fieldName);
+				mresolve ?? {
+					if (mresolve != type) {
+						simplifyUnionName(acc, mresolve);
+					} else mresolve;
+				} : {
+					println("TODO: Figure out what to do with this union member");
+					type;
+				}
+			}
+		}
+		default: type;
+	}
+}
+
+// Find and extract all structs and unions, and otherwise return the corresponding type
 processRuleGType(acc : GTypeAcc, rule : string, t : GType) -> GTypeAcc {
+	mktypename = \r -> makeGfTypeName(acc, r);
 	switch (t) {
-		GTypeResult(r): GTypeAcc(acc with type = GfTypeName(r));
+		GTypeResult(r): GTypeAcc(acc with type = mktypename(r));
 		GTypeNil(): {
-			println(rule + ": Did not expect bare nil");
+			println(rule + ": Did not expect bare nil result");
 			acc;
 		}
 		GTypeBool(): GTypeAcc(acc with type = t);
@@ -76,77 +122,91 @@ processRuleGType(acc : GTypeAcc, rule : string, t : GType) -> GTypeAcc {
 		GTypeDouble(): GTypeAcc(acc with type = t);
 		GTypeString(): GTypeAcc(acc with type = t);
 		GTypeAction(name, args): {
-			sname = acc.prefix + capitalize(name);
-			struct = GfTypeStruct(sname, mapi(args, \i, arg -> {
-				tt = processRuleGType(acc, rule, arg);
-				Pair(gtype2name(arg), tt.type);
-			}));
+			// OK, we have a struct
+			tname = mktypename(name);
+			sname = tname.typename;
+
+			// Process the arguments
+			arged = fold2(args, acc, [], \acc2, argacc, arg -> {
+				tt = processRuleGType(acc2, rule, arg);
+				sarg = Pair(gftype2fieldname(tt.type), tt.type);
+				Pair(tt, arrayPush(argacc, sarg));
+			});
+			struct = GfTypeStruct(sname, arged.second);
+			nacc = arged.first;
 			GTypeAcc(
-				acc with structs = setTree(acc.structs, sname, struct),
-					type = GfTypeName(sname)
+				nacc with structs = setTree(nacc.structs, sname, struct),
+					type = tname
 			);
 		}
 		GTypeStar(type): {
 			tt = processRuleGType(acc, rule, type);
-			GTypeAcc(acc with type = GfTypeArray(tt.type));
+			GTypeAcc(tt with type = GfTypeArray(tt.type));
 		}
 		GTypeUnion(types): {
-			sname = acc.prefix + capitalize(rule);
-			ourType = GfTypeName(sname);
-
+			tname = mktypename(rule);
+			sname = tname.typename;
 			stypes = fold2(types, acc, [], \acc2, atypes, tt -> {
 				acc3 = processRuleGType(acc2, rule, tt);
-				ut = acc3.type;
-				switch (ut) {
-					GfTypeName(name): {
-						if (name == sname) {
-							Pair(acc3, atypes);
-						} else Pair(acc3, arrayPush(atypes, name));
-					}
-					default: {
-						println(rule + ": Only supports unions of names, not " + toString(ut));
-						Pair(acc3, atypes);
-					}
+				ut : GfType = acc3.type;
+				if (ut == tname) Pair(acc3, atypes)
+				else {
+					Pair(acc3, arrayPush(atypes, ut));
 				}
 			});
-			union = GfTypeUnion(sname, stypes.second);
-			GTypeAcc(
-				stypes.first
-				with unions = setTree(stypes.first.unions, sname, union),
-				type = ourType
-			);
+			subtypes = uniq(stypes.second);
+			if (length(subtypes) == 1) {
+				// An alias is not required to be named
+				GTypeAcc(acc with type = subtypes[0]);
+			} else {
+				union = GfTypeUnion(sname, subtypes);
+				GTypeAcc(
+					stypes.first
+					with unions = setTree(stypes.first.unions, sname, union),
+					type = tname
+				);
+			}
 		}
 	}
 }
 
-gtype2name(g : GType) -> string {
+gftype2fieldname(g : GfType) -> string {
 	switch (g) {
-		GTypeResult(rule): rule;
-		GTypeNil(): "nil";
 		GTypeBool(): "b";
 		GTypeInt(): "i";
 		GTypeDouble(): "d";
 		GTypeString(): "s";
-		GTypeAction(name, args): name;
-		GTypeStar(type): gtype2name(type) + "s";
-		GTypeUnion(types): "u";
+		GfTypeArray(t): gftype2fieldname(t) + "s";
+		GfTypeName(f, name): f;
 	}
 }
 
 // Basic types that struct members can be
 GfType ::= GTypeBool, GTypeInt, GTypeDouble, GTypeString, GfTypeArray, GfTypeName;
 	GfTypeArray(t : GfType);
-	GfTypeName(name : string);
+	GfTypeName(fieldName : string, typename : string);
 
 
-GfTypeUnion(name : string, subtypes : [string]);
+GfTypeUnion(name : string, subtypes : [GfType]);
 GfTypeStruct(name : string, args : [Pair<string, GfType>]);
 
 gfUnion2Flow(acc : GTypeAcc, f : GfTypeUnion) -> string {
-	f.name + " ::= " + superglue(f.subtypes, \st -> {
-		typename = gfType2Flow(acc, GfTypeName(st));
-		if (typename == f.name) "" else typename
-	}, ", ") + ";\n";
+	if (length(f.subtypes) == 1) {
+		// Alright, make it a struct instead
+		gfStruct2Flow(acc, GfTypeStruct(f.name, [Pair("v", f.subtypes[0])]))
+	} else {
+		typenames = filtermap(f.subtypes, \type : GfType -> {
+			typename = gfType2Flow(acc, type);
+			prefix = strLeft(typename, strlen(acc.prefix));
+			if (prefix != acc.prefix) {
+				println("Union " + f.name + " requires named type, not " + toString(type));
+			}
+			if (typename == f.name) None() else Some(typename)
+		});
+
+		f.name + " ::= " + strGlue(uniq(typenames), ", ") + ";\n";
+
+	}
 }
 
 gfStruct2Flow(acc : GTypeAcc, s : GfTypeStruct) -> string {
@@ -154,6 +214,7 @@ gfStruct2Flow(acc : GTypeAcc, s : GfTypeStruct) -> string {
 		incTreeValue(acc2, arg.first);
 	});
 
+	// Find out what the fields should be baned
 	rename = fold2(s.args, [], makeTree(), \acc2, counts, arg -> {
 		count = lookupTreeDef(counts, arg.first, 0);
 		ncount = setTree(counts, arg.first, count + 1);
@@ -162,7 +223,12 @@ gfStruct2Flow(acc : GTypeAcc, s : GfTypeStruct) -> string {
 		} else {
 			arg.first + i2s(count + 1);
 		};
-		Pair(arrayPush(acc2, name), ncount)
+		rname = if (name == "bool") "b"
+			else if (name == "int") "i"
+			else if (name == "double") "d"
+			else if (name == "string") "s"
+			else name;
+		Pair(arrayPush(acc2, rname), ncount)
 	}).first;
 
 	s.name + "(" + supergluei(s.args, \i, arg -> {
@@ -177,11 +243,12 @@ gfType2Flow(acc : GTypeAcc, t : GfType) -> string {
 		GTypeDouble(): "double";
 		GTypeString(): "string";
 		GfTypeArray(tt): "[" + gfType2Flow(acc, tt) + "]";
-		GfTypeName(name): {
+		GfTypeName(f, name): {
 			if (containsKeyTree(acc.unions, name)) name
 			else if (containsKeyTree(acc.structs, name)) name
 			else {
-				named = lookupTree(acc.named, name);
+				// OK, we simplify this
+				named = lookupTree(acc.named, f);
 				switch (named) {
 					None(): {
 						println("Unknown result: " + name);
@@ -195,4 +262,3 @@ gfType2Flow(acc : GTypeAcc, t : GfType) -> string {
 		}
 	}
 }
-

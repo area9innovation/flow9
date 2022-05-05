@@ -218,6 +218,30 @@ The `list` and `cons` constructs are very helpful to construct arrays of element
 Most often used in combination with `+` and `*` constructs. See the Array construct 
 in the tutorial to see how this pattern works in the `exps` production.
 
+## Using the DSL parser and associated semantic actions
+
+An alternative is to use the action provider working on the DslAst type, which comes
+with a helper function to parse according to a given grammar, and produce a `DslAst`
+structure as the result:
+
+	parseProgram(file : string, grammar : DslGrammar, program : string) -> DslAst;
+
+See `lib\tools\dsl\dsl_parse` and the readme in that folder for more info.
+
+### Producing types from the grammar
+
+If you use the DSL semantic actions, then you can also get a set of appropriate 
+flow types produced by Gringo:
+
+	gringo myfile.gringo types=1 prefix=My
+
+this will produce a `myfile_types.flow` file with flow types prefixed with `My`
+that match the grammar.
+
+This works by doing a type inference evaluation of the grammar, and use that to 
+determine what type each rule results in. These are then converted into the appropriate
+unions and structs as flow types.
+
 ## Using a compiled grammar
 
 Put your grammar in a `.gringo` file, and compile it with something like:
