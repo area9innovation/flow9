@@ -39,6 +39,11 @@ struct Material {
 	float reflectiveness;
 };
 
+uniform MaterialsBlock {
+	vec3 color[30];
+	float reflectiveness[30];
+};
+
 struct ObjectInfo {
 	float d;
 	int id;

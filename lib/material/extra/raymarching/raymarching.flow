@@ -31,7 +31,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 		d2s(fgetValue(cameraB).lookAt.z)
 	]);
 
-	texturesB = make(extractTexturesFromRMScene(fgetValue(sceneB)));
+	materialsB = make(extractMaterialsFromRMScene(fgetValue(sceneB)));
 
 	webglContextLoadedB = make(false);
 
@@ -41,7 +41,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
 					rmiScene = RMScene2RMIExp(s, false);
-					next(texturesB, extractTexturesFromRMScene(s));
+					next(materialsB, extractMaterialsFromRMScene(s));
 					hostCall("recompileShader", [
 						i2s(id),
 						blueprint(
@@ -82,7 +82,10 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			),
 			makeSubscribeTrigger(
 				webglContextLoadedB,
-				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.texture)))),
+				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
+					RMTexture(texture, parameters): Some(texture);
+					RMColor(col): None();
+				})))),
 				\textures -> {
 					hostCall("resetTextures", [i2s(id)]) |> ignore;
 					mapi(
@@ -95,7 +98,10 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			),
 			makeSubscribeTrigger(
 				webglContextLoadedB,
-				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.parameters)))),
+				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
+					RMTexture(texture, parameters): Some(parameters);
+					RMColor(col): None();
+				})))),
 				\parameters -> {
 					textureParameters = mapConcat(
 						parameters,
@@ -107,6 +113,39 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						])
 					);
 					hostCall("loadNewTextureParameters", [flow(i2s(id)), flow(textureParameters)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
+					RMTexture(texture, parameters): Some(make(0));
+					RMColor(col): Some(col);
+				})))),
+				\col -> {
+					parameters = mapConcat(
+						col,
+						\c -> {
+							h = hexColor2RMI(c);
+							[h.x, h.y, h.z, 0.]
+						}
+					);
+					hostCall("updateMaterialsColorParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(materialsB, FLift(\materials -> fmerge(map(materials, \material -> extractStruct(
+					material.materialProperties,
+					RMReflect(make(0.0))
+				).mixCoef)))),
+				\reflectivness -> {
+					parameters = mapConcat(
+						reflectivness,
+						\r -> {
+							[r, 0., 0., 0.]
+						}
+					);
+					hostCall("updateMaterialsReflectivnessParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
 				}
 			),
 			\ -> addMessageEventListener(\message, origin -> {
@@ -194,21 +233,15 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 	)
 }
 
-extractTexturesFromRMScene(obj : RMScene) -> [RMTexture] {
+extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
-			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
-			RMColor(col): [];
-		};
+		RMCompositeObject(object, name, color, materialProperties, position): [RMMaterial(object, color, materialProperties)];
 		RMPrimitive(): [];
-		RMSTranslate(object, d): extractTexturesFromRMScene(object);
-		RMUnion2(object1, object2): concat(extractTexturesFromRMScene(object1), extractTexturesFromRMScene(object2));
-		RMUnion(objects): mapConcat(objects, extractTexturesFromRMScene);
-		RMSmoothUnion(objects, k): mapConcat(objects, extractTexturesFromRMScene);
-		RMMaterial(object, color, materialProperties): switch(color) {
-			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
-			RMColor(col): [];
-		};
+		RMSTranslate(object, d): extractMaterialsFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractMaterialsFromRMScene);
+		RMMaterial(object, color, materialProperties): [obj];
 		RMEmpty(): [];
 	}
 }
