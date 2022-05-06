@@ -55,24 +55,38 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 	// Simplify the unions
 	typeacc2 = foldTree(typeacc.unions, typeacc, \un, undef, acc -> {
 		stypes = sortUnique(map(undef.subtypes, \st -> {
-			simplifyUnionName(acc, st);
+			simplifyGfType(acc, st);
 		}));
-		if (stypes != sortUnique(undef.subtypes)) {
+		if (length(stypes) == 1) {
+			st = GfTypeStruct(un, [Pair("v", stypes[0])]);
+			GTypeAcc(acc with
+				unions = removeFromTree(acc.unions, un),
+				structs = setTree(acc.structs, un, st)
+			);
+		} else if (stypes != sortUnique(undef.subtypes)) {
 			GTypeAcc(acc with
 				unions = setTree(acc.unions, un, GfTypeUnion(un, stypes))
 			);
 		} else acc;
 	});
 
-	// TODO: If some union is just a struct, we should map that out here
+	// Simplify the structs
+	typeacc3 = foldTree(typeacc2.structs, typeacc2, \st, stdef, acc -> {
+		stargs = map(stdef.args, \sa -> {
+			Pair(sa.first, simplifyGfType(acc, sa.second));
+		});
+		GTypeAcc(acc with
+			structs = setTree(acc.structs, st, GfTypeStruct(st, stargs))
+		);
+	});
 
 	// Should we construct an über union to use for parsing?
 	masterType = getUrlParameter("master-type");
 	monster = if (masterType != "") {
 		// Produce the type converter file
-		makeGfTypeConverter(changeFileExt(strReplace(file, "\\", "/"), ""), masterType, typeacc.prefix, typeacc2.unions, typeacc2.structs);
+		makeGfTypeConverter(changeFileExt(strReplace(file, "\\", "/"), ""), masterType, typeacc3.prefix, typeacc3.unions, typeacc3.structs);
 
-		names = concat(getTreeKeys(typeacc2.unions), getTreeKeys(typeacc2.structs));
+		names = concat(getTreeKeys(typeacc3.unions), getTreeKeys(typeacc3.structs));
 		"\t// This is a monster type used when parsing\n"
 		"\t" + masterType + " ::= " 
 			// We need a special list for parsing as well as basic types
@@ -91,11 +105,11 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 		+ (if (masterType != "") "import ds/list;\n" else "") 
 		+  "\nexport {\n" + monster;
 
-	unions = foldTree(typeacc2.unions, start, \un, undef, acc -> {
-		acc + "\t" + gfUnion2Flow(typeacc2, undef)
+	unions = foldTree(typeacc3.unions, start, \un, undef, acc -> {
+		acc + "\t" + gfUnion2Flow(typeacc3, undef)
 	});
-	result = foldTree(typeacc2.structs, unions, \st, stdef, acc -> {
-		acc + "\t" + gfStruct2Flow(typeacc2, stdef)
+	result = foldTree(typeacc3.structs, unions, \st, stdef, acc -> {
+		acc + "\t" + gfStruct2Flow(typeacc3, stdef)
 	}) + "}\n";
 
 	// println(result);
@@ -116,7 +130,7 @@ makeGfTypeName(acc : GTypeAcc, name : string) -> GfTypeName {
 	GfTypeName(name, acc.prefix + humpCase(name, true));
 }	
 
-simplifyUnionName(acc : GTypeAcc, type : GfType) -> GfType {
+simplifyGfType(acc : GTypeAcc, type : GfType) -> GfType {
 	switch (type) {
 		GfTypeName(fieldName, typename): {
 			if (containsKeyTree(acc.unions, typename)) {
@@ -127,13 +141,16 @@ simplifyUnionName(acc : GTypeAcc, type : GfType) -> GfType {
 				mresolve = lookupTree(acc.named, fieldName);
 				mresolve ?? {
 					if (mresolve != type) {
-						simplifyUnionName(acc, mresolve);
+						simplifyGfType(acc, mresolve);
 					} else mresolve;
 				} : {
 					println("TODO: Figure out what to do with this union member");
 					type;
 				}
 			}
+		}
+		GfTypeArray(t): {
+			GfTypeArray(simplifyGfType(acc, t));
 		}
 		default: type;
 	}
@@ -213,22 +230,16 @@ gftype2fieldname(g : GfType) -> string {
 }
 
 gfUnion2Flow(acc : GTypeAcc, f : GfTypeUnion) -> string {
-	if (length(f.subtypes) == 1) {
-		// Alright, make it a struct instead
-		gfStruct2Flow(acc, GfTypeStruct(f.name, [Pair("v", f.subtypes[0])]))
-	} else {
-		typenames = filtermap(f.subtypes, \type : GfType -> {
-			typename = gfType2Flow(acc, type);
-			prefix = strLeft(typename, strlen(acc.prefix));
-			if (prefix != acc.prefix) {
-				println("Union " + f.name + " requires named type, not " + toString(type));
-			}
-			if (typename == f.name) None() else Some(typename)
-		});
+	typenames = filtermap(f.subtypes, \type : GfType -> {
+		typename = gfType2Flow(acc, type);
+		prefix = strLeft(typename, strlen(acc.prefix));
+		if (prefix != acc.prefix) {
+			println("Union " + f.name + " requires named type, not " + toString(type));
+		}
+		if (typename == f.name) None() else Some(typename)
+	});
 
-		f.name + " ::= " + strGlue(uniq(typenames), ", ") + ";\n";
-
-	}
+	f.name + " ::= " + strGlue(uniq(typenames), ", ") + ";\n";
 }
 
 gfStruct2Flow(acc : GTypeAcc, s : GfTypeStruct) -> string {

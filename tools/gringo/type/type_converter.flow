@@ -28,13 +28,14 @@ makeGfTypeConverter(
 		import tools/dsl/dsl_util;
 
 		export {
-			%lt%2DslAst(w : %t%) -> DslAst;
+			// %lt%2DslAst(w : %t%) -> DslAst;
 			dslAst2%t%(d : DslAst) -> %t%;
 		}
 
-		%lt%2DslAst(w : %t%) -> DslAst {
+		/* %lt%2DslAst(w : %t%) -> DslAst {
 			DslBool(false);
 		}
+		*/
 
 		dslAst2%t%(d : DslAst) -> %t% {
 			switch (d) {
@@ -46,23 +47,26 @@ makeGfTypeConverter(
 				DslNode(name, args, pos): {
 					%to%
 				}
-			}			
+			}
 		}
+
+		%dsl2s%
 	>>, [
 		"typepath", typePath,
 		"t", masterType,
 		"lt", decapitalize(masterType),
-		"to", makeGfStructs2Dsl(masterType, prefix, structs),
+		"to", makeGfStructs2Dsl(masterType, prefix, masterType + "Bool(false)", structs),
+		"dsl2s", makeGf2Converters(masterType, prefix, unions, structs),
 	]);
 	setFileContent(filename, result);
 	{}
 }
 
 // Constructs a converter from DSL to masterType with the given structs inside
-makeGfStructs2Dsl(masterType : string, prefix : string, structs : Tree<string, GfTypeStruct>) -> string {
+makeGfStructs2Dsl(masterType : string, prefix : string, def : string, structs : Tree<string, GfTypeStruct>) -> string {
 	foldTree(structs, "", \st, stdef, acc -> {
 		args = supergluei(stdef.args, \i, sa -> {
-			makeGfType2Dsl(masterType, sa.second) + "(args[" + i2s(i) + "])";
+			makeGfType2Dsl(sa.second) + "(args[" + i2s(i) + "])";
 		}, ", ");
 		acc + blueprint(<< 
 			if (name == %nodename%) {
@@ -73,16 +77,184 @@ makeGfStructs2Dsl(masterType : string, prefix : string, structs : Tree<string, G
 			"nodename", toString(snakeCase(decapitalize(strRight(st, strlen(prefix))))),
 			"args", args,
 		])
-	}) + "{ " + masterType + "Bool(false) }\n";
+	}) + "{ println(\"ERROR: Could not convert \" + name); " + def + " }\n";
 }
 
-makeGfType2Dsl(type : string, t : GfType) -> string {
+makeGfType2Dsl(t : GfType) -> string {
 	switch (t) {
 		GTypeBool(): "getDslBool";
 		GTypeInt(): "getDslInt";
 		GTypeDouble(): "getDslDouble";
 		GTypeString(): "getDslString";
-		GfTypeArray(tt): "(\\t -> map(list2array(getDslList(t)), " + makeGfType2Dsl(type, tt) + "))";
+		GfTypeArray(tt): "(\\t -> map(list2array(getDslList(t)), " + makeGfType2Dsl(tt) + "))";
 		GfTypeName(fieldName, typename): "dslAst2" + typename;
+	}
+}
+
+makeGf2Converters(masterType : string, prefix : string, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>) {
+	foldTree(unions, "", \un, def : GfTypeUnion, acc -> {
+		acc + makeGfUnion2Converters(masterType, prefix, unions, structs, def)
+	})
+	+ foldTree(structs, "", \st, def : GfTypeStruct, acc -> {
+		acc + makeGfTypeName2Converters(masterType, prefix, unions, structs, GfTypeName(st, st))
+	})
+	;
+}
+
+makeGfUnion2Converters(masterType : string, prefix : string, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, union : GfTypeUnion) -> string {
+	un = union.name;
+	ustructs : [GfTypeStruct] = filtermap(union.subtypes, \st -> {
+		switch (st) {
+			GfTypeName(fieldName, typename): lookupTree(structs, typename);
+			default: None();
+		}
+	});
+	to = makeGfStructs2Dsl(un, prefix, 
+		makeDefaultGfTypeNameValue(unions, structs, GfTypeName(un, un)),
+		fold(ustructs, makeTree(), \acc2, s -> setTree(acc2, s.name, s))
+	);
+		
+	blueprint(<<
+		dslAst2%t%(d : DslAst) -> %t% {
+			node = getDslNode(d);
+			name = node.name;
+			args = node.args;
+			%to%
+		}
+	>>, [
+		"t", un,
+		"to", to
+	])
+}
+
+makeGfType2Converters(masterType : string, prefix : string, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, type : GfType) -> string {
+	switch (type) {
+		GfTypeName(__, __): makeGfTypeName2Converters(masterType, prefix, unions, structs, type);
+		default: {
+			"// TODO " + toString(type) + "\n";
+		}
+	}
+}
+
+makeGfTypeName2Converters(masterType : string, prefix : string, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, typename : GfTypeName) -> string {
+	mstruct = lookupTree(structs, typename.typename);
+	mstruct ?? {
+		if (mstruct.args == []) {
+			blueprint(<<
+				dslAst2%t%(d : DslAst) -> %t% {
+					%t%()
+				}
+			>>, [
+				"t", typename.typename,
+			])
+		} else {
+			args = supergluei(mstruct.args, \i, sa -> {
+				makeGfType2Dsl(sa.second) + "(args[" + i2s(i) + "])";
+			}, ", ");
+
+			blueprint(<<
+				dslAst2%t%(d : DslAst) -> %t% {
+					node = getDslNode(d);
+					args = node.args;
+					%t%(%args%)
+				}
+			>>, [
+				"t", typename.typename,
+				"args", args,
+			])
+
+		}
+
+	} : {
+		munion = lookupTree(unions, typename.typename);
+		"// TODO " + toString(typename) + "\n";
+	}
+}
+
+makeDefaultGfTypeValue(
+	unions : Tree<string, GfTypeUnion>,
+	structs : Tree<string, GfTypeStruct>, t : GfType) -> string {
+	switch (t) {
+		GTypeBool(): "false";
+		GTypeInt(): "0";
+		GTypeDouble(): "0.0";
+		GTypeString(): "\"\"";
+		GfTypeArray(tt): "[]";
+		GfTypeName(fieldName, typename): {
+			mstruct = lookupTree(structs, typename);
+			mstruct ?? {
+				mstruct.name + "(" + superglue(mstruct.args, \p -> {
+					makeDefaultGfTypeValue(unions, structs, p.second)
+				}, ", ") + ")"
+			} : {
+				munion = lookupTree(unions, typename);
+				switch (munion) {
+					None(): "UNKNOWN " + typename;
+					Some(u): makeDefaultGfTypeNameValue(unions, structs, t);
+				}
+			}
+		}
+	}
+}
+
+makeDefaultGfTypeStructValue(
+	unions : Tree<string, GfTypeUnion>,
+	structs : Tree<string, GfTypeStruct>, struct : GfTypeStruct) -> string {
+	struct.name + "(" + superglue(struct.args, \p -> {
+		makeDefaultGfTypeValue(unions, structs, p.second)
+	}, ", ") + ")"
+}
+
+makeDefaultGfTypeNameValue(
+	unions : Tree<string, GfTypeUnion>,
+	structs : Tree<string, GfTypeStruct>, tn : GfTypeName) -> string {
+	cheapest = findGfTypeNameComplexity(ref makeSet(), unions, structs, tn);
+	makeDefaultGfTypeValue(unions, structs, cheapest.second)
+}
+
+findGfTypeNameComplexity(seen : ref Set<GfType>, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, type : GfTypeName) -> Pair<int, GfTypeName> {
+	if (containsSet(^seen, type)) {
+		Pair(100000, type)
+	} else {
+		seen := insertSet(^seen, type);
+		mstruct = lookupTree(structs, type.typename);
+		mstruct ?? {
+			Pair(
+				fold(mstruct.args, 0, \acc, arg -> {
+					c = findGfTypeComplexity(seen, unions, structs, arg.second);
+					acc + c.first;
+				}),
+				type
+			);
+		} : {
+			munion = lookupTree(unions, type.typename);
+			switch (munion) {
+				None(): Pair(100, type);
+				Some(undef): {
+					fold(undef.subtypes, Pair(1000000, type), \acc, st : GfType -> {
+						switch (st) {
+							GfTypeName(__, __): {
+								c = findGfTypeNameComplexity(seen, unions, structs, st);
+								if (c.first < acc.first) c else acc
+							}
+							default: acc;
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+findGfTypeComplexity(seen : ref Set<GfType>, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, type : GfType) -> Pair<int, GfType> {
+	switch (type) {
+		GTypeBool(): Pair(0, type);
+		GTypeInt(): Pair(0, type);
+		GTypeDouble(): Pair(0, type);
+		GTypeString(): Pair(1, type);
+		GfTypeArray(t): Pair(0, type);
+		GfTypeName(fieldName, typename): {
+			findGfTypeNameComplexity(seen, unions, structs, type);
+		}
 	}
 }
