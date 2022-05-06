@@ -2040,6 +2040,7 @@ class DisplayObjectHelper {
 				try {
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
 				} catch (e : Dynamic) {
+					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
 					nextWidget = findNextNativeWidget(child, clip);
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
 				}
@@ -2047,6 +2048,7 @@ class DisplayObjectHelper {
 				try {
 					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
 				} catch (e : Dynamic) {
+					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
 					nextWidget = findNextNativeWidget(child, clip);
 					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
 				}
