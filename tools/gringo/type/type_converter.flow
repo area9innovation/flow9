@@ -1,17 +1,88 @@
 import tools/gringo/type/types;
 import ds/tree;
+import text/blueprint;
+import string_utils;
 
 export {
 	// Will construct a flow file with conversion from and to DslAst
 	makeGfTypeConverter(
+		typePath : string,
+		masterType : string,
+		prefix : string,
 		unions : Tree<string, GfTypeUnion>,
 		structs : Tree<string, GfTypeStruct>,
-	) -> string;
+	) -> void;
 }
 
 makeGfTypeConverter(
+	typePath : string,
+	masterType : string,
+	prefix : string,
 	unions : Tree<string, GfTypeUnion>,
 	structs : Tree<string, GfTypeStruct>,
-) -> string {
-	"";
+) -> void {
+	filename = typePath + "2dsl.flow";
+	result = blueprint(<<
+		import %typepath%;
+		import runtime;
+		import tools/dsl/dsl_util;
+
+		export {
+			%lt%2DslAst(w : %t%) -> DslAst;
+			dslAst2%t%(d : DslAst) -> %t%;
+		}
+
+		%lt%2DslAst(w : %t%) -> DslAst {
+			DslBool(false);
+		}
+
+		dslAst2%t%(d : DslAst) -> %t% {
+			switch (d) {
+				DslBool(value): %t%Bool(value);
+				DslInt(value): %t%Int(value);
+				DslDouble(value): %t%Double(value);
+				DslString(value): %t%String(value);
+				DslList(value): %t%List(mapList(value, dslAst2%t%));
+				DslNode(name, args, pos): {
+					%to%
+				}
+			}			
+		}
+	>>, [
+		"typepath", typePath,
+		"t", masterType,
+		"lt", decapitalize(masterType),
+		"to", makeGfStructs2Dsl(masterType, prefix, structs),
+	]);
+	setFileContent(filename, result);
+	{}
+}
+
+// Constructs a converter from DSL to masterType with the given structs inside
+makeGfStructs2Dsl(masterType : string, prefix : string, structs : Tree<string, GfTypeStruct>) -> string {
+	foldTree(structs, "", \st, stdef, acc -> {
+		args = supergluei(stdef.args, \i, sa -> {
+			makeGfType2Dsl(masterType, sa.second) + "(args[" + i2s(i) + "])";
+		}, ", ");
+		acc + blueprint(<< 
+			if (name == %nodename%) {
+				%typename%(%args%)
+			} else >>, [
+			"t", masterType,
+			"typename", st,
+			"nodename", toString(snakeCase(decapitalize(strRight(st, strlen(prefix))))),
+			"args", args,
+		])
+	}) + "{ " + masterType + "Bool(false) }\n";
+}
+
+makeGfType2Dsl(type : string, t : GfType) -> string {
+	switch (t) {
+		GTypeBool(): "getDslBool";
+		GTypeInt(): "getDslInt";
+		GTypeDouble(): "getDslDouble";
+		GTypeString(): "getDslString";
+		GfTypeArray(tt): "(\\t -> map(list2array(getDslList(t)), " + makeGfType2Dsl(type, tt) + "))";
+		GfTypeName(fieldName, typename): "dslAst2" + typename;
+	}
 }
