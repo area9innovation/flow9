@@ -97,18 +97,14 @@ makeGf2Converters(masterType : string, prefix : string, unions : Tree<string, Gf
 	})
 	+ foldTree(structs, "", \st, def : GfTypeStruct, acc -> {
 		acc + makeGfTypeName2Converters(masterType, prefix, unions, structs, GfTypeName(st, st))
-	})
-	;
+	});
 }
 
 makeGfUnion2Converters(masterType : string, prefix : string, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, union : GfTypeUnion) -> string {
 	un = union.name;
-	ustructs : [GfTypeStruct] = filtermap(union.subtypes, \st -> {
-		switch (st) {
-			GfTypeName(fieldName, typename): lookupTree(structs, typename);
-			default: None();
-		}
-	});
+	ustructs : [GfTypeStruct] = concatA(map(union.subtypes, \st -> {
+		expandGfType2Structs(unions, structs, st)
+	}));
 	to = makeGfStructs2Dsl(un, prefix, 
 		makeDefaultGfTypeNameValue(unions, structs, GfTypeName(un, un)),
 		fold(ustructs, makeTree(), \acc2, s -> setTree(acc2, s.name, s))
@@ -125,6 +121,32 @@ makeGfUnion2Converters(masterType : string, prefix : string, unions : Tree<strin
 		"t", un,
 		"to", to
 	])
+}
+
+expandGfType2Structs(unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, st : GfType) -> [GfTypeStruct] {
+	switch (st) {
+		GfTypeName(fieldName, name): {
+			mstruct = lookupTree(structs, name);
+			mstruct ?? {
+				[mstruct]
+			} : {
+				// OK, maybe it is a union
+				munion = lookupTree(unions, name);
+				switch (munion) {
+					None(): {
+						println("Unknown type name " + name);
+						[];
+					}
+					Some(undef): {
+						concatA(map(undef.subtypes, \s -> {
+							expandGfType2Structs(unions, structs, s)
+						}))
+					}
+				}
+			}
+		}
+		default: [];
+	}
 }
 
 makeGfType2Converters(masterType : string, prefix : string, unions : Tree<string, GfTypeUnion>, structs : Tree<string, GfTypeStruct>, type : GfType) -> string {
