@@ -8,7 +8,7 @@ uniform vec2 screenSize;
 uniform vec3 rayOrigin;
 uniform mat4 view;
 
-const int numTextures = gl_MaxTextureImageUnits; //16
+const int numTextures = %numTextures%; //max 16
 uniform sampler2D textures[numTextures];
 
 struct TextureTilingParameter {
@@ -40,8 +40,8 @@ struct Material {
 };
 
 uniform MaterialsBlock {
-	vec3 color[30];
-	float reflectiveness[30];
+	vec3 color[%numColors%];
+	float reflectiveness[%numColors% + numTextures];
 };
 
 struct ObjectInfo {
