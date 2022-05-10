@@ -28,14 +28,20 @@ makeGfTypeConverter(
 		import tools/dsl/dsl_util;
 
 		export {
-			// %lt%2DslAst(w : %t%) -> DslAst;
+			%lt%2DslAst(w : %t%) -> DslAst;
 			dslAst2%t%(d : DslAst) -> %t%;
 		}
 
-		/* %lt%2DslAst(w : %t%) -> DslAst {
-			DslBool(false);
+		%lt%2DslAst(wal : %t%) -> DslAst {
+			switch (wal) {
+				%t%Bool(value): DslBool(value);
+				%t%Int(value): DslInt(value);
+				%t%Double(value): DslDouble(value);
+				%t%String(value): DslString(value);
+				%t%List(value): DslList(mapList(value, %lt%2DslAst));
+				%from%
+			}
 		}
-		*/
 
 		dslAst2%t%(d : DslAst) -> %t% {
 			switch (d) {
@@ -55,11 +61,35 @@ makeGfTypeConverter(
 		"typepath", typePath,
 		"t", masterType,
 		"lt", decapitalize(masterType),
+		"from", makeGfFromConverter(masterType, prefix, decapitalize(masterType) + "2DslAst", structs),
 		"to", makeGfStructs2Dsl(masterType, prefix, masterType + "Bool(false)", structs),
 		"dsl2s", makeGf2Converters(masterType, prefix, unions, structs),
 	]);
 	setFileContent(filename, result);
 	{}
+}
+
+
+// Make a converter from the mastertype to the DSL
+makeGfFromConverter(masterType : string, prefix : string, converter : string, structs : Tree<string, GfTypeStruct>) -> string {
+	foldTree(structs, "", \st, stdef, acc -> {
+		nargs = length(stdef.args);
+		acc + st + "(" + supergluei(stdef.args, \i, arg -> "a" + i2s(i), ", ") + "): "
+		+ "DslNode("
+		+ toString(snakeCase(decapitalize(strRight(st, strlen(prefix))))) + ", "
+		+ "[" + supergluei(stdef.args, \i, arg -> {
+			argType = arg.second;
+			argName = "a" + i2s(i);
+			switch (argType) {
+				GTypeBool(): "DslBool(" + argName + ")";
+				GTypeInt(): "DslInt(" + argName + ")";
+				GTypeDouble(): "DslDouble(" + argName + ")";
+				GTypeString(): "DslString(" + argName + ")";
+				GfTypeArray(t): "DslList(fold(" + argName + ", makeList(), \\acc, e -> Cons(" + converter + "(e), acc)))";
+				GfTypeName(fieldName, typename): converter + "(" + argName + ")";
+			}
+		}, ", ") + "], 0);\n"
+	});
 }
 
 // Constructs a converter from DSL to masterType with the given structs inside

@@ -13,25 +13,24 @@ export {
 produceGringoTypes(file : string, grammar : GTerm) -> void {
 	typeenv = gringoType(grammar);
 	// OK, map of what GTypes each rule produces
-	types : Tree<string, [GType]> = typeenv.env;
+	types1 : Tree<string, [GType]> = typeenv.env;
+
+	// OK, some of these types are simple, so we can instantiate them where they occur
+	types = simplifyGRuleTypes(types1);
 
 	if (false) {
 		println("Result of grammar: " + superglue(typeenv.stack, prettyGType, "  \n"));
-		traverseInOrder(types, \rule, rtypes -> {
-			if (rtypes != []) {
-				println(capitalize(rule) + " = " + superglue(rtypes, prettyGType, "  \n"));
-			}
+		traverseInOrder(types, \rule, rtype -> {
+			println(capitalize(rule) + " = " + prettyGType(rtype));
 		});
 	}
 
 	// OK, extract the unions and structs, and the type of each rule
 	typeacc = foldTree(types, GTypeAcc(makeTree(), makeTree(), makeTree(), 
-		getUrlParameter("type-prefix"), GfTypeName("error", "ERROR")), \rule, rtypes, acc -> {
-		if (length(rtypes) == 1) {
-			acc2 = processRuleGType(acc, rule, rtypes[0]);
-			ruletype = acc2.type;
-			GTypeAcc(acc2 with named = setTree(acc2.named, rule, ruletype));
-		} else acc;
+		getUrlParameter("type-prefix"), GfTypeName("error", "ERROR")), \rule, rtype, acc -> {
+		acc2 = processRuleGType(acc, rule, rtype);
+		ruletype = acc2.type;
+		GTypeAcc(acc2 with named = setTree(acc2.named, rule, ruletype));
 	});
 
 	// At this point, we have a translation of each rule to what type it results in
@@ -57,13 +56,7 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 		stypes = sortUnique(map(undef.subtypes, \st -> {
 			simplifyGfType(acc, st);
 		}));
-		if (length(stypes) == 1) {
-			st = GfTypeStruct(un, [Pair("v", stypes[0])]);
-			GTypeAcc(acc with
-				unions = removeFromTree(acc.unions, un),
-				structs = setTree(acc.structs, un, st)
-			);
-		} else if (stypes != sortUnique(undef.subtypes)) {
+		if (stypes != sortUnique(undef.subtypes)) {
 			GTypeAcc(acc with
 				unions = setTree(acc.unions, un, GfTypeUnion(un, stypes))
 			);
@@ -117,6 +110,52 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 	{}
 }
 
+simplifyGRuleTypes(rules : Tree<string, [GType]>) -> Tree<string, GType> {
+	simpleRules = foldTree(rules, makeTree(), \rule, vals, acc -> {
+		if (length(vals) == 1) {
+			val = vals[0];
+			switch (val) {
+				GTypeResult(__): acc;
+				GTypeNil(): acc;
+				GTypeBool(): setTree(acc, rule, val);
+				GTypeInt(): setTree(acc, rule, val);
+				GTypeDouble(): setTree(acc, rule, val);
+				GTypeString(): setTree(acc, rule, val);
+				GTypeAction(name, args): acc;
+				GTypeStar(type): acc;
+				GTypeUnion(types): acc;
+			}
+		} else acc;
+	});
+
+	foldTree(rules, makeTree(), \rule, vals, acc -> {
+		if (containsKeyTree(simpleRules, rule) || length(vals) != 1) acc
+		else {
+			setTree(acc, rule, instantiateSimpleGRules(simpleRules, vals[0]))
+		}
+	})
+}
+
+instantiateSimpleGRules(simple : Tree<string, GType>, type : GType) -> GType {
+	switch (type) {
+		GTypeResult(rule): lookupTreeDef(simple, rule, type);
+		GTypeNil(): type;
+		GTypeBool(): type;
+		GTypeInt(): type;
+		GTypeDouble(): type;
+		GTypeString(): type;
+		GTypeAction(name, args): GTypeAction(name, map(args, \a -> instantiateSimpleGRules(simple, a)));
+		GTypeStar(typ): GTypeStar(instantiateSimpleGRules(simple, typ));
+		GTypeUnion(types): {
+			stypes = sortUnique(map(types, \a -> instantiateSimpleGRules(simple, a)));
+			if (length(stypes) == 1) {
+				stypes[0];
+			} else {
+				GTypeUnion(stypes);
+			}
+		}
+	}
+}
 
 GTypeAcc(
 	unions : Tree<string, GfTypeUnion>,
@@ -144,7 +183,7 @@ simplifyGfType(acc : GTypeAcc, type : GfType) -> GfType {
 						simplifyGfType(acc, mresolve);
 					} else mresolve;
 				} : {
-					println("TODO: Figure out what to do with this union member");
+					println("TODO: Figure out what to do with this unknown type: " + fieldName);
 					type;
 				}
 			}
