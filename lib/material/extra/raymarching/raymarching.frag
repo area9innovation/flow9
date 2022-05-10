@@ -115,12 +115,7 @@ float opSmoothUnion( float d1, float d2, float k ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
 }
 
-vec3 getObjectNormal(vec3 p);
-
-vec3 getTextureColor(vec3 p, TextureParamerters textureParameter, sampler2D txtr) {
-	vec3 normal = getObjectNormal(p);
-	normal = pow(normal, vec3(10.0));
-	normal /= normal.x + normal.y + normal.z;
+vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, sampler2D txtr) {
 	vec2 texSize = vec2(textureSize(txtr, 0));
 	vec2 sizeNormalized = texSize / max(texSize.x, texSize.y);
 
@@ -141,10 +136,13 @@ vec3 getTextureColor(vec3 p, TextureParamerters textureParameter, sampler2D txtr
 	pz = mod(pz / (textureParameter.scale.xy * sizeNormalized), textureParameter.step.xy);
 	px = mod(px / (textureParameter.scale.zy * sizeNormalized), textureParameter.step.zy);
 
+	normal = pow(normal, vec3(10.0));
+	normal /= normal.x + normal.y + normal.z;
+
 	return (texture(txtr, py) * normal.y + texture(txtr, pz) * normal.z + texture(txtr, px) * normal.x).rgb;
 }
 
-vec3 getBaseMaterial(int id, vec3 p) {
+vec3 getBaseMaterial(int id, vec3 p, vec3 normal) {
 	vec3 materialColor = vec3(0);
 
 	%baseMaterial%
@@ -152,15 +150,15 @@ vec3 getBaseMaterial(int id, vec3 p) {
 	return materialColor;
 }
 
-ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p) {
+ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
 	float interpolation = clamp(0.5 + 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
 	float d = opSmoothUnion(obj1.d, obj2.d, k);
-	vec3 color1 = obj1.textureId >= 0 ? getBaseMaterial(obj1.id, p) : obj1.material.color;
-	vec3 color2 = obj2.textureId >= 0 ? getBaseMaterial(obj2.id, p) : obj2.material.color;
+	vec3 color1 = obj1.textureId >= 0 ? getBaseMaterial(obj1.id, p, normal) : obj1.material.color;
+	vec3 color2 = obj2.textureId >= 0 ? getBaseMaterial(obj2.id, p, normal) : obj2.material.color;
 	return ObjectInfo(d, -1, -1, Material(mix(color2, color1, interpolation), mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)));
 }
 
-ObjectInfo getObjectInfo(vec3 p) {
+ObjectInfo getObjectInfo(vec3 p, vec3 normal) {
 	ObjectInfo d = ObjectInfo(MAX_DIST, -1, -1, Material(vec3(0), 0.0));
 
 	d = %distanceFunction%;
@@ -176,7 +174,7 @@ float getObjectInfoSimple(vec3 p) {
 	return d;
 }
 
-ObjectInfo RayMarch(vec3 ro, vec3 rd) {
+float rayMarch(vec3 ro, vec3 rd) {
 	float dO = 0.;
 	vec3 p;
 	for (int i=0; i< MAX_STEPS; i++){
@@ -185,9 +183,7 @@ ObjectInfo RayMarch(vec3 ro, vec3 rd) {
 		dO += d;
 		if (dO > MAX_DIST || d < SURF_DIST) break;
 	}
-	ObjectInfo oi = getObjectInfo(p);
-	oi.d = dO;
-	return oi; 
+	return dO;
 }
 
 vec3 getObjectNormal(vec3 p) {
@@ -213,43 +209,43 @@ float getShadow(vec3 p, vec3 lightPos, float maxDist, float lightSize) {
 	return clamp(result, 0.0, 1.0);
 }
 
-vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, float lightSize) {
+vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, vec3 normal, float lightSize) {
 	vec3 lightDir = normalize(lightPos - p);
-	vec3 norm = getObjectNormal(p);
 	vec3 viewDir = -rayDirection;
-	vec3 reflectDir = reflect(-lightDir, norm);
+	vec3 reflectDir = reflect(-lightDir, normal);
 
 	float specularStrength = 0.25;
 	float specularShininess = 8.0;
 	vec3 specular = specularStrength * lightColor * pow(clamp(dot(reflectDir, viewDir), 0.0, 1.0), specularShininess);  
 
 	float diffuseStrength = 0.9;
-	vec3 diffuse = diffuseStrength * lightColor * clamp(dot(lightDir, norm), 0.0, 1.0);
+	vec3 diffuse = diffuseStrength * lightColor * clamp(dot(lightDir, normal), 0.0, 1.0);
 
-	float shadow = getShadow(p + norm * SURF_DIST, lightDir, length(lightPos - p), lightSize);
+	float shadow = getShadow(p + normal * SURF_DIST, lightDir, length(lightPos - p), lightSize);
 
 	return (specular + diffuse) * shadow;
 }
 
 
-vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection) {
-	ObjectInfo d = RayMarch(newRayOrigin + getObjectNormal(newRayOrigin) * SURF_DIST * 2., rayDirection);
-	vec3 p = newRayOrigin + rayDirection * d.d;
+vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
+	float d = rayMarch(newRayOrigin + normalOrigin * SURF_DIST * 2., rayDirection);
+	vec3 col = backgroundColor;
 
-	vec3 materialColor = backgroundColor;
-	if (d.textureId >=0) {
-		materialColor = getBaseMaterial(d.id, p);
-	} else {
-		materialColor = d.material.color;
+	if (d < MAX_DIST) {
+		vec3 p = newRayOrigin + rayDirection * d;
+		vec3 normal = getObjectNormal(p);
+		ObjectInfo oi = getObjectInfo(p, normal);
+		vec3 materialColor = backgroundColor;
+		if (oi.textureId >= 0) {
+			materialColor = getBaseMaterial(oi.id, p, normal);
+		} else {
+			materialColor = oi.material.color;
+		}
+
+		vec3 ambientColor = 0.1 * materialColor;
+		col = ambientColor + (%light%) * materialColor;
 	}
 
-	vec3 ambientColor = 0.1 * materialColor;
-	vec3 col = vec3(ambientColor);
-	if (d.d < MAX_DIST) {
-		col = col + (%light%) * materialColor;
-	} else {
-		col = backgroundColor;
-	}
 	return col;
 }
 
@@ -257,25 +253,27 @@ vec3 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
-	ObjectInfo d = RayMarch(rayOrigin, rayDirection);
-	vec3 p = rayOrigin + rayDirection * d.d;
-	vec3 materialColor = backgroundColor;
-	if (d.textureId >=0) {
-		materialColor = getBaseMaterial(d.id, p);
-	} else {
-		materialColor = d.material.color;
-	}
-	if (d.material.reflectiveness > 0.) {
-		materialColor = mix(materialColor, getColorReflect(p, reflect(rayDirection, getObjectNormal(p))), d.material.reflectiveness);
+	float d = rayMarch(rayOrigin, rayDirection);
+	vec3 col = backgroundColor;
+	
+	if (d < MAX_DIST) {
+		vec3 p = rayOrigin + rayDirection * d;
+		vec3 normal = getObjectNormal(p);
+		ObjectInfo oi = getObjectInfo(p, normal);
+		vec3 materialColor = backgroundColor;
+		if (oi.textureId >= 0) {
+			materialColor = getBaseMaterial(oi.id, p, normal);
+		} else {
+			materialColor = oi.material.color;
+		}
+		if (oi.material.reflectiveness > 0.) {
+			materialColor = mix(materialColor, getColorReflect(p, reflect(rayDirection, normal), normal), oi.material.reflectiveness);
+		}
+
+		vec3 ambientColor = 0.1 * materialColor;
+		col = ambientColor + (%light%) * materialColor;
 	}
 
-	vec3 ambientColor = 0.1 * materialColor;
-	vec3 col = vec3(ambientColor);
-	if (d.d < MAX_DIST) {
-		col = col + (%light%) * materialColor;
-	} else {
-		col = backgroundColor;
-	}
 	col = pow(col, vec3(0.4545));
 	return col;
 }
