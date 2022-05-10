@@ -233,7 +233,7 @@ See `lib\tools\dsl\dsl_parse` and the readme in that folder for more info.
 If you use the DSL semantic actions, then you can also get a set of appropriate 
 flow types produced by Gringo:
 
-	gringo myfile.gringo types=1 prefix=My
+	gringo myfile.gringo types=1 type-prefix=My
 
 this will produce a `myfile_types.flow` file with flow types prefixed with `My`
 that match the grammar.
@@ -241,6 +241,18 @@ that match the grammar.
 This works by doing a type inference evaluation of the grammar, and use that to 
 determine what type each rule results in. These are then converted into the appropriate
 unions and structs as flow types.
+
+If you also add a `master-type=Name` argument, a typed parser will also be constructed
+that uses the inferred types. This works by parsing to the DslAst type, and then invoking
+a constructed converted from DslAST to the typed union for the grammar.
+
+If you also add `tyvars=1`, each of the types will get an eclass field, initialized to 0,
+which is helpful for type inference.
+
+See `gringo/tflow` for an example that demonstrates this approach for a simple grammar.
+
+TODO:
+- Add option to get position tracking added to the grammar
 
 ## Using a compiled grammar
 
