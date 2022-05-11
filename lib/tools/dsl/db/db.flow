@@ -1,25 +1,45 @@
-import ds/tree;
+import ds/treeutils;
 import tools/dsl/dsl_util;
 
 export {
+	// Prepare an empty DSL database
 	makeDb() -> Db;
+
+	//
+	// Insert and extraction of DslAst values
+	//
 
 	// Insert this value in the AST
 	insertDbDsl(db : Db, ast : DslAst) -> int;
 
 	// Get this value from the AST
 	lookupDbDsl(db : Db, eclass : int) -> DslAst;
+
+
+	//
+	// Unification API
+	//
+
+	// Unify these two eclasses
+	unifyDbDsl(db : Db, eclass1 : int, eclass2 : int) -> void;
+
+	// What eclasses are in this equivalence class?
+	getDbDslEClass(db : Db, eclass : int) -> Set<int>;
 }
 
 Db(
-	// 0 is nothing. 1 is false, 2 is true.
+	// 0 is unknown. 1 is false, 2 is true.
 	nextId : ref int,
 	// Raw values
 	ints : DbValueTree<int>,
 	doubles : DbValueTree<double>,
 	strings : DbValueTree< string>,
 	arrays : DbValueTree<[int]>,
+	// AST nodes - can probably be specialized for specific types down the line
 	nodes : DbValueTree<[int]>,
+
+	// Here we track unifications of eclasses
+	eclasses : EClassTree,
 );
 
 makeDb() -> Db {
@@ -30,6 +50,7 @@ makeDb() -> Db {
 		DbValueTree(ref makeTree(), ref makeTree()),
 		DbValueTree(ref makeTree(), ref makeTree()),
 		DbValueTree(ref makeTree(), ref makeTree()),
+		EClassTree(ref makeTree(), ref makeTree()),
 	);
 }
 
@@ -92,3 +113,42 @@ lookupDbDsl(db : Db, eclass : int) -> DslAst {
 	}
 }
 
+EClassTree(
+	// Lookup from an eclass to the root
+	roots : ref Tree<int, int>,
+	// Lookup from an eclass to the members of this set
+	eclass : ref Tree<int, Set<int>>,
+);
+
+unifyDbDsl(db : Db, eclass1 : int, eclass2 : int) -> void {
+	root1 = lookupTreeDef(^(db.eclasses.roots), eclass1, eclass1);
+	root2 = lookupTreeDef(^(db.eclasses.roots), eclass2, eclass2);
+
+	members1 = lookupMultimap(^(db.eclasses.eclass), root1);
+	members2 = lookupMultimap(^(db.eclasses.eclass), root2);
+
+	root = 
+		if (root1 < root2) {
+			db.eclasses.roots := setTree(^(db.eclasses.roots), eclass2, root1);
+			db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass2);
+			root1;
+		} else {
+			db.eclasses.roots := setTree(^(db.eclasses.roots), eclass1, root2);
+			db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass1);
+			root2;
+		};
+
+	mmembers1 = mergeSets(members1, members2);
+	mmembers2 = insertSet(mmembers1, root1);
+	mmembers3 = insertSet(mmembers2, root2);
+	db.eclasses.eclass := setTree(^(db.eclasses.eclass), root, mmembers3);
+}
+
+getDbDslEClass(db : Db, eclass : int) -> Set<int> {
+	mroot = lookupTree(^(db.eclasses.roots), eclass);
+	mroot ?? {
+		lookupMultimap(^(db.eclasses.eclass), mroot)
+	} : {
+		makeSet1(eclass)
+	}
+}
