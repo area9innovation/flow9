@@ -246,8 +246,8 @@ If you also add a `master-type=Name` argument, a typed parser will also be const
 that uses the inferred types. This works by parsing to the DslAst type, and then invoking
 a constructed converted from DslAST to the typed union for the grammar.
 
-If you also add `tyvars=1`, each of the types will get an eclass field, initialized to 0,
-which is helpful for type inference.
+If you also add `eclasses=1`, each of the types will get an eclass field, initialized to 0,
+which is helpful for type inference and other things.
 
 See `gringo/tflow` for an example that demonstrates this approach for a simple grammar.
 
