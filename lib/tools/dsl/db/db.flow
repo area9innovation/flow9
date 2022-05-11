@@ -1,0 +1,94 @@
+import ds/tree;
+import tools/dsl/dsl_util;
+
+export {
+	makeDb() -> Db;
+
+	// Insert this value in the AST
+	insertDbDsl(db : Db, ast : DslAst) -> int;
+
+	// Get this value from the AST
+	lookupDbDsl(db : Db, eclass : int) -> DslAst;
+}
+
+Db(
+	// 0 is nothing. 1 is false, 2 is true.
+	nextId : ref int,
+	// Raw values
+	ints : DbValueTree<int>,
+	doubles : DbValueTree<double>,
+	strings : DbValueTree< string>,
+	arrays : DbValueTree<[int]>,
+	nodes : DbValueTree<[int]>,
+);
+
+makeDb() -> Db {
+	Db(
+		ref 3,
+		DbValueTree(ref makeTree(), ref makeTree()),
+		DbValueTree(ref makeTree(), ref makeTree()),
+		DbValueTree(ref makeTree(), ref makeTree()),
+		DbValueTree(ref makeTree(), ref makeTree()),
+		DbValueTree(ref makeTree(), ref makeTree()),
+	);
+}
+
+insertDbDsl(db : Db, ast : DslAst) -> int {
+	switch (ast) {
+		DslBool(value): if (value) 2 else 1;
+		DslInt(value): insertDbValueTree(db.nextId, db.ints, value);
+		DslDouble(value): insertDbValueTree(db.nextId, db.doubles, value);
+		DslString(value): insertDbValueTree(db.nextId, db.strings, value);
+		DslList(value): {
+			a : [DslAst] = list2array(value);
+			ids = map(a, \v -> insertDbDsl(db, v));
+			insertDbValueTree(db.nextId, db.arrays, ids);
+		}
+		DslNode(name, args, pos): {
+			sid = insertDbDsl(db, DslString(name));
+			argids = map(args, \a -> insertDbDsl(db, a));
+			posid = insertDbDsl(db, DslInt(pos));
+			ids = concat3([sid], argids, [posid]);
+			insertDbValueTree(db.nextId, db.nodes, ids);
+		}
+	}
+}
+
+// A dual lookup data structure
+DbValueTree(fromIdx : ref Tree<int, ?>, toIdx : ref Tree<?, int>);
+
+insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
+	mid = lookupTree(^(tree.toIdx), value);
+	mid ?? mid : {
+		id = ^nextId;
+		tree.fromIdx := setTree(^(tree.fromIdx), id, value);
+		tree.toIdx := setTree(^(tree.toIdx), value, id);
+		nextId := id + 1;
+		id;
+	}
+}
+
+lookupDbDsl(db : Db, eclass : int) -> DslAst {
+	if (eclass == 1) DslBool(false)
+	else if (eclass == 2) DslBool(true)
+	else {
+		rec = \ii -> lookupDbDsl(db, ii);
+		if (containsKeyTree(^(db.arrays.fromIdx), eclass)) {
+			ids = getTreeArrayValue(^(db.arrays.fromIdx), eclass);
+			DslList(fold(ids, makeList(), \acc, id -> Cons(rec(id), acc)))
+		} else if (containsKeyTree(^(db.nodes.fromIdx), eclass)) {
+			ids = getTreeArrayValue(^(db.nodes.fromIdx), eclass);
+			vals = map(ids, rec);
+			DslNode(getDslString(vals[0]), subrange(vals, 1, length(vals) - 2), getDslInt(vals[1]));
+		} else if (containsKeyTree(^(db.ints.fromIdx), eclass)) {
+			DslInt(lookupTreeDef(^(db.ints.fromIdx), eclass, 0))
+		} else if (containsKeyTree(^(db.doubles.fromIdx), eclass)) {
+			DslDouble(lookupTreeDef(^(db.doubles.fromIdx), eclass, 0.0))
+		} else if (containsKeyTree(^(db.strings.fromIdx), eclass)) {
+			DslString(lookupTreeDef(^(db.strings.fromIdx), eclass, ""))
+		} else {
+			DslString("ERROR: Unknown eclass " + toString(eclass))
+		}
+	}
+}
+
