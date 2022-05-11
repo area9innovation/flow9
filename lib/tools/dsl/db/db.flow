@@ -12,7 +12,7 @@ export {
 	// Insert this value in the AST
 	insertDbDsl(db : Db, ast : DslAst) -> int;
 
-	// Get this value from the AST
+	// Get this value from the AST - does not resolve eclasses
 	lookupDbDsl(db : Db, eclass : int) -> DslAst;
 
 
@@ -20,11 +20,28 @@ export {
 	// Unification API
 	//
 
-	// Unify these two eclasses
+	// Unify these two eclasses. This does not automatically canonicalize the rest of the graph
 	unifyDbDsl(db : Db, eclass1 : int, eclass2 : int) -> void;
+
+	// What is the root of this eclass?
+	getDbDslRoot(db : Db, eclass : int) -> int;
 
 	// What eclasses are in this equivalence class?
 	getDbDslEClass(db : Db, eclass : int) -> Set<int>;
+
+	canonicalizeDbDsl(db : Db) -> void;
+/*
+	foldDbEClass(
+		db : Db, 
+		// What is the root?
+		eclass : int, 
+		// The value we accumulate
+		acc : ?, 
+		// For each equivalence class, which should we pick?
+		pickClass : (root : int, eclasses : Set<int>) -> int, 
+		// Do the accumulation
+		fn : (acc : ?, root : int) -> ?
+	) -> ?;*/
 }
 
 Db(
@@ -33,7 +50,7 @@ Db(
 	// Raw values
 	ints : DbValueTree<int>,
 	doubles : DbValueTree<double>,
-	strings : DbValueTree< string>,
+	strings : DbValueTree<string>,
 	arrays : DbValueTree<[int]>,
 	// AST nodes - can probably be specialized for specific types down the line
 	nodes : DbValueTree<[int]>,
@@ -81,6 +98,7 @@ DbValueTree(fromIdx : ref Tree<int, ?>, toIdx : ref Tree<?, int>);
 insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
 	mid = lookupTree(^(tree.toIdx), value);
 	mid ?? mid : {
+		// OK, not found, so insert it
 		id = ^nextId;
 		tree.fromIdx := setTree(^(tree.fromIdx), id, value);
 		tree.toIdx := setTree(^(tree.toIdx), value, id);
@@ -89,7 +107,8 @@ insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
 	}
 }
 
-lookupDbDsl(db : Db, eclass : int) -> DslAst {
+lookupDbDsl(db : Db, eclass1 : int) -> DslAst {
+	eclass = getDbDslRoot(db, eclass1);
 	if (eclass == 1) DslBool(false)
 	else if (eclass == 2) DslBool(true)
 	else {
@@ -121,34 +140,77 @@ EClassTree(
 );
 
 unifyDbDsl(db : Db, eclass1 : int, eclass2 : int) -> void {
-	root1 = lookupTreeDef(^(db.eclasses.roots), eclass1, eclass1);
-	root2 = lookupTreeDef(^(db.eclasses.roots), eclass2, eclass2);
+	root1 = getDbDslRoot(db, eclass1);
+	root2 = getDbDslRoot(db, eclass2);
 
+	// OK, we find the root
+	root = min(root1, root2);
+	// Rewrite the root maps
+	db.eclasses.roots := setTree(^(db.eclasses.roots), eclass1, root);
+	db.eclasses.roots := setTree(^(db.eclasses.roots), eclass2, root);
+
+	// Now find the total class
 	members1 = lookupMultimap(^(db.eclasses.eclass), root1);
 	members2 = lookupMultimap(^(db.eclasses.eclass), root2);
-
-	root = 
-		if (root1 < root2) {
-			db.eclasses.roots := setTree(^(db.eclasses.roots), eclass2, root1);
-			db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass2);
-			root1;
-		} else {
-			db.eclasses.roots := setTree(^(db.eclasses.roots), eclass1, root2);
-			db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass1);
-			root2;
-		};
 
 	mmembers1 = mergeSets(members1, members2);
 	mmembers2 = insertSet(mmembers1, root1);
 	mmembers3 = insertSet(mmembers2, root2);
+
+	db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass1);
+	db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass2);
 	db.eclasses.eclass := setTree(^(db.eclasses.eclass), root, mmembers3);
 }
 
-getDbDslEClass(db : Db, eclass : int) -> Set<int> {
+getDbDslRoot(db : Db, eclass : int) -> int {
 	mroot = lookupTree(^(db.eclasses.roots), eclass);
 	mroot ?? {
-		lookupMultimap(^(db.eclasses.eclass), mroot)
+		if (mroot != eclass) {
+			// TODO: We could do path compression here
+			getDbDslRoot(db, mroot)
+		} else eclass;
+	} : eclass
+}
+
+getDbDslEClass(db : Db, eclass : int) -> Set<int> {
+	root = getDbDslRoot(db, eclass);
+	mclasses = lookupTree(^(db.eclasses.eclass), root);
+	mclasses ?? {
+		mclasses
 	} : {
-		makeSet1(eclass)
+		makeSet1(root)
 	}
 }
+
+canonicalizeDbDsl(db : Db) -> void {
+	canonicalizeDbDslChildren(db, db.arrays);
+	canonicalizeDbDslChildren(db, db.nodes);
+}
+
+canonicalizeDbDslChildren(db : Db, tree : DbValueTree<[int]>) -> void {
+	// OK, we have a tree with values. Let us simplify the values to be the root
+	tree.fromIdx := mapTree(^(tree.fromIdx), \values : [int] -> {
+		map(values, \value -> getDbDslRoot(db, value));
+	});
+	
+	// TODO: Should we also simplify the toIdx keys?
+}
+
+/*
+foldDbEClass(
+	db : Db, 
+	// What is the root?
+	eclass : int, 
+	// The value we accumulate
+	acc : ?, 
+	// For each equivalence class, which should we pick?
+	pickClass : (root : int, eclasses : Set<int>) -> int, 
+	// Do the accumulation
+	fn : (acc : ?, root : int) -> ?
+) -> ? {
+	root = lookupTreeDef(^(db.eclasses.roots), eclass, eclass);
+	eclasses = getDbDslEClass(db, root);
+	choice = pickClass(root, eclasses);
+
+}
+*/
