@@ -14,9 +14,11 @@ MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> 
 }
 
 MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
-	glsl = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), false));
-	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true));
-	baseMaterial = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), false));
+	rmiScene = RMScene2RMIExp(fgetValue(sceneB), false);
+	glsl = RMIExp2GLSL(rmiScene.first);
+	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).first);
+	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.second);
+	baseMaterial = RMIExp2GLSLMaterial(rmiScene.first);
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
@@ -49,7 +51,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			make2Subscribe2(
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
-					rmiScene = RMScene2RMIExp(s, false);
+					newRMIScene = RMScene2RMIExp(s, false);
+					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.second);
 					materials = extractMaterialsFromRMScene(s);
 					next(materialsB, materials);
 					countedMaterialsChanged = countMaterials(materials);
@@ -58,12 +61,13 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						blueprint(
 							"#include material/extra/raymarching/raymarching.frag",
 							[
-								"distanceFunction", RMIExp2GLSL(rmiScene),
-								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true)),
+								"distanceFunction", RMIExp2GLSL(newRMIScene.first),
+								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true).first),
 								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
-								"baseMaterial", RMIExp2GLSLMaterial(rmiScene),
+								"baseMaterial", RMIExp2GLSLMaterial(newRMIScene.first),
 								"numTextures", i2s(countedMaterialsChanged.first),
 								"numColors", i2s(countedMaterialsChanged.second),
+								"topLevelDistanceFunction", newTopLevelDistanceFunctions,
 							]
 						)
 					]);
@@ -183,6 +187,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				"baseMaterial", baseMaterial,
 				"numTextures", i2s(countedMaterials.first),
 				"numColors", i2s(countedMaterials.second),
+				"topLevelDistanceFunction", topLevelDistanceFunctions,
 			])
 		)
 	)
@@ -285,4 +290,14 @@ makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<s
 			\fn -> next(pngFn, fn)
 		)
 	)
+}
+
+rmiTree2GLSL(rmiScene : Tree<int, RMIExp>) -> string {
+	strGlue(
+		convertTreeToArray(
+			rmiScene,
+			\k, v -> formatString("if (id == %1) {\nresult = %2;\n}", [i2s(k), RMIExp2GLSL(v)])
+		),
+		" else "
+	);
 }
