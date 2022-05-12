@@ -9,96 +9,123 @@ export {
 	// Insert and extraction of DslAst values
 	//
 
-	// Insert this value in the AST
+	// Insert this value in the AST. Figures out what table to use automatically
+	// bool, ints, doubles, string are handled in a special table
+	// arrays are placed in a table called ""
+	// nodes are placed in a table with the name of the node.
+	// If the value already exists, we get out the existing id of it instead.
 	insertDbDsl(db : Db, ast : DslAst) -> int;
 
-	// Get this value from the AST - does not resolve eclasses
+	// Get this value from the AST. Not efficient, but at least it works
 	lookupDbDsl(db : Db, eclass : int) -> DslAst;
-
-
-	//
-	// Unification API
-	//
-
-	// Unify these two eclasses. This does not automatically canonicalize the rest of the graph
-	unifyDbDsl(db : Db, eclass1 : int, eclass2 : int) -> void;
-
-	// What is the root of this eclass?
-	getDbDslRoot(db : Db, eclass : int) -> int;
-
-	// What eclasses are in this equivalence class?
-	getDbDslEClass(db : Db, eclass : int) -> Set<int>;
-
-	canonicalizeDbDsl(db : Db) -> void;
-/*
-	foldDbEClass(
-		db : Db, 
-		// What is the root?
-		eclass : int, 
-		// The value we accumulate
-		acc : ?, 
-		// For each equivalence class, which should we pick?
-		pickClass : (root : int, eclasses : Set<int>) -> int, 
-		// Do the accumulation
-		fn : (acc : ?, root : int) -> ?
-	) -> ?;*/
 }
 
 Db(
 	// 0 is unknown. 1 is false, 2 is true.
 	nextId : ref int,
 	// Raw values
-	ints : DbValueTree<int>,
-	doubles : DbValueTree<double>,
-	strings : DbValueTree<string>,
-	arrays : DbValueTree<[int]>,
-	// AST nodes - can probably be specialized for specific types down the line
-	nodes : DbValueTree<[int]>,
-
-	// Here we track unifications of eclasses
-	eclasses : EClassTree,
+	ints : DbTable<int>,
+	doubles : DbTable<double>,
+	strings : DbTable<string>,
+	// Here we have each table for each relation
+	// Arrays are stored under the "" name
+	tables : ref Tree<string, DbTable<[int]>>,
 );
 
 makeDb() -> Db {
 	Db(
 		ref 3,
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		EClassTree(ref makeTree(), ref makeTree()),
+		makeDbTable(),
+		makeDbTable(),
+		makeDbTable(),
+		ref makeTree(),
 	);
 }
 
 insertDbDsl(db : Db, ast : DslAst) -> int {
 	switch (ast) {
 		DslBool(value): if (value) 2 else 1;
-		DslInt(value): insertDbValueTree(db.nextId, db.ints, value);
-		DslDouble(value): insertDbValueTree(db.nextId, db.doubles, value);
-		DslString(value): insertDbValueTree(db.nextId, db.strings, value);
+		DslInt(value): insertDbTable(db.nextId, db.ints, value);
+		DslDouble(value): insertDbTable(db.nextId, db.doubles, value);
+		DslString(value): insertDbTable(db.nextId, db.strings, value);
 		DslList(value): {
 			a : [DslAst] = list2array(value);
 			ids = map(a, \v -> insertDbDsl(db, v));
-			insertDbValueTree(db.nextId, db.arrays, ids);
+			insertDbNamedTable(db, "", ids);
 		}
 		DslNode(name, args, pos): {
-			sid = insertDbDsl(db, DslString(name));
 			argids = map(args, \a -> insertDbDsl(db, a));
 			posid = insertDbDsl(db, DslInt(pos));
-			ids = concat3([sid], argids, [posid]);
-			insertDbValueTree(db.nextId, db.nodes, ids);
+			ids = concat(argids, [posid]);
+			insertDbNamedTable(db, name, ids);
+		}
+	}
+}
+
+insertDbNamedTable(db : Db, table : string, value : [int]) -> int {
+	mtable = lookupTree(^(db.tables), table);
+	mtable ?? {
+		insertDbTable(db.nextId, mtable, value);
+	} : {
+		tree = makeDbTable();
+		nvalue = insertDbTable(db.nextId, tree, value);
+		db.tables := setTree(^(db.tables), table, tree);
+		nvalue
+	}
+}
+
+// Extract the DSL value for this class
+lookupDbDsl(db : Db, eclass : int) -> DslAst {
+	if (eclass == 1) DslBool(false)
+	else if (eclass == 2) DslBool(true)
+	else {
+		if (containsKeyTree(^(db.ints.fromIdx), eclass)) {
+			DslInt(lookupTreeDef(^(db.ints.fromIdx), eclass, 0))
+		} else if (containsKeyTree(^(db.doubles.fromIdx), eclass)) {
+			DslDouble(lookupTreeDef(^(db.doubles.fromIdx), eclass, 0.0))
+		} else if (containsKeyTree(^(db.strings.fromIdx), eclass)) {
+			DslString(lookupTreeDef(^(db.strings.fromIdx), eclass, ""))
+		} else {
+			mvalue = foldTree(^(db.tables), None(), \name, table : DbTable, acc -> {
+				switch (acc) {
+					None(): {
+						rec = \ii -> lookupDbDsl(db, ii);
+						if (containsKeyTree(^(table.fromIdx), eclass)) {
+							ids = getTreeArrayValue(^(table.fromIdx), eclass);
+							if (name == "") {
+								Some(DslList(fold(ids, makeList(), \acc2, id -> Cons(rec(id), acc2))))
+							} else {
+								vals = map(ids, rec);
+								Some(DslNode(name, subrange(vals, 0, length(vals) - 1), getDslInt(vals[length(vals) - 1])));
+							}
+						} else acc;
+					}
+					Some(__): acc;
+				}
+			});
+			switch (mvalue) {
+				None(): DslString("ERROR: Unknown eclass " + toString(eclass));
+				Some(l): l;
+			}
 		}
 	}
 }
 
 // A dual lookup data structure
-DbValueTree(fromIdx : ref Tree<int, ?>, toIdx : ref Tree<?, int>);
+DbTable(
+	fromIdx : ref Tree<int, ?>, 
+	toIdx : ref Tree<?, int>,
+);
 
-insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
+makeDbTable() -> DbTable<?> {
+	DbTable(ref makeTree(), ref makeTree());
+}
+
+// Inserts this value in the database, unless it already is there
+insertDbTable(nextId : ref int, tree : DbTable<?>, value : ?) -> int {
 	mid = lookupTree(^(tree.toIdx), value);
 	mid ?? mid : {
-		// OK, not found, so insert it
+		// OK, not found, so insert it with a new id
 		id = ^nextId;
 		tree.fromIdx := setTree(^(tree.fromIdx), id, value);
 		tree.toIdx := setTree(^(tree.toIdx), value, id);
@@ -107,110 +134,3 @@ insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
 	}
 }
 
-lookupDbDsl(db : Db, eclass1 : int) -> DslAst {
-	eclass = getDbDslRoot(db, eclass1);
-	if (eclass == 1) DslBool(false)
-	else if (eclass == 2) DslBool(true)
-	else {
-		rec = \ii -> lookupDbDsl(db, ii);
-		if (containsKeyTree(^(db.arrays.fromIdx), eclass)) {
-			ids = getTreeArrayValue(^(db.arrays.fromIdx), eclass);
-			DslList(fold(ids, makeList(), \acc, id -> Cons(rec(id), acc)))
-		} else if (containsKeyTree(^(db.nodes.fromIdx), eclass)) {
-			ids = getTreeArrayValue(^(db.nodes.fromIdx), eclass);
-			vals = map(ids, rec);
-			DslNode(getDslString(vals[0]), subrange(vals, 1, length(vals) - 2), getDslInt(vals[1]));
-		} else if (containsKeyTree(^(db.ints.fromIdx), eclass)) {
-			DslInt(lookupTreeDef(^(db.ints.fromIdx), eclass, 0))
-		} else if (containsKeyTree(^(db.doubles.fromIdx), eclass)) {
-			DslDouble(lookupTreeDef(^(db.doubles.fromIdx), eclass, 0.0))
-		} else if (containsKeyTree(^(db.strings.fromIdx), eclass)) {
-			DslString(lookupTreeDef(^(db.strings.fromIdx), eclass, ""))
-		} else {
-			DslString("ERROR: Unknown eclass " + toString(eclass))
-		}
-	}
-}
-
-EClassTree(
-	// Lookup from an eclass to the root
-	roots : ref Tree<int, int>,
-	// Lookup from an eclass to the members of this set
-	eclass : ref Tree<int, Set<int>>,
-);
-
-unifyDbDsl(db : Db, eclass1 : int, eclass2 : int) -> void {
-	root1 = getDbDslRoot(db, eclass1);
-	root2 = getDbDslRoot(db, eclass2);
-
-	// OK, we find the root
-	root = min(root1, root2);
-	// Rewrite the root maps
-	db.eclasses.roots := setTree(^(db.eclasses.roots), eclass1, root);
-	db.eclasses.roots := setTree(^(db.eclasses.roots), eclass2, root);
-
-	// Now find the total class
-	members1 = lookupMultimap(^(db.eclasses.eclass), root1);
-	members2 = lookupMultimap(^(db.eclasses.eclass), root2);
-
-	mmembers1 = mergeSets(members1, members2);
-	mmembers2 = insertSet(mmembers1, root1);
-	mmembers3 = insertSet(mmembers2, root2);
-
-	db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass1);
-	db.eclasses.eclass := removeFromTree(^(db.eclasses.eclass), eclass2);
-	db.eclasses.eclass := setTree(^(db.eclasses.eclass), root, mmembers3);
-}
-
-getDbDslRoot(db : Db, eclass : int) -> int {
-	mroot = lookupTree(^(db.eclasses.roots), eclass);
-	mroot ?? {
-		if (mroot != eclass) {
-			// TODO: We could do path compression here
-			getDbDslRoot(db, mroot)
-		} else eclass;
-	} : eclass
-}
-
-getDbDslEClass(db : Db, eclass : int) -> Set<int> {
-	root = getDbDslRoot(db, eclass);
-	mclasses = lookupTree(^(db.eclasses.eclass), root);
-	mclasses ?? {
-		mclasses
-	} : {
-		makeSet1(root)
-	}
-}
-
-canonicalizeDbDsl(db : Db) -> void {
-	canonicalizeDbDslChildren(db, db.arrays);
-	canonicalizeDbDslChildren(db, db.nodes);
-}
-
-canonicalizeDbDslChildren(db : Db, tree : DbValueTree<[int]>) -> void {
-	// OK, we have a tree with values. Let us simplify the values to be the root
-	tree.fromIdx := mapTree(^(tree.fromIdx), \values : [int] -> {
-		map(values, \value -> getDbDslRoot(db, value));
-	});
-	
-	// TODO: Should we also simplify the toIdx keys?
-}
-
-/*
-foldDbEClass(
-	db : Db, 
-	// What is the root?
-	eclass : int, 
-	// The value we accumulate
-	acc : ?, 
-	// For each equivalence class, which should we pick?
-	pickClass : (root : int, eclasses : Set<int>) -> int, 
-	// Do the accumulation
-	fn : (acc : ?, root : int) -> ?
-) -> ? {
-	root = lookupTreeDef(^(db.eclasses.roots), eclass, eclass);
-	eclasses = getDbDslEClass(db, root);
-	choice = pickClass(root, eclasses);
-
-}
-*/
