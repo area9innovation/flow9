@@ -19,7 +19,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).first);
 	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.second);
 	baseMaterial = RMIExp2GLSLMaterial(rmiScene.first);
-	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.)));
+	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
 	cameraPositionStr = formatString("%1, %2, %3", [
@@ -75,7 +75,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s, RMIXYZ(0., 0., 0.)))])
+							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
 						]
 					) |> ignore;
 				}
@@ -136,7 +136,10 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
 					RMTexture(texture, parameters): None();
-					RMColor(col): Some(col);
+					RMColor(color): Some(switch(color) {
+						RMInteractive(trigger, behaviour, transform): behaviour;
+						Behaviour(): color;
+					});
 				})))),
 				\col -> {
 					parameters = mapConcat(
@@ -169,6 +172,41 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				parsedMessage = parseJson(message);
 				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
 					next(webglContextLoadedB, true);
+
+				mouseLeftDownObjectId = getJsonIntField(parsedMessage, "mouseLeftDownObjectId", -1);
+				mouseHoverObjectId = getJsonIntField(parsedMessage, "mouseHoverObjectId", -1);
+				if (mouseLeftDownObjectId != -1) {
+					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
+					maybeApply(
+						lookupTree(topLevelObjects, mouseLeftDownObjectId),
+						\obj -> {
+							iter(
+								extractInteactivesFromRMScene(obj),
+								\i -> {
+									if (i.trigger == RMMouseDown()) {
+										next(i.behaviour, i.transform(getValue(i.behaviour)))
+									}
+								}
+							)
+						}
+					)
+				}
+				if (mouseHoverObjectId != -1) {
+					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
+					maybeApply(
+						lookupTree(topLevelObjects, mouseHoverObjectId),
+						\obj -> {
+							iter(
+								extractInteactivesFromRMScene(obj),
+								\i -> {
+									if (i.trigger == RMMouseHover()) {
+										next(i.behaviour, i.transform(getValue(i.behaviour)))
+									}
+								}
+							)
+						}
+					)
+				}
 			}),
 		],
 		displayRaymarchingCanvas(
@@ -262,6 +300,31 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
 		RMSmoothUnion(objects, k): mapConcat(objects, extractMaterialsFromRMScene);
 		RMMaterial(object, color, materialProperties): [obj];
+		RMEmpty(): [];
+	}
+}
+
+extractInteactivesFromRMScene(obj : RMScene) -> [RMInteractive] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
+			RMColor(col) : switch(col) {
+				RMInteractive(trigger, beh, transform): [col];
+				Behaviour(): [];
+			}
+			RMTexture(__, __): []
+		};
+		RMPrimitive(): [];
+		RMSTranslate(object, d): extractInteactivesFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractInteactivesFromRMScene(object1), extractInteactivesFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractInteactivesFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractInteactivesFromRMScene);
+		RMMaterial(object, color, materialProperties): switch(color) {
+			RMColor(col) : switch(col) {
+				RMInteractive(trigger, beh, transform): [col];
+				Behaviour(): [];
+			}
+			RMTexture(__, __): []
+		};
 		RMEmpty(): [];
 	}
 }
