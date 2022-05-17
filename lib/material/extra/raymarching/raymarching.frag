@@ -48,6 +48,7 @@ struct ObjectInfo {
 	float d;
 	int id;
 	int textureId;
+	bool topLevel;
 	Material material;
 };
 
@@ -115,6 +116,10 @@ float opSmoothUnion( float d1, float d2, float k ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
 }
 
+float opSmoothUnion2( float d1, float d2, float k, float h ) {
+    return mix( d2, d1, h ) - k*h*(1.0-h); 
+}
+
 vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, sampler2D txtr) {
 	vec2 texSize = vec2(textureSize(txtr, 0));
 	vec2 sizeNormalized = texSize / max(texSize.x, texSize.y);
@@ -152,30 +157,49 @@ vec3 getBaseMaterial(int id, vec3 p, vec3 normal) {
 
 ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
 	float interpolation = clamp(0.5 + 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
-	float d = opSmoothUnion(obj1.d, obj2.d, k);
-	vec3 color1 = obj1.textureId >= 0 ? getBaseMaterial(obj1.id, p, normal) : obj1.material.color;
-	vec3 color2 = obj2.textureId >= 0 ? getBaseMaterial(obj2.id, p, normal) : obj2.material.color;
-	return ObjectInfo(d, -1, -1, Material(mix(color2, color1, interpolation), mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)));
+	float d = opSmoothUnion2(obj1.d, obj2.d, k, interpolation);
+	return ObjectInfo(
+		d, -1, -1, false,
+		Material(
+			mix(obj2.material.color, obj1.material.color, interpolation),
+			mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)
+		)
+	);
 }
 
-ObjectInfo getObjectInfo(vec3 p, vec3 normal) {
+ObjectInfo minOISR(ObjectInfo obj1, ObjectInfo obj2, float k) {
+	float d = opSmoothUnion(obj1.d, obj2.d, k);
+	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
+}
+
+ObjectInfo getObjectInfoTopLevel(vec3 p) {
 	return %distanceFunction%;
+}
+
+ObjectInfo getObjectInfo(int id, vec3 p, vec3 normal) {
+	ObjectInfo result = ObjectInfo(MAX_DIST, -1, -1, true, Material(vec3(0.), 0.));
+
+	%topLevelDistanceFunction%
+
+	return result;
 }
 
 float getObjectInfoSimple(vec3 p) {
 	return %simpleDistance%;
 }
 
-float rayMarch(vec3 ro, vec3 rd) {
+ObjectInfo rayMarch(vec3 ro, vec3 rd) {
 	float dO = 0.;
 	vec3 p;
+	ObjectInfo oi;
 	for (int i=0; i< MAX_STEPS; i++){
 		p = ro + rd * dO;
-		float d = getObjectInfoSimple(p);
-		dO += d;
-		if (dO > MAX_DIST || d < SURF_DIST) break;
+		oi = getObjectInfoTopLevel(p);
+		dO += oi.d;
+		if (dO > MAX_DIST || oi.d < SURF_DIST) break;
 	}
-	return dO;
+	oi.d = dO;
+	return oi;
 }
 
 vec3 getObjectNormal(vec3 p) {
@@ -220,13 +244,16 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, vec3 no
 
 
 vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
-	float d = rayMarch(newRayOrigin + normalOrigin * SURF_DIST * 2., rayDirection);
+	ObjectInfo oiSimple = rayMarch(newRayOrigin + normalOrigin * SURF_DIST * 2., rayDirection);;
 	vec3 col = backgroundColor;
 
-	if (d < MAX_DIST) {
-		vec3 p = newRayOrigin + rayDirection * d;
+	if (oiSimple.d < MAX_DIST) {
+		vec3 p = newRayOrigin + rayDirection * oiSimple.d;
 		vec3 normal = getObjectNormal(p);
-		ObjectInfo oi = getObjectInfo(p, normal);
+		ObjectInfo oi = oiSimple;
+		if (!oi.topLevel) {
+			oi = getObjectInfo(oi.id, p, normal);
+		}
 		vec3 materialColor = oi.material.color;
 		if (oi.textureId >= 0) {
 			materialColor = getBaseMaterial(oi.id, p, normal);
@@ -243,13 +270,16 @@ vec3 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
-	float d = rayMarch(rayOrigin, rayDirection);
+	ObjectInfo oiSimple = rayMarch(rayOrigin, rayDirection);
 	vec3 col = backgroundColor;
 	
-	if (d < MAX_DIST) {
-		vec3 p = rayOrigin + rayDirection * d;
+	if (oiSimple.d < MAX_DIST) {
+		vec3 p = rayOrigin + rayDirection * oiSimple.d;
 		vec3 normal = getObjectNormal(p);
-		ObjectInfo oi = getObjectInfo(p, normal);
+		ObjectInfo oi = oiSimple;
+		if (!oi.topLevel) {
+			oi = getObjectInfo(oi.id, p, normal);
+		}
 		vec3 materialColor = oi.material.color;
 		if (oi.textureId >= 0) {
 			materialColor = getBaseMaterial(oi.id, p, normal);

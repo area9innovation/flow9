@@ -1,65 +1,121 @@
-import ds/tree;
+import ds/treeutils;
 import tools/dsl/dsl_util;
 
+// A data structure for use with egraph as rel. algebra
+// See https://arxiv.org/pdf/2108.02290.pdf
+
+// Here is an egraph done with Sqlite:
+// https://github.com/yihozhang/egraph-sqlite
+
+// Here is a DB in rust
+// https://github.com/mwillsey/qry/blob/main/src/lib.rs
 export {
+	// Prepare an empty DSL database
 	makeDb() -> Db;
 
-	// Insert this value in the AST
+	//
+	// Insert and extraction of DslAst values
+	//
+
+	// Insert this value in the AST. Figures out what table to use automatically
+	// bool, ints, doubles, string are handled in a special table
+	// arrays are placed in a table called ""
+	// nodes are placed in a table with the name of the node.
+	// If the value already exists, we get out the existing id of it instead.
 	insertDbDsl(db : Db, ast : DslAst) -> int;
 
-	// Get this value from the AST
+	// Get this value from the AST. Not efficient, but at least it works
 	lookupDbDsl(db : Db, eclass : int) -> DslAst;
 }
 
 Db(
-	// 0 is nothing. 1 is false, 2 is true.
+	// 0 is unknown. 1 is false, 2 is true.
 	nextId : ref int,
 	// Raw values
-	ints : DbValueTree<int>,
-	doubles : DbValueTree<double>,
-	strings : DbValueTree< string>,
-	arrays : DbValueTree<[int]>,
-	nodes : DbValueTree<[int]>,
+	ints : DbSimpleTable<int>,
+	doubles : DbSimpleTable<double>,
+	strings : DbSimpleTable<string>,
+	// Here we have each table for each relation
+	// Arrays are stored under the "" name
+	tables : ref Tree<string, DbTable>,
 );
 
 makeDb() -> Db {
 	Db(
 		ref 3,
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
-		DbValueTree(ref makeTree(), ref makeTree()),
+		makeDbSimpleTable(),
+		makeDbSimpleTable(),
+		makeDbSimpleTable(),
+		ref makeTree(),
 	);
 }
 
 insertDbDsl(db : Db, ast : DslAst) -> int {
 	switch (ast) {
 		DslBool(value): if (value) 2 else 1;
-		DslInt(value): insertDbValueTree(db.nextId, db.ints, value);
-		DslDouble(value): insertDbValueTree(db.nextId, db.doubles, value);
-		DslString(value): insertDbValueTree(db.nextId, db.strings, value);
+		DslInt(value): insertDbSimpleTable(db.nextId, db.ints, value);
+		DslDouble(value): insertDbSimpleTable(db.nextId, db.doubles, value);
+		DslString(value): insertDbSimpleTable(db.nextId, db.strings, value);
 		DslList(value): {
 			a : [DslAst] = list2array(value);
 			ids = map(a, \v -> insertDbDsl(db, v));
-			insertDbValueTree(db.nextId, db.arrays, ids);
+			insertDbNamedTable(db, "", ids);
 		}
 		DslNode(name, args, pos): {
-			sid = insertDbDsl(db, DslString(name));
 			argids = map(args, \a -> insertDbDsl(db, a));
 			posid = insertDbDsl(db, DslInt(pos));
-			ids = concat3([sid], argids, [posid]);
-			insertDbValueTree(db.nextId, db.nodes, ids);
+			ids = concat(argids, [posid]);
+			insertDbNamedTable(db, name, ids);
 		}
 	}
 }
 
-// A dual lookup data structure
-DbValueTree(fromIdx : ref Tree<int, ?>, toIdx : ref Tree<?, int>);
+insertDbNamedTable(db : Db, table : string, value : [int]) -> int {
+	mtable = lookupTree(^(db.tables), table);
+	mtable ?? {
+		insertDbTable(db.nextId, mtable, value);
+	} : {
+		tree = makeDbTable();
+		nvalue = insertDbTable(db.nextId, tree, value);
+		db.tables := setTree(^(db.tables), table, tree);
+		nvalue
+	}
+}
 
-insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
+// Extract the DSL value for this class
+lookupDbDsl(db : Db, eclass : int) -> DslAst {
+	if (eclass == 1) DslBool(false)
+	else if (eclass == 2) DslBool(true)
+	else {
+		if (containsKeyTree(^(db.ints.fromIdx), eclass)) {
+			DslInt(lookupTreeDef(^(db.ints.fromIdx), eclass, 0))
+		} else if (containsKeyTree(^(db.doubles.fromIdx), eclass)) {
+			DslDouble(lookupTreeDef(^(db.doubles.fromIdx), eclass, 0.0))
+		} else if (containsKeyTree(^(db.strings.fromIdx), eclass)) {
+			DslString(lookupTreeDef(^(db.strings.fromIdx), eclass, ""))
+		} else {
+			// TODO: Implement lookup in the tries
+			println("Can not look up ids from named tables for eclass " + toString(eclass));
+			DslString("ERROR");
+		}
+	}
+}
+
+// A dual lookup data structure for simple values
+DbSimpleTable(
+	fromIdx : ref Tree<int, ?>, 
+	toIdx : ref Tree<?, int>,
+);
+
+makeDbSimpleTable() -> DbSimpleTable<?> {
+	DbSimpleTable(ref makeTree(), ref makeTree());
+}
+
+// Inserts this value in the database, unless it already is there
+insertDbSimpleTable(nextId : ref int, tree : DbSimpleTable<?>, value : ?) -> int {
 	mid = lookupTree(^(tree.toIdx), value);
 	mid ?? mid : {
+		// OK, not found, so insert it with a new id
 		id = ^nextId;
 		tree.fromIdx := setTree(^(tree.fromIdx), id, value);
 		tree.toIdx := setTree(^(tree.toIdx), value, id);
@@ -68,27 +124,107 @@ insertDbValueTree(nextId : ref int, tree : DbValueTree<?>, value : ?) -> int {
 	}
 }
 
-lookupDbDsl(db : Db, eclass : int) -> DslAst {
-	if (eclass == 1) DslBool(false)
-	else if (eclass == 2) DslBool(true)
-	else {
-		rec = \ii -> lookupDbDsl(db, ii);
-		if (containsKeyTree(^(db.arrays.fromIdx), eclass)) {
-			ids = getTreeArrayValue(^(db.arrays.fromIdx), eclass);
-			DslList(fold(ids, makeList(), \acc, id -> Cons(rec(id), acc)))
-		} else if (containsKeyTree(^(db.nodes.fromIdx), eclass)) {
-			ids = getTreeArrayValue(^(db.nodes.fromIdx), eclass);
-			vals = map(ids, rec);
-			DslNode(getDslString(vals[0]), subrange(vals, 1, length(vals) - 2), getDslInt(vals[1]));
-		} else if (containsKeyTree(^(db.ints.fromIdx), eclass)) {
-			DslInt(lookupTreeDef(^(db.ints.fromIdx), eclass, 0))
-		} else if (containsKeyTree(^(db.doubles.fromIdx), eclass)) {
-			DslDouble(lookupTreeDef(^(db.doubles.fromIdx), eclass, 0.0))
-		} else if (containsKeyTree(^(db.strings.fromIdx), eclass)) {
-			DslString(lookupTreeDef(^(db.strings.fromIdx), eclass, ""))
-		} else {
-			DslString("ERROR: Unknown eclass " + toString(eclass))
-		}
+// A data structure for more complicated tables with value [int]
+// TODO: Separate this, so the trie is for indexes, while we have
+// another data structure for the values.
+DbTable(
+	values : ref IntTrie
+);
+
+IntTrie(values : Tree<int, IntTrie>);
+
+makeDbTable() -> DbTable {
+	DbTable(ref IntTrie(makeTree()))
+}
+
+// We insert this row into the trie.
+// If it already exists, we return the id
+// If it does not exist, we make an id and use as the first value
+insertDbTable(nextId : ref int, table : DbTable, value : [int]) -> int {
+	mid = getIntTrieStart(^(table.values), value);
+	if (mid == 0) {
+		id = ^nextId;
+		nextId := id + 1;
+		table.values := insertIntTrie(^(table.values), 0, concat([id], value));
+		id;
+	} else {
+		mid;
 	}
 }
 
+getIntTrieStart(trie : IntTrie, value : [int]) -> int {
+	foldTree(trie.values, 0, \start, ctrie, acc -> {
+		if (acc != 0) acc
+		else if (containsIntTrie(ctrie, 0, value)) start
+		else 0;
+	})
+}
+
+containsIntTrie(trie : IntTrie, i : int, values : [int]) -> bool {
+	n = length(values);
+	if (i < n) {
+		val = values[i];
+		mtrie = lookupTree(trie.values, val);
+		mtrie ?? {
+			containsIntTrie(mtrie, i + 1, values);
+		} : {
+			false
+		}
+	} else {
+		true;
+	}
+}
+
+insertIntTrie(trie : IntTrie, i : int, values : [int]) -> IntTrie {
+	if (i < length(values)) {
+		val = values[i];
+		mtrie = lookupTree(trie.values, val);
+		mtrie ?? {
+			ntrie = insertIntTrie(mtrie, i + 1, values);
+			IntTrie(setTree(trie.values, val, ntrie));
+		} : {
+			ntrie = insertIntTrie(IntTrie(makeTree()), i + 1, values);
+			IntTrie(setTree(trie.values, val, ntrie));
+		}
+	} else {
+		// We are done
+		trie;
+	}
+}
+
+printTrie(t : IntTrie) -> void {
+	println("Trie:");
+	doPrintTrie("", t);
+}
+
+doPrintTrie(indent : string, t : IntTrie) -> void {
+	nindent = indent + "  ";
+	traverseInOrder(t.values, \val, tt -> {
+		println(indent + i2s(val));
+		doPrintTrie(nindent, tt)
+	});
+}
+
+main() {
+	table = makeDbTable();
+	nextId = ref 3;
+	println(insertDbTable(nextId, table, [1, 2, 4]));
+	println(insertDbTable(nextId, table, [1, 2, 4]));
+	println(insertDbTable(nextId, table, [1, 2, 6]));
+	println(insertDbTable(nextId, table, [1, 3, 7]));
+	println(insertDbTable(nextId, table, [8, 2, 4]));
+	printTrie(^(table.values));
+	if (false) {
+		t1 = IntTrie(makeTree());
+		printTrie(t1);
+		t2 = insertIntTrie(t1, 0, [1, 2, 4]);
+		printTrie(t2);
+		t3 = insertIntTrie(t2, 0, [1, 2, 6]);
+		printTrie(t3);
+		t4 = insertIntTrie(t3, 0, [1, 3, 7]);
+		printTrie(t4);
+		t5 = insertIntTrie(t4, 0, [8, 2, 4]);
+		printTrie(t5);
+	}
+	quit(0);
+}
