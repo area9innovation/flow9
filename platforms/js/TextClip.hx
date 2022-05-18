@@ -457,6 +457,7 @@ class TextClip extends NativeWidgetClip {
 
 			if (type == 'number') {
 				nativeWidget.step = step;
+				nativeWidget.addEventListener('wheel', function(e) {e.preventDefault();});
 			}
 
 			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';

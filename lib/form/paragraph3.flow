@@ -1101,15 +1101,18 @@ RenderLine(
 			prevElHeight = prevElementHeight(info.optimizedLine, interactiveStyles, i - 1);
 			if (prevElHeight == 0.0) -1.0 else info.lineAsc - m.baseline - prevElHeight * 0.25
 		} else info.lineAsc - m.baseline / (if (isSubscript) 2.0 else 1.0);
+
+		addWordId = \fm -> {
+			if (^useNextWordId) {
+				useNextWordId := false;
+				Access([AccessAttribute("id", const(wordId))], fm);
+			} else fm
+		}
+
 		applyStylesAndOffset = \form : Form ->
-			(
-				if (^useNextWordId) {
-					useNextWordId := false;
-					Access([AccessAttribute("id", const(wordId))], form);
-				} else form
-			)
+			form
 			|> (\fm ->
-				eitherMap(
+				eitherFn(
 					elem.interactivityIdM,
 					\id -> applyIntStylesAndHighlighting(
 						fm,
@@ -1122,8 +1125,9 @@ RenderLine(
 						interWord,
 						highLightOffset,
 						interlineSpacing
-					),
-					Translate(const(^alignmentOffset), const(y + dy), fm)
+					)
+					|> addWordId,
+					\ -> Translate(const(^alignmentOffset), const(y + dy), fm |> addWordId)
 				)
 			);
 
@@ -1167,6 +1171,7 @@ RenderLine(
 		}
 		r
 	});
+	useNextWordId := false;
 	ParaLineResult(
 		Group(lo),
 		info.lineWidth + ^justifyExtraWidth,
@@ -1231,7 +1236,32 @@ applyIntStylesAndHighlighting(
 
 	dynamicHighlightStyleBM = tryExtractStruct(styles, DynamicHighlightStyle(make([]), false));
 
-	textAndBackPair = switch(form) {
+	textAndBackPair = makeTextAndBackPair(form, dynamicHighlightStyleBM, makeBackRect);
+
+	modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
+
+	Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm)
+	|> (\f -> 
+		switch(textAndBackPair.second) {
+			Empty() : f;
+			default : Access([AccessRole("group")], Group([
+				Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
+				f
+			]))
+		}
+	)
+}
+
+makeTextAndBackPair(
+	form : Form,
+	dynamicHighlightStyleBM : Maybe<DynamicHighlightStyle>,
+	makeBackRect : ([CharacterStyle], [CharacterStyle]) -> Form
+) -> Pair<Form, Form> {
+	switch(form) {
+		Access(props, f) : {
+			p = makeTextAndBackPair(f, dynamicHighlightStyleBM, makeBackRect);
+			Pair(Access(props, p.first), p.second)
+		}
 		Text(txt, txtStyle) : {
 
 			makeTxt = \dynStyle -> Text(
@@ -1262,13 +1292,6 @@ applyIntStylesAndHighlighting(
 			)
 		);
 	}
-
-	modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
-
-	Group([
-		Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
-		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
-	]);
 }
 
 applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {

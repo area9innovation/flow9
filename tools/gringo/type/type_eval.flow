@@ -1,23 +1,12 @@
 import text/gringo/gringo_ast;
 import tools/gringo/utils;
 import tools/gringo/gringo_pretty;
+import tools/gringo/type/types;
 import ds/tree;
 import algorithms;
 import string_utils;
 
 export {
-	// Determine the types of each rule, when they use the DSL protocol
-	GType ::= GTypeResult, GTypeNil, GTypeInt, GTypeDouble, GTypeString, GTypeAction, GTypeStar, GTypeUnion;
-		// Delayed gratification: Whatever this rule gives
-		GTypeResult(rule : string);
-		GTypeNil();
-		GTypeInt();
-		GTypeDouble();
-		GTypeString();
-		GTypeAction(name : string, args : [GType]);
-		GTypeStar(type : GType);
-		GTypeUnion(types : [GType]);
-
 	GTypeEnv(
 		rules : Tree<string, GTerm>,
 		env : Tree<string, [GType]>,
@@ -25,13 +14,14 @@ export {
 	);
 
 	// Do a type evaluation and discover the types of the productions
-	// TODO: Simplify trivial types that do not have constructors or unions inside, and inline them
 	gringoType(d : GTerm) -> GTypeEnv;
 
 	prettyGType(t : GType) -> string;
 }
 
-gringoType(d : GTerm) -> GTypeEnv {
+gringoType(g : GTerm) -> GTypeEnv {
+	d = renameAmbiguiousRules(g);
+	// println(gterm2string(d));
 	env = GTypeEnv(findRules(makeTree(), d), makeTree(), []);
 	nenv = gringoTypeEval(env, d);
 	// OK, go and clean up the types where we have references to named rules
@@ -96,6 +86,7 @@ gringoTypeEval(env : GTypeEnv, d : GTerm) -> GTypeEnv {
 		GUnquote(term): {
 			switch (term) {
 				GString(action): {
+					// We know about the actions from tools/dsl/dsl_parse.flow
 					if (action == "s2i") {
 						// Pop and return int
 						replaceLastGType(env, GTypeInt());
@@ -106,6 +97,16 @@ gringoTypeEval(env : GTypeEnv, d : GTerm) -> GTypeEnv {
 						replaceLastGType(env, GTypeString());
 					} else if (action == "nil") {
 						GTypeEnv(env with stack = arrayPush(env.stack, GTypeNil()));
+					} else if (action == "reverse") {
+						// Takes list, gives list
+						env;
+					} else if (action == "dump") {
+						// nop
+						env;
+					} else if (action == "true") {
+						GTypeEnv(env with stack = arrayPush(env.stack, GTypeBool()));
+					} else if (action == "false") {
+						GTypeEnv(env with stack = arrayPush(env.stack, GTypeBool()));
 					} else if (action == "cons") {
 						elm : Pair<GTypeEnv, GType> = popGTypeStack(env);
 						list : Pair<GTypeEnv, GType> = popGTypeStack(elm.first);
@@ -123,7 +124,11 @@ gringoTypeEval(env : GTypeEnv, d : GTerm) -> GTypeEnv {
 						top : Pair<GTypeEnv, GType> = popGTypeStack(env);
 						other : Pair<GTypeEnv, GType> = popGTypeStack(top.first);
 						GTypeEnv(other.first with stack = concat(other.first.stack, [top.second, other.second]));
-					// true, false, make_node(name, list), reverse(list) -> list
+
+					} else if (action == "make_node") {
+						println("TODO: Handle make_node in Gringo typing");
+						env;
+
 					} else {
 						// OK, find out about the name of the action and the number of parameters
 						parts = strSplit(action, "_");
@@ -247,12 +252,12 @@ replaceLastGType(e : GTypeEnv, type : GType) -> GTypeEnv {
 joinGTypes(left : GType, right : GType) -> GType {
 	add = \ -> {
 		switch (right) {
-			GTypeUnion(rtypes): GTypeUnion(sortUnique(arrayPush(rtypes, left)));
+			GTypeUnion(rtypes): makeGTypeUnion(arrayPush(rtypes, left));
 			default: {
 				if (left == right) {
 					left
 				} else {
-					GTypeUnion(sortUnique([left, right]));
+					makeGTypeUnion([left, right]);
 				}
 			}
 		}
@@ -260,6 +265,7 @@ joinGTypes(left : GType, right : GType) -> GType {
 	switch (left) {
 		GTypeResult(r): add();
 		GTypeNil(): if (left == right) left else joinGTypes(right, left);
+		GTypeBool(): add();
 		GTypeInt(): add();
 		GTypeDouble(): add();
 		GTypeString(): add();
@@ -274,14 +280,20 @@ joinGTypes(left : GType, right : GType) -> GType {
 			}
 		}
 		GTypeUnion(ltypes): {
-			GTypeUnion(sortUnique(
+			makeGTypeUnion(
 				switch (right) {
 					GTypeUnion(rtypes): concat(ltypes, rtypes);
 					default: arrayPush(ltypes, right);
 				}
-			));
+			);
 		}
 	}
+}
+
+makeGTypeUnion(types : [GType]) -> GType {
+	so = sortUnique(types);
+	if (length(so) == 1) so[0]
+	else GTypeUnion(so);
 }
 
 popGTypeStack(e : GTypeEnv) -> Pair<GTypeEnv, GType> {
@@ -300,6 +312,7 @@ prettyGType(t : GType) -> string {
 	switch (t) {
 		GTypeResult(rule): capitalize(rule);
 		GTypeNil(): "nil";
+		GTypeBool(): "bool";
 		GTypeInt(): "int"
 		GTypeDouble(): "double";
 		GTypeString(): "string";
@@ -307,4 +320,33 @@ prettyGType(t : GType) -> string {
 		GTypeStar(type): "[" + prettyGType(type) + "]";
 		GTypeUnion(types): superglue(types, prettyGType, " | ");
 	}
+}
+
+// Rename rules to avoid collisions with common names
+renameAmbiguiousRules(g : GTerm) -> GTerm {
+	switch (g) {
+		GRule(id, term, body): {
+			nbody = renameAmbiguiousRules(body);
+			nterm = renameAmbiguiousRules(term);
+			GRule(renameAmbiguiousId(id), nterm, nbody);
+		}
+		GPrecedence(left, right): GPrecedence(renameAmbiguiousRules(left), renameAmbiguiousRules(right)); 
+		GChoice(left, right): GChoice(renameAmbiguiousRules(left), renameAmbiguiousRules(right)); 
+		GSeq(left, right): GSeq(renameAmbiguiousRules(left), renameAmbiguiousRules(right));
+		GStar(term): GStar(renameAmbiguiousRules(term));
+		GPlus(term): GPlus(renameAmbiguiousRules(term));
+		GOpt(term): GOpt(renameAmbiguiousRules(term));
+		GNegate(term): GNegate(renameAmbiguiousRules(term));
+		GError(term): GError(renameAmbiguiousRules(term));
+		GLower(term): GLower(renameAmbiguiousRules(term));
+		GUnquote(term): GUnquote(renameAmbiguiousRules(term));
+		GString(text): g;
+		GRange(lower, upper): g;
+		GVar(id): GVar(renameAmbiguiousId(id));
+		GEpsilon(): g;
+	}
+}
+
+renameAmbiguiousId(id : string) -> string {
+	if (contains(["bool", "int", "double", "string"], id)) { id + "_0" } else id
 }

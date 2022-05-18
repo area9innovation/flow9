@@ -14,10 +14,12 @@ MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> 
 }
 
 MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
-	glsl = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), false));
-	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true));
-	baseMaterial = RMIExp2GLSLMaterial(RMScene2RMIExp(fgetValue(sceneB), false));
-	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB), RMIXYZ(0., 0., 0.)));
+	rmiScene = RMScene2RMIExp(fgetValue(sceneB), false);
+	glsl = RMIExp2GLSL(rmiScene.first);
+	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).first);
+	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.second);
+	baseMaterial = RMIExp2GLSLMaterial(rmiScene.first);
+	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
 	cameraPositionStr = formatString("%1, %2, %3", [
@@ -31,7 +33,16 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 		d2s(fgetValue(cameraB).lookAt.z)
 	]);
 
-	texturesB = make(extractTexturesFromRMScene(fgetValue(sceneB)));
+	materialsB = make(extractMaterialsFromRMScene(fgetValue(sceneB)));
+
+	countMaterials = \materials -> {
+		count = fold2(materials, 0, 0, \acc1, acc2, m -> switch(m.color) {
+			RMTexture(texture, parameters): Pair(acc1 + 1, acc2);
+			RMColor(col): Pair(acc1, acc2 + 1);
+		});
+		Pair(if (count.first < 1) 1 else count.first, if (count.second < 1) 1 else count.second)
+	};
+	countedMaterials = countMaterials(getValue(materialsB));
 
 	webglContextLoadedB = make(false);
 
@@ -40,17 +51,23 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			make2Subscribe2(
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
-					rmiScene = RMScene2RMIExp(s, false);
-					next(texturesB, extractTexturesFromRMScene(s));
+					newRMIScene = RMScene2RMIExp(s, false);
+					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.second);
+					materials = extractMaterialsFromRMScene(s);
+					next(materialsB, materials);
+					countedMaterialsChanged = countMaterials(materials);
 					hostCall("recompileShader", [
 						i2s(id),
 						blueprint(
 							"#include material/extra/raymarching/raymarching.frag",
 							[
-								"distanceFunction", RMIExp2GLSL(rmiScene),
-								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true)),
+								"distanceFunction", RMIExp2GLSL(newRMIScene.first),
+								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true).first),
 								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
-								"baseMaterial", RMIExp2GLSLMaterial(rmiScene)
+								"baseMaterial", RMIExp2GLSLMaterial(newRMIScene.first),
+								"numTextures", i2s(countedMaterialsChanged.first),
+								"numColors", i2s(countedMaterialsChanged.second),
+								"topLevelDistanceFunction", newTopLevelDistanceFunctions,
 							]
 						)
 					]);
@@ -58,7 +75,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s, RMIXYZ(0., 0., 0.)))])
+							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
 						]
 					) |> ignore;
 				}
@@ -82,7 +99,10 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			),
 			makeSubscribeTrigger(
 				webglContextLoadedB,
-				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.texture)))),
+				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
+					RMTexture(texture, parameters): Some(texture);
+					RMColor(col): None();
+				})))),
 				\textures -> {
 					hostCall("resetTextures", [i2s(id)]) |> ignore;
 					mapi(
@@ -95,7 +115,10 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			),
 			makeSubscribeTrigger(
 				webglContextLoadedB,
-				fsubselect(texturesB, FLift(\textures -> fmerge(map(textures, \texture -> texture.parameters)))),
+				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
+					RMTexture(texture, parameters): Some(parameters);
+					RMColor(col): None();
+				})))),
 				\parameters -> {
 					textureParameters = mapConcat(
 						parameters,
@@ -109,10 +132,81 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					hostCall("loadNewTextureParameters", [flow(i2s(id)), flow(textureParameters)])|> ignore;
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
+					RMTexture(texture, parameters): None();
+					RMColor(color): Some(switch(color) {
+						RMInteractive(trigger, behaviour, transform): behaviour;
+						Behaviour(): color;
+					});
+				})))),
+				\col -> {
+					parameters = mapConcat(
+						col,
+						\c -> {
+							h = hexColor2RMI(c);
+							[h.x, h.y, h.z, 0.] //allignment bits
+						}
+					);
+					hostCall("updateMaterialsColorParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(materialsB, FLift(\materials -> fmerge(map(materials, \material -> extractStruct(
+					material.materialProperties,
+					RMReflect(make(0.0))
+				).mixCoef)))),
+				\reflectivness -> {
+					parameters = mapConcat(
+						reflectivness,
+						\r -> {
+							[r, 0., 0., 0.] //allignment bits
+						}
+					);
+					hostCall("updateMaterialsReflectivnessParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
 			\ -> addMessageEventListener(\message, origin -> {
 				parsedMessage = parseJson(message);
 				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
 					next(webglContextLoadedB, true);
+
+				mouseLeftDownObjectId = getJsonIntField(parsedMessage, "mouseLeftDownObjectId", -1);
+				mouseHoverObjectId = getJsonIntField(parsedMessage, "mouseHoverObjectId", -1);
+				if (mouseLeftDownObjectId != -1) {
+					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
+					maybeApply(
+						lookupTree(topLevelObjects, mouseLeftDownObjectId),
+						\obj -> {
+							iter(
+								extractInteactivesFromRMScene(obj),
+								\i -> {
+									if (i.trigger == RMMouseDown()) {
+										next(i.behaviour, i.transform(getValue(i.behaviour)))
+									}
+								}
+							)
+						}
+					)
+				}
+				if (mouseHoverObjectId != -1) {
+					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
+					maybeApply(
+						lookupTree(topLevelObjects, mouseHoverObjectId),
+						\obj -> {
+							iter(
+								extractInteactivesFromRMScene(obj),
+								\i -> {
+									if (i.trigger == RMMouseHover()) {
+										next(i.behaviour, i.transform(getValue(i.behaviour)))
+									}
+								}
+							)
+						}
+					)
+				}
 			}),
 		],
 		displayRaymarchingCanvas(
@@ -128,7 +222,10 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				"distanceFunction", glsl,
 				"simpleDistance", glslSimple,
 				"light", lightGlsl,
-				"baseMaterial", baseMaterial
+				"baseMaterial", baseMaterial,
+				"numTextures", i2s(countedMaterials.first),
+				"numColors", i2s(countedMaterials.second),
+				"topLevelDistanceFunction", topLevelDistanceFunctions,
 			])
 		)
 	)
@@ -194,20 +291,39 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 	)
 }
 
-extractTexturesFromRMScene(obj : RMScene) -> [RMTexture] {
+extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position): [RMMaterial(object, color, materialProperties)];
+		RMPrimitive(): [];
+		RMSTranslate(object, d): extractMaterialsFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractMaterialsFromRMScene);
+		RMMaterial(object, color, materialProperties): [obj];
+		RMEmpty(): [];
+	}
+}
+
+extractInteactivesFromRMScene(obj : RMScene) -> [RMInteractive] {
 	switch(obj) {
 		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
-			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
-			RMColor(col): [];
+			RMColor(col) : switch(col) {
+				RMInteractive(trigger, beh, transform): [col];
+				Behaviour(): [];
+			}
+			RMTexture(__, __): []
 		};
 		RMPrimitive(): [];
-		RMSTranslate(object, d): extractTexturesFromRMScene(object);
-		RMUnion2(object1, object2): concat(extractTexturesFromRMScene(object1), extractTexturesFromRMScene(object2));
-		RMUnion(objects): mapConcat(objects, extractTexturesFromRMScene);
-		RMSmoothUnion(objects, k): mapConcat(objects, extractTexturesFromRMScene);
+		RMSTranslate(object, d): extractInteactivesFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractInteactivesFromRMScene(object1), extractInteactivesFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractInteactivesFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractInteactivesFromRMScene);
 		RMMaterial(object, color, materialProperties): switch(color) {
-			RMTexture(texture, parameters): [RMTexture(texture, parameters)];
-			RMColor(col): [];
+			RMColor(col) : switch(col) {
+				RMInteractive(trigger, beh, transform): [col];
+				Behaviour(): [];
+			}
+			RMTexture(__, __): []
 		};
 		RMEmpty(): [];
 	}
@@ -237,4 +353,14 @@ makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<s
 			\fn -> next(pngFn, fn)
 		)
 	)
+}
+
+rmiTree2GLSL(rmiScene : Tree<int, RMIExp>) -> string {
+	strGlue(
+		convertTreeToArray(
+			rmiScene,
+			\k, v -> formatString("if (id == %1) {\nresult = %2;\n}", [i2s(k), RMIExp2GLSL(v)])
+		),
+		" else "
+	);
 }
