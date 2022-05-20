@@ -100,7 +100,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			makeSubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
-					RMTexture(texture, parameters): Some(texture);
+					RMTexture(texture, parameters): Some(texture.behaviour);
 					RMColor(col): None();
 				})))),
 				\textures -> {
@@ -116,7 +116,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			makeSubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
-					RMTexture(texture, parameters): Some(parameters);
+					RMTexture(texture, parameters): Some(parameters.behaviour);
 					RMColor(col): None();
 				})))),
 				\parameters -> {
@@ -136,10 +136,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
 					RMTexture(texture, parameters): None();
-					RMColor(color): Some(switch(color) {
-						RMInteractive(trigger, behaviour): behaviour;
-						Behaviour(): color;
-					});
+					RMColor(color): Some(color.behaviour);
 				})))),
 				\col -> {
 					parameters = mapConcat(
@@ -156,8 +153,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(map(materials, \material -> extractStruct(
 					material.materialProperties,
-					RMReflect(make(0.0))
-				).mixCoef)))),
+					RMReflect(initRMInteractive(0.0))
+				).mixCoef.behaviour)))),
 				\reflectivness -> {
 					parameters = mapConcat(
 						reflectivness,
@@ -189,9 +186,9 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 								lookupTree(topLevelObjects, t.second),
 								\obj -> {
 									iter(
-										extractInteactivesFromRMScene(obj),
+										extractTriggersFromRMScene(obj),
 										\i -> {
-											next(i.trigger, t.first);
+											next(i, t.first);
 										}
 									)
 								}
@@ -296,27 +293,24 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	}
 }
 
-extractInteactivesFromRMScene(obj : RMScene) -> [RMInteractive] {
+extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 	switch(obj) {
 		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
-			RMColor(col) : switch(col) {
-				RMInteractive(trigger, behaviour): [col];
-				Behaviour(): [];
-			}
-			RMTexture(__, __): []
+			RMColor(col) : [col.trigger];
+			RMTexture(texture, parameters): [texture.trigger, parameters.trigger];
 		};
 		RMPrimitive(): [];
-		RMSTranslate(object, d): extractInteactivesFromRMScene(object);
-		RMUnion2(object1, object2): concat(extractInteactivesFromRMScene(object1), extractInteactivesFromRMScene(object2));
-		RMUnion(objects): mapConcat(objects, extractInteactivesFromRMScene);
-		RMSmoothUnion(objects, k): mapConcat(objects, extractInteactivesFromRMScene);
-		RMMaterial(object, color, materialProperties): switch(color) {
-			RMColor(col) : switch(col) {
-				RMInteractive(trigger, behaviour): [col];
-				Behaviour(): [];
-			}
-			RMTexture(__, __): []
-		};
+		RMSTranslate(object, d): extractTriggersFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractTriggersFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractTriggersFromRMScene);
+		RMMaterial(object, color, materialProperties): concat(
+			switch(color) {
+				RMColor(col) : [col.trigger];
+				RMTexture(texture, parameters): [texture.trigger, parameters.trigger];
+			},
+			eitherMap(tryExtractStruct(materialProperties, RMReflect(initRMInteractive(0.))), \r -> [r.mixCoef.trigger], [])
+		);
 		RMEmpty(): [];
 	}
 }
