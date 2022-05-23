@@ -3,6 +3,9 @@
 This is a test bed for how to get Gringo bootstrapped using
 Gringo and the DSL infrastructure in the best possible way.
 
+TODO:
+- Finish interpreter
+
 # Interpreter
 
 To get to robust parsing with an interpreter, we need these this:
@@ -174,10 +177,15 @@ Add a + b -> Add b + a
 Add (Add a b), c  -> Add (a, Add(b, c))
 
 
-term rewriting
+Term rewriting AST syntax:
+	Add(a, b) -> Add(b, a)
+
 relalg
-[ 2 * x | x in 1..10 ]
+	[ 2 * x | x in 1..10 ]
+	[ Add(e.b, e.a) | e in Add ]
+
 datalog
+
 flow/wise
 
 # Convert type to database

@@ -100,7 +100,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			makeSubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
-					RMTexture(texture, parameters): Some(texture);
+					RMTexture(texture, parameters): Some(texture.behaviour);
 					RMColor(col): None();
 				})))),
 				\textures -> {
@@ -116,7 +116,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			makeSubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
-					RMTexture(texture, parameters): Some(parameters);
+					RMTexture(texture, parameters): Some(parameters.behaviour);
 					RMColor(col): None();
 				})))),
 				\parameters -> {
@@ -136,10 +136,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
 					RMTexture(texture, parameters): None();
-					RMColor(color): Some(switch(color) {
-						RMInteractive(trigger, behaviour, transform): behaviour;
-						Behaviour(): color;
-					});
+					RMColor(color): Some(color.behaviour);
 				})))),
 				\col -> {
 					parameters = mapConcat(
@@ -156,8 +153,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(map(materials, \material -> extractStruct(
 					material.materialProperties,
-					RMReflect(make(0.0))
-				).mixCoef)))),
+					RMReflect(initRMInteractive(0.0))
+				).mixCoef.behaviour)))),
 				\reflectivness -> {
 					parameters = mapConcat(
 						reflectivness,
@@ -173,35 +170,27 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
 					next(webglContextLoadedB, true);
 
-				mouseLeftDownObjectId = getJsonIntField(parsedMessage, "mouseLeftDownObjectId", -1);
-				mouseHoverObjectId = getJsonIntField(parsedMessage, "mouseHoverObjectId", -1);
-				if (mouseLeftDownObjectId != -1) {
+				triggers = [
+					Pair(RMMouseHover(), getJsonIntField(parsedMessage, "mouseHoverObjectId", -1)),
+					Pair(RMMouseHoverIn(), getJsonIntField(parsedMessage, "mouseHoverInObjectId", -1)),
+					Pair(RMMouseHoverOut(), getJsonIntField(parsedMessage, "mouseHoverOutObjectId", -1)),
+					Pair(RMMouseDownleft(), getJsonIntField(parsedMessage, "mouseDownLeftObjectId", -1)),
+				];
+				filteredTriggers = filter(triggers, \t -> t.second != -1);
+				if (filteredTriggers != []) {
 					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
-					maybeApply(
-						lookupTree(topLevelObjects, mouseLeftDownObjectId),
-						\obj -> {
-							iter(
-								extractInteactivesFromRMScene(obj),
-								\i -> {
-									if (i.trigger == RMMouseDown()) {
-										next(i.behaviour, i.transform(getValue(i.behaviour)))
-									}
-								}
-							)
-						}
-					)
-				}
-				if (mouseHoverObjectId != -1) {
-					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
-					maybeApply(
-						lookupTree(topLevelObjects, mouseHoverObjectId),
-						\obj -> {
-							iter(
-								extractInteactivesFromRMScene(obj),
-								\i -> {
-									if (i.trigger == RMMouseHover()) {
-										next(i.behaviour, i.transform(getValue(i.behaviour)))
-									}
+					iter(
+						filteredTriggers,
+						\t -> {
+							maybeApply(
+								lookupTree(topLevelObjects, t.second),
+								\obj -> {
+									iter(
+										extractTriggersFromRMScene(obj),
+										\i -> {
+											next(i, t.first);
+										}
+									)
 								}
 							)
 						}
@@ -304,27 +293,24 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	}
 }
 
-extractInteactivesFromRMScene(obj : RMScene) -> [RMInteractive] {
+extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 	switch(obj) {
 		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
-			RMColor(col) : switch(col) {
-				RMInteractive(trigger, beh, transform): [col];
-				Behaviour(): [];
-			}
-			RMTexture(__, __): []
+			RMColor(col) : [col.trigger];
+			RMTexture(texture, parameters): [texture.trigger, parameters.trigger];
 		};
 		RMPrimitive(): [];
-		RMSTranslate(object, d): extractInteactivesFromRMScene(object);
-		RMUnion2(object1, object2): concat(extractInteactivesFromRMScene(object1), extractInteactivesFromRMScene(object2));
-		RMUnion(objects): mapConcat(objects, extractInteactivesFromRMScene);
-		RMSmoothUnion(objects, k): mapConcat(objects, extractInteactivesFromRMScene);
-		RMMaterial(object, color, materialProperties): switch(color) {
-			RMColor(col) : switch(col) {
-				RMInteractive(trigger, beh, transform): [col];
-				Behaviour(): [];
-			}
-			RMTexture(__, __): []
-		};
+		RMSTranslate(object, d): extractTriggersFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractTriggersFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractTriggersFromRMScene);
+		RMMaterial(object, color, materialProperties): concat(
+			switch(color) {
+				RMColor(col) : [col.trigger];
+				RMTexture(texture, parameters): [texture.trigger, parameters.trigger];
+			},
+			eitherMap(tryExtractStruct(materialProperties, RMReflect(initRMInteractive(0.))), \r -> [r.mixCoef.trigger], [])
+		);
 		RMEmpty(): [];
 	}
 }

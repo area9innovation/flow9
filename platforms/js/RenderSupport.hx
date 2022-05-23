@@ -3357,6 +3357,16 @@ class RenderSupport {
 				}
 			}
 
+			// We need it in HTMLRenderer mode for snapshots support.
+			untyped clip.canvasFilters = clip.filters.map(function(f) {
+				if (untyped HaxeRuntime.instanceof(f, DropShadowFilter)) {
+					var newFilter = Reflect.copy(f); 
+					newFilter.blur = f.blur * 0.5;
+					return newFilter;
+				}
+				return f;
+			});
+
 			clip.invalidateTransform('addFilters');
 		} else {
 			untyped clip.filterPadding = 0.0;
