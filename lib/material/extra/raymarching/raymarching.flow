@@ -3,17 +3,17 @@ import material/extra/raymarching/raymarching_rm2rmi;
 import material/extra/raymarching/raymarching_rmi2code;
 
 export {
-	MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
-	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
+	MRaymarching(id : int, scene : RMScene, light : RMLights, settings : RMSettings) -> Material;
+	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, settings : RMSettings) -> Material;
 
 	makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<string>) -> Material;
 }
 
-MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material {
-	MDynamicRaymarching(id, const(scene), const(light), const(camera))
+MRaymarching(id : int, scene : RMScene, light : RMLights, settings : RMSettings) -> Material {
+	MDynamicRaymarching(id, const(scene), const(light), settings)
 }
 
-MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
+MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, settings : RMSettings) -> Material {
 	rmiScene = RMScene2RMIExp(fgetValue(sceneB), false);
 	glsl = RMIExp2GLSL(rmiScene.first);
 	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).first);
@@ -22,6 +22,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
+	cameraB = settings.camera;
 	cameraPositionStr = formatString("%1, %2, %3", [
 		d2s(fgetValue(cameraB).position.x),
 		d2s(fgetValue(cameraB).position.y),
@@ -45,6 +46,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 	countedMaterials = countMaterials(getValue(materialsB));
 
 	webglContextLoadedB = make(false);
+	fpsB = make(0);
 
 	MConstruct(
 		[
@@ -170,11 +172,12 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
 					next(webglContextLoadedB, true);
 
+				getObjectId = \event -> getJsonIntField(parsedMessage, event, -1);
 				triggers = [
-					Pair(RMMouseHover(), getJsonIntField(parsedMessage, "mouseHoverObjectId", -1)),
-					Pair(RMMouseHoverIn(), getJsonIntField(parsedMessage, "mouseHoverInObjectId", -1)),
-					Pair(RMMouseHoverOut(), getJsonIntField(parsedMessage, "mouseHoverOutObjectId", -1)),
-					Pair(RMMouseDownleft(), getJsonIntField(parsedMessage, "mouseDownLeftObjectId", -1)),
+					Pair(RMMouseHover(), getObjectId("mouseHoverObjectId")),
+					Pair(RMMouseHoverIn(), getObjectId("mouseHoverInObjectId")),
+					Pair(RMMouseHoverOut(), getObjectId("mouseHoverOutObjectId")),
+					Pair(RMMouseDownleft(), getObjectId("mouseDownLeftObjectId")),
 				];
 				filteredTriggers = filter(triggers, \t -> t.second != -1);
 				if (filteredTriggers != []) {
@@ -196,26 +199,32 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						}
 					)
 				}
+
+				fps = getJsonIntField(parsedMessage, "fps", -1);
+				if (fps != -1) next(fpsB, fps);
 			}),
 		],
-		displayRaymarchingCanvas(
-			id,
-			webglContextLoadedB,
-			blueprint("#include material/extra/raymarching/raymarching.js", [
-				"cameraPosition", cameraPositionStr,
-				"cameraLookAt", cameraLookAtStr,
-				"distanceFunction", jsScene,
-			]),
-			"#include material/extra/raymarching/raymarching.vert",
-			blueprint("#include material/extra/raymarching/raymarching.frag", [
-				"distanceFunction", glsl,
-				"simpleDistance", glslSimple,
-				"light", lightGlsl,
-				"baseMaterial", baseMaterial,
-				"numTextures", i2s(countedMaterials.first),
-				"numColors", i2s(countedMaterials.second),
-				"topLevelDistanceFunction", topLevelDistanceFunctions,
-			])
+		MGroup2(
+			displayRaymarchingCanvas(
+				id,
+				webglContextLoadedB,
+				blueprint("#include material/extra/raymarching/raymarching.js", [
+					"cameraPosition", cameraPositionStr,
+					"cameraLookAt", cameraLookAtStr,
+					"distanceFunction", jsScene,
+				]),
+				"#include material/extra/raymarching/raymarching.vert",
+				blueprint("#include material/extra/raymarching/raymarching.frag", [
+					"distanceFunction", glsl,
+					"simpleDistance", glslSimple,
+					"light", lightGlsl,
+					"baseMaterial", baseMaterial,
+					"numTextures", i2s(countedMaterials.first),
+					"numColors", i2s(countedMaterials.second),
+					"topLevelDistanceFunction", topLevelDistanceFunctions,
+				])
+			),
+			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(i2s(fps) + " fps", [])))
 		)
 	)
 }
