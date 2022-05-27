@@ -47,6 +47,10 @@ uniform PositionsBlock {
 	vec3 positions[%numColors% + numTextures];
 };
 
+uniform ObjectParametersBlock {
+	vec4 objectParameters[%numColors% + numTextures];
+};
+
 struct ObjectInfo {
 	float d;
 	int id;

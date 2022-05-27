@@ -45,6 +45,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 	countedMaterials = countMaterials(getValue(materialsB));
 
 	positionsB = make(extractPositionsFromRMScene(fgetValue(sceneB)));
+	objectParametersB = make(extractObjectParametersFromRMScene(fgetValue(sceneB)));
 
 	webglContextLoadedB = make(false);
 	fpsB = make(0);
@@ -60,6 +61,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					next(materialsB, materials);
 					positions = extractPositionsFromRMScene(s);
 					next(positionsB, positions);
+					objectParameters = extractObjectParametersFromRMScene(s);
+					next(objectParametersB, objectParameters);
 					countedMaterialsChanged = countMaterials(materials);
 					hostCall("recompileShader", [
 						i2s(id),
@@ -80,7 +83,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p, positions) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])|> pprint("")
+							formatString("(p, positions, objectParameters) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
 						]
 					) |> ignore;
 				}
@@ -240,6 +243,13 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					hostCall("updateObjectPositions", [flow(i2s(id)), flow(parameters)])|> ignore;
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(objectParametersB, FLift(fmerge)),
+				\parameters -> {
+					hostCall("updateObjectParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
 		],
 		MGroup2(
 			displayRaymarchingCanvas(
@@ -368,6 +378,36 @@ extractPositionsFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [T
 		RMSmoothUnion(objects, k): mapConcat(objects, \o -> extractPositionsFromRMScene0(o, acc));
 		RMMaterial(object, color, materialProperties): extractPositionsFromRMScene0(object, acc);
 		RMInteractive(object, trigger): extractPositionsFromRMScene0(object, acc);
+		RMEmpty(): [];
+	}
+}
+
+extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
+	fRMX = \coord -> fselect(coord, FLift(\c -> c.x));
+	fRMY = \coord -> fselect(coord, FLift(\c -> c.y));
+	fRMZ = \coord -> fselect(coord, FLift(\c -> c.z));
+	getPrimitiveParameters = \o -> {
+		switch(o) {
+			RMSphere(radius): [radius, const(0.), const(0.), const(0.)];
+			RMPlane(normal): [fRMX(normal), fRMY(normal), fRMZ(normal), const(0.)];
+			RMBox(box):  [fRMX(box), fRMY(box), fRMZ(box), const(0.)];
+			RMRoundBox(box, radius): [fRMX(box), fRMY(box), fRMZ(box), radius];
+			RMBoxFrame(box, thickness): [fRMX(box), fRMY(box), fRMZ(box), thickness];
+			RMTorus(revolutionRadius, tubeRadius): [revolutionRadius, tubeRadius, const(0.), const(0.)];
+			RMCappedTorus(revolutionRadius, tubeRadius, percent): [revolutionRadius, tubeRadius, fselect(percent, FLift(\p -> sin(PI * p))), fselect(percent, FLift(\p -> cos(PI * p)))];
+			RMCylinder(height, radius): [height, radius, const(0.), const(0.)];
+			RMRoundedCylinder(height, radius, radiusRounded): [height, fdivide(radius, const(2.)), radiusRounded, const(0.)];
+		}
+	};
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): getPrimitiveParameters(object);
+		RMPrimitive(): getPrimitiveParameters(obj);
+		RMSTranslate(object, d): extractObjectParametersFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractObjectParametersFromRMScene(object1), extractObjectParametersFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractObjectParametersFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractObjectParametersFromRMScene);
+		RMMaterial(object, color, materialProperties): extractObjectParametersFromRMScene(object);
+		RMInteractive(object, trigger): extractObjectParametersFromRMScene(object);
 		RMEmpty(): [];
 	}
 }
