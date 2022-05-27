@@ -35,7 +35,6 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 	]);
 
 	materialsB = make(extractMaterialsFromRMScene(fgetValue(sceneB)));
-
 	countMaterials = \materials -> {
 		count = fold2(materials, 0, 0, \acc1, acc2, m -> switch(m.color) {
 			RMTexture(texture, parameters): Pair(acc1 + 1, acc2);
@@ -44,6 +43,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 		Pair(if (count.first < 1) 1 else count.first, if (count.second < 1) 1 else count.second)
 	};
 	countedMaterials = countMaterials(getValue(materialsB));
+
+	positionsB = make(extractPositionsFromRMScene(fgetValue(sceneB)));
 
 	webglContextLoadedB = make(false);
 	fpsB = make(0);
@@ -57,6 +58,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.second);
 					materials = extractMaterialsFromRMScene(s);
 					next(materialsB, materials);
+					positions = extractPositionsFromRMScene(s);
+					next(positionsB, positions);
 					countedMaterialsChanged = countMaterials(materials);
 					hostCall("recompileShader", [
 						i2s(id),
@@ -77,7 +80,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
+							formatString("(p, positions) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])|> pprint("")
 						]
 					) |> ignore;
 				}
@@ -102,7 +105,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			makeSubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
-					RMTexture(texture, parameters): Some(texture.behaviour);
+					RMTexture(texture, parameters): Some(texture);
 					RMColor(col): None();
 				})))),
 				\textures -> {
@@ -118,7 +121,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 			makeSubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
-					RMTexture(texture, parameters): Some(parameters.behaviour);
+					RMTexture(texture, parameters): Some(parameters);
 					RMColor(col): None();
 				})))),
 				\parameters -> {
@@ -138,7 +141,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
 					RMTexture(texture, parameters): None();
-					RMColor(color): Some(color.behaviour);
+					RMColor(color): Some(color);
 				})))),
 				\col -> {
 					parameters = mapConcat(
@@ -155,8 +158,8 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(map(materials, \material -> extractStruct(
 					material.materialProperties,
-					RMReflect(initRMInteractive(0.0))
-				).mixCoef.behaviour)))),
+					RMReflect(make(0.0))
+				).mixCoef)))),
 				\reflectivness -> {
 					parameters = mapConcat(
 						reflectivness,
@@ -223,6 +226,20 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					nextDistinct(settings.camera, newCamera);
 				}
 			}),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(positionsB, FLift(fmerge)),
+				\positions -> {
+					parameters = mapConcat(
+						positions,
+						\coordinate -> {
+							p = RMCoordinate2RMIXYZ(coordinate);
+							[p.x, p.y, p.z, 0.] //allignment bits
+						}
+					);
+					hostCall("updateObjectPositions", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
 		],
 		MGroup2(
 			displayRaymarchingCanvas(
@@ -311,35 +328,46 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 
 extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): [RMMaterial(object, color, materialProperties)];
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [RMMaterial(object, color, materialProperties)];
 		RMPrimitive(): [];
 		RMSTranslate(object, d): extractMaterialsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
 		RMSmoothUnion(objects, k): mapConcat(objects, extractMaterialsFromRMScene);
 		RMMaterial(object, color, materialProperties): [obj];
+		RMInteractive(object, trigger): extractMaterialsFromRMScene(object);
 		RMEmpty(): [];
 	}
 }
 
 extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
-			RMColor(col) : [col.trigger];
-			RMTexture(texture, parameters): [texture.trigger, parameters.trigger];
-		};
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [trigger];
 		RMPrimitive(): [];
 		RMSTranslate(object, d): extractTriggersFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractTriggersFromRMScene);
-		RMSmoothUnion(objects, k): mapConcat(objects, extractTriggersFromRMScene);
-		RMMaterial(object, color, materialProperties): concat(
-			switch(color) {
-				RMColor(col) : [col.trigger];
-				RMTexture(texture, parameters): [texture.trigger, parameters.trigger];
-			},
-			eitherMap(tryExtractStruct(materialProperties, RMReflect(initRMInteractive(0.))), \r -> [r.mixCoef.trigger], [])
-		);
+		RMSmoothUnion(objects, k): [];
+		RMMaterial(object, color, materialProperties): extractTriggersFromRMScene(object);
+		RMInteractive(object, trigger): [trigger];
+		RMEmpty(): [];
+	}
+}
+
+extractPositionsFromRMScene(obj : RMScene) -> [Transform<RMCoordinate>] {
+	extractPositionsFromRMScene0(obj, const(RMX(0.))) 
+}
+
+extractPositionsFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [Transform<RMCoordinate>] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [fselect2(acc, position, FLift2(addRMCoordinate))];
+		RMPrimitive(): [acc];
+		RMSTranslate(object, d): extractPositionsFromRMScene0(object, fselect2(acc, d, FLift2(addRMCoordinate)));
+		RMUnion2(object1, object2): concat(extractPositionsFromRMScene0(object1, acc), extractPositionsFromRMScene0(object2, acc));
+		RMUnion(objects): mapConcat(objects, \o -> extractPositionsFromRMScene0(o, acc));
+		RMSmoothUnion(objects, k): mapConcat(objects, \o -> extractPositionsFromRMScene0(o, acc));
+		RMMaterial(object, color, materialProperties): extractPositionsFromRMScene0(object, acc);
+		RMInteractive(object, trigger): extractPositionsFromRMScene0(object, acc);
 		RMEmpty(): [];
 	}
 }

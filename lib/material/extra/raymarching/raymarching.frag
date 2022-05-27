@@ -43,6 +43,10 @@ uniform MaterialsBlock {
 	float reflectiveness[%numColors% + numTextures];
 };
 
+uniform PositionsBlock {
+	vec3 positions[%numColors% + numTextures];
+};
+
 struct ObjectInfo {
 	float d;
 	int id;
