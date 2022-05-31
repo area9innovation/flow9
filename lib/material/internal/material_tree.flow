@@ -285,20 +285,42 @@ MTreeOrderNode2MTreeNode(node : MTreeOrderNode<?>, tree : Transform<Tree<?, [MTr
 	);
 }
 
-applyMTreeLazyScrollMode(state : MTreeState<?>) -> (Tropic) -> Tropic {
+isTreeIndexGreater(index1 : [int], index2 : [int]) -> bool {
+	index1 == index2
+	|| either(
+		foldi(index1, None(), \i, acc, idx -> {
+			if (isSome(acc)) acc
+			else {
+				idx2 = elementAt(index2, i, -1);
+				if (idx == idx2) None()
+				else Some(idx > idx2)
+			}
+		}),
+		false
+	);
+}
+
+applyMTreeLazyScrollMode(state : MTreeState<?>, nodeTreeIndex : Transform<[int]>) -> (Tropic) -> Tropic {
 	\node ->
 		eitherMap(state.lazyScrollMode, \lsm -> {
 			nodePosScale = make(PositionScale(zeroPoint, zeroPoint));
 			showItem = make(false);
+			forcedShow = make(false);
 			if (fgetValue(lsm.enabled))
 				node
-				|> (\t -> TShow(showItem, t))
+				|> (\t -> TShow(fOr(showItem, forcedShow), t))
 				|> (\t -> TPositionScale(nodePosScale, t))
 				|> (\t -> TConstruct([
 						make3SubscribeTrigger(fnot(showItem), fstall(lsm.scrollWH, 0), nodePosScale, lsm.scrollPositionScale, \swh, ps, sps -> {
 							y = ps.pos.y - sps.pos.y;
 							if (y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
-						})
+						}),
+						\ -> fconnect(
+							fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+								foldSet(s, false, \acc, si -> acc || isTreeIndexGreater(si, i))
+							),
+							forcedShow
+						)
 					], t))
 			else
 				node
@@ -411,24 +433,27 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			manager,
 			p2,
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
-			\index, __, __, p3 ->
+			\index, __, __, p3 -> {
+				nodeTreeIndex = farray(index);
 				TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c ->
 					MTreeNode2T(
 						manager,
 						p3,
 						state,
 						c,
-						farray(index),
+						nodeTreeIndex,
 						m2t,
 						const(showSeparators),
 						true
 					)
 				)
-				|> applyMTreeLazyScrollMode(state)
+				|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+			}
 		),
 		TSelect(
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
-			\contents : [?] -> mapi(contents, \i, __ ->
+			\contents : [?] -> mapi(contents, \i, __ -> {
+				nodeTreeIndex = farray(const(i));
 				TSelect(
 					fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
 					MTreeNode2T(
@@ -436,14 +461,14 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 						p2,
 						state,
 						node,
-						farray(const(i)),
+						nodeTreeIndex,
 						m2t,
 						const(showSeparators),
 						false
 					)
 				)
-				|> applyMTreeLazyScrollMode(state)
-			)
+				|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+			})
 			|> TLines
 		)
 	)
@@ -889,6 +914,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					fmap(children.first, \c : MTreeNode<?> -> c.content),
 					\index, __, __, p -> {
 						nextDistinct(expanded, true);
+						nodeTreeIndex = farrayPush(treeIndex, index);
 
 						TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c -> {
 							MTreeNode2T(
@@ -896,7 +922,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								p,
 								state,
 								c,
-								farrayPush(treeIndex, index),
+								nodeTreeIndex,
 								m2t,
 								if (state.showSeparators)
 									flessi(index, fadditioni(childrenLength, const(-1)))
@@ -905,12 +931,13 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								true
 							)
 						})
-						|> applyMTreeLazyScrollMode(state)
+						|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
 					}
 				),
 				TSelect(
 					fmap(children.first, \c : MTreeNode<?> -> c.content),
-					\contents -> mapi(contents, \i, __ ->
+					\contents -> mapi(contents, \i, __ -> {
+						nodeTreeIndex = farrayPush(treeIndex, const(i));
 						TSelect(
 							fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
 							MTreeNode2T(
@@ -918,7 +945,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								parent,
 								state,
 								node,
-								farrayPush(treeIndex, const(i)),
+								nodeTreeIndex,
 								m2t,
 								if (state.showSeparators)
 									flessi(const(i), fadditioni(childrenLength, const(-1)))
@@ -927,8 +954,8 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								false
 							)
 						)
-						|> applyMTreeLazyScrollMode(state)
-					)
+						|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+					})
 					|> TLines
 				)
 			)
