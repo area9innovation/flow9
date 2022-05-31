@@ -15,10 +15,10 @@ MRaymarching(id : int, scene : RMScene, light : RMLights, settings : RMSettings)
 
 MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, settings : RMSettings) -> Material {
 	rmiScene = RMScene2RMIExp(fgetValue(sceneB), false);
-	glsl = RMIExp2GLSL(rmiScene.first);
-	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).first);
-	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.second);
-	baseMaterial = RMIExp2GLSLMaterial(rmiScene.first);
+	glsl = RMIExp2GLSL(rmiScene.second);
+	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).second);
+	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.first.topLevelSmoothObjects);
+	baseMaterial = RMIExp2GLSLMaterial(rmiScene.second);
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
@@ -46,6 +46,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 
 	positionsB = make(extractPositionsFromRMScene(fgetValue(sceneB)));
 	objectParametersB = make(extractObjectParametersFromRMScene(fgetValue(sceneB)));
+	smoothCoefficientsB = make(extractSmoothCoefficientsFromRMScene(fgetValue(sceneB)));
 
 	webglContextLoadedB = make(false);
 	fpsB = make(0);
@@ -56,26 +57,26 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
 					newRMIScene = RMScene2RMIExp(s, false);
-					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.second);
+					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.first.topLevelSmoothObjects);
 					materials = extractMaterialsFromRMScene(s);
 					next(materialsB, materials);
-					positions = extractPositionsFromRMScene(s);
-					next(positionsB, positions);
-					objectParameters = extractObjectParametersFromRMScene(s);
-					next(objectParametersB, objectParameters);
 					countedMaterialsChanged = countMaterials(materials);
+					next(positionsB, extractPositionsFromRMScene(s));
+					next(objectParametersB, extractObjectParametersFromRMScene(s));
+					next(smoothCoefficientsB, extractSmoothCoefficientsFromRMScene(s));
 					hostCall("recompileShader", [
 						i2s(id),
 						blueprint(
 							"#include material/extra/raymarching/raymarching.frag",
 							[
-								"distanceFunction", RMIExp2GLSL(newRMIScene.first),
-								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true).first),
+								"distanceFunction", RMIExp2GLSL(newRMIScene.second),
+								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true).second),
 								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
-								"baseMaterial", RMIExp2GLSLMaterial(newRMIScene.first),
+								"baseMaterial", RMIExp2GLSLMaterial(newRMIScene.second),
 								"numTextures", i2s(countedMaterialsChanged.first),
 								"numColors", i2s(countedMaterialsChanged.second),
 								"topLevelDistanceFunction", newTopLevelDistanceFunctions,
+								"numSmooth", i2s(newRMIScene.first.smoothObjectsCounter),
 							]
 						)
 					]);
@@ -83,7 +84,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p, positions, objectParameters) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
+							formatString("(p, positions, objectParameters, smoothCoefficients) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
 						]
 					) |> ignore;
 				}
@@ -187,7 +188,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				];
 				filteredTriggers = filter(triggers, \t -> t.second != -1);
 				if (filteredTriggers != []) {
-					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
+					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).first.topLevelObjects;
 					iter(
 						filteredTriggers,
 						\t -> {
@@ -250,6 +251,19 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					hostCall("updateObjectParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(smoothCoefficientsB, FLift(fmerge)),
+				\smoothCoefficients -> {
+					parameters = mapConcat(
+						smoothCoefficients,
+						\sc -> {
+							[sc, 0., 0., 0.] //allignment bits
+						}
+					);
+					hostCall("updateSmoothCoefficients", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
 		],
 		MGroup2(
 			displayRaymarchingCanvas(
@@ -269,6 +283,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 					"numTextures", i2s(countedMaterials.first),
 					"numColors", i2s(countedMaterials.second),
 					"topLevelDistanceFunction", topLevelDistanceFunctions,
+					"numSmooth", i2s(rmiScene.first.smoothObjectsCounter),
 				])
 			),
 			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(i2s(fps) + " fps", [])))
@@ -408,6 +423,20 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 		RMSmoothUnion(objects, k): mapConcat(objects, extractObjectParametersFromRMScene);
 		RMMaterial(object, color, materialProperties): extractObjectParametersFromRMScene(object);
 		RMInteractive(object, trigger): extractObjectParametersFromRMScene(object);
+		RMEmpty(): [];
+	}
+}
+
+extractSmoothCoefficientsFromRMScene(obj : RMScene) -> [Transform<double>] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [];
+		RMPrimitive(): [];
+		RMSTranslate(object, d): extractSmoothCoefficientsFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractSmoothCoefficientsFromRMScene(object1), extractSmoothCoefficientsFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractSmoothCoefficientsFromRMScene);
+		RMSmoothUnion(objects, k): arrayPush(mapConcat(objects, extractSmoothCoefficientsFromRMScene), k);
+		RMMaterial(object, color, materialProperties): extractSmoothCoefficientsFromRMScene(object);
+		RMInteractive(object, trigger): extractSmoothCoefficientsFromRMScene(object);
 		RMEmpty(): [];
 	}
 }
