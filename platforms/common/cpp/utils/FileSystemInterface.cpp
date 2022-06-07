@@ -301,7 +301,7 @@ StackSlot FileSystemInterface::createTempFile(RUNNER_ARGS)
     std::string path = encodeUtf8(RUNNER->GetString(filename));
 
     std::ofstream fs(path);
-    if (!fs) {
+    if (fs && fs.is_open()) {
         fs << encodeUtf8(RUNNER->GetString(content));
         fs.close();
     }
