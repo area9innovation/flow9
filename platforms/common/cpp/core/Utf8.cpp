@@ -18,7 +18,7 @@
 #endif
 
 // We store here compiler flag about which logic of utf8 decode we should use:
-//  false - usual way with loos real code for 3 bytes codes,
+//  false - usual way with loss real code for 3 bytes codes,
 //  true - with decoding 3 bytes codes into UTF-16 codes (pairs of 2 bytes codes).
 bool is_utf8_js_style = false;
 
