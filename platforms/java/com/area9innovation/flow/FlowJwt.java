@@ -5,7 +5,6 @@ import java.text.*;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
-import com.auth0.*;
 import com.auth0.jwt.JWTVerifier.*;
 import com.auth0.jwt.interfaces.*;
 import com.auth0.jwt.exceptions.*;
