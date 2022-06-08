@@ -713,7 +713,8 @@ int main(int argc, char *argv[])
                 printf("Could not load extended debug info.\n");
                 return 1;
             }
-        } else
+        }
+        else
         {
             // Load debug info before the bytecode
             if (argc > 2 && argv[2][0] != '-') {
@@ -777,6 +778,11 @@ int main(int argc, char *argv[])
                     QString key = a.left(equal);
                     QString value = a.mid(equal + 1);
                     FlowRunner.setUrlParameter(key, value);
+
+                    // Compiler parameter takes precedence.
+                    // If not set - we will check it in app parameters.
+                    if (!is_utf8_js_style)
+                        is_utf8_js_style = !strcmp(argv[i], "use_utf8_js_style=1");
                 } else {
                     FlowRunner.setUrlParameter(a, QString());
                 }
