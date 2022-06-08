@@ -87,7 +87,8 @@ MTreeLazyScrollModeState(
 	enabled : Transform<bool>,
 	scrollWH : DynamicBehaviour<WidthHeight>,
 	scrollPositionScale : DynamicBehaviour<PositionScale>,
-	externalScroll : Maybe<MTreeLazyScrollModeExternalInfo>
+	externalScroll : Maybe<MTreeLazyScrollModeExternalInfo>,
+	sameHeight : Maybe<DynamicBehaviour<Maybe<double>>>
 );
 
 fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
@@ -300,32 +301,71 @@ isTreeIndexGreater(index1 : [int], index2 : [int]) -> bool {
 	);
 }
 
-applyMTreeLazyScrollMode(state : MTreeState<?>, nodeTreeIndex : Transform<[int]>) -> (Tropic) -> Tropic {
-	\node ->
+applyMTreeLazyScrollMode(state : MTreeState<?>, treeNode : Transform<MTreeNode<?>>, nodeTreeIndex : Transform<[int]>) -> (Tropic) -> Tropic {
+	\view ->
 		eitherMap(state.lazyScrollMode, \lsm -> {
-			nodePosScale = make(PositionScale(zeroPoint, zeroPoint));
-			showItem = make(false);
-			forcedShow = make(false);
-			if (fgetValue(lsm.enabled))
-				node
+			if (fgetValue(lsm.enabled)) {
+				nodePosScale = make(zeroPositionScale);
+				showItem = make(false);
+				forcedShow = make(false);
+				forcedShowSize = make(false);
+				nodeHeight = make(0.);
+
+				view
 				|> (\t -> TShow(fOr(showItem, forcedShow), t))
+				|> (\t -> 
+					eitherMap(lsm.sameHeight, \sh ->
+						TGroup2(
+							TShow(forcedShowSize, TSizedHeight(0., fsubselect(treeNode, FLift(\node ->
+								fselect2Lift(flength(node.children), sh, \len, lh ->
+									i2d(len + 1) * either(lh, 0.) + i2d(b2i(state.showSeparators) * len)
+								)
+							)))),
+							t
+						),
+						t
+					)
+				)
 				|> (\t -> TPositionScale(nodePosScale, t))
-				|> (\t -> TConstruct([
-						make3SubscribeTrigger(fnot(showItem), fstall(lsm.scrollWH, 0), nodePosScale, lsm.scrollPositionScale, \swh, ps, sps -> {
-							y = ps.pos.y - sps.pos.y;
-							if (y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
-						}),
-						\ -> fconnect(
-							fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
-								foldSet(s, false, \acc, si -> acc || isTreeIndexGreater(si, i))
-							),
-							forcedShow
-						)
-					], t))
-			else
-				node
+				|> (\t -> TAttachHeight(t, nodeHeight))
+				|> (\t -> TConstruct(
+						concat(
+							[make4SubscribeTrigger(fnot(showItem), fstall(lsm.scrollWH, 0), nodeHeight, nodePosScale, lsm.scrollPositionScale, \swh, hgt, ps, sps -> {
+								y = ps.pos.y - sps.pos.y;
+								if (y >= -hgt && y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
+							})],
+							eitherMap(
+								lsm.sameHeight,
+								\__ -> [
+									\ -> fconnect(
+										fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+											foldSet(s, false, \acc, si -> acc || subrange(si, 0, length(i)) == i)
+										),
+										forcedShow
+									),
+									\ -> fconnect(
+										fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+											foldSet(s, false, \acc, si -> acc || isTreeIndexGreater(si, i))
+										),
+										forcedShowSize
+									),
+								],
+								[
+									\ -> fconnect(
+										fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+											foldSet(s, false, \acc, si -> acc || isTreeIndexGreater(si, i))
+										),
+										forcedShow
+									),
+								]
+							)
+						),
+						t
+					))
+			} else
+				view
 			},
-			node
+			view
 		)
 }
 
@@ -371,12 +411,16 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 
 	lazyScrollMode =
 		maybeMap(
-			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), None())),
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), [])),
 			\lsm -> MTreeLazyScrollModeState(
 				lsm.enabled,
 				makeWH(),
 				make(zeroPositionScale),
-				lsm.externalScroll
+				tryExtractStruct(lsm.style, MTreeLazyScrollModeExternalInfo(makePoint(), makeWH(), const(0.))),
+				maybeMap(
+					tryExtractStruct(lsm.style, MTreeLazyScrollModeSameHeight(None())),
+					\sh -> make(sh.sameHeight)
+				)
 			)
 		);
 
@@ -435,7 +479,8 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
 			\index, __, __, p3 -> {
 				nodeTreeIndex = farray(index);
-				TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c ->
+				treeNode = fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33);
+				TSelect(treeNode, \c ->
 					MTreeNode2T(
 						manager,
 						p3,
@@ -447,15 +492,16 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 						true
 					)
 				)
-				|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+				|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
 			}
 		),
 		TSelect(
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
 			\contents : [?] -> mapi(contents, \i, __ -> {
 				nodeTreeIndex = farray(const(i));
+				treeNode = fselect(children.first, FLift(\nodes -> nodes[i]));
 				TSelect(
-					fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
+					treeNode, \node ->
 					MTreeNode2T(
 						manager,
 						p2,
@@ -467,7 +513,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 						false
 					)
 				)
-				|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+				|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
 			})
 			|> TLines
 		)
@@ -803,6 +849,23 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 				|> (\t -> TAvailableHeight(t, const(0.)))
 		)
 		|> (\f ->
+			eitherMap(state.lazyScrollMode, \lsm ->
+				eitherMap(lsm.sameHeight, \sh ->
+					if (isNone(getValue(sh))) {
+						lineHeight = make(0.);
+						TConstruct(
+							[makeSubscribe(lineHeight, \lh ->
+								if (lh > 0. && isNone(getValue(sh))) nextDistinct(sh, Some(lh))
+							)],
+							TAttachHeight(f, lineHeight)
+						)
+					} else f,
+					f
+				),
+				f
+			)
+		)
+		|> (\f ->
 			eitherMap(
 				state.dragDropState,
 				\dragDropState ->
@@ -915,8 +978,9 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					\index, __, __, p -> {
 						nextDistinct(expanded, true);
 						nodeTreeIndex = farrayPush(treeIndex, index);
+						treeNode = fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33);
 
-						TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c -> {
+						TSelect(treeNode, \c -> {
 							MTreeNode2T(
 								manager,
 								p,
@@ -931,15 +995,16 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								true
 							)
 						})
-						|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+						|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
 					}
 				),
 				TSelect(
 					fmap(children.first, \c : MTreeNode<?> -> c.content),
 					\contents -> mapi(contents, \i, __ -> {
 						nodeTreeIndex = farrayPush(treeIndex, const(i));
+						treeNode = fselect(children.first, FLift(\nodes -> nodes[i]));
 						TSelect(
-							fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
+							treeNode, \node ->
 							MTreeNode2T(
 								manager,
 								parent,
@@ -954,7 +1019,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 								false
 							)
 						)
-						|> applyMTreeLazyScrollMode(state, nodeTreeIndex)
+						|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
 					})
 					|> TLines
 				)
@@ -1398,12 +1463,13 @@ MDynamicArrayTree2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	lazyScrollMode =
 		maybeMap(
-			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), None())),
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), [])),
 			\lsm -> MTreeLazyScrollModeState(
 				lsm.enabled,
 				makeWH(),
 				make(zeroPositionScale),
-				lsm.externalScroll
+				tryExtractStruct(lsm.style, MTreeLazyScrollModeExternalInfo(makePoint(), makeWH(), const(0.))),
+				None()
 			)
 		);
 

@@ -161,6 +161,23 @@ LspCallHierarchyIncomingCall : (from: LspCallHierarchyItem, fromRanges: [LspRang
 LspCallHierarchyOutgoingCallsParams : (item : LspCallHierarchyItem);
 LspCallHierarchyOutgoingCall : (to: LspCallHierarchyItem, fromRanges : [LspRange]);
 
+LspSetTrace : (value : string);
+LspLogTraceParams : (message : string, verbose : string);
+
+LspInitializeParams : (
+	processId : string,
+	clientInfo : LspClientInfo,
+	locale : string,
+	rootPath : string,
+	rootUri : string,
+	initializationOptions : Json,
+	capabilities: Json,
+	trace: string,
+	workspaceFolders : [LspWorkspaceFolder]
+);
+LspClientInfo : (name : string, version : string);
+LspWorkspaceFolder : (uri : string, name : string);
+
 lspRequestMessage2Json(request : LspRequestMessage) -> Json;
 lspNotificationMessage2Json(request : LspNotificationMessage) -> Json;
 lspResponseMessage2Json(response : LspResponseMessage) -> Json;
@@ -224,6 +241,12 @@ lspCallHierarchyOutgoingCallsParams2Json(params : LspCallHierarchyOutgoingCallsP
 lspCallHierarchyOutgoingCall2Json(call : LspCallHierarchyOutgoingCall) -> Json;
 
 lspCancelParams2Json(params : LspCancelParams) -> Json;
+lspSetTrace2Json(trace : LspSetTrace) -> Json;
+lspLogTraceParams2Json(params : LspLogTraceParams) -> Json;
+
+lspInitializeParams2Json(params : LspInitializeParams) -> Json;
+lspClientInfo2Json(info : LspClientInfo) -> Maybe<Json>;
+lspWorkspaceFolder2Json(folder : LspWorkspaceFolder) -> Json;
 
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage>;
 json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage>;
@@ -285,6 +308,12 @@ json2LspCallHierarchyOutgoingCallsParams(json : Json) -> Maybe<LspCallHierarchyO
 json2LspCallHierarchyOutgoingCall(json : Json) -> Maybe<LspCallHierarchyOutgoingCall>;
 
 json2LspCancelParams(json : Json) -> Maybe<LspCancelParams>;
+json2LspSetTrace(json : Json) -> Maybe<LspSetTrace>;
+json2LspLogTraceParams(json : Json) -> Maybe<LspLogTraceParams>;
+
+json2LspInitializeParams(json : Json) -> Maybe<LspInitializeParams>;
+json2LspClientInfo(json : Json) -> Maybe<LspClientInfo>;
+json2LspWorkspaceFolder(json : Json) -> Maybe<LspWorkspaceFolder>;
 
 // 0 stands for no kind
 lspSymbolKindName2id = pairs2tree([
@@ -830,6 +859,48 @@ lspCancelParams2Json(params : LspCancelParams) -> Json {
 	JsonObject([Pair("id", params.id)]);
 }
 
+lspSetTrace2Json(trace : LspSetTrace) -> Json {
+	JsonObject([Pair("value", JsonString(trace.value))]);
+}
+
+lspLogTraceParams2Json(params : LspLogTraceParams) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("message", JsonString(params.message))),
+		if (params.verbose == "") None() else Some(Pair("verbose", JsonString(params.verbose))),
+	], idfn));
+}
+
+lspInitializeParams2Json(params : LspInitializeParams) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("processId", JsonString(params.processId))),
+		maybeMap(lspClientInfo2Json(params.clientInfo), \info -> Pair("clientInfo", info)),
+		if (params.locale == "") None() else Some(Pair("locale", JsonString(params.locale))),
+		if (params.rootPath == "") None() else Some(Pair("rootPath", JsonString(params.rootPath))),
+		Some(Pair("rootUri", if (params.rootUri == "") JsonNull() else JsonString(params.rootUri))),
+		if (params.initializationOptions == JsonNull()) None() else Some(Pair("initializationOptions", params.initializationOptions)),
+		Some(Pair("capabilities", params.capabilities)),
+		Some(Pair("trace", JsonString(if (params.trace == "") "off" else params.trace))),
+		if (length(params.workspaceFolders) == 0) None() else Some(Pair("workspaceFolders", JsonArray(map(params.workspaceFolders, lspWorkspaceFolder2Json))))
+	], idfn));
+}
+
+lspClientInfo2Json(info : LspClientInfo) -> Maybe<Json> {
+	if (info.name == "") None() else 
+	Some(JsonObject(filtermap([
+		Some(Pair("name", JsonString(info.name))), 
+		if (info.version == "") None() else Some(Pair("version", JsonString(info.version)))
+	], idfn)));
+}
+
+lspWorkspaceFolder2Json(folder : LspWorkspaceFolder) -> Json {
+	JsonObject([
+		Pair("uri", JsonString(folder.uri)),
+		Pair("name", JsonString(folder.name))
+	]);
+}
+
+/// --------------------------------------------------------------
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage> {
 	jsonrpc = getJsonStringField(json, "jsonrpc", "");
 	id = getJsonFieldValue(json, "id", JsonNull());
@@ -1373,6 +1444,62 @@ json2LspCancelParams(json : Json) -> Maybe<LspCancelParams> {
 		Some(LspCancelParams(id));
 	}
 }
+
+json2LspSetTrace(json : Json) -> Maybe<LspSetTrace> {
+	if (!jsonObjectHasField(json, "value")) None() else {
+		value = getJsonStringField(json, "value", "");
+		if (value == "off" || value == "message" || value == "verbose") {
+			Some(LspSetTrace(value));
+		} else {
+			None();
+		}
+	}
+}
+
+json2LspLogTraceParams(json : Json) -> Maybe<LspLogTraceParams> {
+	if (!jsonObjectHasField(json, "message")) None() else {
+		message = getJsonStringField(json, "message", "");
+		verbose = getJsonStringField(json, "verbose", "");
+		Some(LspLogTraceParams(message, verbose));
+	}
+}
+
+json2LspInitializeParams(json : Json) -> Maybe<LspInitializeParams> {
+	if (!jsonObjectHasField(json, "processId")) None() else {
+		processId = switch (getJsonFieldValue(json, "processId", JsonNull())) {
+			JsonString(id): id;
+			default: "";
+		}
+		maybeMap(json2LspClientInfo(getJsonObjectField(json, "clientInfo")), \clientInfo ->
+			LspInitializeParams(
+				processId,
+				clientInfo,
+				getJsonStringField(json, "locale", ""),
+				getJsonStringField(json, "rootPath", ""),
+				getJsonStringField(json, "rootUri", ""),
+				getJsonObjectField(json, "initializationOptions"),
+				getJsonObjectField(json, "capabilities"),
+				getJsonStringField(json, "trace", "off"),
+				filtermap(getJsonArrayField(json, "workspaceFolders"), json2LspWorkspaceFolder)
+			)
+		);
+	}
+}
+
+json2LspClientInfo(json : Json) -> Maybe<LspClientInfo> {
+	Some(LspClientInfo(
+		getJsonStringField(json, "name", ""),
+		getJsonStringField(json, "version", "")
+	));
+}
+
+json2LspWorkspaceFolder(json : Json) -> Maybe<LspWorkspaceFolder> {
+	Some(LspWorkspaceFolder(
+		getJsonStringField(json, "uri", ""),
+		getJsonStringField(json, "name", "")
+	));
+}
+
 
 lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string {
 	if (changeEvent.range.start.line != -1) {
