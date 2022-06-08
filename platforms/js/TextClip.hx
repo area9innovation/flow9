@@ -120,6 +120,7 @@ class UnicodeTranslation {
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
+	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") == "1";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var renderStage : FlowContainer;
@@ -1625,7 +1626,16 @@ class TextClip extends NativeWidgetClip {
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
 		}
 
-		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		var forcedUpdate = false;
+		if (useForcedUpdateTextWidth) {
+			try {
+				forcedUpdate = !Browser.document.fonts.check(this.style.toFontString());
+			} catch (e : Dynamic) {
+				forcedUpdate = false;
+			}
+		}
+
+		if (forcedUpdate || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
