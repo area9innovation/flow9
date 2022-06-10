@@ -43,6 +43,7 @@ CONFIG(use_gui) {
     macx {
         # -O2 is too crashy on Mac; see #34057 - ST 12/17/14, 3/30/15
         INCLUDEPATH += /usr/local/include
+        INCLUDEPATH += /usr/local/opt/brew/include
         QMAKE_CFLAGS_RELEASE -= -O2
         QMAKE_CXXFLAGS_RELEASE -= -O2
         LIBS += -framework GLUT
