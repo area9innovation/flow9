@@ -2,7 +2,9 @@
 
 set -e
 
-docker build -t flow9_byterunner .
+qt_version="5.15.2"
+
+docker build --build-arg QT=${qt_version} -t flow9_byterunner .
 
 if [ -z "$FLOW" ]; then
     echo "\$FLOW is undefined. It should point to the flow9 folder"

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+qt_version="5.15.2"
+
 registry=""
 if [ -n "$!" ]; then
   registry="$1/"
@@ -32,5 +34,6 @@ cp "${FLOW}/bin" flow/ -r
 cp "${FLOW}/resources/fonts" flow/ -r
 
 docker build \
+  --build-arg QT=${qt_version} \
   -t "${registry}area9/flowcpp" .
 
