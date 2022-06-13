@@ -8,6 +8,17 @@ import text/blueprint;
 // With implementation here: 
 // https://github.com/simongog/sdsl-lite/blob/master/include/sdsl/k2_tree.hpp
 
+// And another in Rust here:
+// https://github.com/GGabi/k2_tree/blob/master/src/tree/datastore.rs
+
+// TODO: The problem is to figure out what the leave offset is when we
+// go east and south. In these cases, we need to count the number of 0s
+// in the nodes so we know how much we do NOT have to move forward.
+
+// The latest paper describes how to make it simpler to solve: 
+// Have an array of internal nodes for each level.
+// TODO: Adjust the leaves offset correspondingly.
+
 // At first, we do a k=2 implementation just to get it working
 
 QuadI(
@@ -16,6 +27,9 @@ QuadI(
     // These are really just bits. These correspond to the nodes in lexicographic order, except for the leafes
     // If the value is 0, it means that all the leaves below this node are 0.
     nodes : [int],
+	// These are really bits. The correspond to the nodes in lexicographic order of the tree,
+	// but with a separate array for each level. The value is 0 when all leaves below are 0.
+	levelNodes : [[int]],
     // These are really just bits. We keep groups of 4 bits for each leaves which is not 0
     leaves : [int],
     // Where does the leaf for each leaf quadrant begin in terms of index into leaves?
@@ -32,12 +46,13 @@ build1(matrix : [[int]]) -> QuadI {
                 xy(0,1), xy(1, 1)
             ];
         if (leaves == [0, 0, 0, 0]) {
-            QuadI(1, [0], [], [0]);
+            QuadI(1, [0], [[0]], [], [0]);
         } else {
             QuadI(1,
                 [1], 
-                leaves,
-                [0]
+				[[1]],
+                leaves
+				,[0]
             );
         }
     } else {
@@ -55,6 +70,10 @@ build1(matrix : [[int]]) -> QuadI {
                 if (m.leaves == []) [0] else [1], 
                 m.nodes
             ),
+			concat(
+				if (m.leaves == []) [[0]] else [[1]],
+				m.levelNodes,
+			),
             m.leaves,
             concat([0], m.leavesOffset)
         )
@@ -65,6 +84,9 @@ mergeQuadI(left : QuadI, right : QuadI) -> QuadI {
     QuadI(
         left.height,
         concat(left.nodes, right.nodes),
+		mapi(left.levelNodes, \i, ln -> {
+			concat(ln, right.levelNodes[i])
+		}),
         concat(left.leaves, right.leaves),
         concat(left.leavesOffset, map(right.leavesOffset, \o -> o + length(left.leaves)))
     )
@@ -74,7 +96,6 @@ mergeQuadI(left : QuadI, right : QuadI) -> QuadI {
 getQuadI(q : QuadI, height : int, node : int, leavesOffset : int, x : int, y : int, debug : bool) -> bool {
 	if (debug) {
 		println("Looking for " + i2s(x) + "," + i2s(y) + " at node offset " + i2s(node) + " and leaf " + i2s(leavesOffset) + " at height " + i2s(height));
-
 	}
     // If the root is empty, we know it is false
 	if (height + 1 == q.height) {
@@ -124,13 +145,49 @@ getQuadI(q : QuadI, height : int, node : int, leavesOffset : int, x : int, y : i
     }
 }
 
+/*
+        bool adj(idx_type i, idx_type j) const
+        {
+            if (k_t.size() == 0 && k_l.size() == 0)
+                return false;
+            size_type n = std::pow(k_k, k_height - 1);
+            size_type k_2 = std::pow(k_k, 2);
+            idx_type col, row;
+
+            // This is duplicated to avoid an extra if at the loop. As idx_type
+            // is unsigned and rank has an offset of one, is not possible to run
+            // k_t_rank with zero as parameter at the first iteration.
+            row = std::floor(i/static_cast<double>(n));
+            col = std::floor(j/static_cast<double>(n));
+            i = i % n;
+            j = j % n;
+            idx_type level = k_k * row + col;
+            n = n/k_k;
+
+            while (level < k_t.size()) {
+                if (k_t[level] == 0)
+                    return false;
+                row = std::floor(i/static_cast<double>(n));
+                col = std::floor(j/static_cast<double>(n));
+                i = i % n;
+                j = j % n;
+                level = k_t_rank(level + 1) * k_2 + k_k * row + col;
+                n = n/k_k;
+            }
+
+            return k_l[level - k_t.size()] == 1;
+        }
+*/
+
 dumpQuadI(q : QuadI) -> void {
     leaves = superglue(q.leaves, \b -> if (b == 1) "1" else ".", "");
     println("Height: " + i2s(q.height));
     println("Nodes:  ");
     dumpQNodes(q, 0, 0);
-    println("Leave offsets: " + superglue(q.leavesOffset, i2s, ", "));
+	println("Level nodes:");
+	iter(q.levelNodes, println);
     println("Leaves: " + leaves);
+    println("Leave offsets: " + superglue(q.leavesOffset, i2s, ", "));
 }
 
 dumpQNodes(q : QuadI, level : int, node : int) -> void {
@@ -151,7 +208,7 @@ dumpQGrid(q : QuadI, size : int) -> void {
 }
 
 main() {
-    if (false) {
+    if (true) {
         q = build1([
                 [0,1,0,0, 1,0,0,0],
                 [0,0,1,1, 1,0,0,0],
@@ -170,16 +227,20 @@ main() {
 		{}
     }
 
-    if (true) {
-        // This does not work yet.
+    if (false) {
+		// This does not work yet
         q = build1([
-                [1,0,0,0],
-                [0,0,0,0],
-                [0,0,0,0],
-                [0,0,0,0],
+                [1,1, 0,0],
+                [0,1, 0,0],
+
+                [0,0, 1,1],
+                [0,0, 1,0],
             ]);
-        dumpQuadI(q);
-        dumpQGrid(q, 4);
+        dumpQuadI( q );
+
+		println(getQuadI(q, 0, 0, 0, 0, 0, true));
+
+		// dumpQGrid(q, 4);
     }
 
     if (false) {
