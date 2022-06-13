@@ -24,15 +24,13 @@ import text/blueprint;
 QuadI(
     // How high is the tree in levels? Each level contains *4 more nits
     height : int,
-    // These are really just bits. These correspond to the nodes in lexicographic order, except for the leafes
-    // If the value is 0, it means that all the leaves below this node are 0.
-    nodes : [int],
 	// These are really bits. The correspond to the nodes in lexicographic order of the tree,
 	// but with a separate array for each level. The value is 0 when all leaves below are 0.
 	levelNodes : [[int]],
-    // These are really just bits. We keep groups of 4 bits for each leaves which is not 0
+    // These are really just bits. We keep groups of 4 bits for each leaf which is not 0
     leaves : [int],
     // Where does the leaf for each leaf quadrant begin in terms of index into leaves?
+	// Matches the last level of nodes in length.
     leavesOffset : [int],
 );
 
@@ -46,14 +44,9 @@ build1(matrix : [[int]]) -> QuadI {
                 xy(0,1), xy(1, 1)
             ];
         if (leaves == [0, 0, 0, 0]) {
-            QuadI(1, [0], [[0]], [], [0]);
+            QuadI(1, [[0]], [], [0]);
         } else {
-            QuadI(1,
-                [1], 
-				[[1]],
-                leaves
-				,[0]
-            );
+            QuadI(1, [[1]], leaves, [0]);
         }
     } else {
         height = ceil(log(i2d(length(matrix))) / log(i2d(2)));
@@ -66,16 +59,12 @@ build1(matrix : [[int]]) -> QuadI {
         m = mergeQuadI(mergeQuadI(mergeQuadI(nw, ne), sw), se);
         QuadI(
             m.height + 1,
-            concat(
-                if (m.leaves == []) [0] else [1], 
-                m.nodes
-            ),
 			concat(
 				if (m.leaves == []) [[0]] else [[1]],
 				m.levelNodes,
 			),
             m.leaves,
-            concat([0], m.leavesOffset)
+            m.leavesOffset
         )
     }
 }
@@ -83,7 +72,6 @@ build1(matrix : [[int]]) -> QuadI {
 mergeQuadI(left : QuadI, right : QuadI) -> QuadI {
     QuadI(
         left.height,
-        concat(left.nodes, right.nodes),
 		mapi(left.levelNodes, \i, ln -> {
 			concat(ln, right.levelNodes[i])
 		}),
@@ -103,30 +91,32 @@ getQuadI(q : QuadI, height : int, node : int, leavesOffset : int, x : int, y : i
 			println("We are here at " + i2s(leavesOffset + x + 2 * y));
 		}
 		elementAt(q.leaves, leavesOffset + x + 2 * y, 0) == 1;
-	} else if (q.nodes[node] == 0) false
+	} else if (q.levelNodes[height + 1][node] == 0) false
     else {
         half = pow(2, height + 1);
 		step = half * 2;
-        //half = step / 2;
         north = y < half;
         west = x < half;
 
+		nodes = q.levelNodes[height + 1];
+
+		// How far in the nodes array to find the place
         offset = if (north && west) {
             0
         } else if (north && !west) {
             // NE: Check if the NW is empty or not
-            if (q.nodes[node + 1] == 0) 0 else step;
+            if (nodes[node + 1] == 0) 0 else step;
         } else if (!north && west) {
-            if (q.nodes[node + 1] == 0) 0 else step
-            + if (q.nodes[node + 2] == 0) 0 else step;
+            if (nodes[node + 1] == 0) 0 else step
+            + if (nodes[node + 2] == 0) 0 else step;
         } else {
-            if (q.nodes[node + 1] == 0) 0 else step
-            + if (q.nodes[node + 2] == 0) 0 else step
-            + if (q.nodes[node + 3] == 0) 0 else step;
+            if (nodes[node + 1] == 0) 0 else step
+            + if (nodes[node + 2] == 0) 0 else step
+            + if (nodes[node + 3] == 0) 0 else step;
         };
 
 		levelOffset = pow(4, height);
-        newLeafOffset = q.leavesOffset[node + levelOffset];
+        newLeafOffset = 0;// q.leavesOffset[node + levelOffset];
 
 		if (debug) {
 			println(" with step " + i2s(step) + " and north " + b2s(north) + " and west " + b2s(west));
@@ -135,9 +125,9 @@ getQuadI(q : QuadI, height : int, node : int, leavesOffset : int, x : int, y : i
 
         getQuadI(q, 
 			height + 1,
-            node + levelOffset,
+            offset,
             newLeafOffset, 
-			// We should fix these if we are east or south
+			// We should fix these if we are east or south. This is really modulo
 			if (west) x else x - step, 
 			if (north) y else y - step,
 			debug
@@ -180,23 +170,12 @@ getQuadI(q : QuadI, height : int, node : int, leavesOffset : int, x : int, y : i
 */
 
 dumpQuadI(q : QuadI) -> void {
-    leaves = superglue(q.leaves, \b -> if (b == 1) "1" else ".", "");
+    leaves = supergluei(q.leaves, \i, b -> (if (i % 4 == 0) " " else "") + if (b == 1) "1" else ".", "");
     println("Height: " + i2s(q.height));
-    println("Nodes:  ");
-    dumpQNodes(q, 0, 0);
 	println("Level nodes:");
 	iter(q.levelNodes, println);
     println("Leaves: " + leaves);
     println("Leave offsets: " + superglue(q.leavesOffset, i2s, ", "));
-}
-
-dumpQNodes(q : QuadI, level : int, node : int) -> void {
-    size = pow(4, level);
-    println(subrange(q.nodes, node, size));
-    println(subrange(q.leavesOffset, node, size));
-    if (level + 1 < q.height) {
-        dumpQNodes(q, level + 1, node + pow(4, level));
-    }
 }
 
 dumpQGrid(q : QuadI, size : int) -> void {
@@ -208,7 +187,7 @@ dumpQGrid(q : QuadI, size : int) -> void {
 }
 
 main() {
-    if (true) {
+    if (false) {
         q = build1([
                 [0,1,0,0, 1,0,0,0],
                 [0,0,1,1, 1,0,0,0],
@@ -227,11 +206,11 @@ main() {
 		{}
     }
 
-    if (false) {
-		// This does not work yet
+    if (true) {
+		// First quadrant works, but the rest does not yet
         q = build1([
-                [1,1, 0,0],
                 [0,1, 0,0],
+                [1,1, 0,0],
 
                 [0,0, 1,1],
                 [0,0, 1,0],
@@ -240,7 +219,7 @@ main() {
 
 		println(getQuadI(q, 0, 0, 0, 0, 0, true));
 
-		// dumpQGrid(q, 4);
+		dumpQGrid(q, 4);
     }
 
     if (false) {
