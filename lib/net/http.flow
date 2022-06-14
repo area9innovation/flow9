@@ -16,6 +16,10 @@ export {
 	// httpRequest("http://localhost:81/flow/myfile.txt", false, [], [], \c -> println(c), \e -> {}, \s -> {});
 
 	// The response is assumed to be UTF-8 encoded, unless a UTF-16 BOM is present
+	// Also, js target uses UTF-8 encoding with surrogate pairs
+	//  and cpp target uses correct UTF8 encoding, but it returns only two bytes of symbol (even if the character is represented by 3 bytes) - it is a BUG.
+	// But js surrogate pairs and cpp `cropped` character codes are not often. Only for specific symbols, like emoji and etc..
+	//  (which has code more than 0xFFFF, an example is emoji smile with code 0x1F609 (one symbol (😉) with 3 bytes code (0x1F609) and stored in UTF8 with 4 bytes (0xF09F9889)).
 
 	// at the moment of comment POST-request parameters were encoded differently for different compiler backends:
 	// in flowcpp POST-request parameters arent url-encoded, thus doesn't work with getUrlParameter
@@ -39,6 +43,21 @@ export {
 		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
 		async : bool
 	) -> void;
+	// Added `responseEncoding` parameter to return data in the requested encoding.
+	// Compiler or url parameter takes precedence:
+	//  - cpp flag is `use_utf8_js_style`;
+	//  - js flag is `utf8_no_surragates`.
+	// If there is no such - `responseEncoding` will be used.
+	httpCustomRequestExt(
+		url : string,
+		method : RequestMethod,
+		headers : [KeyValue],
+		data : RequestData,
+		responseEncoding : ResponseEncoding,
+		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+		async : bool
+	) -> void;
+
 	// This version currently implemented only in java backend
 	httpCustomRequestWithTimeout(
 		url : string,
@@ -131,12 +150,18 @@ native makeHttpRequest : io (
 	onStatus : (int) -> void,
 ) -> void = HttpSupport.httpRequest;
 
+// responseEncoding parameter allows to set which encoding should be the response:
+//  'auto' - defined by target (js - 'utf8_js', cpp - 'utf8', but cropped by two bytes (it is bug));
+//  'utf8_js' -  UTF-8 encoding with surrogate pairs;
+//  'utf8' - original UTF-8 encoding with 1, 2, 3 bytes length;
+//  'byte' - 1 byte encoding (raw response).
 native httpCustomRequestNative : io (
 	url : string,
 	method : string,
 	headers : [[string]],
 	parameters : [[string]],
 	data : string,
+	responseEncoding : string, // ['auto', 'utf8_js', 'utf8', 'byte']
 	onResponse : (responseStatus : int, responseData : string, responseHeaders : [[string]]) -> void,
 	async : bool
 ) -> void = HttpSupport.httpCustomRequestNative;
@@ -163,7 +188,7 @@ httpCustomRequestWithTimeoutNative (
 	async : bool,
 	timeout : int
 ) -> void {
-	httpCustomRequestNative(url, method, headers, parameters, data, onResponse, async);
+	httpCustomRequestNative(url, method, headers, parameters, data, responseEncoding2string(ResponseEncodingAuto()), onResponse, async);
 }
 
 native doPreloadMediaUrl : io (url : string, onSuccess : () -> void, onError : (string) -> void) -> void = HttpSupport.preloadMediaUrl;
@@ -261,7 +286,20 @@ httpCustomRequest(
 	async : bool
 ) -> void {
 	// Timeout 0 means no real timeout - it will wait for the response infinitely.
-	httpCustomRequestWithTimeout(url, method, headers, data, onResponse, async, 0);
+	httpCustomRequestWithTimeoutExt(url, method, headers, data, onResponse, async, 0, ResponseEncodingAuto());
+}
+
+httpCustomRequestExt(
+	url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	responseEncoding : ResponseEncoding,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	async : bool
+) -> void {
+	// Timeout 0 means no real timeout - it will wait for the response infinitely.
+	httpCustomRequestWithTimeoutExt(url, method, headers, data, onResponse, async, 0, responseEncoding);
 }
 
 httpCustomRequestWithTimeout(
@@ -272,6 +310,19 @@ httpCustomRequestWithTimeout(
 	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
 	async : bool,
 	timeout : int
+) -> void {
+	httpCustomRequestWithTimeoutExt(url, method, headers, data, onResponse, async, timeout, ResponseEncodingAuto());
+}
+
+httpCustomRequestWithTimeoutExt(
+	url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	async : bool,
+	timeout : int,
+	responseEncoding : ResponseEncoding
 ) -> void {
 	isPHPRequest = endsWith(url, ".php");
 	noCacheTimestamp = KeyValue("t", d2s(timestamp()));
@@ -317,6 +368,7 @@ httpCustomRequestWithTimeout(
 			map(headers, \header -> [header.key, header.value]),
 			map(params, \param -> [param.key, param.value]),
 			payload,
+			responseEncoding2string(responseEncoding),
 			\responseStatus, responseData, responseHeaders -> {
 				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
 
