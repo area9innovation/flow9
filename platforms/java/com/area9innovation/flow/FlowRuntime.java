@@ -43,17 +43,18 @@ public abstract class FlowRuntime {
 	}
 	public static boolean compareEqual(Object a, Object b) {
 		if (a == b) return true;
-		if (a.getClass() != b.getClass()) return false;
-		if (a instanceof Integer || a instanceof Boolean || a instanceof Double || a instanceof String) {
-			return a.equals(b);
-		}
-		if (a instanceof Object[]) {
-			int len = ((Object[])a).length;
-			if (len != ((Object[])b).length) return false;
-			for (int i = len; i-- != 0;) {
-				if (!compareEqual(((Object[])a)[i], ((Object[])b)[i])) return false;
+		if (a.getClass().isArray() && b.getClass().isArray()) {
+			Object[] ao = (Object[])a;
+			Object[] bo = (Object[])b;
+			if (ao.length != bo.length) return false;
+			for (int i = ao.length; i-- != 0;) {
+				if (!compareEqual(ao[i], bo[i])) return false;
 			}
 			return true;
+		}
+		if (!a.getClass().equals(b.getClass())) return false;
+		if (a instanceof Integer || a instanceof Boolean || a instanceof Double || a instanceof String) {
+			return a.equals(b);
 		}
 		if (a instanceof Struct) {
 			if (((Struct)a).getTypeId() != ((Struct)b).getTypeId()) return false;

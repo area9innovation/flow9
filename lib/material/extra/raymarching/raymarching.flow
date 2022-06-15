@@ -3,25 +3,26 @@ import material/extra/raymarching/raymarching_rm2rmi;
 import material/extra/raymarching/raymarching_rmi2code;
 
 export {
-	MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material;
-	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material;
+	MRaymarching(id : int, scene : RMScene, light : RMLights, settings : RMSettings) -> Material;
+	MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, settings : RMSettings) -> Material;
 
 	makeRaymarchingMaterialTexture(material : Material, texture : DynamicBehaviour<string>) -> Material;
 }
 
-MRaymarching(id : int, scene : RMScene, light : RMLights, camera : RMCamera) -> Material {
-	MDynamicRaymarching(id, const(scene), const(light), const(camera))
+MRaymarching(id : int, scene : RMScene, light : RMLights, settings : RMSettings) -> Material {
+	MDynamicRaymarching(id, const(scene), const(light), settings)
 }
 
-MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, cameraB : Transform<RMCamera>) -> Material {
+MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RMLights>, settings : RMSettings) -> Material {
 	rmiScene = RMScene2RMIExp(fgetValue(sceneB), false);
-	glsl = RMIExp2GLSL(rmiScene.first);
-	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).first);
-	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.second);
-	baseMaterial = RMIExp2GLSLMaterial(rmiScene.first);
+	glsl = RMIExp2GLSL(rmiScene.second);
+	glslSimple = RMIExp2GLSL(RMScene2RMIExp(fgetValue(sceneB), true).second);
+	topLevelDistanceFunctions = rmiTree2GLSL(rmiScene.first.topLevelSmoothObjects);
+	baseMaterial = RMIExp2GLSLMaterial(rmiScene.second);
 	jsScene = RMIExp2JS(RMScene2RMIExpJS(fgetValue(sceneB)));
 	lightGlsl = RMIExp2GLSL(RMLights2RMIExp(fgetValue(lightB)));
 
+	cameraB = settings.camera;
 	cameraPositionStr = formatString("%1, %2, %3", [
 		d2s(fgetValue(cameraB).position.x),
 		d2s(fgetValue(cameraB).position.y),
@@ -34,17 +35,22 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 	]);
 
 	materialsB = make(extractMaterialsFromRMScene(fgetValue(sceneB)));
-
+	fixCounter = \c -> if (c < 1) 1 else c;
 	countMaterials = \materials -> {
 		count = fold2(materials, 0, 0, \acc1, acc2, m -> switch(m.color) {
 			RMTexture(texture, parameters): Pair(acc1 + 1, acc2);
 			RMColor(col): Pair(acc1, acc2 + 1);
 		});
-		Pair(if (count.first < 1) 1 else count.first, if (count.second < 1) 1 else count.second)
+		Pair(fixCounter(count.first), fixCounter(count.second))
 	};
 	countedMaterials = countMaterials(getValue(materialsB));
 
+	positionsB = make(extractPositionsFromRMScene(fgetValue(sceneB)));
+	objectParametersB = make(extractObjectParametersFromRMScene(fgetValue(sceneB)));
+	smoothCoefficientsB = make(extractSmoothCoefficientsFromRMScene(fgetValue(sceneB)));
+
 	webglContextLoadedB = make(false);
+	fpsB = make(0);
 
 	MConstruct(
 		[
@@ -52,22 +58,26 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				fthrottle(sceneB, 500), fthrottle(lightB, 500),
 				\s, l -> {
 					newRMIScene = RMScene2RMIExp(s, false);
-					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.second);
+					newTopLevelDistanceFunctions = rmiTree2GLSL(newRMIScene.first.topLevelSmoothObjects);
 					materials = extractMaterialsFromRMScene(s);
 					next(materialsB, materials);
 					countedMaterialsChanged = countMaterials(materials);
+					next(positionsB, extractPositionsFromRMScene(s));
+					next(objectParametersB, extractObjectParametersFromRMScene(s));
+					next(smoothCoefficientsB, extractSmoothCoefficientsFromRMScene(s));
 					hostCall("recompileShader", [
 						i2s(id),
 						blueprint(
 							"#include material/extra/raymarching/raymarching.frag",
 							[
-								"distanceFunction", RMIExp2GLSL(newRMIScene.first),
-								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true).first),
+								"distanceFunction", RMIExp2GLSL(newRMIScene.second),
+								"simpleDistance", RMIExp2GLSL(RMScene2RMIExp(s, true).second),
 								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
-								"baseMaterial", RMIExp2GLSLMaterial(newRMIScene.first),
+								"baseMaterial", RMIExp2GLSLMaterial(newRMIScene.second),
 								"numTextures", i2s(countedMaterialsChanged.first),
 								"numColors", i2s(countedMaterialsChanged.second),
 								"topLevelDistanceFunction", newTopLevelDistanceFunctions,
+								"numSmooth", i2s(fixCounter(newRMIScene.first.smoothObjectsCounter)),
 							]
 						)
 					]);
@@ -75,7 +85,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
+							formatString("(p, positions, objectParameters, smoothCoefficients) => {return %1;}", [RMIExp2JS(RMScene2RMIExpJS(s))])
 						]
 					) |> ignore;
 				}
@@ -136,10 +146,7 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				webglContextLoadedB,
 				fsubselect(materialsB, FLift(\materials -> fmerge(filtermap(materials, \material -> switch(material.color) {
 					RMTexture(texture, parameters): None();
-					RMColor(color): Some(switch(color) {
-						RMInteractive(trigger, behaviour, transform): behaviour;
-						Behaviour(): color;
-					});
+					RMColor(color): Some(color);
 				})))),
 				\col -> {
 					parameters = mapConcat(
@@ -173,60 +180,158 @@ MDynamicRaymarching(id : int, sceneB : Transform<RMScene>, lightB : Transform<RM
 				if (getJsonIntField(parsedMessage, "webglContextLoaded", -1) == id)
 					next(webglContextLoadedB, true);
 
-				mouseLeftDownObjectId = getJsonIntField(parsedMessage, "mouseLeftDownObjectId", -1);
-				mouseHoverObjectId = getJsonIntField(parsedMessage, "mouseHoverObjectId", -1);
-				if (mouseLeftDownObjectId != -1) {
-					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
-					maybeApply(
-						lookupTree(topLevelObjects, mouseLeftDownObjectId),
-						\obj -> {
-							iter(
-								extractInteactivesFromRMScene(obj),
-								\i -> {
-									if (i.trigger == RMMouseDown()) {
-										next(i.behaviour, i.transform(getValue(i.behaviour)))
-									}
+				getObjectId = \event -> getJsonIntField(parsedMessage, event, -1);
+				triggers = [
+					Pair(RMMouseHover(), getObjectId("mouseHoverObjectId")),
+					Pair(RMMouseHoverIn(), getObjectId("mouseHoverInObjectId")),
+					Pair(RMMouseHoverOut(), getObjectId("mouseHoverOutObjectId")),
+					Pair(RMMouseDownleft(), getObjectId("mouseDownLeftObjectId")),
+				];
+				filteredTriggers = filter(triggers, \t -> t.second != -1);
+				if (filteredTriggers != []) {
+					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).first.topLevelObjects;
+					iter(
+						filteredTriggers,
+						\t -> {
+							maybeApply(
+								lookupTree(topLevelObjects, t.second),
+								\obj -> {
+									iter(
+										extractTriggersFromRMScene(obj),
+										\i -> {
+											next(i, t.first);
+										}
+									)
 								}
 							)
 						}
 					)
 				}
-				if (mouseHoverObjectId != -1) {
-					topLevelObjects = RMScene2RMIExp(fgetValue(sceneB), false).third;
-					maybeApply(
-						lookupTree(topLevelObjects, mouseHoverObjectId),
-						\obj -> {
-							iter(
-								extractInteactivesFromRMScene(obj),
-								\i -> {
-									if (i.trigger == RMMouseHover()) {
-										next(i.behaviour, i.transform(getValue(i.behaviour)))
-									}
-								}
-							)
-						}
-					)
+
+				fps = getJsonIntField(parsedMessage, "fps", -1);
+				if (fps != -1) next(fpsB, fps);
+
+				cameraPosition = getJsonObjectField(parsedMessage, "cameraPosition");
+				cameraLookAt = getJsonObjectField(parsedMessage, "cameraLookAt");
+
+				if (length(cameraPosition.members) == 3 && length(cameraLookAt.members) == 3) {
+					newCamera = RMCamera(
+						RMXYZ(
+							getJsonDoubleField(cameraPosition, "x", 0.),
+							getJsonDoubleField(cameraPosition, "y", 0.),
+							getJsonDoubleField(cameraPosition, "z", 0.)
+						),
+						RMXYZ(
+							getJsonDoubleField(cameraLookAt, "x", 0.),
+							getJsonDoubleField(cameraLookAt, "y", 0.),
+							getJsonDoubleField(cameraLookAt, "z", 0.)
+						)
+					);
+
+					nextDistinct(settings.camera, newCamera);
 				}
 			}),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(positionsB, FLift(fmerge)),
+				\positions -> {
+					parameters = mapConcat(
+						positions,
+						\coordinate -> {
+							p = RMCoordinate2RMIXYZ(coordinate);
+							[p.x, p.y, p.z, 0.] //allignment bits
+						}
+					);
+					hostCall("updateObjectPositions", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(objectParametersB, FLift(fmerge)),
+				\parameters -> {
+					hostCall("updateObjectParameters", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(smoothCoefficientsB, FLift(fmerge)),
+				\smoothCoefficients -> {
+					parameters = mapConcat(
+						smoothCoefficients,
+						\sc -> {
+							[sc, 0., 0., 0.] //allignment bits
+						}
+					);
+					hostCall("updateSmoothCoefficients", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
+			makeSubscribe2Trigger(
+				webglContextLoadedB,
+				settings.firstPersonCamera,
+				\firstPersonCamera -> {
+					hostCall("toggleFirstPersonCamera", [flow(i2s(id)), flow(firstPersonCamera)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.thirdPersonCameraLimits,
+				\thirdPersonCameraLimits -> {
+					hostCall("changeThirdPersonCameraLimits", [
+						flow(i2s(id)), 
+						flow(thirdPersonCameraLimits.first), 
+						flow(thirdPersonCameraLimits.second)
+					])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.firstPersonCameraLimits,
+				\firstPersonCameraLimits-> {
+					hostCall("changeFirstPersonCameraLimits", [
+						flow(i2s(id)), 
+						flow(firstPersonCameraLimits.first),
+						flow(firstPersonCameraLimits.second)
+					])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.firstPersonCameraSpeed,
+				\firstPersonCameraSpeed-> {
+					hostCall("changeFirstPersonCameraSpeed", [flow(i2s(id)), flow(firstPersonCameraSpeed)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.firstPersonCameraLeftMouseButtonUnlock,
+				\firstPersonCameraLeftMouseButtonUnlock-> {
+					hostCall("changeFirstPersonCameraLeftMouseButtonUnlock", [flow(i2s(id)), flow(firstPersonCameraLeftMouseButtonUnlock)])|> ignore;
+				}
+			),
 		],
-		displayRaymarchingCanvas(
-			id,
-			webglContextLoadedB,
-			blueprint("#include material/extra/raymarching/raymarching.js", [
-				"cameraPosition", cameraPositionStr,
-				"cameraLookAt", cameraLookAtStr,
-				"distanceFunction", jsScene,
-			]),
-			"#include material/extra/raymarching/raymarching.vert",
-			blueprint("#include material/extra/raymarching/raymarching.frag", [
-				"distanceFunction", glsl,
-				"simpleDistance", glslSimple,
-				"light", lightGlsl,
-				"baseMaterial", baseMaterial,
-				"numTextures", i2s(countedMaterials.first),
-				"numColors", i2s(countedMaterials.second),
-				"topLevelDistanceFunction", topLevelDistanceFunctions,
-			])
+		MGroup2(
+			displayRaymarchingCanvas(
+				id,
+				webglContextLoadedB,
+				blueprint("#include material/extra/raymarching/raymarching.js", [
+					"cameraPosition", cameraPositionStr,
+					"cameraLookAt", cameraLookAtStr,
+					"distanceFunction", jsScene,
+					"firstPersonCamera", b2s(getValue(settings.firstPersonCamera)),
+				]),
+				"#include material/extra/raymarching/raymarching.vert",
+				blueprint("#include material/extra/raymarching/raymarching.frag", [
+					"distanceFunction", glsl,
+					"simpleDistance", glslSimple,
+					"light", lightGlsl,
+					"baseMaterial", baseMaterial,
+					"numTextures", i2s(countedMaterials.first),
+					"numColors", i2s(countedMaterials.second),
+					"topLevelDistanceFunction", topLevelDistanceFunctions,
+					"numSmooth", i2s(fixCounter(rmiScene.first.smoothObjectsCounter)),
+				])
+			),
+			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(i2s(fps) + " fps", [])))
 		)
 	)
 }
@@ -250,6 +355,7 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			setAttribute(scriptGLM, "src", "js/glm-js.min.js", true);
 			setAttribute(scriptGLM, "onload", "rayMain(" + "\"" + i2s(id) + "\"" + ")", true);
 			setAttribute(canvas, "id", "rayCanvas" + i2s(id), true);
+			setAttribute(canvas, "tabindex", "1", true); //allow canvas catch key events
 			setCanvasSize(fgetValue(whB));
 			unsSize = makeSubscribeTrigger(webglContextLoadedB, whB, \wh -> {
 				setCanvasSize(wh);
@@ -293,38 +399,90 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 
 extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): [RMMaterial(object, color, materialProperties)];
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [RMMaterial(object, color, materialProperties)];
 		RMPrimitive(): [];
 		RMSTranslate(object, d): extractMaterialsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
 		RMSmoothUnion(objects, k): mapConcat(objects, extractMaterialsFromRMScene);
 		RMMaterial(object, color, materialProperties): [obj];
+		RMInteractive(object, trigger): extractMaterialsFromRMScene(object);
 		RMEmpty(): [];
 	}
 }
 
-extractInteactivesFromRMScene(obj : RMScene) -> [RMInteractive] {
+extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): switch(color) {
-			RMColor(col) : switch(col) {
-				RMInteractive(trigger, beh, transform): [col];
-				Behaviour(): [];
-			}
-			RMTexture(__, __): []
-		};
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [trigger];
 		RMPrimitive(): [];
-		RMSTranslate(object, d): extractInteactivesFromRMScene(object);
-		RMUnion2(object1, object2): concat(extractInteactivesFromRMScene(object1), extractInteactivesFromRMScene(object2));
-		RMUnion(objects): mapConcat(objects, extractInteactivesFromRMScene);
-		RMSmoothUnion(objects, k): mapConcat(objects, extractInteactivesFromRMScene);
-		RMMaterial(object, color, materialProperties): switch(color) {
-			RMColor(col) : switch(col) {
-				RMInteractive(trigger, beh, transform): [col];
-				Behaviour(): [];
-			}
-			RMTexture(__, __): []
-		};
+		RMSTranslate(object, d): extractTriggersFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractTriggersFromRMScene);
+		RMSmoothUnion(objects, k): [];
+		RMMaterial(object, color, materialProperties): extractTriggersFromRMScene(object);
+		RMInteractive(object, trigger): [trigger];
+		RMEmpty(): [];
+	}
+}
+
+extractPositionsFromRMScene(obj : RMScene) -> [Transform<RMCoordinate>] {
+	extractPositionsFromRMScene0(obj, const(RMX(0.))) 
+}
+
+extractPositionsFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [Transform<RMCoordinate>] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [fselect2(acc, position, FLift2(addRMCoordinate))];
+		RMPrimitive(): [acc];
+		RMSTranslate(object, d): extractPositionsFromRMScene0(object, fselect2(acc, d, FLift2(addRMCoordinate)));
+		RMUnion2(object1, object2): concat(extractPositionsFromRMScene0(object1, acc), extractPositionsFromRMScene0(object2, acc));
+		RMUnion(objects): mapConcat(objects, \o -> extractPositionsFromRMScene0(o, acc));
+		RMSmoothUnion(objects, k): mapConcat(objects, \o -> extractPositionsFromRMScene0(o, acc));
+		RMMaterial(object, color, materialProperties): extractPositionsFromRMScene0(object, acc);
+		RMInteractive(object, trigger): extractPositionsFromRMScene0(object, acc);
+		RMEmpty(): [];
+	}
+}
+
+extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
+	fRMX = \coord -> fselect(coord, FLift(\c -> c.x));
+	fRMY = \coord -> fselect(coord, FLift(\c -> c.y));
+	fRMZ = \coord -> fselect(coord, FLift(\c -> c.z));
+	getPrimitiveParameters = \o -> {
+		switch(o) {
+			RMSphere(radius): [radius, const(0.), const(0.), const(0.)];
+			RMPlane(normal): [fRMX(normal), fRMY(normal), fRMZ(normal), const(0.)];
+			RMBox(box):  [fRMX(box), fRMY(box), fRMZ(box), const(0.)];
+			RMRoundBox(box, radius): [fRMX(box), fRMY(box), fRMZ(box), radius];
+			RMBoxFrame(box, thickness): [fRMX(box), fRMY(box), fRMZ(box), thickness];
+			RMTorus(revolutionRadius, tubeRadius): [revolutionRadius, tubeRadius, const(0.), const(0.)];
+			RMCappedTorus(revolutionRadius, tubeRadius, percent): [revolutionRadius, tubeRadius, fselect(percent, FLift(\p -> sin(PI * p))), fselect(percent, FLift(\p -> cos(PI * p)))];
+			RMCylinder(height, radius): [height, radius, const(0.), const(0.)];
+			RMRoundedCylinder(height, radius, radiusRounded): [height, fdivide(radius, const(2.)), radiusRounded, const(0.)];
+		}
+	};
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): getPrimitiveParameters(object);
+		RMPrimitive(): getPrimitiveParameters(obj);
+		RMSTranslate(object, d): extractObjectParametersFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractObjectParametersFromRMScene(object1), extractObjectParametersFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractObjectParametersFromRMScene);
+		RMSmoothUnion(objects, k): mapConcat(objects, extractObjectParametersFromRMScene);
+		RMMaterial(object, color, materialProperties): extractObjectParametersFromRMScene(object);
+		RMInteractive(object, trigger): extractObjectParametersFromRMScene(object);
+		RMEmpty(): [];
+	}
+}
+
+extractSmoothCoefficientsFromRMScene(obj : RMScene) -> [Transform<double>] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): [];
+		RMPrimitive(): [];
+		RMSTranslate(object, d): extractSmoothCoefficientsFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractSmoothCoefficientsFromRMScene(object1), extractSmoothCoefficientsFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractSmoothCoefficientsFromRMScene);
+		RMSmoothUnion(objects, k): arrayPush(mapConcat(objects, extractSmoothCoefficientsFromRMScene), k);
+		RMMaterial(object, color, materialProperties): extractSmoothCoefficientsFromRMScene(object);
+		RMInteractive(object, trigger): extractSmoothCoefficientsFromRMScene(object);
 		RMEmpty(): [];
 	}
 }

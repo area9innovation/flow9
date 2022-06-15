@@ -3,6 +3,9 @@ import tools/flowc_lsp/lsp_utils;
 import tools/flowc/symbol_nature;
 
 export {
+	// Print the import graph in dot format
+	saveImportGraph(filename : string, simplify : bool, prog : FiProgram) -> void;
+
 	// Print a callgraph in format:
 	//
 	// *** file: algorithms.flow
@@ -25,6 +28,35 @@ export {
 	// - callHierarchy/outgoingCalls
 	// Output is made in LSP format (JSON).
 	lspCallHierarchyMethods(prog : FiProgram, globEnv : FcTypeEnvGlobal) -> void;
+}
+
+saveImportGraph(filename : string, simplify : bool, prog : FiProgram) -> void {
+	// Node type is flowfile. Edge type is file position for the import
+	importGraph = foldTree(prog.modules, makeSimpleGraph(), \file, modul, acc -> {
+		addModuleToImportGraph(prog, acc, file)
+	});
+	// Remove redundant imports to simplify the graph
+	reduced = if (simplify) simpleTransitiveReduction(importGraph) else importGraph;
+	dot = simpleGraph2dot(reduced, prog.config.flowfile, [], \f -> [DotLabel(f)], \e -> []);
+	setFileContent(filename, dot);
+	println("Saved import graph to " + filename + ". Convert to SVG with Graphviz:\n");
+	println("  dot -Tsvg " + filename + " -o " + changeFileExt(filename, ".svg") + "\n");
+}
+
+addModuleToImportGraph(prog : FiProgram, acc : SimpleGraph<string, int>, flowfile : string) -> SimpleGraph<string, int> {
+	if (hasSimpleNode(acc, flowfile)) {
+		acc
+	} else {
+		acc1 = addSimpleNode(acc, flowfile);
+		eitherMap(lookupTree(prog.modules, flowfile), \module -> {
+			fold(module.imports, acc1, \acc2 : SimpleGraph<string, int>, im : FiImport -> {
+				// OK, recursively add the chlidren's imports
+				acc3 = addModuleToImportGraph(prog, acc2, im.flowfile);
+				// And an edge to his guy
+				addSimpleEdge(acc3, flowfile, im.flowfile, im.start, 1)
+			});
+		}, acc1)
+	}
 }
 
 printCallGraph(filename : string, prog : FiProgram) -> void {

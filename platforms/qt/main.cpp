@@ -418,6 +418,9 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[1], "--min-heap")) {
             MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
             shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--use_utf8_js_style")) {
+            is_utf8_js_style = true;
+            shift_args(argc, argv, 1);
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
             exit(1);
@@ -710,7 +713,8 @@ int main(int argc, char *argv[])
                 printf("Could not load extended debug info.\n");
                 return 1;
             }
-        } else
+        }
+        else
         {
             // Load debug info before the bytecode
             if (argc > 2 && argv[2][0] != '-') {
@@ -774,6 +778,11 @@ int main(int argc, char *argv[])
                     QString key = a.left(equal);
                     QString value = a.mid(equal + 1);
                     FlowRunner.setUrlParameter(key, value);
+
+                    // Compiler parameter takes precedence.
+                    // If not set - we will check it in app parameters.
+                    if (!is_utf8_js_style)
+                        is_utf8_js_style = !strcmp(argv[i], "use_utf8_js_style=1");
                 } else {
                     FlowRunner.setUrlParameter(a, QString());
                 }
@@ -844,7 +853,7 @@ int main(int argc, char *argv[])
                        "--fallback_font <font> Enables lookup of unknown glyphs in the <font>. <font> example - DejaVuSans.\n"
                        "--transparent          Enables GL transparency.\n"
 #endif
-
+                       "--use_utf8_js_style    To switch UTF-8 parser to js style (3 bytes or more symbol codes converts into UTF-16).\n"
                        "-I dir                 passes -I parameter to flow compiler\n"
                        "Compiler, media-path, and fallback_font options can also be specified in flow.config file in properties format:\n"
                        "    flowcompiler=flowcompiler|nekocompiler|flowc\n"

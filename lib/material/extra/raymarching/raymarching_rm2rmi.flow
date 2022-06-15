@@ -3,73 +3,88 @@ import math/math;
 import ds/arrayutils;
 
 export {
-	RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Triple<RMIExp, Tree<int, RMIExp>, Tree<int, RMScene>>;
+	RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp>;
 	RMLights2RMIExp(obj : RMLights) -> RMIExp;
 	RMScene2RMIExpJS(obj : RMScene) -> RMIExp;
 
 	hexColor2RMI(color : int) -> RMIXYZ;
+	RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ;
+	addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate;
 }
 
 RMObjectCounter(
 	objectId : int,
 	textureId : int,
 	topLevelObjects : Tree<int, RMScene>,
-	topLevelSmoothObjects : Tree<int, RMIExp>
+	topLevelSmoothObjects : Tree<int, RMIExp>,
+	smoothObjectsCounter : int,
 );
 
-RMSceneAccamulators(
-	position : RMCoordinate,
-	rmiPosition : RMIXYZ,
+RMSceneAccumulators(
+	position : Transform<RMCoordinate>,
 	materialColor : RMBaseMaterial,
 	materialProperties : [RMMaterialProperties],
 	rmiMateiral : RMIExp,
+	trigger : DynamicBehaviour<RMTrigger>
 );
 
-RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Triple<RMIExp, Tree<int, RMIExp>, Tree<int, RMScene>> {
-	resultExp = RMScene2RMIExp0(
+RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp> {
+	RMScene2RMIExp0(
 		obj,
-		RMSceneAccamulators(RMXYZ(0., 0., 0.), RMIXYZ(0., 0., 0.), RMColor(const(0)), [], RMIXYZ(1., 1., 1.)),
-		RMObjectCounter(0, 0, makeTree(), makeTree()),
+		RMSceneAccumulators(make(RMXYZ(0., 0., 0.)), RMColor(make(0)), [], RMIXYZ(1., 1., 1.), make(RMMouseDownleft())),
+		RMObjectCounter(0, 0, makeTree(), makeTree(), 0),
 		true,
 		simpleDistance,
 		false
-	);
-	Triple(resultExp.second, resultExp.first.topLevelSmoothObjects, resultExp.first.topLevelObjects)
+	)
 }
 
 RMScene2RMIExp0(
 	obj : RMScene,
-	acc : RMSceneAccamulators,
+	acc : RMSceneAccumulators,
 	id : RMObjectCounter,
 	topLevel : bool,
 	simpleDistance : bool,
 	innerLevel : bool
 ) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): {
-			compositeObject = RMSTranslate(RMMaterial(object, color, materialProperties), position);
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): {
+			compositeObject = RMSTranslate(RMMaterial(RMInteractive(object, trigger), color, materialProperties), position);
 			RMScene2RMIExp0(compositeObject, acc, id, topLevel, simpleDistance, innerLevel);
 		};
 		RMPrimitive(): {
 			wrapFn = if (simpleDistance) {
-				\e -> Pair(RMObjectCounter(id.objectId + 1, id.textureId, id.topLevelObjects, id.topLevelSmoothObjects), e)
+				\e -> Pair(RMObjectCounter(id with objectId = id.objectId + 1), e)
 			} else {
 				\e -> addColorToRMIExp(e, id, acc.rmiMateiral, innerLevel)
 			};
-			resultExp = wrapFn(RMPrimitive2RMIExp(obj, acc.rmiPosition));
-			compositeObject = RMCompositeObject(obj, i2s(id.objectId), acc.materialColor, acc.materialProperties, acc.position);
+			resultExp = wrapFn(RMPrimitive2RMIExp(
+				obj,
+				RMICall(RMIOp("-"), [RMIP(), RMIVar(formatString("positions[%1]", [i2s(id.objectId)]))]),
+				id.objectId
+			));
+			compositeObject = RMCompositeObject(
+				obj,
+				i2s(id.objectId),
+				acc.materialColor,
+				acc.materialProperties,
+				make(fgetValue(acc.position)),
+				acc.trigger
+			);
 
 			if (topLevel) Pair(
-				RMObjectCounter(resultExp.first with topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, compositeObject)),
+				RMObjectCounter(
+					resultExp.first
+					with topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, compositeObject)
+				),
 				resultExp.second
 			) else resultExp
 		}
 		RMSTranslate(object, d): RMScene2RMIExp0(
 			object,
-			RMSceneAccamulators(
+			RMSceneAccumulators(
 				acc with
-				rmiPosition = addRMIXYZ(acc.rmiPosition, RMCoordinate2RMIXYZ(d)),
-				position = addRMCoordinate(acc.position, d)
+				position = fselect2(acc.position, d, FLift2(addRMCoordinate))
 			),
 			id,
 			topLevel,
@@ -111,7 +126,7 @@ RMScene2RMIExp0(
 						Pair(exp2.first, RMICall(
 							RMIFn(if (simpleDistance) "opSmoothUnion" else if(cond) "minOIS" else "minOISR"),
 							concat(
-								[acc2.second, exp2.second, RMIDouble(k)],
+								[acc2.second, exp2.second, RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))],
 								if (!simpleDistance && cond) [RMIP(), RMIVar("normal")] else []
 							)
 						))
@@ -123,7 +138,8 @@ RMScene2RMIExp0(
 					RMObjectCounter(
 						resultExp.first with
 						topLevelSmoothObjects = setTree(resultExp.first.topLevelSmoothObjects, id.objectId, resultExpI.second),
-						topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, obj)
+						topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, RMInteractive(obj, acc.trigger)),
+						smoothObjectsCounter = resultExp.first.smoothObjectsCounter + 1,
 					),
 					resultExp.second
 				) else resultExp
@@ -135,7 +151,7 @@ RMScene2RMIExp0(
 			switch(color) {
 				RMTexture(texture, parameters): RMScene2RMIExp0(
 					object,
-					RMSceneAccamulators(
+					RMSceneAccumulators(
 						acc with
 						rmiMateiral = RMICall(
 							RMIFn("getTextureColor"),
@@ -157,12 +173,9 @@ RMScene2RMIExp0(
 				RMColor(col): {
 					RMScene2RMIExp0(
 						object,
-						RMSceneAccamulators(
+						RMSceneAccumulators(
 							acc with
-							rmiMateiral = hexColor2RMI(getValue(switch(col) {
-								RMInteractive(trigger, beh, transform): beh;
-								Behaviour(): col;
-							})),
+							rmiMateiral = hexColor2RMI(getValue(col)),
 							materialColor = color,
 							materialProperties = materialProperties
 						),
@@ -174,58 +187,65 @@ RMScene2RMIExp0(
 				}
 			}
 		}
+		RMInteractive(object, trigger): RMScene2RMIExp0(
+			object,
+			RMSceneAccumulators(acc with trigger = trigger),
+			id,
+			topLevel,
+			simpleDistance,
+			innerLevel
+		);
 		RMEmpty(): Pair(id, RMIEmpty());
 	}
 }
 
-RMPrimitive2RMIExp(obj : RMPrimitive, position : RMIXYZ) -> RMIExp {
+RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
+	getObjectParameter = \paramId -> RMIVar(formatString("objectParameters[%1].%2", [i2s(id), paramId]));
 	switch(obj) {
 		RMSphere(radius): RMICall(RMIOp("-"), [
-			RMICall(RMIFn("length"), [
-				RMICall(RMIOp("-"), [RMIP(), position]),
-			]),
-			RMIDouble(radius)
+			RMICall(RMIFn("length"), [distance]),
+		 	getObjectParameter("x")
 		]);
 		RMPlane(normal): RMICall(RMIFn("dot"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
+			distance,
 			RMICall(RMIFn("normalize"), [
-				RMCoordinate2RMIXYZ(normal)
+				RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
 			])
 		]);
 		RMBox(box): RMICall(RMIFn("sdBox"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMCoordinate2RMIXYZ(box)
+			distance,
+			RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
 		]);
 		RMRoundBox(box, radius): RMICall(RMIFn("sdRoundBox"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMCoordinate2RMIXYZ(box),
-			RMIDouble(radius)
+			distance,
+			RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
+			getObjectParameter("w")
 		]);
 		RMBoxFrame(box, thickness): RMICall(RMIFn("sdBoxFrame"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMCoordinate2RMIXYZ(box),
-			RMIDouble(thickness)
+			distance,
+			RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
+			getObjectParameter("w")
 		]);
 		RMTorus(revolutionRadius, tubeRadius): RMICall(RMIFn("sdTorus"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMICall(RMIFn("vec2"), [RMIDouble(revolutionRadius), RMIDouble(tubeRadius)])
+			distance,
+			RMICall(RMIFn("vec2"), [getObjectParameter("x"), getObjectParameter("y")])
 		]);
 		RMCappedTorus(revolutionRadius, tubeRadius, percent): RMICall(RMIFn("sdCappedTorus"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMICall(RMIFn("vec2"), [RMIDouble(sin(PI * percent)), RMIDouble(cos(PI * percent))]),
-			RMIDouble(revolutionRadius),
-			RMIDouble(tubeRadius)
+			distance,
+			RMICall(RMIFn("vec2"), [getObjectParameter("z"), getObjectParameter("w")]),
+			getObjectParameter("x"),
+			getObjectParameter("y")
 		]);
 		RMCylinder(height, radius): RMICall(RMIFn("sdCappedCylinder"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMIDouble(height),
-			RMIDouble(radius)
+			distance,
+			getObjectParameter("x"),
+			getObjectParameter("y")
 		]);
 		RMRoundedCylinder(height, radius, radiusRounded): RMICall(RMIFn("sdRoundedCylinder"), [
-			RMICall(RMIOp("-"), [RMIP(), position]),
-			RMIDouble(radius / 2.),
-			RMIDouble(radiusRounded),
-			RMIDouble(height)
+			distance,
+			getObjectParameter("y"),
+			getObjectParameter("z"),
+			getObjectParameter("x")
 		]);
 	}
 }
@@ -245,7 +265,7 @@ RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
 			RMLights2RMIExp0(
 				object,
 				acc,
-				hexColor2RMI(getValue(col.color)),
+				hexColor2RMI(col),
 			);
 		}
 		RMLight(size): RMICall(RMIOp("*"),
@@ -276,22 +296,35 @@ RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
 }
 
 RMScene2RMIExpJS(obj : RMScene) -> RMIExp {
-	RMScene2RMIExpJS0(obj, RMIXYZ(0., 0., 0.), 0).second
+	RMScene2RMIExpJS0(obj, RMObjectCounter(0, 0, makeTree(), makeTree(), 0)).second
 }
 
-RMScene2RMIExpJS0(obj : RMScene, acc : RMIXYZ, id : int) -> Pair<int, RMIExp> {
+RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position): {
+		RMCompositeObject(object, name, color, materialProperties, position, trigger): {
 			compositeObject = RMSTranslate(RMMaterial(object, color, materialProperties), position);
-			RMScene2RMIExpJS0(compositeObject, acc, id);
+			RMScene2RMIExpJS0(compositeObject, id);
 		};
 		RMPrimitive(): {
-			Pair(id + 1, RMIJSObject(setTree(makeTree1("distance", RMPrimitive2RMIExpJS(obj, acc)), "id", RMIInt(id))));
+			Pair(
+				RMObjectCounter(id with objectId = id.objectId + 1),
+				RMIJSObject(
+					setTree(makeTree1(
+						"distance",
+						RMPrimitive2RMIExpJS(
+							obj,
+							RMICall(RMIFn("p['-']"), [RMIVar(formatString("positions[%1]", [i2s(id.objectId)]))]),
+							id.objectId
+						)
+					),
+					"id", RMIInt(id.objectId))
+				)
+			);
 		}
-		RMSTranslate(object, d): RMScene2RMIExpJS0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), id);
+		RMSTranslate(object, d): RMScene2RMIExpJS0(object, id);
 		RMUnion2(object1, object2): {
-			exp1 = RMScene2RMIExpJS0(object1, acc, id);
-			exp2 = RMScene2RMIExpJS0(object2, acc, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, id);
+			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
 			Pair(exp2.first, RMICall(RMIFn("minOI"),
 				[
 					exp1.second,
@@ -301,9 +334,9 @@ RMScene2RMIExpJS0(obj : RMScene, acc : RMIXYZ, id : int) -> Pair<int, RMIExp> {
 		}
 		RMUnion(objects): {
 			if (length(objects) > 0 ) {
-				exp1 = RMScene2RMIExpJS0(objects[0], acc, id);
+				exp1 = RMScene2RMIExpJS0(objects[0], id);
 				fold(tail(objects), exp1, \acc2, obj2 -> {
-					exp2 = RMScene2RMIExpJS0(obj2, acc, acc2.first);
+					exp2 = RMScene2RMIExpJS0(obj2, acc2.first);
 					Pair(exp2.first, RMICall(RMIFn("minOI"),
 						[
 							acc2.second,
@@ -317,74 +350,80 @@ RMScene2RMIExpJS0(obj : RMScene, acc : RMIXYZ, id : int) -> Pair<int, RMIExp> {
 		};
 		RMSmoothUnion(objects, k): {
 			if (length(objects) > 0 ) {
-				exp1 = RMScene2RMIExpJS0(objects[0], acc, id);
-				fold(tail(objects), exp1, \acc2, obj2 -> {
-					exp2 = RMScene2RMIExpJS0(obj2, acc, acc2.first);
+				exp1 = RMScene2RMIExpJS0(objects[0], id);
+				exp2 = fold(tail(objects), exp1, \acc2, obj2 -> {
+					exp2 = RMScene2RMIExpJS0(obj2, acc2.first);
 					Pair(exp2.first, RMICall(RMIFn("minOIS"),
 						[
 							acc2.second,
 							exp2.second,
-							RMIDouble(k)
+							RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))
 						]
 					))
-				})
+				});
+
+				Pair(
+					RMObjectCounter(exp2.first with smoothObjectsCounter = id.smoothObjectsCounter + 1),
+					exp2.second
+				)
 			} else {
 				Pair(id, RMIEmpty());
 			}
 		};
-		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, acc, id);
+		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, id);
+		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, id);
 		RMEmpty(): Pair(id, RMIEmpty());
 	}
 }
 
-RMPrimitive2RMIExpJS(obj : RMPrimitive, position : RMIXYZ) -> RMIExp {
+
+RMPrimitive2RMIExpJS(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
+	getObjectParameter = \paramId -> RMIVar(formatString("objectParameters[%1].%2", [i2s(id), paramId]));
 	switch(obj) {
 		RMSphere(radius): RMICall(RMIOp("-"), [
-			RMICall(RMIFn("glm.length"), [
-				RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position]))
-			]),
-			RMIDouble(radius)
+			RMICall(RMIFn("glm.length"), [distance]),
+			getObjectParameter("x")
 		]);
 		RMPlane(normal): RMICall(RMIFn("glm.dot"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
+			distance,
 			RMICall(RMIFn("glm.normalize"), [
-				RMCoordinate2RMIXYZ(normal)
+				RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
 			])
 		]);
 		RMBox(box): RMICall(RMIFn("sdBox"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMCoordinate2RMIXYZ(box)
+			distance,
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
 		]);
 		RMRoundBox(box, radius): RMICall(RMIFn("sdRoundBox"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMCoordinate2RMIXYZ(box),
-			RMIDouble(radius)
+			distance,
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
+			getObjectParameter("w")
 		]);
 		RMBoxFrame(box, thickness): RMICall(RMIFn("sdBoxFrame"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMCoordinate2RMIXYZ(box),
-			RMIDouble(thickness)
+			distance,
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
+			getObjectParameter("w")
 		]);
 		RMTorus(revolutionRadius, tubeRadius): RMICall(RMIFn("sdTorus"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMICall(RMIFn("glm.vec2"), [RMIDouble(revolutionRadius), RMIDouble(tubeRadius)])
+			distance,
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter("x"), getObjectParameter("y")])
 		]);
 		RMCappedTorus(revolutionRadius, tubeRadius, percent): RMICall(RMIFn("sdCappedTorus"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMICall(RMIFn("glm.vec2"), [RMIDouble(sin(PI * percent)), RMIDouble(cos(PI * percent))]),
-			RMIDouble(revolutionRadius),
-			RMIDouble(tubeRadius)
+			distance,
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter("z"), getObjectParameter("w")]),
+			getObjectParameter("x"),
+			getObjectParameter("y")
 		]);
 		RMCylinder(height, radius): RMICall(RMIFn("sdCappedCylinder"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMIDouble(height),
-			RMIDouble(radius)
+			distance,
+			getObjectParameter("x"),
+			getObjectParameter("y")
 		]);
 		RMRoundedCylinder(height, radius, radiusRounded): RMICall(RMIFn("sdRoundedCylinder"), [
-			RMIConcat(RMIP(), RMICall(RMIFn("['-']"), [position])),
-			RMIDouble(radius / 2.),
-			RMIDouble(radiusRounded),
-			RMIDouble(height)
+			distance,
+			getObjectParameter("y"),
+			getObjectParameter("z"),
+			getObjectParameter("x")
 		]);
 	}
 }
@@ -434,10 +473,9 @@ addColorToRMIExp(exp : RMIExp, id : RMObjectCounter, color : RMIExp, innerLevel 
 	}
 	Pair(
 		RMObjectCounter(
-			id.objectId + 1,
-			id.textureId + b2i(isTexture),
-			id.topLevelObjects,
-			id.topLevelSmoothObjects
+			id with
+			objectId = id.objectId + 1,
+			textureId = id.textureId + b2i(isTexture),
 		),
 		RMIProperty(
 			RMICall(
