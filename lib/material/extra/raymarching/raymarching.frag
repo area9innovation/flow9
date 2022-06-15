@@ -66,11 +66,33 @@ mat2 makeRotate2vec2(vec2 angle) {
 	return mat2(c.x, s.x, -s.y, c.y);
 }
 
-ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
+ObjectInfo opUnion(ObjectInfo obj1, ObjectInfo obj2) {
 	if (obj1.d < obj2.d)
 		return obj1;
 	else
 		return obj2;
+}
+
+ObjectInfo opIntersection(ObjectInfo obj1, ObjectInfo obj2) {
+	if (obj1.d > obj2.d)
+		return obj1;
+	else
+		return obj2;
+}
+
+ObjectInfo opSubtraction(ObjectInfo obj1, ObjectInfo obj2) {
+	ObjectInfo newObj;
+	if (-obj1.d > obj2.d)
+		newObj = obj1;
+	else
+		newObj = obj2;
+	return ObjectInfo(
+		max(-obj1.d, obj2.d),
+		newObj.id,
+		newObj.textureId,
+		newObj.topLevel,
+		newObj.material
+	);
 }
 
 float sdBox( vec3 p, vec3 b ) {
@@ -163,7 +185,7 @@ vec3 getBaseMaterial(int id, vec3 p, vec3 normal) {
 	return materialColor;
 }
 
-ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
+ObjectInfo opSmoothUnionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
 	float interpolation = clamp(0.5 + 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
 	float d = opSmoothUnion2(obj1.d, obj2.d, k, interpolation);
 	return ObjectInfo(
@@ -175,7 +197,7 @@ ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal
 	);
 }
 
-ObjectInfo minOISR(ObjectInfo obj1, ObjectInfo obj2, float k) {
+ObjectInfo opSmoothUnionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
 	float d = opSmoothUnion(obj1.d, obj2.d, k);
 	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
 }
@@ -280,7 +302,7 @@ vec3 getColor(vec2 uv) {
 
 	ObjectInfo oiSimple = rayMarch(rayOrigin, rayDirection);
 	vec3 col = backgroundColor;
-	
+
 	if (oiSimple.d < MAX_DIST) {
 		vec3 p = rayOrigin + rayDirection * oiSimple.d;
 		vec3 normal = getObjectNormal(p);
