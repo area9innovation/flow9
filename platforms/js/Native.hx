@@ -1376,6 +1376,7 @@ class Native {
 			}
 			return true;
 		#elseif js
+			Errors.print("setFileContent '" + file + "' does not work in this target. Use the C++ runner");
 			return false;
 		#else
 			try {

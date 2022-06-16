@@ -33,9 +33,9 @@ class HttpCustom extends haxe.Http {
 		#end
 		var r = req = js.Browser.createXMLHttpRequest();
 
-		var utf8NoSurragatesFlag = Util.getParameter("utf8_no_surragates");
+		var utf8NoSurrogatesFlag = Util.getParameter("utf8_no_surrogates");
 		// Url parameter takes precedence.
-		if (utf8NoSurragatesFlag != null && utf8NoSurragatesFlag != "0") {
+		if (utf8NoSurrogatesFlag != null && utf8NoSurrogatesFlag != "0") {
 			responseEncoding = "utf8";
 		} else if (responseEncoding == "utf8_js") {
 			responseEncoding = "auto";
