@@ -114,7 +114,7 @@ public class HttpSupport extends NativeHost {
 	}
 
 	public static  final Object httpCustomRequestNative(String url, String method, Object[] headers,
-		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
+		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
 		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
 	}
 
