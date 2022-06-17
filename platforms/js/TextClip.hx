@@ -1624,6 +1624,10 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+
+			if (!this.cropWords && widgetWidth > 0 && metrics.width > widgetWidth) {
+				super.setWidth(metrics.width);
+			}
 		}
 
 		var forcedUpdate = false;
