@@ -116,7 +116,7 @@ ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
 
 OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>, nextWidgetId : DynamicBehaviour<Maybe<int>>);
-ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
+ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double, isContainsDynamicElement : bool);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
@@ -534,14 +534,33 @@ getParaLineInfos(
 	linesCount = length(reflowResult) - 1;
 	mapi(reflowResult, \i, line -> {
 		optimizedLine = getOptimizedLine(line.words, alignment, availableWidth, indent, i == linesCount);
+		
+		lineAscAndDynamic : Pair<double, bool> = fold(optimizedLine, Pair(0.0, false), \ac : Pair<double, bool>, ole : OptimizedLineElement -> {
+			lineAsc = max(ac.first, fgetValue(ole.metrics).baseline);
+			isContainsDynamicElement = switch (ole.f : GhostForm) {
+				Ghost(__, __, __) : true;
+				InspectGhost(__, __) : true;
+				CoordinateInspectElement(__, __) : true;
+				default : ac.second; 
+			};			
+			Pair(lineAsc, isContainsDynamicElement);
+		});
+		
 		metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
-		lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+		lineHeightAndWidth : Pair<double, double> = fold(metrics, Pair(0.0, line.indent), \ac : Pair<double, double>, m ->{
+			Pair(
+				max(ac.first, m.height + lineAscAndDynamic.first - m.baseline),
+				ac.second + m.width
+			)
+		});
+		
 		ParaLineInfo(
 			optimizedLine,
-			lineAsc,
-			fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
-			fold(metrics, line.indent, \ac, m -> ac + m.width),
+			lineAscAndDynamic.first,
+			lineHeightAndWidth.first,
+			lineHeightAndWidth.second,
 			line.indent,
+			lineAscAndDynamic.second
 		)
 	});
 }
@@ -1124,7 +1143,8 @@ RenderLine(
 						info.lineHeight,
 						interWord,
 						highLightOffset,
-						interlineSpacing
+						interlineSpacing,
+						info.isContainsDynamicElement
 					)
 					|> addWordId,
 					\ -> Translate(const(^alignmentOffset), const(y + dy), fm |> addWordId)
@@ -1215,6 +1235,7 @@ applyIntStylesAndHighlighting(
 	interWord : double,
 	highLightOffset : double,
 	interlineSpacing : double,
+	isContainsDynamicElement : bool
 ) -> Form {
 	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
 		tryExtractStruct(s, BackgroundFill(white)),
@@ -1249,10 +1270,13 @@ applyIntStylesAndHighlighting(
 	|> (\f -> 
 		switch(textAndBackPair.second) {
 			Empty() : f;
-			default : Access([AccessRole("group")], Group([
-				Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
-				f
-			]))
+			default : {
+				textAndBack = Group([
+					Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
+					f
+				]);
+				if (isContainsDynamicElement) Access([AccessRole("group")], textAndBack) else textAndBack
+			}
 		}
 	)
 }
