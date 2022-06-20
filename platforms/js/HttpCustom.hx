@@ -43,8 +43,13 @@ class HttpCustom extends haxe.Http {
 			responseEncoding = "auto";
 		}
 
-		if (this.arrayBufferEncodings.indexOf(responseEncoding) != -1) r.responseType = ARRAYBUFFER;
-		else r.responseType = NONE;
+		if (!Platform.isIE) {
+			if (this.arrayBufferEncodings.indexOf(responseEncoding) != -1) {
+				r.responseType = ARRAYBUFFER;
+			} else {
+				r.responseType = NONE;
+			}
+		}
 
 		var encodedResponse = "";
 
@@ -140,6 +145,19 @@ class HttpCustom extends haxe.Http {
 			onError(e.toString());
 			return;
 		}
+
+		if (Platform.isIE) {
+			try {
+				if (this.arrayBufferEncodings.indexOf(responseEncoding) != -1) {
+					r.responseType = ARRAYBUFFER;
+				} else {
+					r.responseType = NONE;
+				}
+			} catch (e : Dynamic) {
+				untyped console.log(e);
+			}
+		}
+		
 		// r.withCredentials = withCredentials;
 		// Handled by HttpSupport.hx
 
