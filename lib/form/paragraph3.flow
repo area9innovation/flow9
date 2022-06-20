@@ -141,11 +141,13 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDec
 	switch (elem) {
 		GeneralText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
 		GeneralDynamicText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
-		GeneralSpace(txt, alBef, alAft) : Space(generateText(txt, apply2AlphabetsScaling(alBef, alAft, style)));
+		GeneralSpace(txt, alBef, alAft) :
+			Space(txt, apply2AlphabetsScaling(alBef, alAft, style));
+			//generateText(txt, apply2AlphabetsScaling(alBef, alAft, style)) |> \text -> Space(text.text, text.style);
 		NewLine() : NewLine();
 		GeneralLinePart(f, m, e) : {
 			st =  makeSkipOrderCheck(style);
-			LinePart(Text(f, st) |> wordDecorator, Text(m, st), Text(e, st) |> wordDecorator);
+			LinePart(f, m, e, applyAlphabetStyles(detectAlphabet(m), style))// |> wordDecorator;
 		}
 		EmptyLineElement() : makeZeroSpaceElement(style |> makeSkipOrderCheck);
 		GeneralInspectElement(inspector, element) : InspectElement(
@@ -195,8 +197,8 @@ extractParaAtomicForm = \word1 : ParaWord, pos : int -> {
 	f : Form = switch(w : ParaAtomic) {
 		ParaOneWord(__) : Empty();
 		InspectElement(__, __) : Empty();
-		LinePart(first, inline, last) : if (pos==0) first else if (pos==-1) last else inline;
-		Space(s) : s;
+		LinePart(first, inline, last, st) : Text(if (pos==0) first else if (pos==-1) last else inline, st);
+		Space(s, st) : Text(s, st);
 		default : cast(w : ParaAtomic -> Form);
 	};
 	f
@@ -244,9 +246,9 @@ makeParaWord2(word2 : ParaWord, form2 : Form, pos : int) -> ParaWord {
 getParaWordWidth(word : ParaWord, pos : int) -> ParaWordWidth {
 	fgetw = \w -> fgetValue(makeParaWord2(word, w, pos).metrics).width;
 	p = switch(word.word) {
-		LinePart(f, p, e) :
-			if (pos == 0) fgetw(f) |> \h -> Pair(h, h)
-			else Pair(fgetw(p), fgetw(e));
+		LinePart(f, p, e, st) :
+			if (pos == 0) fgetw(Text(f, st)) |> \h -> Pair(h, h)
+			else Pair(fgetw(Text(p, st)), fgetw(Text(e, st)));
 		default : fgetValue(word.metrics).width |> \h -> Pair(h, h);
 	};
 	switch(word.word) {
@@ -396,7 +398,7 @@ renderParagraphEx(
 
 		group = headList(acc, emptyParaWordGroup);
 		lastSpace = switch(lastElement(group.words, emptyParaWord).word) {
-			Space(__) : true;
+			Space(__, __) : true;
 			default : false;
 		};
 		lastChr = strsubsmart(getWordText(lastElement(group.words, emptyParaWord)), -1, 0);
@@ -405,8 +407,8 @@ renderParagraphEx(
 
 		if (lastChrIsMath && !isUnbreakableSym || switch (word.word) {
 			NewLine() : true;
-			Space(__) : false;
-			LinePart(st, __, __) : lastSpace;
+			Space(__, __) : false;
+			LinePart(st, __, __, __) : lastSpace;
 			default : !keepFormTogetherOrWithMark(getWordForm(word, -1), i) && !isUnbreakableSym  || lastSpace;
 		}) {
 			Cons(
@@ -565,11 +567,11 @@ expandGlueFragments(
 				switch (ra : ParaAtomic) {
 					ParaOneWord(wds) : acc2;
 					NewLine() : acc2;
-					Space(f) : Cons(f, acc2);
-					LinePart(pr, i, po) : Cons(i, acc2);
+					Space(t, st) : Cons(cast(Text(t, st) : Text -> Form), acc2);
+					LinePart(pr, i, po, st) : Cons(cast(Text(i, st) : Text -> Form), acc2);
 					InspectElement(inspector, e) : {
 						switch (e : InspectableElement) {
-							Space(f) : Cons(f, acc2);
+							Space(t, s) : Cons(Text(t, s), acc2);
 							Text(t, s) : Cons(e, acc2);
 							default : Cons(cast(e : InspectableElement -> Form), acc2);
 						}
@@ -633,10 +635,10 @@ makeInteractiveParaWord(
 	switch (w : ParaAtomic) {
 		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM, make(None()));
 		// We choose the middle part
-		LinePart(f, p, e) : {
-			dynFormSizePair = getDynamicFormSize2(p, true);
+		LinePart(f, p, e, st) : {
+			dynFormSizePair = getDynamicFormSize2(Text(p, st), true);
 			ParaWord(
-				LinePart(f, p, e),
+				LinePart(f, p, e, st),
 				dynFormSizePair.second,
 				CoordinateInspectElement(
 					ParaElementInspector(
@@ -657,9 +659,9 @@ makeInteractiveParaWord(
 				make(None())
 			);
 		}
-		Space(s) : {
-			dynFormSizePair = getJoinableTextMetrics(s, true, ignoreLetterSpacing);
-			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()));
+		Space(s, st) : {
+			dynFormSizePair = getJoinableTextMetrics(Text(s, st), true, ignoreLetterSpacing);
+			ParaWord(Space(s, st), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()));
 		}
 		ParaOneWord(wd) : {
 			oc = optimizeCols(wd);
@@ -679,11 +681,11 @@ makeInteractiveParaWord(
 				Text(t, s) : {
 					makeWord(e, e);
 				}
-				LinePart(f, m, l) : {
-					makeWord(LinePart(f, m, l), m);
+				LinePart(f, m, l, st) : {
+					makeWord(LinePart(f, m, l, st), Text(m, st));
 				}
-				Space(t) : {
-					makeWord(Space(t), t);
+				Space(t, st) : {
+					makeWord(Space(t, st), Text(t, st));
 				}
 				default : {
 					s = getJoinableTextMetrics(
@@ -841,8 +843,8 @@ reflowParaWords2(
 		if (cwords == []) result else arrayPush(result, ParaLine({
 			cw = mapi(cwords, \cwordi, cword -> {
 				switch(cword.word) {
-					LinePart(f, p, e) :
-						makeParaWord2(cword, if (cwordi==0) f else if (cwordi < cwordslasti) p else e, if (cwordi < cwordslasti) cwordi else -1);
+					LinePart(f, p, e, st) :
+						makeParaWord2(cword, Text(if (cwordi==0) f else if (cwordi < cwordslasti) p else e, st), if (cwordi < cwordslasti) cwordi else -1);
 					default : cword;
 				}
 			});
@@ -900,7 +902,7 @@ reflowParaWords2(
 		wordWidth = getParaWordWidth(word, if (paraLinePartFRemake) 0 else 1);
 		groupWidth = getParaWordWidthValue(ParaWordWidth(^(group.width) with finalSoftWidthDelta=0.0, finalRigidWidthDelta=0.0), textScale);
 		isSpc = switch (word.word : ParaAtomic) {
-			Space(__) : true;
+			Space(__, __) : true;
 			NewLine() : true;
 			default : false;
 		};
@@ -1353,7 +1355,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
 			lastWord = i == wordsCount;
 			switch (w.word) {
-				Space(__): if (lastWord) acc else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
+				Space(__, __): if (lastWord) acc else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
 				default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
 			}
 		});
@@ -1372,7 +1374,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 		switch(acc){
 			EmptyList() : {
 				formMetrics = switch (w) {
-					Space(__): {
+					Space(__, __): {
 						if (newJustifyEnabled && alignment == Justify()) {
 							switch (f : GhostForm) {
 								Text(__, __) : {
@@ -1415,7 +1417,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										wordWidth = getStaticFormSize(f).width;
 
 										additionalWidth = switch (w) {
-											Space(__): {
+											Space(__, __): {
 												if (newJustifyEnabled && alignment == Justify()) {
 													if (lastWord) 0.0 else wordSpacing;
 												} else 0.0;
@@ -1487,18 +1489,20 @@ getWordText(w : ParaWord) -> string {
 }
 
 setWordText(w : ParaWord, t : string) -> ParaWord {
+	makeResult = \s -> ParaWord(w with
+		word = Text(t, s),
+		form = switch(w.form) {
+			CoordinateInspectElement(inspector, form) : CoordinateInspectElement(
+				inspector,
+				Text(t, getFormTextStyle(form))
+			);
+			Text(__, fs) : Text(t, fs);
+			default : w.form;
+		}
+	);
 	switch(w.word) {
-		Text(__, s) : ParaWord(w with
-			word = Text(t, s),
-			form = switch(w.form) {
-				CoordinateInspectElement(inspector, form) : CoordinateInspectElement(
-					inspector,
-					Text(t, getFormTextStyle(form))
-				);
-				Text(__, fs) : Text(t, fs);
-				default : w.form;
-			}
-		);
+		Text(__, st) : makeResult(st);
+		LinePart(__, __, __, st) : makeResult(st);
 		default : w;
 	};
 }
@@ -1525,7 +1529,7 @@ makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 	switch(w.word) {
 		Text(__, st) :
 			ParaWord(w with
-				word = LinePart(Text(s, st), Empty(), Empty()),
+				word = LinePart(s, "", "", st),
 				form = switch(w.form) {
 					CoordinateInspectElement(inspector, form) : CoordinateInspectElement(
 						inspector,
@@ -1536,9 +1540,9 @@ makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 				},
 				interactivityIdM = None()
 			) |> makeParaWordGroup;
-		LinePart(sf, mf, ef) : {
+		LinePart(sf, mf, ef, st) : {
 			swt = \f, t -> cast(setWordText(ParaWord(w with word = f), t).word : ParaAtomic-> Form);
-			ParaWord(w with word=LinePart(swt(sf, s), swt(mf, ""), swt(ef, ""))) |> makeParaWordGroup;
+			ParaWord(w with word=swt(Text(sf, st), s)) |> makeParaWordGroup;
 		};
 		default : emptyParaWordGroup;
 	};
@@ -1587,7 +1591,7 @@ use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_te
 paragraphElement2string(e : ParagraphElement) -> string {
 	handleNonInteractive = \acc, nonintel -> switch (nonintel) {
 		Text(text, __): acc + text;
-		Space(__): acc + " ";
+		Space(__, __): acc + " ";
 		Form(): acc + getFormText(nonintel);
 		default: acc;
 	};
