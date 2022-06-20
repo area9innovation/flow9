@@ -146,8 +146,26 @@ float opSmoothUnion( float d1, float d2, float k ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
 }
 
+float opSmoothIntersection( float d1, float d2, float k ) {
+    float h = clamp( 0.5 - 0.5*(d2-d1)/k, 0.0, 1.0 );
+    return mix( d2, d1, h ) + k*h*(1.0-h);
+}
+
+float opSmoothSubtraction( float d1, float d2, float k ) {
+    float h = clamp( 0.5 - 0.5*(d2+d1)/k, 0.0, 1.0 );
+    return mix( d2, -d1, h ) + k*h*(1.0-h);
+}
+
 float opSmoothUnion2( float d1, float d2, float k, float h ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
+}
+
+float opSmoothIntersection2( float d1, float d2, float k, float h  ) {
+    return mix( d2, d1, h ) + k*h*(1.0-h);
+}
+
+float opSmoothSubtraction2( float d1, float d2, float k, float h  ) {
+    return mix( d2, -d1, h ) + k*h*(1.0-h);
 }
 
 vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, sampler2D txtr) {
@@ -199,6 +217,40 @@ ObjectInfo opSmoothUnionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3
 
 ObjectInfo opSmoothUnionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
 	float d = opSmoothUnion(obj1.d, obj2.d, k);
+	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
+}
+
+ObjectInfo opSmoothIntersectionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
+	float interpolation = clamp(0.5 - 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
+	float d = opSmoothIntersection2(obj1.d, obj2.d, k, interpolation);
+	return ObjectInfo(
+		d, -1, -1, false,
+		Material(
+			mix(obj2.material.color, obj1.material.color, interpolation),
+			mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)
+		)
+	);
+}
+
+ObjectInfo opSmoothIntersectionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
+	float d = opSmoothIntersection(obj1.d, obj2.d, k);
+	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
+}
+
+ObjectInfo opSmoothSubtractionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
+	float interpolation = clamp(0.5 + 0.5 * (obj2.d + obj1.d) / k, 0.0, 1.0);
+	float d = opSmoothSubtraction2(obj1.d, obj2.d, k, interpolation);
+	return ObjectInfo(
+		d, -1, -1, false,
+		Material(
+			mix(obj2.material.color, obj1.material.color, interpolation),
+			mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)
+		)
+	);
+}
+
+ObjectInfo opSmoothSubtractionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
+	float d = opSmoothSubtraction(obj1.d, obj2.d, k);
 	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
 }
 
