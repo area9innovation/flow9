@@ -2,7 +2,7 @@
 set -e
 
 registry=""
-if [ -n "$!" ]; then
+if [ -n "$1" ]; then
   registry="$1/"
 fi
 
