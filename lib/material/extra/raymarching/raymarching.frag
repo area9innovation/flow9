@@ -31,7 +31,7 @@ uniform TextureParamertersBlock {
 #define MAX_DIST 1000.
 #define SURF_DIST .001
 
-const vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
+uniform vec4 backgroundColor;
 
 struct Material {
 	vec3 color;
@@ -327,7 +327,7 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, vec3 no
 
 vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
 	ObjectInfo oiSimple = rayMarch(newRayOrigin + normalOrigin * SURF_DIST * 2., rayDirection);;
-	vec3 col = backgroundColor;
+	vec3 col = backgroundColor.rgb;
 
 	if (oiSimple.d < MAX_DIST) {
 		vec3 p = newRayOrigin + rayDirection * oiSimple.d;
@@ -348,12 +348,12 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
 	return col;
 }
 
-vec3 getColor(vec2 uv) {
+vec4 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
 	ObjectInfo oiSimple = rayMarch(rayOrigin, rayDirection);
-	vec3 col = backgroundColor;
+	vec4 col = backgroundColor;
 
 	if (oiSimple.d < MAX_DIST) {
 		vec3 p = rayOrigin + rayDirection * oiSimple.d;
@@ -371,15 +371,14 @@ vec3 getColor(vec2 uv) {
 		}
 
 		vec3 ambientColor = 0.1 * materialColor;
-		col = ambientColor + (%light%) * materialColor;
+		col = vec4(ambientColor + (%light%) * materialColor, 1.0);
 	}
 
-	col = pow(col, vec3(0.4545));
+	col = pow(col, vec4(0.4545));
 	return col;
 }
 
 void main() {
 	vec2 uv = (gl_FragCoord.xy - 0.5 * screenSize) / screenSize.y;
-	vec3 col = getColor(uv);
-	fragColor = vec4(col, 1.0);
+	fragColor = getColor(uv);
 }
