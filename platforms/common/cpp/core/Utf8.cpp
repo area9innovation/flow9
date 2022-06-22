@@ -24,7 +24,7 @@ bool is_utf8_js_style = false;
 
 /* Character encoding */
 
-static inline unsigned encode(uint16_t c, uint16_t next_c, bool is_last, uint8_t *out, int &cnt)
+static unsigned encode(uint16_t c, uint16_t next_c, bool is_last, uint8_t *out, int &cnt)
 {
     // How much symbols (chars) used to decode original symbol
     unsigned usedSymbolsCount = 1;
@@ -111,7 +111,10 @@ struct Utf8Parser
     int bytes;
 
     unicode_string parse(const C &str, unsigned size);
+    unicode_string parse_js(const C &str, unsigned size);
     void parse_range(unicode_string &out, const C &str, unsigned size);
+    void parse_range_js(unicode_string &out, const C &str, unsigned size);
+    void parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style);
 };
 
 template<class C>
@@ -122,6 +125,19 @@ unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
     bytes = 0;
     uint32_t err = L'?';
     parse_range(out, str, size);
+    if (bytes)
+        out.push_back(err);
+    return out;
+}
+
+template<class C>
+unicode_string Utf8Parser<C>::parse_js(const C &str, unsigned size)
+{
+    unicode_string out;
+    w = 0;
+    bytes = 0;
+    uint32_t err = L'?';
+    parse_range_js(out, str, size);
     if (bytes)
         out.push_back(err);
     return out;
@@ -149,6 +165,18 @@ unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
 template<class C>
 void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
 {
+    return parse_range_base(out, str, size, false);
+}
+
+template<class C>
+void Utf8Parser<C>::parse_range_js(unicode_string &out, const C &str, unsigned size)
+{
+    return parse_range_base(out, str, size, true);
+}
+
+template<class C>
+void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style)
+{
     int bytes = 0;
     uint16_t decode_error = (uint16_t)0xFFFD;
 
@@ -159,9 +187,9 @@ void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size
     // It is not easy to fix js native (and browsers) to get "works" utf8 text properly, let's break cpp in the same way. :)
     // In this case we will convert 3 bytes (and more) symbols into UTF-16 pairs (like that do js target).
     // But only in case, if compiler started with "--use_utf8_js_style" flag.
-    auto to_utf16_js_style = [&out](uint64_t w)
+    auto to_utf16_js_style = [&out, js_style](uint64_t w)
     {
-        if (w < 0x10000 /* 2 bytes or less */ || !::is_utf8_js_style)
+        if (w < 0x10000 /* 2 bytes or less */ || (!::is_utf8_js_style && !js_style))
         {
             out.push_back((uint32_t) w);
         }
@@ -274,6 +302,10 @@ unicode_string parseUtf8(const std::string &str) {
 
 unicode_string parseUtf8(const char *str, unsigned size) {
     return Utf8Parser<const char*>().parse(str, size);
+}
+
+unicode_string parseUtf8Js(const char *str, unsigned size) {
+    return Utf8Parser<const char*>().parse_js(str, size);
 }
 
 unicode_string parseUtf8u(const unicode_string &str) {

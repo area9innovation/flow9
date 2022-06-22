@@ -203,7 +203,29 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             if (count >= 2 && pdata[0] == 0xFF && pdata[1] == 0xFE) { // UTF-16 BOM
                 data = RUNNER->AllocateString((unicode_char*)(pdata+2), (count-2)/2);
             } else {
-                data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
+                switch (rq->response_enc)
+                {
+                    case ResponseEncodingUTF8:
+                        data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
+                        break;
+                    case ResponseEncodingUTF8js:
+                        data = RUNNER->AllocateString(parseUtf8Js((const char*)pdata, count));
+                        break;
+                    case ResponseEncodingByte:
+                        {
+                            unicode_string out;
+                            const char* str = (const char*)pdata;
+                            for (size_t i = 0; i < count; i++)
+                            {
+                                unsigned char c = (unsigned char) str[i];
+                                out.push_back((uint32_t) c);
+                            }
+                            data = RUNNER->AllocateString(out);
+                            break;
+                        }
+                    default:
+                        data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
+                }
             }
         }
 
@@ -277,7 +299,7 @@ NativeFunction *AbstractHttpSupport::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, systemDownloadFile, 1);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, sendHttpRequestWithAttachments, 6);
 
-    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, httpCustomRequestNative, 7);
+    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, httpCustomRequestNative, 8);
 
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, deleteAppCookies, 0);
 
@@ -458,8 +480,8 @@ StackSlot AbstractHttpSupport::httpRequest(RUNNER_ARGS)
 
 StackSlot AbstractHttpSupport::httpCustomRequestNative(RUNNER_ARGS)
 {
-    RUNNER_PopArgs7(url, method, headers, params, data, onResponse, async);
-    RUNNER_CheckTag3(TString, url, method, data);
+    RUNNER_PopArgs8(url, method, headers, params, data, responseEncoding, onResponse, async);
+    RUNNER_CheckTag4(TString, url, method, data, responseEncoding);
     RUNNER_CheckTag2(TArray, headers, params);
     RUNNER_CheckTag1(TBool, async);
 
@@ -469,6 +491,7 @@ StackSlot AbstractHttpSupport::httpCustomRequestNative(RUNNER_ARGS)
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
     rq.method = RUNNER->GetString(method);
+    rq.response_enc = GetResponseEncodingFromString(encodeUtf8(RUNNER->GetString(responseEncoding)));
     std::string payload_string = encodeUtf8(RUNNER->GetString(data));
     rq.payload = std::vector<uint8_t>(payload_string.begin(), payload_string.end());
     rq.response_cb = onResponse;
@@ -632,4 +655,14 @@ StackSlot AbstractHttpSupport::deleteAppCookies(RUNNER_ARGS)
     doDeleteAppCookies();
 
     RETVOID;
+}
+
+ResponseEncoding AbstractHttpSupport::GetResponseEncodingFromString(std::string str)
+{
+    if (str == "utf8_js" || is_utf8_js_style)
+        return ResponseEncodingUTF8js;
+    else if (str == "byte")
+        return ResponseEncodingByte;
+    else
+        return ResponseEncodingUTF8;
 }
