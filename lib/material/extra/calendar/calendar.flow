@@ -1335,7 +1335,6 @@ MonthTable(
 	eventRowHeightB = make(0.0);
 	availableHeightB = make(0.0);
 	maxDisplayedEventsInOneDayB = make(if (maxDisplayedEventsInOneDay <= 0) CalendarDefaultDisplayedEventsInOneDay else maxDisplayedEventsInOneDay);
-	multiDayEventsPosition = make([]);
 
 	defaultAdditionalEventsView = \count -> {
 		MGroup2(
@@ -1513,7 +1512,7 @@ MonthTable(
 	// "NotEmpty" day consists of a header with a background color number of the day of the first (in time) of the event,
 	// as well as maxDisplayedEventsInOneDay blocks of the events.
 	// If the event is less than maxDisplayedEventsInOneDay  - fill the "empty" blocks
-	makeNotEmptyCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount -> {
+	makeNotEmptyCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount, multiDayEventsPosition -> {
 		eventTypes = getValue(eventTypesB);
 		MSelect2(maxDisplayedEventsInOneDayB, isPrintingB, \maxDisplayedEvents, isPrinting -> {
 			maxEvents = if (isPrinting) getDayMaxEvents(dayDate, rowsEventsCount) else maxDisplayedEvents;
@@ -1566,9 +1565,9 @@ MonthTable(
 	}
 
 	//if day consists 0 events or this day is not available - show emptyDay
-	makeCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount -> {
+	makeCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount, multiDayEventsPosition -> {
 		calendarDayM = if (length(events) > 0 && isEnable) {
-			makeNotEmptyCalendarDay(dayDate, events, isEnable, rowsEventsCount)
+			makeNotEmptyCalendarDay(dayDate, events, isEnable, rowsEventsCount, multiDayEventsPosition)
 		} else {
 			makeEmptyCalendarDay(dayDate, isEnable, rowsEventsCount)
 		}
@@ -1584,7 +1583,7 @@ MonthTable(
 	}
 
 	// First, we keep out all events except the events for the current month. Then create a list of events for each day
-	calendarFiltering = \items : [CalendarEvent], rowsEventsCount -> {
+	calendarFiltering = \items : [CalendarEvent], rowsEventsCount, multiDayEventsPosition -> {
 		currentDate = getValue(currentDateB);
 		filteredByMonth = filter(items, \item -> {
 			startDate = item.startDate;
@@ -1598,11 +1597,11 @@ MonthTable(
 			date = Date(currentDate with day = dayNumber);
 			isEnable = isDateEnable(date, dateMin, dateMax);
 			allEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, dayNumber));
-			makeCalendarDay(date, sortEvents(allEvents), isEnable, rowsEventsCount);
+			makeCalendarDay(date, sortEvents(allEvents), isEnable, rowsEventsCount, multiDayEventsPosition);
 		});
 	}
 
-	getOtherMonthDayFn = \items, rowsEventsCount -> \i -> {
+	getOtherMonthDayFn = \items, rowsEventsCount, multiDayEventsPosition -> \i -> {
 		if (isSome(otherMonthViewM)) {
 			monthStart = Date(getValue(currentDateB) with day = 1);
 			date = if (i > 0) {
@@ -1617,7 +1616,7 @@ MonthTable(
 					timeMonthCheck(startDate, endDate, date) &&
 					timeDayCheck(startDate, endDate, date, date.day)
 			});
-			makeCalendarDay(date, events, isDateEnable(date, dateMin, dateMax), rowsEventsCount);
+			makeCalendarDay(date, events, isDateEnable(date, dateMin, dateMax), rowsEventsCount, multiDayEventsPosition);
 		} else {
 			blankDaySize;
 		}
@@ -1658,13 +1657,16 @@ MonthTable(
 		});
 
 		separateRows = \rows -> arrayPush(interleave(rows, MSeparator(true)), MSeparator(true));
-		getOtherMonthDay = getOtherMonthDayFn(items, rowsEventsCount);
 
-		days = concat(
-			generate(-weekDay, 0, getOtherMonthDay),
-			calendarFiltering(items, rowsEventsCount)
-		);
-		rows = makeLineOfDaysBlockForMonthView(0, getOtherMonthDay, days, hideWeekends, []);
+		rowsT = fselectLift(maxDisplayedEventsInOneDayB, \maxEvents -> {
+			multiDayEventsPosition = checkMultiDayEventsPosition(addDaysToDate(curD, -7), addDaysToDate(addMonthsToDate(curD, 1), 7), items, maxEvents);
+			getOtherMonthDay = getOtherMonthDayFn(items, rowsEventsCount, multiDayEventsPosition);
+			days = concat(
+				generate(-weekDay, 0, getOtherMonthDay),
+				calendarFiltering(items, rowsEventsCount, multiDayEventsPosition)
+			);
+			makeLineOfDaysBlockForMonthView(0, getOtherMonthDay, days, hideWeekends, []);
+		});
 
 		updateDisplayedEvents = \avaliableHeight, weekDayHeight, dayTitleHeight, eventRowHeight -> {
 			availableDayHeight = (avaliableHeight - weekDayHeight) / i2d(rowsCount) - dayTitleHeight;
@@ -1680,7 +1682,14 @@ MonthTable(
 					[];
 				},
 				MAttachAvailableHeight(
-					MLines2A(headerM, MLinesA(separateRows(rows)) |> (\c -> MScroll(c, MFillXY(), scrollStyle))),
+					MLines2A(
+						headerM,
+						MScroll(
+							MSelect(rowsT, \rows -> MLinesA(separateRows(rows))),
+							MFillXY(),
+							scrollStyle
+						)
+					),
 					availableHeightB
 				)
 			),
@@ -1706,6 +1715,7 @@ MonthTable(
 					}
 				});
 
+				rows = fgetValue(rowsT);
 				map(pagesRows, \pageRows -> {
 					MLines2A(headerM, MLinesA(separateRows(map(pageRows, \i -> rows[i]))));
 				});
@@ -1744,32 +1754,29 @@ MonthTable(
 		MIconToggle("view_module", style, [MToggleValue(byWeekViewB)]) |> (\m -> MCols2A(MFillX(), m))
 	}
 
-	eventsT = fselect(currentEvents, FLift(\events -> {
-		combinedEvents = combinedEventsView.getCombinedEvents(MonthTab(), events);
-		if (combinedEvents == []) events else filter(events, \event -> !exists(combinedEvents, \e -> e.id == event.id));
-	}));
+	monthViewB = fselect3(byWeekViewB, currentDateB, currentEvents, \byWeekView, date, allEvents -> {
+		startDateStamp = date2stamp(addDaysToDate(date, -7));
+		endDateStamp = date2stamp(addDaysToDate(addMonthsToDate(date, 1), 7));
+		displayedEvents = filter(allEvents, \event : CalendarEvent -> {
+			time2stamp(event.startDate) <= endDateStamp && time2stamp(event.endDate) >= startDateStamp;
+		});
 
-	monthViewB = fselect3(byWeekViewB, currentDateB, eventsT, \byWeekView, currentDate, items -> {
+		combinedEvents = combinedEventsView.getCombinedEvents(MonthTab(), displayedEvents);
+		events = if (combinedEvents == []) displayedEvents else filter(displayedEvents, \event -> !exists(combinedEvents, \e -> e.id == event.id));
+
 		if (byWeekView) {
-			MonthViewByWeek(currentDate, items);
+			MonthViewByWeek(date, events);
 		} else {
-			MonthViewByDay(currentDate, items);
+			MonthViewByDay(date, events);
 		}
 	});
 
 	CalendarTabView(
-		MConstruct([
-				make2Subscribe(eventsT, maxDisplayedEventsInOneDayB, \events, maxEvents -> {
-					next(multiDayEventsPosition, []);
-					checkMultiDayEventsPosition(dateMin, dateMax, events, maxEvents, multiDayEventsPosition);
-				})
-			],
-			MGroup2(
-				TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
-				MLines2A(
-					if (showMonthSwitchView) MFrame(0.0, 0.0, calendarHeaderStyle.background, MonthViewSwitchMenu()) else MEmpty(),
-					MSelect(monthViewB, \monthView -> monthView.main),
-				)
+		MGroup2(
+			TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
+			MLines2A(
+				if (showMonthSwitchView) MFrame(0.0, 0.0, calendarHeaderStyle.background, MonthViewSwitchMenu()) else MEmpty(),
+				MSelect(monthViewB, \monthView -> monthView.main),
 			)
 		),
 		\availableSize -> fgetValue(monthViewB).getPrintPages(availableSize),
@@ -2427,16 +2434,16 @@ reshuffleEvents(
 checkOneDayEventsPosition(
 	events : [CalendarEvent],
 	maxEvents : int,
-	multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>
+	multiDayEventsPosition : [Pair<CalendarEvent, int>]
 ) -> [CalendarEvent] {
 	printEvents = \evt -> println(foldi(evt, "", \index, res, it -> res + " #" + i2s(index) + " " + it.eventType));
 
 	//To avoid an endless loop with an attempt to take one "seat" by two events
 	eventsInWrongPositionWithoutCorrection = foldi(events, [], \i, res, item -> {
-		index = either(findi(multiDayEventsPosition |> getValue, \p2 -> p2.first == item), -1);
+		index = either(findi(multiDayEventsPosition, \p2 -> p2.first == item), -1);
 		if (index != -1) {
 			currentPosition = i;
-			rigthPosition = getValue(multiDayEventsPosition)[index].second;
+			rigthPosition = multiDayEventsPosition[index].second;
 			arrayPush(res, Pair(currentPosition, rigthPosition))
 		} else {
 			res
@@ -2444,10 +2451,10 @@ checkOneDayEventsPosition(
 	});
 
 	eventsInWrongPosition = foldi(events, [], \i, res, item -> {
-		index = either(findi(multiDayEventsPosition |> getValue, \p2 -> p2.first == item), -1);
+		index = either(findi(multiDayEventsPosition, \p2 -> p2.first == item), -1);
 		if (index != -1) {
 			currentPosition = i;
-			rigthPosition = getValue(multiDayEventsPosition)[index].second;
+			rigthPosition = multiDayEventsPosition[index].second;
 			corrRightPosition = if (rigthPosition >= length(events)) {
 				//if we already have a non-empty event in this position, we don't occupy it
 				index2 = either(findi(eventsInWrongPositionWithoutCorrection, \p2 ->
@@ -2483,47 +2490,55 @@ checkMultiDayEventsPosition(
 	dateMin : Date,
 	dateMax : Date,
 	allEvents : [CalendarEvent],
-	maxEvents : int,
-	multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>
-	) -> void {
-	minYear = dateMin.year;
-	maxYear = dateMax.year;
-	years = enumFromTo(minYear, maxYear);
-	months = enumFromTo(1, 12);
+	maxEvents : int
+) -> [Pair<CalendarEvent, int>] {
+	if (allEvents != []) {
+		minYear = dateMin.year;
+		maxYear = dateMax.year;
+		years = enumFromTo(minYear, maxYear);
 
-	iter(years, \year -> {
-		filteredByYear = filter(allEvents, \item -> timeYearCheck(item.startDate.year, item.endDate.year, year));
+		fold(years, [], \acc1, year -> {
+			filteredByYear = filter(allEvents, \item -> timeYearCheck(item.startDate.year, item.endDate.year, year));
+			months = if (year == minYear && year == maxYear) {
+				enumFromTo(dateMin.month, dateMax.month);
+			} else if (year != minYear) {
+				enumFromTo(1, dateMax.month);
+			} else {
+				enumFromTo(dateMin.month, 12);
+			}
 
-		iter(months, \month -> {
-			filteredByMonth = filter(filteredByYear, \item -> timeMonthCheck(item.startDate, item.endDate, Date(year, month, 1)));
+			fold(months, acc1, \acc2, month -> {
+				filteredByMonth = filter(filteredByYear, \item -> timeMonthCheck(item.startDate, item.endDate, Date(year, month, 1)));
 
-			daysNum = getNumberOfDaysPerMonthInTheYear(year)[month];
-			days = enumFromTo(1, daysNum);
+				daysNum = getNumberOfDaysPerMonthInTheYear(year)[month];
+				days = enumFromTo(1, daysNum);
 
-			iter(days, \day -> {
-				timeSort = \item : CalendarEvent -> item.startDate;
+				fold(days, acc2, \acc3, day -> {
+					timeSort = \item : CalendarEvent -> item.startDate;
 
-				currentDate = Date(year, month, day);
+					currentDate = Date(year, month, day);
 
-				dayEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, day));
+					dayEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, day));
 
-				events = sortEvents(dayEvents)
-					|> \evs -> concat(evs, generate(0, maxEvents - length(evs), \__ -> emptyEvent));
+					events = sortEvents(dayEvents)
+						|> \evs -> concat(evs, generate(0, maxEvents - length(evs), \__ -> emptyEvent));
 
-				newEvents = checkOneDayEventsPosition(events, maxEvents, multiDayEventsPosition);
-				iteri(newEvents, \i, item -> {
-					isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
-					if (isMultiDay) {
-						if (currentDate == time2date(item.startDate)) {
-							index = either(findi(multiDayEventsPosition |> getValue, \p -> p.first == item), -1);
-							if (index == -1)
-								next(multiDayEventsPosition, arrayPush(getValue(multiDayEventsPosition), Pair(item, i)));
+					newEvents = checkOneDayEventsPosition(events, maxEvents, acc3);
+					foldi(newEvents, acc3, \i, acc4, item -> {
+						isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
+						if (isMultiDay && currentDate == time2date(item.startDate)) {
+							index = either(findi(acc4, \p -> p.first == item), -1);
+							if (index == -1) arrayPush(acc4, Pair(item, i)) else acc4;
+						} else {
+							acc4;
 						}
-					}
+					});
 				});
 			});
 		});
-	});
+	} else {
+		[];
+	}
 }
 
 showDatePickerDialog(
@@ -3405,7 +3420,7 @@ CalendarForEvents(
 		TabBody = \body : Material, overlay : Material -> MGroup([
 			TRectangle([Fill(white)], TFillXY()),
 			MLines2A(
-				MScroll(body, TFillXY(), replaceStructMany([
+				MScroll(body, MFillXY(), replaceStructMany([
 					TScrollSetPosition(scrollPositionB),
 					TScrollbarsVisible(isHorizontalScrollbarVisibleB, make(false)),
 					TScrollPersistent(make(true))
@@ -3631,7 +3646,6 @@ CalendarForEvents(
 				// set current date as start of current week
 				getStartOfWeek = \d -> addDaysToDate(d, -dayOfWeek(d));
 				startOfCurrentWeek = getStartOfWeek(getCurrentDate());
-				updateCurrentDate(startOfCurrentWeek);
 
 				contentB = fselect2(currentDate, filteredEvents, FLift2(\start, events -> {
 					RangeView(
@@ -3709,6 +3723,10 @@ CalendarForEvents(
 							});
 							nextDistinct(eventTypesForPrintingB, filteredTypes);
 						}),
+						\ -> {
+							updateCurrentDate(startOfCurrentWeek);
+							nop;
+						},
 						\ -> eitherMap(externalDateM, \externalDate -> {
 							externalDateB = externalDate.currentDateB;
 							fBidirectionalLink(currentDate, externalDateB,
