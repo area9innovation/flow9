@@ -1185,7 +1185,10 @@ class RenderSupport {
 				// Assume that WindowTopHeight is equal for both landscape and portrait and
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
-				win_width = screen_size.width;
+				// window.screen.width on Android tends from time to time to update with delay after rotation, so let's stick with the width from the event
+				if (!Platform.isAndroid) {
+					win_width = screen_size.width;
+				}
 				win_height = screen_size.height - cast getMobileTopHeight();
 
 				if (Platform.isAndroid) {
