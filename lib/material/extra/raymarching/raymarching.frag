@@ -44,7 +44,7 @@ uniform MaterialsBlock {
 };
 
 uniform PositionsBlock {
-	vec3 positions[%numColors% + numTextures];
+	mat4 positions[%numColors% + numTextures];
 };
 
 uniform ObjectParametersBlock {
