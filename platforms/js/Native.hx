@@ -309,9 +309,15 @@ class Native {
 			Browser.document.body.removeChild(textArea);
 
 			// restore focus to the previous state
-			RenderSupport.deferUntilRender(function() {
-				focusedElement.focus();
-			});
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined') {
+					RenderSupport.deferUntilRender(function() {
+						focusedElement.focus();
+					});
+				} else {
+					focusedElement.focus();
+				}
+			");
 			return result;
 		#else
 			return "";
