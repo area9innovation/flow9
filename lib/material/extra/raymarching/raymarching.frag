@@ -82,12 +82,12 @@ ObjectInfo opIntersection(ObjectInfo obj1, ObjectInfo obj2) {
 
 ObjectInfo opSubtraction(ObjectInfo obj1, ObjectInfo obj2) {
 	ObjectInfo newObj;
-	if (-obj1.d > obj2.d)
+	if (obj1.d > -obj2.d)
 		newObj = obj1;
 	else
 		newObj = obj2;
 	return ObjectInfo(
-		max(-obj1.d, obj2.d),
+		max(obj1.d, -obj2.d),
 		newObj.id,
 		newObj.textureId,
 		newObj.topLevel,
@@ -151,7 +151,7 @@ float opSmoothIntersection( float d1, float d2, float k ) {
     return mix( d2, d1, h ) + k*h*(1.0-h);
 }
 
-float opSmoothSubtraction( float d1, float d2, float k ) {
+float opSmoothSubtraction( float d2, float d1, float k ) {
     float h = clamp( 0.5 - 0.5*(d2+d1)/k, 0.0, 1.0 );
     return mix( d2, -d1, h ) + k*h*(1.0-h);
 }
@@ -164,7 +164,7 @@ float opSmoothIntersection2( float d1, float d2, float k, float h  ) {
     return mix( d2, d1, h ) + k*h*(1.0-h);
 }
 
-float opSmoothSubtraction2( float d1, float d2, float k, float h  ) {
+float opSmoothSubtraction2( float d2, float d1, float k, float h  ) {
     return mix( d2, -d1, h ) + k*h*(1.0-h);
 }
 
