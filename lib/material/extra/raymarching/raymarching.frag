@@ -31,7 +31,7 @@ uniform TextureParamertersBlock {
 #define MAX_DIST 1000.
 #define SURF_DIST .001
 
-const vec3 backgroundColor = vec3(0.5, 0.5, 0.7);
+uniform vec4 backgroundColor;
 
 struct Material {
 	vec3 color;
@@ -44,7 +44,7 @@ uniform MaterialsBlock {
 };
 
 uniform PositionsBlock {
-	vec3 positions[%numColors% + numTextures];
+	mat4 positions[%numColors% + numTextures];
 };
 
 uniform ObjectParametersBlock {
@@ -66,11 +66,33 @@ mat2 makeRotate2vec2(vec2 angle) {
 	return mat2(c.x, s.x, -s.y, c.y);
 }
 
-ObjectInfo minOI(ObjectInfo obj1, ObjectInfo obj2) {
+ObjectInfo opUnion(ObjectInfo obj1, ObjectInfo obj2) {
 	if (obj1.d < obj2.d)
 		return obj1;
 	else
 		return obj2;
+}
+
+ObjectInfo opIntersection(ObjectInfo obj1, ObjectInfo obj2) {
+	if (obj1.d > obj2.d)
+		return obj1;
+	else
+		return obj2;
+}
+
+ObjectInfo opSubtraction(ObjectInfo obj1, ObjectInfo obj2) {
+	ObjectInfo newObj;
+	if (obj1.d > -obj2.d)
+		newObj = obj1;
+	else
+		newObj = obj2;
+	return ObjectInfo(
+		max(obj1.d, -obj2.d),
+		newObj.id,
+		newObj.textureId,
+		newObj.topLevel,
+		newObj.material
+	);
 }
 
 float sdBox( vec3 p, vec3 b ) {
@@ -124,8 +146,26 @@ float opSmoothUnion( float d1, float d2, float k ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
 }
 
+float opSmoothIntersection( float d1, float d2, float k ) {
+    float h = clamp( 0.5 - 0.5*(d2-d1)/k, 0.0, 1.0 );
+    return mix( d2, d1, h ) + k*h*(1.0-h);
+}
+
+float opSmoothSubtraction( float d2, float d1, float k ) {
+    float h = clamp( 0.5 - 0.5*(d2+d1)/k, 0.0, 1.0 );
+    return mix( d2, -d1, h ) + k*h*(1.0-h);
+}
+
 float opSmoothUnion2( float d1, float d2, float k, float h ) {
     return mix( d2, d1, h ) - k*h*(1.0-h); 
+}
+
+float opSmoothIntersection2( float d1, float d2, float k, float h  ) {
+    return mix( d2, d1, h ) + k*h*(1.0-h);
+}
+
+float opSmoothSubtraction2( float d2, float d1, float k, float h  ) {
+    return mix( d2, -d1, h ) + k*h*(1.0-h);
 }
 
 vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, sampler2D txtr) {
@@ -163,7 +203,7 @@ vec3 getBaseMaterial(int id, vec3 p, vec3 normal) {
 	return materialColor;
 }
 
-ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
+ObjectInfo opSmoothUnionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
 	float interpolation = clamp(0.5 + 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
 	float d = opSmoothUnion2(obj1.d, obj2.d, k, interpolation);
 	return ObjectInfo(
@@ -175,8 +215,42 @@ ObjectInfo minOIS(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal
 	);
 }
 
-ObjectInfo minOISR(ObjectInfo obj1, ObjectInfo obj2, float k) {
+ObjectInfo opSmoothUnionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
 	float d = opSmoothUnion(obj1.d, obj2.d, k);
+	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
+}
+
+ObjectInfo opSmoothIntersectionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
+	float interpolation = clamp(0.5 - 0.5 * (obj2.d - obj1.d) / k, 0.0, 1.0);
+	float d = opSmoothIntersection2(obj1.d, obj2.d, k, interpolation);
+	return ObjectInfo(
+		d, -1, -1, false,
+		Material(
+			mix(obj2.material.color, obj1.material.color, interpolation),
+			mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)
+		)
+	);
+}
+
+ObjectInfo opSmoothIntersectionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
+	float d = opSmoothIntersection(obj1.d, obj2.d, k);
+	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
+}
+
+ObjectInfo opSmoothSubtractionMaterial(ObjectInfo obj1, ObjectInfo obj2, float k, vec3 p, vec3 normal) {
+	float interpolation = clamp(0.5 + 0.5 * (obj2.d + obj1.d) / k, 0.0, 1.0);
+	float d = opSmoothSubtraction2(obj1.d, obj2.d, k, interpolation);
+	return ObjectInfo(
+		d, -1, -1, false,
+		Material(
+			mix(obj2.material.color, obj1.material.color, interpolation),
+			mix(obj2.material.reflectiveness, obj1.material.reflectiveness, interpolation)
+		)
+	);
+}
+
+ObjectInfo opSmoothSubtractionTopLevel(ObjectInfo obj1, ObjectInfo obj2, float k) {
+	float d = opSmoothSubtraction(obj1.d, obj2.d, k);
 	return ObjectInfo(d, obj1.id, -1, false, Material(vec3(0.), 0.));
 }
 
@@ -253,7 +327,7 @@ vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, vec3 no
 
 vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
 	ObjectInfo oiSimple = rayMarch(newRayOrigin + normalOrigin * SURF_DIST * 2., rayDirection);;
-	vec3 col = backgroundColor;
+	vec3 col = backgroundColor.rgb;
 
 	if (oiSimple.d < MAX_DIST) {
 		vec3 p = newRayOrigin + rayDirection * oiSimple.d;
@@ -274,13 +348,13 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
 	return col;
 }
 
-vec3 getColor(vec2 uv) {
+vec4 getColor(vec2 uv) {
 	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
 	rayDirection = (view*vec4(rayDirection, 1)).xyz;
 
 	ObjectInfo oiSimple = rayMarch(rayOrigin, rayDirection);
-	vec3 col = backgroundColor;
-	
+	vec4 col = backgroundColor;
+
 	if (oiSimple.d < MAX_DIST) {
 		vec3 p = rayOrigin + rayDirection * oiSimple.d;
 		vec3 normal = getObjectNormal(p);
@@ -297,15 +371,14 @@ vec3 getColor(vec2 uv) {
 		}
 
 		vec3 ambientColor = 0.1 * materialColor;
-		col = ambientColor + (%light%) * materialColor;
+		col = vec4(ambientColor + (%light%) * materialColor, 1.0);
 	}
 
-	col = pow(col, vec3(0.4545));
+	col = pow(col, vec4(0.4545));
 	return col;
 }
 
 void main() {
 	vec2 uv = (gl_FragCoord.xy - 0.5 * screenSize) / screenSize.y;
-	vec3 col = getColor(uv);
-	fragColor = vec4(col, 1.0);
+	fragColor = getColor(uv);
 }

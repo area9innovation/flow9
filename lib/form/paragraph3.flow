@@ -11,8 +11,8 @@ export {
 	renderParagraphEx(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager, renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>) -> Form;
 	getLineIndent(paraIndent : double, isFirstLine : bool) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
-	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement;
-	makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement>;
+	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> NonInteractiveWrapElement;
+	makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<NonInteractiveWrapElement>;
 	generalEmptyLineInspectElement(id : int) -> GeneralInspectElement;
 	keepFormTogether(form : Form) -> bool;
 
@@ -64,7 +64,7 @@ export {
 	makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string);
 	makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi;
 
-	newJustifyEnabled = js && isUrlParameterTrue("js_justify");
+	newJustifyEnabled = js && !isUrlParameterFalse("js_justify") && !getDefaultRtl();
 }
 
 // TODO:
@@ -116,11 +116,11 @@ ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
 
 OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>, nextWidgetId : DynamicBehaviour<Maybe<int>>);
-ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double);
+ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double, containsDynamicElement : bool);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
-makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<WrapElement> {
+makeWrapElementsFromGeneralTextFragments(fragments : GeneralTextFragments) -> List<NonInteractiveWrapElement> {
 	mapList(fragments.elements, \elem -> general2WrapElement(elem, fragments.style, idfn))
 }
 
@@ -136,7 +136,7 @@ generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 	)
 }
 
-general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> WrapElement {
+general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> NonInteractiveWrapElement {
 	generateText = \txt, st -> Text(txt, st |> makeSkipOrderCheck) |> wordDecorator;
 	switch (elem) {
 		GeneralText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
@@ -150,7 +150,7 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDec
 		EmptyLineElement() : makeZeroSpaceElement(style |> makeSkipOrderCheck);
 		GeneralInspectElement(inspector, element) : InspectElement(
 			inspector,
-			cast(general2WrapElement(element, style, wordDecorator) : WrapElement -> InspectableElement)
+			cast(general2WrapElement(element, style, wordDecorator) : NonInteractiveWrapElement -> InspectableElement)
 		);
 		NonTextElement() : Empty();
 	}
@@ -363,7 +363,7 @@ renderParagraphEx(
 		filtermap(words, \word -> {
 			applyStyles = \form0 ->
 				Access([AccessAttribute("nextWidgetId",
-					fselect(word.nextWidgetId, FLift(\idM -> eitherMap(idM, makeWigiWordId, "")))
+					fselect(word.nextWidgetId, FLift(\idM -> eitherMap(idM, makeWordId, "")))
 				)], form0)
 				|> (\form ->
 					eitherMap(
@@ -534,14 +534,33 @@ getParaLineInfos(
 	linesCount = length(reflowResult) - 1;
 	mapi(reflowResult, \i, line -> {
 		optimizedLine = getOptimizedLine(line.words, alignment, availableWidth, indent, i == linesCount);
+		
+		lineAscAndDynamic : Pair<double, bool> = fold(optimizedLine, Pair(0.0, false), \ac : Pair<double, bool>, ole : OptimizedLineElement -> {
+			lineAsc = max(ac.first, fgetValue(ole.metrics).baseline);
+			containsDynamicElement = ac.second || switch (ole.f : GhostForm) {
+				Ghost(__, __, __) : true;
+				InspectGhost(__, __) : true;
+				CoordinateInspectElement(__, __) : true;
+				default : ac.second; 
+			};			
+			Pair(lineAsc, containsDynamicElement);
+		});
+		
 		metrics = map(optimizedLine, \ole -> fgetValue(ole.metrics));
-		lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
+		lineHeightAndWidth : Pair<double, double> = fold(metrics, Pair(0.0, line.indent), \ac : Pair<double, double>, m ->{
+			Pair(
+				max(ac.first, m.height + lineAscAndDynamic.first - m.baseline),
+				ac.second + m.width
+			)
+		});
+
 		ParaLineInfo(
 			optimizedLine,
-			lineAsc,
-			fold(metrics, 0.0, \ac, m -> max(ac, m.height + lineAsc - m.baseline)),
-			fold(metrics, line.indent, \ac, m -> ac + m.width),
+			lineAscAndDynamic.first,
+			lineHeightAndWidth.first,
+			lineHeightAndWidth.second,
 			line.indent,
+			lineAscAndDynamic.second
 		)
 	});
 }
@@ -602,7 +621,7 @@ expandGlueFragments(
 			default : {
 				en = switch (e : ParaElement) {
 					WordWrapInteractive(wElem, id) : {
-						InteractiveParaAtomic(cast(wElem : WrapElement -> ParaAtomic), id)
+						InteractiveParaAtomic(cast(wElem : NonInteractiveWrapElement -> ParaAtomic), id)
 					}
 					default : cast(e : ParaElement -> ParaAtomic);
 				}
@@ -998,7 +1017,7 @@ renderParaLines(
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
 		lineAlignment =
 			if (alignment == Justify() && lastLine && !newJustifyEnabled) {
-				StartAlign()
+				StartAlign()  // Justifying instead via CSS because mobiles are too slow.
 			} else {
 				alignment;
 			}
@@ -1078,7 +1097,7 @@ RenderLine(
 	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1 && !newJustifyEnabled) {
 		nwords = length(info.optimizedLine);
 		min(10.0, remaining / i2d(nwords - 1));
-	} else 0.0;
+	} else 0.0;  // Inter-word spacing via CSS instead because mobiles are too slow.
 
 	justifyExtraWidth = ref 0.0;
 
@@ -1087,7 +1106,7 @@ RenderLine(
 		f = elem.f;
 		m = fgetValue(elem.metrics);
 		wordIds := ^wordIds + 1;
-		wordId = makeWigiWordId(^wordIds);
+		wordId = makeWordId(^wordIds);
 
 		setNextWidgetId = \ -> {
 			nextDistinct(elem.nextWidgetId, Some(^wordIds + 1));
@@ -1124,7 +1143,8 @@ RenderLine(
 						info.lineHeight,
 						interWord,
 						highLightOffset,
-						interlineSpacing
+						interlineSpacing,
+						info.containsDynamicElement
 					)
 					|> addWordId,
 					\ -> Translate(const(^alignmentOffset), const(y + dy), fm |> addWordId)
@@ -1215,6 +1235,7 @@ applyIntStylesAndHighlighting(
 	interWord : double,
 	highLightOffset : double,
 	interlineSpacing : double,
+	containsDynamicElement : bool
 ) -> Form {
 	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
 		tryExtractStruct(s, BackgroundFill(white)),
@@ -1225,14 +1246,19 @@ applyIntStylesAndHighlighting(
 		[]
 	);
 
-	makeBackRect = \defStyle, dynStyle -> Rectangle(
-		width + interWord,
-		height + interlineSpacing + 0.1,
-		replaceStructMany(
-			getStyleForBackgroundFromCharStyle(defStyle),
-			getStyleForBackgroundFromCharStyle(dynStyle)
-		)
-	);
+	makeBackRect = \defStyle, dynStyle -> {
+		rectStyle = 
+			replaceStructMany(
+				getStyleForBackgroundFromCharStyle(defStyle),
+				getStyleForBackgroundFromCharStyle(dynStyle)
+			);
+		if (rectStyle == []) Empty()
+		else Rectangle(
+			width + interWord,
+			height + interlineSpacing + 0.1,
+			rectStyle
+		);
+	}
 
 	dynamicHighlightStyleBM = tryExtractStruct(styles, DynamicHighlightStyle(make([]), false));
 
@@ -1244,10 +1270,13 @@ applyIntStylesAndHighlighting(
 	|> (\f -> 
 		switch(textAndBackPair.second) {
 			Empty() : f;
-			default : Access([AccessRole("group")], Group([
-				Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
-				f
-			]))
+			default : {
+				textAndBack = Group([
+					Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
+					f
+				]);
+				if (containsDynamicElement) Access([AccessRole("group")], textAndBack) else textAndBack
+			}
 		}
 	)
 }
@@ -1569,8 +1598,8 @@ makeStoryWidthManager(paragraphs : int, infoOnly : bool) -> StoryWidthManager {
 	)
 }
 
-makeWigiWordId(id : int) {
-	"wigi_word_" + i2s(id);
+makeWordId(id : int) {
+	"word_" + i2s(id);
 }
 
 // Not with others because referenced from flow9 repo.
@@ -1585,22 +1614,18 @@ makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle] {
 use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics");
 
 paragraphElement2string(e : ParagraphElement) -> string {
+	handleNonInteractive = \acc, nonintel -> switch (nonintel) {
+		Text(text, __): acc + text;
+		Space(__): acc + " ";
+		Form(): acc + getFormText(nonintel);
+		default: acc;
+	};
 	switch (e) {
 		TextFragments(list): {
 			foldList(list, "", \acc2, e2 -> {
 				switch (e2) {
-					WordWrapInteractive(e3, __): {
-						switch (e3) {
-							Text(text, __): acc2 + text;
-							Space(__): acc2 + " ";
-							Form(): acc2 + getFormText(e3);
-							default: acc2;
-						}
-					}
-					Text(text, __): acc2 + text;
-					Space(__): acc2 + " ";
-					Form(): acc2 + getFormText(e2);
-					default: acc2;
+					WordWrapInteractive(e3, __): handleNonInteractive(acc2, e3);
+					NonInteractiveWrapElement(): handleNonInteractive(acc2, e2);
 				}
 			})
 		}
