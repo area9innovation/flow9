@@ -51,6 +51,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 
 	positionsB = make(extractPositionsFromRMScene(fgetValue(sceneB)));
 	rotationsB = make(extractRotationsFromRMScene(fgetValue(sceneB)));
+	scalesB = make(extractScalesFromRMScene(fgetValue(sceneB)));
 	objectParametersB = make(extractObjectParametersFromRMScene(fgetValue(sceneB)));
 	smoothCoefficientsB = make(extractSmoothCoefficientsFromRMScene(fgetValue(sceneB)));
 
@@ -69,6 +70,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					countedMaterialsChanged = countMaterials(materials);
 					next(positionsB, extractPositionsFromRMScene(s));
 					next(rotationsB, extractRotationsFromRMScene(s));
+					next(scalesB, extractScalesFromRMScene(s));
 					next(objectParametersB, extractObjectParametersFromRMScene(s));
 					next(smoothCoefficientsB, extractSmoothCoefficientsFromRMScene(s));
 					fixEmptyDistance = \str, fixStr -> if (str == "") fixStr else str;
@@ -241,11 +243,12 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					
 				}
 			}),
-			make2SubscribeTrigger(
+			make3SubscribeTrigger(
 				webglContextLoadedB,
 				fsubselect(positionsB, FLift(fmerge)),
 				fsubselect(rotationsB, FLift(fmerge)),
-				\positions, rotations -> {
+				fsubselect(scalesB, FLift(fmerge)),
+				\positions, rotations, scales -> {
 					parameters1 = mapConcat(
 						positions,
 						\coordinate -> {
@@ -260,7 +263,14 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 							[p.x, p.y, p.z]
 						}
 					);
-					hostCall("updateObjectPositions", [flow(i2s(id)), flow(parameters1), flow(parameters2)])|> ignore;
+					parameters3 = mapConcat(
+						scales,
+						\coordinate -> {
+							p = RMCoordinate2RMIXYZ(coordinate);
+							[p.x, p.y, p.z]
+						}
+					);
+					hostCall("updateObjectPositions", [flow(i2s(id)), flow(parameters1), flow(parameters2), flow(parameters3)])|> ignore;
 				}
 			),
 			makeSubscribeTrigger(
@@ -426,10 +436,11 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 
 extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): [RMMaterial(object, color, materialProperties)];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [RMMaterial(object, color, materialProperties)];
 		RMPrimitive(): [];
 		RMSTranslate(object, d): extractMaterialsFromRMScene(object);
 		RMRotate(object, r): extractMaterialsFromRMScene(object);
+		RMScale(object, s): extractMaterialsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
 		RMIntersection2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
@@ -450,13 +461,14 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 
 extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): switch(trigger) {
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): switch(trigger) {
 			DynamicBehaviour(__, __): [trigger];
 			ConstBehaviour(__): [];
 		};
 		RMPrimitive(): [];
 		RMSTranslate(object, d): extractTriggersFromRMScene(object);
 		RMRotate(object, r): extractTriggersFromRMScene(object);
+		RMScale(object, s): extractTriggersFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractTriggersFromRMScene);
 		RMIntersection2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
@@ -484,10 +496,11 @@ extractPositionsFromRMScene(obj : RMScene) -> [Transform<RMCoordinate>] {
 
 extractPositionsFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [Transform<RMCoordinate>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): [fselect2(acc, position, FLift2(addRMCoordinate))];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [fselect2(acc, position, FLift2(addRMCoordinate))];
 		RMPrimitive(): [acc];
 		RMSTranslate(object, d): extractPositionsFromRMScene0(object, fselect2(acc, d, FLift2(addRMCoordinate)));
 		RMRotate(object, r): extractPositionsFromRMScene0(object, acc);
+		RMScale(object, s): extractPositionsFromRMScene0(object, acc);
 		RMUnion2(object1, object2): concat(extractPositionsFromRMScene0(object1, acc), extractPositionsFromRMScene0(object2, acc));
 		RMUnion(objects): mapConcat(objects, \o -> extractPositionsFromRMScene0(o, acc));
 		RMIntersection2(object1, object2): concat(extractPositionsFromRMScene0(object1, acc), extractPositionsFromRMScene0(object2, acc));
@@ -512,10 +525,11 @@ extractRotationsFromRMScene(obj : RMScene) -> [Transform<RMCoordinate>] {
 
 extractRotationsFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [Transform<RMCoordinate>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): [fselect2(acc, rotation, FLift2(addRMCoordinate))];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [fselect2(acc, rotation, FLift2(addRMCoordinate))];
 		RMPrimitive(): [acc];
 		RMSTranslate(object, d): extractRotationsFromRMScene0(object, acc);
 		RMRotate(object, r): extractRotationsFromRMScene0(object, fselect2(acc, r, FLift2(addRMCoordinate)));
+		RMScale(object, s): extractRotationsFromRMScene0(object, acc);
 		RMUnion2(object1, object2): concat(extractRotationsFromRMScene0(object1, acc), extractRotationsFromRMScene0(object2, acc));
 		RMUnion(objects): mapConcat(objects, \o -> extractRotationsFromRMScene0(o, acc));
 		RMIntersection2(object1, object2): concat(extractRotationsFromRMScene0(object1, acc), extractRotationsFromRMScene0(object2, acc));
@@ -530,6 +544,35 @@ extractRotationsFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [T
 		RMSmoothSubtraction(objects, k): mapConcat(objects, \o -> extractRotationsFromRMScene0(o, acc));
 		RMMaterial(object, color, materialProperties): extractRotationsFromRMScene0(object, acc);
 		RMInteractive(object, trigger): extractRotationsFromRMScene0(object, acc);
+		RMEmpty(): [];
+	}
+}
+
+extractScalesFromRMScene(obj : RMScene) -> [Transform<RMCoordinate>] {
+	extractScalesFromRMScene0(obj, const(RMX(0.)))
+}
+
+extractScalesFromRMScene0(obj : RMScene, acc : Transform<RMCoordinate>) -> [Transform<RMCoordinate>] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [fselect2(acc, scale, FLift2(addRMCoordinate))];
+		RMPrimitive(): [acc];
+		RMSTranslate(object, d): extractScalesFromRMScene0(object, acc);
+		RMRotate(object, r): extractScalesFromRMScene0(object, acc);
+		RMScale(object, s): extractScalesFromRMScene0(object, fselect2(acc, s, FLift2(addRMCoordinate)));
+		RMUnion2(object1, object2): concat(extractScalesFromRMScene0(object1, acc), extractScalesFromRMScene0(object2, acc));
+		RMUnion(objects): mapConcat(objects, \o -> extractScalesFromRMScene0(o, acc));
+		RMIntersection2(object1, object2): concat(extractScalesFromRMScene0(object1, acc), extractScalesFromRMScene0(object2, acc));
+		RMIntersection(objects): mapConcat(objects, \o -> extractScalesFromRMScene0(o, acc));
+		RMSubtraction2(object1, object2): concat(extractScalesFromRMScene0(object1, acc), extractScalesFromRMScene0(object2, acc));
+		RMSubtraction(objects): mapConcat(objects, \o -> extractScalesFromRMScene0(o, acc));
+		RMSmoothUnion2(object1, object2, k): concat(extractScalesFromRMScene0(object1, acc), extractScalesFromRMScene0(object2, acc));
+		RMSmoothUnion(objects, k): mapConcat(objects, \o -> extractScalesFromRMScene0(o, acc));
+		RMSmoothIntersection2(object1, object2, k): concat(extractScalesFromRMScene0(object1, acc), extractScalesFromRMScene0(object2, acc));
+		RMSmoothIntersection(objects, k): mapConcat(objects, \o -> extractScalesFromRMScene0(o, acc));
+		RMSmoothSubtraction2(object1, object2, k): concat(extractScalesFromRMScene0(object1, acc), extractScalesFromRMScene0(object2, acc));
+		RMSmoothSubtraction(objects, k): mapConcat(objects, \o -> extractScalesFromRMScene0(o, acc));
+		RMMaterial(object, color, materialProperties): extractScalesFromRMScene0(object, acc);
+		RMInteractive(object, trigger): extractScalesFromRMScene0(object, acc);
 		RMEmpty(): [];
 	}
 }
@@ -552,10 +595,11 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 		}
 	};
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): getPrimitiveParameters(object);
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): getPrimitiveParameters(object);
 		RMPrimitive(): getPrimitiveParameters(obj);
 		RMSTranslate(object, d): extractObjectParametersFromRMScene(object);
 		RMRotate(object, r): extractObjectParametersFromRMScene(object);
+		RMScale(object, s): extractObjectParametersFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractObjectParametersFromRMScene(object1), extractObjectParametersFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractObjectParametersFromRMScene);
 		RMIntersection2(object1, object2): concat(extractObjectParametersFromRMScene(object1), extractObjectParametersFromRMScene(object2));
@@ -576,10 +620,11 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 
 extractSmoothCoefficientsFromRMScene(obj : RMScene) -> [Transform<double>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): [];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [];
 		RMPrimitive(): [];
 		RMSTranslate(object, d): extractSmoothCoefficientsFromRMScene(object);
 		RMRotate(object, r): extractSmoothCoefficientsFromRMScene(object);
+		RMScale(object, s): extractSmoothCoefficientsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractSmoothCoefficientsFromRMScene(object1), extractSmoothCoefficientsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractSmoothCoefficientsFromRMScene);
 		RMIntersection2(object1, object2): concat(extractSmoothCoefficientsFromRMScene(object1), extractSmoothCoefficientsFromRMScene(object2));
