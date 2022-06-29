@@ -52,7 +52,7 @@ export {
 		CalendarHeaderTightWidth, CalendarHeaderAddEventButton, CalendarReadOnly, CalendarCustomEventView, CalendarPrintable, CalendarTabsDropdown,
 		CalendarMonthAdditionalEventsView, CalendarWeekDayView, CalendarDayNumberView, CalendarMonthFillEmpty, CalendarEventsPopup,
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacities, CalendarCustomHeader, CalendarHideContentFrame,
-		CalendarScrolls, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends,
+		CalendarScrollStyle, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends,
 		CalendarHideTimeInDayView, CalendarHideTimelineInDayView, CalendarReadOnlyEventDialog, CalendarCombinedEventsView,
 		CalendarWeekAdaptiveWidth, CalendarDisableHorizontalBorder;
 
@@ -135,7 +135,7 @@ export {
 			getView : (tab : CalendarTab, currentDateT : Transform<Date>, buttons : CalendarActionButtons) -> Maybe<Material>
 		);
 		CalendarHideContentFrame();
-		CalendarScrolls(enable : bool);
+		CalendarScrollStyle(getStyle : (Maybe<CalendarTab>) -> [MScrollStyle]);
 		CalendarPlannedHideDeleteButton();
 		// Check if event is read only
 		CalendarReadOnlyEvent(isReadOnly : (CalendarEvent) -> Transform<bool>);
@@ -1324,7 +1324,7 @@ MonthTable(
 	otherMonthViewM = tryExtractStruct(styles, CalendarMonthFillEmpty(\__, __, __ -> MEmpty()));
 	opacities = extractStruct(styles, CalendarEventsOpacities(None(), None(), None()));
 	isDynamicNumberOfEvents = maxDisplayedEventsInOneDay == -1;
-	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	scrollStyle = extractStruct(styles, CalendarScrollStyle(\__ -> [])).getStyle(Some(MonthTab()));
 	hideWeekends = contains(styles, CalendarHideWeekends());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
 	// TODO: display combined events
@@ -1335,7 +1335,6 @@ MonthTable(
 	eventRowHeightB = make(0.0);
 	availableHeightB = make(0.0);
 	maxDisplayedEventsInOneDayB = make(if (maxDisplayedEventsInOneDay <= 0) CalendarDefaultDisplayedEventsInOneDay else maxDisplayedEventsInOneDay);
-	multiDayEventsPosition = make([]);
 
 	defaultAdditionalEventsView = \count -> {
 		MGroup2(
@@ -1513,7 +1512,7 @@ MonthTable(
 	// "NotEmpty" day consists of a header with a background color number of the day of the first (in time) of the event,
 	// as well as maxDisplayedEventsInOneDay blocks of the events.
 	// If the event is less than maxDisplayedEventsInOneDay  - fill the "empty" blocks
-	makeNotEmptyCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount -> {
+	makeNotEmptyCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount, multiDayEventsPosition -> {
 		eventTypes = getValue(eventTypesB);
 		MSelect2(maxDisplayedEventsInOneDayB, isPrintingB, \maxDisplayedEvents, isPrinting -> {
 			maxEvents = if (isPrinting) getDayMaxEvents(dayDate, rowsEventsCount) else maxDisplayedEvents;
@@ -1566,9 +1565,9 @@ MonthTable(
 	}
 
 	//if day consists 0 events or this day is not available - show emptyDay
-	makeCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount -> {
+	makeCalendarDay = \dayDate, events : [CalendarEvent], isEnable, rowsEventsCount, multiDayEventsPosition -> {
 		calendarDayM = if (length(events) > 0 && isEnable) {
-			makeNotEmptyCalendarDay(dayDate, events, isEnable, rowsEventsCount)
+			makeNotEmptyCalendarDay(dayDate, events, isEnable, rowsEventsCount, multiDayEventsPosition)
 		} else {
 			makeEmptyCalendarDay(dayDate, isEnable, rowsEventsCount)
 		}
@@ -1584,7 +1583,7 @@ MonthTable(
 	}
 
 	// First, we keep out all events except the events for the current month. Then create a list of events for each day
-	calendarFiltering = \items : [CalendarEvent], rowsEventsCount -> {
+	calendarFiltering = \items : [CalendarEvent], rowsEventsCount, multiDayEventsPosition -> {
 		currentDate = getValue(currentDateB);
 		filteredByMonth = filter(items, \item -> {
 			startDate = item.startDate;
@@ -1598,11 +1597,11 @@ MonthTable(
 			date = Date(currentDate with day = dayNumber);
 			isEnable = isDateEnable(date, dateMin, dateMax);
 			allEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, dayNumber));
-			makeCalendarDay(date, sortEvents(allEvents), isEnable, rowsEventsCount);
+			makeCalendarDay(date, sortEvents(allEvents), isEnable, rowsEventsCount, multiDayEventsPosition);
 		});
 	}
 
-	getOtherMonthDayFn = \items, rowsEventsCount -> \i -> {
+	getOtherMonthDayFn = \items, rowsEventsCount, multiDayEventsPosition -> \i -> {
 		if (isSome(otherMonthViewM)) {
 			monthStart = Date(getValue(currentDateB) with day = 1);
 			date = if (i > 0) {
@@ -1617,7 +1616,7 @@ MonthTable(
 					timeMonthCheck(startDate, endDate, date) &&
 					timeDayCheck(startDate, endDate, date, date.day)
 			});
-			makeCalendarDay(date, events, isDateEnable(date, dateMin, dateMax), rowsEventsCount);
+			makeCalendarDay(date, events, isDateEnable(date, dateMin, dateMax), rowsEventsCount, multiDayEventsPosition);
 		} else {
 			blankDaySize;
 		}
@@ -1658,13 +1657,16 @@ MonthTable(
 		});
 
 		separateRows = \rows -> arrayPush(interleave(rows, MSeparator(true)), MSeparator(true));
-		getOtherMonthDay = getOtherMonthDayFn(items, rowsEventsCount);
 
-		days = concat(
-			generate(-weekDay, 0, getOtherMonthDay),
-			calendarFiltering(items, rowsEventsCount)
-		);
-		rows = makeLineOfDaysBlockForMonthView(0, getOtherMonthDay, days, hideWeekends, []);
+		rowsT = fselectLift(maxDisplayedEventsInOneDayB, \maxEvents -> {
+			multiDayEventsPosition = checkMultiDayEventsPosition(addDaysToDate(curD, -7), addDaysToDate(addMonthsToDate(curD, 1), 7), items, maxEvents);
+			getOtherMonthDay = getOtherMonthDayFn(items, rowsEventsCount, multiDayEventsPosition);
+			days = concat(
+				generate(-weekDay, 0, getOtherMonthDay),
+				calendarFiltering(items, rowsEventsCount, multiDayEventsPosition)
+			);
+			makeLineOfDaysBlockForMonthView(0, getOtherMonthDay, days, hideWeekends, []);
+		});
 
 		updateDisplayedEvents = \avaliableHeight, weekDayHeight, dayTitleHeight, eventRowHeight -> {
 			availableDayHeight = (avaliableHeight - weekDayHeight) / i2d(rowsCount) - dayTitleHeight;
@@ -1680,7 +1682,14 @@ MonthTable(
 					[];
 				},
 				MAttachAvailableHeight(
-					MLines2A(headerM, MLinesA(separateRows(rows)) |> (\c-> if (enableScrolls) MScroll(c, MFillXY(), []) else c)),
+					MLines2A(
+						headerM,
+						MScroll(
+							MSelect(rowsT, \rows -> MLinesA(separateRows(rows))),
+							MFillXY(),
+							scrollStyle
+						)
+					),
 					availableHeightB
 				)
 			),
@@ -1706,6 +1715,7 @@ MonthTable(
 					}
 				});
 
+				rows = fgetValue(rowsT);
 				map(pagesRows, \pageRows -> {
 					MLines2A(headerM, MLinesA(separateRows(map(pageRows, \i -> rows[i]))));
 				});
@@ -1744,32 +1754,29 @@ MonthTable(
 		MIconToggle("view_module", style, [MToggleValue(byWeekViewB)]) |> (\m -> MCols2A(MFillX(), m))
 	}
 
-	eventsT = fselect(currentEvents, FLift(\events -> {
-		combinedEvents = combinedEventsView.getCombinedEvents(MonthTab(), events);
-		if (combinedEvents == []) events else filter(events, \event -> !exists(combinedEvents, \e -> e.id == event.id));
-	}));
+	monthViewB = fselect3(byWeekViewB, currentDateB, currentEvents, \byWeekView, date, allEvents -> {
+		startDateStamp = date2stamp(addDaysToDate(date, -7));
+		endDateStamp = date2stamp(addDaysToDate(addMonthsToDate(date, 1), 7));
+		displayedEvents = filter(allEvents, \event : CalendarEvent -> {
+			time2stamp(event.startDate) <= endDateStamp && time2stamp(event.endDate) >= startDateStamp;
+		});
 
-	monthViewB = fselect3(byWeekViewB, currentDateB, eventsT, \byWeekView, currentDate, items -> {
+		combinedEvents = combinedEventsView.getCombinedEvents(MonthTab(), displayedEvents);
+		events = if (combinedEvents == []) displayedEvents else filter(displayedEvents, \event -> !exists(combinedEvents, \e -> e.id == event.id));
+
 		if (byWeekView) {
-			MonthViewByWeek(currentDate, items);
+			MonthViewByWeek(date, events);
 		} else {
-			MonthViewByDay(currentDate, items);
+			MonthViewByDay(date, events);
 		}
 	});
 
 	CalendarTabView(
-		MConstruct([
-				make2Subscribe(eventsT, maxDisplayedEventsInOneDayB, \events, maxEvents -> {
-					next(multiDayEventsPosition, []);
-					checkMultiDayEventsPosition(dateMin, dateMax, events, maxEvents, multiDayEventsPosition);
-				})
-			],
-			MGroup2(
-				TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
-				MLines2A(
-					if (showMonthSwitchView) MFrame(0.0, 0.0, calendarHeaderStyle.background, MonthViewSwitchMenu()) else MEmpty(),
-					MSelect(monthViewB, \monthView -> monthView.main),
-				)
+		MGroup2(
+			TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
+			MLines2A(
+				if (showMonthSwitchView) MFrame(0.0, 0.0, calendarHeaderStyle.background, MonthViewSwitchMenu()) else MEmpty(),
+				MSelect(monthViewB, \monthView -> monthView.main),
 			)
 		),
 		\availableSize -> fgetValue(monthViewB).getPrintPages(availableSize),
@@ -1835,7 +1842,7 @@ RangeView(
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	opacities = extractStruct(styles, CalendarEventsOpacities(None(), None(), None()));
-	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	scrollStyle = extractStruct(styles, CalendarScrollStyle(\__ -> [])).getStyle(Some(tab));
 	hideWeekends = contains(styles, CalendarHideWeekends());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
 
@@ -1861,7 +1868,7 @@ RangeView(
 			);
 		} else {
 			dayNumberM;
-		});
+		}) |> MBorderBottom(8.0);
 	})).getView;
 	getEventView = extractStruct(styles, CalendarCustomEventView(\__, e, __, __, __, getDefaultView -> getDefaultView(e))).getView;
 	showDaysNames = containsStruct(styles, ShowWeekViewDaysNames());
@@ -1954,7 +1961,7 @@ RangeView(
 		dayNumberM = MIfLazy(isTodayB, \isToday -> getDayNumber(text, isToday, isWeekend, tab));
 
 		if (rangeType == 0 && showDaysNames) {
-			MLines2A(getWeekDay(toUpperCase(dayOfWeekString(date, false)), tab), dayNumberM) |> MBorderBottom(8.0);
+			MLines2A(getWeekDay(toUpperCase(dayOfWeekString(date, false)), tab), dayNumberM);
 		} else {
 			MCenterIn(dayNumberM, byDayCellSize);
 		}
@@ -2098,7 +2105,7 @@ RangeView(
 
 	CalendarTabView(
 		MIfLazy(isMobileViewB, \isMobileView -> {
-			addScroll = \m -> if (enableScrolls) MScroll(m, TFillXY(), []) else m;
+			addScroll = \m -> MScroll(m, TFillXY(), scrollStyle);
 			addGrid = \m -> if (isMobileView) MFrame(2.0, 0.0, [MStroke(MGrey(400))], m) else addTitleAndGrid(m);
 			rows = if (isMobileView) getEventRowsMobile() else getEventRows();
 
@@ -2427,16 +2434,16 @@ reshuffleEvents(
 checkOneDayEventsPosition(
 	events : [CalendarEvent],
 	maxEvents : int,
-	multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>
+	multiDayEventsPosition : [Pair<CalendarEvent, int>]
 ) -> [CalendarEvent] {
 	printEvents = \evt -> println(foldi(evt, "", \index, res, it -> res + " #" + i2s(index) + " " + it.eventType));
 
 	//To avoid an endless loop with an attempt to take one "seat" by two events
 	eventsInWrongPositionWithoutCorrection = foldi(events, [], \i, res, item -> {
-		index = either(findi(multiDayEventsPosition |> getValue, \p2 -> p2.first == item), -1);
+		index = either(findi(multiDayEventsPosition, \p2 -> p2.first == item), -1);
 		if (index != -1) {
 			currentPosition = i;
-			rigthPosition = getValue(multiDayEventsPosition)[index].second;
+			rigthPosition = multiDayEventsPosition[index].second;
 			arrayPush(res, Pair(currentPosition, rigthPosition))
 		} else {
 			res
@@ -2444,10 +2451,10 @@ checkOneDayEventsPosition(
 	});
 
 	eventsInWrongPosition = foldi(events, [], \i, res, item -> {
-		index = either(findi(multiDayEventsPosition |> getValue, \p2 -> p2.first == item), -1);
+		index = either(findi(multiDayEventsPosition, \p2 -> p2.first == item), -1);
 		if (index != -1) {
 			currentPosition = i;
-			rigthPosition = getValue(multiDayEventsPosition)[index].second;
+			rigthPosition = multiDayEventsPosition[index].second;
 			corrRightPosition = if (rigthPosition >= length(events)) {
 				//if we already have a non-empty event in this position, we don't occupy it
 				index2 = either(findi(eventsInWrongPositionWithoutCorrection, \p2 ->
@@ -2483,47 +2490,55 @@ checkMultiDayEventsPosition(
 	dateMin : Date,
 	dateMax : Date,
 	allEvents : [CalendarEvent],
-	maxEvents : int,
-	multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>
-	) -> void {
-	minYear = dateMin.year;
-	maxYear = dateMax.year;
-	years = enumFromTo(minYear, maxYear);
-	months = enumFromTo(1, 12);
+	maxEvents : int
+) -> [Pair<CalendarEvent, int>] {
+	if (allEvents != []) {
+		minYear = dateMin.year;
+		maxYear = dateMax.year;
+		years = enumFromTo(minYear, maxYear);
 
-	iter(years, \year -> {
-		filteredByYear = filter(allEvents, \item -> timeYearCheck(item.startDate.year, item.endDate.year, year));
+		fold(years, [], \acc1, year -> {
+			filteredByYear = filter(allEvents, \item -> timeYearCheck(item.startDate.year, item.endDate.year, year));
+			months = if (year == minYear && year == maxYear) {
+				enumFromTo(dateMin.month, dateMax.month);
+			} else if (year != minYear) {
+				enumFromTo(1, dateMax.month);
+			} else {
+				enumFromTo(dateMin.month, 12);
+			}
 
-		iter(months, \month -> {
-			filteredByMonth = filter(filteredByYear, \item -> timeMonthCheck(item.startDate, item.endDate, Date(year, month, 1)));
+			fold(months, acc1, \acc2, month -> {
+				filteredByMonth = filter(filteredByYear, \item -> timeMonthCheck(item.startDate, item.endDate, Date(year, month, 1)));
 
-			daysNum = getNumberOfDaysPerMonthInTheYear(year)[month];
-			days = enumFromTo(1, daysNum);
+				daysNum = getNumberOfDaysPerMonthInTheYear(year)[month];
+				days = enumFromTo(1, daysNum);
 
-			iter(days, \day -> {
-				timeSort = \item : CalendarEvent -> item.startDate;
+				fold(days, acc2, \acc3, day -> {
+					timeSort = \item : CalendarEvent -> item.startDate;
 
-				currentDate = Date(year, month, day);
+					currentDate = Date(year, month, day);
 
-				dayEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, day));
+					dayEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, day));
 
-				events = sortEvents(dayEvents)
-					|> \evs -> concat(evs, generate(0, maxEvents - length(evs), \__ -> emptyEvent));
+					events = sortEvents(dayEvents)
+						|> \evs -> concat(evs, generate(0, maxEvents - length(evs), \__ -> emptyEvent));
 
-				newEvents = checkOneDayEventsPosition(events, maxEvents, multiDayEventsPosition);
-				iteri(newEvents, \i, item -> {
-					isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
-					if (isMultiDay) {
-						if (currentDate == time2date(item.startDate)) {
-							index = either(findi(multiDayEventsPosition |> getValue, \p -> p.first == item), -1);
-							if (index == -1)
-								next(multiDayEventsPosition, arrayPush(getValue(multiDayEventsPosition), Pair(item, i)));
+					newEvents = checkOneDayEventsPosition(events, maxEvents, acc3);
+					foldi(newEvents, acc3, \i, acc4, item -> {
+						isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
+						if (isMultiDay && currentDate == time2date(item.startDate)) {
+							index = either(findi(acc4, \p -> p.first == item), -1);
+							if (index == -1) arrayPush(acc4, Pair(item, i)) else acc4;
+						} else {
+							acc4;
 						}
-					}
+					});
 				});
 			});
 		});
-	});
+	} else {
+		[];
+	}
 }
 
 showDatePickerDialog(
@@ -2754,7 +2769,7 @@ getCalendarDayView(
 	isReadOnlyB = extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB;
 	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
 	hideContentViewFrame = containsStruct(styles, CalendarHideContentFrame());
-	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	scrollStyle = extractStruct(styles, CalendarScrollStyle(\__ -> [])).getStyle(Some(DayTab()));
 	hideTimeline = containsStruct(styles, CalendarHideTimelineInDayView());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
 	combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__, __ -> [], \__, __, __ -> MEmpty()));
@@ -2907,13 +2922,14 @@ getCalendarDayView(
 		MLinesA([
 			combinedEventsView.getView(DayTab(), combinedEvents, openDayEventsPopup),
 			MLinesA(map(allDayEvents, \event -> MAttachHeight(getAllDayEvent(event), event.heightB))),
-			MLinesA([
-				SelectMLinesA(pastEventsB, \__, i, event -> MAttachHeight(getPastEvent(event), event.heightB)),
-				SelectMLinesA(currentEventsB, \__, i, event -> MAttachHeight(getCurrentEvent(event, i == 0), event.heightB)),
-				SelectMLinesA(futureEventsB, \__, i, event -> MAttachHeight(getFutureEvent(event, i == 0), event.heightB)),
-			]) |> (\c ->
-				if (enableScrolls) MScroll(c, MFillXY(), [TScrollSetPosition(scrollPositionB)])
-				else c
+			MScroll(
+				MLinesA([
+					SelectMLinesA(pastEventsB, \__, i, event -> MAttachHeight(getPastEvent(event), event.heightB)),
+					SelectMLinesA(currentEventsB, \__, i, event -> MAttachHeight(getCurrentEvent(event, i == 0), event.heightB)),
+					SelectMLinesA(futureEventsB, \__, i, event -> MAttachHeight(getFutureEvent(event, i == 0), event.heightB)),
+				]),
+				MFillXY(),
+				replaceStructMany([TScrollSetPosition(scrollPositionB)], scrollStyle)
 			)
 		]);
 	}
@@ -3025,7 +3041,7 @@ CalendarForEvents(
 	isTabsDropdown = containsStruct(styles, CalendarTabsDropdown());
 	hideEventsCount = containsStruct(styles, CalendarYearHideEventsCount());
 	getCustomHeader = extractStruct(styles, CalendarCustomHeader(\__, __, __ -> None())).getView;
-	enableScrolls = extractStruct(styles, CalendarScrolls(true)).enable;
+	scrollStyle = extractStruct(styles, CalendarScrollStyle(\__ -> [])).getStyle(None());
 	pebbleControllerM = maybeMap(tryExtractStruct(styles, CalendarPebbles(makeDummyPebbleController())), \pebble -> pebble.controller);
 
 	filteredEvents = make(getValue(allEvents));
@@ -3404,11 +3420,11 @@ CalendarForEvents(
 		TabBody = \body : Material, overlay : Material -> MGroup([
 			TRectangle([Fill(white)], TFillXY()),
 			MLines2A(
-				if (enableScrolls) MScroll(body, TFillXY(), [
+				MScroll(body, MFillXY(), replaceStructMany([
 					TScrollSetPosition(scrollPositionB),
 					TScrollbarsVisible(isHorizontalScrollbarVisibleB, make(false)),
 					TScrollPersistent(make(true))
-				]) else body,
+				], scrollStyle)),
 				if (hideLegend) MEmpty() else legendM
 			),
 			overlay
@@ -3630,7 +3646,6 @@ CalendarForEvents(
 				// set current date as start of current week
 				getStartOfWeek = \d -> addDaysToDate(d, -dayOfWeek(d));
 				startOfCurrentWeek = getStartOfWeek(getCurrentDate());
-				updateCurrentDate(startOfCurrentWeek);
 
 				contentB = fselect2(currentDate, filteredEvents, FLift2(\start, events -> {
 					RangeView(
@@ -3684,11 +3699,11 @@ CalendarForEvents(
 
 				availableWidthB = make(0.0);
 				hideWeekends = contains(styles, CalendarHideWeekends());
-				weekAddaptiveWdith = extractStruct(styles, CalendarWeekAdaptiveWidth(800.0, 5.4));
+				weekAddaptiveWidth = extractStruct(styles, CalendarWeekAdaptiveWidth(800.0, 5.4));
 				minWidthT = fselect3(isMobileViewB, currentDate, availableWidthB, \isMobileView, start, availableWidth -> {
-					if (!isMobileView && !hideWeekends && availableWidth < weekAddaptiveWdith.minAvailableWidth) {
+					if (!isMobileView && !hideWeekends && availableWidth < weekAddaptiveWidth.minAvailableWidth) {
 						daysBetweenStartAndToday = i2d(getDaysBetweenDates(start, getCurrentDate()));
-						factor = max(7.0 / weekAddaptiveWdith.visibleWeekdays, 1.0);
+						factor = max(7.0 / weekAddaptiveWidth.visibleWeekdays, 1.0);
 						if (daysBetweenStartAndToday > 2.0 && daysBetweenStartAndToday < 7.0) {
 							deferUntilRender(\ -> nextDistinct(scrollPositionB, Point(availableWidth * (factor - 1.0), 0.0)));
 						}
@@ -3708,6 +3723,10 @@ CalendarForEvents(
 							});
 							nextDistinct(eventTypesForPrintingB, filteredTypes);
 						}),
+						\ -> {
+							updateCurrentDate(startOfCurrentWeek);
+							nop;
+						},
 						\ -> eitherMap(externalDateM, \externalDate -> {
 							externalDateB = externalDate.currentDateB;
 							fBidirectionalLink(currentDate, externalDateB,

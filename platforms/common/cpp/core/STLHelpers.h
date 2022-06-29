@@ -225,6 +225,7 @@ extern bool is_utf8_js_style;
 
 unicode_string parseUtf8(const std::string &str);
 unicode_string parseUtf8(const char *str, unsigned size);
+unicode_string parseUtf8Js(const char *str, unsigned size);
 
 unicode_string parseUtf8u(const unicode_string &str);
 

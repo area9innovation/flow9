@@ -27,6 +27,7 @@ import flash.utils.ByteArray;
 #end
 
 class Native {
+	public static var isNew : Bool = Util.getParameter("new") == "1";
 #if (js && flow_nodejs && flow_webmodule)
 	static var webModuleResponseText = "";
 #end
@@ -264,6 +265,10 @@ class Native {
 				return untyped Browser.window.clipboardData.getData("Text");
 			}
 
+			if (isNew) {
+				return clipboardData;
+			}
+
 			// save current focus
 			var focusedElement = Browser.document.activeElement;
 
@@ -304,7 +309,15 @@ class Native {
 			Browser.document.body.removeChild(textArea);
 
 			// restore focus to the previous state
-			focusedElement.focus();
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined') {
+					RenderSupport.deferUntilRender(function() {
+						focusedElement.focus();
+					});
+				} else {
+					focusedElement.focus();
+				}
+			");
 			return result;
 		#else
 			return "";
@@ -1376,6 +1389,7 @@ class Native {
 			}
 			return true;
 		#elseif js
+			Errors.print("setFileContent '" + file + "' does not work in this target. Use the C++ runner");
 			return false;
 		#else
 			try {
