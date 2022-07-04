@@ -118,6 +118,17 @@ public class FlowFileSystem extends NativeHost {
 		return new File(path);
 	}
 
+	public static String fileType(Object file) {
+		File _file = (File)file;
+		String _fileName = _file.getName();
+
+		int index = _fileName.lastIndexOf('.');
+	    if (index > 0) {
+			return _fileName.substring(index + 1);
+	    } else {
+	    	return "";
+	    }
+	}
 	public static double fileSizeNative(Object file) {
 		File _file = (File)file;
 		return (double)_file.length();
