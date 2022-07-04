@@ -1,6 +1,7 @@
 import material/internal/material_component;
 import material/internal/material_ellipsis;
 import material/internal/material_icons;
+import material/internal/material_grid;
 
 export {
 	MSingleLineDefaultHeight = 48.;
@@ -292,7 +293,6 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 							[]
 						), p2
 					)
-					|> (\t -> TInteractive([TMouseDown(make(false))], t))
 				else
 					TEmpty()
 			);
@@ -510,21 +510,27 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 	};
 
 	makeSubmenuLine = \p -> {
-		subStyle : Transform<[MSubListStyle]> =
-			fselect(line, FLift(\ln ->
-				switch (ln : MListLine) {
+		subLinesStyleAndState : Transform<Triple<[MListLine], [MSubListStyle], MListInnerState>> =
+			fsubselect(line, FLift(\ln -> {
+				sbStyle = switch (ln : MListLine) {
 					MSubmenuLine(__, __, subStyle, __): subStyle;
 					default: [];
-				}
-			));
+				};
+				ftriple(
+					switch (ln : MListLine) {
+						MSubmenuLine(__, subLines, __, __): subLines;
+						default: const([]);
+					},
+					const(sbStyle),
+					const(makeMListInnerState(listState, sbStyle))
+				)
+			}));
 
-		subLines : Transform<[MListLine]> =
-			fsubselect(line, FLift(\ln ->
-				switch (ln : MListLine) {
-					MSubmenuLine(__, subLines, __, __): subLines;
-					default: const([]);
-				}
-			));
+		subStyle : Transform<[MSubListStyle]> = fSecondOfTriple(subLinesStyleAndState);
+		subListState : Transform<MListInnerState> = fThirdOfTriple(subLinesStyleAndState);
+
+		subLinesAndState : Transform<Pair<[MListLine], MListInnerState>> =
+			fselectLift(subLinesStyleAndState, \slstst -> Pair(slstst.first, slstst.third));
 
 		subMain : Transform<MListLine> =
 			fselect(line, FLift(\ln ->
@@ -543,9 +549,6 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			));
 		expanded = make(fgetValue(expandedT));
 
-		subListState = fselect(subStyle, FLift(\style : [MSubListStyle] ->
-			makeMListInnerState(listState, style)));
-
 		selectedT = fsubselect(subListState, FLift(\sls : MListInnerState -> sls.selection.selected));
 		selected = make(fgetValue(selectedT));
 
@@ -558,10 +561,27 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					IScriptBehaviour("selected", selected, ISInputValue([], "[int]", true)),
 					IScriptBehaviour("expanded", expanded, ISInputValue([], "bool", false))
 				],
-				subLines,
-				\sl, par ->
-					mapi(sl, \j, l -> TSelect(subListState, \sls -> MListLine2T(par, const(j), const(l), sls, down, passClicks)))
-					|> TLines
+				subLinesAndState,
+				\slst, par -> {
+					subState = slst.second;
+					mapi(slst.first, \j, l -> MListLine2T(par, const(j), const(l), subState, down, passClicks))
+					|> (\subListLines ->
+						eitherMap(subState.reorder, \rdr ->
+							MReorderGrid2T(
+								listState.manager,
+								par,
+								map(subListLines, \sll -> MReorderItem(sll, [])),
+								rdr.order,
+								[
+									MEnabled(fminA([subState.enabled, rdr.enabled, fnot(down)], false)),
+									MDragLowestPriority()
+								],
+								m2t
+							),
+							TLines(subListLines)
+						)
+					)
+				}
 			);
 		yFact = make(b2d(fgetValue(expanded)));
 		factor = fselect(yFact, FLift(\f -> Factor(1., f)));
