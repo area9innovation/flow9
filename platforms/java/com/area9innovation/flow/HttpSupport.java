@@ -243,11 +243,15 @@ public class HttpSupport extends NativeHost {
 					int countSize = 0;
 
 					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (inputStream.available() > 0) {
+					while (true) {
 						// How much chars we used to decode symbol into utf8 (1 or 2)
 						int codesUsed = 0;
 							
 						readSize = in.read(buffer, additionalChars, bufferSize);
+						
+						// We stop, if nothing read
+						if (readSize < 0) break;
+
 						// On one less of real to use it as index + 1 in `for`
 						countSize = readSize + additionalChars - 1;
 						// Now, how much unprocessed chars we have
@@ -273,8 +277,10 @@ public class HttpSupport extends NativeHost {
 				} else if (responseEncoding.equals("utf8_js")) {
 					final char[] buffer = new char[bufferSize];
 					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (inputStream.available() > 0) {
+					while (true) {
 						int rsz = in.read(buffer, 0, buffer.length);
+						// We stop, if nothing read
+						if (rsz < 0) break;
 						response.append(buffer, 0, rsz);
 					}
 				} else if (responseEncoding.equals("byte")) {
