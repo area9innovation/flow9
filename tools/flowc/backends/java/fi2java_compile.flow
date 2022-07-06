@@ -65,6 +65,24 @@ chooseJavaModuleId(name : string, known : Tree<string,bool>) -> string {
 	chooseJavaIdIndex(nametk2, 1, known);
 }
 
+chooseJavaStructName(structName : string, known : Set<string>) -> Pair<string, Set<string>> {
+	lcName = toLowerCase(structName);
+	if (containsSet(known, lcName)) {
+		idx = i2s(getIndexForName(lcName, 1, known));
+		Pair(structName + "_" + idx, insertSet(known, lcName + "_" + idx));
+	} else {
+		Pair(structName, insertSet(known, lcName));
+	}
+}
+
+getIndexForName(name : string, idx : int, known : Set<string>) -> int {
+	if (containsSet(known, name + "_" + i2s(idx))) {
+		getIndexForName(name, idx + 1, known);
+	} else {
+		idx;
+	}
+}
+
 chooseJavaIdIndex(stem : string, idx : int, known : Tree<string,bool>) -> string {
 	name = stem + (if (idx != 1) toString(idx) else "");
 	if (lookupTreeDef(known, name, false)) {
@@ -76,15 +94,19 @@ chooseJavaIdIndex(stem : string, idx : int, known : Tree<string,bool>) -> string
 
 indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool> {
 	// Order all structs by name
-	struct_list = foldTree(modules, makeTree(), \name, javaModule, acc ->
-		fold(javaModule.module.structs, acc, \acc2, struct ->
-			setTree(acc2, struct.name, Pair(javaModule, struct))
-		)
-	);
+	struct_list = foldTree(modules, Pair(makeTree(), makeSet()), \name, javaModule, acc -> {
+		fold(javaModule.module.structs, acc, \acc2, struct -> {
+			javaStructNameAndKnownStructures = chooseJavaStructName(struct.name, acc2.second);
+			Pair(
+				setTree(acc2.first, struct.name, Triple(javaModule, javaStructNameAndKnownStructures.first, struct)),
+				javaStructNameAndKnownStructures.second
+			);
+		});
+	}).first;
 	hashed = foldTree(
 		struct_list,
 		makeTree(),
-		\name, struct, acc -> {
+		\name, __, acc -> {
 			hash = fastHashString(name);
 			switch (lookupTree(acc, hash)) {
 				Some(structs): setTree(acc, hash, insertSet(structs, name));
@@ -99,27 +121,29 @@ indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pai
 	);
 	if (length(hashCollisions) > 0 || !isConfigParameterTrue(program.config.config, "java-incremental")) {
 		if (length(hashCollisions) > 0) {
-			fcPrintln("Struct names hases have collisions:", program.config.threadId);
+			fcPrintln("Struct names hashes have collisions:", program.config.threadId);
 			iter(hashCollisions, \collision -> fcPrintln("\t" + strGlue(set2array(collision), ","), program.config.threadId));
 		}
 		// Assign id values
 		init = Pair(0, makeTree());
-		res = foldTree(struct_list, init, \name, pair, acc -> {
+		res = foldTree(struct_list, init, \name, triple, acc -> {
 			id = acc.first;
-			javaModule = pair.first;
-			struct = pair.second;
+			javaModule = triple.first;
+			javaStructName = triple.second;
+			struct = triple.third;
 			fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
-			data = JavaStruct(id, name, javaModule, fields);
+			data = JavaStruct(id, name, javaStructName, javaModule, fields);
 			Pair(id + 1, setTree(acc.second, name, data));
 		});
 		Pair(res.second, true);
 	} else {
 		Pair(
-			foldTree(struct_list, makeTree(), \name, pair, acc -> {
-				javaModule = pair.first;
-				struct = pair.second;
+			foldTree(struct_list, makeTree(), \name, triple, acc -> {
+				javaModule = triple.first;
+				javaStructName = triple.second;
+				struct = triple.third;
 				fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
-				setTree(acc, name, JavaStruct(fastHashString(name), name, javaModule, fields));
+				setTree(acc, name, JavaStruct(fastHashString(name), name, javaStructName, javaModule, fields));
 			}),
 			false
 		);
@@ -171,7 +195,7 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 										FiTypeName(nm,__): {
 											switch(lookupTree(gctx.cstructs, nm)) {
 												Some(cstruct):
-													if (length(cstruct.fields) > 0) "(Struct_" + cstruct.name + ")"
+													if (length(cstruct.fields) > 0) "(Struct_" + cstruct.javaName + ")"
 													else "";
 												None(): "";
 											}
@@ -315,14 +339,14 @@ generateJavaModuleInit(gctx : JavaGlobalContext, csm : JavaModule) -> string {
 			Some("\tpublic static void init_" + p.first + "() {\n" + p.second + "\t}\n");
 		}
 	));
-	all_globals = "\tpublic static void init() {\n" + 
-			concatStrings(map(globals_init, \p -> 
+	all_globals = "\tpublic static void init() {\n" +
+			concatStrings(map(globals_init, \p ->
 				if (is_large_global(p)) {
 					"\t\tinit_" + p.first + "();\n";
 				} else {
 					p.second;
 				}
-			)) + 
+			)) +
 	"\t}\n";
 	large_globals + all_globals;
 }
@@ -330,13 +354,13 @@ generateJavaModuleInit(gctx : JavaGlobalContext, csm : JavaModule) -> string {
 generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 	traverseInOrder(gctx.cstructs, \sname, sdata : JavaStruct -> {
 		if (length(sdata.fields) > 0) {
-			fname = pathCombine(output_dir, "Struct_" + sname + ".java");
+			fname = pathCombine(output_dir, "Struct_" + sdata.javaName + ".java");
 			mod_name = pathCombine(output_dir, "Module_" + sdata.csmodule.id + ".java");
 			if (fileExists(fname) && usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)) {
 				if (gctx.program.config.verbose > 1) {
 					fcPrintln("Java struct module '" + fname + "' is already generated - keeping it", gctx.program.config.threadId);
 				}
-				class_path = pathCombine(output_dir, "Struct_" + sname + ".class");
+				class_path = pathCombine(output_dir, "Struct_" + sdata.javaName + ".class");
 				if (!fileExists(class_path)) {
 					rlistPush(gctx.to_compile, fname + "\n");
 				}
@@ -358,7 +382,7 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 				fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
 
 				pushstr(
-					"public class Struct_" + sname + " extends Struct" +
+					"public class Struct_" + sdata.javaName + " extends Struct" +
 					(if (fieldstr != "") " implements " + fieldstr else "") +
 					" {\n"
 				);
@@ -369,9 +393,9 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 				);
 
 				// constructor
-				pushstr("\n\tpublic Struct_" + sname + "() {}\n");
+				pushstr("\n\tpublic Struct_" + sdata.javaName + "() {}\n");
 				pushstr(
-					"\tpublic Struct_" + sname + "(" +
+					"\tpublic Struct_" + sdata.javaName + "(" +
 					strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
 					") {\n"
 				);
@@ -419,7 +443,7 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 				pushstr("\t\tif (other_gen == this) return 0;\n");
 				pushstr("\t\tint tmp = other_gen.getTypeId();\n");
 				pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
-				pushstr("\t\tStruct_" + sname + " other = (Struct_" + sname + ")other_gen;\n");
+				pushstr("\t\tStruct_" + sdata.javaName + " other = (Struct_" + sdata.javaName + ")other_gen;\n");
 
 				tmp = fold(fnametypes, false, \tmp, f -> {
 					if (tmp) {
@@ -554,7 +578,7 @@ emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLoc
 							has_args = exists(case.argNames, \a -> a != "__");
 
 							castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
-								stype = "Struct_" + cstruct.name;
+								stype = "Struct_" + cstruct.javaName;
 								jctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
 									" = (" + stype + ")" + tmpvar + ";\n");
 
@@ -960,7 +984,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 							if (nfields == 0)
 								result("SingletonStructs.str_" + sname, "SingletonStruct")
 							else {
-								stype = "Struct_" + sname;
+								stype = "Struct_" + sinfo.javaName;
 								result(
 									"(new " + stype + "(" +
 									strGlue(mapi(es, \j, e ->
@@ -1254,7 +1278,7 @@ type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : b
 			if (in_native) "Struct" else {
 				switch(lookupTree(gctx.cstructs, nm)) {
 					Some(cstruct):
-						if (length(cstruct.fields) > 0) "Struct_" + cstruct.name
+						if (length(cstruct.fields) > 0) "Struct_" + cstruct.javaName
 						else "SingletonStruct";
 					None(): "Struct";
 				}

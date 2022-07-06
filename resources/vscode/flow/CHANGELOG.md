@@ -170,3 +170,9 @@
 
 ## 0.5.0
  - flow notebook, based on Vscode Notebook API, is added.
+
+## 0.5.1
+ - syntax highlighting for gringo language is added.
+
+## 0.5.2
+ - syntax highlighting for lingo language is enhanced.

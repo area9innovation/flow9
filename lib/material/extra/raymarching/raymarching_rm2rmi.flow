@@ -8,8 +8,10 @@ export {
 	RMScene2RMIExpJS(obj : RMScene) -> RMIExp;
 
 	hexColor2RMI(color : int) -> RMIXYZ;
+	expandRMCoordinate(c : RMCoordinate) -> RMXYZ;
 	RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ;
 	addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate;
+	multiplyRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate;
 }
 
 RMObjectCounter(
@@ -60,8 +62,8 @@ RMScene2RMIExp0(
 	innerLevel : bool
 ) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): {
-			compositeObject = RMSTranslate(RMRotate(RMMaterial(RMInteractive(object, trigger), color, materialProperties), rotation), position);
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): {
+			compositeObject = RMTranslate(RMRotate(RMScale(RMMaterial(RMInteractive(object, trigger), color, materialProperties), scale), rotation), position);
 			RMScene2RMIExp0(compositeObject, acc, id, topLevel, simpleDistance, innerLevel);
 		};
 		RMPrimitive(): {
@@ -82,6 +84,7 @@ RMScene2RMIExp0(
 				acc.materialProperties,
 				make(fgetValue(acc.position)),
 				make(fgetValue(acc.rotation)),
+				make(fgetValue(acc.scale)),
 				acc.trigger
 			);
 
@@ -93,7 +96,7 @@ RMScene2RMIExp0(
 				resultExp.second
 			) else resultExp
 		}
-		RMSTranslate(object, d): RMScene2RMIExp0(
+		RMTranslate(object, d): RMScene2RMIExp0(
 			object,
 			RMSceneAccumulators(
 				acc with
@@ -109,6 +112,17 @@ RMScene2RMIExp0(
 			RMSceneAccumulators(
 				acc with
 				rotation = fselect2(acc.rotation, r, FLift2(addRMCoordinate))
+			),
+			id,
+			topLevel,
+			simpleDistance,
+			innerLevel
+		);
+		RMScale(object, s): RMScene2RMIExp0(
+			object,
+			RMSceneAccumulators(
+				acc with
+				scale = fselect2(acc.scale, s, FLift2(addRMCoordinate))
 			),
 			id,
 			topLevel,
@@ -391,15 +405,17 @@ RMLights2RMIExp(obj : RMLights) -> RMIExp {
 RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
 	switch(obj) {
 		RMCompositeLight(size, name, col, position): {
-			compositeObject = RMLTranslate(RMLightMaterial(RMLight(size), col), position);
+			compositeObject = RMLightTranslate(RMLightMaterial(RMLight(size), col), position);
 			RMLights2RMIExp0(compositeObject, acc, color);
 		};
-		RMLTranslate(object, d): RMLights2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
+		RMLightTranslate(object, d): RMLights2RMIExp0(object, addRMIXYZ(acc, RMCoordinate2RMIXYZ(d)), color);
 		RMLightMaterial(object, col): {
 			RMLights2RMIExp0(
 				object,
 				acc,
-				hexColor2RMI(col),
+				hexColor2RMI(switch(col){
+					RMLightColor(c): c;
+				}),
 			);
 		}
 		RMLight(size): RMICall(RMIOp("*"),
@@ -435,8 +451,8 @@ RMScene2RMIExpJS(obj : RMScene) -> RMIExp {
 
 RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, trigger): {
-			compositeObject = RMSTranslate(RMRotate(RMMaterial(object, color, materialProperties), rotation), position);
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): {
+			compositeObject = RMTranslate(RMRotate(RMScale(RMMaterial(object, color, materialProperties), scale), rotation), position);
 			RMScene2RMIExpJS0(compositeObject, id);
 		};
 		RMPrimitive(): {
@@ -455,8 +471,9 @@ RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, 
 				)
 			);
 		}
-		RMSTranslate(object, d): RMScene2RMIExpJS0(object, id);
+		RMTranslate(object, d): RMScene2RMIExpJS0(object, id);
 		RMRotate(object, r): RMScene2RMIExpJS0(object, id);
+		RMScale(object, s): RMScene2RMIExpJS0(object, id);
 		RMBinaryOperator(): RMBinaryOperator2RMIExpJS0(obj, id);
 		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, id);
 		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, id);
@@ -647,24 +664,8 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 	}
 }
 
-RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ {
+expandRMCoordinate(c : RMCoordinate) -> RMXYZ {
 	switch(c) {
-		RMXYZ(x, y, z): RMIXYZ(x, y, z);
-		RMXY(x, y): RMIXYZ(x, y, 0.);
-		RMXZ(x, z): RMIXYZ(x, 0., z);
-		RMYZ(y, z): RMIXYZ(0., y, z);
-		RMX(x): RMIXYZ(x, 0., 0.);
-		RMY(y): RMIXYZ(0., y, 0.);
-		RMZ(z): RMIXYZ(0., 0., z);
-	}
-}
-
-addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
-	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
-}
-
-addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate {
-	convertCoordinate = \c -> switch(c) {
 		RMXYZ(x, y, z): RMXYZ(x, y, z);
 		RMXY(x, y): RMXYZ(x, y, 0.);
 		RMXZ(x, z): RMXYZ(x, 0., z);
@@ -673,9 +674,27 @@ addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate {
 		RMY(y): RMXYZ(0., y, 0.);
 		RMZ(z): RMXYZ(0., 0., z);
 	}
-	c1xyz = convertCoordinate(c1);
-	c2xyz = convertCoordinate(c2);
+}
+
+RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ {
+	rmxyz = expandRMCoordinate(c);
+	RMIXYZ(rmxyz.x, rmxyz.y, rmxyz.z)
+}
+
+addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
+	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
+}
+
+addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate {
+	c1xyz = expandRMCoordinate(c1);
+	c2xyz = expandRMCoordinate(c2);
 	RMXYZ(c1xyz.x + c2xyz.x, c1xyz.y + c2xyz.y, c1xyz.z + c2xyz.z)
+}
+
+multiplyRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate {
+	c1xyz = expandRMCoordinate(c1);
+	c2xyz = expandRMCoordinate(c2);
+	RMXYZ(c1xyz.x * c2xyz.x, c1xyz.y * c2xyz.y, c1xyz.z * c2xyz.z)
 }
 
 addColorToRMIExp(exp : RMIExp, id : RMObjectCounter, color : RMIExp, innerLevel : bool) -> Pair<RMObjectCounter, RMIProperty> {

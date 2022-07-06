@@ -221,13 +221,19 @@ public class HttpSupport extends NativeHost {
 			if (Objects.isNull(inputStream)) {
 				inputStream = con.getErrorStream();
 			}
-			
+
+			if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
+				responseEncoding = "utf8_js";
+			} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
+				responseEncoding = "utf8";
+			}
+
 			StringBuilder response = new StringBuilder();
 			// inputStream might be null, if body is empty
 			if (Objects.nonNull(inputStream)) {
 				final int bufferSize = 1024;
 				
-				if (responseEncoding == "utf8") {
+				if (responseEncoding.equals("utf8")) {
 					// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
 					int additionalChars = 0;
 					// +1 additinal char from the prevoius chain
@@ -237,11 +243,15 @@ public class HttpSupport extends NativeHost {
 					int countSize = 0;
 
 					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (inputStream.available() > 0) {
+					while (true) {
 						// How much chars we used to decode symbol into utf8 (1 or 2)
 						int codesUsed = 0;
 							
 						readSize = in.read(buffer, additionalChars, bufferSize);
+						
+						// We stop, if nothing read
+						if (readSize < 0) break;
+
 						// On one less of real to use it as index + 1 in `for`
 						countSize = readSize + additionalChars - 1;
 						// Now, how much unprocessed chars we have
@@ -264,14 +274,16 @@ public class HttpSupport extends NativeHost {
 					if (additionalChars > 0) {
 						unpackSurrogatePair(response, buffer[0], buffer[0]);
 					}
-				} else if (responseEncoding == "utf8_js") {
+				} else if (responseEncoding.equals("utf8_js")) {
 					final char[] buffer = new char[bufferSize];
 					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (inputStream.available() > 0) {
+					while (true) {
 						int rsz = in.read(buffer, 0, buffer.length);
+						// We stop, if nothing read
+						if (rsz < 0) break;
 						response.append(buffer, 0, rsz);
 					}
-				} else if (responseEncoding == "byte") {
+				} else if (responseEncoding.equals("byte")) {
 					char c;
 					int length;
 					final byte[] buffer = new byte[bufferSize];

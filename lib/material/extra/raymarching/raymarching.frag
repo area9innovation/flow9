@@ -21,7 +21,8 @@ struct TextureParamerters {
 	TextureTilingParameter translate;
 	TextureTilingParameter rotate;
 	TextureTilingParameter step;
-};// 32 * 4 => 128
+	TextureTilingParameter offset;
+};// 32 * 5 => 160
 
 uniform TextureParamertersBlock {
 	TextureParamerters textureParameters[numTextures];
@@ -185,9 +186,9 @@ vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, s
 	pz = (pz - 0.5) * makeRotate2vec2(textureParameter.rotate.xy) + 0.5 - textureParameter.translate.xy;
 	px = (px - 0.5) * makeRotate2vec2(textureParameter.rotate.zy) + 0.5 - textureParameter.translate.zy;
 
-	py = mod(py / (textureParameter.scale.zx * sizeNormalized), textureParameter.step.zx);
-	pz = mod(pz / (textureParameter.scale.xy * sizeNormalized), textureParameter.step.xy);
-	px = mod(px / (textureParameter.scale.zy * sizeNormalized), textureParameter.step.zy);
+	py = mod(mod(py / (textureParameter.scale.zx * sizeNormalized), textureParameter.step.zx) + textureParameter.offset.zx, 1.0);
+	pz = mod(mod(pz / (textureParameter.scale.xy * sizeNormalized), textureParameter.step.xy) + textureParameter.offset.xy, 1.0);
+	px = mod(mod(px / (textureParameter.scale.zy * sizeNormalized), textureParameter.step.zy) + textureParameter.offset.zy, 1.0); 
 
 	normal = pow(normal, vec3(10.0));
 	normal /= normal.x + normal.y + normal.z;
