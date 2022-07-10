@@ -20,6 +20,7 @@ RMObjectCounter(
 	topLevelObjects : Tree<int, RMScene>,
 	topLevelSmoothObjects : Tree<int, RMIExp>,
 	smoothObjectsCounter : int,
+	repetitionCounter : int,
 );
 
 RMSceneAccumulators(
@@ -31,6 +32,7 @@ RMSceneAccumulators(
 	rmiMateiral : RMIExp,
 	trigger : Behaviour<RMTrigger>,
 	smoothMaterial : bool,
+	repetition : Maybe<Pair<double, RMXYZ>>,
 );
 
 RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp> {
@@ -44,9 +46,10 @@ RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RM
 			[],
 			RMIXYZ(1., 1., 1.),
 			make(RMMouseDownleft()),
-			false
+			false,
+			None(),
 		),
-		RMObjectCounter(0, 0, makeTree(), makeTree(), 0),
+		RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0),
 		true,
 		simpleDistance,
 		false
@@ -72,9 +75,26 @@ RMScene2RMIExp0(
 			} else {
 				\e -> addColorToRMIExp(e, id, acc.rmiMateiral, innerLevel)
 			};
+			wrapRepetitions = \p -> {
+				eitherMap(
+					acc.repetition,
+					\rep -> RMICall(RMIOp("-"), [
+						p,
+						RMICall(RMIOp("*"), [
+							RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "w"),
+							RMICall(RMIFn("clamp"), [
+								RMICall(RMIFn("round"), [RMICall(RMIOp("/"), [p, RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "w")])]),
+								RMICall(RMIOp("*"), [RMIDouble(-1.), RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "xyz")]),
+								RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "xyz"),
+							])
+						])
+					]),
+					p
+				)
+			};
 			resultExp = wrapFn(RMPrimitive2RMIExp(
 				obj,
-				RMIConcat(RMICall(RMIOp("*"), [RMIVar(formatString("(positions[%1]", [i2s(id.objectId)])), RMICall(RMIFn("vec4"), [RMIP(), RMIDouble(1.0)])]), RMIVar(").xyz")),
+				wrapRepetitions(RMIStructMember(RMIBrackets(RMICall(RMIOp("*"), [RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("vec4"), [RMIP(), RMIDouble(1.0)])])), "xyz")),
 				id.objectId
 			));
 			compositeObject = RMCompositeObject(
@@ -91,7 +111,8 @@ RMScene2RMIExp0(
 			if (topLevel) Pair(
 				RMObjectCounter(
 					resultExp.first
-					with topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, compositeObject)
+					with topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, compositeObject),
+					repetitionCounter = if (isSome(acc.repetition)) id.repetitionCounter + 1 else id.repetitionCounter,
 				),
 				resultExp.second
 			) else resultExp
@@ -129,6 +150,14 @@ RMScene2RMIExp0(
 			simpleDistance,
 			innerLevel
 		);
+		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExp0(
+			object,
+			RMSceneAccumulators(acc with repetition = Some(Pair(getValue(space), getValue(repetitions)))),
+			id,
+			topLevel,
+			simpleDistance,
+			innerLevel
+		);
 		RMBinaryOperator(): RMBinaryOperator2RMIExp0(obj, acc, id, topLevel, simpleDistance, innerLevel);
 		RMMaterial(object, color, materialProperties): {
 			switch(color) {
@@ -141,8 +170,8 @@ RMScene2RMIExp0(
 							[
 								RMIP(),
 								RMIVar("normal"),
-								RMIVar(formatString("textureParameters[%1]", [i2s(id.textureId)])),
-								RMIVar(formatString("textures[%1]", [i2s(id.textureId)]))
+								RMIArrayIndex("textureParameters", id.textureId),
+								RMIArrayIndex("textures", id.textureId)
 							]
 						),
 						materialColor = color,
@@ -183,7 +212,7 @@ RMScene2RMIExp0(
 }
 
 RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
-	getObjectParameter = \paramId -> RMIVar(formatString("objectParameters[%1].%2", [i2s(id), paramId]));
+	getObjectParameter = \paramId -> RMIStructMember(RMIArrayIndex("objectParameters", id), paramId);
 	switch(obj) {
 		RMSphere(radius): RMICall(RMIOp("-"), [
 			RMICall(RMIFn("length"), [distance]),
@@ -304,7 +333,7 @@ RMBinaryOperator2RMIExp0(
 				checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(
 					RMIFn(if (simpleDistance) "opSmoothUnion" else if(newAcc.smoothMaterial) "opSmoothUnionMaterial" else "opSmoothUnionTopLevel"),
 					concat(
-						[exp1.second, exp2.second, RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))],
+						[exp1.second, exp2.second, RMIArrayIndex("smoothCoefficients", id.smoothObjectsCounter)],
 						if (!simpleDistance && newAcc.smoothMaterial) [RMIP(), RMIVar("normal")] else []
 					)
 				)))
@@ -337,7 +366,7 @@ RMBinaryOperator2RMIExp0(
 				checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(
 					RMIFn(if (simpleDistance) "opSmoothIntersection" else if(newAcc.smoothMaterial) "opSmoothIntersectionMaterial" else "opSmoothIntersectionTopLevel"),
 					concat(
-						[exp1.second, exp2.second, RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))],
+						[exp1.second, exp2.second, RMIArrayIndex("smoothCoefficients", id.smoothObjectsCounter)],
 						if (!simpleDistance && newAcc.smoothMaterial) [RMIP(), RMIVar("normal")] else []
 					)
 				)))
@@ -370,7 +399,7 @@ RMBinaryOperator2RMIExp0(
 				checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(
 					RMIFn(if (simpleDistance) "opSmoothSubtraction" else if(newAcc.smoothMaterial) "opSmoothSubtractionMaterial" else "opSmoothSubtractionTopLevel"),
 					concat(
-						[exp1.second, exp2.second, RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))],
+						[exp1.second, exp2.second, RMIArrayIndex("smoothCoefficients", id.smoothObjectsCounter)],
 						if (!simpleDistance && newAcc.smoothMaterial) [RMIP(), RMIVar("normal")] else []
 					)
 				)))
@@ -446,7 +475,7 @@ RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
 }
 
 RMScene2RMIExpJS(obj : RMScene) -> RMIExp {
-	RMScene2RMIExpJS0(obj, RMObjectCounter(0, 0, makeTree(), makeTree(), 0)).second
+	RMScene2RMIExpJS0(obj, RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0)).second
 }
 
 RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
@@ -463,7 +492,7 @@ RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, 
 						"distance",
 						RMPrimitive2RMIExpJS(
 							obj,
-							RMIConcat(RMIConcat(RMIVar(formatString("(positions[%1]", [i2s(id.objectId)])), RMICall(RMIFn("['*']"), [RMICall(RMIFn("glm.vec4"), [RMIP(), RMIDouble(1.0)])])), RMIVar(").xyz")),
+							RMIStructMember(RMIBrackets(RMIConcat(RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("['*']"), [RMICall(RMIFn("glm.vec4"), [RMIP(), RMIDouble(1.0)])]))), "xyz"),
 							id.objectId
 						)
 					),
@@ -474,6 +503,7 @@ RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, 
 		RMTranslate(object, d): RMScene2RMIExpJS0(object, id);
 		RMRotate(object, r): RMScene2RMIExpJS0(object, id);
 		RMScale(object, s): RMScene2RMIExpJS0(object, id);
+		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExpJS0(object, RMObjectCounter(id with repetitionCounter = id.repetitionCounter + 1));
 		RMBinaryOperator(): RMBinaryOperator2RMIExpJS0(obj, id);
 		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, id);
 		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, id);
@@ -483,7 +513,7 @@ RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, 
 
 
 RMPrimitive2RMIExpJS(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
-	getObjectParameter = \paramId -> RMIVar(formatString("objectParameters[%1].%2", [i2s(id), paramId]));
+	getObjectParameter = \paramId -> RMIStructMember(RMIArrayIndex("objectParameters", id), paramId);
 	switch(obj) {
 		RMSphere(radius): RMICall(RMIOp("-"), [
 			RMICall(RMIFn("glm.length"), [distance]),
@@ -596,7 +626,7 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 				[
 					exp1.second,
 					exp2.second,
-					RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))
+					RMIArrayIndex("smoothCoefficients", id.smoothObjectsCounter)
 				]
 			)));
 
@@ -620,7 +650,7 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 				[
 					exp1.second,
 					exp2.second,
-					RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))
+					RMIArrayIndex("smoothCoefficients", id.smoothObjectsCounter)
 				]
 			)));
 
@@ -644,7 +674,7 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 				[
 					exp1.second,
 					exp2.second,
-					RMIVar(formatString("smoothCoefficients[%1]", [i2s(id.smoothObjectsCounter)]))
+					RMIArrayIndex("smoothCoefficients", id.smoothObjectsCounter)
 				]
 			)));
 
@@ -728,10 +758,10 @@ addColorToRMIExp(exp : RMIExp, id : RMObjectCounter, color : RMIExp, innerLevel 
 						[
 							eitherMap(
 								plainColor, \__->
-								RMIVar(formatString("color[%1]", [i2s(id.objectId - id.textureId)])),
+								RMIArrayIndex("color", id.objectId - id.textureId),
 								if (!innerLevel) RMIXYZ(0., 0., 0.) else color
 							),
-							RMIVar(formatString("reflectiveness[%1]", [i2s(id.objectId)]))
+							RMIArrayIndex("reflectiveness", id.objectId)
 						]
 					)
 				]

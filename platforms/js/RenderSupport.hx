@@ -140,7 +140,7 @@ class RenderSupport {
 						untyped RenderRoot.attachShadow({mode : 'open'});
 					}
 				}
-				
+
 				setupPixiStage();
 				createPixiRenderer();
 				initPixiStageEventListeners();
@@ -156,7 +156,7 @@ class RenderSupport {
 					untyped console.warn("WARNING! Existing instance has not been found into FlowInstances");
 				} else {
 					RenderRoot = renderRoot;
-					PixiStage = existingInstance.stage; 
+					PixiStage = existingInstance.stage;
 				}
 			}
 		}
@@ -708,7 +708,7 @@ class RenderSupport {
 		if (viewportScaleWorkaroundEnabled) {
 			try {
 				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
-				// So let`s recalculate viewport sizes after some delay (10s) with real values 
+				// So let`s recalculate viewport sizes after some delay (10s) with real values
 				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
 			} catch (e : Dynamic) {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
@@ -962,7 +962,7 @@ class RenderSupport {
 
 	private static inline function calculateMobileTopHeight() {
 		var screenSize = getScreenSize();
-		
+
 		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
 		// Dirty trick to fix this wrong innerHeight value
 		var innerHeightCompensation = (
@@ -1330,8 +1330,8 @@ class RenderSupport {
 					setMousePosition(touchPos);
 					if (MouseUpReceived) stage.emit("mousedown");
 				} else if (e.touches.length > 1) {
-					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos); 
-					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos); 
+					var touchPos1 = getMouseEventPosition(e.touches[0], rootPos);
+					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
 			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
@@ -2139,9 +2139,15 @@ class RenderSupport {
 	}
 
 	public static function findTextFieldCharByPosition(textclip : TextClip, x: Float, y: Float) : Int {
+		if (x < 0) {
+			x = 0;
+		} else {
+			var width = getTextFieldWidth(textclip);
+			if (x > width) x = width;
+		}
 		/* Assuming exact glyph codes used to form each clip's text. */
 		var EPSILON = 0.1; // Why not, pixel precision assumed.
-		var clip = getClipAt(textclip, new Point(x, y));
+		var clip = getClipAt(textclip, new Point(x, y), false, null, false);
 		try {
 			textclip = cast(clip, TextClip);
 		} catch(exc: String) {
@@ -3072,8 +3078,8 @@ class RenderSupport {
 		return getClipAt(clip, point, false) != null;
 	}
 
-	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Float) : DisplayObject {
-		if (!clip.getClipRenderable() || untyped clip.isMask) {
+	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Float, ?checkVisible : Bool = true) : DisplayObject {
+		if ((!clip.getClipRenderable() || untyped clip.isMask) && checkVisible) {
 			return null;
 		} else if (checkMask && !hittestMask(clip, point)) {
 			return null;
@@ -3363,7 +3369,7 @@ class RenderSupport {
 			// We need it in HTMLRenderer mode for snapshots support.
 			untyped clip.canvasFilters = clip.filters.map(function(f) {
 				if (untyped HaxeRuntime.instanceof(f, DropShadowFilter)) {
-					var newFilter = Reflect.copy(f); 
+					var newFilter = Reflect.copy(f);
 					newFilter.blur = f.blur * 0.5;
 					return newFilter;
 				}
