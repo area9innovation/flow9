@@ -3370,6 +3370,7 @@ class RenderSupport {
 			untyped clip.canvasFilters = clip.filters.map(function(f) {
 				if (untyped HaxeRuntime.instanceof(f, DropShadowFilter)) {
 					var newFilter = Reflect.copy(f);
+					newFilter.__proto__ = f.__proto__;
 					newFilter.blur = f.blur * 0.5;
 					return newFilter;
 				}
