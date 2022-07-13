@@ -490,13 +490,19 @@ class RenderSupport {
 
 		PixiStage.forceClipRenderable();
 		emit("beforeprint");
-		forceRender();
 
-		PixiStage.once("drawframe", function () {
+		var openPrintDialog = function () {
+			forceRender();
 			PixiStage.onImagesLoaded(function () {
 				Browser.window.print();
 			});
-		});
+		};
+
+		if (Native.isNew) {
+			PixiStage.once("drawframe", openPrintDialog);
+		} else {
+			Native.timer(10, openPrintDialog);
+		}
 	}
 
 	private static function getBackingStoreRatio() : Float {
