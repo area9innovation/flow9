@@ -490,9 +490,9 @@ class RenderSupport {
 
 		PixiStage.forceClipRenderable();
 		emit("beforeprint");
-		forceRender();
 
 		PixiStage.once("drawframe", function () {
+			forceRender();
 			PixiStage.onImagesLoaded(function () {
 				Browser.window.print();
 			});
