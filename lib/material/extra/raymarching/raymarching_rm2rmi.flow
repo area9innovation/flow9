@@ -80,7 +80,7 @@ RMScene2RMIExp0(
 				foldiList(
 					acc.repetition,
 					p,
-					\i, acc2, rep -> {
+					\i, acc2, __ -> {
 						RMICall(RMIOp("-"), [
 							RMIBrackets(acc2),
 							RMICall(RMIOp("*"), [
@@ -484,24 +484,41 @@ RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
 }
 
 RMScene2RMIExpJS(obj : RMScene) -> RMIExp {
-	RMScene2RMIExpJS0(obj, RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0)).second
+	RMScene2RMIExpJS0(obj, makeList(), RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0)).second
 }
 
-RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
+RMScene2RMIExpJS0(obj : RMScene, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
 		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): {
 			compositeObject = RMTranslate(RMRotate(RMScale(RMMaterial(object, color, materialProperties), scale), rotation), position);
-			RMScene2RMIExpJS0(compositeObject, id);
+			RMScene2RMIExpJS0(compositeObject, repetition, id);
 		};
 		RMPrimitive(): {
+			wrapRepetitions = \p -> {
+				foldiList(
+					repetition,
+					p,
+					\i, acc2, __ -> {
+						RMIConcat(RMIBrackets(acc2), RMICall(RMIFn("['-']"), [
+							RMIConcat(RMIArrayIndex("spaces", id.repetitionCounter + i), RMICall(RMIFn("['*']"), [
+								RMICall(RMIFn("clampVec3"), [
+									RMICall(RMIFn("roundVec3"), [RMICall(RMIFn("divVec3"), [RMIBrackets(acc2), RMIArrayIndex("spaces", id.repetitionCounter + i)])]),
+									RMIConcat(RMIArrayIndex("repetitions", id.repetitionCounter + i), RMICall(RMIFn("['*']"), [RMIDouble(-1.)])),
+									RMIArrayIndex("repetitions", id.repetitionCounter + i),
+								])
+							]))
+						]))
+					}
+				);
+			};
 			Pair(
-				RMObjectCounter(id with objectId = id.objectId + 1),
+				RMObjectCounter(id with objectId = id.objectId + 1, repetitionCounter = id.repetitionCounter + countList(repetition)),
 				RMIJSObject(
 					setTree(makeTree1(
 						"distance",
 						RMPrimitive2RMIExpJS(
 							obj,
-							RMIStructMember(RMIBrackets(RMIConcat(RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("['*']"), [RMICall(RMIFn("glm.vec4"), [RMIP(), RMIDouble(1.0)])]))), "xyz"),
+							wrapRepetitions(RMIStructMember(RMIBrackets(RMIConcat(RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("['*']"), [RMICall(RMIFn("glm.vec4"), [RMIP(), RMIDouble(1.0)])]))), "xyz")),
 							id.objectId
 						)
 					),
@@ -509,13 +526,13 @@ RMScene2RMIExpJS0(obj : RMScene, id : RMObjectCounter) -> Pair<RMObjectCounter, 
 				)
 			);
 		}
-		RMTranslate(object, d): RMScene2RMIExpJS0(object, id);
-		RMRotate(object, r): RMScene2RMIExpJS0(object, id);
-		RMScale(object, s): RMScene2RMIExpJS0(object, id);
-		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExpJS0(object, RMObjectCounter(id with repetitionCounter = id.repetitionCounter + 1));
-		RMBinaryOperator(): RMBinaryOperator2RMIExpJS0(obj, id);
-		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, id);
-		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, id);
+		RMTranslate(object, d): RMScene2RMIExpJS0(object, repetition, id);
+		RMRotate(object, r): RMScene2RMIExpJS0(object, repetition, id);
+		RMScale(object, s): RMScene2RMIExpJS0(object, repetition, id);
+		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExpJS0(object, Cons(Pair(getValue(space), getValue(repetitions)), repetition), id);
+		RMBinaryOperator(): RMBinaryOperator2RMIExpJS0(obj, repetition, id);
+		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, repetition, id);
+		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, repetition, id);
 		RMEmpty(): Pair(id, RMIEmpty());
 	}
 }
@@ -572,11 +589,11 @@ RMPrimitive2RMIExpJS(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
 	}
 }
 
-RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
+RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
 		RMUnion2(object1, object2): {
-			exp1 = RMScene2RMIExpJS0(object1, id);
-			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
+			exp2 = RMScene2RMIExpJS0(object2, repetition, exp1.first);
 			checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(RMIFn("opUnion"),
 				[
 					exp1.second,
@@ -587,14 +604,14 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 		RMUnion(objects): {
 			if (length(objects) > 0 ) {
 				newExp = fold(tail(objects), objects[0], \acc2, obj2 -> RMUnion2(acc2, obj2));
-				RMScene2RMIExpJS0(newExp, id);
+				RMScene2RMIExpJS0(newExp, repetition, id);
 			} else {
 				Pair(id, RMIEmpty());
 			}
 		};
 		RMIntersection2(object1, object2): {
-			exp1 = RMScene2RMIExpJS0(object1, id);
-			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
+			exp2 = RMScene2RMIExpJS0(object2, repetition, exp1.first);
 			checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(RMIFn("opIntersection"),
 				[
 					exp1.second,
@@ -605,14 +622,14 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 		RMIntersection(objects): {
 			if (length(objects) > 0 ) {
 				newExp = fold(tail(objects), objects[0], \acc2, obj2 -> RMIntersection2(acc2, obj2));
-				RMScene2RMIExpJS0(newExp, id);
+				RMScene2RMIExpJS0(newExp, repetition, id);
 			} else {
 				Pair(id, RMIEmpty());
 			}
 		};
 		RMSubtraction2(object1, object2): {
-			exp1 = RMScene2RMIExpJS0(object1, id);
-			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
+			exp2 = RMScene2RMIExpJS0(object2, repetition, exp1.first);
 			checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(RMIFn("opSubtraction"),
 				[
 					exp1.second,
@@ -623,14 +640,14 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 		RMSubtraction(objects): {
 			if (length(objects) > 0 ) {
 				newExp = fold(tail(objects), objects[0], \acc2, obj2 -> RMSubtraction2(acc2, obj2));
-				RMScene2RMIExpJS0(newExp, id);
+				RMScene2RMIExpJS0(newExp, repetition, id);
 			} else {
 				Pair(id, RMIEmpty());
 			}
 		};
 		RMSmoothUnion2(object1, object2, k): {
-			exp1 = RMScene2RMIExpJS0(object1, id);
-			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
+			exp2 = RMScene2RMIExpJS0(object2, repetition, exp1.first);
 			resExp = checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(RMIFn("opSmoothUnion"),
 				[
 					exp1.second,
@@ -647,14 +664,14 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 		RMSmoothUnion(objects, k): {
 			if (length(objects) > 0 ) {
 				newExp = fold(tail(objects), objects[0], \acc2, obj2 -> RMSmoothUnion2(acc2, obj2, k));
-				RMScene2RMIExpJS0(newExp, id);
+				RMScene2RMIExpJS0(newExp, repetition, id);
 			} else {
 				Pair(id, RMIEmpty());
 			}
 		};
 		RMSmoothIntersection2(object1, object2, k): {
-			exp1 = RMScene2RMIExpJS0(object1, id);
-			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
+			exp2 = RMScene2RMIExpJS0(object2, repetition, exp1.first);
 			resExp = checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(RMIFn("opSmoothIntersection"),
 				[
 					exp1.second,
@@ -671,14 +688,14 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 		RMSmoothIntersection(objects, k): {
 			if (length(objects) > 0 ) {
 				newExp = fold(tail(objects), objects[0], \acc2, obj2 -> RMSmoothIntersection2(acc2, obj2, k));
-				RMScene2RMIExpJS0(newExp, id);
+				RMScene2RMIExpJS0(newExp, repetition, id);
 			} else {
 				Pair(id, RMIEmpty());
 			}
 		};
 		RMSmoothSubtraction2(object1, object2, k): {
-			exp1 = RMScene2RMIExpJS0(object1, id);
-			exp2 = RMScene2RMIExpJS0(object2, exp1.first);
+			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
+			exp2 = RMScene2RMIExpJS0(object2, repetition, exp1.first);
 			resExp = checkRMBinaryOperator(id, exp1, exp2, \ -> Pair(exp2.first, RMICall(RMIFn("opSmoothSubtraction"),
 				[
 					exp1.second,
@@ -695,7 +712,7 @@ RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, id : RMObjectCounter) -> Pair
 		RMSmoothSubtraction(objects, k): {
 			if (length(objects) > 0 ) {
 				newExp = fold(tail(objects), objects[0], \acc2, obj2 -> RMSmoothSubtraction2(acc2, obj2, k));
-				RMScene2RMIExpJS0(newExp, id);
+				RMScene2RMIExpJS0(newExp, repetition, id);
 			} else {
 				Pair(id, RMIEmpty());
 			}
