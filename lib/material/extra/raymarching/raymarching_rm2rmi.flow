@@ -10,8 +10,9 @@ export {
 	hexColor2RMI(color : int) -> RMIXYZ;
 	expandRMCoordinate(c : RMCoordinate) -> RMXYZ;
 	RMCoordinate2RMIXYZ(c : RMCoordinate) -> RMIXYZ;
-	addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate;
-	multiplyRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate;
+	addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMXYZ;
+	multiplyRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMXYZ;
+	divideRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMXYZ;
 }
 
 RMObjectCounter(
@@ -32,7 +33,7 @@ RMSceneAccumulators(
 	rmiMateiral : RMIExp,
 	trigger : Behaviour<RMTrigger>,
 	smoothMaterial : bool,
-	repetition : Maybe<Pair<double, RMXYZ>>,
+	repetition : List<Pair<RMXYZ, RMXYZ>>,
 );
 
 RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp> {
@@ -47,7 +48,7 @@ RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RM
 			RMIXYZ(1., 1., 1.),
 			make(RMMouseDownleft()),
 			false,
-			None(),
+			makeList(),
 		),
 		RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0),
 		true,
@@ -76,20 +77,22 @@ RMScene2RMIExp0(
 				\e -> addColorToRMIExp(e, id, acc.rmiMateiral, innerLevel)
 			};
 			wrapRepetitions = \p -> {
-				eitherMap(
+				foldiList(
 					acc.repetition,
-					\rep -> RMICall(RMIOp("-"), [
-						p,
-						RMICall(RMIOp("*"), [
-							RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "w"),
-							RMICall(RMIFn("clamp"), [
-								RMICall(RMIFn("round"), [RMICall(RMIOp("/"), [p, RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "w")])]),
-								RMICall(RMIOp("*"), [RMIDouble(-1.), RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "xyz")]),
-								RMIStructMember(RMIArrayIndex("repetitions", id.repetitionCounter), "xyz"),
+					p,
+					\i, acc2, rep -> {
+						RMICall(RMIOp("-"), [
+							RMIBrackets(acc2),
+							RMICall(RMIOp("*"), [
+								RMIArrayIndex("spaces", id.repetitionCounter + i),
+								RMICall(RMIFn("clamp"), [
+									RMICall(RMIFn("round"), [RMICall(RMIOp("/"), [RMIBrackets(acc2), RMIArrayIndex("spaces", id.repetitionCounter + i)])]),
+									RMICall(RMIOp("*"), [RMIDouble(-1.), RMIArrayIndex("repetitions", id.repetitionCounter + i)]),
+									RMIArrayIndex("repetitions", id.repetitionCounter + i),
+								])
 							])
 						])
-					]),
-					p
+					}
 				)
 			};
 			resultExp = wrapFn(RMPrimitive2RMIExp(
@@ -110,12 +113,18 @@ RMScene2RMIExp0(
 
 			if (topLevel) Pair(
 				RMObjectCounter(
-					resultExp.first
-					with topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, compositeObject),
-					repetitionCounter = if (isSome(acc.repetition)) id.repetitionCounter + 1 else id.repetitionCounter,
+					resultExp.first with
+					topLevelObjects = setTree(resultExp.first.topLevelObjects, id.objectId, compositeObject),
+					repetitionCounter = if (!isEmptyList(acc.repetition)) id.repetitionCounter + countList(acc.repetition) else id.repetitionCounter,
 				),
 				resultExp.second
-			) else resultExp
+			) else Pair(
+				RMObjectCounter(
+					resultExp.first with
+					repetitionCounter = if (!isEmptyList(acc.repetition)) id.repetitionCounter + countList(acc.repetition) else id.repetitionCounter,
+				),
+				resultExp.second
+			)
 		}
 		RMTranslate(object, d): RMScene2RMIExp0(
 			object,
@@ -152,7 +161,7 @@ RMScene2RMIExp0(
 		);
 		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExp0(
 			object,
-			RMSceneAccumulators(acc with repetition = Some(Pair(getValue(space), getValue(repetitions)))),
+			RMSceneAccumulators(acc with repetition = Cons(Pair(getValue(space), getValue(repetitions)), acc.repetition)),
 			id,
 			topLevel,
 			simpleDistance,
@@ -715,16 +724,22 @@ addRMIXYZ(c1 : RMIXYZ, c2 : RMIXYZ) -> RMIXYZ {
 	RMIXYZ(c1.x + c2.x, c1.y + c2.y, c1.z + c2.z)
 }
 
-addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate {
+addRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMXYZ {
 	c1xyz = expandRMCoordinate(c1);
 	c2xyz = expandRMCoordinate(c2);
 	RMXYZ(c1xyz.x + c2xyz.x, c1xyz.y + c2xyz.y, c1xyz.z + c2xyz.z)
 }
 
-multiplyRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMCoordinate {
+multiplyRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMXYZ {
 	c1xyz = expandRMCoordinate(c1);
 	c2xyz = expandRMCoordinate(c2);
 	RMXYZ(c1xyz.x * c2xyz.x, c1xyz.y * c2xyz.y, c1xyz.z * c2xyz.z)
+}
+
+divideRMCoordinate(c1 : RMCoordinate, c2 : RMCoordinate) -> RMXYZ {
+	c1xyz = expandRMCoordinate(c1);
+	c2xyz = expandRMCoordinate(c2);
+	RMXYZ(c1xyz.x / c2xyz.x, c1xyz.y / c2xyz.y, c1xyz.z / c2xyz.z)
 }
 
 addColorToRMIExp(exp : RMIExp, id : RMObjectCounter, color : RMIExp, innerLevel : bool) -> Pair<RMObjectCounter, RMIProperty> {
