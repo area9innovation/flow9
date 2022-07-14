@@ -51,7 +51,8 @@ uniform PositionsBlock {
 uniform ObjectParametersBlock {
 	vec4 objectParameters[%numColors% + numTextures];
 	float smoothCoefficients[%numSmooth%];
-	vec4 repetitions[%numRepetitions%];
+	vec3 spaces[%numRepetitions%];
+	vec3 repetitions[%numRepetitions%];
 };
 
 struct ObjectInfo {
