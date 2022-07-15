@@ -2,6 +2,7 @@ import string;
 import text/deserialize_string;
 import math/bits;
 import math/stringmath;
+import math/matrix;
 
 export {
 	humpCase(s : string, initial : bool) -> string;
@@ -45,6 +46,38 @@ export {
 
 	// Checks if all characters in the string are ASCII, i.e. their codes don't exceed 127
 	isAsciiString(s : string) -> bool;
+
+	/*
+	Formats the input matrix (array of columns, which are arrays of rows) into the output like:
+
+	| # | MPE# | ND Expression                | MPE Translation                        | ND Rationale | MPE Rationale                               |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 1 | 5    |  ` ( ( ps /\ ch ) -> th ) `  |  ` ( ph -> ( ( ps /\ ch ) -> th ) ) `  | Given        | $e.                                         |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 2 | 2    |  ` ( ch -> ps ) `            |  ` ( ph -> ( ch -> ps ) ) `            | Given        | $e.                                         |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 3 | 1    |  ` ch `                      |  ` ( ph -> ch ) `                      | Given        | $e.                                         |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 4 | 3    |  ` ps `                      |  ` ( ph -> ps ) `                      |  ` -> `E 2,3 |  ~ mpd , the MPE equivalent of ` -> `E, 1,2 |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 5 | 4    |  ` ( ps /\ ch ) `            |  ` ( ph -> ( ps /\ ch ) ) `            |  ` /\ `I 4,3 |  ~ jca , the MPE equivalent of ` /\ `I, 3,1 |
+
+	*/
+	stringMatrix2s(m : [[string]], colHeaders : Maybe<[string]>, rowHeadres : Maybe<[string]>) -> string;
+
+	/*
+	Formats the input matrix (array of columns, which are arrays of rows) into the output like:
+
+	 #   MPE#   ND Expression                  MPE Translation                          ND Rationale   MPE Rationale                               
+	------------------------------------------------------------------------------------------------------------------------------------------------
+	 1   5       ` ( ( ps /\ ch ) -> th ) `     ` ( ph -> ( ( ps /\ ch ) -> th ) ) `    Given          $e.                                         
+	 2   2       ` ( ch -> ps ) `               ` ( ph -> ( ch -> ps ) ) `              Given          $e.                                         
+	 3   1       ` ch `                         ` ( ph -> ch ) `                        Given          $e.                                         
+	 4   3       ` ps `                         ` ( ph -> ps ) `                         ` -> `E 2,3    ~ mpd , the MPE equivalent of ` -> `E, 1,2 
+	 5   4       ` ( ps /\ ch ) `               ` ( ph -> ( ps /\ ch ) ) `               ` /\ `I 4,3    ~ jca , the MPE equivalent of ` /\ `I, 3,1 
+
+	*/
+	stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string;
 }
 
 humpCase(s : string, initial : bool) -> string {
@@ -230,4 +263,86 @@ toStringFormatted2(v : flow) -> string {
 
 isAsciiString(s : string) -> bool {
 	forall(s2a(s), \code -> code < 128);
+}
+
+// Returns a pair: first is a longest line in the string (lines are separated by a '\n')
+// and second is a number of lines in the string.
+stringDims(s : string) -> Pair<int, int> {
+	lines = strSplit(s, "\n");
+	Pair(
+		fold(tail(lines), strlen(lines[0]), \acc, line -> max(acc, strlen(line))),
+		length(lines)
+	);
+}
+
+// Makes a complete rectangular cell out of string `s` with a given diensions:
+// the length of each line: `dims.first` and number of lines: `dims.second`
+fillCell(s : string, dims : Pair<int, int>) -> [string] {
+	s_lines = strSplit(s, "\n");
+	map(enumFromTo(0, dims.second - 1), \i ->
+		if (i < length(s_lines)) {
+			line = " " + s_lines[i];
+			if (strlen(line) < dims.first) {
+				rpad(line, " ", dims.first);
+			} else {
+				substring(line, 0, dims.first);
+			}
+		} else {
+			strRepeat(" ", dims.first);
+		}
+	);
+}
+
+stringMatrix2s(m : [[string]], colHeaders : Maybe<[string]>, rowHeadres : Maybe<[string]>) -> string {
+	if (m == []) "" else {
+		m1 = eitherMap(colHeaders, \hs -> mapi(m, \i, col -> concat([if (i < length(hs)) hs[i] else ""], col)), m);
+		m2 = eitherMap(rowHeadres, \hs -> concat(if (isNone(colHeaders)) [hs] else [concat([""], hs)], m1), m1);
+		matr = completeMatrix(m2, "");
+		n_rows = length(matr[0]);
+		dims = map(matr, \col -> map(col, \row -> stringDims(row)));
+		cols = map(dims, \col -> fold(col, 0, \ac, row -> max(ac, row.first + 2)));
+		rows = map(enumFromTo(0, n_rows - 1), \i -> fold(dims, 0, \ac, col -> max(ac, col[i].second)));
+		cells = mapi(matr, \i, col -> mapi(col, \j, row -> fillCell(row, Pair(cols[i], rows[j]))));
+		leng = fold(cols, 0, \acc, col -> acc + col + 1) + 1;
+		strGlue(
+			map(enumFromTo(0, n_rows - 1),
+				\i -> strGlue(
+					map(enumFromTo(0, rows[i] - 1),
+						\j -> "|" + strGlue(mapi(cols, \k,__ -> cells[k][i][j]), "|") + "|"
+					),
+					"\n"
+				)
+			),
+			"\n" + strRepeat("-", leng) + "\n"
+		)
+	}
+}
+
+stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string {
+	if (m == []) "" else {
+		m1 = eitherMap(colHeaders, \hs -> mapi(m, \i, col -> concat([if (i < length(hs)) hs[i] else ""], col)), m);
+		matr = completeMatrix(m1, "");
+		n_rows = length(matr[0]);
+		dims = map(matr, \col -> map(col, \row -> stringDims(row)));
+		cols = map(dims, \col -> fold(col, 0, \ac, row -> max(ac, row.first + 2)));
+		rows = map(enumFromTo(0, n_rows - 1), \i -> fold(dims, 0, \ac, col -> max(ac, col[i].second)));
+		cells = mapi(matr, \i, col -> mapi(col, \j, row -> fillCell(row, Pair(cols[i], rows[j]))));
+		leng = fold(cols, 0, \acc, col -> acc + col + 1);
+		foldi(
+			map(enumFromTo(0, n_rows - 1),
+				\i -> strGlue(
+					map(enumFromTo(0, rows[i] - 1),
+						\j -> strGlue(mapi(cols, \k,__ -> cells[k][i][j]), " ")
+					),
+					"\n"
+				)
+			),
+			"",
+			\i, acc, s -> {
+				if (i != 1 || isNone(colHeaders)) acc + "\n" + s else  {
+					acc + "\n" + strRepeat("-", leng) + "\n" + s
+				}
+			}
+		)
+	}
 }
