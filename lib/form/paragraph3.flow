@@ -535,8 +535,13 @@ getParaLineInfos(
 	mapi(reflowResult, \i, line -> {
 		words = if (isUrlParameterTrue("new") && alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
 			isSpace = switch (lastElement(line.words, emptyParaWord).word) {
-				Space(__): true;
-				default: false;
+				Space(spaceForm) : switch (spaceForm : GhostForm) {
+					Text(text, __) : {
+						text == " "
+					};
+					default: false
+				};
+				default : false;
 			};
 			if (isSpace) take(line.words, length(line.words) - 1) else line.words
 		} else line.words;
@@ -1389,9 +1394,19 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
 		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
 			lastWord = i == wordsCount;
+			defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
 			switch (w.word) {
-				Space(__): if (lastWord) Pair(acc.first, acc.second + fgetValue(w.metrics).width) else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
-				default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+				Space(spaceForm): {
+					switch (spaceForm : GhostForm) {
+						Text(text, __) : {
+							if (text == " ") {
+								if (lastWord) defValue() else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
+							} else defValue()
+						};
+						default: defValue()
+					}
+				};
+				default: defValue();
 			}
 		});
 		if (spacesAndWordsWidth.first > 0) {
@@ -1412,9 +1427,11 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 					Space(__): {
 						if (newJustifyEnabled && alignment == Justify()) {
 							switch (f : GhostForm) {
-								Text(__, __) : {
-									spaceSize = getStaticFormSize(f);
-									FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
+								Text(text, __) : {
+									if (text == " ") {
+										spaceSize = getStaticFormSize(f);
+										FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
+									} else metrics
 								}
 								default: metrics
 							}
@@ -1440,6 +1457,22 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 									joinText(t1, s1, t2, s2);
 								}
 
+								additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
+									switch (w) {
+										Space(spaceForm): {
+											switch (spaceForm : GhostForm) {
+												Text(text, __) : {
+													if (text == " ") {
+														wordSpacing;
+													} else 0.0
+												};
+												default: 0.0
+											}
+										}
+										default: 0.0;
+									};
+								} else 0.0;
+
 								if (length(join) == 1 && intIdM == p.interactivityIdM) {
 									t : Form = join[0];
 
@@ -1450,15 +1483,6 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										m = getStaticFormSize(t);
 										optimizedLineElementMetrics : FormMetrics = fgetValue(p.metrics);
 										wordWidth = getStaticFormSize(f).width;
-
-										additionalWidth = switch (w) {
-											Space(__): {
-												if (newJustifyEnabled && alignment == Justify()) {
-													if (lastWord) 0.0 else wordSpacing;
-												} else 0.0;
-											}
-											default: 0.0;
-										};
 
 										Pair(
 											t,
@@ -1473,7 +1497,20 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										OptimizedLineElement(jtf.first, jtf.second, intIdM, nextWidgetId),
 										tail_
 									);
-								} else Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
+								} else {
+									fMetrics : FormMetrics = fgetValue(metrics);
+									Cons(
+										OptimizedLineElement(
+											f, 
+											FormMetrics(fMetrics with 
+												width = fMetrics.width + additionalWidth
+											) |> const, 
+											intIdM, 
+											nextWidgetId
+										), 
+										acc
+									);
+								};
 							}
 							default : {
 								Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
@@ -1491,8 +1528,13 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 			map(arr, \e -> {
 				switch (e.f : GhostForm) {
 					Text(t, s): {
+						fMetrics : FormMetrics = fgetValue(e.metrics);
 						OptimizedLineElement(
-							e with f = Text(t, arrayPush(s, wordSpacingStyle))
+							e with 
+							f = Text(t, arrayPush(s, wordSpacingStyle)), 
+							metrics = FormMetrics(fMetrics with 
+								width = roundTo(fMetrics.width, 0.01)
+							) |> const
 						)
 					}
 					default: e;
