@@ -1,0 +1,169 @@
+// © Copyright 2011 Area9 Technologies.
+
+import formats/html/html;
+import lingo/compiler/syntaxtree_util;
+import formats/html/html_parse;
+import formats/html/parser2/html_parse_typed;
+import formats/html/html_node;
+
+export {
+	// Following HTML parsing pitfalls are handled:
+	// - optionality of closing tags: </li>, </tr>, </td> (may be skipped for certain next opening tags)
+	// - stray </br> and </p> tags with no corresponding opening tags
+	// - sudden interruption of the flow of tokens by closing </html> tag
+	// Returns a pair: the sequence of toplevel HTML nodes and an error message (is empty when no error are found).
+ 	parseHtml2(text: string) -> Pair<[HtmlNode], string>;
+}
+
+plainHtmlNode2lowerCase(nodes : [PlainHtmlNode]) -> [PlainHtmlNode] {
+	map(nodes, \plain ->
+		switch (plain) {
+			PlainHtmlComment(text): 
+				PlainHtmlComment(text);
+			PlainHtmlEntity(prefix, body): 
+				PlainHtmlEntity(prefix, body);
+			PlainHtmlTag(open, tag, attribs, close): 
+				PlainHtmlTag(
+					open,
+					toLowerCase(tag), 
+					map(attribs, \attr -> 
+						PlainHtmlAttrib(toLowerCase(attr.key), toLowerCase(attr.val))
+					),
+					close
+				);
+			PlainHtmlText(text): 
+				PlainHtmlText(text);
+		}
+	);
+}
+
+
+parseHtml2(text: string) -> Pair<[HtmlNode], string> {
+	err = ref "";
+	on_err = \s -> err := ^err + (if (^err == "") "" else "\n") + "html parsing error: " + s;
+	plain = plainHtmlNode2lowerCase(parsePlainHtmlSource(text, on_err).nodes);
+	nodes = parseHtmlStructured2(plain, on_err);
+	Pair(nodes, ^err);
+}
+
+parseHtmlStructured2(elems : [PlainHtmlNode], err : (string) -> void) -> [HtmlNode] {
+	stack = parseHtmlNodeStructured2(elems, 0, err, ParseHtmlStack2(HtmlTag("html", [], []), makeList(), None()));
+	if  (stack.parent != None()) {
+		err("non-empty stack at the end of html parsing");
+	}
+	list2array(stack.elems);
+}
+
+ParseHtmlStack2(
+	tag : HtmlTag,
+	elems : List<HtmlNode>,
+	parent : Maybe<ParseHtmlStack2>
+);
+
+closeHtmlTag2(depth : int, stack : ParseHtmlStack2, err : (string) -> void) -> ParseHtmlStack2 {
+	if (depth == 0) stack else {
+		switch (stack.parent) {
+			Some(parent): {
+				new_stack = ParseHtmlStack2(parent with
+					elems = Cons(
+						HtmlTag(stack.tag with 
+							children = list2array(stack.elems)
+						),
+						parent.elems
+					),
+				);
+				closeHtmlTag2(depth - 1, new_stack, err);
+			}
+			None(): {
+				err("no parent of: " + htmlNode2s(stack.tag));
+				stack;
+			}
+		}
+	}
+}
+
+closeAllHtmlTags2(stack : ParseHtmlStack2) -> ParseHtmlStack2 {
+	switch (stack.parent) {
+		Some(parent): {
+			new_stack = ParseHtmlStack2(parent with
+				elems = Cons(
+					HtmlTag(stack.tag with 
+						children = list2array(stack.elems)
+					),
+					parent.elems
+				),
+			);
+			closeAllHtmlTags2(new_stack);
+		}
+		None(): {
+			stack;
+		}
+	}
+}
+
+parseHtmlNodeStructured2(elems : [PlainHtmlNode], i : int, err : (string) -> void, stack : ParseHtmlStack2) -> ParseHtmlStack2 {
+	if (i == length(elems)) {
+		closeAllHtmlTags2(stack); 
+	} else {
+		elem = elems[i];
+		stack1 = switch (elem) {
+			PlainHtmlTag(open, tag, attribs, close): {
+				html_tag = HtmlTag(tag, map(attribs, \attr -> HtmlAttrib(attr.key, attr.val)), []);
+				if (open == "<" && close == "/>") {
+					ParseHtmlStack2(stack with elems = Cons(html_tag, stack.elems));
+				} else if (open == "<" && close == ">") {
+					if (tag == "br" || tag == "p") {
+						ParseHtmlStack2(stack with elems = Cons(HtmlTag(tag, [], []), stack.elems));
+					} else {
+						depth = if (tag == "li") {
+							if (stack.tag.tag == "li") 1 else 0;
+						} else if (tag == "tr") {
+							if (stack.tag.tag == "tr") 1 else
+							if (stack.tag.tag == "td") 2 else 0;
+						} else if (tag == "td") {
+							if (stack.tag.tag == "td") 1 else 0;
+						} else {
+							0;
+						}
+						ParseHtmlStack2(html_tag, makeList(), Some(closeHtmlTag2(depth, stack, err)));
+					}
+				} else if (open == "</" && close == ">") {
+					if (tag == "br" || tag == "p") {
+						stack;
+					} else {
+						if (stack.tag.tag != tag) {
+							depth = if (tag == "tr") {
+								if (stack.tag.tag == "table") 0 else 
+								if (stack.tag.tag == "td") 2 else 0;
+							} else if (tag == "ul" || tag == "ol") {
+								if (stack.tag.tag == "li") 2 else 0;
+							} else if (tag == "table") {
+								if (stack.tag.tag == "tr") 2 else
+								if (stack.tag.tag == "td") 3 else 0;
+							} else {
+								0;
+							}
+							closeHtmlTag2(depth, stack, err);
+						} else {
+							closeHtmlTag2(1, stack, err);
+						}
+					}
+				} else {
+					err("illegal combination of open/close brackets");
+					stack;
+				}
+			}
+			default: {
+				node = switch (elem) {
+					PlainHtmlComment(text): HtmlComment(text)
+					PlainHtmlEntity(prefix, body): HtmlEntity(prefix, body);
+					PlainHtmlTag(open, tag, attribs, close): 
+						HtmlTag(tag, map(attribs, \attr -> HtmlAttrib(attr.key, attr.val)), []);
+					PlainHtmlText(text): HtmlText(text);
+				}
+				ParseHtmlStack2(stack with elems = Cons(node, stack.elems));
+			}
+		}
+		parseHtmlNodeStructured2(elems, i + 1, err, stack1);
+	}
+}

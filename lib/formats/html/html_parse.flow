@@ -4,22 +4,9 @@ import formats/html/html;
 import lingo/compiler/syntaxtree_util;
 import formats/html/parser/ast;
 import formats/html/parser/parser;
+import formats/html/html_node;
 
 export {
-	HtmlNode ::= HtmlTag, HtmlText, HtmlEntity, HtmlComment;
-		HtmlTag(
-			tag: string,
-			attribs: [HtmlAttrib],
-			children: [HtmlNode]
-		);
-		HtmlAttrib(key: string, val: string);
-		HtmlText(text: string);
-		HtmlComment(text: string);
-		HtmlEntity(
-			prefix : string, // Prefixes: &# - decimal, &#x - hex, & - string
-			body : string    // codes:    8828,         22A4       forall
-		);
-
 	// Following HTML parsing pitfalls are handled:
 	// - optionality of closing tags: </li>, </tr>, </td> (may be skipped for certain next opening tags)
 	// - stray </br> and </p> tags with no corresponding opening tags
@@ -27,11 +14,9 @@ export {
 	// Returns a pair: the sequence of toplevel HTML nodes and an error message (is empty when no error are found).
  	parseHtml(text: string) -> Pair<[HtmlNode], string>;
 
-	// Converts the HTML nodes back to a string (inverse function to `parseHtml`);
-	html2s(html : [HtmlNode]) -> string; 
-
-	// Unescape the underlying HTML entity
-	unescapeHtmlEntity(entity : HtmlEntity) -> string;
+	HtmlTagKind ::= HtmlTagOpen, HtmlTagClose, HtmlTagClopen;
+		HtmlTagOpen(); HtmlTagClose(); HtmlTagClopen();
+	parseHtmlPlain(src : string, err : (string) -> void) -> [Pair<HtmlNode, HtmlTagKind>];
 }
 
 parseHtml(text: string) -> Pair<[HtmlNode], string> {
@@ -41,9 +26,6 @@ parseHtml(text: string) -> Pair<[HtmlNode], string> {
 	nodes = parseHtmlStructured(plain, on_err);
 	Pair(nodes, ^err);
 }
-
-HtmlTagKind ::= HtmlTagOpen, HtmlTagClose, HtmlTagClopen;
-	HtmlTagOpen(); HtmlTagClose(); HtmlTagClopen();
 
 parseHtmlStructured(elems : [Pair<HtmlNode, HtmlTagKind>], err : (string) -> void) -> [HtmlNode] {
 	stack = parseHtmlNodeStructured(elems, 0, err, ParseHtmlStack(HtmlTag("html", [], []), makeList(), None()));
@@ -160,40 +142,12 @@ parseHtmlNodeStructured(elems : [Pair<HtmlNode, HtmlTagKind>], i : int, err : (s
 	}
 }
 
-html2s(html : [HtmlNode]) -> string {
-	concatStrings(map(html, htmlNode2s));
-}
-
-htmlNode2s(elem : HtmlNode) -> string {
-	switch (elem) {
-		HtmlTag(tag, attribs, body): {
-			attribs_s = concatStrings(
-				mapi(attribs, \i, attr -> 
-					attr.key + "='" + attr.val + "'" + if (i + 1 != length(attribs)) " " else ""
-				)
-			);
-			if (length(body) > 0) {
-				open_tag = "<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + ">";
-				close_tag = "</" + tag + ">";
-				open_tag + html2s(body) + close_tag;
-			} else {
-				"<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + "/>"
-			}
-		}
-		HtmlText(text):       text;
-		HtmlComment(text):    "<!--" + text + "-->";
-		HtmlEntity(prefix, body): prefix + body + ";";
-	}
-}
-
 parseHtmlPlain(src : string, err : (string) -> void) -> [Pair<HtmlNode, HtmlTagKind>] {
 	pr1 = parse_html_source(src);
 	st = pr1.first;
 	if (st.end != strlen(src)) {
 		msg = "met: '" + pr1.second.met + "', while expected: '" + strGlue(pr1.second.expected, ", ") + "'";
-		err("Syntax error: " + msg + ", html source:\n" + 
-				strIndent(src)
-		);
+		err("Syntax error: " + msg + ", html source:\n" + strIndent(src));
 		[]
 	} else {
 		htmlMakeNodes(st, src, err);
@@ -249,7 +203,7 @@ htmlMakeAttribs(sts : [SyntaxTree], src : string) -> [HtmlAttrib] {
 			} else if (elem.rule == st_html_attrib2) {
 				make_attrib(grabSTText(get_html_source_html_attrib2_val(elem), src));
 			} else if (elem.rule == st_html_attrib3) {
-				make_attrib(grabSTText(get_html_source_html_attrib1_val(elem), src));
+				make_attrib(grabSTText(get_html_source_html_attrib3_val(elem), src));
 			} else if (elem.rule == st_html_attrib4) {
 				make_attrib("1");
 			} else {
@@ -258,14 +212,4 @@ htmlMakeAttribs(sts : [SyntaxTree], src : string) -> [HtmlAttrib] {
 			}
 		}
 	);
-}
-
-unescapeHtmlEntity(entity : HtmlEntity) -> string {
-	if (entity.prefix == "&#") {
-		fromCharCode(s2i(entity.body)); // like &#8828,
-	} else if (entity.prefix == "&#x") {
-		fromCharCode(parseHex(entity.body)); // like &#x22A4;
-	} else {
-		unescapeHtml2("&" + entity.body + ";"); // like &forall;
-	}
 }
