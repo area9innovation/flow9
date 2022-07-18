@@ -1106,12 +1106,23 @@ RenderLine(
 	remaining = width - info.lineWidth;
 	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
 
+	wordsCount = length(info.optimizedLine) - 1;
+
 	// Inter-word spacing for justification
 	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1 && !newJustifyEnabled) {
-		nwords = length(info.optimizedLine);
-		min(10.0, remaining / i2d(nwords - 1));
+		nSpaces = foldi(info.optimizedLine, 0 , \i, acc, elem : OptimizedLineElement -> {
+				lastWord = i == wordsCount;
+				switch (elem.f : GhostForm) {
+					Text(text, __) : {
+						if (text == " ") {
+							if (lastWord) acc else acc + 1
+						} else acc
+					};
+					default: acc
+				}
+		});
+		if (nSpaces > 0) remaining / i2d(nSpaces) else 0.0
 	} else 0.0;  // Inter-word spacing via CSS instead because mobiles are too slow.
-
 	justifyExtraWidth = ref 0.0;
 
 	// The width and the individual forms
@@ -1141,6 +1152,18 @@ RenderLine(
 			} else fm
 		}
 
+		isSpaceForm = {
+			lastWord = i == wordsCount;
+			!newJustifyEnabled && switch (f : GhostForm) {
+				Text(text, __) : {
+					if (text == " ") {
+						!lastWord
+					} else false
+				};
+				default: false
+			}
+		};
+
 		applyStylesAndOffset = \form : Form ->
 			form
 			|> (\fm ->
@@ -1152,9 +1175,8 @@ RenderLine(
 						^alignmentOffset,
 						y,
 						dy,
-						m.width,
+						m.width + if (isSpaceForm) interWord else 0.0,
 						info.lineHeight,
-						interWord,
 						highLightOffset,
 						interlineSpacing,
 						info.containsDynamicElement
@@ -1164,7 +1186,8 @@ RenderLine(
 				)
 			);
 
-		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
+		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 
+		else if (isSpaceForm) interWord else 0.0;
 
 		r = switch (f : GhostForm) {
 			Empty() : None();
@@ -1198,7 +1221,7 @@ RenderLine(
 			default : Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
 		}
 
-		if (m.width != 0.0 && !intStyleContains(IgnoreMetrics(), elem, interactiveStyles)) {
+		if (m.width != 0.0 && !intStyleContains(IgnoreMetrics(), elem, interactiveStyles)) {		
 			justifyExtraWidth := ^justifyExtraWidth + justifyOffset;
 			alignmentOffset := ^alignmentOffset + m.width + justifyOffset;
 		}
@@ -1245,7 +1268,6 @@ applyIntStylesAndHighlighting(
 	baselineShift : double,
 	width : double,
 	height : double,
-	interWord : double,
 	highLightOffset : double,
 	interlineSpacing : double,
 	containsDynamicElement : bool
@@ -1267,7 +1289,7 @@ applyIntStylesAndHighlighting(
 			);
 		if (rectStyle == []) Empty()
 		else Rectangle(
-			width + interWord,
+			width,
 			height + interlineSpacing + 0.1,
 			rectStyle
 		);
@@ -1285,7 +1307,7 @@ applyIntStylesAndHighlighting(
 			Empty() : f;
 			default : {
 				textAndBack = Group([
-					Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
+					Translate(const(xOffset), const(yOffset + highLightOffset), textAndBackPair.second),
 					f
 				]);
 				if (containsDynamicElement) Access([AccessRole("group")], textAndBack) else textAndBack
