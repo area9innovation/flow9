@@ -504,6 +504,15 @@ renderParagraphEx(
 	})
 }
 
+isSpaceForm(spaceForm : GhostForm) -> bool {
+	switch (spaceForm : GhostForm) {
+		Text(text, __) : {
+			text == " "
+		};
+		default: false
+	};
+}
+
 getParaLineInfos(
 	alignment : ParaLineAlignment,
 	wordGroups : [ParaWordGroup],
@@ -535,12 +544,7 @@ getParaLineInfos(
 	mapi(reflowResult, \i, line -> {
 		words = if (isUrlParameterTrue("new") && alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
 			isSpace = switch (lastElement(line.words, emptyParaWord).word) {
-				Space(spaceForm) : switch (spaceForm : GhostForm) {
-					Text(text, __) : {
-						text == " "
-					};
-					default: false
-				};
+				Space(spaceForm) : isSpaceForm(spaceForm);
 				default : false;
 			};
 			if (isSpace) take(line.words, length(line.words) - 1) else line.words
@@ -1106,12 +1110,16 @@ RenderLine(
 	remaining = width - info.lineWidth;
 	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
 
+	wordsCount = length(info.optimizedLine) - 1;
+
 	// Inter-word spacing for justification
 	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1 && !newJustifyEnabled) {
-		nwords = length(info.optimizedLine);
-		min(10.0, remaining / i2d(nwords - 1));
+		nSpaces = foldi(info.optimizedLine, 0 , \i, acc, elem : OptimizedLineElement -> {
+				lastWord = i == wordsCount;
+				if (!lastWord && isSpaceForm(elem.f)) acc + 1 else acc
+		});
+		if (nSpaces > 0) remaining / i2d(nSpaces) else 0.0
 	} else 0.0;  // Inter-word spacing via CSS instead because mobiles are too slow.
-
 	justifyExtraWidth = ref 0.0;
 
 	// The width and the individual forms
@@ -1141,6 +1149,9 @@ RenderLine(
 			} else fm
 		}
 
+		lastWord = i == wordsCount;
+		isSpace = !newJustifyEnabled && !lastWord && isSpaceForm(elem.f);
+
 		applyStylesAndOffset = \form : Form ->
 			form
 			|> (\fm ->
@@ -1152,9 +1163,8 @@ RenderLine(
 						^alignmentOffset,
 						y,
 						dy,
-						m.width,
+						m.width + if (isSpace) interWord else 0.0,
 						info.lineHeight,
-						interWord,
 						highLightOffset,
 						interlineSpacing,
 						info.containsDynamicElement
@@ -1164,7 +1174,8 @@ RenderLine(
 				)
 			);
 
-		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
+		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 
+		else if (isSpace) interWord else 0.0;
 
 		r = switch (f : GhostForm) {
 			Empty() : None();
@@ -1245,7 +1256,6 @@ applyIntStylesAndHighlighting(
 	baselineShift : double,
 	width : double,
 	height : double,
-	interWord : double,
 	highLightOffset : double,
 	interlineSpacing : double,
 	containsDynamicElement : bool
@@ -1267,7 +1277,7 @@ applyIntStylesAndHighlighting(
 			);
 		if (rectStyle == []) Empty()
 		else Rectangle(
-			width + interWord,
+			width,
 			height + interlineSpacing + 0.1,
 			rectStyle
 		);
@@ -1285,7 +1295,7 @@ applyIntStylesAndHighlighting(
 			Empty() : f;
 			default : {
 				textAndBack = Group([
-					Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
+					Translate(const(xOffset), const(yOffset + highLightOffset), textAndBackPair.second),
 					f
 				]);
 				if (containsDynamicElement) Access([AccessRole("group")], textAndBack) else textAndBack
