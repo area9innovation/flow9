@@ -82,7 +82,8 @@ public class HttpSupport extends NativeHost {
 			onStatus.invoke(responseCode);
 
 			// TODO: Make this asynchronous
-			BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+			ResultStreamPair p = getResultStreamPair(con);
+			BufferedReader in = new BufferedReader(new InputStreamReader(p.stream));
 			String inputLine;
 			StringBuffer response = new StringBuffer();
 
@@ -91,14 +92,37 @@ public class HttpSupport extends NativeHost {
 				response.append('\n');
 			}
 			in.close();
-
-			onData.invoke(response.toString());
+			if (p.isData) {
+				onData.invoke(response.toString());
+			} else {
+				onError.invoke(response.toString());
+			}
 		} catch (MalformedURLException e) {
 			onError.invoke("Malformed url " + url + " " + e.getMessage());
 		} catch (IOException e) {
 			onError.invoke("IO exception " + url + " " + e.getMessage());
 		}
 		return null;
+	}
+
+	private static class ResultStreamPair {
+		public InputStream stream;
+		public Boolean isData; // otherwise it's an error
+
+		private ResultStreamPair(InputStream stream, Boolean isData) {
+			this.stream = stream;
+			this.isData = isData;
+		}
+	}
+
+	private static final ResultStreamPair getResultStreamPair(HttpURLConnection con) {
+		/* getInputStream returns exception when status is not 200 and some other cases
+		If status is 400/500 -> we should call getErrorStream*/
+		try {
+			return new ResultStreamPair(con.getInputStream(), true);
+		} catch (IOException e) {
+			return new ResultStreamPair(con.getErrorStream(), false);
+		}
 	}
 
 	private static final java.lang.reflect.Method string2utf8Bytes;
@@ -124,7 +148,7 @@ public class HttpSupport extends NativeHost {
 		) {
 		return httpCustomRequestWithTimeoutNativeBase(url, method, headers, params, data, "auto", onResponse, async, timeout);
 	}
-	
+
 	private static final Object httpCustomRequestWithTimeoutNativeBase(String url, String method, Object[] headers,
 		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
@@ -211,16 +235,7 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
-			InputStream inputStream = null;
-			/* getInputStream returns exception when status is not 200 and some other cases
-			If status is 400/500 -> we should call getErrorStream*/
-			try {
-				inputStream = con.getInputStream();
-			} catch (IOException e) {
-			}
-			if (Objects.isNull(inputStream)) {
-				inputStream = con.getErrorStream();
-			}
+			InputStream inputStream = getResultStreamPair(con).stream;
 
 			if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
 				responseEncoding = "utf8_js";
@@ -232,7 +247,7 @@ public class HttpSupport extends NativeHost {
 			// inputStream might be null, if body is empty
 			if (Objects.nonNull(inputStream)) {
 				final int bufferSize = 1024;
-				
+
 				if (responseEncoding.equals("utf8")) {
 					// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
 					int additionalChars = 0;
@@ -246,9 +261,9 @@ public class HttpSupport extends NativeHost {
 					while (true) {
 						// How much chars we used to decode symbol into utf8 (1 or 2)
 						int codesUsed = 0;
-							
+
 						readSize = in.read(buffer, additionalChars, bufferSize);
-						
+
 						// We stop, if nothing read
 						if (readSize < 0) break;
 
@@ -256,13 +271,13 @@ public class HttpSupport extends NativeHost {
 						countSize = readSize + additionalChars - 1;
 						// Now, how much unprocessed chars we have
 						additionalChars = (char)readSize;
-						
+
 						int counter = 0;
 						while (counter < countSize) {
 							codesUsed = unpackSurrogatePair(response, buffer[counter], buffer[counter + 1]);
 							counter += codesUsed;
 
-							additionalChars -= codesUsed; 
+							additionalChars -= codesUsed;
 						}
 
 						if (additionalChars > 0) {
@@ -300,7 +315,7 @@ public class HttpSupport extends NativeHost {
 						response.append("\n");
 					}
 				}
-				
+
 			}
 			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
 
@@ -308,7 +323,7 @@ public class HttpSupport extends NativeHost {
 			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
 		} catch (IOException e) {
 			onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
-		}	
+		}
 		return null;
 	}
 
@@ -474,7 +489,7 @@ public class HttpSupport extends NativeHost {
 				}
 				in.close();
 			} catch (IOException e) {
-				onError.invoke("IO exception while reading reponse " + url + " " + e.getMessage());
+				onError.invoke("IO exception while reading response " + url + " " + e.getMessage());
 			}
 
 			if (responseCode != 200) {
