@@ -56,6 +56,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 	objectParametersB = make(extractObjectParametersFromRMScene(initialScene));
 	smoothCoefficientsB = make(extractSmoothCoefficientsFromRMScene(initialScene));
 	repetitionCoefficientsB = make(extractRepetitionCoefficientsFromRMScene(initialScene));
+	showStatusB = make(extractShowStatusFromRMScene(initialScene));
 
 	webglContextLoadedB = make(false);
 	fpsB = make(0);
@@ -76,6 +77,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					next(objectParametersB, extractObjectParametersFromRMScene(s));
 					next(smoothCoefficientsB, extractSmoothCoefficientsFromRMScene(s));
 					next(repetitionCoefficientsB, extractRepetitionCoefficientsFromRMScene(s));
+					next(showStatusB, extractShowStatusFromRMScene(s));
 					fixEmptyDistance = \str, fixStr -> if (str == "") fixStr else str;
 					hostCall("recompileShader", [
 						i2s(id),
@@ -352,6 +354,13 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					}));
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(showStatusB, FLift(fmerge)),
+				\parameters -> {
+					hostCall("updateVisibility", [flow(i2s(id)), flow(parameters)])|> ignore;
+				}
+			),
 		],
 		MGroup2(
 			displayRaymarchingCanvas(
@@ -444,7 +453,7 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 
 extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [RMMaterial(object, color, materialProperties)];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): [RMMaterial(object, color, materialProperties)];
 		RMPrimitive(): [];
 		RMTranslate(object, d): extractMaterialsFromRMScene(object);
 		RMRotate(object, r): extractMaterialsFromRMScene(object);
@@ -470,7 +479,7 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 
 extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): switch(trigger) {
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): switch(trigger) {
 			DynamicBehaviour(__, __): [trigger];
 			ConstBehaviour(__): [];
 		};
@@ -502,7 +511,7 @@ extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 
 extractTransformationsFromRMScene(obj : RMScene) -> [RMUnaryOperator] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [RMTranslate(RMRotate(RMScale(RMEmpty(), scale), rotation), position)];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): [RMTranslate(RMRotate(RMScale(RMEmpty(), scale), rotation), position)];
 		RMPrimitive(): [RMScale(RMEmpty(), const(RMXYZ(1., 1., 1.)))];
 		RMTranslate(object, d): map(extractTransformationsFromRMScene(object), \o -> RMTranslate(o, d));
 		RMRotate(object, r): map(extractTransformationsFromRMScene(object), \o -> RMRotate(o, r));
@@ -528,7 +537,7 @@ extractTransformationsFromRMScene(obj : RMScene) -> [RMUnaryOperator] {
 
 extractTransformationsBehaviours(obj : RMScene) -> [Behaviour<RMCoordinate>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [position, rotation, scale];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): [position, rotation, scale];
 		RMPrimitive(): [];
 		RMTranslate(object, d): arrayPush(extractTransformationsBehaviours(object), d);
 		RMRotate(object, r): arrayPush(extractTransformationsBehaviours(object), r);
@@ -600,7 +609,7 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 		}
 	};
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): getPrimitiveParameters(object);
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): getPrimitiveParameters(object);
 		RMPrimitive(): getPrimitiveParameters(obj);
 		RMTranslate(object, d): extractObjectParametersFromRMScene(object);
 		RMRotate(object, r): extractObjectParametersFromRMScene(object);
@@ -626,7 +635,7 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 
 extractSmoothCoefficientsFromRMScene(obj : RMScene) -> [Transform<double>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): [];
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): [];
 		RMPrimitive(): [];
 		RMTranslate(object, d): extractSmoothCoefficientsFromRMScene(object);
 		RMRotate(object, r): extractSmoothCoefficientsFromRMScene(object);
@@ -656,7 +665,7 @@ extractRepetitionCoefficientsFromRMScene(obj : RMScene) -> [Transform<Pair<RMXYZ
 
 extractRepetitionCoefficientsFromRMScene0(obj : RMScene, repetitionsList : List<Pair<Behaviour<RMXYZ>, Behaviour<RMXYZ>>>, scales : Transform<RMXYZ>) -> [Transform<Pair<RMXYZ, RMXYZ>>] {
 	switch(obj) {
-		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, fselect2(scales, scale, FLift2(multiplyRMCoordinate)));
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, fselect2(scales, scale, FLift2(multiplyRMCoordinate)));
 		RMPrimitive(): {
 			foldList(
 				reverseList(repetitionsList),
@@ -684,6 +693,32 @@ extractRepetitionCoefficientsFromRMScene0(obj : RMScene, repetitionsList : List<
 		RMSmoothSubtraction(objects, k): mapConcat(objects, \object -> extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales));
 		RMMaterial(object, color, materialProperties): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales);
 		RMInteractive(object, trigger): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales);
+		RMEmpty(): [];
+	}
+}
+
+extractShowStatusFromRMScene(obj : RMScene) -> [Behaviour<bool>] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): [shown];
+		RMPrimitive(): [];
+		RMTranslate(object, d): extractShowStatusFromRMScene(object);
+		RMRotate(object, r): extractShowStatusFromRMScene(object);
+		RMScale(object, s): extractShowStatusFromRMScene(object);
+		RMRepetitionLimited(object, c, l): extractShowStatusFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractShowStatusFromRMScene);
+		RMIntersection2(object1, object2): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
+		RMIntersection(objects): mapConcat(objects, extractShowStatusFromRMScene);
+		RMSubtraction2(object1, object2): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
+		RMSubtraction(objects): mapConcat(objects, extractShowStatusFromRMScene);
+		RMSmoothUnion2(object1, object2, k): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
+		RMSmoothUnion(objects, k): mapConcat(objects, extractShowStatusFromRMScene);
+		RMSmoothIntersection2(object1, object2, k): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
+		RMSmoothIntersection(objects, k): mapConcat(objects, extractShowStatusFromRMScene);
+		RMSmoothSubtraction2(object1, object2, k): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
+		RMSmoothSubtraction(objects, k): mapConcat(objects, extractShowStatusFromRMScene);
+		RMMaterial(object, color, materialProperties): extractShowStatusFromRMScene(object);
+		RMInteractive(object, trigger): extractShowStatusFromRMScene(object);
 		RMEmpty(): [];
 	}
 }
