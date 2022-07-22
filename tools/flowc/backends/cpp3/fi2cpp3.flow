@@ -1,0 +1,195 @@
+import tools/common/prog_version;
+import tools/flowc/backends/cpp3/fi2cpp3_compile;
+import tools/flowc/backends/cpp3/fi2cpp3_main;
+
+export {
+	fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void;
+}
+
+fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void {
+	fcVerbose(cfg, 0, "Building a cpp3 '" + cfg.flowfile + "' application " + (if (cfg.builder == "") "" else "with " + cfg.builder ) + "...");
+
+	builder_is_ready = true; /*if (cfg.builder == "gradle") {
+		gradle_version = fcGradleVersion(cfg);
+		if (gradle_version < 0.0) {
+			fcPrintln("No gradle is found in the system", cfg.threadId);
+			false;
+		} else if (gradle_version < 6.7) {
+			fcPrintln("Gradle version is: " + d2s(gradle_version) + ", while should be >= 6.7", cfg.threadId);
+			false;
+		} else {
+			true;
+		}
+	} else {
+		true;
+	}*/
+	if (!builder_is_ready) callback(5) else {
+		package_path = if (cfg.builder != "gradle") {
+			pathCombineMany(concat([cfg.generatedir], strSplit(cfg.namespace, ".")));
+		} else {
+			pathCombineMany(concat([cfg.generatedir, fileNameOnly(changeFileExt(cfg.exefile, "")), "src", "main", "cpp3"], strSplit(cfg.namespace, ".")));
+		}
+		ensureDirectoryExists(package_path);
+		gcontext = fi2cpp3Translate(program, cfg, package_path);
+
+		if (length(gcontext.errors) > 0) {
+			callback(5);
+		} else {
+			sources_list_file = pathCombine(package_path, "sources");
+			if (!setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""))) {
+				callback(5);
+			} else {
+				/*if (cfg.jarfile != "") {
+					if (fi2cpp3CheckCpp3Version(cfg)) {
+						if (cfg.builder == "gradle") {
+							fi2cpp3BuildWithGradle(cfg, callback);
+						} else {
+							fi2Cpp3BuildRaw(cfg, package_path, callback);
+						}
+					} else {
+						callback(5);
+					}
+				} else {
+					callback(0);
+				}*/
+				callback(0);
+			}
+		}
+	}
+}
+
+fi2cpp3Translate(program : FiProgram, cfg : FiCpp3Config, package_path : string) -> Cpp3GlobalContext {
+	fcVerbose(cfg, 1, "Collecting code for all imported files...");
+
+	main_fname = pathCombine(package_path, "Main.cpp3");
+	prev_build_has_collisions = getCollisionAndTimestampOfFile(main_fname).first;
+	cmodules_info = indexCpp3Modules(program);
+	cstructs_collisions = indexCpp3Structs(program, cmodules_info.first);
+	header_generator = \time ->  {
+		header =
+			"// HASH COLLISIONS: " + (if (cstructs_collisions.second) "YES" else "NO") + "\n" +
+			"// timestamp: " + d2s(time) + "\n\n" +
+			"#" + "include <cpp3_flow_runtime>\n\n" +
+			"namespace " + cfg.namespace + " {\n\n";
+		ref Cons(header, makeList())
+	};
+
+	gcontext = Cpp3GlobalContext(
+		cfg, program, package_path,
+		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
+		makeTree(), // globals
+		makeTree(), // globalFuncs
+		makeTree(), //fi2cpp3Natives(cfg), // natives
+		makeSet(), // missing_natives
+		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)), // has_func_def
+		makeTree(), // has_field_accessor
+		makeTree(), // uses_host
+		ref makeList(), // init_code
+		ref makeList(), // wrapper_code
+		ref makeList(), // native wrapper_code
+		header_generator,
+		cstructs_collisions.second || prev_build_has_collisions,
+		ref makeList(),
+		[]
+	);
+
+	indexCpp3Globals(gcontext);
+	generateCpp3Modules(gcontext, package_path);
+	generateCpp3StructDefs(gcontext, package_path);
+	generateCpp3MainClass(gcontext);
+	generateCpp3SingletonStructs(gcontext);
+	generateCpp3Structs(gcontext);
+	generateCpp3Wrappers(gcontext);
+
+	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
+		if (has) {
+			field_fname = pathCombine(package_path, "Field_" + name + ".cpp3");
+			if (fileExists(field_fname)) {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Cpp3 field module '" + field_fname + "' is already generated - keeping it", cfg.threadId);
+				}
+				class_path = pathCombine(package_path, "Field_" + name + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gcontext.to_compile, field_fname + "\n");
+				}
+			} else {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Creating cpp3 field module '" + field_fname + "'", cfg.threadId);
+				}
+				ftext = gcontext.header_generator(timestamp());
+				text = "interface Field_" + name + "<T> {\n" +
+					"\tT get_" + name + "();\n" +
+					"\tvoid set_" + name + "(T value);\n" +
+				"}\n";
+				rlistPush(ftext, text);
+				writeCpp3Source(gcontext, field_fname, javaList2String(ftext, ""));
+			}
+		}
+	});
+
+	traverseInOrder(gcontext.has_func_def, \nargs, has -> {
+		if (nargs > 11 && has) {
+			func_fname = pathCombine(package_path, "Func" + i2s(nargs) + ".cpp3");
+			if (fileExists(func_fname)) {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Cpp3 struct module '" + func_fname + "' is already generated - keeping it", cfg.threadId);
+				}
+				class_path = pathCombine(package_path, "Func" + i2s(nargs) + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gcontext.to_compile, func_fname + "\n");
+				}
+			} else {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Creating cpp3 struct module '" + func_fname + "'", cfg.threadId);
+				}
+				ftext = gcontext.header_generator(timestamp());
+				rlistPush(ftext,
+					"interface Func" + i2s(nargs) + "<RT," +
+					strGlue(map(enumFromTo(0, nargs - 1), \i -> "A" + i2s(i)), ", ") + "> {\n"
+				);
+				rlistPush(ftext,
+					"\tRT invoke(" +
+					strGlue(map(enumFromTo(0,nargs - 1), \i -> "A" + i2s(i) + " a" + i2s(i)), ", ") +
+					");\n"
+				);
+				writeCpp3Source(gcontext, func_fname, javaList2String(ftext, "}\n"));
+			}
+		}
+	});
+	gcontext;
+}
+
+fi2cpp3CheckCpp3Version(cfg : FiCpp3Config) -> bool {
+	cpp3_version_opt = lookupTreeDef(cfg.options, "cpp3-version", "");
+	if (cpp3_version_opt == "") {
+		// No restrictions on cpp3 version
+		true;
+	} else {
+		cpp3_version = map(strSplit(cpp3_version_opt, "."), s2i);
+		cpp3_installed = programVersion("cpp3", "-version", "cpp3 version");
+		cpp3c_installed = programVersion("cpp3c", "-version", "cpp3c");
+		ver2s = \v -> superglue(v, i2s, ".");
+		if (cpp3_installed == []) {
+			fcPrintln("cpp3 is not functioning for some reason", cfg.threadId);
+			false;
+		} else if (cpp3c_installed == []) {
+			fcPrintln("cpp3c is not functioning for some reason", cfg.threadId);
+			false;
+		} else if (cpp3_installed != cpp3c_installed) {
+			fcPrintln(
+				"cpp3 and cpp3c versions differ: " + ver2s(cpp3_installed) + " != " + ver2s(cpp3c_installed),
+				cfg.threadId
+			);
+			false;
+		} else if (!compareVersion(cpp3_version, cpp3_installed, \v1, v2 -> v1 == v2)) {
+			fcPrintln(
+					"Installed cpp3 version: " + ver2s(cpp3_installed) +
+					" doesn't match the required cpp3 version from config: " + cpp3_version_opt,
+					cfg.threadId
+			);
+			false;
+		} else {
+			true;
+		}
+	}
+}

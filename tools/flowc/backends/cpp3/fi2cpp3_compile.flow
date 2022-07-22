@@ -1,0 +1,1553 @@
+import math/hash;
+import tools/flowc/backends/common;
+import tools/flowc/backends/cpp3/fi2cpp3_defines;
+
+export {
+	indexCpp3Modules(program : FiProgram) -> Pair<Tree<string, Cpp3Module>, [Cpp3Module]>;
+	indexCpp3Structs(program : FiProgram, modules : Tree<string, Cpp3Module>) -> Pair<Tree<string, Cpp3Struct>, bool>;
+	indexCpp3Globals(gctx : Cpp3GlobalContext) -> void;
+	generateCpp3Modules(gctx : Cpp3GlobalContext, output_dir : string) -> void;
+	generateCpp3StructDefs(gctx : Cpp3GlobalContext, output_dir : string) -> void;
+	type2cpp3ObjType(gctx : Cpp3GlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string;
+}
+
+indexCpp3Modules(program : FiProgram) -> Pair<Tree<string, Cpp3Module>, [Cpp3Module]> {
+	init = Triple(makeTree(), makeTree(), []);
+
+	res = fold(program.traversal, init, \acc ,name -> {
+		module = lookupTreeDef(program.modules, name, dummyFiModule);
+		id = chooseCpp3ModuleId(module.fileinfo.flowfile, acc.second);
+		ndecls : Tree<string, FiDeclaration> = fold(
+			module.globalVars, makeTree(),
+			\acc2, d : FiGlobalVar -> setTree(acc2, d.name, d)
+		);
+		all_decls : [FiDeclaration] = if (true) {
+			// variables sorted by init order
+			odecls : [FiDeclaration] = mapConcat(
+				module.initOrder,
+				\n -> {
+					def = lookupTree(ndecls, n);
+					switch (def) {
+						Some(dec): [dec];
+						None(): [];
+					}
+				}
+			);
+			concat(module.natives, concat(odecls, module.functions));
+		} else {
+			// alphabetical order for comparing files
+			ndecls2 : Tree<string, FiDeclaration> = fold(
+				module.functions, ndecls,
+				\acc2, d : FiFunctionDec -> setTree(acc2, d.name, d)
+			);
+			ndecls3 : Tree<string, FiDeclaration> = fold(
+				module.natives, ndecls2,
+				\acc2, d : FiNativeDec -> setTree(acc2, d.name, d)
+			);
+			foldTree(ndecls3, [], \k,v,acc2 -> arrayPush(acc2,v))
+		}
+		// result
+		csm = Cpp3Module(name, module, id, ref makeList(), all_decls);
+		Triple(
+			setTree(acc.first, name, csm),
+			setTree(acc.second, id, true),
+			arrayPush(acc.third, csm)
+		);
+	});
+
+	Pair(res.first, res.third);
+}
+
+chooseCpp3ModuleId(name : string, known : Tree<string,bool>) -> string {
+	lastSlash = strLastIndexOf(name, "/");
+	nametk = if (lastSlash >= 0) strRight(name, lastSlash + 1) else name;
+	nametk2 = toLowerCase(strReplace(nametk, ".", "_"));
+	chooseCpp3IdIndex(nametk2, 1, known);
+}
+
+chooseCpp3StructName(structName : string, known : Set<string>) -> Pair<string, Set<string>> {
+	lcName = toLowerCase(structName);
+	if (containsSet(known, lcName)) {
+		idx = i2s(cpp3GetIndexForName(lcName, 1, known));
+		Pair(structName + "_" + idx, insertSet(known, lcName + "_" + idx));
+	} else {
+		Pair(structName, insertSet(known, lcName));
+	}
+}
+
+cpp3GetIndexForName(name : string, idx : int, known : Set<string>) -> int {
+	if (containsSet(known, name + "_" + i2s(idx))) {
+		cpp3GetIndexForName(name, idx + 1, known);
+	} else {
+		idx;
+	}
+}
+
+chooseCpp3IdIndex(stem : string, idx : int, known : Tree<string,bool>) -> string {
+	name = stem + (if (idx != 1) toString(idx) else "");
+	if (lookupTreeDef(known, name, false)) {
+		chooseCpp3IdIndex(stem, idx + 1, known);
+	} else {
+		name;
+	}
+}
+
+indexCpp3Structs(program : FiProgram, modules : Tree<string, Cpp3Module>) -> Pair<Tree<string, Cpp3Struct>, bool> {
+	// Order all structs by name
+	struct_list = foldTree(modules, Pair(makeTree(), makeSet()), \name, cpp3Module, acc -> {
+		fold(cpp3Module.module.structs, acc, \acc2, struct -> {
+			cpp3StructNameAndKnownStructures = chooseCpp3StructName(struct.name, acc2.second);
+			Pair(
+				setTree(acc2.first, struct.name, Triple(cpp3Module, cpp3StructNameAndKnownStructures.first, struct)),
+				cpp3StructNameAndKnownStructures.second
+			);
+		});
+	}).first;
+	hashed = foldTree(
+		struct_list,
+		makeTree(),
+		\name, __, acc -> {
+			hash = fastHashString(name);
+			switch (lookupTree(acc, hash)) {
+				Some(structs): setTree(acc, hash, insertSet(structs, name));
+				None(): setTree(acc, hash, makeSet1(name));
+			}
+		}
+	);
+	emptyArray : [Set<string>] = [];
+	hashCollisions = foldTree(hashed,
+		emptyArray,
+		\hash, names, acc -> if (sizeSet(names) > 1) concat(acc, [names]) else acc
+	);
+	if (length(hashCollisions) > 0 || !isConfigParameterTrue(program.config.config, "cpp3-incremental")) {
+		if (length(hashCollisions) > 0) {
+			fcPrintln("Struct names hashes have collisions:", program.config.threadId);
+			iter(hashCollisions, \collision -> fcPrintln("\t" + strGlue(set2array(collision), ","), program.config.threadId));
+		}
+		// Assign id values
+		init = Pair(0, makeTree());
+		res = foldTree(struct_list, init, \name, triple, acc -> {
+			id = acc.first;
+			cpp3Module = triple.first;
+			cpp3StructName = triple.second;
+			struct = triple.third;
+			fields = map(struct.args, \arg -> Cpp3StructField(arg.name, arg.type, arg.ismutable));
+			data = Cpp3Struct(id, name, cpp3StructName, cpp3Module, fields);
+			Pair(id + 1, setTree(acc.second, name, data));
+		});
+		Pair(res.second, true);
+	} else {
+		Pair(
+			foldTree(struct_list, makeTree(), \name, triple, acc -> {
+				cpp3Module = triple.first;
+				cpp3StructName = triple.second;
+				struct = triple.third;
+				fields = map(struct.args, \arg -> Cpp3StructField(arg.name, arg.type, arg.ismutable));
+				setTree(acc, name, Cpp3Struct(fastHashString(name), name, cpp3StructName, cpp3Module, fields));
+			}),
+			false
+		);
+	}
+}
+
+indexCpp3Globals(gctx : Cpp3GlobalContext) -> void {
+	pushistr = \s -> rlistPush(gctx.init_code, s);
+	iter(gctx.csm_list, \csm -> {
+		iter(csm.decl_order, \decl -> {
+			switch (decl : FiDeclaration) {
+				FiFunctionDec(name, lambda, type, __, __): {
+					switch (find(csm.module.natives, \n -> n.name == name)) {
+						Some(nat): {
+							// May be a native function. Check if it is the case.
+							parts = strSplit(nat.nativeName, ".");
+							native_host = parts[0];
+							native_name = parts[1];
+							if (!checkCpp3NativeExists(gctx, native_host, native_name)) {
+								// This is a fallback for a native, which dosn't exist - use it
+								ginfo = Cpp3GlobalInfo("Module_" + csm.id, "f_" + name, csm, type, "");
+								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+							}
+						}
+						None(): {
+							// Not a fallback - use directly
+							ginfo = Cpp3GlobalInfo("Module_" + csm.id, "f_" + name, csm, type, "");
+							gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+						}
+					}
+				}
+				FiGlobalVar(name, expr, type,__,__): {
+					tstr = type2cpp3ObjType(gctx, type, true, false, false);
+					rlistPush(csm.vars, "\tpublic static " + tstr + " g_" + name + ";\n");
+
+					ginfo = Cpp3GlobalInfo("Module_" + csm.id, "g_" + name, csm, type, "");
+					gctx.globals ::= setTree(gctx.globals, name, ginfo);
+				}
+				FiNativeDec(name, io, type, nname, fallback, __, s): {
+					switch (type) {
+						FiTypeFunction(__, __): {
+							parts = strSplit(nname, ".");
+							if (length(parts) != 2) {
+								fail("Invalid native identifier: " + nname);
+							}
+							cast = switch (type) {
+								FiTypeFunction(ats, rt): {
+									switch (rt) {
+										FiTypeName(nm,__): {
+											switch(lookupTree(gctx.cstructs, nm)) {
+												Some(cstruct):
+													if (length(cstruct.fields) > 0) "(Struct_" + cstruct.cpp3Name + ")"
+													else "";
+												None(): "";
+											}
+										}
+										default: "";
+									}
+								}
+								default: "";
+							}
+							native_host = parts[0];
+							native_name = parts[1];
+							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
+							if (checkCpp3NativeExists(gctx, native_host, native_name)) {
+								// Use a native name as a real native from appropriate host.
+								ginfo = Cpp3GlobalInfo(native_host, native_name, csm, type, cast);
+								gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+							} else {
+								switch (fallback) {
+									FiLambda(__,__,__,__): {
+										// ok, using a fallback
+									}
+									default: {
+										// no fallback neither native.
+										gctx.missing_natives ::= insertSet(gctx.missing_natives, name);
+									}
+								}
+							}
+						}
+						default: {
+							fail("this should never happen: indexCpp3Globals");
+						}
+					}
+				}
+			}
+		});
+	});
+}
+
+generateCpp3Modules(gctx : Cpp3GlobalContext, output_dir : string) -> void {
+	pushistr = \s -> rlistPush(gctx.init_code, s);
+
+	// Statistics of method sizes.
+	max_code_lines = ref 0;
+	max_code_lines_size = ref 0;
+	max_code_lines_fun = ref "";
+	max_code_size = ref 0;
+	max_code_size_lines = ref 0;
+	max_code_size_fun = ref "";
+	config = gctx.program.config;
+
+	csm_list = filter(gctx.csm_list, \csm -> csm.decl_order != []);
+
+	iter(csm_list, \csm -> {
+		module_path = pathCombine(output_dir, "Module_" + csm.id + ".hpp");
+		if (usePreviouslyGeneratedModules(gctx, csm.module, module_path)) {
+			if (gctx.program.config.verbose > 1) {
+				fcPrintln("Cpp3 module '" + module_path + "' is already generated - keeping it", gctx.program.config.threadId);
+			}
+			/*class_path = pathCombine(output_dir, "Module_" + csm.id + ".class");
+			if (!fileExists(class_path)) {
+				rlistPush(gctx.to_compile, module_path + "\n");
+			}*/
+			iter(csm.decl_order, \decl ->
+				switch (decl : FiDeclaration) {
+					FiFunctionDec(__, lambda, __, __, __):
+						addCpp3ExpressionWrappers(gctx, lambda);
+					FiGlobalVar(name, value, __, __, __): {
+						addCpp3ExpressionWrappers(gctx, value);
+						pushistr("\t\tModule_" + csm.id + ".init_" + name + "();\n");
+					}
+					FiNativeDec(__,__,__, nname, fallback,__,__): { }
+				}
+			);
+		} else {
+			if (gctx.program.config.verbose > 0) {
+				fcPrintln("Generating cpp3 module '" + module_path + "'", gctx.program.config.threadId);
+			}
+			module_text = gctx.header_generator(csm.module.fileinfo.trampstamp);
+			pushstr = \s -> rlistPush(module_text, s);
+
+			//pushstr("final public class Module_" + csm.id + " {\n");
+			pushstr(javaList2String(csm.vars, ""));
+
+			if (length(csm.module.globalVars) > 0) {
+				pushstr(generateCpp3ModuleInit(gctx, csm));
+				pushistr("\t\tModule_" + csm.id + ".init();\n");
+			}
+
+			iter(csm.decl_order, \decl -> {
+				switch (decl : FiDeclaration) {
+					FiFunctionDec(name, lambda, type, __, __): {
+						code = emitCpp3Function(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						lines = strCountOf(code, "\n");
+						size = strlen(code);
+						if (lines > ^max_code_lines) {
+							max_code_lines := lines;
+							max_code_lines_size := size;
+							max_code_lines_fun := name;
+						}
+						if (size > ^max_code_size) {
+							max_code_size := size;
+							max_code_size_lines := lines;
+							max_code_size_fun := name;
+						}
+						if (size >= 65536 && isConfigParameterTrue(config.config, "cpp3-method-size-stats")) {
+							fcPrintln("Function: " + name + " size: " + i2s(size) + " >= 65536", config.threadId);
+						}
+						pushstr(code);
+					}
+					FiGlobalVar(name, expr, type, __, __): { }
+					FiNativeDec(name, io, type, nname, fallback,__,__): { }
+				}
+			});
+			writeCpp3Source(gctx, module_path, javaList2String(module_text, "}\n"));
+		}
+	});
+	if (isConfigParameterTrue(config.config, "cpp3-method-size-stats")) {
+		fcPrintln("Max code lines: " + i2s(^max_code_lines) + " at function " + ^max_code_lines_fun + ", size: " + i2s(^max_code_lines_size), config.threadId);
+		fcPrintln("Max code size: " + i2s(^max_code_size) + " at function " + ^max_code_size_fun + " , lines: " + i2s(^max_code_size_lines), config.threadId);
+	}
+}
+
+generateCpp3ModuleInit(gctx : Cpp3GlobalContext, csm : Cpp3Module) -> string {
+	local_counter = ref 0;
+	globals_init = map(csm.module.globalVars, \var -> {
+		fctx = Cpp3FunctionContext(
+			gctx, csm, None(), ref makeList(), local_counter,
+			cpp3StatementPullContext(local_counter),
+			"", false, []
+		);
+		ctx = Cpp3ScopeContext(fctx, "\t\t", makeTree());
+		tstr = type2cpp3ObjType(gctx, var.type, true, false, false);
+		emitCpp3Statement(ctx, var.value, Cpp3ReturnLocal("g_" + var.name, tstr));
+		Pair(var.name, javaList2String(fctx.text, ""));
+	});
+	// Initialize large global variables separately in order to limit cpp3 code size per function.
+	is_large_global = \p -> strlen(p.second) > 1024;
+	large_globals = concatStrings(filtermap(globals_init, \p ->
+		if (!is_large_global(p)) None() else {
+			Some("\tvoid init_" + p.first + "() {\n" + p.second + "\t}\n");
+		}
+	));
+	all_globals = "\tvoid init() {\n" +
+			concatStrings(map(globals_init, \p ->
+				if (is_large_global(p)) {
+					"\t\tinit_" + p.first + "();\n";
+				} else {
+					p.second;
+				}
+			)) +
+	"\t}\n";
+	large_globals + all_globals;
+}
+
+generateCpp3StructDefs(gctx : Cpp3GlobalContext, output_dir : string) -> void {
+	traverseInOrder(gctx.cstructs, \sname, sdata : Cpp3Struct -> {
+		if (length(sdata.fields) > 0) {
+			fname = pathCombine(output_dir, "Struct_" + sdata.cpp3Name + ".cpp3");
+			mod_name = pathCombine(output_dir, "Module_" + sdata.csmodule.id + ".cpp3");
+			if (fileExists(fname) && usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)) {
+				if (gctx.program.config.verbose > 1) {
+					fcPrintln("Cpp3 struct module '" + fname + "' is already generated - keeping it", gctx.program.config.threadId);
+				}
+				class_path = pathCombine(output_dir, "Struct_" + sdata.cpp3Name + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gctx.to_compile, fname + "\n");
+				}
+			} else {
+				if (gctx.program.config.verbose > 0) {
+					fcPrintln("Generating cpp3 struct module '" + fname + "'", gctx.program.config.threadId);
+				}
+				str_data = gctx.header_generator(timestamp());
+				pushstr = \s -> str_data := Cons(s, ^str_data);
+
+				fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
+					Quadruple(
+						n, type2cpp3ObjType(gctx, f.type, true, false, false),
+						f.type, type2cpp3ObjType(gctx, f.type, false, false, false)
+					)
+				);
+				accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
+
+				fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
+
+				pushstr(
+					"struct Struct_" + sdata.cpp3Name + " : public Struct" +
+					(if (fieldstr != "") " implements " + fieldstr else "") +
+					" {\n"
+				);
+
+				// fields
+				iter(fnametypes, \f ->
+					pushstr("\tpublic " + f.second + " f_" + f.first + ";\n")
+				);
+
+				// constructor
+				pushstr("\n\tpublic Struct_" + sdata.cpp3Name + "() {}\n");
+				pushstr(
+					"\tpublic Struct_" + sdata.cpp3Name + "(" +
+					strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
+					") {\n"
+				);
+				iter(fnametypes, \f ->
+					pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
+				);
+				pushstr("\t}\n");
+
+				// accessors
+				iter(accessor_flds, \f -> {
+					name = f.first;
+					pushstr("\tpublic " + f.fourth + " get_" + name + "() { return f_" + name + "; }\n");
+					pushstr("\tpublic void set_" + name + "(" + f.fourth + " value) { f_" + name + " = value; }\n");
+				});
+
+				// metadata
+				pushstr("\n\tpublic int getTypeId() { return " + i2s(sdata.id) + "; }\n");
+				pushstr("\tpublic String getTypeName() { return \"" + sname + "\"; }\n");
+
+				pushstr("\n\tprivate static final String[] field_names = new String[] {\n\t\t");
+				pushstr(strGlue(map(fnametypes,\f -> "\"" + f.first + "\""), ", "));
+
+				pushstr("\n\t};\n\tprivate static final RuntimeType[] field_types = new RuntimeType[] {\n\t\t");
+				pushstr(strGlue(map(sdata.fields,\f -> type2cpp3RuntimeType(f.type)), ", "));
+
+				pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
+				pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
+
+				// generic field access
+				pushstr("\n\tpublic Object[] getFields() {\n\t\treturn new Object[] {\n\t\t\t");
+				pushstr(strGlue(map(fnametypes,\f -> "f_" + f.first), ", "));
+				pushstr("\n\t\t};\n\t}\n");
+
+				pushstr("\t@SuppressWarnings(\"unchecked\")\n");
+				pushstr("\tpublic void setFields(Object[] values) {\n");
+				pushstr("\t\tif (values.length != "+i2s(length(fnametypes))+")\n");
+				pushstr("\t\t\tthrow new IndexOutOfBoundsException(\"Invalid field count in " + sname + "\");\n");
+				iteri(fnametypes, \i, f ->
+					pushstr("\t\tf_" + f.first + " = (" + f.fourth + ")values[" + i2s(i) + "];\n")
+				);
+				pushstr("\t}\n\n");
+
+				// comparison
+				pushstr("\tpublic int compareTo(Struct other_gen) {\n");
+				pushstr("\t\tif (other_gen == this) return 0;\n");
+				pushstr("\t\tint tmp = other_gen.getTypeId();\n");
+				pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
+				pushstr("\t\tStruct_" + sdata.cpp3Name + " other = (Struct_" + sdata.cpp3Name + ")other_gen;\n");
+
+				tmp = fold(fnametypes, false, \tmp, f -> {
+					if (tmp) {
+						pushstr("\t\tif (tmp != 0) return tmp;\n");
+					}
+					emitCpp3Comparison(pushstr, f.first, f.third);
+				});
+				if (tmp)
+					pushstr("\t\treturn tmp;\n\t}\n")
+				else
+					pushstr("\t\treturn 0;\n\t}\n");
+				writeCpp3Source(gctx, fname, javaList2String(str_data, "}\n"));
+			}
+		}
+	});
+}
+
+emitCpp3Function(gctx : Cpp3GlobalContext, csm : Cpp3Module, global : string, name : string, tree : FiLambda, parent : Maybe<Cpp3ScopeContext>, indent0 : string, type : FiTypeFunction) -> string {
+	is_closure = (parent != None());
+	atypes = map(tree.args, \arg -> arg.type);
+	rtype = type.returnType;
+
+	local_counter = ref switch (parent) {
+		None(): 0;
+		Some(p): ^(p.func.next_local_id);
+	}
+
+	arg_locals = mapi(tree.args, \i, arg -> {
+		aname2 = "a" + (if (arg.name == "__") cpp3NewLocalName(local_counter, i2s(i)) else arg.name);
+		atypestr = type2cpp3ObjType(gctx, atypes[i], !is_closure, false, false);
+		Cpp3LocalInfo(arg.name, aname2, atypestr, is_closure, is_closure);
+	});
+
+	fctx = Cpp3FunctionContext(
+		gctx, csm,
+		switch (parent) {
+			Some(p): Some(ref p);
+			None(): None();
+		},
+		ref makeList(), local_counter,
+		cpp3StatementPullContext(local_counter),
+
+		// tail call
+		if (is_closure) "" else global,
+		false,
+
+		arg_locals
+	);
+
+	indent = if (is_closure) indent0 else indent0 + "\t";
+
+	ctx = Cpp3ScopeContext(
+		fctx, indent + "\t",
+		fold(arg_locals, makeTree(), \t, l -> setTree(t, l.name, l))
+	);
+
+	rtypestr = type2cpp3ObjType(gctx, rtype, !is_closure, false, false);
+	emitCpp3Statement(ctx, tree.body, Cpp3ReturnStmt(rtypestr));
+
+	prefix = if (is_closure)
+		indent0 + "public final " + rtypestr + " invoke"
+	else
+		indent0 + "public static final " + rtypestr + " " + name;
+
+	arg_text = map(arg_locals, \loc -> {
+		(if (is_closure) "final " else "") + loc.type + " " + loc.id
+	});
+
+	body = javaList2String(fctx.text, "");
+
+	reslist = ref makeList();
+
+	if (is_closure) {
+		func_type = "Func" + i2s(length(arg_locals)) + "<" + rtypestr + concatStrings(map(arg_locals, \loc -> ", " + loc.type)) + ">";
+		rlistPush(reslist, "(" + func_type + ")(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
+		//rlistPush(reslist, "(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
+	} else {
+		rlistPush(reslist, prefix + "(" + strGlue(arg_text, ", ") + ") {\n");
+	}
+
+	if (fctx.has_tail_call) {
+		rlistPush(reslist, indent + "TAIL_CALL: for(;;) {\n");
+		rlistPush(reslist, body);
+		rlistPush(reslist, indent + "}\n");
+	} else {
+		rlistPush(reslist, body);
+	}
+
+	if (is_closure) {
+		rlistPush(reslist, indent0 + "}");
+	} else {
+		rlistPush(reslist, indent + "}\n");
+	}
+
+	list2string(^reslist);
+}
+
+emitCpp3Statement(ctx0 : Cpp3ScopeContext, code0 : FiExp, retloc : Cpp3ReturnLocation) {
+	unw_code = unfoldCpp3Statements(ctx0, code0, true);
+	code : FiExp = unw_code.first;
+	ctx = unw_code.second;
+
+	switch (code) {
+		FiIf(cond, then, elseExp, __, __): {
+			cond_code = unfoldCpp3Statements(ctx, cond, false);
+			condstr = emitCpp3Expression(cond_code.second, cond_code.first, "boolean");
+			cpp3ctxPushStr(ctx, ctx.indent + "if (" + condstr + ") {\n");
+			subctx = cpp3ctxPushIndent(ctx, "\t");
+			emitCpp3Statement(subctx, then, retloc);
+			cpp3ctxPushStr(ctx, ctx.indent + "} else {\n");
+			emitCpp3Statement(subctx, elseExp, retloc);
+			cpp3ctxPushStr(ctx, ctx.indent + "}\n");
+		}
+		FiSwitch(x, __, cases,__,__): {
+			arg_code = unfoldCpp3Statements(ctx, x, false);
+			argstr = emitCpp3Expression(arg_code.second, arg_code.first, "Struct");
+			tmpvar = cpp3NewLocalName(ctx.func.next_local_id, "_tmp");
+			cpp3ctxPushStr(ctx, ctx.indent + "Struct " + tmpvar + " = " +  argstr + ";\n");
+			cpp3ctxPushStr(ctx, ctx.indent + "switch (" + tmpvar + ".getTypeId()) {\n");
+			subctx = cpp3ctxPushIndent(ctx, "\t");
+			tmpvar2 = cpp3NewLocalName(ctx.func.next_local_id, "_tmp");
+			inputvar = x.name;
+			has_default = fold(cases, false, \hasdef, case -> {
+				case_ctx_v = if (case.struct == "default") {
+					cpp3ctxPushStr(ctx, ctx.indent + "default: {\n");
+					Pair(subctx, true);
+				} else {
+					switch (lookupTree(ctx.func.gctx.cstructs, case.struct)) {
+						Some(cstruct): {
+							cpp3ctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/: {\n");
+
+							has_args = exists(case.argNames, \a -> a != "__");
+
+							castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
+								stype = "Struct_" + cstruct.cpp3Name;
+								cpp3ctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
+									" = (" + stype + ")" + tmpvar + ";\n");
+
+								if (inputvar != "")
+									cpp3ctxPushLocal(subctx, Cpp3LocalInfo(inputvar, tmpvar2, stype, true, false))
+								else
+									subctx;
+							}
+							else
+								subctx;
+
+							ectx = if (!has_args)
+								castctx
+							else {
+								foldi(case.argNames, castctx, \i, sctx, arg -> {
+									if (arg == "__")
+										sctx
+									else {
+										aname = cpp3NewLocalName(ctx.func.next_local_id, arg);
+										ty = type2cpp3ObjType(ctx.func.gctx, cstruct.fields[i].type, true, false, false);
+										cpp3ctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
+											" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
+
+										cpp3ctxPushLocal(sctx, Cpp3LocalInfo(arg,aname,ty,true,false));
+									}
+								});
+							}
+
+							Pair(ectx, hasdef);
+						}
+						None():
+							fail0("invalid struct in case: " + case.struct);
+					}
+				}
+
+				emitCpp3Statement(case_ctx_v.first, case.body, retloc);
+
+				if (!isCpp3ReturnStmt(retloc))
+					cpp3ctxPushStr(ctx, subctx.indent + "break;\n");
+				cpp3ctxPushStr(ctx, ctx.indent + "}\n");
+
+				case_ctx_v.second;
+			});
+
+			if (!has_default) {
+				cpp3ctxPushStr(ctx, ctx.indent + "default:\n");
+				cpp3ctxPushStr(ctx, subctx.indent +
+					"throw new RuntimeException(\"Unexpected struct in switch: \"+" +
+					tmpvar + ".getTypeName());\n");
+			}
+
+			cpp3ctxPushStr(ctx, ctx.indent + "}\n");
+		}
+
+		FiCallPrim(op, es, type, __): {
+			switch (op) {
+				FcArrayPrim():
+					if (length(es) == 0)
+						cpp3ReturnValue(ctx, retloc, "SingletonStructs.arr_empty")
+					else {
+						emitCpp3DefaultStmt(ctx, code, retloc);
+					}
+				FcAssignPrim(): {
+					vtype = ctxType2cpp3ObjType(ctx, fiExpType(es[1]), false, false);
+
+					ref_code = unfoldCpp3Statements(ctx, es[0], false);
+					refstr = emitCpp3Expression(ref_code.second, ref_code.first, "Reference<"+vtype+">");
+					val_code = unfoldCpp3Statements(ctx, es[1], false);
+					valstr = emitCpp3Expression(val_code.second, val_code.first, vtype);
+
+					cpp3ctxPushStr(ctx, ctx.indent + refstr + ".value = " + valstr + ";\n");
+					cpp3ReturnNull(ctx, retloc);
+				}
+				FcSetMutablePrim(field): {
+					sinfo = type2cpp3Struct(ctx.func.gctx, type);
+					type1s = ctxType2cpp3ObjType(ctx, type, true, false);
+
+					vtype = switch (sinfo) {
+						Some(cstruct): {
+							argid = elemIndex(map(cstruct.fields, \f -> f.name), field, -1);
+							if (argid < 0)
+								fail0("Struct " + cstruct.name + " has no field " + field);
+							type2cpp3ObjType(ctx.func.gctx, cstruct.fields[argid].type, true, false, false);
+						}
+						None():
+							ctxType2cpp3ObjType(ctx, fiExpType(es[1]), true, false);
+					}
+
+					ref_code = unfoldCpp3Statements(ctx, es[0], false);
+					refstr = emitCpp3Expression(ref_code.second, ref_code.first, type1s);
+					val_code = unfoldCpp3Statements(ctx, es[1], false);
+					valstr = emitCpp3Expression(val_code.second, val_code.first, vtype);
+
+					switch (sinfo) {
+						Some(cstruct): {
+							cpp3ctxPushStr(ctx, ctx.indent + refstr + ".f_" + field + "=" + valstr + ";\n");
+						}
+						None(): {
+							cpp3RequireAccessor(ctx.func.gctx, field);
+							cpp3ctxPushStr(ctx, ctx.indent + "((Field_" + field + ")" + refstr +
+								").set_" + field + "(" + valstr + ");\n");
+						}
+					}
+					cpp3ReturnNull(ctx, retloc);
+				}
+				default:
+					emitCpp3DefaultStmt(ctx, code, retloc);
+			}
+		}
+		default:
+			emitCpp3DefaultStmt(ctx, code, retloc);
+	}
+}
+
+emitCpp3DefaultStmt(ctx : Cpp3ScopeContext, code : FiExp, retloc : Cpp3ReturnLocation) -> void {
+	switch (retloc) {
+		Cpp3ReturnIgnore():
+			switch (code) {
+				FiVoid(__): {}
+				default:
+					if (isSafeCpp3Statement(ctx.func.gctx, code))
+						emitCpp3ExprStmt(ctx, code, "", "Object")
+					else {
+						tmpvar = cpp3NewLocalName(ctx.func.next_local_id, "_unused");
+						emitCpp3ExprStmt(ctx, code, "Object " + tmpvar + "=", "Object");
+					}
+			}
+		Cpp3ReturnLocal(name,type):
+			emitCpp3ExprStmt(ctx, code, name + "=", type);
+		Cpp3ReturnStmt(type):
+			switch (code) {
+				FiCall(fn, es, __, __): {
+					can_tail = switch (fn) {
+						FiVar(x, __, __): x == ctx.func.can_tail_call;
+						default: false;
+					};
+					if (can_tail)
+						emitCpp3TailCall(ctx, code, type)
+					else
+						emitCpp3ExprStmt(ctx, code, "return ", type);
+				}
+				default:
+					emitCpp3ExprStmt(ctx, code, "return ", type);
+			}
+	}
+}
+
+emitCpp3ExprStmt(ctx : Cpp3ScopeContext, code : FiExp, eexpr : string, etype : string) -> void {
+	switch (code) {
+		FiLambda(__,__,__,__):
+			emitCpp3Closure(ctx, code, eexpr, etype);
+		default:
+			cpp3ctxPushStr(ctx, ctx.indent + eexpr + emitCpp3Expression(ctx, code, etype) + ";\n");
+	}
+}
+
+emitCpp3TailCall(ctx : Cpp3ScopeContext, code : FiCall, rtype : string) -> void {
+	subindent = ctx.indent + "\t";
+	(ctx.func).has_tail_call ::= true;
+
+	cpp3ctxPushStr(ctx, ctx.indent + "{\n");
+
+	args = code.args;
+
+	var_assigns = mapi(ctx.func.arg_locals, \i, arg -> {
+		is_same = switch (args[i]) {
+			FiVar(x, __, __):
+				x == arg.name &&
+				eitherMap(lookupTree(ctx.locals, x), \l -> l==arg, false);
+			default:
+				false;
+		};
+
+		if (is_same)
+			""
+		else {
+			arg_code = unfoldCpp3Statements(ctx, args[i], false);
+			tmpvar = cpp3NewLocalName(ctx.func.next_local_id, "__tmp");
+			argstr = emitCpp3Expression(arg_code.second, arg_code.first, arg.type);
+
+			cpp3ctxPushStr(ctx, subindent + "final " + arg.type + " " + tmpvar + " = " + argstr + ";\n");
+
+			subindent + arg.id + " = " + tmpvar + ";\n";
+		}
+	});
+
+	iter(var_assigns, \s -> if (s != "") cpp3ctxPushStr(ctx, s));
+
+	cpp3ctxPushStr(ctx, subindent + "continue TAIL_CALL;\n" + ctx.indent + "}\n");
+}
+
+emitCpp3Closure(ctx : Cpp3ScopeContext, code : FiLambda, rloc : string, rtype : string) {
+	fctx = ctx.func;
+	bodycode = emitCpp3Function(fctx.gctx, fctx.csm, "", "", code, Some(ctx), ctx.indent, code.type);
+
+	type1 = type2cpp3ObjType(fctx.gctx, fiExpType(code), true, false, false);
+	type2 = rtype;
+
+	cpp3ctxPushStr(ctx, ctx.indent + rloc);
+	cpp3ctxPushStr(ctx, wrapCpp3Cast(bodycode, type1, type2));
+	cpp3ctxPushStr(ctx, ";\n");
+}
+
+emitCpp3Expression(ctx : Cpp3ScopeContext, expcode : FiExp, rtype : string) -> string {
+	result = \str, type -> {
+		wrapCpp3Cast(str, type, rtype);
+	};
+	switch (expcode) {
+		FiVoid(__): "null";
+		FiBool(v, __): result(if (v) "true" else "false", "boolean");
+		FiInt(v, __):  result(if (v < 0) "(" + i2s(v) + ")" else i2s(v), "int");
+		FiDouble(d, i): {
+			//TODO: infinity
+			vs = if (isNanOrInf(d)) {
+				"Math.NaN"
+			} else {
+				s = d2s(d);
+				s1 = if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s + ".0" else s;
+				if (getCharAt(s, 0) == "-") "(" + s1 + ")" else s1;
+			};
+			result(vs, "double");
+		}
+		FiString(s, __): {
+			vs = stringFold(s, "\"", \acc,code ->
+				acc + if (code < 0x20) {
+					if (code == 0x09) "\\t"
+					else if (code == 0x0a) "\\n"
+					else if (code == 0x0d) "\\r"
+					else "\\u"+lpad(formatHex(code), "0", 4);
+				} else if (code >= 0x80) {
+					"\\u" + lpad(formatHex(code), "0", 4)
+				} else {
+					if (code == 0x22) "\\\""
+					else if (code == 0x5c) "\\\\"
+					else fromCharCode(code);
+				}
+			) + "\"";
+			result(vs, "String");
+		}
+		FiSeq(es, type, __): {
+			if (length(es) == 0) {
+				"null"
+			} else {
+				if (length(es) != 1) fail0("unexpected sequence in expression");
+				emitCpp3Expression(ctx, es[0], rtype);
+			}
+		}
+		FiVar(name, type, __):
+			switch (resolveCpp3Local(ctx, name)) {
+				Some(linfo):
+					wrapCpp3Cast(linfo.id, linfo.type, rtype);
+				None(): {
+					gctx = ctx.func.gctx;
+					switch (lookupTree(gctx.globals, name)) {
+						Some(ginfo): {
+							tstr = type2cpp3ObjType(gctx, ginfo.type, true, false, startsWith(name, "h_"));
+							wrapCpp3Cast(ginfo.class + "." + ginfo.name, tstr, rtype);
+						}
+						None():
+							switch (lookupTree(gctx.globalFuncs, name)) {
+								Some(finfo): {
+									ftype = cast(finfo.type : FiType -> FiTypeFunction);
+									id = "w_" + name;
+									wrapper_type = type2cpp3ObjType(gctx, ftype, false, false, false);
+									rlistPush(gctx.wrapper_code, Cpp3WrapperCode(id, wrapper_type, finfo.class + "::" + finfo.name));
+									fglobal = Cpp3GlobalInfo("Wrappers", id, finfo.csmodule, finfo.type, "");
+									gctx.globals ::= setTree(gctx.globals, name, fglobal);
+									wrapCpp3Cast("Wrappers." + id, wrapper_type, rtype);
+								}
+								None(): {
+									name;
+									/*if (containsSet(gctx.missing_natives, name)) {
+										//fail0("native: '" + name + "' is not implemented and has no fallback");
+										fcPrintln("native: '" + name + "' is not implemented and has no fallback", gctx.config.threadId);
+										"missed_native_" + name;
+									} else {
+										fail0("unknown var: '" + name + "'");
+									}*/
+								}
+							}
+					}
+				}
+			}
+		FiCall(f, es, type, __): {
+			gctx = ctx.func.gctx;
+			global = switch (f) {
+				FiVar(fname, __, __): {
+					switch (resolveCpp3Local(ctx, fname)) {
+						Some(__): None();
+						None(): {
+							switch (lookupTree(gctx.globals, fname)) {
+								Some(glob): None();
+								None(): lookupTree(gctx.globalFuncs, fname);
+							}
+						}
+					}
+				}
+				default: None();
+			};
+			switch (global) {
+				Some(finfo): {
+					is_native = startsWith(finfo.name, "h_");
+					ftype = cast(finfo.type : FiType -> FiTypeFunction);
+					rname = finfo.cast + finfo.class + "." + finfo.name;
+					aexprs = mapi(es, \j, expr ->
+						emitCpp3Expression(ctx, expr, type2cpp3ObjType(gctx, ftype.args[j].type, true, false, is_native))
+					);
+					result(rname + "(" + strGlue(aexprs, ", ") + ")", type2cpp3ObjType(gctx, ftype.returnType, true, false, is_native));
+				}
+				None(): {
+					arrow = cpp3VerifyFiTypeFunction(fiExpType(f));
+					typeinfo = switch (arrow) {
+						Some(funcType):
+							Triple(
+								ctxType2cpp3ObjType(ctx, funcType, false, false),
+								map(funcType.args, \arg -> ctxType2cpp3ObjType(ctx, arg.type, false, false)),
+ 								ctxType2cpp3ObjType(ctx, funcType.returnType, false, false)
+							);
+						None():
+							Triple(
+								cpp3RequireFunction(gctx, length(es)),
+								map(es, \__ -> "Object"),
+								"Object"
+							);
+					}
+					fnexpr = emitCpp3Expression(ctx, f, typeinfo.first);
+					aexprs = zipWith(es, typeinfo.second,
+						\expr, t -> emitCpp3Expression(ctx, expr, t));
+					result(fnexpr + ".invoke(" + strGlue(aexprs, ", ") + ")", typeinfo.third);
+				}
+			}
+		}
+		FiIf(cond, ethen, eelse, type, __): {
+			etype = ctxType2cpp3ObjType(ctx, type, true, false);
+			result(
+				"(" + emitCpp3Expression(ctx, cond, "boolean") + "?" +
+					emitCpp3Expression(ctx, ethen, etype) + ":" +
+					emitCpp3Expression(ctx, eelse, etype) + ")",
+				etype
+			);
+		}
+		FiCast(e0, tFrom, tTo, type, __): {
+			csm = ctx.func.csm;
+			sfrom = ctxType2cpp3ObjType(ctx, tFrom, true, false);
+			sto = ctxType2cpp3ObjType(ctx, tTo, true, false);
+			arg = emitCpp3Expression(ctx, e0, sfrom);
+			result(
+				switch (tFrom) {
+					FiTypeInt():
+						switch (tTo) {
+							FiTypeInt():    arg;
+							FiTypeDouble(): "((double)" + arg + ")";
+							FiTypeString(): "Integer.toString((int)(" + arg + "))";
+							default:        "((" + sto + ")" + arg + ")";
+						}
+					FiTypeDouble():
+						switch (tTo) {
+							FiTypeInt():    "((int)" + arg + ")";
+							FiTypeDouble(): arg;
+							FiTypeString(): "FlowRuntime.doubleToString(" + arg + ")";
+							default:        "((" + sto + ")" + arg + ")";
+						}
+					default: "((" + sto + ")" + arg + ")";
+				},
+				sto
+			);
+		}
+		FiCallPrim(op, es, type, __):
+			switch (op) {
+				FcRefPrim(): {
+					result(
+						"(new Reference(" + emitCpp3Expression(ctx, es[0], "Object") + "))",
+						"Reference"
+					);
+				}
+				FcDerefPrim(): {
+					rettype = ctxType2cpp3ObjType(ctx, type, false, false);
+					reftype = if (rettype == "Object") "Reference" else "Reference<" + rettype + ">";
+					result(
+						emitCpp3Expression(ctx, es[0], reftype) + ".value",
+						rettype
+					);
+				}
+				FcArrayPrim():
+					result(
+						if (length(es) == 0)
+							"SingletonStructs.arr_empty"
+						else
+							"(new Object[] { " + strGlue(map(es, \e -> {
+								val_code = unfoldCpp3Statements(ctx, e, false);
+								emitCpp3Expression(val_code.second, val_code.first, "Object");
+							}), ", ") + " })",
+						"Object[]"
+					);
+				FcIndexPrim(): {
+					rtypestr = if (rtype == "Object") ctxType2cpp3ObjType(ctx, type, false, false) else rtype;
+					"((" + rtypestr + ")(" + emitCpp3Expression(ctx, es[0], "Object[]") + "[" + emitCpp3Expression(ctx, es[1], "int") + "]))";
+				}
+				FcStructPrim(sname):
+					switch (lookupTree(ctx.func.gctx.cstructs, sname)) {
+						None(): fail0("unknown struct " + sname);
+						Some(sinfo): {
+							nfields = length(sinfo.fields);
+							if (nfields != length(es))
+								fail0("Invalid number of arguments constructing " + sname + ": " + i2s(length(es)) + " instead of " + i2s(nfields));
+							if (nfields == 0)
+								result("SingletonStructs.str_" + sname, "SingletonStruct")
+							else {
+								stype = "Struct_" + sinfo.cpp3Name;
+								result(
+									"(new " + stype + "(" +
+									strGlue(mapi(es, \j, e ->
+										emitCpp3Expression(ctx, e,
+											type2cpp3ObjType(ctx.func.gctx, sinfo.fields[j].type, true, false, false))),
+										", ") +
+									"))",
+									stype
+								);
+							}
+						}
+					}
+				FcFieldPrim(field): {
+					gctx = ctx.func.gctx;
+					type1 = fiExpType(es[0]);
+					sinfo = type2cpp3Struct(gctx, type1);
+					refstr = emitCpp3Expression(ctx, es[0], ctxType2cpp3ObjType(ctx, type1, true, false));
+
+					if (field == "structname")
+						result("((Struct)" + refstr + ").getTypeName()", "String")
+					else
+						switch (sinfo) {
+							Some(cstruct): {
+								argid = elemIndex(map(cstruct.fields, \f -> f.name), field, -1);
+								if (argid < 0)
+									fail0("Struct " + cstruct.name+" has no field " + field);
+								vtype = type2cpp3ObjType(gctx, cstruct.fields[argid].type, true, false, false);
+								result(refstr + ".f_" + field, vtype);
+							}
+							None(): {
+								cpp3RequireAccessor(gctx, field);
+								result("((Field_" + field + ")" + refstr + ").get_" + field + "()", "Object");
+							}
+						}
+				}
+				FcAndPrim():
+					result(
+						"(" + emitCpp3Expression(ctx, es[0], "boolean") + "&&" + emitCpp3Expression(ctx, es[1], "boolean") + ")",
+						"boolean"
+					);
+				FcOrPrim():
+					result(
+						"(" + emitCpp3Expression(ctx, es[0], "boolean") + "||" + emitCpp3Expression(ctx, es[1], "boolean") + ")",
+						"boolean"
+					);
+				FcNotPrim():
+					result("!" + emitCpp3Expression(ctx, es[0], "boolean"), "boolean");
+				FcNegPrim():
+					switch (type) {
+						FiTypeInt():    result("(-" + emitCpp3Expression(ctx, es[0], "int") + ")", "int");
+						FiTypeDouble(): result("(-" + emitCpp3Expression(ctx, es[0], "double") + ")", "double");
+						default:        result("FlowRuntime.negate(" + emitCpp3Expression(ctx, es[0], "Object") + ")", "Object");
+					}
+				FcPlusPrim():  emitCpp3Arith(ctx, "+", "FlowRuntime.add", es[0], es[1], type, rtype);
+				FcMinusPrim(): emitCpp3Arith(ctx, "-", "FlowRuntime.sub", es[0], es[1], type, rtype);
+				FcMulPrim():   emitCpp3Arith(ctx, "*", "FlowRuntime.mul", es[0], es[1], type, rtype);
+				FcDivPrim():   emitCpp3Arith(ctx, "/", "FlowRuntime.div", es[0], es[1], type, rtype);
+				FcModPrim():   emitCpp3Arith(ctx, "%", "FlowRuntime.mod", es[0], es[1], type, rtype);
+				FcEqPrim():    emitCpp3Compare(ctx, "==", es[0], es[1], rtype);
+				FcNePrim():    emitCpp3Compare(ctx, "!=", es[0], es[1], rtype);
+				FcLtPrim():    emitCpp3Compare(ctx, "<",  es[0], es[1], rtype);
+				FcLePrim():    emitCpp3Compare(ctx, "<=", es[0], es[1], rtype);
+				FcGtPrim():    emitCpp3Compare(ctx, ">",  es[0], es[1], rtype);
+				FcGePrim():    emitCpp3Compare(ctx, ">=", es[0], es[1], rtype);
+				default: "/*TODO*/";
+			}
+		default:
+			"/*TODO*/"
+	}
+}
+
+emitCpp3Compare(ctx : Cpp3ScopeContext, op : string, e1 : FiExp, e2 : FiExp, rtype : string) -> string {
+	singletonNo = \e -> {
+		switch(e) {
+			FiCallPrim(cop, __, __, __): {
+				switch(cop) {
+					FcStructPrim(sname): {
+						switch (lookupTree(ctx.func.gctx.cstructs, sname)) {
+							Some(sinfo): {
+								if (sinfo.fields == []) sinfo.id else -1;
+							}
+							None(): -1;
+						}
+					}
+					default: -1;
+				}
+			}
+			default: -1;
+		}
+	}
+	opwrap = \ts -> {
+		"(" + emitCpp3Expression(ctx, e1, ts) + op + emitCpp3Expression(ctx, e2, ts) + ")";
+	}
+	fnwrap = \fn,ts -> {
+		re1 = emitCpp3Expression(ctx, e1, ts);
+		re2 = emitCpp3Expression(ctx, e2, ts);
+
+		wrap = \ -> {
+			if (op == "==") {
+				"FlowRuntime.compareEqual(" + re1 + "," + re2 + ")";
+			} else if (op == "!=") {
+				"(!FlowRuntime.compareEqual(" + re1 + "," + re2 + "))";
+			} else {
+				"(" + fn + "(" + re1 + "," + re2 + ")" + op + "0)";
+			}
+		}
+
+		aempty = "SingletonStructs.arr_empty";
+		rs1 = singletonNo(e1);
+		rs2 = singletonNo(e2);
+		if ((re1 == aempty || re2 == aempty) && (op == "==" || op == "!=")) {
+			if (re1 == aempty) {
+				"((Object[])" + re2 + ").length " + op + " 0";
+			} else if (re2 == aempty) {
+				"((Object[])" + re1 + ").length " + op + " 0";
+			} else {
+				wrap();
+			}
+		} else if ((rs1 > 0 || rs2 > 0) && (op == "==" || op == "!=")) {
+			if (rs1 > 0) {
+				"((Struct)" + re2 + ").getTypeId() " + op + " " + i2s(rs1);
+			} else if (rs2 > 0) {
+				"((Struct)" + re1 + ").getTypeId() " + op + " " + i2s(rs2);
+			} else {
+				wrap();
+			}
+		} else {
+			wrap();
+		}
+	}
+	strwrap = \ -> {
+		s1 = emitCpp3Expression(ctx, e1, "String");
+		s2 = emitCpp3Expression(ctx, e2, "String");
+		if (op == "==")
+			"(" + s1 + ").equals(" + s2 + ")"
+		else if (op == "!=")
+			"(!(" + s1 + ").equals(" + s2 + "))"
+		else
+			"((" + s1 + ").compareTo(" + s2 + ")" + op + "0)";
+	}
+	switch (fiExpType(e1)) {
+		FiTypeInt():    opwrap("int");
+		FiTypeDouble(): opwrap("double");
+		FiTypeBool():
+			if (op == "==" || op == "!=") {
+				opwrap("boolean");
+			} else {
+				"((" + emitCpp3Expression(ctx, e1, "boolean") + "? 1 : 0)" + op +
+				"(" + emitCpp3Expression(ctx, e2, "boolean") + "? 1 : 0))";
+			}
+		FiTypeString(): strwrap();
+		default:        fnwrap("FlowRuntime.compareByValue","Object");
+	}
+}
+
+emitCpp3Arith(ctx : Cpp3ScopeContext, op : string, fn : string, e1 : FiExp, e2 : FiExp, type : FiType, rtype : string) -> string {
+	opwrap = \ts -> {
+		wrapCpp3Cast("(" + emitCpp3Expression(ctx, e1, ts) + op + emitCpp3Expression(ctx, e2, ts) + ")", ts, rtype);
+	}
+	defwrap = \-> {
+		wrapCpp3Cast(fn+ "(" + emitCpp3Expression(ctx, e1, "Object") + "," + emitCpp3Expression(ctx, e2, "Object") + ")", "Object", rtype)
+	}
+	switch (type) {
+		FiTypeInt():    opwrap("int");
+		FiTypeDouble(): opwrap("double");
+		FiTypeString(): opwrap("String");
+		default:        defwrap();
+	}
+}
+
+emitCpp3Comparison(pushstr : (string) -> void, name : string, t : FiType) -> bool {
+	defcase = \ -> {
+		pushstr("\t\ttmp = FlowRuntime.compareByValue(f_" + name + ", other.f_" + name + ");\n");
+		true;
+	};
+	cmpcase = \ -> {
+		pushstr("\t\ttmp = f_" + name + ".compareTo(other.f_" + name + ");\n");
+		true;
+	};
+	numcase = \ -> {
+		pushstr("\t\tif (f_" + name + " != other.f_" + name + ")\n");
+		pushstr("\t\t\treturn (f_" + name + " > other.f_" + name + ") ? 1 : -1;\n");
+		false;
+	};
+	boolcase = \ -> {
+		pushstr("\t\tif (f_" + name + " != other.f_" + name + ")\n");
+		pushstr("\t\t\treturn f_" + name + " ? 1 : -1;\n");
+		false;
+	};
+	strcase = \ -> {
+		pushstr("\t\ttmp = f_" + name+".compareTo(other.f_" + name + ");\n");
+		true;
+	};
+	switch (t) {
+		FiTypeArray(__):        defcase();
+		FiTypeFunction(__, __): defcase();
+		FiTypeRef(__):          cmpcase();
+		FiTypeParameter(__):    defcase(); // TODO:?
+		FiTypeBool():           boolcase();
+		FiTypeInt():            numcase();
+		FiTypeDouble():         numcase();
+		FiTypeString():         strcase();
+		FiTypeFlow():           defcase();
+		FiTypeVoid():           defcase();
+		FiTypeNative():         defcase();
+		FiTypeName(__, __):     cmpcase();
+	}
+}
+
+unfoldCpp3Statements(ctx : Cpp3ScopeContext, code : FiExp, allow_stmt : bool) -> Pair<FiExp,Cpp3ScopeContext> {
+	switch (code) {
+		FiSeq(es, __, __): {
+			if (length(es) == 0) {
+				Pair(code, ctx)
+			} else {
+				lasti = length(es) - 1;
+				head = subrange(es, 0, lasti);
+				iter(head, \item ->
+					emitCpp3Statement(ctx, item, Cpp3ReturnIgnore())
+				);
+				unfoldCpp3Statements(ctx, es[lasti], allow_stmt);
+			}
+		}
+		FiLet(x, type, e1, e2, type2, __): {
+			value_body = unfoldCpp3Statements(ctx, e1, true);
+			body = value_body.first;
+			ln = cpp3NewLocalName(ctx.func.next_local_id, x);
+			stype = ctxType2cpp3ObjType(ctx, type, true, false);
+			is_final = switch (body) {
+				FiLambda(__, __, __, __): {
+					rexpr = "final " + stype + " " + ln + " = ";
+					emitCpp3Closure(value_body.second, body, rexpr, stype);
+					true;
+				}
+				default: {
+					head = stype + " " + ln;
+					if (isCpp3Statement(body, true)) {
+						cpp3ctxPushStr(ctx, ctx.indent + head + ";\n");
+						emitCpp3Statement(value_body.second, body, Cpp3ReturnLocal(ln, stype));
+						false;
+					} else {
+						expr = emitCpp3Expression(value_body.second, body, stype);
+						cpp3ctxPushStr(ctx, ctx.indent + "final " + head + " = " + expr + ";\n");
+						true;
+					}
+				}
+			}
+			subscope = cpp3ctxPushLocal(ctx, Cpp3LocalInfo(x, ln, stype, is_final, false));
+			unfoldCpp3Statements(subscope, e2, allow_stmt);
+		}
+		default: {
+			if (!allow_stmt || !isCpp3Statement(code, true)) {
+				eitherMap(
+					pullFiStatements(ctx.func.pullctx, code),
+					\code2 -> unfoldCpp3Statements(ctx, code2, false),
+					Pair(code, ctx)
+				);
+			} else {
+				Pair(code, ctx)
+			}
+		}
+	}
+}
+
+type2cpp3ObjType(gctx : Cpp3GlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string {
+	switch (t) {
+		FiTypeArray(arr):              "Object[]";
+		FiTypeFunction(args, retType): {
+			arity = length(args);
+			cpp3RequireFunction(gctx, arity);
+			ft = "Func" + i2s(arity);
+			if (no_args)
+				ft
+			else {
+				astr = strGlue(map(args, \t3 -> type2cpp3ObjType(gctx, t3.type, false, no_args, in_native)), ", ");
+
+				(ft + "<" + type2cpp3ObjType(gctx, retType, false, no_args, in_native))+
+					(if (arity == 0) "" else "," + astr) + ">";
+			}
+		};
+		FiTypeRef(tp):                 if (no_args) "Reference" else "Reference<" + type2cpp3ObjType(gctx, tp, false, no_args, in_native) + ">";
+		FiTypeParameter(nm):           "Object"; // TODO: is it right ?
+		FiTypeBool():                  if (field) "boolean" else "Boolean";
+		FiTypeInt():                   if (field) "int" else "Integer";
+		FiTypeDouble():                if (field) "double" else "Double";
+		FiTypeString():                "String";
+		FiTypeFlow():                  "Object";
+		FiTypeVoid():                  "Object";
+		FiTypeNative():                "Object";
+		FiTypeName(nm, __):
+			if (in_native) "Struct" else {
+				switch(lookupTree(gctx.cstructs, nm)) {
+					Some(cstruct):
+						if (length(cstruct.fields) > 0) "Struct_" + cstruct.cpp3Name
+						else "SingletonStruct";
+					None(): "Struct";
+				}
+			}
+	}
+}
+
+cpp3RequireFunction(gctx : Cpp3GlobalContext, arity : int) -> string {
+	ftypestr = "Func" + i2s(arity);
+
+	if (!lookupTreeDef(gctx.has_func_def, arity, false)) {
+		gctx.has_func_def ::= setTree(gctx.has_func_def, arity, true);
+	}
+	ftypestr;
+}
+
+cpp3RequireAccessor(gctx : Cpp3GlobalContext, name : string) {
+	if (!lookupTreeDef(gctx.has_field_accessor, name, false)) {
+		gctx.has_field_accessor ::= setTree(gctx.has_field_accessor, name, true);
+	}
+}
+
+cpp3VerifyFiTypeFunction(t : FiType) -> Maybe<FiTypeFunction> {
+	switch (t) {
+		FiTypeFunction(__, __): Some(t);
+		default: None();
+	}
+}
+
+type2cpp3RuntimeType(t : FiType) -> string {
+	switch (t) {
+		FiTypeArray(__):        "RuntimeType.ARRAY";
+		FiTypeFunction(__, __): "RuntimeType.UNKNOWN";
+		FiTypeRef(__):          "RuntimeType.REF";
+		FiTypeParameter(__):    "RuntimeType.UNKNOWN";
+		FiTypeBool():           "RuntimeType.BOOL";
+		FiTypeInt():            "RuntimeType.INT";
+		FiTypeDouble():         "RuntimeType.DOUBLE";
+		FiTypeString():         "RuntimeType.STRING";
+		FiTypeFlow():           "RuntimeType.UNKNOWN";
+		FiTypeVoid():           "RuntimeType.UNKNOWN";
+		FiTypeNative():         "RuntimeType.UNKNOWN";
+		FiTypeName(__, __):     "RuntimeType.STRUCT"
+	}
+}
+
+type2cpp3Struct(gctx : Cpp3GlobalContext, t : FiType) -> Maybe<Cpp3Struct> {
+	switch (t) {
+		FiTypeName(name, __):
+			switch(lookupTree(gctx.cstructs, name)) {
+				Some(cstruct):
+					if (length(cstruct.fields) > 0)
+						Some(cstruct)
+					else
+						None();
+				None(): None();
+			}
+		default: None();
+	}
+}
+
+ctxType2cpp3ObjType(ctx : Cpp3ScopeContext, type : FiType, field : bool, no_args : bool) {
+	fctx = ctx.func;
+	type2cpp3ObjType(fctx.gctx, type, field, no_args, false);
+}
+
+cpp3ctxPushStr(ctx : Cpp3ScopeContext, str : string) {
+	rlistPush(ctx.func.text, str);
+}
+
+cpp3ctxPushLocal(ctx : Cpp3ScopeContext, info : Cpp3LocalInfo) {
+	Cpp3ScopeContext(ctx.func, ctx.indent, setTree(ctx.locals, info.name, info))
+}
+
+cpp3ctxPushIndent(ctx : Cpp3ScopeContext, delta : string) {
+	Cpp3ScopeContext(ctx.func, ctx.indent + delta, ctx.locals)
+}
+
+wrapCpp3Cast(expr : string, srct : string, dstt : string) {
+	if (srct == dstt || dstt == "Object" || (dstt == "Struct" && startsWith(srct,"Struct_"))) {
+		expr
+	} else {
+		igen = strIndexOf(dstt, "<");
+		if (igen > 0 && strlen(srct) > igen && startsWith(srct, substring(dstt, 0, igen))) {
+			"((" + dstt + ")(" + substring(dstt, 0, igen) + ")" + expr + ")"
+		} else {
+			"((" + dstt + ")" + expr + ")";
+		}
+	}
+}
+
+resolveCpp3Local(ctx : Cpp3ScopeContext, name : string) -> Maybe<Cpp3LocalInfo> {
+	lt = lookupTree(ctx.locals, name);
+	switch (lt) {
+		Some(info): lt;
+		None():
+			switch (ctx.func.parent) {
+				Some(rp): {
+					pctx = ^rp;
+					lt2 = resolveCpp3Local(pctx, name);
+					switch (lt2) {
+						Some(info):
+							if (info.is_final)
+								lt2
+							else {
+								lname = cpp3NewLocalName(pctx.func.next_local_id, name);
+								info3 = Cpp3LocalInfo(name, lname, info.type, true, false);
+
+								cpp3ctxPushStr(pctx, pctx.indent + "final " + info.type + " " + lname + " = " + info.id + ";\n");
+
+								rp := cpp3ctxPushLocal(^rp, info3);
+								Some(info3);
+							}
+						None(): None();
+					}
+				}
+				None(): None();
+			}
+	}
+}
+
+isCpp3Statement(code : FiExp, if_is_statement : bool) {
+	switch (code) {
+		FiSeq(es, __, __):             length(es) != 1;
+		FiLet(__, __, __, __, __, __): true;
+		FiLambda(__, __, __, __):      true;
+		FiSwitch(__, __, __, __, __):  true;
+		FiIf(__, __, __, __, __):      if_is_statement;
+		FiCallPrim(op, es, __, __):
+			switch (op) {
+				FcAssignPrim():        true;
+				FcSetMutablePrim(__):  true;
+				FcArrayPrim():         length(es) > 10;
+				default:               false;
+			}
+		default: false;
+	}
+}
+
+isSafeCpp3Statement(gctx : Cpp3GlobalContext, code : FiExp) {
+	switch (code) {
+		FiCall(f, es, __, __):
+			switch (f) {
+				FiVar(x, __, __):
+					lookupTree(gctx.cstructs, x) == None();
+				default:
+					true;
+			}
+		default:
+			false;
+	}
+}
+
+isCpp3ReturnStmt(retloc : Cpp3ReturnLocation) {
+	switch (retloc) {
+		Cpp3ReturnStmt(t): true;
+		default: false;
+	}
+}
+
+cpp3ReturnValue(ctx : Cpp3ScopeContext, retloc : Cpp3ReturnLocation, valstr : string) -> void {
+	switch (retloc) {
+		Cpp3ReturnIgnore(): {}
+		Cpp3ReturnLocal(name,type):
+			cpp3ctxPushStr(ctx, ctx.indent + name + "=" + valstr + ";\n");
+		Cpp3ReturnStmt(type):
+			cpp3ctxPushStr(ctx, ctx.indent + "return " + valstr + ";\n");
+	}
+}
+
+cpp3ReturnNull(ctx : Cpp3ScopeContext, retloc : Cpp3ReturnLocation) -> void {
+	cpp3ReturnValue(ctx, retloc, "null");
+}
+
+cpp3StatementPullContext(local_counter : ref int) {
+	FiStatementPullContext(
+		\s -> isCpp3Statement(s, false),
+		\ -> {
+			id = ^local_counter;
+			local_counter := id + 1;
+			"$" + i2s(id);
+		}
+	)
+}
+
+checkCpp3NativeExists(gctx : Cpp3GlobalContext, native_host : string, native_name : string) -> bool {
+	host_natives = lookupTreeDef(gctx.host_natives, native_host, makeSet());
+	containsSet(host_natives, native_name);
+}
+
+cpp3NewLocalName(counter : ref int, name : string) {
+	id = ^counter;
+	counter := id + 1;
+	"l" + i2s(id) + "_" + name;
+}
+
+addCpp3ExpressionWrappers(gctx : Cpp3GlobalContext, expcode : FiExp) -> void {
+	switch (expcode) {
+		FiConst(__): { }
+		FiSeq(es, __, __):
+			iter(es, \e -> addCpp3ExpressionWrappers(gctx, e));
+		FiVar(name, __, __): { }
+		FiCall(f, es, __, __): {
+			global = switch (f) {
+				FiVar(fname, tp, __): {
+					switch (lookupTree(gctx.globals, fname)) {
+						Some(__): None();
+						None(): lookupTree(gctx.globalFuncs, fname);
+					}
+				}
+				default: None();
+			};
+			iter(es, \expr -> addCpp3ExpressionWrappers(gctx, expr));
+			switch (global) {
+				Some(__): { }
+				None(): addCpp3ExpressionWrappers(gctx, f);
+			}
+		}
+		FiIf(cond, ethen, eelse, __, __): {
+			addCpp3ExpressionWrappers(gctx, cond);
+			addCpp3ExpressionWrappers(gctx, ethen);
+			addCpp3ExpressionWrappers(gctx, eelse);
+		}
+		FiCast(e, __,__,__,__):
+			addCpp3ExpressionWrappers(gctx, e);
+		FiCallPrim(op, es, type, __): {
+			iter(es, \e -> addCpp3ExpressionWrappers(gctx, e));
+			switch (op) {
+				FcFieldPrim(field): {
+					if (field != "structname") {
+						switch (type2cpp3Struct(gctx, fiExpType(es[0]))) {
+							Some(__): { }
+							None(): cpp3RequireAccessor(gctx, field);
+						}
+					}
+				}
+				FcSetMutablePrim(field): {
+					switch (type2cpp3Struct(gctx, type)) {
+						Some(__): { }
+						None(): cpp3RequireAccessor(gctx, field);
+					}
+				}
+				default: { }
+			}
+        }
+		FiLet(__, __, e1, e2, __, __): {
+			addCpp3ExpressionWrappers(gctx, e1);
+			addCpp3ExpressionWrappers(gctx, e2);
+		}
+		FiSwitch(x, __, cases, __,__): {
+			addCpp3ExpressionWrappers(gctx, x);
+			iter(cases, \c -> addCpp3ExpressionWrappers(gctx, c.body));
+		}
+		FiRequire(__, e, __,__):
+			addCpp3ExpressionWrappers(gctx, e);
+		FiUnsafe(__, fallback, __,__):
+			addCpp3ExpressionWrappers(gctx, fallback);
+		FiLambda(__, body, __,__):
+			addCpp3ExpressionWrappers(gctx, body);
+	}
+}
+
+usePreviouslyGeneratedModules(gctx : Cpp3GlobalContext, module : FiModule, path : string) -> bool {
+	if (!gctx.hash_collisions && module.incremental && fileExists(path)) {
+		collision_and_time = getCollisionAndTimestampOfFile(path);
+		!collision_and_time.first && collision_and_time.second == d2s(module.fileinfo.trampstamp);
+	} else {
+		false
+	}
+}
