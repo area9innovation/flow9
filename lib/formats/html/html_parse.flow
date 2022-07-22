@@ -2,8 +2,7 @@
 
 import formats/html/html;
 import lingo/compiler/syntaxtree_util;
-import formats/html/lingo_parser/ast;
-import formats/html/lingo_parser/parser;
+import formats/html/parser/html_parse_typed;
 import formats/html/html_node;
 
 export {
@@ -13,21 +12,46 @@ export {
 	// - sudden interruption of the flow of tokens by closing </html> tag
 	// Returns a pair: the sequence of toplevel HTML nodes and an error message (is empty when no error are found).
  	parseHtml(text: string) -> Pair<[HtmlNode], string>;
-
-	HtmlTagKind ::= HtmlTagOpen, HtmlTagClose, HtmlTagClopen;
-		HtmlTagOpen(); HtmlTagClose(); HtmlTagClopen();
-	parseHtmlPlain(src : string, err : (string) -> void) -> [Pair<HtmlNode, HtmlTagKind>];
 }
 
 parseHtml(text: string) -> Pair<[HtmlNode], string> {
 	err = ref "";
 	on_err = \s -> err := ^err + (if (^err == "") "" else "\n") + "html parsing error: " + s;
-	plain = parseHtmlPlain(text, on_err);
+	plain = plainHtmlNode2lowerCase(parsePlainHtmlSource(text, on_err).nodes);
 	nodes = parseHtmlStructured(plain, on_err);
 	Pair(nodes, ^err);
 }
 
-parseHtmlStructured(elems : [Pair<HtmlNode, HtmlTagKind>], err : (string) -> void) -> [HtmlNode] {
+plainHtmlNode2lowerCase(nodes : [PlainHtmlNode]) -> [PlainHtmlNode] {
+	map(nodes, \plain ->
+		switch (plain) {
+			PlainHtmlComment(text): 
+				PlainHtmlComment(text);
+			PlainHtmlEntity(prefix, body): 
+				PlainHtmlEntity(prefix, body);
+			PlainHtmlTag(open, tag, attribs, close): 
+				PlainHtmlTag(
+					open,
+					toLowerCase(tag), 
+					map(attribs, \attr -> 
+						PlainHtmlAttrib(toLowerCase(attr.key), toLowerCase(attr.val))
+					),
+					close
+				);
+			PlainHtmlScript(attribs, src):
+				PlainHtmlScript(
+					map(attribs, \attr -> 
+						PlainHtmlAttrib(toLowerCase(attr.key), toLowerCase(attr.val))
+					),
+					src
+				);
+			PlainHtmlText(text): 
+				PlainHtmlText(text);
+		}
+	);
+}
+
+parseHtmlStructured(elems : [PlainHtmlNode], err : (string) -> void) -> [HtmlNode] {
 	stack = parseHtmlNodeStructured(elems, 0, err, ParseHtmlStack(HtmlTag("html", [], []), makeList(), None()));
 	if  (stack.parent != None()) {
 		err("non-empty stack at the end of html parsing");
@@ -82,134 +106,76 @@ closeAllHtmlTags(stack : ParseHtmlStack) -> ParseHtmlStack {
 	}
 }
 
-parseHtmlNodeStructured(elems : [Pair<HtmlNode, HtmlTagKind>], i : int, err : (string) -> void, stack : ParseHtmlStack) -> ParseHtmlStack {
+parseHtmlNodeStructured(elems : [PlainHtmlNode], i : int, err : (string) -> void, stack : ParseHtmlStack) -> ParseHtmlStack {
 	if (i == length(elems)) {
 		closeAllHtmlTags(stack); 
 	} else {
-		elem = elems[i].first;
+		elem = elems[i];
 		stack1 = switch (elem) {
-			HtmlTag(tag, attribs, __): {
-				switch (elems[i].second) {
-					HtmlTagClopen(): {
-						ParseHtmlStack(stack with elems = Cons(elem, stack.elems));
-					}
-					HtmlTagOpen(): {
-						if (tag == "br" || tag == "p") {
-							ParseHtmlStack(stack with elems = Cons(HtmlTag(tag, [], []), stack.elems));
+			PlainHtmlTag(open, tag, attribs, close): {
+				html_tag = HtmlTag(tag, map(attribs, \attr -> HtmlAttrib(attr.key, attr.val)), []);
+				if (startsWith(open, "!")) {
+					// Skip <!document> in case met
+					stack;
+				} else if (open == "<" && close == "/>") {
+					ParseHtmlStack(stack with elems = Cons(html_tag, stack.elems));
+				} else if (open == "<" && close == ">") {
+					if (startsWith(tag, "!")) {
+						stack
+					} else if (tag == "br" || tag == "p") {
+						ParseHtmlStack(stack with elems = Cons(HtmlTag(tag, [], []), stack.elems));
+					} else {
+						depth = if (tag == "li") {
+							if (stack.tag.tag == "li") 1 else 0;
+						} else if (tag == "tr") {
+							if (stack.tag.tag == "tr") 1 else
+							if (stack.tag.tag == "td") 2 else 0;
+						} else if (tag == "td") {
+							if (stack.tag.tag == "td") 1 else 0;
 						} else {
-							depth = if (tag == "li") {
-								if (stack.tag.tag == "li") 1 else 0;
-							} else if (tag == "tr") {
-								if (stack.tag.tag == "tr") 1 else
+							0;
+						}
+						ParseHtmlStack(html_tag, makeList(), Some(closeHtmlTag(depth, stack, err)));
+					}
+				} else if (open == "</" && close == ">") {
+					if (tag == "br" || tag == "p") {
+						stack;
+					} else {
+						if (stack.tag.tag != tag) {
+							depth = if (tag == "tr") {
+								if (stack.tag.tag == "table") 0 else 
 								if (stack.tag.tag == "td") 2 else 0;
-							} else if (tag == "td") {
-								if (stack.tag.tag == "td") 1 else 0;
+							} else if (tag == "ul" || tag == "ol") {
+								if (stack.tag.tag == "li") 2 else 0;
+							} else if (tag == "table") {
+								if (stack.tag.tag == "tr") 2 else
+								if (stack.tag.tag == "td") 3 else 0;
 							} else {
 								0;
 							}
-							ParseHtmlStack(elem, makeList(), Some(closeHtmlTag(depth, stack, err)));
-						}
-					}
-					HtmlTagClose(): {
-						if (tag == "br" || tag == "p") {
-							stack;
+							closeHtmlTag(depth, stack, err);
 						} else {
-							if (stack.tag.tag != tag) {
-								depth = if (tag == "tr") {
-									if (stack.tag.tag == "table") 0 else 
-									if (stack.tag.tag == "td") 2 else 0;
-								} else if (tag == "ul" || tag == "ol") {
-									if (stack.tag.tag == "li") 2 else 0;
-								} else if (tag == "table") {
-									if (stack.tag.tag == "tr") 2 else
-									if (stack.tag.tag == "td") 3 else 0;
-								} else {
-									0;
-								}
-								closeHtmlTag(depth, stack, err);
-							} else {
-								closeHtmlTag(1, stack, err);
-							}
+							closeHtmlTag(1, stack, err);
 						}
 					}
+				} else {
+					err("illegal combination of open/close brackets");
+					stack;
 				}
 			}
 			default: {
-				ParseHtmlStack(stack with elems = Cons(elem, stack.elems));
+				node = switch (elem) {
+					PlainHtmlComment(text): HtmlComment(text)
+					PlainHtmlEntity(prefix, body): HtmlEntity(prefix, body);
+					PlainHtmlTag(open, tag, attribs, close): 
+						HtmlTag(tag, map(attribs, \attr -> HtmlAttrib(attr.key, attr.val)), []);
+					PlainHtmlText(text): HtmlText(text);
+					PlainHtmlScript(attribs, src): 
+						HtmlTag("script", map(attribs, \attr -> HtmlAttrib(attr.key, attr.val)), [HtmlText(src)]);
+				}
+				ParseHtmlStack(stack with elems = Cons(node, stack.elems));
 			}
 		}
 		parseHtmlNodeStructured(elems, i + 1, err, stack1);
 	}
-}
-
-parseHtmlPlain(src : string, err : (string) -> void) -> [Pair<HtmlNode, HtmlTagKind>] {
-	pr1 = parse_html_source(src);
-	st = pr1.first;
-	if (st.end != strlen(src)) {
-		msg = "met: '" + pr1.second.met + "', while expected: '" + strGlue(pr1.second.expected, ", ") + "'";
-		err("Syntax error: " + msg + ", html source:\n" + strIndent(src));
-		[]
-	} else {
-		htmlMakeNodes(st, src, err);
-	}
-}
-
-htmlMakeNodes(st : SyntaxTree, src : string, err : (string) -> void) -> [Pair<HtmlNode, HtmlTagKind>] {
-	synt_trees = get_html_source_html_element_s(st);
-	map(synt_trees,
-		\elem -> {
-			if (elem.rule == st_html_text) {
-				Pair(HtmlText(grabSTText(elem, src)), HtmlTagOpen());
-			} else if (elem.rule == st_html_comment) {
-				comment = grabSTText(get_html_source_html_comment_text(elem), src);
-				Pair(HtmlComment(comment), HtmlTagOpen());
-			} else if (elem.rule == st_html_entity) {
-				prefix = grabSTText(get_html_source_html_entity_prefix(elem), src);
-				body = grabSTText(get_html_source_html_entity_body(elem), src);
-				Pair(HtmlEntity(prefix, body), HtmlTagOpen());
-			} else if (elem.rule == st_html_tag) {
-				open = grabSTText(get_html_source_html_tag_open(elem), src);
-				close = grabSTText(get_html_source_html_tag_close(elem), src);
-				tag = toLowerCase(grabSTText(get_html_source_html_id(elem), src));
-				attribs = htmlMakeAttribs(get_html_source_html_attrib_s(elem), src);
-				if (open == "<" && close == "/>") {
-					Pair(HtmlTag(tag, attribs, []), HtmlTagClopen());
-				} else if (open == "<" && close == ">") {
-					Pair(HtmlTag(tag, attribs, []), HtmlTagOpen());
-				} else if (open == "</" && close == ">") {
-					Pair(HtmlTag(tag, attribs, []), HtmlTagClose());
-				} else {
-					err("Illegal tag: " + grabSTText(elem, src));
-					Pair(HtmlComment(""), HtmlTagOpen());
-				}
-			} else {
-				// Shouldn't happen
-				Pair(HtmlComment(""), HtmlTagOpen());
-			}
-		}
-	);
-}
-
-htmlMakeAttribs(sts : [SyntaxTree], src : string) -> [HtmlAttrib] {
-	map(sts,
-		\elem -> {
-			make_attrib = \v -> {
-				key = toLowerCase(grabSTText(get_html_source_html_id(elem), src));
-				val = toLowerCase(v);
-				HtmlAttrib(key, val);
-			}
-			if (elem.rule == st_html_attrib1) {
-				make_attrib(grabSTText(get_html_source_html_attrib1_val(elem), src));
-			} else if (elem.rule == st_html_attrib2) {
-				make_attrib(grabSTText(get_html_source_html_attrib2_val(elem), src));
-			} else if (elem.rule == st_html_attrib3) {
-				make_attrib(grabSTText(get_html_source_html_attrib3_val(elem), src));
-			} else if (elem.rule == st_html_attrib4) {
-				make_attrib("1");
-			} else {
-				// Shouldn't happen
-				HtmlAttrib("", "");
-			}
-		}
-	);
 }
