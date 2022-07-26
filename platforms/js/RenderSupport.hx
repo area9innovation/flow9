@@ -1878,7 +1878,7 @@ class RenderSupport {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
 		if (accessWidget == null) {
-			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
+			if (AccessibilityEnabled || attributesMap.get("tag") == "form" || untyped clip.iframe != null) {
 				if (clip.isHTMLRenderer()) {
 					clip.initNativeWidget();
 				}
