@@ -172,6 +172,15 @@ export {
 		prevPeriodButtons : Pair<Material, Material>,
 		nextPeriodButtons : Pair<Material, Material>
 	);
+
+	drawCalendarEventFrame(
+		frameSize : double,
+		radius : double,
+		height : double,
+		tooltipM : Maybe<string>,
+		style : [TGraphicsStyle],
+		eventViewM : Material
+	) -> Material;
 }
 
 CalendarTabView(
@@ -2696,13 +2705,13 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 	// background and stroke colors
 	getColors = \opacity -> {
 		if (opacity == 0.0) {
-			Pair(MWhite(), MGrey(400));
+			Pair(MWhite(), type.backColor);
 		} else {
 			color = MCustomColor(mixColors(MColor2int(type.backColor), white, opacity, 1.0 - opacity));
 			Pair(color, color);
 		}
 	}
-	pastColors = getColors(either(opacities.past, 0.2));
+	pastColors = getColors(either(opacities.past, 0.0));
 	currentColors = getColors(either(opacities.current, 1.0));
 	futureColors = getColors(either(opacities.future, 0.2));
 
@@ -2713,27 +2722,23 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 		getEventTitle = extractStruct(styles, CalendarCustomEventTitle(\e, __ -> {
 			MEllipsisText(getEventTitleDefault(e), ifArrayPush([textColor, MFullWidth()], !isPastEvent, MBodyBold()));
 		})).getTitle;
-		MFrame(if (hideTime) 0.0 else 16.0, 4.0, [MFill(colors.first), StrokeWidth(1.0), MStroke(colors.second)],
+		timeM = if (hideTime) {
+			MEmpty()
+		} else {
 			MColsYCenterA([
-				if (hideTime) MFixedY(48.0) else MEmpty(),
-				MLinesA([
-					if (hideTime) {
-						MEmpty()
-					} else {
-						MColsYCenterA([
-							MIcon("schedule", [textColor]) |> MBorderEnd(8.0),
-							MText(timeString, [textColor, MBodyBold()])
-						]) |> MBorderBottom(4.0)
-					},
-					getEventTitle(event, type) |> MBorderStart(2.0)
-				]),
-				MFillX(),
-				if (isPastEvent) {
-					MTooltip(MFrame(0.0, 5.0, [MFill(pastColors.first)], MFixed(10.0, 10.0)), MText(type.name, []), []);
-				} else {
-					MEmpty();
-				}
-			]) |> MBorderLeftRight(if (hideTime) 8.0 else 0.0)
+				MIcon("schedule", [textColor]) |> MBorderEnd(8.0),
+				MText(timeString, [textColor, MBodyBold()])
+			]) |> MBorderBottom(4.0)
+		}
+		titleM = getEventTitle(event, type) |> MBorderStart(2.0);
+
+		drawCalendarEventFrame(
+			if (hideTime) 8.0 else 16.0,
+			4.0,
+			if (hideTime) 48.0 else 78.0,
+			if (isPastEvent) Some(type.name) else None(),
+			[MFill(colors.first), StrokeWidth(1.0), MStroke(colors.second)],
+			MLinesA([timeM, titleM])
 		);
 	}
 	geEventTimeString = \ -> {
@@ -2747,12 +2752,12 @@ getCalendarDayEventDefaultView(event : CalendarEvent, type : CalendarEventDecrip
 			switch (allDayTimeType) {
 				CalendarCurrentEvent(): getEventView(_("All Day"), currentColors, false);
 				CalendarFutureEvent(): getEventView(_("All Day"), futureColors, false);
-				default: getEventView(_("All Day"), getColors(0.0), true);
+				default: getEventView(_("All Day"), pastColors, true);
 			}
 		}
 		CalendarCurrentEvent(): getEventView(geEventTimeString(), currentColors, false);
 		CalendarFutureEvent(): getEventView(geEventTimeString(), futureColors, false);
-		CalendarPastEvent(): getEventView(geEventTimeString(), getColors(0.0), true);
+		CalendarPastEvent(): getEventView(geEventTimeString(), pastColors, true);
 	}
 }
 
@@ -4006,4 +4011,51 @@ getPrintCalendarIconButton(
 			showDialog(isRunningB, disposer);
 		})
 	);
+}
+
+drawCalendarEventFrame(
+	frameSize : double,
+	radius : double,
+	height : double,
+	tooltipM : Maybe<string>,
+	style : [TGraphicsStyle],
+	eventViewM : Material
+) -> Material {
+	frameBorder = 2.0;
+	getFramePart = \sizeM : Material, tooltip : string, r : double, alignment : MTooltipAlignmentType -> {
+		addBorder = switch (alignment) {
+			MTop(): \m -> MBorderA(frameBorder, frameBorder, frameBorder, 0.0, m)
+			MBottom(): \m -> MBorderA(frameBorder, 0.0, frameBorder, frameBorder, m)
+			MStart(): MBorderStart(frameBorder)
+			MEnd(): MBorderEnd(frameBorder)
+			default: idfn
+		}
+		MTooltip(
+			addBorder(MFrame(0.0, r, [MFill(MWhite())], sizeM)),
+			MText(tooltip, []),
+			[MEnabled(const(true)), MTooltipAlignment(alignment)]
+		);
+	}
+
+	MFrame(0.0, radius, style,
+		MAvailableHeight(
+			eitherMap(tooltipM,
+				\tooltip -> {
+					size = frameSize - frameBorder;
+
+					MLinesA([
+						getFramePart(TFillMaxHX(size), tooltip, radius, MTop()),
+						MColsA([
+							getFramePart(MFillWY(size), tooltip, 0.0, MStart()),
+							MCenterY(eventViewM),
+							getFramePart(MFillWY(size), tooltip, 0.0, MEnd()),
+						]),
+						getFramePart(TFillMaxHX(size), tooltip, radius, MBottom()),
+					]);
+				},
+				MCenterY(eventViewM) |> MBorderLeftRight(frameSize)
+			),
+			const(height)
+		)
+	) |> MFixHeight(MFixedY(height));
 }

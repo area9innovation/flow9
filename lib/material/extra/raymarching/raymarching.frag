@@ -33,6 +33,7 @@ uniform TextureParamertersBlock {
 #define SURF_DIST .001
 
 uniform vec4 backgroundColor;
+uniform float shown[%numColors% + numTextures];
 
 struct Material {
 	vec3 color;
@@ -51,7 +52,9 @@ uniform PositionsBlock {
 uniform ObjectParametersBlock {
 	vec4 objectParameters[%numColors% + numTextures];
 	float smoothCoefficients[%numSmooth%];
-};
+	vec3 spaces[%numRepetitions%];
+	vec3 repetitions[%numRepetitions%];
+}; //256 objects
 
 struct ObjectInfo {
 	float d;

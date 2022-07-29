@@ -64,7 +64,7 @@ export {
 	makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string);
 	makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi;
 
-	newJustifyEnabled = js && !isUrlParameterFalse("js_justify") && !getDefaultRtl();
+	newJustifyEnabled = js && !isUrlParameterFalse("js_justify");
 }
 
 // TODO:
@@ -158,7 +158,7 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDec
 
 makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native {
 	overridden = applyAlphabetStyles(detectAlphabet(txt), style);
-	textfield = makeTextfield(getMappedFontFamily(overridden));
+	textfield = makeTextfield(getMappedFontFace(overridden));
 	rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 	setTextDirection(textfield, if (rtl) "rtl" else "ltr");
 	dstyle = getDefinedTextStyle(overridden);
@@ -504,6 +504,15 @@ renderParagraphEx(
 	})
 }
 
+isSpaceForm(spaceForm : GhostForm) -> bool {
+	switch (spaceForm : GhostForm) {
+		Text(text, __) : {
+			text == " "
+		};
+		default: false
+	};
+}
+
 getParaLineInfos(
 	alignment : ParaLineAlignment,
 	wordGroups : [ParaWordGroup],
@@ -533,7 +542,14 @@ getParaLineInfos(
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
 	linesCount = length(reflowResult) - 1;
 	mapi(reflowResult, \i, line -> {
-		optimizedLine = getOptimizedLine(line.words, alignment, availableWidth, indent, i == linesCount);
+		words = if (isUrlParameterTrue("new") && alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
+			isSpace = switch (lastElement(line.words, emptyParaWord).word) {
+				Space(spaceForm) : isSpaceForm(spaceForm);
+				default : false;
+			};
+			if (isSpace) take(line.words, length(line.words) - 1) else line.words
+		} else line.words;
+		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount);
 
 		lineAscAndDynamic : Pair<double, bool> = fold(optimizedLine, Pair(0.0, false), \ac : Pair<double, bool>, ole : OptimizedLineElement -> {
 			lineAsc = max(ac.first, fgetValue(ole.metrics).baseline);
@@ -1017,8 +1033,8 @@ renderParaLines(
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
 		lineAlignment =
-			if (alignment == Justify() && lastLine && !newJustifyEnabled) {
-				StartAlign()  // Justifying instead via CSS because mobiles are too slow.
+			if (alignment == Justify() && lastLine) {
+				StartAlign()
 			} else {
 				alignment;
 			}
@@ -1054,11 +1070,7 @@ renderParaLines(
 }
 
 getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement]{
-	if (isBiDiEnabled() || alignment == Justify() && !newJustifyEnabled) {
-		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM, w.nextWidgetId));
-	} else {
-		optimizeLine(words, alignment, availableWidth, indent, lastLine);
-	};
+	optimizeLine(words, alignment, availableWidth, indent, lastLine);
 }
 
 calcParaLineAlignmentOffset(slack : double, lineIndent : double, rtl : bool, alignment : ParaLineAlignment) -> double {
@@ -1092,14 +1104,18 @@ RenderLine(
 	interlineSpacing : double,
 ) -> ParaLineResult {
 	remaining = width - info.lineWidth;
-	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
+	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, if (newJustifyEnabled && alignment == Justify()) StartAlign() else alignment);
+
+	wordsCount = length(info.optimizedLine) - 1;
 
 	// Inter-word spacing for justification
 	interWord = if (alignment == Justify() && length(info.optimizedLine) > 1 && !newJustifyEnabled) {
-		nwords = length(info.optimizedLine);
-		min(10.0, remaining / i2d(nwords - 1));
+		nSpaces = foldi(info.optimizedLine, 0 , \i, acc, elem : OptimizedLineElement -> {
+				lastWord = i == wordsCount;
+				if (!lastWord && isSpaceForm(elem.f)) acc + 1 else acc
+		});
+		if (nSpaces > 0) remaining / i2d(nSpaces) else 0.0
 	} else 0.0;  // Inter-word spacing via CSS instead because mobiles are too slow.
-
 	justifyExtraWidth = ref 0.0;
 
 	// The width and the individual forms
@@ -1129,6 +1145,9 @@ RenderLine(
 			} else fm
 		}
 
+		lastWord = i == wordsCount;
+		isSpace = !newJustifyEnabled && !lastWord && isSpaceForm(elem.f);
+
 		applyStylesAndOffset = \form : Form ->
 			form
 			|> (\fm ->
@@ -1140,9 +1159,8 @@ RenderLine(
 						^alignmentOffset,
 						y,
 						dy,
-						m.width,
+						m.width + if (isSpace) interWord else 0.0,
 						info.lineHeight,
-						interWord,
 						highLightOffset,
 						interlineSpacing,
 						info.containsDynamicElement
@@ -1152,7 +1170,8 @@ RenderLine(
 				)
 			);
 
-		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
+		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 
+		else if (isSpace) interWord else 0.0;
 
 		r = switch (f : GhostForm) {
 			Empty() : None();
@@ -1233,7 +1252,6 @@ applyIntStylesAndHighlighting(
 	baselineShift : double,
 	width : double,
 	height : double,
-	interWord : double,
 	highLightOffset : double,
 	interlineSpacing : double,
 	containsDynamicElement : bool
@@ -1255,7 +1273,7 @@ applyIntStylesAndHighlighting(
 			);
 		if (rectStyle == []) Empty()
 		else Rectangle(
-			width + interWord,
+			width,
 			height + interlineSpacing + 0.1,
 			rectStyle
 		);
@@ -1273,7 +1291,7 @@ applyIntStylesAndHighlighting(
 			Empty() : f;
 			default : {
 				textAndBack = Group([
-					Translate(const(xOffset - interWord / 2.), const(yOffset + highLightOffset), textAndBackPair.second),
+					Translate(const(xOffset), const(yOffset + highLightOffset), textAndBackPair.second),
 					f
 				]);
 				if (containsDynamicElement) Access([AccessRole("group")], textAndBack) else textAndBack
@@ -1382,9 +1400,19 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
 		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
 			lastWord = i == wordsCount;
+			defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
 			switch (w.word) {
-				Space(__): if (lastWord) acc else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width);
-				default: Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+				Space(spaceForm): {
+					switch (spaceForm : GhostForm) {
+						Text(text, __) : {
+							if (text == " ") {
+								if (lastWord) defValue() else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
+							} else defValue()
+						};
+						default: defValue()
+					}
+				};
+				default: defValue();
 			}
 		});
 		if (spacesAndWordsWidth.first > 0) {
@@ -1405,9 +1433,11 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 					Space(__): {
 						if (newJustifyEnabled && alignment == Justify()) {
 							switch (f : GhostForm) {
-								Text(__, __) : {
-									spaceSize = getStaticFormSize(f);
-									FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
+								Text(text, __) : {
+									if (text == " ") {
+										spaceSize = getStaticFormSize(f);
+										FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
+									} else metrics
 								}
 								default: metrics
 							}
@@ -1433,6 +1463,22 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 									joinText(t1, s1, t2, s2);
 								}
 
+								additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
+									switch (w) {
+										Space(spaceForm): {
+											switch (spaceForm : GhostForm) {
+												Text(text, __) : {
+													if (text == " ") {
+														wordSpacing;
+													} else 0.0
+												};
+												default: 0.0
+											}
+										}
+										default: 0.0;
+									};
+								} else 0.0;
+
 								if (length(join) == 1 && intIdM == p.interactivityIdM) {
 									t : Form = join[0];
 
@@ -1443,15 +1489,6 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										m = getStaticFormSize(t);
 										optimizedLineElementMetrics : FormMetrics = fgetValue(p.metrics);
 										wordWidth = getStaticFormSize(f).width;
-
-										additionalWidth = switch (w) {
-											Space(__): {
-												if (newJustifyEnabled && alignment == Justify()) {
-													if (lastWord) 0.0 else wordSpacing;
-												} else 0.0;
-											}
-											default: 0.0;
-										};
 
 										Pair(
 											t,
@@ -1466,7 +1503,20 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										OptimizedLineElement(jtf.first, jtf.second, intIdM, nextWidgetId),
 										tail_
 									);
-								} else Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
+								} else {
+									fMetrics : FormMetrics = fgetValue(metrics);
+									Cons(
+										OptimizedLineElement(
+											f, 
+											FormMetrics(fMetrics with 
+												width = fMetrics.width + additionalWidth
+											) |> const, 
+											intIdM, 
+											nextWidgetId
+										), 
+										acc
+									);
+								};
 							}
 							default : {
 								Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
@@ -1484,8 +1534,13 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 			map(arr, \e -> {
 				switch (e.f : GhostForm) {
 					Text(t, s): {
+						fMetrics : FormMetrics = fgetValue(e.metrics);
 						OptimizedLineElement(
-							e with f = Text(t, arrayPush(s, wordSpacingStyle))
+							e with 
+							f = Text(t, arrayPush(s, wordSpacingStyle)), 
+							metrics = FormMetrics(fMetrics with 
+								width = roundTo(fMetrics.width, 0.01)
+							) |> const
 						)
 					}
 					default: e;
