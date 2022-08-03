@@ -63,8 +63,8 @@ export {
 	// Note that function may be called by renderForm very often, so it must be fast.
 	setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -> void;
 
-	// override font face for default font (works as defaultFont http-parameter but lower priority)
-	setFontFaceOverride(familyM : Maybe<string>) -> void;
+	// Overrides font family for default font
+	setDefaultFontFamilyOverride(familyM : Maybe<string>) -> void;
 
 	getNativeLangFromBCP(bcpLang : string) -> string;
 
@@ -120,6 +120,7 @@ export {
 	getFontFaceStyle(fontFace : string, style : FontFamilyStyle) -> bool;
 	canFontFaceStyleBeSwitched(fontFace : string, style : FontFamilyStyle) -> bool;
 	switchFontFaceStyle(fontFace : string, style : FontFamilyStyle, turnOn : Maybe<bool>) -> string;
+	replaceFontFamily(srcFace : string, familyChange : (string) -> string) -> string;
 
 	doesLangDefaultFontFamilyExist(lang : string) -> bool;
 	setLang2DefaultFontFamilyMap(langsMap : [Pair<string, [Pair<string, string>]>]) -> void;
@@ -310,17 +311,27 @@ getChineseFontMinimal() -> FontFamily {
 
 //In case of change update getCharacterStyleFromWigiTextStyle
 defaultFontFace_ = "Roboto";
+defaultFontFamily_ = "Roboto";
 defaultFontSize_ = 11.0;
-defaultFontOverride_ = eitherGetUrlValidParameter("defaultFontFace", isValidIdentifier, idfn, "");
-fontFaceOverride_ : ref Maybe<string> = ref None();
+defaultFontFamilyOverride_ = eitherGetUrlValidParameter("defaultFontFamily", isValidIdentifier, idfn, "");
+fontFamilyOverride_ : ref Maybe<string> = ref None();
+// single-entry cache for getMappedFont. Hit rate is 80%.
+getMappedFont_cache_key = ref Pair("", -1.0);
+getMappedFont_cache_value = ref Pair("", -1.0);
 
-setFontFaceOverride(familyM : Maybe<string>) -> void {
-	fontFaceOverride_ := familyM;
+resetMappedFontCache() {
+	getMappedFont_cache_key := Pair("", -1.0);
+	getMappedFont_cache_value := Pair("", -1.0);
 }
 
-getDefaultFontFaceOverride() -> string {
-	if (defaultFontOverride_ != "") defaultFontOverride_
-	else either(^fontFaceOverride_,  defaultFontFace_);
+setDefaultFontFamilyOverride(familyM : Maybe<string>) -> void {
+	fontFamilyOverride_ := familyM;
+	resetMappedFontCache();
+}
+
+getDefaultFontFamilyOverride() -> string {
+	if (defaultFontFamilyOverride_ != "") defaultFontFamilyOverride_
+	else either(^fontFamilyOverride_,  defaultFontFamily_);
 }
 
 fontOverrides = ref eitherGetUrlValidParameterM("fontOverrides", \s -> {
@@ -349,12 +360,8 @@ fontOverrides = ref eitherGetUrlValidParameterM("fontOverrides", \s -> {
 getMappedFontFn : ref (string, double) -> Pair<string, double> =
 	ref \family, size -> Pair(family, size);
 
-// single-entry cache for getMappedFont. Hit rate is 80%.
-getMappedFont_cache_key = ref Pair("", -1.0);
-getMappedFont_cache_value = ref Pair("", -1.0);
-
 getMappedFont(face : string, size : double) {
-	fface = if (face != "" && face != defaultFontFace_) face else getDefaultFontFaceOverride();
+	fface = if (face != "") face else defaultFontFace_;
 	if (fface != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
 		mappedFont =
 			if (fface == "MaterialIcons" || (fface == "'Material Icons'")) {
@@ -678,17 +685,17 @@ apply2AlphabetsScaling(alphabet1 : string, alphabet2 : string, styles : [Charact
 }
 
 applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterStyle] {
-	getFontSize = \ffam -> {
+	getFontSize = \ffc -> {
 		fsz = extractStruct(styles, FontSize(defaultFontSize_)).size;
-		ratio = getAlphabetScaling(alphabet, ffam);
-		FontSize(fsz * getAlphabetScaling(alphabet, ffam));
+		ratio = getAlphabetScaling(alphabet, ffc);
+		FontSize(fsz * getAlphabetScaling(alphabet, ffc));
 	}
 	eitherFn(
 		tryExtractStruct(styles, FontFamily("")),
 		\ff -> {
-			ffam = ff.name;
-			fontFamily = if (alphabet == "arb") strReplace(ffam, "RobotoMedium", "RobotoBold") else ffam;
-			replaceStructMany(styles, [FontFamily(fontFamily), getFontSize(ffam)])
+			ffc = ff.name;
+			fontFace = if (alphabet == "arb") strReplace(ffc, "RobotoMedium", "RobotoBold") else ffc;
+			replaceStructMany(styles, [FontFamily(fontFace), getFontSize(ffc)])
 		},
 		\-> {
 			replaceStructMany(styles, [getFontSize(defaultFontFace_)])
@@ -896,6 +903,15 @@ switchFontFaceStyle(fontFace : string, style : FontFamilyStyle, turnOn : Maybe<b
 			SItalic(): change(eitherMap(turnOn, idfn, !italic), bold);
 		};
 	}, fontFace)
+}
+
+replaceFontFamily(srcFace : string, familyChange : (string) -> string) -> string {
+	mapFontSwitchingStateMachine(srcFace, \italic, bold, source -> {
+		dstFamily = familyChange(source(false, false));
+		mapFontSwitchingStateMachine(dstFamily, \__, __, change -> {
+			change(italic, bold)
+		}, dstFamily)
+	}, srcFace)
 }
 
 mapFontFaceToLanguageDefaultFamilyCache : ref Tree<string, ref Tree<string, string>> = ref makeTree();
