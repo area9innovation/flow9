@@ -31,6 +31,7 @@ export {
 	MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
 
 	addTagName(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacterStyle];
+	updateOnFontWrapper(parent : MFocusGroup, makeTropic : () -> Tropic) -> Tropic;
 
 	getHeadingTagFromFontSize(fontSize : double) -> Maybe<string>;
 }
@@ -53,13 +54,12 @@ currentMLang = ref "";
 currentMLangFont = ref "";
 
 MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
-	TText(text, MTextStyle2TCharacterStyle(parent, text, style))
+	updateOnFontWrapper(parent, \ -> TText(text, MTextStyle2TCharacterStyle(parent, text, style)))
 }
 
 MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MParagraphStyle]) -> Tropic {
 	mTextStyle = style2MTextStyle(style);
 	fontStyle = extractMFontStyleDef(mTextStyle, getFontStyle(parent));
-	characterStyle = MTextStyle2TCharacterStyle(parent, fgetValue(text), mTextStyle);
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 
 	interlineSpacing = eitherFn(tryExtractStruct(style, InterlineSpacing(0.)), idfn, \ -> MFontStyle2InterlineSpacing(parent, fontStyle));
@@ -67,14 +67,20 @@ MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MPa
 
 	cropLongWords = extractStructMany(style, CropWords(true));
 
-	concat3(characterStyle, [ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
-	|> (\parStyle : [TParagraphStyle] ->
-		arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style), extractStruct(style, SetRTL(parent.rtl)).rtl))
-	)
-	|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, FullWidth())))
-	|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, Justify())))
-	|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, ParagraphMetrics(nop1))))
-	|> (\parStyle -> TParagraph(text, parStyle))
+	parStyle =
+		concat([ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
+		|> (\parStyle : [TParagraphStyle] ->
+			arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style), extractStruct(style, SetRTL(parent.rtl)).rtl))
+		)
+		|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, FullWidth())))
+		|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, Justify())))
+		|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, ParagraphMetrics(nop1))));
+
+	makeTParagraph = \ -> {
+		characterStyle = MTextStyle2TCharacterStyle(parent, fgetValue(text), mTextStyle);
+		TParagraph(text, concat(characterStyle, parStyle))
+	};
+	updateOnFontWrapper(parent, makeTParagraph)
 }
 
 MTextStyle2TCharacterStyle(parent : MFocusGroup, text : string, style : [MTextStyle]) -> [TCharacterStyle] {
@@ -137,6 +143,10 @@ addLangAttribute(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacte
 		)
 }
 
+updateOnFontWrapper(parent : MFocusGroup, makeTropic : () -> Tropic) -> Tropic {
+	eitherFn(parent.theme.fontWrapper, \wrapper -> TSelect(wrapper, \__ -> makeTropic()), makeTropic);
+}
+
 extractMTextStyleDef(style : [MParagraphStyle], def : MFontStyleBundle) -> [MTextStyle] {
 	bundle = extractMFontStyleBundle(style, def);
 
@@ -176,7 +186,7 @@ MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], de
 		font = MFontStyle2MFont(parent, bundle.fontStyle);
 		wrappedFont = eitherMap(
 			parent.theme.fontWrapper,
-			\wrapper -> wrapper.wrapper(font, intColor, bundle.enabled),
+			\wrapper -> fgetValue(wrapper).wrapper(font, intColor, bundle.enabled),
 			font
 		);
 		arrayPush(
