@@ -327,7 +327,7 @@ if (a === b) return true;
 			if (!keepStringEscapes) {
 				#if js
 				untyped __js__("
-					return '\"' + value.replace(/[\\\\\\\"\\n\\t]/g, c => {
+					return '\"' + value.replace(/[\\\\\\\"\\n\\t]/g, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
