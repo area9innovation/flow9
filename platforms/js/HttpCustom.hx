@@ -165,14 +165,28 @@ class HttpCustom extends haxe.Http {
 			if( !Lambda.exists(headers, function(h) return h.name == "Content-Type") && method != 'GET')
 				r.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
 
-			for( h in headers )
-				r.setRequestHeader(h.name,h.value);
+			for( h in headers ) {
+				try {
+					r.setRequestHeader(h.name,h.value);
+				} catch (e : Dynamic) {
+					me.req = null;
+					me.onResponse(0, e.toString(), []);
+					return;
+				}
+			}
 		#else
 			if( !Lambda.exists(headers, function(h) return h.header == "Content-Type") && method != 'GET')
 				r.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
 
-			for( h in headers )
-				r.setRequestHeader(h.header,h.value);
+			for( h in headers ) {
+				try {
+					r.setRequestHeader(h.header,h.value);
+				} catch (e : Dynamic) {
+					me.req = null;
+					me.onResponse(0, e.toString(), []);
+					return;
+				}
+			}
 		#end
 
 		r.send(uri);

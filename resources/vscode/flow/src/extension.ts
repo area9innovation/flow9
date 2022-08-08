@@ -13,7 +13,7 @@ import {
 
 import * as tools from "./tools";
 import * as updater from "./updater";
-import * as simplegit from 'simple-git/promise';
+import simpleGit from 'simple-git';
 import * as notebook from './notebook';
 //import { performance } from 'perf_hooks';
 import editors from './editors';
@@ -266,7 +266,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
         await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
         return;
     }
-    const git = simplegit(flowRoot);
+    const git = simpleGit(flowRoot);
     let status = await git.status();
     if (status.current != "master") {
         await vscode.window.showErrorMessage("Flow repository is not on master branch. Please switch to master to proceed.");

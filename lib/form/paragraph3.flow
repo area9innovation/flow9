@@ -8,7 +8,14 @@ import text/blueprint;
 export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
-	renderParagraphEx(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager, renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>) -> Form;
+	renderParagraphEx(
+		p : [ParagraphElement],
+		s : [ParagraphStyle],
+		rtl : bool,
+		widthManager : ParagraphWidthManager,
+		renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
+		fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
+	) -> Form;
 	getLineIndent(paraIndent : double, isFirstLine : bool) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
 	general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> NonInteractiveWrapElement;
@@ -187,7 +194,7 @@ renderParagraph(
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
-	renderParagraphEx(p, s, rtl, widthManager, None());
+	renderParagraphEx(p, s, rtl, widthManager, None(), idfn);
 }
 
 extractParaAtomicForm = \word1 : ParaWord, pos : int -> {
@@ -270,7 +277,8 @@ renderParagraphEx(
 	s : [ParagraphStyle],
 	rtl : bool,
 	widthManager : ParagraphWidthManager,
-	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
+	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
+	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
 ) -> Form {
 	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
 
@@ -307,7 +315,8 @@ renderParagraphEx(
 	gluedArr = list2array(glued);
 	words : [ParaWord] = mapi(gluedArr, \i, word -> makeParaWord(
 		word,
-		i + 1 == length(gluedArr) || containsStruct(s, IgnoreLetterspacingOnReflow())
+		i + 1 == length(gluedArr) || containsStruct(s, IgnoreLetterspacingOnReflow()),
+		fontWrapper
 	));
 
 	isUnbreakable = \currentWord, prevWord -> {
@@ -654,7 +663,8 @@ expandGlueFragments(
 makeInteractiveParaWord(
 	w : ParaAtomic,
 	interactivityIdM : Maybe<int>,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
 ) -> ParaWord {
 	s2w = \s : Pair<Form, Transform<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
@@ -694,7 +704,11 @@ makeInteractiveParaWord(
 			);
 		}
 		Space(s) : {
-			dynFormSizePair = getJoinableTextMetrics(s, true, ignoreLetterSpacing);
+			innerForm = switch(s : Form) {
+				Text(t, st): Text(t, fontWrapper(st));
+				default: s;
+			}
+			dynFormSizePair = getJoinableTextMetrics(innerForm, true, ignoreLetterSpacing);
 			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()));
 		}
 		ParaOneWord(wd) : {
@@ -732,7 +746,11 @@ makeInteractiveParaWord(
 			}
 		}
 		InteractiveParaAtomic(word, id) : {
-			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing);
+			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing, fontWrapper);
+		}
+		Text(t, s) : {
+			opt = Text(t, fontWrapper(s)) |> optimizeForm;
+			getJoinableTextMetrics(opt, false, ignoreLetterSpacing) |> s2w;
 		}
 		default : {
 			opt = optimizeForm(cast(w : ParaAtomic -> Form));
@@ -777,17 +795,19 @@ getJoinableTextMetrics(
 	}
 }
 
-makeParaWord(w : ParaAtomic, ignoreLetterSpacing : bool) -> ParaWord {
+makeParaWord(w : ParaAtomic, ignoreLetterSpacing : bool, fontWrapper : ([CharacterStyle]) -> [CharacterStyle]) -> ParaWord {
 	switch (w) {
 		InteractiveParaAtomic(word, id) : makeInteractiveParaWord(
 			word,
 			Some(id),
-			ignoreLetterSpacing
+			ignoreLetterSpacing,
+			fontWrapper
 		);
 		default : makeInteractiveParaWord(
 			w,
 			None(),
-			ignoreLetterSpacing
+			ignoreLetterSpacing,
+			fontWrapper
 		);
 	}
 }
