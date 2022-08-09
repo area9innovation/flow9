@@ -1503,15 +1503,26 @@ class Native {
 	}
 
 	public static function getUrl(u : String, t : String) : Void {
+		getUrlBasic(u, t);
+	}
+
+	public static function getUrlAutoclose(u : String, t : String, delay : Int) : Void {
+		getUrlBasic(u, t, delay);
+	}
+
+	public static function getUrlBasic(u : String, t : String, ?autoCloseDelay : Int = -1) : Void {
 		#if (js && !flow_nodejs)
 		try {
-			Browser.window.open(u, t);
+			var openedWindow = Browser.window.open(u, t);
+			if (autoCloseDelay >= 0) {
+				openedWindow.addEventListener('pageshow', function() {
+					timer(autoCloseDelay, function() { openedWindow.close(); });
+				});
+			}
 		} catch (e:Dynamic) {
 			// Catch exception that tells that window wasn't opened after user chose to stay on page
 			if (e != null && e.number != -2147467259) throw e;
 		}
-		#elseif flash
-		flash.Lib.getURL(new flash.net.URLRequest(u), t);
 		#end
 	}
 
