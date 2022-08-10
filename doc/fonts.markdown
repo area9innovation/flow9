@@ -17,6 +17,7 @@ How to update Material icons
 	1.5. Copy `list` from `material_icons.flow` (https://github.com/area9innovation/flow9/blob/master/lib/material/internal/material_icons.flow#L64) to `existingIcons` array
 	1.6. Call `flowcpp merge_icons.flow`
 	1.7. Copy the content of `icons_merged.txt` back to `material_icons.flow`
+	1.8. Notify colleagues that keep their own copy of font locally or in the project. (GroveX, Rodion Safonov, etc.)
 
 2. Update dfont for flowcpp
 	2.1. Go to https://github.com/google/material-design-icons/tree/master/font
