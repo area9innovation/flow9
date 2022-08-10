@@ -56,6 +56,8 @@ class RenderSupport {
 	// Workaround is intended for using with SCORM Cloud
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
+	// Don't wait for fonts to load
+	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") == "1";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -547,6 +549,9 @@ class RenderSupport {
 
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
+			if (mainNoDelay || Native.isNew) {
+				defer(StartFlowMainWithTimeCheck);
+			}
 		} else {
 			defer(StartFlowMain);
 		}
@@ -838,7 +843,7 @@ class RenderSupport {
 		initFullScreenEventListeners();
 
 		webFontsLoadingStartAt = NativeTime.timestamp();
-		WebFontsConfig = FontLoader.loadWebFonts(StartFlowMainWithTimeCheck);
+		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay || Native.isNew) function() {} else StartFlowMainWithTimeCheck);
 
 		initClipboardListeners();
 		initCanvasStackInteractions();
