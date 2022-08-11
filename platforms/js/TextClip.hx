@@ -119,6 +119,7 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("new") == "1" && Util.getParameter("forced_textwidth_update") != "0";
 
@@ -1285,7 +1286,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (Platform.isIOS && Platform.browserMajorVersion < 13) {
+		if (Platform.isIOS && (Platform.browserMajorVersion < 13 || EnsureInputIOS)) {
 			RenderSupport.ensureCurrentInputVisible();
 		}
 
