@@ -1678,6 +1678,12 @@ class RenderSupport {
 				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
 					if (Platform.isIOS) {
 						Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
+						var onblur : Dynamic = function () {};
+						onblur = function() {
+							Browser.window.scrollTo(0, 0);
+							focused_node.removeEventListener("blur", onblur);
+						};
+						focused_node.addEventListener("blur", onblur);
 					} else {
 						var mainStage = PixiStage.children[0];
 						mainStage.y = visibleAreaHeight - rect.bottom;
