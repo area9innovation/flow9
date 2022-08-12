@@ -134,7 +134,7 @@ produceGringoTypes(file : string, grammar : GTerm) -> void {
 			acc + "\t" + gfUnion2Flow(typeacc3, undef)
 		});
 		result = foldTree(typeacc3.structs, unions, \st, stdef, acc -> {
-			acc + "\t" + gfStruct2Flow(typeacc3, stdef)
+			acc + "\t" + gfStruct2Flow(typeacc3, false, stdef)
 		}) + "}\n";
 
 		// println(result);
@@ -327,7 +327,7 @@ gfUnion2Flow(acc : GTypeAcc, f : GfTypeUnion) -> string {
 	f.name + " ::= " + strGlue(uniq(typenames), ", ") + ";\n";
 }
 
-gfStruct2Flow(acc : GTypeAcc, s : GfTypeStruct) -> string {
+gfStruct2Flow(acc : GTypeAcc, colon : bool, s : GfTypeStruct) -> string {
 	nameCounts = fold(s.args, makeTree(), \acc2, arg -> {
 		incTreeValue(acc2, arg.first);
 	});
@@ -346,10 +346,11 @@ gfStruct2Flow(acc : GTypeAcc, s : GfTypeStruct) -> string {
 			else if (name == "double") "d"
 			else if (name == "string") "s"
 			else name;
-		Pair(arrayPush(acc2, rname), ncount)
+		cname = if (isUpperLetter(getCharAt(rname, 0))) toLowerCase(rname) else rname;
+		Pair(arrayPush(acc2, cname), ncount)
 	}).first;
 
-	s.name + "(" + supergluei(s.args, \i, arg -> {
+	s.name + (if (colon) " : " else "") + "(" + supergluei(s.args, \i, arg -> {
 		rename[i] + " : " + gfType2Flow(acc, arg.second)
 	}, ", ") + ");\n";
 }
@@ -388,15 +389,34 @@ produceMelonTypes(file : string, tacc : GTypeAcc, unions : Tree<string, GfTypeUn
 				GfTypeName(f, struct): {
 					mstdef = lookupTree(structs, struct);
 					mstdef ?? {
-						ft = gfStruct2Flow(tacc, mstdef);
+						ft = gfStruct2Flow(tacc, false, mstdef);
 						strsubsmart(ft, 0, -2);
 					} : toString(st);
 				}
 				default: toString(st);
 			}
-		}, ",\n\t");
-	}) + ";\n";
+		}, ",\n\t") + ";\n\n";
+	});
+
+	usedStructs = foldTree(unions, makeSet(), \un, ud, acc -> {
+		fold(ud.subtypes, acc, \acc2, tu -> {
+			switch (tu) {
+				GfTypeName(f, struct): insertSet(acc2, struct);
+				default: acc2;
+			}
+		})
+	});
+
+	res2 = foldTree(structs, res, \st, std, acc -> {
+		if (containsSet(usedStructs, st)) acc
+		else {
+			ft = gfStruct2Flow(tacc, true, std);
+			acc + ft;
+		}
+	});
+
 	// println(res);
-	setFileContent(file, res);
+
+	setFileContent(file, res2);
 	{}
 }
