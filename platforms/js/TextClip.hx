@@ -180,6 +180,7 @@ class TextClip extends NativeWidgetClip {
 	private var doNotRemap : Bool = false;
 	private var preventSelectEvent : Bool = false;
 	private var preventMouseUpEvent : Bool = false;
+	private var preventEnsureCurrentInputVisible : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1287,7 +1288,11 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (Platform.isIOS && (Platform.browserMajorVersion < 13 || EnsureInputIOS)) {
-			RenderSupport.ensureCurrentInputVisible();
+			if (!this.preventEnsureCurrentInputVisible) {
+				RenderSupport.ensureCurrentInputVisible();
+				// Intended for first focusing into wigi editor after page reload (for some reason, onFocus duplicates in this case).
+				this.preventEnsureCurrentInputVisible = true;
+			}
 		}
 
 		if (Platform.isIOS) {
@@ -1298,6 +1303,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onBlur(e : Event) : Void {
+		this.preventEnsureCurrentInputVisible = false;
 		if (untyped RenderSupport.Animating || this.preventBlur) {
 			untyped this.preventBlur = false;
 			RenderSupport.once("stagechanged", function() { if (nativeWidget != null && isFocused) nativeWidget.focus(); });
