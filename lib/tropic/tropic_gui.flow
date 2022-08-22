@@ -58,6 +58,7 @@ export {
 	TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic;
 
 	TCircle(radius : double, style : [TGraphicsStyle]) -> Tropic;
+	TCircleT(radius : Transform<double>, style : Transform<[TGraphicsStyle]>) -> Tropic;
 
 	TGroup(c : [Tropic]) -> Tropic;
 	TCols(c : [Tropic]) -> Tropic;
@@ -386,12 +387,12 @@ export {
 
 	wh2Tropic(wh : WidthHeight) -> Tropic;
 
-	// Zoom tropic if its metrics are bigger than maxWH
-	TZoomMax(tr : Tropic, maxWH : Transform<WidthHeight>) -> Tropic;
-	// Zoom tropic if its width is bigger than maxWidth
-	TZoomMaxWidth(tr : Tropic, maxWidth : Transform<double>) -> Tropic;
-	// Zoom tropic if its height is bigger than maxHeight
-	TZoomMaxHeight(tr : Tropic, maxHeight : Transform<double>) -> Tropic;
+	// Zoom tropic if its available metrics are bigger than threshold
+	TZoomMax(tr : Tropic, threshold : Transform<WidthHeight>) -> Tropic;
+	// Zoom tropic if its available width is bigger than thresholdWidth
+	TZoomMaxWidth(tr : Tropic, thresholdWidth : Transform<double>) -> Tropic;
+	// Zoom tropic if its available height is bigger than thresholdHeight
+	TZoomMaxHeight(tr : Tropic, thresholdHeight : Transform<double>) -> Tropic;
 
 	// Helpers to make Tropic not transparent for events
 	disableMouseWheelBelow(content : Tropic) -> Tropic;
@@ -512,6 +513,10 @@ TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic {
 
 TCircle(radius : double, style : [TGraphicsStyle]) -> Tropic {
 	TGraphics([GCircle(radius, radius, radius)], style);
+}
+
+TCircleT(radius : Transform<double>, style : Transform<[TGraphicsStyle]>) -> Tropic {
+	TDynamicGraphics(fselectLift(radius, \r -> [GCircle(r, r, r)]), style);
 }
 
 TGroup(c : [Tropic]) -> Tropic {
@@ -2732,25 +2737,25 @@ wh2Tropic(wh : WidthHeight) -> Tropic {
 		TFillXY();
 }
 
-TZoomMax(tr : Tropic, maxWH : Transform<WidthHeight>) -> Tropic {
+TZoomMax(tr : Tropic, threshold : Transform<WidthHeight>) -> Tropic {
 	availableWH = makeWH();
-	scaleFactor = fselect2(availableWH, maxWH, FLift2(\awh, mwh -> max3(awh.width / mwh.width, awh.height / mwh.height, 1.0)));
+	scaleFactor = fselect2(availableWH, threshold, FLift2(\awh, mwh -> max3(awh.width / mwh.width, awh.height / mwh.height, 1.0)));
 
 	TScale(ffactor2(scaleFactor), tr)
 	|> (\f -> TAttachAvailable(f, availableWH))
 }
 
-TZoomMaxWidth(tr : Tropic, maxWidth : Transform<double>) -> Tropic {
+TZoomMaxWidth(tr : Tropic, thresholdWidth : Transform<double>) -> Tropic {
 	availableX = make(0.0);
-	scaleFactor = fmax(fdivide(availableX, maxWidth), const(1.0));
+	scaleFactor = fmax(fdivide(availableX, thresholdWidth), const(1.0));
 
 	TScale(ffactor2(scaleFactor), tr)
 	|> (\f -> TAttachAvailableWidth(f, availableX))
 }
 
-TZoomMaxHeight(tr : Tropic, maxHeight : Transform<double>) -> Tropic {
+TZoomMaxHeight(tr : Tropic, thresholdHeight : Transform<double>) -> Tropic {
 	availableY = make(0.0);
-	scaleFactor = fmax(fdivide(availableY, maxHeight), const(1.0));
+	scaleFactor = fmax(fdivide(availableY, thresholdHeight), const(1.0));
 
 	TScale(ffactor2(scaleFactor), tr)
 	|> (\f -> TAttachAvailableHeight(f, availableY))
@@ -2778,6 +2783,7 @@ blockInteractives(content : Tropic) -> Tropic {
 }
 
 interactivesBlockerLayer(tr : Tropic) -> Tropic {
+	touchInside = make(false);
 	TInteractive(
 		[
 			MouseDown(\mi -> mi.inside()),
@@ -2785,9 +2791,23 @@ interactivesBlockerLayer(tr : Tropic) -> Tropic {
 			MouseMiddleDown(\mi -> mi.inside()),
 			MouseUp(\mi -> mi().inside),
 			MouseMove(\mi -> mi().inside),
-			TouchStart(\mi -> length(mi.inside) > 0 && !exists(mi.inside, \m -> !m())),
-			TouchMove(\mi -> length(mi.inside) > 0 && !exists(mi.inside, \m -> !m())),
-			TouchEnd(\mi -> length(mi.inside) > 0 && !exists(mi.inside, \m -> !m())),
+			TouchStart(\mi -> {
+				block = length(mi.inside) > 0 && !exists(mi.inside, \m -> !m());
+				nextDistinct(touchInside, block);
+				block;
+			}),
+			TouchMove(\mi -> {
+				block = length(mi.inside) > 0 && !exists(mi.inside, \m -> !m());
+				nextDistinct(touchInside, block);
+				block;
+			}),
+			TouchEnd(\mi -> {
+				if (length(mi.inside) > 0) {
+					!exists(mi.inside, \m -> !m())
+				} else {
+					getValue(touchInside);
+				}
+			}),
 			RollOver(nop1),
 			RollOut(nop1)
 		],

@@ -1,0 +1,243 @@
+import ds/tree;
+import math/math;
+
+/*
+OrderedSet<?> has this interface:
+
+insert(x : ?) -> void
+is-empty() -> bool
+contains(x : ?) -> bool
+delete(x : ?) -> void
+max() -> ?
+min() -> ?
+successor(x : ?) -> ? // Smallest element that is greater than x (or x if it is the max)
+predecessor(x : ?) -> ? // Largest element that smaller than x (or x if it is min)
+
+This can be implemented for ints using a trie of the bits.
+
+http://web.stanford.edu/class/archive/cs/cs166/cs166.1166/lectures/15/Small15.pdf
+
+To find the successor, it can be done by doing a binary search over the layers of
+a trie, provided there is a way to do that.
+The way to do that is to have a hash table for each layer that stores all nodes
+in that layer. This is called x fast tries, and they work well for ints.
+
+If you have that data structure, then the intersection of two sorted sets of integers
+can be done by having iterators into each set, and then using successor of the other
+side to jump ahead.
+
+http://www.jcomputers.us/vol11/jcp1102-01.pdf
+
+
+
+
+
+*/
+
+export {
+	//
+	// An object oriented API for a trie with just ints
+	// 
+	makeIntTrie() -> IntTrie;
+
+	IntTrie(
+		// Does this trie contain this row? Also works for prefixes
+		contains : (row : [int]) -> bool,
+		// Insert this row in the trie (ignoring duplicates)
+		insert : (row : [int]) -> void,
+		// Merge these two tries
+		merge : (IntTrie) -> void,
+		// Extract the subtrie from this prefix
+		extractTrie : (IntTrie, prefix : [int]) -> IntTrie,
+		// Debug dump of the trie
+		print : () -> void,
+		// Low level access to/from underlying representation
+		toRaw : () -> IntTrieValue,
+		fromRaw : (IntTrieValue) -> void,
+	);
+
+	// TODO: Add foldIntTrie top-level function
+
+	//
+	// The same, but as a functional API for a trie with just ints
+	//
+
+	IntTrieValue(
+		values : Tree<int, IntTrieValue>
+	);
+
+	// Check if the trie contains this value (call with i = 0). Also works for prefixes
+	containsIntTrie(trie : IntTrieValue, i : int, values : [int]) -> bool;
+	// Insert this value (call with i = 0)
+	insertIntTrie(trie : IntTrieValue, i : int, values : [int]) -> IntTrieValue;
+	// Merge these two tries
+	mergeIntTries(left : IntTrieValue, right : IntTrieValue) -> IntTrieValue;
+	// Fold over the trie, expanding each row to full arrays
+	foldIntTrieValue(t : IntTrieValue, acc : ?, fn : (acc : ?, [int]) -> ?) -> ?;
+
+	// Given a prefix, extract the subtrie (call with i = 0) for this prefix
+	extractIntTrie(trie : IntTrieValue, i : int, prefix : [int]) -> IntTrieValue;
+
+	// TODO:
+	// Full row filtering.
+	// filter : (IntTrieValue, fn : (row : [int]) -> bool)) -> IntTrieValue
+	// map : (IntTrieValue, fn : (row : [int) -> [int]) -> IntTrieValue
+	// intersect : (IntTrieValue, IntTrieValue) -> IntTrieValue
+	// difference : (IntTrieValue, IntTrieValue) -> IntTrieValue
+	// Reduce the depth of the trie to this depth
+	// truncate : (IntTrieValue, i : int, depth : int) -> IntTrieValue
+	// remove (IntTrieValue, i : int, prefix : [int]) -> IntTrieValue
+
+	// Find the subtrie that obeys this condition
+	// find(IntTrieValue, i : int, fn : (prefix : [int]) -> bool) -> IntTrieValue
+
+	// A filter using prefixes
+	// filterPrefix : (IntTrieValue, fn : (prefix : [int]) -> bool) -> IntTrieValue
+
+	// A fold of filtered values using prefixes
+	// filterFold : (IntTrieValue, acc : ?, filter : (prefix : [int]) -> bool, fn : (acc : ?, row : [int]) -> ?) -> ?;
+
+	// A prefix intersection that does intersection until a certain depth, after which it is a merge/union
+	// prefixIntersect : (IntTrieValue, IntTrieValue, depth : int) -> IntTrieValue
+
+	// Find the trie that is bigger than this prefix
+	// successor : (IntTrieValue, i : int, prefix : [int]) -> IntTrieValue
+
+	// Find the trie that is smaller than this prefix
+	// predecessor : (IntTrieValue, i : int, prefix : [int]) -> IntTrieValue
+
+	// Debug dump of the trie
+	printTrie(t : IntTrieValue) -> void;
+}
+
+
+
+
+makeIntTrie() -> IntTrie {
+	value = ref IntTrieValue(makeTree());
+	IntTrie(
+		\row -> containsIntTrie(^value, 0, row),
+		\row -> value := insertIntTrie(^value, 0, row),
+		\trie -> {
+			rvalue : IntTrieValue = trie.toRaw();
+			value := mergeIntTries(^value, rvalue);
+		},
+		\trie, prefix -> {
+			ex = extractIntTrie(^value, 0, prefix);
+			rt = makeIntTrie();
+			rt.fromRaw(ex);
+			rt;
+		},
+		\ -> printTrie(^value),
+		\ -> ^value,
+		\v -> value := v,
+	)
+}
+
+//
+// The raw, functional implementation of a trie
+//
+
+// Check if the trie contains this value (starting with i = 0)
+containsIntTrie(trie : IntTrieValue, i : int, values : [int]) -> bool {
+	n = length(values);
+	if (i < n) {
+		val = values[i];
+		mtrie = lookupTree(trie.values, val);
+		mtrie ?? {
+			containsIntTrie(mtrie, i + 1, values);
+		} : {
+			false
+		}
+	} else {
+		true;
+	}
+}
+
+// Insert this value (starting with i = 0)
+insertIntTrie(trie : IntTrieValue, i : int, values : [int]) -> IntTrieValue {
+	if (i < length(values)) {
+		val = values[i];
+		mtrie = lookupTree(trie.values, val);
+		mtrie ?? {
+			ntrie = insertIntTrie(mtrie, i + 1, values);
+			IntTrieValue(setTree(trie.values, val, ntrie));
+		} : {
+			// There is no subtree for this, so make one
+			ntrie = insertIntTrie(IntTrieValue(makeTree()), i + 1, values);
+			IntTrieValue(setTree(trie.values, val, ntrie));
+		}
+	} else {
+		// We are done
+		trie;
+	}
+}
+
+mergeIntTries(left : IntTrieValue, right : IntTrieValue) -> IntTrieValue {
+	foldIntTrieValue(right, left, \acc, lrow -> {
+		insertIntTrie(acc, 0, lrow)
+	});
+}
+
+// Fold over the trie, expanding each row to full arrays
+foldIntTrieValue(t : IntTrieValue, acc : ?, fn : (acc : ?, [int]) -> ?) -> ? {
+	doFoldIntTrie(acc, [], t, fn)
+}
+
+doFoldIntTrie(acc : ?, row : [int], t : IntTrieValue, fn : (acc : ?, [int]) -> ?) -> ? {
+	foldTree(t.values, acc, \h, tl, acc2 -> {
+		nrow = arrayPush(row, h);
+		if (isEmptyTree(t.values)) {
+			// Leaf
+			fn(acc2, nrow);
+		} else {
+			// OK, there is more
+			doFoldIntTrie(acc, nrow, tl, fn)
+		}
+	});
+}
+
+extractIntTrie(trie : IntTrieValue, i : int, prefix : [int]) -> IntTrieValue {
+	n = length(prefix);
+	if (i < n) {
+		val = prefix[i];
+		mtrie = lookupTree(trie.values, val);
+		mtrie ?? {
+			extractIntTrie(mtrie, i + 1, prefix);
+		} : {
+			// Not found
+			IntTrieValue(makeTree());
+		}
+	} else {
+		trie;
+	}
+}
+
+printTrie(t : IntTrieValue) -> void {
+	println("Trie:");
+	doPrintTrie("", t);
+}
+
+doPrintTrie(indent : string, t : IntTrieValue) -> void {
+	nindent = indent + "  ";
+	traverseInOrder(t.values, \val, tt -> {
+		println(indent + i2s(val));
+		doPrintTrie(nindent, tt)
+	});
+}
+/*
+
+main() {
+	t0 = IntTrieValue(makeTree());
+	t1 = insertIntTrie(t0, 0, [0, 1, 2, 3]);
+	t2 = insertIntTrie(t1, 0, [0, 1, 2, 4]);
+	t3 = insertIntTrie(t2, 0, [0, 1, 3, 5]);
+	t4 = insertIntTrie(t3, 0, [0, 1, 3, 6]);
+	printTrie(t4);
+
+	p = extractIntTrie(t4, 0, [0, 1]);
+	printTrie(p);
+
+	quit(0);
+}
+*/

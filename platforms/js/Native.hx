@@ -27,6 +27,7 @@ import flash.utils.ByteArray;
 #end
 
 class Native {
+	public static var isNew : Bool = Util.getParameter("new") == "1";
 #if (js && flow_nodejs && flow_webmodule)
 	static var webModuleResponseText = "";
 #end
@@ -264,6 +265,10 @@ class Native {
 				return untyped Browser.window.clipboardData.getData("Text");
 			}
 
+			if (isNew) {
+				return clipboardData;
+			}
+
 			// save current focus
 			var focusedElement = Browser.document.activeElement;
 
@@ -304,7 +309,15 @@ class Native {
 			Browser.document.body.removeChild(textArea);
 
 			// restore focus to the previous state
-			focusedElement.focus();
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined') {
+					RenderSupport.deferUntilRender(function() {
+						focusedElement.focus();
+					});
+				} else {
+					focusedElement.focus();
+				}
+			");
 			return result;
 		#else
 			return "";
@@ -1376,6 +1389,7 @@ class Native {
 			}
 			return true;
 		#elseif js
+			Errors.print("setFileContent '" + file + "' does not work in this target. Use the C++ runner");
 			return false;
 		#else
 			try {
@@ -1489,15 +1503,26 @@ class Native {
 	}
 
 	public static function getUrl(u : String, t : String) : Void {
+		getUrlBasic(u, t);
+	}
+
+	public static function getUrlAutoclose(u : String, t : String, delay : Int) : Void {
+		getUrlBasic(u, t, delay);
+	}
+
+	public static function getUrlBasic(u : String, t : String, ?autoCloseDelay : Int = -1) : Void {
 		#if (js && !flow_nodejs)
 		try {
-			Browser.window.open(u, t);
+			var openedWindow = Browser.window.open(u, t);
+			if (autoCloseDelay >= 0) {
+				openedWindow.addEventListener('pageshow', function() {
+					timer(autoCloseDelay, function() { openedWindow.close(); });
+				});
+			}
 		} catch (e:Dynamic) {
 			// Catch exception that tells that window wasn't opened after user chose to stay on page
 			if (e != null && e.number != -2147467259) throw e;
 		}
-		#elseif flash
-		flash.Lib.getURL(new flash.net.URLRequest(u), t);
 		#end
 	}
 

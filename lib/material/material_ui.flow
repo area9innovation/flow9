@@ -106,11 +106,20 @@ export {
 		separator : string
 	) -> Material;
 
+	MAutoCompleteMultiSelectionBase(
+		items : [string],
+		selected : DynamicBehaviour<[int]>,
+		separators : [string],
+		text : DynamicBehaviour<string>,
+		style : [MAutoCompleteStyle],
+		state : [MTextInputState]
+	) -> Material;
+
 	MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material;
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton, MBrowseDialogStyles;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -122,6 +131,8 @@ export {
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
 		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
 		MHideBrowseButton(); // Browse button is shown by default in autocomplete mode
+		MBrowseDialogStyles(style : [MBrowseDialogStyle]);
+			MBrowseDialogStyle ::= MDialogStyle, MDynamicListStyle;
 
 	MCollapsingBox(
 		content : Material,
@@ -164,6 +175,9 @@ export {
 	MPictureFill(picURL : string, style : [MPictureStyle]) -> Material;
 	MPictureFit(picURL : string, style : [MPictureStyle]) -> Material;
 
+	// Tries to fit content into box if the difference between content and box heights is less than threshold, adds a scroll otherwise
+	MScrollOrFit(content : Material, box : Material, threshold : double) -> Material;
+
 	MTabs(tabs : [MTab], selected : DynamicBehaviour<int>, style : [MTabsStyle]) -> Material {
 		MDynamicTabs(const(tabs), selected, style)
 		|> MCallstack;
@@ -174,6 +188,8 @@ export {
 		|> MCallstack;
 	};
 
+	// Use these only if you have no access to MaterialManager of MFocusGroup.
+	// Use MTextStyle2CharacterStyle otherwise
 	MTextStyle2CharacterStyleRootParent(style : [MParagraphStyle]) -> [CharacterStyle];
 	MFontStyle2CharacterStyleRootParent(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
 }
@@ -860,49 +876,34 @@ MDropDownOrAutoComplete(
 		);
 
 	makeMAutoCompleteControl = \manager -> {
-		preventSelectedChange = ref false;
-		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
-
+		inputInspector = tryExtractStruct(style, MInputInspector(make("")));
+		idx2string = \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "");
 		trimStr = \s -> trim(s) |> toLowerCase;
-		string2idxsMulti = \str ->
-			filtermap(strSplit2WithoutLeave(str, [",", ";"]), \sel ->
-				findi(items, \item -> trimStr(item) == trimStr(sel))
-			);
-		string2idxs = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+		string2idx = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
 
-		selectedStrB =
-			eitherMap(multiSelection,
-				\ms -> idxs2string(getValue(ms.selected)),
-				idxs2string([getValue(selected)])
-			)
-			|> make;
+		selectedStrB = make(if (isSome(multiSelection)) "" else idx2string(getValue(selected)));
 
-		autoCompleteStyle =
+		autoCompleteStyle0 =
 			extractStruct(style, MAutoCompleteStyles([])).style
+			|> (\st -> arrayPush(st, MSuggestionsDynamicListMode()))
 			|> (\st -> eitherMap(labelM,
 				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
 				st
 			))
-			|> (\st -> arrayPush(st, MCompletionFn(\com, isSelected, setWordFn ->
-					MGetFocusGroup(\parent -> {
-						wrapSetWordFn = \sm -> {
-							switch(sm : SentenceMatch) {
-								SentenceHit(__, __, __, __) : {
-									nextDistinct(selected, string2idxs(getValue(selectedStrB)));
-									setWordFn(sm);
-								}
-								SentenceHitExtended(__, __, __, __, idx) : {
-									preventSelectedChange := true;
-									setWordFn(sm);
-									preventSelectedChange := false;
-									nextDistinct(selected, idx);
-								};
-							}
-						};
-						defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
-					})
-			)))
 			|> (\st -> if (contains(style, MHideBrowseButton())) st else {
+				browseDialogStyle = extractStruct(style, MBrowseDialogStyles([MListWidth(-1., 700.)])).style;
+				dialogStyle = filtermap(browseDialogStyle, \bdst ->
+					switch (bdst) {
+						MDialogStyle() : {a : Maybe<MDialogStyle> = Some(bdst); a};
+						default : None()
+					}
+				);
+				dynamicListStyle = filtermap(browseDialogStyle, \bdst ->
+					switch (bdst) {
+						MDynamicListStyle() : {a : Maybe<MDynamicListStyle> = Some(bdst); a};
+						default : None()
+					}
+				);
 				onClick = \ -> {
 					dialogClose = make(false);
 
@@ -915,48 +916,82 @@ MDropDownOrAutoComplete(
 					matcher = simpleBuildSentenceMatcher(items);
 					filteredItems = fselect(filterText, FLift(\txt -> {
 						itms =
-							if (txt == "") items
+							if (txt == "") mapi(items, \i, it -> Pair(it, i))
 							else map(
 								simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
-								\hit -> hit.sentence
+								\hit -> {
+									index = switch(hit : SentenceMatch) {
+										SentenceHit(__, __, __, __) : string2idx(hit.sentence);
+										SentenceHitExtended(__, __, __, __, idx) : idx;
+									}
+									Pair(hit.sentence, index)
+								}
 							);
-						sortCustom(itms, \str -> toLowerCase(str), true)
+						sortCustom(itms, \str -> toLowerCase(str.first), true);
 					}));
 					selectedItems = make([]);
 
-					list = MDynamicList(
-						fmap(filteredItems, \it -> MSingleLine(it, [
-							MOnClick(\ -> {
-								nextDistinct(selectedStrB, it);
-								nextDistinct(selected, string2idxs(it));
+					onItemClick = \it -> \ -> {
+						idx = it.second;
+						eitherFn(
+							multiSelection,
+							\ms -> {
+								if (contains(getValue(ms.selected), idx))
+									nextDistinct(ms.selected, filter(getValue(ms.selected), \selIdx -> selIdx != idx))
+								else
+									dynArrayPush(ms.selected, idx)
+							},
+							\ -> {
+								if (getValue(selected) == idx) {
+									nextDistinct(selectedStrB, "");
+									nextDistinct(selected, -1);
+								} else {
+									nextDistinct(selectedStrB, it.first);
+									nextDistinct(selected, idx);
+								}
 								nextDistinct(dialogClose, true);
-							})
-						])),
-						[],
-						[MScrollCropByContent(), MListSelection(const(true), false, false, selectedItems)]
+							}
+						)
+					}
+
+					list = MDynamicList(
+						fmap(filteredItems, \it -> MSingleLine(it.first, [MOnClick(onItemClick(it))])),
+						dynamicListStyle,
+						[MScrollCropByContent(), MListSelection(const(true), isSome(multiSelection), true, selectedItems)]
 					)
 					|> (\m -> MConstruct([
 						makeSubscribe(filteredItems, \fItems -> {
-							currentStr = fgetValue(selectedStrB);
-							nextDistinct(selectedItems, eitherMap(findi(fItems, \it -> it == currentStr), v2a, []))
+							selItems = eitherFn(
+								multiSelection,
+								\ms -> {
+									selArr = getValue(ms.selected);
+									filtermapi(fItems, \i, it -> if (contains(selArr, it.second)) Some(i) else None());
+								},
+								\ -> {
+									sel = getValue(selected);
+									eitherMap(findi(fItems, \it -> sel == it.second), v2a, []);
+								}
+							);
+							nextDistinct(selectedItems, selItems);
 						})
 					], m));
 
-					dialogContent = MLines2A(filterInput, list);
-					
-					ShowMDialog(manager, dialogClose, [
+					listWidth = make(0.);
+					dialogContent = MLines2A(MAvailableWidth(filterInput, listWidth), MAttachWidth(list, listWidth));
+
+					ShowMDialog(manager, dialogClose, concat(dialogStyle, [
 						MDialogUseFrame(),
 						MDialogClickOutToClose(),
 						MDialogActions([
-							MTextButton(_("CANCEL"), \ -> next(dialogClose, true), [], []),
+							MTextButton(_("CLOSE"), \ -> next(dialogClose, true), [], []),
 						])
-					], dialogContent)
+					]), dialogContent)
 				};
 				concat(st, [MRightCustomButton(
 					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse content")))])
 				), MShowDropDownArrow(false)])
 			});
-		autoCompleteState =
+		autoCompleteState0 =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
 				if (isRequired) {
@@ -964,29 +999,60 @@ MDropDownOrAutoComplete(
 					replaceStruct(st, MInputError(error, [MRequiredField()]));
 				} else
 					st
-			)
-			|> (\st -> {
-				processKeyDown = extractStruct(st, MInputProcessKeyDown(\__ -> true)).fn;
-				replaceStruct(st, MInputProcessKeyDown(\ke -> processKeyDown(ke) && ke.keycode != KEY_ENTER))
-			});
+			);
 
-		MConstruct(
-			[
-				\ ->
-					eitherFn(multiSelection,
-						\ms -> bidirectionalLink(ms.selected, selectedStrB, idxs2string, string2idxsMulti),
+		eitherFn(
+			multiSelection,
+			\ms ->
+				MAutoCompleteMultiSelectionBase(items, ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
+			\ -> {
+				preventSelectedChange = ref false;
+
+				autoCompleteStyle =
+					autoCompleteStyle0
+					|> (\st -> arrayPush(st, MCompletionFn(\com, isSelected, setWordFn ->
+							MGetFocusGroup(\parent -> {
+								wrapSetWordFn = \sm -> {
+									switch(sm : SentenceMatch) {
+										SentenceHit(__, __, __, __) : {
+											nextDistinct(selected, string2idx(getValue(selectedStrB)));
+											setWordFn(sm);
+										}
+										SentenceHitExtended(__, __, __, __, idx) : {
+											preventSelectedChange := true;
+											setWordFn(sm);
+											preventSelectedChange := false;
+											nextDistinct(selected, idx);
+										};
+									}
+								};
+								defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
+							})
+					)));
+
+				autoCompleteState =
+					autoCompleteState0
+					|> (\st -> {
+						processKeyDown = extractStruct(st, MInputProcessKeyDown(\__ -> true)).fn;
+						replaceStruct(st, MInputProcessKeyDown(\ke -> processKeyDown(ke) && ke.keycode != KEY_ENTER))
+					});
+
+				MConstruct(
+					[
 						\ -> bidirectionalLink(selected, selectedStrB,
-							\idx -> idxs2string([idx]),
-							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idxs(str)
+							\idx -> idx2string(idx),
+							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idx(str)
 						)
-					),
-				eitherMap(
-					tryExtractStruct(style, MInputInspector(make(""))),
-					\insp -> makeSubscribe(selectedStrB, \str -> nextDistinct(insp.text, str)),
-					\ -> nop
+					],
+					MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
 				)
-			],
-			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
+			}
+		)
+		|> (\m -> eitherMap(
+				inputInspector,
+				\insp -> MConstruct([makeSubscribe(selectedStrB, \txt -> nextDistinct(insp.text, txt))], m),
+				m
+			)
 		)
 	}
 
@@ -1020,31 +1086,50 @@ MDropDownOrAutoComplete(
 }
 
 MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>, separator : string) -> Material {
-	text = make("");
-	focused = make(false);
+	MAutoCompleteMultiSelectionBase(items, selected, [separator], make(""), [], [])
+}
+
+MAutoCompleteMultiSelectionBase(
+	items : [string],
+	selected : DynamicBehaviour<[int]>,
+	separators : [string],
+	text : DynamicBehaviour<string>,
+	style : [MAutoCompleteStyle],
+	state : [MTextInputState]) -> Material {
+
+	focused = extractStruct(state, MFocused(make(false))).focused;
 	currentMatches = make([]);
 
-	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + separator));
+	idxs2string = \idxs -> concatStrings(map(idxs, \idx -> elementAt(items, idx, "") + elementAt(separators, 0, ", ")));
 	trimStr = \s -> trim(s) |> toLowerCase;
 	string2idx = \s -> findi(items, \item -> trimStr(item) == trimStr(s));
-	string2idxsMulti = \str -> filtermap(strSplit2WithoutLeave(str, [separator]), string2idx);
+	string2idxsMulti = \str -> filtermap(strSplit2WithoutLeave(str, separators), string2idx);
 
-	matchFn = \matcher, input0, maxHits, prefix, exhaustive, position -> {
-		input = trim(takeAfterLast(input0, separator, input0));
+	position = extractStruct(state, TTextInputPosition(make(strlen(getValue(text))))).position;
+
+	matchFn = \matcher, input0, maxHits, prefix, exhaustive, pos -> {
+		input = trim(takeAfterLastMult(input0, separators, input0));
 		if (input == "")
 			filtermap(matcher.sentences, \s -> {
 				if (s != "") Some(SentenceHit(matcher, s, 0., makeSet()))
 				else None()
 			})
-		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
+		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, pos);
 	}
+
+	lineHeight = make(0.);
+	makeChkbox = \sel -> MSelect(lineHeight, \lh -> if (lh == 0.) TEmpty() else MCheckBox(TEmpty(), sel, [MIconSize(lh / 2.)]));
 
 	completionFn = \com, active, __ ->
 		MGetManager(\manager -> MGetFocusGroup(\parent -> {
+			index = switch(com : SentenceMatch) {
+				SentenceHit(__, __, __, __) : string2idx(com.sentence);
+				SentenceHitExtended(__, __, __, __, idx) : Some(idx);
+			}
 			selectedB = make(false);
 			isSelected = fselect(selected, FLift(\idxs ->
 				eitherMap(
-					string2idx(com.sentence),
+					index,
 					\idx -> contains(idxs, idx),
 					false
 				)
@@ -1058,15 +1143,16 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 			MCols2(
 				MConstruct([
 					\ -> fconnect(isSelected, selectedB),
-					makeSubscribe2(selectedB, \sel ->
-						maybeApply(string2idx(com.sentence), \idx ->
-						 	if (sel) {
-						 		if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
-						 	}
+					makeSubscribe2(selectedB, \sel -> {
+						maybeApply(index, \idx ->
+							if (sel) {
+								if (!contains(getValue(selected), idx)) dynArrayPush(selected, idx)
+							}
 							else nextDistinct(selected, filter(getValue(selected), \it -> it != idx))
-						)
-					)],
-					MCheckBox(TEmpty(), selectedB, [])
+						);
+						nextDistinct(position, strlen(getValue(text)));
+					})],
+					makeChkbox(selectedB)
 				),
 				MInteractive(
 					[KeyDown2(\h, k -> {
@@ -1075,8 +1161,9 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 							true
 						} else h
 					})],
-					defaultCompletionFn(manager, parent, []).fn(com, active, \__ -> wrapSetWordFn())
+					defaultCompletionFn(manager, parent, style).fn(com, active, \__ -> wrapSetWordFn())
 				)
+				|> (\m -> MAttachHeight(m, lineHeight))
 			)
 		}));
 
@@ -1099,29 +1186,35 @@ MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>
 					}
 				)
 			],
-			MCheckBox(TEmpty(), mainCheckboxSelected, [])
+			makeChkbox(mainCheckboxSelected)
 		)
 		|> MBorderTopBottom(-8.);
 
-	MAutoComplete(text, items, [
-		MLeftCustomButton(
+	MAutoComplete(text, items, concat(style, [
+		MStartCustomButtonT(
 			TEmpty(),
 			mainCheckbox,
-			48.,
+			lineHeight,
 			false
 		),
 		MSentenceMatcher(simpleBuildSentenceMatcher, matchFn),
 		MCompletionFn(completionFn),
-		MCurrentMatches(\cm -> nextDistinct(currentMatches, cm))
-	], [
+	])
+	|> (\st -> {
+		external = tryExtractStruct(st, MCurrentMatches(nop1));
+		replaceStruct(st, MCurrentMatches(\cm -> {
+			nextDistinct(currentMatches, cm);
+			maybeApply(external, \ext -> ext.fn(cm));
+		}));
+	}),
+	concat(state, [
 		MFocused(focused),
 		MPositionOnFocus(\c, p -> strlen(c)),
+		TTextInputPosition(position),
+		TTextInputSelection(position),
 		MInputProcessKeyDown(\k -> k.keycode != KEY_ENTER)
-	])
-	|> (\m -> MConstruct(
-		[\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)],
-		m
-	))
+	]))
+	|> (\m -> MConstruct([\ -> bidirectionalLink(selected, text, idxs2string, string2idxsMulti)], m))
 }
 
 MSeparatedButton(mainButton : MTextButton, iconButton : MIconButton, menuLines : [MMenuLine], widthByButton : bool) -> Material {
@@ -1173,7 +1266,8 @@ MFlippingCard(
 	duration = extractStruct(state, MDuration(const(0.4))).duration;
 	percent = extractStruct(state, FAnimationPercent(make(0.0))).percent;
 	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
-	isHovered = isSameStructType(triggerType, MTriggerHover());
+	isHoverTrigger = isSameStructType(triggerType, MTriggerHover());
+	isBackSide = make(false);
 	flipped = make(false);
 
 	keyframes = [
@@ -1186,11 +1280,18 @@ MFlippingCard(
 		FAnimationKeyframe([FScaleValue(Factor(1., 1.))]),
 	];
 
-	MComponent([], \foc -> {
-		trigger = if (isHovered) fstall(foc.hover, 0) else flipped;
+	MComponent([
+		MHighlightOnFocus(const(true)),
+		MButtonTitle(fselectLift(isBackSide, \isBack -> "Flipping card (" + (if (isBack) "back" else "front") + " side)")),
+		MOnClick(\ -> {
+			reverseBehaviour(flipped);
+			maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
+		})
+	], \foc -> {
+		trigger = if (isHoverTrigger) fstall(foc.hover, 0) else flipped;
 		MDynamicCard(
 			fif(
-				fequal(trigger, fOr(feq(percent, 0.), fgreater(percent, const(0.5)))),
+				isBackSide,
 				const(back),
 				const(front)
 			),
@@ -1198,15 +1299,9 @@ MFlippingCard(
 			extractMButtonState(state)
 			|> (\st ->
 				if (cpp) replaceStruct(st, MElevation(zero))
-				else st
+				else replaceStruct(st, extractStruct(st, MElevation(fif(fOr(foc.hover, foc.focused), const(6.), const(2.)))))
 			)
-			|> (\st ->
-				if (isHovered) st
-				else replaceStruct(st, MOnClick(\ -> {
-					reverseBehaviour(flipped);
-					maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
-				}))
-			)
+			|> (\st -> removeAllStructs(st, MOnClick(nop)))
 		)
 		|> (\m -> MAnimation(m, fif(trigger, const(keyframes), const([])), [FAnimationDuration(duration), FAnimationPercent(percent), FAnimationOnFinish(\ -> nextDistinct(percent, 0.0))]))
 		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
@@ -1215,6 +1310,7 @@ MFlippingCard(
 		|> (\m -> MOrigin(const(Factor(0.5, 0.5)), m))
 		|> (\m -> MAnimation(m, fif(fselectWithLast(trigger, FLift2(\old, new -> (old == new) || new)), const([]), const(keyframes)), [FAnimationDuration(duration), FAnimationPercent(percent), FAnimationOnFinish(\ -> nextDistinct(percent, 0.0))]))
 		|> (\m -> MOrigin(const(Factor(-0.5, -0.5)), m))
+		|> (\m -> MConstruct([\ -> fconnect(fequal(trigger, fOr(feq(percent, 0.), fgreater(percent, const(0.5)))), isBackSide)], m))
 	})
 }
 
@@ -1348,6 +1444,31 @@ MPictureFit(picURL : string, style : [MPictureStyle]) {
 		],
 		MPictureTweak(picURL, style),
 		TFillXY()
+	)
+}
+
+MScrollOrFit(content : Material, box : Material, threshold : double) -> Material {
+	contentHeight = make(0.);
+	avBox = makeWH();
+	availableHeight = fheight(avBox);
+	scale = fselect2(contentHeight, availableHeight, FLift2(\ch, ah ->
+		if (ah == 0. || ch - ah > threshold) 1. else min(1., ah / ch)
+	));
+
+	scrollEnabled = fgreater(fsubtract(contentHeight, availableHeight), const(threshold));
+
+	content
+	|> (\m -> MAttachHeight(m, contentHeight))
+	|> (\m -> MAvailableWidth(m, fwidth(avBox)))
+	|> (\m -> MScale(ffactor2(scale), m))
+	|> (\m -> MScroll(
+		m,
+		MAttachBox(box, avBox),
+		[
+			MScrollCropByContent(),
+			TScrollEnabled(scrollEnabled),
+			MScrollCropEnabled(scrollEnabled)
+		])
 	)
 }
 

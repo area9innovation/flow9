@@ -47,7 +47,6 @@ import java.security.*;
 import java.util.Arrays;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
@@ -1310,7 +1309,7 @@ public class Native extends NativeHost {
 		return millis - tzOffset;
 	}
 
-	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyy-MM-dd HH:mm:ss");
+	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
 	public static final String time2string(double time) {
 		long millis = Double.valueOf(time).longValue();
@@ -1319,7 +1318,7 @@ public class Native extends NativeHost {
 
 	public static final double string2time(String tv) {
 		try {
-			return LocalDateTime.parse(tv, dateFormat).toInstant(ZoneOffset.ofHours(0)).toEpochMilli();
+			return LocalDateTime.parse(tv, dateFormat).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
 		} catch (DateTimeParseException  e) {
 			System.err.println(e.toString());
 			return 0;
@@ -1512,8 +1511,8 @@ public class Native extends NativeHost {
 				}
 			}
 			public void close() {
-				thread.interrupt();
 				try {
+					thread.join(250);
 					is.close();
 				} catch (Exception ex) {
 					errReader.contents += exceptionStackTrace(ex) + "\n";
@@ -1697,8 +1696,8 @@ public class Native extends NativeHost {
 				}
 			}
 			public void close() {
-				thread.interrupt();
 				try {
+					thread.join(250);
 					is.close();
 				} catch (Exception ex) {
 					onErr.invoke("Problem closing stream " + name + ":\n" + exceptionStackTrace(ex));
@@ -2595,6 +2594,30 @@ public class Native extends NativeHost {
 			} catch (java.lang.IllegalArgumentException ex) {
 				System.err.println("While adding a function: " + name + "\n" + ex.getMessage());
 			}
+		}
+	}
+
+	public static final String runtimeValueType(Object value) {
+		if (value == null) {
+			return "void";
+		} else if (value instanceof Integer) {
+			return "int";
+		} else if (value instanceof Double) {
+			return "double";
+		} else if (value instanceof Boolean) {
+			return "bool";
+		} else if (value instanceof String) {
+			return "string";
+		} else if (value instanceof Struct) {
+			return ((Struct)value).getTypeName();
+		} else if (value instanceof Function) {
+			return "function";
+		} else if (value instanceof Object[]) {
+			return "array";
+		} else if (value instanceof Reference) {
+			return "ref";
+		} else {
+			return "undef";
 		}
 	}
 }

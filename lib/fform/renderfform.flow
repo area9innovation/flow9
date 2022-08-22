@@ -692,8 +692,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			};
 
 			if (getValue(fullwindow)) {
-				setResize(true);
-				setFullWindow(true);
+				deferred(\ -> {
+					setResize(true);
+					setFullWindow(true);
+				})
 			};
 
 			uns = subscribe2(fullwindow, \fw -> {
@@ -1124,9 +1126,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				(js && (extractStruct(properties, ClassName("")).className != "" || extractStruct(properties, TagName("")).tagName != ""))) {
 				d = renderFForm(form, zorder);
 
+				role = extractStruct(properties, AccessRole("")).role;
+				tagName = extractStruct(properties, TagName("")).tagName;
+
 				makeAccessClip =
-					(!contains(["button", "checkbox", "textbox", "video", "iframe"], extractStruct(properties, AccessRole("")).role) &&
-						!contains(["button", "textarea", "input", "video", "iframe"], extractStruct(properties, TagName("")).tagName))
+					(
+						!contains(["button", "checkbox", "textbox", "video", "iframe"], role) &&
+						!contains(["button", "textarea", "input", "video", "iframe"], tagName) &&
+						!(role == "presentation" && tagName == "p")
+					)
 					|| isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
 
 				if (makeAccessClip) {
@@ -1267,6 +1275,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			subtitlesAlignBottom = contains(style, FVideoSubtitlesAlignBottom());
 			subtitlesBottomBorder = extractStruct(style, FVideoSubtitlesBottomBorder(-1.)).border;
 			subtitlesScaleMode = tryExtractStruct(style, FVideoSubtitlesScaleMode(-1., -1.));
+			externalSubtitles = tryExtractStruct(style, FVideoExternalSubtitles("", "", const(true)));
 			looping = tryExtractStruct(style, FVideoLoop(const(false)));
 			timeRange = tryExtractStruct(style, FVideoTimeRange(const(0.), const(0.)));
 			playbackRate = tryExtractStruct(style, FVideoPlaybackRate(make(0.)));
@@ -1300,6 +1309,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					}
 				);
 			iter(additionalSources, \s -> addVideoSource(video, s.url, s.type));
+			esUns = initUnsM();
+			maybeApply(externalSubtitles, \es -> {
+				setUnsM(esUns, makeSubscribeUns(es.enabled, \en -> if (en) [setVideoExternalSubtitle(video, es.src, es.kind)] else [])());
+			});
 
 			if (contains(style, FAudio())) setVideoIsAudio(video);
 
@@ -1464,6 +1477,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					[]
 				),
 				[
+					\ -> dispUnsM(esUns),
 					\ -> closeVideo(video),
 					\ -> deleteNative(video),
 				]
@@ -1519,7 +1533,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			textInputResponse = ref false;
 			constCharacterStyle = style2characterStyle(style);
 			characterStyle = fconcat(extractStruct(style, FCharacterStyle(const([]))).style, const(constCharacterStyle));
-			textfield = makeTextfield(getMappedFontFamily(fgetValue(characterStyle)));
+			textfield = makeTextfield(getMappedFontFace(fgetValue(characterStyle)));
 			rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 			setTextDirection(textfield, if (rtl) "rtl" else "ltr");
 			setPreventContextMenu(textfield, contains(style, FPreventContextMenu()));
@@ -1568,7 +1582,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							setTextFieldWidth(textfield, v.width);
 							setTextFieldHeight(textfield, v.height);
 						})(),
-						makeSubscribe(focus, \f ->
+						if (mobile) subscribe(focus, \f ->
+							if (!^textInputResponse) setFocus(textfield, f)
+						) else makeSubscribe(focus, \f ->
 							if (!^textInputResponse) setFocus(textfield, f)
 						)(),
 						make2Subscribe(position, selection, \p, s -> if (!^textInputResponse) {

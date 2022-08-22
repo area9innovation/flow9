@@ -1,6 +1,7 @@
 import material/internal/material_component;
 import material/internal/material_ellipsis;
 import material/internal/material_icons;
+import material/internal/material_grid;
 
 export {
 	MSingleLineDefaultHeight = 48.;
@@ -109,6 +110,7 @@ MListLine2Height(line : MListLine, listState : MListInnerState) -> Maybe<double>
 
 MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine>, listState : MListInnerState, down : DynamicBehaviour<bool>, passClicks : bool) -> Tropic {
 	m2t = listState.m2t;
+	isReorder = eitherMap(listState.reorder, \r -> r.enabled, const(false));
 
 	makeMLine = \p -> {
 		name = fselect(line, FLift(\ln -> ln.structname));
@@ -174,7 +176,9 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		enabled : Transform<bool> =
 			fsubselect(state, FLift(\st -> extractStruct(st, MEnabled(const(true))).enabled));
 		selectionEnabled : Transform<bool> =
-			fsubselect(state, FLift(\st -> extractStruct(st, MSelectionEnabled(const(true))).enabled));
+			fsubselect(state, FLift(\st ->
+				extractStruct(st, MSelectionEnabled(fand(listState.selection.enabled, fnot(isReorder)))).enabled
+			));
 
 		onLineClick = fselect(state, FLift(\st -> tryExtractStruct(st, MOnClick(nop))));
 
@@ -212,6 +216,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					MOnClick(onClick),
 					MEnabled(enabled),
 					MSelected(focusSelected),
+					MSelectionEnabled(lineSelectionEnabled),
 					MAddFocusGroup(true),
 					MRippleType(fif(rippleEnabled, const(MRippleFill()), const(MNoRipple()))),
 					MHighlightOnFocus(const(true)),
@@ -220,12 +225,13 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					MCursorShape(fif(rippleEnabled, const(FingerCursor()), const(DefaultCursor()))),
 					THovering(hovering),
 					extractStruct(fgetValue(state), AccessRole("")),
-					extractStruct(fgetValue(state),
-						MButtonTitle(fselect2(title, subtitle, FLift2(\t, st -> {
-							s = trim(t + " " + st.first);
+					MButtonTitle(fsubselect(state, FLift(\st -> {
+						defButtonTitle = fselect2(title, subtitle, FLift2(\t, sub -> {
+							s = trim(t + " " + sub.first);
 							if (s == "") "List item" else s;
-						})))
-					)
+						}));
+						extractStruct(st, MButtonTitle(defButtonTitle)).title;
+					})))
 				]
 			)
 			|> (\fs -> ifArrayPush(fs, isSome(listState.reorder), MAdditionalRollOutCheck()))
@@ -271,7 +277,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			);
 
 		isReorderIconEnabled = fand(
-			eitherMap(listState.reorder, \r -> r.enabled, const(false)),
+			isReorder,
 			const(listState.reorderShowIcon)
 		);
 
@@ -287,7 +293,6 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 							[]
 						), p2
 					)
-					|> (\t -> TInteractive([TMouseDown(make(false))], t))
 				else
 					TEmpty()
 			);
@@ -439,7 +444,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 				)
 			)
 			|> (\t -> TCols2Dir(t, reorderIcon(p2), p2.rtl))
-			|> (\t -> TBorderT(sideBorders, const(0.), sideBorders, const(0.), t))
+			|> (\t -> TBorderTDir(sideBorders, const(0.), sideBorders, const(0.), t, p2.rtl))
 		)
 		|> (\f ->
 			MComponent2T(
@@ -505,21 +510,27 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 	};
 
 	makeSubmenuLine = \p -> {
-		subStyle : Transform<[MSubListStyle]> =
-			fselect(line, FLift(\ln ->
-				switch (ln : MListLine) {
+		subLinesStyleAndState : Transform<Triple<[MListLine], [MSubListStyle], MListInnerState>> =
+			fsubselect(line, FLift(\ln -> {
+				sbStyle = switch (ln : MListLine) {
 					MSubmenuLine(__, __, subStyle, __): subStyle;
 					default: [];
-				}
-			));
+				};
+				ftriple(
+					switch (ln : MListLine) {
+						MSubmenuLine(__, subLines, __, __): subLines;
+						default: const([]);
+					},
+					const(sbStyle),
+					const(makeMListInnerState(listState, sbStyle))
+				)
+			}));
 
-		subLines : Transform<[MListLine]> =
-			fsubselect(line, FLift(\ln ->
-				switch (ln : MListLine) {
-					MSubmenuLine(__, subLines, __, __): subLines;
-					default: const([]);
-				}
-			));
+		subStyle : Transform<[MSubListStyle]> = fSecondOfTriple(subLinesStyleAndState);
+		subListState : Transform<MListInnerState> = fThirdOfTriple(subLinesStyleAndState);
+
+		subLinesAndState : Transform<Pair<[MListLine], MListInnerState>> =
+			fselectLift(subLinesStyleAndState, \slstst -> Pair(slstst.first, slstst.third));
 
 		subMain : Transform<MListLine> =
 			fselect(line, FLift(\ln ->
@@ -538,9 +549,6 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			));
 		expanded = make(fgetValue(expandedT));
 
-		subListState = fselect(subStyle, FLift(\style : [MSubListStyle] ->
-			makeMListInnerState(listState, style)));
-
 		selectedT = fsubselect(subListState, FLift(\sls : MListInnerState -> sls.selection.selected));
 		selected = make(fgetValue(selectedT));
 
@@ -553,10 +561,27 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					IScriptBehaviour("selected", selected, ISInputValue([], "[int]", true)),
 					IScriptBehaviour("expanded", expanded, ISInputValue([], "bool", false))
 				],
-				subLines,
-				\sl, par ->
-					mapi(sl, \j, l -> TSelect(subListState, \sls -> MListLine2T(par, const(j), const(l), sls, down, passClicks)))
-					|> TLines
+				subLinesAndState,
+				\slst, par -> {
+					subState = slst.second;
+					mapi(slst.first, \j, l -> MListLine2T(par, const(j), const(l), subState, down, passClicks))
+					|> (\subListLines ->
+						eitherMap(subState.reorder, \rdr ->
+							MReorderGrid2T(
+								listState.manager,
+								par,
+								map(subListLines, \sll -> MReorderItem(sll, [])),
+								rdr.order,
+								[
+									MEnabled(fminA([subState.enabled, rdr.enabled, fnot(down)], false)),
+									MDragLowestPriority()
+								],
+								m2t
+							),
+							TLines(subListLines)
+						)
+					)
+				}
 			);
 		yFact = make(b2d(fgetValue(expanded)));
 		factor = fselect(yFact, FLift(\f -> Factor(1., f)));
@@ -631,7 +656,8 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 
 	MComponentGroup2T(listState.manager, parent, "MListLine", [
 		MFocusId(i),
-		AccessRole(if (eitherMap(listState.reorder, \rdr -> fgetValue(rdr.enabled), false)) "option" else "listitem")
+		TagName("div"),
+		FAccessAttribute("role", fif(isReorder, const("option"), const("listitem"))),
 	], \p ->
 		TSelect(
 			fselect(line, FLift(\ln ->

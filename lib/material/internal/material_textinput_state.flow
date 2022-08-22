@@ -19,6 +19,7 @@ export {
 		inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
 	defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MAutoCompleteStyle]) -> MCompletionFn;
+	completionLineHeight(textMetrics : FormMetrics, inputBorders : MInputBorders) -> double;
 	addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic;
 
 	MTextEditorIScriptBehaviours(
@@ -70,14 +71,15 @@ export {
 		color : MColor,
 		width : double,
 		textWidth : DynamicBehaviour<double>,
+		maxHeight : double,
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
-		leftIcon : MLeftIcon,
-		leftButton : Maybe<MLeftCustomButton>,
+		startIcon : MLeftIcon,
+		startButton : Maybe<MStartCustomButtonT>,
 		editIcon : Maybe<DynamicBehaviour<bool>>,
-		rightButton : Maybe<Transform<string>>,
-		rightCustomButton : Maybe<Material>,
+		endButton : Maybe<Transform<string>>,
+		endCustomButton : Maybe<Material>,
 		inputBorders : MInputBorders,
 		noLeftBorder : bool,
 		maxChars : int,
@@ -108,7 +110,7 @@ export {
 	);
 
 	MInputAutocompleteState(
-		matchers : [Transform<Pair<int, SentenceMatcher>>],
+		matchers : Transform<[Pair<int, SentenceMatcher>]>,
 		sentenceMatcher : MSentenceMatcher,
 		completionFn : MCompletionFn,
 		sentences : DynamicBehaviour<[SentenceMatch]>,
@@ -121,6 +123,8 @@ export {
 		fill : [TGraphicsStyle],
 		setWord : (word : string) -> void,
 		isTextInputInPopup : bool,
+		dynListMode : bool,
+		sameZorderMode : bool,
 		placementType : MSuggestionsPlacementType,
 		inLine : Maybe<MAutoCompleteInLineState>,
 		updateDelay : int,
@@ -143,7 +147,6 @@ export {
 
 	MInputPopupState(
 		openMenu : MOpenMenu,
-		maxHeight : double,
 		inputWH : DynamicBehaviour<WidthHeight>,
 		contentWH : DynamicBehaviour<WidthHeight>,
 		boxWH : DynamicBehaviour<WidthHeight>,
@@ -151,8 +154,7 @@ export {
 		positionScale : DynamicBehaviour<PositionScale>,
 		elevation : Transform<double>,
 		outterBorder : Maybe<RMOutterBorder>,
-		customMetrics : MCustomPopup,
-		dynListMode : bool
+		customMetrics : MCustomPopup
 	);
 
 	MInputErrorState(
@@ -330,6 +332,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	color = extractMColor(parent, style, MAccentColor());
 	width = extractStruct(style, MWidth(-1.)).width;
 	textWidth = make(0.);
+	maxHeight = extractStruct(style, MMaxHeight(-1.)).height;
 	align = extractStruct(style, AutoAlign(AutoAlignNone())).autoalign;
 	fontPadding = extractStruct(style, MInputFontPadding(0.)).padding;
 	filterAction = iScriptBehaviours.filterAction;
@@ -360,20 +363,17 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	customTextStyle : [MParagraphStyle] = extractStruct(style, MCustomTextStyle([])).style;
 
-	//Text Style
+	// Text Style
 	mTextStyle =
-		extractMTextStyleDef(
-			customTextStyle,
-			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
-		)
-		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
-			concatA([
-				[firstOfTriple(f), secondOfTriple(f)],
-				if (thirdOfTriple(f)) [] else [MTextDisabled()],
-				extractStructMany(customTextStyle, LetterSpacing(0.0)),
-				extractStructMany(customTextStyle, MDynamicColor(const(MBlack()))),
-			])
-		);
+		concatA([
+			extractMTextStyleDef(
+				customTextStyle,
+				MFontStyleBundle(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
+			),
+			extractStructMany(customTextStyle, LetterSpacing(0.0)),
+			extractStructMany(customTextStyle, EscapeHTML(true)),
+			extractStructMany(customTextStyle, MDynamicColor(const(MBlack())))
+		]);
 
 	textStyle = extractStruct(style, MDynamicTextStyle(const(mTextStyle))).style;
 	liftFn : FLift<[MTextStyle], FormMetrics> = FLift(\ts : [MTextStyle] -> getTWordMetrics(TText(" ", MTextStyle2CharacterStyle(parent, ts)), makeTree()));
@@ -440,11 +440,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	// Popup
 	popup =
-		if (isPopup)
+		if (isPopup && !contains(style, MSuggestionsSameZorderMode()))
 			Some(
 				MInputPopupState(
 					MOpenMenu(make(false)),
-					extractStruct(style, MMaxHeight(-1.)).height,
 					makeWH(),
 					makeWH(),
 					makeWH(),
@@ -453,7 +452,6 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					either(elevation, MElevation(const(0.))).elevation,
 					maybeMap(tryExtractStruct(style, MPopupOutterBorder(0.)), \pob -> RMOutterBorder(pob.border)),
 					extractStruct(style, MCustomPopup(None(), None(), None())),
-					contains(style, MSuggestionsDynamicListMode())
 				)
 			)
 		else
@@ -483,7 +481,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	// Left Button
 	leftButtonDef =
-		MLeftCustomButton(MIcon("search", [MIconSize(iconSize)]), MIcon("arrow_back", [MIconSize(iconSize)]), 56., true);
+		MStartCustomButton(MIcon("search", [MIconSize(iconSize)]), MIcon("arrow_back", [MIconSize(iconSize)]), 56., true);
 
 	showLeftButton = extractStruct(style, MShowLeftButton(false)).show;
 
@@ -539,11 +537,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	mLabelStyle =
 		extractMTextStyleDef(
 			extractStruct(style, MLabelTextStyle(if (hasFloatingLabel) [] else mTextStyle)).style,
-			Triple(getTextColor(parent), MCaptionSolid(), true)
-		)
-		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
-			[firstOfTriple(f), secondOfTriple(f)]
-			|> (\f2 -> if (f.third) f2 else arrayPush(f2, MTextDisabled()))
+			MFontStyleBundle(getTextColor(parent), MCaptionSolid(), true)
 		);
 	labelStyle0 = MTextStyle2CharacterStyle(parent, mLabelStyle);
 	labelSize = extractStruct(labelStyle0, FontSize(12.)).size;
@@ -655,11 +649,16 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	matchers =
 		if (preparedSentenceMatcher.matcher != const(dummySentenceMatcher)) {
-			[fpair(const(0), preparedSentenceMatcher.matcher)]
+			Some(fselectLift(preparedSentenceMatcher.matcher, \mtchr ->
+				[Pair(0, mtchr)]
+			));
 		} else {
-			mapi(extractStruct(style, MDictionary([])).dictionaries, \i, mdictionary ->
-				Pair(i, sentenceMatcher.matcher(filter(concatA(map(strSplit(mdictionary, "\n"), \s -> strSplit(s, fromCharCode(0x000D)))), \s -> strlen(s) > 0)))
-				|> const
+			maybeMap(
+				tryExtractStruct(style, MDictionaryDynamic(const([]))),
+				\dictionaries ->
+					fmapi(dictionaries.dictionaries, \i, mdictionary ->
+						Pair(i, sentenceMatcher.matcher(filter(concatA(map(strSplit(mdictionary, "\n"), \s -> strSplit(s, fromCharCode(0x000D)))), \s -> strlen(s) > 0)))
+					)
 			)
 		};
 
@@ -678,7 +677,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		);
 
 	autocomplete =
-		if (matchers != [] || isSome(autoCompleteAsync)) {
+		if (isSome(matchers) || isSome(autoCompleteAsync)) {
 			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
 			maxResults = extractStruct(style, MMaxResults(10)).results;
 
@@ -721,7 +720,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 			Some(
 				MInputAutocompleteState(
-					matchers,
+					either(matchers, const([])),
 					sentenceMatcher,
 					extractStructMany(style, TCompletionFn(\__, __, __ -> TEmpty()))
 					|> (\f ->
@@ -744,6 +743,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
 					setWord,
 					iScriptBehaviours.isTextInputInPopup,
+					contains(style, MSuggestionsDynamicListMode()),
+					contains(style, MSuggestionsSameZorderMode()),
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
 					inLine,
 					startSearch.wait,
@@ -767,10 +768,13 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			maybeMap(autocomplete, \__ -> \c, p -> strlen(c))
 		);
 
+	onClearContent = tryExtractStruct(style, MOnClearIconClick(nop));
+
 	// Content functions
 	clearContent = \ -> {
 		next(content, if (inputType == TelType()) "+" else "");
 		nextDistinct(mfocus.focused, true);
+		maybeApply(onClearContent, \onClear -> onClear.onClick());
 
 		if (useNativeInput) {
 			if (mobile)
@@ -859,7 +863,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						};
 
 						newSentences =
-							if (isSome(popup)) {
+							if (isSome(popup) || ac.sameZorderMode) {
 								if (ac.maxResults >= 0) {
 									maybeApply(ac.showMoreResults, \results -> 
 										setUnsM(showMoreHandlerUns, subscribe2(results, \res ->
@@ -963,7 +967,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		fselect3(
 			content,
 			fselect(mfocus.focused, updateFocus |> FLift),
-			eitherMap(autocomplete, \ac -> fmerge(ac.matchers), const([])),
+			eitherMap(autocomplete, \ac -> ac.matchers, const([])),
 			updateFocusContent
 		);
 
@@ -1237,6 +1241,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		color,
 		width,
 		textWidth,
+		maxHeight,
 		align,
 		iconSize,
 		iconBorders,
@@ -1373,9 +1378,17 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 	)
 }
 
-MTextInputLine(visibleText : string, realText : string, length : int, newLine : bool);
+MTextInputFilteredTag(from : int, to : int, filteredTagText : string, fullText : string);
+MTextInputFilteredTagAcc(
+	openedTags : int,
+	openedBrackets : int,
+	filteredText : string,
+	currentFilteredTag : Maybe<MTextInputFilteredTag>,
+	tags : [MTextInputFilteredTag]
+);
+MTextInputLine(visibleText : string, realText : string, filteredTagsText : Triple<string, string, [MTextInputFilteredTag]>, length : int, newLine : bool);
 
-emptyMTextInputLine = MTextInputLine("", "", 0, false);
+emptyMTextInputLine = MTextInputLine("", "", Triple("", "", []), 0, false);
 
 MTextEditorState(
 	mousexy : DynamicBehaviour<Point>,
@@ -1461,6 +1474,62 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 	linesCache = ref Triple(-1., false, makeTree());
 
+	filterTags = \txt -> {
+		filtered = stringFoldi(txt, MTextInputFilteredTagAcc(0, 0, "", None(), []), \i, acc, c -> {
+			s = fromCharCode(c);
+			if (s == "<") {
+				if (i + 1 < strlen(txt) && getCharAt(txt, i + 1) == "/") {
+					MTextInputFilteredTagAcc(acc with
+						openedTags = acc.openedTags - 1,
+						openedBrackets = acc.openedBrackets + 1,
+						currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft -> MTextInputFilteredTag(ft with fullText = ft.fullText + s))
+					)
+				} else {
+					MTextInputFilteredTagAcc(acc with
+						openedTags = acc.openedTags + 1,
+						openedBrackets = acc.openedBrackets + 1,
+						currentFilteredTag =
+							if (isNone(acc.currentFilteredTag)) Some(MTextInputFilteredTag(strlen(acc.filteredText), 0, "", s))
+							else acc.currentFilteredTag
+					)
+				}
+			} else if (s == ">") {
+				if (acc.openedTags == 0) {
+					MTextInputFilteredTagAcc(acc with
+						openedBrackets = acc.openedBrackets - 1,
+						currentFilteredTag = None(),
+						tags = eitherMap(acc.currentFilteredTag, \ft ->
+							arrayPush(acc.tags, MTextInputFilteredTag(ft with to = strlen(acc.filteredText), fullText = ft.fullText + s)),
+							acc.tags
+						)
+					)
+				} else {
+					MTextInputFilteredTagAcc(acc with
+						openedBrackets = acc.openedBrackets - 1,
+						currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft -> MTextInputFilteredTag(ft with fullText = ft.fullText + s))
+					)
+				}
+			} else if (acc.openedBrackets > 0) {
+				MTextInputFilteredTagAcc(acc with
+					currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft -> MTextInputFilteredTag(ft with fullText = ft.fullText + s))
+				)
+			} else {
+				MTextInputFilteredTagAcc(acc with
+					filteredText = acc.filteredText + s,
+					currentFilteredTag = maybeMap(acc.currentFilteredTag, \ft ->
+						MTextInputFilteredTag(ft with filteredTagText = ft.filteredTagText + s, fullText = ft.fullText + s)
+					)
+				)
+			}
+		});
+
+		Triple(
+			filtered.filteredText,
+			filtered.filteredText,
+			filtered.tags
+		)
+	}
+
 	content2lines = \c : string, sp : bool, wd : double -> {
 		map(strSplit(c, "\n"), \l ->
 			Pair(
@@ -1490,9 +1559,10 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 			mapi(splitted, \i, l ->
 				mapi(if (length(l) > 0) l else [Pair(0, "")], \j, ns -> {
 					addN = (i < length(splitted) - 1 && j == length(l) - 1);
-					visibleText = (if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022")));
+					visibleText = if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022"));
+					filteredTagsText = if (sp) filterTags(secondOfPair(ns)) else Triple(visibleText, secondOfPair(ns), []);
 
-					MTextInputLine(visibleText + "\n", secondOfPair(ns), firstOfPair(ns), addN)
+					MTextInputLine(visibleText + "\n", secondOfPair(ns), filteredTagsText, firstOfPair(ns), addN)
 				})
 			)
 			|> concatA
@@ -1531,20 +1601,27 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 		subLength = en.line - st.line;
 
-		foldi(subrange(getValue(lines), st.line, subLength + 1), "", \i, acc, s ->
-			acc + (
+		foldi(subrange(getValue(lines), st.line, subLength + 1), "", \i, acc, s -> {
+			textPart =
 				if (i > 0 && i < subLength)
-					s.realText + newLineSymbol(s)
+					s.filteredTagsText.second + newLineSymbol(s)
 				else if (i == 0 && i == subLength)
-					substring(s.realText, st.symbol, en.symbol - st.symbol)
+					substring(s.filteredTagsText.second, st.symbol, en.symbol - st.symbol)
 				else if (i == subLength)
-					substring(s.realText, 0, en.symbol)
+					substring(s.filteredTagsText.second, 0, en.symbol)
 				else if (i == 0)
-					substring(s.realText, st.symbol, s.length - st.symbol) + newLineSymbol(s)
+					substring(s.filteredTagsText.second, st.symbol, s.length - st.symbol) + newLineSymbol(s)
 				else
-					""
-			)
-		)
+					"";
+
+			if (textPart == "") {
+				acc
+			} else {
+				acc + fold(s.filteredTagsText.third, textPart, \acc2, ft ->
+					strReplace(acc2, ft.filteredTagText, ft.fullText)
+				)
+			}
+		})
 	}
 
 	checkPair = \p : MTextEditorPosition -> {
@@ -1793,7 +1870,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 		if (length(lns) > 0) {
 			y = adjustY(floor(xy.y / textHeight));
 
-			line = lns[y].visibleText |> (\f -> if (endsWith(f, "\n")) substring(f, 0, strlen(f) - 1) else f);
+			line = lns[y].filteredTagsText.first |> (\f -> if (endsWith(f, "\n")) substring(f, 0, strlen(f) - 1) else f);
 
 			x = if (xy.x < 2.) 0 else strlen(getTruncatedByWidthString(line, if (xy.x > 4.) xy.x + 4. else xy.x, textStyle, false));
 
@@ -1813,11 +1890,12 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 					TText(
 						substring(
 							(if (curs.line < 0)
-								lns[0].visibleText
+								lns[0].filteredTagsText.first
 							else if (curs.line >= lnsLength)
-								lastElement(lns, emptyMTextInputLine).visibleText
+								lastElement(lns, emptyMTextInputLine).filteredTagsText.first
 							else
-								lns[curs.line].visibleText)
+								lns[curs.line].filteredTagsText.first
+							)
 							|> (\f -> if (endsWith(f, "\n")) substring(f, 0, strlen(f) - 1) else f),
 							0,
 							curs.symbol
@@ -2394,9 +2472,9 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	inputFixedSize = \lines ->
 		THeight(
 			TSelect(inputState.textStyle, \ts : [MTextStyle] ->
-				MParagraph2T(
+				MDynamicParagraph2T(
 					inputState.parent,
-					generate(0, lines, \i -> "M\n") |> concatStrings,
+					const(generate(0, lines, \i -> "M\n") |> concatStrings),
 					concat(
 						ts,
 						[
@@ -2631,9 +2709,9 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 					);
 
 				if (inputState.multiline)
-					MParagraph2T(
+					MDynamicParagraph2T(
 						inputState.parent,
-						c,
+						const(c),
 						concat(
 							ts,
 							[
@@ -2664,14 +2742,10 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 	textStyle : [MTextStyle] =
 		extractMTextStyleDef(
 			extractStruct(style, MCustomTextStyle([])).style,
-			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
-		)
-		|> (\f : Triple<MThemeColor, MFontStyle, bool> ->
-			[firstOfTriple(f), secondOfTriple(f)]
-			|> (\f2 -> if (f.third) f2 else arrayPush(f2, MTextDisabled()))
+			MFontStyleBundle(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		);
 	isTextInputInPopup = !contains(style, MTextInputOutOfPopup());
-	custLeftButton = extractStruct(style, MLeftCustomButton(TEmpty(), TFixed(1., 1.), 56., true));
+	custLeftButton = extractStruct(style, MStartCustomButton(TEmpty(), TFixed(1., 1.), 56., true));
 	leftButton = extractStruct(style, MShowLeftButton(false)).show || custLeftButton.closed != TEmpty();
 	leftIcon = extractStruct(style, MLeftIcon("", [])).icon != "";
 	label = extractStruct(style, MLabel("")).label;
@@ -2689,7 +2763,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 			)
 		);
 
-	lineHeight = dceil((tTextMetrics.height + inputBorders.top + inputBorders.bottom - 3.) / 4.) * 4.;
+	lineHeight = completionLineHeight(tTextMetrics, inputBorders);
 
 	MCompletionFn(\com, isSelected, setWordFn ->
 		MGetMaterial2Tropic(\m2t -> MGetFocusGroup(\p -> {
@@ -2708,11 +2782,15 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 					|> TCenterY
 				], isRTL)
 				|> (\f ->
-					TBorderDir(
-						inputBorders.start + (if (leftButton && isTextInputInPopup) custLeftButton.inputIndent else 0.) + (if (leftIcon) 72. else 0.),
-						0.,
-						inputBorders.end,
-						0.,
+					TBorderTDir(
+						fsum(concat3(
+							[const(inputBorders.start)],
+							if (leftButton && isTextInputInPopup) [custLeftButton.inputIndent] else [],
+							if (leftIcon) [const(72.)] else []
+						)),
+						zero,
+						const(inputBorders.end),
+						zero,
 						f,
 						isRTL
 					)
@@ -2730,8 +2808,18 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 							[MThemeFill(p, MAccentColor()), FillOpacity(0.4)]),
 					m2t
 				)
+				|> (\t -> if (isSelected) TInteractive([KeyDown2(\h, ke -> {
+						if (ke.keycode == KEY_ENTER) {
+							setWordFn(com);
+							true
+						} else false
+					})], t) else t)
 		}))
 	)
+}
+
+completionLineHeight(textMetrics : FormMetrics, inputBorders : MInputBorders) -> double {
+	dceil((textMetrics.height + inputBorders.top + inputBorders.bottom - 3.) / 4.) * 4.;
 }
 
 addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic {

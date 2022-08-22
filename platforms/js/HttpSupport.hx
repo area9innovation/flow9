@@ -121,7 +121,8 @@ class HttpSupport {
 	#end
 
 	public static function httpRequest(url : String, post : Bool, headers : Array<Array<String>>,
-		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void, ?request : Dynamic = null) : Void {
+		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void,
+		onStatusFn : Int -> Void, ?request : Dynamic = null) : Void {
 		#if flow_nodejs
 
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url, request);
@@ -287,7 +288,7 @@ class HttpSupport {
 	}
 
 	public static function httpCustomRequestNative(url : String, method : String, headers : Array<Array<String>>,
-		params: Array<Array<String>>, data : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool, ?request : Dynamic = null) : Void {
+		params: Array<Array<String>>, data : String, responseEncoding : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool, ?request : Dynamic = null) : Void {
 
 		if ((method == 'DELETE' || method == 'PATCH' || method == "PUT") && !Lambda.exists(headers, function(h) return h[0] == "If-Match")) {
 			headers.push(["If-Match", "*"]);
@@ -502,9 +503,10 @@ class HttpSupport {
 
 		#if (js && !nwjs)
 		http.async = async;
-		#end
-
+		http.requestExt(method == "POST", responseEncoding);
+		#else
 		http.request(method == "POST");
+		#end
 		#end
 	}
 

@@ -119,7 +119,9 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
+	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
+	public static var useForcedUpdateTextWidth = Util.getParameter("new") == "1" && Util.getParameter("forced_textwidth_update") != "0";
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var renderStage : FlowContainer;
@@ -178,6 +180,7 @@ class TextClip extends NativeWidgetClip {
 	private var doNotRemap : Bool = false;
 	private var preventSelectEvent : Bool = false;
 	private var preventMouseUpEvent : Bool = false;
+	private var preventEnsureCurrentInputVisible : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -457,6 +460,7 @@ class TextClip extends NativeWidgetClip {
 
 			if (type == 'number') {
 				nativeWidget.step = step;
+				nativeWidget.addEventListener('wheel', function(e) {e.preventDefault();});
 			}
 
 			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
@@ -588,7 +592,9 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.marginTop = '0px';
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
-				nativeWidget.style.marginTop = '${-getTextMargin()}px';
+				if (this.parent != null) {
+					nativeWidget.style.marginTop = '${-getTextMargin()}px';
+				}
 			});
 		}
 	}
@@ -1281,8 +1287,12 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (Platform.isIOS && Platform.browserMajorVersion < 13) {
-			RenderSupport.ensureCurrentInputVisible();
+		if (Platform.isIOS && (Platform.browserMajorVersion < 13 || EnsureInputIOS)) {
+			if (!this.preventEnsureCurrentInputVisible) {
+				RenderSupport.ensureCurrentInputVisible();
+				// Intended for first focusing into wigi editor after page reload (for some reason, onFocus duplicates in this case).
+				this.preventEnsureCurrentInputVisible = true;
+			}
 		}
 
 		if (Platform.isIOS) {
@@ -1293,6 +1303,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onBlur(e : Event) : Void {
+		this.preventEnsureCurrentInputVisible = false;
 		if (untyped RenderSupport.Animating || this.preventBlur) {
 			untyped this.preventBlur = false;
 			RenderSupport.once("stagechanged", function() { if (nativeWidget != null && isFocused) nativeWidget.focus(); });
@@ -1557,6 +1568,9 @@ class TextClip extends NativeWidgetClip {
 		// Chrome doesn't support this method for 'number' inputs
 		try {
 			nativeWidget.setSelectionRange(start, end);
+			if (start == nativeWidget.value.length && end == nativeWidget.value.length) {
+				nativeWidget.scrollLeft = nativeWidget.scrollWidth;
+			}
 			preventMouseUpEvent = true;
 		} catch (e : Dynamic) {
 			return;
@@ -1617,6 +1631,20 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			metrics.maxWidth = Math.max(metrics.width, metrics.maxWidth);
+
+			if (!this.cropWords && widgetWidth > 0 && metrics.width > widgetWidth) {
+				super.setWidth(metrics.width);
+			}
+		}
+
+		if (useForcedUpdateTextWidth) {
+			try {
+				if (Browser.document.fonts.status == LOADING) {
+					Browser.document.fonts.addEventListener('loadingdone', function() {
+						updateTextWidth();
+					});
+				}
+			} catch (e : Dynamic) {}
 		}
 
 		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {

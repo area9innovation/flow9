@@ -28,7 +28,8 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 	outlined = contains(m.style, MOutlined());
 	fullWidth = contains(m.style, MFullWidth());
 	buttonTextColor = extractStructMany(m.style, MButtonTextColor(false));
-	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f();}));
+	progress = tryExtractStruct(m.style, MTextButtonProgress(make(false)));
+	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f(); maybeApply(progress, \pr -> nextDistinct(pr.activated, true))}));
 	elevation = \focus ->
 		extractStruct(m.style,
 			MElevation(
@@ -38,8 +39,20 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 					zero
 			)
 		).elevation;
-	paddings = extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5));
+
 	isRTL = parent.rtl;
+
+	paddingsAM = tryExtractStruct(m.style, MButtonPaddingsA(16.0, 9.5, 16.0, 9.5));
+	paddings = eitherFn(
+		paddingsAM,
+		\paddingsA -> {
+			left = if (isRTL) paddingsA.end else paddingsA.start;
+			right = if (isRTL) paddingsA.start else paddingsA.end;
+			MButtonPaddings(left, paddingsA.top, right, paddingsA.bottom)
+		},
+		\-> extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5))
+	);
+
 	textAlignment = commonAlignment2abs(extractStruct(m.style, MTextAlignment(CenterAlign())).alignment, isRTL);
 	textAlignmentX = switch (textAlignment) {
 		LeftAlign() : 0.0;
@@ -100,6 +113,12 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 			m.text,
 			replaceStructMany(textStyle, [contrastingMColor(parent), MTextDisabled()])
 		)
+		|> (\f -> eitherMap(progress, \pr ->
+			TCopySize2(f, \sz, tr ->
+				TIf(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([contrastingMColor(parent)])), sz, true), tr)
+			),
+			f
+		))
 		|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, true))
 		|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
 		|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f)
@@ -121,7 +140,8 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 				MHighlightOnFocus(const(true)),
 				MHighlightOnHover(const(true)),
 				MRippleShape("MTextButton"),
-				MButtonTitle(const(m.text))
+				MButtonTitle(const(m.text)),
+				MClickEnabled(eitherMap(progress, \pr -> fnot(pr.activated), const(true)))
 			]
 		);
 
@@ -130,6 +150,12 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 		m.text,
 		textStyle
 	)
+	|> (\f -> eitherMap(progress, \pr ->
+		TCopySize2(f, \sz, tr ->
+			TIf(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([textColor])), sz, true), tr)
+		),
+		f
+	))
 	|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, false))
 	|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
 	|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f))
@@ -170,22 +196,36 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 					else
 						f2
 				))
-				|> (\f2 -> TIfLazy2(focus.enabled, \b -> if (b) f2() else disabled(), !fullWidth))
+				|> (\f2 -> TIfLazy2(focus.enabled, \b -> if (b) f2() else disabled(), !fullWidth && isNone(parent.theme.fontWrapper)))
 			},
 			m2t
 		)
 	)
-	|> (if (fullWidth) makeTropicConstantHeight(None()) else makeTropicConstant(None(), None()))
+	|> (if (isSome(parent.theme.fontWrapper)) idfn else if (fullWidth) makeTropicConstantHeight(None()) else makeTropicConstant(None(), None()))
 }
 
 // This type is added for the correct typechecking of variable 'paddings'.
 MButtonBordersOrPaddings ::= MButtonBorders, MButtonPaddings;
 
 MTextClickable2T(manager : MaterialManager, parent : MFocusGroup, m : MTextClickable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	paddings : MButtonBordersOrPaddings = if (containsStruct(m.style, MButtonBorders(8., 4., 8., 4.)))
+	isRTL = parent.rtl;
+	paddings : MButtonBordersOrPaddings = if (
+		containsStruct(m.style, MButtonPaddingsA(8., 4., 8., 4.)) ||
+		containsStruct(m.style, MButtonPaddings(8., 4., 8., 4.))
+	) {
+		paddingsAM = tryExtractStruct(m.style, MButtonPaddingsA(16.0, 9.5, 16.0, 9.5));
+		eitherFn(
+			paddingsAM,
+			\paddingsA -> {
+				left = if (isRTL) paddingsA.end else paddingsA.start;
+				right = if (isRTL) paddingsA.start else paddingsA.end;
+				MButtonPaddings(left, paddingsA.top, right, paddingsA.bottom)
+			},
+			\-> extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5))
+		);
+	} else {
 		extractStruct(m.style, MButtonBorders(8., 4., 8., 4.))
-	else
-		extractStruct(m.style, MButtonPaddings(8., 4., 8., 4.));
+	}
 	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f();}));
 	backgroundStyle = extractStruct(m.style, MBackgroundStyle([])).style;
 	raised = isSome(tryExtractStruct(backgroundStyle, Fill(black))) && extractStruct(backgroundStyle, FillOpacity(1.)).opacity > 0.;
@@ -623,7 +663,7 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 						TConstruct([\ -> fconnect(foc.down, pressed)], caption(foc.enabled)),
 					m2t
 				)
-			else 
+			else
 				caption(fmin(enabled, parent.enabled));
 
 		switch (captionPosition.pos) {

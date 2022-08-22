@@ -59,9 +59,9 @@ DESC
 
   ## List your development dependencies here. Development dependencies are
   ## those that are only needed during development
-  s.add_development_dependency('rake', '~>0')
-  s.add_development_dependency('rack', '~>1.5', '>=1.5.1')
-  s.add_development_dependency('sinatra', '~>1.3', '>=1.3.4')
+  s.add_development_dependency('rake', '~>12.3.3')
+  s.add_development_dependency('rack', '~>2.2', '>=2.2.4')
+  s.add_development_dependency('sinatra', '~>2.2', '>=2.2.1')
   s.add_development_dependency('vegas', '~>0.1.11')
 
   ## Leave this section as-is. It will be automatically generated from the

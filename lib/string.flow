@@ -119,6 +119,9 @@ export {
 
 
 	// Get the character at index. Considering the string as UCS-2
+	// In JS target string can be String or JSBinflowBuffer,
+	// but flowc generates a wrong code for the case of JSBinflowBuffer because of this optimization:
+	// https://github.com/area9innovation/flow9/blob/0f0b457cf2e7151f8d83c321f9f249c512470fd0/tools/flowc/backends/javascript/fi2javascript_compile.flow#L966-L967
 	native getCharAt : (string, int) -> string = Native.getCharAt;
 
 	// Convert a string to an array of character codes in UTF-8 format
@@ -147,6 +150,9 @@ export {
 	isHexLetter : (string) -> bool;
 	//Is this a single hex digit string?
 	isHexDigit : (string) -> bool;
+
+	// Returns true if string is not empty and consists of hex digits only.
+	isHexDigits : (string) -> bool;
 
 	// Is this string a base64 presentation of something
 	isBase64String : (string) -> bool;
@@ -233,7 +239,9 @@ export {
 	// (or multiple separator occur after each other), empty strings result.
 	// has issues on the edges: strSplit("aba", "a") -> ["", "b", ""] instead of ["b"].
 	strSplit(a : string, sep : string) -> [string];
-	strSplitLeave(s : string, sep : string) -> [string]; // separators are included in resulting array, no issues from strSplit
+	// Separators are included in resulting array, no issues from strSplit
+	// FIXME: hangs when empty separator given
+	strSplitLeave(s : string, sep : string) -> [string];
 
 	// separators in some sub-pieces are ignored.
 	// updateContext takes one char at once.
@@ -265,6 +273,8 @@ export {
 
 	// Finds last occurance of sep, and returns whatever comes after. Returns def if the sep is not found
 	takeAfterLast(str : string, sep : string, def : string) -> string;
+	// Finds last occurance of any of seps, and returns whatever comes after. Returns def if no one of sep is found
+	takeAfterLastMult(str : string, seps : [string], def : string) -> string;
 
 	// Return text between start and stop separators (only first)
 	takeBetween(str : string, start : string, stop : string, def : string) -> string;
@@ -285,8 +295,13 @@ export {
 
 	/// Folds over the character codes of the left-to-right character sequence in s.
 	stringFold : (s : string, a : ?, f : (a2 : ?, c : int) -> ?) -> ?;
-	stringFoldi : (s : string, a : ?, f : (i : int, a2 : ?, c : int) -> ?) -> ?;
 	stringCharsFold(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ?;
+	stringFoldr : (s : string, a : ?, f : (a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFoldr(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ?;
+	stringFoldi : (s : string, a : ?, f : (i : int, a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFoldi(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ?;
+	stringFoldri : (s : string, a : ?, f : (i : int, a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFoldri(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ?;
 
 	// Reverses a string
 	reverse(s : string) -> string;
@@ -338,6 +353,9 @@ export {
 
 	// returns s repeated cnt times
 	strRepeat(s : string, cnt : int) -> string;
+
+	// checks if the word is an english auxiliary word
+	isAuxiliaryWord(word : string) -> bool;
 }
 
 _s(s) { s }
@@ -405,15 +423,15 @@ multipleSuperpositionStrIndexOf(str : string, substr : string, allowSuperpositio
 		[]
 	} else {
 		result = ref [];
-		subsrtLenght = strlen(substr);
-		step = if (allowSuperposition && strlen(str) > subsrtLenght) {
+		substrLength = strlen(substr);
+		step = if (allowSuperposition && strlen(str) > substrLength) {
 			firstCharCode = getCharCodeAt(substr, 0);
 			stepM = stringFoldi(substr, None(), \i, acc, c -> {
 				// i == 0 is trivial case with zero gap, so we ignore it
-				if (isNone(acc) && c == firstCharCode && i > 0 && startsWith(substr, substring(substr, i, subsrtLenght - i))) Some(i) else acc
+				if (isNone(acc) && c == firstCharCode && i > 0 && startsWith(substr, substring(substr, i, substrLength - i))) Some(i) else acc
 			});
-			either(stepM, subsrtLenght);
-		} else subsrtLenght;
+			either(stepM, substrLength);
+		} else substrLength;
 		for(0, \i -> i < strlen(str), \i -> {
 			pos = strRangeIndexOf(str, substr, i, strlen(str));
 			if (pos < 0) {
@@ -584,10 +602,10 @@ isDouble(s0 : string) -> bool {
 	arr = strSplit(s, ".");
 	// the first condition makes sure that we have at least one character that is not '.'
 	// so in the last condition at least one part will be not empty, that allows to accept "1." and ".1"
-	strlen(s) >= length(arr) && 
-	length(arr) < 3 && 
+	strlen(s) >= length(arr) &&
+	length(arr) < 3 &&
 	all(mapi(arr, \i, el -> {
-		el == "" || 
+		el == "" ||
 		if (i == 0) {
 			// we allow , as a thousands separator. Let's keep it simple for now.
 			isDigits(strReplace(el, ",", ""))
@@ -604,6 +622,14 @@ isHexLetter(scs) {
 
 isHexDigit(scs) {
 	isDigit(scs) || isHexLetter(scs);
+}
+
+isHexDigits(s) {
+	isHexDigits0(s, 0, strlen(s))
+}
+
+isHexDigits0(s : string, index : int, len : int) -> bool {
+	if (index < len) isHexDigit(getCharAt(s, index)) && isHexDigits0(s, index+1, len) else len > 0;
 }
 
 isBase64String(s) {
@@ -919,6 +945,14 @@ takeAfterLast(str : string, sep : string, def : string) -> string {
 	if (i == -1) def else strRight(str, i + strlen(sep));
 }
 
+takeAfterLastMult(str : string, seps : [string], def : string) -> string {
+	if (length(seps) == 0) def
+	else {
+		idxs = map(seps, \sep -> Pair(strLastIndexOf(str, sep), strlen(sep)));
+		i = fold(idxs, idxs[0], \acc, idx -> if (acc.first > idx.first) acc else idx);
+		if (i.first == -1) def else strRight(str, i.first + i.second);
+	}
+}
 
 takeBetween(str : string, start : string, stop : string, def : string) -> string {
 	after = takeAfter(str, start, def);
@@ -1026,12 +1060,32 @@ stringFold(s, a, f) {
 	foldRange(0, strlen(s) - 1, a, \a2, i->f(a2, getCharCodeAt(s, i)));
 }
 
+stringCharsFold(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ? {
+	foldRange(0, strlen(s) - 1, a, \acc, i -> f(acc, substring(s, i, 1)));
+}
+
+stringFoldr(s, a, f) {
+	foldrRange(strlen(s) - 1, 0, a, \a2, i->f(a2, getCharCodeAt(s, i)));
+}
+
+stringCharsFoldr(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ? {
+	foldrRange(strlen(s) - 1, 0, a, \acc, i -> f(acc, substring(s, i, 1)));
+}
+
 stringFoldi(s, a, f) {
 	foldRange(0, strlen(s) - 1, a, \a2, i -> f(i, a2, getCharCodeAt(s, i)));
 }
 
-stringCharsFold(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ? {
-	foldRange(0, strlen(s) - 1, a, \acc, i -> f(acc, substring(s, i, 1)));
+stringCharsFoldi(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ? {
+	foldRange(0, strlen(s) - 1, a, \acc, i -> f(i, acc, substring(s, i, 1)));
+}
+
+stringFoldri(s, a, f) {
+	foldrRange(strlen(s) - 1, 0, a, \a2, i -> f(i, a2, getCharCodeAt(s, i)));
+}
+
+stringCharsFoldri(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ? {
+	foldrRange(strlen(s) - 1, 0, a, \acc, i -> f(i, acc, substring(s, i, 1)));
 }
 
 getUrlExtension(url) {
@@ -1181,9 +1235,13 @@ concatStrings(strings) {
 	}
 }
 
+isAuxiliaryWord(word : string) -> bool {
+	auxiliaryWords = ["a", "an", "and", "as", "at", "but", "by", "down", "for", "from", "in", "into", "near", "nor", "of", "on", "onto", "or", "the", "to", "up", "with"];
+	contains(auxiliaryWords, word);
+}
+
 toCapitalization(s : string) -> string {
 	if (toUpperCase(s) != s) {
-		exceptions = ["a", "an", "the", "and", "but", "or", "for", "nor", "as", "at", "by", "for", "from", "in", "into", "near", "of", "on", "onto", "to", "with", "down", "up"];
 		endMarks = [".", "!", "?", "...", "\n"];
 		separators = concat(["-", ":", ",", "\"", " ", "\xA0;", "\u00A0"], endMarks);
 		separatedString = strSplit2(s, separators);
@@ -1196,7 +1254,7 @@ toCapitalization(s : string) -> string {
 			isLastWord = i >= len - 1 || contains(endMarks, separatedString[i + 1]);
 			isSeparator = contains(separators, v);
 
-			res = if ((isFirstWord || isLastWord || ^hyphenCase || !contains(exceptions, w))
+			res = if ((isFirstWord || isLastWord || ^hyphenCase || !isAuxiliaryWord(w))
 					&& !isSeparator) {
 				toUpperCase(strLeft(v, 1)) + strRight(w, 1)
 			} else {

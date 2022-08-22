@@ -7,6 +7,7 @@ import lingo/pegcode/rename_bindings;
 import lingo/pegcode/optimize_grammar;
 import lingo/pegcode/pegcode;
 import lingo/pegcode/lingocode;
+import lingo/pegcode/helpers;
 import lingo/pegtypecheck;
 import lingo/pegcode/infer_pegactions;
 import lingo/compiler/compile_lingo;
@@ -43,6 +44,7 @@ main() {
 	grammarName = getUrlParameter("grammarname");
 	needsPreprocess = isUrlParameterTrue("preprocess");
 	definitions = strSplit(getUrlParameter("definitions"), ",");
+	prefixRules = getUrlParameter("prefix_rules");
 
 	files = strSplit(grammarfile, ",");
 	grammar = fold(files, "", \content, file -> {
@@ -65,6 +67,7 @@ main() {
 
         flowfile=<file> produces a flow file with a parsing driver for the pegcode parser.
        	parsetype=MyAstType makes the parsing driver use a strongly typed return type.
+		prefix_rules=<pref> change rule names from 'name' to 'pref_name'
 
         grammar=1 prints the optimized grammar for inspection.
         opcodes=1 prints the resulting pegcodes.
@@ -105,7 +108,7 @@ main() {
 				println("Could not parse grammar file `" + grammarfile + "`");
 				quit(1);
 			}
-			Some(gr): {
+			Some(gr0): {
 				if (r.pos < strlen(preprocessed)) {
 					println("Could not parse all of grammar file `" + grammarfile + "`:");
 					printParseError(preprocessed, r);
@@ -119,6 +122,7 @@ main() {
 						println("Input file should have .lingo suffix");
 						quit(1);
 					} else {
+						gr = if (prefixRules == "") gr0 else prefixRulesInGrammar(gr0, prefixRules);
 						arrayName =
 							if (grammarName != "") {
 								grammarName
@@ -174,7 +178,8 @@ main() {
 
 						// Compile to a Flow parser?
 						if (flowparser != "") {
-							output = compileSyntaxGrammarToFlow(actionless, []);
+							options = if (prefixRules == "") [] else [cswgoInnerFunctionsPrefix(prefixRules)];
+							output = compileSyntaxGrammarToFlow(actionless, options);
 							target = changeFileExt(flowparser, ".flow");
 							if (output.first != "") {
 								println("Error compiling to " + target + ": " + output.first);
@@ -442,28 +447,4 @@ export {
 
 pegOps4" + name + " : [PegOp] =" + s4 + ";\n"
 + (if (debug != makeTree()) "pegOps4" + name + "Debug = " + serialize(debug) + ";\n" else "")
-}
-
-removePegActions(pa : Parsing) -> Parsing {
-	switch (pa) {
-		Choices(p): Choices(map(p, removePegActions));
-		Seq(seq): Seq(map(seq, removePegActions));
-		Star(p): Star(removePegActions(p));
-		Plus(p): Plus(removePegActions(p));
-		Opt(p): Opt(removePegActions(p));
-		Negation(p): Negation(removePegActions(p));
-		CutUp(p): CutUp(removePegActions(p));
-		CutDown(p): CutDown(removePegActions(p));
-		Rule(name): pa;
-		iRule(i): pa;
-		Term(name): pa;
-		CharRange(first, last): pa;
-		Epsilon(): pa;
-		Action(fn): Epsilon();
-		Action2(e): Epsilon();
-		ActionIndex(): pa;
-		BindResult(name, v): BindResult(name, removePegActions(v));
-		BindMatched(name, v): BindMatched(name, removePegActions(v));
-		LingoValue(value): pa;
-	}
 }

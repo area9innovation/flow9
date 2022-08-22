@@ -11,7 +11,7 @@ MChart2T(manager : MaterialManager, parent : MFocusGroup, m : MChart, m2t : (Mat
 	subtitle = extractStruct(m.style, MChartSubtitle("")).subtitle;
 	chartTextColor = contrastingMColor(parent);
 	chartScale = extractStruct(m.style, MChartScale(1.0)).scale;
-	xAxisIsDate = contains(m.style, MXAxisIsDate());
+	xAxisIsDate = isSome(tryExtractStruct(m.style, MXAxisIsDate2(false)));
 	widthHeight = extractStruct(m.style, WidthHeight(-1., -1.));
 	maxWidth = if (widthHeight.width > 0.) widthHeight.width else 240.;
 	maxHeight = if (widthHeight.height > 0.) widthHeight.height else 240.;
@@ -111,7 +111,9 @@ MDrawLineChart2T(
 	chartTextColor = contrastingMColor(parent);
 	valuesPostfix = extractStruct(style, MValuesPostfix("")).postfix;
 	tooltipValuesPostfix = extractStruct(style, MTooltipValuesPostfix(valuesPostfix)).postfix;
-	xAxisIsDate = contains(style, MXAxisIsDate());
+	xAxisIsDate0 = tryExtractStruct(style, MXAxisIsDate2(false));
+	xAxisIsDate = isSome(xAxisIsDate0);
+	showYear = eitherMap(xAxisIsDate0, \v -> v.showYear, false);
 	isCurve = contains(style, MChartCurve());
 	isDisplayVertically = contains(style, MXAxisVertical());
 	chartScale = extractStruct(style, MChartScale(1.0)).scale;
@@ -294,7 +296,7 @@ MDrawLineChart2T(
 
 	makeCharts = \cw, ch -> {
 		refreshHoverPoints();
-		drawLineCharts(manager, parent, data, chartColors, cw, ch, chartScale, lengthX2, lengthY2, minX2, minY2, maxX2, maxY2, isCurve, xAxisIsDate,
+		drawLineCharts(manager, parent, data, chartColors, cw, ch, chartScale, lengthX2, lengthY2, minX2, minY2, maxX2, maxY2, isCurve, xAxisIsDate, showYear,
 			valuesPostfix, tooltipValuesPostfix, addHoverPoint, positionScale, chartTextColor, style, manager.manager.renderStyle, lightBackground,
 			m2t, doNotCrop, escapeHTML
 		)
@@ -367,7 +369,7 @@ MDrawLineChart2T(
 			text =
 				if (length(visibleRows) <= i) {
 					if (xAxisIsDate)
-						getDateString(stamp2date(d), false, false, false)
+						getDateString(stamp2date(d), false, false, showYear)
 					else
 						d2st(d, 2)
 				} else
@@ -379,7 +381,7 @@ MDrawLineChart2T(
 				|> (\t -> TBorder(8.0, 0.0, 8.0, 0.0, t))
 			else {
 				ellipsisStyle : [MEllipsisTextStyle] = textStyle([MCaption(), chartTextColor]);
-				MEllipsisText2T(manager, parent, MEllipsisText(text, concat(ellipsisStyle, [MShowTooltip(const(true)), escapeHTML])), m2t)
+				MEllipsisText2T(manager, parent, MEllipsisText(text, concat(ellipsisStyle, [MShowTooltip(const(true)), escapeHTML, MMaxLines(if (showYear) 2 else 1)])), m2t)
 			})
 			|> simpleScale
 			|> TCenterY
@@ -467,11 +469,6 @@ MDrawLineChart2T(
 		);
 
 	legendWidthFixed = fmultiply(fsubtract(legendWidth, const(38.)), const(chartScale));
-	chartSized =
-		TSizedWidthHeight(
-			legendWidth,
-			faddition(chartHeight, const(oChartScale * 32.0))
-		);
 
 	legend =
 		mapi(tail(data.columns), \i, c -> {
@@ -495,16 +492,12 @@ MDrawLineChart2T(
 		|> (\t -> TAttachWidth(t, legendWidth))
 		|> (\f -> TAvailable(f, TSizedWidth(fdivide(width, const(4.0)), 0.0)))
 		|> (\f -> TBorder(8.0, 0.0, 0.0, 0.0, f))
-		|> (\f -> TCase(
-			[
-				TFillXY(),
-				chartSized
-			],
-			[
-				f,
-				TScroll(manager.manager, f, chartSized, [TScrollBound(const(true), const(true))])
-			]))
-		|> (\f -> TAvailable(f, TEmpty()))
+		|> (\f -> MScroll2T(manager, parent,
+			MScroll(f, TFillXHT(faddition(chartHeight, const(oChartScale * 32.0))), [
+				TScrollAxisEnabled(const(false), const(true)),
+				TScrollCropByContent(const(true), const(true)),
+				TScrollbarOverlapContent(false)
+			]), m2t))
 		|> simpleScale
 		|> (\f -> TBorder(oChartScale * 16.0, 16.0, 0.0, 16.0, f));
 
@@ -577,7 +570,7 @@ makeChartBorder() -> ChartBorder {
 
 drawLineCharts(manager : MaterialManager, parent : MFocusGroup, data : MChartData, chartColors : [MColor], chartWidth : double, chartHeight : double,
 	chartScale : double, lengthX2 : double, lengthY2 : double, minX2 : double, minY2 : double, maxX2 : double, maxY2 : double, isCurve : bool,
-	xAxisIsDate : bool, valuesPostfix : string, tooltipValuesPostfix : string, addHoverPoint : (Tropic) -> void, positionScale : DynamicBehaviour<PositionScale>,
+	xAxisIsDate : bool, showYear : bool, valuesPostfix : string, tooltipValuesPostfix : string, addHoverPoint : (Tropic) -> void, positionScale : DynamicBehaviour<PositionScale>,
 	chartTextColor : MColor, style : [MChartStyle], renderStyle : [TRenderStyle], lightBackground : bool, m2t : (Material, MFocusGroup) -> Tropic, doNotCrop : bool, escapeHTML : EscapeHTML) -> Pair<[Tropic], ChartBorder> {
 
 	valuesLabels1 = extractStructMany(style, MValuesLabels(false));
@@ -686,7 +679,7 @@ drawLineCharts(manager : MaterialManager, parent : MFocusGroup, data : MChartDat
 					tooltipText =
 						if (length(data.rows) <= r.second) {
 							if (xAxisIsDate)
-								getDateString(stamp2date(data.data[r.second][0]), false, false, false)
+								getDateString(stamp2date(data.data[r.second][0]), false, false, showYear)
 							else
 								d2st(data.data[r.second][0], 2)
 						} else {

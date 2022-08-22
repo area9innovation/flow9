@@ -1,0 +1,180 @@
+import ds/treeutils;
+import ds/inttrie;
+import tools/dsl/dsl_util;
+
+// A data structure for use with egraph as rel. algebra
+// See https://arxiv.org/pdf/2108.02290.pdf
+
+// Here is an egraph done with Sqlite:
+// https://github.com/yihozhang/egraph-sqlite
+
+// Here is a DB in rust
+// https://github.com/mwillsey/qry/blob/main/src/lib.rs
+
+// TODO:
+// - Figure out how to do a query language on this as we have it
+
+/*
+For efficient joins on IntTries, this snippet is helpful:
+
+treeSuccessorKey(t : Tree<int, ?>, current : int) -> int {
+    findTreeUpperKey(t, current + 1, current);
+}
+*/
+
+export {
+	// Prepare an empty DSL database
+	makeDb() -> Db;
+
+	//
+	// Insert and extraction of DslAst values
+	//
+
+	// Insert this value in the AST. Figures out what table to use automatically
+	// bool, ints, doubles, string are handled in a special table
+	// arrays are placed in a table called ""
+	// nodes are placed in a table with the name of the node.
+	// If the value already exists, we get out the existing id of it instead.
+	insertDbDsl(db : Db, ast : DslAst) -> int;
+
+	// Get this value from the AST. Not efficient, but at least it works
+	lookupDbDsl(db : Db, eclass : int) -> DslAst;
+}
+
+Db(
+	// 0 is unknown. 1 is false, 2 is true.
+	nextId : ref int,
+	// Raw values
+	ints : DbSimpleTable<int>,
+	doubles : DbSimpleTable<double>,
+	strings : DbSimpleTable<string>,
+	// Here we have each table for each relation
+	// Arrays are stored under the "" name
+	tables : ref Tree<string, DbSimpleTable<[int]>>,
+);
+
+makeDb() -> Db {
+	Db(
+		ref 3,
+		makeDbSimpleTable(),
+		makeDbSimpleTable(),
+		makeDbSimpleTable(),
+		ref makeTree(),
+	);
+}
+
+insertDbDsl(db : Db, ast : DslAst) -> int {
+	switch (ast) {
+		DslBool(value): if (value) 2 else 1;
+		DslInt(value): insertDbSimpleTable(db.nextId, db.ints, value);
+		DslDouble(value): insertDbSimpleTable(db.nextId, db.doubles, value);
+		DslString(value): insertDbSimpleTable(db.nextId, db.strings, value);
+		DslList(value): {
+			a : [DslAst] = list2array(value);
+			ids = map(a, \v -> insertDbDsl(db, v));
+			insertDbNamedTable(db, "", ids);
+		}
+		DslNode(name, args, pos): {
+			argids = map(args, \a -> insertDbDsl(db, a));
+			posid = insertDbDsl(db, DslInt(pos));
+			ids = concat(argids, [posid]);
+			insertDbNamedTable(db, name, ids);
+		}
+	}
+}
+
+insertDbNamedTable(db : Db, table : string, value : [int]) -> int {
+	mtable = lookupTree(^(db.tables), table);
+	mtable ?? {
+		insertDbSimpleTable(db.nextId, mtable, value);
+	} : {
+		tree = makeDbSimpleTable();
+		nvalue = insertDbSimpleTable(db.nextId, tree, value);
+		db.tables := setTree(^(db.tables), table, tree);
+		nvalue
+	}
+}
+
+// Extract the DSL value for this class
+lookupDbDsl(db : Db, eclass : int) -> DslAst {
+	if (eclass == 1) DslBool(false)
+	else if (eclass == 2) DslBool(true)
+	else {
+		if (containsKeyTree(^(db.ints.rows), eclass)) {
+			DslInt(lookupTreeDef(^(db.ints.rows), eclass, 0))
+		} else if (containsKeyTree(^(db.doubles.rows), eclass)) {
+			DslDouble(lookupTreeDef(^(db.doubles.rows), eclass, 0.0))
+		} else if (containsKeyTree(^(db.strings.rows), eclass)) {
+			DslString(lookupTreeDef(^(db.strings.rows), eclass, ""))
+		} else {
+			val = foldTree(^(db.tables), Pair("", []), \name, table, acc -> {
+				if (acc.second != []) acc
+				else {
+					mrow = lookupTree(^(table.rows), eclass);
+					mrow ?? {
+						Pair(name, mrow);
+					} : acc
+				}
+			});
+			if (val.second != []) {
+				DslNode(val.first,
+					map(val.second, \e -> lookupDbDsl(db, e)),
+					0
+				);
+			} else {
+				println("Can not look up ids from named tables for eclass " + toString(eclass));
+				DslString("ERROR");
+			}
+		}
+	}
+}
+
+// A data structure for simple rows of values, as well as indexes to them
+DbSimpleTable(
+	rows : ref Tree<int, ?>, 
+	indexes : ref [DbIndex],
+);
+
+DbIndex(
+	// What columns we index (if you need to look up the id, put it as the last column)
+	columns : [int],
+	// A trie from the values of those columns
+	trie : IntTrie,
+);
+
+makeDbSimpleTable() -> DbSimpleTable<?> {
+	DbSimpleTable(ref makeTree(), ref []);
+}
+
+// Inserts this value in the database, unless it already is there
+insertDbSimpleTable(nextId : ref int, tree : DbSimpleTable<?>, value : ?) -> int {
+	// Insert with a new id
+	id = ^nextId;
+	tree.rows := setTree(^(tree.rows), id, value);
+	nextId := id + 1;
+	id;
+}
+
+main() {
+	db = makeDb();
+	nextId = ref 3;
+	println(insertDbNamedTable(db, "test", [1, 2, 4]));
+	println(insertDbNamedTable(db, "test", [1, 2, 4]));
+	println(insertDbNamedTable(db, "test", [1, 2, 6]));
+	println(insertDbNamedTable(db, "test", [1, 3, 7]));
+	println(insertDbNamedTable(db, "test", [8, 2, 4]));
+//	printTrie(^(table.values));
+	if (false) {
+		t1 = IntTrieValue(makeTree());
+		printTrie(t1);
+		t2 = insertIntTrie(t1, 0, [1, 2, 4]);
+		printTrie(t2);
+		t3 = insertIntTrie(t2, 0, [1, 2, 6]);
+		printTrie(t3);
+		t4 = insertIntTrie(t3, 0, [1, 3, 7]);
+		printTrie(t4);
+		t5 = insertIntTrie(t4, 0, [8, 2, 4]);
+		printTrie(t5);
+	}
+	quit(0);
+}

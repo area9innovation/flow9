@@ -1,3 +1,4 @@
+import tools/common/prog_version;
 import tools/flowc/backends/java/fi2java_compile;
 import tools/flowc/backends/java/fi2java_main;
 import tools/flowc/backends/java/fi2java_natives;
@@ -42,10 +43,14 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> vo
 				callback(5);
 			} else {
 				if (cfg.jarfile != "") {
-					if (cfg.builder == "gradle") {
-						fi2javaBuildWithGradle(cfg, callback);
+					if (fi2javaCheckJavaVersion(cfg)) {
+						if (cfg.builder == "gradle") {
+							fi2javaBuildWithGradle(cfg, callback);
+						} else {
+							fi2JavaBuildRaw(cfg, package_path, callback);
+						}
 					} else {
-						fi2JavaBuildRaw(cfg, package_path, callback);
+						callback(5);
 					}
 				} else {
 					callback(0);
@@ -154,4 +159,39 @@ fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string)
 		}
 	});
 	gcontext;
+}
+
+fi2javaCheckJavaVersion(cfg : FiJavaConfig) -> bool {
+	java_version_opt = lookupTreeDef(cfg.options, "java-version", "");
+	if (java_version_opt == "") {
+		// No restrictions on java version
+		true;
+	} else {
+		java_version = map(strSplit(java_version_opt, "."), s2i);
+		java_installed = programVersion("java", "-version", "java version");
+		javac_installed = programVersion("javac", "-version", "javac");
+		ver2s = \v -> superglue(v, i2s, ".");
+		if (java_installed == []) {
+			fcPrintln("java is not functioning for some reason", cfg.threadId);
+			false;
+		} else if (javac_installed == []) {
+			fcPrintln("javac is not functioning for some reason", cfg.threadId);
+			false;
+		} else if (java_installed != javac_installed) {
+			fcPrintln(
+				"java and javac versions differ: " + ver2s(java_installed) + " != " + ver2s(javac_installed),
+				cfg.threadId
+			);
+			false;
+		} else if (!compareVersion(java_version, java_installed, \v1, v2 -> v1 == v2)) {
+			fcPrintln(
+					"Installed java version: " + ver2s(java_installed) +
+					" doesn't match the required java version from config: " + java_version_opt,
+					cfg.threadId
+			);
+			false;
+		} else {
+			true;
+		}
+	}
 }

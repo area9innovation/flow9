@@ -18,6 +18,7 @@ import java.io.FileNotFoundException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.io.Reader;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -81,7 +82,8 @@ public class HttpSupport extends NativeHost {
 			onStatus.invoke(responseCode);
 
 			// TODO: Make this asynchronous
-			BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+			ResultStreamPair p = getResultStreamPair(con);
+			BufferedReader in = new BufferedReader(new InputStreamReader(p.stream));
 			String inputLine;
 			StringBuffer response = new StringBuffer();
 
@@ -90,14 +92,37 @@ public class HttpSupport extends NativeHost {
 				response.append('\n');
 			}
 			in.close();
-
-			onData.invoke(response.toString());
-        } catch (MalformedURLException e) {
-        	onError.invoke("Malformed url " + url + " " + e.getMessage());
-        } catch (IOException e) {
-        	onError.invoke("IO exception " + url + " " + e.getMessage());
-        }
+			if (p.isData) {
+				onData.invoke(response.toString());
+			} else {
+				onError.invoke(response.toString());
+			}
+		} catch (MalformedURLException e) {
+			onError.invoke("Malformed url " + url + " " + e.getMessage());
+		} catch (IOException e) {
+			onError.invoke("IO exception " + url + " " + e.getMessage());
+		}
 		return null;
+	}
+
+	private static class ResultStreamPair {
+		public InputStream stream;
+		public Boolean isData; // otherwise it's an error
+
+		private ResultStreamPair(InputStream stream, Boolean isData) {
+			this.stream = stream;
+			this.isData = isData;
+		}
+	}
+
+	private static final ResultStreamPair getResultStreamPair(HttpURLConnection con) {
+		/* getInputStream returns exception when status is not 200 and some other cases
+		If status is 400/500 -> we should call getErrorStream*/
+		try {
+			return new ResultStreamPair(con.getInputStream(), true);
+		} catch (IOException e) {
+			return new ResultStreamPair(con.getErrorStream(), false);
+		}
 	}
 
 	private static final java.lang.reflect.Method string2utf8Bytes;
@@ -114,12 +139,18 @@ public class HttpSupport extends NativeHost {
 	}
 
 	public static  final Object httpCustomRequestNative(String url, String method, Object[] headers,
-		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
-		return httpCustomRequestWithTimeoutNative(url, method, headers, params, data, onResponse, async, 0);
+		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
+		return httpCustomRequestWithTimeoutNativeBase(url, method, headers, params, data, responseEncoding, onResponse, async, 0);
 	}
 
 	public static final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
 		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
+		) {
+		return httpCustomRequestWithTimeoutNativeBase(url, method, headers, params, data, "auto", onResponse, async, timeout);
+	}
+
+	private static final Object httpCustomRequestWithTimeoutNativeBase(String url, String method, Object[] headers,
+		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
 		) {
 		try {
 			// Add parameters
@@ -204,24 +235,87 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
-			InputStream inputStream = null;
-			/* getInputStream returns exception when status is not 200 and some other cases
-			If status is 400/500 -> we should call getErrorStream*/
-			try {
-				inputStream = con.getInputStream();
-			} catch (IOException e) {
+			InputStream inputStream = getResultStreamPair(con).stream;
+
+			if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
+				responseEncoding = "utf8_js";
+			} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
+				responseEncoding = "utf8";
 			}
-			if (Objects.isNull(inputStream)) {
-				inputStream = con.getErrorStream();
-			}
+
 			StringBuilder response = new StringBuilder();
 			// inputStream might be null, if body is empty
 			if (Objects.nonNull(inputStream)) {
-				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-				for (String line; (line = reader.readLine()) != null; ) {
+				final int bufferSize = 1024;
+
+				if (responseEncoding.equals("utf8")) {
+					// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
+					int additionalChars = 0;
+					// +1 additinal char from the prevoius chain
+					final char[] buffer = new char[bufferSize + 1];
+
+					int readSize = 0;
+					int countSize = 0;
+
+					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
+					while (true) {
+						// How much chars we used to decode symbol into utf8 (1 or 2)
+						int codesUsed = 0;
+
+						readSize = in.read(buffer, additionalChars, bufferSize);
+
+						// We stop, if nothing read
+						if (readSize < 0) break;
+
+						// On one less of real to use it as index + 1 in `for`
+						countSize = readSize + additionalChars - 1;
+						// Now, how much unprocessed chars we have
+						additionalChars = (char)readSize;
+
+						int counter = 0;
+						while (counter < countSize) {
+							codesUsed = unpackSurrogatePair(response, buffer[counter], buffer[counter + 1]);
+							counter += codesUsed;
+
+							additionalChars -= codesUsed;
+						}
+
+						if (additionalChars > 0) {
+							buffer[0] = buffer[counter];
+							additionalChars = 1;
+						}
+					}
+
+					if (additionalChars > 0) {
+						unpackSurrogatePair(response, buffer[0], buffer[0]);
+					}
+				} else if (responseEncoding.equals("utf8_js")) {
+					final char[] buffer = new char[bufferSize];
+					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
+					while (true) {
+						int rsz = in.read(buffer, 0, buffer.length);
+						// We stop, if nothing read
+						if (rsz < 0) break;
+						response.append(buffer, 0, rsz);
+					}
+				} else if (responseEncoding.equals("byte")) {
+					char c;
+					int length;
+					final byte[] buffer = new byte[bufferSize];
+
+					while ((length = inputStream.read(buffer)) != -1) {
+						for (int i=0; i< length; i++) {
+							response.append((char) (buffer[i]&0x00FF));
+						}
+					}
+				} else { // auto or other
+					BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+					for (String line; (line = reader.readLine()) != null; ) {
 						response.append(line);
 						response.append("\n");
+					}
 				}
+
 			}
 			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
 
@@ -229,8 +323,31 @@ public class HttpSupport extends NativeHost {
 			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
 		} catch (IOException e) {
 			onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
-		}	
+		}
 		return null;
+	}
+
+	private static final Integer unpackSurrogatePair(StringBuilder response, Character codeHi, Character codeLow) {
+		char codeError = 0xFFFD;
+		int codeResult = codeError;
+
+		// `code` is the highest part of the surrogate pair
+		if (0xD800 <= codeHi && codeHi <= 0xDBFF) {
+			codeResult = ((codeHi & 0x3FF) << 10) + (codeLow & 0x3FF) + 0x10000;
+			// Now we can't store 3 bytes (or more) symbols in java string, let's crop it to 2 bytes (like in cpp and js targets)
+			response.append((char) codeResult);
+			return 2;
+		} else if (0xDC00 <= codeHi && codeHi <= 0xDFFF) {
+		// `code` is the lowest part of the surrogate pair
+		// If we meet it - something went wrong.
+			response.append((char) codeError);
+			return 1;
+		}
+		// Otherwise we do nothing - we have utf8 code.
+		// Will process it below.
+
+		response.append((char) codeHi);
+		return 1;
 	}
 
 	private static final String encodeUrlParameter(String key, String value) {
@@ -372,7 +489,7 @@ public class HttpSupport extends NativeHost {
 				}
 				in.close();
 			} catch (IOException e) {
-				onError.invoke("IO exception while reading reponse " + url + " " + e.getMessage());
+				onError.invoke("IO exception while reading response " + url + " " + e.getMessage());
 			}
 
 			if (responseCode != 200) {

@@ -35,6 +35,11 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     // Set headers for HTTP request
     setRequestHeaders(request, rq.headers);
 
+    // Replies only. It indicates that the server is redirecting the request to a different URL.
+    request.setAttribute(QNetworkRequest::RedirectionTargetAttribute, true);
+    // Indicates whether the Network Access API should automatically follow a HTTP redirect response or not.
+    // Currently redirects that are insecure, that is redirecting from "https" to "http" protocol, are not allowed.
+    // In QT 6 this attribute is removed.
     request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
 
     if (getFlowRunner()->NotifyStubs)

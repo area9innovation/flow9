@@ -1,8 +1,8 @@
 syntax lambda+quotestring+array {
 	registerDslParserExtension("tuples", << 
 		atom = atom | '(' ws ')' ws $"nil" $"tuple_1" 
-			| '(' ws $"nil" exp "," ws $"cons" ')' $"tuple_1"
-			| '(' ws exps  ')' $"tuple_1";
+			| '(' ws $"nil" exp "," ws $"cons" ')' ws $"tuple_1"
+			| '(' ws exps ')' ws $"tuple_1";
 	>>);
 
 	registerDslLowering("desugar", "tuples", "ast", "lambda", ";", <<

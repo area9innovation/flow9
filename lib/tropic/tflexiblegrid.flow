@@ -8,7 +8,7 @@ export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows,
 			CenterAlign, EndAlign, TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector,
-			TBaselineAlign, TFillersSupport, TAvailableMinMax;
+			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold;
 
 			TWrapNewRow(wrap : bool); // New row should be below all the elements in the previous one (true by default for horizontal grid)
 			TWrapNewColumn(wrap : bool); // New column should be to the right of all the elements in the previous one (true by default for vertical grid)
@@ -22,6 +22,7 @@ export {
 			TFillersSupport(); // Allow size of the items to grow by available space
 			TCenterSupport() -> TFlexibleGridStyle { TFillersSupport(); };
 			TAvailableMinMax(min : Transform<double>, max : Transform<double>);
+			TArrayThreshold(threshold : Transform<int>); // Fine efficiency tuning : what algorithm to use depending on array size
 
 			TFlexibleGridContentSizeInspector(wh : DynamicBehaviour<WidthHeight>);
 }
@@ -74,6 +75,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			StartAlign();
 	alignBaselines = contains(style, TBaselineAlign());
 	fillersSupport = contains(style, TFillersSupport()) || alignBaselines;
+	arrayThreshold = extractStruct(style, TArrayThreshold(const(ARRAY_DIFF_TRESHOLD))).threshold;
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 	isSameSize = contains(style, TSameSize());
@@ -180,7 +182,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			)
 		);
 
-	SelectTGroupFixed(itemsB, \idx, __, item -> item2Tropic(item, feq(idx, 0)))
+	SelectTGroupFixed(itemsB, \idx, __, item -> item2Tropic(item, feq(idx, 0)), arrayThreshold)
 	|> (\f ->
 		TransformTAcc2(\t2a -> {
 				b1 = f |> t2a;
@@ -546,6 +548,7 @@ fitTFlexibleGrid(
 	isRTL : bool
 ) -> void {
 	currentPoint = ref const(zeroPoint);
+	currentCoord = ref const(0.);
 	currentLine = ref [];
 	availableSize = make(const(sizeMin));
 
@@ -606,28 +609,27 @@ fitTFlexibleGrid(
 	}
 
 	iter(items, \it -> {
-		doesFit =
-			if (vertical)
-				fgetValue(fpointY(^currentPoint)) + fgetValue(fheight(it.minWH)) < sizeMax
-			else
-				fgetValue(fpointX(^currentPoint)) + fgetValue(fwidth(it.minWH)) < sizeMax;
+		minSize = if (vertical) fheight(it.minWH) else fwidth(it.minWH); 
+		doesFit = fgetValue(^currentCoord) + fgetValue(minSize) < sizeMax;
 
 		if (eitherMap(maxRows, \mr -> length(^currentLine) < mr, true) && (doesFit || length(^currentLine) == 0)) {
 			currentLine := arrayPush(^currentLine, it);
 
+			currentCoord := faddition(^currentCoord, minSize);
 			if (vertical) {
-				currentPoint := fpoint(fpointX(^currentPoint), faddition(fpointY(^currentPoint), fheight(it.minWH)));
+				currentPoint := fpoint(fpointX(^currentPoint), ^currentCoord);
 			} else {
-				currentPoint := fpoint(faddition(fpointX(^currentPoint), fwidth(it.minWH)), fpointY(^currentPoint));
+				currentPoint := fpoint(^currentCoord, fpointY(^currentPoint));
 			}
 		} else {
 			addLineFn();
 			currentLine := [it];
+			currentCoord := minSize;
 
 			if (vertical) {
-				currentPoint := fpoint(fpointX(^currentPoint), fheight(it.minWH));
+				currentPoint := fpoint(fpointX(^currentPoint), ^currentCoord);
 			} else {
-				currentPoint := fpoint(fwidth(it.minWH), fpointY(^currentPoint));
+				currentPoint := fpoint(^currentCoord, fpointY(^currentPoint));
 			}
 		}
 	});
@@ -933,9 +935,9 @@ checkBFMaxRows(state : BFState, block : BFBlock, point : Point, par : BFParamete
 	)
 }
 
-SelectTGroupFixed(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
+SelectTGroupFixed(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic, threshold : Transform<int>) -> Tropic {
 	TIf(
-		flessi(flength(values), const(ARRAY_DIFF_TRESHOLD)),
+		flessi(flength(values), threshold),
 		SelectTGroup(values, makeTropicFn),
 		TSelect(values, \vals ->
 			mapi(vals, \i, v -> makeTropicFn(const(i), i, v))

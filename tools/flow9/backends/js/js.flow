@@ -4,6 +4,7 @@ import tools/flow9/backends/pretty;
 import tools/flow9/backends/utils;
 import tools/flow9/backends/js/js_natives;
 import tools/flow9/backends/js/js_runtime;
+import tools/flow9/bexp/inline;
 
 export {
 	// Compiles the given flow path to JS as a single string
@@ -12,11 +13,14 @@ export {
 
 bmodule2js(cache : FlowCache, flowpath : string, shorten_ids : bool, jsmode : int) -> Promise<string, string> {
 	backend = jsBackend();
-	spec = makeBackendSpec(backend, "t_", "", "__",
+	typeprefix = if (isUrlParameterTrue("readable")) "" else "t_";
+	prefix = if (isUrlParameterTrue("readable")) "" else "__";
+	spec = makeBackendSpec(backend, typeprefix, "", prefix,
 		// We consider a native is a generator for a named identifier (non arithmetic, comparison, etc.)
 		filter(getTreeKeys(backend.generators), \gen_name -> isLetter(getCharAt(gen_name, 0)))
 	);
-	modules = list2array(programBModules(cache, flowpath, makeList(), makeSet()).first);
+	modules1 = list2array(programBModules(cache, flowpath, makeList(), makeSet()).first);
+	modules = map(modules1, inlineBLets);
 	bexp_program = renameIdsBExpProgram(bmodules2BExpProgram(modules, spec), spec, shorten_ids);
 	prog = bexpProgram2BProgram(bexp_program.first);
 	shortenIds = bexp_program.second;
@@ -97,7 +101,7 @@ bdeclaration2js(backend : Backend<bool>, b : BDeclaration) -> string {
 			if (tailcall) {
 				blueprint("
 					function %name%(%args%) {
-						T:  while(true) {
+						T:  while (true) {
 							%body%
 						}
 					}", [
@@ -174,8 +178,7 @@ bstatement2js(backend : Backend<bool>, b : BStatement, withReturn : bool) -> str
 			if (length(args) == 1) {
 				blueprint("
 					%arg% = %value%;
-					continue T;
-				", ["arg", args[0],
+					continue T;", ["arg", args[0],
 					"value", bexp2js(backend, values[0])])
 			} else {
 				// Define tmps
@@ -194,21 +197,27 @@ bstatement2js(backend : Backend<bool>, b : BStatement, withReturn : bool) -> str
 			}, "\n");
 		}
 		BSwitchStatement(val, cases, type): {
+			caseval = switch (val) {
+				BVar(id, __): id;
+				default: "__case_val";
+			};
 			def_case = filter(cases, \c -> c.id == "default");
 			js_cases = concat(
 				map(
 					filter(cases, \c -> c.id != "default"), \c -> 
 					blueprint("
-						if (__case_val._id == '%id%') {
+						if (%caseval%._id == '%id%') {
 							%body%
 						} else ", 
-						["id", c.id, "body", bstatement2js(backend, c.body, withReturn)]
+						["id", c.id, 
+						"body", bstatement2js(backend, c.body, withReturn),
+						"caseval", caseval]
 					)
 				),
 				[if (def_case == []) {
 					blueprint("
 						{
-							throw 'Unexpected value is switch: ' + __case_val.toString();
+							throw 'Unexpected value in switch: ' + __case_val.toString();
 						}", []
 					);
 				} else {
@@ -220,13 +229,17 @@ bstatement2js(backend : Backend<bool>, b : BStatement, withReturn : bool) -> str
 					)
 				}]
 			);
-			blueprint("
-				let __case_val = %val%;
-				%cases%
-				", [
-					"val", bexp2js(backend, val),
-					"cases", concatStrings(js_cases),
-			]);
+			if (caseval == "__case_val") {
+				blueprint("
+					let __case_val = %val%;
+					%cases%
+					", [
+						"val", bexp2js(backend, val),
+						"cases", concatStrings(js_cases),
+				]);
+			} else {
+				concatStrings(js_cases);
+			}
 		}
 		BSetMutableStatement(left, field, value): {
 			bexp2js(backend, left) + "." + field + "=" + bexp2js(backend, value) + ";";
@@ -250,10 +263,14 @@ bexp2js(backend : Backend<bool>, b : BExp) -> string {
 			])
 		}
 		BLambda(args, body, __, __): {
-			"function(" 
-			+ strGlue(args, ", ") + ") {" 
-			+ bstatement2js(backend, bexp2BReturn(body), getBType(body) != bvoidType)
-			+ "}"
+			blueprint("
+				function(%args%) {
+					%body%
+				}",
+				[
+					"args", strGlue(args, ", "),
+					"body", bstatement2js(backend, bexp2BReturn(body), getBType(body) != bvoidType)
+			]);
 		};
 		BCall(fn, args, restype): {
 			produceBackendCall(backend, b, bexp2js);

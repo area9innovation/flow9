@@ -211,12 +211,23 @@ MDynamicDataTable2TInner(
 					)
 					|> wrapIntoBorders(p)
 					|> (if (lifted) TBorderTop(state.rowHeight) else idfn)
-					|> (\t -> MComponent2T(manager, p, "MDataTableLine" + i2s(j), [
+					|> (\t -> {
+						lineSelectionEnabled =
+							fand(
+								state.selection.enabled,
+								fsubselect2(state.selectionEnabled.enabled, idx, \selEnabled, index -> elementAt(selEnabled, index, const(true)))
+							);
+						isInteractive = fand(
+							state.hoverEnabled.enabled,
+							fOr(lineSelectionEnabled, state.onClick.enabled)
+						);
+						MComponent2T(manager, p, "MDataTableLine" + i2s(j), [
 							MHighlightOnHover(const(true)),
 							MOnClick(\ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(j)),
-							MRippleType(const(MRippleFill()))
+							MRippleType(fif(isInteractive, const(MRippleFill()), const(MNoRipple()))),
+							MCursorShape(fif(isInteractive, const(FingerCursor()), const(DefaultCursor()))),
 						], \__ -> t, m2t)
-					)
+					})
 					|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
 							TIfLazy2(
 								fcontains(state.selection.selected, const(j)),
@@ -407,7 +418,7 @@ MDynamicDataTable2TInner(
 			};
 
 		content
-		|> (\f -> TAvailableHeightPreventFillers(f, rowsAvailableHeight))
+		|> (\f -> TAvailableHeightPreventFillers(f, if (paginationState.cropPageHeight) visibleRowsHeight else rowsAvailableHeight))
 		|> (\f -> TConstruct(
 				concat(
 					if (paginationState.isEmpty) [
@@ -552,7 +563,7 @@ MDynamicDataTable2TInner(
 					[\ -> fBidirectionalLink(
 						fpair(page, expandRow),
 						fpair(state.rowsBoxScrollPosition.position, expandRow),
-						\pair -> if (paginationState.anyType)
+						\pair -> if (paginationState.anyType || fgetValue(state.scrollEnabled))
 							nextDistinct(state.rowsBoxScrollPosition.position, Point(0., i2d(pair.first.first) * countRowHeight(pair.second))),
 						\pair ->
 							paginationState.updatePageNumber(max(0, floor(pair.first.y) / floor(countRowHeight(pair.second))))
@@ -958,6 +969,7 @@ MPaginationState(
 	auto : bool,
 	isEmpty : bool,
 	hideAutoPaginationFooter : bool,
+	cropPageHeight : bool,
 	subs : (Transform<int>, Transform<[int]>) -> [() -> () -> void]
 );
 
@@ -965,6 +977,7 @@ makeMPaginationState(style : [MDataTableStyle], isReorder : bool) -> MPagination
 	currentPage = tryExtractStruct(style, MCurrentPage(make(0)));
 	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 	goToIndex = tryExtractStruct(style, MGoToIndex(make(-1)));
+	cropPageHeight = contains(style, MCropPageByVisibleLines());
 	paginationDef = MPagination(make(0), []);
 	pagination = if (isReorder) paginationDef else extractStruct(style, paginationDef);
 	isEmpty = pagination.rowsPerPage == [];
@@ -984,6 +997,8 @@ makeMPaginationState(style : [MDataTableStyle], isReorder : bool) -> MPagination
 	pageNumber = make(0);
 	rowsPerPage = fSecondOfPair(page);
 
+	maxPageNumber = \rowsCountB -> fselect2Lift(rowsCountB, rowsPerPage, \rc, rpp -> max(0, ceil(i2d(rc) / i2d(max(rpp, 1))) - 1));
+
 	subs = \rowsCountB, sortingResult -> [
 		\ -> fBidirectionalLink(page, pageNumber,
 			\pair -> nextDistinct(pageNumber, pair.first / max(pair.second, 1)),
@@ -991,7 +1006,8 @@ makeMPaginationState(style : [MDataTableStyle], isReorder : bool) -> MPagination
 				rpp = fgetValue(rowsPerPage);
 				rowsCount = fgetValue(rowsCountB);
 				updatePageNumber(forceRange(num * rpp, 0, rowsCount - 1))
-			})
+			}),
+			makeSubscribe2(maxPageNumber(rowsCountB), \maxPage -> nextDistinct(pageNumber, min(maxPage, getValue(pageNumber))))
 		]
 		|> (\sbs ->
 			eitherMap(
@@ -1052,6 +1068,7 @@ makeMPaginationState(style : [MDataTableStyle], isReorder : bool) -> MPagination
 		auto,
 		isEmpty,
 		hideAutoPaginationFooter,
+		cropPageHeight,
 		subs
 	)
 }

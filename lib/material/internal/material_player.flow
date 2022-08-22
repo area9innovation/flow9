@@ -14,16 +14,20 @@ export {
 }
 
 MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	(\p -> eitherFn2(
-		getYouTubeURL(m.filename),
-		getVimeoURL(m.filename),
-		\url, __ -> MVideoPlayer2MRealHTML(url, p, m, m2t),
+	(\p -> eitherFn(
+		getExternalPlayerURL(m.filename),
 		\url -> MVideoPlayer2MRealHTML(url, p, m, m2t),
 		\ -> {
 			itemsColorM : Maybe<MColor> = maybeMap(tryExtractStruct(m.style, MItemsColor(MWhite())), \ic -> MThemeColor2MColor(p, ic.color));
 			color = extractMColor(p, m.style, MAccentColor());
 			selectedColor = extractStruct(m.style, MSelectedColor(color));
-			backgroundColor = MThemeColor2MColor(p, extractStruct(m.style, MPlayerBackground(MDialogMColor(false))).color);
+			backgroundColor = extractStruct(m.style, MPlayerDynamicBackground(const(MDialogMColor(false)))).color;
+			backgroundOpacity = extractStruct(m.style, MPlayerBackgroundOpacity(const(1.0))).opacity;
+			
+			addBackground = \vt : Tropic -> {
+				TFrameT(zero, zero, fselect2Lift(backgroundColor, backgroundOpacity, \bgc, bgo -> [MFill(MThemeColor2MColor(p, bgc)), FillOpacity(bgo)]), vt)
+			}
+
 			videoHasErrors = make(false);
 			enabled =
 				fands([
@@ -45,6 +49,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			subtitlesControl = tryExtractStruct(mPlayerControls, SubtitlesControl(const(false)));
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
 			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
+			externalSubtitles = tryExtractStruct(m.style, MExternalSubtitles("", ""));
 			shortcutsEnabled = !containsStruct(m.style, MPlayerDisableKeyboardShortcuts());
 
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
@@ -93,7 +98,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			playbackRateSelected = make(3);
 			showProgressCircle = make(true);
 			subtitlesVisible = make(true);
-			subtitlesEnabled = fand(enabled.enabled, const(isSome(subtitles) || isSome(animatedSubtitles)));
+			subtitlesEnabled = fand(enabled.enabled, const(isSome(subtitles) || isSome(animatedSubtitles) || isSome(externalSubtitles)));
 			playingPopup = make(None());
 			volumePopup = make(None());
 			positionPopup = make(None());
@@ -155,6 +160,14 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					eitherMap(subtitles, \sbtl ->
 						replaceStruct(st,
 							FVideoSubtitles(fif(subtitlesVisible, sbtl.subtitles, const(VideoSubtitle("", []))))
+						),
+						st
+					)
+				)
+				|> (\st ->
+					eitherMap(externalSubtitles, \sbtl ->
+						replaceStruct(st,
+							FVideoExternalSubtitles(sbtl.src, sbtl.kind, subtitlesVisible)
 						),
 						st
 					)
@@ -279,12 +292,12 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					TIf(videoHasErrors,
 						TGroup2(
 							TRectangle([Fill(black)], TFillXY()),
-							TCenter(MParagraph2T(p, "An error occurred. Please try again later.", [MWhite(), CenterAlign()]))
+							TCenter(MDynamicParagraph2T(p, const("An error occurred. Please try again later."), [MWhite(), CenterAlign()]))
 						),
 						video
 					)
 				)
-				|> addTBackground(backgroundColor);
+				|> addBackground;
 
 			slider = \p2 ->
 				MSelect2T(
@@ -333,7 +346,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							),
 							m2t
 						)
-						|> (\t -> TDispose([\ -> dispUnsA(rangeUns)], t))		
+						|> (\t -> TDispose([\ -> dispUnsA(rangeUns)], t))
 					}
 				)
 				|> (\f -> TBorder(-2.0, -6.0, -2.0, -2.0, f));
@@ -405,9 +418,11 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				|> (\t -> TBorder(4., 0., 8., 0., t));
 
 			showVolumeSlider =
-				if (mobile)
-					enabled.enabled
-				else
+				if (mobile) {
+					// On iOS volume can be changed only by physical buttons 
+					if (ios()) const(false)
+					else enabled.enabled
+				} else
 					fselectdelay(
 						fand(fOr(fOr(fOr(volumeButtonHovered, volumeSliderHovered), fOr(volumeSliderFocused, volumeButtonFocused)), volumeSliderDown), enabled.enabled),
 						\sh -> if (sh) 0 else 100
@@ -623,9 +638,9 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					)
 					|> (\f ->
 						if (autoHide)
-							TFrame(0.0, 0.0, [GradientFill(90.0, [GradientPoint(black, 0.0, 0.0), GradientPoint(black, 0.3, 0.3),GradientPoint(black, 0.8, 1.0)])], f)
+							TFrame(0.0, 0.0, [GradientFill(90.0, [GradientPoint(black, 0.0, 0.0), GradientPoint(black, 0.3, 0.3), GradientPoint(black, 0.8, 1.0)])], f)
 						else
-							addTBackground(backgroundColor)(f)
+							addBackground(f)
 					)
 				)
 				|> (\makePanel ->
@@ -872,7 +887,7 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 		|> (\sz -> TFrameT(const(frame.border), const(frame.radius), backgroundStyle, sz));
 
 	makeSubtitleLine = \sbtl, size, translatePoint, dSize ->
-		MParagraph2T(parent, sbtl.text, concat(MCharacterStyle2MTextStyle(sbtl.style), [
+		MDynamicParagraph2T(parent, const(sbtl.text), concat(MCharacterStyle2MTextStyle(sbtl.style), [
 			MSetRTL(false),
 			extractStruct(sbtl.style, EscapeHTML(true)),
 			CenterAlign(),
