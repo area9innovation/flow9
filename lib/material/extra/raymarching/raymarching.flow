@@ -112,7 +112,10 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 				}
 			),
 			makeSubscribe2(
-				fthrottle(cameraB, 500),
+				fsubselect(
+					settings.onDemandRenderFn,
+					FLift(\onDemandRenderFnM -> if (isSome(onDemandRenderFnM)) cameraB else fthrottle(cameraB, 500))
+				),
 				\c -> {
 					hostCall("setCameraPosition", [
 						i2d(id),
@@ -255,18 +258,6 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					}
 					
 				}
-				
-				textPositions = map(
-					getJsonArrayField(parsedMessage, "textPositions"),
-					\tp -> {
-						if (getJsonBoolField(tp, "inBounds", false)) {
-							Some(Pair(Point(getJsonDoubleField(tp, "x", 0.), getJsonDoubleField(tp, "y", 0.)), getJsonDoubleField(tp, "distance", 0.)))
-						} else {
-							None()
-						}
-					}
-				);
-				if (textPositions != []) nextDistinct(textPositionsB, textPositions);
 			}),
 			makeSubscribeTrigger(
 				webglContextLoadedB,
@@ -390,6 +381,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					hostCall("updateTextPoints", [flow(i2s(id)), flow(positions)])|> ignore;
 				}
 			),
+			\ -> when(webglContextLoadedB, \-> getTextCoords(id, textPositionsB)),
 		],
 		MGroup([
 			displayRaymarchingCanvas(
@@ -400,6 +392,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					"cameraLookAt", cameraLookAtStr,
 					"distanceFunction", jsScene,
 					"firstPersonCamera", b2s(getValue(settings.firstPersonCamera)),
+					"shown", serialize(map(getValue(showStatusB), getValue))
 				]),
 				"#include material/extra/raymarching/raymarching.vert",
 				blueprint("#include material/extra/raymarching/raymarching.frag", [
@@ -415,18 +408,21 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 				])
 			),
 			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(attachOutline(i2s(fps) + " fps"), [EscapeHTML(false)]))),
-			MSelect2(textPositionsB, settings.textFontSettings, \tps, textFontSettings -> MGroup(mapi(tps, \i, tpM -> {
+			MSelect2(flength(textPositionsB), settings.textFontSettings, \textAmount, textFontSettings -> MGroup(mapi(fgetValue(textPositionsB), \i, tpM -> {
 				heightB = make(0.);
-				eitherMap(tpM, \tp -> MTranslate(
-					fselect(heightB, FLift(\h-> Point(tp.first.x, tp.first.y - h / 2.))),
-					MSelect2(
-						getValue(textPointsB)[i].text, getValue(textPointsB)[i].showDot,
-						\text, showDot -> MAttachHeight(MText(
-							attachOutline((if (showDot) "○ " else "") + text),
-							[EscapeHTML(false), MCustomFont(getRMTextFontSize(textFontSettings, tp.second), "Roboto", primarySmallTextOpacity)]
-						), heightB)
+				MShow(
+					fselect(textPositionsB, FLift(\tp -> tp[i].third)),
+					MTranslate(
+						fselect2(textPositionsB, heightB, FLift2(\tp, h -> Point(tp[i].first.x, tp[i].first.y - h / 2.))),
+						MSelect3(
+							getValue(textPointsB)[i].text, getValue(textPointsB)[i].showDot, fselect(textPositionsB, FLift(\tp -> tp[i].second)),
+							\text, showDot, distance -> MAttachHeight(MText(
+								attachOutline((if (showDot) "○ " else "") + text),
+								[EscapeHTML(false), MCustomFont(getRMTextFontSize(textFontSettings, distance), "Roboto", primarySmallTextOpacity)]
+							), heightB)
+						)
 					)
-				), MEmpty())
+				)
 			})))
 		])
 	)
@@ -843,4 +839,24 @@ getRMTextFontSize(textFontSettings : RMTextFontSettings, distance : double) -> d
 	} else {
 		baseSize
 	};
+}
+
+getTextCoords(id : int, textPositionsB : DynamicBehaviour<[Triple<Point, double, bool>]>) {
+	timer(10, \ -> {
+		textCoords = map(hostCall("getTextCoords", [flow(i2s(id))]), parseJson);
+
+		textPositions = map(
+			textCoords,
+			\tp -> {
+				Triple(
+					Point(getJsonDoubleField(tp, "x", 0.), getJsonDoubleField(tp, "y", 0.)),
+					getJsonDoubleField(tp, "distance", 0.),
+					getJsonBoolField(tp, "inBounds", false)
+				)
+			}
+		);
+		if (textPositions != []) nextDistinct(textPositionsB, textPositions);
+
+		getTextCoords(id, textPositionsB);
+	})
 }

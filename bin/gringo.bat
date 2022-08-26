@@ -1,1 +1,1 @@
-flowcpp tools/gringo/gringo.flow -- %*
+flowcpp --cgi tools/gringo/gringo.flow -- %*
