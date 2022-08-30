@@ -205,7 +205,7 @@ class HttpSupport {
 		var handled = false;	// Whether the request has already completed, failed or timed out
 
 #if js
-		var http = new haxe.http.HttpJs(url);
+		var http = new haxe.Http(url);
 		// Set up timeout
 		var checkTimeout = function() {
 			if (!handled) {
