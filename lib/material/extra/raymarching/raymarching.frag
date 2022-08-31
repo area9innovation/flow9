@@ -186,6 +186,17 @@ float opSmoothSubtraction2( float d2, float d1, float k, float h  ) {
     return mix( d2, -d1, h ) + k*h*(1.0-h);
 }
 
+float opExtrussion( in vec3 p, in float sdf, in float h )
+{
+    vec2 w = vec2( sdf, abs(p.z) - h );
+  	return min(max(w.x,w.y),0.0) + length(max(w,0.0));
+}
+
+vec2 opRevolution( in vec3 p, float w )
+{
+    return vec2( length(p.xz) - w, p.y );
+}
+
 vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, sampler2D txtr) {
 	vec2 texSize = vec2(textureSize(txtr, 0));
 	vec2 sizeNormalized = texSize / max(texSize.x, texSize.y);
