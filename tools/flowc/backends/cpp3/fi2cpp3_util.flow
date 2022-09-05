@@ -1,0 +1,447 @@
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/freevars;
+import string_utils;
+
+export {
+	fiWrapWithPars(s : string) -> string;
+	fiWrapTypeWithPars(tp : string) -> string;
+	fiWrapWithBraces(s : string) -> string;
+
+	fiTypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter>;
+	fiIsTypeFunction(t : FiType) -> bool;
+	fiIsScalarType(t : FiType) -> bool;
+
+
+	// If type is struct or union - returns the name, otherwise returns empty string
+	fiTypeName(tp : FiType) -> string;
+
+	fiIsRecursive(name : string, lambda : FiLambda) -> bool;
+	fiIsTailRecursive(name : string, lambda : FiLambda) -> bool;
+
+	fiUnions2Structs(names : FiGlobalNames) -> Tree<string, [FiTypeStruct]>;
+	fiStucts2Unions(names : FiGlobalNames, unions2structs: Tree<string, [FiTypeStruct]>) -> Tree<string, [FiTypeUnion]>;
+	fiUnion2CommonFields(unions2structs: Tree<string, [FiTypeStruct]>) -> Tree<string, [FiStructArg]>;
+	fiStruct2CommonFields(unions2structs: Tree<string, [FiTypeStruct]>) -> Tree<string, Tree<string, [FiStructArg]>>;
+
+	fiWrapCaseVarsWithCasts(e : FiExp, vars: [Pair<string, FiType>]) -> FiExp;
+	fiTransformTypars(t : FiType, transform : (FiTypeParameter) -> FiType) -> FiType;
+	fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool;
+
+	fiFilterTypars(types: [FiType]) -> [FiTypeParameter];
+	fiStrcutFullTypars(struct : FiTypeStruct, struct2union: Tree<string, [FiTypeUnion]>) -> [FiTypeParameter];
+
+	varsDependencies(prog : FiProgram) -> Tree<string, Set<string>>;
+
+	// Remove a special polymorphic function `flow : (?) -> flow` with its argument
+	fiExpGetRidOfFlow(e : FiExp) -> FiExp;
+	fiProgramGetRidOfFLow(p : FiProgram) -> FiProgram;
+
+	fiDearrayType(tp: FiType) -> FiType;
+	fiDerefType(tp: FiType) -> FiType;
+
+	fiScalarType(tp: FiType) -> bool;
+}
+
+fiWrapWithPars(s : string) -> string {
+	if (strlen(s) == 0) "" else 
+	if (getCharAt(s,0) == "(" && getCharAt(s, strlen(s) - 1) == ")") s else 
+	"(" + s + ")";
+}
+
+fiWrapTypeWithPars(tp : string) -> string {
+	if (strContains(tp, "->")) "(" + tp + ")" else tp;
+}
+
+fiWrapWithBraces(s : string) -> string {
+	if (startsWith(s, "{") && endsWith(s, "}")) s else "{\n" + strIndent(s) + "\n}";
+}
+
+fiTypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter> {
+	switch (type) {
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
+		FiTypeParameter(n): insertSet(acc, type);
+		FiTypeRef(rt):      fiTypeTypars(acc, rt);
+		FiTypeArray(at):    fiTypeTypars(acc, at);
+		FiTypeName(id, tp): fold(tp, acc, fiTypeTypars);
+		FiTypeFunction(args, rt): fold(args, fiTypeTypars(acc, rt), \ac, arg -> fiTypeTypars(ac, arg.type));
+	}
+}
+
+fiIsTypeFunction(t : FiType) -> bool {
+	switch (t) {
+		FiTypeFunction(__,__): true;
+		default: false;
+	}
+}
+
+fiIsScalarType(t : FiType) -> bool {
+	switch (t) {
+		FiTypeVoid():       true;
+		FiTypeBool():       true;
+		FiTypeInt():        true;
+		FiTypeDouble():     true;
+		default: false;
+	}
+}
+
+fiTypeName(tp : FiType) -> string {
+	switch (tp) {
+		FiTypeName(n,__):  n;
+		default: "";
+	}
+}
+
+fiIsTailRecursive(name : string, lambda : FiLambda) -> bool {
+	return_calls = fiReturnCalls(makeSet(), lambda.body);
+	non_return_calls = fiNonReturnCalls(makeSet(), lambda.body, true);
+	set2array(return_calls) == [name] && !containsSet(non_return_calls, name);
+}
+
+fiReturnCalls(acc : Set<string>, e : FiExp) -> Set<string> {
+	switch (e) {
+		FiSeq(s,__,__):
+			if (length(s) == 0) acc else fiReturnCalls(acc, s[length(s) - 1]);
+		FiCall(f,__,__, __):
+			switch(f) {
+				FiVar(name, __,__): insertSet(acc, name);
+				default: acc;
+			}
+		FiLet(__,__,__, e2,__,__):
+			fiReturnCalls(acc, e2);
+		FiIf(__, e2, e3,__, __):
+			fiReturnCalls(fiReturnCalls(acc, e2), e3);
+		default: acc;
+	}
+}
+
+fiNonReturnCalls(acc : Set<string>, e : FiExp, returning : bool) -> Set<string> {
+	switch (e) {
+		FiSeq(s, __,__): {
+			if (length(s) == 0) acc else {
+				last = s[length(s) - 1];
+				fold(
+					take(s, length(s) - 1), 
+					fiNonReturnCalls(acc, last, returning), 
+					\ac, x -> fiNonReturnCalls(ac, x, false)
+				);
+			}
+		}
+		FiCast(ex, __,__,__,__): 
+			fiNonReturnCalls(acc, ex, false);
+		FiCall(f, args,__,__): {
+			acc1 = fold(args, acc, \ac, arg -> fiNonReturnCalls(ac, arg, false));
+			switch(f) {
+				FiVar(name, __,__): {
+					if (returning) acc1 else insertSet(acc, name);
+				}
+				default: {
+					fiNonReturnCalls(acc1, f, false);
+				}
+			}
+		}
+		FiSwitch(x, __, cases,__, __): {
+			fold(cases, fiNonReturnCalls(acc, x, false), \ac, case ->
+				fiNonReturnCalls(ac, case.body, false)
+			);
+		}
+		FiLambda(__, body, __,__): {
+			fiNonReturnCalls(acc, body, false)
+		}
+		FiLet(__, __, e1, e2,__, __): {
+			fiNonReturnCalls(fiNonReturnCalls(acc, e1, false), e2, returning);
+		}
+		FiIf(e1, e2, e3, type, __): {
+			fiNonReturnCalls(fiNonReturnCalls(fiNonReturnCalls(acc, e1, false), e2, returning), e3, returning);
+		}
+		FiCallPrim(__, es, __, __):
+			fold(es, acc, \ac, x -> fiNonReturnCalls(ac, x, false));
+		FiRequire(flowfile, ex, type, __): fiNonReturnCalls(acc, ex, false);
+		FiUnsafe(name, fallback, type, __): fiNonReturnCalls(acc, fallback, false);
+		default: acc;
+	}
+}
+
+fiIsRecursive(name : string, lambda : FiLambda) -> bool {
+	containsSet(fifreevars(lambda), name);
+}
+
+fiUnions2Structs(names : FiGlobalNames) -> Tree<string, [FiTypeStruct]> {
+	fold(getTreeValues(names.unions), makeTree(), \acc, union ->
+		fiUnion2Structs(union, acc, names)
+	);
+}
+
+fiStucts2Unions(names : FiGlobalNames, unions2structs: Tree<string, [FiTypeStruct]>) -> Tree<string, [FiTypeUnion]> {
+	no_union = FiTypeUnion("", [], [], 0);
+	foldTree(unions2structs, makeTree(), \union, structs, acc -> 
+		fold(structs, acc, \ac, struct ->
+			setTree(ac, struct.name, 
+				concat(
+					lookupTreeDef(ac, struct.name, []), 
+					[lookupTreeDef(names.unions, union, no_union)]
+				)
+			)
+		)
+	);
+}
+
+fiUnion2Structs(union : FiTypeUnion, acc: Tree<string, [FiTypeStruct]>, names : FiGlobalNames) -> Tree<string, [FiTypeStruct]> {
+	if (containsKeyTree(acc, union.name)) acc else {
+		p = fold(union.typenames, Pair([], acc), \ac, type -> 
+			switch (lookupTree(names.structs, type.name)) {
+				Some(struct): Pair(concat(ac.first, [struct]), ac.second);
+				None(): {
+					switch (lookupTree(names.unions, type.name)) {
+						Some(union1): {
+							ac1 = fiUnion2Structs(union1, ac.second, names);
+							Pair(concat(ac.first, lookupTreeDef(ac1, union1.name, [])), ac1);
+						}
+						None(): {
+							fail("must not happen");
+							ac;
+						}
+					}
+				}
+			}
+		);
+		setTree(p.second, union.name, uniq(p.first));
+	}
+}
+
+fiStructCommonFields(structs: [FiTypeStruct]) -> [FiStructArg] {
+	fold(tail(structs),
+		structs[0].args,
+		\ac, struct -> filter(ac, \field -> exists(struct.args, \arg -> arg.name == field.name))
+	)
+}
+
+fiUnion2CommonFields(unions2structs: Tree<string, [FiTypeStruct]>) -> Tree<string, [FiStructArg]> {
+	foldTree(unions2structs, makeTree(), \union, structs, acc -> {
+		common = fiStructCommonFields(structs);
+		if (common == []) acc else setTree(acc, union, common);
+	});
+}
+
+fiStruct2CommonFields(unions2structs: Tree<string, [FiTypeStruct]>) -> Tree<string, Tree<string, [FiStructArg]>> {
+	foldTree(unions2structs, makeTree(), \union, structs, acc -> {
+		common = fiStructCommonFields(structs);
+		if (common == []) acc else {
+			fold(structs, acc, \ac, struct ->
+				setTree(ac, struct.name, setTree(lookupTreeDef(ac, struct.name, makeTree()), union, common))
+			);
+		}
+	});
+}
+
+
+fiWrapCaseVarsWithCasts(e : FiExp, vars: [Pair<string, FiType>]) -> FiExp {
+	switch (e) {
+		FiLet(v, type, e1, e2,__, __): {
+			switch (find(vars, \p -> p.first == v)) {
+				Some(p): {
+					transformed = fiTransformTypars(p.second, \__ -> FiTypeFlow());
+					e1_wrapped = FiCast(e1, transformed, type, type, -1);
+					FiLet(e with 
+						e1 = e1_wrapped, 
+						e2 = fiWrapCaseVarsWithCasts(e2, vars)
+					);
+				}
+				None(): e;
+			}
+		}
+		default: e;
+	}
+}
+
+fiTransformTypars(t : FiType, transform : (FiTypeParameter) -> FiType) -> FiType {
+	switch (t) {
+		FiTypeArray(arr): 
+			FiTypeArray(fiTransformTypars(arr, transform));
+		FiTypeFunction(args, retType):
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg with type = fiTransformTypars(arg.type, transform))), 
+				fiTransformTypars(retType, transform)
+			);
+		FiTypeRef(tp):
+			FiTypeRef(fiTransformTypars(tp, transform));
+		FiTypeParameter(nm):
+			transform(t);
+		FiTypeName(name, typars):
+			FiTypeName(name, map(typars, \tp -> fiTransformTypars(tp, transform)));
+		default: t;
+	}
+}
+
+fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool {
+	 switch (lookupTree(names.toplevel, name)) {
+		Some(decl): {
+			switch (decl) {
+				FiFunctionDec(__,__,__,__,__): true;
+				FiNativeDec(__,__,__,__,__,__,__): true;
+				default: false;
+			}
+		}
+		None(): false;
+	}
+}
+
+fiFilterTypars(types: [FiType]) -> [FiTypeParameter] {
+	filtermap(types, \type -> 
+		switch (type) {
+			FiTypeParameter(__): Some(type);
+			default: None();
+		}
+	);
+}
+
+fiStrcutFullTypars(struct : FiTypeStruct, struct2union: Tree<string, [FiTypeUnion]>) -> [FiTypeParameter] {
+	filter_typars = \types -> filtermap(types, \type -> 
+		switch (type) {
+			FiTypeParameter(__): Some(type);
+			default: None();
+		}
+	);
+	supertypes = lookupTreeDef(struct2union, struct.name, []);
+	sort(uniq(fold(supertypes, fiFilterTypars(struct.typars), \acc, union ->
+		concat(acc, fiFilterTypars(union.typeparameters))
+	)));
+}
+
+fiDeclDependencies(d : FiDeclaration, deps : Tree<string, Set<string>>, visited : Set<string>, names : FiGlobalNames) -> Tree<string, Set<string>> {
+	if (containsKeyTree(deps, d.name) || containsSet(visited, d.name)) deps else {
+		visited1 = insertSet(visited, d.name);
+		find_deps = \e -> {
+			free = fifreevars(e);
+			deps1 = foldSet(free, deps, \acc, v -> 
+				switch (lookupTree(names.toplevel, v)) {
+					Some(v_d): {
+						fiDeclDependencies(v_d, acc, visited1, names);
+					}
+					None(): acc;
+				}
+			);
+			decl_deps = foldSet(free, free, \acc, v -> 
+				mergeSets(acc, lookupTreeDef(deps1, v, makeSet()))
+			);
+			setTree(deps1, d.name, decl_deps);
+		}
+		switch (d) {
+			FiFunctionDec(__, lambda,__,__,__): find_deps(lambda);
+			FiGlobalVar(__, value,__,__,__): find_deps(value);
+			FiNativeDec(__,__,__,__,fallback,__,__): find_deps(fallback);
+		}
+	}
+}
+
+varsDependencies(prog : FiProgram) -> Tree<string, Set<string>> {
+	fold(prog.traversal, makeTree(), \acc, mod_name -> {
+		module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+		fold(module.initOrder, acc, \ac, name -> {
+			switch (lookupTree(prog.names.toplevel, name)) {
+				Some(d): {
+					switch (d) {
+						FiGlobalVar(__,__,__,__,__): {
+							fiDeclDependencies(d, ac, makeSet(), prog.names);
+						}
+						default: ac;
+					}
+ 				}
+				None(): ac;
+			}
+
+		})
+	});
+}
+
+fiExpGetRidOfFlow(e : FiExp) -> FiExp {
+	switch (e) {
+		FiSeq(es, __,__): 
+			FiSeq(e with es = map(es, fiExpGetRidOfFlow));
+		FiCast(ex, __,__,__,__): 
+			FiCast(e with e = fiExpGetRidOfFlow(ex));
+		FiCall(f, args, type, call_start): {
+			def = \-> FiCall(e with f = fiExpGetRidOfFlow(f), args = map(args, fiExpGetRidOfFlow));
+			switch (f) {
+				FiVar(name, fn_type, vstart): {
+					if (name != "flow") def() else {
+						// Remove a call of `flow : (?) -> flow` with its argument
+						fiExpGetRidOfFlow(args[0]);
+					}
+				}
+				default: def();
+			}
+		}
+		FiSwitch(x, __, cases,__, __):
+			FiSwitch(e with cases = map(cases, \c -> FiCase(c with body = fiExpGetRidOfFlow(c.body))));
+		FiLambda(__, body, __,__):
+			FiLambda(e with body = fiExpGetRidOfFlow(body));
+		FiLet(__, __, e1, e2,__, __):
+			FiLet(e with e1 = fiExpGetRidOfFlow(e1), e2 = fiExpGetRidOfFlow(e2));
+		FiIf(e1, e2, e3, type, __):
+			FiIf(e with e1 = fiExpGetRidOfFlow(e1), e2 = fiExpGetRidOfFlow(e2), e3 = fiExpGetRidOfFlow(e3));
+		FiCallPrim(__, es, __, __):
+			FiCallPrim(e with es = map(es, fiExpGetRidOfFlow));
+		FiRequire(__, ex,__, __):
+			FiRequire(e with e = fiExpGetRidOfFlow(ex));
+		FiUnsafe(__, fallback,__, __): 
+			FiUnsafe(e with fallback = fiExpGetRidOfFlow(fallback));
+		default: e;
+	}
+}
+
+fiDeclGetRidOfFlow(d : FiDeclaration) -> FiDeclaration {
+	switch (d) {
+		FiFunctionDec(__, lambda,__,__,__): 
+			FiFunctionDec(d with lambda = cast(fiExpGetRidOfFlow(lambda) : FiExp -> FiLambda));
+		FiGlobalVar(__, value,__,__,__): 
+			FiGlobalVar(d with value = fiExpGetRidOfFlow(value));
+		FiNativeDec(__,__,__,__,fallback,__,__):
+			FiNativeDec(d with fallbackLambda = fiExpGetRidOfFlow(fallback));
+	}
+}
+
+fiModuleGetRidOfFlow(m : FiModule) -> FiModule {
+	FiModule(m with 
+		functions = map(m.functions, \d -> FiFunctionDec(d with lambda = cast(fiExpGetRidOfFlow(d.lambda) : FiExp -> FiLambda))),
+		globalVars = map(m.globalVars, \d -> FiGlobalVar(d with value = fiExpGetRidOfFlow(d.value))),
+		natives = map(m.natives, \d -> FiNativeDec(d with fallbackLambda = fiExpGetRidOfFlow(d.fallbackLambda)))
+	);
+}
+
+fiProgramGetRidOfFLow(p : FiProgram) -> FiProgram {
+	FiProgram(p with
+		modules = mapTree(p.modules, fiModuleGetRidOfFlow),
+		names = FiGlobalNames(p.names with
+			toplevel = mapTree(p.names.toplevel, fiDeclGetRidOfFlow)
+		)
+	);
+}
+
+fiDearrayType(tp: FiType) -> FiType {
+	switch (tp) {
+		FiTypeArray(t): t;
+		default: fail0("non-array treated as array");
+	}
+}
+
+fiDerefType(tp: FiType) -> FiType {
+	switch (tp) {
+		FiTypeRef(t): t;
+		default: fail0("non-reference treated as reference");
+	}
+}
+
+fiScalarType(tp: FiType) -> bool {
+	switch (tp) {
+		FiTypeBool(): true;
+		FiTypeInt(): true;
+		FiTypeDouble(): true;
+		default: false;
+	}
+}
