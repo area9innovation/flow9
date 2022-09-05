@@ -1,9 +1,10 @@
 import tools/flowc/statements/fs_helpers;
+import tools/flowc/manipulation/freevars;
 
 export {
-	fiExp2FsStat(e : FiExp, returns: bool) -> FsStat;
+	fiExp2FsStat(e : FiExp, returns: bool, locals: Set<string>) -> FsStat;
+	fiExp2FsExp(e : FiExp, locals: Set<string>) -> Pair<FsExp, [FsStat]>;
 	fsWrapSeq(stats: [FsStat]) -> FsStat;
-	fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]>;
 	fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat;
 }
 
@@ -20,21 +21,21 @@ fsUnwrapSeq(stat: FsStat) -> [FsStat] {
 	}
 }
 
-fiExp2FsStat(e : FiExp, returns: bool) -> FsStat {
+fiExp2FsStat(e : FiExp, returns: bool, locals: Set<string>) -> FsStat {
 	wrap = \x -> if (returns) FsRet(x) else FsWrap(x); 
 	switch (e) {
 		FiSeq(es, __,__): {
 			fsWrapSeq(concatA(mapi(es, \i, x -> 
-				fsUnwrapSeq(fiExp2FsStat(x, returns && (i + 1 == length(es))))
+				fsUnwrapSeq(fiExp2FsStat(x, returns && (i + 1 == length(es)), locals))
 			)));
 		}
 		FiCast(ex, from, to,__,__): {
-			pair = fiExp2FsExp(ex);
+			pair = fiExp2FsExp(ex, locals);
 			fsWrapSeq(concat(pair.second, [wrap(FsCast(pair.first, from, to))]));
 		}
 		FiCall(f, args, type, __): {
-			f_pair = fiExp2FsExp(f);
-			args_pairs = map(args, fiExp2FsExp);
+			f_pair = fiExp2FsExp(f, locals);
+			args_pairs = map(args, \x -> fiExp2FsExp(x, locals));
 			fsWrapSeq(concat(
 				concatA(concat(
 					[f_pair.second], 
@@ -47,33 +48,43 @@ fiExp2FsStat(e : FiExp, returns: bool) -> FsStat {
 		}
 		FiSwitch(x, __, cs, type, __): {
 			FsSwitch(x, 
-				map(cs, \c -> FsCase(c.struct, c.argNames, fiExp2FsStat(c.body, returns))), 
+				map(cs, \c -> {
+					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+					FsCase(c.struct, c.argNames, fiExp2FsStat(c.body, returns, case_locals))
+				}), 
 				type
 			);
 		}
 		FiLambda(args, body, type,__): {
-			wrap(FsLambda(args, fiExp2FsStat(body, true), type));
+			lambda_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
+			free_vars = fifreevars(e);
+			closure = intersectSets(free_vars, locals);
+			wrap(FsLambda(set2array(closure), args, fiExp2FsStat(body, true, lambda_locals), type));
 		}
 		FiLet(name, vtype, e1, e2, type, __): {
-			e1_pair = fiExp2FsExp(e1);
-			fsWrapSeq(concat3(e1_pair.second,
-				[FsLet(name, vtype, e1_pair.first)],
-				fsUnwrapSeq(fiExp2FsStat(e2, returns))
-			));
+			if (name == "__") {
+				fiExp2FsStat(e2, returns, locals);
+			} else {
+				e1_pair = fiExp2FsExp(e1, locals);
+				fsWrapSeq(concat3(e1_pair.second,
+					[FsLet(name, vtype, e1_pair.first)],
+					fsUnwrapSeq(fiExp2FsStat(e2, returns, insertSet(locals, name)))
+				));
+			}
 		}
 		FiIf(e1, e2, e3, type, __): {
-			e1_pair = fiExp2FsExp(e1);
+			e1_pair = fiExp2FsExp(e1, locals);
 			fsWrapSeq(concat(e1_pair.second,
 				[FsIf(
 					e1_pair.first, 
-					fiExp2FsStat(e2, returns), 
-					fiExp2FsStat(e3, returns), 
+					fiExp2FsStat(e2, returns, locals), 
+					fiExp2FsStat(e3, returns, locals), 
 					type
 				)]
 			));
 		}
 		FiCallPrim(op, es, type, __): {
-			es_pairs = map(es, fiExp2FsExp);
+			es_pairs = map(es, \x -> fiExp2FsExp(x, locals));
 			fsWrapSeq(concat(
 				concatA(map(es_pairs, \p -> p.second)), 
 				[wrap(FsCallPrim(op, 
@@ -82,11 +93,11 @@ fiExp2FsStat(e : FiExp, returns: bool) -> FsStat {
 			));
 		}
 		FiRequire(file, ex, type, __): {
-			pair = fiExp2FsExp(ex);
+			pair = fiExp2FsExp(ex, locals);
 			fsWrapSeq(concat(pair.second, [wrap(FsRequire(file, pair.first, type))]));
 		}
 		FiUnsafe(name, ex, type, __): {
-			pair = fiExp2FsExp(ex);
+			pair = fiExp2FsExp(ex, locals);
 			fsWrapSeq(concat(pair.second, [wrap(FsUnsafe(name, pair.first, type))]));
 		}
 		FiVar(name,__,__): wrap(e);
@@ -98,13 +109,13 @@ fiExp2FsStat(e : FiExp, returns: bool) -> FsStat {
 	}
 }
 
-fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]> {
+fiExp2FsExp(e : FiExp, locals: Set<string>) -> Pair<FsExp, [FsStat]> {
 	switch (e) {
 		FiSeq(es, type, __): {
 			if (length(es) == 0) {
 				Pair(FiVoid(0), []);
 			} else {
-				pairs = map(es, fiExp2FsExp);
+				pairs = map(es, \x -> fiExp2FsExp(x, locals));
 				last = lastElement(pairs, Pair(FiVoid(0), []));
 				Pair(
 					last.first,
@@ -113,12 +124,12 @@ fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]> {
 			}
 		}
 		FiCast(ex, from, to,__,__): {
-			pair = fiExp2FsExp(ex);
+			pair = fiExp2FsExp(ex, locals);
 			Pair(FsCast(pair.first, from, to), pair.second);
 		}
 		FiCall(f, args, type, call_start): {
-			f_pair = fiExp2FsExp(f);
-			args_pairs = map(args, fiExp2FsExp);
+			f_pair = fiExp2FsExp(f, locals);
+			args_pairs = map(args, \x -> fiExp2FsExp(x, locals));
 			Pair(
 				FsCall(f_pair.first, 
 					map(args_pairs, \p -> p.first), type
@@ -131,7 +142,14 @@ fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]> {
 		}
 		FiSwitch(x, __, cases, type, __): {
 			tmp_var = "_switch_" + x.name;
-			cases_pairs = map(cases, \c -> fiExp2FsExp(c.body));
+			cases_pairs = map(cases, \c -> 
+				fiExp2FsExp(
+					c.body, 
+					fold(c.argNames, locals, \acc, arg -> 
+						if (arg == "__") acc else insertSet(acc, arg)
+					)
+				)
+			);
 			cases_stats = mapi(cases_pairs, \i, c_pair -> {
 				c = cases[i];
 				FsCase(c.struct, c.argNames, 
@@ -150,24 +168,31 @@ fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]> {
 			);
 		}
 		FiLambda(args, body, type,__): {
-			Pair(FsLambda(args, fiExp2FsStat(body, true), type), []);
+			free_vars = fifreevars(e);
+			closure = intersectSets(free_vars, locals);
+			lambda_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
+			Pair(FsLambda(set2array(closure), args, fiExp2FsStat(body, true, lambda_locals), type), []);
 		}
 		FiLet(name, vtype, e1, e2,__, __): {
-			e1_pair = fiExp2FsExp(e1);
-			e2_pair = fiExp2FsExp(e2);
-			Pair(
-				e2_pair.first,
-				concat3(
-					e1_pair.second, 
-					[FsLet(name, vtype, e1_pair.first)],
-					e2_pair.second
-				)
-			);
+			if (name == "__") {
+				fiExp2FsExp(e2, locals);
+			} else {
+				e1_pair = fiExp2FsExp(e1, locals);
+				e2_pair = fiExp2FsExp(e2, insertSet(locals, name));
+				Pair(
+					e2_pair.first,
+					concat3(
+						e1_pair.second, 
+						[FsLet(name, vtype, e1_pair.first)],
+						e2_pair.second
+					)
+				);
+			}
 		}
 		FiIf(e1, e2, e3, type, __): {
-			e1_pair = fiExp2FsExp(e1);
-			e2_pair = fiExp2FsExp(e2);
-			e3_pair = fiExp2FsExp(e3);
+			e1_pair = fiExp2FsExp(e1, locals);
+			e2_pair = fiExp2FsExp(e2, locals);
+			e3_pair = fiExp2FsExp(e3, locals);
 			Pair(
 				FsTernary( 
 					e1_pair.first, 
@@ -178,7 +203,7 @@ fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]> {
 			);
 		}
 		FiCallPrim(op, es, type, __): {
-			es_pairs = map(es, fiExp2FsExp);
+			es_pairs = map(es, \x -> fiExp2FsExp(x, locals));
 			Pair(
 				FsCallPrim(op,
 					map(es_pairs, \p -> p.first), type
@@ -187,11 +212,11 @@ fiExp2FsExp(e : FiExp) -> Pair<FsExp, [FsStat]> {
 			);
 		}
 		FiRequire(file, ex, type, __): {
-			pair = fiExp2FsExp(ex);
+			pair = fiExp2FsExp(ex, locals);
 			Pair(FsRequire(file, pair.first, type), pair.second);
 		}
 		FiUnsafe(name, ex, type, __): {
-			pair = fiExp2FsExp(ex);
+			pair = fiExp2FsExp(ex, locals);
 			Pair(FsUnsafe(name, pair.first, type), pair.second);
 		}
 		FiVar(name,__,__): Pair(e, []);

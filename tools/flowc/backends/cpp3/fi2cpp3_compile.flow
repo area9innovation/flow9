@@ -2,7 +2,6 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/cpp3/fi2cpp3_defines;
 import tools/flowc/backends/cpp3/fi2cpp3_runtime;
 import tools/flowc/statements/fi2fs;
-import tools/flowc/statements/fsfreevars;
 import string_utils;
 
 
@@ -204,10 +203,10 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) ->
 }
 
 fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
-	pair = fiExp2FsExp(globalVar.value);
+	pair = fiExp2FsExp(globalVar.value, makeSet());
 
 	value_exp = if (pair.second == []) pair.first else {
-		FsCall(FsLambda([], fsWrapSeq(pair.second), FiTypeFunction([], globalVar.type)), [], globalVar.type);
+		FsCall(FsLambda([], [], fsWrapSeq(pair.second), FiTypeFunction([], globalVar.type)), [], globalVar.type);
 	}
 	value = fsExp2cpp3(value_exp, gctx);
 	init = fiVarName2cpp3(globalVar.name) + " = " + value;
@@ -224,7 +223,13 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> str
 	names = gctx.program.names;
 	fun_typars = set2array(fiTypeTypars(makeSet(), fn_type));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, names);
-	fun_body = " " + fiWrapWithBraces(fsStat2cpp3(fiExp2FsStat(fun.lambda.body, true), gctx));
+	fun_stat = fiExp2FsStat(
+		fun.lambda.body, true, 
+		fold(lambda.args, makeSet(), \acc, arg -> 
+			if (arg.name == "__") acc else insertSet(acc, arg.name)
+		)
+	);
+	fun_body = " " + fiWrapWithBraces(fsStat2cpp3(fun_stat, gctx));
 	fun_name = fiVarName2cpp3(name);
 	fun_signature = fiType2cpp3(fn_type.returnType) + " " + fun_name + "(" + 
 		superglue(lambda.args, \arg -> fiType2cpp3(arg.type) + " " + fiVarName2cpp3(arg.name), ", ") + 
@@ -390,10 +395,9 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				}
 			};
 		}
-		FsLambda(args, body, type): {
+		FsLambda(closure, args, body, type): {
 			fun = fiType2cpp3(type);
-			free_vars = []; //set2array(fsExpFreevars(e).free);
-			fun + "([" + strGlue(free_vars, ", ") + "] " + 
+			fun + "([" + superglue(closure, fiVarName2cpp3, ", ") + "] " + 
 			"(" + superglue(args, \arg -> fiType2cpp3(arg.type) + " " + fiVarName2cpp3(arg.name), ", ") + ") " + 
 			"{\n" + strIndent(fsStat2cpp3(body, gctx)) + "\n})";
 		}
