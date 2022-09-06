@@ -51,6 +51,7 @@ inline String makeString(const std::string& s) { return String(new string(fromSt
 
 
 // Compound types
+
 struct Struct;
 struct Array;
 struct Reference;
@@ -58,6 +59,9 @@ struct Function;
 
 // Special uninterpreted type
 struct Native;
+
+template<typename... U>
+using Union = std::variant<U...>;
 
 using Flow = std::variant<
 	Int, Bool, Double, String, 
@@ -91,7 +95,6 @@ struct Native {
 	virtual String name() const = 0;
 	virtual String toString() const = 0;
 };
-
 template<typename T> 
 struct Str : public Struct {
 	Str(T* s): str(s) { }
@@ -159,13 +162,14 @@ struct Fun : public Function {
 	Ptr<Fn> fn;
 };
 
+template<typename N>
 struct Nat : public Native {
-	Nat(void* n): nat(n) { }
+	Nat(N* n): nat(n) { }
 	Nat(const Nat& n): nat(n.nat) { }
 	Nat(Nat&& n): nat(std::move(n.nat)) { }
 	Nat& operator = (Nat&& n) { nat = std::move(n.nat); return *this; }
 
-	void* nat;
+	Ptr<N> nat;
 };
 
 void flow2string(Flow v, std::ostream& os, bool init = true) {
@@ -215,9 +219,7 @@ void flow2string(Flow v, std::ostream& os, bool init = true) {
 }
 
 template<typename T> struct ToFlow;
-//{ 
-//	static Flow conv(T t); 
-//};
+
 template<> struct ToFlow<Int> {
 	static Flow conv(Int i) { return Flow(i); }
 };
@@ -242,14 +244,15 @@ template<typename T> struct ToFlow<Str<T>> {
 template<typename T> struct ToFlow<Ref<T>> {
 	static Flow conv(Ref<T> r) { return Ptr<Reference>(new Ref<T>(r)); }
 };
-template<typename R, typename... As > struct ToFlow<Fun<R, As...>> {
+template<typename R, typename... As> struct ToFlow<Fun<R, As...>> {
 	static Flow conv(Fun<R, As...> f) { return Ptr<Function>(new Fun<R, As...>(f)); }
+};
+template<typename T> struct ToFlow<Nat<T>> {
+	static Flow conv(Nat<T> n) { return Ptr<Native>(new Nat<T>(n)); }
 };
 
 template<typename T> struct FromFlow;
-//{ 
-//	static T conv(Flow f); 
-//};
+
 template<> struct FromFlow<Int> {
 	static Int conv(Flow f) { return std::get<Int>(f); }
 };
@@ -274,8 +277,11 @@ template<typename T> struct FromFlow<Str<T>> {
 template<typename T> struct FromFlow<Ref<T>> {
 	static Ref<T> conv(Flow f) { return dynamic_cast<Ref<T>&>(*std::get<Ptr<Reference>>(f)); }
 };
-template<typename R, typename... As > struct FromFlow<Fun<R, As...>> {
+template<typename R, typename... As> struct FromFlow<Fun<R, As...>> {
 	static Fun<R, As...>& conv(Flow f) { return static_cast<Fun<R, As...>&>(*std::get<Ptr<Function>>(f)); }
+};
+template<typename T> struct FromFlow<Nat<T>> {
+	static Nat<T> conv(Flow n) { return dynamic_cast<Nat<T>&>(*std::get<Ptr<Native>>(n)); }
 };
 
 std::map<string, string> command_args;
