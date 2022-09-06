@@ -68,6 +68,8 @@ On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
 
 A lot of tips: https://medium.freecodecamp.org/here-are-some-super-secret-vs-code-hacks-to-boost-your-productivity-20d30197ac76 
 
+If F7 does not start compiling the file, then check [Keyboard Shortcuts](https://code.visualstudio.com/docs/getstarted/keybindings). If there are 2 commands associated with the same key, then change Keybinding for one of them.
+
 ## FEATURES AND CONFIGURATION
 * Syntax highligting (flow, lingo, flowschema, sharekey), code snippets, and brace matching work out of the box
 * There are 4 commands:
