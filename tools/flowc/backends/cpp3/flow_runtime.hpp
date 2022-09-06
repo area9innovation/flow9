@@ -60,8 +60,7 @@ struct Function;
 // Special uninterpreted type
 struct Native;
 
-template<typename... U>
-using Union = std::variant<U...>;
+using Union = Ptr<Struct>;
 
 using Flow = std::variant<
 	Int, Bool, Double, String, 
@@ -88,13 +87,10 @@ struct Reference {
 	virtual Flow reference() = 0;
 };
 
-struct Function {
-};
+struct Function { };
 
-struct Native {
-	virtual String name() const = 0;
-	virtual String toString() const = 0;
-};
+struct Native { };
+
 template<typename T> 
 struct Str : public Struct {
 	Str(T* s): str(s) { }
@@ -117,6 +113,7 @@ struct Arr : public Array {
 	Arr(std::initializer_list<T> il): arr(new Vect(il)) { }
 	Arr(const Arr& a): arr(a.arr) { }
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
+	Arr(const Vect& v): arr(new Vect(v)) { }
 	Arr(Vect* v): arr(v) { }
 	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
 	Int size() const override { return arr->size(); }
@@ -128,13 +125,6 @@ struct Arr : public Array {
 		}
 		return ret;
 	};
-	Arr<T> clone() const {
-		Arr<T> ret(arr->size());
-		for (T x : *arr) {
-			ret.arr->push_back(x);
-		}
-		return ret;
-	}
 
 	Ptr<Vect> arr;
 };
@@ -210,15 +200,16 @@ void flow2string(Flow v, std::ostream& os, bool init = true) {
 			flow2string(std::get<Ptr<Reference>>(v)->reference(), os, false);
 			break;
 		}
-		case Type::FUNC:   os << "<func>"; break;
+		case Type::FUNC: {
+			os << "<func>"; 
+			break;
+		}
 		case Type::NATIVE: {
-			os << toStdString(std::get<Ptr<Native>>(v)->toString());
+			os << "<native>";
 			break;
 		}
 	}
 }
-
-template<typename T> struct ToFlow;
 
 template<> struct ToFlow<Int> {
 	static Flow conv(Int i) { return Flow(i); }
@@ -251,7 +242,6 @@ template<typename T> struct ToFlow<Nat<T>> {
 	static Flow conv(Nat<T> n) { return Ptr<Native>(new Nat<T>(n)); }
 };
 
-template<typename T> struct FromFlow;
 
 template<> struct FromFlow<Int> {
 	static Int conv(Flow f) { return std::get<Int>(f); }
