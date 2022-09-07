@@ -182,6 +182,8 @@ float sdTriangle(in vec2 p, in vec2 p0, in vec2 p1, in vec2 p2)
     return -sqrt(d.x)*sign(d.y);
 }
 
+%generatedFunctions%
+
 float opSmoothUnion( float d1, float d2, float k ) {
     float h = clamp( 0.5 + 0.5*(d2-d1)/k, 0.0, 1.0 );
     return mix( d2, d1, h ) - k*h*(1.0-h); 
