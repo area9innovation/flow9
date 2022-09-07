@@ -61,7 +61,7 @@ struct Function;
 struct Native;
 
 using Union = Ptr<Struct>;
-//Arr(Vect&& v): arr(std::move(v)) { }
+
 using Flow = std::variant<
 	Int, Bool, Double, String, 
 	Ptr<Struct>, Ptr<Array>, Ptr<Reference>, Ptr<Function>,
@@ -92,18 +92,7 @@ struct Function { };
 struct Native { };
 
 template<typename T> 
-struct Str : public Struct {
-	Str(T* s): str(s) { }
-	Str(const Str& s): str(s.str) { }
-	Str(Str&& s): str(std::move(s.str)) { }
-	Str& operator = (Str&& s) { str = std::move(s.str); return *this; }
-	Int id() const override { return str->id(); }
-	String name() const override { return str->name(); }
-	Int size() const override { return str->size(); }
-	std::vector<Flow> fields() override { return str->fields(); }
-
-	Ptr<T> str;
-};
+using Str = Ptr<T>;
 
 template<typename T> 
 struct Arr : public Array {
@@ -174,9 +163,14 @@ void flow2string(Flow v, std::ostream& os, bool init = true) {
 		}
 		case Type::STRUCT: {
 			Ptr<Struct> s = std::get<Ptr<Struct>>(v);
-			os << s->name() << "(";
+			os << toStdString(s->name()) << "(";
+			bool first = true;
 			for (Flow f : s->fields()) {
+				if (!first) {
+					os << ", ";
+				}
 				flow2string(f, os, false);
+				first = false;
 			}
 			os << ")";
 			break;
@@ -233,7 +227,7 @@ template<typename T> struct ToFlow<Arr<T>> {
 	static Flow conv(Arr<T> a) { return Ptr<Array>(new Arr<T>(a)); }
 };
 template<typename T> struct ToFlow<Str<T>> {
-	static Flow conv(Str<T> s) { return Ptr<Struct>(new Str<T>(s)); }
+	static Flow conv(Str<T> s) { return s; }
 };
 template<typename T> struct ToFlow<Ref<T>> {
 	static Flow conv(Ref<T> r) { return Ptr<Reference>(new Ref<T>(r)); }
