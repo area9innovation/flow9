@@ -1,0 +1,175 @@
+import tools/flowc/incremental/fi_helpers;
+
+export {
+// Expand calls of common field of a struct in some unions to switch with individual 
+// structs.
+fiEliminateUnionFields(expr : FiExp, names: FiGlobalNames, local: int) -> FiExp;
+
+/*
+Example: 
+	U :: S1, S2;
+		S1(a: int, b: string);
+		S2(x: double, a: int);
+
+function 
+	makeU() -> U { 
+		...
+	}
+
+	someFn() -> void {
+		...
+		makeU().a
+		...
+	}
+
+will expand to
+	someFn() -> void {
+		...
+		__union_3 = makeU();
+		switch(__union_3) {
+			S1(__field_3,__): __field_3;
+			S2(__,__field_3): __field_3;
+		}
+		...
+	}
+
+*/
+
+}
+
+fiEliminateUnionFields(e : FiExp, names: FiGlobalNames, local: int) -> FiExp {
+	elim = \x -> fiEliminateUnionFields(x, names, local);
+	switch(e) {
+		FiLambda(__, body,__, __): {
+			FiLambda(e with body = elim(body));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = elim(fn),
+				args = map(args, elim)
+			);
+		}
+		FiLet(__, __,e1, e2,__, __): {
+			FiLet(e with
+				e1 = elim(e1),
+				e2 = elim(e2)
+			);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with
+				e1 = elim(e1),
+				e2 = elim(e2),
+				e3 = elim(e3)
+			);
+		}
+		FiSwitch(__, __,cases,__, __): {
+			FiSwitch(e with 
+				cases = map(cases, \c -> FiCase(c with body = elim(c.body)))
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = elim(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, elim));
+		}
+		FiCallPrim(op, es, rtype, start): {
+			switch (op) {
+				FcFieldPrim(field): {
+					arg = es[0];
+					arg_type = cast(fiExpType(arg) : FiType -> FiTypeName);
+					switch (lookupTree(names.unions, arg_type.name)) {
+						Some(union): {
+							make_switch = \switch_var -> {
+								field_var = "__field_" + i2s(local);
+								FiSwitch(switch_var, switch_var.type, 
+									map(union.typenames, \tn -> {
+										struct = lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0));
+										FiCase(
+											tn.name,
+											map(struct.args, \a -> if (a.name != field) "__" else field_var),
+											FiVar(field_var, rtype, start),
+											start
+										)
+									}),
+									rtype, start
+								);
+							}
+							switch (arg) {
+								FiVar(var, vtype,__): {
+									make_switch(arg);
+								}
+								default: {
+									union_var = "__union_" + i2s(local);
+									FiLet(
+										union_var, arg_type,
+										fiEliminateUnionFields(arg, names, local + 1),
+										make_switch(FiVar(union_var, arg_type, start)),
+										rtype, start
+									);
+								}
+							}
+						}
+						None(): {
+							FiCallPrim(e with es = map(es, elim));
+						}
+					}
+				}
+				FcSetMutablePrim(field): {
+					arg = es[0];
+					val = fiEliminateUnionFields(es[1], names, local + 1);
+					arg_type = cast(fiExpType(arg) : FiType -> FiTypeName);
+					switch (lookupTree(names.unions, arg_type.name)) {
+						Some(union): {
+							make_switch = \switch_var -> {
+								FiSwitch(switch_var, switch_var.type, 
+									map(union.typenames, \tn -> {
+										struct = lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0));
+										FiCase(
+											tn.name,
+											map(struct.args, \__ -> "__"),
+											FiCallPrim(e with es = [switch_var, val]),
+											start
+										)
+									}),
+									rtype, start
+								);
+							}
+							switch (arg) {
+								FiVar(var, vtype,__): {
+									make_switch(arg);
+								}
+								default: {
+									union_var = "__union_" + i2s(local);
+									FiLet(
+										union_var, arg_type,
+										fiEliminateUnionFields(arg, names, local + 1),
+										make_switch(FiVar(union_var, arg_type, start)),
+										rtype, start
+									);
+								}
+							}
+						}
+						None(): {
+							FiCallPrim(e with es = map(es, elim));
+						}
+					}
+				}
+				default: FiCallPrim(e with es = map(es, elim));
+			}
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = elim(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = elim(ex));
+		}
+		FiVar(__,__, __): e;
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+

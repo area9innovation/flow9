@@ -61,7 +61,7 @@ struct Function;
 struct Native;
 
 using Union = Ptr<Struct>;
-
+//Arr(Vect&& v): arr(std::move(v)) { }
 using Flow = std::variant<
 	Int, Bool, Double, String, 
 	Ptr<Struct>, Ptr<Array>, Ptr<Reference>, Ptr<Function>,
@@ -226,6 +226,9 @@ template<> struct ToFlow<String> {
 template<> struct ToFlow<Flow> {
 	static Flow conv(Flow f) { return f; }
 };
+template<> struct ToFlow<Union> {
+	static Flow conv(Union u) { return Flow(u); }
+};
 template<typename T> struct ToFlow<Arr<T>> {
 	static Flow conv(Arr<T> a) { return Ptr<Array>(new Arr<T>(a)); }
 };
@@ -257,6 +260,9 @@ template<> struct FromFlow<String> {
 };
 template<> struct FromFlow<Flow> {
 	static Flow conv(Flow f) { return f; }
+};
+template<> struct FromFlow<Union> {
+	static Union conv(Flow f) { return std::get<Union>(f); }
 };
 template<typename T> struct FromFlow<Arr<T>> {
 	static Arr<T> conv(Flow f) { return dynamic_cast<Arr<T>&>(*std::get<Ptr<Array>>(f)); }
