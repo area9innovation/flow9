@@ -7,7 +7,6 @@
 #include <functional>
 #include <algorithm>
 #include <sstream>
-//#include <compare>
 #include <memory>
 #include <cstdlib>
 #include <variant>
@@ -337,8 +336,27 @@ template<> struct FromFlow<Union> {
 	static Union conv(Flow f) { return std::get<Union>(f); }
 };
 template<typename T> struct FromFlow<Arr<T>> {
-	static Arr<T> conv(Flow f) { return dynamic_cast<Arr<T>&>(*std::get<Ptr<Array>>(f)); }
+	static Arr<T> conv(Flow f) { 
+		return std::dynamic_pointer_cast<typename Arr<T>::Vect>(std::get<Ptr<Array>>(f));
+	}
 };
+
+template<> struct FromFlow<Arr<Flow>> {
+	static Arr<Flow> conv(Flow f) { 
+		return std::get<Ptr<Array>>(f)->elements();
+	}
+};
+template<> struct FromFlow<Arr<Arr<Flow>>> {
+	static Arr<Arr<Flow>> conv(Flow f) { 
+		Arr<Flow> arrays = std::get<Ptr<Array>>(f)->elements();
+		Arr<Arr<Flow>> ret(arrays.size());
+		for (Flow x : *arrays.arr) {
+			ret.arr->push_back(FromFlow<Arr<Flow>>::conv(x));
+		}
+		return ret;
+	}
+};
+
 template<typename T> struct FromFlow<Str<T>> {
 	static Str<T> conv(Flow f) { return dynamic_cast<Str<T>&>(*std::get<Ptr<Struct>>(f)); }
 };
