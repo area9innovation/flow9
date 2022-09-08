@@ -7,7 +7,7 @@
 #include <functional>
 #include <algorithm>
 #include <sstream>
-#include <compare>
+//#include <compare>
 #include <memory>
 #include <cstdlib>
 #include <variant>
@@ -50,8 +50,29 @@ inline String makeString(const string& s) { return String(new string(s)); }
 inline String makeString(char16_t ch) { return String(new string(1, ch)); }
 inline String makeString(const std::string& s) { return String(new string(fromStdString(s))); }
 
-template<typename O>
-Int order2int(O x) { return (x < 0) ? 1 : ((x > 0) ? 1 : 0); }
+template<typename T> struct ToFlow;
+template<typename T> struct FromFlow;
+template<typename T> struct Compare;
+
+template<> struct Compare<Bool> {
+	static Int cmp(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+};
+
+template<> struct Compare<int> {
+	static Int cmp(int v1, int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+};
+
+template<> struct Compare<Double> {
+	static Int cmp(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);  }
+};
+
+template<> struct Compare<void*> {
+	static Int cmp(void* v1, void* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);  }
+};
+
+template<> struct Compare<String> {
+	static Int cmp(String v1, String v2) { return v1->compare(*v2); }
+};
 
 // Compound types
 
@@ -70,10 +91,6 @@ using Flow = std::variant<
 	Ptr<Struct>, Ptr<Array>, Ptr<Reference>, Ptr<Function>,
 	Ptr<Native>
 >;
-
-template<typename T> struct ToFlow;
-template<typename T> struct FromFlow;
-template<typename T> struct Compare;
 
 struct Struct {
 	virtual Int id() const = 0;
@@ -136,7 +153,7 @@ struct Arr : public Array {
 		return ret;
 	}
 	Int compare(Arr a) const { 
-		Int c1 = order2int(arr->size() <=> a.arr->size());
+		Int c1 = Compare<Int>::cmp(arr->size(), a.arr->size());
 		if (c1 != 0) {
 			return c1;
 		} else {
@@ -184,7 +201,7 @@ struct Fun : public Function {
 	Fun(Fun&& f): fn(std::move(f.fn)) { }
 	Fun& operator = (Fun&& f) { fn = std::move(f.fn); return *this; }
 	R operator()(As... as) const { return fn->operator()(as...); }
-	Int compare(Fun f) const { return order2int(fn.get() <=> f.fn.get()); }
+	Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
 	template<typename R1, typename... As1> 
 	Fun<R1, As1...> cast() const {
 		return std::reinterpret_pointer_cast<typename Fun<R1, As1...>::Fn>(fn);
@@ -199,7 +216,7 @@ struct Nat : public Native {
 	Nat(const Nat& n): nat(n.nat) { }
 	Nat(Nat&& n): nat(std::move(n.nat)) { }
 	Nat& operator = (Nat&& n) { nat = std::move(n.nat); return *this; }
-	Int compare(Nat n) const { return order2int(nat.get() <=> n.nat.get()); }
+	Int compare(Nat n) const { return Compare<void*>::cmp(nat.get(), n.nat.get()); }
 	template<typename N1>
 	Nat<N1> cast() const {
 		return std::reinterpret_pointer_cast<N1>(nat);
@@ -331,90 +348,8 @@ template<typename T> struct FromFlow<Nat<T>> {
 	static Nat<T> conv(Flow n) { return dynamic_cast<Nat<T>&>(*std::get<Ptr<Native>>(n)); }
 };
 
-Int compareFlow(Flow v1, Flow v2) {
-	if (v1.index() != v2.index()) {
-		return order2int(v1.index() <=> v2.index());
-	} else {
-		switch (v1.index()) {
-			case Type::INT:    return order2int(std::get<Int>(v1) <=> std::get<Int>(v2));
-			case Type::BOOL:   return order2int(std::get<Bool>(v1) <=> std::get<Bool>(v2));
-			case Type::DOUBLE: return order2int(std::get<Double>(v1) <=> std::get<Double>(v2));
-			case Type::STRING: return std::get<String>(v1)->compare(*std::get<String>(v2));
-			case Type::STRUCT: {
-				Ptr<Struct> s1 = std::get<Ptr<Struct>>(v1);
-				Ptr<Struct> s2 = std::get<Ptr<Struct>>(v2);
-				Int c1 = s1->name()->compare(*s2->name());
-				if (c1 != 0) {
-					return c1;
-				} else {
-					std::vector<Flow> fs1 = s1->fields();
-					std::vector<Flow> fs2 = s2->fields();
-					for (Int i = 0; i < fs1.size(); ++ i) {
-						Int c2 = compareFlow(fs1.at(i), fs2.at(i));
-						if (c2 != 0) {
-							return c2;
-						}
-					}
-					return 0;
-				}
-			}
-			case Type::ARRAY: {
-				Ptr<Array> a1 = std::get<Ptr<Array>>(v1);
-				Ptr<Array> a2 = std::get<Ptr<Array>>(v2);
-				Int c1 = order2int(a1->size() <=> a2->size());
-				if (c1 != 0) {
-					return c1;
-				} else {
-					std::vector<Flow> es1 = a1->elements();
-					std::vector<Flow> es2 = a2->elements();
-					for (Int i = 0; i < es1.size(); ++ i) {
-						Int c2 = compareFlow(es1.at(i), es2.at(i));
-						if (c2 != 0) {
-							return c2;
-						}
-					}
-					return 0;
-				}
-			}
-			case Type::REF: {
-				Ptr<Reference> r1 = std::get<Ptr<Reference>>(v1);
-				Ptr<Reference> r2 = std::get<Ptr<Reference>>(v2);
-				return compareFlow(r1->reference(), r2->reference());
-			}
-			case Type::FUNC: {
-				Ptr<Function> f1 = std::get<Ptr<Function>>(v1);
-				Ptr<Function> f2 = std::get<Ptr<Function>>(v2);
-				return order2int(f1.get() <=> f2.get());
-			}
-			case Type::NATIVE: {
-				Ptr<Native> n1 = std::get<Ptr<Native>>(v1);
-				Ptr<Native> n2 = std::get<Ptr<Native>>(v2);
-				return order2int(n1.get() <=> n2.get());
-			}
-			default: {
-				std::cerr << "illegal type: " << v1.index() << std::endl;
-				assert(false);
-				return 0;
-			}
-		}
-	}
-}
 
-template<> struct Compare<Int> {
-	static Int cmp(Int v1, Int v2) { return order2int(v1 <=> v2); }
-};
-
-template<> struct Compare<Bool> {
-	static Int cmp(Bool v1, Bool v2) { return order2int(v1 <=> v2); }
-};
-
-template<> struct Compare<Double> {
-	static Int cmp(Double v1, Double v2) { return order2int(v1 <=> v2); }
-};
-
-template<> struct Compare<String> {
-	static Int cmp(String v1, String v2) { return v1->compare(*v2); }
-};
+Int compareFlow(Flow v1, Flow v2);
 
 template<> struct Compare<Flow> {
 	static Int cmp(Flow v1, Flow v2) { return compareFlow(v1, v2); }
@@ -441,13 +376,83 @@ struct Compare<Str<T>> {
 
 template<typename R, typename... As>
 struct Compare<Fun<R, As...>> {
-	static Int cmp(Fun<R, As...> v1, Fun<R, As...> v2) { return order2int(v1.fn.get() <=> v2.fn.get()); }
+	static Int cmp(Fun<R, As...> v1, Fun<R, As...> v2) { return Compare<void*>::cmp(v1.fn.get(), v2.fn.get()); }
 };
 
 template<typename T>
 struct Compare<Nat<T>> {
-	static Int cmp(Nat<T> v1, Nat<T> v2) { return order2int(v1.nat.get() <=> v2.nat.get()); }
+	static Int cmp(Nat<T> v1, Nat<T> v2) { return Compare<void*>::cmp(v1.nat.get(), v2.nat.get()); }
 };
+
+Int compareFlow(Flow v1, Flow v2) {
+	if (v1.index() != v2.index()) {
+		return Compare<Int>::cmp(v1.index(), v2.index());
+	} else {
+		switch (v1.index()) {
+			case Type::INT:    return Compare<Int>::cmp(std::get<Int>(v1), std::get<Int>(v2));
+			case Type::BOOL:   return Compare<Bool>::cmp(std::get<Bool>(v1), std::get<Bool>(v2));
+			case Type::DOUBLE: return Compare<Double>::cmp(std::get<Double>(v1), std::get<Double>(v2));
+			case Type::STRING: return std::get<String>(v1)->compare(*std::get<String>(v2));
+			case Type::STRUCT: {
+				Ptr<Struct> s1 = std::get<Ptr<Struct>>(v1);
+				Ptr<Struct> s2 = std::get<Ptr<Struct>>(v2);
+				Int c1 = s1->name()->compare(*s2->name());
+				if (c1 != 0) {
+					return c1;
+				} else {
+					std::vector<Flow> fs1 = s1->fields();
+					std::vector<Flow> fs2 = s2->fields();
+					for (Int i = 0; i < fs1.size(); ++ i) {
+						Int c2 = compareFlow(fs1.at(i), fs2.at(i));
+						if (c2 != 0) {
+							return c2;
+						}
+					}
+					return 0;
+				}
+			}
+			case Type::ARRAY: {
+				Ptr<Array> a1 = std::get<Ptr<Array>>(v1);
+				Ptr<Array> a2 = std::get<Ptr<Array>>(v2);
+				Int c1 = Compare<Int>::cmp(a1->size(), a2->size());
+				if (c1 != 0) {
+					return c1;
+				} else {
+					std::vector<Flow> es1 = a1->elements();
+					std::vector<Flow> es2 = a2->elements();
+					for (Int i = 0; i < es1.size(); ++ i) {
+						Int c2 = compareFlow(es1.at(i), es2.at(i));
+						if (c2 != 0) {
+							return c2;
+						}
+					}
+					return 0;
+				}
+			}
+			case Type::REF: {
+				Ptr<Reference> r1 = std::get<Ptr<Reference>>(v1);
+				Ptr<Reference> r2 = std::get<Ptr<Reference>>(v2);
+				return compareFlow(r1->reference(), r2->reference());
+			}
+			case Type::FUNC: {
+				Ptr<Function> f1 = std::get<Ptr<Function>>(v1);
+				Ptr<Function> f2 = std::get<Ptr<Function>>(v2);
+				return Compare<void*>::cmp(f1.get(), f2.get());
+			}
+			case Type::NATIVE: {
+				Ptr<Native> n1 = std::get<Ptr<Native>>(v1);
+				Ptr<Native> n2 = std::get<Ptr<Native>>(v2);
+				return Compare<void*>::cmp(n1.get(), n2.get());
+			}
+			default: {
+				std::cerr << "illegal type: " << v1.index() << std::endl;
+				assert(false);
+				return 0;
+			}
+		}
+	}
+}
+
 
 std::map<string, string> command_args;
 int exit_code = 0;
