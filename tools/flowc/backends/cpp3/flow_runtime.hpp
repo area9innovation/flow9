@@ -73,6 +73,7 @@ using Flow = std::variant<
 
 template<typename T> struct ToFlow;
 template<typename T> struct FromFlow;
+template<typename T> struct Compare;
 
 struct Struct {
 	virtual Int id() const = 0;
@@ -100,17 +101,17 @@ using Str = Ptr<T>;
 
 template<typename From, typename To>
 Str<To> struct2struct(Str<From> from) {
-	return std::dynamic_pointer_cast<To>(from.get());
+	return std::reinterpret_pointer_cast<To>(from);
 }
 
 template<typename To>
 Str<To> union2struct(Union from) {
-	return std::dynamic_pointer_cast<To>(from.get());
+	return std::dynamic_pointer_cast<To>(from);
 }
 
 template<typename From>
 Union struct2union(Str<From> from) {
-	return std::dynamic_pointer_cast<Struct>(from);
+	return std::static_pointer_cast<Struct>(from);
 }
 
 template<typename T> 
@@ -123,6 +124,7 @@ struct Arr : public Array {
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
 	Arr(const Vect& v): arr(new Vect(v)) { }
 	Arr(Vect* v): arr(v) { }
+	Arr(Ptr<Vect>&& v): arr(std::move(v)) { }
 	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
 	Int size() const override { return arr->size(); }
 	std::vector<Flow> elements() override {
@@ -139,7 +141,7 @@ struct Arr : public Array {
 			return c1;
 		} else {
 			for (Int i = 0; i < arr->size(); ++ i) {
-				Int c2 = arr->at(i).compare(a.arr->at(i));
+				Int c2 = Compare<T>::cmp(arr->at(i), a.arr->at(i));
 				if (c2 != 0) {
 					return c2;
 				}
@@ -162,7 +164,7 @@ struct Ref : public Reference {
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
 	Ref& operator = (Ref&& r) { ref = std::move(r.ref); return *this; }
 	Flow reference() override { return ToFlow<T>::conv(*ref); }
-	Int compare(Ref r) const { return ref->compare(*r.ref); }
+	Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
 	template<typename T1>
 	Ref<T1> cast() const {
 		return std::reinterpret_pointer_cast<T1>(ref);
@@ -174,10 +176,10 @@ template<typename R, typename... As>
 struct Fun : public Function {
 	typedef std::function<R(As...)> Fn;
 	//Fun(const Fn& f): fn(std::make_shared(f)) { }
-	Fun(Fn&& f): fn(std::make_shared(f)) { }
+	Fun(Fn&& f): fn(std::make_shared<Fn>(f)) { }
 	Fun(Fn* f): fn(f) { }
 	Fun(Ptr<Fn>&& f): fn(std::move(f)) { }
-	//Fun(const Fn& f): fn(std::make_shared<Fn>(f)) { }
+	Fun(const Fn& f): fn(std::make_shared<Fn>(f)) { }
 	Fun(const Fun& f): fn(f.fn) { }
 	Fun(Fun&& f): fn(std::move(f.fn)) { }
 	Fun& operator = (Fun&& f) { fn = std::move(f.fn); return *this; }
@@ -397,8 +399,6 @@ Int compareFlow(Flow v1, Flow v2) {
 		}
 	}
 }
-
-template<typename T> struct Compare;
 
 template<> struct Compare<Int> {
 	static Int cmp(Int v1, Int v2) { return order2int(v1 <=> v2); }
