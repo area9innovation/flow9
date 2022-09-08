@@ -95,25 +95,22 @@ struct Function { };
 
 struct Native { };
 
-//template<typename T> 
-//struct Str : public Ptr<T> { };
-
 template<typename T> 
 using Str = Ptr<T>;
 
 template<typename From, typename To>
 Str<To> struct2struct(Str<From> from) {
-	return dynamic_cast<To*>(from.get());
+	return std::dynamic_pointer_cast<To>(from.get());
 }
 
 template<typename To>
 Str<To> union2struct(Union from) {
-	return dynamic_cast<To*>(from.get());
+	return std::dynamic_pointer_cast<To>(from.get());
 }
 
 template<typename From>
 Union struct2union(Str<From> from) {
-	return Union(dynamic_cast<Struct*>(from.get()));
+	return std::dynamic_pointer_cast<Struct>(from);
 }
 
 template<typename T> 
