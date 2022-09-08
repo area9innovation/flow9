@@ -143,6 +143,7 @@ struct Arr : public Array {
 	Arr(Vect* v): arr(v) { }
 	Arr(Ptr<Vect>&& v): arr(std::move(v)) { }
 	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
+	Arr& operator = (const Arr& a) { arr = a.arr; return *this; }
 	Int size() const override { return arr->size(); }
 	std::vector<Flow> elements() override {
 		std::vector<Flow> ret;
@@ -176,10 +177,12 @@ struct Arr : public Array {
 
 template<typename T> 
 struct Ref : public Reference {
+	Ref(const T& r): ref(std::make_shared<T>(r)) { }
 	Ref(T&& r): ref(std::make_shared<T>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
 	Ref& operator = (Ref&& r) { ref = std::move(r.ref); return *this; }
+	Ref& operator = (const Ref& r) { ref = r.ref; return *this; }
 	Flow reference() override { return ToFlow<T>::conv(*ref); }
 	Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
 	template<typename T1>
@@ -200,6 +203,7 @@ struct Fun : public Function {
 	Fun(const Fun& f): fn(f.fn) { }
 	Fun(Fun&& f): fn(std::move(f.fn)) { }
 	Fun& operator = (Fun&& f) { fn = std::move(f.fn); return *this; }
+	Fun& operator = (const Fun& f) { fn = f.fn; return *this; }
 	R operator()(As... as) const { return fn->operator()(as...); }
 	Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
 	template<typename R1, typename... As1> 
