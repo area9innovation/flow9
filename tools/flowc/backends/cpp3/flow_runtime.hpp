@@ -98,6 +98,11 @@ struct Native { };
 template<typename T> 
 using Str = Ptr<T>;
 
+template<typename From, typename To>
+Str<To> struct2struct(Str<From> from) {
+	return std::dynamic_pointer_cast<To>(from.get());
+}
+
 template<typename To>
 Str<To> union2struct(Union from) {
 	return std::dynamic_pointer_cast<To>(from.get());
