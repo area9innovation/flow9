@@ -98,11 +98,6 @@ struct Native { };
 template<typename T> 
 using Str = Ptr<T>;
 
-template<typename From, typename To>
-Str<To> struct2struct(Str<From> from) {
-	return std::dynamic_pointer_cast<To>(from.get());
-}
-
 template<typename To>
 Str<To> union2struct(Union from) {
 	return std::dynamic_pointer_cast<To>(from.get());
@@ -147,6 +142,10 @@ struct Arr : public Array {
 			return 0;
 		}
 	}
+	template<typename T1>
+	Arr<T1> cast() const {
+		return std::reinterpret_pointer_cast<typename Arr<T1>::Vect>(arr);
+	}
 
 	Ptr<Vect> arr;
 };
@@ -159,20 +158,29 @@ struct Ref : public Reference {
 	Ref& operator = (Ref&& r) { ref = std::move(r.ref); return *this; }
 	Flow reference() override { return ToFlow<T>::conv(*ref); }
 	Int compare(Ref r) const { return ref->compare(*r.ref); }
-
+	template<typename T1>
+	Ref<T1> cast() const {
+		return std::reinterpret_pointer_cast<T1>(ref);
+	}
 	Ptr<T> ref;
 };
 
 template<typename R, typename... As> 
 struct Fun : public Function {
 	typedef std::function<R(As...)> Fn;
-	Fun(Fn&& f): fn(std::make_shared<Fn>(f)) { }
+	//Fun(Fn&& f): fn(std::move(f)) { }
+	Fun(Fn* f): fn(f) { }
+	Fun(Ptr<Fn>&& f): fn(std::move(f)) { }
 	Fun(const Fn& f): fn(std::make_shared<Fn>(f)) { }
 	Fun(const Fun& f): fn(f.fn) { }
 	Fun(Fun&& f): fn(std::move(f.fn)) { }
 	Fun& operator = (Fun&& f) { fn = std::move(f.fn); return *this; }
 	R operator()(As... as) const { return fn->operator()(as...); }
 	Int compare(Fun f) const { return order2int(fn.get() <=> f.fn.get()); }
+	template<typename R1, typename... As1> 
+	Fun<R1, As1...> cast() const {
+		return std::reinterpret_pointer_cast<typename Fun<R1, As1...>::Fn>(fn);
+	}
 
 	Ptr<Fn> fn;
 };
@@ -184,6 +192,10 @@ struct Nat : public Native {
 	Nat(Nat&& n): nat(std::move(n.nat)) { }
 	Nat& operator = (Nat&& n) { nat = std::move(n.nat); return *this; }
 	Int compare(Nat n) const { return order2int(nat.get() <=> n.nat.get()); }
+	template<typename N1>
+	Nat<N1> cast() const {
+		return std::reinterpret_pointer_cast<N1>(nat);
+	}
 
 	Ptr<N> nat;
 };

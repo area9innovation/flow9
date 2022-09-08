@@ -460,14 +460,7 @@ fsCallPrim2cpp3(op : FcPrim, es : [FsExp], type : FiType, gctx : Cpp3GlobalConte
 		FcOrPrim():  "(" + e2k(es[0]) + " || " + e2k(es[1]) + ")";
 		FcAndPrim(): "(" + e2k(es[0]) + " && " + e2k(es[1]) + ")";
 		FcNotPrim(): "!" + e2k(es[0]);
-		/*
-		FcEqPrim():  "(" + e2k(es[0]) + " == " + e2k(es[1]) + ")";
-		FcNePrim():  "(" + e2k(es[0]) + " != " + e2k(es[1]) + ")";
-		FcLePrim():  "(" + e2k(es[0]) + " <= " + e2k(es[1]) + ")";
-		FcGePrim():  "(" + e2k(es[0]) + " >= " + e2k(es[1]) + ")";
-		FcLtPrim():  "(" + e2k(es[0]) + " < " + e2k(es[1]) + ")";
-		FcGtPrim():  "(" + e2k(es[0]) + " > " + e2k(es[1]) + ")";
-*/
+
 		FcEqPrim():  "(Compare<" + fiType2cpp3(arg_type, gctx) + ">::cmp(" + e2k(es[0]) + ", " + e2k(es[1]) + ") == 0)";
 		FcNePrim():  "(Compare<" + fiType2cpp3(arg_type, gctx) + ">::cmp(" + e2k(es[0]) + ", " + e2k(es[1]) + ") != 0)";
 		FcLePrim():  "(Compare<" + fiType2cpp3(arg_type, gctx) + ">::cmp(" + e2k(es[0]) + ", " + e2k(es[1]) + ") <= 0)";
@@ -485,7 +478,13 @@ fsCallPrim2cpp3(op : FcPrim, es : [FsExp], type : FiType, gctx : Cpp3GlobalConte
 		FcMinusPrim(): "(" + e2k(es[0]) + " - " + e2k(es[1]) + ")"; 
 		FcMulPrim():   "(" + e2k(es[0]) + " * " + e2k(es[1]) + ")";
 		FcDivPrim():   "(" + e2k(es[0]) + " / " + e2k(es[1]) + ")";
-		FcModPrim():   "(" + e2k(es[0]) + " % " + e2k(es[1]) + ")";
+		FcModPrim(): {
+			if (type == FiTypeDouble()) {
+				"fmod(" + e2k(es[0]) + ", " + e2k(es[1]) + ")";
+			} else {
+				"(" + e2k(es[0]) + " % " + e2k(es[1]) + ")";
+			}
+		}
 		FcNegPrim():   "-" + e2k(es[0]);
 		FcArrayPrim(): {
 			arr_type = fiDearrayType(type);
@@ -498,7 +497,7 @@ fsCallPrim2cpp3(op : FcPrim, es : [FsExp], type : FiType, gctx : Cpp3GlobalConte
 		FcAssignPrim(): {
 			ref_tp = cast(fsExpType(es[0]) : FiType -> FiTypeRef);
 			val_tp = fsExpType(es[1]);
-			"(*" + e2k(es[0]) + ".ref = " + e2k(es[1]) + ")";
+			"(*" + e2k(es[0]) + ".ref = " + fiCpp3Cast(val_tp, ref_tp.t, e2k(es[1]), gctx) + ")";
 		}
 		FcRefPrim(): {
 			ref_type = fiDerefType(type);
@@ -567,7 +566,6 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 		"FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
 	} else {
 		static_cast = \s1 -> "static_cast<" + fiType2cpp3(to, gctx) + ">(" + s1 + ")";
-		dynamic_cast = \s1 -> "dynamic_cast<" + fiType2cpp3(to, gctx) + "&>(" + s1 + ")";
 		switch (to) {
 			FiTypeVoid():       fail0("cast to void");
 			FiTypeBool():       static_cast(s);
@@ -575,10 +573,18 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 			FiTypeDouble():     static_cast(s);
 			FiTypeString():     static_cast(s);
 			FiTypeFlow():       "ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
-			FiTypeNative():     dynamic_cast(s);
-			FiTypeParameter(n): dynamic_cast(s);
-			FiTypeRef(rt):      dynamic_cast(s);
-			FiTypeArray(at):    dynamic_cast(s);
+			FiTypeNative(): {
+				s + ".cast<void>()";
+			}
+			FiTypeParameter(n): {
+				fail0("cast from type parameter")
+			}
+			FiTypeRef(rt): {
+				s + ".cast<" + fiType2cpp3(rt, gctx)+  ">()";
+			}
+			FiTypeArray(at): {
+				s + ".cast<" + fiType2cpp3(at, gctx)+  ">()";
+			}
 			FiTypeName(id_to, tp_to): {
 				to_is_union = containsKeyTree(gctx.program.names.unions, id_to);
 				switch (from) {
@@ -589,6 +595,7 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 								s 
 							} else {
 								"struct2union<" + fiStructName2cpp3(from, gctx) + ">(" + s + ")";
+								//"std::dynamic_pointer_cast<" + fiStructName2cpp3(from, gctx) + ">(" + s + ")"
 							}
 						} else {
 							if (from_is_union) {
@@ -601,7 +608,10 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 					default: fail0("illegal case to struct");
 				}
 			}
-			FiTypeFunction(__,__): dynamic_cast(s);
+			FiTypeFunction(args, rt): {
+				signature = superglue(concat([rt], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ");
+				s + ".cast<" + signature+  ">()";
+			}
 		}
 	}
 }
