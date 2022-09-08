@@ -5,6 +5,7 @@
 #include <vector>
 #include <cassert>
 #include <functional>
+#include <algorithm>
 #include <sstream>
 #include <compare>
 #include <memory>
@@ -81,7 +82,7 @@ struct Struct {
 	virtual Int compare(const Struct&) const = 0;
 };
 
-struct Array { 
+struct Array {
 	virtual Int size() const = 0;
 	virtual std::vector<Flow> elements() = 0;
 };
@@ -112,7 +113,7 @@ Str<To> union2struct(Union from) {
 
 template<typename From>
 Union struct2union(Str<From> from) {
-	return from.get();
+	return Union(dynamic_cast<Struct*>(from.get()));
 }
 
 template<typename T> 
@@ -372,6 +373,11 @@ Int compareFlow(Flow v1, Flow v2) {
 				Ptr<Native> n1 = std::get<Ptr<Native>>(v1);
 				Ptr<Native> n2 = std::get<Ptr<Native>>(v2);
 				return order2int(n1.get() <=> n2.get());
+			}
+			default: {
+				std::cerr << "illegal type: " << v1.index() << std::endl;
+				assert(false);
+				return 0;
 			}
 		}
 	}
