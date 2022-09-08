@@ -141,7 +141,7 @@ struct Arr : public Array {
 			return c1;
 		} else {
 			for (Int i = 0; i < arr->size(); ++ i) {
-				Int c2 = arr->at(i).compare(a.err->at(i));
+				Int c2 = arr->at(i).compare(a.arr->at(i));
 				if (c2 != 0) {
 					return c2;
 				}
@@ -169,6 +169,7 @@ template<typename R, typename... As>
 struct Fun : public Function {
 	typedef std::function<R(As...)> Fn;
 	Fun(Fn&& f): fn(std::make_shared<Fn>(f)) { }
+	Fun(const Fn& f): fn(std::make_shared<Fn>(f)) { }
 	Fun(const Fun& f): fn(f.fn) { }
 	Fun(Fun&& f): fn(std::move(f.fn)) { }
 	Fun& operator = (Fun&& f) { fn = std::move(f.fn); return *this; }
