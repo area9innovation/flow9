@@ -20,8 +20,7 @@ fi2wise(program : FiProgram, cfg : FiWiseConfig, callback : (int) -> void) -> vo
 
 writeWise2file(program : FiProgram, path : string, module : FiModule) -> void {
 	println("----------------------\nflow->wise "+ module.fileinfo.flowfile + ".flow");
-	filepath : string = pathCombine(path, ltrim2(module.fileinfo.flowfile, path))  + ".wise";
-
+	filepath : string = pathCombine(path, takeAfter(module.fileinfo.flowfile, path, module.fileinfo.flowfile))  + ".wise";
 	file = wiseAst2string(fiModule2FlowWiseAst(module));
 
 	ensureDirectoryExists(dirName(filepath));
@@ -33,7 +32,12 @@ writeWise2file(program : FiProgram, path : string, module : FiModule) -> void {
 fiModule2FlowWiseAst(module : FiModule) -> FlowWiseAst {
 	body = FlowWiWaseEmpty();
 	exportNames = buildSet(module.exports);
-	newBody = fold(module.functions, body, \acc, v -> fiFunctionDec2FlowWiFunction(v, containsSet(exportNames, v.name), acc));
+	functions = values2tree(module.functions, \f -> f.name);
+	newBody = foldr(module.initOrder, body, \acc, fnName -> eitherMap(
+		lookupTree(functions, fnName),
+		\fn -> fiFunctionDec2FlowWiFunction(fn, containsSet(exportNames, fnName), acc),
+		acc
+	));
 	imports = fold(module.imports, newBody, \acc, v -> fiImport2FlowWiseAst(v, acc));
 
 	imports;
@@ -86,7 +90,6 @@ fiExp2FlowWiExp(exp : FiExp) -> FlowWiExp {
 	}
 }
 
-// TODO : another types?
 fiCallPrim2wiExp(exp : FiCallPrim) -> Maybe<FlowWiExp> {
 	if (exp.es == []) {
 		None();
@@ -205,15 +208,22 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 		default : makeDefPrintln(toString(type));
 	}
 	getWiPrintFn = \arg -> switch (arg : FiExp) {
-		FiBool(v, __) : "printlnb";
-		FiInt(v, __) : "printlni32";
-		// FiDouble(v, __) : "";
-		// FiString(v, __) : "";
+		FiBool(__, __) : "printlnb";
+		FiInt(__, __) : "printlni32";
+		FiDouble(v, __) : makeDefPrintln(d2s(v));
+		FiString(v, __) : makeDefPrintln(v);
 		FiVoid(__) : "printv128";
 		FiVar(__, type, __) : makePrintForFiType(type);
-		FiCallPrim(op, es, type, start): makePrintForFiType(type);
-		FiIf(e1, e2, e3, type, start) : makePrintForFiType(type);
-		default : makeDefPrintln(toString(arg));
+		FiCallPrim(__, __, type, __): makePrintForFiType(type);
+		FiIf(__, __, __, type, __) : makePrintForFiType(type);
+		FiLambda(__, __, type, start) : makePrintForFiType(type);
+		FiCall(__, __, type, __) : makePrintForFiType(type);
+		FiLet(__, type, __, __, type2, __) : makePrintForFiType(type);
+		FiSwitch(__, switchType, __, type, __) : makePrintForFiType(type);
+		FiCast(__, tFrom, tTo, type, __) : makePrintForFiType(tTo);
+		FiSeq(__, type, __) : makePrintForFiType(type);
+		FiRequire(__, __, type, __) : makePrintForFiType(type);
+		FiUnsafe(__, __, type, __) : makePrintForFiType(type);
 	}
 	switch (exp : FlowWiExp) {
 		FlowWiVar(id) : if (id == "println" && args != []) {
@@ -267,26 +277,32 @@ wiseAst2string(code : FlowWiseAst) -> string {
 		FlowWiseAstDouble(value) : d2s(value);
 		FlowWiseAstString(value) : value;
 		FlowWiType(): wiType2string(code);
-		// FlowWiGlobal(id : string, optexport : string, type : FlowWiType, optmutable : int, exp : FlowWiExp, decl : FlowWiDecl);
 		FlowWiIdtype(id, type) : id + " : " + wiType2string(type);
-		// FlowWiImport(id1 : string, type : FlowWiType, optmutable : int, id2 : string, id3 : string, decl : FlowWiDecl);
-		FlowWiWaseEmpty() : "";
-		FlowWiFlowWiseInclude(s, decl) : {
-			"include " + s + ";\n"
-			+ wiseAst2string(decl);
-		}
-		FlowWiFunction(id, optexport, lambdaargs, type, e, decl) : {
+		FlowWiDecl() : wiDecl2string(code);
+		FlowWiExp() : wiExp2string(code, None());
+	}
+}
+
+wiDecl2string(decl : FlowWiDecl) -> string {
+	switch (decl : FlowWiDecl) {
+		FlowWiFunction(id, optexport, lambdaargs, type, e, decl2) : {
 			parentExp = None();
-			(if (s2b(optexport)) "export " else " ")
+			"\n" + (if (s2b(optexport)) "export " else " ")
 			+ wiVar2string(id, parentExp)
 			+ "(" + strGlue(map(lambdaargs, wiseAst2string), ", ") + ")"
 			+ " -> " + wiType2string(type)
 			+ " {\n"
-			+ wiExp2string(e, parentExp)
-			+ "\n}";
+			+ "\t" + wiExp2string(e, parentExp)
+			+ "\n}\n"
+			+ wiDecl2string(decl2);
 		}
-		FlowWiExp() : wiExp2string(code, None());
-		default : "TODO[" + toString(code)+"]";
+		FlowWiGlobal(id, optexport, type, optmutable, expression, decl2) : "TODO Decl[" + toString(decl)+"]";
+		FlowWiImport(id1, type, optmutable, id2, id3, decl2) : "TODO Decl[" + toString(decl)+"]";
+		FlowWiWaseEmpty() : "";
+		FlowWiFlowWiseInclude(s, decl2) : {
+			"include " + s + ";\n"
+			+ wiseAst2string(decl2);
+		}
 	}
 }
 
