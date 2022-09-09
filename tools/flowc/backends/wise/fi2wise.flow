@@ -67,7 +67,13 @@ fiExp2FlowWiExp(exp : FiExp) -> FlowWiExp {
 		FiLet(name, type, e1, e2, type2, start) : {
 			FlowWiLet(name, 0, fiType2FlowWiType(type), fiExp2FlowWiExp(e1), FlowWiBrace([fiExp2FlowWiExp(e2)]));
 		}
-		FiIf(e, e2, e3, type, start) : makeDefExp();
+		FiIf(e, e2, e3, type, start) : {
+			if (isSameStructType(e3, FiVoid(0))) {
+				FlowWiIf(fiExp2FlowWiExp(e), fiExp2FlowWiExp(e2));
+			} else {
+				FlowWiIfelse(fiExp2FlowWiExp(e), fiExp2FlowWiExp(e2), fiExp2FlowWiExp(e3));
+			}
+		}
 		FiSwitch(x, sWitchType, cases, type, start) : makeDefExp();
 			// struct is "default" for default case
 			// FiCase(struct: string, argNames : [string], body: FiExp, start : int);
@@ -76,7 +82,6 @@ fiExp2FlowWiExp(exp : FiExp) -> FlowWiExp {
 		FiCallPrim(op, es, type, start) : eitherFn(fiCallPrim2wiExp(exp), idfn, makeDefExp);
 		FiRequire(flowfile, e, type, start) : makeDefExp();
 		FiUnsafe(name, fallback, type, start) : makeDefExp();
-
 		FiConst() : fiConst2FlowWiExp(exp);
 	}
 }
@@ -194,21 +199,21 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 		"println"
 	}
 	makePrintForFiType = \type -> switch (type : FiType) {
-		FiTypeBool() : "printi32"; // TODO
-		FiTypeInt() : "printi32";
+		FiTypeBool() : "printlnb";
+		FiTypeInt() : "printlni32";
 		// FiTypeDouble() : FlowWiBasictype("f64");
 		// FiTypeString() : makeDefType();
 		default : makeDefPrintln(toString(type));
 	}
 	getWiPrintFn = \arg -> switch (arg : FiExp) {
-		FiBool(v, __) : "printi32"; // TODO
-		FiInt(v, __) : "printi32";
+		FiBool(v, __) : "printlnb";
+		FiInt(v, __) : "printlni32";
 		// FiDouble(v, __) : "";
 		// FiString(v, __) : "";
 		FiVoid(__) : "printv128";
 		FiVar(__, type, __) : makePrintForFiType(type);
-		// 'FiCallPrim(FcOrPrim(), [FiBool(true, 83), FiBool(false, 91)], FiTypeBool(), 83)
 		FiCallPrim(op, es, type, start): makePrintForFiType(type);
+		FiIf(e1, e2, e3, type, start) : makePrintForFiType(type);
 		default : makeDefPrintln(toString(arg));
 	}
 	switch (exp : FlowWiExp) {
@@ -216,7 +221,7 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 			FlowWiVar(getWiPrintFn(args[0]))
 		} else {
 			exp
-		};
+		}
 		default : exp;
 	}
 }
@@ -360,6 +365,7 @@ extractExpsFromFlowWiBrace(e : FlowWiBrace, acc : [FlowWiExp]) -> [FlowWiExp] {
 }
 
 wiAtom2string(exp : FlowWiAtom, parent : Maybe<FlowWiExp>) -> string {
+	eol = "\n\t";
 	switch (exp : FlowWiAtom) {
 		FlowWiBool(b) : if (b) "true" else "false";
 		FlowWiInt(int_0) : i2s(int_0);
@@ -367,8 +373,18 @@ wiAtom2string(exp : FlowWiAtom, parent : Maybe<FlowWiExp>) -> string {
 		FlowWiTuple(exps) : "(" + strGlue(map(exps, \e -> wiExp2string(e, None())), ", ") + ")";
 		FlowWiVar(id) : wiVar2string(id, parent);
 		FlowWiSet(id, e) : id + " := " + wiseAst2string(e) + ";";
-		// FlowWiIf(exp1 : FlowWiExp, exp2 : FlowWiExp);
-		// FlowWiIfelse(exp1 : FlowWiExp, exp2 : FlowWiExp, exp3 : FlowWiExp);
+		FlowWiIf(exp1, exp2) : {
+			"if (" + wiExp2string(exp1, None()) + ") {"
+			+ eol + wiExp2string(exp2, None()) + eol
+			+ "}";
+		}
+		FlowWiIfelse(exp1, exp2, exp3) : {
+			"if (" + wiExp2string(exp1, None()) + ") {"
+			+ eol + wiExp2string(exp2, None()) + "\n"
+			+ "} else {"
+			+ eol + wiExp2string(exp3, None()) + "\n"
+			+ "}";
+		}
 		// FlowWiBreak();
 		// FlowWiContinue();
 		// FlowWiReturn(exps : [FlowWiExp]);
