@@ -85,10 +85,16 @@ export {
 	fiTypeContainsName(tp : FiType, name : string) -> bool;
 
 	// Erase information about funciton arg names. Used to compare types by value.
-	fiTypeStripArgnames(type : FiType) -> FiType;
+	//fiTypeStripArgnames(type : FiType) -> FiType;
 
 	// Checks if a name is a name of a global function or native (not variable!)
 	fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool;
+
+	// Clear from the name: renames a variable
+	fiRenameVar(e : FiExp, var: string, new: string) -> FiExp;
+
+	// Checks the equivalence of types (function arg names are ignored)
+	fiEqualTypes(type1 : FiType, type2 : FiType) -> bool;
 }
 
 fiDeclarationArgNames(decl) {
@@ -613,7 +619,7 @@ fiTypeContainsName(tp : FiType, name : string) -> bool {
 			fiTypeContainsName(rt, name) || exists(args, \arg -> fiTypeContainsName(arg.type, name));
 	}
 }
-
+/*
 fiTypeStripArgnames(type : FiType) -> FiType {
 	switch (type) {
 		FiTypeRef(rt):
@@ -630,7 +636,7 @@ fiTypeStripArgnames(type : FiType) -> FiType {
 		default: type;
 	}
 }
-
+*/
 fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool {
 	 switch (lookupTree(names.toplevel, name)) {
 		Some(decl): {
@@ -641,5 +647,93 @@ fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool {
 			}
 		}
 		None(): false;
+	}
+}
+
+fiRenameVar(e : FiExp, var: string, new: string) -> FiExp {
+	ren = \x -> fiRenameVar(x, var, new);
+	switch(e) {
+		FiLambda(__, body,__, __): {
+			FiLambda(e with body = ren(body));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = ren(fn),
+				args = map(args, ren)
+			);
+		}
+		FiLet(__, __,e1, e2,__, __): {
+			FiLet(e with
+				e1 = ren(e1),
+				e2 = ren(e2)
+			);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with
+				e1 = ren(e1),
+				e2 = ren(e2),
+				e3 = ren(e3)
+			);
+		}
+		FiSwitch(__, __,cases,__, __): {
+			FiSwitch(e with 
+				cases = map(cases, \c -> FiCase(c with body = ren(c.body)))
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = ren(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, ren));
+		}
+		FiCallPrim(__, es,__,__): {
+			FiCallPrim(e with es = map(es, ren));
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = ren(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = ren(ex));
+		}
+		FiVar(name,__, __): if (name != var) e else FiVar(e with name = new);
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+
+fiEqualTypes(type1 : FiType, type2 : FiType) -> bool {
+	switch (type1) {
+		FiTypeRef(rt1): {
+			switch (type2) {
+				FiTypeRef(rt2): fiEqualTypes(rt1, rt2);
+				default: false;
+			}
+		}
+		FiTypeArray(at1): {
+			switch (type2) {
+				FiTypeArray(at2): fiEqualTypes(at1, at2);
+				default: false;
+			}
+		}
+		FiTypeName(id1, tp1): {
+			switch (type2) {
+				FiTypeName(id2, tp2): {
+					id1 == id2 && all(mapi(tp1, \i, t1 -> fiEqualTypes(t1, tp2[i])));
+				}
+				default: false;
+			}
+		}
+		FiTypeFunction(args1, rt1): {
+			switch (type2) {
+				FiTypeFunction(args2, rt2): {
+					fiEqualTypes(rt1, rt2) && all(mapi(args1, \i, t1 -> fiEqualTypes(t1.type, args2[i].type)));
+				}
+				default: false;
+			}
+		}
+		default: type1 == type2;
 	}
 }

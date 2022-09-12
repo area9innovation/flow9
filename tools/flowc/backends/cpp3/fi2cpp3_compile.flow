@@ -194,10 +194,12 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) ->
 }
 
 fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
-	value0 = fiEliminateUnionFields(globalVar.value, gctx.program.names, 0);
+	names = gctx.program.names;
+	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
 	value1 = fiExpSSA(value0);
-	value = fiExplisitCastInSwitch(value1, gctx.program.names);
-	pair = fiExp2FsExp(value, makeSet(), gctx.program.names);
+	value2 = fiExplisitCastInSwitch(value1, names);
+	value = fiFixVarInSameStructType(value2, makeTree(), names);
+	pair = fiExp2FsExp(value, makeSet(), names);
 
 	value_exp = if (pair.second == []) pair.first else {
 		FsCall(FsLambda([], [], 
@@ -215,46 +217,59 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
 
 fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> string {
 	name = fun.name;
-	lambda0 = fiEliminateUnionFields(fun.lambda, gctx.program.names, 0);
-	lambda1 = fiExplisitCastInSwitch(lambda0, gctx.program.names);
-	lambda2 = fiEliminateUnionFields(lambda1, gctx.program.names, 0);
-	lambda3 = fiExpSSA(lambda2);
-	lambda4 = cast(lambda3: FiExp -> FiLambda);
-	lambda = if (fiTypeStripArgnames(fun.type.returnType) == fiTypeStripArgnames(lambda4.type.returnType)) lambda4 else {
-		FiLambda(lambda4 with 
-			body = FiCast(lambda4.body, lambda4.type.returnType, fun.type.returnType, fun.type.returnType, lambda4.start)
+	/*if (name == "flow") {
+		// flow(i : ?) -> flow  is a special function, which is treated separately
+		"";
+	} else {*/
+		fn_type = fun.type;
+		names = gctx.program.names;
+		lambda0 = fiEliminateUnionFields(fun.lambda, gctx.program.names, 0);
+		lambda1 = fiExplisitCastInSwitch(lambda0, gctx.program.names);
+		lambda2 = fiEliminateUnionFields(lambda1, gctx.program.names, 0);
+		lambda3 = fiExpSSA(lambda2);
+		lambda4 = fiFixVarInSameStructType(
+			lambda3, 
+			fold(fn_type.args, makeTree(), \acc, arg -> 
+				setTree(acc, arg.name, FiVar(arg.name, arg.type, 0))
+			), 
+			names
 		);
-	}
-	fn_type = fun.type;
-	names = gctx.program.names;
-	fun_typars = set2array(fiTypeTypars(makeSet(), fn_type));
-	decl_typars = fiDeclTypars2cpp3(fun_typars, names);
-	fun_stat = fiExp2FsStat(
-		lambda.body, FsReturnToOuter(), 
-		fold(lambda.args, makeSet(), \acc, arg -> 
-			if (arg.name == "__") acc else insertSet(acc, arg.name)
-		),
-		names
-	);
-	/*if (name == "fn3") {
-		println("fn3:\n" +
-			"fun.lambda:\n" +
-			/*toStringFormatted(fun.lambda) + "\n\n" +
-			"lambda0:\n" +
-			toStringFormatted(lambda0) + "\n\n" +
-			"lambda1:\n" +
-			toStringFormatted(lambda1) + "\n\n" +* /
-			"fun_stat:\n" + 
-			fsStat2s(fun_stat) + "\n\n"
+		lambda5 = cast(lambda4: FiExp -> FiLambda);
+		lambda = if (fiEqualTypes(fun.type.returnType, lambda5.type.returnType)) lambda5 else {
+			FiLambda(lambda5 with 
+				body = FiCast(lambda5.body, lambda5.type.returnType, fun.type.returnType, fun.type.returnType, lambda4.start)
+			);
+		}
+		fun_typars = set2array(fiTypeTypars(makeSet(), fn_type));
+		decl_typars = fiDeclTypars2cpp3(fun_typars, names);
+		fun_stat = fiExp2FsStat(
+			lambda.body, FsReturnToOuter(), 
+			fold(lambda.args, makeSet(), \acc, arg -> 
+				if (arg.name == "__") acc else insertSet(acc, arg.name)
+			),
+			names
 		);
-	}*/
+		/*
+		if (name == "flow2i") {
+			println("flow2i:\n" +
+				"fun.lambda:\n" +
+				/*toStringFormatted(fun.lambda) + "\n\n" +
+				"lambda0:\n" +
+				toStringFormatted(lambda0) + "\n\n" +
+				"lambda1:\n" +
+				toStringFormatted(lambda1) + "\n\n" +* /
+				"fun_stat:\n" + 
+				fsStat2s(fun_stat) + "\n\n"
+			);
+		}*/
 
-	fun_body = " " + fiWrapWithBraces(fsStat2cpp3(fun_stat, gctx));
-	fun_name = fiVarName2cpp3(name);
-	fun_signature = fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + "(" + 
-		superglue(lambda.args, \arg -> fiType2cpp3(arg.type, gctx) + " " + fiVarName2cpp3(arg.name), ", ") + 
-	")";
-	decl_typars + fun_signature + (if (only_decl) ";" else fun_body) + "\n\n";
+		fun_body = " " + fiWrapWithBraces(fsStat2cpp3(fun_stat, gctx));
+		fun_name = fiVarName2cpp3(name);
+		fun_signature = fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + "(" + 
+			superglue(lambda.args, \arg -> fiType2cpp3(arg.type, gctx) + " " + fiVarName2cpp3(arg.name), ", ") + 
+		")";
+		decl_typars + fun_signature + (if (only_decl) ";" else fun_body) + "\n\n";
+	//}
 }
 
 fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
@@ -527,10 +542,15 @@ fsCallPrim2cpp3(op : FcPrim, es : [FsExp], type : FiType, gctx : Cpp3GlobalConte
 		}
 		FcStructPrim(struct_name): {
 			struct_type = cast(type : FiType -> FiTypeName);
-			//typars = if (struct_type.typeparameters == []) "" else 
-			//	"<" + superglue(struct_type.typeparameters, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
-			struct_full_name = fiStructName2cpp3(struct_type, gctx); // fiTypeName2cpp3(struct_name) + typars;
-			"Str<" + struct_full_name + ">(new " + struct_full_name + "(" + superglue(es, e2k, ", ") + "))";
+			struct_full_name = fiStructName2cpp3(struct_type, gctx);
+			struct = lookupTreeDef(gctx.program.names.structs, struct_name, FiTypeStruct("", [], [], 0));
+			s_args = mapi(es, \i, arg -> {
+				sarg_type = fsExpType(arg);
+				call_type = struct.args[i].type;
+				arg_s = e2k(arg);
+				fiCpp3Cast(sarg_type, call_type, arg_s, gctx);
+			});
+			"Str<" + struct_full_name + ">(new " + struct_full_name + "(" + strGlue(s_args, ", ") + "))";
 		}
 		FcFieldPrim(name): {
 			if (name == "structname") {
@@ -583,9 +603,14 @@ void init_struct_defs() {\n" +
 }
 
 fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> string {
-	if (fiTypeStripArgnames(from) == fiTypeStripArgnames(to)) s else 
+	if (fiEqualTypes(from, to)) s else 
 	if (from == FiTypeFlow()) {
-		"FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
+		to_typars = fiCollectTypars(to, makeSet());
+		if (isEmptySet(to_typars)) {
+			"FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
+		} else {
+			s;
+		}
 	} else {
 		static_cast = \s1 -> "static_cast<" + fiType2cpp3(to, gctx) + ">(" + s1 + ")";
 		switch (to) {
@@ -599,7 +624,10 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 				s + ".cast<void>()";
 			}
 			FiTypeParameter(n): {
-				fail0("cast from type parameter")
+				switch (from) {
+					FiTypeParameter(m): "struct2struct<" + fiType2cpp3(to, gctx) + ">(" + s + ")";
+					default: s;
+				}
 			}
 			FiTypeRef(rt): {
 				s + ".cast<" + fiType2cpp3(rt, gctx)+  ">()";
@@ -616,13 +644,13 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 							if (from_is_union) {
 								s 
 							} else {
-								"struct2union<" + fiStructName2cpp3(from, gctx) + ">(" + s + ")";
+								"struct2union<" + fiType2cpp3(from, gctx) + ">(" + s + ")";
 							}
 						} else {
 							if (from_is_union) {
-								"union2struct<" + fiStructName2cpp3(to, gctx) + ">(" + s + ")";
+								"union2struct<" + fiType2cpp3(to, gctx) + ">(" + s + ")";
 							} else {
-								"struct2struct<" + fiStructName2cpp3(from, gctx) + ", " + fiStructName2cpp3(to, gctx) + ">(" + s + ")";
+								"struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
 							}
 						}
 					}
@@ -631,7 +659,7 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 			}
 			FiTypeFunction(args, rt): {
 				signature = superglue(concat([rt], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ");
-				s + ".cast<" + signature+  ">()";
+				s + ".template cast<" + signature+  ">()";
 			}
 		}
 	}

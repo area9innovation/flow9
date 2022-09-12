@@ -43,6 +43,19 @@ will expand to
 // Perform SSA (Single Static Assignment) transformation.
 fiExpSSA(e : FiExp) -> FiExp;
 
+/* Undo type coercing inside: 
+	`if (isSameStructType(a, b)) { 
+		e 
+	}`  
+transform it to:
+	`if (isSameStructType(a, b)) { 
+		__prime_a = cast(e: a.type -> b.type);
+		e_prime
+	}`
+where `e_prime` - is e with `a` replaced by `__prime_a`
+ */
+fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp;
+
 }
 
 fiEliminateUnionFields(e : FiExp, names: FiGlobalNames, local: int) -> FiExp {
@@ -271,60 +284,6 @@ fiExplisitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 	}
 }
 
-fiRenameVar(e : FiExp, var: string, new: string) -> FiExp {
-	ren = \x -> fiRenameVar(x, var, new);
-	switch(e) {
-		FiLambda(__, body,__, __): {
-			FiLambda(e with body = ren(body));
-		}
-		FiCall(fn, args,__,__): {
-			FiCall(e with
-				f = ren(fn),
-				args = map(args, ren)
-			);
-		}
-		FiLet(__, __,e1, e2,__, __): {
-			FiLet(e with
-				e1 = ren(e1),
-				e2 = ren(e2)
-			);
-		}
-		FiIf(e1, e2, e3,__, __): {
-			FiIf(e with
-				e1 = ren(e1),
-				e2 = ren(e2),
-				e3 = ren(e3)
-			);
-		}
-		FiSwitch(__, __,cases,__, __): {
-			FiSwitch(e with 
-				cases = map(cases, \c -> FiCase(c with body = ren(c.body)))
-			);
-		}
-		FiCast(ex, __, __, __, __): {
-			FiCast(e with e = ren(ex));
-		}
-		FiSeq(es,__,__): {
-			FiSeq(e with es = map(es, ren));
-		}
-		FiCallPrim(__, es,__,__): {
-			FiCallPrim(e with es = map(es, ren));
-		}
-		FiRequire(__, ex,__,__): {
-			FiRequire(e with e = ren(ex));
-		}
-		FiUnsafe(__, ex,__,__): {
-			FiUnsafe(e with fallback = ren(ex));
-		}
-		FiVar(name,__, __): if (name != var) e else FiVar(e with name = new);
-		FiVoid(__):       e;
-		FiDouble(__,__):  e;
-		FiInt(__,__):     e;
-		FiString(__,__):  e;
-		FiBool(__,__):    e;
-	}
-}
-
 fiExpSSA(e : FiExp) -> FiExp {
 	fiExpDoSSA(e, makeTree());
 }
@@ -396,5 +355,165 @@ fiExpDoSSA(e: FiExp, vars_assigned: Tree<string, int>) -> FiExp {
 		FiInt(__,__):     e;
 		FiString(__,__):  e;
 		FiBool(__,__):    e;
+	}
+}
+
+fiDetectIfIsSameStructType(e : FiIf) -> [FiVar] {
+	switch (e.e1) {
+		FiCall(f, args, __,__): {
+			switch (f) {
+			FiVar(name,__,__): {
+				if (name == "isSameStructType") {
+					filtermap(args, \arg -> 
+						switch (arg) {
+							FiVar(__,__,__): Some(arg);
+							default: None();
+						}
+					);
+				} else {
+					[];
+				}
+			}
+			default: [];
+			}
+		}
+		default: [];
+	}
+}
+
+fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp {
+	fix = \x -> fiFixVarInSameStructType(x, locals, names);
+	switch(e) {
+		FiLambda(args, body,__, start): {
+			new_locals = fold(args, locals, \acc, arg -> 
+				setTree(acc, arg.name, FiVar(arg.name, arg.type, start))
+			);
+			FiLambda(e with body = fiFixVarInSameStructType(body, new_locals, names));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = fix(fn),
+				args = map(args, fix)
+			);
+		}
+		FiLet(v, t, e1, e2,__, start): {
+			new_locals = setTree(locals, v, FiVar(v, t, start));
+			FiLet(e with
+				e1 = fix(e1),
+				e2 = fiFixVarInSameStructType(e2, new_locals, names);
+			);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			def_case = \-> FiIf(e with e1 = fix(e1), e2 = fix(e2), e3 = fix(e3));
+			vars = fiDetectIfIsSameStructType(e);
+			if (length(vars) == 2) {
+				v0 = vars[0];
+				v1 = vars[1];
+				fix_vars = \old: FiVar, new: FiVar -> {
+					prim_name = "__prim_" + old.name;
+					e2_prim = FiLet(prim_name, new.type, 
+						FiCast(old, old.type, new.type, new.type, start),
+						fiRenameVar(fix(e2), old.name, prim_name), type, start
+					);
+					ret = FiIf(e with e1 = fix(e1), e2 = e2_prim, e3 = fix(e3));
+					println("fiFixVarInSameStructType:\n" + toStringFormatted(ret));
+					ret;
+				}
+				switch (fiVarTypeInExpr(e2, v0.name)) {
+					Some(v0_prim): {
+						switch (fiVarTypeInExpr(e2, v1.name)) {
+							Some(v1_prim): fail0("both variables change types in 'if' with 'isSameStructType' condition");
+							None(): fix_vars(v0, v0_prim);
+						}
+					}
+					None(): {
+						switch (fiVarTypeInExpr(e2, v1.name)) {
+							Some(v1_prim): fix_vars(v1, v1_prim);
+							None(): def_case();
+						}
+					}
+				} 
+			} else {
+				def_case();
+			}
+		}
+		FiSwitch(var, vtype, cases, type, start): {
+			FiSwitch(e with
+				cases = map(cases, \c -> {
+					struct = lookupTreeDef(names.structs, c.struct, FiTypeStruct("", [], [], 0));
+					new_locals = foldi(c.argNames, locals, \i, acc, arg -> 
+						setTree(acc, arg, FiVar(arg, struct.args[i].type, start))
+					);
+					FiCase(c with body = fiFixVarInSameStructType(c.body, new_locals, names));
+				})
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = fix(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, fix));
+		}
+		FiCallPrim(__, es,__,__): {
+			FiCallPrim(e with es = map(es, fix));
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = fix(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = fix(ex));
+		}
+		FiVar(__,__,__): e;
+		FiVoid(__):      e;
+		FiDouble(__,__): e;
+		FiInt(__,__):    e;
+		FiString(__,__): e;
+		FiBool(__,__):   e;
+	}
+}
+
+fiVarTypeInExpr(e : FiExp, var: string) -> Maybe<FiVar> {
+	check_e = \x -> fiVarTypeInExpr(x, var);
+	check_es = \xs -> fold(xs, None(), \acc, x ->
+		if (isSome(acc)) acc else fiVarTypeInExpr(x, var)
+	);
+	switch(e) {
+		FiLambda(args, body,__, start): {
+			check_e(body);
+		}
+		FiCall(fn, args,__,__): {
+			switch (check_e(fn)) {
+				Some(t): Some(t);
+				None():  check_es(args);
+			}
+		}
+		FiLet(v, t, e1, e2,__, start): {
+			check_es([e1, e2]);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			check_es([e1, e2, e3]);
+		}
+		FiSwitch(v, vtype, cases, type, start): {
+			if (v.name == var) Some(v) else {
+				check_es(map(cases, \c -> c.body));
+			}
+		}
+		FiCast(ex, __, __, __, __): {
+			check_e(ex);
+		}
+		FiSeq(es,__,__): {
+			check_es(es);
+		}
+		FiCallPrim(__, es,__,__): {
+			check_es(es);
+		}
+		FiRequire(__, ex,__,__): {
+			check_e(ex);
+		}
+		FiUnsafe(__, ex,__,__): {
+			check_e(ex);
+		}
+		FiVar(name,__,__): if (name == var) Some(e) else None();
+		default: None();
 	}
 }
