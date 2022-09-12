@@ -154,10 +154,10 @@ inline Arr<T> " + var_nm("filter") + "(Arr<T> a, Fun<Bool, T> fn) {
 }\n"),
 Pair("isSameStructType", \type_nm, var_nm -> 
 "inline Bool " + var_nm("isSameStructType") + "(Flow o1, Flow o2) {
-	if (o1.index() != Type::STRUCT || o2.index() != Type::STRUCT) {
+	if (o1.type() != Type::STRUCT || o2.type() != Type::STRUCT) {
 		return false;
 	} else {
-		return std::get<Ptr<Struct>>(o1)->name() == std::get<Ptr<Struct>>(o2)->name();
+		return std::get<Ptr<Struct>>(o1.val)->name() == std::get<Ptr<Struct>>(o2.val)->name();
 	}
 }\n"),
 Pair("quit", \type_nm, var_nm -> "void " + var_nm("quit") + "(Int code) { exit(code); }\n\n"),
@@ -407,19 +407,19 @@ Flow " + var_nm("makeStructValue") + "(String name, Arr<Flow> args, Flow defval)
 
 Pair("isSameObj", \type_nm, var_nm -> 
 "Bool " + var_nm("isSameObj") + "(Flow a, Flow b) {
-	if (a.index() != b.index()) {
+	if (a.type() != b.type()) {
 		return false;
 	} else {
-		switch (a.index()) {
-			case Type::INT:    return std::get<Int>(a) == std::get<Int>(b);
-			case Type::BOOL:   return std::get<Bool>(a) == std::get<Bool>(b);
-			case Type::DOUBLE: return std::get<Double>(a) == std::get<Double>(b);
-			case Type::STRING: return *std::get<String>(a) == *std::get<String>(b);
-			case Type::STRUCT: return std::get<Ptr<Struct>>(a).get() == std::get<Ptr<Struct>>(b).get();
-			case Type::ARRAY:  return std::get<Ptr<Array>>(a).get() == std::get<Ptr<Array>>(b).get();
-			case Type::REF:    return std::get<Ptr<Reference>>(a).get() == std::get<Ptr<Reference>>(b).get();
-			case Type::FUNC:   return std::get<Ptr<Function>>(a).get() == std::get<Ptr<Function>>(b).get();
-			case Type::NATIVE: return std::get<Ptr<Native>>(a).get() == std::get<Ptr<Native>>(b).get();
+		switch (a.type()) {
+			case Type::INT:    return std::get<Int>(a.val) == std::get<Int>(b.val);
+			case Type::BOOL:   return std::get<Bool>(a.val) == std::get<Bool>(b.val);
+			case Type::DOUBLE: return std::get<Double>(a.val) == std::get<Double>(b.val);
+			case Type::STRING: return *std::get<String>(a.val) == *std::get<String>(b.val);
+			case Type::STRUCT: return std::get<Ptr<Struct>>(a.val).get() == std::get<Ptr<Struct>>(b.val).get();
+			case Type::ARRAY:  return std::get<Ptr<Array>>(a.val).get() == std::get<Ptr<Array>>(b.val).get();
+			case Type::REF:    return std::get<Ptr<Reference>>(a.val).get() == std::get<Ptr<Reference>>(b.val).get();
+			case Type::FUNC:   return std::get<Ptr<Function>>(a.val).get() == std::get<Ptr<Function>>(b.val).get();
+			case Type::NATIVE: return std::get<Ptr<Native>>(a.val).get() == std::get<Ptr<Native>>(b.val).get();
 		}
 	}
 }\n"),
@@ -440,7 +440,7 @@ Flow " + var_nm("voidValue") + "() {
 
 Pair("isArray", \type_nm, var_nm -> 
 "Bool " + var_nm("isArray") + "(Flow f) {
-	return f.index() == Type::ARRAY;
+	return f.type() == Type::ARRAY;
 }\n"),
 
 Pair("loaderUrl", \type_nm, var_nm -> "String " + var_nm("loaderUrl") + "() { return makeString(\"\"); }\n\n"),
@@ -646,15 +646,17 @@ Pair("fromBinary", \type_nm, var_nm ->
 }\n"),
 
 Pair("toBinary", \type_nm, var_nm -> "
-Void writeCharValue(Int c, std::ostringstream& os) {
-	os << (c & 0xffff);
+Void writeCharValue(Int c, std::vector<char16_t>& os) {
+	//c & 0xffff;
+	os.push_back(c & 0xffff);
 }
-Void writeBinaryInt32(Int i, std::ostringstream& os) {
+Void writeBinaryInt32(Int i, std::vector<char16_t>& os) {
 	Int low = (i & 0xffff);
 	Int high = (i >> 16);
-	os << low << high;
+	writeCharValue(low, os);
+	writeCharValue(high, os);
 }
-Void writeIntValue(Int value, std::ostringstream& os) {
+Void writeIntValue(Int value, std::vector<char16_t>& os) {
 	if ((value & 0xFFFF8000) != 0) {
 		writeCharValue(0xFFF5, os);
 		writeBinaryInt32(value, os);
@@ -662,19 +664,25 @@ Void writeIntValue(Int value, std::ostringstream& os) {
 		writeCharValue(value, os);
 	}
 }
-Void writeBooleanValue(Bool value, std::ostringstream& os) {
+Void writeBooleanValue(Bool value, std::vector<char16_t>& os) {
 	writeCharValue(value ? 0xFFFE : 0xFFFD, os);
 }
-Void writeDoubleValue(Double value, std::ostringstream& os) {
+
+Void writeDoubleValue(Double value, std::vector<char16_t>& os) {
+	union DoubleSplitter {
+		DoubleSplitter(Double v): d(v) { }
+		char16_t ints[4];
+		Double d;
+	};
 	writeCharValue(0xFFFC, os);
-	os << value;
-	/*val bb = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-	bb.putDouble(value)
-	for (i in 0..3) {
-		writeCharValue(bb.getShort(i + i).toInt(), os)
-	}*/
+	DoubleSplitter v(value);
+	os.push_back(v.ints[0] & 0xffff);
+	os.push_back((v.ints[1] >> 16) & 0xffff);
+	os.push_back((v.ints[2] >> 32) & 0xffff);
+	os.push_back((v.ints[3] >> 48) & 0xffff);
 }
-Void writeStringValue(String value, std::ostringstream& os) {
+
+Void writeStringValue(String value, std::vector<char16_t>& os) {
 	Int str_len = value->size();
 	if (str_len > 65535) {
 		writeCharValue(0xFFFB, os);
@@ -687,27 +695,27 @@ Void writeStringValue(String value, std::ostringstream& os) {
 		writeCharValue(c, os);
 	}
 }
-Void writeBinaryValue(Flow value, std::ostringstream& os, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<Struct>>& structDefs) {
-	switch (value.index()) {
+Void writeBinaryValue(Flow value, std::vector<char16_t>& os, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<Struct>>& structDefs) {
+	switch (value.type()) {
 		case Type::STRING: {
-			writeStringValue(std::get<String>(value), os);
+			writeStringValue(std::get<String>(value.val), os);
 			break;
 		}
 		case Type::DOUBLE: {
-			writeDoubleValue(std::get<Double>(value), os);
+			writeDoubleValue(std::get<Double>(value.val), os);
 			break;
 		}
 		case Type::INT: {
-			writeIntValue(std::get<Int>(value), os);
+			writeIntValue(std::get<Int>(value.val), os);
 			break;
 		}
 		case Type::BOOL: {
-			writeBooleanValue(std::get<Bool>(value), os);
+			writeBooleanValue(std::get<Bool>(value.val), os);
 			break;
 		}
 		case Type::STRUCT: {
-			Ptr<Struct> s = std::get<Ptr<Struct>>(value); 
-			//writeStructValue(std::get<Ptr<Struct>>(value), os, structIdxs, structDefs);
+			Ptr<Struct> s = std::get<Ptr<Struct>>(value.val); 
+			//writeStructValue(std::get<Ptr<Struct>>(value.val), os, structIdxs, structDefs);
 			String struct_id = s->name();
 			if (structIdxs.find(*struct_id) == structIdxs.end()) {
 				structIdxs[*struct_id] = structDefs.size();
@@ -722,7 +730,7 @@ Void writeBinaryValue(Flow value, std::ostringstream& os, std::unordered_map<str
 			break;
 		}
 		case Type::ARRAY: {
-			Ptr<Array> a = std::get<Ptr<Array>>(value);
+			Ptr<Array> a = std::get<Ptr<Array>>(value.val);
 			Int l = a->size();
 			if (l == 0) {
 				writeCharValue(0xFFF7, os);
@@ -750,11 +758,15 @@ String " + var_nm("toBinary") + "(Flow value) {
 	std::unordered_map<string, Int> structIdxs;
 	std::vector<Ptr<Struct>> structDefs;
 
-	std::ostringstream os;
+	std::vector<char16_t> os;
+	// Placeholders for size of values - 32 bit int
+	os.push_back(0);
+	os.push_back(0);
 	writeBinaryValue(value, os, structIdxs, structDefs);
-	//os.seekg(0, std::ios::end);
-	Int size = os.tellp();
-	//Int size = os.pcount();
+	Int len = os.size();
+	// Set length at the beginning
+	os[0] = len & 0xffff;
+	os[1] = len >> 16;
 
 	if (structDefs.size() == 0) {
 		writeCharValue(0xFFF7, os);
@@ -779,7 +791,7 @@ String " + var_nm("toBinary") + "(Flow value) {
 			writeCharValue(c, os);
 		}
 	}
-	return makeString(std::to_string(size + 2) + os.str());
+	return makeString(os.data(), os.size());
 }\n"),
 
 Pair("createHttpServerNative", \type_nm, var_nm -> "fun " + var_nm("createHttpServerNative") + "(
