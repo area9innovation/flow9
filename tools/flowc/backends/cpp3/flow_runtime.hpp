@@ -162,7 +162,7 @@ struct Flow {
 			case Type::REF:    return Type::REF;
 			case Type::FUNC:   return Type::FUNC;
 			case Type::NATIVE: return Type::NATIVE;
-			default: return Type::NATIVE;
+			default:           return Type::NATIVE;
 		} 
 	}
 };
