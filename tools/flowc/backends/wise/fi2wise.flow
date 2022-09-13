@@ -3,6 +3,7 @@ import tools/flowc/incremental/fiprogram;
 
 import text/blueprint;
 import tools/flowc/backends/wise/flow_wise_types;
+import tools/flowc/backends/wise/flow_wise_natives;
 
 // run test from 'tests' folder
 // \flow9\tools\flowc\backends\wise> .\cmpl variable
@@ -33,16 +34,27 @@ fiModule2FlowWiseAst(module : FiModule) -> FlowWiseAst {
 	exportNames = buildSet(module.exports);
 	functions = values2tree(module.functions, \f -> f.name);
 	structs = fiStructs2wiTuples(module.structs);
+	natives = getWiNatives(module.natives);
 
 	newBody = foldr(module.initOrder, FlowWiWaseEmpty(), \acc, fnName -> eitherMap(
 		lookupTree(functions, fnName),
-		\fn -> fiFunctionDec2FlowWiFunction(fn, containsSet(exportNames, fnName), structs.second, acc),
+		\fn -> fiFunctionDec2FlowWiFunction(fn, containsSet(exportNames, fnName), structs.second, natives, acc),
 		acc
 	));
 	
 	imports = fold(module.imports, newBody, \acc, v -> fiImport2FlowWiseAst(v, acc));
 
 	FlowWiseAstList(Cons(imports, structs.first));
+}
+
+FlowWiNatives(
+	fns : Tree<string, string>,
+);
+// TODO ?
+getWiNatives(natives : [FiNativeDec]) -> FlowWiNatives {
+	FlowWiNatives(fold(natives, makeTree(), \acc, decl -> 
+		eitherMap(findNativeName(decl.name), \n -> setTree(acc, decl.name, n), acc)
+	));
 }
 
 StructTuple(
@@ -84,27 +96,28 @@ fiImport2FlowWiseAst(decl : FiImport, body : FlowWiDecl) -> FlowWiDecl {
 	FlowWiFlowWiseInclude("lib/" + decl.flowfile, body);
 }
 
-fiFunctionDec2FlowWiFunction(func : FiFunctionDec, exported : bool, structs : StructTuple, body : FlowWiDecl) -> FlowWiFunction {
+fiFunctionDec2FlowWiFunction(func : FiFunctionDec, exported : bool, structs : StructTuple, natives : FlowWiNatives, body : FlowWiDecl) -> FlowWiFunction {
 	FlowWiFunction(
 		func.name,
 		b2s(exported),
 		map(func.lambda.args, \arg -> FlowWiIdtype(arg.name, fiType2FlowWiType(arg.type, structs))),
 		fiType2FlowWiType(func.type.returnType, structs),
-		fiExp2FlowWiExp(func.lambda.body, structs),
+		fiExp2FlowWiExp(func.lambda.body, structs, natives),
 		body
 	);
 }
 
-fiExp2FlowWiExp(exp : FiExp, structs : StructTuple) -> FlowWiExp {
+fiExp2FlowWiExp(exp : FiExp, structs : StructTuple, natives : FlowWiNatives) -> FlowWiExp {
 	makeDefExp = \-> {
 		println("TODO FlowWiExp: " + toString(exp));
 		FlowWiBrace([]);
 	}
-	e2e = \e -> fiExp2FlowWiExp(e, structs);
+	resloveVarName = \name -> lookupTreeDef(natives.fns, name, name);
+	e2e = \e -> fiExp2FlowWiExp(e, structs, natives);
 	switch (exp : FiExp) {
 		FiLambda(args, body, type, start) : makeDefExp();
 		FiCall(f, args, type, start) : FlowWiCall(resolveWiFnName(e2e(f), args), map(args, e2e));
-		FiVar(name, type, start) : FlowWiVar(name);
+		FiVar(name, type, start) : FlowWiVar(resloveVarName(name));
 		FiLet(name, type, e1, e2, type2, start) : {
 			FlowWiLet(name, 0, fiType2FlowWiType(type, structs), e2e(e1), FlowWiBrace([e2e(e2)]));
 		}
@@ -120,16 +133,16 @@ fiExp2FlowWiExp(exp : FiExp, structs : StructTuple) -> FlowWiExp {
 			// FiCase(struct: string, argNames : [string], body: FiExp, start : int);
 		FiCast(e, tFrom, tTo, type, start) : makeDefExp();
 		FiSeq(es, type, start) : FlowWiBrace(map(es, e2e));
-		FiCallPrim(op, es, type, start) : eitherFn(fiCallPrim2wiExp(exp, structs), idfn, makeDefExp);
+		FiCallPrim(op, es, type, start) : eitherFn(fiCallPrim2wiExp(exp, structs, natives), idfn, makeDefExp);
 		FiRequire(flowfile, e, type, start) : makeDefExp();
 		FiUnsafe(name, fallback, type, start) : makeDefExp();
 		FiConst() : fiConst2FlowWiExp(exp);
 	}
 }
 
-fiCallPrim2wiExp(exp : FiCallPrim, structs : StructTuple) -> Maybe<FlowWiExp> {
-	e2e = \e -> fiExp2FlowWiExp(e, structs);
-	structM = fiStructFn2wiExp(exp, structs);
+fiCallPrim2wiExp(exp : FiCallPrim, structs : StructTuple, natives : FlowWiNatives) -> Maybe<FlowWiExp> {
+	e2e = \e -> fiExp2FlowWiExp(e, structs, natives);
+	structM = fiStructFn2wiExp(exp, structs, natives);
 	
 	if (isSome(structM)) {
 		structM;
@@ -140,7 +153,7 @@ fiCallPrim2wiExp(exp : FiCallPrim, structs : StructTuple) -> Maybe<FlowWiExp> {
 	} else {
 		firstExpM = fcPrims2flowWiExp(exp.op, e2e(exp.es[0]), e2e(exp.es[1]));
 		tail = subrange(exp.es, 2, length(exp.es) - 1);
-		secondExpM = fiCallPrim2wiExp(FiCallPrim(exp.op, tail, exp.type, exp.start), structs);
+		secondExpM = fiCallPrim2wiExp(FiCallPrim(exp.op, tail, exp.type, exp.start), structs, natives);
 		eitherMap(
 			firstExpM,
 			\firstExp -> {
@@ -155,7 +168,7 @@ fiCallPrim2wiExp(exp : FiCallPrim, structs : StructTuple) -> Maybe<FlowWiExp> {
 	}
 }
 
-fiStructFn2wiExp(exp : FiCallPrim, structs : StructTuple) -> Maybe<FlowWiExp> {
+fiStructFn2wiExp(exp : FiCallPrim, structs : StructTuple, natives : FlowWiNatives) -> Maybe<FlowWiExp> {
 	makeError = \desc -> {
 		println("Wrong field : " + desc + toString(exp));
 		None();
@@ -176,7 +189,7 @@ fiStructFn2wiExp(exp : FiCallPrim, structs : StructTuple) -> Maybe<FlowWiExp> {
 	switch (exp.op: FcPrim) {
 		FcStructPrim(structName) : eitherFn(
 			lookupTree(structs.link, structName),
-			\__ -> Some(FlowWiTuple(map(exp.es, \e -> fiExp2FlowWiExp(e, structs)))),
+			\__ -> Some(FlowWiTuple(map(exp.es, \e -> fiExp2FlowWiExp(e, structs, natives)))),
 			\-> makeWarning("structure not found ")
 		);
 		FcFieldPrim(fieldName) : if (length(exp.es) == 1) {
@@ -190,7 +203,7 @@ fiStructFn2wiExp(exp : FiCallPrim, structs : StructTuple) -> Maybe<FlowWiExp> {
 				}
 				FiCallPrim(__, __, type, __) : {
 					eitherFn(
-						fiStructFn2wiExp(exp.es[0], structs),
+						fiStructFn2wiExp(exp.es[0], structs, natives),
 						\e -> eitherFn(
 							getFieldIndex(fieldName, type),
 							\index -> Some(FlowWiTupledot(e, index)),
@@ -308,14 +321,14 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 	makePrintForFiType = \type -> switch (type : FiType) {
 		FiTypeBool() : "printlnb";
 		FiTypeInt() : "printlni32";
-		// FiTypeDouble() : FlowWiBasictype("f64");
+		FiTypeDouble() : "printlnf64";
 		// FiTypeString() : makeDefType();
 		default : makeDefPrintln(toString(type));
 	}
 	getWiPrintFn = \arg -> switch (arg : FiExp) {
 		FiBool(__, __) : "printlnb";
 		FiInt(__, __) : "printlni32";
-		FiDouble(v, __) : makeDefPrintln(d2s(v));
+		FiDouble(v, __) : "printlnf64";
 		FiString(v, __) : makeDefPrintln(v);
 		FiVoid(__) : "printv128";
 		FiVar(__, type, __) : makePrintForFiType(type);
