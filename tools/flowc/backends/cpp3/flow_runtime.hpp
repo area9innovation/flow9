@@ -43,6 +43,35 @@ using Double = double;
 using string = std::u16string;
 using String = Ptr<string>;
 
+// Unions for conversion from Double/Int to 16-bit chars and back
+
+struct Two16Chars {
+	Two16Chars(char16_t v0, char16_t v1): c0(v0), c1(v1) {}
+	char16_t c0;
+	char16_t c1;
+};
+
+union IntOrChars {
+	Two16Chars chars;
+	Int int_;
+	IntOrChars(Int i): int_(i) { }
+	IntOrChars(char16_t i0, char16_t i1): chars(i0, i1) { }
+};
+struct Four16Chars {
+	Four16Chars(char16_t v0, char16_t v1, char16_t v2, char16_t v3): c0(v0), c1(v1), c2(v2), c3(v3) {}
+	char16_t c0;
+	char16_t c1;
+	char16_t c2;
+	char16_t c3;
+};
+
+union DoubleOrChars {
+	Four16Chars chars;
+	Double double_;
+	DoubleOrChars(Double d): double_(d) { }
+	DoubleOrChars(char16_t i0, char16_t i1, char16_t i2, char16_t i3): chars(i0, i1, i2, i3) { }
+};
+
 std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> utf16_to_utf8;
 
 inline std::string toStdString(String s) { return utf16_to_utf8.to_bytes(*s); }
@@ -98,15 +127,7 @@ struct Function;
 // Special uninterpreted type
 struct Native;
 
-//using Union = Ptr<Struct>;
-
 template<typename T> struct Str;
-
-/*using Flow = std::variant<
-	Int, Bool, Double, String, 
-	Ptr<Struct>, Ptr<Array>, Ptr<Reference>, Ptr<Function>,
-	Ptr<Native>
->;*/
 
 struct Flow {
 	typedef std::variant<
@@ -145,8 +166,6 @@ struct Flow {
 		} 
 	}
 };
-
-
 
 void flow2string(Flow v, std::ostream& os, bool init = true);
 
@@ -235,11 +254,6 @@ template<typename From>
 Union struct2union(Str<typename From::Name> from) {
 	return std::static_pointer_cast<Struct>(from.str);
 }
-
-/*template<typename To>
-Str<typename To::element_type> struct2struct2(Ptr<Struct> from) {
-	return std::reinterpret_pointer_cast<To::element_type>(from);
-}*/
 
 template<typename T> 
 struct Arr : public Array {
