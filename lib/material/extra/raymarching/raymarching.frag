@@ -28,9 +28,9 @@ uniform TextureParamertersBlock {
 	TextureParamerters textureParameters[numTextures];
 };
 
-#define MAX_STEPS 1000
-#define MAX_DIST 1000.
-#define SURF_DIST .001
+uniform int MAX_STEPS;
+uniform float MAX_DIST;
+uniform float SURF_DIST;
 
 uniform vec4 backgroundColor;
 uniform float shown[%numColors% + numTextures];
