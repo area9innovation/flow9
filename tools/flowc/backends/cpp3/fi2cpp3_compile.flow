@@ -3,44 +3,23 @@ import tools/flowc/statements/fi2fs;
 import tools/flowc/manipulation/eliminate_union_fields;
 
 export {
-	cpp3MainFunc(gctx: Cpp3GlobalContext) -> string;
+	cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [CppRuntimePart]) -> string;
 	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string;
+	cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> CppRuntimePart;
 }
 
-cpp3MainFunc(gctx: Cpp3GlobalContext) -> string {
+cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [CppRuntimePart]) -> string {
 	init = strGlue(^(gctx.volatileInit), "\n");
-	struct_defs = fiCpp3StructDefs(gctx);
-	blueprint("
-
-using namespace flow;
-using namespace %prog_namespace%;
-
-%struct_defs%
-
-int main(int argc, const char* argv[]) {
-	for (int i = 1; i < argc; ++ i) {
-		std::string arg(argv[i]);
-		int eq_ind = arg.find(\"=\");
-		if (eq_ind == std::string::npos) {
-			command_args[fromStdString(arg)] = fromStdString(\"\");
-		} else {
-			std::string key = arg.substr(0, eq_ind);
-			std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
-			command_args[fromStdString(key)] = fromStdString(val);
-		}
-	}
-	init_struct_defs();
-	%init%
-	%main%();
-	return exit_code;
-}
-
-", [
-	"init", init, 
-	"struct_defs", struct_defs,
-	"main", gctx.varname2cpp("main"),
-	"prog_namespace", gctx.config.namespace
-]);
+	mains = superglue(runtime_parts, \part -> part.main, "\n");
+	sources = superglue(runtime_parts, \part -> part.source, "\n");
+"using namespace flow;
+using namespace " + gctx.config.namespace + ";\n\n" +
+(if (sources == "") "" else sources + "\n") +
+"int main(int argc, const char* argv[]) {\n" +
+(if (mains == "") "" else strIndent(mains) + "\n") +
+(if (init == "") "" else strIndent(init) + "\n") +
+"\t" + gctx.varname2cpp("main") + "();\n" +
+"\treturn 0;\n}\n";
 }
 
 fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string {
@@ -69,17 +48,24 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string {
 			if (!fiCpp3IsNative(nat.name, gctx) && !contains(module.initOrder, nat.name)) {
 				refArrayPush(missing_natives, nat.name);
 			}
-			maybeMap(cpp3_nat, \n -> n.def(gctx));
+			maybeMap(cpp3_nat, \n -> n.def(gctx.typename2cpp, gctx.varname2cpp));
 		}
 	});
+	includes = strGlue(set2array(fold(module.natives, makeSet(), \acc, nat -> 
+		switch (lookupTree(gctx.natives, nat.name)) {
+			Some(n): fold(n.include, acc, \ac, inc -> insertSet(ac, "#inc" + "lude  " + inc));
+			None(): acc;
+		}
+	)), "\n");
 	if (^missing_natives != []) {
 		err = "Module " + module.fileinfo.flowfile + ": following native functions are not implemented in cpp3 runtime and doesn't have a flow fallbacks:\n" +
 			strIndent(superglue(^missing_natives, \name -> "\t" + name, "\n"));
-		gctx.errors := concat(^(gctx.errors), [err]);
-		fcPrintln(err, gctx.config.threadId);
+		refArrayPush(gctx.errors, err);
+		fcPrintln(err, gctx.config.config.threadId);
 	}
 	all = concatA([structs_decls, structs_defs, defs2, defs1(true), defs1(false)]);
 	(if (exists(module.functions, \fn -> fn.name == "main")) "" else "#pragma once\n") +
+	(if (includes == "") "" else includes + "\n") +
 	"#inc" + "lude \"flow_runtime.hpp\"\n" +
 	"// Module " + module.fileinfo.flowfile + "\n\n" + 
 	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp.flowfile, "/", "_") + ".hpp\"\n")) + "\n") +
@@ -407,7 +393,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 					switch (lookupTree(gctx.natives, name)) {
 						Some(nat): {
 							switch (nat.inline) {
-								Some(inline): inline.def(s_args, f_type);
+								Some(inline): inline.def(s_args);
 								None(): gctx.varname2cpp(name) + typars + "(" + strGlue(s_args, ", ") + ")";
 							}
 						}
@@ -638,4 +624,26 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 			}
 		}
 	}
+}
+
+cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> CppRuntimePart {
+CppRuntimePart("struct_defs", 
+"
+struct FieldDef {
+	string name;
+	string type;
+	bool isMutable;
+};
+
+struct StructDef {
+	typedef std::function<Flow(Arr<Flow>)> Constructor;
+	Int id;
+	Constructor make;
+	std::vector<FieldDef> fields;
+};
+
+std::map<string, StructDef> struct_defs;
+
+", fiCpp3StructDefs(gctx), "init_struct_defs();", ["<map>"]
+);
 }

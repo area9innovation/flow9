@@ -1,0 +1,131 @@
+[
+
+CppRuntimePart("command_args", 
+"std::map<string, string> command_args;", "",
+"for (int i = 1; i < argc; ++ i) {
+	std::string arg(argv[i]);
+	int eq_ind = arg.find(\"=\");
+	if (eq_ind == std::string::npos) {
+		command_args[fromStdString(arg)] = fromStdString(\"\");
+	} else {
+		std::string key = arg.substr(0, eq_ind);
+		std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
+		command_args[fromStdString(key)] = fromStdString(val);
+	}
+}", ["<map>"]
+),
+
+CppRuntimePart("date_time_format", "std::string date_time_format(\"%Y-%m-%d %H:%M:%S\");", "", "", []),
+
+CppRuntimePart("void_value", 
+"struct RuntimeVoid : public Native { };
+const Flow void_value(new RuntimeVoid());
+","", "", []
+),
+
+CppRuntimePart("to_binary", 
+"Void writeCharValue(Int c, std::vector<char16_t>& os) {
+	os.push_back(c & 0xffff);
+}
+Void writeBinaryInt32(Int value, std::vector<char16_t>& os) {
+	IntOrChars i(value);
+	writeCharValue(i.chars.c0, os);
+	writeCharValue(i.chars.c1, os);
+}
+Void writeIntValue(Int value, std::vector<char16_t>& os) {
+	if ((value & 0xFFFF8000) != 0) {
+		writeCharValue(0xFFF5, os);
+		writeBinaryInt32(value, os);
+	} else {
+		writeCharValue(value, os);
+	}
+}
+Void writeBooleanValue(Bool value, std::vector<char16_t>& os) {
+	writeCharValue(value ? 0xFFFE : 0xFFFD, os);
+}
+Void writeDoubleValue(Double value, std::vector<char16_t>& os) {
+	writeCharValue(0xFFFC, os);
+	DoubleOrChars d(value);
+	writeCharValue(d.chars.c0, os);
+	writeCharValue(d.chars.c1, os);
+	writeCharValue(d.chars.c2, os);
+	writeCharValue(d.chars.c3, os);
+}
+Void writeStringValue(String value, std::vector<char16_t>& os) {
+	Int str_len = value->size();
+	if (str_len > 65535) {
+		writeCharValue(0xFFFB, os);
+		writeBinaryInt32(str_len, os);
+	} else {
+		writeCharValue(0xFFFA, os);
+		writeCharValue(str_len, os);
+	}
+	for (auto c : *value) {
+		writeCharValue(c, os);
+	}
+}
+Void writeBinaryValue(Flow value, std::vector<char16_t>& os, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<Struct>>& structDefs) {
+	switch (value.type()) {
+		case Type::STRING: {
+			writeStringValue(std::get<String>(value.val), os);
+			break;
+		}
+		case Type::DOUBLE: {
+			writeDoubleValue(std::get<Double>(value.val), os);
+			break;
+		}
+		case Type::INT: {
+			writeIntValue(std::get<Int>(value.val), os);
+			break;
+		}
+		case Type::BOOL: {
+			writeBooleanValue(std::get<Bool>(value.val), os);
+			break;
+		}
+		case Type::STRUCT: {
+			Ptr<Struct> s = std::get<Ptr<Struct>>(value.val); 
+			//writeStructValue(std::get<Ptr<Struct>>(value.val), os, structIdxs, structDefs);
+			String struct_id = s->name();
+			if (structIdxs.find(*struct_id) == structIdxs.end()) {
+				structIdxs[*struct_id] = structDefs.size();
+				structDefs.push_back(s);
+			}
+			Int struct_idx = structIdxs.at(*struct_id);
+			writeCharValue(0xFFF4, os);
+			writeCharValue(struct_idx, os);
+			for (Flow w : s->fields())  {
+				writeBinaryValue(w, os, structIdxs, structDefs);
+			}
+			break;
+		}
+		case Type::ARRAY: {
+			Ptr<Array> a = std::get<Ptr<Array>>(value.val);
+			Int l = a->size();
+			if (l == 0) {
+				writeCharValue(0xFFF7, os);
+			} else {
+				if (l > 65535) {
+					writeCharValue(0xFFF9, os);
+					writeBinaryInt32(l, os);
+				} else {
+					writeCharValue(0xFFF8, os);
+					writeCharValue(l, os);
+				}
+				for (Flow v : a->elements()) {
+					writeBinaryValue(v, os, structIdxs, structDefs);
+				}
+			}
+			break;
+		}
+		default: {
+			std::cerr << \"Not implemented: toBinary of \";
+			flow2string(value, std::cerr, false); 
+			std::cerr << std::endl;
+			break;
+		}
+	}
+}
+","", "", ["<unordered_map>"]
+)
+
+]

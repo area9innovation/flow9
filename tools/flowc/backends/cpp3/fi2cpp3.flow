@@ -9,8 +9,8 @@ export {
 }
 
 fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void {
-	if (cfg.verbose > 0) {
-		fcPrintln("Building a cpp3 '" + cfg.flowfile + "' application ...", cfg.threadId);
+	if (cfg.config.verbose > 0) {
+		fcPrintln("Building a cpp3 '" + cfg.config.flowfile + "' application ...", cfg.config.threadId);
 	}
 	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeVoid());
 	program = program0 |> 
@@ -31,15 +31,18 @@ fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> v
 	volatile_vars = filter(vars, \v -> 
 		exists(cfg.volatile, \name -> v.name == name || containsSet(lookupTreeDef(var_deps, v.name, makeSet()), name))
 	);
-	gctx = Cpp3GlobalContext(cfg, program, package_path,
+	gctx0 = Cpp3GlobalContext(cfg, program, package_path,
 		structs2ids,
 		\t -> "T" + i2s(strlen(t.n)),
 		\name -> "F_" + name,
 		\name -> "f_" + name,
-		fiCpp3InitNativeFuncs(),
-		fiCpp3InitRuntimeParts(),
+		fiCpp3InitNativeFuncs(cfg),
+		fiCpp3InitRuntimeParts(cfg),
 		buildSet(map(volatile_vars, \v -> v.name)),
 		ref [], ref []
+	);
+	gctx = Cpp3GlobalContext(gctx0 with 
+		runtimeParts = setTree(gctx0.runtimeParts, "struct_defs", cpp3StructDefsRuntimePart(gctx0))
 	);
 	sources = fi2cpp3Translate(gctx);
 	if (^(gctx.errors) != []) callback(5) else {
@@ -47,24 +50,46 @@ fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> v
 	}
 }
 
+fi2cpp3RuntimeParts(gctx: Cpp3GlobalContext) -> [CppRuntimePart] {
+	parts = set2array(foldTree(gctx.program.names.toplevel, makeSet(), \name, __, acc ->
+		switch (lookupTree(gctx.natives, name)) {
+			Some(nat): fold(nat.depends, acc, \ac, dep -> insertSet(ac, dep));
+			None(): acc;
+		}
+	));
+	filtermap(parts, \p -> 
+		switch (lookupTree(gctx.runtimeParts, p)) {
+			Some(part): {
+				Some(part);
+			}
+			None(): {
+				refArrayPush(gctx.errors, "unknown runtime part: " + p);
+				None();
+			}
+		}
+	);
+}
+
 fi2cpp3Translate(gctx: Cpp3GlobalContext) -> [string] {
 	save_file = \file, content -> {
 		path = pathCombine(gctx.packagePath, file);
 		ensureDirectoryExists(dirName(path));
 		if (!setFileContent(path, content)) {
-			fcPrintln("Failed to save " + file, gctx.config.threadId);
+			fcPrintln("Failed to save " + file, gctx.config.config.threadId);
 		}
 	}
+	// The runtime fragents, which are used in a program
+	runtime_parts = fi2cpp3RuntimeParts(gctx);
 	sources = if (!gctx.config.monolith) {
-		save_file("flow_runtime.hpp", fiCpp3Runtime(gctx));
+		save_file("flow_runtime.hpp", fiCpp3Runtime(gctx, runtime_parts));
 		sources = list2array(fold(gctx.program.traversal, makeList1("flow_runtime.hpp"), \srcs, name -> {
-			if (gctx.config.verbose > 1) {
-				fcPrintln("Compiling to cpp3: " + name, gctx.config.threadId);
+			if (gctx.config.config.verbose > 1) {
+				fcPrintln("Compiling to cpp3: " + name, gctx.config.config.threadId);
 			}
 			module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
 			cpp3_module = fiModule2cpp3(module, gctx);
 			is_main = exists(module.functions, \fn -> fn.name == "main");
-			cpp3_src = cpp3_module + if (!is_main) "" else "\n" + cpp3MainFunc(gctx);
+			cpp3_src = cpp3_module + if (!is_main) "" else "\n" + cpp3MainFunc(gctx, runtime_parts);
 			cpp3_path = strReplace(changeFileExt(name, if (!is_main) ".hpp" else ".cpp"), "/", "_");
 			//if (cpp3_src == "") srcs else {
 				save_file(cpp3_path, cpp3_src);
@@ -74,18 +99,18 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> [string] {
 		sources;
 	} else {
 		cpp3_modules = fold(gctx.program.traversal,
-			makeList1(fiCpp3Runtime(gctx)),
+			makeList1(fiCpp3Runtime(gctx, runtime_parts)),
 			\acc, name -> {
 				module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
 				Cons(fiModule2cpp3(module, gctx), acc);
 			}
 		);
-		cpp3_src = list2string(Cons(cpp3MainFunc(gctx), cpp3_modules));
-		cpp3_path = strReplace(changeFileExt(gctx.config.flowfile, ".cpp"), "/", "_");
+		cpp3_src = list2string(Cons(cpp3MainFunc(gctx, runtime_parts), cpp3_modules));
+		cpp3_path = strReplace(changeFileExt(gctx.config.config.flowfile, ".cpp"), "/", "_");
 		save_file(cpp3_path, cpp3_src);
 		[cpp3_path];
 	}
-	save_file(gctx.config.flowfile + "_sources", concatStrings(map(sources, \src -> src + "\n")));
+	save_file(gctx.config.config.flowfile + "_sources", concatStrings(map(sources, \src -> src + "\n")));
 	filter(sources, \path -> endsWith(path, ".cpp"));
 }
 
@@ -98,9 +123,9 @@ fi2cpp3Build(gctx: Cpp3GlobalContext, sources: [string], callback : (int) -> voi
 	optimize = if (opt_param == "" || debug_param != "") [] else {
 		["-O" + opt_param]
 	}
-	args = concatA([sources, debug, optimize, ["-std=c++20", "-o", changeFileExt(gctx.config.flowfile, ".exe")]]);
-	if (gctx.config.verbose > 0) {
-		fcPrintln("Compiling with cpp3: 'g++ " + strGlue(args, " ") + "', dir: " + gctx.packagePath + "...", gctx.config.threadId);
+	args = concatA([sources, debug, optimize, ["-std=c++20", "-o", changeFileExt(gctx.config.config.flowfile, ".exe")]]);
+	if (gctx.config.config.verbose > 0) {
+		fcPrintln("Compiling with cpp3: 'g++ " + strGlue(args, " ") + "', dir: " + gctx.packagePath + "...", gctx.config.config.threadId);
 	}
 	result = execSystemProcessOutput("g++", args, gctx.packagePath);
 	remove_no_cast_needed = \ -> {
@@ -122,7 +147,7 @@ fi2cpp3Build(gctx: Cpp3GlobalContext, sources: [string], callback : (int) -> voi
 
 		}), "\n");
 	}
-	if (gctx.config.verbose > 0 || result.exitCode != 0) {
+	if (gctx.config.config.verbose > 0 || result.exitCode != 0) {
 		msg = remove_no_cast_needed();
 		if (!isSpace(msg)) {
 			fcPrintln(remove_no_cast_needed(), gctx.program.config.threadId);

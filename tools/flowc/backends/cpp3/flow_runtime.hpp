@@ -1,28 +1,16 @@
 #pragma once
 // Cpp3 runtime
-#include <map>
 #include <string>
 #include <vector>
 #include <cassert>
 #include <functional>
 #include <algorithm>
 #include <sstream>
-#include <fstream>
 #include <memory>
-#include <cstdlib>
 #include <variant>
 #include <iostream>
-#include <cmath>
 #include <codecvt>
 #include <locale>
-#include <ctime>
-#include <chrono>
-#include <sys/time.h>
-#include <filesystem>
-#include <system_error>
-#include <unordered_map>
-#include <concepts>
-//#include <stacktrace>
 
 namespace flow {
 
@@ -651,25 +639,5 @@ Int compareFlow(Flow v1, Flow v2) {
 		}
 	}
 }
-
-
-std::map<string, string> command_args;
-int exit_code = 0;
-std::string date_time_format("%Y-%m-%d %H:%M:%S");
-
-struct FieldDef {
-	string name;
-	string type;
-	bool isMutable;
-};
-
-struct StructDef {
-	typedef std::function<Flow(Arr<Flow>)> Constructor;
-	Int id;
-	Constructor make;
-	std::vector<FieldDef> fields;
-};
-
-std::map<string, StructDef> struct_defs;
 
 }
