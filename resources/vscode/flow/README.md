@@ -67,6 +67,8 @@ Ctrl+k o to open the current file in a new window.
 On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
 
 
+If F7 does not start compiling the file, then check [Keyboard Shortcuts](https://code.visualstudio.com/docs/getstarted/keybindings). If there are 2 commands associated with the same key, then change Keybinding for one of them.
+
 ## FEATURES AND CONFIGURATION
 * Syntax highligting (flow, lingo, flowschema, sharekey), code snippets, and brace matching work out of the box
 * There are 3 commands:

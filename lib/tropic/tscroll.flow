@@ -10,7 +10,7 @@ export {
 	TScrollStyle ::= TScrollSetPosition, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TScrollPersistent,
 		TScrollDisableMouseWheel, TReverseMouseWheel, TScrollDisableOutOfBounds, TScrollKeysEnabled, TScrollbarsVisible,
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
-		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
+		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition, TScrollStep,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
 		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled;
 
@@ -140,6 +140,8 @@ export {
 		TScrollResizeBeforePrint(resize : bool); // Resize to the max content height before printing page, true by default
 
 		TScrollCropEnabled(enabled : Transform<bool>); // showScrolling by default
+		// Round scroll position to the corresponding step
+		TScrollStep(step : Transform<double>);
 
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
 
@@ -155,6 +157,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	cropByContent = tryExtractStruct(style, TScrollCropByContent(const(false), const(false)));
 	inspectVisible = tryExtractStruct(style, makeTScrollInspectVisible());
 	setPosition = tryExtractStruct(style, TScrollSetPosition(const(zeroPoint)));
+	scrollStep = tryExtractStruct(style, TScrollStep(const(-1.)));
 	// Do we restrict dragging "out" of bounds? Setting to false will allow swiping content over of bound.
 	scrollBound = extractStruct(style, TScrollBound(const(true), const(true)));
 	scrollOutOfBounds = tryExtractStruct(style, TScrollOutOfBounds(make(0.), make(0.)));
@@ -301,7 +304,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					fand(showScrolling, enabled),
 					\ -> TScrollHandlePosition(scrollId, manager, style, contentWH, boxWH, scrollPosition, maxWH,
 						currentPoint, xMoving, yMoving, inspectVisible, scrollBound, moving, currentInteractive, downXBar, downYBar,
-						TRectangle(interactiveRectangleStyle, TSized(boxWH)))
+						maybeMap(scrollStep, \ss -> ss.step), TRectangle(interactiveRectangleStyle, TSized(boxWH)))
 				),
 				TConstruct(
 					[
@@ -357,7 +360,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 								concat(
 									f2,
 									[
-										\ -> fconnect(scrollPosition, iv.topleft),
+										\ -> fconnectSelect(scrollPosition, iv.topleft, \p -> eitherMap(scrollStep, \ss -> roundToStep(p, ss), p)),
 										\ -> fconnect(boxWH, iv.widthHeight)
 									]
 								),
@@ -429,7 +432,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 										sp.position,
 										scrollPosition,
 										\p -> boundScrollPosition(p, fgetValue(maxWH), fgetValue(scrollBound.x), fgetValue(scrollBound.y)),
-										idfn
+										\p -> eitherMap(scrollStep, \ss -> roundToStep(p, ss), p)
 									)
 								),
 							f2
@@ -500,8 +503,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 							TScrollRectT(scrollPosition, boxWH, t, enabled)
 						else {
 							sPosition =
-								if (isRTL) fselect2(maxWH, scrollPosition, FLift2(\mwh, sp -> Point(mwh.width - sp.x, sp.y)))
-								else scrollPosition;
+								eitherMap(
+									scrollStep,
+									\ss -> fselectLift(scrollPosition, \p -> roundToStep(p, ss)),
+									scrollPosition
+								)
+								|> (\scrollPositionFixed ->
+									if (isRTL) fselect2(maxWH, scrollPositionFixed, FLift2(\mwh, sp -> Point(mwh.width - sp.x, sp.y)))
+									else scrollPositionFixed
+								);
 							TCrop2(sPosition, boxWH, cropEnabled, t)
 						}
 					)
@@ -734,7 +744,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	boxWH : Transform<WidthHeight>, scrollPosition : DynamicBehaviour<Point>, maxWH : Transform<WidthHeight>, currentPoint : DynamicBehaviour<Point>,
 	xMoving: DynamicBehaviour<bool>, yMoving : DynamicBehaviour<bool>, inspectVisible : Maybe<TScrollInspectVisible>, scrollBound : TScrollBound,
 	moving : DynamicBehaviour<bool>, currentInteractive : DynamicBehaviour<Maybe<bool>>, downXBar : DynamicBehaviour<bool>,
-	downYBar : DynamicBehaviour<bool>, tr : Tropic) -> Tropic {
+	downYBar : DynamicBehaviour<bool>, scrollStep : Maybe<Transform<double>>, tr : Tropic) -> Tropic {
 	// Disable mouse wheel
 	disableWheel = contains(style, TScrollDisableMouseWheel());
 	// Reverse mouse wheel
@@ -930,7 +940,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		speedY := [];
 	}
 
-	scrollStep = 20.;
+	scrollStepKey = 20.;
 	inside = make(false);
 	mouseWheelPos = ref None();
 
@@ -960,19 +970,19 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				if (fgetValue(keysEnabled) && !handled && !hasKeyboardFocus() && getValue(inside) && keyFilter(ke)) {
 					if (ke.utf == "up" && fgetValue(yEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStep)));
+						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStepKey)));
 						true
 					} else if (ke.utf == "down" && fgetValue(yEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStep, fgetValue(maxWH).height)));
+						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStepKey, fgetValue(maxWH).height)));
 						true
 					} else if (ke.utf == "left" && fgetValue(xEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStep), sp.y));
+						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStepKey), sp.y));
 						true
 					} else if (ke.utf == "right" && fgetValue(xEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(min(sp.x + scrollStep, fgetValue(maxWH).width), sp.y));
+						nextDistinct(scrollPosition, Point(min(sp.x + scrollStepKey, fgetValue(maxWH).width), sp.y));
 						true
 					} else if (ke.keycode == KEY_PAGEUP) {
 						handlePageKeys(ke,
@@ -1045,9 +1055,9 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				TMouseWheelInteractive(
 					manager,
 					tr,
-					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
+					TScrollMouseWheelCallback(scrollPosition, scrollBound, scrollStep, maxWH, mouseWheelPos,
 						deltaTimer, reverseWheel, speedX, speedY, xEnabled, xMoving, true),
-					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
+					TScrollMouseWheelCallback(scrollPosition, scrollBound, scrollStep, maxWH, mouseWheelPos,
 						deltaTimer, reverseWheel, speedX, speedY, yEnabled, yMoving, false)
 				)
 			])
@@ -1071,6 +1081,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 TScrollMouseWheelCallback(
 	scrollPosition : DynamicBehaviour<Point>,
 	scrollBound : TScrollBound,
+	scrollStep : Maybe<Transform<double>>,
 	maxWH : Transform<WidthHeight>,
 	mousePos : ref Maybe<Point>,
 	deltaTimer : LazyDeltaTimer,
@@ -1084,6 +1095,7 @@ TScrollMouseWheelCallback(
 	uns = initUnsM();
 
 	stage = getStage();
+	wheelStep = either(scrollStep, const(100.));
 
 	\d -> {
 		dispUnsM(uns);
@@ -1098,7 +1110,7 @@ TScrollMouseWheelCallback(
 			spV = if (horizontal) sp.x else sp.y;
 			bound = fgetValue(if (horizontal) scrollBound.y else scrollBound.x);
 
-			delta = -d * 100. * if (!reverseWheel) 1. else -1.;
+			delta = -d * fgetValue(wheelStep) * if (!reverseWheel) 1. else -1.;
 
 			newV =
 				if (bound)
@@ -1419,6 +1431,11 @@ updateScrollPositionOnDragging(scrollPosition : DynamicBehaviour<Point>, boxWH :
 			)
 		}
 	}
+}
+
+roundToStep(point : Point, ss : TScrollStep) {
+	step = fgetValue(ss.step);
+	Point(dround(point.x / step) * step, dround(point.y / step) * step)
 }
 
 TFadeInOut(manager : TManager, fadeIn : Transform<bool>, content : Tropic) -> Tropic {

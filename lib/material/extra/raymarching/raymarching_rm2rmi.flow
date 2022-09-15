@@ -17,11 +17,13 @@ export {
 
 RMObjectCounter(
 	objectId : int,
+	offset : int,
 	textureId : int,
 	topLevelObjects : Tree<int, RMScene>,
 	topLevelSmoothObjects : Tree<int, RMIExp>,
 	smoothObjectsCounter : int,
 	repetitionCounter : int,
+	polygonPoints : Set<int>,
 );
 
 RMSceneAccumulators(
@@ -50,7 +52,7 @@ RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RM
 			false,
 			makeList(),
 		),
-		RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0),
+		RMObjectCounter(0, 0, 0, makeTree(), makeTree(), 0, 0, makeSet()),
 		true,
 		simpleDistance,
 		false
@@ -71,11 +73,6 @@ RMScene2RMIExp0(
 			RMScene2RMIExp0(compositeObject, acc, id, topLevel, simpleDistance, innerLevel);
 		};
 		RMPrimitive(): {
-			wrapFn = if (simpleDistance) {
-				\e : RMIExp -> Pair(RMObjectCounter(id with objectId = id.objectId + 1), e)
-			} else {
-				\e : RMIExp -> addColorToRMIExp(e, id, acc.rmiMateiral, innerLevel)
-			};
 			wrapRepetitions = \p -> {
 				foldiList(
 					acc.repetition,
@@ -95,11 +92,19 @@ RMScene2RMIExp0(
 					}
 				)
 			};
-			resultExp = wrapFn(RMIBrackets(RMICall(RMIOp("+"), [RMICall(RMIOp("*"), [RMIArrayIndex("shown", id.objectId), RMIBrackets(RMPrimitive2RMIExp(
+			primitive = RMPrimitive2RMIExp(
 				obj,
 				wrapRepetitions(RMIStructMember(RMIBrackets(RMICall(RMIOp("*"), [RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("vec4"), [RMIP(), RMIDouble(1.0)])])), "xyz")),
-				id.objectId
-			))]), RMICall(RMIOp("*"), [RMIBrackets(RMICall(RMIOp("-"), [RMIDouble(1.0), RMIArrayIndex("shown", id.objectId)])), RMIVar("MAX_DIST")])])));
+				id.offset
+			);
+			polygons = eitherMap(primitive.third, \p -> insertSet(id.polygonPoints, p), id.polygonPoints);
+			newCounter = RMObjectCounter(id with offset = id.offset + primitive.second, polygonPoints = polygons);
+			wrapFn = if (simpleDistance) {
+				\e : RMIExp -> Pair(RMObjectCounter(newCounter with objectId = id.objectId + 1), e)
+			} else {
+				\e : RMIExp -> addColorToRMIExp(e, newCounter, acc.rmiMateiral, innerLevel)
+			};
+			resultExp = wrapFn(RMIBrackets(RMICall(RMIOp("+"), [RMICall(RMIOp("*"), [RMIArrayIndex("shown", id.objectId), RMIBrackets(primitive.first)]), RMICall(RMIOp("*"), [RMIBrackets(RMICall(RMIOp("-"), [RMIDouble(1.0), RMIArrayIndex("shown", id.objectId)])), RMIVar("MAX_DIST")])])));
 			compositeObject = RMCompositeObject(
 				obj,
 				i2s(id.objectId),
@@ -168,7 +173,7 @@ RMScene2RMIExp0(
 			simpleDistance,
 			innerLevel
 		);
-		RMBinaryOperator(): RMBinaryOperator2RMIExp0(obj, acc, id, topLevel, simpleDistance, innerLevel);
+		RMBinaryOperator(): RMBinaryOperator2RMIExp(obj, acc, id, topLevel, simpleDistance, innerLevel);
 		RMMaterial(object, color, materialProperties): {
 			switch(color) {
 				RMTexture(texture, parameters): RMScene2RMIExp0(
@@ -222,58 +227,107 @@ RMScene2RMIExp0(
 	}
 }
 
-RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
-	getObjectParameter = \paramId -> RMIStructMember(RMIArrayIndex("objectParameters", id), paramId);
+RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple<RMIExp, int, Maybe<int>> {
 	switch(obj) {
-		RMSphere(radius): RMICall(RMIOp("-"), [
+		RMSphere(radius): Triple(RMICall(RMIOp("-"), [
 			RMICall(RMIFn("length"), [distance]),
-		 	getObjectParameter("x")
-		]);
-		RMPlane(normal): RMICall(RMIFn("dot"), [
+		 	getObjectParameter(offset, 0)
+		]), 1, None());
+		RMPlane(normal): Triple(RMICall(RMIFn("dot"), [
 			distance,
 			RMICall(RMIFn("normalize"), [
-				RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
+				RMICall(RMIFn("vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)])
 			])
-		]);
-		RMBox(box): RMICall(RMIFn("sdBox"), [
+		]), 3, None());
+		RMBox(box): Triple(RMICall(RMIFn("sdBox"), [
 			distance,
-			RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
-		]);
-		RMRoundBox(box, radius): RMICall(RMIFn("sdRoundBox"), [
+			RMICall(RMIFn("vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)])
+		]), 3, None());
+		RMRoundBox(box, radius): Triple(RMICall(RMIFn("sdRoundBox"), [
 			distance,
-			RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
-			getObjectParameter("w")
-		]);
-		RMBoxFrame(box, thickness): RMICall(RMIFn("sdBoxFrame"), [
+			RMICall(RMIFn("vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			getObjectParameter(offset, 3)
+		]), 4, None());
+		RMBoxFrame(box, thickness): Triple(RMICall(RMIFn("sdBoxFrame"), [
 			distance,
-			RMICall(RMIFn("vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
-			getObjectParameter("w")
-		]);
-		RMTorus(revolutionRadius, tubeRadius): RMICall(RMIFn("sdTorus"), [
+			RMICall(RMIFn("vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			getObjectParameter(offset, 3)
+		]), 4, None());
+		RMTorus(revolutionRadius, tubeRadius): Triple(RMICall(RMIFn("sdTorus"), [
 			distance,
-			RMICall(RMIFn("vec2"), [getObjectParameter("x"), getObjectParameter("y")])
-		]);
-		RMCappedTorus(revolutionRadius, tubeRadius, percent): RMICall(RMIFn("sdCappedTorus"), [
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1)])
+		]), 2, None());
+		RMCappedTorus(revolutionRadius, tubeRadius, percent): Triple(RMICall(RMIFn("sdCappedTorus"), [
 			distance,
-			RMICall(RMIFn("vec2"), [getObjectParameter("z"), getObjectParameter("w")]),
-			getObjectParameter("x"),
-			getObjectParameter("y")
-		]);
-		RMCylinder(height, radius): RMICall(RMIFn("sdCappedCylinder"), [
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 2), getObjectParameter(offset, 3)]),
+			getObjectParameter(offset, 0),
+			getObjectParameter(offset, 1)
+		]), 4, None());
+		RMCylinder(height, radius): Triple(RMICall(RMIFn("sdCappedCylinder"), [
 			distance,
-			getObjectParameter("x"),
-			getObjectParameter("y")
-		]);
-		RMRoundedCylinder(height, radius, radiusRounded): RMICall(RMIFn("sdRoundedCylinder"), [
+			getObjectParameter(offset, 0),
+			getObjectParameter(offset, 1)
+		]), 2, None());
+		RMRoundedCylinder(height, radius, radiusRounded): Triple(RMICall(RMIFn("sdRoundedCylinder"), [
 			distance,
-			getObjectParameter("y"),
-			getObjectParameter("z"),
-			getObjectParameter("x")
-		]);
+			getObjectParameter(offset, 1),
+			getObjectParameter(offset, 2),
+			getObjectParameter(offset, 0)
+		]), 3, None());
+		RMOctahedron(size): Triple(RMICall(RMIFn("sdOctahedron"), [
+			distance,
+			getObjectParameter(offset, 0),
+		]), 1, None());
+		RMExtrusion(object, size): {
+			primitive = RM2DPrimitives2RMIExp(object, distance, offset);
+			Triple(RMICall(RMIFn("opExtrussion"), [distance, primitive.first, getObjectParameter(offset, 0)]), primitive.second + 1, primitive.third);
+		}
+		RMRevolution(object, radius): {
+			primitive = RM2DPrimitives2RMIExp(object, RMICall(RMIFn("opRevolution"), [distance, getObjectParameter(offset, 0)]), offset);
+			Triple(primitive.first, primitive.second + 1, primitive.third);
+		}
 	}
 }
 
-RMBinaryOperator2RMIExp0(
+RM2DPrimitives2RMIExp(obj : RM2DPrimitives, distance : RMIExp, offset : int) -> Triple<RMIExp, int, Maybe<int>> {
+	switch(obj) {
+		RMCircle(radius): Triple(RMICall(RMIOp("-"), [
+			RMICall(RMIFn("length"), [RMIStructMember(distance, "xy")]),
+		 	getObjectParameter(offset, 1)
+		]), 1, None());
+		RMHexagon(radius): Triple(RMICall(RMIFn("sdHexagon"), [RMIStructMember(distance, "xy"), getObjectParameter(offset, 1)]), 1, None());
+		RMTriangle(point0, point1, point2): Triple(RMICall(RMIFn("sdTriangle"), [
+			RMIStructMember(distance, "xy"),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
+		]), 6, None());
+		RMPolygon(points): {
+			numPoints = length(points);
+			polygon = RMICall(
+				RMIFn("sdPolygon"), [
+					RMIArray(generate(
+						0,
+						numPoints,
+						\i -> RMICall(RMIFn("vec2"), [getObjectParameter(offset, 2 * i + 1), getObjectParameter(offset, 2 * i + 2)])
+					)),
+					RMIStructMember(distance, "xy")
+				]
+			);
+			wrapForThin = if (numPoints < 3) RMICall(RMIOp("-"), [polygon, RMIDouble(0.01)]) else polygon;
+			Triple(wrapForThin, 2 * numPoints, Some(numPoints));
+		}
+		RMQuadraticBezier(A, B, C): Triple(RMICall(RMIOp("-"), [RMICall(RMIFn("sdBezier"), [
+			RMIStructMember(distance, "xy"),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
+		]), RMIDouble(0.01)]), 6, None());
+		RMEmpty(): Triple(RMIEmpty(), 0, None());
+	}
+}
+
+RMBinaryOperator2RMIExp(
 	obj : RMBinaryOperator,
 	acc : RMSceneAccumulators,
 	id : RMObjectCounter,
@@ -486,7 +540,7 @@ RMLights2RMIExp0(obj : RMLights, acc : RMIXYZ, color : RMIExp) -> RMIExp {
 }
 
 RMScene2RMIExpJS(obj : RMScene) -> RMIExp {
-	RMScene2RMIExpJS0(obj, makeList(), RMObjectCounter(0, 0, makeTree(), makeTree(), 0, 0)).second
+	RMScene2RMIExpJS0(obj, makeList(), RMObjectCounter(0, 0, 0, makeTree(), makeTree(), 0, 0, makeSet())).second
 }
 
 RMScene2RMIExpJS0(obj : RMScene, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
@@ -513,16 +567,26 @@ RMScene2RMIExpJS0(obj : RMScene, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMO
 					}
 				);
 			};
+			primitive = RMPrimitive2RMIExpJS(
+				obj,
+				wrapRepetitions(RMIStructMember(RMIBrackets(RMIConcat(RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("['*']"), [RMICall(RMIFn("glm.vec4"), [RMIP(), RMIDouble(1.0)])]))), "xyz")),
+				id.offset
+			);
 			Pair(
-				RMObjectCounter(id with objectId = id.objectId + 1, repetitionCounter = id.repetitionCounter + countList(repetition)),
+				RMObjectCounter(id with objectId = id.objectId + 1, repetitionCounter = id.repetitionCounter + countList(repetition), offset = id.offset + primitive.second),
 				RMIJSObject(
 					setTree(makeTree1(
 						"distance",
-						RMIBrackets(RMICall(RMIOp("+"), [RMICall(RMIOp("*"), [RMIArrayIndex("shown", id.objectId), RMIBrackets(RMPrimitive2RMIExpJS(
-							obj,
-							wrapRepetitions(RMIStructMember(RMIBrackets(RMIConcat(RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("['*']"), [RMICall(RMIFn("glm.vec4"), [RMIP(), RMIDouble(1.0)])]))), "xyz")),
-							id.objectId
-						))]), RMICall(RMIOp("*"), [RMIBrackets(RMICall(RMIOp("-"), [RMIDouble(1.0), RMIArrayIndex("shown", id.objectId)])), RMIVar("defaultDistance.distance")])]))
+						RMIBrackets(RMICall(RMIOp("+"), [
+							RMICall(RMIOp("*"), [
+								RMIArrayIndex("shown", id.objectId),
+								RMIBrackets(primitive.first)
+							]),
+							RMICall(RMIOp("*"), [
+								RMIBrackets(RMICall(RMIOp("-"), [RMIDouble(1.0), RMIArrayIndex("shown", id.objectId)])),
+								RMIVar("MAX_DIST")
+							])
+						]))
 					),
 					"id", RMIInt(id.objectId))
 				)
@@ -532,7 +596,7 @@ RMScene2RMIExpJS0(obj : RMScene, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMO
 		RMRotate(object, r): RMScene2RMIExpJS0(object, repetition, id);
 		RMScale(object, s): RMScene2RMIExpJS0(object, repetition, id);
 		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExpJS0(object, Cons(Pair(getValue(space), getValue(repetitions)), repetition), id);
-		RMBinaryOperator(): RMBinaryOperator2RMIExpJS0(obj, repetition, id);
+		RMBinaryOperator(): RMBinaryOperator2RMIExpJS(obj, repetition, id);
 		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, repetition, id);
 		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, repetition, id);
 		RMText(text, position, showDot): Pair(id, RMIEmpty());
@@ -540,59 +604,93 @@ RMScene2RMIExpJS0(obj : RMScene, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMO
 	}
 }
 
-
-RMPrimitive2RMIExpJS(obj : RMPrimitive, distance : RMIExp, id : int) -> RMIExp {
-	getObjectParameter = \paramId -> RMIStructMember(RMIArrayIndex("objectParameters", id), paramId);
+RMPrimitive2RMIExpJS(obj : RMPrimitive, distance : RMIExp, offset : int) -> Pair<RMIExp, int> {
 	switch(obj) {
-		RMSphere(radius): RMICall(RMIOp("-"), [
+		RMSphere(radius): Pair(RMICall(RMIOp("-"), [
 			RMICall(RMIFn("glm.length"), [distance]),
-			getObjectParameter("x")
-		]);
-		RMPlane(normal): RMICall(RMIFn("glm.dot"), [
+			getObjectParameter(offset, 0)
+		]), 1);
+		RMPlane(normal): Pair(RMICall(RMIFn("glm.dot"), [
 			distance,
 			RMICall(RMIFn("glm.normalize"), [
-				RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
+				RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)])
 			])
-		]);
-		RMBox(box): RMICall(RMIFn("sdBox"), [
+		]), 3);
+		RMBox(box): Pair(RMICall(RMIFn("sdBox"), [
 			distance,
-			RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")])
-		]);
-		RMRoundBox(box, radius): RMICall(RMIFn("sdRoundBox"), [
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)])
+		]), 3);
+		RMRoundBox(box, radius): Pair(RMICall(RMIFn("sdRoundBox"), [
 			distance,
-			RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
-			getObjectParameter("w")
-		]);
-		RMBoxFrame(box, thickness): RMICall(RMIFn("sdBoxFrame"), [
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			getObjectParameter(offset, 3)
+		]), 4);
+		RMBoxFrame(box, thickness): Pair(RMICall(RMIFn("sdBoxFrame"), [
 			distance,
-			RMICall(RMIFn("glm.vec3"), [getObjectParameter("x"), getObjectParameter("y"), getObjectParameter("z")]),
-			getObjectParameter("w")
-		]);
-		RMTorus(revolutionRadius, tubeRadius): RMICall(RMIFn("sdTorus"), [
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			getObjectParameter(offset, 3)
+		]), 4);
+		RMTorus(revolutionRadius, tubeRadius): Pair(RMICall(RMIFn("sdTorus"), [
 			distance,
-			RMICall(RMIFn("glm.vec2"), [getObjectParameter("x"), getObjectParameter("y")])
-		]);
-		RMCappedTorus(revolutionRadius, tubeRadius, percent): RMICall(RMIFn("sdCappedTorus"), [
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1)])
+		]), 2);
+		RMCappedTorus(revolutionRadius, tubeRadius, percent): Pair(RMICall(RMIFn("sdCappedTorus"), [
 			distance,
-			RMICall(RMIFn("glm.vec2"), [getObjectParameter("z"), getObjectParameter("w")]),
-			getObjectParameter("x"),
-			getObjectParameter("y")
-		]);
-		RMCylinder(height, radius): RMICall(RMIFn("sdCappedCylinder"), [
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 2), getObjectParameter(offset, 3)]),
+			getObjectParameter(offset, 0),
+			getObjectParameter(offset, 1)
+		]), 4);
+		RMCylinder(height, radius): Pair(RMICall(RMIFn("sdCappedCylinder"), [
 			distance,
-			getObjectParameter("x"),
-			getObjectParameter("y")
-		]);
-		RMRoundedCylinder(height, radius, radiusRounded): RMICall(RMIFn("sdRoundedCylinder"), [
+			getObjectParameter(offset, 0),
+			getObjectParameter(offset, 1)
+		]), 2);
+		RMRoundedCylinder(height, radius, radiusRounded): Pair(RMICall(RMIFn("sdRoundedCylinder"), [
 			distance,
-			getObjectParameter("y"),
-			getObjectParameter("z"),
-			getObjectParameter("x")
-		]);
+			getObjectParameter(offset, 1),
+			getObjectParameter(offset, 2),
+			getObjectParameter(offset, 0)
+		]), 3);
+		RMOctahedron(size): Pair(RMICall(RMIFn("sdOctahedron"), [
+			distance,
+			getObjectParameter(offset, 0),	
+		]), 1);
+		RMExtrusion(object, size): {
+			primitive = RM2DPrimitives2RMIExpJS(object, distance, offset);
+			Pair(RMICall(RMIFn("opExtrussion"), [distance, primitive.first, getObjectParameter(offset, 0)]), primitive.second + 1);
+		}
+		RMRevolution(object, radius): {
+			primitive = RM2DPrimitives2RMIExpJS(object, RMICall(RMIFn("opRevolution"), [distance, getObjectParameter(offset, 0)]), offset);
+			Pair(primitive.first, primitive.second + 1);
+		}
 	}
 }
 
-RMBinaryOperator2RMIExpJS0(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
+RM2DPrimitives2RMIExpJS(obj : RM2DPrimitives, distance : RMIExp, offset : int) -> Pair<RMIExp, int> {
+	switch(obj) {
+		RMCircle(radius): Pair(RMICall(RMIOp("-"), [
+			RMICall(RMIFn("glm.length"), [RMIStructMember(distance, "xy")]),
+			getObjectParameter(offset, 1)
+		]), 1);
+		RMHexagon(radius): Pair(RMICall(RMIFn("sdHexagon"), [RMIStructMember(distance, "xy"), getObjectParameter(offset, 1)]), 1);
+		RMTriangle(point0, point1, point2): Pair(RMICall(RMIFn("sdTriangle"), [
+			RMIStructMember(distance, "xy"),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
+		]), 6);
+		RMPolygon(points): Pair(RMICall(RMIFn("sdPolygon"), [RMIArray(generate(0, length(points), \i -> RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 2 * i + 1), getObjectParameter(offset, 2 * i + 2)]))), RMIStructMember(distance, "xy")]), length(points));
+		RMQuadraticBezier(A, B, C): Pair(RMICall(RMIFn("sdBezier"), [
+			RMIStructMember(distance, "xy"),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
+		]), 6);
+		RMEmpty(): Pair(RMIEmpty(), 0);
+	}
+}
+
+RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMObjectCounter) -> Pair<RMObjectCounter, RMIExp> {
 	switch(obj) {
 		RMUnion2(object1, object2): {
 			exp1 = RMScene2RMIExpJS0(object1, repetition, id);
@@ -822,3 +920,12 @@ checkRMBinaryOperator(id : RMObjectCounter, exp1 : Pair<RMObjectCounter, RMIExp>
 		onOk()
 	}
 };
+
+getObjectParameter(objId : int, paramId : int) -> RMIStructMember {
+	id = objId + paramId;
+	vecParam = id % 4;
+	RMIStructMember(
+		RMIArrayIndex("objectParameters", id / 4),
+		if (vecParam == 0) "x" else if (vecParam == 1) "y" else if (vecParam == 2) "z" else "w"
+	);
+}

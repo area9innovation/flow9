@@ -31,7 +31,7 @@ class HttpCustom extends haxe.Http {
 		#else
 			me.responseData = null;
 		#end
-		var r = req = js.Browser.createXMLHttpRequest();
+		var r = me.req = js.Browser.createXMLHttpRequest();
 
 		var utf8NoSurrogatesFlag = Util.getParameter("utf8_no_surrogates");
 		// Url parameter takes precedence.
@@ -104,7 +104,7 @@ class HttpCustom extends haxe.Http {
 			if (r.responseType == ARRAYBUFFER) me.responseData = encodedResponse;
 			else me.responseData = r.responseText;
 			#end
-			
+
 			me.responseHeaders =
 				r
 					.getAllResponseHeaders()
@@ -142,7 +142,7 @@ class HttpCustom extends haxe.Http {
 				r.open("GET",url,async);
 		} catch( e : Dynamic ) {
 			me.req = null;
-			onError(e.toString());
+			me.onError(e.toString());
 			return;
 		}
 
@@ -157,7 +157,7 @@ class HttpCustom extends haxe.Http {
 				untyped console.log(e);
 			}
 		}
-		
+
 		// r.withCredentials = withCredentials;
 		// Handled by HttpSupport.hx
 
@@ -194,6 +194,13 @@ class HttpCustom extends haxe.Http {
 			onreadystatechange(null);
 	}
 
+	public override function cancel() {
+		if (this.req != null) {
+			this.req.abort();
+			this.req = null;
+		}
+	}
+
 	private function parseUtf8Real(str : Uint8Array, size : Int) : String {
 		var out = "";
 		var bytes = 0;
@@ -227,7 +234,7 @@ class HttpCustom extends haxe.Http {
 					c = str[i + j];
 					w = ((w << 6)|(c & 0x3f)); // 0x3f = 0011 1111
 				}
-				
+
 				out += String.fromCharCode(w);
 			}
 			else {
@@ -260,7 +267,7 @@ class HttpCustom extends haxe.Http {
 				push_sequence(0x07, c, i, bytes); // 0x07 = 0000 0111
 				i += bytes;
 			}
-			else { //error, UTF-8 accept only max 4 octets 
+			else { //error, UTF-8 accept only max 4 octets
 				out += decode_error;
 				i++;
 			}

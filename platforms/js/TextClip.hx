@@ -508,7 +508,7 @@ class TextClip extends NativeWidgetClip {
 				}
 
 				nativeWidget.style.whiteSpace = "pre";
-				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+				baselineWidget.style.direction = nativeWidget.style.direction = switch (this.textDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
 					default : null;
@@ -527,7 +527,7 @@ class TextClip extends NativeWidgetClip {
 					}
 				}
 
-				nativeWidget.style.direction = switch (this.contentGlyphsDirection) {
+				baselineWidget.style.direction = nativeWidget.style.direction = switch (this.textDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
 					default : null;
@@ -574,6 +574,7 @@ class TextClip extends NativeWidgetClip {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				makeBaselineWidgetAmiriItalicBugWorkaround();
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);

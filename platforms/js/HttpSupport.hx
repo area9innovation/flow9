@@ -204,21 +204,30 @@ class HttpSupport {
 
 		var handled = false;	// Whether the request has already completed, failed or timed out
 
+#if js
+		var http = new haxe.Http(url);
 		// Set up timeout
 		var checkTimeout = function() {
 			if (!handled) {
 				handled = true;
 				onErrorFn(url + ": request timed out");
+				http.cancel();
 			}
 		}
 		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
-
+		var stopTimer = function () {
+			timeoutInspector.stop();
+		}
+#else
 		var http = new haxe.Http(url);
+		http.cnxTimeout = TimeoutInterval / 1000.0 // ms to seconds;
+		var stopTimer = function () {}
+#end
 
 		http.onData = function (res: String) {
 			if (!handled) {
 				handled = true;
-				timeoutInspector.stop();
+				stopTimer();
 				try {
 					onDataFn(res);
 				} catch (e : Dynamic) {
@@ -235,7 +244,7 @@ class HttpSupport {
 		http.onError = function (err: String) {
 			if (!handled) {
 				handled = true;
-				timeoutInspector.stop();
+				stopTimer();
 				try {
 					onErrorFn(err);
 				} catch (e : Dynamic) {
@@ -372,20 +381,21 @@ class HttpSupport {
 		#else
 		var handled = false;	// Whether the request has already completed, failed or timed out
 
-		// Set up timeout
-		var checkTimeout = function() {
-			if (!handled) {
-				handled = true;
-				onResponseFn(408, url + ": request timed out", []);
-			}
-		}
-		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
-
 		#if (js && !nwjs)
 		var http = new HttpCustom(url, method);
 		#else
 		var http = new HttpCustom(url);
 		#end
+
+		// Set up timeout
+		var checkTimeout = function() {
+			if (!handled) {
+				handled = true;
+				onResponseFn(408, url + ": request timed out", []);
+				http.cancel();
+			}
+		}
+		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
 
 		if (data != "") {
 			http.setPostData(data);
