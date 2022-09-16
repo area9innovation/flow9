@@ -39,24 +39,23 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string {
 		}
 	});
 	missing_natives = ref [];
-	defs2 = filtermap(module.natives, \nat -> {
+	natives = filtermap(module.natives, \nat -> {
 		if (nat.name == "for") {
 			// 'for' is a special native, used in tail call optimization, i.e. it is moved to main runtime
 			None();
 		} else {
-			cpp3_nat = lookupTree(gctx.natives, nat.name);
 			if (!fiCpp3IsNative(nat.name, gctx) && !contains(module.initOrder, nat.name)) {
 				refArrayPush(missing_natives, nat.name);
 			}
-			maybeMap(cpp3_nat, \n -> n.def(gctx.typename2cpp, gctx.varname2cpp));
+			lookupTree(gctx.natives, nat.name);
 		}
 	});
-	includes = strGlue(set2array(fold(module.natives, makeSet(), \acc, nat -> 
-		switch (lookupTree(gctx.natives, nat.name)) {
-			Some(n): fold(n.include, acc, \ac, inc -> insertSet(ac, "#inc" + "lude  " + inc));
-			None(): acc;
-		}
-	)), "\n");
+	defs2 = map(natives, \nat -> nat.def(gctx.typename2cpp, gctx.varname2cpp));
+	includes = superglue(
+		fiCpp3DependenciesIncludes(map(natives, \nat -> nat.dependencies)), 
+		\inc -> "#inc" + "lude " + inc, 
+		"\n"
+	);
 	if (^missing_natives != []) {
 		err = "Module " + module.fileinfo.flowfile + ": following native functions are not implemented in cpp3 runtime and doesn't have a flow fallbacks:\n" +
 			strIndent(superglue(^missing_natives, \name -> "\t" + name, "\n"));
@@ -66,7 +65,7 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string {
 	all = concatA([structs_decls, structs_defs, defs2, defs1(true), defs1(false)]);
 	(if (exists(module.functions, \fn -> fn.name == "main")) "" else "#pragma once\n") +
 	(if (includes == "") "" else includes + "\n") +
-	"#inc" + "lude \"flow_runtime.hpp\"\n" +
+	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
 	"// Module " + module.fileinfo.flowfile + "\n\n" + 
 	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp.flowfile, "/", "_") + ".hpp\"\n")) + "\n") +
 	"namespace " + gctx.config.namespace + " {\n" +
@@ -644,6 +643,6 @@ struct StructDef {
 
 std::map<string, StructDef> struct_defs;
 
-", fiCpp3StructDefs(gctx), "init_struct_defs();", ["<map>"]
+", fiCpp3StructDefs(gctx), "init_struct_defs();", [Cpp3Std(["<map>"], [])]
 );
 }
