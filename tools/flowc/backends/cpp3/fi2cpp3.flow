@@ -1,8 +1,7 @@
 import tools/flowc/backends/cpp3/fi2cpp3_compile;
+import tools/flowc/backends/cpp3/fi2cpp3_build;
 import tools/flowc/manipulation/tail_call;
 import tools/flowc/manipulation/flatten_unions;
-//import promise;
-import sys/process;
 
 export {
 	fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void;
@@ -101,49 +100,6 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	}));
 	save_file(gctx.config.config.flowfile + "_sources", concatStrings(map(sources, \src -> src + "\n")));
 	Cpp3CompiledProgram(compiled, sources);
-}
-
-fi2cpp3BuildDirectly(gctx: Cpp3GlobalContext, program: Cpp3CompiledProgram, callback : (int) -> void) -> void {
-	cpp_sources = filter(program.sources, \path -> endsWith(path, ".cpp"));
-	debug_param = getConfigParameterDef(gctx.program.config.config, "cpp-debug", "");
-	debug = if (debug_param == "") [] else {
-		["-O0", "-ggdb" + debug_param]
-	}
-	opt_param = getConfigParameterDef(gctx.program.config.config, "cpp-optimize", "");
-	optimize = if (opt_param == "" || debug_param != "") [] else {
-		["-O" + opt_param]
-	}
-	args = concatA([cpp_sources, debug, optimize, ["-std=c++20", "-o", changeFileExt(gctx.config.config.flowfile, ".exe")]]);
-	if (gctx.config.config.verbose > 0) {
-		fcPrintln("Compiling with cpp3: 'g++ " + strGlue(args, " ") + "', dir: " + gctx.packagePath + "...", gctx.config.config.threadId);
-	}
-	result = execSystemProcessOutput("g++", args, gctx.packagePath);
-	remove_no_cast_needed = \ -> {
-		counter = ref 0;
-		remove_pred = \line -> {
-			strContains(line, "no cast needed") ||
-			(strContains(line, "warning: parameter '") && strContains(line, "' is never used"))
-		}
-		// After any warning string with "no cast needed" and "warning: parameter '?' is never used" 
-		// remove this and two following lines
-		strGlue(filter(strSplit(result.stdall, "\n"), \line -> {
-			if (remove_pred(line)) {
-				counter := 3;
-			}
-			if (^counter == 0) true else {
-				counter := ^counter - 1;
-				false;
-			}
-
-		}), "\n");
-	}
-	if (gctx.config.config.verbose > 0 || result.exitCode != 0) {
-		msg = remove_no_cast_needed();
-		if (!isSpace(msg)) {
-			fcPrintln(remove_no_cast_needed(), gctx.program.config.threadId);
-		}
-	}
-	if (result.exitCode == 0) callback(0) else callback(5);	
 }
 
 fi2cpp3RemoveEmptyModules(modules: Tree<string, Cpp3CompiledModule>) -> Tree<string, Cpp3CompiledModule> {
