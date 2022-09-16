@@ -1,0 +1,559 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+
+import text/blueprint;
+import tools/flowc/backends/wise/flow_wise_types;
+import tools/flowc/backends/wise/flow_wise_natives;
+
+// run test from 'tests' folder
+// \flow9\tools\flowc\backends\wise> .\cmpl variable
+
+export {
+	fi2wise(program : FiProgram, cfg : FiWiseConfig, callback : (int) -> void) -> void;
+}
+
+fi2wise(program : FiProgram, cfg : FiWiseConfig, callback : (int) -> void) -> void {
+	traverseInOrder(program.modules, \name, module -> {
+		writeWise2file(program, cfg.outputfolder, module);
+	});
+	callback(0);
+}
+
+writeWise2file(program : FiProgram, path : string, module : FiModule) -> void {
+	println("----------------------\nflow->wise "+ module.fileinfo.flowfile + ".flow");
+	filepath : string = pathCombine(path, takeAfter(module.fileinfo.flowfile, path, module.fileinfo.flowfile))  + ".wise";
+	file = wiseAst2string(fiModule2FlowWiseAst(module));
+
+	ensureDirectoryExists(dirName(filepath));
+	if (!setFileContent(filepath, file)) {
+		println("Could not write " + filepath);
+	}
+}
+
+fiModule2FlowWiseAst(module : FiModule) -> FlowWiseAst {
+	exportNames = buildSet(module.exports);
+	functions = values2tree(module.functions, \f -> f.name);
+	structs = fiStructs2wiTuples(module.structs);
+	natives = getWiNatives(module.natives);
+
+	newBody = foldr(module.initOrder, FlowWiWaseEmpty(), \acc, fnName -> eitherMap(
+		lookupTree(functions, fnName),
+		\fn -> fiFunctionDec2FlowWiFunction(fn, containsSet(exportNames, fnName), structs.second, natives, acc),
+		acc
+	));
+	
+	imports = fold(module.imports, newBody, \acc, v -> fiImport2FlowWiseAst(v, acc));
+
+	FlowWiseAstList(Cons(imports, structs.first));
+}
+
+FlowWiNatives(
+	fns : Tree<string, string>,
+);
+// TODO ?
+getWiNatives(natives : [FiNativeDec]) -> FlowWiNatives {
+	FlowWiNatives(fold(natives, makeTree(), \acc, decl -> 
+		eitherMap(findNativeName(decl.name), \n -> setTree(acc, decl.name, n), acc)
+	));
+}
+
+StructTuple(
+	link : Tree</*struct_name*/string, StructTupleArgs>
+);
+StructTupleArgs(
+	args : Tree<string/*arg_name*/, StructTupleArg>
+);
+StructTupleArg(
+	index : int,
+	type : FiType,
+);
+
+fiStructs2wiTuples(structs : [FiTypeStruct]) -> Pair<List<FlowWiExp>, StructTuple> {
+	foldr(structs, Pair(makeList(), StructTuple(makeTree())), \acc, struct -> unpair(acc, \ast, dict ->
+		Pair(
+			Cons(fiStruct2wiTupleAnnotation(struct, dict), ast),
+			// TODO: remove type?
+			StructTuple(setTree(
+				dict.link, 
+				struct.name,
+				StructTupleArgs(foldi(struct.args, makeTree(), \i, acc2, arg -> 
+					setTree(acc2, arg.name, StructTupleArg(i, arg.type))
+				))
+			))
+		)
+	));
+}
+
+fiStruct2wiTupleAnnotation(struct : FiTypeStruct, structs : StructTuple) -> FlowWiExp {
+	FlowWiTypeannotation(
+		FlowWiVar(struct.name),
+		FlowWiTupletype(map(struct.args, \arg -> fiType2FlowWiType(arg.type, structs)))
+	);
+}
+
+// TODO: fix path. or mapper (flow_lib -> FlowWise_lib)
+fiImport2FlowWiseAst(decl : FiImport, body : FlowWiDecl) -> FlowWiDecl {
+	FlowWiFlowWiseInclude("lib/" + decl.flowfile, body);
+}
+
+fiFunctionDec2FlowWiFunction(func : FiFunctionDec, exported : bool, structs : StructTuple, natives : FlowWiNatives, body : FlowWiDecl) -> FlowWiFunction {
+	FlowWiFunction(
+		func.name,
+		b2s(exported),
+		map(func.lambda.args, \arg -> FlowWiIdtype(arg.name, fiType2FlowWiType(arg.type, structs))),
+		fiType2FlowWiType(func.type.returnType, structs),
+		fiExp2FlowWiExp(func.lambda.body, structs, natives),
+		body
+	);
+}
+
+fiExp2FlowWiExp(exp : FiExp, structs : StructTuple, natives : FlowWiNatives) -> FlowWiExp {
+	makeDefExp = \-> {
+		println("TODO FlowWiExp: " + toString(exp));
+		FlowWiBrace([]);
+	}
+	resloveVarName = \name -> lookupTreeDef(natives.fns, name, name);
+	e2e = \e -> fiExp2FlowWiExp(e, structs, natives);
+	switch (exp : FiExp) {
+		FiLambda(args, body, type, start) : makeDefExp();
+		FiCall(f, args, type, start) : FlowWiCall(resolveWiFnName(e2e(f), args), map(args, e2e));
+		FiVar(name, type, start) : FlowWiVar(resloveVarName(name));
+		FiLet(name, type, e1, e2, type2, start) : {
+			FlowWiLet(name, 0, fiType2FlowWiType(type, structs), e2e(e1), FlowWiBrace([e2e(e2)]));
+		}
+		FiIf(e, e2, e3, type, start) : {
+			if (isSameStructType(e3, FiVoid(0))) {
+				FlowWiIf(e2e(e), e2e(e2));
+			} else {
+				FlowWiIfelse(e2e(e), e2e(e2), e2e(e3));
+			}
+		}
+		FiSwitch(x, sWitchType, cases, type, start) : makeDefExp();
+			// struct is "default" for default case
+			// FiCase(struct: string, argNames : [string], body: FiExp, start : int);
+		FiCast(e, tFrom, tTo, type, start) : makeDefExp();
+		FiSeq(es, type, start) : FlowWiBrace(map(es, e2e));
+		FiCallPrim(op, es, type, start) : eitherFn(fiCallPrim2wiExp(exp, structs, natives), idfn, makeDefExp);
+		FiRequire(flowfile, e, type, start) : makeDefExp();
+		FiUnsafe(name, fallback, type, start) : makeDefExp();
+		FiConst() : fiConst2FlowWiExp(exp);
+	}
+}
+
+fiCallPrim2wiExp(exp : FiCallPrim, structs : StructTuple, natives : FlowWiNatives) -> Maybe<FlowWiExp> {
+	e2e = \e -> fiExp2FlowWiExp(e, structs, natives);
+	structM = fiStructFn2wiExp(exp, structs, natives);
+	
+	if (isSome(structM)) {
+		structM;
+	} else if (exp.es == []) {
+		None();
+	} else if (length(exp.es) == 1) {
+		fcPrim2flowWiExp(exp.op, e2e(exp.es[0]), exp.type);
+	} else {
+		firstExpM = fcPrims2flowWiExp(exp.op, e2e(exp.es[0]), e2e(exp.es[1]));
+		tail = subrange(exp.es, 2, length(exp.es) - 1);
+		secondExpM = fiCallPrim2wiExp(FiCallPrim(exp.op, tail, exp.type, exp.start), structs, natives);
+		eitherMap(
+			firstExpM,
+			\firstExp -> {
+				eitherMap(
+					secondExpM,
+					\secondExp -> fcPrims2flowWiExp(exp.op, firstExp, secondExp),
+					firstExpM
+				);
+			},
+			secondExpM
+		);
+	}
+}
+
+fiStructFn2wiExp(exp : FiCallPrim, structs : StructTuple, natives : FlowWiNatives) -> Maybe<FlowWiExp> {
+	makeError = \desc -> {
+		println("Wrong field : " + desc + toString(exp));
+		None();
+	}
+	makeWarning = \desc -> {
+		devtrace("fiStructConstr2wiExp:: " + desc);
+		None();
+	}
+	getFieldIndex = \fieldName, type-> {
+		maybeMap(
+			maybeBind(
+				lookupTree(structs.link, fiType2structName(type)),
+				\args -> lookupTree(args.args, fieldName)
+			),
+			\arg -> arg.index
+		);
+	}
+	e2e = \e -> fiExp2FlowWiExp(e, structs, natives);
+	makeTupleDot = \fieldName, type, e -> {
+		eitherFn(
+			getFieldIndex(fieldName, type),
+			\index -> Some(FlowWiTupledot(e, index)),
+			\ -> makeError("structure or field not found ")
+		)
+	}
+
+	switch (exp.op: FcPrim) {
+		FcStructPrim(structName) : eitherFn(
+			lookupTree(structs.link, structName),
+			\__ -> Some(FlowWiTuple(map(exp.es, \e -> fiExp2FlowWiExp(e, structs, natives)))),
+			\-> makeWarning("structure not found ")
+		);
+		FcFieldPrim(fieldName) : if (length(exp.es) == 1) {
+			switch (exp.es[0] : FiExp) {
+				FiVar(varName, type, __) : makeTupleDot(fieldName, type, FlowWiVar(varName));
+				FiCallPrim(__, __, type, __) : {
+					eitherFn(
+						fiStructFn2wiExp(exp.es[0], structs, natives),
+						\e -> makeTupleDot(fieldName, type, e),
+						\-> makeError("wrong expression ")
+					);
+				}
+				FiCall(f, args, type, __): makeTupleDot(fieldName, type, FlowWiCall(e2e(f), map(args, e2e)));
+				default : makeError("");
+			}
+		} else {
+			makeError("");
+		}
+		default : makeWarning("wrong type ");
+	}
+}
+
+fiType2structName(type : FiType) -> string {
+	switch (type : FiType) {
+		FiTypeName(name, __) : name;
+		default : {
+			println("wrong struct name : " + toString(type));
+			"";
+		}
+	};
+}
+
+fcPrim2flowWiExp(type : FcPrim, e : FlowWiExp, resultType : FiType) -> Maybe<FlowWiExp> {
+	makeError = \-> {
+		println("Wrong operation : " + toString(type) + " (" + toString(e) + ")");
+		None();
+	}
+	makeDef = \-> {
+		println("TODO : transform expression " + toString(type));
+		None();
+	}
+	isBool = \-> isSameStructType(resultType, FiTypeBool());
+	isNumber = \-> isSameStructType(resultType, FiTypeInt()) || isSameStructType(resultType, FiTypeDouble());
+	switch (type : FcPrim) {
+		FcOrPrim() : if (isBool()) Some(e) else makeError();
+		FcAndPrim() : makeError();
+		FcNotPrim() : if (isBool()) Some(FlowWiBoolNot(e)) else makeError();
+		FcEqPrim() : makeError();
+		FcNePrim() : makeError();
+		FcLePrim() : makeError();
+		FcGePrim() : makeError();
+		FcLtPrim() : makeError();
+		FcGtPrim() : makeError();
+		FcPlusPrim() : makeError();
+		FcMinusPrim() : makeError();
+		FcMulPrim() : makeError();
+		FcDivPrim() : makeError();
+		FcModPrim() : makeError();
+		FcNegPrim() : if (isNumber()) Some(FlowWiNegate(e)) else makeError();
+		FcArrayPrim() : makeDef();
+		FcIndexPrim() : makeDef();
+		FcDerefPrim() : makeDef();
+		FcAssignPrim() : makeDef();
+		FcRefPrim() : makeDef();
+		FcStructPrim(structName) : makeDef();
+		FcFieldPrim(name) : makeDef();
+		FcSetMutablePrim(name) : makeDef();
+		FcCreateClosurePrim(structName, functionName) : makeDef();
+		FcQuote() : makeDef();
+		FcUnquote() : makeDef();
+	}
+}
+
+fcPrims2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<FlowWiExp> {
+	makeDef = \-> {
+		println("TODO : join expression " + toString(type));
+		None();
+	}
+	makeError = \-> {
+		println("Wrong operation : " + toString(type) + " (" + toString(e1) + ", " + toString(e2) + ")");
+		None();
+	}
+	makeExp = \e -> Some(FlowWiBrace([e]));
+	switch (type : FcPrim) {
+		FcOrPrim() : makeExp(FlowWiBoolOr(e1, e2));
+		FcAndPrim() : makeExp(FlowWiBoolAnd(e1, e2));
+		FcNotPrim() : makeError();
+		FcEqPrim() : makeExp(FlowWiEqual(e1, e2));
+		FcNePrim() : makeExp(FlowWiNotEqual(e1, e2));
+		FcLePrim() : makeExp(FlowWiLessEqual(e1, e2));
+		FcGePrim() : makeExp(FlowWiGreaterEqual(e1, e2));
+		FcLtPrim() : makeExp(FlowWiLess(e1, e2));
+		FcGtPrim() : makeExp(FlowWiGreater(e1, e2));
+		FcPlusPrim() : makeExp(FlowWiAdd(e1, e2));
+		FcMinusPrim() : makeExp(FlowWiSub(e1, e2));
+		FcMulPrim() : makeExp(FlowWiMul(e1, e2));
+		FcDivPrim() : makeExp(FlowWiDiv(e1, e2));
+		FcModPrim() : makeExp(FlowWiMod(e1, e2));
+		FcNegPrim() : makeError();
+		FcArrayPrim() : makeDef();
+		FcIndexPrim() : makeDef();
+		FcDerefPrim() : makeDef();
+		FcAssignPrim() : makeDef();
+		FcRefPrim() : makeDef(); 
+		FcStructPrim(structName) : makeDef();
+		FcFieldPrim(name) : makeDef(); 
+		FcSetMutablePrim(name) : makeDef();
+		FcCreateClosurePrim(structName, functionName) : makeDef();
+		FcQuote() : makeDef();
+		FcUnquote() : makeDef();
+	}
+}
+
+// temporary function
+resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
+	makeDefPrintln = \desc -> {
+		println("println for '" + desc + "' isn't implemented");
+		"println"
+	}
+	makePrintForFiType = \type -> switch (type : FiType) {
+		FiTypeBool() : "printlnb";
+		FiTypeInt() : "printlni32";
+		FiTypeDouble() : "printlnf64";
+		// FiTypeString() : makeDefType();
+		default : makeDefPrintln(toString(type));
+	}
+	getWiPrintFn = \arg -> switch (arg : FiExp) {
+		FiBool(__, __) : "printlnb";
+		FiInt(__, __) : "printlni32";
+		FiDouble(v, __) : "printlnf64";
+		FiString(v, __) : makeDefPrintln(v);
+		FiVoid(__) : "printv128";
+		FiVar(__, type, __) : makePrintForFiType(type);
+		FiCallPrim(__, __, type, __): makePrintForFiType(type);
+		FiIf(__, __, __, type, __) : makePrintForFiType(type);
+		FiLambda(__, __, type, start) : makePrintForFiType(type);
+		FiCall(__, __, type, __) : makePrintForFiType(type);
+		FiLet(__, type, __, __, type2, __) : makePrintForFiType(type);
+		FiSwitch(__, switchType, __, type, __) : makePrintForFiType(type);
+		FiCast(__, tFrom, tTo, type, __) : makePrintForFiType(tTo);
+		FiSeq(__, type, __) : makePrintForFiType(type);
+		FiRequire(__, __, type, __) : makePrintForFiType(type);
+		FiUnsafe(__, __, type, __) : makePrintForFiType(type);
+	}
+	switch (exp : FlowWiExp) {
+		FlowWiVar(id) : if (id == "println" && args != []) {
+			FlowWiVar(getWiPrintFn(args[0]))
+		} else {
+			exp
+		}
+		default : exp;
+	}
+}
+
+fiConst2FlowWiExp(exp : FiConst) -> FlowWiExp {
+	switch (exp : FiConst) {
+		FiVoid(start) : FlowWiTuple([]);
+		FiDouble(d, start) : FlowWiDouble(d);
+		FiInt(i, start) : FlowWiInt(i);
+		FiString(s, start) : {
+			println("TODO: string(" + s + ")");
+			FlowWiTuple([]);
+		}
+		FiBool(b, start) : FlowWiBool(b);
+	}
+}
+
+fiType2FlowWiType(type : FiType, structs : StructTuple) -> FlowWiType {
+	makeDefType = \-> {
+		println("TODO Type: " + toString(type));
+		FlowWiBasictype("auto");
+	}
+	switch (type : FiType) {
+		FiTypeArray(t) : makeDefType();
+		FiTypeFunction(args, returnType) : FlowWiFntype(
+			map(args, \arg -> fiType2FlowWiType(arg.type, structs)),
+			fiType2FlowWiType(returnType, structs)
+		);
+		FiTypeRef(t) : makeDefType();
+		FiTypeParameter(n) : makeDefType();	// ?, ?? and so on
+		FiTypeBool() : FlowWiBasictype("auto");
+		FiTypeInt() : FlowWiBasictype("i32");
+		FiTypeDouble() : FlowWiBasictype("f64");
+		FiTypeString() : makeDefType();
+		FiTypeFlow() : makeDefType();
+		FiTypeVoid() :  FlowWiBasictype("auto");
+		FiTypeNative() : makeDefType();
+		FiTypeName(name, typeparameters) : FlowWiTupletype(eitherFn(
+			lookupTree(structs.link, name),
+			\args -> map(
+				sortCustom(getTreeValues(args.args), \arg -> arg.index, true),
+				\arg -> fiType2FlowWiType(arg.type, structs)
+			),
+			\-> map(typeparameters, \t -> fiType2FlowWiType(t, structs))
+		));
+	}
+}
+
+wiseAst2string(code : FlowWiseAst) -> string {
+	switch (code : FlowWiseAst) {
+		FlowWiseAstList(value) : foldList(value, "\n", \acc, v -> acc + wiseAst2string(v));
+		FlowWiseAstBool(value) : b2s(value);
+		FlowWiseAstInt(value) : i2s(value);
+		FlowWiseAstDouble(value) : d2s(value);
+		FlowWiseAstString(value) : value;
+		FlowWiType(): wiType2string(code);
+		FlowWiIdtype(id, type) : id + " : " + wiType2string(type);
+		FlowWiDecl() : wiDecl2string(code);
+		FlowWiExp() : wiExp2string(code, None());
+	}
+}
+
+wiDecl2string(decl : FlowWiDecl) -> string {
+	switch (decl : FlowWiDecl) {
+		FlowWiFunction(id, optexport, lambdaargs, type, e, decl2) : {
+			parentExp = None();
+			"\n" + (if (s2b(optexport)) "export " else " ")
+			+ wiVar2string(id, parentExp)
+			+ "(" + strGlue(map(lambdaargs, wiseAst2string), ", ") + ")"
+			+ " -> " + wiType2string(type)
+			+ " {\n"
+			+ "\t" + wiExp2string(e, parentExp)
+			+ "\n}\n"
+			+ wiDecl2string(decl2);
+		}
+		FlowWiGlobal(id, optexport, type, optmutable, expression, decl2) : "TODO Decl[" + toString(decl)+"]";
+		FlowWiImport(id1, type, optmutable, id2, id3, decl2) : "TODO Decl[" + toString(decl)+"]";
+		FlowWiWaseEmpty() : "";
+		FlowWiFlowWiseInclude(s, decl2) : {
+			"include " + s + ";\n"
+			+ wiseAst2string(decl2);
+		}
+	}
+}
+
+wiType2string(type : FlowWiType) -> string {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(s) : s; // TODO ?
+		FlowWiFntype(types, returnType) : "(" + strGlue(map(types, wiType2string), ", ") + ") -> " + wiType2string(returnType);
+		FlowWiTupletype(types) : "(" + strGlue(map(types, wiType2string), ", ") + ")";
+	}
+	
+}
+
+wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>) -> string {
+	joinExp = \sign : string, exp1 : FlowWiExp, exp2 : FlowWiExp -> {
+		"(" + wiseAst2string(exp1) + " " + sign + " " + wiseAst2string(exp2) + ")";
+	}
+	eol = "\n\t";
+	wiExpDef2string = \e -> wiExp2string(e, None());
+	switch (exp : FlowWiExp) {
+		FlowWiAdd(exp1, exp2) : joinExp("+", exp1, exp2);
+		FlowWiSub(exp1, exp2) : joinExp("-", exp1, exp2);
+		FlowWiAnd(exp1, exp2) : joinExp("&", exp1, exp2);
+		FlowWiBoolAnd(exp1, exp2) : joinExp("&&", exp1, exp2);
+		FlowWiBoolNot(e) : "!" + wiseAst2string(e); // TODO ?
+		FlowWiBoolOr(exp1, exp2) : joinExp("||", exp1, exp2);
+		FlowWiXor(exp1, exp2) : joinExp("^", exp1, exp2);
+		FlowWiBrace(exps) : {
+			expressions = map(extractExpsFromFlowWiBrace(exp, []), \e -> wiExp2string(e, Some(exp)));
+			if (expressions == []) {
+				""
+			} else if (length(expressions) == 1) {
+				expressions[0];
+			} else {
+				"{" + eol + strGlue(expressions, ";" + eol) + ";" + eol + "}";
+				
+			}
+		}
+		FlowWiCall(e, exps) : wiExp2string(e, Some(exp)) + "(" + strGlue(map(exps, wiExpDef2string), ", ") + ")";
+		FlowWiDiv(exp1, exp2) : joinExp("/", exp1, exp2);
+		FlowWiEqual(exp1, exp2) : joinExp("==", exp1, exp2);
+		FlowWiGreater(exp1, exp2) : joinExp(">", exp1, exp2);
+		FlowWiGreaterEqual(exp1, exp2) : joinExp(">=", exp1, exp2);
+		// FlowWiGreaterEqualu(exp1 : FlowWiExp, exp2 : FlowWiExp);
+		// FlowWiGreateru(exp1 : FlowWiExp, exp2 : FlowWiExp);
+		FlowWiLess(exp1, exp2) : joinExp("<", exp1, exp2);
+		FlowWiLessEqual(exp1, exp2) : joinExp("<=", exp1, exp2);
+		// FlowWiLessEqualu(exp1, exp2) : joinExp("<=", exp1, exp2); // TODO: ?
+		// FlowWiLessu(exp1, exp2) : joinExp("<", exp1, exp2); // TODO: ?
+		// FlowWiIsNull(e : FlowWiExp);
+		FlowWiTupledot(e, index) : wiExp2string(e, None()) + "." + i2s(index);
+		FlowWiTypeannotation(e, type) : ""; // ignore declaration
+		FlowWiLet(id, i, opttype, e, brace) : {
+			body = wiExpDef2string(brace);
+			id + " : " + wiType2string(opttype) + " = " + wiExpDef2string(e) + ";"
+			+ eol + rtrim2(ltrim2(body, "{"), "}");
+		}
+		// FlowWiWasmOp(s : string, wargs : [FlowWiWarg], exps : [FlowWiExp]);
+		FlowWiMod(exp1, exp2) : joinExp("%", exp1, exp2);
+		FlowWiMul(exp1, exp2) : joinExp("*", exp1, exp2);
+		FlowWiNegate(e) : "-" + wiExpDef2string(e);
+		FlowWiNotEqual(exp1, exp2) : joinExp("!=", exp1, exp2);
+		FlowWiOr(exp1, exp2) : joinExp("|", exp1, exp2);
+		FlowWiAtom(): wiAtom2string(exp, parent);
+		default : "TODO[" + toString(exp)+"]";
+	}
+}
+
+extractExpsFromFlowWiBrace(e : FlowWiBrace, acc : [FlowWiExp]) -> [FlowWiExp] {
+	concat(
+		acc,
+		mapConcat(e.expsemi, \s -> 
+			if (isSameStructType(s, FlowWiBrace([]))) extractExpsFromFlowWiBrace(s, []) else [s]
+		)
+	)
+}
+
+wiAtom2string(exp : FlowWiAtom, parent : Maybe<FlowWiExp>) -> string {
+	eol = "\n\t";
+	switch (exp : FlowWiAtom) {
+		FlowWiBool(b) : if (b) "true" else "false";
+		FlowWiInt(int_0) : i2s(int_0);
+		FlowWiDouble(double_0) : {
+			// TODO: find the reason ? 
+			// ds(0.0) == 0 == i32
+			isInt = isDigits(d2s(if (double_0 >= 0.) double_0 else double_0 * (-1.)));
+			d2s(double_0) + (if (isInt) ".0" else "");
+		}
+		FlowWiTuple(exps) : "(" + strGlue(map(exps, \e -> wiExp2string(e, None())), ", ") + ")";
+		FlowWiVar(id) : wiVar2string(id, parent);
+		FlowWiSet(id, e) : id + " := " + wiseAst2string(e) + ";";
+		FlowWiIf(exp1, exp2) : {
+			"if (" + wiExp2string(exp1, None()) + ") {"
+			+ eol + wiExp2string(exp2, None()) + eol
+			+ "}";
+		}
+		FlowWiIfelse(exp1, exp2, exp3) : {
+			"if (" + wiExp2string(exp1, None()) + ") {"
+			+ eol + wiExp2string(exp2, None()) + "\n"
+			+ "} else {"
+			+ eol + wiExp2string(exp3, None()) + "\n"
+			+ "}";
+		}
+		// FlowWiBreak();
+		// FlowWiContinue();
+		// FlowWiReturn(exps : [FlowWiExp]);
+		// FlowWiWhile(exp1 : FlowWiExp, exp2 : FlowWiExp);
+
+		// FlowWiHex32(s : string);
+		// FlowWiHex64(s : string);
+		// FlowWiHexf32(s : string);
+		// FlowWiHexf64(s : string);
+		// FlowWiI64(s : string);
+		default : "TODO[" + toString(exp)+"]";
+	}
+}
+
+// temporary function
+wiVar2string(name : string, parent : Maybe<FlowWiExp>) -> string {
+	if (name == "main") {
+		"export _start"
+	} else if (name == "println") {
+		""
+	} else {
+		name;
+	}
+}

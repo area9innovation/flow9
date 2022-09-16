@@ -99,6 +99,8 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 								"topLevelDistanceFunction", newTopLevelDistanceFunctions,
 								"numSmooth", i2s(fixCounter(newRMIScene.first.smoothObjectsCounter)),
 								"numRepetitions", i2s(fixCounter(newRMIScene.first.repetitionCounter)),
+								"numParameters", i2s(newRMIScene.first.offset / 4 + 1),
+								"generatedFunctions", generatePolygonFunctions(newRMIScene.first.polygonPoints),
 							]
 						)
 					]);
@@ -106,7 +108,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 						"setDistanceFunction",
 						[
 							i2s(id),
-							formatString("(p, positions, objectParameters, smoothCoefficients, spaces, repetitions, shown, defaultDistance) => {return %1;}", [fixEmptyDistance(RMIExp2JS(RMScene2RMIExpJS(s)), "defaultDistance")])
+							"(p, MAX_DIST, positions, objectParameters, smoothCoefficients, spaces, repetitions, shown) => {return {distance : MAX_DIST, id : -1};}"
 						]
 					) |> ignore;
 				}
@@ -381,6 +383,27 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					hostCall("updateTextPoints", [flow(i2s(id)), flow(positions)])|> ignore;
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.maxRenderSteps,
+				\maxRenderSteps -> {
+					hostCall("setMaxRenderSteps", [flow(i2s(id)), flow(maxRenderSteps)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.maxRenderDistance,
+				\maxRenderDistance -> {
+					hostCall("setMaxRenderDistance", [flow(i2s(id)), flow(maxRenderDistance)])|> ignore;
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				settings.surfaceDistance,
+				\surfaceDistance -> {
+					hostCall("setSurfaceDistance", [flow(i2s(id)), flow(surfaceDistance)])|> ignore;
+				}
+			),
 			\ -> when(webglContextLoadedB, \-> getTextCoords(id, textPositionsB)),
 		],
 		MGroup([
@@ -405,6 +428,8 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					"topLevelDistanceFunction", topLevelDistanceFunctions,
 					"numSmooth", i2s(fixCounter(rmiScene.first.smoothObjectsCounter)),
 					"numRepetitions", i2s(fixCounter(rmiScene.first.repetitionCounter)),
+					"numParameters", i2s(rmiScene.first.offset / 4 + 1),
+					"generatedFunctions", generatePolygonFunctions(rmiScene.first.polygonPoints),
 				])
 			),
 			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(attachOutline(i2s(fps) + " fps"), [EscapeHTML(false)]))),
@@ -635,26 +660,32 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 	fRMX = \coord -> fselect(coord, FLift(\c -> c.x));
 	fRMY = \coord -> fselect(coord, FLift(\c -> c.y));
 	fRMZ = \coord -> fselect(coord, FLift(\c -> c.z));
+	fRMX2D = \coord -> fselect(coord, FLift(\c -> c.x));
+	fRMY2D = \coord -> fselect(coord, FLift(\c -> c.y));
+	get2DTransforms = \o -> {
+		switch(o) {
+			RMCircle(radius): [radius];
+			RMHexagon(radius): [radius];
+			RMTriangle(point0, point1, point2): [fRMX2D(point0), fRMY2D(point0), fRMX2D(point1), fRMY2D(point1), fRMX2D(point2), fRMY2D(point2)];
+			RMPolygon(points): mapConcat(points, \p -> [fRMX2D(p), fRMY2D(p)]);
+			RMQuadraticBezier(A, B, C): [fRMX2D(A), fRMY2D(A), fRMX2D(B), fRMY2D(B), fRMX2D(C), fRMY2D(C)];
+			RMEmpty(): [];
+		}
+	};
 	getPrimitiveParameters = \o -> {
 		switch(o) {
-			RMSphere(radius): [radius, const(0.), const(0.), const(0.)];
-			RMPlane(normal): [fRMX(normal), fRMY(normal), fRMZ(normal), const(0.)];
-			RMBox(box):  [fRMX(box), fRMY(box), fRMZ(box), const(0.)];
+			RMSphere(radius): [radius];
+			RMPlane(normal): [fRMX(normal), fRMY(normal), fRMZ(normal)];
+			RMBox(box):  [fRMX(box), fRMY(box), fRMZ(box)];
 			RMRoundBox(box, radius): [fRMX(box), fRMY(box), fRMZ(box), radius];
 			RMBoxFrame(box, thickness): [fRMX(box), fRMY(box), fRMZ(box), thickness];
-			RMTorus(revolutionRadius, tubeRadius): [revolutionRadius, tubeRadius, const(0.), const(0.)];
+			RMTorus(revolutionRadius, tubeRadius): [revolutionRadius, tubeRadius];
 			RMCappedTorus(revolutionRadius, tubeRadius, percent): [revolutionRadius, tubeRadius, fselect(percent, FLift(\p -> sin(PI * p))), fselect(percent, FLift(\p -> cos(PI * p)))];
-			RMCylinder(height, radius): [height, radius, const(0.), const(0.)];
-			RMRoundedCylinder(height, radius, radiusRounded): [height, fdivide(radius, const(2.)), radiusRounded, const(0.)];
-			RMOctahedron(size): [size, const(0.), const(0.), const(0.)];
-			RMExtrusion(object, size): switch(object) {
-				RMCircle(radius): [size, radius, const(0.), const(0.)];
-				RMHexagon(radius): [size, radius, const(0.), const(0.)];
-			}
-			RMRevolution(object, rradius): switch(object) {
-				RMCircle(radius): [rradius, radius, const(0.), const(0.)];
-				RMHexagon(radius): [rradius, radius, const(0.), const(0.)];
-			}
+			RMCylinder(height, radius): [height, radius];
+			RMRoundedCylinder(height, radius, radiusRounded): [height, fdivide(radius, const(2.)), radiusRounded];
+			RMOctahedron(size): [size];
+			RMExtrusion(object, size): concat([size], get2DTransforms(object));
+			RMRevolution(object, radius): concat([radius], get2DTransforms(object));
 		}
 	};
 	switch(obj) {
@@ -867,5 +898,27 @@ getTextCoords(id : int, textPositionsB : DynamicBehaviour<[Triple<Point, double,
 		if (textPositions != []) nextDistinct(textPositionsB, textPositions);
 
 		getTextCoords(id, textPositionsB);
+	})
+}
+
+generatePolygonFunctions(polygonPoints : Set<int>) -> string {
+	template = "float sdPolygon(vec2[%1] v, vec2 p)
+	{
+		float d = dot(p - v[0], p - v[0]);
+		float s = 1.0;
+		for(int i = 0, j = %1 - 1; i < %1; j = i, i++)
+		{
+			vec2 e = v[j] - v[i];
+			vec2 w = p - v[i];
+			vec2 b = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
+			d = min(d, dot(b, b));
+			bvec3 c = bvec3(p.y >= v[i].y, p.y < v[j].y, e.x * w.y > e.y * w.x);
+			if(all(c) || all(not(c))) s *= -1.0;  
+		}
+		return s * sqrt(d);
+	}";
+
+	foldSet(polygonPoints, "", \acc, num -> {
+		acc + "\n\n" + formatString(template, [i2s(num)]);
 	})
 }
