@@ -3,8 +3,8 @@ import tools/flowc/statements/fi2fs;
 import tools/flowc/manipulation/eliminate_union_fields;
 
 export {
-	cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
-	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string;
+	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
+	fiCompiledModule2cpp3(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
 	cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> Cpp3RuntimePart;
 }
 
@@ -22,7 +22,7 @@ using namespace " + gctx.config.namespace + ";\n\n" +
 "\treturn 0;\n}\n";
 }
 
-fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string {
+fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule {
 	names = gctx.program.names;
 	structs_decls = map(module.structs, \struct -> fiStruct2cpp3(struct, gctx, true));
 	structs_defs = map(module.structs, \struct -> fiStruct2cpp3(struct, gctx, false));
@@ -63,14 +63,30 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> string {
 		fcPrintln(err, gctx.config.config.threadId);
 	}
 	all = concatA([structs_decls, structs_defs, defs2, defs1(true), defs1(false)]);
-	(if (exists(module.functions, \fn -> fn.name == "main")) "" else "#pragma once\n") +
+	Cpp3CompiledModule(
+		module.fileinfo.flowfile,
+		exists(module.functions, \fn -> fn.name == "main"),
+		concatA([structs_decls, structs_defs, defs2, defs1(true), defs1(false)]),
+		map(module.imports, \imp -> imp.flowfile),
+		natives
+	);
+}
+
+fiCompiledModule2cpp3(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
+	includes = superglue(
+		fiCpp3DependenciesIncludes(map(module.natives, \nat -> nat.dependencies)), 
+		\inc -> "#inc" + "lude " + inc, 
+		"\n"
+	);
+	(if (module.isMain) "" else "#pragma once\n") +
 	(if (includes == "") "" else includes + "\n") +
 	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
-	"// Module " + module.fileinfo.flowfile + "\n\n" + 
-	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp.flowfile, "/", "_") + ".hpp\"\n")) + "\n") +
+	"// Module " + module.name + "\n\n" + 
+	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
 	"namespace " + gctx.config.namespace + " {\n" +
 	"using namespace flow;\n\n" + 
-	concatStrings(all) + "\n}\n";
+	concatStrings(module.source) + "\n}\n" +
+	if (module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
 }
 
 fiStructName2cpp3(tn : FiTypeName, gctx: Cpp3GlobalContext) -> string {

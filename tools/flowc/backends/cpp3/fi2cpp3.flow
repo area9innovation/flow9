@@ -80,36 +80,24 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> [string] {
 	}
 	// The runtime fragents, which are used in a program
 	runtime_parts = fi2cpp3RuntimeParts(gctx);
-	sources = if (!gctx.config.monolith) {
-		save_file("__flow_runtime.hpp", fiCpp3Runtime(gctx, runtime_parts));
-		sources = list2array(fold(gctx.program.traversal, makeList1("__flow_runtime.hpp"), \srcs, name -> {
-			if (gctx.config.config.verbose > 1) {
-				fcPrintln("Compiling to cpp3: " + name, gctx.config.config.threadId);
-			}
-			module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
-			cpp3_module = fiModule2cpp3(module, gctx);
-			is_main = exists(module.functions, \fn -> fn.name == "main");
-			cpp3_src = cpp3_module + if (!is_main) "" else "\n" + cpp3MainFunc(gctx, runtime_parts);
-			cpp3_path = strReplace(changeFileExt(name, if (!is_main) ".hpp" else ".cpp"), "/", "_");
-			//if (cpp3_src == "") srcs else {
-				save_file(cpp3_path, cpp3_src);
-				Cons(cpp3_path, srcs);
-			//}
-		}));
-		sources;
-	} else {
-		cpp3_modules = fold(gctx.program.traversal,
-			makeList1(fiCpp3Runtime(gctx, runtime_parts)),
-			\acc, name -> {
-				module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
-				Cons(fiModule2cpp3(module, gctx), acc);
-			}
-		);
-		cpp3_src = list2string(Cons(cpp3MainFunc(gctx, runtime_parts), cpp3_modules));
-		cpp3_path = strReplace(changeFileExt(gctx.config.config.flowfile, ".cpp"), "/", "_");
-		save_file(cpp3_path, cpp3_src);
-		[cpp3_path];
-	}
+	save_file("__flow_runtime.hpp", fiCpp3Runtime(gctx, runtime_parts));
+
+	compiled = fold(gctx.program.traversal, makeTree(), \acc, name -> {
+		if (gctx.config.config.verbose > 1) {
+			fcPrintln("Compiling to cpp3: " + name, gctx.config.config.threadId);
+		}
+		module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
+		setTree(acc, name, fiModule2cpp3(module, gctx));
+	});
+
+	sources = list2array(foldTree(compiled, makeList1("__flow_runtime.hpp"), \name, cpp3_module, srcs -> {
+		cpp3_src = fiCompiledModule2cpp3(cpp3_module, gctx, runtime_parts);
+		cpp3_path = strReplace(changeFileExt(name, if (!cpp3_module.isMain) ".hpp" else ".cpp"), "/", "_");
+		//if (cpp3_src == "") srcs else {
+			save_file(cpp3_path, cpp3_src);
+			Cons(cpp3_path, srcs);
+		//}
+	}));
 	save_file(gctx.config.config.flowfile + "_sources", concatStrings(map(sources, \src -> src + "\n")));
 	filter(sources, \path -> endsWith(path, ".cpp"));
 }
