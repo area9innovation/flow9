@@ -60,12 +60,12 @@ union DoubleOrChars {
 	DoubleOrChars(char16_t i0, char16_t i1, char16_t i2, char16_t i3): chars(i0, i1, i2, i3) { }
 };
 
-std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> utf16_to_utf8;
+using utf16_to_utf8 = std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t>;
 
-inline std::string toStdString(String s) { return utf16_to_utf8.to_bytes(*s); }
-inline string fromStdString(const std::string& s) { return utf16_to_utf8.from_bytes(s); }
+inline std::string toStdString(String s) { utf16_to_utf8 conv; return conv.to_bytes(*s); }
+inline string fromStdString(const std::string& s) { utf16_to_utf8 conv; return conv.from_bytes(s); }
 
-String empty_string = String(new string());
+const String empty_string = String(new string());
 
 inline String makeString() { return empty_string; }
 inline String makeString(const char16_t* s) { return String(new string(s)); }
@@ -75,10 +75,10 @@ inline String makeString(char16_t ch) { return String(new string(1, ch)); }
 inline String makeString(const std::string& s) { return String(new string(fromStdString(s))); }
 inline String makeString(const char16_t* s, Int len) { return String(new string(s, len)); }
 
-String string_true = makeString("true");
-String string_false = makeString("false");
-String string_1 = makeString("1");
-String string_0 = makeString("0");
+const String string_true = makeString("true");
+const String string_false = makeString("false");
+const String string_1 = makeString("1");
+const String string_0 = makeString("0");
 
 template<typename T> struct ToFlow;
 template<typename T> struct FromFlow;
@@ -289,6 +289,7 @@ struct Arr : public Array {
 
 template<typename T> 
 struct Ref : public Reference {
+	Ref() { }
 	Ref(const T& r): ref(std::make_shared<T>(r)) { }
 	Ref(T&& r): ref(std::make_shared<T>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
@@ -307,7 +308,7 @@ struct Ref : public Reference {
 template<typename R, typename... As> 
 struct Fun : public Function {
 	typedef std::function<R(As...)> Fn;
-	//Fun(const Fn& f): fn(std::make_shared(f)) { }
+	Fun() {}
 	Fun(Fn&& f): fn(std::make_shared<Fn>(f)) { }
 	Fun(Fn* f): fn(f) { }
 	Fun(Ptr<Fn>&& f): fn(std::move(f)) { }
@@ -328,10 +329,14 @@ struct Fun : public Function {
 
 template<typename N>
 struct Nat : public Native {
+	Nat() {}
 	Nat(N* n): nat(n) { }
 	Nat(const Nat& n): nat(n.nat) { }
+	Nat(const Ptr<N>& n): nat(n) { }
+	Nat(Ptr<N>&& n): nat(std::move(n)) { }
 	Nat(Nat&& n): nat(std::move(n.nat)) { }
 	Nat& operator = (Nat&& n) { nat = std::move(n.nat); return *this; }
+	Nat& operator = (const Nat& n) { nat = n.nat; return *this; }
 	Int compare(Nat n) const { return Compare<void*>::cmp(nat.get(), n.nat.get()); }
 	template<typename N1>
 	Nat<N1> cast() const {
@@ -341,15 +346,20 @@ struct Nat : public Native {
 	Ptr<N> nat;
 };
 
-void flow2string(Flow v, std::ostream& os, bool init) {
+inline void flow2string(Flow v, std::ostream& os, bool init) {
 	switch (v.type()) {
 		case Type::INT:    os << std::get<Int>(v.val); break;
 		case Type::BOOL:   os << (std::get<Bool>(v.val) ? "true" : "false"); break;
 		case Type::DOUBLE: os << std::get<Double>(v.val); break;
 		case Type::STRING: {
-			if (!init) os << "\"";
+			if (!init) {
+				os << "\"";
+			}
 			os << toStdString(std::get<String>(v.val));
-			if (!init) os << "\""; break;
+			if (!init) {
+				os << "\""; 
+			}
+			break;
 		}
 		case Type::STRUCT: {
 			Ptr<Struct> s = std::get<Ptr<Struct>>(v.val);
@@ -571,7 +581,7 @@ struct Compare<Nat<T>> {
 	static Int cmp(Nat<T> v1, Nat<T> v2) { return Compare<void*>::cmp(v1.nat.get(), v2.nat.get()); }
 };
 
-Int compareFlow(Flow v1, Flow v2) {
+inline Int compareFlow(Flow v1, Flow v2) {
 	if (v1.type() != v2.type()) {
 		return Compare<Int>::cmp(v1.type(), v2.type());
 	} else {

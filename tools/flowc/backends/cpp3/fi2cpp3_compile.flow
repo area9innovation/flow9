@@ -60,15 +60,17 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule 
 
 cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
 	init = strGlue(^(gctx.volatileInit), "\n");
-	mains = superglue(runtime_parts, \part -> part.main, "\n");
+	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
+	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
 	sources = superglue(runtime_parts, \part -> part.source, "\n");
 "using namespace flow;
 using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
 "int main(int argc, const char* argv[]) {\n" +
-(if (mains == "") "" else strIndent(mains) + "\n") +
+(if (mainInits == "") "" else strIndent(mainInits) + "\n") +
 (if (init == "") "" else strIndent(init) + "\n") +
 "\t" + gctx.varname2cpp("main") + "();\n" +
+(if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
 "\treturn 0;\n}\n";
 }
 
@@ -188,8 +190,10 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
 	init = gctx.varname2cpp(globalVar.name) + " = " + fsExp2cpp3(value_exp, gctx) + ";";
 	if (containsSet(gctx.volatileVars, globalVar.name)) {
 		gctx.volatileInit := concat(^(gctx.volatileInit), [init]);
+		fiType2cpp3(globalVar.type, gctx) + " " + gctx.varname2cpp(globalVar.name) + ";\n\n";
+	} else {
+		fiType2cpp3(globalVar.type, gctx) + " " + init + ";\n\n";
 	}
-	fiType2cpp3(globalVar.type, gctx) + " " + init + ";\n\n";
 }
 
 fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> string {
@@ -436,16 +440,36 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		FsCallPrim(op, es, type): fsCallPrim2cpp3(op, es, type, gctx);
 		FiVar(name, type,__): {
 			var = gctx.varname2cpp(name);
-			switch (type) {
-				FiTypeFunction(argts, rt): {
-					if (fiIsGlobalFunction(name, gctx.program.names)) {
-						"std::function<" + fiType2cpp3(rt, gctx) + "(" + 
-						superglue(argts, \t -> fiType2cpp3(t.type, gctx), ", ") + ")>(" + var + ")";
-					} else {
-						var;
+			switch (lookupTree(gctx.program.names.toplevel, name)) {
+				Some(decl): {
+					switch (decl) {
+						FiFunctionDec(__,__, fn_type, __,__): {
+							call_type = cast(type: FiType -> FiTypeFunction);
+							typars_instances = fiMatchTyparsOrdered(fn_type, call_type);
+							typars = if (length(typars_instances) == 0) "" else {
+								"<" + superglue(typars_instances, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
+							}
+							"std::function<" + fiType2cpp3(call_type.returnType, gctx) + "(" + 
+							superglue(call_type.args, \t -> fiType2cpp3(t.type, gctx), ", ") + ")>(" + var + typars + ")";
+						}
+						FiNativeDec(__,__, fn_type, __,__,__,__): {
+							switch (fn_type) {
+								FiTypeFunction(as, ret): {
+									call_type = cast(type: FiType -> FiTypeFunction);
+									typars_instances = fiMatchTyparsOrdered(fn_type, call_type);
+									typars = if (length(typars_instances) == 0) "" else {
+										"<" + superglue(typars_instances, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
+									}
+									"std::function<" + fiType2cpp3(call_type.returnType, gctx) + "(" + 
+									superglue(call_type.args, \t -> fiType2cpp3(t.type, gctx), ", ") + ")>(" + var + typars + ")";
+								}
+								default: var;
+							}
+						}
+						default: var;
 					}
 				}
-				default: var;
+				None(): var;
 			}
 		}
 		FsRequire(flowfile, ex, type): fail0("//TODO: FiRequire " + flowfile);
@@ -568,10 +592,11 @@ fiCpp3StructDefs(gctx : Cpp3GlobalContext) -> string {
 			constructor + ", " +
 			fields +
 		"}";
-		"\tstruct_defs[fromStdString(\"" + struct.name + "\")] = " + struct_def + ";\n";
+		"\tdefs[fromStdString(\"" + struct.name + "\")] = " + struct_def + ";\n";
 	});
 "
-void init_struct_defs() {\n" + 
+std::map<string, StructDef> StructDefs::defs;
+void StructDefs::init() {\n" + 
 	concatStrings(struct_defs) + 
 "\n}\n";
 
@@ -657,8 +682,13 @@ struct StructDef {
 	std::vector<FieldDef> fields;
 };
 
-std::map<string, StructDef> struct_defs;
-
-", fiCpp3StructDefs(gctx), "init_struct_defs();", [Cpp3Std(["<map>"], [])]
+struct StructDefs {
+	static void init();
+	static std::map<string, StructDef> defs;
+};
+", 
+fiCpp3StructDefs(gctx), 
+"StructDefs::init();", "", 
+[Cpp3Std(["<map>"], [])]
 );
 }
