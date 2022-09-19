@@ -155,7 +155,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) ->
 			"\treturn 0;"
 		"\n}";
 
-		field = "Flow field(String name) override {\n" +
+		get_field = "Flow field(String name) override {\n" +
 			(if (length(struct.args) == 0) {
 				"\tassert(false && \"unkown field in struct\");\n" +
 				"\treturn Flow();";
@@ -181,6 +181,30 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) ->
 			}) +
 		"\n}";
 
+		set_field = "void setField(String name, Flow val) override {\n" +
+			(if (length(struct.args) == 0) {
+				"\tassert(false && \"unkown field in struct\");"
+			} else {
+				strIndent(
+					supergluei(struct.args, 
+						\i, arg -> {
+							if (i == 0) {
+								"if (toStdString(name) == \"" + arg.name + "\") {\n" +
+									"\t" + gctx.varname2cpp(arg.name) + " = " + "FromFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
+								"\n} "
+							} else {
+								"else if (toStdString(name) == \"" + arg.name + "\") {\n" +
+									"\t" + gctx.varname2cpp(arg.name) + " = " + "FromFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
+								"\n} "
+							}
+						}, "\n"
+					) + "else {\n" +
+						"\tassert(false && \"unkown field in struct\");" +
+					"\n}"
+				);
+			}) +
+		"\n}";
+
 		decl_typars + "struct " + struct_name + ": public Struct {\n" +
 		constructor + 
 		//(if (copy_constructor == "") "" else copy_constructor) +
@@ -191,7 +215,8 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) ->
 		"\tString name() const override { return makeString(\"" + struct.name + "\"); }\n" +
 		"\tInt size() const override { return " + i2s(length(struct.args)) + "; }\n" +
 		"\tstd::vector<Flow> fields() override { return std::vector<Flow>{" + superglue(struct.args, \arg -> "ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}; }\n" +
-		strIndent(field) + "\n" +
+		strIndent(get_field) + "\n" +
+		strIndent(set_field) + "\n" +
 		strIndent(compare1) + "\n" + 
 		strIndent(compare2) + "\n" + 
 		(if (fields == "") "" else fields) +
@@ -544,13 +569,22 @@ fsCallPrim2cpp3(op : FcPrim, es : [FsExp], type : FiType, gctx : Cpp3GlobalConte
 		FcIndexPrim(): {
 			switch (arg_type) {
 				FiTypeFlow(): {
-					"(*" + e2k(es[0]) + ".arr)[" + e2k(es[1]) + "]";
+					e2k(es[0]) + ".toArray()->element(" + e2k(es[1]) + ")";
 				}
 				default:
 					"(*" + e2k(es[0]) + ".arr)[" + e2k(es[1]) + "]";
 			}
 		}
-		FcDerefPrim():   "(*" +e2k(es[0]) + ".ref)";
+		FcDerefPrim(): {
+			switch (arg_type) {
+				FiTypeFlow(): {
+					e2k(es[0]) + ".toReference()->reference()";
+				}
+				default:
+					"(*" +e2k(es[0]) + ".ref)";
+
+			}
+		}
 		FcAssignPrim(): {
 			ref_tp = fiDerefType(fsExpType(es[0]));
 			val_tp = fsExpType(es[1]);
@@ -583,16 +617,26 @@ fsCallPrim2cpp3(op : FcPrim, es : [FsExp], type : FiType, gctx : Cpp3GlobalConte
 						}
 					}
 					FiTypeFlow(): {
-						"std::get<Ptr<Struct>>(" + e2k(es[0]) + ".val)->name()";
+						e2k(es[0]) + ".toStruct()->name()";
 					}
 					default: fail0("accees to field '" + name + "' of non-field: " + fsExp2s(es[0]));
 				}
 			} else {
-				e2k(es[0]) + "->" + gctx.varname2cpp(name);
+				switch (arg_type) {
+					FiTypeFlow(): {
+						e2k(es[0]) + ".toStruct()->field(" + gctx.varname2cpp(name) + ")";
+					}
+					default: e2k(es[0]) + "->" + gctx.varname2cpp(name);
+				}
 			}
 		}
 		FcSetMutablePrim(name): {
-			e2k(es[0]) + "->" + gctx.varname2cpp(name) + " = " + e2k(es[1]);
+			switch (arg_type) {
+				FiTypeFlow(): {
+					e2k(es[0]) + ".toStruct()->setField(" + gctx.varname2cpp(name) + ", " + e2k(es[1]) + ")";
+				}
+				default: e2k(es[0]) + "->" + gctx.varname2cpp(name) + " = " + e2k(es[1]);
+			}
 		}
 		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
 		FcQuote():   fail0("// TODO: FcQuote");

@@ -133,11 +133,19 @@ struct Flow {
 	Flow(Ptr<Reference> r): val(r) { }
 	Flow(Ptr<Function> f): val(f) { }
 	Flow(Ptr<Native> n): val(n) { }
-
-	template<typename T>
-	Flow(Str<T> s);
+	template<typename T> Flow(Str<T> s);
 
 	Variant val;
+
+	Int toInt() { return std::get<Int>(val); }
+	Bool toBool() { return std::get<Bool>(val); }
+	Double toDouble() { return std::get<Double>(val); }
+	String toString() { return std::get<String>(val); }
+	Ptr<Struct> toStruct() { return std::get<Ptr<Struct>>(val); }
+	Ptr<Array> toArray() { return std::get<Ptr<Array>>(val); }
+	Ptr<Reference> toReference() { return std::get<Ptr<Reference>>(val); }
+	Ptr<Function> toFunction() { return std::get<Ptr<Function>>(val); }
+	Ptr<Native> toNative() { return std::get<Ptr<Native>>(val); }
 
 	Type type() const { 
 		switch (val.index()) {
@@ -163,6 +171,7 @@ struct Struct {
 	virtual Int size() const = 0;
 	virtual std::vector<Flow> fields() = 0;
 	virtual Flow field(String name) = 0;
+	virtual void setField(String name, Flow val) = 0;
 	virtual Int compare(const Struct&) const = 0;
 };
 
