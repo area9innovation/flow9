@@ -328,85 +328,23 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			"\n}";
 		}
 		FsSwitch(x, cases, type): {
-			typename = getFiTypeName(x.type);
-			switch (lookupTree(gctx.program.names.unions, typename)) {
-				Some(union): {
-					case2k = \c -> {
-						switch (lookupTree(gctx.program.names.structs, c.struct)) {
-							Some(struct): {
-								typars = if (length(struct.typars) == 0) "" else 
-									"<" + superglue(struct.typars, \typar-> fiType2cpp3(typar, gctx), ", ") + ">";
-								name = gctx.typename2cpp(c.struct) + typars;
-								args_to_wrap = filtermapi(c.args, \i, arg -> {
-									arg_type = struct.args[i].type;
-									arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
-									if (arg_typars == []) None() else Some(Pair(arg, arg_type));
-								});
-								vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
-								body1 = fsStat2cpp3(vars_wrapped, gctx);
-								id = lookupTreeDef(gctx.structs2id, c.struct, -1);
-								"case " + i2s(id) + " /*" + c.struct + "*/: {\n" +
-									strIndent(body1) + "\n\tbreak;"
-								"\n}";
-
-							}
-							None(): {
-								// default case
-								if (c.struct != "default") fail0("struct is not found") else {
-									body1 = fsStat2cpp3(c.body, gctx);
-									strIndent("default: {\n" + strIndent(body1)) + "\n}";
-								}
-							}
-						}
-					}
-					nondef_cases = filtermap(cases, \c ->
-						if (c.struct == "default") None() else Some(case2k(c))
-					);
-					all_cases = switch (find(cases, \case -> case.struct == "default")) {
-						Some(def_case): {
-							concat(nondef_cases, [case2k(def_case)]);
+			switch (x.type) {
+				FiTypeName(typename,__): {
+					switch (lookupTree(gctx.program.names.unions, typename)) {
+						Some(__): {
+							fsSwitch2cpp3(stat, gctx.varname2cpp(x.name) + "->id()", gctx);
 						}
 						None(): {
-							redundant_defcase = if (gctx.config.monolith) [] else 
-								["default: {\n" + 
-									strIndent("assert(false && \"unexpected case in switch\");\nbreak;") + 
-								"\n}"];
-							concat(nondef_cases, redundant_defcase);
-							//nondef_cases;
+							fsStructSwitch2cpp3(stat, typename, gctx);
 						}
-					}
-					"switch (" + gctx.varname2cpp(x.name) + "->id()) {\n" +
-						superglue(all_cases, \case -> strIndent(case), "\n") +
-					"\n}";
+					}			
 				}
-				None(): {
-					switch (lookupTree(gctx.program.names.structs, typename)) {
-						Some(struct): {
-							switch (find(cases, \case -> case.struct == typename)) {
-								Some(c): {
-									typars = if (length(struct.typars) == 0) "" else 
-										"<" + superglue(struct.typars, \typar-> fiType2cpp3(typar, gctx), ", ") + ">";
-									name = gctx.typename2cpp(c.struct) + typars;
-									args_to_wrap = filtermapi(c.args, \i, arg -> {
-										arg_type = struct.args[i].type;
-										arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
-										if (arg_typars == []) None() else Some(Pair(arg, arg_type));
-									});
-									vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
-									body1 = fsStat2cpp3(vars_wrapped, gctx);
-									body1;
-								}
-								None(): {
-									fail0("struct case is not found");
-								}
-							}
-						}
-						None(): {
-							fail0("must be struct or union (type name)");
-						}
-					}
+				FiTypeFlow(): {
+					fsSwitch2cpp3(stat, gctx.varname2cpp(x.name) + ".toStruct()->id()", gctx);
 				}
-			}			
+				default:
+					fail0("must be struct or union or flow type, got: " + prettyFiType(dummyPretty, x.type, makeSet()));
+			}
 		}
 		FsSeq(es, type): {
 			if (length(es) == 0) "" else
@@ -425,6 +363,85 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			gctx.varname2cpp(var.name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 	};
+}
+
+fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string {
+	nondef_cases = filtermap(sw.cases, \c ->
+		if (c.struct == "default") None() else Some(fsCase2cpp3(c, gctx))
+	);
+	all_cases = switch (find(sw.cases, \case -> case.struct == "default")) {
+		Some(def_case): {
+			concat(nondef_cases, [fsCase2cpp3(def_case, gctx)]);
+		}
+		None(): {
+			redundant_defcase = if (gctx.config.monolith) [] else 
+				["default: {\n" + 
+					strIndent("assert(false && \"unexpected case in switch\");\nbreak;") + 
+				"\n}"];
+			concat(nondef_cases, redundant_defcase);
+			//nondef_cases;
+		}
+	}
+	"switch (" + sw_cond + ") {\n" +
+		superglue(all_cases, \case -> strIndent(case), "\n") +
+	"\n}";
+}
+
+fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
+	switch (lookupTree(gctx.program.names.structs, c.struct)) {
+		Some(struct): {
+			typars = if (length(struct.typars) == 0) "" else 
+				"<" + superglue(struct.typars, \typar-> fiType2cpp3(typar, gctx), ", ") + ">";
+			name = gctx.typename2cpp(c.struct) + typars;
+			args_to_wrap = filtermapi(c.args, \i, arg -> {
+				arg_type = struct.args[i].type;
+				arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
+				if (arg_typars == []) None() else Some(Pair(arg, arg_type));
+			});
+			vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
+			body1 = fsStat2cpp3(vars_wrapped, gctx);
+			id = lookupTreeDef(gctx.structs2id, c.struct, -1);
+			"case " + i2s(id) + " /*" + c.struct + "*/: {\n" +
+				strIndent(body1) + "\n\tbreak;"
+			"\n}";
+
+		}
+		None(): {
+			// default case
+			if (c.struct != "default") fail0("struct is not found") else {
+				body1 = fsStat2cpp3(c.body, gctx);
+				strIndent("default: {\n" + strIndent(body1)) + "\n}";
+			}
+		}
+	}
+}
+
+fsStructSwitch2cpp3(sw: FsSwitch, typename: string, gctx: Cpp3GlobalContext) -> string {
+	switch (lookupTree(gctx.program.names.structs, typename)) {
+		Some(struct): {
+			switch (find(sw.cases, \case -> case.struct == typename)) {
+				Some(c): {
+					typars = if (length(struct.typars) == 0) "" else 
+						"<" + superglue(struct.typars, \typar-> fiType2cpp3(typar, gctx), ", ") + ">";
+					name = gctx.typename2cpp(c.struct) + typars;
+					args_to_wrap = filtermapi(c.args, \i, arg -> {
+						arg_type = struct.args[i].type;
+						arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
+						if (arg_typars == []) None() else Some(Pair(arg, arg_type));
+					});
+					vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
+					body1 = fsStat2cpp3(vars_wrapped, gctx);
+					body1;
+				}
+				None(): {
+					fail0("struct case is not found");
+				}
+			}
+		}
+		None(): {
+			fail0("must be struct or union (type name): " + typename);
+		}
+	}
 }
 
 fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
@@ -450,7 +467,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				fiCpp3Cast(arg_type, call_type, arg_s, gctx);
 			});
 			switch(f) {
-				FiVar(name, __,__): {
+				FsVar(name,__,__): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, name);
 					typars = switch (toplevel) {
 						Some(fn): {
@@ -490,46 +507,47 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			")";
 		}
 		FsCallPrim(op, es, type): fsCallPrim2cpp3(op, es, type, gctx);
-		FiVar(name, type,__): {
+		FsVar(name, type, local): {
 			var = gctx.varname2cpp(name);
-			switch (lookupTree(gctx.program.names.toplevel, name)) {
-				Some(decl): {
-					external_func_var = \fn_type -> {
-						switch (type) {
-							FiTypeFunction(args, ret_type): {
-								typars_instances = fiMatchTyparsOrdered(fn_type, type);
-								typars = if (length(typars_instances) == 0) "" else {
-									"<" + superglue(typars_instances, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
+			if (local) var else {
+				switch (lookupTree(gctx.program.names.toplevel, name)) {
+					Some(decl): {
+						external_func_var = \fn_type -> {
+							switch (type) {
+								FiTypeFunction(args, ret_type): {
+									typars_instances = fiMatchTyparsOrdered(fn_type, type);
+									typars = if (length(typars_instances) == 0) "" else {
+										"<" + superglue(typars_instances, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
+									}
+									"std::function<" + fiType2cpp3(ret_type, gctx) + "(" + 
+									superglue(args, \t -> fiType2cpp3(t.type, gctx), ", ") + ")>(" + var + typars + ")";
 								}
-								"std::function<" + fiType2cpp3(ret_type, gctx) + "(" + 
-								superglue(args, \t -> fiType2cpp3(t.type, gctx), ", ") + ")>(" + var + typars + ")";
+								default: {
+									fail0(
+										"non-func type:\n" + toStringFormatted(type) + "\n" +
+										"for func type:\n" + toStringFormatted(fn_type) + "\n" +
+										"expr:\n" + toStringFormatted(e) + "\n"
+									);
+								}
 							}
-							default: {
-								println(
-									"non-func type:\n" + toStringFormatted(type) + "\n" +
-									"for func type:\n" + toStringFormatted(fn_type) + "\n" +
-									"expr:\n" + toStringFormatted(e) + "\n"
-								);
-								var;
+						}
+						switch (decl) {
+							FiFunctionDec(__,__, fn_type, __,__): {
+								external_func_var(fn_type);
 							}
+							FiNativeDec(__,__, fn_type, __,__,__,__): {
+								switch (fn_type) {
+									FiTypeFunction(as, ret): {
+										external_func_var(fn_type);
+									}
+									default: var;
+								}
+							}
+							default: var;
 						}
 					}
-					switch (decl) {
-						FiFunctionDec(__,__, fn_type, __,__): {
-							external_func_var(fn_type);
-						}
-						FiNativeDec(__,__, fn_type, __,__,__,__): {
-							switch (fn_type) {
-								FiTypeFunction(as, ret): {
-									external_func_var(fn_type);
-								}
-								default: var;
-							}
-						}
-						default: var;
-					}
+					None(): var;
 				}
-				None(): var;
 			}
 		}
 		FsRequire(flowfile, ex, type): fail0("//TODO: FiRequire " + flowfile);

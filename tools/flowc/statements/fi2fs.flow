@@ -6,7 +6,7 @@ export {
 	FsReturnPolicy ::= FsReturnToOuter, FsReturnNowhere, FsReturnToLocal; 
 		FsReturnToOuter();
 		FsReturnNowhere();
-		FsReturnToLocal(var: FiVar);
+		FsReturnToLocal(var: FsVar);
 
 	fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiGlobalNames) -> FsStat;
 	fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp, [FsStat]>;
@@ -58,24 +58,35 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 			));
 		}
 		FiSwitch(v, vtype, cs, type, __): {
-			typename = getFiTypeName(v.type);
-			if (containsKeyTree(names.unions, typename)) {
-				FsSwitch(v, 
-					map(cs, \c -> {
-						case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-						FsCase(c.struct, c.argNames, fiExp2FsStat(c.body, returns, case_locals, names))
-					}), 
-					type
-				);
-			} else {
-				switch (find(cs, \c -> c.struct == typename)) {
-					Some(c): {
-						case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-						fiExp2FsStat(c.body, returns, case_locals, names);
+			default_switch = \ -> FsSwitch(
+				FsVar(v.name, v.type, containsSet(locals, v.name)), 
+				map(cs, \c -> {
+					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+					FsCase(c.struct, c.argNames, fiExp2FsStat(c.body, returns, case_locals, names))
+				}), 
+				type
+			);
+			switch (v.type) {
+				FiTypeName(typename,__): {
+					if (containsKeyTree(names.unions, typename)) {
+						default_switch();
+					} else {
+						switch (find(cs, \c -> c.struct == typename)) {
+							Some(c): {
+								case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+								fiExp2FsStat(c.body, returns, case_locals, names);
+							}
+							None(): {
+								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+							}
+						}
 					}
-					None(): {
-						fail0("unmatched struct type " + typename + " in switch " + prettyFiExp(dummyPretty, e));
-					}
+				}
+				FiTypeFlow(): {
+					default_switch();
+				}
+				default: {
+					fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
 				}
 			}
 		}
@@ -124,7 +135,7 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 			pair = do_exp(ex);
 			fsWrapSeq(concat(pair.second, [wrap(FsUnsafe(name, pair.first, type))]));
 		}
-		FiVar(name,__,__): wrap(e);
+		FiVar(name,type,__): wrap(FsVar(name, type, containsSet(locals, name)));
 		FiVoid(__):        wrap(e);
 		FiDouble(__, __):  wrap(e);
 		FiInt(__, __):     wrap(e);
@@ -166,27 +177,39 @@ fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp,
 			);
 		}
 		FiSwitch(v, vtype, cases, type, start): {
-			typename = getFiTypeName(v.type);
-			tmp_var = FiVar("__switch_" + v.name, type, start);
-			switch_stat = if (containsKeyTree(names.unions, typename)) {
+			tmp_var = FsVar("__switch_" + v.name, type, true);
+			default_switch_stat = \-> {
 				cases_stats = map(cases, \c -> {
 					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
 					case_stat = fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names);
 					FsCase(c.struct, c.argNames, case_stat);
 				});
-				FsSwitch(v, cases_stats, type);
-			} else {
-				switch (find(cases, \c -> c.struct == typename)) {
-					Some(c): {
-						case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-						fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names);
+				FsSwitch(FsVar(v.name, v.type, containsSet(locals, v.name)), cases_stats, type);
+			}
+			switch (v.type) {
+				FiTypeName(typename,__): {
+					switch_stat = if (containsKeyTree(names.unions, typename)) {
+						default_switch_stat();
+					} else {
+						switch (find(cases, \c -> c.struct == typename)) {
+							Some(c): {
+								case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+								fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names);
+							}
+							None(): {
+								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+							}
+						}
 					}
-					None(): {
-						fail0("unmatched struct type " + typename + " in switch " + prettyFiExp(dummyPretty, e));
-					}
+					Pair(tmp_var, [FsVarDecl(tmp_var), switch_stat]);
+				}
+				FiTypeFlow(): {
+					Pair(tmp_var, [FsVarDecl(tmp_var), default_switch_stat()]);
+				}
+				default: {
+					fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
 				}
 			}
-			Pair(tmp_var, [FsVarDecl(tmp_var), switch_stat]);
 		}
 		FiLambda(args, body, type,__): {
 			free_vars = fifreevars(e);
@@ -240,7 +263,7 @@ fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp,
 			pair = do_exps(ex);
 			Pair(FsUnsafe(name, pair.first, type), pair.second);
 		}
-		FiVar(name,__,__): Pair(e, []);
+		FiVar(name, type,__): Pair(FsVar(name, type, containsSet(locals, name)), []);
 		FiVoid(__):        Pair(e, []);
 		FiDouble(__, __):  Pair(e, []);
 		FiInt(__, __):     Pair(e, []);
