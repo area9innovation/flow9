@@ -162,12 +162,14 @@ struct Struct {
 	virtual String name() const = 0;
 	virtual Int size() const = 0;
 	virtual std::vector<Flow> fields() = 0;
+	virtual Flow field(String name) = 0;
 	virtual Int compare(const Struct&) const = 0;
 };
 
 struct Array {
 	virtual Int size() const = 0;
 	virtual std::vector<Flow> elements() = 0;
+	virtual Flow element(Int i) = 0;
 };
 
 struct Reference {
@@ -264,6 +266,9 @@ struct Arr : public Array {
 			ret.push_back(ToFlow<T>::conv(x));
 		}
 		return ret;
+	}
+	Flow element(Int i) override {
+		return ToFlow<T>::conv(arr->at(i));
 	}
 	Int compare(Arr a) const { 
 		Int c1 = Compare<Int>::cmp(arr->size(), a.arr->size());
