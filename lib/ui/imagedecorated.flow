@@ -34,6 +34,7 @@ export {
 		hideLoadingSpinnerB : Behaviour<bool>
 	) -> Form;
 
+	makeImagePreZoomDecorationsForms(decorations : [PreZoomDecoration], width : double, height : double) -> [Form];
 	makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], width : double, height : double) -> Form;
 
 	splitImageDecorations(
@@ -358,6 +359,8 @@ makeImageTextBox(ib : ImageTextBox) -> Form {
 		StartAlign(): b2d(getDefaultRtl());
 		EndAlign(): b2d(!getDefaultRtl());
 	};
+	widthManager = make(100000.0) |> \w -> ParagraphWidthManager(w, w, false);
+	scaleX = make(1.0);
 	Group([
 		makeImageRectangle(ib.rectangle, 0.0, 0.0),  // Only first parameter effective in the case.
 		Translate(
@@ -365,10 +368,24 @@ makeImageTextBox(ib : ImageTextBox) -> Form {
 			const(ib.rectangle.y),
 			Available(
 				const(recW), const(recH),
-				Align2(hAlignN, verticalAlign2d(ib.vAlign), Border(8.0, 8.0, 8.0, 8.0, Paragraph(
-					[TextFragment(ib.label.text, ib.label.style)],
-					[ib.hAlign]
-				)))
+				Align2(hAlignN, verticalAlign2d(ib.vAlign), Constructor(
+					Scale(
+						scaleX, scaleX,
+						Border(8.0, 8.0, 8.0, 8.0, renderParagraph(
+							[TextFragment(ib.label.text, ib.label.style)],
+							[ib.hAlign, ParagraphSingleLine()],
+							getDefaultRtl(), widthManager
+						)
+					)),
+					\ -> {
+						[
+							connectSelectu(
+								widthManager.width, scaleX,
+								\w -> if (w < 1.0) 0.0 else min((recW - 16.0/*borders*/) / w, 1.0)
+							)
+						] |> \uns -> \-> applyall(uns)
+					}
+				))
 			)
 		),
 	]);
@@ -400,55 +417,59 @@ makeImageCircle(iCircle : ImageCircle, _width : double, _height : double) -> For
 
 }
 
-makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : double, _height : double) -> Form {
-	if (decorations != []) {
-		fold(decorations, [], \prevD, d -> {
-			concat(prevD,
-				switch (d: PreZoomDecoration) {
-					ImageLabel(x, y, label): {
-						// We use a border to force the size to adjust accordingly
-						// We cut two pixel border of TextField, so we add them here to match view in Annotate
-						switch (label : Form) {
-							Text(text, style) : Offset(x, y, Border(2.0, 2.0, 0.0, 0.0, Text(text, style))) |> v2a;
-							default : {
-								reportImageLabelError(d);
-								[]
-							}
-
+makeImagePreZoomDecorationsForms(decorations : [PreZoomDecoration], _width : double, _height : double) -> [Form] {
+	fold(decorations, [], \prevD, d -> {
+		concat(prevD,
+			switch (d: PreZoomDecoration) {
+				ImageLabel(x, y, label): {
+					// We use a border to force the size to adjust accordingly
+					// We cut two pixel border of TextField, so we add them here to match view in Annotate
+					switch (label : Form) {
+						Text(text, style) : Offset(x, y, Border(2.0, 2.0, 0.0, 0.0, Text(text, style))) |> v2a;
+						default : {
+							reportImageLabelError(d);
+							[]
 						}
-					}
-					ImageArrow(x, y, rotate, len, color, thickness, label): {
-						// (x, y) is a point to where the arrow points
-						angleRad = rotate * PI / 180.0;
 
-						arrow = FixSize(6.0, 9.0, Graphics(makeArrowGraphics(len, thickness), [Stroke(color), StrokeWidth(max(thickness, 1.0))]));
-						[
-							Offset(x, y, Rotate(const(-rotate - 90.0), arrow)),
-							Offset(x + len * cos(angleRad), y - len * sin(angleRad), label)
-						]
-					}
-					ImageCircle(x, y, radius, style, inverted): {
-						[ makeImageCircle(d, _width, _height) ]
-					}
-					ImageRectangle(x, y, width, height, style, inverted) : {
-						[ makeImageRectangle(d, _width, _height) ]
-					}
-					ImageTextBox(label, hAlign, vAlign, rect) : {
-						[ makeImageTextBox(d) ];
-					}
-					ImageDimmer(type, lt, rb, dimmerColor, borderColor, dimmerOpacity, borderOpacity) : {
-						shape = makeDimmerShape(type, lt, rb);
-						boxAround = [LineTo(0.0, 0.0), LineTo(0.0, _height), LineTo(_width, _height), LineTo(_width, 0.0), LineTo(0.0, 0.0)];
-						[
-							Group([
-								Graphics(concat(shape, boxAround), [Fill(dimmerColor), FillOpacity(dimmerOpacity)]),
-								Graphics(shape, [Stroke(borderColor), StrokeOpacity(borderOpacity)])
-							])
-						]
 					}
 				}
-			)
-		}) |> Group |> \f -> Size2(zeroSize, f)
+				ImageArrow(x, y, rotate, len, color, thickness, label): {
+					// (x, y) is a point to where the arrow points
+					angleRad = rotate * PI / 180.0;
+
+					arrow = FixSize(6.0, 9.0, Graphics(makeArrowGraphics(len, thickness), [Stroke(color), StrokeWidth(max(thickness, 1.0))]));
+					[
+						Offset(x, y, Rotate(const(-rotate - 90.0), arrow)),
+						Offset(x + len * cos(angleRad), y - len * sin(angleRad), label)
+					]
+				}
+				ImageCircle(x, y, radius, style, inverted): {
+					[ makeImageCircle(d, _width, _height) ]
+				}
+				ImageRectangle(x, y, width, height, style, inverted) : {
+					[ makeImageRectangle(d, _width, _height) ]
+				}
+				ImageTextBox(label, hAlign, vAlign, rect) : {
+					[ makeImageTextBox(d) ];
+				}
+				ImageDimmer(type, lt, rb, dimmerColor, borderColor, dimmerOpacity, borderOpacity) : {
+					shape = makeDimmerShape(type, lt, rb);
+					boxAround = [LineTo(0.0, 0.0), LineTo(0.0, _height), LineTo(_width, _height), LineTo(_width, 0.0), LineTo(0.0, 0.0)];
+					[
+						Group([
+							Graphics(concat(shape, boxAround), [Fill(dimmerColor), FillOpacity(dimmerOpacity)]),
+							Graphics(shape, [Stroke(borderColor), StrokeOpacity(borderOpacity)])
+						])
+					]
+				}
+			}
+		)
+	})
+}
+
+makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : double, _height : double) -> Form {
+	if (decorations != []) {
+		makeImagePreZoomDecorationsForms(decorations, _width, _height) |> Group |> \f -> Size2(zeroSize, f)
 	} else {
 		Empty()
 	}
@@ -599,7 +620,7 @@ splitImageDecorations(
 	decorations : [ImageDecoration]
 	) -> ImageDecoration4
 {
-	graphics = \q : ImageDecoration4, d : PreAndPostZoomDecoration -> {
+	graphics = \q : ImageDecoration4, d : PreOrPostZoomDecoration -> {
 		if (noScaleDecorations)
 			ImageDecoration4(q.preZoom, arrayPush(q.postZoom, d), q.sizeIndependent, q.crop)
 		else
