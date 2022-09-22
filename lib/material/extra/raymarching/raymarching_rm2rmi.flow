@@ -227,6 +227,7 @@ RMScene2RMIExp0(
 	}
 }
 
+//In Triple: first - distance expression, second - amount of paramerters, third - used only for 2d polygon to generate separate functions for each amount of points.
 RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple<RMIExp, int, Maybe<int>> {
 	switch(obj) {
 		RMSphere(radius): Triple(RMICall(RMIOp("-"), [
@@ -279,12 +280,55 @@ RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple
 			getObjectParameter(offset, 0),
 		]), 1, None());
 		RMExtrusion(object, size): {
+			xyBoundsM = getRM2DPrimitiveDimensions(object, offset);
 			primitive = RM2DPrimitives2RMIExp(object, distance, offset);
-			Triple(RMICall(RMIFn("opExtrussion"), [distance, primitive.first, getObjectParameter(offset, 0)]), primitive.second + 1, primitive.third);
+			extrussion = RMICall(RMIFn("opExtrussion"), [distance, primitive.first, getObjectParameter(offset, 0)]);
+
+			boundExtrussion = eitherMap(
+				xyBoundsM,
+				\xyBounds -> {
+					xBound = xyBounds.first;
+					yBound = xyBounds.second;
+					zBound = getObjectParameter(offset, 0);
+					box = RMICall(RMIFn("sdBox"), [
+						distance,
+						RMICall(RMIFn("vec3"), [xBound, yBound, zBound])
+					]);
+					boxCheck = RMICall(RMIOp("?:"), [
+						RMICall(RMIOp("<"), [box, RMICall(RMIFn("max"), [xBound, yBound])]),
+						extrussion,
+						box
+					]);
+					boxCheck
+				},
+				extrussion
+			);
+			Triple(boundExtrussion, primitive.second + 1, primitive.third);
 		}
 		RMRevolution(object, radius): {
+			xyBoundsM = getRM2DPrimitiveDimensions(object, offset);
 			primitive = RM2DPrimitives2RMIExp(object, RMICall(RMIFn("opRevolution"), [distance, getObjectParameter(offset, 0)]), offset);
-			Triple(primitive.first, primitive.second + 1, primitive.third);
+
+			boundRevolution = eitherMap(
+				xyBoundsM,
+				\xyBounds -> {
+					xBound = RMICall(RMIOp("*"), [xyBounds.first, RMIBrackets(RMICall(RMIOp("+"), [getObjectParameter(offset, 0), RMIDouble(1.)]))]);
+					yBound = xyBounds.second;
+					zBound = xBound;
+					box = RMICall(RMIFn("sdBox"), [
+						distance,
+						RMICall(RMIFn("vec3"), [xBound, yBound, zBound])
+					]);
+					boxCheck = RMICall(RMIOp("?:"), [
+						RMICall(RMIOp("<"), [box, RMICall(RMIFn("max"), [xBound, yBound])]),
+						primitive.first,
+						box
+					]);
+					boxCheck
+				},
+				primitive.first
+			);
+			Triple(boundRevolution, primitive.second + 1, primitive.third);
 		}
 	}
 }
@@ -324,6 +368,27 @@ RM2DPrimitives2RMIExp(obj : RM2DPrimitives, distance : RMIExp, offset : int) -> 
 			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
 		]), RMIDouble(0.01)]), 6, None());
 		RMEmpty(): Triple(RMIEmpty(), 0, None());
+	}
+}
+
+getRM2DPrimitiveDimensions(obj : RM2DPrimitives, offset : int) -> Maybe<Pair<RMIExp, RMIExp>> {
+	switch(obj) {
+		RMCircle(radius): None();
+		RMHexagon(radius): None();
+		RMTriangle(point0, point1, point2): None();
+		RMPolygon(points): None();
+		RMQuadraticBezier(A, B, C): {
+			xSize = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [getObjectParameter(offset, 1), RMICall(RMIFn("max"), [getObjectParameter(offset, 3), getObjectParameter(offset, 5)])]),
+				RMICall(RMIFn("min"), [getObjectParameter(offset, 1), RMICall(RMIFn("min"), [getObjectParameter(offset, 3), getObjectParameter(offset, 5)])])
+			]));
+			ySize = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [getObjectParameter(offset, 2), RMICall(RMIFn("max"), [getObjectParameter(offset, 4), getObjectParameter(offset, 6)])]),
+				RMICall(RMIFn("min"), [getObjectParameter(offset, 2), RMICall(RMIFn("min"), [getObjectParameter(offset, 4), getObjectParameter(offset, 6)])])
+			]));
+			Some(Pair(xSize, ySize))
+		};
+		RMEmpty(): None();
 	}
 }
 
