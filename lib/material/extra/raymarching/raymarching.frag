@@ -223,6 +223,30 @@ float sdBezier( in vec2 pos, in vec2 A, in vec2 B, in vec2 C )
     return sqrt( res );
 }
 
+float sdSegmentSq( in vec2 p, in vec2 a, in vec2 b )
+{
+	vec2 pa = p-a, ba = b-a;
+	float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+	return dot2( pa - ba*h );
+}
+
+float sdCubicBezier(vec2 pos, vec2 p0, vec2 p1, vec2 p2, vec2 p3, const int kNum)
+{   
+    vec2 res = vec2(1e10,0.0);
+    vec2 a = p0;
+    for( int i=1; i<kNum; i++ )
+    {
+        float t = float(i)/float(kNum-1);
+        float s = 1.0-t;
+        vec2 b = p0*s*s*s + p1*3.0*s*s*t + p2*3.0*s*t*t + p3*t*t*t;
+        float d = sdSegmentSq( pos, a, b );
+        if( d<res.x ) res = vec2(d,t);
+        a = b;
+    }
+    
+	return sqrt(res.x);
+}
+
 %generatedFunctions%
 
 float opSmoothUnion( float d1, float d2, float k ) {
