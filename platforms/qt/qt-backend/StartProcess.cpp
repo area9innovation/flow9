@@ -78,6 +78,7 @@ StackSlot StartProcess::execSystemProcess(RUNNER_ARGS)
     p->out_pos = p->stdout_pos = p->stderr_pos = 0;
     p->stdout_cb = onstdout;
     p->stderr_cb = onstderr;
+	p->exit_cb = FLOWVOID;
 
     process_set[p->process] = p;
 
@@ -368,7 +369,9 @@ void StartProcess::endProcess(FlowProcess *p, int code)
 
         WITH_RUNNER_LOCK_DEFERRED(RUNNER);
 
-        RUNNER->EvalFunction(p->exit_cb, 1, StackSlot::MakeInt(code));
+		if (p->exit_cb.GetType() != TVoid) {
+        	RUNNER->EvalFunction(p->exit_cb, 1, StackSlot::MakeInt(code));
+		}
     } else {
         p->stdout_buf.append(p->process->readAllStandardOutput());
         p->stderr_buf.append(p->process->readAllStandardError());

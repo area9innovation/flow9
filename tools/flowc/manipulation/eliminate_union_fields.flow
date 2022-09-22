@@ -1,4 +1,5 @@
 import tools/flowc/incremental/fi_helpers;
+import sys/exception; 
 import string_utils;
 
 export {
@@ -55,6 +56,8 @@ transform it to:
 where `e_prime` - is e with `a` replaced by `__prime_a`
  */
 fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp;
+
+fiMakeAllCastsExplicit(e : FiExp, type: FiType, names: FiGlobalNames, do: bool) -> FiExp;
 
 }
 
@@ -539,5 +542,137 @@ fiVarTypeInExpr(e : FiExp, var: string) -> Maybe<FiVar> {
 		}
 		FiVar(name,__,__): if (name == var) Some(e) else None();
 		default: None();
+	}
+}
+
+fiMakeAllCastsExplicit(e : FiExp, type: FiType, names: FiGlobalNames, do: bool) -> FiExp {
+	no_cast = \x -> fiMakeAllCastsExplicit(x, FiTypeVoid(), names, false);
+	e1 = switch(e) {
+		FiLambda(__, body, fn_type, __): {
+			switch (type) {
+				FiTypeFunction(__,returnType): {
+					FiLambda(e with body = fiMakeAllCastsExplicit(body, returnType, names, true));
+				}
+				default: {
+					throw("non func type: " + toString(type) + ", expected: " + toString(fn_type) + "\n" + toStringFormatted(e));
+					//FiLambda(e with body = fiMakeAllCastsExplicit(body, fn_type.returnType, names));
+				}
+			}
+		}
+		FiCall(fn, args,__,__): {
+			fn_type = cast(fiExpType(fn): FiType -> FiTypeFunction);
+			FiCall(e with
+				f = fiMakeAllCastsExplicit(fn, fn_type, names, true),
+				args = mapi(args, \i, arg -> 
+					fiMakeAllCastsExplicit(arg, fn_type.args[i].type, names, true)
+				)
+			);
+		}
+		FiLet(v, t, e1, e2, __, start): {
+			FiLet(e with 
+				e1 = fiMakeAllCastsExplicit(e1, t, names, true),
+				e2 = fiMakeAllCastsExplicit(e2, type, names, true)
+			);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with 
+				e1 = fiMakeAllCastsExplicit(e1, FiTypeBool(), names, false),
+				e2 = fiMakeAllCastsExplicit(e2, type, names, true),
+				e3 = fiMakeAllCastsExplicit(e3, type, names, true),
+			);
+		}
+		FiSwitch(v, __, cases, __,__): {
+			FiSwitch(e with
+				cases = map(cases, \c ->
+					FiCase(c with body = fiMakeAllCastsExplicit(c.body, type, names, true))
+				)
+			);
+		}
+		FiCast(ex, from, __, __, __): {
+			FiCast(e with e = no_cast(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with
+				es = mapi(es, \i, ex -> 
+					if (i + 1 == length(es)) {
+						no_cast(ex);
+					} else {
+						fiMakeAllCastsExplicit(ex, type, names, true);
+					}
+				)
+			);
+		}
+		FiCallPrim(__, es,__,__): {
+			fiMakeAllCastsExplicitInCallPrim(e, type, names);
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = no_cast(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = no_cast(ex));
+		}
+		default: e;
+	}
+	type1 = fiExpType(e1);
+	if (!do || fiEqualTypes(type1, type) || type == FiTypeVoid()) e1 else {
+		FiCast(e1, type1, type, type, e1.start);
+	}
+}
+
+
+fiMakeAllCastsExplicitInCallPrim(e : FiCallPrim, type: FiType, names: FiGlobalNames) -> FiCallPrim {
+	def_case = \do -> FiCallPrim(e with es = map(e.es, \x -> fiMakeAllCastsExplicit(x, type, names, do)));
+	typed_case = \tp, do -> FiCallPrim(e with es = map(e.es, \x -> fiMakeAllCastsExplicit(x, tp, names, do)));
+	dearray_type = \tp -> switch (tp) {
+		FiTypeArray(t): t;
+		default: FiTypeVoid();
+	}
+	deref_type = \tp -> switch (tp) {
+		FiTypeRef(t): t;
+		default: FiTypeVoid();
+	}
+	switch (e.op) {
+		FcOrPrim():  def_case(false);
+		FcAndPrim(): def_case(false);
+		FcNotPrim(): def_case(false);
+
+		FcEqPrim():  typed_case(fiExpType(e.es[0]), true);
+		FcNePrim():  typed_case(fiExpType(e.es[0]), true);
+		FcLePrim():  typed_case(fiExpType(e.es[0]), true);
+		FcGePrim():  typed_case(fiExpType(e.es[0]), true);
+		FcLtPrim():  typed_case(fiExpType(e.es[0]), true);
+		FcGtPrim():  typed_case(fiExpType(e.es[0]), true);
+
+		FcPlusPrim():  def_case(true);
+		FcMinusPrim(): def_case(true);
+		FcMulPrim():   def_case(true);
+		FcDivPrim():   def_case(true);
+		FcModPrim():   def_case(true);
+		FcNegPrim():   def_case(true);
+		FcArrayPrim(): typed_case(dearray_type(type), true);
+		FcIndexPrim(): FiCallPrim(e with es = [
+			fiMakeAllCastsExplicit(e.es[0], FiTypeArray(type), names, true),
+			fiMakeAllCastsExplicit(e.es[1], FiTypeInt(), names, true)
+		]);
+		FcDerefPrim(): typed_case(FiTypeRef(type), true);
+		FcAssignPrim(): FiCallPrim(e with es = [
+			e.es[0],
+			fiMakeAllCastsExplicit(e.es[1], fiExpType(e.es[1]), names, true)
+		]);
+		FcRefPrim(): typed_case(deref_type(type), true);
+		FcStructPrim(struct_name): {
+			struct = lookupTreeDef(names.structs, struct_name, FiTypeStruct("", [], [], 0));
+			FiCallPrim(e with es = mapi(e.es, \i, x -> fiMakeAllCastsExplicit(x, struct.args[i].type, names, true)));
+		}
+		FcFieldPrim(name): FiCallPrim(e with es = [  // TODO - do it right
+			fiMakeAllCastsExplicit(e.es[0], fiExpType(e.es[0]), names, false)
+		]);
+		FcSetMutablePrim(name): FiCallPrim(e with es = [ // TODO - do it right
+			fiMakeAllCastsExplicit(e.es[0], fiExpType(e.es[0]), names, false),
+			fiMakeAllCastsExplicit(e.es[1], fiExpType(e.es[1]), names, true)
+		]);
+		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
+		FcQuote():   fail0("// TODO: FcQuote");
+		FcUnquote(): fail0("// TODO: FcUnquote");
 	}
 }
