@@ -10,7 +10,7 @@ export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
 		FlexibleGridAlignment ::= RelativeAlignment, CenterAlign, TightWidth;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, FlexibleGridAlignment,
-			TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector,
+			TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector, TFlexibleGridMaxContentWidthInspector,
 			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold;
 
 			TWrapNewRow(wrap : bool); // New row should be below all the elements in the previous one (true by default for horizontal grid)
@@ -27,7 +27,10 @@ export {
 			TAvailableMinMax(min : Transform<double>, max : Transform<double>);
 			TArrayThreshold(threshold : Transform<int>); // Fine efficiency tuning : what algorithm to use depending on array size
 
+			// Size of the box, which content occupies inside the grid. Less or equal to outer grid box size
 			TFlexibleGridContentSizeInspector(wh : DynamicBehaviour<WidthHeight>);
+			// Sum of all content widths
+			TFlexibleGridMaxContentWidthInspector(maxWidth : DynamicBehaviour<double>);
 }
 
 TFlexibleGridItem(
@@ -67,6 +70,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	animation = tryExtractStruct(style, TAnimationTimer(LazyDeltaTimer(make(0.0), nop, nop)));
 	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
 	contentSizeInspector = tryExtractStruct(style, TFlexibleGridContentSizeInspector(makeWH()));
+	maxContentWidthInspector = tryExtractStruct(style, TFlexibleGridMaxContentWidthInspector(make(0.)));
 	stageSizeB = make(0.);
 	availableMinMax = extractStruct(style, TAvailableMinMax(stageSizeB, stageSizeB));
 	alignment : FlexibleGridAlignment =
@@ -110,18 +114,25 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	itemsB = fsubselect(itemsB0, FLift(\v -> const(v)));
 
 	contentBaseline = fsubselect(felementAt(itemsB, const(0), const(emptyTFlexibleGridItem)), FLift(\e : TFlexibleGridItem -> e.baseline));
-	contentSize =
+	contentSize0 =
 		fselect(
 			fsubmap(itemsB, \it : TFlexibleGridItem -> fpair(fsubselect(it.tr, idfn |> FLift), it.wh)),
 			FLift(\pairs : [Pair<Point, WidthHeight>]-> {
-				fold(pairs, zeroWH, \acc, v ->
-					WidthHeight(
-						max(acc.width, v.second.width + v.first.x),
-						max(acc.height, v.second.height + v.first.y)
+				fold(pairs, Triple(zeroWH, doubleMax, 0.), \acc, v ->
+					Triple(
+						WidthHeight(
+							max(acc.first.width, v.second.width + v.first.x),
+							max(acc.first.height, v.second.height + v.first.y)
+						),
+						min(acc.second, v.first.x),
+						acc.third + v.second.width
 					)
 				)
 			})
 		);
+
+	contentSize = fFirstOfTriple(contentSize0);
+
 	contentMinSize = fselect(fsubmap(itemsB, \it -> if (lockWidth) fwidth(it.minWH) else fheight(it.minWH)), FLift(\v -> either(maxA(v), 0.0)));
 
 	parameters =
@@ -298,8 +309,23 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			\inspector ->
 				TConstruct(
 					[
-						\ -> fconnect(contentSize, inspector.wh)
+						if (isRTL) {
+							\ -> fconnectSelect(contentSize0, inspector.wh, \cs -> WidthHeight(cs.first.width - cs.second, cs.first.height))
+						} else {
+							\ -> fconnect(contentSize, inspector.wh)
+						}
 					],
+					f
+				),
+			f
+		)
+	)
+	|> (\f ->
+		eitherMap(
+			maxContentWidthInspector,
+			\inspector ->
+				TConstruct(
+					[\ -> fconnect(fThirdOfTriple(contentSize0), inspector.maxWidth)],
 					f
 				),
 			f
