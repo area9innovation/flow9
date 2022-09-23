@@ -99,6 +99,16 @@ ObjectInfo opSubtraction(ObjectInfo obj1, ObjectInfo obj2) {
 	);
 }
 
+ObjectInfo opRound(ObjectInfo obj, float radius) {
+	return ObjectInfo(
+		obj.d - radius,
+		obj.id,
+		obj.textureId,
+		obj.topLevel,
+		obj.material
+	);
+}
+
 float sdBox( vec3 p, vec3 b ) {
 	vec3 q = abs(p) - b;
 	return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
