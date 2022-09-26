@@ -62,6 +62,8 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 	}
 }
 
+debug_explicit_casts = ref false;
+
 fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp {
 	no_cast = \x -> fsMakeExpCastsExplicit(x, FiTypeVoid(), names, false);
 	e1 = switch(e) {
@@ -79,16 +81,27 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 			}
 		}
 		FsCall(fn, args,__): {
+			debug = ref false;
 			fn_type = cast(fsExpType(fn): FiType -> FiTypeFunction);
 			fn_args = switch (fn) {
 				FsVar(name, __, local): {
+					/*if (name == "fold") {
+						debug := true;
+						debug_explicit_casts := true;
+					}*/
 					if (local) fn_type.args else {
 						decl = lookupTreeDef(names.toplevel, name, FiGlobalVar("", FiVoid(0), FiTypeVoid(), 0, 0));
 						switch (decl) {
-							FiFunctionDec(__,__,tp,__,__): tp.args;
+							FiFunctionDec(__,__,tp,__,__): {
+								//tp.args;
+								fn_type.args;
+							}
 							FiNativeDec(__,__,tp,__,__,__,__): {
 								switch (tp) {
-									FiTypeFunction(fn_args,__): fn_args;
+									FiTypeFunction(fn_args,__): {
+										//fn_args;
+										fn_type.args;
+									}
 									default: fn_type.args;
 								}
 							}
@@ -98,12 +111,24 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 				}
 				default: fn_type.args;
 			}
-			FsCall(e with
+			/*if (^debug) {
+				println(
+					//"fn_args:\n" + toStringFormatted(fn_args) + "\n" +
+					"fn_args(1):\n" + toStringFormatted(map(args, \arg -> fsExpType(arg))) + "\n" +
+					"fn_type.args:\n" + toStringFormatted(fn_type.args) + "\n"
+				);
+			}*/
+			ret = FsCall(e with
 				f = fsMakeExpCastsExplicit(fn, fn_type, names, false),
 				args = mapi(args, \i, arg ->
-					fsMakeExpCastsExplicit(arg, fn_args[i].type, names, true)
+					fsMakeExpCastsExplicit(arg, fn_type.args[i].type, names, true)
 				)
 			);
+			/*if (^debug_explicit_casts) {
+				println("______________________________________");
+			}*/
+			debug_explicit_casts := false;
+			ret;
 		}
 		FsCallPrim(__,__,type1): {
 			fsMakeCallPrimCastsExplicit(e, type1, names);
@@ -127,8 +152,20 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 		default: e;
 	}
 	type1 = fsExpType(e1);
-	if (!do || fiEqualTypes(type1, type) || type == FiTypeVoid()) e1 else {
-		fsExplicitCast(e1, type1, type);
+	if (!do || fiEqualTypes(type1, type) || type == FiTypeVoid()) {
+		/*if (^debug_explicit_casts) {
+			println("no explicit cast(1) from:\n" + toStringFormatted(type1) + "\nto\n" + toStringFormatted(type) + "\n\n" +
+				"do: " + b2s(do) + ", fiEqualTypes(type1, type): " + b2s(fiEqualTypes(type1, type))
+			);
+		}*/
+		e1 
+	} else {
+		switch (type) {
+			FiTypeParameter(__): e;
+			default: {
+				FsCast(e, type1, type);
+			}
+		}
 	}
 }
 
