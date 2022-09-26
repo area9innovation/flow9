@@ -86,13 +86,13 @@ reconstructed on each reflow, because we combine them together to have as few sp
 possible, and because rendering words in the same sprite improves the interword spacing.
 */
 
-// Intermediately used typed as a union of ParagraphElement and WrapElement and ParaOneWord
+// Intermediately used typed as a union of ParagraphElement and WrapElement and ParaWordGlued
 ParaElement ::= ParagraphElement, WrapElement, ParaAtomic;
 
 // After expanding elements to words
-ParaAtomic ::= Form, ParaOneWord, TextElement, InteractiveParaAtomic;
-	// A range of elements that need to be on the same line
-	ParaOneWord(elements : [Form]);
+ParaAtomic ::= Form, ParaWordGlued, TextElement, InteractiveParaAtomic;
+	// The word should be kept with previous on the same line
+	ParaWordGlued(word : ParaAtomic);
 	InteractiveParaAtomic(elem : ParaAtomic, interactivityId : int);
 
 GhostForm ::= Form, Ghosted; // It is important that GhostForm is a super type of Ghosted
@@ -113,7 +113,8 @@ ParaWord(
 	ghosted : Ghosted,
 	form : GhostForm,
 	interactivityIdM : Maybe<int>,
-	nextWidgetId : DynamicBehaviour<Maybe<int>>
+	nextWidgetId : DynamicBehaviour<Maybe<int>>,
+	glued : bool
 );
 
 ParaWordWidth(rigidWidth : double, softWidth : double, finalRigidWidthDelta : double, finalSoftWidthDelta : double);
@@ -204,7 +205,7 @@ renderParagraph(
 
 paraAtomic2form(pa : ParaAtomic, pos : int) -> Form {
 	switch(pa : ParaAtomic) {
-		ParaOneWord(__) : Empty();
+		ParaWordGlued(pa2) : paraAtomic2form(pa2, pos);
 		InspectElement(__, __) : Empty();
 		LinePart(first, inline, last) : if (pos==0) first else if (pos==-1) last else inline;
 		Space(s) : s;
@@ -222,7 +223,7 @@ paraWordWord2form(word : ParaWord, pos : int) -> Form {
 defaultFontSizeStyle = FontSize(14.0);
 zeroParaWordWidth = ParaWordWidth(0.0, 0.0, 0.0, 0.0);
 emptyParaWordGroup = ParaWordGroup([], ref zeroParaWordWidth);
-emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None(), make(None()));
+emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None(), make(None()), false);
 paraLinePartFRemake = isUrlParameterTrue("plpf");
 paraLinePartFRemakeD = b2d(paraLinePartFRemake);
 
@@ -316,7 +317,7 @@ renderParagraphEx(
 	words : [ParaWord] = mapi(gluedArr, \i, word -> makeParaWord(
 		word,
 		i + 1 == length(gluedArr) || containsStruct(s, IgnoreLetterspacingOnReflow()),
-		fontWrapper
+		fontWrapper, false
 	));
 
 	isUnbreakable = \currentWord, prevWord -> {
@@ -429,7 +430,7 @@ renderParagraphEx(
 			NewLine() : true;
 			Space(__) : false;
 			LinePart(st, __, __) : lastSpace;
-			default : !keepFormTogetherOrWithMark(paraWordGhosted2form(word, -1), i) && !isUnbreakableSym  || lastSpace;
+			default : (!word.glued && !keepFormTogetherOrWithMark(paraWordGhosted2form(word, -1), i) && !isUnbreakableSym) || lastSpace;
 		}) {
 			Cons(
 				addWordToGroup(
@@ -618,28 +619,11 @@ expandGlueFragments(
 		} else if (runLength == 1) {
 			Cons(headList(running, Empty()), acc);
 		} else {
-			wds = foldList(running, makeList(), \acc2, ra : ParaAtomic -> {
-				switch (ra : ParaAtomic) {
-					ParaOneWord(wds) : acc2;
-					NewLine() : acc2;
-					Space(f) : Cons(f, acc2);
-					LinePart(pr, i, po) : Cons(i, acc2);
-					InspectElement(inspector, e) : {
-						switch (e : InspectableElement) {
-							Form(): Cons(e, acc2);
-							Space(f) : Cons(f, acc2);
-							LinePart(pr, i, po): Cons(i, acc2);
-						}
-					}
-					InteractiveParaAtomic(ia, id) : {
-						Cons(paraAtomic2form(ia, -1), acc2);
-					}
-					default : {
-						Cons(paraAtomic2form(ra, -1), acc2);
-					}
-				}
-			});
-			Cons(ParaOneWord(list2array(reverseList(wds))), acc)
+			foldList(
+				tailList(running),
+				Cons(headList(running, Empty()), acc),
+				\acc2, ra : ParaAtomic -> Cons(ra |> ParaWordGlued, acc2)
+			);
 		};
 	};
 
@@ -683,19 +667,20 @@ makeInteractiveParaWord(
 	w : ParaAtomic,
 	interactivityIdM : Maybe<int>,
 	ignoreLetterSpacing : bool,
-	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
+	fontWrapper : ([CharacterStyle]) -> [CharacterStyle],
+	glued : bool
 ) -> ParaWord {
 	s2w = \s : Pair<Form, Transform<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
-			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM, make(None()));
+			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM, make(None()), glued);
 		} else {
 			x = make(0.0);
 			y = make(0.0);
-			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM, make(None()));
+			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM, make(None()), glued);
 		}
 	}
 	switch (w : ParaAtomic) {
-		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM, make(None()));
+		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM, make(None()), glued);
 		// We choose the middle part
 		LinePart(f, p, e) : {
 			dynFormSizePair = getDynamicFormSize2(p, true);
@@ -719,7 +704,8 @@ makeInteractiveParaWord(
 				),
 				Empty(),
 				interactivityIdM,
-				make(None())
+				make(None()),
+				glued
 			);
 		}
 		Space(s) : {
@@ -728,12 +714,10 @@ makeInteractiveParaWord(
 				default: s;
 			}
 			dynFormSizePair = getJoinableTextMetrics(innerForm, true, ignoreLetterSpacing);
-			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()));
+			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()), glued);
 		}
-		ParaOneWord(wd) : {
-			oc = optimizeCols(wd);
-			line : Form = Line(oc);
-			getDynamicFormSize(line) |> s2w;
+		ParaWordGlued(wg) : {
+			makeInteractiveParaWord(wg, interactivityIdM, ignoreLetterSpacing, fontWrapper, true);
 		}
 		InspectElement(inspector, e) : {
 			makeWord = \word, form -> ParaWord(
@@ -742,7 +726,8 @@ makeInteractiveParaWord(
 				CoordinateInspectElement(inspector, form),
 				Empty(),
 				interactivityIdM,
-				make(None())
+				make(None()),
+				glued
 			);
 			switch (e : InspectableElement) {
 				Text(t, s) : {
@@ -756,12 +741,12 @@ makeInteractiveParaWord(
 				}
 				Form(): {
 					s = getJoinableTextMetrics(e, false, ignoreLetterSpacing);
-					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM, make(None()));
+					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM, make(None()), glued);
 				}
 			}
 		}
 		InteractiveParaAtomic(word, id) : {
-			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing, fontWrapper);
+			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing, fontWrapper, glued);
 		}
 		Text(t, s) : {
 			opt = Text(t, fontWrapper(s)) |> optimizeForm;
@@ -809,19 +794,24 @@ getJoinableTextMetrics(
 	}
 }
 
-makeParaWord(w : ParaAtomic, ignoreLetterSpacing : bool, fontWrapper : ([CharacterStyle]) -> [CharacterStyle]) -> ParaWord {
+makeParaWord(w : ParaAtomic, ignoreLetterSpacing : bool, fontWrapper : ([CharacterStyle]) -> [CharacterStyle], glued : bool) -> ParaWord {
 	switch (w) {
+		ParaWordGlued(w2): {
+			makeParaWord(w2, ignoreLetterSpacing, fontWrapper, true);
+		}
 		InteractiveParaAtomic(word, id) : makeInteractiveParaWord(
 			word,
 			Some(id),
 			ignoreLetterSpacing,
-			fontWrapper
+			fontWrapper,
+			glued
 		);
 		default : makeInteractiveParaWord(
 			w,
 			None(),
 			ignoreLetterSpacing,
-			fontWrapper
+			fontWrapper,
+			glued
 		);
 	}
 }
@@ -1660,7 +1650,7 @@ makeParaWordGroupForMath(w : ParaWord, s : string) -> ParaWordGroup {
 				newWord : ParaAtomic = setWordText(ParaWord(w with word = f), t).word;
 				switch (newWord) {
 					Form(): newWord;
-					ParaOneWord(__): Empty();
+					ParaWordGlued(__): Empty();
 					TextElement(): Empty();
 					InteractiveParaAtomic(__, __): Empty();
 				}
