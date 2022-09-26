@@ -1,0 +1,195 @@
+import tools/flowc/statements/fs_helpers;
+import tools/flowc/incremental/fi_helpers;
+import sys/exception;
+
+export {
+	fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat;
+	fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
+	fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
+}
+
+fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
+	switch (e) {
+		FsLet(v, type, ex): {
+			switch (find(vars, \p -> p.first == v)) {
+				Some(p): {
+					ex_wrapped = FsCast(ex, fsExpType(ex), type);
+					FsLet(e with e = ex_wrapped);
+				}
+				None(): e;
+			}
+		}
+		FsSeq(ss, __): {
+			FsSeq(e with ss = map(ss, \x -> fsWrapCaseVarsWithCasts(x, vars)));
+		}
+		default: e;
+	}
+}
+
+fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat {
+	do_cast = \x -> fsMakeStatCastsExplicit(x, type, names);
+	switch(s) {
+		FsLet(name, vtype, e1): {
+			FsLet(s with e = fsMakeExpCastsExplicit(e1, vtype, names, true));
+		}
+		FsIf(e1, s1, s2, __): {
+			FsIf(s with
+				cond = fsMakeExpCastsExplicit(e1, FiTypeBool(), names, true),
+				s1 = do_cast(s1),
+				s2 = do_cast(s2),
+			);
+		}
+		FsSwitch(v, cases, __): {
+			FsSwitch(s with
+				cases = map(cases, \c -> FsCase(c with body = do_cast(c.body)))
+			);
+		}
+		FsSeq(ss, __): {
+			FsSeq(s with ss = map(ss, do_cast));
+		}
+		FsWrap(e): {
+			FsWrap(fsMakeExpCastsExplicit(e, fsExpType(e), names, false));
+		}
+		FsRet(e): {
+			FsRet(fsMakeExpCastsExplicit(e, type, names, true));
+		}
+		FsVarDecl(var): {
+			s;
+		}
+		FsAssign(var, e): {
+			FsAssign(var, fsMakeExpCastsExplicit(e, var.type, names, true));
+		}
+	}
+}
+
+fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp {
+	no_cast = \x -> fsMakeExpCastsExplicit(x, FiTypeVoid(), names, false);
+	e1 = switch(e) {
+		FsLambda(closure, args, body, __): {
+			switch (type) {
+				FiTypeFunction(__,returnType): {
+					FsLambda(e with body = fsMakeStatCastsExplicit(body, returnType, names));
+				}
+				default: {
+					throw("non func type: " + toString(type) + ", expected: " + toString(type) + "\n" + toStringFormatted(e));
+				}
+			}
+		}
+		FsCall(fn, args,__): {
+			fn_type = cast(fsExpType(fn): FiType -> FiTypeFunction);
+			fn_args = switch (fn) {
+				FsVar(name, __, local): {
+					if (local) fn_type.args else {
+						decl = lookupTreeDef(names.toplevel, name, FiGlobalVar("", FiVoid(0), FiTypeVoid(), 0, 0));
+						switch (decl) {
+							FiFunctionDec(__,__,tp,__,__): tp.args;
+							FiNativeDec(__,__,tp,__,__,__,__): {
+								switch (tp) {
+									FiTypeFunction(fn_args,__): fn_args;
+									default: fn_type.args;
+								}
+							}
+							default: fn_type.args;
+						}
+					}
+				}
+				default: fn_type.args;
+			}
+			FsCall(e with
+				f = fsMakeExpCastsExplicit(fn, fn_type, names, false),
+				args = mapi(args, \i, arg ->
+					fsMakeExpCastsExplicit(arg, fn_args[i].type, names, true)
+				)
+			);
+		}
+		FsCallPrim(__,__,type1): {
+			fsMakeCallPrimCastsExplicit(e, type1, names);
+		}
+		FsRequire(__, ex,__): {
+			FsRequire(e with e = no_cast(ex));
+		}
+		FsUnsafe(__, ex,__): {
+			FsUnsafe(e with fallback = no_cast(ex));
+		}
+		FsCast(ex, from, to): {
+			FsCast(e with e = no_cast(ex));
+		}
+		FsTernary(cond, pos, neg, type1): {
+			FsTernary(e with
+				cond = fsMakeExpCastsExplicit(cond, FiTypeBool(), names, false),
+				s1 = fsMakeExpCastsExplicit(pos, type1, names, true),
+				s2 = fsMakeExpCastsExplicit(neg, type1, names, true),
+			);
+		}
+		default: e;
+	}
+	type1 = fsExpType(e1);
+	if (!do || fiEqualTypes(type1, type) || type == FiTypeVoid()) e1 else {
+		fsExplicitCast(e1, type1, type);
+	}
+}
+
+fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) -> FsCallPrim {
+	def_case = \do -> FsCallPrim(e with es = map(e.es, \x -> fsMakeExpCastsExplicit(x, type, names, do)));
+	typed_case = \tp, do -> FsCallPrim(e with es = map(e.es, \x -> fsMakeExpCastsExplicit(x, tp, names, do)));
+	dearray_type = \tp -> switch (tp) {
+		FiTypeArray(t): t;
+		default: FiTypeVoid();
+	}
+	deref_type = \tp -> switch (tp) {
+		FiTypeRef(t): t;
+		default: FiTypeVoid();
+	}
+	switch (e.op) {
+		FcOrPrim():  def_case(false);
+		FcAndPrim(): def_case(false);
+		FcNotPrim(): def_case(false);
+
+		FcEqPrim():  typed_case(fsExpType(e.es[0]), true);
+		FcNePrim():  typed_case(fsExpType(e.es[0]), true);
+		FcLePrim():  typed_case(fsExpType(e.es[0]), true);
+		FcGePrim():  typed_case(fsExpType(e.es[0]), true);
+		FcLtPrim():  typed_case(fsExpType(e.es[0]), true);
+		FcGtPrim():  typed_case(fsExpType(e.es[0]), true);
+
+		FcPlusPrim():  def_case(true);
+		FcMinusPrim(): def_case(true);
+		FcMulPrim():   def_case(true);
+		FcDivPrim():   def_case(true);
+		FcModPrim():   def_case(true);
+		FcNegPrim():   def_case(true);
+		FcArrayPrim(): typed_case(dearray_type(type), true);
+		FcIndexPrim(): FsCallPrim(e with es = [
+			fsMakeExpCastsExplicit(e.es[0], FiTypeArray(type), names, true),
+			fsMakeExpCastsExplicit(e.es[1], FiTypeInt(), names, true)
+		]);
+		FcDerefPrim(): typed_case(FiTypeRef(type), true);
+		FcAssignPrim(): FsCallPrim(e with es = [
+			e.es[0],
+			fsMakeExpCastsExplicit(e.es[1], fsExpType(e.es[1]), names, true)
+		]);
+		FcRefPrim(): typed_case(deref_type(type), true);
+		FcStructPrim(struct_name): {
+			struct = lookupTreeDef(names.structs, struct_name, FiTypeStruct("", [], [], 0));
+			FsCallPrim(e with es = mapi(e.es, \i, x -> fsMakeExpCastsExplicit(x, struct.args[i].type, names, true)));
+		}
+		FcFieldPrim(name): FsCallPrim(e with es = [  // TODO - do it right
+			fsMakeExpCastsExplicit(e.es[0], fsExpType(e.es[0]), names, false)
+		]);
+		FcSetMutablePrim(name): FsCallPrim(e with es = [ // TODO - do it right
+			fsMakeExpCastsExplicit(e.es[0], fsExpType(e.es[0]), names, false),
+			fsMakeExpCastsExplicit(e.es[1], fsExpType(e.es[1]), names, true)
+		]);
+		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
+		FcQuote():   fail0("// TODO: FcQuote");
+		FcUnquote(): fail0("// TODO: FcUnquote");
+	}
+}
+
+fsExplicitCast(e: FsExp, from: FiType, to: FiType) -> FsExp {
+	from_typars = fiCollectTypars(from, makeSet());
+	to_typars = fiCollectTypars(to, makeSet());
+	if (!isEmptySet(from_typars) || !isEmptySet(to_typars)) e else {
+		FsCast(e, from, to);
+	}
+}

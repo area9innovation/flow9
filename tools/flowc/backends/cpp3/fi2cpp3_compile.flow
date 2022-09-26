@@ -229,9 +229,12 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
 	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
 	value1 = fiExpSSA(value0);
 	value2 = fiExplicitCastInSwitch(value1, names);
-	value3 = fiMakeAllCastsExplicit(value2, globalVar.type, names, true);
-	value = fiFixVarInSameStructType(value3, makeTree(), names);
-	pair = fiExp2FsExp(value, makeSet(), names);
+	value = fiFixVarInSameStructType(value2, makeTree(), names);
+	pair0 = fiExp2FsExp(value, makeSet(), names);
+	pair = Pair(
+		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
+		map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
+	);
 
 	value_exp = if (pair.second == []) pair.first else {
 		FsCall(FsLambda([], [], 
@@ -275,13 +278,6 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> str
 			names
 		);
 		//lambda5 = fiMakeAllCastsExplicit(lambda4, fn_type, names);
-		/*lambda5 = tryCatch(
-			\-> fiMakeAllCastsExplicit(lambda4, fn_type, names, true), 
-			\msg -> {
-				println(msg + "\nin: " + name + "\n" + prettyFiExp(dummyPretty, fun.lambda));
-				fail0(msg)
-			}
-		);*/
 		//lambda_body = cast(lambda4: FiExp -> FiLambda).body;
 		/*tryCatch(
 			\-> fiMakeAllCastsExplicit(cast(lambda4: FiExp -> FiLambda).body, fn_type.returnType, names, true), 
@@ -291,18 +287,19 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> str
 			}
 		);*/
 		lambda5 = cast(lambda4: FiExp -> FiLambda);
-		lambda = if (fiEqualTypes(fun.type.returnType, lambda5.type.returnType)) lambda5 else {
+		/*lambda = if (fiEqualTypes(fun.type.returnType, lambda5.type.returnType)) lambda5 else {
 			FiLambda(lambda5 with 
 				body = FiCast(lambda5.body, lambda5.type.returnType, fun.type.returnType, fun.type.returnType, lambda5.start)
 			);
-		}
-		fun_stat = fiExp2FsStat(
-			lambda.body, FsReturnToOuter(), 
+		}*/
+		fun_stat0 = fiExp2FsStat(
+			lambda5.body, FsReturnToOuter(), 
 			fold(fun_args, makeSet(), \acc, arg -> 
 				if (arg.name == "__") acc else insertSet(acc, arg.name)
 			),
 			names
 		);
+		fun_stat = fsMakeStatCastsExplicit(fun_stat0, fn_type.returnType, names);
 		/*if (name == "parseJsonDouble2") {
 			println(
 				"parseJsonDouble2:\n" + toStringFormatted(lambda4) + 
@@ -517,6 +514,12 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			});
 			switch(f) {
 				FsVar(name,__,__): {
+					/*if (name == "isSameStructType") {
+						println("isSameStructType:\n" +
+							"args[i].type:\n" + toStringFormatted(map(args, \arg -> fsExpType(arg))) + "\n" +
+							"f_type.args[i]:\n" + toStringFormatted(f_type.args) + "\n"
+						);
+					}*/
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, name);
 					typars = switch (toplevel) {
 						Some(fn): {
@@ -817,7 +820,8 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 							}
 						}
 					}
-					default: throw("illegal case to struct");
+					FiTypeParameter(__): s;
+					default: throw("illegal cast to struct from: " + prettyFiType(dummyPretty, from, makeSet()));
 				}
 			}
 			FiTypeFunction(args, rt): {

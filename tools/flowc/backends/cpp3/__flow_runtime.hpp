@@ -112,10 +112,56 @@ struct Array;
 struct Reference;
 struct Function;
 
+// Dynamic type
+struct Flow;
+
 // Special uninterpreted type
 struct Native;
 
-template<typename T> struct Str;
+void flow2string(Flow v, std::ostream& os, bool init = true);
+
+template<typename T>
+struct Str {
+	typedef T Name;
+	Str(): str() { }
+	Str(T* s): str(s) { }
+	Str(Ptr<T> s): str(s) { }
+	Str(const Union& u);
+	Str(const Flow& f);
+	Str(const Str& s): str(s.str) { }
+	Str(Str&& s): str(std::move(s.str)) { }
+	T& operator *() { return str.operator*(); }
+	T* operator ->() { return str.operator->(); }
+	T* get() { return str.get(); }
+	Str& operator = (const Str& s) { str.operator=(s.str); return *this; }
+	Str& operator = (Str&& s) { str.operator=(std::move(s.str)); return *this;}
+	template<typename T1>
+	Str<T1> cast() {
+		return std::reinterpret_pointer_cast<T1>(str);
+	}
+
+	Ptr<T> str;
+};
+
+struct Union {
+	Union(): un() {}
+	template<typename T>
+	Union(Str<T> s): un(std::static_pointer_cast<Struct>(s.str)) { }
+	Union(Ptr<Struct> s): un(s) { }
+	Union(const Union& u): un(u.un) { }
+	Union(Union&& u): un(std::move(u.un)) { }
+	Struct& operator *() { return un.operator*(); }
+	Struct* operator ->() { return un.operator->(); }
+	Struct* get() { return un.get(); }
+	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
+	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
+	template<typename T1>
+	Str<T1> cast() {
+		return std::dynamic_pointer_cast<T1>(un);
+	}
+
+	Ptr<Struct> un;
+};
 
 struct Flow {
 	typedef std::variant<
@@ -133,6 +179,8 @@ struct Flow {
 	Flow(Ptr<Reference> r): val(r) { }
 	Flow(Ptr<Function> f): val(f) { }
 	Flow(Ptr<Native> n): val(n) { }
+	Flow(const Union& u): val(u.un) { }
+	Flow(Union&& u): val(std::move(u.un)) { }
 	template<typename T> Flow(Str<T> s);
 
 	Variant val;
@@ -163,7 +211,17 @@ struct Flow {
 	}
 };
 
-void flow2string(Flow v, std::ostream& os, bool init = true);
+template<typename T>
+Str<T>::Str(const Union& u): str(std::dynamic_pointer_cast<T>(u.un)) { }
+template<typename T>
+Str<T>::Str(const Flow& f) {
+	if (f.type() != Type::STRUCT) {
+		std::cerr << "struct construction from not a struct ";
+		flow2string(f, std::cerr, false);
+		std::cerr << std::endl;
+	}
+	str = std::dynamic_pointer_cast<T>(std::get<Ptr<Struct>>(f.val));
+}
 
 struct Struct {
 	virtual Int id() const = 0;
@@ -188,53 +246,6 @@ struct Reference {
 struct Function { };
 
 struct Native { };
-
-template<typename T>
-struct Str {
-	typedef T Name;
-	Str(): str() { }
-	Str(T* s): str(s) { }
-	Str(Ptr<T> s): str(s) { }
-	Str(const Union& u);
-	Str(const Flow& f);
-	Str(const Str& s): str(s.str) { }
-	Str(Str&& s): str(std::move(s.str)) { }
-	T& operator *() { return str.operator*(); }
-	T* operator ->() { return str.operator->(); }
-	T* get() { return str.get(); }
-	Str& operator = (const Str& s) { str.operator=(s.str); return *this; }
-	Str& operator = (Str&& s) { str.operator=(std::move(s.str)); return *this;}
-
-	Ptr<T> str;
-};
-
-struct Union {
-	Union(): un() {}
-	template<typename T>
-	Union(Str<T> s): un(std::static_pointer_cast<Struct>(s.str)) { }
-	Union(Ptr<Struct> s): un(s) { }
-	Union(const Union& u): un(u.un) { }
-	Union(Union&& u): un(std::move(u.un)) { }
-	Struct& operator *() { return un.operator*(); }
-	Struct* operator ->() { return un.operator->(); }
-	Struct* get() { return un.get(); }
-	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
-	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
-
-	Ptr<Struct> un;
-};
-
-template<typename T>
-Str<T>::Str(const Union& u): str(std::dynamic_pointer_cast<T>(u.un)) { }
-template<typename T>
-Str<T>::Str(const Flow& f) {
-	if (f.type() != Type::STRUCT) {
-		std::cerr << "struct construction from not a struct ";
-		flow2string(f, std::cerr, false);
-		std::cerr << std::endl;
-	}
-	str = std::dynamic_pointer_cast<T>(std::get<Ptr<Struct>>(f.val));
-}
 
 template<typename T>
 Flow::Flow(Str<T> s): val(std::static_pointer_cast<Struct>(s.str)) { }
@@ -294,7 +305,7 @@ struct Arr : public Array {
 		}
 	}
 	template<typename T1>
-	Arr<T1> cast() const {
+	Arr<T1> cast() {
 		return std::reinterpret_pointer_cast<typename Arr<T1>::Vect>(arr);
 	}
 
@@ -313,7 +324,7 @@ struct Ref : public Reference {
 	Flow reference() override { return ToFlow<T>::conv(*ref); }
 	Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
 	template<typename T1>
-	Ref<T1> cast() const {
+	Ref<T1> cast() {
 		return std::reinterpret_pointer_cast<T1>(ref);
 	}
 	Ptr<T> ref;
@@ -334,7 +345,7 @@ struct Fun : public Function {
 	R operator()(As... as) const { return fn->operator()(as...); }
 	Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
 	template<typename R1, typename... As1> 
-	Fun<R1, As1...> cast() const {
+	Fun<R1, As1...> cast() {
 		return std::reinterpret_pointer_cast<typename Fun<R1, As1...>::Fn>(fn);
 	}
 
@@ -353,7 +364,7 @@ struct Nat : public Native {
 	Nat& operator = (const Nat& n) { nat = n.nat; return *this; }
 	Int compare(Nat n) const { return Compare<void*>::cmp(nat.get(), n.nat.get()); }
 	template<typename N1>
-	Nat<N1> cast() const {
+	Nat<N1> cast() {
 		return std::reinterpret_pointer_cast<N1>(nat);
 	}
 
@@ -507,7 +518,7 @@ template<typename T> struct FromFlow<Nat<T>> {
 	static Nat<T> conv(Flow n) { return dynamic_cast<Nat<T>&>(*std::get<Ptr<Native>>(n.val)); }
 };
 
-template<typename From, typename To> struct Cast;
+//template<typename From, typename To> struct Cast;
 
 /*
 enum Type {
@@ -516,29 +527,146 @@ enum Type {
 	NATIVE
 };
 */
+template<typename From> struct Cast;
+template<> struct Cast<Int> { template<typename _To> struct To; };
+template<> struct Cast<Bool> { template<typename _To> struct To; };
+template<> struct Cast<Double> { template<typename _To> struct To; };
+template<> struct Cast<String> { template<typename _To> struct To; };
+template<> struct Cast<Flow> { template<typename _To> struct To; };
+template<> struct Cast<Union> { template<typename _To> struct To; };
+template<typename T> struct Cast<Str<T>> { template<typename _To> struct To; };
+template<typename T> struct Cast<Arr<T>> { template<typename _To> struct To; };
+template<typename T> struct Cast<Ref<T>> { template<typename _To> struct To; };
+template<typename T> struct Cast<Nat<T>> { template<typename _To> struct To; };
+template<typename R, typename... As> struct Cast<Fun<R, As...>> { template<typename _To> struct To; };
 
-template<> struct Cast<Int, Int> { Int conv(Int x) { return x; } };
-template<> struct Cast<Int, Bool> { Bool conv(Int x) { return x == 0 ? false : true; } };
-template<> struct Cast<Int, Double> { Double conv(Int x) { return x; } };
-template<> struct Cast<Int, String> { String conv(Int x) { return makeString(std::to_string(x)); } };
+template<> struct Cast<Int>::To<Int> { Int conv(Int x) { return x; } };
+template<> struct Cast<Int>::To<Bool> { Bool conv(Int x) { return x == 0 ? false : true; } };
+template<> struct Cast<Int>::To<Double> { Double conv(Int x) { return x; } };
+template<> struct Cast<Int>::To<String> { String conv(Int x) { return makeString(std::to_string(x)); } };
+template<> struct Cast<Int>::To<Flow> { Flow conv(Int x) { return x; } };
 
-template<> struct Cast<Bool, Int> { Int conv(Bool x) { return x ? 1 : 0; } };
-template<> struct Cast<Bool, Bool> { Bool conv(Bool x) { return x; } };
-template<> struct Cast<Bool, Double> { Double conv(Bool x) { return x; } };
-template<> struct Cast<Bool, String> { String conv(Bool x) { return makeString(std::to_string(x)); } };
+template<> struct Cast<Bool>::To<Int> { Int conv(Bool x) { return x ? 1 : 0; } };
+template<> struct Cast<Bool>::To<Bool> { Bool conv(Bool x) { return x; } };
+template<> struct Cast<Bool>::To<Double> { Double conv(Bool x) { return x; } };
+template<> struct Cast<Bool>::To<String> { String conv(Bool x) { return makeString(std::to_string(x)); } };
+template<> struct Cast<Bool>::To<Flow> { Flow conv(Bool x) { return x; } };
 
-template<> struct Cast<Double, Int> { Int conv(Double x) { return x; } };
-template<> struct Cast<Double, Bool> { Bool conv(Double x) { return x; } };
-template<> struct Cast<Double, Double> { Double conv(Double x) { return x; } };
-template<> struct Cast<Double, String> { String conv(Double x) { return makeString(std::to_string(x)); } };
+template<> struct Cast<Double>::To<Int> { Int conv(Double x) { return x; } };
+template<> struct Cast<Double>::To<Bool> { Bool conv(Double x) { return x; } };
+template<> struct Cast<Double>::To<Double> { Double conv(Double x) { return x; } };
+template<> struct Cast<Double>::To<String> { String conv(Double x) { return makeString(std::to_string(x)); } };
+template<> struct Cast<Double>::To<Flow> { Flow conv(Bool x) { return x; } };
 
-template<> struct Cast<String, Int> { Int conv(String x) { return std::stoi(toStdString(x)); } };
-template<> struct Cast<String, Bool> { Bool conv(String x) { return *x == *string_true || *x == *string_1; } };
-template<> struct Cast<String, Double> { Double conv(String x) { return std::stod(toStdString(x)); } };
-template<> struct Cast<String, String> { String conv(String x) { return x; } };
+template<> struct Cast<String>::To<Int> { Int conv(String x) { return std::stoi(toStdString(x)); } };
+template<> struct Cast<String>::To<Bool> { Bool conv(String x) { return *x == *string_true || *x == *string_1; } };
+template<> struct Cast<String>::To<Double> { Double conv(String x) { return std::stod(toStdString(x)); } };
+template<> struct Cast<String>::To<String> { String conv(String x) { return x; } };
+template<> struct Cast<String>::To<Flow> { Flow conv(Bool x) { return x; } };
+
+template<> struct Cast<Flow>::To<Int> { Int conv(Flow x) { return x.toInt(); } };
+template<> struct Cast<Flow>::To<Bool> { Bool conv(Flow x) { return x.toBool(); } };
+template<> struct Cast<Flow>::To<Double> { Double conv(Flow x) { return x.toDouble(); } };
+template<> struct Cast<Flow>::To<String> { String conv(Flow x) { return x.toString(); } };
+template<> struct Cast<Flow>::To<Ptr<Struct>> { Ptr<Struct> conv(Flow x) { return x.toStruct(); } };
+template<> struct Cast<Flow>::To<Ptr<Array>> { Ptr<Array> conv(Flow x) { return x.toArray(); } };
+template<> struct Cast<Flow>::To<Ptr<Reference>> { Ptr<Reference> conv(Flow x) { return x.toReference(); } };
+template<> struct Cast<Flow>::To<Ptr<Function>> { Ptr<Function> conv(Flow x) { return x.toFunction(); } };
+template<> struct Cast<Flow>::To<Ptr<Native>> { Ptr<Native> conv(Flow x) { return x.toNative(); } };
+
+template<typename T> struct Cast<Flow>::To<Str<T>> {
+	Str<T> conv(Flow x) { 
+		return std::dynamic_pointer_cast<typename Str<T>::Name>(x.toStruct()); 
+	} 
+};
+template<> struct Cast<Flow>::To<Union> {
+	Union conv(Flow x) { 
+		return x.toStruct(); 
+	} 
+};
+template<typename T> struct Cast<Flow>::To<Arr<T>> { 
+	Arr<T> conv(Flow x) {
+		return *std::dynamic_pointer_cast<Arr<T>>(x.toArray()); 
+	} 
+};
+template<typename T> struct Cast<Flow>::To<Ref<T>> { 
+	Ref<T> conv(Flow x) { 
+		return *std::dynamic_pointer_cast<Ref<T>>(x.toReference()); 
+	} 
+};
+template<typename R, typename... As> struct Cast<Flow>::To<Fun<R, As...>> { 
+	Fun<R, As...> conv(Flow x) { 
+		return *std::dynamic_pointer_cast<Fun<R, As...>>(x.toFunction());
+	} 
+};
+
+template<typename T> struct Cast<Flow>::To<Nat<T>> { 
+	Nat<T> conv(Flow x) { 
+		return *std::dynamic_pointer_cast<Nat<T>>(x.toNative()); 
+	} 
+};
+
+//template<> struct Cast<Int>::To<Flow> { Flow conv(Int x) { return x; } };
+//template<> struct Cast<Bool>::To<Flow> { Flow conv(Bool x) { return x; } };
+//template<> struct Cast<Double>::To<Flow> { Flow conv(Double x) { return x; } };
+//template<> struct Cast<String>::To<Flow> { Flow conv(String x) { return x; } };
+//template<> struct Cast<Ptr<Struct>>::To<Flow> { Flow conv(Ptr<Struct> x) { return x; } };
+//template<> struct Cast<Ptr<Array>>::To<Flow> { Flow conv(Ptr<Array> x) { return x; } };
+//template<> struct Cast<Ptr<Reference>>::To<Flow> { Flow conv(Ptr<Reference> x) { return x; } };
+//template<> struct Cast<Ptr<Function>>::To<Flow> { Flow conv(Ptr<Function> x) { return x; } };
+//template<> struct Cast<Ptr<Native>>::To<Flow> { Flow conv(Ptr<Native> x) { return x; } };
+
+/*
+template<typename T> struct Cast<Str<T>>::To<Flow> {
+	Flow conv(Str<T> x) { 
+		return std::static_pointer_cast<Struct>(x.str); 
+	} 
+};
+*/
+
+/*
+template<> struct Cast<Union>::To<Flow> {
+	Flow conv(Union x) { 
+		return x.un; 
+	} 
+};
+template<typename T> struct Cast<Arr<T>>::To<Flow> { 
+	Flow conv(Arr<T> x) {
+		return Ptr<Array>(new Arr<T>(x));
+	} 
+};
+template<typename T> struct Cast<Ref<T>>::To<Flow> { 
+	Flow conv(Ref<T> x) { 
+		return Ptr<Reference>(new Ref<T>(x));
+	} 
+};
+template<typename R, typename... As> struct Cast<Fun<R, As...>>::To<Flow> { 
+	Flow conv(Fun<R, As...> x) { 
+		return Ptr<Function>(new Fun<R, As...>(x));
+	} 
+};
+
+template<typename T> struct Cast<Nat<T>>::To<Flow> { 
+	Flow conv(Nat<T> x) { 
+		return Ptr<Native>(new Nat<T>(x));
+	} 
+};
+
+//template<typename T> struct Cast<Ptr<Struct>>::To<Str<T>> { Str<T> conv(Ptr<Struct> x) { return std::dynamic_pointer_cast<T>(x); } };
+template<typename T> struct Cast<Union>::To<Str<T>> { Str<T> conv(Union x) { return std::dynamic_pointer_cast<T>(x.un); } };
+//template<typename T> struct Cast<Str<T>>::To<Ptr<Struct>> { Ptr<Struct> conv(Str<T> x) { return std::static_pointer_cast<Struct>(x.str); } };
+template<typename T> struct Cast<Str<T>>::To<Union> { Union conv(Str<T> x) { return std::static_pointer_cast<Struct>(x.str); } };
+template<typename T1, typename T2> struct Cast<Str<T1>>::To<Str<T2>> { Ptr<T2> conv(Str<T1> x) { return std::reinterpret_pointer_cast<T2>(x.str); } };
+
+
+template<typename T1, typename T2> struct Cast<Arr<T1>>::To<Arr<T2>> { Arr<T2> conv(Arr<T1> x) { return x.template cast<T2>(); } };
+template<typename T1, typename T2> struct Cast<Ref<T1>>::To<Ref<T2>> { Ref<T2> conv(Ref<T1> x) { return x.template cast<T2>(); } };
+template<typename T1, typename T2> struct Cast<Nat<T1>>::To<Nat<T2>> { Nat<T2> conv(Nat<T1> x) { return x.template cast<T2>(); } };
+
+*/
 
 template<typename> struct is_struct : std::false_type {};
-template<typename T> struct is_struct<Arr<T>> : std::true_type {};
+template<typename T> struct is_struct<Str<T>> : std::true_type {};
 
 /*
 template<typename S1, typename S2> struct Cast<S1, S1> { 
