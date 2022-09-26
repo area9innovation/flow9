@@ -6,6 +6,9 @@ export {
 	fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat;
 	fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
 	fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
+
+	fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>;
+	fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp;
 }
 
 fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
@@ -236,10 +239,148 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 	}
 }
 
-fsExplicitCast(e: FsExp, from: FiType, to: FiType) -> FsExp {
-	from_typars = fiCollectTypars(from, makeSet());
-	to_typars = fiCollectTypars(to, makeSet());
-	if (!isEmptySet(from_typars) || !isEmptySet(to_typars)) e else {
-		FsCast(e, from, to);
+fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>> {
+	switch(s) {
+		FsLet(v, vtype, e): {
+			if (v == "__") {
+				Pair(
+					FsLet(s with
+						e = fsExpSSA(e, vars)
+					),
+					vars
+				);
+			} else {
+				v_ind = lookupTreeDef(vars, v, 0);
+				new_vars = setTree(vars, v, v_ind + 1);
+				Pair(
+					FsLet(s with
+						name = fsSSAvar(v, new_vars),
+						e = fsExpSSA(e, new_vars)
+					),
+					new_vars
+				);
+			}
+		}
+		FsIf(cond, s1, s2,__): {
+			Pair(
+				FsIf(s with
+					cond = fsExpSSA(cond, vars),
+					s1 = fsStatSSA(s1, vars).first,
+					s2 = fsStatSSA(s2, vars).first
+				), 
+				vars
+			);
+		}
+		FsSwitch(var, cases, type): {
+			Pair(
+				FsSwitch(s with
+					x = FsVar(var with name = fsSSAvar(var.name, vars)),
+					cases = map(cases, \c -> {
+						new_vars = fold(c.args, vars, \acc, arg -> 
+							if (arg == "__") acc else
+							setTree(acc, arg, lookupTreeDef(vars, arg, 0) + 1)
+						);
+						FsCase(c with body = fsStatSSA(c.body, new_vars).first);
+					})
+				), 
+				vars
+			);
+		}
+		FsSeq(es,__): {
+			p = fold(es, Pair([], vars), \acc, e -> {
+				x = fsStatSSA(e, acc.second);
+				Pair(concat(acc.first, [x.first]), x.second);
+			});
+			Pair(FsSeq(s with ss = p.first), p.second);
+		}
+		FsWrap(e): {
+			Pair(FsWrap(fsExpSSA(e, vars)), vars);
+		}
+		FsRet(e): {
+			Pair(FsRet(fsExpSSA(e, vars)), vars);
+		}
+		FsVarDecl(var): {
+			if (var.name == "__") {
+				Pair(s, vars);
+			} else {
+				v_ind = lookupTreeDef(vars, var.name, 0);
+				new_vars = setTree(vars, var.name, v_ind + 1);
+				Pair(
+					FsVarDecl(FsVar(var with name = fsSSAvar(var.name, new_vars))),
+					new_vars
+				);
+			}
+		}
+		FsAssign(var, e): {
+			Pair(
+				FsAssign(
+					FsVar(var with name = fsSSAvar(var.name, vars)), 
+					fsExpSSA(e, vars)
+				),
+				vars
+			);
+		}
 	}
+}
+
+fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
+	switch(e) {
+		FsLambda(closure, args, body,__): {
+			new_vars = fold(args, vars, \acc, arg ->
+				if (arg.name == "__") acc else {
+					arg_i = lookupTreeDef(acc, arg.name, 0);
+					setTree(acc, arg.name, arg_i + 1);
+				}
+			);
+			FsLambda(e with
+				closure = map(closure, \v -> fsSSAvar(v, new_vars)),
+				args = map(args, \arg -> {
+					arg_i = lookupTreeDef(new_vars, arg.name, 0);
+					FiFunArg(arg with 
+						name = fsSSAvar(arg.name, new_vars);
+					);
+				}),
+				body = fsStatSSA(body, new_vars).first
+			);
+		}
+		FsCall(fn, args,__): {
+			FsCall(e with
+				f = fsExpSSA(fn, vars),
+				args = map(args, \arg -> fsExpSSA(arg, vars))
+			);
+		}
+		FsTernary(cond, s1, s2,__): {
+			FsTernary(e with
+				cond = fsExpSSA(cond, vars),
+				s1 = fsExpSSA(s1, vars),
+				s2 = fsExpSSA(s2, vars)
+			);
+		}
+		FsCast(ex, __, __): {
+			FsCast(e with e = fsExpSSA(ex, vars));
+		}
+		FsCallPrim(__, es,__): {
+			FsCallPrim(e with es = map(es, \x -> fsExpSSA(x, vars)));
+		}
+		FsRequire(__, ex,__): {
+			FsRequire(e with e = fsExpSSA(ex, vars));
+		}
+		FsUnsafe(__, ex,__): {
+			FsUnsafe(e with fallback = fsExpSSA(ex, vars));
+		}
+		FsVar(name,__,__): {
+			i = lookupTreeDef(vars, name, 0);
+			FsVar(e with name = fsSSAvar(name, vars));
+		}
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+
+fsSSAvar(v: string, vars: Tree<string, int>) -> string {
+	i = lookupTreeDef(vars, v, 0);
+	v + if (i <= 1) "" else "__ssa_" + i2s(i - 1);
 }

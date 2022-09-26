@@ -238,11 +238,21 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> string {
 	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
 	value1 = fiExplicitCastInSwitch(value0, names);
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
-	value = fiExpSSA(value2);
+	value = value2; //fiExpSSA(value2);
 	pair0 = fiExp2FsExp(value, makeSet(), names);
-	pair = Pair(
+	pair1 = Pair(
 		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
 		map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
+	);
+	//fsStatDoSSA(s: FsStat, vars_assigned: ref Tree<string, int>) -> FsStat;
+	//fsExpDoSSA(e: FsExp, vars_assigned: ref Tree<string, int>) -> FsExp;
+	pair2 = fold(pair1.second, Pair([], makeTree()), \acc, s -> {
+		p = fsStatSSA(s, acc.second);
+		Pair(concat(acc.first, [p.first]), p.second);
+	});
+	pair = Pair(
+		fsExpSSA(pair1.first, pair2.second),
+		pair2.first
 	);
 
 	value_exp = if (pair.second == []) pair.first else {
@@ -272,9 +282,7 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> st
 	fun_name = gctx.varname2cpp(name);
 	fun_typars = set2array(fiTypeTypars(makeSet(), fn_type));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
-	fun_signature = fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + "(" + 
-		superglue(fun_args, \arg -> fiType2cpp3(arg.type, gctx) + " " + gctx.varname2cpp(arg.name), ", ") + 
-	")";
+	fun_signature = fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + fiFunArgs2cpp(fun_args, gctx);
 	if (only_decl) {
 		decl_typars + fun_signature + ";\n\n";
 	} else {
@@ -289,7 +297,9 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> st
 			), 
 			names
 		);
-		lambda4 = fiExpSSA(lambda3);
+		lambda4 = lambda3; //fiExpSSA(lambda3);
+		//println("lambda3:\n" + toStringFormatted(lambda3) + "\nlambda4:\n" + toStringFormatted(lambda4)+ "\n\n\n");
+		//println("lambda3:\n" + prettyFiExp(dummyPretty, lambda3) + "\nlambda4:\n" + prettyFiExp(dummyPretty, lambda4));
 		lambda5 = cast(lambda4: FiExp -> FiLambda);
 		fun_cpp = tryCatch(\-> {
 				fun_stat0 = fiExp2FsStat(
@@ -299,7 +309,10 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> st
 					),
 					names
 				);
-				fun_stat = fsMakeStatCastsExplicit(fun_stat0, fn_type.returnType, names);
+				//fsStatDoSSA(s: FsStat, vars_assigned: ref Tree<string, int>) -> FsStat;
+				//fsExpDoSSA(e: FsExp, vars_assigned: ref Tree<string, int>) -> FsExp;
+				fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
+				fun_stat = fsMakeStatCastsExplicit(fun_stat1, fn_type.returnType, names);
 				fsStat2cpp3(fun_stat, gctx);
 			},
 			\msg  -> {
@@ -313,6 +326,13 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> st
 		);
 		decl_typars + fun_signature + " " + fiWrapWithBraces(fun_cpp) + "\n\n";
 	}
+}
+
+fiFunArgs2cpp(args: [FiFunArg], gctx: Cpp3GlobalContext) -> string {
+	arg2cpp = \i, arg -> {
+		fiType2cpp3(arg.type, gctx) + " " + (if (arg.name == "__") arg.name + i2s(i) else gctx.varname2cpp(arg.name))
+	};
+	"(" + strGlue(mapi(args, arg2cpp), ", ") + ")";
 }
 
 fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
@@ -531,7 +551,8 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		FsLambda(closure, args, body, type): {
 			fun = fiType2cpp3(type, gctx);
 			fun + "([" + superglue(closure, gctx.varname2cpp, ", ") + "] " + 
-			"(" + superglue(args, \arg -> fiType2cpp3(arg.type, gctx) + " " + gctx.varname2cpp(arg.name), ", ") + ") " + 
+			fiFunArgs2cpp(args, gctx) + 
+			//"(" + superglue(args, \arg -> fiType2cpp3(arg.type, gctx) + " " + gctx.varname2cpp(arg.name), ", ") + ") " + 
 			"{\n" + strIndent(fsStat2cpp3(body, gctx)) + "\n})";
 		}
 		FsTernary(e1, e2, e3, type): {
@@ -629,7 +650,12 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FcNegPrim():   "-" + e2k(e.es[0]);
 		FcArrayPrim(): {
 			arr_type = fiDearrayType(e.type);
-			"Arr<" + fiType2cpp3(arr_type, gctx) + ">{" + superglue(e.es, e2k, ", ") + "}";
+			arr_s = map(e.es, e2k);
+			if (length(arr_s) < 8 && !exists(arr_s, \s -> strContains(s, "\n"))) {
+				"Arr<" + fiType2cpp3(arr_type, gctx) + ">{" + strGlue(arr_s, ", ") + "}";
+			} else {
+				"Arr<" + fiType2cpp3(arr_type, gctx) + ">{\n" + strIndent(strGlue(arr_s, ",\n")) + "\n}";
+			}
 		}
 		FcIndexPrim(): {
 			switch (arg_type) {

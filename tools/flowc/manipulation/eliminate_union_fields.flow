@@ -309,17 +309,21 @@ fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 }
 
 fiExpSSA(e : FiExp) -> FiExp {
-	fiExpDoSSA(e, makeTree());
+	fiExpDoSSA(e, ref makeTree());
 }
 
-fiExpDoSSA(e: FiExp, vars_assigned: Tree<string, int>) -> FiExp {
+fiExpDoSSA(e: FiExp, vars_assigned: ref Tree<string, int>) -> FiExp {
 	ssa = \x -> fiExpDoSSA(x, vars_assigned);
 	switch(e) {
 		FiLambda(args, body,__, __): {
-			new_vars = fold(args, vars_assigned, \acc, arg -> 
-				setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1)
-			);
-			FiLambda(e with body = fiExpDoSSA(body, new_vars));
+			new_args = mapi(args, \i, arg -> {
+				arg_i = lookupTreeDef(^vars_assigned, arg.name, 0);
+				vars_assigned := setTree(^vars_assigned, arg.name, arg_i + 1);
+				FiFunArg(arg with 
+					name = if (arg_i == 0) arg.name else arg.name + i2s(arg_i);
+				);
+			});
+			FiLambda(e with body = ssa(body), args = new_args);
 		}
 		FiCall(fn, args,__,__): {
 			FiCall(e with
@@ -328,12 +332,12 @@ fiExpDoSSA(e: FiExp, vars_assigned: Tree<string, int>) -> FiExp {
 			);
 		}
 		FiLet(v, __,e1, e2,__, __): {
-			v_ind = lookupTreeDef(vars_assigned, v, 0);
-			new_vars = setTree(vars_assigned, v, v_ind + 1);
+			v_ind = lookupTreeDef(^vars_assigned, v, 0);
+			vars_assigned := setTree(^vars_assigned, v, v_ind + 1);
 			FiLet(e with
 				name = if (v_ind <= 0) v else v + i2s(v_ind),
 				e1 = ssa(e1),
-				e2 = fiExpDoSSA(e2, new_vars);
+				e2 = ssa(e2);
 			);
 		}
 		FiIf(e1, e2, e3,__, __): {
@@ -344,14 +348,14 @@ fiExpDoSSA(e: FiExp, vars_assigned: Tree<string, int>) -> FiExp {
 			);
 		}
 		FiSwitch(var, vtype, cases, type, start): {
-			var_i = lookupTreeDef(vars_assigned, var.name, 0);
+			var_i = lookupTreeDef(^vars_assigned, var.name, 0);
 			FiSwitch(e with
 				x = FiVar(var with name = if (var_i <= 1) var.name else var.name + i2s(var_i - 1)),
 				cases = map(cases, \c -> {
-					new_vars = fold(c.argNames, vars_assigned, \acc, arg -> 
-						setTree(acc, arg, lookupTreeDef(acc, arg, 0) + 1)
+					iter(c.argNames, \arg -> 
+						vars_assigned := setTree(^vars_assigned, arg, lookupTreeDef(^vars_assigned, arg, 0) + 1)
 					);
-					FiCase(c with body = fiExpDoSSA(c.body, new_vars));
+					FiCase(c with body = ssa(c.body));
 				})
 			);
 		}
@@ -371,7 +375,7 @@ fiExpDoSSA(e: FiExp, vars_assigned: Tree<string, int>) -> FiExp {
 			FiUnsafe(e with fallback = ssa(ex));
 		}
 		FiVar(name,__, __): {
-			i = lookupTreeDef(vars_assigned, name, 0);
+			i = lookupTreeDef(^vars_assigned, name, 0);
 			FiVar(e with name = name + if (i <= 1) "" else i2s(i - 1));
 		}
 		FiVoid(__):       e;
