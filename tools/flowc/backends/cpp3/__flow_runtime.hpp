@@ -133,6 +133,9 @@ struct Str {
 	T& operator *() { return str.operator*(); }
 	T* operator ->() { return str.operator->(); }
 	T* get() { return str.get(); }
+	const T& operator *() const { return str.operator*(); }
+	const T* operator ->() const { return str.operator->(); }
+	const T* get() const { return str.get(); }
 	Str& operator = (const Str& s) { str.operator=(s.str); return *this; }
 	Str& operator = (Str&& s) { str.operator=(std::move(s.str)); return *this;}
 	template<typename T1>
@@ -153,6 +156,9 @@ struct Union {
 	Struct& operator *() { return un.operator*(); }
 	Struct* operator ->() { return un.operator->(); }
 	Struct* get() { return un.get(); }
+	const Struct& operator *() const { return un.operator*(); }
+	const Struct* operator ->() const { return un.operator->(); }
+	const Struct* get() const { return un.get(); }
 	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
 	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
 	template<typename T1>

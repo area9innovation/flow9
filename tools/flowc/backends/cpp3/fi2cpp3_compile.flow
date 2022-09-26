@@ -101,7 +101,11 @@ fiDeclTypars2cpp3(types : [FiType], gctx : Cpp3GlobalContext) -> string {
 	if (typars == []) "" else "template <" + superglue(typars, \tp -> "typename " + gctx.typar2cpp(tp), ", ") + ">\n";
 }
 
-fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) -> string {
+fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = struct.name,
+		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
+	);
 	struct_name = gctx.typename2cpp(struct.name);
 	names = gctx.program.names;
 	typars = struct.typars;
@@ -224,14 +228,17 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, only_decl: bool) ->
 	}
 }
 
-fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
-	names = gctx.program.names;
+fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> string {
+	names = gctx0.program.names;
 	name = globalVar.name;
-	gctx.currentToplevel := name;
+	gctx = Cpp3GlobalContext(gctx0 with 
+		currentToplevel = name,
+		toplevelTypars = fiCollectTypars(globalVar.type, makeSet())
+	);
 	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
-	value1 = fiExpSSA(value0);
-	value2 = fiExplicitCastInSwitch(value1, names);
-	value = fiFixVarInSameStructType(value2, makeTree(), names);
+	value1 = fiExplicitCastInSwitch(value0, names);
+	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
+	value = fiExpSSA(value2);
 	pair0 = fiExp2FsExp(value, makeSet(), names);
 	pair = Pair(
 		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
@@ -254,10 +261,13 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx: Cpp3GlobalContext) -> string {
 	}
 }
 
-fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> string {
+fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
 	name = fun.name;
-	gctx.currentToplevel := name;
 	fn_type = fun.type;
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = name,
+		toplevelTypars = fiCollectTypars(fn_type, makeSet())
+	);
 	fun_args = fun.lambda.args;
 	fun_name = gctx.varname2cpp(name);
 	fun_typars = set2array(fiTypeTypars(makeSet(), fn_type));
@@ -272,14 +282,14 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx: Cpp3GlobalContext, only_decl: bool) -> str
 		lambda0 = fiEliminateUnionFields(fun.lambda, names, 0);
 		lambda1 = fiExplicitCastInSwitch(lambda0, names);
 		lambda2 = fiEliminateUnionFields(lambda1, names, 0);
-		lambda3 = fiExpSSA(lambda2);
-		lambda4 = fiFixVarInSameStructType(
-			lambda3, 
+		lambda3 = fiFixVarInSameStructType(
+			lambda2, 
 			fold(fn_type.args, makeTree(), \acc, arg -> 
 				setTree(acc, arg.name, FiVar(arg.name, arg.type, 0))
 			), 
 			names
 		);
+		lambda4 = fiExpSSA(lambda3);
 		lambda5 = cast(lambda4: FiExp -> FiLambda);
 		fun_cpp = tryCatch(\-> {
 				fun_stat0 = fiExp2FsStat(
@@ -314,7 +324,7 @@ fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
 			"Fun<" + superglue(concat([retType], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ") + ">";
 		}
 		FiTypeRef(tp):        "Ref<" + fiType2cpp3(tp, gctx) + ">";
-		FiTypeParameter(nm):  "T" + i2s(strlen(nm));
+		FiTypeParameter(nm):  if (containsSet(gctx.toplevelTypars, nm)) "T" + i2s(strlen(nm)) else "Void";
 		FiTypeBool():         "Bool";
 		FiTypeInt():          "Int";
 		FiTypeDouble():       "Double";
