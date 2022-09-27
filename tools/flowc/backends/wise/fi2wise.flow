@@ -70,7 +70,7 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 	));
 	
 	// TODO: imports if necessary 
-	systemImports = [FiImport("array_i32", true, 0)];
+	systemImports = [FiImport("array_i32", true, 0), FiImport("string", true, 0)];
 	imports = fold(concat(module.imports, systemImports), newBody, \acc, v -> fiImport2FlowWiseAst(v, acc));
 
 	FlowWiseAstList(Cons(imports, structs.first));
@@ -155,7 +155,7 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, structs : StructTuple) -> Flow
 		FiCallPrim(op, es, type, start) : eitherFn(fiCallPrim2wiExp(state, exp, structs), idfn, makeDefExp);
 		FiRequire(flowfile, e, type, start) : makeDefExp();
 		FiUnsafe(name, fallback, type, start) : makeDefExp();
-		FiConst() : fiConst2FlowWiExp(exp);
+		FiConst() : fiConst2FlowWiExp(state, exp);
 	}
 }
 
@@ -387,36 +387,6 @@ fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<F
 // TODO: 1 native -> N implementations (by type)
 // fix this ugly function
 resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
-	makeDefPrintln = \desc -> {
-		println("println for '" + desc + "' isn't implemented");
-		"println"
-	}
-	makePrintForFiType = \type -> switch (type : FiType) {
-		FiTypeBool() : "printlnb";
-		FiTypeInt() : "printlni32";
-		FiTypeDouble() : "printlnf64";
-		// FiTypeString() : "";
-		default : makeDefPrintln(toString(type));
-	}
-	getWiPrintFn = \arg -> switch (arg : FiExp) {
-		FiBool(__, __) : "printlnb";
-		FiInt(__, __) : "printlni32";
-		FiDouble(v, __) : "printlnf64";
-		FiString(v, __) : makeDefPrintln(v);
-		FiVoid(__) : "printv128";
-		FiVar(__, type, __) : makePrintForFiType(type);
-		FiCallPrim(__, __, type, __): makePrintForFiType(type);
-		FiIf(__, __, __, type, __) : makePrintForFiType(type);
-		FiLambda(__, __, type, start) : makePrintForFiType(type);
-		FiCall(__, __, type, __) : makePrintForFiType(type);
-		FiLet(__, type, __, __, type2, __) : makePrintForFiType(type);
-		FiSwitch(__, switchType, __, type, __) : makePrintForFiType(type);
-		FiCast(__, tFrom, tTo, type, __) : makePrintForFiType(tTo);
-		FiSeq(__, type, __) : makePrintForFiType(type);
-		FiRequire(__, __, type, __) : makePrintForFiType(type);
-		FiUnsafe(__, __, type, __) : makePrintForFiType(type);
-	}
-
 	makeArrayError = \fnName -> {
 		println("wrong arguments for " + fnName);
 		"fnName"
@@ -445,7 +415,7 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 
 	switch (exp : FlowWiExp) {
 		FlowWiVar(id) : if (id == "println" && args != []) {
-			FlowWiVar(getWiPrintFn(args[0]))
+			makeFlowWiPrint(args[0]);
 		} else if ((id == "length" || id == "subrange") && args != []) {
 			FlowWiVar(makeArrayFnForFiType(resolveArrType(extractArrayFiType(args[0]), FiTypeInt()), id));
 		} else if (id == "concat" && length(args) == 2) {
@@ -459,6 +429,40 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 			exp
 		}
 		default : exp;
+	}
+}
+
+makeFlowWiPrint(exp : FiExp) -> FlowWiExp {
+	makeNativePrintln = \fnName -> FlowWiVar(fnName);
+	makeDefPrintln = \desc -> {
+		println("println for '" + desc + "' isn't implemented");
+		makeNativePrintln("println");
+	}
+	makePrintForFiType = \type -> switch (type : FiType) {
+		FiTypeBool() : makeNativePrintln("printlnb");
+		FiTypeInt() : makeNativePrintln("printlni32");
+		FiTypeDouble() : makeNativePrintln("printlnf64");
+		FiTypeVoid() : makeNativePrintln("printv128");
+		FiTypeString() : makeNativePrintln("printlnStr");
+		default : makeDefPrintln(toString(type));
+	}
+	switch (exp : FiExp) {
+		FiBool(__, __) : makePrintForFiType(FiTypeBool());
+		FiInt(__, __) : makePrintForFiType(FiTypeInt());
+		FiDouble(v, __) : makePrintForFiType(FiTypeDouble());
+		FiString(v, __) : makePrintForFiType(FiTypeString());
+		FiVoid(__) : makePrintForFiType(FiTypeVoid());
+		FiVar(__, type, __) : makePrintForFiType(type);
+		FiCallPrim(__, __, type, __): makePrintForFiType(type);
+		FiIf(__, __, __, type, __) : makePrintForFiType(type);
+		FiLambda(__, __, type, start) : makePrintForFiType(type);
+		FiCall(__, __, type, __) : makePrintForFiType(type);
+		FiLet(__, type, __, __, type2, __) : makePrintForFiType(type);
+		FiSwitch(__, switchType, __, type, __) : makePrintForFiType(type);
+		FiCast(__, tFrom, tTo, type, __) : makePrintForFiType(tTo);
+		FiSeq(__, type, __) : makePrintForFiType(type);
+		FiRequire(__, __, type, __) : makePrintForFiType(type);
+		FiUnsafe(__, __, type, __) : makePrintForFiType(type);
 	}
 }
 
@@ -491,16 +495,22 @@ extractFiTypeFromFiExp(exp : FiExp) -> FiType {
 	}
 }
 
-fiConst2FlowWiExp(exp : FiConst) -> FlowWiExp {
+fiConst2FlowWiExp(state : FiWiseState, exp : FiConst) -> FlowWiExp {
 	switch (exp : FiConst) {
-		FiVoid(start) : FlowWiTuple([]);
-		FiDouble(d, start) : FlowWiDouble(d);
-		FiInt(i, start) : FlowWiInt(i);
-		FiString(s, start) : {
-			println("TODO: string(" + s + ")");
-			FlowWiTuple([]);
+		FiVoid(__) : FlowWiTuple([]);
+		FiDouble(d, __) : FlowWiDouble(d);
+		FiInt(i, __) : FlowWiInt(i);
+		FiString(s, __) : {
+			eitherFn(
+				makeWiArrayConstruction(map(s2a(s), \v -> FlowWiInt(v)), incTmpVarCounter(state)),
+				idfn,
+				\-> {
+					println("TODO: string(" + s + ")");
+					FlowWiTuple([]);
+				}
+			);
 		}
-		FiBool(b, start) : FlowWiBool(b);
+		FiBool(b, __) : FlowWiBool(b);
 	}
 }
 
@@ -520,7 +530,7 @@ fiType2FlowWiType(type : FiType, structs : StructTuple) -> FlowWiType {
 		FiTypeBool() : FlowWiBasictype("auto");
 		FiTypeInt() : FlowWiBasictype("i32");
 		FiTypeDouble() : FlowWiBasictype("f64");
-		FiTypeString() : makeDefType();
+		FiTypeString() : FlowWiArrayType(fiType2FlowWiType(FiTypeInt(), structs));
 		FiTypeFlow() : makeDefType();
 		FiTypeVoid() :  FlowWiBasictype("auto");
 		FiTypeNative() : makeDefType();
