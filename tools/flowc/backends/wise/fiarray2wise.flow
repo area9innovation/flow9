@@ -1,0 +1,75 @@
+import string;
+import tools/flowc/backends/wise/flow_wise_types;
+
+// TODO: think about
+// makeWiArrayConstruction()
+// create runtime fns : createArrayI32_N - where n = array_length
+// -> we'll replace arr = {tmp=; ...  tmp} with arr = createArrayI32_N(1,2,3);
+
+export {
+	makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp) -> FlowWiExp;
+	makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int) -> Maybe<FlowWiExp>;
+	isWiArrayConstruction(exp : FlowWiExp) -> bool;
+}
+
+makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp) -> FlowWiExp {
+	FlowWiCall(FlowWiVar("getValueArrayI32"), [e1, e2]);
+}
+
+makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int) -> Maybe<FlowWiExp> {
+	// TODO : other types
+	intArray = filtermap(exps, \e -> switch (e : FlowWiExp) {
+		FlowWiInt(v): Some(v);
+		default : None();
+	});
+	if (intArray == []) {
+		Some(makeCreateArrayCall(0));
+	} else if (length(intArray) == length(exps)) {
+		tmpVar = "tmp" + i2s(tmpIndex);
+		Some(FlowWiBrace([
+			FlowWiInt(0), // not to erase '{}' in the result string // TOD: fix it
+			FlowWiBrace([FlowWiLet(
+				tmpVar,
+				0,
+				FlowWiBasictype("auto"),
+				makeCreateArrayCall(length(exps)),
+				FlowWiBrace(arrayPush(
+					mapi(intArray, \i, value -> FlowWiCall(FlowWiVar("setValueArrayI32"), [FlowWiVar(tmpVar), FlowWiInt(i), FlowWiInt(value)])),
+					FlowWiVar(tmpVar)
+				)),
+			)])
+		]));
+	} else {
+		println("TODO: array of this type of elements is implemented. " + toString(exps));
+		None();
+	}
+}
+
+makeCreateArrayCall(len : int) -> FlowWiCall {
+	FlowWiCall(FlowWiVar("createArrayI32"), [FlowWiInt(len)]);
+}
+
+isWiArrayConstruction(exp : FlowWiExp) -> bool {
+	isCreateFn = \e -> {
+		switch (e : FlowWiExp) {
+			FlowWiCall(v, __) : v == makeCreateArrayCall(0).exp;
+			default : false;
+		}
+	}
+	isCreateFn(exp)
+	|| {
+		switch (exp : FlowWiExp) {
+			FlowWiBrace(es): length(es) > 1
+							&& switch (es[1] : FlowWiExp) {
+								FlowWiBrace(es1): es1 != []
+													&& switch (es1[0] : FlowWiExp) {
+														FlowWiLet(__, __, __, e, __) : isCreateFn(e);
+														default : false;
+													};
+								default : false;
+							};
+			default : false;
+		}
+	}
+
+}
