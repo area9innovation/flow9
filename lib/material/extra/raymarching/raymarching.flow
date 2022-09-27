@@ -108,7 +108,7 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 						"setDistanceFunction",
 						[
 							i2s(id),
-							"(p, MAX_DIST, positions, objectParameters, smoothCoefficients, spaces, repetitions, shown) => {return {distance : MAX_DIST, id : -1};}"
+							formatString("(p, MAX_DIST, positions, objectParameters, smoothCoefficients, spaces, repetitions, shown) => {return %1;}", [fixEmptyDistance(RMIExp2JS(RMScene2RMIExpJS(s)), "{distance : MAX_DIST, id : -1}")])
 						]
 					) |> ignore;
 				}
@@ -520,6 +520,7 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 		RMRotate(object, r): extractMaterialsFromRMScene(object);
 		RMScale(object, s): extractMaterialsFromRMScene(object);
 		RMRepetitionLimited(object, c, l): extractMaterialsFromRMScene(object);
+		RM3DRound(object, radius): extractMaterialsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractMaterialsFromRMScene);
 		RMIntersection2(object1, object2): concat(extractMaterialsFromRMScene(object1), extractMaterialsFromRMScene(object2));
@@ -550,6 +551,7 @@ extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 		RMRotate(object, r): extractTriggersFromRMScene(object);
 		RMScale(object, s): extractTriggersFromRMScene(object);
 		RMRepetitionLimited(object, c, l): extractTriggersFromRMScene(object);
+		RM3DRound(object, radius): extractTriggersFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractTriggersFromRMScene);
 		RMIntersection2(object1, object2): concat(extractTriggersFromRMScene(object1), extractTriggersFromRMScene(object2));
@@ -580,6 +582,7 @@ extractTransformationsFromRMScene(obj : RMScene) -> [RMUnaryOperator] {
 		RMRotate(object, r): map(extractTransformationsFromRMScene(object), \o -> RMRotate(o, r));
 		RMScale(object, s): map(extractTransformationsFromRMScene(object), \o -> RMScale(o, s));
 		RMRepetitionLimited(object, c, l): extractTransformationsFromRMScene(object);
+		RM3DRound(object, radius): extractTransformationsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractTransformationsFromRMScene(object1), extractTransformationsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractTransformationsFromRMScene);
 		RMIntersection2(object1, object2): concat(extractTransformationsFromRMScene(object1), extractTransformationsFromRMScene(object2));
@@ -607,6 +610,7 @@ extractTransformationsBehaviours(obj : RMScene) -> [Behaviour<RMCoordinate>] {
 		RMRotate(object, r): arrayPush(extractTransformationsBehaviours(object), r);
 		RMScale(object, s): arrayPush(extractTransformationsBehaviours(object), s);
 		RMRepetitionLimited(object, c, l): extractTransformationsBehaviours(object);
+		RM3DRound(object, radius): extractTransformationsBehaviours(object);
 		RMUnion2(object1, object2): concat(extractTransformationsBehaviours(object1), extractTransformationsBehaviours(object2));
 		RMUnion(objects): mapConcat(objects, extractTransformationsBehaviours);
 		RMIntersection2(object1, object2): concat(extractTransformationsBehaviours(object1), extractTransformationsBehaviours(object2));
@@ -656,22 +660,25 @@ prepareTransformations(obj : RMScene) -> [double] {
 	}
 }
 
+get2DTransforms(obj : RM2DPrimitives) -> [Transform<double>] {
+	fRMX = \coord -> fselect(coord, FLift(\c -> c.x));
+	fRMY = \coord -> fselect(coord, FLift(\c -> c.y));
+	switch(obj) {
+		RMCircle(radius): [radius];
+		RMHexagon(radius): [radius];
+		RMTriangle(point0, point1, point2): [fRMX(point0), fRMY(point0), fRMX(point1), fRMY(point1), fRMX(point2), fRMY(point2)];
+		RMPolygon(points): mapConcat(points, \p -> [fRMX(p), fRMY(p)]);
+		RMQuadraticBezier(A, B, C): [fRMX(A), fRMY(A), fRMX(B), fRMY(B), fRMX(C), fRMY(C)];
+		RMCubicBezier(A, B, C, D, k): [fRMX(A), fRMY(A), fRMX(B), fRMY(B), fRMX(C), fRMY(C), fRMX(D), fRMY(D), fselect(k, FLift(i2d))];
+		RM2DRound(object, radius): arrayPush(get2DTransforms(object), radius);
+		RMEmpty(): [];
+	}
+}
+
 extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 	fRMX = \coord -> fselect(coord, FLift(\c -> c.x));
 	fRMY = \coord -> fselect(coord, FLift(\c -> c.y));
 	fRMZ = \coord -> fselect(coord, FLift(\c -> c.z));
-	fRMX2D = \coord -> fselect(coord, FLift(\c -> c.x));
-	fRMY2D = \coord -> fselect(coord, FLift(\c -> c.y));
-	get2DTransforms = \o -> {
-		switch(o) {
-			RMCircle(radius): [radius];
-			RMHexagon(radius): [radius];
-			RMTriangle(point0, point1, point2): [fRMX2D(point0), fRMY2D(point0), fRMX2D(point1), fRMY2D(point1), fRMX2D(point2), fRMY2D(point2)];
-			RMPolygon(points): mapConcat(points, \p -> [fRMX2D(p), fRMY2D(p)]);
-			RMQuadraticBezier(A, B, C): [fRMX2D(A), fRMY2D(A), fRMX2D(B), fRMY2D(B), fRMX2D(C), fRMY2D(C)];
-			RMEmpty(): [];
-		}
-	};
 	getPrimitiveParameters = \o -> {
 		switch(o) {
 			RMSphere(radius): [radius];
@@ -686,6 +693,7 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 			RMOctahedron(size): [size];
 			RMExtrusion(object, size): concat([size], get2DTransforms(object));
 			RMRevolution(object, radius): concat([radius], get2DTransforms(object));
+			RM3DQuadraticBezier(A, B, C): [fRMX(A), fRMY(A), fRMZ(A), fRMX(B), fRMY(B), fRMZ(B), fRMX(C), fRMY(C), fRMZ(C)];
 		}
 	};
 	switch(obj) {
@@ -695,6 +703,7 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 		RMRotate(object, r): extractObjectParametersFromRMScene(object);
 		RMScale(object, s): extractObjectParametersFromRMScene(object);
 		RMRepetitionLimited(object, c, l): extractObjectParametersFromRMScene(object);
+		RM3DRound(object, radius): arrayPush(extractObjectParametersFromRMScene(object), radius);
 		RMUnion2(object1, object2): concat(extractObjectParametersFromRMScene(object1), extractObjectParametersFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractObjectParametersFromRMScene);
 		RMIntersection2(object1, object2): concat(extractObjectParametersFromRMScene(object1), extractObjectParametersFromRMScene(object2));
@@ -722,6 +731,7 @@ extractSmoothCoefficientsFromRMScene(obj : RMScene) -> [Transform<double>] {
 		RMRotate(object, r): extractSmoothCoefficientsFromRMScene(object);
 		RMScale(object, s): extractSmoothCoefficientsFromRMScene(object);
 		RMRepetitionLimited(object, c, l): extractSmoothCoefficientsFromRMScene(object);
+		RM3DRound(object, radius): extractSmoothCoefficientsFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractSmoothCoefficientsFromRMScene(object1), extractSmoothCoefficientsFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractSmoothCoefficientsFromRMScene);
 		RMIntersection2(object1, object2): concat(extractSmoothCoefficientsFromRMScene(object1), extractSmoothCoefficientsFromRMScene(object2));
@@ -761,6 +771,7 @@ extractRepetitionCoefficientsFromRMScene0(obj : RMScene, repetitionsList : List<
 		RMRotate(object, r): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales);
 		RMScale(object, s): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, fselect2(scales, s, FLift2(multiplyRMCoordinate)));
 		RMRepetitionLimited(object, space, repetitions): extractRepetitionCoefficientsFromRMScene0(object, Cons(Pair(space, repetitions), repetitionsList), scales);
+		RM3DRound(object, radius): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales);
 		RMUnion2(object1, object2): concat(extractRepetitionCoefficientsFromRMScene0(object1, repetitionsList, scales), extractRepetitionCoefficientsFromRMScene0(object2, repetitionsList, scales));
 		RMUnion(objects): mapConcat(objects, \object -> extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales));
 		RMIntersection2(object1, object2): concat(extractRepetitionCoefficientsFromRMScene0(object1, repetitionsList, scales), extractRepetitionCoefficientsFromRMScene0(object2, repetitionsList, scales));
@@ -788,6 +799,7 @@ extractShowStatusFromRMScene(obj : RMScene) -> [Behaviour<bool>] {
 		RMRotate(object, r): extractShowStatusFromRMScene(object);
 		RMScale(object, s): extractShowStatusFromRMScene(object);
 		RMRepetitionLimited(object, c, l): extractShowStatusFromRMScene(object);
+		RM3DRound(object, radius): extractShowStatusFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractShowStatusFromRMScene);
 		RMIntersection2(object1, object2): concat(extractShowStatusFromRMScene(object1), extractShowStatusFromRMScene(object2));
@@ -815,6 +827,7 @@ extractRMTextFromRMScene(obj : RMScene) -> [RMText] {
 		RMRotate(object, r): extractRMTextFromRMScene(object);
 		RMScale(object, s): extractRMTextFromRMScene(object);
 		RMRepetitionLimited(object, c, l): extractRMTextFromRMScene(object);
+		RM3DRound(object, radius): extractRMTextFromRMScene(object);
 		RMUnion2(object1, object2): concat(extractRMTextFromRMScene(object1), extractRMTextFromRMScene(object2));
 		RMUnion(objects): mapConcat(objects, extractRMTextFromRMScene);
 		RMIntersection2(object1, object2): concat(extractRMTextFromRMScene(object1), extractRMTextFromRMScene(object2));

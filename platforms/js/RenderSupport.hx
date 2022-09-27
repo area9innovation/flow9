@@ -3707,7 +3707,7 @@ class RenderSupport {
 		if (fs) {
 			var mainStage = getClipPixiStage(FullScreenTargetClip);
 			var root =
-				mainStage.nativeWidget == null
+				mainStage == null || mainStage.nativeWidget == null
 				? Browser.document.body
 				: mainStage.nativeWidget.host != null
 					? mainStage.nativeWidget.host

@@ -99,6 +99,16 @@ ObjectInfo opSubtraction(ObjectInfo obj1, ObjectInfo obj2) {
 	);
 }
 
+ObjectInfo opRound(ObjectInfo obj, float radius) {
+	return ObjectInfo(
+		obj.d - radius,
+		obj.id,
+		obj.textureId,
+		obj.topLevel,
+		obj.material
+	);
+}
+
 float sdBox( vec3 p, vec3 b ) {
 	vec3 q = abs(p) - b;
 	return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
@@ -221,6 +231,80 @@ float sdBezier( in vec2 pos, in vec2 A, in vec2 B, in vec2 C )
         // res = min(res,dot2(d+(c+b*t.z)*t.z));
     }
     return sqrt( res );
+}
+
+float sdSegmentSq( in vec2 p, in vec2 a, in vec2 b )
+{
+	vec2 pa = p-a, ba = b-a;
+	float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+	return dot2( pa - ba*h );
+}
+
+float sdCubicBezier(vec2 pos, vec2 p0, vec2 p1, vec2 p2, vec2 p3, const int kNum)
+{   
+    vec2 res = vec2(1e10,0.0);
+    vec2 a = p0;
+    for( int i=1; i<kNum; i++ )
+    {
+        float t = float(i)/float(kNum-1);
+        float s = 1.0-t;
+        vec2 b = p0*s*s*s + p1*3.0*s*s*t + p2*3.0*s*t*t + p3*t*t*t;
+        float d = sdSegmentSq( pos, a, b );
+        if( d<res.x ) res = vec2(d,t);
+        a = b;
+    }
+    
+	return sqrt(res.x);
+}
+
+float sd3DQuadraticBezier(vec3 pos, vec3 A, vec3 B, vec3 C) {
+	vec3 a = B - A;
+    vec3 b = A - 2.0*B + C;
+    vec3 c = a * 2.0;
+    vec3 d = A - pos;
+
+    float kk = 1.0 / dot(b,b);
+    float kx = kk * dot(a,b);
+    float ky = kk * (2.0*dot(a,a)+dot(d,b)) / 3.0;
+    float kz = kk * dot(d,a);      
+
+    vec2 res;
+
+    float p = ky - kx*kx;
+    float p3 = p*p*p;
+    float q = kx*(2.0*kx*kx - 3.0*ky) + kz;
+    float h = q*q + 4.0*p3;
+
+    if(h >= 0.0) 
+    { 
+        h = sqrt(h);
+        vec2 x = (vec2(h, -h) - q) / 2.0;
+        vec2 uv = sign(x)*pow(abs(x), vec2(1.0/3.0));
+        float t = clamp(uv.x+uv.y-kx, 0.0, 1.0);
+
+        // 1 root
+        res = vec2(dot2(d+(c+b*t)*t),t);
+        
+        //res = vec2( dot2( pos-bezier(A,B,C,t)), t );
+    }
+    else
+    {
+        float z = sqrt(-p);
+        float v = acos( q/(p*z*2.0) ) / 3.0;
+        float m = cos(v);
+        float n = sin(v)*1.732050808;
+        vec3 t = clamp( vec3(m+m,-n-m,n-m)*z-kx, 0.0, 1.0);
+        
+        // 3 roots, but only need two
+        float dis = dot2(d+(c+b*t.x)*t.x);
+        res = vec2(dis,t.x);
+
+        dis = dot2(d+(c+b*t.y)*t.y);
+        if( dis<res.x ) res = vec2(dis,t.y );
+    }
+    
+    res.x = sqrt(res.x);
+    return res.x;
 }
 
 %generatedFunctions%
