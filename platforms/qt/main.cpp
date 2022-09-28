@@ -336,6 +336,7 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[1], "--cgi")) {
             cgi = true;
             cgi_headers = true;
+            is_utf8_js_style = true;
             shift_args(argc, argv, 1);
         } else if (!strcmp(argv[1], "-I")) {
             if (flowCompiler > 0) {
