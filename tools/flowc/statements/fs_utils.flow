@@ -164,15 +164,15 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 		e1 
 	} else {
 		switch (type) {
-			FiTypeParameter(__): e;
+			FiTypeParameter(__): e1;
 			default: {
-				FsCast(e, type1, type);
+				FsCast(e1, type1, type);
 			}
 		}
 	}
 }
 
-fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) -> FsCallPrim {
+fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) -> FsExp {
 	def_case = \do -> FsCallPrim(e with es = map(e.es, \x -> fsMakeExpCastsExplicit(x, type, names, do)));
 	typed_case = \tp, do -> FsCallPrim(e with es = map(e.es, \x -> fsMakeExpCastsExplicit(x, tp, names, do)));
 	dearray_type = \tp -> switch (tp) {
@@ -226,9 +226,29 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 			struct = lookupTreeDef(names.structs, struct_name, FiTypeStruct("", [], [], 0));
 			FsCallPrim(e with es = mapi(e.es, \i, x -> fsMakeExpCastsExplicit(x, struct.args[i].type, names, true)));
 		}
-		FcFieldPrim(name): FsCallPrim(e with es = [  // TODO - do it right
-			fsMakeExpCastsExplicit(e.es[0], fsExpType(e.es[0]), names, false)
-		]);
+		FcFieldPrim(name): {
+			if (name == "structname") {
+				def_case(false);
+			} else {
+				switch (fsExpType(e.es[0])) {
+					FiTypeName(struct_name, typars): {
+						switch (lookupTree(names.structs, struct_name)) {
+							Some(struct): {
+								switch (find(struct.args, \arg -> arg.name == name)) {
+									Some(arg): {
+										if (fiEqualTypes(type, arg.type)) def_case(false) else 
+										FsCast(def_case(false), arg.type, type);
+									}
+									None(): fail0("field " + name + " of struct " + struct_name + " is not found");
+								}
+							}
+							None(): def_case(false);
+						}
+					}
+					default: def_case(false);
+				}
+			}
+		}
 		FcSetMutablePrim(name): FsCallPrim(e with es = [ // TODO - do it right
 			fsMakeExpCastsExplicit(e.es[0], fsExpType(e.es[0]), names, false),
 			fsMakeExpCastsExplicit(e.es[1], fsExpType(e.es[1]), names, true)

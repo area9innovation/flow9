@@ -120,6 +120,12 @@ struct Native;
 
 void flow2string(Flow v, std::ostream& os, bool init = true);
 
+template<typename T> struct Str;
+template<typename T> struct Arr;
+template<typename T> struct Ref;
+template<typename T> struct Nat;
+template<typename R, typename... As> struct Fun;
+
 template<typename T>
 struct Str {
 	typedef T Name;
@@ -136,6 +142,7 @@ struct Str {
 	const T& operator *() const { return str.operator*(); }
 	const T* operator ->() const { return str.operator->(); }
 	const T* get() const { return str.get(); }
+	bool isSameObj(Str<T> s) const { return str.get() == s.str.get(); }
 	Str& operator = (const Str& s) { str.operator=(s.str); return *this; }
 	Str& operator = (Str&& s) { str.operator=(std::move(s.str)); return *this;}
 	template<typename T1>
@@ -159,6 +166,7 @@ struct Union {
 	const Struct& operator *() const { return un.operator*(); }
 	const Struct* operator ->() const { return un.operator->(); }
 	const Struct* get() const { return un.get(); }
+	bool isSameObj(Union u) const { return un.get() == u.un.get(); }
 	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
 	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
 	template<typename T1>
@@ -188,6 +196,10 @@ struct Flow {
 	Flow(const Union& u): val(u.un) { }
 	Flow(Union&& u): val(std::move(u.un)) { }
 	template<typename T> Flow(Str<T> s);
+	template<typename T> Flow(Ref<T> r);
+	template<typename T> Flow(Arr<T> a);
+	template<typename T> Flow(Nat<T> n);
+	template<typename R, typename... As> Flow(Fun<R, As...> f);
 
 	Variant val;
 
@@ -214,6 +226,24 @@ struct Flow {
 			case Type::NATIVE: return Type::NATIVE;
 			default:           return Type::NATIVE;
 		} 
+	}
+	bool isSameObj(Flow f) { 
+		if (type() != f.type()) {
+			return false;
+		} else {
+			switch (type()) {
+				case Type::INT:    return toInt() == f.toInt();
+				case Type::BOOL:   return toBool() == f.toBool();
+				case Type::DOUBLE: return toDouble() == f.toDouble();
+				case Type::STRING: return *toString() == *f.toString();
+				case Type::STRUCT: return toStruct().get() == f.toStruct().get();
+				case Type::ARRAY:  return toArray().get() == f.toArray().get();
+				case Type::REF:    return toReference().get() == f.toReference().get();
+				case Type::FUNC:   return toFunction().get() == f.toFunction().get();
+				case Type::NATIVE: return toNative().get() == f.toNative().get();
+				default:           return false;
+			}
+		}
 	}
 };
 
@@ -252,9 +282,6 @@ struct Reference {
 struct Function { };
 
 struct Native { };
-
-template<typename T>
-Flow::Flow(Str<T> s): val(std::static_pointer_cast<Struct>(s.str)) { }
 
 template<typename From, typename To>
 Str<typename To::Name> struct2struct(Str<typename From::Name> from) {
@@ -310,6 +337,7 @@ struct Arr : public Array {
 			return 0;
 		}
 	}
+	bool isSameObj(Arr a) const { return arr.get() == a.arr.get(); }
 	template<typename T1>
 	Arr<T1> cast() {
 		return std::reinterpret_pointer_cast<typename Arr<T1>::Vect>(arr);
@@ -329,6 +357,7 @@ struct Ref : public Reference {
 	Ref& operator = (const Ref& r) { ref = r.ref; return *this; }
 	Flow reference() override { return ToFlow<T>::conv(*ref); }
 	Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
+	bool isSameObj(Ref r) const { return ref.get() == r.ref.get(); }
 	template<typename T1>
 	Ref<T1> cast() {
 		return std::reinterpret_pointer_cast<T1>(ref);
@@ -350,6 +379,7 @@ struct Fun : public Function {
 	Fun& operator = (const Fun& f) { fn = f.fn; return *this; }
 	R operator()(As... as) const { return fn->operator()(as...); }
 	Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
+	bool isSameObj(Fun f) const { return fn.get() == f.fn.get(); }
 	template<typename R1, typename... As1> 
 	Fun<R1, As1...> cast() {
 		return std::reinterpret_pointer_cast<typename Fun<R1, As1...>::Fn>(fn);
@@ -369,6 +399,7 @@ struct Nat : public Native {
 	Nat& operator = (Nat&& n) { nat = std::move(n.nat); return *this; }
 	Nat& operator = (const Nat& n) { nat = n.nat; return *this; }
 	Int compare(Nat n) const { return Compare<void*>::cmp(nat.get(), n.nat.get()); }
+	bool isSameObj(Nat n) const { return nat.get() == n.nut.get(); }
 	template<typename N1>
 	Nat<N1> cast() {
 		return std::reinterpret_pointer_cast<N1>(nat);
@@ -376,6 +407,12 @@ struct Nat : public Native {
 
 	Ptr<N> nat;
 };
+
+template<typename T> Flow::Flow(Str<T> s): val(std::static_pointer_cast<Struct>(s.str)) { }
+template<typename T> Flow::Flow(Ref<T> r): val(std::make_shared<Ref<T>>(r)) { }
+template<typename T> Flow::Flow(Arr<T> a): val(std::make_shared<Arr<T>>(a)) { }
+template<typename T> Flow::Flow(Nat<T> n): val(std::make_shared<Nat<T>>(n)) { }
+template<typename R, typename... As> Flow::Flow(Fun<R, As...> f): val(std::make_shared<Fun<R, As...>>(f)) { }
 
 inline void flow2string(Flow v, std::ostream& os, bool init) {
 	switch (v.type()) {

@@ -146,7 +146,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		" return *this; }\n";
 
 		fields = concatStrings(map(struct.args, \arg -> 
-			"\t" + fiType2cpp3(arg.type, gctx) + " " + gctx.varname2cpp(arg.name) + ";\n"));
+			"\t" + (if (arg.ismutable) "mutable " else "") + fiType2cpp3(arg.type, gctx) + " " + gctx.varname2cpp(arg.name) + ";\n"));
 		compare1 = "Int compare(const Struct& s) const override {\n" +
 			"\tInt c = name()->compare(*s.name());\n" + 
 			"\treturn (c != 0) ? c : compare(dynamic_cast<const " + struct_name + "&>(s));\n" + 
@@ -313,6 +313,11 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> st
 				//fsExpDoSSA(e: FsExp, vars_assigned: ref Tree<string, int>) -> FsExp;
 				fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
 				fun_stat = fsMakeStatCastsExplicit(fun_stat1, fn_type.returnType, names);
+				if (name == "deserialize2") {
+					println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
+					println("fun_stat1:\n" + toStringFormatted(fun_stat1) +"\n----------\n");
+					println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
+				}
 				fsStat2cpp3(fun_stat, gctx);
 			},
 			\msg  -> {
@@ -575,8 +580,10 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 									typars = if (length(typars_instances) == 0) "" else {
 										"<" + superglue(typars_instances, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
 									}
-									"std::function<" + fiType2cpp3(ret_type, gctx) + "(" + 
+									wrap = "std::function<" + fiType2cpp3(ret_type, gctx) + "(" + 
 									superglue(args, \t -> fiType2cpp3(t.type, gctx), ", ") + ")>(" + var + typars + ")";
+									fun = fiType2cpp3(type, gctx);
+									fun + "(" + wrap + ")";
 								}
 								default: {
 									throw(
@@ -762,65 +769,70 @@ void StructDefs::init() {\n" +
 }
 
 fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> string {
-	if (fiEqualTypes(from, to)) s else 
-	if (from == FiTypeFlow()) {
-		to_typars = fiCollectTypars(to, makeSet());
-		if (isEmptySet(to_typars)) {
-			"FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
-		} else {
-			s;
-		}
-	} else {
-		static_cast = \s1 -> "static_cast<" + fiType2cpp3(to, gctx) + ">(" + s1 + ")";
-		switch (to) {
-			FiTypeVoid():       throw("cast to void");
-			FiTypeBool():       static_cast(s);
-			FiTypeInt():        static_cast(s);
-			FiTypeDouble():     static_cast(s);
-			FiTypeString():     static_cast(s);
-			FiTypeFlow():       "ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
-			FiTypeNative(): {
-				s + ".cast<void>()";
-			}
-			FiTypeParameter(n): {
-				/**switch (from) {
-					FiTypeParameter(m): "struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
-					default: s;
-				}*/
-				s;
-			}
-			FiTypeRef(rt): {
-				s + ".cast<" + fiType2cpp3(rt, gctx)+  ">()";
-			}
-			FiTypeArray(at): {
-				s + ".cast<" + fiType2cpp3(at, gctx)+  ">()";
-			}
-			FiTypeName(id_to, tp_to): {
-				to_is_union = containsKeyTree(gctx.program.names.unions, id_to);
-				switch (from) {
-					FiTypeName(id_from, tp_from): {
-						from_is_union = containsKeyTree(gctx.program.names.unions, id_from);
-						if (to_is_union) {
-							if (from_is_union) {
-								s 
-							} else {
-								"struct2union<" + fiType2cpp3(from, gctx) + ">(" + s + ")";
-							}
-						} else {
-							if (from_is_union) {
-								"union2struct<" + fiType2cpp3(to, gctx) + ">(" + s + ")";
-							} else {
-								"struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
-							}
-						}
-					}
-					FiTypeParameter(__): s;
-					default: throw("illegal cast to struct from: " + prettyFiType(dummyPretty, from, makeSet()));
+	if (fiEqualTypes(from, to)) s else {
+		switch (from) {
+			FiTypeParameter(__): s;
+			FiTypeFlow(): {
+				to_typars = fiCollectTypars(to, makeSet());
+				if (isEmptySet(to_typars)) {
+					"FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
+				} else {
+					s;
 				}
 			}
-			FiTypeFunction(args, rt): {
-				signature = superglue(concat([rt], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ");
-				s + ".template cast<" + signature+  ">()";
+			default: {
+				static_cast = \s1 -> "static_cast<" + fiType2cpp3(to, gctx) + ">(" + s1 + ")";
+				switch (to) {
+					FiTypeVoid():       throw("cast to void");
+					FiTypeBool():       static_cast(s);
+					FiTypeInt():        static_cast(s);
+					FiTypeDouble():     static_cast(s);
+					FiTypeString():     static_cast(s);
+					FiTypeFlow():       "ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
+					FiTypeNative(): {
+						s + ".template cast<void>()";
+					}
+					FiTypeParameter(n): {
+						/**switch (from) {
+							FiTypeParameter(m): "struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
+							default: s;
+						}*/
+						s;
+					}
+					FiTypeRef(rt): {
+						s + ".template cast<" + fiType2cpp3(rt, gctx)+  ">()";
+					}
+					FiTypeArray(at): {
+						s + ".template cast<" + fiType2cpp3(at, gctx)+  ">()";
+					}
+					FiTypeName(id_to, tp_to): {
+						to_is_union = containsKeyTree(gctx.program.names.unions, id_to);
+						switch (from) {
+							FiTypeName(id_from, tp_from): {
+								from_is_union = containsKeyTree(gctx.program.names.unions, id_from);
+								if (to_is_union) {
+									if (from_is_union) {
+										s 
+									} else {
+										"struct2union<" + fiType2cpp3(from, gctx) + ">(" + s + ")";
+									}
+								} else {
+									if (from_is_union) {
+										"union2struct<" + fiType2cpp3(to, gctx) + ">(" + s + ")";
+									} else {
+										"struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
+									}
+								}
+							}
+							FiTypeParameter(__): s;
+							default: throw("illegal cast to struct from: " + prettyFiType(dummyPretty, from, makeSet()));
+						}
+					}
+					FiTypeFunction(args, rt): {
+						signature = superglue(concat([rt], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ");
+						s + ".template cast<" + signature+  ">()";
+					}
+				}
 			}
 		}
 	}
