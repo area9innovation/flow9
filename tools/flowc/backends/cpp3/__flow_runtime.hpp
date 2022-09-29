@@ -302,7 +302,7 @@ template<typename T>
 struct Arr : public Array {
 	typedef std::vector<T> Vect;
 	Arr(): arr(new Vect()) { }
-	Arr(Int s): arr(new Vect()) { arr->reserve(s); }
+	Arr(std::size_t s): arr(new Vect()) { arr->reserve(s); }
 	Arr(std::initializer_list<T> il): arr(new Vect(il)) { }
 	Arr(const Arr& a): arr(a.arr) { }
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
@@ -311,7 +311,7 @@ struct Arr : public Array {
 	Arr(Ptr<Vect>&& v): arr(std::move(v)) { }
 	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
 	Arr& operator = (const Arr& a) { arr = a.arr; return *this; }
-	Int size() const override { return arr->size(); }
+	Int size() const override { return static_cast<Int>(arr->size()); }
 	std::vector<Flow> elements() override {
 		std::vector<Flow> ret;
 		ret.reserve(arr->size());
@@ -328,7 +328,7 @@ struct Arr : public Array {
 		if (c1 != 0) {
 			return c1;
 		} else {
-			for (Int i = 0; i < arr->size(); ++ i) {
+			for (std::size_t i = 0; i < arr->size(); ++ i) {
 				Int c2 = Compare<T>::cmp(arr->at(i), a.arr->at(i));
 				if (c2 != 0) {
 					return c2;
@@ -790,7 +790,7 @@ inline Int compareFlow(Flow v1, Flow v2) {
 				} else {
 					std::vector<Flow> fs1 = s1->fields();
 					std::vector<Flow> fs2 = s2->fields();
-					for (Int i = 0; i < fs1.size(); ++ i) {
+					for (std::size_t i = 0; i < fs1.size(); ++ i) {
 						Int c2 = compareFlow(fs1.at(i), fs2.at(i));
 						if (c2 != 0) {
 							return c2;
@@ -808,7 +808,7 @@ inline Int compareFlow(Flow v1, Flow v2) {
 				} else {
 					std::vector<Flow> es1 = a1->elements();
 					std::vector<Flow> es2 = a2->elements();
-					for (Int i = 0; i < es1.size(); ++ i) {
+					for (std::size_t i = 0; i < es1.size(); ++ i) {
 						Int c2 = compareFlow(es1.at(i), es2.at(i));
 						if (c2 != 0) {
 							return c2;
