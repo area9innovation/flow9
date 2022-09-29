@@ -1,5 +1,5 @@
 import tools/flowc/statements/fs_helpers;
-import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fi_type_unify;
 import sys/exception;
 
 export {
@@ -16,7 +16,8 @@ fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
 		FsLet(v, type, ex): {
 			switch (find(vars, \p -> p.first == v)) {
 				Some(p): {
-					ex_wrapped = FsCast(ex, fsExpType(ex), type);
+					//ex_wrapped = FsCast(ex, fsExpType(ex), type);
+					ex_wrapped = fsMakeCast(ex, fsExpType(ex), type);
 					FsLet(e with e = ex_wrapped);
 				}
 				None(): e;
@@ -65,8 +66,6 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 	}
 }
 
-debug_explicit_casts = ref false;
-
 fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp {
 	no_cast = \x -> fsMakeExpCastsExplicit(x, FiTypeVoid(), names, false);
 	e1 = switch(e) {
@@ -86,52 +85,12 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 		FsCall(fn, args,__): {
 			debug = ref false;
 			fn_type = cast(fsExpType(fn): FiType -> FiTypeFunction);
-			fn_args = switch (fn) {
-				FsVar(name, __, local): {
-					/*if (name == "fold") {
-						debug := true;
-						debug_explicit_casts := true;
-					}*/
-					if (local) fn_type.args else {
-						decl = lookupTreeDef(names.toplevel, name, FiGlobalVar("", FiVoid(0), FiTypeVoid(), 0, 0));
-						switch (decl) {
-							FiFunctionDec(__,__,tp,__,__): {
-								//tp.args;
-								fn_type.args;
-							}
-							FiNativeDec(__,__,tp,__,__,__,__): {
-								switch (tp) {
-									FiTypeFunction(fn_args,__): {
-										//fn_args;
-										fn_type.args;
-									}
-									default: fn_type.args;
-								}
-							}
-							default: fn_type.args;
-						}
-					}
-				}
-				default: fn_type.args;
-			}
-			/*if (^debug) {
-				println(
-					//"fn_args:\n" + toStringFormatted(fn_args) + "\n" +
-					"fn_args(1):\n" + toStringFormatted(map(args, \arg -> fsExpType(arg))) + "\n" +
-					"fn_type.args:\n" + toStringFormatted(fn_type.args) + "\n"
-				);
-			}*/
-			ret = FsCall(e with
+			FsCall(e with
 				f = fsMakeExpCastsExplicit(fn, fn_type, names, false),
 				args = mapi(args, \i, arg ->
 					fsMakeExpCastsExplicit(arg, fn_type.args[i].type, names, true)
 				)
 			);
-			/*if (^debug_explicit_casts) {
-				println("______________________________________");
-			}*/
-			debug_explicit_casts := false;
-			ret;
 		}
 		FsCallPrim(__,__,type1): {
 			fsMakeCallPrimCastsExplicit(e, type1, names);
@@ -155,18 +114,21 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 		default: e;
 	}
 	type1 = fsExpType(e1);
-	if (!do || fiEqualTypes(type1, type) || type == FiTypeVoid()) {
-		/*if (^debug_explicit_casts) {
-			println("no explicit cast(1) from:\n" + toStringFormatted(type1) + "\nto\n" + toStringFormatted(type) + "\n\n" +
-				"do: " + b2s(do) + ", fiEqualTypes(type1, type): " + b2s(fiEqualTypes(type1, type))
-			);
-		}*/
-		e1 
-	} else {
-		switch (type) {
-			FiTypeParameter(__): e1;
-			default: {
-				FsCast(e1, type1, type);
+	if (!do) e1 else {
+		fsMakeCast(e1, type1, type);
+	}
+}
+
+fsMakeCast(e: FsExp, from: FiType, to: FiType) -> FsExp {
+	if (fiEqualTypes(from, to) || to == FiTypeVoid()) e else {
+		switch (fiUnifyTypes(to, from, makeTree())) {
+			Some(s): {
+				from1 = fiApplyTypeSubstitution(s, from);
+				to1 = fiApplyTypeSubstitution(s, to);
+				if (fiEqualTypes(from1, to1)) e else FsCast(e, from1, to1);
+			}
+			None(): {
+				FsCast(e, from, to);
 			}
 		}
 	}
@@ -236,8 +198,7 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 							Some(struct): {
 								switch (find(struct.args, \arg -> arg.name == name)) {
 									Some(arg): {
-										if (fiEqualTypes(type, arg.type)) def_case(false) else 
-										FsCast(def_case(false), arg.type, type);
+										fsMakeCast(def_case(false), arg.type, type);
 									}
 									None(): fail0("field " + name + " of struct " + struct_name + " is not found");
 								}
