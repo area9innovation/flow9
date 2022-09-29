@@ -8,8 +8,8 @@ export {
 		FsReturnNowhere();
 		FsReturnToLocal(var: FsVar);
 
-	fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiGlobalNames) -> FsStat;
-	fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp, [FsStat]>;
+	fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiGlobalNames, tmp: ref int) -> FsStat;
+	fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames, tmp: ref int) -> Pair<FsExp, [FsStat]>;
 	fsWrapSeq(stats: [FsStat]) -> FsStat;
 }
 
@@ -26,17 +26,17 @@ fsUnwrapSeq(stat: FsStat) -> [FsStat] {
 	}
 }
 
-fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiGlobalNames) -> FsStat {
+fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiGlobalNames, tmp: ref int) -> FsStat {
 	wrap = \x -> switch (returns) {
 		FsReturnToOuter():  FsRet(x);
 		FsReturnNowhere():  FsWrap(x);
 		FsReturnToLocal(v): FsAssign(v, x);
 	}
-	do_exp = \x -> fiExp2FsExp(x, locals, names);
+	do_exp = \x -> fiExp2FsExp(x, locals, names, tmp);
 	switch (e) {
 		FiSeq(es, __,__): {
 			fsWrapSeq(concatA(mapi(es, \i, x -> 
-				fsUnwrapSeq(fiExp2FsStat(x, if (i + 1 == length(es)) returns else FsReturnNowhere(), locals, names))
+				fsUnwrapSeq(fiExp2FsStat(x, if (i + 1 == length(es)) returns else FsReturnNowhere(), locals, names, tmp))
 			)));
 		}
 		FiCast(ex, from, to,__,__): {
@@ -61,7 +61,7 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 				FsVar(v.name, v.type, containsSet(locals, v.name)), 
 				map(cs, \c -> {
 					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-					FsCase(c.struct, c.argNames, fiExp2FsStat(c.body, returns, case_locals, names))
+					FsCase(c.struct, c.argNames, fiExp2FsStat(c.body, returns, case_locals, names, tmp))
 				}), 
 				type
 			);
@@ -73,7 +73,7 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 						switch (find(cs, \c -> c.struct == typename)) {
 							Some(c): {
 								case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-								fiExp2FsStat(c.body, returns, case_locals, names);
+								fiExp2FsStat(c.body, returns, case_locals, names, tmp);
 							}
 							None(): {
 								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
@@ -93,16 +93,16 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 			lambda_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
 			free_vars = fifreevars(e);
 			closure = intersectSets(free_vars, locals);
-			wrap(FsLambda(set2array(closure), args, fiExp2FsStat(body, FsReturnToOuter(), lambda_locals, names), type));
+			wrap(FsLambda(set2array(closure), args, fiExp2FsStat(body, FsReturnToOuter(), lambda_locals, names, tmp), type));
 		}
 		FiLet(name, vtype, e1, e2, type, __): {
 			if (name == "__") {
-				fiExp2FsStat(e2, returns, locals, names);
+				fiExp2FsStat(e2, returns, locals, names, tmp);
 			} else {
 				e1_pair = do_exp(e1);
 				fsWrapSeq(concat3(e1_pair.second,
 					[FsLet(name, vtype, e1_pair.first)],
-					fsUnwrapSeq(fiExp2FsStat(e2, returns, insertSet(locals, name), names))
+					fsUnwrapSeq(fiExp2FsStat(e2, returns, insertSet(locals, name), names, tmp))
 				));
 			}
 		}
@@ -111,8 +111,8 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 			fsWrapSeq(concat(e1_pair.second,
 				[FsIf(
 					e1_pair.first, 
-					fiExp2FsStat(e2, returns, locals, names), 
-					fiExp2FsStat(e3, returns, locals, names), 
+					fiExp2FsStat(e2, returns, locals, names, tmp), 
+					fiExp2FsStat(e3, returns, locals, names, tmp), 
 					type
 				)]
 			));
@@ -143,8 +143,8 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, locals: Set<string>, names: FiG
 	}
 }
 
-fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp, [FsStat]> {
-	do_exps = \x -> fiExp2FsExp(x, locals, names);
+fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames, tmp: ref int) -> Pair<FsExp, [FsStat]> {
+	do_exps = \x -> fiExp2FsExp(x, locals, names, tmp);
 	switch (e) {
 		FiSeq(es, type, __): {
 			if (length(es) == 0) {
@@ -176,11 +176,12 @@ fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp,
 			);
 		}
 		FiSwitch(v, vtype, cases, type, start): {
-			tmp_var = FsVar("__switch_" + v.name, type, true);
+			tmp_var = FsVar("__switch_" + v.name + (if (^tmp == 0) "" else "_" + i2s(^tmp)), type, true);
+			tmp := ^tmp + 1;
 			default_switch_stat = \-> {
 				cases_stats = map(cases, \c -> {
 					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-					case_stat = fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names);
+					case_stat = fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names, tmp);
 					FsCase(c.struct, c.argNames, case_stat);
 				});
 				FsSwitch(FsVar(v.name, v.type, containsSet(locals, v.name)), cases_stats, type);
@@ -193,7 +194,7 @@ fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp,
 						switch (find(cases, \c -> c.struct == typename)) {
 							Some(c): {
 								case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-								fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names);
+								fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names, tmp);
 							}
 							None(): {
 								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
@@ -214,14 +215,14 @@ fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames) -> Pair<FsExp,
 			free_vars = fifreevars(e);
 			closure = intersectSets(free_vars, locals);
 			lambda_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
-			Pair(FsLambda(set2array(closure), args, fiExp2FsStat(body, FsReturnToOuter(), lambda_locals, names), type), []);
+			Pair(FsLambda(set2array(closure), args, fiExp2FsStat(body, FsReturnToOuter(), lambda_locals, names, tmp), type), []);
 		}
 		FiLet(name, vtype, e1, e2,__, __): {
 			if (name == "__") {
 				do_exps(e2);
 			} else {
 				e1_pair = do_exps(e1);
-				e2_pair = fiExp2FsExp(e2, insertSet(locals, name), names);
+				e2_pair = fiExp2FsExp(e2, insertSet(locals, name), names, tmp);
 				Pair(
 					e2_pair.first,
 					concat3(

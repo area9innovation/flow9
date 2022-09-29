@@ -473,6 +473,12 @@ inline void flow2string(Flow v, std::ostream& os, bool init) {
 	}
 }
 
+inline String flow2string(Flow f) {
+	std::ostringstream os;
+	flow2string(f, os, true);
+	return makeString(os.str());
+}
+
 template<> struct ToFlow<Int> {
 	static Flow conv(Int i) { return Flow(i); }
 };
