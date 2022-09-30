@@ -740,7 +740,7 @@ class TextClip extends NativeWidgetClip {
 
 		// Force text value right away
 		if (nativeWidget != null && isInput) {
-			var keepSelectionRange = true;
+			var keepSelectionRange = !Platform.isSafari;
 			var selectionStartPrev = nativeWidget.selectionStart;
 			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = text;
