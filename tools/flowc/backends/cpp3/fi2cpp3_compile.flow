@@ -12,32 +12,36 @@ export {
 
 fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule {
 	names = gctx.program.names;
-	structs_decls = map(module.structs, \struct -> fiStruct2cpp3(struct, gctx, true));
-	structs_defs = map(module.structs, \struct -> fiStruct2cpp3(struct, gctx, false));
-	/*header_decls = filtermap(module.initOrder, \name -> {
-		switch (find(module.globalVars, \gv -> gv.name == name)) {
-			Some(globalVar): {
-				if (only_decls) None() else Some(fiGlobalVar2cpp3(globalVar, gctx));
+	compiled_structs = map(module.structs, \struct -> 
+		Cpp3CompiledDeclaration(struct.name, true, 
+			fiStruct2cpp3(struct, gctx, true),
+			fiStruct2cpp3(struct, gctx, false)
+		)
+	);
+	//vars = filtermap(module.initOrder, \name -> find(module.globalVars, \gv -> gv.name == name));
+	//funcs = filtermap(module.initOrder, \name -> find(module.functions, \fn -> fn.name == name));
+	decls = concat(
+		module.natives,
+		filtermap(module.initOrder, \name -> {
+			switch (find(module.globalVars, \gv -> gv.name == name)) {
+				Some(globalVar): Some(globalVar);
+				None(): find(module.functions, \fn -> fn.name == name);
 			}
-			None(): {
-				maybeBind(find(module.functions, \fn -> fn.name == name), \fun ->
-					if (fiCpp3IsNative(name, gctx)) None() else Some(fiFunc2cpp3(fun, gctx, only_decls))
-				);
-			}
-		}
-	});*/
-	defs1 = \only_decls -> filtermap(module.initOrder, \name -> {
-		switch (find(module.globalVars, \gv -> gv.name == name)) {
-			Some(globalVar): {
-				if (only_decls) None() else Some(fiGlobalVar2cpp3(globalVar, gctx));
-			}
-			None(): {
-				maybeBind(find(module.functions, \fn -> fn.name == name), \fun ->
-					if (fiCpp3IsNative(name, gctx)) None() else Some(fiFunc2cpp3(fun, gctx, only_decls))
-				);
-			}
-		}
-	});
+		})
+	);
+	compiled_decls = filtermap(decls, \decl -> fiDeclaration2cpp3(decl, gctx));
+	is_main = exists(module.functions, \fn -> fn.name == "main");
+	Cpp3CompiledModule(
+		gctx.flowfile2cpp(module.fileinfo.flowfile),
+		is_main,
+		concat(compiled_structs, compiled_decls),
+		map(module.imports, \imp -> imp.flowfile),
+		fiModuleNatives2cpp3(module, gctx)
+	);
+}
+
+
+fiModuleNatives2cpp3(module: FiModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] {
 	missing_natives = ref [];
 	natives = filtermap(module.natives, \nat -> {
 		if (nat.name == "for") {
@@ -50,35 +54,39 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule 
 			lookupTree(gctx.natives, nat.name);
 		}
 	});
-	defs2 = map(natives, \nat -> nat.def(gctx.typename2cpp, gctx.varname2cpp));
-	includes = superglue(
-		fiCpp3DependenciesIncludes(map(natives, \nat -> nat.dependencies)), 
-		\inc -> "#inc" + "lude " + inc, 
-		"\n"
-	);
 	if (^missing_natives != []) {
 		err = "Module " + module.fileinfo.flowfile + ": following native functions are not implemented in cpp3 runtime and doesn't have a flow fallbacks:\n" +
 			strIndent(superglue(^missing_natives, \name -> "\t" + name, "\n"));
 		refArrayPush(gctx.errors, err);
 		fcPrintln(err, gctx.config.config.threadId);
 	}
-	is_main = exists(module.functions, \fn -> fn.name == "main");
-	header = concatA([structs_decls, structs_defs, defs2, defs1(true), defs1(false)]);
-	Cpp3CompiledModule(
-		gctx.flowfile2cpp(module.fileinfo.flowfile),
-		is_main,
-		header,
-		[],
-		map(module.imports, \imp -> imp.flowfile),
-		natives
-	);
+	natives;
 }
 
 cpp3InlineFunction(fn: FiFunctionDec) -> bool {
-	typars = fiCollectTypars(fn.type, makeSet());
-	if (!isEmptySet(typars)) true else {
+	if (!isEmptySet(fiCollectTypars(fn.type, makeSet()))) true else {
 		if (!fiExpIsSimple(fn.lambda.body)) false else {
 			fiExpAstNodesCount(fn.lambda.body) < 8;
+		}
+	}
+}
+
+fiDeclaration2cpp3(decl: FiDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3CompiledDeclaration> {
+	switch (decl) {
+		FiGlobalVar(name, value, type,__,__): {
+			Some(fiGlobalVar2cpp3(decl, gctx));
+		}
+		FiFunctionDec(name, lambda, type,__,__): {
+			if (fiCpp3IsNative(name, gctx)) None() else {
+				Some(fiFunc2cpp3(decl, gctx));
+			}
+		}
+		FiNativeDec(name, __,type,__, fallback,__,__): {
+			if (name == "for") None() else {
+				maybeMap(lookupTree(gctx.natives, name), \nat -> 
+					nat.declaration(gctx.typename2cpp, gctx.varname2cpp)
+				);
+			}
 		}
 	}
 }
@@ -105,6 +113,8 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 		\inc -> "#inc" + "lude " + inc, 
 		"\n"
 	);
+	forward_decls = map(module.decls, \decl -> decl.forward);
+	header_defs = filtermap(module.decls, \decl -> if (decl.headerOnly) Some(decl.definition) else None());
 	"#pragma once\n" +
 	(if (includes == "") "" else includes + "\n") +
 	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
@@ -112,17 +122,18 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
 	"namespace " + gctx.config.namespace + " {\n" +
 	"using namespace flow;\n\n" + 
-	concatStrings(module.header) + "\n" + 
+	concatStrings(forward_decls) + "\n" + 
+	concatStrings(header_defs) + "\n" + 
 	"}\n";
-	//if (module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
 }
 
 fiCompiledModule2cpp3source(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	if (length(module.source) == 0 && !module.isMain) "" else {
+	source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
+	if (length(source_defs) == 0 && !module.isMain) "" else {
 		"#inc" + "lude \"" + module.name + ".hpp\"\n" +
 		"namespace " + gctx.config.namespace + " {\n" +
 		"using namespace flow;\n\n" + 
-		concatStrings(module.source) + "\n" +
+		concatStrings(source_defs) + "\n" +
 		"}\n" +
 		if (module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
 	}
@@ -265,7 +276,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 	}
 }
 
-fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> string {
+fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
 	names = gctx0.program.names;
 	name = globalVar.name;
 	gctx = Cpp3GlobalContext(gctx0 with 
@@ -275,14 +286,12 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> string {
 	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
 	value1 = fiExplicitCastInSwitch(value0, names);
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
-	value = value2; //fiExpSSA(value2);
+	value = value2;
 	pair0 = fiExp2FsExp(value, makeSet(), names, ref 0);
 	pair1 = Pair(
 		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
 		map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
 	);
-	//fsStatDoSSA(s: FsStat, vars_assigned: ref Tree<string, int>) -> FsStat;
-	//fsExpDoSSA(e: FsExp, vars_assigned: ref Tree<string, int>) -> FsExp;
 	pair2 = fold(pair1.second, Pair([], makeTree()), \acc, s -> {
 		p = fsStatSSA(s, acc.second);
 		Pair(concat(acc.first, [p.first]), p.second);
@@ -301,14 +310,18 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> string {
 	}
 	init = gctx.varname2cpp(name) + " = " + fsExp2cpp3(value_exp, gctx) + ";";
 	if (containsSet(gctx.volatileVars, name)) {
+		// Volatile variable
 		gctx.volatileInit := concat(^(gctx.volatileInit), [init]);
-		fiType2cpp3(globalVar.type, gctx) + " " + gctx.varname2cpp(name) + ";\n\n";
+		var_decl = fiType2cpp3(globalVar.type, gctx) + " " + gctx.varname2cpp(name) + ";\n\n";
+		Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
 	} else {
-		fiType2cpp3(globalVar.type, gctx) + " " + init + ";\n\n";
+		// Constant variable
+		var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + ";\n\n";
+		Cpp3CompiledDeclaration(name, true, "", var_def);
 	}
 }
 
-fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
+fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
 	name = fun.name;
 	fn_type = fun.type;
 	gctx = Cpp3GlobalContext(
@@ -316,60 +329,56 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext, only_decl: bool) -> st
 		toplevelTypars = fiCollectTypars(fn_type, makeSet())
 	);
 	fun_args = fun.lambda.args;
+	headerOnly = cpp3InlineFunction(fun);
 	fun_name = gctx.varname2cpp(name);
 	fun_typars = set2array(fiTypeTypars(makeSet(), fn_type));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
-	fun_signature = fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + fiFunArgs2cpp(fun_args, gctx);
-	if (only_decl) {
-		decl_typars + fun_signature + ";\n\n";
-	} else {
-		names = gctx.program.names;
-		lambda0 = fiEliminateUnionFields(fun.lambda, names, 0);
-		lambda1 = fiExplicitCastInSwitch(lambda0, names);
-		lambda2 = fiEliminateUnionFields(lambda1, names, 0);
-		lambda3 = fiFixVarInSameStructType(
-			lambda2, 
-			fold(fn_type.args, makeTree(), \acc, arg -> 
-				setTree(acc, arg.name, FiVar(arg.name, arg.type, 0))
-			), 
-			names
-		);
-		lambda4 = lambda3; //fiExpSSA(lambda3);
-		//println("lambda3:\n" + toStringFormatted(lambda3) + "\nlambda4:\n" + toStringFormatted(lambda4)+ "\n\n\n");
-		//println("lambda3:\n" + prettyFiExp(dummyPretty, lambda3) + "\nlambda4:\n" + prettyFiExp(dummyPretty, lambda4));
-		lambda5 = cast(lambda4: FiExp -> FiLambda);
-		fun_cpp = tryCatch(
-			\-> {
-				fun_stat0 = fiExp2FsStat(
-					lambda5.body, FsReturnToOuter(), 
-					fold(fun_args, makeSet(), \acc, arg -> 
-						if (arg.name == "__") acc else insertSet(acc, arg.name)
-					),
-					names, ref 0
-				);
-				//fsStatDoSSA(s: FsStat, vars_assigned: ref Tree<string, int>) -> FsStat;
-				//fsExpDoSSA(e: FsExp, vars_assigned: ref Tree<string, int>) -> FsExp;
-				fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
-				fun_stat = fsMakeStatCastsExplicit(fun_stat1, fn_type.returnType, names);
-				if (name == "fi2JavaBuildProgramJar") {
-					//println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
-					//println("fun_stat0:\n" + toStringFormatted(fun_stat0) +"\n----------\n");
-					//println("fun_stat1:\n" + toStringFormatted(fun_stat1) +"\n----------\n");
-					println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
-				}
-				fsStat2cpp3(fun_stat, gctx);
-			},
-			\msg  -> {
-				println(
-					msg + "\nin: " + name + "\n" + 
-					prettyFiExp(dummyPretty, fun.lambda) + "\n"// + 
-					//toStringFormatted(fun.lambda)
-				);
-				fail0(msg);
+	fun_signature = (if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + fiFunArgs2cpp(fun_args, gctx);
+	forward_decl = decl_typars + fun_signature + ";\n\n";
+	
+	names = gctx.program.names;
+	lambda0 = fiEliminateUnionFields(fun.lambda, names, 0);
+	lambda1 = fiExplicitCastInSwitch(lambda0, names);
+	lambda3 = fiFixVarInSameStructType(
+		lambda1, 
+		fold(fn_type.args, makeTree(), \acc, arg -> 
+			setTree(acc, arg.name, FiVar(arg.name, arg.type, 0))
+		), 
+		names
+	);
+	lambda4 = lambda3;
+	lambda5 = cast(lambda4: FiExp -> FiLambda);
+	fun_cpp = tryCatch(
+		\-> {
+			fun_stat0 = fiExp2FsStat(
+				lambda5.body, FsReturnToOuter(), 
+				fold(fun_args, makeSet(), \acc, arg -> 
+					if (arg.name == "__") acc else insertSet(acc, arg.name)
+				),
+				names, ref 0
+			);
+			fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
+			fun_stat = fsMakeStatCastsExplicit(fun_stat1, fn_type.returnType, names);
+			if (name == "fi2JavaBuildProgramJar") {
+				//println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
+				//println("fun_stat0:\n" + toStringFormatted(fun_stat0) +"\n----------\n");
+				//println("fun_stat1:\n" + toStringFormatted(fun_stat1) +"\n----------\n");
+				println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
 			}
-		);
-		decl_typars + fun_signature + " " + fiWrapWithBraces(fun_cpp) + "\n\n";
-	}
+			fsStat2cpp3(fun_stat, gctx);
+		},
+		\msg  -> {
+			println(
+				msg + "\nin: " + name + "\n" + 
+				prettyFiExp(dummyPretty, fun.lambda) + "\n"// + 
+				//toStringFormatted(fun.lambda)
+			);
+			fail0(msg);
+		}
+	);
+	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(fun_cpp) + "\n\n";
+
+	Cpp3CompiledDeclaration(name, headerOnly, forward_decl, definition);
 }
 
 fiFunArgs2cpp(args: [FiFunArg], gctx: Cpp3GlobalContext) -> string {
