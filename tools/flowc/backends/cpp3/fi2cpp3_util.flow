@@ -31,6 +31,12 @@ export {
 
 	// Utility function which saves a file in an output directory
 	fi2cpp3SaveFile(file: string, content: string, gctx: Cpp3GlobalContext) -> void;
+
+	// Only calls, primitive operators and constant values
+	fiExpIsSimple(e: FiExp) -> bool;
+
+	// Count the number of nodes in AST
+	fiExpAstNodesCount(e: FiExp) -> int;
 }
 
 fiWrapWithPars(s : string) -> string {
@@ -158,5 +164,63 @@ fi2cpp3SaveFile(file: string, content: string, gctx: Cpp3GlobalContext) -> void 
 	ensureDirectoryExists(dirName(path));
 	if (!setFileContent(path, content)) {
 		fcPrintln("Failed to save " + file, gctx.config.config.threadId);
+	}
+}
+
+fiExpIsSimple(e: FiExp) -> bool {
+	switch(e) {
+		FiLambda(args, body,__, start): false;
+		FiCall(fn, args,__,__): {
+			switch (fn) {
+				FiVar(__,__,__): forall(args, fiExpIsSimple);
+				default: false;
+			}
+		}
+		FiLet(v, t, e1, e2,__, start): false;
+		FiIf(e1, e2, e3,__, __): false;
+		FiSwitch(v, vtype, cases, type, start): false;
+		FiCast(ex, __, __, __, __): fiExpIsSimple(ex);
+		FiSeq(es,__,__): false;
+		FiCallPrim(__, es,__,__): forall(es, fiExpIsSimple);
+		FiRequire(__, ex,__,__): false;
+		FiUnsafe(__, ex,__,__): false;
+		FiVar(name,__,__): true;
+		default: true;
+	}
+}
+
+fiExpAstNodesCount(e: FiExp) -> int {
+	switch(e) {
+		FiLambda(args, body,__, start): {
+			fiExpAstNodesCount(body) + 1;
+		}
+		FiCall(fn, args,__,__): {
+			fold(args, fiExpAstNodesCount(fn), \acc, x -> acc + fiExpAstNodesCount(x));
+		}
+		FiLet(v, t, e1, e2,__, start): {
+			fiExpAstNodesCount(e1) + fiExpAstNodesCount(e2) + 1;
+		}
+		FiIf(e1, e2, e3,__, __): {
+			fiExpAstNodesCount(e1) + fiExpAstNodesCount(e2) + fiExpAstNodesCount(e3) + 1;
+		}
+		FiSwitch(v, vtype, cases, type, start): {
+			fold(cases, 1, \acc, c -> acc + fiExpAstNodesCount(c.body));
+		}
+		FiCast(ex, __, __, __, __): {
+			fiExpAstNodesCount(ex) + 1;
+		}
+		FiSeq(es,__,__): {
+			fold(es, 1, \acc, x -> acc + fiExpAstNodesCount(x));
+		}
+		FiCallPrim(__, es,__,__): {
+			fold(es, 1, \acc, x -> acc + fiExpAstNodesCount(x));
+		}
+		FiRequire(__, ex,__,__): {
+			fiExpAstNodesCount(ex) + 1;
+		}
+		FiUnsafe(__, ex,__,__): {
+			fiExpAstNodesCount(ex) + 1;
+		}
+		default: 1;
 	}
 }
