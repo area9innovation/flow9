@@ -83,6 +83,11 @@ const String string_0 = makeString("0");
 template<typename T> struct ToFlow;
 template<typename T> struct FromFlow;
 template<typename T> struct Compare;
+template<typename T> struct Equal {
+	bool operator() (T v1, T v2) const {
+		return Compare<T>::cmp(v1, v2) == 0;
+	}
+};
 
 template<> struct Compare<Bool> {
 	static Int cmp(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
@@ -279,9 +284,13 @@ struct Reference {
 	virtual Flow reference() = 0;
 };
 
-struct Function { };
+struct Function { 
+	virtual Flow call(std::vector<Flow> args) = 0;
+};
 
-struct Native { };
+struct Native { 
+	virtual Void* get() = 0;
+};
 
 template<typename From, typename To>
 Str<typename To::Name> struct2struct(Str<typename From::Name> from) {
@@ -380,6 +389,20 @@ struct Fun : public Function {
 	R operator()(As... as) const { return fn->operator()(as...); }
 	Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
 	bool isSameObj(Fun f) const { return fn.get() == f.fn.get(); }
+	template<std::size_t... S>
+	Flow call(const std::vector<Flow>& vec, std::index_sequence<S...>) {
+		//return fn->operator()(FromFlow<As[S]...>::conv(vec.at(S)...));
+		return Flow(0);
+	}
+	Flow call(std::vector<Flow> args) override {
+		static const Int arity = sizeof...(As);
+		if (arity == args.size()) {
+			return call(args, std::make_index_sequence<arity>());
+		} else {
+			assert(false && "function arity mismatch");
+			return Flow();
+		}
+	}
 	template<typename R1, typename... As1> 
 	Fun<R1, As1...> cast() {
 		return std::reinterpret_pointer_cast<typename Fun<R1, As1...>::Fn>(fn);
@@ -400,6 +423,7 @@ struct Nat : public Native {
 	Nat& operator = (const Nat& n) { nat = n.nat; return *this; }
 	Int compare(Nat n) const { return Compare<void*>::cmp(nat.get(), n.nat.get()); }
 	bool isSameObj(Nat n) const { return nat.get() == n.nut.get(); }
+	Void* get() override { return nat.get(); }
 	template<typename N1>
 	Nat<N1> cast() {
 		return std::reinterpret_pointer_cast<N1>(nat);
@@ -515,37 +539,37 @@ template<typename T> struct ToFlow<Nat<T>> {
 
 
 template<> struct FromFlow<Int> {
-	static Int conv(Flow f) { return std::get<Int>(f.val); }
+	static Int conv(Flow f) { return f.toInt(); }
 };
 template<> struct FromFlow<Bool> {
-	static Bool conv(Flow f) { return std::get<Bool>(f.val); }
+	static Bool conv(Flow f) { return f.toBool(); }
 };
 template<> struct FromFlow<Double> {
-	static Double conv(Flow f) { return std::get<Double>(f.val); }
+	static Double conv(Flow f) { return f.toDouble(); }
 };
 template<> struct FromFlow<String> {
-	static String conv(Flow f) { return std::get<String>(f.val); }
+	static String conv(Flow f) { return f.toString(); }
 };
 template<> struct FromFlow<Flow> {
 	static Flow conv(Flow f) { return f; }
 };
 template<> struct FromFlow<Union> {
-	static Union conv(Flow f) { return std::get<Ptr<Struct>>(f.val); }
+	static Union conv(Flow f) { return f.toStruct(); }
 };
 template<typename T> struct FromFlow<Arr<T>> {
 	static Arr<T> conv(Flow f) { 
-		return std::dynamic_pointer_cast<typename Arr<T>::Vect>(std::get<Ptr<Array>>(f.val));
+		return std::dynamic_pointer_cast<typename Arr<T>::Vect>(f.toArray());
 	}
 };
 
 template<> struct FromFlow<Arr<Flow>> {
 	static Arr<Flow> conv(Flow f) { 
-		return std::get<Ptr<Array>>(f.val)->elements();
+		return f.toArray()->elements();
 	}
 };
 template<> struct FromFlow<Arr<Arr<Flow>>> {
 	static Arr<Arr<Flow>> conv(Flow f) { 
-		Arr<Flow> arrays = std::get<Ptr<Array>>(f.val)->elements();
+		Arr<Flow> arrays = f.toArray()->elements();
 		Arr<Arr<Flow>> ret(arrays.size());
 		for (Flow x : *arrays.arr) {
 			ret.arr->push_back(FromFlow<Arr<Flow>>::conv(x));
@@ -555,16 +579,16 @@ template<> struct FromFlow<Arr<Arr<Flow>>> {
 };
 
 template<typename T> struct FromFlow<Str<T>> {
-	static Str<T> conv(Flow f) { return dynamic_cast<Str<T>&>(*std::get<Ptr<Struct>>(f.val)); }
+	static Str<T> conv(Flow f) { return dynamic_pointer_cast<T>(f.toStruct()); }
 };
 template<typename T> struct FromFlow<Ref<T>> {
-	static Ref<T> conv(Flow f) { return dynamic_cast<Ref<T>&>(*std::get<Ptr<Reference>>(f.val)); }
+	static Ref<T> conv(Flow f) { return *dynamic_pointer_cast<Ref<T>>(f.toReference()); }
 };
 template<typename R, typename... As> struct FromFlow<Fun<R, As...>> {
-	static Fun<R, As...>& conv(Flow f) { return static_cast<Fun<R, As...>&>(*std::get<Ptr<Function>>(f.val)); }
+	static Fun<R, As...> conv(Flow f) { return *dynamic_pointer_cast<Fun<R, As...>>(f.toFunction()); }
 };
 template<typename T> struct FromFlow<Nat<T>> {
-	static Nat<T> conv(Flow n) { return dynamic_cast<Nat<T>&>(*std::get<Ptr<Native>>(n.val)); }
+	static Nat<T> conv(Flow f) { return *dynamic_pointer_cast<Nat<T>>(f.toNative()); }
 };
 
 //template<typename From, typename To> struct Cast;
