@@ -361,6 +361,7 @@ struct Ref : public Reference {
 	Ref(const T& r): ref(std::make_shared<T>(r)) { }
 	Ref(T&& r): ref(std::make_shared<T>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
+	Ref(Ptr<T>&& r): ref(std::move(r)) { }
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
 	Ref& operator = (Ref&& r) { ref = std::move(r.ref); return *this; }
 	Ref& operator = (const Ref& r) { ref = r.ref; return *this; }
