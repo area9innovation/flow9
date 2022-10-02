@@ -176,38 +176,65 @@ fiExp2FsExp(e : FiExp, locals: Set<string>, names: FiGlobalNames, tmp: ref int) 
 			);
 		}
 		FiSwitch(v, vtype, cases, type, start): {
-			tmp_var = FsVar("__switch_" + v.name + (if (^tmp == 0) "" else "_" + i2s(^tmp)), type, true);
-			tmp := ^tmp + 1;
-			default_switch_stat = \-> {
+			default_switch_stat = \return -> {
 				cases_stats = map(cases, \c -> {
 					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-					case_stat = fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names, tmp);
+					case_stat = fiExp2FsStat(c.body, return, case_locals, names, tmp);
 					FsCase(c.struct, c.argNames, case_stat);
 				});
 				FsSwitch(FsVar(v.name, vtype, containsSet(locals, v.name)), cases_stats, type);
 			}
-			switch (vtype) {
-				FiTypeName(typename,__): {
-					switch_stat = if (containsKeyTree(names.unions, typename)) {
-						default_switch_stat();
-					} else {
-						switch (find(cases, \c -> c.struct == typename)) {
-							Some(c): {
-								case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
-								fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names, tmp);
-							}
-							None(): {
-								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+			if (type == FiTypeVoid()) {
+				switch (vtype) {
+					FiTypeName(typename,__): {
+						switch_stat = if (containsKeyTree(names.unions, typename)) {
+							default_switch_stat(FsReturnNowhere());
+						} else {
+							switch (find(cases, \c -> c.struct == typename)) {
+								Some(c): {
+									case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+									fiExp2FsStat(c.body, FsReturnNowhere(), case_locals, names, tmp);
+								}
+								None(): {
+									fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+								}
 							}
 						}
+						Pair(FiVoid(start), [switch_stat]);
 					}
-					Pair(tmp_var, [FsVarDecl(tmp_var), switch_stat]);
+					FiTypeFlow(): {
+						Pair(FiVoid(start), [default_switch_stat(FsReturnNowhere())]);
+					}
+					default: {
+						fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
+					}
 				}
-				FiTypeFlow(): {
-					Pair(tmp_var, [FsVarDecl(tmp_var), default_switch_stat()]);
-				}
-				default: {
-					fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
+			} else {
+				tmp_var = FsVar("__switch_" + v.name + (if (^tmp == 0) "" else "_" + i2s(^tmp)), type, true);
+				tmp := ^tmp + 1;
+				switch (vtype) {
+					FiTypeName(typename,__): {
+						switch_stat = if (containsKeyTree(names.unions, typename)) {
+							default_switch_stat(FsReturnToLocal(tmp_var));
+						} else {
+							switch (find(cases, \c -> c.struct == typename)) {
+								Some(c): {
+									case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+									fiExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_locals, names, tmp);
+								}
+								None(): {
+									fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+								}
+							}
+						}
+						Pair(tmp_var, [FsVarDecl(tmp_var), switch_stat]);
+					}
+					FiTypeFlow(): {
+						Pair(tmp_var, [FsVarDecl(tmp_var), default_switch_stat(FsReturnToLocal(tmp_var))]);
+					}
+					default: {
+						fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
+					}
 				}
 			}
 		}
