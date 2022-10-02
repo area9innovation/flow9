@@ -41,8 +41,16 @@ will expand to
 
 */
 
-// Perform SSA (Single Static Assignment) transformation.
-fiExpSSA(e : FiExp) -> FiExp;
+// Rename enclosed same var name in recurring FiLet.
+/* Example: here rettype is recurring, i.e. needs renaming in the inner scope
+rettype = {
+		switch (type) {
+			FiTypeFunction(__, rettype): fiCppLambdaRetType(cfg, program, rettype);
+			default: "TODO";
+		}
+}
+*/
+fiExpRenameRecurringVars(e: FiExp, locals: Set<string>) -> FiExp;
 
 /* Undo type coercing inside: 
 	`if (isSameStructType(a, b)) { 
@@ -308,76 +316,78 @@ fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 	}
 }
 
-fiExpSSA(e : FiExp) -> FiExp {
-	fiExpDoSSA(e, ref makeTree());
+fiNewVar(v: string, locals: Set<string>, i: int) -> string {
+	w = "__" + v + "_" + i2s(i);
+	if (!containsSet(locals, w)) w else fiNewVar(v, locals, i + 1);
 }
 
-fiExpDoSSA(e: FiExp, vars_assigned: ref Tree<string, int>) -> FiExp {
-	ssa = \x -> fiExpDoSSA(x, vars_assigned);
+fiExpRenameRecurringVars(e: FiExp, locals: Set<string>) -> FiExp {
+	rename_rvars = \x -> fiExpRenameRecurringVars(x, locals);
 	switch(e) {
 		FiLambda(args, body,__, __): {
-			new_args = mapi(args, \i, arg -> {
-				arg_i = lookupTreeDef(^vars_assigned, arg.name, 0);
-				vars_assigned := setTree(^vars_assigned, arg.name, arg_i + 1);
-				FiFunArg(arg with 
-					name = if (arg_i == 0) arg.name else arg.name + i2s(arg_i);
-				);
-			});
-			FiLambda(e with body = ssa(body), args = new_args);
+			new_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
+			FiLambda(e with body = fiExpRenameRecurringVars(body, new_locals));
 		}
 		FiCall(fn, args,__,__): {
 			FiCall(e with
-				f = ssa(fn),
-				args = map(args, ssa)
+				f = rename_rvars(fn),
+				args = map(args, rename_rvars)
 			);
 		}
 		FiLet(v, __,e1, e2,__, __): {
-			v_ind = lookupTreeDef(^vars_assigned, v, 0);
-			vars_assigned := setTree(^vars_assigned, v, v_ind + 1);
-			FiLet(e with
-				name = if (v_ind <= 0) v else v + i2s(v_ind),
-				e1 = ssa(e1),
-				e2 = ssa(e2);
-			);
+			if (v == "__" || !containsSet(locals, v)) {
+				new_locals = insertSet(locals, v);
+				FiLet(e with
+					e1 = fiExpRenameRecurringVars(e1, new_locals),
+					e2 = fiExpRenameRecurringVars(e2, new_locals);
+				);
+			} else {
+				w = fiNewVar(v, locals, 0);
+				new_locals = insertSet(locals, w);
+				FiLet(e with
+					name = w,
+					e1 = fiExpRenameRecurringVars(e1, new_locals),
+					e2 = fiExpRenameRecurringVars(fiRenameVar(e2, v, w), new_locals);
+				);
+			}
 		}
 		FiIf(e1, e2, e3,__, __): {
 			FiIf(e with
-				e1 = ssa(e1),
-				e2 = ssa(e2),
-				e3 = ssa(e3)
+				e1 = rename_rvars(e1),
+				e2 = rename_rvars(e2),
+				e3 = rename_rvars(e3)
 			);
 		}
 		FiSwitch(var, vtype, cases, type, start): {
-			var_i = lookupTreeDef(^vars_assigned, var.name, 0);
 			FiSwitch(e with
-				x = FiVar(var with name = if (var_i <= 1) var.name else var.name + i2s(var_i - 1)),
 				cases = map(cases, \c -> {
-					iter(c.argNames, \arg -> 
-						vars_assigned := setTree(^vars_assigned, arg, lookupTreeDef(^vars_assigned, arg, 0) + 1)
+					new_args = map(c.argNames, \arg -> 
+						if (arg == "__" || !containsSet(locals, arg)) arg else
+						fiNewVar(arg, locals, 0)
 					);
-					FiCase(c with body = ssa(c.body));
+					FiCase(c with 
+						argNames = new_args, 
+						body = rename_rvars(c.body)
+					);
 				})
 			);
 		}
 		FiCast(ex, __, __, __, __): {
-			FiCast(e with e = ssa(ex));
+			FiCast(e with e = rename_rvars(ex));
 		}
 		FiSeq(es,__,__): {
-			FiSeq(e with es = map(es, ssa));
+			FiSeq(e with es = map(es, rename_rvars));
 		}
 		FiCallPrim(__, es,__,__): {
-			FiCallPrim(e with es = map(es, ssa));
+			FiCallPrim(e with es = map(es, rename_rvars));
 		}
 		FiRequire(__, ex,__,__): {
-			FiRequire(e with e = ssa(ex));
+			FiRequire(e with e = rename_rvars(ex));
 		}
 		FiUnsafe(__, ex,__,__): {
-			FiUnsafe(e with fallback = ssa(ex));
+			FiUnsafe(e with fallback = rename_rvars(ex));
 		}
-		FiVar(name,__, __): {
-			i = lookupTreeDef(^vars_assigned, name, 0);
-			FiVar(e with name = name + if (i <= 1) "" else i2s(i - 1));
-		}
+		FiVar(__,__, __): e;
 		FiVoid(__):       e;
 		FiDouble(__,__):  e;
 		FiInt(__,__):     e;
