@@ -68,16 +68,23 @@ export {
 	/*
 	Formats the input matrix (array of columns, which are arrays of rows) into the output like:
 
-	 #   MPE#   ND Expression                  MPE Translation                          ND Rationale   MPE Rationale                               
+	 #   MPE#   ND Expression                  MPE Translation                          ND Rationale   MPE Rationale
 	------------------------------------------------------------------------------------------------------------------------------------------------
-	 1   5       ` ( ( ps /\ ch ) -> th ) `     ` ( ph -> ( ( ps /\ ch ) -> th ) ) `    Given          $e.                                         
-	 2   2       ` ( ch -> ps ) `               ` ( ph -> ( ch -> ps ) ) `              Given          $e.                                         
-	 3   1       ` ch `                         ` ( ph -> ch ) `                        Given          $e.                                         
-	 4   3       ` ps `                         ` ( ph -> ps ) `                         ` -> `E 2,3    ~ mpd , the MPE equivalent of ` -> `E, 1,2 
-	 5   4       ` ( ps /\ ch ) `               ` ( ph -> ( ps /\ ch ) ) `               ` /\ `I 4,3    ~ jca , the MPE equivalent of ` /\ `I, 3,1 
+	 1   5       ` ( ( ps /\ ch ) -> th ) `     ` ( ph -> ( ( ps /\ ch ) -> th ) ) `    Given          $e.
+	 2   2       ` ( ch -> ps ) `               ` ( ph -> ( ch -> ps ) ) `              Given          $e.
+	 3   1       ` ch `                         ` ( ph -> ch ) `                        Given          $e.
+	 4   3       ` ps `                         ` ( ph -> ps ) `                         ` -> `E 2,3    ~ mpd , the MPE equivalent of ` -> `E, 1,2
+	 5   4       ` ( ps /\ ch ) `               ` ( ph -> ( ps /\ ch ) ) `               ` /\ `I 4,3    ~ jca , the MPE equivalent of ` /\ `I, 3,1
 
 	*/
 	stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string;
+
+
+	// Replace patterns like: "$F_2(some_arg)" with corresponding function invocation
+	strApplyFns(s: string) -> ([(string) -> string]) -> string;
+
+	// Replace patterns like: "$A_1" with corresponding values
+	strSubstituteArgs(pattern: string) -> ([string]) -> string;
 }
 
 humpCase(s : string, initial : bool) -> string {
@@ -345,4 +352,35 @@ stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string {
 			}
 		)
 	}
+}
+
+strApplyFns(s: string) -> ([(string) -> string]) -> string {
+	\fns -> foldi(fns, s, \k, acc, fn -> {
+		name = "$F_" + i2s(k) + "(";
+		next_close_bracket = \i -> for(i, \x -> x + 1 < strlen(acc) && getCharAt(acc, x + 1) != ")", \x -> x + 1) + 1;
+		start_inds = multipleStrIndexOf(acc, name);
+		if (length(start_inds) == 0) acc else
+		if (length(start_inds) == 1) {
+			start_ind = start_inds[0];
+			end_ind = next_close_bracket(start_ind);
+			applied = fn(substring(acc, start_ind + strlen(name), end_ind - start_ind - strlen(name)));
+			substring(acc, 0, start_ind) + applied + substring(acc, end_ind + 1, strlen(acc) - end_ind - 1);
+		} else {
+			end_inds = map(start_inds, next_close_bracket);
+			applied = mapi(start_inds, \i, start -> fn(substring(acc, start + strlen(name), end_inds[i] - start - strlen(name))));
+			concatStrings(mapi(start_inds, \i, start ->
+				if (i == 0) {
+					substring(acc, 0, start) + applied[0] + substring(acc, end_inds[i] + 1, start_inds[i + 1] - end_inds[i] - 1);
+				} else if (i + 1 == length(start_inds)) {
+					applied[i] + substring(acc, end_inds[i] + 1, strlen(acc) - end_inds[i] - 1);
+				} else {
+					applied[i] + substring(acc, end_inds[i] + 1, start_inds[i + 1] - end_inds[i] - 1);
+				}
+			));
+		}
+	});
+}
+
+strSubstituteArgs(pattern: string) -> ([string]) -> string {
+	\args -> strReplaces(pattern, concatA(mapi(args, \i, arg -> ["$A_" + i2s(i), arg])));
 }
