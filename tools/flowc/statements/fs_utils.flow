@@ -9,6 +9,11 @@ export {
 
 	fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>;
 	fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp;
+
+	fsInterpolateTyparsStat(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
+	fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames) -> FsExp;
+
+	debug_typars_interpolation = ref false;
 }
 
 fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
@@ -367,4 +372,210 @@ fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
 fsSSAvar(v: string, vars: Tree<string, int>) -> string {
 	i = lookupTreeDef(vars, v, 0);
 	v + if (i <= 1) "" else "__ssa_" + i2s(i - 1);
+}
+
+fsInterpolateTyparsStat(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat {
+	do_interpolate = \x -> fsInterpolateTyparsStat(x, type, names);
+	switch(s) {
+		FsLet(name, vtype, e1): {
+			FsLet(s with e = fsInterpolateTyparsExp(e1, vtype, names));
+		}
+		FsIf(e1, s1, s2, __): {
+			FsIf(s with
+				cond = fsInterpolateTyparsExp(e1, FiTypeBool(), names),
+				s1 = do_interpolate(s1),
+				s2 = do_interpolate(s2),
+			);
+		}
+		FsSwitch(v, cases, __): {
+			FsSwitch(s with
+				cases = map(cases, \c -> FsCase(c with body = do_interpolate(c.body)))
+			);
+		}
+		FsSeq(ss, __): {
+			FsSeq(s with ss = map(ss, do_interpolate));
+		}
+		FsWrap(e): {
+			FsWrap(fsInterpolateTyparsExp(e, fsExpType(e), names));
+		}
+		FsRet(e): {
+			FsRet(fsInterpolateTyparsExp(e, type, names));
+		}
+		FsVarDecl(var): {
+			s;
+		}
+		FsAssign(var, e): {
+			FsAssign(var, fsInterpolateTyparsExp(e, var.type, names));
+		}
+	}
+}
+
+fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames) -> FsExp {
+	do_interpolate = \x -> fsInterpolateTyparsExp(x, FiTypeVoid(), names);
+	e1 = switch(e) {
+		FsLambda(closure, args, body, type1): {
+			switch (type) {
+				FiTypeFunction(__,returnType): {
+					FsLambda(e with 
+						body = fsInterpolateTyparsStat(body, returnType, names)
+						//type = FiTypeFunction(type1 with returnType = returnType)
+					);
+				}
+				FiTypeParameter(__): {
+					//FsLambda(e with body = fsInterpolateTyparsStat(body, type1.returnType, names));
+					FsLambda(e with body = fsInterpolateTyparsStat(body, fsStatType(body), names));
+				}
+				default: {
+					throw("non func type: " + toString(type) + ", expected: " + toString(type) + "\n" + toStringFormatted(e));
+				}
+			}
+		}
+		FsCall(fn, args,__): {
+			debug = ref false;
+			fn_type = cast(fsExpType(fn): FiType -> FiTypeFunction);
+			FsCall(e with
+				f = fsInterpolateTyparsExp(fn, fn_type, names),
+				args = mapi(args, \i, arg ->
+					fsInterpolateTyparsExp(arg, fn_type.args[i].type, names)
+				)
+			);
+		}
+		FsCallPrim(__,__,type1): {
+			fsInterpolateTyparsCallPrim(e, type1, names);
+		}
+		FsRequire(__, ex,__): {
+			FsRequire(e with e = do_interpolate(ex));
+		}
+		FsUnsafe(__, ex,__): {
+			FsUnsafe(e with fallback = do_interpolate(ex));
+		}
+		FsCast(ex, from, to): {
+			FsCast(e with e = do_interpolate(ex));
+		}
+		FsTernary(cond, pos, neg, type1): {
+			FsTernary(e with
+				cond = fsInterpolateTyparsExp(cond, FiTypeBool(), names),
+				s1 = fsInterpolateTyparsExp(pos, type1, names),
+				s2 = fsInterpolateTyparsExp(neg, type1, names),
+			);
+		}
+		default: e;
+	}
+	fsInterpolateTyparsTypes(e1, type);
+}
+
+fsInterpolateTyparsTypes(e: FsExp, to: FiType) -> FsExp {
+	from = fsExpType(e);
+	if (fiEqualTypes(from, to) || to == FiTypeVoid()) e else {
+		switch (fiMatchTypes(to, from, Pair(makeTree(), makeTree()))) {
+			Some(p): {
+				from1 = fiApplyTypeSubstitution(p.second, from);
+				if (!fiEqualTypes(from, from1)) {
+					println("Interpolated type, was:\n" + toString(from) + ",\nnow:\n" + toString(from1) + "\n\n\n");
+				}
+				fsSetExpType(e, from1);
+			}
+			None(): {
+				//FsCast(e, from, to);
+				e;
+			}
+		}
+	}
+}
+
+fsInterpolateTyparsCallPrim(e : FsCallPrim, type: FiType, names: FiGlobalNames) -> FsExp {
+	def_interpolate = \ -> FsCallPrim(e with es = map(e.es, \x -> fsInterpolateTyparsExp(x, type, names)));
+	typed_interpolate = \tp-> FsCallPrim(e with es = map(e.es, \x -> fsInterpolateTyparsExp(x, tp, names)));
+	dearray_type = \tp -> switch (tp) {
+		FiTypeArray(t): t;
+		default: FiTypeVoid();
+	}
+	deref_type = \tp -> switch (tp) {
+		FiTypeRef(t): t;
+		default: FiTypeVoid();
+	}
+	switch (e.op) {
+		FcOrPrim():  def_interpolate();
+		FcAndPrim(): def_interpolate();
+		FcNotPrim(): def_interpolate();
+
+		FcEqPrim():  typed_interpolate(fsExpType(e.es[0]));
+		FcNePrim():  typed_interpolate(fsExpType(e.es[0]));
+		FcLePrim():  typed_interpolate(fsExpType(e.es[0]));
+		FcGePrim():  typed_interpolate(fsExpType(e.es[0]));
+		FcLtPrim():  typed_interpolate(fsExpType(e.es[0]));
+		FcGtPrim():  typed_interpolate(fsExpType(e.es[0]));
+
+		FcPlusPrim():  def_interpolate();
+		FcMinusPrim(): def_interpolate();
+		FcMulPrim():   def_interpolate();
+		FcDivPrim():   def_interpolate();
+		FcModPrim():   def_interpolate();
+		FcNegPrim():   def_interpolate();
+		FcArrayPrim(): typed_interpolate(dearray_type(type));
+		FcIndexPrim(): FsCallPrim(e with es = [
+			fsInterpolateTyparsExp(e.es[0], FiTypeArray(type), names),
+			fsInterpolateTyparsExp(e.es[1], FiTypeInt(), names)
+		]);
+		FcDerefPrim(): typed_interpolate(FiTypeRef(type));
+		FcAssignPrim(): {
+			var_type = fsExpType(e.es[0]);
+			exp_type = fsExpType(e.es[1]);
+			type1 = switch (var_type) {
+				FiTypeRef(t): t;
+				FiTypeParameter(__): exp_type;
+				FiTypeFlow(): FiTypeFlow();
+				default: throw("illegal assign type: " + prettyFiType(dummyPretty, var_type, makeSet()));
+			}
+			FsCallPrim(e with es = [
+				fsInterpolateTyparsExp(e.es[0], var_type, names),
+				fsInterpolateTyparsExp(e.es[1], type1, names)
+			]);
+		}
+		FcRefPrim(): typed_interpolate(deref_type(type));
+		FcStructPrim(struct_name): {
+			struct = lookupTreeDef(names.structs, struct_name, FiTypeStruct("", [], [], 0));
+			ret = FsCallPrim(e with es = mapi(e.es, \i, x -> fsInterpolateTyparsExp(x, struct.args[i].type, names)));
+			if (^debug_typars_interpolation  && struct_name == "Some") {
+				println(
+					"fsInterpolateTyparsCallPrim: \n" + 
+						toStringFormatted(e) + "\n" + 
+						toStringFormatted(ret) + "\n-------------\n" + 
+						"fsExpType(e.es[0]): " + toString(fsExpType(e.es[0])) + "\n" +
+						"struct.args[0].type: " + toString(struct.args[0].type) + "\n" + 
+						"type: " + toString(type) + "\n\n\n"
+				);
+			}
+			ret;
+		}
+		FcFieldPrim(name): {
+			if (name == "structname") {
+				def_interpolate();
+			} else {
+				switch (fsExpType(e.es[0])) {
+					FiTypeName(struct_name, typars): {
+						switch (lookupTree(names.structs, struct_name)) {
+							Some(struct): {
+								switch (find(struct.args, \arg -> arg.name == name)) {
+									Some(arg): {
+										fsInterpolateTyparsTypes(def_interpolate(), type);
+									}
+									None(): fail0("field " + name + " of struct " + struct_name + " is not found");
+								}
+							}
+							None(): def_interpolate();
+						}
+					}
+					default: def_interpolate();
+				}
+			}
+		}
+		FcSetMutablePrim(name): FsCallPrim(e with es = [ // TODO - do it right
+			fsInterpolateTyparsExp(e.es[0], fsExpType(e.es[0]), names),
+			fsInterpolateTyparsExp(e.es[1], fsExpType(e.es[1]), names)
+		]);
+		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
+		FcQuote():   fail0("// TODO: FcQuote");
+		FcUnquote(): fail0("// TODO: FcUnquote");
+	}
 }
