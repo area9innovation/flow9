@@ -740,11 +740,10 @@ class TextClip extends NativeWidgetClip {
 
 		// Force text value right away
 		if (nativeWidget != null && isInput) {
-			var keepSelectionRange = true;
 			var selectionStartPrev = nativeWidget.selectionStart;
 			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = text;
-			if (keepSelectionRange) setSelection(selectionStartPrev, selectionEndPrev);
+			setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
 		if (this.isHTMLRenderer()) {
@@ -1563,7 +1562,7 @@ class TextClip extends NativeWidgetClip {
 
 	public function setSelection(start : Int, end : Int) : Void {
 		// setSelectionRange triggers 'focusin' event in Safari
-		if (Platform.isSafari && (start == -1 || end == -1)) {
+		if (Platform.isSafari && ((start == -1 || end == -1) || (start == nativeWidget.selectionStart && end == nativeWidget.selectionEnd))) {
 			return;
 		}
 		// Chrome doesn't support this method for 'number' inputs

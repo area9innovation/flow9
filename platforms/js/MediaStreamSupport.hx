@@ -126,8 +126,8 @@ class MediaStreamSupport {
 	public static function makeMediaStream(
 		recordAudio : Bool,
 		recordVideo : Bool,
-		videoDeviceId : String,
 		audioDeviceId : String,
+		videoDeviceId : String,
 		onMediaStreamReady : Dynamic->Void,
 		onMediaStreamError : String->Void
 	) : Void {
@@ -144,6 +144,7 @@ class MediaStreamSupport {
 		}
 		untyped navigator.mediaDevices.getUserMedia(constraints)
 		.then(function(mediaStream) {
+
 			onMediaStreamReady(new FlowMediaStream(mediaStream));
 		}, function(error) {
 			onMediaStreamError(error.message);

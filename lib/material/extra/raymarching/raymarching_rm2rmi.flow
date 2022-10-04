@@ -36,6 +36,7 @@ RMSceneAccumulators(
 	trigger : Behaviour<RMTrigger>,
 	smoothMaterial : bool,
 	repetition : List<Pair<RMXYZ, RMXYZ>>,
+	roundnessCount : int,
 );
 
 RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RMIExp> {
@@ -51,6 +52,7 @@ RMScene2RMIExp(obj : RMScene, simpleDistance : bool) -> Pair<RMObjectCounter, RM
 			make(RMMouseDownleft()),
 			false,
 			makeList(),
+			0
 		),
 		RMObjectCounter(0, 0, 0, makeTree(), makeTree(), 0, 0, makeSet()),
 		true,
@@ -95,7 +97,8 @@ RMScene2RMIExp0(
 			primitive = RMPrimitive2RMIExp(
 				obj,
 				wrapRepetitions(RMIStructMember(RMIBrackets(RMICall(RMIOp("*"), [RMIArrayIndex("positions", id.objectId), RMICall(RMIFn("vec4"), [RMIP(), RMIDouble(1.0)])])), "xyz")),
-				id.offset
+				id.offset,
+				acc.roundnessCount,
 			);
 			polygons = eitherMap(primitive.third, \p -> insertSet(id.polygonPoints, p), id.polygonPoints);
 			newCounter = RMObjectCounter(id with offset = id.offset + primitive.second, polygonPoints = polygons);
@@ -173,6 +176,20 @@ RMScene2RMIExp0(
 			simpleDistance,
 			innerLevel
 		);
+		RM3DRound(object, radius): {
+			exp = RMScene2RMIExp0(
+				object,
+				RMSceneAccumulators(acc with roundnessCount = acc.roundnessCount + 1),
+				id,
+				topLevel,
+				simpleDistance,
+				innerLevel
+			);
+			Pair(
+				RMObjectCounter(exp.first with offset = exp.first.offset + 1),
+				RMICall(if (simpleDistance) RMIOp("-") else RMIFn("opRound"), [exp.second, getObjectParameter(exp.first.offset, 0)])
+			)
+		}
 		RMBinaryOperator(): RMBinaryOperator2RMIExp(obj, acc, id, topLevel, simpleDistance, innerLevel);
 		RMMaterial(object, color, materialProperties): {
 			switch(color) {
@@ -228,7 +245,7 @@ RMScene2RMIExp0(
 }
 
 //In Triple: first - distance expression, second - amount of paramerters, third - used only for 2d polygon to generate separate functions for each amount of points.
-RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple<RMIExp, int, Maybe<int>> {
+RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int, roundnessCount : int) -> Triple<RMIExp, int, Maybe<int>> {
 	switch(obj) {
 		RMSphere(radius): Triple(RMICall(RMIOp("-"), [
 			RMICall(RMIFn("length"), [distance]),
@@ -279,6 +296,42 @@ RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple
 			distance,
 			getObjectParameter(offset, 0),
 		]), 1, None());
+		RM3DQuadraticBezier(A, B, C): {
+			xBound = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [getObjectParameter(offset, 0), RMICall(RMIFn("max"), [getObjectParameter(offset, 3), getObjectParameter(offset, 6)])]),
+				RMICall(RMIFn("min"), [getObjectParameter(offset, 0), RMICall(RMIFn("min"), [getObjectParameter(offset, 3), getObjectParameter(offset, 6)])])
+			]));
+			yBound = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [getObjectParameter(offset, 1), RMICall(RMIFn("max"), [getObjectParameter(offset, 4), getObjectParameter(offset, 7)])]),
+				RMICall(RMIFn("min"), [getObjectParameter(offset, 1), RMICall(RMIFn("min"), [getObjectParameter(offset, 4), getObjectParameter(offset, 7)])])
+			]));
+			zBound = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [getObjectParameter(offset, 2), RMICall(RMIFn("max"), [getObjectParameter(offset, 5), getObjectParameter(offset, 8)])]),
+				RMICall(RMIFn("min"), [getObjectParameter(offset, 2), RMICall(RMIFn("min"), [getObjectParameter(offset, 5), getObjectParameter(offset, 8)])])
+			]));
+			box = RMICall(RMIFn("sdBox"), [
+				distance,
+				RMICall(RMIFn("vec3"), [xBound, yBound, zBound])
+			]);
+			bezier = RMICall(RMIFn("sd3DQuadraticBezier"), [
+				distance,
+				RMICall(RMIFn("vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+				RMICall(RMIFn("vec3"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4), getObjectParameter(offset, 5)]),
+				RMICall(RMIFn("vec3"), [getObjectParameter(offset, 6), getObjectParameter(offset, 7), getObjectParameter(offset, 8)]),
+			]);
+			limitBox = fold(
+				enumFromTo(0, roundnessCount - 1),
+				RMICall(RMIOp("/"), [RMIBrackets(RMICall(RMIOp("+"), [xBound, RMICall(RMIOp("+"), [yBound, zBound])])), RMIDouble(2.)]),
+				\acc, i -> RMIBrackets(RMICall(RMIOp("+"), [acc, getObjectParameter(offset, 9 + i)]))
+			);
+			boxCheck = RMICall(RMIOp("?:"), [
+				RMICall(RMIOp("<"), [box, limitBox]),
+				bezier,
+				box
+			]);
+
+			Triple(boxCheck, 9, None())
+		};
 		RMExtrusion(object, size): {
 			xyBoundsM = getRM2DPrimitiveDimensions(object, offset);
 			primitive = RM2DPrimitives2RMIExp(object, distance, offset);
@@ -294,8 +347,13 @@ RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple
 						distance,
 						RMICall(RMIFn("vec3"), [xBound, yBound, zBound])
 					]);
+					limitBox = fold(
+						enumFromTo(0, roundnessCount - 1),
+						RMICall(RMIFn("max"), [xBound, RMICall(RMIFn("max"), [yBound, zBound])]),
+						\acc, i -> RMIBrackets(RMICall(RMIOp("+"), [acc, getObjectParameter(offset, primitive.second + 1 + i)]))
+					);
 					boxCheck = RMICall(RMIOp("?:"), [
-						RMICall(RMIOp("<"), [box, RMICall(RMIFn("max"), [xBound, yBound])]),
+						RMICall(RMIOp("<"), [box, limitBox]),
 						extrussion,
 						box
 					]);
@@ -319,8 +377,13 @@ RMPrimitive2RMIExp(obj : RMPrimitive, distance : RMIExp, offset : int) -> Triple
 						distance,
 						RMICall(RMIFn("vec3"), [xBound, yBound, zBound])
 					]);
+					limitBox = fold(
+						enumFromTo(0, roundnessCount - 1),
+						RMICall(RMIFn("max"), [xBound, yBound]),
+						\acc, i -> RMIBrackets(RMICall(RMIOp("+"), [acc, getObjectParameter(offset, primitive.second + 1 + i)]))
+					);
 					boxCheck = RMICall(RMIOp("?:"), [
-						RMICall(RMIOp("<"), [box, RMICall(RMIFn("max"), [xBound, yBound])]),
+						RMICall(RMIOp("<"), [box, limitBox]),
 						primitive.first,
 						box
 					]);
@@ -367,6 +430,18 @@ RM2DPrimitives2RMIExp(obj : RM2DPrimitives, distance : RMIExp, offset : int) -> 
 			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
 			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
 		]), RMIDouble(0.01)]), 6, None());
+		RMCubicBezier(A, B, C, D, k): Triple(RMICall(RMIOp("-"), [RMICall(RMIFn("sdCubicBezier"), [
+			RMIStructMember(distance, "xy"),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
+			RMICall(RMIFn("vec2"), [getObjectParameter(offset, 7), getObjectParameter(offset, 8)]),
+			RMICall(RMIFn("int"), [getObjectParameter(offset, 9)]),
+		]), RMIDouble(0.01)]), 9, None());
+		RM2DRound(object, radius): {
+			exp = RM2DPrimitives2RMIExp(object, distance, offset);
+			Triple(RMICall(RMIOp("-"), [exp.first, getObjectParameter(offset, exp.second + 1)]), exp.second + 1, exp.third)
+		}
 		RMEmpty(): Triple(RMIEmpty(), 0, None());
 	}
 }
@@ -388,6 +463,30 @@ getRM2DPrimitiveDimensions(obj : RM2DPrimitives, offset : int) -> Maybe<Pair<RMI
 			]));
 			Some(Pair(xSize, ySize))
 		};
+		RMCubicBezier(A, B, C, D, k): {
+			xSize = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [
+					RMICall(RMIFn("max"), [getObjectParameter(offset, 1), getObjectParameter(offset, 3)]),
+					RMICall(RMIFn("max"), [getObjectParameter(offset, 5), getObjectParameter(offset, 7)])
+				]),
+				RMICall(RMIFn("min"), [
+					RMICall(RMIFn("min"), [getObjectParameter(offset, 1), getObjectParameter(offset, 3)]),
+					RMICall(RMIFn("min"), [getObjectParameter(offset, 5), getObjectParameter(offset, 7)])
+				])
+			]));
+			ySize = RMIBrackets(RMICall(RMIOp("-"), [
+				RMICall(RMIFn("max"), [
+					RMICall(RMIFn("max"), [getObjectParameter(offset, 2), getObjectParameter(offset, 4)]),
+					RMICall(RMIFn("max"), [getObjectParameter(offset, 6), getObjectParameter(offset, 8)])
+				]),
+				RMICall(RMIFn("min"), [
+					RMICall(RMIFn("min"), [getObjectParameter(offset, 2), getObjectParameter(offset, 4)]),
+					RMICall(RMIFn("min"), [getObjectParameter(offset, 6), getObjectParameter(offset, 8)])
+				])
+			]));
+			Some(Pair(xSize, ySize))
+		};
+		RM2DRound(object, radius): None();
 		RMEmpty(): None();
 	}
 }
@@ -661,6 +760,13 @@ RMScene2RMIExpJS0(obj : RMScene, repetition : List<Pair<RMXYZ, RMXYZ>>, id : RMO
 		RMRotate(object, r): RMScene2RMIExpJS0(object, repetition, id);
 		RMScale(object, s): RMScene2RMIExpJS0(object, repetition, id);
 		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExpJS0(object, Cons(Pair(getValue(space), getValue(repetitions)), repetition), id);
+		RM3DRound(object, radius): {
+			exp = RMScene2RMIExpJS0(object, repetition, id);
+			Pair(
+				RMObjectCounter(exp.first with offset = exp.first.offset + 1),
+				RMICall(RMIFn("opRound"), [exp.second, getObjectParameter(exp.first.offset, 0)])
+			)
+		}
 		RMBinaryOperator(): RMBinaryOperator2RMIExpJS(obj, repetition, id);
 		RMMaterial(object, color, materialProperties): RMScene2RMIExpJS0(object, repetition, id);
 		RMInteractive(object, trigger): RMScene2RMIExpJS0(object, repetition, id);
@@ -720,6 +826,12 @@ RMPrimitive2RMIExpJS(obj : RMPrimitive, distance : RMIExp, offset : int) -> Pair
 			distance,
 			getObjectParameter(offset, 0),	
 		]), 1);
+		RM3DQuadraticBezier(A, B, C): Pair(RMICall(RMIFn("sd3DQuadraticBezier"), [
+			distance,
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 0), getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4), getObjectParameter(offset, 5)]),
+			RMICall(RMIFn("glm.vec3"), [getObjectParameter(offset, 6), getObjectParameter(offset, 7), getObjectParameter(offset, 8)]),
+		]), 9);
 		RMExtrusion(object, size): {
 			primitive = RM2DPrimitives2RMIExpJS(object, distance, offset);
 			Pair(RMICall(RMIFn("opExtrussion"), [distance, primitive.first, getObjectParameter(offset, 0)]), primitive.second + 1);
@@ -751,6 +863,18 @@ RM2DPrimitives2RMIExpJS(obj : RM2DPrimitives, distance : RMIExp, offset : int) -
 			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
 			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
 		]), 6);
+		RMCubicBezier(A, B, C, D, k): Pair(RMICall(RMIFn("sdCubicBezier"), [
+			RMIStructMember(distance, "xy"),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 1), getObjectParameter(offset, 2)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 3), getObjectParameter(offset, 4)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 5), getObjectParameter(offset, 6)]),
+			RMICall(RMIFn("glm.vec2"), [getObjectParameter(offset, 7), getObjectParameter(offset, 8)]),
+			getObjectParameter(offset, 9)
+		]), 9);
+		RM2DRound(object, radius): {
+			exp = RM2DPrimitives2RMIExpJS(object, distance, offset);
+			Pair(RMICall(RMIOp("-"), [exp.first, getObjectParameter(offset, exp.second + 1)]), exp.second + 1)
+		}
 		RMEmpty(): Pair(RMIEmpty(), 0);
 	}
 }
