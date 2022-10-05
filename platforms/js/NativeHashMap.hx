@@ -3,7 +3,7 @@ import HaxeRuntime;
 
 private class FlowHashKey<K> {
 	public var key: K;
-	public var hashCode: () -> Int; 
+	public var hashCode: Void -> Int;
 	public function new(key, hash) {
 		this.key = key;
 		var code = hash(key);
