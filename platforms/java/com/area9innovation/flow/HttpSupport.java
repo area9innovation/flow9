@@ -26,6 +26,8 @@ import java.nio.file.Files;
 
 @SuppressWarnings("unchecked")
 public class HttpSupport extends NativeHost {
+	public static String defaultResponseEncoding = "auto";
+
 	public static Object httpRequest(String url, boolean post,Object[] headers,
 				Object[] params,Func1<Object,String> onData,Func1<Object,String> onError,Func1<Object,Integer> onStatus) {
 		// TODO
@@ -241,6 +243,8 @@ public class HttpSupport extends NativeHost {
 				responseEncoding = "utf8_js";
 			} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
 				responseEncoding = "utf8";
+			} else if (responseEncoding.equals("auto")) {
+				responseEncoding = defaultResponseEncoding;
 			}
 
 			StringBuilder response = new StringBuilder();
@@ -526,6 +530,27 @@ public class HttpSupport extends NativeHost {
 	public static final Object clearUrlCache() {
 		// NOP
 		System.out.println("clearUrlCache not implemented");
+		return null;
+	}
+
+	public static final Object setDefaultResponseEncoding (String responseEncoding) {
+		defaultResponseEncoding = responseEncoding;
+
+		String encodingName = "";
+		if (responseEncoding.equals("auto")) {
+			encodingName = "auto";
+		} else if (responseEncoding.equals("utf8_js")) {
+			encodingName = "utf8 with surrogate pairs";
+		} else if (responseEncoding.equals("utf8")) {
+			encodingName = "utf8 without surrogate pairs";
+		} else if (responseEncoding.equals("byte")) {
+			encodingName = "raw byte";
+		} else {
+			encodingName = "auto";
+		}
+
+		System.out.println("Default response encoding switched to '" + encodingName + "'");
+
 		return null;
 	}
 }
