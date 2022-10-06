@@ -49,12 +49,14 @@ public static function containsNativeHashMap<K, T>(m: FlowHashMap<K, T>, key: K)
 
 public static function sizeNativeHashMap<K, T>(m: FlowHashMap<K, T>): Int {
 	var size: Int = 0;
-	for (key in m.map) size += 1;
+	for (__ in m.map) size += 1;
 	return size;
 }
 
 public static function clearNativeHashMap<K, T>(m: FlowHashMap<K, T>): Void {
-	m.map.clear();
+	for (k in m.map.keys()) {
+		m.map.remove(k);
+	}
 }
 
 public static function cloneNativeHashMap<K, T>(m: FlowHashMap<K, T>): FlowHashMap<K, T> {
