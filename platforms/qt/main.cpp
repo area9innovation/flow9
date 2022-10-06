@@ -419,7 +419,7 @@ int main(int argc, char *argv[])
             MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
             shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--use_utf8_js_style")) {
-            is_utf8_js_style = true;
+            setUtf8JsStyleGlobalFlag(true);
             shift_args(argc, argv, 1);
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
@@ -779,10 +779,7 @@ int main(int argc, char *argv[])
                     QString value = a.mid(equal + 1);
                     FlowRunner.setUrlParameter(key, value);
 
-                    // Compiler parameter takes precedence.
-                    // If not set - we will check it in app parameters.
-                    if (!is_utf8_js_style)
-                        is_utf8_js_style = !strcmp(argv[i], "use_utf8_js_style=1");
+                    setUtf8JsStyleGlobalFlag(!strcmp(argv[i], "use_utf8_js_style=1"));
                 } else {
                     FlowRunner.setUrlParameter(a, QString());
                 }
