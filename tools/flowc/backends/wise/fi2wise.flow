@@ -24,12 +24,14 @@ fi2wise(program : FiProgram, cfg : FiWiseConfig, callback : (int) -> void) -> vo
 FiWiseState(
 	flowWiNatives : ref Tree<string, string>,
 	tmpVarCounter : ref int,
+	polyFns : ref Tree<string, Pair<FiTypeFunction, Tree<string, string>>>, // <fnName, <typeParam, templateName>>
 );
 
 makeFiWiseState() -> FiWiseState {
 	FiWiseState(
 		ref makeTree(),
 		ref 0,
+		ref makeTree(),
 	);
 }
 
@@ -62,6 +64,15 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 	functions = values2tree(module.functions, \f -> f.name);
 	structs = fiStructs2wiTuples(module.structs);
 	initWiNatives(state, module.natives);
+
+	// save templates
+	iter(module.initOrder, \fnName -> maybeApply(
+		lookupTree(functions, fnName),
+		\fn -> {
+			templates = fiTypeFunction2templates(fn.type);
+			state.polyFns := setTree(^(state.polyFns), fn.name, Pair(fn.type, templates));
+		}
+	));
 
 	newBody = foldr(module.initOrder, FlowWiWaseEmpty(), \acc, fnName -> eitherMap(
 		lookupTree(functions, fnName),
@@ -116,14 +127,71 @@ fiImport2FlowWiseAst(decl : FiImport, body : FlowWiDecl) -> FlowWiDecl {
 }
 
 fiFunctionDec2FlowWiFunction(state : FiWiseState, func : FiFunctionDec, exported : bool, structs : StructTuple, body : FlowWiDecl) -> FlowWiFunction {
+	templates = eitherFn(lookupTree(^(state.polyFns), func.name), secondOfPair, makeTree);
 	FlowWiFunction(
 		func.name,
 		b2s(exported),
-		map(func.lambda.args, \arg -> FlowWiIdtype(arg.name, fiType2FlowWiType(arg.type, structs))),
-		fiType2FlowWiType(func.type.returnType, structs),
+		getTreeValues(templates),
+		map(func.lambda.args, \arg -> FlowWiIdtype(arg.name, fiType2FlowWiType(setTemplateInFiType(arg.type, templates), structs))),
+		fiType2FlowWiType(setTemplateInFiType(func.type.returnType, templates), structs),
 		fiExp2FlowWiExp(state, func.lambda.body, structs),
 		body
 	);
+}
+
+// format : (A-Z)*
+fiTypeFunction2templates(type : FiTypeFunction) -> Tree<string, string> {
+	lastTemplate = ref [64];
+	fiTypeParameter2template = \v : string -> {
+		code = ^lastTemplate;
+		lastChar = lastElement(code, 64);
+		lastTemplate := if (lastChar > 90) arrayPush(code, 64) else replace(code, length(code) - 1, lastChar + 1);
+		superglue(^lastTemplate, fromCharCode, "");
+	}
+	mapTree2(
+		extractFiTypeParameters(arrayPush(map(type.args, \a -> a.type), type.returnType), makeSet()).tree,
+		\k, __ -> fiTypeParameter2template(k)
+	);
+}
+
+setTemplateInFiType(type : FiType, templates : Tree<string, string>) -> FiType {
+	rec = \t -> setTemplateInFiType(t, templates);
+	switch (type : FiType) {
+		FiTypeArray(tt) : type;
+		FiTypeFunction(args, returnType) : FiTypeFunction(map(args, \a -> FiFunArg(a with type = rec(a.type))), rec(returnType));
+		FiTypeRef(t) : FiTypeRef(rec(t));
+		FiTypeParameter(n) : FiTypeParameter(lookupTreeDef(templates, n, ""));
+		FiTypeBool() : type;
+		FiTypeInt() : type;
+		FiTypeDouble() : type;
+		FiTypeString() : type;
+		FiTypeFlow() : type;
+		FiTypeVoid() :  type;
+		FiTypeNative() : type;
+		FiTypeName(n, typeparameters) : FiTypeName(n, map(typeparameters, rec));
+	}
+}
+
+extractFiTypeParameters(types : [FiType], acc : Set<string>) -> Set<string> {
+	if (types == []) {
+		acc;
+	} else {
+		accTypes = tail(types);
+		switch (types[0] : FiType) {
+			FiTypeArray(tt) : extractFiTypeParameters(arrayPush(accTypes, tt), acc);
+			FiTypeFunction(args, returnType) : extractFiTypeParameters(concat(accTypes, arrayPush(map(args, \arg -> arg.type), returnType)), acc);
+			FiTypeRef(tt) : extractFiTypeParameters(arrayPush(accTypes, tt), acc);
+			FiTypeParameter(n) : extractFiTypeParameters(accTypes, insertSet(acc, n));
+			FiTypeBool() : extractFiTypeParameters(accTypes, acc);
+			FiTypeInt() : extractFiTypeParameters(accTypes, acc);
+			FiTypeDouble() : extractFiTypeParameters(accTypes, acc);
+			FiTypeString() : extractFiTypeParameters(accTypes, acc);
+			FiTypeFlow() : extractFiTypeParameters(accTypes, acc);
+			FiTypeVoid() :  extractFiTypeParameters(accTypes, acc);
+			FiTypeNative() : extractFiTypeParameters(accTypes, acc);
+			FiTypeName(__, typeparameters) : extractFiTypeParameters(concat(accTypes, typeparameters), acc);
+		}
+	}
 }
 
 fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, structs : StructTuple) -> FlowWiExp {
@@ -135,7 +203,22 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, structs : StructTuple) -> Flow
 	e2e = \e -> fiExp2FlowWiExp(state, e, structs);
 	switch (exp : FiExp) {
 		FiLambda(args, body, type, start) : makeDefExp();
-		FiCall(f, args, type, start) : FlowWiCall(resolveWiFnName(e2e(f), args), map(args, e2e));
+		FiCall(f, args, type, start) : {
+			fnName = extractFiVarNameFromFiExp(f);
+			polyFn = lookupTree(^(state.polyFns), fnName);
+			templates = eitherFn(polyFn, secondOfPair, makeTree);
+			if (isEmptyTree(templates)) {
+				FlowWiCall(resolveWiFnName(e2e(f), args), map(args, e2e));
+			} else {
+				declRealTypes = matchFnTypes(
+					eitherFn(polyFn, firstOfPair, \-> FiTypeFunction([], FiTypeVoid())),
+					map(args, extractFiTypeFromFiExp),
+					type
+				);
+				realTypes = map(getTreeKeys(templates), \t -> fiType2FlowWiType(lookupTreeDef(declRealTypes, t, FiTypeFlow()), structs));
+				FlowWiCall(FlowWiPolyCall(resolveWiFnName(e2e(f), args), realTypes), map(args, e2e));
+			}
+		}
 		FiVar(name, type, start) : FlowWiVar(resloveVarName(name));
 		FiLet(name, type, e1, e2, type2, start) : {
 			FlowWiLet(name, 0, fiType2FlowWiType(type, structs), e2e(e1), FlowWiBrace([e2e(e2)]));
@@ -156,6 +239,60 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, structs : StructTuple) -> Flow
 		FiRequire(flowfile, e, type, start) : makeDefExp();
 		FiUnsafe(name, fallback, type, start) : makeDefExp();
 		FiConst() : fiConst2FlowWiExp(state, exp);
+	}
+}
+
+matchFnTypes(declaredTypes : FiTypeFunction, argTypes : [FiType], returnType : FiType) -> Tree<string, FiType> {
+	if (length(declaredTypes.args) != length(argTypes)) {
+		println("can't match fn types");
+		makeTree();
+	} else {
+		matchFnType(
+			declaredTypes.returnType,
+			returnType,
+			foldi(declaredTypes.args, makeTree(), \i, acc, arg -> matchFnType(arg.type, argTypes[i], acc))
+		);
+	}
+}
+
+matchFnType(declaredType : FiType, realType : FiType, acc : Tree<string, FiType>) -> Tree<string, FiType> {
+	onError = \ -> {
+		println("wrong types : declared '" + toString(declaredType) + "', used '" + toString(realType) + "'");
+		acc;
+	}
+	switch (declaredType : FiType) {
+		FiTypeArray(t1) : switch (realType : FiType) {
+			FiTypeArray(t2): matchFnType(t1, t2, acc);
+			default : onError();
+		}
+		FiTypeFunction(args1, rt1) : switch (realType : FiType) {
+			FiTypeFunction(args2, rt2): if (length(args1) == length(args2)) {
+				foldi(args1, matchFnType(rt1, rt2, acc), \i, acc2, a1 -> matchFnType(a1.type, args2[i].type, acc2));
+			} else {
+				onError();
+			}
+			default : onError();
+		}
+		FiTypeRef(t1) : switch (realType : FiType) {
+			FiTypeRef(t2): matchFnType(t1, t2, acc);
+			default : onError();
+		}
+		FiTypeParameter(n) : setTree(acc, n, realType);
+		FiTypeBool() : acc;
+		FiTypeInt() : acc;
+		FiTypeDouble() : acc;
+		FiTypeString() : acc;
+		FiTypeFlow() : acc;
+		FiTypeVoid() :  acc;
+		FiTypeNative() : acc;
+		FiTypeName(__, at1) : switch (realType : FiType) {
+			FiTypeName(__, at2): if (length(at1) == length(at2)) {
+				foldi(at1, acc, \i, acc2, t1 -> matchFnType(t1, at2[i], acc2));
+			} else {
+				onError();
+			}
+			default : onError();
+		}
 	}
 }
 
@@ -495,6 +632,27 @@ extractFiTypeFromFiExp(exp : FiExp) -> FiType {
 	}
 }
 
+extractFiVarNameFromFiExp(exp : FiExp) -> string {
+	switch (exp : FiExp) {
+		FiBool(__, __) : "";
+		FiInt(__, __) : "";
+		FiDouble(__, __) : "";
+		FiString(__, __) : "";
+		FiVoid(__) : "";
+		FiVar(id, __, __) : id;
+		FiCallPrim(__, __, __, __): "";
+		FiIf(__, __, __, __, __) : "";
+		FiLambda(__, __, __, __) : "";
+		FiCall(__, __, __, __) : "";
+		FiLet(__, __, __, __, __, __) : "";
+		FiSwitch(__, __, __, __, __) : "";
+		FiCast(__, __, __, __, __) : "";
+		FiSeq(__, __, __) : "";
+		FiRequire(__, __, __, __) : "";
+		FiUnsafe(__, __, __, __) : "";
+	}
+}
+
 fiConst2FlowWiExp(state : FiWiseState, exp : FiConst) -> FlowWiExp {
 	switch (exp : FiConst) {
 		FiVoid(__) : FlowWiTuple([]);
@@ -526,7 +684,7 @@ fiType2FlowWiType(type : FiType, structs : StructTuple) -> FlowWiType {
 			fiType2FlowWiType(returnType, structs)
 		);
 		FiTypeRef(t) : makeDefType();
-		FiTypeParameter(n) : makeDefType();	// ?, ?? and so on
+		FiTypeParameter(n) : FlowWiBasictype(n);
 		FiTypeBool() : FlowWiBasictype("auto");
 		FiTypeInt() : FlowWiBasictype("i32");
 		FiTypeDouble() : FlowWiBasictype("f64");
@@ -561,10 +719,11 @@ wiseAst2string(code : FlowWiseAst) -> string {
 
 wiDecl2string(decl : FlowWiDecl) -> string {
 	switch (decl : FlowWiDecl) {
-		FlowWiFunction(id, optexport, lambdaargs, type, e, decl2) : {
+		FlowWiFunction(id, optexport, templates, lambdaargs, type, e, decl2) : {
 			parentExp = None();
 			"\n" + (if (s2b(optexport)) "export " else " ")
 			+ wiVar2string(id, parentExp)
+			+ (if (templates == []) "" else "[" + strGlue(templates, ",")+ "]")
 			+ "(" + strGlue(map(lambdaargs, wiseAst2string), ", ") + ")"
 			+ " -> " + wiType2string(type)
 			+ " {\n"
@@ -619,6 +778,7 @@ wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>) -> string {
 			}
 		}
 		FlowWiCall(e, exps) : wiExp2string(e, Some(exp)) + "(" + strGlue(map(exps, wiExpDef2string), ", ") + ")";
+		FlowWiPolyCall(e, types) : wiExp2string(e, Some(exp))  + "[" + superglue(types, wiType2string, ", ") + "]";
 		FlowWiDiv(exp1, exp2) : joinExp("/", exp1, exp2);
 		FlowWiEqual(exp1, exp2) : joinExp("==", exp1, exp2);
 		FlowWiGreater(exp1, exp2) : joinExp(">", exp1, exp2);
