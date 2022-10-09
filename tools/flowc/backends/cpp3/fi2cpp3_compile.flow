@@ -295,12 +295,13 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	pair2 = fold(pair1.second, Pair([], makeTree()), \acc, s -> {
 		p = fsStatSSA(s, acc.second);
 		//fun_stat2 = fsInterpolateTyparsStat(fun_stat1, fn_type.returnType, names);
-		stat = fsInterpolateTyparsStat(p.first, FiTypeVoid(), names);
+		stat = fsInterpolateTyparsStat(p.first, names);
 		Pair(concat(acc.first, [stat]), p.second);
 	});
 	value3 = fsExpSSA(pair1.first, pair2.second);
 	debug_typars_interpolation := name == "fontOverrides";
-	value4 = fsInterpolateTyparsExp(value3, globalVar.type, names);
+	value4 = fsInterpolateTyparsExp(value3, names);
+	debug_typars_interpolation := false;
 	pair = Pair(value4, pair2.first);
 
 	value_exp = if (pair.second == []) {
@@ -314,14 +315,14 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 		}
 		pair.first 
 	} else {
-		if (name == "fontOverrides") {
+		/*if (name == "fontOverrides") {
 			println(
 				"globalVar.value:\n" + toStringFormatted(globalVar.value) +"\n----------\n" + 
 				"value3:\n" + toStringFormatted(value3) +"\n----------\n" + 
 				"value4:\n" + toStringFormatted(value4) +"\n----------\n" + 
 				"pair.second:\n" + toStringFormatted(pair.second) +"\n----------\n"
 			);
-		}
+		}*/
 		FsCall(FsLambda([], [], 
 			fsWrapSeq(concat(pair.second, [FsRet(pair.first)])), 
 			FiTypeFunction([], globalVar.type
@@ -376,7 +377,7 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 			fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
 			// fsInterpolateTyparsStat(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
 			// fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
-			fun_stat2 = fsInterpolateTyparsStat(fun_stat1, fn_type.returnType, names);
+			fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
 			fun_stat = fsMakeStatCastsExplicit(fun_stat2, fn_type.returnType, names);
 			/*if (name == "fontOverrides") {
 				println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
@@ -804,32 +805,49 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 	}
 }
 
-fiCpp3StructDefs(gctx : Cpp3GlobalContext) -> string {
-	struct_arg = \i, arg -> {
-		arg_val = "__args.arr->at(" + i2s(i) + ")";
-		arg_type = fiType2cpp3(fiTransformTypars(arg.type, \__ -> FiTypeFlow()), gctx);
-		"FromFlow<" + arg_type + ">::conv(" + arg_val + ")";
-	}
-	struct_defs = map(getTreeValues(gctx.program.names.structs), \struct -> {
-		typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
-		struct_name = gctx.typename2cpp(struct.name) + typars;
-		args = "(" + strGlue(mapi(struct.args, \i, arg -> struct_arg(i, arg)), ", ") + ")";
-		wrapper = "Str<" + struct_name + ">";
-		constructor = "[](Arr<Flow> __args) { return ToFlow<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
-		fields = if (struct.args == []) "std::vector<FieldDef>()" else {
-			"std::vector{" + 
-				superglue(struct.args, \arg  -> 
-					"FieldDef{fromStdString(\"" + arg.name + "\"), fromStdString(\"" + fiType2cpp3(arg.type, gctx) +"\"), " + b2s(arg.ismutable) + "}", 
-					", "
-				) + 
-			"}";
-		}
-		struct_def = "StructDef{" + 
-			i2s(lookupTreeDef(gctx.structs2id, struct.name, -1)) + ", " +
-			constructor + ", " +
-			fields +
-		"}";
-		"\tdefs[fromStdString(\"" + struct.name + "\")] = " + struct_def + ";\n";
+fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
+	struct_defs = map(getTreeValues(gctx0.program.names.structs), \struct -> {
+		tryCatch(
+			\-> {
+				typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
+				gctx = Cpp3GlobalContext(
+					gctx0 with currentToplevel = struct.name,
+					toplevelTypars = buildSet(filtermap(struct.typars, \tp ->
+						switch (tp) {
+							FiTypeParameter(nm): Some(nm);
+							default: None();
+						}
+					))
+				);
+				struct_arg = \i, arg -> {
+					arg_val = "__args.arr->at(" + i2s(i) + ")";
+					arg_type = fiType2cpp3(fiTransformTypars(arg.type, \__ -> FiTypeFlow()), gctx);
+					"FromFlow<" + arg_type + ">::conv(" + arg_val + ")";
+				}
+				struct_name = gctx.typename2cpp(struct.name) + typars;
+				args = "(" + strGlue(mapi(struct.args, \i, arg -> struct_arg(i, arg)), ", ") + ")";
+				wrapper = "Str<" + struct_name + ">";
+				constructor = "[](Arr<Flow> __args) { return ToFlow<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
+				fields = if (struct.args == []) "std::vector<FieldDef>()" else {
+					"std::vector{" + 
+						superglue(struct.args, \arg  -> 
+							"FieldDef{fromStdString(\"" + arg.name + "\"), fromStdString(\"" + fiType2cpp3(arg.type, gctx) +"\"), " + b2s(arg.ismutable) + "}", 
+							", "
+						) + 
+					"}";
+				}
+				struct_def = "StructDef{" + 
+					i2s(lookupTreeDef(gctx.structs2id, struct.name, -1)) + ", " +
+					constructor + ", " +
+					fields +
+				"}";
+				"\tdefs[fromStdString(\"" + struct.name + "\")] = " + struct_def + ";\n";
+			},
+			\err -> {
+				println("struct: " + toString(struct) + "\nerr: " + toString(err));
+				throw(err);
+			}
+		);
 	});
 "
 std::map<string, StructDef> StructDefs::defs;
