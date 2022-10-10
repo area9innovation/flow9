@@ -415,16 +415,14 @@ renderParagraphEx(
 		);
 
 		group = headList(acc, emptyParaWordGroup);
-		lastSpace = switch(lastElement(group.words, emptyParaWord).word) {
-			Space(__) : true;
-			default : false;
-		};
+		lastWord = lastElement(group.words, emptyParaWord);
+		lastSpace = isParaWordSpace(lastWord);
 		rightmostWordLastChr = strsubsmart(
 			getWordText((if (rtl) firstElement else lastElement)(group.words, emptyParaWord)),
 			-1, 0
 		);
 		lastChrIsMath = rightmostWordLastChr != "" && (strContains("+-=×/", rightmostWordLastChr));
-		isUnbreakableSym = isUnbreakable(word, lastElement(group.words, emptyParaWord));
+		isUnbreakableSym = isUnbreakable(word, lastWord);
 
 		if (lastChrIsMath && !isUnbreakableSym || switch (word.word) {
 			NewLine() : true;
@@ -536,6 +534,22 @@ isSpaceForm(spaceForm : GhostForm) -> bool {
 	};
 }
 
+wigiRtrimSpace = !isUrlParameterFalse("wigi_rtrim_space");
+
+isParaWordSpace(w : ParaWord) -> bool {
+	switch (w.word) {
+		Space(__) : true;
+		default : false;
+	};
+}
+
+isParaWordSpaceForm(w : ParaWord) -> bool {
+	switch (w.word) {
+		Space(spaceForm) : isSpaceForm(spaceForm);
+		default : false;
+	};
+}
+
 getParaLineInfos(
 	alignment : ParaLineAlignment,
 	wordGroups : [ParaWordGroup],
@@ -565,12 +579,15 @@ getParaLineInfos(
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
 	linesCount = length(reflowResult) - 1;
 	mapi(reflowResult, \i, line -> {
-		words = if (isUrlParameterTrue("new") && alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
-			isSpace = switch (lastElement(line.words, emptyParaWord).word) {
-				Space(spaceForm) : isSpaceForm(spaceForm);
-				default : false;
-			};
-			if (isSpace) take(line.words, length(line.words) - 1) else line.words
+		words = if (wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
+			// we don't need spaces in the end of the line becasue if there is filler element in the line spaces will be out of the available width
+			// and we can't move space on the next line because it will break alignment so we just trim spaces in the end.
+			if (isParaWordSpaceForm(lastElement(line.words, emptyParaWord))) {
+				foldr(line.words, makeList(), \acc, paraWord -> {
+					if (acc == EmptyList() && isParaWordSpaceForm(paraWord)) acc
+					else Cons(paraWord, acc);
+				}) |> list2array |> reverseA;
+			} else line.words;
 		} else line.words;
 		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount);
 
@@ -619,9 +636,10 @@ expandGlueFragments(
 		} else if (runLength == 1) {
 			Cons(headList(running, Empty()), acc);
 		} else {
+			revRunning = reverseList(running);
 			foldList(
-				tailList(running),
-				Cons(headList(running, Empty()), acc),
+				tailList(revRunning),
+				Cons(headList(revRunning, Empty()), acc),
 				\acc2, ra : ParaAtomic -> Cons(ra |> ParaWordGlued, acc2)
 			);
 		};

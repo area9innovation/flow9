@@ -20,7 +20,12 @@
 // We store here compiler flag about which logic of utf8 decode we should use:
 //  false - usual way with loss real code for 3 bytes codes,
 //  true - with decoding 3 bytes codes into UTF-16 codes (pairs of 2 bytes codes).
-bool is_utf8_js_style = false;
+bool utf8_js_style_global_flag = false;
+
+void setUtf8JsStyleGlobalFlag(const bool flag)
+{
+    utf8_js_style_global_flag = flag;
+}
 
 /* Character encoding */
 
@@ -33,7 +38,7 @@ static unsigned encode(uint16_t c, uint16_t next_c, bool is_last, uint8_t *out, 
     uint32_t code = c;
 
     // If we started in utf8_js_style - we need to check utf-16 codes first.
-    if (::is_utf8_js_style)
+    if (::utf8_js_style_global_flag)
     {
         // `code` is the highest part of the surrogate pair
         if (0xD800 <= code && code <= 0xDBFF)
@@ -111,33 +116,25 @@ struct Utf8Parser
     int bytes;
 
     unicode_string parse(const C &str, unsigned size);
-    unicode_string parse_js(const C &str, unsigned size);
+    unicode_string parse_base(const C &str, unsigned size, bool js_style);
     void parse_range(unicode_string &out, const C &str, unsigned size);
-    void parse_range_js(unicode_string &out, const C &str, unsigned size);
     void parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style);
 };
 
 template<class C>
 unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
 {
-    unicode_string out;
-    w = 0;
-    bytes = 0;
-    uint32_t err = L'?';
-    parse_range(out, str, size);
-    if (bytes)
-        out.push_back(err);
-    return out;
+    return parse_base(str, size, ::utf8_js_style_global_flag);
 }
 
 template<class C>
-unicode_string Utf8Parser<C>::parse_js(const C &str, unsigned size)
+unicode_string Utf8Parser<C>::parse_base(const C &str, unsigned size, bool js_style)
 {
     unicode_string out;
     w = 0;
     bytes = 0;
     uint32_t err = L'?';
-    parse_range_js(out, str, size);
+    parse_range_base(out, str, size, js_style);
     if (bytes)
         out.push_back(err);
     return out;
@@ -165,13 +162,7 @@ unicode_string Utf8Parser<C>::parse_js(const C &str, unsigned size)
 template<class C>
 void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
 {
-    return parse_range_base(out, str, size, false);
-}
-
-template<class C>
-void Utf8Parser<C>::parse_range_js(unicode_string &out, const C &str, unsigned size)
-{
-    return parse_range_base(out, str, size, true);
+    return parse_range_base(out, str, size, ::utf8_js_style_global_flag);
 }
 
 template<class C>
@@ -189,7 +180,7 @@ void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned
     // But only in case, if compiler started with "--use_utf8_js_style" flag.
     auto to_utf16_js_style = [&out, js_style](uint64_t w)
     {
-        if (w < 0x10000 /* 2 bytes or less */ || (!::is_utf8_js_style && !js_style))
+        if (w < 0x10000 /* 2 bytes or less */ || !js_style)
         {
             out.push_back((uint32_t) w);
         }
@@ -301,11 +292,11 @@ unicode_string parseUtf8(const std::string &str) {
 }
 
 unicode_string parseUtf8(const char *str, unsigned size) {
-    return Utf8Parser<const char*>().parse(str, size);
+    return parseUtf8Base(str, size, ::utf8_js_style_global_flag);
 }
 
-unicode_string parseUtf8Js(const char *str, unsigned size) {
-    return Utf8Parser<const char*>().parse_js(str, size);
+unicode_string parseUtf8Base(const char *str, unsigned size, bool js_style) {
+    return Utf8Parser<const char*>().parse_base(str, size, js_style);
 }
 
 unicode_string parseUtf8u(const unicode_string &str) {
@@ -324,7 +315,7 @@ inline C doEncodeUtf8(I str, unsigned size)
     for (unsigned i = 0; i < size; i++)
     {
         bool is_last = size - i == 1;
-        // Sometimes in case of flag `is_utf8_js_style` we will need the next symbol to do decode
+        // Sometimes in case of flag `defaultResponseEncoding = ResponseEncodingUTF8js` we will need the next symbol to do decode
         //  original symbol from the utf16 surrogate pair.
         uint16_t next_c = str[i];
         if (!is_last) next_c = str[i + 1];
