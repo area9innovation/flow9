@@ -11,6 +11,7 @@
 #include <iostream>
 #include <codecvt>
 #include <locale>
+#include <cmath>
 
 namespace flow {
 
@@ -540,16 +541,44 @@ template<typename T> struct ToFlow<Nat<T>> {
 
 
 template<> struct FromFlow<Int> {
-	static Int conv(Flow f) { return f.toInt(); }
+	static Int conv(Flow f) { 
+		switch (f.type()) {
+			case Type::INT:    return f.toInt();
+			case Type::BOOL:   return f.toBool() ? 1 : 0;
+			case Type::DOUBLE: return round(f.toDouble());
+			case Type::STRING: return std::stoi(toStdString(f.toString()));
+			default:           return 0;
+		}
+	}
 };
 template<> struct FromFlow<Bool> {
-	static Bool conv(Flow f) { return f.toBool(); }
+	static Bool conv(Flow f) { 
+		switch (f.type()) {
+			case Type::INT:    return f.toInt() != 0;
+			case Type::BOOL:   return f.toBool();
+			case Type::DOUBLE: return f.toDouble() != 0.0;
+			case Type::STRING: {
+				std::string s = toStdString(f.toString());
+				return s == "1" || s == "true" || s == "True";
+			}
+			default: return 0;
+		}
+	}
 };
 template<> struct FromFlow<Double> {
-	static Double conv(Flow f) { return f.toDouble(); }
+	static Double conv(Flow f) { 
+		return f.toDouble();
+		switch (f.type()) {
+			case Type::INT:    return f.toInt();
+			case Type::BOOL:   return f.toBool() ? 1.0 : 0.0;
+			case Type::DOUBLE: return f.toDouble();
+			case Type::STRING: return std::stod(toStdString(f.toString()));
+			default:           return 0.0;
+		}
+	}
 };
 template<> struct FromFlow<String> {
-	static String conv(Flow f) { return f.toString(); }
+	static String conv(Flow f) { return flow2string(f); }
 };
 template<> struct FromFlow<Flow> {
 	static Flow conv(Flow f) { return f; }
