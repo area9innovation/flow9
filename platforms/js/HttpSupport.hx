@@ -22,6 +22,8 @@ import js.html.Uint8Array;
 class HttpSupport {
 	static var TimeoutInterval = 1200000;	// twenty minutes in ms
 
+	static var defaultResponseEncoding = null;
+
 	#if (js && !flow_nodejs)
 	private static var XMLHttpRequestOverriden : Bool = false;
 	private static var CORSCredentialsEnabled = true;
@@ -298,6 +300,10 @@ class HttpSupport {
 
 	public static function httpCustomRequestNative(url : String, method : String, headers : Array<Array<String>>,
 		params: Array<Array<String>>, data : String, responseEncoding : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool, ?request : Dynamic = null) : Void {
+
+		if (defaultResponseEncoding != null && responseEncoding == "auto") {
+			responseEncoding = defaultResponseEncoding;
+		}
 
 		if ((method == 'DELETE' || method == 'PATCH' || method == "PUT") && !Lambda.exists(headers, function(h) return h[0] == "If-Match")) {
 			headers.push(["If-Match", "*"]);
@@ -682,6 +688,25 @@ class HttpSupport {
 	public static function sendHttpRequestWithAttachments(url : String, headers : Array<Array<String>>, params : Array<Array<String>>,
 			attachments : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void) : Void {
 		// NOP
+	}
+
+	public static function setDefaultResponseEncoding (responseEncoding : String) : Void {
+		defaultResponseEncoding = responseEncoding;
+
+		var encodingName = "";
+		if (responseEncoding == "auto") {
+			encodingName = "auto";
+		} else if (responseEncoding == "utf8_js") {
+			encodingName = "utf8 with surrogate pairs";
+		} else if (responseEncoding == "utf8") {
+			encodingName = "utf8 without surrogate pairs";
+		} else if (responseEncoding == "byte") {
+			encodingName = "raw byte";
+		} else {
+			encodingName = "auto";
+		}
+
+		Native.println("Default response encoding switched to '" + encodingName + "'");
 	}
 }
 

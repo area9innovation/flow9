@@ -221,11 +221,11 @@ public:
 // We store here compiler flag about which logic of utf8 decode we should use:
 //  false - usual way with loss real code for 3 bytes codes,
 //  true - with decoding 3 bytes codes into UTF-16 codes (pairs of 2 bytes codes).
-extern bool is_utf8_js_style;
+void setUtf8JsStyleGlobalFlag(const bool flag);
 
 unicode_string parseUtf8(const std::string &str);
 unicode_string parseUtf8(const char *str, unsigned size);
-unicode_string parseUtf8Js(const char *str, unsigned size);
+unicode_string parseUtf8Base(const char *str, unsigned size, bool js_style);
 
 unicode_string parseUtf8u(const unicode_string &str);
 
