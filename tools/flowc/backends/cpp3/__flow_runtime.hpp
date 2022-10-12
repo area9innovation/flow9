@@ -311,35 +311,33 @@ Union struct2union(Str<typename From::Name> from) {
 template<typename T> 
 struct Array : public AArray {
 	typedef std::vector<T> Vect;
-	Array(): arr(new Vect()) { }
-	Array(std::size_t s): arr(new Vect()) { arr->reserve(s); }
-	Array(std::initializer_list<T> il): arr(new Vect(il)) { }
-	Array(const Array& a): arr(a.arr) { }
-	//Array(Array&& a): arr(std::move(a.arr)) { }
-	//Array(const Vect& v): arr(new Vect(v)) { }
-	//Array(Vect* v): arr(v) { }
-	//Array(Ptr<Vect>&& v): arr(std::move(v)) { }
-	//Array& operator = (Array&& a) { arr = std::move(a.arr); return *this; }
-	//Array& operator = (const Array& a) { arr = a.arr; return *this; }
-	Int size() const override { return static_cast<Int>(arr->size()); }
+	Array(std::size_t s): vect() { vect.reserve(s); }
+	Array(std::initializer_list<T> il): vect(il) { }
+	static Ptr<Array> init(std::size_t s) { return std::make_shared<Array>(s); }
+	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
+	Array(const Array& a): vect(a.vect) { }
+	Array(const Vect& v): vect(v) { }
+	Array(Vect&& v): vect(std::move(v)) { }
+
+	Int size() const override { return static_cast<Int>(vect.size()); }
 	std::vector<Flow> elements() override {
 		std::vector<Flow> ret;
-		ret.reserve(arr->size());
-		for (T x : *arr) {
+		ret.reserve(vect.size());
+		for (T x : vect) {
 			ret.push_back(ToFlow<T>::conv(x));
 		}
 		return ret;
 	}
 	Flow element(Int i) override {
-		return ToFlow<T>::conv(arr->at(i));
+		return ToFlow<T>::conv(vect.at(i));
 	}
 	Int compare(Array a) const { 
-		Int c1 = Compare<Int>::cmp(arr->size(), a.arr->size());
+		Int c1 = Compare<Int>::cmp(vect.size(), a.vect.size());
 		if (c1 != 0) {
 			return c1;
 		} else {
-			for (std::size_t i = 0; i < arr->size(); ++ i) {
-				Int c2 = Compare<T>::cmp(arr->at(i), a.arr->at(i));
+			for (std::size_t i = 0; i < vect.size(); ++ i) {
+				Int c2 = Compare<T>::cmp(vect.at(i), a.vect.at(i));
 				if (c2 != 0) {
 					return c2;
 				}
@@ -347,61 +345,34 @@ struct Array : public AArray {
 			return 0;
 		}
 	}
-	bool isSameObj(Array a) const { return arr.get() == a.arr.get(); }
-	template<typename T1>
-	Array<T1> cast() {
-		return std::reinterpret_pointer_cast<typename Array<T1>::Vect>(arr);
-	}
-
-	Ptr<Vect> arr;
+	Vect vect;
 };
 
 template<typename T> 
-struct Arr : public AArray {
-	typedef std::vector<T> Vect;
-	Arr(): arr(new Vect()) { }
-	Arr(std::size_t s): arr(new Vect()) { arr->reserve(s); }
-	Arr(std::initializer_list<T> il): arr(new Vect(il)) { }
+struct Arr {
+	Arr(): {}
+	Arr(std::initializer_list<T> il): arr(std::move(std::make_shared<Array<T>>(il))) { }
+	Arr(Ptr<Array<T>>&& a): arr(std::move(a)) { }
 	Arr(const Arr& a): arr(a.arr) { }
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
-	Arr(const Vect& v): arr(new Vect(v)) { }
-	Arr(Vect* v): arr(v) { }
-	Arr(Ptr<Vect>&& v): arr(std::move(v)) { }
+
+	Arr(std::size_t s): arr(std::move(Array<T>::init(s))) { }
+	Array<T>& operator *() { return arr.operator*(); }
+	Array<T>* operator ->() { return arr.operator->(); }
+	Array<T>* get() { return arr.get(); }
+	const Array<T>& operator *() const { return arr.operator*(); }
+	const Array<T>* operator ->() const { return arr.operator->(); }
+	const Array<T>* get() const { return arr.get(); }
+
 	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
 	Arr& operator = (const Arr& a) { arr = a.arr; return *this; }
-	Int size() const override { return static_cast<Int>(arr->size()); }
-	std::vector<Flow> elements() override {
-		std::vector<Flow> ret;
-		ret.reserve(arr->size());
-		for (T x : *arr) {
-			ret.push_back(ToFlow<T>::conv(x));
-		}
-		return ret;
-	}
-	Flow element(Int i) override {
-		return ToFlow<T>::conv(arr->at(i));
-	}
-	Int compare(Arr a) const { 
-		Int c1 = Compare<Int>::cmp(arr->size(), a.arr->size());
-		if (c1 != 0) {
-			return c1;
-		} else {
-			for (std::size_t i = 0; i < arr->size(); ++ i) {
-				Int c2 = Compare<T>::cmp(arr->at(i), a.arr->at(i));
-				if (c2 != 0) {
-					return c2;
-				}
-			}
-			return 0;
-		}
-	}
 	bool isSameObj(Arr a) const { return arr.get() == a.arr.get(); }
 	template<typename T1>
 	Arr<T1> cast() {
-		return std::reinterpret_pointer_cast<typename Arr<T1>::Vect>(arr);
+		return std::reinterpret_pointer_cast<Array<T1>>(arr);
 	}
 
-	Ptr<Vect> arr;
+	Ptr<Array<T>> arr;
 };
 
 template<typename T> 
@@ -486,7 +457,7 @@ struct Nat : public ANative {
 
 template<typename T> Flow::Flow(Str<T> s): val(std::static_pointer_cast<AStruct>(s.str)) { }
 template<typename T> Flow::Flow(Ref<T> r): val(std::make_shared<Ref<T>>(r)) { }
-template<typename T> Flow::Flow(Arr<T> a): val(std::make_shared<Arr<T>>(a)) { }
+template<typename T> Flow::Flow(Arr<T> a): val(std::static_pointer_cast<AArray>(a.arr)) { }
 template<typename T> Flow::Flow(Nat<T> n): val(std::make_shared<Nat<T>>(n)) { }
 template<typename R, typename... As> Flow::Flow(Fun<R, As...> f): val(std::make_shared<Fun<R, As...>>(f)) { }
 
@@ -574,7 +545,7 @@ template<> struct ToFlow<Union> {
 	static Flow conv(Union u) { return Flow(u.un); }
 };
 template<typename T> struct ToFlow<Arr<T>> {
-	static Flow conv(Arr<T> a) { return Ptr<AArray>(new Arr<T>(a)); }
+	static Flow conv(Arr<T> a) { return std::static_pointer_cast<AArray>(a.arr); }
 };
 template<typename T> struct ToFlow<Str<T>> {
 	static Flow conv(Str<T> s) { return std::static_pointer_cast<AStruct>(s.str); }
@@ -638,21 +609,22 @@ template<> struct FromFlow<Union> {
 };
 template<typename T> struct FromFlow<Arr<T>> {
 	static Arr<T> conv(Flow f) { 
-		return std::dynamic_pointer_cast<typename Arr<T>::Vect>(f.toArray());
+		return std::dynamic_pointer_cast<Array<T>>(f.toArray());
 	}
 };
 
 template<> struct FromFlow<Arr<Flow>> {
-	static Arr<Flow> conv(Flow f) { 
-		return f.toArray()->elements();
+	static Arr<Flow> conv(Flow f) {
+		std::vector<Flow> elems = f.toArray()->elements();
+		return Arr<Flow>(std::make_shared<Array<Flow>>(elems));
 	}
 };
 template<> struct FromFlow<Arr<Arr<Flow>>> {
 	static Arr<Arr<Flow>> conv(Flow f) { 
-		Arr<Flow> arrays = f.toArray()->elements();
-		Arr<Arr<Flow>> ret(arrays.size());
-		for (Flow x : *arrays.arr) {
-			ret.arr->push_back(FromFlow<Arr<Flow>>::conv(x));
+		std::vector<Flow> elems = f.toArray()->elements();
+		Arr<Arr<Flow>> ret(elems.size());
+		for (Flow x : elems) {
+			ret->vect.push_back(FromFlow<Arr<Flow>>::conv(x));
 		}
 		return ret;
 	}
@@ -853,7 +825,7 @@ template<> struct Compare<Union> {
 
 template<typename T>
 struct Compare<Arr<T>> {
-	static Int cmp(Arr<T> v1, Arr<T> v2) { return v1.compare(v2); }
+	static Int cmp(Arr<T> v1, Arr<T> v2) { return v1->compare(*v2); }
 };
 
 template<typename T>
