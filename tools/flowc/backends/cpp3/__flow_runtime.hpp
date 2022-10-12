@@ -309,6 +309,54 @@ Union struct2union(Str<typename From::Name> from) {
 }
 
 template<typename T> 
+struct Array : public AArray {
+	typedef std::vector<T> Vect;
+	Array(): arr(new Vect()) { }
+	Array(std::size_t s): arr(new Vect()) { arr->reserve(s); }
+	Array(std::initializer_list<T> il): arr(new Vect(il)) { }
+	Array(const Array& a): arr(a.arr) { }
+	//Array(Array&& a): arr(std::move(a.arr)) { }
+	//Array(const Vect& v): arr(new Vect(v)) { }
+	//Array(Vect* v): arr(v) { }
+	//Array(Ptr<Vect>&& v): arr(std::move(v)) { }
+	//Array& operator = (Array&& a) { arr = std::move(a.arr); return *this; }
+	//Array& operator = (const Array& a) { arr = a.arr; return *this; }
+	Int size() const override { return static_cast<Int>(arr->size()); }
+	std::vector<Flow> elements() override {
+		std::vector<Flow> ret;
+		ret.reserve(arr->size());
+		for (T x : *arr) {
+			ret.push_back(ToFlow<T>::conv(x));
+		}
+		return ret;
+	}
+	Flow element(Int i) override {
+		return ToFlow<T>::conv(arr->at(i));
+	}
+	Int compare(Array a) const { 
+		Int c1 = Compare<Int>::cmp(arr->size(), a.arr->size());
+		if (c1 != 0) {
+			return c1;
+		} else {
+			for (std::size_t i = 0; i < arr->size(); ++ i) {
+				Int c2 = Compare<T>::cmp(arr->at(i), a.arr->at(i));
+				if (c2 != 0) {
+					return c2;
+				}
+			}
+			return 0;
+		}
+	}
+	bool isSameObj(Array a) const { return arr.get() == a.arr.get(); }
+	template<typename T1>
+	Array<T1> cast() {
+		return std::reinterpret_pointer_cast<typename Array<T1>::Vect>(arr);
+	}
+
+	Ptr<Vect> arr;
+};
+
+template<typename T> 
 struct Arr : public AArray {
 	typedef std::vector<T> Vect;
 	Arr(): arr(new Vect()) { }
@@ -412,6 +460,8 @@ struct Fun : public AFunction {
 
 	Ptr<Fn> fn;
 };
+
+
 
 template<typename N>
 struct Nat : public ANative {
