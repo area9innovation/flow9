@@ -1,6 +1,6 @@
 package com.area9innovation.flow;
 
-class BluetoothSupport {
+class BluetoothSupport extends NativeHost {
     /*public static new {}
 
     public static static __init__() {

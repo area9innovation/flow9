@@ -3,13 +3,16 @@ import lingo/compiler/syntaxtree_util;
 import tools/flowc/backends/common;
 import tools/flowc/backends/java/parser/java_parser;
 import tools/flowc/backends/java/parser/java_ast;
+import tools/flowc/backends/java/fi2java_defines;
 
 export {
-	// Parse all java files with classes derived from 'NativeHost' from config and find all their public methods.
-	fi2javaNatives(cfg : FiJavaConfig) -> Tree<string, Set<string>>;
+	// Organize runtime files for a current program:
+	// - Parse all java files with classes derived from 'NativeHost' from config and find all their public methods.
+	// - Gather all other files, which form a runtime
+	fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime;
 }
 
-fi2javaNatives(cfg : FiJavaConfig) -> Tree<string, Set<string>> {
+fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
 	flow_dir = getFlowDir();
 	lib_natives = pathCombineMany([flow_dir, "platforms", "java", "com", "area9innovation", "flow"]);
 	extern_native_dirs = filtermap(cfg.externNatives, \nat -> {
@@ -22,29 +25,32 @@ fi2javaNatives(cfg : FiJavaConfig) -> Tree<string, Set<string>> {
 		}
 	});
 	native_dirs = concat([lib_natives], extern_native_dirs);
-	fold(native_dirs, makeTree(), \acc, native_dir ->
+	fold(native_dirs, JavaRuntime(makeTree(), makeSet()), \acc, native_dir ->
 		fold(readDirectoryRecursively(native_dir), acc, \ac, file ->
 			if (!endsWith(file, ".java")) ac else {
 				code = getFileContent(file);
-				name = changeFileExt(fileNameOnly(file), "");
 				if (code == "") {
 					fcPrintln("empty source code for file: " + file, cfg.threadId);
 					ac;
 				} else {
-					if (name == "NativeHost" || !strContains(code, "NativeHost")) ac else {
+					name = changeFileExt(fileNameOnly(file), "");
+					if (name == "NativeHost" || name == "FlowRuntime" || !strContains(code, "NativeHost")) {
+						JavaRuntime(ac.natives, insertSet(ac.classes, name));
+					} else {
 						res = parse_Compilation(code);
 						ast = res.first;
 						err = res.second;
 						if (ast.rule == -1) {
-							println(
+							fcPrintln(
 								"Error wile parsing file: '" + file + "', pos: " + i2s(err.pos) + ", met: '" + err.met + "', expected: '" + strGlue(err.expected, ", ") + "' in:\n" +
-								fi2javaShowPos(code, err.pos)
+								fi2javaShowPos(code, err.pos),
+								cfg.threadId
 							);
 							ac;
 						} else {
 							natives = fi2javaNativesFromAst(ast, code);
 							if (length(natives) == 0) ac else {
-								setTree(ac, name, buildSet(natives));
+								JavaRuntime(setTree(ac.natives, name, buildSet(natives)), ac.classes);
 							}
 						}
 					}
