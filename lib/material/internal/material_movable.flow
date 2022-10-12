@@ -121,10 +121,12 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 	onCreate = extractStruct(style, MResizableOnCreate(minMax.max)).size;
 	controlOnStart = contains(style, MResizableControlOnStart());
 	availableWH : DynamicBehaviour<WidthHeight> = make(WidthHeight(100., 100.));
+	customHandler = tryExtractStruct(style, MCustomHandler(\__ -> TEmpty()));
+	updateMovable = tryExtractStruct(style, MUpdateMovable(makePoint()));
 
 	mouseDown = make(false);
+	mouseDownLT = make(false);
 	mouseXY = make(zeroPoint);
-	startPoint = ref zeroPoint;
 	minWH = makeWH();
 	maxWH = makeWH();
 	createWH = makeWH();
@@ -138,39 +140,45 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 			)
 		);
 
+	makeHandler = \p, reversed ->
+		TRectangle(interactiveRectangleStyle, TFixed(10., 10.))
+		|> (\f2 ->
+			TGroup2(
+				f2,
+				eitherMap(
+					customHandler,
+					\ch -> m2t(ch.makeHandler(reversed), p),
+					TGraphics(
+						if (reversed)
+							[
+								LineTo(9., 9.),
+								MoveTo(0., 4.),
+								LineTo(5., 9.)
+							]
+						else
+							[
+								MoveTo(0., 9.),
+								LineTo(9., 0.),
+								MoveTo(4., 9.),
+								LineTo(9., 4.)
+							],
+						[
+							StrokeOpacity(1.),
+							Stroke(black),
+							FillOpacity(0.)
+						]
+					)
+				)
+			)
+		);
 
 	(\p -> {
 		reversed = p.rtl != controlOnStart;
 		TDisplay("MResizableContent")
 		|> (\f ->
-			TGroup2(
+			TGroup([
 				f,
-				TRectangle(interactiveRectangleStyle, TFixed(10., 10.))
-				|> (\f2 ->
-					TGroup2(
-						f2,
-						TGraphics(
-							if (reversed)
-								[
-									LineTo(9., 9.),
-									MoveTo(0., 4.),
-									LineTo(5., 9.)
-								]
-							else
-								[
-									MoveTo(0., 9.),
-									LineTo(9., 0.),
-									MoveTo(4., 9.),
-									LineTo(9., 4.)
-								],
-							[
-								StrokeOpacity(1.),
-								Stroke(black),
-								FillOpacity(0.)
-							]
-						)
-					)
-				)
+				makeHandler(p, reversed)
 				|> (\f2 ->
 					TInteractive(
 						[
@@ -182,8 +190,18 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 				// |> (\f2 -> TCursor(MoveCursor, f2))
 				|> (\f2 -> TCols2Dir(TFillX(), f2, reversed))
 				|> (\f2 -> TLines2(TFillY(), f2))
+				|> (\f2 -> TAvailable(f2, TGhost("MResizableContent"))),
+				makeHandler(p, reversed)
+				|> (\f2 ->
+					TInteractive(
+						[
+							TMouseDown(mouseDownLT)
+						],
+						f2
+					)
+				)
 				|> (\f2 -> TAvailable(f2, TGhost("MResizableContent")))
-			)
+			])
 		)
 		|> (\f -> TAvailable(f, TSized(availableWH)))
 		|> (\f -> TInteractive([TMouseXY(mouseXY)], f))
@@ -196,11 +214,22 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 			TConstruct(
 				[
 					makeSubscribe(mouseDown, \md -> if (md) addMInteractionItemId(manager, resizableId)),
-					makeSubscribe2(mouseXY, \xy ->
-						if (isCurrentMInteractionItemId(manager, resizableId) && getValue(mouseDown)) {
-							blockOtherMInteractionItemIds(manager, resizableId);
-							avX = if (reversed) getValue(availableWH).width - xy.x else xy.x;
-							updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, xy.y))
+					makeSubscribe(mouseDownLT, \md -> if (md) addMInteractionItemId(manager, resizableId)),
+					makeSubscribe2(fstall(mouseXY, 100), \xy ->
+						if (isCurrentMInteractionItemId(manager, resizableId)) {
+							if (getValue(mouseDown)) {
+								blockOtherMInteractionItemIds(manager, resizableId);
+								avX = if (reversed) getValue(availableWH).width - xy.x else xy.x;
+								updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, xy.y))
+							} else if (getValue(mouseDownLT)) {
+								blockOtherMInteractionItemIds(manager, resizableId);
+								avX = if (reversed) xy.x else getValue(availableWH).width - xy.x;
+								avY = getValue(availableWH).height - xy.y;
+								maybeApply(updateMovable, \um ->
+									nextDistinct(um.leftTop, Point(getValue(um.leftTop).x + xy.x, getValue(um.leftTop).y + xy.y))
+								);
+								updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, avY))
+							}
 						}
 					),
 					\ -> {updateWidthHeight(getValue(minWH), getValue(maxWH), getValue(createWH)); nop},
