@@ -1,12 +1,11 @@
-import ds/arrayutils;
-import ds/tree;
+import ds/hashmap;
 
 export {
 	// Specialized version of general associaitive container with integer keys.
 	// Optimized for performance.
 	// As a fallback uses a hash map.
 
-	IntMap : (map : native, __ : [?]);
+	IntMap : (map : native, __: [?]);
 
 	// Creates a int map with a given hash function.
 	makeIntMap(capacity: int) -> IntMap<?>;
@@ -55,21 +54,6 @@ export {
 
 	equalsIntMap(h1 : IntMap<?>, h2 : IntMap<?>) -> bool;
 }
-
-// On java: wrapper around IntMap - has native implementation. NOT thread-safe. 
-//    About x2 of performance, compared with flow implementation (x10 compared with Tree).
-// On other platforms: flow implementation of int map.
-//    About x5 of performance, compared with Tree<int, ?> or Tree<string, ?>
-
-native makeNativeIntMap : (cap: int) -> native = NativeIntMap.init;
-native setNativeIntMap : (m : native, key : int, value : ?) -> void = NativeIntMap.set;
-native getNativeIntMap : (m : native, key : int) -> Maybe<?> = NativeIntMap.get;
-native removeNativeIntMap : (m : native, key : int) -> void = NativeIntMap.remove;
-native containsNativeIntMap : (m : native, key : int) -> bool = NativeIntMap.contains;
-native sizeNativeIntMap : (m : native) -> int = NativeIntMap.size;
-native clearNativeIntMap : (m : native) -> void = NativeIntMap.clear;
-native cloneNativeIntMap : (m : native) -> native = NativeIntMap.clone;
-native iterNativeIntMap : (m : native, f : (int, ?) -> void) -> void = NativeIntMap.iter;
 
 sizeIntMap(intMap : IntMap<?>) -> int {
 	sizeNativeIntMap(intMap.map);
@@ -198,125 +182,52 @@ equalsIntMap(h1 : IntMap<?>, h2 : IntMap<?>) -> bool {
 	}
 }
 
-// FALLBACKS FOR NON-NATIVE IMPLEMENTATION
+// Currently natives are implemented only for JS platform
 
-// A hash table, containing key-value pairs: IntMapImpl<?, ??>.
-// USE WITH CAUTION, because it is a mutable data structure,
-// so calls of set/remove functions change their arguments.
-//
-// Tests (tools/flowc/tests/ds/hashmap_test) show, that it is approx. 
-// 5 times faster for integer and string keys, then Tree<?, ??>.
-//
-// Hash collisions are handled with conventional Tree<?, ??> data structure. 
-IntMapImpl(
-	data : ref [ref Tree<int, ??>],
-	size : ref int
-);
+native makeNativeIntMap : (cap: int) -> native = NativeIntMap.init;
+native setNativeIntMap : (m : native, key : int, value : ?) -> void = NativeIntMap.set;
+native getNativeIntMap : (m : native, key : int) -> Maybe<?> = NativeIntMap.get;
+native removeNativeIntMap : (m : native, key : int) -> void = NativeIntMap.remove;
+native containsNativeIntMap : (m : native, key : int) -> bool = NativeIntMap.contains;
+native sizeNativeIntMap : (m : native) -> int = NativeIntMap.size;
+native clearNativeIntMap : (m : native) -> void = NativeIntMap.clear;
+native cloneNativeIntMap : (m : native) -> native = NativeIntMap.clone;
+native iterNativeIntMap : (m : native, f : (int, ?) -> void) -> void = NativeIntMap.iter;
 
+// FALLBACKS FOR NON-NATIVE IMPLEMENTATION - USE HASH MAP
 
 sizeNativeIntMap(hm : native) -> int {
-	impl = cast(flow(hm) : flow -> IntMapImpl);
-	^(impl.size);
+	sizeHashMap(cast(flow(hm) : flow -> HashMap<int, ?>));
 }
 
 clearNativeIntMap(hm : native) -> void {
-	impl = cast(flow(hm) : flow -> IntMapImpl);
-	impl.size := 0;
-	impl.data := arrayRepeatDeferred(\ -> ref makeTree(), length(^(impl.data)));
+	clearHashMap(cast(flow(hm) : flow -> HashMap<int, ?>));
 }
 
 makeNativeIntMap(init_capacity : int) -> native {
-	flow(IntMapImpl(ref arrayRepeatDeferred(\ -> ref makeTree(), init_capacity), ref 0));
+	flow(makeHashMapCap(idfn, init_capacity));
 }
 
 getNativeIntMap(hm : native, key : int) -> Maybe<?> {
-	intMap = cast(flow(hm) : flow -> IntMapImpl);
-	index = intMapIndex(intMap, key);
-	if (index >= 0) {
-		lookupTree(^(^(intMap.data)[index]), key);
-	} else {
-		None();
-	}
+	lookupHashMap(cast(flow(hm) : flow -> HashMap<int, ?>), key);
 }
 
 containsNativeIntMap(hm : native, key : int) -> bool {
-	intMap = cast(flow(hm) : flow -> IntMapImpl);
-	index = intMapIndex(intMap, key);
-	index >= 0 && containsKeyTree(^(^(intMap.data)[index]), key);
+	containsKeyHashMap(cast(flow(hm) : flow -> HashMap<int, ?>), key);
 }
 
 setNativeIntMap(hm : native, key : int, value : ?) -> void {
-	intMap = cast(flow(hm) : flow -> IntMapImpl);
-	resizeIntMapOnDemand(intMap);
-	i = intMapIndex(intMap, key);
-	if (i >= 0) {
-		bucket = ^(^(intMap.data)[i]);
-		switch (lookupTree(bucket, key)) {
-			Some(__): { }
-			None(): intMap.size := ^(intMap.size) + 1;
-		}
-		^(intMap.data)[i] := setTree(bucket, key, value);
-	}
-}
-
-resizeIntMapOnDemand(intMap : IntMapImpl<?, ??>) -> void {
-	if (i2d(^(intMap.size) + 1) > i2d(length(^(intMap.data))) * 0.75) {
-		// Double the size of the data vector
-		resized_data = arrayRepeatDeferred(\ -> ref makeTree(), length(^(intMap.data)) * 2);
-		iter(^(intMap.data), 
-			\bucket -> {
-				traverseInOrder(^bucket, \key, value -> {
-						i = intMapDataIndex(resized_data, key);
-						if (i >= 0)
-							resized_data[i] := setTree(^(resized_data[i]), key, value);
-					}
-				)
-			}
-		);
-		intMap.data := resized_data;
-	}
+	setHashMap(cast(flow(hm) : flow -> HashMap<int, ?>), key, value);
 }
 
 removeNativeIntMap(hm : native, key : int) -> void {
-	intMap = cast(flow(hm) : flow -> IntMapImpl);
-	i = intMapIndex(intMap, key);
-	if (i >= 0) {
-		bucket = ^(^(intMap.data)[i]);
-		switch (lookupTree(bucket, key)) {
-			Some(__): intMap.size := ^(intMap.size) - 1;
-			None(): { }
-		}
-		^(intMap.data)[i] := removeFromTree(bucket, key);
-	}
+	removeFromHashMap(cast(flow(hm) : flow -> HashMap<int, ?>), key);
 }
 
 iterNativeIntMap(hm : native, fn : (key : int, value : ?) -> void) -> void {
-	intMap = cast(flow(hm) : flow -> IntMapImpl);
-	iter(^(intMap.data), \tree -> traverseInOrder(^tree, \key, value -> fn(key, value)));
-}
-
-intMapIndex(intMap : IntMapImpl<?>, key : int) -> int {
-	intMapDataIndex(^(intMap.data), key);
-}
-
-intMapDataIndex(data : [ref Tree<int, ?>], key : int) -> int {
-	len = length(data);
-	if (len > 0) {
-		i = key % length(data);
-		if (i < 0) {
-			i + length(data);
-		} else {
-			i
-		}
-	} else {
-		-1
-	}
+	iterHashMap(cast(flow(hm) : flow -> HashMap<int, ?>), fn);
 }
 
 cloneNativeIntMap(hm : native) -> native {
-	intMap = cast(flow(hm) : flow -> IntMapImpl);
-	flow(IntMapImpl(
-		ref map(^(intMap.data), \t -> ref (^t)),
-		ref ^(intMap.size)
-	));
+	flow(copyHashMap(cast(flow(hm) : flow -> HashMap<int, ?>)));
 }
