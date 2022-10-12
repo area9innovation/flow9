@@ -2,7 +2,7 @@ package com.area9innovation.flow;
 
 import java.io.*;
 
-public final class FastCgiMessage extends NativeHost {
+public final class FastCgiMessage {
     public static final byte VERSION = 1;
     public static final int HEADER_LENGTH = 8;
     public static final int END_REQUEST_BODY_LENGTH = 8;
