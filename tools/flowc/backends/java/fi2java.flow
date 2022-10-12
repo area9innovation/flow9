@@ -2,7 +2,7 @@ import tools/common/prog_version;
 import tools/flowc/manipulation/flatten_unions;
 import tools/flowc/backends/java/fi2java_compile;
 import tools/flowc/backends/java/fi2java_main;
-import tools/flowc/backends/java/fi2java_natives;
+import tools/flowc/backends/java/fi2java_runtime;
 import tools/flowc/backends/java/fi2jar_raw;
 import tools/flowc/backends/java/fi2jar_gradle;
 
@@ -34,7 +34,14 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> vo
 			pathCombineMany(concat([cfg.generatedir, fileNameOnly(changeFileExt(cfg.jarfile, "")), "src", "main", "java"], strSplit(cfg.packageName, ".")));
 		}
 		ensureDirectoryExists(package_path);
+		java_start = timestamp();
+		translate_start = timestamp();
 		gcontext = fi2javaTranslate(program, cfg, package_path);
+		translate_time = timestamp() - translate_start;
+		print_timephase = \label, time -> {
+			total = timestamp() - java_start;
+			fcPrintln(label + ": " + d2st(time / total * 100.0, 1) + "% (" + d2st(time / 1000.0, 2) + "s)", cfg.threadId);
+		}
 
 		if (length(gcontext.errors) > 0) {
 			callback(5);
@@ -44,11 +51,26 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> vo
 				callback(5);
 			} else {
 				if (cfg.jarfile != "") {
+					build_start = timestamp();
 					if (fi2javaCheckJavaVersion(cfg)) {
 						if (cfg.builder == "gradle") {
-							fi2javaBuildWithGradle(cfg, callback);
+							fi2javaBuildWithGradle(cfg, gcontext.uses_host, gcontext.runtime, \code -> {
+								build_time = timestamp() - build_start;
+								if (isConfigParameterTrue(cfg.options, "java-timephases")) {
+									print_timephase("Translate ", translate_time);
+									print_timephase("Build     ", build_time);
+								}
+								callback(code)
+							});
 						} else {
-							fi2JavaBuildRaw(cfg, package_path, callback);
+							fi2JavaBuildRaw(cfg, package_path, \code -> {
+								build_time = timestamp() - build_start;
+								if (isConfigParameterTrue(cfg.options, "java-timephases")) {
+									print_timephase("Translate ", translate_time);
+									print_timephase("Build     ", build_time);
+								}
+								callback(code)
+							});
 						}
 					} else {
 						callback(5);
@@ -80,13 +102,13 @@ fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string)
 	gcontext = JavaGlobalContext(
 		cfg, program, package_path,
 		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
+		fi2javaRuntime(cfg), // runtime
 		makeTree(), // globals
 		makeTree(), // globalFuncs
-		fi2javaNatives(cfg), // natives
 		makeSet(), // missing_natives
 		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)), // has_func_def
 		makeTree(), // has_field_accessor
-		makeTree(), // uses_host
+		makeSet(), // uses_host
 		ref makeList(), // init_code
 		ref makeList(), // wrapper_code
 		ref makeList(), // native wrapper_code
