@@ -15,7 +15,7 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 	origin = extractStruct(m.style, MMovableOrigin(const(Factor(0., 0.)))).origin;
 
 	isDragging = make(false);
-	mouseXY = make(zeroPoint);
+	mouseXY = extractStruct(m.style, MMousePosition(make(zeroPoint))).point;
 	mouseXYLocal = make(zeroPoint);
 	cursorPosition = ref zeroPoint;
 
@@ -122,7 +122,7 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 	controlOnStart = contains(style, MResizableControlOnStart());
 	availableWH : DynamicBehaviour<WidthHeight> = make(WidthHeight(100., 100.));
 	customHandler = tryExtractStruct(style, MCustomHandler(\__ -> TEmpty()));
-	updateMovable = tryExtractStruct(style, MUpdateMovable(makePoint()));
+	updateMovable = tryExtractStruct(style, MUpdateMovable(makePoint(), makePoint()));
 
 	mouseDown = make(false);
 	mouseDownLT = make(false);
@@ -212,29 +212,38 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 		|> (\f -> TLet("MResizableContent", m2t(m.content, p), f))
 		|> (\f ->
 			TConstruct(
-				[
-					makeSubscribe(mouseDown, \md -> if (md) addMInteractionItemId(manager, resizableId)),
-					makeSubscribe(mouseDownLT, \md -> if (md) addMInteractionItemId(manager, resizableId)),
-					makeSubscribe2(fstall(mouseXY, 100), \xy ->
-						if (isCurrentMInteractionItemId(manager, resizableId)) {
-							if (getValue(mouseDown)) {
-								blockOtherMInteractionItemIds(manager, resizableId);
-								avX = if (reversed) getValue(availableWH).width - xy.x else xy.x;
-								updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, xy.y))
-							} else if (getValue(mouseDownLT)) {
-								blockOtherMInteractionItemIds(manager, resizableId);
-								avX = if (reversed) xy.x else getValue(availableWH).width - xy.x;
-								avY = getValue(availableWH).height - xy.y;
-								maybeApply(updateMovable, \um ->
-									nextDistinct(um.leftTop, Point(getValue(um.leftTop).x + xy.x, getValue(um.leftTop).y + xy.y))
-								);
-								updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, avY))
+				concat([
+						makeSubscribe(mouseDown, \md -> if (md) addMInteractionItemId(manager, resizableId)),
+						makeSubscribe(mouseDownLT, \md -> if (md) addMInteractionItemId(manager, resizableId)),
+						makeSubscribe2(mouseXY, \xy ->
+							if (isCurrentMInteractionItemId(manager, resizableId)) {
+								if (getValue(mouseDown)) {
+									blockOtherMInteractionItemIds(manager, resizableId);
+									avX = if (reversed) getValue(availableWH).width - xy.x else xy.x;
+									updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, xy.y))
+								}
 							}
-						}
-					),
-					\ -> {updateWidthHeight(getValue(minWH), getValue(maxWH), getValue(createWH)); nop},
-					make3Subscribe(minWH, maxWH, availableWH, updateWidthHeight)
-				],
+						),
+						\ -> {updateWidthHeight(getValue(minWH), getValue(maxWH), getValue(createWH)); nop},
+						make3Subscribe(minWH, maxWH, availableWH, updateWidthHeight)
+					],
+					eitherMap(
+						updateMovable3, \um ->
+							[makeSubscribe2(um.mousePosition, \mousePos ->
+								if (isCurrentMInteractionItemId(manager, resizableId) && getValue(mouseDownLT)) {
+									blockOtherMInteractionItemIds(manager, resizableId);
+									prevLT = getValue(um.leftTop);
+									dx = mousePos.x - prevLT.x;
+									dy = mousePos.y - prevLT.y;
+									avX = getValue(availableWH).width - dx;
+									avY = getValue(availableWH).height - dy;
+									nextDistinct(um.leftTop, mousePos);
+									updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, avY))
+								}
+							)],
+						[]
+					)
+				),
 				f
 			)
 		)
