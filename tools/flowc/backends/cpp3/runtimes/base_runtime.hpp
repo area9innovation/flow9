@@ -299,17 +299,15 @@ template<typename From>
 Union struct2union(Str<typename From::Name> from) {
 	return std::static_pointer_cast<AStruct>(from.str);
 }
-
 template<typename T> 
 struct Array : public AArray {
 	typedef std::vector<T> Vect;
 	Array(std::size_t s): vect() { vect.reserve(s); }
 	Array(std::initializer_list<T> il): vect(il) { }
-	static Ptr<Array> init(std::size_t s) { return std::make_shared<Array>(s); }
-	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
 	Array(const Array& a): vect(a.vect) { }
 	Array(const Vect& v): vect(v) { }
 	Array(Vect&& v): vect(std::move(v)) { }
+	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
 
 	Int size() const override { return static_cast<Int>(vect.size()); }
 	std::vector<Flow> elements() override {
@@ -342,15 +340,14 @@ struct Array : public AArray {
 
 template<typename T> 
 struct Arr {
-	//Arr(): arr(Array<T>::init(8)) {}
 	Arr(): arr() { }
 	Arr(std::initializer_list<T> il): arr(std::move(std::make_shared<Array<T>>(il))) { }
 	Arr(Ptr<Array<T>>&& a): arr(std::move(a)) { }
 	Arr(const Arr& a): arr(a.arr) { }
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
+	Arr(std::size_t s): arr(std::move(std::make_shared<Array<T>>(s))) { }
 	static Arr makeEmpty() { return Arr(std::make_shared<Array<T>>(0)); }
 
-	Arr(std::size_t s): arr(std::move(Array<T>::init(s))) { }
 	Array<T>& operator *() { return arr.operator*(); }
 	Array<T>* operator ->() { return arr.operator->(); }
 	Array<T>* get() { return arr.get(); }
@@ -373,7 +370,6 @@ template<typename T>
 struct Ref : public AReference {
 	Ref() { }
 	Ref(const T& r): ref(std::make_shared<T>(r)) { }
-	//Ref(T r): ref(std::make_shared<T>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
 	Ref(Ptr<T>&& r): ref(std::move(r)) { }
 	Ref(const Ptr<T>& r): ref(r) { }
@@ -577,8 +573,8 @@ template<> struct FromFlow<Union> {
 	static Union conv(Flow f) { return f.toStruct(); }
 };
 template<typename T> struct FromFlow<Arr<T>> {
-	static Arr<T> conv(Flow f) { 
-		return std::dynamic_pointer_cast<Array<T>>(f.toArray());
+	static Arr<T> conv(Flow f) {
+		return std::reinterpret_pointer_cast<Array<T>>(f.toArray());
 	}
 };
 
@@ -603,10 +599,10 @@ template<typename T> struct FromFlow<Str<T>> {
 	static Str<T> conv(Flow f) { return dynamic_pointer_cast<T>(f.toStruct()); }
 };
 template<typename T> struct FromFlow<Ref<T>> {
-	static Ref<T> conv(Flow f) { return *dynamic_pointer_cast<Ref<T>>(f.toReference()); }
+	static Ref<T> conv(Flow f) { return *reinterpret_pointer_cast<Ref<T>>(f.toReference()); }
 };
 template<typename R, typename... As> struct FromFlow<Fun<R, As...>> {
-	static Fun<R, As...> conv(Flow f) { return *dynamic_pointer_cast<Fun<R, As...>>(f.toFunction()); }
+	static Fun<R, As...> conv(Flow f) { return *reinterpret_pointer_cast<Fun<R, As...>>(f.toFunction()); }
 };
 
 
@@ -677,17 +673,17 @@ template<> struct Cast<Flow>::To<Union> {
 };
 template<typename T> struct Cast<Flow>::To<Arr<T>> { 
 	Arr<T> conv(Flow x) {
-		return *std::dynamic_pointer_cast<Arr<T>>(x.toArray()); 
+		return *std::reinterpret_pointer_cast<Arr<T>>(x.toArray()); 
 	} 
 };
 template<typename T> struct Cast<Flow>::To<Ref<T>> { 
 	Ref<T> conv(Flow x) { 
-		return *std::dynamic_pointer_cast<Ref<T>>(x.toReference()); 
+		return *std::reinterpret_pointer_cast<Ref<T>>(x.toReference()); 
 	} 
 };
 template<typename R, typename... As> struct Cast<Flow>::To<Fun<R, As...>> { 
 	Fun<R, As...> conv(Flow x) { 
-		return *std::dynamic_pointer_cast<Fun<R, As...>>(x.toFunction());
+		return *std::reinterpret_pointer_cast<Fun<R, As...>>(x.toFunction());
 	} 
 };
 
