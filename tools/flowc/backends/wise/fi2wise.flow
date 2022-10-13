@@ -199,27 +199,36 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, structs : StructTuple) -> Flow
 		println("TODO FlowWiExp: " + toString(exp));
 		FlowWiBrace([]);
 	}
-	resloveVarName = \name -> lookupTreeDef(^(state.flowWiNatives), name, name);
+	getTemplateRealTypes = \fnName, fnArgTypes, fnRetType -> {
+		maybeMap(
+			lookupTree(^(state.polyFns), fnName),
+			unpairC(\fnTypes, templates -> {
+				declRealTypes = matchFnTypes(fnTypes, fnArgTypes, fnRetType);
+				map(getTreeKeys(templates), \t -> fiType2FlowWiType(lookupTreeDef(declRealTypes, t, FiTypeFlow()), structs));
+			})
+		);
+	}
+	resloveVar = \name, type -> {
+		// TODO: islocal ? (shadowing)
+		id = lookupTreeDef(^(state.flowWiNatives), name, name);
+		newVar = FlowWiVar(id);
+		switch (type : FiType) {
+			FiTypeFunction(args, returnType) : eitherMap(
+				getTemplateRealTypes(id, map(args, \a -> a.type), returnType),
+				\realTypes -> FlowWiPolyCall(newVar, realTypes),
+				newVar
+			);
+			default : newVar;
+		}
+	}
 	e2e = \e -> fiExp2FlowWiExp(state, e, structs);
 	switch (exp : FiExp) {
 		FiLambda(args, body, type, start) : makeDefExp();
 		FiCall(f, args, type, start) : {
-			fnName = extractFiVarNameFromFiExp(f);
-			polyFn = lookupTree(^(state.polyFns), fnName);
-			templates = eitherFn(polyFn, secondOfPair, makeTree);
-			if (isEmptyTree(templates)) {
-				FlowWiCall(resolveWiFnName(e2e(f), args), map(args, e2e));
-			} else {
-				declRealTypes = matchFnTypes(
-					eitherFn(polyFn, firstOfPair, \-> FiTypeFunction([], FiTypeVoid())),
-					map(args, extractFiTypeFromFiExp),
-					type
-				);
-				realTypes = map(getTreeKeys(templates), \t -> fiType2FlowWiType(lookupTreeDef(declRealTypes, t, FiTypeFlow()), structs));
-				FlowWiCall(FlowWiPolyCall(resolveWiFnName(e2e(f), args), realTypes), map(args, e2e));
-			}
+			newFn = resolveWiFnName(e2e(f), args);
+			FlowWiCall(newFn, map(args, e2e));
 		}
-		FiVar(name, type, start) : FlowWiVar(resloveVarName(name));
+		FiVar(name, type, start) : resloveVar(name, type);
 		FiLet(name, type, e1, e2, type2, start) : {
 			FlowWiLet(name, 0, fiType2FlowWiType(type, structs), e2e(e1), FlowWiBrace([e2e(e2)]));
 		}
@@ -747,7 +756,7 @@ wiType2string(type : FlowWiType) -> string {
 		FlowWiBasictype(s) : s; // TODO ?
 		FlowWiFntype(types, returnType) : "(" + strGlue(map(types, wiType2string), ", ") + ") -> " + wiType2string(returnType);
 		FlowWiTupletype(types) : "(" + strGlue(map(types, wiType2string), ", ") + ")";
-		FlowWiArrayType(t) : "auto"; // i32 ?
+		FlowWiArrayType(t) : "i32"; // pointer
 	}
 	
 }

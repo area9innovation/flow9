@@ -1388,6 +1388,12 @@ class TextClip extends NativeWidgetClip {
 		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 		emit('input', newValue);
+
+		if (Platform.isAndroid) {
+			Native.timer(0, function() {
+				RenderSupport.ensureCurrentInputVisible();
+			});
+		}
 	}
 
 	private function onScroll(e : Dynamic) {

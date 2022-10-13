@@ -972,6 +972,10 @@ class RenderSupport {
 	}
 
 	private static inline function calculateMobileTopHeight() {
+		var portraitOrientation = isPortaitOrientation();
+		if (!viewportScaleWorkaroundEnabled && (portraitOrientation ? WindowTopHeightPortrait : WindowTopHeightLandscape) != -1) {
+			return;
+		}
 		var screenSize = getScreenSize();
 
 		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
@@ -985,7 +989,7 @@ class RenderSupport {
 		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
 
 		// Calculate top height only once for each orientation
-		if (isPortaitOrientation()) {
+		if (portraitOrientation) {
 			if (WindowTopHeightPortrait == -1 || viewportScaleWorkaroundEnabled)
 				WindowTopHeightPortrait = topHeight;
 		} else {
@@ -1686,13 +1690,27 @@ class RenderSupport {
 						focused_node.addEventListener("blur", onblur);
 					} else {
 						var mainStage = PixiStage.children[0];
-						mainStage.y = visibleAreaHeight - rect.bottom;
+						var setMainStageY = function(y) {
+							if (mainStage.y != y) {
+								mainStage.y = y;
+								InvalidateLocalStages();
+							}
+						}
+						setMainStageY(mainStage.y + visibleAreaHeight - rect.bottom);
+
 						var onblur : Dynamic = function () {};
 						onblur = function() {
-							mainStage.y = 0;
+							setMainStageY(0);
 							focused_node.removeEventListener("blur", onblur);
 						};
 						focused_node.addEventListener("blur", onblur);
+
+						var onresize : Dynamic = function () {};
+						onresize = function() {
+							setMainStageY(0);
+							Browser.window.removeEventListener("resize", onresize);
+						};
+						Browser.window.addEventListener("resize", onresize);
 					}
 				}
 			}
