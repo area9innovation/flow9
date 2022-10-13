@@ -574,7 +574,22 @@ template<> struct FromFlow<Union> {
 };
 template<typename T> struct FromFlow<Arr<T>> {
 	static Arr<T> conv(Flow f) {
-		return std::reinterpret_pointer_cast<Array<T>>(f.toArray());
+		Ptr<AArray> arr = f.toArray();
+		if (arr->size() == 0) {
+			return Arr<T>::makeEmpty();
+		} else {
+			Arr<T> dyn = std::dynamic_pointer_cast<Array<T>>(arr);
+			if (dyn.arr) {
+				return dyn;
+			} else {
+				std::vector<Flow> elems = f.toArray()->elements();
+				Arr<T> ret(elems.size());
+				for (Flow x : elems) {
+					ret->vect.push_back(FromFlow<T>::conv(x));
+				}
+				return ret;
+			}
+		}
 	}
 };
 
@@ -582,16 +597,6 @@ template<> struct FromFlow<Arr<Flow>> {
 	static Arr<Flow> conv(Flow f) {
 		std::vector<Flow> elems = f.toArray()->elements();
 		return Arr<Flow>(std::make_shared<Array<Flow>>(elems));
-	}
-};
-template<> struct FromFlow<Arr<Arr<Flow>>> {
-	static Arr<Arr<Flow>> conv(Flow f) { 
-		std::vector<Flow> elems = f.toArray()->elements();
-		Arr<Arr<Flow>> ret(elems.size());
-		for (Flow x : elems) {
-			ret->vect.push_back(FromFlow<Arr<Flow>>::conv(x));
-		}
-		return ret;
 	}
 };
 
