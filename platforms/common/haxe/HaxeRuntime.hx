@@ -231,7 +231,174 @@ if (a === b) return true;
 		#end
 	}
 
+	static function toStringCommon(value : Dynamic, ?keepStringEscapes : Bool = false, additionalEscapingFn : String -> String) : String {
+		if (value == null) return "{}";
+
+/*
+		#if flash
+			// Possible return values of the getQualifiedClassName:
+			//   "Array"
+			//   "int" for ints (or defacto doubles that are ints)
+			//   "Number" for doubles
+			//   "Boolean" for bools
+			//   "String"
+			//   "FS_Foo" for structs
+			//   "FlowRefObject" for references
+			//   "builtin.as$0::MethodClosure"  for functions
+			// See the results with this:
+			// flash.external.ExternalInterface.call("console.log", qname1);
+			var qname1 = untyped __global__["flash.utils.getQualifiedClassName"](value);
+			if (qname1 == "int" || qname1 == "Number" || qname1 == "Boolean") {
+				return Std.string(value);
+			}
+		#else*/
+		if (!Reflect.isObject(value)) {
+			return Std.string(value);
+		}
+		//#end
+		if (isArray(value)) {
+			var a : Array<Dynamic> = value;
+			var r = "[";
+			var s = "";
+			for (v in a) {
+				var vc = toStringCommon(v, keepStringEscapes, additionalEscapingFn);
+				r += s + vc;
+				s = ", ";
+			}
+			return r + "]";
+		}
+		if (Reflect.hasField(value, "__v")) {
+			// Reference
+			return "ref " + toStringCommon(value.__v, keepStringEscapes, additionalEscapingFn);
+		}
+		#if (js && readable)
+		if (Reflect.hasField(value, "_name")) {
+			var name = value._name;
+			var structname = name;
+			var id = _structids_.get(name);
+		#else
+		if (Reflect.hasField(value, "_id")) {
+			var id = value._id;
+			var structname = _structnames_.get(id);
+		#end
+			var r = structname + "(";
+
+			if (structname == "DLink") {
+				return r + "...)";
+			}
+
+			var s = "";
+			var args = _structargs_.get(id);
+			var argTypes = _structargtypes_.get(id);
+			// We need to remember the order of the fields
+			for (i in 0...args.length) {
+				var f = args[i];
+				var t = argTypes[i];
+				var v : Dynamic = Reflect.field(value, f);
+				switch (t) {
+					case RTDouble: {
+						r += s + v + ( (Std.int(v) == v) ? ".0" : "" );
+					}
+					case RTArray(arrtype): {
+						if (!isArray(v) || arrtype != RTDouble) r += s + toStringCommon(v, keepStringEscapes, additionalEscapingFn);
+						else {
+							r += s + "[";
+							for (j in 0...v.length)
+								r += ((j > 0) ? ", " : "") + v[j] + ((Std.int(v[j]) == v[j]) ? ".0" : "" );
+							r += "]";
+						}
+					}
+					default:
+						r += s + toStringCommon(v, keepStringEscapes, additionalEscapingFn);
+				}
+				s = ", ";
+			}
+			r += ")";
+			return r;
+		}
+		if (Reflect.isFunction(value)) {
+			return "<function>";
+		}
+
+		try {
+			// OK, it is a string
+			var s : String = value;
+
+			if (!keepStringEscapes) {
+				return additionalEscapingFn(s);
+			} else {
+				StringTools.replace(s, "\\", "\\\\"); // Check if really a string
+
+				return s;
+			}
+		} catch(e : Dynamic) {
+			return "<native>";//haxe.Json.stringify(value);
+		}
+		// #end
+	}
+
 	public static function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return toStringCommon(value, keepStringEscapes, function(s){
+			#if js
+				untyped __js__("
+					  return '\"' + value.replace(/[\\\\\\\"\\n\\t]/g, function (c) {
+						if (c==='\\\\') {
+							return '\\\\\\\\';
+						} else if (c==='\\\"') {
+							return '\\\\\"';
+						} else if (c === '\\n') {
+							return '\\\\n';
+						} else if (c==='\\t') {
+							return '\\\\t';
+						} else {
+							return c;
+						}
+					}) + '\"';
+				");
+			#else
+				s = StringTools.replace(s, "\\", "\\\\");
+				s = StringTools.replace(s, "\"", "\\\"");
+				s = StringTools.replace(s, "\n", "\\n");
+				s = StringTools.replace(s, "\t", "\\t");
+			#end
+			
+			return "\"" + s + "\"";
+		});
+	}
+
+	public static function toStringEscapeControlChars2(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return toStringCommon(value, keepStringEscapes, function(s){
+			#if js
+				untyped __js__("
+  					var re = new RegExp(\"[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]\", \"g\");
+  					return '\"' + value.replace(re, function (c) {
+						if (c==='\\\\') {
+							return '\\\\\\\\';
+						} else if (c==='\\\"') {
+							return '\\\\\"';
+						} else if (c === '\\n') {
+							return '\\\\n';
+						} else if (c==='\\t') {
+							return '\\\\t';
+						} else if (c.length===1 && c.charCodeAt(0)<0x20) {
+							return \"\\\\u\" + c.charCodeAt(0).toString(16).padStart(4, \"0\");
+						} else {
+							return c;
+						}
+					}) + '\"';
+				");
+			#else
+				s = StringTools.replace(s, "\\", "\\\\");
+				s = StringTools.replace(s, "\"", "\\\"");
+				s = StringTools.replace(s, "\n", "\\n");
+				s = StringTools.replace(s, "\t", "\\t");
+			#end
+
+			return "\"" + s + "\"";
+		});
+	}
+
+	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
 		if (value == null) return "{}";
 
 /*
@@ -327,7 +494,8 @@ if (a === b) return true;
 			if (!keepStringEscapes) {
 				#if js
 				untyped __js__("
-					return '\"' + value.replace(/[\\\\\\\"\\n\\t]/g, function (c) {
+  					var re = new RegExp(\"[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]\", \"g\");
+  					return '\"' + value.replace(re, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
@@ -336,6 +504,8 @@ if (a === b) return true;
 							return '\\\\n';
 						} else if (c==='\\t') {
 							return '\\\\t';
+						} else if (c.length===1 && c.charCodeAt(0)<0x20) {
+							return \"\\\\u\" + c.charCodeAt(0).toString(16).padStart(4, \"0\");
 						} else {
 							return c;
 						}
