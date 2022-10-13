@@ -12,7 +12,7 @@ export {
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition, TScrollStep,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled, TScrollSkipInteractivityOnHold;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -29,6 +29,9 @@ export {
 
 		// Do not handle the mouse events, so they are also sent to stuff below
 		TScrollDontHandle();
+		// If tap inside scroll box without moving for more than 200 ms, then interactive state will be withdrawed.
+		// Helpful for scroll inside MDragDrop 
+		TScrollSkipInteractivityOnHold();
 
 		// Disables Mouse Wheel
 		TScrollDisableMouseWheel();
@@ -227,6 +230,10 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	inspectShowScrolling = tryExtractStruct(style, TScrollInspectShowScrolling(make(false)));
 	cropEnabled = extractStruct(style, TScrollCropEnabled(showScrolling)).enabled;
 
+	skipInteractivityOnHold = contains(style, TScrollSkipInteractivityOnHold());
+	currentInteractiveUns = initUnsM();
+	resetCurrentInteractive = \ -> {dispUnsM(currentInteractiveUns); nextDistinct(currentInteractive, None())}
+
 	TransformTAcc2(\t2a -> {
 		boxWH =
 			eitherMap(cropByContent, \crop ->
@@ -304,7 +311,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					fand(showScrolling, enabled),
 					\ -> TScrollHandlePosition(scrollId, manager, style, contentWH, boxWH, scrollPosition, maxWH,
 						currentPoint, xMoving, yMoving, inspectVisible, scrollBound, moving, currentInteractive, downXBar, downYBar,
-						maybeMap(scrollStep, \ss -> ss.step), TRectangle(interactiveRectangleStyle, TSized(boxWH)))
+						maybeMap(scrollStep, \ss -> ss.step), currentInteractiveUns, TRectangle(interactiveRectangleStyle, TSized(boxWH)))
 				),
 				TConstruct(
 					[
@@ -576,12 +583,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 								next(currentPoint, Point(mi.x, mi.y));
 								next(moving, true);
 								nextDistinct(currentInteractive, Some(false));
+								if (skipInteractivityOnHold) {
+									setUnsM(currentInteractiveUns, interruptibleTimer(200, resetCurrentInteractive));
+								}
 								scrollHandle && (getValue(xMoving) || getValue(yMoving))
 							} else {
 								false
 							}
 						}),
-						MouseUp(\__ -> { nextDistinct(currentInteractive, None()); false }),
+						MouseUp(\__ -> { resetCurrentInteractive(); false }),
 						TMouseInside(scrollBoxHover, false)
 					],
 					TRectangle(interactiveRectangleStyle, TSized(boxWH))
@@ -744,7 +754,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	boxWH : Transform<WidthHeight>, scrollPosition : DynamicBehaviour<Point>, maxWH : Transform<WidthHeight>, currentPoint : DynamicBehaviour<Point>,
 	xMoving: DynamicBehaviour<bool>, yMoving : DynamicBehaviour<bool>, inspectVisible : Maybe<TScrollInspectVisible>, scrollBound : TScrollBound,
 	moving : DynamicBehaviour<bool>, currentInteractive : DynamicBehaviour<Maybe<bool>>, downXBar : DynamicBehaviour<bool>,
-	downYBar : DynamicBehaviour<bool>, scrollStep : Maybe<Transform<double>>, tr : Tropic) -> Tropic {
+	downYBar : DynamicBehaviour<bool>, scrollStep : Maybe<Transform<double>>, currentInteractiveUns : ref Maybe<() -> void>, tr : Tropic) -> Tropic {
 	// Disable mouse wheel
 	disableWheel = contains(style, TScrollDisableMouseWheel());
 	// Reverse mouse wheel
@@ -1031,6 +1041,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				false
 			}),
 			IgnoreHitTest(MouseMove2(\h, mi -> {
+				dispUnsM(currentInteractiveUns);
 				if (getValue(moving)) {
 					next(currentPoint, mi() |> (\f -> Point(f.x, f.y)));
 				} else if (isSome(getValue(currentInteractive)) && !getValue(downXBar) && !getValue(downYBar)) {
