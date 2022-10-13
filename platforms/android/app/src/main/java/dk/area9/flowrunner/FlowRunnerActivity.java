@@ -173,10 +173,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
         DisplayMetrics metrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(metrics);
    
-//        http_client = Utils.createHttpClient();
-        String user_agent = "flow Android " + Build.VERSION.RELEASE + 
-                " dpi=" + metrics.densityDpi + " " + metrics.widthPixels + "x" + metrics.heightPixels;
-//        http_client.getParams().setParameter("User-Agent", user_agent);
+        String user_agent = (Build.BRAND + "[" + Build.MODEL + "]").replace(' ', '_') + "/" + Build.VERSION.RELEASE + " " + Build.VERSION.INCREMENTAL + "(Android)" +
+               " dpi=" + metrics.densityDpi + " " + metrics.widthPixels + "x" + metrics.heightPixels;
         
         Log.i(Utils.LOG_TAG, "Device info: " + Build.DEVICE + " OS: " + Build.VERSION.RELEASE);
         Log.i(Utils.LOG_TAG, "User agent for Http requests : " + user_agent);
@@ -281,6 +279,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     Map<String, String> rawHeaders = new HashMap<>();
                     for (int i = 0; i < headers.length; i+=2)
                         rawHeaders.put(headers[i], headers[i+1]);
+					rawHeaders.put("User-Agent", user_agent);
 
                     Utils.loadHttpAsync(uri, method, rawHeaders, payload, callback);
                 } catch (IOException exception) {
