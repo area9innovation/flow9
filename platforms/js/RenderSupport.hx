@@ -1619,6 +1619,17 @@ class RenderSupport {
 
 			Browser.window.document.dispatchEvent(e);
 			forceRollOverRollOutUpdate();
+		} else if (event == "pointerdown" || event == "pointerup" || event == "pointermove" || event == "pointerout") {
+			var me = {
+				clientX : Std.int(x),
+				clientY : Std.int(y),
+			};
+
+			var e = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent('" + event + "', me)")
+				: new js.html.PointerEvent(event, me);
+
+			untyped clip.nativeWidget.dispatchEvent(e);
 		}
 
 		if (!Util.isMouseEventName(event) || isStage(clip)) {

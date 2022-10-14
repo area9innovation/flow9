@@ -1,4 +1,5 @@
 import js.Browser;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -99,6 +100,20 @@ class WebClip extends NativeWidgetClip {
 						if (Native.isTouchScreen()) {
 							iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
 						}
+					} else {
+						var listenAndDispatch = function(eventName : String) {
+							iframeDocument.addEventListener(eventName, function(e : Dynamic) {
+								var pos0 = Util.getPointerEventPosition(e);
+								var iframeBoundingRect = iframe.getBoundingClientRect();
+								var pos = new Point(pos0.x + iframeBoundingRect.x, pos0.y + iframeBoundingRect.y);
+								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, eventName, pos.x, pos.y);
+							}, false);
+						}
+
+						listenAndDispatch('pointerdown');
+						listenAndDispatch('pointerup');
+						listenAndDispatch('pointermove');
+						listenAndDispatch('pointerout');
 					}
 
 					if (this.noScroll) {
