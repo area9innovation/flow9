@@ -23,6 +23,9 @@ class HaxeRuntime {
 	static public var _structargtypes_ : haxe.ds.IntMap<Array<RuntimeType>>;
 	static public var _structids_ : haxe.ds.StringMap<Int>;
 	static public var _structtemplates_ : haxe.ds.IntMap<Dynamic>;
+#if (js)
+	static var _regexCharsToReplace = "/[\\\\\\\"\\n\\t]/g";
+#end
 	static public inline function ref__<T>(val : T) : Dynamic { return new FlowRefObject(val); }
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
 	static public inline function setref__<T>(r : Dynamic, v : T) : Void { r.__v = v; }
@@ -341,7 +344,8 @@ if (a === b) return true;
 		return toStringCommon(value, keepStringEscapes, function(val, s){
 			#if js
 				untyped __js__("
-					  return '\"' + val.replace(/[\\\\\\\"\\n\\t]/g, function (c) {
+					_regexCharsToReplace  = /[\\\\\\\"\\n\\t]/g;
+					return '\"' + val.replace(_regexCharsToReplace, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
@@ -370,8 +374,8 @@ if (a === b) return true;
 		return toStringCommon(value, keepStringEscapes, function(val, s){
 			#if js
 				untyped __js__("
-  					var re = new RegExp(\"[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]\", \"g\");
-  					return '\"' + val.replace(re, function (c) {
+					_regexCharsToReplace  = /[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g;
+  					return '\"' + val.replace(_regexCharsToReplace, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
