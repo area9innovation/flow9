@@ -344,6 +344,9 @@ if (a === b) return true;
 		return toStringCommon(value, keepStringEscapes, function(val, s){
 			#if js
 				untyped __js__("
+					if (typeof _regexCharsToReplace === 'undefined') {
+						var _regexCharsToReplace = //;
+					}
 					_regexCharsToReplace  = /[\\\\\\\"\\n\\t]/g;
 					return '\"' + val.replace(_regexCharsToReplace, function (c) {
 						if (c==='\\\\') {
@@ -374,6 +377,9 @@ if (a === b) return true;
 		return toStringCommon(value, keepStringEscapes, function(val, s){
 			#if js
 				untyped __js__("
+					if (typeof _regexCharsToReplace === 'undefined') {
+						var _regexCharsToReplace = //;
+					}
 					_regexCharsToReplace  = /[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g;
   					return '\"' + val.replace(_regexCharsToReplace, function (c) {
 						if (c==='\\\\') {
