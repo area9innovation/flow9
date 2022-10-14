@@ -16,6 +16,10 @@ export {
 
 	// Set the implicit typars to some particular type (FiTypeVoid or FiTypeFlow or whatever).
 	fiSetImplicitStructTypars(program : FiProgram, implicit: FiType) -> FiProgram;
+
+	// If a native is implemented - remove a fallback, otherwise remove a native.
+	// In case a native is not implemented and 
+	fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram;
 }
 
 fiFlattenUnions(program : FiProgram) -> FiProgram {
@@ -257,4 +261,30 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 		}
 		default: Some(t);
 	}
+}
+
+fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram {
+	// for each function name decide: if it is a true native or should use a fallback
+	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc ->
+		fold(module.natives,
+			fold(module.functions, acc, 
+				\ac, func -> if (native_is_implemented(func.name)) ac else setTree(ac, func.name, func)
+			),
+			\ac, nat -> if (native_is_implemented(nat.name)) setTree(ac, nat.name, nat) else ac
+		)
+	);
+	FiProgram(program with
+		modules = mapTree(program.modules, \module ->
+			FiModule(module with
+				// Filter out fallbacks for non-true natives
+				functions = filter(module.functions, \func -> !native_is_implemented(func.name)),
+				// Filter out true natives
+				natives = filter(module.natives, \nat -> native_is_implemented(nat.name)),
+			)
+		),
+		names = FiGlobalNames(program.names with
+			// update toplevel declarations with proper ones
+			toplevel = mapTree2(program.names.toplevel, \name, decl -> lookupTreeDef(native_resolver, name, decl))
+		)
+	);
 }

@@ -151,7 +151,7 @@ fiDeclTypars2cpp3(types : [FiType], gctx : Cpp3GlobalContext) -> string {
 
 fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
 	gctx = Cpp3GlobalContext(
-		gctx0 with currentToplevel = struct.name,
+		gctx0 with currentToplevel = Some(struct),
 		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
 	);
 	struct_name = gctx.typename2cpp(struct.name);
@@ -280,7 +280,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	names = gctx0.program.names;
 	name = globalVar.name;
 	gctx = Cpp3GlobalContext(gctx0 with 
-		currentToplevel = name,
+		currentToplevel = Some(globalVar),
 		toplevelTypars = fiCollectTypars(globalVar.type, makeSet())
 	);
 	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
@@ -288,9 +288,19 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
 	value = value2;
 	pair0 = fiExp2FsExp(value, makeSet(), names, ref 0);
-	pair1 = Pair(
-		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
-		map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
+	pair1 = tryCatch(
+		\-> Pair(
+			fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
+			map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
+		),
+		\err -> {
+			println(
+				err + "\nin: " + name + "\n" + 
+				prettyFiExp(dummyPretty, globalVar.value) + "\n"// + 
+				//toStringFormatted(fun.lambda)
+			);
+			fail0(err);
+		}
 	);
 	pair2 = fold(pair1.second, Pair([], makeTree()), \acc, s -> {
 		p = fsStatSSA(s, acc.second);
@@ -338,7 +348,7 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	name = fun.name;
 	fn_type = fun.type;
 	gctx = Cpp3GlobalContext(
-		gctx0 with currentToplevel = name,
+		gctx0 with currentToplevel = Some(fun),
 		toplevelTypars = fiCollectTypars(fn_type, makeSet())
 	);
 	//debug_typars_interpolation := 
@@ -372,14 +382,18 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 			// fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
 			fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
 			fun_stat = fsMakeStatCastsExplicit(fun_stat2, fn_type.returnType, names);
-			/*if (name == "fctypeenv2fi") {
-				println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
+			/*if (name == "deserializeNext") {
+				debug_typars_interpolation := true;
+				fsInterpolateTyparsStat(fun_stat1, names);
+				debug_typars_interpolation := false;
+				//println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
 				//println("lambda0:\n" + toStringFormatted(lambda0) +"\n----------\n");
 				//println("fun_stat0:\n" + toStringFormatted(fun_stat0) +"\n----------\n");
 				//println("lambda1:\n" + toStringFormatted(lambda1) +"\n----------\n");
-				//println("fun_stat1:\n" + toStringFormatted(fun_stat1) +"\n----------\n");
+				println("fun_stat1:\n" + toStringFormatted(fun_stat1) +"\n----------\n");
 				println("fun_stat2:\n" + toStringFormatted(fun_stat2) +"\n----------\n");
-				println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
+				//println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
+				//quit(0);
 			}*/
 			fsStat2cpp3(fun_stat, gctx);
 		},
@@ -413,7 +427,20 @@ fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
 			"Fun<" + superglue(concat([retType], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ") + ">";
 		}
 		FiTypeRef(tp):        "Ref<" + fiType2cpp3(tp, gctx) + ">";
-		FiTypeParameter(nm):  if (containsSet(gctx.toplevelTypars, nm)) "T" + i2s(strlen(nm)) else "Flow";
+		FiTypeParameter(nm):  {
+			if (!containsSet(gctx.toplevelTypars, nm)) {
+				/*where = eitherMap(gctx.currentToplevel, toStringFormatted, "");
+				refArrayPush(gctx.errors, 
+					"Stray free type parameter: '" + nm + "'" + 
+					(if (where == "") "" else " met in:\n" + where + "\n\n")
+				);
+				//println("STRAY: " + i2s(strlen(nm)) + " IN " + eitherMap(gctx.currentToplevel, \x -> x.name, "<none>") + "!!!!");
+				throw("STRAY: " + i2s(strlen(nm)) + " IN " + eitherMap(gctx.currentToplevel, \x -> x.name, "<none>") + "!!!!");*/
+				"Flow";
+			} else {
+				"T" + i2s(strlen(nm));
+			}
+		}
 		FiTypeBool():         "Bool";
 		FiTypeInt():          "Int";
 		FiTypeDouble():       "Double";
@@ -445,12 +472,12 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				strIndent(fsStat2cpp3(neg, gctx)) + 
 			"\n}";
 		}
-		FsSwitch(x, cases, type): {
+		FsSwitch(x, sw_type, cases, type): {
 			switch (x.type) {
 				FiTypeName(typename,__): {
 					switch (lookupTree(gctx.program.names.unions, typename)) {
 						Some(__): {
-							fsSwitch2cpp3(stat, gctx.varname2cpp(x.name) + "->id()", gctx);
+							fsSwitch2cpp3(stat, gctx.varname2cpp(x.name) + "->id()/*" + typename + "*/", gctx);
 						}
 						None(): {
 							fsStructSwitch2cpp3(stat, typename, gctx);
@@ -512,27 +539,24 @@ fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string 
 fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 	switch (lookupTree(gctx.program.names.structs, c.struct)) {
 		Some(struct): {
-			typars = if (length(struct.typars) == 0) "" else 
-				"<" + superglue(struct.typars, \typar-> fiType2cpp3(typar, gctx), ", ") + ">";
-			name = gctx.typename2cpp(c.struct) + typars;
 			args_to_wrap = filtermapi(c.args, \i, arg -> {
 				arg_type = struct.args[i].type;
 				arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
 				if (arg_typars == []) None() else Some(Pair(arg, arg_type));
 			});
 			vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
-			body1 = fsStat2cpp3(vars_wrapped, gctx);
+			body = fsStat2cpp3(vars_wrapped, gctx);
 			id = lookupTreeDef(gctx.structs2id, c.struct, -1);
 			"case " + i2s(id) + " /*" + c.struct + "*/: {\n" +
-				strIndent(body1) + "\n\tbreak;"
+				strIndent(body) + "\n\tbreak;"
 			"\n}";
 
 		}
 		None(): {
 			// default case
 			if (c.struct != "default") throw("struct is not found") else {
-				body1 = fsStat2cpp3(c.body, gctx);
-				strIndent("default: {\n" + strIndent(body1)) + "\n}";
+				body = fsStat2cpp3(c.body, gctx);
+				strIndent("default: {\n" + strIndent(body)) + "\n}";
 			}
 		}
 	}
@@ -543,17 +567,13 @@ fsStructSwitch2cpp3(sw: FsSwitch, typename: string, gctx: Cpp3GlobalContext) -> 
 		Some(struct): {
 			switch (find(sw.cases, \case -> case.struct == typename)) {
 				Some(c): {
-					typars = if (length(struct.typars) == 0) "" else 
-						"<" + superglue(struct.typars, \typar-> fiType2cpp3(typar, gctx), ", ") + ">";
-					name = gctx.typename2cpp(c.struct) + typars;
 					args_to_wrap = filtermapi(c.args, \i, arg -> {
 						arg_type = struct.args[i].type;
 						arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
 						if (arg_typars == []) None() else Some(Pair(arg, arg_type));
 					});
 					vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
-					body1 = fsStat2cpp3(vars_wrapped, gctx);
-					body1;
+					fsStat2cpp3(vars_wrapped, gctx);
 				}
 				None(): {
 					throw("struct case is not found");
@@ -618,7 +638,10 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			};
 		}
 		FsLambda(closure, args, body, type): {
-			fun = fiType2cpp3(type, gctx);
+			fun = tryCatch(\-> fiType2cpp3(type, gctx), \err -> {
+				println(err + "\nIn: " + toString(type) + "\n" + toStringFormatted(e));
+				fail0(err + "\nIn: " + toString(type) + "\n" + toStringFormatted(e));
+			});
 			body_s = fsStat2cpp3(body, gctx);
 			header = fun + "([" + superglue(closure, gctx.varname2cpp, ", ") + "] " + fiFunArgs2cpp(args, gctx);
 			if (strlen(body_s) > 64 || strContains(body_s, "\n")) {
@@ -885,7 +908,7 @@ fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
 			\-> {
 				typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
 				gctx = Cpp3GlobalContext(
-					gctx0 with currentToplevel = struct.name,
+					gctx0 with currentToplevel = Some(struct),
 					toplevelTypars = buildSet(filtermap(struct.typars, \tp ->
 						switch (tp) {
 							FiTypeParameter(nm): Some(nm);

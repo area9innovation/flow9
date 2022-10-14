@@ -47,7 +47,7 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 				s2 = do_cast(s2),
 			);
 		}
-		FsSwitch(v, cases, __): {
+		FsSwitch(v, __, cases, __): {
 			FsSwitch(s with
 				cases = map(cases, \c -> FsCase(c with body = do_cast(c.body)))
 			);
@@ -82,6 +82,14 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 					);
 				}
 				FiTypeParameter(__): {
+					//FsLambda(e with body = fsMakeStatCastsExplicit(body, type1.returnType, names));
+					FsLambda(e with body = fsMakeStatCastsExplicit(body, fsStatType(body), names));
+				}
+				FiTypeFlow(): {
+					//FsLambda(e with body = fsMakeStatCastsExplicit(body, type1.returnType, names));
+					FsLambda(e with body = fsMakeStatCastsExplicit(body, fsStatType(body), names));
+				}
+				FiTypeNative(): {
 					//FsLambda(e with body = fsMakeStatCastsExplicit(body, type1.returnType, names));
 					FsLambda(e with body = fsMakeStatCastsExplicit(body, fsStatType(body), names));
 				}
@@ -129,7 +137,7 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 
 fsMakeCast(e: FsExp, from: FiType, to: FiType) -> FsExp {
 	if (fiEqualTypes(from, to) || to == FiTypeVoid()) e else {
-		switch (fiMatchTypes(from, to, Pair(makeTree(), makeTree()))) {
+		switch (fiMatchTyparsSym(from, to, Pair(makeTree(), makeTree()))) {
 			Some(p): {
 				from1 = fiApplyTypeSubstitution(p.first, from);
 				to1 = fiApplyTypeSubstitution(p.second, to);
@@ -275,7 +283,7 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 				vars
 			);
 		}
-		FsSwitch(var, cases, type): {
+		FsSwitch(var, __, cases, type): {
 			Pair(
 				FsSwitch(s with
 					x = FsVar(var with name = fsSSAvar(var.name, vars)),
@@ -402,7 +410,7 @@ fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 				s2 = do_interpolate(s2),
 			);
 		}
-		FsSwitch(v, cases, __): {
+		FsSwitch(v, __, cases, __): {
 			FsSwitch(s with
 				cases = map(cases, \c -> FsCase(c with body = do_interpolate(c.body)))
 			);
@@ -431,21 +439,76 @@ fsInterpolateTyparsExp(e : FsExp, names: FiGlobalNames) -> FsExp {
 		FsLambda(closure, args, body, type): {
 			FsLambda(e with body = fsInterpolateTyparsStat(body, names));
 		}
-		FsCall(fn, args,__): {
+		FsCall(fn, args, ret_type): {
 			fn1 = fsInterpolateTyparsExp(fn, names);
 			fn_type = fsExpType(fn1);
 			args1 = mapi(args, \i, arg -> fsInterpolateTyparsExp(arg, names));
+			debug = if (!^debug_typars_interpolation) false else {
+				switch (fn) {
+					FsVar(nm, __,__): nm == "flow";
+					default: false;
+				}
+			}
 			switch (fn_type) {
+				// debug_typars_interpolation
 				FiTypeFunction(fn_args, returnType): {
-					args_int = mapi(args1, \i, arg -> {
-						arg_type = fsExpType(arg);
-						sub = fiMatchTypars(arg_type, fn_args[i].type, makeTree());
-						fsSetExpType(
-							arg, 
-							fiApplyTypeSubstitution(sub, arg_type)
-						)
-					});
-					FsCall(e with f = fn1, args = args_int);
+					// Match arguments 
+					args_unified = mapi(args1, \i, arg -> fiUnifyTypes(fsExpType(arg), fn_args[i].type)
+						/*switch () {
+							Some(p): p;
+							None(): fail0(
+								"args don't unify: " + toString(arg_type) + " and " + toString(fn_args[i].type) + "\n" +
+								fsExp2s(e) + "\n\n" +
+								toStringFormatted(e)
+							);
+						}*/
+
+						//fiUnifyTypes(type1 : FiType, type2: FiType) -> Maybe<Pair<FiType, FiType>>;
+
+						/*sub = fiMatchTyparsSym(arg_type, fn_args[i].type, Pair(makeTree(), makeTree()));
+						inter_type = fiApplyTypeSubstitution(sub, arg_type);
+						if (debug) {
+							println("Matchning:\n" +
+								"arg_type: " + toString(arg_type) + "\n" +
+								"fn_args[i].type: " + toString(fn_args[i].type) + "\n" +
+								"sub: [" + superglue(tree2pairs(sub), \p -> p.first + " -> " + toString(p.second), ", ") + "]\n" +
+								"inter_type: " + toString(inter_type) + "\n"
+							);
+						}
+						fsSetExpType(arg, inter_type); 
+					}*/
+					);
+					ret_unified = fiUnifyTypes(returnType, ret_type);
+					/*	Some(p): p;
+						None(): {
+							if (ret_type != FiTypeVoid()) {
+								fail0(
+									"return types don't unify: " + toString(ret_type) + " and " + toString(returnType) + "\n" +
+									fsExp2s(e) + "\n\n" +
+									toStringFormatted(e)
+								);
+							} else {
+								Pair(ret_type, returnType);
+							}
+						}
+					}*/
+					if (debug) {
+						println("interpolate flow:\n" +
+							"fn:\n" + toStringFormatted(fn) + "\n" + 
+							"fn_type:\n" + toStringFormatted(fn_type) + "\n" + 
+							"args1:\n" + toStringFormatted(args1) + "\n" +
+							"args_unified:\n" + toStringFormatted(args_unified) + "\n" +
+							"ret_unified:\n" + toStringFormatted(ret_unified) + "\n"
+						);
+					}
+					FsCall(e with 
+						f = fsSetExpType(fn1, FiTypeFunction(
+							mapi(fn_args, \i, arg -> FiFunArg(arg.name, args_unified[i].second)),
+							ret_unified.second
+						)), 
+						args = mapi(args1, \i, arg -> fsSetExpType(arg, args_unified[i].first)),
+						type = ret_unified.first
+					);
 				}
 				default: {
 					FsCall(e with f = fn1, args = args1);
