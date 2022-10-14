@@ -24,7 +24,8 @@ class HaxeRuntime {
 	static public var _structids_ : haxe.ds.StringMap<Int>;
 	static public var _structtemplates_ : haxe.ds.IntMap<Dynamic>;
 #if (js)
-	static var _regexCharsToReplace : Dynamic;
+	static var regexCharsToReplaceForString = "/[\\\\\\\"\\n\\t]/g";
+	static var regexCharsToReplaceForJson = "/[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g";
 #end
 	static public inline function ref__<T>(val : T) : Dynamic { return new FlowRefObject(val); }
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
@@ -344,8 +345,7 @@ if (a === b) return true;
 		return toStringCommon(value, keepStringEscapes, function(val, s){
 			#if js
 				untyped __js__("
-					HaxeRuntime._regexCharsToReplace  = /[\\\\\\\"\\n\\t]/g;
-					return '\"' + val.replace(HaxeRuntime._regexCharsToReplace, function (c) {
+					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForString, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
@@ -374,8 +374,7 @@ if (a === b) return true;
 		return toStringCommon(value, keepStringEscapes, function(val, s){
 			#if js
 				untyped __js__("
-					HaxeRuntime._regexCharsToReplace  = /[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g;
-  					return '\"' + val.replace(HaxeRuntime._regexCharsToReplace, function (c) {
+					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForJson, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
