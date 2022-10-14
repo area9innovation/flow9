@@ -4002,6 +4002,10 @@ class RenderSupport {
 		clip.setNoScroll();
 	}
 
+	public static function setWebClipPassEvents(clip : WebClip) : Void {
+		clip.setPassEvents();
+	}
+
 	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
 		cb(clip.evalJS(code));
 	}
