@@ -1,0 +1,398 @@
+// array structure (bytes : data)
+// 0-3  : counter
+// 4-7  : length (items count)
+// 8+ : values
+
+
+//------------------------------------------------------------------------------
+// PUBLIC
+//------------------------------------------------------------------------------
+
+// result is an address
+createArray[T](length : i32) -> i32 {
+	typeSize : i32 = sizeoftype(T);
+	adr : i32 = initArray(length, typeSize);
+	// if (adr == 0) printlnStr("error");
+	// memory.fill<>(adr, defValue, length * typeSize);
+	adr;
+}
+
+getLengthArray(arrayAdr : i32) -> i32 {
+	counter : i32 = getArrayCounter(arrayAdr);
+	len : i32 = if (counter > 0) {
+		getArrayItemsCount(arrayAdr);
+	} else {
+		0;
+	};
+	// drop(arrayAdr);
+	len;
+}
+
+setValueArray[T](arrayAdr : i32, index : i32, value : T) -> () {
+	// dup(value);
+	setValueArrayE[T](arrayAdr, index, value);
+	// drop(arrayAdr);
+	{}
+}
+
+// dup is in the program (dup(getValueArray()))
+// if it is the last dup, getValueArray()
+// result : value or 0 if error
+getValueArray[T](arrayAdr : i32, index : i32, defValue : T) -> T {
+	// dupField(arrayAdr, index);
+	//res : (i32, T) = getValueArrayE[T](arrayAdr, index, defValue);
+	// dropArray(arrayAdr);
+	//errCode : i32 = res.0;
+	// if (res.0 == 0) { // error!
+	//if (errCode == 0) {
+		// dup(res) ??
+	//	res.1;
+	//} else {
+	//	defValue;
+	//};
+
+
+	if (index >= 0) {
+		counter : i32 = getArrayCounter(arrayAdr);
+		if (counter > 0) {
+			len : i32 = getLengthArray(arrayAdr);
+			if (index < len) {
+				element : T = load<>(arrayAdr + sizeoftype(T) * index);
+				// (0, load<>(...)) // error
+				element;
+			} else {
+				defValue;
+			}
+		} else {
+			defValue;
+		}
+	} else {
+		defValue;
+	}
+}
+
+// We can't reuse memory
+// don't do deep copy
+arrayPush[T](arrayAdr : i32, value : T) -> i32 {
+	// dupFields(arrayAdr);
+	len : i32 = getLengthArray(arrayAdr);
+	res : i32 = resizeArray(arrayAdr, sizeoftype(T), len + 1);
+	// dropArray(arrayAdr);
+	// drop(value)
+	setArrayItem[T](res, len, value);
+	res;
+}
+
+// don't do deep copy
+replaceArray[T](arrayAdr : i32, index : i32, value : T) -> i32 {
+	// dup(value) ?
+	typeSize : i32 = sizeoftype(T);
+	len : i32 = getLengthArray(arrayAdr);
+	newArr : i32 = if (index < 0) {
+		// copy arr
+		subrangeArrayE(arrayAdr, 0, len, typeSize);
+	} else {
+		// reuse
+		//if (getArrayCounter(arrayAdr) == 1) {
+		//	if (index >= len) {
+		//		// dup(arrayAdr);
+		//		// dup(value)
+		//		arrayPushI32(arrayAdr, value);
+		//	} else {
+				// replace
+		//		setArrayItem[T](arrayAdr, index, value);
+		//		arrayAdr;
+		//	}
+		//} else {
+			newLen : i32 = if (index >= len) len + 1 else len;
+			arr : i32 = resizeArray(arrayAdr, typeSize, newLen);
+			setArrayItem[T](arr, if (index >= len) len else index, value);
+			arr;
+		//}
+	};
+	// dropArray(arrayAdr);
+	// drop(value)
+	newArr;
+}
+
+//------------------------------------------------------------------------------
+// don't do deep copy
+// We can't reuse memory
+// in app : 
+// concat(dup(adr1), dup(adr2)) or concat(adr1, adr2)
+concatArrays[T](adr1 : i32, adr2 : i32) -> i32 {
+	// dupFields(adr1);
+	// dupFields(adr2);
+	adr : i32 = concat2Arrays(adr1, adr2, sizeoftype(T));
+	
+	// dropArray(adr1);
+	// dropArray(adr2);
+
+	adr;
+}
+
+// don't do deep copy
+subrangeArray[T](arrayAdr : i32, index : i32, length : i32) -> i32 {
+	// dupFields(arrayAdr); in range
+	arr : i32 = subrangeArrayE(arrayAdr, index, length, sizeoftype(T));
+	// dup(arr)
+	// dropArray(arrayAdr);
+	arr;
+}
+
+compareArrays[T](adr1 : i32, adr2 : i32) -> i32 {
+	res : i32 = compareArraysE[T](adr1, adr2);
+	if (res < -1) -1 else res;
+}
+
+//------------------------------------------------------------------------------
+// PRIVATE
+//------------------------------------------------------------------------------
+
+// typeSize in bytes
+initArray(length : i32, typeSize : i32) -> i32 {
+	if (length >= 0 && typeSize > 0) {
+		adr : i32 = allocateArrayMemory(arrayOffset + length * typeSize); // data + 2 service fields
+		
+		store<>(adr, 1); // counter
+		store<>(adr + 4, length);
+
+		adr + arrayOffset;
+	} else {
+		// error
+		0
+	}
+}
+
+// result = error_code :
+// 0 - ok, 1,3 - wrong index, 2 - deleted object
+setValueArrayE[T](arrayAdr : i32, index : i32, value : T) -> i32 {
+	if (index >= 0) {
+		counter : i32 = getArrayCounter(arrayAdr);
+		if (counter > 0) {
+			len : i32 = getLengthArray(arrayAdr);
+			if (index < len) {
+				setArrayItem[T](arrayAdr, index, value);
+				0;
+			} else {
+				3;
+			}
+		} else {
+			2;
+		}
+	} else {
+		1;
+	}
+}
+
+setArrayItem[T](arrayAdr : i32, index : i32, value : T) -> () {
+	store<>(arrayAdr + sizeoftype(T) * index, value);
+}
+
+// TODO: unboxing (value = pointer) ?
+// result : (error_code, value)
+// error_code : 0 - ok, 1 - wrong index, 2 - dead array
+getValueArrayE[T](arrayAdr : i32, index : i32, defValue : T) -> (i32, T) {
+	if (index >= 0) {
+		counter : i32 = getArrayCounter(arrayAdr);
+		if (counter > 0) {
+			len : i32 = getLengthArray(arrayAdr);
+			if (index < len) {
+				element : T = load<>(arrayAdr + sizeoftype(T) * index);
+				// (0, load<>(...)) // error
+				(0, element);
+			} else {
+				(1, defValue);
+			}
+		} else {
+			(2, defValue);
+		}
+	} else {
+		(1, defValue);
+	}
+}
+
+
+// compare[T](adr1 : i32, adr2 : i32) -> i32 {
+// 	heap objects:
+// 	- array<T> : compareArraysE[T]
+// 		compareArrayOFArrayOfArrayOfTuple
+// 
+// 	- strings (array of i16)
+// 	- structs : compareStructs[struct id]
+// 		Pair<int, int> -> (i32, i32, i32)  comparePAir<iojnt,. int|
+// 		Pair<double, int> -> (i32, f64, i32)
+
+// 	- references
+// }
+
+// specialized_compare0(i1 : i32, i2 : i32) -> i32 {
+// 	if (i1 == i2) 0 else if (i1 < i2) -1 else 1
+// }
+
+
+// compareArraysE[i32](adr1, adr2, specialized_compare0) == 0
+// compareArraysE[i32](adr1, adr2, specialized_compare0) != 0
+
+// [int]   = 0
+// [[int]] = 1
+// Struct1  = 2
+// [Struct1] = 3
+// ref [[Struct1]]  = 4
+
+
+// TODO: unboxing (value = pointer) ?
+// -1 - a1<a2, 0 - a1==a1, 1 - a1>a2, -2(+) - wrong index
+// compareArraysE[T](adr1 : i32, adr2 : i32, compare : (T, T) -> i32) -> i32 {
+compareArraysE[T](adr1 : i32, adr2 : i32) -> i32 {
+	len1 : i32 = getLengthArray(adr1);
+	len2 : i32 = getLengthArray(adr2);
+	
+	if (len1 == 0 || len2 == 0) {
+		res1 : i32 = (if (len1 == 0 && len2 == 0) 0 else if (len1 == 0) -1 else 1);
+		return res1;
+	};
+
+	minLen : i32 = if (len1 < len2) len1 else len2;
+	var i = 0;
+	while (i < minLen) {
+		//v1 : (i32, T) = getValueArrayE[T](adr1, i);
+		//v2 : (i32, T) = getValueArrayE[T](adr2, i);
+		//err1 : i32 = v1.0;
+		//err2 : i32 = v2.0;
+		//val1 : i32 = v1.1;
+		//val2 : i32 = v2.1;
+		//if (err1 == 0 && err2 == 0) {
+		//	if (val1 != val2) {
+		//		res2 : i32 = (if (val1 < val2) -1 else 1);
+		//		return res2;
+		//	}
+		//} else {
+		//	return -3;
+		//};
+		i := i + 1;
+	};
+	result : i32 = (if (len1 == len2) 0 else if (len1 < len2) -1 else 1);
+	result;
+}
+
+concat2Arrays(src1 : i32, src2 : i32, typeSize : i32) -> i32 {
+	len1 : i32 = getLengthArray(src1);
+	len2 : i32 = getLengthArray(src2);
+
+	dst : i32 = resizeArray(src1, typeSize, len1 + len2);
+
+	if (len2 > 0) {
+		memory.copy<>(dst + len1 * typeSize, src2, len2 * typeSize);
+	};
+
+	dst;
+}
+
+// make a copy
+resizeArray(src : i32, typeSize : i32, newLen : i32) -> i32 {
+	dst : i32 = initArray(newLen, typeSize);
+	len : i32 = getLengthArray(src);
+	minLen : i32 = if (newLen > len) len else newLen;
+	if (minLen > 0) {
+		memory.copy<>(dst, src, newLen * typeSize);
+	};
+	dst;
+}
+
+subrangeArrayE(arrayAdr : i32, index : i32, length : i32, typeSize : i32) -> i32 {
+	newLen : i32 = if (index < 0 || length < 1) {
+		0;
+	} else {
+		len : i32 = getLengthArray(arrayAdr);
+		if (index >= len) {
+			0;
+		} else {
+			lenToEnd : i32 = len - index;
+			if (length > lenToEnd) lenToEnd else length;
+		}
+	};
+
+	dst : i32 = initArray(newLen, typeSize);
+
+	if (newLen > 0) {
+		memory.copy<>(dst, arrayAdr + index * typeSize, newLen * typeSize);
+	};
+	dst;
+}
+
+
+//------------------------------------------------------------------------------
+// memory and inner structure
+//------------------------------------------------------------------------------
+
+// first free cell
+ARRAY_HEAP_POINTER : i32 = 4096;
+// offset before data starts
+arrayOffset : i32 = 8;
+//arrayOffset : i32 = 2 * 4; // error: invalid initializer: instruction not valid in initializer expression: i32.mul
+
+// dup fields
+// increment counter
+// error ?
+dupArray(arrayAdr : i32) -> () {
+	counter : i32 = getArrayCounter(arrayAdr);
+	if (counter > 0) {
+		setArrayCounter(arrayAdr, counter + 1); // counter
+	} else {
+		// error. array is dead
+	}
+}
+
+// drop fields
+// decrement counter
+dropArray(arrayAdr : i32) -> () {
+	counter : i32 = getArrayCounter(arrayAdr) - 1;
+	setArrayCounter(arrayAdr, counter);
+	// dropFields here
+	if (counter < 1) {
+		freeArray(arrayAdr);
+	} else {
+		// ok
+	}
+}
+
+getArrayCounter(arrayAdr : i32) -> i32 {
+	load<>(arrayAdr - arrayOffset);
+}
+
+getArrayItemsCount(arrayAdr : i32) -> i32 {
+	load<>(arrayAdr - 4);
+}
+
+setArrayCounter(arrayAdr : i32, value : i32) -> () {
+	store<>(arrayAdr - arrayOffset, value);
+}
+
+// TODO: find the first free cell
+// Heap address is hidden
+// size  - size in bytes
+// result - address of the block
+allocateArrayMemory(size : i32) -> i32 {
+	freeCell : i32 = load<>(ARRAY_HEAP_POINTER);
+	store<>(ARRAY_HEAP_POINTER, freeCell + size); // move the ptr to the next free cell
+	freeCell;
+}
+
+freeArrayMemory(address : i32) -> () {
+	// mark the memory region as free
+	// free cells ?
+}
+
+// common free ?
+freeArray(arrayAdr : i32) -> () {
+	setArrayCounter(arrayAdr, 0); // reset counter
+	freeArrayMemory(arrayAdr);
+}
+
+//_____________________________________________________
+
+// magic ?
+initMemory() -> () {
+	store<>(ARRAY_HEAP_POINTER, ARRAY_HEAP_POINTER + arrayOffset);
+}

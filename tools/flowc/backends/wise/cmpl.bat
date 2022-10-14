@@ -11,7 +11,7 @@ cd %FLOWDIR%
 call flowc wise=%WASEDIR%%TESTDIR% %WASEDIR%%TESTDIR%%1.flow
 
 cd %WASEDIR%
-call bin\wised.bat %TESTDIR%%1.wise
+call flowcpp -I .. --batch ../wise/wise.flow -- I=..,../flow9/ %TESTDIR%%1.wise
 
 @echo _____________________________________________
 @echo Execute...
