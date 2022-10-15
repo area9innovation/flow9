@@ -24,8 +24,8 @@ class HaxeRuntime {
 	static public var _structids_ : haxe.ds.StringMap<Int>;
 	static public var _structtemplates_ : haxe.ds.IntMap<Dynamic>;
 #if (js)
-	static var regexCharsToReplaceForString = "/[\\\\\\\"\\n\\t]/g";
-	static var regexCharsToReplaceForJson = "/[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g";
+	static var regexCharsToReplaceForString : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t]/g");
+	static var regexCharsToReplaceForJson : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g");
 #end
 	static public inline function ref__<T>(val : T) : Dynamic { return new FlowRefObject(val); }
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
