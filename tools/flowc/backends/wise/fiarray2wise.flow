@@ -3,13 +3,13 @@ import tools/flowc/backends/wise/flow_wise_types;
 
 // TODO: think about
 // makeWiArrayConstruction()
-// create runtime fns : createArrayI32_N - where n = array_length
-// -> we'll replace arr = {tmp=; ...  tmp} with arr = createArrayI32_N(1,2,3);
+// create runtime fns : createArray_N - where n = array_length
+// -> we'll replace arr = {tmp=; ...  tmp} with arr = createArray_N(1,2,3);
 
 export {
 	makeStringType() -> FlowWiType; // string = array of chars
 
-	makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp) -> FlowWiExp;
+	makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp, type : FlowWiType) -> FlowWiExp;
 	makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int, type : FlowWiType) -> Maybe<FlowWiExp>;
 	isWiArrayConstruction(exp : FlowWiExp) -> bool;
 }
@@ -19,23 +19,40 @@ makeStringType() -> FlowWiType {
 }
 
 // TODO: type
-makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp) -> FlowWiExp {
-	FlowWiCall(FlowWiVar("getValueArrayI32"), [e1, e2]);
+makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp, type : FlowWiType) -> FlowWiExp {
+	FlowWiCall(
+		FlowWiPolyCall(FlowWiVar("getValueArray"), [type]),
+		[e1, e2, makeDefaultTypeValue(type)]
+	);
+}
+
+makeDefaultTypeValue(type : FlowWiType) -> FlowWiExp {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(s) : 
+			if (s == "i32") FlowWiInt(0)
+			else if (s == "i64") FlowWiInt(0)
+			else if (s == "f32") FlowWiDouble(0.0)
+			else if (s == "f64") FlowWiDouble(0.0)
+			else if (s == "bool") FlowWiBool(false)
+			else { // auto, v128, templates
+				println("ERROR: Can not determine the default value for '" + s + "'");
+				FlowWiInt(0);
+			};
+		FlowWiFntype(__, __) : FlowWiInt(0); // pointer
+		FlowWiTupletype(types) : FlowWiTuple(map(types, makeDefaultTypeValue));
+		FlowWiArrayType(t) : FlowWiInt(0); // pointer
+	}
 }
 
 makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int, type : FlowWiType) -> Maybe<FlowWiExp> {
-	makeDef = \ -> {
-		println("array of " + toString(type) + " is not implemented");
-		None();
-	}
 	if (exps == []) {
 		Some(makeCreateArrayCall(0, "i32"));
 	} else {
 		basicType = extractWiseArrayType(type);
-		if (basicType == "i32") {
+		if (basicType == "string") {
 			makeWiArrayConstructionByType(
 				exps,
-				"setValueArrayI32",
+				FlowWiVar("setCharString"),
 				tmpIndex,
 				\e -> switch (e : FlowWiExp) {
 					FlowWiInt(__): Some(e);
@@ -43,19 +60,24 @@ makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int, type : FlowWiType) -
 				},
 				basicType
 			);
-		} else if (basicType == "string") {
-			makeWiArrayConstructionByType(
-				exps,
-				"setCharString",
-				tmpIndex,
-				\e -> switch (e : FlowWiExp) {
-					FlowWiInt(__): Some(e);
-					default : None();
-				},
-				basicType
-			);
+		} else if (basicType == "") {
+			println("array of " + toString(type) + " is not implemented");
+			None();
 		} else {
-			makeDef();
+			makeWiArrayConstructionByType(
+				exps,
+				FlowWiPolyCall(FlowWiVar("setValueArray"), [FlowWiBasictype(basicType)]),
+				tmpIndex,
+				\e -> switch (e : FlowWiExp) {
+					FlowWiInt(__): Some(e);
+					FlowWiDouble(__): Some(e);
+					FlowWiBool(__): Some(e);
+					FlowWiTuple(__): Some(e);
+					// array ?
+					default : None();
+				},
+				basicType
+			);
 		}
 	} 
 }
@@ -69,7 +91,7 @@ extractWiseArrayType(type : FlowWiType) -> string {
 	}
 }
 
-makeWiArrayConstructionByType(exps : [FlowWiExp], setValFn : string, tmpIndex : int, getVal : (FlowWiExp) -> Maybe<FlowWiExp>, type : string) -> Maybe<FlowWiExp> {
+makeWiArrayConstructionByType(exps : [FlowWiExp], setValFn : FlowWiExp, tmpIndex : int, getVal : (FlowWiExp) -> Maybe<FlowWiExp>, type : string) -> Maybe<FlowWiExp> {
 	values = filtermap(exps, getVal);
 	if (length(values) == length(exps)) {
 		tmpVar = "tmp" + i2s(tmpIndex);
@@ -78,10 +100,10 @@ makeWiArrayConstructionByType(exps : [FlowWiExp], setValFn : string, tmpIndex : 
 			FlowWiBrace([FlowWiLet(
 				tmpVar,
 				0,
-				FlowWiBasictype("auto"),
+				FlowWiBasictype("i32"), // pointer
 				makeCreateArrayCall(length(values), type),
 				FlowWiBrace(arrayPush(
-					mapi(values, \i, value -> FlowWiCall(FlowWiVar(setValFn), [FlowWiVar(tmpVar), FlowWiInt(i), value])),
+					mapi(values, \i, value -> FlowWiCall(setValFn, [FlowWiVar(tmpVar), FlowWiInt(i), value])),
 					FlowWiVar(tmpVar)
 				)),
 			)])
@@ -92,13 +114,17 @@ makeWiArrayConstructionByType(exps : [FlowWiExp], setValFn : string, tmpIndex : 
 }
 
 makeCreateArrayCall(len : int, type : string) -> FlowWiCall {
-	fnName = if (type == "i32") "createArrayI32"
-	else if (type == "string") "createString"
-	else {
+	if (type == "string") {
+		FlowWiCall(FlowWiVar("createString"), [FlowWiInt(len)])
+	} else if (type == "") {
 		println("create array of " +  type + " is not implemented");
-		"createArray"
+		FlowWiCall(FlowWiVar("createArray"), [FlowWiInt(len)]);
+	} else {
+		FlowWiCall(
+			FlowWiPolyCall(FlowWiVar("createArray"), [FlowWiBasictype(type)]),
+			[FlowWiInt(len)]
+		)
 	}
-	FlowWiCall(FlowWiVar(fnName), [FlowWiInt(len)]);
 }
 
 isWiArrayConstruction(exp : FlowWiExp) -> bool {

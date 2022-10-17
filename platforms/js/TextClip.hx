@@ -1333,6 +1333,11 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
+		// On iOS in numeric mode you can still input non-number characters. They will be shown visually but wrong characters will clear 'value'.
+		// Here we are resetting visual representation to be consistent
+		if (Platform.isIOS && type == 'number' && nativeWidget.value == '') {
+			nativeWidget.value = '';
+		}
 		// Some browsers tend to return nativeWidget.value without decimal separator at the end, but still visually display it
 		var decimalSeparatorFix = type == 'number' && (e.data == '.' || e.data == ',');
 		var nativeWidgetValue = decimalSeparatorFix ? nativeWidget.value + e.data : nativeWidget.value;
@@ -1383,6 +1388,12 @@ class TextClip extends NativeWidgetClip {
 		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
 		emit('input', newValue);
+
+		if (Platform.isAndroid) {
+			Native.timer(0, function() {
+				RenderSupport.ensureCurrentInputVisible();
+			});
+		}
 	}
 
 	private function onScroll(e : Dynamic) {
