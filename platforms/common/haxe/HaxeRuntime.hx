@@ -23,6 +23,10 @@ class HaxeRuntime {
 	static public var _structargtypes_ : haxe.ds.IntMap<Array<RuntimeType>>;
 	static public var _structids_ : haxe.ds.StringMap<Int>;
 	static public var _structtemplates_ : haxe.ds.IntMap<Dynamic>;
+#if (js)
+	static var regexCharsToReplaceForString : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t]/g");
+	static var regexCharsToReplaceForJson : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g");
+#end
 	static public inline function ref__<T>(val : T) : Dynamic { return new FlowRefObject(val); }
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
 	static public inline function setref__<T>(r : Dynamic, v : T) : Void { r.__v = v; }
@@ -231,7 +235,7 @@ if (a === b) return true;
 		#end
 	}
 
-	public static function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+	static function toStringCommon(value : Dynamic, ?keepStringEscapes : Bool = false, additionalEscapingFn : Dynamic->String->String) : String {
 		if (value == null) return "{}";
 
 /*
@@ -261,7 +265,7 @@ if (a === b) return true;
 			var r = "[";
 			var s = "";
 			for (v in a) {
-				var vc = toString(v);
+				var vc = toStringCommon(v, keepStringEscapes, additionalEscapingFn);
 				r += s + vc;
 				s = ", ";
 			}
@@ -269,7 +273,7 @@ if (a === b) return true;
 		}
 		if (Reflect.hasField(value, "__v")) {
 			// Reference
-			return "ref " + toString(value.__v);
+			return "ref " + toStringCommon(value.__v, keepStringEscapes, additionalEscapingFn);
 		}
 		#if (js && readable)
 		if (Reflect.hasField(value, "_name")) {
@@ -300,7 +304,7 @@ if (a === b) return true;
 						r += s + v + ( (Std.int(v) == v) ? ".0" : "" );
 					}
 					case RTArray(arrtype): {
-						if (!isArray(v) || arrtype != RTDouble) r += s + toString(v);
+						if (!isArray(v) || arrtype != RTDouble) r += s + toStringCommon(v, keepStringEscapes, additionalEscapingFn);
 						else {
 							r += s + "[";
 							for (j in 0...v.length)
@@ -309,7 +313,7 @@ if (a === b) return true;
 						}
 					}
 					default:
-						r += s + toString(v);
+						r += s + toStringCommon(v, keepStringEscapes, additionalEscapingFn);
 				}
 				s = ", ";
 			}
@@ -325,9 +329,23 @@ if (a === b) return true;
 			var s : String = value;
 
 			if (!keepStringEscapes) {
-				#if js
+				return additionalEscapingFn(value, s);
+			} else {
+				StringTools.replace(s, "\\", "\\\\"); // Check if really a string
+
+				return s;
+			}
+		} catch(e : Dynamic) {
+			return "<native>";//haxe.Json.stringify(value);
+		}
+		// #end
+	}
+
+	public static function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return toStringCommon(value, keepStringEscapes, function(val, s){
+			#if js
 				untyped __js__("
-					return '\"' + value.replace(/[\\\\\\\"\\n\\t]/g, function (c) {
+					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForString, function (c) {
 						if (c==='\\\\') {
 							return '\\\\\\\\';
 						} else if (c==='\\\"') {
@@ -341,23 +359,46 @@ if (a === b) return true;
 						}
 					}) + '\"';
 				");
-				#else
+			#else
 				s = StringTools.replace(s, "\\", "\\\\");
 				s = StringTools.replace(s, "\"", "\\\"");
 				s = StringTools.replace(s, "\n", "\\n");
 				s = StringTools.replace(s, "\t", "\\t");
-				#end
+			#end
+			
+			return "\"" + s + "\"";
+		});
+	}
 
-				return "\"" + s + "\"";
-			} else {
-				StringTools.replace(s, "\\", "\\\\"); // Check if really a string
+	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return toStringCommon(value, keepStringEscapes, function(val, s){
+			#if js
+				untyped __js__("
+					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForJson, function (c) {
+						if (c==='\\\\') {
+							return '\\\\\\\\';
+						} else if (c==='\\\"') {
+							return '\\\\\"';
+						} else if (c === '\\n') {
+							return '\\\\n';
+						} else if (c==='\\t') {
+							return '\\\\t';
+						} else if (c.length===1 && c.charCodeAt(0)<0x20) {
+							return \"\\\\u\" + c.charCodeAt(0).toString(16).padStart(4, \"0\");
+						} else {
+							return c;
+						}
+					}) + '\"';
+				");
+			#else
+				s = StringTools.replace(s, "\\", "\\\\");
+				s = StringTools.replace(s, "\"", "\\\"");
+				s = StringTools.replace(s, "\n", "\\n");
+				s = StringTools.replace(s, "\t", "\\t");
+			#end
 
-				return s;
-			}
-		} catch(e : Dynamic) {
-			return "<native>";//haxe.Json.stringify(value);
-		}
-		// #end
+			return "\"" + s + "\"";
+		});
 	}
 
 	#if (!neko && !cpp)

@@ -361,6 +361,10 @@ class Native {
 		return HaxeRuntime.toString(value, keepStringEscapes);
 	}
 
+	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return HaxeRuntime.toStringEscapeControlChars(value, keepStringEscapes);
+	}
+
 	public static inline function gc() : Void {
 		#if flash
 			// unsupported technique that seems to force garbage collection
