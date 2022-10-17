@@ -8,6 +8,7 @@
 #include <memory>
 #include <variant>
 #include <iostream>
+#include <iomanip>
 #include <codecvt>
 #include <locale>
 #include <cmath>
@@ -62,8 +63,9 @@ union DoubleOrChars {
 
 using utf16_to_utf8 = std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t>;
 
-inline std::string toStdString(String s) { utf16_to_utf8 conv; return conv.to_bytes(*s); }
-inline string fromStdString(const std::string& s) { utf16_to_utf8 conv; return conv.from_bytes(s); }
+inline std::string toStdString(String s) { static utf16_to_utf8 conv; return conv.to_bytes(*s); }
+inline std::string toStdChar(char16_t s) { static utf16_to_utf8 conv; return conv.to_bytes(s); }
+inline string fromStdString(const std::string& s) { static utf16_to_utf8 conv; return conv.from_bytes(s); }
 
 const String empty_string = String(new string());
 
@@ -437,10 +439,21 @@ inline void flow2string(Flow v, std::ostream& os, bool init) {
 		case Type::STRING: {
 			if (!init) {
 				os << "\"";
-			}
-			os << toStdString(v.toString());
-			if (!init) {
-				os << "\""; 
+				for (char16_t c : *v.toString()) {
+					switch (c) {
+						case '"': os << "\\\"";      break;
+						case '\\': os << "\\\\";     break;
+						case '\n': os << "\\n";      break;
+						case '\t': os << "\\t";      break;
+						case '\r': os << "\\r";      break;
+						default: os << toStdChar(c); break;
+					}
+				}
+				os << "\"";
+			} else {
+				for (char16_t c : *v.toString()) {
+					os << toStdChar(c); 
+				}
 			}
 			break;
 		}
