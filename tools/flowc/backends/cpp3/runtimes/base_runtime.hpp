@@ -306,12 +306,13 @@ struct AStruct {
 
 struct AArray {
 	virtual Int size() const = 0;
-	virtual Arr<Flow> elements() = 0;
-	virtual Flow element(Int i) = 0;
+	virtual Arr<Flow> get() = 0;
+	virtual Flow get(Int i) = 0;
 };
 
 struct AReference {
-	virtual Flow reference() = 0;
+	virtual Flow get() = 0;
+	virtual void set(Flow) = 0;
 };
 
 struct AFunction { 
@@ -343,14 +344,14 @@ struct Array : public AArray {
 	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
 
 	Int size() const override { return static_cast<Int>(vect.size()); }
-	Arr<Flow> elements() override {
+	Arr<Flow> get() override {
 		Arr<Flow> ret(vect.size());
 		for (T x : vect) {
 			ret->vect.push_back(ToFlow<T>::conv(x));
 		}
 		return ret;
 	}
-	Flow element(Int i) override {
+	Flow get(Int i) override {
 		return ToFlow<T>::conv(vect.at(i));
 	}
 	Int compare(Array a) const { 
@@ -370,25 +371,47 @@ struct Array : public AArray {
 	Vect vect;
 };
 
+template<typename T> 
+struct Reference : public AReference {
+	Reference() { }
+	Reference(const T& r): val(std::make_shared<T>(r)) { }
+	Reference(T&& r): val(std::move(r)) { }
+	Reference(const Reference& r): val(r.val) { }
+	Reference(Reference&& r): val(std::move(r.val)) { }
+	Reference& operator = (Reference&& r) { val = std::move(r.val); return *this; }
+	Reference& operator = (const Reference& r) { val = r.val; return *this; }
+	Flow reference() override { return ToFlow<T>::conv(val); }
+	Int compare(Reference r) const { return Compare<T>::cmp(val, r.val); }
+
+	Ptr<T> val;
+};
 
 template<typename T> 
-struct Ref : public AReference {
+struct Ref {
 	Ref() { }
-	Ref(const T& r): ref(std::make_shared<T>(r)) { }
+	Ref(const T& r): ref(std::make_shared<Reference<T>>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
-	Ref(Ptr<T>&& r): ref(std::move(r)) { }
-	Ref(const Ptr<T>& r): ref(r) { }
+	Ref(Ptr<Reference<T>>&& r): ref(std::move(r)) { }
+	//Ref(const Ptr<T>& r): ref(r) { }
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
+
+	Reference<T>& operator *() { return ref.operator*(); }
+	Reference<T>* operator ->() { return ref.operator->(); }
+	Reference<T>* get() { return ref.get(); }
+	const Reference<T>& operator *() const { return ref.operator*(); }
+	const Reference<T>* operator ->() const { return ref.operator->(); }
+	const Reference<T>* get() const { return ref.get(); }
+
 	Ref& operator = (Ref&& r) { ref = std::move(r.ref); return *this; }
 	Ref& operator = (const Ref& r) { ref = r.ref; return *this; }
-	Flow reference() override { return ToFlow<T>::conv(*ref); }
-	Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
+	//Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
+
 	bool isSameObj(Ref r) const { return ref.get() == r.ref.get(); }
 	template<typename T1>
 	Ref<T1> cast() {
-		return std::reinterpret_pointer_cast<T1>(ref);
+		return std::reinterpret_pointer_cast<Reference<T1>>(ref);
 	}
-	Ptr<T> ref;
+	Ptr<Reference<T>> ref;
 };
 
 template<typename R, typename... As> 
@@ -430,7 +453,7 @@ struct Fun : public AFunction {
 
 
 template<typename T> Flow::Flow(Str<T> s): val(std::static_pointer_cast<AStruct>(s.str)) { }
-template<typename T> Flow::Flow(Ref<T> r): val(std::static_pointer_cast<AReference>(std::make_shared<Ref<T>>(r))) { }
+template<typename T> Flow::Flow(Ref<T> r): val(std::static_pointer_cast<AReference>(r.ref)) { }
 template<typename T> Flow::Flow(Arr<T> a): val(std::static_pointer_cast<AArray>(a.arr)) { }
 template<typename R, typename... As> Flow::Flow(Fun<R, As...> f): val(std::static_pointer_cast<AFunction>(std::make_shared<Fun<R, As...>>(f))) { }
 
@@ -536,7 +559,7 @@ template<typename T> struct ToFlow<Str<T>> {
 	static Flow conv(Str<T> s) { return std::static_pointer_cast<AStruct>(s.str); }
 };
 template<typename T> struct ToFlow<Ref<T>> {
-	static Flow conv(Ref<T> r) { return Ptr<AReference>(new Ref<T>(r)); }
+	static Flow conv(Ref<T> r) { return std::static_pointer_cast<AReference>(r.ref); }
 };
 template<typename R, typename... As> struct ToFlow<Fun<R, As...>> {
 	static Flow conv(Fun<R, As...> f) { return Ptr<AFunction>(new Fun<R, As...>(f)); }
@@ -620,7 +643,10 @@ template<typename T> struct FromFlow<Str<T>> {
 	static Str<T> conv(Flow f) { return dynamic_pointer_cast<T>(f.toStruct()); }
 };
 template<typename T> struct FromFlow<Ref<T>> {
-	static Ref<T> conv(Flow f) { return *reinterpret_pointer_cast<Ref<T>>(f.toReference()); }
+	static Ref<T> conv(Flow f) {
+		Ptr<AReference>	ref = f.toReference();
+		return reinterpret_pointer_cast<Reference<T>>(ref); 
+	}
 };
 template<typename R, typename... As> struct FromFlow<Fun<R, As...>> {
 	static Fun<R, As...> conv(Flow f) { return *reinterpret_pointer_cast<Fun<R, As...>>(f.toFunction()); }
@@ -799,7 +825,7 @@ struct Compare<Arr<T>> {
 
 template<typename T>
 struct Compare<Ref<T>> {
-	static Int cmp(Ref<T> v1, Ref<T> v2) { return v1.compare(v2); }
+	static Int cmp(Ref<T> v1, Ref<T> v2) { return v1->compare(*v2); }
 };
 
 template<typename T>
