@@ -256,6 +256,10 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 				);
 			}) +
 		"\n}";
+		flow_fields = "Arr<Flow> fields() override { return " + 
+			(if (length(struct.args) == 0) "Arr<Flow>::makeEmpty()" else
+			"Arr<Flow>{" + superglue(struct.args, \arg -> "ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}") 
+			+ "; }";
 
 		decl_typars + "struct " + struct_name + ": public AStruct {\n" +
 		constructor + 
@@ -266,7 +270,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		"\tInt id() const override { return " + i2s(lookupTreeDef(gctx.structs2id, struct.name, -1)) + "; }\n" +
 		"\tString name() const override { return makeString(\"" + struct.name + "\"); }\n" +
 		"\tInt size() const override { return " + i2s(length(struct.args)) + "; }\n" +
-		"\tstd::vector<Flow> fields() override { return std::vector<Flow>{" + superglue(struct.args, \arg -> "ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}; }\n" +
+		strIndent(flow_fields) + "\n" +
 		strIndent(get_field) + "\n" +
 		strIndent(set_field) + "\n" +
 		strIndent(compare1) + "\n" + 
@@ -712,6 +716,35 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 	});
 }
 
+fsCallPrimPlus2cpp3(es : [FsExp], gctx : Cpp3GlobalContext, acc: [FsExp]) -> [FsExp] {
+	fold(es, acc, \ac, e -> {
+		switch (e) {
+			FsCallPrim(op, es1, __): {
+				switch (e.op) {
+					FcPlusPrim(): fsCallPrimPlus2cpp3(es1, gctx, ac);
+					default: concat(ac, [e]);
+				}
+			}
+			default: concat(ac, [e]);
+		}
+	});
+}
+
+fsCallPrimMult2cpp3(es : [FsExp], gctx : Cpp3GlobalContext, acc: [FsExp]) -> [FsExp] {
+	fold(es, acc, \ac, e -> {
+		switch (e) {
+			FsCallPrim(op, es1, __): {
+				switch (e.op) {
+					FcMulPrim(): fsCallPrimMult2cpp3(es1, gctx, ac);
+					default: concat(ac, [e]);
+				}
+			}
+			default: concat(ac, [e]);
+		}
+	});
+}
+
+
 fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 	e2k = \x -> fsExp2cpp3(x, gctx);
 	arg_type = if (length(e.es) > 0) fsExpType(e.es[0]) else FiTypeVoid();
@@ -728,14 +761,18 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FcGtPrim():  "(Compare<" + fiType2cpp3(arg_type, gctx) + ">::cmp(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") > 0)";
 
 		FcPlusPrim():  {
+			plus_args = fsCallPrimPlus2cpp3(e.es, gctx, []);
 			if (e.type == FiTypeString()) {
-				"makeString(*" + e2k(e.es[0]) + " + *" + e2k(e.es[1]) + ")";
+				"makeString(" + superglue(plus_args, \x -> "*" +e2k(x), " + ") + ")";
 			} else {
-				"(" + e2k(e.es[0]) + " + " + e2k(e.es[1]) + ")";
+				"(" + superglue(plus_args, e2k, " + ") + ")";
 			}
 		}
 		FcMinusPrim(): "(" + e2k(e.es[0]) + " - " + e2k(e.es[1]) + ")"; 
-		FcMulPrim():   "(" + e2k(e.es[0]) + " * " + e2k(e.es[1]) + ")";
+		FcMulPrim(): {
+			mult_args = fsCallPrimMult2cpp3(e.es, gctx, []);
+			"(" + superglue(mult_args, e2k, " * ") + ")";
+		}
 		FcDivPrim():   "(" + e2k(e.es[0]) + " / " + e2k(e.es[1]) + ")";
 		FcModPrim(): {
 			if (e.type == FiTypeDouble()) {

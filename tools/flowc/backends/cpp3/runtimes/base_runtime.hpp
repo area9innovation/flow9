@@ -122,12 +122,43 @@ struct AFunction;
 // Dynamic type
 struct Flow;
 
-void flow2string(Flow v, std::ostream& os, bool init = true);
+void flow2string(Flow v, std::ostream& os, bool init);
 
 template<typename T> struct Str;
 template<typename T> struct Arr;
 template<typename T> struct Ref;
 template<typename R, typename... As> struct Fun;
+
+template<typename T> struct Array;
+template<typename T> struct Reference;
+
+template<typename T> 
+struct Arr {
+	Arr(): arr() { }
+	Arr(std::initializer_list<T> il): arr(std::move(std::make_shared<Array<T>>(il))) { }
+	Arr(Ptr<Array<T>>&& a): arr(std::move(a)) { }
+	Arr(const Arr& a): arr(a.arr) { }
+	Arr(Arr&& a): arr(std::move(a.arr)) { }
+	Arr(std::size_t s): arr(std::move(std::make_shared<Array<T>>(s))) { }
+	static Arr makeEmpty() { return Arr(std::make_shared<Array<T>>(0)); }
+
+	Array<T>& operator *() { return arr.operator*(); }
+	Array<T>* operator ->() { return arr.operator->(); }
+	Array<T>* get() { return arr.get(); }
+	const Array<T>& operator *() const { return arr.operator*(); }
+	const Array<T>* operator ->() const { return arr.operator->(); }
+	const Array<T>* get() const { return arr.get(); }
+
+	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
+	Arr& operator = (const Arr& a) { arr = a.arr; return *this; }
+	bool isSameObj(Arr a) const { return arr.get() == a.arr.get(); }
+	template<typename T1>
+	Arr<T1> cast() {
+		return std::reinterpret_pointer_cast<Array<T1>>(arr);
+	}
+
+	Ptr<Array<T>> arr;
+};
 
 template<typename T>
 struct Str {
@@ -267,7 +298,7 @@ struct AStruct {
 	virtual Int id() const = 0;
 	virtual String name() const = 0;
 	virtual Int size() const = 0;
-	virtual std::vector<Flow> fields() = 0;
+	virtual Arr<Flow> fields() = 0;
 	virtual Flow field(String name) = 0;
 	virtual void setField(String name, Flow val) = 0;
 	virtual Int compare(const AStruct&) const = 0;
@@ -275,7 +306,7 @@ struct AStruct {
 
 struct AArray {
 	virtual Int size() const = 0;
-	virtual std::vector<Flow> elements() = 0;
+	virtual Arr<Flow> elements() = 0;
 	virtual Flow element(Int i) = 0;
 };
 
@@ -312,11 +343,10 @@ struct Array : public AArray {
 	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
 
 	Int size() const override { return static_cast<Int>(vect.size()); }
-	std::vector<Flow> elements() override {
-		std::vector<Flow> ret;
-		ret.reserve(vect.size());
+	Arr<Flow> elements() override {
+		Arr<Flow> ret(vect.size());
 		for (T x : vect) {
-			ret.push_back(ToFlow<T>::conv(x));
+			ret->vect.push_back(ToFlow<T>::conv(x));
 		}
 		return ret;
 	}
@@ -340,33 +370,6 @@ struct Array : public AArray {
 	Vect vect;
 };
 
-template<typename T> 
-struct Arr {
-	Arr(): arr() { }
-	Arr(std::initializer_list<T> il): arr(std::move(std::make_shared<Array<T>>(il))) { }
-	Arr(Ptr<Array<T>>&& a): arr(std::move(a)) { }
-	Arr(const Arr& a): arr(a.arr) { }
-	Arr(Arr&& a): arr(std::move(a.arr)) { }
-	Arr(std::size_t s): arr(std::move(std::make_shared<Array<T>>(s))) { }
-	static Arr makeEmpty() { return Arr(std::make_shared<Array<T>>(0)); }
-
-	Array<T>& operator *() { return arr.operator*(); }
-	Array<T>* operator ->() { return arr.operator->(); }
-	Array<T>* get() { return arr.get(); }
-	const Array<T>& operator *() const { return arr.operator*(); }
-	const Array<T>* operator ->() const { return arr.operator->(); }
-	const Array<T>* get() const { return arr.get(); }
-
-	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
-	Arr& operator = (const Arr& a) { arr = a.arr; return *this; }
-	bool isSameObj(Arr a) const { return arr.get() == a.arr.get(); }
-	template<typename T1>
-	Arr<T1> cast() {
-		return std::reinterpret_pointer_cast<Array<T1>>(arr);
-	}
-
-	Ptr<Array<T>> arr;
-};
 
 template<typename T> 
 struct Ref : public AReference {
@@ -460,8 +463,9 @@ inline void flow2string(Flow v, std::ostream& os, bool init) {
 		case Type::STRUCT: {
 			Ptr<AStruct> s = v.toStruct();
 			os << toStdString(s->name()) << "(";
+			Arr<Flow> fields = s->fields();
 			bool first = true;
-			for (Flow f : s->fields()) {
+			for (Flow f : fields->vect) {
 				if (!first) {
 					os << ", ";
 				}
@@ -472,10 +476,10 @@ inline void flow2string(Flow v, std::ostream& os, bool init) {
 			break;
 		}
 		case Type::ARRAY: {
-			Ptr<AArray> a = v.toArray();
+			Arr<Flow> a = v.toArray()->elements();
 			os << "[";
 			bool first = true;
-			for (Flow e : a->elements()) {
+			for (Flow e : a->vect) {
 				if (!first) {
 					os << ", ";
 				}
@@ -491,7 +495,7 @@ inline void flow2string(Flow v, std::ostream& os, bool init) {
 			break;
 		}
 		case Type::FUNC: {
-			os << "<func>"; 
+			os << "<function>"; 
 			break;
 		}
 		case Type::NATIVE: {
@@ -595,9 +599,9 @@ template<typename T> struct FromFlow<Arr<T>> {
 			if (dyn.arr) {
 				return dyn;
 			} else {
-				std::vector<Flow> elems = f.toArray()->elements();
-				Arr<T> ret(elems.size());
-				for (Flow x : elems) {
+				Arr<Flow> elems = f.toArray()->elements();
+				Arr<T> ret(elems->size());
+				for (Flow x : elems->vect) {
 					ret->vect.push_back(FromFlow<T>::conv(x));
 				}
 				return ret;
@@ -608,8 +612,7 @@ template<typename T> struct FromFlow<Arr<T>> {
 
 template<> struct FromFlow<Arr<Flow>> {
 	static Arr<Flow> conv(Flow f) {
-		std::vector<Flow> elems = f.toArray()->elements();
-		return Arr<Flow>(std::make_shared<Array<Flow>>(elems));
+		return f.toArray()->elements();
 	}
 };
 
@@ -825,10 +828,10 @@ inline Int compareFlow(Flow v1, Flow v2) {
 				if (c1 != 0) {
 					return c1;
 				} else {
-					std::vector<Flow> fs1 = s1->fields();
-					std::vector<Flow> fs2 = s2->fields();
-					for (std::size_t i = 0; i < fs1.size(); ++ i) {
-						Int c2 = compareFlow(fs1.at(i), fs2.at(i));
+					Arr<Flow> fs1 = s1->fields();
+					Arr<Flow> fs2 = s2->fields();
+					for (Int i = 0; i < fs1->size(); ++ i) {
+						Int c2 = compareFlow(fs1->vect.at(i), fs2->vect.at(i));
 						if (c2 != 0) {
 							return c2;
 						}
@@ -843,10 +846,10 @@ inline Int compareFlow(Flow v1, Flow v2) {
 				if (c1 != 0) {
 					return c1;
 				} else {
-					std::vector<Flow> es1 = a1->elements();
-					std::vector<Flow> es2 = a2->elements();
-					for (std::size_t i = 0; i < es1.size(); ++ i) {
-						Int c2 = compareFlow(es1.at(i), es2.at(i));
+					Arr<Flow> es1 = a1->elements();
+					Arr<Flow> es2 = a2->elements();
+					for (Int i = 0; i < es1->size(); ++ i) {
+						Int c2 = compareFlow(es1->vect.at(i), es2->vect.at(i));
 						if (c2 != 0) {
 							return c2;
 						}
