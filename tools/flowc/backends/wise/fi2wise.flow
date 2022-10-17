@@ -51,7 +51,8 @@ initWiNatives(state : FiWiseState, natives : [FiNativeDec]) -> void {
 writeWise2file(state : FiWiseState, program : FiProgram, path : string, module : FiModule) -> void {
 	println("----------------------\nflow->wise "+ module.fileinfo.flowfile + ".flow");
 	filepath : string = pathCombine(path, takeAfter(module.fileinfo.flowfile, path, module.fileinfo.flowfile))  + ".wise";
-	file = wiseAst2string(fiModule2FlowWiseAst(state, module));
+	wiseProgram = fiModule2FlowWiseAst(state, module);
+	file = wiseAst2string(wiseProgram);
 
 	ensureDirectoryExists(dirName(filepath));
 	if (!setFileContent(filepath, file)) {
@@ -70,7 +71,9 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 		lookupTree(functions, fnName),
 		\fn -> {
 			templates = fiTypeFunction2templates(fn.type);
-			state.polyFns := setTree(^(state.polyFns), fn.name, Pair(fn.type, templates));
+			if (!isEmptyTree(templates)) {
+				state.polyFns := setTree(^(state.polyFns), fn.name, Pair(fn.type, templates));
+			}
 		}
 	));
 
@@ -81,8 +84,12 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 	));
 	
 	// TODO: imports if necessary 
-	systemImports = [FiImport("array_i32", true, 0), FiImport("string", true, 0)];
-	imports = fold(concat(module.imports, systemImports), newBody, \acc, v -> fiImport2FlowWiseAst(v, acc));
+	systemImports = [
+		"tools/flowc/backends/wise/lib/array",
+		"tools/flowc/backends/wise/lib/string",
+	];
+	userImports = map(module.imports, \imp -> "lib/wise/" + imp.flowfile);
+	imports = fold(concat(userImports, systemImports), newBody, \acc, v -> FlowWiFlowWiseInclude(v, acc));
 
 	FlowWiseAstList(Cons(imports, structs.first));
 }
@@ -119,11 +126,6 @@ fiStruct2wiTupleAnnotation(struct : FiTypeStruct, structs : StructTuple) -> Flow
 		FlowWiVar(struct.name),
 		FlowWiTupletype(map(struct.args, \arg -> fiType2FlowWiType(arg.type, structs)))
 	);
-}
-
-// TODO: fix path. or mapper (flow_lib -> FlowWise_lib)
-fiImport2FlowWiseAst(decl : FiImport, body : FlowWiDecl) -> FlowWiDecl {
-	FlowWiFlowWiseInclude("lib/wise/" + decl.flowfile, body);
 }
 
 fiFunctionDec2FlowWiFunction(state : FiWiseState, func : FiFunctionDec, exported : bool, structs : StructTuple, body : FlowWiDecl) -> FlowWiFunction {
@@ -225,8 +227,7 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, structs : StructTuple) -> Flow
 	switch (exp : FiExp) {
 		FiLambda(args, body, type, start) : makeDefExp();
 		FiCall(f, args, type, start) : {
-			newFn = resolveWiFnName(e2e(f), args);
-			FlowWiCall(newFn, map(args, e2e));
+			unpair(resolveWiFnName(e2e(f), args, structs), \newFn, newArgs -> FlowWiCall(newFn, map(newArgs, e2e)));
 		}
 		FiVar(name, type, start) : resloveVar(name, type);
 		FiLet(name, type, e1, e2, type2, start) : {
@@ -319,7 +320,7 @@ fiCallPrim2wiExp(state : FiWiseState, exp : FiCallPrim, structs : StructTuple) -
 		fcPrim2flowWiExp(exp.op, e2e(exp.es[0]), exp.type);
 	} else {
 		firstArgType = extractFiTypeFromFiExp(exp.es[0]);
-		firstExpM = fcPrims2flowWiExp(exp.op, e2e(exp.es[0]), e2e(exp.es[1]), firstArgType);
+		firstExpM = fcPrims2flowWiExp(state, exp.op, e2e(exp.es[0]), e2e(exp.es[1]), firstArgType, structs);
 		tail = subrange(exp.es, 2, length(exp.es) - 1);
 		secondExpM = fiCallPrim2wiExp(state, FiCallPrim(exp.op, tail, exp.type, exp.start), structs);
 		eitherMap(
@@ -327,7 +328,7 @@ fiCallPrim2wiExp(state : FiWiseState, exp : FiCallPrim, structs : StructTuple) -
 			\firstExp -> {
 				eitherMap(
 					secondExpM,
-					\secondExp -> fcPrims2flowWiExp(exp.op, firstExp, secondExp, firstArgType),
+					\secondExp -> fcPrims2flowWiExp(state, exp.op, firstExp, secondExp, firstArgType, structs),
 					firstExpM
 				);
 			},
@@ -441,9 +442,9 @@ fcPrim2flowWiExp(type : FcPrim, e : FlowWiExp, resultType : FiType) -> Maybe<Flo
 }
 
 
-fcPrims2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, firstArgType : FiType) -> Maybe<FlowWiExp> {
+fcPrims2flowWiExp(state : FiWiseState, type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, firstArgType : FiType, structs : StructTuple) -> Maybe<FlowWiExp> {
 	if (isSameStructType(firstArgType, FiTypeArray(FiTypeVoid())) || isWiArrayConstruction(e1) || isWiArrayConstruction(e2)) {
-		fcPrimArrays2flowWiExp(type, e1, e2);
+		fcPrimArrays2flowWiExp(type, e1, e2, extractArrayFiType(firstArgType), state, structs);
 	} else {
 		fcPrimBools2flowWiExp(type, e1, e2);
 	}
@@ -476,7 +477,7 @@ fcPrimBools2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<Fl
 		FcModPrim() : makeExp(FlowWiMod(e1, e2));
 		FcNegPrim() : makeError();
 		FcArrayPrim() : makeDef();
-		FcIndexPrim() : Some(makeWiArrayIndex(e1, e2)); // ?
+		FcIndexPrim() :  makeDef();
 		FcDerefPrim() : makeDef();
 		FcAssignPrim() : makeDef();
 		FcRefPrim() : makeDef(); 
@@ -489,14 +490,17 @@ fcPrimBools2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<Fl
 	}
 }
 
-// TODO: array type
-fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<FlowWiExp> {
+// TODO: array type (compare by value, and not by pointer)
+fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, valueType : FiType, state : FiWiseState, structs : StructTuple) -> Maybe<FlowWiExp> {
 	makeError = \-> {
 		println("Wrong operation : " + toString(type) + " (" + toString(e1) + ", " + toString(e2) + ")");
 		None();
 	}
 
-	makeCompareFn = \-> FlowWiCall(FlowWiVar("compareArraysI32"), [e1, e2]);
+	makeCompareFn = \-> FlowWiCall(
+		FlowWiPolyCall(FlowWiVar("compareArrays"), [fiType2FlowWiType(valueType, structs)]),
+		[e1, e2/* , fiExp2FlowWiExp(state, fiType2defVal(valueType), structs) */]
+	);
 
 	makeExp = \e -> Some(FlowWiBrace([e]));
 
@@ -517,7 +521,7 @@ fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<F
 		FcModPrim() : makeError();
 		FcNegPrim() : makeError();
 		FcArrayPrim() : makeError();
-		FcIndexPrim() : Some(makeWiArrayIndex(e1, e2)); // ?
+		FcIndexPrim() : Some(makeWiArrayIndex(e1, e2, fiType2FlowWiType(valueType, structs)));
 		FcDerefPrim() : makeError();
 		FcAssignPrim() : makeError();
 		FcRefPrim() : makeError(); 
@@ -530,28 +534,38 @@ fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<F
 	}
 }
 
-// TODO: 1 native -> N implementations (by type)
-// fix this ugly function
-resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
-	makeArrayError = \fnName -> {
-		println("wrong arguments for " + fnName);
-		"fnName"
+// TODO: fix this ugly function
+resolveWiFnName(exp : FlowWiExp, args : [FiExp], structs : StructTuple) -> Pair<FlowWiExp, [FiExp]> {
+	fiName2wiseFnInf = \fnName : string -> {
+		if (fnName == "concat") Pair("concatArrays", true)
+		else if (fnName == "arrayPush") Pair("arrayPush", true)
+		else if (fnName == "length") Pair("getLengthArray", false)
+		else if (fnName == "subrange") Pair("subrangeArray", true)
+		else if (fnName == "replace") Pair("replaceArray", true)
+		else Pair("", false);
 	}
-
-	fiName2wiseName = \fnName -> {
-		if (fnName == "concat") "concatArrays"
-		else if (fnName == "arrayPush") "arrayPush"
-		else if (fnName == "length") "getArrayLength"
-		else if (fnName == "subrange") "subrangeArray"
-		else if (fnName == "replace") "replaceArray"
-		else "";
-	}
-	makeArrayFnForFiType = \type, fnName -> switch (type : FiType) {
-		FiTypeInt() : fiName2wiseName(fnName) + "I32";
-		default : {
-			println(fnName + " for '" + toString(type) + "' isn't implemented");
-			fnName;
+	makeArrayFnForFiType = \type, fnName -> {
+		fnInf = switch (type : FiType) {
+			FiTypeInt() : fiName2wiseFnInf(fnName);
+			FiTypeDouble() : fiName2wiseFnInf(fnName);
+			FiTypeBool() : fiName2wiseFnInf(fnName);
+			FiTypeString() : fiName2wiseFnInf(fnName);
+			FiTypeArray(__) : fiName2wiseFnInf(fnName);
+			default : Pair("", false);
 		}
+		unpair(fnInf, \name : string, tmplFn : bool -> {
+			if (name == "") {
+				println(fnName + " for '" + toString(type) + "' isn't implemented");
+				Pair(exp, args);
+			} else {
+				fnExp = if (tmplFn) {
+					FlowWiPolyCall(FlowWiVar(name), [fiType2FlowWiType(type, structs)])
+				} else {
+					FlowWiVar(name);
+				}
+				Pair(fnExp, args);
+			}
+		});
 	}
 
 	// TODO: fix FiTypeParameter
@@ -561,20 +575,20 @@ resolveWiFnName(exp : FlowWiExp, args : [FiExp]) -> FlowWiExp {
 
 	switch (exp : FlowWiExp) {
 		FlowWiVar(id) : if (id == "println" && args != []) {
-			makeFlowWiPrint(args[0]);
+			Pair(makeFlowWiPrint(args[0]), args);
 		} else if ((id == "length" || id == "subrange") && args != []) {
-			FlowWiVar(makeArrayFnForFiType(resolveArrType(extractArrayFiType(args[0]), FiTypeInt()), id));
+			makeArrayFnForFiType(resolveArrType(extractArrayFiTypeFromExp(args[0]), FiTypeInt()), id);
 		} else if (id == "concat" && length(args) == 2) {
-			arrType = resolveArrType(extractArrayFiType(args[0]), extractArrayFiType(args[1]));
-			FlowWiVar(makeArrayFnForFiType(resolveArrType(arrType, FiTypeInt()), id))
+			arrType = resolveArrType(extractArrayFiTypeFromExp(args[0]), extractArrayFiTypeFromExp(args[1]));
+			makeArrayFnForFiType(resolveArrType(arrType, FiTypeInt()), id)
 		} else if (id == "arrayPush" && length(args) == 2) {
-			FlowWiVar(makeArrayFnForFiType(extractArrayFiType(args[1]), id))
+			makeArrayFnForFiType(extractArrayFiTypeFromExp(args[1]), id)
 			} else if (id == "replace" && length(args) == 3) {
-			FlowWiVar(makeArrayFnForFiType(extractArrayFiType(args[2]), id))
+			makeArrayFnForFiType(extractArrayFiTypeFromExp(args[2]), id)
 		} else {
-			exp
+			Pair(exp, args);
 		}
-		default : exp;
+		default : Pair(exp, args);
 	}
 }
 
@@ -612,8 +626,11 @@ makeFlowWiPrint(exp : FiExp) -> FlowWiExp {
 	}
 }
 
-extractArrayFiType(exp : FiExp) -> FiType {
-	type = extractFiTypeFromFiExp(exp) ;
+extractArrayFiTypeFromExp(exp : FiExp) -> FiType {
+	extractArrayFiType(extractFiTypeFromFiExp(exp));
+}
+
+extractArrayFiType(type : FiType) -> FiType {
 	switch (type : FiType) {
 		FiTypeArray(t) : t;
 		default : type;
