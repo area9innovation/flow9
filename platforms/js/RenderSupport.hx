@@ -1619,7 +1619,7 @@ class RenderSupport {
 
 			Browser.window.document.dispatchEvent(e);
 			forceRollOverRollOutUpdate();
-		} else if (event == "pointerdown" || event == "pointerup" || event == "pointermove" || event == "pointerout") {
+		} else if (event == "pointerdown" || event == "pointerup" || event == "pointermove") {
 			var me = {
 				clientX : Std.int(x),
 				clientY : Std.int(y),
@@ -1627,8 +1627,9 @@ class RenderSupport {
 
 			var e = Platform.isIE || Platform.isSafari
 				? {
-					var customEvent = "new CustomEvent('" + event + "', me)"; 
-					untyped __js__(customEvent);
+					if (event == "pointerdown") untyped __js__("new CustomEvent('pointerdown', me)")
+					else if (event == "pointerup") untyped __js__("new CustomEvent('pointerup', me)")
+					else untyped __js__("new CustomEvent('pointermove', me)");
 				}
 				: new js.html.PointerEvent(event, me);
 
