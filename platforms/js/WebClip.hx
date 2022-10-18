@@ -114,7 +114,6 @@ class WebClip extends NativeWidgetClip {
 						listenAndDispatch('pointerdown');
 						listenAndDispatch('pointerup');
 						listenAndDispatch('pointermove');
-						listenAndDispatch('pointerout');
 					}
 
 					if (this.noScroll) {
