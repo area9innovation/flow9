@@ -2348,7 +2348,6 @@ async.parallel(fns, function(err, results) { cb(results) });");
 			tag.href = href;
 			tag.as = as;
 			js.Browser.document.head.appendChild(tag);
-			untyped console.log("preloadStaticResource from haxe");
 		#end
 	}
 }
