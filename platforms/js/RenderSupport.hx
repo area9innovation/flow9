@@ -1626,7 +1626,10 @@ class RenderSupport {
 			};
 
 			var e = Platform.isIE || Platform.isSafari
-				? untyped __js__("new CustomEvent('" + event + "', me)")
+				? {
+					var customEvent = "new CustomEvent('" + event + "', me)"; 
+					untyped __js__(customEvent);
+				}
 				: new js.html.PointerEvent(event, me);
 
 			untyped clip.nativeWidget.dispatchEvent(e);
