@@ -96,7 +96,9 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
 	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
 	sources = superglue(runtime_parts, \part -> part.source, "\n");
-"using namespace flow;
+"
+using namespace flow;
+using namespace std::string_literals;
 using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
 "int main(int argc, const char* argv[]) {\n" +
@@ -121,6 +123,7 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	"// Module " + module.name + "\n\n" + 
 	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
 	"namespace " + gctx.config.namespace + " {\n" +
+	"using namespace std::string_literals;\n" +
 	"using namespace flow;\n\n" + 
 	concatStrings(forward_decls) + "\n" + 
 	concatStrings(header_defs) + "\n" + 
@@ -132,6 +135,7 @@ fiCompiledModule2cpp3source(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	if (length(source_defs) == 0 && !module.isMain) "" else {
 		"#inc" + "lude \"" + module.name + ".hpp\"\n" +
 		"namespace " + gctx.config.namespace + " {\n" +
+		"using namespace std::string_literals;\n" +
 		"using namespace flow;\n\n" + 
 		concatStrings(source_defs) + "\n" +
 		"}\n" +
@@ -207,7 +211,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 			"\treturn 0;"
 		"\n}";
 
-		get_field = "Flow field(String name) override {\n" +
+		get_field = "Flow field(String name) const override {\n" +
 			(if (length(struct.args) == 0) {
 				"\tassert(false && \"unkown field in struct\");\n" +
 				"\treturn Flow();";
@@ -233,12 +237,13 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 			}) +
 		"\n}";
 
-		set_field = "void setField(String name, Flow val) override {\n" +
-			(if (length(struct.args) == 0) {
+		mutable_fields = filter(struct.args, \arg -> arg.ismutable);
+		set_field = "void setField(String name, Flow val) const override {\n" +
+			(if (length(mutable_fields) == 0) {
 				"\tassert(false && \"unkown field in struct\");"
 			} else {
 				strIndent(
-					supergluei(struct.args, 
+					supergluei(mutable_fields, 
 						\i, arg -> {
 							if (i == 0) {
 								"if (toStdString(name) == \"" + arg.name + "\") {\n" +
@@ -256,7 +261,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 				);
 			}) +
 		"\n}";
-		flow_fields = "Arr<Flow> fields() override { return " + 
+		flow_fields = "Arr<Flow> fields() const override { return " + 
 			(if (length(struct.args) == 0) "Arr<Flow>::makeEmpty()" else
 			"Arr<Flow>{" + superglue(struct.args, \arg -> "ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}") 
 			+ "; }";
@@ -599,7 +604,19 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			s = d2s(d);
 			if (strContains(s, ".")) s else s + ".0";
 		}
-		FiString(s, __): "makeString(u\"" + escapeStr(toAsciiString(s)) + "\")";
+		FiString(s, __): {
+			s1 = concatStrings(map(s2a(s), \code ->
+				if (code == 0x09) "\\t" else
+				if (code == 0x0a) "\\n" else
+				if (code == 0x0d) "\\r" else
+				if (code == 0x22) "\\\"" else
+				if (code == 0x5c) "\\\\" else
+				if (0 < code && code < 0x80) fromCharCode(code) else
+				if (code <= 0xFFFF) "\\u" + lpad(formatHex(code), "0", 4) else 
+				"\\U" + lpad(formatHex(code), "0", 8)
+			));
+			"makeString(\"" + s1 + "\"s)";
+		}
 		FsCast(ex, from, to): {
 			s = fsExp2cpp3(ex, gctx);
 			//fiCpp3Cast(fsExpType(ex), to, s, gctx);
@@ -809,13 +826,20 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 				FiTypeFlow(): {
 					e2k(e.es[0]) + ".toReference()->reference()";
 				}
-				default:
-					"(" +e2k(e.es[0]) + "->val)";
-
+				default: {
+					"(*" +e2k(e.es[0]) + "->val)";
+				}
 			}
 		}
 		FcAssignPrim(): {
-			"(" + e2k(e.es[0]) + "->val = " + e2k(e.es[1]) + ")";
+			switch (arg_type) {
+				FiTypeFlow(): {
+					e2k(e.es[0]) + ".toReference()->set(" + e2k(e.es[1]) + ")";
+				}
+				default: {
+					"(*" + e2k(e.es[0]) + "->val = " + e2k(e.es[1]) + ")";
+				}
+			}
 		}
 		FcRefPrim(): {
 			ref_type = fiDerefType(e.type);
