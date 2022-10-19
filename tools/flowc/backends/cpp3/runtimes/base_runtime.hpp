@@ -86,9 +86,7 @@ template<typename T> struct ToFlow;
 template<typename T> struct FromFlow;
 template<typename T> struct Compare;
 template<typename T> struct Equal {
-	bool operator() (T v1, T v2) const {
-		return Compare<T>::cmp(v1, v2) == 0;
-	}
+	bool operator() (T v1, T v2) const { return Compare<T>::cmp(v1, v2) == 0; }
 };
 
 template<> struct Compare<Bool> {
@@ -204,7 +202,7 @@ struct Str {
 	Str& operator = (const Str& s) { str.operator=(s.str); return *this; }
 	Str& operator = (Str&& s) { str.operator=(std::move(s.str)); return *this;}
 	template<typename T1>
-	Str<T1> cast() const { return std::reinterpret_pointer_cast<T1>(str); }
+	Str<T1> cast() const;
 
 	Ptr<T> str;
 };
@@ -226,7 +224,7 @@ struct Union {
 	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
 	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
 	template<typename T1>
-	Str<T1> cast() const { return std::reinterpret_pointer_cast<T1>(un); }
+	Str<T1> cast() const;
 
 	Ptr<AStruct> un;
 };
@@ -302,18 +300,6 @@ struct Flow {
 	}
 };
 
-template<typename T>
-Str<T>::Str(const Union& u): str(std::dynamic_pointer_cast<T>(u.un)) { }
-template<typename T>
-Str<T>::Str(const Flow& f) {
-	if (f.type() != Type::STRUCT) {
-		std::cerr << "struct construction from not a struct ";
-		flow2string(f, std::cerr, false);
-		std::cerr << std::endl;
-	}
-	str = std::reinterpret_pointer_cast<T>(std::get<Ptr<AStruct>>(f.val));
-}
-
 struct AStruct {
 	virtual Int id() const = 0;
 	virtual String name() const = 0;
@@ -346,13 +332,44 @@ Str<typename To::Name> struct2struct(Str<typename From::Name> from) {
 
 template<typename To>
 Str<typename To::Name> union2struct(Union from) {
-	return std::dynamic_pointer_cast<typename To::Name>(from.un);
+	typedef typename To::Name T1;
+	return (from.un->id() == T1::ID)? std::reinterpret_pointer_cast<T1>(from.un) : Str<T1>();
 }
 
 template<typename From>
 Union struct2union(Str<typename From::Name> from) {
 	return std::static_pointer_cast<AStruct>(from.str);
 }
+template<class T>
+template<class T1>
+Str<T1> Str<T>::cast() const { 
+	return (str->id() == T1::ID) ? std::reinterpret_pointer_cast<T1>(str) : Str<T1>(); 
+}
+
+template<typename T1>
+Str<T1> Union::cast() const {
+	return (un->id() == T1::ID) ? std::reinterpret_pointer_cast<T1>(un) : Str<T1>(); 
+}
+
+template<typename T>
+Str<T>::Str(const Union& u) { 
+	if (u->id() == T::ID) {
+		str = std::reinterpret_pointer_cast<T>(u.un);
+	}
+}
+template<typename T>
+Str<T>::Str(const Flow& f) {
+	if (f.type() != Type::STRUCT) {
+		std::cerr << "struct construction from not a struct ";
+		flow2string(f, std::cerr, false);
+		std::cerr << std::endl;
+	}
+	Ptr<AStruct> s = f.toStruct();
+	if (s->id() == T::ID) {
+		str = std::reinterpret_pointer_cast<T>(s);
+	}
+}
+
 template<typename T> 
 struct Array : public AArray {
 	typedef std::vector<T> Vect;
@@ -634,7 +651,10 @@ template<> struct FromFlow<Arr<Flow>> {
 };
 
 template<typename T> struct FromFlow<Str<T>> {
-	static Str<T> conv(Flow f) { return std::reinterpret_pointer_cast<T>(f.toStruct()); }
+	static Str<T> conv(Flow f) { 
+		Ptr<AStruct> s = f.toStruct();
+		return (s->id() == T::ID) ? std::reinterpret_pointer_cast<T>(s) : Str<T>(); 
+	}
 };
 template<typename T> struct FromFlow<Ref<T>> {
 	static Ref<T> conv(Flow f) { return std::reinterpret_pointer_cast<Reference<T>>(f.toReference()); }
@@ -827,7 +847,11 @@ struct Compare<Ref<T>> {
 
 template<typename T>
 struct Compare<Str<T>> {
-	static Int cmp(Str<T> v1, Str<T> v2) { return v1->compare(*v2); }
+	static Int cmp(Str<T> v1, Str<T> v2) { 
+		if (v1.get() == nullptr) return -1; else
+		if (v2.get() == nullptr) return 1; else
+		return v1->compare(*v2); 
+	}
 };
 
 template<typename R, typename... As>
