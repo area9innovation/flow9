@@ -1619,6 +1619,21 @@ class RenderSupport {
 
 			Browser.window.document.dispatchEvent(e);
 			forceRollOverRollOutUpdate();
+		} else if (event == "pointerdown" || event == "pointerup" || event == "pointermove") {
+			var me = {
+				clientX : Std.int(x),
+				clientY : Std.int(y),
+			};
+
+			var e = Platform.isIE || Platform.isSafari
+				? {
+					if (event == "pointerdown") untyped __js__("new CustomEvent('pointerdown', me)")
+					else if (event == "pointerup") untyped __js__("new CustomEvent('pointerup', me)")
+					else untyped __js__("new CustomEvent('pointermove', me)");
+				}
+				: new js.html.PointerEvent(event, me);
+
+			untyped clip.nativeWidget.dispatchEvent(e);
 		}
 
 		if (!Util.isMouseEventName(event) || isStage(clip)) {
@@ -3989,6 +4004,10 @@ class RenderSupport {
 
 	public static function setWebClipNoScroll(clip : WebClip) : Void {
 		clip.setNoScroll();
+	}
+
+	public static function setWebClipPassEvents(clip : WebClip) : Void {
+		clip.setPassEvents();
 	}
 
 	public static function webClipEvalJS(clip : Dynamic, code : String, cb : Dynamic -> Void) : Void {
