@@ -61,8 +61,6 @@ union DoubleOrChars {
 	DoubleOrChars(char16_t i0, char16_t i1, char16_t i2, char16_t i3): chars(i0, i1, i2, i3) { }
 };
 
-using utf16_to_utf8 = std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t>;
-
 inline std::string toStdString(String str) { 
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < str->size(); ++i) {
@@ -104,23 +102,20 @@ inline std::string toStdString(String str) {
 	}
 	return ret; 
 }
-inline std::string toStdChar(char16_t s) { static utf16_to_utf8 conv; return conv.to_bytes(s); }
-inline string fromStdString(const std::string& s) { static utf16_to_utf8 conv; return conv.from_bytes(s); }
+inline string fromStdString(const std::string& s) { static std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> conv; return conv.from_bytes(s); }
 
-const String empty_string = String(new string());
+inline String makeString() { return std::make_shared<string>(); }
+inline String makeString(const char16_t* s) { return std::make_shared<string>(s); }
+inline String makeString(String s) { return std::make_shared<string>(*s); }
+inline String makeString(const string& s) { return std::make_shared<string>(s); }
+inline String makeString(char16_t ch) { return std::make_shared<string>(1, ch); }
+inline String makeString(const std::string& s) { return std::make_shared<string>(fromStdString(s)); }
+inline String makeString(const char16_t* s, Int len) { return std::make_shared<string>(s, len); }
 
-inline String makeString() { return empty_string; }
-inline String makeString(const char16_t* s) { return String(new string(s)); }
-inline String makeString(String s) { return String(new string(*s)); }
-inline String makeString(const string& s) { return String(new string(s)); }
-inline String makeString(char16_t ch) { return String(new string(1, ch)); }
-inline String makeString(const std::string& s) { return String(new string(fromStdString(s))); }
-inline String makeString(const char16_t* s, Int len) { return String(new string(s, len)); }
-
-const String string_true = makeString("true");
-const String string_false = makeString("false");
-const String string_1 = makeString("1");
-const String string_0 = makeString("0");
+const String string_true = makeString(u"true");
+const String string_false = makeString(u"false");
+const String string_1 = makeString(u"1");
+const String string_0 = makeString(u"0");
 
 template<typename T> struct ToFlow;
 template<typename T> struct FromFlow;
@@ -160,7 +155,7 @@ struct AFunction;
 // Dynamic type
 struct Flow;
 
-void flow2string(Flow v, std::ostream& os, bool init);
+void flow2string(Flow v, String os, bool init);
 
 template<typename T> struct Str;
 template<typename T> struct Arr;
@@ -340,6 +335,7 @@ struct Flow {
 	}
 };
 
+inline String flow2string(Flow f) { String os = makeString(); flow2string(f, os, true); return os; }
 struct AStruct {
 	virtual Int id() const = 0;
 	virtual String name() const = 0;
@@ -400,9 +396,7 @@ Str<T>::Str(const Union& u) {
 template<typename T>
 Str<T>::Str(const Flow& f) {
 	if (f.type() != Type::STRUCT) {
-		std::cerr << "struct construction from not a struct ";
-		flow2string(f, std::cerr, false);
-		std::cerr << std::endl;
+		std::cerr << "struct construction from not a struct " << toStdString(flow2string(f)) << std::endl;
 	}
 	Ptr<AStruct> s = f.toStruct();
 	if (s->id() == T::ID) {
@@ -507,82 +501,75 @@ template<typename T> Flow::Flow(Ref<T> r): val(std::static_pointer_cast<AReferen
 template<typename T> Flow::Flow(Arr<T> a): val(std::static_pointer_cast<AArray>(a.arr)) { }
 template<typename R, typename... As> Flow::Flow(Fun<R, As...> f): val(std::static_pointer_cast<AFunction>(std::make_shared<Fun<R, As...>>(f))) { }
 
-inline void flow2string(Flow v, std::ostream& os, bool init) {
+inline void flow2string(Flow v, String os, bool init) {
 	switch (v.type()) {
-		case Type::INT:    os << v.toInt(); break;
-		case Type::BOOL:   os << (v.toBool() ? "true" : "false"); break;
-		case Type::DOUBLE: os << v.toDouble(); break;
+		case Type::INT:    os->append(fromStdString(std::to_string(v.toInt()))); break;
+		case Type::BOOL:   os->append((v.toBool() ? u"true" : u"false")); break;
+		case Type::DOUBLE: os->append(fromStdString(std::to_string(v.toDouble()))); break;
 		case Type::STRING: {
 			if (!init) {
-				os << "\"";
+				os->append(u"\"");
 				for (char16_t c : *v.toString()) {
 					switch (c) {
-						case '"': os << "\\\"";      break;
-						case '\\': os << "\\\\";     break;
-						case '\n': os << "\\n";      break;
-						case '\t': os << "\\t";      break;
-						//case '\r': os << "\\u000d";  break;
-						case '\r': os << "\\r";      break;
-						default: os << toStdChar(c); break;
+						case '"': os->append(u"\\\"");      break;
+						case '\\': os->append(u"\\\\");     break;
+						case '\n': os->append(u"\\n");      break;
+						case '\t': os->append(u"\\t");      break;
+						//case '\r': os->append("\\u000d");  break;
+						case '\r': os->append(u"\\r");      break;
+						default: *os += c; break;
 					}
 				}
-				os << "\"";
+				os->append(u"\"");
 			} else {
-				for (char16_t c : *v.toString()) {
-					os << toStdChar(c); 
-				}
+				os->append(*v.toString());
 			}
 			break;
 		}
 		case Type::STRUCT: {
 			Ptr<AStruct> s = v.toStruct();
-			os << toStdString(s->name()) << "(";
+			os->append(*s->name());
+			os->append(u"(");
 			Arr<Flow> fields = s->fields();
 			bool first = true;
 			for (Flow f : fields->vect) {
 				if (!first) {
-					os << ", ";
+					os->append(u", ");
 				}
 				flow2string(f, os, false);
 				first = false;
 			}
-			os << ")";
+			os->append(u")");
 			break;
 		}
 		case Type::ARRAY: {
 			Arr<Flow> a = v.toArray()->elements();
-			os << "[";
+			os->append(u"[");
 			bool first = true;
 			for (Flow e : a->vect) {
 				if (!first) {
-					os << ", ";
+					os->append(u", ");
 				}
 				flow2string(e, os, false);
 				first = false;
 			}
-			os << "]";
+			os->append(u"]");
 			break;
 		}
 		case Type::REF: {
-			os << "ref ";
+			os->append(u"ref ");
 			flow2string(v.toReference()->reference(), os, false);
 			break;
 		}
 		case Type::FUNC: {
-			os << "<function>"; 
+			os->append(u"<function>"); 
 			break;
 		}
 		case Type::NATIVE: {
-			os << "<native>";
+			os->append(u"<native>");
 			break;
 		}
 	}
-}
-
-inline String flow2string(Flow f) {
-	std::ostringstream os;
-	flow2string(f, os, true);
-	return makeString(os.str());
 }
 
 template<> struct ToFlow<Int> {
