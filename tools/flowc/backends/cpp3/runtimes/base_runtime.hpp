@@ -63,7 +63,47 @@ union DoubleOrChars {
 
 using utf16_to_utf8 = std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t>;
 
-inline std::string toStdString(String s) { static utf16_to_utf8 conv; return conv.to_bytes(*s); }
+inline std::string toStdString(String str) { 
+	std::size_t len = 0;
+	for (std::size_t i = 0; i < str->size(); ++i) {
+		char16_t ch = str->at(i);
+		uint32_t x = (0xD800 <= ch && ch <= 0xDBFF) ? ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000 : ch;
+		if (x <= 0x7F) len += 1; else 
+		if (x <= 0x7FF) len += 2; else 
+		if (x <= 0xFFFF) len += 3; else 
+		if (x <= 0x1FFFFF) len += 4; else 
+		if (x <= 0x3FFFFFF) len += 5; else
+		throw std::runtime_error("broken utf encoding");
+	}
+	std::string ret;
+	ret.reserve(len);
+	for (std::size_t i = 0; i < str->size(); ++i) {
+		char16_t ch = str->at(i);
+		uint32_t x = (0xD800 <= ch && ch <= 0xDBFF) ? ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000 : ch;
+		if (x <= 0x7F) {
+			ret += x;
+		} else if (x <= 0x7FF) {
+			ret += (0xC0 | ((x >> 6) & 0x3F));
+			ret += (0x80 | (x & 0x3F));
+		} else if (x <= 0xFFFF) {
+			ret += (0xE0 | ((x >> 12) & 0x3F));
+			ret += (0x80 | ((x >> 6) & 0x3F));
+			ret += (0x80 | (x & 0x3F));
+		} else if (x <= 0x1FFFFF) {
+			ret += (0xF0 | ((x >> 18) & 0x3F));
+			ret += (0x80 | ((x >> 12) & 0x3F));
+			ret += (0x80 | ((x >> 6) & 0x3F));
+			ret += (0x80 | (x & 0x3F));
+		} else if (x <= 0x3FFFFFF) {
+			ret += (0xF8 | ((x >> 24) & 0x3F));
+			ret += (0x80 | ((x >> 18) & 0x3F));
+			ret += (0x80 | ((x >> 12) & 0x3F));
+			ret += (0x80 | ((x >> 6) & 0x3F));
+			ret += (0x80 | (x & 0x3F));
+		}
+	}
+	return ret; 
+}
 inline std::string toStdChar(char16_t s) { static utf16_to_utf8 conv; return conv.to_bytes(s); }
 inline string fromStdString(const std::string& s) { static utf16_to_utf8 conv; return conv.from_bytes(s); }
 
