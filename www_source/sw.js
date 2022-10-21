@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 26;
+var SERVICE_WORKER_VERSION = 27;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -707,7 +707,10 @@ self.addEventListener('fetch', function(event) {
       "stamp.php" == name + "." + ext ||
       "flowjs.html" == name + "." + ext));
 
-    if (res) resetRequestsCount();
+    if (res) {
+      resetRequestsCount();
+      requestsTimings = [];
+    }
 
     return res;
   }
