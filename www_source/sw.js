@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 25;
+var SERVICE_WORKER_VERSION = 26;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -147,6 +147,9 @@ var swIndexedDb = {
 }
 
 var timerId = null;
+
+// Collection of requests and timings of processing steps
+var requestsTimings = [];
 
 function swIndexedDbInitialize() {
   if (swIndexedDb.isNeedInit()) {
@@ -603,6 +606,16 @@ var moveJwtToHeaders = function(request) {
   }
 };
 
+var createRequestTimingsVar = function() {
+  var tm = Date.now();
+  return {
+    startTimestamp: tm,
+    lastTime: tm,
+    duration: -1,
+    steps: []
+  };
+}
+
 self.addEventListener('install', function(event) {
   self.skipWaiting();
 
@@ -624,6 +637,18 @@ self.addEventListener('activate', function(event) {
 
 self.addEventListener('fetch', function(event) {
   swIndexedDbInitialize();
+
+  var requestTimings = createRequestTimingsVar();
+
+  function addTimingsStep(name) {
+    var tm = Date.now() - requestTimings.lastTime;
+    requestTimings.steps.push({
+      name: name,
+      time: tm
+    });
+
+    requestTimings.lastTime = Date.now();
+  }
 
   var isMatchSkipFilter = function(request) {
     var fixedUrl = urlAddBaseLocation(request.url).toLowerCase();
@@ -687,12 +712,25 @@ self.addEventListener('fetch', function(event) {
     return res;
   }
 
+  var extractRequestStepInfo = function(baseUrl, parameters) {
+    requestTimings.name = baseUrl.split('\\').pop().split('/').pop();
+    requestTimings.operation = parameters.map(function(p) {
+      p2 = p.toLowerCase();
+      var index = p2.indexOf('=');
+
+      if ((index !== -1) && (p2.substr(0, index) == "operation")) return p.substr(index + 1);
+      else return "";
+    }).filter(function(op) { return op != ""});
+  }
+
   // Creation a requestData for GET requests
   var createRequestDataGET = function(request) {
     var fixedUrl = urlAddBaseLocation(request.url);
     var urlSplitted = extractUrlParameters(fixedUrl);
     var usedCacheName = CACHE_NAME;
     var isStaticCaching = isStaticCachingFn(request.url);
+
+    extractRequestStepInfo(urlSplitted.baseUrl, urlSplitted.parameters);
 
     if (request.method == "GET") {
       var cacheFilter = findCacheFilter(fixedUrl, request.method, false);
@@ -751,6 +789,8 @@ self.addEventListener('fetch', function(event) {
             requestUrl += glueSymb + reqParamsText;
           }
 
+          extractRequestStepInfo(urlSplitted.baseUrl, extractUrlParameters(requestUrl).parameters);
+
           return { urlNewFull: requestUrl, isFileUploading: isFileUploadingRequest };
         }).catch(function() {
           return { urlNewFull: fixedUrl, isFileUploading: isFileUploadingRequest };
@@ -759,6 +799,7 @@ self.addEventListener('fetch', function(event) {
         return Promise.resolve({ urlNewFull: fixedUrl, isFileUploading: isFileUploadingRequest });
       }
     } else {
+      extractRequestStepInfo(urlSplitted.baseUrl, urlSplitted.parameters);
       return Promise.resolve({ urlNewFull: fixedUrl, isFileUploading: isFileUploadingRequest });
     }
   }
@@ -1062,10 +1103,13 @@ self.addEventListener('fetch', function(event) {
     return clients.get(event.clientId).then(function(client) {
       var clientUrl = new URL(client.url);
 
-      if (isStampForApplicationJsRequestInner(client.url))
+      if (isStampForApplicationJsRequestInner(client.url)) {
+        addTimingsStep("isStampForApplicationJsRequest");
         return Promise.resolve();
-      else
+      } else {
+        addTimingsStep("isStampForApplicationJsRequest");
         return Promise.reject();
+      }
     });
   }
 
@@ -1093,11 +1137,14 @@ self.addEventListener('fetch', function(event) {
 
   function getResourceFromCache(requestData, ignoreSearch) {
     if (requestData.isFileUploading) {
+      addTimingsStep("getResourceFromCache skip");
       // We don't cache file uploading request, so we skip the step of request searching in cache
       return Promise.reject();
     } else {
       return caches.match(prepareRequestToCache(requestData), { ignoreSearch: (ignoreSearch && !requestData.isCustomCaching) })
         .then(function(response) {
+          addTimingsStep("getResourceFromCache match");
+
           if (!response) {
             return Promise.reject();
           }
@@ -1141,12 +1188,17 @@ self.addEventListener('fetch', function(event) {
             url: requestData.originalRequest.url,
             urlCached: fixedRequest.url
           });
+
+          addTimingsStep("cache put");
         });
       }
     };
 
     var doFetchFn = function() {
-      return moveJwtToHeaders(requestData.cloneRequest()).then(function(request) { return fetch(request); }).then(function(response) {
+      return moveJwtToHeaders(requestData.cloneRequest())
+      .then(function(request) { addTimingsStep("moveJwtToHeaders"); return fetch(request); })
+      .then(function(response) {
+          addTimingsStep("fetch" + (response.redirected?"+redirection":""));
           if (response.status == 200 && response.type == "basic") {
             if (isStampForApplicationJsRequestInner(requestData.originalRequest.url))
               cleanTimestampSensitiveRequests(requestData.originalRequest.url);
@@ -1171,14 +1223,22 @@ self.addEventListener('fetch', function(event) {
         if (etag.endsWith("-gzip")) etag = etag.substring(0, etag.length - 5);
         else if (etag.endsWith("-gzip\"")) etag = etag.substring(0, etag.length - 6) + "\"";
 
+        addTimingsStep("checked cache-control");
+
         return createIfNoneMatchRequest(requestData, etag).then(function(cRequest) {
-            return moveJwtToHeaders(cRequest).then(function(request) { return fetch(request); }).then(function(response) {
+            addTimingsStep("createIfNoneMatchRequest");
+            return moveJwtToHeaders(cRequest)
+            .then(function(request) { addTimingsStep("moveJwtToHeaders"); return fetch(request); })
+            .then(function(response) {
+              addTimingsStep("fetch" + (response.redirected?"+redirection":""));
+
               if (response.status == 200 && response.type == "basic") {
                 doCacheFn(response);
                 return response.clone();
               } else if (response.status == 304 && response.type == "basic") {
                 return updateHeadersInResponse(responseCache, response.headers)
                   .then(responseNew => {
+                    addTimingsStep("updateHeadersInResponse");
                     doCacheFn(responseNew);
                     return responseNew.clone();
                   })
@@ -1197,7 +1257,7 @@ self.addEventListener('fetch', function(event) {
     if (requestData.isFileUploading) {
       // We can't to clone file uploading request, so we processing it as is, without caching
       return fetch(requestData.cloneRequest())
-        .then(function(response) { addRequestStatus("fromNetwork"); return response.clone(); });
+        .then(function(response) { addTimingsStep("fetch" + (response.redirected?"+redirection":"")); addRequestStatus("fromNetwork"); return response.clone(); });
     } else {
       if (checkIfNotModified) {
         return getCachedResource(requestData)
@@ -1365,10 +1425,17 @@ self.addEventListener('fetch', function(event) {
     };
 
     return fn().then(function(requestData2) {
+      addTimingsStep("makeResponse fn");
       if (requestData2.originalRequest.headers.get('range')) {
         return buildRangeResponse(requestData2);
       } else {
-        return buildResponse(requestData2);
+        return buildResponse(requestData2).then(function(result) {
+          addTimingsStep("some last step");
+          requestTimings.duration = (Date.now() - requestTimings.startTimestamp);
+          requestsTimings.push(requestTimings);
+
+          return result;
+        });
       }
     });
   }
@@ -1385,6 +1452,10 @@ self.addEventListener('fetch', function(event) {
 
   // do nothing for non http requests (like `chrome-extension` requests and others)
   if(!event.request.url.startsWith('http')) {
+    addTimingsStep("skipped (http)");
+    requestTimings.duration = (Date.now() - requestTimings.startTimestamp);
+    requestsTimings.push(requestTimings);
+    
     return;
   } else if (url.match(SHARED_DATA_ENDPOINT)) {
     event.respondWith(
@@ -1402,12 +1473,19 @@ self.addEventListener('fetch', function(event) {
       })
     );
   } else {
+    requestTimings.lastTime = Date.now();
     var requestData = createRequestDataGET(event.request);
+    addTimingsStep("createRequestDataGET");
 
     if (checkRequestForSkipping(event.request, requestData)) {
-      addRequestStatus("skipped");
+      addTimingsStep("checkRequestForSkipping");
+      addRequestStatus("skipped (rule)");
+      requestTimings.duration = (Date.now() - requestTimings.startTimestamp);
+      requestsTimings.push(requestTimings);
+
       return;
     } else {
+      addTimingsStep("checkRequestForSkipping");
       event.respondWith(makeResponse(event.request, requestData));
     }
   }
@@ -1630,6 +1708,11 @@ self.addEventListener('message', function(event) {
     respond({ status: "OK" });
   } else if (event.data.action == "get_requests_stats") {
     respond({ data: requestsCount });
+  } else if (event.data.action == "reset_timings") {
+    requestsTimings = [];
+    respond({ status: "OK" });
+  } else if (event.data.action == "get_timings") {
+    respond({ data: requestsTimings });
   } else {
     respond({ status: "Failed", error: "Unknown operation: " + event.data.action });
   }
