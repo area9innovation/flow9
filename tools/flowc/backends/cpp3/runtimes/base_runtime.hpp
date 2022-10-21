@@ -108,6 +108,7 @@ inline String makeString() { return std::make_shared<string>(); }
 inline String makeString(const char16_t* s) { return std::make_shared<string>(s); }
 inline String makeString(String s) { return std::make_shared<string>(*s); }
 inline String makeString(const string& s) { return std::make_shared<string>(s); }
+inline String makeString(string&& s) { return std::make_shared<string>(std::move(s)); }
 inline String makeString(char16_t ch) { return std::make_shared<string>(1, ch); }
 inline String makeString(const std::string& s) { return std::make_shared<string>(fromStdString(s)); }
 inline String makeString(const char16_t* s, Int len) { return std::make_shared<string>(s, len); }
