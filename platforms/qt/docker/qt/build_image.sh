@@ -5,5 +5,7 @@ if [ -n "$1" ]; then
   registry="$1/"
 fi
 
-docker build -t "${registry}area9/qt:aqt-5.12.11" .
+qt_version="5.12.11"
+
+docker build --build-arg QT=$qt_version -t "${registry}area9/qt:aqt-${qt_version}" .
 
