@@ -1,5 +1,6 @@
 import tools/flowc/statements/fsexp;
 import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/manipulation/effects;
 import string_utils;
 
 export {
@@ -15,6 +16,7 @@ fsSetExpType(e : FsExp, t: FiType) -> FsExp;
 fsHasTailCall(s: FsStat) -> bool;
 
 fiExpIsFsExp(e: FiExp) -> bool;
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
 
 }
 
@@ -202,9 +204,41 @@ fiExpIsFsExp(e: FiExp) -> bool {
 		FiLambda(__,__,__,__): true;
 		FiLet(__,__,__,__,__, __): false;
 		FiIf(e1, e2, e3,__, __): fiExpIsFsExp(e1) && fiExpIsFsExp(e2) && fiExpIsFsExp(e3);   
-		FiCallPrim(__, es,__, __): forall(es, fiExpIsFsExp);
+		FiCallPrim(op, es,__, __): {
+			forall(es, fiExpIsFsExp) &&
+			switch (op) {
+				FcAssignPrim(): false;
+				FcSetMutablePrim(__): false;
+				default: true;
+			}
+		}
 		FiRequire(__,__,__,__): false;
 		FiUnsafe(__,__,__,__): false;
 		default: true;
+	}
+}
+
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): exists(es, \x -> fiExpHasEffects(x, effects));
+		FiCast(ex,__,__,__,__): fiExpHasEffects(ex, effects);
+		FiCall(f, args,__,__): fiExpHasEffects(f, effects) || exists(args, \x -> fiExpHasEffects(x, effects));
+		FiSwitch(__,__,cases,__,__): exists(cases, \c -> fiExpHasEffects(c.body, effects));
+		FiLambda(__,body,__,__): fiExpHasEffects(body, effects);
+		FiLet(__,__,e1,e2,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects);
+		FiIf(e1, e2, e3,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects) || fiExpHasEffects(e3, effects);
+		FiCallPrim(op, es,__, __): {
+			exists(es, \x -> fiExpHasEffects(x, effects)) ||
+			switch (op) {
+				FcAssignPrim(): true;
+				FcSetMutablePrim(__): true;
+				FcRefPrim(): true;
+				default: false;
+			}
+		}
+		FiRequire(__,ex,__,__): fiExpHasEffects(ex, effects);
+		FiUnsafe(__,__,__,__): true;
+		FiVar(name,__,__): containsSet(effects.hasEffects, name);
+		default: false;
 	}
 }

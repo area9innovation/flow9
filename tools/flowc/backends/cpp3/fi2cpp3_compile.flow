@@ -311,7 +311,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value1 = fiExplicitCastInSwitch(value0, names);
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
 	value = value2;
-	pair0 = fiExp2FsExp(value, makeSet(), names, ref 0);
+	pair0 = fiExp2FsExp(value, makeSet(), gctx.effects, ref 0);
 	pair1 = tryCatch(
 		\-> Pair(
 			fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
@@ -400,7 +400,7 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	lambda5_body = fiExpRenameRecurringVars(lambda4.body, fun_locals);
 	fun_cpp = tryCatch(
 		\-> {
-			fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), fun_locals, names, ref 0, name);
+			fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), fun_locals, gctx.effects, ref 0, name);
 			fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
 			// fsInterpolateTyparsStat(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
 			// fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
@@ -421,7 +421,7 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 			}*/
 			body = fsStat2cpp3(fun_stat, gctx);
 			if (!fsHasTailCall(fun_stat)) body else {
-				"while (true) {\n" + strIndent(body) + "\n}";
+				"while (true) " + fiWrapWithBraces(body);
 			}
 		},
 		\msg  -> {
@@ -456,13 +456,6 @@ fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
 		FiTypeRef(tp):        "Ref<" + fiType2cpp3(tp, gctx) + ">";
 		FiTypeParameter(nm):  {
 			if (!containsSet(gctx.toplevelTypars, nm)) {
-				/*where = eitherMap(gctx.currentToplevel, toStringFormatted, "");
-				refArrayPush(gctx.errors, 
-					"Stray free type parameter: '" + nm + "'" + 
-					(if (where == "") "" else " met in:\n" + where + "\n\n")
-				);
-				//println("STRAY: " + i2s(strlen(nm)) + " IN " + eitherMap(gctx.currentToplevel, \x -> x.name, "<none>") + "!!!!");
-				throw("STRAY: " + i2s(strlen(nm)) + " IN " + eitherMap(gctx.currentToplevel, \x -> x.name, "<none>") + "!!!!");*/
 				"Flow";
 			} else {
 				"T" + i2s(strlen(nm));
@@ -579,9 +572,7 @@ fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string 
 		}
 		None(): {
 			redundant_defcase = if (gctx.config.monolith) [] else 
-				["default: {\n" + 
-					strIndent("assert(false && \"unexpected case in switch\");\nbreak;") + 
-				"\n}"];
+				["default: " + fiWrapWithBraces("assert(false && \"unexpected case in switch\");\nbreak;")];
 			concat(nondef_cases, redundant_defcase);
 			//nondef_cases;
 		}
@@ -602,16 +593,15 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 			vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
 			body = fsStat2cpp3(vars_wrapped, gctx);
 			id = lookupTreeDef(gctx.structs2id, c.struct, -1);
-			"case " + i2s(id) + " /*" + c.struct + "*/: {\n" +
-				strIndent(body) + "\n\tbreak;"
-			"\n}";
+			"case " + i2s(id) + " /*" + c.struct + "*/: " +
+				fiWrapWithBraces(fiUnwrap(body, "{", "}") + "\nbreak;");
 
 		}
 		None(): {
 			// default case
 			if (c.struct != "default") throw("struct is not found") else {
 				body = fsStat2cpp3(c.body, gctx);
-				strIndent("default: {\n" + strIndent(body)) + "\n}";
+				strIndent("default: " + fiWrapWithBraces(body));
 			}
 		}
 	}
@@ -667,18 +657,18 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsCast(ex, from, to): {
 			s = fsExp2cpp3(ex, gctx);
-			//fiCpp3Cast(fsExpType(ex), to, s, gctx);
 			fiCpp3Cast(from, to, s, gctx);
 		}
 		FsCall(f, args, type): {
 			f_type = cast(fsExpType(f): FiType -> FiTypeFunction);
 			s_args = map(args, \arg -> fsExp2cpp3(arg, gctx));
 			s_args_len = fold(s_args, 0, \acc, s_arg -> acc + strlen(s_arg) + 2);
-			s_args_wrapped = if (length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
-				"(\n" + strIndent(strGlue(s_args, ",\n")) + "\n)";
+			s_args_all = if (length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
+				strGlue(s_args, ",\n");
 			} else {
-				"(" + strGlue(s_args, ", ") + ")";
+				strGlue(s_args, ", ");
 			}
+			s_args_wrapped = fiWrapWithPars(s_args_all);
 			switch(f) {
 				FsVar(name,__,__): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, name);
@@ -707,17 +697,8 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			};
 		}
 		FsLambda(closure, args, body, type): {
-			fun = tryCatch(\-> fiType2cpp3(type, gctx), \err -> {
-				println(err + "\nIn: " + toString(type) + "\n" + toStringFormatted(e));
-				fail0(err + "\nIn: " + toString(type) + "\n" + toStringFormatted(e));
-			});
-			body_s = fsStat2cpp3(body, gctx);
-			header = fun + "([" + superglue(closure, gctx.varname2cpp, ", ") + "] " + fiFunArgs2cpp(args, gctx);
-			if (strlen(body_s) > 64 || strContains(body_s, "\n")) {
-				header + " mutable {\n" + strIndent(fsStat2cpp3(body, gctx)) + "\n})";
-			} else {
-				header + " mutable { " + fsStat2cpp3(body, gctx) + " })";
-			}
+			fiType2cpp3(type, gctx) + "([" + superglue(closure, gctx.varname2cpp, ", ") + "] " + fiFunArgs2cpp(args, gctx) +
+			" mutable " + fiWrapWithBraces(fsStat2cpp3(body, gctx)) + ")";
 		}
 		FsTernary(e1, e2, e3, type): {
 			"(" + fsExp2cpp3(e1, gctx) + " ? \n" + 
