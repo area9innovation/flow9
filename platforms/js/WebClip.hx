@@ -106,7 +106,10 @@ class WebClip extends NativeWidgetClip {
 							iframeDocument.addEventListener(eventName, function(e : Dynamic) {
 								var pos0 = Util.getPointerEventPosition(e);
 								var iframeBoundingRect = iframe.getBoundingClientRect();
-								var pos = new Point(pos0.x + iframeBoundingRect.x, pos0.y + iframeBoundingRect.y);
+								var pos = new Point(
+									pos0.x * this.worldTransform.a + iframeBoundingRect.x,
+									pos0.y * this.worldTransform.d + iframeBoundingRect.y
+								);
 								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, eventName, pos.x, pos.y);
 							}, false);
 						}
