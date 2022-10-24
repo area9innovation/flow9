@@ -167,6 +167,10 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		decl_typars + "struct " + struct_name + ";\n\n";
 	} else {
 		static_id = "enum { ID = " + struct_id + " };"; 
+		field_types = supergluei(struct.args, 
+			\i, arg -> "typedef " + fiType2cpp3(arg.type, gctx) + " " + "FieldType_" + i2s(i) + ";",
+			"\n"
+		);
 		getter = \union, field -> 
 			"\t" + fiType2cpp3(field.type, gctx) + " get_" + union + "_" + field.name + "() override { return " + gctx.varname2cpp(field.name) + "; }\n";
 		setter = \union, field -> 
@@ -223,11 +227,11 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 						\i, arg -> {
 							if (i == 0) {
 								"if (*name == u\"" + arg.name + "\") {\n" +
-									"\treturn ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
+									"\treturn Cast<Flow>::template From<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
 								"\n} "
 							} else {
 								"else if (*name == u\"" + arg.name + "\") {\n" +
-									"\treturn ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
+									"\treturn Cast<Flow>::template From<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
 								"\n} "
 							}
 						}, "\n"
@@ -249,11 +253,11 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 						\i, arg -> {
 							if (i == 0) {
 								"if (*name == u\"" + arg.name + "\") {\n" +
-									"\t" + gctx.varname2cpp(arg.name) + " = " + "FromFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
+									"\t" + gctx.varname2cpp(arg.name) + " = " + "Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
 								"\n} "
 							} else {
 								"else if (*name == u\"" + arg.name + "\") {\n" +
-									"\t" + gctx.varname2cpp(arg.name) + " = " + "FromFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
+									"\t" + gctx.varname2cpp(arg.name) + " = " + "Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
 								"\n} "
 							}
 						}, "\n"
@@ -265,11 +269,18 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		"\n}";
 		flow_fields = "Arr<Flow> fields() const override { return " + 
 			(if (length(struct.args) == 0) "Arr<Flow>::makeEmpty()" else
-			"Arr<Flow>{" + superglue(struct.args, \arg -> "ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}") 
+			"Arr<Flow>{" + superglue(struct.args, \arg -> "Cast<Flow>::template From<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}") 
 			+ "; }";
+		cast_to = "template<typename N>\n" +
+		"Ptr<N> cast() {\n" +
+			"\treturn std::make_shared<N>(\n" + 
+				supergluei(struct.args, \i, field -> "\t\tCast<FieldType_" + i2s(i) + ">::template To<typename N::FieldType_" + i2s(i) + ">::conv(" + gctx.varname2cpp(field.name) + ")", ",\n") + 
+			"\n\t);\n" +
+		"}";
 
 		decl_typars + "struct " + struct_name + ": public AStruct {\n" +
 		strIndent(static_id) + "\n" +
+		strIndent(field_types) + "\n" +
 		constructor + 
 		//(if (copy_constructor == "") "" else copy_constructor) +
 		(if (move_constructor == "") "" else move_constructor) +
@@ -283,6 +294,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		strIndent(set_field) + "\n" +
 		strIndent(compare1) + "\n" + 
 		strIndent(compare2) + "\n" + 
+		strIndent(cast_to) + "\n" +
 		(if (fields == "") "" else fields) +
 		"};\n\n";
 	}
@@ -925,78 +937,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 }
 
 fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> string {
-	if (fiEqualTypes(from, to)) s else {
-		switch (from) {
-			FiTypeParameter(__): s;
-			FiTypeFlow():   "FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
-			FiTypeNative(): "FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
-			default: {
-				static_cast = \s1 -> "static_cast<" + fiType2cpp3(to, gctx) + ">(" + s1 + ")";
-				switch (to) {
-					FiTypeVoid():       throw("cast to void");
-					FiTypeBool():       static_cast(s);
-					FiTypeInt():        static_cast(s);
-					FiTypeDouble():     static_cast(s);
-					FiTypeString(): {
-						switch (from) {
-							FiTypeVoid():   "makeString(\"{}\")";
-							FiTypeBool():   "makeString(std::to_string(" + s + "))";
-							FiTypeInt():    "makeString(std::to_string(" + s + "))";
-							FiTypeDouble(): "makeString(std::to_string(" + s + "))";
-							FiTypeString(): s;
-							default:        "flow2string(Flow(" + s + "))";
-						}
-					}
-					FiTypeFlow(): {
-						"ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
-					}
-					FiTypeNative(): {
-						"ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
-					}
-					FiTypeParameter(n): {
-						/**switch (from) {
-							FiTypeParameter(m): "struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
-							default: s;
-						}*/
-						s;
-					}
-					FiTypeRef(rt): {
-						s + ".template cast<" + fiType2cpp3(rt, gctx)+  ">()";
-					}
-					FiTypeArray(at): {
-						s + ".template cast<" + fiType2cpp3(at, gctx)+  ">()";
-					}
-					FiTypeName(id_to, tp_to): {
-						to_is_union = containsKeyTree(gctx.program.names.unions, id_to);
-						switch (from) {
-							FiTypeName(id_from, tp_from): {
-								from_is_union = containsKeyTree(gctx.program.names.unions, id_from);
-								if (to_is_union) {
-									if (from_is_union) {
-										s 
-									} else {
-										"struct2union<" + fiType2cpp3(from, gctx) + ">(" + s + ")";
-									}
-								} else {
-									if (from_is_union) {
-										"union2struct<" + fiType2cpp3(to, gctx) + ">(" + s + ")";
-									} else {
-										"struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
-									}
-								}
-							}
-							FiTypeParameter(__): s;
-							default: throw("illegal cast to struct from: " + prettyFiType(dummyPretty, from, makeSet()));
-						}
-					}
-					FiTypeFunction(args, rt): {
-						signature = superglue(concat([rt], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ");
-						s + ".template cast<" + signature+  ">()";
-					}
-				}
-			}
-		}
-	}
+	"Cast<" + fiType2cpp3(from, gctx) + ">::template To<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
 }
 
 fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
@@ -1016,12 +957,12 @@ fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
 				struct_arg = \i, arg -> {
 					arg_val = "__args->vect.at(" + i2s(i) + ")";
 					arg_type = fiType2cpp3(fiTransformTypars(arg.type, \__ -> FiTypeFlow()), gctx);
-					"FromFlow<" + arg_type + ">::conv(" + arg_val + ")";
+					"Cast<Flow>::template To<" + arg_type + ">::conv(" + arg_val + ")";
 				}
 				struct_name = gctx.typename2cpp(struct.name) + typars;
 				args = "(" + strGlue(mapi(struct.args, \i, arg -> struct_arg(i, arg)), ", ") + ")";
 				wrapper = "Str<" + struct_name + ">";
-				constructor = "[](Arr<Flow> __args) { return ToFlow<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
+				constructor = "[](Arr<Flow> __args) { return Cast<Flow>::template From<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
 				fields = if (struct.args == []) "std::vector<FieldDef>()" else {
 					"std::vector{" + 
 						superglue(struct.args, \arg  -> 
