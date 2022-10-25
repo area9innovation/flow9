@@ -2,6 +2,7 @@ import material/material_dialog;
 import material/material_print;
 import material/material_snackbar;
 import material/internal/material_reorder;
+import material/internal/material_moving_point;
 import ui/animate/teasing;
 import form/realhtmlworkaround;
 import net/integration_url_parameter;
@@ -166,6 +167,18 @@ export {
 	MEllipsisTextTwoFontsStyle ::= MEllipsisTextStyle, MEllipsisTextCurrentFont;
 		// You can observe the font, but not change it.
 		MEllipsisTextCurrentFont(fontB : DynamicBehaviour<MFontStyle>);
+
+	// Helps to define box size and position from the UI. Transparent by default.
+	MEditableRectangle(
+		position : DynamicBehaviour<Point>,
+		size : DynamicBehaviour<WidthHeight>,
+		handles : Transform<[MResizableHandle]>,
+		style : [MEditableRectangleStyle]
+	) -> Material;
+
+		MEditableRectangleStyle ::= MEditableRectangleBackground, MCustomHandle, MResizableOnCreate, MResizableEnabled, MResizableMinMax, MMovableLimits;
+			MCustomHandle(fn : (MResizableHandle) -> Material);
+			MEditableRectangleBackground(style : Transform<[TGraphicsStyle]>);
 
 	// Construct an HTML stage with the given metrics
 	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
@@ -1357,6 +1370,60 @@ MEllipsisTextTwoFonts(
 		})
 	})
 	|> (\m -> MAttachAvailableWidth(m, avWidth))
+}
+
+MEditableRectangle(
+	position : DynamicBehaviour<Point>,
+	size : DynamicBehaviour<WidthHeight>,
+	handles : Transform<[MResizableHandle]>,
+	style : [MEditableRectangleStyle]
+) -> Material {
+	handleSize = 24.;
+	mousePosition0 = makePoint();
+	avBox = makeWH();
+	isHovered = make(false);
+	defHandleFn = \__ -> MVisible(isHovered, MCursor(FingerCursor(), movingMIcon("casino", const(handleSize), MYellowA, make(false))));
+	handleFn = extractStruct(style, MCustomHandle(defHandleFn)).fn;
+	backgroundStyle = extractStruct(style, MEditableRectangleBackground(const(interactiveRectangleStyle))).style;
+	onCreate = extractStruct(style, MResizableOnCreate(TSized(cloneBehaviour(size))));
+	minMax = extractStruct(style, MResizableMinMax(TEmpty(), TFillXY()));
+	resizableEnabled = extractStruct(style, MResizableEnabled(const(true), const(true)));
+	limits = extractStruct(style, MMovableLimits(None(), None(), None(), None()));
+
+	mousePosition =
+		fselect2Lift(mousePosition0, avBox, \mp, av ->
+			Point(
+				max(0., min(av.width, mp.x)),
+				max(0., min(av.height, mp.y))
+			)
+		);
+
+	MMovable(
+		MResizable(
+			MFrameT(zero, zero, backgroundStyle, TFillXY()),
+			[
+				onCreate,
+				resizableEnabled,
+				MResizableMinMax(
+					MGroup2(minMax.min, TSizedWidthHeight(
+						fif(resizableEnabled.x, const(2.* handleSize), zero),
+						fif(resizableEnabled.y, const(2.* handleSize), zero)
+					)),
+					minMax.max
+				),
+				MMultipleHandlesMode(handles, handleFn, position, mousePosition)
+			]
+		)
+		|> (\m -> MComponent([THovering(isHovered), MPassClicks(), MFocusEnabled(const(false)), MCursorShape(const(ArrowCursor()))], \__ -> m))
+		|> (\m -> MAttachBox(m, size)),
+		TFillXY(),
+		[
+			MMovablePosition(position),
+			MMousePosition(mousePosition0),
+			limits
+		]
+	)
+	|> (\m -> MAttachAvailable(m, avBox))
 }
 
 MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material {

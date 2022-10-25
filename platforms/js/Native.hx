@@ -361,6 +361,10 @@ class Native {
 		return HaxeRuntime.toString(value, keepStringEscapes);
 	}
 
+	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return HaxeRuntime.toStringEscapeControlChars(value, keepStringEscapes);
+	}
+
 	public static inline function gc() : Void {
 		#if flash
 			// unsupported technique that seems to force garbage collection
@@ -2334,6 +2338,16 @@ var fns = tasks.map(function(c, i, a) {
 });
 
 async.parallel(fns, function(err, results) { cb(results) });");
+		#end
+	}
+
+	public static function preloadStaticResource(href : String, as : String) : Void {
+		#if (js && !flow_nodejs)
+			var tag : Dynamic = js.Browser.document.createElement("link");
+			tag.rel = "preload";
+			tag.href = href;
+			tag.as = as;
+			js.Browser.document.head.appendChild(tag);
 		#end
 	}
 }
