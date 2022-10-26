@@ -113,6 +113,7 @@ inline String makeString(string&& s) { return std::make_shared<string>(std::move
 inline String makeString(char16_t ch) { return std::make_shared<string>(1, ch); }
 inline String makeString(const std::string& s) { return std::make_shared<string>(fromStdString(s)); }
 inline String makeString(const char16_t* s, Int len) { return std::make_shared<string>(s, len); }
+inline String makeString(const std::vector<char16_t>& codes) { return std::make_shared<string>(codes.data(), codes.size()); }
 
 const String string_true = makeString(u"true");
 const String string_false = makeString(u"false");
@@ -196,7 +197,6 @@ struct Arr {
 	Arr& operator = (Arr&& a) { arr = std::move(a.arr); return *this; }
 	Arr& operator = (const Arr& a) { arr = a.arr; return *this; }
 	bool isSameObj(Arr a) const { return arr.get() == a.arr.get(); }
-	template<typename T1> Arr<T1> cast() const;
 
 	Ptr<Array<T>> arr;
 };
@@ -222,7 +222,6 @@ struct Ref {
 	//Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
 
 	bool isSameObj(Ref r) const { return ref.get() == r.ref.get(); }
-	template<typename T1> Ref<T1> cast() const;
 
 	Ptr<Reference<T>> ref;
 };
@@ -246,7 +245,6 @@ struct Str {
 	bool isSameObj(Str<T> s) const { return str.get() == s.str.get(); }
 	Str& operator = (const Str& s) { str.operator=(s.str); return *this; }
 	Str& operator = (Str&& s) { str.operator=(std::move(s.str)); return *this;}
-	template<typename T1> Str<T1> cast() const;
 
 	Ptr<T> str;
 };
@@ -275,7 +273,7 @@ struct Fun {
 	R operator()(As... as) const { return fn->operator()(as...); }
 	Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
 	bool isSameObj(Fun f) const { return fn.get() == f.fn.get(); }
-	template<typename R1, typename... As1> Fun<R1, As1...> cast() const;
+
 	Ptr<Function<R, As...>> fn;
 };
 
@@ -295,8 +293,6 @@ struct Union {
 	bool isSameObj(Union u) const { return un.get() == u.un.get(); }
 	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
 	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
-	template<typename T1>
-	Str<T1> cast() const;
 
 	Ptr<AStruct> un;
 };
@@ -327,16 +323,79 @@ struct Flow {
 
 	Variant val;
 
-	Int toInt() const { return std::get<Int>(val); }
-	Bool toBool() const { return std::get<Bool>(val); }
-	Double toDouble() const { return std::get<Double>(val); }
-	String toString() const { return std::get<String>(val); }
-	Ptr<AStruct> toStruct() const { return std::get<Ptr<AStruct>>(val); }
-	Ptr<AArray> toArray() const { return std::get<Ptr<AArray>>(val); }
-	Ptr<AReference> toReference() const { return std::get<Ptr<AReference>>(val); }
-	Ptr<AFunction> toFunction() const { return std::get<Ptr<AFunction>>(val); }
+	Int toInt() const {
+		try { 
+			return std::get<Int>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Int (" << Type::INT << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	Bool toBool() const { 
+		try {
+			return std::get<Bool>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Bool(" << Type::BOOL << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	Double toDouble() const { 
+		try {
+			return std::get<Double>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Double(" << Type::DOUBLE << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	String toString() const { 
+		try {
+			return std::get<String>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get String(" << Type::STRING << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	Ptr<AStruct> toStruct() const { 
+		try {
+			return std::get<Ptr<AStruct>>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Struct(" << Type::STRUCT << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	Ptr<AArray> toArray() const { 
+		try {
+			return std::get<Ptr<AArray>>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Array(" << Type::ARRAY << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	Ptr<AReference> toReference() const { 
+		try {
+			return std::get<Ptr<AReference>>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Reference(" << Type::REF << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
+	Ptr<AFunction> toFunction() const { 
+		try{
+			return std::get<Ptr<AFunction>>(val); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Function(" << Type::FUNC << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
 	template<typename T>
-	Ptr<T> toNative() const { return std::reinterpret_pointer_cast<T>(std::get<Ptr<Void>>(val)); }
+	Ptr<T> toNative() const { 
+		try{
+			return std::reinterpret_pointer_cast<T>(std::get<Ptr<Void>>(val)); 
+		} catch (std::bad_variant_access& err) {
+			std::cerr << "failed to get Native(" << Type::NATIVE << ") , index: " << val.index() << std::endl;
+			throw err;
+		}
+	}
 
 	Type type() const { 
 		switch (val.index()) {
@@ -394,8 +453,9 @@ struct AReference {
 	virtual void set(Flow) const = 0;
 };
 
-struct AFunction { 
-	virtual Flow call(std::vector<Flow> args) const = 0;
+struct AFunction {
+	virtual Int arity() const = 0;
+	virtual Flow call(Flow args...) const = 0;
 };
 
 template<typename T>
@@ -420,6 +480,8 @@ struct Array : public AArray {
 	Flow element(Int i) const override;
 	Int compare(Array a) const;
 
+	template<typename T1> Arr<T1> cast() const;
+
 	Vect vect;
 };
 
@@ -436,37 +498,51 @@ struct Reference : public AReference {
 	void set(Flow r) const override { *val = Cast<Flow>::template To<T>::conv(r); }
 	Int compare(Reference r) const { return Compare<T>::cmp(*val, *r.val); }
 
+	template<typename T1> Ref<T1> cast() const;
+
 	mutable Ptr<T> val;
 };
 
 template<typename R, typename... As> 
 struct Function : public AFunction {
 	typedef std::function<R(As...)> Fn;
+	enum { ARITY = sizeof...(As) };
 	Function() {}
 	Function(Fn&& f): fn(std::move(f)) { }
 	Function(const Fn& f): fn(f) { }
 	Function(const Function& f): fn(f.fn) { }
 	Function(Function&& f): fn(std::move(f.fn)) { }
 	R operator()(As... as) const { return fn.operator()(as...); }
-	//Int compare(Fun f) const { return Compare<void*>::cmp(fn.get(), f.fn.get()); }
-	//bool isSameObj(Fun f) const { return fn.get() == f.fn.get(); }
-	template<std::size_t... S>
-	Flow call(const std::vector<Flow>& vec, std::index_sequence<S...>) const {
-		//return fn->operator()(FromFlow<As[S]...>::conv(vec.at(S)...));
-		return Flow(0);
-	}
-	Flow call(std::vector<Flow> args) const override {
-		static const Int arity = sizeof...(As);
-		if (arity == args.size()) {
-			return call(args, std::make_index_sequence<arity>());
-		} else {
-			assert(false && "function arity mismatch");
+	Int arity() const override { return ARITY; }
+	Flow call(Flow as...) const override {
+		if constexpr (std::is_same_v<R, Void>) {
+			fn.operator()(Cast<Flow>::template To<As>::conv(as)...);
 			return Flow();
+		} else {
+			return Cast<R>::template To<Flow>::conv(fn.operator()(Cast<Flow>::template To<As>::conv(as)...));
 		}
 	}
 	template<typename R1, typename... As1> 
 	Fun<R1, As1...> cast() const {
-		return std::reinterpret_pointer_cast<typename Fun<R1, As1...>::Fn>(fn);
+		if constexpr (std::is_same_v<R, R1> && std::conjunction_v<std::is_same<As, As1>...>) {
+			return Fun(fn);
+		} else if constexpr (std::is_same_v<R, Void>) {
+			std::function<R1(As1...)> ret = [this](As1... as) { 
+				fn.operator()(Cast<As1>::template To<As>::conv(as)...);
+				return R1();
+			};
+			return Fun<R1, As1...>(ret);
+		} else if constexpr (std::is_same_v<R1, Void>) {
+			std::function<R1(As1...)> ret = [this](As1... as) { 
+				fn.operator()(Cast<As1>::template To<As>::conv(as)...);
+			};
+			return Fun<R1, As1...>(ret);
+		} else {
+			std::function<R1(As1...)> ret = [this](As1... as) { 
+				return Cast<R>::template To<R1>::conv(fn.operator()(Cast<As1>::template To<As>::conv(as)...)); 
+			};
+			return Fun<R1, As1...>(ret);
+		}
 	}
 
 	Fn fn;
@@ -647,7 +723,7 @@ template<> template<typename R, typename... As> struct BiCast<Flow>::To<Fun<R, A
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			return std::reinterpret_pointer_cast<Function<R, As...>>(x.toFunction());
+			return r->template cast<R, As...>();
 		}
 	} 
 };
@@ -663,7 +739,11 @@ template<> template<typename T> struct BiCast<Flow>::To<Str<T>> {
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			return std::reinterpret_pointer_cast<T>(x.toStruct());
+			if constexpr (T::SIZE == 0) {
+				return std::make_shared<T>();
+			} else {
+				return std::make_shared<T>(x.toStruct());
+			}
 		}
 	} 
 };
@@ -718,7 +798,12 @@ template<> template<typename T> struct BiCast<Union>::To<Str<T>> {
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			return std::reinterpret_pointer_cast<T>(x.un);
+			/*if constexpr (T::SIZE == 0) {
+				return std::make_shared<T>();
+			} else {*/
+				//return std::make_shared<T>(x.un);
+				return std::reinterpret_pointer_cast<T>(x.un);
+			//}
 		}
 	} 
 };
@@ -736,7 +821,7 @@ template<typename T> template<typename T1> struct BiCast<Str<T>>::To<Str<T1>> {
 		if constexpr (std::is_same_v<T, T1>) {
 			return x;
 		} else {
-			return x.template cast<T1>(); 
+			return x->template cast<T1>(); 
 		}
 	} 
 };
@@ -746,7 +831,7 @@ template<typename T> template<typename T1> struct BiCast<Str<T>>::From<Str<T1>> 
 		if constexpr (std::is_same_v<T, T1>) {
 			return x;
 		} else {
-			return x.template cast<T>();
+			return x->template cast<T>();
 		}
 	} 
 };
@@ -760,7 +845,7 @@ template<typename T> template<typename T1> struct BiCast<Arr<T>>::To<Arr<T1>> {
 		if constexpr (std::is_same_v<T, T1>) {
 			return x;
 		} else {
-			return x.template cast<T1>();
+			return x->template cast<T1>();
 		}
 	} 
 };
@@ -770,7 +855,7 @@ template<typename T> template<typename T1> struct BiCast<Arr<T>>::From<Arr<T1>> 
 		if constexpr (std::is_same_v<T, T1>) {
 			return x;
 		} else {
-			return x.template cast<T>();
+			return x->template cast<T>();
 		}
 	} 
 };
@@ -809,7 +894,7 @@ struct BiCast<Fun<R, As...>>::To<Fun<R1, As1...>> {
 		if constexpr (std::is_same_v<R, R1> && std::conjunction_v<std::is_same<As, As1>...>) {
 			return x;
 		} else {
-			return x.template cast<R1, As1...>(); 
+			return x->template cast<R1, As1...>(); 
 		}
 	} 
 };
@@ -821,7 +906,7 @@ struct BiCast<Fun<R, As...>>::From<Fun<R1, As1...>> {
 		if constexpr (std::is_same_v<R, R1> && std::conjunction_v<std::is_same<As, As1>...>) {
 			return x;
 		} else {
-			return x.template cast<R, As...>(); 
+			return x->template cast<R, As...>(); 
 		}
 	} 
 };
@@ -854,6 +939,7 @@ T1 Cast<T1>::From<T2>::conv(T2 x) {
 	}
 }
 
+/*
 template<typename T>
 template<typename T1>
 Str<T1> Str<T>::cast() const { 
@@ -863,7 +949,9 @@ Str<T1> Str<T>::cast() const {
 		return str->template cast<T1>();
 	}
 }
+*/
 
+/*
 template<typename T>
 template<typename T1>
 Arr<T1> Arr<T>::cast() const { 
@@ -884,7 +972,7 @@ Ref<T1> Ref<T>::cast() const {
 	if constexpr (std::is_same_v<T, T1>) {
         return *this;
     } else {
-		return Cast<T>::template To<T1>::conv(*ref->val);
+		return ref->cast<T>(); //Cast<T>::template To<T1>::conv(*ref->val);
 	}
 }
 
@@ -894,10 +982,10 @@ Fun<R1, As1...> Fun<R, As...>::cast() const {
 	if constexpr (std::is_same_v<R, R1> && std::conjunction_v<std::is_same<As, As1>...>) {
         return *this;
     } else {
-		return std::reinterpret_pointer_cast<Function<R1, As1...>>(fn);
+		return fn->cast<R1, As1...>();
 	}
 }
-
+*/
 
 template<typename T>
 Arr<Flow> Array<T>::elements() const {
@@ -928,6 +1016,20 @@ Int Array<T>::compare(Array a) const {
 			}
 		}
 		return 0;
+	}
+}
+
+template<typename T>
+template<typename T1>
+Arr<T1> Array<T>::cast() const {
+	if constexpr (std::is_same_v<T, T1>) {
+        return Arr<T1>(this);
+    } else {
+		Arr<T1> ret = Arr<T1>(vect.size());
+		for (T x : vect) {
+			ret->vect.push_back(Cast<T>::template To<T1>::conv(x));
+		}
+		return ret;
 	}
 }
 

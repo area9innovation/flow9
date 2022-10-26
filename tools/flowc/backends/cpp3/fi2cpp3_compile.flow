@@ -166,7 +166,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 	if (only_decl) {
 		decl_typars + "struct " + struct_name + ";\n\n";
 	} else {
-		static_id = "enum { ID = " + struct_id + " };"; 
+		static_id = "enum { ID = " + struct_id + ", SIZE = " + i2s(length(struct.args)) + " };"; 
 		field_types = supergluei(struct.args, 
 			\i, arg -> "typedef " + fiType2cpp3(arg.type, gctx) + " " + "FieldType_" + i2s(i) + ";",
 			"\n"
@@ -177,7 +177,14 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 			"\tvoid set_" + union + "_" + field.name + "(" + fiType2cpp3(field.type, gctx) + " ___x___) override { " + gctx.varname2cpp(field.name) + " = ___x___; }\n";
 		field_interface = \union, field -> getter(union, field) + if (!field.ismutable) "" else setter(union, field);
 
-		constructor_init = if (struct.args == []) "" else {
+		static_instance = if (length(struct.args) > 0) "" else {
+			"static Str<" + struct_name + "> instance() {\n" +
+				"\tstatic Str<" + struct_name + "> inst(std::make_shared<" + struct_name + ">());\n" +
+				"\treturn inst;\n" +
+			"}";
+		}
+
+		constructor_init = if (length(struct.args) == 0) "" else {
 			": " + superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(__" + gctx.varname2cpp(arg.name) + ")", ", ");
 		}
 		constructor = "\t" + struct_name + 
@@ -188,6 +195,10 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		copy_constructor = if (struct.args == []) "" else 
 		"\t" + struct_name + "(const " + struct_name + "& s): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(s." + gctx.varname2cpp(arg.name) + ")", ", " ) + 
+		" { }\n";
+		abstract_constructor = if (length(struct.args) == 0) "" else 
+		"\t" + struct_name + "(Ptr<AStruct> p): " + 
+			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(p->field(makeString(u\"" + arg.name + "\"))))", ", " ) + 
 		" { }\n";
 		move_constructor = if (struct.args == []) "" else 
 		"\t" + struct_name + "(" + struct_name + "&& s): " + 
@@ -281,14 +292,16 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		decl_typars + "struct " + struct_name + ": public AStruct {\n" +
 		strIndent(static_id) + "\n" +
 		strIndent(field_types) + "\n" +
+		(if (static_instance == "") "" else strIndent(static_instance) + "\n") +
 		constructor + 
 		//(if (copy_constructor == "") "" else copy_constructor) +
 		(if (move_constructor == "") "" else move_constructor) +
+		(if (abstract_constructor == "") "" else abstract_constructor) +
 		//(if (assignment_operator == "") "" else assignment_operator) +
 		//(if (assignment_move == "") "" else assignment_move) +
 		"\tInt id() const override { return " + struct_id + "; }\n" +
 		"\tString name() const override { return makeString(\"" + struct.name + "\"); }\n" +
-		"\tInt size() const override { return " + i2s(length(struct.args)) + "; }\n" +
+		"\tInt size() const override { return SIZE; }\n" +
 		strIndent(flow_fields) + "\n" +
 		strIndent(get_field) + "\n" +
 		strIndent(set_field) + "\n" +
@@ -363,7 +376,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 		Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
 	} else {
 		// Constant variable
-		var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + ";\n\n";
+		var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + "\n\n";
 		Cpp3CompiledDeclaration(name, true, "", var_def);
 	}
 }
@@ -638,21 +651,25 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		FiInt(i, __):    i2s(i);
 		FiDouble(d, __): { 
 			s = d2s(d);
-			if (strContains(s, ".")) s else s + ".0";
+			if (strContains(s, ".") || strContains(s, "e")) s else s + ".0";
 		}
 		FiString(s, __): {
 			if (s == "") "makeString()" else {
-				s1 = concatStrings(map(s2a(s), \code ->
-					if (code == 0x09) "\\t" else
-					if (code == 0x0a) "\\n" else
-					if (code == 0x0d) "\\r" else
-					if (code == 0x22) "\\\"" else
-					if (code == 0x5c) "\\\\" else
-					if (0 < code && code < 0x80) fromCharCode(code) else
-					if (code <= 0xFFFF) "\\u" + lpad(formatHex(code), "0", 4) else 
-					"\\U" + lpad(formatHex(code), "0", 8)
-				));
-				"makeString(\"" + s1 + "\"s)";
+				codes = s2a(s);
+				if (exists(codes, \code -> 0xD800 <= code && code <= 0xDFFF)) {
+					"makeString(std::vector<char16_t>{" + superglue(codes, i2s, ", ") + "})";
+				} else {
+					s1 = concatStrings(mapi(codes, \i, code ->
+						if (code == 0x09) "\\t" else
+						if (code == 0x0a) "\\n" else
+						if (code == 0x0d) "\\r" else
+						if (code == 0x22) "\\\"" else
+						if (code == 0x5c) "\\\\" else
+						if (0 < code && code < 0x80) fromCharCode(code) else
+						"\\u" + lpad(formatHex(code), "0", 4)
+					));
+					"makeString(\"" + s1 + "\"s)";
+				}
 			}
 		}
 		FsCast(ex, from, to): {
