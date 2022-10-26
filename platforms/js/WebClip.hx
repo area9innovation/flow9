@@ -1,4 +1,5 @@
 import js.Browser;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -8,7 +9,8 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageWidth : Dynamic = null;
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
-	private var noScroll : Dynamic = null;
+	private var noScroll : Bool = false;
+	private var passEvents : Bool = false;
 
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
@@ -99,6 +101,22 @@ class WebClip extends NativeWidgetClip {
 						if (Native.isTouchScreen()) {
 							iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
 						}
+					} else if (this.passEvents) {
+						var listenAndDispatch = function(eventName : String) {
+							iframeDocument.addEventListener(eventName, function(e : Dynamic) {
+								var pos0 = Util.getPointerEventPosition(e);
+								var iframeBoundingRect = iframe.getBoundingClientRect();
+								var pos = new Point(
+									pos0.x * this.worldTransform.a + iframeBoundingRect.x,
+									pos0.y * this.worldTransform.d + iframeBoundingRect.y
+								);
+								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, eventName, pos.x, pos.y);
+							}, false);
+						}
+
+						listenAndDispatch('pointerdown');
+						listenAndDispatch('pointerup');
+						listenAndDispatch('pointermove');
 					}
 
 					if (this.noScroll) {
@@ -258,6 +276,10 @@ class WebClip extends NativeWidgetClip {
 
 	public function setNoScroll() : Void {
 		this.noScroll = true;
+	}
+
+	public function setPassEvents() : Void {
+		this.passEvents = true;
 	}
 
 	public function setSandBox(value : String) : Void {
