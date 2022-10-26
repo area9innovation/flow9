@@ -1,5 +1,6 @@
 // Common includes, which are used by runtime
 
+#ifndef FLOW_RUNTIME_HEADER
 #include <string>
 #include <vector>
 #include <functional>
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <iomanip>
 #include <type_traits>
+#endif
 
 // C++ runtime for flow
 
@@ -140,23 +142,6 @@ template<typename T1> struct Cast {
 	template<typename T2> struct From { static T1 conv(T2 x); };
 };
 
-/*
-template<typename> struct DefaultValue;
-template<> struct DefaultValue<Int> { static Int value() { return 0; } };
-template<> struct DefaultValue<Bool> { static Bool value() { return false; } };
-template<> struct DefaultValue<Double> { static Double value() { return 0.0; } };
-template<> struct DefaultValue<String> { static String value() { return makeString(); } };
-template<> struct DefaultValue<Ptr<Void>> { static Ptr<Void> value() { return Ptr<Void>(); } };
-template<typename T> struct DefaultValue<Arr<T>> { static Arr<T> value() { return Arr<T>::makeEmpty(); } };
-template<typename T> struct DefaultValue<Ref<T>> { static Ref<T> value() { return Ref<T>(DefaultValue<T>::value()); } };
-template<typename T> struct DefaultValue<Str<T>> { static Str<T> value() { return T::defaultValue(); } };
-template<typename R, typename... As> struct DefaultValue<Fun<typename R, typename... As>> { 
-	static Fun<typename R, typename... As> value() { 
-		return Fun<typename R, typename... As>([](As... as) { return DefaultValue<R>::value(); }); 
-	} 
-};
-*/
-
 template<typename T> 
 struct Arr {
 	Arr(): arr() { }
@@ -187,7 +172,6 @@ struct Ref {
 	Ref(const T& r): ref(std::make_shared<Reference<T>>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
 	Ref(Ptr<Reference<T>>&& r): ref(std::move(r)) { }
-	//Ref(const Ptr<T>& r): ref(r) { }
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
 
 	Reference<T>& operator *() { return ref.operator*(); }
@@ -199,7 +183,6 @@ struct Ref {
 
 	Ref& operator = (Ref&& r) { ref = std::move(r.ref); return *this; }
 	Ref& operator = (const Ref& r) { ref = r.ref; return *this; }
-	//Int compare(Ref r) const { return Compare<T>::cmp(*ref, *r.ref); }
 
 	bool isSameObj(Ref r) const { return ref.get() == r.ref.get(); }
 
@@ -235,7 +218,6 @@ struct Fun {
 	Fun() {}
 	Fun(const Fn& f): fn(std::make_shared<Function<R, As...>>(f)) { }
 	Fun(Fn&& f): fn(std::make_shared<Function<R, As...>>(f)) { }
-	//Fun(Fn* f): fn(f) { }
 	Fun(Ptr<Function<R, As...>>&& f): fn(std::move(f)) { }
 	Fun(const Ptr<Function<R, As...>>& f): fn(f) { }
 	Fun(const Fun& f): fn(f.fn) { }
@@ -309,7 +291,6 @@ struct Flow {
 		} catch (std::bad_variant_access& err) {
 			std::cerr << "failed to get Int (" << Type::INT << "), in fact: " << type2s(val.index()) << std::endl;
 			throw err;
-			//return DefaultValue<Int>::value();
 		}
 	}
 	Bool toBool() const { 
@@ -318,7 +299,6 @@ struct Flow {
 		} catch (std::bad_variant_access& err) {
 			std::cerr << "failed to get Bool(" << Type::BOOL << "), in fact: " << type2s(val.index()) << std::endl;
 			throw err;
-			//return DefaultValue<Bool>::value();
 		}
 	}
 	Double toDouble() const { 
@@ -327,7 +307,6 @@ struct Flow {
 		} catch (std::bad_variant_access& err) {
 			std::cerr << "failed to get Double(" << Type::DOUBLE << "), index: " << type2s(val.index()) << std::endl;
 			throw err;
-			//return DefaultValue<Double>::value();
 		}
 	}
 	String toString() const { 
@@ -336,7 +315,6 @@ struct Flow {
 		} catch (std::bad_variant_access& err) {
 			std::cerr << "failed to get String(" << Type::STRING << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
-			//return DefaultValue<String>::value();
 		}
 	}
 	Ptr<AStruct> toStruct() const { 
@@ -345,7 +323,6 @@ struct Flow {
 		} catch (std::bad_variant_access& err) {
 			std::cerr << "failed to get Struct(" << Type::STRUCT << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
-			//return DefaultValue<Int>::value();
 		}
 	}
 	Ptr<AArray> toArray() const { 
