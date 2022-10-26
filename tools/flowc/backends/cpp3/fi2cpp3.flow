@@ -85,9 +85,10 @@ fi2cpp3RuntimeParts(gctx: Cpp3GlobalContext) -> [Cpp3RuntimePart] {
 fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	// The runtime fragents, which are used in a program
 	runtime_parts = fi2cpp3RuntimeParts(gctx);
-	fi2cpp3SaveFile("__flow_runtime.hpp", fiCpp3Runtime(gctx, runtime_parts), gctx);
+	fi2cpp3SaveFile("__flow_runtime.hpp", fiCpp3RuntimeHeader(gctx, runtime_parts), gctx);
+	fi2cpp3SaveFile("__flow_runtime.cpp", fiCpp3RuntimeSource(gctx, runtime_parts), gctx);
 
-	compiled1 = fold(gctx.program.traversal, makeTree(), \acc, name -> {
+	compiled = fold(gctx.program.traversal, makeTree(), \acc, name -> {
 		if (gctx.config.config.verbose > 0) {
 			fcPrintln("Compiling to cpp3: " + name, gctx.config.config.threadId);
 		}
@@ -95,46 +96,22 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 		cpp_module = fiModule2cpp3(module, gctx);
 		setTree(acc, name, cpp_module);
 	});
-	compiled = compiled1; //fi2cpp3RemoveEmptyModules(compiled1);
 
-	sources = list2array(fold(gctx.program.traversal, makeList1("__flow_runtime.hpp"), \srcs, module_name -> {
-		module = lookupTreeDef(compiled, module_name, Cpp3CompiledModule("", false, [], [], []));
-		name = module.name;
-		header = fiCompiledModule2cpp3header(module, gctx, runtime_parts);
-		fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, gctx);
-		srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
-		source = fiCompiledModule2cpp3source(module, gctx, runtime_parts);
-		if (source == "") srcs1 else {
-			fi2cpp3SaveFile(changeFileExt(name, ".cpp"), source, gctx);
-			Cons(changeFileExt(name, ".cpp"), srcs);
+	sources = list2array(fold(gctx.program.traversal, 
+		array2list(["__flow_runtime.hpp", "__flow_runtime.cpp"]), 
+		\srcs, module_name -> {
+			module = lookupTreeDef(compiled, module_name, Cpp3CompiledModule("", false, [], [], []));
+			name = module.name;
+			header = fiCompiledModule2cpp3header(module, gctx, runtime_parts);
+			fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, gctx);
+			srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
+			source = fiCompiledModule2cpp3source(module, gctx, runtime_parts);
+			if (source == "") srcs1 else {
+				fi2cpp3SaveFile(changeFileExt(name, ".cpp"), source, gctx);
+				Cons(changeFileExt(name, ".cpp"), srcs);
+			}
 		}
-	}));
+	));
 	fi2cpp3SaveFile(gctx.config.outfile + "_sources", concatStrings(map(sources, \src -> src + "\n")), gctx);
 	Cpp3CompiledProgram(compiled, sources);
-}
-
-fi2cpp3RemoveEmptyModules(modules: Tree<string, Cpp3CompiledModule>) -> Tree<string, Cpp3CompiledModule> {
-	empty_names = filtermap(getTreeValues(modules), \m -> if (length(m.decls) == 0) Some(m.name) else None());
-	modules1 = mapTree(modules, \module -> {
-		real_imps = filter(module.imports, \imp -> !contains(empty_names, imp));
-		empty_transitive = set2array(fold(
-			filter(module.imports, \imp -> contains(empty_names, imp)), 
-			makeSet(), \acc, imp -> fi2cpp3ModuleTransitiveImports(imp, modules, acc)
-		));
-		implicit_imports = filter(empty_transitive, \imp -> !contains(empty_names, imp));
-		Cpp3CompiledModule(module with imports = concat(real_imps, implicit_imports));
-	});
-	filterTree(modules1, \__,m -> length(m.decls) > 0);
-}
-
-fi2cpp3ModuleTransitiveImports(
-	m: string,
-	modules: Tree<string, Cpp3CompiledModule>,
-	acc: Set<string>
-) -> Set<string> {
-	if (containsSet(acc, m)) acc else {
-		acc1 = insertSet(acc, m);
-		module = lookupTreeDef(modules, m, Cpp3CompiledModule("", false, [], [], []));
-		fold(module.imports, insertSet(acc, m), \ac, imp -> fi2cpp3ModuleTransitiveImports(imp, modules, ac));
-	}
 }

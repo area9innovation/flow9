@@ -4,16 +4,18 @@ import tools/flowc/backends/cpp3/fi2cpp3_util;
 import tools/flowc/backends/cpp3/fi2cpp3_defines;
 
 export {
-	fiCpp3Runtime(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
+	fiCpp3RuntimeHeader(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
+	fiCpp3RuntimeSource(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
+
 	fiCpp3IsNative(name : string, gctx: Cpp3GlobalContext) -> bool;
 	fiCpp3InitNativeFuncs(cfg: FiCpp3Config) -> Tree<string, Cpp3Native>;
 	fiCpp3InitRuntimeParts(cfg: FiCpp3Config) -> Tree<string, Cpp3RuntimePart>;
 	fiCpp3DependenciesIncludes(depsA: [[Cpp3Dependency]]) -> [string];
 }
 
-fiCpp3Runtime(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
+fiCpp3RuntimeHeader(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
 	all_includes = fiCpp3DependenciesIncludes(map(runtime_parts, \part -> part.dependencies));
-	base_runtime = fiCpp3BaseRuntime(gctx.config);
+	base_runtime = fiCpp3BaseRuntimeParts(gctx.config, ".hpp");
 	includes = superglue(all_includes, \inc -> "#inc" + "lude " + inc, "\n");
 
 	"#pragma once\n" +
@@ -24,10 +26,22 @@ fiCpp3Runtime(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> stri
 	"}\n";
 }
 
-fiCpp3BaseRuntime(cfg: FiCpp3Config) -> [string] {
+fiCpp3RuntimeSource(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
+	base_runtime = fiCpp3BaseRuntimeParts(gctx.config, ".cpp");
+
+	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
+	concatStrings(base_runtime) + "\n\n" +
+	"namespace flow {\n" +
+		concatStrings(filtermap(runtime_parts, \part -> 
+			if (part.staysInMain) None() else Some("// Runtime part: " + part.name + "\n" + part.source + "\n\n")
+		)) +
+	"}\n";
+}
+
+fiCpp3BaseRuntimeParts(cfg: FiCpp3Config, extension: string) -> [string] {
 	fold(cfg.nativeDirs, [], \acc, dir -> 
 		fold(readDirectory(pathCombine(dir, "runtimes")), acc, \ac, file ->
-			if (!endsWith(file, ".hpp")) ac else {
+			if (!endsWith(file, extension)) ac else {
 				concat(ac, [getFileContent(pathCombineMany([dir, "runtimes", file]))]);
 			}
 		)
