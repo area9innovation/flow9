@@ -1,7 +1,7 @@
-// Cpp3 runtime
+// Common includes, which are used by runtime
+
 #include <string>
 #include <vector>
-#include <cassert>
 #include <functional>
 #include <algorithm>
 #include <sstream>
@@ -9,10 +9,9 @@
 #include <variant>
 #include <iostream>
 #include <iomanip>
-#include <codecvt>
-#include <locale>
-#include <cmath>
 #include <type_traits>
+
+// C++ runtime for flow
 
 namespace flow {
 
@@ -32,6 +31,8 @@ using Bool = bool;
 using Double = double;
 using string = std::u16string;
 using String = Ptr<string>;
+
+inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
 
 // Unions for conversion from Double/Int to 16-bit chars and back
 
@@ -66,7 +67,10 @@ inline std::string toStdString(String str) {
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < str->size(); ++i) {
 		char16_t ch = str->at(i);
-		uint32_t x = (0xD800 <= ch && ch <= 0xDBFF) ? ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000 : ch;
+		uint32_t x = ch;
+		if (0xD800 <= ch && ch <= 0xDBFF) {
+			x = ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000;
+		}
 		if (x <= 0x7F) len += 1; else 
 		if (x <= 0x7FF) len += 2; else 
 		if (x <= 0xFFFF) len += 3; else 
@@ -78,7 +82,10 @@ inline std::string toStdString(String str) {
 	ret.reserve(len);
 	for (std::size_t i = 0; i < str->size(); ++i) {
 		char16_t ch = str->at(i);
-		uint32_t x = (0xD800 <= ch && ch <= 0xDBFF) ? ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000 : ch;
+		uint32_t x = ch; 
+		if (0xD800 <= ch && ch <= 0xDBFF) {
+			x = ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000;
+		}
 		if (x <= 0x7F) {
 			ret += x;
 		} else if (x <= 0x7FF) {
@@ -86,24 +93,109 @@ inline std::string toStdString(String str) {
 			ret += (0x80 | (x & 0x3F));
 		} else if (x <= 0xFFFF) {
 			ret += (0xE0 | ((x >> 12) & 0x3F));
-			ret += (0x80 | ((x >> 6) & 0x3F));
+			ret += (0x80 | ((x >> 6)  & 0x3F));
 			ret += (0x80 | (x & 0x3F));
 		} else if (x <= 0x1FFFFF) {
 			ret += (0xF0 | ((x >> 18) & 0x3F));
 			ret += (0x80 | ((x >> 12) & 0x3F));
-			ret += (0x80 | ((x >> 6) & 0x3F));
+			ret += (0x80 | ((x >> 6)  & 0x3F));
 			ret += (0x80 | (x & 0x3F));
 		} else if (x <= 0x3FFFFFF) {
 			ret += (0xF8 | ((x >> 24) & 0x3F));
 			ret += (0x80 | ((x >> 18) & 0x3F));
 			ret += (0x80 | ((x >> 12) & 0x3F));
-			ret += (0x80 | ((x >> 6) & 0x3F));
+			ret += (0x80 | ((x >> 6)  & 0x3F));
 			ret += (0x80 | (x & 0x3F));
 		}
 	}
 	return ret; 
 }
-inline string fromStdString(const std::string& s) { static std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> conv; return conv.from_bytes(s); }
+//inline string fromStdString(const std::string& s) { static std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> conv; return conv.from_bytes(s); }
+inline string fromStdString(const std::string& s) {
+	std::size_t len = 0;
+	for (std::size_t i = 0; i < s.length(); ++i) {
+		uint8_t ch = s.at(i);
+		if ((ch & 0xFC) == 0xF8 && i < len - 4) {
+			i += 4; len += 2;
+		} else if ((ch & 0xF8) == 0xF0 && i < len - 3) {
+			i += 3; len +=2;
+		} else if ((ch & 0xF0) == 0xE0 && i < len - 2) {
+			i += 2; len += 1;
+		} else if ((ch & 0xE0) == 0xC0 && i < len - 1) {
+			i += 1; len += 1;
+		} else { 
+			len += 1;
+		}
+	}
+	string str;
+	str.reserve(len);
+	for (std::size_t i = 0; i < s.length(); ++i) {
+		uint8_t b1 = s.at(i);
+
+		if ((b1 & 0xFC) == 0xF8 && i < len - 4) {
+			uint8_t b2 = s.at(i + 1);
+			uint8_t b3 = s.at(i + 2);
+			uint8_t b4 = s.at(i + 3);
+			uint8_t b5 = s.at(i + 4);
+			i += 4;
+
+			uint32_t h1 = (b1 & 0x3)  << 24;
+			uint32_t h2 = (b2 & 0x3F) << 18;
+			uint32_t h3 = (b3 & 0x3F) << 12;
+			uint32_t h4 = (b4 & 0x3F) << 6;
+			uint32_t h5 = 0x3F & b5;
+
+			uint32_t h = h1 | h2 | h3 | h4 | h5;
+
+			// Surrogate pair
+			h = h - 0x10000;
+			str.push_back((char16_t) ((h >> 10)   + 0xD800));
+			str.push_back((char16_t) ((h & 0x3FF) + 0xDC00));
+		} else if ((b1 & 0xF8) == 0xF0 && i < len - 3) {
+			uint8_t b2 = s.at(i + 1);
+			uint8_t b3 = s.at(i + 2);
+			uint8_t b4 = s.at(i + 3);
+			i += 3;
+
+			uint32_t h1 = (b1 & 0x7)  << 18;
+			uint32_t h2 = (b2 & 0x3F) << 12;
+			uint32_t h3 = (b3 & 0x3F) << 6;
+			uint32_t h4 = 0x3F & b4;
+
+			uint32_t h = h1 | h2 | h3 | h4;
+
+			// Surrogate pair
+			h = h - 0x10000;
+			str.push_back((char16_t) ((h >> 10)   + 0xD800));
+			str.push_back((char16_t) ((h & 0x3FF) + 0xDC00));
+		} else if ((b1 & 0xF0) == 0xE0 && i < len - 2) {
+			uint8_t b2 = s.at(i + 1);
+			uint8_t b3 = s.at(i + 2);
+			i += 2;
+
+			char16_t h1 = (b1 & 0xF)  << 12;
+			char16_t h2 = (b2 & 0x3F) << 6;
+			char16_t h3 = 0x3F & b3;
+
+			char16_t h = h1 | h2 | h3;
+
+			str.push_back(h);
+		} else if ((b1 & 0xE0) == 0xC0 && i < len - 1) {
+			uint8_t b2 = s.at(i + 1);
+			i += 1;
+
+			char16_t h1 = (b1 & 0x1F) << 6;
+			char16_t h2 = 0x3F & b2;
+			char16_t h = h1 | h2;
+
+			str.push_back(h);
+		} else {
+			char16_t h = b1 & 0xff;
+			str.push_back(h);
+		}
+	}
+	return str;
+}
 
 inline String makeString() { return std::make_shared<string>(); }
 inline String makeString(const char16_t* s) { return std::make_shared<string>(s); }
@@ -119,6 +211,21 @@ const String string_true = makeString(u"true");
 const String string_false = makeString(u"false");
 const String string_1 = makeString(u"1");
 const String string_0 = makeString(u"0");
+
+inline const char* type2s(Int type) { 
+	switch (type) {
+		case Type::INT:    return "int";
+		case Type::BOOL:   return "bool";
+		case Type::DOUBLE: return "double";
+		case Type::STRING: return "string";
+		case Type::STRUCT: return "struct";
+		case Type::ARRAY:  return "array";
+		case Type::REF:    return "ref";
+		case Type::FUNC:   return "function";
+		case Type::NATIVE: return "native";
+		default:           return "unknown";
+	} 
+}
 
 template<typename T> struct ToFlow;
 template<typename T> struct FromFlow;
@@ -176,6 +283,23 @@ template<typename T1> struct Cast {
 	template<typename T2> struct To { static T2 conv(T1 x); };
 	template<typename T2> struct From { static T1 conv(T2 x); };
 };
+
+/*
+template<typename> struct DefaultValue;
+template<> struct DefaultValue<Int> { static Int value() { return 0; } };
+template<> struct DefaultValue<Bool> { static Bool value() { return false; } };
+template<> struct DefaultValue<Double> { static Double value() { return 0.0; } };
+template<> struct DefaultValue<String> { static String value() { return makeString(); } };
+template<> struct DefaultValue<Ptr<Void>> { static Ptr<Void> value() { return Ptr<Void>(); } };
+template<typename T> struct DefaultValue<Arr<T>> { static Arr<T> value() { return Arr<T>::makeEmpty(); } };
+template<typename T> struct DefaultValue<Ref<T>> { static Ref<T> value() { return Ref<T>(DefaultValue<T>::value()); } };
+template<typename T> struct DefaultValue<Str<T>> { static Str<T> value() { return T::defaultValue(); } };
+template<typename R, typename... As> struct DefaultValue<Fun<typename R, typename... As>> { 
+	static Fun<typename R, typename... As> value() { 
+		return Fun<typename R, typename... As>([](As... as) { return DefaultValue<R>::value(); }); 
+	} 
+};
+*/
 
 template<typename T> 
 struct Arr {
@@ -327,47 +451,52 @@ struct Flow {
 		try { 
 			return std::get<Int>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Int (" << Type::INT << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Int (" << Type::INT << "), in fact: " << type2s(val.index()) << std::endl;
 			throw err;
+			//return DefaultValue<Int>::value();
 		}
 	}
 	Bool toBool() const { 
 		try {
 			return std::get<Bool>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Bool(" << Type::BOOL << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Bool(" << Type::BOOL << "), in fact: " << type2s(val.index()) << std::endl;
 			throw err;
+			//return DefaultValue<Bool>::value();
 		}
 	}
 	Double toDouble() const { 
 		try {
 			return std::get<Double>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Double(" << Type::DOUBLE << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Double(" << Type::DOUBLE << "), index: " << type2s(val.index()) << std::endl;
 			throw err;
+			//return DefaultValue<Double>::value();
 		}
 	}
 	String toString() const { 
 		try {
 			return std::get<String>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get String(" << Type::STRING << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get String(" << Type::STRING << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
+			//return DefaultValue<String>::value();
 		}
 	}
 	Ptr<AStruct> toStruct() const { 
 		try {
 			return std::get<Ptr<AStruct>>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Struct(" << Type::STRUCT << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Struct(" << Type::STRUCT << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
+			//return DefaultValue<Int>::value();
 		}
 	}
 	Ptr<AArray> toArray() const { 
 		try {
 			return std::get<Ptr<AArray>>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Array(" << Type::ARRAY << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Array(" << Type::ARRAY << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
 		}
 	}
@@ -375,7 +504,7 @@ struct Flow {
 		try {
 			return std::get<Ptr<AReference>>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Reference(" << Type::REF << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Reference(" << Type::REF << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
 		}
 	}
@@ -383,7 +512,7 @@ struct Flow {
 		try{
 			return std::get<Ptr<AFunction>>(val); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Function(" << Type::FUNC << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Function(" << Type::FUNC << ") , index: " << type2s(val.index()) << std::endl;
 			throw err;
 		}
 	}
@@ -392,7 +521,7 @@ struct Flow {
 		try{
 			return std::reinterpret_pointer_cast<T>(std::get<Ptr<Void>>(val)); 
 		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Native(" << Type::NATIVE << ") , index: " << val.index() << std::endl;
+			std::cerr << "failed to get Native(" << Type::NATIVE << ") , index: " <<type2s(val.index()) << std::endl;
 			throw err;
 		}
 	}
@@ -602,7 +731,7 @@ template<> struct BiCast<Int>::To<Int> { static Int conv(Int x) { return x; } st
 template<> struct BiCast<Int>::From<Bool> { static Int conv(Bool x) { return x ? 1 : 0; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::To<Bool> { static Bool conv(Int x) { return x == 0 ? false : true; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::To<Double> { static Double conv(Int x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::From<Double> { static Int conv(Double x) { return round(x); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Int>::From<Double> { static Int conv(Double x) { return double2int(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::To<String> { static String conv(Int x) { return makeString(std::to_string(x)); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::From<String> { static Int conv(String x) { return std::stoi(toStdString(x)); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::To<Flow> { static Flow conv(Int x) { return x; } static constexpr bool is_available() { return true; } };
@@ -610,7 +739,7 @@ template<> struct BiCast<Int>::From<Flow> { static Int conv(Flow x) {
 	switch (x.type()) {
 		case Type::INT:    return x.toInt();
 		case Type::BOOL:   return x.toBool() ? 1 : 0;
-		case Type::DOUBLE: return round(x.toDouble());
+		case Type::DOUBLE: return double2int(x.toDouble());
 		case Type::STRING: return std::stoi(toStdString(x.toString()));
 		default:           return 0;
 	}
@@ -680,7 +809,7 @@ template<> struct BiCast<Flow>::To<Int> { static Int conv(Flow x) {
 	switch (x.type()) {
 		case Type::INT:    return x.toInt();
 		case Type::BOOL:   return x.toBool() ? 1 : 0;
-		case Type::DOUBLE: return round(x.toDouble());
+		case Type::DOUBLE: return double2int(x.toDouble());
 		case Type::STRING: return std::stoi(toStdString(x.toString()));
 		default:           return 0;
 	}
@@ -798,12 +927,7 @@ template<> template<typename T> struct BiCast<Union>::To<Str<T>> {
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			/*if constexpr (T::SIZE == 0) {
-				return std::make_shared<T>();
-			} else {*/
-				//return std::make_shared<T>(x.un);
-				return std::reinterpret_pointer_cast<T>(x.un);
-			//}
+			return std::make_shared<T>(x.un);
 		}
 	} 
 };
@@ -1199,7 +1323,6 @@ inline Int compareFlow(Flow v1, Flow v2) {
 			}
 			default: {
 				std::cerr << "illegal type: " << v1.type() << std::endl;
-				assert(false);
 				return 0;
 			}
 		}

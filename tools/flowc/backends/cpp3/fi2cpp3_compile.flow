@@ -18,8 +18,6 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule 
 			fiStruct2cpp3(struct, gctx, false)
 		)
 	);
-	//vars = filtermap(module.initOrder, \name -> find(module.globalVars, \gv -> gv.name == name));
-	//funcs = filtermap(module.initOrder, \name -> find(module.functions, \fn -> fn.name == name));
 	decls = concat(
 		module.natives,
 		filtermap(module.initOrder, \name -> {
@@ -44,15 +42,10 @@ fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule 
 fiModuleNatives2cpp3(module: FiModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] {
 	missing_natives = ref [];
 	natives = filtermap(module.natives, \nat -> {
-		if (nat.name == "for") {
-			// 'for' is a special native, used in tail call optimization, i.e. it is moved to main runtime
-			None();
-		} else {
-			if (!fiCpp3IsNative(nat.name, gctx) && !contains(module.initOrder, nat.name)) {
-				refArrayPush(missing_natives, nat.name);
-			}
-			lookupTree(gctx.natives, nat.name);
+		if (!fiCpp3IsNative(nat.name, gctx) && !contains(module.initOrder, nat.name)) {
+			refArrayPush(missing_natives, nat.name);
 		}
+		lookupTree(gctx.natives, nat.name);
 	});
 	if (^missing_natives != []) {
 		err = "Module " + module.fileinfo.flowfile + ": following native functions are not implemented in cpp3 runtime and doesn't have a flow fallbacks:\n" +
@@ -81,13 +74,10 @@ fiDeclaration2cpp3(decl: FiDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3Co
 				Some(fiFunc2cpp3(decl, gctx));
 			}
 		}
-		FiNativeDec(name, __,type,__, fallback,__,__): {
-			if (name == "for") None() else {
-				maybeMap(lookupTree(gctx.natives, name), \nat -> 
-					nat.declaration(gctx.typename2cpp, gctx.varname2cpp)
-				);
-			}
-		}
+		FiNativeDec(name, __,type,__, fallback,__,__):
+			maybeMap(lookupTree(gctx.natives, name), \nat -> 
+				nat.declaration(gctx.typename2cpp, gctx.varname2cpp)
+			);
 	}
 }
 
@@ -192,24 +182,29 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 			superglue(struct.args, \arg -> fiType2cpp3(arg.type, gctx) + " __" + gctx.varname2cpp(arg.name), ", " ) + 
 		") " + constructor_init + " { }\n";
 
-		copy_constructor = if (struct.args == []) "" else 
+		copy_constructor = if (length(struct.args) == 0) "" else 
 		"\t" + struct_name + "(const " + struct_name + "& s): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(s." + gctx.varname2cpp(arg.name) + ")", ", " ) + 
 		" { }\n";
-		abstract_constructor = if (length(struct.args) == 0) "" else 
+		abstract_constructor = if (length(struct.args) == 0) "\t" + struct_name + "(Ptr<AStruct> p){ }\n" else
 		"\t" + struct_name + "(Ptr<AStruct> p): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(p->field(makeString(u\"" + arg.name + "\"))))", ", " ) + 
 		" { }\n";
-		move_constructor = if (struct.args == []) "" else 
+		move_constructor = if (length(struct.args) == 0) "" else 
 		"\t" + struct_name + "(" + struct_name + "&& s): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(std::move(s." + gctx.varname2cpp(arg.name) + "))", ", " ) + 
 		" { }\n";
+		/*default_value = "static Ptr<" + struct_name + "> defaultValue() {\n" + 
+			"return std::make_shared<" + struct_name + ">(" +
+				superglue(struct.args, \arg -> "DefaultValue<" + fiType2cpp3(arg.type, gctx) + ">::value()", ", " )
+			+ ")" +
+		"\n}";*/
 
-		assignment_operator = if (struct.args == []) "" else 
+		assignment_operator = if (length(struct.args) == 0) "" else 
 		"\t" + struct_name + "& operator = (const " + struct_name + "& s) { " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + " = s." + gctx.varname2cpp(arg.name) + ";", " " ) + 
 		" return *this; }\n";
-		assignment_move = if (struct.args == []) "" else 
+		assignment_move = if (length(struct.args) == 0) "" else 
 		"\t" + struct_name + "& operator = (" + struct_name + "&& s) { " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + " = std::move(s." + gctx.varname2cpp(arg.name) + ");", " " ) + 
 		" return *this; }\n";
@@ -297,6 +292,7 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		//(if (copy_constructor == "") "" else copy_constructor) +
 		(if (move_constructor == "") "" else move_constructor) +
 		(if (abstract_constructor == "") "" else abstract_constructor) +
+		//strIndent(default_value) + "\n" +
 		//(if (assignment_operator == "") "" else assignment_operator) +
 		//(if (assignment_move == "") "" else assignment_move) +
 		"\tInt id() const override { return " + struct_id + "; }\n" +
