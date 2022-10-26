@@ -6,7 +6,7 @@ import tools/flowc/manipulation/eliminate_union_fields;
 export {
 	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
 	fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
-	fiCompiledModule2cpp3source(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
+	fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> [string];
 	cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> Cpp3RuntimePart;
 }
 
@@ -120,17 +120,32 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	"}\n";
 }
 
-fiCompiledModule2cpp3source(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
-	if (length(source_defs) == 0 && !module.isMain) "" else {
-		"#inc" + "lude \"" + module.name + ".hpp\"\n" +
-		"namespace " + gctx.config.namespace + " {\n" +
-		"using namespace std::string_literals;\n" +
-		"using namespace flow;\n\n" + 
-		concatStrings(source_defs) + "\n" +
-		"}\n" +
-		if (module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
-	}
+fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> [string] {
+	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
+
+	// Cut all definition into parts, not exceeding 20kb
+	source_defs_cut = list2array(fold(all_source_defs, Pair(makeList(), 0), \acc, def -> 
+		if (acc.second + strlen(def) < 20000) {
+			switch (acc.first) {
+				Cons(arr, tail_): Pair(Cons(concat(arr, [def]), tail_), acc.second + strlen(def));
+				EmptyList(): Pair(makeList1([def]), strlen(def));
+			}
+		} else {
+			Pair(Cons([def], acc.first), strlen(def));
+		}
+	).first);
+
+	mapi(source_defs_cut, \i, source_defs ->
+		if (length(source_defs) == 0 && !module.isMain) "" else {
+			"#inc" + "lude \"" + module.name + ".hpp\"\n" +
+			"namespace " + gctx.config.namespace + " {\n" +
+			"using namespace std::string_literals;\n" +
+			"using namespace flow;\n\n" + 
+			concatStrings(source_defs) + "\n" +
+			"}\n" +
+			if (i == 0 && module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
+		}
+	);
 }
 
 fiStructName2cpp3(tn : FiTypeName, gctx: Cpp3GlobalContext) -> string {
