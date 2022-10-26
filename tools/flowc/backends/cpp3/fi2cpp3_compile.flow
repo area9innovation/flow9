@@ -96,7 +96,9 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
 	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
 	sources = superglue(runtime_parts, \part -> part.source, "\n");
-"using namespace flow;
+"
+using namespace flow;
+using namespace std::string_literals;
 using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
 "int main(int argc, const char* argv[]) {\n" +
@@ -121,6 +123,7 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	"// Module " + module.name + "\n\n" + 
 	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
 	"namespace " + gctx.config.namespace + " {\n" +
+	"using namespace std::string_literals;\n" +
 	"using namespace flow;\n\n" + 
 	concatStrings(forward_decls) + "\n" + 
 	concatStrings(header_defs) + "\n" + 
@@ -132,6 +135,7 @@ fiCompiledModule2cpp3source(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	if (length(source_defs) == 0 && !module.isMain) "" else {
 		"#inc" + "lude \"" + module.name + ".hpp\"\n" +
 		"namespace " + gctx.config.namespace + " {\n" +
+		"using namespace std::string_literals;\n" +
 		"using namespace flow;\n\n" + 
 		concatStrings(source_defs) + "\n" +
 		"}\n" +
@@ -155,19 +159,32 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
 	);
 	struct_name = gctx.typename2cpp(struct.name);
+	struct_id = i2s(lookupTreeDef(gctx.structs2id, struct.name, -1));
 	names = gctx.program.names;
 	typars = struct.typars;
 	decl_typars = fiDeclTypars2cpp3(typars, gctx);
 	if (only_decl) {
 		decl_typars + "struct " + struct_name + ";\n\n";
 	} else {
+		static_id = "enum { ID = " + struct_id + ", SIZE = " + i2s(length(struct.args)) + " };"; 
+		field_types = supergluei(struct.args, 
+			\i, arg -> "typedef " + fiType2cpp3(arg.type, gctx) + " " + "FieldType_" + i2s(i) + ";",
+			"\n"
+		);
 		getter = \union, field -> 
 			"\t" + fiType2cpp3(field.type, gctx) + " get_" + union + "_" + field.name + "() override { return " + gctx.varname2cpp(field.name) + "; }\n";
 		setter = \union, field -> 
 			"\tvoid set_" + union + "_" + field.name + "(" + fiType2cpp3(field.type, gctx) + " ___x___) override { " + gctx.varname2cpp(field.name) + " = ___x___; }\n";
 		field_interface = \union, field -> getter(union, field) + if (!field.ismutable) "" else setter(union, field);
 
-		constructor_init = if (struct.args == []) "" else {
+		static_instance = if (length(struct.args) > 0) "" else {
+			"static Str<" + struct_name + "> instance() {\n" +
+				"\tstatic Str<" + struct_name + "> inst(std::make_shared<" + struct_name + ">());\n" +
+				"\treturn inst;\n" +
+			"}";
+		}
+
+		constructor_init = if (length(struct.args) == 0) "" else {
 			": " + superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(__" + gctx.varname2cpp(arg.name) + ")", ", ");
 		}
 		constructor = "\t" + struct_name + 
@@ -178,6 +195,10 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		copy_constructor = if (struct.args == []) "" else 
 		"\t" + struct_name + "(const " + struct_name + "& s): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(s." + gctx.varname2cpp(arg.name) + ")", ", " ) + 
+		" { }\n";
+		abstract_constructor = if (length(struct.args) == 0) "" else 
+		"\t" + struct_name + "(Ptr<AStruct> p): " + 
+			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(p->field(makeString(u\"" + arg.name + "\"))))", ", " ) + 
 		" { }\n";
 		move_constructor = if (struct.args == []) "" else 
 		"\t" + struct_name + "(" + struct_name + "&& s): " + 
@@ -201,13 +222,13 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		"\n}";
 		compare2 = "Int compare(const " + struct_name + "& s) const {\n" +
 			concatStrings(mapi(struct.args, \i, arg ->
-				"\tInt c" + i2s(i) + " = Compare<" + fiType2cpp3(arg.type, gctx) + ">::cmp(" + gctx.varname2cpp(arg.name) + ", " + gctx.varname2cpp(arg.name) + "); " + 
+				"\tInt c" + i2s(i) + " = Compare<" + fiType2cpp3(arg.type, gctx) + ">::cmp(" + gctx.varname2cpp(arg.name) + ", s." + gctx.varname2cpp(arg.name) + "); " + 
 				"if (c" + i2s(i) + " != 0) return c" + i2s(i) + ";\n",
 			)) + 
 			"\treturn 0;"
 		"\n}";
 
-		get_field = "Flow field(String name) override {\n" +
+		get_field = "Flow field(String name) const override {\n" +
 			(if (length(struct.args) == 0) {
 				"\tassert(false && \"unkown field in struct\");\n" +
 				"\treturn Flow();";
@@ -216,12 +237,12 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 					supergluei(struct.args, 
 						\i, arg -> {
 							if (i == 0) {
-								"if (toStdString(name) == \"" + arg.name + "\") {\n" +
-									"\treturn ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
+								"if (*name == u\"" + arg.name + "\") {\n" +
+									"\treturn Cast<Flow>::template From<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
 								"\n} "
 							} else {
-								"else if (toStdString(name) == \"" + arg.name + "\") {\n" +
-									"\treturn ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
+								"else if (*name == u\"" + arg.name + "\") {\n" +
+									"\treturn Cast<Flow>::template From<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ");" +
 								"\n} "
 							}
 						}, "\n"
@@ -233,20 +254,21 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 			}) +
 		"\n}";
 
-		set_field = "void setField(String name, Flow val) override {\n" +
-			(if (length(struct.args) == 0) {
+		mutable_fields = filter(struct.args, \arg -> arg.ismutable);
+		set_field = "void setField(String name, Flow val) const override {\n" +
+			(if (length(mutable_fields) == 0) {
 				"\tassert(false && \"unkown field in struct\");"
 			} else {
 				strIndent(
-					supergluei(struct.args, 
+					supergluei(mutable_fields, 
 						\i, arg -> {
 							if (i == 0) {
-								"if (toStdString(name) == \"" + arg.name + "\") {\n" +
-									"\t" + gctx.varname2cpp(arg.name) + " = " + "FromFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
+								"if (*name == u\"" + arg.name + "\") {\n" +
+									"\t" + gctx.varname2cpp(arg.name) + " = " + "Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
 								"\n} "
 							} else {
-								"else if (toStdString(name) == \"" + arg.name + "\") {\n" +
-									"\t" + gctx.varname2cpp(arg.name) + " = " + "FromFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
+								"else if (*name == u\"" + arg.name + "\") {\n" +
+									"\t" + gctx.varname2cpp(arg.name) + " = " + "Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(val);" +
 								"\n} "
 							}
 						}, "\n"
@@ -256,25 +278,36 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 				);
 			}) +
 		"\n}";
-		flow_fields = "Arr<Flow> fields() override { return " + 
+		flow_fields = "Arr<Flow> fields() const override { return " + 
 			(if (length(struct.args) == 0) "Arr<Flow>::makeEmpty()" else
-			"Arr<Flow>{" + superglue(struct.args, \arg -> "ToFlow<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}") 
+			"Arr<Flow>{" + superglue(struct.args, \arg -> "Cast<Flow>::template From<" + fiType2cpp3(arg.type, gctx) + ">::conv(" + gctx.varname2cpp(arg.name) + ")", ", ") + "}") 
 			+ "; }";
+		cast_to = "template<typename N>\n" +
+		"Ptr<N> cast() {\n" +
+			"\treturn std::make_shared<N>(\n" + 
+				supergluei(struct.args, \i, field -> "\t\tCast<FieldType_" + i2s(i) + ">::template To<typename N::FieldType_" + i2s(i) + ">::conv(" + gctx.varname2cpp(field.name) + ")", ",\n") + 
+			"\n\t);\n" +
+		"}";
 
 		decl_typars + "struct " + struct_name + ": public AStruct {\n" +
+		strIndent(static_id) + "\n" +
+		strIndent(field_types) + "\n" +
+		(if (static_instance == "") "" else strIndent(static_instance) + "\n") +
 		constructor + 
 		//(if (copy_constructor == "") "" else copy_constructor) +
 		(if (move_constructor == "") "" else move_constructor) +
+		(if (abstract_constructor == "") "" else abstract_constructor) +
 		//(if (assignment_operator == "") "" else assignment_operator) +
 		//(if (assignment_move == "") "" else assignment_move) +
-		"\tInt id() const override { return " + i2s(lookupTreeDef(gctx.structs2id, struct.name, -1)) + "; }\n" +
+		"\tInt id() const override { return " + struct_id + "; }\n" +
 		"\tString name() const override { return makeString(\"" + struct.name + "\"); }\n" +
-		"\tInt size() const override { return " + i2s(length(struct.args)) + "; }\n" +
+		"\tInt size() const override { return SIZE; }\n" +
 		strIndent(flow_fields) + "\n" +
 		strIndent(get_field) + "\n" +
 		strIndent(set_field) + "\n" +
 		strIndent(compare1) + "\n" + 
 		strIndent(compare2) + "\n" + 
+		strIndent(cast_to) + "\n" +
 		(if (fields == "") "" else fields) +
 		"};\n\n";
 	}
@@ -291,7 +324,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value1 = fiExplicitCastInSwitch(value0, names);
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
 	value = value2;
-	pair0 = fiExp2FsExp(value, makeSet(), names, ref 0);
+	pair0 = fiExp2FsExp(value, makeSet(), gctx.effects, ref 0);
 	pair1 = tryCatch(
 		\-> Pair(
 			fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
@@ -343,7 +376,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 		Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
 	} else {
 		// Constant variable
-		var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + ";\n\n";
+		var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + "\n\n";
 		Cpp3CompiledDeclaration(name, true, "", var_def);
 	}
 }
@@ -380,7 +413,7 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	lambda5_body = fiExpRenameRecurringVars(lambda4.body, fun_locals);
 	fun_cpp = tryCatch(
 		\-> {
-			fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), fun_locals, names, ref 0);
+			fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), fun_locals, gctx.effects, ref 0, name);
 			fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
 			// fsInterpolateTyparsStat(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
 			// fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
@@ -399,7 +432,10 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 				//println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
 				//quit(0);
 			}*/
-			fsStat2cpp3(fun_stat, gctx);
+			body = fsStat2cpp3(fun_stat, gctx);
+			if (!fsHasTailCall(fun_stat)) body else {
+				"while (true) " + fiWrapWithBraces(body);
+			}
 		},
 		\msg  -> {
 			println(
@@ -433,13 +469,6 @@ fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
 		FiTypeRef(tp):        "Ref<" + fiType2cpp3(tp, gctx) + ">";
 		FiTypeParameter(nm):  {
 			if (!containsSet(gctx.toplevelTypars, nm)) {
-				/*where = eitherMap(gctx.currentToplevel, toStringFormatted, "");
-				refArrayPush(gctx.errors, 
-					"Stray free type parameter: '" + nm + "'" + 
-					(if (where == "") "" else " met in:\n" + where + "\n\n")
-				);
-				//println("STRAY: " + i2s(strlen(nm)) + " IN " + eitherMap(gctx.currentToplevel, \x -> x.name, "<none>") + "!!!!");
-				throw("STRAY: " + i2s(strlen(nm)) + " IN " + eitherMap(gctx.currentToplevel, \x -> x.name, "<none>") + "!!!!");*/
 				"Flow";
 			} else {
 				"T" + i2s(strlen(nm));
@@ -470,11 +499,27 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsIf(cond, pos, neg, type): {
-			"if " + fiWrapWithPars(fsExp2cpp3(cond, gctx)) + " {\n" + 
-				strIndent(fsStat2cpp3(pos, gctx)) + 
-			"\n} else {\n" + 
-				strIndent(fsStat2cpp3(neg, gctx)) + 
-			"\n}";
+			cond_cpp = fsExp2cpp3(cond, gctx);
+			pos_cpp = fsStat2cpp3(pos, gctx);
+			neg_cpp = fsStat2cpp3(neg, gctx);
+			if (pos_cpp != "") {
+				if (neg_cpp != "") {
+					"if " + fiWrapWithPars(cond_cpp) + " " + 
+						fiWrapWithBraces(pos_cpp) +
+					" else " + 
+						fiWrapWithBraces(neg_cpp);
+				} else {
+					"if " + fiWrapWithPars(cond_cpp) + " " + 
+						fiWrapWithBraces(pos_cpp);
+				}
+			} else {
+				if (neg_cpp != "") {
+					"if (!" + cond_cpp + ") " + 
+						fiWrapWithBraces(neg_cpp);
+				} else {
+					"";
+				}
+			}
 		}
 		FsSwitch(x, sw_type, cases, type): {
 			switch (x.type) {
@@ -497,13 +542,25 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsSeq(es, type): {
 			if (length(es) == 0) "" else
-			if (length(es) == 1) fsStat2cpp3(es[0], gctx) else 
-			fiWrapWithBraces(superglue(es, \x -> fsStat2cpp3(x, gctx), "\n"));
+			if (length(es) == 1) fsStat2cpp3(es[0], gctx) else {
+				es_cpp = filter(map(es, \x -> fsStat2cpp3(x, gctx)), \s -> s != "");
+				fiWrapWithBraces(strGlue(es_cpp, "\n"));
+			}
 		}
-		FsWrap(e): fsExp2cpp3(e, gctx) + ";";
+		FsWrap(e): {
+			e_cpp = fsExp2cpp3(e, gctx);
+			if (e_cpp != "") e_cpp + ";" else "";
+		}
 		FsRet(e): {
 			e_s = fsExp2cpp3(e, gctx);
-			(if (fsExpType(e) == FiTypeVoid()) e_s else "return " + e_s) + ";"
+			if (fsExpType(e) == FiTypeVoid()) {
+				if (e_s == "") "return;" else e_s + ";\nreturn;";
+			} else {
+				"return " + e_s + ";"
+			}
+		}
+		FsTailCall(type): {
+			"continue;";
 		}
 		FsVarDecl(var): {
 			fiType2cpp3(var.type, gctx) + " " + gctx.varname2cpp(var.name) + ";";
@@ -528,9 +585,7 @@ fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string 
 		}
 		None(): {
 			redundant_defcase = if (gctx.config.monolith) [] else 
-				["default: {\n" + 
-					strIndent("assert(false && \"unexpected case in switch\");\nbreak;") + 
-				"\n}"];
+				["default: " + fiWrapWithBraces("assert(false && \"unexpected case in switch\");\nbreak;")];
 			concat(nondef_cases, redundant_defcase);
 			//nondef_cases;
 		}
@@ -551,16 +606,15 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 			vars_wrapped = if (args_to_wrap == []) c.body else fsWrapCaseVarsWithCasts(c.body, args_to_wrap);
 			body = fsStat2cpp3(vars_wrapped, gctx);
 			id = lookupTreeDef(gctx.structs2id, c.struct, -1);
-			"case " + i2s(id) + " /*" + c.struct + "*/: {\n" +
-				strIndent(body) + "\n\tbreak;"
-			"\n}";
+			"case " + i2s(id) + " /*" + c.struct + "*/: " +
+				fiWrapWithBraces(fiUnwrap(body, "{", "}") + "\nbreak;");
 
 		}
 		None(): {
 			// default case
 			if (c.struct != "default") throw("struct is not found") else {
 				body = fsStat2cpp3(c.body, gctx);
-				strIndent("default: {\n" + strIndent(body)) + "\n}";
+				strIndent("default: " + fiWrapWithBraces(body));
 			}
 		}
 	}
@@ -597,23 +651,41 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		FiInt(i, __):    i2s(i);
 		FiDouble(d, __): { 
 			s = d2s(d);
-			if (strContains(s, ".")) s else s + ".0";
+			if (strContains(s, ".") || strContains(s, "e")) s else s + ".0";
 		}
-		FiString(s, __): "makeString(u\"" + escapeStr(toAsciiString(s)) + "\")";
+		FiString(s, __): {
+			if (s == "") "makeString()" else {
+				codes = s2a(s);
+				if (exists(codes, \code -> 0xD800 <= code && code <= 0xDFFF)) {
+					"makeString(std::vector<char16_t>{" + superglue(codes, i2s, ", ") + "})";
+				} else {
+					s1 = concatStrings(mapi(codes, \i, code ->
+						if (code == 0x09) "\\t" else
+						if (code == 0x0a) "\\n" else
+						if (code == 0x0d) "\\r" else
+						if (code == 0x22) "\\\"" else
+						if (code == 0x5c) "\\\\" else
+						if (0 < code && code < 0x80) fromCharCode(code) else
+						"\\u" + lpad(formatHex(code), "0", 4)
+					));
+					"makeString(\"" + s1 + "\"s)";
+				}
+			}
+		}
 		FsCast(ex, from, to): {
 			s = fsExp2cpp3(ex, gctx);
-			//fiCpp3Cast(fsExpType(ex), to, s, gctx);
 			fiCpp3Cast(from, to, s, gctx);
 		}
 		FsCall(f, args, type): {
 			f_type = cast(fsExpType(f): FiType -> FiTypeFunction);
 			s_args = map(args, \arg -> fsExp2cpp3(arg, gctx));
 			s_args_len = fold(s_args, 0, \acc, s_arg -> acc + strlen(s_arg) + 2);
-			s_args_wrapped = if (length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
-				"(\n" + strIndent(strGlue(s_args, ",\n")) + "\n)";
+			s_args_all = if (length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
+				strGlue(s_args, ",\n");
 			} else {
-				"(" + strGlue(s_args, ", ") + ")";
+				strGlue(s_args, ", ");
 			}
+			s_args_wrapped = fiWrapWithPars(s_args_all);
 			switch(f) {
 				FsVar(name,__,__): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, name);
@@ -642,17 +714,8 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			};
 		}
 		FsLambda(closure, args, body, type): {
-			fun = tryCatch(\-> fiType2cpp3(type, gctx), \err -> {
-				println(err + "\nIn: " + toString(type) + "\n" + toStringFormatted(e));
-				fail0(err + "\nIn: " + toString(type) + "\n" + toStringFormatted(e));
-			});
-			body_s = fsStat2cpp3(body, gctx);
-			header = fun + "([" + superglue(closure, gctx.varname2cpp, ", ") + "] " + fiFunArgs2cpp(args, gctx);
-			if (strlen(body_s) > 64 || strContains(body_s, "\n")) {
-				header + " mutable {\n" + strIndent(fsStat2cpp3(body, gctx)) + "\n})";
-			} else {
-				header + " mutable { " + fsStat2cpp3(body, gctx) + " })";
-			}
+			fiType2cpp3(type, gctx) + "([" + superglue(closure, gctx.varname2cpp, ", ") + "] " + fiFunArgs2cpp(args, gctx) +
+			" mutable " + fiWrapWithBraces(fsStat2cpp3(body, gctx)) + ")";
 		}
 		FsTernary(e1, e2, e3, type): {
 			"(" + fsExp2cpp3(e1, gctx) + " ? \n" + 
@@ -809,13 +872,20 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 				FiTypeFlow(): {
 					e2k(e.es[0]) + ".toReference()->reference()";
 				}
-				default:
-					"(*" +e2k(e.es[0]) + ".ref)";
-
+				default: {
+					"(*" +e2k(e.es[0]) + "->val)";
+				}
 			}
 		}
 		FcAssignPrim(): {
-			"(*" + e2k(e.es[0]) + ".ref = " + e2k(e.es[1]) + ")";
+			switch (arg_type) {
+				FiTypeFlow(): {
+					e2k(e.es[0]) + ".toReference()->set(" + e2k(e.es[1]) + ")";
+				}
+				default: {
+					"(*" + e2k(e.es[0]) + "->val = " + e2k(e.es[1]) + ")";
+				}
+			}
 		}
 		FcRefPrim(): {
 			ref_type = fiDerefType(e.type);
@@ -865,78 +935,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 }
 
 fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> string {
-	if (fiEqualTypes(from, to)) s else {
-		switch (from) {
-			FiTypeParameter(__): s;
-			FiTypeFlow():   "FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
-			FiTypeNative(): "FromFlow<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
-			default: {
-				static_cast = \s1 -> "static_cast<" + fiType2cpp3(to, gctx) + ">(" + s1 + ")";
-				switch (to) {
-					FiTypeVoid():       throw("cast to void");
-					FiTypeBool():       static_cast(s);
-					FiTypeInt():        static_cast(s);
-					FiTypeDouble():     static_cast(s);
-					FiTypeString(): {
-						switch (from) {
-							FiTypeVoid():   "makeString(\"{}\")";
-							FiTypeBool():   "makeString(std::to_string(" + s + "))";
-							FiTypeInt():    "makeString(std::to_string(" + s + "))";
-							FiTypeDouble(): "makeString(std::to_string(" + s + "))";
-							FiTypeString(): s;
-							default:        "flow2string(Flow(" + s + "))";
-						}
-					}
-					FiTypeFlow(): {
-						"ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
-					}
-					FiTypeNative(): {
-						"ToFlow<" + fiType2cpp3(from, gctx) + ">::conv(" + s + ")";
-					}
-					FiTypeParameter(n): {
-						/**switch (from) {
-							FiTypeParameter(m): "struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
-							default: s;
-						}*/
-						s;
-					}
-					FiTypeRef(rt): {
-						s + ".template cast<" + fiType2cpp3(rt, gctx)+  ">()";
-					}
-					FiTypeArray(at): {
-						s + ".template cast<" + fiType2cpp3(at, gctx)+  ">()";
-					}
-					FiTypeName(id_to, tp_to): {
-						to_is_union = containsKeyTree(gctx.program.names.unions, id_to);
-						switch (from) {
-							FiTypeName(id_from, tp_from): {
-								from_is_union = containsKeyTree(gctx.program.names.unions, id_from);
-								if (to_is_union) {
-									if (from_is_union) {
-										s 
-									} else {
-										"struct2union<" + fiType2cpp3(from, gctx) + ">(" + s + ")";
-									}
-								} else {
-									if (from_is_union) {
-										"union2struct<" + fiType2cpp3(to, gctx) + ">(" + s + ")";
-									} else {
-										"struct2struct<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + s + ")";
-									}
-								}
-							}
-							FiTypeParameter(__): s;
-							default: throw("illegal cast to struct from: " + prettyFiType(dummyPretty, from, makeSet()));
-						}
-					}
-					FiTypeFunction(args, rt): {
-						signature = superglue(concat([rt], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ");
-						s + ".template cast<" + signature+  ">()";
-					}
-				}
-			}
-		}
-	}
+	"Cast<" + fiType2cpp3(from, gctx) + ">::template To<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
 }
 
 fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
@@ -956,16 +955,16 @@ fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
 				struct_arg = \i, arg -> {
 					arg_val = "__args->vect.at(" + i2s(i) + ")";
 					arg_type = fiType2cpp3(fiTransformTypars(arg.type, \__ -> FiTypeFlow()), gctx);
-					"FromFlow<" + arg_type + ">::conv(" + arg_val + ")";
+					"Cast<Flow>::template To<" + arg_type + ">::conv(" + arg_val + ")";
 				}
 				struct_name = gctx.typename2cpp(struct.name) + typars;
 				args = "(" + strGlue(mapi(struct.args, \i, arg -> struct_arg(i, arg)), ", ") + ")";
 				wrapper = "Str<" + struct_name + ">";
-				constructor = "[](Arr<Flow> __args) { return ToFlow<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
+				constructor = "[](Arr<Flow> __args) { return Cast<Flow>::template From<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
 				fields = if (struct.args == []) "std::vector<FieldDef>()" else {
 					"std::vector{" + 
 						superglue(struct.args, \arg  -> 
-							"FieldDef{fromStdString(\"" + arg.name + "\"), fromStdString(\"" + fiType2cpp3(arg.type, gctx) +"\"), " + b2s(arg.ismutable) + "}", 
+							"FieldDef{u\"" + arg.name + "\", u\"" + fiType2cpp3(arg.type, gctx) +"\", " + b2s(arg.ismutable) + "}", 
 							", "
 						) + 
 					"}";
@@ -975,7 +974,7 @@ fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
 					constructor + ", " +
 					fields +
 				"}";
-				"\tdefs[fromStdString(\"" + struct.name + "\")] = " + struct_def + ";\n";
+				"\tdefs[u\"" + struct.name + "\"] = " + struct_def + ";\n";
 			},
 			\err -> {
 				println("struct: " + toString(struct) + "\nerr: " + toString(err));

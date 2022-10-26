@@ -1,5 +1,6 @@
 import tools/flowc/statements/fsexp;
 import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/manipulation/effects;
 import string_utils;
 
 export {
@@ -11,6 +12,11 @@ fsExp2s(e: FsExp) -> string;
 fsStat2s(s: FsStat) -> string;
 
 fsSetExpType(e : FsExp, t: FiType) -> FsExp;
+
+fsHasTailCall(s: FsStat) -> bool;
+
+fiExpIsFsExp(e: FiExp) -> bool;
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
 
 }
 
@@ -40,6 +46,7 @@ fsStatType(s: FsStat) -> FiType {
 		FsSeq(ss, type):       type;
 		FsWrap(e):             fsExpType(e);
 		FsRet(e):              fsExpType(e);
+		FsTailCall(type):      type;
 		FsVarDecl(var):        var.type;
 		FsAssign(__,__):       FiTypeVoid();
 	}
@@ -73,6 +80,9 @@ fsStat2s(s: FsStat) -> string {
 		}
 		FsRet(e): {
 			"return " + fsExp2s(e);
+		}
+		FsTailCall(__): {
+			"tailcall";
 		}
 		FsVarDecl(var): {
 			var.name + " : " + t2s(var.type);
@@ -168,5 +178,67 @@ fsSetExpType(e : FsExp, t: FiType) -> FsExp {
 		FsTernary(__,__,__,__): FsTernary(e with type = t);
 		FsVar(__,__,__):        FsVar(e with type = t);
 		default: e;
+	}
+}
+
+fsHasTailCall(s: FsStat) -> bool {
+	switch (s) {
+		FsIf(e, s1, s2, __): fsHasTailCall(s1) || fsHasTailCall(s2);
+		FsSwitch(v,__, cases, __): exists(cases, \c -> fsHasTailCall(c.body));
+		FsSeq(ss, type): if (length(ss) == 0) false else fsHasTailCall(ss[length(ss) - 1]);
+		FsTailCall(__):  true;
+		default: false;
+	}
+}
+
+fiExpIsFsExp(e: FiExp) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): 
+			if (length(es) == 0) true else	
+			if (length(es) == 1) {
+				fiExpIsFsExp(es[0]) && type != FiTypeVoid();
+			} else false;
+		FiCast(ex,__,__,__,__): fiExpIsFsExp(ex);
+		FiCall(f, args,__,__): fiExpIsFsExp(f) && forall(args, fiExpIsFsExp);
+		FiSwitch(__,__,__,__,__): false;
+		FiLambda(__,__,__,__): true;
+		FiLet(__,__,__,__,__, __): false;
+		FiIf(e1, e2, e3,__, __): fiExpIsFsExp(e1) && fiExpIsFsExp(e2) && fiExpIsFsExp(e3);   
+		FiCallPrim(op, es,__, __): {
+			forall(es, fiExpIsFsExp) &&
+			switch (op) {
+				FcAssignPrim(): false;
+				FcSetMutablePrim(__): false;
+				default: true;
+			}
+		}
+		FiRequire(__,__,__,__): false;
+		FiUnsafe(__,__,__,__): false;
+		default: true;
+	}
+}
+
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): exists(es, \x -> fiExpHasEffects(x, effects));
+		FiCast(ex,__,__,__,__): fiExpHasEffects(ex, effects);
+		FiCall(f, args,__,__): fiExpHasEffects(f, effects) || exists(args, \x -> fiExpHasEffects(x, effects));
+		FiSwitch(__,__,cases,__,__): exists(cases, \c -> fiExpHasEffects(c.body, effects));
+		FiLambda(__,body,__,__): fiExpHasEffects(body, effects);
+		FiLet(__,__,e1,e2,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects);
+		FiIf(e1, e2, e3,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects) || fiExpHasEffects(e3, effects);
+		FiCallPrim(op, es,__, __): {
+			exists(es, \x -> fiExpHasEffects(x, effects)) ||
+			switch (op) {
+				FcAssignPrim(): true;
+				FcSetMutablePrim(__): true;
+				FcRefPrim(): true;
+				default: false;
+			}
+		}
+		FiRequire(__,ex,__,__): fiExpHasEffects(ex, effects);
+		FiUnsafe(__,__,__,__): true;
+		FiVar(name,__,__): containsSet(effects.hasEffects, name);
+		default: false;
 	}
 }
