@@ -190,15 +190,16 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		"\t" + struct_name + "(Ptr<AStruct> p): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(p->field(makeString(u\"" + arg.name + "\"))))", ", " ) + 
 		" { }\n";
+		flow_constructor = 
+		"\t" + struct_name + "(Arr<Flow> fs)" + 
+			(if (length(struct.args) == 0) "" else
+				": " + supergluei(struct.args, \i, arg -> gctx.varname2cpp(arg.name) + "(Cast<Flow>::template To<" + fiType2cpp3(arg.type, gctx) + ">::conv(fs->vect.at(" + i2s(i) + ")))", ", " )
+			) + 
+		" { }\n";
 		move_constructor = if (length(struct.args) == 0) "" else 
 		"\t" + struct_name + "(" + struct_name + "&& s): " + 
 			superglue(struct.args, \arg -> gctx.varname2cpp(arg.name) + "(std::move(s." + gctx.varname2cpp(arg.name) + "))", ", " ) + 
 		" { }\n";
-		/*default_value = "static Ptr<" + struct_name + "> defaultValue() {\n" + 
-			"return std::make_shared<" + struct_name + ">(" +
-				superglue(struct.args, \arg -> "DefaultValue<" + fiType2cpp3(arg.type, gctx) + ">::value()", ", " )
-			+ ")" +
-		"\n}";*/
 
 		assignment_operator = if (length(struct.args) == 0) "" else 
 		"\t" + struct_name + "& operator = (const " + struct_name + "& s) { " + 
@@ -284,6 +285,8 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 			"\n\t);\n" +
 		"}";
 
+		struct_def = "static StructDef def() {\n" + strIndent(fiStruct2DefCpp3(struct, gctx)) + "\n}";
+
 		decl_typars + "struct " + struct_name + ": public AStruct {\n" +
 		strIndent(static_id) + "\n" +
 		strIndent(field_types) + "\n" +
@@ -292,10 +295,12 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		//(if (copy_constructor == "") "" else copy_constructor) +
 		(if (move_constructor == "") "" else move_constructor) +
 		(if (abstract_constructor == "") "" else abstract_constructor) +
+		flow_constructor + 
 		//strIndent(default_value) + "\n" +
 		//(if (assignment_operator == "") "" else assignment_operator) +
 		//(if (assignment_move == "") "" else assignment_move) +
-		"\tInt id() const override { return " + struct_id + "; }\n" +
+		strIndent(struct_def) + "\n" + 
+		"\tInt id() const override { return ID; }\n" +
 		"\tString name() const override { return makeString(\"" + struct.name + "\"); }\n" +
 		"\tInt size() const override { return SIZE; }\n" +
 		strIndent(flow_fields) + "\n" +
@@ -307,6 +312,33 @@ fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -
 		(if (fields == "") "" else fields) +
 		"};\n\n";
 	}
+}
+
+fiStruct2DefCpp3(struct : FiTypeStruct, gctx0: Cpp3GlobalContext) -> string {
+	typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = Some(struct),
+		toplevelTypars = buildSet(filtermap(struct.typars, \tp ->
+			switch (tp) {
+				FiTypeParameter(nm): Some(nm);
+				default: None();
+			}
+		))
+	);
+	struct_name = gctx.typename2cpp(struct.name) + typars;
+	constructor = "[](Arr<Flow> args) { return Flow(Str<" + struct_name + ">(std::make_shared<" + struct_name + ">(args))); }";
+	fields = if (struct.args == []) "std::vector<FieldDef>()" else {
+		"std::vector" + fiWrapWithBraces(
+			superglue(struct.args, \arg  -> 
+				"FieldDef{u\"" + arg.name + "\", u\"" + fiType2cpp3(arg.type, gctx) +"\", " + b2s(arg.ismutable) + "}", 
+				", "
+			)
+		);
+	}
+	"return StructDef { ID,\n" +
+		strIndent(constructor) + ",\n" +
+		strIndent(fields) +
+	"\n};";
 }
 
 fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
@@ -934,49 +966,10 @@ fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> stri
 	"Cast<" + fiType2cpp3(from, gctx) + ">::template To<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
 }
 
-fiCpp3StructDefs(gctx0 : Cpp3GlobalContext) -> string {
-	struct_defs = map(getTreeValues(gctx0.program.names.structs), \struct -> {
-		tryCatch(
-			\-> {
-				typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
-				gctx = Cpp3GlobalContext(
-					gctx0 with currentToplevel = Some(struct),
-					toplevelTypars = buildSet(filtermap(struct.typars, \tp ->
-						switch (tp) {
-							FiTypeParameter(nm): Some(nm);
-							default: None();
-						}
-					))
-				);
-				struct_arg = \i, arg -> {
-					arg_val = "__args->vect.at(" + i2s(i) + ")";
-					arg_type = fiType2cpp3(fiTransformTypars(arg.type, \__ -> FiTypeFlow()), gctx);
-					"Cast<Flow>::template To<" + arg_type + ">::conv(" + arg_val + ")";
-				}
-				struct_name = gctx.typename2cpp(struct.name) + typars;
-				args = "(" + strGlue(mapi(struct.args, \i, arg -> struct_arg(i, arg)), ", ") + ")";
-				wrapper = "Str<" + struct_name + ">";
-				constructor = "[](Arr<Flow> __args) { return Cast<Flow>::template From<" + wrapper + ">::conv(" + wrapper + "(new " + struct_name + args + ")); }";
-				fields = if (struct.args == []) "std::vector<FieldDef>()" else {
-					"std::vector{" + 
-						superglue(struct.args, \arg  -> 
-							"FieldDef{u\"" + arg.name + "\", u\"" + fiType2cpp3(arg.type, gctx) +"\", " + b2s(arg.ismutable) + "}", 
-							", "
-						) + 
-					"}";
-				}
-				struct_def = "StructDef{" + 
-					i2s(lookupTreeDef(gctx.structs2id, struct.name, -1)) + ", " +
-					constructor + ", " +
-					fields +
-				"}";
-				"\tdefs[u\"" + struct.name + "\"] = " + struct_def + ";\n";
-			},
-			\err -> {
-				println("struct: " + toString(struct) + "\nerr: " + toString(err));
-				throw(err);
-			}
-		);
+fiCpp3StructDefs(gctx : Cpp3GlobalContext) -> string {
+	struct_defs = map(getTreeValues(gctx.program.names.structs), \struct -> {
+		typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
+		"\tdefs[u\"" + struct.name + "\"] = " + gctx.typename2cpp(struct.name) + typars + "::def();\n"
 	});
 "
 std::map<string, StructDef> StructDefs::defs;
@@ -988,21 +981,7 @@ void StructDefs::init() {\n" +
 
 cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> Cpp3RuntimePart {
 Cpp3RuntimePart("struct_defs", 
-"
-struct FieldDef {
-	string name;
-	string type;
-	bool isMutable;
-};
-
-struct StructDef {
-	typedef std::function<Flow(Arr<Flow>)> Constructor;
-	Int id;
-	Constructor make;
-	std::vector<FieldDef> fields;
-};
-
-struct StructDefs {
+"struct StructDefs {
 	static void init();
 	static std::map<string, StructDef> defs;
 };

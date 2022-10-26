@@ -945,4 +945,17 @@ struct Compare<Fun<R, As...>> {
 	static Int cmp(Fun<R, As...> v1, Fun<R, As...> v2) { return Compare<void*>::cmp(v1.fn.get(), v2.fn.get()); }
 };
 
+struct FieldDef {
+	string name;
+	string type;
+	bool isMutable;
+};
+
+struct StructDef {
+	typedef std::function<Flow(Arr<Flow>)> Constructor;
+	Int id;
+	Constructor make;
+	std::vector<FieldDef> fields;
+};
+
 }
