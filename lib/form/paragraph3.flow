@@ -203,11 +203,17 @@ renderParagraph(
 	renderParagraphEx(p, s, rtl, widthManager, None(), idfn);
 }
 
-paraAtomic2form(pa : ParaAtomic, pos : int) -> Form {
+paraAtomic2form(pa : ParaAtomic, pos : WordPositionInLine) -> Form {
 	switch(pa : ParaAtomic) {
 		ParaWordGlued(pa2) : paraAtomic2form(pa2, pos);
 		InspectElement(__, __) : Empty();
-		LinePart(first, inline, last, __) : if (pos==0) first else if (pos==-1) last else inline;
+		LinePart(first, middle, end, __) : {
+			switch (pos) {
+				WordPositionInLineFirst(): first;
+				WordPositionInLineMiddle(): middle;
+				WordPositionInLineEnd(): end;
+			}
+		}
 		Space(s) : s;
 		Form(): pa;
 		NewLine(): Empty();
@@ -215,7 +221,7 @@ paraAtomic2form(pa : ParaAtomic, pos : int) -> Form {
 	};
 }
 
-paraWordWord2form(word : ParaWord, pos : int) -> Form {
+paraWordWord2form(word : ParaWord, pos : WordPositionInLine) -> Form {
 	w : ParaAtomic = word.word;
 	paraAtomic2form(w, pos)
 };
@@ -227,7 +233,7 @@ emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None(), 
 paraLinePartFRemake = isUrlParameterTrue("plpf");
 paraLinePartFRemakeD = b2d(paraLinePartFRemake);
 
-makeParaWord2(word2 : ParaWord, form2 : Form, pos : int) -> ParaWord {
+makeParaWord2(word2 : ParaWord, form2 : Form, pos : WordPositionInLine) -> ParaWord {
 	ghosted =
 		switch (word2.ghosted : Ghosted) {
 			Empty() : Empty();
@@ -249,11 +255,11 @@ makeParaWord2(word2 : ParaWord, form2 : Form, pos : int) -> ParaWord {
 };
 
 
-getParaWordWidth(word : ParaWord, pos : int) -> ParaWordWidth {
+getParaWordWidth(word : ParaWord, pos : WordPositionInLine) -> ParaWordWidth {
 	fgetw = \w -> fgetValue(makeParaWord2(word, w, pos).metrics).width;
 	p = switch(word.word) {
 		LinePart(f, p, e, __) :
-			if (pos == 0) fgetw(f) |> \h -> Pair(h, h)
+			if (pos == WordPositionInLineFirst()) fgetw(f) |> \h -> Pair(h, h)
 			else Pair(fgetw(p), fgetw(e));
 		default : fgetValue(word.metrics).width |> \h -> Pair(h, h);
 	};
@@ -330,7 +336,7 @@ renderParagraphEx(
 	};
 	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), ref zeroParaWordWidth);
 
-	paraWordGhosted2form : (ParaWord, int) -> Form = \word : ParaWord, pos : int -> {
+	paraWordGhosted2form : (ParaWord, WordPositionInLine) -> Form = \word : ParaWord, pos : WordPositionInLine -> {
 		g = word.ghosted;
 		switch (g : Ghosted) {
 			Empty() : paraWordWord2form(word, pos);
@@ -407,7 +413,7 @@ renderParagraphEx(
 	wordGroups = foldi(words, makeList(), \i, acc : List<ParaWordGroup>, word -> {
 		wordForm = ParaWord(word with form =
 			switch (word.ghosted : Ghosted) {
-				Empty() : paraWordWord2form(word, 1);
+				Empty() : paraWordWord2form(word, WordPositionInLineMiddle());
 				Ghost(xc, yc, fm) : word.ghosted;
 				InspectGhost(__, fm) : word.ghosted;
 				CoordinateInspectElement(__, __) : word.ghosted;
@@ -428,7 +434,7 @@ renderParagraphEx(
 			NewLine() : true;
 			Space(__) : false;
 			LinePart(st, __, __, __) : lastSpace;
-			default : (!word.glued && !keepFormTogetherOrWithMark(paraWordGhosted2form(word, -1), i) && !isUnbreakableSym) || lastSpace;
+			default : (!word.glued && !keepFormTogetherOrWithMark(paraWordGhosted2form(word, WordPositionInLineEnd()), i) && !isUnbreakableSym) || lastSpace;
 		} || switch (lastWord.word) {
 			LinePart(st, __, __, allowBreakAfter) : allowBreakAfter;
 			default: false;
@@ -468,7 +474,7 @@ renderParagraphEx(
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 				iter(wordGroups, \wg ->
 					wg.width := foldi(wg.words, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
-						addParaWordWidth(acc, getParaWordWidth(pw, 1))
+						addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
 					)
 				);
 				infos = getParaLineInfos(
@@ -861,8 +867,8 @@ remeasureFirstWord(wgs : [ParaWordGroup]) -> [ParaWordGroup] {
 	if (wgs != []) {
 		wg = wgs[0];
 		w = wg.words[0];
-		oldWW = getParaWordWidth(w, 1);
-		newWW = getParaWordWidth(w, 0);
+		oldWW = getParaWordWidth(w, WordPositionInLineEnd());
+		newWW = getParaWordWidth(w, WordPositionInLineFirst());
 		gw = ^(wg.width);
 		wg.width := if (length(wg.words) == 1)
 			newWW
@@ -929,7 +935,7 @@ reflowParaWords2(
 						makeParaWord2(
 							cword,
 							if (cwordi==0) f else if (cwordi < cwordslasti) p else e,
-							if (cwordi < cwordslasti) cwordi else -1
+							if (cwordi==0) WordPositionInLineFirst() else if (cwordi < cwordslasti) WordPositionInLineMiddle() else WordPositionInLineEnd()
 						);
 					}
 					default : cword;
@@ -986,7 +992,7 @@ reflowParaWords2(
 	} else {
 		group = wordGroups[0];
 		word = group.words[0];
-		wordWidth = getParaWordWidth(word, if (paraLinePartFRemake) 0 else 1);
+		wordWidth = getParaWordWidth(word, if (paraLinePartFRemake) WordPositionInLineFirst() else WordPositionInLineMiddle());
 		groupWidth = getParaWordWidthValue(ParaWordWidth(^(group.width) with finalSoftWidthDelta=0.0, finalRigidWidthDelta=0.0), textScale);
 		isSpc = switch (word.word : ParaAtomic) {
 			Space(__) : true;
