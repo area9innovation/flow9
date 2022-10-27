@@ -7,10 +7,20 @@ export {
 	fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void;
 }
 
-fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void {
+fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void {
 	if (cfg.config.verbose > 0) {
-		fcPrintln("Building a cpp3 '" + cfg.config.flowfile + "' application ...", cfg.config.threadId);
+		fcPrintln("Building a cpp3 '" + cfg.outfile + "' application ...", cfg.config.threadId);
 	}
+	compiled = fi2cpp3Compile(program, cfg);
+	if (length(compiled.errors) > 0) {
+		fcPrintln(strGlue(compiled.errors, "\n"), cfg.config.threadId);
+		callback(5);
+	} else {
+		fi2cpp3Build(cfg, compiled.name, compiled.sources, compiled.qtDeps, callback);
+	}
+}
+
+fi2cpp3Compile(program0 : FiProgram, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
 	natives = fiCpp3InitNativeFuncs(cfg);
 	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeFlow());
 	resolveNatives = \prog -> fiResolveNatives(prog, \name -> containsKeyTree(natives, name));
@@ -20,8 +30,7 @@ fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> v
 		|> fiCompleteStructTypars
 		|> setImplicitTypars
 	;
-	package_path = pathCombine(cfg.outputdir, cfg.outfile);
-	ensureDirectoryExists(package_path);
+	ensureDirectoryExists(cfg.outputdir);
 	structs2ids = foldi(getTreeValues(program.names.structs), makeTree(), \i, acc, struct -> setTree(acc, struct.name, i));
 	vars = filtermap(getTreeValues(program.names.toplevel), \decl -> 
 		switch (decl) {
@@ -35,7 +44,6 @@ fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> v
 	);
 	gctx0 = Cpp3GlobalContext(cfg, program, 
 		collectFiEffects(program),
-		package_path,
 		\flowfile -> strReplace(flowfile, "/", "_"),
 		structs2ids,
 		\t -> "T" + i2s(strlen(t.n)),
@@ -49,41 +57,15 @@ fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> v
 	gctx = Cpp3GlobalContext(gctx0 with 
 		runtimeParts = setTree(gctx0.runtimeParts, "struct_defs", cpp3StructDefsRuntimePart(gctx0))
 	);
-	compiled = fi2cpp3Translate(gctx);
-	if (^(gctx.errors) != []) {
-		fcPrintln(strGlue(^(gctx.errors), "\n"), cfg.config.threadId);
-		callback(5);
-	} else {
-		fi2cpp3Build(gctx, compiled, callback);
-	}
-}
-
-fi2cpp3RuntimeParts(gctx: Cpp3GlobalContext) -> [Cpp3RuntimePart] {
-	parts = set2array(foldTree(gctx.program.names.toplevel, makeSet(), \name, __, acc ->
-		switch (lookupTree(gctx.natives, name)) {
-			Some(nat): fold(nat.runtimeParts, acc, \ac, dep -> insertSet(ac, dep));
-			None(): acc;
-		}
-	));
-	filtermap(parts, \p -> 
-		switch (lookupTree(gctx.runtimeParts, p)) {
-			Some(part): {
-				Some(part);
-			}
-			None(): {
-				refArrayPush(gctx.errors, "unknown runtime part: " + p);
-				None();
-			}
-		}
-	);
+	fi2cpp3Translate(gctx);
 }
 
 fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	// The runtime fragents, which are used in a program
 	runtime_parts = fi2cpp3RuntimeParts(gctx);
-	fi2cpp3SaveFile("__flow_includes.hpp", fiCpp3RuntimeIncludes(gctx, runtime_parts), gctx);
-	fi2cpp3SaveFile("__flow_runtime.hpp", fiCpp3RuntimeHeader(gctx, runtime_parts), gctx);
-	fi2cpp3SaveFile("__flow_runtime.cpp", fiCpp3RuntimeSource(gctx, runtime_parts), gctx);
+	fi2cpp3SaveFile("__flow_includes.hpp", fiCpp3RuntimeIncludes(gctx, runtime_parts), gctx.config);
+	fi2cpp3SaveFile("__flow_runtime.hpp", fiCpp3RuntimeHeader(gctx, runtime_parts), gctx.config);
+	fi2cpp3SaveFile("__flow_runtime.cpp", fiCpp3RuntimeSource(gctx, runtime_parts), gctx.config);
 
 	compiled0 = fold(gctx.program.traversal, makeTree(), \acc, name -> {
 		if (gctx.config.config.verbose > 0) {
@@ -103,13 +85,13 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 				Some(module): {
 					name = module.name;
 					header = fiCompiledModule2cpp3header(module, gctx, runtime_parts);
-					fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, gctx);
+					fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, gctx.config);
 					srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
 					sources = fiCompiledModule2cpp3sources(module, gctx, runtime_parts);
 					if (length(sources) == 0) srcs1 else {
 						foldi(sources, srcs, \i, acc, source -> {
 							src_name = if (i == 0) name else name + "_" + i2s(i);
-							fi2cpp3SaveFile(changeFileExt(src_name, ".cpp"), source, gctx);
+							fi2cpp3SaveFile(changeFileExt(src_name, ".cpp"), source, gctx.config);
 							Cons(changeFileExt(src_name, ".cpp"), acc);
 						});
 					}
@@ -118,8 +100,13 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 			}
 		}
 	));
-	fi2cpp3SaveFile(gctx.config.outfile + "_sources", concatStrings(map(sources, \src -> src + "\n")), gctx);
-	Cpp3CompiledProgram(main_name, compiled, sources);
+	fi2cpp3SaveFile(gctx.config.outfile + "_sources", concatStrings(map(sources, \src -> src + "\n")), gctx.config);
+	Cpp3CompiledProgram(
+		main_name,
+		sources, 
+		fi2cpp3QtDeps(compiled, gctx),
+		^(gctx.errors)
+	);
 }
 
 cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
@@ -231,5 +218,49 @@ fi2cpp3Monolith(main_name: string, compiled: Tree<string, Cpp3CompiledModule>, g
 	makeTree1(
 		main_name, 
 		Cpp3CompiledModule(main_name, true, all_decls, [], all_natives)
+	);
+}
+
+fi2cpp3QtDeps(modules: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> [Cpp3Qt] {
+	list2array(foldTree(modules, makeList(), \__,m, acc -> 
+		fold(m.natives, acc, \ac, nat -> {
+			runtime_deps = fold(nat.runtimeParts, [], \a, part_name -> 
+				switch (lookupTree(gctx.runtimeParts, part_name)) {
+					Some(part): {
+						concat(a, part.dependencies);
+					}
+					None(): {
+						refArrayPush(gctx.errors, "unkonwn runtime part: " + part_name);
+						a;
+					}
+				}
+			);
+			fold(concat(nat.dependencies, runtime_deps), ac, \a, dep ->
+				switch (dep) {
+					Cpp3Qt(__,__): Cons(dep, a);
+					default: a;
+				}
+			)
+		})
+	));
+}
+
+fi2cpp3RuntimeParts(gctx: Cpp3GlobalContext) -> [Cpp3RuntimePart] {
+	parts = set2array(foldTree(gctx.program.names.toplevel, makeSet(), \name, __, acc ->
+		switch (lookupTree(gctx.natives, name)) {
+			Some(nat): fold(nat.runtimeParts, acc, \ac, dep -> insertSet(ac, dep));
+			None(): acc;
+		}
+	));
+	filtermap(parts, \p -> 
+		switch (lookupTree(gctx.runtimeParts, p)) {
+			Some(part): {
+				Some(part);
+			}
+			None(): {
+				refArrayPush(gctx.errors, "unknown runtime part: " + p);
+				None();
+			}
+		}
 	);
 }
