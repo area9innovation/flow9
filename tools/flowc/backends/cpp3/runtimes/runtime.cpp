@@ -189,9 +189,9 @@ bool Flow::isSameObj(Flow f) const {
 
 void flow2string(Flow v, String os, bool init) {
 	switch (v.type()) {
-		case Type::INT:    os->append(fromStdString(std::to_string(v.toInt()))); break;
-		case Type::BOOL:   os->append((v.toBool() ? u"true" : u"false")); break;
-		case Type::DOUBLE: os->append(fromStdString(std::to_string(v.toDouble()))); break;
+		case Type::INT:    os->append(*int2string(v.toInt())); break;
+		case Type::BOOL:   os->append(*bool2string(v.toBool())); break;
+		case Type::DOUBLE: os->append(*double2string(v.toDouble())); break;
 		case Type::STRING: {
 			if (!init) {
 				os->append(u"\"");

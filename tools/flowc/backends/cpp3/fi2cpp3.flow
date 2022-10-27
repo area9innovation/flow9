@@ -54,11 +54,7 @@ fi2cpp3(program0 : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> v
 		fcPrintln(strGlue(^(gctx.errors), "\n"), cfg.config.threadId);
 		callback(5);
 	} else {
-		if (getConfigParameterDef(cfg.config.config, "cpp3-build", "1") == "1") {
-			fi2cpp3Build(gctx, compiled, callback);
-		} else {
-			callback(0);
-		}
+		fi2cpp3Build(gctx, compiled, callback);
 	}
 }
 
@@ -166,10 +162,10 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 
 fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> [string] {
 	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
-
-	// Cut all definition into parts, not exceeding 200kb
+	max_cpp_source = s2i(lookupTreeDef(gctx.program.config.config, "cpp-max-source", "100000"));
+	// Cut all definition into parts, not exceeding max-cpp-source kb
 	source_defs_cut = list2array(fold(all_source_defs, Pair(makeList(), 0), \acc, def -> 
-		if (acc.second + strlen(def) < 200000) {
+		if (acc.second + strlen(def) < max_cpp_source) {
 			switch (acc.first) {
 				Cons(arr, tail_): Pair(Cons(concat(arr, [def]), tail_), acc.second + strlen(def));
 				EmptyList(): Pair(makeList1([def]), strlen(def));
@@ -219,6 +215,7 @@ void StructDefs::init() {\n" +
 }
 
 fi2cpp3Monolith(compiled: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> Tree<string, Cpp3CompiledModule> {
+	main_name = either(findInOrder(compiled, \__, module -> if (module.isMain) Some(module.name) else None()), "");
 	all_decls = concatA(list2array(fold(gctx.program.traversal, makeList(), \acc, module_name -> 
 		switch (lookupTree(compiled, module_name)) {
 			Some(module): Cons(module.decls, acc);
@@ -232,13 +229,7 @@ fi2cpp3Monolith(compiled: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalCont
 		}
 	)));
 	makeTree1(
-		gctx.program.config.flowfile, 
-		Cpp3CompiledModule(
-			gctx.program.config.flowfile,
-			true,
-			all_decls,
-			[],
-			all_natives
-		)
+		main_name, 
+		Cpp3CompiledModule(main_name, true, all_decls, [], all_natives)
 	);
 }

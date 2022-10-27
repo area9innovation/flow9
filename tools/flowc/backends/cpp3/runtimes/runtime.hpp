@@ -34,8 +34,6 @@ using Double = double;
 using string = std::u16string;
 using String = Ptr<string>;
 
-inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
-
 // Unions for conversion from Double/Int to 16-bit chars and back
 
 struct Two16Chars {
@@ -82,6 +80,14 @@ const String string_true = makeString(u"true");
 const String string_false = makeString(u"false");
 const String string_1 = makeString(u"1");
 const String string_0 = makeString(u"0");
+
+inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
+inline Int string2int(String x) { if (x->size() == 0) return 0; else { try { return std::stoi(toStdString(x)); } catch (std::exception& e) { return 0; } } }
+inline Double string2double(String x) { if (x->size() == 0) return 0.0; else { try { return std::stod(toStdString(x)); } catch (std::exception& e) { return 0.0; } } }
+inline String int2string(Int x) { return makeString(std::to_string(x)); }
+inline String double2string(Double x) { return makeString(std::to_string(x)); }
+inline String bool2string(Bool x) { return x ? string_true : string_false; }
+
 
 const char* type2s(Int type);
 
@@ -535,15 +541,15 @@ template<> struct BiCast<Int>::From<Bool> { static Int conv(Bool x) { return x ?
 template<> struct BiCast<Int>::To<Bool> { static Bool conv(Int x) { return x == 0 ? false : true; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::To<Double> { static Double conv(Int x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::From<Double> { static Int conv(Double x) { return double2int(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::To<String> { static String conv(Int x) { return makeString(std::to_string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::From<String> { static Int conv(String x) { return std::stoi(toStdString(x)); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Int>::To<String> { static String conv(Int x) { return int2string(x); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Int>::From<String> { static Int conv(String x) { return string2int(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::To<Flow> { static Flow conv(Int x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Int>::From<Flow> { static Int conv(Flow x) { 
 	switch (x.type()) {
 		case Type::INT:    return x.toInt();
 		case Type::BOOL:   return x.toBool() ? 1 : 0;
 		case Type::DOUBLE: return double2int(x.toDouble());
-		case Type::STRING: return std::stoi(toStdString(x.toString()));
+		case Type::STRING: return string2int(x.toString());
 		default:           return 0;
 	}
 } static constexpr bool is_available() { return true; } };
@@ -556,7 +562,7 @@ template<> struct BiCast<Bool>::To<Bool> { static Bool conv(Bool x) { return x; 
 template<> struct BiCast<Bool>::From<Bool> { static Bool conv(Bool x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::To<Double> { static Double conv(Bool x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::From<Double> { static Bool conv(Double x) { return x == 0.0 ? false : true; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::To<String> { static String conv(Bool x) { return makeString(std::to_string(x)); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Bool>::To<String> { static String conv(Bool x) { return bool2string(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::From<String> { static Bool conv(String x) { return *x == *string_true; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::To<Flow> { static Flow conv(Bool x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::From<Flow> { static Bool conv(Flow f) { 
@@ -580,27 +586,27 @@ template<> struct BiCast<Double>::To<Bool> { static Bool conv(Double x) { return
 template<> struct BiCast<Double>::From<Bool> { static Bool conv(Double x) { return x ? 1.0 : 0.0; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Double>::To<Double> { static Double conv(Double x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Double>::From<Double> { static Double conv(Double x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::To<String> { static String conv(Double x) { return makeString(std::to_string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::From<String> { static Double conv(String x) { return std::stod(toStdString(x)); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Double>::To<String> { static String conv(Double x) { return double2string(x); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Double>::From<String> { static Double conv(String x) { return string2double(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Double>::To<Flow> { static Flow conv(Double x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Double>::From<Flow> { static Double conv(Flow f) { 
 	switch (f.type()) {
 		case Type::INT:    return f.toInt();
 		case Type::BOOL:   return f.toBool() ? 1.0 : 0.0;
 		case Type::DOUBLE: return f.toDouble();
-		case Type::STRING: return std::stod(toStdString(f.toString()));
+		case Type::STRING: return string2double(f.toString());
 		default:           return 0.0;
 	}
 } static constexpr bool is_available() { return true; } };
 
 // BiCast<String>
 
-template<> struct BiCast<String>::To<Int> { static Int conv(String x) { return std::stoi(toStdString(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::From<Int> { static String conv(Int x) { return makeString(std::to_string(x)); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<String>::To<Int> { static Int conv(String x) { return string2int(x); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<String>::From<Int> { static String conv(Int x) { return int2string(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::To<Bool> { static Bool conv(String x) { return *x == *string_true || *x == *string_1; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::From<Bool> { static String conv(Bool x) { return x ? string_true : string_false; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::To<Double> { static Double conv(String x) { return std::stod(toStdString(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::From<Double> { static String conv(Double x) { return makeString(std::to_string(x)); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<String>::To<Double> { static Double conv(String x) { return string2double(x); } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<String>::From<Double> { static String conv(Double x) { return double2string(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::To<String> { static String conv(String x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::From<String> { static String conv(String x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::To<Flow> { static Flow conv(String x) { return x; } static constexpr bool is_available() { return true; } };
@@ -613,7 +619,7 @@ template<> struct BiCast<Flow>::To<Int> { static Int conv(Flow x) {
 		case Type::INT:    return x.toInt();
 		case Type::BOOL:   return x.toBool() ? 1 : 0;
 		case Type::DOUBLE: return double2int(x.toDouble());
-		case Type::STRING: return std::stoi(toStdString(x.toString()));
+		case Type::STRING: return string2int(x.toString());
 		default:           return 0;
 	}
 } static constexpr bool is_available() { return true; } };
@@ -636,7 +642,7 @@ template<> struct BiCast<Flow>::To<Double> { static Double conv(Flow f) {
 		case Type::INT:    return f.toInt();
 		case Type::BOOL:   return f.toBool() ? 1.0 : 0.0;
 		case Type::DOUBLE: return f.toDouble();
-		case Type::STRING: return std::stod(toStdString(f.toString()));
+		case Type::STRING: return string2double(f.toString());
 		default:           return 0.0;
 	}
 } static constexpr bool is_available() { return true; } };
