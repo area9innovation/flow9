@@ -4,12 +4,35 @@
 
 namespace flow {
 
+String double2string(Double x) { 
+	static std::ostringstream os; 
+	os << std::scientific << x;
+	std::string str = os.str();
+	os.str("");
+	os.clear();
+	std::size_t point_pos = str.find('.');
+	if (point_pos == std::string::npos) {
+		return makeString(str); 
+	} else {
+		bool is_integer = true;
+		for (std::size_t i = point_pos + 1; i < str.length() && is_integer; ++ i) {
+			char ch = str.at(i);
+			is_integer = !('1' < ch && ch < '9');
+		}
+		if (is_integer) {
+			return makeString(str.substr(0, point_pos)); 
+		} else {
+			return makeString(str); 
+		}
+	}
+}
+
 std::string toStdString(String str) { 
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < str->size(); ++i) {
 		char16_t ch = str->at(i);
 		uint32_t x = ch;
-		if (0xD800 <= ch && ch <= 0xDBFF) {
+		if (0xD800 <= ch && ch <= 0xDFFF) {
 			x = ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000;
 		}
 		if (x <= 0x7F) len += 1; else 
@@ -24,7 +47,7 @@ std::string toStdString(String str) {
 	for (std::size_t i = 0; i < str->size(); ++i) {
 		char16_t ch = str->at(i);
 		uint32_t x = ch; 
-		if (0xD800 <= ch && ch <= 0xDBFF) {
+		if (0xD800 <= ch && ch <= 0xDFFF) {
 			x = ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000;
 		}
 		if (x <= 0x7F) {
@@ -73,7 +96,7 @@ string fromStdString(const std::string& s) {
 	for (std::size_t i = 0; i < s.length(); ++i) {
 		uint8_t b1 = s.at(i);
 
-		if ((b1 & 0xFC) == 0xF8 && i < len - 4) {
+		if ((b1 & 0xFC) == 0xF8 && i < s.length() - 4) {
 			uint8_t b2 = s.at(i + 1);
 			uint8_t b3 = s.at(i + 2);
 			uint8_t b4 = s.at(i + 3);
@@ -92,7 +115,7 @@ string fromStdString(const std::string& s) {
 			h = h - 0x10000;
 			str.push_back((char16_t) ((h >> 10)   + 0xD800));
 			str.push_back((char16_t) ((h & 0x3FF) + 0xDC00));
-		} else if ((b1 & 0xF8) == 0xF0 && i < len - 3) {
+		} else if ((b1 & 0xF8) == 0xF0 && i < s.length() - 3) {
 			uint8_t b2 = s.at(i + 1);
 			uint8_t b3 = s.at(i + 2);
 			uint8_t b4 = s.at(i + 3);
@@ -109,7 +132,7 @@ string fromStdString(const std::string& s) {
 			h = h - 0x10000;
 			str.push_back((char16_t) ((h >> 10)   + 0xD800));
 			str.push_back((char16_t) ((h & 0x3FF) + 0xDC00));
-		} else if ((b1 & 0xF0) == 0xE0 && i < len - 2) {
+		} else if ((b1 & 0xF0) == 0xE0 && i < s.length() - 2) {
 			uint8_t b2 = s.at(i + 1);
 			uint8_t b3 = s.at(i + 2);
 			i += 2;
@@ -121,7 +144,7 @@ string fromStdString(const std::string& s) {
 			char16_t h = h1 | h2 | h3;
 
 			str.push_back(h);
-		} else if ((b1 & 0xE0) == 0xC0 && i < len - 1) {
+		} else if ((b1 & 0xE0) == 0xC0 && i < s.length() - 1) {
 			uint8_t b2 = s.at(i + 1);
 			i += 1;
 
@@ -187,29 +210,25 @@ bool Flow::isSameObj(Flow f) const {
 	}
 }
 
-void flow2string(Flow v, String os, bool init) {
+void flow2string(Flow v, String os) {
 	switch (v.type()) {
 		case Type::INT:    os->append(*int2string(v.toInt())); break;
 		case Type::BOOL:   os->append(*bool2string(v.toBool())); break;
 		case Type::DOUBLE: os->append(*double2string(v.toDouble())); break;
 		case Type::STRING: {
-			if (!init) {
-				os->append(u"\"");
-				for (char16_t c : *v.toString()) {
-					switch (c) {
-						case '"': os->append(u"\\\"");      break;
-						case '\\': os->append(u"\\\\");     break;
-						case '\n': os->append(u"\\n");      break;
-						case '\t': os->append(u"\\t");      break;
-						//case '\r': os->append("\\u000d");  break;
-						case '\r': os->append(u"\\r");      break;
-						default: *os += c; break;
-					}
+			os->append(u"\"");
+			for (char16_t c : *v.toString()) {
+				switch (c) {
+					case '"': os->append(u"\\\"");      break;
+					case '\\': os->append(u"\\\\");     break;
+					case '\n': os->append(u"\\n");      break;
+					case '\t': os->append(u"\\t");      break;
+					//case '\r': os->append("\\u000d");  break;
+					case '\r': os->append(u"\\r");      break;
+					default: *os += c; break;
 				}
-				os->append(u"\"");
-			} else {
-				os->append(*v.toString());
 			}
+			os->append(u"\"");
 			break;
 		}
 		case Type::STRUCT: {
@@ -222,7 +241,7 @@ void flow2string(Flow v, String os, bool init) {
 				if (!first) {
 					os->append(u", ");
 				}
-				flow2string(f, os, false);
+				flow2string(f, os);
 				first = false;
 			}
 			os->append(u")");
@@ -236,7 +255,7 @@ void flow2string(Flow v, String os, bool init) {
 				if (!first) {
 					os->append(u", ");
 				}
-				flow2string(e, os, false);
+				flow2string(e, os);
 				first = false;
 			}
 			os->append(u"]");
@@ -244,7 +263,7 @@ void flow2string(Flow v, String os, bool init) {
 		}
 		case Type::REF: {
 			os->append(u"ref ");
-			flow2string(v.toReference()->reference(), os, false);
+			flow2string(v.toReference()->reference(), os);
 			break;
 		}
 		case Type::FUNC: {
