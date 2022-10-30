@@ -32,8 +32,13 @@ std::string toStdString(String str) {
 	for (std::size_t i = 0; i < str->size(); ++i) {
 		char16_t ch = str->at(i);
 		uint32_t x = ch;
-		if (0xD800 <= ch && ch <= 0xDFFF) {
-			x = ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000;
+		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str->size()) {
+			char16_t ch1 = str->at(i + 1);
+			if (0xDC00 <= ch1 && ch1 <= 0xDFFF) {
+				// surrogate pair detected
+				i += 1;
+				x = ((ch & 0x3FF) << 10) + (ch1 & 0x3FF) + 0x10000;
+			}
 		}
 		if (x <= 0x7F) len += 1; else 
 		if (x <= 0x7FF) len += 2; else 
@@ -47,8 +52,13 @@ std::string toStdString(String str) {
 	for (std::size_t i = 0; i < str->size(); ++i) {
 		char16_t ch = str->at(i);
 		uint32_t x = ch; 
-		if (0xD800 <= ch && ch <= 0xDFFF) {
-			x = ((ch & 0x3FF) << 10) + (str->at(++i) & 0x3FF) + 0x10000;
+		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str->size()) {
+			char16_t ch1 = str->at(i + 1);
+			if (0xDC00 <= ch1 && ch1 <= 0xDFFF) {
+				// surrogate pair detected
+				i += 1;
+				x = ((ch & 0x3FF) << 10) + (ch1 & 0x3FF) + 0x10000;
+			}
 		}
 		if (x <= 0x7F) {
 			ret += x;
