@@ -406,17 +406,31 @@ Str<T>::Str(const Union& u) {
 template<typename T> 
 struct Array : public AArray {
 	typedef std::vector<T> Vect;
+	typedef typename Vect::const_iterator const_iterator;
+	typedef typename Vect::iterator iterator;
+
+	Array(): vect() { }
 	Array(std::size_t s): vect() { vect.reserve(s); }
 	Array(std::initializer_list<T> il): vect(il) { }
 	Array(const Array& a): vect(a.vect) { }
 	Array(const Vect& v): vect(v) { }
 	Array(Vect&& v): vect(std::move(v)) { }
+	virtual ~Array() {}
 	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
+
+	Array& operator = (const Array& a) { vect.operator=(a.vect); return *this; }
+	Array& operator = (Array&& a) { vect.operator=(std::move(a.vect)); return *this; }
 
 	Int size() const override { return static_cast<Int>(vect.size()); }
 	Arr<Flow> elements() const override;
 	Flow element(Int i) const override;
 	Int compare(Array a) const;
+
+	const_iterator begin() const { return vect.begin(); }
+	const_iterator end() const { return vect.end(); }
+	iterator begin() { return vect.begin(); }
+	iterator end(){ return vect.end(); }
+	void push_back(T x) { vect.push_back(x); }
 
 	template<typename T1> Arr<T1> cast() const;
 
