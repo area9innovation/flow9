@@ -464,7 +464,8 @@ struct Function : public AFunction {
 	Function(const Fn& f): fn(f) { }
 	Function(const Function& f): fn(f.fn) { }
 	Function(Function&& f): fn(std::move(f.fn)) { }
-	R operator()(As... as) const { return fn.operator()(as...); }
+	R operator()(As... as) const { return call(as...); }
+	virtual R call(As... as) const { return fn.operator()(as...); }
 	Int arity() const override { return ARITY; }
 	Flow call(Flow as...) const override {
 		if constexpr (std::is_same_v<R, Void>) {
