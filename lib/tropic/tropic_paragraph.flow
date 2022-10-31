@@ -226,11 +226,6 @@ TRenderDynamicParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
-isTParaBodyDebugOn(words : [TParaWord]) -> bool {
-	isUrlParameterTrue("tparabodydebug") && firstElement(words, dummyTParaWord).word == GeneralText("ما")
-}
-
-
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
@@ -283,23 +278,15 @@ TRenderParagraph(
 
 	paragraphWHB = makeWH();
 	paragraphBaselineB = make(0.0);
-	wfn = if (isUrlParameterTrue("tparaworddebug")) TDebugRed else idfn;
 
 	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
-		TGroup(map(groupedWords, wfn))
+		TGroup(groupedWords)
 	));
-
-	isbodydebug = isTParaBodyDebugOn(words);
-	if (isbodydebug) {
-		println("TRenderParagraph: "+toString(s));
-		println("Indents: "+toString(genIndent)+", "+toString(indent));
-	}
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 
 	updateFn = \wi -> {
-		if (isbodydebug) println("WidthManager: "+toString(getValue(widthManager.storyWidth))+" → "+toString(getValue(widthManager.width)));
 		oldWH = getValue(paragraphWHB);
 		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
@@ -311,7 +298,6 @@ TRenderParagraph(
 			genIndent, linesCountB, None(), fitLongWords,
 			ignoreLetterSpacing, renderedLinesInfoM
 		);
-		if (isbodydebug) println("paragraphSize: "+toString(paragraphSizeBaselineAndChanges.metrics));
 		if (widthManager != dummyParagraphWidthManager) nextDistinct(widthManager.width, paragraphSizeBaselineAndChanges.metrics.first.width);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -384,7 +370,7 @@ TRenderParagraph(
 			},
 			awB
 		)
-	) |> (if (isbodydebug) {if (widthManager==dummyParagraphWidthManager) TDebugBlue else TDebugGreen} else idfn) |> if (needIndent) TBorderStart(genIndent, rtl) else idfn
+	) |> if (needIndent) TBorderStart(genIndent, rtl) else idfn
 }
 
 LineHeadingsAcc(
@@ -415,7 +401,7 @@ groupAndPositionWords(
 		)
 	);
 
-	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords  else Cons(
+	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords else Cons(
 		makeHeadingGroup(
 			groupResult.currentGroup,
 			groupResult.currentTag,
@@ -783,7 +769,7 @@ reflowTParaWords(
 	nextDistinct(linesCountB, length(text));
 
 	widthAndBaseline = TAlignParaLines(
-		availableParaWidth,//either(reflowAndWidth.second, availableParaWidth),
+		availableParaWidth,
 		paraLines,
 		tightWidth,
 		alignment,
@@ -820,7 +806,6 @@ reflowAndFitTParaWords(
 	fitLongWords : bool,
 	ignoreLetterSpacing : bool
 ) -> Pair<TReflowedLinesAndChanges, Maybe<double>> {
-	isbodydebug = isTParaBodyDebugOn(words);
 	firstLineWidth = availableWidth - getLineIndent(firstLineIndent, true);
 	reflowResult = reflowTParaWordsRec(
 		words,
@@ -834,9 +819,8 @@ reflowAndFitTParaWords(
 		fitLongWords,
 		ignoreLetterSpacing
 	);
-	if (isbodydebug) println("reflowAndFitTParaWords intermediate: "+switch (reflowResult) {TOverflowCase(w): "overflow: "+d2s(w); TReflowedLinesAndChanges(__, w, __): d2s(w)});
 
-	r = switch (reflowResult) {
+	switch (reflowResult) {
 		TOverflowCase(overflowWidth) : {
 			newFirstLineWidth = overflowWidth - getLineIndent(firstLineIndent, true);
 			reflowAndScale = reflowAndFitTParaWords(
@@ -850,9 +834,7 @@ reflowAndFitTParaWords(
 			Pair(reflowAndScale.first, Some(overflowWidth));
 		}
 		TReflowedLinesAndChanges(lines, width, changes) : Pair(reflowResult, None());
-	};
-	if (isbodydebug) println("reflowAndFitTParaWords final: "+toString(r.second));
-	r
+	}
 }
 
 // here availableWidth is an amount of width for current line
@@ -868,7 +850,6 @@ reflowTParaWordsRec(
 	catchOverflow : bool,
 	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
-	isbodydebug = isTParaBodyDebugOn(words);
 	sumWordWidths = \cws -> fold(cws, 0.0, \acc, w -> acc + getValue(w.inspector.size).width);
 	addLine = \cw, indent -> switch (result) {
 		TReflowedLinesAndChanges(lines, reflowWidth, changes) : {
@@ -1135,7 +1116,8 @@ keepWordsTogetherRec(tr : Tropic) -> bool {
 	}
 }
 
-TParaLineAcc(width : double, y : double, baseline : double);
+TParaLineAcc(width : double, baseline : double);
+TParaLineResult(y : double, width : double, height : double, baseline : double);
 
 TAlignParaLines(
 	availableWidth : double,
@@ -1150,8 +1132,34 @@ TAlignParaLines(
 ) -> Pair<WidthHeight, double> {
 	lasti = length(lines) - 1;
 
-	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
+	y = ref 0.0;
+	lineInfos = mapi(lines, \i, line -> {
+		lastLine = i == lasti;
+		inspectors = map(line.words, \p -> p.inspector);
+
+		lineWidth = line.indent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
+		lineAsc = fold(inspectors, 0.0, \ac, m -> max(ac, getValue(m.baseline)));
+
+		lineHeight = fold(inspectors, 0.0, \ac, m ->
+			max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
+		);
+		r = TParaLineResult(^y, lineWidth, lineHeight, lineAsc);
+		y := (^y) + lineHeight + if (lastLine) 0.0 else interlineSpacing;
+		r
+	});
+
+	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
+		f = lineInfos[i];
+		TParaLineAcc(
+			max(acc.width, f.width),
+			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
+		);
+	});
+
+	alignWidth = if (tightWidth) a.width else max(availableWidth, a.width);
+
+	iteri(lines, \i, line -> {
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
@@ -1161,60 +1169,40 @@ TAlignParaLines(
 			} else {
 				alignment;
 			}
-		f = TRenderLine(
-			acc.y, line.words, availableWidth,
+		TRenderLine(
+			lineInfos[i], line.words, alignWidth,
 			lineAlignment, line.indent, generalIndent,
 			i, rtl, isMarked
 		);
-		nwidth = max(acc.width, f.width);
-		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
-		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
-		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
-		nbaseline = f.baseline;
-		TParaLineAcc(
-			nwidth,
-			nheight,
-			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
-		);
 	});
-	Pair(WidthHeight(if (tightWidth) a.width else /*max(availableWidth, a.width)*/a.width, a.y), a.baseline);
-}
 
-TParaLineResult(width : double, height : double, baseline : double);
+	Pair(WidthHeight(alignWidth, ^y), a.baseline);
+}
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
 TRenderLine(
-	y : double,
+	result : TParaLineResult,
 	words : [TParaWord],
-	width : double,
+	alignWidth : double,
 	alignment : ParaLineAlignment,
 	lineIndent: double,
 	generalIndent : double,
 	lineNumber : int,
 	rtl : bool,
 	isMarked : bool,
-) -> TParaLineResult {
+) -> void {
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
 	nwords = length(words);
 	inspectors = map(words, \p -> p.inspector);
-	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
-	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
-		max(ac, getValue(m.baseline));
-	});
-
-	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
-		max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
-	);
 
 	// Alignment offset
-	alignWidth = width;
-	startOffset = if (rtl) max(0.0, alignWidth - lineWidth) else 0.;
-	endOffset = if (rtl) 0.0 else max(0., alignWidth - lineWidth);
+	startOffset = if (rtl) max(0.0, alignWidth - result.width) else 0.;
+	endOffset = if (rtl) 0.0 else max(0., alignWidth - result.width);
 	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
 		LeftAlign(): if (rtl) endOffset else startOffset;
 		RightAlign(): if (rtl) startOffset else endOffset;
-		CenterAlign(): max(0.0, (alignWidth - lineWidth) / 2.0);
+		CenterAlign(): max(0.0, (alignWidth - result.width) / 2.0);
 		StartAlign(): startOffset;
 		EndAlign(): endOffset;
 		Justify(): 0.0;
@@ -1236,7 +1224,7 @@ TRenderLine(
 				(alignWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
 			} else 0.0
 		} else {
-			remaining = alignWidth - lineWidth;
+			remaining = alignWidth - result.width;
 			min(10.0, remaining / i2d(nwords - 1));
 		}
 	} else 0.0;
@@ -1256,25 +1244,23 @@ TRenderLine(
 		dy = eitherMap(
 			words[i].scriptM,
 			\script -> switch(script) {
-				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else lineAsc - elemBaseline - prevElemHeight * 0.25;
-				ParaElementSubscript() : lineAsc - elemBaseline / 2.0;
+				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else result.baseline - elemBaseline - prevElemHeight * 0.25;
+				ParaElementSubscript() : result.baseline - elemBaseline / 2.0;
 			},
-			lineAsc - getValue(inspector.baseline)
+			result.baseline - getValue(inspector.baseline)
 		);
-		yOffset = y + dy;
+		yOffset = result.y + dy;
 		nextDistinct(inspector.y, yOffset);
 		nextDistinct(inspector.x, ^alignmentOffset + if (rtl) 0.0 else generalIndent);
 		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == nwords - 1) WordPositionInLineEnd() else WordPositionInLineMiddle());
 
-		nextDistinct(inspector.lineHeight, lineHeight);
-		nextDistinct(inspector.lineAsc, lineAsc);
+		nextDistinct(inspector.lineHeight, result.height);
+		nextDistinct(inspector.lineAsc, result.baseline);
 		nextDistinct(inspector.lineNumber, lineNumber);
 		nextDistinct(inspector.lineWordSpacing, interWord);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) {elemWidth + if (isSpace) justifyOffset  else 0.0} else 0.0;
 	});
-
-	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
 }
 
 prevWordHeight(inspectors : [ParaElementInspector] , words : [TParaWord], i : int ) -> double {
