@@ -1,7 +1,6 @@
 ;;  a9flow-mode2.el
 ;;
-;; Major mode to edit flow files in Emacs with project support
-;; with fixes for new flowc compiler
+;; Major mode to edit area9 flow source files in Emacs with simple project support
 ;; Author: Evgeniy Turishev evgeniy.turishev@area9.dk
 ;; This module based on original a9flow-mode Nikolay Sokolov <Nikolay.Sokolov@area9.dk>
 
@@ -27,9 +26,9 @@
 ;; it is a ordinary elisp-file, for example:
 ;;
 ;; (a9flow-add-target "learner-js"  "flowc1 learner/learner.flow js=~/area9/lyceum/rhapsode/www2/learner.js")
-;; (a9flow-add-target "educator" "flowcpp --no-jit educator/educator.flow -- devtrace=1 dev=1")
 ;; (a9flow-add-target "curator-js-dbg"  "flowc1  debug=1 js=$AREA9/lyceum/rhapsode/www2/curator.js  html=$AREA9/lyceum/rhapsode/www2/curator.html curator/curator.flow")
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
 ;; Load project:
 ;; M-x a9flow-open-project
 ;;
@@ -37,12 +36,8 @@
 ;; M-x a9flow-compile-project
 ;; or more convenient with ido:
 ;; M-x a9flow-compile-project-ido
+;; or M-x a9flow-compile-project-ivy
 ;;
-;; You can set default target:
-;; M-x a9flow-set-default-target
-;;  or more convenient with ido:
-;; M-x a9flow-set-default-target-ido
-;; and then compile it:
 ;; M-x a9flow-compile-default-target
 ;;
 ;; find function definition or import file:
@@ -50,8 +45,6 @@
 ;; and
 ;; M-x a9flow-go-back
 ;;
-;; go to function body in this file:
-;; M-x a9flow-goto-function-body
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; You can add to your .emacs something like:
 ;;
@@ -62,24 +55,28 @@
 ;;
 ;; (add-hook 'a9flow-mode-hook
 ;; 	  (lambda ()
-;; 	    (setq tab-width 4)
-;; 	    (local-set-key (kbd "C-c o") 'a9flow-open-project)
-;; 	    (local-set-key (kbd "C-c p") 'a9flow-compile-project-ido)
-;; 	    (local-set-key (kbd "C-c d") 'a9flow-set-default-target)
-;; 	    (local-set-key (kbd "C-c c") 'a9flow-compile-default-target)
-;; 	    (local-set-key (kbd "M-.")   'a9flow-goto-definition)
-;; 	    (local-set-key (kbd "M-,")   'a9flow-go-back)
-;; 	    (local-set-key (kbd "M-/")   'a9flow-goto-function-body)
-;; 	    (local-set-key (kbd "C-.")   'a9flow-history-point)
+;;           ...
 ;; 	    )
 ;; 	  )
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (require 'cl-lib)
+(require 'generic-x)
+(require 'compile)
+(provide 'a9flow-mode2) ;; the feature name corresponds to the file name
+
+
+(defvar a9flow-mode-map
+  (let ((map (make-sparse-keymap)))
+	    (define-key map  "\C-co" 'a9flow-open-project)
+	    (define-key map  "\C-ct" 'a9flow-compile-project-ivy)
+	    (define-key map  "\C-cc" 'a9flow-compile-default-target)
+	    (define-key map  "\M-."  'a9flow-goto-definition)
+	    (define-key map  "\M-,"  'a9flow-go-back)
+	    (define-key map  "\C-ch" 'a9flow-history-point)
+	    map)
+  "Keymap for `a9flow-mode'.")
 
 ;;;; Syntax ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(require 'generic-x)
-
-(setq a9flow-compat nil) ;; Compatibility mode
 
 (defvar a9flow-mode-syntax-table
   (let ((a9flow-mode-syntax-table (make-syntax-table)))
@@ -89,9 +86,7 @@
     (modify-syntax-entry ?< "." a9flow-mode-syntax-table)
     (modify-syntax-entry ?> "." a9flow-mode-syntax-table)
     a9flow-mode-syntax-table)
-  "`define-generic-defun' takes COMMENT-LIST, but its support for
-ending comments with the lint terminator seems not to work,
-so here we are setting up our own syntax table.")
+  "`Syntax table used while in A9Flow")
 
 (defun line-matchesp (regexp offset)
   "Return t if line matches regular expression REGEXP.  The
@@ -278,6 +273,7 @@ point currently is on, and the associated indentation rules."
 
 (defconst a9flow-keywords '(
   "import"
+  "forbid"
   "export"
   "if"
   "else"
@@ -291,7 +287,6 @@ point currently is on, and the associated indentation rules."
 
 (defconst a9flow-builtins '(
   ;;  runtime
-
   "for"
   "fori"
   "generate"
@@ -671,7 +666,27 @@ point currently is on, and the associated indentation rules."
   "keys2tree"
   "values2tree"
   "values2treeEx"
-))
+
+  ;;
+  "mapAsync"
+  ;; Pair, Triple, Quadruple
+  "unpair"
+  "unpairC"
+  "untriple"
+  "untripleC"
+  "unquadruple"
+  "unquadrupleC"
+  "firstOfPair"
+  "secondOfPair"
+  "firstOfTriple"
+  "secondOfTriple"
+  "thirdOfTriple"
+  "firstOfQuadruple"
+  "secondOfQuadruple"
+  "thirdOfQuadruple"
+  "fourthOfQuadruple"
+
+ ))
 
 (defconst a9flow-types '(
   "int"
@@ -683,37 +698,12 @@ point currently is on, and the associated indentation rules."
   "float"
 ))
 
-(defconst type_regex "\\[?\\s-*\\([a-zA-Z]+\\)\\s-*\\]?")
-
-(defvar hexcolour-keywords
-  '(("0x\\([abcdefABCDEF[:digit:]]\\{6\\}\\)"
-     (0 (put-text-property (match-beginning 0)
-                           (match-end 0)
-                           'face (list :background
-                                       (progn
-                                         (message (concat "#" (match-string-no-properties 1)))
-                                         (concat "#" (match-string-no-properties 1)))))))))
-
-
-(defvar a9flow-status-compiling nil)
-(defvar a9flow-status-error-count 0)
-(defvar a9flow-status-last-build-time nil)
-
-
-;; Set up the actual generic mode
-(define-generic-mode 'a9flow-mode
-  nil ;; comment-list
-  ;;a9flow-keywords ;; keyword-list
-  '()
-  ;; font-lock-list
-  `(("\\(\\s(\\|\\s-+\\|\\<\\)\\(\\<[A-Z]\\(\\sw\\|\\s_\\)+\\>\\)" (2 'font-lock-type-face))
-    ("\\b[0-9]+\\b" . font-lock-constant-face)
-    ("|>" . font-lock-builtin-face)
-
-;; Type highlighting
-;;    ("^\\+" (,(concat ":\\s-*\(\\(\\s-*,?\\s-*[a-zA-Z]+\\(\\s-*:\\s-*" type_regex "\\s-*\\)?\\)*\).*->\\s-*" type_regex "\\s-*{") nil nil (3 'font-lock-type-face)))
-;;    (,(concat "->\\s-*" type_regex "\\s-*[{;]") 1 'font-lock-type-face)
-
+(defconst a9flow-font-lock-keywords
+  ;; the order of the rules is taken into account!
+  ;; use case-sensive search mode, by set properly font-lock-defaults flags
+  `(
+    ("\\b[0-9]+\\b" . font-lock-constant-face) ;; numeric literals
+    ("|>" . font-lock-builtin-face) ;; pipe
     (,(regexp-opt a9flow-keywords 'words) . 'font-lock-keyword-face)
     (,(regexp-opt a9flow-builtins 'words) . 'font-lock-builtin-face)
     (,(regexp-opt a9flow-types 'words) . 'font-lock-type-face)
@@ -721,81 +711,57 @@ point currently is on, and the associated indentation rules."
     ;; fontify x in local declarations like:   x : Foo = ...
     ("^\\s-*\\(\\<\\(\\sw\\|\\s_\\)+\\>\\) *\\(:[^=\n]+\\)?=" (1 'font-lock-variable-name-face))
 
-;; Lambdas
-    ("\\(\\\\\\).*?\\(->\\)"
-     (1 (prog1 ()
-          (when (not a9flow-compat)
-            (compose-region (match-beginning 1) (match-end 1) ?λ))
-          (put-text-property (match-beginning 1) (match-end 1) 'font-lock-face 'font-lock-builtin-face)))
-     (2 (prog1 ()
-          (if (not a9flow-compat)
-              (progn
-                (compose-region (match-beginning 2) (match-end 2) ?→)
-                (put-text-property (match-beginning 2) (- (match-end 2) 1) 'font-lock-face 'font-lock-builtin-face))
-              (put-text-property (match-beginning 2) (match-end 2) 'font-lock-face 'font-lock-builtin-face)))))
-    (").*?\\(->\\)"
-     (1 (prog1 ()
-          (when (not a9flow-compat)
-            (compose-region (match-beginning 1) (match-end 1) ?→))
-          (put-text-property (match-beginning 1) (match-end 1) 'font-lock-face 'font-lock-builtin-face))))
+    ;; structur constructors, unions (started from A-Z) and  global definitions in upper-case 
+    ("\\<[A-Z][A-Za-z0-9_]*\\>"   . 'font-lock-type-face)
+ 
+    ;; hexcolour-keywords
     ("0x\\([abcdefABCDEF[:digit:]]\\{6\\}\\)"
-     (0 (put-text-property (match-beginning 0)
+      (0 (put-text-property (match-beginning 0)
                             (match-end 0)
                             'face (list :background
                                         (progn
                                           ;; (message (concat "#" (match-string-no-properties 1)))
-                                          (concat "#" (match-string-no-properties 1))))))))
+                                          (concat "#" (match-string-no-properties 1)))))))
+    )
+    
+  "Expressions to highlight in A9Flow mode.")
 
-  ;; auto-mode-list
-  '()
-  ;; function-list
-  '((lambda ()
-      (set-syntax-table a9flow-mode-syntax-table)
-      (setq comment-start "//")
-      (setq comment-end "")
-      (setq parse-sexp-ignore-comments t)
-      (set (make-local-variable 'indent-line-function) 'a9flow-indent-line)
-      (setq mode-line-format (append mode-line-format (list '(:eval
-         (if a9flow-status-compiling
-             (concat "Status: Compiling " a9flow-status-compiling "...")
-             (if (eq a9flow-status-error-count 0)
-                 "Status: Ok"
-                 (concat "Status: Compiling errors: " (number-to-string a9flow-status-error-count)))))
-                                                            " | "
-                                                            '(:eval (if a9flow-status-last-build-time (format-time-string "Last build: %Y/%m/%d %H:%M:%S" a9flow-status-last-build-time) ""))
-                                                            ))))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;;;###autoload
+(define-derived-mode a9flow-mode prog-mode "A9Flow"
+  "Major mode for editing a9flow code.\\<a9flow-mode-map>"
+  (setq-local comment-start "//")
+  (setq-local comment-end "")
+  (setq-local parse-sexp-ignore-comments t)
+  (setq-local font-lock-defaults '(a9flow-font-lock-keywords nil nil)) ;; case-sensitive search, it's nessassery for types constructor search
+  (setq-local indent-line-function 'a9flow-indent-line)
+  (setq-local tab-width 4)
+  (a9flow-register-compilation-error-regexp)
+)
+;; compilation mode ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun a9flow-register-compilation-error-regexp ()
+  (let ((form '(a9flow "^\\(.+?\\):\\([0-9]+\\):\\([0-9]+\\):" 1 2)))
+
+      (if (assq 'a9flow compilation-error-regexp-alist-alist)
+	  (setf (cdr (assq 'a9flow compilation-error-regexp-alist-alist)) (cdr form))
+	(push form compilation-error-regexp-alist-alist))
+
+      (push 'a9flow compilation-error-regexp-alist)
+  ))
 
 ;;;;;;;;;;;;; PROJECT MANAGEMENT ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defvar a9flow-flow-directory "../../flow9" "a9flow flow directory")
 (defvar a9flow-project-file nil "Current project file name")
-
-
 (defvar a9flow-proj-default-directory nil "a9flow default directory")
-(defvar a9flow-include-list () "a9flow include directories list")
 (defvar a9flow-target-list () "a9flow project targets list")
 (defvar a9flow-default-target nil "a9flow default target")
 
 (defvar a9flow-goto-history '())
 (defvar a9flow-goto-hash '())
 
-(defun a9flow-add-compiler-opts (cmd)
-  (let* ((cmd-args (split-string (string-trim cmd)))
-	 (compiler (car  cmd-args))
-	 (args (string-join (cdr cmd-args) " "))
-	 (inc-dirs (string-join (cons a9flow-proj-default-directory a9flow-include-list)  ","))
-	 )
-    (if (or (string= compiler "flowc")
-	    (string= compiler "flowc1")
-	    (string= compiler "flowcpp"))
-	(concat compiler " "
-		"working-dir=" a9flow-proj-default-directory " "
-		"I=" inc-dirs " " ;; need to compile project from any dir
-		args)
-      cmd
-      )
-    ))
 
 (defun a9flow-add-target (name compile-cmd)
   "Add project (or replace) to project list"
@@ -806,8 +772,10 @@ point currently is on, and the associated indentation rules."
 	(setq a9flow-target-list
 	      (cons (list
 		     'name name
-		     'compile-cmd (a9flow-add-compiler-opts compile-cmd))
-		    (cl-delete name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))))
+		     'compile-cmd compile-cmd)
+		    (cl-delete name a9flow-target-list
+			       :test 'equal
+			       :key (lambda (proj) (plist-get proj 'name))))))
     (message "load project error: name:'%s'" name)))
 
 (defun a9flow-clear-target-list ()
@@ -824,11 +792,8 @@ point currently is on, and the associated indentation rules."
   (interactive	"fProject file: ")
   (setq a9flow-project-file project-file-name)
   (setq a9flow-proj-default-directory (file-name-directory project-file-name))
-  (setq a9flow-include-list nil)
-  (a9flow-load-flow-config) ;; after project's load and set a9flow-proj-default-directory
   (message "a9flow project:%s" project-file-name)
   (message "a9flow default dir:%s" a9flow-proj-default-directory)
-  (message "a9flow include:%s" a9flow-include-list)
   (load-file project-file-name))
 
 (defun a9flow-compile-project-ido ()
@@ -839,10 +804,20 @@ point currently is on, and the associated indentation rules."
         (a9flow-compile-project target-name))
     (message "ido not found")))
 
+
+(defun a9flow-compile-project-ivy ()
+  (interactive)
+  (if (fboundp 'ivy-read)
+      (progn
+        (setq target-name (ivy-read "Compile target: " (mapcar 'cadr a9flow-target-list)))
+        (a9flow-compile-project target-name))
+    (message "ivy not found")))
+
+
+
 (defun a9flow-compile-project (target-name)
   "Compile project's target"
   (interactive	"sTarget name: ")
-  ;;(setq compilation-filter-hook 'a9flow-compile-filter-hk)
   (let ((proj (a9flow-proj-find target-name)))
     (if proj
 	(let (
@@ -850,9 +825,12 @@ point currently is on, and the associated indentation rules."
 	      (work-dir (plist-get proj 'work-dir))
 	      (curr-dir default-directory)
 	      )
-	  ;;(cd a9flow-proj-default-directory) ;; to compile resorces/fontconfig.json, remove after fix flowcpp working-dir opt
+	  (setq a9flow-default-target target-name)	  
+	  (cd a9flow-proj-default-directory)
+	  ;; the flow compiler rises 'cyclick dependencies error' if run without cd to root project
+	  ;; and it's needed also to compile resorces/fontconfig.json
 	  (compile compile-cmd)
-	  ;;(cd curr-dir)
+	  (cd curr-dir)
 	  )
       (message "Target '%s' not found" target-name))))
 
@@ -860,20 +838,6 @@ point currently is on, and the associated indentation rules."
   "Compile the default project"
   (interactive)
   (a9flow-compile-project a9flow-default-target))
-
-(defun a9flow-set-default-target-ido ()
-  (interactive)
-  (if (fboundp 'ido-completing-read)
-      (progn
-        (setq target-name (ido-completing-read "Default target: " (mapcar 'cadr a9flow-target-list)))
-        (a9flow-set-default-target target-name))
-    (message "ido not found")))
-
-(defun a9flow-set-default-target (target-name)
-  "Set default target"
-  (interactive "sTarget name: ")
-  (setq a9flow-default-target target-name))
-
 
 (defun a9flow-find-file-in-include-paths (fname)
 ;;  (message "find name '%s' in includes:%s" fname a9flow-include-list)
@@ -884,20 +848,14 @@ point currently is on, and the associated indentation rules."
     (if dir (concat a9flow-proj-default-directory "/"  dir "/" fname) nil)))
 
 
-(defun a9flow-load-flow-config ()
-  (interactive)
-  (with-temp-buffer
-    (insert-file-contents (concat a9flow-proj-default-directory "/flow.config"))
-    (let ((include (when (string-match "include=\\(.*\\)" (buffer-string))
-	   	     (match-string 1 (buffer-string)))))
-      (setq a9flow-include-list (append a9flow-include-list (split-string include ",")))
-      )))
-
-(defun a9flow-set-default-directory (dir)
-  "Set default directory for find function definitions without project file or from project file"
-  (interactive	"DDirectory: ")
-  (setq a9flow-proj-default-directory dir)
-  (when (not a9flow-project-file) (a9flow-load-flow-config)))
+;; (defun a9flow-load-flow-config ()
+;;   (interactive)
+;;   (with-temp-buffer
+;;     (insert-file-contents (concat a9flow-proj-default-directory "/flow.config"))
+;;     (let ((include (when (string-match "include=\\(.*\\)" (buffer-string))
+;; 	   	     (match-string 1 (buffer-string)))))
+;;       (setq a9flow-include-list (append a9flow-include-list (split-string include ",")))
+;;       )))
 
 
 ;;;;;;;;;; GOTO PROCEDURES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -980,7 +938,8 @@ point currently is on, and the associated indentation rules."
 (defun a9flow-goto-compiled-definition(word initial-buffer initial-point)
   (message "word%s; buffer:%s; point:%s; dir:%s" word  (buffer-file-name) initial-point a9flow-proj-default-directory)
   (setq a9flow-compiler-path "flowc1")
-  (setq command-to-execute (concat a9flow-compiler-path  " working-dir=" a9flow-proj-default-directory " find-definition=" word " " (buffer-file-name)))
+  ;;(setq command-to-execute (concat a9flow-compiler-path  " working-dir=" a9flow-proj-default-directory " find-definition=" word " " (buffer-file-name)))
+  (setq command-to-execute (concat a9flow-compiler-path  " find-definition=" word " " (buffer-file-name)))
   (message command-to-execute)
   (setq res (shell-command-to-string command-to-execute))
   (message "cmd result:%s" res)
@@ -1000,20 +959,6 @@ point currently is on, and the associated indentation rules."
       (message (concat "Error: " res))
       (switch-to-buffer initial-buffer)
       (goto-char initial-point))))
-
-(defun a9flow-goto-function-body ()
-  (interactive)
-  (setq current-position `(,(buffer-name) ,(point)))
-  (setq cv (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
-  (string-match "^[ \t]*\\([a-zA-Z0-9-_]+\\)[ ]*:?[ ]*\(" cv)
-  (setq name (match-string 1 cv))
-  (setq res (re-search-forward (concat "^[ \t]*" name "(.*)[ \t]*\\(->[ \t]*[a-zA-Z0-9_-]+[ \t]*\\)?{$") nil t 1))
-;;  (message (concat "^[ \t]*" name "(.*)[ \t]*{$"))
-  (if res
-      (progn
-        (push current-position a9flow-goto-history)
-        (beginning-of-line))
-      (message (concat "Error: " name " function body not found."))))
 
 (defun a9flow-go-back ()
   (interactive)
@@ -1035,18 +980,6 @@ point currently is on, and the associated indentation rules."
   (interactive)
   (setq current-position `(,(buffer-name) ,(point)))
   (push current-position a9flow-goto-history))
-
-
-
-;; (defun a9flow-compile-filter-hk ()
-;;   (let ((str (buffer-substring compilation-filter-start (point-max)))
-;; 	err-msg)
-;;     (when (string-match  "\"\\(neko .+\\)\"" str)
-;;       (setq err-msg (match-string 1 str))
-;;       (when err-msg (insert (replace-regexp-in-string "\\\\n" "\n"  err-msg))))))
-
-;; (defun a9flow-set-compile-filter ()
-;;   (setq compilation-filter-hook 'a9flow-compile-filter-hk))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1081,58 +1014,5 @@ point currently is on, and the associated indentation rules."
 
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun a9flow-compilation-hook (process)
-  (message "a9flow compilation start")
-  
-  )
-
-;; (defun a9flow-compilation-add-error-alist ()
-;;    (if (boundp 'compilation-error-regexp-alist-alist)
-;;     (progn
-;;       (add-to-list
-;;        'compilation-error-regexp-alist-alist
-;;        '(a9flow 
-;;          "\\(.+\\.flow\\):(\\([0-9]+\\):\\([0-9]+\\):)" 1 2 3))
-;;       (add-to-list
-;;        'compilation-error-regexp-alist
-;;        'a9flow)))
-;;     )
-
-;; (defun a9flow-compilation-add-error-alist ()
-;;    (if (boundp 'compilation-error-regexp-alist-alist)
-;;     (progn
-;;       (set
-;;        'compilation-error-regexp-alist-alist
-;;        '(a9flow 
-;;  ;;        "\\(.+\\.flow\\):\\(\\([0-9]+\\):\\([0-9]+\\)\\)" 1 2 3)
-;;        "^\\([_[:alnum:]-/]*.js\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):.*$" 1 2 3)
-;;        )
-;;       (set
-;;        'compilation-error-regexp-alist
-;;        '(a9flow))))
-;;     )
 
 
-(defun a9flow-compilation-add-error-alist ()
-  (make-local-variable 'compilation-error-regexp-alist)
-  (setq compilation-error-regexp-alist
-	'(("^\\([_[:alnum:]-/]*.js\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):.*$" 1 2 3)))
-  )
-
-
-
-
-
-(require 'compile)
-(a9flow-compilation-add-error-alist)
-(add-hook 'compilation-start-hook 'a9flow-compilation-hook)
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(provide 'a9flow-mode2)
-
-
-;; compilation-start-hook
-;; 
