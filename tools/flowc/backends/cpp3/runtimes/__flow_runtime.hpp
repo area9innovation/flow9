@@ -20,9 +20,8 @@ namespace flow {
 template<typename T> using Ptr = std::shared_ptr<T>;
 
 enum Type {
-	INT, BOOL, DOUBLE, STRING, 
-	STRUCT, ARRAY, REF, FUNC, 
-	NATIVE
+	INT = 0,   BOOL = 1, DOUBLE = 2, STRING = 3, NATIVE = 4, // scalar types
+	ARRAY = 5, REF = 6,  FUNC = 7,   STRUCT = 8              // complex types
 };
 
 using Void = void;
@@ -33,34 +32,105 @@ using Bool = bool;
 using Double = double;
 using string = std::u16string;
 using String = Ptr<string>;
+using Native = Ptr<void>;
 
-// Unions for conversion from Double/Int to 16-bit chars and back
+// Base class for object classes
 
-struct Two16Chars {
-	Two16Chars(char16_t v0, char16_t v1): c0(v0), c1(v1) {}
-	char16_t c0;
-	char16_t c1;
+struct AFlow;
+
+// Wrappers to scalar types
+
+struct AInt;
+struct ABool;
+struct ADouble;
+struct AString;
+struct ANative;
+
+// Abstract compound types
+
+struct AStruct;
+struct AArray;
+struct AReference;
+struct AFunction;
+
+struct Flow;
+
+void flow2string(Flow v, String os);
+
+template<typename T> struct Str;
+template<typename T> struct Arr;
+template<typename T> struct Ref;
+template<typename R, typename... As> struct Fun;
+
+template<typename T> struct Array;
+template<typename T> struct Reference;
+template<typename R, typename... As> struct Function;
+
+
+template<typename> struct BiCast;
+
+template<typename T1> struct Cast { 
+	template<typename T2> struct To { static T2 conv(T1 x); };
+	template<typename T2> struct From { static T1 conv(T2 x); };
 };
 
-union IntOrChars {
-	Two16Chars chars;
-	Int int_;
-	IntOrChars(Int i): int_(i) { }
-	IntOrChars(char16_t i0, char16_t i1): chars(i0, i1) { }
-};
-struct Four16Chars {
-	Four16Chars(char16_t v0, char16_t v1, char16_t v2, char16_t v3): c0(v0), c1(v1), c2(v2), c3(v3) {}
-	char16_t c0;
-	char16_t c1;
-	char16_t c2;
-	char16_t c3;
+struct AFlow {
+	virtual Int type() const = 0;
+	virtual ~AFlow() { }
 };
 
-union DoubleOrChars {
-	Four16Chars chars;
-	Double double_;
-	DoubleOrChars(Double d): double_(d) { }
-	DoubleOrChars(char16_t i0, char16_t i1, char16_t i2, char16_t i3): chars(i0, i1, i2, i3) { }
+struct AInt : public AFlow {
+	AInt(Int v): val(v) { }
+	Int type() const override { return Type::INT; }
+	const Int val;
+};
+struct ABool : public AFlow {
+	ABool(Bool v): val(v) { }
+	Int type() const override { return Type::BOOL; }
+	const Bool val;
+}; 
+struct ADouble : public AFlow {
+	ADouble(Double v): val(v) { }
+	Int type() const override { return Type::DOUBLE; }
+	const Double val;
+};
+struct AString : public AFlow {
+	AString(String s): str(s) { }
+	Int type() const override { return Type::STRING; }
+	const String str;
+};
+struct ANative : public AFlow {
+	ANative(Native n): nat(n) { }
+	Int type() const override { return Type::NATIVE; }
+	mutable Native nat;
+};
+
+struct AStruct : public AFlow {
+	virtual String name() const = 0;
+	virtual Int size() const = 0;
+	virtual Arr<Flow> fields() const = 0;
+	virtual Flow field(String name) const = 0;
+	virtual void setField(String name, Flow val) const = 0;
+	virtual Int compare(const AStruct&) const = 0;
+};
+
+struct AArray : public AFlow{
+	Int type() const override { return Type::ARRAY; }
+	virtual Int size() const = 0;
+	virtual Arr<Flow> elements() const = 0;
+	virtual Flow element(Int i) const = 0;
+};
+
+struct AReference : public AFlow {
+	Int type() const override { return Type::REF; }
+	virtual Flow reference() const = 0;
+	virtual void set(Flow) const = 0;
+};
+
+struct AFunction : public AFlow {
+	Int type() const override { return Type::FUNC; }
+	virtual Int arity() const = 0;
+	virtual Flow invoke(Flow args...) const = 0;
 };
 
 std::string toStdString(String str);
@@ -118,36 +188,6 @@ template<> struct Compare<String> {
 	static Int cmp(String v1, String v2) { return v1->compare(*v2); }
 };
 
-// Abstract compound types
-
-struct AStruct;
-struct Union;
-struct AArray;
-struct AReference;
-struct AFunction;
-
-// Dynamic type
-struct Flow;
-
-void flow2string(Flow v, String os);
-
-template<typename T> struct Str;
-template<typename T> struct Arr;
-template<typename T> struct Ref;
-template<typename R, typename... As> struct Fun;
-
-template<typename T> struct Array;
-template<typename T> struct Reference;
-template<typename R, typename... As> struct Function;
-
-
-template<typename> struct BiCast;
-
-template<typename T1> struct Cast { 
-	template<typename T2> struct To { static T2 conv(T1 x); };
-	template<typename T2> struct From { static T1 conv(T2 x); };
-};
-
 template<typename T> 
 struct Arr {
 	Arr(): arr() { }
@@ -201,7 +241,6 @@ struct Str {
 	Str(): str() { }
 	Str(T* s): str(s) { }
 	Str(Ptr<T> s): str(s) { }
-	Str(const Union& u);
 	Str(const Flow& f);
 	Str(const Str& s): str(s.str) { }
 	Str(Str&& s): str(std::move(s.str)) { }
@@ -245,163 +284,57 @@ struct Fun {
 	Ptr<Function<R, As...>> fn;
 };
 
-struct Union {
-	Union(): un() {}
-	template<typename T>
-	Union(Str<T> s): un(std::static_pointer_cast<AStruct>(s.str)) { }
-	Union(Ptr<AStruct> s): un(s) { }
-	Union(const Union& u): un(u.un) { }
-	Union(Union&& u): un(std::move(u.un)) { }
-	AStruct& operator *() { return un.operator*(); }
-	AStruct* operator ->() { return un.operator->(); }
-	AStruct* get() { return un.get(); }
-	const AStruct& operator *() const { return un.operator*(); }
-	const AStruct* operator ->() const { return un.operator->(); }
-	const AStruct* get() const { return un.get(); }
-	bool isSameObj(Union u) const { return un.get() == u.un.get(); }
-	Union& operator = (const Union& u) { un.operator=(u.un); return *this; }
-	Union& operator = (Union&& u) { un.operator=(std::move(u.un)); return *this; }
-
-	Ptr<AStruct> un;
-};
-
 struct Flow {
-	typedef std::variant<
-		Int, Bool, Double, String,
-		Ptr<AStruct>, Ptr<AArray>, Ptr<AReference>, Ptr<AFunction>, 
-		Ptr<Void>
-	> Variant;
 	Flow(): val() { }
-	Flow(Int i): val(i) { }
-	Flow(Bool b): val(b) { }
-	Flow(Double d): val(d) { }
-	Flow(String s): val(s) { }
-	Flow(Ptr<AStruct> s): val(s) { }
-	Flow(Ptr<AArray> a): val(a) { }
-	Flow(Ptr<AReference> r): val(r) { }
-	Flow(Ptr<AFunction> f): val(f) { }
-	Flow(Ptr<Void> n): val(n) { }
-	Flow(const Union& u): val(u.un) { }
-	Flow(Union&& u): val(std::move(u.un)) { }
-	template<typename T> Flow(Str<T> s);
-	template<typename T> Flow(Ref<T> r);
-	template<typename T> Flow(Arr<T> a);
-	template<typename R, typename... As> Flow(Fun<R, As...> f);
-	template<typename T> Flow(Ptr<T> n): val(std::static_pointer_cast<Void>(n)) { }
+	Flow(Ptr<AFlow>&& v): val(std::move(v)) { } 
+	Flow(const Flow& v): val(v.val) { }
+	Flow(Flow&& v): val(std::move(v.val)) { }
 
-	Variant val;
+	Flow(Int i): val(std::make_shared<AInt>(i)) { }
+	Flow(Bool b): val(std::make_shared<ABool>(b)) { }
+	Flow(Double d): val(std::make_shared<ADouble>(d)) { }
+	Flow(String s): val(std::make_shared<AString>(s)) { }
+	Flow(Native n): val(std::make_shared<ANative>(n)) { }
+	template<typename T> Flow(Str<T> s): val(std::move(std::static_pointer_cast<AFlow>(s.str))) { }
+	template<typename T> Flow(Ref<T> r): val(std::move(std::static_pointer_cast<AFlow>(r.ref))) { }
+	template<typename T> Flow(Arr<T> a): val(std::move(std::static_pointer_cast<AFlow>(a.arr))) { }
+	template<typename R, typename... As> Flow(Fun<R, As...> f): val(std::move(std::static_pointer_cast<AFlow>(f.fn))) { }
 
-	Int toInt() const {
-		try { 
-			return std::get<Int>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Int (" << Type::INT << "), in fact: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	Bool toBool() const { 
-		try {
-			return std::get<Bool>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Bool(" << Type::BOOL << "), in fact: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	Double toDouble() const { 
-		try {
-			return std::get<Double>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Double(" << Type::DOUBLE << "), index: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	String toString() const { 
-		try {
-			return std::get<String>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get String(" << Type::STRING << ") , index: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	Ptr<AStruct> toStruct() const { 
-		try {
-			return std::get<Ptr<AStruct>>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Struct(" << Type::STRUCT << ") , index: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	Ptr<AArray> toArray() const { 
-		try {
-			return std::get<Ptr<AArray>>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Array(" << Type::ARRAY << ") , index: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	Ptr<AReference> toReference() const { 
-		try {
-			return std::get<Ptr<AReference>>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Reference(" << Type::REF << ") , index: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	Ptr<AFunction> toFunction() const { 
-		try{
-			return std::get<Ptr<AFunction>>(val); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Function(" << Type::FUNC << ") , index: " << type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
-	template<typename T>
-	Ptr<T> toNative() const { 
-		try{
-			return std::reinterpret_pointer_cast<T>(std::get<Ptr<Void>>(val)); 
-		} catch (std::bad_variant_access& err) {
-			std::cerr << "failed to get Native(" << Type::NATIVE << ") , index: " <<type2s(val.index()) << std::endl;
-			throw err;
-		}
-	}
+	AFlow& operator *() { return val.operator*(); }
+	AFlow* operator ->() { return val.operator->(); }
+	AFlow* get() { return val.get(); }
+	const AFlow& operator *() const { return val.operator*(); }
+	const AFlow* operator ->() const { return val.operator->(); }
+	const AFlow* get() const { return val.get(); }
 
-	Type type() const;
-	bool isSameObj(Flow f) const;
+	Flow& operator = (Flow&& v) { val = std::move(v.val); return *this; }
+	Flow& operator = (const Flow& v) { val = v.val; return *this; }
+
+	Int type() const { return val->type(); }
+	Int toInt() const { return std::dynamic_pointer_cast<AInt>(val)->val; }
+	Bool toBool() const { return std::dynamic_pointer_cast<ABool>(val)->val; }
+	Double toDouble() const { return std::dynamic_pointer_cast<ADouble>(val)->val; }
+	String toString() const { return std::dynamic_pointer_cast<AString>(val)->str; }
+	Ptr<AStruct> toAStruct() const { return std::dynamic_pointer_cast<AStruct>(val); }
+	Ptr<AArray> toAArray() const { return std::dynamic_pointer_cast<AArray>(val); }
+	Ptr<AReference> toAReference() const { return std::dynamic_pointer_cast<AReference>(val); }
+	Ptr<AFunction> toAFunction() const { return std::dynamic_pointer_cast<AFunction>(val); }
+
+	template<typename T> Str<T> toStruct() const;
+	template<typename T> Arr<T> toArray() const;
+	template<typename T> Ref<T> toReference() const;
+	template<typename R, typename... As> Fun<R, As...> toFunction() const;
+	template<typename T> Ptr<T> toNative() const { return std::reinterpret_pointer_cast<T>(std::dynamic_pointer_cast<ANative>(val)->nat); }
+
+	bool isSameObj(Flow v) const;
+
+	Ptr<AFlow> val;
 };
+
+
+template<typename T> inline Str<T>::Str(const Flow& f): str(f.toStruct<T>().str) { }
 
 inline String flow2string(Flow f) { String os = makeString(); flow2string(f, os); return os; }
-struct AStruct {
-	virtual Int id() const = 0;
-	virtual String name() const = 0;
-	virtual Int size() const = 0;
-	virtual Arr<Flow> fields() const = 0;
-	virtual Flow field(String name) const = 0;
-	virtual void setField(String name, Flow val) const = 0;
-	virtual Int compare(const AStruct&) const = 0;
-};
-
-struct AArray {
-	virtual Int size() const = 0;
-	virtual Arr<Flow> elements() const = 0;
-	virtual Flow element(Int i) const = 0;
-};
-
-struct AReference {
-	virtual Flow reference() const = 0;
-	virtual void set(Flow) const = 0;
-};
-
-struct AFunction {
-	virtual Int arity() const = 0;
-	virtual Flow call(Flow args...) const = 0;
-};
-
-template<typename T>
-Str<T>::Str(const Union& u) { 
-	if (u->id() == T::ID) {
-		str = std::dynamic_pointer_cast<T>(u.un);
-	}
-}
 
 template<typename T> 
 struct Array : public AArray {
@@ -467,7 +400,7 @@ struct Function : public AFunction {
 	R operator()(As... as) const { return call(as...); }
 	virtual R call(As... as) const { return fn.operator()(as...); }
 	Int arity() const override { return ARITY; }
-	Flow call(Flow as...) const override {
+	Flow invoke(Flow as...) const override {
 		if constexpr (std::is_same_v<R, Void>) {
 			fn.operator()(Cast<Flow>::template To<As>::conv(as)...);
 			return Flow();
@@ -501,12 +434,6 @@ struct Function : public AFunction {
 	Fn fn;
 };
 
-
-template<typename T> Flow::Flow(Str<T> s): val(std::static_pointer_cast<AStruct>(s.str)) { }
-template<typename T> Flow::Flow(Ref<T> r): val(std::static_pointer_cast<AReference>(r.ref)) { }
-template<typename T> Flow::Flow(Arr<T> a): val(std::static_pointer_cast<AArray>(a.arr)) { }
-template<typename R, typename... As> Flow::Flow(Fun<R, As...> f): val(std::static_pointer_cast<AFunction>(std::make_shared<Fun<R, As...>>(f))) { }
-
 template<> struct BiCast<Int> {
 	template<typename> struct From { static constexpr bool is_available() { return false; } }; 
 	template<typename> struct To { static constexpr bool is_available() { return false; } }; 
@@ -523,11 +450,11 @@ template<> struct BiCast<String> {
 	template<typename> struct From { static constexpr bool is_available() { return false; } }; 
 	template<typename> struct To { static constexpr bool is_available() { return false; } }; 
 };
-template<> struct BiCast<Flow> {
+template<> struct BiCast<Native> {
 	template<typename> struct From { static constexpr bool is_available() { return false; } }; 
 	template<typename> struct To { static constexpr bool is_available() { return false; } }; 
 };
-template<> struct BiCast<Union> {
+template<> struct BiCast<Flow> {
 	template<typename> struct From { static constexpr bool is_available() { return false; } }; 
 	template<typename> struct To { static constexpr bool is_available() { return false; } }; 
 };
@@ -666,13 +593,11 @@ template<> struct BiCast<Flow>::To<String> { static String conv(Flow x) { if (x.
 template<> struct BiCast<Flow>::From<String> { static Flow conv(String x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::To<Flow> { static Flow conv(Flow x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::From<Flow> { static Flow conv(Flow x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<Union> { static Union conv(Flow x) { return x.toStruct(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Union> { static Flow conv(Union x) { return x.un; } static constexpr bool is_available() { return true; } };
 
 template<> template<typename R, typename... As> struct BiCast<Flow>::To<Fun<R, As...>> {
 	static constexpr bool is_available() { return true; }
 	static Fun<R, As...> conv(Flow x) { 
-		Fun<R, As...> r = std::dynamic_pointer_cast<Function<R, As...>>(x.toFunction());
+		Fun<R, As...> r = std::dynamic_pointer_cast<Function<R, As...>>(x.val);
 		if (r.get() != nullptr) {
 			return r;
 		} else {
@@ -682,37 +607,37 @@ template<> template<typename R, typename... As> struct BiCast<Flow>::To<Fun<R, A
 };
 template<> template<typename R, typename... As> struct BiCast<Flow>::From<Fun<R, As...>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Fun<R, As...> x) { return std::static_pointer_cast<AFunction>(x.fn); } 
+	static Flow conv(Fun<R, As...> x) { return std::static_pointer_cast<AFlow>(x.fn); } 
 };
 
 template<> template<typename T> struct BiCast<Flow>::To<Str<T>> {
 	static constexpr bool is_available() { return true; }
 	static Str<T> conv(Flow x) { 
-		Str<T> r = std::dynamic_pointer_cast<T>(x.toStruct());
+		Str<T> r = std::dynamic_pointer_cast<T>(x.val);
 		if (r.get() != nullptr) {
 			return r;
 		} else {
 			if constexpr (T::SIZE == 0) {
 				return std::make_shared<T>();
 			} else {
-				return std::make_shared<T>(x.toStruct());
+				return T::fromAStruct(std::dynamic_pointer_cast<AStruct>(x.val));
 			}
 		}
 	} 
 };
 template<> template<typename T> struct BiCast<Flow>::From<Str<T>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Str<T> x) { return std::static_pointer_cast<AStruct>(x.str); } 
+	static Flow conv(Str<T> x) { return std::static_pointer_cast<AFlow>(x.str); } 
 };
 
 template<> template<typename T> struct BiCast<Flow>::To<Arr<T>> {
 	static constexpr bool is_available() { return true; }
-	static Arr<T> conv(Flow x) { 
-		Arr<T> r = std::dynamic_pointer_cast<Array<T>>(x.toArray());
+	static Arr<T> conv(Flow x) {
+		Arr<T> r = std::dynamic_pointer_cast<Array<T>>(x.val);
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			Arr<Flow> elems = x.toArray()->elements();
+			Arr<Flow> elems = std::dynamic_pointer_cast<AArray>(x.val)->elements();
 			Arr<T> ret(elems->size());
 			for (Flow x : elems->vect) {
 				ret->vect.push_back(Cast<Flow>::template To<T>::conv(x));
@@ -723,42 +648,27 @@ template<> template<typename T> struct BiCast<Flow>::To<Arr<T>> {
 };
 template<> template<typename T> struct BiCast<Flow>::From<Arr<T>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Arr<T> x) { return std::static_pointer_cast<AArray>(x.arr); } 
+	static Flow conv(Arr<T> x) { return std::static_pointer_cast<AFlow>(x.arr); } 
 };
 
 template<> template<typename T> struct BiCast<Flow>::To<Ref<T>> {
 	static constexpr bool is_available() { return true; }
 	static Ref<T> conv(Flow x) { 
-		Ref<T> r = std::dynamic_pointer_cast<Reference<T>>(x.toReference());
+		Ref<T> r = std::dynamic_pointer_cast<Reference<T>>(x.val);
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			return Ref<T>(Cast<Flow>::template To<T>::conv(x.toReference()->reference()));
+			return Ref<T>(
+				Cast<Flow>::template To<T>::conv(
+					std::dynamic_pointer_cast<AReference>(x.val)->reference()
+				)
+			);
 		}
 	} 
 };
 template<> template<typename T> struct BiCast<Flow>::From<Ref<T>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Ref<T> x) { return std::static_pointer_cast<AReference>(x.ref); } 
-};
-
-// BiCast<Union>
-
-template<> template<typename T> struct BiCast<Union>::To<Str<T>> {
-	static constexpr bool is_available() { return true; }
-	static Str<T> conv(Union x) { 
-		Str<T> r = std::dynamic_pointer_cast<T>(x.un);
-		if (r.get() != nullptr) {
-			return r;
-		} else {
-			return std::make_shared<T>(x.un);
-		}
-	} 
-};
-template<> template<typename T> struct BiCast<Union>::From<Str<T>> {
-	static constexpr bool is_available() { return true; }
-	static Union conv(Str<T> x) { return std::static_pointer_cast<AStruct>(x.str); } 
-	
+	static Flow conv(Ref<T> x) { return std::static_pointer_cast<AFlow>(x.ref); } 
 };
 
 // BiCast<Str<T>>
@@ -933,15 +843,58 @@ Arr<T1> Array<T>::cast() const {
 	}
 }
 
+template<typename T> Str<T> Flow::toStruct() const {
+	Str<T> r = std::dynamic_pointer_cast<T>(val);
+	if (r.get() != nullptr) {
+		return r;
+	} else {
+		if constexpr (T::SIZE == 0) {
+			return std::make_shared<T>();
+		} else {
+			return T::fromAStruct(toAStruct());
+		}
+	}
+}
+template<typename T> Arr<T> Flow::toArray() const {
+	Arr<T> r = std::dynamic_pointer_cast<Array<T>>(val);
+	if (r.get() != nullptr) {
+		return r;
+	} else {
+		Arr<Flow> elems = std::dynamic_pointer_cast<AArray>(val)->elements();
+		Arr<T> ret(elems->size());
+		for (Flow x : elems->vect) {
+			ret->vect.push_back(Cast<Flow>::template To<T>::conv(x));
+		}
+		return ret;
+	}
+}
+template<typename T> Ref<T> Flow::toReference() const {
+	Ref<T> r = std::dynamic_pointer_cast<Reference<T>>(val);
+		if (r.get() != nullptr) {
+			return r;
+		} else {
+			return Ref<T>(
+				Cast<Flow>::template To<T>::conv(
+					std::dynamic_pointer_cast<AReference>(val)->reference()
+				)
+			);
+		}
+}
+template<typename R, typename... As> Fun<R, As...> Flow::toFunction() const {
+	Fun<R, As...> r = std::dynamic_pointer_cast<Function<R, As...>>(val);
+	if (r.get() != nullptr) {
+		return r;
+	} else {
+		return r->template cast<R, As...>();
+	}
+}
+
 Int compareFlow(Flow v1, Flow v2);
 
 template<> struct Compare<Flow> {
 	static Int cmp(Flow v1, Flow v2) { return compareFlow(v1, v2); }
 };
 
-template<> struct Compare<Union> {
-	static Int cmp(Union v1, Union v2) { return v1.un->compare(*v2.un); }
-};
 template<typename T>
 struct Compare<Arr<T>> {
 	static Int cmp(Arr<T> v1, Arr<T> v2) { return v1->compare(*v2); }
