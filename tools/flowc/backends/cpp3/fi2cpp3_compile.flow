@@ -300,19 +300,9 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
 	value = value2;
 	pair0 = fiExp2FsExp(value, makeSet(), gctx.effects, ref 0);
-	pair1 = tryCatch(
-		\-> Pair(
-			fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
-			map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
-		),
-		\err -> {
-			println(
-				err + "\nin: " + name + "\n" + 
-				prettyFiExp(dummyPretty, globalVar.value) + "\n"// + 
-				//toStringFormatted(fun.lambda)
-			);
-			fail0(err);
-		}
+	pair1 = Pair(
+		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
+		map(pair0.second, \s -> fsMakeStatCastsExplicit(s, FiTypeVoid(), names))
 	);
 	pair2 = fold(pair1.second, Pair([], makeTree()), \acc, s -> {
 		p = fsStatSSA(s, acc.second);
@@ -324,18 +314,6 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	pair = Pair(value4, pair2.first);
 
 	value_exp = if (pair.second == []) pair.first else {
-		/*if (name == "defaultPegActions") {
-			println(
-				//"globalVar.value:\n" + toStringFormatted(globalVar.value) +"\n----------\n" + 
-				//"value3:\n" + toStringFormatted(value3) +"\n----------\n" + 
-				//"value4:\n" + toStringFormatted(value4) +"\n----------\n" +
-				"value:\n" + toStringFormatted(value) +"\n----------\n" + 
-				"pair0:\n" + toStringFormatted(pair0) +"\n----------\n"
-				//"pair1:\n" + toStringFormatted(pair1) +"\n----------\n" +
-				//"pair2:\n" + toStringFormatted(pair2) +"\n----------\n" +
-				//"pair.second:\n" + toStringFormatted(pair.second) +"\n----------\n"
-			);
-		}*/
 		FsCall(FsLambda([], [], 
 			fsWrapSeq(concat(pair.second, [FsRet(pair.first)])), 
 			FiTypeFunction([], globalVar.type
@@ -363,8 +341,6 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 		gctx0 with currentToplevel = Some(fun),
 		toplevelTypars = fiCollectTypars(fn_type, makeSet())
 	);
-	//debug_typars_interpolation := 
-	debug_typars_interpolation := name == "fctypeenv2fi";
 	fun_args = fun.lambda.args;
 	headerOnly = cpp3InlineFunction(fun);
 	fun_name = gctx.varname2cpp(name);
@@ -386,43 +362,16 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	);
 	lambda4 = cast(lambda3: FiExp -> FiLambda);
 	lambda5_body = fiExpRenameRecurringVars(lambda4.body, fun_locals);
-	fun_cpp = tryCatch(
-		\-> {
-			fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), fun_locals, gctx.effects, ref 0, name);
-			fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
-			// fsInterpolateTyparsStat(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
-			// fsInterpolateTyparsExp(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
-			fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
-			fun_stat = fsMakeStatCastsExplicit(fun_stat2, fn_type.returnType, names);
-			/*if (name == "updateFTyvar") {
-				debug_typars_interpolation := true;
-				fsInterpolateTyparsStat(fun_stat1, names);
-				debug_typars_interpolation := false;
-				println("fun.lambda:\n" + toStringFormatted(fun.lambda) +"\n----------\n");
-				//println("lambda0:\n" + toStringFormatted(lambda0) +"\n----------\n");
-				//println("fun_stat0:\n" + toStringFormatted(fun_stat0) +"\n----------\n");
-				//println("lambda1:\n" + toStringFormatted(lambda1) +"\n----------\n");
-				//println("fun_stat1:\n" + toStringFormatted(fun_stat1) +"\n----------\n");
-				//println("fun_stat2:\n" + toStringFormatted(fun_stat2) +"\n----------\n");
-				println("fun_stat:\n" + toStringFormatted(fun_stat) +"\n----------\n");
-				//quit(0);
-			}*/
-			body = fsStat2cpp3(fun_stat, gctx);
-			if (!fsHasTailCall(fun_stat)) body else {
-				"while (true) " + fiWrapWithBraces(body);
-			}
-		},
-		\msg  -> {
-			println(
-				msg + "\nin: " + name + "\n" + 
-				prettyFiExp(dummyPretty, fun.lambda) + "\n"// + 
-				//toStringFormatted(fun.lambda)
-			);
-			fail0(msg);
-		}
-	);
+
+	fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), fun_locals, gctx.effects, ref 0, name);
+	fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
+	fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
+	fun_stat = fsMakeStatCastsExplicit(fun_stat2, fn_type.returnType, names);
+	body = fsStat2cpp3(fun_stat, gctx);
+	fun_cpp = if (!fsHasTailCall(fun_stat)) body else {
+		"while (true) " + fiWrapWithBraces(body);
+	}
 	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(fun_cpp) + "\n\n";
-	debug_typars_interpolation := false;
 	Cpp3CompiledDeclaration(name, headerOnly, forward_decl, definition);
 }
 
@@ -467,7 +416,7 @@ fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
 }
 
 fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
-	do = \-> switch (stat) {
+	switch (stat) {
 		FsLet(name, vtype, e): {
 			if (name == "__") "" else {
 				fiType2cpp3(vtype, gctx) + " " + gctx.varname2cpp(name) + " = " + fsExp2cpp3(e, gctx) + ";";
@@ -512,7 +461,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 					fsSwitch2cpp3(stat, gctx.varname2cpp(x.name) + "->type()/*Flow*/", gctx);
 				}
 				default:
-					throw("must be struct or union or flow type, got: " + prettyFiType(dummyPretty, x.type, makeSet()));
+					fail0("must be struct or union or flow type, got: " + prettyFiType(dummyPretty, x.type, makeSet()));
 			}
 		}
 		FsSeq(es, type): {
@@ -543,11 +492,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 		FsAssign(var, e): {
 			gctx.varname2cpp(var.name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
-	};
-	tryCatch(do, \msg -> {
-		println("in: " + toStringFormatted(stat));
-		throw(msg);
-	});
+	}
 }
 
 fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string {
@@ -590,7 +535,7 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 		}
 		None(): {
 			// default case
-			if (c.struct != "default") throw("struct is not found") else {
+			if (c.struct != "default") fail0("struct is not found") else {
 				body = fsStat2cpp3(c.body, gctx);
 				strIndent("default: " + fiWrapWithBraces(body));
 			}
@@ -612,18 +557,18 @@ fsStructSwitch2cpp3(sw: FsSwitch, typename: string, gctx: Cpp3GlobalContext) -> 
 					fsStat2cpp3(vars_wrapped, gctx);
 				}
 				None(): {
-					throw("struct case is not found");
+					fail0("struct case is not found");
 				}
 			}
 		}
 		None(): {
-			throw("must be struct or union (type name): " + typename);
+			fail0("must be struct or union (type name): " + typename);
 		}
 	}
 }
 
 fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
-	do = \-> switch (e) {
+	switch (e) {
 		FiVoid(__):      "";
 		FiBool(b, __):   b2s(b);
 		FiInt(i, __):    i2s(i);
@@ -721,7 +666,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 									fun + "(" + wrap + ")";
 								}
 								default: {
-									throw(
+									fail0(
 										"non-func type:\n" + toStringFormatted(type) + "\n" +
 										"for func type:\n" + toStringFormatted(fn_type) + "\n" +
 										"expr:\n" + toStringFormatted(e) + "\n"
@@ -748,13 +693,9 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				}
 			}
 		}
-		FsRequire(flowfile, ex, type): throw("//TODO: FiRequire " + flowfile);
-		FsUnsafe(name, fallback, type): throw("//TODO: FiUnsafe " + name);
-	};
-	tryCatch(do, \msg -> {
-		println("in: " + toStringFormatted(e));
-		throw(msg);
-	});
+		FsRequire(flowfile, ex, type): fail0("//TODO: FsRequire is not implemented in cpp3 backend" + flowfile);
+		FsUnsafe(name, fallback, type): fail0("//TODO: FsUnsafe is not implemented in cpp3 backend" + name);
+	}
 }
 
 fsCallPrimPlus2cpp3(es : [FsExp], gctx : Cpp3GlobalContext, acc: [FsExp]) -> [FsExp] {
@@ -887,7 +828,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 					FiTypeFlow(): {
 						e2k(e.es[0]) + ".toAStruct()->name()";
 					}
-					default: throw("accees to field '" + name + "' of non-field: " + fsExp2s(e.es[0]));
+					default: fail0("accees to field '" + name + "' of non-field: " + fsExp2s(e.es[0]));
 				}
 			} else {
 				switch (arg_type) {
@@ -906,9 +847,9 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 				default: e2k(e.es[0]) + "->" + gctx.varname2cpp(name) + " = " + e2k(e.es[1]);
 			}
 		}
-		FcCreateClosurePrim(structName, functionName): throw("// TODO: FcCreateClosurePrim");
-		FcQuote():   throw("// TODO: FcQuote");
-		FcUnquote(): throw("// TODO: FcUnquote");
+		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
+		FcQuote():   fail0("// TODO: implement FcQuote in cpp3 backend");
+		FcUnquote(): fail0("// TODO: implement FcUnquote in cpp3 backend");
 	}
 }
 
