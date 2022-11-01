@@ -9,7 +9,8 @@ export {
 	TRenderDynamicParagraph(
 		words : DynamicBehaviour<[TParaWord]>,
 		s : [ParagraphStyle],
-		alignWidthM : Maybe<DynamicBehaviour<double>>
+		alignWidthM : Maybe<DynamicBehaviour<double>>,
+		forceReflowT : Transform<bool>
 	) -> TDynamicParagraph;
 
 	TRenderParagraph(
@@ -43,7 +44,8 @@ export {
 TRenderDynamicParagraph(
 	wordsB : DynamicBehaviour<[TParaWord]>,
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>
+	alignWidthBM : Maybe<DynamicBehaviour<double>>,
+	forceReflowT : Transform<bool>
 ) -> TDynamicParagraph {
 	traceApi = makeWigiTrace_Tropic("TRenderDynamicParagraph", getValue(wordsB));
 
@@ -206,7 +208,11 @@ TRenderDynamicParagraph(
 					applyall(^dynamicWordsUns);
 					dynamicWordsUns := [];
 				}
-			}
+			},
+			makeSubscribe2(forceReflowT, \__ -> {
+				traceApi.trace(\ -> "forceReflow triggered");
+				updateFn(getValue(awB), None())
+			})
 		],
 		TAttachAvailableWidth(
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
@@ -477,16 +483,9 @@ positionInteractiveWords(
 	map(
 		list2array(words),
 		\word -> {
-			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), \__, __ -> word.ghostView);
-			wordView = switch (word.word) {
-				GeneralText(str) : viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style));
-				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
-				default : word.ghostView;
-			};
-
 			TTranslate(
-				fpoint(fsubtract(word.inspector.x, const(genIndent)), word.inspector.y),
-				wordView
+				fpoint(fsubtract(getWordInspector(word).x, const(genIndent)), getWordInspector(word).y),
+				word.ghostView
 			);
 		}
 	)
@@ -539,6 +538,7 @@ joinGroupedWords(
 			NonTextElement() : onDynamicElemCase();
 			GeneralDynamicText(__) : onDynamicElemCase();
 			EmptyLineElement() : onDynamicElemCase();
+			GeneralLinePart(__, __, __, __) : onDynamicElemCase();
 			default : {
 				if (isSameGroup(currentGroup, getValue(word.id))) Pair(
 					acc,
@@ -672,16 +672,12 @@ commonWordConstructor(
 	scriptM : Maybe<ParaElementScriptType>,
 	ignoreLetterSpacing : bool
 ) -> TParaWord {
-	inspector = either(inspectorM, dummyInspector());
-	wordView = inspectWordView(
-		tr,
-		inspector,
-		if (ignoreLetterSpacing) 0.0 else extractStruct(style, LetterSpacing(0.0)).spacing
-	);
+	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
+
 	TParaWord(
 		w,
 		inspector,
-		wordView,
+		inspectWordView(tr, inspector, if (ignoreLetterSpacing) 0.0 else extractStruct(style, LetterSpacing(0.0)).spacing),
 		make(id),
 		style,
 		rtl,
@@ -905,74 +901,63 @@ reflowTParaWordsRec(
 					ignoreLetterSpacing
 				);
 			}
-			GeneralLinePart(first, mid, end): {
+			GeneralLinePart(first, mid, end, allowBreakAfter): {
 
 				makeLinePartWord = \txt : string -> inspectedTWord(txt, word, ignoreLetterSpacing || rest == []);
-				width = getWordWidth(word);
+				// maybe we should investigate next word width depending on it's position in the line too
 				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
-
-				addChange = \reflowResult: TReflowResultAcc, paraword : TParaWord -> {
-					// Add change only if the word really changed
-					if (paraword.ghostView != word.ghostView) switch (reflowResult) {
-						TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
-							lines,
-							WordsAndIndexes(
-								arrayPush(changes.words, paraword),
-								arrayPush(changes.indexes, currentWordIndex)
-							)
-						);
-						TOverflowCase(__) : reflowResult;
-					} else reflowResult
-				};
 
 				if (currentWords == []) {
 					// If it is the first item on the line
-					paraword = makeLinePartWord(first);
+					nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineFirst());
+					width = getWordWidth(word);
 					reflowTParaWordsRec(
 						rest,
 						nextWordIndex,
 						availableWidth,
 						remaining - width,
-						arrayPush(currentWords, paraword),
-						addChange(result, paraword),
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				} else if (width + nextWordWidth < remaining) {
-					// If it is the middle item on the line
-					paraword = makeLinePartWord(mid);
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						availableWidth,
-						remaining - width,
-						arrayPush(currentWords, paraword),
-						addChange(result, paraword),
+						arrayPush(currentWords, word),
+						result,
 						paraIndent,
 						false,
 						catchOverflow,
 						ignoreLetterSpacing
 					);
 				} else {
-					// If it is the last item on the line
-					paraword = makeLinePartWord(end);
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						nextLineWidth,
-						nextLineWidth,
-						[],
-						addChange(
-							addLine(arrayPush(currentWords, paraword), lineIndent),
-							paraword
-						),
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
+					// we have to check the width of the element in case it is inline
+					nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineMiddle());
+					width = getWordWidth(word);
+
+					if (width + nextWordWidth < remaining) {
+						// If it is the middle item on the line
+						reflowTParaWordsRec(
+							rest,
+							nextWordIndex,
+							availableWidth,
+							remaining - width,
+							arrayPush(currentWords, word),
+							result,
+							paraIndent,
+							false,
+							catchOverflow,
+							ignoreLetterSpacing
+						);
+					} else {
+						// If it is the last item on the line
+						nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineEnd());
+						reflowTParaWordsRec(
+							rest,
+							nextWordIndex,
+							nextLineWidth,
+							nextLineWidth,
+							[],
+							addLine(arrayPush(currentWords, word), lineIndent),
+							paraIndent,
+							false,
+							catchOverflow,
+							ignoreLetterSpacing
+						);
+					}
 				}
 			}
 			GeneralSpace(__, __, __): {
@@ -1020,7 +1005,7 @@ reflowTParaWordsRec(
 						switch (_word.word) {
 							NewLine(): true;
 							GeneralSpace(__, __, __): true;
-							GeneralLinePart(__, __, __): true;
+							GeneralLinePart(__, __, __, allowBreakAfter): true;
 							default: {
 								f = getWordView(_word);
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
@@ -1190,6 +1175,7 @@ TRenderLine(
 	alignWidthM : Maybe<double>
 ) -> TParaLineResult {
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
+	nwords = length(words);
 	inspectors = map(words, \p -> p.inspector);
 	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
 	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
@@ -1214,9 +1200,9 @@ TRenderLine(
 	} + (if (rtl) 0. else lineIndent);
 
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && length(inspectors) > 1) {
+	interWord = if (alignment == Justify() && nwords > 1) {
 		if (newJustifyEnabled) {
-			wordsCount = length(words) - 1;
+			wordsCount = nwords - 1;
 			spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, lineIndent), \i, acc : Pair<int, double>, w -> {
 				lastWord = i == wordsCount;
 				wordWith = getValue(w.inspector.size).width;
@@ -1229,7 +1215,6 @@ TRenderLine(
 				(alignWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
 			} else 0.0
 		} else {
-			nwords = length(inspectors);
 			remaining = alignWidth - lineWidth;
 			min(10.0, remaining / i2d(nwords - 1));
 		}
@@ -1241,6 +1226,8 @@ TRenderLine(
 			GeneralSpace(__, __, __): true;
 			default: false;
 		};
+
+		word = words[i];
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
 		elemBaseline = getValue(inspector.baseline);
@@ -1256,6 +1243,8 @@ TRenderLine(
 		yOffset = y + dy;
 		nextDistinct(inspector.y, yOffset);
 		nextDistinct(inspector.x, ^alignmentOffset + if (rtl) 0.0 else generalIndent);
+		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == nwords - 1) WordPositionInLineEnd() else WordPositionInLineMiddle());
+
 		nextDistinct(inspector.lineHeight, lineHeight);
 		nextDistinct(inspector.lineAsc, lineAsc);
 		nextDistinct(inspector.lineNumber, lineNumber);
@@ -1330,7 +1319,7 @@ generalWrapElement2string(e : GeneralWrapElement) -> string {
 		GeneralText(txt): txt;
 		GeneralSpace(str, alphabetBefore, alphabetAfter): str;
 		NewLine(): "<NL>";
-		GeneralLinePart(first, mid, end): first + mid + end;
+		GeneralLinePart(first, mid, end, __): first + mid + end;
 		GeneralInspectElement(inspector, element): generalWrapElement2string(element);
 		EmptyLineElement(): "<EL>";
 		NonTextElement(): "<NonText>";
