@@ -17,7 +17,20 @@
 
 namespace flow {
 
+template<typename T>
+struct JustPtr {
+	JustPtr(T* p): ptr(p) { }
+	T& operator *() { return *ptr; }
+	T* operator ->() { return ptr; }
+	T* get() { return ptr; }
+	T& operator *() const { return *ptr; }
+	T* operator ->() const { return ptr; }
+	T* get() const { return ptr; }
+	T* ptr;
+};
+
 template<typename T> using Ptr = std::shared_ptr<T>;
+template<typename T, typename... As> Ptr<T> makePtr(As... as) { return std::make_shared<T>(as...); }
 
 enum Type {
 	INT = 0,   BOOL = 1, DOUBLE = 2, STRING = 3, NATIVE = 4, // scalar types
@@ -136,15 +149,15 @@ struct AFunction : public AFlow {
 std::string toStdString(String str);
 string fromStdString(const std::string& s);
 
-inline String makeString() { return std::make_shared<string>(); }
-inline String makeString(const char16_t* s) { return std::make_shared<string>(s); }
-inline String makeString(String s) { return std::make_shared<string>(*s); }
-inline String makeString(const string& s) { return std::make_shared<string>(s); }
-inline String makeString(string&& s) { return std::make_shared<string>(std::move(s)); }
-inline String makeString(char16_t ch) { return std::make_shared<string>(1, ch); }
-inline String makeString(const std::string& s) { return std::make_shared<string>(fromStdString(s)); }
-inline String makeString(const char16_t* s, Int len) { return std::make_shared<string>(s, len); }
-inline String makeString(const std::vector<char16_t>& codes) { return std::make_shared<string>(codes.data(), codes.size()); }
+inline String makeString() { return makePtr<string>(); }
+inline String makeString(const char16_t* s) { return makePtr<string>(s); }
+inline String makeString(String s) { return makePtr<string>(*s); }
+inline String makeString(const string& s) { return makePtr<string>(s); }
+inline String makeString(string&& s) { return makePtr<string>(std::move(s)); }
+inline String makeString(char16_t ch) { return makePtr<string>(1, ch); }
+inline String makeString(const std::string& s) { return makePtr<string>(fromStdString(s)); }
+inline String makeString(const char16_t* s, Int len) { return makePtr<string>(s, len); }
+inline String makeString(const std::vector<char16_t>& codes) { return makePtr<string>(codes.data(), codes.size()); }
 
 const String string_true = makeString(u"true");
 const String string_false = makeString(u"false");
@@ -191,12 +204,12 @@ template<> struct Compare<String> {
 template<typename T> 
 struct Arr {
 	Arr(): arr() { }
-	Arr(std::initializer_list<T> il): arr(std::move(std::make_shared<Array<T>>(il))) { }
+	Arr(std::initializer_list<T> il): arr(std::move(makePtr<Array<T>>(il))) { }
 	Arr(Ptr<Array<T>>&& a): arr(std::move(a)) { }
 	Arr(const Arr& a): arr(a.arr) { }
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
-	Arr(std::size_t s): arr(std::move(std::make_shared<Array<T>>(s))) { }
-	static Arr makeEmpty() { return Arr(std::make_shared<Array<T>>(0)); }
+	Arr(std::size_t s): arr(std::move(makePtr<Array<T>>(s))) { }
+	static Arr makeEmpty() { return Arr(makePtr<Array<T>>(0)); }
 
 	Array<T>& operator *() { return arr.operator*(); }
 	Array<T>* operator ->() { return arr.operator->(); }
@@ -215,7 +228,7 @@ struct Arr {
 template<typename T> 
 struct Ref {
 	Ref() { }
-	Ref(const T& r): ref(std::make_shared<Reference<T>>(r)) { }
+	Ref(const T& r): ref(makePtr<Reference<T>>(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
 	Ref(Ptr<Reference<T>>&& r): ref(std::move(r)) { }
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
@@ -261,8 +274,8 @@ template<typename R, typename... As>
 struct Fun {
 	typedef std::function<R(As...)> Fn;
 	Fun() {}
-	Fun(const Fn& f): fn(std::make_shared<Function<R, As...>>(f)) { }
-	Fun(Fn&& f): fn(std::make_shared<Function<R, As...>>(f)) { }
+	Fun(const Fn& f): fn(makePtr<Function<R, As...>>(f)) { }
+	Fun(Fn&& f): fn(makePtr<Function<R, As...>>(f)) { }
 	Fun(Ptr<Function<R, As...>>&& f): fn(std::move(f)) { }
 	Fun(const Ptr<Function<R, As...>>& f): fn(f) { }
 	Fun(const Fun& f): fn(f.fn) { }
@@ -290,11 +303,11 @@ struct Flow {
 	Flow(const Flow& v): val(v.val) { }
 	Flow(Flow&& v): val(std::move(v.val)) { }
 
-	Flow(Int i): val(std::make_shared<AInt>(i)) { }
-	Flow(Bool b): val(std::make_shared<ABool>(b)) { }
-	Flow(Double d): val(std::make_shared<ADouble>(d)) { }
-	Flow(String s): val(std::make_shared<AString>(s)) { }
-	Flow(Native n): val(std::make_shared<ANative>(n)) { }
+	Flow(Int i): val(makePtr<AInt>(i)) { }
+	Flow(Bool b): val(makePtr<ABool>(b)) { }
+	Flow(Double d): val(makePtr<ADouble>(d)) { }
+	Flow(String s): val(makePtr<AString>(s)) { }
+	Flow(Native n): val(makePtr<ANative>(n)) { }
 	template<typename T> Flow(Str<T> s): val(std::move(std::static_pointer_cast<AFlow>(s.str))) { }
 	template<typename T> Flow(Ref<T> r): val(std::move(std::static_pointer_cast<AFlow>(r.ref))) { }
 	template<typename T> Flow(Arr<T> a): val(std::move(std::static_pointer_cast<AFlow>(a.arr))) { }
@@ -349,7 +362,7 @@ struct Array : public AArray {
 	Array(const Vect& v): vect(v) { }
 	Array(Vect&& v): vect(std::move(v)) { }
 	virtual ~Array() {}
-	Ptr<Array> copy() { return std::make_shared<Array>(vect); }
+	Ptr<Array> copy() { return makePtr<Array>(vect); }
 
 	Array& operator = (const Array& a) { vect.operator=(a.vect); return *this; }
 	Array& operator = (Array&& a) { vect.operator=(std::move(a.vect)); return *this; }
@@ -373,7 +386,7 @@ struct Array : public AArray {
 template<typename T> 
 struct Reference : public AReference {
 	Reference() { }
-	Reference(const T& r): val(std::make_shared<T>(r)) { }
+	Reference(const T& r): val(makePtr<T>(r)) { }
 	Reference(T&& r): val(std::move(r)) { }
 	Reference(const Reference& r): val(r.val) { }
 	Reference(Reference&& r): val(std::move(r.val)) { }
@@ -618,7 +631,7 @@ template<> template<typename T> struct BiCast<Flow>::To<Str<T>> {
 			return r;
 		} else {
 			if constexpr (T::SIZE == 0) {
-				return std::make_shared<T>();
+				return makePtr<T>();
 			} else {
 				return T::fromAStruct(std::dynamic_pointer_cast<AStruct>(x.val));
 			}
@@ -849,7 +862,7 @@ template<typename T> Str<T> Flow::toStruct() const {
 		return r;
 	} else {
 		if constexpr (T::SIZE == 0) {
-			return std::make_shared<T>();
+			return makePtr<T>();
 		} else {
 			return T::fromAStruct(toAStruct());
 		}
