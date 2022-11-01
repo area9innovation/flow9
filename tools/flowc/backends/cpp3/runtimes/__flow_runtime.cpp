@@ -209,12 +209,11 @@ void flow2string(Flow v, String os) {
 			os->append(u"\"");
 			for (char16_t c : *v.toString()) {
 				switch (c) {
-					case '"': os->append(u"\\\"");      break;
-					case '\\': os->append(u"\\\\");     break;
-					case '\n': os->append(u"\\n");      break;
-					case '\t': os->append(u"\\t");      break;
-					//case '\r': os->append("\\u000d");  break;
-					case '\r': os->append(u"\\r");      break;
+					case '"': os->append(u"\\\"");  break;
+					case '\\': os->append(u"\\\\"); break;
+					case '\n': os->append(u"\\n");  break;
+					case '\t': os->append(u"\\t");  break;
+					case '\r': os->append(u"\\r");  break;
 					default: *os += c; break;
 				}
 			}
