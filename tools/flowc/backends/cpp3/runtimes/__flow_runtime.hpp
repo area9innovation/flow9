@@ -11,6 +11,9 @@
 #include <iostream>
 #include <iomanip>
 #include <type_traits>
+#include <map>
+#include <mutex>
+#include <atomic>
 #endif
 
 // C++ runtime for flow
@@ -18,19 +21,110 @@
 namespace flow {
 
 template<typename T>
-struct JustPtr {
-	JustPtr(T* p): ptr(p) { }
+struct Ptr {
+	Ptr(): ptr() { }
+	Ptr(std::shared_ptr<T>&& p): ptr(std::move(p)) { }
+	Ptr(const std::shared_ptr<T>& p): ptr(p) { }
+	Ptr(Ptr&& p): ptr(std::move(p.ptr)) { }
+	Ptr(const Ptr& p): ptr(p.ptr) { }
+
+	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
+	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
+
+	T& operator *() { return ptr.operator*(); }
+	T* operator ->() { return ptr.operator->(); }
+	T* get() { return ptr.get(); }
+	T& operator *() const { return ptr.operator*(); }
+	T* operator ->() const { return ptr.operator->(); }
+	T* get() const { return ptr.get(); }
+	operator bool() const { return ptr.operator bool(); }
+
+	template<typename T1> Ptr<T1> staticCast() const { return std::static_pointer_cast<T1>(ptr); }
+	template<typename T1> Ptr<T1> dynamicCast() const { return std::dynamic_pointer_cast<T1>(ptr); }
+	template<typename T1> Ptr<T1> reinterpretCast() const { return std::reinterpret_pointer_cast<T1>(ptr); }
+
+	std::shared_ptr<T> ptr;
+};
+
+template<>
+struct Ptr<void> {
+	Ptr(): ptr() { }
+	Ptr(std::shared_ptr<void>&& p): ptr(std::move(p)) { }
+	Ptr(const std::shared_ptr<void>& p): ptr(p) { }
+	Ptr(Ptr&& p): ptr(std::move(p.ptr)) { }
+	Ptr(const Ptr& p): ptr(p.ptr) { }
+
+	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
+	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
+
+	void* operator ->() { return ptr.operator->(); }
+	void* get() { return ptr.get(); }
+	void* operator ->() const { return ptr.operator->(); }
+	void* get() const { return ptr.get(); }
+	operator bool() const { return ptr.operator bool(); }
+
+	template<typename T1> Ptr<T1> staticCast() const { return std::static_pointer_cast<T1>(ptr); }
+	template<typename T1> Ptr<T1> dynamicCast() const { return std::dynamic_pointer_cast<T1>(ptr); }
+	template<typename T1> Ptr<T1> reinterpretCast() const { return std::reinterpret_pointer_cast<T1>(ptr); }
+
+	std::shared_ptr<void> ptr;
+};
+
+template<typename T, typename... As> Ptr<T> makePtr(As... as);
+
+
+/*
+template<typename T>
+struct Ptr {
+	Ptr(): ptr() { }
+	Ptr(T* p): ptr(p) { }
+	Ptr(Ptr&& p): ptr(p.ptr) { }
+	Ptr(const Ptr& p): ptr(p.ptr) { }
+
+	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
+	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
+
 	T& operator *() { return *ptr; }
 	T* operator ->() { return ptr; }
 	T* get() { return ptr; }
 	T& operator *() const { return *ptr; }
 	T* operator ->() const { return ptr; }
 	T* get() const { return ptr; }
+	operator bool() const { return ptr; }
+
+	template<typename T1> Ptr<T1> staticCast() const { return static_cast<T1*>(ptr); }
+	template<typename T1> Ptr<T1> dynamicCast() const { return dynamic_cast<T1*>(ptr); }
+	template<typename T1> Ptr<T1> reinterpretCast() const { return reinterpret_cast<T1*>(ptr); }
+
 	T* ptr;
 };
 
-template<typename T> using Ptr = std::shared_ptr<T>;
-template<typename T, typename... As> Ptr<T> makePtr(As... as) { return std::make_shared<T>(as...); }
+template<>
+struct Ptr<void> {
+	Ptr(): ptr() { }
+	Ptr(void* p): ptr(p) { }
+	Ptr(Ptr&& p): ptr(p.ptr) { }
+	Ptr(const Ptr& p): ptr(p.ptr) { }
+
+	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
+	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
+
+	void* operator ->() { return ptr; }
+	void* get() { return ptr; }
+	void* operator ->() const { return ptr; }
+	void* get() const { return ptr; }
+	operator bool() const { return ptr; }
+
+	template<typename T1> Ptr<T1> staticCast() const { return static_cast<T1*>(ptr); }
+	template<typename T1> Ptr<T1> dynamicCast() const { return dynamic_cast<T1*>(ptr); }
+	template<typename T1> Ptr<T1> reinterpretCast() const { return reinterpret_cast<T1*>(ptr); }
+
+	void* ptr;
+};
+
+template<typename T, typename... As> Ptr<T> makePtr(As... as) { return Ptr<T>(new T(as...)); }
+
+*/
 
 enum Type {
 	INT = 0,   BOOL = 1, DOUBLE = 2, STRING = 3, NATIVE = 4, // scalar types
@@ -252,7 +346,6 @@ template<typename T>
 struct Str {
 	typedef T Name;
 	Str(): str() { }
-	Str(T* s): str(s) { }
 	Str(Ptr<T> s): str(s) { }
 	Str(const Flow& f);
 	Str(const Str& s): str(s.str) { }
@@ -303,15 +396,15 @@ struct Flow {
 	Flow(const Flow& v): val(v.val) { }
 	Flow(Flow&& v): val(std::move(v.val)) { }
 
-	Flow(Int i): val(makePtr<AInt>(i)) { }
-	Flow(Bool b): val(makePtr<ABool>(b)) { }
-	Flow(Double d): val(makePtr<ADouble>(d)) { }
-	Flow(String s): val(makePtr<AString>(s)) { }
-	Flow(Native n): val(makePtr<ANative>(n)) { }
-	template<typename T> Flow(Str<T> s): val(std::move(std::static_pointer_cast<AFlow>(s.str))) { }
-	template<typename T> Flow(Ref<T> r): val(std::move(std::static_pointer_cast<AFlow>(r.ref))) { }
-	template<typename T> Flow(Arr<T> a): val(std::move(std::static_pointer_cast<AFlow>(a.arr))) { }
-	template<typename R, typename... As> Flow(Fun<R, As...> f): val(std::move(std::static_pointer_cast<AFlow>(f.fn))) { }
+	Flow(Int i): val(makePtr<AInt>(i).staticCast<AFlow>()) { }
+	Flow(Bool b): val(makePtr<ABool>(b).staticCast<AFlow>()) { }
+	Flow(Double d): val(makePtr<ADouble>(d).staticCast<AFlow>()) { }
+	Flow(String s): val(makePtr<AString>(s).staticCast<AFlow>()) { }
+	Flow(Native n): val(makePtr<ANative>(n).staticCast<AFlow>()) { }
+	template<typename T> Flow(Str<T> s): val(s.str.template staticCast<AFlow>()) { }
+	template<typename T> Flow(Ref<T> r): val(r.ref.template staticCast<AFlow>()) { }
+	template<typename T> Flow(Arr<T> a): val(a.arr.template staticCast<AFlow>()) { }
+	template<typename R, typename... As> Flow(Fun<R, As...> f): val(f.fn.template staticCast<AFlow>()) { }
 
 	AFlow& operator *() { return val.operator*(); }
 	AFlow* operator ->() { return val.operator->(); }
@@ -324,20 +417,20 @@ struct Flow {
 	Flow& operator = (const Flow& v) { val = v.val; return *this; }
 
 	Int type() const { return val->type(); }
-	Int toInt() const { return std::dynamic_pointer_cast<AInt>(val)->val; }
-	Bool toBool() const { return std::dynamic_pointer_cast<ABool>(val)->val; }
-	Double toDouble() const { return std::dynamic_pointer_cast<ADouble>(val)->val; }
-	String toString() const { return std::dynamic_pointer_cast<AString>(val)->str; }
-	Ptr<AStruct> toAStruct() const { return std::dynamic_pointer_cast<AStruct>(val); }
-	Ptr<AArray> toAArray() const { return std::dynamic_pointer_cast<AArray>(val); }
-	Ptr<AReference> toAReference() const { return std::dynamic_pointer_cast<AReference>(val); }
-	Ptr<AFunction> toAFunction() const { return std::dynamic_pointer_cast<AFunction>(val); }
+	Int toInt() const { return val.dynamicCast<AInt>()->val; }
+	Bool toBool() const { return val.dynamicCast<ABool>()->val; }
+	Double toDouble() const { return val.dynamicCast<ADouble>()->val; }
+	String toString() const { return val.dynamicCast<AString>()->str; }
+	Ptr<AStruct> toAStruct() const { return val.dynamicCast<AStruct>(); }
+	Ptr<AArray> toAArray() const { return val.dynamicCast<AArray>(); }
+	Ptr<AReference> toAReference() const { return val.dynamicCast<AReference>(); }
+	Ptr<AFunction> toAFunction() const { return val.dynamicCast<AFunction>(); }
 
 	template<typename T> Str<T> toStruct() const;
 	template<typename T> Arr<T> toArray() const;
 	template<typename T> Ref<T> toReference() const;
 	template<typename R, typename... As> Fun<R, As...> toFunction() const;
-	template<typename T> Ptr<T> toNative() const { return std::reinterpret_pointer_cast<T>(std::dynamic_pointer_cast<ANative>(val)->nat); }
+	template<typename T> Ptr<T> toNative() const { return val.template dynamicCast<ANative>()->nat.template reinterpretCast<T>(); }
 
 	bool isSameObj(Flow v) const;
 
@@ -610,7 +703,7 @@ template<> struct BiCast<Flow>::From<Flow> { static Flow conv(Flow x) { return x
 template<> template<typename R, typename... As> struct BiCast<Flow>::To<Fun<R, As...>> {
 	static constexpr bool is_available() { return true; }
 	static Fun<R, As...> conv(Flow x) { 
-		Fun<R, As...> r = std::dynamic_pointer_cast<Function<R, As...>>(x.val);
+		Fun<R, As...> r = x.val.template dynamicCast<Function<R, As...>>();
 		if (r.get() != nullptr) {
 			return r;
 		} else {
@@ -620,37 +713,37 @@ template<> template<typename R, typename... As> struct BiCast<Flow>::To<Fun<R, A
 };
 template<> template<typename R, typename... As> struct BiCast<Flow>::From<Fun<R, As...>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Fun<R, As...> x) { return std::static_pointer_cast<AFlow>(x.fn); } 
+	static Flow conv(Fun<R, As...> x) { return x.fn.template staticCast<AFlow>(); } 
 };
 
 template<> template<typename T> struct BiCast<Flow>::To<Str<T>> {
 	static constexpr bool is_available() { return true; }
 	static Str<T> conv(Flow x) { 
-		Str<T> r = std::dynamic_pointer_cast<T>(x.val);
+		Str<T> r = x.val.template dynamicCast<T>();
 		if (r.get() != nullptr) {
 			return r;
 		} else {
 			if constexpr (T::SIZE == 0) {
 				return makePtr<T>();
 			} else {
-				return T::fromAStruct(std::dynamic_pointer_cast<AStruct>(x.val));
+				return T::fromAStruct(x.val.template dynamicCast<AStruct>());
 			}
 		}
 	} 
 };
 template<> template<typename T> struct BiCast<Flow>::From<Str<T>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Str<T> x) { return std::static_pointer_cast<AFlow>(x.str); } 
+	static Flow conv(Str<T> x) { return x.str.template staticCast<AFlow>(); } 
 };
 
 template<> template<typename T> struct BiCast<Flow>::To<Arr<T>> {
 	static constexpr bool is_available() { return true; }
 	static Arr<T> conv(Flow x) {
-		Arr<T> r = std::dynamic_pointer_cast<Array<T>>(x.val);
+		Arr<T> r = x.val.template dynamicCast<Array<T>>();
 		if (r.get() != nullptr) {
 			return r;
 		} else {
-			Arr<Flow> elems = std::dynamic_pointer_cast<AArray>(x.val)->elements();
+			Arr<Flow> elems = x.val.template dynamicCast<AArray>()->elements();
 			Arr<T> ret(elems->size());
 			for (Flow x : elems->vect) {
 				ret->vect.push_back(Cast<Flow>::template To<T>::conv(x));
@@ -661,19 +754,19 @@ template<> template<typename T> struct BiCast<Flow>::To<Arr<T>> {
 };
 template<> template<typename T> struct BiCast<Flow>::From<Arr<T>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Arr<T> x) { return std::static_pointer_cast<AFlow>(x.arr); } 
+	static Flow conv(Arr<T> x) { return x.arr.template staticCast<AFlow>(); } 
 };
 
 template<> template<typename T> struct BiCast<Flow>::To<Ref<T>> {
 	static constexpr bool is_available() { return true; }
 	static Ref<T> conv(Flow x) { 
-		Ref<T> r = std::dynamic_pointer_cast<Reference<T>>(x.val);
+		Ref<T> r = x.val.template dynamicCast<Reference<T>>();
 		if (r.get() != nullptr) {
 			return r;
 		} else {
 			return Ref<T>(
 				Cast<Flow>::template To<T>::conv(
-					std::dynamic_pointer_cast<AReference>(x.val)->reference()
+					x.val.template dynamicCast<AReference>()->reference()
 				)
 			);
 		}
@@ -681,7 +774,7 @@ template<> template<typename T> struct BiCast<Flow>::To<Ref<T>> {
 };
 template<> template<typename T> struct BiCast<Flow>::From<Ref<T>> {
 	static constexpr bool is_available() { return true; }
-	static Flow conv(Ref<T> x) { return std::static_pointer_cast<AFlow>(x.ref); } 
+	static Flow conv(Ref<T> x) { return x.ref.template staticCast<AFlow>(); } 
 };
 
 // BiCast<Str<T>>
@@ -857,7 +950,7 @@ Arr<T1> Array<T>::cast() const {
 }
 
 template<typename T> Str<T> Flow::toStruct() const {
-	Str<T> r = std::dynamic_pointer_cast<T>(val);
+	Str<T> r = val.template dynamicCast<T>();
 	if (r.get() != nullptr) {
 		return r;
 	} else {
@@ -869,11 +962,11 @@ template<typename T> Str<T> Flow::toStruct() const {
 	}
 }
 template<typename T> Arr<T> Flow::toArray() const {
-	Arr<T> r = std::dynamic_pointer_cast<Array<T>>(val);
+	Arr<T> r = val.template dynamicCast<Array<T>>();
 	if (r.get() != nullptr) {
 		return r;
 	} else {
-		Arr<Flow> elems = std::dynamic_pointer_cast<AArray>(val)->elements();
+		Arr<Flow> elems = val.template dynamicCast<AArray>()->elements();
 		Arr<T> ret(elems->size());
 		for (Flow x : elems->vect) {
 			ret->vect.push_back(Cast<Flow>::template To<T>::conv(x));
@@ -882,19 +975,19 @@ template<typename T> Arr<T> Flow::toArray() const {
 	}
 }
 template<typename T> Ref<T> Flow::toReference() const {
-	Ref<T> r = std::dynamic_pointer_cast<Reference<T>>(val);
+	Ref<T> r = val.template dynamicCast<Reference<T>>();
 		if (r.get() != nullptr) {
 			return r;
 		} else {
 			return Ref<T>(
 				Cast<Flow>::template To<T>::conv(
-					std::dynamic_pointer_cast<AReference>(val)->reference()
+					val.template dynamicCast<AReference>()->reference()
 				)
 			);
 		}
 }
 template<typename R, typename... As> Fun<R, As...> Flow::toFunction() const {
-	Fun<R, As...> r = std::dynamic_pointer_cast<Function<R, As...>>(val);
+	Fun<R, As...> r = val.template dynamicCast<Function<R, As...>>();
 	if (r.get() != nullptr) {
 		return r;
 	} else {
@@ -944,5 +1037,157 @@ struct StructDef {
 	Constructor make;
 	std::vector<FieldDef> fields;
 };
+
+template<std::size_t dim>
+struct MemBlock {
+	MemBlock(): nextFree(nullptr) { }
+	~MemBlock() { }
+	MemBlock* nextFree;
+	uint8_t data[dim];
+};
+
+template<std::size_t dim>
+struct BlockList {
+	BlockList(uint32_t s, BlockList* p = nullptr): 
+	size(s), mem(new MemBlock<dim>[s]), free(nullptr), prev(p) {
+		for (uint32_t i = 0; i < size; ++ i) {
+			// make a linked list of free blocks
+			mem[i].nextFree = (i + 1 == size) ? nullptr : mem + (i + 1);
+		}
+		free = mem;
+	}
+
+	void* allocate() {
+		if (free) {
+			MemBlock<dim>* allocated = free;
+			free = allocated->nextFree;
+			allocated->nextFree = nullptr;
+			return &allocated->data;
+		} else {
+			return prev ? prev->allocate() : nullptr;
+		}
+	}
+	bool deallocate(void* p) {
+		if (mem < p && p < mem + size) {
+			MemBlock<dim>* x = reinterpret_cast<MemBlock<dim>*>(reinterpret_cast<MemBlock<dim>**>(p) - 1);
+			x->nextFree = free;
+			free = x;
+			// successfully deallocated
+			return true;
+		} else {
+			// not from this block cache
+			return prev ? prev->deallocate(p) : false;
+		}
+	}
+	uint32_t size;
+
+private:
+	MemBlock<dim>*  mem;
+	MemBlock<dim>*  free;
+	BlockList<dim>* prev;
+};
+
+template<std::size_t dim>
+struct BlockCache {
+	BlockCache(): cache(new BlockList<dim>((1024 * 64) / dim)) { }
+	static BlockCache& instance(const std::thread::id& id) { 
+		static std::map<std::thread::id, BlockCache> thread_instance; 
+		return thread_instance[id]; 
+	}
+
+	template<typename T>
+	T* allocate() {
+		if (void* m = cache->allocate()) {
+			return reinterpret_cast<T*>(m);
+		} else {
+			cache = new BlockList<dim>(cache->size * 2, cache);
+			return reinterpret_cast<T*>(cache->allocate());
+		}
+	}
+	template<typename T>
+	bool deallocate(T* ptr) {
+		return cache->deallocate(ptr);
+	}
+private:
+	BlockList<dim>* cache;
+};
+
+void initMaxHeapSize(int argc, const char* argv[]);
+extern std::atomic<std::size_t> allocated_bytes;
+extern std::size_t max_heap_size;
+
+struct AllocStats {
+	template<typename T>
+	void registerAlloc(std::size_t n) {
+		m.lock();
+		std::size_t to_alloc = n * sizeof(T);
+		if (allocated_bytes + to_alloc > max_heap_size) {
+			std::cerr << "Out of heap memory, already used: " << allocated_bytes << ", try to allocate: " << to_alloc << ", max heap size: " << max_heap_size << std::endl;
+			throw std::bad_alloc();
+		}
+		if (alloc_stats.find(sizeof(T)) == alloc_stats.end()) {
+			alloc_stats[sizeof(T)] = 0;
+		}
+		alloc_stats[sizeof(T)] += 1;
+		m.unlock();
+	}
+	template<typename T>
+	void registerDealloc(std::size_t n) {
+		m.lock();
+		std::size_t to_dealloc = n * sizeof(T);
+		if (allocated_bytes < to_dealloc) {
+			std::cerr << "to dealloc: " << to_dealloc << " which is greater, then it is allocated: " << allocated_bytes << std::endl;
+		}
+		m.unlock();
+	}
+	void print();
+
+	std::map<std::size_t, int> alloc_stats;
+	std::mutex m;
+};
+
+extern AllocStats* alloc_stats;
+
+
+const bool use_allocator_cache = false;
+
+template<class T>
+struct CachingMallocator {
+	typedef T value_type;
+	template <class U>
+    constexpr CachingMallocator (const CachingMallocator <U>&) noexcept {}
+	static CachingMallocator& instance() { static CachingMallocator _instance; return _instance; }
+
+	[[nodiscard]] T* allocate(std::size_t n) {
+		std::size_t to_alloc = n * sizeof(T);
+		allocated_bytes += to_alloc;
+		if constexpr (use_allocator_cache) {
+			return BlockCache<sizeof(T)>::instance(std::this_thread::get_id()).template allocate<T>();
+		} else {
+			if (T* p = static_cast<T*>(std::malloc(to_alloc))) {
+				return p;
+			} else {
+				throw std::bad_alloc();
+			}
+		}
+	}
+ 
+	void deallocate(T* p, std::size_t n) noexcept {
+		allocated_bytes -= n * sizeof(T);
+		if constexpr (use_allocator_cache) {
+			BlockCache<sizeof(T)>::instance(std::this_thread::get_id()).template deallocate<T>(p);
+		} else {
+			std::free(p);
+		}
+	}
+
+private:
+	CachingMallocator() = default;
+};
+
+template<typename T, typename... As> Ptr<T> makePtr(As... as) { 
+	return Ptr<T>(std::allocate_shared<T>(CachingMallocator<T>::instance(), as...));
+	//return Ptr<T>(std::make_shared<T>(as...));
+}
 
 }

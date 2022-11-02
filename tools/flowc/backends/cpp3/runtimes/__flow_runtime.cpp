@@ -4,6 +4,33 @@
 
 namespace flow {
 
+
+std::atomic<std::size_t> allocated_bytes = 0;
+std::size_t max_heap_size = 2u * 1024u * 1024u * 1024u; // 1 Gb by default
+
+AllocStats* alloc_stats = nullptr;
+
+void AllocStats::print() {
+	std::cout << "Allocation stats: " << std::endl;
+	for (auto p : alloc_stats) {
+		std::cout << "sizeof " << p.first << " allocated " << p.second << " times" << std::endl;
+	}
+}
+
+void initMaxHeapSize(int argc, const char* argv[]) {
+	for (int i = 0; i < argc; ++i) {
+		std::string arg(argv[i]);
+		std::size_t eq_ind = arg.find("=");
+		if (eq_ind == std::string::npos) {
+			std::string key = arg.substr(0, eq_ind);
+			std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
+			if (key == "heap-size") {
+				max_heap_size = std::stoi(val);
+			}
+		}
+	}
+}
+
 String double2string(Double x) { 
 	static std::ostringstream os; 
 	os << std::scientific << x;
@@ -221,7 +248,7 @@ void flow2string(Flow v, String os) {
 			break;
 		}
 		case Type::ARRAY: {
-			Arr<Flow> a = std::dynamic_pointer_cast<AArray>(v.val)->elements();
+			Arr<Flow> a = v.val.dynamicCast<AArray>()->elements();
 			os->append(u"[");
 			bool first = true;
 			for (Flow e : a->vect) {
@@ -236,7 +263,7 @@ void flow2string(Flow v, String os) {
 		}
 		case Type::REF: {
 			os->append(u"ref ");
-			flow2string(std::dynamic_pointer_cast<AReference>(v.val)->reference(), os);
+			flow2string(v.val.dynamicCast<AReference>()->reference(), os);
 			break;
 		}
 		case Type::FUNC: {
@@ -248,7 +275,7 @@ void flow2string(Flow v, String os) {
 			break;
 		}
 		default: {
-			Ptr<AStruct> s = std::dynamic_pointer_cast<AStruct>(v.val);
+			Ptr<AStruct> s = v.val.dynamicCast<AStruct>();
 			os->append(*s->name());
 			os->append(u"(");
 			Arr<Flow> fields = s->fields();
@@ -276,8 +303,8 @@ Int compareFlow(Flow v1, Flow v2) {
 			case Type::DOUBLE: return Compare<Double>::cmp(v1.toDouble(), v2.toDouble());
 			case Type::STRING: return v1.toString()->compare(*v2.toString());
 			case Type::ARRAY: {
-				Ptr<AArray> a1 = std::dynamic_pointer_cast<AArray>(v1.val);
-				Ptr<AArray> a2 = std::dynamic_pointer_cast<AArray>(v2.val);
+				Ptr<AArray> a1 = v1.val.dynamicCast<AArray>();
+				Ptr<AArray> a2 = v2.val.dynamicCast<AArray>();
 				Int c1 = Compare<Int>::cmp(a1->size(), a2->size());
 				if (c1 != 0) {
 					return c1;
@@ -294,24 +321,24 @@ Int compareFlow(Flow v1, Flow v2) {
 				}
 			}
 			case Type::REF: {
-				Ptr<AReference> r1 = std::dynamic_pointer_cast<AReference>(v1.val);
-				Ptr<AReference> r2 = std::dynamic_pointer_cast<AReference>(v2.val);
+				Ptr<AReference> r1 = v1.val.dynamicCast<AReference>();
+				Ptr<AReference> r2 = v2.val.dynamicCast<AReference>();
 				return compareFlow(r1->reference(), r2->reference());
 			}
 			case Type::FUNC: {
-				Ptr<AFunction> f1 = std::dynamic_pointer_cast<AFunction>(v1.val);
-				Ptr<AFunction> f2 = std::dynamic_pointer_cast<AFunction>(v2.val);
+				Ptr<AFunction> f1 = v1.val.dynamicCast<AFunction>();
+				Ptr<AFunction> f2 = v2.val.dynamicCast<AFunction>();
 				return Compare<void*>::cmp(f1.get(), f2.get());
 			}
 			case Type::NATIVE: {
-				Ptr<ANative> n1 = std::dynamic_pointer_cast<ANative>(v1.val);
-				Ptr<ANative> n2 = std::dynamic_pointer_cast<ANative>(v2.val);
+				Ptr<ANative> n1 = v1.val.dynamicCast<ANative>();
+				Ptr<ANative> n2 = v2.val.dynamicCast<ANative>();
 				return Compare<Void*>::cmp(n1->nat.get(), n2->nat.get());
 			}
 			default: {
 				case Type::STRUCT: {
-					Ptr<AStruct> s1 = std::dynamic_pointer_cast<AStruct>(v1.val);
-					Ptr<AStruct> s2 = std::dynamic_pointer_cast<AStruct>(v2.val);
+					Ptr<AStruct> s1 = v1.val.dynamicCast<AStruct>();
+					Ptr<AStruct> s2 = v2.val.dynamicCast<AStruct>();
 					Int c1 = s1->name()->compare(*s2->name());
 					if (c1 != 0) {
 						return c1;
