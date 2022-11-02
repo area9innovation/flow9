@@ -1,0 +1,244 @@
+import tools/flowc/statements/fsexp;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/manipulation/effects;
+import string_utils;
+
+export {
+
+fsExpType(e: FsExp) -> FiType;
+fsStatType(s: FsStat) -> FiType;
+
+fsExp2s(e: FsExp) -> string;
+fsStat2s(s: FsStat) -> string;
+
+fsSetExpType(e : FsExp, t: FiType) -> FsExp;
+
+fsHasTailCall(s: FsStat) -> bool;
+
+fiExpIsFsExp(e: FiExp) -> bool;
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
+
+}
+
+fsExpType(e: FsExp) -> FiType {
+	switch (e) {
+		FsLambda(__,__,__, type): type;
+		FsCall(__,__, type):      type;
+		FsVar(__, type,__):       type;
+		FsCallPrim(__,__, type):  type;
+		FsRequire(__,__, type):   type;
+		FsUnsafe(__,__, type):    type;
+		FsCast(__,__,type):       type;
+		FsTernaryIf(__,__,__, type): type;
+		FiVoid(__):       FiTypeVoid();
+		FiDouble(__, __): FiTypeDouble();
+		FiInt(__, __):    FiTypeInt();
+		FiString(__, __): FiTypeString();
+		FiBool(__, __):   FiTypeBool();
+	}
+}
+
+fsStatType(s: FsStat) -> FiType {
+	switch (s) {
+		FsLet(__,__,__):       FiTypeVoid();
+		FsIf(__,__,__, type):  type;
+		FsSwitch(__,__,__, type): type;
+		FsSeq(ss, type):       type;
+		FsWrapExp(e):          fsExpType(e);
+		FsRet(e):              fsExpType(e);
+		FsTailCall(type):      type;
+		FsVarDecl(var):        var.type;
+		FsAssign(__,__):       FiTypeVoid();
+	}
+}
+
+fsStat2s(s: FsStat) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (s) {
+		FsLet(name, vtype, e): {
+			name + " : " + t2s(vtype) + " = " + fsExp2s(e);
+		}
+		FsIf(e, s1, s2, __): {
+			"if (" + fsExp2s(e) + ") " + fsStat2s(s1) + " else " + fsStat2s(s2);
+		}
+		FsSwitch(v,__, cases, __): {
+			"switch (" + fsExp2s(v) + ") {\n" +
+				strIndent(superglue(cases, \c -> {
+					body_s = fsStat2s(c.body);
+					body_s1 = if (strContains(body_s, "\n") || startsWith(body_s, "{")) body_s else body_s + ";";
+					c.struct + "(" + strGlue(c.args, ", ") + "): " + body_s1;
+				}, "\n")) +
+			"\n}";
+		}
+		FsSeq(ss, type): {
+			if (length(ss) == 0) "{}" else
+			if (length(ss) == 1) fsStat2s(ss[0]) else
+			"{\n" + strIndent(superglue(ss, fsStat2s, ";\n")) + "\n}";
+		}
+		FsWrapExp(e): {
+			fsExp2s(e);
+		}
+		FsRet(e): {
+			"return " + fsExp2s(e);
+		}
+		FsTailCall(__): {
+			"tailcall";
+		}
+		FsVarDecl(var): {
+			var.name + " : " + t2s(var.type);
+		}
+		FsAssign(var, e): {
+			var.name + " := " +  fsExp2s(e);
+		}
+	}
+}
+
+fsExp2s(e: FsExp) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (e) {
+		FsLambda(closure, args, body,__): {
+			body_s = fsStat2s(body);
+			closure_s = "[" + strGlue(closure, ", ") + "]";
+			header = closure_s + "\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> ";
+			if (!strContains(body_s, "\n") || startsWith(body_s, "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
+		}
+		FsCall(f, args,__): {
+			fsExp2s(f) + "(" + superglue(args, fsExp2s, ", ") + ")";
+		}
+		FsCallPrim(__,__,__): {
+			fsCallPrim2s(e);
+		}
+		FsRequire(file, ex,__): {
+			"require " + file + " " + fsExp2s(ex);
+		}
+		FsUnsafe(name, fallback,__): {
+			"unsafe " + name + " " + fsExp2s(fallback);
+		}
+		FsCast(ex, from, to): {
+			"(" + fsExp2s(ex) + " : " + t2s(from) + " -> " + t2s(to) + ")";
+		}
+		FsTernaryIf(cond, pos, neg, __): {
+			"(" + fsExp2s(cond) + " ? " + fsExp2s(pos) + " : " + fsExp2s(neg) + ")";
+		}
+		FsVar(name,__,__): name;
+		FiVoid(__):      "{}";
+		FiDouble(d, __): d2s(d);
+		FiInt(i, __):    i2s(i)
+		FiString(s, __): "\"" + escapeStr(s) + "\"";
+		FiBool(b, __):   b2s(b);
+	}
+}
+
+fsCallPrim2s(call: FsCallPrim) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	es = call.es;
+	switch (call.op) {
+		FcOrPrim():  "(" + fsExp2s(es[0]) + " || " + fsExp2s(es[1]) + ")";
+		FcAndPrim(): "(" + fsExp2s(es[0]) + " && " + fsExp2s(es[1]) + ")";
+		FcNotPrim(): "!" + fsExp2s(es[0]);
+		FcEqPrim():  "(" + fsExp2s(es[0]) + " == " + fsExp2s(es[1]) + ")";
+		FcNePrim():  "(" + fsExp2s(es[0]) + " != " + fsExp2s(es[1]) + ")";
+		FcLePrim():  "(" + fsExp2s(es[0]) + " <= " + fsExp2s(es[1]) + ")";
+		FcGePrim():  "(" + fsExp2s(es[0]) + " >= " + fsExp2s(es[1]) + ")";
+		FcLtPrim():  "(" + fsExp2s(es[0]) + " < " + fsExp2s(es[1]) + ")";
+		FcGtPrim():  "(" + fsExp2s(es[0]) + " > " + fsExp2s(es[1]) + ")";
+		FcPlusPrim():  "(" + fsExp2s(es[0]) + " + " + fsExp2s(es[1]) + ")";
+		FcMinusPrim(): "(" + fsExp2s(es[0]) + " - " + fsExp2s(es[1]) + ")"; 
+		FcMulPrim():   "(" + fsExp2s(es[0]) + " * " + fsExp2s(es[1]) + ")";
+		FcDivPrim():   "(" + fsExp2s(es[0]) + " / " + fsExp2s(es[1]) + ")";
+		FcModPrim():   "(" + fsExp2s(es[0]) + " % " + fsExp2s(es[1]) + ")";
+		FcNegPrim():   "-" + fsExp2s(es[0]);
+		FcArrayPrim():   "[" + superglue(es, fsExp2s, ", ") + "]";
+		FcIndexPrim():   fsExp2s(es[0]) + "[" + fsExp2s(es[1]) + "]";
+		FcDerefPrim():   "(*" +fsExp2s(es[0]) + ")";
+		FcAssignPrim():  fsExp2s(es[0]) + " := " + fsExp2s(es[1]);
+		FcRefPrim():     "ref " + fsExp2s(es[0]);
+		FcStructPrim(struct_name): {
+			struct_type = cast(call.type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			struct_name + typars + "(" + superglue(es, fsExp2s, ", ") + ")";
+		}
+		FcFieldPrim(name): fsExp2s(es[0]) + "." + name;
+		FcSetMutablePrim(name): fsExp2s(es[0]) + "." + name + " = " + fsExp2s(es[1]);
+		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
+		FcQuote():   fail0("// TODO: FcQuote");
+		FcUnquote(): fail0("// TODO: FcUnquote");
+	}
+}
+
+fsSetExpType(e : FsExp, t: FiType) -> FsExp {
+	switch(e) {
+		FsLambda(__,__,__,__):  FsLambda(e with type = cast(t : FiType -> FiTypeFunction));
+		FsCall(__,__,__):       FsCall(e with type = t);
+		FsCallPrim(__,__,__):   FsCallPrim(e with type = t);
+		FsRequire(__,__,__):    FsRequire(e with type = t);
+		FsUnsafe(__,__,__):     FsUnsafe(e with type = t);
+		FsCast(__,__,__):       FsCast(e with to = t);
+		FsTernaryIf(__,__,__,__): FsTernaryIf(e with type = t);
+		FsVar(__,__,__):        FsVar(e with type = t);
+		default: e;
+	}
+}
+
+fsHasTailCall(s: FsStat) -> bool {
+	switch (s) {
+		FsIf(e, s1, s2, __): fsHasTailCall(s1) || fsHasTailCall(s2);
+		FsSwitch(v,__, cases, __): exists(cases, \c -> fsHasTailCall(c.body));
+		FsSeq(ss, type): if (length(ss) == 0) false else fsHasTailCall(ss[length(ss) - 1]);
+		FsTailCall(__):  true;
+		default: false;
+	}
+}
+
+fiExpIsFsExp(e: FiExp) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): 
+			if (length(es) == 0) true else	
+			if (length(es) == 1) {
+				fiExpIsFsExp(es[0]) && type != FiTypeVoid();
+			} else false;
+		FiCast(ex,__,__,__,__): fiExpIsFsExp(ex);
+		FiCall(f, args,__,__): fiExpIsFsExp(f) && forall(args, fiExpIsFsExp);
+		FiSwitch(__,__,__,__,__): false;
+		FiLambda(__,__,__,__): true;
+		FiLet(__,__,__,__,__, __): false;
+		FiIf(e1, e2, e3,__, __): fiExpIsFsExp(e1) && fiExpIsFsExp(e2) && fiExpIsFsExp(e3);   
+		FiCallPrim(op, es,__, __): {
+			forall(es, fiExpIsFsExp) &&
+			switch (op) {
+				FcAssignPrim(): false;
+				FcSetMutablePrim(__): false;
+				default: true;
+			}
+		}
+		FiRequire(__,__,__,__): false;
+		FiUnsafe(__,__,__,__): false;
+		default: true;
+	}
+}
+
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): exists(es, \x -> fiExpHasEffects(x, effects));
+		FiCast(ex,__,__,__,__): fiExpHasEffects(ex, effects);
+		FiCall(f, args,__,__): fiExpHasEffects(f, effects) || exists(args, \x -> fiExpHasEffects(x, effects));
+		FiSwitch(__,__,cases,__,__): exists(cases, \c -> fiExpHasEffects(c.body, effects));
+		FiLambda(__,body,__,__): fiExpHasEffects(body, effects);
+		FiLet(__,__,e1,e2,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects);
+		FiIf(e1, e2, e3,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects) || fiExpHasEffects(e3, effects);
+		FiCallPrim(op, es,__, __): {
+			exists(es, \x -> fiExpHasEffects(x, effects)) ||
+			switch (op) {
+				FcAssignPrim(): true;
+				FcSetMutablePrim(__): true;
+				FcRefPrim(): true;
+				default: false;
+			}
+		}
+		FiRequire(__,ex,__,__): fiExpHasEffects(ex, effects);
+		FiUnsafe(__,__,__,__): true;
+		FiVar(name,__,__): containsSet(effects.hasEffects, name);
+		default: false;
+	}
+}

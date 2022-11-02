@@ -22,17 +22,8 @@ public class NativeHashMap extends NativeHost {
 		none = FlowRuntime.struct_prototypes[none_id];
 	}
 
-	public static final <K, V> HashMap<K, V> init(Func1<Integer, K> hash, int cap, double load) {
+	public static final <K, V> HashMap<K, V> init(Func1<Integer, K> hash, int cap, double load, Object dummy[]) {
 		return new HashMap<K, V>(cap, (float)load);
-	}
-
-	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Func1<Integer, K> hash(Object map) {
-		return new Func1<Integer, K>() {
-			public Integer invoke(K k) {
-				return k.hashCode();
-			}
-		};
 	}
 
 	@SuppressWarnings (value="unchecked")
@@ -42,7 +33,7 @@ public class NativeHashMap extends NativeHost {
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Struct get(Object map, K key) {
+	public static final <K, V> Struct get(Object map, K key, Object dummy[]) {
 		V val = ((HashMap<K, V>) map).get(key);
 		if (val != null) {
 			final Struct copy = some.clone();
@@ -55,40 +46,49 @@ public class NativeHashMap extends NativeHost {
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Boolean contains(Object map, K key) {
+	public static final <K, V> Boolean contains(Object map, K key, Object dummy[]) {
 		return ((HashMap<K, V>) map).containsKey(key);
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Object remove(Object map, Object key) {
+	public static final <K, V> Object remove(Object map, Object key, Object dummy[]) {
 		HashMap<Object, Object> hashMap = (HashMap<Object, Object>) map;
 		hashMap.remove(key);
 		return null;
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> int size(Object map) {
+	public static final <K, V> int size(Object map, Object dummy[]) {
 		return ((HashMap<K, V>) map).size();
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Object clear(Object map) {
+	public static final <K, V> Object clear(Object map, Object dummy[]) {
 		((HashMap<K, V>) map).clear();
 		return null;
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Object clone(Object map) {
+	public static final <K, V> Object clone(Object map, Object dummy[]) {
 		return ((HashMap<K, V>) map).clone();
 	}
 
 	@SuppressWarnings (value="unchecked")
-	public static final <K, V> Object iter(Object map, Func2<Object, K, V> fn) {
+	public static final <K, V> Object iter(Object map, Func2<Object, K, V> fn, Object dummy[]) {
 		((HashMap<K, V>) map).forEach(new java.util.function.BiConsumer<K, V>() {
 			public void accept(K k, V v) {
 				fn.invoke(k, v);
 			}
 		});
 		return null;
+	}
+
+	@SuppressWarnings (value="unchecked")
+	public static final <K, V> Func1<Integer, K> hash(Object map, Object dummy[]) {
+		return new Func1<Integer, K>() {
+			public Integer invoke(K k) {
+				return k.hashCode();
+			}
+		};
 	}
 }
