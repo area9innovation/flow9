@@ -33,7 +33,7 @@ void initMaxHeapSize(int argc, const char* argv[]) {
 
 String double2string(Double x) { 
 	static std::ostringstream os; 
-	os << std::scientific << x;
+	os << std::setprecision(12) << x;
 	std::string str = os.str();
 	os.str("");
 	os.clear();
@@ -54,13 +54,14 @@ String double2string(Double x) {
 	}
 }
 
-std::string toStdString(String str) { 
+std::string toStdString(String s) {
+	const string& str = s->str;
 	std::size_t len = 0;
-	for (std::size_t i = 0; i < str->size(); ++i) {
-		char16_t ch = str->at(i);
+	for (std::size_t i = 0; i < str.size(); ++i) {
+		char16_t ch = str.at(i);
 		uint32_t x = ch;
-		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str->size()) {
-			char16_t ch1 = str->at(i + 1);
+		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str.size()) {
+			char16_t ch1 = str.at(i + 1);
 			if (0xDC00 <= ch1 && ch1 <= 0xDFFF) {
 				// surrogate pair detected
 				i += 1;
@@ -76,11 +77,11 @@ std::string toStdString(String str) {
 	}
 	std::string ret;
 	ret.reserve(len);
-	for (std::size_t i = 0; i < str->size(); ++i) {
-		char16_t ch = str->at(i);
+	for (std::size_t i = 0; i < str.size(); ++i) {
+		char16_t ch = str.at(i);
 		uint32_t x = ch; 
-		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str->size()) {
-			char16_t ch1 = str->at(i + 1);
+		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str.size()) {
+			char16_t ch1 = str.at(i + 1);
 			if (0xDC00 <= ch1 && ch1 <= 0xDFFF) {
 				// surrogate pair detected
 				i += 1;
@@ -220,8 +221,8 @@ bool Flow::isSameObj(Flow f) const {
 			case Type::INT:    return toInt() == f.toInt();
 			case Type::BOOL:   return toBool() == f.toBool();
 			case Type::DOUBLE: return toDouble() == f.toDouble();
-			case Type::STRING: return *toString() == *f.toString();
-			case Type::NATIVE: return toNative<Void>().get() == f.toNative<Void>().get();
+			case Type::STRING: return toString()->str == f.toString()->str;
+			case Type::NATIVE: return toNative()->nat == f.toNative()->nat;
 			default:           return val.get() == f.val.get();
 		}
 	}
@@ -229,65 +230,65 @@ bool Flow::isSameObj(Flow f) const {
 
 void flow2string(Flow v, String os) {
 	switch (v.type()) {
-		case Type::INT:    os->append(*int2string(v.toInt())); break;
-		case Type::BOOL:   os->append(*bool2string(v.toBool())); break;
-		case Type::DOUBLE: os->append(*double2string(v.toDouble())); break;
+		case Type::INT:    os->str.append(int2string(v.toInt())->str); break;
+		case Type::BOOL:   os->str.append(bool2string(v.toBool())->str); break;
+		case Type::DOUBLE: os->str.append(double2string(v.toDouble())->str); break;
 		case Type::STRING: {
-			os->append(u"\"");
-			for (char16_t c : *v.toString()) {
+			os->str.append(u"\"");
+			for (char16_t c : v.toString()->str) {
 				switch (c) {
-					case '"': os->append(u"\\\"");  break;
-					case '\\': os->append(u"\\\\"); break;
-					case '\n': os->append(u"\\n");  break;
-					case '\t': os->append(u"\\t");  break;
-					case '\r': os->append(u"\\r");  break;
-					default: *os += c; break;
+					case '"': os->str.append(u"\\\"");  break;
+					case '\\': os->str.append(u"\\\\"); break;
+					case '\n': os->str.append(u"\\n");  break;
+					case '\t': os->str.append(u"\\t");  break;
+					case '\r': os->str.append(u"\\r");  break;
+					default: os->str += c; break;
 				}
 			}
-			os->append(u"\"");
+			os->str.append(u"\"");
 			break;
 		}
 		case Type::ARRAY: {
 			Arr<Flow> a = v.val.dynamicCast<AArray>()->elements();
-			os->append(u"[");
+			os->str.append(u"[");
 			bool first = true;
 			for (Flow e : a->vect) {
 				if (!first) {
-					os->append(u", ");
+					os->str.append(u", ");
 				}
 				flow2string(e, os);
 				first = false;
 			}
-			os->append(u"]");
+			os->str.append(u"]");
 			break;
 		}
 		case Type::REF: {
-			os->append(u"ref ");
+			os->str.append(u"ref ");
 			flow2string(v.val.dynamicCast<AReference>()->reference(), os);
 			break;
 		}
 		case Type::FUNC: {
-			os->append(u"<function>"); 
+			os->str.append(u"<function>"); 
 			break;
 		}
 		case Type::NATIVE: {
-			os->append(u"<native>");
+			os->str.append(u"<native>");
 			break;
 		}
 		default: {
 			Ptr<AStruct> s = v.val.dynamicCast<AStruct>();
-			os->append(*s->name());
-			os->append(u"(");
+			os->str.append(s->name()->str);
+			os->str.append(u"(");
 			Arr<Flow> fields = s->fields();
 			bool first = true;
 			for (Flow f : fields->vect) {
 				if (!first) {
-					os->append(u", ");
+					os->str.append(u", ");
 				}
 				flow2string(f, os);
 				first = false;
 			}
-			os->append(u")");
+			os->str.append(u")");
 			break;
 		}
 	}
@@ -301,10 +302,10 @@ Int compareFlow(Flow v1, Flow v2) {
 			case Type::INT:    return Compare<Int>::cmp(v1.toInt(), v2.toInt());
 			case Type::BOOL:   return Compare<Bool>::cmp(v1.toBool(), v2.toBool());
 			case Type::DOUBLE: return Compare<Double>::cmp(v1.toDouble(), v2.toDouble());
-			case Type::STRING: return v1.toString()->compare(*v2.toString());
+			case Type::STRING: return v1.toString()->str.compare(v2.toString()->str);
 			case Type::ARRAY: {
-				Ptr<AArray> a1 = v1.val.dynamicCast<AArray>();
-				Ptr<AArray> a2 = v2.val.dynamicCast<AArray>();
+				Ptr<AArray> a1 = v1.toAArray();
+				Ptr<AArray> a2 = v2.toAArray();
 				Int c1 = Compare<Int>::cmp(a1->size(), a2->size());
 				if (c1 != 0) {
 					return c1;
@@ -321,25 +322,25 @@ Int compareFlow(Flow v1, Flow v2) {
 				}
 			}
 			case Type::REF: {
-				Ptr<AReference> r1 = v1.val.dynamicCast<AReference>();
-				Ptr<AReference> r2 = v2.val.dynamicCast<AReference>();
+				Ptr<AReference> r1 = v1.toAReference();
+				Ptr<AReference> r2 = v2.toAReference();
 				return compareFlow(r1->reference(), r2->reference());
 			}
 			case Type::FUNC: {
-				Ptr<AFunction> f1 = v1.val.dynamicCast<AFunction>();
-				Ptr<AFunction> f2 = v2.val.dynamicCast<AFunction>();
+				Ptr<AFunction> f1 = v1.toAFunction();
+				Ptr<AFunction> f2 = v2.toAFunction();
 				return Compare<void*>::cmp(f1.get(), f2.get());
 			}
 			case Type::NATIVE: {
-				Ptr<ANative> n1 = v1.val.dynamicCast<ANative>();
-				Ptr<ANative> n2 = v2.val.dynamicCast<ANative>();
-				return Compare<Void*>::cmp(n1->nat.get(), n2->nat.get());
+				Ptr<ANative> n1 = v1.toNative();
+				Ptr<ANative> n2 = v2.toNative();
+				return Compare<Void*>::cmp(n1->nat, n2->nat);
 			}
 			default: {
 				case Type::STRUCT: {
 					Ptr<AStruct> s1 = v1.val.dynamicCast<AStruct>();
 					Ptr<AStruct> s2 = v2.val.dynamicCast<AStruct>();
-					Int c1 = s1->name()->compare(*s2->name());
+					Int c1 = s1->name()->str.compare(s2->name()->str);
 					if (c1 != 0) {
 						return c1;
 					} else {

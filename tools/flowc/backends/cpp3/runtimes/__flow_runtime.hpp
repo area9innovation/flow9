@@ -14,75 +14,225 @@
 #include <map>
 #include <mutex>
 #include <atomic>
+#include <thread>
 #endif
 
 // C++ runtime for flow
 
 namespace flow {
 
-template<typename T>
-struct Ptr {
-	Ptr(): ptr() { }
-	Ptr(std::shared_ptr<T>&& p): ptr(std::move(p)) { }
-	Ptr(const std::shared_ptr<T>& p): ptr(p) { }
-	Ptr(Ptr&& p): ptr(std::move(p.ptr)) { }
-	Ptr(const Ptr& p): ptr(p.ptr) { }
 
-	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
-	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
-
-	T& operator *() { return ptr.operator*(); }
-	T* operator ->() { return ptr.operator->(); }
-	T* get() { return ptr.get(); }
-	T& operator *() const { return ptr.operator*(); }
-	T* operator ->() const { return ptr.operator->(); }
-	T* get() const { return ptr.get(); }
-	operator bool() const { return ptr.operator bool(); }
-
-	template<typename T1> Ptr<T1> staticCast() const { return std::static_pointer_cast<T1>(ptr); }
-	template<typename T1> Ptr<T1> dynamicCast() const { return std::dynamic_pointer_cast<T1>(ptr); }
-	template<typename T1> Ptr<T1> reinterpretCast() const { return std::reinterpret_pointer_cast<T1>(ptr); }
-
-	std::shared_ptr<T> ptr;
+template<std::size_t dim>
+struct MemBlock {
+	MemBlock(): nextFree(nullptr) { }
+	~MemBlock() { }
+	MemBlock* nextFree;
+	uint8_t data[dim];
 };
 
-template<>
-struct Ptr<void> {
-	Ptr(): ptr() { }
-	Ptr(std::shared_ptr<void>&& p): ptr(std::move(p)) { }
-	Ptr(const std::shared_ptr<void>& p): ptr(p) { }
-	Ptr(Ptr&& p): ptr(std::move(p.ptr)) { }
-	Ptr(const Ptr& p): ptr(p.ptr) { }
+template<std::size_t dim>
+struct BlockList {
+	BlockList(uint32_t s, BlockList* p = nullptr): 
+	size(s), mem(new MemBlock<dim>[s]), free(nullptr), prev(p) {
+		for (uint32_t i = 0; i < size; ++ i) {
+			// make a linked list of free blocks
+			mem[i].nextFree = (i + 1 == size) ? nullptr : mem + (i + 1);
+		}
+		free = mem;
+	}
 
-	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
-	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
+	void* allocate() {
+		if (free) {
+			MemBlock<dim>* allocated = free;
+			free = allocated->nextFree;
+			allocated->nextFree = nullptr;
+			return &allocated->data;
+		} else {
+			return prev ? prev->allocate() : nullptr;
+		}
+	}
+	bool deallocate(void* p) {
+		if (mem < p && p < mem + size) {
+			MemBlock<dim>* x = reinterpret_cast<MemBlock<dim>*>(reinterpret_cast<MemBlock<dim>**>(p) - 1);
+			x->nextFree = free;
+			free = x;
+			// successfully deallocated
+			return true;
+		} else {
+			// not from this block cache
+			return prev ? prev->deallocate(p) : false;
+		}
+	}
+	uint32_t size;
 
-	void* operator ->() { return ptr.operator->(); }
-	void* get() { return ptr.get(); }
-	void* operator ->() const { return ptr.operator->(); }
-	void* get() const { return ptr.get(); }
-	operator bool() const { return ptr.operator bool(); }
-
-	template<typename T1> Ptr<T1> staticCast() const { return std::static_pointer_cast<T1>(ptr); }
-	template<typename T1> Ptr<T1> dynamicCast() const { return std::dynamic_pointer_cast<T1>(ptr); }
-	template<typename T1> Ptr<T1> reinterpretCast() const { return std::reinterpret_pointer_cast<T1>(ptr); }
-
-	std::shared_ptr<void> ptr;
+private:
+	MemBlock<dim>*  mem;
+	MemBlock<dim>*  free;
+	BlockList<dim>* prev;
 };
 
-template<typename T, typename... As> Ptr<T> makePtr(As... as);
+template<std::size_t dim>
+struct BlockCache {
+	BlockCache(): cache(new BlockList<dim>((1024 * 64) / dim)) { }
+	static BlockCache& instance(const std::thread::id& id) { 
+		static std::map<std::thread::id, BlockCache> thread_instance; 
+		return thread_instance[id]; 
+	}
+
+	template<typename T>
+	T* allocate() {
+		if (void* m = cache->allocate()) {
+			return reinterpret_cast<T*>(m);
+		} else {
+			cache = new BlockList<dim>(cache->size * 2, cache);
+			return reinterpret_cast<T*>(cache->allocate());
+		}
+	}
+	template<typename T>
+	bool deallocate(T* ptr) {
+		return cache->deallocate(ptr);
+	}
+private:
+	BlockList<dim>* cache;
+};
+
+void initMaxHeapSize(int argc, const char* argv[]);
+extern std::atomic<std::size_t> allocated_bytes;
+extern std::size_t max_heap_size;
+
+struct AllocStats {
+	template<typename T>
+	void registerAlloc(std::size_t n) {
+		m.lock();
+		std::size_t to_alloc = n * sizeof(T);
+		if (allocated_bytes + to_alloc > max_heap_size) {
+			std::cerr << "Out of heap memory, already used: " << allocated_bytes << ", try to allocate: " << to_alloc << ", max heap size: " << max_heap_size << std::endl;
+			throw std::bad_alloc();
+		}
+		if (alloc_stats.find(sizeof(T)) == alloc_stats.end()) {
+			alloc_stats[sizeof(T)] = 0;
+		}
+		alloc_stats[sizeof(T)] += 1;
+		m.unlock();
+	}
+	template<typename T>
+	void registerDealloc(std::size_t n) {
+		m.lock();
+		std::size_t to_dealloc = n * sizeof(T);
+		if (allocated_bytes < to_dealloc) {
+			std::cerr << "to dealloc: " << to_dealloc << " which is greater, then it is allocated: " << allocated_bytes << std::endl;
+		}
+		m.unlock();
+	}
+	void print();
+
+	std::map<std::size_t, int> alloc_stats;
+	std::mutex m;
+};
+
+extern AllocStats* alloc_stats;
 
 
-/*
+const bool use_allocator_cache = false;
+
+template<class T>
+struct CachingMallocator {
+	typedef T value_type;
+	template <class U>
+    constexpr CachingMallocator (const CachingMallocator <U>&) noexcept {}
+	static CachingMallocator& instance() { static CachingMallocator _instance; return _instance; }
+
+	[[nodiscard]] T* allocate(std::size_t n) {
+		std::size_t to_alloc = n * sizeof(T);
+		allocated_bytes += to_alloc;
+		if constexpr (use_allocator_cache) {
+			return BlockCache<sizeof(T)>::instance(std::this_thread::get_id()).template allocate<T>();
+		} else {
+			if (T* p = static_cast<T*>(std::malloc(to_alloc))) {
+				return p;
+			} else {
+				throw std::bad_alloc();
+			}
+		}
+	}
+ 
+	void deallocate(T* p, std::size_t n) noexcept {
+		allocated_bytes -= n * sizeof(T);
+		if constexpr (use_allocator_cache) {
+			BlockCache<sizeof(T)>::instance(std::this_thread::get_id()).template deallocate<T>(p);
+		} else {
+			std::free(p);
+		}
+	}
+
+	static T* alloc() { 
+		return instance().allocate(1);
+	}
+	static void free(T* p) { instance().deallocate(p, 1); }
+
+private:
+	CachingMallocator() = default;
+};
+
 template<typename T>
-struct Ptr {
-	Ptr(): ptr() { }
-	Ptr(T* p): ptr(p) { }
-	Ptr(Ptr&& p): ptr(p.ptr) { }
-	Ptr(const Ptr& p): ptr(p.ptr) { }
+struct DefaultAllocator {
+	static T* alloc() { 
+		if (T* p = static_cast<T*>(std::malloc(sizeof(T)))) {
+			return p;
+		} else {
+			throw std::bad_alloc();
+		}
+	}
+	static void free(T* p) { std::free(p); }
+};
 
-	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
-	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
+template<typename T, typename A = CachingMallocator<T>>
+struct Ptr {
+	Ptr(): ptr(nullptr) { }
+	Ptr(T* p): ptr(p) { inc(); }
+	~Ptr() { dec(); }
+
+	template<typename... As>
+	static Ptr<T> make(As... as) { 
+		//return Ptr(new(A::alloc()) T(as...)); 
+		return Ptr(new T(as...)); 
+	}
+
+	Ptr(Ptr&& p): ptr(p.ptr) { p.ptr = nullptr; }
+	Ptr(const Ptr& p): ptr(p.ptr) { inc(); }
+
+	template<typename T1>
+	Ptr(Ptr<T1>&& p): ptr(static_cast<T*>(p.ptr)) { p.ptr = nullptr; }
+	template<typename T1>
+	Ptr(const Ptr<T1>& p): ptr(static_cast<T*>(p.ptr)) { inc(); }
+
+	Ptr& operator = (Ptr&& p) { 
+		dec();
+		ptr = p.ptr;
+		p.ptr = nullptr; 
+		return *this; 
+	}
+	Ptr& operator = (const Ptr& p) { 
+		dec();
+		ptr = p.ptr; 
+		inc();
+		return *this; 
+	}
+	void inc() {
+		if (ptr) {
+			++ ptr->refs;
+		} 
+	}
+	void dec() {
+		if (ptr) {
+			-- ptr->refs;
+			if (ptr->refs == 0) {
+				//A::free(ptr);
+				delete ptr;
+				ptr = nullptr;
+			}
+		}
+	}
 
 	T& operator *() { return *ptr; }
 	T* operator ->() { return ptr; }
@@ -92,39 +242,17 @@ struct Ptr {
 	T* get() const { return ptr; }
 	operator bool() const { return ptr; }
 
-	template<typename T1> Ptr<T1> staticCast() const { return static_cast<T1*>(ptr); }
-	template<typename T1> Ptr<T1> dynamicCast() const { return dynamic_cast<T1*>(ptr); }
-	template<typename T1> Ptr<T1> reinterpretCast() const { return reinterpret_cast<T1*>(ptr); }
-
+	template<typename T1> Ptr<T1> staticCast() const { 
+		return Ptr<T1>(static_cast<T1*>(ptr)); 
+	}
+	template<typename T1> Ptr<T1> dynamicCast() const { 
+		return Ptr<T1>(dynamic_cast<T1*>(ptr)); 
+	}
+	template<typename T1> Ptr<T1> reinterpretCast() const { 
+		return Ptr<T1>(reinterpret_cast<T1*>(ptr)); 
+	}
 	T* ptr;
 };
-
-template<>
-struct Ptr<void> {
-	Ptr(): ptr() { }
-	Ptr(void* p): ptr(p) { }
-	Ptr(Ptr&& p): ptr(p.ptr) { }
-	Ptr(const Ptr& p): ptr(p.ptr) { }
-
-	Ptr& operator = (Ptr&& p) { ptr = std::move(p.ptr); return *this; }
-	Ptr& operator = (const Ptr& p) { ptr = p.ptr; return *this; }
-
-	void* operator ->() { return ptr; }
-	void* get() { return ptr; }
-	void* operator ->() const { return ptr; }
-	void* get() const { return ptr; }
-	operator bool() const { return ptr; }
-
-	template<typename T1> Ptr<T1> staticCast() const { return static_cast<T1*>(ptr); }
-	template<typename T1> Ptr<T1> dynamicCast() const { return dynamic_cast<T1*>(ptr); }
-	template<typename T1> Ptr<T1> reinterpretCast() const { return reinterpret_cast<T1*>(ptr); }
-
-	void* ptr;
-};
-
-template<typename T, typename... As> Ptr<T> makePtr(As... as) { return Ptr<T>(new T(as...)); }
-
-*/
 
 enum Type {
 	INT = 0,   BOOL = 1, DOUBLE = 2, STRING = 3, NATIVE = 4, // scalar types
@@ -138,8 +266,6 @@ using Int = int32_t;
 using Bool = bool;
 using Double = double;
 using string = std::u16string;
-using String = Ptr<string>;
-using Native = Ptr<void>;
 
 // Base class for object classes
 
@@ -162,8 +288,6 @@ struct AFunction;
 
 struct Flow;
 
-void flow2string(Flow v, String os);
-
 template<typename T> struct Str;
 template<typename T> struct Arr;
 template<typename T> struct Ref;
@@ -173,6 +297,8 @@ template<typename T> struct Array;
 template<typename T> struct Reference;
 template<typename R, typename... As> struct Function;
 
+using String = Ptr<AString>;
+using Native = Ptr<ANative>;
 
 template<typename> struct BiCast;
 
@@ -182,34 +308,46 @@ template<typename T1> struct Cast {
 };
 
 struct AFlow {
-	virtual Int type() const = 0;
+	AFlow(): refs(0) { }
+	AFlow(const AFlow& f) = delete;
 	virtual ~AFlow() { }
+	virtual Int type() const = 0;
+	//std::atomic<std::size_t> refs = 0;
+	std::size_t refs;
 };
 
 struct AInt : public AFlow {
 	AInt(Int v): val(v) { }
 	Int type() const override { return Type::INT; }
-	const Int val;
+	Int val;
 };
 struct ABool : public AFlow {
 	ABool(Bool v): val(v) { }
 	Int type() const override { return Type::BOOL; }
-	const Bool val;
+	Bool val;
 }; 
 struct ADouble : public AFlow {
 	ADouble(Double v): val(v) { }
 	Int type() const override { return Type::DOUBLE; }
-	const Double val;
+	Double val;
 };
 struct AString : public AFlow {
-	AString(String s): str(s) { }
+	AString(): str() { }
+	AString(string s): str(s) { }
+	AString(const char16_t* s, Int len): str(s, len) { }
+	AString(char16_t c): str(1, c) { }
 	Int type() const override { return Type::STRING; }
-	const String str;
+	string str;
 };
 struct ANative : public AFlow {
-	ANative(Native n): nat(n) { }
+	ANative(void* n, std::function<void(void*)> r): nat(n), release(r) { }
+	~ANative() override { release(nat); }
 	Int type() const override { return Type::NATIVE; }
-	mutable Native nat;
+	template<typename T>
+	T* cast() { return reinterpret_cast<T*>(nat); }
+
+	void* nat;
+	std::function<void(void*)> release;
 };
 
 struct AStruct : public AFlow {
@@ -221,7 +359,7 @@ struct AStruct : public AFlow {
 	virtual Int compare(const AStruct&) const = 0;
 };
 
-struct AArray : public AFlow{
+struct AArray : public AFlow {
 	Int type() const override { return Type::ARRAY; }
 	virtual Int size() const = 0;
 	virtual Arr<Flow> elements() const = 0;
@@ -243,15 +381,15 @@ struct AFunction : public AFlow {
 std::string toStdString(String str);
 string fromStdString(const std::string& s);
 
-inline String makeString() { return makePtr<string>(); }
-inline String makeString(const char16_t* s) { return makePtr<string>(s); }
-inline String makeString(String s) { return makePtr<string>(*s); }
-inline String makeString(const string& s) { return makePtr<string>(s); }
-inline String makeString(string&& s) { return makePtr<string>(std::move(s)); }
-inline String makeString(char16_t ch) { return makePtr<string>(1, ch); }
-inline String makeString(const std::string& s) { return makePtr<string>(fromStdString(s)); }
-inline String makeString(const char16_t* s, Int len) { return makePtr<string>(s, len); }
-inline String makeString(const std::vector<char16_t>& codes) { return makePtr<string>(codes.data(), codes.size()); }
+inline String makeString() { return Ptr<AString>::make(); }
+inline String makeString(const char16_t* s) { return Ptr<AString>::make(s); }
+inline String makeString(String s) { return Ptr<AString>::make(s->str); }
+inline String makeString(const string& s) { return Ptr<AString>::make(s); }
+inline String makeString(string&& s) { return Ptr<AString>::make(std::move(s)); }
+inline String makeString(char16_t ch) { return Ptr<AString>::make(ch); }
+inline String makeString(const std::string& s) { return Ptr<AString>::make(fromStdString(s)); }
+inline String makeString(const char16_t* s, Int len) { return Ptr<AString>::make(s, len); }
+inline String makeString(const std::vector<char16_t>& codes) { return Ptr<AString>::make(codes.data(), codes.size()); }
 
 const String string_true = makeString(u"true");
 const String string_false = makeString(u"false");
@@ -259,8 +397,8 @@ const String string_1 = makeString(u"1");
 const String string_0 = makeString(u"0");
 
 inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
-inline Int string2int(String x) { if (x->size() == 0) return 0; else { try { return std::stoi(toStdString(x)); } catch (std::exception& e) { return 0; } } }
-inline Double string2double(String x) { if (x->size() == 0) return 0.0; else { try { return std::stod(toStdString(x)); } catch (std::exception& e) { return 0.0; } } }
+inline Int string2int(String x) { if (x->str.size() == 0) return 0; else { try { return std::stoi(toStdString(x)); } catch (std::exception& e) { return 0; } } }
+inline Double string2double(String x) { if (x->str.size() == 0) return 0.0; else { try { return std::stod(toStdString(x)); } catch (std::exception& e) { return 0.0; } } }
 inline String int2string(Int x) { return makeString(std::to_string(x)); }
 String double2string(Double x);
 inline String bool2string(Bool x) { return x ? string_true : string_false; }
@@ -279,8 +417,8 @@ template<> struct Compare<Bool> {
 	static Int cmp(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 };
 
-template<> struct Compare<int> {
-	static Int cmp(int v1, int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+template<> struct Compare<Int> {
+	static Int cmp(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 };
 
 template<> struct Compare<Double> {
@@ -292,18 +430,18 @@ template<> struct Compare<void*> {
 };
 
 template<> struct Compare<String> {
-	static Int cmp(String v1, String v2) { return v1->compare(*v2); }
+	static Int cmp(String v1, String v2) { return v1->str.compare(v2->str); }
 };
 
 template<typename T> 
 struct Arr {
 	Arr(): arr() { }
-	Arr(std::initializer_list<T> il): arr(std::move(makePtr<Array<T>>(il))) { }
+	Arr(std::initializer_list<T> il): arr(std::move(Ptr<Array<T>>::make(il))) { }
 	Arr(Ptr<Array<T>>&& a): arr(std::move(a)) { }
 	Arr(const Arr& a): arr(a.arr) { }
 	Arr(Arr&& a): arr(std::move(a.arr)) { }
-	Arr(std::size_t s): arr(std::move(makePtr<Array<T>>(s))) { }
-	static Arr makeEmpty() { return Arr(makePtr<Array<T>>(0)); }
+	Arr(std::size_t s): arr(std::move(Ptr<Array<T>>::make(s))) { }
+	static Arr makeEmpty() { return Arr(std::move(Ptr<Array<T>>::make())); }
 
 	Array<T>& operator *() { return arr.operator*(); }
 	Array<T>* operator ->() { return arr.operator->(); }
@@ -322,7 +460,7 @@ struct Arr {
 template<typename T> 
 struct Ref {
 	Ref() { }
-	Ref(const T& r): ref(makePtr<Reference<T>>(r)) { }
+	Ref(const T& r): ref(Ptr<Reference<T>>::make(r)) { }
 	Ref(const Ref& r): ref(r.ref) { }
 	Ref(Ptr<Reference<T>>&& r): ref(std::move(r)) { }
 	Ref(Ref&& r): ref(std::move(r.ref)) { }
@@ -367,8 +505,8 @@ template<typename R, typename... As>
 struct Fun {
 	typedef std::function<R(As...)> Fn;
 	Fun() {}
-	Fun(const Fn& f): fn(makePtr<Function<R, As...>>(f)) { }
-	Fun(Fn&& f): fn(makePtr<Function<R, As...>>(f)) { }
+	Fun(const Fn& f): fn(Ptr<Function<R, As...>>::make(f)) { }
+	Fun(Fn&& f): fn(Ptr<Function<R, As...>>::make(f)) { }
 	Fun(Ptr<Function<R, As...>>&& f): fn(std::move(f)) { }
 	Fun(const Ptr<Function<R, As...>>& f): fn(f) { }
 	Fun(const Fun& f): fn(f.fn) { }
@@ -396,15 +534,15 @@ struct Flow {
 	Flow(const Flow& v): val(v.val) { }
 	Flow(Flow&& v): val(std::move(v.val)) { }
 
-	Flow(Int i): val(makePtr<AInt>(i).staticCast<AFlow>()) { }
-	Flow(Bool b): val(makePtr<ABool>(b).staticCast<AFlow>()) { }
-	Flow(Double d): val(makePtr<ADouble>(d).staticCast<AFlow>()) { }
-	Flow(String s): val(makePtr<AString>(s).staticCast<AFlow>()) { }
-	Flow(Native n): val(makePtr<ANative>(n).staticCast<AFlow>()) { }
-	template<typename T> Flow(Str<T> s): val(s.str.template staticCast<AFlow>()) { }
-	template<typename T> Flow(Ref<T> r): val(r.ref.template staticCast<AFlow>()) { }
-	template<typename T> Flow(Arr<T> a): val(a.arr.template staticCast<AFlow>()) { }
-	template<typename R, typename... As> Flow(Fun<R, As...> f): val(f.fn.template staticCast<AFlow>()) { }
+	Flow(Int i): val(Ptr<AInt>::make(i)) { }
+	Flow(Bool b): val(Ptr<ABool>::make(b)) { }
+	Flow(Double d): val(Ptr<ADouble>::make(d)) { }
+	Flow(String s): val(s) { }
+	Flow(Native n): val(n) { }
+	template<typename T> Flow(Str<T> s): val(s.str) { }
+	template<typename T> Flow(Ref<T> r): val(r.ref) { }
+	template<typename T> Flow(Arr<T> a): val(a.arr) { }
+	template<typename R, typename... As> Flow(Fun<R, As...> f): val(f.fn) { }
 
 	AFlow& operator *() { return val.operator*(); }
 	AFlow* operator ->() { return val.operator->(); }
@@ -420,7 +558,8 @@ struct Flow {
 	Int toInt() const { return val.dynamicCast<AInt>()->val; }
 	Bool toBool() const { return val.dynamicCast<ABool>()->val; }
 	Double toDouble() const { return val.dynamicCast<ADouble>()->val; }
-	String toString() const { return val.dynamicCast<AString>()->str; }
+	String toString() const { return val.dynamicCast<AString>(); }
+	Native toNative() const { return val.dynamicCast<ANative>(); }
 	Ptr<AStruct> toAStruct() const { return val.dynamicCast<AStruct>(); }
 	Ptr<AArray> toAArray() const { return val.dynamicCast<AArray>(); }
 	Ptr<AReference> toAReference() const { return val.dynamicCast<AReference>(); }
@@ -430,13 +569,13 @@ struct Flow {
 	template<typename T> Arr<T> toArray() const;
 	template<typename T> Ref<T> toReference() const;
 	template<typename R, typename... As> Fun<R, As...> toFunction() const;
-	template<typename T> Ptr<T> toNative() const { return val.template dynamicCast<ANative>()->nat.template reinterpretCast<T>(); }
 
 	bool isSameObj(Flow v) const;
 
 	Ptr<AFlow> val;
 };
 
+void flow2string(Flow v, String os);
 
 template<typename T> inline Str<T>::Str(const Flow& f): str(f.toStruct<T>().str) { }
 
@@ -454,8 +593,7 @@ struct Array : public AArray {
 	Array(const Array& a): vect(a.vect) { }
 	Array(const Vect& v): vect(v) { }
 	Array(Vect&& v): vect(std::move(v)) { }
-	virtual ~Array() {}
-	Ptr<Array> copy() { return makePtr<Array>(vect); }
+	Ptr<Array> copy() { return Ptr<Array>::make(vect); }
 
 	Array& operator = (const Array& a) { vect.operator=(a.vect); return *this; }
 	Array& operator = (Array&& a) { vect.operator=(std::move(a.vect)); return *this; }
@@ -479,19 +617,20 @@ struct Array : public AArray {
 template<typename T> 
 struct Reference : public AReference {
 	Reference() { }
-	Reference(const T& r): val(makePtr<T>(r)) { }
-	Reference(T&& r): val(std::move(r)) { }
+	Reference(T r): val(r) { }
 	Reference(const Reference& r): val(r.val) { }
 	Reference(Reference&& r): val(std::move(r.val)) { }
 	Reference& operator = (Reference&& r) { val = std::move(r.val); return *this; }
 	Reference& operator = (const Reference& r) { val = r.val; return *this; }
-	Flow reference() const override { return Cast<T>::template To<Flow>::conv(*val); }
-	void set(Flow r) const override { *val = Cast<Flow>::template To<T>::conv(r); }
-	Int compare(Reference r) const { return Compare<T>::cmp(*val, *r.val); }
+	Flow reference() const override { return Cast<T>::template To<Flow>::conv(val); }
+	void set(Flow r) const override { val = Cast<Flow>::template To<T>::conv(r); }
+	Int compare(Reference r) const { return Compare<T>::cmp(val, r.val); }
+	T getValue() const { return val; }
+	void setValue(T v) const { val = v; }
 
 	template<typename T1> Ref<T1> cast() const;
 
-	mutable Ptr<T> val;
+	mutable T val;
 };
 
 template<typename R, typename... As> 
@@ -611,7 +750,7 @@ template<> struct BiCast<Bool>::From<Bool> { static Bool conv(Bool x) { return x
 template<> struct BiCast<Bool>::To<Double> { static Double conv(Bool x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::From<Double> { static Bool conv(Double x) { return x == 0.0 ? false : true; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::To<String> { static String conv(Bool x) { return bool2string(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::From<String> { static Bool conv(String x) { return *x == *string_true; } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Bool>::From<String> { static Bool conv(String x) { return x->str == string_true->str; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::To<Flow> { static Flow conv(Bool x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Bool>::From<Flow> { static Bool conv(Flow f) { 
 	switch (f.type()) {
@@ -651,7 +790,7 @@ template<> struct BiCast<Double>::From<Flow> { static Double conv(Flow f) {
 
 template<> struct BiCast<String>::To<Int> { static Int conv(String x) { return string2int(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::From<Int> { static String conv(Int x) { return int2string(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::To<Bool> { static Bool conv(String x) { return *x == *string_true || *x == *string_1; } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<String>::To<Bool> { static Bool conv(String x) { return x->str == string_true->str || x->str == string_1->str; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::From<Bool> { static String conv(Bool x) { return x ? string_true : string_false; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::To<Double> { static Double conv(String x) { return string2double(x); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<String>::From<Double> { static String conv(Double x) { return double2string(x); } static constexpr bool is_available() { return true; } };
@@ -724,7 +863,7 @@ template<> template<typename T> struct BiCast<Flow>::To<Str<T>> {
 			return r;
 		} else {
 			if constexpr (T::SIZE == 0) {
-				return makePtr<T>();
+				return Ptr<T>::make();
 			} else {
 				return T::fromAStruct(x.val.template dynamicCast<AStruct>());
 			}
@@ -955,7 +1094,7 @@ template<typename T> Str<T> Flow::toStruct() const {
 		return r;
 	} else {
 		if constexpr (T::SIZE == 0) {
-			return makePtr<T>();
+			return Ptr<T>::make();
 		} else {
 			return T::fromAStruct(toAStruct());
 		}
@@ -1037,7 +1176,7 @@ struct StructDef {
 	Constructor make;
 	std::vector<FieldDef> fields;
 };
-
+/*
 template<std::size_t dim>
 struct MemBlock {
 	MemBlock(): nextFree(nullptr) { }
@@ -1184,10 +1323,26 @@ struct CachingMallocator {
 private:
 	CachingMallocator() = default;
 };
+*/
 
-template<typename T, typename... As> Ptr<T> makePtr(As... as) { 
+/*
+template<typename T, typename... As> Ptr<T> Ptr::make(As... as) { 
 	return Ptr<T>(std::allocate_shared<T>(CachingMallocator<T>::instance(), as...));
 	//return Ptr<T>(std::make_shared<T>(as...));
 }
 
+template<typename T, typename... As> Ptr<T> Ptr::make(As... as) {
+	//T* place = CachingMallocator<T>::instance()
+	//return Ptr<T>(std::allocate_shared<T>(CachingMallocator<T>::instance(), as...));
+	//return Ptr<T>(std::make_shared<T>(as...));
+	return Ptr<T>(new T(as...));
+}
+
+template<typename T> void disposePtr(Ptr<T> p) {
+	//CachingMallocator<T>::instance().deallocate(p.ptr, 1);
+	//return Ptr<T>(std::allocate_shared<T>(CachingMallocator<T>::instance(), as...));
+	//return Ptr<T>(std::make_shared<T>(as...));
+	delete p.ptr;
+}
+*/
 }
