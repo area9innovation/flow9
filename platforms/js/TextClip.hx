@@ -501,6 +501,10 @@ class TextClip extends NativeWidgetClip {
 						textContent = textContent + line + "\n";
 					}
 
+					if (textLines.length > 0) {
+						textContent = textContent.substring(0, textContent.length - 1);
+					}
+
 					nativeWidget.textContent = textContent;
 					if (textBackgroundWidget != null) {
 						textBackgroundWidget.textContent = textContent;
@@ -1795,6 +1799,7 @@ class TextClip extends NativeWidgetClip {
 
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
+			baselineWidget.role = 'presentation';
 
 			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
