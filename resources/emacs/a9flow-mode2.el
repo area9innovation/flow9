@@ -708,11 +708,11 @@ point currently is on, and the associated indentation rules."
     (,(regexp-opt a9flow-builtins 'words) . 'font-lock-builtin-face)
     (,(regexp-opt a9flow-types 'words) . 'font-lock-type-face)
 
-    ;; fontify x in local declarations like:   x : Foo = ...
-    ("^\\s-*\\(\\<\\(\\sw\\|\\s_\\)+\\>\\) *\\(:[^=\n]+\\)?=" (1 'font-lock-variable-name-face))
-
     ;; structur constructors, unions (started from A-Z) and  global definitions in upper-case 
     ("\\<[A-Z][A-Za-z0-9_]*\\>"   . 'font-lock-type-face)
+
+    ;; fontify x in local declarations like:   x : Foo = ...
+    ("^\\s-*\\(\\<\\(\\sw\\|\\s_\\)+\\>\\) *\\(:[^=\n]+\\)?=" (1 'font-lock-variable-name-face))
  
     ;; hexcolour-keywords
     ("0x\\([abcdefABCDEF[:digit:]]\\{6\\}\\)"
