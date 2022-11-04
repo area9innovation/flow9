@@ -1786,11 +1786,14 @@ class TextClip extends NativeWidgetClip {
 			if (!isNativeWidget) {
 				return;
 			}
+			var tagName2 = this.tagName != null && this.tagName != '' ? this.tagName : tagName; 
 
 			this.deleteNativeWidget();
 
-			nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
-			this.updateClipID();
+			nativeWidget = Browser.document.createElement(tagName2);
+			if (tagName2 != 'span') {
+				this.updateClipID();
+			}
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
 			if (this.className != null && this.className != '') {
