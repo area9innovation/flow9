@@ -226,6 +226,10 @@ TRenderDynamicParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
+isRTLFlag(n: string, rtl) -> bool {
+	isUrlParameterTrue(n) || (rtl && !isUrlParameterFalse(n))
+}
+
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
@@ -288,7 +292,7 @@ TRenderParagraph(
 
 	updateFn = \wi -> {
 		oldWH = getValue(paragraphWHB);
-		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", storyW: "+toString(getValue(widthManager.storyWidth)) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
 		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful stuff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -309,12 +313,12 @@ TRenderParagraph(
 			Factor(1., 1.)
 		));
 
-		traceApi.trace(\-> "updateFn END wi = " + toString(wi) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(getValue(paragraphWHB))  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.trace(\-> "updateFn END wi = " + toString(wi) + ", storyW: "+toString(getValue(widthManager.storyWidth)) + ", paragraphWH: " + toString(getValue(paragraphWHB)) + ", linesCount: " + toString(getValue(linesCountB)));
 
 		deferred(\ -> updateBehaviour(reflowHappenedB, \t -> !t));
 	};
 
-	executeReflow = \ -> updateFn(getValue(widthManager.storyWidth) |> \sw -> if (sw == 0.0) getValue(awB) else sw);
+	executeReflow = \ -> updateFn(getValue(widthManager.storyWidth) |> \sw -> if (sw <= 0.0) getValue(awB) else sw);
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
@@ -456,7 +460,7 @@ makeHeadingGroup(
 	rtl : bool
 ) -> Tropic {
 
-	joinedWords = if (rtl || isUrlParameterFalse("join_words")) positionInteractiveWords(
+	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
@@ -556,9 +560,10 @@ joinGroupedWords(
 
 JoinTextAcc(
 	currentString : string,
+	currentSpaces : string,
 	style : [CharacterStyle],
 	lineNumber : int,
-	currentOffset : Transform<Point>,
+	currentOffset : Point,
 	acc : List<Tropic>
 );
 
@@ -581,18 +586,20 @@ joinTextWords(
 			};
 			joinResult = foldList(
 				words,
-				JoinTextAcc("", [], -1, const(point), EmptyList()),
+				JoinTextAcc("", "", [], -1, point, EmptyList()),
 				\acc, word -> appendOrJoinWord(
 					acc,
 					word,
-					genIndent,
 					reflowHappened,
 					wordsViewConstructor
 				)
 			);
 			TGroup(
 				// here we get group because words of the same style(wigiText) can be placed on few lines
-				list2array(addLastLine(joinResult, wordsViewConstructor)) |> reverseA
+				list2array(addLastLine(
+					JoinTextAcc(joinResult with currentOffset=Point(joinResult.currentOffset with x=joinResult.currentOffset.x-genIndent)),
+					wordsViewConstructor
+				)) |> reverseA
 			);
 		}
 	);
@@ -603,7 +610,6 @@ joinTextWords(
 appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
-	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
 ) -> JoinTextAcc {
@@ -615,29 +621,35 @@ appendOrJoinWord(
 		default : "";
 	};
 
-	wordOffset = const(Point(
-		getValue(word.inspector.x) - genIndent,
+	wordOffset = Point(
+		getValue(word.inspector.x),
 		getValue(word.inspector.y)
-	));
+	);
 
 	if (acc.lineNumber == -1) {
 		// There are no words yet.
-		JoinTextAcc(
+		if (isSpace(wordString)) acc else JoinTextAcc(
 			wordString,
+			"",
 			ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 			lineNumber,
 			wordOffset,
 			acc.acc
 		);
 	} else if (acc.lineNumber == lineNumber) {
+		ofs = Point(wordOffset with x=min(wordOffset.x, acc.currentOffset.x));
 		// just concat to current string
-		JoinTextAcc(acc with
-			currentString = wordString + acc.currentString,
-			currentOffset = wordOffset
+		if (isSpace(wordString)) JoinTextAcc(acc with
+			currentSpaces = wordString + acc.currentSpaces
+		) else JoinTextAcc(acc with
+			currentString = wordString + acc.currentSpaces + acc.currentString,
+			currentSpaces = "",
+			currentOffset = ofs
 		)
 	} else {
-		JoinTextAcc(
+		if (isSpace(wordString)) acc else JoinTextAcc(
 			wordString,
+			"",
 			ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 			lineNumber,
 			wordOffset,
@@ -652,7 +664,7 @@ addLastLine(
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
-			joinResult.currentOffset,
+			const(joinResult.currentOffset),
 			wordsViewConstructor(
 				joinResult.currentString,
 				joinResult.style
@@ -769,7 +781,7 @@ reflowTParaWords(
 	nextDistinct(linesCountB, length(text));
 
 	widthAndBaseline = TAlignParaLines(
-		availableParaWidth,
+		either(reflowAndWidth.second, availableParaWidth),
 		paraLines,
 		tightWidth,
 		alignment,
