@@ -1,0 +1,175 @@
+[
+
+Cpp3RuntimePart("command_args", 
+"
+struct CommandArgs {
+	static void init(int argc, const char* argv[]);
+	static std::map<string, string> args;
+};
+",
+"
+std::map<string, string> CommandArgs::args;
+void CommandArgs::init(int argc, const char* argv[]) {
+	for (int i = 1; i < argc; ++ i) { 
+		std::string arg(argv[i]);
+		std::size_t eq_ind = arg.find(\"=\");
+		if (eq_ind == std::string::npos) {
+			CommandArgs::args[fromStdString(arg)] = fromStdString(\"\");
+		} else {
+			std::string key = arg.substr(0, eq_ind);
+			std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
+			CommandArgs::args[fromStdString(key)] = fromStdString(val);
+		}
+	}
+}
+",
+"CommandArgs::init(argc, argv);", "",
+[Cpp3Std(["<map>"], [])], false
+),
+
+Cpp3RuntimePart("date_time_format", 
+"const std::string date_time_format(\"%Y-%m-%d %H:%M:%S\");",
+"", "", "", [], false),
+
+Cpp3RuntimePart("void_value", 
+"struct RuntimeVoid { };
+const Flow void_value(makePtr<RuntimeVoid>());
+","", "", "", [], false),
+
+Cpp3RuntimePart("to_binary", 
+"
+// Unions for conversion from Double/Int to 16-bit chars and back
+
+struct Two16Chars {
+	Two16Chars(char16_t v0, char16_t v1): c0(v0), c1(v1) {}
+	char16_t c0;
+	char16_t c1;
+};
+
+union IntOrChars {
+	Two16Chars chars;
+	Int int_;
+	IntOrChars(Int i): int_(i) { }
+	IntOrChars(char16_t i0, char16_t i1): chars(i0, i1) { }
+};
+struct Four16Chars {
+	Four16Chars(char16_t v0, char16_t v1, char16_t v2, char16_t v3): c0(v0), c1(v1), c2(v2), c3(v3) {}
+	char16_t c0;
+	char16_t c1;
+	char16_t c2;
+	char16_t c3;
+};
+
+union DoubleOrChars {
+	Four16Chars chars;
+	Double double_;
+	DoubleOrChars(Double d): double_(d) { }
+	DoubleOrChars(char16_t i0, char16_t i1, char16_t i2, char16_t i3): chars(i0, i1, i2, i3) { }
+};
+
+inline Void appendCharValue(Int c, String s) {
+	s->push_back(c & 0xffff);
+}
+inline Void appendBinaryInt32(Int value, String s) {
+	IntOrChars i(value);
+	appendCharValue(i.chars.c0, s);
+	appendCharValue(i.chars.c1, s);
+}
+inline Void appendIntValue(Int value, String s) {
+	if ((value & 0xFFFF8000) != 0) {
+		appendCharValue(0xFFF5, s);
+		appendBinaryInt32(value, s);
+	} else {
+		appendCharValue(value, s);
+	}
+}
+inline Void appendBooleanValue(Bool value, String s) {
+	appendCharValue(value ? 0xFFFE : 0xFFFD, s);
+}
+Void appendDoubleValue(Double value, String s);
+Void appendStringValue(String value, String s);
+Void appendBinaryValue(Flow value, String s, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<AStruct>>& structDefs);
+",
+"
+Void appendDoubleValue(Double value, String s) {
+	appendCharValue(0xFFFC, s);
+	DoubleOrChars d(value);
+	appendCharValue(d.chars.c0, s);
+	appendCharValue(d.chars.c1, s);
+	appendCharValue(d.chars.c2, s);
+	appendCharValue(d.chars.c3, s);
+}
+Void appendStringValue(String value, String s) {
+	Int str_len = value->size();
+	if (str_len > 65535) {
+		appendCharValue(0xFFFB, s);
+		appendBinaryInt32(str_len, s);
+	} else {
+		appendCharValue(0xFFFA, s);
+		appendCharValue(str_len, s);
+	}
+	for (auto c : *value) {
+		appendCharValue(c, s);
+	}
+}
+Void appendBinaryValue(Flow value, String s, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<AStruct>>& structDefs) {
+	switch (value.type()) {
+		case Type::STRING: {
+			appendStringValue(value.toString(), s);
+			break;
+		}
+		case Type::DOUBLE: {
+			appendDoubleValue(value.toDouble(), s);
+			break;
+		}
+		case Type::INT: {
+			appendIntValue(value.toInt(), s);
+			break;
+		}
+		case Type::BOOL: {
+			appendBooleanValue(value.toBool(), s);
+			break;
+		}
+		case Type::ARRAY: {
+			Ptr<AArray> a = value.val.dynamicCast<AArray>();
+			Int l = a->size();
+			if (l == 0) {
+				appendCharValue(0xFFF7, s);
+			} else {
+				if (l > 65535) {
+					appendCharValue(0xFFF9, s);
+					appendBinaryInt32(l, s);
+				} else {
+					appendCharValue(0xFFF8, s);
+					appendCharValue(l, s);
+				}
+				Arr<Flow> elements = a->elements();
+				for (Flow v : elements->vect) {
+					appendBinaryValue(v, s, structIdxs, structDefs);
+				}
+			}
+			break;
+		}
+		default: {
+			Ptr<AStruct> str = value.val.dynamicCast<AStruct>();
+			String struct_id = str->name();
+			if (structIdxs.find(*struct_id) == structIdxs.end()) {
+				structIdxs[*struct_id] = structDefs.size();
+				structDefs.push_back(str);
+			}
+			Int struct_idx = structIdxs.at(*struct_id);
+			appendCharValue(0xFFF4, s);
+			appendCharValue(struct_idx, s);
+			Arr<Flow> fields = str->fields();
+			for (Flow w : fields->vect)  {
+				appendBinaryValue(w, s, structIdxs, structDefs);
+			}
+			break;
+		}
+	}
+}
+", "", "",
+[Cpp3Std(["<unordered_map>"], [])], false
+)
+
+]

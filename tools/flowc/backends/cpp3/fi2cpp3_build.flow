@@ -1,0 +1,174 @@
+import tools/flowc/backends/cpp3/fi2cpp3_util;
+import string_utils;
+import sys/process;
+
+export {
+	fi2cpp3Build(cfg: FiCpp3Config, main_name: string, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void;
+}
+
+fi2cpp3Build(cfg: FiCpp3Config, main_name: string, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
+	if (length(qt_deps) == 0) {
+		if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") == "1") {
+			fi2cpp3BuildDirectly(cfg, main_name, sources, \code ->
+				if (code != 0) callback(code) else fi2cpp3CopyExecutable(cfg, main_name, callback)
+			);
+		} else {
+			callback(0);
+		}
+	} else {
+		fi2cpp3BuildWithQmake(cfg, sources, qt_deps, \code ->
+			if (code != 0) callback(code) else fi2cpp3CopyExecutable(cfg, main_name, callback)
+		);
+	}
+}
+
+fi2cpp3BuildDirectly(cfg: FiCpp3Config, main_name: string, sources: [string], callback : (int) -> void) -> void {
+	cpp_sources = filter(sources, \path -> endsWith(path, ".cpp"));
+	opts = concat(fi2cpp3BuildOpts(cfg), ["-std=c++20"]);
+	args = concat3(cpp_sources, opts, ["-o", main_name]);
+	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "g++");
+	if (cfg.config.verbose > 0) {
+		fcPrintln("Compiling: '" + cpp_compiler + " " + strGlue(args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
+	}
+	result_exit_code = execSystemProcess(cpp_compiler, args, cfg.outputdir,
+		\out -> if (cfg.config.verbose > 0 && !isSpace(out)) {
+				fcPrintln(out, cfg.config.threadId);
+		},
+		\err -> if (!isSpace(err)) {
+			fcPrintln(err, cfg.config.threadId);
+		}
+	);
+	if (result_exit_code == 0) callback(0) else callback(5);
+}
+
+fi2cpp3BuildOpts(cfg: FiCpp3Config) -> [string] {
+	debug_param = getConfigParameterDef(cfg.config.config, "cpp-debug", "");
+	use_debug = debug_param == "" || debug_param == "0";
+	debug = if (use_debug) [] else {
+		["-O0", "-ggdb3"]
+	}
+	opt_param = getConfigParameterDef(cfg.config.config, "cpp-optimize", "");
+	optimize = if (opt_param == "" || use_debug) [] else {
+		["-O" + opt_param]
+	}
+	concatA([debug, optimize, ["-Wno-unused-value", "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-return-type", "-Wno-unused-but-set-variable", "-Wno-trigraphs"]]);
+}
+
+fi2cpp3BuildWithQmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
+
+	qt_conf = fi2cpp3QmakeConf(qt_deps, sources, cfg);
+	qt_conf_file = cfg.outfile + ".pro";
+	fi2cpp3SaveFile(qt_conf_file, qt_conf, cfg);
+	qmake_args = ["-o", "Makefile", qt_conf_file];
+	if (cfg.config.verbose > 0) {
+		fcPrintln("Preparing Makefile with cpp3: 'qmake " + strGlue(qmake_args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
+	}
+	qmake_result = execSystemProcessOutput("qmake", qmake_args, cfg.outputdir);
+	if (cfg.config.verbose > 0 || qmake_result.exitCode != 0) {
+		if (!isSpace(qmake_result.stdall)) {
+			fcPrintln(qmake_result.stdall, cfg.config.threadId);
+		}
+	}
+	if (qmake_result.exitCode != 0) callback(5) else 
+	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") != "1") callback(0) else {
+		build_concurrency = getConfigParameterDef(
+			cfg.config.config, 
+			"cpp-build-jobs", 
+			i2s(availableProcessors())
+		);
+		make_args = ["-j" + build_concurrency];
+		if (cfg.config.verbose > 0) {
+			fcPrintln("Building Makefile with cpp3: 'make " + strGlue(make_args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
+		}
+		make_exit_code = execSystemProcess("make", make_args, cfg.outputdir,
+			\out -> if (cfg.config.verbose > 0 && !isSpace(out)) {
+				fcPrintln(out, cfg.config.threadId);
+			},
+			\err -> if (!isSpace(err)) {
+				fcPrintln(err, cfg.config.threadId);
+			}
+		);
+		if (make_exit_code != 0) callback(5) else callback(0);
+	}
+}
+
+fi2cpp3QmakeConf(qt_deps: [Cpp3Qt], sources: [string], cfg: FiCpp3Config) -> string {
+	qt_opts = concatA(map(qt_deps, \dep -> dep.opts));
+	unconditional = fold(qt_opts, makeTree(), \acc, opt -> 
+		if (opt.condition != "") acc else 
+		setTree(acc, opt.name, concat(lookupTreeDef(acc, opt.name, []), [opt]))
+	);
+	folded = fold(qt_opts, makeTree(), \acc, opt -> {
+		opt_cond = lookupTreeDef(acc, opt.condition, makeTree());
+		opt_name = lookupTreeDef(opt_cond, opt.name, makeTree());
+		opt_sign = lookupTreeDef(opt_name, opt.sign, []);
+		setTree(acc, opt.condition, 
+			setTree(opt_cond, opt.name, 
+				setTree(opt_name, opt.sign, 
+					concat(opt_sign, opt.value)
+				)
+			)
+		)
+	});
+	opts2qt = \opts -> {
+		foldTree(opts, "", \name, opt, acc ->
+			foldTree(opt, acc, \sign, vals, ac ->
+				name + " " + sign + " " + strGlue(vals, " ") + "\n"
+			)
+		)
+	}
+	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "");
+	cpp_sources = filter(sources, \path -> endsWith(path, ".cpp"));
+	hpp_sources = filter(sources, \path -> endsWith(path, ".hpp"));
+	cxx_opts = superglue(concat(["-std=c++2a"], fi2cpp3BuildOpts(cfg)), \opt -> "QMAKE_CXXFLAGS += " + opt, "\n");
+	conf_opts = strGlue(cfg.qtOpts, "\n");
+	opt_param = getConfigParameterDef(cfg.config.config, "cpp-optimize", "");
+
+	"QT += core\n" +
+	(if (exists(qt_deps, \dep -> exists(dep.includes, \inc -> strContains(inc, "QtConcurrent")))) "QT += concurrent\n" else "") +
+	(if (opt_param == "") "" else "QMAKE_CXXFLAGS_RELEASE += -O" + opt_param + "\n") +
+	"CONFIG += -std=c++2a\n" +
+	(if (cpp_compiler == "") "" else "QMAKE_CXX = " + cpp_compiler + "\n") +
+	"QMAKE_CXXFLAGS += -Wno-unused-value -Wno-unused-parameter -Wno-unused-variable -Wno-return-type -Wno-unused-but-set-variable -Wno-trigraphs\n" +
+	(if (isConfigParameterTrue(cfg.config.config, "cpp-debug")) "CONFIG+=debug\n" else "") +
+	(if (isConfigParameterTrue(cfg.config.config, "cpp-optimize")) "CONFIG+=release\n" else "") +
+	cxx_opts + "\n" +
+	(if (conf_opts == "") "" else conf_opts + "\n") +
+	foldTree(folded, "", \cond, opts, acc ->
+		if (cond != "") {
+			cond + " {\n" + strIndent(opts2qt(opts)) + "\n}\n";
+		} else {
+			opts2qt(opts)
+		}
+	) + "\n" +
+	// TODO: enable a precompiled headers?
+	//"PRECOMPILED_HEADER = __flow_includes.hpp\n" +
+	concatStrings(map(hpp_sources, \hpp -> 
+		"HEADERS += " + hpp + "\n"
+	)) + "\n" +
+	concatStrings(map(cpp_sources, \cpp ->
+		"SOURCES += " + cpp + "\n"
+	)) + "\n";
+}
+
+fi2cpp3CopyExecutable(cfg: FiCpp3Config, main_name: string, callback : (int) -> void) -> void {
+	executable = if (windows()) {
+		changeFileExt(cfg.outfile, ".exe");
+	} else {
+		cfg.outfile;
+	}
+	built_executable = pathCombineMany([cfg.outputdir, main_name]);
+	if (fileExists(built_executable)) {
+		copy_code = execSystemProcess("cp", [built_executable, executable], ".",
+			\out -> if (cfg.config.verbose > 0 && !isSpace(out)) {
+				fcPrintln(out, cfg.config.threadId);
+			},
+			\err -> if (!isSpace(err)) {
+				fcPrintln(err, cfg.config.threadId);
+			}
+		);
+		if (copy_code != 0) callback(5) else callback(0);
+	} else {
+		callback(0);
+	}
+}

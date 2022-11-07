@@ -2246,6 +2246,16 @@ public class Native extends NativeHost {
 			}
 		};
 	}
+	public static final <RT, A1, A2, A3> Func3<RT, A1, A2, A3> synchronizedTernaryFn(Object lock, Func3<RT, A1, A2, A3> fn) {
+		return new Func3<RT, A1, A2, A3>() {
+			@Override
+			public RT invoke(A1 arg1, A2 arg2, A3 arg3) {
+				synchronized (lock) {
+					return fn.invoke(arg1, arg2, arg3);
+				}
+			}
+		};
+	}
 
 	public static final String urlDecode(String s) {
 		try {
