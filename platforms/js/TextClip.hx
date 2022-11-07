@@ -501,6 +501,10 @@ class TextClip extends NativeWidgetClip {
 						textContent = textContent + line + "\n";
 					}
 
+					if (textLines.length > 0) {
+						textContent = textContent.substring(0, textContent.length - 1);
+					}
+
 					nativeWidget.textContent = textContent;
 					if (textBackgroundWidget != null) {
 						textBackgroundWidget.textContent = textContent;
@@ -1782,11 +1786,14 @@ class TextClip extends NativeWidgetClip {
 			if (!isNativeWidget) {
 				return;
 			}
+			var tagName2 = this.tagName != null && this.tagName != '' ? this.tagName : tagName; 
 
 			this.deleteNativeWidget();
 
-			nativeWidget = Browser.document.createElement(this.tagName != null && this.tagName != '' ? this.tagName : tagName);
-			this.updateClipID();
+			nativeWidget = Browser.document.createElement(tagName2);
+			if (tagName2 != 'span') {
+				this.updateClipID();
+			}
 			nativeWidget.classList.add('nativeWidget');
 			nativeWidget.classList.add('textWidget');
 			if (this.className != null && this.className != '') {
@@ -1795,6 +1802,7 @@ class TextClip extends NativeWidgetClip {
 
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
+			baselineWidget.role = 'presentation';
 
 			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
