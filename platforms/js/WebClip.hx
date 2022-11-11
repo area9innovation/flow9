@@ -114,9 +114,15 @@ class WebClip extends NativeWidgetClip {
 							}, false);
 						}
 
-						listenAndDispatch('pointerdown');
-						listenAndDispatch('pointerup');
-						listenAndDispatch('pointermove');
+						if (Platform.isSafari) {
+							listenAndDispatch('mousedown');
+							listenAndDispatch('mouseup');
+							listenAndDispatch('mousemove');
+						} else {
+							listenAndDispatch('pointerdown');
+							listenAndDispatch('pointerup');
+							listenAndDispatch('pointermove');
+						}
 					}
 
 					if (this.noScroll) {
