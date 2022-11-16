@@ -46,7 +46,7 @@ incTmpVarCounter(state : FiWiseState) -> int {
 
 // TODO
 initWiNatives(state : FiWiseState, natives : [FiNativeDec]) -> void {
-	state.flowWiNatives := fold(natives, makeTree(), \acc, decl -> 
+	state.flowWiNatives := fold(natives, makeTree(), \acc, decl ->
 		eitherMap(findNativeName(decl.name), \n -> setTree(acc, decl.name, n), acc)
 	);
 }
@@ -85,19 +85,20 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 		\fn -> fiFunctionDec2FlowWiFunction(state, fn, containsSet(exportNames, fnName), structs.second, acc),
 		acc
 	));
-	
+
 	extendedBody = foldSet(^(state.compareFnTypes), newBody, \acc, type -> {
 		newDecl = makeFlowWiComparatorFn(type, state.tmpVarCounter);
 		FlowWiFunction(newDecl with decl = acc);
 	});
-	
-	// TODO: imports if necessary 
+
+	// TODO: imports if necessary
 	systemImports = [
-		"tools/flowc/backends/wise/lib/array",
 		"tools/flowc/backends/wise/lib/string",
+		"tools/flowc/backends/wise/lib/array",
+		"lib/wise/runtime",
 	];
 	userImports = map(module.imports, \imp -> "lib/wise/" + imp.flowfile);
-	imports = fold(concat(userImports, systemImports), extendedBody, \acc, v -> FlowWiFlowWiseInclude(v, acc));
+	imports = fold(uniq(concat(systemImports, userImports)), extendedBody, \acc, v -> FlowWiFlowWiseInclude(v, acc));
 
 	FlowWiseAstList(Cons(imports, structs.first));
 }
@@ -119,9 +120,9 @@ fiStructs2wiTuples(structs : [FiTypeStruct]) -> Pair<List<FlowWiExp>, StructTupl
 			Cons(fiStruct2wiTupleAnnotation(struct, dict), ast),
 			// TODO: remove type?
 			StructTuple(setTree(
-				dict.link, 
+				dict.link,
 				struct.name,
-				StructTupleArgs(foldi(struct.args, makeTree(), \i, acc2, arg -> 
+				StructTupleArgs(foldi(struct.args, makeTree(), \i, acc2, arg ->
 					setTree(acc2, arg.name, StructTupleArg(i, arg.type))
 				))
 			))
@@ -324,7 +325,7 @@ matchFnType(declaredType : FiType, realType : FiType, acc : Tree<string, FiType>
 fiCallPrim2wiExp(state : FiWiseState, exp : FiCallPrim, scopeTemplates : Tree<string, string>, structs : StructTuple) -> Maybe<FlowWiExp> {
 	e2e = \e -> fiExp2FlowWiExp(state, e, scopeTemplates, structs);
 	structM = fiStructFn2wiExp(state, exp, scopeTemplates, structs);
-	
+
 	if (isSome(structM)) {
 		structM;
 	} else if (exp.op == FcArrayPrim()) {
@@ -511,9 +512,9 @@ fcPrimBools2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<Fl
 		FcIndexPrim() :  makeDef();
 		FcDerefPrim() : makeDef();
 		FcAssignPrim() : makeDef();
-		FcRefPrim() : makeDef(); 
+		FcRefPrim() : makeDef();
 		FcStructPrim(structName) : makeDef();
-		FcFieldPrim(name) : makeDef(); 
+		FcFieldPrim(name) : makeDef();
 		FcSetMutablePrim(name) : makeDef();
 		FcCreateClosurePrim(structName, functionName) : makeDef();
 		FcQuote() : makeDef();
@@ -555,9 +556,9 @@ fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, valueType 
 		FcIndexPrim() : Some(makeWiArrayIndex(e1, e2, fiType2FlowWiType(valueType, structs)));
 		FcDerefPrim() : makeError();
 		FcAssignPrim() : makeError();
-		FcRefPrim() : makeError(); 
+		FcRefPrim() : makeError();
 		FcStructPrim(__) : makeError();
-		FcFieldPrim(__) : makeError(); 
+		FcFieldPrim(__) : makeError();
 		FcSetMutablePrim(__) : makeError();
 		FcCreateClosurePrim(__, __) : makeError();
 		FcQuote() : makeError();
@@ -806,7 +807,7 @@ wiType2string(type : FlowWiType) -> string {
 		FlowWiTupletype(types, __) : "(" + strGlue(map(types, wiType2string), ", ") + ")";
 		FlowWiArrayType(t) : "i32"; // pointer
 	}
-	
+
 }
 
 wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>) -> string {
@@ -831,7 +832,7 @@ wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>) -> string {
 				expressions[0];
 			} else {
 				"{" + eol + strGlue(expressions, ";" + eol) + ";" + eol + "}";
-				
+
 			}
 		}
 		FlowWiCall(e, exps) : wiExp2string(e, Some(exp)) + "(" + strGlue(map(exps, wiExpDef2string), ", ") + ")";
@@ -868,9 +869,12 @@ wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>) -> string {
 extractExpsFromFlowWiBrace(e : FlowWiBrace, acc : [FlowWiExp]) -> [FlowWiExp] {
 	concat(
 		acc,
-		mapConcat(e.expsemi, \s -> 
-			if (isSameStructType(s, FlowWiBrace([]))) extractExpsFromFlowWiBrace(s, []) else [s]
-		)
+		mapConcat(e.expsemi, \s -> {
+			switch (s) {
+				FlowWiBrace(__): extractExpsFromFlowWiBrace(s, []);
+				default: [s];
+			}
+		})
 	)
 }
 
@@ -880,7 +884,7 @@ wiAtom2string(exp : FlowWiAtom, parent : Maybe<FlowWiExp>) -> string {
 		FlowWiBool(b) : if (b) "true" else "false";
 		FlowWiInt(int_0) : i2s(int_0);
 		FlowWiDouble(double_0) : {
-			// TODO: find the reason ? 
+			// TODO: find the reason ?
 			// ds(0.0) == 0 == i32
 			isInt = isDigits(d2s(if (double_0 >= 0.) double_0 else double_0 * (-1.)));
 			d2s(double_0) + (if (isInt) ".0" else "");

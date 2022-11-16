@@ -229,3 +229,7 @@ https://www.microsoft.com/en-us/research/uploads/prod/2020/11/perceus-tr-v1.pdf
 
 We support a special kind of string surrounded by << anything >>, which is hoped
 to help make mixing muliple languages easier.
+
+# Efficient functional data structures
+
+http://trout.me.uk/lisp/vlist.pdf
