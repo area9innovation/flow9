@@ -2,7 +2,8 @@ import tools/flowc/statements/fs_helpers;
 import tools/flowc/incremental/fi_type_unify;
 
 export {
-	fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat;
+	fsWrapCaseVarsWithCasts(e : FsStat, names: FiGlobalNames) -> FsStat;
+
 	fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
 	fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
 
@@ -11,21 +12,65 @@ export {
 
 	fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat;
 	fsInterpolateTyparsExp(e : FsExp, names: FiGlobalNames) -> FsExp;
+
+	fsStatReturnVars(s : FsStat) -> FsStat;
+	fsExpReturnVars(e : FsExp) -> FsExp;
 }
 
-fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
+fsWrapCaseVarsWithCasts(s : FsStat, names: FiGlobalNames) -> FsStat {
+	switch(s) {
+		FsIf(__, s1, s2, __): {
+			FsIf(s with
+				s1 = fsWrapCaseVarsWithCasts(s1, names),
+				s2 = fsWrapCaseVarsWithCasts(s2, names),
+			);
+		}
+		FsSwitch(v, __, cases, __): {
+			FsSwitch(s with
+				cases = map(cases, \c -> {
+					body1 = fsWrapCaseVarsWithCasts(c.body, names);
+					if (c.struct == "default") {
+						FsCase(c with body = body1);
+					} else {
+						switch (lookupTree(names.structs, c.struct)) {
+							Some(struct): {
+								args_to_wrap = filtermapi(c.args, \i, arg -> {
+									arg_type = struct.args[i].type;
+									arg_typars = fiCollectTypars(arg_type, makeSet());
+									//arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
+									if (isEmptySet(arg_typars)) None() else Some(Pair(arg.name, arg_type));
+								});
+								body2 = if (args_to_wrap == []) body1 else fsDoWrapCaseVarsWithCasts(body1, args_to_wrap);
+								FsCase(c with body = body2);
+							}
+							None(): {
+								fail0("struct " + c.struct + "is not found");
+							}
+						}
+					}
+				})
+			);
+		}
+		FsSeq(ss, __): {
+			FsSeq(s with ss = map(ss, \x -> fsWrapCaseVarsWithCasts(x, names)));
+		}
+		default: s;
+	}
+}
+
+fsDoWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
 	switch (e) {
-		FsLet(v, type, ex): {
-			switch (find(vars, \p -> p.first == v)) {
+		FsLet(v, ex): {
+			switch (find(vars, \p -> p.first == v.name)) {
 				Some(p): {
-					ex_wrapped = fsMakeCast(ex, fsExpType(ex), type);
+					ex_wrapped = fsMakeCast(ex, fsExpType(ex), v.type);
 					FsLet(e with e = ex_wrapped);
 				}
 				None(): e;
 			}
 		}
 		FsSeq(ss, __): {
-			FsSeq(e with ss = map(ss, \x -> fsWrapCaseVarsWithCasts(x, vars)));
+			FsSeq(e with ss = map(ss, \x -> fsDoWrapCaseVarsWithCasts(x, vars)));
 		}
 		default: e;
 	}
@@ -34,8 +79,8 @@ fsWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
 fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat {
 	do_cast = \x -> fsMakeStatCastsExplicit(x, type, names);
 	switch(s) {
-		FsLet(name, vtype, e1): {
-			FsLet(s with e = fsMakeExpCastsExplicit(e1, vtype, names, true));
+		FsLet(v, e1): {
+			FsLet(s with e = fsMakeExpCastsExplicit(e1, v.type, names, true));
 		}
 		FsIf(e1, s1, s2, __): {
 			FsIf(s with
@@ -58,7 +103,7 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 		FsRet(e): {
 			FsRet(fsMakeExpCastsExplicit(e, type, names, true));
 		}
-		FsTailCall(__): {
+		FsTailCall(): {
 			s;
 		}
 		FsVarDecl(var): {
@@ -66,6 +111,15 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 		}
 		FsAssign(var, e): {
 			FsAssign(var, fsMakeExpCastsExplicit(e, var.type, names, true));
+		}
+		FsMemDispose(e): {
+			FsMemDispose(fsMakeExpCastsExplicit(e, fsExpType(e), names, false));
+		}
+		FsMemProtect(e): {
+			FsMemProtect(fsMakeExpCastsExplicit(e, fsExpType(e), names, false));
+		}
+		FsMemUnprotect(e): {
+			FsMemUnprotect(fsMakeExpCastsExplicit(e, fsExpType(e), names, false));
 		}
 	}
 }
@@ -287,21 +341,15 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 
 fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>> {
 	switch(s) {
-		FsLet(v, vtype, e): {
-			if (v == "__") {
-				Pair(
-					FsLet(s with
-						e = fsExpSSA(e, vars)
-					),
-					vars
-				);
+		FsLet(v, e): {
+			if (v.name == "__") {
+				Pair(FsLet(s with e = fsExpSSA(e, vars)), vars);
 			} else {
-				v_ind = lookupTreeDef(vars, v, 0);
-				new_vars = setTree(vars, v, v_ind + 1);
+				new_vars = setTree(vars, v.name, lookupTreeDef(vars, v.name, 0) + 1);
 				Pair(
-					FsLet(s with
-						name = fsSSAvar(v, new_vars),
-						e = fsExpSSA(e, new_vars)
+					FsLet(
+						FsVar(v with name = fsSSAvar(v.name, new_vars)), 
+						fsExpSSA(e, new_vars)
 					),
 					new_vars
 				);
@@ -323,10 +371,19 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 					x = FsVar(var with name = fsSSAvar(var.name, vars)),
 					cases = map(cases, \c -> {
 						new_vars = fold(c.args, vars, \acc, arg -> 
-							if (arg == "__") acc else
-							setTree(acc, arg, lookupTreeDef(vars, arg, 0) + 1)
+							if (arg.name == "__") acc else
+							setTree(acc, arg.name, lookupTreeDef(vars, arg.name, 0) + 1)
 						);
-						FsCase(c with body = fsStatSSA(c.body, new_vars).first);
+						/*println(
+							"Old args:\n" + toStringFormatted(c.args) + "\n" +
+							"New args:\n" + toStringFormatted(map(c.args, \arg -> FsVar(arg with name = fsSSAvar(arg.name, vars)))) + "\n" +
+							"old_vars:\n" + superglue(tree2pairs(vars), \p -> p.first + " -> " + i2s(p.second), ", ") + "\n" +
+							"new_vars:\n" + superglue(tree2pairs(new_vars), \p -> p.first + " -> " + i2s(p.second), ", ") + "\n"
+						);*/
+						FsCase(c with
+							args = map(c.args, \arg -> FsVar(arg with name = fsSSAvar(arg.name, new_vars))),
+							body = fsStatSSA(c.body, vars).first
+						);
 					})
 				), 
 				vars
@@ -345,15 +402,15 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 		FsRet(e): {
 			Pair(FsRet(fsExpSSA(e, vars)), vars);
 		}
-		FsTailCall(__): {
+		FsTailCall(): {
 			Pair(s, vars);
 		}
 		FsVarDecl(var): {
 			if (var.name == "__") {
 				Pair(s, vars);
 			} else {
-				v_ind = lookupTreeDef(vars, var.name, 0);
-				new_vars = setTree(vars, var.name, v_ind + 1);
+				//v_ind = lookupTreeDef(vars, var.name, 0);
+				new_vars = setTree(vars, var.name, lookupTreeDef(vars, var.name, 0) + 1);
 				Pair(
 					FsVarDecl(FsVar(var with name = fsSSAvar(var.name, new_vars))),
 					new_vars
@@ -369,6 +426,15 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 				vars
 			);
 		}
+		FsMemDispose(e): {
+			Pair(FsMemDispose(fsExpSSA(e, vars)), vars);
+		}
+		FsMemProtect(e): {
+			Pair(FsMemProtect(fsExpSSA(e, vars)), vars);
+		}
+		FsMemUnprotect(e): {
+			Pair(FsMemUnprotect(fsExpSSA(e, vars)), vars);
+		}
 	}
 }
 
@@ -377,14 +443,14 @@ fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
 		FsLambda(closure, args, body,__): {
 			new_vars = fold(args, vars, \acc, arg ->
 				if (arg.name == "__") acc else {
-					arg_i = lookupTreeDef(acc, arg.name, 0);
-					setTree(acc, arg.name, arg_i + 1);
+					//arg_i = lookupTreeDef(acc, arg.name, 0);
+					setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1);
 				}
 			);
 			FsLambda(e with
-				closure = map(closure, \v -> fsSSAvar(v, new_vars)),
+				closure = map(closure, \v -> FsVar(v with name = fsSSAvar(v.name, new_vars))),
 				args = map(args, \arg -> {
-					arg_i = lookupTreeDef(new_vars, arg.name, 0);
+					//arg_i = lookupTreeDef(new_vars, arg.name, 0);
 					FiFunArg(arg with 
 						name = fsSSAvar(arg.name, new_vars);
 					);
@@ -418,7 +484,7 @@ fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
 			FsUnsafe(e with fallback = fsExpSSA(ex, vars));
 		}
 		FsVar(name,__,__): {
-			i = lookupTreeDef(vars, name, 0);
+			//i = lookupTreeDef(vars, name, 0);
 			FsVar(e with name = fsSSAvar(name, vars));
 		}
 		FiVoid(__):       e;
@@ -431,13 +497,13 @@ fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
 
 fsSSAvar(v: string, vars: Tree<string, int>) -> string {
 	i = lookupTreeDef(vars, v, 0);
-	v + if (i <= 1) "" else "__ssa_" + i2s(i - 1);
+	v + if (i == 0) "" else "__ssa_" + i2s(i);
 }
 
 fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 	do_interpolate = \x -> fsInterpolateTyparsStat(x, names);
 	switch(s) {
-		FsLet(name, vtype, e1): {
+		FsLet(v, e1): {
 			FsLet(s with e = fsInterpolateTyparsExp(e1, names));
 		}
 		FsIf(e1, s1, s2, __): {
@@ -461,7 +527,7 @@ fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 		FsRet(e): {
 			FsRet(fsInterpolateTyparsExp(e, names));
 		}
-		FsTailCall(__): {
+		FsTailCall(): {
 			s;
 		}
 		FsVarDecl(var): {
@@ -469,6 +535,15 @@ fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 		}
 		FsAssign(var, e): {
 			FsAssign(var, fsInterpolateTyparsExp(e, names));
+		}
+		FsMemDispose(e): {
+			FsMemDispose(fsInterpolateTyparsExp(e, names));
+		}
+		FsMemProtect(e): {
+			FsMemProtect(fsInterpolateTyparsExp(e, names));
+		}
+		FsMemUnprotect(e): {
+			FsMemUnprotect(fsInterpolateTyparsExp(e, names));
 		}
 	}
 }
@@ -581,5 +656,82 @@ fsInterpolateTyparsCallPrim(e : FsCallPrim, names: FiGlobalNames) -> FsExp {
 		FcCreateClosurePrim(structName, functionName): def_interpolate();
 		FcQuote():   def_interpolate();
 		FcUnquote(): def_interpolate();
+	}
+}
+
+fsStatReturnVars(s : FsStat) -> FsStat {
+	switch(s) {
+		FsLet(v, e): {
+			FsLet(v, fsExpReturnVars(e));
+		}
+		FsIf(e, s1, s2, __): {
+			FsIf(s with
+				cond = fsExpReturnVars(e),
+				s1 = fsStatReturnVars(s1),
+				s2 = fsStatReturnVars(s2),
+			);
+		}
+		FsSwitch(v, __, cases, __): {
+			FsSwitch(s with
+				cases = map(cases, \c -> FsCase(c with body = fsStatReturnVars(c.body)))
+			);
+		}
+		FsSeq(ss, __): {
+			FsSeq(s with ss = mapConcat(ss, \x -> fsUnwrapSeq(fsStatReturnVars(x))));
+		}
+		FsRet(e): {
+			ret = FsRet(fsExpReturnVars(e));
+			switch (ret.e) {
+				FsVar(__,__,__): ret;
+				default: {
+					type = fsExpType(ret.e);
+					switch (type) {
+						FiTypeVoid(): {
+							FsSeq([FsWrapExp(ret.e), FsRet(FiVoid(-1))], type);
+						}
+						default: {
+							ret_var = FsVar("__ret_var__", type, FsVarRet());
+							FsSeq([FsLet(ret_var, ret.e), FsRet(ret_var)], type);
+						}
+					}
+				}
+			}
+		}
+		FsWrapExp(e): FsWrapExp(fsExpReturnVars(e));
+		FsAssign(var, e): {
+			FsAssign(var, fsExpReturnVars(e));
+		}
+		default: s;
+	}
+}
+
+fsExpReturnVars(e : FsExp) -> FsExp {
+	switch(e) {
+		FsLambda(__,__, body,__): {
+			FsLambda(e with body = fsStatReturnVars(body));
+		}
+		FsCall(fn, args, ret_type): {
+			FsCall(fsExpReturnVars(fn), map(args, fsExpReturnVars), ret_type);
+		}
+		FsCallPrim(__,es,__): {
+			FsCallPrim(e with es = map(es, fsExpReturnVars));
+		}
+		FsRequire(__, ex,__): {
+			FsRequire(e with e = fsExpReturnVars(ex));
+		}
+		FsUnsafe(__, ex,__): {
+			FsUnsafe(e with fallback = fsExpReturnVars(ex));
+		}
+		FsCast(ex, from, to): {
+			FsCast(e with e = fsExpReturnVars(ex));
+		}
+		FsTernaryIf(cond, pos, neg, type1): {
+			FsTernaryIf(e with
+				cond = fsExpReturnVars(cond),
+				s1 = fsExpReturnVars(pos),
+				s2 = fsExpReturnVars(neg),
+			);
+		}
+		default: e;
 	}
 }
