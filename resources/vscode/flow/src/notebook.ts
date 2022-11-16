@@ -9,14 +9,14 @@ let encoder = new TextEncoder();
 interface RawNotebookData {
 	cells: RawNotebookCell[]
 }
-  
+
 interface RawNotebookCell {
 	language: string;
 	value: string;
 	kind: vscode.NotebookCellKind;
 	editable?: boolean;
 }
-  
+
 export class FlowNotebookSerializer implements vscode.NotebookSerializer {
 	public readonly label: string = 'My Sample Content Serializer';
 
@@ -41,7 +41,7 @@ export class FlowNotebookSerializer implements vscode.NotebookSerializer {
 	public async serializeNotebook(data: vscode.NotebookData, token: vscode.CancellationToken): Promise<Uint8Array> {
 		// Map the Notebook data into the format we want to save the Notebook data as
 		let contents: RawNotebookData = { cells: []};
-  
+
 		for (const cell of data.cells) {
 			contents.cells.push({
 				kind: cell.kind,
@@ -49,7 +49,7 @@ export class FlowNotebookSerializer implements vscode.NotebookSerializer {
 				value: cell.value
 			});
 		}
-	
+
 		// Give a string of all the data to save and VS Code will handle the rest
 		return new TextEncoder().encode(JSON.stringify(contents));
 	}
@@ -59,12 +59,11 @@ export class FlowNotebookController {
 	readonly id = 'flow-notebook';
 	public readonly label = 'Flow9 Notebook Controller';
 	readonly supportedLanguages = ['flow'];
-  
+
 	private _executionOrder = 0;
 	private readonly _controller: vscode.NotebookController;
-  
+
 	constructor() {
-		this._startExecutor(() => {});
 		this._controller = vscode.notebooks.createNotebookController(this.id, 'flow-notebook', this.label);
 		this._controller.supportedLanguages = this.supportedLanguages;
 		this._controller.supportsExecutionOrder = true;
@@ -76,7 +75,7 @@ export class FlowNotebookController {
 	}
 	private _execChainOfPromises(promises: (() => Promise<void>)[], i : integer): void {
 		if (i < promises.length) {
-			promises[i]().then( 
+			promises[i]().then(
 				() => this._execChainOfPromises(promises, i + 1),
 				(x : string) => { }
 			);
@@ -88,7 +87,7 @@ export class FlowNotebookController {
 	private _executeCell(cell: vscode.NotebookCell): () => Promise<void> {
 		return () => new Promise((resolve, reject) => {
 			const exec = () => {
-				const execution = this._controller.createNotebookCellExecution(cell);	
+				const execution = this._controller.createNotebookCellExecution(cell);
 				execution.executionOrder = ++this._executionOrder;
 				execution.start(Date.now());
 				execution.token.onCancellationRequested(() => {
@@ -105,18 +104,18 @@ export class FlowNotebookController {
 				const is_repl_command = this._isAReplCommand(cell);
 				const flow_dir = tools.getFlowRoot();
 				// Possible options, passed to 'compile' command:
-				//   readable=1 
+				//   readable=1
 				//   "bin-dir=" + flow_dir + "/bin/"
-				//   repl-compile-output=1 
+				//   repl-compile-output=1
 				//   repl-save-tmp=1
 
 				// TODO: fix 'readable=1' so that the obtained code is working.
 				//const html_opts = "js-call-main=1 repl-no-quit=1 readable=1";
 				const html_opts = "js-call-main=1 repl-no-quit=1";
-				const request = should_be_rendered ? 
+				const request = should_be_rendered ?
 					"compile html=www/cell_" + cell.index  + ".html " + html_opts + "\n" + code + "\n\n":
 					(is_repl_command ? code + "\n" : "add cell_" + cell.index + " force exec\n" + code + "\n\n");
-				this._kernelChannel.append(request);
+				this._output(request);
 				if (!this._executor || !this._executor.stdin.write(request)) {
 					reject("Error while writing: \n" + request);
 				} else {
@@ -146,7 +145,7 @@ export class FlowNotebookController {
 		});
 	}
 	// Here 'msg' is a message from a previuos command (i.e. 'add cell_<i>' with a piece of code)
-	private _makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
+	private _makeTextOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void {
 		return (buffer : string) => {
 			if (!buffer.startsWith('Error:')) {
 				this._setCellTextSuccess(cell, buffer, execution);
@@ -157,7 +156,7 @@ export class FlowNotebookController {
 			}
 		}
 	}
-	private _makeHtmlOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void { 
+	private _makeHtmlOutCallback(resolve : () => void, reject : (x : any) => void, cell: vscode.NotebookCell, execution: vscode.NotebookCellExecution): (a : string) => void {
 		return (buffer : string) => {
 			if (!buffer.startsWith('Error:')) {
 				this._setCellHtmlSuccess(cell, buffer, execution);
@@ -231,7 +230,7 @@ export class FlowNotebookController {
 			let buffer: string = "";
 			this._executor.stdout.on("data", (buf : any) => {
 				let out = buf.toString();
-				this._kernelChannel.append(out);
+				this._output(out);
 				buffer += out;
 				// Check the end of execution of a previous command
 				if (buffer.endsWith("> ") || buffer.trim().endsWith("Bye.")) {
@@ -247,9 +246,9 @@ export class FlowNotebookController {
 					buffer = "";
 				}
 			});
-			this._executor.stdout.on("error", (out : string) => this._kernelChannel.append(out.toString()));
-			this._executor.stderr.on("data", (out : string) => this._kernelChannel.append(out.toString()));
-			this._executor.stderr.on("error", (out : string) => this._kernelChannel.append(out.toString()));
+			this._executor.stdout.on("error", (out : string) => this._output(out));
+			this._executor.stderr.on("data", (out : string) => this._output(out));
+			this._executor.stderr.on("error", (out : string) => this._output(out));
 			// Exit callbacks for executor
 			this._executor.on("close", (code : number, signal : string) => this._executor = null);
 			this._executor.on("disconnect", () => this._executor = null);
@@ -261,5 +260,12 @@ export class FlowNotebookController {
 	private _callback = (arg: string) => { };
 	// REPL interpreter process.
 	private _executor : ChildProcess = null;
-	private _kernelChannel: vscode.OutputChannel = vscode.window.createOutputChannel("Flow Notebook");
+	private _kernelChannel: vscode.OutputChannel = null;
+	private _output(msg: string): void {
+		if (!this._kernelChannel) {
+			this._kernelChannel = vscode.window.createOutputChannel("Flow Notebook");
+		}
+		this._kernelChannel.show(true);
+		this._kernelChannel.append(msg);
+	}
 }

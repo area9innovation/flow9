@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show(true);
+	serverChannel = vscode.window.createOutputChannel("Flow Language Server");
 
 
 	// Create an LSP client
@@ -161,11 +162,8 @@ function toggleHttpServer() {
 }
 
 function startHttpServer() {
-    if (!httpServerOnline) {
-		if (!serverChannel) {
-			serverChannel = vscode.window.createOutputChannel("Flow server");
-			serverChannel.show(true);
-		}
+	if (!httpServerOnline) {
+		serverChannel.show(true);
 		httpServer = tools.launchFlowcHttpServer(
 			getFlowRoot(),
 			showHttpServerOnline,
@@ -203,7 +201,7 @@ function startLspClient() {
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
 		documentSelector: [{scheme: 'file', language: 'flow'}],
-		outputChannel: flowChannel,
+		outputChannel: serverChannel,
 		revealOutputChannelOn: RevealOutputChannelOn.Info,
 		uriConverters: {
 			// FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
