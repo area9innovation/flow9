@@ -4,35 +4,7 @@
 
 namespace flow {
 
-/*
-std::atomic<std::size_t> allocated_bytes = 0;
-std::size_t max_heap_size = 2u * 1024u * 1024u * 1024u; // 1 Gb by default
-
-AllocStats* alloc_stats = nullptr;
-
-void AllocStats::print() {
-	std::cout << "Allocation stats: " << std::endl;
-	for (auto p : alloc_stats) {
-		std::cout << "sizeof " << p.first << " allocated " << p.second << " times" << std::endl;
-	}
-}
-
-void initMaxHeapSize(int argc, const char* argv[]) {
-	for (int i = 0; i < argc; ++i) {
-		std::string arg(argv[i]);
-		std::size_t eq_ind = arg.find("=");
-		if (eq_ind == std::string::npos) {
-			std::string key = arg.substr(0, eq_ind);
-			std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
-			if (key == "heap-size") {
-				max_heap_size = std::stoi(val);
-			}
-		}
-	}
-}
-*/
-
-String* double2string(Double x) { 
+string double2string(Double x) { 
 	static std::ostringstream os; 
 	os << std::setprecision(12) << x;
 	std::string str = os.str();
@@ -40,7 +12,7 @@ String* double2string(Double x) {
 	os.clear();
 	std::size_t point_pos = str.find('.');
 	if (point_pos == std::string::npos) {
-		return new String(str); 
+		return std2string(str);
 	} else {
 		bool is_integer = true;
 		for (std::size_t i = point_pos + 1; i < str.length() && is_integer; ++ i) {
@@ -48,14 +20,14 @@ String* double2string(Double x) {
 			is_integer = !('1' < ch && ch < '9');
 		}
 		if (is_integer) {
-			return new String(str.substr(0, point_pos)); 
+			return std2string(str.substr(0, point_pos)); 
 		} else {
-			return new String(str); 
+			return std2string(str); 
 		}
 	}
 }
 
-std::string String::toStd() const {
+std::string string2std(const string& str) {
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < str.size(); ++i) {
 		char16_t ch = str.at(i);
@@ -113,7 +85,7 @@ std::string String::toStd() const {
 	return ret; 
 }
 
-String::String(const std::string& s) {
+string std2string(const std::string& s) {
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < s.length(); ++i) {
 		uint8_t ch = s.at(i);
@@ -129,6 +101,7 @@ String::String(const std::string& s) {
 			len += 1;
 		}
 	}
+	string str;
 	str.reserve(len);
 	for (std::size_t i = 0; i < s.length(); ++i) {
 		uint8_t b1 = s.at(i);
@@ -195,6 +168,7 @@ String::String(const std::string& s) {
 			str.push_back(h);
 		}
 	}
+	return str;
 }
 
 const char* type2s(Int type) { 
@@ -211,104 +185,104 @@ const char* type2s(Int type) {
 	} 
 }
 
-bool Flow::isSameObj(Flow* f) { 
+bool AFlow::isSameObj(Flow f) const { 
 	if (type() != f->type()) {
 		return false;
 	} else {
 		switch (type()) {
-			case Type::INT:    return toInt() == f->toInt();
-			case Type::BOOL:   return toBool() == f->toBool();
-			case Type::DOUBLE: return toDouble() == f->toDouble();
-			case Type::STRING: return toString()->str == f->toString()->str;
-			case Type::NATIVE: return toNative()->nat == f->toNative()->nat;
-			default:           return this == f;
+			case Type::INT:    return getInt() == f->getInt();
+			case Type::BOOL:   return getBool() == f->getBool();
+			case Type::DOUBLE: return getDouble() == f->getDouble();
+			case Type::STRING: return getString()->str == f->getString()->str;
+			case Type::NATIVE: return getNative()->nat == f->getNative()->nat;
+			default:           return this == f.ptr;
 		}
 	}
 }
 
-void flow2string(Flow* v, String* os) {
+void flow2string(Flow v, string& str) {
 	switch (v->type()) {
-		case Type::INT:    os->str.append(int2string(v->toInt())->str); break;
-		case Type::BOOL:   os->str.append(bool2string(v->toBool())->str); break;
-		case Type::DOUBLE: os->str.append(double2string(v->toDouble())->str); break;
+		case Type::INT:    str.append(int2string(v->getInt())); break;
+		case Type::BOOL:   str.append(bool2string(v->getBool())); break;
+		case Type::DOUBLE: str.append(double2string(v->getDouble())); break;
 		case Type::STRING: {
-			os->str.append(u"\"");
-			for (char16_t c : v->toString()->str) {
+			str.append(u"\"");
+			for (char16_t c : v->getString()->str) {
 				switch (c) {
-					case '"': os->str.append(u"\\\"");  break;
-					case '\\': os->str.append(u"\\\\"); break;
-					case '\n': os->str.append(u"\\n");  break;
-					case '\t': os->str.append(u"\\t");  break;
-					case '\r': os->str.append(u"\\r");  break;
-					default: os->str += c; break;
+					case '"': str.append(u"\\\"");  break;
+					case '\\': str.append(u"\\\\"); break;
+					case '\n': str.append(u"\\n");  break;
+					case '\t': str.append(u"\\t");  break;
+					case '\r': str.append(u"\\r");  break;
+					default: str += c; break;
 				}
 			}
-			os->str.append(u"\"");
+			str.append(u"\"");
 			break;
 		}
 		case Type::ARRAY: {
-			AArr* a = v->toAArr();
-			os->str.append(u"[");
+			PVec a = v->getAVec();
+			str.append(u"[");
 			bool first = true;
 			for (Int i = 0; i < a->size(); ++i) {
 				if (!first) {
-					os->str.append(u", ");
+					str.append(u", ");
 				}
-				flow2string(a->getFlow(i), os);
+				flow2string(a->getFlowItem(i), str);
 				first = false;
 			}
-			os->str.append(u"]");
+			str.append(u"]");
 			break;
 		}
 		case Type::REF: {
-			os->str.append(u"ref ");
-			flow2string(v->toARef()->getFlow(), os);
+			str.append(u"ref ");
+			flow2string(v->getARef()->getFlowRef(), str);
 			break;
 		}
 		case Type::FUNC: {
-			os->str.append(u"<function>"); 
+			str.append(u"<function>"); 
 			break;
 		}
 		case Type::NATIVE: {
-			os->str.append(u"<native>");
+			str.append(u"<native>");
 			break;
 		}
 		default: {
-			AStr* s = v->toAStr();
-			os->str.append(s->name()->str);
-			os->str.append(u"(");
+			PStr s = v->getAStr();
+			str.append(s->name()->str);
+			str.append(u"(");
 			bool first = true;
 			for (Int i = 0; i < s->size(); ++ i) {
 				if (!first) {
-					os->str.append(u", ");
+					str.append(u", ");
 				}
-				flow2string(s->getFlow(i), os);
+				flow2string(s->getFlowField(i), str);
 				first = false;
 			}
-			os->str.append(u")");
+			str.append(u")");
 			break;
 		}
 	}
 }
 
-Int compareFlow(Flow* v1, Flow* v2) {
+Int compareFlow(Flow v1, Flow v2) {
 	if (v1->type() != v2->type()) {
 		return Compare<Int>::cmp(v1->type(), v2->type());
 	} else {
 		switch (v1->type()) {
-			case Type::INT:    return Compare<Int>::cmp(v1->toInt(), v2->toInt());
-			case Type::BOOL:   return Compare<Bool>::cmp(v1->toBool(), v2->toBool());
-			case Type::DOUBLE: return Compare<Double>::cmp(v1->toDouble(), v2->toDouble());
-			case Type::STRING: return v1->toString()->str.compare(v2->toString()->str);
+			case Type::INT:    return Compare<Int>::cmp(v1->getInt(), v2->getInt());
+			case Type::BOOL:   return Compare<Bool>::cmp(v1->getBool(), v2->getBool());
+			case Type::DOUBLE: return Compare<Double>::cmp(v1->getDouble(), v2->getDouble());
+			case Type::STRING: return v1->getString()->str.compare(v2->getString()->str);
 			case Type::ARRAY: {
-				AArr* a1 = v1->toAArr();
-				AArr* a2 = v2->toAArr();
+				PVec a1 = v1->getAVec();
+				PVec a2 = v2->getAVec();
 				Int c1 = Compare<Int>::cmp(a1->size(), a2->size());
 				if (c1 != 0) {
 					return c1;
 				} else {
 					for (Int i = 0; i < a1->size(); ++ i) {
-						Int c2 = compareFlow(a1->getFlow(i), a2->getFlow(i));
+						Int c2 = compareFlow(a1->getFlowItem(i), a2->getFlowItem(i));
 						if (c2 != 0) {
 							return c2;
 						}
@@ -317,30 +291,30 @@ Int compareFlow(Flow* v1, Flow* v2) {
 				}
 			}
 			case Type::REF: {
-				ARef* r1 = v1->toARef();
-				ARef* r2 = v2->toARef();
-				return compareFlow(r1->getFlow(), r2->getFlow());
+				PRef r1 = v1->getARef();
+				PRef r2 = v2->getARef();
+				return compareFlow(r1->getFlowRef(), r2->getFlowRef());
 			}
 			case Type::FUNC: {
-				AFun* f1 = v1->toAFun();
-				AFun* f2 = v2->toAFun();
-				return Compare<void*>::cmp(f1, f2);
+				PFun f1 = v1->getAFun();
+				PFun f2 = v2->getAFun();
+				return Compare<const void*>::cmp(f1.ptr, f2.ptr);
 			}
 			case Type::NATIVE: {
-				Native* n1 = v1->toNative();
-				Native* n2 = v2->toNative();
+				Native n1 = v1->getNative();
+				Native n2 = v2->getNative();
 				return Compare<Void*>::cmp(n1->nat, n2->nat);
 			}
 			default: {
 				case Type::STRUCT: {
-					AStr* s1 = v1->toAStr();
-					AStr* s2 = v2->toAStr();
+					PStr s1 = v1->getAStr();
+					PStr s2 = v2->getAStr();
 					Int c1 = s1->name()->str.compare(s2->name()->str);
 					if (c1 != 0) {
 						return c1;
 					} else {
 						for (Int i = 0; i < s1->size(); ++ i) {
-							Int c2 = compareFlow(s1->getFlow(i), s2->getFlow(i));
+							Int c2 = compareFlow(s1->getFlowField(i), s2->getFlowField(i));
 							if (c2 != 0) {
 								return c2;
 							}
