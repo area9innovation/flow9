@@ -849,44 +849,8 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private static Map<Long, Timer> timers = new ConcurrentHashMap<Long, Timer>();
-
-	private static Timer getTimer() {
-		Long threadId = Thread.currentThread().getId();
-		if (timers.containsKey(threadId)) {
-			return timers.get(threadId);
-		} else {
-			Timer timer = new Timer(true);
-			synchronized (timers) {
-				timers.put(threadId, timer);
-			}
-
-			TimerTask task = new TimerTask() {
-				public void run() {
-					invokeCallback(new Runnable() {
-						public void run() {
-							synchronized (timers) {
-								timers.put(Thread.currentThread().getId(), timer);
-							}
-						}
-					});
-				}
-			};
-			timer.schedule(task, 0);
-
-			return timer;
-		}
-	}
-
 	private static void cancelTimer(Timer timer) {
 		timer.cancel();
-		timers.forEach((key, value) -> {
-			if (value.equals(timer)) {
-				synchronized (timers) {
-					timers.remove(key);
-				}
-			}
-		});
 	}
 
 	public static void invokeCallback(Runnable cb) {
@@ -894,7 +858,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Timer scheduleTimerTask(int ms, final Func0<Object> cb) {
-		Timer timer = getTimer();
+		Timer timer = new Timer(true);
 		TimerTask task = new TimerTask() {
 			public void run() {
 				invokeCallback(new Runnable() {
@@ -910,14 +874,7 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		try {
-			timer.schedule(task, ms);
-		} catch (java.lang.IllegalStateException ex) {
-			// if the timer is canceled, then recreate it and use a new one
-			cancelTimer(timer);
-			Timer timer2 = getTimer();
-			timer2.schedule(task, ms);
-		}
+		timer.schedule(task, ms);
 		return timer;
 	}
 
