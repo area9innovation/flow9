@@ -131,17 +131,24 @@ function checkHttpServerStatus(initial : boolean) {
 }
 
 function outputHttpServerMemStats() {
-	client.sendRequest("workspace/executeCommand", {
-		command : "command",
-		arguments : ["server-mem-info=1", "do_not_log_this=1"]
-	}).then(
-		(out : string) => {
-			const lines = out.split("\n");
-			const mem_stats = lines.find((line) => line.indexOf("free") != -1);
-			showHttpServerOnline(mem_stats);
-		},
-		(err : any) => showHttpServerOffline()
-	);
+	try {
+		client.sendRequest("workspace/executeCommand", {
+			command : "command",
+			arguments : ["server-mem-info=1", "do_not_log_this=1"]
+		}).then(
+			(out : string) => {
+				const lines = out.split("\n");
+				const mem_stats = lines.find((line) => line.indexOf("free") != -1);
+				showHttpServerOnline(mem_stats);
+			},
+			(err : any) => showHttpServerOffline()
+		);
+	} catch (e) {
+		serverChannel.show(true);
+		serverChannel.appendLine("Restarting flow LSP server because of error:");
+		serverChannel.appendLine(e);
+		startLspClient();
+	}
 }
 
 function flowConsole() {
@@ -182,11 +189,14 @@ function stopHttpServer() {
 }
 
 function stopLspClient() {
-	if (client) {
-		client.sendNotification("exit");
-		client.stop();
+	try {
+		if (client) {
+			client.sendNotification("exit");
+			client.stop();
+		}
+	} finally {
+		client = null;
 	}
-	client = null;
 }
 
 function startLspClient() {
