@@ -2060,18 +2060,14 @@ public class Native extends NativeHost {
 		try {
 			while (true) {
 				int ch = System.in.read();
-				if (ch == -1) {
-					break;
-				} else {
-					line.add(Byte.valueOf((byte)ch));
-					if (ch == pattern[pos]) {
-						pos += 1;
-						if (pos == pattern.length) {
-							break;
-						}
-					} else {
-						pos = 0;
+				line.add(Byte.valueOf((byte)ch));
+				if (ch == pattern[pos]) {
+					pos += 1;
+					if (pos == pattern.length) {
+						break;
 					}
+				} else {
+					pos = 0;
 				}
 			}
 		} catch (IOException e) {
