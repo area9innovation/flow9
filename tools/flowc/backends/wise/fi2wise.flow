@@ -350,11 +350,11 @@ fiStructFn2wiExp(state : FiWiseState, exp : FiCallPrim, templates : Tree<string,
 		);
 	}
 	e2e = \e -> fiExp2FlowWiExp(state, e, templates);
-	makeTupleDot = \fieldName, type, e, isTerminalExp -> {
+	makeTupleDot = \fieldName, type, e -> {
 		eitherFn(
 			getFieldIndex(fieldName, type),
 			\index -> Some(FlowWiTupledot(
-				if (isTerminalExp) decostructStructInExp(e, fiType2FlowWiType(type, state.getStructFields)) else e,
+				decostructStructInExp(e, fiType2FlowWiType(type, state.getStructFields)).first,
 				index
 			)),
 			\ -> makeError("structure or field not found ")
@@ -369,15 +369,15 @@ fiStructFn2wiExp(state : FiWiseState, exp : FiCallPrim, templates : Tree<string,
 		);
 		FcFieldPrim(fieldName) : if (length(exp.es) == 1) {
 			switch (exp.es[0] : FiExp) {
-				FiVar(varName, type, __) : makeTupleDot(fieldName, type, FlowWiVar(varName), true);
+				FiVar(varName, type, __) : makeTupleDot(fieldName, type, FlowWiVar(varName));
 				FiCallPrim(__, __, type, __) : {
 					eitherFn(
 						fiStructFn2wiExp(state, exp.es[0], templates),
-						\e -> makeTupleDot(fieldName, type, e, false),
+						\e -> makeTupleDot(fieldName, type, e),
 						\-> makeError("wrong expression ")
 					);
 				}
-				FiCall(f, args, type, __): makeTupleDot(fieldName, type, FlowWiCall(e2e(f), map(args, e2e)), true);
+				FiCall(f, args, type, __): makeTupleDot(fieldName, type, FlowWiCall(e2e(f), map(args, e2e)));
 				default : makeError("");
 			}
 		} else {
@@ -450,14 +450,35 @@ fcPrims2flowWiExp(
 ) -> Maybe<FlowWiExp> {
 	constr1 = ref None();
 	constr2 = ref None();
-	isArrConstr = \e, v -> onlyOnce(v, \ -> isWiArrayConstruction(e)) ;
+	isArrConstr = \e, v -> onlyOnce(v, \ -> isWiArrayConstruction(e));
+	makeDefCmpr = \ -> fcPrimBools2flowWiExp(type, e1, e2);
 	if (isSameStructType(arg1Type, FiTypeArray(FiTypeVoid())) || isArrConstr(e1, constr1) || isArrConstr(e2, constr2)) {
 		arrType = if (isArrConstr(e1, constr1) && isArrConstr(e2, constr2)) FiTypeInt()
 				else if (isArrConstr(e1, constr1)) extractArrayFiType(arg2Type)
 				else extractArrayFiType(arg1Type);
 		fcPrimArrays2flowWiExp(type, e1, e2, setTemplateInFiType(arrType, scopeTemplates), state);
 	} else {
-		fcPrimBools2flowWiExp(type, e1, e2);
+		newType = setTemplateInFiType(arg1Type, scopeTemplates);
+		switch (newType : FiType) {
+			FiTypeName(name, __) : {
+				if (containsKeyTree(^(state.structs).table, name)) {
+					fcPrimStructs2flowWiExp(type, e1, e2, fiType2FlowWiType(newType, state.getStructFields), state);
+				} else {
+					makeDefCmpr()
+				}
+			}
+			FiTypeArray(__) : makeDefCmpr();
+			FiTypeFunction(__, __) : makeDefCmpr();
+			FiTypeRef(__) : makeDefCmpr();
+			FiTypeParameter(__) : makeDefCmpr();
+			FiTypeBool() : makeDefCmpr();
+			FiTypeInt() : makeDefCmpr();
+			FiTypeDouble() : makeDefCmpr();
+			FiTypeString() : makeDefCmpr();
+			FiTypeFlow() : makeDefCmpr();
+			FiTypeVoid() : makeDefCmpr();
+			FiTypeNative() : makeDefCmpr();
+		}
 	}
 }
 
@@ -492,10 +513,10 @@ fcPrimBools2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp) -> Maybe<Fl
 		FcDerefPrim() : makeDef();
 		FcAssignPrim() : makeDef();
 		FcRefPrim() : makeDef();
-		FcStructPrim(structName) : makeDef();
-		FcFieldPrim(name) : makeDef();
-		FcSetMutablePrim(name) : makeDef();
-		FcCreateClosurePrim(structName, functionName) : makeDef();
+		FcStructPrim(__) : makeDef();
+		FcFieldPrim(__) : makeDef();
+		FcSetMutablePrim(__) : makeDef();
+		FcCreateClosurePrim(__, __) : makeDef();
 		FcQuote() : makeDef();
 		FcUnquote() : makeDef();
 	}
@@ -533,6 +554,63 @@ fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, valueType 
 		FcNegPrim() : makeError();
 		FcArrayPrim() : makeError();
 		FcIndexPrim() : Some(makeWiArrayIndex(e1, e2, fiType2FlowWiType(valueType, state.getStructFields)));
+		FcDerefPrim() : makeError();
+		FcAssignPrim() : makeError();
+		FcRefPrim() : makeError();
+		FcStructPrim(__) : makeError();
+		FcFieldPrim(__) : makeError();
+		FcSetMutablePrim(__) : makeError();
+		FcCreateClosurePrim(__, __) : makeError();
+		FcQuote() : makeError();
+		FcUnquote() : makeError();
+	}
+}
+
+fcPrimStructs2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, eType : FlowWiType, state : FiWiseState) -> Maybe<FlowWiExp> {
+	makeCmprTuple = \-> switch(eType : FlowWiType) {
+		FlowWiBasictype(__) : None();
+		FlowWiFntype(__, __) : None();
+		FlowWiTupletype(__, __) : Some(makeComparisonWiTuples(e1, e2, eType, state.tmpVarCounter));
+		FlowWiArrayType(__) : None();
+	}
+	makeError = \-> {
+		println("Wrong operation : " + toString(type) + " (" + toString(e1) + ", " + toString(e2) + ")");
+		None();
+	}
+	makeExp = \cmpr -> eitherFn(
+		makeCmprTuple(),
+		\e -> {
+			tmpVarName = "_tmp_" + i2s(^(state.tmpVarCounter));
+			state.tmpVarCounter := ^(state.tmpVarCounter) + 1;
+			Some(FlowWiLet(
+				tmpVarName,
+				0,
+				FlowWiBasictype("i32"),
+				FlowWiBrace([FlowWiInt(0), e]), // 0 - to have {} in wise
+				FlowWiBrace([cmpr(FlowWiVar(tmpVarName))])
+			));
+		},
+		makeError
+	);
+
+	switch (type : FcPrim) {
+		FcOrPrim() : makeError();
+		FcAndPrim() : makeError();
+		FcNotPrim() : makeError();
+		FcEqPrim() : makeExp(\e -> FlowWiEqual(e, FlowWiInt(0)));
+		FcNePrim() : makeExp(\e -> FlowWiNotEqual(e, FlowWiInt(0)));
+		FcLePrim() : makeExp(\e -> FlowWiLessEqual(e, FlowWiInt(0)));
+		FcGePrim() : makeExp(\e -> FlowWiGreaterEqual(e, FlowWiInt(0)));
+		FcLtPrim() : makeExp(\e -> FlowWiEqual(e, FlowWiInt(-1)));
+		FcGtPrim() : makeExp(\e -> FlowWiEqual(e, FlowWiInt(1)));
+		FcPlusPrim() : makeError();
+		FcMinusPrim() : makeError();
+		FcMulPrim() : makeError();
+		FcDivPrim() : makeError();
+		FcModPrim() : makeError();
+		FcNegPrim() : makeError();
+		FcArrayPrim() : makeError();
+		FcIndexPrim() : makeError();
 		FcDerefPrim() : makeError();
 		FcAssignPrim() : makeError();
 		FcRefPrim() : makeError();
@@ -793,11 +871,13 @@ wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>, structs : WiseAstStruct
 			varType = switch (opttype : FlowWiOpttype) {
 				FlowWiBasictype(__) : opttype;
 				FlowWiFntype(__, __) : opttype;
-				FlowWiTupletype(__, __) : FlowWiBasictype("i32"); // pointer
+				// TODO: always pointers ?
+				FlowWiTupletype(__, __) : if (isStructDecomposition(e)) opttype else FlowWiBasictype("i32"); // pointer
 				FlowWiArrayType(__) : opttype;
 			}
+			newBody = if (length(brace.expsemi) > 1) rtrim2(ltrim2(body, "{"), "}") else body;
 			id + " : " + wiType2string(varType) + " = " + wiExpDef2string(e) + ";"
-			+ eol + rtrim2(ltrim2(body, "{"), "}");
+			+ eol + newBody;
 		}
 		// FlowWiWasmOp(s : string, wargs : [FlowWiWarg], exps : [FlowWiExp]);
 		FlowWiMod(exp1, exp2) : joinExp("%", exp1, exp2);
