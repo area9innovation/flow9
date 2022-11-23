@@ -352,7 +352,7 @@ class HttpSupport {
 
 			if (response.statusCode == 301) {
 				// We have to redirect to the correct Location url
-				httpCustomRequestNative(untyped response.headers.location, method, headers, params, data, onResponseFn, async, request);
+				httpCustomRequestNative(untyped response.headers.location, method, headers, params, data, responseEncoding, onResponseFn, async, request);
 
 				return;
 			}

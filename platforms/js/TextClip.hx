@@ -704,6 +704,9 @@ class TextClip extends NativeWidgetClip {
 			} else if (Platform.isMacintosh) {
 				fontFamilies += ", Geeza Pro";
 			}
+		// Similarly, for japanese different fallback fonts are used for measuring and rendering.
+		} else if (fontFamilies == "Meiryo" || fontFamilies == "MeiryoBold") {
+			fontFamilies += ', Yu Gothic';
 		}
 
 		if (Platform.isSafari) {

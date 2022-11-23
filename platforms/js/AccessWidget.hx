@@ -424,6 +424,7 @@ class AccessWidget extends EventEmitter {
 		"combobox" => "button",
 		"radio" => "button",
 		"tab" => "button",
+		"link" => "button",
 		"banner" => "header",
 		"main" => "section",
 		"navigation" => "nav",

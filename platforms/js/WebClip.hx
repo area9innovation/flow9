@@ -110,11 +110,18 @@ class WebClip extends NativeWidgetClip {
 									pos0.x * this.worldTransform.a + iframeBoundingRect.x,
 									pos0.y * this.worldTransform.d + iframeBoundingRect.y
 								);
-								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, eventName, pos.x, pos.y);
+								var emittedEventName = (Platform.isSafari && Platform.isMobile) ? switch (eventName) {
+									case "pointerdown": "mousedown";
+									case "pointerup": "mouseup";
+									case "pointermove": "mousemove";
+									default: eventName;
+								} : eventName;
+
+								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, emittedEventName, pos.x, pos.y);
 							}, false);
 						}
 
-						if (Platform.isSafari) {
+						if (Platform.isSafari && !Platform.isMobile) {
 							listenAndDispatch('mousedown');
 							listenAndDispatch('mouseup');
 							listenAndDispatch('mousemove');
