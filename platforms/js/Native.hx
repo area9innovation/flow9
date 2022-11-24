@@ -1434,6 +1434,9 @@ class Native {
 						js.html.URL.revokeObjectURL(url);
 					});
 				} else {
+					if (content.startsWith(Util.fromCharCode(0xFEFF))) {
+						content = content.substr(1);
+					}
 					var base64data = Browser.window.btoa(content);
 					a.href = 'data:application/octet-stream;base64,' + base64data;
 					a.click();
