@@ -327,4 +327,34 @@ Int compareFlow(Flow v1, Flow v2) {
 	}
 }
 
+template<> uint32_t hash(uint32_t h, Flow v) {
+	switch (v->type()) {
+		case Type::INT:    return hash(h, v->getInt());
+		case Type::BOOL:   return hash(h, v->getBool());
+		case Type::DOUBLE: return hash(h, v->getDouble());
+		case Type::STRING: return hash(h, v->getString());
+		case Type::ARRAY: {
+			PVec a = v->getAVec();
+			for (Int i = 0; i < a->size(); ++i) {
+				h = hash(h, a->getFlowItem(i));
+			}
+			return h;
+		}
+		case Type::REF:
+			return hash(h, reinterpret_cast<uint64_t>(v->getARef()->getFlowRef().ptr));
+		case Type::FUNC:
+			return hash(h, reinterpret_cast<uint64_t>(v->getAFun().ptr));
+		case Type::NATIVE: 
+			return hash(h, v->getNative());
+		default: {
+			PStr s = v->getAStr();
+			h = hash(h, s->name());
+			for (Int i = 0; i < s->size(); ++ i) {
+				h = hash(h, s->getFlowField(i));
+			}
+			return h;
+		}
+	}
+}
+
 }

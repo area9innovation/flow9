@@ -5,22 +5,24 @@ import string_utils;
 
 export {
 
-fsExpType(e: FsExp) -> FiType;
-fsStatType(s: FsStat) -> FiType;
+	fsExpType(e: FsExp) -> FiType;
+	fsStatType(s: FsStat) -> FiType;
 
-fsExp2s(e: FsExp) -> string;
-fsStat2s(s: FsStat) -> string;
+	fsExp2s(e: FsExp) -> string;
+	fsStat2s(s: FsStat) -> string;
 
-fsSetExpType(e : FsExp, t: FiType) -> FsExp;
+	fsSetExpType(e : FsExp, t: FiType) -> FsExp;
 
-fsHasTailCall(s: FsStat) -> bool;
+	fsHasTailCall(s: FsStat) -> bool;
 
-fiExpIsFsExp(e: FiExp) -> bool;
-fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
+	fiExpIsFsExp(e: FiExp) -> bool;
+	fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
 
-fsWrapSeq(stats: [FsStat]) -> FsStat;
-fsUnwrapSeq(stat: FsStat) -> [FsStat];
+	fsWrapSeq(stats: [FsStat]) -> FsStat;
+	fsUnwrapSeq(stat: FsStat) -> [FsStat];
 
+	fsStatFreevars(s : FsStat) -> Set<FsVar>;
+	fsExpFreevars(e : FsExp) -> Set<FsVar>;
 }
 
 fsExpType(e: FsExp) -> FiType {
@@ -52,6 +54,13 @@ fsStatType(s: FsStat) -> FiType {
 		FsTailCall():          FiTypeVoid();
 		FsVarDecl(var):        var.type;
 		FsAssign(__,__):       FiTypeVoid();
+		FsMemory(op, e): {
+			switch (op) {
+				FmReuse():    fsExpType(e);
+				FmIsUnique(): FiTypeBool();
+				default:      FiTypeVoid();
+			}
+		}
 	}
 }
 
@@ -92,6 +101,17 @@ fsStat2s(s: FsStat) -> string {
 		}
 		FsAssign(var, e): {
 			var.name + " := " +  fsExp2s(e);
+		}
+		FsMemory(op, e): {
+			switch (op) {
+				FmDup():      "pdup(" +  fsExp2s(e) + ")";
+				FmDrop():     "drop(" +  fsExp2s(e) + ")";
+				FmReuse():    "reuse(" +  fsExp2s(e) + ")";
+				FmDispose():  "dispose(" +  fsExp2s(e) + ")";
+				FmIsUnique(): "is_unique(" +  fsExp2s(e) + ")";
+				FmDecRef():   "dec_ref(" +  fsExp2s(e) + ")";
+				FmNull():     "nullptr";
+			}
 		}
 	}
 }
@@ -167,6 +187,12 @@ fsCallPrim2s(call: FsCallPrim) -> string {
 		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
 		FcQuote():   fail0("// TODO: FcQuote");
 		FcUnquote(): fail0("// TODO: FcUnquote");
+		FsReuseStructPrim(name, reuse): {
+			struct_type = cast(call.type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			name + typars + "@" + reuse.name + "(" + superglue(es, fsExp2s, ", ") + ")";
+		}
 	}
 }
 
@@ -256,5 +282,94 @@ fsUnwrapSeq(stat: FsStat) -> [FsStat] {
 	switch (stat) {
 		FsSeq(stats,__): stats; 
 		default: [stat]; 
+	}
+}
+
+fsStatFreevars(s : FsStat) -> Set<FsVar> {
+	fsStatFreevarsBoundFree(s, makeSet(), makeSet());
+}
+
+fsStatFreevarsBoundFree(s : FsStat, bound : Set<FsVar>, free : Set<FsVar>) -> Set<FsVar> {
+	switch (s) {
+		FsLet(v, e): {
+			fsExpFreevarsBoundFree(e, insertSet(bound, v), free);
+		}
+		FsIf(e, s1, s2, __): {
+			fsStatFreevarsBoundFree(s2, bound, 
+				fsStatFreevarsBoundFree(s1, bound, 
+					fsExpFreevarsBoundFree(e, bound, free)
+				)
+			);
+		}
+		FsSwitch(v,__, cases, __): {
+			fold(cases, fsExpFreevarsBoundFree(v, bound, free), \acc, c -> 
+				fsStatFreevarsBoundFree(c.body, bound, acc)
+			);
+		}
+		FsSeq(ss, type): {
+			fold(ss, free, \acc, x -> 
+				fsStatFreevarsBoundFree(x, bound, acc)
+			);
+		}
+		FsWrapExp(e): {
+			fsExpFreevarsBoundFree(e, bound, free);
+		}
+		FsRet(e): {
+			fsExpFreevarsBoundFree(e, bound, free);
+		}
+		FsTailCall(): free;
+		FsVarDecl(v): free;
+		FsAssign(v, e): {
+			fsExpFreevarsBoundFree(e, insertSet(bound, v), free);
+		}
+		FsMemory(op, e): {
+			fsExpFreevarsBoundFree(e, bound, free);
+		}
+	}
+}
+
+fsExpFreevars(e : FsExp) -> Set<FsVar> {
+	fsExpFreevarsBoundFree(e, makeSet(), makeSet());
+}
+
+fsExpFreevarsBoundFree(expr : FsExp, bound : Set<FsVar>, free : Set<FsVar>) -> Set<FsVar> {
+	switch (expr) {
+		FsLambda(closure, args, body,__): {
+			fsStatFreevarsBoundFree(body, 
+				fold(args, bound, \acc, arg -> insertSet(acc, FsVar(arg.name, arg.type, FsVarArg()))),
+				free
+			);
+		}
+		FsCall(f, args,__): {
+			fold(args, 
+				fsExpFreevarsBoundFree(f, bound, free),
+				\acc, arg -> fsExpFreevarsBoundFree(arg, bound, acc)
+			);
+		}
+		FsCallPrim(__,es,__): {
+			fold(es, bound, \acc, arg -> fsExpFreevarsBoundFree(arg, bound, acc));
+		}
+		FsRequire(__, ex,__): {
+			fsExpFreevarsBoundFree(ex, bound, free);
+		}
+		FsUnsafe(__, ex,__): {
+			fsExpFreevarsBoundFree(ex, bound, free);
+		}
+		FsCast(ex, from, to): {
+			fsExpFreevarsBoundFree(ex, bound, free);
+		}
+		FsTernaryIf(cond, pos, neg, __): {
+			fsExpFreevarsBoundFree(neg, bound, 
+				fsExpFreevarsBoundFree(pos, bound, 
+					fsExpFreevarsBoundFree(cond, bound, free)
+				)
+			);
+		}
+		FsVar(name,__,__): if (containsSet(bound, expr)) free else insertSet(free, expr);
+		FiVoid(__):      free;
+		FiDouble(d, __): free;
+		FiInt(i, __):    free;
+		FiString(s, __): free;
+		FiBool(b, __):   free;
 	}
 }

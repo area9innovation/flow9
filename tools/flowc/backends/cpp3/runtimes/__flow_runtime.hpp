@@ -34,10 +34,10 @@ struct Ptr {
 	template<typename T1>
 	Ptr(const Ptr<T1>& p): ptr(static_cast<const T*>(p.ptr)) { inc(); }
 
-	template<typename T1>
-	Ptr& operator = (const T1* p1) { dec(); ptr = static_cast<const T*>(p1); inc(); return *this; }
-	template<typename T1>
-	Ptr& operator = (Ptr<T1> p1) { dec(); ptr = static_cast<const T*>(p1.ptr); inc(); return *this; }
+	//template<typename T1>
+	//Ptr& operator = (const T1* p1) { is_smart = p1.is_smart; dec(); ptr = static_cast<const T*>(p1); inc(); return *this; }
+	//template<typename T1>
+	//Ptr& operator = (Ptr<T1> p1) { is_smart = p1.is_smart; dec(); ptr = static_cast<const T*>(p1.ptr); inc(); return *this; }
 
 	Ptr& operator = (Ptr&& p) { dec(); ptr = p.ptr; p.ptr = nullptr; return *this; }
 	Ptr& operator = (const Ptr& p) { dec(); ptr = p.ptr; inc(); return *this; }
@@ -45,9 +45,13 @@ struct Ptr {
 	const T& operator *() { return *ptr; }
 	const T* operator ->() { return ptr; }
 	const T* get() { return ptr; }
+	//const T* release() { dec(); const T* ret = ptr; ptr = nullptr; return ret; }
+
 	const T& operator *() const { return *ptr; }
 	const T* operator ->() const { return ptr; }
 	const T* get() const { return ptr; }
+	//const T* release() const { dec(); const T* ret = ptr; ptr = nullptr; return ret; }
+
 	operator bool() const { return ptr; }
 	bool isSameObj(const Ptr& p) const { return ptr == p.ptr; }
 
@@ -55,12 +59,9 @@ struct Ptr {
 	static Ptr<T> make(As... as) { return new T(std::move(as)...); }
 	template<typename T1>
 	static Ptr<T> make(std::initializer_list<T1> il) { return new T(std::move(il)); }
-	template<typename T1> Ptr<T1> statCast() const { return Ptr<T1>(static_cast<const T1*>(ptr)); }
-	template<typename T1> Ptr<T1> dynCast() const { return Ptr<T1>(dynamic_cast<const T1*>(ptr)); }
-	template<typename T1> Ptr<T1> reintCast() const { return Ptr<T1>(reinterpret_cast<const T1*>(ptr)); }
 
-	void inc() const { ptr->incRefs(); }
-	void dec() const { if (ptr) ptr->decRefs(); }
+	inline void inc() const { ptr->incRefs(); }
+	inline void dec() const { if (ptr) ptr->decRefs(); }
 
 	const T* ptr;
 };
@@ -188,10 +189,21 @@ struct AFlow {
 	bool isSameObj(Flow f) const;
 
 	void incRefs() const { ++ refs; }
-	bool decRefs() const { -- refs; if (refs == 0) { delete this; return true; } else { return false; } }
+	//void decRefs() const;
+	void decRefs() const { 
+		-- refs; 
+		if (refs == 0) {
+			delete this; 
+		}
+	}
 
 	mutable std::size_t refs;
 };
+
+template<typename T> struct IsScalar { enum { value = false }; };
+template<> struct IsScalar<Int> { enum { value = true }; };
+template<> struct IsScalar<Bool> { enum { value = true }; };
+template<> struct IsScalar<Double> { enum { value = true }; };
 
 struct FInt : public AFlow {
 	enum { TYPE = Type::INT };
@@ -231,11 +243,17 @@ struct VString : public AFlow {
 };
 
 inline String concatStrings(String s1, String s2) {
-	string ret;
-	ret.reserve(s1->str.size() + s2->str.size());
-	ret += s1->str;
-	ret += s2->str;
-	return String::make(ret);
+	if (s1->refs > 2) {
+		string ret;
+		ret.reserve(s1->str.size() + s2->str.size());
+		ret += s1->str;
+		ret += s2->str;
+		return String::make(ret);
+	} else {
+		//std::cout << "Shortcut for concatStrings, s1->size()=" << s1->str.size() << ", s2->size()" << s2->str.size() << std::endl;
+		const_cast<string&>(s1->str) += s2->str;
+		return s1;
+	}
 }
 
 struct VNative : public AFlow {
@@ -355,6 +373,55 @@ template<> struct Compare<const void*> { static Int cmp(const void* v1, const vo
 template<> struct Compare<String> { static Int cmp(String v1, String v2) { return v1->str.compare(v2->str); } };
 template<> struct Compare<Native> { static Int cmp(Native v1, Native v2) { return Compare<void*>::cmp(v1->nat, v2->nat); } };
 
+const uint32_t FNV_offset_basis = 0x811C9DC5;
+const uint32_t FNV_prime = 16777619;
+
+template<typename T> uint32_t hash(uint32_t h, T v);
+template<> inline uint32_t hash(uint32_t h, Bool v) { 
+	return (h ^ static_cast<uint8_t>(v)) * FNV_prime; 
+}
+template<> inline uint32_t hash(uint32_t h, Int v) {
+	uint32_t v1 = static_cast<uint32_t>(v);
+	h = (h ^ ( v1        & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 8)  & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 16) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 24) & 0xFF)) * FNV_prime;
+	return h;
+}
+template<> inline uint32_t hash(uint32_t h, uint64_t v1) { 
+	h = (h ^ ( v1        & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 8)  & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 16) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 24) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 32) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 40) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 48) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 56) & 0xFF)) * FNV_prime;
+	return h;
+}
+template<> inline uint32_t hash(uint32_t h, Double v) { 
+	return hash<uint64_t>(h, static_cast<uint64_t>(v));
+}
+template<> inline uint32_t hash(uint32_t h, void* v) { 
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(v));
+}
+template<> inline uint32_t hash(uint32_t h, const void* v) { 
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(v));
+}
+template<> inline uint32_t hash(uint32_t h, String v) {
+	for (char16_t c : v->str) {
+		h = (h ^ ( c       & 0xFF)) * FNV_prime;
+		h = (h ^ ((c >> 8) & 0xFF)) * FNV_prime;
+	}
+	return h; 
+}
+template<> inline uint32_t hash(uint32_t h, Native n) { 
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(n->nat));
+}
+template<> uint32_t hash(uint32_t h, Flow n);
+
+template<typename T> struct Hash { inline size_t operator() (T n) const { return hash(FNV_offset_basis, n); } };
+
 template<typename T> 
 struct Vector : public AVec {
 	typedef std::vector<T> Vect;
@@ -393,13 +460,40 @@ struct Vector : public AVec {
 	Vect vect;
 };
 
+/*
 template<typename T>
-Vec<T> concatVecs(Vec<T> v1, Vec<T> v2) {
-	std::vector<T> ret;
-	ret.reserve(v1->size() + v2->size());
-	for(T x : *v1) ret.push_back(x);
-	for(T x : *v2) ret.push_back(x);
-	return Vec<T>::make(std::move(ret));
+const Vector<T>* concatVecs(const Vector<T>* v1, const Vector<T>* v2) {
+	if (v1->refs > 1) {
+		std::vector<T> ret;
+		ret.reserve(v1->size() + v2->size());
+		for(T x : *v1) ret.push_back(x);
+		for(T x : *v2) ret.push_back(x);
+		return new Vector<T>(std::move(ret));
+	} else {
+		//std::cout << "Shortcut for concatVecs, v1->size()=" << v1->vect.size() << ", v2->size()=" << v2->vect.size() << std::endl;
+		std::vector<T>& ret = const_cast<std::vector<T>&>(v1->vect);
+		for(T x : *v2) ret.push_back(x);
+		//std::cout << "Resulting v1->size()=" << v1->vect.size() << ", ret.size()=" << ret.size() << std::endl;
+		return v1;
+	}
+}*/
+
+template<typename T>
+Vec<T> concatVecs1(Vec<T> v1, Vec<T> v2) {
+	if (v1->refs > 2) {
+		std::cout << "concatVecs, v1->refs=" << v1->refs << std::endl;
+		std::vector<T> ret;
+		ret.reserve(v1->size() + v2->size());
+		for(T x : *v1) ret.push_back(x);
+		for(T x : *v2) ret.push_back(x);
+		return new Vector<T>(std::move(ret));
+	} else {
+		std::cout << "Shortcut for concatVecs, v1->size()=" << v1->vect.size() << ", v2->size()=" << v2->vect.size() << std::endl;
+		std::vector<T>& ret = const_cast<std::vector<T>&>(v1->vect);
+		for(T x : *v2) ret.push_back(x);
+		std::cout << "Resulting v1->size()=" << v1->vect.size() << ", ret.size()=" << ret.size() << std::endl;
+		return v1;
+	}
 }
 
 template<typename T> 
@@ -425,35 +519,25 @@ struct Reference : public ARef {
 	mutable T val;
 };
 
-struct Closure {
-	Closure() { }
-	Closure(std::initializer_list<Flow> cl): closure(cl) { }
-	Closure(const Closure& cl): closure(cl.closure) { }
-	Closure(Closure&& cl): closure(std::move(cl.closure)) { } 
-	std::vector<Flow> closure;
-};
-
 template<typename R, typename... As> 
-struct Function : public AFun {
+struct Function : public AFun, public std::function<R(As...)> {
 	typedef std::function<R(As...)> Fn;
 	enum { ARITY = sizeof...(As) };
 	Function() {}
-	Function(Fn&& f): fn(std::move(f)) { }
-	Function(Fn&& f, Closure&& cl): fn(std::move(f)), closure(std::move(cl)) { }
-	Function(const Fn& f): fn(f) { }
-	Function(const Fn& f, const Closure& cl): fn(f), closure(cl) { }
-	Function(const Function& f): fn(f.fn), closure(fn.closure) { }
-	Function(Function&& f): fn(std::move(f.fn)), closure(std::move(fn.closure)) { }
+	Function(Fn&& f): Fn(std::move(f)) { }
+	Function(const Fn& f): Fn(f) { }
+	Function(const Function& f): Fn(f) { }
+	Function(Function&& f): Fn(std::move(f)) { }
 
 	// AFun interface
 	Int arity() const override { return ARITY; }
 	Flow callFlowArgs() const override {
 		if constexpr (ARITY == 0) {
 			if constexpr (std::is_same_v<R, Void>) {
-				fn();
+				Fn::operator()();
 				return nullptr;
 			} else {
-				return Cast<R>::template To<Flow>::conv(fn());
+				return Cast<R>::template To<Flow>::conv(Fn::operator()());
 			}
 		} else {
 			std::cerr << "arity mismatch: actual " << ARITY << " while used as: " << 0 << std::endl;
@@ -463,33 +547,21 @@ struct Function : public AFun {
 	}
 	Flow callFlowArgs(Flow as...) const override {
 		if constexpr (std::is_same_v<R, Void>) {
-			fn(Cast<Flow>::template To<As>::conv(as)...);
+			Fn::operator()(Cast<Flow>::template To<As>::conv(as)...);
 			return nullptr;
 		} else {
 			return Cast<R>::template To<Flow>::conv(
-				fn(Cast<Flow>::template To<As>::conv(as)...)
+				Fn::operator()(Cast<Flow>::template To<As>::conv(as)...)
 			);
 		}
 	}
-
-	// R, As... direct interface
-	R operator()(As... as) const { 
+	inline R call(As... as) const { 
 		if constexpr (std::is_same_v<R, Void>) {
-			call(as...); 
+			Fn::operator()(as...); 
 		} else {
-			return call(as...); 
+			return Fn::operator()(as...); 
 		}
 	}
-	virtual R call(As... as) const { 
-		if constexpr (std::is_same_v<R, Void>) {
-			fn(as...); 
-		} else {
-			return fn(as...); 
-		}
-	}
-
-	Fn fn;
-	Closure closure;
 };
 
 template<typename T> Str<T> AFlow::toStr() const { 

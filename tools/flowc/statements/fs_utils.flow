@@ -112,6 +112,9 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 		FsAssign(var, e): {
 			FsAssign(var, fsMakeExpCastsExplicit(e, var.type, names, true));
 		}
+		FsMemory(op, e): {
+			FsMemory(op, fsMakeExpCastsExplicit(e, fsExpType(e), names, true));
+		}
 	}
 }
 
@@ -232,6 +235,25 @@ fsTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
 fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) -> FsExp {
 	def_case = \do -> FsCallPrim(e with es = map(e.es, \x -> fsMakeExpCastsExplicit(x, type, names, do)));
 	typed_case = \tp, do -> FsCallPrim(e with es = map(e.es, \x -> fsMakeExpCastsExplicit(x, tp, names, do)));
+	struct_case = \name -> {
+		struct = lookupTreeDef(names.structs, name, FiTypeStruct("", [], [], 0));
+		switch (type) {
+			FiTypeName(__,typars): {
+				typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
+					switch (tp) {
+						FiTypeParameter(nm): setTree(acc, nm, typars[i]);
+						default: acc;
+					}
+				);
+				FsCallPrim(e with es = mapi(e.es, \i, x ->
+					fsMakeExpCastsExplicit(x, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names, true)
+				));
+			}
+			default: {
+				fail0("struct type must be FiTypeName, got: " + toString(type));
+			}
+		}
+	}
 	dearray_type = \tp -> switch (tp) {
 		FiTypeArray(t): t;
 		default: FiTypeVoid();
@@ -279,25 +301,7 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 			]);
 		}
 		FcRefPrim(): typed_case(deref_type(type), true);
-		FcStructPrim(struct_name): {
-			struct = lookupTreeDef(names.structs, struct_name, FiTypeStruct("", [], [], 0));
-			switch (type) {
-				FiTypeName(__,typars): {
-					typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
-						switch (tp) {
-							FiTypeParameter(nm): setTree(acc, nm, typars[i]);
-							default: acc;
-						}
-					);
-					FsCallPrim(e with es = mapi(e.es, \i, x ->
-						fsMakeExpCastsExplicit(x, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names, true)
-					));
-				}
-				default: {
-					fail0("struct type must be FiTypeName, got: " + toString(type));
-				}
-			}
-		}
+		FcStructPrim(name): struct_case(name);
 		FcFieldPrim(name): {
 			if (name == "structname") {
 				def_case(false);
@@ -327,6 +331,7 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 		FcCreateClosurePrim(structName, functionName): fail0("// TODO: FcCreateClosurePrim");
 		FcQuote():   fail0("// TODO: FcQuote");
 		FcUnquote(): fail0("// TODO: FcUnquote");
+		FsReuseStructPrim(name, reuse): struct_case(name);
 	}
 }
 
@@ -406,6 +411,15 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 			Pair(
 				FsAssign(
 					FsVar(var with name = fsSSAvar(var.name, vars)), 
+					fsExpSSA(e, vars)
+				),
+				vars
+			);
+		}
+		FsMemory(op, e): {
+			Pair(
+				FsMemory(
+					op, 
 					fsExpSSA(e, vars)
 				),
 				vars
@@ -512,6 +526,9 @@ fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 		FsAssign(var, e): {
 			FsAssign(var, fsInterpolateTyparsExp(e, names));
 		}
+		FsMemory(op, e): {
+			FsMemory(op, fsInterpolateTyparsExp(e, names));
+		}
 	}
 }
 
@@ -569,6 +586,32 @@ fsInterpolateTyparsExp(e : FsExp, names: FiGlobalNames) -> FsExp {
 
 fsInterpolateTyparsCallPrim(e : FsCallPrim, names: FiGlobalNames) -> FsExp {
 	def_interpolate = \ -> FsCallPrim(e with es = map(e.es, \x -> fsInterpolateTyparsExp(x, names)));
+	interpolate_struct = \name -> {
+		struct = lookupTreeDef(names.structs, name, FiTypeStruct("", [], [], 0));
+		type = fsExpType(e);
+		switch (type) {
+			FiTypeName(__,typars): {
+				typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
+					switch (tp) {
+						FiTypeParameter(nm): setTree(acc, nm, typars[i]);
+						default: acc;
+					}
+				);
+				subst = foldi(struct.args, makeTree(), \i, sub, struct_arg -> 
+					fiMatchTypars(fsExpType(e.es[i]), fiApplyTypeSubstitution(typar_subst, struct_arg.type), sub)
+				);
+				FsCallPrim(e with es = mapi(e.es, \i, x ->
+					fsSetExpType(
+						fsInterpolateTyparsExp(x, names), 
+						fiApplyTypeSubstitution(subst, fsExpType(x))
+					)
+				));
+			}
+			default: {
+				fail0("struct type must be FiTypeName, got: " + toString(type));
+			}
+		}
+	}
 	switch (e.op) {
 		FcOrPrim():  def_interpolate();
 		FcAndPrim(): def_interpolate();
@@ -592,37 +635,13 @@ fsInterpolateTyparsCallPrim(e : FsCallPrim, names: FiGlobalNames) -> FsExp {
 		FcDerefPrim(): def_interpolate();
 		FcAssignPrim(): def_interpolate();
 		FcRefPrim(): def_interpolate();
-		FcStructPrim(struct_name): {
-			struct = lookupTreeDef(names.structs, struct_name, FiTypeStruct("", [], [], 0));
-			type = fsExpType(e);
-			switch (type) {
-				FiTypeName(__,typars): {
-					typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
-						switch (tp) {
-							FiTypeParameter(nm): setTree(acc, nm, typars[i]);
-							default: acc;
-						}
-					);
-					subst = foldi(struct.args, makeTree(), \i, sub, struct_arg -> 
-						fiMatchTypars(fsExpType(e.es[i]), fiApplyTypeSubstitution(typar_subst, struct_arg.type), sub)
-					);
-					FsCallPrim(e with es = mapi(e.es, \i, x ->
-						fsSetExpType(
-							fsInterpolateTyparsExp(x, names), 
-							fiApplyTypeSubstitution(subst, fsExpType(x))
-						)
-					));
-				}
-				default: {
-					fail0("struct type must be FiTypeName, got: " + toString(type));
-				}
-			}
-		}
+		FcStructPrim(name): interpolate_struct(name);
 		FcFieldPrim(name): def_interpolate();
 		FcSetMutablePrim(name): def_interpolate();
 		FcCreateClosurePrim(structName, functionName): def_interpolate();
 		FcQuote():   def_interpolate();
 		FcUnquote(): def_interpolate();
+		FsReuseStructPrim(name, reuse): interpolate_struct(name);
 	}
 }
 
