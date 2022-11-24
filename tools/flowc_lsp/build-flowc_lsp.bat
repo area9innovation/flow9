@@ -8,5 +8,6 @@ echo =====================
 echo.
 
 pushd %BASE_DIR%
+SET PATH=%JAVA_HOME%\bin;%PATH%
 call flowc1 jar=tools\flowc_lsp\flowc_lsp.jar tools\flowc_lsp\flowc_lsp.flow
 popd
