@@ -112,8 +112,6 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 	imports;
 }
 
-
-
 fiFunctionDec2FlowWiFunction(state : FiWiseState, func : FiFunctionDec, exported : bool, body : FlowWiDecl) -> FlowWiFunction {
 	templates = eitherFn(lookupTree(^(state.polyFns), func.name), secondOfPair, makeTree);
 	FlowWiFunction(
@@ -585,8 +583,8 @@ fcPrimStructs2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, eType : F
 			Some(FlowWiLet(
 				tmpVarName,
 				0,
-				FlowWiBasictype("i32"),
-				FlowWiBrace([FlowWiInt(0), e]), // 0 - to have {} in wise
+				fiType2FlowWiType(FiTypeInt(), state.getStructFields), // result is -1/0/1
+				e,
 				FlowWiBrace([cmpr(FlowWiVar(tmpVarName))])
 			));
 		},
@@ -795,7 +793,7 @@ wiseAst2string(code : FlowWiseAst, structs : WiseAstStructs) -> string {
 		FlowWiseAstDouble(value) : d2s(value);
 		FlowWiseAstString(value) : value;
 		FlowWiType(): wiType2string(code);
-		FlowWiIdtype(id, type) : id + " : " + wiType2string(type);
+		FlowWiIdtype(id, type) : id + " : " + wiType2stringForFn(type);
 		FlowWiDecl() : wiDecl2string(code, structs);
 		FlowWiExp() : wiExp2string(code, None(), structs);
 	}
@@ -809,7 +807,7 @@ wiDecl2string(decl : FlowWiDecl, structs : WiseAstStructs) -> string {
 			+ wiVar2string(id, parentExp)
 			+ (if (templates == []) "" else "[" + strGlue(templates, ",")+ "]")
 			+ "(" + strGlue(map(lambdaargs, \a -> wiseAst2string(a, structs)), ", ") + ")"
-			+ " -> " + wiType2string(type)
+			+ " -> " + wiType2stringForFn(type)
 			+ " {\n"
 			+ "\t" + initMemory(id, structs) + "\n"
 			+ "\t" + wiExp2string(e, parentExp, structs)
@@ -852,7 +850,10 @@ wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>, structs : WiseAstStruct
 			}
 		}
 		FlowWiCall(e, exps) : wiExp2string(e, Some(exp), structs) + "(" + strGlue(map(exps, wiExpDef2string), ", ") + ")";
-		FlowWiPolyCall(e, types) : wiExp2string(e, Some(exp), structs)  + "[" + superglue(types, wiType2string, ", ") + "]";
+		FlowWiPolyCall(e, types) : {
+			type2str = if (isGetStructValueExp(e)) flowWiTupletype2string else wiType2string;
+			wiExp2string(e, Some(exp), structs)  + "[" + superglue(types, type2str, ", ") + "]";
+		}
 		FlowWiDiv(exp1, exp2) : joinExp("/", exp1, exp2);
 		FlowWiEqual(exp1, exp2) : joinExp("==", exp1, exp2);
 		FlowWiGreater(exp1, exp2) : joinExp(">", exp1, exp2);
@@ -869,14 +870,18 @@ wiExp2string(exp : FlowWiExp, parent : Maybe<FlowWiExp>, structs : WiseAstStruct
 		FlowWiLet(id, i, opttype, e, brace) : {
 			body = wiExpDef2string(brace);
 			varType = switch (opttype : FlowWiOpttype) {
-				FlowWiBasictype(__) : opttype;
-				FlowWiFntype(__, __) : opttype;
+				FlowWiBasictype(__) : wiType2string(opttype);
+				FlowWiFntype(__, __) : wiType2string(opttype);
 				// TODO: always pointers ?
-				FlowWiTupletype(__, __) : if (isStructDecomposition(e)) opttype else FlowWiBasictype("i32"); // pointer
-				FlowWiArrayType(__) : opttype;
+				FlowWiTupletype(__, __) : if (isStructDecomposition(e)) {
+					flowWiTupletype2string(opttype)
+				} else {
+					wiType2string(FlowWiBasictype("i32")); // pointer
+				}
+				FlowWiArrayType(__) : wiType2string(opttype);
 			}
 			newBody = if (length(brace.expsemi) > 1) rtrim2(ltrim2(body, "{"), "}") else body;
-			id + " : " + wiType2string(varType) + " = " + wiExpDef2string(e) + ";"
+			id + " : " + varType + " = " + wiExpDef2string(e) + ";"
 			+ eol + newBody;
 		}
 		// FlowWiWasmOp(s : string, wargs : [FlowWiWarg], exps : [FlowWiExp]);
