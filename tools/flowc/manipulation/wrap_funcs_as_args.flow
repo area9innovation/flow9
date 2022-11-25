@@ -43,32 +43,32 @@ doWrapFuncArgs(names : FiGlobalNames, ex : FiExp, isArg : bool) {
 			FiCall(process(f), map(args, \a -> processA(a)), type, start);
 		FiSwitch(__, __, __, __, __): 
 			FiSwitch(ex with cases = 
-				map(ex.cases, \c -> FiCase(c with body = process(c.body))));
+				map(ex.cases, \c -> FiCase(c with body = processA(c.body))));
 		FiLambda(args, body, type, start):
 			FiLambda(args, process(body), type, start); 
 		FiLet(name, type, e1, e2, type2, start): 
-			FiLet(ex with e1 = process(e1), e2 = process(e2));
+			FiLet(ex with e1 = processA(e1), e2 = processA(e2));
 		FiIf(e1, e2, e3, type, start): 
-			FiIf(process(e1), process(e2), process(e3), type, start);
+			FiIf(processA(e1), processA(e2), processA(e3), type, start);
 		FiCallPrim(__, es, __, __):
-			FiCallPrim(ex with es = map(es, process));
+			FiCallPrim(ex with es = map(es, processA));
 		FiRequire(flowfile, e, type, start):
-			FiRequire(flowfile, process(e), type, start);
+			FiRequire(flowfile, processA(e), type, start);
 		FiUnsafe(name, fallback, type, start):
-			FiUnsafe(name, process(fallback), type, start);
+			FiUnsafe(name, processA(fallback), type, start);
 		FiSeq(es, type, start):
-			FiSeq(map(es, process), type, start);
+			FiSeq(map(es, processA), type, start);
 		FiCast(__, __, __, __, __): 
-			FiCast(ex with e = process(ex.e));
+			FiCast(ex with e = processA(ex.e));
 	}
 }
 
-fiWasmWrapFuncArgs(prg : FiProgram) {
+fiWasmWrapFuncArgs(prg : FiProgram) -> FiProgram {
+	doWrap = \expr -> doWrapFuncArgs(prg.names, expr, false);
 	fold(prg.traversal, prg, \program, moduleName -> {
 		switch (lookupTree(program.modules, moduleName)) {
 			None(): program;
 			Some(m): {
-				doWrap = \expr -> doWrapFuncArgs(prg.names, expr, false);
 				functions0 = map(m.functions, \f : FiFunctionDec -> {
 					FiFunctionDec(f with lambda = FiLambda(f.lambda with body = doWrap(f.lambda.body)))
 				});
@@ -93,9 +93,18 @@ fiWasmWrapFuncArgs(prg : FiProgram) {
 					natives = natives,
 				);
 
-				FiProgram(program with modules = setTree(program.modules, moduleName, module));
+				FiProgram(program with 
+					modules = setTree(program.modules, moduleName, module),
+					names = FiGlobalNames(program.names with
+						toplevel = fold(module.natives, fold(module.globalVars, fold(module.functions, 
+							program.names.toplevel,
+							\acc: Tree<string, FiDeclaration>, f -> setTree(acc, f.name, f)),
+							\acc: Tree<string, FiDeclaration>, v -> setTree(acc, v.name, v)),
+							\acc: Tree<string, FiDeclaration>, n -> setTree(acc, n.name, n)
+						)
+					)
+				);
 			}
 		};
 	});
 }
-
