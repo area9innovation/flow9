@@ -2,11 +2,12 @@ import tools/flowc/backends/wise/fi2wise_utils;
 import text/blueprint;
 
 export {
-	fiStructs2wiTuples(structs : [FiTypeStruct]) -> WiseAstStructs;
+	fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstStructs;
 
 	WiseAstStructs(
 		data : StructTuple,
 		table : Tree<string, int>,
+		unions : Tree<string, [int]>, // unionName - [structId]
 	);
 	makeWiseAstStructs() -> WiseAstStructs;
 
@@ -33,11 +34,11 @@ makeStructTuple() -> StructTuple {
 }
 
 makeWiseAstStructs() -> WiseAstStructs {
-	WiseAstStructs(makeStructTuple(), makeTree());
+	WiseAstStructs(makeStructTuple(), makeTree(), makeTree());
 }
 
-fiStructs2wiTuples(structs : [FiTypeStruct]) -> WiseAstStructs {
-	foldr(structs, Pair(makeWiseAstStructs(), 1), \acc, struct -> unpair(acc, \tuples, cntr -> Pair(
+fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstStructs {
+	state = foldr(structs, Pair(makeWiseAstStructs(), 1), \acc, struct -> unpair(acc, \tuples, id -> Pair(
 		WiseAstStructs(
 			// TODO: remove type?
 			StructTuple(setTree(
@@ -47,10 +48,34 @@ fiStructs2wiTuples(structs : [FiTypeStruct]) -> WiseAstStructs {
 					setTree(acc2, arg.name, StructTupleArg(i, arg.type))
 				))
 			)),
-			setTree(tuples.table, struct.name, cntr)
+			setTree(tuples.table, struct.name, id),
+			tuples.unions,
 		),
-		cntr + 1
+		id + 1
 	))).first;
+
+	unionIds = values2treeEx(unions, \v -> v.name, \t -> map(t.typenames, \v -> v.name));
+	unionStructs = values2treeEx(
+		unions,
+		\v -> v.name,
+		\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
+	);
+
+	WiseAstStructs(state with unions = unionStructs);
+}
+
+getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string]) -> [string] {
+	if (ids == []) {
+		acc
+	} else {
+		id = ids[0];
+		children = unzip(lookupTreeDef(unionIds, id, []), \v -> containsKeyTree(unionIds, v));
+		getUnionStructs(
+			concat(tail(ids), children.first),
+			unionIds,
+			concat(acc, children.second)
+		);
+	}
 }
 
 getStructArgs(name : string, data : StructTuple) -> Maybe<[FiType]> {
