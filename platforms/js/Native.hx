@@ -1411,6 +1411,10 @@ class Native {
 	}
 
 	public static function setFileContentBinary(file : String, content : Dynamic) : Bool {
+		return setFileContentBinaryCommon(file, content, false);
+	}
+
+	public static function setFileContentBinaryCommon(file : String, content : Dynamic, convertToUTF8 : Bool) : Bool {
 		#if (js && (flow_nodejs || nwjs))
 			try {
 				Fs.writeFileSync(file, new Buffer(content), 'binary');
@@ -1424,7 +1428,7 @@ class Native {
 				a.download = file;
 				js.Browser.document.body.appendChild(a);
 
-				if (Util.getParameter("save_file_utf8") == "1") { // Old implementation, Blob converts to UTF-8
+				if (convertToUTF8 || Util.getParameter("save_file_utf8") == "1") { // Old implementation, Blob converts to UTF-8
 					var fileBlob = new js.html.Blob([content], {type : 'application/octet-stream'});
 					var url = js.html.URL.createObjectURL(fileBlob);
 					a.href = url;
@@ -1447,7 +1451,11 @@ class Native {
 
 				return true;
 			} catch (error : Dynamic) {
-				return false;
+				if (convertToUTF8) {
+					return false;
+				} else {
+					return setFileContentBinaryCommon(file, content, true);
+				}
 			}
 
 		#else
