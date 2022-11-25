@@ -1,6 +1,9 @@
 import tools/flowc/backends/wise/fituple2wise;
 import tools/flowc/incremental/fiexp;
 
+
+import tools/flowc/incremental/fiprettyprint;
+
 export {
 	fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp;
 }
@@ -25,7 +28,7 @@ fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp {
 				FiTypeInt(),
 				0
 			),
-			fiCases2fiIfs(e.cases, FiVar(tmpVar, FiTypeInt(), 0), e.type, env.unions, env.table),
+			fiCases2fiIfs(e.cases, FiVar(tmpVar, FiTypeInt(), 0), e.type, env.table),
 			e.type,
 			0
 		)], e.type, 0);
@@ -34,37 +37,34 @@ fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp {
 
 // we don't check the correctness of switch. but we could be
 // for some reasons, union is already flat (cases don't contain unions)
-fiCases2fiIfs(cases: [FiCase], e : FiVar, type : FiType, unions : Tree<string, [int]>, structs : Tree<string, int>) -> FiExp {
+fiCases2fiIfs(cases: [FiCase], e : FiVar, type : FiType, structs : Tree<string, int>) -> FiExp {
 	scases = unzip(cases, \c -> c.struct == "default");
 	defCases = scases.first;
 	defCase = if (defCases == []) fiType2defVal(type) else defCases[0].body;
-	cmprExpWithStructIds = \ids : [int] -> if (ids == []) {
-		FiBool(false, 0);
-	} else if (length(ids) == 1) {
-		makeCmpIdFn(e, ids[0]);
-	} else {
-		makeCmpIdsFn(e, ids, FiBool(false, 0));
-	}
-	structCases = fold(scases.second, makeTree(), \acc, c -> {
-		ids = eitherFn(lookupTree(unions, c.struct), idfn, \-> eitherFn(lookupTree(structs, c.struct), v2a, \-> []));
-		setTree(
-			acc,
-			c.body,
-			Pair(
-				eitherMap(lookupTree(acc, c.body), \caseInf -> concat(ids, caseInf.first), ids),
-				c.argNames
-			)
-		)
+
+	orderedCases = fold(scases.second, makeTree(), \tree, c -> {
+		eitherFn(
+			lookupTree(structs, c.struct),
+			\id -> setTree(tree, id, Pair(c.argNames, c.body)),
+			\ -> {
+				println("ERROR: can't find struct '" + c.struct + "' in switch");
+				tree
+			}
+		);
 	});
-	foldTree(structCases, Pair(defCase, 0), \caseBody, caseInf, acc -> unpair(acc, \caseExps, i -> {
-		body = filterUnusedArgs(caseBody, caseInf.second);
-		newExp = if (i == 0 && defCases == []) {
-			FiSeq([body], type, 0)
-		} else {
-			FiIf(cmprExpWithStructIds(caseInf.first), body, caseExps, type, 0);
-		}
-		Pair(newExp, i + 1);
-	})).first;
+
+	foldTreeBinary(
+		orderedCases,
+		\id : int, c, left, right -> {
+			newRight = FiIf(makeEqIdsFn(e, id), filterUnusedArgs(c.second, c.first), right, type, 0);
+			if (left == right) {
+				newRight;
+			} else {
+				FiIf(makeLessIdsFn(e, id), left, newRight, type, 0);
+			}
+		},
+		defCase
+	);
 }
 
 filterUnusedArgs(e : FiExp, args : [string]) -> FiExp {
@@ -133,20 +133,12 @@ removeUnusedVars(expr : FiExp, ids : Set<string>) -> FiExp {
 	}
 }
 
-makeCmpIdsFn(e : FiVar, ids : [int], acc : FiExp) -> FiExp {
-	if (ids == []) {
-		acc;
-	} else {
-		makeCmpIdsFn(
-			e,
-			tail(ids),
-			FiCallPrim(FcOrPrim(), [acc, makeCmpIdFn(e, ids[0])], FiTypeBool(), 0)
-		);
-	}
+makeEqIdsFn(e : FiVar, id : int) -> FiExp {
+	FiCallPrim(FcEqPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
 }
 
-makeCmpIdFn(e : FiVar, id : int) -> FiExp {
-	FiCallPrim(FcEqPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
+makeLessIdsFn(e : FiVar, id : int) -> FiExp {
+	FiCallPrim(FcLtPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
 }
 
 fiType2defVal(type : FiType) -> FiConst {
