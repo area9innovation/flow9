@@ -1662,7 +1662,9 @@ class TextClip extends NativeWidgetClip {
 			} catch (e : Dynamic) {}
 		}
 
-		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		var isJapaneseFont = style.fontFamily == "Meiryo" || style.fontFamily == "MeiryoBold";
+
+		if (isJapaneseFont || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
