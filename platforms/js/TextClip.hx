@@ -511,7 +511,7 @@ class TextClip extends NativeWidgetClip {
 					}
 				}
 
-				nativeWidget.style.whiteSpace = "pre";
+				nativeWidget.style.whiteSpace = isJapaneseFont(style) ? "pre-wrap" : "pre";
 				baselineWidget.style.direction = nativeWidget.style.direction = switch (this.textDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
@@ -675,6 +675,10 @@ class TextClip extends NativeWidgetClip {
 			return "Extra Bold"
 		else
 			return "Black";
+	}
+
+	public static function isJapaneseFont(st) : Bool {
+		return Native.isNew && (st.fontFamily == "Meiryo" || st.fontFamily == "MeiryoBold");
 	}
 
 	private static var ffMap : Dynamic;
@@ -1636,6 +1640,9 @@ class TextClip extends NativeWidgetClip {
 				}
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				if (isJapaneseFont(style) && this.isHTMLRenderer()) {
+					measureHTMLWidth();
+				}
 			}
 
 			metrics.maxWidth = 0.0;
@@ -1662,9 +1669,8 @@ class TextClip extends NativeWidgetClip {
 			} catch (e : Dynamic) {}
 		}
 
-		var isJapaneseFont = style.fontFamily == "Meiryo" || style.fontFamily == "MeiryoBold";
 
-		if (isJapaneseFont || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
@@ -1731,7 +1737,7 @@ class TextClip extends NativeWidgetClip {
 
 		nativeWidget.style.display = tempDisplay;
 
-		if (!wordWrap && textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
+		if ((!wordWrap || isJapaneseFont(style)) && textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
 			var textNodeWidth = textNodeMetrics.width;
 			metrics.width = textNodeWidth;
 		}
