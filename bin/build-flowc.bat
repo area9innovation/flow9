@@ -63,6 +63,8 @@ echo }>> %VERFILE%
 )
 
 pushd %BASE_DIR%
+if exist platforms\java\com\area9innovation\flow\*.class del platforms\java\com\area9innovation\flow\*.class
+SET PATH=%JAVA_HOME%\bin;%PATH%
 call flowc1 jar=flowc_1 tools/flowc/flowc.flow
 
 "%JAVA%" bin\check_java_version.java

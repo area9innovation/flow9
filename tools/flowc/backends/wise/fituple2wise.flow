@@ -1,0 +1,172 @@
+import tools/flowc/backends/wise/fi2wise_utils;
+import text/blueprint;
+
+export {
+	fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstStructs;
+
+	WiseAstStructs(
+		data : StructTuple,
+		table : Tree<string, int>,
+		unions : Tree<string, [int]>, // unionName - [structId]
+	);
+	makeWiseAstStructs() -> WiseAstStructs;
+
+	getStructArgs(name : string, data : StructTuple) -> Maybe<[FiType]>;
+	flowWiTuple2string(struct : FlowWiTuple, structs : WiseAstStructs, field2string : (FlowWiExp) -> string) -> string;
+	decostructStructInExp(e : FlowWiExp, type : FlowWiType) -> Pair<FlowWiExp, FlowWiType>;
+	isStructDecomposition(e : FlowWiExp) -> bool;
+	isGetStructValueExp(v : FlowWiExp) -> bool;
+}
+
+StructTuple(
+	link : Tree</*struct_name*/string, StructTupleArgs>
+);
+StructTupleArgs(
+	args : Tree<string/*arg_name*/, StructTupleArg>
+);
+StructTupleArg(
+	index : int,
+	type : FiType,
+);
+
+makeStructTuple() -> StructTuple {
+	StructTuple(makeTree());
+}
+
+makeWiseAstStructs() -> WiseAstStructs {
+	WiseAstStructs(makeStructTuple(), makeTree(), makeTree());
+}
+
+fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstStructs {
+	state = foldr(structs, Pair(makeWiseAstStructs(), 1), \acc, struct -> unpair(acc, \tuples, id -> Pair(
+		WiseAstStructs(
+			// TODO: remove type?
+			StructTuple(setTree(
+				tuples.data.link,
+				struct.name,
+				StructTupleArgs(foldi(struct.args, makeTree(), \i, acc2, arg ->
+					setTree(acc2, arg.name, StructTupleArg(i, arg.type))
+				))
+			)),
+			setTree(tuples.table, struct.name, id),
+			tuples.unions,
+		),
+		id + 1
+	))).first;
+
+	unionIds = values2treeEx(unions, \v -> v.name, \t -> map(t.typenames, \v -> v.name));
+	unionStructs = values2treeEx(
+		unions,
+		\v -> v.name,
+		\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
+	);
+
+	WiseAstStructs(state with unions = unionStructs);
+}
+
+getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string]) -> [string] {
+	if (ids == []) {
+		acc
+	} else {
+		id = ids[0];
+		children = unzip(lookupTreeDef(unionIds, id, []), \v -> containsKeyTree(unionIds, v));
+		getUnionStructs(
+			concat(tail(ids), children.first),
+			unionIds,
+			concat(acc, children.second)
+		);
+	}
+}
+
+getStructArgs(name : string, data : StructTuple) -> Maybe<[FiType]> {
+	maybeMap(lookupTree(data.link, name), \args -> map(
+		sortCustom(getTreeValues(args.args), \arg -> arg.index, true),
+		\arg -> arg.type
+	));
+}
+
+flowWiTuple2string(struct : FlowWiTuple, structs : WiseAstStructs, field2string : (FlowWiExp) -> string) -> string {
+	makeDefTuple = \-> "(" + superglue(struct.exps, field2string, ", ") + (if (struct.exps == []) "" else ",") + ")";
+	eitherFn(
+		lookupTree(structs.table, struct.id),
+		\iid -> eitherFn(
+			getStructArgs(struct.id, structs.data),
+			\fieldTypes : [FiType] -> {
+				getFields = \name : string -> getStructArgs(name, structs.data);
+				tupleFieldTypes = mapi(fieldTypes, \i, ft -> 
+					eitherFn(elementAtM(struct.typeParameters, i), idfn, \-> fiType2FlowWiType(ft, getFields))
+				);
+				field2string(makeCreateStruct(iid, struct, tupleFieldTypes));
+			},
+			\ -> {
+				println("Structure fields '" + struct.id + "' are not found");
+				makeDefTuple();
+			}
+		),
+		\ -> {
+			if (struct.id != "") println("Structure '" + struct.id + "' is not found");
+			makeDefTuple();
+		}
+	);
+}
+
+addStructServiceFields(type : FlowWiType) -> FlowWiType {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(__) : type;
+		FlowWiFntype(tt, returnType) : FlowWiFntype(
+			map(tt, addStructServiceFields),
+			addStructServiceFields(returnType)
+		);
+		FlowWiTupletype(tt, id) : FlowWiTupletype(concat(
+			[FlowWiBasictype("i32"), FlowWiBasictype("i32")], // counter, id
+			map(tt, addStructServiceFields)
+		), id);
+		FlowWiArrayType(tt) : FlowWiArrayType(addStructServiceFields(tt));
+	}
+}
+
+makeGetStructValue(struct : FlowWiExp, type : FlowWiTupletype) -> FlowWiExp {
+	FlowWiCall(
+		FlowWiPolyCall(FlowWiVar("getStructValue"), [type]),
+		[struct]
+	);
+}
+
+makeCreateStruct(id : int, struct : FlowWiTuple, types : [FlowWiType]) -> FlowWiExp {
+	fieldTypes = map(types, addStructServiceFields);
+	FlowWiCall(
+		FlowWiPolyCall(FlowWiVar("createStruct"), [FlowWiTupletype(fieldTypes, struct.id)]),
+		[
+			FlowWiInt(id),
+			FlowWiTuple("", struct.exps, []) // "" - don't 'create' twice
+		]
+	);
+}
+
+decostructStructInExp(e : FlowWiExp, type : FlowWiType) -> Pair<FlowWiExp, FlowWiType> {
+	newType = addStructServiceFields(type);
+	switch (newType : FlowWiType) {
+		FlowWiTupletype(__, __): Pair(makeGetStructValue(e, newType), newType);
+		default : Pair(e, type);
+	}
+}
+
+// TODO: delete
+isStructDecomposition(e : FlowWiExp) -> bool {
+	switch (e : FlowWiExp) {
+		FlowWiCall(fn, args): {
+			switch (fn : FlowWiExp) {
+				FlowWiPolyCall(v, __): isGetStructValueExp(v);
+				default : false;
+			}
+		}
+		default : false;
+	}
+}
+
+isGetStructValueExp(v : FlowWiExp) -> bool {
+	switch (v : FlowWiExp) {
+		FlowWiVar(id): id == "getStructValue";
+		default : false;
+	}
+}

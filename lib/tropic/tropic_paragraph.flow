@@ -48,6 +48,7 @@ TRenderDynamicParagraph(
 	forceReflowT : Transform<bool>
 ) -> TDynamicParagraph {
 	traceApi = makeWigiTrace_Tropic("TRenderDynamicParagraph", getValue(wordsB));
+	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -91,12 +92,14 @@ TRenderDynamicParagraph(
 		oldWH = getValue(paragraphWHB);
 		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
-		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
-			getValue(wordsB), w, indent, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, false, false, None()
+			getValue(wordsB), w, indent, tightWidth, alignment,
+			interlineSpacing, topLineBaseline, rtl,
+			containsStruct(s, ParagraphMarked()),
+			genIndent, linesCountB, alignWidthM, false,
+			false, None()
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
@@ -234,6 +237,7 @@ TRenderParagraph(
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Tropic {
 	traceApi = makeWigiTrace_Tropic("TRenderParagraph", words);
+	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -273,7 +277,8 @@ TRenderParagraph(
 		if (rtl) 0.0 else genIndent,
 		reflowHappenedB,
 		joinedWordsConstructors,
-		rtl
+		rtl,
+		ignoreLetterSpacing
 	);
 
 	paragraphWHB = makeWH();
@@ -290,11 +295,12 @@ TRenderParagraph(
 		oldWH = getValue(paragraphWHB);
 		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
-		// It's the safest way to simmulate single line, because reflowParaWords2 does a lot of useful staff.
+		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 		paragraphSizeBaselineAndChanges = reflowTParaWords(
-			words, w, indent, tightWidth, alignment, interlineSpacing,
-			topLineBaseline, rtl, containsStruct(s, ParagraphMarked()),
+			words, w, indent, tightWidth, alignment,
+			interlineSpacing, topLineBaseline, rtl,
+			containsStruct(s, ParagraphMarked()),
 			genIndent, linesCountB, alignWidthM, fitLongWords,
 			ignoreLetterSpacing, renderedLinesInfoM
 		);
@@ -373,7 +379,7 @@ TRenderParagraph(
 			},
 			awB
 		)
-	) |> if (needIndent) TBorderStart(genIndent, rtl) else idfn;
+	) |> (if (needIndent) TBorderStart(genIndent, rtl) else idfn)
 }
 
 LineHeadingsAcc(
@@ -389,7 +395,8 @@ groupAndPositionWords(
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
-	rtl : bool
+	rtl : bool,
+	ignoreLetterSpacing : bool
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
@@ -400,18 +407,20 @@ groupAndPositionWords(
 			genIndent,
 			reflowHappened,
 			joinedWordsConstructors,
-			rtl
+			rtl,
+			ignoreLetterSpacing
 		)
 	);
 
-	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords  else Cons(
+	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords else Cons(
 		makeHeadingGroup(
 			groupResult.currentGroup,
 			groupResult.currentTag,
 			genIndent,
 			reflowHappened,
 			joinedWordsConstructors,
-			rtl
+			rtl,
+			ignoreLetterSpacing
 		),
 		groupResult.groupedWords
 	);
@@ -425,7 +434,8 @@ appendWordToLine(
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
-	rtl : bool
+	rtl : bool,
+	ignoreLetterSpacing : bool
 ) -> LineHeadingsAcc {
 	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size), "");
 	if (acc.currentTag == tag && isUrlParameterTrue("new") && !isUrlParameterFalse("tparawordglue")) {
@@ -440,7 +450,8 @@ appendWordToLine(
 				genIndent,
 				reflowHappened,
 				joinedWordsConstructors,
-				rtl
+				rtl,
+				ignoreLetterSpacing
 			),
 			acc.groupedWords
 		);
@@ -456,14 +467,15 @@ makeHeadingGroup(
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
-	rtl : bool
+	rtl : bool,
+	ignoreLetterSpacing : bool
 ) -> Tropic {
 
 	joinedWords = if (rtl || isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
-	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors);
+	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing);
 
 	if (tag == "" || isUrlParameterTrue("new")) TGroup(joinedWords) else TAccess(
 		[
@@ -499,7 +511,8 @@ joinGroupedWords(
 	words: List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	ignoreLetterSpacing : bool
 ) -> [Tropic] {
 
 	isSameGroup = \currentGroup : List<TParaWord>, id : int -> switch (currentGroup) {
@@ -520,7 +533,8 @@ joinGroupedWords(
 						joinedWordsConstructors,
 						getValue(firstWord.id),
 						\t, s -> TText(t, arrayPush(makeSkipOrderCheck(s), TagName("span")))
-					)
+					),
+					ignoreLetterSpacing
 				)
 			)
 		}
@@ -568,7 +582,8 @@ joinTextWords(
 	words : List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	ignoreLetterSpacing : bool
 ) -> Tropic {
 	// Here is TSelect that recalculates the view when behaviour is updated.
 	// It happens on each reflow because after reflow words can go to another line.
@@ -587,12 +602,13 @@ joinTextWords(
 					word,
 					genIndent,
 					reflowHappened,
-					wordsViewConstructor
+					wordsViewConstructor,
+					ignoreLetterSpacing
 				)
 			);
 			TGroup(
 				// here we get group because words of the same style(wigiText) can be placed on few lines
-				list2array(addLastLine(joinResult, wordsViewConstructor)) |> reverseA
+				list2array(addLastLine(joinResult, wordsViewConstructor, ignoreLetterSpacing)) |> reverseA
 			);
 		}
 	);
@@ -605,57 +621,61 @@ appendOrJoinWord(
 	word : TParaWord,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	ignoreLetterSpacing : bool
 ) -> JoinTextAcc {
-	lineNumber = getValue(word.inspector.lineNumber);
-	lineWordSpacingB = word.inspector.lineWordSpacing;
-	wordString = switch (word.word) {
-		GeneralText(str) : str;
-		GeneralSpace(str, __, __) : str;
-		default : "";
-	};
+	if (!getValue(word.inspector.detached)) {
+		lineNumber = getValue(word.inspector.lineNumber);
+		lineWordSpacingB = word.inspector.lineWordSpacing;
+		wordString = switch (word.word) {
+			GeneralText(str) : str;
+			GeneralSpace(str, __, __) : str;
+			default : "";
+		};
 
-	wordOffset = const(Point(
-		getValue(word.inspector.x) - genIndent,
-		getValue(word.inspector.y)
-	));
+		wordOffset = const(Point(
+			getValue(word.inspector.x) - genIndent,
+			getValue(word.inspector.y)
+		));
 
-	if (acc.lineNumber == -1) {
-		// There are no words yet.
-		JoinTextAcc(
-			wordString,
-			ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
-			lineNumber,
-			wordOffset,
-			acc.acc
-		);
-	} else if (acc.lineNumber == lineNumber) {
-		// just concat to current string
-		JoinTextAcc(acc with
-			currentString = wordString + acc.currentString,
-			currentOffset = wordOffset
-		)
-	} else {
-		JoinTextAcc(
-			wordString,
-			ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
-			lineNumber,
-			wordOffset,
-			addLastLine(acc, wordsViewConstructor)
-		)
-	}
+		if (acc.lineNumber == -1) {
+			// There are no words yet.
+			JoinTextAcc(
+				wordString,
+				ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
+				lineNumber,
+				wordOffset,
+				acc.acc
+			);
+		} else if (acc.lineNumber == lineNumber) {
+			// just concat to current string
+			JoinTextAcc(acc with
+				currentString = wordString + acc.currentString,
+				currentOffset = wordOffset
+			)
+		} else {
+			JoinTextAcc(
+				wordString,
+				ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
+				lineNumber,
+				wordOffset,
+				addLastLine(acc, wordsViewConstructor, ignoreLetterSpacing)
+			)
+		}
+	} else acc
 }
 
 addLastLine(
 	joinResult : JoinTextAcc,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	ignoreLetterSpacing : bool
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
 			joinResult.currentOffset,
 			wordsViewConstructor(
 				joinResult.currentString,
-				joinResult.style
+				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style
 			)
 		),
 		joinResult.acc,

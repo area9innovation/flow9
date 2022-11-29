@@ -1411,6 +1411,10 @@ class Native {
 	}
 
 	public static function setFileContentBinary(file : String, content : Dynamic) : Bool {
+		return setFileContentBinaryCommon(file, content, false);
+	}
+
+	public static function setFileContentBinaryCommon(file : String, content : Dynamic, convertToUTF8 : Bool) : Bool {
 		#if (js && (flow_nodejs || nwjs))
 			try {
 				Fs.writeFileSync(file, new Buffer(content), 'binary');
@@ -1420,24 +1424,38 @@ class Native {
 			return true;
 		#elseif (js)
 			try {
-				var fileBlob = new js.html.Blob([content]);
-
 				var a : Dynamic = js.Browser.document.createElement("a");
-				var url = js.html.URL.createObjectURL(fileBlob);
-
-				a.href = url;
 				a.download = file;
 				js.Browser.document.body.appendChild(a);
-				a.click();
 
+				if (convertToUTF8 || Util.getParameter("save_file_utf8") == "1") { // Old implementation, Blob converts to UTF-8
+					var fileBlob = new js.html.Blob([content], {type : 'application/octet-stream'});
+					var url = js.html.URL.createObjectURL(fileBlob);
+					a.href = url;
+					a.click();
+
+					Native.defer(function() {
+						js.html.URL.revokeObjectURL(url);
+					});
+				} else {
+					if (content.startsWith(Util.fromCharCode(0xFEFF))) {
+						content = content.substr(1);
+					}
+					var base64data = Browser.window.btoa(content);
+					a.href = 'data:application/octet-stream;base64,' + base64data;
+					a.click();
+				}
 				Native.defer(function() {
 					js.Browser.document.body.removeChild(a);
-					js.html.URL.revokeObjectURL(url);
 				});
 
 				return true;
 			} catch (error : Dynamic) {
-				return false;
+				if (convertToUTF8) {
+					return false;
+				} else {
+					return setFileContentBinaryCommon(file, content, true);
+				}
 			}
 
 		#else

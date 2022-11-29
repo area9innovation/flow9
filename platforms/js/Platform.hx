@@ -23,6 +23,7 @@ class Platform {
 	public static var isLinux : Bool = false;
 
 	public static var isDarkMode = false;
+	public static var isMouseSupported = false;
 
 	public static var browserMajorVersion : Int = 0;
 

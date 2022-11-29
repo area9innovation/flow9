@@ -1,0 +1,79 @@
+import ds/tree;
+import algorithms;
+import ds/arrayutils;
+import tools/flowc/backends/wise/flow_wise_types;
+import tools/flowc/incremental/fitype;
+
+export {
+	makeStringType() -> FlowWiType; // string = array of chars
+	fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<[FiType]>) -> FlowWiType;
+	wiType2string(type : FlowWiType) -> string; // for vars, etc
+	flowWiTupletype2string(type : FlowWiType) -> string; // for natives . tree of tuple
+	wiType2stringForFn(type : FlowWiType) -> string; // fn declaration. tuple is a pointer
+}
+
+makeStringType() -> FlowWiType {
+	FlowWiBasictype("string");
+}
+
+fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<[FiType]>) -> FlowWiType {
+	fiType2flowWiType(type, None(), getStruct);
+}
+
+fiType2flowWiType(type : FiType, param : Maybe<FiType>, getStruct : (string) -> Maybe<[FiType]>) -> FlowWiType {
+	makeDefType = \-> {
+		println("TODO Type: " + toString(type));
+		FlowWiBasictype("auto");
+	}
+	mapType = \t -> fiType2flowWiType(t, None(), getStruct);
+	switch (type : FiType) {
+		FiTypeArray(t) : FlowWiArrayType(mapType(t));
+		FiTypeFunction(args, returnType) : FlowWiFntype(
+			map(args, \arg -> mapType(arg.type)),
+			mapType(returnType)
+		);
+		FiTypeRef(t) : makeDefType();
+		FiTypeParameter(n) : param ?? if (startsWith(n, "?")) mapType(param) else FlowWiBasictype(n) : FlowWiBasictype(n);
+		FiTypeBool() : FlowWiBasictype("auto");
+		FiTypeInt() : FlowWiBasictype("i32");
+		FiTypeDouble() : FlowWiBasictype("f64");
+		FiTypeString() : FlowWiArrayType(makeStringType());
+		FiTypeFlow() : makeDefType();
+		FiTypeVoid() :  FlowWiBasictype("auto");
+		FiTypeNative() : makeDefType();
+		FiTypeName(name, typeparameters) : FlowWiTupletype(eitherFn(
+			getStruct(name),
+			\args -> mapi(args, \i, a -> fiType2flowWiType(a, elementAtM(typeparameters, i), getStruct)),
+			\-> map(typeparameters, mapType)
+		), name);
+	}
+}
+
+wiType2string(type : FlowWiType) -> string {
+	flowWiType2string(type, true, false);
+}
+
+flowWiTupletype2string(type : FlowWiType) -> string {
+	flowWiType2string(type, true, true);
+}
+
+// maybe we have to expand tuple in Call, not inside the fn (?)
+wiType2stringForFn(type : FlowWiType) -> string {
+	flowWiType2string(type, false, false);
+}
+
+flowWiType2string(type : FlowWiType, topType : bool, deep : bool) -> string {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(s) : s; // TODO ?
+		FlowWiFntype(types, returnType) : {
+			"(" + strGlue(map(types, \t -> flowWiType2string(t, false, false)), ", ") + ") -> "
+			+ flowWiType2string(returnType, false, false);
+		}
+		FlowWiTupletype(types, __) : if (topType || deep) {
+			"(" + strGlue(map(types, \t -> flowWiType2string(t, false, deep)), ", ") + ")"
+		} else {
+			"i32"; // pointer
+		}
+		FlowWiArrayType(t) : "i32"; // pointer
+	}
+}

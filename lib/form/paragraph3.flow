@@ -288,6 +288,7 @@ renderParagraphEx(
 	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
 ) -> Form {
 	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
+	traceApi.trace(\-> "renderParagraphEx "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -346,7 +347,7 @@ renderParagraphEx(
 		};
 	};
 
-	aw = make(0.0);
+	awB = make(0.0);
 	update = make(0);
 	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
 
@@ -356,7 +357,7 @@ renderParagraphEx(
 			prevAccessibilityParent = ^accessibilityParent;
 			accessibilityParent := paragraphAccessibilityParent;
 			rendered = renderParaLines(
-				if (storyWidth > 0.0) storyWidth else getValue(aw),
+				if (storyWidth > 0.0) storyWidth else getValue(awB),
 				lines, tightWidth, alignment, interlineSpacing,
 				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
 				interLineHighlighting, renderedLinesInfoM
@@ -457,7 +458,7 @@ renderParagraphEx(
 
 	Constructor(
 		Inspect(
-			[AvailableWidth2(aw)],
+			[AvailableWidth2(awB)],
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
 				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
 			} else {
@@ -477,6 +478,7 @@ renderParagraphEx(
 						addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
 					)
 				);
+				ignoreLetterspacing = containsStruct(s, IgnoreLetterspacingOnReflow());
 				infos = getParaLineInfos(
 					alignment,
 					wordGroups,
@@ -485,7 +487,8 @@ renderParagraphEx(
 					isParagraphMarked,
 					rtl,
 					fitLongWords,
-					extractStruct(s, defaultFontSizeStyle).size
+					extractStruct(s, defaultFontSizeStyle).size,
+					ignoreLetterspacing
 				);
 
 				nextDistinct(linesCountB, length(infos));
@@ -497,8 +500,8 @@ renderParagraphEx(
 
 			uns = concatA([
 				[
-					subscribe(aw, \v -> {
-						traceApi.trace(\-> "aw changed. calling updateFn. aw = " + toString(v));
+					subscribe(awB, \v -> {
+						traceApi.trace(\-> "awB changed. calling updateFn. awB = " + toString(v));
 						updateFn(v);
 					}),
 				],
@@ -509,14 +512,14 @@ renderParagraphEx(
 						if (u == 1) deferUntilNextFrameRendered(\ -> {
 							traceApi.trace(\-> "updateFn DEFERRED STARTED");
 							next(update, 0);
-							updateFn(getValue(aw))
+							updateFn(getValue(awB))
 						})
 					})
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
 					if (i < ndymamicUpper) {
 						traceApi.trace(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
-						updateFn(getValue(aw))
+						updateFn(getValue(awB))
 					} else {
 						traceApi.trace(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
 						nextDistinct(update, 1)
@@ -568,7 +571,8 @@ getParaLineInfos(
 	isParagraphMarked : bool,
 	rtl : bool,
 	shrinkLongWords : bool,
-	fontSize : double
+	fontSize : double,
+	ignoreLetterSpacing : bool
 ) -> [ParaLineInfo] {
 	textScale = if (shrinkLongWords && wordGroups != []) {
 		maxWidthGroup : ParaWordGroup = fold(
@@ -599,7 +603,7 @@ getParaLineInfos(
 				}) |> list2array |> reverseA;
 			} else line.words;
 		} else line.words;
-		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount);
+		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount, ignoreLetterSpacing);
 
 		lineAscAndDynamic : Pair<double, bool> = fold(optimizedLine, Pair(0.0, false), \ac : Pair<double, bool>, ole : OptimizedLineElement -> {
 			lineAsc = max(ac.first, fgetValue(ole.metrics).baseline);
@@ -803,7 +807,7 @@ getJoinableTextMetrics(
 		getDefault()
 	} else switch (form) {
 		Text(text, st) : {
-			letterSpacing = extractStruct(st, LetterSpacing(0.0)).spacing;
+			letterSpacing = extractStruct(st, zeroLetterSpacing).spacing;
 			staticMetrics = getStaticFormSizeCached2(form, getExactTopPoint);
 
 			metrics : Pair<Form, Transform<FormMetrics>> = if (use_dynamic_text_metrics) {
@@ -1128,8 +1132,8 @@ renderParaLines(
 	))
 }
 
-getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement]{
-	optimizeLine(words, alignment, availableWidth, indent, lastLine);
+getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool) -> [OptimizedLineElement]{
+	optimizeLine(words, alignment, availableWidth, indent, lastLine, ignoreLetterSpacing);
 }
 
 calcParaLineAlignmentOffset(slack : double, lineIndent : double, rtl : bool, alignment : ParaLineAlignment) -> double {
@@ -1453,7 +1457,7 @@ applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> F
 // Joins texts together to a single text element, along with the new metrics
 dummyTextWidthInspector = TextWidthInspector(make(0.0));
 
-optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool) -> [OptimizedLineElement] {
+optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool) -> [OptimizedLineElement] {
 	wordsCount = length(words) - 1;
 
 	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
@@ -1490,17 +1494,26 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 			EmptyList() : {
 				formMetrics = switch (w) {
 					Space(__): {
+						metricsWithoutLS = if (ignoreLetterSpacing) {
+							switch (f : GhostForm) {
+								Text(__, style) : {
+									spaceSize = getStaticFormSize(f);
+									FormMetrics(spaceSize with width = spaceSize.width - extractStruct(style, zeroLetterSpacing).spacing) |> const
+								}
+								default: metrics
+							}
+						} else metrics;
 						if (newJustifyEnabled && alignment == Justify()) {
 							switch (f : GhostForm) {
 								Text(text, __) : {
 									if (text == " ") {
 										spaceSize = getStaticFormSize(f);
 										FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
-									} else metrics
+									} else metricsWithoutLS
 								}
-								default: metrics
+								default: metricsWithoutLS
 							}
-						} else metrics
+						} else metricsWithoutLS
 					};
 					default: metrics;
 				};
@@ -1511,15 +1524,17 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 					Text(t1, s1) : {
 						switch (f : GhostForm) {
 							Text(t2, s2) : {
+								s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1; 
+								s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2; 
 								join = if (use_dynamic_text_metrics) {
 									joinText(
 										t1,
-										removeAllStructs(s1, dummyTextWidthInspector),
+										removeAllStructs(s1_withCorrectLS, dummyTextWidthInspector),
 										t2,
-										removeAllStructs(s1, dummyTextWidthInspector)
+										removeAllStructs(s1_withCorrectLS, dummyTextWidthInspector)
 									);
 								} else {
-									joinText(t1, s1, t2, s2);
+									joinText(t1, s1_withCorrectLS, t2, s2_withCorrectLS);
 								}
 
 								additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
@@ -1552,7 +1567,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										Pair(
 											t,
 											FormMetrics(m with
-												width = optimizedLineElementMetrics.width + wordWidth + extractStruct(s2, LetterSpacing(0.0)).spacing + additionalWidth
+												width = optimizedLineElementMetrics.width + wordWidth + (if (ignoreLetterSpacing) 0.0 else extractStruct(s2, zeroLetterSpacing).spacing) + additionalWidth
 											) |> const
 										);
 									}
