@@ -511,7 +511,7 @@ class TextClip extends NativeWidgetClip {
 					}
 				}
 
-				nativeWidget.style.whiteSpace = isJapaneseFont(style) ? "pre-wrap" : "pre";
+				nativeWidget.style.whiteSpace = isJapaneseFont(style) && style.wordWrap ? "pre-wrap" : "pre";
 				baselineWidget.style.direction = nativeWidget.style.direction = switch (this.textDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
@@ -1670,7 +1670,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 
-		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		if (isJapaneseFont(style) || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
