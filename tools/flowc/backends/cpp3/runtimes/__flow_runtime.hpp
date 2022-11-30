@@ -80,7 +80,7 @@ using Bool = bool;
 using Double = double;
 using string = std::u16string;
 
-const char* type2s(Int type);
+string type2s(Int type);
 
 // String conversions
 
@@ -137,7 +137,6 @@ using PVec = Ptr<AVec>;
 using PRef = Ptr<ARef>;
 using PFun = Ptr<AFun>;
 
-using Union = PStr;
 
 // Specific polymiphic types for particular type parameters
 
@@ -188,16 +187,17 @@ struct AFlow {
 
 	bool isSameObj(Flow f) const;
 
-	void incRefs() const { ++ refs; }
-	//void decRefs() const;
-	void decRefs() const { 
-		-- refs; 
-		if (refs == 0) {
+	inline void incRefs() const { 
+		++ refs; 
+	}
+	inline void decRefs() const { 
+		if (-- refs == 0) {
 			delete this; 
 		}
 	}
 
-	mutable std::size_t refs;
+	//mutable std::atomic<uint32_t> refs;
+	mutable uint32_t refs;
 };
 
 template<typename T> struct IsScalar { enum { value = false }; };
@@ -243,28 +243,31 @@ struct VString : public AFlow {
 };
 
 inline String concatStrings(String s1, String s2) {
-	if (s1->refs > 2) {
+	//if (s1->refs > 2) {
 		string ret;
 		ret.reserve(s1->str.size() + s2->str.size());
 		ret += s1->str;
 		ret += s2->str;
 		return String::make(ret);
-	} else {
+	/*} else {
 		//std::cout << "Shortcut for concatStrings, s1->size()=" << s1->str.size() << ", s2->size()" << s2->str.size() << std::endl;
 		const_cast<string&>(s1->str) += s2->str;
 		return s1;
-	}
+	}*/
 }
 
 struct VNative : public AFlow {
 	enum { TYPE = Type::NATIVE };
-	VNative(void* n, std::function<void(void*)> r): nat(n), release(r) { }
+	VNative(const AFlow* w): nat(const_cast<AFlow*>(w)), release([](void* x) { static_cast<AFlow*>(x)->decRefs(); }), is_wrapper(true) { w->incRefs(); }
+	VNative(void* n, std::function<void(void*)> r): nat(n), release(r), is_wrapper(false) { }
 	~VNative() override { release(nat); }
 	Int type() const override { return Type::NATIVE; }
-	template<typename T> T* cast() const { return reinterpret_cast<T*>(nat); }
+	template<typename T> T* cast() const { return static_cast<T*>(nat); }
+	Flow toFlow() const { return is_wrapper ? static_cast<AFlow*>(nat) : this; }
 
 	mutable void* nat;
 	std::function<void(void*)> release;
+	bool is_wrapper;
 };
 
 struct AStr : public AFlow {
@@ -352,7 +355,13 @@ inline String AFlow::toString() const {
 		return flow2string(this);
 	}
 }
-inline Native AFlow::toNative() const { return getNative(); }
+inline Native AFlow::toNative() const { 
+	if (type() == Type::NATIVE) {
+		return getNative(); 
+	} else {
+		return Native::make(this);
+	}
+}
 inline PStr AFlow::toAStr() const { return getAStr(); }
 inline PVec AFlow::toAVec() const { return getAVec(); }
 inline PRef AFlow::toARef() const { return getARef(); }
@@ -477,7 +486,7 @@ const Vector<T>* concatVecs(const Vector<T>* v1, const Vector<T>* v2) {
 		return v1;
 	}
 }*/
-
+/*
 template<typename T>
 Vec<T> concatVecs1(Vec<T> v1, Vec<T> v2) {
 	if (v1->refs > 2) {
@@ -495,7 +504,7 @@ Vec<T> concatVecs1(Vec<T> v1, Vec<T> v2) {
 		return v1;
 	}
 }
-
+*/
 template<typename T> 
 struct Reference : public ARef {
 	Reference() { }
@@ -564,6 +573,56 @@ struct Function : public AFun, public std::function<R(As...)> {
 	}
 };
 
+//using Union = PStr;
+
+template<int... TS>
+struct Union {
+	Union(): un() { }
+	Union(const PStr& u): un(u) { check(); }
+	Union(PStr&& u): un(std::move(u)) { check(); }
+
+	template<typename T>
+	Union(const Str<T>& s): un(s) { check(); }
+	template<typename T>
+	Union(Str<T>&& s): un(std::move(s)) { check(); }
+
+	Union(const Union& u): un(u.un) { }
+	Union(Union&& u): un(std::move(u.un)) { }
+	template<int... TS1>
+	Union(const Union<TS1...>& u): un(u.un) { check(); }
+	template<int... TS1>
+	Union(Union<TS1...>&& u): un(std::move(u.un)) { check(); }
+
+	void check() const {
+		std::vector<Int> types = {TS...};
+		Int tp = un->type();
+		for (Int t: types) {
+			if (t == tp) {
+				return;
+			}
+		}
+		std::cerr << "Type " << string2std(type2s(un->type())) << " is not contained in union of types:" << std::endl;
+		for (Int t : types) {
+			std::cerr << string2std(type2s(t)) << ", ";
+		}
+		std::cerr << std::endl;
+		throw std::exception();
+		exit(1);
+	}
+	Union& operator = (Union&& u) { un.operator = (std::move(u.un)); check(); return *this; }
+	Union& operator = (const Union& u) { un.operator = (std::move(u.un)); check(); return *this; }
+
+	const AStr& operator *() { return un.operator*(); }
+	const AStr* operator ->() { return un.operator->(); }
+	const AStr* get() { return un.get(); }
+
+	const AStr& operator *() const { return un.operator*(); }
+	const AStr* operator ->() const { return un.operator->(); }
+	const AStr* get() const { return un.get(); }
+
+	PStr un;
+};
+
 template<typename T> Str<T> AFlow::toStr() const { 
 	if (const T* t = dynamic_cast<const T*>(this)) {
 		return t;
@@ -630,7 +689,7 @@ template<> struct BiCast<Double> { template<typename> struct From { static const
 template<> struct BiCast<String> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<> struct BiCast<Native> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<> struct BiCast<Flow> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Union> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
+template<int... TS> struct BiCast<Union<TS...>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<typename T> struct BiCast<Vec<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<typename T> struct BiCast<Ref<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<typename R, typename... As> struct BiCast<Fun<R, As...>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
@@ -682,7 +741,7 @@ template<> struct BiCast<String>::From<Flow> { static String conv(Flow x) { retu
 
 // BiCast<Native>
 
-template<> struct BiCast<Native>::To<Flow> { static Flow conv(Native x) { return x; } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Native>::To<Flow> { static Flow conv(Native x) { return x->toFlow(); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Native>::From<Flow> { static Native conv(Flow x) { return x->toNative(); } static constexpr bool is_available() { return true; } };
 
 // BiCast<Flow>
@@ -696,10 +755,10 @@ template<> struct BiCast<Flow>::From<Double> { static Flow   conv(Double d)  { r
 template<> struct BiCast<Flow>::To<String>   { static String conv(Flow x)   { return x->toString(); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::From<String> { static Flow   conv(String x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::To<Native>   { static Native conv(Flow x)   { return x->toNative(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Native> { static Flow   conv(Native x) { return x; } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Flow>::From<Native> { static Flow   conv(Native x) { return x->toFlow(); } static constexpr bool is_available() { return true; } };
 
-template<> struct BiCast<Flow>::To<Union>   { static Union conv(Flow x) { return x->toAStr(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Union> { static Flow conv(Union x) { return x; } static constexpr bool is_available() { return true; } };
+template<> template<int... TS> struct BiCast<Flow>::To<Union<TS...>>   { static Union<TS...> conv(Flow x) { return x->toAStr(); } static constexpr bool is_available() { return true; } };
+template<> template<int... TS> struct BiCast<Flow>::From<Union<TS...>> { static Flow conv(Union<TS...> x) { return x.get(); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::To<AVec>   { static PVec conv(Flow x) { return x->toAVec(); } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::From<AVec> { static Flow conv(PVec x) { return x; } static constexpr bool is_available() { return true; } };
 template<> struct BiCast<Flow>::To<ARef>   { static PRef conv(Flow x) { return x->toARef(); } static constexpr bool is_available() { return true; } };
@@ -721,22 +780,33 @@ template<> template<typename T> struct BiCast<Flow>::From<Ref<T>> { static Flow 
 template<typename T> template<typename T1> struct BiCast<Str<T>>::To<Str<T1>> { static Str<T1> conv(Str<T> x) { return T1::fromAStr(x.ptr); } static constexpr bool is_available() { return static_cast<int>(T1::TYPE) == static_cast<int>(Type::STRUCT); } };
 template<typename T> template<typename T1> struct BiCast<Str<T>>::From<Str<T1>> { static Str<T> conv(Str<T1> x) { return T::fromAStr(x.ptr); } static constexpr bool is_available() { return static_cast<int>(T::TYPE) == static_cast<int>(Type::STRUCT);  } };
 
-// BiCast<Union>
+// BiCast<Union<TS...>>
 
-template<> template<typename T> struct BiCast<Union>::To<Str<T>> {
+template<int... TS> template<typename T> struct BiCast<Union<TS...>>::To<Str<T>> {
 	static constexpr bool is_available() { return static_cast<int>(T::TYPE) == static_cast<int>(Type::STRUCT); }
-	static Str<T> conv(Union x) { 
-		if (const T* s = dynamic_cast<const T*>(x.ptr)) {
+	static Str<T> conv(Union<TS...> x) { 
+		if (const T* s = dynamic_cast<const T*>(x.get())) {
 			return s;
 		} else {
-			return T::fromAStr(x); 
+			return T::fromAStr(x.get()); 
 		}
 	} 
 };
-template<> template<typename T> struct BiCast<Union>::From<Str<T>> {
+template<int... TS> template<typename T> struct BiCast<Union<TS...>>::From<Str<T>> {
 	static constexpr bool is_available() { return true; }
-	static Union conv(Str<T> x) { return x; } 
+	static Union<TS...> conv(Str<T> x) { return x; } 
 };
+
+template<int... TS> template<int... TS1> struct BiCast<Union<TS...>>::To<Union<TS1...>> {
+	static constexpr bool is_available() { return true; }
+	static Union<TS1...> conv(Union<TS...> x) { return x; } 
+};
+
+template<int... TS> template<int... TS1> struct BiCast<Union<TS...>>::From<Union<TS1...>> {
+	static constexpr bool is_available() { return true; }
+	static Union<TS...> conv(Union<TS1...> x) { return x; } 
+};
+
 
 // BiCast<Vec<T>>
 
@@ -845,12 +915,12 @@ struct Compare<Str<T>> {
 	}
 };
 
-template<>
-struct Compare<Union> {
-	static Int cmp(Union v1, Union v2) { 
-		if (!v1) return -1; else
-		if (!v2) return 1; else
-		return compareFlow(v1, v2); 
+template<int... TS>
+struct Compare<Union<TS...>> {
+	static Int cmp(Union<TS...> v1, Union<TS...> v2) { 
+		if (!v1.get()) return -1; else
+		if (!v2.get()) return 1; else
+		return compareFlow(v1.get(), v2.get()); 
 	}
 };
 
@@ -871,5 +941,8 @@ struct StructDef {
 	Constructor make;
 	std::vector<FieldDef> fields;
 };
+
+extern string struct_names[];
+extern Int struct_count;
 
 }

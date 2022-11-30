@@ -1,0 +1,76 @@
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/manipulation/transform;
+
+export {
+	// Try to find a named constant from config and pass it to AST. 
+	// In case no such a value is found, the default value  is used.
+	// Format of a compile-time variable:
+	//    __compiletime__somevar_true
+	//    __compiletime__anothervar_42
+	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
+	// default fallback value, which should be used, in case no proper variable is defined in config.
+	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
+	// default value.
+	fiSubstituteCompileTimeProgram(prog: FiProgram, on_err: (FcError) -> void) -> FiProgram;
+}
+
+fiSubstituteCompileTimeProgram(prog: FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	if (prog.config.verbose > 0) {
+		fcPrintln("Substituting compile-time constants from config", prog.config.threadId);
+	}
+	// fiSubstituteCompileTimeVar(e: FiExp, conf: CompilerConfig, on_err: (string, int) -> void) -> FiExp
+	fiTransformProgramExp(prog, \e, __, module, __ -> {
+		fiSubstituteCompileTimeVar(e, prog.config, \msg, pos -> 
+			on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]))
+		)
+	});
+}
+
+fiSubstituteCompileTimeVar(e: FiExp, conf: CompilerConfig, on_err: (string, int) -> void) -> FiExp {
+	// Usage of a special compile-time constants, which may be substituted from config during compilation
+	// Format of a compile-time variable:
+	//    __compiletime__somevar_true
+	//    __compiletime__anothervar_42
+	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
+	// default fallback value, which should be used, in case no proper variable is defined in config.
+	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
+	// default value.
+	switch (e) {
+		FiVar(name, type, start): {
+			if (startsWith(name, "__compiletime__")) {
+				compile_time_val = substring(name, 15, strlen(name) - 15);
+				defval_sep = strIndexOf(compile_time_val, "_");
+				compile_time_var = substring(compile_time_val, 0, defval_sep);
+				compile_time_def = substring(compile_time_val, defval_sep + 1, strlen(compile_time_val) - (defval_sep + 1));
+				if (strlen(compile_time_var) == 0 || strlen(compile_time_def) == 0) {
+					on_err("Wrong compile time constant: must be like '__compiletime__somevar_true' or '__compiletime__anothervar_42', got: " + name, start);
+				}
+				make_compile_time_val = \val, def -> {
+					if (def == "true" || def == "false") {
+						// Case of a boolean compile-time expression
+						if (type != FiTypeBool()) {
+							on_err("Inconsistent type of compile-time constant, is boolean while must be " + prettyFiType(dummyPretty, type, makeSet()), start);
+						}
+						FiBool(val == "true", start);
+					} else if (isDigits(val)) {
+						// Case of an integer compile-time expression
+						if (type != FiTypeInt()) {
+							on_err("Inconsistent type of compile-time constant, is integer while must be " + prettyFiType(dummyPretty, type, makeSet()), start);
+						}
+						FiInt(s2i(val), start);
+					} else {
+						on_err("Unsupported type of compile-time constant: " + val + ", must be an integer or boolean constant", start);
+						e;
+					}
+				}
+				switch (lookupTree(conf.config, compile_time_var)) {
+					Some(val): make_compile_time_val(trim2(val, " \t\r\n"), compile_time_def);
+					None(): make_compile_time_val(compile_time_def, compile_time_def);
+				}
+			} else {
+				e;
+			}
+		}
+		default: e;
+	}
+}

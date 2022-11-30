@@ -1,0 +1,159 @@
+import tools/flowc/incremental/fiprettyprint;
+
+export {
+	// Greneral transformation of a program: on a declaration level
+	fiTransformProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram;
+
+	// Greneral transformation of a program: on an expression level
+	fiTransformProgramExp(prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram;
+
+	// Greneral transformation of an expression
+	fiTransformExp(prog: FiProgram, toplevel: FiDeclaration, module: FiModule, e: FiExp, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiExp;
+}
+
+fiTransformProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram {
+	modules = mapTree(prog.modules, \module -> fiTransformModule(prog, module, fn));
+	FiProgram(prog with
+		modules = modules,
+		names = foldTree(modules, 
+			FiGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree()),
+			\__,module, acc -> fiModule2GlobalNames(module, acc)
+		)
+	);
+}
+
+fiModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames {
+	names1 = fold(module.structs, names, \acc, x -> 
+		FiGlobalNames(acc with 
+			struct2module = setTree(acc.struct2module, x.name, module.fileinfo.flowfile),
+			structs = setTree(acc.structs, x.name, x)
+		)
+	);
+	names2 = fold(module.unions, names1, \acc, x -> 
+		FiGlobalNames(acc with 
+			union2module = setTree(acc.union2module, x.name, module.fileinfo.flowfile),
+			unions = setTree(acc.unions, x.name, x)
+		)
+	);
+	names3 = fold(module.functions, names2, \acc, x -> 
+		FiGlobalNames(acc with 
+			function2module = setTree(acc.function2module, x.name, module.fileinfo.flowfile),
+			toplevel = setTree(acc.toplevel, x.name, x)
+		)
+	);
+	names4 = fold(module.globalVars, names3, \acc, x -> 
+		FiGlobalNames(acc with 
+			globalVar2module = setTree(acc.globalVar2module, x.name, module.fileinfo.flowfile),
+			toplevel = setTree(acc.toplevel, x.name, x)
+		)
+	);
+	names5 = fold(module.natives, names4, \acc, x -> 
+		FiGlobalNames(acc with 
+			native2module = setTree(acc.native2module, x.name, module.fileinfo.flowfile),
+			toplevel = setTree(acc.toplevel, x.name, x)
+		)
+	);
+	names5;
+}
+
+fiTransformModule(prog: FiProgram, module: FiModule, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiModule {
+	toplevels = mapConcat(fiModuleToplevels(module), \x -> fn(x, module, prog));
+	FiModule(module with
+		structs = filtermap(toplevels, \x -> switch (x) { 
+			FiTypeStruct(__,__,__,__): Some(x);
+			default: None();
+		}),
+		unions = filtermap(toplevels, \x -> switch (x) { 
+			FiTypeUnion(__,__,__,__): Some(x);
+			default: None();
+		}),
+		functions = filtermap(toplevels, \x -> switch (x) { 
+			FiFunctionDec(__,__,__,__,__): Some(x);
+			default: None();
+		}),
+		globalVars = filtermap(toplevels, \x -> switch (x) { 
+			FiGlobalVar(__,__,__,__,__): Some(x);
+			default: None();
+		}),
+		natives = filtermap(toplevels, \x -> switch (x) { 
+			FiNativeDec(__,__,__,__,__,__,__): Some(x);
+			default: None();
+		}),
+	);
+}
+
+fiModuleToplevels(module: FiModule) -> [FiToplevel] {
+	concatA([
+		filtermap(module.structs, \s -> Some(s)),
+		filtermap(module.unions, \u -> Some(u)),
+		filtermap(module.functions, \f -> Some(f)),
+		filtermap(module.globalVars, \v -> Some(v)),
+		filtermap(module.natives, \n -> Some(n)),
+	]);
+}
+
+fiTransformProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram {
+	fiTransformProgramToplevel(program, \toplevel, module, prog -> 
+		switch (toplevel) {
+			FiTypeStruct(__,__,__,__): [toplevel];
+			FiTypeUnion(__,__,__,__): [toplevel];
+			FiFunctionDec(__,lambda,__,__,__): {
+				[FiFunctionDec(toplevel with 
+					lambda = cast(fiTransformExp(prog, toplevel, module, lambda, fn): FiExp -> FiLambda)
+				)];
+			}
+			FiGlobalVar(__,value,__,__,__): {
+				[FiGlobalVar(toplevel with 
+					value = fiTransformExp(prog, toplevel, module, value, fn)
+				)];
+			}
+			FiNativeDec(__,__,__,__,fallback,__,__): {
+				[FiNativeDec(toplevel with 
+					fallbackLambda = fiTransformExp(prog, toplevel, module, fallback, fn)
+				)];
+			}
+		}
+	);
+}
+
+fiTransformExp(prog: FiProgram, toplevel: FiDeclaration, module: FiModule, e: FiExp, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiExp {
+	do_job = \x -> fiTransformExp(prog, toplevel, module, x, fn);
+	fn(switch (e) {
+		FiLambda(args, body, type, start): {
+			FiLambda(e with body = do_job(body));
+		}
+		FiCall(f, args, type, start): {
+			FiCall(e with f = do_job(f), args = map(args, do_job));
+		}
+		FiLet(x, t, e1, e2, type, start): {
+			FiLet(e with e1 = do_job(e1), e2 = do_job(e2));
+		}
+		FiIf(e1, e2, e3, type, start): {
+			FiIf(e with e1 = do_job(e1), e2 = do_job(e2), e3 = do_job(e3));
+		}
+		FiSwitch(x, typ, cs, type, start): {
+			FiSwitch(e with cases = map(cs, \c -> FiCase(c with body = do_job(c.body))));
+		}
+		FiCast(e1, tFrom, tTo, type, start): {
+			FiCast(e with e = do_job(e1));
+		}
+		FiSeq(es, type, start): {
+			FiSeq(e with es = map(es, do_job));
+		}
+		FiCallPrim(op, es, type, start):{
+			FiCallPrim(e with es = map(es, do_job));
+		}
+		FiRequire(flowfile, e1, type, start): {
+			FiRequire(e with e = do_job(e1));
+		}
+		FiUnsafe(name, fb, type, start): {
+			FiUnsafe(e with fallback = do_job(fb));
+		}
+		FiVar(__,__,__):  e;
+		FiString(__, __): e;
+		FiBool(__, __):   e;
+		FiDouble(__, __): e;
+		FiVoid(__):       e;
+		FiInt(__, __):    e;
+	}, toplevel, module, prog);
+}

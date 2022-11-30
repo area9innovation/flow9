@@ -2,12 +2,24 @@ import tools/flowc/backends/common;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/manipulation/effects;
 import tools/flowc/manipulation/freevars;
+import tools/flowc/manipulation/transform;
+import string_utils;
 
 export {
 	deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram;
 }
 
-deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
+deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
+	// In case of condition with value known at a compile time - leave only corresponding branch
+	prog = fiTransformProgramExp(prog0, \e, decl,__,__ -> switch (e) {
+		FiIf(e1, e2, e3, __,__): {
+			switch (e1) {
+				FiBool(v,__): if (v) e2 else e3;
+				default: e;
+			}
+		}
+		default: e;
+	});
 	used = deadFiCodeAlive(prog, effects, preserveNames, eliminateNames, removeMain, removeGlobals);
 	dead = ref makeList();
 	conf = prog.config;
@@ -69,21 +81,36 @@ deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, e
 		}
 	);
 	// Show list of dead items only on verbose=2
-	if (verbose > 1) {
-		fcPrintln("Dead: " + strGlue(list2array(^dead), ", "), prog.config.threadId);
+	if (verbose > 1 || isConfigParameterTrue(prog.config.config, "show-deadcode")) {
+		dead_array = sort(list2array(^dead));
+		fcPrintln("Dead (" + i2s(length(dead_array)) + " identifiers):\n" + strArrayWrap(dead_array, 200, false, ", "), prog.config.threadId);
 	}
 	FiProgram(
 		prog.config,
 		modules,
 		prog.traversal,
-		// Filter toplevels as well 
+		// Arrange a new, toplevels, with deadcode removed 
 		FiGlobalNames(prog.names with
-			toplevel = filterTree(prog.names.toplevel, \name,__ -> containsSet(used, name))
+			toplevel = foldTree(modules, makeTree(), \name, module, acc -> 
+				fold(module.natives, 
+					fold(module.globalVars, 
+						fold(module.functions, acc, \ac, f -> setTree(ac, f.name, f)),
+						\ac, v -> setTree(ac, v.name, v)
+					),
+					\ac, n -> setTree(ac, n.name, n)
+				)
+			)
 		)
 	);
 }
 
-DeadCodeAcc(effects : FiEffects, modules : Tree<string, FiModule>, queue : Set<string>, used : Set<string>);
+DeadCodeAcc(
+	effects : FiEffects, 
+	modules : Tree<string, FiModule>, 
+	queue : Set<string>, 
+	used : Set<string>,
+	toplevel : Tree<string, FiDeclaration>
+);
 
 deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool) -> Set<string> {
 	queue = foldTree(
@@ -100,7 +127,7 @@ deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : Set<strin
 			)
 		}
 	);
-	visitDead(DeadCodeAcc(effects, prog.modules, queue, makeSet()), eliminateNames).used
+	visitDead(DeadCodeAcc(effects, prog.modules, queue, makeSet(), prog.names.toplevel), eliminateNames).used
 }
 
 visitDead(acc : DeadCodeAcc, eliminateNames : Set<string>) -> DeadCodeAcc {
@@ -109,7 +136,7 @@ visitDead(acc : DeadCodeAcc, eliminateNames : Set<string>) -> DeadCodeAcc {
 		Some(pop): {
 			name = pop.value;
 			visitDead(
-				deadFiName(DeadCodeAcc(acc.effects, acc.modules, pop.rest, acc.used),name, eliminateNames),
+				deadFiName(DeadCodeAcc(acc with queue = pop.rest), name, eliminateNames),
 				eliminateNames
 			)
 		}
@@ -117,7 +144,7 @@ visitDead(acc : DeadCodeAcc, eliminateNames : Set<string>) -> DeadCodeAcc {
 }
 
 deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> DeadCodeAcc {
-	mdec = lookupTree(acc.effects.names.toplevel, name);
+	mdec = lookupTree(acc.toplevel, name);
 	switch (mdec) {
 		None(): {
 			if (name != "main") {
@@ -139,7 +166,10 @@ deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> De
 			newnames = differenceSets(differenceSets(referenced, nused), eliminateNames);
 			nqueue = mergeSets(acc.queue, newnames);
 			nused2 = mergeSets(nused, newnames);
-			DeadCodeAcc(acc.effects, acc.modules, nqueue, nused2)
+			DeadCodeAcc(acc with
+				queue = nqueue, 
+				used = nused2
+			);
 		}
 	}
 }
@@ -175,9 +205,9 @@ and eliminate the appropriate branches from 'if (java) { .. }' statements.
 This function returns Some(b) in such cases, and None() in the others.
 */
 compileTimeIfCondition(ex : FiExp, backends : [FcBackendConfig]) -> Maybe<bool> {
-	if (length(backends) == 0) None() else {
-		switch (ex) {
-			FiVar(name, __,__): {
+	switch (ex) {
+		FiVar(name, __,__): {
+			if (length(backends) == 0) None() else {
 				if (name == "js" || name == "nodejs" || name == "nwjs" || name == "jslibrary") {
 					if (forall(backends, isJSBackendConfig)) Some(true) else
 					if (!exists(backends, isJSBackendConfig)) Some(false) else None();
@@ -193,8 +223,9 @@ compileTimeIfCondition(ex : FiExp, backends : [FcBackendConfig]) -> Maybe<bool> 
 					if (!exists(backends, isJavaBackendConfig)) Some(false) else None();
 				} else None();
 			}
-			default: None();
 		}
+		FiBool(v, __): Some(v);
+		default: None();
 	}
 }
 
@@ -219,7 +250,7 @@ removeUnreacheableFromFiExp(expr : FiExp, backends : [FcBackendConfig], conf : C
 		FiIf(e1, e2, e3, type, s):
 			switch (compileTimeIfCondition(e1, backends)) {
 				Some(val): {
-					fcVerbose(conf, 1, "Removing resolved compile-time if condition");
+					fcVerbose(conf, 0, "Removing resolved compile-time if condition");
 					if (val) {
 						removeUnreacheableFromFiExp(e2, backends, conf);
 					} else {

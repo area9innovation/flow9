@@ -171,17 +171,23 @@ string std2string(const std::string& s) {
 	return str;
 }
 
-const char* type2s(Int type) { 
+string type2s(Int type) { 
 	switch (type) {
-		case Type::INT:    return "int";
-		case Type::BOOL:   return "bool";
-		case Type::DOUBLE: return "double";
-		case Type::STRING: return "string";
-		case Type::ARRAY:  return "array";
-		case Type::REF:    return "ref";
-		case Type::FUNC:   return "function";
-		case Type::NATIVE: return "native";
-		default:           return "struct";
+		case Type::INT:    return u"int";
+		case Type::BOOL:   return u"bool";
+		case Type::DOUBLE: return u"double";
+		case Type::STRING: return u"string";
+		case Type::ARRAY:  return u"array";
+		case Type::REF:    return u"ref";
+		case Type::FUNC:   return u"function";
+		case Type::NATIVE: return u"native";
+		default: {
+			if (type - 8 + 1 < struct_count) {
+				return struct_names[type - 8];
+			} else {
+				return u"unknown";
+			}
+		}
 	} 
 }
 

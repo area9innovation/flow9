@@ -5,14 +5,14 @@ import tools/flowc/manipulation/flatten_unions;
 import tools/flowc/manipulation/wrap_funcs_as_args;
 
 export {
-	fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void;
+	fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void;
 }
 
-fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void {
+fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void {
 	if (cfg.config.verbose > 0) {
 		fcPrintln("Building a cpp3 '" + cfg.outfile + "' application ...", cfg.config.threadId);
 	}
-	compiled = fi2cpp3Compile(program, cfg);
+	compiled = fi2cpp3Compile(program, globEnv, cfg);
 	if (length(compiled.errors) > 0) {
 		fcPrintln(strGlue(compiled.errors, "\n"), cfg.config.threadId);
 		callback(5);
@@ -21,7 +21,7 @@ fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> vo
 	}
 }
 
-fi2cpp3Compile(program0 : FiProgram, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
+fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
 	natives = fiCpp3InitNativeFuncs(cfg);
 	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeFlow());
 	resolveNatives = \prog -> fiResolveNatives(prog, \name -> containsKeyTree(natives, name));
@@ -33,7 +33,8 @@ fi2cpp3Compile(program0 : FiProgram, cfg : FiCpp3Config) -> Cpp3CompiledProgram 
 		|> fiWasmWrapFuncArgs
 	;
 	ensureDirectoryExists(cfg.outputdir);
-	structs2ids = foldi(getTreeValues(program.names.structs), makeTree(), \i, acc, struct -> setTree(acc, struct.name, i + 8));
+	structs = getTreeValues(program.names.structs);
+	structs2ids = foldi(structs, makeTree(), \i, acc, struct -> setTree(acc, struct.name, i + 8));
 	vars = filtermap(getTreeValues(program.names.toplevel), \decl -> 
 		switch (decl) {
 			FiGlobalVar(__,__,__,__,__): Some(decl);
@@ -44,17 +45,19 @@ fi2cpp3Compile(program0 : FiProgram, cfg : FiCpp3Config) -> Cpp3CompiledProgram 
 	volatile_vars = filter(vars, \v -> 
 		exists(cfg.volatile, \name -> v.name == name || containsSet(lookupTreeDef(var_deps, v.name, makeSet()), name))
 	);
-	gctx0 = Cpp3GlobalContext(cfg, program, 
+	gctx0 = Cpp3GlobalContext(globEnv, cfg, program, 
 		collectFiEffects(program),
 		\flowfile -> strReplace(flowfile, "/", "_"),
+		structs,
 		structs2ids,
 		\t -> "T" + i2s(strlen(t.n)),
 		\name -> "F_" + name,
 		\name -> "f_" + name,
+		\name -> i2s(lookupTreeDef(structs2ids, name, -1)),
 		natives,
 		fiCpp3InitRuntimeParts(cfg),
 		buildSet(map(volatile_vars, \v -> v.name)),
-		ref [], ref [], None(), makeSet()
+		ref [], ref [], "", None(), makeSet()
 	);
 	gctx = Cpp3GlobalContext(gctx0 with 
 		runtimeParts = setTree(gctx0.runtimeParts, "struct_defs", cpp3StructDefsRuntimePart(gctx0))
@@ -86,14 +89,15 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 			switch (lookupTree(compiled, module_name)) {
 				Some(module): {
 					name = module.name;
-					header = fiCompiledModule2cpp3header(module, gctx, runtime_parts);
-					fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, gctx.config);
+					mod_gctx = Cpp3GlobalContext(gctx with currentModule = name);
+					header = fiCompiledModule2cpp3header(module, mod_gctx, runtime_parts);
+					fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, mod_gctx.config);
 					srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
-					sources = fiCompiledModule2cpp3sources(module, gctx, runtime_parts);
+					sources = fiCompiledModule2cpp3sources(module, mod_gctx, runtime_parts);
 					if (length(sources) == 0) srcs1 else {
 						foldi(sources, srcs, \i, acc, source -> {
 							src_name = if (i == 0) name else name + "_" + i2s(i);
-							fi2cpp3SaveFile(changeFileExt(src_name, ".cpp"), source, gctx.config);
+							fi2cpp3SaveFile(changeFileExt(src_name, ".cpp"), source, mod_gctx.config);
 							Cons(changeFileExt(src_name, ".cpp"), acc);
 						});
 					}
@@ -116,11 +120,15 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
 	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
 	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
+	struct_names = "string flow::struct_names[] = {\n" + 
+		strIndent(strArrayWrap(map(gctx.structs, \s -> "u\"" + s.name + "\""), 128, false, ", "))  + 
+	"\n};\nInt flow::struct_count = " + i2s(length(gctx.structs)) + ";\n\n";
 "
 using namespace flow;
 using namespace std::string_literals;
 using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
+struct_names + 
 "int main(int argc, const char* argv[]) {\n" +
 //"\talloc_stats = new AllocStats();\n" + 
 //"\tinitMaxHeapSize(argc, argv);\n" +
