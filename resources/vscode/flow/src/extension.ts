@@ -145,8 +145,7 @@ function outputHttpServerMemStats() {
 		);
 	} catch (e) {
 		serverChannel.show(true);
-		serverChannel.appendLine("Restarting flow LSP server because of error:");
-		serverChannel.appendLine(e);
+		serverChannel.appendLine("Restarting flow LSP server because of error: " + e);
 		startLspClient();
 	}
 }
@@ -189,13 +188,16 @@ function stopHttpServer() {
 }
 
 function stopLspClient() {
-	try {
-		if (client) {
+	if (client) {
+		try {
 			client.sendNotification("exit");
+		} catch (error) {
+			serverChannel.show(true);
+			serverChannel.appendLine("Error exiting LSP server: " + error);
+		} finally {
 			client.stop();
+			client = null;
 		}
-	} finally {
-		client = null;
 	}
 }
 
