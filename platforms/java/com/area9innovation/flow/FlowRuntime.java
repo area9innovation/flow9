@@ -137,7 +137,7 @@ public abstract class FlowRuntime {
 		if (value == null) {
 			return "{}";
 		} else if (value instanceof Function) {
-			return "<function>";
+			return "<function " + value + ">";
 		} else if (value instanceof Double) {
 			return doubleToString((Double)value);
 		}
@@ -189,7 +189,7 @@ public abstract class FlowRuntime {
 			}
 			buf.append("]");
 		} else if (value instanceof Function) {
-			buf.append("<function>");
+			buf.append("<function " + value + ">");
 		} else if (value instanceof Double) {
 			buf.append(doubleToString((Double)value));
 		} else if (value instanceof Struct) {
