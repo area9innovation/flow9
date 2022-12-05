@@ -32,6 +32,13 @@ class FontLoader {
 		untyped __js__("setTimeout(onDone, 25)");
 	}
 
+	public static function loadFSFont(family : String, url : String) {
+		addFontFace("g_font_12", "./php/filesystemdb.php?operation=download_blob_binary&replica=true&file_id=122&cached=0&filename=g_font_12.ttf&thumbnail=0&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjEiLCJlbWFpbCI6ImFkbWluQGFyZWE5LmRrIiwiZmlyc3ROYW1lIjoiQWRtaW4iLCJsYXN0TmFtZSI6IkFjY291bnQiLCJpc3MiOiJjdXJhdG9yIiwiaWF0IjoxNjY5ODk0NzY0LCJleHAiOjE2NzExMDQzNjR9.n6UJ08ePX6CVZvFSsxolS30HiEfydEWlX1531kxr6kU&accessKey=RmlsZXN5c3RlbUluZm8uMC5jcnVkLjEyMi4yMDIyMTIzMS4x.5c833e2bb6eee6773dd648a1a23b273c");
+		addStyledText("g_font_12");
+		addFontFace("g_font_11", "./php/filesystemdb.php?operation=download_blob_binary&replica=true&file_id=123&cached=0&filename=g_font_11.ttf&thumbnail=0&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpZCI6IjEiLCJlbWFpbCI6ImFkbWluQGFyZWE5LmRrIiwiZmlyc3ROYW1lIjoiQWRtaW4iLCJsYXN0TmFtZSI6IkFjY291bnQiLCJpc3MiOiJjdXJhdG9yIiwiaWF0IjoxNjY5ODk0NzY0LCJleHAiOjE2NzExMDQzNjR9.n6UJ08ePX6CVZvFSsxolS30HiEfydEWlX1531kxr6kU&accessKey=RmlsZXN5c3RlbUluZm8uMC5jcnVkLjEyMy4yMDIyMTIzMS4x.af73bc7e329a44c371f311405c2b3db6");
+		addStyledText("g_font_11");		
+	}
+
 	public static function loadWebFonts(onDone : Void -> Void) {
 		if (HaxeRuntime.typeof(WebFont) != "undefined") {
 			var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
@@ -118,5 +125,12 @@ class FontLoader {
 		Native.timer(FontLoadingTimeout, function() {
 			Browser.document.body.removeChild(text);
 		});
+	}
+
+	private static function addFontFace(family : String, url : String) {
+		var css = "@font-face {	font-family: " + family + "; src: url(" + url + "); }";
+		var style = Browser.document.createElement('style');
+		style.appendChild(Browser.document.createTextNode(css));
+		Browser.document.head.appendChild(style);
 	}
 }

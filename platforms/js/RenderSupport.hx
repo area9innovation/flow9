@@ -2091,6 +2091,10 @@ class RenderSupport {
 		FontLoader.loadPreconfiguredWebFonts(families, onDone);
 	}
 
+	public static function loadFSFont(family : String, url : String) : Void {
+		FontLoader.loadFSFont(family, url);
+	}
+
 	public static function getFontStylesConfigString() : String {
 		return haxe.Resource.getString("fontstyles");
 	}
