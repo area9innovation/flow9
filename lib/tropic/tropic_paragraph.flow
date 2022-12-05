@@ -9,14 +9,14 @@ export {
 	TRenderDynamicParagraph(
 		words : DynamicBehaviour<[TParaWord]>,
 		s : [ParagraphStyle],
-		alignWidthM : Maybe<DynamicBehaviour<double>>,
+		widthManager : ParagraphWidthManager,
 		forceReflowT : Transform<bool>
 	) -> TDynamicParagraph;
 
 	TRenderParagraph(
 		words : [TParaWord],
 		s : [ParagraphStyle],
-		alignWidthBM : Maybe<DynamicBehaviour<double>>,
+		widthManager : ParagraphWidthManager,
 		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 		renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 	) -> Tropic;
@@ -44,11 +44,11 @@ export {
 TRenderDynamicParagraph(
 	wordsB : DynamicBehaviour<[TParaWord]>,
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>,
+	widthManager : ParagraphWidthManager,
 	forceReflowT : Transform<bool>
 ) -> TDynamicParagraph {
 	traceApi = makeWigiTrace_Tropic("TRenderDynamicParagraph", getValue(wordsB));
-	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
+	traceApi.trace(\-> "TRenderParagraph "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -66,6 +66,7 @@ TRenderDynamicParagraph(
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
 	awB = make(0.0);
+	storyWidthB = if (widthManager==dummyParagraphWidthManager) awB else widthManager.storyWidth;
 	update = make(0);
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
@@ -88,9 +89,9 @@ TRenderDynamicParagraph(
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
 	));
 
-	updateFn = \wi, alignWidthM -> {
+	updateFn = \wi -> {
 		oldWH = getValue(paragraphWHB);
-		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", storyW: "+toString(getValue(storyWidthB)) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
 		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -98,12 +99,13 @@ TRenderDynamicParagraph(
 			getValue(wordsB), w, indent, tightWidth, alignment,
 			interlineSpacing, topLineBaseline, rtl,
 			containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, false,
+			genIndent, linesCountB, false,
 			false, None()
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 		nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+		if (widthManager != dummyParagraphWidthManager) nextDistinct(widthManager.width, getValue(paragraphWHB).width);
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 
 		// need to update words to show hyphenation point
@@ -120,10 +122,10 @@ TRenderDynamicParagraph(
 				TGroupReplace(translateWord(word, if (rtl) 0.0 else genIndent), index)
 			);
 		});
-		traceApi.trace(\-> "updateFn END wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(getValue(paragraphWHB))  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.trace(\-> "updateFn END wi = " + toString(wi) + ", storyW: "+toString(getValue(storyWidthB)) + ", paragraphWH: " + toString(getValue(paragraphWHB)) + ", linesCount: " + toString(getValue(linesCountB)));
 	};
 
-	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+	executeReflow = \ -> updateFn(getValue(storyWidthB) |> \sw -> if (sw <= 0.0) getValue(awB) else sw);
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
@@ -179,26 +181,19 @@ TRenderDynamicParagraph(
 
 	tropic = TConstruct(
 		[
-			eitherFn(
-				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> {
-					traceApi.trace(\ -> "awB_alignWidthB changed. calling updateFn. aw = " + toString(aw) + ", alignWidth = " + toString(alw));
-					updateFn(aw, Some(alw));
-					newAlw = getValue(alignWidthB);
-					if (newAlw != alw) {
-						traceApi.trace(\ -> "awB_alignWidthB changed. alignWidth changed after updateFn. calling updateFn again. aw = " + toString(aw) + ", newAlignWidth = " + toString(newAlw));
-						updateFn(aw, Some(newAlw));
-					}
-				}),
-				\ -> makeSubscribe(awB, \aw -> {
-					traceApi.trace(\ -> "awB changed. calling updateFn. aw = " + toString(aw));
-					updateFn(aw, None())
-				})
-			),
+			make2Subscribe(awB, storyWidthB, \availableWidth, storyWidth -> {
+				traceApi.trace(\ -> "alignWidthB and/or storyWidth changed. calling updateFn. aw = " + toString(availableWidth) + ", storyWidth = " + toString(storyWidth));
+				executeReflow();
+				newsw = getValue(storyWidthB);
+				if (newsw != storyWidth) {
+					traceApi.trace(\ -> "storyWidth changed. storyWidth changed after updateFn. calling updateFn again. storyWidth = " + toString(storyWidth) + ", newStoryWidth = " + toString(newsw));
+					executeReflow();
+				}
+			}),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
 					deferUntilNextFrameRendered(\ -> {
-						traceApi.trace(\-> "executeReflow DEFERRED STARTED with awB = " + toString(awB) + ", alignWidthB = " + toString(maybeMap(alignWidthBM, getValue)));
+						traceApi.trace(\-> "executeReflow DEFERRED STARTED with awB = " + toString(awB) + ", storyW = " + toString(getValue(storyWidthB)));
 						next(update, 0);
 						// Force an update
 						executeReflow()
@@ -214,7 +209,7 @@ TRenderDynamicParagraph(
 			},
 			makeSubscribe2(forceReflowT, \__ -> {
 				traceApi.trace(\ -> "forceReflow triggered");
-				updateFn(getValue(awB), None())
+				executeReflow()
 			})
 		],
 		TAttachAvailableWidth(
@@ -229,15 +224,19 @@ TRenderDynamicParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
+isRTLFlag(n: string, rtl) -> bool {
+	isUrlParameterTrue(n) || (rtl && !isUrlParameterFalse(n))
+}
+
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
-	alignWidthBM : Maybe<DynamicBehaviour<double>>,
+	widthManager : ParagraphWidthManager,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Tropic {
 	traceApi = makeWigiTrace_Tropic("TRenderParagraph", words);
-	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
+	traceApi.trace(\-> "TRenderParagraph "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -260,6 +259,7 @@ TRenderParagraph(
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
 	awB = make(0.0);
+	storyWidthB = if (widthManager==dummyParagraphWidthManager) awB else widthManager.storyWidth;
 	subscribe(awB, \v -> {
 		traceApi.trace(\-> "awB -> " + toString(v));
 		tmp1 = 2;
@@ -295,9 +295,9 @@ TRenderParagraph(
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 
-	updateFn = \wi, alignWidthM -> {
+	updateFn = \wi -> {
 		oldWH = getValue(paragraphWHB);
-		traceApi.traceAndNest(\-> "updateFn START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.traceAndNest(\-> "updateFn START availableW = " + toString(getValue(awB)) + ", storyW: "+toString(getValue(storyWidthB)) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
 		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -305,12 +305,15 @@ TRenderParagraph(
 			words, w, indent, tightWidth, alignment,
 			interlineSpacing, topLineBaseline, rtl,
 			containsStruct(s, ParagraphMarked()),
-			genIndent, linesCountB, alignWidthM, fitLongWords,
+			genIndent, linesCountB, fitLongWords,
 			ignoreLetterSpacing, renderedLinesInfoM
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-		deferUntilNextFrameRendered(\-> nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first));
+		deferUntilNextFrameRendered(\-> {
+			nextDistinct(paragraphWHB, paragraphSizeAndBaseline.first);
+			if (widthManager != dummyParagraphWidthManager) nextDistinct(widthManager.width, getValue(paragraphWHB).width);
+		});
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 		nextDistinct(scaleB, eitherMap(
 			paragraphSizeBaselineAndChanges.scaleM,
@@ -318,12 +321,12 @@ TRenderParagraph(
 			Factor(1., 1.)
 		));
 
-		traceApi.unnestAndTrace(\-> "updateFn END wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(getValue(paragraphWHB))  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.unnestAndTrace(\-> "updateFn END availableW = " + toString(getValue(awB)) + ", storyW: "+toString(getValue(storyWidthB)) + ", paragraphWH: " + toString(getValue(paragraphWHB)) + ", linesCount: " + toString(getValue(linesCountB)));
 
 		deferred(\ -> updateBehaviour(reflowHappenedB, \t -> !t));
 	};
 
-	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+	executeReflow = \ -> updateFn(getValue(widthManager.storyWidth) |> \sw -> if (sw <= 0.0) getValue(awB) else sw);
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
@@ -353,15 +356,19 @@ TRenderParagraph(
 
 	TConstruct(
 		[
-			eitherFn(
-				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
-			),
+			make2Subscribe(awB, storyWidthB, \availableWidth, storyWidth -> {
+				traceApi.trace(\ -> "alignWidthB and/or storyWidth changed. calling updateFn. aw = " + toString(availableWidth) + ", storyWidth = " + toString(storyWidth));
+				executeReflow();
+				newsw = getValue(storyWidthB);
+				if (newsw != storyWidth) {
+					traceApi.trace(\ -> "storyWidth changed. storyWidth changed after updateFn. calling updateFn again. storyWidth = " + toString(storyWidth) + ", newStoryWidth = " + toString(newsw));
+					executeReflow();
+				}
+			}),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
 					deferUntilNextFrameRendered(\ -> {
-						traceApi.trace(\-> "executeReflow DEFERRED STARTED with awB = " + toString(awB) + ", alignWidthB = " + toString(maybeMap(alignWidthBM, getValue)));
+						traceApi.trace(\-> "executeReflow DEFERRED STARTED with awB = " + toString(awB));
 						next(update, 0);
 						// Force an update
 						executeReflow()
@@ -475,7 +482,7 @@ makeHeadingGroup(
 	ignoreLetterSpacing : bool
 ) -> Tropic {
 
-	joinedWords = if (rtl || isUrlParameterFalse("join_words")) positionInteractiveWords(
+	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
@@ -499,10 +506,13 @@ positionInteractiveWords(
 	map(
 		list2array(words),
 		\word -> {
-			TTranslate(
-				fpoint(fsubtract(getWordInspector(word).x, const(genIndent)), getWordInspector(word).y),
-				word.ghostView
-			);
+			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), \__, __ -> word.ghostView);
+			wordView = switch (word.word) {
+				GeneralText(str) : viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style));
+				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				default : word.ghostView;
+			};
+			translateWord(word, genIndent)
 		}
 	)
 }
@@ -574,9 +584,10 @@ joinGroupedWords(
 
 JoinTextAcc(
 	currentString : string,
+	currentSpaces : string,
 	style : [CharacterStyle],
 	lineNumber : int,
-	currentOffset : Transform<Point>,
+	currentOffset : Point,
 	acc : List<Tropic>
 );
 
@@ -600,11 +611,10 @@ joinTextWords(
 			};
 			joinResult = foldList(
 				words,
-				JoinTextAcc("", [], -1, const(point), EmptyList()),
+				JoinTextAcc("", "", [], -1, point, EmptyList()),
 				\acc, word -> appendOrJoinWord(
 					acc,
 					word,
-					genIndent,
 					reflowHappened,
 					wordsViewConstructor,
 					ignoreLetterSpacing
@@ -612,7 +622,11 @@ joinTextWords(
 			);
 			TGroup(
 				// here we get group because words of the same style(wigiText) can be placed on few lines
-				list2array(addLastLine(joinResult, wordsViewConstructor, ignoreLetterSpacing)) |> reverseA
+				list2array(addLastLine(
+					JoinTextAcc(joinResult with currentOffset=Point(joinResult.currentOffset with x=joinResult.currentOffset.x-genIndent)),
+					wordsViewConstructor,
+					ignoreLetterSpacing
+				)) |> reverseA
 			);
 		}
 	);
@@ -623,7 +637,6 @@ joinTextWords(
 appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
-	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
 	ignoreLetterSpacing : bool
@@ -637,29 +650,35 @@ appendOrJoinWord(
 			default : "";
 		};
 
-		wordOffset = const(Point(
-			getValue(word.inspector.x) - genIndent,
+		wordOffset = Point(
+			getValue(word.inspector.x),
 			getValue(word.inspector.y)
-		));
+		);
 
 		if (acc.lineNumber == -1) {
 			// There are no words yet.
-			JoinTextAcc(
+			if (isSpace(wordString)) acc else JoinTextAcc(
 				wordString,
+				"",
 				ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 				lineNumber,
 				wordOffset,
 				acc.acc
 			);
 		} else if (acc.lineNumber == lineNumber) {
+			ofs = Point(wordOffset with x=min(wordOffset.x, acc.currentOffset.x));
 			// just concat to current string
-			JoinTextAcc(acc with
-				currentString = wordString + acc.currentString,
-				currentOffset = wordOffset
+			if (isSpace(wordString)) JoinTextAcc(acc with
+				currentSpaces = wordString + acc.currentSpaces
+			) else JoinTextAcc(acc with
+				currentString = wordString + acc.currentSpaces + acc.currentString,
+				currentSpaces = "",
+				currentOffset = ofs
 			)
 		} else {
-			JoinTextAcc(
+			if (isSpace(wordString)) acc else JoinTextAcc(
 				wordString,
+				"",
 				ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 				lineNumber,
 				wordOffset,
@@ -676,7 +695,7 @@ addLastLine(
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
-			joinResult.currentOffset,
+			const(joinResult.currentOffset),
 			wordsViewConstructor(
 				joinResult.currentString,
 				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style
@@ -725,14 +744,14 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 spaceStr : string = " ";
 zeroSpaceStr : string = "\u200b";
 
-TParaLine(words : [TParaWord], indent : double);
+TParaLine(words : [TParaWord], width : double, indent : double);
 // To remember changed in reflowTParaWords words and their indexes
 WordsAndIndexes(words : [TParaWord], indexes : [int]);
 // Return type for reflowTParaWordsRec
 TReflowResultAcc ::= TOverflowCase, TReflowedLinesAndChanges;
 	TOverflowCase(width: double);
-	TReflowedLinesAndChanges(lines : [TParaLine], changes : WordsAndIndexes);
-	initialLines = TReflowedLinesAndChanges([], WordsAndIndexes([], []));
+	TReflowedLinesAndChanges(lines : [TParaLine], width : double, changes : WordsAndIndexes);
+	initialLines = TReflowedLinesAndChanges([], 0.0, WordsAndIndexes([], []));
 // Return type for reflowTParaWords
 TReflowResult(metrics : Pair<WidthHeight, double>, words : WordsAndIndexes, scaleM : Maybe<double>);
 
@@ -749,7 +768,6 @@ reflowTParaWords(
 	isMarked : bool,
 	generalIndent : double,
 	linesCountB : DynamicBehaviour<int>,
-	alignWidthM : Maybe<double>,
 	fitLongWords : bool,
 	ignoreLetterSpacing : bool,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
@@ -786,7 +804,7 @@ reflowTParaWords(
 				setTParaWordRTL,
 				rtl
 			),
-			\l, ws -> TParaLine(ws, l.indent),
+			\l, ws -> TParaLine(ws, l.width, l.indent),
 		)
 	else text;
 
@@ -801,8 +819,7 @@ reflowTParaWords(
 		topLineBaseline,
 		rtl,
 		isMarked,
-		generalIndent,
-		alignWidthM
+		generalIndent
 	);
 
 	maybeApply(
@@ -858,7 +875,7 @@ reflowAndFitTParaWords(
 			);
 			Pair(reflowAndScale.first, Some(overflowWidth));
 		}
-		TReflowedLinesAndChanges(lines, changes) : Pair(reflowResult, None());
+		TReflowedLinesAndChanges(lines, width, changes) : Pair(reflowResult, None());
 	}
 }
 
@@ -875,16 +892,21 @@ reflowTParaWordsRec(
 	catchOverflow : bool,
 	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
+	sumWordWidths = \cws -> fold(cws, 0.0, \acc, w -> acc + getValue(w.inspector.size).width);
 	addLine = \cw, indent -> switch (result) {
-		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
-			ifArrayPush(lines, cw != [], TParaLine(cw, indent)),
-			changes
-		);
+		TReflowedLinesAndChanges(lines, reflowWidth, changes) : {
+			sww = sumWordWidths(cw);
+			TReflowedLinesAndChanges(
+				ifArrayPush(lines, cw != [], TParaLine(cw, sww, indent)),
+				max(sww, reflowWidth),
+				changes
+			);
+		}
 		TOverflowCase(__) : result;
 	}
 
 	addOverflow = \overflowWidth -> switch(result) {
-		TReflowedLinesAndChanges(__, __) : TOverflowCase(overflowWidth);
+		TReflowedLinesAndChanges(__, __, __) : TOverflowCase(overflowWidth);
 		TOverflowCase(ow) : TOverflowCase(max(overflowWidth, ow));
 	};
 
@@ -893,7 +915,7 @@ reflowTParaWordsRec(
 	}
 
 	lineIndex = switch(result) {
-		TReflowedLinesAndChanges(lines, __) : length(lines);
+		TReflowedLinesAndChanges(lines, __, __) : length(lines);
 		TOverflowCase(ow) : 1;
 	}
 
@@ -1136,7 +1158,8 @@ keepWordsTogetherRec(tr : Tropic) -> bool {
 	}
 }
 
-TParaLineAcc(width : double, y : double, baseline : double);
+TParaLineAcc(width : double, baseline : double);
+TParaLineResult(y : double, width : double, height : double, baseline : double);
 
 TAlignParaLines(
 	availableWidth : double,
@@ -1147,13 +1170,38 @@ TAlignParaLines(
 	topLineBaseline : bool,
 	rtl : bool,
 	isMarked : bool,
-	generalIndent : double,
-	alignWidthM : Maybe<double>
+	generalIndent : double
 ) -> Pair<WidthHeight, double> {
 	lasti = length(lines) - 1;
 
-	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
+	y = ref 0.0;
+	lineInfos = mapi(lines, \i, line -> {
+		lastLine = i == lasti;
+		inspectors = map(line.words, \p -> p.inspector);
+
+		lineWidth = line.indent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
+		lineAsc = fold(inspectors, 0.0, \ac, m -> max(ac, getValue(m.baseline)));
+
+		lineHeight = fold(inspectors, 0.0, \ac, m ->
+			max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
+		);
+		r = TParaLineResult(^y, lineWidth, lineHeight, lineAsc);
+		y := (^y) + lineHeight + if (lastLine) 0.0 else interlineSpacing;
+		r
+	});
+
+	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
+		f = lineInfos[i];
+		TParaLineAcc(
+			max(acc.width, f.width),
+			if (i == 0 || !topLineBaseline) f.baseline else acc.baseline
+		);
+	});
+
+	alignWidth = max(availableWidth, a.width);
+
+	iteri(lines, \i, line -> {
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
@@ -1163,61 +1211,40 @@ TAlignParaLines(
 			} else {
 				alignment;
 			}
-		f = TRenderLine(
-			acc.y, line.words, availableWidth,
+		TRenderLine(
+			lineInfos[i], line.words, alignWidth,
 			lineAlignment, line.indent, generalIndent,
-			i, rtl, isMarked, alignWidthM
-		);
-		nwidth = max(acc.width, f.width);
-		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
-		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
-		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
-		nbaseline = f.baseline;
-		TParaLineAcc(
-			nwidth,
-			nheight,
-			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
+			i, rtl, isMarked
 		);
 	});
-	Pair(WidthHeight(if (tightWidth) a.width else max(availableWidth, a.width), a.y), a.baseline);
-}
 
-TParaLineResult(width : double, height : double, baseline : double);
+	Pair(WidthHeight(a.width, ^y), a.baseline);
+}
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
 TRenderLine(
-	y : double,
+	result : TParaLineResult,
 	words : [TParaWord],
-	width : double,
+	alignWidth : double,
 	alignment : ParaLineAlignment,
 	lineIndent: double,
 	generalIndent : double,
 	lineNumber : int,
 	rtl : bool,
 	isMarked : bool,
-	alignWidthM : Maybe<double>
-) -> TParaLineResult {
+) -> void {
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
 	nwords = length(words);
 	inspectors = map(words, \p -> p.inspector);
-	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
-	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
-		max(ac, getValue(m.baseline));
-	});
-
-	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
-		max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
-	);
 
 	// Alignment offset
-	alignWidth = min(either(alignWidthM, width), width);
-	startOffset = if (rtl) max(0.0, alignWidth - lineWidth) else 0.;
-	endOffset = if (rtl) 0.0 else max(0., alignWidth - lineWidth);
+	startOffset = if (rtl) max(0.0, alignWidth - result.width) else 0.;
+	endOffset = if (rtl) 0.0 else max(0., alignWidth - result.width);
 	alignmentOffset = ref switch (alignment : ParaLineAlignment) {
 		LeftAlign(): if (rtl) endOffset else startOffset;
 		RightAlign(): if (rtl) startOffset else endOffset;
-		CenterAlign(): max(0.0, (alignWidth - lineWidth) / 2.0);
+		CenterAlign(): max(0.0, (alignWidth - result.width) / 2.0);
 		StartAlign(): startOffset;
 		EndAlign(): endOffset;
 		Justify(): 0.0;
@@ -1239,7 +1266,7 @@ TRenderLine(
 				(alignWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
 			} else 0.0
 		} else {
-			remaining = alignWidth - lineWidth;
+			remaining = alignWidth - result.width;
 			min(10.0, remaining / i2d(nwords - 1));
 		}
 	} else 0.0;
@@ -1259,25 +1286,23 @@ TRenderLine(
 		dy = eitherMap(
 			words[i].scriptM,
 			\script -> switch(script) {
-				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else lineAsc - elemBaseline - prevElemHeight * 0.25;
-				ParaElementSubscript() : lineAsc - elemBaseline / 2.0;
+				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else result.baseline - elemBaseline - prevElemHeight * 0.25;
+				ParaElementSubscript() : result.baseline - elemBaseline / 2.0;
 			},
-			lineAsc - getValue(inspector.baseline)
+			result.baseline - getValue(inspector.baseline)
 		);
-		yOffset = y + dy;
+		yOffset = result.y + dy;
 		nextDistinct(inspector.y, yOffset);
 		nextDistinct(inspector.x, ^alignmentOffset + if (rtl) 0.0 else generalIndent);
 		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == nwords - 1) WordPositionInLineEnd() else WordPositionInLineMiddle());
 
-		nextDistinct(inspector.lineHeight, lineHeight);
-		nextDistinct(inspector.lineAsc, lineAsc);
+		nextDistinct(inspector.lineHeight, result.height);
+		nextDistinct(inspector.lineAsc, result.baseline);
 		nextDistinct(inspector.lineNumber, lineNumber);
 		nextDistinct(inspector.lineWordSpacing, interWord);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) {elemWidth + if (isSpace) justifyOffset  else 0.0} else 0.0;
 	});
-
-	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
 }
 
 prevWordHeight(inspectors : [ParaElementInspector] , words : [TParaWord], i : int ) -> double {
@@ -1297,7 +1322,7 @@ extractStyleForRectangle(style : [TCharacterStyle]) -> [GraphicsStyle] {
 
 translateWord(word : TParaWord, genIndent : double) -> Tropic {
 	TTranslate(
-		fpoint(fsubtract(word.inspector.x, const(genIndent)), word.inspector.y),
+		fpoint(fsubtract(getWordInspector(word).x, const(genIndent)), getWordInspector(word).y),
 		word.ghostView
 	);
 }
