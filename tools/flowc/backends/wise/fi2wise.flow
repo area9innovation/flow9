@@ -18,7 +18,8 @@ export {
 fi2wise(program : FiProgram, cfg : FiWiseConfig, callback : (int) -> void) -> void {
 	state = makeFiWiseState();
 	traverseInOrder(program.modules, \name, module -> {
-		writeWise2file(state, program, cfg.outputfolder, module);
+		writeWise2file(state, program, cfg.outputfolder, cfg.includes, module);
+		state.structs := removeInnerStructsFromState(^(state.structs), module.exports);
 	});
 	callback(0);
 }
@@ -62,10 +63,10 @@ initWiNatives(state : FiWiseState, natives : [FiNativeDec]) -> void {
 	);
 }
 
-writeWise2file(state : FiWiseState, program : FiProgram, path : string, module : FiModule) -> void {
+writeWise2file(state : FiWiseState, program : FiProgram, path : string, includes : [string], module : FiModule) -> void {
 	println("----------------------\nflow->wise "+ module.fileinfo.flowfile + ".flow");
 	filepath : string = pathCombine(path, takeAfter(module.fileinfo.flowfile, path, module.fileinfo.flowfile))  + ".wise";
-	wiseProgram = fiModule2FlowWiseAst(state, module);
+	wiseProgram = fiModule2FlowWiseAst(state, module, includes);
 	file = wiseAst2string(wiseProgram, ^(state.structs), ^(state.polyFns));
 
 	ensureDirectoryExists(dirName(filepath));
@@ -74,11 +75,11 @@ writeWise2file(state : FiWiseState, program : FiProgram, path : string, module :
 	}
 }
 
-fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
+fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]) -> FlowWiseAst {
 	exportNames = buildSet(module.exports);
 	functions = values2tree(module.functions, \f -> f.name);
 	orderedStructs = filtermap(module.initOrder, \fnName -> lookupTree(functions, fnName));
-	state.structs := fiStructs2wiTuples(module.structs, module.unions, orderedStructs);
+	state.structs := fiStructs2wiTuples(^(state.structs), module.structs, module.unions, orderedStructs);
 	initWiNatives(state, module.natives);
 
 	// save templates
@@ -112,10 +113,28 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule) -> FlowWiseAst {
 		"tools/flowc/backends/wise/lib/tuple",
 		"lib/wise/runtime",
 	];
-	userImports = map(module.imports, \imp -> "lib/wise/" + imp.flowfile);
+	userImports = filtermap(module.imports, \imp -> {
+		filePath = resolveWiseFilePath(includes, imp.flowfile + ".wise");
+		relativePath = takeBeforeLast(relatingPath(filePath, "../"), ".wise", "");
+		if (relativePath == "") None() else Some(relativePath);
+	});
 	imports = fold(uniq(concat(systemImports, userImports)), extendedBody, \acc, v -> FlowWiFlowWiseInclude(v, acc));
 
 	imports;
+}
+
+resolveWiseFilePath(includes : [string], file : string) -> string {
+	if (fileExists(file)) file
+	else if (includes == []) {
+		""
+	} else {
+		path = pathCombine(includes[0], file);
+		if (fileExists(path)) {
+			path
+		} else {
+			resolveWiseFilePath(tail(includes), path);
+		}
+	}
 }
 
 fiFunctionDec2FlowWiFunction(state : FiWiseState, func : FiFunctionDec, exported : bool, nextFn : FlowWiDecl) -> FlowWiFunction {
@@ -284,7 +303,7 @@ fiVar2FlowWiExp(state : FiWiseState, exp : FiVar, scopeTemplates : Tree<string, 
 		);
 	}
 
-
+	// TODO: islocal ? (shadowing)
 	id = lookupTreeDef(^(state.flowWiNatives), exp.name, exp.name);
 	newVar = FlowWiVar(id);
 	switch (exp.type : FiType) {

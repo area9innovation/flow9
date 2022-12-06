@@ -8,7 +8,7 @@ set TESTDIR=tests/flow/
 
 
 cd %FLOWDIR%
-call flowc wise=%WASEDIR%%TESTDIR% %WASEDIR%%TESTDIR%%1.flow
+call flowc wise=%WASEDIR%%TESTDIR% I=%WASEDIR%%TESTDIR% %WASEDIR%%TESTDIR%%1.flow
 
 cd %WASEDIR%
 call flowcpp -I .. --batch ../wise/wise.flow -- I=..,../flow9/ %TESTDIR%%1.wise
