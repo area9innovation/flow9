@@ -57,30 +57,27 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 						switch (lookupTree(env.effects.names.toplevel, fn)) {
 							Some(func): {
 								func_args = cast(func: FiDeclaration -> FiFunctionDec).lambda.args;
+								assign_func_vars = filtermapi(args_pairs, \i, p -> {
+									make_assign = \-> FsAssign(
+										FsVar(func_args[i].name, func_args[i].type, FsVarLoc(), start), 
+										FsVar(func_args[i].name + "__tmp__", func_args[i].type, FsVarLoc(), start), start
+									);
+									switch (p.first) {
+										FsVar(name,__,__,__): if (name == env.args[i].name) None() else Some(make_assign());
+										default: Some(make_assign());
+									}
+								});
+								assing_and_tailcall = FsSeq(concat(assign_func_vars, [FsTailCall(start)]), FiTypeVoid(), start);
 								fsWrapSeq(concat(
-									concatA(map(args_pairs, \p -> p.second)), 
-									concatA([
-										filtermapi(args_pairs, \i, p -> {
-											make_let = \-> FsLet(FsVar(func_args[i].name + "__tmp__", func_args[i].type, FsVarLoc(), start), p.first, start);
-											switch (p.first) {
-												FsVar(name,__,__,__): 
-													if (name == env.args[i].name) None() else Some(make_let());
-												default:
-													Some(make_let());
-											}
-										}),
-										filtermapi(args_pairs, \i, p -> {
-											make_assign = \-> FsAssign(
-												FsVar(func_args[i].name, func_args[i].type, FsVarLoc(), start), 
-												FsVar(func_args[i].name + "__tmp__", func_args[i].type, FsVarLoc(), start), start
-											);
-											switch (p.first) {
-												FsVar(name,__,__,__): if (name == env.args[i].name) None() else Some(make_assign());
-												default: Some(make_assign());
-											}
-										}),
-										[FsTailCall(start)]
-									])
+									concatA(map(args_pairs, \p -> p.second)),
+									[foldi(args_pairs, assing_and_tailcall, \i, acc, p -> 
+										FsLet(
+											FsVar(func_args[i].name + "__tmp__", func_args[i].type, FsVarLoc(), start), 
+											p.first, 
+											acc,
+											start
+										)
+									)]
 								));
 							}
 							None(): fail0("function " + fn + " is not found");
@@ -168,12 +165,10 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 				);
 				if (fiExpIsFsExp(e1)) {
 					e1_pair = do_exp(e1);
-					fsWrapSeq(concat3(e1_pair.second,
-						[FsLet(let_var, e1_pair.first, start)],
-						fsUnwrapSeq(fiExp2FsStat(e2, returns, let_env, fn))
+					fsWrapSeq(concat(e1_pair.second,
+						[FsLet(let_var, e1_pair.first, fiExp2FsStat(e2, returns, let_env, fn), start)]
 					));
 				} else {
-					
 					fsWrapSeq(concat3(
 						[FsVarDecl(let_var, start)],
 						fsUnwrapSeq(fiExp2FsStat(e1, FsReturnToLocal(let_var), let_env, fn)),
@@ -371,10 +366,9 @@ fiExp2FsExp(e : FiExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 				e2_pair = fiExp2FsExp(e2, let_env);
 				Pair(
 					e2_pair.first,
-					concat3(
+					concat(
 						e1_pair.second, 
-						[FsLet(let_var, e1_pair.first, start)],
-						e2_pair.second
+						[FsLet(let_var, e1_pair.first, fsWrapSeq(e2_pair.second), start)]
 					)
 				);
 			}
@@ -453,7 +447,7 @@ fiVar2FsVar(name: string, type: FiType, start: int, env: FsEnv) -> FsVar {
 
 fsVarIsInStat(v: string, s: FsStat) -> bool {
 	switch(s) {
-		FsLet(__, e,__): fsVarIsInExp(v, e);
+		FsLet(__, e, s1,__): fsVarIsInExp(v, e) || fsVarIsInStat(v, s1);
 		FsIf(e, s1, s2, __,__): fsVarIsInExp(v, e) || fsVarIsInStat(v, s1) || fsVarIsInStat(v, s2);
 		FsSwitch(__,__, cases, __,__): exists(cases, \c -> fsVarIsInStat(v, c.body));
 		FsSeq(ss, __,__): exists(ss, \s1 -> fsVarIsInStat(v, s1));

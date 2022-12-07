@@ -60,11 +60,13 @@ fsWrapCaseVarsWithCasts(s : FsStat, names: FiGlobalNames) -> FsStat {
 
 fsDoWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
 	switch (e) {
-		FsLet(v, ex,__): {
+		FsLet(v, ex, s,__): {
 			switch (find(vars, \p -> p.first == v.name)) {
 				Some(p): {
-					ex_wrapped = fsMakeCast(ex, fsExpType(ex), v.type);
-					FsLet(e with e = ex_wrapped);
+					FsLet(e with 
+						e = fsMakeCast(ex, fsExpType(ex), v.type),
+						s = fsDoWrapCaseVarsWithCasts(s, vars)
+					);
 				}
 				None(): e;
 			}
@@ -79,8 +81,11 @@ fsDoWrapCaseVarsWithCasts(e : FsStat, vars: [Pair<string, FiType>]) -> FsStat {
 fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat {
 	do_cast = \x -> fsMakeStatCastsExplicit(x, type, names);
 	switch(s) {
-		FsLet(v, e1,__): {
-			FsLet(s with e = fsMakeExpCastsExplicit(e1, v.type, names, true));
+		FsLet(v, e1, s1,__): {
+			FsLet(s with 
+				e = fsMakeExpCastsExplicit(e1, v.type, names, true),
+				s = do_cast(s1)
+			);
 		}
 		FsIf(e1, s1, s2, __,__): {
 			FsIf(s with
@@ -337,17 +342,21 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 
 fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>> {
 	switch(s) {
-		FsLet(v, e, start): {
+		FsLet(v, e, s1, start): {
 			if (v.name == "__") {
-				Pair(FsLet(s with e = fsExpSSA(e, vars)), vars);
+				p = fsStatSSA(s1, vars);
+				Pair(FsLet(s with e = fsExpSSA(e, vars), s = p.first), p.second);
 			} else {
 				new_vars = setTree(vars, v.name, lookupTreeDef(vars, v.name, 0) + 1);
+				p = fsStatSSA(s1, new_vars);
 				Pair(
 					FsLet(
 						FsVar(v with name = fsSSAvar(v.name, new_vars)), 
-						fsExpSSA(e, new_vars), start
+						fsExpSSA(e, new_vars), 
+						p.first,
+						start
 					),
-					new_vars
+					p.second
 				);
 			}
 		}
@@ -493,8 +502,11 @@ fsSSAvar(v: string, vars: Tree<string, int>) -> string {
 fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 	do_interpolate = \x -> fsInterpolateTyparsStat(x, names);
 	switch(s) {
-		FsLet(v, e1,__): {
-			FsLet(s with e = fsInterpolateTyparsExp(e1, names));
+		FsLet(v, e1, s1, __): {
+			FsLet(s with 
+				e = fsInterpolateTyparsExp(e1, names),
+				s = do_interpolate(s1)
+			);
 		}
 		FsIf(e1, s1, s2, __,__): {
 			FsIf(s with
@@ -647,8 +659,8 @@ fsInterpolateTyparsCallPrim(e : FsCallPrim, names: FiGlobalNames) -> FsExp {
 
 fsStatReturnVars(s : FsStat) -> FsStat {
 	switch(s) {
-		FsLet(v, e, start): {
-			FsLet(v, fsExpReturnVars(e), start);
+		FsLet(v, e, s1, start): {
+			FsLet(v, fsExpReturnVars(e), fsStatReturnVars(s1), start);
 		}
 		FsIf(e, s1, s2, __,__): {
 			FsIf(s with
@@ -677,7 +689,7 @@ fsStatReturnVars(s : FsStat) -> FsStat {
 						}
 						default: {
 							ret_var = FsVar("__ret_var__", type, FsVarRet(), start);
-							FsSeq([FsLet(ret_var, ret.e, start), FsRet(ret_var, start)], type, start);
+							FsLet(ret_var, ret.e, FsRet(ret_var, start), start);
 						}
 					}
 				}
