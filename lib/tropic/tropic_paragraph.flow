@@ -475,7 +475,7 @@ makeHeadingGroup(
 	ignoreLetterSpacing : bool
 ) -> Tropic {
 
-	joinedWords = if (rtl || isUrlParameterFalse("join_words")) positionInteractiveWords(
+	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
@@ -499,10 +499,13 @@ positionInteractiveWords(
 	map(
 		list2array(words),
 		\word -> {
-			TTranslate(
-				fpoint(fsubtract(getWordInspector(word).x, const(genIndent)), getWordInspector(word).y),
-				word.ghostView
-			);
+			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), \__, __ -> word.ghostView);
+			wordView = switch (word.word) {
+				GeneralText(str) : viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style));
+				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				default : word.ghostView;
+			};
+			translateWord(word, genIndent)
 		}
 	)
 }
@@ -519,8 +522,8 @@ joinGroupedWords(
 	ignoreLetterSpacing : bool
 ) -> [Tropic] {
 
-	isSameGroup = \currentGroup : List<TParaWord>, id : int -> switch (currentGroup) {
-		Cons(firstWord, __) : getValue(firstWord.id) == id;
+	isSameGroup = \currentGroup : List<TParaWord>, word : TParaWord -> switch (currentGroup) {
+		Cons(firstWord, __) : getValue(firstWord.id) == getValue(word.id) && getValue(firstWord.rtl) == getValue(word.rtl);
 		EmptyList() : false
 	};
 
@@ -558,7 +561,7 @@ joinGroupedWords(
 			EmptyLineElement() : onDynamicElemCase();
 			GeneralLinePart(__, __, __, __) : onDynamicElemCase();
 			default : {
-				if (isSameGroup(currentGroup, getValue(word.id))) Pair(
+				if (isSameGroup(currentGroup, word)) Pair(
 					acc,
 					Cons(word, currentGroup)
 				) else Pair(
@@ -574,9 +577,10 @@ joinGroupedWords(
 
 JoinTextAcc(
 	currentString : string,
+	currentSpaces : string,
 	style : [CharacterStyle],
 	lineNumber : int,
-	currentOffset : Transform<Point>,
+	currentOffset : Point,
 	acc : List<Tropic>
 );
 
@@ -600,11 +604,10 @@ joinTextWords(
 			};
 			joinResult = foldList(
 				words,
-				JoinTextAcc("", [], -1, const(point), EmptyList()),
+				JoinTextAcc("", "", [], -1, point, EmptyList()),
 				\acc, word -> appendOrJoinWord(
 					acc,
 					word,
-					genIndent,
 					reflowHappened,
 					wordsViewConstructor,
 					ignoreLetterSpacing
@@ -612,7 +615,11 @@ joinTextWords(
 			);
 			TGroup(
 				// here we get group because words of the same style(wigiText) can be placed on few lines
-				list2array(addLastLine(joinResult, wordsViewConstructor, ignoreLetterSpacing)) |> reverseA
+				list2array(addLastLine(
+					JoinTextAcc(joinResult with currentOffset=Point(joinResult.currentOffset with x=joinResult.currentOffset.x-genIndent)),
+					wordsViewConstructor,
+					ignoreLetterSpacing
+				)) |> reverseA
 			);
 		}
 	);
@@ -623,7 +630,6 @@ joinTextWords(
 appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
-	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
 	ignoreLetterSpacing : bool
@@ -637,29 +643,35 @@ appendOrJoinWord(
 			default : "";
 		};
 
-		wordOffset = const(Point(
-			getValue(word.inspector.x) - genIndent,
+		wordOffset = Point(
+			getValue(word.inspector.x),
 			getValue(word.inspector.y)
-		));
+		);
 
 		if (acc.lineNumber == -1) {
 			// There are no words yet.
-			JoinTextAcc(
+			if (isSpace(wordString)) acc else JoinTextAcc(
 				wordString,
-				ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
+				"",
+				ifArrayPush(replaceStruct(word.style, SetRTL(getValue(word.rtl))), newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 				lineNumber,
 				wordOffset,
 				acc.acc
 			);
 		} else if (acc.lineNumber == lineNumber) {
+			ofs = Point(wordOffset with x=min(wordOffset.x, acc.currentOffset.x));
 			// just concat to current string
-			JoinTextAcc(acc with
-				currentString = wordString + acc.currentString,
-				currentOffset = wordOffset
+			if (isSpace(wordString)) JoinTextAcc(acc with
+				currentSpaces = wordString + acc.currentSpaces
+			) else JoinTextAcc(acc with
+				currentString = wordString + acc.currentSpaces + acc.currentString,
+				currentSpaces = "",
+				currentOffset = ofs
 			)
 		} else {
-			JoinTextAcc(
+			if (isSpace(wordString)) acc else JoinTextAcc(
 				wordString,
+				"",
 				ifArrayPush(word.style, newJustifyEnabled, WordSpacing(lineWordSpacingB)),
 				lineNumber,
 				wordOffset,
@@ -676,7 +688,7 @@ addLastLine(
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
-			joinResult.currentOffset,
+			const(joinResult.currentOffset),
 			wordsViewConstructor(
 				joinResult.currentString,
 				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style

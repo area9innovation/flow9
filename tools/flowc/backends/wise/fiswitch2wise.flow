@@ -5,10 +5,10 @@ import tools/flowc/incremental/fiexp;
 import tools/flowc/incremental/fiprettyprint;
 
 export {
-	fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp;
+	fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int, templates : Tree<string, FiTypeParameter>) -> FiExp;
 }
 
-fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp {
+fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int, templates : Tree<string, FiTypeParameter>) -> FiExp {
 	structIds = switch (e.switchType : FiType) {
 		FiTypeName(name, __) : lookupTreeDef(env.unions, name, []);
 		default : [];
@@ -28,7 +28,7 @@ fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp {
 				FiTypeInt(),
 				0
 			),
-			fiCases2fiIfs(e.cases, FiVar(tmpVar, FiTypeInt(), 0), e.type, env.table),
+			fiCases2fiIfs(e.cases, FiVar(tmpVar, FiTypeInt(), 0), setTemplateInFiType(e.type, templates), env),
 			e.type,
 			0
 		)], e.type, 0);
@@ -37,15 +37,41 @@ fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int) -> FiExp {
 
 // we don't check the correctness of switch. but we could be
 // for some reasons, union is already flat (cases don't contain unions)
-fiCases2fiIfs(cases: [FiCase], e : FiVar, type : FiType, structs : Tree<string, int>) -> FiExp {
+fiCases2fiIfs(cases: [FiCase], e : FiVar, type : FiType, env : WiseAstStructs) -> FiExp {
 	scases = unzip(cases, \c -> c.struct == "default");
 	defCases = scases.first;
-	defCase = if (defCases == []) fiType2defVal(type) else defCases[0].body;
+	defCase = if (defCases == []) {
+		fiType2defVal(type, if (cases == []) None() else Some(cases[0].body));
+	} else {
+		defCases[0].body;
+	}
 
 	orderedCases = fold(scases.second, makeTree(), \tree, c -> {
 		eitherFn(
-			lookupTree(structs, c.struct),
-			\id -> setTree(tree, id, Pair(c.argNames, c.body)),
+			lookupTree(env.table, c.struct),
+			\id -> {
+				if (id < 0) {
+					onErrorStruct = \-> {
+						// structure is defined, but never used
+						println("WARNING : case is ignored: " + toString(c) + ". From [" + toString(e) + "]");
+						tree;
+					}
+					eitherFn(
+						lookupTree(env.templStructs, id),
+						\v : Tree<[FiType], int> -> {
+							ids = getTreeValues(v);
+							if (ids == []) {
+								onErrorStruct()
+							} else {
+								setTree(tree, ids, Pair(c.argNames, c.body))
+							}
+						},
+						onErrorStruct
+					);
+				} else {
+					setTree(tree, [id], Pair(c.argNames, c.body))
+				}
+			},
 			\ -> {
 				println("ERROR: can't find struct '" + c.struct + "' in switch");
 				tree
@@ -55,14 +81,19 @@ fiCases2fiIfs(cases: [FiCase], e : FiVar, type : FiType, structs : Tree<string, 
 
 	foldTreeBinary(
 		orderedCases,
-		\id : int, c, left, right -> {
-			newRight = FiIf(makeEqIdsFn(e, id), filterUnusedArgs(c.second, c.first), right, type, 0);
-			if (left == right) {
-				newRight;
+		\ids : [int], c, left, right -> unpair(c, \caseArgs, caseBody -> {
+			if (ids == []) {
+				defCase;
 			} else {
-				FiIf(makeLessIdsFn(e, id), left, newRight, type, 0);
+				newLeft = filterUnusedArgs(caseBody, caseArgs);
+				newRight = FiIf(makeEqIdsFn(e, ids), newLeft, right, type, 0);
+				if (left == right) {
+					newRight;
+				} else {
+					FiIf(makeLessIdsFn(e, ids[0]), left, newRight, type, 0);
+				}
 			}
-		},
+		}),
 		defCase
 	);
 }
@@ -133,27 +164,35 @@ removeUnusedVars(expr : FiExp, ids : Set<string>) -> FiExp {
 	}
 }
 
-makeEqIdsFn(e : FiVar, id : int) -> FiExp {
-	FiCallPrim(FcEqPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
+makeEqIdsFn(e : FiVar, ids : [int]) -> FiExp {
+	if (ids == []) {
+		FiBool(false, 0);
+	} else {
+		makeEqExp = \id -> FiCallPrim(FcEqPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
+		fold(tail(ids), makeEqExp(ids[0]), \acc, id -> 
+			FiCallPrim(FcOrPrim(), [acc, makeEqExp(id)], FiTypeBool(), 0)
+		);
+	}
 }
 
 makeLessIdsFn(e : FiVar, id : int) -> FiExp {
 	FiCallPrim(FcLtPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
 }
 
-fiType2defVal(type : FiType) -> FiConst {
+fiType2defVal(type : FiType, alt : Maybe<FiExp>) -> FiExp {
+	makeUnknownType = \-> either(alt, FiVoid(0));
 	switch (type : FiType) {
-		FiTypeArray(__) : FiInt(0, 0);
-		FiTypeFunction(__, __) : FiInt(0, 0);
-		FiTypeRef(__) :FiInt(0, 0);
-		FiTypeParameter(__) : FiInt(0, 0);
-		FiTypeFlow() : FiVoid(0);
-		FiTypeVoid() :  FiVoid(0);
-		FiTypeNative() : FiVoid(0);
-		FiTypeName(__, __) : FiInt(0, 0);
+		FiTypeRef(__) : FiInt(0, 0); // pointer
+		FiTypeParameter(__) : makeUnknownType();
+		FiTypeFlow() : makeUnknownType();
+		FiTypeNative() : FiInt(0, 0); // pointer ?
+		FiTypeName(__, __) : FiInt(0, 0); // pointer
+		FiTypeArray(__) : FiInt(0, 0); // pointer
+		FiTypeFunction(__, __) : FiInt(0, 0); // pointer ?
 		FiTypeBool() : FiBool(false, 0);
 		FiTypeInt() : FiInt(0, 0);
 		FiTypeDouble() : FiDouble(0.0, 0);
 		FiTypeString() : FiString("", 0);
+		FiTypeVoid() : FiVoid(0);
 	}
 }

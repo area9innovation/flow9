@@ -1,27 +1,49 @@
+import tools/flowc/incremental/fimodule;
 import tools/flowc/backends/wise/fi2wise_utils;
 import text/blueprint;
 
 export {
-	fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstStructs;
+	fiStructs2wiTuples(
+		env : WiseAstStructs,
+		structs : [FiTypeStruct],
+		unions : [FiTypeUnion],
+		functions : [FiFunctionDec], // information about templates (real types)
+	) -> WiseAstStructs;
 
 	WiseAstStructs(
 		data : StructTuple,
 		table : Tree<string, int>,
-		unions : Tree<string, [int]>, // unionName - [structId]
+		unions : Tree<string, [int]>, // unionName - [structId/generalStructId]
+		templStructs : Tree<int, Tree<[FiType], int>>, // generalStructId - <typeParams-structId>
+		nextId : ref int,
 	);
 	makeWiseAstStructs() -> WiseAstStructs;
 
-	getStructArgs(name : string, data : StructTuple) -> Maybe<[FiType]>;
-	flowWiTuple2string(struct : FlowWiTuple, structs : WiseAstStructs, field2string : (FlowWiExp) -> string) -> string;
+	removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAstStructs;
+
+	getStructArgs(name : string, data : StructTuple) -> Maybe<Pair<[FiType], [FiType]>>;
+	flowWiTuple2string(
+		struct : FlowWiTuple,
+		structs : WiseAstStructs,
+		polyParams : Tree<string, FiType>, // templatePlaceholder(== ?+) - templateAlias(== Letters)
+		field2string : (FlowWiExp) -> string
+	) -> string;
+	
+	//TODO : we use it in comparison and tupledot.
+	// we can do an optimization for tupledot (don't load all the fields, only required)
 	decostructStructInExp(e : FlowWiExp, type : FlowWiType) -> Pair<FlowWiExp, FlowWiType>;
 	isStructDecomposition(e : FlowWiExp) -> bool;
 	isGetStructValueExp(v : FlowWiExp) -> bool;
+	isCreateStructValueExp(v : FlowWiExp) -> bool;
+
+	isTemplateStruct(env : WiseAstStructs, name : string) -> bool;
 }
 
 StructTuple(
 	link : Tree</*struct_name*/string, StructTupleArgs>
 );
 StructTupleArgs(
+	typeParameters : [FiType],
 	args : Tree<string/*arg_name*/, StructTupleArg>
 );
 StructTupleArg(
@@ -34,25 +56,36 @@ makeStructTuple() -> StructTuple {
 }
 
 makeWiseAstStructs() -> WiseAstStructs {
-	WiseAstStructs(makeStructTuple(), makeTree(), makeTree());
+	WiseAstStructs(makeStructTuple(), makeTree(), makeTree(), makeTree(), ref 1);
 }
 
-fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstStructs {
-	state = foldr(structs, Pair(makeWiseAstStructs(), 1), \acc, struct -> unpair(acc, \tuples, id -> Pair(
+getNextStructId(v : ref int) -> int {
+	id = ^(v);
+	v := id + 1;
+	id;
+}
+
+fiStructs2wiTuples(env : WiseAstStructs, structs : [FiTypeStruct], unions : [FiTypeUnion], functions : [FiFunctionDec]) -> WiseAstStructs {
+	state = foldr(structs, env, \tuples, struct -> {
+		id = getNextStructId(tuples.nextId);
 		WiseAstStructs(
 			// TODO: remove type?
 			StructTuple(setTree(
 				tuples.data.link,
 				struct.name,
-				StructTupleArgs(foldi(struct.args, makeTree(), \i, acc2, arg ->
-					setTree(acc2, arg.name, StructTupleArg(i, arg.type))
-				))
+				StructTupleArgs(
+					struct.typars,
+					foldi(struct.args, makeTree(), \i, acc2, arg ->
+						setTree(acc2, arg.name, StructTupleArg(i, arg.type))
+					)
+				)
 			)),
-			setTree(tuples.table, struct.name, id),
+			setTree(tuples.table, struct.name, if (struct.typars == []) id else (-1) * id), // we'll replace 1 struct with N later
 			tuples.unions,
-		),
-		id + 1
-	))).first;
+			tuples.templStructs,
+			tuples.nextId,
+		)
+	});
 
 	unionIds = values2treeEx(unions, \v -> v.name, \t -> map(t.typenames, \v -> v.name));
 	unionStructs = values2treeEx(
@@ -61,7 +94,10 @@ fiStructs2wiTuples(structs : [FiTypeStruct], unions : [FiTypeUnion]) -> WiseAstS
 		\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
 	);
 
-	WiseAstStructs(state with unions = unionStructs);
+	WiseAstStructs(state with
+		unions = unionStructs,
+		templStructs = calculateTemplateStructs(state.table, functions, state.nextId)
+	);
 }
 
 getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string]) -> [string] {
@@ -78,31 +114,117 @@ getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string
 	}
 }
 
-getStructArgs(name : string, data : StructTuple) -> Maybe<[FiType]> {
-	maybeMap(lookupTree(data.link, name), \args -> map(
-		sortCustom(getTreeValues(args.args), \arg -> arg.index, true),
-		\arg -> arg.type
+getStructArgs(name : string, data : StructTuple) -> Maybe<Pair<[FiType], [FiType]>> {
+	maybeMap(lookupTree(data.link, name), \args -> Pair(
+		args.typeParameters,
+		map(
+			sortCustom(getTreeValues(args.args), \arg -> arg.index, true),
+			\arg -> arg.type
+		)
 	));
 }
 
-flowWiTuple2string(struct : FlowWiTuple, structs : WiseAstStructs, field2string : (FlowWiExp) -> string) -> string {
+calculateTemplateStructs(structs : Tree<string, int>, functions : [FiFunctionDec], structCntr : ref int) -> Tree<int, Tree<[FiType], int>> {
+	fold(functions, makeTree(), \acc, fn -> {
+		calculateTemplateStructsInExp([fn.lambda.body], structs, acc, structCntr);
+	});
+}
+
+calculateTemplateStructsInExp(exps : [FiExp], structs : Tree<string, int>, acc : Tree<int, Tree<[FiType], int>>, structCntr : ref int) -> Tree<int, Tree<[FiType], int>> {
+	if (exps == []) {
+		acc
+	} else {
+		ee = tail(exps);
+		newValues = switch(exps[0] : FiExp) {
+			FiLambda(__, body, __, __): Pair(arrayPush(ee, body), acc);
+			FiCall(f, args, __, __): Pair(arrayPush(concat(ee, args), f), acc);
+			FiVar(__, __, __): Pair(ee, acc);
+			FiLet(__, __, e1, e2, __, __): Pair(arrayPush(arrayPush(ee, e1), e2), acc);
+			FiIf(e1, e2, e3, __, __):  Pair(arrayPush(arrayPush(arrayPush(ee, e1), e2), e3), acc);
+			FiSwitch(__, __, cases, __, __): Pair(concat(ee, map(cases, \c -> c.body)), acc);
+			FiCast(e, __, __, __, __): Pair(arrayPush(ee, e), acc);
+			FiSeq(es, __, __): Pair(concat(ee, es), acc);
+			FiCallPrim(op, es, type, __): {
+				newAcc = switch (op : FcPrim) {
+					FcStructPrim(structName) : eitherFn(
+						lookupTree(structs, structName),
+						\id -> {
+							if (id < 0) {
+								newId = getNextStructId(structCntr);
+								typeParams = getFiTypeNameType(type).typeparameters;
+								newParams = eitherFn(
+									lookupTree(acc, id),
+									\tmplStructs -> setTree(tmplStructs, typeParams, newId),
+									\ -> makeTree1(typeParams, newId)
+								);
+								setTree(acc, id, newParams);
+							} else {
+								acc; // structure without templates
+							}
+						},
+						\-> {
+							println("ERROR: unknown struct " + structName + " in " + toString(exps[0]));
+							acc;
+						}
+					);
+					default : acc;
+				}
+				Pair(concat(ee, es), newAcc);
+			}
+			FiVoid(__): Pair(ee, acc);
+			FiDouble(__, __): Pair(ee, acc);
+			FiInt(__, __): Pair(ee, acc);
+			FiString(__, __): Pair(ee, acc);
+			FiBool(__, __): Pair(ee, acc);
+			FiRequire(__, e2, __, __): Pair(arrayPush(ee, e2), acc);
+			FiUnsafe(__, fallback, __, __): Pair(arrayPush(ee, fallback), acc);
+		}
+		calculateTemplateStructsInExp(newValues.first, structs, newValues.second, structCntr);
+	}
+}
+
+flowWiTuple2string(struct : FlowWiTuple, structs : WiseAstStructs, polyParams : Tree<string, FiType>, field2string : (FlowWiExp) -> string) -> string {
 	makeDefTuple = \-> "(" + superglue(struct.exps, field2string, ", ") + (if (struct.exps == []) "" else ",") + ")";
 	eitherFn(
 		lookupTree(structs.table, struct.id),
-		\iid -> eitherFn(
-			getStructArgs(struct.id, structs.data),
-			\fieldTypes : [FiType] -> {
-				getFields = \name : string -> getStructArgs(name, structs.data);
-				tupleFieldTypes = mapi(fieldTypes, \i, ft -> 
-					eitherFn(elementAtM(struct.typeParameters, i), idfn, \-> fiType2FlowWiType(ft, getFields))
+		\iid -> {
+			structId = if (iid < 0) {
+				eitherFn(
+					lookupTree(structs.templStructs, iid),
+					\templStructs : Tree<[FiType], int> -> {
+						eitherFn(
+							lookupTree(templStructs, struct.typeParameters),
+							idfn,
+							\-> {
+								println("ERROR: can't find template struct id : " + toString(struct));
+								iid;
+							}
+						)
+					},
+					\-> {
+						println("ERROR: can't find template struct id (unregistered) : " + toString(struct));
+						iid;
+					}
 				);
-				field2string(makeCreateStruct(iid, struct, tupleFieldTypes));
-			},
-			\ -> {
-				println("Structure fields '" + struct.id + "' are not found");
-				makeDefTuple();
+			} else {
+				iid
 			}
-		),
+
+			eitherFn(
+				getStructArgs(struct.id, structs.data),
+				unpairC(\typePars, fieldTypes : [FiType] -> {
+					getFields = \name : string -> getStructArgs(name, structs.data);
+					tupleFieldTypes = map(fieldTypes, \ft -> {
+						fiType2FlowWiTypeT(ft, polyParams, getFields);
+					});
+					field2string(makeCreateStruct(structId, struct, tupleFieldTypes));
+				}),
+				\ -> {
+					println("Structure fields '" + struct.id + "' are not found");
+					makeDefTuple();
+				}
+			)
+		},
 		\ -> {
 			if (struct.id != "") println("Structure '" + struct.id + "' is not found");
 			makeDefTuple();
@@ -169,4 +291,32 @@ isGetStructValueExp(v : FlowWiExp) -> bool {
 		FlowWiVar(id): id == "getStructValue";
 		default : false;
 	}
+}
+
+isCreateStructValueExp(v : FlowWiExp) -> bool {
+	switch (v : FlowWiExp) {
+		FlowWiVar(id): id == "createStruct";
+		default : false;
+	}
+}
+
+isTemplateStruct(env : WiseAstStructs, name : string) -> bool {
+	eitherMap(
+		lookupTree(env.data.link, name),
+		\s -> s.typeParameters != [],
+		false
+	);
+}
+
+removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAstStructs {
+	exports = buildSet(exported);
+	newStructs = filterTree(env.table, \name, __ -> containsSet(exports, name));
+	newIds = foldTree(newStructs, makeSet(), \__, id, acc -> insertSet(acc, id));
+	WiseAstStructs(
+		StructTuple(filterTree(env.data.link, \name, __ -> containsSet(exports, name))),
+		newStructs,
+		filterTree(env.unions, \name, __ -> containsSet(exports, name)),
+		filterTree(env.templStructs, \id, __ -> containsSet(newIds, id)),
+		env.nextId,
+	);
 }
