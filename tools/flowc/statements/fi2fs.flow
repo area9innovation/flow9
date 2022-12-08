@@ -70,14 +70,16 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 								assing_and_tailcall = FsSeq(concat(assign_func_vars, [FsTailCall(start)]), FiTypeVoid(), start);
 								fsWrapSeq(concat(
 									concatA(map(args_pairs, \p -> p.second)),
-									[foldi(args_pairs, assing_and_tailcall, \i, acc, p -> 
-										FsLet(
+									[foldi(args_pairs, assing_and_tailcall, \i, acc, p -> {
+										make_let = \-> FsLet(
 											FsVar(func_args[i].name + "__tmp__", func_args[i].type, FsVarLoc(), start), 
-											p.first, 
-											acc,
-											start
-										)
-									)]
+											p.first, acc, start
+										);
+										switch (p.first) {
+											FsVar(name,__,__,__): if (name == env.args[i].name) acc else make_let();
+											default: make_let();
+										}
+									})]
 								));
 							}
 							None(): fail0("function " + fn + " is not found");
@@ -190,12 +192,31 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 		}
 		FiCallPrim(op, es, type, start): {
 			es_pairs = map(es, do_exp);
-			fsWrapSeq(concat(
-				concatA(map(es_pairs, \p -> p.second)), 
-				[wrap(FsCallPrim(op, 
-					map(es_pairs, \p -> p.first), type, start
-				))]
-			));
+			switch (op) {
+				FcAssignPrim(): {
+					fsWrapSeq(concat(
+						concatA(map(es_pairs, \p -> p.second)), 
+						[FsAssign(es_pairs[0].first, es_pairs[1].first, start), wrap(FiVoid(0))]
+					));
+				}
+				FcSetMutablePrim(name): {
+					fsWrapSeq(concat(
+						concatA(map(es_pairs, \p -> p.second)), 
+						[FsAssign(
+							FsCallPrim(FcFieldPrim(name), [es_pairs[0].first], fsExpType(es_pairs[1].first), start), 
+							es_pairs[1].first, start
+						), wrap(FiVoid(0))]
+					));
+				}
+				default: {
+					fsWrapSeq(concat(
+						concatA(map(es_pairs, \p -> p.second)), 
+						[wrap(FsCallPrim(op, 
+							map(es_pairs, \p -> p.first), type, start
+						))]
+					));
+				}
+			}
 		}
 		FiRequire(file, ex, type, start): {
 			pair = do_exp(ex);
@@ -412,12 +433,37 @@ fiExp2FsExp(e : FiExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 		}
 		FiCallPrim(op, es, type, start): {
 			es_pairs = map(es, do_exps);
-			Pair(
-				FsCallPrim(op,
-					map(es_pairs, \p -> p.first), type, start
-				),
-				concatA(map(es_pairs, \p -> p.second))
-			);
+			switch (op) {
+				FcAssignPrim(): {
+					Pair(
+						FiVoid(start),
+						concat(
+							concatA(map(es_pairs, \p -> p.second)),
+							[FsAssign(es_pairs[0].first, es_pairs[1].first, start)]
+						)
+					);
+				}
+				FcSetMutablePrim(name): {
+					Pair(
+						FiVoid(start),
+						concat(
+							concatA(map(es_pairs, \p -> p.second)),
+							[FsAssign(
+								FsCallPrim(FcFieldPrim(name), [es_pairs[0].first], fsExpType(es_pairs[1].first), start),
+								es_pairs[1].first, start
+							)]
+						)
+					);
+				}
+				default: {
+					Pair(
+						FsCallPrim(op,
+							map(es_pairs, \p -> p.first), type, start
+						),
+						concatA(map(es_pairs, \p -> p.second))
+					);
+				}
+			}
 		}
 		FiRequire(file, ex, type, start): {
 			pair = do_exps(ex);
