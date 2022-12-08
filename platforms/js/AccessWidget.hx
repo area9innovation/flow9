@@ -422,6 +422,7 @@ class AccessWidget extends EventEmitter {
 		"button" => "button",
 		"checkbox" => "button",
 		"combobox" => "button",
+		"dialog" => "dialog",
 		"radio" => "button",
 		"tab" => "button",
 		"link" => "button",
