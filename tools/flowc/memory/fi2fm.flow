@@ -1,54 +1,85 @@
 import tools/flowc/incremental/fi_helpers;
-import tools/flowc/memory/fmexp;
+import tools/flowc/memory/fm_helpers;
 
 export {
-	fiExp2fmExp(e: FiExp) -> FmExp;
+	fiExp2fmExp(e: FiExp, bound: Set<string>) -> FmExp;
 }
 
-fiExp2fmExp(ex: FiExp) -> FmExp {
+fiExp2fmExp(ex: FiExp, bound: Set<string>) -> FmExp {
 	switch (ex) {
 		FiSeq(es, type, start): {
-			FmSeq(map(es, fiExp2fmExp), type, start)
+			fm_es = map(es, \x -> fiExp2fmExp(x, bound));
+			free = uniq(fold(fm_es, [], \acc, fm -> concat(acc, fmFreeVars(fm))));
+			FmSeq(fm_es, FmInfo(free, type, start));
 		}
 		FiCast(e, from, to, type, start): {
-			FmCallPrim(FmCastPrim(from, to), [fiExp2fmExp(e)], type, start);
+			em = fiExp2fmExp(e, bound);
+			FmCallPrim(FmCastPrim(from, to), [em], FmInfo(fmFreeVars(em), type, start));
 		}
 		FiCall(f, args, type, start): {
-			FmCall(fiExp2fmExp(f), map(args, fiExp2fmExp), type, start);
+			fm = fiExp2fmExp(f, bound);
+			argsm = map(args, \arg -> fiExp2fmExp(arg, bound));
+			free = uniq(fold(argsm, fmFreeVars(fm), \acc, x -> concat(acc, fmFreeVars(x))));
+			FmCall(fm, argsm, FmInfo(free, type, start));
 		}
 		FiSwitch(v, vtype, cases, type, start): {
-			FmSwitch(v, type, map(cases, \c -> FmCase(c.struct, c.argNames, fiExp2fmExp(c.body), c.start)), type, start)
+			cm = map(cases, \c -> 
+				FmCase(c.struct, c.argNames, fiExp2fmExp(c.body, fold(c.argNames, bound, \acc, x -> insertSet(acc, x))), c.start)
+			);
+			vm = FmVar(v.name, containsSet(bound, v.name), FmInfo([], v.type, v.start));
+			free = uniq(fold(cm, fmFreeVars(vm), \acc, c -> concat(acc, fmFreeVars(c.body))));
+			FmSwitch(vm, vtype, cm, FmInfo(free, type, start));
 		}
 		FiLambda(args, body, type, start): {
-			FmLambda(args, fiExp2fmExp(body), type, start);
+			bodym = fiExp2fmExp(body, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)));
+			FmLambda(args, bodym, FmInfo(fmFreeVars(bodym), type, start));
 		}
 		FiLet(name, vtype, e1, e2, type, start): {
-			FmLet(FiVar(name, vtype, start), fiExp2fmExp(e1), fiExp2fmExp(e2), type, start);
+			e1m = fiExp2fmExp(e1, bound);
+			e2m = fiExp2fmExp(e2, insertSet(bound, name));
+			free = uniq(concat(fmFreeVars(e1m), fmFreeVars(e2m)));
+			FmLet(
+				FmVar(name, containsSet(bound, name), FmInfo([], vtype, start)), 
+				e1m, e2m, FmInfo(free, type, start)
+			);
 		}
 		FiIf(e1, e2, e3, type, start): {
-			FmIf(fiExp2fmExp(e1), fiExp2fmExp(e2), fiExp2fmExp(e3), type, start);
+			e1m = fiExp2fmExp(e1, bound);
+			e2m = fiExp2fmExp(e2, bound);
+			e3m = fiExp2fmExp(e3, bound);
+			free = uniq(concat3(fmFreeVars(e1m), fmFreeVars(e2m), fmFreeVars(e3m)));
+			FmIf(e1m, e2m, e3m, FmInfo(free, type, start));
 		}
 		FiCallPrim(op, es, type, start): {
+			esm = map(es, \x -> fiExp2fmExp(x, bound));
+			free = uniq(fold(esm, [], \acc, x -> concat(acc, fmFreeVars(x))));
 			switch (op) {
 				FcAssignPrim(): {
-					FmAssign(fiExp2fmExp(es[0]), fiExp2fmExp(es[1]), start);
+					FmAssign(esm[0], esm[1], FmInfo(free, FiTypeVoid(), start));
 				}
 				FcSetMutablePrim(field): {
 					FmAssign(
-						FmCallPrim(FmFieldPrim(field), [fiExp2fmExp(es[0])], fiExpType(es[1]), start),
-						fiExp2fmExp(es[1]), start
+						FmCallPrim(FmFieldPrim(field), [esm[0]], FmInfo(fmFreeVars(esm[0]), fiExpType(es[1]), start)),
+						esm[1], FmInfo(free, FiTypeVoid(), start)
 					);
 				}
-				default: FmCallPrim(fcPrim2FmPrim(op), map(es, fiExp2fmExp), type, start);
+				default: {
+					
+					FmCallPrim(fcPrim2FmPrim(op), esm, FmInfo(free, type, start));
+				}
 			}
 		}
 		FiRequire(file, e, type, start): {
-			FmCallPrim(FmRequirePrim(file), [fiExp2fmExp(e)], type, start);
+			em = fiExp2fmExp(e, bound);
+			FmCallPrim(FmRequirePrim(file), [em], FmInfo(fmFreeVars(em), type, start));
 		}
 		FiUnsafe(name, fb, type, start): {
-			FmCallPrim(FmUnsafePrim(name), [fiExp2fmExp(fb)], type, start);
+			fbm = fiExp2fmExp(fb, bound);
+			FmCallPrim(FmUnsafePrim(name), [fbm], FmInfo(fmFreeVars(fbm), type, start));
 		}
-		FiVar(__,__,__):   ex;
+		FiVar(name, type, start): {
+			FmVar(name, containsSet(bound, name), FmInfo([], type, start));
+		}
 		FiVoid(__):        ex;
 		FiDouble(__, __):  ex;
 		FiInt(__, __):     ex;
