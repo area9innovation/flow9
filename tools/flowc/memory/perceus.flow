@@ -1,0 +1,149 @@
+import ds/multiset;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/memory/fm_helpers;
+import tools/flowc/manipulation/freevars;
+
+export {
+	PerceusContext(
+		borrowed: MultiSet<string>, 
+		linear: MultiSet<string>
+	);
+	fmPerceus(e: FmExp, ctx: PerceusContext) -> FmExp;
+}
+
+checkPerceusInvariants(e: FmExp, ctx: PerceusContext) -> void {
+	// Δ∩Γ = ∅
+	traverseInOrder(ctx.borrowed.tree, \v, i -> {
+		if (containsKeyTree(ctx.linear.tree, v)) {
+			println("Borrowed and linear variables intersects with: " + v);
+		}
+	});
+	// multiplicity of each member in Δ, Γ is 1
+	traverseInOrder(ctx.borrowed.tree, \v, i -> {
+		if (i > 1) {
+			println("Multiplicity of borrowed variable: " + v + " has multiplicity: " + i2s(i));
+		}
+	});
+	// multiplicity of each member in Δ, Γ is 1
+	traverseInOrder(ctx.linear.tree, \v, i -> {
+		if (i > 1) {
+			println("Multiplicity of linear variable: " + v + " has multiplicity: " + i2s(i));
+		}
+	});
+	fv = fifreevars(e);
+	// Γ ⊆ fv(e)
+	traverseInOrder(ctx.linear.tree, \v, i -> {
+		if (!containsSet(fv, v)) {
+			println("Variable: " + v + " from linear context is not found in expression: " + prettyFmExp(dummyPretty, e));
+		}
+	});
+	// fv(e) ⊆ Δ, Γ
+	iterSet(fv, \v -> {
+		if (!(containsKeyTree(ctx.borrowed.tree, v) || containsKeyTree(ctx.linear.tree, v))) {
+			println("Freee variable: " + v + " from expression: " + prettyFmExp(dummyPretty, e) + " is not found in linear or borrowed context");
+		}
+	});
+}
+
+fmPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
+	checkPerceusInvariants(ex, ctx);
+	switch (ex) {
+		FmSeq(es, type, start): {
+			if (length(es) == 0) FmSeq([], type, start) else
+			if (length(es) == 1) fi2fmPerceus(es[0], ctx) else {
+				FmSeq(fi2fmPerceusExps(es, ctx).first, type, start);
+			}
+		}
+		FmCall(f, args, type, start): {
+			pargs = fi2fmPerceusExps(args, ctx);
+			FmCall(fi2fmPerceus(f, pargs.second), pargs.first, type, start);
+		}
+		FmSwitch(v, vtype, cases, type, start): {
+			if (!containsKeyTree(ctx.linear.tree, v.name)) {
+				println("Linear context doesn't contain a switch variable: " + v.name);
+			}
+			FmSwitch(v, vtype,
+				map(cases, \c -> {
+					c_boundvars = buildMultiSet(filtermap(c.argNames, \n -> if (n == "__") None() else Some(Pair(n, 1))));
+					c_freevars = set2multiSet(fifreevars(c.body));
+					linear1 = uniteMultiSets(ctx.linear, c_boundvars);
+					linear2 = intersectMultiSets(linear1, c_freevars);
+					linear3 = diffMultiSets(linear1, linear2);
+					c_body = fi2fmPerceus(c.body, PerceusContext(ctx with linear = linear2));
+					FmCase(c.struct, c.argNames, 
+						foldMultiSet(linear3, c_body, \acc, n, __ ->
+							FmMemory(FmDrop(n), acc, start)
+						),
+						c.start
+					);
+				}),
+				type, start
+			);
+		}
+		FmLambda(args, body, type, starts): {
+			fv_body = fifreevars(body);
+			
+			if ()
+		}
+		FmLet(name, vtype, e1, e2, type, start): {
+			fv_e2 = set2multiSet(fifreevars(e2));
+			if (containsMultiSet(fv_e2, name)) {
+				linear2 = intersectMultiSets(ctx.linear, removeMultiSet(fv_e2, name));
+				FmLet(name, vtype,
+					fi2fmPerceus(e1, PerceusContext(
+						uniteMultiSets(ctx.borrowed, linear2),
+						diffMultiSets(ctx.linear, linear2)
+					)),
+					fi2fmPerceus(e2, PerceusContext(ctx with 
+						linear = insertMultiSet(linear2, name)
+					)),
+					type, start
+				);
+			} else {
+				p2 = fi2fmPerceusExp(e2, ctx);
+				FmLet(name, vtype,
+					fi2fmPerceus(e1, p2.second),
+					p2.first, type, start
+				);
+			}
+		}
+		FmIf(e1, e2, e3, type, start): {
+			FmVoid(0);
+		}
+		FmCallPrim(op, es, type, start): {
+			FmCallPrim(op, fi2fmPerceusExps(es, ctx).first, type, start);
+		}
+		FmAssign(to, what, start): {
+			ex;
+		}
+		FmVar(name, type, start): {
+			if (containsMultiSet(ctx.linear, name)) ex else {
+				FmMemory(FmDup(name), ex, start);
+			}
+		}
+		FmString(__,__): ex;
+		FmInt(__,__): ex;
+		FmDouble(__,__): ex;
+		FmBool(__,__): ex;
+		FmVoid(__): ex;
+	}
+}
+
+fi2fmPerceusExp(e: FmExp, ctx: PerceusContext) -> Pair<FmExp, PerceusContext> {
+	fv = set2multiSet(fifreevars(e));
+	linear2 = intersectMultiSets(ctx.linear, fv);
+	Pair(
+		fi2fmPerceus(e, PerceusContext(ctx with linear = linear2)),
+		PerceusContext(
+			uniteMultiSets(ctx.borrowed, linear2),
+			diffMultiSets(ctx.linear, linear2)
+		)
+	);
+}
+
+fi2fmPerceusExps(es: [FmExp], ctx: PerceusContext) -> Pair<[FmExp], PerceusContext> {
+	foldr(es, Pair([], ctx), \acc, e -> {
+		p = fi2fmPerceusExp(e, acc.second);
+		Pair(concat([p.first], acc.first), p.second);
+	});
+}

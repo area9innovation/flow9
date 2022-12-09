@@ -37,7 +37,6 @@ fsWrapCaseVarsWithCasts(s : FsStat, names: FiGlobalNames) -> FsStat {
 								args_to_wrap = filtermapi(c.args, \i, arg -> {
 									arg_type = struct.args[i].type;
 									arg_typars = fiCollectTypars(arg_type, makeSet());
-									//arg_typars = set2array(fiTypeTypars(makeSet(), arg_type));
 									if (isEmptySet(arg_typars)) None() else Some(Pair(arg.name, arg_type));
 								});
 								body2 = if (args_to_wrap == []) body1 else fsDoWrapCaseVarsWithCasts(body1, args_to_wrap);
@@ -137,8 +136,8 @@ fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsSta
 				}
 			}
 		}
-		FsMemory(op, e, start): {
-			FsMemory(op, fsMakeExpCastsExplicit(e, fsExpType(e), names, true), start);
+		FsMemory(op, var, e, start): {
+			FsMemory(op, var, fsMakeExpCastsExplicit(e, fsExpType(e), names, true), start);
 		}
 	}
 }
@@ -181,22 +180,6 @@ fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) 
 		FsCallPrim(__,__,type1,__): {
 			fsMakeCallPrimCastsExplicit(e, type1, names);
 		}
-		FsRequire(__, ex,__,__): {
-			FsRequire(e with e = no_cast(ex));
-		}
-		FsUnsafe(__, ex,__,__): {
-			FsUnsafe(e with fallback = no_cast(ex));
-		}
-		FsCast(ex, from, to,__): {
-			FsCast(e with e = no_cast(ex));
-		}
-		FsTernaryIf(cond, pos, neg, type1,__): {
-			FsTernaryIf(e with
-				cond = fsMakeExpCastsExplicit(cond, FiTypeBool(), names, false),
-				s1 = fsMakeExpCastsExplicit(pos, type1, names, true),
-				s2 = fsMakeExpCastsExplicit(neg, type1, names, true),
-			);
-		}
 		default: e;
 	}
 	type1 = fsExpType(e1);
@@ -211,10 +194,10 @@ fsMakeCast(e: FsExp, from: FiType, to: FiType) -> FsExp {
 			Some(p): {
 				from1 = fiApplyTypeSubstitution(p.first, from);
 				to1 = fiApplyTypeSubstitution(p.second, to);
-				if (fiEqualTypes(from1, to1)) e else FsCast(e, from1, to1, e.start);
+				if (fiEqualTypes(from1, to1)) e else FsCallPrim(FsCastPrim(from1, to1), [e], to1, e.start);
 			}
 			None(): {
-				FsCast(e, from, to, e.start);
+				FsCallPrim(FsCastPrim(from, to), [e], to, e.start);
 			}
 		}
 	}
@@ -335,6 +318,18 @@ fsMakeCallPrimCastsExplicit(e : FsCallPrim, type: FiType, names: FiGlobalNames) 
 				}
 			}
 		}
+		FsRequirePrim(file):  def_case(false);
+		FsUnsafePrim(name):   def_case(false);
+		FsCastPrim(from, to): def_case(false);
+		FsIfPrim(): {
+			FsCallPrim(e with
+				es = [
+					fsMakeExpCastsExplicit(e.es[0], FiTypeBool(), names, false),
+					fsMakeExpCastsExplicit(e.es[1], type, names, true),
+					fsMakeExpCastsExplicit(e.es[2], type, names, true)
+				]
+			);
+		}
 		FsReuseStructPrim(name, reuse): struct_case(name);
 	}
 }
@@ -407,7 +402,6 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 			if (var.name == "__") {
 				Pair(s, vars);
 			} else {
-				//v_ind = lookupTreeDef(vars, var.name, 0);
 				new_vars = setTree(vars, var.name, lookupTreeDef(vars, var.name, 0) + 1);
 				Pair(
 					FsVarDecl(FsVar(var with name = fsSSAvar(var.name, new_vars)), start),
@@ -424,10 +418,10 @@ fsStatSSA(s: FsStat, vars: Tree<string, int>) -> Pair<FsStat, Tree<string, int>>
 				vars
 			);
 		}
-		FsMemory(op, e, start): {
+		FsMemory(op, var, e, start): {
 			Pair(
 				FsMemory(
-					op, 
+					op, var,
 					fsExpSSA(e, vars), start
 				),
 				vars
@@ -441,18 +435,16 @@ fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
 		FsLambda(closure, args, body,__,__): {
 			new_vars = fold(args, vars, \acc, arg ->
 				if (arg.name == "__") acc else {
-					//arg_i = lookupTreeDef(acc, arg.name, 0);
 					setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1);
 				}
 			);
 			FsLambda(e with
 				closure = map(closure, \v -> FsVar(v with name = fsSSAvar(v.name, new_vars))),
-				args = map(args, \arg -> {
-					//arg_i = lookupTreeDef(new_vars, arg.name, 0);
+				args = map(args, \arg ->
 					FiFunArg(arg with 
 						name = fsSSAvar(arg.name, new_vars);
-					);
-				}),
+					)
+				),
 				body = fsStatSSA(body, new_vars).first
 			);
 		}
@@ -462,27 +454,10 @@ fsExpSSA(e: FsExp, vars: Tree<string, int>) -> FsExp {
 				args = map(args, \arg -> fsExpSSA(arg, vars))
 			);
 		}
-		FsTernaryIf(cond, s1, s2,__,__): {
-			FsTernaryIf(e with
-				cond = fsExpSSA(cond, vars),
-				s1 = fsExpSSA(s1, vars),
-				s2 = fsExpSSA(s2, vars)
-			);
-		}
-		FsCast(ex, __,__,__): {
-			FsCast(e with e = fsExpSSA(ex, vars));
-		}
 		FsCallPrim(__, es,__,__): {
 			FsCallPrim(e with es = map(es, \x -> fsExpSSA(x, vars)));
 		}
-		FsRequire(__, ex,__,__): {
-			FsRequire(e with e = fsExpSSA(ex, vars));
-		}
-		FsUnsafe(__, ex,__,__): {
-			FsUnsafe(e with fallback = fsExpSSA(ex, vars));
-		}
 		FsVar(name,__,__,__): {
-			//i = lookupTreeDef(vars, name, 0);
 			FsVar(e with name = fsSSAvar(name, vars));
 		}
 		FiVoid(__):       e;
@@ -537,8 +512,8 @@ fsInterpolateTyparsStat(s : FsStat, names: FiGlobalNames) -> FsStat {
 		FsAssign(var, e, start): {
 			FsAssign(var, fsInterpolateTyparsExp(e, names), start);
 		}
-		FsMemory(op, e, start): {
-			FsMemory(op, fsInterpolateTyparsExp(e, names), start);
+		FsMemory(op, var, e, start): {
+			FsMemory(op, var, fsInterpolateTyparsExp(e, names), start);
 		}
 	}
 }
@@ -574,22 +549,6 @@ fsInterpolateTyparsExp(e : FsExp, names: FiGlobalNames) -> FsExp {
 		}
 		FsCallPrim(__,__,type1,__): {
 			fsInterpolateTyparsCallPrim(e, names);
-		}
-		FsRequire(__, ex,__,__): {
-			FsRequire(e with e = do_interpolate(ex));
-		}
-		FsUnsafe(__, ex,__,__): {
-			FsUnsafe(e with fallback = do_interpolate(ex));
-		}
-		FsCast(ex, from, to,__): {
-			FsCast(e with e = do_interpolate(ex));
-		}
-		FsTernaryIf(cond, pos, neg, type1,__): {
-			FsTernaryIf(e with
-				cond = fsInterpolateTyparsExp(cond, names),
-				s1 = fsInterpolateTyparsExp(pos, names),
-				s2 = fsInterpolateTyparsExp(neg, names),
-			);
 		}
 		default: e;
 	}
@@ -647,6 +606,10 @@ fsInterpolateTyparsCallPrim(e : FsCallPrim, names: FiGlobalNames) -> FsExp {
 		FsRefPrim(): def_interpolate();
 		FsStructPrim(name): interpolate_struct(name);
 		FsFieldPrim(name): def_interpolate();
+		FsRequirePrim(__): def_interpolate();
+		FsUnsafePrim(__): def_interpolate();
+		FsCastPrim(from, to): def_interpolate();
+		FsIfPrim(): def_interpolate();
 		FsReuseStructPrim(name, reuse): interpolate_struct(name);
 	}
 }
@@ -707,22 +670,6 @@ fsExpReturnVars(e : FsExp) -> FsExp {
 		}
 		FsCallPrim(__,es,__,__): {
 			FsCallPrim(e with es = map(es, fsExpReturnVars));
-		}
-		FsRequire(__, ex,__,__): {
-			FsRequire(e with e = fsExpReturnVars(ex));
-		}
-		FsUnsafe(__, ex,__,__): {
-			FsUnsafe(e with fallback = fsExpReturnVars(ex));
-		}
-		FsCast(ex, from, to,__): {
-			FsCast(e with e = fsExpReturnVars(ex));
-		}
-		FsTernaryIf(cond, pos, neg, type1,__): {
-			FsTernaryIf(e with
-				cond = fsExpReturnVars(cond),
-				s1 = fsExpReturnVars(pos),
-				s2 = fsExpReturnVars(neg),
-			);
 		}
 		default: e;
 	}

@@ -16,8 +16,8 @@ export {
 		mutable tmp: int, 
 	);
 
-	fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsStat;
-	fiExp2FsExp(e : FiExp, env: FsEnv) -> Pair<FsExp, [FsStat]>;
+	fmExp2FsStat(e : FmExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsStat;
+	fmExp2FsExp(e : FmExp, env: FsEnv) -> Pair<FsExp, [FsStat]>;
 }
 
 fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsStat {
@@ -35,9 +35,7 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 		}
 		FiCast(ex, from, to,__, start): {
 			pair = do_exp(ex);
-			fsWrapSeq(concat(pair.second, [wrap(
-				FsCallPrim(FsCastPrim(from, to), [pair.first], to, start)
-			)]));
+			fsWrapSeq(concat(pair.second, [wrap(FsCast(pair.first, from, to, start))]));
 		}
 		FiCall(f, args, type, start): {
 			args_pairs = map(args, do_exp);
@@ -222,15 +220,11 @@ fiExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 		}
 		FiRequire(file, ex, type, start): {
 			pair = do_exp(ex);
-			fsWrapSeq(concat(pair.second, [wrap(
-				FsCallPrim(FsRequirePrim(file), [pair.first], type, start)
-			)]));
+			fsWrapSeq(concat(pair.second, [wrap(FsRequire(file, pair.first, type, start))]));
 		}
 		FiUnsafe(name, ex, type, start): {
 			pair = do_exp(ex);
-			fsWrapSeq(concat(pair.second, [wrap(
-				FsCallPrim(FsUnsafePrim(name), [pair.first], type, start)
-			)]));
+			fsWrapSeq(concat(pair.second, [wrap(FsUnsafe(name, pair.first, type, start))]));
 		}
 		FiVar(name, type, start): wrap(fiVar2FsVar(name, type, start, env));
 		FiVoid(__):        wrap(e);
@@ -262,10 +256,7 @@ fiExp2FsExp(e : FiExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 		}
 		FiCast(ex, from, to,__, start): {
 			pair = do_exps(ex);
-			Pair(
-				FsCallPrim(FsCastPrim(from, to), [pair.first], to, start),
-				pair.second
-			);
+			Pair(FsCast(pair.first, from, to, start), pair.second);
 		}
 		FiCall(f, args, type, start): {
 			args_pairs = map(args, do_exps);
@@ -410,7 +401,11 @@ fiExp2FsExp(e : FiExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 			e3_pair = do_exps(e3);
 			if (good_exp(e1) && good_exp(e2) && good_exp(e3)) {
 				Pair(
-					FsCallPrim(FsIfPrim(), [e1_pair.first, e2_pair.first, e3_pair.first], type, start),
+					FsTernaryIf( 
+						e1_pair.first, 
+						e2_pair.first, 
+						e3_pair.first, type, start
+					),
 					concat3(e1_pair.second, e2_pair.second, e3_pair.second)
 				);
 			} else {
@@ -472,11 +467,11 @@ fiExp2FsExp(e : FiExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 		}
 		FiRequire(file, ex, type, start): {
 			pair = do_exps(ex);
-			Pair(FsCallPrim(FsRequirePrim(file), [pair.first], type, start), pair.second);
+			Pair(FsRequire(file, pair.first, type, start), pair.second);
 		}
 		FiUnsafe(name, ex, type, start): {
 			pair = do_exps(ex);
-			Pair(FsCallPrim(FsUnsafePrim(name), [pair.first], type, start), pair.second);
+			Pair(FsUnsafe(name, pair.first, type, start), pair.second);
 		}
 		FiVar(name, type, start): Pair(fiVar2FsVar(name, type, start, env), []);
 		FiVoid(__):        Pair(e, []);
@@ -540,7 +535,7 @@ fsVarIsInStat(v: string, s: FsStat) -> bool {
 		FsTailCall(__): false;
 		FsVarDecl(var,__): false;
 		FsAssign(var, e,__): fsVarIsInExp(v, e);
-		FsMemory(op, var, e,__): fsVarIsInExp(v, e);
+		FsMemory(op, e,__): fsVarIsInExp(v, e);
 	}
 }
 
@@ -549,6 +544,10 @@ fsVarIsInExp(v: string, e: FsExp) -> bool {
 		FsLambda(__,__,body,__,__): fsVarIsInStat(v, body);
 		FsCall(fn, args,__,__): fsVarIsInExp(v, fn) || exists(args, \arg -> fsVarIsInExp(v, arg));
 		FsCallPrim(__,es,__,__): exists(es, \x -> fsVarIsInExp(v, x));
+		FsRequire(__, ex,__,__): fsVarIsInExp(v, ex);
+		FsUnsafe(__, ex,__,__): fsVarIsInExp(v, ex);
+		FsCast(ex, from, to,__): fsVarIsInExp(v, ex);
+		FsTernaryIf(cond, pos, neg, type1,__): fsVarIsInExp(v, cond) || fsVarIsInExp(v, pos) || fsVarIsInExp(v, neg);
 		FsVar(name,__,__,__): v == name;
 		FiConst(): false;
 	}
