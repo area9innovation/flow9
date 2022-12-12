@@ -9,7 +9,7 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects) -> FmExp {
 	switch (ex) {
 		FiSeq(es, type, start): {
 			fm_es = map(es, \x -> fiExp2fmExp(x, bound, effects));
-			free = uniq(fold(fm_es, [], \acc, fm -> concat(acc, fmFreeVars(fm))));
+			free = fold(fm_es, makeSet(), \acc, fm -> mergeSets(acc, fmFreeVars(fm)));
 			FmSeq(fm_es, FmInfo(free, type, start));
 		}
 		FiCast(e, from, to, type, start): {
@@ -19,15 +19,15 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects) -> FmExp {
 		FiCall(f, args, type, start): {
 			fm = fiExp2fmExp(f, bound, effects);
 			argsm = map(args, \arg -> fiExp2fmExp(arg, bound, effects));
-			free = uniq(fold(argsm, fmFreeVars(fm), \acc, x -> concat(acc, fmFreeVars(x))));
+			free = fold(argsm, fmFreeVars(fm), \acc, x -> mergeSets(acc, fmFreeVars(x)));
 			FmCall(fm, argsm, FmInfo(free, type, start));
 		}
 		FiSwitch(v, vtype, cases, type, start): {
 			cm = map(cases, \c -> 
 				FmCase(c.struct, c.argNames, fiExp2fmExp(c.body, fold(c.argNames, bound, \acc, x -> insertSet(acc, x)), effects), c.start)
 			);
-			vm = FmVar(v.name, containsSet(bound, v.name), FmInfo([], v.type, v.start));
-			free = uniq(fold(cm, fmFreeVars(vm), \acc, c -> concat(acc, fmFreeVars(c.body))));
+			vm = FmVar(v.name, containsSet(bound, v.name), FmInfo(makeSet1(v.name), v.type, v.start));
+			free = fold(cm, fmFreeVars(vm), \acc, c -> mergeSets(acc, fmFreeVars(c.body)));
 			FmSwitch(vm, vtype, cm, FmInfo(free, type, start));
 		}
 		FiLambda(args, body, type, start): {
@@ -37,9 +37,9 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects) -> FmExp {
 		FiLet(name, vtype, e1, e2, type, start): {
 			e1m = fiExp2fmExp(e1, bound, effects);
 			e2m = fiExp2fmExp(e2, insertSet(bound, name), effects);
-			free = uniq(concat(fmFreeVars(e1m), fmFreeVars(e2m)));
+			free = mergeSets(fmFreeVars(e1m), fmFreeVars(e2m));
 			FmLet(
-				FmVar(name, containsSet(bound, name), FmInfo([], vtype, start)), 
+				FmVar(name, containsSet(bound, name), FmInfo(makeSet1(name), vtype, start)), 
 				e1m, e2m, FmInfo(free, type, start)
 			);
 		}
@@ -47,7 +47,7 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects) -> FmExp {
 			e1m = fiExp2fmExp(e1, bound, effects);
 			e2m = fiExp2fmExp(e2, bound, effects);
 			e3m = fiExp2fmExp(e3, bound, effects);
-			free = uniq(concat3(fmFreeVars(e1m), fmFreeVars(e2m), fmFreeVars(e3m)));
+			free = mergeSets(mergeSets(fmFreeVars(e1m), fmFreeVars(e2m)), fmFreeVars(e3m));
 			good_exp = \x -> fiExpHasNoStatements(x) && !fiExpHasEffects(x, effects);
 			if (good_exp(e1) && good_exp(e2) && good_exp(e3)) {
 				FmCallPrim(FmIfPrim(), [e1m, e2m, e3m], FmInfo(free, type, start));
@@ -57,7 +57,7 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects) -> FmExp {
 		}
 		FiCallPrim(op, es, type, start): {
 			esm = map(es, \x -> fiExp2fmExp(x, bound, effects));
-			free = uniq(fold(esm, [], \acc, x -> concat(acc, fmFreeVars(x))));
+			free = fold(esm, makeSet(), \acc, x -> mergeSets(acc, fmFreeVars(x)));
 			switch (op) {
 				FcAssignPrim(): {
 					FmAssign(esm[0], esm[1], FmInfo(free, FiTypeVoid(), start));
@@ -83,7 +83,7 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects) -> FmExp {
 			FmCallPrim(FmUnsafePrim(name), [fbm], FmInfo(fmFreeVars(fbm), type, start));
 		}
 		FiVar(name, type, start): {
-			FmVar(name, containsSet(bound, name), FmInfo([], type, start));
+			FmVar(name, containsSet(bound, name), FmInfo(makeSet1(name), type, start));
 		}
 		FiVoid(__):        ex;
 		FiDouble(__, __):  ex;
