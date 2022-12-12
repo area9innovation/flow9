@@ -1,5 +1,5 @@
-import ds/array;
 import tools/flowc/memory/fmexp;
+import tools/flowc/manipulation/effects;
 
 export {
 	fmFreeVars(fm: FmExp) -> [FmVar];
@@ -8,6 +8,11 @@ export {
 
 	fmWrapExp(es: [FmExp]) -> FmExp;
 	fmUnwrapExp(e: FmExp) -> [FmExp];
+
+	// Checks that there's no statement constructions: switch, if, let and sequence of length > 1
+	fiExpHasNoStatements(e: FiExp) -> bool;
+
+	fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
 }
 
 fmFreeVars(fm: FmExp) -> [FmVar] {
@@ -78,5 +83,48 @@ fmUnwrapExp(e: FmExp) -> [FmExp] {
 	switch (e) {
 		FmSeq(es,__): es;
 		default: [e];
+	}
+}
+
+fiExpHasNoStatements(e: FiExp) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): 
+			if (length(es) == 0) true else	
+			if (length(es) == 1) {
+				fiExpHasNoStatements(es[0]) && type != FiTypeVoid();
+			} else false;
+		FiCast(ex,__,__,__,__): fiExpHasNoStatements(ex);
+		FiCall(f, args,__,__): fiExpHasNoStatements(f) && forall(args, fiExpHasNoStatements);
+		FiSwitch(__,__,__,__,__): false;
+		FiLambda(__,__,__,__): true;
+		FiLet(__,__,__,__,__, __): false;
+		FiIf(e1, e2, e3,__, __): fiExpHasNoStatements(e1) && fiExpHasNoStatements(e2) && fiExpHasNoStatements(e3);   
+		FiCallPrim(op, es,__, __): forall(es, fiExpHasNoStatements);
+		FiRequire(__,__,__,__): false;
+		FiUnsafe(__,__,__,__): false;
+		default: true;
+	}
+}
+
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): exists(es, \x -> fiExpHasEffects(x, effects));
+		FiCast(ex,__,__,__,__): fiExpHasEffects(ex, effects);
+		FiCall(f, args,__,__): fiExpHasEffects(f, effects) || exists(args, \x -> fiExpHasEffects(x, effects));
+		FiSwitch(__,__,cases,__,__): exists(cases, \c -> fiExpHasEffects(c.body, effects));
+		FiLambda(__,body,__,__): fiExpHasEffects(body, effects);
+		FiLet(__,__,e1,e2,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects);
+		FiIf(e1, e2, e3,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects) || fiExpHasEffects(e3, effects);
+		FiCallPrim(op, es,__, __): {
+			exists(es, \x -> fiExpHasEffects(x, effects)) ||
+			switch (op) {
+				FcRefPrim(): true;
+				default: false;
+			}
+		}
+		FiRequire(__,ex,__,__): fiExpHasEffects(ex, effects);
+		FiUnsafe(__,__,__,__): true;
+		FiVar(name,__,__): containsSet(effects.hasEffects, name);
+		default: false;
 	}
 }
