@@ -174,8 +174,9 @@ ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, 
     close = extractStruct(style, MPrintClose(make(false))).closeB;
     selectedPageSize = extractStruct(style, MPrintSelectedPageSize(make(4))).selPageSize;
     selectedOrientation = extractStruct(style, MPrintSelectedOrientation(make(0))).selOrientation;
+	hasPrintExtractPNGFn = containsStruct(style, MPrintExtractPNG(nop1));
     pngSetFn = extractStruct(style, MPrintExtractPNG(nop1)).setfn;
-    printPages = fmap(pages, \p -> MPrintPage(p, make(None()), make(false)));
+    printPagesT = fmap(pages, \p -> MPrintPage(p, make(None()), make(false)));
 	onOK = extractStruct(style, MPrintOnOK(nop)).onOK;
     widthS = make("21.0");
     heightS = make("29.7");
@@ -197,46 +198,55 @@ ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, 
             MDialogClickOutToClose(),
             MIsReady(isReady)
         ],
-        MConstruct(
-            [
-                make2Subscribe(fsubmap(printPages, \p -> p.fn), isReady, \pfn, r -> {
-                    if (r && !contains(pfn, None())) {
-                        pngSetFn(Some(\i, cb -> {
-                            next(fgetValue(printPages)[i].mode, true);
-                            maybeApply(pfn[i], \fn -> fn(\v -> { next(fgetValue(printPages)[i].mode, false); cb(v); }));
-                        }))
-                    } else {
-                        pngSetFn(None())
-                    }
-                }),
-                make2SubscribeUns(selectedPageSize, selectedOrientation, \s, o -> {
-                    if (s >= length(MPrintPaperSizes) - 1 || s < 0) {
-                        [
-                            makeSubscribe(fwh(fselect(widthS, FLift(\w -> cm2pixels(s2d(w)))), fselect(heightS, FLift(\h -> cm2pixels(s2d(h))))), \v -> {
-                                next(TPrintPageSize, Some(v))
-                            })()
-                        ]
-                    } else {
-                        next(TPrintPageSize, Some(if (o == 0) MPrintPaperSizes[s].second else WidthHeight(MPrintPaperSizes[s].second.height, MPrintPaperSizes[s].second.width)));
+        MConstruct(concatA([
+			if (hasPrintExtractPNGFn) [
+				make2Subscribe(fsubmap(printPagesT, \p -> p.fn), isReady, \pfn, r -> {
+					if (r && !contains(pfn, None())) {
+						pngSetFn(Some(\i, cb -> {
+							printPage = elementAt(fgetValue(printPagesT), i, MPrintPage(MEmpty(), make(None()), make(false)));
+							next(printPage.mode, true);
+							maybeApply(pfn[i],
+								\fn -> fn(\v -> {
+									next(printPage.mode, false);
+									cb(v);
+								})
+							);
+						}))
+					} else {
+						pngSetFn(None());
+					}
+				}),
+			] else [],
+			[
+				make2SubscribeUns(selectedPageSize, selectedOrientation, \s, o -> {
+					if (s >= length(MPrintPaperSizes) - 1 || s < 0) {
+						[
+							makeSubscribe(fwh(fselect(widthS, FLift(\w -> cm2pixels(s2d(w)))), fselect(heightS, FLift(\h -> cm2pixels(s2d(h))))), \v -> {
+								next(TPrintPageSize, Some(v))
+							})()
+						]
+					} else {
+						next(TPrintPageSize, Some(if (o == 0) MPrintPaperSizes[s].second else WidthHeight(MPrintPaperSizes[s].second.height, MPrintPaperSizes[s].second.width)));
 
-                        [];
-                    }
-                }),
-                \ -> mrender(
-                    manager,
-                    false,
-                    MCropSize(
-                        TFixed(1.0, 1.0),
-                        MPrintPages(fmapi(printPages, \i, p ->
-                            MExtractPNG(
-                                MIfPrint(p.page, MIf(p.mode, MAvailable(p.page, TSized(feither(TPrintPageSize, const(zeroWH)))), TEmpty())),
-                                \fn -> next(p.fn, fn)
-                            )
-                        ))
-                    )
-                ),
-                \ -> \ -> next(TPrintPageSize, None())
-            ],
+						[];
+					}
+				}),
+				\ -> mrender(
+					manager,
+					false,
+					MCropSize(
+						TFixed(1.0, 1.0),
+						MPrintPages(fmapi(printPagesT, \i, p ->
+							MExtractPNG(
+								MIfPrint(p.page, MIf(p.mode, MAvailable(p.page, TSized(feither(TPrintPageSize, const(zeroWH)))), TEmpty())),
+								\fn -> next(p.fn, fn)
+							)
+						))
+					)
+				),
+				\ -> \ -> next(TPrintPageSize, None())
+			]]),
+			MAvailableWidth(
 				extractStruct(style,
 					MPrintCustomContent(
 						MLines([
@@ -263,9 +273,10 @@ ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, 
 							),
 						])
 					)
-				).content
-            |> (\f -> MAvailableWidth(f, const(260.0)))
-        )
+				).content,
+				const(260.0)
+			)
+         )
     );
 
     \ -> reverseBehaviour(close);
