@@ -181,6 +181,8 @@ checkWhatIsChanged(
 					if (added != [] || removed != [] || updatedNames != []) {
 						callback(added, removed, updatedNames);
 					}
+				} else {
+					lastCheckResultR := Some(FSPathContent(basePath, dirs, files3));
 				}
 			},
 			\-> lastCheckResultR := Some(FSPathContent(basePath, dirs, files3))
@@ -357,6 +359,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
 	uploadMaxImageResolutionM = minA(map(extractStructMany(styles, FbUploadImageMaxResolution(0)), \s -> s.resolution));
 	uploadMaxVideoBitrateM = minA(map(extractStructMany(styles, FbUploadVideoMaxBitrate(0)), \s -> s.bitrate));
+	uploadStyle = extractStruct(styles, FbFilesUploadStyle([])).style;
 
 	importEngines = mapConcat(extractStructMany(styles, FbImportEngine([])), \s -> s.engines);
 
@@ -1307,11 +1310,12 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					dropFn2 = {
 						\files -> {
 							filterUploadedFilesForRestrictionsNative(files, Some(manager), m2t, dropFn.fn,
-								concat3(
+								concatA([
 									eitherMap(uploadMaxSizeM, \size -> [FbFilterMaxSize(size)], []),
 									eitherMap(uploadMaxImageResolutionM, \res -> [FbFilterMaxResolution(res)], []),
 									eitherMap(uploadMaxVideoBitrateM, \bitrate -> [FbFilterMaxBitrate(bitrate)], []),
-								)
+									uploadStyle
+								])
 							);
 						}
 					}
@@ -1451,29 +1455,117 @@ filterUploadedFilesForRestrictionsNative(
 	);
 }
 
+FbFilesBehaviour(
+	ask : [FbSourceData],
+	normal : [FbSourceData],
+	reduce : [FbSourceData],
+);
+FbFilesByType(
+	images : FbFilesBehaviour,
+	videos : FbFilesBehaviour,
+	others : FbFilesBehaviour
+);
+FbFileTestResult(
+	file : FbSourceData,
+	wh : WidthHeight,
+	bitrate : int,
+	flagB : DynamicBehaviour<bool>
+);
 filterUploadedFilesForRestrictions(
 	data : [FbSourceData],
 	managerM : Maybe<MaterialManager>,
 	m2t : (Material, MFocusGroup) -> Tropic,
-	onDone : (normal : [FbSourceData], large : [FbSourceData], toReduce : [FbSourceData]) -> void,
+	onDone : (normal : [FbSourceData], toReduce : [FbSourceData], large : [FbSourceData]) -> void,
 	style : [FbFilterUploadDialog]
 ) -> void {
-	maxSizeM = maybeMap(tryExtractStruct(style, FbFilterMaxSize(0)), \s -> i2d(s.size));
-	maxResolutionM = maybeMap(tryExtractStruct(style, FbFilterMaxResolution(0)), \s -> s.size);
-	maxBitrateM = maybeMap(tryExtractStruct(style, FbFilterMaxBitrate(0)), \s -> s.bitrate);
+	maxSizeM = maybeMap(tryExtractStruct(style, FbFilterMaxFileSize(0, FbReduceShowInDialog(true))), \s -> i2d(s.size));
+	maxResolutionM = maybeMap(tryExtractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(true))), \s -> s.size);
+	maxBitrateM = maybeMap(tryExtractStruct(style, FbFilterMaxVideoBitrate(0, FbReduceAskUser(true))), \s -> s.bitrate);
 
-	defaultImageReduce = extractStruct(style, FbDefaultResolutionReduce(true)).reduce;
-	defaultVideoReduce = extractStruct(style, FbDefaultBitrateReduce(true)).reduce;
+	defImageAskUserM = maybeMap(tryExtractStruct(style, FbDefaultResolutionReduce(true)), \s -> s.reduce);
+	defVideoAskUserM = maybeMap(tryExtractStruct(style, FbDefaultBitrateReduce(true)), \s -> s.reduce);
 
-	filesLargeSmall : Pair<[FbSourceData], [FbSourceData]> = eitherFn(
-		maxSizeM,
-		\maxSize -> partition(data, \d : FbSourceData -> d.size > maxSize),
-		\-> Pair([], data)
-	);
+	defFileBehaviour = extractStruct(style, FbFilterMaxFileSize(0, FbReduceShowInDialog(true))).behaviour;
+	defImageBehaviour = extractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(either(defImageAskUserM, true)))).behaviour;
+	defVideoBehaviour = extractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(either(defVideoAskUserM, true)))).behaviour;
 
 	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
 	getText = \isMany -> if (isMany) _("The files are very large. We recommend you to reduce them.")
 		else _("The file is very large. We recommend you to reduce it.");
+
+	videoExtensions = ["mp4", "webm", "m4v"];
+	imageExtensions = ["swf", "png", "jpg", "jpeg", "bmp"];
+
+	fbFilesBehaviourEmpty = FbFilesBehaviour([], [], []);
+	fbFilesTypeEmpty = FbFilesByType(fbFilesBehaviourEmpty, fbFilesBehaviourEmpty, fbFilesBehaviourEmpty);
+
+	// Concatenating files to the corresponding group of Base
+	fbUpdateBehaviours = \base, ask, normal, reduce -> FbFilesBehaviour(
+		concat(base.ask, ask),
+		concat(base.normal, normal),
+		concat(base.reduce, reduce),
+	);
+
+	// Cacl the default behaviour
+	getDefBehaviourFn = \isViewOnM, isMaxSetM, defAskUserM, defBehaviour -> {
+		if (isSome(isViewOnM)) {
+			switch (defBehaviour) {
+				// do reducing
+				FbReduceDoAuto(): \base, file -> fbUpdateBehaviours(base, [], [], [file]);
+				// keep as is
+				FbReduceSkip(): \base, file -> fbUpdateBehaviours(base, [], [file], []);
+				// ask user what to do
+				FbReduceAskUser(defReduce): \base, file -> {
+					// if possible to check - ask user
+					if (isSome(isMaxSetM) && either(isMaxSetM, 0) > 0) fbUpdateBehaviours(base, [file], [], [])
+					// do reducing
+					else if (defReduce) fbUpdateBehaviours(base, [], [], [file])
+					// keep as is
+					else fbUpdateBehaviours(base, [], [file], []);
+				}
+			}
+		} else {
+			if (defAskUserM == Some(true) || defBehaviour == FbReduceDoAuto() || defBehaviour == FbReduceAskUser(true)) {
+				// do reducing
+				\base, file -> fbUpdateBehaviours(base, [], [], [file])
+			} else {
+				// keep as is
+				\base, file -> fbUpdateBehaviours(base, [], [file], [])
+			}
+		}
+	}
+
+	// Default behaviours for the files types depends on Style
+	imageDefFn = getDefBehaviourFn(managerM, maxResolutionM, defImageAskUserM, defImageBehaviour);
+	videoDefFn = getDefBehaviourFn(managerM, maxBitrateM, defVideoAskUserM, defVideoBehaviour);
+	otherDefFn = getDefBehaviourFn(None(), None(), None(), FbReduceSkip());
+
+	splitOnFileTypesFn = \acc, d -> {
+		if (contains(imageExtensions, d.extension)) {
+			FbFilesByType(imageDefFn(acc.images, d), acc.videos, acc.others);
+		} else if (contains(videoExtensions, d.extension)) {
+			FbFilesByType(acc.images, videoDefFn(acc.videos, d), acc.others);
+		} else {
+			FbFilesByType(acc.images, acc.videos, otherDefFn(acc.others, d));
+		}
+	}
+
+	// Spliting the data into several groups
+	dataSplittedR : ref FbFilesByType = ref eitherFn(
+		maxSizeM,
+		\maxSize -> fold(data, fbFilesTypeEmpty, \acc, d : FbSourceData -> {
+			if (d.size > maxSize) {
+				FbFilesByType(
+					acc.images, acc.videos,
+					if (defFileBehaviour.show) fbUpdateBehaviours(acc.others, [d], [], [])
+					else fbUpdateBehaviours(acc.others, [], [], [d])
+				)
+			} else {
+				splitOnFileTypesFn(acc, d)
+			}
+		}),
+		\-> fold(data, fbFilesTypeEmpty, \acc, d : FbSourceData -> splitOnFileTypesFn(acc, d))
+	);
 
 	showDefaultDialog = \manager, closeB, title, buttons, view -> {
 		renderMDialog2(
@@ -1516,19 +1608,35 @@ filterUploadedFilesForRestrictions(
 		);
 	}
 	
-	doStepDialog = \manager, resultNormal, resultLarge, resultImageLarge, resultVideoLarge -> {
-		resultImageLargePair : [Triple<FbSourceData, DynamicBehaviour<bool>, WidthHeight>] = map(
-			resultImageLarge, \r -> Triple(r.first, make(defaultImageReduce), r.second)
-		);
-		resultVideoLargePair : [Pair<FbSourceData, DynamicBehaviour<bool>>] = map(
-			resultVideoLarge, \r -> Pair(r, make(defaultVideoReduce))
-		);
+	doStepDialog = \manager, dataSplittedRR : ref FbFilesByType, askImages, askVideos -> {
+		defaultImageReduce = either(defImageAskUserM, true);
+		defaultVideoReduce = either(defVideoAskUserM, true);
 
-		if ((resultLarge == [] && resultImageLarge == [] && resultVideoLarge == []) || !isSome(managerM)) {
-			onDone(resultNormal, [], []);
+		iter(askImages, \r -> next(r.flagB, defaultImageReduce));
+		iter(askVideos, \r -> next(r.flagB, defaultVideoReduce));
+
+		if ((askImages == [] && askVideos == [] && (^dataSplittedRR).others.ask == []) || isNone(managerM)) {
+			onDone(
+				// resultNormal
+				concatA([
+					(^dataSplittedRR).images.normal,
+					(^dataSplittedRR).videos.normal,
+					(^dataSplittedRR).others.normal,
+				]),
+				// resultReduce
+				concatA([
+					(^dataSplittedRR).images.reduce,
+					(^dataSplittedRR).videos.reduce
+				]),
+				// resultLarge
+				concat(
+					(^dataSplittedRR).others.ask,
+					(^dataSplittedRR).others.reduce
+				)
+			);
 		} else {
 			closeB = make(false);
-			isMany = (length(resultNormal) + length(resultLarge) + length(resultImageLarge) + length(resultVideoLarge)) > 1;
+			isMany = (length((^dataSplittedRR).others.ask) + length(askImages) + length(askVideos)) > 1;
 			title = getTitle(isMany);
 
 			onCancelFn = \-> {
@@ -1537,20 +1645,31 @@ filterUploadedFilesForRestrictions(
 			}
 
 			onUploadFn = \-> {
-				resultImageLarge2 = partition(resultImageLargePair, \r -> getValue(r.second));
-				resultVideoLarge2 = partition(resultVideoLargePair, \r -> getValue(r.second));
+				resultImageReduceNormal = partition(askImages, \r -> getValue(r.flagB));
+				resultVideoReduceNormal = partition(askVideos, \r -> getValue(r.flagB));
 				onDone(
-					concat3(
-						resultNormal,
-						map(resultImageLarge2.second, firstOfTriple),
-						map(resultVideoLarge2.second, firstOfPair)
-					),
+					// resultNormal
+					concatA([
+						(^dataSplittedRR).images.normal,
+						(^dataSplittedRR).videos.normal,
+						(^dataSplittedRR).others.normal,
+						map(resultImageReduceNormal.second, \d -> d.file),
+						map(resultVideoReduceNormal.second, \d -> d.file)
+					]),
+					// resultReduce
+					concatA([
+						(^dataSplittedRR).images.reduce,
+						(^dataSplittedRR).videos.reduce,
+						map(resultImageReduceNormal.first, \d -> d.file),
+						map(resultVideoReduceNormal.first, \d -> d.file)
+					]),
+					// resultLarge
 					concat(
-						map(resultImageLarge2.first, firstOfTriple),
-						map(resultVideoLarge2.first, firstOfPair)
-					),
-					resultLarge
+						(^dataSplittedRR).others.ask,
+						(^dataSplittedRR).others.reduce
+					)
 				);
+
 				next(closeB, true);
 			}
 
@@ -1558,7 +1677,7 @@ filterUploadedFilesForRestrictions(
 				MTextButton(_("CANCEL"), onCancelFn, [], [MShortcut("esc")]),
 				MTextButton(_("UPLOAD"), onUploadFn, [MButtonRaised()], [
 					MShortcut("enter"),
-					MEnabled(const(resultNormal != [] || resultImageLarge != [] || resultVideoLarge != []))
+					MEnabled(const(true))
 				])
 			];
 
@@ -1598,72 +1717,85 @@ filterUploadedFilesForRestrictions(
 
 			view = MLines(concatA([
 				[MText(getText(isMany), [MSubheading()]), MEmpty()],
-				if (resultNormal != []) [
-					getExpander(
-						_("Normal files"), MEmpty(),
-						MLines(interleave(
-							map(resultNormal, \r -> {
-								getFileRow(r.name + "." + r.extension, MText(_("to upload"), [MGrey(400)]));
-							}),
-							TFixed(0., 8.)
-						))
-					)
-				] else [],
-				if (resultLarge != []) [
-					getExpander(
-						_("Extra large files"), MEmpty(),
-						MLines(concat(
-							eitherMap(maxSizeM, \size -> getInfoTextView(_("Allowed max file size is %1 bytes;"), d2s(size)), []),
-							interleave(
-								map(resultLarge, \r -> {
-									getFileRow(r.name + "." + r.extension, MText(_("to skip"), [MGrey(400)]));
+				concatA([
+					(^dataSplittedRR).images.normal,
+					(^dataSplittedRR).images.reduce,
+					(^dataSplittedRR).videos.normal,
+					(^dataSplittedRR).videos.reduce,
+					(^dataSplittedRR).others.normal,
+				]) |> (\resultNormal ->
+					if (resultNormal != []) [
+						getExpander(
+							_("Normal files"), MEmpty(),
+							MLines(interleave(
+								map(sortCustom(resultNormal, \d -> d.name, true), \r -> {
+									getFileRow(r.name + "." + r.extension, MText(_("to upload"), [MGrey(400)]));
 								}),
 								TFixed(0., 8.)
-							)
-						))
-					)
-				] else [],
-				if (resultImageLargePair != []) [
+							))
+						)
+					] else []
+				),
+				concat(
+					(^dataSplittedRR).others.ask,
+					(^dataSplittedRR).others.reduce,
+				) |> (\resultLarge -> 
+					if (resultLarge != []) [
+						getExpander(
+							_("Extra large files"), MEmpty(),
+							MLines(concat(
+								eitherMap(maxSizeM, \size -> getInfoTextView(_("Allowed max file size is %1 bytes;"), d2s(size)), []),
+								interleave(
+									map(sortCustom(resultLarge, \d -> d.name, true), \r -> {
+										getFileRow(r.name + "." + r.extension, MText(_("to skip"), [MGrey(400)]));
+									}),
+									TFixed(0., 8.)
+								)
+							))
+						)
+					] else []
+				),
+				if (askImages != []) [
 					getExpander(
 						_("High resolution images"),
 						{
 							mainSwitcherB = make(defaultImageReduce);
 							MConstruct(
-								[makeSubscribe(mainSwitcherB, \v -> iter(resultImageLargePair, \r -> nextDistinct(r.second, v)))],
+								[makeSubscribe(mainSwitcherB, \v -> iter(askImages, \r -> nextDistinct(r.flagB, v)))],
 								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText(_("Reduce"), _("As is"))])
 							)
 						},
 						MLines(concat(
 							eitherMap(maxResolutionM, \res -> getInfoTextView(_("Allowed max resolution for the image is %1 x %1 pixels;"), i2s(res)), []),
-							map(resultImageLargePair, \r -> {
-								maxRes = max(r.third.width, r.third.height);
+							map(sortCustom(askImages, \d -> d.file.name, true), \r -> {
+								maxRes = max(r.wh.width, r.wh.height);
 								k = maxRes / max(eitherMap(maxResolutionM, i2d, maxRes), 1.);
-								text = formatString(_("Current imgae resolution is %1 x %2 pixels."), [i2s(trunc(r.third.width)), i2s(trunc(r.third.height))]) + "\n" +
-									formatString(_("On image reducing the resolution will become %1 x %2 pixels."), [i2s(trunc(r.third.width / k)), i2s(trunc(r.third.height / k))]);
+								text = formatString(_("Current imgae resolution is %1 x %2 pixels."), [i2s(trunc(r.wh.width)), i2s(trunc(r.wh.height))]) + "\n" +
+									formatString(_("On image reducing the resolution will become %1 x %2 pixels."), [i2s(trunc(r.wh.width / k)), i2s(trunc(r.wh.height / k))]);
 								getFileRow(
-									r.first.name + "." + r.first.extension,
-									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText(_("Reduce"), _("As is")), MTooltipText(const(text))])
+									r.file.name + "." + r.file.extension,
+									MSwitchControl(r.flagB, [getPrimaryColor(manager), MOnOffText(_("Reduce"), _("As is")), MTooltipText(const(text))])
 								)
 							})
 						))
 					)
 				] else [],
-				if (resultVideoLargePair != []) [
+				if (askVideos != []) [
 					getExpander(
 						_("High resolution videos"),
 						{
 							mainSwitcherB = make(defaultVideoReduce);
 							MConstruct(
-								[makeSubscribe(mainSwitcherB, \v -> iter(resultVideoLargePair, \r -> nextDistinct(r.second, v)))],
+								[makeSubscribe(mainSwitcherB, \v -> iter(askVideos, \r -> nextDistinct(r.flagB, v)))],
 								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText(_("Reduce"), _("As is"))])
 							)
 						},
 						MLines(concat(
 							eitherMap(maxBitrateM, \bitrate -> getInfoTextView(_("Allowed max video bitrate is %1 kbps;"), i2s(bitrate)), []),
-							map(resultVideoLargePair, \r -> {
+							map(sortCustom(askVideos, \d -> d.file.name, true), \r -> {
 								getFileRow(
-									r.first.name + "." + r.first.extension,
-									MSwitchControl(r.second, [getPrimaryColor(manager), MOnOffText(_("Reduce"), _("As is"))])
+									r.file.name + "." + r.file.extension,
+									MSwitchControl(r.flagB, [getPrimaryColor(manager), MOnOffText(_("Reduce"), _("As is"))])
 								)
 							})
 						))
@@ -1675,36 +1807,13 @@ filterUploadedFilesForRestrictions(
 		}
 	}
 
-	videoExtensions = ["mp4", "webm", "m4v"];
-	imageExtensions = ["swf", "png", "jpg", "jpeg", "bmp"];
-
-	dataSplitted = fold(filesLargeSmall.second, Triple([], [], []), \acc, r -> {
-		if (contains(imageExtensions, r.extension)) {
-			Triple(arrayPush(acc.first, r), acc.second, acc.third);
-		} else if (contains(videoExtensions, r.extension)) {
-			Triple(acc.first, arrayPush(acc.second, r), acc.third);
-		} else {
-			Triple(acc.first, acc.second, arrayPush(acc.third, r));
-		}
-	});
-	
 	eitherFn(
 		managerM,
+		// Check restriction using UI
 		\manager -> {
-			defaultResultFn = \-> {
-				doStepDialog(manager,
-					concatA([
-						dataSplitted.third,
-						if (defaultImageReduce && isSome(maxResolutionM)) [] else dataSplitted.first,
-						if (defaultVideoReduce && isSome(maxBitrateM)) [] else dataSplitted.second
-					]),
-					filesLargeSmall.first,
-					if (defaultImageReduce && isSome(maxResolutionM)) map(dataSplitted.first, \v -> Pair(v, WidthHeight(0., 0.))) else [],
-					if (defaultVideoReduce && isSome(maxBitrateM)) dataSplitted.second else []
-				);
-			}
+			defaultResultFn = \-> doStepDialog(manager, dataSplittedR, [], []);
 
-			if ((isSome(maxResolutionM) && dataSplitted.first != []) || (isSome(maxBitrateM) && dataSplitted.second != [])) {
+			if ((isSome(maxResolutionM) && (^dataSplittedR).images.ask != []) || (isSome(maxBitrateM) && (^dataSplittedR).videos.ask != [])) {
 				closeDialogB = make(false);
 				imageDataMB = make(None());
 				videoDataMB = make(None());
@@ -1749,7 +1858,7 @@ filterUploadedFilesForRestrictions(
 						gotWH = \wh -> {
 							if (^gotWHR) {
 								gotWHR := false;
-								ff(Pair(iDataRow, wh));
+								ff(FbFileTestResult(iDataRow, wh, 0, make(false)));
 							}
 						}
 
@@ -1771,7 +1880,7 @@ filterUploadedFilesForRestrictions(
 					},
 					onChecked,
 					// Never should happen
-					\__ -> onChecked(map(iData, \iDataRow -> Pair(iDataRow, WidthHeight(0., 0.))))
+					\__ -> onChecked(map(iData, \iDataRow -> FbFileTestResult(iDataRow, WidthHeight(0., 0.), 0, make(false))))
 				);
 
 				checkVideosFn = \vData, onChecked -> mapAsync(
@@ -1782,7 +1891,7 @@ filterUploadedFilesForRestrictions(
 							if (!(^lengthDoneR)) {
 								lengthDoneR := true;
 								len2 = if (len == 0.) 1. else len;
-								ff(Pair(vDataRow, trunc(vDataRow.size * 8. / len2 / 1024. * 0.95)));
+								ff(FbFileTestResult(vDataRow, WidthHeight(0., 0.), trunc(vDataRow.size * 8. / len2 / 1024. * 0.95), make(false)));
 							}
 						}
 
@@ -1804,53 +1913,50 @@ filterUploadedFilesForRestrictions(
 					},
 					onChecked,
 					// Never should happen
-					\__ -> onChecked(map(vData, \vDataRow -> Pair(vDataRow, 0)))
+					\__ -> onChecked(map(vData, \vDataRow -> FbFileTestResult(vDataRow, WidthHeight(0., 0.), 0, make(false))))
 				);
 
-				mapiAsync(
-					[maxResolutionM, maxBitrateM],
-					\i, sM, ff, __ -> {
-						if (i == 0) {
+				mapAsync(
+					[
+						Quadruple(maxResolutionM, checkImagesFn, \maxResolution, r -> max(trunc(r.wh.width), trunc(r.wh.height)) <= maxResolution, (^dataSplittedR).images.ask),
+						Quadruple(maxBitrateM, checkVideosFn, \maxBitrate, r -> r.bitrate <= maxBitrate, (^dataSplittedR).videos.ask)
+					],
+					\itemTriple, ff, __ -> {
+						unquadruple(itemTriple, \sM, extractSizeFn, isLargeFn, files -> {
 							eitherFn(
 								sM,
-								\maxResolution -> {
-									checkImagesFn(dataSplitted.first, \result -> {
-										normalLarge = partition(result, \r -> max(trunc(r.second.width), trunc(r.second.height)) <= maxResolution);
-										ff(Pair(
-											map(normalLarge.first, firstOfPair),
-											normalLarge.second
-										))
+								\maxValue -> {
+									extractSizeFn(files, \result -> {
+										ff(map(result, \r -> { next(r.flagB, isLargeFn(maxValue, r)); r }))
 									})
 								},
-								\-> ff(Pair(dataSplitted.first, []))
+								\-> ff(map(files, \r -> FbFileTestResult(r, WidthHeight(0., 0.), 0, make(false))))
 							);
-						} else if (i == 1) {
-							eitherFn(
-								sM,
-								\maxBitrate -> {
-									checkVideosFn(dataSplitted.second, \result -> {
-										normalLarge = partition(result, \r -> r.second <= maxBitrate);
-										ff(Pair(
-											map(normalLarge.first, firstOfPair),
-											map(normalLarge.second, \v -> Pair(v.first, WidthHeight(0., 0.)))
-										))
-									})
-								},
-								\-> ff(Pair(dataSplitted.second, []))
-							);
-						}
+						});
 					},
-					\resultA /* [Pairs([normal], [large])] */ -> {
-						next(closeDialogB, true);
-						doStepDialog(manager,
-							concat(
-								dataSplitted.third,
-								mapConcat(resultA, firstOfPair)
-							),
-							filesLargeSmall.first,
-							if (resultA != []) resultA[0].second else [],
-							if (length(resultA) > 1) map(resultA[1].second, firstOfPair) else []
-						);
+					\resultA /* [images, videos] */ -> {
+						fbResetAskBehaviours = \base -> FbFilesBehaviour([], base.normal, base.reduce);
+						getFiles = \files -> filtermap(files, \d -> if (getValue(d.flagB)) Some(d.file) else None());
+
+						(if (resultA == []) Pair([], [])
+						else if (length(resultA) == 1) Pair(resultA[1], [])
+						else Pair(resultA[0], resultA[1]))
+							|> (\result2 -> unpair(result2, \testedImages, testedVideos -> {
+								(^dataSplittedR)
+									|> (\files -> FbFilesByType(fbUpdateBehaviours(files.images, [], getFiles(testedImages), []), files.videos, files.others))
+									|> (\files -> FbFilesByType(files.images, fbUpdateBehaviours(files.videos, [], getFiles(testedVideos), []), files.others))
+									|> (\files -> FbFilesByType(fbResetAskBehaviours(files.images), fbResetAskBehaviours(files.videos), files.others))
+									|> (\files -> dataSplittedR := files);
+
+								next(closeDialogB, true);
+								doStepDialog(
+									manager, dataSplittedR,
+									// resultImageLarge
+									filter(testedImages, \d -> !getValue(d.flagB)),
+									// resultVideoLarge
+									filter(testedVideos, \d -> !getValue(d.flagB))
+								);
+							}));
 					},
 					// Never should happen
 					\__ -> {
@@ -1862,18 +1968,25 @@ filterUploadedFilesForRestrictions(
 				defaultResultFn();
 			}
 		},
+		// or apply default options
 		\-> {
 			onDone(
-				concat3(
-					dataSplitted.third,
-					if (defaultImageReduce) [] else dataSplitted.first,
-					if (defaultVideoReduce) [] else dataSplitted.second
-				),
+				// upolad as is
+				concatA([
+					(^dataSplittedR).images.normal,
+					(^dataSplittedR).videos.normal,
+					(^dataSplittedR).others.normal
+				]),
+				// to reduce
+				concatA([
+					(^dataSplittedR).images.reduce,
+					(^dataSplittedR).videos.reduce
+				]),
+				// extra lagre files
 				concat(
-					if (defaultImageReduce) dataSplitted.first else [],
-					if (defaultVideoReduce) dataSplitted.second else []
+					(^dataSplittedR).others.ask,
+					(^dataSplittedR).others.reduce
 				),
-				filesLargeSmall.first
 			);
 		}
 	);
