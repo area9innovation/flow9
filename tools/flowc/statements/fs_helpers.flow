@@ -23,14 +23,19 @@ export {
 
 	fsStatFreevars(s : FsStat) -> Set<string>;
 	fsExpFreevars(e : FsExp) -> Set<string>;
+
+	fsVarIsInStat(v: string, s: FsStat) -> bool;
+	fsVarIsInExp(v: string, e: FsExp) -> bool;
+
+	fsStatLambda(s: FsStat) -> FsLambda;
 }
 
 fsExpType(e: FsExp) -> FiType {
 	switch (e) {
-		FsLambda(__,__,__, type,__): type;
-		FsCall(__,__, type,__):      type;
-		FsVar(__,__,type,__):        type;
-		FsCallPrim(__,__,type,__):   type;
+		FsLambda(__,__,__,__, type,__): type;
+		FsCall(__,__, type,__):         type;
+		FsVar(__,__,type,__):           type;
+		FsCallPrim(__,__,type,__):      type;
 		FiVoid(__):       FiTypeVoid();
 		FiDouble(__, __): FiTypeDouble();
 		FiInt(__, __):    FiTypeInt();
@@ -50,9 +55,8 @@ fsStatType(s: FsStat) -> FiType {
 		FsTailCall(start):           FiTypeVoid();
 		FsVarDecl(v,start):          v.type;
 		FsAssign(__,__,__):          FiTypeVoid();
-		FsMemory(op,__, e,__): {
+		FsMemory(op,__,__): {
 			switch (op) {
-				FmReuse():    fsExpType(e);
 				FmIsUnique(): FiTypeBool();
 				default:      FiTypeVoid();
 			}
@@ -64,10 +68,10 @@ fsStat2s(s: FsStat) -> string {
 	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
 	switch (s) {
 		FsLet(v, e, s1,__,__): {
-			v.name + " : " + t2s(v.type) + " = " + fsExp2s(e) + ";\n" + fsStat2s(s1);
+			v.name + " : " + t2s(v.type) + " = " + ";\n" + fsStat2s(s1);
 		}
 		FsIf(e, s1, s2, __,__): {
-			"if (" + fsExp2s(e) + ") " + fsStat2s(s1) + " else " + fsStat2s(s2);
+			"if (" + ") " + fsStat2s(s1) + " else " + fsStat2s(s2);
 		}
 		FsSwitch(v,__, cases, __,__): {
 			"switch (" + fsExp2s(v) + ") {\n" +
@@ -87,7 +91,7 @@ fsStat2s(s: FsStat) -> string {
 			fsExp2s(e);
 		}
 		FsRet(e,__): {
-			"return " + fsExp2s(e);
+			"return ";
 		}
 		FsTailCall(__): {
 			"tailcall";
@@ -98,14 +102,14 @@ fsStat2s(s: FsStat) -> string {
 		FsAssign(to, what,__): {
 			fsExp2s(to) + " := " +  fsExp2s(what);
 		}
-		FsMemory(op, var, e,__): {
+		FsMemory(op, var,__): {
 			switch (op) {
-				FmDup():      "dup(" + var  + ");" + fsExp2s(e);
-				FmDrop():     "drop(" +  var + ");" + fsExp2s(e);
-				FmReuse():    "reuse(" +  var + ");" + fsExp2s(e);
-				FmDispose():  "dispose(" +  var + ");" + fsExp2s(e);
-				FmIsUnique(): "is_unique(" +  var + ");" + fsExp2s(e);
-				FmDecRef():   "dec_ref(" +  var + ")" + fsExp2s(e);
+				FmDup():      "dup(" + var  + ");";
+				FmDrop():     "drop(" +  var + ");";
+				FmReuse():    "reuse(" +  var + ");";
+				FmDispose():  "dispose(" +  var + ");";
+				FmIsUnique(): "is_unique(" +  var + ");";
+				FmDecRef():   "dec_ref(" +  var + ")";
 				FmNull():     "nullptr";
 			}
 		}
@@ -115,7 +119,7 @@ fsStat2s(s: FsStat) -> string {
 fsExp2s(e: FsExp) -> string {
 	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
 	switch (e) {
-		FsLambda(closure, args, body,__,__): {
+		FsLambda(__,closure, args, body,__,__): {
 			body_s = fsStat2s(body);
 			closure_s = "[" + superglue(closure, \v -> v.name, ", ") + "]";
 			header = closure_s + "\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> ";
@@ -190,10 +194,10 @@ fsCallPrim2s(call: FsCallPrim) -> string {
 
 fsSetExpType(e : FsExp, t: FiType) -> FsExp {
 	switch(e) {
-		FsLambda(__,__,__,__,__): FsLambda(e with type = cast(t: FiType -> FiTypeFunction));
-		FsCall(__,__,__,__):      FsCall(e with type = t);
-		FsCallPrim(__,__,__,__):  FsCallPrim(e with type = t);
-		FsVar(__,__,__,__):       FsVar(e with type = t);
+		FsLambda(__,__,__,__,__,__): FsLambda(e with type = cast(t: FiType -> FiTypeFunction));
+		FsCall(__,__,__,__):         FsCall(e with type = t);
+		FsCallPrim(__,__,__,__):     FsCallPrim(e with type = t);
+		FsVar(__,__,__,__):          FsVar(e with type = t);
 		default: e;
 	}
 }
@@ -228,30 +232,6 @@ fiExpIsFsExp(e: FiExp) -> bool {
 		default: true;
 	}
 }
-
-/*fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
-	switch (e) {
-		FiSeq(es, type,__): exists(es, \x -> fiExpHasEffects(x, effects));
-		FiCast(ex,__,__,__,__): fiExpHasEffects(ex, effects);
-		FiCall(f, args,__,__): fiExpHasEffects(f, effects) || exists(args, \x -> fiExpHasEffects(x, effects));
-		FiSwitch(__,__,cases,__,__): exists(cases, \c -> fiExpHasEffects(c.body, effects));
-		FiLambda(__,body,__,__): fiExpHasEffects(body, effects);
-		FiLet(__,__,e1,e2,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects);
-		FiIf(e1, e2, e3,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects) || fiExpHasEffects(e3, effects);
-		FiCallPrim(op, es,__, __): {
-			exists(es, \x -> fiExpHasEffects(x, effects)) ||
-			switch (op) {
-				FcRefPrim(): true;
-				default: false;
-			}
-		}
-		FiRequire(__,ex,__,__): fiExpHasEffects(ex, effects);
-		FiUnsafe(__,__,__,__): true;
-		FiVar(name,__,__): containsSet(effects.hasEffects, name);
-		default: false;
-	}
-}
-*/
 
 fsWrapSeq(stats: [FsStat]) -> FsStat {
 	if (length(stats) == 0) FsSeq([], FiTypeVoid(), -1) else 
@@ -302,14 +282,12 @@ fsStatFreevarsBoundFree(s : FsStat, bound : Set<string>, free : Set<string>) -> 
 		FsRet(e,__): {
 			fsExpFreevarsBoundFree(e, bound, free);
 		}
-		FsTailCall(__): free;
-		FsVarDecl(v,__): free;
 		FsAssign(to, what,__): {
 			fsExpFreevarsBoundFree(to, bound, fsExpFreevarsBoundFree(what, bound, free));
 		}
-		FsMemory(__,__,e,__): {
-			fsExpFreevarsBoundFree(e, bound, free);
-		}
+		FsMemory(__,__,__): free;
+		FsTailCall(__): free;
+		FsVarDecl(v,__): free;
 	}
 }
 
@@ -319,7 +297,7 @@ fsExpFreevars(e : FsExp) -> Set<string> {
 
 fsExpFreevarsBoundFree(expr : FsExp, bound : Set<string>, free : Set<string>) -> Set<string> {
 	switch (expr) {
-		FsLambda(closure, args, body, __,__): {
+		FsLambda(__,closure, args, body, __,__): {
 			fsStatFreevarsBoundFree(body, 
 				fold(args, bound, \acc, arg -> insertSet(acc, arg.name)),
 				free
@@ -340,5 +318,42 @@ fsExpFreevarsBoundFree(expr : FsExp, bound : Set<string>, free : Set<string>) ->
 		FiInt(i, __):    free;
 		FiString(s, __): free;
 		FiBool(b, __):   free;
+	}
+}
+
+fsVarIsInStat(v: string, s: FsStat) -> bool {
+	switch(s) {
+		FsLet(__, e, s1,__,__): fsVarIsInExp(v, e) || fsVarIsInStat(v, s1);
+		FsIf(e, s1, s2, __,__): fsVarIsInExp(v, e) || fsVarIsInStat(v, s1) || fsVarIsInStat(v, s2);
+		FsSwitch(__,__, cases, __,__): exists(cases, \c -> fsVarIsInStat(v, c.body));
+		FsSeq(ss, __,__): exists(ss, \s1 -> fsVarIsInStat(v, s1));
+		FsWrapExp(e,__): fsVarIsInExp(v, e);
+		FsRet(e,__):  fsVarIsInExp(v, e);
+		FsAssign(var, e,__): fsVarIsInExp(v, e);
+		FsMemory(op, var,__): false;
+		FsTailCall(__): false;
+		FsVarDecl(var,__): false;
+	}
+}
+
+fsVarIsInExp(v: string, e: FsExp) -> bool {
+	switch(e) {
+		FsLambda(__,__,__,body,__,__): fsVarIsInStat(v, body);
+		FsCall(fn, args,__,__): fsVarIsInExp(v, fn) || exists(args, \arg -> fsVarIsInExp(v, arg));
+		FsCallPrim(__,es,__,__): exists(es, \x -> fsVarIsInExp(v, x));
+		FsVar(name,__,__,__): v == name;
+		FiConst(): false;
+	}
+}
+
+fsStatLambda(s: FsStat) -> FsLambda {
+	do_ex = \ex -> switch (ex) {
+		FsLambda(__,__,__,body,__,__): ex; 
+		default: fail0("expected FsLambda got: " + fsExp2s(ex));
+	}
+	switch (s) {
+		FsRet(ex,__): do_ex(ex);
+		FsWrapExp(ex,__): do_ex(ex);
+		default: fail0("expected FsRet or FsWrapExp got: " + fsStat2s(s));
 	}
 }

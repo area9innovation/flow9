@@ -2,6 +2,8 @@ import tools/flowc/backends/cpp3/fi2cpp3_runtime;
 import tools/flowc/statements/fi2fs;
 import tools/flowc/statements/fs_utils;
 import tools/flowc/manipulation/eliminate_union_fields;
+import tools/flowc/memory/fi2fm;
+import tools/flowc/statements/fm2fs;
 
 export {
 	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
@@ -354,7 +356,8 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value1 = fiExplicitCastInSwitch(value0, names);
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
 	value = value2;
-	pair0 = fiExp2FsExp(value, FsEnv([], makeTree(), gctx.effects, names, 0));
+	value_m = fiExp2fmExp(value, makeSet(), gctx.effects, true);
+	pair0 = fmExp2FsExp(value_m, FsEnv([], makeTree(), gctx.effects, names, 0));
 	pair1 = Pair(
 		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
 		map(pair0.second, \s -> {
@@ -362,7 +365,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 			fsWrapCaseVarsWithCasts(s1, names);
 		})
 	);
-	pair2 = pair1; //Pair(fsExpReturnVars(pair1.first), map(pair1.second, fsStatReturnVars));
+	pair2 = pair1;
 	pair3 = fold(pair2.second, Pair([], makeTree()), \acc, s -> {
 		p = fsStatSSA(s, acc.second);
 		stat = fsInterpolateTyparsStat(p.first, names);
@@ -374,7 +377,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 
 	value_exp = if (pair.second == []) pair.first else {
 		ret_var = FsVar("__ret_var__", true, globalVar.type, globalVar.value.start);
-		FsCall(FsLambda([], [], 
+		FsCall(FsLambda(false, [], [], 
 			fsWrapSeq(concat(pair.second, [
 				FsLet(ret_var, pair.first, FsRet(ret_var, globalVar.value.start), globalVar.type, globalVar.value.start)
 			])), 
@@ -408,9 +411,6 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	fun_name = gctx.varname2cpp(name);
 	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
-	fun_signature = (if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + fun_name + fiFunArgs2cpp(fun_args, gctx);
-	forward_decl = decl_typars + fun_signature + ";\n\n";
-	fun_locals = fold(fun_args, makeSet(), \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
 	
 	names = gctx.program.names;
 	lambda0 = fiEliminateUnionFields(fun.lambda, names, 0);
@@ -422,30 +422,27 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 		), 
 		names
 	);
-	lambda4 = cast(lambda3: FiExp -> FiLambda);
-	lambda5_body = fiExpRenameRecurringVars(lambda4.body, fun_locals);
+	lambda4 = lambda3;
+	lambda5 = fiExpRenameRecurringVars(lambda4, makeSet());
 
-	fun_stat0 = fiExp2FsStat(lambda5_body, FsReturnToOuter(), 
-		FsEnv(
-			fun.lambda.args,
-			fold(fun_args, makeTree(), \acc, arg -> if (arg.name == "__") acc else 
-				setTree(acc, arg.name, FsVar(arg.name, true, arg.type, fun.lambda.start))
-			),
-			gctx.effects,
-			names,
-			0
-		), 
-		name
-	);
+	fun_m = fiExp2fmExp(lambda5, makeSet(), gctx.effects, true);
+	fun_stat0 = fmExp2FsStat(fun_m, FsReturnToOuter(), FsEnv([], makeTree(), gctx.effects, names, 0), name);
 	fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
 	fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
-	fun_stat3 = fsMakeStatCastsExplicit(fun_stat2, fn_type.returnType, names);
-	fun_stat4 = fun_stat3; //fsStatReturnVars(fun_stat3);
+	fun_stat3 = fsMakeStatCastsExplicit(fun_stat2, fn_type, names);
+	fun_stat4 = fun_stat3;
 	fun_stat5 = fsWrapCaseVarsWithCasts(fun_stat4, names);
-	body = fsStat2cpp3(fun_stat5, gctx);
-	fun_cpp = if (!fsHasTailCall(fun_stat5)) body else {
-		"while (true) " + fiWrapWithBraces(body);
+
+	stat_lambda = fsStatLambda(fun_stat5);
+	cpp_body = fsStat2cpp3(stat_lambda.body, gctx);
+	fun_cpp = if (!fsHasTailCall(stat_lambda.body)) cpp_body else {
+		"while (true) " + fiWrapWithBraces(cpp_body);
 	}
+	fun_signature =
+		(if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + 
+		fun_name + fiFunArgs2cpp(stat_lambda.args, gctx);
+	forward_decl = decl_typars + fun_signature + ";\n\n";
+
 	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(fun_cpp) + "\n\n";
 	Cpp3CompiledDeclaration(name, headerOnly, forward_decl, definition);
 }
@@ -595,14 +592,14 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 					fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
 			}
 		}
-		FsMemory(op, var, e, __): {
+		FsMemory(op, var, __): {
 			switch (op) {
-				FmDup():      "perceus_dup(" + var + ");\n" + fsExp2s(e);
-				FmDrop():     "perceus_drop(" + var + ")\n" + fsExp2s(e);
-				FmReuse():    "perceus_reuse(" + var + ")\n" + fsExp2s(e);
-				FmDispose():  "perceus_dispose(" + var + ")\n" + fsExp2s(e);
-				FmIsUnique(): "perceus_is_unique(" + var + ")\n" + fsExp2s(e);
-				FmDecRef():   "perceus_dec_ref(" + var + ")\n" + fsExp2s(e);
+				FmDup():      "perceus_dup(" + var + ");";
+				FmDrop():     "perceus_drop(" + var + ")";
+				FmReuse():    "perceus_reuse(" + var + ")";
+				FmDispose():  "perceus_dispose(" + var + ")";
+				FmIsUnique(): "perceus_is_unique(" + var + ")";
+				FmDecRef():   "perceus_dec_ref(" + var + ")";
 				FmNull():     "nullptr";
 			}
 		}
@@ -749,8 +746,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				}
 			};
 		}
-		FsLambda(closure, args, body, type, __): {
-			ptr_closure = filter(closure, \v -> !fiIsScalarType(v.type));
+		FsLambda(toplevel, closure, args, body, type, __): {
 			fiType2cpp3(type, gctx) + "::make" +
 			"([" + superglue(closure, \v -> gctx.varname2cpp(v.name), ", ") + "] " + fiFunArgs2cpp(args, gctx) +
 			" " + fiWrapWithBraces(fsStat2cpp3(body, gctx)) +
