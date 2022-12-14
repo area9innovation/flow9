@@ -56,6 +56,8 @@ export {
 
 	nonBreakableSpace : string = fromCharCode(nonBreakableSpaceCode);
 	wordJoiner : string = fromCharCode(wordJoinerCode);
+	zeroWidthJoiner : string = fromCharCode(zeroWidthJoinerCode);
+	isWordJoiner(char : string) -> bool;
 
 	makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle];
 
@@ -165,7 +167,7 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDec
 				NewLine(): e1;
 			}
 		}
-		NonTextElement() : Empty();
+		NonTextElement(__) : Empty();
 	}
 }
 
@@ -288,6 +290,7 @@ renderParagraphEx(
 	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
 ) -> Form {
 	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
+	traceApi.trace(\-> "renderParagraphEx "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -329,7 +332,7 @@ renderParagraphEx(
 	isUnbreakable = \currentWord, prevWord -> {
 		lastChr = strsubsmart(getWordText(prevWord), -1, 0);
 		firstChr = strsubsmart(getWordText(currentWord), 0, 1);
-		lastChr == wordJoiner || firstChr == wordJoiner || lastChr == nonBreakableSpace || firstChr == nonBreakableSpace;
+		isWordJoiner(lastChr) || isWordJoiner(firstChr)
 	};
 	keepFormTogetherOrWithMark = \form1, i -> {
 		keepFormTogether(form1) || isParagraphMarked && i <= 1;
@@ -346,7 +349,7 @@ renderParagraphEx(
 		};
 	};
 
-	aw = make(0.0);
+	awB = make(0.0);
 	update = make(0);
 	linesB : DynamicBehaviour<ParaLinesInfos> = make(ParaLinesInfos([], 0.0));
 
@@ -356,7 +359,7 @@ renderParagraphEx(
 			prevAccessibilityParent = ^accessibilityParent;
 			accessibilityParent := paragraphAccessibilityParent;
 			rendered = renderParaLines(
-				if (storyWidth > 0.0) storyWidth else getValue(aw),
+				if (storyWidth > 0.0) storyWidth else getValue(awB),
 				lines, tightWidth, alignment, interlineSpacing,
 				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
 				interLineHighlighting, renderedLinesInfoM
@@ -457,7 +460,7 @@ renderParagraphEx(
 
 	Constructor(
 		Inspect(
-			[AvailableWidth2(aw)],
+			[AvailableWidth2(awB)],
 			if (paragraphBorder.top > 0.0 || paragraphBorder.bottom > 0.0) {
 				Border(0.0, paragraphBorder.top, 0.0, paragraphBorder.bottom, contentGroup);
 			} else {
@@ -468,7 +471,7 @@ renderParagraphEx(
 			updateFn = \wi-> {
 				oldLines = getValue(linesCountB);
 				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				traceApi.trace(\-> "updateFn START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+				traceApi.traceAndNest(\-> "updateFn START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -494,13 +497,13 @@ renderParagraphEx(
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
 				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceApi.trace(\-> "updateFn END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.unnestAndTrace(\-> "updateFn END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
 				[
-					subscribe(aw, \v -> {
-						traceApi.trace(\-> "aw changed. calling updateFn. aw = " + toString(v));
+					subscribe(awB, \v -> {
+						traceApi.trace(\-> "awB changed. calling updateFn. awB = " + toString(v));
 						updateFn(v);
 					}),
 				],
@@ -511,14 +514,14 @@ renderParagraphEx(
 						if (u == 1) deferUntilNextFrameRendered(\ -> {
 							traceApi.trace(\-> "updateFn DEFERRED STARTED");
 							next(update, 0);
-							updateFn(getValue(aw))
+							updateFn(getValue(awB))
 						})
 					})
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
 					if (i < ndymamicUpper) {
 						traceApi.trace(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
-						updateFn(getValue(aw))
+						updateFn(getValue(awB))
 					} else {
 						traceApi.trace(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
 						nextDistinct(update, 1)
@@ -1523,8 +1526,8 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 					Text(t1, s1) : {
 						switch (f : GhostForm) {
 							Text(t2, s2) : {
-								s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1; 
-								s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2; 
+								s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1;
+								s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2;
 								join = if (use_dynamic_text_metrics) {
 									joinText(
 										t1,
@@ -1800,4 +1803,8 @@ makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi
 
 makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> WigiTraceApi {
 	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> words, paragraphElement2string))
+}
+
+isWordJoiner(char : string) -> bool {
+	char == wordJoiner || char == nonBreakableSpace || char == zeroWidthJoiner
 }

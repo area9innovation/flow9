@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show(true);
+	serverChannel = vscode.window.createOutputChannel("Flow Language Server");
 
 
 	// Create an LSP client
@@ -130,17 +131,23 @@ function checkHttpServerStatus(initial : boolean) {
 }
 
 function outputHttpServerMemStats() {
-	client.sendRequest("workspace/executeCommand", {
-		command : "command",
-		arguments : ["server-mem-info=1", "do_not_log_this=1"]
-	}).then(
-		(out : string) => {
-			const lines = out.split("\n");
-			const mem_stats = lines.find((line) => line.indexOf("free") != -1);
-			showHttpServerOnline(mem_stats);
-		},
-		(err : any) => showHttpServerOffline()
-	);
+	try {
+		client.sendRequest("workspace/executeCommand", {
+			command : "command",
+			arguments : ["server-mem-info=1", "do_not_log_this=1"]
+		}).then(
+			(out : string) => {
+				const lines = out.split("\n");
+				const mem_stats = lines.find((line) => line.indexOf("free") != -1);
+				showHttpServerOnline(mem_stats);
+			},
+			(err : any) => showHttpServerOffline()
+		);
+	} catch (e) {
+		serverChannel.show(true);
+		serverChannel.appendLine("Restarting flow LSP server because of error: " + e);
+		startLspClient();
+	}
 }
 
 function flowConsole() {
@@ -161,11 +168,8 @@ function toggleHttpServer() {
 }
 
 function startHttpServer() {
-    if (!httpServerOnline) {
-		if (!serverChannel) {
-			serverChannel = vscode.window.createOutputChannel("Flow server");
-			serverChannel.show(true);
-		}
+	if (!httpServerOnline) {
+		serverChannel.show(true);
 		httpServer = tools.launchFlowcHttpServer(
 			getFlowRoot(),
 			showHttpServerOnline,
@@ -185,10 +189,16 @@ function stopHttpServer() {
 
 function stopLspClient() {
 	if (client) {
-		client.sendNotification("exit");
-		client.stop();
+		try {
+			client.sendNotification("exit");
+		} catch (error) {
+			serverChannel.show(true);
+			serverChannel.appendLine("Error exiting LSP server: " + error);
+		} finally {
+			client.stop();
+			client = null;
+		}
 	}
-	client = null;
 }
 
 function startLspClient() {
@@ -203,7 +213,7 @@ function startLspClient() {
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
 		documentSelector: [{scheme: 'file', language: 'flow'}],
-		outputChannel: flowChannel,
+		outputChannel: serverChannel,
 		revealOutputChannelOn: RevealOutputChannelOn.Info,
 		uriConverters: {
 			// FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)

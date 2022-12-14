@@ -1,0 +1,198 @@
+import tools/flowc/backends/wise/fituple2wise;
+import tools/flowc/incremental/fiexp;
+
+
+import tools/flowc/incremental/fiprettyprint;
+
+export {
+	fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int, templates : Tree<string, FiTypeParameter>) -> FiExp;
+}
+
+fiSwitch2fiExp(e : FiSwitch, env : WiseAstStructs, tmpIndex : int, templates : Tree<string, FiTypeParameter>) -> FiExp {
+	structIds = switch (e.switchType : FiType) {
+		FiTypeName(name, __) : lookupTreeDef(env.unions, name, []);
+		default : [];
+	}
+
+	if (structIds == [] || e.cases == []) {
+		println("ERROR : union structs are not found. [ " + toString(e) + " ]");
+		FiVoid(0);
+	} else {
+		tmpVar = "_tmp" + i2s(tmpIndex);
+		FiSeq([FiInt(0, 0), FiLet(
+			tmpVar,
+			FiTypeInt(),
+			FiCall(
+				FiVar("getStructId", FiTypeFunction([FiFunArg("adr", FiTypeInt())], FiTypeInt()), 0),
+				[e.x],
+				FiTypeInt(),
+				0
+			),
+			fiCases2fiIfs(e.cases, FiVar(tmpVar, FiTypeInt(), 0), setTemplateInFiType(e.type, templates), env),
+			e.type,
+			0
+		)], e.type, 0);
+	}
+}
+
+// we don't check the correctness of switch. but we could be
+// for some reasons, union is already flat (cases don't contain unions)
+fiCases2fiIfs(cases: [FiCase], e : FiVar, type : FiType, env : WiseAstStructs) -> FiExp {
+	scases = unzip(cases, \c -> c.struct == "default");
+	defCases = scases.first;
+	defCase = if (defCases == []) {
+		fiType2defVal(type, if (cases == []) None() else Some(cases[0].body));
+	} else {
+		defCases[0].body;
+	}
+
+	orderedCases = fold(scases.second, makeTree(), \tree, c -> {
+		eitherFn(
+			lookupTree(env.table, c.struct),
+			\id -> {
+				if (id < 0) {
+					onErrorStruct = \-> {
+						// structure is defined, but never used
+						println("WARNING : case is ignored: " + toString(c) + ". From [" + toString(e) + "]");
+						tree;
+					}
+					eitherFn(
+						lookupTree(env.templStructs, id),
+						\v : Tree<[FiType], int> -> {
+							ids = getTreeValues(v);
+							if (ids == []) {
+								onErrorStruct()
+							} else {
+								setTree(tree, ids, Pair(c.argNames, c.body))
+							}
+						},
+						onErrorStruct
+					);
+				} else {
+					setTree(tree, [id], Pair(c.argNames, c.body))
+				}
+			},
+			\ -> {
+				println("ERROR: can't find struct '" + c.struct + "' in switch");
+				tree
+			}
+		);
+	});
+
+	foldTreeBinary(
+		orderedCases,
+		\ids : [int], c, left, right -> unpair(c, \caseArgs, caseBody -> {
+			if (ids == []) {
+				defCase;
+			} else {
+				newLeft = filterUnusedArgs(caseBody, caseArgs);
+				newRight = FiIf(makeEqIdsFn(e, ids), newLeft, right, type, 0);
+				if (left == right) {
+					newRight;
+				} else {
+					FiIf(makeLessIdsFn(e, ids[0]), left, newRight, type, 0);
+				}
+			}
+		}),
+		defCase
+	);
+}
+
+filterUnusedArgs(e : FiExp, args : [string]) -> FiExp {
+	usedIds = getUsedVars([e], makeSet());
+	unusedIds = filter(args, \a -> !containsSet(usedIds, a));
+	if (unusedIds == []) e else removeUnusedVars(e, buildSet(unusedIds));
+}
+
+getUsedVars(exps : [FiExp], ids : Set<string>) -> Set<string> {
+	if (exps == []) {
+		ids;
+	} else{
+		newExps = tail(exps);
+		values = switch (exps[0] : FiExp) {
+			FiLambda(__, body, __, __): Pair(arrayPush(newExps, body), ids);
+			FiCall(f, args, __, __): Pair(concat(arrayPush(newExps, f), args), ids);
+			FiVar(name, __, __): Pair(newExps, insertSet(ids, name));
+			FiLet(__, __, e1, e2, __, __): Pair(arrayPush(arrayPush(newExps, e1), e2), ids);
+			FiIf(e1, e2, e3, __, __): Pair(arrayPush(arrayPush(arrayPush(newExps, e1), e2), e3), ids);
+			FiSwitch(x, __, cases, __, __): Pair(concat(arrayPush(newExps, x), map(cases, \c -> c.body)), ids);
+			FiCast(e, __, __, __, __): Pair(arrayPush(newExps, e), ids);
+			FiSeq(es, __, __): Pair(concat(newExps, es), ids);
+			FiCallPrim(__, es, __, __): Pair(concat(newExps, es), ids);
+			FiVoid(__): Pair(newExps, ids);
+			FiDouble(__, __): Pair(newExps, ids);
+			FiInt(__, __): Pair(newExps, ids);
+			FiString(__, __): Pair(newExps, ids);
+			FiBool(__, __): Pair(newExps, ids);
+			FiRequire(__, e, __, __): Pair(arrayPush(newExps, e), ids);
+			FiUnsafe(__, e, __, __): Pair(arrayPush(newExps, e), ids);
+		}
+		getUsedVars(values.first, values.second);
+	}
+}
+
+removeUnusedVars(expr : FiExp, ids : Set<string>) -> FiExp {
+	switch (expr : FiExp) {
+		FiLet(name, __, e1, body, __, __): {
+			newBody = removeUnusedVars(body, ids);
+			if (containsSet(ids, name)) newBody else FiLet(expr with e1 = removeUnusedVars(e1, ids), e2 = newBody);
+		}
+		FiLambda(__, body, __, __): FiLambda(expr with body = removeUnusedVars(body, ids));
+		FiCall(f, args, __, __): FiCall(expr with 
+			f = removeUnusedVars(f, ids),
+			args = map(args, \e -> removeUnusedVars(e, ids))
+		);
+		FiVar(__, __, __): expr;
+		FiIf(e1, e2, e3, __, __): FiIf(expr with 
+			e1 = removeUnusedVars(e1, ids),
+			e2 = removeUnusedVars(e2, ids),
+			e3 = removeUnusedVars(e3, ids)
+		);
+		FiSwitch(x, __, cases, __, __): FiSwitch(expr with 
+			cases = map(cases, \c -> FiCase(c with body = removeUnusedVars(c.body, ids)))
+		);
+		FiCast(e, __, __, __, __): FiCast(expr with e = removeUnusedVars(e, ids));
+		FiSeq(es, __, __): FiSeq(expr with es = map(es, \e -> removeUnusedVars(e, ids)));
+		FiCallPrim(__, es, __, __): FiCallPrim(expr with es = map(es, \e -> removeUnusedVars(e, ids)));
+		FiVoid(__): expr;
+		FiDouble(__, __): expr;
+		FiInt(__, __): expr;
+		FiString(__, __): expr;
+		FiBool(__, __): expr;
+		FiRequire(__, e, __, __): FiRequire(expr with e = removeUnusedVars(e, ids));
+		FiUnsafe(__, e, __, __): FiUnsafe(expr with fallback = removeUnusedVars(e, ids));
+	}
+}
+
+makeEqIdsFn(e : FiVar, ids : [int]) -> FiExp {
+	if (ids == []) {
+		FiBool(false, 0);
+	} else {
+		makeEqExp = \id -> FiCallPrim(FcEqPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
+		fold(tail(ids), makeEqExp(ids[0]), \acc, id -> 
+			FiCallPrim(FcOrPrim(), [acc, makeEqExp(id)], FiTypeBool(), 0)
+		);
+	}
+}
+
+makeLessIdsFn(e : FiVar, id : int) -> FiExp {
+	FiCallPrim(FcLtPrim(), [e, FiInt(id, 0)], FiTypeBool(), 0);
+}
+
+fiType2defVal(type : FiType, alt : Maybe<FiExp>) -> FiExp {
+	makeUnknownType = \-> either(alt, FiVoid(0));
+	switch (type : FiType) {
+		FiTypeRef(__) : FiInt(0, 0); // pointer
+		FiTypeParameter(__) : makeUnknownType();
+		FiTypeFlow() : makeUnknownType();
+		FiTypeNative() : FiInt(0, 0); // pointer ?
+		FiTypeName(__, __) : FiInt(0, 0); // pointer
+		FiTypeArray(__) : FiInt(0, 0); // pointer
+		FiTypeFunction(__, __) : FiInt(0, 0); // pointer ?
+		FiTypeBool() : FiBool(false, 0);
+		FiTypeInt() : FiInt(0, 0);
+		FiTypeDouble() : FiDouble(0.0, 0);
+		FiTypeString() : FiString("", 0);
+		FiTypeVoid() : FiVoid(0);
+	}
+}

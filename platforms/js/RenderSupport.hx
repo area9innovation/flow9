@@ -986,7 +986,12 @@ class RenderSupport {
 				&& screenSize.height != Browser.window.innerHeight
 				&& (screenSize.height - Browser.window.innerHeight * getViewportScale()) < 100
 			) ? 95.0 / getViewportScale() : 0.0;
-		var topHeight = cast (screenSize.height - Browser.window.innerHeight + innerHeightCompensation);
+
+		var topHeight = cast(
+			viewportScaleWorkaroundEnabled
+				? (screenSize.height - Browser.window.innerHeight + innerHeightCompensation)
+				: (screenSize.height - Browser.window.innerHeight * browserZoom)
+		);
 
 		// Calculate top height only once for each orientation
 		if (portraitOrientation) {
@@ -1074,11 +1079,7 @@ class RenderSupport {
 	}
 
 	private static inline function getMobileTopHeight() {
-		if (isPortaitOrientation()) {
-			return WindowTopHeightPortrait;
-		} else {
-			return WindowTopHeightLandscape;
-		}
+		return isPortaitOrientation() ? WindowTopHeightPortrait : WindowTopHeightLandscape;
 	}
 
 	private static inline function initClipboardListeners() {
@@ -1171,6 +1172,7 @@ class RenderSupport {
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
 		if (printMode) return;
 
+		var oldBrowserZoom = browserZoom;
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (backingStoreRatio != PixiRenderer.resolution) {
@@ -1194,17 +1196,20 @@ class RenderSupport {
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
 
-				// Still send whole window size - without reducing by screen kbd
-				// for flow does not resize the stage. The stage will be
-				// scrolled by this renderer if needed or by the browser when it is supported.
-				// Assume that WindowTopHeight is equal for both landscape and portrait and
-				// browser window is fullscreen
-				var screen_size = getScreenSize();
-				// window.screen.width on Android tends from time to time to update with delay after rotation, so let's stick with the width from the event
-				if (!Platform.isAndroid) {
-					win_width = screen_size.width;
+				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom. 
+				if (oldBrowserZoom == browserZoom) {
+					// Still send whole window size - without reducing by screen kbd
+					// for flow does not resize the stage. The stage will be
+					// scrolled by this renderer if needed or by the browser when it is supported.
+					// Assume that WindowTopHeight is equal for both landscape and portrait and
+					// browser window is fullscreen
+					var screen_size = getScreenSize();
+					// window.screen.width on Android tends from time to time to update with delay after rotation, so let's stick with the width from the event
+					if (!Platform.isAndroid) {
+						win_width = screen_size.width;
+					}
+					win_height = Math.floor((screen_size.height - getMobileTopHeight()) / browserZoom);
 				}
-				win_height = screen_size.height - cast getMobileTopHeight();
 
 				if (Platform.isAndroid) {
 					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
@@ -2089,6 +2094,10 @@ class RenderSupport {
 
 	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
 		FontLoader.loadPreconfiguredWebFonts(families, onDone);
+	}
+
+	public static function loadFSFont(family : String, url : String) : Void {
+		FontLoader.loadFSFont(family, url);
 	}
 
 	public static function getFontStylesConfigString() : String {
