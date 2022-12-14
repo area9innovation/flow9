@@ -1,5 +1,6 @@
 import tools/flowc/memory/fmexp;
 import tools/flowc/manipulation/effects;
+import string_utils;
 
 export {
 	fmExpInfo(fm: FmExp) -> FmInfo;
@@ -11,6 +12,10 @@ export {
 	fiExpHasNoStatements(e: FiExp) -> bool;
 
 	fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
+
+	// Prettyprinters for expressions
+	fmPrim2s(op: FmPrim, es: [string], type: FiType) -> string;
+	fmExp2s(ex: FmExp) -> string;
 }
 
 fmExpInfo(fm: FmExp) -> FmInfo {
@@ -96,5 +101,112 @@ fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
 		FiUnsafe(__,__,__,__): true;
 		FiVar(name,__,__): containsSet(effects.hasEffects, name);
 		default: false;
+	}
+}
+
+fmPrim2s(op: FmPrim, es: [string], type: FiType) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (op) {
+		FmOrPrim():  "(" + es[0] + " || " + es[1] + ")";
+		FmAndPrim(): "(" + es[0] + " && " + es[1] + ")";
+		FmNotPrim(): "!" + es[0];
+		FmEqPrim():  "(" + es[0] + " == " + es[1] + ")";
+		FmNePrim():  "(" + es[0] + " != " + es[1] + ")";
+		FmLePrim():  "(" + es[0] + " <= " + es[1] + ")";
+		FmGePrim():  "(" + es[0] + " >= " + es[1] + ")";
+		FmLtPrim():  "(" + es[0] + " < " + es[1] + ")";
+		FmGtPrim():  "(" + es[0] + " > " + es[1] + ")";
+		FmPlusPrim():  "(" + es[0] + " + " + es[1] + ")";
+		FmMinusPrim(): "(" + es[0] + " - " + es[1] + ")"; 
+		FmMulPrim():   "(" + es[0] + " * " + es[1] + ")";
+		FmDivPrim():   "(" + es[0] + " / " + es[1] + ")";
+		FmModPrim():   "(" + es[0] + " % " + es[1] + ")";
+		FmNegPrim():   "-" + es[0];
+		FmArrayPrim():   "[" + strGlue(es,  ", ") + "]";
+		FmIndexPrim():   es[0] + "[" + es[1] + "]";
+		FmDerefPrim():   "(*" +es[0] + ")";
+		FmRefPrim():     "ref " + es[0];
+		FmStructPrim(struct_name): {
+			struct_type = cast(type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			struct_name + typars + "(" + strGlue(es, ", ") + ")";
+		}
+		FmFieldPrim(name): es[0] + "." + name;
+		FmRequirePrim(file): {
+			"require " + file + " " + es[0];
+		}
+		FmUnsafePrim(name): {
+			"unsafe " + name + " " + es[0];
+		}
+		FmCastPrim(from, to): {
+			"(" + es[0] + " : " + t2s(from) + " -> " + t2s(to) + ")";
+		}
+		FmIfPrim(): {
+			"(" + es[0] + " ? " + es[1] + " : " + es[2] + ")";
+		}
+		FmReusePrim(name, reuse): {
+			struct_type = cast(type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			name + typars + "@" + reuse + "(" + strGlue(es, ", ") + ")";
+		}
+	}
+}
+
+fmExp2s(ex: FmExp) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (ex) {
+		FmLet(v, e1, e2,__): {
+			v.name + " : " + t2s(v.info.type) + " = " + fmExp2s(e1) + ";\n" + fmExp2s(e2);
+		}
+		FmIf(e, s1, s2, __): {
+			"if (" + fmExp2s(e) + ") " + fmExp2s(s1) + " else " + fmExp2s(s2);
+		}
+		FmSwitch(v,__, cases, __): {
+			"switch (" + fmExp2s(v) + ") {\n" +
+				strIndent(superglue(cases, \c -> {
+					body_s = fmExp2s(c.body);
+					body_s1 = if (strContains(body_s, "\n") || startsWith(body_s, "{")) body_s else body_s + ";";
+					c.struct + "(" + superglue(c.args, \arg -> arg.name, ", ") + "): " + body_s1;
+				}, "\n")) +
+			"\n}";
+		}
+		FmSeq(ss,__): {
+			if (length(ss) == 0) "{}" else
+			if (length(ss) == 1) fmExp2s(ss[0]) else
+			"{\n" + strIndent(superglue(ss, fmExp2s, ";\n")) + "\n}";
+		}
+		FmAssign(to, what,__): {
+			fmExp2s(to) + " := " +  fmExp2s(what);
+		}
+		FmMemory(op, e,__): {
+			switch (op) {
+				FmDup():      "dup(" + fmExp2s(e) + ");";
+				FmDrop():     "drop(" + fmExp2s(e) + ");";
+				FmReuse():    "reuse(" + fmExp2s(e) + ");";
+				FmDispose():  "dispose(" + fmExp2s(e) + ");";
+				FmIsUnique(): "is_unique(" + fmExp2s(e) + ");";
+				FmDecRef():   "dec_ref(" + fmExp2s(e) + ")";
+				FmNull():     "nullptr";
+			}
+		}
+		FmLambda(__, args, body,__): {
+			body_s = fmExp2s(body);
+			header = "\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> ";
+			if (!strContains(body_s, "\n") || startsWith(body_s, "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
+		}
+		FmCall(f, args,__): {
+			fmExp2s(f) + "(" + superglue(args, fmExp2s, ", ") + ")";
+		}
+		FmCallPrim(op, es, info): {
+			fmPrim2s(op, map(es, fmExp2s), info.type);
+		}
+		FmVar(name,__,__): name;
+		FiVoid(__):      "{}";
+		FiDouble(d, __): d2s(d);
+		FiInt(i, __):    i2s(i)
+		FiString(s, __): "\"" + escapeStr(s) + "\"";
+		FiBool(b, __):   b2s(b);
 	}
 }

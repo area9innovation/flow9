@@ -4,38 +4,42 @@ import tools/flowc/manipulation/freevars;
 import string_utils;
 
 export {
-	fiExp2fmExp(e: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool) -> FmExp;
+	fiExp2fmExp(e: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool, names: FiGlobalNames) -> FmExp;
 }
 
-fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool) -> FmExp {
+fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool, names: FiGlobalNames) -> FmExp {
 	switch (ex) {
 		FiSeq(es, type, start): {
-			fm_es = map(es, \x -> fiExp2fmExp(x, bound, effects, false));
+			fm_es = map(es, \x -> fiExp2fmExp(x, bound, effects, false, names));
 			free = fold(fm_es, makeSet(), \acc, fm -> mergeSets(acc, fmExpInfo(fm).free));
 			FmSeq(fm_es, FmInfo(free, type, start));
 		}
 		FiCast(e, from, to, type, start): {
-			em = fiExp2fmExp(e, bound, effects, false);
+			em = fiExp2fmExp(e, bound, effects, false, names);
 			FmCallPrim(FmCastPrim(from, to), [em], FmInfo(fmExpInfo(em).free, type, start));
 		}
 		FiCall(f, args, type, start): {
-			fm = fiExp2fmExp(f, bound, effects, false);
-			argsm = map(args, \arg -> fiExp2fmExp(arg, bound, effects, false));
+			fm = fiExp2fmExp(f, bound, effects, false, names);
+			argsm = map(args, \arg -> fiExp2fmExp(arg, bound, effects, false, names));
 			free = fold(argsm, fmExpInfo(fm).free, \acc, x -> mergeSets(acc, fmExpInfo(x).free));
 			FmCall(fm, argsm, FmInfo(free, type, start));
 		}
 		FiSwitch(v, vtype, cases, type, start): {
 			// Variables from the case are explicitly introduced as let-statements, so there's no
 			// need to setup bound variables here
-			cm = map(cases, \c -> 
-				FmCase(c.struct, c.argNames, fiExp2fmExp(c.body, bound, effects, false), c.start)
-			);
+			cm = map(cases, \c -> {
+				struct = lookupTreeDef(names.structs, c.struct, FiTypeStruct("", [], [], 0));
+				struct_args = mapi(c.argNames, \i, arg_name -> 
+					FmVar(arg_name, true, FmInfo(makeSet1(arg_name), struct.args[i].type, c.start))
+				);
+				FmCase(c.struct, struct_args, fiExp2fmExp(c.body, bound, effects, false, names), c.start)
+			});
 			vm = FmVar(v.name, containsSet(bound, v.name), FmInfo(makeSet1(v.name), v.type, v.start));
 			free = fold(cm, fmExpInfo(vm).free, \acc, c -> mergeSets(acc, fmExpInfo(c.body).free));
 			FmSwitch(vm, vtype, cm, FmInfo(free, type, start));
 		}
 		FiLambda(args, body, type, start): {
-			bodym = fiExp2fmExp(body, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), effects, false);
+			bodym = fiExp2fmExp(body, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), effects, false, names);
 			FmLambda(is_toplevel, args, bodym, 
 				FmInfo(
 					fold(args, fmExpInfo(bodym).free, \acc, arg -> removeSet(acc, arg.name)), 
@@ -44,8 +48,8 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool
 			);
 		}
 		FiLet(name, vtype, e1, e2, type, start): {
-			e1m = fiExp2fmExp(e1, bound, effects, false);
-			e2m = fiExp2fmExp(e2, insertSet(bound, name), effects, false);
+			e1m = fiExp2fmExp(e1, bound, effects, false, names);
+			e2m = fiExp2fmExp(e2, insertSet(bound, name), effects, false, names);
 			free = mergeSets(fmExpInfo(e1m).free, fmExpInfo(e2m).free);
 			FmLet(
 				FmVar(name, true, FmInfo(makeSet1(name), vtype, start)), 
@@ -53,9 +57,9 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool
 			);
 		}
 		FiIf(e1, e2, e3, type, start): {
-			e1m = fiExp2fmExp(e1, bound, effects, false);
-			e2m = fiExp2fmExp(e2, bound, effects, false);
-			e3m = fiExp2fmExp(e3, bound, effects, false);
+			e1m = fiExp2fmExp(e1, bound, effects, false, names);
+			e2m = fiExp2fmExp(e2, bound, effects, false, names);
+			e3m = fiExp2fmExp(e3, bound, effects, false, names);
 			free = mergeSets(mergeSets(fmExpInfo(e1m).free, fmExpInfo(e2m).free), fmExpInfo(e3m).free);
 			good_exp = \x -> fiExpHasNoStatements(x) && !fiExpHasEffects(x, effects);
 			if (fiExpType(e2) != FiTypeVoid() && good_exp(e1) && good_exp(e2) && good_exp(e3)) {
@@ -65,7 +69,7 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool
 			}
 		}
 		FiCallPrim(op, es, type, start): {
-			esm = map(es, \x -> fiExp2fmExp(x, bound, effects, false));
+			esm = map(es, \x -> fiExp2fmExp(x, bound, effects, false, names));
 			free = fold(esm, makeSet(), \acc, x -> mergeSets(acc, fmExpInfo(x).free));
 			switch (op) {
 				FcAssignPrim(): {
@@ -83,11 +87,11 @@ fiExp2fmExp(ex: FiExp, bound: Set<string>, effects: FiEffects, is_toplevel: bool
 			}
 		}
 		FiRequire(file, e, type, start): {
-			em = fiExp2fmExp(e, bound, effects, false);
+			em = fiExp2fmExp(e, bound, effects, false, names);
 			FmCallPrim(FmRequirePrim(file), [em], FmInfo(fmExpInfo(em).free, type, start));
 		}
 		FiUnsafe(name, fb, type, start): {
-			fbm = fiExp2fmExp(fb, bound, effects, false);
+			fbm = fiExp2fmExp(fb, bound, effects, false, names);
 			FmCallPrim(FmUnsafePrim(name), [fbm], FmInfo(fmExpInfo(fbm).free, type, start));
 		}
 		FiVar(name, type, start): {
