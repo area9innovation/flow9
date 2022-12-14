@@ -37,7 +37,7 @@ fmExp2FsStat(e : FmExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 			switch (f) {
 				FmVar(nm,__,__): {
 					if (nm != fn || returns != FsReturnToOuter()) do_call() else {
-						switch (lookupTree(env.effects.names.toplevel, fn)) {
+						switch (lookupTree(env.names.toplevel, fn)) {
 							Some(func): {
 								func_args = cast(func: FiDeclaration -> FiFunctionDec).lambda.args;
 								assign_func_vars = filtermapi(args_pairs, \i, p -> {
@@ -76,29 +76,21 @@ fmExp2FsStat(e : FmExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 			default_switch = \ -> FsSwitch(
 				FsVar(v.name, true, v.info.type, v.info.start), vtype,
 				map(cs, \c -> {
+					// env locals are added by correspongind let statements in body
 					struct_args = map(c.args, \arg -> FsVar(arg.name, true, arg.info.type, arg.info.start));
-					case_env = FsEnv(env with
-						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-							setTree(acc, arg.name, arg)
-						)
-					);
-					FsCase(c.struct, struct_args, fmExp2FsStat(c.body, returns, case_env, fn), c.start)
+					FsCase(c.struct, struct_args, fmExp2FsStat(c.body, returns, env, fn), c.start);
 				}), 
 				info.type, info.start
 			);
 			switch (vtype) {
 				FiTypeName(typename,__): {
-					if (containsKeyTree(env.effects.names.unions, typename)) {
+					if (containsKeyTree(env.names.unions, typename)) {
 						default_switch();
 					} else {
 						switch (find(cs, \c -> c.struct == typename)) {
 							Some(c): {
-								case_env = FsEnv(env with
-									locals = fold(c.args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-										setTree(acc, arg.name, FsVar(arg.name, true, arg.info.type, arg.info.start))
-									)
-								);
-								fmExp2FsStat(c.body, returns, case_env, fn);
+								// env locals are added by correspongind let statements in body
+								fmExp2FsStat(c.body, returns, env, fn);
 							}
 							None(): {
 								fail0("unmatched struct type '" + typename + "' in switch:\n" + toString(e));
@@ -236,12 +228,8 @@ fmExp2FsExp(e : FmExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 			default_switch_stat = \return -> {
 				cases_stats = map(cases, \c -> {
 					struct_args = map(c.args, \arg -> FsVar(arg.name, true, arg.info.type, arg.info.start));
-					case_env = FsEnv(env with 
-						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-							setTree(acc, arg.name, arg)
-						)
-					);
-					case_stat = fmExp2FsStat(c.body, return, case_env, "");
+					// env locals are added by correspongind let statements in body
+					case_stat = fmExp2FsStat(c.body, return, env, "");
 					FsCase(c.struct, struct_args, case_stat, c.start);
 				});
 				FsSwitch(
@@ -252,17 +240,13 @@ fmExp2FsExp(e : FmExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 			if (info.type == FiTypeVoid()) {
 				switch (vtype) {
 					FiTypeName(typename,__): {
-						switch_stat = if (containsKeyTree(env.effects.names.unions, typename)) {
+						switch_stat = if (containsKeyTree(env.names.unions, typename)) {
 							default_switch_stat(FsReturnNowhere());
 						} else {
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
-									case_env = FsEnv(env with
-										locals = fold(c.args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-											setTree(acc, arg.name, FsVar(arg.name, true, arg.info.type, arg.info.start))
-										)
-									);
-									fmExp2FsStat(c.body, FsReturnNowhere(), case_env, "");
+									// env locals are added by correspongind let statements in body
+									fmExp2FsStat(c.body, FsReturnNowhere(), env, "");
 								}
 								None(): {
 									fail0("unmatched struct type '" + typename + "' in switch:\n" + toString(e));
@@ -283,17 +267,12 @@ fmExp2FsExp(e : FmExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 				env.tmp ::= env.tmp + 1;
 				switch (vtype) {
 					FiTypeName(typename,__): {
-						switch_stat = if (containsKeyTree(env.effects.names.unions, typename)) {
+						switch_stat = if (containsKeyTree(env.names.unions, typename)) {
 							default_switch_stat(FsReturnToLocal(tmp_var));
 						} else {
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
-									case_env = FsEnv(env with 
-										locals = fold(c.args, env.locals, \acc, arg -> if (arg.name == "__") acc else
-											setTree(acc, arg.name, FsVar(arg.name, true, arg.info.type, arg.info.start))
-										)
-									);
-									fmExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_env, "");
+									fmExp2FsStat(c.body, FsReturnToLocal(tmp_var), env, "");
 								}
 								None(): {
 									fail0("unmatched struct type '" + typename + "' in switch:\n" + toString(e));
