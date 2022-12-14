@@ -41,7 +41,7 @@ checkPerceusInvariants(e: FmExp, ctx: PerceusContext) -> void {
 	// fv(e) ⊆ Δ, Γ
 	iterSet(fv, \v -> {
 		if (!(containsKeyTree(ctx.borrowed.tree, v) || containsKeyTree(ctx.linear.tree, v))) {
-			println("Freee variable: " + v + " from expression: +\n`" + fmExp2s(e) + " is not found in linear or borrowed context");
+			println("Free variable: " + v + " from expression: \n" + fmExp2s(e) + "\nis not found in linear or borrowed context");
 		}
 	});
 }
@@ -82,19 +82,38 @@ fmPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 							),
 							[c_body]
 						)),
-						/*foldMultiSet(linear3, c_body, \acc, n, __ ->
-							FmMemory(FmDrop(), acc, info)
-						),*/
 						c.start
 					);
 				}),
 				info
 			);
 		}
-		FmLambda(toplevel, args, body, infos): {
-			fv_body = fmExpInfo(body).free;
-			// TODO
-			ex;
+		FmLambda(toplevel, args, body, info): {
+			fv_body = set2multiSet(fold(args, fmExpInfo(body).free, \acc, arg -> removeSet(acc, arg.name)));
+			to_dup = diffMultiSets(fv_body, ctx.linear);
+			lambda_locals = fold(args, ctx.locals, \acc, arg -> 
+				setTree(acc, arg.name, FmVar(arg.name, true, FmInfo(makeSet1(arg.name), arg.type, info.start)))
+			);
+			p_body = fmPerceus(body, 
+				PerceusContext(
+					makeMultiSet(), 
+					uniteMultiSets(fv_body, buildMultiSet(map(args, \arg -> Pair(arg.name, 1)))),
+					lambda_locals
+				)
+			);
+			fmWrapExp(concat(
+				map(multiSet2array(to_dup), \v -> 
+					switch (lookupTree(lambda_locals, v)) {
+						Some(w): {
+							FmMemory(FmDup(), w, FmInfo(makeSet1(v), FiTypeVoid(), info.start));
+						}
+						None(): fail0("variable " + v  + " is not found in locals: [" + 
+							strGlue(getTreeKeys(ctx.locals), ", ") + "]"
+						);
+					}
+				),
+				[FmLambda(toplevel, args, p_body, info)]
+			))
 		}
 		FmLet(var, e1, e2, info): {
 			fv_e2 = set2multiSet(fmExpInfo(e2).free);
@@ -121,13 +140,15 @@ fmPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 			}
 		}
 		FmIf(e1, e2, e3, info): {
-			FiVoid(0);
+			p1 = fmPerceusExp(e1, ctx);
+			FmIf(p1.first, fmPerceus(e1, p1.second), fmPerceus(e2, p1.second), info);
 		}
 		FmCallPrim(op, es, info): {
 			FmCallPrim(op, fmPerceusExps(es, ctx).first, info);
 		}
-		FmAssign(to, what, start): {
-			ex;
+		FmAssign(to, what, info): {
+			p1 = fmPerceusExp(to, ctx);
+			FmSeq([FmMemory(FmDrop(), p1.first, info), FmAssign(p1.first, fmPerceus(what, p1.second), info)], info);
 		}
 		FmVar(name, local, info): {
 			if (containsMultiSet(ctx.linear, name)) ex else {
@@ -136,9 +157,7 @@ fmPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 				);
 			}
 		}
-		FmMemory(op, e, info): {
-			ex;
-		}
+		FmMemory(op, e, info): ex;
 		FiString(__,__): ex;
 		FiInt(__,__): ex;
 		FiDouble(__,__): ex;
