@@ -4,17 +4,18 @@ export {
 	MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material;
 
 	MInputChipsStyle ::= MInputChipsMaxWidth, MSelectedInputChips, MInputChipsLeftCaption, MCustomAutoCompleteStyle, MCustomChipStyle, MInputChipsTextButton,
-		MInputChipsToRight, MInputChipsInputTrigger, MInputChipsMultiline, MAnimationEnabled /*for multiline*/;
+		MInputChipsAlignRight, MInputChipsUniq, MInputChipsText, MInputChipsMultiline, MAnimationEnabled /*for multiline*/;
 
 		MSelectedInputChips(items : DynamicBehaviour<[string]>);
 		MInputChipsLeftCaption(caption : Material);
 		MInputChipsTextButton(text : string);
-		MInputChipsToRight(left : bool);
+		MInputChipsAlignRight();
 		MInputChipsMaxWidth(width : Transform<double>);
 		MCustomChipStyle(style : [MChipStyle]);
 		MCustomAutoCompleteStyle(style : [MAutoCompleteStyle]);
 		MInputChipsMultiline();
-		MInputChipsInputTrigger(trigget : DynamicBehaviour<bool>);
+		MInputChipsText(text : DynamicBehaviour<string>, track : bool);
+		MInputChipsUniq();
 }
 
 MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material {
@@ -26,8 +27,9 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	acStyle = extractStruct(style, MCustomAutoCompleteStyle([])).style;
 	multiline = contains(style, MInputChipsMultiline());
 	animationEnabled = extractStruct(style, MAnimationEnabled(true));
-	chipsToRight = extractStruct(style, MInputChipsToRight(false)).left;
-	trigget = extractStruct(style, MInputChipsInputTrigger(make(true))).trigget;
+	chipsToRight = contains(style, MInputChipsAlignRight());
+	inputText = extractStruct(style, MInputChipsText(make(""), false));
+	uniqChips = contains(style, MInputChipsUniq());
 
 	text = make("");
 	focused = make(false);
@@ -57,9 +59,10 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	autoComplete =
 		MGetManager(\manager -> {
 			defFn = defaultCompletionFn(manager, manager.focus, []).fn;
-			MSelect2(items, selectedItems, \itms, selecItms ->
-				MAutoComplete(text, filter(itms,\i -> !contains(selecItms, i)), concatA([
+			MSelect(items, \itms, ->
+				MAutoComplete(text, itms, concatA([
 					[
+						MDictionaryDynamic(fselect2(items, selectedItems, FLift2(\it, s -> filter(it, \i-> !contains(s, i))))),
 						MTextInputOutOfPopup(),
 						MCompletionFn(\match, selected, setWord -> defFn(match, selected, \word -> {
 							setWord(word);
@@ -113,8 +116,8 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	chipsGrid =
 		if (multiline) {
 			MFlexibleGrid(
-				if(chipsToRight) fconcat(fconcat(farray(const(MAvailable(autoComplete, MFillWY(240.)))), farray(make(button))), fmap(selectedItems, materialize))
-				else fconcat(fmap(selectedItems, materialize), fconcat(farray(const(autoComplete)), farray(make(button)))),
+				if(chipsToRight) fconcat(fconcat(farray(const(MAvailable(autoComplete, MFillWY(240.)))), farray(const(button))), fmap(selectedItems, materialize))
+				else fconcat(fmap(selectedItems, materialize), fconcat(farray(const(autoComplete)), farray(const(button)))),
 				[TFillersSupport(), MBaselineAlign(), animationEnabled]
 			)
 			|> (\m -> MBaseline(acBaseline, m))
@@ -137,18 +140,20 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 				TScrollAxisEnabled(const(true), const(false))
 			]);
 	
-	MBaselineCols([caption, chips])
+	MBaselineCols2(caption, chips)
 	|> (\m -> MAttachWidth(m, leftWidth))
 	|> (\m -> if (multiline) MAttachWidth(m, fullWidth) else MBaselineCols2(m, autoComplete))
 	|> (\m -> MAttachAvailableWidth(m, avWidth))
 	|> (\m -> eitherMap(maxWidth, \mw -> MAvailable(m, TFillWYT(mw.width)), m))
 	|> (\m -> MFrame(0., 0., [MFill(MWhite())], m))
 	|> (\m -> MConstruct(
-		[
-			makeSubscribe(selectedItems, \i -> nextDistinct(selectedItems, uniq(i))),
-			makeSubscribe(text, \t -> nextDistinct(trigget, (t == ""))),
-			makeSubscribe2(items, \itms -> nextDistinct(selectedItems, filter(getValue(selectedItems), \it -> contains(itms, it))))
-		],
+		ifArrayPushMany(
+			[makeSubscribe2(items, \itms -> nextDistinct(selectedItems, filter(getValue(selectedItems), \it -> contains(itms, it))))],
+			[
+				Pair(uniqChips, makeSubscribe(selectedItems, \i -> deferred(\-> nextDistinct(selectedItems, uniq(i))))),
+				Pair(inputText.track, makeSubscribe(text, \t -> nextDistinct(inputText.text, t))),
+			]
+		),
 		m))
 	|> (\m -> if (multiline) MPositionScale(icPosScale, m) else m)
 }
