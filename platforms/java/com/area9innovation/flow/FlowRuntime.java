@@ -3,6 +3,9 @@ package com.area9innovation.flow;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
 
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
@@ -200,8 +203,12 @@ public abstract class FlowRuntime {
 	}
 
 	public static String doubleToString(double value) {
-		String rstr = Double.toString(value);
-		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
+		DecimalFormat df = new DecimalFormat("0");
+		df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
+		df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
+
+		String rstr = df.format(value);
+		return rstr;
 	}
 
 	public static final Struct makeStructValue(String name, Object[] fields, Struct default_value) {

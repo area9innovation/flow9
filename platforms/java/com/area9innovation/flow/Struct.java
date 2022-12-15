@@ -29,10 +29,7 @@ public abstract class Struct implements Comparable<Struct>, Cloneable {
 			if (i > 0)
 				buf.append(", ");
 
-			if (types[i] == RuntimeType.DOUBLE && values[i] instanceof Number)
-				buf.append(((Number)values[i]).doubleValue());
-			else
-				FlowRuntime.toStringAppend(values[i], buf);
+			FlowRuntime.toStringAppend(values[i], buf);
 		}
 
 		buf.append(')');
