@@ -60,8 +60,12 @@ struct Ptr {
 	template<typename T1>
 	static Ptr<T> make(std::initializer_list<T1> il) { return new T(std::move(il)); }
 
-	inline void inc() const { ptr->incRefs(); }
-	inline void dec() const { if (ptr) ptr->decRefs(); }
+	inline void inc() const { 
+		//ptr->incRefs(); 
+	}
+	inline void dec() const { 
+		//if (ptr) ptr->decRefs(); 
+	}
 
 	const T* ptr;
 };
@@ -153,7 +157,7 @@ template<typename R, typename... As> using Fun = Ptr<Function<R, As...>>;
 
 struct AFlow {
 	enum { TYPE = Type::UNKNOWN };
-	AFlow(): refs(0) { }
+	AFlow(): refs(1) { }
 	AFlow(const AFlow& f) = delete;
 	virtual ~AFlow() { }
 	virtual Int type() const = 0;
@@ -192,7 +196,7 @@ struct AFlow {
 	}
 	inline void decRefs() const { 
 		if (-- refs == 0) {
-			delete this; 
+			//delete this; 
 		}
 	}
 
@@ -381,6 +385,11 @@ template<> struct Compare<void*> { static Int cmp(void* v1, void* v2) { return (
 template<> struct Compare<const void*> { static Int cmp(const void* v1, const void* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
 template<> struct Compare<String> { static Int cmp(String v1, String v2) { return v1->str.compare(v2->str); } };
 template<> struct Compare<Native> { static Int cmp(Native v1, Native v2) { return Compare<void*>::cmp(v1->nat, v2->nat); } };
+
+template<typename T> struct RefCount { static void inc(T x) { x->incRefs(); } static void dec(T x) { x->decRefs(); } };
+template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } };
+template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } };
+template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } };
 
 const uint32_t FNV_offset_basis = 0x811C9DC5;
 const uint32_t FNV_prime = 16777619;
