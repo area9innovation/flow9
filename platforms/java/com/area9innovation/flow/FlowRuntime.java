@@ -11,7 +11,17 @@ public abstract class FlowRuntime {
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
 	public static String[] program_args;
 	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
-	private static DecimalFormat decimalFormat = getDecimalFormat();
+
+	private static final ThreadLocal<DecimalFormat> decimalFormat = new ThreadLocal<DecimalFormat>(){
+        @Override
+        protected DecimalFormat initialValue()
+        {
+			DecimalFormat df = new DecimalFormat("0.0");
+			df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
+			df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
+			return df;
+        }
+    };
 
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
@@ -137,14 +147,6 @@ public abstract class FlowRuntime {
 		return Integer.valueOf(o1.hashCode()).compareTo(o2.hashCode());
 	}
 
-	private static DecimalFormat getDecimalFormat() {
-		DecimalFormat df = new DecimalFormat("0.0");
-		df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
-		df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
-
-		return df;
-	}
-
 	public static String toString(Object value) {
 		if (value == null) {
 			return "{}";
@@ -212,7 +214,7 @@ public abstract class FlowRuntime {
 	}
 
 	private static String doubleToStringInternal(double value) {
-		return decimalFormat.format(value);
+		return decimalFormat.get().format(value);
 	}
 
 	public static String doubleToString(double value) {
