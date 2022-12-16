@@ -11,6 +11,7 @@ public abstract class FlowRuntime {
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
 	public static String[] program_args;
 	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
+	private static DecimalFormat decimalFormat = getDecimalFormat();
 
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
@@ -136,13 +137,21 @@ public abstract class FlowRuntime {
 		return Integer.valueOf(o1.hashCode()).compareTo(o2.hashCode());
 	}
 
+	private static DecimalFormat getDecimalFormat() {
+		DecimalFormat df = new DecimalFormat("0.0");
+		df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
+		df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
+
+		return df;
+	}
+
 	public static String toString(Object value) {
 		if (value == null) {
 			return "{}";
 		} else if (value instanceof Function) {
 			return "<function " + value + ">";
 		} else if (value instanceof Double) {
-			return doubleToString((Double)value);
+			return doubleToStringInternal((Double)value);
 		}
 
 		StringBuilder buf = new StringBuilder();
@@ -194,7 +203,7 @@ public abstract class FlowRuntime {
 		} else if (value instanceof Function) {
 			buf.append("<function " + value + ">");
 		} else if (value instanceof Double) {
-			buf.append(doubleToString((Double)value));
+			buf.append(doubleToStringInternal((Double)value));
 		} else if (value instanceof Struct) {
 			((Struct)value).toStringAppend(buf);
 		} else {
@@ -202,13 +211,13 @@ public abstract class FlowRuntime {
 		}
 	}
 
-	public static String doubleToString(double value) {
-		DecimalFormat df = new DecimalFormat("0");
-		df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
-		df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
+	private static String doubleToStringInternal(double value) {
+		return decimalFormat.format(value);
+	}
 
-		String rstr = df.format(value);
-		return rstr;
+	public static String doubleToString(double value) {
+		String rstr = doubleToStringInternal(value);
+		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
 	}
 
 	public static final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
