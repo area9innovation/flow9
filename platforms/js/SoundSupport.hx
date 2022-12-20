@@ -90,7 +90,11 @@ class SoundSupport {
 				audio.src = url;
 
 				var remove_listeners : Dynamic = null;
-				var oncanplay = function() { Errors.print(url + " loaded"); onComplete(); remove_listeners(); };
+				var oncanplay = function() {
+					if (Util.getParameter("devtrace") == "1") Errors.print(url + " loaded");
+					onComplete();
+					remove_listeners();
+				};
 				var onerror = function() { Errors.print("Cannot load: " + url); onFail("" + audio.error); remove_listeners(); };
 				remove_listeners = function() { audio.removeEventListener("canplay", oncanplay); audio.removeEventListener("error", onerror); };
 
@@ -176,7 +180,11 @@ class SoundSupport {
 			var url : String = audio.currentSrc;
 
 			var remove_listeners : Dynamic = null;
-			var onended = function() { Errors.print(url + " ended"); onDone(); remove_listeners(); };
+			var onended = function() {
+				if (Util.getParameter("devtrace") == "1") Errors.print(url + " ended");
+				onDone();
+				remove_listeners();
+			};
 			var onerror = function() { Errors.print("Cannot play: " + url); onDone(); remove_listeners(); };
 			remove_listeners = function() { audio.removeEventListener("ended", onended); audio.removeEventListener("error", onerror); };
 
