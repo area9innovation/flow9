@@ -30,11 +30,17 @@ export class FlowNotebookSerializer implements vscode.NotebookSerializer {
 			raw = { cells: [] };
 		}
 		// Create array of Notebook cells for the VS Code API from file contents
-		const cells = raw.cells.map(item => new vscode.NotebookCellData(
-			item.kind,
-			item.value,
-			item.language
-		));
+		const cells = raw.cells.map(item => {
+			let value : any = item.value
+			if (Array.isArray(value)) {
+				value = value.join("\n")
+			}
+			return new vscode.NotebookCellData(
+				item.kind,
+				value,
+				item.language
+			)
+		});
 		// Pass read and formatted Notebook Data to VS Code to display Notebook with saved cells
 		return new vscode.NotebookData(cells);
 	}
@@ -43,15 +49,19 @@ export class FlowNotebookSerializer implements vscode.NotebookSerializer {
 		let contents: RawNotebookData = { cells: []};
 
 		for (const cell of data.cells) {
+			let value : any = cell.value
+			if (value.includes("\n")) {
+				value = value.split("\n")
+			}
 			contents.cells.push({
 				kind: cell.kind,
 				language: cell.languageId,
-				value: cell.value
+				value: value
 			});
 		}
 
 		// Give a string of all the data to save and VS Code will handle the rest
-		return new TextEncoder().encode(JSON.stringify(contents));
+		return new TextEncoder().encode(JSON.stringify(contents, null, 4));
 	}
 }
 
