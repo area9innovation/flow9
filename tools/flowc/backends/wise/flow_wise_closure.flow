@@ -195,12 +195,25 @@ addClosureToFnTypes(
 			default: acc;
 		});
 
+		fixFiFunArgs = \args -> map(args, \arg -> FiFunArg(arg.name, setClosureFnArgType(arg.type)));
+
 		FiFunctionDec(
 			func.name,
 			FiLambda(
-				if (fixedFn) func.lambda.args else addClosureToFiFunArgs(func.lambda.args),
+				if (fixedFn) {
+					fixFiFunArgs(func.lambda.args);
+				} else {
+					addClosureToFiFunArgs(func.lambda.args);
+				},
 				addClosureToFnTypesInFiExp(func.name, closures, func.lambda.body, fnNames, structs, tmpVarCounter, fnArgs),
-				if (fixedFn) func.lambda.type else addClosureToFiTypeFunction(func.lambda.type),
+				if (fixedFn) {
+					FiTypeFunction(
+						fixFiFunArgs(func.lambda.type.args),
+						setClosureFnArgType(func.lambda.type.returnType)
+					)
+				} else {
+					addClosureToFiTypeFunction(func.lambda.type);
+				},
 				func.lambda.start
 			),
 			if (fixedFn) func.type else addClosureToFiTypeFunction(func.type),
@@ -219,7 +232,7 @@ addClosureToFiTypeFunction(type : FiTypeFunction) -> FiTypeFunction {
 
 addClosureToFiFunArgs(args : [FiFunArg]) -> [FiFunArg] {
 	arrayPush(
-		map(args, \arg -> FiFunArg(arg.name, setClosureFnArgType(arg.type))),
+		mapi(args, \i, arg -> FiFunArg(if (arg.name == "") makeTmpStructFieldName(i) else arg.name, setClosureFnArgType(arg.type))),
 		FiFunArg(makeClosureVarName(), FiTypeInt())
 	);
 }
@@ -441,18 +454,21 @@ makeTmpStructName(i : int) -> string {
 	"_TMPSTRUCT_" + i2s(i);
 }
 
+makeTmpStructFieldName(i : int) -> string {
+	"field" + i2s(i);
+}
+
 makeNewFiStruct(structs : WiseAstStructs, structTypes : [FiType]) -> Pair<WiseAstStructs, string> {
 	tmpStructId = ^(structs.nextId);
 	structs.nextId := tmpStructId + 1;
 	tmpStructName = makeTmpStructName(tmpStructId);
-	makeFieldName = \i -> "field" + i2s(i);
 	newStructs = pushNewStructToState(
 		structs,
 		tmpStructName,
 		tmpStructId,
 		StructTupleArgs(
 			[], // typeParameters : [FiType] TODO
-			foldi(structTypes, makeTree(), \i, acc, t -> setTree(acc, makeFieldName(i), StructTupleArg(i, t)))
+			foldi(structTypes, makeTree(), \i, acc, t -> setTree(acc, makeTmpStructFieldName(i), StructTupleArg(i, t)))
 		)
 	);
 	Pair(newStructs, tmpStructName);
@@ -462,11 +478,10 @@ makeNewFiStruct(structs : WiseAstStructs, structTypes : [FiType]) -> Pair<WiseAs
 makeCallFiTypeFunctionFnArg(structs : WiseAstStructs, e : FiCall, tmpVarCounter : ref int, localVars : Tree<string, FiType>,) -> Pair<FiExp, WiseAstStructs> {
 	tmpStructTypes = [extractFiTypeFromFiExp(e.f), FiTypeInt()];
 	newStruct = makeNewFiStruct(structs, tmpStructTypes);
-	makeFieldName = \i -> "field" + i2s(i);
 	structType = FiTypeName(newStruct.second, tmpStructTypes); // typars ?
 
 	makeTupledot = \i, varExp -> FiCallPrim(
-		FcFieldPrim(makeFieldName(i)),
+		FcFieldPrim(makeTmpStructFieldName(i)),
 		[varExp],
 		structType,
 		0
@@ -479,21 +494,33 @@ makeCallFiTypeFunctionFnArg(structs : WiseAstStructs, e : FiCall, tmpVarCounter 
 		0
 	);
 
+	createTmpStructType = \-> {
+		ind = ^tmpVarCounter;
+		tmpVarCounter := ind + 1;
+		tmpVarName = "tmp" + i2s(ind);
+		FiLet(
+			tmpVarName,
+			structType,
+			e.f,
+			makeCallExp(FiVar(tmpVarName, structType, 0)),
+			e.type,
+			0
+		);
+	}
+
 	newExp = switch (e.f : FiExp) {
-		FiVar(name, __, start): makeCallExp(eitherMap(lookupTree(localVars, name), \type -> FiVar(name, type, start), e.f));
-		default : {
-			ind = ^tmpVarCounter;
-			tmpVarCounter := ind + 1;
-			tmpVarName = "tmp" + i2s(ind);
-			FiLet(
-				tmpVarName,
-				structType,
-				e.f,
-				makeCallExp(FiVar(tmpVarName, structType, 0)),
-				e.type,
-				0
+		FiVar(name, t, start): {
+			eitherFn(
+				lookupTree(localVars, name),
+				\type -> makeCallExp(FiVar(name, type, start)),
+				\-> switch (t : FiType) {
+					FiTypeFunction(__, __) : {r=createTmpStructType();
+					r;}
+					default : makeCallExp(e.f);
+				}
 			);
 		}
+		default : createTmpStructType();
 	}
 
 	Pair(newExp, newStruct.first);
