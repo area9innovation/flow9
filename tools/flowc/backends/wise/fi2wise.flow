@@ -19,9 +19,15 @@ export {
 
 fi2wise(program : FiProgram, cfg : FiWiseConfig, callback : (int) -> void) -> void {
 	state = makeFiWiseState();
-	state.fnNames := collectFnNames(program);
+	modules = getTreeValues(program.modules);
+	state.fnNames := collectFnNames(modules);
+	structNames = collectStructNames(modules);
 
 	newProgram = liftWiseClosures(program, ^(state.fnNames), state.structs, state.tmpVarCounter);
+	state.closures := FiWiseClosures(
+		differenceSets(collectFnNames(newProgram), ^(state.fnNames)),
+		differenceSets(collectStructNames(newProgram), structNames)
+	);
 
 	iter(newProgram, \module : FiModule -> {
 		writeWise2file(state, cfg.outputfolder, cfg.includes, module);
@@ -44,6 +50,7 @@ FiWiseState(
 	compareFnTypes : ref Set<FlowWiType>,
 	structs : ref WiseAstStructs,
 	fnNames : ref Set<string>,
+	closures : ref FiWiseClosures,
 	getStructFields : (string) -> Maybe<Pair<[FiType], [FiType]>>, // typars, args
 );
 
@@ -55,9 +62,15 @@ makeFiWiseState() -> FiWiseState {
 		ref makeSet(),
 		ref makeWiseAstStructs(),
 		ref makeSet(),
+		ref FiWiseClosures(makeSet(), makeSet()),
 		\__ -> None(),
 	);
 }
+
+FiWiseClosures(
+	fns : Set<string>,
+	structs : Set<string>,
+);
 
 incTmpVarCounter(state : FiWiseState) -> int {
 	tmpVarIndex = ^(state.tmpVarCounter);
@@ -300,12 +313,13 @@ fiVar2FlowWiExp(state : FiWiseState, exp : FiVar, scopeTemplates : Tree<string, 
 		maybeMap(
 			lookupTree(^(state.polyFns), fnName),
 			unpairC(\fnTypes, templates -> {
-				declRealTypes = matchFnTypes(fnTypes, fnArgTypes, fnRetType, scopeTemplates);
+				declRealTypes = matchFnTypes(^(state.closures), fnTypes, fnArgTypes, fnRetType, scopeTemplates);
 				map(getTreeKeys(templates), \t -> {
 					realType = eitherFn(
 						lookupTree(declRealTypes, t),
 						unpairC(\argIndexes, rt -> {
-							if (isSameStructType(rt, FiTypeParameter(t))) {
+							if (isSameStructType(rt, FiTypeParameter(t)) && !containsSet(^(state.closures).fns, fnName)) {
+								// it is a structure
 								ignoreTemplateParam(argIndexes, fnName, t);
 							} else {
 								rt;
@@ -333,35 +347,36 @@ fiVar2FlowWiExp(state : FiWiseState, exp : FiVar, scopeTemplates : Tree<string, 
 }
 
 // result is <typeParam - <argIndex,type>>
-matchFnTypes(declaredTypes : FiTypeFunction, argTypes : [FiType], returnType : FiType, scopeTemplates : Tree<string, FiTypeParameter>) -> Tree<string, Pair<[int], FiType>> {
+matchFnTypes(closures : FiWiseClosures, declaredTypes : FiTypeFunction, argTypes : [FiType], returnType : FiType, scopeTemplates : Tree<string, FiTypeParameter>) -> Tree<string, Pair<[int], FiType>> {
 	if (length(declaredTypes.args) != length(argTypes)) {
 		println("can't match fn types");
 		makeTree();
 	} else {
 		matchFnType(
+			closures,
 			declaredTypes.returnType,
 			returnType,
 			scopeTemplates,
 			-1,
-			foldi(declaredTypes.args, makeTree(), \i, acc, arg -> matchFnType(arg.type, argTypes[i], scopeTemplates, i, acc))
+			foldi(declaredTypes.args, makeTree(), \i, acc, arg -> matchFnType(closures, arg.type, argTypes[i], scopeTemplates, i, acc))
 		);
 	}
 }
 
-matchFnType(declaredType : FiType, realType : FiType, scopeTemplates : Tree<string, FiTypeParameter>, argIndex : int, acc : Tree<string, Pair<[int], FiType>>) -> Tree<string, Pair<[int], FiType>> {
+matchFnType(closures : FiWiseClosures, declaredType : FiType, realType : FiType, scopeTemplates : Tree<string, FiTypeParameter>, argIndex : int, acc : Tree<string, Pair<[int], FiType>>) -> Tree<string, Pair<[int], FiType>> {
 	onError = \ -> {
 		println("wrong types : declared '" + toString(declaredType) + "', used '" + toString(realType) + "'");
 		acc;
 	}
 	switch (declaredType : FiType) {
 		FiTypeArray(t1) : switch (realType : FiType) {
-			FiTypeArray(t2): matchFnType(t1, t2, scopeTemplates, argIndex, acc);
+			FiTypeArray(t2): matchFnType(closures, t1, t2, scopeTemplates, argIndex, acc);
 			default : onError();
 		}
 		FiTypeFunction(args1, rt1) : switch (realType : FiType) {
 			FiTypeFunction(args2, rt2): if (length(args1) == length(args2)) {
-				foldi(args1, matchFnType(rt1, rt2, scopeTemplates, argIndex, acc), \i, acc2, a1 -> 
-					matchFnType(a1.type, args2[i].type, scopeTemplates, argIndex, acc2)
+				foldi(args1, matchFnType(closures, rt1, rt2, scopeTemplates, argIndex, acc), \i, acc2, a1 -> 
+					matchFnType(closures, a1.type, args2[i].type, scopeTemplates, argIndex, acc2)
 				);
 			} else {
 				onError();
@@ -369,7 +384,7 @@ matchFnType(declaredType : FiType, realType : FiType, scopeTemplates : Tree<stri
 			default : onError();
 		}
 		FiTypeRef(t1) : switch (realType : FiType) {
-			FiTypeRef(t2): matchFnType(t1, t2, scopeTemplates, argIndex, acc);
+			FiTypeRef(t2): matchFnType(closures, t1, t2, scopeTemplates, argIndex, acc);
 			default : onError();
 		}
 		FiTypeParameter(n) : {
@@ -396,13 +411,23 @@ matchFnType(declaredType : FiType, realType : FiType, scopeTemplates : Tree<stri
 		FiTypeFlow() : acc;
 		FiTypeVoid() :  acc;
 		FiTypeNative() : acc;
-		FiTypeName(__, at1) : switch (realType : FiType) {
-			FiTypeName(__, at2): if (length(at1) == length(at2)) {
-				foldi(at1, acc, \i, acc2, t1 -> matchFnType(t1, at2[i], scopeTemplates, argIndex, acc2));
+		FiTypeName(name, at1) : {
+			defCheck = \-> switch (realType : FiType) {
+					FiTypeName(__, at2): if (length(at1) == length(at2)) {
+						foldi(at1, acc, \i, acc2, t1 -> matchFnType(closures, t1, at2[i], scopeTemplates, argIndex, acc2));
+					} else {
+						onError();
+					}
+					default : onError();
+				}
+			if (containsSet(closures.structs, name)) {
+				switch (realType : FiType) {
+					FiTypeInt() : matchFnType(closures, declaredType, declaredType, scopeTemplates, argIndex, acc);
+					default : defCheck();
+				}
 			} else {
-				onError();
+				defCheck();
 			}
-			default : onError();
 		}
 	}
 }
@@ -1108,9 +1133,15 @@ initMemory(fnName : string, structs : WiseAstStructs) -> string {
 	}
 }
 
-collectFnNames(program : FiProgram) -> Set<string> {
-	foldTree(program.modules, makeSet(), \__, module, acc -> {
+collectFnNames(modules : [FiModule]) -> Set<string> {
+	fold(modules, makeSet(), \acc, module -> {
 		newAcc = fold(module.functions, acc, \acc2, f : FiFunctionDec -> insertSet(acc2, f.name));
 		fold(module.natives, newAcc, \acc2, f : FiFunctionDec -> insertSet(acc2, f.name));
+	});
+}
+
+collectStructNames(modules : [FiModule]) -> Set<string> {
+	fold(modules, makeSet(), \acc, module -> {
+		fold(module.structs, acc, \acc2, f : FiTypeStruct -> insertSet(acc2, f.name));
 	});
 }
