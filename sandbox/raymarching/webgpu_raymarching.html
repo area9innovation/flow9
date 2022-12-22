@@ -1,0 +1,174 @@
+<html>
+	<head>
+		<script id="vert" type="text/plain">
+			@vertex
+			fn main(
+				@builtin(vertex_index) VertexIndex : u32
+			) -> @builtin(position) vec4<f32> {
+				var pos = array<vec2<f32>, 4>(
+					vec2(-1.0, -1.0),
+					vec2(-1.0, 1.0),
+					vec2(1.0, -1.0),
+					vec2(1.0, 1.0)
+				);
+
+				return vec4<f32>(pos[VertexIndex], 0.0, 1.0);
+			}
+		</script>
+		<script id="frag" type="text/plain">
+			fn GetDist(p : vec3<f32>) -> f32{
+				var minSphereDist = 1000.;
+			
+				minSphereDist = length(p - vec3(0, 1, 1)) - 1;
+			
+				let planeDist = p.y;
+				let d = min(minSphereDist, planeDist);
+				return d;
+			}
+			
+			fn RayMarch(ro : vec3<f32>, rd : vec3<f32>) -> f32 {
+				var dO = 0.;
+				for (var i : i32 =0; i< 1000; i++){
+					let p = ro +rd*dO;
+					let ds = GetDist(p);
+					dO += ds;
+					if (dO>1000. || ds<0.001) {break;}
+				}
+				return dO; 
+			}
+
+			fn GetNormal(p : vec3<f32>) -> vec3<f32>{
+				let d = GetDist(p);
+				let e = vec2(.01,0.);
+				let n = d - vec3(
+					GetDist(p - e.xyy),
+					GetDist(p - e.yxy),
+					GetDist(p - e.yyx)
+				);
+				return normalize(n);
+			}
+			
+			fn GetLight(p : vec3<f32>) -> f32 {
+				let lightPos = vec3<f32>(0, 5, 6);
+				let l = normalize (lightPos-p);
+				let n = GetNormal(p);
+				var dif = clamp(dot(n,l),0.,1.);
+				let d = RayMarch(p+n*0.001*2.,l);
+				if (d<length(lightPos-p)) {dif *= .1;}
+				return dif;
+			}
+			
+
+			@fragment
+			fn main(
+				@builtin(position) coord: vec4<f32>,
+			) -> @location(0) vec4<f32> {
+
+				//let cameraPosition = vec3(6, 8, 12);
+				//let cameraDirection = vec3(0, 1, 6);
+				var view = mat4x4(
+					-0.707, 0., 0.707, 0.,
+					-0.45, 0.771, -0.45, 0.,
+					-0.545, -0.636, -0.545, 0.,
+					0., 0., 0., 1.
+				);
+
+				let screenSize = vec2<f32>(800, 600);
+				let uv = (coord.xy - 0.5 * screenSize.xy)/screenSize.y;
+				var rayDirection = normalize(vec3 (uv.x, uv.y, 1));
+				rayDirection = (view*vec4(rayDirection, 1)).xyz;
+				let rayOrigin = vec3(6., 8., 12.);
+
+				let d = RayMarch(rayOrigin, rayDirection);
+				let p = rayOrigin + rayDirection * d;
+				let dif = GetLight(p);
+
+				let color = vec3(dif);
+
+				return vec4<f32>(color, 1.0);
+			}
+		</script>
+		<script>
+			var device;
+			var context;
+			const initFn = async function() {
+				if (!navigator.gpu) throw Error("WebGPU not supported.");
+
+				const adapter = await navigator.gpu.requestAdapter();
+				if (!adapter) throw Error("Couldn’t request WebGPU adapter.");
+				
+				device = await adapter.requestDevice();
+				if (!device) throw Error("Couldn’t request WebGPU logical device.");
+
+				let canvas = document.getElementById('rc');
+				context = canvas.getContext('webgpu');
+
+				const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+				context.configure({
+					device,
+					format: presentationFormat,
+					alphaMode: 'opaque',
+				});
+				let vertShaderCode = document.getElementById("vert").text;
+				let fragShaderCode = document.getElementById("frag").text;
+
+				const pipeline = device.createRenderPipeline({
+					layout: 'auto',
+					vertex: {
+					module: device.createShaderModule({
+						code: vertShaderCode,
+					}),
+					entryPoint: 'main',
+					},
+					fragment: {
+					module: device.createShaderModule({
+						code: fragShaderCode,
+					}),
+					entryPoint: 'main',
+					targets: [
+						{
+						format: presentationFormat,
+						},
+					],
+					},
+					primitive: {
+					topology: 'triangle-strip',
+					},
+				});
+
+				function frame() {
+
+					const commandEncoder = device.createCommandEncoder();
+					const textureView = context.getCurrentTexture().createView();
+
+					const renderPassDescriptor = {
+						colorAttachments: [
+							{
+								view: textureView,
+								clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+								loadOp: 'clear',
+								storeOp: 'store',
+							},
+						],
+					};
+
+					const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+					passEncoder.setPipeline(pipeline);
+					passEncoder.draw(4, 1, 0, 0);
+					passEncoder.end();
+
+					device.queue.submit([commandEncoder.finish()]);
+					requestAnimationFrame(frame);
+				}
+
+				requestAnimationFrame(frame);
+				};
+			
+			initFn();
+
+		</script>
+	</head>
+	<body>
+		<canvas id="rc" width="800" height="600"></canvas>
+	</body>
+</html>

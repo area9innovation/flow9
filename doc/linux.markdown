@@ -264,6 +264,13 @@ Download and setup QT 5.12.0 (or later):
 wget https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
 chmod +x qt-opensource-linux-x64-5.12.0.run
 ```
+
+If you are using Ubuntu, then you can also install QT via apt. This means you can install it without a UI, and without an QT account. It is done via: 
+```bash
+sudo apt update
+sudo apt install qt5-default qtmultimedia5-dev qtwebengine5-dev libqt5websockets5-dev
+```
+
 **Install into `/opt/Qt/5.12.0` and be sure to select all items to install!**
 You might want to install into a different folder but it's important to create
 a symlink to the folder mentioned above and build with libraries statically
