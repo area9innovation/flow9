@@ -73,13 +73,51 @@ checkPerceusInvariants(e: FmExp, ctx: PerceusContext) -> void {
 	});
 }
 
+//FmInfo(free: Set<string>, type: FiType, start: int);
+
+fmPerceusMakeDrops(vars: [string], ctx: PerceusContext) -> [FmExp] {
+	filtermap(vars, \n ->
+		switch (lookupTree(ctx.locals, n)) {
+			Some(w): 
+				if (fiTypeIsScalar(fmExpInfo(w).type)) None()
+				else Some(FmMemory(FmDrop(), w, FmInfo(makeSet(), FiTypeVoid(), w.info.start)));
+			None(): fail0("linear variable: " + n + " is not found");
+		}
+	);
+}
+
+fmPerceusToDrop(e: FmExp, ctx: PerceusContext) -> [FmExp] {
+	info = fmExpInfo(e);
+	vars_to_drop = multiSet2array(diffMultiSets(ctx.linear, set2multiSet(info.free)));
+	fmPerceusMakeDrops(vars_to_drop, ctx);
+}
+
 fmDoPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 	checkPerceusInvariants(ex, ctx);
 	switch (ex) {
 		FmSeq(es, info): {
 			if (length(es) == 0) FmSeq([], info) else
-			if (length(es) == 1) fmDoPerceus(es[0], ctx) else {
-				FmSeq(fmDoPerceusExps(es, ctx).first, info);
+			if (length(es) == 1) {
+				fmWrapExp(concat(
+					fmPerceusToDrop(es[0], ctx),
+					[fmDoPerceus(es[0], ctx)]
+				));
+			} else {
+				infos = map(es, fmExpInfo);
+				all_frees_upto = mapi(es, \i, __ -> 
+					foldi(infos, makeSet(), \j, acc, inf ->
+						if (j < i) acc else mergeSets(acc, inf.free)
+					)
+				);
+				to_free = mapi(all_frees_upto, \i, vars -> 
+					set2array(if (i + 1 == length(all_frees_upto)) all_frees_upto[i] else
+					differenceSets(all_frees_upto[i], all_frees_upto[i + 1]))
+				);
+				es_p = fmDoPerceusExps(es, ctx);
+				FmSeq(concatA(mapi(es_p.first, \i, x -> 
+						concat(fmPerceusMakeDrops(to_free[i], ctx), [x])
+					)), info
+				);
 			}
 		}
 		FmCall(f, args, info): {
@@ -87,18 +125,25 @@ fmDoPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 			FmCall(fmDoPerceus(f, pargs.second), pargs.first, info);
 		}
 		FmSwitch(v, vtype, cases, info): {
-			if (!containsKeyTree(ctx.linear.tree, v.name)) {
-				println("Linear context doesn't contain a switch variable: " + v.name);
-			}
+			/*if (!containsKeyTree(ctx.linear.tree, v.name)) {
+				println(
+					"Linear context doesn't contain a switch variable: " + v.name + ",\n" +
+					"linear: [" + strGlue(getTreeKeys(ctx.linear.tree), ", ") + "]\n" + 
+					"borrowed: [" + strGlue(getTreeKeys(ctx.borrowed.tree), ", ") + "]\n" +
+					"locals: [" + strGlue(getTreeKeys(ctx.locals), ", ") + "]\n" +
+					"in expression: \n" + fmExp2s(^perceus_debug_exp) + "\n"
+				);
+				fail("AAA");
+			}*/
 			sw = FmSwitch(v, vtype,
 				map(cases, \c -> {
 					//linear0 = ctx.linear;
 					c_freevars = set2multiSet(fmExpInfo(c.body).free);
 					//linear1 = linear0;
 					linear2 = intersectMultiSets(ctx.linear, c_freevars);
-					linear3 = diffMultiSets(ctx.linear, c_freevars);
-					c_body = fmDoPerceus(c.body, PerceusContext(ctx with linear = linear2));
-					c_locals = fold(c.args, ctx.locals, \acc, w -> setTree(acc, w.name, w));
+					//linear3 = diffMultiSets(ctx.linear, c_freevars);
+					//c_body = ;
+					//c_locals = fold(c.args, ctx.locals, \acc, w -> setTree(acc, w.name, w));
 					/*if (^perceus_debug_flag) {
 						println("AAA:\n"
 							"c.body: " + fmExp2s(c.body) + "\n" +
@@ -112,15 +157,8 @@ fmDoPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 					}*/
 					FmCase(c.struct, c.args, 
 						fmWrapExp(concat(
-							foldMultiSet(linear3, [], \acc, n, __ ->
-								switch (lookupTree(c_locals, n)) {
-									Some(w): 
-										if (fiTypeIsScalar(fmExpInfo(w).type)) acc
-										else concat(acc, [FmMemory(FmDrop(), w, info)]);
-									None(): fail0("linear variable: " + n + " is not found");
-								}
-							),
-							[c_body]
+							fmPerceusToDrop(c.body, ctx),
+							[fmDoPerceus(c.body, PerceusContext(ctx with linear = linear2))]
 						)),
 						c.start
 					);
@@ -191,11 +229,17 @@ fmDoPerceus(ex: FmExp, ctx: PerceusContext) -> FmExp {
 		FmIf(e1, e2, e3, info): {
 			p1 = fmDoPerceusExp(e1, ctx);
 			FmIf(p1.first, 
-				fmDoPerceus(e2, PerceusContext(p1.second with 
-					linear = intersectMultiSets(p1.second.linear, set2multiSet(fmExpInfo(e2).free))
-				)), 
-				fmDoPerceus(e3, PerceusContext(p1.second with 
-					linear = intersectMultiSets(p1.second.linear, set2multiSet(fmExpInfo(e3).free))
+				fmWrapExp(concat(
+					fmPerceusToDrop(e2, p1.second),
+					[fmDoPerceus(e2, PerceusContext(p1.second with 
+						linear = intersectMultiSets(p1.second.linear, set2multiSet(fmExpInfo(e2).free))
+					))]
+				)),
+				fmWrapExp(concat(
+					fmPerceusToDrop(e3, p1.second),
+					[fmDoPerceus(e3, PerceusContext(p1.second with 
+						linear = intersectMultiSets(p1.second.linear, set2multiSet(fmExpInfo(e3).free))
+					))]
 				)), 
 				info
 			);

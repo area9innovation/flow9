@@ -135,17 +135,27 @@ fmExp2FsStat(e : FmExp, returns: FsReturnPolicy, env: FsEnv, fn: string) -> FsSt
 		}
 		FmLet(v, e1, e2, info): {
 			if (v.name == "__") {
-				fmExp2FsStat(e2, returns, env, fn);
+				e1_p = fmExp2FsExp(e1, env);
+				fsWrapSeq(concat3(
+					e1_p.second,
+					[FsWrapExp(e1_p.first, info.start)],
+					fsUnwrapSeq(fmExp2FsStat(e2, returns, env, fn))
+				));
 			} else {
 				let_var = FsVar(v.name, true, v.info.type, v.info.start);
 				let_env = FsEnv(env with
 					locals = setTree(env.locals, v.name, let_var)
 				);
-				fsWrapSeq(concat3(
+				e1_p = fmExp2FsExp(e1, let_env);
+				fsWrapSeq(concat(
+					e1_p.second,
+					[FsLet(let_var, e1_p.first, fmExp2FsStat(e2, returns, let_env, fn), info.type, info.start)]
+				));
+				/*fsWrapSeq(concat3(
 					[FsVarDecl(let_var, v.info.start)],
 					fsUnwrapSeq(fmExp2FsStat(e1, FsReturnToLocal(let_var), let_env, fn)),
 					fsUnwrapSeq(fmExp2FsStat(e2, returns, let_env, fn))
-				));
+				));*/
 			}
 		}
 		FmIf(e1, e2, e3, info): {
@@ -263,8 +273,8 @@ fmExp2FsExp(e : FmExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 					}
 				}
 			} else {
-				tmp_var = FsVar("__switch_" + v.name + (if (env.tmp == 0) "" else "_" + i2s(env.tmp)), true, info.type, v.info.start);
-				env.tmp ::= env.tmp + 1;
+				tmp_var = FsVar("sw_" + v.name + (if (^(env.tmp_sw) == 0) "" else i2s(^(env.tmp_sw))), true, info.type, v.info.start);
+				env.tmp_sw := ^(env.tmp_sw) + 1;
 				switch (vtype) {
 					FiTypeName(typename,__): {
 						switch_stat = if (containsKeyTree(env.names.unions, typename)) {
@@ -317,30 +327,26 @@ fmExp2FsExp(e : FmExp, env: FsEnv) -> Pair<FsExp, [FsStat]> {
 			), []);
 		}
 		FmLet(v, e1, e2, info): {
-			if (v.name == "__") {
-				do_exps(e2);
-			} else {
-				e1_pair = do_exps(e1);
-				let_var = FsVar(v.name, true, v.info.type, info.start);
-				let_env = FsEnv(env with
-					locals = setTree(env.locals, v.name, let_var)
-				);
-				e2_pair = fmExp2FsExp(e2, let_env);
-				Pair(
-					e2_pair.first,
-					concat(
-						e1_pair.second, 
-						[FsLet(let_var, e1_pair.first, fsWrapSeq(e2_pair.second), info.type, info.start)]
-					)
-				);
-			}
+			e1_pair = do_exps(e1);
+			let_var = FsVar(v.name, true, v.info.type, info.start);
+			let_env = FsEnv(env with
+				locals = setTree(env.locals, v.name, let_var)
+			);
+			e2_pair = fmExp2FsExp(e2, let_env);
+			Pair(
+				e2_pair.first,
+				concat(
+					e1_pair.second, 
+					[FsLet(let_var, e1_pair.first, fsWrapSeq(e2_pair.second), info.type, info.start)]
+				)
+			);
 		}
 		FmIf(e1, e2, e3, info): {
+			tmp_var = FsVar("if_" + (if (^(env.tmp_if) == 0) "" else i2s(^(env.tmp_if))), true, info.type, info.start);
+			env.tmp_if := ^(env.tmp_if) + 1;
 			e1_pair = do_exps(e1);
 			e2_pair = do_exps(e2);
 			e3_pair = do_exps(e3);
-			tmp_var = FsVar("__if_" + (if (env.tmp == 0) "" else "_" + i2s(env.tmp)), true, info.type, info.start);
-			env.tmp ::= env.tmp + 1;
 			Pair(
 				tmp_var,
 				concat(

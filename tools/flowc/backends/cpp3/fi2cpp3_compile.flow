@@ -3,6 +3,7 @@ import tools/flowc/statements/fs_utils;
 import tools/flowc/manipulation/eliminate_union_fields;
 import tools/flowc/memory/fi2fm;
 import tools/flowc/memory/perceus;
+import tools/flowc/memory/fm_utils;
 import tools/flowc/statements/fm2fs;
 
 export {
@@ -358,10 +359,10 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value = value2;
 
 	mem_1 = fiExp2fmExp(value, makeSet(), gctx.effects, true, names);
-	mem_2 = fmPerceus(mem_1, names);
-	//mem_2 = mem_1;
+	mem_2 = fmSsa(mem_1);
+	mem_3 = fmPerceus(mem_2, names);
 
-	pair0 = fmExp2FsExp(mem_2, FsEnv([], makeTree(), names, 0));
+	pair0 = fmExp2FsExp(mem_3, FsEnv([], makeTree(), names, ref 0, ref 0));
 	pair1 = Pair(
 		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
 		map(pair0.second, \s -> {
@@ -371,11 +372,11 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	);
 	pair2 = pair1;
 	pair3 = fold(pair2.second, Pair([], makeTree()), \acc, s -> {
-		p = fsStatSSA(s, acc.second);
+		p = Pair(s, acc.second); //fsStatSSA(s, acc.second);
 		stat = fsInterpolateTyparsStat(p.first, names);
 		Pair(concat(acc.first, [stat]), p.second);
 	});
-	value3 = fsExpSSA(pair2.first, pair3.second);
+	value3 = pair2.first; //fsExpSSA(pair2.first, pair3.second);
 	value4 = fsInterpolateTyparsExp(value3, names);
 	pair = Pair(value4, pair3.first);
 
@@ -413,19 +414,11 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	fun_args = fun.lambda.args;
 	headerOnly = cpp3InlineFunction(fun);
 	fun_name = gctx.varname2cpp(name);
-	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
-	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
 	
 	names = gctx.program.names;
 	lambda0 = fiEliminateUnionFields(fun.lambda, names, 0);
 	lambda1 = fiExplicitCastInSwitch(lambda0, names);
-	lambda3 = fiFixVarInSameStructType(
-		lambda1, 
-		fold(fn_type.args, makeTree(), \acc, arg -> 
-			setTree(acc, arg.name, FiVar(arg.name, arg.type, 0))
-		), 
-		names
-	);
+	lambda3 = fiFixVarInSameStructType(lambda1, makeTree(), names);
 	lambda4 = lambda3;
 	lambda5 = fiExpRenameRecurringVars(lambda4, makeSet());
 
@@ -433,12 +426,11 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	if (fiToplevelName(gctx.currentToplevel) == "either") {
 		perceus_debug_flag := true;
 	}
-	mem_2 = fmPerceus(mem_1, names);
-	perceus_debug_flag := false;
-	//mem_2 = mem_1;
+	mem_2 = fmSsa(mem_1);
+	mem_3 = fmPerceus(mem_2, names);
 
-	fun_stat0 = fmExp2FsStat(mem_2, FsReturnToOuter(), FsEnv([], makeTree(), names, 0), name);
-	fun_stat1 = fsStatSSA(fun_stat0, makeTree()).first;
+	fun_stat0 = fmExp2FsStat(mem_3, FsReturnToOuter(), FsEnv([], makeTree(), names, ref 0, ref 0), name);
+	fun_stat1 = fun_stat0;
 	fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
 	fun_stat3 = fsMakeStatCastsExplicit(fun_stat2, fn_type, names);
 	fun_stat4 = fun_stat3;
@@ -449,6 +441,8 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	fun_cpp = if (!fsHasTailCall(stat_lambda.body)) cpp_body else {
 		"while (true) " + fiWrapWithBraces(cpp_body);
 	}
+	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
+	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
 	fun_signature =
 		(if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + 
 		fun_name + fiFunArgs2cpp(stat_lambda.args, gctx);
@@ -605,7 +599,12 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsMemory(op, ex, __): {
 			tp = fsExpType(ex);
-			switch (tp) {
+			switch (op) {
+				FmDup():  "RefCount<" + fiType2cpp3(tp, gctx) + ">::inc(" + fsExp2cpp3(ex, gctx) + ");";
+				FmDrop(): "RefCount<" + fiType2cpp3(tp, gctx) + ">::dec(" + fsExp2cpp3(ex, gctx) + ");";
+				default:  fail0("memory operation: " + toString(op) + " is not implemented yet");
+			}
+			/*switch (tp) {
 				FiTypeParameter(n): {
 					switch (op) {
 						FmDup():  "RefCount<" + fiType2cpp3(tp, gctx) + ">::inc(" + fsExp2cpp3(ex, gctx) + ");";
@@ -620,7 +619,7 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 						default:  fail0("memory operation: " + toString(op) + " is not implemented yet");
 					}
 				}
-			}
+			}*/
 		}
 	}
 }
@@ -664,7 +663,6 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 			id = lookupTreeDef(gctx.structs2id, c.struct, -1);
 			"case " + i2s(id) + " /*" + c.struct + "*/: " +
 				fiWrapWithBraces(fiUnwrap(body, "{", "}") + "\nbreak;");
-
 		}
 		None(): {
 			// default case

@@ -1,0 +1,189 @@
+import tools/flowc/memory/fm_helpers;
+
+export {
+	fmSsa(e: FmExp) -> FmExp;
+}
+
+fmSsa(e: FmExp) -> FmExp {
+	fmSsa2(fmSsa1(e, makeTree()), ref makeTree());
+}
+
+fmSsa1(ex: FmExp, vars: Tree<string, int>) -> FmExp {
+	ssa_info = \info, vs -> FmInfo(info with free = mapSet(info.free, \x -> fmSSAvar(x, vs)));
+	switch(ex) {
+		FmLet(v, e, s1, info): {
+			if (v.name == "__") {
+				FmLet(v, fmSsa1(e, vars), fmSsa1(s1, vars), ssa_info(info, vars));
+			} else {
+				new_vars = setTree(vars, v.name, lookupTreeDef(vars, v.name, 0) + 1);
+				FmLet(
+					FmVar(v with name = fmSSAvar(v.name, new_vars)), 
+					fmSsa1(e, new_vars), 
+					fmSsa1(s1, new_vars), ssa_info(info, new_vars)
+				);
+			}
+		}
+		FmIf(cond, s1, s2, info): {
+			FmIf(
+				fmSsa1(cond, vars),
+				fmSsa1(s1, vars),
+				fmSsa1(s2, vars), 
+				ssa_info(info, vars)
+			);
+		}
+		FmSwitch(var, type, cases, info): {
+			FmSwitch(
+				FmVar(var with name = fmSSAvar(var.name, vars)), type,
+				map(cases, \c -> {
+					new_vars = fold(c.args, vars, \acc, arg -> 
+						if (arg.name == "__") acc else
+						setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1)
+					);
+					FmCase(c with
+						args = map(c.args, \arg -> FmVar(arg with name = fmSSAvar(arg.name, new_vars))),
+						body = fmSsa1(c.body, vars) // HERE MUST BE vars ! Because case locals are duplicated in the body !
+					);
+				}), ssa_info(info, vars)
+			);
+		}
+		FmSeq(es, info): {
+			FmSeq(map(es, \e -> fmSsa1(e, vars)), ssa_info(info, vars));
+		}
+		FmAssign(to, what, info): {
+			FmAssign(
+				fmSsa1(to, vars), 
+				fmSsa1(what, vars), 
+				ssa_info(info, vars)
+			);
+		}
+		FmMemory(op, e, info): {
+			FmMemory(op, fmSsa1(e, vars), ssa_info(info, vars));
+		}
+		FmLambda(toplevel, args, body, info): {
+			new_vars = fold(args, vars, \acc, arg ->
+				if (arg.name == "__") acc else {
+					setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1);
+				}
+			);
+			FmLambda(toplevel,
+				map(args, \arg -> FiFunArg(arg with name = fmSSAvar(arg.name, new_vars))),
+				fmSsa1(body, new_vars), ssa_info(info, vars)
+			);
+		}
+		FmCall(fn, args, info): {
+			FmCall(
+				fmSsa1(fn, vars),
+				map(args, \arg -> fmSsa1(arg, vars)), ssa_info(info, vars)
+			);
+		}
+		FmCallPrim(op, es, info): {
+			FmCallPrim(op, map(es, \x -> fmSsa1(x, vars)), ssa_info(info, vars));
+		}
+		FmVar(name, local, info): {
+			if (local) {
+				FmVar(fmSSAvar(name, vars), local, ssa_info(info, vars));
+			} else {
+				ex;
+			}
+		}
+		FiVoid(__):       ex;
+		FiDouble(__,__):  ex;
+		FiInt(__,__):     ex;
+		FiString(__,__):  ex;
+		FiBool(__,__):    ex;
+	}
+}
+
+fmSSAvar(v: string, vars: Tree<string, int>) -> string {
+	if (v == "__") v else {
+		i = lookupTreeDef(vars, v, 0);
+		if (i == 0) fail("fmSSAvar: i == 0, v=" + v);
+		v + if (i == 1) "" else "__ssa_" + i2s(i - 1);
+	}
+}
+
+fmSsa2(ex: FmExp, vars: ref Tree<string, int>) -> FmExp {
+	ssa_info = \info -> FmInfo(info with free = mapSet(info.free, \x -> fmSSAvar(x, ^vars)));
+	switch(ex) {
+		FmLet(v, e, s1, info): {
+			if (v.name == "__") {
+				FmLet(v, fmSsa2(e, vars), fmSsa2(s1, vars), ssa_info(info));
+			} else {
+				vars := setTree(^vars, v.name, lookupTreeDef(^vars, v.name, 0) + 1);
+				FmLet(
+					FmVar(v with name = fmSSAvar(v.name, ^vars)), 
+					fmSsa2(e, vars), 
+					fmSsa2(s1, vars), ssa_info(info)
+				);
+			}
+		}
+		FmIf(cond, s1, s2, info): {
+			FmIf(
+				fmSsa2(cond, vars),
+				fmSsa2(s1, vars),
+				fmSsa2(s2, vars), 
+				ssa_info(info)
+			);
+		}
+		FmSwitch(var, type, cases, info): {
+			FmSwitch(
+				FmVar(var with name = fmSSAvar(var.name, ^vars)), type,
+				map(cases, \c -> {
+					new_vars = fold(c.args, ^vars, \acc, arg -> 
+						if (arg.name == "__") acc else
+						setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1)
+					);
+					FmCase(c with
+						args = map(c.args, \arg -> FmVar(arg with name = fmSSAvar(arg.name, new_vars))),
+						body = fmSsa2(c.body, vars) // HERE MUST BE vars ! Because case locals are duplicated in the body !
+					);
+				}), ssa_info(info)
+			);
+		}
+		FmSeq(es, info): {
+			FmSeq(map(es, \e -> fmSsa2(e, vars)), ssa_info(info));
+		}
+		FmAssign(to, what, info): {
+			FmAssign(
+				fmSsa2(to, vars), 
+				fmSsa2(what, vars), 
+				ssa_info(info)
+			);
+		}
+		FmMemory(op, e, info): {
+			FmMemory(op, fmSsa2(e, vars), ssa_info(info));
+		}
+		FmLambda(toplevel, args, body, info): {
+			vars := fold(args, ^vars, \acc, arg ->
+				if (arg.name == "__") acc else {
+					setTree(acc, arg.name, lookupTreeDef(acc, arg.name, 0) + 1);
+				}
+			);
+			FmLambda(toplevel,
+				map(args, \arg -> FiFunArg(arg with name = fmSSAvar(arg.name, ^vars))),
+				fmSsa2(body, vars), ssa_info(info)
+			);
+		}
+		FmCall(fn, args, info): {
+			FmCall(
+				fmSsa2(fn, vars),
+				map(args, \arg -> fmSsa2(arg, vars)), ssa_info(info)
+			);
+		}
+		FmCallPrim(op, es, info): {
+			FmCallPrim(op, map(es, \x -> fmSsa2(x, vars)), ssa_info(info));
+		}
+		FmVar(name, local, info): {
+			if (local) {
+				FmVar(fmSSAvar(name, ^vars), local, ssa_info(info));
+			} else {
+				ex;
+			}
+		}
+		FiVoid(__):       ex;
+		FiDouble(__,__):  ex;
+		FiInt(__,__):     ex;
+		FiString(__,__):  ex;
+		FiBool(__,__):    ex;
+	}
+}

@@ -21,6 +21,8 @@
 
 namespace flow {
 
+//#define PERCEUS_REFS
+
 // Reference counting pointer. Essential for memory managing.
 template<typename T>
 struct Ptr {
@@ -60,11 +62,15 @@ struct Ptr {
 	template<typename T1>
 	static Ptr<T> make(std::initializer_list<T1> il) { return new T(std::move(il)); }
 
-	inline void inc() const { 
-		//ptr->incRefs(); 
+	inline void inc() const {
+		#ifndef PERCEUS_REFS
+		ptr->incRefs(); 
+		#endif
 	}
-	inline void dec() const { 
-		//if (ptr) ptr->decRefs(); 
+	inline void dec() const {
+		#ifndef PERCEUS_REFS 
+		if (ptr) ptr->decRefs(); 
+		#endif
 	}
 
 	const T* ptr;
@@ -196,7 +202,7 @@ struct AFlow {
 	}
 	inline void decRefs() const { 
 		if (-- refs == 0) {
-			//delete this; 
+			delete this; 
 		}
 	}
 
@@ -386,7 +392,18 @@ template<> struct Compare<const void*> { static Int cmp(const void* v1, const vo
 template<> struct Compare<String> { static Int cmp(String v1, String v2) { return v1->str.compare(v2->str); } };
 template<> struct Compare<Native> { static Int cmp(Native v1, Native v2) { return Compare<void*>::cmp(v1->nat, v2->nat); } };
 
-template<typename T> struct RefCount { static void inc(T x) { x->incRefs(); } static void dec(T x) { x->decRefs(); } };
+template<typename T> struct RefCount { 
+	static void inc(T x) { 
+		#ifdef PERCEUS_REFS
+		x->incRefs(); 
+		#endif
+	} 
+	static void dec(T x) { 
+		#ifdef PERCEUS_REFS
+		x->decRefs(); 
+		#endif
+	} 
+};
 template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } };
 template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } };
 template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } };
