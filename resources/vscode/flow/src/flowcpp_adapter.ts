@@ -450,7 +450,9 @@ export class FlowDebugSession extends LoggingDebugSession {
 				}
 				this.sendResponse(response);
 			}, msg => {
-				this.sendErrorResponse(response, 7, msg.toString());
+				response.message = msg.toString();
+				response.success = false;
+				this.sendResponse(response);
 			});
 		} else {
 			this.miDebugger.sendUserInput(expression).then(output => {
@@ -466,7 +468,9 @@ export class FlowDebugSession extends LoggingDebugSession {
 					};
 				this.sendResponse(response);
 			}, msg => {
-				this.sendErrorResponse(response, 8, msg.toString());
+				response.message = msg.toString();
+				response.success = false;
+				this.sendResponse(response);
 			});
 		}
 	}
