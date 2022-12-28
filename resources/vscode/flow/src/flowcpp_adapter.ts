@@ -152,7 +152,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			this.miDebugger.start();
 		}, err => {
 			this.sendErrorResponse(response, 103, `Failed to load MI Debugger: ${err.toString()}`)
-		});		
+		});
 	}
 
 	protected launchError(err: any) {
@@ -219,7 +219,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			if (running)
 				await this.miDebugger.continue();
 			response.body = {
-				breakpoints: brkpoints.map(brkp => 
+				breakpoints: brkpoints.map(brkp =>
 					new Breakpoint(brkp[0], brkp[0] ? brkp[1].line : undefined))
 			};
 			this.sendResponse(response);
@@ -239,9 +239,9 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	// performs deep compare of two stacks
 	private compareStacks(s1: Stack[], s2: Stack[]) {
-		return (null == s1 && null == s2) || 
+		return (null == s1 && null == s2) ||
 			(s1 && s2 && s1.length == s2.length && s1.reduce(
-				(acc, s, i) => acc && (s.address == s2[i].address), 
+				(acc, s, i) => acc && (s.address == s2[i].address),
 				true));
 	}
 
@@ -292,17 +292,17 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
 		// 2 handles - one for args, one for locals
-		const stackHandle = STACK_HANDLES_START + (parseInt(args.frameId as any) || 0) * 2; 
+		const stackHandle = STACK_HANDLES_START + (parseInt(args.frameId as any) || 0) * 2;
 		response.body = {
 			scopes: [
-				new Scope("Locals", stackHandle + 1, false),			
+				new Scope("Locals", stackHandle + 1, false),
 				new Scope("Arguments",  stackHandle, false),
 			]
 		};
 		this.sendResponse(response);
     }
-    
-    private createVariable(arg) { 
+
+    private createVariable(arg) {
         return this.variableHandles.create(arg);
     }
 
@@ -438,8 +438,12 @@ export class FlowDebugSession extends LoggingDebugSession {
 	}
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
-		if (args.context == "watch" || args.context == "hover")
-			this.miDebugger.evalExpression(args.expression).then((res) => {
+		let expression: string = args.expression;
+		if (args.context == "watch" || args.context == "hover") {
+			if (args.context == "hover" && expression && expression[0] == "\\") {
+				expression = expression.substring(1);
+			}
+			this.miDebugger.evalExpression(expression).then((res) => {
 				response.body = {
 					variablesReference: 0,
 					result: res.result("value")
@@ -448,8 +452,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 			}, msg => {
 				this.sendErrorResponse(response, 7, msg.toString());
 			});
-		else {
-			this.miDebugger.sendUserInput(args.expression).then(output => {
+		} else {
+			this.miDebugger.sendUserInput(expression).then(output => {
 				if (typeof output == "undefined")
 					response.body = {
 						result: "",
