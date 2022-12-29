@@ -506,6 +506,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			if (args.context == "hover" && expression && expression[0] == "\\") {
 				expression = expression.substring(1);
 			}
+			expression = expression.replace(/\[(\d+)\]/g, '.$1').trim();
 			this.evaluateExpression(response, expression).then(response2 => {
 				this.sendResponse(response2);
 			}, msg => {
