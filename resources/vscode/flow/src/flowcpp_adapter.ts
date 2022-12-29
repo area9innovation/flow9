@@ -379,8 +379,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			catch (err) {
 				this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
 			}
-		}
-		else {
+		} else {
             const varObj = this.variableHandles.get(args.variablesReference);
             try {
                 // Variable members
@@ -443,12 +442,25 @@ export class FlowDebugSession extends LoggingDebugSession {
 	}
 
 	protected async evaluateExpression(response: DebugProtocol.EvaluateResponse, expression: string): Promise<DebugProtocol.EvaluateResponse> {
-		let expressionA: string[] = expression.split(".");
+		let expressionA: string[] = expression.replace(/\[(\d+)\]/g, '.$1').split(".");
+		let currExpression = expressionA[0];
+		let varObjName = "var__" + currExpression;
+		try {
+			await this.updateOrCreateVariable(currExpression, varObjName, "*");
+		} catch (err) {
+			if (err instanceof MIError && err.message.startsWith("Duplicate variable name:")) {
+				// Ignore this error. Multiple watches can refer the same object variable.
+				// For example "struct.field1" and "struct.filed2" need only one object variable for "struct",
+				// in parallel we can get this exception "Duplicate variable name:" in this case.
+			} else {
+				throw err;
+			}
+		}
 		if (expressionA.length == 1) {
 			try {
 				let res: any = await this.miDebugger.evalExpression(expression);
 				response.body = {
-					variablesReference: 0,
+					variablesReference: this.variableHandlesReverse[varObjName] || 0,
 					result: res.result("value")
 				}
 				return response;
@@ -458,19 +470,6 @@ export class FlowDebugSession extends LoggingDebugSession {
 				return response;
 			}
 		} else {
-			let currExpression = expressionA[0];
-			let varObjName = "var__" + currExpression;
-			try {
-				await this.updateOrCreateVariable(currExpression, varObjName, "*");
-			} catch (err) {
-				if (err instanceof MIError && err.message.startsWith("Duplicate variable name:")) {
-					// Ignore this error. Multiple watches can refer the same object variable.
-					// For example "struct.field1" and "struct.filed2" need only one object variable for "struct",
-					// in parallel we can get this exception "Duplicate variable name:" in this case.
-				} else {
-					throw err;
-				}
-			}
 			for (let j = 1; j < expressionA.length; j++) {
 				let name = expressionA[j];
 				let children: VariableObject[] = await this.miDebugger.varListChildren(varObjName);
@@ -479,7 +478,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 					if (children[i].exp == name) {
 						if (j == expressionA.length - 1) {
 							response.body = {
-								variablesReference: 0,
+								variablesReference: this.findOrCreateVariable(children[i]),
 								result: children[i].value
 							}
 							return response;
@@ -506,7 +505,6 @@ export class FlowDebugSession extends LoggingDebugSession {
 			if (args.context == "hover" && expression && expression[0] == "\\") {
 				expression = expression.substring(1);
 			}
-			expression = expression.replace(/\[(\d+)\]/g, '.$1').trim();
 			this.evaluateExpression(response, expression).then(response2 => {
 				this.sendResponse(response2);
 			}, msg => {
