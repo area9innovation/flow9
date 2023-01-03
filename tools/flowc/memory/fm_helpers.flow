@@ -9,7 +9,10 @@ export {
 	fmUnwrapExp(e: FmExp) -> [FmExp];
 
 	// Checks that there's no statement constructions: switch, if, let and sequence of length > 1
-	fiExpHasNoStatements(e: FiExp) -> bool;
+	fiExpHasNoStatements(e: FiExp, effects: FiEffects) -> bool;
+
+	// If e has statements, wrap it in lambda so that it doesn't
+	fiExpMakeNoStatements(e: FiExp, effects: FiEffects) -> FiExp;
 
 	fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
 
@@ -28,7 +31,7 @@ fmExpInfo(fm: FmExp) -> FmInfo {
 		FmSeq(__,info):          info;
 		FmCallPrim(__,__,info):  info;
 		FmMemory(__,__,info):    info;
-		FmVar(__,__,info):       info;
+		FmVar(__,__,__,info):    info;
 		FmAssign(__,__,info):    info;
 		FiVoid(start):      FmInfo(makeSet(), FiTypeVoid(), start);
 		FiDouble(__,start): FmInfo(makeSet(), FiTypeDouble(), start);
@@ -55,29 +58,42 @@ fmUnwrapExp(e: FmExp) -> [FmExp] {
 	}
 }
 
-fiExpHasNoStatements(e: FiExp) -> bool {
+fiExpHasNoStatements(e: FiExp, effects: FiEffects) -> bool {
+	no_stats = \x -> fiExpHasNoStatements(x, effects);
 	switch (e) {
 		FiSeq(es, type,__): 
 			if (length(es) == 0) true else	
 			if (length(es) == 1) {
-				fiExpHasNoStatements(es[0]) && type != FiTypeVoid();
+				no_stats(es[0]) && type != FiTypeVoid();
 			} else false;
-		FiCast(ex,__,__,__,__): fiExpHasNoStatements(ex);
-		FiCall(f, args,__,__): fiExpHasNoStatements(f) && forall(args, fiExpHasNoStatements);
+		FiCast(ex,__,__,__,__): no_stats(ex);
+		FiCall(f, args,__,__): no_stats(f) && forall(args, no_stats);
 		FiSwitch(__,__,__,__,__): false;
 		FiLambda(__,__,__,__): true;
 		FiLet(__,__,__,__,__, __): false;
-		FiIf(e1, e2, e3,__, __): fiExpHasNoStatements(e1) && fiExpHasNoStatements(e2) && fiExpHasNoStatements(e3);   
+		FiIf(e1, e2, e3,__, __): {
+			no_stats1 = \x -> no_stats(x) && !fiExpHasEffects(x, effects);
+			no_stats1(e1) && no_stats1(e2) && no_stats1(e3);
+		}
 		FiCallPrim(op, es,__, __): {
 			switch (op) {
 				FcAssignPrim(): false;
 				FcSetMutablePrim(field): false;
-				default: forall(es, fiExpHasNoStatements);
+				default: forall(es, no_stats);
 			}
 		}
 		FiRequire(__,__,__,__): false;
 		FiUnsafe(__,__,__,__): false;
 		default: true;
+	}
+}
+
+fiExpMakeNoStatements(e: FiExp, effects: FiEffects) -> FiExp {
+	if (fiExpHasNoStatements(e, effects)) e else {
+		tp = fiExpType(e);
+		FiCall(
+			FiLambda([], e, FiTypeFunction([], tp), e.start), [], tp, e.start
+		);
 	}
 }
 
@@ -209,11 +225,11 @@ fmExp2s(ex: FmExp) -> string {
 		FmCallPrim(op, es, info): {
 			fmPrim2s(op, map(es, fmExp2s), info.type);
 		}
-		FmVar(name,__,__): name;
-		FiVoid(__):      "{}";
-		FiDouble(d, __): d2s(d);
-		FiInt(i, __):    i2s(i)
-		FiString(s, __): "\"" + escapeStr(s) + "\"";
-		FiBool(b, __):   b2s(b);
+		FmVar(name,__,__,__): name;
+		FiVoid(__):           "{}";
+		FiDouble(d, __):      d2s(d);
+		FiInt(i, __):         i2s(i)
+		FiString(s, __):      "\"" + escapeStr(s) + "\"";
+		FiBool(b, __):        b2s(b);
 	}
 }

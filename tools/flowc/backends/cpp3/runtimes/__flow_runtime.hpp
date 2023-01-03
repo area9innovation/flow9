@@ -163,7 +163,11 @@ template<typename R, typename... As> using Fun = Ptr<Function<R, As...>>;
 
 struct AFlow {
 	enum { TYPE = Type::UNKNOWN };
+	#ifdef PERCEUS_REFS
 	AFlow(): refs(1) { }
+	#else
+	AFlow(): refs(0) { }
+	#endif
 	AFlow(const AFlow& f) = delete;
 	virtual ~AFlow() { }
 	virtual Int type() const = 0;

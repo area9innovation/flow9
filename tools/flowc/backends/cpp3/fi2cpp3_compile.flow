@@ -1,5 +1,6 @@
 import tools/flowc/backends/cpp3/fi2cpp3_runtime;
 import tools/flowc/statements/fs_utils;
+import tools/flowc/statements/fs_memory;
 import tools/flowc/manipulation/eliminate_union_fields;
 import tools/flowc/memory/fi2fm;
 import tools/flowc/memory/perceus;
@@ -356,40 +357,17 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
 	value1 = fiExplicitCastInSwitch(value0, names);
 	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
-	value = value2;
+	value  = fiExpMakeNoStatements(value2, gctx.effects);
 
 	mem_1 = fiExp2fmExp(value, makeSet(), gctx.effects, true, names);
 	mem_2 = fmSsa(mem_1);
-	mem_3 = fmPerceus(mem_2, names);
+	//mem_3 = fmPerceus(mem_2, names);
 
-	pair0 = fmExp2FsExp(mem_3, FsEnv([], makeTree(), names, ref 0, ref 0));
-	pair1 = Pair(
-		fsMakeExpCastsExplicit(pair0.first, globalVar.type, names, true),
-		map(pair0.second, \s -> {
-			s1 = fsMakeStatCastsExplicit(s, FiTypeVoid(), names);
-			fsWrapCaseVarsWithCasts(s1, names);
-		})
-	);
-	pair2 = pair1;
-	pair3 = fold(pair2.second, Pair([], makeTree()), \acc, s -> {
-		p = Pair(s, acc.second); //fsStatSSA(s, acc.second);
-		stat = fsInterpolateTyparsStat(p.first, names);
-		Pair(concat(acc.first, [stat]), p.second);
-	});
-	value3 = pair2.first; //fsExpSSA(pair2.first, pair3.second);
-	value4 = fsInterpolateTyparsExp(value3, names);
-	pair = Pair(value4, pair3.first);
+	exp1 = fmExp2FsExp(mem_2, FsEnv([], makeTree(), names, gctx.effects, ref 0, ref 0)).first;
+	exp2 = fsMakeExpCastsExplicit(exp1, globalVar.type, names, true);
+	exp3 = fsInterpolateTyparsExp(exp2, names);
 
-	value_exp = if (pair.second == []) pair.first else {
-		ret_var = FsVar("__ret_var__", true, globalVar.type, globalVar.value.start);
-		FsCall(FsLambda(false, [], [], 
-			fsWrapSeq(concat(pair.second, [
-				FsLet(ret_var, pair.first, FsRet(ret_var, globalVar.value.start), globalVar.type, globalVar.value.start)
-			])), 
-			FiTypeFunction([], globalVar.type), globalVar.value.start
-		), [], globalVar.type, globalVar.value.start);
-	}
-	value_cpp = fsExp2cpp3(value_exp, gctx);
+	value_cpp = fsExp2cpp3(exp3, gctx);
 
 	init = gctx.varname2cpp(name) + " = " + value_cpp + ";";
 	if (containsSet(gctx.volatileVars, name)) {
@@ -427,9 +405,9 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 		perceus_debug_flag := true;
 	}
 	mem_2 = fmSsa(mem_1);
-	mem_3 = fmPerceus(mem_2, names);
+	//mem_3 = fmPerceus(mem_2, names);
 
-	fun_stat0 = fmExp2FsStat(mem_3, FsReturnToOuter(), FsEnv([], makeTree(), names, ref 0, ref 0), name);
+	fun_stat0 = fmExp2FsStat(mem_2, FsReturnToOuter(), FsEnv([], makeTree(), names, gctx.effects, ref 0, ref 0), name);
 	fun_stat1 = fun_stat0;
 	fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
 	fun_stat3 = fsMakeStatCastsExplicit(fun_stat2, fn_type, names);
@@ -731,7 +709,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			}
 			call_args = fiWrapWithPars(s_args_all);
 			switch(f) {
-				FsVar(name,__, kind, __): {
+				FsVar(name,__,__, kind, __): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, name);
 					typars = switch (toplevel) {
 						Some(fn): {
@@ -770,7 +748,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			")";
 		}
 		FsCallPrim(op, es, type, __): fsCallPrim2cpp3(e, gctx);
-		FsVar(name, type, kind, __):  gctx.varname2cpp(name);
+		FsVar(name, type, last, kind, __):  gctx.varname2cpp(name);
 	}
 }
 

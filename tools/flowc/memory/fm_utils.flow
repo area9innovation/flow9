@@ -2,6 +2,8 @@ import tools/flowc/memory/fm_helpers;
 
 export {
 	fmSsa(e: FmExp) -> FmExp;
+
+	fmTraverseLasVarUsage(ex: FmExp, vars: Set<string>) -> Set<string>;
 }
 
 fmSsa(e: FmExp) -> FmExp {
@@ -79,9 +81,9 @@ fmSsa1(ex: FmExp, vars: Tree<string, int>) -> FmExp {
 		FmCallPrim(op, es, info): {
 			FmCallPrim(op, map(es, \x -> fmSsa1(x, vars)), ssa_info(info, vars));
 		}
-		FmVar(name, local, info): {
+		FmVar(name, local, last, info): {
 			if (local) {
-				FmVar(fmSSAvar(name, vars), local, ssa_info(info, vars));
+				FmVar(fmSSAvar(name, vars), local, last, ssa_info(info, vars));
 			} else {
 				ex;
 			}
@@ -173,17 +175,120 @@ fmSsa2(ex: FmExp, vars: ref Tree<string, int>) -> FmExp {
 		FmCallPrim(op, es, info): {
 			FmCallPrim(op, map(es, \x -> fmSsa2(x, vars)), ssa_info(info));
 		}
-		FmVar(name, local, info): {
+		FmVar(name, local, last, info): {
 			if (local) {
-				FmVar(fmSSAvar(name, ^vars), local, ssa_info(info));
+				FmVar(fmSSAvar(name, ^vars), local, last, ssa_info(info));
 			} else {
 				ex;
 			}
 		}
-		FiVoid(__):       ex;
-		FiDouble(__,__):  ex;
-		FiInt(__,__):     ex;
-		FiString(__,__):  ex;
-		FiBool(__,__):    ex;
+		FiVoid(__):      ex;
+		FiDouble(__,__): ex;
+		FiInt(__,__):    ex;
+		FiString(__,__): ex;
+		FiBool(__,__):   ex;
 	}
 }
+
+// Traverse the AST backwards and markup the first variable use as last
+
+fmTraverseLasVarUsage(ex: FmExp, vars: Set<string>) -> Set<string> {
+	switch(ex) {
+		FmLet(v, e, s1, info): {
+			vars1 = fmTraverseLasVarUsage(s1, vars);
+			v.last := !containsSet(vars1, v.name);
+			insertSet(fmTraverseLasVarUsage(e, vars1), v.name);
+		}
+		FmIf(cond, s1, s2, info): {
+			fmTraverseLasVarUsage(cond, mergeSets(
+				fmTraverseLasVarUsage(s1, vars), 
+				fmTraverseLasVarUsage(s2, vars)
+			));
+		}
+		FmSwitch(v, type, cases, info): {
+			vars1 = fold(cases, vars, \acc, c -> mergeSets(acc, fmTraverseLasVarUsage(c.body, vars)));
+			v.last := !containsSet(vars1, v.name);
+			insertSet(vars1, v.name);
+		}
+		FmSeq(es, info): {
+			foldr(es, vars, \acc, x -> mergeSets(acc, fmTraverseLasVarUsage(x, acc)));
+		}
+		FmAssign(to, what, info): {
+			fmTraverseLasVarUsage(to, fmTraverseLasVarUsage(what, vars));
+		}
+		FmMemory(op, e, info): {
+			fmTraverseLasVarUsage(e, vars);
+		}
+		FmLambda(toplevel, args, body, info): {
+			fmTraverseLasVarUsage(body, makeSet());
+			vars;
+		}
+		FmCall(fn, args, info): {
+			vars1 = fold(args, vars, \acc, x -> fmTraverseLasVarUsage(x, acc));
+			fmTraverseLasVarUsage(fn, vars1);
+		}
+		FmCallPrim(op, es, info): {
+			foldr(es, vars, \acc, x -> fmTraverseLasVarUsage(x, acc));
+		}
+		FmVar(name, local, last, info): {
+			last := !containsSet(vars, name);
+			insertSet(vars, name);
+		}
+		FiVoid(__):       vars;
+		FiDouble(__,__):  vars;
+		FiInt(__,__):     vars;
+		FiString(__,__):  vars;
+		FiBool(__,__):    vars;
+	}
+}
+
+fmEmitDupDrops(ex: FmExp, vars: Set<string>) -> Set<string> {
+	switch(ex) {
+		FmLet(v, e, s1, info): {
+			vars1 = fmEmitDupDrops(s1, vars);
+			v.last := !containsSet(vars1, v.name);
+			insertSet(fmEmitDupDrops(e, vars1), v.name);
+		}
+		FmIf(cond, s1, s2, info): {
+			fmEmitDupDrops(cond, mergeSets(
+				fmEmitDupDrops(s1, vars), 
+				fmEmitDupDrops(s2, vars)
+			));
+		}
+		FmSwitch(v, type, cases, info): {
+			vars1 = fold(cases, vars, \acc, c -> mergeSets(acc, fmEmitDupDrops(c.body, vars)));
+			v.last := !containsSet(vars1, v.name);
+			insertSet(vars1, v.name);
+		}
+		FmSeq(es, info): {
+			foldr(es, vars, \acc, x -> mergeSets(acc, fmEmitDupDrops(x, acc)));
+		}
+		FmAssign(to, what, info): {
+			fmEmitDupDrops(to, fmEmitDupDrops(what, vars));
+		}
+		FmMemory(op, e, info): {
+			fmEmitDupDrops(e, vars);
+		}
+		FmLambda(toplevel, args, body, info): {
+			fmEmitDupDrops(body, makeSet());
+			vars;
+		}
+		FmCall(fn, args, info): {
+			vars1 = fold(args, vars, \acc, x -> fmEmitDupDrops(x, acc));
+			fmEmitDupDrops(fn, vars1);
+		}
+		FmCallPrim(op, es, info): {
+			foldr(es, vars, \acc, x -> fmEmitDupDrops(x, acc));
+		}
+		FmVar(name, local, last, info): {
+			last := !containsSet(vars, name);
+			insertSet(vars, name);
+		}
+		FiVoid(__):       vars;
+		FiDouble(__,__):  vars;
+		FiInt(__,__):     vars;
+		FiString(__,__):  vars;
+		FiBool(__,__):    vars;
+	}
+}
+
