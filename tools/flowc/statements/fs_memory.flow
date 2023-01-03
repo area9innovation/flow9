@@ -1,0 +1,216 @@
+import ds/array;
+import tools/flowc/statements/fs_helpers;
+
+export {
+	fsStatPerceus(s: FsStat) -> FsStat;
+	fsExpPerceus(e: FsExp) -> FsExp;
+	//fsTraverseStatLasVarUsage(ex: FsStat, vars: Set<string>) -> Set<string>;
+	//fsTraverseExpLasVarUsage(ex: FsExp, vars: Set<string>) -> Set<string>;
+}
+
+fsStatPerceus(s: FsStat) -> FsStat {
+	fsTraverseStatLasVarUsage(s, makeSet());
+	fsDoStatPerceus(s);
+}
+
+fsExpPerceus(e: FsExp) -> FsExp {
+	fsTraverseExpLasVarUsage(e, makeSet());
+	fsDoExpPerceus(e);
+}
+
+MemOps(pre: [FsMemory], post: [FsMemory]);
+
+fsDoStatPerceus(s: FsStat) -> FsStat {
+	switch (s) {
+		FsIf(cond, s1, s2, __,__): {
+			expOps = fsExpMemOps(cond);
+			fsWrapSeq(concat(
+				expOps.pre,
+				[FsIf(s with
+					cond = fsDoExpPerceus(cond),  
+					s1 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s1)))),
+					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s2)))) 
+				)]
+			));
+		}
+		FsSwitch(x, sw_type, cases,__,__): {
+			xOps = fsExpMemOps(x);
+			fsWrapSeq(concat(
+				xOps.pre,
+				[FsSwitch(s with 
+					cases = map(cases, \c ->
+						FsCase(c with 
+							body = fsWrapSeq(concat(xOps.post, fsUnwrapSeq(fsDoStatPerceus(c.body))))
+						)
+					)
+				)]
+			));
+		}
+		FsSeq(es, type,__): {
+			fsWrapSeq(concatA(
+				map(es, \x -> fsUnwrapSeq(fsDoStatPerceus(x)))
+			));
+		}
+		FsLet(v, e, s1, __,__): {
+			eOps = fsExpMemOps(e);
+			fsWrapSeq(concat(
+				eOps.pre,
+				[FsLet(s with
+					e = fsDoExpPerceus(e),
+					s = fsWrapSeq(concat(
+						eOps.post,
+						fsUnwrapSeq(fsDoStatPerceus(s1))
+					))
+				)]
+			));
+		}
+		FsWrapExp(e,__): {
+			eOps = fsExpMemOps(e);
+			fsWrapSeq(concat3(eOps.pre, [FsWrapExp(s with e = fsDoExpPerceus(e))], eOps.post));
+		}
+		FsRet(e,__): {
+			FsRet(s with e = fsDoExpPerceus(e));
+		}
+		FsTailCall(__): {
+			s;
+		}
+		FsVarDecl(var,__): {
+			s;
+		}
+		FsAssign(to, what,__): {
+			toOps = fsExpMemOps(to);
+			whatOps = fsExpMemOps(what);
+			fsWrapSeq(concat3(
+				concat(toOps.pre, whatOps.pre), 
+				[FsAssign(s with to = fsDoExpPerceus(to), what = fsDoExpPerceus(what))],
+				concat(whatOps.post, whatOps.post)
+			));
+		}
+		FsMemory(op, e,__): {
+			FsMemory(s with e = fsDoExpPerceus(e));
+		}
+	}
+}
+
+fsExpMemOps(ex: FsExp) -> MemOps {
+	vars = set2array(fsExpVars(ex, makeSet()));
+	MemOps(
+		filtermap(vars, \v -> if (^(v.last)) None() else Some(FsMemory(FmDup(), v, v.start))),
+		map(vars, \v -> FsMemory(FmDrop(), v, v.start))
+	);
+}
+
+fsExpVars(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
+	switch (ex) {
+		FsCall(f, args, type,__): {
+			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
+		}
+		FsLambda(toplevel, closure, args, body, type,__): {
+			vars;
+		}
+		FsCallPrim(op, es, type,__): {
+			fold(es, vars, \acc, x -> fsExpVars(x, acc));
+		}
+		FsVar(name, type, last, kind,__): {
+			insertSet(vars, ex);
+		}
+		FiString(s, __): vars;
+		FiVoid(__):      vars;
+		FiBool(b, __):   vars;
+		FiInt(i, __):    vars;
+		FiDouble(d, __): vars;
+	}
+}
+
+fsDoExpPerceus(ex: FsExp) -> FsExp {
+	switch (ex) {
+		FsCall(f, args, type,__): {
+			FsCall(ex with
+				f = fsDoExpPerceus(f),
+				args = map(args, fsDoExpPerceus)
+			);
+		}
+		FsLambda(toplevel, closure, args, body, type,__): {
+			FsLambda(ex with body = fsDoStatPerceus(body));
+		}
+		FsCallPrim(op, es, type,__): {
+			FsCallPrim(ex with es = map(es, fsDoExpPerceus));
+		}
+		FsVar(name, type, last, kind,__): ex;
+		FiString(s, __): ex;
+		FiVoid(__):      ex;
+		FiBool(b, __):   ex;
+		FiInt(i, __):    ex;
+		FiDouble(d, __): ex;
+	}
+}
+
+// Traverse the AST backwards and markup the first variable use as last
+
+fsTraverseStatLasVarUsage(ex: FsStat, vars: Set<string>) -> Set<string> {
+	switch(ex) {
+		FsLet(v, e, s1, __,__): {
+			vars1 = fsTraverseStatLasVarUsage(s1, vars);
+			v.last := !containsSet(vars1, v.name);
+			insertSet(fsTraverseExpLasVarUsage(e, vars1), v.name);
+		}
+		FsIf(cond, s1, s2, __,__): {
+			fsTraverseExpLasVarUsage(cond, mergeSets(
+				fsTraverseStatLasVarUsage(s1, vars), 
+				fsTraverseStatLasVarUsage(s2, vars)
+			));
+		}
+		FsSwitch(v, type, cases, __,__): {
+			vars1 = fold(cases, vars, \acc, c -> mergeSets(acc, fsTraverseStatLasVarUsage(c.body, vars)));
+			v.last := !containsSet(vars1, v.name);
+			insertSet(vars1, v.name);
+		}
+		FsSeq(es, __,__): {
+			foldr(es, vars, \acc, x -> mergeSets(acc, fsTraverseStatLasVarUsage(x, acc)));
+		}
+		FsAssign(to, what, __): {
+			fsTraverseExpLasVarUsage(to, fsTraverseExpLasVarUsage(what, vars));
+		}
+		FsMemory(op, e, __): {
+			fsTraverseExpLasVarUsage(e, vars);
+		}
+		FsWrapExp(e, start): {
+			fsTraverseExpLasVarUsage(e, vars);
+		}
+		FsRet(e, start): {
+			fsTraverseExpLasVarUsage(e, vars);
+		}
+		FsTailCall(start): {
+			vars;
+		}
+		FsVarDecl(var, start): {
+			vars;
+		}
+	}
+}
+
+fsTraverseExpLasVarUsage(ex: FsExp, vars: Set<string>) -> Set<string> {
+	switch(ex) {
+		FsLambda(toplevel, closure, args, body, __,__): {
+			fsTraverseStatLasVarUsage(body, makeSet());
+			vars;
+		}
+		FsCall(fn, args, __,__): {
+			vars1 = fold(args, vars, \acc, x -> fsTraverseExpLasVarUsage(x, acc));
+			fsTraverseExpLasVarUsage(fn, vars1);
+		}
+		FsCallPrim(op, es, __,__): {
+			foldr(es, vars, \acc, x -> fsTraverseExpLasVarUsage(x, acc));
+		}
+		FsVar(name, local, last, __,__): {
+			last := !containsSet(vars, name);
+			insertSet(vars, name);
+		}
+		FiVoid(__):       vars;
+		FiDouble(__,__):  vars;
+		FiInt(__,__):     vars;
+		FiString(__,__):  vars;
+		FiBool(__,__):    vars;
+	}
+}
+
