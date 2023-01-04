@@ -434,7 +434,11 @@ class AccessWidget extends EventEmitter {
 		"textbox" => "input",
 		"switch" => "button",
 		"menuitem" => "button",
-		"option" => "button"
+		"option" => "button",
+		"table" => "table",
+		"row" => "tr",
+		"columnheader" => "th",
+		"cell" => "td"
 	];
 
 	public static var zIndexValues = {
