@@ -1,6 +1,7 @@
 import tools/flowc/backends/cpp3/fi2cpp3_runtime;
 import tools/flowc/statements/fs_utils;
 import tools/flowc/statements/fs_memory;
+import tools/flowc/statements/fi2fs;
 import tools/flowc/manipulation/eliminate_union_fields;
 import tools/flowc/memory/fi2fm;
 import tools/flowc/memory/perceus;
@@ -354,21 +355,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 		currentToplevel = Some(globalVar),
 		toplevelTypars = fiCollectTypars(globalVar.type, makeSet())
 	);
-	value0 = fiEliminateUnionFields(globalVar.value, names, 0);
-	value1 = fiExplicitCastInSwitch(value0, names);
-	value2 = fiFixVarInSameStructType(value1, makeTree(), names);
-	value  = fiExpMakeNoStatements(value2, gctx.effects);
-
-	mem_1 = fiExp2fmExp(value, makeSet(), gctx.effects, true, names);
-	mem_2 = fmSsa(mem_1);
-	//mem_3 = fmPerceus(mem_2, names);
-
-	exp1 = fmExp2FsExp(mem_2, FsEnv([], makeTree(), names, gctx.effects, ref 0, ref 0)).first;
-	exp2 = fsMakeExpCastsExplicit(exp1, globalVar.type, names, true);
-	exp3 = fsInterpolateTyparsExp(exp2, names);
-
-	value_cpp = fsExp2cpp3(exp3, gctx);
-
+	value_cpp = fsExp2cpp3(fiPrepareExp2cpp3(globalVar.value, globalVar.type, gctx, ""), gctx);
 	init = gctx.varname2cpp(name) + " = " + value_cpp + ";";
 	if (containsSet(gctx.volatileVars, name)) {
 		// Volatile variable
@@ -389,45 +376,41 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 		gctx0 with currentToplevel = Some(fun),
 		toplevelTypars = fiCollectTypars(fn_type, makeSet())
 	);
-	fun_args = fun.lambda.args;
-	headerOnly = cpp3InlineFunction(fun);
-	fun_name = gctx.varname2cpp(name);
-	
-	names = gctx.program.names;
-	lambda0 = fiEliminateUnionFields(fun.lambda, names, 0);
-	lambda1 = fiExplicitCastInSwitch(lambda0, names);
-	lambda3 = fiFixVarInSameStructType(lambda1, makeTree(), names);
-	lambda4 = lambda3;
-	lambda5 = fiExpRenameRecurringVars(lambda4, makeSet());
-
-	mem_1 = fiExp2fmExp(lambda5, makeSet(), gctx.effects, true, names);
-	if (fiToplevelName(gctx.currentToplevel) == "either") {
-		perceus_debug_flag := true;
-	}
-	mem_2 = fmSsa(mem_1);
-	//mem_3 = fmPerceus(mem_2, names);
-
-	fun_stat0 = fmExp2FsStat(mem_2, FsReturnToOuter(), FsEnv([], makeTree(), names, gctx.effects, ref 0, ref 0), name);
-	fun_stat1 = fun_stat0;
-	fun_stat2 = fsInterpolateTyparsStat(fun_stat1, names);
-	fun_stat3 = fsMakeStatCastsExplicit(fun_stat2, fn_type, names);
-	fun_stat4 = fun_stat3;
-	fun_stat5 = fsWrapCaseVarsWithCasts(fun_stat4, names);
-
-	stat_lambda = fsStatLambda(fun_stat5);
-	cpp_body = fsStat2cpp3(stat_lambda.body, gctx);
-	fun_cpp = if (!fsHasTailCall(stat_lambda.body)) cpp_body else {
-		"while (true) " + fiWrapWithBraces(cpp_body);
-	}
 	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
+	headerOnly = cpp3InlineFunction(fun);
+	stat_lambda = cast(fiPrepareExp2cpp3(fun.lambda, fn_type, gctx, name): FsExp -> FsLambda);
 	fun_signature =
 		(if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + 
-		fun_name + fiFunArgs2cpp(stat_lambda.args, gctx);
+		gctx.varname2cpp(name) + fiFunArgs2cpp(stat_lambda.args, gctx);
 	forward_decl = decl_typars + fun_signature + ";\n\n";
-
-	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(fun_cpp) + "\n\n";
+	cpp_body = fsStat2cpp3(stat_lambda.body, gctx);
+	cpp_fun = if (!fsHasTailCall(stat_lambda.body)) cpp_body else {
+		"while (true) " + fiWrapWithBraces(cpp_body);
+	}
+	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun) + "\n\n";
 	Cpp3CompiledDeclaration(name, headerOnly, forward_decl, definition);
+}
+
+fiPrepareExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string) -> FsExp {
+	names = gctx.program.names;
+	// First phase: do some preparation steps
+	e0 = fiEliminateUnionFields(e, names, 0);
+	e1 = fiExplicitCastInSwitch(e0, names);
+	e2 = fiFixVarInSameStructType(e1, makeTree(), names);
+	e3 = fiExpRenameRecurringVars(e2, makeSet());
+	e4 = fiExpMakeNoStatements(e3, gctx.effects);
+
+	// Second phase: transform to FsExp and do type interpolation/explicit casts
+	x0 = fiExp2FsExp(e4, name, gctx.effects, names);
+	x1 = fsExpSSA(x0, makeTree());
+	x2 = fsInterpolateTyparsExp(x1, names);
+	x3 = fsMakeExpCastsExplicit(x2, type, names, true);
+	x4 = fsWrapExpCaseVarsWithCasts(x3, names);
+	x5 = fsExpReturnVars(x4);
+
+	//x4 = fsStatPerceus(x3);
+	x5;
 }
 
 fiFunArgs2cpp(args: [FiFunArg], gctx: Cpp3GlobalContext) -> string {

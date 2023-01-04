@@ -2,7 +2,8 @@ import tools/flowc/statements/fs_helpers;
 import tools/flowc/incremental/fi_type_unify;
 
 export {
-	fsWrapCaseVarsWithCasts(e : FsStat, names: FiGlobalNames) -> FsStat;
+	fsWrapStatCaseVarsWithCasts(e : FsStat, names: FiGlobalNames) -> FsStat;
+	fsWrapExpCaseVarsWithCasts(e : FsExp, names: FiGlobalNames) -> FsExp;
 
 	fsMakeStatCastsExplicit(s : FsStat, type: FiType, names: FiGlobalNames) -> FsStat;
 	fsMakeExpCastsExplicit(e : FsExp, type: FiType, names: FiGlobalNames, do: bool) -> FsExp;
@@ -17,18 +18,19 @@ export {
 	fsExpReturnVars(e : FsExp) -> FsExp;
 }
 
-fsWrapCaseVarsWithCasts(s : FsStat, names: FiGlobalNames) -> FsStat {
+fsWrapStatCaseVarsWithCasts(s : FsStat, names: FiGlobalNames) -> FsStat {
 	switch(s) {
-		FsIf(__, s1, s2, __,__): {
+		FsIf(cond, s1, s2, __,__): {
 			FsIf(s with
-				s1 = fsWrapCaseVarsWithCasts(s1, names),
-				s2 = fsWrapCaseVarsWithCasts(s2, names),
+				cond = fsWrapExpCaseVarsWithCasts(cond, names),
+				s1 = fsWrapStatCaseVarsWithCasts(s1, names),
+				s2 = fsWrapStatCaseVarsWithCasts(s2, names),
 			);
 		}
 		FsSwitch(v, __, cases, __,__): {
 			FsSwitch(s with
 				cases = map(cases, \c -> {
-					body1 = fsWrapCaseVarsWithCasts(c.body, names);
+					body1 = fsWrapStatCaseVarsWithCasts(c.body, names);
 					if (c.struct == "default") {
 						FsCase(c with body = body1);
 					} else {
@@ -50,10 +52,49 @@ fsWrapCaseVarsWithCasts(s : FsStat, names: FiGlobalNames) -> FsStat {
 				})
 			);
 		}
+		FsLet(v, x, s1,__,__): {
+			FsLet(s with 
+				e = fsWrapExpCaseVarsWithCasts(x, names),
+				s = fsWrapStatCaseVarsWithCasts(s1, names)
+			);
+		}
 		FsSeq(ss, __,__): {
-			FsSeq(s with ss = map(ss, \x -> fsWrapCaseVarsWithCasts(x, names)));
+			FsSeq(s with ss = map(ss, \x -> fsWrapStatCaseVarsWithCasts(x, names)));
+		}
+		FsWrapExp(x, __): {
+			FsWrapExp(s with e = fsWrapExpCaseVarsWithCasts(x, names));
+		}
+		FsRet(x,__): {
+			FsRet(s with e = fsWrapExpCaseVarsWithCasts(x, names));
+		}
+		FsAssign(to, what, __): {
+			FsAssign(s with 
+				to = fsWrapExpCaseVarsWithCasts(to, names),
+				what = fsWrapExpCaseVarsWithCasts(what, names),
+			);
+		}
+		FsMemory(__, x,__): {
+			FsMemory(s with e = fsWrapExpCaseVarsWithCasts(x, names));
 		}
 		default: s;
+	}
+}
+
+fsWrapExpCaseVarsWithCasts(e : FsExp, names: FiGlobalNames) -> FsExp {
+	switch(e) {
+		FsLambda(__,closure, args, body, type1,__): {
+			FsLambda(e with body = fsWrapStatCaseVarsWithCasts(body, names));
+		}
+		FsCall(fn, args,__,__): {
+			FsCall(e with
+				f = fsWrapExpCaseVarsWithCasts(fn, names),
+				args = map(args, \arg -> fsWrapExpCaseVarsWithCasts(arg, names))
+			);
+		}
+		FsCallPrim(__,es,__,__): {
+			FsCallPrim(e with es = map(es, \x -> fsWrapExpCaseVarsWithCasts(x, names)));
+		}
+		default: e;
 	}
 }
 
