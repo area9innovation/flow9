@@ -79,7 +79,7 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 			toOps = fsExpMemOps(to);
 			whatOps = fsExpMemOps(what);
 			fsWrapSeq(concat3(
-				concat(toOps.pre, whatOps.pre), 
+				whatOps.pre, 
 				[FsAssign(s with to = fsDoExpPerceus(to), what = fsDoExpPerceus(what))],
 				concat(whatOps.post, whatOps.post)
 			));
@@ -92,9 +92,11 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 
 fsExpMemOps(ex: FsExp) -> MemOps {
 	vars = set2array(fsExpVars(ex, makeSet()));
+	to_dup = \v -> !(fiTypeIsScalar(v.type)) && v.local && !^(v.last);
+	to_drop = \v -> !(fiTypeIsScalar(v.type)) && v.local && !v.return;
 	MemOps(
-		filtermap(vars, \v -> if (^(v.last)) None() else Some(FsMemory(FmDup(), v, v.start))),
-		map(vars, \v -> FsMemory(FmDrop(), v, v.start))
+		filtermap(vars, \v -> if (to_dup(v)) Some(FsMemory(FmDup(), v, v.start)) else None()),
+		filtermap(vars, \v -> if (to_drop(v)) Some(FsMemory(FmDrop(), v, v.start)) else None())
 	);
 }
 
@@ -109,7 +111,7 @@ fsExpVars(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
 		FsCallPrim(op, es, type,__): {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
 		}
-		FsVar(name, type, last, kind,__): {
+		FsVar(name, type, last, return, kind,__): {
 			insertSet(vars, ex);
 		}
 		FiString(s, __): vars;
@@ -134,7 +136,7 @@ fsDoExpPerceus(ex: FsExp) -> FsExp {
 		FsCallPrim(op, es, type,__): {
 			FsCallPrim(ex with es = map(es, fsDoExpPerceus));
 		}
-		FsVar(name, type, last, kind,__): ex;
+		FsVar(name, local, last, return, type,__): ex;
 		FiString(s, __): ex;
 		FiVoid(__):      ex;
 		FiBool(b, __):   ex;
@@ -200,7 +202,7 @@ fsTraverseExpLasVarUsage(ex: FsExp, vars: Set<string>) -> Set<string> {
 		FsCallPrim(op, es, __,__): {
 			foldr(es, vars, \acc, x -> fsTraverseExpLasVarUsage(x, acc));
 		}
-		FsVar(name, local, last, __,__): {
+		FsVar(name, local, last, __,__,__): {
 			last := !containsSet(vars, name);
 			insertSet(vars, name);
 		}
