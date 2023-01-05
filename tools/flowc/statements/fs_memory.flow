@@ -1,5 +1,5 @@
 import ds/array;
-import tools/flowc/statements/fs_helpers;
+import tools/flowc/statements/fs_transform;
 
 export {
 	fsStatPerceus(s: FsStat) -> FsStat;
@@ -8,12 +8,12 @@ export {
 
 fsStatPerceus(s: FsStat) -> FsStat {
 	fsTraverseStatLasVarUsage(s, makeSet());
-	fsDoStatPerceus(s);
+	fsStatTransform(fsDoStatPerceus(s), fsStatOptimize, idfn);
 }
 
 fsExpPerceus(e: FsExp) -> FsExp {
 	fsTraverseExpLasVarUsage(e, makeSet());
-	fsDoExpPerceus(e);
+	fsExpTransform(fsDoExpPerceus(e), fsStatOptimize, idfn);
 }
 
 MemOps(pre: [FsMemory], post: [FsMemory]);
@@ -25,9 +25,9 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 			fsWrapSeq(concat(
 				expOps.pre,
 				[FsIf(s with
-					cond = fsDoExpPerceus(cond),  
+					cond = fsDoExpPerceus(cond),
 					s1 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s1)))),
-					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s2)))) 
+					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s2))))
 				)]
 			));
 		}
@@ -79,9 +79,10 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 			toOps = fsExpMemOps(to);
 			whatOps = fsExpMemOps(what);
 			fsWrapSeq(concat3(
-				whatOps.pre, 
+				//concat(toOps.post, whatOps.pre),
+				whatOps.pre,
 				[FsAssign(s with to = fsDoExpPerceus(to), what = fsDoExpPerceus(what))],
-				concat(whatOps.post, whatOps.post)
+				whatOps.post
 			));
 		}
 		FsMemory(op, e,__): {
@@ -92,8 +93,8 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 
 fsExpMemOps(ex: FsExp) -> MemOps {
 	vars = set2array(fsExpVars(ex, makeSet()));
-	to_dup = \v -> !(fiTypeIsScalar(v.type)) && v.local && !^(v.last);
-	to_drop = \v -> !(fiTypeIsScalar(v.type)) && v.local && !v.return;
+	to_dup = \v -> !(fiTypeIsScalar(v.type)) && v.local/* && !^(v.last)*/;
+	to_drop = \v -> !(fiTypeIsScalar(v.type)) && v.local/* && !v.return*/;
 	MemOps(
 		filtermap(vars, \v -> if (to_dup(v)) Some(FsMemory(FmDup(), v, v.start)) else None()),
 		filtermap(vars, \v -> if (to_drop(v)) Some(FsMemory(FmDrop(), v, v.start)) else None())
@@ -214,3 +215,31 @@ fsTraverseExpLasVarUsage(ex: FsExp, vars: Set<string>) -> Set<string> {
 	}
 }
 
+fsStatOptimize(s: FsStat) -> FsStat {
+	switch (s) {
+		FsSeq(ss, type,__): {
+			un_memop = \op, x -> switch (x) {
+				FsMemory(o, e, __): if (op == o) Some(e) else None();
+				default: None();
+			}
+			op1_op2 = \op1, op2, x1, x2 -> {
+				switch (un_memop(op1, x1)) {
+					Some(e1): {
+						switch (un_memop(op2, x2)) {
+							Some(e2): e1 == e2;
+							None(): false;
+						}
+					}
+					None(): false;
+				}
+			}
+			FsSeq(s with 
+				ss = transformArrayPairs(
+					mapConcat(ss, fsUnwrapSeq), 
+					\x1, x2 -> if (op1_op2(FmDup(), FmDrop(), x1, x2) || op1_op2(FmDrop(), FmDup(), x1, x2)) Some([]) else None()
+				)
+			);
+		}
+		default: s;
+	}
+}
