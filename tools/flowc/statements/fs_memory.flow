@@ -3,22 +3,37 @@ import tools/flowc/statements/fs_transform;
 
 export {
 	fsStatPerceus(s: FsStat) -> FsStat;
-	fsExpPerceus(e: FsExp) -> FsExp;
+	fsExpPerceus(e: FsExp, name: string) -> FsExp;
 }
 
 fsStatPerceus(s: FsStat) -> FsStat {
-	fsTraverseStatLasVarUsage(s, makeSet());
-	fsStatTransform(fsDoStatPerceus(s), fsStatOptimize, idfn);
+	s1 = fsStatLasVarUsage(s, makeSet()).first;
+	fsStatTransform(fsDoStatPerceus(s1, FsPerceusEnv(makeSet())), fsStatOptimize, idfn);
 }
 
-fsExpPerceus(e: FsExp) -> FsExp {
-	fsTraverseExpLasVarUsage(e, makeSet());
-	fsExpTransform(fsDoExpPerceus(e), fsStatOptimize, idfn);
+do_perceus_debug  = ref false;
+
+FsPerceusEnv(
+	caseArgs: Set<string>
+);
+
+fsExpPerceus(e: FsExp, name: string) -> FsExp {
+	do_perceus_debug := name == "main";
+	//fsTraverseExpLasVarUsage(e, makeSet());
+	e1 = fsExpLasVarUsage(e, makeSet()).first;
+	/*if (^do_perceus_debug) {
+		println(
+			"EXP:\n" + fsExp2s(e) + "\n\n" + 
+			"EXP1:\n" + fsExp2s(e1)
+		);
+	}*/
+	fsExpTransform(fsDoExpPerceus(e1), fsStatOptimize, idfn);
+	//fsDoExpPerceus(e1);
 }
 
 MemOps(pre: [FsMemory], post: [FsMemory]);
 
-fsDoStatPerceus(s: FsStat) -> FsStat {
+fsDoStatPerceus(s: FsStat, env: FsPerceusEnv) -> FsStat {
 	switch (s) {
 		FsIf(cond, s1, s2, __,__): {
 			expOps = fsExpMemOps(cond);
@@ -26,8 +41,8 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 				expOps.pre,
 				[FsIf(s with
 					cond = fsDoExpPerceus(cond),
-					s1 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s1)))),
-					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s2))))
+					s1 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s1, env)))),
+					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s2, env))))
 				)]
 			));
 		}
@@ -36,29 +51,49 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 			fsWrapSeq(concat(
 				xOps.pre,
 				[FsSwitch(s with 
-					cases = map(cases, \c ->
+					cases = map(cases, \c -> {
+						env1 = FsPerceusEnv(env with 
+							caseArgs = fold(c.args, env.caseArgs, \acc, arg -> 
+								insertSet(acc, arg.name)
+							)
+						);
 						FsCase(c with 
-							body = fsWrapSeq(concat(xOps.post, fsUnwrapSeq(fsDoStatPerceus(c.body))))
+							body = fsWrapSeq(concat(
+								xOps.post, 
+								fsUnwrapSeq(fsDoStatPerceus(c.body, env1))
+							))
 						)
-					)
+					})
 				)]
 			));
 		}
 		FsSeq(es, type,__): {
 			fsWrapSeq(concatA(
-				map(es, \x -> fsUnwrapSeq(fsDoStatPerceus(x)))
+				map(es, \x -> fsUnwrapSeq(fsDoStatPerceus(x, env)))
 			));
 		}
-		FsLet(v, e, s1, __,__): {
+		FsLet(v, e, s1, __,start): {
 			eOps = fsExpMemOps(e);
+			/*if (v.name == "xAA" || v.name == "xxAA") {
+				vars = set2array(fsExpVars(e, makeSet()));
+				println(
+					v.name + " let RHS vars: [" + superglue(vars, \x -> x.name, ", ") + "]\n" +
+					toString(vars) + "\n" +
+					"eOps.pre:\n" + toStringFormatted(eOps.pre)
+				);
+			}*/
+			env1 = if (!containsSet(env.caseArgs, v.name)) env else {
+				FsPerceusEnv(env with caseArgs = removeSet(env.caseArgs, v.name));
+			}
+			post = concat(eOps.post, fsUnwrapSeq(fsDoStatPerceus(s1, env1)));
+			post1 = if (!containsSet(env.caseArgs, v.name)) post else {
+				concat([FsMemory(FmDup(), v, start)], post);
+			}
 			fsWrapSeq(concat(
 				eOps.pre,
 				[FsLet(s with
 					e = fsDoExpPerceus(e),
-					s = fsWrapSeq(concat(
-						eOps.post,
-						fsUnwrapSeq(fsDoStatPerceus(s1))
-					))
+					s = fsWrapSeq(post1)
 				)]
 			));
 		}
@@ -93,7 +128,7 @@ fsDoStatPerceus(s: FsStat) -> FsStat {
 
 fsExpMemOps(ex: FsExp) -> MemOps {
 	vars = set2array(fsExpVars(ex, makeSet()));
-	to_dup = \v -> !(fiTypeIsScalar(v.type)) && v.local/* && !^(v.last)*/;
+	to_dup = \v -> !(fiTypeIsScalar(v.type)) && v.local && !v.last;
 	to_drop = \v -> !(fiTypeIsScalar(v.type)) && v.local/* && !v.return*/;
 	MemOps(
 		filtermap(vars, \v -> if (to_dup(v)) Some(FsMemory(FmDup(), v, v.start)) else None()),
@@ -102,6 +137,28 @@ fsExpMemOps(ex: FsExp) -> MemOps {
 }
 
 fsExpVars(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
+	switch (ex) {
+		FsCall(f, args, type,__): {
+			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
+		}
+		FsLambda(toplevel, closure, args, body, type,__): {
+			fold(closure, vars, \acc, x -> insertSet(acc, x));
+		}
+		FsCallPrim(op, es, type,__): {
+			fold(es, vars, \acc, x -> fsExpVars(x, acc));
+		}
+		FsVar(name, local, last, return, __,__): {
+			insertSet(vars, ex);
+		}
+		FiString(s, __): vars;
+		FiVoid(__):      vars;
+		FiBool(b, __):   vars;
+		FiInt(i, __):    vars;
+		FiDouble(d, __): vars;
+	}
+}
+
+fsStatLocals(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
 	switch (ex) {
 		FsCall(f, args, type,__): {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
@@ -131,8 +188,8 @@ fsDoExpPerceus(ex: FsExp) -> FsExp {
 				args = map(args, fsDoExpPerceus)
 			);
 		}
-		FsLambda(toplevel, closure, args, body, type,__): {
-			FsLambda(ex with body = fsDoStatPerceus(body));
+		FsLambda(toplevel, closure, args, body, type, start): {
+			FsLambda(ex with body = fsDoStatPerceus(body, FsPerceusEnv(makeSet())));
 		}
 		FsCallPrim(op, es, type,__): {
 			FsCallPrim(ex with es = map(es, fsDoExpPerceus));
@@ -143,75 +200,6 @@ fsDoExpPerceus(ex: FsExp) -> FsExp {
 		FiBool(b, __):   ex;
 		FiInt(i, __):    ex;
 		FiDouble(d, __): ex;
-	}
-}
-
-// Traverse the AST backwards and markup the first variable use as last
-
-fsTraverseStatLasVarUsage(ex: FsStat, vars: Set<string>) -> Set<string> {
-	switch(ex) {
-		FsLet(v, e, s1, __,__): {
-			vars1 = fsTraverseStatLasVarUsage(s1, vars);
-			v.last := !containsSet(vars1, v.name);
-			insertSet(fsTraverseExpLasVarUsage(e, vars1), v.name);
-		}
-		FsIf(cond, s1, s2, __,__): {
-			fsTraverseExpLasVarUsage(cond, mergeSets(
-				fsTraverseStatLasVarUsage(s1, vars), 
-				fsTraverseStatLasVarUsage(s2, vars)
-			));
-		}
-		FsSwitch(v, type, cases, __,__): {
-			vars1 = fold(cases, vars, \acc, c -> mergeSets(acc, fsTraverseStatLasVarUsage(c.body, vars)));
-			v.last := !containsSet(vars1, v.name);
-			insertSet(vars1, v.name);
-		}
-		FsSeq(es, __,__): {
-			foldr(es, vars, \acc, x -> mergeSets(acc, fsTraverseStatLasVarUsage(x, acc)));
-		}
-		FsAssign(to, what, __): {
-			fsTraverseExpLasVarUsage(to, fsTraverseExpLasVarUsage(what, vars));
-		}
-		FsMemory(op, e, __): {
-			fsTraverseExpLasVarUsage(e, vars);
-		}
-		FsWrapExp(e, start): {
-			fsTraverseExpLasVarUsage(e, vars);
-		}
-		FsRet(e, start): {
-			fsTraverseExpLasVarUsage(e, vars);
-		}
-		FsTailCall(start): {
-			vars;
-		}
-		FsVarDecl(var, start): {
-			vars;
-		}
-	}
-}
-
-fsTraverseExpLasVarUsage(ex: FsExp, vars: Set<string>) -> Set<string> {
-	switch(ex) {
-		FsLambda(toplevel, closure, args, body, __,__): {
-			fsTraverseStatLasVarUsage(body, makeSet());
-			vars;
-		}
-		FsCall(fn, args, __,__): {
-			vars1 = fold(args, vars, \acc, x -> fsTraverseExpLasVarUsage(x, acc));
-			fsTraverseExpLasVarUsage(fn, vars1);
-		}
-		FsCallPrim(op, es, __,__): {
-			foldr(es, vars, \acc, x -> fsTraverseExpLasVarUsage(x, acc));
-		}
-		FsVar(name, local, last, __,__,__): {
-			last := !containsSet(vars, name);
-			insertSet(vars, name);
-		}
-		FiVoid(__):       vars;
-		FiDouble(__,__):  vars;
-		FiInt(__,__):     vars;
-		FiString(__,__):  vars;
-		FiBool(__,__):    vars;
 	}
 }
 
@@ -255,3 +243,126 @@ fsStatOptimize(s: FsStat) -> FsStat {
 		default: s;
 	}
 }
+
+// Traverse the AST backwards and markup the first variable use as last
+
+fsStatLasVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
+	switch(ex) {
+		FsLet(v, e, s1, __,__): {
+			p1 = fsStatLasVarUsage(s1, vars);
+			p2 = fsExpLasVarUsage(e, p1.second);
+			Pair(
+				FsLet(ex with 
+					var = FsVar(v with last = !containsSet(p1.second, v.name)),
+					e = p2.first,
+					s = p1.first
+				),
+				insertSet(p2.second, v.name)
+			);
+		}
+		FsIf(cond, s1, s2, __,__): {
+			p1 = fsStatLasVarUsage(s1, vars);
+			p2 = fsStatLasVarUsage(s2, vars);
+			c = fsExpLasVarUsage(cond, mergeSets(p1.second, p2.second));
+			Pair(
+				FsIf(ex with 
+					cond = c.first,
+					s1 = p1.first,
+					s2 = p2.first
+				),
+				c.second
+			);
+		}
+		FsSwitch(v, type, cases, __,__): {
+			cases_ps = map(cases, \c -> {
+				p = fsStatLasVarUsage(c.body, vars);
+				Pair(FsCase(c with body = p.first), p.second);
+			});
+			vars1 = fold(cases_ps, vars, \acc, p -> mergeSets(acc, p.second));
+			Pair(
+				FsSwitch(ex with
+					x = FsVar(v with last = !containsSet(vars1, v.name)),
+					cases = map(cases_ps, \p -> p.first)
+				),
+				insertSet(vars1, v.name)
+			);
+		}
+		FsSeq(ss, __,__): {
+			ps = foldr(ss, Pair([], vars), \acc, x -> {
+				p = fsStatLasVarUsage(x, acc.second);
+				Pair(concat([p.first], acc.first), p.second);
+			});
+			Pair(
+				FsSeq(ex with ss = ps.first),
+				ps.second
+			);
+		}
+		FsAssign(to, what, __): {
+			p1 = fsExpLasVarUsage(what, vars);
+			p2 = fsExpLasVarUsage(to, p1.second);
+			Pair(
+				FsAssign(ex with
+					to = p2.first,
+					what = p1.first
+				),
+				p2.second
+			);
+		}
+		FsMemory(op, e, __): {
+			p = fsExpLasVarUsage(e, vars);
+			Pair(FsMemory(ex with e = p.first), p.second);
+		}
+		FsWrapExp(e, start): {
+			p = fsExpLasVarUsage(e, vars);
+			Pair(FsWrapExp(ex with e = p.first), p.second);
+		}
+		FsRet(e, start): {
+			p = fsExpLasVarUsage(e, vars);
+			Pair(FsRet(ex with e = p.first), p.second);
+		}
+		FsTailCall(start): {
+			Pair(ex, vars);
+		}
+		FsVarDecl(var, start): {
+			Pair(ex, vars);
+		}
+	}
+}
+
+fsExpLasVarUsage(ex: FsExp, vars: Set<string>) -> Pair<FsExp, Set<string>> {
+	switch(ex) {
+		FsLambda(toplevel, closure, args, body, __,__): {
+			p = fsStatLasVarUsage(body, makeSet());
+			Pair(FsLambda(ex with body = p.first), p.second);
+		}
+		FsCall(fn, args, __,__): {
+			ps = fold(args, Pair([], vars), \acc, x -> {
+				p = fsExpLasVarUsage(x, acc.second);
+				Pair(concat(acc.first, [p.first]), p.second);
+			});
+			fp = fsExpLasVarUsage(fn, ps.second);
+			Pair(
+				FsCall(ex with
+					f = fp.first,
+					args = ps.first
+				),
+				fp.second
+			);
+		}
+		FsCallPrim(op, es, __,__): {
+			ps = foldr(es, Pair([], vars), \acc, x -> {
+				p = fsExpLasVarUsage(x, acc.second);
+				Pair(concat([p.first], acc.first), p.second);
+			});
+			Pair(FsCallPrim(ex with es = ps.first), ps.second);
+		}
+		FsVar(name, local, last, return,__,__): {
+			Pair(
+				FsVar(ex with last = !containsSet(vars, name)), 
+				insertSet(vars, name)
+			);
+		}
+		default: Pair(ex, vars);
+	}
+}
+

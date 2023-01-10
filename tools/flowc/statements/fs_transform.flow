@@ -1,0 +1,136 @@
+import ds/array;
+import tools/flowc/statements/fs_helpers;
+
+export {
+	fsStatTransform(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat;
+	fsExpTransform(e: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp;
+
+	fsStatTraverse(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
+	fsExpTraverse(e: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
+}
+
+fsStatTransform(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat {
+	trans_s(switch (s) {
+		FsIf(cond, s1, s2, __,__): {
+			FsIf(s with
+				cond = fsExpTransform(cond, trans_s, trans_e),
+				s1 = fsStatTransform(s1, trans_s, trans_e),
+				s2 = fsStatTransform(s2, trans_s, trans_e)
+			);
+		}
+		FsSwitch(x, sw_type, cases,__,__): {
+			FsSwitch(s with 
+				cases = map(cases, \c -> FsCase(c with body = fsStatTransform(c.body, trans_s, trans_e)))
+			);
+		}
+		FsSeq(ss, type,__): {
+			FsSeq(s with 
+				ss = map(ss, \x -> fsStatTransform(x, trans_s, trans_e))
+			);
+		}
+		FsLet(v, e, s1, __,__): {
+			FsLet(s with 
+				e = fsExpTransform(e, trans_s, trans_e),
+				s = fsStatTransform(s1, trans_s, trans_e)
+			);
+		}
+		FsWrapExp(e,__): {
+			FsWrapExp(s with e = fsExpTransform(e, trans_s, trans_e));
+		}
+		FsRet(e,__): {
+			FsRet(s with e = fsExpTransform(e, trans_s, trans_e));
+		}
+		FsTailCall(__): {
+			s;
+		}
+		FsVarDecl(var,__): {
+			s;
+		}
+		FsAssign(to, what,__): {
+			FsAssign(s with 
+				to = fsExpTransform(to, trans_s, trans_e),
+				what = fsExpTransform(what, trans_s, trans_e)
+			);
+		}
+		FsMemory(op, e,__): {
+			FsMemory(s with e = fsExpTransform(e, trans_s, trans_e));
+		}
+	});
+}
+
+fsExpTransform(ex: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp {
+	trans_e(switch(ex) {
+		FsLambda(__,__,__, body, __,__): {
+			FsLambda(ex with body = fsStatTransform(body, trans_s, trans_e));
+		}
+		FsCall(fn, args, __,__): {
+			FsCall(ex with 
+				f = fsExpTransform(fn, trans_s, trans_e),
+				args = map(args, \x -> fsExpTransform(x, trans_s, trans_e))
+			);
+		}
+		FsCallPrim(op, es, __,__): {
+			FsCallPrim(ex with es = map(es, \x -> fsExpTransform(x, trans_s, trans_e)));
+		}
+		FsVar(name, local, last, __,__,__): ex;
+		FiConst(): ex;
+	});
+}
+
+fsStatTraverse(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
+	switch (s) {
+		FsIf(cond, s1, s2, __,__): {
+			fsExpTraverse(cond, trans_s, trans_e);
+			fsStatTraverse(s1, trans_s, trans_e);
+			fsStatTraverse(s2, trans_s, trans_e);
+		}
+		FsSwitch(x, sw_type, cases,__,__): {
+			fsExpTraverse(x, trans_s, trans_e);
+			iter(cases, \c -> fsStatTraverse(c.body, trans_s, trans_e));
+		}
+		FsSeq(ss, type,__): { 
+			iter(ss, \x -> fsStatTraverse(x, trans_s, trans_e));
+		}
+		FsLet(v, e, s1, __,__): {
+			fsExpTraverse(v, trans_s, trans_e);
+			fsExpTraverse(e, trans_s, trans_e);
+			fsStatTraverse(s1, trans_s, trans_e);
+		}
+		FsWrapExp(e,__): {
+			fsExpTraverse(e, trans_s, trans_e);
+		}
+		FsRet(e,__): {
+			fsExpTraverse(e, trans_s, trans_e);
+		}
+		FsTailCall(__): { }
+		FsVarDecl(var,__): { 
+			fsExpTraverse(var, trans_s, trans_e);
+		}
+		FsAssign(to, what,__): {
+			fsExpTraverse(to, trans_s, trans_e);
+			fsExpTraverse(what, trans_s, trans_e);
+		}
+		FsMemory(op, e,__): {
+			fsExpTraverse(e, trans_s, trans_e);
+		}
+	}
+	trans_s(s);
+}
+
+fsExpTraverse(ex: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
+	switch(ex) {
+		FsLambda(__,__,__, body, __,__): {
+			fsStatTraverse(body, trans_s, trans_e);
+		}
+		FsCall(fn, args, __,__): {
+			fsExpTraverse(fn, trans_s, trans_e);
+			iter(args, \x -> fsExpTraverse(x, trans_s, trans_e));
+		}
+		FsCallPrim(op, es, __,__): {
+			iter(es, \x -> fsExpTraverse(x, trans_s, trans_e));
+		}
+		FsVar(name, local, last, __,__,__): { }
+		FiConst(): { }
+	};
+	trans_e(ex);
+}
