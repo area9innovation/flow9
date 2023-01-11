@@ -87,7 +87,11 @@ public class FlowFileSystem extends NativeHost {
 	public static String resolveRelativePath(String path) {
 		File file = new File(path);
 		try {
-			return file.getCanonicalPath();
+			path = file.getCanonicalPath();
+			if (File.separator.equals("\\")) {
+				path = path.replace('\\', '/');
+			}
+			return path;
 		} catch (Exception e) {
 			return "";
 		}

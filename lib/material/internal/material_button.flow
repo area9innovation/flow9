@@ -579,10 +579,13 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 	clickEnabled = extractStruct(style, MClickEnabled(const(true)));
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
 	captionClickable = !contains(style, MCaptionNonClickable());
+	checkableTitle = make(name); 
 
+	defFn = \en -> MComponentGroup2T(manager, parent, name + "Caption", [MEnabled(en)], \p2 -> m2t(captionM, p2));
 	caption = \en ->
 		switch (captionM) {
 			MText(text, tStyle): {
+				nextDistinct(checkableTitle, text);
 				MIfLazy2T(
 					manager,
 					parent,
@@ -608,7 +611,11 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 					true
 				)
 			}
-			default: MComponentGroup2T(manager, parent, name + "Caption", [MEnabled(en)], \p2 -> m2t(captionM, p2))
+			MEllipsisText(text, __): {
+				nextDistinct(checkableTitle, text);
+				defFn(en);
+			}
+			default: defFn(en);
 		}
 
 	pressed = make(false);
@@ -631,7 +638,7 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			[
 				IScriptBehaviour("value", value, ISInputValue([], "bool", true)),
 				FAccessAttribute("aria-checked", fif(value, const("true"), const("false"))),
-				extractStruct(style, MButtonTitle(const(name)))
+				extractStruct(style, MButtonTitle(checkableTitle))
 			]
 		);
 
@@ -1404,15 +1411,17 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 	textStyle = eitherMap(textStyle0, \ts -> ts.style, [MDataRow()]);
 	mousePosition = makePoint();
 	outlined = contains(style, MOutlined());
-	strokeWidth = 1.;
+	outlineColor = tryExtractStruct(style, MOutlineColor(MBlack()));
+	outlineOpacity = extractStruct(style, MOutlineOpacity(1.)).opacity;
+	strokeWidth = extractStruct(style, MOutlineWidth(1.)).width;
 	chipCorners = tryExtractStruct(style, MChipCorners(RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.)));
 
 	selectedColor = extractMColor(parent, style, MPrimaryColor());
 	colorOpacityDef = extractStruct(style, FillOpacity(1.)).opacity;
 	unselectedColor = MThemeColor2MColor(parent, extractStruct(style, MUnselectedColor(if (outlined) MWhite() else MGrey(300))).color);
 
-	growth = make(0.);
-	fade = make(0.);
+	growth = make(1.);
+	fade = make(1.);
 	isInside = make(false);
 
 	icon : Maybe<Material> =
@@ -1529,23 +1538,26 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 			MComponent2T(manager, p, "MChip", focusState, \foc -> {
 				isEnabled = fOr(foc.enabled, active);
 
-				downTrigger =
-					fif(
-						selectable.enabled,
-						fstall(fOr(foc.down, fand(fneq(growth, 0.), fneq(growth, 1.))), 0),
-						foc.down
-					);
+				rippleEnabled = fOr(fnot(selectable.enabled), fOr(fnot(isInside), foc.down));
+				selected = fOr(fand(selectable.enabled, selectable.selected), active);
 
-				rippleEnabled =
-					fOr(fnot(selectable.enabled), fOr(fnot(isInside), downTrigger));
-
-				selected =
-					ftransistor(fnot(downTrigger), fOr(fand(selectable.enabled, selectable.selected), active));
-
-				selectedProgress = fselect2(growth, fif(rippleEnabled, fade, const(0.)), FLift2(\gr, f -> {
-					pr = gr * (1. - f);
-					if (fgetValue(selected)) 1. - pr else pr
-				}));
+				selectedProgress = fif(selectable.enabled,
+					fselect3(
+						fif(rippleEnabled, growth, const(1.)),
+						fif(rippleEnabled, fade, const(0.)),
+						fif(foc.down, fnot(selectable.selected), selectable.selected),
+						\gr, f, sel -> {
+							if (gr != 0. && abs(gr - 1.) > 0.1) {
+								if (sel) gr else 1. - gr
+							} else if (f != 0. && abs(f - 1.) > 0.1) {
+								if (sel) f else 1. - f
+							} else {
+								if (sel) 1. else 0.
+							}
+						}
+					),
+					const(0.)
+				);
 
 				selectedColorWithOpacity =
 					MCustomColor(
@@ -1561,6 +1573,8 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						MCustomColor(mixColors(MColor2int(MTextMColor(unselectedColor)), MColor2int(MTextMColor(selectedColor)), 1. - pr, pr))
 					));
 
+				outlineMColor = maybeMap(outlineColor, \oc -> MThemeColor2MColor(foc, oc.color));
+
 				hovered = fand(isEnabled, fOr(foc.hover, extHover));
 				hoveredLayerOpacity =
 					fselect3(hovered, foc.focused, foc.down, \hov, focused, down ->
@@ -1572,12 +1586,14 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						TSelect2(mainLayerColor, mainLayerOpacity, \col, op ->
 							MShape(p, [MFill(col), FillOpacity(op)], sz, "MChip")
 						),
-						MRipple2T(manager, p, TBorder4(strokeWidth / 2., sz), downTrigger, [
+						MRipple2T(manager, p, TBorder4(strokeWidth / 2., sz), foc.down, [
 							MRippleType(const(MRippleFill())),
 							MRipplePosition(mousePosition),
 							MRippleColor(
 								fif(selectable.enabled,
-									fif(selected, const(unselectedColor), const(selectedColorWithOpacity)),
+									fselect(selectedProgress, FLift(\pr ->
+										MCustomColor(mixColors(MColor2int(unselectedColor), MColor2int(selectedColor), 1. - pr, pr))
+									)),
 									const(contrastingMColor(parent))
 								)
 							),
@@ -1590,8 +1606,16 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						if (outlined) {
 							TSelect(selectedProgress, \pr ->
 								TGroup2(
-									MShape(p, [MStroke(MGrey(300)), StrokeOpacity(1. - pr), StrokeWidth(strokeWidth)], sz, "MChip"),
-									MShape(p, [MStroke(selectedColor), StrokeOpacity(min(1., 2. * colorOpacityDef) * pr), StrokeWidth(strokeWidth)], sz, "MChip")
+									MShape(p, [
+										MStroke(either(outlineMColor, MGrey(300))),
+										StrokeOpacity((1. - pr) * outlineOpacity),
+										StrokeWidth(strokeWidth)
+									], sz, "MChip"),
+									MShape(p, [
+										MStroke(either(outlineMColor, selectedColor)),
+										StrokeOpacity(min(1., 2. * colorOpacityDef) * pr * outlineOpacity),
+										StrokeWidth(strokeWidth)
+									], sz, "MChip")
 								)
 							)
 						} else TEmpty(),

@@ -56,6 +56,8 @@ export {
 
 	nonBreakableSpace : string = fromCharCode(nonBreakableSpaceCode);
 	wordJoiner : string = fromCharCode(wordJoinerCode);
+	zeroWidthJoiner : string = fromCharCode(zeroWidthJoinerCode);
+	isWordJoiner(char : string) -> bool;
 
 	makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle];
 
@@ -65,7 +67,8 @@ export {
 		traceAndUnnest : (() -> string) -> void,
 		unnestAndTrace : (() -> string) -> void,
 		nest : () -> void,
-		unnest : () -> void
+		unnest : () -> void,
+		traceId : string
 	);
 
 	makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string);
@@ -165,7 +168,7 @@ general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDec
 				NewLine(): e1;
 			}
 		}
-		NonTextElement() : Empty();
+		NonTextElement(__) : Empty();
 	}
 }
 
@@ -330,7 +333,7 @@ renderParagraphEx(
 	isUnbreakable = \currentWord, prevWord -> {
 		lastChr = strsubsmart(getWordText(prevWord), -1, 0);
 		firstChr = strsubsmart(getWordText(currentWord), 0, 1);
-		lastChr == wordJoiner || firstChr == wordJoiner || lastChr == nonBreakableSpace || firstChr == nonBreakableSpace;
+		isWordJoiner(lastChr) || isWordJoiner(firstChr)
 	};
 	keepFormTogetherOrWithMark = \form1, i -> {
 		keepFormTogether(form1) || isParagraphMarked && i <= 1;
@@ -469,7 +472,7 @@ renderParagraphEx(
 			updateFn = \wi-> {
 				oldLines = getValue(linesCountB);
 				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				traceApi.trace(\-> "updateFn START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+				traceApi.traceAndNest(\-> "updateFn START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -495,7 +498,7 @@ renderParagraphEx(
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
 				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceApi.trace(\-> "updateFn END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.unnestAndTrace(\-> "updateFn END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
@@ -1524,8 +1527,8 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 					Text(t1, s1) : {
 						switch (f : GhostForm) {
 							Text(t2, s2) : {
-								s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1; 
-								s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2; 
+								s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1;
+								s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2;
 								join = if (use_dynamic_text_metrics) {
 									joinText(
 										t1,
@@ -1774,7 +1777,7 @@ paragraphElement2string(e : ParagraphElement) -> string {
 
 wigiTraceLevel : ref int = ref 0;
 
-dummyWigiTraceApi = WigiTraceApi(nop1, nop1, nop1, nop1, nop, nop);
+dummyWigiTraceApi = WigiTraceApi(nop1, nop1, nop1, nop1, nop, nop, "");
 
 makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string) {
 	\-> fold(words(), "", \acc, w -> acc + word2string(w))
@@ -1792,7 +1795,8 @@ makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi
 			\messageFn -> { traceFn(messageFn); unnestFn(); },
 			\messageFn -> { unnestFn(); traceFn(messageFn); },
 			nestFn,
-			unnestFn
+			unnestFn,
+			traceId
 		)
 	} else {
 		dummyWigiTraceApi
@@ -1801,4 +1805,8 @@ makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi
 
 makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> WigiTraceApi {
 	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> words, paragraphElement2string))
+}
+
+isWordJoiner(char : string) -> bool {
+	char == wordJoiner || char == nonBreakableSpace || char == zeroWidthJoiner
 }

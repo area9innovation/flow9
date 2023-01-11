@@ -265,7 +265,7 @@ if (a === b) return true;
 			var r = "[";
 			var s = "";
 			for (v in a) {
-				var vc = toStringCommon(v, keepStringEscapes, additionalEscapingFn);
+				var vc = toStringCommon(v, false, additionalEscapingFn);
 				r += s + vc;
 				s = ", ";
 			}
@@ -273,7 +273,7 @@ if (a === b) return true;
 		}
 		if (Reflect.hasField(value, "__v")) {
 			// Reference
-			return "ref " + toStringCommon(value.__v, keepStringEscapes, additionalEscapingFn);
+			return "ref " + toStringCommon(value.__v, false, additionalEscapingFn);
 		}
 		#if (js && readable)
 		if (Reflect.hasField(value, "_name")) {
@@ -304,7 +304,7 @@ if (a === b) return true;
 						r += s + v + ( (Std.int(v) == v) ? ".0" : "" );
 					}
 					case RTArray(arrtype): {
-						if (!isArray(v) || arrtype != RTDouble) r += s + toStringCommon(v, keepStringEscapes, additionalEscapingFn);
+						if (!isArray(v) || arrtype != RTDouble) r += s + toStringCommon(v, false, additionalEscapingFn);
 						else {
 							r += s + "[";
 							for (j in 0...v.length)
@@ -313,7 +313,7 @@ if (a === b) return true;
 						}
 					}
 					default:
-						r += s + toStringCommon(v, keepStringEscapes, additionalEscapingFn);
+						r += s + toStringCommon(v, false, additionalEscapingFn);
 				}
 				s = ", ";
 			}
@@ -365,7 +365,7 @@ if (a === b) return true;
 				s = StringTools.replace(s, "\n", "\\n");
 				s = StringTools.replace(s, "\t", "\\t");
 			#end
-			
+
 			return "\"" + s + "\"";
 		});
 	}

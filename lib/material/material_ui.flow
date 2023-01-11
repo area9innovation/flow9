@@ -131,7 +131,8 @@ export {
 		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
 		MCustomAnyItem(text : string);
 		MChangeOnClick(); // Changes selected only when click on autocomplete item.
-		MInputInspector(text : DynamicBehaviour<string>); // Intended for MAutoComplete case.
+		// Intended for MAutoComplete case. Can be used as initial autocomplete value.
+		MInputInspector(text : DynamicBehaviour<string>);
 		MHideBrowseButton(); // Browse button is shown by default in autocomplete mode
 		MBrowseDialogStyles(style : [MBrowseDialogStyle]);
 			MBrowseDialogStyle ::= MDialogStyle, MDynamicListStyle;
@@ -180,6 +181,12 @@ export {
 			MCustomHandle(fn : (MResizableHandle) -> Material);
 			MEditableRectangleBackground(style : Transform<[TGraphicsStyle]>);
 
+	MPopupOpener(button : MaterialButton, popupContent : Material, style : [MPopupOpenerStyle]) -> Material;
+		MaterialButton ::= MTextButton, MIconButton;
+		MPopupOpenerStyle ::= MPopupAlignment, MOpenMenu;
+			MPopupAlignment(type : Transform<MPopupAlignmentType>);
+				MPopupAlignmentType ::= MStart, MEnd, MLeft, MRight, MTop, MBottom, MNoAlignment;
+
 	// Construct an HTML stage with the given metrics
 	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
 
@@ -190,7 +197,7 @@ export {
 	MPictureFit(picURL : string, style : [MPictureStyle]) -> Material;
 
 	// Tries to fit content into box if the difference between content and box heights is less than threshold, adds a scroll otherwise
-	MScrollOrFit(content : Material, box : Material, threshold : double) -> Material;
+	MScrollOrFit(content : Material, box : Material, threshold : double, style : [MScrollStyle]) -> Material;
 
 	// Helper to manipulate element background corners appearance. Look at defaultMaterialShapeMapping to detect what shapeName to use.
 	MCustomCorners(m : Material, shapeName : string, corners : MaterialShape) -> Material;
@@ -318,7 +325,7 @@ MTopMost(content : Material, style : [MTopMostStyle]) -> Material {
 	MGetManager(\manager ->
 		MMoveClip(
 			MComponentGroup(
-				MCopySize2(content, \tr, sz -> 
+				MCopySize2(content, \tr, sz ->
 					MGroup2(
 						MCursor(ArrowCursor(), MTranslate(movPosition, sz |> disableMInteractivesBelow)),
 						MMovable(tr, TFillXY(), [MMovablePosition(movPosition), MEnabled(movingEnabled)])
@@ -791,7 +798,7 @@ MInlinePopupPosition(
 
 MAddShortcutDialog(manager : MaterialManager, onDismiss : () -> void) -> () -> void {
 	if (checkIntegrationShowPwaParameter() && mobile && js && ios() &&
-			getKeyValue("progressive_shortcut_dialog_shown", "false") == "false" && 
+			getKeyValue("progressive_shortcut_dialog_shown", "false") == "false" &&
 			!isUrlParameterTrue("progressive_shortcut_dialog_hide")) {
 
 		onClose = ref nop;
@@ -898,7 +905,7 @@ MDropDownOrAutoComplete(
 
 	makeMAutoCompleteControl = \manager -> {
 		inputInspector = tryExtractStruct(style, MInputInspector(make("")));
-		idx2string = \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "");
+		idx2string = \idx -> elementAt(items, idx, if (showAnyItem) items[0] else eitherMap(inputInspector, \inp -> getValue(inp.text), ""));
 		trimStr = \s -> trim(s) |> toLowerCase;
 		string2idx = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
 
@@ -1009,7 +1016,7 @@ MDropDownOrAutoComplete(
 					]), dialogContent)
 				};
 				concat(st, [MRightCustomButton(
-					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse content")))])
+					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse Content")))])
 				), MShowDropDownArrow(false)])
 			});
 		autoCompleteState0 =
@@ -1353,7 +1360,7 @@ MEllipsisTextTwoFonts(
 	MGetFocusGroup(\parent -> {
 		size1 = MFontStyle2MFont(parent, font1).size;
 		size2 = MFontStyle2MFont(parent, font2).size;
-		
+
 		bigger = if (size1 > size2) font1 else font2;
 		smaller = if (size1 > size2) font2 else font1;
 
@@ -1427,6 +1434,65 @@ MEditableRectangle(
 		]
 	)
 	|> (\m -> MAttachAvailable(m, avBox))
+}
+
+MPopupOpener(button : MaterialButton, popupContent : Material, style : [MPopupOpenerStyle]) -> Material {
+	popupOpened = extractStruct(style, MOpenMenu(make(false))).opened;
+	posScale = make(zeroPositionScale);
+	buttonWH = makeWH();
+	popupW = make(0.);
+	popupH = make(0.);
+	border = 16.;
+
+	mat = switch (button) {
+		MIconButton(__, onClick, __, __):
+			MIconButton(button with onClick = \ -> {
+				reverseBehaviour(popupOpened);
+				onClick()
+			});
+		MTextButton(__, onClick, __, __):
+			MTextButton(button with onClick = \ -> {
+				reverseBehaviour(popupOpened);
+				onClick()
+			})
+	}
+	MGetManager(\manager -> MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t -> {
+		alignment = extractStruct(style, MPopupAlignment(const(MNoAlignment()))).type;
+		leftOffset = fnegate(popupW);
+		rightOffset = fwidth(buttonWH);
+		offset = fsubselect(alignment, FLift(\align -> switch (align) {
+			MTop() : fwh(zero, fnegate(faddition(popupH, const(2. * border))));
+			MBottom() : fwh(zero, fheight(buttonWH));
+			MLeft() : fwh(leftOffset, zero);
+			MRight() : fwh(rightOffset, zero);
+			MStart() : fwh(if (p.rtl) rightOffset else leftOffset, zero);
+			MEnd() : fwh(if (p.rtl) leftOffset else rightOffset, zero);
+			default : const(WidthHeight(0., 0.))
+		}));
+
+		MConstruct([
+			makeSubscribe2(popupOpened, \op ->
+				if (op) RenderMPopup(manager, p, MPopup(
+						[[popupContent]],
+						posScale,
+						[
+							RMBorders(border),
+							MOpenMenu(popupOpened),
+							MFocusOnPrevious(true),
+							RMOffset(fstall(fselectLift(offset, \o -> Pair(o, 0.)), 0)),
+							RMCurrentWidth(popupW),
+							RMCurrentHeight(popupH)
+						]
+					),
+					m2t
+				)
+			)
+		], MPositionScale(posScale, MAttachBox(mat, buttonWH)))
+		|> (\m -> MCopySize(m, \sz ->
+			MInteractive([MouseUp(\__ -> {nextDistinct(popupOpened, false); false;})], sz),
+			false
+		))
+	})))
 }
 
 MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material {
@@ -1522,7 +1588,7 @@ MPictureFit(picURL : string, style : [MPictureStyle]) {
 	)
 }
 
-MScrollOrFit(content : Material, box : Material, threshold : double) -> Material {
+MScrollOrFit(content : Material, box : Material, threshold : double, style : [MScrollStyle]) -> Material {
 	contentHeight = make(0.);
 	avBox = makeWH();
 	availableHeight = fheight(avBox);
@@ -1539,12 +1605,15 @@ MScrollOrFit(content : Material, box : Material, threshold : double) -> Material
 	|> (\m -> MScroll(
 		m,
 		MAttachBox(box, avBox),
-		[
-			MScrollCropByContent(),
-			TScrollEnabled(scrollEnabled),
-			MScrollCropEnabled(scrollEnabled)
-		])
-	)
+		concat(
+			style,
+			[
+				MScrollCropByContent(),
+				TScrollEnabled(scrollEnabled),
+				MScrollCropEnabled(scrollEnabled)
+			]
+		)
+	))
 }
 
 MCustomCorners(m : Material, shapeName : string, corners : MaterialShape) -> Material {

@@ -4,7 +4,7 @@ import material/internal/material_component;
 import material/internal/tropic_size_util;
 
 export {
-	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
+	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogAccessibleName, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
 		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable, MMovableOrigin,
 		MDialogResizable, MResizableControlOnStart, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MFocusOnPrevious, MFloatingContent, MDialogCloseButton,
 		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MAddSafeArea,
@@ -13,6 +13,7 @@ export {
 		// These are very commonly recommended
 		MDialogTitle(title : string);
 		MDialogCustomTitle(title : Material);
+		MDialogAccessibleName(name : Transform<string>); // It will be used by screenreader
 		MDialogUseFrame();
 		MDialogScroll();
 		MDialogScrollStyle(style : [MScrollStyle]);
@@ -122,10 +123,11 @@ renderMDialog3(
 	us = ref [];
 	disp = \ -> dispUnsA(us);
 
+	currentFocusedItem = getCurrentFocusedItem(manager);
 	previousFocus =
 		if (extractStruct(style, MFocusOnPrevious(true)).enabled) {
 			eitherFn(
-				getCurrentFocusedItem(manager),
+				currentFocusedItem,
 				\fi -> Some(fi),
 				\ -> getPreviousFocusedItem(manager)
 			)
@@ -244,7 +246,7 @@ renderMDialog3(
 							MDynamicParagraph2T(
 								p,
 								const(ttl.title),
-								[MTitle(), ParagraphMargin(0.0, 0.0)]
+								[MTitle(), ParagraphMargin(0.0, 0.0), TagName("h2")]
 							)
 							|> (\t ->
 								eitherMap(
@@ -509,7 +511,7 @@ renderMDialog3(
 		|> (\t -> TBorder(sideBorder, sideBorder, sideBorder, sideBorder, t))
 		|> (\t : Tropic -> if (extractStruct(style, MAddSafeArea(true)).add) m2t(MSafeArea(t), p) else t)
 		|> (\t ->
-			TGroup2( // click events shall not pass
+			TGroup([ // click events shall not pass
 				TInteractive(
 					[
 						TMouseDownGhost(down),
@@ -581,8 +583,13 @@ renderMDialog3(
 				)
 				|> disableBelow(!nonModal), // Disable all other mouse events except handled
 
+				TInteractive(
+					[KeyUp2(\h, ke -> if (!h && ke.keycode == KEY_ESCAPE) {disp(); true} else h)],
+					TRectangle(interactiveRectangleStyle, TFillXY())
+				),
+
 				t
-			)
+			])
 		)
 		|> (\t ->
 			if (isSome(hideDialog0)) {
@@ -656,6 +663,11 @@ renderMDialog3(
 			f;
 		}
 	)
+	|> (\t -> TAccess([
+		AccessRole("dialog"),
+		FAccessAttribute("aria-label", extractStruct(style, MDialogAccessibleName(const(eitherMap(title, \ttl -> ttl.title, "Dialog")))).name),
+		FAccessAttribute("flow-force-focus", const(b2s(isSome(currentFocusedItem) && !fullWindow)))
+	], t))
 	|> (\t ->
 		if (!fullWindow || resizable) {
 			t
@@ -792,7 +804,7 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 	button =
 		either(customButton,
 			if (contains(style, MSnackbarNoButton())) TEmpty()
-			else MIconButton("clear", closeSnackbar, [textColor], [])
+			else MIconButton("clear", closeSnackbar, [textColor], [MButtonTitle(const("Close snackbar"))])
 		)
 		|> MCenterY |> MBorderLeft(8.0);
 
@@ -826,6 +838,11 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 			else
 				TAnimatedExpander(manager, manager.focus, t, visible, [MNoCrop(), MExpanderProgress(progress), MExpandFromStart()])
 		)
+		|> (\t -> TAccess([
+			AccessRole("dialog"),
+			FAccessAttribute("aria-label", const(text)),
+			FAccessAttribute("flow-force-focus", const("true"))
+		], t))
 		|> TAlignBottom
 		|> TAlignHorizontalDir(alignment, manager.focus.rtl)
 		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));

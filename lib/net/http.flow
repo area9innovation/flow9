@@ -1,17 +1,9 @@
 // © Copyright 2011 Area9 Technologies.
 
-import sys/target;
-import net/url;
-import ds/arrayutils;
 import fs/filesystem;
 import net/http_types;
 
 export {
-	/*currentRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
-	okRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
-	errorRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
-	statusRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));*/
-
 	// Example simple call disregarding errors:
 	// httpRequest("http://localhost:81/flow/myfile.txt", false, [], [], \c -> println(c), \e -> {}, \s -> {});
 
@@ -48,7 +40,7 @@ export {
 	//  - cpp flag is `use_utf8_js_style`;
 	//  - js flag is `utf8_no_surrogates`.
 	// If there is no such - `responseEncoding` will be used.
-	// 
+	//
 	// RequestTimeout currently implemented only in java backend.
 	httpCustomRequestStyled(
 		url : string,
@@ -128,6 +120,24 @@ export {
 	// Priority of response encoding flags (hight to low):
 	//  Request style -> Global setter -> Url parameter -> Compiler parameter
 	setDefaultResponseEncoding : (encoding : ResponseEncoding) -> void;
+
+	// Set function that updates arguments before passing them to native functions
+	// If it returns None() then the request should not be processed, in this case
+	// onData or onError have already been called
+	setHttpRequestArgsUpdater(update : (HttpRequestArgs) -> Maybe<HttpRequestArgs>) -> void;
+	HttpRequestArgs(
+		url : string,
+		method : RequestMethod,
+		headers : [KeyValue],
+		params : [KeyValue],
+		onData : (int, string, [KeyValue]) -> void,
+		onError : (int, string, [KeyValue]) -> void
+	);
+}
+
+httpRequestArgsUpdater : ref (HttpRequestArgs) -> Maybe<HttpRequestArgs> = ref \a -> Some(a);
+setHttpRequestArgsUpdater(update : (HttpRequestArgs) -> Maybe<HttpRequestArgs>) -> void {
+	httpRequestArgsUpdater := update;
 }
 
 setDefaultResponseEncoding(encoding : ResponseEncoding) -> void {
@@ -221,8 +231,6 @@ httpRequest(url, postMethod2, headers, params2, onData, onError, onStatus) {
 			true
 		);
 	} else {
-		// next(currentRequest, Quadruple(url, postMethod2, headers, params2));
-
 		// In OWASP mode GET request with parameters is forbidden, so we replace it with POST
 		postMethod =
 			if (isOWASPLevel1() && !postMethod2 && (params2 != [] || strContains(url, "?"))) {
@@ -246,24 +254,35 @@ httpRequest(url, postMethod2, headers, params2, onData, onError, onStatus) {
 				}
 			}
 
-		makeHttpRequest(
+		args = HttpRequestArgs(
 			fixedUrl,
-			postMethod,
-			map(headers, \header -> [header.key, header.value]),
-			map(params, \param -> [param.key, param.value]),
-			\ d -> {
-				// nextDistinct(okRequest, Quadruple(url, postMethod2, headers, params2));
+			if (postMethod) POST() else GET(),
+			headers,
+			params,
+			\status, data, __ -> {
 				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-				onData(d)
+				onStatus(status);
+				onData(data);
 			},
-			\ e -> {
-				// nextDistinct(errorRequest, Quadruple(url, postMethod2, headers, params2));
+			\status, error, __ -> {
 				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-				onError(e)
-			},
-			\st -> {
-				// nextDistinct(statusRequest, Quadruple(url, postMethod2, headers, params2));
-				onStatus(st)
+				onStatus(status);
+				onError(error);
+			}
+		);
+		maybeApply(
+			(^httpRequestArgsUpdater)(args),
+			\argsUpdated -> {
+				status = ref 0;
+				makeHttpRequest(
+					argsUpdated.url,
+					argsUpdated.method == POST(),
+					keyValues2strings(argsUpdated.headers),
+					keyValues2strings(argsUpdated.params),
+					\data -> argsUpdated.onData(^status, data, []),
+					\error -> argsUpdated.onError(^status, error, []),
+					\s -> status := s
+				);
 			}
 		);
 	}
@@ -350,45 +369,53 @@ httpCustomRequestBase(
 			}
 		}
 
-	if (timeout == 0) {
-		httpCustomRequestNative(
-			fixedUrl,
-			methodName2,
-			map(headers, \header -> [header.key, header.value]),
-			map(params, \param -> [param.key, param.value]),
-			payload,
-			responseEncoding2string(responseEncoding),
-			\responseStatus, responseData, responseHeaders -> {
-				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-
-				onResponse(
-					responseStatus,
-					responseData,
-					map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
-				);
-			},
-			async
-		);
-	} else {
-		httpCustomRequestWithTimeoutNative(
-			fixedUrl,
-			methodName2,
-			map(headers, \header -> [header.key, header.value]),
-			map(params, \param -> [param.key, param.value]),
-			payload,
-			\responseStatus, responseData, responseHeaders -> {
-				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-
-				onResponse(
-					responseStatus,
-					responseData,
-					map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
-				);
-			},
-			async,
-			timeout
-		);
+	onResponse2 = \responseStatus, responseData, responseHeaders -> {
+		runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+		onResponse(responseStatus, responseData, responseHeaders);
 	}
+	args = HttpRequestArgs(
+		fixedUrl,
+		string2method(methodName2),
+		headers,
+		params,
+		onResponse2,
+		onResponse2
+	);
+	maybeApply(
+		(^httpRequestArgsUpdater)(args),
+		\argsUpdated -> {
+			onResponse3 = \responseStatus, responseData, responseHeaders -> {
+				argsUpdated.onData(
+					responseStatus,
+					responseData,
+					strings2KeyValues(responseHeaders)
+				);
+			}
+			if (timeout == 0) {
+				httpCustomRequestNative(
+					argsUpdated.url,
+					method2string(argsUpdated.method),
+					keyValues2strings(argsUpdated.headers),
+					keyValues2strings(argsUpdated.params),
+					payload,
+					responseEncoding2string(responseEncoding),
+					onResponse3,
+					async
+				);
+			} else {
+				httpCustomRequestWithTimeoutNative(
+					argsUpdated.url,
+					method2string(argsUpdated.method),
+					keyValues2strings(argsUpdated.headers),
+					keyValues2strings(argsUpdated.params),
+					payload,
+					onResponse3,
+					async,
+					timeout
+				);
+			}
+		}
+	);
 }
 
 preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void {
@@ -447,8 +474,8 @@ uploadClientFile(file, url, params, headers, listeners) {
 	doUploadClientFile(
 		file,
 		url,
-		map(params, \param -> [param.key, param.value]),
-		map(headers, \header -> [header.key, header.value]),
+		keyValues2strings(params),
+		keyValues2strings(headers),
 		onOpen.onOpen,
 		onData.onData,
 		onError.onError,
@@ -471,9 +498,9 @@ sendHttpRequestWithAttachments(
 ) -> void {
 	makeSendHttpRequestWithAttachments(
 		url,
-		map(headers, \header -> [header.key, header.value]),
-		map(params, \param -> [param.key, param.value]),
-		map(attachments, \attachment -> [attachment.key, attachment.value]),
+		keyValues2strings(headers),
+		keyValues2strings(params),
+		keyValues2strings(attachments),
 		onData,
 		onError
 	);
@@ -500,4 +527,18 @@ deleteAppCookies() {
 enableCORSCredentials(enabled : bool) {
 	// NOP
 	// Works in JS only
+}
+
+keyValues2strings(kvs : [KeyValue]) -> [[string]] {
+	map(kvs, \kv -> [kv.key, kv.value]);
+}
+
+strings2KeyValues(strings : [[string]]) -> [KeyValue] {
+	filtermap(strings, \ss -> {
+		if (length(ss) >= 2) {
+			Some(KeyValue(ss[0], ss[1]));
+		} else {
+			None();
+		}
+	});
 }

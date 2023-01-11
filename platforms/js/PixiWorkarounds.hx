@@ -676,6 +676,11 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
+					// Super-specific bug in Safari : when it measures full string, which contains 'T ' combination, it returns a little shorter width than
+					// the sum of words separately
+					if (Platform.isSafari && lines[i].includes('T ')) {
+						lineWidth += 0.3
+					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(/[\\s]+/).length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
