@@ -90,7 +90,10 @@ class VideoClip extends FlowContainer {
 					videoWidget.currentTime = endTime;
 				} else {
 					videoWidget.currentTime = startTime;
-					if (!videoWidget.loop) videoWidget.pause();
+					if (!videoWidget.loop) {
+						videoWidget.pause();
+						onStreamEnded();
+					}
 				}
 				positionFn(videoWidget.currentTime);
 			} else if (videoResponse) {
