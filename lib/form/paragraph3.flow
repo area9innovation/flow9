@@ -14,7 +14,9 @@ export {
 		rtl : bool,
 		widthManager : ParagraphWidthManager,
 		renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
-		fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
+		fontWrapper : ([CharacterStyle]) -> [CharacterStyle],
+		scrollIDM : Maybe<int>,
+		scrollPositionB : DynamicBehaviour<double>
 	) -> Form;
 	getLineIndent(paraIndent : double, isFirstLine : bool) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
@@ -203,7 +205,7 @@ renderParagraph(
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
-	renderParagraphEx(p, s, rtl, widthManager, None(), idfn);
+	renderParagraphEx(p, s, rtl, widthManager, None(), idfn, None(), make(-1.0));
 }
 
 paraAtomic2form(pa : ParaAtomic, pos : WordPositionInLine) -> Form {
@@ -288,7 +290,9 @@ renderParagraphEx(
 	rtl : bool,
 	widthManager : ParagraphWidthManager,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
-	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
+	fontWrapper : ([CharacterStyle]) -> [CharacterStyle],
+	scrollIDM : Maybe<int>,
+	scrollPositionB : DynamicBehaviour<double>
 ) -> Form {
 	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
 	traceApi.trace(\-> "renderParagraphEx "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
@@ -363,7 +367,7 @@ renderParagraphEx(
 				if (storyWidth > 0.0) storyWidth else getValue(awB),
 				lines, tightWidth, alignment, interlineSpacing,
 				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-				interLineHighlighting, renderedLinesInfoM
+				interLineHighlighting, renderedLinesInfoM, scrollIDM, scrollPositionB
 			);
 			updaterWrapper(\-> nextDistinct(widthManager.width, lines.maxLineWidth));
 			accessibilityParent := prevAccessibilityParent;
@@ -1090,7 +1094,9 @@ renderParaLines(
 	rtl : bool,
 	isMarked : bool,
 	interLineHighlighting : bool,
-	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
+	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
+	scrollIDM : Maybe<int>,
+	scrollPositionB : DynamicBehaviour<double>
 ) -> Form {
 	lasti = length(lines.lines) - 1;
 	a : ParaLineAcc = foldi(lines.lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, lineInfo : ParaLineInfo -> {
@@ -1115,6 +1121,32 @@ renderParaLines(
 				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
 			} else 0.0
 		);
+
+		eitherFn(
+			scrollIDM,
+			\scrollID -> {
+				if (getValue(scrollPositionB) == -1.0) {
+					existsAnnotation = exists(
+						lineInfo.optimizedLine,
+						\elem : OptimizedLineElement -> {
+							eitherMap(
+								elem.interactivityIdM,
+								\id -> extractStruct(
+									lookupTreeDef(styleTree, id, []),
+									Annotation(-1)
+								).id,
+								-1
+							) == scrollID; 
+						}
+					);
+					if (existsAnnotation) {
+						nextDistinct(scrollPositionB, acc.y);
+					}
+				}
+			},
+			nop
+		);
+
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
 			acc.y + f.height + if (lastLine) 0. else interlineSpacing,
