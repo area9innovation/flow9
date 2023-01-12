@@ -1354,7 +1354,7 @@ class RenderSupport {
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
@@ -1387,7 +1387,7 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) stage.emit("mouseup");
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
@@ -1424,7 +1424,7 @@ class RenderSupport {
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				stage.emit("mousemove");
