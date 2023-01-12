@@ -262,8 +262,30 @@ class FlowSprite extends Sprite {
 							}
 						});
 
-						var width = Math.isFinite(widgetBounds.maxX) ? widgetBounds.maxX : 0;
-						var height = Math.isFinite(widgetBounds.maxY) ? widgetBounds.maxY : 0;
+						// With Chrome svg data:img images are not scaled correctly for devicePixelRatio > 1.
+						// For instance, with Retina display, which has a factor from 2 to 3.
+						var width = Math.isFinite(widgetBounds.maxX) ? {
+							if (
+								forceSvg
+								&& Browser.window.devicePixelRatio > 1
+								&& Platform.isChrome
+							) {
+								widgetBounds.maxX / Browser.window.devicePixelRatio;
+							 } else {
+								widgetBounds.maxX;
+							}
+						} : 0;
+						var height = Math.isFinite(widgetBounds.maxY) ? {
+							if (
+								forceSvg
+								&& Browser.window.devicePixelRatio > 1
+								&& Platform.isChrome
+							) {
+								widgetBounds.maxY / Browser.window.devicePixelRatio;
+							 } else {
+								widgetBounds.maxY;
+							}
+						} : 0;
 
 						metricsFn(width, height);
 					} else {
