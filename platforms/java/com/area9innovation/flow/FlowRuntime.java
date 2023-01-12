@@ -57,6 +57,8 @@ public abstract class FlowRuntime {
 	}
 	public static boolean compareEqual(Object a, Object b) {
 		if (a == b) return true;
+		// void values (null in java backend) may also be compared in the interpreter, so we check this case
+		if (a == null || b == null) return false;
 		if (a.getClass().isArray() && b.getClass().isArray()) {
 			Object[] ao = (Object[])a;
 			Object[] bo = (Object[])b;
