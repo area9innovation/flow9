@@ -129,7 +129,7 @@ fcDetectTailCall(decl : FiFunctionDec) -> bool {
 			}
 			default: false;
 		}
-	);
+	) && !fcVarExistsInNonReturnExps(decl.lambda.body, decl.name, false);
 }
 
 fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp] {
@@ -139,6 +139,39 @@ fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp] {
 		FiSwitch(__,__,cs,__,__):   fold(cs, acc, \ac, c -> fcReturnExps(c.body, ac));
 		FiSeq(es,__,__):            if (length(es) == 0) acc else fcReturnExps(es[length(es) - 1], acc);
 		default:                    concat(acc, [e]);
+    }
+}
+
+fcVarExistsInNonReturnExps(ex : FiExp, v : string, non_return: bool) -> bool {
+    switch (ex) {
+		FiLet(__, __,e1,e2,__, __): {
+			fcVarExistsInNonReturnExps(e1, v, true) ||
+			fcVarExistsInNonReturnExps(e2, v, non_return);
+		}
+		FiIf(e1, e2, e3,__,__): {
+			fcVarExistsInNonReturnExps(e1, v, true) ||
+			fcVarExistsInNonReturnExps(e2, v, non_return) ||
+			fcVarExistsInNonReturnExps(e3, v, non_return);
+		}
+		FiSwitch(x,__,cs,__,__): {
+			(non_return && x.name == v) || exists(cs,\c -> fcVarExistsInNonReturnExps(c.body, v, non_return));
+		}
+		FiSeq(es,__,__): {
+			if (length(es) <= 1) false else
+			exists(take(es, length(es) - 1), \x -> fcVarExistsInNonReturnExps(x, v, true));
+		}
+		FiCallPrim(__,es,__,__): {
+			exists(es,\x -> fcVarExistsInNonReturnExps(x, v, non_return))
+		}
+		FiCall(f, args, type, start): {
+			fcVarExistsInNonReturnExps(f, v, non_return) || exists(args,\a -> fcVarExistsInNonReturnExps(a, v, non_return));
+		}
+		FiVar(name, type, start): non_return && v == name;
+		FiLambda(__,body,__,__): false;
+		FiCast(e, tFrom, tTo, type, start): fcVarExistsInNonReturnExps(e, v, non_return);
+		FiRequire(flowfile, e, type, start): fcVarExistsInNonReturnExps(e, v, non_return);
+		FiUnsafe(name, fallback, type, start): fcVarExistsInNonReturnExps(fallback, v, non_return);
+		FiConst(): false;
     }
 }
 
