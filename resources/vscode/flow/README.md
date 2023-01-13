@@ -7,14 +7,14 @@ This folder contains Visual Studio Code extension for flow and lingo.
 2. Click the Extensions bar on the left (ctrl+shift+x)
 3. Click `More -> Install from VSIX...` and choose `resources/vscode/flow.vsix`
 
-Alternatively, run the following command line: `code --install-extension flow.vsix` or one of the `install-or-update` scripts provided. 
+Alternatively, run the following command line: `code --install-extension flow.vsix` or one of the `install-or-update` scripts provided.
 
-The extension has auto-update functionality. At every activation (aka VSCode start-up and opening 
-a `.flow` file) it will check for its updates by looking at package.json in flow repository 
-and prompt user to update. It will also monitor this file for changes. The update procedure 
+The extension has auto-update functionality. At every activation (aka VSCode start-up and opening
+a `.flow` file) it will check for its updates by looking at package.json in flow repository
+and prompt user to update. It will also monitor this file for changes. The update procedure
 itself is automatic as well.
 
-Configure the flow root folder under File->Preferences->Settings->Extensions->Flow configuration 
+Configure the flow root folder under File->Preferences->Settings->Extensions->Flow configuration
 and change `flow.root` to point to the root of the Flow repo (typically `c:\flow9`).
 
 # Useful coding font
@@ -32,14 +32,7 @@ To change the tabs and line endings globally, use the following settings:
 ```
         "editor.detectIndentation": false,
         "editor.tabSize" : 4,
-        "files.eol": "\n" 
-```
-
-To get nice colors use: 
-
-```
-        "editor.bracketPairColorization.enabled": true,
-        "editor.guides.bracketPairs": true
+        "files.eol": "\n"
 ```
 
 You can put it to your user settings (File -> Preferences -> Settings), or to workspace settings.
@@ -66,7 +59,7 @@ Ctrl+k o to open the current file in a new window.
 
 On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
 
-A lot of tips: https://medium.freecodecamp.org/here-are-some-super-secret-vs-code-hacks-to-boost-your-productivity-20d30197ac76 
+A lot of tips: https://medium.freecodecamp.org/here-are-some-super-secret-vs-code-hacks-to-boost-your-productivity-20d30197ac76
 
 If F7 does not start compiling the file, then check [Keyboard Shortcuts](https://code.visualstudio.com/docs/getstarted/keybindings). If there are 2 commands associated with the same key, then change Keybinding for one of them.
 
@@ -89,12 +82,12 @@ If F7 does not start compiling the file, then check [Keyboard Shortcuts](https:/
         * name of workspace folder in the workspace - always use specified workspace folder as a project root
         * relative path - treat as relative path to the first workspace folder, use as project root
 
-* VS Code uses tasks to build projects, and they have to be set up on per-project(workspace) basis. 
-The idea is that tasks define actions to be performed on the project as a whole - for example, no 
-matter which file you are currently editing, to run or debug the project, you need to run the "main" 
-file. You might have different compile targets - i.e. bytecode and js, or you might want to 
-customize the arguments given to flowcpp when running or debugging (i.e. screen size or 
-`devtrace=1`). Tasks allow to do just that. To use tasks: 
+* VS Code uses tasks to build projects, and they have to be set up on per-project(workspace) basis.
+The idea is that tasks define actions to be performed on the project as a whole - for example, no
+matter which file you are currently editing, to run or debug the project, you need to run the "main"
+file. You might have different compile targets - i.e. bytecode and js, or you might want to
+customize the arguments given to flowcpp when running or debugging (i.e. screen size or
+`devtrace=1`). Tasks allow to do just that. To use tasks:
     1. Open a folder in VS Code - it will make it a workspace (best to open a repo root)
     2. Choose `Tasks -> Configure Tasks` - it will create `tasks.json` (choose external program if asked to)
     3. Copy task definition from the `tasks.json` file next to this README to your tasks.json
@@ -107,7 +100,7 @@ are supported. To debug a program:
     4. Modify the flow file to launch (relative to repo/workspace root) and a name
     5. Click `F5` to launch debugger
 * The following code analysis tools are supported:
-    1. Jump to definition (F12) - this jumps to the declaration - i.e. an entry in the `export` 
+    1. Jump to definition (F12) - this jumps to the declaration - i.e. an entry in the `export`
     section. If the cursor is already on definition, jumps to declaration (like Ctrl-F12).
     2. To show the definition in popup, hover the mouse over a symbol and hold down CTRL
     3. Go to Implementation (Ctrl-F12) - this jumps to the definition
@@ -134,4 +127,4 @@ See https://code.visualstudio.com/docs/extensions/example-hello-world .
 2. Run `build.cmd` or `build.sh` to update the `flow.vsix` package
 
 ## Release Notes
-See [Changelog](./CHANGELOG.md).
+See [Changelog](https://github.com/area9innovation/flow9/blob/master/resources/vscode/flow/CHANGELOG.md).

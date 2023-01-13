@@ -32,7 +32,7 @@ public class FlowJwt extends NativeHost {
 			return "OK";
 		} catch (JWTVerificationException e){
 			System.out.println(jwt + "/" + e.getMessage());
-			return "Wrong signature";
+			return "Wrong signature or expired";
 		} catch (Exception e) {
 			System.out.println(jwt + "/" + e.getMessage());
 			return "Other exception";

@@ -6,8 +6,8 @@ import tools/flowc/incremental/fiexp;
 
 export {
 	makeStringType() -> FlowWiType; // string = array of chars
-	fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType;
-	fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType;
+	fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType;
+	fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, fnPointer : bool, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType;
 	// either the correct type, or 'auto'
 	fiType2flowWiBasictype(type : FiType) ->FlowWiBasictype;
 	wiType2string(type : FlowWiType) -> string; // for vars, etc
@@ -21,24 +21,33 @@ makeStringType() -> FlowWiType {
 	FlowWiBasictype("string");
 }
 
-fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType {
-	fiType2flowWiType(type, makeTree(), getStruct);
+fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType {
+	fiType2flowWiType(type, makeTree(), false, getStruct);
 }
 
-fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType {
-	fiType2flowWiType(type, templates, getStruct);
+fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, fnPointer : bool, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType {
+	fiType2flowWiType(type, templates, fnPointer, getStruct);
 }
 
-fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType {
-	mapType = \t -> fiType2flowWiType(t, templates, getStruct);
+fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, fnPointer : bool, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType {
+	mapType = \t -> fiType2flowWiType(t, templates, fnPointer, getStruct);
 	switch (type : FiType) {
 		FiTypeArray(t) : FlowWiArrayType(mapType(t));
-		FiTypeFunction(args, returnType) : FlowWiFntype(
-			map(args, \arg -> mapType(arg.type)),
-			mapType(returnType)
+		FiTypeFunction(args, returnType) : 
+			if (fnPointer) {
+				fiType2flowWiBasictype(FiTypeInt())
+			} else  {
+				FlowWiFntype(
+					map(args, \arg -> mapType(arg.type)),
+					mapType(returnType)
+				);
+			}
+		FiTypeRef(t) : FlowWiRefType(mapType(t));
+		FiTypeParameter(n) : eitherMap(
+			lookupTree(templates, n),
+			\tt -> if (tt == type) FlowWiBasictype(n) else mapType(tt),
+			FlowWiBasictype(n)
 		);
-		FiTypeRef(t) : fiType2flowWiBasictype(type);
-		FiTypeParameter(n) : eitherMap(lookupTree(templates, n), \tt -> if (tt == type) FlowWiBasictype(n) else mapType(tt), FlowWiBasictype(n));
 		FiTypeBool() : fiType2flowWiBasictype(type);
 		FiTypeInt() : fiType2flowWiBasictype(type);
 		FiTypeDouble() : fiType2flowWiBasictype(type);
@@ -53,7 +62,7 @@ fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, getStruct : (
 			});
 			FlowWiTupletype(eitherFn(
 				getStruct(name),
-				unpairC(\structParams, args -> {
+				untripleC(\structParams, args, isTempStruct -> {
 					newTemplates = if (length(structParams) == length(typePars) && structParams != typePars) {
 						foldi(structParams, makeTree(), \i, acc, v -> switch (v : FiType) {
 							FiTypeParameter(n): setTree(acc, n, typePars[i]);
@@ -62,7 +71,8 @@ fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, getStruct : (
 					} else {
 						templates
 					}
-					map(args, \a -> fiType2flowWiType(setTemplateInFiType(a, newTemplates), newTemplates, getStruct))
+					fnPointer2 = !isTempStruct || fnPointer;
+					map(args, \a -> fiType2flowWiType(setTemplateInFiType(a, newTemplates), newTemplates, fnPointer2, getStruct));
 				}),
 				\-> map(typePars, mapType)
 			), name);
@@ -132,7 +142,8 @@ flowWiType2string(type : FlowWiType, topType : bool) -> string {
 		} else {
 			"i32"; // pointer
 		}
-		FlowWiArrayType(t) : "i32"; // pointer
+		FlowWiArrayType(__) : "i32"; // pointer
+		FlowWiRefType(__) : "i32"; // pointer
 	}
 }
 
