@@ -6,9 +6,10 @@ import text/blueprint;
 import tools/flowc/backends/wise/fiarray2wise;
 import tools/flowc/backends/wise/fituple2wise;
 import tools/flowc/backends/wise/fiswitch2wise;
-import tools/flowc/backends/wise/firef2wise;
-import tools/flowc/backends/wise/flow_wise_closure;
+import tools/flowc/backends/wise/flow_wise_tailcall;
 
+
+import tools/flowc/manipulation/tail_call;
 // run test from 'tests' folder
 // \flow9\tools\flowc\backends\wise> .\cmpl variable
 // PS C:\a9\wase> flowcpp -I .. --batch ../wise/wise.flow -- I=..,../flow9/ tests\flow\array2.wise
@@ -167,16 +168,16 @@ fiFunctionDec2FlowWiFunction(state : FiWiseState, func : FiFunctionDec, exported
 	templates = mapTree(templateNames, \t -> FiTypeParameter(t));
 	newArgs = map(func.lambda.args, \arg -> FlowWiIdtype(arg.name, fiType2FlowWiTypeT(arg.type, templates, false, state.getStructFields)));
 	mainFn = isMainFn(func.name);
- 
-	FlowWiFunction(
-		func.name,
-		b2s(exported),
-		getTreeValues(templateNames),
-		newArgs,
-		fiType2FlowWiType(setTemplateInFiType(func.type.returnType, templates), state.getStructFields),
-		fiExp2FlowWiExp(state, func.lambda.body, templates, mainFn),
-		nextFn
-	);
+
+	fnBody = fiExp2FlowWiExp(state, func.lambda.body, templates, mainFn);
+	resType = fiType2FlowWiType(setTemplateInFiType(func.type.returnType, templates), state.getStructFields);
+	newFnBody = if (isTailRecursiveFn(func)) {
+		replaceRecursionWithLoop(fnBody, func.name, newArgs, resType, \-> incTmpVarCounter(state));
+	} else {
+		fnBody;
+	}
+
+	FlowWiFunction(func.name, b2s(exported), getTreeValues(templateNames), newArgs, resType, newFnBody, nextFn);
 }
 
 fiTypeFunction2templates(type : FiTypeFunction) -> Tree<string, string> {
@@ -269,7 +270,7 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, scopeTemplates : Tree<string, 
 					\newFn, fnName, newArgs -> fold(
 						tail(newFns),
 						FlowWiCall(newFn, map(newArgs, \a -> mapExp(a, true)[0])),
-						\newExp : FlowWiCall, fnExp : FlowWiExp -> FlowWiCall(fnExp, [newExp])
+						\newExp : FlowWiExp, fnExp : FlowWiExp -> FlowWiCall(fnExp, [newExp])
 					)
 				);
 			}
@@ -293,7 +294,7 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, scopeTemplates : Tree<string, 
 			state,
 			fiSwitch2fiExp(exp, ^(state.structs), incTmpVarCounter(state), scopeTemplates),
 			scopeTemplates,
-			mainFn
+			mainFn,
 		);
 		FiCast(e, tFrom, tTo, type, start) : makeDefExp();
 		FiSeq(es, type, start) : FlowWiBrace(map(es, e2e));
@@ -790,7 +791,6 @@ fcPrimBools2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, e1Type : Fi
 	}
 	makeExp = \makeFlowWiExp -> Some(FlowWiBrace([
 		makeFlowWiExp(addBraceIfNecessary(e1), addBraceIfNecessary(e2))
-		//makeFlowWiExp((e1), (e2))
 	]));
 	switch (type : FcPrim) {
 		FcOrPrim() : makeExp(\ne1, ne2 -> FlowWiBoolOr(ne1, ne2));
@@ -1206,6 +1206,7 @@ extractExpsFromFlowWiBrace(e : FlowWiBrace, acc : [FlowWiExp]) -> [FlowWiExp] {
 
 wiAtom2string(fnId : string, exp : FlowWiAtom, parent : Maybe<FlowWiExp>, structs : WiseAstStructs, polyFns : Tree<string, Pair<FiTypeFunction, Tree<string, string>>>) -> string {
 	eol = "\n\t";
+	e2s = \e -> wiExp2string(fnId, e, None(), structs, polyFns);
 	switch (exp : FlowWiAtom) {
 		FlowWiBool(b) : if (b) "true" else "false";
 		FlowWiInt(int_0) : i2s(int_0);
@@ -1226,26 +1227,31 @@ wiAtom2string(fnId : string, exp : FlowWiAtom, parent : Maybe<FlowWiExp>, struct
 			} else {
 				makeTree();
 			}
-			flowWiTuple2string(exp, structs, mergeTree(polyParams, structPolyParams), \e -> wiExp2string(fnId, e, None(), structs, polyFns));
+			flowWiTuple2string(exp, structs, mergeTree(polyParams, structPolyParams), e2s);
 		}
 		FlowWiVar(id) : wiVar2string(id, parent);
 		FlowWiSet(id, e) : id + " := " + wiseAst2string(e, structs, polyFns) + ";";
 		FlowWiIf(exp1, exp2) : {
-			"if (" + wiExp2string(fnId, exp1, None(), structs, polyFns) + ") {"
-			+ eol + wiExp2string(fnId, exp2, None(), structs, polyFns) + eol
+			"if (" + e2s(exp1) + ") {"
+			+ eol + e2s(exp2) + eol
 			+ "}";
 		}
 		FlowWiIfelse(exp1, exp2, exp3) : {
-			"if (" + wiExp2string(fnId, exp1, None(), structs, polyFns) + ") {"
-			+ eol + wiExp2string(fnId, exp2, None(), structs, polyFns) + "\n"
+			"if (" + e2s(exp1) + ") {"
+			+ eol + e2s(exp2) + "\n"
 			+ "} else {"
-			+ eol + wiExp2string(fnId, exp3, None(), structs, polyFns) + "\n"
+			+ eol + e2s(exp3) + "\n"
 			+ "}";
 		}
 		// FlowWiBreak();
 		// FlowWiContinue();
 		// FlowWiReturn(exps : [FlowWiExp]);
-		// FlowWiWhile(exp1 : FlowWiExp, exp2 : FlowWiExp);
+		FlowWiWhile(exp1, exp2) : {
+			"while (" + e2s(exp1) + ")"
+			+ eol + e2s(exp2) + "\n"
+
+		};
+		FlowWiDefValueOfType(t) : "defoftype(" + wiType2string(t) + ")";
 
 		// FlowWiHex32(s : string);
 		// FlowWiHex64(s : string);
