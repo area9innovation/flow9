@@ -85,24 +85,30 @@ public class HttpSupport extends NativeHost {
 
 			// TODO: Make this asynchronous
 			ResultStreamPair p = getResultStreamPair(con);
-			BufferedReader in = new BufferedReader(new InputStreamReader(p.stream));
-			String inputLine;
-			StringBuffer response = new StringBuffer();
+			if (Objects.nonNull(p.stream)) {
+				BufferedReader in = new BufferedReader(new InputStreamReader(p.stream));
+				String inputLine;
+				StringBuffer response = new StringBuffer();
 
-			while ((inputLine = in.readLine()) != null) {
-				response.append(inputLine);
-				response.append('\n');
-			}
-			in.close();
-			if (p.isData) {
-				onData.invoke(response.toString());
+				while ((inputLine = in.readLine()) != null) {
+					response.append(inputLine);
+					response.append('\n');
+				}
+				in.close();
+				if (p.isData) {
+					onData.invoke(response.toString());
+				} else {
+					onError.invoke(response.toString());
+				}
 			} else {
-				onError.invoke(response.toString());
+				onError.invoke("");
 			}
 		} catch (MalformedURLException e) {
 			onError.invoke("Malformed url " + url + " " + e.getMessage());
 		} catch (IOException e) {
 			onError.invoke("IO exception " + url + " " + e.getMessage());
+		} catch (Exception e) {
+			onError.invoke("Other exception " + url + " " + e.getMessage());
 		}
 		return null;
 	}
@@ -118,8 +124,9 @@ public class HttpSupport extends NativeHost {
 	}
 
 	private static final ResultStreamPair getResultStreamPair(HttpURLConnection con) {
-		/* getInputStream returns exception when status is not 200 and some other cases
-		If status is 400/500 -> we should call getErrorStream*/
+		// getInputStream returns exception when status is not 200 and some other cases
+		// If status is 400/500 -> we should call getErrorStream
+		// Both of this streams can be empty, even can be NULL
 		try {
 			return new ResultStreamPair(con.getInputStream(), true);
 		} catch (IOException e) {
