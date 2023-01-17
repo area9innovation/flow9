@@ -422,6 +422,7 @@ class AccessWidget extends EventEmitter {
 		"button" => "button",
 		"checkbox" => "button",
 		"combobox" => "button",
+		"dialog" => "dialog",
 		"radio" => "button",
 		"tab" => "button",
 		"link" => "button",
@@ -433,7 +434,11 @@ class AccessWidget extends EventEmitter {
 		"textbox" => "input",
 		"switch" => "button",
 		"menuitem" => "button",
-		"option" => "button"
+		"option" => "button",
+		"table" => "table",
+		"row" => "tr",
+		"columnheader" => "th",
+		"cell" => "td"
 	];
 
 	public static var zIndexValues = {
@@ -807,13 +812,15 @@ class AccessWidget extends EventEmitter {
 			};
 
 			if (Platform.isMobile) {
-				if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-					element.onpointerdown = onpointerdown;
-					element.onpointerup = onpointerup;
-				}
+				if (role == "button") {
+					if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+						element.onpointerdown = onpointerdown;
+						element.onpointerup = onpointerup;
+					}
 
-				element.ontouchstart = onpointerdown;
-				element.ontouchend = onpointerup;
+					element.ontouchstart = onpointerdown;
+					element.ontouchend = onpointerup;
+				}
 			} else if (Platform.isSafari) {
 				element.onmousedown = onpointerdown;
 				element.onmouseup = onpointerup;

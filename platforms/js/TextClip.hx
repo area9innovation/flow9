@@ -678,7 +678,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public static function isJapaneseFont(st) : Bool {
-		return Native.isNew && (st.fontFamily == "Meiryo" || st.fontFamily == "MeiryoBold");
+		return st.fontFamily == "Meiryo" || st.fontFamily == "MeiryoBold";
 	}
 
 	private static var ffMap : Dynamic;

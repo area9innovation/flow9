@@ -3,11 +3,25 @@ package com.area9innovation.flow;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
 
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
 	public static String[] program_args;
 	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
+
+	private static final ThreadLocal<DecimalFormat> decimalFormat = new ThreadLocal<DecimalFormat>(){
+        @Override
+        protected DecimalFormat initialValue()
+        {
+			DecimalFormat df = new DecimalFormat("0.0");
+			df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
+			df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
+			return df;
+        }
+    };
 
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
@@ -43,6 +57,8 @@ public abstract class FlowRuntime {
 	}
 	public static boolean compareEqual(Object a, Object b) {
 		if (a == b) return true;
+		// void values (null in java backend) may also be compared in the interpreter, so we check this case
+		if (a == null || b == null) return false;
 		if (a.getClass().isArray() && b.getClass().isArray()) {
 			Object[] ao = (Object[])a;
 			Object[] bo = (Object[])b;
@@ -139,7 +155,7 @@ public abstract class FlowRuntime {
 		} else if (value instanceof Function) {
 			return "<function " + value + ">";
 		} else if (value instanceof Double) {
-			return doubleToString((Double)value);
+			return doubleToStringInternal((Double)value);
 		}
 
 		StringBuilder buf = new StringBuilder();
@@ -191,7 +207,7 @@ public abstract class FlowRuntime {
 		} else if (value instanceof Function) {
 			buf.append("<function " + value + ">");
 		} else if (value instanceof Double) {
-			buf.append(doubleToString((Double)value));
+			buf.append(doubleToStringInternal((Double)value));
 		} else if (value instanceof Struct) {
 			((Struct)value).toStringAppend(buf);
 		} else {
@@ -199,8 +215,12 @@ public abstract class FlowRuntime {
 		}
 	}
 
+	private static String doubleToStringInternal(double value) {
+		return decimalFormat.get().format(value);
+	}
+
 	public static String doubleToString(double value) {
-		String rstr = Double.toString(value);
+		String rstr = doubleToStringInternal(value);
 		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
 	}
 

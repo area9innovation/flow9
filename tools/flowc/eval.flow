@@ -138,11 +138,15 @@ fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlo
 	};
 }
 
+// A wrapper for local variable value. It is necessary since interpreted functions may return void value,
+// which in java backend is just null and may lead to 'variable 'ret' is not defined' in case ret has a void value.
+FcEvalLocal(val: flow);
+
 fcReplEval(
 	ex : FiExp,
 	structs : HashMap<string, FiTypeStruct>,
 	globals : HashMap<string, FcEvalGlobal>,
-	locals : HashMap<string, flow>,
+	locals : HashMap<string, FcEvalLocal>,
 	onError : (string, int) -> void
 ) -> flow {
 	make_err = \msg, pos -> {
@@ -192,21 +196,19 @@ fcReplEval(
 		}
 		FiVar(x,__,pos): {
 			switch (lookupHashMap(locals, x)) {
-				Some(v): v;
+				Some(v): v.val;
 				None(): {
 					switch (lookupHashMap(globals, x)) {
 						Some(global): global.value;
-						None(): make_err("variable " + x + " is not defined", pos);
+						None(): make_err("variable '" + x + "' is not defined", pos);
 					}
 				}
 			}
 		}
 		FiLet(x, __, e1, e2,__,__): {
 			xv = fcReplEval(e1, structs, globals, locals, onError);
-			setHashMap(locals, x, xv);
-			ret = fcReplEval(e2, structs, globals, locals, onError);
-			removeFromHashMap(locals, x);
-			ret;
+			if (x != "__") setHashMap(locals, x, FcEvalLocal(xv));
+			fcReplEval(e2, structs, globals, locals, onError);
 		}
 		FiIf(e1, e2, e3, __,__): {
 			if (cast(fcReplEval(e1, structs, globals, locals, onError) : flow -> bool)) {
@@ -230,16 +232,10 @@ fcReplEval(
 					}
 					if (case.struct != "default") {
 						iteri(case.argNames, \i, arg ->
-							setHashMap(locals, arg, args[i])
+							if (arg != "__") setHashMap(locals, arg, FcEvalLocal(args[i]))
 						);
 					}
-					ret = fcReplEval(case.body, structs, globals, locals, onError);
-					if (case.struct != "default") {
-						iter(case.argNames, \arg ->
-							removeFromHashMap(locals, arg)
-						);
-					}
-					ret;
+					fcReplEval(case.body, structs, globals, locals, onError);
 				}
 				None(): {
 					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w), pos);
@@ -566,7 +562,7 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 2) {
@@ -575,8 +571,8 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 3) {
@@ -585,9 +581,9 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 4) {
@@ -596,10 +592,10 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 5) {
@@ -608,11 +604,11 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 6) {
@@ -621,12 +617,12 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 7) {
@@ -635,13 +631,13 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 8) {
@@ -650,14 +646,14 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
-			setHashMap(locals, lambda.args[7].name, a7);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 8) {
@@ -666,14 +662,14 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
-			setHashMap(locals, lambda.args[7].name, a7);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 9) {
@@ -682,15 +678,15 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
-			setHashMap(locals, lambda.args[7].name, a7);
-			setHashMap(locals, lambda.args[8].name, a8);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 10) {
@@ -699,16 +695,16 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
-			setHashMap(locals, lambda.args[7].name, a7);
-			setHashMap(locals, lambda.args[8].name, a8);
-			setHashMap(locals, lambda.args[9].name, a9);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			setHashMap(locals, lambda.args[9].name, FcEvalLocal(a9));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 11) {
@@ -717,17 +713,17 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
-			setHashMap(locals, lambda.args[7].name, a7);
-			setHashMap(locals, lambda.args[8].name, a8);
-			setHashMap(locals, lambda.args[9].name, a9);
-			setHashMap(locals, lambda.args[10].name, a10);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			setHashMap(locals, lambda.args[9].name, FcEvalLocal(a9));
+			setHashMap(locals, lambda.args[10].name, FcEvalLocal(a10));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else if (arity == 12) {
@@ -736,18 +732,18 @@ fcMakeFnFromLambda(
 				None(): makeHashMap(fastHashString);
 				Some(cl): copyHashMap(cl);
 			}
-			setHashMap(locals, lambda.args[0].name, a0);
-			setHashMap(locals, lambda.args[1].name, a1);
-			setHashMap(locals, lambda.args[2].name, a2);
-			setHashMap(locals, lambda.args[3].name, a3);
-			setHashMap(locals, lambda.args[4].name, a4);
-			setHashMap(locals, lambda.args[5].name, a5);
-			setHashMap(locals, lambda.args[6].name, a6);
-			setHashMap(locals, lambda.args[7].name, a7);
-			setHashMap(locals, lambda.args[8].name, a8);
-			setHashMap(locals, lambda.args[9].name, a9);
-			setHashMap(locals, lambda.args[10].name, a10);
-			setHashMap(locals, lambda.args[11].name, a11);
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			setHashMap(locals, lambda.args[9].name, FcEvalLocal(a9));
+			setHashMap(locals, lambda.args[10].name, FcEvalLocal(a10));
+			setHashMap(locals, lambda.args[11].name, FcEvalLocal(a11));
 			fcReplEval(lambda.body, structs, globals, locals, onError);
 		});
 	} else {

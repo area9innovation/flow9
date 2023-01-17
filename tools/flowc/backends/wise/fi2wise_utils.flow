@@ -2,51 +2,60 @@ import ds/tree;
 import algorithms;
 import ds/arrayutils;
 import tools/flowc/backends/wise/flow_wise_types;
-import tools/flowc/incremental/fitype;
+import tools/flowc/incremental/fiexp;
 
 export {
 	makeStringType() -> FlowWiType; // string = array of chars
-	fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType;
-	fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType;
+	fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType;
+	fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, fnPointer : bool, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType;
+	// either the correct type, or 'auto'
+	fiType2flowWiBasictype(type : FiType) ->FlowWiBasictype;
 	wiType2string(type : FlowWiType) -> string; // for vars, etc
 	wiType2stringForFn(type : FlowWiType) -> string; // fn declaration. tuple is a pointer
 	getFiTypeNameType(type : FiType) -> FiTypeName;
 	setTemplateInFiType(type : FiType, templates : Tree<string, FiType>) -> FiType;
+	extractFiTypeFromFiExp(exp : FiExp) -> FiType;
+	makeFlowWiTypeVoid() -> FlowWiBasictype;
 }
 
 makeStringType() -> FlowWiType {
 	FlowWiBasictype("string");
 }
 
-fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType {
-	fiType2flowWiType(type, makeTree(), getStruct);
+fiType2FlowWiType(type : FiType, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType {
+	fiType2flowWiType(type, makeTree(), false, getStruct);
 }
 
-fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType {
-	fiType2flowWiType(type, templates, getStruct);
+fiType2FlowWiTypeT(type : FiType, templates : Tree<string, FiType>, fnPointer : bool, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType {
+	fiType2flowWiType(type, templates, fnPointer, getStruct);
 }
 
-fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, getStruct : (string) -> Maybe<Pair<[FiType], [FiType]>>) -> FlowWiType {
-	makeDefType = \-> {
-		println("TODO Type: " + toString(type));
-		FlowWiBasictype("auto");
-	}
-	mapType = \t -> fiType2flowWiType(t, templates, getStruct);
+fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, fnPointer : bool, getStruct : (string) -> Maybe<Triple<[FiType], [FiType], bool>>) -> FlowWiType {
+	mapType = \t -> fiType2flowWiType(t, templates, fnPointer, getStruct);
 	switch (type : FiType) {
 		FiTypeArray(t) : FlowWiArrayType(mapType(t));
-		FiTypeFunction(args, returnType) : FlowWiFntype(
-			map(args, \arg -> mapType(arg.type)),
-			mapType(returnType)
+		FiTypeFunction(args, returnType) : 
+			if (fnPointer) {
+				fiType2flowWiBasictype(FiTypeInt())
+			} else  {
+				FlowWiFntype(
+					map(args, \arg -> mapType(arg.type)),
+					mapType(returnType)
+				);
+			}
+		FiTypeRef(t) : FlowWiRefType(mapType(t));
+		FiTypeParameter(n) : eitherMap(
+			lookupTree(templates, n),
+			\tt -> if (tt == type) FlowWiBasictype(n) else mapType(tt),
+			FlowWiBasictype(n)
 		);
-		FiTypeRef(t) : makeDefType();
-		FiTypeParameter(n) : eitherMap(lookupTree(templates, n), \tt -> if (tt == type) FlowWiBasictype(n) else mapType(tt), FlowWiBasictype(n));
-		FiTypeBool() : FlowWiBasictype("bool");
-		FiTypeInt() : FlowWiBasictype("i32");
-		FiTypeDouble() : FlowWiBasictype("f64");
+		FiTypeBool() : fiType2flowWiBasictype(type);
+		FiTypeInt() : fiType2flowWiBasictype(type);
+		FiTypeDouble() : fiType2flowWiBasictype(type);
 		FiTypeString() : FlowWiArrayType(makeStringType());
-		FiTypeFlow() : makeDefType();
-		FiTypeVoid() : FlowWiBasictype("void");
-		FiTypeNative() : makeDefType();
+		FiTypeFlow() : fiType2flowWiBasictype(type);
+		FiTypeVoid() : fiType2flowWiBasictype(type);
+		FiTypeNative() : fiType2flowWiBasictype(type);
 		FiTypeName(name, typeparameters) : {
 			typePars = map(typeparameters, \tp -> switch (tp : FiType) {
 				FiTypeParameter(n): either(lookupTree(templates, n), tp);
@@ -54,7 +63,7 @@ fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, getStruct : (
 			});
 			FlowWiTupletype(eitherFn(
 				getStruct(name),
-				unpairC(\structParams, args -> {
+				untripleC(\structParams, args, isTempStruct -> {
 					newTemplates = if (length(structParams) == length(typePars) && structParams != typePars) {
 						foldi(structParams, makeTree(), \i, acc, v -> switch (v : FiType) {
 							FiTypeParameter(n): setTree(acc, n, typePars[i]);
@@ -63,11 +72,34 @@ fiType2flowWiType(type : FiType, templates : Tree<string, FiType>, getStruct : (
 					} else {
 						templates
 					}
-					map(args, \a -> fiType2flowWiType(setTemplateInFiType(a, newTemplates), newTemplates, getStruct))
+					fnPointer2 = !isTempStruct || fnPointer;
+					map(args, \a -> fiType2flowWiType(setTemplateInFiType(a, newTemplates), newTemplates, fnPointer2, getStruct));
 				}),
 				\-> map(typePars, mapType)
 			), name);
 		}
+	}
+}
+
+fiType2flowWiBasictype(type : FiType) -> FlowWiBasictype {
+	makeDefType = \-> {
+		println("TODO Type: " + toString(type));
+		FlowWiBasictype("auto");
+	}
+
+	switch (type : FiType) {
+		FiTypeArray(t) : makeDefType();
+		FiTypeFunction(args, returnType) : makeDefType();
+		FiTypeRef(t) : makeDefType();
+		FiTypeParameter(n) : makeDefType();
+		FiTypeBool() : FlowWiBasictype("bool");
+		FiTypeInt() : FlowWiBasictype("i32");
+		FiTypeDouble() : FlowWiBasictype("f64");
+		FiTypeString() : makeDefType();
+		FiTypeFlow() : makeDefType();
+		FiTypeVoid() : makeFlowWiTypeVoid();
+		FiTypeNative() : makeDefType();
+		FiTypeName(name, typeparameters) : makeDefType();
 	}
 }
 
@@ -101,7 +133,7 @@ wiType2stringForFn(type : FlowWiType) -> string {
 
 flowWiType2string(type : FlowWiType, topType : bool) -> string {
 	switch (type : FlowWiType) {
-		FlowWiBasictype(s) : if (s == "void") "()" else s; // TODO ?
+		FlowWiBasictype(s) : if (type == makeFlowWiTypeVoid()) "()" else s; // TODO ?
 		FlowWiFntype(types, returnType) : {
 			"(" + strGlue(map(types, \t -> flowWiType2string(t, false)), ", ") + ") -> "
 			+ flowWiType2string(returnType, false);
@@ -111,7 +143,8 @@ flowWiType2string(type : FlowWiType, topType : bool) -> string {
 		} else {
 			"i32"; // pointer
 		}
-		FlowWiArrayType(t) : "i32"; // pointer
+		FlowWiArrayType(__) : "i32"; // pointer
+		FlowWiRefType(__) : "i32"; // pointer
 	}
 }
 
@@ -130,4 +163,29 @@ getFiTypeNameType(type : FiType) -> FiTypeName {
 		FiTypeNative() : FiTypeName("", []);
 		FiTypeName(__, __) : type;
 	}
+}
+
+extractFiTypeFromFiExp(exp : FiExp) -> FiType {
+	switch (exp : FiExp) {
+		FiBool(__, __) : FiTypeBool();
+		FiInt(__, __) : FiTypeInt();
+		FiDouble(__, __) : FiTypeDouble();
+		FiString(__, __) : FiTypeString();
+		FiVoid(__) : FiTypeVoid();
+		FiVar(__, type, __) : type;
+		FiCallPrim(__, __, type, __): type;
+		FiIf(__, __, __, type, __) : type;
+		FiLambda(__, __, type, __) : type;
+		FiCall(__, __, type, __) : type;
+		FiLet(__, type, __, __, type2, __) : type;
+		FiSwitch(__, switchType, __, type, __) : type;
+		FiCast(__, tFrom, tTo, type, __) : tTo;
+		FiSeq(__, type, __) : type;
+		FiRequire(__, __, type, __) : type;
+		FiUnsafe(__, __, type, __) : type;
+	}
+}
+
+makeFlowWiTypeVoid() -> FlowWiBasictype {
+	FlowWiBasictype("void");
 }

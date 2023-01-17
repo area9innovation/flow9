@@ -1632,6 +1632,16 @@ StackSlot iosGLRenderSupport::hostCall(RUNNER_ARGS)
     {
         [UIScreen mainScreen].brightness = RUNNER->GetArraySlot(args, 0).GetDouble();
     }
+    if ( encodeUtf8(RUNNER->GetString(name)) == "getBrowser" )
+	{
+    	NSString* code = [DeviceInfo getMachineName];
+		return jsstring2stackslot(code);
+	}
+    if ( encodeUtf8(RUNNER->GetString(name)) == "getSysVersion" )
+	{
+    	NSString* code = [DeviceInfo getSysVersion];
+		return jsstring2stackslot(code);
+	}
     
     RETVOID;
 }

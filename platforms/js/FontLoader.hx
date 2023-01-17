@@ -32,6 +32,11 @@ class FontLoader {
 		untyped __js__("setTimeout(onDone, 25)");
 	}
 
+	public static function loadFSFont(family : String, url : String) {
+		addFontFace(family, url);
+		addStyledText(family);
+	}
+
 	public static function loadWebFonts(onDone : Void -> Void) {
 		if (HaxeRuntime.typeof(WebFont) != "undefined") {
 			var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
@@ -118,5 +123,12 @@ class FontLoader {
 		Native.timer(FontLoadingTimeout, function() {
 			Browser.document.body.removeChild(text);
 		});
+	}
+
+	private static function addFontFace(family : String, url : String) {
+		var css = "@font-face {	font-family: " + family + "; src: url(" + url + "); }";
+		var style = Browser.document.createElement('style');
+		style.appendChild(Browser.document.createTextNode(css));
+		Browser.document.head.appendChild(style);
 	}
 }

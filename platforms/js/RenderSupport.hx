@@ -1332,6 +1332,11 @@ class RenderSupport {
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
+			// In case of using VoiceOver when inside frame, Safari tends to return wrong pageY value. We have to create an workaround and pass event
+			// to button's onclick handler.
+			if (Platform.isIOS && isInsideFrame() && Browser.document.activeElement != null && Browser.document.activeElement.tagName.toLowerCase() == 'button') {
+				return;
+			}
 			// Prevent default drop focus on canvas
 			// Works incorrectly in Edge
 			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
@@ -1354,7 +1359,7 @@ class RenderSupport {
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
@@ -1387,7 +1392,7 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) stage.emit("mouseup");
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
@@ -1424,7 +1429,7 @@ class RenderSupport {
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				stage.emit("mousemove");
@@ -2094,6 +2099,10 @@ class RenderSupport {
 
 	public static function loadPreconfiguredFonts(families : Array<String>, onDone : Void -> Void) : Void {
 		FontLoader.loadPreconfiguredWebFonts(families, onDone);
+	}
+
+	public static function loadFSFont(family : String, url : String) : Void {
+		FontLoader.loadFSFont(family, url);
 	}
 
 	public static function getFontStylesConfigString() : String {

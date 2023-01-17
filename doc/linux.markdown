@@ -34,7 +34,7 @@ so as a compromise you can store variables in some file, which is
 touch ~/.env
 echo "source ~/.env" | tee -a ~/.bashrc ~/.profile
 ```
-Also it can be useful to define environment variables in .xsessionrc. This way they will be 
+Also it can be useful to define environment variables in .xsessionrc. This way they will be
 [enabled for any X session](https://askubuntu.com/questions/82120/how-do-i-set-an-environment-variable-in-a-unity-session)
 
 # Backend
@@ -116,7 +116,7 @@ git clone ssh://git@github.com/area9innovation/flow9.git
 ```
 
 Notice, that flow9 repo requires installed [Git LFS](https://git-lfs.github.com).
-You have to reclone the flow9 repository after installing Git LFS, or use 
+You have to reclone the flow9 repository after installing Git LFS, or use
 ```bash
 git lfs pull
 ```
@@ -163,9 +163,9 @@ work as well, but it is not guaranteed.
 version, you can do it manually either by downloading it from the
 official site
 
-    The [Neko download site](http://nekovm.org/download) offers both
-    32-bit and 64-bit binaries.  Make sure your haxe and neko match. Most
-    use the 32-bit version.
+The [Neko download site](http://nekovm.org/download) offers both
+32-bit and 64-bit binaries.  Make sure your haxe and neko match. Most
+use the 32-bit version.
 
 or via package manager like this:
 ```bash
@@ -259,11 +259,22 @@ wget -q -O /tmp/libpng12.deb http://mirrors.kernel.org/ubuntu/pool/main/libp/lib
 ```
 With Ubuntu 20.04, follow the instruction [here](https://askubuntu.com/questions/1136302/can-not-install-libpng12-so-0-on-ubuntu-19-04-for-packet-tracert-7) to proper install libpng12.
 
+Some distributions don't have latest `libpng12` versions in their repositories,
+and it can conflict with other packages, like `usrmerge`. You can find info on
+installing more recent versions of `libpng12` [here](https://askubuntu.com/questions/1116185/cant-install-libpng12-due-to-usrmerge-cant-run-packettracer-without-it).
+
 Download and setup QT 5.12.0 (or later):
 ```bash
 wget https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
 chmod +x qt-opensource-linux-x64-5.12.0.run
 ```
+
+If you are using Ubuntu, then you can also install QT via apt. This means you can install it without a UI, and without an QT account. It is done via:
+```bash
+sudo apt update
+sudo apt install qt5-default qtmultimedia5-dev qtwebengine5-dev libqt5websockets5-dev
+```
+
 **Install into `/opt/Qt/5.12.0` and be sure to select all items to install!**
 You might want to install into a different folder but it's important to create
 a symlink to the folder mentioned above and build with libraries statically
@@ -275,7 +286,7 @@ rm qt-opensource-linux-x64-5.12.0.run
 
 ```bash
 sudo apt install libpulse-dev libglu1-mesa-dev qtchooser -y
-qtchooser -install qt512 ~/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
+qtchooser -install qt512 /opt/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
 echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone Area9's fork of asmjit repo:

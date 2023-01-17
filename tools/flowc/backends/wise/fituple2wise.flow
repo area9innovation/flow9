@@ -17,11 +17,24 @@ export {
 		templStructs : Tree<int, Tree<[FiType], int>>, // generalStructId - <typeParams-structId>
 		nextId : ref int,
 	);
+	StructTuple(
+		link : Tree</*struct_name*/string, StructTupleArgs>,
+		tmpStructs : Set<string>, // created by compiler
+		structWithFns : Tree<string, [FiType]>, // oldName - newArgTypes
+	);
+	StructTupleArgs(
+		typeParameters : [FiType],
+		args : Tree<string/*arg_name*/, StructTupleArg>
+	);
+	StructTupleArg(
+		index : int,
+		type : FiType,
+	);
 	makeWiseAstStructs() -> WiseAstStructs;
 
 	removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAstStructs;
 
-	getStructArgs(name : string, data : StructTuple) -> Maybe<Pair<[FiType], [FiType]>>;
+	getStructArgs(name : string, data : StructTuple) -> Maybe<Triple<[FiType], [FiType], bool>>;
 	flowWiTuple2string(
 		struct : FlowWiTuple,
 		structs : WiseAstStructs,
@@ -39,20 +52,8 @@ export {
 	isTemplateStruct(env : WiseAstStructs, name : string) -> bool;
 }
 
-StructTuple(
-	link : Tree</*struct_name*/string, StructTupleArgs>
-);
-StructTupleArgs(
-	typeParameters : [FiType],
-	args : Tree<string/*arg_name*/, StructTupleArg>
-);
-StructTupleArg(
-	index : int,
-	type : FiType,
-);
-
 makeStructTuple() -> StructTuple {
-	StructTuple(makeTree());
+	StructTuple(makeTree(), makeSet(), makeTree());
 }
 
 makeWiseAstStructs() -> WiseAstStructs {
@@ -70,16 +71,20 @@ fiStructs2wiTuples(env : WiseAstStructs, structs : [FiTypeStruct], unions : [FiT
 		id = getNextStructId(tuples.nextId);
 		WiseAstStructs(
 			// TODO: remove type?
-			StructTuple(setTree(
-				tuples.data.link,
-				struct.name,
-				StructTupleArgs(
-					struct.typars,
-					foldi(struct.args, makeTree(), \i, acc2, arg ->
-						setTree(acc2, arg.name, StructTupleArg(i, arg.type))
+			StructTuple(
+				setTree(
+					tuples.data.link,
+					struct.name,
+					StructTupleArgs(
+						struct.typars,
+						foldi(struct.args, makeTree(), \i, acc2, arg ->
+							setTree(acc2, arg.name, StructTupleArg(i, arg.type))
+						)
 					)
-				)
-			)),
+				),
+				tuples.data.tmpStructs,
+				tuples.data.structWithFns
+			),
 			setTree(tuples.table, struct.name, if (struct.typars == []) id else (-1) * id), // we'll replace 1 struct with N later
 			tuples.unions,
 			tuples.templStructs,
@@ -114,13 +119,14 @@ getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string
 	}
 }
 
-getStructArgs(name : string, data : StructTuple) -> Maybe<Pair<[FiType], [FiType]>> {
-	maybeMap(lookupTree(data.link, name), \args -> Pair(
+getStructArgs(name : string, data : StructTuple) -> Maybe<Triple<[FiType], [FiType], bool>> {
+	maybeMap(lookupTree(data.link, name), \args -> Triple(
 		args.typeParameters,
 		map(
 			sortCustom(getTreeValues(args.args), \arg -> arg.index, true),
 			\arg -> arg.type
-		)
+		),
+		containsSet(data.tmpStructs, name)
 	));
 }
 
@@ -212,10 +218,10 @@ flowWiTuple2string(struct : FlowWiTuple, structs : WiseAstStructs, polyParams : 
 
 			eitherFn(
 				getStructArgs(struct.id, structs.data),
-				unpairC(\typePars, fieldTypes : [FiType] -> {
+				untripleC(\typePars, fieldTypes : [FiType], isTmpStruct -> {
 					getFields = \name : string -> getStructArgs(name, structs.data);
 					tupleFieldTypes = map(fieldTypes, \ft -> {
-						fiType2FlowWiTypeT(ft, polyParams, getFields);
+						fiType2FlowWiTypeT(ft, polyParams, !isTmpStruct, getFields);
 					});
 					field2string(makeCreateStruct(structId, struct, tupleFieldTypes));
 				}),
@@ -244,6 +250,7 @@ addStructServiceFields(type : FlowWiType) -> FlowWiType {
 			map(tt, addStructServiceFields)
 		), id);
 		FlowWiArrayType(tt) : FlowWiArrayType(addStructServiceFields(tt));
+		FlowWiRefType(tt): FlowWiRefType(addStructServiceFields(tt));
 	}
 }
 
@@ -313,7 +320,11 @@ removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAs
 	newStructs = filterTree(env.table, \name, __ -> containsSet(exports, name));
 	newIds = foldTree(newStructs, makeSet(), \__, id, acc -> insertSet(acc, id));
 	WiseAstStructs(
-		StructTuple(filterTree(env.data.link, \name, __ -> containsSet(exports, name))),
+		StructTuple(
+			filterTree(env.data.link, \name, __ -> containsSet(exports, name)),
+			env.data.tmpStructs,
+			env.data.structWithFns
+		),
 		newStructs,
 		filterTree(env.unions, \name, __ -> containsSet(exports, name)),
 		filterTree(env.templStructs, \id, __ -> containsSet(newIds, id)),

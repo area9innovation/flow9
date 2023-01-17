@@ -3,6 +3,7 @@
 import ds/array;
 import form/gui;
 import formats/html/html2form;
+import formats/webvtt/webvtt;
 import form/paragraph;
 import sys/sound;
 import formats/xml;
@@ -98,6 +99,32 @@ parseXmlCC(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity) 
 		}
 		XmlText(__): {}
 	}
+}
+
+parseWebVTTContent(content : string, ccsref : ref [ClosedCaption]) -> void {
+	webvtt = parseWebVTT(content);
+	cueTS2ms = \ts -> trunc(1000.0 * cueTimestamp2double(ts));
+
+	iter(webvtt.cues, \c : CueBlock -> {
+		blockStart = cueTS2ms(c.start);
+		blockEnd = cueTS2ms(c.end);
+		emptyCC = ClosedCaption(blockStart, blockEnd, "");
+
+		unpair(
+			fold(c.text, Pair([], emptyCC), \acc, t : CueText -> unpair(acc, \ccs, lastCC -> {
+				textStart = extractStruct(t.style, dummyCueTimestamp) |> cueTS2ms;
+				if (textStart > lastCC.begin) {
+					Pair(
+						arrayPush(ccs, ClosedCaption(lastCC with end = textStart - 1)),
+						ClosedCaption(textStart, blockEnd, t.content)
+					)
+				} else {
+					Pair(ccs, ClosedCaption(lastCC with text = lastCC.text + t.content))
+				}
+			})),
+			\ccs, lastCC -> refConcat(ccsref, ifArrayPush(ccs, lastCC != emptyCC, lastCC))
+		)
+	});
 }
 
 
@@ -236,10 +263,13 @@ makeCaptionsButton(captionsAvailable: Behaviour<bool>, showSubs : DynamicBehavio
 	);
 }
 
-loadCaptionsFile(captionsFile:string,
-				captionsAvailable: DynamicBehaviour<bool>, curPlayedTime: Behaviour<double>,
-				loadingError : DynamicBehaviour<bool>) -> Behaviour<VideoSubtitle>
-{
+loadCaptionsFile(
+	captionsFile: string,
+	captionsAvailable: DynamicBehaviour<bool>,
+	curPlayedTime: Behaviour<double>,
+	loadingError : DynamicBehaviour<bool>
+) -> Behaviour<VideoSubtitle> {
+
 	closedCaptions = ref [];
 	fontSize = ref 24.0;
 	fontFamily = ref "";
@@ -252,15 +282,18 @@ loadCaptionsFile(captionsFile:string,
 
 	findCurrentCC = \cpt -> {
 		ret = ref dummyCC;
-		index = for(0, \i -> {
-			if(i >= length(^closedCaptions) || ^closedCaptions[i].begin > cpt)
-				false
-			else if (^closedCaptions[i].begin <= cpt && ^closedCaptions[i].end > cpt) {
-				ret := ^closedCaptions[i];
-				false;
-			} else
-				true;
-		}, \i -> i+1);
+		index = for(0,
+			\i -> {
+				if (i >= length(^closedCaptions) || ^closedCaptions[i].begin > cpt)
+					false
+				else if (^closedCaptions[i].begin <= cpt && ^closedCaptions[i].end > cpt) {
+					ret := ^closedCaptions[i];
+					false;
+				} else
+					true;
+			},
+			\i -> i+1
+		);
 		^ret;
 	}
 
@@ -277,15 +310,20 @@ loadCaptionsFile(captionsFile:string,
 
 	if (captionsFile != "") {
 		httpRequest(addServerPathIfRelative(captionsFile), false, [], [],
-			\c -> {
+			\c -> if (isWebVTT(c)) {
+				parseWebVTTContent(c, closedCaptions);
+				startSubs();
+				nextDistinct(currentCC, findCurrentCC(trunc(getValue(curPlayedTime) * 1000.0)));
+				next(loadingError, false);
+			} else {
 				parsed = parseXml2(c);
-				switch(parsed) {
+				switch (parsed) {
 					XmlElement(tag, __, __) : {
 						_tag = toLowerCase(tag);
 						if (_tag == "tt" || _tag == "transcript") {
 							parseXmlCC(parsed, closedCaptions, fontSize, fontFamily, color, opacity, bgColor, bgOpacity);
 							startSubs();
-							nextDistinct(currentCC, findCurrentCC(trunc(getValue(curPlayedTime)*1000.0)));
+							nextDistinct(currentCC, findCurrentCC(trunc(getValue(curPlayedTime) * 1000.0)));
 							next(loadingError, false);
 						}
 						else {
@@ -1038,7 +1076,7 @@ makeVideoPlayer2(path:string, options: [PlayerOption], controls: [PlayerControl]
 	_warn = Available(frameWidth, frameHeight, Center(Mutable(warning)));
 	_vid = Inspect(
 		[Width(vw), Height(vh)],
-		Scale(const(scale), const(scale), 
+		Scale(const(scale), const(scale),
 			eitherFn(
 				getExternalPlayerURL(path),
 				\url -> RealHTML2(url, const(extractStruct(^params, PlayerSize(600.0, 400.0)) |> (\sz -> WidthHeight(sz.width, sz.height))), []),
@@ -1293,7 +1331,7 @@ makeSoundPlayer(url : string, options : [PlayerOption]) {
 	play_pic = "images/play.swf";
 	pause_pic = "images/pause.swf";
 	stop_pic = "images/stop.swf";
-	
+
 	soundControlFn = \-> {
 		next(currentVolume, i2d((getValue(isMuted))));
 		next(isMuted, 1 - getValue(isMuted));
