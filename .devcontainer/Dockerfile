@@ -25,7 +25,7 @@ RUN add-apt-repository ppa:haxe/releases -y \
 	&& apt-get update \
 	&& apt-get install -y haxe
 	
-# Installing haxelib in a share folder (The current user need to run 'haxelib setup $HAXELIB_PATH' as well)
+# Installing haxelib in a share folder
 RUN haxelib setup $HAXELIB_PATH \
 	&& haxelib install format 3.4.2 \
 	&& haxelib install pixijs 4.8.4 \
