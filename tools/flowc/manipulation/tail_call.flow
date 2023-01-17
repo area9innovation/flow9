@@ -166,7 +166,7 @@ fcVarExistsInNonReturnExps(ex : FiExp, v : string, non_return: bool) -> bool {
 			exists(es,\x -> fcVarExistsInNonReturnExps(x, v, true))
 		}
 		FiCall(f, args, type, start): {
-			fcVarExistsInNonReturnExps(f, v, true) ||
+			non_return && fcVarExistsInNonReturnExps(f, v, true) ||
 			exists(args,\a -> fcVarExistsInNonReturnExps(a, v, true));
 		}
 		FiVar(name, type, start): non_return && v == name;
@@ -179,7 +179,7 @@ fcVarExistsInNonReturnExps(ex : FiExp, v : string, non_return: bool) -> bool {
 }
 
 fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func : string) -> FiExp {
-	switch (ret_type) {
+	def_case = \-> switch (ret_type) {
 		FiTypeVoid(): {
 			switch (e) {
 				FiSeq(es,__,__): FiSeq(concat(es, [FiBool(false, -1)]), FiTypeBool(), -1);
@@ -187,64 +187,64 @@ fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func :
 			}
 		}
 		default: {
-			def_case = \-> FiSeq([
-					FiCallPrim(FcAssignPrim(),
-						[FiVar("__ret", FiTypeRef(ret_type), -1), e],
-						FiTypeVoid(), -1
-					),
-					FiBool(false, -1)
-				],
-				FiTypeBool(), -1
+			FiSeq([
+				FiCallPrim(
+					FcAssignPrim(),
+					[FiVar("__ret", FiTypeRef(ret_type), -1), e],
+					FiTypeVoid(), -1
+				),
+				FiBool(false, -1)
+			],
+			FiTypeBool(), -1);
+		}
+	}
+	switch (e) {
+		FiLet(__,__,e1,e2,__, __): {
+			FiLet(e with e2 = fcConvertReturnExps(e2, args, ret_type, tail_func), type2 = FiTypeBool());
+		}
+		FiIf(c, e1, e2, __, p): {
+			FiIf(c,
+				fcConvertReturnExps(e1, args, ret_type, tail_func),
+				fcConvertReturnExps(e2, args, ret_type, tail_func), FiTypeBool(), p
 			);
-			switch (e) {
-				FiLet(__,__,e1,e2,__, __): {
-					FiLet(e with e2 = fcConvertReturnExps(e2, args, ret_type, tail_func), type2 = FiTypeBool());
-				}
-				FiIf(c, e1, e2, __, p): {
-					FiIf(c,
-						fcConvertReturnExps(e1, args, ret_type, tail_func),
-						fcConvertReturnExps(e2, args, ret_type, tail_func), FiTypeBool(), p
-					);
-				}
-				FiSwitch(__,__,cs,__,__): {
-					FiSwitch(e with
-						cases = map(cs, \c -> FiCase(c with body = fcConvertReturnExps(c.body, args, ret_type, tail_func))),
-						type = FiTypeBool()
-					);
-				}
-				FiSeq(es,__,__): {
-					last = length(es) - 1;
-					if (length(es) == 0) e else FiSeq(e with
-						es = replace(es, last, fcConvertReturnExps(es[last], args, ret_type, tail_func)),
-						type = FiTypeBool()
-					);
-				}
-				FiCall(f, es,__,__): {
-					switch (f) {
-						FiVar(name,__,__):
-							if (tail_func != name) def_case() else {
-								updated_refs = filtermapi(args, \i, arg ->
-									if (arg.name == "__") None() else 
-									Some(FiCallPrim(
-										FcAssignPrim(),
-										[
-											FiVar("__" + arg.name, FiTypeRef(arg.type), -1),
-											es[i]
-										],
-										FiTypeVoid(), -1
-									))
-								);
-								FiSeq(
-									concat(updated_refs, [FiBool(true, -1)]),
-									FiTypeBool(), -1
-								);
-							}
-						default: def_case();
+		}
+		FiSwitch(__,__,cs,__,__): {
+			FiSwitch(e with
+				cases = map(cs, \c -> FiCase(c with body = fcConvertReturnExps(c.body, args, ret_type, tail_func))),
+				type = FiTypeBool()
+			);
+		}
+		FiSeq(es,__,__): {
+			last = length(es) - 1;
+			if (length(es) == 0) e else FiSeq(e with
+				es = replace(es, last, fcConvertReturnExps(es[last], args, ret_type, tail_func)),
+				type = FiTypeBool()
+			);
+		}
+		FiCall(f, es,__,__): {
+			switch (f) {
+				FiVar(name,__,__):
+					if (tail_func != name) def_case() else {
+						updated_refs = filtermapi(args, \i, arg ->
+							if (arg.name == "__") None() else
+							Some(FiCallPrim(
+								FcAssignPrim(),
+								[
+									FiVar("__" + arg.name, FiTypeRef(arg.type), -1),
+									es[i]
+								],
+								FiTypeVoid(), -1
+							))
+						);
+						FiSeq(
+							concat(updated_refs, [FiBool(true, -1)]),
+							FiTypeBool(), -1
+						);
 					}
-				}
 				default: def_case();
 			}
 		}
+		default: def_case();
 	}
 }
 
