@@ -1336,7 +1336,13 @@ class RenderSupport {
 			// Works incorrectly in Edge
 			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
 			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-			if (PreventDefault) e.preventDefault();
+			if (PreventDefault &&
+				// In case of using VoiceOver when inside frame, Safari tends to return wrong pageY value. We have to create an workaround and pass event
+				// to button's onclick handler. 
+					!(Platform.isIOS && isInsideFrame() && Browser.document.activeElement != null && Browser.document.activeElement.tagName.toLowerCase() == 'button')
+			) {
+				e.preventDefault();
+			}
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
