@@ -6,10 +6,10 @@ export {
 	trimFlowfile : (flowfile : string, imports : [string], workingDir : string) -> string;
 
 	// Find the given flow-file, using imports. Returns a full filesystem path
-	findFlowPath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void) -> string;
+	findFlowPath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void, check_uniqueness: bool) -> string;
 
 	// Find the given flow-file, using imports. Returns a relative filesystem path
-	findFlowRelativePath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void) -> string;
+	findFlowRelativePath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void, check_uniqueness: bool) -> string;
 
 	// Returns current working directory with slashes (/) and no slash at the end
 	fcCurrentWorkingDir() -> string;
@@ -78,20 +78,15 @@ trimFlowfile(flowfile : string, imports : [string], workingDir : string) -> stri
 	}), "/")
 }
 
-findFlowPath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void) -> string {
-	path = findFlowRelativePath(flowpath, flowsuffix, imports, workingDir, err);
+findFlowPath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void, check_uniqueness: bool) -> string {
+	path = findFlowRelativePath(flowpath, flowsuffix, imports, workingDir, err, check_uniqueness);
 	path |> resolveRelativePath |> fcNormalizeWindowsPath;
 }
 
-findFlowRelativePath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void) -> string {
+findFlowRelativePath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string, err : (string) -> void, check_uniqueness: bool) -> string {
 	withFlow = if (endsWith(flowpath, ".flow") || !flowsuffix) flowpath else flowpath + ".flow";
-	shift = if (workingDir == "") ""  else relatingPath(workingDir, resolveRelativePath("."));
-	pathShift = if (shift == "") shift else shift + "/";
-	paths = if (fileExists(withFlow)) {
-		[withFlow];
-	} else {
-		doFindFlowPath(withFlow, imports, 0, pathShift, []);
-	}
+	relative_imports = map(imports, \imp -> if (imp == ".") imp else relatingPath(imp, resolveRelativePath(".")));
+	paths = doFindFlowPath(withFlow, relative_imports, 0, workingDir, [], check_uniqueness);
 	if (length(paths) == 1) paths[0] else
 	if (length(paths) == 0) {
 		err("Could not resolve file: " + flowpath);
@@ -104,21 +99,21 @@ findFlowRelativePath(flowpath : string, flowsuffix : bool, imports : [string], w
 	}
 }
 
-doFindFlowPath(withFlow : string, imports : [string], i : int, pathShift : string, acc : [string]) -> [string] {
+doFindFlowPath(withFlow : string, imports : [string], i : int, workingDir : string, acc : [string], check_uniqueness: bool) -> [string] {
 	if (i == length(imports)) acc else {
-		head = imports[i];
-		directPath = pathCombine(head, withFlow);
-		new_acc = if (fileExists(directPath)) {
-			concat(acc, [directPath]);
+		directPath = pathCombine(imports[i], withFlow);
+		new_acc = if (workingDir == "") {
+			if (!fileExists(directPath)) acc else concat(acc, [directPath]);
 		} else {
-			shiftedPath = pathCombine(pathShift, directPath);
-			if (fileExists(shiftedPath)) {
-				concat(acc, [shiftedPath]);
-			} else {
-				acc;
-			}
+			remotePath = pathCombine(workingDir, directPath);
+			acc1 = if (fileExists(remotePath)) concat(acc, [remotePath]) else acc;
+			if (fileExists(directPath) && (check_uniqueness || length(acc1) == 0)) concat(acc1, [directPath]) else acc1;
 		}
-		doFindFlowPath(withFlow, imports, i + 1, pathShift, new_acc);
+		if (check_uniqueness || length(new_acc) == 0) {
+			doFindFlowPath(withFlow, imports, i + 1, workingDir, new_acc, check_uniqueness);
+		} else {
+			new_acc;
+		}
 	}
 }
 
