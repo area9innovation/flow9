@@ -14,49 +14,63 @@ isTailRecursiveFn(func : FiFunctionDec) -> bool {
 }
 
 replaceRecursionWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int) -> FlowWiExp {
-	newExp1 = replaceRecursiveFnArgNames(body, fnName, args, getTmpIndex);
-	newExp = fixReturnValuesAndRecursiveCalls(newExp1, fnName, args, retType, getTmpIndex, true);
-	wrapFnBodyWithLoop(newExp, fnName, args, retType, getTmpIndex);
+	isRealReference = false; // ref = if (isRealReference) structure else mutableVariable;
+	newExp1 = replaceRecursiveFnArgNames(body, fnName, args, getTmpIndex, isRealReference);
+	newExp = fixReturnValuesAndRecursiveCalls(newExp1, fnName, args, retType, getTmpIndex, true, isRealReference);
+	wrapFnBodyWithLoop(newExp, fnName, args, retType, getTmpIndex, isRealReference);
 }
 
 // do ... while()
-wrapFnBodyWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int) -> FlowWiExp {
+wrapFnBodyWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
 	tmpVar = makeTailCallCondTmpName(fnName);
 	boolType = fiType2flowWiBasictype(FiTypeBool());
 	tmpVarType = FlowWiRefType(boolType);
 	tmpVarFnRes = makeTailCallTmpResName(fnName);
 	withResult = retType != makeFlowWiTypeVoid();
 
-	retExp = if (withResult) {
-		[either(makeWiRefDeconstruction([FlowWiVar(tmpVarFnRes)], retType), FlowWiVar(tmpVarFnRes))]
+	makeRefGetter = \name, type -> if (isRealReference) {
+		either(makeWiRefDeconstruction([FlowWiVar(name)], type), FlowWiVar(name))
 	} else {
-		[]
+		FlowWiVar(name)
 	}
+	makeRefSetter = \name -> if (isRealReference) {
+		either(
+			makeWiRefSetter(
+				[FlowWiVar(name), FlowWiBool(false)],
+				[tmpVarType, boolType],
+				getTmpIndex()
+			),
+			FlowWiSet(name, FlowWiBool(false))
+		)
+	} else {
+		FlowWiSet(name, FlowWiBool(false))
+	}
+
 	loopExp = FlowWiBrace(concat(
 		[FlowWiWhile(
-			either(makeWiRefDeconstruction([FlowWiVar(tmpVar)], tmpVarType), FlowWiVar(tmpVar)),
-			FlowWiBrace([
-				either(
-					makeWiRefSetter(
-						[FlowWiVar(tmpVar), FlowWiBool(false)],
-						[tmpVarType, boolType],
-						getTmpIndex()
-					),
-					FlowWiSet(tmpVar, FlowWiBool(false))
-				),
-				body
-			])
+			makeRefGetter(tmpVar, tmpVarType),
+			FlowWiBrace([makeRefSetter(tmpVar), body])
 		)],
-		retExp
+		if (withResult) [makeRefGetter(tmpVarFnRes, retType)] else []
 	));
 
-	makeTmpRefVar = \name, type, val, nextExp -> FlowWiLet(
-		name,
-		0,
-		FlowWiRefType(type),
-		either(makeWiRefConstruction([val], type), val),
-		FlowWiBrace([nextExp])
-	);
+	makeTmpRefVar = \name, type, val, nextExp -> if (isRealReference) {
+		FlowWiLet(
+			name,
+			0,
+			FlowWiRefType(type),
+			either(makeWiRefConstruction([val], type), val),
+			FlowWiBrace([nextExp])
+		);
+	} else {
+		FlowWiLet(
+			name,
+			1, // mutable
+			type,
+			val,
+			FlowWiBrace([nextExp])
+		);
+	}
 
 	newBody = makeTmpRefVar(
 		tmpVar,
@@ -76,25 +90,29 @@ wrapFnBodyWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], ret
 	}
 }
 
-fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int, lastOp : bool) -> FlowWiExp {
+fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int, lastOp : bool, isRealReference : bool) -> FlowWiExp {
 	setFnRes = \e2 -> {
 		if (!lastOp || retType == makeFlowWiTypeVoid()) {
 			e2
 		} else {
-			either(
-				makeWiRefSetter(
-					[FlowWiVar(makeTailCallTmpResName(fnName)), e2],
-					[FlowWiRefType(retType), retType],
-					getTmpIndex()
-				),
-				e2
-			)
+			if (isRealReference) {
+				either(
+					makeWiRefSetter(
+						[FlowWiVar(makeTailCallTmpResName(fnName)), e2],
+						[FlowWiRefType(retType), retType],
+						getTmpIndex()
+					),
+					e2
+				)
+			} else {
+				FlowWiSet(makeTailCallTmpResName(fnName), e2)
+			}
 		}
 	}
 
-	recF = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, false);
-	recT = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, true);
-	recP = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, lastOp);
+	recF = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, false, isRealReference);
+	recT = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, true, isRealReference);
+	recP = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, lastOp, isRealReference);
 	recA = \exps -> if (exps == []) {
 		exps
 	} else {
@@ -104,14 +122,25 @@ fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiI
 		);
 	}
 	wrapBoolExp = \e2 -> mapWiRefSetter(e2, \e3 -> {
-		eitherMap(
-			makeWiRefDeconstruction([FlowWiVar(makeTailCallTmpResName(fnName))], fiType2flowWiBasictype(FiTypeBool())),
-			\e4 -> switch (e3 : FlowWiExp) {
-				FlowWiBrace(expsemi) : FlowWiBrace(arrayPush(expsemi, e4));
-				default : FlowWiBrace([e3, e4]);
-			},
-			e3
-		)
+		switch (e3 : FlowWiExp) {
+			FlowWiSet(id, __): if (isRealReference || !isTailCallTmpArgName(fnName, id)) {
+				e3;
+			} else {
+				FlowWiBrace([e3, FlowWiVar(makeTailCallTmpResName(fnName))])
+			}
+			default : eitherMap(
+				if (isRealReference) {
+					makeWiRefDeconstruction([FlowWiVar(makeTailCallTmpResName(fnName))], fiType2flowWiBasictype(FiTypeBool()))
+				} else {
+					Some(FlowWiVar(makeTailCallTmpResName(fnName)))
+				},
+				\e4 -> switch (e3 : FlowWiExp) {
+					FlowWiBrace(expsemi) : FlowWiBrace(arrayPush(expsemi, e4));
+					default : FlowWiBrace([e3, e4]);
+				},
+				e3
+			)
+		}
 	});
 	switch (e : FlowWiExp) {
 		FlowWiBreak(): setFnRes(e);
@@ -144,7 +173,7 @@ fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiI
 		FlowWiCall(e2, exps): {
 			callFnName = extractVarNameFromFlowWiExp(e2);
 			if (fnName == callFnName) {
-				replaceFnCallWithTailCall(fnName, exps, map(args, \a -> Pair(a.id, a.type)), getTmpIndex);
+				replaceFnCallWithTailCall(fnName, exps, map(args, \a -> Pair(a.id, a.type)), getTmpIndex, isRealReference);
 			} else {
 				setFnRes(FlowWiCall(recF(e2), map(exps, recF)));
 			}
@@ -176,22 +205,29 @@ fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiI
 	}
 }
 
-replaceFnCallWithTailCall(fnName : string, args : [FlowWiExp], argTypes : [Pair<string, FlowWiType>], getTmpIndex : () -> int) -> FlowWiExp {
-	onError = \-> {
-		println("can't fix tailCall for '" + fnName + "' with args : " + toString(args));
-		FlowWiBrace([]);
-	}
-	boolType = fiType2flowWiBasictype(FiTypeBool());
+replaceFnCallWithTailCall(fnName : string, args : [FlowWiExp], argTypes : [Pair<string, FlowWiType>], getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
+	if (isRealReference) {
+		onError = \-> {
+			println("can't fix tailCall for '" + fnName + "' with args : " + toString(args));
+			FlowWiBrace([]);
+		}
+		boolType = fiType2flowWiBasictype(FiTypeBool());
 
-	eitherFn(
-		makeWiRefSetter(
-			[FlowWiVar(makeTailCallCondTmpName(fnName)), FlowWiBool(true)],
-			[FlowWiRefType(boolType), boolType],
-			getTmpIndex()
-		),
-		\v : FlowWiLet -> FlowWiLet(v with brace = FlowWiBrace(arrayPush(v.brace.expsemi, makeTailFnArgSetters(fnName, args, argTypes, getTmpIndex)))),
-		onError
-	);
+		eitherFn(
+			makeWiRefSetter(
+				[FlowWiVar(makeTailCallCondTmpName(fnName)), FlowWiBool(true)],
+				[FlowWiRefType(boolType), boolType],
+				getTmpIndex()
+			),
+			\v : FlowWiLet -> FlowWiLet(v with brace = FlowWiBrace(arrayPush(v.brace.expsemi, makeTailFnArgSetters(fnName, args, argTypes, getTmpIndex, isRealReference)))),
+			onError
+		);
+	} else {
+		FlowWiBrace([
+			FlowWiSet(makeTailCallCondTmpName(fnName), FlowWiBool(true)),
+			makeTailFnArgSetters(fnName, args, argTypes, getTmpIndex, isRealReference)
+		]);
+	}
 }
 
 makeTailCallCondTmpName(fnName : string) -> string {
@@ -210,19 +246,29 @@ makeTailCallTmpArgName(fnName : string, argName : string) -> Maybe<string> {
 	}
 }
 
-makeTailFnArgSetters(fnName : string, args : [FlowWiExp], argTypes : [Pair<string, FlowWiType>], getTmpIndex : () -> int) -> FlowWiExp {
+isTailCallTmpArgName(fnName : string, name : string) -> bool {
+	startsWith(name, "_ARG_") && endsWith(name, "_" + makeTailCallCondTmpName(fnName));
+}
+
+makeTailFnArgSetters(fnName : string, args : [FlowWiExp], argTypes : [Pair<string, FlowWiType>], getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
 	if (length(args) == length(argTypes)) {
 		foldi(args, FlowWiBrace([]), \i, acc, arg -> unpair(argTypes[i], \argName, argType -> {
-			eitherMap(
+			either(
 				maybeBind(
 					makeTailCallTmpArgName(fnName, argName),
-					\tmpArgName -> makeWiRefSetter(
-						[FlowWiVar(tmpArgName), arg],
-						[FlowWiRefType(argType), argType],
-						getTmpIndex()
-					)
+					\tmpArgName -> if (isRealReference) {
+						maybeMap(
+							makeWiRefSetter(
+								[FlowWiVar(tmpArgName), arg],
+								[FlowWiRefType(argType), argType],
+								getTmpIndex()
+							),
+							\lv : FlowWiLet -> FlowWiLet(lv with brace = FlowWiBrace(ifArrayPush(lv.brace.expsemi, acc != FlowWiBrace([]), acc)))
+						)
+					} else {
+						Some(FlowWiBrace(if (acc != FlowWiBrace([])) [FlowWiSet(tmpArgName, arg), acc] else [FlowWiSet(tmpArgName, arg)]))
+					}
 				),
-				\lv : FlowWiLet -> FlowWiLet(lv with brace = FlowWiBrace(arrayPush(lv.brace.expsemi, acc))),
 				acc
 			);
 		}));
@@ -303,11 +349,11 @@ extractAllFnCalls(e : FiExp, fnName : string, acc : [bool], lastOp : bool) -> [b
 	}
 }
 
-replaceRecursiveFnArgNames(e : FlowWiExp, fnName : string, args : [FlowWiIdtype], getTmpIndex : () -> int) -> FlowWiExp {
-	rec = \e2 -> replaceRecursiveFnArgNames(e2, fnName, args, getTmpIndex);
+replaceRecursiveFnArgNames(e : FlowWiExp, fnName : string, args : [FlowWiIdtype], getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
+	rec = \e2 -> replaceRecursiveFnArgNames(e2, fnName, args, getTmpIndex, isRealReference);
 	replaceArgVar = \v : FlowWiVar -> eitherMap(
 		maybeBind(find(args, \a -> a.id == v.id), \a -> maybeMap(makeTailCallTmpArgName(fnName, v.id), \newName -> Pair(newName, a.type))),
-		unpairC(\newId, type -> either(makeWiRefDeconstruction([FlowWiVar(newId)], type), v)),
+		unpairC(\newId, type -> if (isRealReference) either(makeWiRefDeconstruction([FlowWiVar(newId)], type), v) else FlowWiVar(newId)),
 		v
 	);
 	recWasmOpArgs = \wargs -> {
