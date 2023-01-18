@@ -23,7 +23,7 @@ fcOptimizeTailCalls(prog : FiProgram) -> FiProgram {
 				}
 			);
 			optimized_module = FiModule(module with functions = optimized_funcs);
-			FiProgram(acc with 
+			FiProgram(acc with
 				modules = setTree(acc.modules, mod_name, optimized_module),
 				names = FiGlobalNames(acc.names with
 					toplevel = mergeTree(acc.names.toplevel, ^funcs_map)
@@ -36,13 +36,13 @@ fcOptimizeTailCalls(prog : FiProgram) -> FiProgram {
 _fc_for_type_ref : ref Maybe<FiTypeFunction> = ref None();
 
 _fc_for_type_() -> FiTypeFunction {
-	onlyOnce(_fc_for_type_ref, \ -> 
+	onlyOnce(_fc_for_type_ref, \ ->
 		FiTypeFunction(
 			[
-				FiFunArg("init", FiTypeBool()), 
-				FiFunArg("predicate", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool())), 
+				FiFunArg("init", FiTypeBool()),
+				FiFunArg("predicate", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool())),
 				FiFunArg("f", FiTypeFunction([FiFunArg("", FiTypeBool())], FiTypeBool()))
-			], 
+			],
 			FiTypeBool()
 		)
 	);
@@ -63,10 +63,10 @@ fcOptimizeTailCall(decl : FiFunctionDec, names : FiGlobalNames) -> FiFunctionDec
             ),
             FiLambda(
                 [FiFunArg("__", FiTypeBool())],
-                fold(reverseA(decl.lambda.args),
+                foldr(decl.lambda.args,
                     modified_fn,
                     \acc, arg -> FiLet(
-                        arg.name, 
+                        arg.name,
                         arg.type,
                         FiCallPrim(FcDerefPrim(), [FiVar("__" + arg.name, FiTypeRef(arg.type), -1)], arg.type, -1),
                         acc,
@@ -83,27 +83,27 @@ fcOptimizeTailCall(decl : FiFunctionDec, names : FiGlobalNames) -> FiFunctionDec
 	} else {
 		ret_arg_ind = findiDef(decl.lambda.args, \arg -> arg.type == ret_type, -1);
 		ret_val = if (ret_arg_ind == -1) {
-			fcMakeDefaultValueOfType(ret_type, names);
+			fcMakeDefaultValueOfType(ret_type, names, makeSet());
 		} else {
 			ret_arg = decl.lambda.args[ret_arg_ind];
 			FiVar(ret_arg.name + "__", ret_type, -1);
 		}
 		FiLet(
-			"__ret", 
-			FiTypeRef(ret_type), 
+			"__ret",
+			FiTypeRef(ret_type),
 			FiCallPrim(FcRefPrim(), [ret_val], FiTypeRef(ret_type), -1),
 			FiSeq([
-				for_cycle, 
+				for_cycle,
 				FiCallPrim(FcDerefPrim(), [FiVar("__ret", FiTypeRef(ret_type), -1)], ret_type, -1)
 			], ret_type, -1),
 			ret_type, -1
 		);
 	}
     new_body = fold(reverseA(decl.lambda.args),
-        wrap_return, 
+        wrap_return,
         \acc, arg -> FiLet(
-            "__" + arg.name, 
-            FiTypeRef(arg.type), 
+            "__" + arg.name,
+            FiTypeRef(arg.type),
             FiCallPrim(FcRefPrim(), [FiVar(arg.name + "__", arg.type, -1)], FiTypeRef(arg.type), -1),
             acc,
             ret_type, -1
@@ -114,31 +114,22 @@ fcOptimizeTailCall(decl : FiFunctionDec, names : FiGlobalNames) -> FiFunctionDec
     FiFunctionDec(decl with lambda = new_lambda, type = new_lambda_type);
 }
 
-fcDetectTailCall(decl : FiFunctionDec) -> bool { 
-    ret_exps = fcReturnExps(decl.lambda.body, []);
-	b1 = ref false;
-    b2 = fold(ret_exps, true, \acc, e -> {
-        if (!acc) acc else {
-            switch (e) {
-                FiCall(f, args,__,__): {
-                    switch (f) {
-                        FiVar(name,__,__): {
-							// Recursion detected
-							b1 := true;
-							decl.name == name;
-						}
-                        default: false;
-                    }
-                }
-                FiVar(name,__,__): {
-                    exists(decl.lambda.args, \arg -> arg.name == name);
-                }
-				FiConst(): true;
-                default: false;
-            }
-        }
-    });
-	^b1 && b2;
+
+fcDetectTailCall(decl : FiFunctionDec) -> bool {
+	exists(fcReturnExps(decl.lambda.body, []), \e ->
+		switch (e) {
+			FiCall(f, args,__,__): {
+				switch (f) {
+					FiVar(name,__,__): {
+						// tail recursion detected
+						decl.name == name;
+					}
+					default: false;
+				}
+			}
+			default: false;
+		}
+	) && !fcVarExistsInNonReturnExps(decl.lambda.body, decl.name, false);
 }
 
 fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp] {
@@ -151,142 +142,208 @@ fcReturnExps(e : FiExp, acc : [FiExp]) -> [FiExp] {
     }
 }
 
-
-fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func : string) -> FiExp {
-    switch (e) {
-		FiLet(__,__,e1,e2,__, __): {
-            FiLet(e with e2 = fcConvertReturnExps(e2, args, ret_type, tail_func), type2 = FiTypeBool());
-        }
-		FiIf(c, e1, e2, __, p): {
-            FiIf(c,
-                fcConvertReturnExps(e1, args, ret_type, tail_func),
-                fcConvertReturnExps(e2, args, ret_type, tail_func), FiTypeBool(), p
-            );
-        }
-		FiSwitch(__,__,cs,__,__): {
-            FiSwitch(e with 
-                cases = map(cs, \c -> FiCase(c with body = fcConvertReturnExps(c.body, args, ret_type, tail_func))),
-                type = FiTypeBool()
-            );
-        }
-		FiSeq(es,__,__): {
-            last = length(es) - 1;
-            if (length(es) == 0) e else FiSeq(e with 
-                es = replace(es, last, fcConvertReturnExps(es[last], args, ret_type, tail_func)),
-                type = FiTypeBool()
-            );
-        }
-        FiVar(name,__,__): {
-            switch (find(args, \arg -> arg.name == name)) {
-                Some(arg): {
-					if (ret_type == FiTypeVoid()) {
-						FiBool(false, -1);
-					} else {
-						FiSeq(
-							[
-								FiCallPrim(FcAssignPrim(), 
-									[FiVar("__ret", FiTypeRef(ret_type), -1), e], 
-									FiTypeVoid(), -1
-								),
-								FiBool(false, -1)
-							],
-							FiTypeBool(), -1
-						);
-					}
-                }
-                None(): e;
-            }
-        }
-        FiCall(f, es,__,__): {
-            switch (f) {
-                FiVar(name,__,__): 
-                    if (tail_func != name) e else {
-                        updated_refs = mapi(args, \i, arg ->
-                            FiCallPrim(
-                                FcAssignPrim(),
-                                [
-                                    FiVar("__" + arg.name, FiTypeRef(arg.type), -1),
-                                    es[i]
-                                ],
-                                FiTypeVoid(), -1
-                            )
-                        );
-                        FiSeq(
-                            concat(updated_refs, [FiBool(true, -1)]),
-                            FiTypeBool(), -1
-                        );
-                    }
-                default: e;
-            }
-        }
-		FiConst(): {
-			if (ret_type == FiTypeVoid()) {
-				FiBool(false, -1);
-			} else {
-				FiSeq(
-					[
-						FiCallPrim(FcAssignPrim(), 
-							[FiVar("__ret", FiTypeRef(ret_type), -1), e], 
-							FiTypeVoid(), -1
-						),
-						FiBool(false, -1)
-					],
-					FiTypeBool(), -1
-				);
-			}
+fcVarExistsInNonReturnExps(ex : FiExp, v : string, non_return: bool) -> bool {
+    switch (ex) {
+		FiLet(__, __,e1,e2,__, __): {
+			fcVarExistsInNonReturnExps(e1, v, true) ||
+			fcVarExistsInNonReturnExps(e2, v, non_return);
 		}
-		default: e;
+		FiIf(e1, e2, e3,__,__): {
+			fcVarExistsInNonReturnExps(e1, v, true) ||
+			fcVarExistsInNonReturnExps(e2, v, non_return) ||
+			fcVarExistsInNonReturnExps(e3, v, non_return);
+		}
+		FiSwitch(x,__,cs,__,__): {
+			(non_return && x.name == v) ||
+			exists(cs,\c -> fcVarExistsInNonReturnExps(c.body, v, non_return));
+		}
+		FiSeq(es,__,__): {
+			any(mapi(es, \i, x ->
+				fcVarExistsInNonReturnExps(x, v, non_return || (i + 1 != length(es)))
+			));
+		}
+		FiCallPrim(__,es,__,__): {
+			exists(es,\x -> fcVarExistsInNonReturnExps(x, v, true))
+		}
+		FiCall(f, args, type, start): {
+			non_return && fcVarExistsInNonReturnExps(f, v, true) ||
+			exists(args,\a -> fcVarExistsInNonReturnExps(a, v, true));
+		}
+		FiVar(name, type, start): non_return && v == name;
+		FiLambda(__,body,__,__): false;
+		FiCast(e, tFrom, tTo, type, start): fcVarExistsInNonReturnExps(e, v, non_return);
+		FiRequire(flowfile, e, type, start): fcVarExistsInNonReturnExps(e, v, true);
+		FiUnsafe(name, fallback, type, start): fcVarExistsInNonReturnExps(fallback, v, true);
+		FiConst(): false;
     }
 }
 
-fcMakeDefaultValueOfType(type : FiType, names : FiGlobalNames) -> FiExp {
+fcConvertReturnExps(e : FiExp, args : [FiFunArg], ret_type : FiType, tail_func : string) -> FiExp {
+	def_case = \-> switch (ret_type) {
+		FiTypeVoid(): {
+			switch (e) {
+				FiSeq(es,__,__): FiSeq(concat(es, [FiBool(false, -1)]), FiTypeBool(), -1);
+				default: FiSeq([e, FiBool(false, -1)], FiTypeBool(), -1);
+			}
+		}
+		default: {
+			FiSeq([
+				FiCallPrim(
+					FcAssignPrim(),
+					[FiVar("__ret", FiTypeRef(ret_type), -1), e],
+					FiTypeVoid(), -1
+				),
+				FiBool(false, -1)
+			],
+			FiTypeBool(), -1);
+		}
+	}
+	switch (e) {
+		FiLet(__,__,e1,e2,__, __): {
+			FiLet(e with e2 = fcConvertReturnExps(e2, args, ret_type, tail_func), type2 = FiTypeBool());
+		}
+		FiIf(c, e1, e2, __, p): {
+			FiIf(c,
+				fcConvertReturnExps(e1, args, ret_type, tail_func),
+				fcConvertReturnExps(e2, args, ret_type, tail_func), FiTypeBool(), p
+			);
+		}
+		FiSwitch(__,__,cs,__,__): {
+			FiSwitch(e with
+				cases = map(cs, \c -> FiCase(c with body = fcConvertReturnExps(c.body, args, ret_type, tail_func))),
+				type = FiTypeBool()
+			);
+		}
+		FiSeq(es,__,__): {
+			last = length(es) - 1;
+			if (length(es) == 0) e else FiSeq(e with
+				es = replace(es, last, fcConvertReturnExps(es[last], args, ret_type, tail_func)),
+				type = FiTypeBool()
+			);
+		}
+		FiCall(f, es,__,__): {
+			switch (f) {
+				FiVar(name,__,__):
+					if (tail_func != name) def_case() else {
+						updated_refs = filtermapi(args, \i, arg ->
+							if (arg.name == "__") None() else
+							Some(FiCallPrim(
+								FcAssignPrim(),
+								[
+									FiVar("__" + arg.name, FiTypeRef(arg.type), -1),
+									es[i]
+								],
+								FiTypeVoid(), -1
+							))
+						);
+						FiSeq(
+							concat(updated_refs, [FiBool(true, -1)]),
+							FiTypeBool(), -1
+						);
+					}
+				default: def_case();
+			}
+		}
+		default: def_case();
+	}
+}
+
+fcMakeDefaultValueOfType(type : FiType, names : FiGlobalNames, forbiden: Set<string>) -> FiExp {
 	switch (type) {
 		FiTypeArray(__): {
 			FiCallPrim(FcArrayPrim(), [], type, -1);
 		}
 		FiTypeFunction(args, rt): {
-			FiLambda(args, fcMakeDefaultValueOfType(rt, names), type, -1);
+			FiLambda(args, fcMakeDefaultValueOfType(rt, names, forbiden), type, -1);
 		}
 		FiTypeRef(tp): {
-			FiCallPrim(FcRefPrim(), [fcMakeDefaultValueOfType(tp, names)], type, -1);
+			FiCallPrim(FcRefPrim(), [fcMakeDefaultValueOfType(tp, names, forbiden)], type, -1);
 		}
-		FiTypeParameter(n): {
-			fail("Trying to make value of type: " + prettyFiType(dummyPretty, type, makeSet()));
-			FiVoid(-1);
-		}
+		FiTypeParameter(n): FiVoid(-1);
 		FiTypeBool():   FiBool(false, -1);
 		FiTypeInt():    FiInt(0, -1);
 		FiTypeDouble(): FiDouble(0.0, -1);
 		FiTypeString(): FiString("", -1);
 		FiTypeFlow():   FiInt(0, -1);
 		FiTypeVoid():   FiVoid(-1);
-		FiTypeNative(): {
-			// TODO: is there a way to make a value of native type?
-			fail("Trying to make value of type: " + prettyFiType(dummyPretty, type, makeSet()) + " - is not supported");
-			FiVoid(-1);
-		}
+		FiTypeNative(): FiVoid(-1);
 		FiTypeName(name, typars): {
 			switch (lookupTree(names.structs, name)) {
 				Some(struct): {
 					FiCallPrim(
-						FcStructPrim(name), 
-						map(struct.args, \arg -> fcMakeDefaultValueOfType(arg.type, names)),
+						FcStructPrim(name),
+						map(struct.args, \arg -> fcMakeDefaultValueOfType(arg.type, names, forbiden)),
 						type,
 						-1
 					);
 				}
 				None(): {
+					new_forbiden = insertSet(forbiden, name);
 					switch (lookupTree(names.unions, name)) {
 						Some(union): {
-							fcMakeDefaultValueOfType(union.typenames[0], names);
+							switch (fcChooseDefaultUnionTypename(union, names, new_forbiden)) {
+								Some(tp): {
+									fcMakeDefaultValueOfType(tp, names, new_forbiden);
+								}
+								None(): {
+									fail0("Cannot create a default value of a union: " + name + " - only cyclic types are found");
+								}
+							}
 						}
 						None(): {
-							fail("Named type: " + name + " is not found");
-							FiVoid(-1);
+							fail0("Named type: " + name + " is not found");
 						}
 					}
 				}
 			}
 		}
+	}
+}
+
+// In case we generate a default value of a union like Tree ::== TreeNode, TreeEmpty
+// we must choose a TreeEmpty variant, otherwise an infinite tree is going to be constructed.
+
+fcChooseDefaultUnionTypename(union: FiTypeUnion, names : FiGlobalNames, forbiden: Set<string>) -> Maybe<FiTypeName> {
+	fold(union.typenames, None(), \acc, tn -> 
+		if (isSome(acc) || containsSet(forbiden, tn.name)) acc else {
+			new_forbiden = insertSet(forbiden, tn.name);
+			switch (lookupTree(names.structs, tn.name)) {
+				Some(struct): {
+					if (forall(struct.args, \arg -> fcTypeDoesNotRecursion(arg.type, new_forbiden))) Some(tn) else None();
+				}
+				None(): {
+					switch (lookupTree(names.unions, tn.name)) {
+						Some(subunion): {
+							fcChooseDefaultUnionTypename(subunion, names, new_forbiden);
+						}
+						None(): {
+							fail0("Named type: " + tn.name + " is not found");
+						}
+					}
+				}
+			}
+		}
+	);
+}
+
+fcTypeDoesNotRecursion(type: FiType, forbiden: Set<string>) {
+	switch (type) {
+		FiTypeName(name,__): 
+			!containsSet(forbiden, name);
+		FiTypeArray(tp): 
+			fcTypeDoesNotRecursion(tp, forbiden);
+		FiTypeRef(tp): 
+			fcTypeDoesNotRecursion(tp, forbiden);
+		FiTypeFunction(args, ret): 
+			fcTypeDoesNotRecursion(ret, forbiden) && 
+			forall(args, \arg -> fcTypeDoesNotRecursion(arg.type, forbiden));
+		FiTypeParameter(n): false;
+		FiTypeNative(): true;
+		FiTypeFlow():   true;
+		FiTypeBool():   true;
+		FiTypeInt():    true;
+		FiTypeDouble(): true;
+		FiTypeString(): true;
+		FiTypeVoid():   false;
 	}
 }

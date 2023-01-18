@@ -812,13 +812,15 @@ class AccessWidget extends EventEmitter {
 			};
 
 			if (Platform.isMobile) {
-				if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-					element.onpointerdown = onpointerdown;
-					element.onpointerup = onpointerup;
-				}
+				if (role == "button") {
+					if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+						element.onpointerdown = onpointerdown;
+						element.onpointerup = onpointerup;
+					}
 
-				element.ontouchstart = onpointerdown;
-				element.ontouchend = onpointerup;
+					element.ontouchstart = onpointerdown;
+					element.ontouchend = onpointerup;
+				}
 			} else if (Platform.isSafari) {
 				element.onmousedown = onpointerdown;
 				element.onmouseup = onpointerup;

@@ -1589,12 +1589,10 @@ public class Native extends NativeHost {
 
 		ProcessRunner ps = new ProcessRunner(cmd, currentWorkingDirectory, stdin, onExit);
 		Future future = threadpool.submit(ps);
-
-		return true;
 	} catch (Exception ex) {
 		onExit.invoke(-200, "", "while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
-		return false;
 	}
+	return null;
 	}
 
 	private static final class ProcessStarter implements Runnable {
