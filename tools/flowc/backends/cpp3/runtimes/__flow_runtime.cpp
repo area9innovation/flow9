@@ -173,6 +173,7 @@ string std2string(const std::string& s) {
 
 string type2s(Int type) { 
 	switch (type) {
+		case Type::VOID:   return u"void";
 		case Type::INT:    return u"int";
 		case Type::BOOL:   return u"bool";
 		case Type::DOUBLE: return u"double";
@@ -196,6 +197,7 @@ bool AFlow::isSameObj(Flow f) const {
 		return false;
 	} else {
 		switch (type()) {
+			case Type::VOID:   return true;
 			case Type::INT:    return getInt() == f->getInt();
 			case Type::BOOL:   return getBool() == f->getBool();
 			case Type::DOUBLE: return getDouble() == f->getDouble();
@@ -208,6 +210,7 @@ bool AFlow::isSameObj(Flow f) const {
 
 void flow2string(Flow v, string& str) {
 	switch (v->type()) {
+		case Type::VOID:   str.append(u"{}"); break;
 		case Type::INT:    str.append(int2string(v->getInt())); break;
 		case Type::BOOL:   str.append(bool2string(v->getBool())); break;
 		case Type::DOUBLE: str.append(double2string(v->getDouble())); break;
@@ -276,6 +279,7 @@ Int compareFlow(Flow v1, Flow v2) {
 		return Compare<Int>::cmp(v1->type(), v2->type());
 	} else {
 		switch (v1->type()) {
+			case Type::VOID:   return 0;
 			case Type::INT:    return Compare<Int>::cmp(v1->getInt(), v2->getInt());
 			case Type::BOOL:   return Compare<Bool>::cmp(v1->getBool(), v2->getBool());
 			case Type::DOUBLE: return Compare<Double>::cmp(v1->getDouble(), v2->getDouble());
@@ -309,7 +313,7 @@ Int compareFlow(Flow v1, Flow v2) {
 			case Type::NATIVE: {
 				Native n1 = v1->getNative();
 				Native n2 = v2->getNative();
-				return Compare<Void*>::cmp(n1->nat, n2->nat);
+				return Compare<void*>::cmp(n1->nat, n2->nat);
 			}
 			default: {
 				case Type::STRUCT: {

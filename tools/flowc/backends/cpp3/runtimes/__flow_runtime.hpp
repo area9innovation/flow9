@@ -77,12 +77,14 @@ struct Ptr {
 };
 
 enum Type {
-	INT = 0,   BOOL = 1, DOUBLE = 2, STRING = 3, NATIVE = 4, // scalar types
-	ARRAY = 5, REF = 6,  FUNC = 7,   STRUCT = 8,             // complex types
+	VOID = 0, // special void type - technically it is nullptr_t
+	INT = 1,   BOOL = 2, DOUBLE = 3, STRING = 4, NATIVE = 5, // primary types
+	ARRAY = 6, REF = 7,  FUNC = 8,   STRUCT = 9,             // complex types
 	UNKNOWN = -1
 };
 
-using Void = void;
+using Void = nullptr_t;
+const Void void_value = nullptr;
 
 // Scalar types
 using Int = int32_t;
@@ -173,6 +175,7 @@ struct AFlow {
 	virtual Int type() const = 0;
 
 	// Direct getters - don't do any conversion
+	Void getVoid() const;
 	Int getInt() const;
 	Bool getBool() const;
 	Double getDouble() const;
@@ -219,6 +222,11 @@ template<> struct IsScalar<Int> { enum { value = true }; };
 template<> struct IsScalar<Bool> { enum { value = true }; };
 template<> struct IsScalar<Double> { enum { value = true }; };
 
+struct FVoid : public AFlow {
+	enum { TYPE = Type::VOID };
+	FVoid() { }
+	Int type() const override { return Type::VOID; }
+};
 struct FInt : public AFlow {
 	enum { TYPE = Type::INT };
 	FInt(Int v): val(v) { }
@@ -325,6 +333,7 @@ struct AFun : public AFlow {
 void flow2string(Flow v, string& os);
 inline String flow2string(Flow f) { string os; flow2string(f, os); return String::make(os); }
 
+inline Void AFlow::getVoid() const { return void_value; }
 inline Int AFlow::getInt() const { return static_cast<const FInt*>(this)->val; }
 inline Bool AFlow::getBool() const { return static_cast<const FBool*>(this)->val; }
 inline Double AFlow::getDouble() const { return static_cast<const FDouble*>(this)->val; }
@@ -388,6 +397,7 @@ template<typename T1> struct Cast {
 
 template<typename T> struct Compare;
 template<typename T> struct Equal { bool operator() (T v1, T v2) const { return Compare<T>::cmp(v1, v2) == 0; } };
+template<> struct Compare<Void> { static Int cmp(Void v1, Void v2) { return 0; } };
 template<> struct Compare<Bool> { static Int cmp(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
 template<> struct Compare<Int> { static Int cmp(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
 template<> struct Compare<Double> { static Int cmp(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
@@ -572,12 +582,7 @@ struct Function : public AFun, public std::function<R(As...)> {
 	Int arity() const override { return ARITY; }
 	Flow callFlowArgs() const override {
 		if constexpr (ARITY == 0) {
-			if constexpr (std::is_same_v<R, Void>) {
-				Fn::operator()();
-				return nullptr;
-			} else {
-				return Cast<R>::template To<Flow>::conv(Fn::operator()());
-			}
+			return Cast<R>::template To<Flow>::conv(Fn::operator()());
 		} else {
 			std::cerr << "arity mismatch: actual " << ARITY << " while used as: " << 0 << std::endl;
 			exit(1);
@@ -585,21 +590,12 @@ struct Function : public AFun, public std::function<R(As...)> {
 		}
 	}
 	Flow callFlowArgs(Flow as...) const override {
-		if constexpr (std::is_same_v<R, Void>) {
-			Fn::operator()(Cast<Flow>::template To<As>::conv(as)...);
-			return nullptr;
-		} else {
-			return Cast<R>::template To<Flow>::conv(
-				Fn::operator()(Cast<Flow>::template To<As>::conv(as)...)
-			);
-		}
+		return Cast<R>::template To<Flow>::conv(
+			Fn::operator()(Cast<Flow>::template To<As>::conv(as)...)
+		);
 	}
-	inline R call(As... as) const { 
-		if constexpr (std::is_same_v<R, Void>) {
-			Fn::operator()(as...); 
-		} else {
-			return Fn::operator()(as...); 
-		}
+	inline R call(As... as) const {
+		return Fn::operator()(as...);
 	}
 };
 
@@ -687,25 +683,13 @@ template<typename R, typename... As> Fun<R, As...> AFlow::toFun() const {
 	} else {
 		PFun f = toAFun();
 		if constexpr (Function<R, As...>::ARITY == 0) {
-			if constexpr (std::is_same_v<R, Void>) {
-				return Fun<R, As...>::make([f]() mutable { 
-					f->callFlowArgs();
-				});
-			} else {
-				return Fun<R, As...>::make([f]() mutable { 
-					return Cast<Flow>::template To<R>::conv(f->callFlowArgs()); 
-				});
-			}
+			return Fun<R, As...>::make([f]() mutable { 
+				return Cast<Flow>::template To<R>::conv(f->callFlowArgs()); 
+			});
 		} else {
-			if constexpr (std::is_same_v<R, Void>) {
-				return Fun<R, As...>::make([f](As... as) mutable { 
-					f->callFlowArgs(Cast<As>::template To<Flow>::conv(as)...);
-				});
-			} else {
-				return Fun<R, As...>::make([f](As... as) mutable { 
-					return Cast<Flow>::template To<R>::conv(f->callFlowArgs(Cast<As>::template To<Flow>::conv(as)...)); 
-				});
-			}
+			return Fun<R, As...>::make([f](As... as) mutable { 
+				return Cast<Flow>::template To<R>::conv(f->callFlowArgs(Cast<As>::template To<Flow>::conv(as)...)); 
+			});
 		}
 	}
 }
@@ -713,6 +697,7 @@ template<typename R, typename... As> Fun<R, As...> AFlow::toFun() const {
 // Default cast fillers: all are not available. Available ones will be set by partial specialization
 
 template<typename T> struct BiCast { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
+template<> struct BiCast<Void> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<> struct BiCast<Int> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<> struct BiCast<Bool> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<> struct BiCast<Double> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
@@ -724,6 +709,11 @@ template<typename T> struct BiCast<Vec<T>> { template<typename> struct From { st
 template<typename T> struct BiCast<Ref<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<typename R, typename... As> struct BiCast<Fun<R, As...>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
 template<typename T> struct BiCast<Str<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
+
+// BiCast<Void>
+
+template<> struct BiCast<Void>::From<Flow> { static Void conv(Flow x) { return void_value; } static constexpr bool is_available() { return true; } };
+template<> struct BiCast<Flow>::From<Void> { static Flow conv(Void x) { return Ptr<FVoid>::make(); } static constexpr bool is_available() { return true; } };
 
 // BiCast<Int>
 

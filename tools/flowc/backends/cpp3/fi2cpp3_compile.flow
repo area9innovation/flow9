@@ -57,7 +57,7 @@ fiModuleNatives2cpp3(module: FiModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] 
 cpp3InlineFunction(fn: FiFunctionDec) -> bool {
 	if (!isEmptySet(fiCollectTypars(fn.type, makeSet()))) true else {
 		if (!fiExpIsSimple(fn.lambda.body)) false else {
-			fiExpAstNodesCount(fn.lambda.body) < 8;
+			fiExpAstNodesCount(fn.lambda.body) < 9;
 		}
 	}
 }
@@ -390,7 +390,21 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
 	headerOnly = cpp3InlineFunction(fun);
-	stat_lambda = cast(fiPrepareExp2cpp3(fun.lambda, fn_type, gctx, name): FsExp -> FsLambda);
+	lambda_exp = fiPrepareExp2cpp3(fun.lambda, fn_type, gctx, name);
+	//if (extractStructName(lambda_exp) != "FsLambda") {
+	//	fail("in function " + fun.name + " expected FsLambda, got:\n" + fsExp2s(lambda_exp));
+	//}
+	// unwrap lambda from cast
+	stat_lambda = switch (lambda_exp) {
+		FsLambda(__,__,__,__,__,__): lambda_exp;
+		FsCallPrim(op, es,__,__): {
+			switch (op) {
+				FmCastPrim(__,__): cast(es[0]: FsExp -> FsLambda);
+				default: fail0("must be lambda or cast to lambda");
+			}
+		}
+		default: fail0("must be lambda or cast to lambda");
+	}
 	fun_signature =
 		(if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + 
 		gctx.varname2cpp(name) + fiFunArgs2cpp(stat_lambda.args, gctx);
@@ -405,23 +419,45 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 
 fiPrepareExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string) -> FsExp {
 	names = gctx.program.names;
+	/*if (name == "tryExtractStruct") {
+		println("type: " + prettyFiType(dummyPretty, type, makeSet()));
+	}*/
+	show = name == "setCommonXField"; //setCommonXField
+	pr = \x, i -> if (show) {
+		println("e" + i2s(i) + ":\n" + prettyFiExp(dummyPretty, x));
+	}
 	// First phase: do some preparation steps
 	e0 = fiEliminateUnionFields(e, names, 0);
+	pr(e0, 0);
 	e1 = fiExplicitCastInSwitch(e0, names);
+	pr(e1, 1);
 	e2 = fiFixVarInSameStructType(e1, makeTree(), names);
+	pr(e2, 2);
 	e3 = fiExpRenameRecurringVars(e2, makeSet());
+	pr(e3, 3);
 	e4 = fiExpMakeNoStatements(e3, gctx.effects);
+	pr(e4, 4);
+
+	pr2 = \x, i -> if (show) {
+		println("x" + i2s(i) + ":\n" + fsExp2s(x));
+	}
 
 	// Second phase: transform to FsExp and do type interpolation/explicit casts
 	x0 = fiExp2FsExp(e4, name, gctx.effects, names);
+	pr2(x0, 0);
 	x1 = fsExpSSA(x0, makeTree());
+	pr2(x1, 1);
 	x2 = fsInterpolateTyparsExp(x1, names);
+	pr2(x2, 2);
 	x3 = fsMakeExpCastsExplicit(x2, type, names, true);
+	pr2(x3, 3);
 	x4 = fsWrapExpCaseVarsWithCasts(x3, names);
+	pr2(x4, 4);
 	x5 = fsExpReturnVars(x4);
+	pr2(x5, 5);
 
 	// Memory: ref-counting operations are inserted
-	x6 = fsExpPerceus(x5, name);
+	x6 = x5; //fsExpPerceus(x5, name);
 	x6;
 }
 
@@ -542,11 +578,12 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsRet(e, __): {
 			e_s = fsExp2cpp3(e, gctx);
-			if (fsExpType(e) == FiTypeVoid()) {
+			"return " + e_s + ";"
+			/*if (fsExpType(e) == FiTypeVoid()) {
 				if (e_s == "") "return;" else e_s + ";\nreturn;";
 			} else {
 				"return " + e_s + ";"
-			}
+			}*/
 		}
 		FsTailCall(__): {
 			"continue;";
@@ -667,7 +704,7 @@ fsStructSwitch2cpp3(sw: FsSwitch, typename: string, gctx: Cpp3GlobalContext) -> 
 
 fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 	switch (e) {
-		FiVoid(__):      "";
+		FiVoid(__):      "void_value";
 		FiBool(b, __):   b2s(b);
 		FiInt(i, __):    i2s(i);
 		FiDouble(d, __): { 
@@ -723,7 +760,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 							}
 						}
 						None(): {
-							if (!traits.local) {
+							if (!traits.local && fiIsGlobalFunction(name, gctx.program.names)) {
 								gctx.varname2cpp(name) + typars + call_args;
 							} else {
 								gctx.varname2cpp(name) + typars + "->call" + call_args;

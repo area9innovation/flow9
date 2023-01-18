@@ -3,6 +3,7 @@ import tools/flowc/backends/cpp3/fi2cpp3_build;
 import tools/flowc/manipulation/tail_call;
 import tools/flowc/manipulation/flatten_unions;
 import tools/flowc/manipulation/wrap_funcs_as_args;
+import tools/flowc/manipulation/transform;
 
 export {
 	fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void;
@@ -25,16 +26,39 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 	natives = fiCpp3InitNativeFuncs(cfg);
 	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeFlow());
 	resolveNatives = \prog -> fiResolveNatives(prog, \name -> containsKeyTree(natives, name));
+	uniformFuncs = \prog -> fiTransformProgramToplevel(prog, \toplevel, __,__ -> {
+		switch (toplevel) {
+			FiGlobalVar(name, value, type, declStart, defStart): {
+				switch (value) {
+					FiLambda(args, body, tp, start): {
+						[FiFunctionDec(name, value, tp, declStart, defStart)];
+					}
+					default: [toplevel];
+				}
+			}
+			default: [toplevel];
+		}
+	});
 	program = program0
 		|> resolveNatives
 		|> fiFlattenUnions
 		|> fiCompleteStructTypars
 		|> setImplicitTypars
 		|> fiWasmWrapFuncArgs
+		|> uniformFuncs
 	;
 	ensureDirectoryExists(cfg.outputdir);
 	structs = getTreeValues(program.names.structs);
-	structs2ids = foldi(structs, makeTree(), \i, acc, struct -> setTree(acc, struct.name, i + 8));
+	/*
+	maximum non-struct type id is 8
+	enum Type {
+		VOID = 0,
+		INT = 1,   BOOL = 2, DOUBLE = 3, STRING = 4, NATIVE = 5, // primary types
+		ARRAY = 6, REF = 7,  FUNC = 8,   STRUCT = 9,             // complex types
+		UNKNOWN = -1
+	};
+	*/
+	structs2ids = foldi(structs, makeTree(), \i, acc, struct -> setTree(acc, struct.name, i + 9));
 	vars = filtermap(getTreeValues(program.names.toplevel), \decl -> 
 		switch (decl) {
 			FiGlobalVar(__,__,__,__,__): Some(decl);
