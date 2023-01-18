@@ -16,7 +16,7 @@ If it is working it should display "Hello from Docker!" and a lot more.
 
 ### Linux or WSL (Windows Subsystem for Linux)
 
-Clone the flow9 git repository to a sub folder. For example "prg"
+Clone the flow9 git repository, it is recommended to use a sub-folder of home. For example "prg"
 
 	cd ~
 	mkdir prg
@@ -38,20 +38,21 @@ If you open a terminal in VS Code you should have a prompt that looks something 
 
 	vscode ➜ /workspaces/flow9 (master) $ 
 
-The workspace/flow9 folder is the same as your ~/prg/flow9 folder. 
+The workspaces/flow9 folder is the same as your ~/prg/flow9 folder. 
 
 ### Windows
 
 For Windows it is recommended to use the Ubuntu WSL on Windows. This is because the Linux filesystem is much faster. But it also works with the Windows file system. Create a sub folder: 
 
-	c:\
+	c:
+	cd \
 	mkdir prg
 	cd prg
 	git clone https://github.com/area9innovation/flow9.git
 
 Start VS Code: 
 
-	c:\
+	c:
 	cd \prg\flow9
 	code .
 
@@ -84,9 +85,12 @@ Verify the flow9 Plugin. TODO
 
 ## Trouble shooting VS Code image builds. 
 
-If VS Code fails to create the dev-container it might be needed to remove the bad images and container. Do that by listing all the containers and remove the flow9 container:  
+If VS Code fails to create the dev-container it might be needed to remove the bad images and container. Do that by listing all the containers and remove the flow9 containers:  
 
 	docker container ls --all
 	docker container rm xyz
+	docker container rm xyz..
 
-Where xyz is the id vsc-flow9-* container
+	docker image prune
+
+Where xyz is the id vsc-flow9-* containers

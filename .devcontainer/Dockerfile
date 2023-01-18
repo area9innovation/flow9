@@ -31,3 +31,4 @@ RUN haxelib setup $HAXELIB_PATH \
 	&& haxelib install pixijs 4.8.4 \
 	&& haxelib install threejs
 
+RUN echo "\necho \"Welcome to Flow9 DevContainer. See the doc/devcontainer.md for more information.\"" >> /home/vscode/.bashrc
