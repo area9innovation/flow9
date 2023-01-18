@@ -52,8 +52,10 @@ For Windows it is recommended to use the Ubuntu WSL on Windows. This is because 
 Start VS Code: 
 
 	c:\
-	cd /prg/flow9
+	cd \prg\flow9
 	code .
+
+See the Linux/WSL description for additional details. 
 
 ### MAC
 
@@ -69,7 +71,7 @@ In VS Code with the DevContainer open, do the following in a Terminal:
 
 If it is working, it should print: Hello console.
 
-Try the http target with:
+Try the html target with:
 
 	cd /workspaces/flow9
 	flowc1 html=sandbox/graph.html sandbox/graph.flow
