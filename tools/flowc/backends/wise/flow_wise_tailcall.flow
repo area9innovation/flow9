@@ -97,12 +97,19 @@ fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiI
 	recP = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, lastOp);
 	recA = \exps -> if (exps == []) {
 		exps
-	 } else {
+	} else {
 		arrayPush(
 			map(take(exps, length(exps) - 1), recF),
 			recP(exps[length(exps) - 1])
 		);
-	 }
+	}
+	wrapBoolExp = \e2 -> {
+		if (isWiRefSetter(e2)) {
+			FlowWiBrace([e2, FlowWiVar(makeTailCallTmpResName(fnName))]);
+		} else {
+			e2;
+		}
+	}
 	switch (e : FlowWiExp) {
 		FlowWiBreak(): setFnRes(e);
 		FlowWiContinue(): setFnRes(e);
@@ -126,10 +133,10 @@ fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiI
 		FlowWiHexf64(__): setFnRes(e);
 		FlowWiI64(__): setFnRes(e);
 		FlowWiAdd(exp1, exp2): setFnRes(FlowWiAdd(recF(exp1), recF(exp2)));
-		FlowWiAnd(exp1, exp2): setFnRes(FlowWiAnd(recF(exp1), recF(exp2)));
 		FlowWiBoolAnd(exp1, exp2): setFnRes(FlowWiBoolAnd(recF(exp1), recF(exp2)));
 		FlowWiBoolNot(e2): setFnRes(FlowWiBoolNot(recF(e2)));
-		FlowWiBoolOr(exp1, exp2): setFnRes(FlowWiBoolOr(recF(exp1), recF(exp2)));
+		FlowWiAnd(exp1, exp2): setFnRes(FlowWiBoolOr(wrapBoolExp(recF(exp1)), wrapBoolExp(recF(exp2))));
+		FlowWiBoolOr(exp1, exp2): setFnRes(FlowWiBoolOr(wrapBoolExp(recF(exp1)), wrapBoolExp(recF(exp2))));
 		FlowWiBrace(expsemi): FlowWiBrace(recA(expsemi));
 		FlowWiCall(e2, exps): {
 			callFnName = extractVarNameFromFlowWiExp(e2);
@@ -226,6 +233,10 @@ makeTailFnArgSetters(fnName : string, args : [FlowWiExp], argTypes : [Pair<strin
 extractAllFnCalls(e : FiExp, fnName : string, acc : [bool], lastOp : bool) -> [bool] {
 	rec = \ne, isTail -> extractAllFnCalls(ne, fnName, acc, isTail);
 	recA = \exps, isTail -> fold(exps, acc, \acc2, e2 -> extractAllFnCalls(e2, fnName, acc2, isTail));
+	recSeq = \exps, isTail -> {
+		newAcc = recA(take(exps, length(exps) - 1), false);
+		extractAllFnCalls(exps[length(exps) - 1], fnName, newAcc, isTail);
+	}
 	switch (e : FiExp) {
 		FiLambda(__, body, __, __): rec(body, lastOp);
 		FiCall(f, args, __, __): {
@@ -246,11 +257,39 @@ extractAllFnCalls(e : FiExp, fnName : string, acc : [bool], lastOp : bool) -> [b
 			extractAllFnCalls(x, fnName, newAcc, false);
 		}
 		FiCast(e2, __, __, __, __): rec(e2, false);
-		FiSeq(es, __, __): {
-			newAcc = recA(take(es, length(es) - 1), false);
-			extractAllFnCalls(es[length(es) - 1], fnName, newAcc, true);
+		FiSeq(es, __, __): recSeq(es, true);
+		FiCallPrim(op, exps, __, __): {
+			recPrim = \-> recA(exps, false);
+			switch (op : FcPrim) {
+				FcOrPrim(): recSeq(exps, lastOp);
+				FcAndPrim(): recSeq(exps, lastOp);
+				FcNotPrim(): recPrim();
+				FcEqPrim(): recPrim();
+				FcNePrim(): recPrim();
+				FcLePrim(): recPrim();
+				FcGePrim(): recPrim();
+				FcLtPrim(): recPrim();
+				FcGtPrim(): recPrim();
+				FcPlusPrim(): recPrim();
+				FcMinusPrim(): recPrim();
+				FcMulPrim(): recPrim();
+				FcDivPrim(): recPrim();
+				FcModPrim(): recPrim();
+				FcNegPrim(): recPrim();
+				FcArrayPrim(): recPrim();
+				FcIndexPrim(): recPrim();
+				FcDerefPrim(): recPrim();
+				FcAssignPrim(): recPrim();
+				FcRefPrim(): recPrim();
+				FcStructPrim(__): recPrim();
+				FcFieldPrim(__): recPrim();
+				FcSetMutablePrim(__): recPrim();
+				FcCreateClosurePrim(__, __): recPrim();
+				FcQuote(): recPrim();
+				FcUnquote(): recPrim();
+			}
+			
 		}
-		FiCallPrim(__, exps, __, __): recA(exps, false);
 		FiVoid(__): acc;
 		FiDouble(__, __): acc;
 		FiInt(__, __): acc;
