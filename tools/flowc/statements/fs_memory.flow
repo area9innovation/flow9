@@ -1,4 +1,5 @@
 import ds/array;
+import tools/flowc/incremental/fi_helpers;
 import tools/flowc/statements/fs_transform;
 
 export {
@@ -80,7 +81,7 @@ fsDoStatPerceus(s: FsStat, env: FsPerceusEnv) -> FsStat {
 			}
 			post = concat(eOps.post, fsUnwrapSeq(fsDoStatPerceus(s1, env1)));
 			post1 = if (!containsSet(env.caseArgs, v.name)) post else {
-				concat([FsMemory(FmDup(), v, start)], post);
+				concat([FsMemory(FsDup(), v, start)], post);
 			}*/
 			fsWrapSeq(concat(
 				eOps.pre,
@@ -122,21 +123,36 @@ fsDoStatPerceus(s: FsStat, env: FsPerceusEnv) -> FsStat {
 
 fsExpMemOps(ex: FsExp) -> MemOps {
 	vars1 = set2array(fsExpVars(ex, makeSet()));
-	vars2 = filter(vars1, \v -> !(fiTypeIsScalar(v.type)) && !fsVarIsGlobal(v.traits));
+	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.type) && !fsVarIsGlobalFunc(v.traits));
 	// Filter out arguemnt vars, which are used exactly once in each go-through function body path 
 	vars = filter(vars2, \v -> 
 		switch (v.traits.kind) {
 			FsVarTmp(): false;
-			//FsVarLocal(): !(v.traits.firstUse && v.traits.lastUse);
 			default: true;
 		}
 	);
-	to_dup = \v -> v.traits.firstUse /*&& !v.traits.last*/;
-	to_drop = \v -> !(fiTypeIsScalar(v.type)) && !fsVarIsGlobal(v.traits) && v.traits.lastUse /*&& !v.traits.first*/;
+	to_dup = \v -> v.traits.firstUse;
+	to_drop = \v -> !fiTypeIsScalar(v.type) && !fsVarIsGlobalFunc(v.traits) && v.traits.lastUse;
 	MemOps(
-		filtermap(vars, \v -> if (to_dup(v)) Some(FsMemory(FmDup(), v, v.start)) else None()),
-		filtermap(vars, \v -> if (to_drop(v)) Some(FsMemory(FmDrop(), v, v.start)) else None())
+		filtermap(vars, \v -> 
+			if (to_dup(v)) Some(FsMemory(FsIncRC(), v, v.start)) else None()
+		),
+		filtermap(vars, \v -> 
+			if (to_drop(v)) Some(FsMemory(FsDecRC(), v, v.start)) else None()
+		)
 	);
+	/*
+	to_dup = \v -> v.traits.firstUse && !v.traits.lastUse;
+	to_drop = \v -> !(fiTypeIsScalar(v.type)) && !fsVarIsGlobalFunc(v.traits) && v.traits.lastUse;
+	MemOps(
+		filtermap(vars, \v -> 
+			if (to_dup(v)) Some(FsMemory(FsIncRC(), v, v.start)) else None()
+		),
+		filtermap(vars, \v -> 
+			if (to_drop(v)) Some(FsMemory(if (v.traits.firstUse) FsCheckRC() else FsDecRC(), v, v.start)) else None()
+		)
+	);
+	*/
 }
 
 fsExpVars(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
@@ -236,8 +252,8 @@ fsStatOptimize(s: FsStat) -> FsStat {
 				ss = transformArrayPairs(
 					mapConcat(ss, fsUnwrapSeq), 
 					\x1, x2 -> {
-						v1 = op1_op2(FmDup(), FmDrop(), x1, x2);
-						v2 = op1_op2(FmDrop(), FmDup(), x1, x2);
+						v1 = op1_op2(FsIncRC(), FsDecRC(), x1, x2);
+						v2 = op1_op2(FsDecRC(), FsIncRC(), x1, x2);
 						if (v1 || v2) Some([]) else None();
 					}
 				)

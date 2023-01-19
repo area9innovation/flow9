@@ -163,6 +163,8 @@ template<typename T> using Vec = Ptr<Vector<T>>;
 template<typename T> using Ref = Ptr<Reference<T>>;
 template<typename R, typename... As> using Fun = Ptr<Function<R, As...>>;
 
+typedef uint32_t RefCount_t;
+
 struct AFlow {
 	enum { TYPE = Type::UNKNOWN };
 	#ifdef PERCEUS_REFS
@@ -212,17 +214,14 @@ struct AFlow {
 			delete this; 
 		}
 	}
-	inline bool checkRefs() const {
+	inline void checkRefs() const {
 		if (refs == 0) {
 			delete this;
-			return true;
-		} else {
-			return false;
 		}
 	}
 
 	//mutable std::atomic<uint32_t> refs;
-	mutable uint32_t refs;
+	mutable RefCount_t refs;
 };
 
 template<typename T> struct IsScalar { enum { value = false }; };
@@ -413,8 +412,8 @@ template<> struct Compare<Int> { static Int cmp(Int v1, Int v2) { return (v1 < v
 template<> struct Compare<Double> { static Int cmp(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
 template<> struct Compare<void*> { static Int cmp(void* v1, void* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
 template<> struct Compare<const void*> { static Int cmp(const void* v1, const void* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
-template<> struct Compare<String> { static Int cmp(String v1, String v2) { return v1->str.compare(v2->str); } };
-template<> struct Compare<Native> { static Int cmp(Native v1, Native v2) { return Compare<void*>::cmp(v1->nat, v2->nat); } };
+template<> struct Compare<String> { static Int cmp(String v1, String v2) { Int ret = v1->str.compare(v2->str); v1->checkRefs(); v2->checkRefs(); return ret; } };
+template<> struct Compare<Native> { static Int cmp(Native v1, Native v2) { Int ret = Compare<void*>::cmp(v1->nat, v2->nat); v1->checkRefs(); v2->checkRefs(); return ret; } };
 
 template<typename T> struct RefCount { 
 	static void inc(T x) { 
@@ -429,13 +428,18 @@ template<typename T> struct RefCount {
 	}
 	static bool check(T x) { 
 		#ifdef PERCEUS_REFS
-		return x->checkRefs(); 
+		x->checkRefs(); 
+		#endif
+	}
+	static RefCount_t refs(T x) { 
+		#ifdef PERCEUS_REFS
+		x->refs; 
 		#endif
 	} 
 };
-template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } static bool check(Int x) { return false; }};
-template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } static bool check(Bool x) { return false; }};
-template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } static bool check(Double x) { return false; }};
+template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } static void check(Int x) { } static RefCount_t refs(Int x) { return 1; } };
+template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } static void check(Bool x) { } static RefCount_t refs(Bool x) { return 1; }};
+template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } static void check(Double x) { } static RefCount_t refs(Double x) { return 1; }};
 
 const uint32_t FNV_offset_basis = 0x811C9DC5;
 const uint32_t FNV_prime = 16777619;
@@ -494,14 +498,24 @@ struct Vector : public AVec {
 
 	Vector(): vect() { }
 	Vector(std::size_t s): vect() { vect.reserve(s); }
-	Vector(std::initializer_list<T> il): vect(il) { }
-	Vector(const Vect& v): vect(v) { }
+	Vector(std::initializer_list<T> il): vect(il) { for (T x : vect) RefCount<T>::inc(x); }
+	Vector(const Vect& v): vect(v) { for (T x : vect) RefCount<T>::inc(x); }
 	Vector(Vect&& v): vect(std::move(v)) { }
 	Vector(Vector&& a): vect(std::move(a.vect)) { }
-	Vector(const Vector& a): vect(a.vect) { }
+	Vector(const Vector& a): vect(a.vect) { for (T x : vect) RefCount<T>::inc(x); }
+	~Vector() override { for (T x : vect) RefCount<T>::dec(x); }
 
-	Vector& operator = (const Vector& a) { vect.operator=(a.vect); return *this; }
-	Vector& operator = (Vector&& a) { vect.operator=(std::move(a.vect)); return *this; }
+	Vector& operator = (const Vector& a) {
+		for (T x : vect) RefCount<T>::dec(x);
+		vect.operator=(a.vect);
+		for (T x : vect) RefCount<T>::inc(x);
+		return *this;
+	}
+	Vector& operator = (Vector&& a) {
+		for (T x : vect) RefCount<T>::dec(x); 
+		vect.operator=(std::move(a.vect));
+		return *this;
+	}
 
 	// AVec interface
 	Int size() const override { return static_cast<Int>(vect.size()); }
@@ -513,11 +527,11 @@ struct Vector : public AVec {
 	const_iterator end() const { return vect.end(); }
 	iterator begin() { return vect.begin(); }
 	iterator end(){ return vect.end(); }
-	void push_back(T x) { vect.push_back(x); }
+	void push_back(T x) { RefCount<T>::inc(x); vect.push_back(x); }
 
 	// general interface
 	T getItem(Int i) const { return vect.at(i); }
-	void setItem(Int i, T x) { vect[i] = x; }
+	void setItem(Int i, T x) { RefCount<T>::dec(vect[i]); vect[i] = x; RefCount<T>::inc(vect[i]); }
 
 	Int compare(Vec<T> a) const;
 
@@ -563,12 +577,22 @@ Vec<T> concatVecs1(Vec<T> v1, Vec<T> v2) {
 template<typename T> 
 struct Reference : public ARef {
 	Reference() { }
-	Reference(T r): val(r) { }
-	Reference(const Reference& r): val(r.val) { }
+	Reference(T r): val(r) { RefCount<T>::inc(val); }
+	Reference(const Reference& r): val(r.val) { RefCount<T>::inc(val); }
 	Reference(Reference&& r): val(std::move(r.val)) { }
+	~Reference() override { RefCount<T>::dec(val); }
 
-	Reference& operator = (Reference&& r) { val = std::move(r.val); return *this; }
-	Reference& operator = (const Reference& r) { val = r.val; return *this; }
+	Reference& operator = (Reference&& r) {
+		RefCount<T>::dec(val);
+		val = std::move(r.val);
+		return *this;
+	}
+	Reference& operator = (const Reference& r) { 
+		RefCount<T>::dec(val);
+		val = r.val; 
+		RefCount<T>::inc(val);
+		return *this;
+	}
 
 	// ARef interface
 	Flow getFlowRef() const override { return Cast<T>::template To<Flow>::conv(getRef()); }
@@ -576,7 +600,7 @@ struct Reference : public ARef {
 
 	// T-specific getter/setter
 	T getRef() const { return val; }
-	void setRef(T v) const { val = v; }
+	void setRef(T v) const { RefCount<T>::dec(val); val = v; RefCount<T>::inc(val); }
 
 	Int compare(Ref<T> r) const { return Compare<T>::cmp(val, r->val); }
 

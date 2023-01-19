@@ -1,5 +1,9 @@
+//import ds/set;
+import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/statements/fsexp;
-import tools/flowc/memory/fm_helpers;
+import tools/flowc/manipulation/effects;
+import string_utils;
+//import tools/flowc/memory/fm_helpers;
 
 export {
 
@@ -26,7 +30,12 @@ export {
 
 	fsStatLambda(s: FsStat) -> FsLambda;
 
-	fsVarIsGlobal(t: FsVarTraits) -> bool;
+	fsVarIsGlobalFunc(t: FsVarTraits) -> bool;
+
+	// If e has statements, wrap it in lambda so that it doesn't
+	fiExpMakeNoStatements(e: FiExp, effects: FiEffects) -> FiExp;
+
+	fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
 }
 
 fsExpType(e: FsExp) -> FiType {
@@ -56,7 +65,7 @@ fsStatType(s: FsStat) -> FiType {
 		FsAssign(__,__,__):          FiTypeVoid();
 		FsMemory(op,__,__): {
 			switch (op) {
-				FmIsUnique(): FiTypeBool();
+				FsIsUnique(): FiTypeBool();
 				default:      FiTypeVoid();
 			}
 		}
@@ -103,13 +112,14 @@ fsStat2s(s: FsStat) -> string {
 		}
 		FsMemory(op, e,__): {
 			switch (op) {
-				FmDup():      "dup(" + fsExp2s(e) + ");";
-				FmDrop():     "drop(" + fsExp2s(e) + ");";
-				FmReuse():    "reuse(" + fsExp2s(e) + ");";
-				FmDispose():  "dispose(" + fsExp2s(e) + ");";
-				FmIsUnique(): "is_unique(" + fsExp2s(e) + ");";
-				FmDecRef():   "dec_ref(" + fsExp2s(e) + ");";
-				FmNull():     "nullptr";
+				FsIncRC():    "incRef(" + fsExp2s(e) + ");";
+				FsDecRC():    "decRef(" + fsExp2s(e) + ");";
+				FsCheckRC():  "checkRef(" + fsExp2s(e) + ");";
+				FsReuse():    "reuse(" + fsExp2s(e) + ");";
+				FsDispose():  "dispose(" + fsExp2s(e) + ");";
+				FsIsUnique(): "is_unique(" + fsExp2s(e) + ");";
+				FsDecRef():   "dec_ref(" + fsExp2s(e) + ");";
+				FsNull():     "nullptr";
 			}
 		}
 	}
@@ -128,11 +138,11 @@ fsExp2s(e: FsExp) -> string {
 			fsExp2s(f) + "(" + superglue(args, fsExp2s, ", ") + ")";
 		}
 		FsCallPrim(op, es, type,__): {
-			fmPrim2s(op, map(es, fsExp2s), type);
+			fsPrim2s(op, map(es, fsExp2s), type);
 		}
 		FsVar(name, traits,__,__): {
 			switch (traits.kind) {
-				FsVarGlobal(): name;
+				FsVarGlobal(func): name + if (func) "/*fn*/" else "/*gvar first: " + b2s(traits.firstUse) + " last: " + b2s(traits.lastUse) + "*/";
 				default: name + "/* first: " + b2s(traits.firstUse) + " last: " + b2s(traits.lastUse) + "*/";
 			}
 		}
@@ -141,6 +151,56 @@ fsExp2s(e: FsExp) -> string {
 		FiInt(i, __):    i2s(i)
 		FiString(s, __): "\"" + escapeStr(s) + "\"";
 		FiBool(b, __):   b2s(b);
+	}
+}
+
+fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (op) {
+		FsOrPrim():  "(" + es[0] + " || " + es[1] + ")";
+		FsAndPrim(): "(" + es[0] + " && " + es[1] + ")";
+		FsNotPrim(): "!" + es[0];
+		FsEqPrim():  "(" + es[0] + " == " + es[1] + ")";
+		FsNePrim():  "(" + es[0] + " != " + es[1] + ")";
+		FsLePrim():  "(" + es[0] + " <= " + es[1] + ")";
+		FsGePrim():  "(" + es[0] + " >= " + es[1] + ")";
+		FsLtPrim():  "(" + es[0] + " < " + es[1] + ")";
+		FsGtPrim():  "(" + es[0] + " > " + es[1] + ")";
+		FsPlusPrim():  "(" + es[0] + " + " + es[1] + ")";
+		FsMinusPrim(): "(" + es[0] + " - " + es[1] + ")"; 
+		FsMulPrim():   "(" + es[0] + " * " + es[1] + ")";
+		FsDivPrim():   "(" + es[0] + " / " + es[1] + ")";
+		FsModPrim():   "(" + es[0] + " % " + es[1] + ")";
+		FsNegPrim():   "-" + es[0];
+		FsArrayPrim():   "[" + strGlue(es,  ", ") + "]";
+		FsIndexPrim():   es[0] + "[" + es[1] + "]";
+		FsDerefPrim():   "(*" +es[0] + ")";
+		FsRefPrim():     "ref " + es[0];
+		FsStructPrim(struct_name): {
+			struct_type = cast(type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			struct_name + typars + "(" + strGlue(es, ", ") + ")";
+		}
+		FsFieldPrim(name): es[0] + "." + name;
+		FsRequirePrim(file): {
+			"require " + file + " " + es[0];
+		}
+		FsUnsafePrim(name): {
+			"unsafe " + name + " " + es[0];
+		}
+		FsCastPrim(from, to): {
+			"(" + es[0] + " : " + t2s(from) + " -> " + t2s(to) + ")";
+		}
+		FsIfPrim(): {
+			"(" + es[0] + " ? " + es[1] + " : " + es[2] + ")";
+		}
+		FsReusePrim(name, reuse): {
+			struct_type = cast(type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			name + typars + "@" + reuse + "(" + strGlue(es, ", ") + ")";
+		}
 	}
 }
 
@@ -310,9 +370,71 @@ fsStatLambda(s: FsStat) -> FsLambda {
 	}
 }
 
-fsVarIsGlobal(t: FsVarTraits) -> bool {
+fsVarIsGlobalFunc(t: FsVarTraits) -> bool {
 	switch (t.kind) {
-		FsVarGlobal(): true;
+		FsVarGlobal(func): func;
+		default: false;
+	}
+}
+
+fiExpHasNoStatements(e: FiExp, effects: FiEffects) -> bool {
+	no_stats = \x -> fiExpHasNoStatements(x, effects);
+	switch (e) {
+		FiSeq(es, type,__): 
+			if (length(es) == 0) true else	
+			if (length(es) == 1) {
+				no_stats(es[0]) && type != FiTypeVoid();
+			} else false;
+		FiCast(ex,__,__,__,__): no_stats(ex);
+		FiCall(f, args,__,__): no_stats(f) && forall(args, no_stats);
+		FiSwitch(__,__,__,__,__): false;
+		FiLambda(__,__,__,__): true;
+		FiLet(__,__,__,__,__, __): false;
+		FiIf(e1, e2, e3,__, __): {
+			no_stats1 = \x -> no_stats(x) && !fiExpHasEffects(x, effects);
+			no_stats1(e1) && no_stats1(e2) && no_stats1(e3);
+		}
+		FiCallPrim(op, es,__, __): {
+			switch (op) {
+				FcAssignPrim(): false;
+				FcSetMutablePrim(field): false;
+				default: forall(es, no_stats);
+			}
+		}
+		FiRequire(__,__,__,__): false;
+		FiUnsafe(__,__,__,__): false;
+		default: true;
+	}
+}
+
+fiExpMakeNoStatements(e: FiExp, effects: FiEffects) -> FiExp {
+	if (fiExpHasNoStatements(e, effects)) e else {
+		tp = fiExpType(e);
+		FiCall(
+			FiLambda([], e, FiTypeFunction([], tp), e.start), [], tp, e.start
+		);
+	}
+}
+
+fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
+	switch (e) {
+		FiSeq(es, type,__): exists(es, \x -> fiExpHasEffects(x, effects));
+		FiCast(ex,__,__,__,__): fiExpHasEffects(ex, effects);
+		FiCall(f, args,__,__): fiExpHasEffects(f, effects) || exists(args, \x -> fiExpHasEffects(x, effects));
+		FiSwitch(__,__,cases,__,__): exists(cases, \c -> fiExpHasEffects(c.body, effects));
+		FiLambda(__,body,__,__): fiExpHasEffects(body, effects);
+		FiLet(__,__,e1,e2,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects);
+		FiIf(e1, e2, e3,__, __): fiExpHasEffects(e1, effects) || fiExpHasEffects(e2, effects) || fiExpHasEffects(e3, effects);
+		FiCallPrim(op, es,__, __): {
+			exists(es, \x -> fiExpHasEffects(x, effects)) ||
+			switch (op) {
+				FcRefPrim(): true;
+				default: false;
+			}
+		}
+		FiRequire(__,ex,__,__): fiExpHasEffects(ex, effects);
+		FiUnsafe(__,__,__,__): true;
+		FiVar(name,__,__): containsSet(effects.hasEffects, name);
 		default: false;
 	}
 }
