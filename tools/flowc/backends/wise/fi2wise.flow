@@ -645,7 +645,7 @@ fcPrim2flowWiExp(state : FiWiseState, type : FcPrim, e : FlowWiExp, resultType :
 		None();
 	}
 	isBool = \-> isSameStructType(resultType, FiTypeBool());
-	isNumber = \-> isSameStructType(resultType, FiTypeInt()) || isSameStructType(resultType, FiTypeDouble());
+
 	switch (type : FcPrim) {
 		FcOrPrim() : if (isBool()) Some(e) else makeError();
 		FcAndPrim() : makeError();
@@ -661,7 +661,20 @@ fcPrim2flowWiExp(state : FiWiseState, type : FcPrim, e : FlowWiExp, resultType :
 		FcMulPrim() : makeError();
 		FcDivPrim() : makeError();
 		FcModPrim() : makeError();
-		FcNegPrim() : if (isNumber()) Some(FlowWiNegate(e)) else makeError();
+		FcNegPrim() : switch(resultType : FiType) {
+			FiTypeArray(__): makeError();
+			FiTypeFunction(__, __): makeError();
+			FiTypeRef(__): makeError();
+			FiTypeParameter(__): makeError();
+			FiTypeBool(): makeError();
+			FiTypeInt(): Some(FlowWiSub(FlowWiInt(0), e));
+			FiTypeDouble(): Some(FlowWiNegate(e));
+			FiTypeString(): makeError();
+			FiTypeFlow(): makeError();
+			FiTypeVoid(): makeError();
+			FiTypeNative(): makeError();
+			FiTypeName(__, __): makeError();
+		}
 		FcArrayPrim() : makeDef();
 		FcIndexPrim() : makeDef();
 		FcDerefPrim() : makeDef();
@@ -712,7 +725,7 @@ fcPrims2flowWiExp(
 			FiTypeBool() : makeDefCmpr();
 			FiTypeInt() : makeDefCmpr();
 			FiTypeDouble() : makeDefCmpr();
-			FiTypeString() : makeDefCmpr();
+			FiTypeString() : fcPrimWrapComparatorResult(type, makeComparisonWiStrings(e1, e2));
 			FiTypeFlow() : makeDefCmpr();
 			FiTypeVoid() : makeDefCmpr();
 			FiTypeNative() : makeDefCmpr();
@@ -825,7 +838,39 @@ fcPrimBools2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, e1Type : Fi
 	}
 }
 
-// TODO: array type (compare by value, and not by pointer)
+
+fcPrimWrapComparatorResult(type : FcPrim, e : FlowWiExp) -> Maybe<FlowWiExp> {
+	makeExp = \e2 -> Some(FlowWiBrace([e2]));
+	switch (type : FcPrim) {
+		FcEqPrim() : makeExp(FlowWiEqual(e, FlowWiInt(0)));
+		FcNePrim() : makeExp(FlowWiNotEqual(e, FlowWiInt(0)));
+		FcLePrim() : makeExp(FlowWiLessEqual(e, FlowWiInt(0)));
+		FcGePrim() : makeExp(FlowWiGreaterEqual(e, FlowWiInt(0)));
+		FcLtPrim() : makeExp(FlowWiEqual(e, FlowWiInt(-1)));
+		FcGtPrim() : makeExp(FlowWiEqual(e, FlowWiInt(1)));
+		FcPlusPrim() : None();
+		FcMinusPrim() : None();
+		FcMulPrim() : None();
+		FcDivPrim() : None();
+		FcModPrim() : None();
+		FcNegPrim() : None();
+		FcArrayPrim() : None();
+		FcOrPrim() : None();
+		FcAndPrim() : None();
+		FcNotPrim() : None();
+		FcIndexPrim() : None();
+		FcDerefPrim() : None();
+		FcAssignPrim() : None();
+		FcRefPrim() : None();
+		FcStructPrim(__) : None();
+		FcFieldPrim(__) : None();
+		FcSetMutablePrim(__) : None();
+		FcCreateClosurePrim(__, __) : None();
+		FcQuote() : None();
+		FcUnquote() : None();
+	}
+}
+
 fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, valueType : FiType, state : FiWiseState) -> Maybe<FlowWiExp> {
 	makeError = \-> {
 		println("Wrong operation : " + toString(type) + " (" + toString(e1) + ", " + toString(e2) + ")");
@@ -835,20 +880,20 @@ fcPrimArrays2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, valueType 
 	makeCmprArray = \-> {
 		itemType = fiType2FlowWiType(valueType, state.getStructFields);
 		state.compareFnTypes := insertSet(^(state.compareFnTypes), itemType);
-		makeWiArrayCompareCall(e1, e2, itemType);
+		fcPrimWrapComparatorResult(type, makeWiArrayCompareCall(e1, e2, itemType));
 	}
-	makeExp = \e -> Some(FlowWiBrace([e]));
+
 
 	switch (type : FcPrim) {
 		FcOrPrim() : makeError();
 		FcAndPrim() : makeError();
 		FcNotPrim() : makeError();
-		FcEqPrim() : makeExp(FlowWiEqual(makeCmprArray(), FlowWiInt(0)));
-		FcNePrim() : makeExp(FlowWiNotEqual(makeCmprArray(), FlowWiInt(0)));
-		FcLePrim() : makeExp(FlowWiLessEqual(makeCmprArray(), FlowWiInt(0)));
-		FcGePrim() : makeExp(FlowWiGreaterEqual(makeCmprArray(), FlowWiInt(0)));
-		FcLtPrim() : makeExp(FlowWiEqual(makeCmprArray(), FlowWiInt(-1)));
-		FcGtPrim() : makeExp(FlowWiEqual(makeCmprArray(), FlowWiInt(1)));
+		FcEqPrim() : makeCmprArray();
+		FcNePrim() : makeCmprArray();
+		FcLePrim() : makeCmprArray();
+		FcGePrim() : makeCmprArray();
+		FcLtPrim() : makeCmprArray();
+		FcGtPrim() : makeCmprArray();
 		FcPlusPrim() : makeError();
 		FcMinusPrim() : makeError();
 		FcMulPrim() : makeError();
@@ -1178,7 +1223,7 @@ wiExp2string(fnId : string, exp : FlowWiExp, parent : Maybe<FlowWiExp>, structs 
 				FlowWiRefType(__) : wiType2string(opttype);
 			}
 			newBody = if (length(brace.expsemi) > 1) rtrim2(ltrim2(body, "{"), "}") else body;
-			id + " : " + varType + " = {" + wiExpDef2string(e) + "};"
+			(if (i == 1) "var " else "") + id + " : " + varType + " = {" + wiExpDef2string(e) + "};"
 			+ eol + newBody;
 		}
 		// FlowWiWasmOp(s : string, wargs : [FlowWiWarg], exps : [FlowWiExp]);
@@ -1230,7 +1275,7 @@ wiAtom2string(fnId : string, exp : FlowWiAtom, parent : Maybe<FlowWiExp>, struct
 			flowWiTuple2string(exp, structs, mergeTree(polyParams, structPolyParams), e2s);
 		}
 		FlowWiVar(id) : wiVar2string(id, parent);
-		FlowWiSet(id, e) : id + " := " + wiseAst2string(e, structs, polyFns) + ";";
+		FlowWiSet(id, e) : id + " := " + wiseAst2string(e, structs, polyFns);
 		FlowWiIf(exp1, exp2) : {
 			"if (" + e2s(exp1) + ") {"
 			+ eol + e2s(exp2) + eol
