@@ -1,0 +1,54 @@
+import tools/flowc/backends/cpp3/fi2cpp3_util;
+
+export {
+	fiStructName2cpp3(tn : FiTypeName, gctx: Cpp3GlobalContext) -> string;
+	fiDeclTypars2cpp3(types : [FiType], gctx : Cpp3GlobalContext) -> string;
+	fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string;
+}
+
+fiStructName2cpp3(tn : FiTypeName, gctx: Cpp3GlobalContext) -> string {
+	gctx.typename2cpp(tn.name) + if (tn.typeparameters == []) "" else "<" + superglue(tn.typeparameters, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
+}
+
+fiDeclTypars2cpp3(types : [FiType], gctx : Cpp3GlobalContext) -> string {
+	typars_names = sort(set2array(fold(types, makeSet(), \acc, type -> fiCollectTypars(type, acc))));
+	typars = map(typars_names, \n -> FiTypeParameter(n));
+	if (typars == []) "" else "template <" + superglue(typars, \tp -> "typename " + gctx.typar2cpp(tp), ", ") + ">\n";
+}
+
+fiType2cpp3(t : FiType, gctx: Cpp3GlobalContext) -> string {
+	switch (t) {
+		FiTypeArray(arr): {
+			"Vec<" + fiType2cpp3(arr, gctx) + ">";
+		}
+		FiTypeFunction(args, retType): {
+			"Fun<" + superglue(concat([retType], map(args, \arg -> arg.type)), \tp -> fiType2cpp3(tp, gctx) , ", ") + ">";
+		}
+		FiTypeRef(tp): {
+			"Ref<" + fiType2cpp3(tp, gctx) + ">";
+		}
+		FiTypeParameter(nm):  {
+			if (!containsSet(gctx.toplevelTypars, nm)) {
+				// Stray type parameters are considered flow by default
+				"Flow";
+			} else {
+				"T" + i2s(strlen(nm));
+			}
+		}
+		FiTypeName(name, typars):  {
+			if (containsKeyTree(gctx.program.names.structs, name)) {
+				"Str<" + fiStructName2cpp3(t, gctx) + ">";
+			} else {
+				union = lookupTreeDef(gctx.program.names.unions, name, FiTypeUnion("", [], [], 0));
+				"Union<" + superglue(union.typenames, \tn -> i2s(lookupTreeDef(gctx.structs2id, tn.name, -1)), ", ") + ">";
+			}
+		}
+		FiTypeBool():   "Bool";
+		FiTypeInt():    "Int";
+		FiTypeDouble(): "Double";
+		FiTypeString(): "String";
+		FiTypeFlow():   "Flow";
+		FiTypeVoid():   "Void";
+		FiTypeNative(): "Native";
+	}
+}

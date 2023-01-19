@@ -212,9 +212,12 @@ struct AFlow {
 			delete this; 
 		}
 	}
-	inline void keepRefs() const {
+	inline bool checkRefs() const {
 		if (refs == 0) {
-			delete this; 
+			delete this;
+			return true;
+		} else {
+			return false;
 		}
 	}
 
@@ -275,8 +278,8 @@ inline String concatStrings(String s1, String s2) {
 		ret.reserve(s1->str.size() + s2->str.size());
 		ret += s1->str;
 		ret += s2->str;
-		s1->keepRefs();
-		s2->keepRefs();
+		s1->checkRefs();
+		s2->checkRefs();
 		return String::make(ret);
 	/*} else {
 		//std::cout << "Shortcut for concatStrings, s1->size()=" << s1->str.size() << ", s2->size()" << s2->str.size() << std::endl;
@@ -424,15 +427,15 @@ template<typename T> struct RefCount {
 		x->decRefs(); 
 		#endif
 	}
-	static void keep(T x) { 
+	static bool check(T x) { 
 		#ifdef PERCEUS_REFS
-		x->keepRefs(); 
+		return x->checkRefs(); 
 		#endif
 	} 
 };
-template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } static void keep(Int x) { }};
-template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } static void keep(Bool x) { }};
-template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } static void keep(Double x) { }};
+template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } static bool check(Int x) { return false; }};
+template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } static bool check(Bool x) { return false; }};
+template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } static bool check(Double x) { return false; }};
 
 const uint32_t FNV_offset_basis = 0x811C9DC5;
 const uint32_t FNV_prime = 16777619;
