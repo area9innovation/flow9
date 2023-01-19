@@ -17,7 +17,6 @@ import simpleGit from 'simple-git';
 import * as notebook from './notebook';
 //import { performance } from 'perf_hooks';
 import editors from './editors';
-const isPortReachable = require('is-port-reachable');
 
 interface ProblemMatcher {
     name: string,
@@ -108,10 +107,10 @@ function runUI() {
 }
 
 function checkHttpServerStatus(initial : boolean) {
-	const port = vscode.workspace.getConfiguration("flow").get("portOfHttpServer");
-	isPortReachable(port, {host: 'localhost'}).then(
-		(reacheable : boolean) => {
-			if (reacheable) {
+	const port : number = vscode.workspace.getConfiguration("flow").get("portOfHttpServer");
+	tools.isPortAvailable(port).then(
+		(free : boolean) => {
+			if (!free) {
 				outputHttpServerMemStats();
 				httpServerOnline = true;
 			} else {
@@ -228,11 +227,9 @@ function startLspClient() {
 	client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
 	// Start the client. This will also launch the server
 	client.start();
-	client.onReady().then(() => {
-		sendOutlineEnabledUpdate();
-		checkHttpServerStatus(true);
-		setInterval(checkHttpServerStatus, 3000, false);
-	});
+	sendOutlineEnabledUpdate();
+	checkHttpServerStatus(true);
+	setInterval(checkHttpServerStatus, 3000, false);
 }
 
 function showHttpServerOnline(mem_stats : string = null) {
