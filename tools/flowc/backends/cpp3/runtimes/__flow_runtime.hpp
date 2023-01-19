@@ -21,7 +21,7 @@
 
 namespace flow {
 
-//#define PERCEUS_REFS
+#define PERCEUS_REFS
 
 // Reference counting pointer. Essential for memory managing.
 template<typename T>
@@ -166,7 +166,7 @@ template<typename R, typename... As> using Fun = Ptr<Function<R, As...>>;
 struct AFlow {
 	enum { TYPE = Type::UNKNOWN };
 	#ifdef PERCEUS_REFS
-	AFlow(): refs(1) { }
+	AFlow(): refs(0) { }
 	#else
 	AFlow(): refs(0) { }
 	#endif
@@ -209,6 +209,11 @@ struct AFlow {
 	}
 	inline void decRefs() const { 
 		if (-- refs == 0) {
+			delete this; 
+		}
+	}
+	inline void keepRefs() const {
+		if (refs == 0) {
 			delete this; 
 		}
 	}
@@ -270,6 +275,8 @@ inline String concatStrings(String s1, String s2) {
 		ret.reserve(s1->str.size() + s2->str.size());
 		ret += s1->str;
 		ret += s2->str;
+		s1->keepRefs();
+		s2->keepRefs();
 		return String::make(ret);
 	/*} else {
 		//std::cout << "Shortcut for concatStrings, s1->size()=" << s1->str.size() << ", s2->size()" << s2->str.size() << std::endl;
@@ -416,11 +423,16 @@ template<typename T> struct RefCount {
 		#ifdef PERCEUS_REFS
 		x->decRefs(); 
 		#endif
+	}
+	static void keep(T x) { 
+		#ifdef PERCEUS_REFS
+		x->keepRefs(); 
+		#endif
 	} 
 };
-template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } };
-template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } };
-template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } };
+template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } static void keep(Int x) { }};
+template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } static void keep(Bool x) { }};
+template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } static void keep(Double x) { }};
 
 const uint32_t FNV_offset_basis = 0x811C9DC5;
 const uint32_t FNV_prime = 16777619;

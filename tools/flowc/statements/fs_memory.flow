@@ -121,9 +121,18 @@ fsDoStatPerceus(s: FsStat, env: FsPerceusEnv) -> FsStat {
 }
 
 fsExpMemOps(ex: FsExp) -> MemOps {
-	vars = set2array(fsExpVars(ex, makeSet()));
-	to_dup = \v -> !(fiTypeIsScalar(v.type)) && v.traits.local && v.traits.first /*&& !v.traits.last*/;
-	to_drop = \v -> !(fiTypeIsScalar(v.type)) && v.traits.local && v.traits.last /*&& !v.traits.first*/;
+	vars1 = set2array(fsExpVars(ex, makeSet()));
+	vars2 = filter(vars1, \v -> !(fiTypeIsScalar(v.type)) && !fsVarIsGlobal(v.traits));
+	// Filter out arguemnt vars, which are used exactly once in each go-through function body path 
+	vars = vars2;
+	/*filter(vars1, \v -> 
+		switch (v.traits.kind) {
+			FsVarArg(): !(v.traits.firstUse && v.traits.lastUse);
+			default: true;
+		}
+	);*/
+	to_dup = \v -> v.traits.firstUse /*&& !v.traits.last*/;
+	to_drop = \v -> !(fiTypeIsScalar(v.type)) && !fsVarIsGlobal(v.traits) && v.traits.lastUse /*&& !v.traits.first*/;
 	MemOps(
 		filtermap(vars, \v -> if (to_dup(v)) Some(FsMemory(FmDup(), v, v.start)) else None()),
 		filtermap(vars, \v -> if (to_drop(v)) Some(FsMemory(FmDrop(), v, v.start)) else None())
@@ -248,7 +257,7 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 			p2 = fsExpLastVarUsage(e, p1.second);
 			Pair(
 				FsLet(ex with 
-					var = FsVar(v with traits = FsVarTraits(v.traits with last = !containsSet(p1.second, v.name))),
+					var = FsVar(v with traits = FsVarTraits(v.traits with lastUse = !containsSet(p1.second, v.name))),
 					e = p2.first,
 					s = p1.first
 				),
@@ -276,7 +285,7 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 			vars1 = fold(cases_ps, vars, \acc, p -> mergeSets(acc, p.second));
 			Pair(
 				FsSwitch(ex with
-					x = FsVar(v with traits = FsVarTraits(v.traits with last = !containsSet(vars1, v.name))),
+					x = FsVar(v with traits = FsVarTraits(v.traits with lastUse = !containsSet(vars1, v.name))),
 					cases = map(cases_ps, \p -> p.first)
 				),
 				insertSet(vars1, v.name)
@@ -353,7 +362,7 @@ fsExpLastVarUsage(ex: FsExp, vars: Set<string>) -> Pair<FsExp, Set<string>> {
 		}
 		FsVar(name, traits,__,__): {
 			Pair(
-				FsVar(ex with traits = FsVarTraits(traits with last = !containsSet(vars, name))), 
+				FsVar(ex with traits = FsVarTraits(traits with lastUse = !containsSet(vars, name))), 
 				insertSet(vars, name)
 			);
 		}
@@ -397,7 +406,7 @@ fsStatFirstVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> 
 			});
 			Pair(
 				FsSwitch(ex with
-					x = FsVar(v with traits = FsVarTraits(v.traits with first = !containsSet(vars, v.name))),
+					x = FsVar(v with traits = FsVarTraits(v.traits with firstUse = !containsSet(vars, v.name))),
 					cases = map(cases_ps, \p -> p.first)
 				),
 				fold(cases_ps, vars1, \acc, p -> mergeSets(acc, p.second))
@@ -474,7 +483,7 @@ fsExpFirstVarUsage(ex: FsExp, vars: Set<string>) -> Pair<FsExp, Set<string>> {
 		}
 		FsVar(name, traits,__,__): {
 			Pair(
-				FsVar(ex with traits = FsVarTraits(traits with first = !containsSet(vars, name))), 
+				FsVar(ex with traits = FsVarTraits(traits with firstUse = !containsSet(vars, name))), 
 				insertSet(vars, name)
 			);
 		}
