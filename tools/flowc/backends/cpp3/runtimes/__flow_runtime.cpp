@@ -193,19 +193,20 @@ string type2s(Int type) {
 }
 
 bool AFlow::isSameObj(Flow f) const { 
-	if (type() != f->type()) {
-		return false;
-	} else {
+	bool ret = false;
+	if (type() == f->type()) {
 		switch (type()) {
-			case Type::VOID:   return true;
-			case Type::INT:    return getInt() == f->getInt();
-			case Type::BOOL:   return getBool() == f->getBool();
-			case Type::DOUBLE: return getDouble() == f->getDouble();
-			case Type::STRING: return getString()->str == f->getString()->str;
-			case Type::NATIVE: return getNative()->nat == f->getNative()->nat;
-			default:           return this == f.ptr;
+			case Type::VOID:   ret = true; break;
+			case Type::INT:    ret = getInt() == f->getInt(); break;
+			case Type::BOOL:   ret = getBool() == f->getBool(); break;
+			case Type::DOUBLE: ret = getDouble() == f->getDouble(); break;
+			case Type::STRING: ret = getString()->str == f->getString()->str; break;
+			case Type::NATIVE: ret = getNative()->nat == f->getNative()->nat;
+			default:           ret = this == f.ptr; break;
 		}
 	}
+	f->checkRefs();
+	return ret;
 }
 
 void flow2string(Flow v, string& str) {
@@ -274,46 +275,59 @@ void flow2string(Flow v, string& str) {
 	}
 }
 
+String flow2string(Flow f) { 
+	string os; 
+	flow2string(f, os);
+	return String::make(os); 
+}
+
 Int compareFlow(Flow v1, Flow v2) {
+	Int ret = 0;
 	if (v1->type() != v2->type()) {
-		return Compare<Int>::cmp(v1->type(), v2->type());
+		ret = Compare<Int>::cmp(v1->type(), v2->type());
 	} else {
 		switch (v1->type()) {
-			case Type::VOID:   return 0;
-			case Type::INT:    return Compare<Int>::cmp(v1->getInt(), v2->getInt());
-			case Type::BOOL:   return Compare<Bool>::cmp(v1->getBool(), v2->getBool());
-			case Type::DOUBLE: return Compare<Double>::cmp(v1->getDouble(), v2->getDouble());
-			case Type::STRING: return v1->getString()->str.compare(v2->getString()->str);
+			case Type::VOID:   ret = 0; break;
+			case Type::INT:    ret = Compare<Int>::cmp(v1->getInt(), v2->getInt()); break;
+			case Type::BOOL:   ret = Compare<Bool>::cmp(v1->getBool(), v2->getBool()); break;
+			case Type::DOUBLE: ret = Compare<Double>::cmp(v1->getDouble(), v2->getDouble()); break;
+			case Type::STRING: ret = v1->getString()->str.compare(v2->getString()->str); break;
 			case Type::ARRAY: {
 				PVec a1 = v1->getAVec();
 				PVec a2 = v2->getAVec();
 				Int c1 = Compare<Int>::cmp(a1->size(), a2->size());
 				if (c1 != 0) {
-					return c1;
+					ret = c1;
 				} else {
 					for (Int i = 0; i < a1->size(); ++ i) {
 						Int c2 = compareFlow(a1->getFlowItem(i), a2->getFlowItem(i));
 						if (c2 != 0) {
-							return c2;
+							ret = c2;
+							break;
 						}
 					}
-					return 0;
+					ret = 0;
 				}
+				break;
 			}
 			case Type::REF: {
 				PRef r1 = v1->getARef();
 				PRef r2 = v2->getARef();
-				return compareFlow(r1->getFlowRef(), r2->getFlowRef());
+				Int c = compareFlow(r1->getFlowRef(), r2->getFlowRef());
+				ret = c;
+				break;
 			}
 			case Type::FUNC: {
 				PFun f1 = v1->getAFun();
 				PFun f2 = v2->getAFun();
-				return Compare<const void*>::cmp(f1.ptr, f2.ptr);
+				ret = Compare<const void*>::cmp(f1.ptr, f2.ptr);
+				break;
 			}
 			case Type::NATIVE: {
 				Native n1 = v1->getNative();
 				Native n2 = v2->getNative();
-				return Compare<void*>::cmp(n1->nat, n2->nat);
+				ret = Compare<void*>::cmp(n1->nat, n2->nat);
+				break;
 			}
 			default: {
 				case Type::STRUCT: {
@@ -321,50 +335,60 @@ Int compareFlow(Flow v1, Flow v2) {
 					PStr s2 = v2->getAStr();
 					Int c1 = s1->name()->str.compare(s2->name()->str);
 					if (c1 != 0) {
-						return c1;
+						ret = c1;
 					} else {
 						for (Int i = 0; i < s1->size(); ++ i) {
 							Int c2 = compareFlow(s1->getFlowField(i), s2->getFlowField(i));
 							if (c2 != 0) {
-								return c2;
+								ret = c2;
+								break;
 							}
 						}
-						return 0;
+						ret = 0;
 					}
 				}
+				break;
 			}
 		}
 	}
+	return ret;
 }
 
 template<> uint32_t hash(uint32_t h, Flow v) {
+	uint32_t ret = 0;
 	switch (v->type()) {
-		case Type::INT:    return hash(h, v->getInt());
-		case Type::BOOL:   return hash(h, v->getBool());
-		case Type::DOUBLE: return hash(h, v->getDouble());
-		case Type::STRING: return hash(h, v->getString());
+		case Type::INT:    ret = hash(h, v->getInt()); break;
+		case Type::BOOL:   ret = hash(h, v->getBool()); break;
+		case Type::DOUBLE: ret = hash(h, v->getDouble()); break;
+		case Type::STRING: ret = hash(h, v->getString()); break;
 		case Type::ARRAY: {
 			PVec a = v->getAVec();
 			for (Int i = 0; i < a->size(); ++i) {
 				h = hash(h, a->getFlowItem(i));
 			}
-			return h;
+			ret = h;
+			break;
 		}
 		case Type::REF:
-			return hash(h, reinterpret_cast<uint64_t>(v->getARef()->getFlowRef().ptr));
+			ret = hash(h, reinterpret_cast<uint64_t>(v->getARef()->getFlowRef().ptr));
+			break;
 		case Type::FUNC:
-			return hash(h, reinterpret_cast<uint64_t>(v->getAFun().ptr));
+			ret = hash(h, reinterpret_cast<uint64_t>(v->getAFun().ptr));
+			break;
 		case Type::NATIVE: 
-			return hash(h, v->getNative());
+			ret = hash(h, v->getNative());
+			break;
 		default: {
 			PStr s = v->getAStr();
 			h = hash(h, s->name());
 			for (Int i = 0; i < s->size(); ++ i) {
 				h = hash(h, s->getFlowField(i));
 			}
-			return h;
+			ret = h;
+			break;
 		}
 	}
+	return ret;
 }
 
 }

@@ -339,8 +339,7 @@ struct AFun : public AFlow {
 	virtual Flow callFlowArgs(Flow args...) const = 0;
 };
 
-void flow2string(Flow v, string& os);
-inline String flow2string(Flow f) { string os; flow2string(f, os); return String::make(os); }
+String flow2string(Flow f);
 
 inline Void AFlow::getVoid() const { return void_value; }
 inline Int AFlow::getInt() const { return static_cast<const FInt*>(this)->val; }
@@ -614,8 +613,11 @@ struct Function : public AFun, public std::function<R(As...)> {
 	Function() {}
 	Function(Fn&& f): Fn(std::move(f)) { }
 	Function(const Fn& f): Fn(f) { }
-	Function(const Function& f): Fn(f) { }
-	Function(Function&& f): Fn(std::move(f)) { }
+
+	Function(Fn&& f, Vector<Flow>&& cl): Fn(std::move(f)), closure(std::move(cl)) { }
+	Function(const Fn& f, const Vector<Flow>& cl): Fn(f), closure(cl) { }
+	Function(const Function& f): Fn(f), closure(f.closure) { }
+	Function(Function&& f): Fn(std::move(f)), closure(std::move(f.closure)) { }
 
 	// AFun interface
 	Int arity() const override { return ARITY; }
@@ -636,6 +638,7 @@ struct Function : public AFun, public std::function<R(As...)> {
 	inline R call(As... as) const {
 		return Fn::operator()(as...);
 	}
+	Vector<Flow> closure;
 };
 
 //using Union = PStr;
