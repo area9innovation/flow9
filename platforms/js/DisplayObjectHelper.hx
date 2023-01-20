@@ -2059,6 +2059,9 @@ class DisplayObjectHelper {
 				if (childWidget.getAttribute('flow-force-focus') == 'true') {
 					RenderSupport.once("stagechanged", function() {
 						untyped child.nativeWidget.showModal();
+						RenderSupport.once("stagechanged", function() {
+							untyped child.nativeWidget.close();
+						});
 					});
 				};
 			}
