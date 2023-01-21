@@ -168,7 +168,7 @@ typedef uint32_t RefCount_t;
 struct AFlow {
 	enum { TYPE = Type::UNKNOWN };
 	#ifdef PERCEUS_REFS
-	AFlow(): refs(0) { }
+	AFlow(): refs(1) { }
 	#else
 	AFlow(): refs(0) { }
 	#endif
@@ -215,7 +215,7 @@ struct AFlow {
 		}
 	}
 	inline void checkRefs() const {
-		if (refs == 0) {
+		if (-- refs == 0) {
 			delete this;
 		}
 	}
@@ -276,9 +276,9 @@ inline String concatStrings(String s1, String s2) {
 		string ret;
 		ret.reserve(s1->str.size() + s2->str.size());
 		ret += s1->str;
+		s1->decRefs();
 		ret += s2->str;
-		s1->checkRefs();
-		s2->checkRefs();
+		s2->decRefs();
 		return String::make(ret);
 	/*} else {
 		//std::cout << "Shortcut for concatStrings, s1->size()=" << s1->str.size() << ", s2->size()" << s2->str.size() << std::endl;
@@ -497,11 +497,11 @@ struct Vector : public AVec {
 
 	Vector(): vect() { }
 	Vector(std::size_t s): vect() { vect.reserve(s); }
-	Vector(std::initializer_list<T> il): vect(il) { for (T x : vect) RefCount<T>::inc(x); }
-	Vector(const Vect& v): vect(v) { for (T x : vect) RefCount<T>::inc(x); }
+	Vector(std::initializer_list<T> il): vect(il) { /*for (T x : vect) RefCount<T>::inc(x);*/ }
+	Vector(const Vect& v): vect(v) { /*for (T x : vect) RefCount<T>::inc(x);*/ }
 	Vector(Vect&& v): vect(std::move(v)) { }
 	Vector(Vector&& a): vect(std::move(a.vect)) { }
-	Vector(const Vector& a): vect(a.vect) { for (T x : vect) RefCount<T>::inc(x); }
+	Vector(const Vector& a): vect(a.vect) { /*for (T x : vect) RefCount<T>::inc(x);*/ }
 	~Vector() override { for (T x : vect) RefCount<T>::dec(x); }
 
 	Vector& operator = (const Vector& a) {
@@ -576,8 +576,8 @@ Vec<T> concatVecs1(Vec<T> v1, Vec<T> v2) {
 template<typename T> 
 struct Reference : public ARef {
 	Reference() { }
-	Reference(T r): val(r) { RefCount<T>::inc(val); }
-	Reference(const Reference& r): val(r.val) { RefCount<T>::inc(val); }
+	Reference(T r): val(r) { /*RefCount<T>::inc(val);*/ }
+	Reference(const Reference& r): val(r.val) { /*RefCount<T>::inc(val);*/ }
 	Reference(Reference&& r): val(std::move(r.val)) { }
 	~Reference() override { RefCount<T>::dec(val); }
 
@@ -589,7 +589,7 @@ struct Reference : public ARef {
 	Reference& operator = (const Reference& r) { 
 		RefCount<T>::dec(val);
 		val = r.val; 
-		RefCount<T>::inc(val);
+		//RefCount<T>::inc(val);
 		return *this;
 	}
 
@@ -599,7 +599,11 @@ struct Reference : public ARef {
 
 	// T-specific getter/setter
 	T getRef() const { return val; }
-	void setRef(T v) const { RefCount<T>::dec(val); val = v; RefCount<T>::inc(val); }
+	void setRef(T v) const { 
+		RefCount<T>::dec(val); 
+		val = v; 
+		//RefCount<T>::inc(val); 
+	}
 
 	Int compare(Ref<T> r) const { return Compare<T>::cmp(val, r->val); }
 
