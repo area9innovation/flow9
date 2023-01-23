@@ -136,6 +136,7 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]
 		"tools/flowc/backends/wise/lib/array",
 		"tools/flowc/backends/wise/lib/tuple",
 		"tools/flowc/backends/wise/lib/reference",
+		"tools/flowc/backends/wise/lib/math",
 		"lib/wise/runtime",
 	];
 	userImports = filtermap(module.imports, \imp -> {
@@ -265,11 +266,15 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, scopeTemplates : Tree<string, 
 				println("can't find fn for Call '" + toString(exp));
 				FlowWiBrace([]);
 			} else {
-				untriple(
+				unquadruple(
 					resolveFlowWiFn(newFns[0], args, scopeTemplates, mainFn, ^(state.flowWiNatives), state.getStructFields),
-					\newFn, fnName, newArgs -> fold(
+					\newFn, fnName, newArgs, makeOperation -> fold(
 						tail(newFns),
-						FlowWiCall(newFn, map(newArgs, \a -> mapExp(a, true)[0])),
+						eitherFn(
+							makeOperation,
+							\fn -> fn(map(newArgs, \a -> mapExp(a, true)[0])),
+							\-> FlowWiCall(newFn, map(newArgs, \a -> mapExp(a, true)[0]))
+						),
 						\newExp : FlowWiExp, fnExp : FlowWiExp -> FlowWiCall(fnExp, [newExp])
 					)
 				);
@@ -980,7 +985,7 @@ resolveFlowWiFn(
 	mainFn : bool,
 	flowWiNatives : Tree<string, [WiseNativeFn]>,
 	getStructFields : (string) -> Maybe<Triple<[FiType], [FiType], bool>>,
-) -> Triple<FlowWiExp, string, [FiExp]> {
+) -> Quadruple<FlowWiExp, string, [FiExp], Maybe<([FlowWiExp]) -> FlowWiExp>> {
 	fiName2wiseFnInf = \fnName : string -> {
 		if (fnName == "concat") Pair("concatArrays", true)
 		else if (fnName == "arrayPush") Pair("arrayPush", true)
@@ -1029,22 +1034,23 @@ resolveFlowWiFn(
 	eitherMap(
 		varId,
 		\id -> if (id == "println" && args != []) {
-			Triple(makeFlowWiPrint(args[0], scopeTemplates, getStructFields), id, [args[0]]);
+			Quadruple(makeFlowWiPrint(args[0], scopeTemplates, getStructFields), id, [args[0]], None());
 		} else if ((id == "length" || id == "subrange") && args != []) {
-			Triple(makeArrayFnForFiType(resolveArrType(extractArrayFiTypeFromExp(args[0]), FiTypeInt()), id), id, [args[0]]);
+			Quadruple(makeArrayFnForFiType(resolveArrType(extractArrayFiTypeFromExp(args[0]), FiTypeInt()), id), id, [args[0]], None());
 		} else if (id == "concat" && length(args) >= 2) {
 			arrType = resolveArrType(extractArrayFiTypeFromExp(args[0]), extractArrayFiTypeFromExp(args[1]));
-			Triple(makeArrayFnForFiType(resolveArrType(arrType, FiTypeInt()), id), id, take(args, 2));
+			Quadruple(makeArrayFnForFiType(resolveArrType(arrType, FiTypeInt()), id), id, take(args, 2), None());
 		} else if (id == "arrayPush" && length(args) >= 2) {
-			Triple(makeArrayFnForFiType(extractArrayFiTypeFromExp(args[1]), id), id, take(args, 2));
+			Quadruple(makeArrayFnForFiType(extractArrayFiTypeFromExp(args[1]), id), id, take(args, 2), None());
 		} else if (id == "replace" && length(args) >= 3) {
-			Triple(makeArrayFnForFiType(extractArrayFiTypeFromExp(args[2]), id), id, take(args, 3));
+			Quadruple(makeArrayFnForFiType(extractArrayFiTypeFromExp(args[2]), id), id, take(args, 3), None());
 		} else {
 			defNum = length(args);
+			nativeFn = find(concatA(getTreeValues(flowWiNatives)), \p -> p.nativeName == id);
 			argNumber = eitherMap(find(concatA(getTreeValues(flowWiNatives)), \p -> p.nativeName == id), \v -> length(v.type.args), defNum);
-			Triple(exp, id, take(args, if (argNumber > defNum) defNum else argNumber));
+			Quadruple(exp, id, take(args, if (argNumber > defNum) defNum else argNumber), nativeFn ?? nativeFn.makeOperation : None());
 		},
-		Triple(exp, "", args)
+		Quadruple(exp, "", args, None())
 	);
 }
 

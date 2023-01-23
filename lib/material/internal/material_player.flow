@@ -23,7 +23,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			selectedColor = extractStruct(m.style, MSelectedColor(color));
 			backgroundColor = extractStruct(m.style, MPlayerDynamicBackground(const(MDialogMColor(false)))).color;
 			backgroundOpacity = extractStruct(m.style, MPlayerBackgroundOpacity(const(1.0))).opacity;
-			
+
 			addBackground = \vt : Tropic -> {
 				TFrameT(zero, zero, fselect2Lift(backgroundColor, backgroundOpacity, \bgc, bgo -> [MFill(MThemeColor2MColor(p, bgc)), FillOpacity(bgo)]), vt)
 			}
@@ -47,6 +47,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			fullScreenControl = contains(controls, FullScreenPlayer());
 			playbackRateControl = !android() && contains(controls, PlaybackRateControl());
 			subtitlesControl = tryExtractStruct(mPlayerControls, SubtitlesControl(const(false)));
+			subtitlesSelector = tryExtractStruct(mPlayerControls, SubtitlesSelector(make(SubtitleSource("", "", "")), []));
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
 			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
 			externalSubtitles = tryExtractStruct(m.style, MExternalSubtitles("", ""));
@@ -105,6 +106,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			mousePosition = makePoint();
 			mouseDown = make(false);
 			settingsMenuOpen = make(false);
+			subtitlesMenuOpen = make(false);
 
 			makeFadeOutIcon = \icon -> {
 				MIcon2T(
@@ -423,7 +425,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 
 			showVolumeSlider =
 				if (mobile) {
-					// On iOS volume can be changed only by physical buttons 
+					// On iOS volume can be changed only by physical buttons
 					if (ios()) const(false)
 					else enabled.enabled
 				} else
@@ -566,26 +568,62 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 
 			subtitlesButton = \p2 -> {
 				tooltipText = const(_("Subtitles"));
-				eitherMap(subtitlesControl, \sControl ->
-					TCopySize(
-						MIconToggle2T(manager, p2,
-							MIconToggle(
-								"subtitles",
-								eitherMap(
-									itemsColorM,
-									\ic -> [MIconButtonBorder(4.), ic, MToggleFalseIcon("subtitles", [ic])],
-									[MIconButtonBorder(4.)]
+
+				btnStyle = [MIconButtonBorder(4.)];
+				btnState = [
+					MEnabled(subtitlesEnabled),
+					MTooltipAlignment(MTop()),
+					MTooltipText(tooltipText),
+					MButtonTitle(tooltipText),
+					MFocused(subtitlesButtonFocused)
+				];
+				toggleIcon = MIconToggle("subtitles",
+					eitherMap(itemsColorM, \ic -> concat(btnStyle, [ic, MToggleFalseIcon("subtitles", [ic])]), btnStyle),
+					arrayPush(btnState, MToggleValue(subtitlesVisible))
+				);
+
+				makeSubtitlesMenu = \subsSelector -> {
+					currentSubtitle = getValue(subsSelector.current);
+					currentSubtitleId = make(findiDef(subsSelector.available, eq(currentSubtitle), 0));
+					TConstruct(
+						[
+							makeSubscribe(currentSubtitleId, \id -> eitherFn(
+								elementAtM(subsSelector.available, id),
+								\sub -> {
+									nextDistinct(subsSelector.current, sub);
+									next(subtitlesVisible, true);
+								},
+								\ -> next(subtitlesVisible, false)
+							))
+						],
+						MMenu2T(manager, p2,
+							MMenu(
+								MIconButton(toggleIcon.icon, nop, arrayPushMaybe(btnStyle, itemsColorM), btnState),
+								concat(
+									map(subsSelector.available, \s -> {
+										label = if (s.label != "") s.label else s.lang;
+										MMenuSingleLine(label, []);
+									}),
+									[MSeparatorLine(), MMenuSingleLine(_("Disabled"), [])]
 								),
 								[
-									MToggleValue(subtitlesVisible),
-									MEnabled(subtitlesEnabled),
-									MTooltipAlignment(MTop()),
-									MTooltipText(tooltipText),
-									MButtonTitle(tooltipText),
-									MFocused(subtitlesButtonFocused)
+									MCondensed(true),
+									MSingleSelection(currentSubtitleId),
+									enabled,
+									selectedColor,
+									MOpenMenu(subtitlesMenuOpen)
 								]
 							),
 							m2t
+						)
+					);
+				}
+
+				eitherMap(subtitlesControl, \sControl ->
+					TCopySize(
+						eitherFn(subtitlesSelector,
+							makeSubtitlesMenu,
+							\ -> MIconToggle2T(manager, p2, toggleIcon, m2t)
 						),
 						\tr ->
 							TRectangle([MFill(MRed(500))], TFillXH(2.))

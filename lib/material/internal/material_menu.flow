@@ -1523,9 +1523,13 @@ MMenuLines2Material(
 		}
 	}
 
-	onItemClick = \i, click, isSelected -> \ -> {
-		nextDistinct(openMenu.opened, false);
-		closeBelow();
+	onItemClick = \i, click, isSelected, focused -> \ -> {
+		closeFn = \ -> {
+			nextDistinct(openMenu.opened, false);
+			closeBelow();
+		}
+
+		if (getValue(focused)) deferUntilNextFrameRendered(closeFn) else closeFn();
 
 		if (i >= shiftGap) {
 			timer(50, \ ->
@@ -1577,21 +1581,21 @@ MMenuLines2Material(
 		], parent.rtl)
 		|> (\t2 -> if (state.nearTitle) TGroup2(t2, TFillX()) else t2);
 
-	focusOnOpen = \i ->
+	focusOnOpen = \i, st ->
 		eitherMap(getValue(focusedItem),
 			\fi ->
 				if (
 					((i == shiftGap) && fi == MMenuFirstItem())
 					|| (i == length(items1) - 1 && fi == MMenuLastItem())
 				) {
-					focused = make(false);
+					focused = extractStruct(st, MFocused(make(false))).focused;
 					timer(50, \ -> {
 						nextDistinct(focusedItem, None());
 						nextDistinct(focused, true);
 					});
-					[MFocused(focused)]
-				} else [],
-			[]
+					replaceStruct(st, MFocused(focused))
+				} else st,
+			st
 		);
 
 	makeMMenuLine = \i, title : Maybe<string>, content : Maybe<Material>, _style ->
@@ -1599,7 +1603,8 @@ MMenuLines2Material(
 			style = getLineStyle(_style, i);
 			hgt = extractStruct(style, MHeight(lineHeight)).height;
 			selectedInspector = extractStruct(style, MSelected(make(false))).selected;
-			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector);
+			focused = extractStruct(style, MFocused(make(false))).focused;
+			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector, focused);
 			selected = selectedId == i && !indexShift;
 			id = state.popupId + "_menuitem" + i2s(i);
 			focusState =
@@ -1613,9 +1618,10 @@ MMenuLines2Material(
 						MHighlightOnHover(const(true)),
 						MFocusOnDown(ref true),
 						FAccessAttribute("id", const(id)),
-						extractStruct(_style, MRippleOutlineEnabled(const(false)))
+						extractStruct(_style, MRippleOutlineEnabled(const(false))),
+						MFocused(focused)
 					]
-					|> (\arr -> concat(arr, focusOnOpen(i)))
+					|> (\arr -> focusOnOpen(i, arr))
 					|> (\arr -> eitherMap(title, \t -> arrayPush(arr, extractStruct(_style, MButtonTitle(const(t)))), arr))
 				);
 			lineTextStyle = extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(parent)))).style;
@@ -1779,7 +1785,7 @@ MMenuLines2Material(
 							extractStruct(style, MRippleOutlineEnabled(const(false)))
 						]
 					)
-					|> (\arr -> concat(arr, focusOnOpen(i)))
+					|> (\arr -> focusOnOpen(i, arr))
 					|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
 
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
