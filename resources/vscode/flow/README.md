@@ -35,13 +35,6 @@ To change the tabs and line endings globally, use the following settings:
         "files.eol": "\n"
 ```
 
-To get nice colors use:
-
-```
-        "editor.bracketPairColorization.enabled": true,
-        "editor.guides.bracketPairs": true
-```
-
 You can put it to your user settings (File -> Preferences -> Settings), or to workspace settings.
 
 You can also consider to turn off File Preview, where files open with italics in the tab, and are lost again
