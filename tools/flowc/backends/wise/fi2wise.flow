@@ -80,10 +80,20 @@ incTmpVarCounter(state : FiWiseState) -> int {
 	tmpVarIndex;
 }
 
-initWiNatives(state : FiWiseState, natives : [FiNativeDec]) -> void {
-	state.flowWiNatives := fold(natives, makeTree(), \acc, decl -> {
+initWiNatives(state : FiWiseState, natives : [FiNativeDec], exportNames : Set<string>) -> void {
+	exportedNatives = foldTree(^(state.flowWiNatives), makeTree(), \fnName, fns, acc -> {
+		newFns = filter(fns, \f -> f.exported);
+		if (newFns == []) acc else setTree(acc, fnName, newFns);
+	});
+	state.flowWiNatives := fold(natives, exportedNatives, \acc, decl -> {
 		nativeFnChain = findWiseNativeFns(decl.name);
-		if (nativeFnChain == []) acc else setTree(acc, decl.name, nativeFnChain);
+		if (nativeFnChain == []) {
+			acc
+		} else {
+			oldFns = lookupTreeDef(acc, decl.name, []);
+			newFns = if (containsSet(exportNames, decl.name)) map(nativeFnChain, \f -> WiseNativeFn(f with exported = true)) else nativeFnChain;
+			setTree(acc, decl.name, concat(oldFns,  newFns));
+		}
 	});
 }
 
@@ -104,7 +114,7 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]
 	functions = values2tree(module.functions, \f -> f.name);
 	orderedStructs = filtermap(module.initOrder, \fnName -> lookupTree(functions, fnName));
 	state.structs := fiStructs2wiTuples(^(state.structs), module.structs, module.unions, orderedStructs);
-	initWiNatives(state, module.natives);
+	initWiNatives(state, module.natives, exportNames);
 
 	// save templates
 	iter(module.initOrder, \fnName -> maybeApply(
