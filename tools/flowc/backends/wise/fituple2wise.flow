@@ -16,6 +16,7 @@ export {
 		unions : Tree<string, [int]>, // unionName - [structId/generalStructId]
 		templStructs : Tree<int, Tree<[FiType], int>>, // generalStructId - <typeParams-structId>
 		nextId : ref int,
+		exports : Set<string>,
 	);
 	StructTuple(
 		link : Tree</*struct_name*/string, StructTupleArgs>,
@@ -58,7 +59,7 @@ makeStructTuple() -> StructTuple {
 }
 
 makeWiseAstStructs() -> WiseAstStructs {
-	WiseAstStructs(makeStructTuple(), makeTree(), makeTree(), makeTree(), ref 1);
+	WiseAstStructs(makeStructTuple(), makeTree(), makeTree(), makeTree(), ref 1, makeSet());
 }
 
 getNextStructId(v : ref int) -> int {
@@ -85,27 +86,32 @@ fiStructs2wiTuples(env : WiseAstStructs, structs : [FiTypeStruct], unions : [FiT
 				),
 				tuples.data.tmpStructs,
 				tuples.data.structWithFns,
-
 				tuples.data.exportedTmpStructs,
 			),
 			setTree(tuples.table, struct.name, if (struct.typars == []) id else (-1) * id), // we'll replace 1 struct with N later
 			tuples.unions,
 			tuples.templStructs,
 			tuples.nextId,
+			tuples.exports,
 		)
 	});
 
 	unionIds = values2treeEx(unions, \v -> v.name, \t -> map(t.typenames, \v -> v.name));
-	unionStructs = values2treeEx(
-		unions,
-		\v -> v.name,
-		\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
+	unionStructs = mergeTree(
+		values2treeEx(
+			unions,
+			\v -> v.name,
+			\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
+		),
+		filterTree(state.unions, \unionId, ids -> containsSet(state.exports, unionId))
 	);
 
-	WiseAstStructs(state with
-		unions = unionStructs,
-		templStructs = calculateTemplateStructs(state.table, functions, state.nextId)
+	newTemplStructs = mergeTree(
+		calculateTemplateStructs(state.table, functions, state.nextId),
+		state.templStructs
 	);
+
+	WiseAstStructs(state with unions = unionStructs, templStructs = newTemplStructs);
 }
 
 getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string]) -> [string] {
@@ -336,6 +342,7 @@ removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAs
 		filterTree(env.unions, \name, __ -> containsSet(exports, name)),
 		filterTree(env.templStructs, \id, __ -> containsSet(newIds, id)),
 		env.nextId,
+		env.exports,
 	);
 	
 }
