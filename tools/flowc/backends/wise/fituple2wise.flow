@@ -21,6 +21,7 @@ export {
 		link : Tree</*struct_name*/string, StructTupleArgs>,
 		tmpStructs : Set<string>, // created by compiler
 		structWithFns : Tree<string, [FiType]>, // oldName - newArgTypes
+		exportedTmpStructs : Set<string>,
 	);
 	StructTupleArgs(
 		typeParameters : [FiType],
@@ -53,7 +54,7 @@ export {
 }
 
 makeStructTuple() -> StructTuple {
-	StructTuple(makeTree(), makeSet(), makeTree());
+	StructTuple(makeTree(), makeSet(), makeTree(), makeSet());
 }
 
 makeWiseAstStructs() -> WiseAstStructs {
@@ -80,10 +81,12 @@ fiStructs2wiTuples(env : WiseAstStructs, structs : [FiTypeStruct], unions : [FiT
 						foldi(struct.args, makeTree(), \i, acc2, arg ->
 							setTree(acc2, arg.name, StructTupleArg(i, arg.type))
 						)
-					)
+					),
 				),
 				tuples.data.tmpStructs,
-				tuples.data.structWithFns
+				tuples.data.structWithFns,
+
+				tuples.data.exportedTmpStructs,
 			),
 			setTree(tuples.table, struct.name, if (struct.typars == []) id else (-1) * id), // we'll replace 1 struct with N later
 			tuples.unions,
@@ -317,17 +320,22 @@ isTemplateStruct(env : WiseAstStructs, name : string) -> bool {
 
 removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAstStructs {
 	exports = buildSet(exported);
-	newStructs = filterTree(env.table, \name, __ -> containsSet(exports, name));
+	isPublicStruct = \name -> containsSet(exports, name)
+		|| containsSet(env.data.exportedTmpStructs, name)
+		|| containsSet(env.data.tmpStructs, name);
+	newStructs = filterTree(env.table, \name, __ -> isPublicStruct(name));
 	newIds = foldTree(newStructs, makeSet(), \__, id, acc -> insertSet(acc, id));
 	WiseAstStructs(
 		StructTuple(
-			filterTree(env.data.link, \name, __ -> containsSet(exports, name)),
+			filterTree(env.data.link, \name, __ -> isPublicStruct(name)),
 			env.data.tmpStructs,
-			env.data.structWithFns
+			env.data.structWithFns,
+			env.data.exportedTmpStructs,
 		),
 		newStructs,
 		filterTree(env.unions, \name, __ -> containsSet(exports, name)),
 		filterTree(env.templStructs, \id, __ -> containsSet(newIds, id)),
 		env.nextId,
 	);
+	
 }

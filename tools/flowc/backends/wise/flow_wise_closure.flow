@@ -13,6 +13,7 @@ FiWiseClosure(
 	structs : Tree<string, Pair<FiTypeStruct, FiTypeStruct>>, // <closureNames.struct - <CapturedVars, CallStruct> >
 	fns : [FiFunctionDec],
 	names : Tree<string, FcCreateClosurePrim>, // lambdaVarName - closureNames(struct,fn)
+	exports : Set<string>,
 );
 
 liftWiseClosures(program : FiProgram, userFns : Tree<string, FiTypeFunction>, structs : ref WiseAstStructs, tmpVarCounter : ref int) -> [FiModule] {
@@ -21,7 +22,11 @@ liftWiseClosures(program : FiProgram, userFns : Tree<string, FiTypeFunction>, st
 		fold(m.structs, makeSet(), \acc, s -> insertSet(acc, s.name)),
 		fold(m.functions, makeSet(), \acc, s -> insertSet(acc, s.name))
 	));
+	// TODO: only related exports, not all
+	exportNames = ref makeSet();
+
 	addedClosures = mapTree2(newProgram.modules, \k, m : FiModule -> {
+		exportNames := fold(m.exports, ^exportNames, \acc, name -> insertSet(acc, name));
 		eitherFn(
 			lookupTree(origStructFns, k),
 			unpairC(\structNames, __ -> {
@@ -68,8 +73,8 @@ liftWiseClosures(program : FiProgram, userFns : Tree<string, FiTypeFunction>, st
 	foldTree(newProgram.modules, [], \name, module, acc -> {
 		closures = eitherFn(
 			lookupTree(addedClosures, name),
-			unpairC(\s, fns -> FiWiseClosure(s, fns, makeTree())),
-			makeFiWiseClosure
+			unpairC(\s, fns -> FiWiseClosure(s, fns, makeTree(), ^exportNames)),
+			\-> FiWiseClosure(makeFiWiseClosure() with exports = ^exportNames)
 		);
 		newModule = FiModule(module with 
 			structs = mapConcat(
@@ -116,7 +121,7 @@ pushTmpStructNameToWiseAstStructs(structs : ref WiseAstStructs, name : string) -
 }
 
 makeFiWiseClosure() -> FiWiseClosure {
-	FiWiseClosure(makeTree(), [], makeTree());
+	FiWiseClosure(makeTree(), [], makeTree(), makeSet());
 }
 
 makeClosureVarName() -> string {
@@ -246,7 +251,7 @@ addClosureToFnTypes(
 		fnArgs = if (fixedFn) makeTree() else fold(func.lambda.args, makeTree(), \acc, arg -> switch (arg.type : FiType) {
 			FiTypeFunction(args, retType): {
 				structTypes = [addClosureToFiTypeFunction(FiTypeFunction(args, retType)), FiTypeInt()];
-				newStruct = makeNewFiStruct(^structs, structTypes);
+				newStruct = makeNewFiStruct(^structs, structTypes, containsSet(closures.exports, func.name));
 				structs := newStruct.first;
 				setTree(acc, arg.name, FiTypeName(newStruct.second, [])); // typars ?
 			}
@@ -327,7 +332,7 @@ addClosureToFnTypesInFiExp(
 					fnName = extractFiVarNameFromFiExp(e2);
 					realFn = lookupTree(userFns, fnName);
 					// we have to replace fn with a structure with closure
-					maybeMap(realFn, \ft -> createStructForFiFunction(closures, structs, fnType, e2, false, Some(ft)));
+					maybeMap(realFn, \ft -> createStructForFiFunction(closures, structs, fnName, fnType, e2, false, Some(ft)));
 				}
 			),
 			idfn,
@@ -382,7 +387,7 @@ addClosureToFnTypesInFiExp(
 					newCall;
 				} else {
 					unpair(
-						makeCallFiTypeFunctionFnArg(^structs, newCall, tmpVarCounter, localVars),
+						makeCallFiTypeFunctionFnArg(closures, ^structs, newCall, tmpVarCounter, localVars),
 						\newExp : FiExp, newStructs : WiseAstStructs -> {
 							structs := newStructs;
 							newExp
@@ -479,8 +484,7 @@ wrapFnInStructForConstructionExp(
 			default : value;
 		}
 	} else if (isLambdaFn || isSome(realFnExpResult)) {
-		r=createStructForFiFunction(closures, structs, type, value, isLambdaFn, realFnExpResult);
-		r
+		createStructForFiFunction(closures, structs, fnName, type, value, isLambdaFn, realFnExpResult);
 	} else if (fnName == ""  || deep) {
 		wrapFnInStructResultForConstruction(type, value, closures, structs, userFns, userStructs);
 	} else {
@@ -577,7 +581,7 @@ fixFnInUserStructureConstruction(closures : FiWiseClosure, structs : ref WiseAst
 							// struct with fns
 							structArgTypes = map(newValues, firstOfPair);
 							unpair(
-								makeNewFiStruct(^structs, structArgTypes),
+								makeNewFiStruct(^structs, structArgTypes, containsSet(closures.exports, structName)),
 								\newStructs, tmpStructName -> {
 									oldType = getFiTypeNameType(t);
 									// newType = FiTypeName(tmpStructName, oldType.typeparameters);
@@ -600,7 +604,7 @@ fixFnInUserStructureConstruction(closures : FiWiseClosure, structs : ref WiseAst
 	);
 }
 
-createStructForFiFunction(closures : FiWiseClosure, structs : ref WiseAstStructs, fnType : FiTypeFunction, fnExp : FiExp, isLambdaFn : bool, declaredFnType : Maybe<FiTypeFunction>) -> FiExp {
+createStructForFiFunction(closures : FiWiseClosure, structs : ref WiseAstStructs, fnName : string, fnType : FiTypeFunction, fnExp : FiExp, isLambdaFn : bool, declaredFnType : Maybe<FiTypeFunction>) -> FiExp {
 	fnTypeWithClosure = addClosureToFiTypeFunction(fnType);
 	closureEnv = maybeBind(
 		extractFcCreateClosurePrim(fnExp),
@@ -616,7 +620,7 @@ createStructForFiFunction(closures : FiWiseClosure, structs : ref WiseAstStructs
 				FiInt(0, 0);
 			} else {
 				capturedVarTypes = map(capturedVars.args, \a -> a.type);
-				newStruct2 = makeNewFiStruct(^structs, capturedVarTypes);
+				newStruct2 = makeNewFiStruct(^structs, capturedVarTypes, containsSet(closures.exports, fnName));
 				tmpStructName2 = newStruct2.second;
 				structs := newStruct2.first;
 				FiCallPrim(
@@ -629,7 +633,7 @@ createStructForFiFunction(closures : FiWiseClosure, structs : ref WiseAstStructs
 			[FiVar(functionName, fnTypeWithClosure, 0), scopeEnv]
 		}),
 		\-> [fnExp, FiInt(0, 0)]
-	)
+	);
 	if (isLambdaFn) {
 		if (closureData[1] == FiInt(0, 0)) closureData[0] else closureData[1];
 	} else {
@@ -641,7 +645,7 @@ createStructForFiFunction(closures : FiWiseClosure, structs : ref WiseAstStructs
 		});
 
 		structTypes = [fnTypeWithClosure, FiTypeInt()];
-		newStruct = makeNewFiStruct(^structs, structTypes);
+		newStruct = makeNewFiStruct(^structs, structTypes, containsSet(closures.exports, fnName));
 		tmpStructName = newStruct.second;
 		structs := newStruct.first;
 		FiCallPrim(
@@ -696,7 +700,7 @@ isMainFn2(name : string) -> bool {
 	name == "main";
 }
 
-pushNewStructToState(structs : WiseAstStructs, name : string, id : int, args : StructTupleArgs) -> WiseAstStructs {
+pushNewStructToState(structs : WiseAstStructs, name : string, id : int, args : StructTupleArgs, exported : bool) -> WiseAstStructs {
 	WiseAstStructs(
 		StructTuple(
 			setTree(
@@ -705,7 +709,8 @@ pushNewStructToState(structs : WiseAstStructs, name : string, id : int, args : S
 				args
 			),
 			insertSet(structs.data.tmpStructs, name),
-			structs.data.structWithFns
+			structs.data.structWithFns,
+			if (exported) insertSet(structs.data.exportedTmpStructs, name) else structs.data.exportedTmpStructs,
 		),
 		setTree(structs.table, name, id),
 		structs.unions,
@@ -722,7 +727,7 @@ makeTmpStructFieldName(i : int) -> string {
 	"field" + i2s(i);
 }
 
-makeNewFiStruct(structs : WiseAstStructs, structTypes : [FiType]) -> Pair<WiseAstStructs, string> {
+makeNewFiStruct(structs : WiseAstStructs, structTypes : [FiType], exported : bool) -> Pair<WiseAstStructs, string> {
 	tmpStructId = ^(structs.nextId);
 	structs.nextId := tmpStructId + 1;
 	tmpStructName = makeTmpStructName(tmpStructId);
@@ -733,7 +738,8 @@ makeNewFiStruct(structs : WiseAstStructs, structTypes : [FiType]) -> Pair<WiseAs
 		StructTupleArgs(
 			extractFiTypeParameters(structTypes), // typeParameters
 			foldi(structTypes, makeTree(), \i, acc, t -> setTree(acc, makeTmpStructFieldName(i), StructTupleArg(i, t)))
-		)
+		),
+		exported
 	);
 	Pair(newStructs, tmpStructName);
 }
@@ -811,17 +817,21 @@ matchFiTypeParams(t1 : FiType, t2 : FiType) -> [FiType] {
 }
 
 // TODO: replace 2 getStructs with 1
-makeCallFiTypeFunctionFnArg(structs : WiseAstStructs, e : FiCall, tmpVarCounter : ref int, localVars : Tree<string, FiType>,) -> Pair<FiExp, WiseAstStructs> {
+makeCallFiTypeFunctionFnArg(closures : FiWiseClosure, structs : WiseAstStructs, e : FiCall, tmpVarCounter : ref int, localVars : Tree<string, FiType>,) -> Pair<FiExp, WiseAstStructs> {
 	eType = extractFiTypeFromFiExp(e.f);
 	expType = switch (eType : FiType) {
 		FiTypeFunction(__, __): FiTypeInt();
 		default : eType;
 	}
+	exportedStruct = switch (e.f : FiExp) {
+		FiVar(name, __, __): containsSet(closures.exports, name);
+		default : false;
+	}
 	tmpStructTypesVar = [expType, FiTypeInt()]; // type + closure
-	newStructVar = makeNewFiStruct(structs, tmpStructTypesVar);
+	newStructVar = makeNewFiStruct(structs, tmpStructTypesVar, exportedStruct);
 	structTypeVar = FiTypeName(newStructVar.second, tmpStructTypesVar); // typars ?
 	tmpStructTypes = [eType, FiTypeInt()];
-	newStructBody = makeNewFiStruct(newStructVar.first, tmpStructTypes);
+	newStructBody = makeNewFiStruct(newStructVar.first, tmpStructTypes, exportedStruct);
 	structTypeBody = FiTypeName(newStructBody.second, extractFiTypeParameters(tmpStructTypes));
 
 	makeTupledot = \i, varExp -> FiCallPrim(
