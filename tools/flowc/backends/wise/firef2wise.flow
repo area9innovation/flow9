@@ -1,0 +1,153 @@
+import tools/flowc/backends/wise/flow_wise_compare;
+
+// TODO: dup drop. Memory management ?
+export {
+	makeWiRefConstruction(exps : [FlowWiExp], type : FlowWiType) -> Maybe<FlowWiExp>;
+	makeWiRefDeconstruction(exps : [FlowWiExp], type : FlowWiType) -> Maybe<FlowWiExp>;
+	makeWiRefSetter(exps : [FlowWiExp], types : [FlowWiType], tmpInd : int) -> Maybe<FlowWiLet>;
+	mapWiRefSetter(e : FlowWiExp, fn : (FlowWiExp) -> FlowWiExp) -> FlowWiExp;
+}
+
+makeWiRefConstruction(exps : [FlowWiExp], type : FlowWiType) -> Maybe<FlowWiExp> {
+	if (exps == []) {
+		println("ERROR : can't create a reference. there isn't value");
+		None();
+	} else if (length(exps) > 1) {
+		println("ERROR : can't create a reference. too many values : " + toString(exps));
+		None();
+	} else {
+		Some(FlowWiCall(
+			FlowWiPolyCall(FlowWiVar("createRef"), [extractWiseRefType(type)]),
+			exps
+		));
+	}
+}
+
+extractWiseRefType(type : FlowWiType) -> FlowWiType {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(__) : type;
+		FlowWiFntype(__, __) : type;
+		FlowWiTupletype(__, __) : type;
+		FlowWiArrayType(__) : type;
+		FlowWiRefType(t) : t;
+	}
+}
+
+makeWiRefDeconstruction(exps : [FlowWiExp], type : FlowWiType) -> Maybe<FlowWiExp> {
+	if (exps == []) {
+		println("ERROR : can't create derefFn. there isn't value");
+		None();
+	} else if (length(exps) > 1) {
+		println("ERROR : can't create a derefFn. too many values : " + toString(exps));
+		None();
+	} else {
+		Some(FlowWiCall(
+			FlowWiPolyCall(FlowWiVar("getRef"), [extractWiseRefType(type)]),
+			exps
+		));
+	}
+}
+
+makeWiRefSetter(exps : [FlowWiExp], types : [FlowWiType], tmpInd : int) -> Maybe<FlowWiLet> {
+	if (length(exps) != 2 || length(types) != 2) {
+		println("ERROR : can't create setter for Ref. wrong parameters : " + toString(exps));
+		None();
+	} else {
+		// we can detect errors
+		tmpVar = "tmp" + i2s(tmpInd);
+		Some(FlowWiLet(
+			tmpVar,
+			0,
+			FlowWiBasictype("bool"),
+			FlowWiCall(
+				FlowWiPolyCall(FlowWiVar("setRef"), [types[1]]),
+				exps
+			),
+			FlowWiBrace([]),
+		));
+	}
+}
+
+
+mapWiRefSetter(e : FlowWiExp, fn : (FlowWiExp) -> FlowWiExp) -> FlowWiExp {
+	switch (e : FlowWiExp) {
+		FlowWiBreak(): e;
+		FlowWiContinue(): e;
+		FlowWiIf(exp1, exp2): FlowWiIf(exp1, mapWiRefSetter(exp2, fn));
+		FlowWiIfelse(exp1, exp2, exp3): FlowWiIfelse(exp1, mapWiRefSetter(exp2, fn), mapWiRefSetter(exp3, fn));
+		FlowWiReturn(exps): if (exps == []) e else mapWiRefSetter(exps[length(exps) - 1], fn);
+		FlowWiSet(__, __): fn(e);
+		FlowWiVar(__): e;
+		FlowWiWhile(exp1, exp2): FlowWiWhile(exp1, mapWiRefSetter(exp2, fn));
+		FlowWiSizeOfType(__): e;
+		FlowWiDefValueOfType(__): e;
+		FlowWiTuple(__, __, __): e;
+		FlowWiInt(__): e;
+		FlowWiBool(__): e;
+		FlowWiDouble(__): e;
+		FlowWiHex32(__): e;
+		FlowWiHex64(__): e;
+		FlowWiHexf32(__): e;
+		FlowWiHexf64(__): e;
+		FlowWiI64(__): e;
+		FlowWiAdd(__, __): e;
+		FlowWiAnd(__, __): e;
+		FlowWiBoolAnd(exp1, exp2): FlowWiBoolAnd(mapWiRefSetter(exp1, fn), mapWiRefSetter(exp2, fn));
+		FlowWiBoolNot(__): e;
+		FlowWiBoolOr(exp1, exp2): FlowWiBoolOr(mapWiRefSetter(exp1, fn), mapWiRefSetter(exp2, fn));
+		FlowWiBrace(exps): if (exps == []) e else FlowWiBrace(arrayPush(take(exps, length(exps) - 1), mapWiRefSetter(exps[length(exps) - 1], fn)));
+		FlowWiCall(__, __): e;
+		FlowWiPolyCall(e2, t): FlowWiPolyCall(mapWiRefSetter(e2, fn), t);
+		FlowWiDiv(__, __): e;
+		FlowWiEqual(exp1, exp2): FlowWiEqual(mapWiRefSetter(exp1, fn), mapWiRefSetter(exp2, fn));
+		FlowWiGreater(__, __): e;
+		FlowWiGreaterEqual(__, __): e;
+		FlowWiGreaterEqualu(__, __): e;
+		FlowWiGreateru(__, __): e;
+		FlowWiIsNull(__): e;
+		FlowWiLess(__, __): e;
+		FlowWiLessEqual(__, __): e;
+		FlowWiLessEqualu(__, __): e;
+		FlowWiLessu(__, __): e;
+		FlowWiLet(__, __, __, __, b): {
+			newLet = wrapWiRefResultSetter(e, fn);
+			if (newLet == e) {
+				FlowWiLet(e with brace = either(extractFlowWiBrace(mapWiRefSetter(b, fn)), b));
+			} else {
+				newLet;
+			}
+		}
+		FlowWiMod(__, __): e;
+		FlowWiMul(__, __): e;
+		FlowWiNegate(__): e;
+		FlowWiNotEqual(exp1, exp2): FlowWiNotEqual(mapWiRefSetter(exp1, fn), mapWiRefSetter(exp2, fn));
+		FlowWiOr(__, __): e;
+		FlowWiSub(__, __): e;
+		FlowWiTupledot(__, __): e;
+		FlowWiTypeannotation(__, __): e;
+		FlowWiWasmOp(__, __, __): e;
+		FlowWiXor(__, __): e;
+		FlowWiArrayIndex(__, __): e;
+	}
+}
+
+// see makeWiRefSetter
+wrapWiRefResultSetter(e : FlowWiExp, fn : (FlowWiExp) -> FlowWiExp) -> FlowWiExp {
+	switch (e : FlowWiExp) {
+		FlowWiLet(__, __, __, e2, __): switch (e2 : FlowWiExp) {
+			FlowWiCall(e3, __): switch (e3 : FlowWiExp) {
+				FlowWiPolyCall(e4, __): switch (e4 : FlowWiExp) {
+					FlowWiVar(id): if (id == "setRef") {
+						FlowWiBrace([e, fn(FlowWiBrace([]))])
+					} else {
+						e;
+					}
+					default : e;
+				}
+				default : e;
+			}
+			default : e;
+		}
+		default : e;
+	}
+}

@@ -676,6 +676,11 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
+					// Super-specific bug in Safari : when it measures full string, which contains 'T ' combination, it returns a little shorter width than
+					// the sum of words separately
+					if (Platform.isSafari && lines[i].includes('T ')) {
+						lineWidth += 0.3
+					}
 					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(/[\\s]+/).length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
@@ -755,7 +760,7 @@ class PixiWorkarounds {
 				// Some OS (like MacOS) and video adapters renders font with more or less blureness
 				// this check helps to minimize the impact of blureness (which leads to difference in measured sizes and baselines)
 				// Note: we found that for small fonts like 9 and lower, we should use strict check because bold and normal fonts measured wrong
-				const checkBlureness = typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' || (typeof fontSize !== 'undefined' && fontSize <= 9);
+				const checkBlureness = typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' || (typeof fontSize !== 'undefined' && fontSize <= 10);
 				// ascent. scan from top to bottom until we find a non red pixel
 				for (i = 0; i < baseline; ++i)
 				{

@@ -22,7 +22,7 @@ export {
 	// Selected page size affects only content inside TPrintPages/MPrintPages and can be read from TPrintPageSize
 	ShowMPrintDialog(manager : MaterialManager) -> () -> void;
 	// Same as ShowMPrintDialog, only takes pages for printing as parameter
-	ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, style : [MPrintStyle]) -> () -> void;
+	ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[MPrintPage]>, style : [MPrintStyle]) -> () -> void;
 
 	// Styles for print customizations
 	MPrintStyle ::= MPrintSelectedPageSize, MPrintSelectedOrientation, MPrintExtractPNG, MPrintOnOK, MPrintCustomContent, MPrintClose;
@@ -170,19 +170,19 @@ ShowMPrintDialog(manager : MaterialManager) -> () -> void {
 	ShowMPrintPagesDialog(manager, const([]), []);
 }
 
-ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, style : [MPrintStyle]) -> () -> void {
+ShowMPrintPagesDialog(manager : MaterialManager, printPagesT : Transform<[MPrintPage]>, style : [MPrintStyle]) -> () -> void {
     close = extractStruct(style, MPrintClose(make(false))).closeB;
     selectedPageSize = extractStruct(style, MPrintSelectedPageSize(make(4))).selPageSize;
     selectedOrientation = extractStruct(style, MPrintSelectedOrientation(make(0))).selOrientation;
 	hasPrintExtractPNGFn = containsStruct(style, MPrintExtractPNG(nop1));
     pngSetFn = extractStruct(style, MPrintExtractPNG(nop1)).setfn;
-    printPagesT = fmap(pages, \p -> MPrintPage(p, make(None()), make(false)));
 	onOK = extractStruct(style, MPrintOnOK(nop)).onOK;
     widthS = make("21.0");
     heightS = make("29.7");
     isReady = make(false);
-
-    ShowMDialog(
+	pagesB = make(MEmpty());
+	
+	ShowMDialog(
         manager,
         close,
         [
@@ -191,6 +191,20 @@ ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, 
                 MTextButton(_("CLOSE"), \ -> reverseBehaviour(close), [], []),
                 MTextButton(_("PRINT"), \ -> {
 					onOK();
+					// Print pages to update pagesB
+					next(pagesB, 
+						MCropSize(
+							TFixed(0.0, 0.0),
+							MPrintPages(fmap(printPagesT, \p ->
+									MExtractPNG(
+										MIfPrint(p.page, MIf(p.mode, MAvailable(p.page, TSized(feither(TPrintPageSize, const(zeroWH)))), MEmpty())),
+										\fn -> next(p.fn, fn)
+									)
+								)
+							)
+						)
+					);
+					// Show browser's print dialog
 					showPrintDialog();
 				}, [MButtonRaised()], []),
             ]),
@@ -226,24 +240,17 @@ ShowMPrintPagesDialog(manager : MaterialManager, pages : Transform<[Material]>, 
 							})()
 						]
 					} else {
-						next(TPrintPageSize, Some(if (o == 0) MPrintPaperSizes[s].second else WidthHeight(MPrintPaperSizes[s].second.height, MPrintPaperSizes[s].second.width)));
-
+						selPrintPageSize = secondOfPair(MPrintPaperSizes[s]);
+						printPageSize = if (o == 0) {
+							selPrintPageSize;
+						} else {
+							WidthHeight(selPrintPageSize.height, selPrintPageSize.width);
+						};
+						next(TPrintPageSize, Some(printPageSize));
 						[];
 					}
 				}),
-				\ -> mrender(
-					manager,
-					false,
-					MCropSize(
-						TFixed(1.0, 1.0),
-						MPrintPages(fmapi(printPagesT, \i, p ->
-							MExtractPNG(
-								MIfPrint(p.page, MIf(p.mode, MAvailable(p.page, TSized(feither(TPrintPageSize, const(zeroWH)))), TEmpty())),
-								\fn -> next(p.fn, fn)
-							)
-						))
-					)
-				),
+				\ -> mrender(manager, false, MMutable(pagesB)),
 				\ -> \ -> next(TPrintPageSize, None())
 			]]),
 			MAvailableWidth(

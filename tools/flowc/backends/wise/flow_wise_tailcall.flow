@@ -1,0 +1,495 @@
+import tools/flowc/incremental/fimodule;
+import tools/flowc/backends/wise/firef2wise;
+import tools/flowc/backends/wise/flow_wise_closure;
+
+
+export {
+	isTailRecursiveFn(func : FiFunctionDec) -> bool;
+	replaceRecursionWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int) -> FlowWiExp;
+}
+
+isTailRecursiveFn(func : FiFunctionDec) -> bool {
+	tailCalls = extractAllFnCalls(func.lambda.body, func.name, [], true);
+	tailCalls != [] && forall(tailCalls, idfn);
+}
+
+replaceRecursionWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int) -> FlowWiExp {
+	isRealReference = false; // ref = if (isRealReference) structure else mutableVariable;
+	newExp1 = replaceRecursiveFnArgNames(body, fnName, args, getTmpIndex, isRealReference);
+	newExp = fixReturnValuesAndRecursiveCalls(newExp1, fnName, args, retType, getTmpIndex, true, isRealReference);
+	wrapFnBodyWithLoop(newExp, fnName, args, retType, getTmpIndex, isRealReference);
+}
+
+// do ... while()
+wrapFnBodyWithLoop(body : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
+	tmpVar = makeTailCallCondTmpName(fnName);
+	boolType = fiType2flowWiBasictype(FiTypeBool());
+	tmpVarType = FlowWiRefType(boolType);
+	tmpVarFnRes = makeTailCallTmpResName(fnName);
+	withResult = retType != makeFlowWiTypeVoid();
+
+	makeRefGetter = \name, type -> if (isRealReference) {
+		either(makeWiRefDeconstruction([FlowWiVar(name)], type), FlowWiVar(name))
+	} else {
+		FlowWiVar(name)
+	}
+	makeRefSetter = \name -> if (isRealReference) {
+		either(
+			makeWiRefSetter(
+				[FlowWiVar(name), FlowWiBool(false)],
+				[tmpVarType, boolType],
+				getTmpIndex()
+			),
+			FlowWiSet(name, FlowWiBool(false))
+		)
+	} else {
+		FlowWiSet(name, FlowWiBool(false))
+	}
+
+	loopExp = FlowWiBrace(concat(
+		[FlowWiWhile(
+			makeRefGetter(tmpVar, tmpVarType),
+			FlowWiBrace([makeRefSetter(tmpVar), body])
+		)],
+		if (withResult) [makeRefGetter(tmpVarFnRes, retType)] else []
+	));
+
+	makeTmpRefVar = \name, type, val, nextExp -> if (isRealReference) {
+		FlowWiLet(
+			name,
+			0,
+			FlowWiRefType(type),
+			either(makeWiRefConstruction([val], type), val),
+			FlowWiBrace([nextExp])
+		);
+	} else {
+		FlowWiLet(
+			name,
+			1, // mutable
+			type,
+			val,
+			FlowWiBrace([nextExp])
+		);
+	}
+
+	newBody = makeTmpRefVar(
+		tmpVar,
+		boolType,
+		FlowWiBool(true),
+		fold(args, loopExp, \acc, arg -> eitherMap(
+			makeTailCallTmpArgName(fnName, arg.id),
+			\argName -> makeTmpRefVar(argName, arg.type, FlowWiVar(arg.id), acc),
+			acc
+		))
+	);
+
+	if (withResult) {
+		makeTmpRefVar(tmpVarFnRes, retType, FlowWiDefValueOfType(retType), newBody);
+	} else {
+		newBody;
+	}
+}
+
+fixReturnValuesAndRecursiveCalls(e : FlowWiExp, fnName : string, args : [FlowWiIdtype], retType : FlowWiType, getTmpIndex : () -> int, lastOp : bool, isRealReference : bool) -> FlowWiExp {
+	setFnRes = \e2 -> {
+		if (!lastOp || retType == makeFlowWiTypeVoid()) {
+			e2
+		} else {
+			if (isRealReference) {
+				either(
+					makeWiRefSetter(
+						[FlowWiVar(makeTailCallTmpResName(fnName)), e2],
+						[FlowWiRefType(retType), retType],
+						getTmpIndex()
+					),
+					e2
+				)
+			} else {
+				FlowWiSet(makeTailCallTmpResName(fnName), e2)
+			}
+		}
+	}
+
+	recF = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, false, isRealReference);
+	recT = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, true, isRealReference);
+	recP = \e2 -> fixReturnValuesAndRecursiveCalls(e2, fnName, args, retType, getTmpIndex, lastOp, isRealReference);
+	recA = \exps -> if (exps == []) {
+		exps
+	} else {
+		arrayPush(
+			map(take(exps, length(exps) - 1), recF),
+			recP(exps[length(exps) - 1])
+		);
+	}
+	wrapBoolExp = \e2 -> mapWiRefSetter(e2, \e3 -> {
+		switch (e3 : FlowWiExp) {
+			FlowWiSet(id, __): if (isRealReference || !isTailCallTmpArgName(fnName, id)) {
+				e3;
+			} else {
+				FlowWiBrace([e3, FlowWiVar(makeTailCallTmpResName(fnName))])
+			}
+			default : eitherMap(
+				if (isRealReference) {
+					makeWiRefDeconstruction([FlowWiVar(makeTailCallTmpResName(fnName))], fiType2flowWiBasictype(FiTypeBool()))
+				} else {
+					Some(FlowWiVar(makeTailCallTmpResName(fnName)))
+				},
+				\e4 -> switch (e3 : FlowWiExp) {
+					FlowWiBrace(expsemi) : FlowWiBrace(arrayPush(expsemi, e4));
+					default : FlowWiBrace([e3, e4]);
+				},
+				e3
+			)
+		}
+	});
+	switch (e : FlowWiExp) {
+		FlowWiBreak(): setFnRes(e);
+		FlowWiContinue(): setFnRes(e);
+		FlowWiIf(exp1, exp2): setFnRes(FlowWiIf(recF(exp1), recF(exp2)));
+		FlowWiIfelse(exp1, exp2, exp3): {
+			FlowWiIfelse(recF(exp1), recP(exp2), recP(exp3));
+		}
+		FlowWiReturn(exps): FlowWiReturn(recA(exps));
+		FlowWiSet(id, e2): FlowWiSet(id, recF(e2));
+		FlowWiVar(id): setFnRes(e);
+		FlowWiWhile(exp1, exp2): FlowWiWhile(recF(exp1), recP(exp2));
+		FlowWiSizeOfType(__): setFnRes(e);
+		FlowWiDefValueOfType(__): setFnRes(e);
+		FlowWiTuple(id, exps, typeParameters): setFnRes(FlowWiTuple(id, map(exps, recF), typeParameters));
+		FlowWiInt(__): setFnRes(e);
+		FlowWiBool(__): setFnRes(e);
+		FlowWiDouble(__): setFnRes(e);
+		FlowWiHex32(__): setFnRes(e);
+		FlowWiHex64(__): setFnRes(e);
+		FlowWiHexf32(__): setFnRes(e);
+		FlowWiHexf64(__): setFnRes(e);
+		FlowWiI64(__): setFnRes(e);
+		FlowWiAdd(exp1, exp2): setFnRes(FlowWiAdd(recF(exp1), recF(exp2)));
+		FlowWiBoolAnd(exp1, exp2): setFnRes(FlowWiBoolAnd(recF(exp1), recF(exp2)));
+		FlowWiBoolNot(e2): setFnRes(FlowWiBoolNot(recF(e2)));
+		FlowWiAnd(exp1, exp2): setFnRes(FlowWiBoolOr(wrapBoolExp(recF(exp1)), wrapBoolExp(recF(exp2))));
+		FlowWiBoolOr(exp1, exp2): setFnRes(FlowWiBoolOr(wrapBoolExp(recF(exp1)), wrapBoolExp(recF(exp2))));
+		FlowWiBrace(expsemi): FlowWiBrace(recA(expsemi));
+		FlowWiCall(e2, exps): {
+			callFnName = extractVarNameFromFlowWiExp(e2);
+			if (fnName == callFnName) {
+				replaceFnCallWithTailCall(fnName, exps, map(args, \a -> Pair(a.id, a.type)), getTmpIndex, isRealReference);
+			} else {
+				setFnRes(FlowWiCall(recF(e2), map(exps, recF)));
+			}
+		}
+		FlowWiPolyCall(e2, types): setFnRes(FlowWiPolyCall(recF(e2), types));
+		FlowWiDiv(exp1, exp2): setFnRes(FlowWiDiv(recF(exp1), recF(exp2)));
+		FlowWiEqual(exp1, exp2): setFnRes(FlowWiEqual(recF(exp1), recF(exp2)));
+		FlowWiGreater(exp1, exp2): setFnRes(FlowWiGreater(recF(exp1), recF(exp2)));
+		FlowWiGreaterEqual(exp1, exp2): setFnRes(FlowWiGreaterEqual(recF(exp1), recF(exp2)));
+		FlowWiGreaterEqualu(exp1, exp2): setFnRes(FlowWiGreaterEqualu(recF(exp1), recF(exp2)));
+		FlowWiGreateru(exp1, exp2): setFnRes(FlowWiGreateru(recF(exp1), recF(exp2)));
+		FlowWiIsNull(e2): setFnRes(FlowWiIsNull(recF(e2)));
+		FlowWiLess(exp1, exp2): setFnRes(FlowWiLess(recF(exp1), recF(exp2)));
+		FlowWiLessEqual(exp1, exp2): setFnRes(FlowWiLessEqual(recF(exp1), recF(exp2)));
+		FlowWiLessEqualu(exp1, exp2): setFnRes(FlowWiLessEqualu(recF(exp1), recF(exp2)));
+		FlowWiLessu(exp1, exp2): setFnRes(FlowWiLessu(recF(exp1), recF(exp2)));
+		FlowWiLet(id, i, opttype, e2, brace): FlowWiLet(id, i, opttype, recF(e2), FlowWiBrace(recA(brace.expsemi)));
+		FlowWiMod(exp1, exp2): setFnRes(FlowWiMod(recF(exp1), recF(exp2)));
+		FlowWiMul(exp1, exp2): setFnRes(FlowWiMul(recF(exp1), recF(exp2)));
+		FlowWiNegate(e2): setFnRes(FlowWiNegate(recF(e2)));
+		FlowWiNotEqual(exp1, exp2): setFnRes(FlowWiNotEqual(recF(exp1), recF(exp2)));
+		FlowWiOr(exp1, exp2): setFnRes(FlowWiOr(recF(exp1), recF(exp2)));
+		FlowWiSub(exp1, exp2): setFnRes(FlowWiSub(recF(exp1), recF(exp2)));
+		FlowWiTupledot(e2, ind): setFnRes(FlowWiTupledot(recF(e2), ind));
+		FlowWiTypeannotation(e2, type): setFnRes(FlowWiTypeannotation(recF(e2), type));
+		FlowWiWasmOp(s, wargs, exps): setFnRes(FlowWiWasmOp(s, wargs, map(exps, recF)));
+		FlowWiXor(exp1, exp2): setFnRes(FlowWiXor(recF(exp1), recF(exp2)));
+		FlowWiArrayIndex(e2, index): setFnRes(FlowWiArrayIndex(recF(e2), index));
+	}
+}
+
+replaceFnCallWithTailCall(fnName : string, args : [FlowWiExp], argTypes : [Pair<string, FlowWiType>], getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
+	if (isRealReference) {
+		onError = \-> {
+			println("can't fix tailCall for '" + fnName + "' with args : " + toString(args));
+			FlowWiBrace([]);
+		}
+		boolType = fiType2flowWiBasictype(FiTypeBool());
+
+		eitherFn(
+			makeWiRefSetter(
+				[FlowWiVar(makeTailCallCondTmpName(fnName)), FlowWiBool(true)],
+				[FlowWiRefType(boolType), boolType],
+				getTmpIndex()
+			),
+			\v : FlowWiLet -> FlowWiLet(v with brace = FlowWiBrace(arrayPush(v.brace.expsemi, makeTailFnArgSetters(fnName, args, argTypes, getTmpIndex, isRealReference)))),
+			onError
+		);
+	} else {
+		FlowWiBrace([
+			FlowWiSet(makeTailCallCondTmpName(fnName), FlowWiBool(true)),
+			makeTailFnArgSetters(fnName, args, argTypes, getTmpIndex, isRealReference)
+		]);
+	}
+}
+
+makeTailCallCondTmpName(fnName : string) -> string {
+	"_TMP_TAILCALL_" + fnName
+}
+
+makeTailCallTmpResName(fnName : string) -> string {
+	"_RES_" + makeTailCallCondTmpName(fnName);
+}
+
+makeTailCallTmpArgName(fnName : string, argName : string) -> Maybe<string> {
+	if (argName == makeClosureVarName()) {
+		None()
+	} else {
+		Some("_ARG_" + toUpperCase(argName) + "_" + makeTailCallCondTmpName(fnName));
+	}
+}
+
+isTailCallTmpArgName(fnName : string, name : string) -> bool {
+	startsWith(name, "_ARG_") && endsWith(name, "_" + makeTailCallCondTmpName(fnName));
+}
+
+makeTailFnArgSetters(fnName : string, args : [FlowWiExp], argTypes : [Pair<string, FlowWiType>], getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
+	if (length(args) == length(argTypes)) {
+		foldi(args, FlowWiBrace([]), \i, acc, arg -> unpair(argTypes[i], \argName, argType -> {
+			either(
+				maybeBind(
+					makeTailCallTmpArgName(fnName, argName),
+					\tmpArgName -> if (isRealReference) {
+						maybeMap(
+							makeWiRefSetter(
+								[FlowWiVar(tmpArgName), arg],
+								[FlowWiRefType(argType), argType],
+								getTmpIndex()
+							),
+							\lv : FlowWiLet -> FlowWiLet(lv with brace = FlowWiBrace(ifArrayPush(lv.brace.expsemi, acc != FlowWiBrace([]), acc)))
+						)
+					} else {
+						Some(FlowWiBrace(if (acc != FlowWiBrace([])) [FlowWiSet(tmpArgName, arg), acc] else [FlowWiSet(tmpArgName, arg)]))
+					}
+				),
+				acc
+			);
+		}));
+	} else {
+		println("can't create setters for tailCall args '" + fnName + "'. Args = " + toString(args));
+		FlowWiBrace([]);
+	}
+}
+
+// [isTailCall]
+extractAllFnCalls(e : FiExp, fnName : string, acc : [bool], lastOp : bool) -> [bool] {
+	rec = \ne, isTail -> extractAllFnCalls(ne, fnName, acc, isTail);
+	recA = \exps, isTail -> fold(exps, acc, \acc2, e2 -> extractAllFnCalls(e2, fnName, acc2, isTail));
+	recSeq = \exps, isTail -> if (exps == []) {
+		[]
+	} else {
+		newAcc = recA(take(exps, length(exps) - 1), false);
+		extractAllFnCalls(exps[length(exps) - 1], fnName, newAcc, isTail);
+	}
+	switch (e : FiExp) {
+		FiLambda(__, body, __, __): rec(body, lastOp);
+		FiCall(f, args, __, __): {
+			newAcc = recA(args, false);
+			extractAllFnCalls(f, fnName, newAcc, lastOp);
+		}
+		FiVar(name, __, __): if (name == fnName) arrayPush(acc, lastOp) else acc;
+		FiLet(__, __, e1, body, __, __): {
+			newAcc = rec(e1, false);
+			extractAllFnCalls(body, fnName, newAcc, lastOp);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			newAcc = recA([e2, e3], lastOp);
+			extractAllFnCalls(e1, fnName, newAcc, false);
+		}
+		FiSwitch(x, __, cases, __, __): {
+			newAcc = recA(map(cases, \c -> c.body), lastOp);
+			extractAllFnCalls(x, fnName, newAcc, false);
+		}
+		FiCast(e2, __, __, __, __): rec(e2, false);
+		FiSeq(es, __, __): recSeq(es, true);
+		FiCallPrim(op, exps, __, __): {
+			recPrim = \-> recA(exps, false);
+			switch (op : FcPrim) {
+				FcOrPrim(): recSeq(exps, lastOp);
+				FcAndPrim(): recSeq(exps, lastOp);
+				FcNotPrim(): recPrim();
+				FcEqPrim(): recPrim();
+				FcNePrim(): recPrim();
+				FcLePrim(): recPrim();
+				FcGePrim(): recPrim();
+				FcLtPrim(): recPrim();
+				FcGtPrim(): recPrim();
+				FcPlusPrim(): recPrim();
+				FcMinusPrim(): recPrim();
+				FcMulPrim(): recPrim();
+				FcDivPrim(): recPrim();
+				FcModPrim(): recPrim();
+				FcNegPrim(): recPrim();
+				FcArrayPrim(): recPrim();
+				FcIndexPrim(): recPrim();
+				FcDerefPrim(): recPrim();
+				FcAssignPrim(): recPrim();
+				FcRefPrim(): recPrim();
+				FcStructPrim(__): recPrim();
+				FcFieldPrim(__): recPrim();
+				FcSetMutablePrim(__): recPrim();
+				FcCreateClosurePrim(__, __): recPrim();
+				FcQuote(): recPrim();
+				FcUnquote(): recPrim();
+			}
+			
+		}
+		FiVoid(__): acc;
+		FiDouble(__, __): acc;
+		FiInt(__, __): acc;
+		FiString(__, __): acc;
+		FiBool(__, __): acc;
+		FiRequire(__, e2, __, __): rec(e2, lastOp);
+		FiUnsafe(__, e2, __, __): rec(e2, lastOp);
+	}
+}
+
+replaceRecursiveFnArgNames(e : FlowWiExp, fnName : string, args : [FlowWiIdtype], getTmpIndex : () -> int, isRealReference : bool) -> FlowWiExp {
+	rec = \e2 -> replaceRecursiveFnArgNames(e2, fnName, args, getTmpIndex, isRealReference);
+	replaceArgVar = \v : FlowWiVar -> eitherMap(
+		maybeBind(find(args, \a -> a.id == v.id), \a -> maybeMap(makeTailCallTmpArgName(fnName, v.id), \newName -> Pair(newName, a.type))),
+		unpairC(\newId, type -> if (isRealReference) either(makeWiRefDeconstruction([FlowWiVar(newId)], type), v) else FlowWiVar(newId)),
+		v
+	);
+	recWasmOpArgs = \wargs -> {
+		fold2(wargs, None(), [], \tmpExp, newAs, a -> switch (a : FlowWiWarg) {
+			FlowWiInt(__) : Pair(tmpExp, arrayPush(newAs, a));
+			FlowWiType() : Pair(tmpExp, arrayPush(newAs, a));
+			FlowWiVar(__): {
+				newExp = replaceArgVar(a);
+				if (newExp == a) {
+					Pair(tmpExp, arrayPush(newAs, a));
+				} else {
+					tmpVarName = "_tmp_" + i2s(getTmpIndex());
+					derefExp = FlowWiLet(
+						tmpVarName,
+						0,
+						FlowWiBasictype("auto"),
+						newExp,
+						either(tmpExp, FlowWiBrace([]))
+					);
+					Pair(Some(derefExp), arrayPush(newAs, FlowWiVar(tmpVarName)));
+				}
+			}
+		});
+	}
+	switch (e : FlowWiExp) {
+		FlowWiBreak(): e;
+		FlowWiContinue(): e;
+		FlowWiIf(exp1, exp2): FlowWiIf(rec(exp1), rec(exp2));
+		FlowWiIfelse(exp1, exp2, exp3): FlowWiIfelse(rec(exp1), rec(exp2), rec(exp3));
+		FlowWiReturn(exps): FlowWiReturn(map(exps, rec));
+		FlowWiSet(id, e2): FlowWiSet(id, rec(e2));
+		FlowWiVar(id): replaceArgVar(e);
+		FlowWiWhile(exp1, exp2): FlowWiWhile(rec(exp1), rec(exp2));
+		FlowWiSizeOfType(__): e;
+		FlowWiDefValueOfType(__): e;
+		FlowWiTuple(id, exps, typeParameters): FlowWiTuple(id, map(exps, rec), typeParameters);
+		FlowWiInt(__): e;
+		FlowWiBool(__): e;
+		FlowWiDouble(__): e;
+		FlowWiHex32(__): e;
+		FlowWiHex64(__): e;
+		FlowWiHexf32(__): e;
+		FlowWiHexf64(__): e;
+		FlowWiI64(__): e;
+		FlowWiAdd(exp1, exp2): FlowWiAdd(rec(exp1), rec(exp2));
+		FlowWiAnd(exp1, exp2): FlowWiAnd(rec(exp1), rec(exp2));
+		FlowWiBoolAnd(exp1, exp2): FlowWiBoolAnd(rec(exp1), rec(exp2));
+		FlowWiBoolNot(e2): FlowWiBoolNot(rec(e2));
+		FlowWiBoolOr(exp1, exp2): FlowWiBoolOr(rec(exp1), rec(exp2));
+		FlowWiBrace(expsemi): FlowWiBrace(map(expsemi, rec));
+		FlowWiCall(e2, exps): FlowWiCall(rec(e2), map(exps, rec));
+		FlowWiPolyCall(e2, types): FlowWiPolyCall(rec(e2), types);
+		FlowWiDiv(exp1, exp2): FlowWiDiv(rec(exp1), rec(exp2));
+		FlowWiEqual(exp1, exp2): FlowWiEqual(rec(exp1), rec(exp2));
+		FlowWiGreater(exp1, exp2): FlowWiGreater(rec(exp1), rec(exp2));
+		FlowWiGreaterEqual(exp1, exp2): FlowWiGreaterEqual(rec(exp1), rec(exp2));
+		FlowWiGreaterEqualu(exp1, exp2): FlowWiGreaterEqualu(rec(exp1), rec(exp2));
+		FlowWiGreateru(exp1, exp2): FlowWiGreateru(rec(exp1), rec(exp2));
+		FlowWiIsNull(e2): FlowWiIsNull(rec(e2));
+		FlowWiLess(exp1, exp2): FlowWiLess(rec(exp1), rec(exp2));
+		FlowWiLessEqual(exp1, exp2): FlowWiLessEqual(rec(exp1), rec(exp2));
+		FlowWiLessEqualu(exp1, exp2): FlowWiLessEqualu(rec(exp1), rec(exp2));
+		FlowWiLessu(exp1, exp2): FlowWiLessu(rec(exp1), rec(exp2));
+		FlowWiLet(id, i, opttype, e2, brace): FlowWiLet(id, i, opttype, rec(e2), FlowWiBrace(map(brace.expsemi, rec)));
+		FlowWiMod(exp1, exp2): FlowWiMod(rec(exp1), rec(exp2));
+		FlowWiMul(exp1, exp2): FlowWiMul(rec(exp1), rec(exp2));
+		FlowWiNegate(e2): FlowWiNegate(rec(e2));
+		FlowWiNotEqual(exp1, exp2): FlowWiNotEqual(rec(exp1), rec(exp2));
+		FlowWiOr(exp1, exp2): FlowWiOr(rec(exp1), rec(exp2));
+		FlowWiSub(exp1, exp2): FlowWiSub(rec(exp1), rec(exp2));
+		FlowWiTupledot(e2, int_0): FlowWiTupledot(rec(e2), int_0);
+		FlowWiTypeannotation(e2, type): FlowWiTypeannotation(rec(e2), type);
+		FlowWiWasmOp(s, wargs, exps): {
+			unpair(recWasmOpArgs(wargs), \newExp, newArgs -> {
+				newWasmOp = FlowWiWasmOp(s, newArgs, map(exps, rec));
+				newExp ?? FlowWiBrace([newExp, newWasmOp]) : newWasmOp;
+			});
+		}
+		FlowWiXor(exp1, exp2): FlowWiXor(rec(exp1), rec(exp2));
+		FlowWiArrayIndex(e2, index): FlowWiArrayIndex(rec(e2), index);
+	}
+}
+
+extractVarNameFromFlowWiExp(e : FlowWiExp) -> string {
+	switch (e : FlowWiExp) {
+		FlowWiBreak(): "";
+		FlowWiContinue(): "";
+		FlowWiIf(exp1, exp2): "";
+		FlowWiIfelse(exp1, exp2, exp3): "";
+		FlowWiReturn(exps): if (exps == []) "" else extractVarNameFromFlowWiExp(exps[length(exps) - 1]);
+		FlowWiSet(id, e2): "";
+		FlowWiVar(id): id;
+		FlowWiWhile(exp1, exp2): extractVarNameFromFlowWiExp(exp2);
+		FlowWiSizeOfType(__): "";
+		FlowWiDefValueOfType(__): "";
+		FlowWiTuple(id, exps, typeParameters): "";
+		FlowWiInt(__): "";
+		FlowWiBool(__): "";
+		FlowWiDouble(__): "";
+		FlowWiHex32(__): "";
+		FlowWiHex64(__): "";
+		FlowWiHexf32(__): "";
+		FlowWiHexf64(__): "";
+		FlowWiI64(__): "";
+		FlowWiAdd(exp1, exp2): "";
+		FlowWiAnd(exp1, exp2): "";
+		FlowWiBoolAnd(exp1, exp2): "";
+		FlowWiBoolNot(e2): "";
+		FlowWiBoolOr(exp1, exp2): "";
+		FlowWiBrace(expsemi): if (expsemi == []) "" else extractVarNameFromFlowWiExp(expsemi[length(expsemi) - 1]);
+		FlowWiCall(e2, exps): "";
+		FlowWiPolyCall(e2, types): extractVarNameFromFlowWiExp(e2);
+		FlowWiDiv(exp1, exp2): "";
+		FlowWiEqual(exp1, exp2): "";
+		FlowWiGreater(exp1, exp2): "";
+		FlowWiGreaterEqual(exp1, exp2): "";
+		FlowWiGreaterEqualu(exp1, exp2): "";
+		FlowWiGreateru(exp1, exp2): "";
+		FlowWiIsNull(e2): "";
+		FlowWiLess(exp1, exp2): "";
+		FlowWiLessEqual(exp1, exp2): "";
+		FlowWiLessEqualu(exp1, exp2): "";
+		FlowWiLessu(exp1, exp2): "";
+		FlowWiLet(id, i, opttype, e2, brace): if (brace.expsemi == []) "" else extractVarNameFromFlowWiExp(brace.expsemi[length(brace.expsemi) - 1]);
+		FlowWiMod(exp1, exp2): "";
+		FlowWiMul(exp1, exp2): "";
+		FlowWiNegate(e2): "";
+		FlowWiNotEqual(exp1, exp2): "";
+		FlowWiOr(exp1, exp2): "";
+		FlowWiSub(exp1, exp2): "";
+		FlowWiTupledot(e2, int_0): "";
+		FlowWiTypeannotation(e2, type): "";
+		FlowWiWasmOp(s, wargs, exps): "";
+		FlowWiXor(exp1, exp2): "";
+		FlowWiArrayIndex(e2, index): "";
+	}
+}

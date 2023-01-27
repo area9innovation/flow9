@@ -3,6 +3,7 @@ import material/internal/material_typography;
 
 export {
 	MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	makeTooltipId(id : int) -> string;
 }
 
 MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -10,7 +11,6 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 	virtualScreen = tryExtractStruct(m.style, MVirtualScreen(makeWH(), make(zeroPositionScale)));
 	disableOnDragging = contains(m.style, MDisableOnDragging());
 	blockHover = contains(m.style, MBlockHover());
-	dontScale = contains(m.style, MTooltipDontScale());
 
 	tooltipGap = 8.;
 	overlapGap = 4.;
@@ -31,14 +31,30 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 
 	customId = tryExtractStruct(m.style, MTooltipCustomId(-1));
 	popupId = eitherFn(customId, \cid -> cid.id, \ -> makeTropicTag(manager));
-	tooltipId = "tooltip" + i2s(popupId);
+	tooltipId = makeTooltipId(popupId);
+	tooltipContentWH = makeWH();
+
+	ariaDescribedBy = FAccessAttribute("aria-describedby", fif(openMenu.opened, const(eitherMap(customId, \__ -> "", tooltipId)), const("")));
+
+	mat = switch (m.box) {
+		MTextButton(btnTxt, btnOnClick, btnStyle, btnState) : {
+			MTextButton(btnTxt, btnOnClick, btnStyle, arrayPush(btnState, ariaDescribedBy));
+		}
+		MIconButton(btnName, btnOnClick, btnStyle, btnState) : {
+			MIconButton(btnName, btnOnClick, btnStyle, arrayPush(btnState, ariaDescribedBy));
+		}
+		MComponent(focState, fn) : {
+			MComponent(arrayPush(focState, ariaDescribedBy), fn);
+		}
+		default : m.box;
+	}
 
 	MComponentGroup2T(
 		manager,
 		parent,
 		"MTooltip",
 		[
-			FAccessAttribute("aria-describedby", fif(openMenu.opened, const(eitherMap(customId, \__ -> "", tooltipId)), const(""))),
+			ariaDescribedBy,
 			FAccessVisible(enabled)
 		],
 		\p -> {
@@ -47,7 +63,8 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 			tooltipWH = makeWH();
 
 			offsetAndBordersT =
-				fsubselect3(tooltipWH, buttonWH, tooltipAlign, \twh, bwh, align -> {
+				fsubselect4(tooltipWH, buttonWH, tooltipAlign, positionScale, \twh, bwh0, align, posScale -> {
+					bwh = WidthHeight(bwh0.width * posScale.scale.x, bwh0.height * posScale.scale.y);
 					top = const(Pair(WidthHeight((bwh.width - twh.width) / 2., -twh.height - tooltipGap), Quadruple(0., 0., 0., tooltipGap + overlapGap) ));
 					bottom = const(Pair(WidthHeight((bwh.width - twh.width) / 2., bwh.height + tooltipGap), Quadruple(0., tooltipGap + overlapGap, 0., 0.)));
 					left = const(Pair(WidthHeight(-twh.width - tooltipGap, (bwh.height - twh.height) / 2.), Quadruple(0., 0., tooltipGap + overlapGap, 0.)));
@@ -60,12 +77,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 						MBottom() : bottom;
 						MLeft() : left;
 						MRight() : right;
-						MTryTopFirst() :
-							fif(
-								fselect(positionScale, FLift(\ps : PositionScale -> ps.pos.y > twh.height + tooltipGap)),
-								top,
-								bottom
-							);
+						MTryTopFirst() : if (posScale.pos.y > twh.height + tooltipGap) top else bottom
 						MTryBottomFirst() : {
 							stageWH =
 								eitherMap(virtualScreen, \vs : MVirtualScreen ->
@@ -76,9 +88,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 								);
 
 							fif(
-								fselect2(positionScale, stageWH, FLift2(\ps : PositionScale, sWH ->
-									ps.pos.y + (bwh.height + twh.height) * ps.scale.y > sWH.height - tooltipGap
-								)),
+								fselectLift(stageWH, \sWH -> posScale.pos.y + bwh.height + twh.height > sWH.height - tooltipGap),
 								top,
 								bottom
 							);
@@ -103,10 +113,12 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 				TMouseInside(popupHover, blockHover)
 			];
 
+			showTooltip = fand(fand(enabled, openMenu.opened), const(!isEmptyMaterial(m.tooltip)));
+
 			TConstruct(
 				[
-					makeSubscribe2Uns(fand(enabled, openMenu.opened), \op -> {
-						if (op && !isEmptyMaterial(m.tooltip)) {
+					makeSubscribe2Uns(showTooltip, \show -> {
+						if (show) {
 							[
 								interruptibleDeferUntilNextFrameRendered(\ -> {
 									MComponentGroup(
@@ -173,8 +185,6 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 														!lightBackground
 													)
 												),
-												AccessRole("tooltip"),
-												FAccessAttribute("id", const(tooltipId))
 											]
 										)
 									)
@@ -198,18 +208,13 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 											p,
 											MPopup(
 												[[MAttachBox(f, tooltipWH)]],
-												fselect2(positionScale, translatePosition, FLift2(\ps : PositionScale, tr : Point -> {
-													PositionScale(Point(ps.pos.x + tr.x, ps.pos.y + tr.y),
-														if (dontScale) {
-															eitherMap(virtualScreen, \vs -> {
-																vsSize = fgetValue(vs.size);
-																tSize = getValue(tooltipWH);
-																factor = min(max(0., min(1., vsSize.width / tSize.width)), min(1., vsSize.height / tSize.height));
-																Point(factor, factor)
-															}, zeroScale)
-														} else ps.scale
-													)
-												})),
+												fselect3(
+													positionScale,
+													translatePosition,
+													eitherMap(virtualScreen, \vs -> fselectLift(vs.position, \ps -> ps.scale), const(zeroScale)),
+													\ps : PositionScale, tr : Point, sc : Point ->
+														PositionScale(Point(ps.pos.x + tr.x, ps.pos.y + tr.y), sc)
+												),
 												eitherMap(virtualScreen, \vs -> arrayPush(popupStyle, vs), popupStyle)
 											),
 											m2t
@@ -240,20 +245,43 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 				if (!mobile)
 					TInteractive(
 						[TMouseInside(hover, blockHover)],
-						m2t(m.box, p)
+						m2t(mat, p)
 					)
 				else
 					TCopySize(
-						m2t(m.box, p),
+						m2t(mat, p),
 						\tr ->
 							TInteractive([TMouseDownGhost(hover)], tr),
 						true
 					)
 			)
+			|> (\t -> TAttachBox(t, tooltipContentWH))
+			|> (\t -> TGroup2(
+				TShow(showTooltip, MComponentGroup2T(
+					manager,
+					p,
+					"MTooltipVisuallyHidden",
+					[
+						AccessRole("tooltip"),
+						FAccessAttribute("id", const(tooltipId)),
+					],
+					\p2 ->
+						m2t(m.tooltip, p2)
+						|> (\t2 -> MScroll2T(manager, p2, MScroll(t2, TSized(tooltipContentWH), [MScrollCropByContent()]), m2t))
+						|> (\t2 -> TAlpha(const(0.001), t2))
+						|> (\t2 -> TAccess([AccessRole("presentation"), FAccessAttribute("aria-hidden", const("true"))], t2))
+				))
+				|> (\t2 -> TFixSize(t2, TEmpty())),
+				t
+			))
 		}
 	)
 }
 
 isEmptyMaterial(m : Material) -> bool {
 	m == TEmpty() || m == TMutable(ConstBehaviour(TEmpty())) || m == MMutable(ConstBehaviour(TEmpty()))
+}
+
+makeTooltipId(id : int) -> string {
+	"tooltip" + i2s(id)
 }
