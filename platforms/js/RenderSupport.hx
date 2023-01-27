@@ -58,6 +58,7 @@ class RenderSupport {
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") == "1";
+	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -1369,7 +1370,7 @@ class RenderSupport {
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (HandlePointerTouchEvent || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
@@ -1402,7 +1403,7 @@ class RenderSupport {
 				if (e.touches.length == 0) {
 					if (!MouseUpReceived) stage.emit("mouseup");
 				}
-			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (HandlePointerTouchEvent || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				if (e.which == 3 || e.button == 2) {
@@ -1439,7 +1440,7 @@ class RenderSupport {
 					var touchPos2 = getMouseEventPosition(e.touches[1], rootPos);
 					GesturesDetector.processPinch(touchPos1, touchPos2);
 				}
-			} else if (Native.isNew || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
+			} else if (HandlePointerTouchEvent || !Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !isMousePositionEqual(mousePos)) {
 				setMousePosition(mousePos);
 
 				stage.emit("mousemove");
