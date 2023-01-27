@@ -80,10 +80,20 @@ incTmpVarCounter(state : FiWiseState) -> int {
 	tmpVarIndex;
 }
 
-initWiNatives(state : FiWiseState, natives : [FiNativeDec]) -> void {
-	state.flowWiNatives := fold(natives, makeTree(), \acc, decl -> {
+initWiNatives(state : FiWiseState, natives : [FiNativeDec], exportNames : Set<string>) -> void {
+	exportedNatives = foldTree(^(state.flowWiNatives), makeTree(), \fnName, fns, acc -> {
+		newFns = filter(fns, \f -> f.exported);
+		if (newFns == []) acc else setTree(acc, fnName, newFns);
+	});
+	state.flowWiNatives := fold(natives, exportedNatives, \acc, decl -> {
 		nativeFnChain = findWiseNativeFns(decl.name);
-		if (nativeFnChain == []) acc else setTree(acc, decl.name, nativeFnChain);
+		if (nativeFnChain == []) {
+			acc
+		} else {
+			oldFns = lookupTreeDef(acc, decl.name, []);
+			newFns = if (containsSet(exportNames, decl.name)) map(nativeFnChain, \f -> WiseNativeFn(f with exported = true)) else nativeFnChain;
+			setTree(acc, decl.name, concat(oldFns,  newFns));
+		}
 	});
 }
 
@@ -104,7 +114,7 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]
 	functions = values2tree(module.functions, \f -> f.name);
 	orderedStructs = filtermap(module.initOrder, \fnName -> lookupTree(functions, fnName));
 	state.structs := fiStructs2wiTuples(^(state.structs), module.structs, module.unions, orderedStructs);
-	initWiNatives(state, module.natives);
+	initWiNatives(state, module.natives, exportNames);
 
 	// save templates
 	iter(module.initOrder, \fnName -> maybeApply(
@@ -136,6 +146,7 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]
 		"tools/flowc/backends/wise/lib/array",
 		"tools/flowc/backends/wise/lib/tuple",
 		"tools/flowc/backends/wise/lib/reference",
+		"tools/flowc/backends/wise/lib/math",
 		"lib/wise/runtime",
 	];
 	userImports = filtermap(module.imports, \imp -> {
@@ -265,11 +276,15 @@ fiExp2FlowWiExp(state : FiWiseState, exp : FiExp, scopeTemplates : Tree<string, 
 				println("can't find fn for Call '" + toString(exp));
 				FlowWiBrace([]);
 			} else {
-				untriple(
-					resolveFlowWiFn(newFns[0], args, scopeTemplates, mainFn, ^(state.flowWiNatives), state.getStructFields),
-					\newFn, fnName, newArgs -> fold(
+				unquadruple(
+					resolveFlowWiFn(newFns[0], args, type, scopeTemplates, mainFn, ^(state.flowWiNatives), state.getStructFields),
+					\newFn, fnName, newArgs, makeOperation -> fold(
 						tail(newFns),
-						FlowWiCall(newFn, map(newArgs, \a -> mapExp(a, true)[0])),
+						eitherFn(
+							makeOperation,
+							\fn -> fn(map(newArgs, \a -> mapExp(a, true)[0])),
+							\-> FlowWiCall(newFn, map(newArgs, \a -> mapExp(a, true)[0]))
+						),
 						\newExp : FlowWiExp, fnExp : FlowWiExp -> FlowWiCall(fnExp, [newExp])
 					)
 				);
@@ -645,7 +660,7 @@ fcPrim2flowWiExp(state : FiWiseState, type : FcPrim, e : FlowWiExp, resultType :
 		None();
 	}
 	isBool = \-> isSameStructType(resultType, FiTypeBool());
-	isNumber = \-> isSameStructType(resultType, FiTypeInt()) || isSameStructType(resultType, FiTypeDouble());
+
 	switch (type : FcPrim) {
 		FcOrPrim() : if (isBool()) Some(e) else makeError();
 		FcAndPrim() : makeError();
@@ -661,7 +676,20 @@ fcPrim2flowWiExp(state : FiWiseState, type : FcPrim, e : FlowWiExp, resultType :
 		FcMulPrim() : makeError();
 		FcDivPrim() : makeError();
 		FcModPrim() : makeError();
-		FcNegPrim() : if (isNumber()) Some(FlowWiNegate(e)) else makeError();
+		FcNegPrim() : switch(resultType : FiType) {
+			FiTypeArray(__): makeError();
+			FiTypeFunction(__, __): makeError();
+			FiTypeRef(__): makeError();
+			FiTypeParameter(__): makeError();
+			FiTypeBool(): makeError();
+			FiTypeInt(): Some(FlowWiSub(FlowWiInt(0), e));
+			FiTypeDouble(): Some(FlowWiNegate(e));
+			FiTypeString(): makeError();
+			FiTypeFlow(): makeError();
+			FiTypeVoid(): makeError();
+			FiTypeNative(): makeError();
+			FiTypeName(__, __): makeError();
+		}
 		FcArrayPrim() : makeDef();
 		FcIndexPrim() : makeDef();
 		FcDerefPrim() : makeDef();
@@ -963,21 +991,25 @@ fcPrimStructs2flowWiExp(type : FcPrim, e1 : FlowWiExp, e2 : FlowWiExp, eType : F
 resolveFlowWiFn(
 	exp : FlowWiExp,
 	args : [FiExp],
+	resType : FiType,
 	scopeTemplates : Tree<string, FiTypeParameter>,
 	mainFn : bool,
 	flowWiNatives : Tree<string, [WiseNativeFn]>,
 	getStructFields : (string) -> Maybe<Triple<[FiType], [FiType], bool>>,
-) -> Triple<FlowWiExp, string, [FiExp]> {
+) -> Quadruple<FlowWiExp, string, [FiExp], Maybe<([FlowWiExp]) -> FlowWiExp>> {
 	fiName2wiseFnInf = \fnName : string -> {
 		if (fnName == "concat") Pair("concatArrays", true)
 		else if (fnName == "arrayPush") Pair("arrayPush", true)
 		else if (fnName == "length") Pair("getLengthArray", false)
 		else if (fnName == "subrange") Pair("subrangeArray", true)
 		else if (fnName == "replace") Pair("replaceArray", true)
+		else if (fnName == "fold") Pair("fold", true)
+		else if (fnName == "map") Pair("map", true)
+		else if (fnName == "filter") Pair("filter", true)
 		else Pair("", false);
 	}
-	makeArrayFnForFiType = \type, fnName -> {
-		fnInf = switch (type : FiType) {
+	makeArrayFnForFiType = \arrType, types, fnName -> {
+		fnInf = switch (arrType : FiType) {
 			FiTypeInt() : fiName2wiseFnInf(fnName);
 			FiTypeDouble() : fiName2wiseFnInf(fnName);
 			FiTypeBool() : fiName2wiseFnInf(fnName);
@@ -988,11 +1020,14 @@ resolveFlowWiFn(
 		}
 		unpair(fnInf, \name : string, tmplFn : bool -> {
 			if (name == "") {
-				println(fnName + " for '" + toString(type) + "' isn't implemented");
+				println(fnName + " for '" + toString(arrType) + "' isn't implemented");
 				exp;
 			} else {
 				if (tmplFn) {
-					FlowWiPolyCall(FlowWiVar(name), [fiType2FlowWiTypeT(type, scopeTemplates, true, getStructFields)])
+					FlowWiPolyCall(
+						FlowWiVar(name),
+						map(types, \type -> fiType2FlowWiTypeT(type, scopeTemplates, true, getStructFields))
+					)
 				} else {
 					FlowWiVar(name);
 				}
@@ -1016,22 +1051,37 @@ resolveFlowWiFn(
 	eitherMap(
 		varId,
 		\id -> if (id == "println" && args != []) {
-			Triple(makeFlowWiPrint(args[0], scopeTemplates, getStructFields), id, [args[0]]);
+			Quadruple(makeFlowWiPrint(args[0], scopeTemplates, getStructFields), id, [args[0]], None());
 		} else if ((id == "length" || id == "subrange") && args != []) {
-			Triple(makeArrayFnForFiType(resolveArrType(extractArrayFiTypeFromExp(args[0]), FiTypeInt()), id), id, [args[0]]);
+			arrType = resolveArrType(extractArrayFiTypeFromExp(args[0]), FiTypeInt());
+			Quadruple(makeArrayFnForFiType(arrType, [arrType], id), id, [args[0]], None());
 		} else if (id == "concat" && length(args) >= 2) {
-			arrType = resolveArrType(extractArrayFiTypeFromExp(args[0]), extractArrayFiTypeFromExp(args[1]));
-			Triple(makeArrayFnForFiType(resolveArrType(arrType, FiTypeInt()), id), id, take(args, 2));
+			arrType0 = resolveArrType(extractArrayFiTypeFromExp(args[0]), extractArrayFiTypeFromExp(args[1]));
+			arrType = resolveArrType(arrType0, FiTypeInt());
+			Quadruple(makeArrayFnForFiType(arrType, [arrType], id), id, take(args, 2), None());
 		} else if (id == "arrayPush" && length(args) >= 2) {
-			Triple(makeArrayFnForFiType(extractArrayFiTypeFromExp(args[1]), id), id, take(args, 2));
+			arrType = extractArrayFiTypeFromExp(args[1]);
+			Quadruple(makeArrayFnForFiType(arrType, [arrType], id), id, take(args, 2), None());
 		} else if (id == "replace" && length(args) >= 3) {
-			Triple(makeArrayFnForFiType(extractArrayFiTypeFromExp(args[2]), id), id, take(args, 3));
+			arrType = extractArrayFiTypeFromExp(args[2]);
+			Quadruple(makeArrayFnForFiType(arrType, [arrType], id), id, take(args, 3), None());
+		} else if (id == "fold" && length(args) >= 4) {
+			arrType = extractArrayFiTypeFromExp(args[0]);
+			Quadruple(makeArrayFnForFiType(arrType, [arrType, resType], id), id, take(args, 4), None());
+		} else if (id == "map" && length(args) >= 3) {
+			arrType = extractArrayFiTypeFromExp(args[0]);
+			newArrType = resolveArrType(extractArrayFiType(resType), FiTypeInt());
+			Quadruple(makeArrayFnForFiType(arrType, [arrType, newArrType], id), id, take(args, 3), None());
+		} else if (id == "filter" && length(args) >= 3) {
+			arrType = extractArrayFiTypeFromExp(args[0]);
+			Quadruple(makeArrayFnForFiType(arrType, [arrType], id), id, take(args, 3), None());
 		} else {
 			defNum = length(args);
+			nativeFn = find(concatA(getTreeValues(flowWiNatives)), \p -> p.nativeName == id);
 			argNumber = eitherMap(find(concatA(getTreeValues(flowWiNatives)), \p -> p.nativeName == id), \v -> length(v.type.args), defNum);
-			Triple(exp, id, take(args, if (argNumber > defNum) defNum else argNumber));
+			Quadruple(exp, id, take(args, if (argNumber > defNum) defNum else argNumber), nativeFn ?? nativeFn.makeOperation : None());
 		},
-		Triple(exp, "", args)
+		Quadruple(exp, "", args, None())
 	);
 }
 
@@ -1210,7 +1260,7 @@ wiExp2string(fnId : string, exp : FlowWiExp, parent : Maybe<FlowWiExp>, structs 
 				FlowWiRefType(__) : wiType2string(opttype);
 			}
 			newBody = if (length(brace.expsemi) > 1) rtrim2(ltrim2(body, "{"), "}") else body;
-			id + " : " + varType + " = {" + wiExpDef2string(e) + "};"
+			(if (i == 1) "var " else "") + id + " : " + varType + " = {" + wiExpDef2string(e) + "};"
 			+ eol + newBody;
 		}
 		// FlowWiWasmOp(s : string, wargs : [FlowWiWarg], exps : [FlowWiExp]);
@@ -1262,7 +1312,7 @@ wiAtom2string(fnId : string, exp : FlowWiAtom, parent : Maybe<FlowWiExp>, struct
 			flowWiTuple2string(exp, structs, mergeTree(polyParams, structPolyParams), e2s);
 		}
 		FlowWiVar(id) : wiVar2string(id, parent);
-		FlowWiSet(id, e) : id + " := " + wiseAst2string(e, structs, polyFns) + ";";
+		FlowWiSet(id, e) : id + " := " + wiseAst2string(e, structs, polyFns);
 		FlowWiIf(exp1, exp2) : {
 			"if (" + e2s(exp1) + ") {"
 			+ eol + e2s(exp2) + eol

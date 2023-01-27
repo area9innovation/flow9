@@ -496,6 +496,12 @@ class RenderSupport {
 		var openPrintDialog = function () {
 			forceRender();
 			PixiStage.onImagesLoaded(function () {
+				if (forceOnAfterprint) {
+					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI. 
+					PixiStage.once("drawframe", function() {
+						emit("afterprint");
+					});
+				}
 				Browser.window.print();
 			});
 		};
@@ -925,6 +931,7 @@ class RenderSupport {
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
 	private static var printMode = false;
+	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
@@ -950,6 +957,7 @@ class RenderSupport {
 		}, false);
 
 		Browser.window.addEventListener('afterprint', function () {
+			forceOnAfterprint = false;
 			if (printMode) {
 				DisplayObjectHelper.InvalidateRenderable = prevInvalidateRenderable;
 				printMode = false;
