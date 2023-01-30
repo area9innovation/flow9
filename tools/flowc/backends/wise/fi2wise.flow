@@ -141,11 +141,19 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]
 	newBody = foldr(orderedStructs, FlowWiWaseEmpty(), \acc, fn ->
 		fiFunctionDec2FlowWiFunction(newState, fn, containsSet(exportNames, fn.name), acc)
 	);
-
 	extendedBody = foldSet(^(newState.compareFnTypes), newBody, \acc, type -> {
 		newDecl = makeFlowWiComparatorFn(type, newState.tmpVarCounter);
 		FlowWiFunction(newDecl with decl = acc);
 	});
+
+	bodyWithGlobals = fold(module.globalVars, extendedBody, \acc, v -> FlowWiGlobal(
+		v.name,
+		if (containsSet(exportNames, v.name)) "1" else "0", // optexport
+		fiType2FlowWiType(v.type, newState.getStructFields),
+		0, // optmutable // TODO: ref?
+		fiExp2FlowWiExp(newState, v.value, makeTree(), true), // TODO: scopeTemplates ?
+		acc
+	));
 
 	// TODO: imports if necessary
 	systemImports = [
@@ -161,7 +169,7 @@ fiModule2FlowWiseAst(state : FiWiseState, module : FiModule, includes : [string]
 		relativePath = takeBeforeLast(relatingPath(filePath, "../"), ".wise", "");
 		if (relativePath == "") None() else Some(relativePath);
 	});
-	imports = fold(uniq(concat(systemImports, userImports)), extendedBody, \acc, v -> FlowWiFlowWiseInclude(v, acc));
+	imports = fold(uniq(concat(systemImports, userImports)), bodyWithGlobals, \acc, v -> FlowWiFlowWiseInclude(v, acc));
 
 	imports;
 }
@@ -1183,21 +1191,26 @@ wiseAst2string(code : FlowWiseAst, structs : WiseAstStructs, polyFns : Tree<stri
 }
 
 wiDecl2string(decl : FlowWiDecl, structs : WiseAstStructs, polyFns : Tree<string, Pair<FiTypeFunction, Tree<string, string>>>) -> string {
+	var2str = \optexport, id -> "\n" + (if (s2b(optexport)) "export " else " ")
+			+ wiVar2string(id, None());
 	switch (decl : FlowWiDecl) {
 		FlowWiFunction(id, optexport, templates, lambdaargs, type, e, decl2) : {
-			parentExp = None();
-			"\n" + (if (s2b(optexport)) "export " else " ")
-			+ wiVar2string(id, parentExp)
+			var2str(optexport, id)
 			+ (if (templates == []) "" else "[" + strGlue(templates, ",")+ "]")
 			+ "(" + strGlue(map(lambdaargs, \a -> wiseAst2string(a, structs, polyFns)), ", ") + ")"
 			+ " -> " + wiType2stringForFn(type)
 			+ " {\n"
 			+ "\t" + initMemory(id, structs) + "\n"
-			+ "\t" + wiExp2string(id, e, parentExp, structs, polyFns)
+			+ "\t" + wiExp2string(id, e, None(), structs, polyFns)
 			+ "\n}\n"
 			+ wiDecl2string(decl2, structs, polyFns);
 		}
-		FlowWiGlobal(id, optexport, type, optmutable, expression, decl2) : "TODO Decl[" + toString(decl)+"]";
+		FlowWiGlobal(id, optexport, type, optmutable, e, decl2) : {
+			// optmutable
+			var2str(optexport, id) + " : " + wiType2stringForFn(type)
+			+ " = " + wiExp2string("", e, None(), structs, polyFns) + "; \n"
+			+ wiDecl2string(decl2, structs, polyFns);
+		}
 		FlowWiImport(id1, type, optmutable, id2, id3, decl2) : "TODO Decl[" + toString(decl)+"]";
 		FlowWiWaseEmpty() : "";
 		FlowWiFlowWiseInclude(s, decl2) : {
