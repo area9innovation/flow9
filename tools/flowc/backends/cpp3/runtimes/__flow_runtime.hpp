@@ -12,76 +12,84 @@
 #include <iomanip>
 #include <type_traits>
 #include <map>
+#include <unordered_map>
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <tuple>
+#include <any>
+#include <typeindex>
+#include <typeinfo>
 #endif
 
 // C++ runtime for flow
 
 namespace flow {
 
-#define PERCEUS_REFS
+inline void fail(const std::string& msg) { throw std::runtime_error(msg); }
 
-// Reference counting pointer. Essential for memory managing.
-template<typename T>
-struct Ptr {
-	Ptr(): ptr(nullptr) { }
-	Ptr(const T* p): ptr(p) { inc(); }
-	~Ptr() { dec(); }
-	Ptr(Ptr&& p): ptr(p.ptr) { p.ptr = nullptr; }
-	Ptr(const Ptr& p): ptr(p.ptr) { inc(); }
-	template<typename T1>
-	Ptr(Ptr<T1>&& p): ptr(static_cast<const T*>(p.ptr)) { p.ptr = nullptr; }
-	template<typename T1>
-	Ptr(const Ptr<T1>& p): ptr(static_cast<const T*>(p.ptr)) { inc(); }
-
-	//template<typename T1>
-	//Ptr& operator = (const T1* p1) { is_smart = p1.is_smart; dec(); ptr = static_cast<const T*>(p1); inc(); return *this; }
-	//template<typename T1>
-	//Ptr& operator = (Ptr<T1> p1) { is_smart = p1.is_smart; dec(); ptr = static_cast<const T*>(p1.ptr); inc(); return *this; }
-
-	Ptr& operator = (Ptr&& p) { dec(); ptr = p.ptr; p.ptr = nullptr; return *this; }
-	Ptr& operator = (const Ptr& p) { dec(); ptr = p.ptr; inc(); return *this; }
-
-	const T& operator *() { return *ptr; }
-	const T* operator ->() { return ptr; }
-	const T* get() { return ptr; }
-	//const T* release() { dec(); const T* ret = ptr; ptr = nullptr; return ret; }
-
-	const T& operator *() const { return *ptr; }
-	const T* operator ->() const { return ptr; }
-	const T* get() const { return ptr; }
-	//const T* release() const { dec(); const T* ret = ptr; ptr = nullptr; return ret; }
-
-	operator bool() const { return ptr; }
-	bool isSameObj(const Ptr& p) const { return ptr == p.ptr; }
-
-	template<typename... As>
-	static Ptr<T> make(As... as) { return new T(std::move(as)...); }
-	template<typename T1>
-	static Ptr<T> make(std::initializer_list<T1> il) { return new T(std::move(il)); }
-
-	inline void inc() const {
-		#ifndef PERCEUS_REFS
-		ptr->incRefs(); 
-		#endif
-	}
-	inline void dec() const {
-		#ifndef PERCEUS_REFS 
-		if (ptr) ptr->decRefs(); 
-		#endif
-	}
-
-	const T* ptr;
-};
-
-enum Type {
+enum TypeFx {
 	VOID = 0, // special void type - technically it is nullptr_t
 	INT = 1,   BOOL = 2, DOUBLE = 3, STRING = 4, NATIVE = 5, // primary types
 	ARRAY = 6, REF = 7,  FUNC = 8,   STRUCT = 9,             // complex types
-	UNKNOWN = -1
+	// These types can't be met in runtime, but are used in RTTI markup
+	UNKNOWN = -1, FLOW = -2, PARAMETER = -3
 };
+
+// Types with id values < 9 are from TypeFx, others are structs. 
+
+using TypeId = int32_t;
+
+// Flow internally uses utf-16 string format
+
+using string = std::u16string;
+
+// Runtime type information: structs
+
+struct FieldDef {
+	string name;
+	TypeId type;
+};
+
+struct StructDef {
+	string name;
+	TypeId type;
+	std::vector<FieldDef> args;
+};
+
+struct RTTI {
+	// List of names for the types in TypeFx
+	static const string type_names[];
+	// Sequence of all struct definitions
+	static std::vector<StructDef> struct_defs;
+	static const string& typeName(TypeId id) {
+		if (id < 0) return type_names[0]; else
+		if (id < 9) return type_names[id + 1]; else
+		if (id - 9 < struct_defs.size()) {
+			return struct_defs.at(id - 9).name;
+		} else {
+			return type_names[0];
+		}
+	}
+	static const StructDef& structDef(TypeId id) {
+		if (id - 9 + 1 < struct_defs.size()) {
+			return struct_defs.at(id - 8);
+		} else {
+			// Special struct def - undefined.
+			return struct_defs.at(0);
+		}
+	}
+	static int structField(TypeId id, const string& field) {
+		int i = 0;
+		for (auto& arg : struct_defs.at(id).args) {
+			if (arg.name == field) break;
+			i += 1;
+		}
+		return i;
+	}
+};
+
+// Basic types
 
 using Void = nullptr_t;
 const Void void_value = nullptr;
@@ -90,9 +98,6 @@ const Void void_value = nullptr;
 using Int = int32_t;
 using Bool = bool;
 using Double = double;
-using string = std::u16string;
-
-string type2s(Int type);
 
 // String conversions
 
@@ -117,898 +122,637 @@ inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else {
 inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }	
 inline Bool string2bool(const string& s) { return s != u"false"; }
 
-// Base class for object classes, 
-// at the same time general dynamic type, which may be any other
+// Forward declaration of all types
 
-struct AFlow;
-using Flow = Ptr<AFlow>;
+struct Flow;
+struct String;
+struct Native;
+template<TypeId Id, typename... Fs> struct Str;
+template<typename T> struct Vec;
+template<typename T> struct Ref;
+template<typename R, typename... As> struct Fun;
 
-// Flow wrappers to scalar types
+// Predicate for compile-time type resolution
 
-struct FInt;
-struct FBool;
-struct FDouble;
+template<TypeId Id, typename T> struct is_type { enum { result = false }; };
+template<> struct is_type<TypeFx::VOID, Void> { enum { result = true }; };
+template<> struct is_type<TypeFx::INT, Int> { enum { result = true }; };
+template<> struct is_type<TypeFx::BOOL, Bool> { enum { result = true }; };
+template<> struct is_type<TypeFx::DOUBLE, Double> { enum { result = true }; };
+template<> struct is_type<TypeFx::STRING, String*> { enum { result = true }; };
+template<> struct is_type<TypeFx::NATIVE, Native*> { enum { result = true }; };
+template<typename T> struct is_type<TypeFx::ARRAY, Vec<T>> { enum { result = true }; };
+template<typename T> struct is_type<TypeFx::REF, Ref<T>> { enum { result = true }; };
+template<typename R, typename... As> struct is_type<TypeFx::FUNC, Fun<R, As...>> { enum { result = true }; };
+template<TypeId Id1, TypeId Id2, typename... Fs> struct is_type<Id1, Str<Id2, Fs...>> { enum { result = true }; };
+template<TypeId Id, typename T> constexpr bool is_type_v = is_type<Id, T>::result;
 
-// Non-polymorphic non-scalar types
+template<typename T> struct is_struct { enum { result = false }; };
+template<TypeId Id, typename... Fs> struct is_struct<Str<Id, Fs...>> { enum { result = true }; };
+template<typename T> constexpr bool is_struct_v = is_struct<T>::result;
 
-struct VString;
-struct VNative;
+template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer<T>>;
 
-using String = Ptr<VString>;
-using Native = Ptr<VNative>;
+template<typename T1, typename T2> T2 cast(T1 x);
+template<typename T> Int compare(T v1, T v2);
+template<typename T> inline Bool equal(T v1, T v2) { return compare(v1, v2) == 0; }
+template<typename T> inline String* toString(T v);
+template<typename T> inline void toString(T v, string& str);
 
-// Abstract compound types
+template<typename T> inline void rc(T x, Int d) {
+	if constexpr (std::is_pointer_v<T>) { x->rc_ += d; if (x->rc_ == 0) delete x; }
+}
 
-struct AStr;
-struct AVec;
-struct ARef;
-struct AFun;
+template<typename T> inline T incRc(T x) {
+	if constexpr (std::is_pointer_v<T>) { ++x->rc_; } return x;
+}
 
-using PStr = Ptr<AStr>;
-using PVec = Ptr<AVec>;
-using PRef = Ptr<ARef>;
-using PFun = Ptr<AFun>;
+// Dynamic wrapper for all values 
 
-
-// Specific polymiphic types for particular type parameters
-
-template<typename T> struct Vector;
-template<typename T> struct Reference;
-template<typename R, typename... As> struct Function;
-
-// Reference-counting Pointers to compound types. Are passed all-around as variables/values.
-
-template<typename T> using Str = Ptr<T>;
-template<typename T> using Vec = Ptr<Vector<T>>;
-template<typename T> using Ref = Ptr<Reference<T>>;
-template<typename R, typename... As> using Fun = Ptr<Function<R, As...>>;
-
-typedef uint32_t RefCount_t;
-
-struct AFlow {
-	enum { TYPE = Type::UNKNOWN };
-	#ifdef PERCEUS_REFS
-	AFlow(): refs(1) { }
-	#else
-	AFlow(): refs(0) { }
-	#endif
-	AFlow(const AFlow& f) = delete;
-	virtual ~AFlow() { }
-	virtual Int type() const = 0;
-
-	// Direct getters - don't do any conversion
-	Void getVoid() const;
-	Int getInt() const;
-	Bool getBool() const;
-	Double getDouble() const;
-	String getString() const;
-	Native getNative() const;
-	PStr getAStr() const;
-	PVec getAVec() const;
-	PRef getARef() const;
-	PFun getAFun() const;
-
-	// Indirect getters - may perform conversions
-	Int toInt() const;
-	Bool toBool() const;
-	Double toDouble() const;
-	String toString() const;
-	Native toNative() const;
-	PStr toAStr() const;
-	PVec toAVec() const;
-	PRef toARef() const;
-	PFun toAFun() const;
-
-	template<typename T> Str<T> toStr() const;
-	template<typename T> Vec<T> toVec() const;
-	template<typename T> Ref<T> toRef() const;
-	template<typename R, typename... As> Fun<R, As...> toFun() const;
-
-	bool isSameObj(Flow f) const;
-
-	inline void incRefs() const { 
-		++ refs; 
-	}
-	inline void decRefs() const { 
-		if (-- refs == 0) {
-			delete this; 
-		}
-	}
-	inline void checkRefs() const {
-		if (-- refs == 0) {
-			delete this;
-		}
-	}
-
-	//mutable std::atomic<uint32_t> refs;
-	mutable RefCount_t refs;
+struct Flow {
+	Flow(): rc_(1) {}
+	virtual ~Flow() {}
+	virtual TypeId typeId() const = 0;
+	virtual Int size() const { return 0; }
+	virtual Flow* getFlow(Int i) { fail("invalid flow value getter"); return nullptr; }
+	virtual void setFlow(Int i, Flow* v) { fail("invalid flow value setter"); }
+	virtual Flow* callFlow(Flow*...) { fail("invalid flow value getter"); return nullptr; }
+	template<typename T> inline T get() { return dynamic_cast<T>(this); }
+	Int rc_;
 };
 
-template<typename T> struct IsScalar { enum { value = false }; };
-template<> struct IsScalar<Int> { enum { value = true }; };
-template<> struct IsScalar<Bool> { enum { value = true }; };
-template<> struct IsScalar<Double> { enum { value = true }; };
+struct FVoid : public Flow { virtual TypeId typeId() const override { return TypeFx::VOID; } };
+struct FInt : public Flow { FInt(Int v): val(v) {} virtual TypeId typeId() const override { return TypeFx::INT; } Int val; };
+struct FBool : public Flow { FBool(Bool v): val(v) {} virtual TypeId typeId() const override { return TypeFx::BOOL; } Bool val; };
+struct FDouble : public Flow { FDouble(Double v): val(v) {} virtual TypeId typeId() const override { return TypeFx::DOUBLE; } Double val; };
 
-struct FVoid : public AFlow {
-	enum { TYPE = Type::VOID };
-	FVoid() { }
-	Int type() const override { return Type::VOID; }
-};
-struct FInt : public AFlow {
-	enum { TYPE = Type::INT };
-	FInt(Int v): val(v) { }
-	Int type() const override { return Type::INT; }
-	const Int val;
-};
-struct FBool : public AFlow {
-	enum { TYPE = Type::BOOL };
-	FBool(Bool v): val(v) { }
-	Int type() const override { return Type::BOOL; }
-	const Bool val;
-}; 
-struct FDouble : public AFlow {
-	enum { TYPE = Type::DOUBLE };
-	FDouble(Double v): val(v) { }
-	Int type() const override { return Type::DOUBLE; }
-	const Double val;
-};
+template<> inline Void Flow::get<Void>() { return void_value; }
+template<> inline Int Flow::get<Int>() { return dynamic_cast<FInt*>(this)->val; }
+template<> inline Bool Flow::get<Bool>() { return dynamic_cast<FBool*>(this)->val; }
+template<> inline Double Flow::get<Double>() { return dynamic_cast<FDouble*>(this)->val; }
 
-struct VString : public AFlow {
-	enum { TYPE = Type::STRING };
-	VString(): str() { }
-	VString(const std::string& s): str(std2string(s)) { }
-	VString(const string& s): str(s) { }
-	VString(string&& s): str(std::move(s)) { }
-	VString(const char16_t* s): str(s) { }
-	VString(const char16_t* s, Int len): str(s, len) { }
-	VString(char16_t c): str(1, c) { }
-	VString(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
-	VString(const VString& s): str(s.str) { }
-	VString(Ptr<VString> s): str(s->str) { }
-	Int type() const override { return Type::STRING; }
+struct String : public Flow {
+	enum { TYPE = TypeFx::STRING };
+	String(): str() { }
+	String(const std::string& s): str(std2string(s)) { }
+	String(const string& s): str(s) { }
+	String(string&& s): str(std::move(s)) { }
+	String(const char16_t* s): str(s) { }
+	String(const char16_t* s, Int len): str(s, len) { }
+	String(char16_t c): str(1, c) { }
+	String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
+	//String(String* s): str(s->str) { }
+
+	String(const String& s): str(s.str) { }
+	String(String&& s): str(std::move(s.str)) { }
+
+	template<typename... As>
+	static String* make(As... as) { return new String(as...); }
+
+	TypeId typeId() const override { return TypeFx::STRING; }
 	std::string toStd() const { return string2std(str); }
+
+	String& operator = (const String& s) { str = s.str; return *this; }
+	String& operator = (String&& s) { str = s.str; return *this; }
 
 	string str;
 };
 
-inline String concatStrings(String s1, String s2) {
-	//if (s1->refs > 2) {
-		string ret;
-		ret.reserve(s1->str.size() + s2->str.size());
-		ret += s1->str;
-		s1->decRefs();
-		ret += s2->str;
-		s2->decRefs();
-		return String::make(ret);
-	/*} else {
-		//std::cout << "Shortcut for concatStrings, s1->size()=" << s1->str.size() << ", s2->size()" << s2->str.size() << std::endl;
-		const_cast<string&>(s1->str) += s2->str;
-		return s1;
-	}*/
+inline String* concatStrings(String* s1, String* s2) {
+	string ret;
+	ret.reserve(s1->str.size() + s2->str.size());
+	ret += s1->str;
+	ret += s2->str;
+	return new String(ret);
 }
 
-struct VNative : public AFlow {
-	enum { TYPE = Type::NATIVE };
-	VNative(const AFlow* w): nat(const_cast<AFlow*>(w)), release([](void* x) { static_cast<AFlow*>(x)->decRefs(); }), is_wrapper(true) { w->incRefs(); }
-	VNative(void* n, std::function<void(void*)> r): nat(n), release(r), is_wrapper(false) { }
-	~VNative() override { release(nat); }
-	Int type() const override { return Type::NATIVE; }
-	template<typename T> T* cast() const { return static_cast<T*>(nat); }
-	Flow toFlow() const { return is_wrapper ? static_cast<AFlow*>(nat) : this; }
-
-	mutable void* nat;
-	std::function<void(void*)> release;
-	bool is_wrapper;
+struct Native : public Flow {
+	enum { TYPE = TypeFx::NATIVE };
+	constexpr static TypeId typeId_() { return TypeFx::NATIVE; }
+	template<typename T>
+	Native(T v): val(v) { if constexpr (is_flow_ancestor_v<T>) rc(v, +1); }
+	~Native() override {
+		try {
+			rc(std::any_cast<Flow*>(val), -1);
+		} catch(const std::bad_any_cast& e) { }
+	}
+	TypeId typeId() const override { return TypeFx::NATIVE; }
+	template<typename T> 
+	T get() {
+		try {
+			rc(std::any_cast<Flow*>(val), -1);
+		} catch(const std::bad_any_cast& e) { 
+			fail("incorrect type in native");
+		}
+	}
+private:
+	std::any val;
 };
 
-struct AStr : public AFlow {
-	// Type is specified in ancestor classes
-	virtual String name() const = 0;
-	virtual Int size() const = 0;
-	// Get field by index
-	virtual Flow getFlowField(Int i) const = 0;
-	// Get field bu name
-	virtual Flow getFlowField(String name) const = 0;
-	// Mutable fields ! therefore const qualifier is kept.
-	virtual void setFlowField(Int i, Flow val) const = 0;
-	virtual void setFlowField(String name, Flow val) const = 0;
+// Any particular struct
+
+template<TypeId Id, typename... Fs>
+struct Str : public Flow {
+	enum { TYPE = Id, SIZE = sizeof...(Fs) };
+	using Fields = std::tuple<Fs...>;
+	Str(Fs... fs): fields(fs...) { rcFields<0>(+1); }
+	~Str() override { rcFields<0>(-1); }
+
+	template<Int i>
+	void rcFields(Int delta) {
+		if constexpr(i < SIZE) {
+			rc(std::get<i>(fields), delta);
+			rcFields<i + 1>(delta);
+		}
+	}
+
+	static Str* make(Fs... fs) { return new Str(fs...); }
+
+	TypeId typeId() const override { return TYPE; }
+	Int size() const override { return sizeof...(Fs); }
+
+	Flow* getFlow(Int i) override {
+		return getFlow_<0>(i);
+	}
+	template<Int i>
+	Flow* getFlow_(Int j) {
+		if constexpr(i == SIZE) {
+			fail("illegal access of field by index");
+			return nullptr;
+		} else {
+			if (i == j) return cast<std::tuple_element_t<i, Fields>, Flow*>(get<i>()); else
+			return getFlow_<i + 1>(j);
+		}
+	}
+	void setFlow(Int i, Flow* v) override {
+		setFlow_<0>(i, v);
+	}
+	template<Int i>
+	void setFlow_(Int j, Flow* v) {
+		if constexpr(i == SIZE) fail("illegal access of field by index"); else {
+			if (i == j) set<i>(cast<Flow*, std::tuple_element_t<i, Fields>>(v));
+			else setFlow_<i + 1>(j, v);
+		}
+	}
+
+	Flow* getFlow(String* f) {
+		return getFlow(RTTI::structField(Id, f->str)); 
+	}
+	void setFlow(String* f, Flow* v) {
+		setFlow(RTTI::structField(Id, f->str), v);
+	}
+
+	template<Int i>
+	typename std::tuple_element_t<i, Fields> get() {
+		std::tuple_element_t<i, Fields> x = std::get<i>(fields);
+		rc(x, +1);
+		return x;
+	}
+	template<Int i>
+	void set(typename std::tuple_element_t<i, Fields> v) {
+		rc(std::get<i>(fields), -1);
+		std::get<i>(fields) = v;
+		rc(std::get<i>(fields), +1);
+	}
+	Int compare_(Str* s) const { return compare_<0>(s); }
+	template<Int i>
+	Int compare_(Str* s) const {
+		if constexpr(i == SIZE) return 0; else {
+			Int c = compare<std::tuple_element_t<i, Fields>>(
+				std::get<i>(fields), std::get<i>(s->fields)
+			);
+			if (c != 0) return c;
+			compare_<i + 1>(s);
+		}
+	}
+
+	void toStringStr(string& str) const { 
+		str.append(RTTI::typeName(TYPE));
+		str.append(u"(");
+		toStringArgs<0>(str);
+		str.append(u")");
+	}
+	template<Int i>
+	void toStringArgs(string& str) const {
+		if constexpr(i < SIZE) {
+			if (i > 0) {
+				str.append(u", ");
+			}
+			toString(std::get<i>(fields), str);
+			toStringArgs<i + 1>(str);
+		}
+	}
+private:
+	Fields fields;
 };
-
-struct AVec : public AFlow {
-	enum { TYPE = Type::ARRAY };
-	Int type() const override { return Type::ARRAY; }
-	virtual Int size() const = 0;
-	virtual Flow getFlowItem(Int i) const = 0;
-	virtual void setFlowItem(Int i, Flow val) = 0;
-};
-
-struct ARef : public AFlow {
-	enum { TYPE = Type::REF };
-	Int type() const override { return Type::REF; }
-	virtual Flow getFlowRef() const = 0;
-	// Reference is mutable by design, therefore const qualifier is kept.
-	virtual void setFlowRef(Flow r) const = 0;
-};
-
-struct AFun : public AFlow {
-	enum { TYPE = Type::FUNC };
-	Int type() const override { return Type::FUNC; }
-	virtual Int arity() const = 0;
-	// Special case of zero-ary function is added because c varargs don't admit zero arg
-	virtual Flow callFlowArgs() const = 0;
-	virtual Flow callFlowArgs(Flow args...) const = 0;
-};
-
-String flow2string(Flow f);
-
-inline Void AFlow::getVoid() const { return void_value; }
-inline Int AFlow::getInt() const { return static_cast<const FInt*>(this)->val; }
-inline Bool AFlow::getBool() const { return static_cast<const FBool*>(this)->val; }
-inline Double AFlow::getDouble() const { return static_cast<const FDouble*>(this)->val; }
-inline String AFlow::getString() const { return static_cast<const VString*>(this); }
-inline Native AFlow::getNative() const { return static_cast<const VNative*>(this); }
-inline PStr AFlow::getAStr() const { return static_cast<const AStr*>(this); }
-inline PVec AFlow::getAVec() const { return static_cast<const AVec*>(this); }
-inline PRef AFlow::getARef() const { return static_cast<const ARef*>(this); }
-inline PFun AFlow::getAFun() const { return static_cast<const AFun*>(this); }
-
-inline Int AFlow::toInt() const { 
-	switch (type()) {
-		case Type::INT:    return getInt();
-		case Type::BOOL:   return int2bool(getBool());
-		case Type::DOUBLE: return double2int(getDouble());
-		case Type::STRING: return string2int(getString()->str);
-		default:           return 0;
-	}
-}
-inline Bool AFlow::toBool() const { 
-	switch (type()) {
-		case Type::INT:    return int2bool(getInt());
-		case Type::BOOL:   return getBool();
-		case Type::DOUBLE: return double2bool(getDouble());
-		case Type::STRING: return string2bool(getString()->str);
-		default:           return false;
-	}
-}
-inline Double AFlow::toDouble() const { 
-	switch (type()) {
-		case Type::INT:    return int2double(getInt());
-		case Type::BOOL:   return bool2double(getBool());
-		case Type::DOUBLE: return getDouble();
-		case Type::STRING: return string2double(getString()->str);
-		default:           return 0.0;
-	}
-}
-inline String AFlow::toString() const {
-	if (type() == Type::STRING) {
-		return getString();
-	} else {
-		return flow2string(this);
-	}
-}
-inline Native AFlow::toNative() const { 
-	if (type() == Type::NATIVE) {
-		return getNative(); 
-	} else {
-		return Native::make(this);
-	}
-}
-inline PStr AFlow::toAStr() const { return getAStr(); }
-inline PVec AFlow::toAVec() const { return getAVec(); }
-inline PRef AFlow::toARef() const { return getARef(); }
-inline PFun AFlow::toAFun() const { return getAFun(); }
-
-template<typename T1> struct Cast { 
-	template<typename T2> struct To   { static T2 conv(T1 x); };
-	template<typename T2> struct From { static T1 conv(T2 x); };
-};
-
-template<typename T> struct Compare;
-template<typename T> struct Equal { bool operator() (T v1, T v2) const { return Compare<T>::cmp(v1, v2) == 0; } };
-template<> struct Compare<Void> { static Int cmp(Void v1, Void v2) { return 0; } };
-template<> struct Compare<Bool> { static Int cmp(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
-template<> struct Compare<Int> { static Int cmp(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
-template<> struct Compare<Double> { static Int cmp(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
-template<> struct Compare<void*> { static Int cmp(void* v1, void* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
-template<> struct Compare<const void*> { static Int cmp(const void* v1, const void* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); } };
-template<> struct Compare<String> { static Int cmp(String v1, String v2) { Int ret = v1->str.compare(v2->str); v1->checkRefs(); v2->checkRefs(); return ret; } };
-template<> struct Compare<Native> { static Int cmp(Native v1, Native v2) { Int ret = Compare<void*>::cmp(v1->nat, v2->nat); v1->checkRefs(); v2->checkRefs(); return ret; } };
-
-template<typename T> struct RefCount { 
-	static void inc(T x) { 
-		#ifdef PERCEUS_REFS
-		x->incRefs(); 
-		#endif
-	} 
-	static void dec(T x) { 
-		#ifdef PERCEUS_REFS
-		x->decRefs(); 
-		#endif
-	}
-	static bool check(T x) { 
-		#ifdef PERCEUS_REFS
-		x->checkRefs(); 
-		#endif
-	}
-	static RefCount_t refs(T x) { 
-		#ifdef PERCEUS_REFS
-		x->refs; 
-		#endif
-	} 
-};
-template<> struct RefCount<Int> { static void inc(Int x) { } static void dec(Int x) { } static void check(Int x) { } static RefCount_t refs(Int x) { return 1; } };
-template<> struct RefCount<Bool> { static void inc(Bool x) { } static void dec(Bool x) { } static void check(Bool x) { } static RefCount_t refs(Bool x) { return 1; }};
-template<> struct RefCount<Double> { static void inc(Double x) { } static void dec(Double x) { } static void check(Double x) { } static RefCount_t refs(Double x) { return 1; }};
-
-const uint32_t FNV_offset_basis = 0x811C9DC5;
-const uint32_t FNV_prime = 16777619;
-
-template<typename T> uint32_t hash(uint32_t h, T v);
-template<> inline uint32_t hash(uint32_t h, Bool v) { 
-	return (h ^ static_cast<uint8_t>(v)) * FNV_prime; 
-}
-template<> inline uint32_t hash(uint32_t h, Int v) {
-	uint32_t v1 = static_cast<uint32_t>(v);
-	h = (h ^ ( v1        & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 8)  & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 16) & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 24) & 0xFF)) * FNV_prime;
-	return h;
-}
-template<> inline uint32_t hash(uint32_t h, uint64_t v1) { 
-	h = (h ^ ( v1        & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 8)  & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 16) & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 24) & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 32) & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 40) & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 48) & 0xFF)) * FNV_prime;
-	h = (h ^ ((v1 >> 56) & 0xFF)) * FNV_prime;
-	return h;
-}
-template<> inline uint32_t hash(uint32_t h, Double v) { 
-	return hash<uint64_t>(h, static_cast<uint64_t>(v));
-}
-template<> inline uint32_t hash(uint32_t h, void* v) { 
-	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(v));
-}
-template<> inline uint32_t hash(uint32_t h, const void* v) { 
-	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(v));
-}
-template<> inline uint32_t hash(uint32_t h, String v) {
-	for (char16_t c : v->str) {
-		h = (h ^ ( c       & 0xFF)) * FNV_prime;
-		h = (h ^ ((c >> 8) & 0xFF)) * FNV_prime;
-	}
-	return h; 
-}
-template<> inline uint32_t hash(uint32_t h, Native n) { 
-	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(n->nat));
-}
-template<> uint32_t hash(uint32_t h, Flow n);
-
-template<typename T> struct Hash { inline size_t operator() (T n) const { return hash(FNV_offset_basis, n); } };
 
 template<typename T> 
-struct Vector : public AVec {
-	typedef std::vector<T> Vect;
-	typedef typename Vect::const_iterator const_iterator;
-	typedef typename Vect::iterator iterator;
+struct Vec : public Flow {
+	enum { TYPE = TypeFx::ARRAY };
+	using ElType = T;
+	using const_iterator = typename std::vector<T>::const_iterator;
+	using iterator = typename std::vector<T>::iterator;
 
-	Vector(): vect() { }
-	Vector(std::size_t s): vect() { vect.reserve(s); }
-	Vector(std::initializer_list<T> il): vect(il) { /*for (T x : vect) RefCount<T>::inc(x);*/ }
-	Vector(const Vect& v): vect(v) { /*for (T x : vect) RefCount<T>::inc(x);*/ }
-	Vector(Vect&& v): vect(std::move(v)) { }
-	Vector(Vector&& a): vect(std::move(a.vect)) { }
-	Vector(const Vector& a): vect(a.vect) { /*for (T x : vect) RefCount<T>::inc(x);*/ }
-	~Vector() override { for (T x : vect) RefCount<T>::dec(x); }
+	Vec(): vect() { }
+	Vec(std::size_t s): vect() { vect.reserve(s); }
+	Vec(std::initializer_list<T>&& il): vect(std::move(il)) { rcVect(+1); }
+	Vec(const std::vector<T>& v): vect(v) { rcVect(+1); }
+	Vec(std::vector<T>&& v): vect(std::move(v)) { rcVect(+1); }
+	Vec(Vec&& a): vect(std::move(a.vect)) { }
+	Vec(const Vec& a): vect(a.vect) { rcVect(+1); }
+	~Vec() override { rcVect(-1); }
+	void rcVect(Int delta) { for (T x : vect) rc(x, delta); }
 
-	Vector& operator = (const Vector& a) {
-		for (T x : vect) RefCount<T>::dec(x);
+	Vec& operator = (const Vec& a) {
+		rcVect(-1);
 		vect.operator=(a.vect);
-		for (T x : vect) RefCount<T>::inc(x);
+		rcVect(+1);
 		return *this;
 	}
-	Vector& operator = (Vector&& a) {
-		for (T x : vect) RefCount<T>::dec(x); 
+	Vec& operator = (Vec&& a) {
+		rcVect(-1);
 		vect.operator=(std::move(a.vect));
 		return *this;
 	}
+	template<typename... As>
+	static Vec* make(As... as) { return new Vec(as...); }
+	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
 
-	// AVec interface
-	Int size() const override { return static_cast<Int>(vect.size()); }
-	Flow getFlowItem(Int i) const override { return Cast<T>::template To<Flow>::conv(getItem(i)); }
-	void setFlowItem(Int i, Flow x) override { setItem(i, Cast<Flow>::template To<T>::conv(x)); }
+	TypeId typeId() const override { return TYPE; }
 
 	// std::vector interface
 	const_iterator begin() const { return vect.begin(); }
 	const_iterator end() const { return vect.end(); }
 	iterator begin() { return vect.begin(); }
 	iterator end(){ return vect.end(); }
-	void push_back(T x) { RefCount<T>::inc(x); vect.push_back(x); }
 
 	// general interface
-	T getItem(Int i) const { return vect.at(i); }
-	void setItem(Int i, T x) { RefCount<T>::dec(vect[i]); vect[i] = x; RefCount<T>::inc(vect[i]); }
+	Int size() const { return static_cast<Int>(vect.size()); }
+	Flow* getFlow(Int i) override { return cast<ElType, Flow*>(get(i)); }
+	void setFlow(Int i, Flow* v) override { set(i, cast<Flow*, ElType>(v)); }
+	void push_back(ElType x) {
+		rc(x, +1);
+		vect.push_back(x);
+	}
 
-	Int compare(Vec<T> a) const;
-
-	Vect vect;
+	ElType get(Int i) {
+		ElType x = vect.at(i);
+		rc(x, +1);
+		return x; 
+	}
+	void set(Int i, ElType x) { 
+		rc(vect[i], -1);
+		vect[i] = x;
+		rc(vect[i], +1);
+	}
+private:
+	std::vector<ElType> vect;
 };
 
-/*
-template<typename T>
-const Vector<T>* concatVecs(const Vector<T>* v1, const Vector<T>* v2) {
-	if (v1->refs > 1) {
-		std::vector<T> ret;
-		ret.reserve(v1->size() + v2->size());
-		for(T x : *v1) ret.push_back(x);
-		for(T x : *v2) ret.push_back(x);
-		return new Vector<T>(std::move(ret));
-	} else {
-		//std::cout << "Shortcut for concatVecs, v1->size()=" << v1->vect.size() << ", v2->size()=" << v2->vect.size() << std::endl;
-		std::vector<T>& ret = const_cast<std::vector<T>&>(v1->vect);
-		for(T x : *v2) ret.push_back(x);
-		//std::cout << "Resulting v1->size()=" << v1->vect.size() << ", ret.size()=" << ret.size() << std::endl;
-		return v1;
-	}
-}*/
-/*
-template<typename T>
-Vec<T> concatVecs1(Vec<T> v1, Vec<T> v2) {
-	if (v1->refs > 2) {
-		std::cout << "concatVecs, v1->refs=" << v1->refs << std::endl;
-		std::vector<T> ret;
-		ret.reserve(v1->size() + v2->size());
-		for(T x : *v1) ret.push_back(x);
-		for(T x : *v2) ret.push_back(x);
-		return new Vector<T>(std::move(ret));
-	} else {
-		std::cout << "Shortcut for concatVecs, v1->size()=" << v1->vect.size() << ", v2->size()=" << v2->vect.size() << std::endl;
-		std::vector<T>& ret = const_cast<std::vector<T>&>(v1->vect);
-		for(T x : *v2) ret.push_back(x);
-		std::cout << "Resulting v1->size()=" << v1->vect.size() << ", ret.size()=" << ret.size() << std::endl;
-		return v1;
-	}
-}
-*/
 template<typename T> 
-struct Reference : public ARef {
-	Reference() { }
-	Reference(T r): val(r) { /*RefCount<T>::inc(val);*/ }
-	Reference(const Reference& r): val(r.val) { /*RefCount<T>::inc(val);*/ }
-	Reference(Reference&& r): val(std::move(r.val)) { }
-	~Reference() override { RefCount<T>::dec(val); }
+struct Ref : public Flow {
+	enum { TYPE = TypeFx::REF };
+	using RefType = T;
+	Ref() { }
+	Ref(T r): val(r) { rc(val, +1); }
+	Ref(const Ref& r): val(r.val) { rc(val, +1); }
+	Ref(Ref&& r): val(std::move(r.val)) { }
+	~Ref() override { rc(val, -1); }
 
-	Reference& operator = (Reference&& r) {
-		RefCount<T>::dec(val);
+	Ref& operator = (Ref&& r) {
+		rc(val, -1);
 		val = std::move(r.val);
 		return *this;
 	}
-	Reference& operator = (const Reference& r) { 
-		RefCount<T>::dec(val);
-		val = r.val; 
-		//RefCount<T>::inc(val);
+	Ref& operator = (const Ref& r) { 
+		rc(val, -1);
+		val = r.val;
+		rc(val, +1); 
 		return *this;
 	}
 
-	// ARef interface
-	Flow getFlowRef() const override { return Cast<T>::template To<Flow>::conv(getRef()); }
-	void setFlowRef(Flow r) const override { setRef(Cast<Flow>::template To<T>::conv(r)); }
+	template<typename... As>
+	static Ref* make(As... as) { return new Ref(as...); }
+
+	TypeId typeId() const override { return TypeFx::REF; }
+
+	Flow* getFlow(Int i) override { return cast<RefType, Flow*>(get()); }
+	void setFlow(Int i, Flow* v) override { set(cast<Flow*, RefType>(v)); }
 
 	// T-specific getter/setter
-	T getRef() const { return val; }
-	void setRef(T v) const { 
-		RefCount<T>::dec(val); 
-		val = v; 
-		//RefCount<T>::inc(val); 
+	T get() {
+		rc(val, +1);
+		return val; 
 	}
-
-	Int compare(Ref<T> r) const { return Compare<T>::cmp(val, r->val); }
-
-	mutable T val;
+	void set(T v) { 
+		rc(val, -1);
+		val = v;
+		rc(val, +1);
+	}
+private:
+	T val;
 };
 
 template<typename R, typename... As> 
-struct Function : public AFun, public std::function<R(As...)> {
-	typedef std::function<R(As...)> Fn;
-	enum { ARITY = sizeof...(As) };
-	Function() {}
-	Function(Fn&& f): Fn(std::move(f)) { }
-	Function(const Fn& f): Fn(f) { }
+struct Fun : public Flow, public std::function<R(As...)> {
+	enum { TYPE = TypeFx::FUNC, ARITY = sizeof...(As) };
+	using RetType = R;
+	using Args = std::tuple<As...>;
+	using Fn = std::function<R(As...)>;
 
-	Function(Fn&& f, Vector<Flow>&& cl): Fn(std::move(f)), closure(std::move(cl)) { }
-	Function(const Fn& f, const Vector<Flow>& cl): Fn(f), closure(cl) { }
-	Function(const Function& f): Fn(f), closure(f.closure) { }
-	Function(Function&& f): Fn(std::move(f)), closure(std::move(f.closure)) { }
+	Fun() {}
+	Fun(Fn&& f): Fn(std::move(f)) { }
+	Fun(const Fn& f): Fn(f) { }
 
-	// AFun interface
-	Int arity() const override { return ARITY; }
-	Flow callFlowArgs() const override {
-		if constexpr (ARITY == 0) {
-			return Cast<R>::template To<Flow>::conv(Fn::operator()());
-		} else {
-			std::cerr << "arity mismatch: actual " << ARITY << " while used as: " << 0 << std::endl;
-			exit(1);
-			return nullptr;
-		}
+	Fun(Fn&& f, Vec<Flow*>&& cl): Fn(std::move(f)), closure(std::move(cl)) { }
+	Fun(const Fn& f, const Vec<Flow*>& cl): Fn(f), closure(cl) { }
+	Fun(const Fun& f): Fn(f), closure(f.closure) { }
+	Fun(Fun&& f): Fn(std::move(f)), closure(std::move(f.closure)) { }
+
+	template<typename... As1>
+	static Fun* make(As1... as) { return new Fun(as...); }
+
+	TypeId typeId() const override { return TYPE; }
+
+	inline R call(As... as) const { return Fn::operator()(as...); }
+	/*inline R call(Args as) const {
+		return [as]<std::size_t... I>(std::index_sequence<I...>)
+			{ return call(std::get<I>(as)...); }
+			(std::make_index_sequence<ARITY>{});
+	}*/
+	Flow* callFlow(Flow* as...) override { 
+		return cast<R, Flow*>(Fn::operator()(cast<Flow*, As>(as)...)); 
 	}
-	Flow callFlowArgs(Flow as...) const override {
-		return Cast<R>::template To<Flow>::conv(
-			Fn::operator()(Cast<Flow>::template To<As>::conv(as)...)
-		);
-	}
-	inline R call(As... as) const {
-		return Fn::operator()(as...);
-	}
-	Vector<Flow> closure;
+private:
+	Vec<Flow*> closure;
 };
 
-//using Union = PStr;
+// Cast templates: from any type to any
 
-template<int... TS>
-struct Union {
-	Union(): un() { }
-	Union(const PStr& u): un(u) { check(); }
-	Union(PStr&& u): un(std::move(u)) { check(); }
-
-	template<typename T>
-	Union(const Str<T>& s): un(s) { check(); }
-	template<typename T>
-	Union(Str<T>&& s): un(std::move(s)) { check(); }
-
-	Union(const Union& u): un(u.un) { }
-	Union(Union&& u): un(std::move(u.un)) { }
-	template<int... TS1>
-	Union(const Union<TS1...>& u): un(u.un) { check(); }
-	template<int... TS1>
-	Union(Union<TS1...>&& u): un(std::move(u.un)) { check(); }
-
-	void check() const {
-		std::vector<Int> types = {TS...};
-		Int tp = un->type();
-		for (Int t: types) {
-			if (t == tp) {
-				return;
-			}
-		}
-		std::cerr << "Type " << string2std(type2s(un->type())) << " is not contained in union of types:" << std::endl;
-		for (Int t : types) {
-			std::cerr << string2std(type2s(t)) << ", ";
-		}
-		std::cerr << std::endl;
-		throw std::exception();
-		exit(1);
-	}
-	Union& operator = (Union&& u) { un.operator = (std::move(u.un)); check(); return *this; }
-	Union& operator = (const Union& u) { un.operator = (std::move(u.un)); check(); return *this; }
-
-	const AStr& operator *() { return un.operator*(); }
-	const AStr* operator ->() { return un.operator->(); }
-	const AStr* get() { return un.get(); }
-
-	const AStr& operator *() const { return un.operator*(); }
-	const AStr* operator ->() const { return un.operator->(); }
-	const AStr* get() const { return un.get(); }
-
-	PStr un;
-};
-
-template<typename T> Str<T> AFlow::toStr() const { 
-	if (const T* t = dynamic_cast<const T*>(this)) {
-		return t;
-	} else {
-		return T::fromAStr(toAStr());
-	}
-}
-template<typename T> Vec<T> AFlow::toVec() const {   
-	if (const Vector<T>* t = dynamic_cast<const Vector<T>*>(this)) {
-		return t;
-	} else {
-		PVec a = toAVec();
-		std::vector<T> ret;
-		ret.reserve(a->size());
-		for (Int i = 0; i < a->size(); ++ i) {
-			ret.push_back(Cast<Flow>::To<T>::conv(a->getFlowItem(i)));
-		}
-		return Vec<T>::make(std::move(ret));
-	}
-}
-template<typename T> Ref<T> AFlow::toRef() const { 
-	if (const Reference<T>* t = dynamic_cast<const Reference<T>*>(this)) {
-		return t;
-	} else {
-		// TODO: fix this!
-		return Ref<T>::make(Cast<Flow>::To<T>::conv(toARef()->getFlowRef()));
-	}
-}
-template<typename R, typename... As> Fun<R, As...> AFlow::toFun() const {
-	if (const Function<R, As...>* t = dynamic_cast<const Function<R, As...>*>(this)) {
-		return t;
-	} else {
-		PFun f = toAFun();
-		if constexpr (Function<R, As...>::ARITY == 0) {
-			return Fun<R, As...>::make([f]() mutable { 
-				return Cast<Flow>::template To<R>::conv(f->callFlowArgs()); 
-			});
-		} else {
-			return Fun<R, As...>::make([f](As... as) mutable { 
-				return Cast<Flow>::template To<R>::conv(f->callFlowArgs(Cast<As>::template To<Flow>::conv(as)...)); 
-			});
-		}
-	}
-}
-
-// Default cast fillers: all are not available. Available ones will be set by partial specialization
-
-template<typename T> struct BiCast { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Void> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Int> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Bool> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Double> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<String> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Native> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<> struct BiCast<Flow> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<int... TS> struct BiCast<Union<TS...>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<typename T> struct BiCast<Vec<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<typename T> struct BiCast<Ref<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<typename R, typename... As> struct BiCast<Fun<R, As...>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-template<typename T> struct BiCast<Str<T>> { template<typename> struct From { static constexpr bool is_available() { return false; } }; template<typename> struct To { static constexpr bool is_available() { return false; } }; };
-
-// BiCast<Void>
-
-template<> struct BiCast<Void>::From<Flow> { static Void conv(Flow x) { return void_value; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Void> { static Flow conv(Void x) { return Ptr<FVoid>::make(); } static constexpr bool is_available() { return true; } };
-
-// BiCast<Int>
-
-template<> struct BiCast<Int>::From<Bool> { static Int conv(Bool x) { return bool2int(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::To<Bool> { static Bool conv(Int x) { return int2bool(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::To<Double> { static Double conv(Int x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::From<Double> { static Int conv(Double x) { return double2int(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::To<String> { static String conv(Int x) { return String::make(int2string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::From<String> { static Int conv(String x) { return string2int(x->str); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::To<Flow> { static Flow conv(Int x) { return Ptr<FInt>::make(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Int>::From<Flow> { static Int conv(Flow x) { return x->toInt(); } static constexpr bool is_available() { return true; } };
-
-// BiCast<Bool>
-
-template<> struct BiCast<Bool>::To<Int> { static Int conv(Bool x) { return bool2int(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::From<Int> { static Bool conv(Int x) { return int2bool(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::To<Double> { static Double conv(Bool x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::From<Double> { static Bool conv(Double x) { return double2bool(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::To<String> { static String conv(Bool x) { return String::make(bool2string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::From<String> { static Bool conv(String x) { return string2bool(x->str); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::To<Flow> { static Flow conv(Bool x) { return Ptr<FBool>::make(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Bool>::From<Flow> { static Bool conv(Flow f) { return f->toBool(); } static constexpr bool is_available() { return true; } };
-
-// BiCast<Double>
-
-template<> struct BiCast<Double>::To<Int> { static Int conv(Double x) { return double2int(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::From<Int> { static Double conv(Int x) { return int2double(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::To<Bool> { static Bool conv(Double x) { return double2bool(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::From<Bool> { static Double conv(Bool x) { return bool2double(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::To<String> { static String conv(Double x) { return String::make(double2string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::From<String> { static Double conv(String x) { return string2double(x->str); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::To<Flow> { static Flow conv(Double x) { return Ptr<FDouble>::make(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Double>::From<Flow> { static Double conv(Flow f) { return f->toDouble(); } static constexpr bool is_available() { return true; } };
-
-// BiCast<String>
-
-template<> struct BiCast<String>::To<Int> { static Int conv(String x) { return string2int(x->str); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::From<Int> { static String conv(Int x) { return String::make(int2string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::To<Bool> { static Bool conv(String x) { return string2bool(x->str); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::From<Bool> { static String conv(Bool x) { return String::make(bool2string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::To<Double> { static Double conv(String x) { return string2double(x->str); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::From<Double> { static String conv(Double x) { return String::make(double2string(x)); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::To<Flow> { static Flow conv(String x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<String>::From<Flow> { static String conv(Flow x) { return x->toString(); } static constexpr bool is_available() { return true; } };
-
-// BiCast<Native>
-
-template<> struct BiCast<Native>::To<Flow> { static Flow conv(Native x) { return x->toFlow(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Native>::From<Flow> { static Native conv(Flow x) { return x->toNative(); } static constexpr bool is_available() { return true; } };
-
-// BiCast<Flow>
-
-template<> struct BiCast<Flow>::To<Int>      { static Int conv(Flow x) { return x->toInt(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Int>    { static Flow conv(Int x) { return Ptr<FInt>::make(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<Bool>     { static Bool conv(Flow x) { return x->toBool(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Bool>   { static Flow conv(Bool x) { return Ptr<FBool>::make(x); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<Double>   { static Double conv(Flow x) { return x->toDouble(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Double> { static Flow   conv(Double d)  { return Ptr<FDouble>::make(d); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<String>   { static String conv(Flow x)   { return x->toString(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<String> { static Flow   conv(String x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<Native>   { static Native conv(Flow x)   { return x->toNative(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<Native> { static Flow   conv(Native x) { return x->toFlow(); } static constexpr bool is_available() { return true; } };
-
-template<> template<int... TS> struct BiCast<Flow>::To<Union<TS...>>   { static Union<TS...> conv(Flow x) { return x->toAStr(); } static constexpr bool is_available() { return true; } };
-template<> template<int... TS> struct BiCast<Flow>::From<Union<TS...>> { static Flow conv(Union<TS...> x) { return x.get(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<AVec>   { static PVec conv(Flow x) { return x->toAVec(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<AVec> { static Flow conv(PVec x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<ARef>   { static PRef conv(Flow x) { return x->toARef(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<ARef> { static Flow conv(PRef x) { return x; } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::To<AFun>   { static PFun conv(Flow x) { return x->toAFun(); } static constexpr bool is_available() { return true; } };
-template<> struct BiCast<Flow>::From<AFun> { static Flow conv(PFun x) { return x; } static constexpr bool is_available() { return true; } };
-
-template<> template<typename R, typename... As> struct BiCast<Flow>::To<Fun<R, As...>>   { static Fun<R, As...> conv(Flow x) { return x->toFun<R, As...>(); } static constexpr bool is_available() { return true; } };
-template<> template<typename R, typename... As> struct BiCast<Flow>::From<Fun<R, As...>> { static Flow conv(Fun<R, As...> x) { return x; } static constexpr bool is_available() { return true; } };
-template<> template<typename T> struct BiCast<Flow>::To<Str<T>>   { static Str<T> conv(Flow x) { return x->toStr<T>(); } static constexpr bool is_available() { return true; } };
-template<> template<typename T> struct BiCast<Flow>::From<Str<T>> { static Flow conv(Str<T> x) { return x; } static constexpr bool is_available() { return true; } };
-template<> template<typename T> struct BiCast<Flow>::To<Vec<T>>   { static Vec<T> conv(Flow x) { return x->toVec<T>(); } static constexpr bool is_available() { return true; } };
-template<> template<typename T> struct BiCast<Flow>::From<Vec<T>> { static Flow conv(Vec<T> x) { return x; } static constexpr bool is_available() { return true; } };
-template<> template<typename T> struct BiCast<Flow>::To<Ref<T>>   { static Ref<T> conv(Flow x) { return x->toRef<T>(); } static constexpr bool is_available() { return true; } };
-template<> template<typename T> struct BiCast<Flow>::From<Ref<T>> { static Flow conv(Ref<T> x) { return x; } static constexpr bool is_available() { return true; } };
-
-// BiCast<Str<T>>
-
-template<typename T> template<typename T1> struct BiCast<Str<T>>::To<Str<T1>> { static Str<T1> conv(Str<T> x) { return T1::fromAStr(x.ptr); } static constexpr bool is_available() { return static_cast<int>(T1::TYPE) == static_cast<int>(Type::STRUCT); } };
-template<typename T> template<typename T1> struct BiCast<Str<T>>::From<Str<T1>> { static Str<T> conv(Str<T1> x) { return T::fromAStr(x.ptr); } static constexpr bool is_available() { return static_cast<int>(T::TYPE) == static_cast<int>(Type::STRUCT);  } };
-
-// BiCast<Union<TS...>>
-
-template<int... TS> template<typename T> struct BiCast<Union<TS...>>::To<Str<T>> {
-	static constexpr bool is_available() { return static_cast<int>(T::TYPE) == static_cast<int>(Type::STRUCT); }
-	static Str<T> conv(Union<TS...> x) { 
-		if (const T* s = dynamic_cast<const T*>(x.get())) {
-			return s;
-		} else {
-			return T::fromAStr(x.get()); 
-		}
-	} 
-};
-template<int... TS> template<typename T> struct BiCast<Union<TS...>>::From<Str<T>> {
-	static constexpr bool is_available() { return true; }
-	static Union<TS...> conv(Str<T> x) { return x; } 
-};
-
-template<int... TS> template<int... TS1> struct BiCast<Union<TS...>>::To<Union<TS1...>> {
-	static constexpr bool is_available() { return true; }
-	static Union<TS1...> conv(Union<TS...> x) { return x; } 
-};
-
-template<int... TS> template<int... TS1> struct BiCast<Union<TS...>>::From<Union<TS1...>> {
-	static constexpr bool is_available() { return true; }
-	static Union<TS...> conv(Union<TS1...> x) { return x; } 
-};
-
-
-// BiCast<Vec<T>>
-
-template<typename T> template<typename T1> struct BiCast<Vec<T>>::To<Vec<T1>> {
-	static constexpr bool is_available() { return true; }
-	static Vec<T1> conv(Vec<T> x) { return x->template toVec<T1>(); } 
-};
-template<typename T> template<typename T1> struct BiCast<Vec<T>>::From<Vec<T1>> {
-	static constexpr bool is_available() { return true; }
-	static Vec<T> conv(Vec<T1> x) { return x->template toVec<T>(); } 
-};
-
-
-// BiCast<Ref<T>>
-
-template<typename T> template<typename T1> struct BiCast<Ref<T>>::To<Ref<T1>> {
-	static constexpr bool is_available() { return true; }
-	static Ref<T1> conv(Ref<T> x) { return x->template toRef<T1>(); } 
-};
-template<typename T> template<typename T1> struct BiCast<Ref<T>>::From<Ref<T1>> {
-	static constexpr bool is_available() { return true; }
-	static Ref<T> conv(Ref<T1> x) { return x->template toRef<T>(); }
-};
-
-// BiCast<Fun<R, As...>>
-
-template<typename R, typename... As> 
-template<typename R1, typename... As1> 
-struct BiCast<Fun<R, As...>>::To<Fun<R1, As1...>> {
-	static constexpr bool is_available() { return true; }
-	static Fun<R1, As1...> conv(Fun<R, As...> x) { return x->template toFun<R1, As1...>(); } 
-};
-template<typename R, typename... As> 
-template<typename R1, typename... As1> 
-struct BiCast<Fun<R, As...>>::From<Fun<R1, As1...>> {
-	static constexpr bool is_available() { return true; }
-	static Fun<R, As...> conv(Fun<R1, As1...> x) { return x->template toFun<R, As...>(); } 
-};
-
-template<typename T1> 
-template<typename T2> 
-T2 Cast<T1>::To<T2>::conv(T1 x) {
+template<typename T1, typename T2>
+inline T2 cast(T1 x) {
 	if constexpr (std::is_same_v<T1, T2>) {
 		return x;
-	} else if constexpr (BiCast<T1>::template To<T2>::is_available()) {
-		typedef typename BiCast<T1>::template To<T2> Conv;
-		return Conv::conv(x);
+	} else if constexpr (std::is_same_v<T2, Void>) {
+		if constexpr (std::is_same_v<T1, Void>) { return void_value; }
 	} else {
-		typedef typename BiCast<T2>::template From<T1> Conv;
-		return Conv::conv(x);
-	}
-}
-
-template<typename T1> 
-template<typename T2> 
-T1 Cast<T1>::From<T2>::conv(T2 x) {
-	if constexpr (std::is_same_v<T1, T2>) {
-		return x;
-	} else if constexpr (BiCast<T1>::template To<T2>::is_available()) {
-		typedef typename BiCast<T1>::template From<T2> Conv;
-		return Conv::conv(x);
-	} else {
-		typedef typename BiCast<T2>::template To<T1> Conv;
-		return Conv::conv(x);
-	}
-}
-
-template<typename T>
-Int Vector<T>::compare(Vec<T> a) const { 
-	Int c1 = Compare<Int>::cmp(vect.size(), a->vect.size());
-	if (c1 != 0) {
-		return c1;
-	} else {
-		for (std::size_t i = 0; i < vect.size(); ++ i) {
-			Int c2 = Compare<T>::cmp(getItem(i), a->getItem(i));
-			if (c2 != 0) {
-				return c2;
+		T2 ret;
+		if constexpr (std::is_same_v<T2, Flow*>) {
+			if constexpr (std::is_same_v<T1, Bool>) { ret = new FBool(x); }
+			else if constexpr (std::is_same_v<T1, Int>) { ret = new FInt(x); }
+			else if constexpr (std::is_same_v<T1, Double>) { ret = new FDouble(x); }
+			else if constexpr (std::is_same_v<T1, Void>) { ret = new FVoid(); }
+			else if constexpr (std::is_same_v<T1, Native*>) {
+				try {
+					ret = std::any_cast<Flow*>(x->val);
+				} catch(const std::bad_any_cast& e) {
+					ret = x;
+				}
+			}
+			else if constexpr (std::is_pointer_v<T1>) ret = x;
+		}
+		else if constexpr (std::is_same_v<T2, Int>) {
+			if constexpr (std::is_same_v<T1, Bool>) { ret = bool2int(x); }
+			else if constexpr (std::is_same_v<T1, Double>) { ret = double2int(x); }
+			else if constexpr (std::is_same_v<T1, String*>) { ret = string2int(x); }
+			else if constexpr (std::is_same_v<T1, Flow*>) {
+				switch (x->typeId()) {
+					case TypeFx::INT:    ret = x->template get<Int>();
+					case TypeFx::BOOL:   ret = bool2int(x->template get<Bool>());
+					case TypeFx::DOUBLE: ret = double2int(x->template get<Double>());
+					case TypeFx::STRING: ret = string2int(x->template get<String*>()->str);
+					default:             fail("invalid conversion to int");
+				}
+			}
+			else if constexpr (std::is_same_v<T1, Native*>) {
+				try {
+					ret = std::any_cast<Int>(x->val);
+				} catch(const std::bad_any_cast& e) {
+					fail("invalid conversion to int");
+				}
 			}
 		}
-		return 0;
+		else if constexpr (std::is_same_v<T2, Bool>) {
+			if constexpr (std::is_same_v<T1, Int>) { ret = int2bool(x); }
+			else if constexpr (std::is_same_v<T1, Double>) { ret = double2bool(x); }
+			else if constexpr (std::is_same_v<T1, String*>) { ret = string2bool(x); }
+			else if constexpr (std::is_same_v<T1, Flow*>) {
+				switch (x->typeId()) {
+					case TypeFx::INT:    ret = int2bool(x->template get<Int>());
+					case TypeFx::BOOL:   ret = x->template get<Bool>();
+					case TypeFx::DOUBLE: ret = double2bool(x->template get<Double>());
+					case TypeFx::STRING: ret = string2bool(x->template get<String*>()->str);
+					default:             fail("invalid conversion to bool");
+				}
+			}
+			else if constexpr (std::is_same_v<T1, Native*>) {
+				try {
+					ret = std::any_cast<Bool>(x->val);
+				} catch(const std::bad_any_cast& e) {
+					fail("invalid conversion to bool");
+				}
+			}
+		}
+		else if constexpr (std::is_same_v<T2, Double>) {
+			if constexpr (std::is_same_v<T1, Int>) { ret = int2double(x); }
+			else if constexpr (std::is_same_v<T1, Bool>) { ret = bool2double(x); }
+			else if constexpr (std::is_same_v<T1, String*>) { ret = string2double(x); }
+			else if constexpr (std::is_same_v<T1, Flow*>) {
+				switch (x->typeId()) {
+					case TypeFx::INT:    ret = int2double(x->template get<Int>());
+					case TypeFx::BOOL:   ret = bool2double(x->template get<Bool>());
+					case TypeFx::DOUBLE: ret = x->template get<Double>();
+					case TypeFx::STRING: ret = string2double(x->template get<String*>()->str);
+					default:             fail("invalid conversion to double");
+				}
+			}
+			else if constexpr (std::is_same_v<T1, Native*>) {
+				try {
+					ret = std::any_cast<Double>(x->val);
+				} catch(const std::bad_any_cast& e) {
+					fail("invalid conversion to double");
+				}
+			}
+		}
+		else if constexpr (std::is_same_v<T2, String*>) {
+			if constexpr (std::is_same_v<T1, Int>) { ret = int2string(x); }
+			else if constexpr (std::is_same_v<T1, Bool>) { ret = bool2string(x); }
+			else if constexpr (std::is_same_v<T1, Double>) { ret = double2string(x); }
+			else ret = flow2string(x);
+		}
+		else if constexpr (std::is_same_v<T2, Native*>) {
+			if constexpr (std::is_same_v<T1, Flow*>) {
+				ret = x;
+			} else {
+				ret = new Native(x);
+			}
+		}
+		else if constexpr (std::is_pointer_v<T2>) {
+			using V2 = std::remove_pointer<T2>::type;
+			if constexpr (is_type_v<TypeFx::ARRAY, T2>) {
+				if constexpr (std::is_same_v<T1, Flow*>) {
+					ret = new V2(x->size());
+					for (Int i = 0; i < x->size(); ++ i) {
+						ret->vect.push_back(cast<Flow*, typename V2::ElType>(x->getFlow(i)));
+					}
+				} else {
+					using V1 = std::remove_pointer<T1>::type;
+					ret = new V2(x->size());
+					for (Int i = 0; i < x->size(); ++ i) {
+						ret->vect.push_back(cast<typename V1::ElType, typename V2::ElType>(x->get(i)));
+					}
+				}
+			}
+			else if constexpr (is_type_v<TypeFx::REF, T2>) {
+				if constexpr (std::is_same_v<T1, Flow*>) {
+					ret = new V2(cast<Flow*, typename V2::RefType>(x->getFlow(0)));
+				} else {
+					using V1 = std::remove_pointer<T1>::type;
+					T2 ret = new V2(x->size());
+					ret = new V2(cast<typename V1::RefType, typename V2::RefType>(x->get()));
+				}
+			}
+			else if constexpr (is_type_v<TypeFx::FUNC, T2>) {
+				if constexpr (std::is_same_v<T1, Flow*>) {
+					ret = new V2([x](auto... as) mutable {
+						return cast<Flow*, typename V2::RetType>(
+							x->callFlow(cast<typename V2::ArgTypes, Flow*>(as)...)
+						); 
+					});
+				} else {
+					using V1 = std::remove_pointer<T1>::type;
+					ret = new V2([x](auto... as) mutable {
+						return cast<typename V1::RetType, typename V2::RetType>(
+							x->call(cast<typename V2::ArgTypes, typename V1::ArgTypes>(as)...)
+						); 
+					});
+				}
+			}
+			else if constexpr (is_struct_v<V2>) {
+				if constexpr (std::is_same_v<T1, Flow*>) {
+					using V2_Fields = typename V2::Fields;
+					ret = [x]<std::size_t... I>(std::index_sequence<I...>) { 
+						return new V2(
+							cast<Flow*, std::tuple_element_t<I, V2_Fields>>(x->get(I))...
+						);
+					}
+					(std::make_index_sequence<V2::SIZE>{});
+				} else {
+					using V1 = std::remove_pointer<T1>::type;
+					using V1_Fields = typename V1::Fields;
+					using V2_Fields = typename V2::Fields;
+					ret = [x]<std::size_t... I>(std::index_sequence<I...>) { 
+						return new V2(
+							cast<std::tuple_element_t<I, V1_Fields>, std::tuple_element_t<I, V2_Fields>>(std::get<I>(x->fields))...
+						);
+					}
+					(std::make_index_sequence<V2::SIZE>{});
+				}
+			} else {
+				fail("unknown type");
+			}
+		}
+		/*if constexpr (std::is_scalar_v<T1>) {
+			RefCount<T1>::dec(x);
+		}*/
+		return ret;
 	}
 }
 
-Int compareFlow(Flow v1, Flow v2);
+// General comparison functions
 
-template<> struct Compare<Flow> {
-	static Int cmp(Flow v1, Flow v2) { return compareFlow(v1, v2); }
-};
+Int compareFlow(Flow* v1, Flow* v2);
 
 template<typename T>
-struct Compare<Vec<T>> {
-	static Int cmp(Vec<T> v1, Vec<T> v2) { return v1->compare(v2); }
-};
-
-template<typename T>
-struct Compare<Ref<T>> {
-	static Int cmp(Ref<T> v1, Ref<T> v2) { return v1->compare(v2); }
-};
-
-template<typename T>
-struct Compare<Str<T>> {
-	static Int cmp(Str<T> v1, Str<T> v2) { 
+inline Int compare(T v1, T v2) {
+	if (std::is_same_v<T, Void>) return 0;
+	else if constexpr (std::is_scalar_v<T> || std::is_same_v<T, void*>) return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);
+	else if constexpr (std::is_same_v<T, Flow*>) return compareFlow(v1, v2);
+	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
+		Int c1 = compare<Int>(v1->size(), v2->size());
+		if (c1 != 0) {
+			return c1;
+		} else {
+			for (std::size_t i = 0; i < v1->vect.size(); ++ i) {
+				Int c2 = compare<typename T::ElType>(v1->get(i), v2->get(i));
+				if (c2 != 0) {
+					return c2;
+				}
+			}
+			return 0;
+		}
+	}
+	else if constexpr (is_type_v<TypeFx::REF, T>) {
+		return compare<typename T::RefType>(v1->get(), v2->get()); 
+	}
+	else if constexpr (is_type_v<TypeFx::FUNC, T> || is_type_v<TypeFx::NATIVE, T>) {
+		return compare<void*>(v1, v2); 
+	}
+	else if constexpr (is_struct_v<T>) {
 		if (!v1) return -1; else
-		if (!v2) return 1; else
-		return v1->compare(v2); 
+		if (!v2) return 1; else {
+			return v1->compare(v2);
+		}
 	}
-};
-
-template<int... TS>
-struct Compare<Union<TS...>> {
-	static Int cmp(Union<TS...> v1, Union<TS...> v2) { 
-		if (!v1.get()) return -1; else
-		if (!v2.get()) return 1; else
-		return compareFlow(v1.get(), v2.get()); 
+	else {
+		fail("unknown type");
 	}
-};
+}
 
-template<typename R, typename... As>
-struct Compare<Fun<R, As...>> {
-	static Int cmp(Fun<R, As...> v1, Fun<R, As...> v2) { return Compare<const void*>::cmp(v1.ptr, v2.ptr); }
-};
+// Convert any value to string
 
-struct FieldDef {
-	string name;
-	string type;
-	bool isMutable;
-};
+String* flow2string(Flow* f);
 
-struct StructDef {
-	typedef std::function<Flow(Vec<Flow>)> Constructor;
-	Int id;
-	Constructor make;
-	std::vector<FieldDef> fields;
-};
+template<typename T>
+inline String* toString(T v) {
+	string str;
+	toString(v, str);
+	return new String(str);
+}
 
-extern string struct_names[];
-extern Int struct_count;
+void appendEscaped(String* x, string& str);
+
+template<typename T>
+inline void toString(T v, string& str) {
+	if (std::is_same_v<T, Void>) str.append(u"{}");
+	else if constexpr (std::is_same_v<T, Int>) str.append(int2string(v));
+	else if constexpr (std::is_same_v<T, Bool>) str.append(bool2string(v));
+	else if constexpr (std::is_same_v<T, Double>) str.append(int2string(v));
+	else if constexpr (std::is_same_v<T, String*>) appendEscaped(v, str);
+	else if constexpr (std::is_same_v<T, Flow*>) str.append(flow2string(v));
+	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
+		str.append(u"[");
+		bool first = true;
+		for (Int i = 0; i < v->size(); ++i) {
+			if (!first) {
+				str.append(u", ");
+			}
+			toString(v->get(i), str);
+			first = false;
+		}
+		str.append(u"]");
+	}
+	else if constexpr (is_type_v<TypeFx::REF, T>) {
+		str.append(u"ref ");
+		toString(v->get(), str);
+	}
+	else if constexpr (is_type_v<TypeFx::FUNC, T>) {
+		str.append(u"<function>");
+	}
+	else if constexpr (is_type_v<TypeFx::NATIVE, T>) {
+		str.append(u"<native>");
+	}
+	else if constexpr (is_struct_v<T>) {
+		v->toStringStr(str);
+	}
+}
+
+template<typename T> inline void show_rc(const char* lab, T x) {
+	if constexpr (std::is_pointer_v<T>) {
+		String* s = toString(x);
+		std::cout << lab << " " << s->toStd() << "->rc = " << x->rc_ << std::endl;
+	}
+}
+
 
 }

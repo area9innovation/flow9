@@ -1,4 +1,5 @@
 import ds/array;
+import ds/multiset;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/statements/fs_transform;
 
@@ -30,7 +31,7 @@ fsExpPerceus(e: FsExp, name: string) -> FsExp {
 	}*/
 	e2 = fsExpFirstVarUsage(e1, makeSet()).first;
 	fsExpTransform(fsDoExpPerceus(e2), fsStatOptimize, idfn);
-	//fsDoExpPerceus(e1);
+	//fsDoExpPerceus(e2);
 }
 
 MemOps(pre: [FsMemory], post: [FsMemory]);
@@ -121,23 +122,30 @@ fsDoStatPerceus(s: FsStat, env: FsPerceusEnv) -> FsStat {
 }
 
 fsExpMemOps(ex: FsExp) -> MemOps {
-	vars1 = set2array(fsExpVars(ex, makeSet()));
-	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.type) && !fsVarIsGlobalFunc(v.traits));
+	vars1 = multiSet2pairs(fsExpVars(ex, makeMultiSet()));
+	if (exists(vars1, \p -> p.second > 1)) {
+		println("exists(vars1, \\p -> p.second > 1):\n" + fsExp2s(ex));
+	}
+	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.first.type) && !fsVarIsGlobalFunc(v.first.traits));
 	// Filter out arguemnt vars, which are used exactly once in each go-through function body path 
 	vars = filter(vars2, \v -> 
-		switch (v.traits.kind) {
+		switch (v.first.traits.kind) {
 			FsVarTmp(): false;
 			default: true;
 		}
 	);
-	to_dup = \v -> !v.traits.lastUse;
-	to_drop = \v -> false && !fiTypeIsScalar(v.type) && !fsVarIsGlobalFunc(v.traits) && v.traits.lastUse;
+	to_dup = \v -> {
+		c1 = if (v.first.traits.lastUse) v.second - 1 else v.second;
+		// Global variables should be bumped ref counter by 1
+		if (fsVarIsGlobal(v.first.traits)) c1 + 1 else c1;
+	}
+	to_drop = \v -> -v.second;
 	MemOps(
 		filtermap(vars, \v -> 
-			if (to_dup(v)) Some(FsMemory(FsIncRC(), v, v.start)) else None()
+			if (to_dup(v) == 0) None() else Some(FsMemory(FsRC(to_dup(v)), v.first, v.first.start))
 		),
-		filtermap(vars, \v -> 
-			if (to_drop(v)) Some(FsMemory(FsDecRC(), v, v.start)) else None()
+		map(vars, \v -> 
+			FsMemory(FsRC(to_drop(v)), v.first, v.first.start)
 		)
 	);
 	/*
@@ -154,19 +162,19 @@ fsExpMemOps(ex: FsExp) -> MemOps {
 	*/
 }
 
-fsExpVars(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
+fsExpVars(ex: FsExp, vars: MultiSet<FsVar>) -> MultiSet<FsVar> {
 	switch (ex) {
 		FsCall(f, args, type,__): {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
 		}
 		FsLambda(toplevel, closure, args, body, type,__): {
-			fold(closure, vars, \acc, x -> insertSet(acc, x));
+			fold(closure, vars, \acc, x -> insertMultiSet(acc, x));
 		}
 		FsCallPrim(op, es, type,__): {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
 		}
 		FsVar(name,__,__,__): {
-			insertSet(vars, ex);
+			insertMultiSet(vars, ex);
 		}
 		FiString(s, __): vars;
 		FiVoid(__):      vars;
@@ -176,7 +184,7 @@ fsExpVars(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
 	}
 }
 
-fsStatLocals(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
+fsStatLocals(ex: FsExp, vars: MultiSet<FsVar>) -> MultiSet<FsVar> {
 	switch (ex) {
 		FsCall(f, args, type,__): {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
@@ -188,7 +196,7 @@ fsStatLocals(ex: FsExp, vars: Set<FsVar>) -> Set<FsVar> {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
 		}
 		FsVar(name, __,__,__): {
-			insertSet(vars, ex);
+			insertMultiSet(vars, ex);
 		}
 		FiString(s, __): vars;
 		FiVoid(__):      vars;
@@ -224,10 +232,6 @@ fsDoExpPerceus(ex: FsExp) -> FsExp {
 fsStatOptimize(s: FsStat) -> FsStat {
 	switch (s) {
 		FsSeq(ss, type,__): {
-			un_memop = \op, x -> switch (x) {
-				FsMemory(o, e, __): if (op == o) Some(e) else None();
-				default: None();
-			}
 			equal_e = \e1, e2 -> switch (e1) {
 				FsVar(name1,__,__,__):
 					switch (e2) {
@@ -236,25 +240,34 @@ fsStatOptimize(s: FsStat) -> FsStat {
 					}
 				default: false;
 			}
-			op1_op2 = \op1, op2, x1, x2 -> {
-				switch (un_memop(op1, x1)) {
-					Some(e1): {
-						switch (un_memop(op2, x2)) {
-							Some(e2): equal_e(e1, e2);
-							None(): false;
+			delta = \x1, x2 -> {
+				switch (x1) {
+					FsMemory(op1, e1, __): {
+						switch (x2) {
+							FsMemory(op2, e2, __): {
+								if (!equal_e(e1, e2)) None() else {
+									switch (op1) {
+										FsRC(d1): 
+											switch (op2) {
+												FsRC(d2): Some(Pair(d1 + d2, e1));
+												default: None();
+											}
+										default: None();
+									}
+								}
+							}
+							default: None();
 						}
 					}
-					None(): false;
+					default: None();
 				}
 			}
 			FsSeq(s with 
 				ss = transformArrayPairs(
 					mapConcat(ss, fsUnwrapSeq), 
-					\x1, x2 -> {
-						v1 = op1_op2(FsIncRC(), FsDecRC(), x1, x2);
-						v2 = op1_op2(FsDecRC(), FsIncRC(), x1, x2);
-						if (v1 || v2) Some([]) else None();
-					}
+					\x1, x2 -> maybeMap(delta(x1, x2), \p ->
+						if (p.first == 0) [] else [FsMemory(FsRC(p.first), p.second, 0)]
+					)
 				)
 			);
 		}

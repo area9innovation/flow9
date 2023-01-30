@@ -4,6 +4,11 @@
 
 namespace flow {
 
+const string RTTI::type_names[] = {
+	u"unknown", u"void",   u"int",   u"bool", u"double", 
+	u"string",  u"native", u"array", u"ref",  u"function"
+};
+
 string double2string(Double x) { 
 	static std::ostringstream os; 
 	os << std::setprecision(12) << x;
@@ -171,102 +176,80 @@ string std2string(const std::string& s) {
 	return str;
 }
 
-string type2s(Int type) { 
-	switch (type) {
-		case Type::VOID:   return u"void";
-		case Type::INT:    return u"int";
-		case Type::BOOL:   return u"bool";
-		case Type::DOUBLE: return u"double";
-		case Type::STRING: return u"string";
-		case Type::ARRAY:  return u"array";
-		case Type::REF:    return u"ref";
-		case Type::FUNC:   return u"function";
-		case Type::NATIVE: return u"native";
-		default: {
-			if (type - 8 + 1 < struct_count) {
-				return struct_names[type - 8];
-			} else {
-				return u"unknown";
-			}
-		}
-	} 
-}
-
-bool AFlow::isSameObj(Flow f) const { 
+bool isSameObj(Flow* f1, Flow* f2) {
 	bool ret = false;
-	if (type() == f->type()) {
-		switch (type()) {
-			case Type::VOID:   ret = true; break;
-			case Type::INT:    ret = getInt() == f->getInt(); break;
-			case Type::BOOL:   ret = getBool() == f->getBool(); break;
-			case Type::DOUBLE: ret = getDouble() == f->getDouble(); break;
-			case Type::STRING: ret = getString()->str == f->getString()->str; break;
-			case Type::NATIVE: ret = getNative()->nat == f->getNative()->nat;
-			default:           ret = this == f.ptr; break;
+	if (f1->typeId() == f2->typeId()) {
+		switch (f1->typeId()) {
+			case TypeFx::VOID:   ret = true; break;
+			case TypeFx::INT:    ret = (f1->get<Int>() == f2->get<Int>()); break;
+			case TypeFx::BOOL:   ret = (f1->get<Bool>() == f2->get<Bool>()); break;
+			case TypeFx::DOUBLE: ret = (f1->get<Double>() == f2->get<Double>()); break;
+			case TypeFx::STRING: ret = (f1->get<String*>()->str == f2->get<String*>()->str); break;
+			case TypeFx::NATIVE: ret = (f1 == f2); break;
+			default:             ret = (f1 == f2); break;
 		}
 	}
-	f->checkRefs();
 	return ret;
 }
 
-void flow2string(Flow v, string& str) {
-	switch (v->type()) {
-		case Type::VOID:   str.append(u"{}"); break;
-		case Type::INT:    str.append(int2string(v->getInt())); break;
-		case Type::BOOL:   str.append(bool2string(v->getBool())); break;
-		case Type::DOUBLE: str.append(double2string(v->getDouble())); break;
-		case Type::STRING: {
-			str.append(u"\"");
-			for (char16_t c : v->getString()->str) {
-				switch (c) {
-					case '"': str.append(u"\\\"");  break;
-					case '\\': str.append(u"\\\\"); break;
-					case '\n': str.append(u"\\n");  break;
-					case '\t': str.append(u"\\t");  break;
-					case '\r': str.append(u"\\r");  break;
-					default: str += c; break;
-				}
-			}
-			str.append(u"\"");
+void appendEscaped(String* x, string& str) {
+	for (char16_t c : x->str) {
+		switch (c) {
+			case '"': str.append(u"\\\"");  break;
+			case '\\': str.append(u"\\\\"); break;
+			case '\n': str.append(u"\\n");  break;
+			case '\t': str.append(u"\\t");  break;
+			case '\r': str.append(u"\\r");  break;
+			default: str += c; break;
+		}
+	}
+}
+
+void flow2string(Flow* v, string& str) {
+	switch (v->typeId()) {
+		case TypeFx::VOID:   str.append(u"{}"); break;
+		case TypeFx::INT:    str.append(int2string(v->get<Int>())); break;
+		case TypeFx::BOOL:   str.append(bool2string(v->get<Bool>())); break;
+		case TypeFx::DOUBLE: str.append(double2string(v->get<Double>())); break;
+		case TypeFx::STRING: {
+			str.append(u"\""); appendEscaped(v->get<String*>(), str); str.append(u"\"");
 			break;
 		}
-		case Type::ARRAY: {
-			PVec a = v->getAVec();
+		case TypeFx::ARRAY: {
 			str.append(u"[");
 			bool first = true;
-			for (Int i = 0; i < a->size(); ++i) {
+			for (Int i = 0; i < v->size(); ++i) {
 				if (!first) {
 					str.append(u", ");
 				}
-				flow2string(a->getFlowItem(i), str);
+				flow2string(v->getFlow(i), str);
 				first = false;
 			}
 			str.append(u"]");
 			break;
 		}
-		case Type::REF: {
+		case TypeFx::REF: {
 			str.append(u"ref ");
-			flow2string(v->getARef()->getFlowRef(), str);
+			flow2string(v->getFlow(0), str);
 			break;
 		}
-		case Type::FUNC: {
+		case TypeFx::FUNC: {
 			str.append(u"<function>"); 
 			break;
 		}
-		case Type::NATIVE: {
+		case TypeFx::NATIVE: {
 			str.append(u"<native>");
 			break;
 		}
 		default: {
-			PStr s = v->getAStr();
-			str.append(s->name()->str);
+			str.append(RTTI::typeName(v->typeId()));
 			str.append(u"(");
 			bool first = true;
-			for (Int i = 0; i < s->size(); ++ i) {
+			for (Int i = 0; i < v->size(); ++ i) {
 				if (!first) {
 					str.append(u", ");
 				}
-				flow2string(s->getFlowField(i), str);
+				flow2string(v->getFlow(i), str);
 				first = false;
 			}
 			str.append(u")");
@@ -275,32 +258,30 @@ void flow2string(Flow v, string& str) {
 	}
 }
 
-String flow2string(Flow f) { 
+String* flow2string(Flow* f) { 
 	string os; 
 	flow2string(f, os);
-	return String::make(os); 
+	return new String(os); 
 }
 
-Int compareFlow(Flow v1, Flow v2) {
+Int compareFlow(Flow* v1, Flow* v2) {
 	Int ret = 0;
-	if (v1->type() != v2->type()) {
-		ret = Compare<Int>::cmp(v1->type(), v2->type());
+	if (v1->typeId() != v2->typeId()) {
+		ret = compare<Int>(v1->typeId(), v2->typeId());
 	} else {
-		switch (v1->type()) {
-			case Type::VOID:   ret = 0; break;
-			case Type::INT:    ret = Compare<Int>::cmp(v1->getInt(), v2->getInt()); break;
-			case Type::BOOL:   ret = Compare<Bool>::cmp(v1->getBool(), v2->getBool()); break;
-			case Type::DOUBLE: ret = Compare<Double>::cmp(v1->getDouble(), v2->getDouble()); break;
-			case Type::STRING: ret = v1->getString()->str.compare(v2->getString()->str); break;
-			case Type::ARRAY: {
-				PVec a1 = v1->getAVec();
-				PVec a2 = v2->getAVec();
-				Int c1 = Compare<Int>::cmp(a1->size(), a2->size());
+		switch (v1->typeId()) {
+			case TypeFx::VOID:   ret = 0; break;
+			case TypeFx::INT:    ret = compare<Int>(v1->get<Int>(), v2->get<Int>()); break;
+			case TypeFx::BOOL:   ret = compare<Bool>(v1->get<Bool>(), v2->get<Bool>()); break;
+			case TypeFx::DOUBLE: ret = compare<Double>(v1->get<Double>(), v2->get<Double>()); break;
+			case TypeFx::STRING: ret = v1->get<String*>()->str.compare(v2->get<String*>()->str); break;
+			case TypeFx::ARRAY: {
+				Int c1 = compare<Int>(v1->size(), v2->size());
 				if (c1 != 0) {
 					ret = c1;
 				} else {
-					for (Int i = 0; i < a1->size(); ++ i) {
-						Int c2 = compareFlow(a1->getFlowItem(i), a2->getFlowItem(i));
+					for (Int i = 0; i < v1->size(); ++ i) {
+						Int c2 = compareFlow(v1->getFlow(i), v2->getFlow(i));
 						if (c2 != 0) {
 							ret = c2;
 							break;
@@ -310,35 +291,27 @@ Int compareFlow(Flow v1, Flow v2) {
 				}
 				break;
 			}
-			case Type::REF: {
-				PRef r1 = v1->getARef();
-				PRef r2 = v2->getARef();
-				Int c = compareFlow(r1->getFlowRef(), r2->getFlowRef());
+			case TypeFx::REF: {
+				Int c = compareFlow(v1->getFlow(0), v2->getFlow(0));
 				ret = c;
 				break;
 			}
-			case Type::FUNC: {
-				PFun f1 = v1->getAFun();
-				PFun f2 = v2->getAFun();
-				ret = Compare<const void*>::cmp(f1.ptr, f2.ptr);
+			case TypeFx::FUNC: {
+				ret = compare<void*>(v1, v2);
 				break;
 			}
-			case Type::NATIVE: {
-				Native n1 = v1->getNative();
-				Native n2 = v2->getNative();
-				ret = Compare<void*>::cmp(n1->nat, n2->nat);
+			case TypeFx::NATIVE: {
+				ret = compare<void*>(v1, v2);
 				break;
 			}
 			default: {
-				case Type::STRUCT: {
-					PStr s1 = v1->getAStr();
-					PStr s2 = v2->getAStr();
-					Int c1 = s1->name()->str.compare(s2->name()->str);
+				case TypeFx::STRUCT: {
+					Int c1 = RTTI::typeName(v1->typeId()).compare(RTTI::typeName(v2->typeId()));
 					if (c1 != 0) {
 						ret = c1;
 					} else {
-						for (Int i = 0; i < s1->size(); ++ i) {
-							Int c2 = compareFlow(s1->getFlowField(i), s2->getFlowField(i));
+						for (Int i = 0; i < v1->size(); ++ i) {
+							Int c2 = compareFlow(v1->getFlow(i), v2->getFlow(i));
 							if (c2 != 0) {
 								ret = c2;
 								break;
@@ -354,32 +327,84 @@ Int compareFlow(Flow v1, Flow v2) {
 	return ret;
 }
 
-template<> uint32_t hash(uint32_t h, Flow v) {
+/*
+
+const uint32_t FNV_offset_basis = 0x811C9DC5;
+const uint32_t FNV_prime = 16777619;
+
+template<typename T> uint32_t hash(uint32_t h, T v);
+template<> inline uint32_t hash(uint32_t h, Bool v) { 
+	return (h ^ static_cast<uint8_t>(v)) * FNV_prime; 
+}
+template<> inline uint32_t hash(uint32_t h, Int v) {
+	uint32_t v1 = static_cast<uint32_t>(v);
+	h = (h ^ ( v1        & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 8)  & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 16) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 24) & 0xFF)) * FNV_prime;
+	return h;
+}
+template<> inline uint32_t hash(uint32_t h, uint64_t v1) { 
+	h = (h ^ ( v1        & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 8)  & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 16) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 24) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 32) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 40) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 48) & 0xFF)) * FNV_prime;
+	h = (h ^ ((v1 >> 56) & 0xFF)) * FNV_prime;
+	return h;
+}
+template<> inline uint32_t hash(uint32_t h, Double v) { 
+	return hash<uint64_t>(h, static_cast<uint64_t>(v));
+}
+template<> inline uint32_t hash(uint32_t h, void* v) { 
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(v));
+}
+template<> inline uint32_t hash(uint32_t h, const void* v) { 
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(v));
+}
+template<> inline uint32_t hash(uint32_t h, String* v) {
+	for (char16_t c : v->str) {
+		h = (h ^ ( c       & 0xFF)) * FNV_prime;
+		h = (h ^ ((c >> 8) & 0xFF)) * FNV_prime;
+	}
+	return h; 
+}
+template<> inline uint32_t hash(uint32_t h, Native* n) { 
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(n->nat));
+}
+template<> uint32_t hash(uint32_t h, Flow* n);
+
+template<typename T> struct Hash { inline size_t operator() (T n) const { return hash(FNV_offset_basis, n); } };
+
+
+template<> uint32_t hash(uint32_t h, Flow* v) {
 	uint32_t ret = 0;
-	switch (v->type()) {
-		case Type::INT:    ret = hash(h, v->getInt()); break;
-		case Type::BOOL:   ret = hash(h, v->getBool()); break;
-		case Type::DOUBLE: ret = hash(h, v->getDouble()); break;
-		case Type::STRING: ret = hash(h, v->getString()); break;
-		case Type::ARRAY: {
-			PVec a = v->getAVec();
+	switch (v->typeId()) {
+		case TypeFx::INT:    ret = hash(h, v->get<Int>()); break;
+		case TypeFx::BOOL:   ret = hash(h, v->get<Bool>()); break;
+		case TypeFx::DOUBLE: ret = hash(h, v->get<Double>()); break;
+		case TypeFx::STRING: ret = hash(h, v->get<String*>()); break;
+		case TypeFx::ARRAY: {
+			AVec* a = v->get<AVec*>();
 			for (Int i = 0; i < a->size(); ++i) {
 				h = hash(h, a->getFlowItem(i));
 			}
 			ret = h;
 			break;
 		}
-		case Type::REF:
-			ret = hash(h, reinterpret_cast<uint64_t>(v->getARef()->getFlowRef().ptr));
+		case TypeFx::REF:
+			ret = hash(h, reinterpret_cast<uint64_t>(v->get<ARef*>()->getFlowRef().ptr));
 			break;
-		case Type::FUNC:
-			ret = hash(h, reinterpret_cast<uint64_t>(v->getAFun().ptr));
+		case TypeFx::FUNC:
+			ret = hash(h, reinterpret_cast<uint64_t>(v->get<AFun*>().ptr));
 			break;
-		case Type::NATIVE: 
-			ret = hash(h, v->getNative());
+		case TypeFx::NATIVE: 
+			ret = hash(h, v->get<Native*>());
 			break;
 		default: {
-			PStr s = v->getAStr();
+			AStr* s = v->get<AStr*>();
 			h = hash(h, s->name());
 			for (Int i = 0; i < s->size(); ++ i) {
 				h = hash(h, s->getFlowField(i));
@@ -390,5 +415,7 @@ template<> uint32_t hash(uint32_t h, Flow v) {
 	}
 	return ret;
 }
+
+*/
 
 }

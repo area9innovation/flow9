@@ -3,7 +3,8 @@ import tools/flowc/backends/cpp3/fi2cpp3_build;
 import tools/flowc/manipulation/tail_call;
 import tools/flowc/manipulation/flatten_unions;
 import tools/flowc/manipulation/wrap_funcs_as_args;
-import tools/flowc/manipulation/transform;
+import tools/flowc/manipulation/transform_decls;
+import tools/flowc/manipulation/eliminate_union_fields;
 
 export {
 	fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void;
@@ -25,27 +26,22 @@ fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, call
 fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
 	natives = fiCpp3InitNativeFuncs(cfg);
 	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeFlow());
+	// fiToplevelResolveNatives
 	resolveNatives = \prog -> fiResolveNatives(prog, \name -> containsKeyTree(natives, name));
-	uniformFuncs = \prog -> fiTransformProgramToplevel(prog, \toplevel, __,__ -> {
-		switch (toplevel) {
-			FiGlobalVar(name, value, type, declStart, defStart): {
-				switch (value) {
-					FiLambda(args, body, tp, start): {
-						[FiFunctionDec(name, value, tp, declStart, defStart)];
-					}
-					default: [toplevel];
-				}
-			}
-			default: [toplevel];
-		}
-	});
+	uniformFuncs = \prog -> fiMapProgramToplevel(prog, \toplevel, __,__ -> fiToplevelGlobalVar2Function(toplevel));
 	program = program0
-		|> resolveNatives
+		|> \p -> fiMapProgramToplevel(p, \x,__,__ -> {
+			xs = fiToplevelGlobalVar2Function(x);
+			mapConcat(xs, \y -> fiToplevelResolveNatives(y, \name -> containsKeyTree(natives, name)));
+		})
+		//|> resolveNatives
 		|> fiFlattenUnions
 		|> fiCompleteStructTypars
 		|> setImplicitTypars
 		|> fiWasmWrapFuncArgs
-		|> uniformFuncs
+		//|> uniformFuncs
+		|> fiRemoveSigletonSeqences
+		|> fiExtractCallNonScalarProgram
 	;
 	ensureDirectoryExists(cfg.outputdir);
 	structs = getTreeValues(program.names.structs);
@@ -58,7 +54,15 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		UNKNOWN = -1
 	};
 	*/
-	structs2ids = foldi(structs, makeTree(), \i, acc, struct -> setTree(acc, struct.name, i + 9));
+	structs2cpp = foldi(structs, makeTree(), \i, acc, struct -> 
+		setTree(acc, struct.name, 
+			Cpp3Struct(i + 9, struct, 
+				foldi(struct.args, makeTree(), \j, ac, arg -> 
+					setTree(ac, arg.name, Cpp3StructArg(j, arg.type))
+				)
+			)
+		)
+	);
 	vars = filtermap(getTreeValues(program.names.toplevel), \decl -> 
 		switch (decl) {
 			FiGlobalVar(__,__,__,__,__): Some(decl);
@@ -73,11 +77,11 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		collectFiEffects(program),
 		\flowfile -> strReplace(flowfile, "/", "_"),
 		structs,
-		structs2ids,
+		structs2cpp,
 		\t -> "T" + i2s(strlen(t.n)),
 		\name -> "_" + name,
 		\name -> "_" + name,
-		\name -> i2s(lookupTreeDef(structs2ids, name, -1)),
+		\name -> eitherMap(lookupTree(structs2cpp, name), \str -> i2s(str.id), ""),
 		natives,
 		fiCpp3InitRuntimeParts(cfg),
 		buildSet(map(volatile_vars, \v -> v.name)),
@@ -153,23 +157,27 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 		}
 	);
 	show_vars = \header -> superglue(non_scalar_vars, \var -> 
-		"std::cout << \"" + header + " " + var.name + "->refs = \" << " + gctx.varname2cpp(var.name) + "->refs << std::endl;",
+		"std::cout << \"" + header + " " + var.name + "->rc_ = \" << " + gctx.varname2cpp(var.name) + "->rc_ << std::endl;",
 		"\n"
 	);
-	inc_vars = superglue(non_scalar_vars, \var -> gctx.varname2cpp(var.name) + "->incRefs();", "\n");
+	inc_vars = superglue(non_scalar_vars, \var -> "rc(" + gctx.varname2cpp(var.name) + ", 1);", "\n");
 	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
 	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
-	dec_vars = superglue(non_scalar_vars, \var -> gctx.varname2cpp(var.name) + "->decRefs();", "\n");
+	dec_vars = superglue(non_scalar_vars, \var -> "rc(" + gctx.varname2cpp(var.name) + ", -1);", "\n");
 	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
-	struct_names = "string flow::struct_names[] = {\n" + 
+
+	struct_names = "string struct_names[] = {\n" + 
 		strIndent(strArrayWrap(map(gctx.structs, \s -> "u\"" + s.name + "\""), 128, false, ", "))  + 
-	"\n};\nInt flow::struct_count = " + i2s(length(gctx.structs)) + ";\n\n";
+	"\n};\nInt struct_count = " + i2s(length(gctx.structs)) + ";\n\n";
+
+	struct_defs = cpp3StructDefs(gctx);
 "
 using namespace flow;
 using namespace std::string_literals;
 using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
-struct_names + 
+//struct_names + 
+struct_defs +
 "int main(int argc, const char* argv[]) {\n" +
 //"\talloc_stats = new AllocStats();\n" + 
 //"\tinitMaxHeapSize(argc, argv);\n" +
@@ -186,6 +194,46 @@ strIndent(show_vars("(B+)")) + "\n" +
 //"\talloc_stats->print();\n" + 
 "\tstd::cout << \" TERMINATION \" << std::endl;\n" + 
 "\treturn 0;\n}\n";
+}
+
+cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
+	type2id = \tp -> {
+		/*
+		enum TypeFx {
+			VOID = 0, // special void type - technically it is nullptr_t
+			INT = 1,   BOOL = 2, DOUBLE = 3, STRING = 4, NATIVE = 5, // primary types
+			ARRAY = 6, REF = 7,  FUNC = 8,   STRUCT = 9,             // complex types
+			UNKNOWN = -1
+		};
+		*/
+		switch (tp) {
+			FiTypeVoid(): 0;
+			FiTypeInt(): 1;
+			FiTypeBool(): 2;
+			FiTypeDouble(): 3;
+			FiTypeString(): 4;
+			FiTypeNative(): 5;
+			FiTypeArray(__): 6;
+			FiTypeRef(__): 7;
+			FiTypeFunction(__,__): 8;
+			FiTypeName(name,__): {
+				eitherMap(lookupTree(gctx.structs2cpp, name), \str -> str.id, -1);
+			}
+			FiTypeFlow(): -2;
+			FiTypeParameter(__): -3;
+		}
+	}
+	"std::vector<StructDef> RTTI::struct_defs = {\n" + 
+		strIndent(strArrayWrap(mapi(gctx.structs, \i, s -> 
+			"StructDef{u\"" + s.name + "\", " + 
+			i2s(i + 9) + ", {" + 
+				superglue(s.args, 
+					\arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(type2id(arg.type)) + "}", 
+					", "
+				) + 
+			"}}"
+		), 128, false, ", ")) + 
+	"\n};\n\n";
 }
 
 fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {

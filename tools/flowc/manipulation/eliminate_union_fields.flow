@@ -1,4 +1,5 @@
 import tools/flowc/incremental/fi_helpers; 
+import tools/flowc/manipulation/common;
 import string_utils;
 
 export {
@@ -64,11 +65,30 @@ where `e_prime` - is e with `a` replaced by `__prime_a`
  */
 fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp;
 
+/*
+In compound expressions, which contain subexpressions with non-scalar types, extract these
+subexpressions via let-statements, which bind them with temporary variables, i.e.
+
+func(Struct("A", 3, 4), 15, "...")
+
+will be transformed into:
+
+v1 = "A";
+v2 = Struct(v1, 3, 4);
+v3 = "...";
+func(v2, 15, v3)
+
+*/
+//fiExtractCallNonScalarExp(e: FiExp) -> FiExp;
+fiExtractCallNonScalarProgram(p: FiProgram) -> FiProgram;
+
+fiRemoveSigletonSeqences(p: FiProgram) -> FiProgram;
+
 }
 
 fiEliminateUnionFields(e : FiExp, names: FiGlobalNames, local: int) -> FiExp {
 	elim = \x -> fiEliminateUnionFields(x, names, local);
-	switch(e) {
+	switch (e) {
 		FiLambda(__, body,__, __): {
 			FiLambda(e with body = elim(body));
 		}
@@ -221,7 +241,7 @@ fiEliminateUnionFields(e : FiExp, names: FiGlobalNames, local: int) -> FiExp {
 
 fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 	ex_cast = \x -> fiExplicitCastInSwitch(x, names);
-	switch(e) {
+	switch (e) {
 		FiLambda(__, body,__, __): {
 			FiLambda(e with body = ex_cast(body));
 		}
@@ -318,7 +338,7 @@ fiNewVar(v: string, locals: Set<string>, i: int) -> string {
 
 fiExpRenameRecurringVars(e: FiExp, locals: Set<string>) -> FiExp {
 	rename_rvars = \x -> fiExpRenameRecurringVars(x, locals);
-	switch(e) {
+	switch (e) {
 		FiLambda(args, body,__, __): {
 			new_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
 			FiLambda(e with body = fiExpRenameRecurringVars(body, new_locals));
@@ -416,7 +436,7 @@ fiDetectIfIsSameStructType(e : FiIf) -> [FiVar] {
 
 fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp {
 	fix = \x -> fiFixVarInSameStructType(x, locals, names);
-	switch(e) {
+	switch (e) {
 		FiLambda(args, body,__, start): {
 			new_locals = fold(args, locals, \acc, arg -> 
 				setTree(acc, arg.name, FiVar(arg.name, arg.type, start))
@@ -508,7 +528,7 @@ fiVarTypeInExpr(e : FiExp, var: string) -> Maybe<FiVar> {
 	check_es = \xs -> fold(xs, None(), \acc, x ->
 		if (isSome(acc)) acc else fiVarTypeInExpr(x, var)
 	);
-	switch(e) {
+	switch (e) {
 		FiLambda(args, body,__, start): {
 			check_e(body);
 		}
@@ -547,4 +567,55 @@ fiVarTypeInExpr(e : FiExp, var: string) -> Maybe<FiVar> {
 		FiVar(name,__,__): if (name == var) Some(e) else None();
 		default: None();
 	}
+}
+
+fiExtractCallNonScalarProgram(p: FiProgram) -> FiProgram {
+	tmp_var_counter = ref 0;
+	new_var = \-> {
+		name = "__tv_" + i2s(^tmp_var_counter);
+		tmp_var_counter := ^tmp_var_counter + 1;
+		name;
+	}
+	fiMapProgramExp(p, \e, decl, module, program ->
+		fiMapExp(e,
+			\x, env -> switch (env.parents) {
+				EmptyList(): x;
+				Cons(parent,__): {
+					switch (parent) {
+						FiLet(__,__,__,__,__,__): x;
+						default: {
+							switch (x) {
+								FiVar(__,__,__): x;
+								FiInt(__,__): x;
+								FiBool(__,__): x;
+								FiDouble(__,__): x;
+								FiVoid(__): x;
+								default: {
+									type = fiExpType(x);
+									if (fiTypeIsScalar(type)) x else {
+										fn_var = new_var();
+										FiLet(fn_var, type, x, FiVar(fn_var, type, 0), type, 0);
+									}
+								}
+							}
+						}
+					}
+				}
+			},
+			false
+		)
+	);
+}
+
+fiRemoveSigletonSeqences(p: FiProgram) -> FiProgram{
+	fiMapProgramExp(p, \e, decl, module, prog ->
+		mapFiExp(e,
+			\x -> switch (x) {
+				FiSeq(es,__,__): {
+					if (length(es) == 1) es[0] else x;
+				}
+				default: x;
+			}
+		)
+	);
 }

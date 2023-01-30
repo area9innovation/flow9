@@ -23,9 +23,10 @@ fiExp2FsExp(e : FiExp, fn: string, effects: FiEffects, names: FiGlobalNames) -> 
 
 fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_toplevel: bool) -> FsStat {
 	wrap = \x -> switch (returns) {
-		FsReturnToOuter():  FsRet(x, x.start);
-		FsReturnNowhere():  FsWrapExp(x, x.start);
-		FsReturnToLocal(v): FsAssign(v, x, e.start);
+		FsReturnToOuter():   FsRet(x, x.start);
+		FsReturnNowhere():   FsWrapExp(x, x.start);
+		FsReturnToAssign(v):  FsAssign(v, x, e.start);
+		FsReturnToLet(v, s): FsLet(v, x, s, fsStatType(s), e.start);
 	}
 	do_exp = \x -> fiDoExp2FsExp(x, env, fn, false);
 	switch (e) {
@@ -188,11 +189,7 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 						[FsLet(let_var, e1_pair.first, fiDoExp2FsStat(e2, returns, let_env, fn, false), type, start)]
 					));
 				} else {
-					fsWrapSeq(concat3(
-						[FsVarDecl(let_var, start)],
-						fsUnwrapSeq(fiDoExp2FsStat(e1, FsReturnToLocal(let_var), let_env, fn, false)),
-						fsUnwrapSeq(fiDoExp2FsStat(e2, returns, let_env, fn, false))
-					));
+					fiDoExp2FsStat(e1, FsReturnToLet(let_var, fiDoExp2FsStat(e2, returns, let_env, fn, false)), let_env, fn, false);
 				}
 			}
 		}
@@ -361,7 +358,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 				switch (vtype) {
 					FiTypeName(typename,__): {
 						switch_stat = if (containsKeyTree(env.names.unions, typename)) {
-							default_switch_stat(FsReturnToLocal(tmp_var));
+							default_switch_stat(FsReturnToAssign(tmp_var));
 						} else {
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
@@ -373,7 +370,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 											setTree(acc, arg.name, arg)
 										)
 									);
-									fiDoExp2FsStat(c.body, FsReturnToLocal(tmp_var), case_env, "", false);
+									fiDoExp2FsStat(c.body, FsReturnToAssign(tmp_var), case_env, "", false);
 								}
 								None(): {
 									fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
@@ -383,7 +380,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 						Pair(tmp_var, [FsVarDecl(tmp_var, start), switch_stat]);
 					}
 					FiTypeFlow(): {
-						Pair(tmp_var, [FsVarDecl(tmp_var, start), default_switch_stat(FsReturnToLocal(tmp_var))]);
+						Pair(tmp_var, [FsVarDecl(tmp_var, start), default_switch_stat(FsReturnToAssign(tmp_var))]);
 					}
 					default: {
 						fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));

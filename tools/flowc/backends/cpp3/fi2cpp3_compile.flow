@@ -3,7 +3,8 @@ import tools/flowc/backends/cpp3/fi2cpp3_compile_struct;
 import tools/flowc/statements/fs_utils;
 import tools/flowc/statements/fs_memory;
 import tools/flowc/statements/fi2fs;
-import tools/flowc/manipulation/eliminate_union_fields;
+//import tools/flowc/manipulation/eliminate_union_fields;
+import tools/flowc/manipulation/transform_exps;
 
 export {
 	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
@@ -14,8 +15,8 @@ fiModule2cpp3(module : FiModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 	names = gctx.program.names;
 	compiled_structs = map(module.structs, \struct -> 
 		Cpp3CompiledDeclaration(struct.name, true, 
-			fiStruct2cpp3(struct, gctx, true),
-			fiStruct2cpp3(struct, gctx, false)
+			fiStruct2cpp3_new(struct, gctx, true),
+			"" //fiStruct2cpp3(struct, gctx, false)
 		)
 	);
 	decls = concat(
@@ -89,16 +90,21 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	);
 	value_cpp = fsExp2cpp3(fiPrepareExp2cpp3(globalVar.value, globalVar.type, gctx, ""), gctx);
 	init = gctx.varname2cpp(name) + " = " + value_cpp + ";";
+	/*
 	if (containsSet(gctx.volatileVars, name)) {
 		// Volatile variable
 		gctx.volatileInit := concat(^(gctx.volatileInit), [init]);
-		var_decl = fiType2cpp3(globalVar.type, gctx) + " " + gctx.varname2cpp(name) + ";\n\n";
-		Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
+		//var_decl = fiType2cpp3(globalVar.type, gctx) + " " + gctx.varname2cpp(name) + ";\n\n";
+		//Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
 	} else {
-		// Constant variable
-		var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + "\n\n";
-		Cpp3CompiledDeclaration(name, true, "", var_def);
+		// Ordinary variable
+		//var_def = "const " + fiType2cpp3(globalVar.type, gctx) + " " + init + "\n\n";
+		//Cpp3CompiledDeclaration(name, true, "", var_def);
 	}
+	*/
+	gctx.volatileInit := concat(^(gctx.volatileInit), [init]);
+	var_decl = fiType2cpp3(globalVar.type, gctx) + " " + gctx.varname2cpp(name) + ";\n\n";
+	Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
 }
 
 fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
@@ -112,6 +118,14 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
 	headerOnly = cpp3InlineFunction(fun);
 	lambda_exp = fiPrepareExp2cpp3(fun.lambda, fn_type, gctx, name);
+	println(
+		"orig_lambda:\n" + 
+			//toStringFormatted(fun.lambda) + "\n" + 
+			prettyFiExp(dummyPretty, fun.lambda) + "\n" + 
+		"lambda_exp:\n" + 
+			//toStringFormatted(lambda_exp) + "\n" + 
+			fsExp2s(lambda_exp) + "\n"
+	);
 	//if (extractStructName(lambda_exp) != "FsLambda") {
 	//	fail("in function " + fun.name + " expected FsLambda, got:\n" + fsExp2s(lambda_exp));
 	//}
@@ -148,16 +162,27 @@ fiPrepareExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string)
 		println("e" + i2s(i) + ":\n" + prettyFiExp(dummyPretty, x));
 	}
 	// First phase: do some preparation steps
-	e0 = fiEliminateUnionFields(e, names, 0);
+	e0 = fiTransEliminateUnionFields(e, names);
 	pr(e0, 0);
-	e1 = fiExplicitCastInSwitch(e0, names);
+	e1 = fiExplicitCastInSwitch1(e0, names);
 	pr(e1, 1);
-	e2 = fiFixVarInSameStructType(e1, makeTree(), names);
+	e2 = fiFixVarInSameStructType1(e1);
 	pr(e2, 2);
-	e3 = fiExpRenameRecurringVars(e2, makeSet());
+	e3 = fiExpRenameRecurringVars1(e2);
 	pr(e3, 3);
 	e4 = fiExpMakeNoStatements(e3, gctx.effects);
 	pr(e4, 4);
+
+	e5 = fiExpMakeVarsUnique(e4);
+	pr(e5, 5);
+	e6 = fiExpInterpolateTypars(e4, names);
+	pr(e6, 6);
+	e7 = fiExpMakeCastsExplicit(e6, type, names);
+	pr(e7, 7);
+	e8 = fiExplicitCastInSwitch1(e7, names);
+	pr(e8, 8);
+	e9 = fiExpReturnVars(e8); 
+	pr(e9, 9);
 
 	pr2 = \x, i -> if (show) {
 		println("x" + i2s(i) + ":\n" + fsExp2s(x));
@@ -165,7 +190,8 @@ fiPrepareExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string)
 
 	// Second phase: transform to FsExp and do type interpolation/explicit casts
 	x0 = fiExp2FsExp(e4, name, gctx.effects, names);
-	pr2(x0, 0);
+	
+	/*pr2(x0, 0);
 	x1 = fsExpSSA(x0, makeTree());
 	pr2(x1, 1);
 	x2 = fsInterpolateTyparsExp(x1, names);
@@ -175,10 +201,10 @@ fiPrepareExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string)
 	x4 = fsWrapExpCaseVarsWithCasts(x3, names);
 	pr2(x4, 4);
 	x5 = fsExpReturnVars(x4);
-	pr2(x5, 5);
+	pr2(x5, 5);*/
 
 	// Memory: ref-counting operations are inserted
-	x6 = fsExpPerceus(x5, name);
+	x6 = fsExpPerceus(x0, name);
 	x6;
 }
 
@@ -219,7 +245,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				FiTypeName(typename,__): {
 					switch (lookupTree(gctx.program.names.unions, typename)) {
 						Some(__): {
-							fsSwitch2cpp3(stat, gctx.varname2cpp(x.name), gctx.varname2cpp(x.name) + "->type()/*" + typename + "*/", gctx);
+							fsSwitch2cpp3(stat, gctx.varname2cpp(x.name), gctx.varname2cpp(x.name) + "->typeId()/*" + typename + "*/", gctx);
 						}
 						None(): {
 							fsStructSwitch2cpp3(stat, typename, gctx);
@@ -227,7 +253,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 					}			
 				}
 				FiTypeFlow(): {
-					fsSwitch2cpp3(stat, gctx.varname2cpp(x.name), gctx.varname2cpp(x.name) + "->type()/*Flow*/", gctx);
+					fsSwitch2cpp3(stat, gctx.varname2cpp(x.name), gctx.varname2cpp(x.name) + "->typeId()/*Flow*/", gctx);
 				}
 				default:
 					fail0("must be struct or union or flow type, got: " + prettyFiType(dummyPretty, x.type, makeSet()));
@@ -241,9 +267,10 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsLet(v, e, s,__,__): {
 			if (v.name == "__") "" else {
+				s_cpp = fsStat2cpp3(s, gctx);
 				fiType2cpp3(v.type, gctx) + " " + gctx.varname2cpp(v.name) + " = " + 
-				fsExp2cpp3(e, gctx) + ";\n" + 
-				fsStat2cpp3(s, gctx);
+				fsExp2cpp3(e, gctx) + ";" + 
+				if (s_cpp == "") "" else "\n" + s_cpp;
 			}
 		}
 		FsAtomic(): {
@@ -261,13 +288,7 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsRet(e, __): {
-			e_s = fsExp2cpp3(e, gctx);
-			"return " + e_s + ";"
-			/*if (fsExpType(e) == FiTypeVoid()) {
-				if (e_s == "") "return;" else e_s + ";\nreturn;";
-			} else {
-				"return " + e_s + ";"
-			}*/
+			"return " + fsExp2cpp3(e, gctx) + ";"
 		}
 		FsTailCall(__): {
 			"continue;";
@@ -282,9 +303,9 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 						FiTypeRef(__):
 							fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
 						FiTypeFlow(): 
-							fsExp2cpp3(to, gctx) + "->setFlowRef(" + fsExp2cpp3(what, gctx) + ");";
+							fsExp2cpp3(to, gctx) + "->setFlow(0, " + fsExp2cpp3(what, gctx) + ");";
 						default:
-							fsExp2cpp3(to, gctx) + "->setRef(" + fsExp2cpp3(what, gctx) + ");";
+							fsExp2cpp3(to, gctx) + "->set(" + fsExp2cpp3(what, gctx) + ");";
 					}
 				}
 				default:
@@ -294,27 +315,9 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 		FsMemory(op, ex, __): {
 			tp = fsExpType(ex);
 			switch (op) {
-				FsIncRC():   "RefCount<" + fiType2cpp3(tp, gctx) + ">::inc(" + fsExp2cpp3(ex, gctx) + ");";
-				FsDecRC():   "RefCount<" + fiType2cpp3(tp, gctx) + ">::dec(" + fsExp2cpp3(ex, gctx) + ");";
-				FsCheckRC(): "RefCount<" + fiType2cpp3(tp, gctx) + ">::check(" + fsExp2cpp3(ex, gctx) + ");";
+				FsRC(delta):   "rc<" + fiType2cpp3(tp, gctx) + ">(" + fsExp2cpp3(ex, gctx) + ", " + i2s(delta) + ");";
 				default:  fail0("memory operation: " + toString(op) + " is not implemented yet");
 			}
-			/*switch (tp) {
-				FiTypeParameter(n): {
-					switch (op) {
-						FsDup():  "RefCount<" + fiType2cpp3(tp, gctx) + ">::inc(" + fsExp2cpp3(ex, gctx) + ");";
-						FsDrop(): "RefCount<" + fiType2cpp3(tp, gctx) + ">::dec(" + fsExp2cpp3(ex, gctx) + ");";
-						default:  fail0("memory operation: " + toString(op) + " is not implemented yet");
-					}
-				}
-				default: {
-					switch (op) {
-						FsDup():  fsExp2cpp3(ex, gctx) + "->incRefs();";
-						FsDrop(): fsExp2cpp3(ex, gctx) + "->decRefs();";
-						default:  fail0("memory operation: " + toString(op) + " is not implemented yet");
-					}
-				}
-			}*/
 		}
 	}
 }
@@ -355,7 +358,7 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 	switch (lookupTree(gctx.program.names.structs, c.struct)) {
 		Some(struct): {
 			body = fsStat2cpp3(c.body, gctx);
-			id = lookupTreeDef(gctx.structs2id, c.struct, -1);
+			id = eitherMap(lookupTree(gctx.structs2cpp, c.struct), \str -> str.id, -1);
 			"case " + i2s(id) + " /*" + c.struct + "*/: " +
 				fiWrapWithBraces(fiUnwrap(body, "{", "}") + "\nbreak;");
 		}
@@ -449,18 +452,20 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 								gctx.varname2cpp(name) + typars + call_args;
 							} else {
 								gctx.varname2cpp(name) + typars + "->call" + call_args;
+								//gctx.varname2cpp(name) + typars + call_args;
 							}
 						}
 					}
 				}
 				default: {
 					fsExp2cpp3(f, gctx) + "->call" + call_args;
+					//fsExp2cpp3(f, gctx) + call_args;
 				}
 			};
 		}
 		FsLambda(toplevel, closure, args, body, type, __): {
 			//ref_counted_closure = filter(closure, \v -> !fiTypeIsScalar(v.type));
-			fiType2cpp3(type, gctx) + "::make" +
+			"Fun<" + fiType2cpp3(type.returnType, gctx) + concatStrings(map(type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">::make" +
 			"([" + superglue(closure, \v -> gctx.varname2cpp(v.name), ", ") + "] " + fiFunArgs2cpp(args, gctx) +
 			" " + fiWrapWithBraces(fsStat2cpp3(body, gctx)) + 
 				//", Vector<Flow>({" + superglue(ref_counted_closure, \v -> gctx.varname2cpp(v.name), ", ") + "})" +
@@ -468,8 +473,16 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsCallPrim(op, es, type, __): fsCallPrim2cpp3(e, gctx);
 		FsVar(name, traits, type,__): {
-			if (fsVarIsGlobalFunc(traits)) gctx.varname2cpp(name) else 
-			gctx.varname2cpp(name) + "/* first: " + b2s(traits.firstUse) + ", last: " + b2s(traits.lastUse) + ", kind: " + toString(traits.kind) + "*/";
+			var_name = gctx.varname2cpp(name);
+			switch (traits.kind) {
+				FsVarGlobal(func): 
+					var_name;
+					//if (func) var_name else "incRc(" + var_name + ")";
+				default: var_name;
+
+			} 
+			//if (fsVarIsGlobalFunc(traits)) gctx.varname2cpp(name) else 
+			//gctx.varname2cpp(name); // + "/* first: " + b2s(traits.firstUse) + ", last: " + b2s(traits.lastUse) + ", kind: " + toString(traits.kind) + "*/";
 		}
 	}
 }
@@ -557,19 +570,19 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FsIndexPrim(): {
 			switch (arg_type) {
 				FiTypeFlow(): {
-					e2k(e.es[0]) + "->toAArr()->getFlowItem(" + e2k(e.es[1]) + ")";
+					e2k(e.es[0]) + "->getFlow(" + e2k(e.es[1]) + ")";
 				}
 				default:
-					e2k(e.es[0]) + "->getItem(" + e2k(e.es[1]) + ")";
+					e2k(e.es[0]) + "->get(" + e2k(e.es[1]) + ")";
 			}
 		}
 		FsDerefPrim(): {
 			switch (arg_type) {
 				FiTypeFlow(): {
-					e2k(e.es[0]) + "->toARef()->getFlowRef()";
+					e2k(e.es[0]) + "->getFlow(0)";
 				}
 				default: {
-					e2k(e.es[0]) + "->getRef()";
+					e2k(e.es[0]) + "->get()";
 				}
 			}
 		}
@@ -579,35 +592,47 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		}
 		FsStructPrim(__): {
 			struct_type = cast(e.type : FiType -> FiTypeName);
-			"Str<" + fiStructName2cpp3(struct_type, gctx) + ">::make(" + strGlue(map(e.es, e2k), ", ") + ")";
+			fiStructName2cpp3(struct_type, gctx) + "::make(" + strGlue(map(e.es, e2k), ", ") + ")";
 		}
-		FsFieldPrim(name): {
-			if (name == "structname") {
+		FsFieldPrim(field_name): {
+			if (field_name == "structname") {
 				switch (arg_type) {
-					FiTypeName(typename, params): {
-						if (containsKeyTree(gctx.program.names.structs, typename)) {
-							"String::make(\"" + typename + "\")";
+					FiTypeName(struct_name, params): {
+						if (containsKeyTree(gctx.program.names.structs, struct_name)) {
+							"String::make(\"" + struct_name + "\")";
 						} else {
-							e2k(e.es[0]) + "->toAStr()->name()";
+							"String::make(RTTI::typeName(" + e2k(e.es[0]) + "->typeId()))";
 						}
 					}
 					FiTypeFlow(): {
-						e2k(e.es[0]) + "->toAStr()->name()";
+						"String::make(RTTI::typeName(" + e2k(e.es[0]) + "->typeId()))";
 					}
-					default: fail0("accees to field '" + name + "' of non-field: " + fsExp2s(e.es[0]));
+					default: fail0("accees to field '" + field_name + "' of non-struct " + fsExp2s(e.es[0]));
 				}
 			} else {
 				switch (arg_type) {
 					FiTypeFlow(): {
-						e2k(e.es[0]) + "->toAStr()->getFlowField(String::make(\"" + name + "\"))";
+						e2k(e.es[0]) + "->getFlow(String::make(\"" + field_name + "\"))";
 					}
-					default: e2k(e.es[0]) + "->" + gctx.varname2cpp(name);
+					FiTypeName(struct_name,__): {
+						field_ind = eitherMap(lookupTree(gctx.structs2cpp, struct_name), 
+							\str -> eitherMap(lookupTree(str.argInds, field_name), \arg -> arg.ind, -1),
+							-1
+						);
+						if (field_ind == -1) {
+							fail("unknown field name '" + field_name + "' of struct: '" + struct_name + "'");
+						}
+						e2k(e.es[0]) + "->get<" + i2s(field_ind) + ">()";
+					}
+					default: {
+						fail0("accees to field '" + field_name + "' of non-struct: " + fsExp2s(e.es[0]));
+					}
 				}
 			}
 		}
 		FsCastPrim(from, to): {
-			s = fsExp2cpp3(e.es[0], gctx);
-			fiCpp3Cast(from, to, s, gctx);
+			//"Cast<" + fiType2cpp3(from, gctx) + ">::template To<" + fiType2cpp3(to, gctx) + ">::conv(" + fsExp2cpp3(e.es[0], gctx) + ")";
+			"cast<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + fsExp2cpp3(e.es[0], gctx) + ")";
 		}
 		FsIfPrim(): {
 			"(" + fsExp2cpp3(e.es[0], gctx) + " ? \n" + 
@@ -620,12 +645,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FsUnsafePrim(name): fail0("//TODO: FsUnsafe is not implemented in cpp3 backend" + name);
 		FsReusePrim(__, reuse): {
 			struct_type = cast(e.type : FiType -> FiTypeName);
-			"Str<" + fiStructName2cpp3(struct_type, gctx) + ">::makeReuse(" + reuse + ", " + strGlue(map(e.es, e2k), ", ") + ")";
+			fiStructName2cpp3(struct_type, gctx) + "::makeReuse(" + reuse + ", " + strGlue(map(e.es, e2k), ", ") + ")";
 		}
 	}
-}
-
-fiCpp3Cast(from: FiType, to: FiType, s: string, gctx: Cpp3GlobalContext) -> string {
-	if (fiEqualTypes(from, to)) s else
-	"Cast<" + fiType2cpp3(from, gctx) + ">::template To<" + fiType2cpp3(to, gctx) + ">::conv(" + s + ")";
 }
