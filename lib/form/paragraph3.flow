@@ -134,8 +134,9 @@ ParaLineInfo(
 	lineWidth : double,
 	lineIndent : double,
 	containsDynamicElement : bool,
-	y : DynamicBehaviour<double>
+	y : double
 );
+ParaLinesInfoAcc(lines : List<ParaLineInfo>, y : double);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
@@ -499,7 +500,8 @@ renderParagraphEx(
 					rtl,
 					fitLongWords,
 					extractStruct(s, defaultFontSizeStyle).size,
-					ignoreLetterspacing
+					ignoreLetterspacing,
+					interlineSpacing
 				);
 
 				nextDistinct(linesCountB, length(infos));
@@ -583,7 +585,8 @@ getParaLineInfos(
 	rtl : bool,
 	shrinkLongWords : bool,
 	fontSize : double,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	interlineSpacing : double
 ) -> [ParaLineInfo] {
 	textScale = if (shrinkLongWords && wordGroups != []) {
 		maxWidthGroup : ParaWordGroup = fold(
@@ -603,14 +606,14 @@ getParaLineInfos(
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
 	linesCount = length(reflowResult) - 1;
-	mapi(reflowResult, \i, line -> {
+	a : ParaLinesInfoAcc = foldi(reflowResult, ParaLinesInfoAcc(EmptyList(), 0.0), \i : int, acc : ParaLinesInfoAcc, line : ParaLine -> {
 		words = if (wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
 			// we don't need spaces in the end of the line becasue if there is filler element in the line spaces will be out of the available width
 			// and we can't move space on the next line because it will break alignment so we just trim spaces in the end.
 			if (isParaWordSpaceForm(lastElement(line.words, emptyParaWord))) {
-				foldr(line.words, makeList(), \acc, paraWord -> {
-					if (acc == EmptyList() && isParaWordSpaceForm(paraWord)) acc
-					else Cons(paraWord, acc);
+				foldr(line.words, makeList(), \acc1, paraWord -> {
+					if (acc1 == EmptyList() && isParaWordSpaceForm(paraWord)) acc1
+					else Cons(paraWord, acc1);
 				}) |> list2array |> reverseA;
 			} else line.words;
 		} else line.words;
@@ -635,16 +638,21 @@ getParaLineInfos(
 			)
 		});
 
-		ParaLineInfo(
+		paraLineInfo = ParaLineInfo(
 			optimizedLine,
 			lineAscAndDynamic.first,
 			lineHeightAndWidth.first,
 			lineHeightAndWidth.second,
 			line.indent,
 			lineAscAndDynamic.second,
-			make(.0)
-		)
+			acc.y
+		);
+		ParaLinesInfoAcc(
+			Cons(paraLineInfo, acc.lines),
+			acc.y + lineHeightAndWidth.first + if (i == linesCount) 0. else interlineSpacing,
+		);
 	});
+	list2array(a.lines);
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -1124,7 +1132,6 @@ renderParaLines(
 				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
 			} else 0.0
 		);
-		nextDistinct(lineInfo.y, acc.y);
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
 			acc.y + f.height + if (lastLine) 0. else interlineSpacing,
@@ -1143,7 +1150,7 @@ renderParaLines(
 						acc
 					)
 				});
-				RenderedLinesInfo(info.lineHeight, info.lineAsc, elementsID, getValue(info.y))
+				RenderedLinesInfo(info.lineHeight, info.lineAsc, elementsID, info.y)
 			}));
 		}
 	);
