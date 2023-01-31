@@ -2064,7 +2064,7 @@ class DisplayObjectHelper {
 					RenderSupport.once("stagechanged", function() {
 						untyped child.nativeWidget.showModal();
 						RenderSupport.once("stagechanged", function() {
-							untyped child.nativeWidget.close();
+							if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
 						});
 					});
 				};
