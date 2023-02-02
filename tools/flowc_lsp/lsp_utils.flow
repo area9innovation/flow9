@@ -6,7 +6,11 @@ import tools/common/logging;
 import tools/common/utils;
 
 export {
+	// Makes diagnostic message from compiler's output
 	lspErrorDiagnostics(file : URI, s : string) -> Json;
+	// Sends multiple diagnostic message from compiler's output. We need it because error might be in different files
+	lspCallOutErrorDiagnostics(callOut : (Json) -> void, msg : string) -> void;
+
 	lspParseErrors(s : string) -> [LspDiagnostic];
 	lspFileConfig(file : string) -> CompilerConfig;
 	lspParseLocations(s : string) -> [Json];
@@ -22,9 +26,23 @@ export {
 }
 
 lspErrorDiagnostics(file : URI, s : string) -> Json {
+	lspDiagnostics2notificationMessageJson(file, lspParseErrors(s));
+}
+
+lspDiagnostics2notificationMessageJson(file : URI, diagnostics : [LspDiagnostic]) -> Json {
 	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics",
-		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", lspParseErrors(s)))
+		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", diagnostics))
 	));
+}
+
+emptyLspDiagnosticRelatedInformation = LspDiagnosticRelatedInformation(LspLocation(URI("", URIAuthority("", "", ""), "", "", ""), LspRange(LspPosition(0, 0), LspPosition(0, 0))), "");
+lspCallOutErrorDiagnostics(callOut : (Json) -> void, msg : string) -> void {
+	diagnostics = lspParseErrors(msg);
+	byUri = fold(diagnostics, makeTree(), \acc, d -> {
+		uri = extractStruct(d.relatedInformation, emptyLspDiagnosticRelatedInformation).location.uri;
+		treePushToArrayValue(acc, uri, d);
+	});
+	iter(map(tree2pairs(byUri), unpairC(lspDiagnostics2notificationMessageJson)), callOut);
 }
 
 lspParseErrors(s : string) -> [LspDiagnostic] {
