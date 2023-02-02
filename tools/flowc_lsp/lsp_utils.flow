@@ -22,28 +22,29 @@ export {
 }
 
 lspErrorDiagnostics(file : URI, s : string) -> Json {
-	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics", 
+	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics",
 		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", lspParseErrors(s)))
 	));
 }
 
 lspParseErrors(s : string) -> [LspDiagnostic] {
-	if (!strContains(s, "Error: ")) [] else {
+	if (!strContains(s, "Error: ")) {
+		[];
+	} else {
 		err_lines = filtermap(strSplit(s, "\n"), \l -> lspParseLocation(l, true));
 		fold(err_lines, [], \acc, p -> {
 			loc = p.first; msg = p.second;
-			diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], []);
-			acc1 = if (strContains(msg, "Error: ")) {
+			diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], [LspDiagnosticRelatedInformation(loc, "")]);
+			if (strContains(msg, "Error: ")) {
 				concat(acc, [diag]);
 			} else if (acc != []) {
 				last = lastElement(acc, diag);
-				replace(acc, length(acc) - 1, LspDiagnostic(last with 
-					relatedInformation = concat(last.relatedInformation, [LspDiagnosticRelatedInformation(loc, "")])
+				replace(acc, length(acc) - 1, LspDiagnostic(last with
+					relatedInformation = concat(last.relatedInformation, diag.relatedInformation)
 				));
 			} else {
 				acc;
 			}
-			acc1
 		});
 	}
 }
@@ -82,7 +83,7 @@ lspParseLocations(s : string) -> [Json] {
 
 lspParseSymbols(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
-	filtermap(strSplit(s, "\n"), \l -> 
+	filtermap(strSplit(s, "\n"), \l ->
 		maybeBind(lspParseLocation(l, false), \p -> {
 			loc = p.first;
 			descr_parts = strSplit(trim(p.second), " ");
@@ -103,13 +104,17 @@ lspParseSymbols(s : string) -> [Json] {
 lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>> {
 	isNum = \st -> st != "" && isDigits(st);
 	parts0 = strSplit(s, ":");
-	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) None() else {
-		// Windows path may start with C:/... and 
-		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) parts0 else {
+	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) {
+		None();
+	} else {
+		// Windows path may start with C:/... and
+		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) {
+			parts0;
+		} else {
 			concat(["/" + parts0[0] + ":" + parts0[1]], tailFrom(parts0, 2));
 		}
 		if (length(parts) < 3 || parts[0] == "" || !isNum(parts[1]) || !isNum(parts[2])) {
-			None() ;
+			None();
 		} else {
 			path = strReplace(parts[0], "\\", "/");
 			sline = s2i(parts[1]) - 1;
@@ -134,7 +139,7 @@ lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, str
 }
 
 lspServerLog(message : string, conf : Tree<string, string>) -> void {
-	log_file = lookupTreeDef(conf, "server-log", findFlowDir() + 
+	log_file = lookupTreeDef(conf, "server-log", findFlowDir() +
 		"/.log/flowc_lsp_server.log");
 	log_dir = fcDirName(log_file);
 	if (log_dir != "") {
@@ -200,16 +205,16 @@ lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, strin
 }
 
 lspRunConfViaHttp(
-	conf : CompilerConfig, 
-	on_exit : (int, string, string) -> void, 
+	conf : CompilerConfig,
+	on_exit : (int, string, string) -> void,
 	on_fail : (int, string) -> void
 ) -> void {
-	serverUrl = 
+	serverUrl =
 		"http://localhost:" +
 		getConfigParameterDef(conf.config, "server-port", "10001");
 	patchedConfig = patchRemoteConfig(conf);
-	serialized_server_job = 
-		(getConfigParameterDef(conf.config, "compile-expression", "") != "") || 
+	serialized_server_job =
+		(getConfigParameterDef(conf.config, "compile-expression", "") != "") ||
 		(getConfigParameterDef(conf.config, "dump-program", "") == "1");
 	serialized_config = "config_" + serialize(patchedConfig);
 	httpCustomRequest(
