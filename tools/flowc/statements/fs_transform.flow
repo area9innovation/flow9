@@ -1,136 +1,334 @@
 import ds/array;
 import tools/flowc/statements/fs_helpers;
+import tools/flowc/manipulation/common;
 
 export {
-	fsStatTransform(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat;
-	fsExpTransform(e: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp;
+	fsStatMap(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat;
+	fsExpMap(e: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp;
 
-	fsStatTraverse(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
-	fsExpTraverse(e: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
+	fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
+	fsExpIter(e: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
+
+	FsTraverseEnv(
+		parents: List<FsAll>,
+		locals: Tree<string, FsVar>,
+		args: Tree<string, FsVar>,
+		lets: Tree<string, FsVar>,
+	);
+
+	//fsMap(s: FsAll, fn: (FsAll, FsTraverseEnv) -> FsAll, order: AstTraverseOrder) -> FsAll;
+
+	//fsFoldMap(s: FsAll, acc: ?, fn: (FsAll, FsTraverseEnv, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?>;
+
+/*
+	fsStatFoldMap(
+		s: FsStat, acc: ?, 
+		fn_s: (FsStat, ?) -> Pair<FsStat, ?>, 
+		fn_e: (FsExp, ?) -> Pair<FsExp, ?>,
+		order: AstTraverseOrder
+	) -> Pair<FsStat, ?>;
+	fsExpFoldMap(
+		e: FsExp, acc: ?, 
+		fn_s: (FsStat, ?) -> Pair<FsStat, ?>, 
+		fn_e: (FsExp, ?) -> Pair<FsExp, ?>,
+		order: AstTraverseOrder
+	) -> Pair<FsExp, ?>;
+
+	fsFoldMap(s: FsAll, acc: ?, fn: (FsAll, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?>;*/
 }
 
-fsStatTransform(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat {
+fsStatMap(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat {
 	trans_s(switch (s) {
-		FsIf(cond, s1, s2, __,__): {
+		FsIf(cond, s1, s2): {
 			FsIf(s with
-				cond = fsExpTransform(cond, trans_s, trans_e),
-				s1 = fsStatTransform(s1, trans_s, trans_e),
-				s2 = fsStatTransform(s2, trans_s, trans_e)
+				cond = fsExpMap(cond, trans_s, trans_e),
+				s1 = fsStatMap(s1, trans_s, trans_e),
+				s2 = fsStatMap(s2, trans_s, trans_e)
 			);
 		}
-		FsSwitch(x, sw_type, cases,__,__): {
+		FsSwitch(x, sw_type, cases): {
 			FsSwitch(s with 
-				cases = map(cases, \c -> FsCase(c with body = fsStatTransform(c.body, trans_s, trans_e)))
+				cases = map(cases, \c -> FsCase(c with body = fsStatMap(c.body, trans_s, trans_e)))
 			);
 		}
-		FsSeq(ss, type,__): {
+		FsSeq(ss): {
 			FsSeq(s with 
-				ss = map(ss, \x -> fsStatTransform(x, trans_s, trans_e))
+				ss = map(ss, \x -> fsStatMap(x, trans_s, trans_e))
 			);
 		}
-		FsLet(v, e, s1, __,__): {
-			FsLet(s with 
-				e = fsExpTransform(e, trans_s, trans_e),
-				s = fsStatTransform(s1, trans_s, trans_e)
-			);
+		FsWrapExp(e): {
+			FsWrapExp(s with e = fsExpMap(e, trans_s, trans_e));
 		}
-		FsWrapExp(e,__): {
-			FsWrapExp(s with e = fsExpTransform(e, trans_s, trans_e));
+		FsRet(e): {
+			FsRet(s with e = fsExpMap(e, trans_s, trans_e));
 		}
-		FsRet(e,__): {
-			FsRet(s with e = fsExpTransform(e, trans_s, trans_e));
-		}
-		FsTailCall(__): {
+		FsTailCall(): {
 			s;
 		}
-		FsVarDecl(var,__): {
+		FsVarDecl(var): {
 			s;
 		}
-		FsAssign(to, what,__): {
+		FsVarDef(v, e): {
+			FsVarDef(s with e = fsExpMap(e, trans_s, trans_e));
+		}
+		FsAssign(to, what): {
 			FsAssign(s with 
-				to = fsExpTransform(to, trans_s, trans_e),
-				what = fsExpTransform(what, trans_s, trans_e)
+				to = fsExpMap(to, trans_s, trans_e),
+				what = fsExpMap(what, trans_s, trans_e)
 			);
 		}
-		FsMemory(op, e,__): {
-			FsMemory(s with e = fsExpTransform(e, trans_s, trans_e));
+		FsMemory(op, e): {
+			FsMemory(s with e = fsExpMap(e, trans_s, trans_e));
 		}
 	});
 }
 
-fsExpTransform(ex: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp {
+fsExpMap(ex: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp {
 	trans_e(switch(ex) {
-		FsLambda(__,__,__, body, __,__): {
-			FsLambda(ex with body = fsStatTransform(body, trans_s, trans_e));
+		FsLambda(__,__,__, body, __): {
+			FsLambda(ex with body = fsStatMap(body, trans_s, trans_e));
 		}
-		FsCall(fn, args, __,__): {
+		FsCall(fn, args, __): {
 			FsCall(ex with 
-				f = fsExpTransform(fn, trans_s, trans_e),
-				args = map(args, \x -> fsExpTransform(x, trans_s, trans_e))
+				f = fsExpMap(fn, trans_s, trans_e),
+				args = map(args, \x -> fsExpMap(x, trans_s, trans_e))
 			);
 		}
-		FsCallPrim(op, es, __,__): {
-			FsCallPrim(ex with es = map(es, \x -> fsExpTransform(x, trans_s, trans_e)));
+		FsCallPrim(op, es, __): {
+			FsCallPrim(ex with es = map(es, \x -> fsExpMap(x, trans_s, trans_e)));
 		}
-		FsVar(name,__,__,__): ex;
+		FsCast(e, from, type): {
+			FsCast(ex with e = fsExpMap(e, trans_s, trans_e));
+		}
+		FsVar(name,__,__): ex;
 		FiConst(): ex;
 	});
 }
 
-fsStatTraverse(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
+fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
 	switch (s) {
-		FsIf(cond, s1, s2, __,__): {
-			fsExpTraverse(cond, trans_s, trans_e);
-			fsStatTraverse(s1, trans_s, trans_e);
-			fsStatTraverse(s2, trans_s, trans_e);
+		FsIf(cond, s1, s2): {
+			fsExpIter(cond, trans_s, trans_e);
+			fsStatIter(s1, trans_s, trans_e);
+			fsStatIter(s2, trans_s, trans_e);
 		}
-		FsSwitch(x, sw_type, cases,__,__): {
-			fsExpTraverse(x, trans_s, trans_e);
-			iter(cases, \c -> fsStatTraverse(c.body, trans_s, trans_e));
+		FsSwitch(x, sw_type, cases): {
+			fsExpIter(x, trans_s, trans_e);
+			iter(cases, \c -> fsStatIter(c.body, trans_s, trans_e));
 		}
-		FsSeq(ss, type,__): { 
-			iter(ss, \x -> fsStatTraverse(x, trans_s, trans_e));
+		FsSeq(ss): { 
+			iter(ss, \x -> fsStatIter(x, trans_s, trans_e));
 		}
-		FsLet(v, e, s1, __,__): {
-			fsExpTraverse(v, trans_s, trans_e);
-			fsExpTraverse(e, trans_s, trans_e);
-			fsStatTraverse(s1, trans_s, trans_e);
+		FsWrapExp(e): {
+			fsExpIter(e, trans_s, trans_e);
 		}
-		FsWrapExp(e,__): {
-			fsExpTraverse(e, trans_s, trans_e);
+		FsRet(e): {
+			fsExpIter(e, trans_s, trans_e);
 		}
-		FsRet(e,__): {
-			fsExpTraverse(e, trans_s, trans_e);
+		FsTailCall(): { }
+		FsVarDecl(var): { 
+			fsExpIter(var, trans_s, trans_e);
 		}
-		FsTailCall(__): { }
-		FsVarDecl(var,__): { 
-			fsExpTraverse(var, trans_s, trans_e);
+		FsVarDef(v, e): {
+			fsExpIter(v, trans_s, trans_e);
+			fsExpIter(e, trans_s, trans_e);
 		}
-		FsAssign(to, what,__): {
-			fsExpTraverse(to, trans_s, trans_e);
-			fsExpTraverse(what, trans_s, trans_e);
+		FsAssign(to, what): {
+			fsExpIter(to, trans_s, trans_e);
+			fsExpIter(what, trans_s, trans_e);
 		}
-		FsMemory(op, e,__): {
-			fsExpTraverse(e, trans_s, trans_e);
+		FsMemory(op, e): {
+			fsExpIter(e, trans_s, trans_e);
 		}
 	}
 	trans_s(s);
 }
 
-fsExpTraverse(ex: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
+fsExpIter(ex: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
 	switch(ex) {
-		FsLambda(__,__,__, body, __,__): {
-			fsStatTraverse(body, trans_s, trans_e);
+		FsLambda(__,__,__, body, __): {
+			fsStatIter(body, trans_s, trans_e);
 		}
-		FsCall(fn, args, __,__): {
-			fsExpTraverse(fn, trans_s, trans_e);
-			iter(args, \x -> fsExpTraverse(x, trans_s, trans_e));
+		FsCall(fn, args, __): {
+			fsExpIter(fn, trans_s, trans_e);
+			iter(args, \x -> fsExpIter(x, trans_s, trans_e));
 		}
-		FsCallPrim(op, es, __,__): {
-			iter(es, \x -> fsExpTraverse(x, trans_s, trans_e));
+		FsCallPrim(op, es, __): {
+			iter(es, \x -> fsExpIter(x, trans_s, trans_e));
 		}
-		FsVar(name,__,__,__): { }
+		FsCast(e,__,__): {
+			fsExpIter(e, trans_s, trans_e);
+		}
+		FsVar(name,__,__): { }
 		FiConst(): { }
 	};
 	trans_e(ex);
 }
+
+/*
+fsFoldMap(e: FsAll, acc: ?, fn: (FsAll, FsTraverseEnv, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?> {
+	fsDoFoldMap(e, 
+		FsTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()),
+		acc, fn, order
+	);
+}
+
+fsDoFoldMap(e: FsAll, env: FsTraverseEnv, acc: ?, fn: (FsAll, FsTraverseEnv, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?> {
+	if (order.argsFirst) {
+		env1 = FsTraverseEnv(env with parents = Cons(e, env.parents));
+		p = fsDoFoldMapArgs(e, env1, acc, fn, order);
+		fn(p.first, env, p.second);
+	} else {
+		p = fn(e, env, acc);
+		env1 = FsTraverseEnv(env with parents = Cons(p.first, env.parents));
+		fsDoFoldMapArgs(p.first, env1, p.second, fn, order);
+	}
+}
+
+fsDoFoldMapArgs(
+	e: FsAll, env: FsTraverseEnv, acc: ?, 
+	fn: (FsAll, FsTraverseEnv, ?) -> Pair<FsAll, ?>,
+	order: AstTraverseOrder
+) -> ? {
+	switch (s) {
+		FsIf(cond, s1, s2): {
+			if (order.direct) {
+				p_cond = fsDoFoldMap(cond, env, acc, fn, order);
+				p_s1 = fsDoFoldMap(p_cond.first, env, p_cond.second, fn, order);
+				p_s2 = fsDoFoldMap(p_s1.first, env, p_s1.second, fn, order);
+				Pair(FsIf(p_cond.first, p_s1.first, p_s2.first), p_s2.second);
+			} else {
+				p_s2 = fsDoFoldMap(p_s1.first, env, p_s1.second, fn, order);
+				p_s1 = fsDoFoldMap(p_cond.first, env, p_cond.second, fn, order);
+				p_cond = fsDoFoldMap(cond, env, acc, fn, order);
+				Pair(FsIf(p_cond.first, p_s1.first, p_s2.first), p_s2.second);
+			}
+		}
+		FsSwitch(x, sw_type, cases): {
+			fsDoFoldMap(x, trans_s, trans_e);
+			iter(cases, \c -> fsDoFoldMap(c.body, trans_s, trans_e));
+		}
+		FsSeq(ss): { 
+			iter(ss, \x -> fsDoFoldMap(x, trans_s, trans_e));
+		}
+		FsLet(v, e): {
+			fsDoFoldMap(v, trans_s, trans_e);
+			fsDoFoldMap(e, trans_s, trans_e);
+		}
+		FsWrapExp(e): {
+			fsDoFoldMap(e, trans_s, trans_e);
+		}
+		FsRet(e): {
+			fsDoFoldMap(e, trans_s, trans_e);
+		}
+		FsTailCall(): { }
+		FsVarDecl(var): { 
+			fsDoFoldMap(var, trans_s, trans_e);
+		}
+		FsAssign(to, what): {
+			fsDoFoldMap(to, trans_s, trans_e);
+			fsDoFoldMap(what, trans_s, trans_e);
+		}
+		FsMemory(op, e): {
+			fsDoFoldMap(e, trans_s, trans_e);
+		}
+		FsLambda(__,__,__, body, __): {
+			fsDoFoldMap(body, trans_s, trans_e);
+		}
+		FsCall(fn, args, __): {
+			fsDoFoldMap(fn, trans_s, trans_e);
+			iter(args, \x -> fsDoFoldMap(x, trans_s, trans_e));
+		}
+		FsCallPrim(op, es, __): {
+			iter(es, \x -> fsDoFoldMap(x, trans_s, trans_e));
+		}
+		FsCast(e,__,__): {
+			fsDoFoldMap(e, trans_s, trans_e);
+		}
+		FsVar(name,__,__): { }
+		FiConst(): { }
+	}
+}
+*/
+/*
+fsStatFoldMap(
+	s: FsStat, acc: ?, 
+	fn_s: (FsStat, ?) -> Pair<FsStat, ?>,
+	fn_e: (FsExp, ?) -> Pair<FsExp, ?>
+	) -> ? {
+	switch (s) {
+		FsIf(cond, s1, s2): {
+			fsExpFold(cond, trans_s, trans_e);
+			fsStatFold(s1, trans_s, trans_e);
+			fsStatFold(s2, trans_s, trans_e);
+		}
+		FsSwitch(x, sw_type, cases): {
+			fsExpFold(x, trans_s, trans_e);
+			iter(cases, \c -> fsStatFold(c.body, trans_s, trans_e));
+		}
+		FsSeq(ss): { 
+			iter(ss, \x -> fsStatFold(x, trans_s, trans_e));
+		}
+		FsLet(v, e): {
+			fsExpFold(v, trans_s, trans_e);
+			fsExpFold(e, trans_s, trans_e);
+		}
+		FsWrapExp(e): {
+			fsExpFold(e, trans_s, trans_e);
+		}
+		FsRet(e): {
+			fsExpFold(e, trans_s, trans_e);
+		}
+		FsTailCall(): { }
+		FsVarDecl(var): { 
+			fsExpFold(var, trans_s, trans_e);
+		}
+		FsAssign(to, what): {
+			fsExpFold(to, trans_s, trans_e);
+			fsExpFold(what, trans_s, trans_e);
+		}
+		FsMemory(op, e): {
+			fsExpFold(e, trans_s, trans_e);
+		}
+	}
+	trans_s(s);
+}
+
+fsExpFold(ex: FsExp, acc: ?, fn_s: (?, FsStat) -> ?, fn_e: (?, FsExp) -> ?) -> ? {
+	switch(ex) {
+		FsLambda(__,__,__, body, __): {
+			fsStatFold(body, trans_s, trans_e);
+		}
+		FsCall(fn, args, __): {
+			fsExpFold(fn, trans_s, trans_e);
+			iter(args, \x -> fsExpFold(x, trans_s, trans_e));
+		}
+		FsCallPrim(op, es, __): {
+			iter(es, \x -> fsExpFold(x, trans_s, trans_e));
+		}
+		FsCast(e,__,__): {
+			fsExpFold(e, trans_s, trans_e);
+		}
+		FsVar(name,__,__): { }
+		FiConst(): { }
+	};
+	trans_e(ex);
+}
+
+
+fsFoldMap(s: FsAll, acc: ?, fn: (FsAll, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?> {
+	if (order.argsFirst) {
+		env1 = FiExpEnv(env with parents = Cons(e, env.parents));
+		p = fiFoldMapExpArgs(e, env1, acc, fn, order);
+		fn(p.first, env, p.second);
+	} else {
+		p = fn(e, env, acc);
+		env1 = FiExpEnv(env with parents = Cons(p.first, env.parents));
+		fiFoldMapExpArgs(p.first, env1, p.second, fn, order);
+	}
+}
+
+fsDoFoldMap(s: FsAll, acc: ?, fn: (FsAll, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?> {
+	
+}
+*/

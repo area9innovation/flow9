@@ -222,7 +222,9 @@ void flow2string(Flow* v, string& str) {
 				if (!first) {
 					str.append(u", ");
 				}
-				flow2string(v->getFlow(i), str);
+				Flow* f = v->getFlow(i);
+				flow2string(f, str);
+				rc(f, -1);
 				first = false;
 			}
 			str.append(u"]");
@@ -230,7 +232,9 @@ void flow2string(Flow* v, string& str) {
 		}
 		case TypeFx::REF: {
 			str.append(u"ref ");
-			flow2string(v->getFlow(0), str);
+			Flow* f = v->getFlow(0);
+			flow2string(f, str);
+			rc(f, -1);
 			break;
 		}
 		case TypeFx::FUNC: {
@@ -249,7 +253,9 @@ void flow2string(Flow* v, string& str) {
 				if (!first) {
 					str.append(u", ");
 				}
-				flow2string(v->getFlow(i), str);
+				Flow* f = v->getFlow(i);
+				flow2string(f, str);
+				rc(f, -1);
 				first = false;
 			}
 			str.append(u")");

@@ -141,14 +141,14 @@ template<> struct is_type<TypeFx::BOOL, Bool> { enum { result = true }; };
 template<> struct is_type<TypeFx::DOUBLE, Double> { enum { result = true }; };
 template<> struct is_type<TypeFx::STRING, String*> { enum { result = true }; };
 template<> struct is_type<TypeFx::NATIVE, Native*> { enum { result = true }; };
-template<typename T> struct is_type<TypeFx::ARRAY, Vec<T>> { enum { result = true }; };
-template<typename T> struct is_type<TypeFx::REF, Ref<T>> { enum { result = true }; };
-template<typename R, typename... As> struct is_type<TypeFx::FUNC, Fun<R, As...>> { enum { result = true }; };
-template<TypeId Id1, TypeId Id2, typename... Fs> struct is_type<Id1, Str<Id2, Fs...>> { enum { result = true }; };
+template<typename T> struct is_type<TypeFx::ARRAY, Vec<T>*> { enum { result = true }; };
+template<typename T> struct is_type<TypeFx::REF, Ref<T>*> { enum { result = true }; };
+template<typename R, typename... As> struct is_type<TypeFx::FUNC, Fun<R, As...>*> { enum { result = true }; };
+template<TypeId Id, typename... Fs> struct is_type<Id, Str<Id, Fs...>*> { enum { result = true }; };
 template<TypeId Id, typename T> constexpr bool is_type_v = is_type<Id, T>::result;
 
 template<typename T> struct is_struct { enum { result = false }; };
-template<TypeId Id, typename... Fs> struct is_struct<Str<Id, Fs...>> { enum { result = true }; };
+template<TypeId Id, typename... Fs> struct is_struct<Str<Id, Fs...>*> { enum { result = true }; };
 template<typename T> constexpr bool is_struct_v = is_struct<T>::result;
 
 template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer<T>>;
@@ -165,6 +165,10 @@ template<typename T> inline void rc(T x, Int d) {
 
 template<typename T> inline T incRc(T x) {
 	if constexpr (std::is_pointer_v<T>) { ++x->rc_; } return x;
+}
+
+template<typename T, typename V> inline T decRc(V y, T x) {
+	if constexpr (std::is_pointer_v<T>) { if (--x->rc_ == 0) delete x; } return y;
 }
 
 // Dynamic wrapper for all values 
@@ -387,7 +391,9 @@ struct Vec : public Flow {
 	iterator end(){ return vect.end(); }
 
 	// general interface
-	Int size() const { return static_cast<Int>(vect.size()); }
+	Int size() const { 
+		return static_cast<Int>(vect.size()); 
+	}
 	Flow* getFlow(Int i) override { return cast<ElType, Flow*>(get(i)); }
 	void setFlow(Int i, Flow* v) override { set(i, cast<Flow*, ElType>(v)); }
 	void push_back(ElType x) {
@@ -593,13 +599,13 @@ inline T2 cast(T1 x) {
 				if constexpr (std::is_same_v<T1, Flow*>) {
 					ret = new V2(x->size());
 					for (Int i = 0; i < x->size(); ++ i) {
-						ret->vect.push_back(cast<Flow*, typename V2::ElType>(x->getFlow(i)));
+						ret->push_back(cast<Flow*, typename V2::ElType>(x->getFlow(i)));
 					}
 				} else {
 					using V1 = std::remove_pointer<T1>::type;
 					ret = new V2(x->size());
 					for (Int i = 0; i < x->size(); ++ i) {
-						ret->vect.push_back(cast<typename V1::ElType, typename V2::ElType>(x->get(i)));
+						ret->push_back(cast<typename V1::ElType, typename V2::ElType>(x->get(i)));
 					}
 				}
 			}
@@ -652,9 +658,7 @@ inline T2 cast(T1 x) {
 				fail("unknown type");
 			}
 		}
-		/*if constexpr (std::is_scalar_v<T1>) {
-			RefCount<T1>::dec(x);
-		}*/
+		//rc(x, -1);
 		return ret;
 	}
 }

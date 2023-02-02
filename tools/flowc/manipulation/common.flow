@@ -10,7 +10,7 @@ export {
 	fiVarIsUsed(var : string, expr : FiExp) -> bool;
 	fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string];
 
-	FiMapOrder(
+	AstTraverseOrder(
 		argsFirst: bool, // fold args first, a node afterwards vs. in opposite order
 		direct: bool     // direct vs. reverse iteration over args
 	);
@@ -22,7 +22,7 @@ export {
 	fiMapProgramExp(prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram;
 
 	// A local description of scope environment in expression
-	FiExpEnv(
+	FiExpTraverseEnv(
 		parents: List<FiExp>,
 		locals: Tree<string, FiVar>,
 		args: Tree<string, FiVar>,
@@ -30,10 +30,10 @@ export {
 	);
 
 	// General form of expression transformation
-	fiMapExp(e: FiExp, fn: (FiExp, FiExpEnv) -> FiExp, argsFirst: bool) -> FiExp;
+	fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp;
 
-	// General form of expression folding
-	fiFoldMapExp(e: FiExp, acc: ?, fn: (FiExp, FiExpEnv, ?) -> Pair<FiExp, ?>, order: FiMapOrder) -> Pair<FiExp, ?>;
+	// General form of expression folding, combined with mapping
+	fiFoldMapExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?>;
 
 	// Find anything in AST
 	fiFindInExpr(e : FiExp, pred: (FiExp) -> Maybe<?>) -> Maybe<?>;
@@ -415,29 +415,29 @@ fiMapProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgr
 	);
 }
 
-fiMapExp(e: FiExp, fn: (FiExp, FiExpEnv) -> FiExp, argsFirst: bool) -> FiExp {
-	fiDoMapExp(e, FiExpEnv(makeList(), makeTree(), makeTree(), makeTree()), fn, argsFirst);
+fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp {
+	fiDoMapExp(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), fn, argsFirst);
 }
 
-fiDoMapExp(e: FiExp, env: FiExpEnv, fn: (FiExp, FiExpEnv) -> FiExp, argsFirst: bool) -> FiExp {
+fiDoMapExp(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp {
 	if (argsFirst) {
-		env1 = FiExpEnv(env with parents = Cons(e, env.parents));
+		env1 = FiExpTraverseEnv(env with parents = Cons(e, env.parents));
 		e1 = fiMapExpArgs(e, env1, fn, argsFirst);
 		fn(e1, env);
 	} else {
 		e1 = fn(e, env);
-		env1 = FiExpEnv(env with parents = Cons(e1, env.parents));
+		env1 = FiExpTraverseEnv(env with parents = Cons(e1, env.parents));
 		fiMapExpArgs(e1, env1, fn, argsFirst);
 	}
 }
 
-fiMapExpArgs(e: FiExp, env: FiExpEnv, fn: (FiExp, FiExpEnv) -> FiExp, argsFirst: bool) -> FiExp {
+fiMapExpArgs(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp {
 	switch (e) {
 		FiLambda(args, body, type, start): {
 			env1 = fold(args, env, \acc, arg -> {
 				if (arg.name == "__") acc else {
 					var = FiVar(arg.name, arg.type, start);
-					FiExpEnv(acc with 
+					FiExpTraverseEnv(acc with 
 						locals = setTree(acc.locals, arg.name, var),
 						args = setTree(acc.args, arg.name, var),
 					);
@@ -456,7 +456,7 @@ fiMapExpArgs(e: FiExp, env: FiExpEnv, fn: (FiExp, FiExpEnv) -> FiExp, argsFirst:
 		FiLet(name, type, e1, e2,__,start): {
 			env1 = if (name == "__") env else { 
 				var = FiVar(name, type, start);
-				FiExpEnv(env with 
+				FiExpTraverseEnv(env with 
 					locals = setTree(env.locals, name, var),
 					lets = setTree(env.args, name, var),
 				);
@@ -514,29 +514,29 @@ fiMapExpArgs(e: FiExp, env: FiExpEnv, fn: (FiExp, FiExpEnv) -> FiExp, argsFirst:
 	}
 }
 
-fiFoldMapExp(e: FiExp, acc: ?, fn: (FiExp, FiExpEnv, ?) -> Pair<FiExp, ?>, order: FiMapOrder) -> Pair<FiExp, ?> {
-	fiDoFoldMapExp(e, FiExpEnv(makeList(), makeTree(), makeTree(), makeTree()), acc, fn, order); 
+fiFoldMapExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?> {
+	fiDoFoldMapExp(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), acc, fn, order); 
 }
 
-fiDoFoldMapExp(e: FiExp, env: FiExpEnv, acc: ?, fn: (FiExp, FiExpEnv, ?) -> Pair<FiExp, ?>, order: FiMapOrder) -> Pair<FiExp, ?> {
+fiDoFoldMapExp(e: FiExp, env: FiExpTraverseEnv, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?> {
 	if (order.argsFirst) {
-		env1 = FiExpEnv(env with parents = Cons(e, env.parents));
+		env1 = FiExpTraverseEnv(env with parents = Cons(e, env.parents));
 		p = fiFoldMapExpArgs(e, env1, acc, fn, order);
 		fn(p.first, env, p.second);
 	} else {
 		p = fn(e, env, acc);
-		env1 = FiExpEnv(env with parents = Cons(p.first, env.parents));
+		env1 = FiExpTraverseEnv(env with parents = Cons(p.first, env.parents));
 		fiFoldMapExpArgs(p.first, env1, p.second, fn, order);
 	}
 }
 
-fiFoldMapExpArgs(e: FiExp, env: FiExpEnv, acc0: ?, fn: (FiExp, FiExpEnv, ?) -> Pair<FiExp, ?>, order: FiMapOrder) -> Pair<FiExp, ?> {
+fiFoldMapExpArgs(e: FiExp, env: FiExpTraverseEnv, acc0: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?> {
 	switch (e) {
 		FiLambda(args, body, type, start): {
 			env1 = fold(args, env, \acc, arg -> {
 				if (arg.name == "__") acc else {
 					var = FiVar(arg.name, arg.type, start);
-					FiExpEnv(acc with 
+					FiExpTraverseEnv(acc with 
 						locals = setTree(acc.locals, arg.name, var),
 						args = setTree(acc.args, arg.name, var),
 					);
@@ -578,7 +578,7 @@ fiFoldMapExpArgs(e: FiExp, env: FiExpEnv, acc0: ?, fn: (FiExp, FiExpEnv, ?) -> P
 		FiLet(name, type, e1, e2, __, start): {
 			env1 = if (name == "__") env else {
 				var = FiVar(name, type, start);
-				FiExpEnv(env with 
+				FiExpTraverseEnv(env with 
 					locals = setTree(env.locals, name, var),
 					lets = setTree(env.args, name, var),
 				);
