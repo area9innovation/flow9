@@ -3732,7 +3732,14 @@ class RenderSupport {
 	public static function requestFullScreenClip(clip : FlowContainer) {
 		var nativeWidget = untyped clip.findNativeWidgetChild(clip.parentClip);
 		if (nativeWidget != null) {
+			var rootHeightBefore = getStageHeight();
 			requestFullScreen(nativeWidget);
+			// To keep in sync mouse coordinates with fullscreen content
+			once("resize", function() {
+				var rootHeightAfter = getStageHeight();
+				PixiStage.nativeWidget.style.position = 'absolute';
+				PixiStage.nativeWidget.style.top = '${rootHeightBefore - rootHeightAfter}px';
+			});
 		}
 	}
 
@@ -3740,6 +3747,8 @@ class RenderSupport {
 		var nativeWidget = untyped clip.findNativeWidgetChild(clip.parentClip);
 		if (nativeWidget != null) {
 			exitFullScreen(nativeWidget);
+			PixiStage.nativeWidget.style.position = null;
+			PixiStage.nativeWidget.style.top = null;
 		}
 	}
 
