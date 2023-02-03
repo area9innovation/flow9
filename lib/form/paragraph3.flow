@@ -481,9 +481,11 @@ renderParagraphEx(
 		),
 		\ -> {
 			updateFn = \wi-> {
+				id = traceApi.makeRenderingId();
+
 				oldLines = getValue(linesCountB);
 				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				traceApi.traceAndNest(\-> "updateFn START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+				traceApi.traceAndNest(\-> "updateFn [" + id + "] START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -509,8 +511,12 @@ renderParagraphEx(
 				nextDistinct(linesCountB, length(infos));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
+
+				traceApi.traceAndNest(\-> "updateFn [" + id + "] lines SET START maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceApi.unnestAndTrace(\-> "updateFn END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] lines SET END  maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+
+				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
@@ -937,6 +943,27 @@ reflowParaWords(
 	else reflowResult;
 }
 
+rtrimParaWordGroup(group : ParaWordGroup) -> ParaWordGroup {
+	trimmedWords = foldList(
+		group.words |> array2list,
+		makeList(),
+		\acc, w -> {
+			if (isParaWordSpaceForm(w) && isEmptyList(acc)) {
+				acc
+			} else {
+				Cons(w, acc)
+			}
+		}
+	) |> list2array;
+
+	ParaWordGroup(
+		trimmedWords,
+		ref foldi(trimmedWords, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
+			addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
+		)
+	)
+}
+
 // here availableWidth is an amount of width for current line
 reflowParaWords2(
 	wordGroups : [ParaWordGroup],
@@ -1037,9 +1064,18 @@ reflowParaWords2(
 		detachWord(word, isSpc);
 		isNewLine = switch (word.word : ParaAtomic) {
 			NewLine() : true;
-			default :
-				max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining
-				&& (isSpc || currentWordGroups != [])
+			default : {
+				if (max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining && (isSpc || currentWordGroups != [])) {
+					// we should check if the groupd ends with spaces that are not count into width if they are in the end of the line
+					if (wigiRtrimSpace) {
+						getParaWordWidthValue(^(rtrimParaWordGroup(group).width), textScale) > remaining
+					} else {
+						true
+					}
+				} else {
+					false
+				}
+			}
 		};
 		if (isNewLine) {
 			reflowParaWords2(
