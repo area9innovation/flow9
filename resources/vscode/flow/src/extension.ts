@@ -220,6 +220,10 @@ function startLspClient() {
 			//        is implemented properly in clangd
 			code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
 			protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
+		},
+		markdown: {
+			isTrusted: true,
+			supportHtml: true
 		}
 	}
 
