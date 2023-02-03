@@ -51,8 +51,8 @@ export {
 
 	// Will be populated when rendering  document with real height of all lines from top-level paragraphs
 	RenderedLinesInfoStyle(baselines : DynamicBehaviour<[DynamicBehaviour<[RenderedLinesInfo]>]>);
-		RenderedLinesInfo(height : double, baseline : double);
-		dummyRenderedLinesInfo = RenderedLinesInfo(0.0, 0.0);
+		RenderedLinesInfo(height : double, baseline : double, elementsID : [int], y : double);
+		dummyRenderedLinesInfo = RenderedLinesInfo(0.0, 0.0, [], 0.0);
 
 	nonBreakableSpace : string = fromCharCode(nonBreakableSpaceCode);
 	wordJoiner : string = fromCharCode(wordJoinerCode);
@@ -127,7 +127,16 @@ ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
 
 OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>, nextWidgetId : DynamicBehaviour<Maybe<int>>);
-ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double, containsDynamicElement : bool);
+ParaLineInfo(
+	optimizedLine : [OptimizedLineElement],
+	lineAsc : double,
+	lineHeight : double,
+	lineWidth : double,
+	lineIndent : double,
+	containsDynamicElement : bool,
+	y : double
+);
+ParaLinesInfoAcc(lines : List<ParaLineInfo>, y : double);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
@@ -493,7 +502,8 @@ renderParagraphEx(
 					rtl,
 					fitLongWords,
 					extractStruct(s, defaultFontSizeStyle).size,
-					ignoreLetterspacing
+					ignoreLetterspacing,
+					interlineSpacing
 				);
 
 				nextDistinct(linesCountB, length(infos));
@@ -577,7 +587,8 @@ getParaLineInfos(
 	rtl : bool,
 	shrinkLongWords : bool,
 	fontSize : double,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	interlineSpacing : double
 ) -> [ParaLineInfo] {
 	textScale = if (shrinkLongWords && wordGroups != []) {
 		maxWidthGroup : ParaWordGroup = fold(
@@ -597,14 +608,14 @@ getParaLineInfos(
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
 	linesCount = length(reflowResult) - 1;
-	mapi(reflowResult, \i, line -> {
+	a : ParaLinesInfoAcc = foldi(reflowResult, ParaLinesInfoAcc(EmptyList(), 0.0), \i : int, acc : ParaLinesInfoAcc, line : ParaLine -> {
 		words = if (wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
 			// we don't need spaces in the end of the line becasue if there is filler element in the line spaces will be out of the available width
 			// and we can't move space on the next line because it will break alignment so we just trim spaces in the end.
 			if (isParaWordSpaceForm(lastElement(line.words, emptyParaWord))) {
-				foldr(line.words, makeList(), \acc, paraWord -> {
-					if (acc == EmptyList() && isParaWordSpaceForm(paraWord)) acc
-					else Cons(paraWord, acc);
+				foldr(line.words, makeList(), \acc1, paraWord -> {
+					if (acc1 == EmptyList() && isParaWordSpaceForm(paraWord)) acc1
+					else Cons(paraWord, acc1);
 				}) |> list2array |> reverseA;
 			} else line.words;
 		} else line.words;
@@ -629,15 +640,21 @@ getParaLineInfos(
 			)
 		});
 
-		ParaLineInfo(
+		paraLineInfo = ParaLineInfo(
 			optimizedLine,
 			lineAscAndDynamic.first,
 			lineHeightAndWidth.first,
 			lineHeightAndWidth.second,
 			line.indent,
-			lineAscAndDynamic.second
-		)
+			lineAscAndDynamic.second,
+			acc.y
+		);
+		ParaLinesInfoAcc(
+			Cons(paraLineInfo, acc.lines),
+			acc.y + lineHeightAndWidth.first + if (i == linesCount) 0. else interlineSpacing,
+		);
 	});
+	list2array(a.lines);
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -1126,11 +1143,19 @@ renderParaLines(
 			if (acc.maxLineWidth < f.width) f.width else acc.maxLineWidth
 		);
 	});
-
 	maybeApply(
 		renderedLinesInfoM,
 		\renderedLinesInfo -> {
-			nextDistinct(renderedLinesInfo, map(lines.lines, \info : ParaLineInfo -> RenderedLinesInfo(info.lineHeight, info.lineAsc)));
+			nextDistinct(renderedLinesInfo, map(lines.lines, \info : ParaLineInfo -> {
+				elementsID = fold(info.optimizedLine, [] , \acc, elem : OptimizedLineElement -> {
+					eitherMap(
+						elem.interactivityIdM,
+						\interactivityId -> arrayPush(acc, interactivityId),
+						acc
+					)
+				});
+				RenderedLinesInfo(info.lineHeight, info.lineAsc, elementsID, info.y)
+			}));
 		}
 	);
 
