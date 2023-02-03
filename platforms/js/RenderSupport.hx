@@ -3730,15 +3730,16 @@ class RenderSupport {
 	}
 
 	public static function requestFullScreenClip(clip : FlowContainer) {
+		if (IsFullScreen) return;
 		var nativeWidget = untyped clip.findNativeWidgetChild(clip.parentClip);
 		if (nativeWidget != null) {
-			var rootHeightBefore = getStageHeight();
+			var elementBRect = nativeWidget.getBoundingClientRect();
 			requestFullScreen(nativeWidget);
 			// To keep in sync mouse coordinates with fullscreen content
-			once("resize", function() {
-				var rootHeightAfter = getStageHeight();
+			once("fullscreen", function() {
 				PixiStage.nativeWidget.style.position = 'absolute';
-				PixiStage.nativeWidget.style.top = '${rootHeightBefore - rootHeightAfter}px';
+				PixiStage.nativeWidget.style.left = '${-elementBRect.left}px';
+				PixiStage.nativeWidget.style.top = '${-elementBRect.top}px';
 			});
 		}
 	}
@@ -3748,6 +3749,7 @@ class RenderSupport {
 		if (nativeWidget != null) {
 			exitFullScreen(nativeWidget);
 			PixiStage.nativeWidget.style.position = null;
+			PixiStage.nativeWidget.style.left = null;
 			PixiStage.nativeWidget.style.top = null;
 		}
 	}
