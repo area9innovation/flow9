@@ -84,10 +84,19 @@ MDockingArea(isColumn : bool, state : MDockingState, areaId : int, style : [MDoc
 					startA = colAlignedA.first;
 					endA = colAlignedA.second;
 					colA = concat(startA, endA);
+	
+					// We need take the cols with only enabled panels
+					colWithEnabledpanelsA = filtermap(areaGridAligned,\c -> {
+						enabledCols = filtermap(concat(c.first, c.second), \pid -> {
+							if (getValue(getValue(state.enabled)[pid])) Some(pid) else None();
+						});
+						if (enabledCols != []) Some(enabledCols) else None()
+					});
 
 					atLeastOneEnabledInColT = fselectLift(fmerge(getValue(state.enabled)), \enA ->
 						 fold(colA, false, \acc, a -> acc || enA[a])
-					);					
+					);
+
 					atLeastOneEnabledT = fselectLift(fmerge(getValue(state.enabled)), \enA -> 
 						fold(areaGrid, false, \acc, singleColA -> acc || fold(singleColA, false, \acc2, a -> acc2 || enA[a]))
 					);
@@ -105,7 +114,7 @@ MDockingArea(isColumn : bool, state : MDockingState, areaId : int, style : [MDoc
 								isColumn,
 								dropInfo,
 								state,
-								length(areaGridAligned),
+								length(colWithEnabledpanelsA),
 								colAlignedA,
 								colId,
 								lg,
@@ -170,7 +179,7 @@ makeDockedPanelA(
 	dontResizeAll = fold(colA, true, \acc, p -> acc && contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
 
 	// Accordion menu
-	accordion = extractStruct(style, MDAreaAccordion(-1, ""));
+	accordion = extractStruct(style, MDAreaAccordion(intMin, ""));
 
 	// Default scroll for areas
 	dontScrollArea  = contains(style, MDAreaDontScroll());
@@ -275,8 +284,6 @@ makeDockedPanelA(
 
 				// Panel size
 				dockedSize = getValue(state.dockedSize)[panelId];
-				pWidth = dockedSize.width;
-				pHeight = dockedSize.height;		
 				panelHB = panelsHA[rowId];
 
 				MConstruct([
@@ -298,9 +305,8 @@ makeDockedPanelA(
 			|> (\f -> if (isColumn) MLines(f) else MColsA(f))
 			// Scroll without side expander button
 			|> (\f -> if (dontScrollArea || containsToolbarFillSize || containsToolbar || containsToolbarButtons) f else MScroll(f, TFillXY(), customScrollStyleA))
-			|> (\f -> if (isColumn) MLines2(sideExpBtn, f) else MCols2A(f, sideExpBtn))
+			|> (\f -> if (isColumn) MLines2(sideExpBtn /* |> (\m -> MGroup2(m, MCenterX(MText(toString(colId), []))))  DEBUG */, f) else MCols2A(f, sideExpBtn))
 		})
-			
 	}
 
 
@@ -339,7 +345,7 @@ makeDockedPanelA(
 		],
 		MFrame(0.0, 0.0, [MFill(editorBgColorFn(areaTheme, state.style))],
 			MGroup2(
-				if (isColumn) {						
+				if (isColumn) {
 					TFillY() |> (\f -> MAttachHeight(f, maxAreaSizeB))  // Get max column height
 				} else {
 					TFillX() |> (\f -> MAttachWidth(f, maxAreaSizeB))  // Get max row width
@@ -419,7 +425,6 @@ resizePanelH(
 		if (isToolbar) dockingBarHeightToolbar else 0.0;
 	}
 
-	cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
 	isBottomLine = contains(style, MDockingBottomLines());
 	dontResizeAll = fold(colA, true, \acc, p -> acc || contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
 	dontResize = isLastPanel;
@@ -484,7 +489,6 @@ resizePanelH(
 					rowFiller,
 					makeHandlesDrop(true, [colId, rowId + 1], true, false)
 						|> showIf(!isToolbar)
-
 				]
 				else if (rowId == length(colA) -1)
 				[
@@ -587,7 +591,6 @@ resizeAreaW(
 	tempWH = makeWH();
 	startingValueB = make(0.0);
 	firstPanelId = firstElement(colA, 0);
-	cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
 	containsToolbar = containsDockingToolbar(state, colA);
 
 	panelsWidthA = map(colA, \s -> getValue(state.size)[s].width);
@@ -609,7 +612,7 @@ resizeAreaW(
 
 	makeHandlesDrop = \resizeW : bool, order : [int], showResize : bool, endpointOffset : bool -> {
 		resizeHelper = dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, resizeTr, style)  
-			|> (\m -> MShowLazy(fselectLift(fmerge(map(colA, \c -> getValue(state.sideExpanded)[c])), \seA -> contains(seA, true)), \ -> m))
+			|> (\m -> MIfLazy(fselectLift(fmerge(map(colA, \c -> getValue(state.sideExpanded)[c])), \seA -> contains(seA, false)), \nse -> if (nse) MEmpty() else m))
 			|> showIf(showResize && !containsToolbar);
 		dockingDropLine(true, resizeW, containsToolbar, dropInfo, state, order, false, resizeHelper, hoverTr, dropTr, endpointOffset, false, style);		
 	}
