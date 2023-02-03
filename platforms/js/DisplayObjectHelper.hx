@@ -19,7 +19,7 @@ class DisplayObjectHelper {
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
 	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
-	public static var ScreenreaderDialog : Bool = Util.getParameter("screenreader_dialog") == "1" || Native.isNew;
+	public static var ScreenreaderDialog : Bool = Util.getParameter("screenreader_dialog") != "0";
 	public static var CheckUniqueClipID : Bool = Util.getParameter("check_unique_clip_id") == "1";
 	public static var UniqueClipIds : Array<String> = [];
 
@@ -1252,7 +1252,9 @@ class DisplayObjectHelper {
 		}
 
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
-		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
+		if (!nativeWidget.classList.contains("print-page-container")) {
+			nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
+		}
 
 		if (isCanvasStage(clip)) {
 			nativeWidget.style.transform = 'matrix(${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0, ${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0)';
@@ -1499,7 +1501,9 @@ class DisplayObjectHelper {
 
 				y = 0;
 			} else {
-				nativeWidget.firstChild.style.top = null;
+				if (!nativeWidget.classList.contains("print-page-container")) {
+					nativeWidget.firstChild.style.top = null;
+				}
 			}
 		}
 
@@ -2060,7 +2064,7 @@ class DisplayObjectHelper {
 					RenderSupport.once("stagechanged", function() {
 						untyped child.nativeWidget.showModal();
 						RenderSupport.once("stagechanged", function() {
-							untyped child.nativeWidget.close();
+							if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
 						});
 					});
 				};

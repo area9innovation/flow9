@@ -93,4 +93,4 @@ If VS Code fails to create the dev-container it might be needed to remove the ba
 
 	docker image prune
 
-Where xyz is the id vsc-flow9-* containers
+Where xyz is the id of the vsc-flow9-* containers

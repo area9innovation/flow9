@@ -320,6 +320,8 @@ renderParagraphEx(
 	isParagraphMarked = containsStruct(s, ParagraphMarked());
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
+	accessForceNoMakeClip = tightWidth && isSingleLine;
+
 	// Expand elements into word-units
 	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
 	// Construct our ParaWords
@@ -363,7 +365,7 @@ renderParagraphEx(
 				if (storyWidth > 0.0) storyWidth else getValue(awB),
 				lines, tightWidth, alignment, interlineSpacing,
 				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-				interLineHighlighting, renderedLinesInfoM
+				interLineHighlighting, accessForceNoMakeClip, renderedLinesInfoM
 			);
 			updaterWrapper(\-> nextDistinct(widthManager.width, lines.maxLineWidth));
 			accessibilityParent := prevAccessibilityParent;
@@ -392,15 +394,15 @@ renderParagraphEx(
 		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
 		filtermap(words, \word -> {
 			applyStyles = \form0 ->
-				Access([AccessAttribute("nextWidgetId",
+				Access(concat([AccessAttribute("nextWidgetId",
 					fselect(word.nextWidgetId, FLift(\idM -> eitherMap(idM, makeWordId, "")))
-				)], form0)
+				)], if (accessForceNoMakeClip) [AccessForceMakeClip(false)] else []), form0)
 				|> (\form ->
 					eitherMap(
 						lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
 						\wordStyles -> {
 							applyListenersAndModifiers(wordStyles, form)
-							|>(\f -> applyBlockHighlighting(wordStyles, f))
+							|> (\f -> applyBlockHighlighting(wordStyles, f))
 						},
 						form
 					)
@@ -1090,6 +1092,7 @@ renderParaLines(
 	rtl : bool,
 	isMarked : bool,
 	interLineHighlighting : bool,
+	accessForceNoMakeClip : bool,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Form {
 	lasti = length(lines.lines) - 1;
@@ -1113,7 +1116,8 @@ renderParaLines(
 			} else 0.0,
 			if (interLineHighlighting){
 				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
-			} else 0.0
+			} else 0.0,
+			accessForceNoMakeClip
 		);
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
@@ -1168,6 +1172,7 @@ RenderLine(
 	isMarked : bool,
 	highLightOffset : double,
 	interlineSpacing : double,
+	accessForceNoMakeClip : bool
 ) -> ParaLineResult {
 	remaining = width - info.lineWidth;
 	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, if (newJustifyEnabled && alignment == Justify()) StartAlign() else alignment);
@@ -1207,7 +1212,7 @@ RenderLine(
 		addWordId = \fm -> {
 			if (^useNextWordId) {
 				useNextWordId := false;
-				Access([AccessAttribute("id", const(wordId))], fm);
+				Access(concat([AccessAttribute("id", const(wordId))], if (accessForceNoMakeClip) [AccessForceMakeClip(false)] else []), fm);
 			} else fm
 		}
 
@@ -1783,13 +1788,14 @@ makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> st
 	\-> fold(words(), "", \acc, w -> acc + word2string(w))
 }
 
+wigiTraceRenderingId = ref -1;
+
 makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi {
 	if (isUrlParameterTrue("trace_wigi_render")) {
 		traceId = "[" + idFn() + "] " + functionName + ": ";
 		traceFn = \messageFn -> println(strRepeat(" ", 2 * ^wigiTraceLevel) + traceId + messageFn());
 		nestFn = \-> wigiTraceLevel := ^wigiTraceLevel + 1;
 		unnestFn = \-> if (^wigiTraceLevel > 0) wigiTraceLevel := ^wigiTraceLevel - 1;
-		renderingId = ref -1;
 
 		WigiTraceApi(
 			traceFn,
@@ -1799,8 +1805,8 @@ makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi
 			nestFn,
 			unnestFn,
 			\ -> {
-				renderingId := ^renderingId + 1;
-				toString(^renderingId);
+				wigiTraceRenderingId := ^wigiTraceRenderingId + 1;
+				toString(^wigiTraceRenderingId);
 			 }
 		)
 	} else {

@@ -16,11 +16,13 @@ export {
 		unions : Tree<string, [int]>, // unionName - [structId/generalStructId]
 		templStructs : Tree<int, Tree<[FiType], int>>, // generalStructId - <typeParams-structId>
 		nextId : ref int,
+		exports : Set<string>,
 	);
 	StructTuple(
 		link : Tree</*struct_name*/string, StructTupleArgs>,
 		tmpStructs : Set<string>, // created by compiler
 		structWithFns : Tree<string, [FiType]>, // oldName - newArgTypes
+		exportedTmpStructs : Set<string>,
 	);
 	StructTupleArgs(
 		typeParameters : [FiType],
@@ -53,11 +55,11 @@ export {
 }
 
 makeStructTuple() -> StructTuple {
-	StructTuple(makeTree(), makeSet(), makeTree());
+	StructTuple(makeTree(), makeSet(), makeTree(), makeSet());
 }
 
 makeWiseAstStructs() -> WiseAstStructs {
-	WiseAstStructs(makeStructTuple(), makeTree(), makeTree(), makeTree(), ref 1);
+	WiseAstStructs(makeStructTuple(), makeTree(), makeTree(), makeTree(), ref 1, makeSet());
 }
 
 getNextStructId(v : ref int) -> int {
@@ -80,29 +82,36 @@ fiStructs2wiTuples(env : WiseAstStructs, structs : [FiTypeStruct], unions : [FiT
 						foldi(struct.args, makeTree(), \i, acc2, arg ->
 							setTree(acc2, arg.name, StructTupleArg(i, arg.type))
 						)
-					)
+					),
 				),
 				tuples.data.tmpStructs,
-				tuples.data.structWithFns
+				tuples.data.structWithFns,
+				tuples.data.exportedTmpStructs,
 			),
 			setTree(tuples.table, struct.name, if (struct.typars == []) id else (-1) * id), // we'll replace 1 struct with N later
 			tuples.unions,
 			tuples.templStructs,
 			tuples.nextId,
+			tuples.exports,
 		)
 	});
 
 	unionIds = values2treeEx(unions, \v -> v.name, \t -> map(t.typenames, \v -> v.name));
-	unionStructs = values2treeEx(
-		unions,
-		\v -> v.name,
-		\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
+	unionStructs = mergeTree(
+		values2treeEx(
+			unions,
+			\v -> v.name,
+			\v -> filtermap(getUnionStructs([v.name], unionIds, []), \s -> lookupTree(state.table, s))
+		),
+		filterTree(state.unions, \unionId, ids -> containsSet(state.exports, unionId))
 	);
 
-	WiseAstStructs(state with
-		unions = unionStructs,
-		templStructs = calculateTemplateStructs(state.table, functions, state.nextId)
+	newTemplStructs = mergeTree(
+		calculateTemplateStructs(state.table, functions, state.nextId),
+		state.templStructs
 	);
+
+	WiseAstStructs(state with unions = unionStructs, templStructs = newTemplStructs);
 }
 
 getUnionStructs(ids : [string], unionIds : Tree<string, [string]>, acc : [string]) -> [string] {
@@ -317,17 +326,23 @@ isTemplateStruct(env : WiseAstStructs, name : string) -> bool {
 
 removeInnerStructsFromState(env : WiseAstStructs, exported : [string]) -> WiseAstStructs {
 	exports = buildSet(exported);
-	newStructs = filterTree(env.table, \name, __ -> containsSet(exports, name));
+	isPublicStruct = \name -> containsSet(exports, name)
+		|| containsSet(env.data.exportedTmpStructs, name)
+		|| containsSet(env.data.tmpStructs, name);
+	newStructs = filterTree(env.table, \name, __ -> isPublicStruct(name));
 	newIds = foldTree(newStructs, makeSet(), \__, id, acc -> insertSet(acc, id));
 	WiseAstStructs(
 		StructTuple(
-			filterTree(env.data.link, \name, __ -> containsSet(exports, name)),
+			filterTree(env.data.link, \name, __ -> isPublicStruct(name)),
 			env.data.tmpStructs,
-			env.data.structWithFns
+			env.data.structWithFns,
+			env.data.exportedTmpStructs,
 		),
 		newStructs,
 		filterTree(env.unions, \name, __ -> containsSet(exports, name)),
 		filterTree(env.templStructs, \id, __ -> containsSet(newIds, id)),
 		env.nextId,
+		env.exports,
 	);
+	
 }
