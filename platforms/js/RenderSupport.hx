@@ -3729,6 +3729,20 @@ class RenderSupport {
 		}
 	}
 
+	public static function requestFullScreenClip(clip : FlowContainer) {
+		var nativeWidget = untyped clip.findNativeWidgetChild(clip.parentClip);
+		if (nativeWidget != null) {
+			requestFullScreen(nativeWidget);
+		}
+	}
+
+	public static function exitFullScreenClip(clip : FlowContainer) {
+		var nativeWidget = untyped clip.findNativeWidgetChild(clip.parentClip);
+		if (nativeWidget != null) {
+			exitFullScreen(nativeWidget);
+		}
+	}
+
 	public static function requestFullScreen(element : Dynamic) {
 		if (element.requestFullscreen != null)
 			element.requestFullscreen();
