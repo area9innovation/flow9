@@ -20,7 +20,7 @@ export {
 	);
 						
 	makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : DynamicBehaviour<[Point]>, style : [MDockingStyle]) -> Material;
-	makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, colId : int, panelId : int, style : [MDockingStyle]) -> Material;
+	makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, areaId : int, colId : int, panelId : int, style : [MDockingStyle]) -> Material;
 }
 
 
@@ -75,7 +75,7 @@ makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool
 	|> (\m -> (MExplicitTheme(m, theme, [])));
 }
 
-makePanelTopBar(docked : bool, panelId: int, colId : int, colA : [int], state : MDockingState, isColumn: bool, pTheme : bool, style : [MDockingStyle]) -> Material {
+makePanelTopBar(docked : bool, panelId: int, areaId : int, colId : int, colA : [int], state : MDockingState, isColumn: bool, pTheme : bool, style : [MDockingStyle]) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
 	enabled = getValue(state.enabled)[panelId];
@@ -105,8 +105,10 @@ makePanelTopBar(docked : bool, panelId: int, colId : int, colA : [int], state : 
 	sepColorFn = separatorColorFn(pTheme, state.style);
 	toolbarSepColorFn = toolbarHandleColorFn(pTheme, state.style);
 	// Accordion menu
-	accordion = extractStruct(style, MDAreaAccordion(intMin, ""));
-	isAccordionMenu = accordion.column >= 0;
+	accordion = extractStruct(state.style, MDEditorSetAreaAccordion("", intMin, ""));
+	areaName = lookupTreeDef(reverseTree(getValue(state.dockingAreas)), areaId, "");
+
+	isAccordionMenu = (accordion.column >= 0) && (accordion.areaName == areaName);
 
 	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), []);
 	getPanelIcon = \st : [MIconStyle] ->  {
@@ -197,8 +199,8 @@ makePanelTopBar(docked : bool, panelId: int, colId : int, colA : [int], state : 
 			else
 				makeIconToggleButton(
 					expanded,
-					if (accordion.column != colId) "keyboard_arrow_up" else "remove",
-					if (accordion.column != colId) "keyboard_arrow_down" else "add",
+					if (accordion.column != colId || !isAccordionMenu) "keyboard_arrow_up" else "remove",
+					if (accordion.column != colId || !isAccordionMenu) "keyboard_arrow_down" else "add",
 					"collapse panel",
 					"expand panel",
 					if (accordion.column != colId) dockingTopBarIconSize else dockingTopBarIconSize - 4.0,
@@ -208,7 +210,7 @@ makePanelTopBar(docked : bool, panelId: int, colId : int, colA : [int], state : 
 					tColorFn,
 					0.5
 				) |> showIf(isColumn || !docked),
-			TFixed(if (isAccordionMenu) 14.0 else 10.0, 0.0)
+			TFixed(if (isAccordionMenu || !isAccordionMenu) 14.0 else 10.0, 0.0)
 		])
 		|> (\m -> if (docked) m else MGroup2(m, mobileToolbarDragHandle(!isColumn)))
 	}
@@ -323,7 +325,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 		// Mobile Panel Topbar
 		panelTopBar = {
 				MGroup2(
-					makePanelTopBar(false, panelId, intMax, [], state, !isVerticalToolbarMobile, lg, style),
+					makePanelTopBar(false, panelId, intMin, intMax, [], state, !isVerticalToolbarMobile, lg, style),
 					// Drag handle for mobile panels
 					MSelect2(state.mobileSize, expanded, \ms, e -> {
 						draggingShape = 
@@ -433,7 +435,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	}))
 }
 
-makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, colId : int, panelId : int, style : [MDockingStyle]) -> Material {
+makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, areaId : int, colId : int, panelId : int, style : [MDockingStyle]) -> Material {
 	manager = state.manager;
 	pstyle = concat(state.style, getValue(state.panelStyle)[panelId]);
 	dontMove  = contains(pstyle, MDPanelDontMove());
@@ -461,6 +463,11 @@ makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, colId : in
 	lightTheme = contains(pstyle, MDPanelForceLightTheme());
 	dockedTheme = if (darkTheme) const(false) else if (lightTheme) const(true) else manager.white;
 	toolbarSepColorFn = toolbarHandleColorFn(fgetValue(dockedTheme), state.style);
+
+	// Accordion menu
+	accordion = extractStruct(state.style, MDEditorSetAreaAccordion("", intMin, ""));
+	areaName = lookupTreeDef(reverseTree(getValue(state.dockingAreas)), areaId, "");
+	isAccordionCol = \cid -> (areaName == accordion.areaName) && (cid == accordion.column);
 
 	// Panel's content
 	dContent = makeDockingPanelContent(state, panelId, false, !isColumn, make(false), make(false), pstyle);
@@ -507,7 +514,7 @@ makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, colId : in
 	MSelect(dockedTheme, \lg -> {
 		[
 			// Docked Topbar
-			makePanelTopBar(true, panelId, colId, colA, state, isColumn, lg, style)	
+			makePanelTopBar(true, panelId, areaId, colId, colA, state, isColumn, lg, style)	
 				|> (\tpbar -> 
 					if (isToolbar) {
 						if (dontMove || fillSpace) {
@@ -517,7 +524,20 @@ makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, colId : in
 						}
 					} else {
 						MGroup2(
-							MClickable(tpbar, \ -> reverseBehaviour(expanded)),
+							MClickable(tpbar, \ -> {
+
+
+							println(" EXPANDED of  - " + getValue(state.title)[panelId]);
+							if (isAccordionCol(colId)) {
+								iter(colA, \pID -> {
+									println("EXp: " + getValue(state.title)[pID] +  "       -(" + getValue(state.title)[panelId] + ")");
+									// if (ex && (pID != panelId)) nextDistinct(getValue(state.expanded)[pID], false);
+									nextDistinct(getValue(state.expanded)[pID], pID == panelId);
+								})
+							}
+								
+								// reverseBehaviour(expanded)
+							}),
 							MShowLazy(sideExpanded, \ -> 
 								makeDraggableHandle(
 									makeMDockingDottedHandle(state, smallDragHandleColorFn(lg, state.style), style)
