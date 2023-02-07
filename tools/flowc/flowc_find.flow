@@ -125,78 +125,89 @@ LocalNameSource ::= LocalNameSourceLambdaArg, LocalNameSourceSwitchCaseArg, Loca
 	LocalNameSourceLet(expr : FiLet);
 	LocalNameSourceStructField(expr : FiCallPrim);
 
-findLocalNameSource(e : FiExp, name : string, maxPos : int) -> Maybe<LocalNameSource> {
-	rec = \ex -> findLocalNameSource(ex, name, maxPos);
+findLocalNameSource(e : FiExp, name : string, maxPos : int, ignoreFields : bool) -> Pair<Maybe<LocalNameSource>, bool> {
+	rec = \ex, ignoreFields2 -> findLocalNameSource(ex, name, maxPos, ignoreFields2);
 	tryFn = \acc, fn -> {
-		if (isSome(acc)) {
+		if (isSome(acc.first)) {
 			acc;
 		} else {
-			fn();
+			fn(acc.second);
 		}
 	}
-	recAcc = \acc, ex -> tryFn(acc, \ -> rec(ex));
-	recArr = \exs -> foldr(exs, None(), recAcc);
+	recAcc = \acc, ex -> tryFn(acc, \ignoreFields2 -> rec(ex, ignoreFields2));
+	recArr = \exs, ignoreFields2 -> foldr(exs, Pair(None(), ignoreFields2), recAcc);
 
+	notFound = Pair(None(), ignoreFields);
 	checkStart = \start -> start <= maxPos && start >= -maxPos;
-	checkMyStart = \fn -> if (checkStart(e.start)) fn() else None();
+	checkMyStart = \fn -> if (checkStart(e.start)) fn() else notFound;
 	switch (e) {
 		FiLambda(args, body, __, __): checkMyStart(\ -> {
-			tryFn(rec(body), \ -> {
+			tryFn(rec(body, ignoreFields), \ignoreFields2 -> Pair(
 				maybeMap(
 					findi(args, \a -> a.name == name),
 					\idx -> LocalNameSourceLambdaArg(e, idx)
-				);
-			});
+				),
+				ignoreFields2
+			));
 		});
-		FiCall(f, args, __, __): checkMyStart(\ -> recAcc(recArr(args), f));
+		FiCall(f, args, __, __): checkMyStart(\ -> recAcc(recArr(args, ignoreFields), f));
 		FiLet(name2, __, e1, e2, __, __): checkMyStart(\ -> {
-			tryFn(recAcc(rec(e2), e1), \ -> {
+			tryFn(recAcc(rec(e2, ignoreFields), e1), \ignoreFields2 -> Pair(
 				if (name2 == name) {
 					Some(LocalNameSourceLet(e));
 				} else {
 					None();
-				}
-			});
+				},
+				ignoreFields2
+			));
 		});
-		FiIf(e1, e2, e3, __, __): checkMyStart(\ -> recAcc(recAcc(rec(e3), e2), e1));
+		FiIf(e1, e2, e3, __, __): checkMyStart(\ -> recAcc(recAcc(rec(e3, ignoreFields), e2), e1));
 		FiSwitch(v, __, cases, __, __): checkMyStart(\ -> {
-			foldri(cases, None(), \idxCase, acc, case -> {
+			foldri(cases, Pair(None(), ignoreFields), \idxCase, acc, case -> {
 				if (checkStart(case.start)) {
-					tryFn(recAcc(acc, case.body), \ -> {
+					tryFn(recAcc(acc, case.body), \ignoreFields2 -> Pair(
 						maybeMap(
 							findi(case.argNames, eq(name)),
 							\idxArg -> LocalNameSourceSwitchCaseArg(e, idxCase, idxArg)
-						);
-					});
+						),
+						ignoreFields2
+					));
 				} else {
-					None();
+					notFound;
 				}
 			});
 		});
-		FiCast(e0, __, __, __, __): checkMyStart(\ -> rec(e0));
-		FiSeq(es, __, __): checkMyStart(\ -> recArr(es));
+		FiCast(e0, __, __, __, __): checkMyStart(\ -> rec(e0, ignoreFields));
+		FiSeq(es, __, __): checkMyStart(\ -> recArr(es, ignoreFields));
 		FiCallPrim(op, es, __, __): {
-			tryFn(recArr(es), \ -> {
+			tryFn(recArr(es, ignoreFields), \ignoreFields2 -> Pair(
 				switch (op) {
 					FcFieldPrim(name2): {
-						if (name2 == name && checkStart(e.start)) {
+						if (!ignoreFields2 && (name2 == name) && checkStart(e.start)) {
 							Some(LocalNameSourceStructField(e));
 						} else {
 							None();
 						}
 					}
 					default: None();
-				}
-			});
+				},
+				ignoreFields2
+			));
 		}
-		FiRequire(__, ex, __, __): checkMyStart(\ -> rec(ex));
-		FiUnsafe(__, fb, __, __): checkMyStart(\ -> rec(fb));
-		FiVar(__, __, __): None();
-		FiString(__, __): None();
-		FiBool(__, __): None();
-		FiDouble(__, __): None();
-		FiVoid(__): None();
-		FiInt(__, __): None();
+		FiRequire(__, ex, __, __): checkMyStart(\ -> rec(ex, ignoreFields));
+		FiUnsafe(__, fb, __, __): checkMyStart(\ -> rec(fb, ignoreFields));
+		FiVar(name2, __, __): {
+			if (name2 == name && checkStart(e.start)) {
+				Pair(None(), true);
+			} else {
+				notFound;
+			}
+		}
+		FiString(__, __): notFound;
+		FiBool(__, __): notFound;
+		FiDouble(__, __): notFound;
+		FiVoid(__): notFound;
+		FiInt(__, __): notFound;
 	}
 }
 
@@ -568,7 +579,7 @@ findNameDefInModuleAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, mod
 	);
 	eitherFn(exprM,
 		\expr -> {
-			source = findLocalNameSource(expr, name, index);
+			source = findLocalNameSource(expr, name, index, false).first;
 			if (isNone(source)) {
 				if (config.verbose > 0) {
 					fcPrintln("`" + name + "` is not found at position " + i2s(index) + " in expression: " + toString(expr) + "<br>", config.threadId);
