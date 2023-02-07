@@ -2,12 +2,14 @@ import tools/flowc/manipulation/countvars;
 import tools/flowc/preload_modules;
 import tools/flowc/completion;
 import tools/flowc/find_occurrences;
+import tools/flowc/backends/wise/fi2wise_utils;
 import lingo/linecolumn;
 
 export {
 	handleFindOptions(env : FcTypeEnvGlobal, flowfile : string, prog : FiProgram) -> void;
 
 	findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, symbol : string) -> void;
+	findDefDeclByPos(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, content : string, line : int, col : int) -> void;
 
 	// Uses global cache for lookups.
 	fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
@@ -280,66 +282,144 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 }
 
 findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string) -> void {
-	doFindDefDecl(config, globEnv, file, name, true)
+	doFindDefDecl(config, globEnv, file, name, -1, true);
 }
 
-doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string, first_time : bool) -> void {
+findDefDeclByPos(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, content : string, line : int, col : int) -> void {
+	unpair(getNameAndPositionByLineCol(line, col, content), \name, index -> {
+		doFindDefDecl(config, globEnv, file, name, index, true)
+	});
+}
+
+doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string, index : int, first_time : bool) -> void {
+	proc_decl = \dec, def, fileinfo -> {
+		if (getConfigParameter(config.config, "find-definition") != "") {
+			if (def >= 0) {
+				printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
+			} else if (dec >=0) {
+				printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
+			}
+		} else if (getConfigParameter(config.config, "find-declaration") != "") {
+			if (dec >= 0) {
+				printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
+			} else if (def >= 0) {
+				printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
+			}
+		} else if (getConfigParameter(config.config, "find-defdecl") != "") {
+			if (def >= 0) {
+				printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
+			}
+			if (dec != def && dec >= 0) {
+				printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
+			}
+		}
+	}
+
+	err = \extraMsg -> {
+		if (config.verbose > 0) {
+			fcPrintln("Fail: could not find definition/declaration for " + name + ". " + extraMsg, config.threadId);
+		} else {
+			fcPrintln("Fail: could not find definition/declaration for " + name, config.threadId);
+		}
+	}
+
+	tryLocalSearch = \ -> {
+		if (index == -1) {
+			if (first_time) {
+				if (fcTryToLoadFile(config, globEnv)) {
+					doFindDefDecl(config, globEnv, file, name, index, false);
+				}
+			} else {
+				err("Try compiling the file (F7)");
+			}
+		} else {
+			moduleName = getTargetModuleName(config);
+			eitherFn(
+				fcLoadFromCache(globEnv, moduleName),
+				\cached : FcCacheModule -> {
+					if (!cached.outdated) {
+						eitherFn(
+							findNameSourceLocation(config, globEnv, cached.loaded.module, name, index),
+							untripleC(\start, end, fileinfo -> printLocation(config, globEnv, fileinfo, start, end, "")),
+							\ -> err("Could not find such local name, try recompiling the file (F7)")
+						);
+					} else {
+						err("Cache is out of date, try compiling the file (F7)");
+					}
+				},
+				\ -> err("Module is not cached, try compiling the file (F7)")
+			);
+		}
+	}
+
 	switch (fcLookupNameInCache(globEnv, name)) {
 		Some(symbol): {
 			switch (fcLoadFromCache(globEnv, symbol.module)) {
 				Some(cached): {
 					fileinfo = cached.loaded.module.fileinfo;
-					proc_decl = \dec, def -> {
-						if (getConfigParameter(config.config, "find-definition") != "") {
-							if (def >= 0) {
-								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
-							} else if (dec >=0) {
-								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
-							}
-						} else if (getConfigParameter(config.config, "find-declaration") != "") {
-							if (dec >= 0) {
-								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
-							} else if (def >= 0) {
-								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
-							}
-						} else if (getConfigParameter(config.config, "find-defdecl") != "") {
-							if (def >= 0) {
-								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
-							}
-							if (dec != def && dec >= 0) {
-								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
-							}
-						}
-					}
 					switch (symbol.named) {
 						FiTypeStruct(__,__,__, start): printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
 						FiTypeUnion(__,__,__, start):  printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
-						FiFunctionDec(__,__,__, dec, def): proc_decl(dec, def);
-						FiGlobalVar(__,__,__, dec, def): proc_decl(dec, def);
-						FiNativeDec(__,__,__,__,__, dec, def): proc_decl(dec, def);
+						FiFunctionDec(__,__,__, dec, def): proc_decl(dec, def, fileinfo);
+						FiGlobalVar(__,__,__, dec, def): proc_decl(dec, def, fileinfo);
+						FiNativeDec(__,__,__,__,__, dec, def): proc_decl(dec, def, fileinfo);
 					}
 				}
-				None(): {
-					if (first_time) {
-						if (fcTryToLoadFile(config, globEnv)) {
-							doFindDefDecl(config, globEnv, file, name, false);
-						}
-					} else {
-						fcPrintln("Fail: could not find definition/declaration for " + name, config.threadId);
-					}
-				}
+				None(): tryLocalSearch();
 			}
 		}
-		None(): {
-			if (first_time) {
-				if (fcTryToLoadFile(config, globEnv)) {
-					doFindDefDecl(config, globEnv, file, name, false);
-				}
-			} else {
-				fcPrintln("Fail: could not find definition/declaration for " + name, config.threadId);
-			}
-		}
+		None(): tryLocalSearch();
 	}
+}
+
+findNameSourceLocation(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, index : int) -> Maybe<Triple<int, int, FiFileInfo>> {
+	found = \start, end, fileinfo -> Some(Triple(start, end, fileinfo));
+	foundLocal = \pos -> found(pos, pos, module.fileinfo);
+	maybeBind(
+		findNameDefInModuleAtIndex(config, env, module, name, index),
+		\localDef -> {
+			switch (localDef) {
+				LocalNameSourceLambdaArg(lambda, idx): foundLocal(lambda.start);
+				LocalNameSourceSwitchCaseArg(sw, idxCase, idxArg): foundLocal(sw.cases[idxCase].start);
+				LocalNameSourceLet(let): found(let.start, let.start, module.fileinfo);
+				LocalNameSourceStructField(prim): {
+					notFound = \msg -> {
+						if (config.verbose > 0) {
+							fcPrintln("Could not find: " + name + ". " + msg, config.threadId);
+						}
+						None();
+					}
+					if (prim.es == []) {
+						notFound("Wrong state of FiCallPrim");
+					} else {
+						structType = extractFiTypeFromFiExp(prim.es[0]);
+						findStructPosition = \structName -> {
+							switch (fcLookupNameInCache(env, structName)) {
+								Some(symbol): {
+									switch (fcLoadFromCache(env, symbol.module)) {
+										Some(cached): {
+											fileinfo = cached.loaded.module.fileinfo;
+											switch (symbol.named) {
+												FiTypeStruct(__, __, __, start): found(start, start + strlen(structName), fileinfo);
+												default: notFound("Found wrong type for structure " + structName);
+											}
+										}
+										None(): notFound("Module is not cached: " + symbol.module);
+									}
+								}
+								None(): notFound("Unknown structure: " + structName);
+							}
+						}
+						switch (structType) {
+							FiTypeName(structName, __): findStructPosition(structName);
+							FiTypeStruct(structName, __, __, __): findStructPosition(structName);
+							default: notFound("Found not a structure, but only structures have fields");
+						}
+					}
+				}
+			}
+		}
+	);
 }
 
 fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
@@ -536,7 +616,10 @@ findFiExpInModuleAtLineCol(env : FcTypeEnvGlobal, module : FiModule, line : int,
 findNameDefInModuleAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, line : int, col : int) -> Maybe<LocalNameSource> {
 	resolver = fcFileLineResolver(env, module.fileinfo.fullpath);
 	index = findLineIndex(resolver, line, col);
+	findNameDefInModuleAtIndex(config, env, module, name, index);
+}
 
+findNameDefInModuleAtIndex(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, index : int) -> Maybe<LocalNameSource> {
 	accFn = \acc, e : FiExp -> {
 		if (e.start > index) {
 			acc;
