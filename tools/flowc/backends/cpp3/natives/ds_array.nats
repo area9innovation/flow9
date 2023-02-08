@@ -1,11 +1,13 @@
 [
 
 Cpp3NativePlain("length", true, 
-"template<typename T> Int $F_1(length)(Vec<T>* a);\n",
+"template<typename T> inline Int $F_1(length)(Vec<T>* a);\n",
 "template<typename T>
-Int $F_1(length)(Vec<T>* a) {
-	return static_cast<Int>(a->size());
-}\n", "static_cast<Int>($A_0->size())", [], []
+inline Int $F_1(length)(Vec<T>* a) {
+	Int ret = static_cast<Int>(a->size());
+	decRc(a);
+	return ret;
+}\n", "", [], []
 ),
 
 Cpp3NativePlain("concat", true,
@@ -14,11 +16,16 @@ Cpp3NativePlain("concat", true,
 inline Vec<T>* $F_1(concat)(Vec<T>* v1, Vec<T>* v2) {
 	//if (v1->refs > 2) {
 		//std::cout << \"concatVecs, v1->refs=\" << v1->refs << std::endl;
-		Vec<T> ret = Vec<T>::make(v1->size() + v2->size());
-		for(T x : *v1) ret->push_back(x);
-		v1->decRC(); 
-		for(T x : *v2) ret->push_back(x);
-		v2->decRC(); 
+		Vec<T>* ret = Vec<T>::make(v1->size() + v2->size());
+		for(T x : *v1) {
+			incRc(x);
+			ret->pushBack(x);
+		}
+		for(T x : *v2) {
+			incRc(x);
+			ret->pushBack(x);
+		}
+		decRc(v1); decRc(v2);
 		return ret;
 	/*} else {
 		//std::cout << \"Shortcut for concatVecs\" << std::endl;
@@ -34,86 +41,99 @@ inline Vec<T>* $F_1(concat)(Vec<T>* v1, Vec<T>* v2) {
 Cpp3NativePlain("fold", true,
 "template<typename T, typename V> V $F_1(fold)(Vec<T>* a, V v, Fun<V, V, T>* fn);\n",
 "template<typename T, typename V>
-V $F_1(fold)(Vec<T>* a, V v, Fun<V, V, T>* fn) {
+V $F_1(fold)(Vec<T>* a, V v, Fun<V, V, T>* f) {
 	for (T x : *a) {
-		ReCount<V>::inc(x);
-		v = fn->call(v, x);
+		incRc(x);
+		incRc(v);
+		incRc(f);
+		V new_ = f->callRc(v, x);
+		decRc(v);
+		v = new_;
 	}
-	fn->decRC();
+	decRc(f);
+	decRc(a);
 	return v;
 }\n", "", [], []),
 
 Cpp3NativePlain("foldi", true,
 "template<typename T, typename V> V $F_1(foldi)(Vec<T>* a, V v, Fun<V, Int, V, T>* fn);\n",
 "template<typename T, typename V>
-V $F_1(foldi)(Vec<T>* a, V v, Fun<V, Int, V, T>* fn) {
+V $F_1(foldi)(Vec<T>* a, V v, Fun<V, Int, V, T>* f) {
 	Int i = 0;
 	for (T x : *a) {
-		v = fn->call(i++, v, x);
+		incRc(x);
+		incRc(v);
+		incRc(f);
+		V new_ = f->callRc(i++, v, x);
+		decRc(v);
+		v = new_;
 	}
-	fn->checkRefs();
+	decRc(f);
+	decRc(a);
 	return v;
 }\n", "", [Cpp3Std(["<typeinfo>"], [])], []),
 
 Cpp3NativePlain("map", true,
 "template<typename T, typename V> Vec<V> $F_1(map)(Vec<T>* a, Fun<V, T>* fn);\n",
 "template<typename T, typename V>
-Vec<V>* $F_1(map)(Vec<T>* a, Fun<V, T>* fn) {
-	Int s = a->size();
-	std::vector<V> ret;
-	ret.reserve(a->size());
+Vec<V>* $F_1(map)(Vec<T>* a, Fun<V, T>* f) {
+	Vec<V>* ret = Vec<V>::make(a->size());
 	for (T x : *a) {
-		ret.push_back(fn->call(x));
+		incRc(x);
+		incRc(f);
+		ret->pushBack(f->callRc(x));
 	}
-	a->checkRefs();
-	fn->checkRefs();
-	return Vec<V>::make(std::move(ret));
+	decRc(f);
+	decRc(a);
+	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("mapi", true,
 "template<typename T, typename V> Vec<V>* $F_1(mapi)(Vec<T>* a, Fun<V, Int, T>* fn);\n",
 "template<typename T, typename V>
-Vec<V>* $F_1(mapi)(Vec<T>* a, Fun<V, Int, T>* fn) {
-	std::vector<V> ret;
-	ret.reserve(a->size());
+Vec<V>* $F_1(mapi)(Vec<T>* a, Fun<V, Int, T>* f) {
+	Vec<V>* ret = Vec<V>::make(a->size());
 	Int i = 0;
 	for (T x : *a) {
-		ret.push_back(fn->call(i++, x));
+		incRc(x);
+		incRc(f);
+		ret->pushBack(fn->callRc(i++, x));
 	}
-	a->checkRefs();
-	fn->checkRefs();
-	return Vec<V>::make(std::move(ret));
+	decRc(f);
+	decRc(a);
+	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("filter", true,
 "template<typename T> Vec<T>* $F_1(filter)(Vec<T>* a, Fun<Bool, T>* fn);\n",
 "template<typename T>
 Vec<T>* $F_1(filter)(Vec<T>* a, Fun<Bool, T>* fn) {
-	std::vector<T> ret;
-	ret.reserve(a->size());
+	Vec<V>* ret = Vec<V>::make(a->size());
 	for (T x : *a) {
-		if (fn->call(x)) {
-			ret.push_back(x);
+		incRc(x);
+		incRc(f);
+		if (fn->callRc(x)) {
+			incRc(x);
+			ret->pushBack(x);
 		}
 	}
-	a->checkRefs();
-	fn->checkRefs();
-	ret.shrink_to_fit();
-	return Vec<T>::make(std::move(ret));
+	decRc(f);
+	decRc(a);
+	ret->shrink();
+	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("replace", true,
 "template<typename T> Vec<T>* $F_1(replace)(Vec<T>* a, Int i, T v);\n",
 "template<typename T>
 Vec<T>* $F_1(replace)(Vec<T>* a, Int i, T v) {
-	std::vector<T> ret(a->vect);
+	Vec<T>* ret = Vec<T>::make(a->vect);
 	if (i < a->size()) {
-		ret[i] = v; 
+		ret->setRc(i, v); 
 	} else if (i == a->size()) {
-		ret.push_back(v);
+		ret.pushBackRc(v);
 	}
-	a->checkRefs();
-	return Vec<T>::make(std::move(ret));
+	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("subrange", true,
@@ -121,16 +141,17 @@ Cpp3NativePlain("subrange", true,
 "template<typename T>
 Vec<T>* $F_1(subrange)(Vec<T>* a, Int i, Int len) {
 	if (len < 0) {
-		a->checkRefs();
+		decRc(a);
 		return Vec<T>::make();
 	} else {
-		std::vector<T> ret;
-		ret.reserve(len);
+		Vec<T>* ret = Vec<T>::make(len);
 		for (Int j = 0; j < len; ++ j) {
-			ret.push_back(a->getItem(i + j));
+			T x = a->get(i + j);
+			incRc(x);
+			ret->pushBack(x);
 		}
-		a->checkRefs();
-		return Vec<T>::make(std::move(ret));
+		decRc(a);
+		return ret;
 	}
 }\n", "", [], []),
 
@@ -140,12 +161,11 @@ Cpp3NativePlain("enumFromTo", false,
 	if (beg > end) {
 		return Vec<Int>::make();
 	} else {
-		std::vector<Int> ret;
-		ret.reserve(end - beg + 1);
+		Vec<Int>* ret = Vec<Int>::make(end - beg + 1);
 		for (Int i = 0; i < end - beg + 1; ++i) {
-			ret.push_back(beg + i);
+			ret->pushBack(beg + i);
 		}
-		return Vec<Int>::make(std::move(ret));
+		return ret;
 	}
 }\n", "", [], []),
 
@@ -154,10 +174,12 @@ Cpp3NativePlain("iter", true,
 "template<typename T>
 Void $F_1(iter)(Vec<T>* a, Fun<Void, T>* fn) { 
 	for (T x : *a) {
-		fn->call(x);
+		incRc(x);
+		incRc(fn);
+		fn->callRc(x);
 	}
-	a->checkRefs();
-	fn->checkRefs();
+	decRc(a);
+	decRc(fn);
 	return void_value;
 }\n", "", [], []),
 
@@ -167,10 +189,12 @@ Cpp3NativePlain("iteri", true,
 Void $F_1(iteri)(Vec<T>* a, Fun<Void, Int, T>* fn) {
 	Int i = 0;
 	for (T x : *a) {
-		fn->call(i++, x);
+		incRc(x);
+		incRc(fn);
+		fn->callRc(i++, x);
 	}
-	a->checkRefs();
-	fn->checkRefs();
+	decRc(a);
+	decRc(fn);
 	return void_value;
 }\n", "", [], []),
 
@@ -179,12 +203,17 @@ Cpp3NativePlain("iteriUntil", true,
 "template<typename T>
 Int $F_1(iteriUntil)(Vec<T>* a, Fun<Bool, Int, T>* fn) {
 	for (Int i = 0; i < static_cast<Int>(a->size()); ++ i) {
-		if (fn->call(i, a->getItem(i))) {
+		T x = a->get(i);
+		incRc(x);
+		incRc(fn);
+		if (fn->callRc(i, x)) {
+			decRc(a);
+			decRc(fn);
 			return i;
 		}
 	}
-	a->checkRefs();
-	fn->checkRefs();
+	decRc(a);
+	decRc(fn);
 	return static_cast<Int>(a->size());
 }\n", "", [], []),
 	
@@ -192,13 +221,17 @@ Cpp3NativePlain("iterUntil", true,
 "template<typename T> Int $F_1(iterUntil)(Vec<T>* a, Fun<Bool, T>* fn);\n",
 "template<typename T>
 Int $F_1(iterUntil)(Vec<T>* a, Fun<Bool, T>* fn) {
-	for (Int i = 0; i < static_cast<Int>(a->size()); ++ i)) {
-		if (fn->call(a->getItem(i))) {
+	for (T x : *a) {
+		incRc(x);
+		incRc(fn);
+		if (fn->callRc(x)) {
+			decRc(a);
+			decRc(fn);
 			return i;
 		}
 	}
-	a->checkRefs();
-	fn->checkRefs();
+	decRc(a);
+	decRc(fn);
 	return static_cast<Int>(a->size());
 }\n", "", [], [])
 

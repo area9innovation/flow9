@@ -176,20 +176,18 @@ string std2string(const std::string& s) {
 	return str;
 }
 
-bool isSameObj(Flow* f1, Flow* f2) {
-	bool ret = false;
+bool isSameObjRc(Flow* f1, Flow* f2) {
 	if (f1->typeId() == f2->typeId()) {
 		switch (f1->typeId()) {
-			case TypeFx::VOID:   ret = true; break;
-			case TypeFx::INT:    ret = (f1->get<Int>() == f2->get<Int>()); break;
-			case TypeFx::BOOL:   ret = (f1->get<Bool>() == f2->get<Bool>()); break;
-			case TypeFx::DOUBLE: ret = (f1->get<Double>() == f2->get<Double>()); break;
-			case TypeFx::STRING: ret = (f1->get<String*>()->str == f2->get<String*>()->str); break;
-			case TypeFx::NATIVE: ret = (f1 == f2); break;
-			default:             ret = (f1 == f2); break;
+			case TypeFx::VOID:   decRc(f1); decRc(f2); return true;
+			case TypeFx::INT:    return (f1->getRc<Int>() == f2->getRc<Int>());
+			case TypeFx::BOOL:   return (f1->getRc<Bool>() == f2->getRc<Bool>());
+			case TypeFx::DOUBLE: return (f1->getRc<Double>() == f2->getRc<Double>());
+			case TypeFx::STRING: return (f1->getRc<String*>()->str == f2->getRc<String*>()->str);
+			case TypeFx::NATIVE: decRc(f1); decRc(f2); return (f1 == f2);
+			default:             decRc(f1); decRc(f2); return (f1 == f2);
 		}
 	}
-	return ret;
 }
 
 void appendEscaped(String* x, string& str) {
@@ -205,132 +203,152 @@ void appendEscaped(String* x, string& str) {
 	}
 }
 
-void flow2string(Flow* v, string& str) {
+void flow2stringRc(Flow* v, string& str) {
 	switch (v->typeId()) {
 		case TypeFx::VOID:   str.append(u"{}"); break;
-		case TypeFx::INT:    str.append(int2string(v->get<Int>())); break;
-		case TypeFx::BOOL:   str.append(bool2string(v->get<Bool>())); break;
-		case TypeFx::DOUBLE: str.append(double2string(v->get<Double>())); break;
+		case TypeFx::INT:    str.append(int2string(v->getRc<Int>())); break;
+		case TypeFx::BOOL:   str.append(bool2string(v->getRc<Bool>())); break;
+		case TypeFx::DOUBLE: str.append(double2string(v->getRc<Double>())); break;
 		case TypeFx::STRING: {
-			str.append(u"\""); appendEscaped(v->get<String*>(), str); str.append(u"\"");
+			str.append(u"\""); appendEscaped(v->getRc<String*>(), str); str.append(u"\"");
 			break;
 		}
 		case TypeFx::ARRAY: {
 			str.append(u"[");
-			bool first = true;
-			for (Int i = 0; i < v->size(); ++i) {
-				if (!first) {
+			Int size = v->size();
+			for (Int i = 0; i < size; ++i) {
+				if (i > 0) {
 					str.append(u", ");
 				}
-				Flow* f = v->getFlow(i);
-				flow2string(f, str);
-				rc(f, -1);
-				first = false;
+				//if (i + 1 < size) {
+					incRc(v);
+				//}
+				flow2stringRc(v->getFlowRc(i), str);
 			}
+			decRc(v);
 			str.append(u"]");
 			break;
 		}
 		case TypeFx::REF: {
 			str.append(u"ref ");
-			Flow* f = v->getFlow(0);
-			flow2string(f, str);
-			rc(f, -1);
+			flow2stringRc(v->getFlowRc(0), str);
 			break;
 		}
 		case TypeFx::FUNC: {
-			str.append(u"<function>"); 
+			str.append(u"<function>");
+			decRc(v);
 			break;
 		}
 		case TypeFx::NATIVE: {
 			str.append(u"<native>");
+			decRc(v);
 			break;
 		}
 		default: {
 			str.append(RTTI::typeName(v->typeId()));
 			str.append(u"(");
-			bool first = true;
-			for (Int i = 0; i < v->size(); ++ i) {
-				if (!first) {
+			Int size = v->size();
+			for (Int i = 0; i < size; ++ i) {
+				if (i > 0) {
 					str.append(u", ");
 				}
-				Flow* f = v->getFlow(i);
-				flow2string(f, str);
-				rc(f, -1);
-				first = false;
+				//if (i + 1 < size) {
+					incRc(v);
+				//}
+				flow2stringRc(v->getFlowRc(i), str);
 			}
+			decRc(v);
 			str.append(u")");
 			break;
 		}
 	}
 }
 
-String* flow2string(Flow* f) { 
+String* flow2stringRc(Flow* f) { 
 	string os; 
-	flow2string(f, os);
+	flow2stringRc(f, os);
 	return new String(os); 
 }
 
-Int compareFlow(Flow* v1, Flow* v2) {
-	Int ret = 0;
+Int flowCompareRc(Flow* v1, Flow* v2) {
 	if (v1->typeId() != v2->typeId()) {
-		ret = compare<Int>(v1->typeId(), v2->typeId());
+		return compareRc<Int>(v1->typeIdRc(), v2->typeIdRc());
 	} else {
 		switch (v1->typeId()) {
-			case TypeFx::VOID:   ret = 0; break;
-			case TypeFx::INT:    ret = compare<Int>(v1->get<Int>(), v2->get<Int>()); break;
-			case TypeFx::BOOL:   ret = compare<Bool>(v1->get<Bool>(), v2->get<Bool>()); break;
-			case TypeFx::DOUBLE: ret = compare<Double>(v1->get<Double>(), v2->get<Double>()); break;
-			case TypeFx::STRING: ret = v1->get<String*>()->str.compare(v2->get<String*>()->str); break;
+			case TypeFx::VOID:   return 0;
+			case TypeFx::INT:    return compareRc<Int>(v1->getRc<Int>(), v2->getRc<Int>());
+			case TypeFx::BOOL:   return compareRc<Bool>(v1->getRc<Bool>(), v2->getRc<Bool>());
+			case TypeFx::DOUBLE: return compareRc<Double>(v1->getRc<Double>(), v2->getRc<Double>());
+			case TypeFx::STRING: return v1->getRc<String*>()->str.compare(v2->getRc<String*>()->str);
 			case TypeFx::ARRAY: {
-				Int c1 = compare<Int>(v1->size(), v2->size());
+				Int c1 = compareRc<Int>(v1->size(), v2->size());
 				if (c1 != 0) {
-					ret = c1;
+					decRc(v1);
+					decRc(v2);
+					return c1;
 				} else {
-					for (Int i = 0; i < v1->size(); ++ i) {
-						Int c2 = compareFlow(v1->getFlow(i), v2->getFlow(i));
+					Int size = v1->size();
+					for (Int i = 0; i < size; ++ i) {
+						//if (i + 1 < size) {
+							incRc(v1);
+							incRc(v2);
+						//}
+						Int c2 = flowCompareRc(v1->getFlowRc(i), v2->getFlowRc(i));
 						if (c2 != 0) {
-							ret = c2;
-							break;
+							decRc(v1);
+							decRc(v2);
+							return c2;
 						}
 					}
-					ret = 0;
+					decRc(v1);
+					decRc(v2);
+					return 0;
 				}
-				break;
 			}
 			case TypeFx::REF: {
-				Int c = compareFlow(v1->getFlow(0), v2->getFlow(0));
-				ret = c;
-				break;
+				return flowCompareRc(v1->getFlowRc(0), v2->getFlowRc(0));
 			}
 			case TypeFx::FUNC: {
-				ret = compare<void*>(v1, v2);
-				break;
+				Int ret = compareRc<void*>(v1, v2);
+				decRc(v1);
+				decRc(v2);
+				return ret;
 			}
 			case TypeFx::NATIVE: {
-				ret = compare<void*>(v1, v2);
-				break;
+				int ret = compareRc<void*>(v1, v2);
+				decRc(v1);
+				decRc(v2);
+				return ret;
 			}
 			default: {
 				case TypeFx::STRUCT: {
 					Int c1 = RTTI::typeName(v1->typeId()).compare(RTTI::typeName(v2->typeId()));
 					if (c1 != 0) {
-						ret = c1;
+						decRc(v1);
+						decRc(v2);
+						return c1;
 					} else {
-						for (Int i = 0; i < v1->size(); ++ i) {
-							Int c2 = compareFlow(v1->getFlow(i), v2->getFlow(i));
+						Int size = v1->size();
+						for (Int i = 0; i < size; ++ i) {
+							//if (i + 1 < size) {
+								incRc(v1);
+								incRc(v2);
+							//}
+							Int c2 = flowCompareRc(v1->getFlowRc(i), v2->getFlowRc(i));
 							if (c2 != 0) {
-								ret = c2;
-								break;
+								decRc(v1);
+								decRc(v2);
+								return c2;
 							}
 						}
-						ret = 0;
+						decRc(v1);
+						decRc(v2);
+						return 0;
 					}
 				}
-				break;
 			}
 		}
 	}
-	return ret;
 }
 
 /*

@@ -3,6 +3,36 @@ import tools/flowc/backends/cpp3/fi2cpp3_compile_type;
 export {
 	fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string;
 	fiStruct2cpp3_new(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string;
+	fiOrderStructs(structs: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct];
+}
+
+fiOrderStructs(structs: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
+	fiDoOrderStructs(structs, [], \str -> 
+		err(str + "\nstructs: " + superglue(structs, \s -> s.name, ", "))
+	);
+}
+
+fiStructDependencies(s: FiTypeStruct) -> [string] {
+	filtermap(s.args, \arg -> switch (arg.type) {
+		FiTypeName(n,__): Some(n);
+		default: None();
+	});
+}
+
+fiDoOrderStructs(left: [FiTypeStruct], ordered: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
+	if (length(left) == 0) ordered else {
+		ready = filter(left, \s1 -> forall(fiStructDependencies(s1), \n -> 
+			forall(left, \s2 -> n != s2.name))
+		);
+		if (length(ready) == 0) {
+			err("cyclic dependency in structs");
+			ordered;
+		} else {
+			new_left = filter(left, \s1 -> forall(ready, \s2 -> s1.name != s2.name));
+			new_ordered = concat(ordered, ready);
+			fiDoOrderStructs(new_left, new_ordered, err);
+		}
+	}
 }
 
 fiStruct2cpp3_new(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
@@ -11,9 +41,14 @@ fiStruct2cpp3_new(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: boo
 		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
 	);
 	struct_name = gctx.typename2cpp(struct.name);
-	struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
-	fiDeclTypars2cpp3(struct.typars, gctx) + 
-	"using " + struct_name + " = Str<" + struct_id + ", " + superglue(struct.args, \arg -> fiType2cpp3(arg.type, gctx), ", ") + ">;\n\n";
+	template_header = fiDeclTypars2cpp3(struct.typars, gctx);
+	if (only_decl) {
+		template_header + "struct " + struct_name + ";\n";
+	} else {
+		struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
+		str_params = concat([struct_id], map(struct.args, \arg -> fiType2cpp3(arg.type, gctx)));
+		template_header + "using " + struct_name + " = Str<" + strGlue(str_params, ", ") + ">;\n\n";
+	}
 }
 
 fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {

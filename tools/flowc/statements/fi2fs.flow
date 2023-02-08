@@ -85,16 +85,6 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 								fsWrapSeq(concat(
 									concatA(map(args_pairs, \p -> p.second)),
 									concat3(let_tmp_vars, assign_func_vars, [FsTailCall()])
-									/*[foldi(args_pairs, assing_and_tailcall, \i, acc, p -> {
-										make_let = \-> FsLet(
-											FsVar(func_args[i].name + "__tmp__", FsVarTraits(FsVarTmp(), false, false, false), func_args[i].type, start), 
-											p.first, acc
-										);
-										switch (p.first) {
-											FsVar(name,__,__): if (name == env.args[i].name) acc else make_let();
-											default: make_let();
-										}
-									})]*/
 								));
 							}
 							None(): fail0("function " + fn + " is not found");
@@ -108,8 +98,6 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 			default_switch = \ -> FsSwitch(
 				fiVar2FsVar(v.name, v.type, v.start, env), vtype,
 				map(cs, \c -> {
-					//struct = lookupTreeDef(env.names.structs, c.struct, FiTypeStruct("", [], [], 0));
-					//struct_args = mapi(c.argNames, \i, arg_name -> FsVar(arg_name, true, false, false, struct.args[i].type, c.start));
 					struct_args = fsCaseStructArgs(c, env);
 					case_env = FsEnv(env with
 						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
@@ -126,11 +114,8 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 					} else {
 						switch (find(cs, \c -> c.struct == typename)) {
 							Some(c): {
-								//struct = lookupTreeDef(env.names.structs, c.struct, FiTypeStruct("", [], [], 0));
-								//struct_args = mapi(c.argNames, \i, arg_name -> FiStructArg(arg_name, struct.args[i].type, struct.args[i].ismutable));
-								struct_args = fsCaseStructArgs(c, env);
 								case_env = FsEnv(env with
-									locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
+									locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
 										setTree(acc, arg.name, arg)
 									)
 								);
@@ -157,18 +142,7 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 			fs_args = map(args, \arg -> FsVar(arg.name, FsVarTraits(FsVarArg(), false, false, false), arg.type));
 			lambda_env = FsEnv(env with
 				args = args,
-				locals = fold(fs_args, env.locals, \acc, arg -> 
-					setTree(acc, arg.name, arg)
-				),
-				/*locals = foldSet(closure,
-					fold(fs_args, env.locals, \acc, arg -> 
-						setTree(acc, arg.name, FsVar(arg.name, true, false, false, arg.type, start))
-					),
-					\acc, arg -> {
-						v = lookupTreeDef(acc, arg, FsVar("", true, false, false, FiTypeVoid(), start));
-						setTree(acc, arg, FsVar(arg, true, false, false, v.type, start));
-					}
-				)*/
+				locals = fold(fs_args, env.locals, \acc, arg -> setTree(acc, arg.name, arg)),
 			);
 			closure_vars = map(set2array(closure), \name -> 
 				switch (lookupTree(env.locals, name)) {
@@ -190,15 +164,11 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 				let_env = FsEnv(env with
 					locals = setTree(env.locals, name, let_var)
 				);
-				//if (fiExpIsFsExp(e1)) {
-					e1_pair = do_exp(e1);
-					fsWrapSeq(concat3(e1_pair.second,
-						[FsVarDef(let_var, e1_pair.first)],
-						fsUnwrapSeq(fiDoExp2FsStat(e2, returns, let_env, fn, false))
-					));
-				//} else {
-				//	fiDoExp2FsStat(e1, FsReturnToLet(let_var, fiDoExp2FsStat(e2, returns, let_env, fn, false)), let_env, fn, false);
-				//}
+				e1_pair = do_exp(e1);
+				fsWrapSeq(concat3(e1_pair.second,
+					[FsVarDef(let_var, e1_pair.first)],
+					fsUnwrapSeq(fiDoExp2FsStat(e2, returns, let_env, fn, false))
+				));
 			}
 		}
 		FiIf(e1, e2, e3, type, start): {
@@ -309,11 +279,10 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 		FiSwitch(v, vtype, cases, type, start): {
 			default_switch_stat = \return -> {
 				cases_stats = map(cases, \c -> {
-					//struct = lookupTreeDef(env.names.structs, c.struct, FiTypeStruct("", [], [], 0));
 					struct_args = fsCaseStructArgs(c, env);
 					case_env = FsEnv(env with 
 						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-							setTree(acc, arg.name, arg /*FsVar(arg.name, true, false, false, arg.type, c.start)*/)
+							setTree(acc, arg.name, arg)
 						)
 					);
 					case_stat = fiDoExp2FsStat(c.body, return, case_env, "", false);
@@ -329,14 +298,9 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 						} else {
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
-									/*struct = lookupTreeDef(env.names.structs, c.struct, FiTypeStruct("", [], [], 0));
-									struct_args = mapi(c.argNames, \i, arg_name -> 
-										FsVar(arg_name, FsVarTraits(true, false, false, false), struct.args[i].type, c.start)
-									);*/
-									struct_args = fsCaseStructArgs(c, env);
 									case_env = FsEnv(env with
-										locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-											setTree(acc, arg.name, arg /*FsVar(arg.name, true, false, false, arg.type, c.start)*/)
+										locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
+											setTree(acc, arg.name, arg)
 										)
 									);
 									fiDoExp2FsStat(c.body, FsReturnNowhere(), case_env, "", false);
@@ -369,11 +333,8 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 						} else {
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
-									//struct = lookupTreeDef(env.names.structs, c.struct, FiTypeStruct("", [], [], 0));
-									//struct_args = mapi(c.argNames, \i, arg_name -> FiStructArg(arg_name, struct.args[i].type, struct.args[i].ismutable));
-									struct_args = fsCaseStructArgs(c, env);
 									case_env = FsEnv(env with 
-										locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
+										locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
 											setTree(acc, arg.name, arg)
 										)
 									);
@@ -402,14 +363,6 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 			fs_args = map(args, \arg -> FsVar(arg.name, FsVarTraits(FsVarArg(), false, false, false), arg.type));
 			lambda_env = FsEnv(env with
 				args = args,
-				/*locals = foldSet(
-					closure,
-					fold(fs_args, env.locals, \acc, arg -> setTree(acc, arg.name, arg)), 
-					\acc, arg -> {
-						v = lookupTreeDef(acc, arg, FsVar("", true, false, false, FiTypeVoid(), start));
-						setTree(acc, arg, FsVar(arg, v.local, false, false, v.type, start));
-					}
-				)*/
 				locals = fold(fs_args, env.locals, \acc, arg -> setTree(acc, arg.name, arg))
 			);
 			closure_vars = map(set2array(closure), \name -> 

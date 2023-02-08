@@ -11,7 +11,7 @@ export {
 fsStatPerceus(s: FsStat) -> FsStat {
 	s1 = fsStatLastVarUsage(s, makeSet()).first;
 	s2 = fsStatFirstVarUsage(s1, makeSet()).first;
-	fsStatMap(fsDoStatPerceus(s2), fsStatOptimize, idfn);
+	fsStatMap(fsDoStatPerceus(s2, [], []).first, fsStatOptimize, idfn);
 }
 
 fsExpPerceus(e: FsExp) -> FsExp {
@@ -22,113 +22,137 @@ fsExpPerceus(e: FsExp) -> FsExp {
 
 MemOps(pre: [FsMemory], post: [FsMemory]);
 
-fsDoStatPerceus(s: FsStat) -> FsStat {
+fsDoStatPerceus(s: FsStat, locals: [FsVar], finalized: [FsVar]) -> Pair<FsStat, [FsVar]> {
+	add_finalized = \x, f -> concat(f, filter(fsExpVars(x, []), \v -> v.traits.lastUse));
 	switch (s) {
 		FsIf(cond, s1, s2): {
 			expOps = fsExpMemOps(cond);
-			fsWrapSeq(concat(
+			t_s1 = fsDoStatPerceus(s1, locals, finalized);
+			t_s2 = fsDoStatPerceus(s2, locals, finalized);
+			Pair(fsWrapSeq(concat(
 				expOps.pre,
 				[FsIf(s with
 					cond = fsDoExpPerceus(cond),
-					s1 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s1)))),
-					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsDoStatPerceus(s2))))
+					s1 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsInsertDecUnused(t_s1.first, locals, finalized)))),
+					s2 = fsWrapSeq(concat(expOps.post, fsUnwrapSeq(fsInsertDecUnused(t_s2.first, locals, finalized))))
 				)]
-			));
+			)), locals);
 		}
 		FsSwitch(x, sw_type, cases): {
 			xOps = fsExpMemOps(x);
-			fsWrapSeq(concat(
+			cases_1 = map(cases, \c -> {
+				c_m = fsDoStatPerceus(c.body, locals, finalized).first;
+				FsCase(c with 
+					body = fsWrapSeq(concat(
+						xOps.post, 
+						fsUnwrapSeq(fsInsertDecUnused(c_m, locals, finalized))
+					))
+				)
+			})
+			Pair(fsWrapSeq(concat(
 				xOps.pre,
 				[FsSwitch(s with 
-					cases = map(cases, \c ->
+					cases = map(cases, \c -> {
+						c_m = fsDoStatPerceus(c.body, locals, finalized).first;
 						FsCase(c with 
 							body = fsWrapSeq(concat(
 								xOps.post, 
-								fsUnwrapSeq(fsDoStatPerceus(c.body))
+								fsUnwrapSeq(fsInsertDecUnused(c_m, locals, finalized))
 							))
 						)
-					)
+					})
 				)]
-			));
+			)), locals);
 		}
 		FsSeq(es): {
-			fsWrapSeq(concatA(
-				map(es, \x -> fsUnwrapSeq(fsDoStatPerceus(x)))
-			));
+			p_es = fold(es, Triple([], locals, finalized), \acc, x -> {
+				p_x = fsDoStatPerceus(x, acc.second, acc.third);
+				Triple(concat(acc.first, fsUnwrapSeq(p_x.first)), p_x.second, acc.third);
+			});
+			Pair(fsWrapSeq(p_es.first), p_es.second);
 		}
 		FsVarDef(v, e): {
 			eOps = fsExpMemOps(e);
-			fsWrapSeq(concat3(
-				eOps.pre,
-				[FsVarDef(s with e = fsDoExpPerceus(e))],
-				eOps.post
-			));
+			Pair(
+				fsWrapSeq(concat3(
+					eOps.pre,
+					[FsVarDef(s with e = fsDoExpPerceus(e))],
+					eOps.post
+				)),
+				concat(locals, [v])
+			);
 		}
 		FsWrapExp(e): {
 			eOps = fsExpMemOps(e);
-			fsWrapSeq(concat3(eOps.pre, [FsWrapExp(s with e = fsDoExpPerceus(e))], eOps.post));
+			Pair(fsWrapSeq(concatA([
+				eOps.pre, 
+				[FsWrapExp(s with e = fsDoExpPerceus(e))],
+				if (fsExpType(e) == FiTypeVoid()) [] else [FsMemory(FsRC(-1), e)],
+				eOps.post
+			])), locals);
 		}
 		FsRet(e): {
-			FsRet(s with e = fsDoExpPerceus(e));
+			Pair(FsRet(s with e = fsDoExpPerceus(e)), locals);
 		}
 		FsTailCall(): {
-			s;
+			Pair(s, locals);
 		}
 		FsVarDecl(var): {
-			s;
+			//Pair(s, concat(locals, [var]));
+			Pair(s, locals);
 		}
 		FsAssign(to, what): {
 			toOps = fsExpMemOps(to);
 			whatOps = fsExpMemOps(what);
-			fsWrapSeq(concat3(
+			Pair(fsWrapSeq(concat3(
 				concat3(toOps.pre, toOps.post, whatOps.pre),
 				[FsAssign(s with to = fsDoExpPerceus(to), what = fsDoExpPerceus(what))],
 				whatOps.post
-			));
+			)), locals);
 		}
 		FsMemory(op, e): {
-			FsMemory(s with e = fsDoExpPerceus(e));
+			Pair(FsMemory(s with e = fsDoExpPerceus(e)), locals);
 		}
 	}
 }
 
 fsExpMemOps(ex: FsExp) -> MemOps {
-	vars1 = multiSet2pairs(fsExpVars(ex, makeMultiSet()));
-	if (exists(vars1, \p -> p.second > 1)) {
-		println("exists(vars1, \\p -> p.second > 1):\n" + fsExp2s(ex));
-	}
-	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.first.type) && !fsVarIsGlobalFunc(v.first.traits));
+	vars1 = fsExpVars(ex, []);
+	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.type) && !fsVarIsGlobalFunc(v.traits));
 	// Filter out arguemnt vars, which are used exactly once in each go-through function body path 
 	vars = filter(vars2, \v -> 
-		switch (v.first.traits.kind) {
+		switch (v.traits.kind) {
 			FsVarTmp(): false;
 			default: true;
 		}
 	);
-	to_dup = \v -> {
-		c1 = if (v.first.traits.lastUse) v.second - 1 else v.second;
+	/*to_dup = \v -> { if (v.traits.lastUse) v.second - 1 else v.second;
+		//c1 = if (v.traits.lastUse) v.second - 1 else v.second;
 		// Global variables should be bumped ref counter by 1
 		//if (fsVarIsGlobal(v.first.traits)) c1 + 1 else c1;
-		c1;
+		//c1;
 	}
-	to_drop = \v -> -v.second;
+	to_drop = \v -> -v.second;*/
 	MemOps(
 		filtermap(vars, \v -> 
-			if (to_dup(v) == 0) None() else Some(FsMemory(FsRC(to_dup(v)), v.first))
+			if (v.traits.lastUse) None() else Some(FsMemory(FsRC(1), v))
 		),
-		map(vars, \v -> 
-			FsMemory(FsRC(to_drop(v)), v.first)
-		)
+		[]
+		//filtermap(vars, \v -> 
+		//	if (v.traits.lastUse && v.traits.kind == FsVarArg()) None() else Some(FsMemory(FsRC(-1), v))
+		//	//FsMemory(FsRC(-1), v)
+		//)
 	);
 }
 
-fsExpVars(ex: FsExp, vars: MultiSet<FsVar>) -> MultiSet<FsVar> {
+fsExpVars(ex: FsExp, vars: [FsVar]) -> [FsVar] {
 	switch (ex) {
 		FsCall(f, args, type): {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
 		}
 		FsLambda(toplevel, closure, args, body, type): {
-			fold(closure, vars, \acc, x -> insertMultiSet(acc, x));
+			fold(closure, vars, \acc, x -> concat(acc, [x]));
+			// Maybe just vars?
 		}
 		FsCallPrim(op, es, type): {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
@@ -137,7 +161,7 @@ fsExpVars(ex: FsExp, vars: MultiSet<FsVar>) -> MultiSet<FsVar> {
 			fsExpVars(e, vars);
 		}
 		FsVar(name,__,__): {
-			insertMultiSet(vars, ex);
+			concat(vars, [ex]);
 		}
 		FiString(s, __): vars;
 		FiVoid(__):      vars;
@@ -147,16 +171,64 @@ fsExpVars(ex: FsExp, vars: MultiSet<FsVar>) -> MultiSet<FsVar> {
 	}
 }
 
+fsStatVars(s: FsStat, vars: [FsVar]) -> [FsVar] {
+	switch (s) {
+		FsIf(cond, s1, s2): {
+			fsStatVars(s2, fsStatVars(s1, fsExpVars(cond, vars)));
+		}
+		FsSwitch(x, sw_type, cases): {
+			fold(cases, concat(vars, [x]), \acc, c -> fsStatVars(c.body, acc));
+		}
+		FsSeq(es): {
+			fold(es, vars, \acc, x -> fsStatVars(x, acc));
+		}
+		FsVarDef(v, e): {
+			fsExpVars(e, vars);
+		}
+		FsWrapExp(e): {
+			fsExpVars(e, vars);
+		}
+		FsRet(e): {
+			fsExpVars(e, vars);
+		}
+		FsTailCall(): {
+			vars;
+		}
+		FsVarDecl(var): {
+			vars;
+		}
+		FsAssign(to, what): {
+			fsExpVars(what, fsExpVars(to, vars));
+		}
+		FsMemory(op, e): {
+			fsExpVars(e, vars);
+		}
+	}
+}
+
+fsInsertDecUnused(s: FsStat, locals: [FsVar], finalized: [FsVar]) -> FsStat {
+	s_vars = map(fsStatVars(s, []), \v -> v.name);
+	unused_vars = filter(locals, \v -> 
+		!fiTypeIsScalar(v.type) && !contains(s_vars, v.name) && !exists(finalized, \f -> f.name == v.name)
+	);
+	if (length(unused_vars) == 0) s else {
+		FsSeq(concat(
+			map(unused_vars, \v -> 
+				FsMemory(FsRC(-1), FsVar(v.name, FsVarTraits(FsVarArg(), false, false, false), v.type))
+			),
+			fsUnwrapSeq(s)
+		));
+	}
+}
+
 fsDoExpPerceus(ex: FsExp) -> FsExp {
 	switch (ex) {
 		FsCall(f, args, type): {
-			FsCall(ex with
-				f = fsDoExpPerceus(f),
-				args = map(args, fsDoExpPerceus)
-			);
+			FsCall(ex with f = fsDoExpPerceus(f), args = map(args, fsDoExpPerceus));
 		}
 		FsLambda(toplevel, closure, args, body, type): {
-			FsLambda(ex with body = fsDoStatPerceus(body));
+			arg_vars = map(args, \arg -> FsVar(arg.name, FsVarTraits(FsVarArg(), false, false, false), arg.type));
+			FsLambda(ex with body = fsInsertDecUnused(fsDoStatPerceus(body, arg_vars, []).first, arg_vars, []));
 		}
 		FsCallPrim(op, es, type): {
 			FsCallPrim(ex with es = map(es, fsDoExpPerceus));

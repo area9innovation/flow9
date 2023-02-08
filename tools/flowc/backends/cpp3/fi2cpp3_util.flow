@@ -35,6 +35,9 @@ export {
 	fiExpAstNodesCount(e: FiExp) -> int;
 
 	fiToplevelName(t: Maybe<FiToplevel>) -> string;
+
+	fiExp2stringShort(expr: FiExp) -> string;
+	fiExp2stringFull(expr: FiExp) -> string;
 }
 
 fiWrapWith(s : string, open: string, close: string) -> string {
@@ -229,4 +232,124 @@ fiExpAstNodesCount(e: FiExp) -> int {
 
 fiToplevelName(mt: Maybe<FiToplevel>) -> string {
 	eitherMap(mt, \t -> t.name, "");
+}
+
+fiExp2stringShort(expr: FiExp) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch(expr) {
+		FiLambda(args, __, type, __): "\\" + superglue(args, \arg -> arg.name, ", ") + " -> ...";
+		FiCall(f, __, type, __):      fiExp2stringShort(f) + "(...)";
+		FiVar(name, type, __):        name;
+		FiLet(name, v_type, e1, e2,__, __): name + ":" + t2s(v_type) + "=" + fiExp2stringShort(e1);
+		FiIf(e1, e2, e3,_, __):   "if (" + fiExp2stringShort(e1) + ")";
+		FiSwitch(x, __, __,__, __): "switch(" + x.name + ")...";
+		FiCast(e1, from, to,__, __): "cast(" + fiExp2stringShort(e1) + ":" + t2s(from) + "->" + t2s(to) + ")";
+		FiSeq(es,__, __): "{...}";
+		FiCallPrim(op, __,__, __): toString(op);
+		FiRequire(__, __,__, __) : "require";
+		FiUnsafe(__,__,__,__) : "unsafe";
+		FiVoid(__): "{}";
+		FiDouble(v,__): d2s(v);
+		FiInt(v, __): i2s(v);
+		FiString(v,__) : "\"" + v + "\"";
+		FiBool(v,__) : b2s(v);
+	}
+}
+
+fiExp2stringFull(expr: FiExp) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	sl_test = \x -> !strContains(x, "\n") && strlen(x) < 64;
+	switch(expr) {
+		FiLambda(args, body, type, __): { 
+			body_s = fiExp2stringFull(body);
+			header = "\\" + superglue(args, \arg -> arg.name + " : " + t2s(arg.type), ", ") + " -> " + t2s(type.returnType) + " ";
+			if (!strContains(body_s, "\n") || startsWith(body_s, "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
+		}
+		FiCall(f, args,__,__): {
+			args_s = map(args, fiExp2stringFull);
+			f_s = fiExp2stringFull(f);
+			s = f_s + "(" + strGlue(args_s, ", ") + ")";
+			if (sl_test(s)) s else {
+				f_s + "(\n" + strIndent(strGlue(args_s, ", ")) + "\n)"
+			}
+		}
+		FiVar(name,__,__): name;
+		FiLet(name, v_type, e1, e2,__, __): {
+			name + " : " + t2s(v_type) + " = " + fiExp2stringFull(e1) + ";\n" + fiExp2stringFull(e2);
+		}
+		FiIf(e1, e2, e3,_, __): {
+			e2_s = fiExp2stringFull(e2);
+			e3_s = fiExp2stringFull(e3);
+			"if (" + fiExp2stringFull(e1) + ") " + 
+			(if (sl_test(e2_s)) e2_s else "{\n" + strIndent(e2_s) + "\n}") + " else " +
+			(if (sl_test(e3_s)) e3_s else "{\n" + strIndent(e3_s) + "\n}");
+		}
+		FiSwitch(x, __, cases,__, __): {
+			"switch (" + x.name + ") {\n" + 
+				strIndent(superglue(cases, \c -> {
+					body_s = fiExp2stringFull(c.body);
+					body_s1 = if (sl_test(body_s)) {
+						(if (endsWith(body_s, ";")) body_s else body_s + ";") 
+					} else {
+						"{\n" + strIndent(body_s) + "\n}";
+					}
+					c.struct + "(" + strGlue(c.argNames, ", ") + "): " + body_s1;
+				}, "\n")) +
+			"\n}";
+		}
+		FiCast(e1, from, to,__, __): "cast(" + fiExp2stringFull(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
+		FiSeq(es,__, __): {
+			if (length(es) == 0) "{}" else 
+			if (length(es) == 1) fiExp2stringFull(es[0]) else {
+				"{\n" + strIndent(superglue(es, fiExp2stringFull, ";\n")) + "\n}";
+			}
+		}
+		FiCallPrim(op, es, type, __): {
+			fcPrim2s(op, map(es, fiExp2stringFull), type)
+		}
+		FiRequire(name, e,__, __) : "require...";
+		FiUnsafe(__,__,__,__) : "unsafe...";
+		FiVoid(__): "{}";
+		FiDouble(v,__): d2s(v);
+		FiInt(v, __): i2s(v);
+		FiString(v,__) : "\"" + escapeStr(v) + "\"";
+		FiBool(v,__) : b2s(v);
+	}
+}
+
+fcPrim2s(op: FcPrim, es: [string], type: FiType) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (op) {
+		FcOrPrim():  "(" + es[0] + " || " + es[1] + ")";
+		FcAndPrim(): "(" + es[0] + " && " + es[1] + ")";
+		FcNotPrim(): "!" + es[0];
+		FcEqPrim():  "(" + es[0] + " == " + es[1] + ")";
+		FcNePrim():  "(" + es[0] + " != " + es[1] + ")";
+		FcLePrim():  "(" + es[0] + " <= " + es[1] + ")";
+		FcGePrim():  "(" + es[0] + " >= " + es[1] + ")";
+		FcLtPrim():  "(" + es[0] + " < " + es[1] + ")";
+		FcGtPrim():  "(" + es[0] + " > " + es[1] + ")";
+		FcPlusPrim():  "(" + es[0] + " + " + es[1] + ")";
+		FcMinusPrim(): "(" + es[0] + " - " + es[1] + ")"; 
+		FcMulPrim():   "(" + es[0] + " * " + es[1] + ")";
+		FcDivPrim():   "(" + es[0] + " / " + es[1] + ")";
+		FcModPrim():   "(" + es[0] + " % " + es[1] + ")";
+		FcNegPrim():   "-" + es[0];
+		FcArrayPrim():   "[" + strGlue(es,  ", ") + "]";
+		FcIndexPrim():   es[0] + "[" + es[1] + "]";
+		FcDerefPrim():   "(*" +es[0] + ")";
+		FcRefPrim():     "ref " + es[0];
+		FcStructPrim(struct_name): {
+			struct_type = cast(type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			struct_name + typars + "(" + strGlue(es, ", ") + ")";
+		}
+		FcFieldPrim(name): es[0] + "." + name;
+		FcAssignPrim(): es[0] + " := " + es[1];
+		FcSetMutablePrim(name): es[0] + "." + name + " := " + es[1];
+		FcCreateClosurePrim(structName, functionName): "FcCreateClosurePrim"; 
+		FcQuote(): "FcQuote";
+		FcUnquote(): "FcUnquote";
+	}
 }
