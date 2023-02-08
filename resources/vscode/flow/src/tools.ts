@@ -88,3 +88,8 @@ export function isPortAvailable(port: number): Promise<boolean> {
 		server.listen(port);
 	});
 }
+
+export function getVerboseParam(): string {
+	let verbose: string = vscode.workspace.getConfiguration("flow").get("compilerVerbose")
+	return verbose ? verbose : "0";
+}

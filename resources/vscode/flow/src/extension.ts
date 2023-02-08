@@ -64,7 +64,7 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.execCommand', execCommand),
 		reg_comm('flow.runUI', runUI),
 		reg_comm('flow.restartLspClient', startLspClient),
-		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates(context)),
+		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates()),
 		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
 		new notebook.FlowNotebookController()
 	);
@@ -74,13 +74,12 @@ export function activate(context: vscode.ExtensionContext) {
 	flowChannel.show(true);
 	serverChannel = vscode.window.createOutputChannel("Flow Language Server");
 
-
 	// Create an LSP client
-	startLspClient();
-
-    updater.checkForUpdate();
-    updater.setupUpdateChecker();
-    serverStatusBarItem.show();
+	startLspClient().then(() => {
+		updater.checkForUpdate();
+		updater.setupUpdateChecker();
+		serverStatusBarItem.show();
+	});
 }
 
 function runUI() {
@@ -186,22 +185,20 @@ function stopHttpServer() {
 	}
 }
 
-function stopLspClient() {
+async function stopLspClient() {
 	if (client) {
-		try {
-			client.sendNotification("exit");
-		} catch (error) {
-			serverChannel.show(true);
-			serverChannel.appendLine("Error exiting LSP server: " + error);
-		} finally {
-			client.stop();
+		await client.stop().then(() => {
+			serverChannel.appendLine("LSP server stopped");
 			client = null;
-		}
+		}, (error) => {
+			serverChannel.show(true);
+			serverChannel.appendLine("Error stopping LSP server: " + error);
+		});
 	}
 }
 
-function startLspClient() {
-	stopLspClient();
+async function startLspClient() {
+	await stopLspClient();
 	serverStatusBarItem.show();
 	const serverOptions: ServerOptions = {
 		command: process.platform == "win32" ? 'flowc1_lsp.bat' : 'flowc1_lsp',
@@ -231,7 +228,7 @@ function startLspClient() {
 	client = new LanguageClient('flow', 'Flow Language Server', serverOptions, clientOptions);
 	// Start the client. This will also launch the server
 	client.start();
-	sendOutlineEnabledUpdate();
+	sendServerVerbosity();
 	checkHttpServerStatus(true);
 	setInterval(checkHttpServerStatus, 3000, false);
 }
@@ -264,7 +261,7 @@ export function deactivate() {
         return undefined;
     } else {
         client.sendNotification("exit");
-        return client.stop()
+        return client.stop();
     }
 }
 
@@ -290,7 +287,8 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
     flowRepoUpdateChannel.show(true);
     flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
 
-    let shutdown_http_and_pull = () => {
+    flowRepoUpdateChannel.append("Shutting down flow LSP server... ");
+    await stopLspClient().then(() => {
         let startHttp = false;
         if (httpServerOnline) {
             startHttp = true;
@@ -299,10 +297,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
             flowRepoUpdateChannel.appendLine("HTTP server is shutdown.");
         }
         pullAndStartServer(git, context, startHttp);
-    }
-    flowRepoUpdateChannel.append("Shutting down flow LSP server... ");
-    stopLspClient();
-    shutdown_http_and_pull();
+    });
 }
 
 async function pullAndStartServer(git, context : vscode.ExtensionContext, startHttp : boolean) {
@@ -325,18 +320,22 @@ async function pullAndStartServer(git, context : vscode.ExtensionContext, startH
     startLspClient();
 }
 
-function sendOutlineEnabledUpdate() {
-	let config = vscode.workspace.getConfiguration("flow");
-	const outlineEnabled = config.get("outline");
-	client.sendNotification("outlineEnabled", outlineEnabled);
+function sendServerVerbosity() {
+	client.sendRequest("workspace/executeCommand", {
+		command : "setVerbose",
+		arguments: ["verbose=" + tools.getVerboseParam()],
+	}).catch((error) => {
+		serverChannel.show(true);
+		serverChannel.appendLine("Command error: " + error);
+	});
 }
 
-function handleConfigurationUpdates(context) {
-    return (e) => {
-        if (e.affectsConfiguration("flow.outline")) {
-            sendOutlineEnabledUpdate();
-        }
-    }
+function handleConfigurationUpdates() {
+	return (event) => {
+		if (event.affectsConfiguration("flow.compilerVerbose")) {
+			sendServerVerbosity();
+		}
+	}
 }
 
 const homedir = process.env[(process.platform == "win32") ? "USERPROFILE" : "HOME"];
@@ -418,8 +417,10 @@ function processFile(
 	on_compiled : () => void = () => { }
 ) {
 	const document = vscode.window.activeTextEditor.document;
-	const verbose = vscode.workspace.getConfiguration("flow").get("compilerVerbose");
-	extra_args = (verbose == "" || verbose == "0") ? extra_args : extra_args.concat(["verbose=" + verbose]);
+	const verbose = tools.getVerboseParam();
+	if (verbose != "0") {
+		extra_args.push("verbose=" + verbose);
+	}
     document.save().then(() => {
         let current = ++counter;
         flowChannel.clear();
