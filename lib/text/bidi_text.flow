@@ -15,7 +15,7 @@ export {
 	nextValidStrPos(left: int, right: int) -> int;
 
 	// Determine where to split the text, based on unicode categories.
-	getCharCatSplitPos(t: string, i: int, endPos: int) -> int;
+	getCharCatSplitPos(data: CharCatSplitPosText, i: int, endPos: int) -> int;
 	// END TODO
 
 	DirectionAndMajority(d: int, m: int);
@@ -26,13 +26,206 @@ export {
 
 	// Returns a reversed list with elements of original list wrapped into a pair with text flow direction
 	markListToBiDiReverse(list: List<?>, getText: (?) -> string) -> List<Pair<?, int>>;
+	CharCatSplitPosText(
+		text : string,
+		textAsInt : [int],
+		t_spaceAsInt : [int],
+		space2_tAsInt : [int],
+		space_tAsInt : [int]
+	);
+
+	makeCharCatSplitPosText(t : string) -> CharCatSplitPosText;
+}
+
+makeCharCatSplitPosText(t : string) -> CharCatSplitPosText {
+	t_space = " " + t;
+	space2_t = "  " + t;
+	space_t = t + " ";
+
+	lenText = strlen(t);
+	text = generate(0, lenText, \i -> getCharCodeAt(t, i));
+	space = getCharCodeAt(" ", 0);
+
+	CharCatSplitPosText(
+		t,
+		text,
+		arrayPush(text, space),
+		concat([space, space], text),
+		concat([space], text),
+	)
 }
 
 nextValidStrPos(left: int, right: int) -> int {
 	if (left >= 0 && (right < 0 || left < right)) left else right;
 }
 
-getCharCatSplitPos(t: string, i: int, endPos: int) -> int {
+sep_cats = [
+	uc_spaceSeparator, uc_lineSeparator, uc_paragraphSeparator, uc_control, uc_format,
+	uc_connectorPunctuation, uc_dashPunctuation, uc_openPunctuation, uc_closePunctuation,
+	uc_initialQuotePunctuation, uc_finalQuotePunctuation, uc_otherPunctuation
+];
+
+codes = [0x27, 0x2C, 0x2D, 0x2E, 0x2F, 0x5C];
+
+caseN = getUrlParameterDef("bidi_text", "0");
+do_verify = isUrlParameterTrue("bidi_text_verify");
+
+getCharCatSplitPos(data: CharCatSplitPosText, i: int, endPos: int) -> int {
+
+	if (do_verify) {
+		new1 = getCharCatSplitPosNew(data, i, endPos);
+		new2 = getCharCatSplitPosNew2(data, i, endPos);
+		orig = getCharCatSplitPosOrig(data, i, endPos);
+
+		if (new1 != orig) {
+			println("new1 != orig");
+		}
+		if (new2 != orig) {
+			println("new2 != orig");
+		}
+	}
+
+	if (caseN == "1") {
+		getCharCatSplitPosNew(data, i, endPos)
+	} else if (caseN == "2") {
+		getCharCatSplitPosNew2(data, i, endPos)
+	} else {
+		getCharCatSplitPosOrig(data, i, endPos)
+	}
+}
+
+getCharCatSplitPosNew(data: CharCatSplitPosText, i: int, endPos: int) -> int {
+	// TODO make these refs part of accumulator in stringFoldi.
+	htmlEntity: ref int = ref -1;
+	htmlTag: ref int = ref -1;
+	t = data.text;
+	t_space = data.t_spaceAsInt;
+	space2_t = data.space2_tAsInt;
+	space_t = data.space_tAsInt;
+
+
+	stringFoldi(strSubRange(t, i, nextValidStrPos(endPos, strlen(t))), -1, \cur_pspi, pspacc, cur_pspcode -> {
+		pre_pspcode = space_t[cur_pspi+i];
+		if (^htmlEntity != -1) {
+			if (pre_pspcode==59) {
+				htmlEntity := -1;
+				nextValidStrPos(pspacc, cur_pspi+i)
+			} else if ((pre_pspcode != 35 && pre_pspcode != 38 && pre_pspcode < 48) || (pre_pspcode > 57 && pre_pspcode < 65) || (pre_pspcode > 90 && pre_pspcode < 97) || pre_pspcode > 122)
+				nextValidStrPos(pspacc, cur_pspi+i+1)
+			else
+				pspacc
+		} else if (pre_pspcode == 38) {
+			htmlEntity := cur_pspi+i;
+			pspacc;
+		} else if (^htmlTag != -1) {
+			if (pre_pspcode == 62) {
+				nextValidStrPos(pspacc, cur_pspi+i)
+			} else pspacc;
+		} else if (pre_pspcode == 60) {
+			htmlTag := cur_pspi+i;
+			pspacc;
+		} else {
+			nxt_pspcode = t_space[cur_pspi+i+1];
+			pre_cat = getUnicodeCategory(pre_pspcode);
+			cur_cat = getUnicodeCategory(cur_pspcode);
+			nxt_cat = getUnicodeCategory(nxt_pspcode);
+			pre_alp = getUnicodeAlphabet(pre_pspcode);
+			cur_alp = getUnicodeAlphabet(cur_pspcode);
+			pre_scl = getAlphabetScaling(pre_alp, "");
+			cur_scl = getAlphabetScaling(cur_alp, "");
+			pre_dir = getUnicodeDirection(pre_pspcode);
+			cur_dir = getUnicodeDirection(cur_pspcode);
+			pre2curBrk = pre_scl != cur_scl || (pre_dir == uc_dir_ltr && cur_dir == uc_dir_rtl) || (pre_dir == uc_dir_rtl && cur_dir == uc_dir_ltr);
+			// It is possible that pre2curBrk is the only condition needed after all, for JS at least.
+			isPunct_cur_cat = isPunct(cur_cat);
+			if (
+				(isPunct_cur_cat && (contains(codes, cur_pspcode) && pre_cat == uc_decimalDigitNumber && contains(sep_cats, nxt_cat))) ||
+				(isPunct(pre_cat) && (cur_cat != uc_decimalDigitNumber || getUnicodeCategory(space2_t[cur_pspi+i]) != uc_decimalDigitNumber) && pre2curBrk) ||
+				(isPunct_cur_cat && (pre_cat != uc_decimalDigitNumber || nxt_cat != uc_decimalDigitNumber) && pre2curBrk) ||
+				(pre_alp != cur_alp) || (pre_cat == uc_spaceSeparator) ||
+				(cur_cat == uc_spaceSeparator && pre2curBrk) ||
+				false
+			)
+				nextValidStrPos(pspacc, cur_pspi+i)
+			else
+				pspacc;
+		}
+	});
+}
+
+getCharCatSplitPosNew2(data: CharCatSplitPosText, i: int, endPos: int) -> int {
+	// TODO make these refs part of accumulator in stringFoldi.
+	htmlEntity: ref int = ref -1;
+	htmlTag: ref int = ref -1;
+	text = data.textAsInt;
+	t_space = data.t_spaceAsInt;
+	space2_t = data.space2_tAsInt;
+	space_t = data.space_tAsInt;
+
+/*
+	stringFoldi(strSubRange(t, i, nextValidStrPos(endPos, strlen(t))), -1, \cur_pspi, pspacc, cur_pspcode -> {
+
+	stringFoldi(s, a, f) {
+		foldRange(0, strlen(s) - 1, a, \a2, i -> f(i, a2, getCharCodeAt(s, i)));
+	}
+
+	foldRange(start : int, end : int, acc : ?, fn : (?, int) -> ?) -> ?
+*/
+	foldRange(i, nextValidStrPos(endPos, length(text))-1, -1, \pspacc, cur_pspi -> {
+		// f(i, a2, getCharCodeAt(s, i))
+		// cur_pspi = cur_pspi2 - 1;
+		cur_pspcode = text[cur_pspi];
+		ppr_pspcode = space2_t[cur_pspi];
+		pre_pspcode = space_t[cur_pspi];
+		if (^htmlEntity != -1) {
+			if (pre_pspcode==59) {
+				htmlEntity := -1;
+				nextValidStrPos(pspacc, cur_pspi + i)
+			} else if ((pre_pspcode != 35 && pre_pspcode != 38 && pre_pspcode < 48) || (pre_pspcode > 57 && pre_pspcode < 65) || (pre_pspcode > 90 && pre_pspcode < 97) || pre_pspcode > 122)
+				nextValidStrPos(pspacc, cur_pspi + i + 1)
+			else
+				pspacc
+		} else if (pre_pspcode == 38) {
+			htmlEntity := cur_pspi + i;
+			pspacc;
+		} else if (^htmlTag != -1) {
+			if (pre_pspcode == 62) {
+				nextValidStrPos(pspacc, cur_pspi + i)
+			} else pspacc;
+		} else if (pre_pspcode == 60) {
+			htmlTag := cur_pspi + i;
+			pspacc;
+		} else {
+			nxt_pspcode = t_space[cur_pspi + 1];
+			pre_cat = getUnicodeCategory(pre_pspcode);
+			cur_cat = getUnicodeCategory(cur_pspcode);
+			nxt_cat = getUnicodeCategory(nxt_pspcode);
+			pre_alp = getUnicodeAlphabet(pre_pspcode);
+			cur_alp = getUnicodeAlphabet(cur_pspcode);
+			pre_scl = getAlphabetScaling(pre_alp, "");
+			cur_scl = getAlphabetScaling(cur_alp, "");
+			pre_dir = getUnicodeDirection(pre_pspcode);
+			cur_dir = getUnicodeDirection(cur_pspcode);
+			pre2curBrk = pre_scl != cur_scl || (pre_dir == uc_dir_ltr && cur_dir == uc_dir_rtl) || (pre_dir == uc_dir_rtl && cur_dir == uc_dir_ltr);
+			// It is possible that pre2curBrk is the only condition needed after all, for JS at least.
+			isPunct_cur_cat = isPunct(cur_cat);
+			if (
+				(isPunct_cur_cat && (contains(codes, cur_pspcode) && pre_cat == uc_decimalDigitNumber && contains(sep_cats, nxt_cat))) ||
+				(isPunct(pre_cat) && (cur_cat != uc_decimalDigitNumber || getUnicodeCategory(ppr_pspcode) != uc_decimalDigitNumber) && pre2curBrk) ||
+				(isPunct_cur_cat && (pre_cat != uc_decimalDigitNumber || nxt_cat != uc_decimalDigitNumber) && pre2curBrk) ||
+				(pre_alp != cur_alp) || (pre_cat == uc_spaceSeparator) ||
+				(cur_cat == uc_spaceSeparator && pre2curBrk) ||
+				false
+			)
+				nextValidStrPos(pspacc, cur_pspi)
+			else
+				pspacc;
+		}
+	});
+}
+
+getCharCatSplitPosOrig(data: CharCatSplitPosText, i: int, endPos: int) -> int {
+	t = data.text;
 	// TODO make these refs part of accumulator in stringFoldi.
 	htmlEntity: ref int = ref -1;
 	htmlTag: ref int = ref -1;
@@ -59,16 +252,16 @@ getCharCatSplitPos(t: string, i: int, endPos: int) -> int {
 			pspacc;
 		} else {
 			nxt_pspcode = getCharCodeAt(t+" ", cur_pspi+i+1);
-			ppr_cat = getUnicodeCategory(ppr_pspcode);
-			pre_cat = getUnicodeCategory(pre_pspcode);
-			cur_cat = getUnicodeCategory(cur_pspcode);
-			nxt_cat = getUnicodeCategory(nxt_pspcode);
-			pre_alp = getUnicodeAlphabet(pre_pspcode);
-			cur_alp = getUnicodeAlphabet(cur_pspcode);
-			pre_scl = getAlphabetScaling(pre_alp, ""); 
-			cur_scl = getAlphabetScaling(cur_alp, ""); 
-			pre_dir = getUnicodeDirection(pre_pspcode);
-			cur_dir = getUnicodeDirection(cur_pspcode);
+			ppr_cat = getUnicodeCategoryEvaluate(ppr_pspcode);
+			pre_cat = getUnicodeCategoryEvaluate(pre_pspcode);
+			cur_cat = getUnicodeCategoryEvaluate(cur_pspcode);
+			nxt_cat = getUnicodeCategoryEvaluate(nxt_pspcode);
+			pre_alp = getUnicodeAlphabetEvaluate(pre_pspcode);
+			cur_alp = getUnicodeAlphabetEvaluate(cur_pspcode);
+			pre_scl = getAlphabetScaling(pre_alp, "");
+			cur_scl = getAlphabetScaling(cur_alp, "");
+			pre_dir = getUnicodeDirectionEvaluate(pre_pspcode);
+			cur_dir = getUnicodeDirectionEvaluate(cur_pspcode);
 			pre2curBrk = pre_scl != cur_scl || (pre_dir == uc_dir_ltr && cur_dir == uc_dir_rtl) || (pre_dir == uc_dir_rtl && cur_dir == uc_dir_ltr);
 			sep_cats = [
 				uc_spaceSeparator, uc_lineSeparator, uc_paragraphSeparator, uc_control, uc_format,
@@ -161,7 +354,7 @@ fold3DMs(first: DirectionAndMajority, second: DirectionAndMajority, third: Direc
 				third.d
 			else
 				first.d
-		else 
+		else
 			if (second.d == uc_dir_rtl || second.d == uc_dir_ltr)
 				second.d
 			else
