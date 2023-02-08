@@ -182,19 +182,21 @@ findLocalNameSource(e : FiExp, name : string, maxPos : int, ignoreFields : bool)
 		FiCast(e0, __, __, __, __): checkMyStart(\ -> rec(e0, ignoreFields));
 		FiSeq(es, __, __): checkMyStart(\ -> recArr(es, ignoreFields));
 		FiCallPrim(op, es, __, __): {
-			tryFn(recArr(es, ignoreFields), \ignoreFields2 -> Pair(
-				switch (op) {
-					FcFieldPrim(name2): {
-						if (!ignoreFields2 && (name2 == name) && checkStart(e.start)) {
-							Some(LocalNameSourceStructField(e));
-						} else {
-							None();
-						}
+			// Here we do not check children first (es) because FcFieldPrim has a different order than others:
+			//   struct.field
+			// Let "struct" has position 10 and "field" has position 17
+			// In FiCallPrim in this case looks like:
+			//   FiCallPrim(FcFieldPrim("field"), [FiVar("struct", FiType(), 10)], FiType(), 17)
+			switch (op) {
+				FcFieldPrim(name2): {
+					if (!ignoreFields && (name2 == name) && checkStart(e.start)) {
+						Pair(Some(LocalNameSourceStructField(e)), ignoreFields);
+					} else {
+						recArr(es, ignoreFields);
 					}
-					default: None();
-				},
-				ignoreFields2
-			));
+				}
+				default: checkMyStart(\ -> recArr(es, ignoreFields));
+			}
 		}
 		FiRequire(__, ex, __, __): checkMyStart(\ -> rec(ex, ignoreFields));
 		FiUnsafe(__, fb, __, __): checkMyStart(\ -> rec(fb, ignoreFields));
@@ -652,7 +654,7 @@ findNameDefInModuleAtIndex(config : CompilerConfig, env : FcTypeEnvGlobal, modul
 	exprM = fold(map(module.globalVars, \gv -> gv.value),
 		fold(nativeLambdas,
 			fold(
-				map(module.functions, \f -> fixLambdaStart(f.lambda, f.declStart)),
+				map(module.functions, \f -> fixLambdaStart(f.lambda, f.defiStart)),
 				None(),
 				accFn
 			),
