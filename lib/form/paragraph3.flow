@@ -623,11 +623,14 @@ getParaLineInfos(
 		words = if (wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
 			// we don't need spaces in the end of the line becasue if there is filler element in the line spaces will be out of the available width
 			// and we can't move space on the next line because it will break alignment so we just trim spaces in the end.
-			if (isParaWordSpaceForm(lastElement(line.words, emptyParaWord))) {
-				foldr(line.words, makeList(), \acc1, paraWord -> {
+			endElement = if (rtl) firstElement else lastElement;
+			endFold = if (rtl) fold else foldr;
+			reverseOrNot = if (rtl) idfn else reverseA;
+			if (isParaWordSpaceForm(endElement(line.words, emptyParaWord))) {
+				endFold(line.words, makeList(), \acc1, paraWord -> {
 					if (acc1 == EmptyList() && isParaWordSpaceForm(paraWord)) acc1
 					else Cons(paraWord, acc1);
-				}) |> list2array |> reverseA;
+				}) |> list2array |> reverseOrNot;
 			} else line.words;
 		} else line.words;
 		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount, ignoreLetterSpacing);
@@ -1241,7 +1244,7 @@ RenderLine(
 	accessForceNoMakeClip : bool
 ) -> ParaLineResult {
 	remaining = width - info.lineWidth;
-	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, if (newJustifyEnabled && alignment == Justify()) StartAlign() else alignment);
+	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
 
 	wordsCount = length(info.optimizedLine) - 1;
 
@@ -1309,7 +1312,6 @@ RenderLine(
 
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0
 		else if (isSpace) interWord else 0.0;
-
 		r = switch (f : GhostForm) {
 			Empty() : None();
 			Ghost(xc, yc, fm) : {
@@ -1538,19 +1540,14 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
 			lastWord = i == wordsCount;
 			defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
-			switch (w.word) {
-				Space(spaceForm): {
-					switch (spaceForm : GhostForm) {
-						Text(text, __) : {
-							if (text == " ") {
-								if (lastWord) defValue() else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
-							} else defValue()
-						};
-						default: defValue()
-					}
+			switch (w.form : GhostForm) {
+				Text(text, __) : {
+					if (text == " " || text == nonBreakableSpace) {
+						if (lastWord) defValue() else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
+					} else defValue()
 				};
-				default: defValue();
-			}
+				default: defValue()
+			};
 		});
 		if (spacesAndWordsWidth.first > 0) {
 			(availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
@@ -1612,18 +1609,13 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 								}
 
 								additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
-									switch (w) {
-										Space(spaceForm): {
-											switch (spaceForm : GhostForm) {
-												Text(text, __) : {
-													if (text == " ") {
-														wordSpacing;
-													} else 0.0
-												};
-												default: 0.0
-											}
-										}
-										default: 0.0;
+									switch (f) {
+										Text(text, __) : {
+											if (text == " " || text == nonBreakableSpace) {
+												wordSpacing;
+											} else 0.0
+										};
+										default: 0.0
 									};
 								} else 0.0;
 
