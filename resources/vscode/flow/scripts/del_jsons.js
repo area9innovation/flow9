@@ -9,6 +9,8 @@ yamlFileNames.forEach(fileName => {
 	yamlFilePath = path.join(__dirname, '../syntaxes', fileName)
 	jsonFilePath = yamlFilePath.replace('.yaml', '.json')
 
-	fs.unlinkSync(jsonFilePath)
-	console.log('Removed ' + jsonFilePath)
+	if (fs.existsSync(jsonFilePath)) {
+		fs.unlinkSync(jsonFilePath)
+		console.log('Removed ' + jsonFilePath)
+	}
 })
