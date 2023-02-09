@@ -26,12 +26,14 @@ export {
 
 	// Returns a reversed list with elements of original list wrapped into a pair with text flow direction
 	markListToBiDiReverse(list: List<?>, getText: (?) -> string) -> List<Pair<?, int>>;
+	// this is internal tuning structure to avoid multiple creation of copies of string possible large and converting them into ints
+	// use makeCharCatSplitPosText helper function to get it
 	CharCatSplitPosText(
-		text : string,
-		textAsInt : [int],
-		t_spaceAsInt : [int],
-		space2_tAsInt : [int],
-		space_tAsInt : [int]
+		text : string, // this is original string of text
+		text_asInt : [int], // it is pre-converted into ints
+		text_space_asInt : [int], // same as text_asInt but with 32 in the end
+		space_space_text_asInt : [int], // same as text_asInt but with 32, 32 in front of
+		space_text_asInt : [int] // same as text_asInt but with 32 in front of
 	);
 
 	makeCharCatSplitPosText(t : string) -> CharCatSplitPosText;
@@ -39,15 +41,14 @@ export {
 
 makeCharCatSplitPosText(t : string) -> CharCatSplitPosText {
 	lenText = strlen(t);
-	text = generate(0, lenText, \i -> getCharCodeAt(t, i));
-	space = getCharCodeAt(" ", 0);
+	text_asInt = s2a(t);
 
 	CharCatSplitPosText(
 		t,
-		text,
-		arrayPush(text, space),
-		concat([space, space], text),
-		concat([space], text),
+		text_asInt,
+		arrayPush(text_asInt, 32),
+		concat([32, 32], text_asInt),
+		concat([32], text_asInt),
 	)
 }
 
@@ -63,16 +64,6 @@ charCatSplitPos_sep_cats = [
 
 charCatSplitPos_codes = [0x27, 0x2C, 0x2D, 0x2E, 0x2F, 0x5C];
 
-do_verify = isUrlParameterTrue("bidi_text_verify");
-
-getCharCatSplitPos(data: CharCatSplitPosText, i: int, endPos: int) -> int {
-	val = getCharCatSplitPosNew(data, i, endPos);
-	if (do_verify) {
-		assertEquals(val, getCharCatSplitPosOrig(data, i, endPos))
-	}
-	val
-}
-
 foldRangeWhileNotFound(start : int, end : int, acc : int, fn : (int, int) -> int) -> int {
 	if (start <= end && acc == -1) {
 		foldRangeWhileNotFound(start + 1, end, fn(acc, start), fn)
@@ -81,14 +72,14 @@ foldRangeWhileNotFound(start : int, end : int, acc : int, fn : (int, int) -> int
 	}
 }
 
-getCharCatSplitPosNew(data: CharCatSplitPosText, i: int, endPos: int) -> int {
+getCharCatSplitPos(data: CharCatSplitPosText, i: int, endPos: int) -> int {
 	// TODO make these refs part of accumulator in stringFoldi.
 	htmlEntity: ref int = ref -1;
 	htmlTag: ref int = ref -1;
-	text = data.textAsInt;
-	t_space = data.t_spaceAsInt;
-	space2_t = data.space2_tAsInt;
-	space_t = data.space_tAsInt;
+	text = data.text_asInt;
+	t_space = data.text_space_asInt;
+	space2_t = data.space_space_text_asInt;
+	space_t = data.space_text_asInt;
 	endLoop = nextValidStrPos(endPos, length(text))-1;
 
 	foldRangeWhileNotFound(i, endLoop, -1, \pspacc, cur_pspi -> {
@@ -147,66 +138,6 @@ getCharCatSplitPosNew(data: CharCatSplitPosText, i: int, endPos: int) -> int {
 			pspacc;
 		}
 	})
-}
-
-getCharCatSplitPosOrig(data: CharCatSplitPosText, i: int, endPos: int) -> int {
-	t = data.text;
-	// TODO make these refs part of accumulator in stringFoldi.
-	htmlEntity: ref int = ref -1;
-	htmlTag: ref int = ref -1;
-	stringFoldi(strSubRange(t, i, nextValidStrPos(endPos, strlen(t))), -1, \cur_pspi, pspacc, cur_pspcode -> {
-		ppr_pspcode = getCharCodeAt("  "+t, cur_pspi+i);
-		pre_pspcode = getCharCodeAt(" "+t, cur_pspi+i);
-		if (^htmlEntity != -1) {
-			if (pre_pspcode==59) {
-				htmlEntity := -1;
-				nextValidStrPos(pspacc, cur_pspi+i)
-			} else if ((pre_pspcode != 35 && pre_pspcode != 38 && pre_pspcode < 48) || (pre_pspcode > 57 && pre_pspcode < 65) || (pre_pspcode > 90 && pre_pspcode < 97) || pre_pspcode > 122)
-				nextValidStrPos(pspacc, cur_pspi+i+1)
-			else
-				pspacc
-		} else if (pre_pspcode == 38) {
-			htmlEntity := cur_pspi+i;
-			pspacc;
-		} else if (^htmlTag != -1) {
-			if (pre_pspcode == 62) {
-				nextValidStrPos(pspacc, cur_pspi+i)
-			} else pspacc;
-		} else if (pre_pspcode == 60) {
-			htmlTag := cur_pspi+i;
-			pspacc;
-		} else {
-			nxt_pspcode = getCharCodeAt(t+" ", cur_pspi+i+1);
-			ppr_cat = getUnicodeCategoryEvaluate(ppr_pspcode);
-			pre_cat = getUnicodeCategoryEvaluate(pre_pspcode);
-			cur_cat = getUnicodeCategoryEvaluate(cur_pspcode);
-			nxt_cat = getUnicodeCategoryEvaluate(nxt_pspcode);
-			pre_alp = getUnicodeAlphabetEvaluate(pre_pspcode);
-			cur_alp = getUnicodeAlphabetEvaluate(cur_pspcode);
-			pre_scl = getAlphabetScaling(pre_alp, "");
-			cur_scl = getAlphabetScaling(cur_alp, "");
-			pre_dir = getUnicodeDirectionEvaluate(pre_pspcode);
-			cur_dir = getUnicodeDirectionEvaluate(cur_pspcode);
-			pre2curBrk = pre_scl != cur_scl || (pre_dir == uc_dir_ltr && cur_dir == uc_dir_rtl) || (pre_dir == uc_dir_rtl && cur_dir == uc_dir_ltr);
-			sep_cats = [
-				uc_spaceSeparator, uc_lineSeparator, uc_paragraphSeparator, uc_control, uc_format,
-				uc_connectorPunctuation, uc_dashPunctuation, uc_openPunctuation, uc_closePunctuation,
-				uc_initialQuotePunctuation, uc_finalQuotePunctuation, uc_otherPunctuation
-			];
-			// It is possible that pre2curBrk is the only condition needed after all, for JS at least.
-			if (
-				(isPunct(cur_cat) && (contains([0x27, 0x2C, 0x2D, 0x2E, 0x2F, 0x5C], cur_pspcode) && pre_cat == uc_decimalDigitNumber && contains(sep_cats, nxt_cat))) ||
-				(isPunct(pre_cat) && (cur_cat != uc_decimalDigitNumber || ppr_cat != uc_decimalDigitNumber) && pre2curBrk) ||
-				(isPunct(cur_cat) && (pre_cat != uc_decimalDigitNumber || nxt_cat != uc_decimalDigitNumber) && pre2curBrk) ||
-				(pre_alp != cur_alp) || (pre_cat == uc_spaceSeparator) ||
-				(cur_cat == uc_spaceSeparator && pre2curBrk) ||
-				false
-			)
-				nextValidStrPos(pspacc, cur_pspi+i)
-			else
-				pspacc;
-		}
-	});
 }
 
 BiDiWord(word: ?, dm: DirectionAndMajority);
