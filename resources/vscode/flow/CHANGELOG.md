@@ -187,3 +187,9 @@
 
 ## 0.5.4
  - compound expressions and folding on hover and watch
+
+## 0.6.0
+ - [PR #1141](https://github.com/area9innovation/flow9/pull/1141)
+	- Find definition and Hover for local variables
+	- Updated dependencies
+	- Improved verbose mode

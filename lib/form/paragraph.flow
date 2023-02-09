@@ -586,7 +586,7 @@ breakTextFragment(
 		0,
 		indexingInit,
 		init,
-		text,
+		makeCharCatSplitPosText(text),
 		disableBreaksAfterHyphen,
 		isFirstChild,
 		moreLineBreaks,
@@ -596,6 +596,8 @@ breakTextFragment(
 		Pair(-1, false),
 		-1,
 		"",
+		isBiDiEnabled(),
+		isUrlParameterTrue("debug")
 	);
 
 	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
@@ -617,7 +619,7 @@ breakTextFragmentIntoElements(
 	i : int,
 	indexing : int,
 	acc : List<GeneralWrapElement>,
-	text : string,
+	textData : CharCatSplitPosText,
 	disableBreaksAfterHyphen : bool,
 	isFirstChild : bool,
 	moreLineBreaks : bool,
@@ -627,7 +629,10 @@ breakTextFragmentIntoElements(
 	hyphenPos : Pair<int, bool>, // pair of next pos of hyphen and soft sign
 	chrCatPos : int, // next pos of split in respect of characters' categories
 	wordAlphabet : string,
+	bidiEnabled : bool,
+	debug : bool
 ) -> List<GeneralWrapElement> {
+	text = textData.text;
 	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing2, offset, f -> {
 		if (0 <= indexing2) {
 			GeneralInspectElement(
@@ -653,8 +658,8 @@ breakTextFragmentIntoElements(
 
 		// update key positions
 
-		newChrCatPos = if (isBiDiEnabled()) {
-			if (i >= chrCatPos) remapMinusOne(getCharCatSplitPos(text, i+1, textLen)-1) else chrCatPos;
+		newChrCatPos = if (bidiEnabled) {
+			if (i >= chrCatPos) remapMinusOne(getCharCatSplitPos(textData, i+1, textLen)-1) else chrCatPos;
 		} else i;
 
 		newSpace1Pos = if (newChrCatPos > space1Pos) indexOfWordDivider(text, i, textLen) else space1Pos;
@@ -672,25 +677,36 @@ breakTextFragmentIntoElements(
 			hyphenPos
 		}
 
-		// TODO try to get rid of array hence malloc optimisation needed.
-		noBiDiPositions : [Pair<int, SymbolAtPositionType>] = [
-			Pair(newSpace1Pos, PositionSpace()),
-			// Pair(^space2Pos, PositionSpace()),
-			Pair(newLinePos2, PositionLineBreak()),
-			Pair(newHhyphenPos.first,
-				if (newHhyphenPos.second) {
-					PositionAllowSoftBreakAfter()
-				} else {
-					PositionAllowBreakAfter()
-				}
-			)
-		];
-		positions = if (isBiDiEnabled())
-			arrayPush(noBiDiPositions, Pair(newChrCatPos, PositionCharCat()))
-		else
-			noBiDiPositions;
-		if (isUrlParameterTrue("debug"))
+		positions = if (bidiEnabled) {
+			[
+				Pair(newSpace1Pos, PositionSpace()),
+				Pair(newLinePos2, PositionLineBreak()),
+				Pair(newHhyphenPos.first,
+					if (newHhyphenPos.second) {
+						PositionAllowSoftBreakAfter()
+					} else {
+						PositionAllowBreakAfter()
+					}
+				),
+				Pair(newChrCatPos, PositionCharCat())
+			]
+		} else {
+			[
+				Pair(newSpace1Pos, PositionSpace()),
+				Pair(newLinePos2, PositionLineBreak()),
+				Pair(newHhyphenPos.first,
+					if (newHhyphenPos.second) {
+						PositionAllowSoftBreakAfter()
+					} else {
+						PositionAllowBreakAfter()
+					}
+				)
+			]
+		}
+
+		if (debug) {
 			println(formatString("Text splitting @%1: %2", [i2s(i), strGlue(map(positions, \p -> strInsert(toString(p.second), i2s(p.first), -1)), ", ")]));
+		}
 
 		keyPosM = fold(positions, None(), \posM : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
 			if (currPos.first >= textLen) {
@@ -772,7 +788,7 @@ breakTextFragmentIntoElements(
 							default: Cons(keyFragment, spaceAcc());
 						}
 					}
-					breakTextFragmentIntoElements(i + 1, indexing + 1, newAcc, text, disableBreaksAfterHyphen, isFirstChild, moreLineBreaks, textLen, newSpace1Pos, newLinePos2, newHhyphenPos, newChrCatPos, newWordAlphabet);
+					breakTextFragmentIntoElements(i + 1, indexing + 1, newAcc, textData, disableBreaksAfterHyphen, isFirstChild, moreLineBreaks, textLen, newSpace1Pos, newLinePos2, newHhyphenPos, newChrCatPos, newWordAlphabet, bidiEnabled, debug);
 				} else if (keyPos == textLen - 1) {
 					word = substring(text, i, keyPos - i);
 					//Cannot happen for hyphen
@@ -792,7 +808,7 @@ breakTextFragmentIntoElements(
 							Cons(makeTextFn(indexing, word), spaceAcc())
 						else
 							Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc())),
-						text,
+						textData,
 						disableBreaksAfterHyphen,
 						isFirstChild,
 						moreLineBreaks,
@@ -801,7 +817,8 @@ breakTextFragmentIntoElements(
 						newLinePos2,
 						newHhyphenPos,
 						newChrCatPos,
-						detectAlphabet(word)
+						detectAlphabet(word), bidiEnabled,
+						debug
 					)
 				}
 			}

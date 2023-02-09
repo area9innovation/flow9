@@ -59,7 +59,7 @@ MDynamicMenu2TInner(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							if (isNone(getValue(focusedItem)) && fgetValue(buttonFocused.focused)) {
 								nextDistinct(focusedItem, Some(MMenuFirstItem()))
 							}
-							RenderMPopup(
+							openFn = \ -> RenderMPopup(
 								manager,
 								p,
 								MMenuLines2MPopup(
@@ -75,7 +75,13 @@ MDynamicMenu2TInner(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									focusedItem
 								),
 								m2t
-							)
+							);
+
+							eitherFn(
+								tryExtractStruct(m.style, MMenuOpenDelay(0)),
+								\delay -> timer(delay.delay, openFn),
+								openFn
+							);
 						}
 					}),
 					\ -> \ -> next(openMenu.opened, false)
@@ -578,26 +584,6 @@ MDropDownMenu2T(
 		}
 	selected = MSingleSelection(currentInner);
 	closed = ref !getValue(openMenu.opened);
-
-	focusState =
-		replaceStructMany(
-			extractMComponentGroupState(m.style),
-			[
-				IScriptBehaviour(
-					"selected",
-					current,
-					ISInputValue(map(items, \item -> {
-							switch (item) {
-								MMenuSingleLine(title, __) : title;
-								default : "";
-							}
-						}),
-						"index",
-						true
-					)
-				)
-			]
-		);
 
 	onClick = \ -> if (^closed) next(openMenu.opened, true);
 	mWidth =
@@ -1110,19 +1096,23 @@ MDropDownMenuButton2T(
 	iconNearTitle = contains(style0, MDropDownIconNearTitle()) || croppedTitle;
 
 	focusState =
-		replaceStructMany(
-			extractMButtonState(style0),
+		concat(
+			replaceStructMany(
+				extractMButtonState(style0),
+				[
+					MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
+					MOnClick(onClick),
+					MRippleType(const(MRippleFill())),
+					MHighlightOnFocus(const(true)),
+					MHighlightOnHover(const(true)),
+					MFocused(focused),
+					extractStruct(style0, MButtonTitle(fselectLift(lineB, label)))
+				]
+			),
 			[
-				MEnabled(fsubselect(lineB, FLift(\line -> extractStruct(line.style, MEnabled(const(true))).enabled))),
-				MOnClick(onClick),
-				MRippleType(const(MRippleFill())),
-				MHighlightOnFocus(const(true)),
-				MHighlightOnHover(const(true)),
-				MFocused(focused),
 				FAccessAttribute("aria-haspopup", const("menu")),
 				FAccessAttribute("aria-expanded", fif(openMenu, const("true"), const(""))),
 				FAccessAttribute("aria-owns", fif(openMenu, const(popupId), const(""))),
-				extractStruct(style0, MButtonTitle(fselect(lineB, label |> FLift)))
 			]
 		);
 
@@ -1532,7 +1522,7 @@ MMenuLines2Material(
 		if (getValue(focused)) deferUntilNextFrameRendered(closeFn) else closeFn();
 
 		if (i >= shiftGap) {
-			timer(50, \ ->
+			setSelectedFn = \ ->
 				maybeApply(singleSelection, \ss -> {
 					unselectPrevious(ss);
 					if (state.singleSelectionToggle && getValue(ss.selected) == i - shiftGap) {
@@ -1542,8 +1532,9 @@ MMenuLines2Material(
 						nextFn(ss.selected, i - shiftGap);
 						nextDistinct(isSelected, true)
 					}
-				})
-			);
+				});
+			// TODO : Maybe get rid of this defer, looks outdated
+			if (isUrlParameterTrue("new")) setSelectedFn() else deferUntilNextFrameRendered(setSelectedFn);
 			if (fgetValue(onListClick.enabled)) onListClick.onClick(i - shiftGap);
 			click(); // action is moved outside delayed code - to solve issue with copying something to clipboard in a firefox.
 		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> {
@@ -1605,7 +1596,8 @@ MMenuLines2Material(
 			selectedInspector = extractStruct(style, MSelected(make(false))).selected;
 			focused = extractStruct(style, MFocused(make(false))).focused;
 			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector, focused);
-			selected = selectedId == i && !indexShift;
+			visuallySelected = selectedId == i && !indexShift;
+			selected = i == if (!indexShift) selectedId else if (selectedId == -1) 0 else selectedId + shiftGap;
 			id = state.popupId + "_menuitem" + i2s(i);
 			focusState =
 				replaceStructMany(
@@ -1618,6 +1610,7 @@ MMenuLines2Material(
 						MHighlightOnHover(const(true)),
 						MFocusOnDown(ref true),
 						FAccessAttribute("id", const(id)),
+						FAccessAttribute("aria-selected", const(if (popupRole == "menu") "" else b2s(selected))),
 						extractStruct(_style, MRippleOutlineEnabled(const(false))),
 						MFocused(focused)
 					]
@@ -1631,14 +1624,14 @@ MMenuLines2Material(
 
 			MComponent2T(state.manager, parent, "MMenuSingleLine", focusState, \focus ->  // Display chosen item when expanded
 				eitherFn(title,
-					\t -> state.makeTitle(parent, lineTextStyle, const(t), selected, itemOnTop(i), Some(primaryWidth), Some(secondaryWidth)),
+					\t -> state.makeTitle(parent, lineTextStyle, const(t), visuallySelected, itemOnTop(i), Some(primaryWidth), Some(secondaryWidth)),
 					\ ->
 						state.m2t(MAlignStart(either(content, TEmpty())), parent)
 						|> (\t -> TCenterYIn(t, TFixed(0., hgt)))
 						|> (\t -> TGroup2(TFillX(), t))
 				)
 				|> (\ttl -> TAccess([FAccessAttribute("aria-hidden", const("true"))], ttl))
-				|> addActions(parent, style, selected, false, primaryWidth, secondaryWidth)
+				|> addActions(parent, style, visuallySelected, false, primaryWidth, secondaryWidth)
 				|> (\t ->
 					TAlpha(
 						getMenuAlpha(focus, parent),

@@ -14,7 +14,8 @@ export {
 		rtl : bool,
 		widthManager : ParagraphWidthManager,
 		renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
-		fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
+		fontWrapper : ([CharacterStyle]) -> [CharacterStyle],
+		renderInfo : WigiRenderParameters
 	) -> Form;
 	getLineIndent(paraIndent : double, isFirstLine : bool) -> double;
 	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
@@ -51,8 +52,8 @@ export {
 
 	// Will be populated when rendering  document with real height of all lines from top-level paragraphs
 	RenderedLinesInfoStyle(baselines : DynamicBehaviour<[DynamicBehaviour<[RenderedLinesInfo]>]>);
-		RenderedLinesInfo(height : double, baseline : double);
-		dummyRenderedLinesInfo = RenderedLinesInfo(0.0, 0.0);
+		RenderedLinesInfo(height : double, baseline : double, elementsID : [int], y : double);
+		dummyRenderedLinesInfo = RenderedLinesInfo(0.0, 0.0, [], 0.0);
 
 	nonBreakableSpace : string = fromCharCode(nonBreakableSpaceCode);
 	wordJoiner : string = fromCharCode(wordJoinerCode);
@@ -75,6 +76,9 @@ export {
 	makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi;
 
 	newJustifyEnabled = js && !isUrlParameterFalse("js_justify");
+	// Allow to customize how render should behave
+	WigiRenderParameters(inline : bool);
+		defaultWigiRenderParameters = WigiRenderParameters(false);
 }
 
 // TODO:
@@ -127,7 +131,16 @@ ParaLine(words : [ParaWord], indent : double);
 ParaLineAcc(lines : List<Form>, y : double, baseline : double, maxLineWidth : double);
 
 OptimizedLineElement(f : GhostForm, metrics : Transform<FormMetrics>, interactivityIdM : Maybe<int>, nextWidgetId : DynamicBehaviour<Maybe<int>>);
-ParaLineInfo(optimizedLine : [OptimizedLineElement], lineAsc : double, lineHeight : double, lineWidth : double, lineIndent : double, containsDynamicElement : bool);
+ParaLineInfo(
+	optimizedLine : [OptimizedLineElement],
+	lineAsc : double,
+	lineHeight : double,
+	lineWidth : double,
+	lineIndent : double,
+	containsDynamicElement : bool,
+	y : double
+);
+ParaLinesInfoAcc(lines : List<ParaLineInfo>, y : double);
 ParaLinesInfos(lines : [ParaLineInfo], maxLineWidth : double);
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
@@ -203,7 +216,7 @@ renderParagraph(
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
-	renderParagraphEx(p, s, rtl, widthManager, None(), idfn);
+	renderParagraphEx(p, s, rtl, widthManager, None(), idfn, defaultWigiRenderParameters);
 }
 
 paraAtomic2form(pa : ParaAtomic, pos : WordPositionInLine) -> Form {
@@ -288,7 +301,8 @@ renderParagraphEx(
 	rtl : bool,
 	widthManager : ParagraphWidthManager,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
-	fontWrapper : ([CharacterStyle]) -> [CharacterStyle]
+	fontWrapper : ([CharacterStyle]) -> [CharacterStyle],
+	renderInfo : WigiRenderParameters
 ) -> Form {
 	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
 	traceApi.trace(\-> "renderParagraphEx "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
@@ -319,6 +333,8 @@ renderParagraphEx(
 	isSingleLine = containsStruct(s, ParagraphSingleLine());
 	isParagraphMarked = containsStruct(s, ParagraphMarked());
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
+
+	accessForceNoMakeClip = tightWidth && isSingleLine;
 
 	// Expand elements into word-units
 	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
@@ -363,7 +379,7 @@ renderParagraphEx(
 				if (storyWidth > 0.0) storyWidth else getValue(awB),
 				lines, tightWidth, alignment, interlineSpacing,
 				topLineBaseline, interactiveStyles, rtl, isParagraphMarked,
-				interLineHighlighting, renderedLinesInfoM
+				interLineHighlighting, accessForceNoMakeClip, renderedLinesInfoM
 			);
 			updaterWrapper(\-> nextDistinct(widthManager.width, lines.maxLineWidth));
 			accessibilityParent := prevAccessibilityParent;
@@ -392,15 +408,15 @@ renderParagraphEx(
 		[if (fill != []) Background(fill, renderedParagraph) else renderedParagraph],
 		filtermap(words, \word -> {
 			applyStyles = \form0 ->
-				Access([AccessAttribute("nextWidgetId",
+				Access(concat([AccessAttribute("nextWidgetId",
 					fselect(word.nextWidgetId, FLift(\idM -> eitherMap(idM, makeWordId, "")))
-				)], form0)
+				)], if (accessForceNoMakeClip) [AccessForceMakeClip(false)] else []), form0)
 				|> (\form ->
 					eitherMap(
 						lookupTree(interactiveStyles, either(word.interactivityIdM, -1)),
 						\wordStyles -> {
 							applyListenersAndModifiers(wordStyles, form)
-							|>(\f -> applyBlockHighlighting(wordStyles, f))
+							|> (\f -> applyBlockHighlighting(wordStyles, f))
 						},
 						form
 					)
@@ -470,9 +486,11 @@ renderParagraphEx(
 		),
 		\ -> {
 			updateFn = \wi-> {
+				id = traceApi.makeRenderingId();
+
 				oldLines = getValue(linesCountB);
 				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				traceApi.traceAndNest(\-> "updateFn START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+				traceApi.traceAndNest(\-> "updateFn [" + id + "] START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -491,14 +509,19 @@ renderParagraphEx(
 					rtl,
 					fitLongWords,
 					extractStruct(s, defaultFontSizeStyle).size,
-					ignoreLetterspacing
+					ignoreLetterspacing,
+					interlineSpacing
 				);
 
 				nextDistinct(linesCountB, length(infos));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
+
+				traceApi.traceAndNest(\-> "updateFn [" + id + "] lines SET START maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceApi.unnestAndTrace(\-> "updateFn END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] lines SET END  maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+
+				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
@@ -508,7 +531,7 @@ renderParagraphEx(
 						updateFn(v);
 					}),
 				],
-				if (ndynamic == 0 || ndynamic == ndymamicUpper) [] else
+				if (renderInfo.inline || ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
 					subscribe2(update, \u -> {
 						// When an update from a dynamic element is requested, we do it in the next frame
@@ -520,7 +543,7 @@ renderParagraphEx(
 					})
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
-					if (i < ndymamicUpper) {
+					if (renderInfo.inline || i < ndymamicUpper) {
 						traceApi.trace(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
 						updateFn(getValue(awB))
 					} else {
@@ -575,7 +598,8 @@ getParaLineInfos(
 	rtl : bool,
 	shrinkLongWords : bool,
 	fontSize : double,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	interlineSpacing : double
 ) -> [ParaLineInfo] {
 	textScale = if (shrinkLongWords && wordGroups != []) {
 		maxWidthGroup : ParaWordGroup = fold(
@@ -595,14 +619,14 @@ getParaLineInfos(
 	} else 1.0;
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
 	linesCount = length(reflowResult) - 1;
-	mapi(reflowResult, \i, line -> {
+	a : ParaLinesInfoAcc = foldi(reflowResult, ParaLinesInfoAcc(EmptyList(), 0.0), \i : int, acc : ParaLinesInfoAcc, line : ParaLine -> {
 		words = if (wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
 			// we don't need spaces in the end of the line becasue if there is filler element in the line spaces will be out of the available width
 			// and we can't move space on the next line because it will break alignment so we just trim spaces in the end.
 			if (isParaWordSpaceForm(lastElement(line.words, emptyParaWord))) {
-				foldr(line.words, makeList(), \acc, paraWord -> {
-					if (acc == EmptyList() && isParaWordSpaceForm(paraWord)) acc
-					else Cons(paraWord, acc);
+				foldr(line.words, makeList(), \acc1, paraWord -> {
+					if (acc1 == EmptyList() && isParaWordSpaceForm(paraWord)) acc1
+					else Cons(paraWord, acc1);
 				}) |> list2array |> reverseA;
 			} else line.words;
 		} else line.words;
@@ -627,15 +651,21 @@ getParaLineInfos(
 			)
 		});
 
-		ParaLineInfo(
+		paraLineInfo = ParaLineInfo(
 			optimizedLine,
 			lineAscAndDynamic.first,
 			lineHeightAndWidth.first,
 			lineHeightAndWidth.second,
 			line.indent,
-			lineAscAndDynamic.second
-		)
+			lineAscAndDynamic.second,
+			acc.y
+		);
+		ParaLinesInfoAcc(
+			Cons(paraLineInfo, acc.lines),
+			acc.y + lineHeightAndWidth.first + if (i == linesCount) 0. else interlineSpacing,
+		);
 	});
+	list2array(a.lines);
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
@@ -918,6 +948,27 @@ reflowParaWords(
 	else reflowResult;
 }
 
+rtrimParaWordGroup(group : ParaWordGroup) -> ParaWordGroup {
+	trimmedWords = foldList(
+		group.words |> array2list,
+		makeList(),
+		\acc, w -> {
+			if (isParaWordSpaceForm(w) && isEmptyList(acc)) {
+				acc
+			} else {
+				Cons(w, acc)
+			}
+		}
+	) |> list2array;
+
+	ParaWordGroup(
+		trimmedWords,
+		ref foldi(trimmedWords, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
+			addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
+		)
+	)
+}
+
 // here availableWidth is an amount of width for current line
 reflowParaWords2(
 	wordGroups : [ParaWordGroup],
@@ -1018,9 +1069,18 @@ reflowParaWords2(
 		detachWord(word, isSpc);
 		isNewLine = switch (word.word : ParaAtomic) {
 			NewLine() : true;
-			default :
-				max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining
-				&& (isSpc || currentWordGroups != [])
+			default : {
+				if (max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining && (isSpc || currentWordGroups != [])) {
+					// we should check if the groupd ends with spaces that are not count into width if they are in the end of the line
+					if (wigiRtrimSpace) {
+						getParaWordWidthValue(^(rtrimParaWordGroup(group).width), textScale) > remaining
+					} else {
+						true
+					}
+				} else {
+					false
+				}
+			}
 		};
 		if (isNewLine) {
 			reflowParaWords2(
@@ -1090,6 +1150,7 @@ renderParaLines(
 	rtl : bool,
 	isMarked : bool,
 	interLineHighlighting : bool,
+	accessForceNoMakeClip : bool,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>
 ) -> Form {
 	lasti = length(lines.lines) - 1;
@@ -1113,7 +1174,8 @@ renderParaLines(
 			} else 0.0,
 			if (interLineHighlighting){
 				if (lastLine || i == 0) interlineSpacing / 2.0 else interlineSpacing
-			} else 0.0
+			} else 0.0,
+			accessForceNoMakeClip
 		);
 		ParaLineAcc(
 			Cons(Size2(const(zeroWH), f.form), acc.lines),
@@ -1122,11 +1184,19 @@ renderParaLines(
 			if (acc.maxLineWidth < f.width) f.width else acc.maxLineWidth
 		);
 	});
-
 	maybeApply(
 		renderedLinesInfoM,
 		\renderedLinesInfo -> {
-			nextDistinct(renderedLinesInfo, map(lines.lines, \info : ParaLineInfo -> RenderedLinesInfo(info.lineHeight, info.lineAsc)));
+			nextDistinct(renderedLinesInfo, map(lines.lines, \info : ParaLineInfo -> {
+				elementsID = fold(info.optimizedLine, [] , \acc, elem : OptimizedLineElement -> {
+					eitherMap(
+						elem.interactivityIdM,
+						\interactivityId -> arrayPush(acc, interactivityId),
+						acc
+					)
+				});
+				RenderedLinesInfo(info.lineHeight, info.lineAsc, elementsID, info.y)
+			}));
 		}
 	);
 
@@ -1168,6 +1238,7 @@ RenderLine(
 	isMarked : bool,
 	highLightOffset : double,
 	interlineSpacing : double,
+	accessForceNoMakeClip : bool
 ) -> ParaLineResult {
 	remaining = width - info.lineWidth;
 	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, if (newJustifyEnabled && alignment == Justify()) StartAlign() else alignment);
@@ -1207,7 +1278,7 @@ RenderLine(
 		addWordId = \fm -> {
 			if (^useNextWordId) {
 				useNextWordId := false;
-				Access([AccessAttribute("id", const(wordId))], fm);
+				Access(concat([AccessAttribute("id", const(wordId))], if (accessForceNoMakeClip) [AccessForceMakeClip(false)] else []), fm);
 			} else fm
 		}
 

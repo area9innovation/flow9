@@ -455,7 +455,7 @@ class RenderSupport {
 		style.setAttribute('type', 'text/css');
 
 		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
-			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; } " +
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; background : white} " +
 			".print-page-container {position : fixed;} ";
 
 		Browser.document.head.appendChild(style);
@@ -3726,6 +3726,32 @@ class RenderSupport {
 			}
 
 			fullWindowTrigger(fw);
+		}
+	}
+
+	public static function requestFullScreenClip(clip : FlowContainer) {
+		if (IsFullScreen || clip == null || untyped !clip.isNativeWidget) return;
+		var nativeWidget = clip.nativeWidget;
+		if (nativeWidget != null) {
+			var elementBRect = nativeWidget.getBoundingClientRect();
+			requestFullScreen(nativeWidget);
+			// To keep in sync mouse coordinates with fullscreen content
+			once("fullscreen", function() {
+				PixiStage.nativeWidget.style.position = 'absolute';
+				PixiStage.nativeWidget.style.left = '${-elementBRect.left}px';
+				PixiStage.nativeWidget.style.top = '${-elementBRect.top}px';
+			});
+		}
+	}
+
+	public static function exitFullScreenClip(clip : FlowContainer) {
+		if (clip == null || untyped !clip.isNativeWidget) return;
+		var nativeWidget = clip.nativeWidget;
+		if (nativeWidget != null) {
+			exitFullScreen(nativeWidget);
+			PixiStage.nativeWidget.style.position = null;
+			PixiStage.nativeWidget.style.left = null;
+			PixiStage.nativeWidget.style.top = null;
 		}
 	}
 
