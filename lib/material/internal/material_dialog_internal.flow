@@ -770,11 +770,14 @@ renderMDialog3(
 }
 
 snackbarDisp = initUnsM();
+snackbarClosingDelayDisp = initUnsM();
+deferredRenderFn = initUnsM();
+
+SNACKBAR_CLOSING_DELAY = 300 //ms
 
 renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn  : (Tropic) -> () -> void) -> void {
-	closeSnackbar = \ -> maybeApply(^snackbarDisp, \fn -> {
-		snackbarDisp := None();
-		fn();
+	closeSnackbar = \ -> maybeApply(^snackbarDisp, \__ -> {
+		dispUnsM(snackbarDisp);
 		maybeApply(tryExtractStruct(style, MSnackbarOnDisappear(nop)), \d -> d.fn());
 	});
 	closeSnackbar();
@@ -860,16 +863,29 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 		|> TAlignHorizontalDir(alignment, manager.focus.rtl)
 		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));
 
-	renderDisp = renderFn(snackBar);
-	nextDistinct(visible, true);
-	timerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+	renderSnackbar = \ -> {
+		renderDisp = renderFn(snackBar);
+		nextDistinct(visible, true);
+		autoDisappearTimerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
 
-	setUnsM(
-		snackbarDisp,
-		\ -> {
-			timerDisp();
-			timer(300, renderDisp);
-			nextDistinct(visible, false);
-		}
-	)
+		setUnsM(
+			snackbarDisp,
+			\ -> {
+				autoDisappearTimerDisp();
+				timer(SNACKBAR_CLOSING_DELAY, renderDisp);
+				setUnsM(snackbarClosingDelayDisp, interruptibleTimer(SNACKBAR_CLOSING_DELAY, \ -> {
+					dispUnsM(deferredRenderFn);
+					dispUnsM(snackbarClosingDelayDisp);
+				}));
+
+				nextDistinct(visible, false);
+			}
+		);
+	}
+
+	if (isSome(^snackbarClosingDelayDisp)) {
+		setUnsM(deferredRenderFn, renderSnackbar);
+	} else {
+		renderSnackbar()
+	}
 }
