@@ -34,7 +34,9 @@ export {
 	// General form of expression transformation
 	fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp;
 
-	// General form of expression folding
+	// General form of expression polymorphic mapping. argsFirst = true.
+	fiMapExp2(e: FiExp, fn: (FiExp, FiExpTraverseEnv, [?]) -> ?) -> ?;
+
 	fiFoldExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> ?, order: AstTraverseOrder) -> ?;
 
 	// General form of expression folding, combined with mapping
@@ -780,4 +782,68 @@ fcSplitCompileTimeVar(id: string) -> Pair<string, string> {
 	} else {
 		Pair(id, "");
 	}
+}
+
+fiMapExp2(e: FiExp, fn: (FiExp, FiExpTraverseEnv, [?]) -> ?) -> ? {
+	fiDoMapExp2(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), fn);
+}
+
+fiDoMapExp2(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv, [?]) -> ?) -> ? {
+	set_parent = \env1, i -> FiExpTraverseEnv(env1 with parents = Cons(Pair(e, i), env.parents));
+	fn(e, env, switch (e) {
+		FiLambda(args, body, type, start): {
+			env1 = fold(args, env, \acc, arg -> {
+				if (arg.name == "__") acc else {
+					var = FiVar(arg.name, arg.type, start);
+					FiExpTraverseEnv(acc with 
+						locals = setTree(acc.locals, arg.name, var),
+						args = setTree(acc.args, arg.name, var),
+					);
+				}
+			});
+			[fiDoMapExp2(body, set_parent(env1, 0), fn)];
+		}
+		FiCall(f, args, type, start): {
+			concat(
+				[fiDoMapExp2(f, set_parent(env, 0), fn)], 
+				mapi(args, \i, arg -> fiDoMapExp2(arg, set_parent(env, i + 1), fn))
+			);
+		}
+		FiLet(name, type, e1, e2,__,start): {
+			env1 = if (name == "__") env else { 
+				var = FiVar(name, type, start);
+				FiExpTraverseEnv(env with 
+					locals = setTree(env.locals, name, var),
+					lets = setTree(env.args, name, var),
+				);
+			}
+			[fiDoMapExp2(e1, set_parent(env, 0), fn), fiDoMapExp2(e2, set_parent(env, 1), fn)];
+		}
+		FiIf(e1, e2, e3, type, start): {
+			[fiDoMapExp2(e1, env, fn), fiDoMapExp2(e2, env, fn), fiDoMapExp2(e3, env, fn)];
+		}
+		FiSwitch(x, typ, cs, type, start): {
+			concat([
+				fiDoMapExp2(x, set_parent(env, 0), fn)],
+				mapi(cs, \i, c -> fiDoMapExp2(c.body, set_parent(env, i), fn))
+			);
+		}
+		FiCast(e1, tFrom, tTo, type, start): {
+			[fiDoMapExp2(e1, set_parent(env, 0), fn)];
+		}
+		FiSeq(es, type, start): {
+			mapi(es, \i, x -> fiDoMapExp2(x, set_parent(env, i), fn));
+		}
+		FiCallPrim(op, es, type, start):{
+			mapi(es, \i, x -> fiDoMapExp2(x, set_parent(env, i), fn));
+		}
+		FiRequire(flowfile, e1, type, start): {
+			[fiDoMapExp2(e1, set_parent(env, 0), fn)];
+		}
+		FiUnsafe(name, fb, type, start): {
+			[fiDoMapExp2(fb, set_parent(env, 0), fn)];
+		} 
+		FiVar(__,__,__): [];
+		FiConst(): [];
+	});
 }

@@ -586,6 +586,7 @@ void decRcs(Args as) {
 	(std::make_index_sequence<std::tuple_size<Args>::value>{});
 }
 */
+
 template<typename R, typename... As> 
 struct Fun : public Flow, public std::function<R(As...)> {
 	enum { TYPE = TypeFx::FUNC, ARITY = sizeof...(As) };
@@ -621,18 +622,18 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	inline R call(As... as) { return Fn::operator()(as...); }
 	inline R callRc(As... as) { 
 		R ret = Fn::operator()(as...);
-		Args args {as...};
-		decArgRc<0>(args);
+		//Args args {as...};
+		//decArgRc<0>(args);
 		decRc(this);
 		return ret;
 	}
-	template<int i>
+	/*template<int i>
 	inline void decArgRc(Args as) {
 		if constexpr (i != ARITY) {
 			decRc(std::get<i>(as));
 			decArgRc<i + 1>(as);
 		}
-	}
+	}*/
 
 	/*inline R call_1(Args as) const {
 		return [as]<std::size_t... I>(std::index_sequence<I...>)

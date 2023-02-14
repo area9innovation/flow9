@@ -3,6 +3,7 @@ import tools/flowc/manipulation/common;
 import tools/flowc/incremental/fi_type_unify;
 import tools/flowc/manipulation/effects;
 import string_utils;
+import ds/cart_prod;
 
 export {
 
@@ -104,6 +105,10 @@ fiExtractCallNonScalarExp(e: FiExp, names: FiGlobalNames) -> FiExp;
 
 // Remove casts from non-scalar types to flow - these casts are implicit
 fiRemoveImplicitCasts(e: FiExp) -> FiExp;
+
+fiPullStatementsUp(e: FiExp) -> FiExp;
+
+fiIsStat(e: FiExp) -> bool;
 
 }
 
@@ -941,4 +946,90 @@ fiLastVarUses(e: FiExp) -> [List<int>] {
 		},
 		AstTraverseOrder(true, false)
 	).first;
+}
+
+fiIsStat(e: FiExp) -> bool {
+	switch (e) {
+		FiSeq(__,__,__): true;
+		FiLet(__,__,__,__,__,__): true;
+		FiSwitch(__,__,__,__,__): true;
+		FiIf(__,__,__,__,__): true;
+		default: false;
+	}
+}
+
+fiStatsArePulled(e: FiExp) -> bool {
+	isNone(fiFindInExpr(e, \x -> 
+		switch (x) {
+			FiCall(f, args,__,__): {
+				if (exists(concat([f], args), fiIsStat)) Some(x) else None();
+			}
+			FiCast(e1,__,__,__,__): {
+				if (fiIsStat(e1)) Some(x) else None();
+			}
+			FiCallPrim(__,es,__,__): {
+				if (exists(es, fiIsStat)) Some(x) else None();
+			}
+			default: None();
+		}
+	));
+}
+
+fiPullStatsFn(i: int, xs: [FiExp], as: [FiExp], fn: ([FiExp]) -> FiExp) -> FiExp {
+	if (i == length(xs)) fn(as) else {
+		x = xs[i];
+		switch (x) {
+			FiIf(e1, e2, e3,__,__): {
+				FiIf(x with 
+					e2 = fiPullStatsFn(i + 1, xs, concat(as, [e2]), fn),
+					e3 = fiPullStatsFn(i + 1, xs, concat(as, [e3]), fn)
+				);
+			}
+			FiSeq(es,__,__): {
+				FiSeq(x with 
+					es = replace(es, length(es) - 1,
+						fiPullStatsFn(i + 1, xs, concat(as, [es[length(es) - 1]]), fn)
+					)
+				);
+			}
+			FiLet(__,__,e1,e2,__,__): {
+				FiLet(x with 
+					e2 = fiPullStatsFn(i + 1, xs, concat(as, [e2]), fn)
+				);
+			}
+			FiSwitch(__,__,cs,__,__): {
+				FiSwitch(x with cases = map(cs, \c -> 
+					FiCase(c with body = fiPullStatsFn(i + 1, xs, concat(as, [c.body]), fn))
+				));
+			}
+			default: {
+				fiPullStatsFn(i + 1, xs, concat(as, [x]), fn)
+			}
+		}
+	}
+}
+
+fiPullStatementUp(x: FiExp) -> FiExp {
+	switch (x) {
+		FiCall(f, args, type, start): {
+			fiPullStatsFn(0, concat([f], args), [], \as -> FiCall(as[0], tail(as), type, start))
+		}
+		FiCast(e, from, to, type, start): {
+			fiPullStatsFn(0, [e], [], \as -> FiCast(as[0], from, to, type, start));
+		}
+		FiLambda(__,body,__,__): {
+			x;
+		}
+		FiCallPrim(op, es, type, start): {
+			fiPullStatsFn(0, es, [], \as -> FiCallPrim(op, as, type, start));
+		}
+		default: x;
+	}
+}
+
+fiPullStatementsUp(e: FiExp) -> FiExp {
+	for(e, 
+		\x -> !fiStatsArePulled(x),
+		\x -> mapFiExp(x, fiPullStatementUp)
+	);
 }
