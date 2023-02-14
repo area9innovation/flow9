@@ -1,0 +1,166 @@
+import ds/array;
+import ds/list;
+import runtime;
+import math/math;
+
+// 4 times slower than mapList()
+mapListNative(l : List<?>, fn : (?) -> ??) -> List<??> {
+	array2list(map(list2array(l), fn))
+}
+
+// doesn't work with N = 40000
+mapListOld(l : List<?>, fn : (?) -> ??) -> List<??> {
+	switch (l : List<?>) {
+		EmptyList(): EmptyList();
+		Cons(h, t): Cons(fn(h), mapListOld(t, fn));
+	}
+}
+
+// doesn't work with N = 10000
+mapiListOld(l : List<?>, fn : (int, ?) -> ??) -> List<??> {
+	doMapiListOld(l, 0, fn)
+}
+
+doMapiListOld(l : List<?>, i : int, fn : (int, ?) -> ??) -> List<??> {
+	switch (l : List<?>) {
+		EmptyList(): EmptyList();
+		Cons(h, t): Cons(fn(i, h), doMapiListOld(t, i + 1, fn));
+	}
+}
+
+// depends on fn, doesn't work with 15k consecutive elements
+filtermapListOld(l : List<?>, fn : (?) -> Maybe<??>) -> List<??> {
+	switch (l : List<?>) {
+		EmptyList(): EmptyList();
+		Cons(h, t): {
+			switch (fn(h)) {  // Explicit switch, by advise from Asger, to eliminate exponentiality.
+				None(): filtermapList(t, fn);
+				Some(subh): Cons(subh, filtermapList(t, fn));
+			}
+		}
+	}
+}
+
+// depends on fn, doesn't work with 15k consecutive elements
+filterListOld(l : List<?>, fn : (?) -> bool) -> List<?> {
+	switch (l : List<?>) {
+		EmptyList(): l;
+		Cons(h, t): if (fn(h)) Cons(h, filterList(t, fn)) else filterList(t, fn);
+	}
+}
+
+
+doTimes(times, fn) {
+	if (times > 0) {
+		fn();
+		doTimes(times - 1, fn);
+	}
+}
+
+test(name : string, list : List<int>, times : int, print : bool, fnNew : (List<int>) -> ?, fnOld : (List<int>) -> ?) -> void {
+	println("Test " + name);
+	t1 = timestamp();
+
+	doTimes(times, \ -> fnNew(list));
+	newList = fnNew(list);
+	if (print) println(newList);
+	t2 = timestamp();
+	println("New: " + d2s(t2 - t1));
+
+	doTimes(times, \ -> fnOld(list));
+	oldList = fnOld(list);
+	if (print) println(oldList);
+	t3 = timestamp();
+	println("Old: " + d2s(t3 - t2));
+
+	println("Equal: " + b2s(newList == oldList));
+
+	println("");
+}
+
+mapListTest(list : List<int>, times : int, print : bool) -> void {
+	test(
+		"mapList", list, times, print,
+		\l -> mapList(   l, \x -> x*x),
+		\l -> mapListOld(l, \x -> x*x)
+	);
+}
+
+mapiListTest(list : List<int>, times : int, print : bool) -> void {
+	test(
+		"mapiList", list, times, print,
+		\l -> mapiList(   l, \i, x -> i*x),
+		\l -> mapiListOld(l, \i, x -> i*x)
+	);
+}
+
+// first test fails on old version with N = 15000
+// other test results are quite close in both versions, the third one is better for the new version
+filtermapListTest(list : List<int>, times : int, print : bool) -> void {
+	test(
+		"filtermapList 1 -- keep all", list, times, print,
+		\l -> filtermapList(   l, \x -> Some(x*x)),
+		\l -> filtermapListOld(l, \x -> Some(x*x))
+	);
+
+	test(
+		"filtermapList 2 -- keep 90%", list, times, print,
+		\l -> filtermapList(   l, \x -> if (x % 10 != 0) None() else Some(x*x)),
+		\l -> filtermapListOld(l, \x -> if (x % 10 != 0) None() else Some(x*x))
+	);
+
+	test(
+		"filtermapList 3 -- keep half", list, times, print,
+		\l -> filtermapList(   l, \x -> if (x % 2 == 0) None() else Some(x*x)),
+		\l -> filtermapListOld(l, \x -> if (x % 2 == 0) None() else Some(x*x))
+	);
+
+	test(
+		"filtermapList 4 -- keep 10%", list, times, print,
+		\l -> filtermapList(   l, \x -> if (x % 10 == 0) None() else Some(x*x)),
+		\l -> filtermapListOld(l, \x -> if (x % 10 == 0) None() else Some(x*x))
+	);
+}
+
+// first test fails on old version with N = 15000
+// other test results are quite close in both versions, the third one is better for the new version
+filterListTest(list : List<int>, times : int, print : bool) -> void {
+	test(
+		"filterList 1 -- keep all", list, times, print,
+		\l -> filterList(   l, \x -> true),
+		\l -> filterListOld(l, \x -> true)
+	);
+
+	test(
+		"filterList 2 -- keep 90%", list, times, print,
+		\l -> filterList(   l, \x -> x % 10 != 0),
+		\l -> filterListOld(l, \x -> x % 10 != 0)
+	);
+
+	test(
+		"filterList 3 -- keep half", list, times, print,
+		\l -> filterList(   l, \x -> x % 2 == 1),
+		\l -> filterListOld(l, \x -> x % 2 == 1)
+	);
+
+	test(
+		"filterList 4 -- keep 10%", list, times, print,
+		\l -> filterList(   l, \x -> x % 10 == 0),
+		\l -> filterListOld(l, \x -> x % 10 == 0)
+	);
+}
+
+main() {
+	times = 10000;
+	N = 5000;
+	print = false;
+	list = generateList(1, N, \x -> x);
+
+	mapListTest(list, times, print);
+	mapiListTest(list, times, print);
+	filtermapListTest(list, times, print);
+	filterListTest(list, times, print);
+
+	quit(0);
+}
+
