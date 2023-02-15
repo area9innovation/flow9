@@ -395,6 +395,9 @@ class FlowSprite extends Sprite {
 
 						onLoaded();
 					} else if (isContentTypeSvg && svgXhr.response.indexOf('foreignObject') > 0) {
+						var warnMessage = 'Warning! SVG (' + url + ') has a <foreignObject> inside, which could effect file size and ability to take a screenshot';
+						untyped console.warn(warnMessage);
+						errorFn(warnMessage);
 						// SVG with foreignObject taints canvas, so we have to trick it
 						url = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
 						forceImageElement();
