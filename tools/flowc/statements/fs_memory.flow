@@ -6,16 +6,26 @@ import tools/flowc/statements/fs_transform;
 export {
 	fsStatPerceus(s: FsStat, names: FiGlobalNames) -> FsStat;
 	fsExpPerceus(e: FsExp, names: FiGlobalNames) -> FsExp;
+
+	debug_perceus = ref false;
 }
 
 fsStatPerceus(s: FsStat, names: FiGlobalNames) -> FsStat {
-	s1 = fsStatLastVarUsage(s, makeSet()).first;
+	s1 = fsStatLastVarUsage(s, makeSet(), names).first;
+	if (^debug_perceus) {
+		println("fsStatLastVarUsage:\n" + 
+			"s:\n" + fsStat2s(s) + "\n" + 
+			"s1:\n" + fsStat2s(s1) + "\n" +
+			"s RAW:\n" + toStringFormatted(s1) + "\n"
+		);
+	}
+
 	fsDoStatPerceus(s1, [], names).first;
 	//fsStatMap(fsDoStatPerceus(s1, [], names).first, fsStatOptimize, idfn);
 }
 
 fsExpPerceus(e: FsExp, names: FiGlobalNames) -> FsExp {
-	e1 = fsExpLastVarUsage(e, makeSet()).first;
+	e1 = fsExpLastVarUsage(e, makeSet(), names).first;
 	fsDoExpPerceus(e1, names);
 	//fsExpMap(fsDoExpPerceus(e1, names), fsStatOptimize, idfn);
 }
@@ -145,7 +155,7 @@ fsExpVars(ex: FsExp, vars: [FsVar]) -> [FsVar] {
 		FsCall(f, args, type): {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
 		}
-		FsLambda(toplevel, closure, args, body, type): {
+		FsLambda(closure, args, body, type): {
 			fold(closure, vars, \acc, x -> concat(acc, [x]));
 			// Maybe just vars?
 		}
@@ -225,7 +235,7 @@ fsDoExpPerceus(ex: FsExp, names: FiGlobalNames) -> FsExp {
 		FsCall(f, args, type): {
 			FsCall(ex with f = fsDoExpPerceus(f, names), args = map(args, \x -> fsDoExpPerceus(x, names)));
 		}
-		FsLambda(toplevel, closure, args, body, type): {
+		FsLambda(closure, args, body, type): {
 			arg_vars = map(args, \arg -> FsVar(arg.name, false, arg.type));
 			FsLambda(ex with body = fsInsertDecUnused(fsDoStatPerceus(body, arg_vars, names).first, arg_vars));
 		}
@@ -293,12 +303,17 @@ fsDoExpPerceus(ex: FsExp, names: FiGlobalNames) -> FsExp {
 
 // Traverse the AST backwards and markup the first variable use as last
 
-fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
+fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<FsStat, Set<string>> {
+	if (^debug_perceus) {
+		println("fsStatLastVarUsage:\n" +
+			toStringFormatted(ex)
+		);
+	}
 	switch(ex) {
 		FsIf(cond, s1, s2): {
-			p1 = fsStatLastVarUsage(s1, vars);
-			p2 = fsStatLastVarUsage(s2, vars);
-			c = fsExpLastVarUsage(cond, mergeSets(p1.second, p2.second));
+			p1 = fsStatLastVarUsage(s1, vars, names);
+			p2 = fsStatLastVarUsage(s2, vars, names);
+			c = fsExpLastVarUsage(cond, mergeSets(p1.second, p2.second), names);
 			Pair(
 				FsIf(ex with 
 					cond = c.first,
@@ -310,21 +325,22 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 		}
 		FsSwitch(v, type, cases): {
 			cases_ps = map(cases, \c -> {
-				p = fsStatLastVarUsage(c.body, vars);
+				p = fsStatLastVarUsage(c.body, vars, names);
 				Pair(FsCase(c with body = p.first), p.second);
 			});
 			vars1 = fold(cases_ps, vars, \acc, p -> mergeSets(acc, p.second));
+			v_p = fsExpLastVarUsage(v, vars1, names);
 			Pair(
 				FsSwitch(ex with
-					x = FsVar(v with last = !containsSet(vars1, v.name)),
+					x = cast(v_p.first: FsExp -> FsVar),
 					cases = map(cases_ps, \p -> p.first)
 				),
-				insertSet(vars1, v.name)
+				v_p.second
 			);
 		}
 		FsSeq(ss): {
 			ps = foldr(ss, Pair([], vars), \acc, x -> {
-				p = fsStatLastVarUsage(x, acc.second);
+				p = fsStatLastVarUsage(x, acc.second, names);
 				Pair(concat([p.first], acc.first), p.second);
 			});
 			Pair(
@@ -333,8 +349,8 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 			);
 		}
 		FsLet(__,__, e1, s1): {
-			p1 = fsStatLastVarUsage(s1, vars);
-			p2 = fsExpLastVarUsage(e1, p1.second);
+			p1 = fsStatLastVarUsage(s1, vars, names);
+			p2 = fsExpLastVarUsage(e1, p1.second, names);
 			Pair(
 				FsLet(ex with 
 					e = p2.first,
@@ -344,8 +360,8 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 			);
 		}
 		FsAssign(to, what): {
-			p1 = fsExpLastVarUsage(what, vars);
-			p2 = fsExpLastVarUsage(to, p1.second);
+			p1 = fsExpLastVarUsage(what, vars, names);
+			p2 = fsExpLastVarUsage(to, p1.second, names);
 			Pair(
 				FsAssign(ex with
 					to = p2.first,
@@ -355,19 +371,20 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 			);
 		}
 		FsMemory(op, e): {
-			p = fsExpLastVarUsage(e, vars);
+			p = fsExpLastVarUsage(e, vars, names);
 			Pair(FsMemory(ex with e = p.first), p.second);
 		}
 		FsWrapExp(e): {
-			p = fsExpLastVarUsage(e, vars);
+			p = fsExpLastVarUsage(e, vars, names);
 			Pair(FsWrapExp(ex with e = p.first), p.second);
 		}
 		FsRet(e): {
-			p = fsExpLastVarUsage(e, vars);
+			p = fsExpLastVarUsage(e, vars, names);
 			Pair(FsRet(ex with e = p.first), p.second);
 		}
 		FsVarDef(v, e): {
-			p = fsExpLastVarUsage(e, vars);
+			fail("obsolete: " + toStringFormatted(ex));
+			p = fsExpLastVarUsage(e, vars, names);
 			Pair(
 				FsVarDef(ex with 
 					var = FsVar(v with last = !containsSet(p.second, v.name)),
@@ -392,18 +409,23 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>) -> Pair<FsStat, Set<string>> {
 	}
 }
 
-fsExpLastVarUsage(ex: FsExp, vars: Set<string>) -> Pair<FsExp, Set<string>> {
+fsExpLastVarUsage(ex: FsExp, vars: Set<string>, names: FiGlobalNames) -> Pair<FsExp, Set<string>> {
+	if (^debug_perceus) {
+		println("fsExpLastVarUsage:\n" +
+			toStringFormatted(ex)
+		);
+	}
 	switch(ex) {
-		FsLambda(toplevel, closure, args, body, __): {
-			p = fsStatLastVarUsage(body, makeSet());
+		FsLambda(closure, args, body, __): {
+			p = fsStatLastVarUsage(body, makeSet(), names);
 			Pair(FsLambda(ex with body = p.first), vars);
 		}
 		FsCall(fn, args, __): {
 			ps = foldr(args, Pair([], vars), \acc, x -> {
-				p = fsExpLastVarUsage(x, acc.second);
+				p = fsExpLastVarUsage(x, acc.second, names);
 				Pair(concat([p.first], acc.first), p.second);
 			});
-			fp = fsExpLastVarUsage(fn, ps.second);
+			fp = fsExpLastVarUsage(fn, ps.second, names);
 			Pair(
 				FsCall(ex with
 					f = fp.first,
@@ -412,16 +434,25 @@ fsExpLastVarUsage(ex: FsExp, vars: Set<string>) -> Pair<FsExp, Set<string>> {
 				fp.second
 			);
 		}
+		FsCast(e, from, type): {
+			pe = fsExpLastVarUsage(e, vars, names);
+			Pair(FsCast(ex with e = pe.first), pe.second);
+		}
 		FsCallPrim(op, es, __): {
 			ps = foldr(es, Pair([], vars), \acc, x -> {
-				p = fsExpLastVarUsage(x, acc.second);
+				p = fsExpLastVarUsage(x, acc.second, names);
 				Pair(concat([p.first], acc.first), p.second);
 			});
 			Pair(FsCallPrim(ex with es = ps.first), ps.second);
 		}
 		FsVar(name, last,__): {
+			if (^debug_perceus) {
+				println("analysing var:  " + name + ", last: " +
+					b2s(!containsSet(vars, name) && !fiIsGlobalVariable(name, names))
+				);
+			}
 			Pair(
-				FsVar(ex with last = !containsSet(vars, name)), 
+				FsVar(ex with last = !containsSet(vars, name) && !fiIsGlobalVariable(name, names)), 
 				insertSet(vars, name)
 			);
 		}

@@ -132,6 +132,9 @@ template<typename T> struct Vec;
 template<typename T> struct Ref;
 template<typename R, typename... As> struct Fun;
 
+// Union is just a flow.
+using Union = Flow;
+
 // Predicate for compile-time type resolution
 
 template<TypeId Id, typename T> struct is_type { enum { result = false }; };

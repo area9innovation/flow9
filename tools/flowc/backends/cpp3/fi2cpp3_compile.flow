@@ -1,7 +1,8 @@
 import tools/flowc/backends/cpp3/fi2cpp3_runtime;
 import tools/flowc/backends/cpp3/fi2cpp3_compile_struct;
-//import tools/flowc/statements/fs_utils;
+import tools/flowc/statements/fs_tailcall;
 import tools/flowc/statements/fs_memory;
+import tools/flowc/statements/fs_transform;
 import tools/flowc/statements/fi2fs;
 //import tools/flowc/manipulation/eliminate_union_fields;
 import tools/flowc/manipulation/transform_exps;
@@ -89,34 +90,17 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 		currentToplevel = Some(globalVar),
 		toplevelTypars = fiCollectTypars(type, makeSet())
 	);
-	value = fiPrepareFiExp2cpp3(globalVar.value, type, gctx, name);
-	is_exp = fiExpHasNoStatements(value, gctx.effects);
-	value_fs = fiPrepareFsExp2cpp3(value, gctx, name);
-	init = switch (value_fs) {
-		FsRet(value_e): {
-			value_cpp = fsExp2cpp3(value_e, gctx);
-			gctx.varname2cpp(name) + " = " + value_cpp + ";";
+	value1 = fiPrepareFiExp2cpp3(globalVar.value, type, gctx, name);
+	value2 = fiPrepareFsExp2cpp3(value1, gctx, name);
+	value3 = fsStatUnwrapLastReturnLetVar(value2);
+	init = switch (value3) {
+		FsRet(e): {
+			gctx.varname2cpp(name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
-		FsSeq(all_ss): {
-			ss = take(all_ss, length(all_ss) - 1);
-			ret = all_ss[length(all_ss) - 1];
-			switch (ret) {
-				FsRet(value_e): {
-					"{\n" + 
-						strIndent(fsStat2cpp3(FsSeq(
-								concat(ss, [FsAssign(
-									FsVar(name, false, type),
-									value_e
-								)])
-							), 
-							gctx
-						)) + 
-					"\n}";
-				}
-				default: fail0("value must be returned at variable " + name + " initialization");
-			}
+		default: {
+			value4 = fsStatReplaceReturnOntoAssign(value3, FsVar(name, false, type));
+			"{\n" + strIndent(fsStat2cpp3(value4, gctx)) + "\n}";
 		}
-		default: fail0("value of " + name + " must be a FsRet or FsSeq");
 	}
 	gctx.volatileInit := concat(^(gctx.volatileInit), [init]);
 	var_decl = fiType2cpp3(type, gctx) + " " + gctx.varname2cpp(name) + ";\n\n";
@@ -141,10 +125,10 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	}
 	// unwrap lambda from cast
 	stat_lambda = switch (lambda_exp) {
-		FsLambda(__,__,__,__,__): lambda_exp;
+		FsLambda(__,__,__,__): lambda_exp;
 		FsCast(e,__,__): {
 			switch (e) {
-				FsLambda(__,__,__,__,__): e;
+				FsLambda(__,__,__,__): e;
 				default: fail0("must be lambda or cast to lambda");
 			}
 		}
@@ -168,6 +152,8 @@ fiPrepareFiExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: strin
 	transforms = [
 		// fiRemoveUnusedVars
 		Pair("fiTransEliminateUnionFields", \x -> fiTransEliminateUnionFields(x, names)),
+		// fiExpShortcutTrivialSwitch(x: FiExp, names: FiGlobalNames) -> FiExp 
+		Pair("fiExpShortcutTrivialSwitch", \x -> fiExpShortcutTrivialSwitch(x, names)),
 		Pair("fiExplicitCastInSwitch1", \x -> fiExplicitCastInSwitch1(x, names)),
 		Pair("fiFixVarInSameStructType1", \x -> fiFixVarInSameStructType1(x)),
 		Pair("fiExpRenameRecurringVars1", \x -> fiExpRenameRecurringVars1(x, names)),
@@ -179,7 +165,7 @@ fiPrepareFiExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: strin
 		Pair("fiRemoveUnusedVars", \x -> fiRemoveUnusedVars(x, gctx.effects)),
 		
 		Pair("fiExtractCallNonScalarExp", \x -> fiExtractCallNonScalarExp(x, names)),
-		Pair("fiExpReturnVars", \x -> fiExpReturnVars(x)),
+		//Pair("fiExpReturnVars", \x -> fiExpReturnVars(x)),
 		//Pair("fiExpMakeNoStatements", \x -> fiExpMakeNoStatements(x, gctx.effects)),
 	];
 	fold(transforms, e, \acc, tr -> {
@@ -194,21 +180,50 @@ fiPrepareFiExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: strin
 fiPrepareFsExp2cpp3(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsStat {
 	show = name == getUrlParameter("test-fs"); //name == "main"; //setCommonXField
 	names = gctx.program.names;
-	println("original expression:\n" + fiExp2stringFull(e));
-	e1 = fiPullStatementsUp(e);
-	println("pulled and original are equal: " + b2s(e == e1));
-	println("statements are pulled:\n" + fiExp2stringFull(e1));
+	if (true) {
 
-	s1 = fiExp2FsExp(e, name, gctx.effects, names);
-	if (show) {
-		println("FS RAW:\n" + fsStat2s(s1));
+		e1 = fiPullStatementsUp(e);
+		if (show) {
+			println("original expression:\n" + fiExp2stringFull(e));
+			println("pulled and original are equal: " + b2s(e == e1));
+			println("statements are pulled:\n" + fiExp2stringFull(e1));
+		}
+
+		s1 = fiExp2FsStat1(e1, names, true, makeTree());
+		if (show) {
+			println("FS RAW:\n" + fsStat2s(s1));
+		}
+		decl = lookupTreeDef(gctx.program.names.toplevel, name, FiGlobalVar("", FiVoid(0), FiTypeVoid(), 0, 0));
+		s2 = switch (decl) {
+			FiFunctionDec(__,__,__,__,__): {
+				// Make a tailcall optimization, if applicable
+				fsStatTailcall(s1, decl);
+			}
+			default: s1;
+		}
+		if (show) {
+			println("FS TAILCALL:\n" + fsStat2s(s2));
+			//debug_perceus := true;
+		}
+		// Memory: ref-counting operations are inserted
+		s3 = fsStatPerceus(s2, names);
+		if (show) {
+			//debug_perceus := false;
+			println("MEM RAW:\n" + fsStat2s(s2));
+		}
+		s3;
+	} else {
+		s1 = fiExp2FsExp(e, name, gctx.effects, names);
+		if (show) {
+			println("FS RAW:\n" + fsStat2s(s1));
+		}
+		// Memory: ref-counting operations are inserted
+		s2 = fsStatPerceus(s1, names);
+		if (show) {
+			println("MEM RAW:\n" + fsStat2s(s2));
+		}
+		s2;
 	}
-	// Memory: ref-counting operations are inserted
-	s2 = fsStatPerceus(s1, names);
-	if (show) {
-		println("MEM RAW:\n" + fsStat2s(s2));
-	}
-	s2;
 }
 
 fiFunArgs2cpp(args: [FiFunArg], gctx: Cpp3GlobalContext) -> string {
@@ -476,7 +491,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				}
 			};
 		}
-		FsLambda(toplevel, closure, args, body, type): {
+		FsLambda(closure, args, body, type): {
 			//ref_counted_closure = filter(closure, \v -> !fiTypeIsScalar(v.type));
 			"Fun<" + fiType2cpp3(type.returnType, gctx) + concatStrings(map(type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">::make" +
 			"([" + superglue(closure, \v -> gctx.varname2cpp(v.name), ", ") + "] " + fiFunArgs2cpp(args, gctx) +

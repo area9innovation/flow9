@@ -5,6 +5,9 @@ import tools/flowc/manipulation/transform_exps;
 export {
 	fiExp2FsStat(e : FiExp, fn: string, effects: FiEffects, names: FiGlobalNames) -> FsStat;
 	fiExp2FsExp(e : FiExp, fn: string, effects: FiEffects, names: FiGlobalNames) -> FsStat;
+
+	fiExp2FsStat1(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, FiVar>) -> FsStat;
+	fiExp2FsExp1(e : FiExp, names: FiGlobalNames, locals: Tree<string, FiVar>) -> FsExp;
 }
 
 fiExp2FsStat(e : FiExp, fn: string, effects: FiEffects, names: FiGlobalNames) -> FsStat {
@@ -99,7 +102,7 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 			default_switch = \ -> FsSwitch(
 				fiVar2FsVar(v.name, v.type, v.start, env), vtype,
 				map(cs, \c -> {
-					struct_args = fsCaseStructArgs(c, env);
+					struct_args = fsCaseStructArgs(c, env.names);
 					case_env = FsEnv(env with
 						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
 							setTree(acc, arg.name, arg)
@@ -116,7 +119,7 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 						switch (find(cs, \c -> c.struct == typename)) {
 							Some(c): {
 								case_env = FsEnv(env with
-									locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
+									locals = fold(fsCaseStructArgs(c, env.names), env.locals, \acc, arg -> if (arg.name == "__") acc else 
 										setTree(acc, arg.name, arg)
 									)
 								);
@@ -152,7 +155,7 @@ fiDoExp2FsStat(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_to
 				}
 			);
 			wrap(FsLambda(
-				is_toplevel, closure_vars, args, 
+				closure_vars, args, 
 				fiDoExp2FsStat(body, FsReturnToOuter(), lambda_env, if (is_toplevel) fn else "", is_toplevel), 
 				type
 			));
@@ -273,7 +276,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 		FiSwitch(v, vtype, cases, type, start): {
 			default_switch_stat = \return -> {
 				cases_stats = map(cases, \c -> {
-					struct_args = fsCaseStructArgs(c, env);
+					struct_args = fsCaseStructArgs(c, env.names);
 					case_env = FsEnv(env with 
 						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
 							setTree(acc, arg.name, arg)
@@ -293,7 +296,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
 									case_env = FsEnv(env with
-										locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
+										locals = fold(fsCaseStructArgs(c, env.names), env.locals, \acc, arg -> if (arg.name == "__") acc else 
 											setTree(acc, arg.name, arg)
 										)
 									);
@@ -328,7 +331,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
 									case_env = FsEnv(env with 
-										locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
+										locals = fold(fsCaseStructArgs(c, env.names), env.locals, \acc, arg -> if (arg.name == "__") acc else 
 											setTree(acc, arg.name, arg)
 										)
 									);
@@ -366,7 +369,7 @@ fiDoExp2FsExp(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsEx
 				}
 			);
 			Pair(FsLambda(
-				is_toplevel, closure_vars, args, 
+				closure_vars, args, 
 				fiDoExp2FsStat(body, FsReturnToOuter(), lambda_env, if (is_toplevel) fn else "", false), 
 				type
 			), []);
@@ -514,8 +517,8 @@ fiVar2FsVar(name: string, type: FiType, start: int, env: FsEnv) -> FsVar {
 	}
 }
 
-fsCaseStructArgs(c: FiCase, env: FsEnv) -> [FsVar] {
-	struct = lookupTreeDef(env.names.structs, c.struct, FiTypeStruct("", [], [], 0));
+fsCaseStructArgs(c: FiCase, names: FiGlobalNames) -> [FsVar] {
+	struct = lookupTreeDef(names.structs, c.struct, FiTypeStruct("", [], [], 0));
 	mapi(c.argNames, \i, arg_name -> 
 		FsVar(arg_name, false, struct.args[i].type)
 	);
@@ -523,341 +526,134 @@ fsCaseStructArgs(c: FiCase, env: FsEnv) -> [FsVar] {
 
 
 // New version
-/*
-fiExp2FsStat1(e : FiExp, fn: string, effects: FiEffects, names: FiGlobalNames) -> FsStat {
-	fiDoExp2FsStat1(e, FsReturnToOuter(), FsEnv([], makeTree(), names, effects, ref 0, ref 0), fn, true);
-}
 
-fiExp2FsExp1(e : FiExp, fn: string, effects: FiEffects, names: FiGlobalNames) -> FsExp {
-	fiDoExp2FsExp1(e, FsEnv([], makeTree(), names, effects, ref 0, ref 0), fn, true).first;
-}
-
-fiDoExp2FsStat1(e : FiExp, returns: FsReturnPolicy, env: FsEnv, fn: string, is_toplevel: bool) -> FsStat {
-	wrap = \x -> switch (returns) {
-		FsReturnToOuter():    FsRet(x);
-		FsReturnNowhere():    FsWrapExp(x);
-		FsReturnToAssign(v):  FsAssign(v, x);
-	}
-	do_exp = \x -> fiDoExp2FsExp1(x, env, fn, false);
+fiExp2FsStat1(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, FiVar>) -> FsStat {
+	wrap = \x -> if (returns) FsRet(x) else FsWrapExp(x);
+	//println("going to fiExp2FsStat1:\n" + prettyFiExp(dummyPretty, e));
 	switch (e) {
 		FiSeq(es, __, start): {
 			fsWrapSeq(concatA(mapi(es, \i, x -> 
 				fsUnwrapSeq(
-					if (i + 1 == length(es)) fiDoExp2FsStat(x, returns, env, fn, false)
-					else fiDoExp2FsStat(x, FsReturnNowhere(), env, "", false)
+					if (i + 1 == length(es)) fiExp2FsStat1(x, names, returns, locals)
+					else fiExp2FsStat1(x, names, false, locals)
 				)
 			)));
 		}
 		FiSwitch(v, vtype, cs, type, start): {
-			default_switch = \ -> FsSwitch(
-				fiVar2FsVar(v.name, v.type, v.start, env), vtype,
-				map(cs, \c -> {
-					struct_args = fsCaseStructArgs(c, env);
-					case_env = FsEnv(env with
-						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-							setTree(acc, arg.name, arg)
-						)
-					);
-					FsCase(c.struct, struct_args, fiDoExp2FsStat(c.body, returns, case_env, fn, false))
-				})
+			FsSwitch(
+				FsVar(v.name, false, v.type), vtype,
+				map(cs, \c ->
+					FsCase(c.struct, fsCaseStructArgs(c, names), fiExp2FsStat1(c.body, names, returns, locals))
+				)
 			);
-			switch (vtype) {
-				FiTypeName(typename,__): {
-					if (containsKeyTree(env.names.unions, typename)) {
-						default_switch();
-					} else {
-						switch (find(cs, \c -> c.struct == typename)) {
-							Some(c): {
-								case_env = FsEnv(env with
-									locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
-										setTree(acc, arg.name, arg)
-									)
-								);
-								fiDoExp2FsStat(c.body, returns, case_env, fn, false);
-							}
-							None(): {
-								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
-							}
-						}
-					}
-				}
-				FiTypeFlow(): {
-					default_switch();
-				}
-				default: {
-					fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
-				}
-			}
 		}
 		FiLet(name, vtype, e1, e2, type, start): {
-			if (name == "__") {
-				fiDoExp2FsStat(e2, returns, env, fn, false);
-			} else {
-				let_var = FsVar(name, false, vtype);
-				let_env = FsEnv(env with
-					locals = setTree(env.locals, name, let_var)
-				);
-				e1_pair = do_exp(e1);
-				fsWrapSeq(concat3(e1_pair.second,
-					[FsVarDef(let_var, e1_pair.first)],
-					fsUnwrapSeq(fiDoExp2FsStat(e2, returns, let_env, fn, false))
-				));
-			}
+			FsLet(name, vtype, fiExp2FsExp1(e1, names, locals), 
+				fiExp2FsStat1(e2, names, returns, setTree(locals, name, FiVar(name, vtype, start)))
+			);
 		}
 		FiIf(e1, e2, e3, type, start): {
-			e1_pair = do_exp(e1);
-			fsWrapSeq(concat(e1_pair.second,
-				[FsIf(
-					e1_pair.first, 
-					fiDoExp2FsStat(e2, returns, env, fn, false), 
-					fiDoExp2FsStat(e3, returns, env, fn, false)
-				)]
-			));
+			FsIf(
+				fiExp2FsExp1(e1, names, locals), 
+				fiExp2FsStat1(e2, names, returns, locals), 
+				fiExp2FsStat1(e3, names, returns, locals)
+			);
+		}
+		FiCallPrim(op, es, type, start): {
+			switch (op) {
+				FcAssignPrim(): {
+					FsAssign(
+						fiExp2FsExp1(es[0], names, locals),
+						fiExp2FsExp1(es[1], names, locals)
+					);
+				}
+				FcSetMutablePrim(name): {
+					FsAssign(
+						FsCallPrim(FsFieldPrim(name), [fiExp2FsExp1(es[0], names, locals)], fiExpType(es[1])), 
+						fiExp2FsExp1(es[1], names, locals)
+					);
+				}
+				default: {
+					wrap(fiExp2FsExp1(e, names, locals));
+				}
+			}
 		}
 		default: {
-			wrap(do_exp(e));
+			wrap(fiExp2FsExp1(e, names, locals));
 		}
 	}
 }
 
-fiDoExp2FsExp1(e : FiExp, env: FsEnv, fn: string, is_toplevel: bool) -> Pair<FsExp, [FsStat]> {
-	do_exps = \x -> fiDoExp2FsExp1(x, env, fn, false);
-	switch (e) {
+fiExp2FsExp1(x : FiExp, names: FiGlobalNames, locals: Tree<string, FiVar>) -> FsExp {
+	switch (x) {
 		FiSeq(es, type, start): {
-			if (length(es) == 0) {
-				Pair(FiVoid(0), []);
-			} else if (length(es) == 1) {
-				do_exps(es[0]);
-			} else {
-				last = lastElement(es, FiVoid(0));
-				other = take(es, length(es) - 1);
-				last_p = do_exps(last);
-				other_s = fsUnwrapSeq(fiDoExp2FsStat(FiSeq(other, type, start), FsReturnNowhere(), env, "", false));
-				Pair(
-					last_p.first,
-					concat(other_s, last_p.second)
-				);
-			}
+			fail("must not happen: expression expected, got: FiSeq " + prettyFiExp(dummyPretty, x));
+			FiVoid(0);
 		}
 		FiCast(ex, from, to, type, start): {
-			pair = do_exps(ex);
-			Pair(
-				FsCast(pair.first, from, type),
-				pair.second
-			);
+			FsCast(fiExp2FsExp1(ex, names, locals), from, type);
 		}
-		FiCall(f, args, type, start): {
-			args_pairs = map(args, do_exps);
-			f_pair = do_exps(f);
-			Pair(
-				FsCall(f_pair.first, 
-					map(args_pairs, \p -> p.first), type
-				),
-				concatA(concat(
-					[f_pair.second], 
-					map(args_pairs, \p -> p.second)
-				)), 
-			);
+		FiCall(fn, args, type, start): {
+			FsCall(fiExp2FsExp1(fn, names, locals), map(args, \arg -> fiExp2FsExp1(arg, names, locals)), type);
 		}
 		FiSwitch(v, vtype, cases, type, start): {
-			default_switch_stat = \return -> {
-				cases_stats = map(cases, \c -> {
-					struct_args = fsCaseStructArgs(c, env);
-					case_env = FsEnv(env with 
-						locals = fold(struct_args, env.locals, \acc, arg -> if (arg.name == "__") acc else 
-							setTree(acc, arg.name, arg)
-						)
-					);
-					case_stat = fiDoExp2FsStat(c.body, return, case_env, "", false);
-					FsCase(c.struct, struct_args, case_stat);
-				});
-				FsSwitch(fiVar2FsVar(v.name, v.type, v.start, env), vtype, cases_stats);
-			}
-			if (type == FiTypeVoid()) {
-				switch (vtype) {
-					FiTypeName(typename,__): {
-						switch_stat = if (containsKeyTree(env.names.unions, typename)) {
-							default_switch_stat(FsReturnNowhere());
-						} else {
-							switch (find(cases, \c -> c.struct == typename)) {
-								Some(c): {
-									case_env = FsEnv(env with
-										locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
-											setTree(acc, arg.name, arg)
-										)
-									);
-									fiDoExp2FsStat(c.body, FsReturnNowhere(), case_env, "", false);
-								}
-								None(): {
-									fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
-								}
-							}
-						}
-						Pair(FiVoid(start), [switch_stat]);
-					}
-					FiTypeFlow(): {
-						Pair(FiVoid(start), [default_switch_stat(FsReturnNowhere())]);
-					}
-					default: {
-						fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
-					}
-				}
-			} else {
-				tmp_var = FsVar(
-					"sw_" + v.name + (if (^(env.tmp_sw) == 0) "" else "_" + i2s(^(env.tmp_sw))), 
-					false, 
-					type
-				);
-				env.tmp_sw := ^(env.tmp_sw) + 1;
-				switch (vtype) {
-					FiTypeName(typename,__): {
-						switch_stat = if (containsKeyTree(env.names.unions, typename)) {
-							default_switch_stat(FsReturnToAssign(tmp_var));
-						} else {
-							switch (find(cases, \c -> c.struct == typename)) {
-								Some(c): {
-									case_env = FsEnv(env with 
-										locals = fold(fsCaseStructArgs(c, env), env.locals, \acc, arg -> if (arg.name == "__") acc else 
-											setTree(acc, arg.name, arg)
-										)
-									);
-									fiDoExp2FsStat(c.body, FsReturnToAssign(tmp_var), case_env, "", false);
-								}
-								None(): {
-									fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
-								}
-							}
-						}
-						Pair(tmp_var, [FsVarDecl(tmp_var), switch_stat]);
-					}
-					FiTypeFlow(): {
-						Pair(tmp_var, [FsVarDecl(tmp_var), default_switch_stat(FsReturnToAssign(tmp_var))]);
-					}
-					default: {
-						fail0("non-struct|union|flow type " + prettyFiType(dummyPretty, v.type, makeSet()) + " in switch:\n" + prettyFiExp(dummyPretty, e));
-					}
-				}
-			}
+			fail("must not happen: expression expected, got: FiSwitch " + prettyFiExp(dummyPretty, x));
+			FiVoid(0);
 		}
-		FiLambda(args, body, type, start): {
-			free_vars = fifreevars(e);
-			locals = buildSet(getTreeKeys(env.locals));
-			closure = intersectSets(free_vars, locals);
-			fs_args = map(args, \arg -> FsVar(arg.name, false, arg.type));
-			lambda_env = FsEnv(env with
-				args = args,
-				locals = fold(fs_args, env.locals, \acc, arg -> setTree(acc, arg.name, arg))
-			);
+		FiLambda(as, body, type, start): {
+			free_vars = fifreevars(x);
+			local_vars = buildSet(getTreeKeys(locals));
+			closure = intersectSets(free_vars, local_vars);
+			fs_args = map(as, \arg -> FsVar(arg.name, false, arg.type));
 			closure_vars = map(set2array(closure), \name -> 
-				switch (lookupTree(env.locals, name)) {
-					Some(tp): tp;
+				switch (lookupTree(locals, name)) {
+					Some(v): FsVar(v.name, false, v.type);
 					None(): fail0("can't find type of a var: " + name);
 				}
 			);
-			Pair(FsLambda(
-				is_toplevel, closure_vars, args, 
-				fiDoExp2FsStat(body, FsReturnToOuter(), lambda_env, if (is_toplevel) fn else "", false), 
-				type
-			), []);
+			lambda_locals = fold(as, locals, \acc, arg -> setTree(acc, arg.name, FiVar(arg.name, arg.type, start)));
+			FsLambda(closure_vars, as, fiExp2FsStat1(body, names, true, lambda_locals), type);
 		}
 		FiLet(name, vtype, e1, e2, type, start): {
-			if (name == "__") {
-				do_exps(e2);
-			} else {
-				e1_pair = do_exps(e1);
-				let_var = FsVar(name, false, vtype);
-				let_env = FsEnv(env with
-					locals = setTree(env.locals, name, let_var)
-				);
-				e2_pair = fiDoExp2FsExp1(e2, let_env, fn, false);
-				Pair(
-					e2_pair.first,
-					concat3(
-						e1_pair.second,
-						[FsVarDef(let_var, e1_pair.first)],
-						e2_pair.second
-					)
-				);
-			}
+			fail(
+				"must not happen: expression expected, got:\n" + 
+				"FiLet " + prettyFiExp(dummyPretty, x) + "\n" +
+				toStringFormatted(x)
+			);
+			FiVoid(0);
 		}
 		FiIf(e1, e2, e3, type, start): {
-			good_exp = \x -> fiExpIsFsExp(x) && !fiExpHasEffects(x, env.effects);
-			e1_pair = do_exps(e1);
-			e2_pair = do_exps(e2);
-			e3_pair = do_exps(e3);
-			if (good_exp(e1) && good_exp(e2) && good_exp(e3)) {
-				Pair(
-					FsCallPrim(FsIfPrim(), [e1_pair.first, e2_pair.first, e3_pair.first], type),
-					concat3(e1_pair.second, e2_pair.second, e3_pair.second)
-				);
-			} else {
-				tmp_var = FsVar(
-					"if_" + (if (^(env.tmp_if) == 0) "" else "_" + i2s(^(env.tmp_if))),
-					false, 
-					type
-				);
-				env.tmp_if := ^(env.tmp_if) + 1;
-				Pair(
-					tmp_var,
-					concat(
-						e1_pair.second,
-						[FsVarDecl(tmp_var), FsIf(
-							e1_pair.first,
-							FsSeq(concat(e2_pair.second, [FsAssign(tmp_var, e2_pair.first)])),
-							FsSeq(concat(e3_pair.second, [FsAssign(tmp_var, e3_pair.first)]))
-						)]
-					)
-				);
-			}
+			fail("must not happen: expression expected, got: FiIf " + prettyFiExp(dummyPretty, x));
+			FiVoid(0);
 		}
 		FiCallPrim(op, es, type, start): {
-			es_pairs = map(es, do_exps);
 			switch (op) {
 				FcAssignPrim(): {
-					Pair(
-						FiVoid(start),
-						concat(
-							concatA(map(es_pairs, \p -> p.second)),
-							[FsAssign(es_pairs[0].first, es_pairs[1].first)]
-						)
-					);
+					fail("must not happen: expression expected, got: FiAssignPrim " + prettyFiExp(dummyPretty, x));
+					FiVoid(0);
 				}
 				FcSetMutablePrim(name): {
-					Pair(
-						FiVoid(start),
-						concat(
-							concatA(map(es_pairs, \p -> p.second)),
-							[FsAssign(
-								FsCallPrim(FsFieldPrim(name), [es_pairs[0].first], fsExpType(es_pairs[1].first)),
-								es_pairs[1].first
-							)]
-						)
-					);
+					fail("must not happen: expression expected, got: FcSetMutablePrim " + prettyFiExp(dummyPretty, x));
+					FiVoid(0);
 				}
 				default: {
-					Pair(
-						FsCallPrim(fcPrim2FsPrim(op),
-							map(es_pairs, \p -> p.first), type
-						),
-						concatA(map(es_pairs, \p -> p.second))
-					);
+					FsCallPrim(fcPrim2FsPrim(op), map(es, \e -> fiExp2FsExp1(e, names, locals)), type);
 				}
 			}
 		}
 		FiRequire(file, ex, type, start): {
-			pair = do_exps(ex);
-			Pair(FsCallPrim(FsRequirePrim(file), [pair.first], type), pair.second);
+			fail("must not happen: expression expected, got: FiRequire " + prettyFiExp(dummyPretty, x));
+			FiVoid(0);
 		}
 		FiUnsafe(name, ex, type, start): {
-			pair = do_exps(ex);
-			Pair(FsCallPrim(FsUnsafePrim(name), [pair.first], type), pair.second);
+			fail("must not happen: expression expected, got: FiUnsafe " + prettyFiExp(dummyPretty, x));
+			FiVoid(0);
 		}
-		FiVar(name, type, start): Pair(fiVar2FsVar(name, type, start, env), []);
-		FiVoid(__):        Pair(e, []);
-		FiDouble(__, __):  Pair(e, []);
-		FiInt(__, __):     Pair(e, []);
-		FiString(__, __):  Pair(e, []);
-		FiBool(__, __):    Pair(e, []);
+		FiVar(name, type, start): FsVar(name, false, type);
+		FiVoid(__):        x;
+		FiDouble(__, __):  x;
+		FiInt(__, __):     x;
+		FiString(__, __):  x;
+		FiBool(__, __):    x;
 	}
 }
-*/

@@ -36,15 +36,18 @@ export {
 	fiExpHasNoStatements(e: FiExp, effects: FiEffects) -> bool;
 
 	fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool;
+
+	fsStatUnwrapLastReturnLetVar(s: FsStat) -> FsStat;
+	fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVar) -> FsStat;
 }
 
 fsExpType(e: FsExp) -> FiType {
 	switch (e) {
-		FsLambda(__,__,__,__, type): type;
-		FsCall(__,__, type):         type;
-		FsVar(__,__,type):           type;
-		FsCallPrim(__,__,type):      type;
-		FsCast(__,__,type):          type;
+		FsLambda(__,__,__, type): type;
+		FsCall(__,__, type):      type;
+		FsVar(__,__,type):        type;
+		FsCallPrim(__,__,type):   type;
+		FsCast(__,__,type):       type;
 		FiVoid(__):       FiTypeVoid();
 		FiDouble(__, __): FiTypeDouble();
 		FiInt(__, __):    FiTypeInt();
@@ -133,7 +136,7 @@ fsStat2s(s: FsStat) -> string {
 fsExp2s(e: FsExp) -> string {
 	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
 	switch (e) {
-		FsLambda(__,closure, args, body,__): {
+		FsLambda(closure, args, body,__): {
 			body_s = fsStat2s(body);
 			closure_s = "[" + superglue(closure, \v -> v.name, ", ") + "]";
 			header = closure_s + "\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> ";
@@ -149,7 +152,7 @@ fsExp2s(e: FsExp) -> string {
 			"(" + fsExp2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
 		}
 		FsVar(name, last,__): {
-			name + (if (last) "/*last*/" else "");
+			name + (if (last) "/*last*/" else "/*not last*/");
 		}
 		FiVoid(__):      "{}";
 		FiDouble(d, __): d2s(d);
@@ -208,10 +211,10 @@ fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {
 
 fsSetExpType(e : FsExp, t: FiType) -> FsExp {
 	switch(e) {
-		FsLambda(__,__,__,__,__): FsLambda(e with type = cast(t: FiType -> FiTypeFunction));
-		FsCall(__,__,__):         FsCall(e with type = t);
-		FsCallPrim(__,__,__):     FsCallPrim(e with type = t);
-		FsVar(__,__,__):          FsVar(e with type = t);
+		FsLambda(__,__,__,__): FsLambda(e with type = cast(t: FiType -> FiTypeFunction));
+		FsCall(__,__,__):      FsCall(e with type = t);
+		FsCallPrim(__,__,__):  FsCallPrim(e with type = t);
+		FsVar(__,__,__):       FsVar(e with type = t);
 		default: e;
 	}
 }
@@ -222,6 +225,7 @@ fsHasTailCall(s: FsStat) -> bool {
 		FsSwitch(v,__, cases): exists(cases, \c -> fsHasTailCall(c.body));
 		FsSeq(ss): if (length(ss) == 0) false else fsHasTailCall(ss[length(ss) - 1]);
 		FsTailCall():  true;
+		FsLet(__,__,__,s1): fsHasTailCall(s1);
 		//FsTailCall(__):  true;
 		FsVarDef(v, e):  false; //fsHasTailCall(s1);
 		default: false;
@@ -328,7 +332,7 @@ fsExpFreevars(e : FsExp) -> Set<string> {
 
 fsExpFreevarsBoundFree(expr : FsExp, bound : Set<string>, free : Set<string>) -> Set<string> {
 	switch (expr) {
-		FsLambda(__,closure, args, body, __): {
+		FsLambda(closure, args, body, __): {
 			fsStatFreevarsBoundFree(body, 
 				fold(args, bound, \acc, arg -> insertSet(acc, arg.name)),
 				free
@@ -374,18 +378,18 @@ fsVarIsInStat(v: string, s: FsStat) -> bool {
 
 fsVarIsInExp(v: string, e: FsExp) -> bool {
 	switch(e) {
-		FsLambda(__,__,__,body,__): fsVarIsInStat(v, body);
-		FsCall(fn, args,__):        fsVarIsInExp(v, fn) || exists(args, \arg -> fsVarIsInExp(v, arg));
-		FsCallPrim(__,es,__):       exists(es, \x -> fsVarIsInExp(v, x));
-		FsCast(e1,__,__):           fsVarIsInExp(v, e1);
-		FsVar(name,__,__):          v == name;
-		FiConst():                  false;
+		FsLambda(__,__,body,__): fsVarIsInStat(v, body);
+		FsCall(fn, args,__):     fsVarIsInExp(v, fn) || exists(args, \arg -> fsVarIsInExp(v, arg));
+		FsCallPrim(__,es,__):    exists(es, \x -> fsVarIsInExp(v, x));
+		FsCast(e1,__,__):        fsVarIsInExp(v, e1);
+		FsVar(name,__,__):       v == name;
+		FiConst():               false;
 	}
 }
 
 fsStatLambda(s: FsStat) -> FsLambda {
 	do_ex = \ex -> switch (ex) {
-		FsLambda(__,__,__,body,__): ex; 
+		FsLambda(__,__,body,__): ex; 
 		default: fail0("expected FsLambda got: " + fsExp2s(ex));
 	}
 	switch (s) {
@@ -454,5 +458,47 @@ fiExpHasEffects(e: FiExp, effects: FiEffects) -> bool {
 		FiUnsafe(__,__,__,__): true;
 		FiVar(name,__,__): containsSet(effects.hasEffects, name);
 		default: false;
+	}
+}
+
+fsStatUnwrapLastReturnLetVar(s: FsStat) -> FsStat {
+	switch (s) {
+		FsRet(ex): s;
+		FsWrapExp(ex): s;
+		FsLet(v,__, def, body): {
+			body1 = fsStatUnwrapLastReturnLetVar(body);
+			switch (body1) {
+				FsRet(r): {
+					switch (r) {
+						FsVar(w,__,__): {
+							if (v != w) s else {
+								FsRet(def);
+							}
+						}
+						default: s;
+					}
+				}
+				default: s;
+			}
+		}
+		default: s;
+	}
+}
+
+fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVar) -> FsStat {
+	switch (s) {
+		FsRet(e): {
+			FsAssign(v, e);
+		}
+		FsLet(__,__,__, s1): {
+			FsLet(s with s = fsStatReplaceReturnOntoAssign(s1, v));
+		}
+		FsSeq(ss): {
+			FsSeq(map(ss, \s1 -> fsStatReplaceReturnOntoAssign(s1, v)));
+		}
+		FsSwitch(__,__,cs): {
+			FsSwitch(s with cases = map(cs, \c -> FsCase(c with body = fsStatReplaceReturnOntoAssign(c.body, v))));
+		}
+		default: s;
 	}
 }
