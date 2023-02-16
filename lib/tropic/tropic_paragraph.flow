@@ -51,7 +51,7 @@ TRenderDynamicParagraph(
 	forceReflowT : Transform<bool>
 ) -> TDynamicParagraph {
 	traceApi = makeWigiTrace_Tropic("TRenderDynamicParagraph", getValue(wordsB));
-	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
+	traceApi.trace(\-> "TRenderDynamicParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -89,7 +89,8 @@ TRenderDynamicParagraph(
 	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
-	));
+	))
+	|> fixAvailableWidthForIndent(awB, indent);
 
 	updateFn = \wi, alignWidthM -> {
 		oldWH = getValue(paragraphWHB);
@@ -231,6 +232,16 @@ TRenderDynamicParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
+fixAvailableWidthForIndent(awB : Transform<double>, indent : double) -> (Tropic) -> Tropic {
+	\t -> {
+		if (indent == 0.0) {
+			t
+		} else {
+			TAvailableWidth(t, fselect(awB, FLift(\aw -> aw - abs(indent))))
+		}
+	}
+}
+
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
@@ -292,7 +303,9 @@ TRenderParagraph(
 	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
 		TGroup(groupedWords)
-	));
+	))
+	|> fixAvailableWidthForIndent(awB, indent);
+
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 	stopDefer = ref nop;
@@ -1244,13 +1257,8 @@ TRenderLine(
 	nwords = length(words);
 	inspectors = map(words, \p -> p.inspector);
 	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
-	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
-		max(ac, getValue(m.baseline));
-	});
-
-	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
-		max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
-	);
+	maxBaseline = foldi(inspectors, 0.0, \i, ac, m -> max(ac, getValue(m.baseline)));
+	lineHeight = foldi(inspectors, 0.0, \i, ac, m -> max(ac, getValue(m.size).height + maxBaseline - getValue(m.baseline)));
 
 	// Alignment offset
 	alignWidth = min(either(alignWidthM, width), width);
@@ -1301,10 +1309,10 @@ TRenderLine(
 		dy = eitherMap(
 			words[i].scriptM,
 			\script -> switch(script) {
-				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else lineAsc - elemBaseline - prevElemHeight * 0.25;
-				ParaElementSubscript() : lineAsc - elemBaseline / 2.0;
+				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else maxBaseline - elemBaseline - prevElemHeight * 0.25;
+				ParaElementSubscript() : maxBaseline - elemBaseline / 2.0;
 			},
-			lineAsc - getValue(inspector.baseline)
+			maxBaseline - getValue(inspector.baseline)
 		);
 		yOffset = y + dy;
 		nextDistinct(inspector.y, yOffset);
@@ -1312,14 +1320,14 @@ TRenderLine(
 		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == nwords - 1) WordPositionInLineEnd() else WordPositionInLineMiddle());
 
 		nextDistinct(inspector.lineHeight, lineHeight);
-		nextDistinct(inspector.lineAsc, lineAsc);
+		nextDistinct(inspector.lineAsc, maxBaseline);
 		nextDistinct(inspector.lineNumber, lineNumber);
 		nextDistinct(inspector.lineWordSpacing, interWord);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) {elemWidth + if (isSpace) justifyOffset  else 0.0} else 0.0;
 	});
 
-	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
+	TParaLineResult(roundTo(lineWidth, 0.01), roundTo(lineHeight, 0.01), roundTo(y + maxBaseline, 0.01));
 }
 
 prevWordHeight(inspectors : [ParaElementInspector] , words : [TParaWord], i : int ) -> double {
