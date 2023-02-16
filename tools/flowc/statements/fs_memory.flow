@@ -32,7 +32,7 @@ fsExpPerceus(e: FsExp, names: FiGlobalNames) -> FsExp {
 
 fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat, [FsVar]> {
 	remove_finalized = \x, locs -> filter(locs, \v -> 
-		forall(fsExpVars(x, []), \w -> !(w.last && w.name == v.name))
+		forall(fsExpVars(x, []), \w -> w.last && w.name == v.name)
 	);
 	switch (s) {
 		FsIf(cond, s1, s2): {
@@ -46,6 +46,8 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 					cond = fsDoExpPerceus(cond, names),
 					s1 = fsWrapSeq(fsUnwrapSeq(fsInsertDecUnused(t_s1.first, new_locals))),
 					s2 = fsWrapSeq(fsUnwrapSeq(fsInsertDecUnused(t_s2.first, new_locals)))
+					//s1 = fsWrapSeq(fsUnwrapSeq(t_s1.first)),
+					//s2 = fsWrapSeq(fsUnwrapSeq(t_s2.first))
 				)]
 			)), new_locals);
 		}
@@ -60,6 +62,7 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 						FsCase(c with 
 							body = fsWrapSeq(
 								fsUnwrapSeq(fsInsertDecUnused(c_m, new_locals))
+								//fsUnwrapSeq(c_m)
 							)
 						)
 					})
@@ -82,6 +85,7 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 				[FsLet(s with
 					e = fsDoExpPerceus(e1, names),
 					s = fsWrapSeq(fsUnwrapSeq(fsInsertDecUnused(t_s1.first, new_locals)))
+					//s = fsWrapSeq(fsUnwrapSeq(t_s1.first))
 				)]
 			)), new_locals);
 		}
@@ -107,14 +111,15 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 			);
 		}
 		FsRet(e): {
+			eOps = fsExpMemOps(e, names);
 			Pair(
-				FsRet(s with e = fsDoExpPerceus(e, names)),
+				fsWrapSeq(concat(
+					eOps, 
+					[FsRet(s with e = fsDoExpPerceus(e, names))]
+				)),
 				remove_finalized(e, locals)
 			);
 		}
-		/*FsTailCall(args): {
-			Pair(s, locals);
-		}*/
 		FsTailCall(): {
 			Pair(s, locals);
 		}
@@ -156,8 +161,11 @@ fsExpVars(ex: FsExp, vars: [FsVar]) -> [FsVar] {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
 		}
 		FsLambda(closure, args, body, type): {
-			fold(closure, vars, \acc, x -> concat(acc, [x]));
-			// Maybe just vars?
+			//if (account_closure) {
+			//	fold(closure, vars, \acc, x -> concat(acc, [x]));
+			//} else {
+				vars;
+			//}
 		}
 		FsCallPrim(op, es, type): {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
@@ -199,9 +207,6 @@ fsStatVars(s: FsStat, vars: [FsVar]) -> [FsVar] {
 		FsRet(e): {
 			fsExpVars(e, vars);
 		}
-		/*FsTailCall(args): {
-			fold(args, vars, \acc, arg -> fsExpVars(arg, acc));
-		}*/
 		FsTailCall(): {
 			vars;
 		}
@@ -221,6 +226,8 @@ fsInsertDecUnused(s: FsStat, locals: [FsVar]) -> FsStat {
 	s_vars = map(fsStatVars(s, []), \v -> v.name);
 	unused_vars = filter(locals, \v -> !fiTypeIsScalar(v.type) && !contains(s_vars, v.name));
 	if (length(unused_vars) == 0) s else {
+		println("unused: [" + superglue(unused_vars, \v -> v.name, "\n") + "]"
+		);
 		FsSeq(concat(
 			map(unused_vars, \v -> 
 				FsMemory(FsDecRc(1), v)
@@ -238,6 +245,7 @@ fsDoExpPerceus(ex: FsExp, names: FiGlobalNames) -> FsExp {
 		FsLambda(closure, args, body, type): {
 			arg_vars = map(args, \arg -> FsVar(arg.name, false, arg.type));
 			FsLambda(ex with body = fsInsertDecUnused(fsDoStatPerceus(body, arg_vars, names).first, arg_vars));
+			//FsLambda(ex with body = fsDoStatPerceus(body, arg_vars, names).first);
 		}
 		FsCallPrim(op, es, type): {
 			FsCallPrim(ex with es = map(es, \x -> fsDoExpPerceus(x, names)));
@@ -253,53 +261,6 @@ fsDoExpPerceus(ex: FsExp, names: FiGlobalNames) -> FsExp {
 		FiDouble(d, __): ex;
 	}
 }
-
-/*fsStatOptimize(s: FsStat) -> FsStat {
-	switch (s) {
-		FsSeq(ss): {
-			equal_e = \e1, e2 -> switch (e1) {
-				FsVar(name1,__,__):
-					switch (e2) {
-						FsVar(name2,__,__): name1 == name2;
-						default: false;
-					}
-				default: false;
-			}
-			delta = \x1, x2 -> {
-				switch (x1) {
-					FsMemory(op1, e1): {
-						switch (x2) {
-							FsMemory(op2, e2): {
-								if (!equal_e(e1, e2)) None() else {
-									switch (op1) {
-										FsIncRc(d1): 
-											switch (op2) {
-												FsDecRc(d2): Some(Pair(d1 - d2, e1));
-												default: None();
-											}
-										default: None();
-									}
-								}
-							}
-							default: None();
-						}
-					}
-					default: None();
-				}
-			}
-			FsSeq(s with 
-				ss = transformArrayPairs(
-					mapConcat(ss, fsUnwrapSeq), 
-					\x1, x2 -> maybeMap(delta(x1, x2), \p ->
-						if (p.first == 0) [] else [FsMemory(FsRC(p.first), p.second)]
-					)
-				)
-			);
-		}
-		default: s;
-	}
-}
-*/
 
 // Traverse the AST backwards and markup the first variable use as last
 
@@ -393,13 +354,6 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<
 				insertSet(p.second, v.name)
 			);
 		}
-		/*FsTailCall(args): {
-			ps = foldr(args, Pair([], vars), \acc, x -> {
-				p = fsExpLastVarUsage(x, acc.second);
-				Pair(concat([p.first], acc.first), p.second);
-			});
-			Pair(FsTailCall(ps.first), ps.second);
-		}*/
 		FsTailCall(): {
 			Pair(ex, vars);
 		}
@@ -459,3 +413,51 @@ fsExpLastVarUsage(ex: FsExp, vars: Set<string>, names: FiGlobalNames) -> Pair<Fs
 		default: Pair(ex, vars);
 	}
 }
+
+
+/*fsStatOptimize(s: FsStat) -> FsStat {
+	switch (s) {
+		FsSeq(ss): {
+			equal_e = \e1, e2 -> switch (e1) {
+				FsVar(name1,__,__):
+					switch (e2) {
+						FsVar(name2,__,__): name1 == name2;
+						default: false;
+					}
+				default: false;
+			}
+			delta = \x1, x2 -> {
+				switch (x1) {
+					FsMemory(op1, e1): {
+						switch (x2) {
+							FsMemory(op2, e2): {
+								if (!equal_e(e1, e2)) None() else {
+									switch (op1) {
+										FsIncRc(d1): 
+											switch (op2) {
+												FsDecRc(d2): Some(Pair(d1 - d2, e1));
+												default: None();
+											}
+										default: None();
+									}
+								}
+							}
+							default: None();
+						}
+					}
+					default: None();
+				}
+			}
+			FsSeq(s with 
+				ss = transformArrayPairs(
+					mapConcat(ss, fsUnwrapSeq), 
+					\x1, x2 -> maybeMap(delta(x1, x2), \p ->
+						if (p.first == 0) [] else [FsMemory(FsRC(p.first), p.second)]
+					)
+				)
+			);
+		}
+		default: s;
+	}
+}
+*/
