@@ -315,7 +315,7 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 				return ret;
 			}
 			case TypeFx::NATIVE: {
-				int ret = compareRc<void*>(v1, v2);
+				Int ret = compareRc<void*>(v1, v2);
 				decRc(v1);
 				decRc(v2);
 				return ret;

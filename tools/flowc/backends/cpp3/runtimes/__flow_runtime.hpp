@@ -862,10 +862,15 @@ Int flowCompareRc(Flow* v1, Flow* v2);
 template<typename T>
 inline Int compareRc(T v1, T v2) {
 	if constexpr (std::is_same_v<T, Void>) return true; 
-	else if constexpr (std::is_scalar_v<T> || std::is_same_v<T, void*>) return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);
+	else if constexpr (std::is_same_v<T, void*>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Int>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Bool>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Double>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 	else if constexpr (std::is_same_v<T, Flow*>) return flowCompareRc(v1, v2);
+	else if constexpr (std::is_same_v<T, String*>) { Int c = v1->str.compare(v2->str); decRc(v1); decRc(v2); return c; }
+	else if constexpr (std::is_same_v<T, Native*>) { Int c = compareRc<void*>(v1, v2); decRc(v1); decRc(v2); return c; }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
-		Int c1 = compare<Int>(v1->size(), v2->size());
+		Int c1 = compareRc<Int>(v1->size(), v2->size());
 		if (c1 != 0) {
 			decRc(v1);
 			decRc(v2);
@@ -877,7 +882,7 @@ inline Int compareRc(T v1, T v2) {
 					incRc(v1);
 					incRc(v2);
 				//}
-				Int c2 = compare<typename T::ElType>(v1->getRc(i), v2->getRc(i));
+				Int c2 = compareRc<typename T::ElType>(v1->getRc(i), v2->getRc(i));
 				if (c2 != 0) {
 					//if (i + 1 < size) {
 						decRc(v1);
@@ -892,10 +897,10 @@ inline Int compareRc(T v1, T v2) {
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::REF, T>) {
-		return compare<typename T::RefType>(v1->getRc(), v2->getRc()); 
+		return compareRc<typename T::RefType>(v1->getRc(), v2->getRc()); 
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T> || is_type_v<TypeFx::NATIVE, T>) {
-		Int ret = compare<void*>(v1, v2);
+		Int ret = compareRc<void*>(v1, v2);
 		decRc(v1);
 		decRc(v2);
 		return ret;
