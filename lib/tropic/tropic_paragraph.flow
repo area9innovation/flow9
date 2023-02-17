@@ -824,7 +824,18 @@ reflowTParaWords(
 		ignoreLetterSpacing
 	);
 
-	text = reflowAndWidth.first.lines;
+	lines = reflowAndWidth.first.lines;
+
+	text = if (alignment == Justify()) {
+		mapi(
+			lines,
+			\i : int, line : TParaLine -> if (i == length(lines) - 1) line
+			else TParaLine(line with words = rtrimWords(line.words))
+		)
+	} else {
+		reflowAndWidth.first.lines;
+	}
+
 	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -912,6 +923,45 @@ reflowAndFitTParaWords(
 	}
 }
 
+detachWord(word : TParaWord, detach : bool) -> void {
+	nextDistinct(word.inspector.detached, detach);
+}
+
+rtrimWords(words : [TParaWord]) -> [TParaWord] {
+	wordsCount = length(words);
+	rtrimmedWords = if (wordsCount > 0) {
+		lastWord = words[wordsCount - 1];
+		switch (lastWord.word : GeneralWrapElement) {
+			GeneralSpace(__, __, __): {
+				detachWord(lastWord, true);
+				take(words, wordsCount - 1)
+			}
+			default: words
+		}
+	} else words
+	if (rtrimmedWords == words) words
+	else rtrimWords(rtrimmedWords)
+}
+ltrimWords(words : [TParaWord]) -> [TParaWord] {
+	wordsCount = length(words);
+	ltrimmedWords = if (wordsCount > 0) {
+		firstWord = words[0];
+		switch (firstWord.word : GeneralWrapElement) {
+			GeneralSpace(__, __, __): {
+				detachWord(firstWord, true);
+				tail(words)
+			}
+			default: words
+		}
+	} else words
+	if (ltrimmedWords == words) words
+	else ltrimWords(ltrimmedWords)
+}
+
+trimWords(words : [TParaWord]) -> [TParaWord] {
+	rtrimWords(ltrimWords(words))
+}
+
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
 	words : [TParaWord],
@@ -937,10 +987,6 @@ reflowTParaWordsRec(
 		TReflowedLinesAndChanges(__, __) : TOverflowCase(overflowWidth);
 		TOverflowCase(ow) : TOverflowCase(max(overflowWidth, ow));
 	};
-
-	detachWord = \w : TParaWord, detach : bool -> {
-		nextDistinct(w.inspector.detached, detach);
-	}
 
 	lineIndex = switch(result) {
 		TReflowedLinesAndChanges(lines, __) : length(lines);
@@ -1146,7 +1192,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
 			lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
-			if (isWordJoiner(lastChr) || isWordJoiner(firstChr)) true else  keepWordsTogetherRec(tr)
+			if (isWordJoiner(lastChr) || isWordJoiner(firstChr)) true else keepWordsTogetherRec(tr)
 		}
 	}
 }
@@ -1212,8 +1258,9 @@ TAlignParaLines(
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
+		// If we have < 3 words (because we should have word + space + word) in the line, we do not justify.
 		lineAlignment =
-			if (alignment == Justify() && lastLine) {
+			if (alignment == Justify() && (lastLine || length(line.words) < 3)) {
 				StartAlign()
 			} else {
 				alignment;
@@ -1279,10 +1326,25 @@ TRenderLine(
 			wordsCount = nwords - 1;
 			spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, lineIndent), \i, acc : Pair<int, double>, w -> {
 				lastWord = i == wordsCount;
-				wordWith = getValue(w.inspector.size).width;
+				firstWord = i == 0;
+				wordWidth = getValue(w.inspector.size).width;
+				defValue = Pair(acc.first, acc.second + wordWidth);
 				switch (w.word : GeneralWrapElement) {
-					GeneralSpace(__, __, __): if (lastWord) acc else Pair(acc.first + 1, acc.second + wordWith);
-					default: Pair(acc.first, acc.second + wordWith);
+					GeneralSpace(__, __, __): if (lastWord || firstWord) {
+						acc
+					} else {
+						Pair(acc.first + 1, acc.second + wordWidth);
+					}
+					GeneralText(text): if (text == nonBreakableSpace) {
+						if (lastWord || firstWord) {
+							acc
+						} else {
+							Pair(acc.first + 1, acc.second + wordWidth)
+						}
+					} else {
+						defValue
+					}
+					default: defValue;
 				}
 			});
 			if (spacesAndWordsWidth.first > 0) {
@@ -1296,8 +1358,11 @@ TRenderLine(
 
 	// The width and the individual forms
 	iteri(inspectors, \i : int, inspector -> {
-		isSpace = switch (words[i].word : GeneralWrapElement) {
+		lastWord = i == length(inspectors) - 1;
+		firstWord = i == 0;
+		isSpace = (!firstWord && !lastWord || alignment != Justify()) && switch (words[i].word : GeneralWrapElement) {
 			GeneralSpace(__, __, __): true;
+			GeneralText(text): text == nonBreakableSpace;
 			default: false;
 		};
 
