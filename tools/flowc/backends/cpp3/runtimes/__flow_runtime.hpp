@@ -751,9 +751,9 @@ inline T2 castRc(T1 x) {
 		}
 	}
 	else if constexpr (std::is_same_v<T2, String*>) {
-		if constexpr (std::is_same_v<T1, Int>) { return int2string(x); }
-		else if constexpr (std::is_same_v<T1, Bool>) { return bool2string(x); }
-		else if constexpr (std::is_same_v<T1, Double>) { return double2string(x); }
+		if constexpr (std::is_same_v<T1, Int>) { return String::make(int2string(x)); }
+		else if constexpr (std::is_same_v<T1, Bool>) { return String::make(bool2string(x)); }
+		else if constexpr (std::is_same_v<T1, Double>) { return String::make(double2string(x)); }
 		else { return flow2stringRc(x); }
 	}
 	else if constexpr (std::is_same_v<T2, Native*>) {
