@@ -12,14 +12,13 @@ export {
 
 fsStatPerceus(s: FsStat, names: FiGlobalNames) -> FsStat {
 	s1 = fsStatLastVarUsage(s, makeSet(), names).first;
-	if (^debug_perceus) {
-		println("fsStatLastVarUsage:\n" + 
+	/*if (^debug_perceus) {
+		println("LAST VARS:\n" + 
 			"s:\n" + fsStat2s(s) + "\n" + 
 			"s1:\n" + fsStat2s(s1) + "\n" +
 			"s RAW:\n" + toStringFormatted(s1) + "\n"
 		);
-	}
-
+	}*/
 	fsDoStatPerceus(s1, [], names).first;
 	//fsStatMap(fsDoStatPerceus(s1, [], names).first, fsStatOptimize, idfn);
 }
@@ -31,9 +30,12 @@ fsExpPerceus(e: FsExp, names: FiGlobalNames) -> FsExp {
 }
 
 fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat, [FsVar]> {
-	remove_finalized = \x, locs -> filter(locs, \v -> 
-		forall(fsExpVars(x, []), \w -> w.last && w.name == v.name)
-	);
+	remove_finalized = \x, locs -> {
+		x_vars = fsExpVars(x, []);
+		filter(locs, \v -> 
+			!exists(x_vars, \w -> w.last && w.name == v.name)
+		);
+	}
 	switch (s) {
 		FsIf(cond, s1, s2): {
 			expOps = fsExpMemOps(cond, names);
@@ -46,8 +48,6 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 					cond = fsDoExpPerceus(cond, names),
 					s1 = fsWrapSeq(fsUnwrapSeq(fsInsertDecUnused(t_s1.first, new_locals))),
 					s2 = fsWrapSeq(fsUnwrapSeq(fsInsertDecUnused(t_s2.first, new_locals)))
-					//s1 = fsWrapSeq(fsUnwrapSeq(t_s1.first)),
-					//s2 = fsWrapSeq(fsUnwrapSeq(t_s2.first))
 				)]
 			)), new_locals);
 		}
@@ -62,7 +62,6 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 						FsCase(c with 
 							body = fsWrapSeq(
 								fsUnwrapSeq(fsInsertDecUnused(c_m, new_locals))
-								//fsUnwrapSeq(c_m)
 							)
 						)
 					})
@@ -85,7 +84,6 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 				[FsLet(s with
 					e = fsDoExpPerceus(e1, names),
 					s = fsWrapSeq(fsUnwrapSeq(fsInsertDecUnused(t_s1.first, new_locals)))
-					//s = fsWrapSeq(fsUnwrapSeq(t_s1.first))
 				)]
 			)), new_locals);
 		}
@@ -124,7 +122,6 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 			Pair(s, locals);
 		}
 		FsVarDecl(var): {
-			//Pair(s, concat(locals, [var]));
 			Pair(s, locals);
 		}
 		FsAssign(to, what): {
@@ -147,6 +144,29 @@ fsDoStatPerceus(s: FsStat, locals: [FsVar], names: FiGlobalNames) -> Pair<FsStat
 	}
 }
 
+fsDoExpPerceus(ex: FsExp, names: FiGlobalNames) -> FsExp {
+	switch (ex) {
+		FsCall(f, args, type): {
+			FsCall(ex with f = fsDoExpPerceus(f, names), args = map(args, \x -> fsDoExpPerceus(x, names)));
+		}
+		FsLambda(closure, args, body, type): {
+			FsLambda(ex with body = fsInsertDecUnused(fsDoStatPerceus(body, args, names).first, args));
+		}
+		FsCallPrim(op, es, type): {
+			FsCallPrim(ex with es = map(es, \x -> fsDoExpPerceus(x, names)));
+		}
+		FsCast(e, from, type): {
+			FsCast(ex with e = fsDoExpPerceus(e, names));
+		}
+		FsVar(name,__,__): ex;
+		FiString(s, __): ex;
+		FiVoid(__):      ex;
+		FiBool(b, __):   ex;
+		FiInt(i, __):    ex;
+		FiDouble(d, __): ex;
+	}
+}
+
 fsExpMemOps(ex: FsExp, names: FiGlobalNames) -> [FsMemory] {
 	vars1 = fsExpVars(ex, []);
 	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.type) && !fiIsGlobalFunction(v.name, names));
@@ -155,17 +175,27 @@ fsExpMemOps(ex: FsExp, names: FiGlobalNames) -> [FsMemory] {
 	);
 }
 
+fsInsertDecUnused(s: FsStat, locals: [FsVar]) -> FsStat {
+	s_vars = map(fsStatVars(s, []), \v -> v.name);
+	unused_vars = filter(locals, \v -> !fiTypeIsScalar(v.type) && !contains(s_vars, v.name));
+	if (length(unused_vars) == 0) s else {
+		FsSeq(concat(
+			map(unused_vars, \v -> 
+				FsMemory(FsDecRc(1), v)
+			),
+			fsUnwrapSeq(s)
+		));
+	}
+}
+
 fsExpVars(ex: FsExp, vars: [FsVar]) -> [FsVar] {
 	switch (ex) {
 		FsCall(f, args, type): {
 			fold(args, fsExpVars(f, vars), \acc, x -> fsExpVars(x, acc));
 		}
 		FsLambda(closure, args, body, type): {
-			//if (account_closure) {
-			//	fold(closure, vars, \acc, x -> concat(acc, [x]));
-			//} else {
-				vars;
-			//}
+			fold(closure, vars, \acc, x -> concat(acc, [x]));
+			//vars;
 		}
 		FsCallPrim(op, es, type): {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
@@ -222,54 +252,9 @@ fsStatVars(s: FsStat, vars: [FsVar]) -> [FsVar] {
 	}
 }
 
-fsInsertDecUnused(s: FsStat, locals: [FsVar]) -> FsStat {
-	s_vars = map(fsStatVars(s, []), \v -> v.name);
-	unused_vars = filter(locals, \v -> !fiTypeIsScalar(v.type) && !contains(s_vars, v.name));
-	if (length(unused_vars) == 0) s else {
-		println("unused: [" + superglue(unused_vars, \v -> v.name, "\n") + "]"
-		);
-		FsSeq(concat(
-			map(unused_vars, \v -> 
-				FsMemory(FsDecRc(1), v)
-			),
-			fsUnwrapSeq(s)
-		));
-	}
-}
-
-fsDoExpPerceus(ex: FsExp, names: FiGlobalNames) -> FsExp {
-	switch (ex) {
-		FsCall(f, args, type): {
-			FsCall(ex with f = fsDoExpPerceus(f, names), args = map(args, \x -> fsDoExpPerceus(x, names)));
-		}
-		FsLambda(closure, args, body, type): {
-			arg_vars = map(args, \arg -> FsVar(arg.name, false, arg.type));
-			FsLambda(ex with body = fsInsertDecUnused(fsDoStatPerceus(body, arg_vars, names).first, arg_vars));
-			//FsLambda(ex with body = fsDoStatPerceus(body, arg_vars, names).first);
-		}
-		FsCallPrim(op, es, type): {
-			FsCallPrim(ex with es = map(es, \x -> fsDoExpPerceus(x, names)));
-		}
-		FsCast(e, from, type): {
-			FsCast(ex with e = fsDoExpPerceus(e, names));
-		}
-		FsVar(name,__,__): ex;
-		FiString(s, __): ex;
-		FiVoid(__):      ex;
-		FiBool(b, __):   ex;
-		FiInt(i, __):    ex;
-		FiDouble(d, __): ex;
-	}
-}
-
 // Traverse the AST backwards and markup the first variable use as last
 
 fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<FsStat, Set<string>> {
-	if (^debug_perceus) {
-		println("fsStatLastVarUsage:\n" +
-			toStringFormatted(ex)
-		);
-	}
 	switch(ex) {
 		FsIf(cond, s1, s2): {
 			p1 = fsStatLastVarUsage(s1, vars, names);
@@ -364,15 +349,29 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<
 }
 
 fsExpLastVarUsage(ex: FsExp, vars: Set<string>, names: FiGlobalNames) -> Pair<FsExp, Set<string>> {
-	if (^debug_perceus) {
-		println("fsExpLastVarUsage:\n" +
-			toStringFormatted(ex)
-		);
-	}
+	update_var : (FsVar, Set<string>) -> Pair<FsVar, Set<string>> = \var, vs -> Pair(
+		FsVar(var with last = !containsSet(vs, var.name) && !fiIsGlobalVariable(var.name, names)),
+		insertSet(vs, var.name)
+	);
 	switch(ex) {
 		FsLambda(closure, args, body, __): {
-			p = fsStatLastVarUsage(body, makeSet(), names);
-			Pair(FsLambda(ex with body = p.first), vars);
+			p_b = fsStatLastVarUsage(body, makeSet(), names);
+			p_args = foldr(args, Pair([], vars), \acc, v -> {
+				p_v = update_var(v, acc.second);
+				Pair(concat([p_v.first], acc.first), p_v.second);
+			});
+			p_cl = foldr(closure, Pair([], p_args.second), \acc, v -> {
+				p_v = update_var(v, acc.second);
+				Pair(concat([p_v.first], acc.first), p_v.second);
+			});
+			Pair(
+				FsLambda(ex with 
+					closure = p_cl.first,
+					args = p_args.first,
+					body = p_b.first
+				), 
+				p_cl.second
+			);
 		}
 		FsCall(fn, args, __): {
 			ps = foldr(args, Pair([], vars), \acc, x -> {
@@ -400,15 +399,7 @@ fsExpLastVarUsage(ex: FsExp, vars: Set<string>, names: FiGlobalNames) -> Pair<Fs
 			Pair(FsCallPrim(ex with es = ps.first), ps.second);
 		}
 		FsVar(name, last,__): {
-			if (^debug_perceus) {
-				println("analysing var:  " + name + ", last: " +
-					b2s(!containsSet(vars, name) && !fiIsGlobalVariable(name, names))
-				);
-			}
-			Pair(
-				FsVar(ex with last = !containsSet(vars, name) && !fiIsGlobalVariable(name, names)), 
-				insertSet(vars, name)
-			);
+			update_var(ex, vars);
 		}
 		default: Pair(ex, vars);
 	}
