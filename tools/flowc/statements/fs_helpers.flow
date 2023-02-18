@@ -48,6 +48,7 @@ fsExpType(e: FsExp) -> FiType {
 		FsVar(__,__,type):        type;
 		FsCallPrim(__,__,type):   type;
 		FsCast(__,__,type):       type;
+		FsIncRc(__,type):         type;
 		FiVoid(__):       FiTypeVoid();
 		FiDouble(__, __): FiTypeDouble();
 		FiInt(__, __):    FiTypeInt();
@@ -68,12 +69,7 @@ fsStatType(s: FsStat) -> FiType {
 		FsVarDecl(v):         FiTypeVoid();
 		FsVarDef(__,__):      FiTypeVoid();
 		FsAssign(__,__):      FiTypeVoid();
-		FsMemory(op,__): {
-			switch (op) {
-				FsIsUnique(): FiTypeBool();
-				default:      FiTypeVoid();
-			}
-		}
+		FsDecRc(__,__):       FiTypeVoid();
 	}
 }
 
@@ -98,7 +94,7 @@ fsStat2s(s: FsStat) -> string {
 			"{\n" + strIndent(superglue(ss, fsStat2s, "\n")) + "\n}";
 		}
 		FsLet(name, type, def, body): {
-			name + " : " + t2s(type) + " = " + fsExp2s(def) + ";\n" + fsStat2s(body);
+			name + " : " + t2s(type) + " = " + fsExp2s(def) + ";\n" + strIndent(fsStat2s(body));
 		}
 		FsWrapExp(e): {
 			fsExp2s(e) + ";";
@@ -119,16 +115,8 @@ fsStat2s(s: FsStat) -> string {
 		FsAssign(to, what): {
 			fsExp2s(to) + " := " +  fsExp2s(what) + ";";
 		}
-		FsMemory(op, e): {
-			switch (op) {
-				FsIncRc(d):   "incRc(" + fsExp2s(e) + (if (d == 1) "" else ", " + i2s(d)) + ");";
-				FsDecRc(d):   "decRc(" + fsExp2s(e) + (if (d == -1) "" else ", " + i2s(-d)) + ");";
-				FsReuse():    "reuse(" + fsExp2s(e) + ");";
-				FsDispose():  "dispose(" + fsExp2s(e) + ");";
-				FsIsUnique(): "is_unique(" + fsExp2s(e) + ");";
-				FsDecRef():   "dec_ref(" + fsExp2s(e) + ");";
-				FsNull():     "nullptr";
-			}
+		FsDecRc(d, e): {
+			"decRc(" + fsExp2s(e) + (if (d == -1) "" else ", " + i2s(-d)) + ");";
 		}
 	}
 }
@@ -139,7 +127,7 @@ fsExp2s(e: FsExp) -> string {
 		FsLambda(closure, args, body,__): {
 			body_s = fsStat2s(body);
 			closure_s = "[" + superglue(closure, fsExp2s, ", ") + "]";
-			header = closure_s + "\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> ";
+			header = closure_s + "\\" + superglue(args, \arg -> fsExp2s(arg) + ":" + t2s(arg.type), ", ") + " -> ";
 			if (!strContains(body_s, "\n") || startsWith(body_s, "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
 		}
 		FsCall(f, args,__): {
@@ -151,8 +139,11 @@ fsExp2s(e: FsExp) -> string {
 		FsCast(e1, from, to): {
 			"(" + fsExp2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
 		}
-		FsVar(name, last,__): {
-			name + (if (last) "/*last*/" else "/*not last*/");
+		FsVar(name, last, type): {
+			name + (if (last && !fiTypeIsScalar(type)) "/*last*/" else "");
+		}
+		FsIncRc(e1,__): {
+			"incRc(" + fsExp2s(e1) + ")";
 		}
 		FiVoid(__):      "{}";
 		FiDouble(d, __): d2s(d);
@@ -319,9 +310,8 @@ fsStatFreevarsBoundFree(s : FsStat, bound : Set<string>, free : Set<string>) -> 
 			bound1 = insertSet(bound, v.name);
 			fsExpFreevarsBoundFree(e, bound1, free);
 		}
-		FsMemory(__,__): free;
+		FsDecRc(__,e): fsExpFreevarsBoundFree(e, bound, free);
 		FsTailCall(): free;
-		//FsTailCall(__): free;
 		FsVarDecl(v): free;
 	}
 }
@@ -350,6 +340,9 @@ fsExpFreevarsBoundFree(expr : FsExp, bound : Set<string>, free : Set<string>) ->
 		FsCast(e,__,__): {
 			fsExpFreevarsBoundFree(e, bound, free);
 		}
+		FsIncRc(e,__): {
+			fsExpFreevarsBoundFree(e, bound, free);
+		}
 		FsVar(name,__,__): if (containsSet(bound, name)) free else insertSet(free, name);
 		FiVoid(__):      free;
 		FiDouble(d, __): free;
@@ -369,9 +362,8 @@ fsVarIsInStat(v: string, s: FsStat) -> bool {
 		FsRet(e):            fsVarIsInExp(v, e);
 		FsAssign(var, e):    fsVarIsInExp(v, e);
 		FsVarDef(__, e):     fsVarIsInExp(v, e);
-		FsMemory(op, var):   false;
+		FsDecRc(__, e):      fsVarIsInExp(v, e);
 		FsTailCall():        false;
-		//FsTailCall(args):    exists(args, \arg -> fsVarIsInExp(v, arg));
 		FsVarDecl(var):      false;
 	}
 }
@@ -382,6 +374,7 @@ fsVarIsInExp(v: string, e: FsExp) -> bool {
 		FsCall(fn, args,__):     fsVarIsInExp(v, fn) || exists(args, \arg -> fsVarIsInExp(v, arg));
 		FsCallPrim(__,es,__):    exists(es, \x -> fsVarIsInExp(v, x));
 		FsCast(e1,__,__):        fsVarIsInExp(v, e1);
+		FsIncRc(e1,__):        fsVarIsInExp(v, e1);
 		FsVar(name,__,__):       v == name;
 		FiConst():               false;
 	}

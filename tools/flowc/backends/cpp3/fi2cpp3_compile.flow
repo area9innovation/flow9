@@ -163,6 +163,7 @@ fiPrepareFiExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: strin
 		Pair("fiRemoveImplicitCasts", \x -> fiRemoveImplicitCasts(x)),
 		Pair("fiExpNormalizeSeqences", \x -> fiExpNormalizeSeqences(x)),
 		Pair("fiRemoveUnusedVars", \x -> fiRemoveUnusedVars(x, gctx.effects)),
+		//Pair("fiExpChangeAndOr2If", \x -> fiExpChangeAndOr2If(x)),
 		
 		Pair("fiExtractCallNonScalarExp", \x -> fiExtractCallNonScalarExp(x, names)),
 		//Pair("fiExpReturnVars", \x -> fiExpReturnVars(x)),
@@ -202,7 +203,7 @@ fiPrepareFsExp2cpp3(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsStat {
 			default: s1;
 		}
 		if (show) {
-			println("FS TAILCALL:\n" + fsStat2s(s2));
+			//println("FS TAILCALL:\n" + fsStat2s(s2));
 			debug_perceus := true;
 		}
 		// Memory: ref-counting operations are inserted
@@ -259,23 +260,25 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsSwitch(x, sw_type, cases): {
-			switch (x.type) {
+			x_type = fsExpType(x);
+			/*comment = switch (x_type) {
 				FiTypeName(typename,__): {
 					switch (lookupTree(gctx.program.names.unions, typename)) {
 						Some(__): {
-							fsSwitch2cpp3(stat, gctx.varname2cpp(x.name), gctx.varname2cpp(x.name) + "->typeIdRc()/*" + typename + "*/", gctx);
+							"/""*" + typename + "*""/";
 						}
 						None(): {
-							fsStructSwitch2cpp3(stat, typename, gctx);
+							fail0("must be union or flow type, got: " + prettyFiType(dummyPretty, x_type, makeSet()));
 						}
 					}			
 				}
 				FiTypeFlow(): {
-					fsSwitch2cpp3(stat, gctx.varname2cpp(x.name), gctx.varname2cpp(x.name) + "->typeIdRc()/*Flow*/", gctx);
+					fsExp2cpp3(x, gctx) + "/""*Flow*""/";
 				}
 				default:
-					fail0("must be struct or union or flow type, got: " + prettyFiType(dummyPretty, x.type, makeSet()));
-			}
+					fail0("must be struct or union or flow type, got: " + prettyFiType(dummyPretty, x_type, makeSet()));
+			}*/
+			fsSwitch2cpp3(stat, fsExp2cpp3(x, gctx) + "->typeIdRc()/*" + fiType2cpp3(fsExpType(x), gctx) + "*/", gctx);
 		}
 		FsSeq(es): {
 			if (length(es) == 0) "" else
@@ -333,24 +336,15 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 					fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
 			}
 		}
-		FsMemory(op, ex): {
-			tp = fsExpType(ex);
-			switch (op) {
-				FsIncRc(delta):
-					"incRc<" + fiType2cpp3(tp, gctx) + ">(" + 
-							fsExp2cpp3(ex, gctx) + (if (delta == 1) "" else ", " + i2s(delta)) + 
-						");";
-				FsDecRc(delta):
-					"decRc<" + fiType2cpp3(tp, gctx) + ">(" + 
-							fsExp2cpp3(ex, gctx) + (if (delta == 1) "" else ", " + i2s(delta)) + 
-					");";
-				default:  fail0("memory operation: " + toString(op) + " is not implemented yet");
-			}
+		FsDecRc(delta, ex): {
+			"decRc<" + fiType2cpp3(fsExpType(ex), gctx) + ">(" + 
+					fsExp2cpp3(ex, gctx) + (if (delta == 1) "" else ", " + i2s(delta)) + 
+			");";
 		}
 	}
 }
 
-fsSwitch2cpp3(sw: FsSwitch, sw_var: string, sw_cond: string, gctx: Cpp3GlobalContext) -> string {
+fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string {
 	nondef_cases = filtermap(sw.cases, \c ->
 		if (c.struct == "default") None() else Some(fsCase2cpp3(c, gctx))
 	);
@@ -396,24 +390,6 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 				body = fsStat2cpp3(c.body, gctx);
 				"default: " + fiWrapWithBraces(body);
 			}
-		}
-	}
-}
-
-fsStructSwitch2cpp3(sw: FsSwitch, typename: string, gctx: Cpp3GlobalContext) -> string {
-	switch (lookupTree(gctx.program.names.structs, typename)) {
-		Some(struct): {
-			switch (find(sw.cases, \case -> case.struct == typename)) {
-				Some(c): {
-					fsStat2cpp3(c.body, gctx);
-				}
-				None(): {
-					fail0("struct case is not found");
-				}
-			}
-		}
-		None(): {
-			fail0("must be struct or union (type name): " + typename);
 		}
 	}
 }
@@ -523,6 +499,9 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				var_name + (if (last) "/*last*/" else "");
 			}
 		}
+		FsIncRc(ex, type): {
+			"incRc<" + fiType2cpp3(type, gctx) + ">(" + fsExp2cpp3(ex, gctx) + ")";
+		}
 	}
 }
 
@@ -599,8 +578,9 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 				"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make()";
 			} else {
 				arr_s = map(e.es, e2k);
-				if (length(arr_s) < 8 && !exists(arr_s, \s -> strContains(s, "\n"))) {
-					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({" + strGlue(arr_s, ", ") + "})";
+				s1 = strGlue(arr_s, ", ");
+				if (strlen(s1) < 64 && !strContains(s1, "\n")) {
+					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({" + s1 + "})";
 				} else {
 					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({\n" + strIndent(strGlue(arr_s, ",\n")) + "\n})";
 				}
