@@ -47,6 +47,7 @@ fsExpType(e: FsExp) -> FiType {
 		FsCall(__,__, type):      type;
 		FsVar(__,__,type):        type;
 		FsCallPrim(__,__,type):   type;
+		FsTailCall(__,type):      type;
 		FsCast(__,__,type):       type;
 		FsIncRc(__,type):         type;
 		FiVoid(__):       FiTypeVoid();
@@ -65,7 +66,6 @@ fsStatType(s: FsStat) -> FiType {
 		FsLet(__,__,__,body): fsStatType(body);
 		FsWrapExp(e):         FiTypeVoid();
 		FsRet(e):             fsExpType(e);
-		FsTailCall():         FiTypeVoid();
 		FsVarDecl(v):         FiTypeVoid();
 		FsVarDef(__,__):      FiTypeVoid();
 		FsAssign(__,__):      FiTypeVoid();
@@ -102,10 +102,6 @@ fsStat2s(s: FsStat) -> string {
 		FsRet(e): {
 			"return " + fsExp2s(e) + ";";
 		}
-		FsTailCall(): {
-			"tailcall";
-			//"tailcall(" + superglue(args, fsExp2s, ", ") + ");";
-		}
 		FsVarDecl(var): {
 			var.name + " : " + t2s(var.type) + ";";
 		}
@@ -135,6 +131,9 @@ fsExp2s(e: FsExp) -> string {
 		}
 		FsCallPrim(op, es, type): {
 			fsPrim2s(op, map(es, fsExp2s), type);
+		}
+		FsTailCall(args, type): {
+			"tailcall(" + superglue(args, \a -> a.param.name + " = " + fsExp2s(a.value), ", ") + ");";
 		}
 		FsCast(e1, from, to): {
 			"(" + fsExp2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
@@ -205,6 +204,7 @@ fsSetExpType(e : FsExp, t: FiType) -> FsExp {
 		FsLambda(__,__,__,__): FsLambda(e with type = cast(t: FiType -> FiTypeFunction));
 		FsCall(__,__,__):      FsCall(e with type = t);
 		FsCallPrim(__,__,__):  FsCallPrim(e with type = t);
+		FsTailCall(__,__):     FsTailCall(e with type = t);
 		FsVar(__,__,__):       FsVar(e with type = t);
 		default: e;
 	}
@@ -212,13 +212,24 @@ fsSetExpType(e : FsExp, t: FiType) -> FsExp {
 
 fsHasTailCall(s: FsStat) -> bool {
 	switch (s) {
-		FsIf(e, s1, s2): fsHasTailCall(s1) || fsHasTailCall(s2);
-		FsSwitch(v,__, cases): exists(cases, \c -> fsHasTailCall(c.body));
-		FsSeq(ss): if (length(ss) == 0) false else fsHasTailCall(ss[length(ss) - 1]);
-		FsTailCall():  true;
-		FsLet(__,__,__,s1): fsHasTailCall(s1);
-		//FsTailCall(__):  true;
-		FsVarDef(v, e):  false; //fsHasTailCall(s1);
+		FsIf(e, s1, s2): {
+			fsHasTailCall(s1) || fsHasTailCall(s2);
+		}
+		FsSwitch(v,__, cases): {
+			exists(cases, \c -> fsHasTailCall(c.body));
+		}
+		FsSeq(ss): {
+			if (length(ss) == 0) false else fsHasTailCall(ss[length(ss) - 1]);
+		}
+		FsLet(__,__,__,s1): {
+			fsHasTailCall(s1);
+		}
+		FsRet(e): {
+			switch (e) {
+				FsTailCall(__,__): true;
+				default: false;
+			}
+		}
 		default: false;
 	}
 }
@@ -310,9 +321,12 @@ fsStatFreevarsBoundFree(s : FsStat, bound : Set<string>, free : Set<string>) -> 
 			bound1 = insertSet(bound, v.name);
 			fsExpFreevarsBoundFree(e, bound1, free);
 		}
-		FsDecRc(__,e): fsExpFreevarsBoundFree(e, bound, free);
-		FsTailCall(): free;
-		FsVarDecl(v): free;
+		FsDecRc(__,e): {
+			fsExpFreevarsBoundFree(e, bound, free);
+		}
+		FsVarDecl(v): {
+			free;
+		}
 	}
 }
 
@@ -336,6 +350,11 @@ fsExpFreevarsBoundFree(expr : FsExp, bound : Set<string>, free : Set<string>) ->
 		}
 		FsCallPrim(__,es,__): {
 			fold(es, bound, \acc, arg -> fsExpFreevarsBoundFree(arg, bound, acc));
+		}
+		FsTailCall(args,__): {
+			fold(args, free, \acc, x -> 
+				fsExpFreevarsBoundFree(x.value, bound, acc)
+			);
 		}
 		FsCast(e,__,__): {
 			fsExpFreevarsBoundFree(e, bound, free);
@@ -363,7 +382,6 @@ fsVarIsInStat(v: string, s: FsStat) -> bool {
 		FsAssign(var, e):    fsVarIsInExp(v, e);
 		FsVarDef(__, e):     fsVarIsInExp(v, e);
 		FsDecRc(__, e):      fsVarIsInExp(v, e);
-		FsTailCall():        false;
 		FsVarDecl(var):      false;
 	}
 }
@@ -373,8 +391,9 @@ fsVarIsInExp(v: string, e: FsExp) -> bool {
 		FsLambda(__,__,body,__): fsVarIsInStat(v, body);
 		FsCall(fn, args,__):     fsVarIsInExp(v, fn) || exists(args, \arg -> fsVarIsInExp(v, arg));
 		FsCallPrim(__,es,__):    exists(es, \x -> fsVarIsInExp(v, x));
+		FsTailCall(args,__):     exists(args, \arg -> fsVarIsInExp(v, arg.value));
 		FsCast(e1,__,__):        fsVarIsInExp(v, e1);
-		FsIncRc(e1,__):        fsVarIsInExp(v, e1);
+		FsIncRc(e1,__):          fsVarIsInExp(v, e1);
 		FsVar(name,__,__):       v == name;
 		FiConst():               false;
 	}

@@ -30,27 +30,11 @@ fsExpPerceus(e: FsExp, names: FiGlobalNames) -> FsExp {
 }
 
 fsDoStatPerceus(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) -> Pair<FsStat, Tree<string, FsVar>> {
-	/*remove_finalized = \x, locs -> {
-		x_vars = fsExpVars(x, []);
-		filter(locs, \v -> 
-			!exists(x_vars, \w -> w.last && w.name == v.name)
-		);
-	}*/
 	switch (s) {
 		FsIf(c, s1, s2): {
 			c_p = fsDoExpPerceus(c, locals, names);
 			s1_p = fsDoStatPerceus(s1, c_p.second, names);
 			s2_p = fsDoStatPerceus(s2, c_p.second, names);
-			/*if (^debug_perceus) {
-				println("If !!!!:\n" +
-					"cond:\n" + fsExp2s(cond) + "\n" + 
-					"locals: [" + superglue(locals, fsExp2s, ", ") + "]\n" +
-					"new_locals: [" + superglue(locals, fsExp2s, ", ") + "]\n" +
-					"locals: [" + superglue(locals, fsExp2s, ", ") + "]\n" +
-					"fsUnusedVars(pos): [" + superglue(fsUnusedVars(t_s1.first, new_locals), fsExp2s, ", ") + "]\n" +
-					"fsUnusedVars(neg): [" + superglue(fsUnusedVars(t_s2.first, new_locals), fsExp2s, ", ") + "]\n"
-				);
-			}*/
 			Pair(
 				FsIf(s with
 					cond = c_p.first,
@@ -77,9 +61,6 @@ fsDoStatPerceus(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) ->
 		FsSeq(es): {
 			p_es = fold(es, Pair([], locals), \acc, x -> {
 				p_x = fsDoStatPerceus(x, acc.second, names);
-				/*println("LOCALS AFTER:\n" + fsStat2s(x) + "\n" +
-					"ARE: " + superglue(p_x.second, fsExp2s, ", ") + "\n"
-				);*/
 				Pair(concat(acc.first, fsUnwrapSeq(p_x.first)), p_x.second);
 			});
 			Pair(fsWrapSeq(p_es.first), p_es.second);
@@ -87,20 +68,9 @@ fsDoStatPerceus(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) ->
 		FsLet(name, type, e1, s1): {
 			e1_p = fsDoExpPerceus(e1, setTree(locals, name, FsVar(name, false, type)), names);
 			s1_p = fsDoStatPerceus(s1, e1_p.second, names);
-			if (^debug_perceus) {
-				println(
-					"FsLet: !!!!!!!\n" +
-					"e1: " + fsExp2s(e1) + "\n" +
-					"s: " + fsStat2s(s) + "\n" +
-					"locals of: " + name + " are: " + superglue(getTreeValues(locals), fsExp2s, ", ") + "\n" +
-					"e1_p.second: " + superglue(getTreeValues(e1_p.second), fsExp2s, ", ") + "\n"
-					//"e1 vars: " + superglue(fsExpVars(e1, []), fsExp2s, ", ") + "\n\n"
-				);
-			}
 			Pair(
 				FsLet(s with
 					e = e1_p.first,
-					//s = fsInsertDecUnused(s1_p.first, e1_p.second)
 					s = s1_p.first
 				),
 				s1_p.second
@@ -113,7 +83,6 @@ fsDoStatPerceus(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) ->
 		FsWrapExp(e): {
 			e_p = fsDoExpPerceus(e, locals, names);
 			Pair(
-				//FsWrapExp(s with e = e_p.first),
 				fsWrapSeq(concat(
 					[FsWrapExp(s with e = e_p.first)],
 					if (fsExpType(e) == FiTypeVoid()) [] else [FsDecRc(1, e)],
@@ -127,9 +96,6 @@ fsDoStatPerceus(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) ->
 				FsRet(s with e = e_p.first),
 				e_p.second
 			);
-		}
-		FsTailCall(): {
-			Pair(s, locals);
 		}
 		FsVarDecl(var): {
 			fail("obsolete");
@@ -168,20 +134,7 @@ fsDoExpPerceus(ex: FsExp, locals: Tree<string, FsVar>, names: FiGlobalNames) -> 
 			);
 		}
 		FsLambda(closure, args, body, type): {
-			//locals1 = fold(args, makeTree(), \acc, v -> setTree(acc, v.name, v));
 			body_p = fsDoStatPerceus(body, makeTree(), names);
-
-			/*if (^debug_perceus) {
-				println("FsLambda !!!!:\n" +
-					"args:  [" + superglue(args, fsExp2s, ", ") + "]\n" +
-					"locals:  [" + superglue(getTreeValues(locals), fsExp2s, ", ") + "]\n" +
-					//"locals1: [" + superglue(getTreeValues(locals1), fsExp2s, ", ") + "]\n" +
-					"body_p.second: [" + superglue(getTreeValues(body_p.second), fsExp2s, ", ") + "]\n" +
-					//"fsUnusedVars(body_p.first, locals1): [" + superglue(fsUnusedVars(body_p.first, locals1), fsExp2s, ", ") + "]\n"
-					//"fsUnusedVars(neg): [" + superglue(fsUnusedVars(t_s2.first, new_locals), fsExp2s, ", ") + "]\n"
-				);
-			}*/
-
 			unused_vars = filter(args, \v -> v.last && !fiTypeIsScalar(v.type));
 			body1 = if (length(unused_vars) == 0) body_p.first else {
 				FsSeq(concat(
@@ -202,6 +155,21 @@ fsDoExpPerceus(ex: FsExp, locals: Tree<string, FsVar>, names: FiGlobalNames) -> 
 			});
 			Pair(
 				FsCallPrim(ex with es = es_p.first),
+				es_p.second
+			);
+		}
+		FsTailCall(args,__): {
+			es_p = fold(args, Pair([], locals), \acc, arg -> {
+				val_p = fsDoExpPerceus(arg.value, acc.second, names);
+				val = if (fiTypeIsScalar(arg.param.type) || fiIsGlobalFunction(arg.param.name, names)) {
+					val_p.first;
+				} else {
+					FsIncRc(val_p.first, arg.param.type)
+				}
+				Pair(concat(acc.first, [FsTailCallArg(arg with value = val)]), val_p.second);
+			});
+			Pair(
+				FsTailCall(ex with args = es_p.first), 
 				es_p.second
 			);
 		}
@@ -228,15 +196,6 @@ fsDoExpPerceus(ex: FsExp, locals: Tree<string, FsVar>, names: FiGlobalNames) -> 
 		FiDouble(d, __): Pair(ex, locals);
 	}
 }
-/*
-fsExpMemOps(ex: FsExp, names: FiGlobalNames) -> [FsMemory] {
-	vars1 = fsExpVars(ex, []);
-	vars2 = filter(vars1, \v -> !fiTypeIsScalar(v.type) && !fiIsGlobalFunction(v.name, names));
-	filtermap(vars2, \v -> 
-		if (v.last) None() else Some(FsMemory(FsIncRc(1), v))
-	);
-}
-*/
 
 fsUnusedVars(s: FsStat, locals: Tree<string, FsVar>) -> [FsVar] {
 	s_vars = map(fsStatVars(s, []), \v -> v.name);
@@ -267,10 +226,12 @@ fsExpVars(ex: FsExp, vars: [FsVar]) -> [FsVar] {
 		}
 		FsLambda(closure, args, body, type): {
 			fold(closure, vars, \acc, x -> concat(acc, [x]));
-			//vars;
 		}
 		FsCallPrim(op, es, type): {
 			fold(es, vars, \acc, x -> fsExpVars(x, acc));
+		}
+		FsTailCall(args,__): {
+			fold(args, vars, \acc, x -> fsExpVars(x.value, acc));
 		}
 		FsCast(e,__,__): {
 			fsExpVars(e, vars);
@@ -311,9 +272,6 @@ fsStatVars(s: FsStat, vars: [FsVar]) -> [FsVar] {
 		}
 		FsRet(e): {
 			fsExpVars(e, vars);
-		}
-		FsTailCall(): {
-			vars;
 		}
 		FsVarDecl(var): {
 			vars;
@@ -414,9 +372,6 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<
 				insertSet(p.second, v.name)
 			);
 		}
-		FsTailCall(): {
-			Pair(ex, vars);
-		}
 		FsVarDecl(var): {
 			Pair(ex, vars);
 		}
@@ -478,6 +433,13 @@ fsExpLastVarUsage(ex: FsExp, vars: Set<string>, names: FiGlobalNames) -> Pair<Fs
 				Pair(concat([p.first], acc.first), p.second);
 			});
 			Pair(FsCallPrim(ex with es = ps.first), ps.second);
+		}
+		FsTailCall(args,__): {
+			ps = foldr(args, Pair([], vars), \acc, x -> {
+				p = fsExpLastVarUsage(x.value, acc.second, names);
+				Pair(concat([FsTailCallArg(x with value = p.first)], acc.first), p.second);
+			});
+			Pair(FsTailCall(ex with args = ps.first), ps.second);
 		}
 		FsVar(name, last,__): {
 			update_var(ex, vars);
