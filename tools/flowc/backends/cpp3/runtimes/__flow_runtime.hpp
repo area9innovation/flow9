@@ -622,7 +622,14 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override { return static_cast<Int>(closure.size()); }
 
-	inline R call(As... as) { return Fn::operator()(as...); }
+	inline R call(As... as) { 
+		for (Flow* x: closure) incRc(x);
+		return Fn::operator()(as...); 
+	}
+	inline R callRc1(As... as) { 
+		for (Flow* x: closure) incRc(x);
+		return Fn::operator()(as...); 
+	}
 	inline R callRc(As... as) {
 		for (Flow* x: closure) incRc(x);
 		R ret = Fn::operator()(as...);
