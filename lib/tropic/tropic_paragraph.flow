@@ -232,6 +232,14 @@ TRenderDynamicParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
+isSpaceWord(word : TParaWord) -> bool {
+	switch (word.word : GeneralWrapElement) {
+		GeneralSpace(__, __, __): true;
+		GeneralText(text): text == nonBreakableSpace;
+		default: false;
+	}
+}
+
 fixAvailableWidthForIndent(awB : Transform<double>, indent : double) -> (Tropic) -> Tropic {
 	\t -> {
 		if (indent == 0.0) {
@@ -942,25 +950,6 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 	if (rtrimmedWords == words) words
 	else rtrimWords(rtrimmedWords)
 }
-ltrimWords(words : [TParaWord]) -> [TParaWord] {
-	wordsCount = length(words);
-	ltrimmedWords = if (wordsCount > 0) {
-		firstWord = words[0];
-		switch (firstWord.word : GeneralWrapElement) {
-			GeneralSpace(__, __, __): {
-				detachWord(firstWord, true);
-				tail(words)
-			}
-			default: words
-		}
-	} else words
-	if (ltrimmedWords == words) words
-	else ltrimWords(ltrimmedWords)
-}
-
-trimWords(words : [TParaWord]) -> [TParaWord] {
-	rtrimWords(ltrimWords(words))
-}
 
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
@@ -1260,7 +1249,7 @@ TAlignParaLines(
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
 		// If we have < 3 words (because we should have word + space + word) in the line, we do not justify.
 		lineAlignment =
-			if (alignment == Justify() && (lastLine || length(line.words) < 3)) {
+			if (alignment == Justify() && (lastLine || length(line.words) < 3 && isSpaceWord(line.words[1]))) {
 				StartAlign()
 			} else {
 				alignment;
@@ -1301,7 +1290,7 @@ TRenderLine(
 	alignWidthM : Maybe<double>
 ) -> TParaLineResult {
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
-	nwords = length(words);
+	wordsCount = length(words) - 1;
 	inspectors = map(words, \p -> p.inspector);
 	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
 	maxBaseline = foldi(inspectors, 0.0, \i, ac, m -> max(ac, getValue(m.baseline)));
@@ -1321,9 +1310,8 @@ TRenderLine(
 	} + (if (rtl) 0. else lineIndent);
 
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && nwords > 1) {
+	interWord = if (alignment == Justify() && wordsCount > 0) {
 		if (newJustifyEnabled) {
-			wordsCount = nwords - 1;
 			spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, lineIndent), \i, acc : Pair<int, double>, w -> {
 				lastWord = i == wordsCount;
 				firstWord = i == 0;
@@ -1352,19 +1340,15 @@ TRenderLine(
 			} else 0.0
 		} else {
 			remaining = alignWidth - lineWidth;
-			min(10.0, remaining / i2d(nwords - 1));
+			min(10.0, remaining / i2d(wordsCount));
 		}
 	} else 0.0;
 
 	// The width and the individual forms
 	iteri(inspectors, \i : int, inspector -> {
-		lastWord = i == length(inspectors) - 1;
+		lastWord = i == wordsCount;
 		firstWord = i == 0;
-		isSpace = (!firstWord && !lastWord || alignment != Justify()) && switch (words[i].word : GeneralWrapElement) {
-			GeneralSpace(__, __, __): true;
-			GeneralText(text): text == nonBreakableSpace;
-			default: false;
-		};
+		isSpace = (!firstWord && !lastWord || alignment != Justify()) && isSpaceWord(words[i]);
 
 		word = words[i];
 		elemWidth = getValue(inspector.size).width;
@@ -1382,7 +1366,7 @@ TRenderLine(
 		yOffset = y + dy;
 		nextDistinct(inspector.y, yOffset);
 		nextDistinct(inspector.x, ^alignmentOffset + if (rtl) 0.0 else generalIndent);
-		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == nwords - 1) WordPositionInLineEnd() else WordPositionInLineMiddle());
+		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == wordsCount) WordPositionInLineEnd() else WordPositionInLineMiddle());
 
 		nextDistinct(inspector.lineHeight, lineHeight);
 		nextDistinct(inspector.lineAsc, maxBaseline);
