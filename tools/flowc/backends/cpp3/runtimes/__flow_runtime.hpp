@@ -156,8 +156,8 @@ template<typename T> constexpr bool is_struct_v = is_struct<T>::result;
 
 template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer<T>>;
 
-template<typename T> inline T incRc(T x, Int d = 1) {
-	if constexpr (std::is_pointer_v<T>) { x->rc_ += d; } return x;
+template<typename T> inline void incRc(T x, Int d = 1) {
+	if constexpr (std::is_pointer_v<T>) { x->rc_ += d; }
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
