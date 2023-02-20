@@ -12,5 +12,5 @@ void main()
 {
 	col = aPos;
 	ndc = projection * view * model * vec4(aPos, 1.0);
-    gl_Position = ndc;
+	gl_Position = ndc;
 } 
