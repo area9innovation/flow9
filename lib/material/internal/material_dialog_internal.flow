@@ -123,7 +123,7 @@ renderMDialog3(
 	us = ref [];
 	disp = \ -> dispUnsA(us);
 
-	currentFocusedItem = getCurrentFocusedItem(manager);
+	currentFocusedItem = fgetValue(manager.latelyFocused);
 	previousFocus =
 		if (extractStruct(style, MFocusOnPrevious(true)).enabled) {
 			eitherFn(
@@ -246,7 +246,7 @@ renderMDialog3(
 							MDynamicParagraph2T(
 								p,
 								const(ttl.title),
-								[MTitle(), ParagraphMargin(0.0, 0.0), TagName("h2")]
+								[MTitle(), ParagraphMargin(0.0, 0.0), TagName(getStandardHeadingLevel())]
 							)
 							|> (\t ->
 								eitherMap(
@@ -678,7 +678,7 @@ renderMDialog3(
 	|> (\t -> TAccess([
 		AccessRole("dialog"),
 		FAccessAttribute("aria-label", extractStruct(style, MDialogAccessibleName(const(eitherMap(title, \ttl -> ttl.title, "Dialog")))).name),
-		FAccessAttribute("flow-force-focus", const(b2s(isSome(currentFocusedItem))))
+		FAccessAttribute("flow-force-focus", const(b2s(manager.focus.theme.dialogActivationEnabled && isSome(currentFocusedItem))))
 	], t))
 	|> (\t ->
 		if (!fullWindow || resizable) {
@@ -770,11 +770,14 @@ renderMDialog3(
 }
 
 snackbarDisp = initUnsM();
+snackbarClosingDelayDisp = initUnsM();
+deferredRenderFn = initUnsM();
+
+SNACKBAR_CLOSING_DELAY = 300 //ms
 
 renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn  : (Tropic) -> () -> void) -> void {
-	closeSnackbar = \ -> maybeApply(^snackbarDisp, \fn -> {
-		snackbarDisp := None();
-		fn();
+	closeSnackbar = \ -> maybeApply(^snackbarDisp, \__ -> {
+		dispUnsM(snackbarDisp);
 		maybeApply(tryExtractStruct(style, MSnackbarOnDisappear(nop)), \d -> d.fn());
 	});
 	closeSnackbar();
@@ -854,22 +857,35 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 			AccessRole("dialog"),
 			ClassName("snackbar"),
 			FAccessAttribute("aria-label", const(text)),
-			FAccessAttribute("flow-force-focus", const("true"))
+			FAccessAttribute("flow-force-focus", const(b2s(manager.focus.theme.dialogActivationEnabled)))
 		], t))
 		|> TAlignBottom
 		|> TAlignHorizontalDir(alignment, manager.focus.rtl)
 		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));
 
-	renderDisp = renderFn(snackBar);
-	nextDistinct(visible, true);
-	timerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+	renderSnackbar = \ -> {
+		renderDisp = renderFn(snackBar);
+		nextDistinct(visible, true);
+		autoDisappearTimerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
 
-	setUnsM(
-		snackbarDisp,
-		\ -> {
-			timerDisp();
-			timer(300, renderDisp);
-			nextDistinct(visible, false);
-		}
-	)
+		setUnsM(
+			snackbarDisp,
+			\ -> {
+				autoDisappearTimerDisp();
+				timer(SNACKBAR_CLOSING_DELAY, renderDisp);
+				setUnsM(snackbarClosingDelayDisp, interruptibleTimer(SNACKBAR_CLOSING_DELAY, \ -> {
+					dispUnsM(deferredRenderFn);
+					dispUnsM(snackbarClosingDelayDisp);
+				}));
+
+				nextDistinct(visible, false);
+			}
+		);
+	}
+
+	if (isSome(^snackbarClosingDelayDisp)) {
+		setUnsM(deferredRenderFn, renderSnackbar);
+	} else {
+		renderSnackbar()
+	}
 }

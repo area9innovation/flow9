@@ -51,7 +51,7 @@ TRenderDynamicParagraph(
 	forceReflowT : Transform<bool>
 ) -> TDynamicParagraph {
 	traceApi = makeWigiTrace_Tropic("TRenderDynamicParagraph", getValue(wordsB));
-	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
+	traceApi.trace(\-> "TRenderDynamicParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -89,7 +89,8 @@ TRenderDynamicParagraph(
 	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
 		TDynamicGroup2(stackChanges, initialWords, TGroupCombiner())
-	));
+	))
+	|> fixAvailableWidthForIndent(awB, indent);
 
 	updateFn = \wi, alignWidthM -> {
 		oldWH = getValue(paragraphWHB);
@@ -231,6 +232,24 @@ TRenderDynamicParagraph(
 	TDynamicParagraph(tropic, addWords, removeWords);
 }
 
+isSpaceWord(word : TParaWord) -> bool {
+	switch (word.word : GeneralWrapElement) {
+		GeneralSpace(__, __, __): true;
+		GeneralText(text): text == nonBreakableSpace;
+		default: false;
+	}
+}
+
+fixAvailableWidthForIndent(awB : Transform<double>, indent : double) -> (Tropic) -> Tropic {
+	\t -> {
+		if (indent == 0.0) {
+			t
+		} else {
+			TAvailableWidth(t, fselect(awB, FLift(\aw -> aw - abs(indent))))
+		}
+	}
+}
+
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
@@ -292,7 +311,9 @@ TRenderParagraph(
 	contentGroup = TBaseline(paragraphBaselineB, TSize(
 		TSized(paragraphWHB),
 		TGroup(groupedWords)
-	));
+	))
+	|> fixAvailableWidthForIndent(awB, indent);
+
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 	stopDefer = ref nop;
@@ -811,7 +832,18 @@ reflowTParaWords(
 		ignoreLetterSpacing
 	);
 
-	text = reflowAndWidth.first.lines;
+	lines = reflowAndWidth.first.lines;
+
+	text = if (alignment == Justify()) {
+		mapi(
+			lines,
+			\i : int, line : TParaLine -> if (i == length(lines) - 1) line
+			else TParaLine(line with words = rtrimWords(line.words))
+		)
+	} else {
+		reflowAndWidth.first.lines;
+	}
+
 	paraLines = if (isBiDiEnabled())
 		zipWith(
 			text,
@@ -899,6 +931,26 @@ reflowAndFitTParaWords(
 	}
 }
 
+detachWord(word : TParaWord, detach : bool) -> void {
+	nextDistinct(word.inspector.detached, detach);
+}
+
+rtrimWords(words : [TParaWord]) -> [TParaWord] {
+	wordsCount = length(words);
+	rtrimmedWords = if (wordsCount > 0) {
+		lastWord = words[wordsCount - 1];
+		switch (lastWord.word : GeneralWrapElement) {
+			GeneralSpace(__, __, __): {
+				detachWord(lastWord, true);
+				take(words, wordsCount - 1)
+			}
+			default: words
+		}
+	} else words
+	if (rtrimmedWords == words) words
+	else rtrimWords(rtrimmedWords)
+}
+
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
 	words : [TParaWord],
@@ -924,10 +976,6 @@ reflowTParaWordsRec(
 		TReflowedLinesAndChanges(__, __) : TOverflowCase(overflowWidth);
 		TOverflowCase(ow) : TOverflowCase(max(overflowWidth, ow));
 	};
-
-	detachWord = \w : TParaWord, detach : bool -> {
-		nextDistinct(w.inspector.detached, detach);
-	}
 
 	lineIndex = switch(result) {
 		TReflowedLinesAndChanges(lines, __) : length(lines);
@@ -1133,7 +1181,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
 			lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
-			if (isWordJoiner(lastChr) || isWordJoiner(firstChr)) true else  keepWordsTogetherRec(tr)
+			if (isWordJoiner(lastChr) || isWordJoiner(firstChr)) true else keepWordsTogetherRec(tr)
 		}
 	}
 }
@@ -1199,8 +1247,9 @@ TAlignParaLines(
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
+		// If we have < 3 words (because we should have word + space + word) in the line, we do not justify.
 		lineAlignment =
-			if (alignment == Justify() && lastLine) {
+			if (alignment == Justify() && (lastLine || length(line.words) < 3 && elementAtMap(line.words, 1, isSpaceWord, true))) {
 				StartAlign()
 			} else {
 				alignment;
@@ -1241,16 +1290,11 @@ TRenderLine(
 	alignWidthM : Maybe<double>
 ) -> TParaLineResult {
 	// styles = map(optimizedLine, \p -> lookupTreeDef(interactiveStyles, getValue(p.id), []));
-	nwords = length(words);
+	wordsCount = length(words) - 1;
 	inspectors = map(words, \p -> p.inspector);
 	lineWidth = lineIndent + fold(inspectors, 0.0, \ac, m -> ac + getValue(m.size).width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
-	lineAsc = foldi(inspectors, 0.0, \i, ac, m -> {
-		max(ac, getValue(m.baseline));
-	});
-
-	lineHeight = foldi(inspectors, 0.0, \i, ac, m ->
-		max(ac, getValue(m.size).height + lineAsc - getValue(m.baseline))
-	);
+	maxBaseline = foldi(inspectors, 0.0, \i, ac, m -> max(ac, getValue(m.baseline)));
+	lineHeight = foldi(inspectors, 0.0, \i, ac, m -> max(ac, getValue(m.size).height + maxBaseline - getValue(m.baseline)));
 
 	// Alignment offset
 	alignWidth = min(either(alignWidthM, width), width);
@@ -1266,15 +1310,29 @@ TRenderLine(
 	} + (if (rtl) 0. else lineIndent);
 
 	// Inter-word spacing for justification
-	interWord = if (alignment == Justify() && nwords > 1) {
+	interWord = if (alignment == Justify() && wordsCount > 0) {
 		if (newJustifyEnabled) {
-			wordsCount = nwords - 1;
 			spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, lineIndent), \i, acc : Pair<int, double>, w -> {
 				lastWord = i == wordsCount;
-				wordWith = getValue(w.inspector.size).width;
+				firstWord = i == 0;
+				wordWidth = getValue(w.inspector.size).width;
+				defValue = Pair(acc.first, acc.second + wordWidth);
 				switch (w.word : GeneralWrapElement) {
-					GeneralSpace(__, __, __): if (lastWord) acc else Pair(acc.first + 1, acc.second + wordWith);
-					default: Pair(acc.first, acc.second + wordWith);
+					GeneralSpace(__, __, __): if (lastWord || firstWord) {
+						acc
+					} else {
+						Pair(acc.first + 1, acc.second + wordWidth);
+					}
+					GeneralText(text): if (text == nonBreakableSpace) {
+						if (lastWord || firstWord) {
+							acc
+						} else {
+							Pair(acc.first + 1, acc.second + wordWidth)
+						}
+					} else {
+						defValue
+					}
+					default: defValue;
 				}
 			});
 			if (spacesAndWordsWidth.first > 0) {
@@ -1282,16 +1340,15 @@ TRenderLine(
 			} else 0.0
 		} else {
 			remaining = alignWidth - lineWidth;
-			min(10.0, remaining / i2d(nwords - 1));
+			min(10.0, remaining / i2d(wordsCount));
 		}
 	} else 0.0;
 
 	// The width and the individual forms
 	iteri(inspectors, \i : int, inspector -> {
-		isSpace = switch (words[i].word : GeneralWrapElement) {
-			GeneralSpace(__, __, __): true;
-			default: false;
-		};
+		lastWord = i == wordsCount;
+		firstWord = i == 0;
+		isSpace = (!firstWord && !lastWord || alignment != Justify()) && isSpaceWord(words[i]);
 
 		word = words[i];
 		elemWidth = getValue(inspector.size).width;
@@ -1301,25 +1358,25 @@ TRenderLine(
 		dy = eitherMap(
 			words[i].scriptM,
 			\script -> switch(script) {
-				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else lineAsc - elemBaseline - prevElemHeight * 0.25;
-				ParaElementSubscript() : lineAsc - elemBaseline / 2.0;
+				ParaElementSuperscript() : if (prevElemHeight == 0.0) -1.0 else maxBaseline - elemBaseline - prevElemHeight * 0.25;
+				ParaElementSubscript() : maxBaseline - elemBaseline / 2.0;
 			},
-			lineAsc - getValue(inspector.baseline)
+			maxBaseline - getValue(inspector.baseline)
 		);
 		yOffset = y + dy;
 		nextDistinct(inspector.y, yOffset);
 		nextDistinct(inspector.x, ^alignmentOffset + if (rtl) 0.0 else generalIndent);
-		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == nwords - 1) WordPositionInLineEnd() else WordPositionInLineMiddle());
+		nextDistinct(inspector.wordPositionInLine, if (i == 0) WordPositionInLineFirst() else if (i == wordsCount) WordPositionInLineEnd() else WordPositionInLineMiddle());
 
 		nextDistinct(inspector.lineHeight, lineHeight);
-		nextDistinct(inspector.lineAsc, lineAsc);
+		nextDistinct(inspector.lineAsc, maxBaseline);
 		nextDistinct(inspector.lineNumber, lineNumber);
 		nextDistinct(inspector.lineWordSpacing, interWord);
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0 else interWord;
 		alignmentOffset := ^alignmentOffset + if (elemWidth > 0.0) {elemWidth + if (isSpace) justifyOffset  else 0.0} else 0.0;
 	});
 
-	TParaLineResult(lineWidth, lineHeight, y + lineAsc);
+	TParaLineResult(roundTo(lineWidth, 0.01), roundTo(lineHeight, 0.01), roundTo(y + maxBaseline, 0.01));
 }
 
 prevWordHeight(inspectors : [ParaElementInspector] , words : [TParaWord], i : int ) -> double {

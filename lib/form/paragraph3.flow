@@ -9,7 +9,7 @@ export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
 	renderParagraph(p : [ParagraphElement], s : [ParagraphStyle], rtl : bool, widthManager : ParagraphWidthManager) -> Form;
 	renderParagraphEx(
-		p : [ParagraphElement],
+		p : [ParagraphElementWithInfo],
 		s : [ParagraphStyle],
 		rtl : bool,
 		widthManager : ParagraphWidthManager,
@@ -79,6 +79,18 @@ export {
 	// Allow to customize how render should behave
 	WigiRenderParameters(inline : bool);
 		defaultWigiRenderParameters = WigiRenderParameters(false);
+
+	wigiTextPartsLimit = 10000;
+
+	ParagraphElementWithInfo(
+		element: ParagraphElement,
+		filler : bool
+	);
+
+	ParaElementWithInfo(
+		element: ParaElement,
+		filler : bool
+	);
 }
 
 // TODO:
@@ -121,7 +133,8 @@ ParaWord(
 	form : GhostForm,
 	interactivityIdM : Maybe<int>,
 	nextWidgetId : DynamicBehaviour<Maybe<int>>,
-	glued : bool
+	glued : bool,
+	filler : bool
 );
 
 ParaWordWidth(rigidWidth : double, softWidth : double, finalRigidWidthDelta : double, finalSoftWidthDelta : double);
@@ -216,7 +229,7 @@ renderParagraph(
 	rtl : bool,
 	widthManager : ParagraphWidthManager
 ) -> Form {
-	renderParagraphEx(p, s, rtl, widthManager, None(), idfn, defaultWigiRenderParameters);
+	renderParagraphEx(map(p, \e -> ParagraphElementWithInfo(e, false)), s, rtl, widthManager, None(), idfn, defaultWigiRenderParameters);
 }
 
 paraAtomic2form(pa : ParaAtomic, pos : WordPositionInLine) -> Form {
@@ -245,7 +258,7 @@ paraWordWord2form(word : ParaWord, pos : WordPositionInLine) -> Form {
 defaultFontSizeStyle = FontSize(14.0);
 zeroParaWordWidth = ParaWordWidth(0.0, 0.0, 0.0, 0.0);
 emptyParaWordGroup = ParaWordGroup([], ref zeroParaWordWidth);
-emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None(), make(None()), false);
+emptyParaWord = ParaWord(Empty(), const(zeroMetrics), Empty(), Empty(), None(), make(None()), false, false);
 paraLinePartFRemake = isUrlParameterTrue("plpf");
 paraLinePartFRemakeD = b2d(paraLinePartFRemake);
 
@@ -296,7 +309,7 @@ getParaWordWidthValue(w : ParaWordWidth, textScale : double) -> double {
 }
 
 renderParagraphEx(
-	p : [ParagraphElement],
+	p : [ParagraphElementWithInfo],
 	s : [ParagraphStyle],
 	rtl : bool,
 	widthManager : ParagraphWidthManager,
@@ -337,7 +350,7 @@ renderParagraphEx(
 	accessForceNoMakeClip = tightWidth && isSingleLine;
 
 	// Expand elements into word-units
-	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
+	glued : List<ParaAtomicWithInfo> = expandGlueFragments(map(p, \e -> ParaElementWithInfo(e.element, e.filler)), 0, false, makeList(), makeList(), 0);
 	// Construct our ParaWords
 	gluedArr = list2array(glued);
 	words : [ParaWord] = mapi(gluedArr, \i, word -> makeParaWord(
@@ -351,11 +364,6 @@ renderParagraphEx(
 		firstChr = strsubsmart(getWordText(currentWord), 0, 1);
 		isWordJoiner(lastChr) || isWordJoiner(firstChr)
 	};
-	keepFormTogetherOrWithMark = \form1, i -> {
-		keepFormTogether(form1) || isParagraphMarked && i <= 1;
-	};
-	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), ref zeroParaWordWidth);
-
 	paraWordGhosted2form : (ParaWord, WordPositionInLine) -> Form = \word : ParaWord, pos : WordPositionInLine -> {
 		g = word.ghosted;
 		switch (g : Ghosted) {
@@ -365,6 +373,12 @@ renderParagraphEx(
 			CoordinateInspectElement(__, f) : f;
 		};
 	};
+	keepFormTogetherOrWithMark = \word, i -> {
+		!word.filler
+		&& keepFormTogether(paraWordGhosted2form(word, WordPositionInLineEnd()))
+		|| isParagraphMarked && i <= 1;
+	};
+	addWordToGroup = \group, word -> ParaWordGroup(arrayPush(group.words, word), ref zeroParaWordWidth);
 
 	awB = make(0.0);
 	update = make(0);
@@ -428,7 +442,18 @@ renderParagraphEx(
 				CoordinateInspectElement(__, __) : None();
 			}
 		})
-	));
+	))
+	|> (\f -> {
+		if (indent == 0.0) {
+			f
+		} else {
+			awBindent = make(0.0);
+			Constructor(
+				OverrideAvailableWidthB(awBindent, f),
+				\-> connectSelectDistinctu(awB, awBindent, \aw -> aw - abs(indent))
+			)
+		}
+	});
 
 	wordGroups = foldi(words, makeList(), \i, acc : List<ParaWordGroup>, word -> {
 		wordForm = ParaWord(word with form =
@@ -454,7 +479,12 @@ renderParagraphEx(
 			NewLine() : true;
 			Space(__) : false;
 			LinePart(st, __, __, __) : lastSpace;
-			default : (!word.glued && !keepFormTogetherOrWithMark(paraWordGhosted2form(word, WordPositionInLineEnd()), i) && !isUnbreakableSym) || lastSpace;
+			default : {
+				(
+					!word.glued && !keepFormTogetherOrWithMark(word, i) && !isUnbreakableSym
+				)
+				|| lastSpace;
+			}
 		} || switch (lastWord.word) {
 			LinePart(st, __, __, allowBreakAfter) : allowBreakAfter;
 			default: false;
@@ -620,14 +650,17 @@ getParaLineInfos(
 	reflowResult = reflowParaWords(wordGroups, availableWidth, indent, rtl, fontSize, textScale);
 	linesCount = length(reflowResult) - 1;
 	a : ParaLinesInfoAcc = foldi(reflowResult, ParaLinesInfoAcc(EmptyList(), 0.0), \i : int, acc : ParaLinesInfoAcc, line : ParaLine -> {
-		words = if (wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && i != linesCount && length(line.words) > 2) {
+		words = if ((wigiRtrimSpace || alignment == Justify() && newJustifyEnabled && length(line.words) > 2) && i != linesCount) {
 			// we don't need spaces in the end of the line becasue if there is filler element in the line spaces will be out of the available width
 			// and we can't move space on the next line because it will break alignment so we just trim spaces in the end.
-			if (isParaWordSpaceForm(lastElement(line.words, emptyParaWord))) {
-				foldr(line.words, makeList(), \acc1, paraWord -> {
+			endElement = if (rtl) firstElement else lastElement;
+			endFold = if (rtl) fold else foldr;
+			reverseOrNot = if (rtl) idfn else reverseA;
+			if (isParaWordSpaceForm(endElement(line.words, emptyParaWord))) {
+				endFold(line.words, makeList(), \acc1, paraWord -> {
 					if (acc1 == EmptyList() && isParaWordSpaceForm(paraWord)) acc1
 					else Cons(paraWord, acc1);
-				}) |> list2array |> reverseA;
+				}) |> list2array |> reverseOrNot;
 			} else line.words;
 		} else line.words;
 		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount, ignoreLetterSpacing);
@@ -668,62 +701,100 @@ getParaLineInfos(
 	list2array(a.lines);
 }
 
+ParaAtomicWithInfo(
+	element: ParaAtomic,
+	filler: bool
+);
+
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
 expandGlueFragments(
-	elements : [ParaElement],
+	elements : [ParaElementWithInfo],
+	currentPosition : int,
 	glueNext : bool,
-	running : List<ParaAtomic>,
-	acc : List<ParaAtomic>,
+	running : List<ParaAtomicWithInfo>,
+	acc : List<ParaAtomicWithInfo>,
 	runLength : int,
-) -> List<ParaAtomic> {
+) -> List<ParaAtomicWithInfo> {
 
 	flush = \ -> {
 		if (runLength == 0) {
 			acc;
 		} else if (runLength == 1) {
-			Cons(headList(running, Empty()), acc);
+			Cons(headList(running, ParaAtomicWithInfo(Empty(), false)), acc);
 		} else {
 			revRunning = reverseList(running);
 			foldList(
 				tailList(revRunning),
-				Cons(headList(revRunning, Empty()), acc),
-				\acc2, ra : ParaAtomic -> Cons(ra |> ParaWordGlued, acc2)
+				Cons(headList(revRunning, ParaAtomicWithInfo(Empty(), false)), acc),
+				\acc2, ra : ParaAtomicWithInfo -> Cons(ParaAtomicWithInfo(ra.element |> ParaWordGlued, ra.filler), acc2)
 			);
 		};
 	};
 
 	n = length(elements);
-	if (n == 0) {
+	if (n - currentPosition == 0) {
 		flush();
 	} else {
-		rest : [ParaElement] = tail(elements);
-		e = elements[0];
-		glueNextFn : (ParaAtomic) -> List<ParaAtomic> = \en -> {
-			if (glueNext) {
-				expandGlueFragments(rest, false, Cons(en, running), acc, runLength + 1);
-			} else {
-				expandGlueFragments(rest, false, Cons(en, makeList()), flush(), 1);
-			}
-		}
-		switch (e : ParaElement) {
-			GlueFragments() : expandGlueFragments(rest, true, running, acc, runLength);
+		e = elements[currentPosition];
+		switch (e.element : ParaElement) {
+			GlueFragments() : expandGlueFragments(elements, currentPosition+1, true, running, acc, runLength);
 			TextFragments(parts) : {
-				p : [WrapElement] = list2array(parts);
-				expandGlueFragments(concat(p, rest), glueNext, running, acc, runLength);
+				p : [ParaElementWithInfo] = map(list2array(parts), \p -> ParaElementWithInfo(p, e.filler));
+				expandGlueFragments(concat(p, subrange(elements, currentPosition + 1, n - currentPosition)), 0, glueNext, running, acc, runLength);
 			}
 			WordWrapInteractive(wElem, id) : {
 				switch (wElem :  NonInteractiveWrapElement) {
-					GlueFragments(): expandGlueFragments(rest, true, running, acc, runLength);
+					GlueFragments(): expandGlueFragments(elements, currentPosition+1, true, running, acc, runLength);
 
-					NewLine(): InteractiveParaAtomic(wElem, id) |> glueNextFn;
-					Space(f) : InteractiveParaAtomic(wElem, id) |> glueNextFn;
-					InspectElement(inspector, element): InteractiveParaAtomic(element, id) |> glueNextFn;
-					LinePart(pr, i, po, __): InteractiveParaAtomic(wElem, id) |> glueNextFn;
-					Form(): InteractiveParaAtomic(wElem, id) |> glueNextFn;
+					NewLine(): {
+						en = InteractiveParaAtomic(wElem, id);
+						if (glueNext) {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), running), acc, runLength + 1);
+						} else {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), makeList()), flush(), 1);
+						}
+					}
+					Space(f) : {
+						en = InteractiveParaAtomic(wElem, id);
+						if (glueNext) {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), running), acc, runLength + 1);
+						} else {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), makeList()), flush(), 1);
+						}
+					}
+					InspectElement(inspector, element): {
+						en = InteractiveParaAtomic(element, id);
+						if (glueNext) {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), running), acc, runLength + 1);
+						} else {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), makeList()), flush(), 1);
+						}
+
+					}
+					LinePart(pr, i, po, __): {
+						en = InteractiveParaAtomic(wElem, id);
+						if (glueNext) {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), running), acc, runLength + 1);
+						} else {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), makeList()), flush(), 1);
+						}
+					}
+					Form(): {
+						en = InteractiveParaAtomic(wElem, id);
+						if (glueNext) {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), running), acc, runLength + 1);
+						} else {
+							expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(en, e.filler), makeList()), flush(), 1);
+						}
+					}
 				}
 			}
 			ParaAtomic(): {
-				glueNextFn(e)
+				if (glueNext) {
+					expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(e.element, e.filler), running), acc, runLength + 1);
+				} else {
+					expandGlueFragments(elements, currentPosition+1, false, Cons(ParaAtomicWithInfo(e.element, e.filler), makeList()), flush(), 1);
+				}
 			}
 		}
 	}
@@ -734,19 +805,20 @@ makeInteractiveParaWord(
 	interactivityIdM : Maybe<int>,
 	ignoreLetterSpacing : bool,
 	fontWrapper : ([CharacterStyle]) -> [CharacterStyle],
-	glued : bool
+	glued : bool,
+	filler : bool
 ) -> ParaWord {
 	s2w = \s : Pair<Form, Transform<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
-			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM, make(None()), glued);
+			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM, make(None()), glued, filler);
 		} else {
 			x = make(0.0);
 			y = make(0.0);
-			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM, make(None()), glued);
+			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM, make(None()), glued, filler);
 		}
 	}
 	switch (w : ParaAtomic) {
-		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM, make(None()), glued);
+		NewLine() : ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM, make(None()), glued, false);
 		// We choose the middle part
 		LinePart(f, p, e, allowBreakAfter) : {
 			dynFormSizePair = getDynamicFormSize2(p, true);
@@ -772,7 +844,8 @@ makeInteractiveParaWord(
 				Empty(),
 				interactivityIdM,
 				make(None()),
-				glued
+				glued,
+				filler
 			);
 		}
 		Space(s) : {
@@ -781,10 +854,10 @@ makeInteractiveParaWord(
 				default: s;
 			}
 			dynFormSizePair = getJoinableTextMetrics(innerForm, true, ignoreLetterSpacing);
-			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()), glued);
+			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM, make(None()), glued, false);
 		}
 		ParaWordGlued(wg) : {
-			makeInteractiveParaWord(wg, interactivityIdM, ignoreLetterSpacing, fontWrapper, true);
+			makeInteractiveParaWord(wg, interactivityIdM, ignoreLetterSpacing, fontWrapper, true, filler);
 		}
 		InspectElement(inspector, e) : {
 			makeWord = \word, form -> ParaWord(
@@ -794,7 +867,8 @@ makeInteractiveParaWord(
 				Empty(),
 				interactivityIdM,
 				make(None()),
-				glued
+				glued,
+				filler
 			);
 			switch (e : InspectableElement) {
 				Text(t, s) : {
@@ -808,12 +882,12 @@ makeInteractiveParaWord(
 				}
 				Form(): {
 					s = getJoinableTextMetrics(e, false, ignoreLetterSpacing);
-					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM, make(None()), glued);
+					ParaWord(Empty(), s.second, InspectGhost(inspector, s.first), Empty(), interactivityIdM, make(None()), glued, filler);
 				}
 			}
 		}
 		InteractiveParaAtomic(word, id) : {
-			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing, fontWrapper, glued);
+			makeInteractiveParaWord(word, Some(id), ignoreLetterSpacing, fontWrapper, glued, filler);
 		}
 		Text(t, s) : {
 			opt = Text(t, fontWrapper(s)) |> optimizeForm;
@@ -861,24 +935,26 @@ getJoinableTextMetrics(
 	}
 }
 
-makeParaWord(w : ParaAtomic, ignoreLetterSpacing : bool, fontWrapper : ([CharacterStyle]) -> [CharacterStyle], glued : bool) -> ParaWord {
-	switch (w) {
+makeParaWord(w : ParaAtomicWithInfo, ignoreLetterSpacing : bool, fontWrapper : ([CharacterStyle]) -> [CharacterStyle], glued : bool) -> ParaWord {
+	switch (w.element) {
 		ParaWordGlued(w2): {
-			makeParaWord(w2, ignoreLetterSpacing, fontWrapper, true);
+			makeParaWord(ParaAtomicWithInfo(w2, w.filler), ignoreLetterSpacing, fontWrapper, true);
 		}
 		InteractiveParaAtomic(word, id) : makeInteractiveParaWord(
 			word,
 			Some(id),
 			ignoreLetterSpacing,
 			fontWrapper,
-			glued
+			glued,
+			w.filler
 		);
 		default : makeInteractiveParaWord(
-			w,
+			w.element,
 			None(),
 			ignoreLetterSpacing,
 			fontWrapper,
-			glued
+			glued,
+			w.filler
 		);
 	}
 }
@@ -1241,7 +1317,7 @@ RenderLine(
 	accessForceNoMakeClip : bool
 ) -> ParaLineResult {
 	remaining = width - info.lineWidth;
-	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, if (newJustifyEnabled && alignment == Justify()) StartAlign() else alignment);
+	alignmentOffset = ref calcParaLineAlignmentOffset(remaining, info.lineIndent, rtl, alignment);
 
 	wordsCount = length(info.optimizedLine) - 1;
 
@@ -1309,7 +1385,6 @@ RenderLine(
 
 		justifyOffset = if (isMarked && i == 0 && lineNumber == 0) 0.0
 		else if (isSpace) interWord else 0.0;
-
 		r = switch (f : GhostForm) {
 			Empty() : None();
 			Ghost(xc, yc, fm) : {
@@ -1538,19 +1613,14 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
 			lastWord = i == wordsCount;
 			defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
-			switch (w.word) {
-				Space(spaceForm): {
-					switch (spaceForm : GhostForm) {
-						Text(text, __) : {
-							if (text == " ") {
-								if (lastWord) defValue() else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
-							} else defValue()
-						};
-						default: defValue()
-					}
+			switch (w.form : GhostForm) {
+				Text(text, __) : {
+					if (text == " " || text == nonBreakableSpace) {
+						if (lastWord) defValue() else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
+					} else defValue()
 				};
-				default: defValue();
-			}
+				default: defValue()
+			};
 		});
 		if (spacesAndWordsWidth.first > 0) {
 			(availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
@@ -1612,18 +1682,13 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 								}
 
 								additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
-									switch (w) {
-										Space(spaceForm): {
-											switch (spaceForm : GhostForm) {
-												Text(text, __) : {
-													if (text == " ") {
-														wordSpacing;
-													} else 0.0
-												};
-												default: 0.0
-											}
-										}
-										default: 0.0;
+									switch (f) {
+										Text(text, __) : {
+											if (text == " " || text == nonBreakableSpace) {
+												wordSpacing;
+											} else 0.0
+										};
+										default: 0.0
 									};
 								} else 0.0;
 
@@ -1825,14 +1890,14 @@ makeSkipOrderCheck(st : [CharacterStyle]) -> [CharacterStyle] {
 
 use_dynamic_text_metrics = isSafariBrowser() && !isUrlParameterFalse("dynamic_text_metrics");
 
-paragraphElement2string(e : ParagraphElement) -> string {
+paragraphElement2string(e : ParagraphElementWithInfo) -> string {
 	handleNonInteractive = \acc, nonintel -> switch (nonintel) {
 		Text(text, __): acc + text;
 		Space(__): acc + " ";
 		Form(): acc + getFormText(nonintel);
 		default: acc;
 	};
-	switch (e) {
+	switch (e.element) {
 		TextFragments(list): {
 			foldList(list |> reverseList, "", \acc2, e2 -> {
 				switch (e2) {
@@ -1841,7 +1906,7 @@ paragraphElement2string(e : ParagraphElement) -> string {
 				}
 			})
 		}
-		Form(): getFormText(e);
+		Form(): getFormText(e.element);
 		GlueFragments(): "";
 	}
 }
@@ -1880,7 +1945,7 @@ makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi
 	}
 }
 
-makeWigiTrace_Form(functionName : string, words : [ParagraphElement]) -> WigiTraceApi {
+makeWigiTrace_Form(functionName : string, words : [ParagraphElementWithInfo]) -> WigiTraceApi {
 	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> words, paragraphElement2string))
 }
 
