@@ -938,7 +938,7 @@ class RenderSupport {
 	private static var prevInvalidateRenderable = false;
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
-		Browser.window.addEventListener('resize', Platform.isWKWebView ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
+		Browser.window.addEventListener('resize', Platform.isWKWebView || (Platform.isIOS && ProgressiveWebTools.isRunningPWA()) ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
 		Browser.window.addEventListener('blur', function () {
 			PageWasHidden = true;
 
@@ -3726,6 +3726,32 @@ class RenderSupport {
 			}
 
 			fullWindowTrigger(fw);
+		}
+	}
+
+	public static function requestFullScreenClip(clip : FlowContainer) {
+		if (IsFullScreen || clip == null || untyped !clip.isNativeWidget) return;
+		var nativeWidget = clip.nativeWidget;
+		if (nativeWidget != null) {
+			var elementBRect = nativeWidget.getBoundingClientRect();
+			requestFullScreen(nativeWidget);
+			// To keep in sync mouse coordinates with fullscreen content
+			once("fullscreen", function() {
+				PixiStage.nativeWidget.style.position = 'absolute';
+				PixiStage.nativeWidget.style.left = '${-elementBRect.left}px';
+				PixiStage.nativeWidget.style.top = '${-elementBRect.top}px';
+			});
+		}
+	}
+
+	public static function exitFullScreenClip(clip : FlowContainer) {
+		if (clip == null || untyped !clip.isNativeWidget) return;
+		var nativeWidget = clip.nativeWidget;
+		if (nativeWidget != null) {
+			exitFullScreen(nativeWidget);
+			PixiStage.nativeWidget.style.position = null;
+			PixiStage.nativeWidget.style.left = null;
+			PixiStage.nativeWidget.style.top = null;
 		}
 	}
 

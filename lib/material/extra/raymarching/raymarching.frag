@@ -5,6 +5,7 @@ out vec4 fragColor;
 
 uniform vec2 screenSize;
 uniform vec3 rayOrigin;
+uniform mat4 projection;
 uniform mat4 view;
 
 const int numTextures = %numTextures%; //max 16
@@ -536,6 +537,9 @@ vec4 getColor(vec2 uv) {
 
 	if (oiSimple.d < MAX_DIST) {
 		vec3 p = rayOrigin + rayDirection * oiSimple.d;
+		vec4 ndc = projection * inverse(view) * vec4(p, 1);
+		gl_FragDepth = (ndc.z / ndc.w) * .5f + .5f;
+
 		vec3 normal = getObjectNormal(p);
 		ObjectInfo oi = oiSimple;
 		if (!oi.topLevel) {

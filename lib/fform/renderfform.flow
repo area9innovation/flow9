@@ -193,6 +193,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				cache = ref true;
 				onlydl = ref false;
 				picErrorHandler = ref nop1;
+				onWarning = ref nop1;
 				onLoaded = ref nop;
 				realSizeFn = ref nop1;
 				picAltText = ref "";
@@ -206,6 +207,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						DontCache(): cache := false;
 						OnlyDownloadToCache(): onlydl := true;
 						OnLoadingError(fn): picErrorHandler := fn;
+						OnWarning(fn): onWarning := fn;
 						OnLoaded(fn): {
 							onLoaded := {
 								prevOnLoaded = ^onLoaded;
@@ -251,13 +253,17 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							},
 							\er -> {
 								if (^clipalive) {
-									e = "Cannot load " + url + " " + er;
+									if (startsWith(er, "Warning")) {
+										^onWarning(er);
+									} else {
+										e = "Cannot load " + url + " " + er;
 
-									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-									nextDistinct(wh, zeroWH);
+										CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+										nextDistinct(wh, zeroWH);
 
-									^picErrorHandler(e);
-									decreaseFFilesCount();
+										^picErrorHandler(e);
+										decreaseFFilesCount();
+									}
 								} else {
 									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
 
@@ -282,11 +288,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								^onLoaded();
 							},
 							\e -> {
-								CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-								nextDistinct(wh, zeroWH);
+								if (startsWith(e, "Warning")) {
+									^onWarning(e);
+								} else {
+									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+									nextDistinct(wh, zeroWH);
 
-								^picErrorHandler(e);
-								decreaseFFilesCount();
+									^picErrorHandler(e);
+									decreaseFFilesCount();
+								}
 							},
 							^onlydl,
 							^picAltText
@@ -725,10 +735,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				d.capabilities
 			);
 		}
-		FFullScreen(fullscreen, wh, form): {
+		FFullScreen2(fullscreen, wh, form, appendToMainStage): {
+			resizeUns = initUnsM();
 			attachFChildAndCapability(
 				rform,
-				renderFForm(FFullWindow(fullscreen, wh, form), zorder),
+				renderFForm(if (appendToMainStage) FFullWindow(fullscreen, wh, form) else form, zorder),
 				[],
 				\clip -> {
 					changeFullscreen = \fsc -> {
@@ -738,11 +749,28 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							removeFullScreenTarget(clip);
 						}
 
-						toggleFullScreen(fsc);
+						if (appendToMainStage) {
+							toggleFullScreen(fsc);
+						} else {
+							if (fsc) {
+								rootId = getRenderRoot();
+								nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+								setUnsM(resizeUns, monitorFResize(wh, rootId));
+								requestFullScreen(clip)
+							}
+							else {
+								dispUnsM(resizeUns);
+								exitFullScreen(clip);
+							}
+						}
 					}
 
 					if (getValue(fullscreen)) {
-						changeFullscreen(true);
+						if (appendToMainStage) {
+							changeFullscreen(true);
+						} else {
+							timer(200, \ -> changeFullscreen(true));
+						}
 					}
 
 					ofsd = onFullScreen(\change -> {
