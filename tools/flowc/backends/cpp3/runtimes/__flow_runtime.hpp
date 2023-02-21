@@ -948,7 +948,7 @@ inline void toStringRc(T v, string& str) {
 	else if constexpr (std::is_same_v<T, Bool>) str.append(bool2string(v));
 	else if constexpr (std::is_same_v<T, Double>) str.append(int2string(v));
 	else if constexpr (std::is_same_v<T, String*>) { appendEscaped(v, str); decRc(v); }
-	else if constexpr (std::is_same_v<T, Flow*>) str.append(flow2stringRc(v)); 
+	else if constexpr (std::is_same_v<T, Flow*>) { String* s = flow2stringRc(v); str.append(s->str); decRc(s); }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		str.append(u"[");
 		Int size = v->size();

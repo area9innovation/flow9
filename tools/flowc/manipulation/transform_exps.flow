@@ -117,6 +117,8 @@ fiExpChangeAndOr2If(x: FiExp) -> FiExp;
 
 fiExpShortcutIf(x: FiExp) -> FiExp;
 
+fiExpReduceChainLets(x: FiExp) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -369,11 +371,60 @@ fiFixVarInSameStructType1(e : FiExp) -> FiExp {
 					v1 = vars[1];
 					fix_vars = \old: FiVar, new: FiVar -> {
 						prim_name = "__prim_" + old.name;
+						/* Example: 
+							if (isSameStructType(acc, el)) {
+								t : ?? = cast(flow(el) : flow -> ??);
+								...
+							} ...
+						*/
 						e2_prim = FiLet(prim_name, new.type, 
 							FiCast(old, old.type, new.type, new.type, start),
 							fiRenameVar(e2, old.name, prim_name), type, start
 						);
-						FiIf(x with e2 = e2_prim);
+						/*
+							if (isSameStructType(acc, el)) {
+								__prim_el : ?? = cast(el : ? -> ??);
+								t : ?? = cast(flow(__prim_el) : flow -> ??);
+								...
+							} ...
+						*/
+						e2_prim_prim = mapFiExp(e2_prim, \y ->
+							switch (y) {
+								FiCast(y_e, y_from, y_to, y_type, __): {
+									if (!fiEqualTypes(new.type, y_type)) y else {
+										switch (y_e) {
+											FiCall(fn, args, __,__): {
+												switch (fn) {
+													FiVar(fn_name,__,__): {
+														if (fn_name != "flow") y else {
+															switch (args[0]) {
+																FiVar(arg_name,__,__): {
+																	if (arg_name != prim_name) y else {
+																		/*
+																			if (isSameStructType(acc, el)) {
+																				__prim_el : ?? = cast(el : ? -> ??);
+																				t : ?? = __prim_el;
+																				...
+																			} ...
+																		*/
+																		args[0];
+																	}
+																}
+																default: y;
+															}
+														}
+													}
+													default: y;
+												}
+											}
+											default: y;
+										}
+									}
+								}
+								default: y;
+							}
+						);
+						FiIf(x with e2 = e2_prim_prim);
 					}
 					switch (fiVarTypeInExpr(e2, v0.name)) {
 						Some(v0_prim): {
@@ -708,7 +759,7 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 			/*if (x != x2) {
 				println(
 					"x: " + toStringFormatted(x) + "\n" +
-					//"x1: " + toStringFormatted(x1) + "\n" +
+					"x1: " + toStringFormatted(x1) + "\n" +
 					"x2: " + toStringFormatted(x2) + "\n"
 				);
 			}*/
@@ -1234,3 +1285,16 @@ fiExpShortcutIf(x: FiExp) -> FiExp {
 	});
 }
 
+fiExpReduceChainLets(x: FiExp) -> FiExp {
+	mapFiExp(x, \e -> switch (e) {
+		FiLet(v, t1, e1, e2,__,__): {
+			switch (e1) {
+				FiVar(w,__,__): {
+					fiRenameVar(e2, v, w);
+				}
+				default: e;
+			}
+		}
+		default: e;
+	});
+}
