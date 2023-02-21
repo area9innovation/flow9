@@ -1607,16 +1607,16 @@ MMenuLines2Material(
 					style,
 					[
 						MOnClick(onClick),
-						extractStruct(_style, AccessRole(if (popupRole == "menu") "menuitem" else "option")),
+						extractStruct(_style, AccessRole(if (popupRole == "menu") "button" else "option")),
 						MRippleType(const(MRippleFill())),
 						MHighlightOnFocus(const(true)),
 						MHighlightOnHover(const(true)),
 						MFocusOnDown(ref true),
-						FAccessAttribute("id", const(id)),
 						FAccessAttribute("aria-selected", const(if (popupRole == "menu") "" else b2s(selected))),
 						extractStruct(_style, MRippleOutlineEnabled(const(false))),
 						MFocused(focused)
 					]
+					|> (\arr -> if (popupRole == "menu") arr else arrayPush(arr, FAccessAttribute("id", const(id))))
 					|> (\arr -> focusOnOpen(i, arr, Some(selected)))
 					|> (\arr -> eitherMap(title, \t -> arrayPush(arr, extractStruct(_style, MButtonTitle(const(t)))), arr))
 				);
@@ -1624,8 +1624,9 @@ MMenuLines2Material(
 
 			primaryWidth = make(0.);
 			secondaryWidth = make(0.);
+			lineAlpha = make(0.);
 
-			MComponent2T(state.manager, parent, "MMenuSingleLine", focusState, \focus ->  // Display chosen item when expanded
+			lineContent =
 				eitherFn(title,
 					\t -> state.makeTitle(parent, lineTextStyle, const(t), visuallySelected, itemOnTop(i), Some(primaryWidth), Some(secondaryWidth)),
 					\ ->
@@ -1635,21 +1636,38 @@ MMenuLines2Material(
 				)
 				|> (\ttl -> TAccess([FAccessHidden()], ttl))
 				|> addActions(parent, style, visuallySelected, false, primaryWidth, secondaryWidth)
-				|> (\t ->
-					TAlpha(
-						getMenuAlpha(focus, parent),
-						TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t)
+				|> (\t -> TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t))
+				|> (\t -> TAlpha(lineAlpha, t));
+
+
+			wrapConstructors = \focus, t ->
+				TConstruct(
+					[
+						makeSubscribe2(fmax(focus.hover, focus.down), \h -> if (h) nextDistinct(hovered, i)),
+						makeSubscribe(focus.focused, \foc -> if (foc) nextDistinct(state.activeDescendantId, id)),
+						\ -> fconnect(getMenuAlpha(focus, focus.parent), lineAlpha)
+					],
+					t
+				);
+
+			(
+				if (popupRole == "menu")
+					TCopySize2(lineContent, \sz, tr ->
+						TGroup2(
+							tr,
+							MComponent2T(state.manager, parent, "MMenuSingleLineButton", focusState, \focus -> wrapConstructors(focus, sz), state.m2t)
+						)
+						|> (\t -> TAccess(
+							[
+								AccessRole("menuitem"),
+								TagName("div"),
+								FAccessAttribute("id", const(id)),
+							],
+							t
+						))
 					)
-				)
-				|> (\f2 ->
-					TConstruct(
-						[
-							makeSubscribe2(fmax(focus.hover, focus.down), \h -> if (h) nextDistinct(hovered, i)),
-							makeSubscribe(focus.focused, \foc -> if (foc) nextDistinct(state.activeDescendantId, id))
-						],
-						f2
-					)
-				), state.m2t
+				else
+					MComponent2T(state.manager, parent, "MMenuSingleLine", focusState, \focus -> wrapConstructors(focus, lineContent), state.m2t)
 			)
 			|> if (isSome(title)) makeTropicConstantHeightDef(hgt) else idfn
 		});
