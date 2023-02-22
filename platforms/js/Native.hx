@@ -1410,6 +1410,10 @@ class Native {
 		return false;
 	}
 
+	public static function setFileContentBinaryConvertToUTF8(file : String, content : String) : Bool {
+		return setFileContentBinaryCommon(file, content, true);
+	}
+
 	public static function setFileContentBinary(file : String, content : Dynamic) : Bool {
 		return setFileContentBinaryCommon(file, content, false);
 	}
