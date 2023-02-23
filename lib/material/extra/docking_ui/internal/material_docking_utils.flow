@@ -14,7 +14,7 @@ export {
 	// Undock panel
 	undockPanel(state : MDockingState, panelId : int) -> void;
 	// Populate docking areas tree, and returns areaId
-	initializeDockingAreas(state : MDockingState, areaTitle : string) -> void;
+	initializeDockingAreas(state : MDockingState, areaTitle : string, areaStyle : [MDockingAreaStyle]) -> void;
 	// Estimate size for panel's resizable container
 	calculatePanelH(isColumn : bool, state : MDockingState, colA : [int], en : bool, se : bool, ex : bool, pID : int) -> double;
 	// Correct panel size
@@ -30,10 +30,11 @@ export {
 	) -> () -> () -> void;
 
 	// Handles & buttons
-	makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material;
+	makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool) -> Material;
 	makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material;
 	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool, light : bool) -> Material;
-	makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, aStyle : [MDockingAreaStyle], style : [MDockingStyle]) -> Material;
+	makeMDockingDottedHandle(state : MDockingState, color : MColor) -> Material;
+	makeSideExpanderBtn(isColumn : bool, state : MDockingState,  areaId : int, colA : [int], light : bool, isEdge : bool, style : [MDockingStyle]) -> Material;
 	makeMDIconToggleButton(boolB : DynamicBehaviour<bool>, iconOn : string, iconOff : string, tooltipOn : string, tooltipOff : string, iconSize: double, clickFn : () -> void, iconColor : MColor, fillOp : double) -> Material;
 
 	// Utils
@@ -74,10 +75,9 @@ containsDockingToolbarButtons(state : MDockingState, colA : [int]) -> bool {
 	fold(colA, false, \acc, pId -> acc || isSameStructType(getValue(state.content)[pId], MDToolbarContent([])))
 }
 
-
-initializeDockingAreas(state : MDockingState, areaTitle : string) -> void {
-	areas = getValue(state.dockingAreas);
+initializeDockingAreas(state : MDockingState, areaTitle : string, areaStyle : [MDockingAreaStyle]) -> void {
 	areaId = lastElement(sort(getTreeValues(getValue(state.dockingAreas))), 0) + 10;
+	next(state.areaStyle, setTree(getValue(state.areaStyle), areaId, areaStyle));
 	next(state.dockingAreas, setTree(getValue(state.dockingAreas), areaTitle, areaId));
 }
 
@@ -262,7 +262,7 @@ makeMDIconToggleButton(
 		) |> MCenterY
 	}
 
-makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool, style : [MDockingStyle]) -> Material {
+makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool) -> Material {
 	dockingSeparatorSize = getDSeparatorSize(isColumn, state.style);
 	dragHandleSize = makeVSize(dockingSeparatorSize, isColumn);
 	draggingBarInactive = \lg : bool -> TRectangle([MFill(separatorColorFn(lg, state.style))], dragHandleSize);
@@ -286,10 +286,12 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 	fillSpace = contains(pstyle, MDToolbarFullSizeFixed());
 
 	handleH = 26.0;
-	handleW = 2.0; //4.0;
+	handleW = 2.0;
 	helperSizeMobile = makeColFixedSize(28.0, topBarH, isColumn);
 	helperSizeDocked = makeHSize(topBarH, isColumn);
 	isHovering = make(false);
+
+	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), []);  // REMOVE
 
 	dontMoveHandle =
 		TRounded4(6.0, [MFill(color), FillOpacity(0.2)], makeHSize(handleW, isColumn)) 
@@ -336,7 +338,7 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 					MCenterIn(
 						MSelect(fselect2(manager.manager.dragging, isHovering, FLift2(\dr, h -> if (dr > 0) false else h)), \b -> {
 							TRounded4(dockingRadius,
-								[MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 0.3)], 
+								[MFill(if (b) dockingDropLineHoverColor else color), FillOpacity(if (b) 0.8 else 0.15)], 
 								makeColFixedSize(16.0, handleW, isColumn)
 							) 	
 							|> (\m -> if (isColumn && !isToolbar) MLines2(m |> MBorderTop(dockingBarHeightToolbar / 2.0), TFillY()) else m)
@@ -345,31 +347,31 @@ makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, c
 					), 
 					true
 				) 
+				// |> (\m -> addTooltip(_(if (docked) "undock panel" else "dock panel"), m))
 				|> (\m -> if (enableHover) MInteractive([TMouseInside(isHovering, false)], m) else m)
 			) 
 
 	if (docked) {
 		if (dontMove || fillSpace) dontMoveHandle else dragHandleDocked
 	} else dragHandleMobile
-};
-
-reverseSideExpandedinColA(state : MDockingState, colA : [int]) -> void {
-	seA  : [DynamicBehaviour<bool>] = map(getValue(state.sideExpanded), \se -> make(getValue(se)));
-	iter(colA, \pId -> reverseBehaviour(seA[pId]));
-	// Reverse in one step
-	nextDistinct(state.sideExpanded, seA);
 }
 
-makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light : bool, aStyle : [MDockingAreaStyle], style : [MDockingStyle]) -> Material {	
-	isRightCol  = contains(aStyle, MDockingRightCols());
+makeSideExpanderBtn(isColumn : bool, state : MDockingState, areaId : int, colA : [int], light : bool, isEdge : bool, style : [MDockingStyle]) -> Material {
+	areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
+	isRightCol  = contains(areaStyle, MDockingRightCols());
+	hideSideMenu  = contains(areaStyle, MDAreaHideSideMenu());
 	dRadius = getDockingRadius(state.style);
 	seB = getValue(state.sideExpanded)[firstElement(colA, 0)];
 	btnSize = makeHSize(sideExpanderButtonSize, isColumn);
 	btnFiller = if(isColumn) TFillX() else TFillY();
+
+	accordionA = eitherMap(tryExtractStruct(areaStyle, MDAreaAccordion(make(false), None())), \some -> [some], []);
+	areaEnableA = eitherMap(tryExtractStruct(areaStyle, MDAreaEnable(make(true))), \some -> [some], []);
+	isAccordion = accordionA != [];
+	isAreaEnable = areaEnableA != [];
+
 	sideExpFn = \ -> {
 		// Update panels in col
-		// println("> REVERSE in:" + toString(colA));
-		// reverseSideExpandedinColA(state, colA);
 		iter(colA, \c -> {
 			reverseBehaviour(getValue(state.sideExpanded)[c])
 		});
@@ -383,6 +385,7 @@ makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light 
 				if (!se) "skip_next" else "skip_previous";
 			}
 			MIcon(sideExpBtnLabel, [MIconSize(sideExpanderIconSize), titleColorFn(lg, style)])
+				|> (\m -> if (se) m |> MBorderLeftRight(8.0) else m)
 				|> (\m -> if (isColumn) m else MRotate90Left(m));
 		})
 	}
@@ -395,11 +398,48 @@ makeSideExpanderBtn(isColumn : bool, state : MDockingState, colA : [int], light 
 		TRounded4(min(2.0, dRadius), [MFill(sideExpanderHoverColorFn(lg, style))], btnSize),
 		if (isRightCol) MColsA([TFillX(), sideExpBtn(lg)]) else sideExpBtn(lg)
 	);
-	MRawButton(sideExpBtnItem(light), sideExpBtnItemHover(light), sideExpBtnItem(light), sideExpBtnItem(light), "", [], [TOnClicked(sideExpFn)]);
+	MGroup2(
+		MRawButton(sideExpBtnItem(light), sideExpBtnItemHover(light), sideExpBtnItem(light), sideExpBtnItem(light), "", [], [TOnClicked(sideExpFn)]),
+		MShowLazy(seB, \ -> {
+			MMenu(MIconButton("more_horiz", nop, [MIconSize(12.0), MIconButtonBorder(0.0)], []), 
+			concatA([
+				if (isAreaEnable) {
+					areaEnable = extractStruct(areaStyle, MDAreaEnable(make(true))).enable;
+					[MMenuCustomLine(
+						MBaselineColsA([
+							MVisible(areaEnable, MIcon("visibility_off", [/*MBlue(800)*/])),
+							MText(_("Hide Docking Area"), []) |> MBorderStart(12.0),
+						]),
+						[MOnClick(\ -> reverseBehaviour(areaEnable))]
+					)] 
+				} else [],
+				if (isAccordion) {
+					accordion = firstElement(accordionA, MDAreaAccordion(make(true), None()));
+					[MMenuCustomLine(
+						MBaselineColsA([
+							MVisible(accordion.enable, MIcon("done", [MBlue(800)])),
+							MText(_((if(getValue(accordion.enable)) "Disable" else "Enable")  + " Accordion Style"), []) |> MBorderStart(12.0),
+						]),
+						[
+							MOnClick(\ -> {
+								if (!getValue(accordion.enable)) {
+									iter(colA, \pID -> {
+										nextDistinct(getValue(state.expanded)[pID], (either(accordion.openPanelName, "all_accordion_panel_closed") == getValue(state.title)[pID]))});
+								}
+								reverseBehaviour(accordion.enable)
+							})
+						]
+					)]
+				} else []
+			]), []) 
+			|> MBorderLeftRight(12.0)
+			|> (\f -> if (if (getDefaultRtl()) !isRightCol else isRightCol) f else MColsA([TFillX(), f]))
+		}) |> showIf((isAccordion || isAreaEnable) && !hideSideMenu && isEdge)
+	)
 }
 
 makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material {
-	dot = TRounded(1.0, 1.0, 1.0, 1.0, [MThemeFill(state.manager, MThemedColor(mobileHandleColorFn(true, style), mobileHandleColorFn(false, style)))], TFixed(1.0, 1.0));
+	dot = TRounded(1.0, 1.0, 1.0, 1.0, [MThemeFill(state.manager, MThemedColor(mobileResizeHandleColorFn(true, style), mobileResizeHandleColorFn(false, style)))], TFixed(1.0, 1.0));
 	gapW = TFixed(2.0, 0.0);
 	gapH = TFixed(0.0, 2.0);
 	helperSize = TFixed(mobileResizeHelperSize, mobileResizeHelperSize);
@@ -422,6 +462,31 @@ makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBeh
 			)
 		)
 	) |> MAlignBottomEndFill
+};
+
+makeMDockingDottedHandle(state : MDockingState, color : MColor) -> Material {
+	dot = TRounded(1.0, 1.0, 1.0, 1.0, [MFill(color)], TFixed(1.0, 1.0));
+	gapW = TFixed(2.0, 0.0);
+	gapH = TFixed(0.0, 2.0);
+	helperSize = TFixed(24.0, dockingBarHeightPanel );
+	MCursor(
+		GrabCursor(),
+		MGroup2(
+			TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], helperSize),
+			MAvailable(
+				MLinesA([
+					MColsA([dot, gapW, dot]),
+					gapH,
+					MColsA([dot, gapW, dot]),
+					gapH,
+					MColsA([dot, gapW, dot]),
+				]) 
+				|> MBorderStart(6.0)
+				|> MCenterY,
+				helperSize
+			)
+		)
+	)
 };
 
 alignEndPanels(state : MDockingState, colA : [int]) -> Pair<[int], [int]> {
