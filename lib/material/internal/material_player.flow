@@ -23,6 +23,9 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			selectedColor = extractStruct(m.style, MSelectedColor(color));
 			backgroundColor = extractStruct(m.style, MPlayerDynamicBackground(const(MDialogMColor(false)))).color;
 			backgroundOpacity = extractStruct(m.style, MPlayerBackgroundOpacity(const(1.0))).opacity;
+			customBarM = tryExtractStruct(m.style, MCustomBar(\__, __, __ -> MEmpty()));
+			dynColorM = tryExtractStruct(m.style, MDynamicColor(const(color)));
+			poster = extractStruct(m.style, MVideoPoster(TEmpty())).poster;
 
 			addBackground = \vt : Tropic -> {
 				TFrameT(zero, zero, fselect2Lift(backgroundColor, backgroundOpacity, \bgc, bgo -> [MFill(MThemeColor2MColor(p, bgc)), FillOpacity(bgo)]), vt)
@@ -192,6 +195,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							manager,
 							p,
 							TVideo(m.filename, videoWH, videoStyle),
+							poster,
 							maybeMap(animatedSubtitles, \sbtl -> Pair(sbtl, subtitlesVisible)),
 							m2t
 						)
@@ -327,6 +331,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 										MButtonTitle(const(_("Video Slider"))),
 										enabled
 									],
+									eitherMap(customBarM, v2a, []),
+									eitherMap(dynColorM, v2a, []),
 									eitherMap(itemsColorM, \itemsColor -> [MInactiveAreaColor(itemsColor)], []),
 									eitherMap(highlightedRanges, \highlighted -> [
 										MSliderHighlightedRanges(fselect(highlighted.ranges, FLift(\ranges -> {
@@ -530,6 +536,15 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				|> TBorderRight(12.)
 				|> (\t -> TVisible(fnot(fand(timeLabelHidden, showVolumeSlider)), t));
 
+			chapterTitle = \p2 -> eitherMap(
+				tryExtractStruct(m.style, MPlayerChapter(const(""))),
+				\ch -> TSelect(ch.title, \title -> MEllipsisText2T(manager, p2,
+					MEllipsisText(title, eitherMap(itemsColorM, v2a, [])),
+					m2t
+				)),
+				TEmpty()
+			);
+
 			playbackRateControlButton = \p2 ->
 				if (playbackRateControl) {
 					tooltipText = const(_("Speed Settings"));
@@ -682,6 +697,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 							volumeControlButton(p3),
 							[
 								timeLabel(p3),
+								chapterTitle(p3),
 								TAttachWidth(TFillX(), panelFillerW)
 							],
 							playbackRateControlButton(p3),
@@ -849,6 +865,7 @@ MVideoWithAnimatedSubtitles(
 			manager,
 			parent,
 			TVideo(filename, wh, style),
+			TEmpty(),
 			Some(Pair(subtitles, const(true))),
 			m2t
 		)
@@ -859,19 +876,22 @@ TVideoWithAnimatedSubtitles(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	video : TVideo,
+	poster : Tropic,
 	subtitles : Maybe<Pair<MAnimatedSubtitles, Transform<bool>>>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
-	videoAreaMetrics = make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(1., 1.)));
-	style = eitherMap(subtitles, \__ -> arrayPush(video.style, FInspectVideoArea(videoAreaMetrics)), video.style);
+	videoAreaMetrics = extractStruct(video.style, FInspectVideoArea(make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(1., 1.))))).metrics;
+	style = eitherMap(subtitles, \__ -> replaceStruct(video.style, FInspectVideoArea(videoAreaMetrics)), video.style);
 
 	applyRange = \scMode, value ->
 		if (scMode.max == -1.) max(scMode.min, value)
 		else forceRange(value, scMode.min, scMode.max);
 
-	TGroup2SameMetrics(
+	TGroupSameMetrics([
 		TVideo(video.filename, video.wh, style),
-		eitherMap(subtitles, \sbtl -> {
+		poster,
+		eitherMap(subtitles,
+			\sbtl -> {
 				areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));
 				areaTopLeft = fselect(videoAreaMetrics, FLift(\vam : FVideoAreaMetrics -> vam.topLeft));
 				scaleMode = tryExtractStruct(sbtl.first.style, FVideoSubtitlesScaleMode(0., 0.));
@@ -905,7 +925,7 @@ TVideoWithAnimatedSubtitles(
 			},
 			TEmpty()
 		)
-	)
+	])
 }
 
 TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : MAnimatedSubtitles, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {

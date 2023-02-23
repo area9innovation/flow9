@@ -16,6 +16,7 @@ export {
 	stageWidthHeight : DynamicBehaviour<Maybe<WidthHeight>> = make(None());
 	fAccessibilityEnabled = ref false;
 	fSvg2GraphicsEnabled = ref !js;
+	isFullScreenActive = make(false);
 }
 
 currentFFormCount = ref 0;
@@ -129,6 +130,7 @@ fullScreenTarget : ref Maybe<native> = ref None();
 
 setFullScreenTargetFlow(clip : native) -> void {
 	fullScreenTarget := Some(clip);
+	nextDistinct(isFullScreenActive, true);
 	setFullScreenTarget(clip);
 }
 
@@ -143,6 +145,7 @@ removeFullScreenTarget(clip : native) -> void {
 		}
 	}
 	resetFullScreenTarget();
+	nextDistinct(isFullScreenActive, false);
 }
 
 renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
@@ -190,6 +193,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				cache = ref true;
 				onlydl = ref false;
 				picErrorHandler = ref nop1;
+				onWarning = ref nop1;
 				onLoaded = ref nop;
 				realSizeFn = ref nop1;
 				picAltText = ref "";
@@ -203,6 +207,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						DontCache(): cache := false;
 						OnlyDownloadToCache(): onlydl := true;
 						OnLoadingError(fn): picErrorHandler := fn;
+						OnWarning(fn): onWarning := fn;
 						OnLoaded(fn): {
 							onLoaded := {
 								prevOnLoaded = ^onLoaded;
@@ -248,13 +253,17 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							},
 							\er -> {
 								if (^clipalive) {
-									e = "Cannot load " + url + " " + er;
+									if (startsWith(er, "Warning")) {
+										^onWarning(er);
+									} else {
+										e = "Cannot load " + url + " " + er;
 
-									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-									nextDistinct(wh, zeroWH);
+										CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+										nextDistinct(wh, zeroWH);
 
-									^picErrorHandler(e);
-									decreaseFFilesCount();
+										^picErrorHandler(e);
+										decreaseFFilesCount();
+									}
 								} else {
 									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
 
@@ -279,11 +288,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								^onLoaded();
 							},
 							\e -> {
-								CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-								nextDistinct(wh, zeroWH);
+								if (startsWith(e, "Warning")) {
+									^onWarning(e);
+								} else {
+									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+									nextDistinct(wh, zeroWH);
 
-								^picErrorHandler(e);
-								decreaseFFilesCount();
+									^picErrorHandler(e);
+									decreaseFFilesCount();
+								}
 							},
 							^onlydl,
 							^picAltText
@@ -722,12 +735,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				d.capabilities
 			);
 		}
-		FFullScreen(fullscreen, wh, form): {
-			fw = make(false);
-
+		FFullScreen2(fullscreen, wh, form, appendToMainStage): {
+			resizeUns = initUnsM();
 			attachFChildAndCapability(
 				rform,
-				renderFForm(FFullWindow(fullscreen, wh, form), zorder),
+				renderFForm(if (appendToMainStage) FFullWindow(fullscreen, wh, form) else form, zorder),
 				[],
 				\clip -> {
 					changeFullscreen = \fsc -> {
@@ -737,12 +749,28 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							removeFullScreenTarget(clip);
 						}
 
-						nextDistinct(fw, fsc);
-						toggleFullScreen(fsc);
+						if (appendToMainStage) {
+							toggleFullScreen(fsc);
+						} else {
+							if (fsc) {
+								rootId = getRenderRoot();
+								nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+								setUnsM(resizeUns, monitorFResize(wh, rootId));
+								requestFullScreen(clip)
+							}
+							else {
+								dispUnsM(resizeUns);
+								exitFullScreen(clip);
+							}
+						}
 					}
 
 					if (getValue(fullscreen)) {
-						changeFullscreen(true);
+						if (appendToMainStage) {
+							changeFullscreen(true);
+						} else {
+							timer(200, \ -> changeFullscreen(true));
+						}
 					}
 
 					ofsd = onFullScreen(\change -> {
@@ -1129,13 +1157,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				role = extractStruct(properties, AccessRole("")).role;
 				tagName = extractStruct(properties, TagName("")).tagName;
 
-				makeAccessClip =
+				defMakeAccessClip =
 					(
 						!contains(["button", "checkbox", "textbox", "video", "iframe"], role) &&
 						!contains(["button", "textarea", "input", "video", "iframe", "span"], tagName) &&
 						!(role == "presentation" && tagName == "p")
 					)
 					|| isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
+
+				makeAccessClip = extractStruct(properties, AccessForceMakeClip(defMakeAccessClip)).makeClip;
 
 				if (makeAccessClip) {
 					attachFChildAndCapability(

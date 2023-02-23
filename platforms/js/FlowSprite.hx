@@ -387,12 +387,20 @@ class FlowSprite extends Sprite {
 				}
 
 				try {
-					if (svgXhr.getResponseHeader("content-type").indexOf("svg") > 0 && svgXhr.response.indexOf("data:img") > 0) {
+					var isContentTypeSvg = svgXhr.getResponseHeader("content-type").indexOf("svg") > 0;
+					if (isContentTypeSvg && svgXhr.response.indexOf("data:img") > 0) {
 						nativeWidget.style.width = null;
 						nativeWidget.style.height = null;
 						nativeWidget.innerHTML = svgXhr.response;
 
 						onLoaded();
+					} else if (isContentTypeSvg && svgXhr.response.indexOf('foreignObject') > 0) {
+						var warnMessage = 'Warning! SVG (' + url + ') has a <foreignObject> inside, which could effect file size and ability to take a screenshot';
+						untyped console.warn(warnMessage);
+						errorFn(warnMessage);
+						// SVG with foreignObject taints canvas, so we have to trick it
+						url = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
+						forceImageElement();
 					} else {
 						forceImageElement();
 					}
@@ -459,6 +467,18 @@ class FlowSprite extends Sprite {
 				if (nativeWidget.naturalWidth != null && nativeWidget.naturalHeight != null && (nativeWidget.naturalWidth > 0 || nativeWidget.naturalHeight > 0)) {
 					widgetBounds.maxX = nativeWidget.naturalWidth;
 					widgetBounds.maxY = nativeWidget.naturalHeight;
+				} else if (isSvg) {
+					var svgElement = nativeWidget.children[0];
+					if (svgElement != null) {
+						var viewBox = svgElement.viewBox.baseVal;
+						var IMG_STANDARD_WIDTH = 300;
+						var IMG_STANDARD_HEIGHT = 150;
+						var svgWidth = viewBox.width;
+						var svgHeight = viewBox.height;
+						var scale = Math.min(1, Math.min(IMG_STANDARD_WIDTH / svgWidth, IMG_STANDARD_HEIGHT / svgHeight));
+						widgetBounds.maxX = svgWidth * scale;
+						widgetBounds.maxY = svgHeight * scale;
+					}
 				} else {
 					Browser.document.body.appendChild(nativeWidget);
 

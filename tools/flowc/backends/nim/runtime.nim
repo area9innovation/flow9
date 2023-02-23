@@ -14,6 +14,9 @@ type
 
 # Runtime for NIM backend
 
+proc println2*[T](t : T): void =
+    echo(t)
+
 proc fcPrintln2*[Ty](x: Ty): void =
   debugEcho $x
 
