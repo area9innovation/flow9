@@ -2062,10 +2062,19 @@ class DisplayObjectHelper {
 			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
 				if (childWidget.getAttribute('flow-force-focus') == 'true') {
 					RenderSupport.once("stagechanged", function() {
+						var childrenArray = untyped Array.from(child.nativeWidget.children);
+						untyped __js__("childrenArray.forEach(ch => ch.setAttribute('aria-hidden', 'true'));");
+						var unhideDialogContent = function() {
+							Native.timer(500, function() {
+								untyped __js__("childrenArray.forEach(ch => ch.removeAttribute('aria-hidden'));");
+							});
+						};
+
 						untyped child.nativeWidget.showModal();
 						RenderSupport.once("stagechanged", function() {
 							if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
 						});
+						unhideDialogContent();
 					});
 				};
 			}
