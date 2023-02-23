@@ -2070,11 +2070,23 @@ class DisplayObjectHelper {
 							});
 						};
 
-						untyped child.nativeWidget.showModal();
-						RenderSupport.once("stagechanged", function() {
-							if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
-						});
-						unhideDialogContent();
+						var dialogTitleArr = untyped Array.from(Browser.document.getElementsByClassName("dialog_title"));
+						if (dialogTitleArr != null && dialogTitleArr[0] != null) {
+							RenderSupport.once("stagechanged", function() {
+								var dialogTitle = dialogTitleArr[0];
+								if (dialogTitle != null) {
+									dialogTitle.setAttribute("tabindex", "-1");
+									dialogTitle.focus();
+								}
+								unhideDialogContent();
+							});
+						} else {
+							untyped child.nativeWidget.showModal();
+							RenderSupport.once("stagechanged", function() {
+								if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
+							});
+							unhideDialogContent();
+						}
 					});
 				};
 			}
