@@ -2,13 +2,159 @@ import ds/array;
 import ds/multiset;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/statements/fs_transform;
+import tools/flowc/statements/fs_utils;
 
 export {
 	fsStatPerceus(s: FsStat, names: FiGlobalNames) -> FsStat;
+	fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat;
+
 	fsExpPerceus(e: FsExp, names: FiGlobalNames) -> FsExp;
 
 	debug_perceus = ref false;
 }
+
+fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
+	// fsMap(s: FsAll, fn: (FsAll) -> FsAll) -> FsAll;
+	id_counter = ref 0;
+	new_id = \-> {
+		id = ^id_counter;
+		id_counter := ^id_counter + 1;
+		id;
+	}
+	s1 = cast(fsMap(s, fsIds(new_id), false): FsAll -> FsStat);
+	if (^debug_perceus) {
+		println("s1 with ids:\n" + 
+			"s:\n" + fs2s(s) + "\n" + 
+			"s1:\n" + fs2s(s1) + "\n"
+			//"s RAW:\n" + toStringFormatted(s1) + "\n"
+		);
+	}
+
+	fs_var_tag_default = 0;
+	fs_var_tag_fn_arg = 1;
+	fs_var_tag_cl_arg = 2;
+	fs_var_tag_local  = 3;
+	fs_var_tag_global = 4;
+	fs_var_tag_global_fn = 5;
+	/*var_tags = fsFold(s1, makeTree(), \acc, x: FsAll -> {
+		switch (x) {
+			FsIf(cond, s1, s2,__):   fsFold(s2, fsFold(s1, fsFold(cond, v, f), f), f);
+			FsSwitch(x,__, cs,__):   do_fold(concat([x], map(cs, \c -> c.body)));
+			FsSeq(ss,__):            do_fold(ss);
+			FsLet(__,__, e1, s1,__): fsFold(s1, fsFold(e1, v, f), f);
+			FsLet1(__,__, e1,__):    fsFold(e1, v, f);
+			FsWrapExp(e1,__):        fsFold(e1, v, f);
+			FsRet(e1,__):            fsFold(e1, v, f);
+			FsVarDef(__, e1,__):     fsFold(e1, v, f);
+			FsAssign(to, what,__):   fsFold(what, fsFold(to, v, f), f);
+			FsModRc(__, e1,__):      fsFold(e1, v, f);
+			FsIncRc(e1,__,__):       fsFold(e1, v, f);
+			FsDecRc(e1,__):          fsFold(e1, v, f);
+			FsLambda(__,as,e,__,__): fsFold(e, do_fold(as), f);
+			FsCall(fn, args, __,__): do_fold(concat([fn], args));
+			FsCallPrim(__,es,__,__): do_fold(es);
+			FsTailCall(args,__,__):  do_fold(map(args, \arg -> arg.value));
+			FsCast(e1,__,__,__):     fsFold(e1, v, f);
+			FsVarDecl(var,__):       v;
+			FsVar(__,__,__,__):      v;
+			FsConst(__,__):          v;
+		}
+		Pair(
+			setTree(acc.first, x.id, s2),
+			s2,
+		)
+	});*/
+
+	//fsFoldr(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
+	id2vars_pre = fsFold(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll -> {
+		s2 = switch (x) {
+			FsVar(__,__,__,__): insertSet(acc.second, x);
+			FsLet(var,__,__,__): insertSet(acc.second, var);
+			FsLet1(var,__,__): insertSet(acc.second, var);
+			default: acc.second;
+		}
+		Pair(
+			setTree(acc.first, x.id, s2),
+			s2,
+		)
+	}).first;
+	id2vars_post = fsFoldr(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll ->
+		Pair(
+			setTree(acc.first, x.id, acc.second),
+			switch (x) {
+				FsVar(__,__,__,__): insertSet(acc.second, x);
+				FsLet(var,__,__,__): insertSet(acc.second, var);
+				FsLet1(var,__,__): insertSet(acc.second, var);
+				default: acc.second;
+			},
+		)
+	).first;
+	id2vars_last = mapTree2(id2vars_pre, \id, pre_vars -> 
+		differenceSets(pre_vars, lookupTreeDef(id2vars_post, id, makeSet()))
+	);
+	set_tree2s = \st -> {
+		superglue(tree2pairs(st), \p -> 
+			i2s(p.first) + ": [" + superglue(set2array(p.second), \v -> v.name, ", ") + "]", "\n" 
+		);
+	}
+	if (^debug_perceus) {
+		println(
+			"id2vars_pre:\n" + set_tree2s(id2vars_pre) + "\n" +
+			"id2vars_post:\n" + set_tree2s(id2vars_post) + "\n" +
+			"id2vars_last:\n" + set_tree2s(id2vars_last) + "\n" +
+			""
+		);
+	}
+	dec_unused = \x -> {
+		unused = filter(set2array(lookupTreeDef(id2vars_last, x.id, makeSet())), \v ->
+			!(fiTypeIsScalar(v.type) || fiIsGlobalFunction(v.name, names))
+		);
+		if (length(unused) == 0) x else {
+			FsSeq(concat(
+				map(unused, \v -> FsDecRc(v, -1)),
+				fsUnwrapSeq(x)
+			), -1);
+		}
+	}
+	cast(fsMap(s1, \x -> switch (x) {
+		FsIf(cond, pos, neg, id):  {
+			FsIf(x with s1 = dec_unused(pos), s2 = dec_unused(pos));
+		};
+		FsSwitch(__,__, cs,__): {
+			FsSwitch(x with cases = map(cs, \c -> FsCase(c with body = dec_unused(c.body))));
+		}
+		FsWrapExp(e1,__): {
+			if (fiTypeIsScalar(fsExpType(e1))) x else {
+				FsDecRc(e1, -1);
+			}
+		}
+		FsModRc(__, e1,__): {
+			fail("double memory operators markup");
+			x;
+		}
+		FsVar(name,__,type,id): {
+			/*unused = set2array(lookupTreeDef(id2vars_last, x.id, makeSet()));
+			if (length(unused) == 0) x else {
+				v1 = unused[0];
+				if (v1.name != name) {
+					fail("<" + i2s(id) + "> v1.name != name: " + v1.name + " != " + name);
+				}
+				FsIncRc(x, type, -1);
+			}*/
+			unused = lookupTreeDef(id2vars_last, x.id, makeSet());
+			if (!containsSet(unused, FsVar(name, false, type, -1)) || fiTypeIsScalar(type) || fiIsGlobalFunction(name, names)) {
+				x;
+			} else {
+				FsIncRc(x, type, -1);
+			}
+		}
+		default: x;
+	}, true): FsAll -> FsStat);
+
+	//fsDoStatPerceus1(s1, makeTree(), names).first;
+	//fsStatMap(fsDoStatPerceus(s1, [], names).first, fsStatOptimize, idfn);
+}
+
 
 fsStatPerceus(s: FsStat, names: FiGlobalNames) -> FsStat {
 	s1 = fsStatLastVarUsage(s, makeSet(), names).first;
@@ -80,8 +226,8 @@ fsDoStatPerceus1(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) -
 			});
 			Pair(fsWrapSeq(p_es.first), p_es.second);
 		}
-		FsLet(name, type, e1, s1,__): {
-			e1_p = fsDoExpPerceus2(e1, setTree(locals, name, FsVar(name, false, type, -1)), names);
+		FsLet(var, e1, s1,__): {
+			e1_p = fsDoExpPerceus2(e1, setTree(locals, var.name, var), names);
 			s1_p = fsDoStatPerceus1(s1, e1_p.second, names);
 			Pair(fsWrapSeq(concat(e1_p.third,
 				[FsLet(s with
@@ -91,8 +237,8 @@ fsDoStatPerceus1(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) -
 				s1_p.second
 			);
 		}
-		FsLet1(name, type, e1,__): {
-			e1_p = fsDoExpPerceus2(e1, setTree(locals, name, FsVar(name, false, type, -1)), names);
+		FsLet1(var, e1,__): {
+			e1_p = fsDoExpPerceus2(e1, setTree(locals, var.name, var), names);
 			Pair(fsWrapSeq(concat(e1_p.third,
 				[FsLet1(s with
 					e = e1_p.first
@@ -133,6 +279,10 @@ fsDoStatPerceus1(s: FsStat, locals: Tree<string, FsVar>, names: FiGlobalNames) -
 			);
 		}
 		FsModRc(delta, e,__): {
+			fail("double memory operators markup");
+			Pair(s, locals);
+		}
+		FsDecRc(e,__): {
 			fail("double memory operators markup");
 			Pair(s, locals);
 		}
@@ -216,6 +366,10 @@ fsDoExpPerceus1(ex: FsExp, locals: Tree<string, FsVar>, incs: Tree<FsVar, int>, 
 				if (fiTypeIsScalar(type) || last || fiIsGlobalFunction(name, names)) incs else inc(ex, incs)
 			);
 		}
+		FsIncRc(e,__,__): {
+			fail("double memory operators markup");
+			Triple(ex, locals, incs);
+		}
 		FsConst(__,__): Triple(ex, locals, incs);
 	}
 }
@@ -259,6 +413,9 @@ fsExpVars(ex: FsExp, vars: [FsVar]) -> [FsVar] {
 		FsCast(e,__,__,__): {
 			fsExpVars(e, vars);
 		}
+		FsIncRc(e,__,__): {
+			fsExpVars(e, vars);
+		}
 		FsVar(name,__,__,__): {
 			concat(vars, [ex]);
 		}
@@ -277,10 +434,10 @@ fsStatVars(s: FsStat, vars: [FsVar]) -> [FsVar] {
 		FsSeq(es,__): {
 			fold(es, vars, \acc, x -> fsStatVars(x, acc));
 		}
-		FsLet(name, type, e1, s1,__): {
+		FsLet(var, e1, s1,__): {
 			fsStatVars(s1, fsExpVars(e1, vars));
 		}
-		FsLet1(name, type, e1,__): {
+		FsLet1(var, e1,__): {
 			fsExpVars(e1, vars);
 		}
 		FsVarDef(v, e,__): {
@@ -299,6 +456,9 @@ fsStatVars(s: FsStat, vars: [FsVar]) -> [FsVar] {
 			fsExpVars(what, fsExpVars(to, vars));
 		}
 		FsModRc(__, e,__): {
+			fsExpVars(e, vars);
+		}
+		FsDecRc(e,__): {
 			fsExpVars(e, vars);
 		}
 	}
@@ -346,7 +506,7 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<
 				ps.second
 			);
 		}
-		FsLet(__,__, e1, s1,__): {
+		FsLet(__, e1, s1,__): {
 			p1 = fsStatLastVarUsage(s1, vars, names);
 			p2 = fsExpLastVarUsage(e1, p1.second, names);
 			Pair(
@@ -357,7 +517,7 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<
 				p2.second
 			);
 		}
-		FsLet1(__,__, e1,__): {
+		FsLet1(__, e1,__): {
 			p2 = fsExpLastVarUsage(e1, vars, names);
 			Pair(
 				FsLet1(ex with 
@@ -380,6 +540,10 @@ fsStatLastVarUsage(ex: FsStat, vars: Set<string>, names: FiGlobalNames) -> Pair<
 		FsModRc(__, e,__): {
 			p = fsExpLastVarUsage(e, vars, names);
 			Pair(FsModRc(ex with e = p.first), p.second);
+		}
+		FsDecRc(e,__): {
+			p = fsExpLastVarUsage(e, vars, names);
+			Pair(FsDecRc(ex with e = p.first), p.second);
 		}
 		FsWrapExp(e,__): {
 			p = fsExpLastVarUsage(e, vars, names);
@@ -462,6 +626,10 @@ fsExpLastVarUsage(ex: FsExp, vars: Set<string>, names: FiGlobalNames) -> Pair<Fs
 				Pair(concat([FsTailCallArg(x with value = p.first)], acc.first), p.second);
 			});
 			Pair(FsTailCall(ex with args = ps.first), ps.second);
+		}
+		FsIncRc(e, type,__): {
+			pe = fsExpLastVarUsage(e, vars, names);
+			Pair(FsIncRc(ex with e = pe.first), pe.second);
 		}
 		FsVar(name, last,__,__): {
 			update_var(ex, vars);

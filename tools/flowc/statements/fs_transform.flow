@@ -5,6 +5,11 @@ import tools/flowc/manipulation/common;
 export {
 	fsStatMap(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat;
 	fsExpMap(e: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsExp;
+	fsMap(s: FsAll, fn: (FsAll) -> FsAll, args_first: bool) -> FsAll;
+	fsMap2(s: FsAll, fn: ([?], FsAll) -> ?) -> ?;
+
+	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
+	fsFoldr(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
 
 	fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
 	fsExpIter(e: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
@@ -15,26 +20,6 @@ export {
 		args: Tree<string, FsVar>,
 		lets: Tree<string, FsVar>,
 	);
-
-	//fsMap(s: FsAll, fn: (FsAll, FsTraverseEnv) -> FsAll, order: AstTraverseOrder) -> FsAll;
-
-	//fsFoldMap(s: FsAll, acc: ?, fn: (FsAll, FsTraverseEnv, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?>;
-
-/*
-	fsStatFoldMap(
-		s: FsStat, acc: ?, 
-		fn_s: (FsStat, ?) -> Pair<FsStat, ?>, 
-		fn_e: (FsExp, ?) -> Pair<FsExp, ?>,
-		order: AstTraverseOrder
-	) -> Pair<FsStat, ?>;
-	fsExpFoldMap(
-		e: FsExp, acc: ?, 
-		fn_s: (FsStat, ?) -> Pair<FsStat, ?>, 
-		fn_e: (FsExp, ?) -> Pair<FsExp, ?>,
-		order: AstTraverseOrder
-	) -> Pair<FsExp, ?>;
-
-	fsFoldMap(s: FsAll, acc: ?, fn: (FsAll, ?) -> Pair<FsAll, ?>, order: AstTraverseOrder) -> Pair<FsAll, ?>;*/
 }
 
 fsStatMap(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> FsStat {
@@ -56,13 +41,13 @@ fsStatMap(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> 
 				ss = map(ss, \x -> fsStatMap(x, trans_s, trans_e))
 			);
 		}
-		FsLet(__,__, e1, s1,__): {
+		FsLet(__, e1, s1,__): {
 			FsLet(s with 
 				e = fsExpMap(e1, trans_s, trans_e),
 				s = fsStatMap(s1, trans_s, trans_e),
 			);
 		}
-		FsLet1(__,__, e1,__): {
+		FsLet1(__, e1,__): {
 			FsLet1(s with 
 				e = fsExpMap(e1, trans_s, trans_e)
 			);
@@ -87,6 +72,9 @@ fsStatMap(s: FsStat, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> 
 		}
 		FsModRc(__, e,__): {
 			FsModRc(s with e = fsExpMap(e, trans_s, trans_e));
+		}
+		FsDecRc(e,__): {
+			FsDecRc(s with e = fsExpMap(e, trans_s, trans_e));
 		}
 	});
 }
@@ -113,9 +101,138 @@ fsExpMap(ex: FsExp, trans_s: (FsStat) -> FsStat, trans_e: (FsExp) -> FsExp) -> F
 		FsCast(e, from, type,__): {
 			FsCast(ex with e = fsExpMap(e, trans_s, trans_e));
 		}
+		FsIncRc(e,__,__): {
+			FsIncRc(ex with e = fsExpMap(e, trans_s, trans_e));
+		}
 		FsVar(name,__,__,__): ex;
 		FsConst(__,__): ex;
 	});
+}
+
+fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
+	map_var = \x -> cast(fsMap(x, f, args_first): FsAll -> FsVar);
+	map_exp = \x -> cast(fsMap(x, f, args_first): FsAll -> FsExp);
+	map_stat = \x -> cast(fsMap(x, f, args_first): FsAll -> FsStat);
+	do_args = \s -> switch (s) {
+		FsIf(cond, s1, s2,__):
+			FsIf(s with cond = map_exp(cond), s1 = map_stat(s1), s2 = map_stat(s2));
+		FsSwitch(x, sw_type, cases,__):
+			FsSwitch(s with x = map_var(x), cases = map(cases, \c -> FsCase(c with body = map_stat(c.body))));
+		FsSeq(ss,__):
+			FsSeq(s with ss = map(ss, \x -> map_stat(x)));
+		FsLet(__, e1, s1,__): 
+			FsLet(s with e = map_exp(e1), s = map_stat(s1));
+		FsLet1(__, e1,__):
+			FsLet1(s with e = map_exp(e1));
+		FsWrapExp(e,__):
+			FsWrapExp(s with e = map_exp(e));
+		FsRet(e,__):
+			FsRet(s with e = map_exp(e));
+		FsVarDecl(var,__):
+			FsVarDecl(s with var = map_var(var));
+		FsVarDef(v, e,__):
+			FsVarDef(s with var = map_var(v), e = map_exp(e));
+		FsAssign(to, what,__):
+			FsAssign(s with to = map_exp(to), what = map_exp(what));
+		FsModRc(__, e,__):
+			FsModRc(s with e = map_exp(e));
+		FsDecRc(e,__):
+			FsDecRc(s with e = map_exp(e));
+		FsIncRc(e,__,__):
+			FsIncRc(s with e = map_exp(e));
+		FsLambda(closure, args, body, __,__):
+			FsLambda(s with closure = map(closure, map_var), args = map(args, map_var), body = map_stat(body));
+		FsCall(fn, args, __,__):
+			FsCall(s with f = map_exp(fn), args = map(args, \x -> map_exp(x)));
+		FsCallPrim(__, es, __,__):
+			FsCallPrim(s with es = map(es, \x -> map_exp(x)));
+		FsTailCall(args,__,__):
+			FsTailCall(s with args = map(args, \x -> FsTailCallArg(x with value = map_exp(x.value))));
+		FsCast(e, from, type,__):
+			FsCast(s with e = map_exp(e));
+		FsVar(name,__,__,__): s;
+		FsConst(__,__): s;
+	}
+	if (args_first) f(do_args(a)) else do_args(f(a));
+}
+
+fsMap2(a: FsAll, f: ([?], FsAll) -> ?) -> ? {
+	get_args = \s -> switch (s) {
+		FsIf(cond, s1, s2,__):   [cond, s1, s2];
+		FsSwitch(x,__, cs,__):   concat([x], map(cs, \c -> c.body));
+		FsSeq(ss,__):            ss;
+		FsLet(__, e1, s1,__): [e1, s1];
+		FsLet1(__, e1,__):       [e1];
+		FsWrapExp(e1,__):        [e1];
+		FsRet(e1,__):            [e1];
+		FsVarDef(__, e1,__):     [e1];
+		FsAssign(to, what,__):   [to, what];
+		FsModRc(__, e1,__):      [e1];
+		FsDecRc(e1,__):          [e1];
+		FsIncRc(e1,__,__):       [e1];
+		FsLambda(__,__,e,__,__): [e];
+		FsCall(fn, args, __,__): concat([fn], args);
+		FsCallPrim(__,es,__,__): es;
+		FsTailCall(args,__,__):  map(args, \arg -> arg.value);
+		FsCast(e1,__,__,__):     [e1];
+		FsVarDecl(var,__):       [];
+		FsVar(__,__,__,__):      [];
+		FsConst(__,__):          [];
+	}
+	f(map(get_args(a), \x -> fsMap2(x, f)), a);
+}
+
+fsFold(s: FsAll, w: ?, f: (?, FsAll) -> ?) -> ? {
+	v = f(w, s);
+	do_fold = \xs -> fold(xs, v, \acc, x -> fsFold(x, acc, f));
+	switch (s) {
+		FsIf(cond, s1, s2,__):   fsFold(s2, fsFold(s1, fsFold(cond, v, f), f), f);
+		FsSwitch(x,__, cs,__):   do_fold(concat([x], map(cs, \c -> c.body)));
+		FsSeq(ss,__):            do_fold(ss);
+		FsLet(__, e1, s1,__): fsFold(s1, fsFold(e1, v, f), f);
+		FsLet1(__, e1,__):       fsFold(e1, v, f);
+		FsWrapExp(e1,__):        fsFold(e1, v, f);
+		FsRet(e1,__):            fsFold(e1, v, f);
+		FsVarDef(__, e1,__):     fsFold(e1, v, f);
+		FsAssign(to, what,__):   fsFold(what, fsFold(to, v, f), f);
+		FsModRc(__, e1,__):      fsFold(e1, v, f);
+		FsIncRc(e1,__,__):       fsFold(e1, v, f);
+		FsDecRc(e1,__):          fsFold(e1, v, f);
+		FsLambda(__,as,e,__,__): fsFold(e, do_fold(as), f);
+		FsCall(fn, args, __,__): do_fold(concat([fn], args));
+		FsCallPrim(__,es,__,__): do_fold(es);
+		FsTailCall(args,__,__):  do_fold(map(args, \arg -> arg.value));
+		FsCast(e1,__,__,__):     fsFold(e1, v, f);
+		FsVarDecl(var,__):       v;
+		FsVar(__,__,__,__):      v;
+		FsConst(__,__):          v;
+	}
+}
+
+fsFoldr(s: FsAll, v: ?, f: (?, FsAll) -> ?) -> ? {
+	do_foldr = \w, xs -> foldr(xs, w, \acc, x -> fsFoldr(x, acc, f));
+	f(switch (s) {
+		FsIf(cond, s1, s2,__):   fsFoldr(cond, fsFoldr(s1, fsFoldr(s2, v, f), f), f);
+		FsSwitch(x,__, cs,__):   do_foldr(v, concat([x], map(cs, \c -> c.body)));
+		FsSeq(ss,__):            do_foldr(v, ss);
+		FsLet(__, e1, s1,__): fsFoldr(e1, fsFoldr(s1, v, f), f);
+		FsLet1(__, e1,__):       fsFoldr(e1, v, f);
+		FsWrapExp(e1,__):        fsFoldr(e1, v, f);
+		FsRet(e1,__):            fsFoldr(e1, v, f);
+		FsVarDef(__, e1,__):     fsFoldr(e1, v, f);
+		FsAssign(to, what,__):   fsFoldr(to, fsFoldr(what, v, f), f);
+		FsModRc(__, e1,__):      fsFoldr(e1, v, f);
+		FsIncRc(e1,__,__):       fsFoldr(e1, v, f);
+		FsDecRc(e1,__):          fsFoldr(e1, v, f);
+		FsLambda(__,as,e,__,__): do_foldr(fsFoldr(e, v, f), as);
+		FsCall(fn, args, __,__): do_foldr(v, concat([fn], args));
+		FsCallPrim(__,es,__,__): do_foldr(v, es);
+		FsTailCall(args,__,__):  do_foldr(v, map(args, \arg -> arg.value));
+		FsCast(e1,__,__,__):     fsFoldr(e1, v, f);
+		FsVarDecl(var,__):       v;
+		FsVar(__,__,__,__):      v;
+		FsConst(__,__):          v;
+	}, s);
 }
 
 fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
@@ -132,11 +249,11 @@ fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> vo
 		FsSeq(ss,__): { 
 			iter(ss, \x -> fsStatIter(x, trans_s, trans_e));
 		}
-		FsLet(__,__, def, body,__): { 
+		FsLet(__, def, body,__): { 
 			fsExpIter(def, trans_s, trans_e);
 			fsStatIter(body, trans_s, trans_e);
 		}
-		FsLet1(__,__, def,__): { 
+		FsLet1(__, def,__): { 
 			fsExpIter(def, trans_s, trans_e);
 		}
 		FsWrapExp(e,__): {
@@ -159,6 +276,9 @@ fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> vo
 		FsModRc(__, e,__): {
 			fsExpIter(e, trans_s, trans_e);
 		}
+		FsDecRc(e,__): {
+			fsExpIter(e, trans_s, trans_e);
+		}
 	}
 	trans_s(s);
 }
@@ -179,6 +299,9 @@ fsExpIter(ex: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> voi
 			iter(args, \arg -> fsExpIter(arg.value, trans_s, trans_e));
 		}
 		FsCast(e,__,__,__): {
+			fsExpIter(e, trans_s, trans_e);
+		}
+		FsIncRc(e,__,__): {
 			fsExpIter(e, trans_s, trans_e);
 		}
 		FsVar(name,__,__,__): { }
