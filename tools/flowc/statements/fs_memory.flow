@@ -13,6 +13,15 @@ export {
 	debug_perceus = ref false;
 }
 
+FsVarTag ::= FsVarTagDecl, FsVarTagArg, FsVarTagClosure, FsVarTagUse, FsVarTagTailCall;
+	FsVarTagDecl();
+	FsVarTagArg();
+	FsVarTagClosure();
+	FsVarTagUse(kind: FsVarKind);
+		FsVarKind ::= FsVarKindLocal, FsVarKindGlobal;
+		FsVarKindLocal(); FsVarKindGlobal(isFunc: bool);
+	FsVarTagTailCall();
+
 fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 	// fsMap(s: FsAll, fn: (FsAll) -> FsAll) -> FsAll;
 	id_counter = ref 0;
@@ -30,47 +39,66 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 		);
 	}
 
-	fs_var_tag_default = 0;
-	fs_var_tag_fn_arg = 1;
-	fs_var_tag_cl_arg = 2;
-	fs_var_tag_local  = 3;
-	fs_var_tag_global = 4;
-	fs_var_tag_global_fn = 5;
-	/*var_tags = fsFold(s1, makeTree(), \acc, x: FsAll -> {
+	var_tags = fsFold(s1, makeTree(), \acc, x: FsAll -> {
 		switch (x) {
-			FsIf(cond, s1, s2,__):   fsFold(s2, fsFold(s1, fsFold(cond, v, f), f), f);
-			FsSwitch(x,__, cs,__):   do_fold(concat([x], map(cs, \c -> c.body)));
-			FsSeq(ss,__):            do_fold(ss);
-			FsLet(__,__, e1, s1,__): fsFold(s1, fsFold(e1, v, f), f);
-			FsLet1(__,__, e1,__):    fsFold(e1, v, f);
-			FsWrapExp(e1,__):        fsFold(e1, v, f);
-			FsRet(e1,__):            fsFold(e1, v, f);
-			FsVarDef(__, e1,__):     fsFold(e1, v, f);
-			FsAssign(to, what,__):   fsFold(what, fsFold(to, v, f), f);
-			FsModRc(__, e1,__):      fsFold(e1, v, f);
-			FsIncRc(e1,__,__):       fsFold(e1, v, f);
-			FsDecRc(e1,__):          fsFold(e1, v, f);
-			FsLambda(__,as,e,__,__): fsFold(e, do_fold(as), f);
-			FsCall(fn, args, __,__): do_fold(concat([fn], args));
-			FsCallPrim(__,es,__,__): do_fold(es);
-			FsTailCall(args,__,__):  do_fold(map(args, \arg -> arg.value));
-			FsCast(e1,__,__,__):     fsFold(e1, v, f);
-			FsVarDecl(var,__):       v;
-			FsVar(__,__,__,__):      v;
-			FsConst(__,__):          v;
+			//FsIf(cond, s1, s2,__):   fsFold(s2, fsFold(s1, fsFold(cond, v, f), f), f);
+			//FsSwitch(x,__, cs,__):   do_fold(concat([x], map(cs, \c -> c.body)));
+			//FsSeq(ss,__):            do_fold(ss);
+			FsLet(v,__,__,__): setTree(acc, v.id, FsVarTagDecl());
+			FsLet1(v,__,__):    setTree(acc, v.id, FsVarTagDecl());
+			//FsWrapExp(e1,__):        fsFold(e1, v, f);
+			//FsRet(e1,__):            fsFold(e1, v, f);
+			FsVarDef(v,__,__):     setTree(acc, v.id, FsVarTagDecl());
+			//FsAssign(to, what,__):   fsFold(what, fsFold(to, v, f), f);
+			//FsModRc(__, e1,__):      fsFold(e1, v, f);
+			//FsIncRc(e1,__,__):       fsFold(e1, v, f);
+			//FsDecRc(e1,__):          fsFold(e1, v, f);
+			FsLambda(closure, args,__,__,__): {
+				fold(args, 
+					fold(closure, acc, \ac, v -> setTree(ac, v.id, FsVarTagClosure())), 
+					\ac, v -> setTree(ac, v.id, FsVarTagArg())
+				);
+			}
+			//FsCall(fn, args, __,__): do_fold(concat([fn], args));
+			//FsCallPrim(__,es,__,__): do_fold(es);
+			FsTailCall(args, vals,__,__): 
+				fold(args, acc, \ac, v -> setTree(ac, v.id, FsVarTagTailCall()));
+			//FsCast(e1,__,__,__):     fsFold(e1, v, f);
+			FsVarDecl(v,__): setTree(acc, v.id, FsVarTagDecl());
+			FsVar(name,__,__,id): {
+				kind = switch (lookupTree(names.toplevel, name)) {
+					Some(decl): {
+						FsVarKindGlobal(switch (decl) {
+							FiGlobalVar(__,__,__,__,__): false;
+							default: true;
+						});
+					}
+					None(): FsVarKindLocal();
+				}
+				setTree(acc, id, FsVarTagUse(kind));
+			}
+			default: acc;
+			//FsConst(__,__):          v;
 		}
-		Pair(
-			setTree(acc.first, x.id, s2),
-			s2,
-		)
-	});*/
+	});
 
 	//fsFoldr(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
 	id2vars_pre = fsFold(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll -> {
 		s2 = switch (x) {
-			FsVar(__,__,__,__): insertSet(acc.second, x);
-			FsLet(var,__,__,__): insertSet(acc.second, var);
-			FsLet1(var,__,__): insertSet(acc.second, var);
+			FsVar(__,__,__,id): 
+				switch (lookupTree(var_tags, id)) {
+					Some(tag): {
+						switch (tag) {
+							FsVarTagDecl():   insertSet(acc.second, x);
+							FsVarTagArg():     insertSet(acc.second, x);
+							default: acc.second;
+							//FsVarClosure(): acc.second;
+							//FsVarGlobal(isFunc): acc.second;
+							//FsVarTailCall(): acc.second;
+						}
+					}
+					None(): acc.second;
+				}
 			default: acc.second;
 		}
 		Pair(
@@ -82,9 +110,21 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 		Pair(
 			setTree(acc.first, x.id, acc.second),
 			switch (x) {
-				FsVar(__,__,__,__): insertSet(acc.second, x);
-				FsLet(var,__,__,__): insertSet(acc.second, var);
-				FsLet1(var,__,__): insertSet(acc.second, var);
+				FsVar(__,__,__,id): //insertSet(acc.second, x);
+					switch (lookupTree(var_tags, id)) {
+						Some(tag): {
+							switch (tag) {
+								FsVarTagUse(kind): {
+									switch (kind) {
+										FsVarKindLocal(): insertSet(acc.second, x);
+										FsVarKindGlobal(isFunc): acc.second;
+									}
+								}
+								default: acc.second;
+							}
+						}
+						None(): acc.second;
+					}
 				default: acc.second;
 			},
 		)
