@@ -4,6 +4,7 @@ import strutils
 import unicode
 import math
 
+#[
 type
   List*[T] = object of RootObj
 
@@ -12,7 +13,7 @@ type
     tail*: List[T]
 
   EmptyList*[T] = object of List[T]
-
+]#
 # Runtime for NIM backend
 
 proc println2*[T](t : T): void =
