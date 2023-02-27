@@ -5,8 +5,10 @@ out vec4 fragColor;
 
 uniform vec2 screenSize;
 uniform vec3 rayOrigin;
-uniform mat4 projection;
 uniform mat4 view;
+uniform mat4 projection;
+uniform mat4 inverseView;
+uniform mat4 inverseProjection;
 
 const int numTextures = %numTextures%; //max 16
 uniform sampler2D textures[numTextures];
@@ -529,9 +531,9 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
 }
 
 vec4 getColor(vec2 uv) {
-	vec4 rd = inverse(projection) * vec4(uv, -1., 1.);
+	vec4 rd = inverseProjection * vec4(uv, -1., 1.);
 	rd /= rd.w;
-	rd = inverse(view) * rd;
+	rd = inverseView * rd;
 	vec3 rayDirection = normalize(rd.xyz - rayOrigin);
 
 	ObjectInfo oiSimple = rayMarch(rayOrigin, rayDirection);
