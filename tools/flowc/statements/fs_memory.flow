@@ -45,10 +45,10 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 			//FsSwitch(x,__, cs,__):   do_fold(concat([x], map(cs, \c -> c.body)));
 			//FsSeq(ss,__):            do_fold(ss);
 			FsLet(v,__,__,__): setTree(acc, v.id, FsVarTagDecl());
-			FsLet1(v,__,__):    setTree(acc, v.id, FsVarTagDecl());
+			FsLet1(v,__,__):   setTree(acc, v.id, FsVarTagDecl());
 			//FsWrapExp(e1,__):        fsFold(e1, v, f);
 			//FsRet(e1,__):            fsFold(e1, v, f);
-			FsVarDef(v,__,__):     setTree(acc, v.id, FsVarTagDecl());
+			FsVarDef(v,__,__): setTree(acc, v.id, FsVarTagDecl());
 			//FsAssign(to, what,__):   fsFold(what, fsFold(to, v, f), f);
 			//FsModRc(__, e1,__):      fsFold(e1, v, f);
 			//FsIncRc(e1,__,__):       fsFold(e1, v, f);
@@ -80,18 +80,25 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 			default: acc;
 			//FsConst(__,__):          v;
 		}
-	});
+	}, true);
+	if (^debug_perceus) {
+		println(
+			"var_tags:\n" + superglue(tree2pairs(var_tags), \p -> 
+				"\t" + i2s(p.first) + "->" + toString(p.second), "\n"
+			) + "\n"
+			""
+		);
+	}
 
-	//fsFoldr(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
 	id2vars_pre = fsFold(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll -> {
 		s2 = switch (x) {
 			FsVar(__,__,__,id): 
 				switch (lookupTree(var_tags, id)) {
 					Some(tag): {
 						switch (tag) {
-							FsVarTagDecl():   insertSet(acc.second, x);
-							FsVarTagArg():     insertSet(acc.second, x);
-							default: acc.second;
+							FsVarTagDecl(): insertSet(acc.second, FsVar(x with id = -1));
+							FsVarTagArg():  insertSet(acc.second, FsVar(x with id = -1));
+							default:        acc.second;
 							//FsVarClosure(): acc.second;
 							//FsVarGlobal(isFunc): acc.second;
 							//FsVarTailCall(): acc.second;
@@ -105,7 +112,7 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 			setTree(acc.first, x.id, s2),
 			s2,
 		)
-	}).first;
+	}, false).first;
 	id2vars_post = fsFoldr(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll ->
 		Pair(
 			setTree(acc.first, x.id, acc.second),
@@ -116,7 +123,7 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 							switch (tag) {
 								FsVarTagUse(kind): {
 									switch (kind) {
-										FsVarKindLocal(): insertSet(acc.second, x);
+										FsVarKindLocal(): insertSet(acc.second, FsVar(x with id = -1));
 										FsVarKindGlobal(isFunc): acc.second;
 									}
 								}
@@ -127,7 +134,7 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 					}
 				default: acc.second;
 			},
-		)
+		), true
 	).first;
 	id2vars_last = mapTree2(id2vars_pre, \id, pre_vars -> 
 		differenceSets(pre_vars, lookupTreeDef(id2vars_post, id, makeSet()))
@@ -172,20 +179,24 @@ fsStatPerceus1(s: FsStat, names: FiGlobalNames) -> FsStat {
 			fail("double memory operators markup");
 			x;
 		}
-		FsVar(name,__,type,id): {
-			/*unused = set2array(lookupTreeDef(id2vars_last, x.id, makeSet()));
-			if (length(unused) == 0) x else {
-				v1 = unused[0];
-				if (v1.name != name) {
-					fail("<" + i2s(id) + "> v1.name != name: " + v1.name + " != " + name);
+		FsVar(name,__,type, id): {
+			if (fiTypeIsScalar(type) || fiIsGlobal(name, names)) x  else {
+				unused = lookupTreeDef(id2vars_last, x.id, makeSet());
+				if (containsSet(unused, FsVar(name, false, type, -1))) {
+					switch (lookupTree(var_tags, id)) {
+						Some(tag): {
+							switch (tag) {
+								FsVarTagUse(kind): {
+									FsVar(x with last = true);
+								}
+								default: x;
+							}
+						}
+						None(): x;
+					}
+				} else {
+					x;
 				}
-				FsIncRc(x, type, -1);
-			}*/
-			unused = lookupTreeDef(id2vars_last, x.id, makeSet());
-			if (!containsSet(unused, FsVar(name, false, type, -1)) || fiTypeIsScalar(type) || fiIsGlobalFunction(name, names)) {
-				x;
-			} else {
-				FsIncRc(x, type, -1);
 			}
 		}
 		default: x;

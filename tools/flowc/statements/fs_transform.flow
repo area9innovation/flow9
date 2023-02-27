@@ -8,8 +8,8 @@ export {
 	fsMap(s: FsAll, fn: (FsAll) -> FsAll, args_first: bool) -> FsAll;
 	fsMap2(s: FsAll, fn: ([?], FsAll) -> ?) -> ?;
 
-	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
-	fsFoldr(s: FsAll, v: ?, fn: (?, FsAll) -> ?) ->?;
+	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?, args_first: bool) ->?;
+	fsFoldr(s: FsAll, v: ?, fn: (?, FsAll) -> ?, args_first: bool) ->?;
 
 	fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
 	fsExpIter(e: FsExp, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void;
@@ -186,57 +186,58 @@ fsMap2(a: FsAll, f: ([?], FsAll) -> ?) -> ? {
 	f(map(get_args(a), \x -> fsMap2(x, f)), a);
 }
 
-fsFold(s: FsAll, v0: ?, f: (?, FsAll) -> ?) -> ? {
-	v = f(v0, s);
-	do_fold = \w, xs -> fold(xs, w, \acc, x -> fsFold(x, acc, f));
-	switch (s) {
-		FsIf(cond, s1, s2,__):   fsFold(s2, fsFold(s1, fsFold(cond, v, f), f), f);
+fsFold(s: FsAll, v0: ?, f: (?, FsAll) -> ?, args_first: bool) -> ? {
+	do_fold = \w, xs -> fold(xs, w, \acc, x -> fsFold(x, acc, f, args_first));
+	do_args = \v -> switch (s) {
+		FsIf(cond, s1, s2,__):   do_fold(v, [cond, s1, s2]); // fsFold(s2, fsFold(s1, fsFold(cond, v, f), f), f);
 		FsSwitch(x,__, cs,__):   do_fold(v, concat([x], map(cs, \c -> c.body)));
 		FsSeq(ss,__):            do_fold(v, ss);
-		FsLet(w, e1, s1,__):     fsFold(s1, fsFold(e1, fsFold(w, v, f), f), f);
-		FsLet1(w, e1,__):        fsFold(e1, fsFold(w, v, f), f);
-		FsWrapExp(e1,__):        fsFold(e1, v, f);
-		FsRet(e1,__):            fsFold(e1, v, f);
-		FsVarDef(w, e1,__):      fsFold(e1, fsFold(w, v, f), f);
-		FsAssign(to, what,__):   fsFold(what, fsFold(to, v, f), f);
-		FsModRc(__, e1,__):      fsFold(e1, v, f);
-		FsIncRc(e1,__,__):       fsFold(e1, v, f);
-		FsDecRc(e1,__):          fsFold(e1, v, f);
-		FsLambda(cl,as,e,__,__): fsFold(e, do_fold(do_fold(v, cl), as), f);
+		FsLet(w, e1, s1,__):     do_fold(v, [w, e1, s1]); //fsFold(s1, fsFold(e1, fsFold(w, v, f), f), f);
+		FsLet1(w, e1,__):        do_fold(v, [w, e1]); //fsFold(e1, fsFold(w, v, f), f);
+		FsWrapExp(e1,__):        fsFold(e1, v, f, args_first);
+		FsRet(e1,__):            fsFold(e1, v, f, args_first);
+		FsVarDef(w, e1,__):      do_fold(v, [w, e1]); //fsFold(e1, fsFold(w, v, f), f);
+		FsAssign(to, what,__):   do_fold(v, [to, what]); //fsFold(what, fsFold(to, v, f), f);
+		FsModRc(__, e1,__):      fsFold(e1, v, f, args_first);
+		FsIncRc(e1,__,__):       fsFold(e1, v, f, args_first);
+		FsDecRc(e1,__):          fsFold(e1, v, f, args_first);
+		FsLambda(cl,as,e,__,__): do_fold(v, concat3(cl, as, [e])); //fsFold(e, do_fold(do_fold(v, cl), as), f);
 		FsCall(fn, args, __,__): do_fold(v, concat([fn], args));
 		FsCallPrim(__,es,__,__): do_fold(v, es);
 		FsTailCall(as,vs,__,__): do_fold(v, concat(as, vs));
-		FsCast(e1,__,__,__):     fsFold(e1, v, f);
-		FsVarDecl(w,__):         fsFold(w, v, f);
+		FsCast(e1,__,__,__):     fsFold(e1, v, f, args_first);
+		FsVarDecl(w,__):         fsFold(w, v, f, args_first);
 		FsVar(__,__,__,__):      v;
 		FsConst(__,__):          v;
 	}
+	if (args_first) f(do_args(v0), s) else do_args(f(v0, s));
 }
 
-fsFoldr(s: FsAll, v: ?, f: (?, FsAll) -> ?) -> ? {
-	do_foldr = \w, xs -> foldr(xs, w, \acc, x -> fsFoldr(x, acc, f));
-	f(switch (s) {
-		FsIf(cond, s1, s2,__):   fsFoldr(cond, fsFoldr(s1, fsFoldr(s2, v, f), f), f);
+fsFoldr(s: FsAll, v0: ?, f: (?, FsAll) -> ?, args_first: bool) -> ? {
+	do_foldr = \w, xs -> foldr(xs, w, \acc, x -> fsFoldr(x, acc, f, args_first));
+	do_args = \v -> switch (s) {
+		FsIf(cond, s1, s2,__):   do_foldr(v, [cond, s1, s2]); //fsFoldr(cond, fsFoldr(s1, fsFoldr(s2, v, f), f), f);
 		FsSwitch(x,__, cs,__):   do_foldr(v, concat([x], map(cs, \c -> c.body)));
 		FsSeq(ss,__):            do_foldr(v, ss);
-		FsLet(w, e1, s1,__):     fsFoldr(w, fsFoldr(e1, fsFoldr(s1, v, f), f), f);
-		FsLet1(w, e1,__):        fsFoldr(w, fsFoldr(e1, v, f), f);
-		FsWrapExp(e1,__):        fsFoldr(e1, v, f);
-		FsRet(e1,__):            fsFoldr(e1, v, f);
-		FsVarDef(w, e1,__):      fsFoldr(w, fsFoldr(e1, v, f), f);
-		FsAssign(to, what,__):   fsFoldr(to, fsFoldr(what, v, f), f);
-		FsModRc(__, e1,__):      fsFoldr(e1, v, f);
-		FsIncRc(e1,__,__):       fsFoldr(e1, v, f);
-		FsDecRc(e1,__):          fsFoldr(e1, v, f);
-		FsLambda(cl,as,e,__,__): do_foldr(do_foldr(fsFoldr(e, v, f), as), cl);
+		FsLet(w, e1, s1,__):     do_foldr(v, [w, e1, s1]); //fsFoldr(w, fsFoldr(e1, fsFoldr(s1, v, f), f), f);
+		FsLet1(w, e1,__):        do_foldr(v, [w, e1]); //fsFoldr(w, fsFoldr(e1, v, f), f);
+		FsWrapExp(e1,__):        fsFoldr(e1, v, f, args_first);
+		FsRet(e1,__):            fsFoldr(e1, v, f, args_first);
+		FsVarDef(w, e1,__):      do_foldr(v, [w, e1]); //fsFoldr(w, fsFoldr(e1, v, f), f);
+		FsAssign(to, what,__):   do_foldr(v, [to, what]); //fsFoldr(to, fsFoldr(what, v, f), f);
+		FsModRc(__, e1,__):      fsFoldr(e1, v, f, args_first);
+		FsIncRc(e1,__,__):       fsFoldr(e1, v, f, args_first);
+		FsDecRc(e1,__):          fsFoldr(e1, v, f, args_first);
+		FsLambda(cl,as,e,__,__): do_foldr(v, concat3(cl, as, [e])); //do_foldr(do_foldr(fsFoldr(e, v, f), as), cl);
 		FsCall(fn, args, __,__): do_foldr(v, concat([fn], args));
 		FsCallPrim(__,es,__,__): do_foldr(v, es);
 		FsTailCall(as,vs,__,__): do_foldr(v, concat(as, vs));
-		FsCast(e1,__,__,__):     fsFoldr(e1, v, f);
-		FsVarDecl(w,__):         fsFoldr(w, v, f);
+		FsCast(e1,__,__,__):     fsFoldr(e1, v, f, args_first);
+		FsVarDecl(w,__):         fsFoldr(w, v, f, args_first);
 		FsVar(__,__,__,__):      v;
 		FsConst(__,__):          v;
-	}, s);
+	}
+	if (args_first) do_args(f(v0, s)) else f(do_args(v0), s);
 }
 
 fsStatIter(s: FsStat, trans_s: (FsStat) -> void, trans_e: (FsExp) -> void) -> void {
