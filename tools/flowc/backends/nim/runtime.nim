@@ -2,6 +2,7 @@ import sequtils
 import typetraits
 import strutils
 import unicode
+import math
 
 type
   List*[T] = object of RootObj
@@ -77,9 +78,10 @@ proc fold*[T, S](arr: seq[T], init: S, op: proc(acc: S, v: T): S): S =
 
 # Apply a collecting function which takes an index, initial value and each element
 proc foldi*[T, S](xs: seq[T], init: S, fn: proc(idx: int, acc: S, v: T): S): S =
+  var ini = init
   for i in 0..length(xs)-1:
-    init = fn(i, init, xs[i])
-  return init
+    ini = fn(i, ini, xs[i])
+  return ini
 
 # Creates a new array, whose elements are selected from 'a' with a condition 'test'.
 proc filter*[T](a: seq[T]; test: proc (v: T): bool): seq[T] =
@@ -106,6 +108,9 @@ proc getUrlParameter*(name: string): string =
   ""
 
 proc toString*[T](a: T): string =
+  return $a
+
+proc toString2*(a: RootObj): string =
   return $a
 
 proc strlen*(s: string): int =
@@ -167,6 +172,9 @@ proc getCharCodeAt*(s: string, i: int): int =
   else:
     return -1
 
+func fromCharCode*(code: int): string =
+  return unicode.toUTF8(cast[Rune](code))
+
 proc strsubsmart*(s: string, start: int, fl0wlen: int): string =
     if start >= 0 and fl0wlen > 0:
       substring(s, start, fl0wlen)
@@ -222,4 +230,75 @@ proc list2array*[T](list: RootObj): seq[T] =
 ]#
   return r
 
+proc list2string*(list: RootObj): seq[string] =
+  var p = list
+  var r = newSeq[string]()
 
+  while true:
+    #echo name(p.type)
+    var n = name(p.type)
+    case n:
+    of "EmptyList":
+      break
+    of "Cons":
+      var c = cast[Cons[string]](p)
+      r = r & @[c.head]
+      p = c.tail
+    else:
+      discard
+
+#[
+    if (p of EmptyList):
+      break
+    else:
+      if (p of Cons):
+        var c = cast[Cons[T]](p)
+        r = r & @[c.head]
+        p = c.tail
+      else:
+        discard
+]#
+  return r
+
+proc bitAnd*(x: int, y: int): int =
+  return x and y
+
+proc bitOr*(x: int, y: int): int =
+  return x or y
+
+proc bitNot*(x: int): int =
+  return not x
+
+proc getKeyValueN*(key : string, defaultValue : string): string =
+  return defaultValue
+
+# native hostCall : io (name: string, args: [flow]) -> flow = Native.hostCall;
+
+proc hostCall*(name: string, args: seq[RootObj]): RootObj =
+  echo("hostCall of $name is not implemented")
+  return args[0]
+
+#native quit : io (code : int) -> void = Native.quit; - is already defined
+
+#native timestamp : io () -> double = Native.timestamp;
+
+proc timestamp*(): float =
+  return 0.0
+
+#native exp : (double) -> double = Native.exp; - is already defined
+
+
+#native log : (double) -> double = Native.log;
+
+func log*(x: float): float =
+  return ln(x)
+
+#native getAllUrlParametersArray : io () -> [[string]] = Native.getAllUrlParameters;
+
+proc getAllUrlParametersArray*(): seq[seq[string]] =
+  return newSeq[seq[string]]()
+
+#native getTargetName : io () -> string = Native.getTargetName;
+
+proc getTargetName*(): string =
+  return "nim"

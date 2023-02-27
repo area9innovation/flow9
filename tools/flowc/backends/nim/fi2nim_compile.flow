@@ -44,102 +44,117 @@ export {
 doTN : ref bool = ref false;
 
 fiNimCompileToplevel(cfg : FiNimConfig, program : FiNimEnv, decl : FiDeclaration, indent : string) {
-	//ci = fiDeclarationInfo(decl);
-	nm = decl.name;
-	// if (decl.name == "redirectAdditionalFn") fcPrintln("HIA: redirectAdditionalFn == " + toString(decl));
-	subindent = indent + fiNimIndent;
-	toplevel = switch (decl : FiDeclaration) {
+	switch (decl : FiDeclaration) {
 		FiNativeDec(name, io, type, nativeName, flowfallback, __, __) : {
 			switch (flowfallback) {
-				FiLambda(__, __, __, __): {
-					fcPrintln("FiNative fallback: " + toString(flowfallback), cfg.threadId);
-					"FiNative " + name + " fallback"
+				FiLambda(__, __, fn_type, __): {
+					if (containsSet(nimNativeFunctions, name)) {
+						// native is implemented in runtime
+						""
+					} else {
+						// use a fallback
+						fiNimCompileFunction(cfg, program, name, fn_type, flowfallback);
+					}
 				}
-				FiVoid(__): "# native: " + nativeName + " " + name + "\n";
+				FiVoid(__): {
+					if (!containsSet(nimNativeFunctions, name)) {
+						fcPrintln("Error: " + name + " native is not implemented in nim backend", cfg.threadId);
+					}
+					"# native: " + nativeName + " " + name + "\n";
+				}
 				default: {
 					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, flowfallback), cfg.threadId);
 					"# native: " + nativeName + " " + name + "\n"
 				}
 			}
 		}
-		FiFunctionDec(name, lambda, t, __, __): {
-			if (containsSet(nimForbiddenFunctions, name)) {
-				nimProcDefinition := Cons("# " + name + " forbidden with nimForbiddenFunctions\n", ^nimProcDefinition);
+		FiFunctionDec(name, lambda, type, __, __): {
+			if (containsSet(nimNativeFunctions, name)) {
+				//is implemented as native in runtime
 				""
 			} else {
-				type = switch (t) {
-					FiTypeFunction(__, rt) : {
-						retType = \ -> fiType2NimType(cfg, program, rt);
-						switch(rt) {
-							FiTypeFunction(__, __): "(" + retType() + ")";
-							//FiTypeStruct(sname, typars, __, __): sname + fiNimParamsForInstantiate(cfg, program, typars);
-							default: retType();
-						}
-					}
-					default : "";
-				}
-				stype = if (type == "") "" else ": " + type;
-
-				fparams = strGlue(mapi(lambda.args, \idx, arg -> {
-					tmp = {
-						varPrefix = switch(arg.type) {
-							FiTypeRef(__) : "var ";
-							default : ""
-						};
-						if (^doTN) fcPrintln("HIA: at = " + toString(arg.type), cfg.threadId);
-						varPrefix + fiType2NimType(cfg, program, arg.type);
-					}
-					fiNimRenameKeyword(cfg, arg.name) + ": " + tmp
-				}
-				), ", ");
-
-				tp = fiNimTypeParamsList(program, FiFunctionDec(name, lambda, t, -1, -1));
-
-				hd = "proc " + fiNimRenameKeyword(cfg, name) + tp + "(" + fparams + ")" + stype;
-
-				if (name != "main") {
-					nimProcDefinition := Cons(hd + "\n", ^nimProcDefinition);
-				}
-
-				meq = (if (name == "main") " {.discardable.}" else "") + " = \n";
-				header = hd + meq;
-
-				lambdaBody : FiExp = lambda.body;
-				bodyOrSeq = switch (lambdaBody) {
-					FiSeq(__, __, __) : lambda.body;
-					default : FiSeq([lambda.body], FiTypeVoid(), -1);
-				}
-				// if (name == "extractStruct") doTN := true;
-				if (^doTN) {
-					// fcPrintln("HIA: decl = " + toString(decl));
-				}
-				bodyTxt = fiNimCompileToReturn(cfg, program, bodyOrSeq, fiNimIndent);
-				doTN := false;
-				header + bodyTxt + "\n"
+				fiNimCompileFunction(cfg, program, name, type, lambda);
 			}
 		}
-
-		FiGlobalVar(name, value, typ, __, __): {
-			// TODO Dead code elimination broke this!
-			// Made stub, but require to fixup it correctly!
-			if (name != "") {
-					// fcPrintln("HIA: " + name + " typ = " + toString(typ));
-					varType = switch(typ) {
-						FiTypeFunction(__, __): "";
-						FiTypeRef(tr): switch(tr) {
-							FiTypeFunction(__,__): "";
-							default: fiType2NimType(cfg, program, typ);
-						}
-						default: fiType2NimType(cfg, program, typ);
-					}
-					"var " + name +
-					(if (varType != "") ": " + (if (name == "securityModes") "seq[OWASP]" else varType) else "") +
-					" = " + fiNimCompileToExpr(cfg, program, value, indent)
-			}
-			else "# FiGlobalVar = " + toString(decl);
+		FiGlobalVar(name, value, type, __, __): {
+			fiNimCompileGlobalVar(cfg, program, name, type, value, indent);
 		}
 	};
-	toplevel
+}
+
+fiNimCompileFunction(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: FiTypeFunction, lambda: FiLambda) -> string {
+	if (containsSet(nimForbiddenFunctions, nm)) {
+		nimProcDefinition := Cons("# " + nm + " forbidden with nimForbiddenFunctions\n", ^nimProcDefinition);
+		""
+	} else {
+		nim_type = \t -> fiType2NimType(cfg, program, t);
+		ret_type = switch(type.returnType) {
+			FiTypeFunction(__, __): "(" + nim_type(type.returnType) + ")";
+			default: nim_type(type.returnType);
+		}
+
+		stype = if (ret_type == "") "" else ": " + ret_type;
+
+		fparams = strGlue(mapi(lambda.args, \idx, arg -> {
+			tmp = {
+				varPrefix = switch(arg.type) {
+					FiTypeRef(__) : "var ";
+					default : ""
+				};
+				if (^doTN) fcPrintln("HIA: at = " + toString(arg.type), cfg.threadId);
+				varPrefix + fiType2NimType(cfg, program, arg.type);
+			}
+			fiNimRenameKeyword(cfg, arg.name) + ": " + tmp
+		}
+		), ", ");
+
+		tp = fiNimTypeParamsList(program, FiFunctionDec(nm, lambda, type, -1, -1));
+
+		hd = "proc " + fiNimRenameKeyword(cfg, nm) + tp + "(" + fparams + ")" + stype;
+
+		if (nm != "main") {
+			nimProcDefinition := Cons(hd + "\n", ^nimProcDefinition);
+		}
+
+		meq = (if (nm == "main") " {.discardable.}" else "") + " = \n";
+		header = hd + meq;
+
+		lambdaBody : FiExp = lambda.body;
+		bodyOrSeq = switch (lambdaBody) {
+			FiSeq(__, __, __) : lambda.body;
+			default : FiSeq([lambda.body], FiTypeVoid(), -1);
+		}
+		// if (name == "extractStruct") doTN := true;
+		if (^doTN) {
+			// fcPrintln("HIA: decl = " + toString(decl));
+		}
+		bodyTxt = fiNimCompileToReturn(cfg, program, bodyOrSeq, fiNimIndent);
+		doTN := false;
+		header + bodyTxt + "\n"
+	}
+}
+
+fiNimCompileGlobalVar(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: FiType, value: FiExp, indent : string) {
+	// TODO Dead code elimination broke this!
+	// Made stub, but require to fixup it correctly!
+	if (nm != "") {
+			// fcPrintln("HIA: " + name + " typ = " + toString(typ));
+			varType = switch(type) {
+				FiTypeFunction(__, __): "";
+				FiTypeRef(tr): switch(tr) {
+					FiTypeFunction(__,__): "";
+					default: fiType2NimType(cfg, program, type);
+				}
+				default: fiType2NimType(cfg, program, type);
+			}
+			"var " + nm +
+			(if (varType != "") ": " + (if (nm == "securityModes") "seq[OWASP]" else varType) else "") +
+			" = " + fiNimCompileToExpr(cfg, program, value, indent)
+	}
+	else {
+		fcPrintln("Error: name of a global variable is empty", cfg.threadId);
+		"# FiGlobalVar = " + toString(value);
+	}
 }
 
 fiNimCompileToExpr(
