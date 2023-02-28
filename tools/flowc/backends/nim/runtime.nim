@@ -201,7 +201,7 @@ proc strsubsmart*(s: string, start: int, fl0wlen: int): string =
           slen+fl0wlen-trueStart
       substring(s, trueStart, trueLength)
 
-proc list2array*[T](list: RootObj): seq[T] =
+proc list2array*[T](list: List[T]): seq[T] =
   var p = list
   var r = newSeq[T]()
 
@@ -231,7 +231,7 @@ proc list2array*[T](list: RootObj): seq[T] =
 ]#
   return r
 
-proc list2string*(list: RootObj): seq[string] =
+proc list2string*(list: List[string]): seq[string] =
   var p = list
   var r = newSeq[string]()
 
