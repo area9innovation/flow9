@@ -74,6 +74,9 @@ export {
 	// Checks whether type is flow (i.e. FiTypeFlow)
 	fiTypeIsFlow(t : FiType) -> bool;
 
+	// Checks whether type is scalar (i.e. void, bool, int or double)
+	fiTypeIsScalar(t : FiType) -> bool;
+
 	// All FiModule declarations in one array;
 	fiModuleDecls(m : FiModule) -> [FiDeclaration];
 
@@ -86,12 +89,29 @@ export {
 
 	// Checks if a name is a name of a global function or native (not variable!)
 	fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool;
+	// Analogical check, but on global variable
+	fiIsGlobalVariable(name: string, names: FiGlobalNames) -> bool;
+	// Any toplevel entry: global var, function or native
+	fiIsGlobal(name: string, names: FiGlobalNames) -> bool;
 
 	// Clear from the name: renames a variable
 	fiRenameVar(e : FiExp, var: string, new: string) -> FiExp;
 
+	// Replace a var with some expression
+	fiReplaceVar(e : FiExp, var: string, new: FiExp) -> FiExp;
+
 	// Checks the equivalence of types (function arg names are ignored)
 	fiEqualTypes(type1 : FiType, type2 : FiType) -> bool;
+
+	// Unwrap the array type from FiTypeArray
+	fiDearrayType(tp: FiType) -> FiType;
+
+	// Unwrap the reference type from FiTypeRef
+	fiDerefType(tp: FiType) -> FiType;
+
+	fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType;
+
+	fiSetExpType(e : FiExp, t: FiType) -> FiExp;
 }
 
 fiDeclarationArgNames(decl) {
@@ -575,6 +595,16 @@ fiTypeIsFlow(t : FiType) {
 	}
 }
 
+fiTypeIsScalar(t : FiType) -> bool {
+	switch (t) {
+		FiTypeVoid():   true;
+		FiTypeBool():   true;
+		FiTypeInt():    true;
+		FiTypeDouble(): true;
+		default:        false;
+	}
+}
+
 fiModuleDecls(m : FiModule) -> [FiDeclaration] {
 	concatA([m.functions, m.globalVars, m.natives]);
 }
@@ -628,6 +658,22 @@ fiIsGlobalFunction(name: string, names: FiGlobalNames) -> bool {
 		}
 		None(): false;
 	}
+}
+
+fiIsGlobalVariable(name: string, names: FiGlobalNames) -> bool {
+	 switch (lookupTree(names.toplevel, name)) {
+		Some(decl): {
+			switch (decl) {
+				FiGlobalVar(__,__,__,__,__): true;
+				default: false;
+			}
+		}
+		None(): false;
+	}
+}
+
+fiIsGlobal(name: string, names: FiGlobalNames) -> bool {
+	 containsKeyTree(names.toplevel, name);
 }
 
 fiRenameVar(e : FiExp, var: string, new: string) -> FiExp {
@@ -685,6 +731,61 @@ fiRenameVar(e : FiExp, var: string, new: string) -> FiExp {
 	}
 }
 
+fiReplaceVar(e : FiExp, var: string, new: FiExp) -> FiExp {
+	ren = \x -> fiReplaceVar(x, var, new);
+	switch(e) {
+		FiLambda(__, body,__, __): {
+			FiLambda(e with body = ren(body));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = ren(fn),
+				args = map(args, ren)
+			);
+		}
+		FiLet(__, __,e1, e2,__, __): {
+			FiLet(e with
+				e1 = ren(e1),
+				e2 = ren(e2)
+			);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with
+				e1 = ren(e1),
+				e2 = ren(e2),
+				e3 = ren(e3)
+			);
+		}
+		FiSwitch(v, __,cases,__, __): {
+			FiSwitch(e with 
+				//x = if (v.name != var) v else FiVar(v with name = new),
+				cases = map(cases, \c -> FiCase(c with body = ren(c.body)))
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = ren(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, ren));
+		}
+		FiCallPrim(__, es,__,__): {
+			FiCallPrim(e with es = map(es, ren));
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = ren(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = ren(ex));
+		}
+		FiVar(name,__, __): if (name != var) e else new;
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+
 fiEqualTypes(type1 : FiType, type2 : FiType) -> bool {
 	switch (type1) {
 		FiTypeRef(rt1): {
@@ -719,3 +820,82 @@ fiEqualTypes(type1 : FiType, type2 : FiType) -> bool {
 	}
 }
 
+fiDearrayType(tp: FiType) -> FiType {
+	switch (tp) {
+		FiTypeArray(t): t;
+		default: fail0("non-array treated as array: " + prettyFiType(dummyPretty, tp, makeSet()));
+	}
+}
+
+fiDerefType(tp: FiType) -> FiType {
+	switch (tp) {
+		FiTypeRef(t): t;
+		default: fail0("non-reference treated as reference: " + prettyFiType(dummyPretty, tp, makeSet()));
+	}
+}
+
+fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
+	if (t1 == t2) t1 else {
+		t0 = switch (t2) {
+			FiTypeFlow(): t2;
+			FiTypeNative(): t2;
+			default: t1;
+		}
+		switch (t1) {
+			FiTypeFlow(): t1;
+			FiTypeNative(): t1;
+			FiTypeName(n1, __): {
+				switch (t2) {
+					FiTypeFlow(): t2;
+					FiTypeNative(): t2;
+					FiTypeName(n2, __): {
+						switch (lookupTree(names.structs, n1)) {
+							Some(__): t2;
+							None(): {
+								switch (lookupTree(names.structs, n2)) {
+									Some(__): t1;
+									None(): {
+										u1 = lookupTreeDef(names.unions, n1, FiTypeUnion("", [], [], 0));
+										u2 = lookupTreeDef(names.unions, n2, FiTypeUnion("", [], [], 0));
+										if (isEmptySet(differenceSets(buildSet(u1.typenames), buildSet(u2.typenames)))) t2 else t1;
+									}
+								}
+							}
+						}
+					}
+					default: t0;
+				}
+			} 
+			default: t0;
+		}
+	}
+}
+
+fiSetExpType(e : FiExp, t: FiType) -> FiExp {
+	switch(e) {
+		FiLambda(__,__,__, __): {
+			switch (t) {
+				FiTypeFunction(__,__): FiLambda(e with type = t);
+				default: {
+					fail("attempt assign a type " + prettyFiType(dummyPretty, t, makeSet()) + " to function");
+					e;
+				}
+			}
+		}
+		FiCall(__,__,__,__):      FiCall(e with type = t);
+		FiLet(__,__,__,__,__,__): FiLet(e with type = t);
+		FiIf(__,__,__,__, __):    FiIf(e with type = t);
+		FiSwitch(__,__,__,__,__): FiSwitch(e with type = t);
+		FiCast(__,__,__,__,__):   FiCast(e with type = t);
+		FiSeq(__,__,__):          FiSeq(e with type = t);
+		FiCallPrim(__,__,__,__):  FiCallPrim(e with type = t);
+		FiRequire(__,__,__,__):   FiRequire(e with type = t);
+		FiUnsafe(__,__,__,__):    FiUnsafe(e with type = t);
+		FiVar(__,__,__):          FiVar(e with type = t);
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
