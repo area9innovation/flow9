@@ -7,34 +7,34 @@ export {
 	fiNimCompileToplevel(
 		cfg : FiNimConfig,
 		// ctx : FiNimToplevelContext,
-		program : FiNimEnv,
+		env : FiNimEnv,
 		decl: FiDeclaration,
 		indent : string) -> string;
 
 	fiNimCompileToExpr(
 		cfg  : FiNimConfig,
 		// ctx  : FiNimToplevelContext,
-		program : FiNimEnv,
+		env : FiNimEnv,
 		expr : FiNimExp,
 		indent : string) -> string;
 
 	fiNimCompileToReturn(
 		cfg  : FiNimConfig,
 		// ctx  : FiNimToplevelContext,
-		program : FiNimEnv,
+		env : FiNimEnv,
 		expr : FiNimExp,
 		indent : string) -> string;
 
 	fiNimCompilePlus(
 		cfg  : FiNimConfig,
-		program : FiNimEnv,
+		env : FiNimEnv,
 		arg1 : Pair<string, FiType>,
 		op   : string,
 		arg2 : Pair<string, FiType>) -> string;
 
 	fiNimCompileDiv(
 		cfg  : FiNimConfig,
-		program : FiNimEnv,
+		env : FiNimEnv,
 		arg1 : Pair<string, FiType>,
 		op   : string,
 		arg2 : Pair<string, FiType>) -> string;
@@ -43,7 +43,7 @@ export {
 // Temporary, will be removed.
 doTN : ref bool = ref false;
 
-fiNimCompileToplevel(cfg : FiNimConfig, program : FiNimEnv, decl : FiDeclaration, indent : string) {
+fiNimCompileToplevel(cfg : FiNimConfig, env : FiNimEnv, decl : FiDeclaration, indent : string) {
 	switch (decl : FiDeclaration) {
 		FiNativeDec(name, io, type, nativeName, flowfallback, __, __) : {
 			switch (flowfallback) {
@@ -53,7 +53,7 @@ fiNimCompileToplevel(cfg : FiNimConfig, program : FiNimEnv, decl : FiDeclaration
 						""
 					} else {
 						// use a fallback
-						fiNimCompileFunction(cfg, program, name, fn_type, flowfallback);
+						fiNimCompileFunction(cfg, env, name, fn_type, flowfallback);
 					}
 				}
 				FiVoid(__): {
@@ -73,21 +73,21 @@ fiNimCompileToplevel(cfg : FiNimConfig, program : FiNimEnv, decl : FiDeclaration
 				//is implemented as native in runtime
 				""
 			} else {
-				fiNimCompileFunction(cfg, program, name, type, lambda);
+				fiNimCompileFunction(cfg, env, name, type, lambda);
 			}
 		}
 		FiGlobalVar(name, value, type, __, __): {
-			fiNimCompileGlobalVar(cfg, program, name, type, value, indent);
+			fiNimCompileGlobalVar(cfg, env, name, type, value, indent);
 		}
 	};
 }
 
-fiNimCompileFunction(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: FiTypeFunction, lambda: FiLambda) -> string {
+fiNimCompileFunction(cfg : FiNimConfig, env : FiNimEnv, nm: string, type: FiTypeFunction, lambda: FiLambda) -> string {
 	if (containsSet(nimForbiddenFunctions, nm)) {
 		nimProcDefinition := Cons("# " + nm + " forbidden with nimForbiddenFunctions\n", ^nimProcDefinition);
 		""
 	} else {
-		nim_type = \t -> fiType2NimType(cfg, program, t);
+		nim_type = \t -> fiType2NimType(cfg, env, t);
 		ret_type = switch(type.returnType) {
 			FiTypeFunction(__, __): "(" + nim_type(type.returnType) + ")";
 			default: nim_type(type.returnType);
@@ -102,13 +102,13 @@ fiNimCompileFunction(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: Fi
 					default : ""
 				};
 				if (^doTN) fcPrintln("HIA: at = " + toString(arg.type), cfg.threadId);
-				varPrefix + fiType2NimType(cfg, program, arg.type);
+				varPrefix + fiType2NimType(cfg, env, arg.type);
 			}
 			fiNimRenameKeyword(cfg, arg.name) + ": " + tmp
 		}
 		), ", ");
 
-		tp = fiNimTypeParamsList(program, FiFunctionDec(nm, lambda, type, -1, -1));
+		tp = fiNimTypeParamsList(env, FiFunctionDec(nm, lambda, type, -1, -1));
 
 		hd = "proc " + fiNimRenameKeyword(cfg, nm) + tp + "(" + fparams + ")" + stype;
 
@@ -128,13 +128,13 @@ fiNimCompileFunction(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: Fi
 		if (^doTN) {
 			// fcPrintln("HIA: decl = " + toString(decl));
 		}
-		bodyTxt = fiNimCompileToReturn(cfg, program, bodyOrSeq, fiNimIndent);
+		bodyTxt = fiNimCompileToReturn(cfg, env, bodyOrSeq, fiNimIndent);
 		doTN := false;
 		header + bodyTxt + "\n"
 	}
 }
 
-fiNimCompileGlobalVar(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: FiType, value: FiExp, indent : string) {
+fiNimCompileGlobalVar(cfg : FiNimConfig, env : FiNimEnv, nm: string, type: FiType, value: FiExp, indent : string) {
 	// TODO Dead code elimination broke this!
 	// Made stub, but require to fixup it correctly!
 	if (nm != "") {
@@ -143,13 +143,14 @@ fiNimCompileGlobalVar(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: F
 				FiTypeFunction(__, __): "";
 				FiTypeRef(tr): switch(tr) {
 					FiTypeFunction(__,__): "";
-					default: fiType2NimType(cfg, program, type);
+					default: fiType2NimType(cfg, env, type);
 				}
-				default: fiType2NimType(cfg, program, type);
+				default: fiType2NimType(cfg, env, type);
 			}
 			"var " + nm +
-			(if (varType != "") ": " + (if (nm == "securityModes") "seq[OWASP]" else varType) else "") +
-			" = " + fiNimCompileToExpr(cfg, program, value, indent)
+			(if (varType != "") ": " + varType else "") +
+			//(if (nm == "securityModes") "seq[OWASP]" else varType) else "") +
+			" = " + fiNimCompileToExpr(cfg, env, value, indent)
 	}
 	else {
 		fcPrintln("Error: name of a global variable is empty", cfg.threadId);
@@ -159,15 +160,15 @@ fiNimCompileGlobalVar(cfg : FiNimConfig, program : FiNimEnv, nm: string, type: F
 
 fiNimCompileToExpr(
 	cfg  : FiNimConfig,
-	program : FiNimEnv,
+	env : FiNimEnv,
 	expr : FiNimExp,
 	indent : string) -> string {
-	subindent = indent+fiNimIndent;
+	subindent = indent + fiNimIndent;
 	switch (expr : FiNimExp) {
 		FiDiscard(e) : {
 			switch(e) {
 				None() : "discard";
-				Some(ex) : "discard\n" + subindent + fiNimCompileToExpr(cfg, program, ex, subindent);
+				Some(ex) : "discard\n" + subindent + fiNimCompileToExpr(cfg, env, ex, subindent);
 			}
 		}
 		FiVoid(__): "discard";
@@ -212,35 +213,35 @@ fiNimCompileToExpr(
 		}
 
 		FiLet(x, tp, e1, e2, __, __): {
-			"var " + fiNimRenameKeyword(cfg, x) + ": " + fiType2NimType(cfg, program, tp) + " =\n" +
-			subindent + fiNimCompileToExpr(cfg, program, e1, subindent) + "\n" +
-			indent + fiNimCompileToExpr(cfg, program, e2, indent);
+			"var " + fiNimRenameKeyword(cfg, x) + ": " + fiType2NimType(cfg, env, tp) + " =\n" +
+			subindent + fiNimCompileToExpr(cfg, env, e1, subindent) + "\n" +
+			indent + fiNimCompileToExpr(cfg, env, e2, indent);
 		}
 
 		FiLambda(xs, e0, type, __): {
 			// fcPrintln("HIA: ltm = " + toString(ltm));
 			lt = switch (type) {
-				FiTypeFunction(__, retType): fiType2NimType(cfg, program, retType);
+				FiTypeFunction(__, retType): fiType2NimType(cfg, env, retType);
 				default: "";
 			}
 			ltype = if (lt != "") ": " + lt else "";
 
 //			ltype = "";
 			"proc(" + strGlue(map(xs, \a -> {
-				ats = fiType2NimType(cfg, program, a.type);
+				ats = fiType2NimType(cfg, env, a.type);
 				atr = switch (a.type) {
 					FiTypeFunction(__, __) : "(" + ats + ")";
 					default : ats;
 				}
 				fiNimRenameKeyword(cfg, a.name) + ": " + atr
 			}), ", ") + ")" + ltype + " =\n" +
-			subindent + fiNimCompileToReturn(cfg, program, e0, subindent);
+			subindent + fiNimCompileToReturn(cfg, env, e0, subindent);
 		}
 
 		FiCall(call, es, __, __): {
 			maybe_sinfo = switch (call) {
 				FiVar(x, __, __): {
-					switch (lookupTree(program.prog.names.structs, x) : Maybe<FiTypeStruct>) {
+					switch (lookupTree(env.prog.names.structs, x) : Maybe<FiTypeStruct>) {
 						Some(sinfo): Some(sinfo);
 						None(): None()
 					}
@@ -258,11 +259,11 @@ fiNimCompileToExpr(
 							if (^doTN) {
 								// fcPrintln("HIA: call = " + toString(call));
 							}
-							fiNimCompileToExpr(cfg, program, call, indent);
+							fiNimCompileToExpr(cfg, env, call, indent);
 							// "#[no name]#"
 						}
 					}
-					args = strGlue(map(es, \e -> {fiNimCompileToExpr(cfg, program, e, subindent)}), ", ");
+					args = strGlue(map(es, \e -> {fiNimCompileToExpr(cfg, env, e, subindent)}), ", ");
 					name + "(" + args + ")";
 				}
 			}
@@ -301,7 +302,7 @@ fiNimCompileToExpr(
 					needReturn = (idx == l-1) && nrr;
 
 					ex = if (needDiscard) FiDiscard(Some(e)) else e;
-					exprCode = (if (idx == 0) "" else "\n" + indent) + (if (needReturn) "return " else "") + fiNimCompileToExpr(cfg, program, ex, indent);
+					exprCode = (if (idx == 0) "" else "\n" + indent) + (if (needReturn) "return " else "") + fiNimCompileToExpr(cfg, env, ex, indent);
 					Cons(exprCode, acc);
 				}))
 			else
@@ -309,19 +310,19 @@ fiNimCompileToExpr(
 		}
 
 		FiIf(e1, e2, e3, __, __): {
-			"if "+fiNimCompileToExpr(cfg, program, e1, "") +":\n"+
-			subindent + fiNimCompileToExpr(cfg, program, e2, subindent) + "\n" +
+			"if "+fiNimCompileToExpr(cfg, env, e1, "") +":\n"+
+			subindent + fiNimCompileToExpr(cfg, env, e2, subindent) + "\n" +
 			indent + "else:\n" +
-			subindent + fiNimCompileToExpr(cfg, program, e3, subindent);
+			subindent + fiNimCompileToExpr(cfg, env, e3, subindent);
 		}
 
 		FiSwitch(e0, e0type, cs, __, __): {
 			"# FiSwitch: \n";
-			"case name(" + fiNimCompileToExpr(cfg, program, e0, subindent) + ".type)" + "\n" +
+			"case name(" + fiNimCompileToExpr(cfg, env, e0, subindent) + ".type)" + "\n" +
 			fold(cs, "", \acc, c : FiCase -> {
 				// fcPrintln("HIA: c = " + toString(c));
 				acc + indent + "of \"" + c.struct + "\":\n" +
-				subindent + fiNimCompileToExpr(cfg, program, c.body, subindent) + "\n"
+				subindent + fiNimCompileToExpr(cfg, env, c.body, subindent) + "\n"
 			});
 			/* 
 			isIf = length(cs) == 2;
@@ -366,7 +367,7 @@ fiNimCompileToExpr(
 				default: indent;
 			};
 			*/
-			args = map(es, \arg : FiExp -> Pair(fiNimCompileToExpr(cfg, program, arg, indent), fiExpType(arg)));
+			args = map(es, \arg : FiExp -> Pair(fiNimCompileToExpr(cfg, env, arg, indent), fiExpType(arg)));
 			opt = switch (op : FcPrim) {
 				FcOrPrim():    args[0].first + " or " + args[1].first;
 				FcAndPrim():   args[0].first + " and " + args[1].first;
@@ -377,22 +378,22 @@ fiNimCompileToExpr(
 				FcGePrim():    args[0].first + " >= " + args[1].first;
 				FcLtPrim():    args[0].first + " < "  + args[1].first;
 				FcGtPrim():    args[0].first + " > "  + args[1].first;
-				FcPlusPrim():  fiNimCompilePlus(cfg, program, args[0], "+", args[1]);
-				FcMinusPrim(): args[0].first + "-"  + args[1].first;
-				FcMulPrim():   args[0].first + "*"  + args[1].first;
-				FcDivPrim():   fiNimCompileDiv(cfg, program, args[0], "/", args[1]);
-				FcModPrim():   fiNimCompileDiv(cfg, program, args[0], "%", args[1]);
+				FcPlusPrim():  fiNimCompilePlus(cfg, env, args[0], " + ", args[1]);
+				FcMinusPrim(): args[0].first + " - "  + args[1].first;
+				FcMulPrim():   args[0].first + " * "  + args[1].first;
+				FcDivPrim():   fiNimCompileDiv(cfg, env, args[0], " / ", args[1]);
+				FcModPrim():   fiNimCompileDiv(cfg, env, args[0], " % ", args[1]);
 				FcNegPrim():  "-" + args[0].first;
-				FcArrayPrim(): "@[" + strGlue(map(args, \e->e.first), ",") + "]";
+				FcArrayPrim(): "@[" + strGlue(map(args, \e->e.first), ", ") + "]";
 				FcIndexPrim(): args[0].first + "[" + args[1].first + "]";
 				FcDerefPrim(): args[0].first;
-				FcAssignPrim():	args[0].first + "=" + args[1].first;
+				FcAssignPrim():	args[0].first + " = " + args[1].first;
 				FcRefPrim(): args[0].first;
 				// After typechecking we definitely know structure exists, so skip sanity checks.
-				FcStructPrim(structname): {
-					struct = {
-						type = fiType2NimType(cfg, program, tp);
-						argNames = switch (resolveFiTypeName(program.prog.names, tp, cfg.threadId)) {
+				FcStructPrim(struct_name): {
+					/*struct = {
+						type = fiType2NimType(cfg, env, tp);
+						argNames = switch (resolveFiTypeName(env.prog.names, tp, cfg.threadId)) {
 							//FiTypeStruct(__ ,__, sargs, __): map(sargs, \e -> e.name);
 							FiTypeStruct(name, tyPars, as, __): map(as, \a -> a.name);
 							default: [];
@@ -402,17 +403,33 @@ fiNimCompileToExpr(
 					if (struct.second == [])
 						struct.first
 					else
-						struct.first + "(" + strGlue(mapi(es, \ix, e -> struct.second[ix] + ": " +  args[ix].first), ", ") + ")";
+						struct.first + "(" + strGlue(mapi(es, \ix, e -> struct.second[ix] + ": " +  args[ix].first), ", ") + ")";*/
+
+					struct = lookupTreeDef(env.prog.names.structs, struct_name, dummyFiTypeStruct);
+					type = cast(tp: FiType -> FiTypeName);
+					//typars = type.typeparameters;
+					//fiNimParamsForInstantiate(cfg : FiNimConfig, nimEnv : FiNimEnv, params: [FiType]) -> string;
+					//structname + fiNimParamsForInstantiate(cfg, env, typars) + 
+					tuple = "(" + 
+						supergluei(args, \i, p ->  struct.args[i].name + ": " + p.first, ", ") + 
+					")";
+					switch (lookupTree(env.prog.names.unions, type.name)) {
+						Some(union): {
+							typars = fiNimParamsForInstantiate(cfg, env, type.typeparameters);
+							union.name + "(st" + struct_name + ", " + tuple + ")";
+						}
+						None(): tuple;
+					}
 				};
 				FcFieldPrim(name): {
 					// fcPrintln("HIA: expr = " + toString(expr));
 					a : FiExp =es[0];
 					vr = switch (a) {
 						FiVar(n, __, __) : n;
-						default : fiNimCompileToExpr(cfg, program, a, indent);
+						default : fiNimCompileToExpr(cfg, env, a, indent);
 					}
 					// (cast[Some](m)).value
-					tpm = fiType2NimTypeName(cfg, program, fiExpType(a));
+					tpm = fiType2NimTypeName(cfg, env, fiExpType(a));
 					"(cast[" + tpm + "](" + vr + "))" +  "." + fiNimRenameKeyword(cfg, name);
 				}
 				/*
@@ -438,34 +455,34 @@ fiNimCompileToExpr(
 			opt;
 		}
 		FiCast(e, tFrom, tTo, __, __): {
-			ex = fiNimCompileToExpr(cfg, program, e, indent);
-			tf = fiType2NimType(cfg, program, tFrom);
-			tt = fiType2NimType(cfg, program, tTo);
+			ex = fiNimCompileToExpr(cfg, env, e, indent);
+			tf = fiType2NimType(cfg, env, tFrom);
+			tt = fiType2NimType(cfg, env, tTo);
 			"cast[" + tt + "](" + ex + ")";
 		}
 		default: "#!other!\n" + toString(expr);
 	}
 }
 
-fiNimCompileToReturn(cfg, program, expr, indent) {
+fiNimCompileToReturn(cfg, env, expr, indent) {
 	subindent = indent+fiNimIndent;
 	switch (expr : FiNimExp) {
-		FiCallPrim(op, es, __, __) : fiNimCompileToExpr(cfg, program, expr, indent);
+		FiCallPrim(op, es, __, __) : fiNimCompileToExpr(cfg, env, expr, indent);
 		FiCall(f, es, type, __): {
 			if (^doTN) {
 				// fcPrintln("HIA: rt = " + toString(rtt));
 			}
 			switch (type) {
-				FiTypeVoid() : fiNimCompileToExpr(cfg, program, expr, indent);
-				default: "return " + fiNimCompileToExpr(cfg, program, expr, indent);
+				FiTypeVoid() : fiNimCompileToExpr(cfg, env, expr, indent);
+				default: "return " + fiNimCompileToExpr(cfg, env, expr, indent);
 			}
 		}
 
 		FiLet(x, tp, e1, e2, t, __): {
 			dec = "var ";
-			dec + fiNimRenameKeyword(cfg, x) + ": " + fiType2NimType(cfg, program, tp) + " = " +
-			fiNimCompileToExpr(cfg, program, e1, subindent) + "\n"+
-			fiNimCompileToReturn(cfg, program, e2, indent);
+			dec + fiNimRenameKeyword(cfg, x) + ": " + fiType2NimType(cfg, env, tp) + " = " +
+			fiNimCompileToExpr(cfg, env, e1, subindent) + "\n"+
+			fiNimCompileToReturn(cfg, env, e2, indent);
 		}
 
 		FiSeq(es, __, __): {
@@ -501,7 +518,7 @@ fiNimCompileToReturn(cfg, program, expr, indent) {
 						// fcPrintln("HIA: needReturn = " + toString(needReturn) + "\n");
 					}
 					ex = if (needDiscard) FiDiscard(Some(e)) else e;
-					exprCode = indent + (if (needReturn) "return " else "") + fiNimCompileToExpr(cfg, program, ex, indent) + (if (idx == l-1) "" else "\n");
+					exprCode = indent + (if (needReturn) "return " else "") + fiNimCompileToExpr(cfg, env, ex, indent) + (if (idx == l-1) "" else "\n");
 					Cons(exprCode, acc);
 				}))
 			else
@@ -509,10 +526,10 @@ fiNimCompileToReturn(cfg, program, expr, indent) {
 		}
 
 		FiIf(e1, e2, e3, __, __): {
-			"if "+fiNimCompileToExpr(cfg, program, e1, "") +":\n"+
-			subindent + fiNimCompileToExpr(cfg, program, e2, subindent) + "\n" +
+			"if "+fiNimCompileToExpr(cfg, env, e1, "") +":\n"+
+			subindent + fiNimCompileToExpr(cfg, env, e2, subindent) + "\n" +
 			indent + "else:\n" +
-			subindent + fiNimCompileToExpr(cfg, program, e3, subindent);
+			subindent + fiNimCompileToExpr(cfg, env, e3, subindent);
 			/*
 			"if "+fiNimCompileToExpr(cfg, ctx, e1, subindent, false)+": "+
 			fiNimCompileToReturn(cfg, ctx, e2, subindent) + "else" +
@@ -559,11 +576,11 @@ fiNimCompileToReturn(cfg, program, expr, indent) {
 			*/
 			"#R FiSwitch:\n"
 		}
-		default: fiNimCompileToExpr(cfg, program, expr, subindent) + "";
+		default: fiNimCompileToExpr(cfg, env, expr, subindent) + "";
 	}
 }
 
-fiNimCompilePlus(cfg : FiNimConfig, program : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
+fiNimCompilePlus(cfg : FiNimConfig, env : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
 	a1 = arg1.first;
 	a2 = arg2.first;
 	// Type checker ensures math types are equal, so we only need one type.
@@ -574,7 +591,7 @@ fiNimCompilePlus(cfg : FiNimConfig, program : FiNimEnv, arg1 : Pair<string, FiTy
 	if (isString && (op == "+")) a1 + "&" + a2 else a1 + op + a2;
 }
 
-fiNimCompileDiv(cfg : FiNimConfig, program : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
+fiNimCompileDiv(cfg : FiNimConfig, env : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
 	a1 = arg1.first;
 	a2 = arg2.first;
 	// Type checker ensures math types are equal, so we only need one type.
