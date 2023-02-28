@@ -2081,10 +2081,12 @@ class DisplayObjectHelper {
 								unhideDialogContent();
 							});
 						} else {
-							untyped child.nativeWidget.showModal();
-							RenderSupport.once("stagechanged", function() {
-								if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
-							});
+							if (untyped child.nativeWidget.showModal != null) {
+								untyped child.nativeWidget.showModal();
+								RenderSupport.once("stagechanged", function() {
+									if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
+								});
+							}
 							unhideDialogContent();
 						}
 					});
