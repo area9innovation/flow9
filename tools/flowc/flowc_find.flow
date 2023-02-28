@@ -519,7 +519,7 @@ fcDoSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 }
 
 fcSymbolInfoMarkDown(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
-	output = \description -> {
+	outputFlow = \description -> {
 		content = strGlue([
 			"```flow",
 			description,
@@ -540,7 +540,21 @@ fcSymbolInfoMarkDown(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : 
 				if (!cached.outdated) {
 					eitherFn(
 						findNameTypeInFiExp(config, globEnv, cached.loaded.module, name, line, col),
-						\type -> output(name + " : " + prettyFiType(dummyPretty, type, makeSet())),
+						\type -> {
+							outputFlow(name + " : " + prettyFiType(dummyPretty, type, makeSet()) + ";");
+							switch (type) {
+								FiTypeName(typeName, __): {
+									maybeApply(
+										fastSymbolNature(config, globEnv, typeName, -1, -1),
+										\nature -> maybeApply(nature.cached, \cachedType -> {
+											fcPrintln("\n\n---\n<br>\n", config.threadId);
+											outputFlow(fcCacheNamed2markdown(cachedType));
+										})
+									);
+								}
+								default: {}
+							}
+						},
 						\ -> err("`" + name + "` can't be found, try recompiling the file (F7)")
 					);
 				} else {
@@ -555,7 +569,7 @@ fcSymbolInfoMarkDown(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : 
 			Some(nature): {
 				switch (nature.cached) {
 					Some(cached): {
-						output(fcCacheNamed2s(cached));
+						outputFlow(fcCacheNamed2markdown(cached));
 					}
 					None(): def();
 				}
@@ -686,13 +700,32 @@ findNameDefInModuleAtIndex(config : CompilerConfig, env : FcTypeEnvGlobal, modul
 	);
 }
 
+fcCacheNamed2markdown(cached : FcCacheNamed) -> string {
+	str0 = fcCacheNamed2strSimple(cached);
+	str = switch (cached.named) {
+		FiTypeUnion(__, __, __, __): {
+			if (startsWith(str0, "(") && endsWith(str0, ")")) {
+				substring(str0, 1, strlen(str0) -2);
+			} else {
+				str0;
+			}
+		};
+		default: str0;
+	}
+
+	"import " + cached.module + ";\n\n" + str + ";";
+}
+
 fcCacheNamed2s(cached : FcCacheNamed) -> string {
+	cached.module + (if (cached.exported) "" else " (local name)") + ":\n\n" + fcCacheNamed2strSimple(cached);
+}
+
+fcCacheNamed2strSimple(cached : FcCacheNamed) -> string {
 	symbol = cached.named;
-	decl = switch (symbol) {
+	switch (symbol) {
 		FiStructOrUnion(): prettyFiStructOrUnion(FcPretty(true, true, makeTree(), makeTree()), symbol, makeSet());
 		FiDeclaration(): prettyFiDeclaration(dummyPretty, symbol, makeSet());
 	};
-	cached.module + (if (cached.exported) "" else " (local name)") + ":\n\n" + decl;
 }
 
 fcTryToLoadFile(conf : CompilerConfig, env : FcTypeEnvGlobal) -> bool {

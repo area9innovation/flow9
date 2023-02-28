@@ -2,6 +2,7 @@ import material/material;
 import material/material_dialog;
 import material/material_snackbar;
 import material/extra/docking_ui/internal/material_docking_state;
+import formats/json/json_utils;
 
 
 export {
@@ -25,12 +26,28 @@ resetMDWorkspace(state : MDockingState) -> void {
 	reverseBehaviour(state.loadWorkspace);
 }
 
-
 dockingState2json(state : MDockingState) -> Json {
-	dockA = getValue(state.dock);
-	dockAjson = 
+	areasAjson = JsonObject(
+		map(reverseA(getTreeKeys(getValue(state.dockingAreas))),\areaName -> {
+			areaId = lookupTreeDef(getValue(state.dockingAreas), areaName, intMin);
+			areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
+			areaEnable = extractStruct(areaStyle, MDAreaEnable(make(true))).enable;
+			accordion = extractStruct(areaStyle, MDAreaAccordion(make(false), None()));
+
+			Pair(areaName,
+				JsonObject(
+					[
+						Pair("areaId", JsonDouble(i2d(areaId))),
+						Pair("enabled", JsonBool(getValue(areaEnable))),
+						Pair("accordion", JsonBool(getValue(accordion.enable))),
+					]
+				)
+			);
+		}));
+
+	panelsAjson = 
 		JsonObject(
-			mapi(dockA,\panelId, dock -> {
+			mapi(getValue(state.dock),\panelId, dock -> {
 				title = getValue(state.title)[panelId];
 				enabled = getValue(getValue(state.enabled)[panelId]);
 				expanded = getValue(getValue(state.expanded)[panelId]);
@@ -53,8 +70,8 @@ dockingState2json(state : MDockingState) -> Json {
 							Pair("y", JsonDouble(pos.y)),
 							Pair("w", JsonDouble(size.width)),
 							Pair("h", JsonDouble(size.height)),
-							Pair("mobileW", JsonDouble(dockedSize.width)),
-							Pair("mobileH", JsonDouble(dockedSize.height)),
+							Pair("mobileW", JsonDouble(mobileSize.width)),
+							Pair("mobileH", JsonDouble(mobileSize.height)),
 							Pair("dockedW", JsonDouble(dockedSize.width)),
 							Pair("dockedH", JsonDouble(dockedSize.height)),
 							Pair("enabled", JsonBool(enabled)),
@@ -64,10 +81,16 @@ dockingState2json(state : MDockingState) -> Json {
 						]
 					)
 				);
+			})
+		);
 
-			}));
-	// json2stringFormatted(dockAjson) |> println;  // Debug print
-	dockAjson
+	workspaceJson = JsonObject([
+		Pair("DockingAreas", areasAjson),
+		Pair("Panels", panelsAjson)
+	]);
+
+	// json2stringFormatted(workspaceJson) |> println;  // Debug print
+	workspaceJson
 }
 
 setMDockingStateKeyValue(state : MDockingState) -> bool {
@@ -80,8 +103,8 @@ setMDockingStateKeyValue(state : MDockingState) -> bool {
             setJsonField(parseJson(savedString), "Name",  JsonString("Default"))
             
         );
-    njson = setJsonField(jName, "Current",  JsonString(json2string(dockingState2json(state))));
-    setKeyValue(keyGroupName |> addDockingSuffix, json2string(njson));
+    njson = setJsonField(jName, "Current",  dockingState2json(state));
+	if (savedString != "") setKeyValue(keyGroupName |> addDockingSuffix, json2string(njson)) else false;
 }
 
 removeMDockingStateKeyValue(state : MDockingState) -> void {
@@ -172,6 +195,7 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                         [
                             MOnClick(
                                 confirmDeleteDialogFn(state.manager, formatString(_("Remove %1?"), [getValue(selectedNameB)]), _("DELETE"), \ -> {
+									currentWSJson = dockingState2json(state);
                                     p = firstElement(
                                         filtermapi(customWorkspacesA, \i, ws -> {
                                         wsName = getJsonStringValue(getJsonFieldValue(ws, "Name", JsonNull()), "");
@@ -179,10 +203,12 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                                     }), Pair(0, JsonNull()));
                                     iWs = p.first;
                                     selWs = p.second;
-                                    nWs = setJsonField(selWs, "Workspace",  JsonString(json2string(dockingState2json(state))));
+                                    // nWs = setJsonField(selWs, "Workspace",  JsonString(json2string(dockingState2json(state))));
+                                    nWs = setJsonField(selWs, "Workspace",  currentWSJson);
                                     nWsA = removeIndex(customWorkspacesA, iWs);
                                     njs = setJsonField(parseJson(savedString), "Workspaces",  JsonArray(nWsA));
-                                    setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs));
+                                	njs2 = setJsonField(njs, "Current",  currentWSJson);
+                                    setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs2));
                                     setMDWorkspaceName(state, "Default");
                                     reverseBehaviour(updateMenu);
                                     showMSnackbar(state.manager, getValue(selectedNameB) + " workspace removed", []);
@@ -194,40 +220,67 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                 ],
                 // Devtools buttons
                 if (isUrlParameterTrue("devtools")) [
-                    // MMenuCustomLine(
-                    //     MText("Rename Workspace", textStyleA) |> MBorderStart(gapW),
-                    //     [
-                    //         MOnClick(\ -> {
-                    //             saveEditWorkspaceDialog(state, updateMenu, false);
-                    //         }),
-                    //         MEnabled(fselectLift(updateMenu, \__ -> getValue(selectedNameB) != "Default"))
-                    //     ]		
-                    // ),
-                    // MMenuCustomLine(
-                    //     MText("Update Workspace", textStyleA) |> MBorderStart(gapW), [
-                    //     MOnClick(\ -> {
-                    //         if (customWorkspacesA != []) {
-                    //             p = firstElement(
-                    //                 filtermapi(customWorkspacesA, \i, ws -> {
-                    //                 wsName = getJsonStringValue(getJsonFieldValue(ws, "Name", JsonNull()), "");
-                    //                 if (wsName == getValue(selectedNameB)) Some(Pair(i, ws)) else None()
-                    //             }), Pair(0, JsonNull()));
-                    //             iWs = p.first;
-                    //             selWs = p.second;
-                    //             nWs = setJsonField(selWs, "Workspace",  JsonString(json2string(dockingState2json(state))));
-                    //             nWsA = replace(customWorkspacesA, iWs ,nWs);
-                    //             njs = setJsonField(parseJson(savedString), "Workspaces",  JsonArray(nWsA));
-                    //             njs2 = setJsonField(njs, "Current",  JsonString(json2string(dockingState2json(state))));
-                    //             setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs2));
-                    //             reverseBehaviour(updateMenu);
-                    //             showMSnackbar(state.manager, getValue(selectedNameB) + " workspace updated", []);
-                    //         }
-                    //     }), 
-                    //     MEnabled(fselectLift(updateMenu, \__ -> getValue(selectedNameB) != "Default"))]
-                    // ),
-                    MSeparatorLine(),
                     MMenuCustomLine(
-                        MText("Clear browser cache", textStyleA) |> MBorderStart(gapW),
+                        MText("Rename Workspace (dev)", textStyleA) |> MBorderStart(gapW),
+                        [
+                            MOnClick(\ -> {
+                                saveEditWorkspaceDialog(state, updateMenu, false);
+                            }),
+                            MEnabled(fselectLift(updateMenu, \__ -> getValue(selectedNameB) != "Default"))
+                        ]		
+                    ),
+                    MMenuCustomLine(
+                        MText("Update Workspace (dev)", textStyleA) |> MBorderStart(gapW), [
+                        MOnClick(\ -> {
+							currentWSJson = dockingState2json(state);
+                            if (customWorkspacesA != []) {
+                                p = firstElement(
+                                    filtermapi(customWorkspacesA, \i, ws -> {
+                                    wsName = getJsonStringValue(getJsonFieldValue(ws, "Name", JsonNull()), "");
+                                    if (wsName == getValue(selectedNameB)) Some(Pair(i, ws)) else None()
+                                }), Pair(0, JsonNull()));
+                                iWs = p.first;
+                                selWs = p.second;
+                                nWs = setJsonField(selWs, "Workspace",  currentWSJson);
+                                nWsA = replace(customWorkspacesA, iWs ,nWs);
+                                njs = setJsonField(parseJson(savedString), "Workspaces",  JsonArray(nWsA));
+                                njs2 = setJsonField(njs, "Current",  currentWSJson);
+                                setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs2));
+                                reverseBehaviour(updateMenu);
+                                showMSnackbar(state.manager, getValue(selectedNameB) + " workspace updated", []);
+                            }
+                        }), 
+                        MEnabled(fselectLift(updateMenu, \__ -> getValue(selectedNameB) != "Default"))]
+                    ),
+                    MSeparatorLine(),
+					MMenuCustomLine(
+                        MText("Copy Current Workspace (dev)", textStyleA) |> MBorderStart(gapW),
+                        [
+                            MOnClick(\ -> {
+								setClipboard(json2stringFormatted(dockingState2json(state)));
+								println(" ^^^ Current Workspace Copied To Clipboard ^^^");
+								println(json2stringFormatted(dockingState2json(state)));
+								showMSnackbar(state.manager, getValue(selectedNameB) + " Workspace Copied To Clipboar", []);
+							})
+                        ]
+                    ),
+					MMenuCustomLine(
+                        MText("Copy All Cached Workspaces (dev)", textStyleA) |> MBorderStart(gapW),
+                        [
+                            MOnClick(\ -> {
+								allWS = json2stringFormatted(parseJson(
+									getKeyValue(keyGroupName |> addDockingSuffix, "")
+								));
+								setClipboard(allWS);
+								println(" ^^^ All Workspaces Copied To Clipboard ^^^");
+								println(allWS);
+								showMSnackbar(state.manager,  "All Workspaces Copied To Clipboard", []);
+							}),
+                            MEnabled(fselectLift(state.enabled, \enA -> savedString != ""))
+                        ]
+                    ),
+                    MMenuCustomLine(
+                        MText("Clear Browser Cache (dev)", textStyleA) |> MBorderStart(gapW),
                         // "Reset Layout", 
                         [
                             MOnClick(
@@ -260,13 +313,15 @@ saveEditWorkspaceDialog(state : MDockingState, updateMenu : DynamicBehaviour<boo
     dtitle = if (addNew) "Add" else "Edit";
 
     saveWorkspace = \ -> {
+		currentWSJson = dockingState2json(state);
         nwsA = arrayPush(customWorkspacesA, JsonObject([
             Pair("Name", JsonString(getValue(nameB))),
-            Pair("Workspace", JsonString(json2string(dockingState2json(state))))
+			Pair("Workspace", currentWSJson)
         ]));
         njs = setJsonField(parseJson(savedString), "Workspaces",  JsonArray(nwsA));
         njs2 = setJsonField(njs, "Name",  JsonString(getValue(nameB)));
-        setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs2));
+		njs3 = setJsonField(njs2, "Current",  currentWSJson);
+        setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs3));
         reverseBehaviour(updateMenu);
     }
 
@@ -282,7 +337,8 @@ saveEditWorkspaceDialog(state : MDockingState, updateMenu : DynamicBehaviour<boo
         nWsA = replace(customWorkspacesA, iWs ,nWs);
         njs = setJsonField(parseJson(savedString), "Workspaces",  JsonArray(nWsA));
         njs2 = setJsonField(njs, "Name",  JsonString(getValue(nameB)));
-        setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs2));
+        njs3 = setJsonField(njs2, "Current",  dockingState2json(state));
+        setKeyValue(keyGroupName |> addDockingSuffix, json2string(njs3));
         reverseBehaviour(updateMenu);
         showMSnackbar(state.manager, "\"" + selectedName + "\" workspace name updated to \"" + getValue(nameB) + "\"", []);
     }
@@ -298,21 +354,20 @@ saveEditWorkspaceDialog(state : MDockingState, updateMenu : DynamicBehaviour<boo
             ),
             MDialogActions([
                 MAlignEnd(MColsA([
-                    MTextButton(_("CANCEL"), \-> nextDistinct(closeB, true), [], [])|> MBorderEnd(4.0),
+                    MTextButton(_("CANCEL"), \-> nextDistinct(closeB, true), [], [MShortcut("esc")])|> MBorderEnd(4.0),
                     MTextButton(_("CONFIRM"), \-> {
                         if (addNew) saveWorkspace() else editWorkspace();
                         nextDistinct(closeB, true);
-                    }, [MButtonRaised()], []),
+                    }, [MButtonRaised()], [MShortcut("enter")]),
                 ])),
             ])
         ],
         MAvailable(
-            MTextInput(nameB, [], []),
+            MTextInput(nameB, [], [MFocused(make(true))]),
             TFillWY(320.0)
         ) |> MBorderTop(8.0)
     );
 }
-
 
 confirmDeleteDialogFn(manager : MaterialManager, title : string, deleteLabel : string, deleteFn : () -> void) -> () -> void {
     closeDialogB = make(false);

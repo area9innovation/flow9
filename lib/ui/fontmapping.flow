@@ -57,6 +57,10 @@ export {
 
 	// Set font face mapping for languages processed in standard manner (that is not CJK langs).
 	setDefaultFontMappingFn(familyMapping : [Pair<string, string>]) -> void;
+	
+	// Set font face mapping for wigify and wigi editor
+	setDefaultWigiFontMappingFn(mappingFn : (string) -> string) -> void;
+	getMappedWigiFont(face : string) -> string;
 
 	// Set mapping function for languages processed in standard manner (that is not CJK langs).
 	// The function accepts font face and size and must return face and size.
@@ -80,7 +84,7 @@ export {
 
 	setDefaultMathFontFaces(fontFaces : [string]) -> void;
 	isMathFontFace(fontFace : string) -> bool;
-
+	isLocalFontFace(fontFace : string) -> bool;
 
 	FontFamilyStyle ::= SBold, SItalic;
 		SBold();
@@ -436,6 +440,7 @@ isBiDiEnabled() -> bool {
 
 // function defining font mapping for non-CJK languages
 defaultFontMappingFn : ref (string, double) -> Pair<string, double> = ref \family, size -> Pair(family, size);
+defaultWigiFontMappingFn : ref (string) -> string = ref idfn;
 reverseFontFamilyMappingTree : ref Tree<string, string> = ref makeTree();
 
 getReverseMappedFontFamily(family : string) -> string {
@@ -469,6 +474,16 @@ setDefaultFontMappingFn(mapping : [Pair<string, string>]) -> void {
 	mapper = setDefaultFontMappingFnHelper(mapping);
 
 	setDefaultFontMappingFn2(mapper);
+}
+
+setDefaultWigiFontMappingFn(mappingFn : (string) -> string) -> void {
+	defaultWigiFontMappingFn := mappingFn;
+}
+
+getMappedWigiFont(face : string) -> string {
+	fface = if (face != "") face else defaultFontFace_;
+	//ToDo : add cache
+	(^defaultWigiFontMappingFn)(fface);
 }
 
 cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
@@ -706,6 +721,14 @@ isMathFontFace(fontFace : string) -> bool {
 	contains(^defaultMathFontFaces, fontFace);
 }
 
+isLocalFontFace(fontFace : string) -> bool {
+	getMappedFontFamilyFaces("");  // Initializing
+	containsKeyTree(
+		either(^fontSwitchingStateMachine, FontSwitchingStateMachines([], makeTree())).family2machine,
+		fontFace
+	);
+}
+
 
 skinFontMap : ref Tree<string, string> = ref makeTree();
 isFontFamilyMappingEnabled = ref true;
@@ -745,7 +768,7 @@ FontSwitchingStateMachines(
 );
 
 fontSwitchingStateMachine : ref Maybe<FontSwitchingStateMachines> = ref None();
-Face(family : string, weight : int, slope : bool, name : string);
+Face(family : string, weight : int, slope : bool, name : string, group : string);
 
 registerMappedFontFamilies(families : [[string]]) -> void {
 	getMappedFontFamilyFaces("");  // Initializing
@@ -778,7 +801,8 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 				// TODO add string weight values conversion.
 				weight = getJsonIntField(faceDescr, "weight", 400);
 				slope = "normal" != getJsonStringField(faceDescr, "style", "normal");
-				Face(correctedFamily, weight, slope, faceName);
+				group = getJsonStringField(faceDescr, "group", correctedFamily);
+				Face(correctedFamily, weight, slope, faceName, group);
 			}));
 			default: {
 				devtrace("fontmapping: Error parsing font config.");
@@ -786,7 +810,7 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 			}
 		};
 
-		grouped = arrayGroupBy(flatFaces, \Q, q -> Q.family == q.family);
+		grouped = arrayGroupBy(flatFaces, \Q, q -> Q.group == q.group);
 
 		// Processing each family collected faces
 		validatedStateMachines = mapConcat(grouped, \familyFaces -> {
