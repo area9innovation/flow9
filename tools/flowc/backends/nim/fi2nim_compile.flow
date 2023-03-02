@@ -73,7 +73,8 @@ fiNimCompileFunction(env : FiNimEnv, nm: string, type: FiTypeFunction, lambda0: 
 		lambda = cast(
 			(lambda0 
 				|> fiFixVarInSameStructType1 
-				|> \ x -> fiExpMakeCastsExplicit(x, type, env.prog.names)
+				|> \x -> fiExpMakeCastsExplicit(x, type, env.prog.names)
+				|> \y -> fiExplicitCastInSwitch1(y, env.prog.names)
 				|> fiPullStatementsUp
 			)
 			: FiExp -> FiLambda);
@@ -223,7 +224,7 @@ fiNimCompileToExpr(env : FiNimEnv, expr : FiNimExp, indent : string) -> string {
 		FiSeq(es, __, __): {
 			l = length(es);
 			// "#[s]#"+
-			if (l >= 0)
+			if (l >= 0) {
 				list2string(foldi(es, makeList(), \idx, acc, e -> {
 					ndd = switch(e) {
 						FiLet(__, __, __, __, __, __) : false;
@@ -240,7 +241,7 @@ fiNimCompileToExpr(env : FiNimEnv, expr : FiNimExp, indent : string) -> string {
 								default : true;
 							}
 						}
-						default : true;
+						default: fiExpType(e) != FiTypeVoid();
 					}
 					needDiscard = (idx < l-1) && ndd;
 					nrr = switch (e) {
@@ -253,8 +254,9 @@ fiNimCompileToExpr(env : FiNimEnv, expr : FiNimExp, indent : string) -> string {
 					exprCode = (if (idx == 0) "" else "\n" + indent) + (if (needReturn) "return " else "") + fiNimCompileToExpr(env, ex, indent);
 					Cons(exprCode, acc);
 				}))
-			else
+			} else {
 				"discard";
+			}
 
 			/*if (length(es) == 0) "discard" else {
 				supergluei(es, \i, x -> {
@@ -290,7 +292,8 @@ fiNimCompileToExpr(env : FiNimEnv, expr : FiNimExp, indent : string) -> string {
 			fold(cs, "", \acc, c : FiCase ->
 				acc + indent + "of st" + c.struct + ":\n" + 
 					subindent + fiNimCompileToExpr(env, c.body, subindent) + "\n"
-			);
+			) + 
+			indent + "else:\n" + subindent + "assert(false,\"illegal struct id in switch\")";
 		}
 		FiCallPrim(op, es, tp, __): {
 			args = map(es, \arg : FiExp -> Pair(fiNimCompileToExpr(env, arg, indent), fiExpType(arg)));
@@ -429,7 +432,9 @@ fiNimCompileCast(env : FiNimEnv, ex: string, from: FiType, to: FiType, indent: s
 fiNimCompileToReturn(env: FiNimEnv, expr: FiNimExp, indent: string) -> string {
 	subindent = indent + fiNimIndent;
 	switch (expr : FiNimExp) {
-		FiCallPrim(op, es, __, __) : fiNimCompileToExpr(env, expr, indent);
+		FiCallPrim(op, es, __, __) : {
+			fiNimCompileToExpr(env, expr, indent);
+		}
 		FiCall(f, es, type, __): {
 			switch (type) {
 				FiTypeVoid() : fiNimCompileToExpr(env, expr, indent);
@@ -447,7 +452,7 @@ fiNimCompileToReturn(env: FiNimEnv, expr: FiNimExp, indent: string) -> string {
 		FiSeq(es, __, __): {
 			l = length(es);
 			//"#R FiSeq:\n" +
-			if (l >= 0)
+			if (l >= 0) {
 				list2string(foldi(es, makeList(), \idx, acc, e -> {
 					ndd = switch(e) {
 						FiLet(__, __, __, __, __, __) : false;
@@ -464,7 +469,7 @@ fiNimCompileToReturn(env: FiNimEnv, expr: FiNimExp, indent: string) -> string {
 								default : true;
 							}
 						}
-						default : true;
+						default : fiExpType(e) != FiTypeVoid();
 					}
 					needDiscard = (idx < l-1) && ndd;
 					nrr = switch(e) {
@@ -476,9 +481,9 @@ fiNimCompileToReturn(env: FiNimEnv, expr: FiNimExp, indent: string) -> string {
 					exprCode = indent + (if (needReturn) "return " else "") + fiNimCompileToExpr(env, ex, indent) + (if (idx == l-1) "" else "\n");
 					Cons(exprCode, acc);
 				}))
-			else
+			} else {
 				"discard";
-
+			}
 			/*if (length(es) == 0) "discard" else {
 				supergluei(es, \i, x -> {
 					x_compiled = fiNimCompileToExpr(env, x, indent);
