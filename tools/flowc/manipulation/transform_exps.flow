@@ -613,10 +613,13 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 				FcModPrim():   def_case();
 				FcNegPrim():   def_case();
 				FcArrayPrim(): typed_case(fiDearrayType(type));
-				FcIndexPrim(): FiCallPrim(x with es = [
-					fiExpMakeCastsExplicit(es[0], FiTypeArray(type), names),
-					fiExpMakeCastsExplicit(es[1], FiTypeInt(), names)
-				]);
+				FcIndexPrim(): {
+					x1 = FiCallPrim(x with es = [
+						fiExpMakeCastsExplicit(es[0], FiTypeArray(type), names),
+						fiExpMakeCastsExplicit(es[1], FiTypeInt(), names)
+					]);
+					fiMakeCast(x1, type, t);
+				}
 				FcDerefPrim(): typed_case(FiTypeRef(type));
 				FcRefPrim(): typed_case(fiDerefType(type));
 				FcStructPrim(name): {
@@ -629,9 +632,31 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 									default: acc;
 								}
 							);
-							FiCallPrim(x with es = mapi(es, \i, y ->
+							/*if (name == "Cons") {
+								println("Cons args:\n" + 
+									toStringFormatted(
+										mapi(es, \i, y ->
+											fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
+										)
+									) + "\n" +
+									"types:\n" +
+									toStringFormatted(
+										mapi(es, \i, y ->
+											fiApplyTypeSubstitution(typar_subst, struct.args[i].type)
+										)
+									) + "\n" +
+									"struct_arg types::\n" +
+									toStringFormatted(
+										mapi(es, \i, y ->
+											struct.args[i].type
+										)
+									)
+								);
+							}*/
+							x1 = FiCallPrim(x with es = mapi(es, \i, y ->
 								fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
 							));
+							fiMakeCast(x1, type, t);
 						}
 						default: {
 							fail("struct type must be FiTypeName, got: " + toString(type));
@@ -666,17 +691,21 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 					to = es[0];
 					what = es[1];
 					tp = fiExpType(to);
-					switch (tp) {
+					x1 = switch (tp) {
 						FiTypeRef(rt): {
 							switch (fiExpType(what)) {
-								FiTypeRef(__): FiCallPrim(x with es = [
-									fiExpMakeCastsExplicit(to, tp, names), 
-									fiExpMakeCastsExplicit(what, tp, names)
-								]);
-								default: FiCallPrim(x with es = [
-									fiExpMakeCastsExplicit(to, tp, names), 
-									fiExpMakeCastsExplicit(what, rt, names)
-								]);
+								FiTypeRef(__): {
+									FiCallPrim(x with es = [
+										fiExpMakeCastsExplicit(to, tp, names), 
+										fiExpMakeCastsExplicit(what, tp, names)
+									]);
+								}
+								default: {
+									FiCallPrim(x with es = [
+										fiExpMakeCastsExplicit(to, tp, names), 
+										fiExpMakeCastsExplicit(what, rt, names)
+									]);
+								}
 							}
 						}
 						default: {
@@ -686,6 +715,7 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 							]);
 						}
 					}
+					fiMakeCast(x1, type, t);
 				}
 				FcSetMutablePrim(name): {
 					switch (fiExpType(es[0])) {
@@ -694,10 +724,11 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 								Some(struct): {
 									switch (find(struct.args, \arg -> arg.name == name)) {
 										Some(arg): {
-											FiCallPrim(x with es = [
+											x1 = FiCallPrim(x with es = [
 												fiExpMakeCastsExplicit(es[0], arg.type, names), 
 												fiExpMakeCastsExplicit(es[1], arg.type, names)
 											]);
+											fiMakeCast(x1, type, t);
 										}
 										None(): {
 											fail("field " + name + " of struct " + struct_name + " is not found");
