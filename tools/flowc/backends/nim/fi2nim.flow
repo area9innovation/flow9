@@ -13,7 +13,36 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
 
 	// Unions shouldn't contain other unions - only structs
-	program = program0 |> fiRemoveImplicitStructTypars |> fiFlattenUnions;
+	// fiCompleteStructTypars
+	// fiRemoveImplicitStructTypars
+	program = program0 |> fiCompleteStructTypars |> fiFlattenUnions;
+
+	casts_from_to = fiFoldProgramToplevel(program, makeTree(), \decl,__,__,acc ->
+		switch (decl) {
+			FiFunctionDec(__,lambda,__,__,__): fiAllCasts(lambda, acc);
+			FiGlobalVar(__,value,__,__,__):    fiAllCasts(value, acc);
+			FiNativeDec(__,__,__,__,fb,__,__): fiAllCasts(fb, acc);
+			default: acc;
+		}
+	);
+	casts_to_from = foldTree(casts_from_to, makeTree(), \from, to_set, acc ->
+		foldSet(to_set, acc, \ac, to ->
+			setTree(ac, to, insertSet(lookupTreeDef(ac, to, makeSet()), from))
+		)
+	);
+	types_map_to_s = \tree -> {
+		concatStrings(map(tree2pairs(tree), \p -> 
+			"\t" + prettyFiType(dummyPretty, p.first, makeSet()) + " => [" + 
+				superglue(set2array(p.second), \t -> prettyFiType(dummyPretty, t, makeSet()), ", ")
+			+ "]\n"
+		))
+	}
+
+	println("casts_from_to:\n" +
+		types_map_to_s(casts_from_to) + "\n" +
+		"casts_to_from:\n" +
+		types_map_to_s(casts_to_from) + "\n"
+	);
 
 	fcVerbose(cfg, 1, "Collecting code for all imported files...");
 
@@ -21,16 +50,20 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 	// Declarations stored in init order (order of their appearance in files).
 	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
 
-	runtimeContent = fiGetNimRuntime(cfg);
-	env = FiNimEnv(program, fiStruct2unions(program));
-	structsCode = fiCollectNIMStructs2(cfg, env);//+fcCollectNIMStructs(cfg, program);
+	env = FiNimEnv(cfg, program, 
+		fiStruct2unions(program),
+		fold(program.traversal, [], \acc, mname ->
+			eitherFn(lookupTree(program.modules, mname), \module -> concat(acc, module.structs), \ -> acc)
+		),
+		casts_to_from,
+		set2array(lookupTreeDef(casts_to_from, FiTypeFlow(), makeSet())),
+		set2array(lookupTreeDef(casts_to_from, FiTypeString(), makeSet())),
+	);
 	moduleCount = i2s(length(decls));
 
 	fcVerbose(cfg, 0, "Generating Nim code for declarations...");
 	modulesCode = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
-
 		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
-
 		mdl = lookupTree(program.modules, p.first);
 		switch (mdl) {
 			None(): {
@@ -40,7 +73,7 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 			Some(module): {
 				r = fold(p.second, acc, \l, v -> {
 					cfg.fileinfo ::= module.fileinfo;
-					tl = fiNimCompileToplevel(cfg, env, v, fiNimIndent);
+					tl = fiNimCompileToplevel(env, v, fiNimIndent);
 					Cons(if (tl == "") "" else "\n", Cons(tl, l));
 				});
 				Cons("\n", r);
@@ -48,15 +81,27 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 		}
 	});
 
-	contents =
-		Cons("main()\n",
-			Cons(list2string(modulesCode),
-				Cons("\n",
-					Cons(list2string(^nimProcDefinition),
-						Cons(runtimeContent,
-							Cons(structsCode, makeList()))))));
+	types = "type\n" + concatStrings([
+		fiNimIndent+ "# Struct Ids\n", 
+		fi2nimStructIds(env) + "\n",
+		fiNimIndent + "# Struct definitions\n",
+		concatStrings(map(env.structs, \s -> fi2nimStructDef(env, s))) + "\n",
+		//fiNimIndent + "# Union definitions\n",
+		//concatStrings(map(getTreeValues(program.names.unions), \u -> fi2nimUnionDef(env, u))) + "\n",
+	]);
 
-	fiAssembleNimFile(cfg, contents);
+	fi2nimAssemble(cfg, [
+		fi2nimRuntime(cfg),
+		"\n# Types\n", 
+		types,
+		"# Struct functions\n",
+		concatStrings(map(env.structs, \s -> fi2nimStructFuncs(env, s))),
+		fi2nimNatives(cfg), 
+		list2string(^nimProcDefinition), 
+		"\n", 
+		list2string(modulesCode), 
+		"main()\n"
+	]);
 
 	callback(0);
 }
