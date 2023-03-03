@@ -40,7 +40,8 @@ fiNimCompileToplevel(env : FiNimEnv, decl : FiDeclaration, indent : string) {
 				}
 			}
 		}
-		FiFunctionDec(name, lambda, type, __, __): {
+		FiFunctionDec(name, lambda, type0, __, __): {
+			type = FiTypeFunction(type0 with args = lambda.args);
 			if (containsSet(nimNativeFunctions, name)) {
 				//is implemented as native in runtime
 				""
@@ -100,10 +101,10 @@ fiNimCompileFunction(env : FiNimEnv, nm: string, type: FiTypeFunction, lambda0: 
 		lambda = cast(fiNimPrepareExp(env, lambda0, type): FiExp -> FiLambda);
 		nim_debug_lambda := lambda;
 
-		/*if (nm == "parseJsonDouble2") {
+		if (nm == "euler2") {
 			fiNimShow(nm, FiVoid(0));
 			//println(toStringFormatted(fiExpMakeCastsExplicit(lambda0, type, env.prog.names)))
-		}*/
+		}
 
 		fn_typars = fiNimTypeParamsList(env, FiFunctionDec(nm, lambda, type, -1, -1));
 
@@ -123,7 +124,7 @@ fiNimCompileGlobalVar(env : FiNimEnv, nm: string, type: FiType, value0: FiExp) {
 	value1 = if (fiNimIsExp(value)) value else {
 		FiCall(FiLambda([], value, FiTypeFunction([], type), 0), [], type, 0);
 	} 
-	"var " + nm + ": " + fiType2NimType(env, type) + " =" +
+	"var " + fiNimRenameKeyword(nm) + ": " + fiType2NimType(env, type) + " =" +
 		fi2nimMaybeIndent(fiNimCompile(env, value1, false));
 }
 
@@ -172,7 +173,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 			wrap_ret(fiNimRenameKeyword(x));
 		}
 		FiLet(x, tp, e1, e2, __, __): {
-			"let " + fiNimRenameKeyword(x) + ": " + fiType2NimType(env, tp) + " =" + 
+			"var " + fiNimRenameKeyword(x) + ": " + fiType2NimType(env, tp) + " =" + 
 			fi2nimMaybeIndent(fiNimCompile(env, e1, false)) + "\n" +
 			fiNimCompile(env, e2, returns);
 		}
@@ -289,7 +290,9 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 			};
 			wrap_ret(opt);
 		}
-		FiCast(e, from, to, __, __): {
+		FiCast(e, from0, to0, __, __): {
+			from = fiNimDerefType(from0);
+			to = fiNimDerefType(to0);
 			e_code = fiNimCompile(env, e, false);
 			def_cast = \-> "cast[" + fiType2NimType(env, to) + "](" + e_code + ")";
 			structs = env.prog.names.structs;
@@ -350,24 +353,20 @@ fiNimCompilePlus(env : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 
 	a1 = arg1.first;
 	a2 = arg2.first;
 	// Type checker ensures math types are equal, so we only need one type.
-	isString = switch (arg1.second) {
-		FiTypeString() : true;
-		default : false;
-	};
-	"(" + (if (isString && (op == "+")) a1 + "&" + a2 else a1 + op + a2) + ")";
+	arg_type = fiNimDerefType(arg1.second);
+	"(" + (if (arg_type == FiTypeString() && (op == " + ")) a1 + " & " + a2 else a1 + op + a2) + ")";
 }
 
 fiNimCompileDiv(env : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
 	a1 = arg1.first;
 	a2 = arg2.first;
 	// Type checker ensures math types are equal, so we only need one type.
-	isInt = switch (arg1.second) {
-		FiTypeInt() : true;
-		default : false;
-	};
-	"(" + (if (isInt && (op == " / ")) {
+	arg_type = fiNimDerefType(arg1.second);
+	"(" + (if (arg_type == FiTypeInt() && (op == " / ")) {
 		a1 + " div " + a2
-	} else if (isInt && (op == " %% ")) {
+	} else if (arg_type == FiTypeInt() && (op == " %% ")) {
+		a1 + " mod " + a2
+	} else if (arg_type == FiTypeDouble() && (op == " %% ")) {
 		a1 + " mod " + a2
 	} else {
 		a1 + op + a2
@@ -395,29 +394,29 @@ fi2nimUnionDef(env : FiNimEnv, union : FiTypeUnion) -> string {
 fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string {
 	typars = fiNimParamsForInstantiate(env, struct.typars);
 	struct_type = struct.name + typars;
-	check_struct_in = \tp_arr -> exists(tp_arr, \tp -> switch (tp) {
-		FiTypeName(nm,__): nm == struct.name || true;
+	check_struct_in = \tp_arr -> exists(tp_arr, \tp -> switch (fiNimDerefType(tp)) {
+		FiTypeName(nm,__): nm == struct.name;
 		default: false;
 	});
 
 	// to_flow
-	to_flow = //if (!check_struct_in(env.casts_to_flow_from)) "" else {
+	to_flow = if (!check_struct_in(env.casts_to_flow_from)) "" else {
 		"proc rt_to_flow" + typars + "(x: " + struct_type  + "): Flow =\n" +
 		fiNimIndent + "Flow(tp: rtStruct, " + 
 		"idStruct: cast[int](" + "st" + struct.name + "), " +
 		"nameStruct: \"" + struct.name + "\", " +
 		"valFields: @[" + superglue(struct.args, \arg -> "rt_to_flow(x." + arg.name + ")", ", ") + 
 		"])\n\n";
-	//}
+	}
 
 	// to_string
-	//if (!check_struct_in(env.casts_to_string_from)) "" else {
-		to_string_args = if (length(struct.args) == 0) "()" else {
-			"(\" & " + superglue(struct.args, \arg -> "rt_to_string(x." + arg.name + ")", " & \", \" & ") + " & \")";
-		} 
-		to_string = "proc rt_to_string" + typars + "(x: " + struct_type  + "): string =\n" +
-		fiNimIndent + "\"" + struct.name + to_string_args + "\"\n\n";
-	//}
+	to_string_args = \ -> if (length(struct.args) == 0) "()" else {
+		"(\" & " + superglue(struct.args, \arg -> "rt_to_string(x." + arg.name + ")", " & \", \" & ") + " & \")";
+	} 
+	to_string = if (!check_struct_in(env.casts_to_string_from)) "" else {
+		"proc rt_to_string" + typars + "(x: " + struct_type  + "): string =\n" +
+		fiNimIndent + "\"" + struct.name + to_string_args() + "\"\n\n";
+	}
 
 	// make_struct
 	make_args = concat(["id: cast[int](st" + struct.name + ")"], mapi(struct.args, \i, arg -> arg.name + ": a_" + i2s(i)));

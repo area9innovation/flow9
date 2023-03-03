@@ -238,7 +238,7 @@ proc getKeyValueN*(key : string, defaultValue : string): string =
 
 proc hostCall*(name: string, args: seq[Flow]): Flow =
   echo("hostCall of $name is not implemented")
-  return Flow(rtVoid)
+  return Flow(tp: rtVoid)
 
 #native quit : io (code : int) -> void = Native.quit; - is already defined
 
