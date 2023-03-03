@@ -2,11 +2,11 @@
 	Native definitions
 ]#
 
-proc println2*[T](t : T): void =
-    echo(t)
+proc println2*[T](x : T): void =
+  echo rt_to_string(x)
 
-proc fcPrintln2*[Ty](x: Ty): void =
-  debugEcho $x
+proc fcPrintln2*[T](x: T): void =
+  echo rt_to_string(x)
 
 # Get a subrange of an array from index
 # if index < 0 or length < 1 it returns an empty array
@@ -98,10 +98,10 @@ proc getUrlParameter*(name: string): string =
   ""
 
 proc toString*[T](a: T): string =
-  return $a
+  return rt_to_string(a)
 
-proc toString2*(a: RootObj): string =
-  return $a
+proc toString2*(a: Flow): string =
+  return rt_to_string(a)
 
 proc strlen*(s: string): int =
   return len(s);
@@ -236,9 +236,9 @@ proc getKeyValueN*(key : string, defaultValue : string): string =
 
 # native hostCall : io (name: string, args: [flow]) -> flow = Native.hostCall;
 
-proc hostCall*(name: string, args: seq[RootObj]): RootObj =
+proc hostCall*(name: string, args: seq[Flow]): Flow =
   echo("hostCall of $name is not implemented")
-  return args[0]
+  return Flow(rtVoid)
 
 #native quit : io (code : int) -> void = Native.quit; - is already defined
 

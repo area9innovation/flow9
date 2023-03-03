@@ -5,13 +5,14 @@ import tools/flowc/manipulation/common;
 
 export {
 	fi2nimStrIndent(s : string) -> string;
-	fiType2NimType(env : FiNimEnv, type : FiType) -> string;
-	fiType2NimTypeName(env : FiNimEnv, type : FiType) -> string;
-	fiDiscardExpr(exprStr : string, expr : FiExp) -> string;
-	fiDoDiscard(exprStr : string, discard : bool) -> string;
-	fiNimTypeParamsList(env : FiNimEnv, fn : FiFunctionDec) -> string;
-	fiNimTypeParamsListStruct(env : FiNimEnv, arg_types: [FiType]) -> string;
+	fi2nimMaybeIndent(s : string) -> string;
+	fi2nimSureIndent(s : string) -> string;
 	fiNimRenameKeyword(kwd : string) -> string;
+
+	fiFuncType2NimType(env : FiNimEnv, type : FiTypeFunction) -> string;
+	fiType2NimType(env : FiNimEnv, type : FiType) -> string;
+
+	fiNimTypeParamsList(env : FiNimEnv, fn : FiFunctionDec) -> string;
 	fiNimParamsForInstantiate(env : FiNimEnv, params: [FiType]) -> string;
 
 	// Get all casts from expression
@@ -21,7 +22,18 @@ export {
 fiProcCounter : ref int = ref 0;
 
 fi2nimStrIndent(s : string) -> string {
-	strGlue(map(strSplit(s, "\n"), \line -> fiNimIndent + line), "\n");
+	strGlue(map(
+		filter(strSplit(s, "\n"), \line -> exists(s2a(line), \code -> code > 32)), 
+		\line -> fiNimIndent + line
+	), "\n");
+}
+
+fi2nimMaybeIndent(s : string) -> string {
+	if (!strContains(s, "\n")) " " + s + " " else "\n" + fi2nimStrIndent(s) + "\n";
+}
+
+fi2nimSureIndent(s : string) -> string {
+	"\n" + fi2nimStrIndent(s) + "\n";
 }
 
 fiNimRenameKeyword(kwd : string) -> string {
@@ -38,20 +50,24 @@ fiNimTypeParamsList(env : FiNimEnv, fn : FiFunctionDec) -> string {
 	if (tp == []) "" else { "[" + strGlue(tp, ", ") + "]" }
 }
 
-fiNimTypeParamsListStruct(env : FiNimEnv, arg_types : [FiType]) -> string {
-	tps = fold(arg_types, makeSet(), \a, t ->
-		fiCollectTypars(t, a)
-	);
-	tp = fold(sort(set2array(tps)), [], \acc1, e ->
-		concat(acc1, ["T" + i2s(strlen(e))])
-	);
-	if (tp == []) "" else { "[" + strGlue(tp, ", ") + "]" }
-}
-
 fiNimParamsForInstantiate(env : FiNimEnv, params : [FiType]) -> string {
 	if (params == []) "" else {
 		"[" + strGlue(map(params, \tp -> fiType2NimType(env, tp)), ", ") + "]"
 	}
+}
+
+fiFuncType2NimType(env : FiNimEnv, type : FiTypeFunction) -> string {
+	rt_code = switch (type.returnType) {
+		FiTypeFunction(__,__): "(" + fiType2NimType(env, type.returnType) + ")";
+		default: fiType2NimType(env, type.returnType);
+	}
+	"(" + 
+		supergluei(type.args, \i, arg -> 
+			fiNimRenameKeyword(if (arg.name == "" || arg.name == "__") "a" + i2s(i) else arg.name) + ": " +
+			fiType2NimType(env, arg.type), 
+			", "
+		) + 
+	"): " + rt_code;
 }
 
 fiType2NimType(env : FiNimEnv, type : FiType) -> string {
@@ -60,12 +76,7 @@ fiType2NimType(env : FiNimEnv, type : FiType) -> string {
 			"seq[" + fiType2NimType(env, t) + "]";
 		}
 		FiTypeFunction(args, rt) : {
-			tp = fiNimTypeParamsListStruct(env, map(args, \arg -> arg.type));
-			r = "proc(" + strGlue(mapi(args, \ix, e -> {
-				(if (e.name == "" || e.name == "__") "t" + i2s(ix) else fiNimRenameKeyword(e.name)) + ": " + fiType2NimType(env, e.type);
-				//fiProcCounter := ^fiProcCounter + 1;
-			}), ", ") +"): " + fiType2NimType(env, rt);
-			r;
+			"proc" + fiFuncType2NimType(env, type);
 		}
 		FiTypeRef(t) :             fiType2NimType(env, t);
 		FiTypeParameter(n) :       "T" + i2s(strlen(n));
@@ -85,41 +96,6 @@ fiType2NimType(env : FiNimEnv, type : FiType) -> string {
 			}
 		}
 	}
-}
-
-fiType2NimTypeName(env : FiNimEnv, type : FiType) -> string {
-	switch (type) {
-		FiTypeArray(t) :           fiType2NimTypeName(env, t);
-		FiTypeFunction(args, rt) : fiType2NimTypeName(env, rt);
-		FiTypeRef(t) :             fiType2NimType(env, t);
-		FiTypeParameter(n) :       "T" + i2s(strlen(n));
-		FiTypeBool() :             "bool";
-		FiTypeInt() :              "int";
-		FiTypeDouble() :           "float";
-		FiTypeString() :           "string";
-		FiTypeFlow() :             "Flow";
-		FiTypeVoid() :             "void";
-		FiTypeNative() :           "Native";
-		FiTypeName(name, params) :  {
-			if (containsKeyTree(env.prog.names.structs, name)) {
-				name; // Name of union or struct
-			} else {
-				// Unions are just unspecified structs
-				"Struct";
-			}
-		}
-	}
-}
-
-fiDiscardExpr(exprStr : string, expr : FiExp) -> string {
-	switch (expr) {
-		FiCallPrim(__, __, __, __): "discard " + exprStr;
-		default : exprStr;
-	}
-}
-
-fiDoDiscard(exprStr : string, discard : bool) -> string {
-	(if (discard) "discard " else "") + exprStr;
 }
 
 fiAllCasts(e: FiExp, acc : Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType>> {
