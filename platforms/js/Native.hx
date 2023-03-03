@@ -361,8 +361,8 @@ class Native {
 		return HaxeRuntime.toString(value, keepStringEscapes);
 	}
 
-	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
-		return HaxeRuntime.toStringEscapeControlChars(value, keepStringEscapes);
+	public static function toStringForJson(value : String) : String {
+		return HaxeRuntime.toStringForJson(value);
 	}
 
 	public static inline function gc() : Void {
@@ -1408,6 +1408,10 @@ class Native {
 	public static function setFileContentUTF16(file : String, content : String) : Bool {
 		// throw "Not implemented for this target: setFileContentUTF16";
 		return false;
+	}
+
+	public static function setFileContentBinaryConvertToUTF8(file : String, content : String) : Bool {
+		return setFileContentBinaryCommon(file, content, true);
 	}
 
 	public static function setFileContentBinary(file : String, content : Dynamic) : Bool {

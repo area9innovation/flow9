@@ -2062,10 +2062,33 @@ class DisplayObjectHelper {
 			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
 				if (childWidget.getAttribute('flow-force-focus') == 'true') {
 					RenderSupport.once("stagechanged", function() {
-						untyped child.nativeWidget.showModal();
-						RenderSupport.once("stagechanged", function() {
-							if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
-						});
+						var childrenArray = untyped Array.from(child.nativeWidget.children);
+						untyped __js__("childrenArray.forEach(ch => ch.setAttribute('aria-hidden', 'true'));");
+						var unhideDialogContent = function() {
+							Native.timer(500, function() {
+								untyped __js__("childrenArray.forEach(ch => ch.removeAttribute('aria-hidden'));");
+							});
+						};
+
+						var dialogTitleArr = untyped Array.from(Browser.document.getElementsByClassName("dialog_title"));
+						if (dialogTitleArr != null && dialogTitleArr[0] != null) {
+							RenderSupport.once("stagechanged", function() {
+								var dialogTitle = dialogTitleArr[0];
+								if (dialogTitle != null) {
+									dialogTitle.setAttribute("tabindex", "-1");
+									dialogTitle.focus();
+								}
+								unhideDialogContent();
+							});
+						} else {
+							if (untyped child.nativeWidget.showModal != null) {
+								untyped child.nativeWidget.showModal();
+								RenderSupport.once("stagechanged", function() {
+									if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
+								});
+							}
+							unhideDialogContent();
+						}
 					});
 				};
 			}
