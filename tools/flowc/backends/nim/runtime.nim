@@ -108,7 +108,7 @@ proc rt_to_bool*(x: Flow): bool =
     assert(false, "illegal conversion")
 
 proc rt_to_int*(x: int): int = x
-proc rt_to_int*(x: float): int = cast[int](round(x))
+proc rt_to_int*(x: float): int = int(round(x))
 proc rt_to_int*(x: bool): int = return if x: 1 else: 0
 proc rt_to_int*(x: string): int = parseInt(x)
 proc rt_to_int*(x: Flow): int =
@@ -123,7 +123,7 @@ proc rt_to_int*(x: Flow): int =
   else:
     assert(false, "illegal conversion")
 
-proc rt_to_double*(x: int): float = cast[float](x)
+proc rt_to_double*(x: int): float = float(x)
 proc rt_to_double*(x: float): float = x
 proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
 proc rt_to_double*(x: string): float = parseFloat(x)
