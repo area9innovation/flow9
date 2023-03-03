@@ -51,7 +51,7 @@ proc enumFromTo*(f: int, t: int): seq[int] =
     return rv
 
   for i in 0 .. n-1:
-    rv[i] = f + i
+    rv.add(f + i)
 
   return rv
 
