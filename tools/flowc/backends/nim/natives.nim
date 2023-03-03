@@ -145,7 +145,7 @@ proc substring*(str: string, start: int, leng: int): string =
       return "";
 
   slen = clipLenToRange(start, slen, strlen)
-  return substr(str, sstart, sstart + slen)
+  return substr(str, sstart, sstart + slen - 1)
 
 proc strIndexOf*(s: string, sub: string): int =
   return strutils.find(s, sub, 0)
