@@ -7,7 +7,7 @@ import math
 # Runtime for NIM backend
 
 type
-  RtType = enum
+  RtType* = enum
     rtVoid,
     rtBool,
     rtInt,
@@ -20,8 +20,8 @@ type
 
 #[ Representation of a dynamic type ]#
 
-  Flow = ref object
-    case tp: RtType
+  Flow* = ref object
+    case tp*: RtType
     of rtVoid:   discard
     of rtBool:   valBool: bool
     of rtInt:    valInt: int
