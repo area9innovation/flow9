@@ -2,221 +2,145 @@ import sequtils
 import typetraits
 import strutils
 import unicode
-
-type
-  List*[T] = object of RootObj
-
-  Cons*[T] = object of List[T]
-    head*: T
-    tail*: List[T]
-
-  EmptyList*[T] = object of List[T]
+import math
 
 # Runtime for NIM backend
 
-proc fcPrintln2*[Ty](x: Ty): void =
-  debugEcho $x
+type
+  RtType = enum
+    rtVoid,
+    rtBool,
+    rtInt,
+    rtDouble,
+    rtString,
+    rtNative,
+    rtArray,
+    rtFunc,
+    rtStruct
 
-# Get a subrange of an array from index
-# if index < 0 or length < 1 it returns an empty array
-proc subrange*[T](s: seq[T], index: int, length : int): seq[T] {.inline.} =
-  s[index, index + len]
+#[ Representation of a dynamic type ]#
 
-proc length*[T](s: seq[T]): int {.inline.} =
-  len(s)
+  Flow = ref object
+    case tp: RtType
+    of rtVoid:   discard
+    of rtBool:   valBool: bool
+    of rtInt:    valInt: int
+    of rtDouble: valDouble: float
+    of rtString: valString: string
+    of rtNative: valNative: Native
+    of rtArray:  valArray: seq[Flow]
+    of rtFunc:   valFunc: proc(x: seq[Flow]): Flow
+    of rtStruct:
+      idStruct: int
+      nameStruct: string
+      valFields: seq[Flow]
 
-proc concat*[T](s1, s2: seq[T]): seq[T] {.inline.} =
-  sequtils.concat(s1, s2)
+  Struct* = ref object of RootObj
+    id: int
 
-proc map*[T, S](s: seq[T], op: proc (x: T): S): seq[S] {.inline.} =
-  sequtils.map(s, op)
+  Native* = ref object of RootObj
+    what: string
+    val: RootObj
 
-# Replace a given element in an array with a new value. Makes a copy
-#native replace : ([?], int, ?) -> [?] = Native.replace;
-proc replace*[T](s: seq[T], i: int, v: T): seq[T] =
-  if i<0 or s == nil:
-    return @[]
+#[ General conversions ]#
+
+proc rt_to_string*(): string = "{}"
+proc rt_to_string*(x: int): string = intToStr(x)
+proc rt_to_string*(x: float): string = formatFloat(x)
+proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
+proc rt_to_string*(x: string): string = x
+proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
+proc rt_to_string*[T](x: seq[T]): string = 
+  var s = "["
+  for i in 0..x.len - 1:
+    if i > 0:
+      s.add(", ")
+    s.add(rt_to_string(x[i]))
+  s.add("]")
+  return s
+proc rt_to_string*(f: Flow): string = 
+  case f.tp:
+  of rtVoid:   return rt_to_string()
+  of rtBool:   return rt_to_string(f.valBool)
+  of rtInt:    return rt_to_string(f.valInt)
+  of rtDouble: return rt_to_string(f.valDouble)
+  of rtString: return "\"" & rt_to_string(f.valString) & "\""
+  of rtNative: return rt_to_string(f.valNative)
+  of rtArray:  return rt_to_string(f.valArray)
+  of rtFunc:   return "<function>"
+  of rtStruct:
+    var s = f.nameStruct & "("
+    for i in 0..f.valFields.len - 1:
+        if i > 0:
+           s.add(", ")
+        s.add(rt_to_string(f.valFields[i]))
+    s.add(")")
+    return s
+
+proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
+proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, valBool: b)
+proc rt_to_flow*(i: int): Flow = Flow(tp: rtInt, valInt: i)
+proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, valDouble: d)
+proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, valString: s)
+proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, valNative: n)
+proc rt_to_flow*[T](arr: seq[T]): Flow = Flow(tp: rtArray, valArray: map(arr, rt_to_flow))
+
+proc rt_to_void*(x: Flow): void = 
+  if x.tp == rtVoid:
+    discard
   else:
-    var s1 = s & @[] # Copy of s
-    if len(s1) > i:
-      s1[i] = v
-    else:
-      add(s1, v) # Append item to the end of array, increasing length
-    return s1
+    assert(false, "illegal conversion")
 
-# Apply a function which takes an index and each element of an array to give a new array
-proc mapi*[T, S](s: seq[T], op: proc (i: int, v: T): S): seq[S] =
-  var rv: seq[S] = newSeq(length(s))
-  for i in 0 .. s.len-1:
-    rv[i] = op(i, s[i])
-  return rv
-
-proc enumFromTo*(f: int, t: int): seq[int] =
-  var n: int = t - f + 1
-  var rv: seq[int]
-
-  if (n < 0):
-    rv = @[]
-    return rv
-
-  for i in 0 .. n-1:
-    rv[i] = f + i
-
-  return rv
-
-# Apply a collecting function.  This is a left fold, i.e., it folds with the start of
-# the array first, i.e., fold([x1, x2, x3], x0, o) = ((x0 o x1) o x2) o x3
-proc fold*[T, S](arr: seq[T], init: S, op: proc(acc: S, v: T): S): S =
-  var ini = init
-  for x in arr:
-    ini = op(ini, x)
-  return ini
-
-# Apply a collecting function which takes an index, initial value and each element
-proc foldi*[T, S](xs: seq[T], init: S, fn: proc(idx: int, acc: S, v: T): S): S =
-  for i in 0..length(xs)-1:
-    init = fn(i, init, xs[i])
-  return init
-
-# Creates a new array, whose elements are selected from 'a' with a condition 'test'.
-proc filter*[T](a: seq[T]; test: proc (v: T): bool): seq[T] =
-  return sequtils.filter(a, test)
-
-# Apply a function which takes an index and each element of an array until it returns true
-# Returns index of last element function was applied to.
-proc iteriUntil*[T](a: seq[T], op: proc(idx: int, v: T): bool): int =
-  for i in 0..length(a)-1:
-    if op(i, a[i]):
-      return i
-  return length(a)
-
-# Apply a function to each element of an array
-proc iter*[T](a: seq[T], op: proc (v: T): void): void =
-  for x in a:
-    op(x)
-  return
-
-proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
-  return name(a.type) == name(b.type)
-
-proc getUrlParameter*(name: string): string =
-  ""
-
-proc toString*[T](a: T): string =
-  return $a
-
-proc strlen*(s: string): int =
-  return len(s);
-
-proc clipLenToRange(start: int, leng: int, size: int): int =
-  var leng1 = leng
-  var send = start + leng
-  if send > size or send  < 0:
-    leng1 = size - start
-  return leng1
-
-proc substring*(str: string, start: int, leng: int): string =
-  var slen = leng
-  var sstart = start
-  var strlen = len(str)
-  if slen < 0:
-    if (sstart < 0) :
-      slen = 0
-    else:
-      var smartLen1 = slen + sstart
-      if smartLen1 >= 0:
-        slen = 0
-      else:
-        var smartLen2 = smartLen1 + strlen
-        if (smartLen2 <= 0):
-          slen = 0
-        else:
-          slen = smartLen2
-
-  if (sstart < 0):
-    var smartStart = sstart + strlen
-    if (smartStart > 0):
-      sstart = smartStart
-    else:
-      sstart = 0
+proc rt_to_bool*(x: int): bool = x != 0
+proc rt_to_bool*(x: float): bool = x != 0.0
+proc rt_to_bool*(x: bool): bool = x
+proc rt_to_bool*(x: string): bool = x != "false"
+proc rt_to_bool*(x: Flow): bool =
+  if x.tp == rtInt:
+    return rt_to_bool(x.valInt)
+  elif x.tp == rtBool:
+    return rt_to_bool(x.valBool)
+  elif x.tp == rtDouble:
+    return rt_to_bool(x.valDouble)
+  elif x.tp == rtString:
+    return rt_to_bool(x.valString)
   else:
-    if (sstart >= strlen):
-      slen = 0
+    assert(false, "illegal conversion")
 
-    if (slen < 1):
-      return "";
-
-  slen = clipLenToRange(start, slen, strlen)
-  return substr(str, sstart, sstart + slen)
-
-proc strIndexOf*(s: string, sub: string): int =
-  return strutils.find(s, sub, 0)
-
-proc toLowerCase*(s: string): string =
-  return unicode.toLower(s)
-
-proc toUpperCase*(s: string): string =
-  return unicode.toLower(s)
-
-proc getCharCodeAt*(s: string, i: int): int =
-  if i >= 0 and i < len(s):
-    return cast[int](unicode.runeAt(s, i))
+proc rt_to_int*(x: int): int = x
+proc rt_to_int*(x: float): int = int(round(x))
+proc rt_to_int*(x: bool): int = return if x: 1 else: 0
+proc rt_to_int*(x: string): int = parseInt(x)
+proc rt_to_int*(x: Flow): int =
+  if x.tp == rtInt:
+    return rt_to_int(x.valInt)
+  elif x.tp == rtBool:
+    return rt_to_int(x.valBool)
+  elif x.tp == rtDouble:
+    return rt_to_int(x.valDouble)
+  elif x.tp == rtString:
+    return rt_to_int(x.valString)
   else:
-    return -1
+    assert(false, "illegal conversion")
 
-proc strsubsmart*(s: string, start: int, fl0wlen: int): string =
-    if start >= 0 and fl0wlen > 0:
-      substring(s, start, fl0wlen)
-    else:
-      var slen: int =
-        strlen(s)
-      var trueStart: int = (
-        if start >= 0: (
-          start
-        ) else: (
-          var ss: int =
-            slen+start;
-          if ss >= 0: (
-            ss
-          ) else:
-            0
-          )
-        )
-      var trueLength: int =
-        if fl0wlen > 0:
-          fl0wlen
-        else:
-          slen+fl0wlen-trueStart
-      substring(s, trueStart, trueLength)
+proc rt_to_double*(x: int): float = float(x)
+proc rt_to_double*(x: float): float = x
+proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
+proc rt_to_double*(x: string): float = parseFloat(x)
+proc rt_to_double*(x: Flow): float =
+  if x.tp == rtInt:
+    return rt_to_double(x.valInt)
+  elif x.tp == rtBool:
+    return rt_to_double(x.valBool)
+  elif x.tp == rtDouble:
+    return rt_to_double(x.valDouble)
+  elif x.tp == rtString:
+    return rt_to_double(x.valString)
+  else:
+    assert(false, "illegal conversion")
 
-proc list2array*[T](list: RootObj): seq[T] =
-  var p = list
-  var r = newSeq[T]()
-
-  while true:
-    echo name(p.type)
-    var n = name(p.type)
-    case n:
-    of "EmptyList":
-      break
-    of "Cons":
-      var c = cast[Cons[T]](p)
-      r = r & @[c.head]
-      p = c.tail
-    else:
-      discard
-
-#[
-    if (p of EmptyList):
-      break
-    else:
-      if (p of Cons):
-        var c = cast[Cons[T]](p)
-        r = r & @[c.head]
-        p = c.tail
-      else:
-        discard
-]#
-  return r
-
-
+proc rt_to_native*(x: Flow): Native =
+  if x.tp == rtNative:
+    return x.valNative
+  else:
+    assert(false, "illegal conversion")

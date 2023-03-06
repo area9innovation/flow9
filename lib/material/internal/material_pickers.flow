@@ -164,9 +164,7 @@ pickerLayout(
 	|> (\f -> TCopySize2(f, \sz, c -> TMask(c, TBorder4(1., TRounded4(radiusMenu, [Fill(white)], TBorder4(-1., sz))))))
 }
 
-datepickerCells(
-	manager : MaterialManager,
-	parent : MFocusGroup,
+MDatePickerInfo(
 	color : MColor,
 	month : Behaviour<Date>,
 	date : DynamicBehaviour<Date>,
@@ -178,7 +176,20 @@ datepickerCells(
 	startFromMonday : bool,
 	yearDisabled : bool,
 	multipleDate : Maybe<MMultipleDate>,
+	onCellClick : Maybe<MOnDateClick>
+);
+
+datepickerCells(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	info : MDatePickerInfo,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	color = info.color;
+	month = info.month;
+	date = info.date;
+	enabled = info.enabled;
+	yearDisabled = info.yearDisabled;
 
 	total = 31;
 	invisible = Point(-1., -1.);
@@ -205,7 +216,7 @@ datepickerCells(
 		[
 			makeSubscribe(month, \mv -> {
 				// days of week start from 0
-				startOffset := if (yearDisabled) 0 else {(dayOfWeek(mv) + b2i(!startFromMonday)) % 7};
+				startOffset := if (yearDisabled) 0 else {(dayOfWeek(mv) + b2i(!info.startFromMonday)) % 7};
 				daysNum := if (yearDisabled && mv.month == 2) 29 else getNumberOfDaysPerMonthInTheYear(mv.year)[mv.month];
 
 				nextDistinct(offsets, getOffsets());
@@ -223,7 +234,7 @@ datepickerCells(
 					TFixed(0., dateCellH)
 				else {
 					monthValue = month |> getValue;
-					firstDayInWeekOffset = 7 - ((dayOfWeek(monthValue) + b2i(!startFromMonday)) % 7);
+					firstDayInWeekOffset = 7 - ((dayOfWeek(monthValue) + b2i(!info.startFromMonday)) % 7);
 					dayOfWeekNames = map(enumFromTo(0, 6), \i -> {
 						currentDate = addDaysToDate(monthValue, firstDayInWeekOffset + i);
 						strLeft(dayOfWeekString(currentDate, true), 1);
@@ -241,7 +252,7 @@ datepickerCells(
 						if (d.year == m.year && d.month == m.month && d.day > 0 && d.day <= ^daysNum)
 							TTranslate(const(ofs[(^startOffset + d.day - 1) / 7][(^startOffset + d.day - 1) % 7]),
 								eitherMap(
-									multipleDate,
+									info.multipleDate,
 									\multiple -> {
 										activeColor = extractMColor(manager, multiple.style, MAccentColor());
 
@@ -267,8 +278,7 @@ datepickerCells(
 									else
 										TTranslate(
 											const(o),
-											datepickerCell(manager, p2, color, month,
-												i * 7 + j + 1 - ^startOffset, date, mDateMin, mDateMax, isMarked, addMarkFn, enabled, multipleDate, m2t)
+											datepickerCell(manager, p2, info, i * 7 + j + 1 - ^startOffset, m2t)
 										)
 								}
 								)
@@ -289,31 +299,26 @@ datepickerCells(
 datepickerCell(
 	manager : MaterialManager,
 	parent : MFocusGroup,
-	color : MColor,
-	thisMonth : Behaviour<Date>,
+	info : MDatePickerInfo,
 	day : int,
-	dateB : DynamicBehaviour<Date>,
-	mDateMin : Maybe<Date>,
-	mDateMax : Maybe<Date>,
-	isMarked : (Date) -> bool,
-	addMarkFn : Maybe<MCustomMark>,
-	enabled0 : Transform<bool>,
-	multipleDate : Maybe<MMultipleDate>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	color = info.color;
+	dateB = info.date;
 
 	hover = make(false);
 	focused = make(false);
 
-	thisDateT = fselect(thisMonth, FLift(\m -> Date(m.year, m.month, day)));
+	thisDateT = fselect(info.month, FLift(\m -> Date(m.year, m.month, day)));
 
 	isEnabled = \thisDate -> {
-		compareDates(thisDate, either(mDateMin, thisDate)) != DateBefore()
-		&& compareDates(thisDate, either(mDateMax, thisDate)) != DateAfter()
+		compareDates(thisDate, either(info.mDateMin, thisDate)) != DateBefore()
+		&& compareDates(thisDate, either(info.mDateMax, thisDate)) != DateAfter()
 	};
 
 	enabled = fselectLift(thisDateT, isEnabled);
-	markedT = fselectLift(thisDateT, isMarked);
-	textColor = fselect4(thisDateT, dateB, hover, enabled0, \thisDate, date, hov, en -> {
+	markedT = fselectLift(thisDateT, info.isMarked);
+	textColor = fselect4(thisDateT, dateB, hover, info.enabled, \thisDate, date, hov, en -> {
 		if (!isEnabled(thisDate) || !en) MGrey(500)
 		else if (hov || thisDate == date) MWhite()
 		else if (stamp2date(timestamp()) == thisDate) color
@@ -326,7 +331,7 @@ datepickerCell(
 
 	bubble =
 		TGroup2(
-			TSelect(enabled0, \en -> TSelectConstantMetrics(textColor, \col ->
+			TSelect(info.enabled, \en -> TSelectConstantMetrics(textColor, \col ->
 				MText2T(parent, i2s(day), [MCaptionSolid(), col] |> addDisabledStyle(en))
 			))
 			|> (\f -> TCenterXIn(f, TFixed(cellWidth, 0.))),
@@ -335,7 +340,7 @@ datepickerCell(
 		|> (\f ->
 			TIfLazy(markedT, \marked ->
 				if (marked)
-					eitherFn(addMarkFn,
+					eitherFn(info.addMarkFn,
 						\addMark -> m2t(addMark.addMark(thisDateT, textColor, f), parent),
 						\ -> TLines2(
 							f,
@@ -378,10 +383,10 @@ datepickerCell(
 	bubbleAnimatedHighlited =
 		TGroup2(
 			eitherMap(
-				multipleDate,
+				info.multipleDate,
 				\multiple -> {
 					activeColor = extractMColor(manager, multiple.style, MAccentColor());
-					TSelect2(multiple.dates, thisMonth, \dates, m ->
+					TSelect2(multiple.dates, info.month, \dates, m ->
 						if (exists(dates, \mDate -> mDate.year == m.year && mDate.month == m.month && mDate.day == day))
 							TCircle(18., [MFill(activeColor), FillOpacity(0.28)])
 						else
@@ -396,9 +401,12 @@ datepickerCell(
 	click = \ -> {
 		currentDate = getValue(dateB);
 		thisDate = fgetValue(thisDateT);
-		if (isEnabled(thisDate)) next(dateB, thisDate);
+		if (isEnabled(thisDate)) {
+			next(dateB, thisDate);
+			maybeApply(info.onCellClick, \onCellClick -> onCellClick.onDateClick(thisDate));
+		};
 		eitherFn(
-			multipleDate,
+			info.multipleDate,
 			\multiple -> if (!contains(multiple.style, MNoChanges())) { 
 				dates = getValue(multiple.dates);
 				if (compareDates(currentDate, thisDate) == DateEqual())
@@ -422,7 +430,7 @@ datepickerCell(
 			m2t
 		);
 
-	TSize(TFixed(dateCellW, dateCellH), TIf(fand(enabled, enabled0), bubbleClickable, bubble))
+	TSize(TFixed(dateCellW, dateCellH), TIf(fand(enabled, info.enabled), bubbleClickable, bubble))
 }
 
 MonthCard(
@@ -434,18 +442,10 @@ MonthCard(
 datepickerCellsAnimated(
 	manager : MaterialManager,
 	parent : MFocusGroup,
-	color : MColor,
-	month : Behaviour<Date>,
-	date : DynamicBehaviour<Date>,
-	mDateMin : Maybe<Date>,
-	mDateMax : Maybe<Date>,
-	isMarked : (Date) -> bool,
-	addMarkFn : Maybe<MCustomMark>,
-	enabled : Transform<bool>,
-	startFromMonday : bool,
-	yearDisabled : bool,
-	multipleDate : Maybe<MMultipleDate>,
+	info : MDatePickerInfo,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	month = info.month;
 
 	cards = map([1., 0.], \c ->
 		MonthCard(make(getValue(month)), make(zeroPoint), make(c))
@@ -459,9 +459,7 @@ datepickerCellsAnimated(
 
 	mapi(cards, \i, c ->
 		TGroup2(
-			datepickerCells(manager, parent, color, c.month, date, mDateMin, mDateMax, isMarked, addMarkFn,
-				fand(enabled, feq(cardCur, i)), startFromMonday, yearDisabled, multipleDate, m2t),
-
+			datepickerCells(manager, parent, MDatePickerInfo(info with enabled = fand(info.enabled, feq(cardCur, i))), m2t),
 			TFixed(width, height)
 			|> (\t -> TAlpha(c.opacity, t))
 		)
@@ -545,6 +543,7 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 	startFromMonday = extractStruct(m.style, MDatePickerFirstWeekDay(false)).monday;
 	noHeader = contains(m.style, MNoHeader());
 	multipleDate = tryExtractStruct(m.style, MMultipleDate(make([]), []));
+	onCellClick = tryExtractStruct(m.style, MOnDateClick(nop1));
 
 	isRTL = parent.rtl;
 
@@ -614,17 +613,20 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker, 
 			datepickerCellsAnimated(
 				manager,
 				parent,
-				color,
-				month,
-				dateB,
-				mDateMin,
-				mDateMax,
-				isMarked,
-				addMarkFn,
-				enabled,
-				startFromMonday,
-				yearDisabled,
-				multipleDate,
+				MDatePickerInfo(
+					color,
+					month,
+					dateB,
+					mDateMin,
+					mDateMax,
+					isMarked,
+					addMarkFn,
+					enabled,
+					startFromMonday,
+					yearDisabled,
+					multipleDate,
+					onCellClick
+				),
 				m2t
 			)
 			|> (\t -> TBorder(pickerMarginCells, 0., pickerMarginCells, 0., t)),

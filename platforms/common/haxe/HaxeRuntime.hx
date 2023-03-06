@@ -370,8 +370,8 @@ if (a === b) return true;
 		});
 	}
 
-	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
-		return toStringCommon(value, keepStringEscapes, function(val, s){
+	public static function toStringForJson(value : String) : String {
+		return toStringCommon(value, false, function(val, s){
 			#if js
 				untyped __js__("
 					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForJson, function (c) {
