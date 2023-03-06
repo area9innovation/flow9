@@ -29,7 +29,8 @@ type
     of rtString: valString: string
     of rtNative: valNative: Native
     of rtArray:  valArray: seq[Flow]
-    of rtFunc:   valFunc: proc(x: seq[Flow]): Flow
+    of rtFunc:   valFunc:
+      proc(x: seq[Flow]): Flow
     of rtStruct:
       idStruct: int
       nameStruct: string

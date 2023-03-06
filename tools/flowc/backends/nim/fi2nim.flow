@@ -19,7 +19,46 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 	// specializeProgram(cfg: FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool, jsmangling : bool) -> FiProgram;\
 
 	program = program0 |> fiCompleteStructTypars |> fiFlattenUnions;
-	//program = program0 |> fiFlattenUnions |> \p -> specializeProgram(cfg, p, true, false);
+	//program = program0 |> fiFlattenUnions |> \p -> specializeProgram(cfg, p, false, true);
+
+	// collect_polymorphic_entities(program : FiProgram, onlyBasicSpecializations : bool) -> Tree<string, FiType>;
+	polymorphics = collect_polymorphic_entities(program, false);
+	println("polymorphics:\n" + strIndent(
+		superglue(tree2pairs(polymorphics), \p -> p.first + " => " + prettyFiType(dummyPretty, p.second, makeSet()), "\n")
+	));
+	// find_specializations(program : FiProgram, polymorphics : Tree<string, FiType>, seed : Tree<string, Set<FiType>>, jsmangling : bool) -> Tree<string, Set<FiType>>;
+	specializations = find_specializations(program, polymorphics, makeTree(), false);
+	println("specializations:\n" + strIndent(
+		superglue(
+			tree2pairs(specializations), 
+			\p -> p.first + " =>\n" + strIndent(superglue(set2array(p.second), \t -> prettyFiType(dummyPretty, t, makeSet()), "\n")), 
+			"\n"
+		))
+	);
+	structs0 = fold(program.traversal, [], \acc, mname ->
+		eitherFn(lookupTree(program.modules, mname), \module -> concat(acc, module.structs), \ -> acc)
+	);
+	structs = list2array(fold(structs0, makeList(), \acc, struct ->
+		switch (lookupTree(specializations, struct.name)) {
+			Some(specs): foldSet(specs, acc, \ac, spec -> 
+				switch (spec) {
+					FiTypeName(nm, typars): Cons(FiTypeStruct(struct with typars = typars), ac);
+					default: fail0("must be a typename");
+				}
+			);
+			None(): {
+				if (length(struct.typars) == 0) {
+					Cons(struct, acc);
+				} else {
+					// Must occur in specialization, otherwise is not used
+					acc;
+				}
+			}
+		}
+	));
+	println("struct_ids:\n" +
+		strIndent(superglue(structs, \s -> prettyFiStructOrUnion(dummyPretty, s, makeSet()), "\n"))
+	);
 
 	casts_from_to = fiFoldProgramToplevel(program, makeTree(), \decl,__,__,acc ->
 		switch (decl) {
@@ -56,9 +95,7 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 
 	env = FiNimEnv(cfg, program, 
 		fiStruct2unions(program),
-		fold(program.traversal, [], \acc, mname ->
-			eitherFn(lookupTree(program.modules, mname), \module -> concat(acc, module.structs), \ -> acc)
-		),
+		structs0,
 		casts_to_from,
 		set2array(lookupTreeDef(casts_to_from, FiTypeFlow(), makeSet())),
 		set2array(lookupTreeDef(casts_to_from, FiTypeString(), makeSet())),
