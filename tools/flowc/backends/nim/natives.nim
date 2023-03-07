@@ -195,15 +195,12 @@ proc list2array*[T](list: Struct): seq[T] =
   var r = newSeq[T]()
 
   while true:
-    case cast[StructType](p.id):
-    of stEmptyList:
+    if cast[StructType](p.id) == st_EmptyList:
       break
-    of stCons:
+    else:
       let cons = Cons[T](p)
       r = r & @[cons.head]
       p = cons.tail
-    else:
-      discard
   return r
 
 proc list2string*(list: Struct): string =
@@ -211,15 +208,12 @@ proc list2string*(list: Struct): string =
   var r = ""
 
   while true:
-    case cast[StructType](p.id):
-    of stEmptyList:
+    if cast[StructType](p.id) == st_EmptyList:
       break
-    of stCons:
+    else:
       let cons = Cons[string](p)
       r.add(cons.head)
       p = cons.tail
-    else:
-      discard
   return r
 
 proc bitAnd*(x: int, y: int): int =

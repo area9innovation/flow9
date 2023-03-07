@@ -14,20 +14,31 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
 
 	// Unions shouldn't contain other unions - only structs
-	// fiCompleteStructTypars
-	// fiRemoveImplicitStructTypars
-	// specializeProgram(cfg: FcCommonConfig, program : FiProgram, onlyBasicSpecializations : bool, jsmangling : bool) -> FiProgram;\
+	program = program0 |> fiRemoveImplicitStructTypars |> fiFlattenUnions;
 
-	program = program0 |> fiCompleteStructTypars |> fiFlattenUnions;
-	//program = program0 |> fiFlattenUnions |> \p -> specializeProgram(cfg, p, false, true);
+	is_explicit_polymorphic = \nm -> switch (lookupTree(program.names.structs, nm)) {
+		Some(struct): length(struct.typars) > 0;
+		None(): switch (lookupTree(program.names.unions, nm)) {
+			Some(union): length(union.typeparameters) > 0;
+			None(): true;
+		}
+	}
 
-	// collect_polymorphic_entities(program : FiProgram, onlyBasicSpecializations : bool) -> Tree<string, FiType>;
-	polymorphics = collect_polymorphic_entities(program, false);
+	polymorphics = filterTree(collect_polymorphic_entities(program, false), \nm, __ -> 
+		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
+		is_explicit_polymorphic(nm)
+	);
 	println("polymorphics:\n" + strIndent(
 		superglue(tree2pairs(polymorphics), \p -> p.first + " => " + prettyFiType(dummyPretty, p.second, makeSet()), "\n")
 	));
-	// find_specializations(program : FiProgram, polymorphics : Tree<string, FiType>, seed : Tree<string, Set<FiType>>, jsmangling : bool) -> Tree<string, Set<FiType>>;
-	specializations = find_specializations(program, polymorphics, makeTree(), false);
+	specializations = filterTree(
+		mapTree(
+			find_specializations(program, polymorphics, makeTree(), false), 
+			\specs -> mapSet(specs, \spec -> fiType2NimType(program.names, spec))
+		),
+		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
+		\nm,__ -> is_explicit_polymorphic(nm)
+	);
 	println("specializations:\n" + strIndent(
 		superglue(
 			tree2pairs(specializations), 
@@ -35,10 +46,10 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 			"\n"
 		))
 	);
-	structs0 = fold(program.traversal, [], \acc, mname ->
+	structs = fold(program.traversal, [], \acc, mname ->
 		eitherFn(lookupTree(program.modules, mname), \module -> concat(acc, module.structs), \ -> acc)
 	);
-	structs = list2array(fold(structs0, makeList(), \acc, struct ->
+	specialized_structs = list2array(fold(structs, makeList(), \acc, struct ->
 		switch (lookupTree(specializations, struct.name)) {
 			Some(specs): foldSet(specs, acc, \ac, spec -> 
 				switch (spec) {
@@ -50,7 +61,7 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 				if (length(struct.typars) == 0) {
 					Cons(struct, acc);
 				} else {
-					// Must occur in specialization, otherwise is not used
+					println("Struct " + struct.name + " must occur in specialization, otherwise is not used");
 					acc;
 				}
 			}
@@ -93,9 +104,10 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 	// Declarations stored in init order (order of their appearance in files).
 	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
 
-	env = FiNimEnv(cfg, program, 
-		fiStruct2unions(program),
-		structs0,
+	env = FiNimEnv(cfg, program,
+		structs,
+		specialized_structs,
+		specializations,
 		casts_to_from,
 		set2array(lookupTreeDef(casts_to_from, FiTypeFlow(), makeSet())),
 		set2array(lookupTreeDef(casts_to_from, FiTypeString(), makeSet())),
@@ -138,8 +150,8 @@ fi2nim(program0 : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> voi
 		types,
 		"# Struct functions\n",
 		concatStrings(map(env.structs, \s -> fi2nimStructFuncs(env, s))),
-		//"# Union functions\n",
-		//fi2nimUnionFuncs(env) + "\n",
+		"# Union functions\n",
+		fi2nimUnionFuncs(env) + "\n",
 		fi2nimNatives(cfg), 
 		list2string(^nimProcDefinition), 
 		"\n", 
