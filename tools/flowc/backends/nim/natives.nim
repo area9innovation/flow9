@@ -269,5 +269,19 @@ proc getTargetName*(): string =
 
 #native fail : io (msg : string) -> void = Native.failWithError;
 proc fail*(error : string): void =
-    echo "Runtime failure: " & error
-    quit(0)
+  echo "Runtime failure: " & error
+  quit(0)
+
+proc getFileContent*(path : string): string =
+  # TODO: Handle exceptions
+  return readFile(path)
+
+proc setFileContent*(path : string, content : string): bool =
+  # TODO: Handle exceptions and return false when problems
+  writeFile(path, content)
+
+proc fileExists(path : string): bool =
+  return fileExists(path)
+
+proc printCallstack(): void =
+  echo getStackTrace()
