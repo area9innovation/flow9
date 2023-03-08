@@ -1,3 +1,4 @@
+import std/times
 #[
     Native definitions
 ]#
@@ -247,8 +248,7 @@ proc hostCall*(name: string, args: seq[Flow]): Flow =
 #native timestamp : io () -> double = Native.timestamp;
 
 proc timestamp*(): float =
-  echo "TODO: Implement timestamp in nim runtime"
-  return 0.0
+  return epochTime() * 1000.0
 
 #native exp : (double) -> double = Native.exp; - is already defined
 
