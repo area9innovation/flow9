@@ -84,6 +84,8 @@ fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType) -> FiExp {
 	|> \x -> fiExpMakeCastsExplicit(x, type, env.prog.names)
 	|> \y -> fiExplicitCastInSwitch1(y, env.prog.names)
 	|> \z -> fiRemoveUnusedVars(z, env.effects)
+	|> fiExpChangeAndOr2If
+	|> fiExpShortcutIf
 	|> fiExpNormalizeSeqences
 	|> fiPullStatementsUp
 }
@@ -216,7 +218,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 	switch (expr) {
 		FiVoid(__):  if (returns) "return" else "discard";
 		FiBool(b, __): wrap_ret(if (b) "true" else "false");
-		FiInt(v, __):  wrap_ret(i2s(v));
+		FiInt(v, __):  wrap_ret(i2s(v) + "i32");
 		FiDouble(d, __): {
 			s = d2s(d);
 			wrap_ret(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s + ".0" else s);
@@ -253,7 +255,8 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 						wrap_ret(fiNimRenameKeyword(x) + typars_str + args);
 					} else {
 						// Tail call detected
-						arg_is_not_changed = \y, i -> {
+						fiNimTailCall(env, expr);
+						/*arg_is_not_changed = \y, i -> {
 							switch (y) {
 								FiVar(v,__,__): v == env.tailcall_args[i].name;
 								default: false;
@@ -274,7 +277,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 								}
 							),
 							["continue"]
-						), "\n");
+						), "\n");*/
 					}
 				}
 				default: {
@@ -352,41 +355,62 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 			)));
 		}
 		FiCallPrim(op, es, tp, __): {
-			args = map(es, \arg : FiExp -> Pair(fiNimCompile(env, arg, false), fiExpType(arg)));
+			args = map(es, \arg : FiExp -> fiNimCompile(env, arg, false));
+			arg_type = if (length(es) > 0) fiNimDerefType(fiExpType(es[0])) else FiTypeVoid();
 			opt = switch (op : FcPrim) {
-				FcOrPrim():    "(" + args[0].first + " or " + args[1].first + ")";
-				FcAndPrim():   "(" + args[0].first + " and " + args[1].first + ")";
-				FcNotPrim():   "not " + args[0].first;
-				FcEqPrim():    "(" + args[0].first + " == " + args[1].first + ")";
-				FcNePrim():    "(" + args[0].first + " != " + args[1].first + ")";
-				FcLePrim():    "(" + args[0].first + " <= " + args[1].first + ")";
-				FcGePrim():    "(" + args[0].first + " >= " + args[1].first + ")";
-				FcLtPrim():    "(" + args[0].first + " < "  + args[1].first + ")";
-				FcGtPrim():    "(" + args[0].first + " > "  + args[1].first + ")";
-				FcPlusPrim():  fiNimCompilePlus(env, args[0], " + ", args[1]);
-				FcMinusPrim(): "(" + args[0].first + " - "  + args[1].first + ")";
-				FcMulPrim():   "(" + args[0].first + " * "  + args[1].first + ")";
-				FcDivPrim():   fiNimCompileDiv(env, args[0], " / ", args[1]);
-				FcModPrim():   fiNimCompileDiv(env, args[0], " %% ", args[1]);
-				FcNegPrim():  "-" + args[0].first;
-				FcArrayPrim(): "@[" + strGlue(map(args, \e->e.first), ", ") + "]";
-				FcIndexPrim(): args[0].first + "[" + args[1].first + "]";
-				FcDerefPrim(): args[0].first;
-				FcAssignPrim():	"(" + args[0].first + " = " + args[1].first + ")";
-				FcRefPrim(): args[0].first;
+				FcOrPrim(): {
+					if (!fiNimHasTailCall(es[1], env.tailcall_fn)) {
+						"(" + args[0] + " or " + args[1] + ")";
+					} else {
+						"(" + args[0] + " or " + args[1] + ")";
+						/*switch (es[1]) {
+							FiCall(f, args,__,__): {
+								arg1 = fiNimCompile(env, es[1], true);
+								"(" + args[0] + " or" + fi2nimSureIndent(arg1) + ")"
+							}
+							default:
+						}*/
+					}
+				}
+				FcAndPrim(): {
+					if (!fiNimHasTailCall(es[1], env.tailcall_fn)) {
+						"(" + args[0] + " and " + args[1] + ")";
+					} else {
+						arg1 = fiNimCompile(env, es[1], true);
+						"(" + args[0] + " and" + fi2nimSureIndent(arg1) + ")"
+					}
+				}
+				FcNotPrim():   "not " + args[0];
+				FcEqPrim():    "(" + args[0] + " == " + args[1] + ")";
+				FcNePrim():    "(" + args[0] + " != " + args[1] + ")";
+				FcLePrim():    "(" + args[0] + " <= " + args[1] + ")";
+				FcGePrim():    "(" + args[0] + " >= " + args[1] + ")";
+				FcLtPrim():    "(" + args[0] + " < "  + args[1] + ")";
+				FcGtPrim():    "(" + args[0] + " > "  + args[1] + ")";
+				FcPlusPrim():  fiNimCompilePlus(env, arg_type, args[0], " + ", args[1]);
+				FcMinusPrim(): "(" + args[0] + " - "  + args[1] + ")";
+				FcMulPrim():   "(" + args[0] + " * "  + args[1] + ")";
+				FcDivPrim():   fiNimCompileDiv(env, arg_type, args[0], " / ", args[1]);
+				FcModPrim():   fiNimCompileDiv(env, arg_type, args[0], " %% ", args[1]);
+				FcNegPrim():  "-" + args[0];
+				FcArrayPrim(): "@[" + strGlue(args, ", ") + "]";
+				FcIndexPrim(): args[0] + "[" + args[1] + "]";
+				FcDerefPrim(): args[0];
+				FcAssignPrim():	"(" + args[0] + " = " + args[1] + ")";
+				FcRefPrim(): args[0];
 				FcStructPrim(struct_name): {
 					typars = fiNimParamsForInstantiate(env, cast(tp: FiType -> FiTypeName).typeparameters);
-					"make_" + struct_name + typars + "(" + superglue(args, \p ->  p.first, ", ") + ")";
+					"make_" + struct_name + typars + "(" + strGlue(args, ", ") + ")";
 				};
 				FcFieldPrim(name): {
 					switch (fiExpType(es[0])) {
-						FiTypeName(__,__): args[0].first +  "." + fiNimRenameKeyword(name);
-						FiTypeFlow(): "rt_get_flow_field(" + args[0].first +  ", \"" + fiNimRenameKeyword(name) + "\")";
+						FiTypeName(__,__): args[0] +  "." + fiNimRenameKeyword(name);
+						FiTypeFlow(): "rt_get_flow_field(" + args[0] +  ", \"" + fiNimRenameKeyword(name) + "\")";
 						default: fail0("field may be get of a struct or a flow");
 					}
 				}
 				FcSetMutablePrim(name): {
-					"(" + args[0].first + "." + fiNimRenameKeyword(name) + "=" + args[1].first + ")";
+					"(" + args[0] + "." + fiNimRenameKeyword(name) + "=" + args[1] + ")";
 				}
 				FcCreateClosurePrim(__, __): fail0("TODO"); // should not happen - Nim does not use lambda lifting
                 FcQuote(): fail0("TODO");
@@ -472,19 +496,50 @@ fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: string) -> string 
 	}
 }
 
-fiNimCompilePlus(env : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
-	a1 = arg1.first;
-	a2 = arg2.first;
-	// Type checker ensures math types are equal, so we only need one type.
-	arg_type = fiNimDerefType(arg1.second);
+fiNimTailCall(env: FiNimEnv, call: FiCall) -> string {
+	args_code = map(call.args, \e -> fiNimCompile(env, e, false));
+	arg_is_not_changed = \y, i -> {
+		switch (y) {
+			FiVar(v,__,__): v == env.tailcall_args[i].name;
+			default: false;
+		}
+	}
+	tmp_arg = \i -> fiNimRenameKeyword("tmp__" + env.tailcall_args[i].name);
+	strGlue(concat3(
+		filtermapi(args_code, \i, arg_code -> 
+			if (arg_is_not_changed(call.args[i], i)) None() else {
+				Some("let " + tmp_arg(i) + ": " + fiNimCompileType(env, env.tailcall_args[i].type) + " =" +
+					fi2nimMaybeIndent(args_code[i])
+				);
+			}
+		),
+		filtermapi(args_code, \i, arg_code -> 
+			if (arg_is_not_changed(call.args[i], i)) None() else {
+				Some(fiNimRenameKeyword(env.tailcall_args[i].name) + " = " + tmp_arg(i));
+			}
+		),
+		["continue"]
+	), "\n");
+}
+
+fiNimCompileAndOr(env : FiNimEnv, arg_type: FiType, a1 : string, op : string, a2: string, e2 : FiExp) {
+	if (!fiNimHasTailCall(e2, env.tailcall_fn)) {
+		"(" + a1 + op + a2 + ")";
+	} else {
+		switch (e2) {
+			FiCall(f, args,__,__): {
+				"(" + a1 + op + fi2nimSureIndent(fiNimTailCall(env, e2)) + ")";
+			}
+			default: "(" + a1 + op + a2 + ")";
+		}
+	}
+}
+
+fiNimCompilePlus(env : FiNimEnv, arg_type: FiType, a1 : string, op : string, a2 : string) {
 	"(" + (if (arg_type == FiTypeString() && (op == " + ")) a1 + " & " + a2 else a1 + op + a2) + ")";
 }
 
-fiNimCompileDiv(env : FiNimEnv, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) {
-	a1 = arg1.first;
-	a2 = arg2.first;
-	// Type checker ensures math types are equal, so we only need one type.
-	arg_type = fiNimDerefType(arg1.second);
+fiNimCompileDiv(env : FiNimEnv, arg_type: FiType, a1 : string, op : string, a2 : string) {
 	"(" + (if (arg_type == FiTypeInt() && (op == " / ")) {
 		a1 + " div " + a2
 	} else if (arg_type == FiTypeInt() && (op == " %% ")) {
@@ -548,8 +603,8 @@ fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string {
 						"a_" + i2s(i) + ": " + fiNimCompileType(env, fiApplyTypeSubstitution(typars_subst, arg.type)), 
 						", "
 					)
-				+ "): int =\n" +
-					fiNimIndent + "cast[int](st_" + fi2nimMangleType(spec) + ")\n\n";
+				+ "): int32 =\n" +
+					fiNimIndent + "cast[int32](st_" + fi2nimMangleType(spec) + ")\n\n";
 			}
 			default: fail0("struct specialization must be FiTypeName");
 		}
@@ -557,7 +612,7 @@ fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string {
 
 	// struct_id
 	struct_id = \x -> if (length(specs) == 0) {
-		"int(" + fi2nimStructId(env, struct) + ")";
+		"int32(" + fi2nimStructId(env, struct) + ")";
 	} else {
 		"rt_struct_id_" + struct.name + "(" + 
 			supergluei(struct.args, \i, arg -> 
@@ -585,7 +640,7 @@ fi2nimUnionFuncs(env : FiNimEnv) -> string {
 				fiNimIndent + "of " + fi2nimStructId(env, spec) + ":\n" + 
 				(if (length(spec.args) == 0) "" else fiNimIndent2 + "let y = " + fiNimCompileType(env, spec_type) + "(x)\n") +
 				fiNimIndent2 + "Flow(tp: rtStruct, " + 
-				"str_id: cast[int](" + fi2nimStructId(env, spec) + "), " +
+				"str_id: cast[int32](" + fi2nimStructId(env, spec) + "), " +
 				"str_name: \"" + spec.name + "\", " +
 				"str_fields: @[" + superglue(spec.args, \arg ->
 					"FlowField(name: \"" + arg.name + "\", val: rt_to_flow(y." + arg.name + "))", ", ") + 
