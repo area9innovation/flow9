@@ -616,3 +616,48 @@ imported module as closures invoking the imported module may escape the scope:
 The syntax suggests that `module` can be unloaded after `foo` returns. However
 it is the invocation in `bar` that actually calls into `module` via the lambda
 returned inn foo.
+
+## Wasm
+
+There is initial support for Wasm, through the nim backend:
+
+Steps:
+0) Follow installation steps on https://github.com/treeform/nim_emscripten_tutorial
+1) flowc demos/euler/euler8.flow nim=euler8.nim
+2) copy euler8.nim to nim_emscripten_tutorial\ and "cd" there
+
+3) Save this to euler8.nims in that folder:
+
+	if defined(emscripten):
+	# This path will only run if -d:emscripten is passed to nim.
+
+	--nimcache:tmp # Store intermediate files close by in the ./tmp dir.
+
+	--os:linux # Emscripten pretends to be linux.
+	--cpu:wasm32 # Emscripten is 32bits.
+	--cc:clang # Emscripten is very close to clang, so we ill replace it.
+	when defined(windows):
+		--clang.exe:emcc.bat  # Replace C
+		--clang.linkerexe:emcc.bat # Replace C linker
+		--clang.cpp.exe:emcc.bat # Replace C++
+		--clang.cpp.linkerexe:emcc.bat # Replace C++ linker.
+	else:
+		--clang.exe:emcc  # Replace C
+		--clang.linkerexe:emcc # Replace C linker
+		--clang.cpp.exe:emcc # Replace C++
+		--clang.cpp.linkerexe:emcc # Replace C++ linker.
+	--listCmd # List what commands we are running so that we can debug them.
+
+	--gc:arc # GC:arc is friendlier with crazy platforms.
+	--exceptions:goto # Goto exceptions are friendlier with crazy platforms.
+	--define:noSignalHandler # Emscripten doesn't support signal handlers.
+	--overflowChecks:off # Flow semantics are different
+
+	# Pass this to Emscripten linker to generate html file scaffold for us.
+	switch("passL", "-o euler8.html --shell-file shell_minimal.html")
+
+3) nim c -d:emscripten -d:wasm -d:release -o:euler8.html euler8.nim
+4) nimhttpd -p:8000
+5) Open http://localhost:8000/euler8.html in browser
+
+and in the console, it prints the result.
