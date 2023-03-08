@@ -22,7 +22,7 @@ proc rt_escape(s: string): string =
 
   # to_string conversions
 proc rt_to_string*(): string = "{}"
-proc rt_to_string*(x: in32t): string = intToStr(x)
+proc rt_to_string*(x: int32): string = intToStr(x)
 proc rt_to_string*(x: float): string = formatFloat(x)
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
 proc rt_to_string*(x: string): string = "\"" & x.rt_escape & "\""
@@ -35,9 +35,9 @@ proc rt_to_bool*(x: string): bool = x != "false"
 
   # to_int conversions
 proc rt_to_int*(x: int32): int32 = x
-proc rt_to_int*(x: float): int32 = int(round(x))
+proc rt_to_int*(x: float): int32 = int32(round(x))
 proc rt_to_int*(x: bool): int32 = return if x: 1 else: 0
-proc rt_to_int*(x: string): int32 = parseInt(x)
+proc rt_to_int*(x: string): int32 = int32(parseInt(x))
 
   # to_double conversions
 proc rt_to_double*(x: int32): float = float(x)
@@ -88,15 +88,8 @@ type
     val: RootObj
 
   # to_string conversions
-proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
 proc rt_to_string*(x: Struct): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
-
-proc rt_to_string*(): string = "{}"
-proc rt_to_string*(x: int32): string = intToStr(x)
-proc rt_to_string*(x: float): string = formatFloat(x)
-proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
-proc rt_to_string*(x: string): string = x
 proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
