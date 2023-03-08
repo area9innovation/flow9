@@ -22,25 +22,25 @@ proc rt_escape(s: string): string =
 
   # to_string conversions
 proc rt_to_string*(): string = "{}"
-proc rt_to_string*(x: int): string = intToStr(x)
+proc rt_to_string*(x: in32t): string = intToStr(x)
 proc rt_to_string*(x: float): string = formatFloat(x)
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
 proc rt_to_string*(x: string): string = "\"" & x.rt_escape & "\""
 
   # to_bool conversions
-proc rt_to_bool*(x: int): bool = x != 0
+proc rt_to_bool*(x: int32): bool = x != 0
 proc rt_to_bool*(x: float): bool = x != 0.0
 proc rt_to_bool*(x: bool): bool = x
 proc rt_to_bool*(x: string): bool = x != "false"
 
   # to_int conversions
-proc rt_to_int*(x: int): int = x
-proc rt_to_int*(x: float): int = int(round(x))
-proc rt_to_int*(x: bool): int = return if x: 1 else: 0
-proc rt_to_int*(x: string): int = parseInt(x)
+proc rt_to_int*(x: int32): int32 = x
+proc rt_to_int*(x: float): int32 = int(round(x))
+proc rt_to_int*(x: bool): int32 = return if x: 1 else: 0
+proc rt_to_int*(x: string): int32 = parseInt(x)
 
   # to_double conversions
-proc rt_to_double*(x: int): float = float(x)
+proc rt_to_double*(x: int32): float = float(x)
 proc rt_to_double*(x: float): float = x
 proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
 proc rt_to_double*(x: string): float = parseFloat(x)
@@ -69,19 +69,19 @@ type
     case tp*: RtType
     of rtVoid:   discard
     of rtBool:   bool_v:   bool
-    of rtInt:    int_v:    int
+    of rtInt:    int_v:    int32
     of rtDouble: double_v: float
     of rtString: string_v: string
     of rtNative: native_v: Native
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
-      str_id: int
+      str_id: int32
       str_name: string
       str_fields: seq[FlowField]
 
   Struct* = ref object of RootObj
-    id: int
+    id: int32
 
   Native* = ref object of RootObj
     what: string
@@ -92,6 +92,12 @@ proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
 proc rt_to_string*(x: Struct): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
 
+proc rt_to_string*(): string = "{}"
+proc rt_to_string*(x: int32): string = intToStr(x)
+proc rt_to_string*(x: float): string = formatFloat(x)
+proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
+proc rt_to_string*(x: string): string = x
+proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
   for i in 0..x.len - 1:
@@ -123,7 +129,7 @@ proc rt_to_string*(f: Flow): string =
   # to_flow conversions
 proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
 proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, bool_v: b)
-proc rt_to_flow*(i: int): Flow = Flow(tp: rtInt, int_v: i)
+proc rt_to_flow*(i: int32): Flow = Flow(tp: rtInt, int_v: i)
 proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
 proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
 proc rt_to_flow*(f: Flow): Flow = f
@@ -157,7 +163,7 @@ proc rt_to_bool*(x: Flow): bool =
   of rtString: return rt_to_bool(x.string_v)
   else: assert(false, "illegal conversion")
 
-proc rt_to_int*(x: Flow): int =
+proc rt_to_int*(x: Flow): int32 =
   case x.tp:
   of rtInt:    return rt_to_int(x.int_v)
   of rtBool:   return rt_to_int(x.bool_v)

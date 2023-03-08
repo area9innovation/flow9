@@ -518,7 +518,14 @@ class DisplayObjectHelper {
 		if (untyped clip.setFocus != null && clip.setFocus(focus)) {
 			return true;
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
-			if (focus && accessWidget.element.focus != null) {
+			// To temprorarily set focus on simple text
+			if (untyped clip.nativeWidget && untyped clip.nativeWidget.classList.contains('flow_focusable')) {
+				if (focus) {
+					untyped clip.nativeWidget.setAttribute('tabindex', '-1');
+					untyped clip.nativeWidget.focus();
+					return true;
+				}
+			} else if (focus && accessWidget.element.focus != null) {
 				accessWidget.element.focus();
 				if (RenderSupport.EnableFocusFrame) accessWidget.element.classList.add("focused");
 

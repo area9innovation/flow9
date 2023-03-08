@@ -6,15 +6,33 @@ in vec3 pos;
 in vec3 norm;
 
 uniform vec3 color;
+uniform vec3 rayOrigin;
 
 out vec4 fragColor;
 
+vec3 getLight(vec3 p, vec3 rayDirection, vec3 lightPos, vec3 lightColor, vec3 normal, float size) {
+	vec3 lightDir = normalize(lightPos - p);
+	vec3 viewDir = -rayDirection;
+	vec3 reflectDir = reflect(-lightDir, normal);
+
+	float specularStrength = 0.25;
+	float specularShininess = 8.0;
+	vec3 specular = specularStrength * lightColor * pow(clamp(dot(reflectDir, viewDir), 0.0, 1.0), specularShininess);  
+
+	float diffuseStrength = 0.9;
+	vec3 diffuse = diffuseStrength * lightColor * clamp(dot(lightDir, normal), 0.0, 1.0);
+
+	return (specular + diffuse);
+}
+
 void main()
 {
-	vec4 diffuseColor = vec4(color, 1);
-	vec3 lightDirection = normalize(vec3(100, 100, 100) - pos);
 	vec3 normal = normalize(norm);
-	float fakeLight = dot(lightDirection, normal) * .5 + .5;
-	fragColor = vec4(diffuseColor.rgb * fakeLight, diffuseColor.a);
+	vec3 p = pos;
+	vec3 rayDirection = normalize(pos - rayOrigin);
+
+	vec3 ambientColor = 0.1 * color;
+	fragColor = pow(vec4(ambientColor + (%light%) * color, 1.0), vec4(0.4545));
+
 	gl_FragDepth = (ndc.z / ndc.w) * .5f + .5f;
 }
