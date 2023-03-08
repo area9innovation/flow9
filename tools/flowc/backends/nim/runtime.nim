@@ -24,19 +24,19 @@ type
     case tp*: RtType
     of rtVoid:   discard
     of rtBool:   valBool: bool
-    of rtInt:    valInt: int
+    of rtInt:    valInt: int32
     of rtDouble: valDouble: float
     of rtString: valString: string
     of rtNative: valNative: Native
     of rtArray:  valArray: seq[Flow]
     of rtFunc:   valFunc: proc(x: seq[Flow]): Flow
     of rtStruct:
-      idStruct: int
+      idStruct: int32
       nameStruct: string
       valFields: seq[Flow]
 
   Struct* = ref object of RootObj
-    id: int
+    id: int32
 
   Native* = ref object of RootObj
     what: string
@@ -45,7 +45,7 @@ type
 #[ General conversions ]#
 
 proc rt_to_string*(): string = "{}"
-proc rt_to_string*(x: int): string = intToStr(x)
+proc rt_to_string*(x: int32): string = intToStr(x)
 proc rt_to_string*(x: float): string = formatFloat(x)
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
 proc rt_to_string*(x: string): string = x
@@ -79,7 +79,7 @@ proc rt_to_string*(f: Flow): string =
 
 proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
 proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, valBool: b)
-proc rt_to_flow*(i: int): Flow = Flow(tp: rtInt, valInt: i)
+proc rt_to_flow*(i: int32): Flow = Flow(tp: rtInt, valInt: i)
 proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, valDouble: d)
 proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, valString: s)
 proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, valNative: n)
@@ -91,7 +91,7 @@ proc rt_to_void*(x: Flow): void =
   else:
     assert(false, "illegal conversion")
 
-proc rt_to_bool*(x: int): bool = x != 0
+proc rt_to_bool*(x: int32): bool = x != 0
 proc rt_to_bool*(x: float): bool = x != 0.0
 proc rt_to_bool*(x: bool): bool = x
 proc rt_to_bool*(x: string): bool = x != "false"
@@ -107,11 +107,11 @@ proc rt_to_bool*(x: Flow): bool =
   else:
     assert(false, "illegal conversion")
 
-proc rt_to_int*(x: int): int = x
-proc rt_to_int*(x: float): int = int(round(x))
-proc rt_to_int*(x: bool): int = return if x: 1 else: 0
-proc rt_to_int*(x: string): int = parseInt(x)
-proc rt_to_int*(x: Flow): int =
+proc rt_to_int*(x: int32): int32 = x
+proc rt_to_int*(x: float): int32 = int32(round(x))
+proc rt_to_int*(x: bool): int32 = return if x: 1 else: 0
+proc rt_to_int*(x: string): int32 = cast[int32](parseInt(x))
+proc rt_to_int*(x: Flow): int32 =
   if x.tp == rtInt:
     return rt_to_int(x.valInt)
   elif x.tp == rtBool:
@@ -123,7 +123,7 @@ proc rt_to_int*(x: Flow): int =
   else:
     assert(false, "illegal conversion")
 
-proc rt_to_double*(x: int): float = float(x)
+proc rt_to_double*(x: int32): float = float(x)
 proc rt_to_double*(x: float): float = x
 proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
 proc rt_to_double*(x: string): float = parseFloat(x)
