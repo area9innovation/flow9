@@ -49,6 +49,10 @@ type
 
 #[ Representation of a dynamic type ]#
 
+  FlowField* = object
+    name*: string
+    val*: Flow
+
   Flow* = ref object
     case tp*: RtType
     of rtVoid:   discard
@@ -62,7 +66,7 @@ type
     of rtStruct:
       str_id: int
       str_name: string
-      str_fields: seq[Flow]
+      str_fields: seq[FlowField]
 
   Struct* = ref object of RootObj
     id: int
@@ -100,7 +104,7 @@ proc rt_to_string*(f: Flow): string =
     for i in 0..f.str_fields.len - 1:
         if i > 0:
            s.add(", ")
-        s.add(rt_to_string(f.str_fields[i]))
+        s.add(rt_to_string(f.str_fields[i].val))
     s.add(")")
     return s
 
@@ -110,6 +114,7 @@ proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, bool_v: b)
 proc rt_to_flow*(i: int): Flow = Flow(tp: rtInt, int_v: i)
 proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
 proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
+proc rt_to_flow*(f: Flow): Flow = f
 proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, native_v: n)
 proc rt_to_flow*(x: Struct): Flow
 proc rt_to_flow*[T](arr: seq[T]): Flow =
@@ -160,3 +165,28 @@ proc rt_to_native*(x: Flow): Native =
   case x.tp:
   of rtNative: return x.native_v
   else: assert(false, "illegal conversion")
+
+proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
+  case x.tp:
+  of rtStruct:
+    for field in x.str_fields:
+      if field.name == field_name:
+        return field.val
+    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
+  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
+
+#[
+
+	Doesn't work: complains that
+		field.val = v
+	can't be assigned to
+
+proc rt_set_flow_field*(x: Flow, field_name: string, v: Flow): void =
+  case x.tp:
+  of rtStruct:
+    for field in x.str_fields:
+      if field.name == field_name:
+        field.val = v
+    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
+  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
+]#
