@@ -279,9 +279,10 @@ proc getFileContent*(path : string): string =
 proc setFileContent*(path : string, content : string): bool =
   # TODO: Handle exceptions and return false when problems
   writeFile(path, content)
+  return true
 
-proc fileExists(path : string): bool =
+proc fileExists*(path : string): bool =
   return fileExists(path)
 
-proc printCallstack(): void =
+proc printCallstack*(): void =
   echo getStackTrace()
