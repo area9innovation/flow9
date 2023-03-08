@@ -6,6 +6,18 @@ import math
 
 # Runtime for NIM backend
 
+proc rt_escape(s: string): string = 
+  var r: string = ""
+  for ch in s:
+    case ch:
+    of '\n': r.add("\\n")
+    of '\t': r.add("\\t")
+    of '\r': r.add("\\r")
+    of '\\': r.add("\\\\")
+    of '"': r.add("\\\"")
+    else: r.add(ch)
+  return r
+
 #[ General conversions ]#
 
   # to_string conversions
@@ -13,7 +25,7 @@ proc rt_to_string*(): string = "{}"
 proc rt_to_string*(x: int): string = intToStr(x)
 proc rt_to_string*(x: float): string = formatFloat(x)
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
-proc rt_to_string*(x: string): string = x
+proc rt_to_string*(x: string): string = "\"" & x.rt_escape & "\""
 
   # to_bool conversions
 proc rt_to_bool*(x: int): bool = x != 0
@@ -95,7 +107,7 @@ proc rt_to_string*(f: Flow): string =
   of rtBool:   return rt_to_string(f.bool_v)
   of rtInt:    return rt_to_string(f.int_v)
   of rtDouble: return rt_to_string(f.double_v)
-  of rtString: return "\"" & rt_to_string(f.string_v) & "\""
+  of rtString: return rt_to_string(f.string_v)
   of rtNative: return rt_to_string(f.native_v)
   of rtArray:  return rt_to_string(f.array_v)
   of rtFunc:   return "<function>"

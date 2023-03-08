@@ -97,11 +97,20 @@ proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
 proc getUrlParameter*(name: string): string =
   ""
 
-proc toString*[T](a: T): string =
-  return rt_to_string(a)
+proc toString*[T](x: T): string =
+  when x is Flow:
+    if x.tp == rtString:
+      return x.string_v
+    else:
+      return rt_to_string(x)
+  else:
+    return rt_to_string(x)
 
-proc toString2*(a: Flow): string =
-  return rt_to_string(a)
+proc toString2*(x: Flow): string =
+  if x.tp == rtString:
+    return x.string_v
+  else:
+    return rt_to_string(x)
 
 proc strlen*(s: string): int =
   return len(s);
