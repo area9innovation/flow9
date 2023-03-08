@@ -95,6 +95,7 @@ proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
     return false
 
 proc getUrlParameter*(name: string): string =
+  echo "TODO: Implement getUrlParameter"
   ""
 
 proc toString*[T](a: T): string =
@@ -232,6 +233,7 @@ proc bitNot*(x: int): int =
   return not x
 
 proc getKeyValueN*(key : string, defaultValue : string): string =
+  echo "TODO: Implement getKeyValueN in Nim"
   return defaultValue
 
 # native hostCall : io (name: string, args: [flow]) -> flow = Native.hostCall;
@@ -245,6 +247,7 @@ proc hostCall*(name: string, args: seq[Flow]): Flow =
 #native timestamp : io () -> double = Native.timestamp;
 
 proc timestamp*(): float =
+  echo "TODO: Implement timestamp in nim runtime"
   return 0.0
 
 #native exp : (double) -> double = Native.exp; - is already defined
@@ -261,6 +264,10 @@ proc getAllUrlParametersArray*(): seq[seq[string]] =
   return newSeq[seq[string]]()
 
 #native getTargetName : io () -> string = Native.getTargetName;
-
 proc getTargetName*(): string =
   return "nim"
+
+#native fail : io (msg : string) -> void = Native.failWithError;
+proc fail*(error : string): void =
+	echo "Runtime failure: " & error
+	quit(0)

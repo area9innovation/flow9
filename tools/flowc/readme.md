@@ -661,3 +661,20 @@ Steps:
 5) Open http://localhost:8000/euler8.html in browser
 
 and in the console, it prints the result.
+
+### Adding new natives to nim
+
+Compile a program
+
+	flowc tools/gringo/gringo.flow nim=gringo.nim
+
+and you get a list of natives missing:
+
+	Error: native getFileContent(path : string) -> string = Native.getFileContent is not implemented in nim backend
+	Error: native printCallstack() -> void = Native.printCallstack is not implemented in nim backend
+	Error: native setFileContent(path : string, content : string) -> bool = Native.setFileContent is not implemented in nim backend
+	Error: native fileExists(string) -> bool = FlowFileSystem.fileExists is not implemented in nim backend
+
+Add an implementation to `tools/flowc/backends/nim/natives.nim`, and add it to the list in `nimNativeFunctions` found in `tools/flowc/backends/nim/fi2nim_defines.flow`.
+
+Then compile again, compile the resulting nim, and check that it works.
