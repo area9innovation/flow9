@@ -662,6 +662,11 @@ Steps:
 
 and in the console, it prints the result.
 
+### Installing nim
+
+We recommend you use choosenim:
+https://github.com/dom96/choosenim#choosenim
+
 ### Adding new natives to nim
 
 Compile a program
@@ -678,3 +683,7 @@ and you get a list of natives missing:
 Add an implementation to `tools/flowc/backends/nim/natives.nim`, and add it to the list in `nimNativeFunctions` found in `tools/flowc/backends/nim/fi2nim_defines.flow`.
 
 Then compile again, compile the resulting nim, and check that it works.
+
+	nim c gringo.nim
+	gringo.exe
+
