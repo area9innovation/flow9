@@ -61,7 +61,7 @@ fiUnion2Structs(union : FiTypeUnion, acc: Tree<string, [FiTypeStruct]>, names : 
 							Pair(concat(ac.first, lookupTreeDef(ac1, union1.name, [])), ac1);
 						}
 						None(): {
-							fail("must not happen");
+							fail("must not happen, type: " + type.name + " is not found");
 							ac;
 						}
 					}
@@ -130,30 +130,30 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 		fcPrintln(msg, program.config.threadId);
 	}
 	names = program.names;
-	remove_func = \func -> {
+	remove_func = \func: FiFunctionDec -> {
 		typars = fiCollectTypars(func.type, makeSet());
-		lambda_removed = fiTransformImplicitStructTyparsFromFiExp(func.lambda, typars, on_err, fn, names);
+		lambda_removed = fiTransformImplicitStructTyparsFromFiExp(func.lambda, typars, on_err, fn, names, func.name);
 		FiFunctionDec(func with
 			lambda = cast(lambda_removed: FiExp -> FiLambda)
 		);
 	}
-	remove_var = \var -> {
+	remove_var = \var: FiGlobalVar -> {
 		typars = fiCollectTypars(var.type, makeSet());
 		FiGlobalVar(var with
-			value = fiTransformImplicitStructTyparsFromFiExp(var.value, typars, on_err, fn, names)
+			value = fiTransformImplicitStructTyparsFromFiExp(var.value, typars, on_err, fn, names, var.name)
 		);
 	}
-	remove_nat = \nat -> {
+	remove_nat = \nat: FiNativeDec -> {
 		typars = fiCollectTypars(nat.type, makeSet());
 		FiNativeDec(nat with
-			fallbackLambda = fiTransformImplicitStructTyparsFromFiExp(nat.fallbackLambda, typars, on_err, fn, names)
+			fallbackLambda = fiTransformImplicitStructTyparsFromFiExp(nat.fallbackLambda, typars, on_err, fn, names, nat.name)
 		);
 	}
 	toplevel_removed = mapTree(program.names.toplevel, \decl ->
 		switch (decl) {
 			FiFunctionDec(__,__,__, __, __): remove_func(decl);
 			FiGlobalVar(__,__,__,__,__): remove_var(decl);
-			FiNativeDec(__,__,type,__, fallback,__,__): remove_nat(decl);
+			FiNativeDec(__,__,__,__,__,__,__): remove_nat(decl);
 		}
 	);
 	FiProgram(program with
@@ -170,13 +170,17 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 	);
 }
 
-fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err: (string) -> void, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames) -> FiExp {
-	re = \x -> fiTransformImplicitStructTyparsFromFiExp(x, typars, on_err, fn, names);
+fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err: (string) -> void, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames, toplevel_name: string) -> FiExp {
+	re = \x -> fiTransformImplicitStructTyparsFromFiExp(x, typars, on_err, fn, names, toplevel_name);
 	rt = \x -> switch (fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names)) {
 		Some(tp): tp;
 		None(): {
-			on_err("type dissapeared: " + prettyFiType(dummyPretty, x, makeSet()) + 
-				", typars: [" + strGlue(set2array(typars), ", ") + "]");
+			on_err(
+				"type dissapeared: " + prettyFiType(dummyPretty, x, makeSet()) + 
+				", typars: [" + strGlue(set2array(typars), ", ") + "]\n" + 
+				"expression: " + prettyFiExp(dummyPretty, e) + "\n" +
+				"in declaration: " + toplevel_name
+			);
 			x;
 		}
 	}
@@ -184,7 +188,7 @@ fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err:
 		FiLambda(args, body, type, start): {
 			body_typars = fold(args, typars, \acc, arg -> fiCollectTypars(arg.type, acc));
 			FiLambda(args,
-				fiTransformImplicitStructTyparsFromFiExp(body, body_typars, on_err, fn, names),
+				fiTransformImplicitStructTyparsFromFiExp(body, body_typars, on_err, fn, names, toplevel_name),
 				cast(rt(type): FiType -> FiTypeFunction), start
 			);
 		}
