@@ -89,6 +89,12 @@ proc iter*[T](a: seq[T], op: proc (v: T): void): void =
     op(x)
   return
 
+# Apply a function to each element of an array
+proc iteri*[T](a: seq[T], op: proc (idx : int32, v: T): void): void =
+  for i in 0..length(a) - 1:
+    op(i, a[i])
+  return
+
 proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
   when (a is Struct) and (b is Struct):
     return a.id == b.id
@@ -272,6 +278,11 @@ proc fail*(error : string): void =
   echo "Runtime failure: " & error
   quit(0)
 
+#native fail0 : io (msg : string) -> ? = Native.failWithError;
+proc fail0*[T](error : string): T =
+  echo "Runtime failure: " & error
+  quit(0)
+
 proc getFileContent*(path : string): string =
   # TODO: Handle exceptions
   return readFile(path)
@@ -286,3 +297,6 @@ proc fileExists*(path : string): bool =
 
 proc printCallstack*(): void =
   echo getStackTrace()
+
+proc loaderUrl*(): string =
+  return ""
