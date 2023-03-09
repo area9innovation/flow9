@@ -221,9 +221,11 @@ rewriteImports(prog : FiProgram, fine : bool) -> void {
 	// OK, we we can find the real set of files we need
 	realNeed : Set<string> = reachableClosureFromSimpleNode(simplified, prog.config.flowfile);
 
+	pr = \s -> fcPrintln(s, prog.config.threadId);
+
 	if (false) {
-		println("Real need");
-		println(toString(set2array(realNeed)));
+		pr("Real need");
+		pr(toString(set2array(realNeed)));
 	}
 
 	// This is what the real graph is
@@ -241,9 +243,28 @@ rewriteImports(prog : FiProgram, fine : bool) -> void {
 
 	super = differenceSets(current, realNeed);
 	if (!isEmptySet(super)) {
-		println("At a top level, these imports are not required:");
-		println(toString(set2array(super)));
+		pr("At a top level, these imports are not required:");
+		files : [Pair<string, int>] = map(set2array(super), \s -> {
+			mod = lookupTreeDef(prog.modules, s, dummyFiModule);
+			Pair(s, round(mod.fileinfo.filesize))
+		});
+		order = sortCustom(files, \a -> a.second, false);
+		pr(
+			strGlue(strWordWrap(
+				superglue(order, \p -> {
+					size = p.second;
+					t = if (size > 1024 * 1024) {
+						d2st(i2d(size) / (1024.0 * 1024.0), 1) + "M"
+					}  else if (size > 1024) {
+						d2st(i2d(size) / 1024.0, 1) + "k"
+					} else i2s(size);
+					p.first + "(" + t + ")"
+				}, ", "),
+				80, [" "]
+			), "\n")
+		);
 	}
+	pr("The real need is " + i2s(sizeSet(realNeed)) + " modules while the current program uses " + i2s(sizeSet(current)) + " modules");
 
 	traverseInOrder(prog.modules, \name, module -> {
 		uses = lookupMultimap(deps, name);
@@ -261,20 +282,20 @@ rewriteImports(prog : FiProgram, fine : bool) -> void {
 		if (!isEmptySet(extra) && (
 			fine || !isEmptySet(intersectSets(extra, super))
 		)) {
-			println("\n" + name + " can reduce imports:");
+			pr("\n" + name + " can reduce imports:");
 			iterSet(extra, \i -> {
 				superflous = differenceSets(reachableClosureFromSimpleNode(simplified, i), realNeed);
 				if (!isEmptySet(superflous)) {
-					println("- import " + i + "  saves " + toString(set2array(superflous)));
+					pr("- import " + i + "  saves " + toString(set2array(superflous)));
 				} else {
-					println("- import " + i);
+					pr("- import " + i);
 				}
 			});
 
 			if (!isEmptySet(missing)) {
 				realMiss = intersectSets(simplifyExtraImports(simplified, required), missing);
 				iterSet(realMiss, \i -> {
-					println("+ import " + i + ";");
+					pr("+ import " + i + ";");
 				});
 			}
 		}
