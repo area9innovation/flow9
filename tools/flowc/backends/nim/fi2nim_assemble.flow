@@ -1,8 +1,10 @@
 import tools/flowc/backends/common;
+import tools/flowc/backends/nim/fi2nim_utils;
+import string_utils;
 
 export {
 	fi2nimRuntime(cfg : FiNimConfig) -> string;
-	fi2nimNatives(cfg : FiNimConfig) -> string;
+	fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative>;
 	fi2nimAssemble(cfg : FiNimConfig, content : [string]) -> void;
 }
 
@@ -12,10 +14,45 @@ fi2nimRuntime(cfg : FiNimConfig) -> string {
 	//"{.push warning[SmallLshouldNotBeUsed]:off.}\n";
 }
 
-fi2nimNatives(cfg : FiNimConfig) -> string {
-	// Use include, not import to avoid exporting issues.
-	"#include tools/flowc/backends/nim/natives.nim" + "\n\n" +
-	"{.push warning[SmallLshouldNotBeUsed]:off.}\n";
+fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
+	native_files = fold(cfg.nativeDirs, [], \acc, dir -> 
+		fi2nimFindAllNativeFiles(pathCombine(dir, "natives"), acc)
+	);
+	fold(native_files, makeTree(), \acc, path ->
+		if (!fileExists(path)) {
+			fcPrintln("runtime natives file: " + path + " is not found", cfg.threadId);
+			acc;
+		} else {
+			src = getFileContent(path);
+			lines = strSplit(src, "\n");
+			imports = filter(lines, fi2nimIsImportLine);
+			proc_decl = find(lines, \line0 -> {
+				line = rtrim(line0);
+				startsWith(line, "proc") && endsWith(line, "=");
+			});
+			code_lines = filter(lines, \line -> !fi2nimIsImportLine(line));
+			code = strGlue(code_lines, "\n");
+			name = changeFileExt(fileNameOnly(path), "");
+			nim_native = NimNative(name, imports, 
+				eitherMap(proc_decl, \decl -> rtrim2(decl, "= "), ""),
+				if (endsWith(code, "\n\n")) code else if (endsWith(code, "\n")) code + "\n" else code + "\n\n"
+			);
+			setTree(acc, name, nim_native);
+		}
+	);
+}
+
+fi2nimFindAllNativeFiles(dir: string, acc: [string]) -> [string] {
+	fold(readDirectory(dir), acc, \ac, file -> {
+		path = pathCombine(dir, file);
+		if (isDirectory(path)) {
+			fi2nimFindAllNativeFiles(path, ac);
+		} else if (endsWith(file, ".nim")) {
+			concat(ac, [path]); 
+		} else {
+			ac;
+		}
+	});
 }
 
 fi2nimAssemble(cfg : FiNimConfig, content : [string]) -> void {

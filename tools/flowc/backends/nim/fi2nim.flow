@@ -108,14 +108,15 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 	// Declarations stored in init order (order of their appearance in files).
 	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
 
-	env = FiNimEnv(cfg, program,
+	env = FiNimEnv(cfg, program, ref makeList(), ref makeSet(),
 		structs,
 		specialized_structs,
 		specializations,
 		casts_to_from,
 		set2array(lookupTreeDef(casts_to_from, FiTypeFlow(), makeSet())),
 		set2array(lookupTreeDef(casts_to_from, FiTypeString(), makeSet())),
-		collectFiEffects(program), "", []
+		collectFiEffects(program), "", [],
+		fi2nimNatives(cfg)
 	);
 	moduleCount = i2s(length(decls));
 
@@ -148,17 +149,22 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		concatStrings(map(env.structs, \s -> fi2nimStructDef(env, s))) + "\n",
 	]);
 
+	runtime = fi2nimRuntime(cfg);
+	runtime_imports = buildSet(filter(strSplit(runtime, "\n"), fi2nimIsImportLine));
+	native_imports = set2array(differenceSets(^(env.native_imports), runtime_imports));
 	fi2nimAssemble(cfg, [
-		fi2nimRuntime(cfg),
+		runtime,
 		"\n# Types\n", 
 		types,
 		"# Struct functions\n",
 		concatStrings(map(env.structs, \s -> fi2nimStructFuncs(env, s))),
 		"# Union functions\n",
 		fi2nimUnionFuncs(env) + "\n",
-		fi2nimNatives(cfg), 
-		list2string(^nimProcDefinition), 
-		"\n", 
+		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
+		"# Forward declarations\n",
+		list2string(^(env.forward_decls)), 
+		"\n",
+		"# Source code\n",
 		list2string(modulesCode), 
 		"main()\n"
 	]);

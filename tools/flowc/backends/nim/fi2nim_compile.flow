@@ -17,19 +17,35 @@ fiNimCompileToplevel(env : FiNimEnv, decl : FiDeclaration, indent : string) {
 		FiNativeDec(name, io, type, nativeName, fallback, __, __) : {
 			switch (fallback) {
 				FiLambda(__, __, fn_type, __): {
-					if (containsSet(nimNativeFunctions, name)) {
-						// native is implemented in runtime
-						""
-					} else {
-						// use a fallback
-						fiNimCompileFunction(env, FiFunctionDec(name, fallback, fn_type, 0, 0));
+					switch (lookupTree(env.natives, name)) {
+						Some(nat): {
+							// native is implemented in runtime
+							env.forward_decls := Cons(nat.decl + "\n", ^(env.forward_decls));
+							env.native_imports := mergeSets(^(env.native_imports), buildSet(nat.imports));
+							"# native function\n" + 
+							nat.code;
+						}
+						None(): {
+							// use a fallback
+							"# fallback of a native function\n" + 
+							fiNimCompileFunction(env, FiFunctionDec(name, fallback, fn_type, 0, 0));
+						}
 					}
 				}
 				FiVoid(__): {
-					if (!containsSet(nimNativeFunctions, name)) {
-						fcPrintln("Error: native " + name + prettyFiType(dummyPretty, type, makeSet()) + " = " + nativeName + " is not implemented in nim backend", env.cfg.threadId);
+					switch (lookupTree(env.natives, name)) {
+						Some(nat): {
+							// native is implemented in runtime
+							env.forward_decls := Cons(nat.decl + "\n", ^(env.forward_decls));
+							env.native_imports := mergeSets(^(env.native_imports), buildSet(nat.imports));
+							"# native function\n" + 
+							nat.code;
+						}
+						None(): {
+							fcPrintln("Error: native " + name + prettyFiType(dummyPretty, type, makeSet()) + " = " + nativeName + " is not implemented in nim backend", env.cfg.threadId);
+							"# native: " + name + "(" + nativeName + ")\n";
+						}
 					}
-					"# native: " + nativeName + " " + name + "\n";
 				}
 				default: {
 					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, fallback), env.cfg.threadId);
@@ -38,11 +54,14 @@ fiNimCompileToplevel(env : FiNimEnv, decl : FiDeclaration, indent : string) {
 			}
 		}
 		FiFunctionDec(name, lambda,__,__, __): {
-			if (containsSet(nimNativeFunctions, name)) {
-				//is implemented as native in runtime
-				""
-			} else {
-				fiNimCompileFunction(env, decl);
+			switch (lookupTree(env.natives, name)) {
+				Some(nat): {
+					//is implemented as native in runtime
+					""
+				}
+				None(): {
+					fiNimCompileFunction(env, decl);
+				}
 			}
 		}
 		FiGlobalVar(name, __,__,__,__): {
@@ -92,7 +111,7 @@ fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType) -> FiExp {
 
 fiNimCompileFunction(env : FiNimEnv, func: FiFunctionDec) -> string {
 	if (containsSet(nimForbiddenFunctions, func.name)) {
-		nimProcDefinition := Cons("# " + func.name + " forbidden with nimForbiddenFunctions\n", ^nimProcDefinition);
+		env.forward_decls := Cons("# " + func.name + " forbidden with nimForbiddenFunctions\n", ^(env.forward_decls));
 		""
 	} else {
 		type = FiTypeFunction(func.type with args = func.lambda.args);
@@ -110,7 +129,7 @@ fiNimCompileFunction(env : FiNimEnv, func: FiFunctionDec) -> string {
 		decl = "proc " + fiNimRenameKeyword(func.name) + fn_typars + fiNimCompileFuncType(env, type);
 
 		if (func.name != "main") {
-			nimProcDefinition := Cons(decl + "\n", ^nimProcDefinition);
+			env.forward_decls := Cons(decl + "\n", ^(env.forward_decls));
 		}
 		has_tail_call = fiNimHasTailCall(lambda.body, func.name);
 		fn_code = if (!has_tail_call) {
