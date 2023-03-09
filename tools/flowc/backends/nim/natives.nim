@@ -1,4 +1,6 @@
-import std/times
+from std/times import epochTime
+import std/random
+
 #[
     Native definitions
 ]#
@@ -26,7 +28,8 @@ proc map*[T, S](s: seq[T], op: proc (x: T): S): seq[S] {.inline.} =
 # Replace a given element in an array with a new value. Makes a copy
 #native replace : ([?], int32, ?) -> [?] = Native.replace;
 proc replace*[T](s: seq[T], i: int32, v: T): seq[T] =
-  if i < 0 or s == nil:
+  #if i < 0 or s == nil:
+  if i < 0 or len(s) == 0:
     return @[]
   else:
     var s1 = s & @[] # Copy of s
@@ -39,8 +42,12 @@ proc replace*[T](s: seq[T], i: int32, v: T): seq[T] =
 # Apply a function which takes an index and each element of an array to give a new array
 proc mapi*[T, S](s: seq[T], op: proc (i: int32, v: T): S): seq[S] =
   var rv: seq[S] = newSeq[S](length(s))
-  for i in 0 .. s.len-1:
+  var i : int32 = 0
+  while i < s.len:
     rv[i] = op(i, s[i])
+    inc i
+  #for i in 0 .. s.len-1:
+  #  rv[i] = op(i, s[i])
   return rv
 
 proc enumFromTo*(f: int32, t: int32): seq[int32] =
@@ -315,7 +322,7 @@ proc time2string*(time : float): string =
   echo "TODO: Implement time2string"
   return "TODO"
 
-proc s2a*(s : string): seq[int] =
+proc s2a*(s : string): seq[int32] =
   echo "Implement s2a"
   return @[]
 
@@ -327,3 +334,12 @@ proc httpCustomRequestNative*(url : string, method_0 : string, headers : seq[seq
     parameters : seq[seq[string]], data : string, responseEncoding : string, 
     onResponse : proc (responseStatus : int, responseData : string, responseHeaders : seq[seq[string]]) : void, async : bool): void =
   echo "TODO: Implement httpCustomRequestNative"
+
+# initialized with current timestamp
+var randState = initRand()
+proc random*(): float =
+    # is 1 included?
+    # randomize(234) // add to main ?
+    # var r = initRand()
+    # return r.rand(1.0)
+    return randState.rand(1.0)
