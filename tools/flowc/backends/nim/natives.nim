@@ -300,3 +300,28 @@ proc printCallstack*(): void =
 
 proc loaderUrl*(): string =
   return ""
+
+# STUBS FROM HERE
+
+proc makeStructValue*(structname : string, args : seq[Flow], default_value : Flow): Flow =
+  echo "TODO: Implement makeStructValue " & structname
+  return default_value
+
+proc string2time*(time : string): float =
+  echo "TODO: Implement string2time"
+  return 0.0
+
+proc time2string*(time : float): string =
+  echo "TODO: Implement time2string"
+  return "TODO"
+
+proc s2a*(s : string): seq[int] =
+  echo "Implement s2a"
+  return []
+
+proc string2utf8*(s : string): seq[int] =
+  echo "Implement string2utf8"
+  return []
+
+proc httpCustomRequestNative*(url : string, method : string, headers : seq[seq[string]], parameters : seq[seq[string]], data : string, responseEncoding : string, onResponse : proc (responseStatus : int, responseData : string, responseHeaders : seq[seq[string]]) : void, async : bool): void =
+  echo "TODO: Implement httpCustomRequestNative"
