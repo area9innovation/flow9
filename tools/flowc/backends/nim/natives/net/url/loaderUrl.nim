@@ -1,0 +1,2 @@
+proc loaderUrl*(): string =
+  return ""
