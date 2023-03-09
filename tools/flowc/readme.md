@@ -680,7 +680,34 @@ and you get a list of natives missing:
 	Error: native setFileContent(path : string, content : string) -> bool = Native.setFileContent is not implemented in nim backend
 	Error: native fileExists(string) -> bool = FlowFileSystem.fileExists is not implemented in nim backend
 
-Add an implementation to `tools/flowc/backends/nim/natives.nim`, and add it to the list in `nimNativeFunctions` found in `tools/flowc/backends/nim/fi2nim_defines.flow`.
+Add an implementation to the directory `tools/flowc/backends/nim/natives`. There's a filesystem analogical to the one in the
+flow9/lib like:
+nim/
+	natives/
+	├── ds/
+	│   ├── array/
+	│	│   ├── length.nim
+	│	│   ├── concat.nim
+	│	│   ├── ....
+	│	│   └── subrange.nim
+	│   ├── list/
+	│	│   ├── list2array.nim
+	│	│   ├── list2string.nim
+	│	│   └── ...
+	│   └── ....
+	├── runtime/
+	│   ├── bitAnd.nim
+	|	├── bitAnd.nim
+	│   └── ...
+	└── sys/
+		├── target/
+		│   ├── getTargetName.nim
+		│   ├── ....
+		│   └── ...
+		└── ...
+
+Each file represents a single native function. The path to the file may no accurately correspond to the corresponding path
+in the library, but its name must exactly coincide with the name of the native, because natives are indexed by their files names.
 
 Then compile again, compile the resulting nim, and check that it works.
 
