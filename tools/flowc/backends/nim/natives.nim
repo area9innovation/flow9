@@ -1,4 +1,6 @@
-import std/times
+from std/times import epochTime
+import std/random
+
 #[
     Native definitions
 ]#
@@ -26,7 +28,8 @@ proc map*[T, S](s: seq[T], op: proc (x: T): S): seq[S] {.inline.} =
 # Replace a given element in an array with a new value. Makes a copy
 #native replace : ([?], int32, ?) -> [?] = Native.replace;
 proc replace*[T](s: seq[T], i: int32, v: T): seq[T] =
-  if i < 0 or s == nil:
+  #if i < 0 or s == nil:
+  if i < 0 or len(s) == 0:
     return @[]
   else:
     var s1 = s & @[] # Copy of s
@@ -38,9 +41,13 @@ proc replace*[T](s: seq[T], i: int32, v: T): seq[T] =
 
 # Apply a function which takes an index and each element of an array to give a new array
 proc mapi*[T, S](s: seq[T], op: proc (i: int32, v: T): S): seq[S] =
-  var rv: seq[S] = newSeq(length(s))
-  for i in 0 .. s.len-1:
+  var rv: seq[S] = newSeq[S](length(s))
+  var i : int32 = 0
+  while i < s.len:
     rv[i] = op(i, s[i])
+    inc i
+  #for i in 0 .. s.len-1:
+  #  rv[i] = op(i, s[i])
   return rv
 
 proc enumFromTo*(f: int32, t: int32): seq[int32] =
@@ -87,6 +94,12 @@ proc iteriUntil*[T](a: seq[T], op: proc(idx: int32, v: T): bool): int32 =
 proc iter*[T](a: seq[T], op: proc (v: T): void): void =
   for x in a:
     op(x)
+  return
+
+# Apply a function to each element of an array
+proc iteri*[T](a: seq[T], op: proc (idx : int32, v: T): void): void =
+  for i in 0..length(a) - 1:
+    op(i, a[i])
   return
 
 proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
@@ -251,7 +264,7 @@ proc hostCall*(name: string, args: seq[Flow]): Flow =
 #native timestamp : io () -> double = Native.timestamp;
 
 proc timestamp*(): float =
-  return epochTime() * 1000.0
+  return round(epochTime() * 1000.0)
 
 #native exp : (double) -> double = Native.exp; - is already defined
 
@@ -272,5 +285,66 @@ proc getTargetName*(): string =
 
 #native fail : io (msg : string) -> void = Native.failWithError;
 proc fail*(error : string): void =
-    echo "Runtime failure: " & error
-    quit(0)
+  echo "Runtime failure: " & error
+  quit(0)
+
+#native fail0 : io (msg : string) -> ? = Native.failWithError;
+proc fail0*[T](error : string): T =
+  echo "Runtime failure: " & error
+  quit(0)
+
+proc getFileContent*(path : string): string =
+  # TODO: Handle exceptions
+  return readFile(path)
+
+proc setFileContent*(path : string, content : string): bool =
+  # TODO: Handle exceptions and return false when problems
+  writeFile(path, content)
+  return true
+
+proc fileExists*(path : string): bool =
+  return fileExists(path)
+
+proc printCallstack*(): void =
+  echo getStackTrace()
+
+proc loaderUrl*(): string =
+  return ""
+
+# STUBS FROM HERE
+
+proc makeStructValue*(structname : string, args : seq[Flow], default_value : Flow): Flow =
+  echo "TODO: Implement makeStructValue " & structname
+  return default_value
+
+# format : "2012-10-01 18:05:40"
+proc string2time*(time : string): float =
+  let dt = parse(time, "yyyy-MM-dd HH:mm:ss")
+  return toUnixFloat(toTime(dt)) * 1000.0
+
+# time is given in milliseconds since epoch 1970 in UTC
+proc time2string*(time : float): string =
+  let dt = local(fromUnixFloat(time / 1000.0))
+  return dt.format("yyyy-MM-dd HH:mm:ss")
+
+proc s2a*(s : string): seq[int32] =
+  echo "Implement s2a"
+  return @[]
+
+proc string2utf8*(s : string): seq[int] =
+  echo "Implement string2utf8"
+  return @[]
+
+proc httpCustomRequestNative*(url : string, method_0 : string, headers : seq[seq[string]], 
+    parameters : seq[seq[string]], data : string, responseEncoding : string, 
+    onResponse : proc (responseStatus : int, responseData : string, responseHeaders : seq[seq[string]]) : void, async : bool): void =
+  echo "TODO: Implement httpCustomRequestNative"
+
+# initialized with current timestamp
+var randState = initRand()
+proc random*(): float =
+    # is 1 included?
+    # randomize(234) // add to main ?
+    # var r = initRand()
+    # return r.rand(1.0)
+    return randState.rand(1.0)

@@ -167,6 +167,9 @@ export {
 	fnot(b : Transform<bool>) -> Transform<bool>;
 	fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
+	// Avoid calling fn inside second Transform if it is redundant. Temporary, it is expected to be default implementation in the future.
+	fandLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
+	fOrLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fabs(a : Transform<double>) -> Transform<double>;
 
@@ -246,8 +249,8 @@ export {
 		FMultiply();
 		FDivide();
 		FEqual(v : ?);
-		FusionAnd();
-		FusionOr();
+		FusionAnd(lazy : bool);
+		FusionOr(lazy : bool);
 		FusionXor();
 		FusionWidthHeight();
 }
@@ -263,8 +266,6 @@ FSelect(b : Transform<flow>, fn : FFn<flow, ?>, mutable beh : FBehaviour<?>);
 FSelect2(b1 : Transform<flow>, b2 : Transform<flow>, fn : FFn2<flow, flow, ?>, mutable beh : FBehaviour<?>);
 FSubSelect(b : Transform<flow>, fn : FFn<flow, Transform<?>>, mutable beh : FBehaviour<?>);
 FConstructable(b : Transform<?>, constructor : () -> () -> void, mutable beh : FBehaviour<?>);
-
-isURLNew = isUrlParameterTrue("new");
 
 fselect(b : Transform<??>, fn : FFn<??, ?>) -> Transform<?> {
 	switch (b : Transform<??>) {
@@ -305,7 +306,7 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 				FSelect(nb2, nf2, __): {
 					ifn1 = instantiateFn(nf1);
 					ifn2 = instantiateFn(nf2);
-					if (isURLNew && nb1 == nb2) {
+					if (nb1 == nb2) {
 						FSelect(nb1, FLift(\f -> ifn(ifn1(f), ifn2(f))), FDestroyed());
 					} else {
 						FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed());
@@ -313,7 +314,7 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 				}
 				default: {
 					ifn1 = instantiateFn(nf1);
-					if (isURLNew && nb1 == b2) {
+					if (nb1 == b2) {
 						FSelect(nb1, FLift(\f -> ifn(ifn1(f), f)), FDestroyed());
 					} else {
 						FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed());
@@ -328,12 +329,21 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 					fselect(b1, FLift(\v -> ifn(v, v2)));
 				}
 				FSelect(nb, nf2, __): {
-					ifn = instantiateFn2(fn);
 					ifn2 = instantiateFn(nf2);
-					if (isURLNew && b1 == nb) {
-						FSelect(b1, FLift(\f -> ifn(f, ifn2(f))), FDestroyed());
+					if (supportsLazy(fn)) {
+						ifn = instantiateFn2Lazy(fn);
+						if (b1 == nb) {
+							FSelect(b1, FLift(\f -> ifn(f, \ -> ifn2(f))), FDestroyed());
+						} else {
+							FSelect2(b1, nb, FLift2(\f, s -> ifn(f, \ -> ifn2(s))), FDestroyed());
+						}
 					} else {
-						FSelect2(b1, nb, FLift2(\f, s -> ifn(f, ifn2(s))), FDestroyed());
+						ifn = instantiateFn2(fn);
+						if (b1 == nb) {
+							FSelect(b1, FLift(\f -> ifn(f, ifn2(f))), FDestroyed());
+						} else {
+							FSelect2(b1, nb, FLift2(\f, s -> ifn(f, ifn2(s))), FDestroyed());
+						}
 					}
 				}
 				default: {
@@ -1675,18 +1685,33 @@ fnot(b : Transform<bool>) -> Transform<bool> {
 	feq(b, false)
 }
 
+lazyTransformEnabled = isUrlParameterTrue("new") && !isUrlParameterFalse("lazy_transform");
 fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
 	if (ConstBehaviour(false) == a || ConstBehaviour(false) == b)
 		ConstBehaviour(false)
 	else
-		fselect2(a, b, FusionAnd());
+		fselect2(a, b, FusionAnd(lazyTransformEnabled));
+}
+
+fandLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
+	if (ConstBehaviour(false) == a || ConstBehaviour(false) == b)
+		ConstBehaviour(false)
+	else
+		fselect2(a, b, FusionAnd(true));
 }
 
 fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
 	if (a == ConstBehaviour(true) || b == ConstBehaviour(true))
 		ConstBehaviour(true)
 	else
-		fselect2(a, b, FusionOr());
+		fselect2(a, b, FusionOr(lazyTransformEnabled));
+}
+
+fOrLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
+	if (a == ConstBehaviour(true) || b == ConstBehaviour(true))
+		ConstBehaviour(true)
+	else
+		fselect2(a, b, FusionOr(true));
 }
 
 fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
@@ -2049,6 +2074,14 @@ fBidirectionalLink(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2
 	\ -> applyList(concatList(u1, u2), apply0)
 }
 
+supportsLazy(fn : FFn2<?, ??, ???>) -> bool {
+	switch (fn : FFn2<?, ??, ???>) {
+		FusionAnd(lazy) : lazy;
+		FusionOr(lazy) : lazy;
+		default : false
+	}
+}
+
 instantiateFn(fn : FFn<?, ??>) -> (?) -> ?? {
 	// println(ffn2string(fn));
 	switch (fn : FFn<?, ??>) {
@@ -2074,7 +2107,7 @@ instantiateFn(fn : FFn<?, ??>) -> (?) -> ?? {
 }
 
 instantiateFn2(fn : FFn2<?, ??, ???>) -> (?, ??) -> ??? {
-	// println(ffn2string(fn));
+	// println(ffn22string(fn));
 	switch (fn : FFn2<?, ??, ???>) {
 		FLift2(f): f;
 		FIdentity2(): flow(\f : ? , s : ?? -> Pair(f, s));
@@ -2086,10 +2119,30 @@ instantiateFn2(fn : FFn2<?, ??, ???>) -> (?, ??) -> ??? {
 		}
 		FMax(): flow(\a : ?, b : ? -> max(a, b));
 		FMin(): flow(\a : ?, b : ? -> min(a, b));
-		FusionAnd() : flow(\a : bool, b : bool -> a && b);
-		FusionOr() : flow(\a : bool, b : bool -> a || b);
+		FusionAnd(__) : flow(\a : bool, b : bool -> a && b);
+		FusionOr(__) : flow(\a : bool, b : bool -> a || b);
 		FusionXor() : flow(\a : bool, b : bool -> a != b);
 		FusionWidthHeight() : flow(\a : double, b : double -> WidthHeight(a, b));
+	}
+}
+
+instantiateFn2Lazy(fn : FFn2<?, ??, ???>) -> (?, () -> ??) -> ??? {
+	switch (fn : FFn2<?, ??, ???>) {
+		FusionAnd(__) : flow(\a : bool, b : () -> bool -> a && b());
+		FusionOr(__) : flow(\a : bool, b : () -> bool -> a || b());
+		// All below are not supposed to be called
+		FLift2(fn2): \f, s -> fn2(f, s());
+		FIdentity2(): flow(\f : ? , s : () -> ?? -> Pair(f, s()));
+		FAddition(): flow(\f : double, s : () -> double -> f + s());
+		FSubtract(): flow(\f : double, s : () -> double-> f - s());
+		FMultiply(): flow(\f: double, s : () -> double-> f * s());
+		FDivide(): {
+			flow(\f : double, s : () -> double -> {s2 = s(); if (s2 == 0.0) 0.0 else f / s2});
+		}
+		FMax(): flow(\a : ?, b : () -> ? -> max(a, b()));
+		FMin(): flow(\a : ?, b : () -> ? -> min(a, b()));
+		FusionXor() : flow(\a : bool, b : () -> bool -> a != b());
+		FusionWidthHeight() : flow(\a : double, b : () -> double -> WidthHeight(a, b()));
 	}
 }
 
@@ -2118,8 +2171,8 @@ ffn22string(fn : FFn2<?, ??, ???>) -> string {
 		FDivide(): "/";
 		FMax(): "max";
 		FMin(): "min";
-		FusionAnd() : "&&";
-		FusionOr() : "||";
+		FusionAnd(__) : "&&";
+		FusionOr(__) : "||";
 		FusionXor() : "^";
 		FusionWidthHeight() : "wh";
 	}
