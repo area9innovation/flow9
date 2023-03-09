@@ -1,4 +1,4 @@
-from std/times import epochTime
+import std/times
 import std/random
 
 #[
@@ -215,7 +215,7 @@ proc list2array*[T](list: Struct): seq[T] =
       break
     of stCons:
       let cons = Cons[T](p)
-      r = r & @[cons.head]
+      r = @[cons.head] & r
       p = cons.tail
     else:
       discard
