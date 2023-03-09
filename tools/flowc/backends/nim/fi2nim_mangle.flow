@@ -1,0 +1,106 @@
+import tools/flowc/incremental/fitype;
+import text/blueprint;
+
+export {
+	// Construct a type name encoding for a type, for use in mangling specialized
+	// polymorphic types
+	fi2nimMangleType(f: FiType) -> string;
+
+	// unmangle type - restore type by mangled suffix
+	fi2nimUnmangleType(str: string) -> FiType;
+
+	fi2nimMangleStruct(s: FiTypeStruct) -> string;
+}
+
+fi2nimMangleStruct(s: FiTypeStruct) -> string {
+	fi2nimMangleType(FiTypeName(s.name, s.typars));
+}
+
+fi2nimMangleType(f: FiType) -> string {
+	switch (f) {
+		FiTypeArray(t): {
+			"a" + fi2nimMangleType(t);
+		}
+		FiTypeFunction(args, returnType): {
+			"c" + i2s(length(args)) + concatStrings(map(args, \a -> fi2nimMangleType(a.type))) +
+			fi2nimMangleType(returnType);
+		}
+		FiTypeRef(t): {
+			// Refs are ignored in nim backend
+			"r" + fi2nimMangleType(t);
+		}
+		FiTypeParameter(n): {
+			// Not supposed to happen, all types must be completely specialized
+			"p" + i2s(strlen(n));
+		}
+		FiTypeName(name, typeparameters): {
+			"t" + i2s(strlen(name)) + name + 
+			i2s(length(typeparameters)) + concatStrings(map(typeparameters, \x -> fi2nimMangleType(x)));
+		}
+		FiTypeBool():   "b";
+		FiTypeInt():    "i";
+		FiTypeDouble(): "d";
+		FiTypeString(): "s";
+		FiTypeFlow():   "f";
+		FiTypeVoid():   "v";
+		FiTypeNative(): "n";
+	}
+}
+
+fi2nimUnmangleType(suffix: string) -> FiType {
+	fi2nimDoUnmangleType(suffix, 0).first;
+}
+
+fi2nimUnmangleTypeSequence(suffix: string, start: int) -> Pair<[FiType], int> {
+	count_end = for(start, \i -> isDigit(getCharAt(suffix, i)), \i -> i + 1);
+	count = s2i(substring(suffix, start, count_end));
+	if (count == 0) {
+		Pair([], count_end);
+	} else {
+		foldRange(0, count - 1, Pair([], count_end), \acc, i -> {
+			argType = fi2nimDoUnmangleType(suffix, acc.second);
+			Pair(arrayPush(acc.first, argType.first), argType.second);
+		});
+	}
+}
+
+fi2nimDoUnmangleType(suffix: string, start: int) -> Pair<FiType, int> {
+	char = getCharAt(suffix, start);
+    if (char == "a") {
+        inner = fi2nimDoUnmangleType(suffix, start + 1);
+        Pair(FiTypeArray(inner.first), inner.second);
+    } else if (char == "c") {
+        args : Pair<[FiType], int> = fi2nimUnmangleTypeSequence(suffix, start + 1);
+        returnType = fi2nimDoUnmangleType(suffix, args.second);
+        Pair(FiTypeFunction(map(args.first, \a -> FiFunArg("", a)), returnType.first), returnType.second);
+    } else if (char == "r") {
+        inner = fi2nimDoUnmangleType(suffix, start + 1);
+        Pair(FiTypeRef(inner.first), inner.second);
+    } else if (char == "p") {
+        num = s2i(getCharAt(suffix, start + 1));
+        Pair(FiTypeParameter(strRepeat("?", num)), start + 2);
+    } else if (char == "b") {
+        Pair(FiTypeBool(), start + 1);
+    } else if (char == "i") {
+        Pair(FiTypeInt(), start + 1);
+    } else if (char == "d") {
+        Pair(FiTypeDouble(), start + 1);
+    } else if (char == "s") {
+        Pair(FiTypeString(), start + 1);
+    } else if (char == "f") {
+        Pair(FiTypeFlow(), start + 1);
+    } else if (char == "v") {
+        Pair(FiTypeVoid(), start + 1);
+    } else if (char == "n") {
+        Pair(FiTypeNative(), start + 1);
+    } else if (char == "t") {
+		name_len_end = for(start + 1, \i -> isDigit(getCharAt(suffix, i)), \i -> i + 1);
+		name_len = s2i(substring(suffix, start + 1, name_len_end - 1));
+		name = substring(suffix, name_len_end, name_len);
+		params = fi2nimUnmangleTypeSequence(suffix, name_len_end + name_len);
+		Pair(FiTypeName(name, params.first), params.second);
+    } else {
+		fail("Invalid mangle string: " + suffix);
+		Pair(FiTypeVoid(), 1);
+    }
+}

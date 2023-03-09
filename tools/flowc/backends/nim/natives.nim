@@ -6,10 +6,10 @@ import std/random
 ]#
 
 proc println2*[T](x : T): void =
-  echo rt_to_string(x)
-
-proc fcPrintln2*[T](x: T): void =
-  echo rt_to_string(x)
+  let s: string = when x is Flow:
+    if x.tp == rtString: x.string_v else: rt_to_string(x)
+  else: rt_to_string(x)
+  echo s
 
 # Get a subrange of an array from index
 # if index < 0 or length < 1 it returns an empty array
@@ -112,11 +112,20 @@ proc getUrlParameter*(name: string): string =
   echo "TODO: Implement getUrlParameter"
   ""
 
-proc toString*[T](a: T): string =
-  return rt_to_string(a)
+proc toString*[T](x: T): string =
+  when x is Flow:
+    if x.tp == rtString:
+      return x.string_v
+    else:
+      return rt_to_string(x)
+  else:
+    return rt_to_string(x)
 
-proc toString2*(a: Flow): string =
-  return rt_to_string(a)
+proc toString2*(x: Flow): string =
+  if x.tp == rtString:
+    return x.string_v
+  else:
+    return rt_to_string(x)
 
 proc strlen*(s: string): int32 =
   return cast[int32](len(s));
@@ -210,15 +219,12 @@ proc list2array*[T](list: Struct): seq[T] =
   var r = newSeq[T]()
 
   while true:
-    case cast[StructType](p.id):
-    of stEmptyList:
+    if cast[StructType](p.id) == st_EmptyList:
       break
-    of stCons:
+    else:
       let cons = Cons[T](p)
       r = @[cons.head] & r
       p = cons.tail
-    else:
-      discard
   return r
 
 proc list2string*(list: Struct): string =
@@ -226,15 +232,12 @@ proc list2string*(list: Struct): string =
   var r = ""
 
   while true:
-    case cast[StructType](p.id):
-    of stEmptyList:
+    if cast[StructType](p.id) == st_EmptyList:
       break
-    of stCons:
+    else:
       let cons = Cons[string](p)
       r.add(cons.head)
       p = cons.tail
-    else:
-      discard
   return r
 
 proc bitAnd*(x: int32, y: int32): int32 =
