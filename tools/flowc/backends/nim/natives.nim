@@ -261,7 +261,7 @@ proc hostCall*(name: string, args: seq[Flow]): Flow =
 #native timestamp : io () -> double = Native.timestamp;
 
 proc timestamp*(): float =
-  return epochTime() * 1000.0
+  return round(epochTime() * 1000.0)
 
 #native exp : (double) -> double = Native.exp; - is already defined
 
@@ -314,13 +314,15 @@ proc makeStructValue*(structname : string, args : seq[Flow], default_value : Flo
   echo "TODO: Implement makeStructValue " & structname
   return default_value
 
+# format : "2012-10-01 18:05:40"
 proc string2time*(time : string): float =
-  echo "TODO: Implement string2time"
-  return 0.0
+  let dt = parse(time, "yyyy-MM-dd HH:mm:ss")
+  return toUnixFloat(toTime(dt)) * 1000.0
 
+# time is given in milliseconds since epoch 1970 in UTC
 proc time2string*(time : float): string =
-  echo "TODO: Implement time2string"
-  return "TODO"
+  let dt = local(fromUnixFloat(time / 1000.0))
+  return dt.format("yyyy-MM-dd HH:mm:ss")
 
 proc s2a*(s : string): seq[int32] =
   echo "Implement s2a"
