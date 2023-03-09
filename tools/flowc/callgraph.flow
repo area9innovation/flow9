@@ -1,6 +1,5 @@
-import tools/flowc/manipulation/deadcode;
-import tools/flowc_lsp/lsp_utils;
 import tools/flowc/symbol_nature;
+import formats/lsp;
 
 export {
 	// Print the import graph in dot format
@@ -29,7 +28,7 @@ export {
 	// Output is made in LSP format (JSON).
 	lspCallHierarchyMethods(prog : FiProgram, globEnv : FcTypeEnvGlobal) -> void;
 
-	rewriteImports(fi : FiProgram, reportMissing : bool) -> void;
+	rewriteImports(fi : FiProgram, fine : bool) -> void;
 }
 
 saveImportGraph(filename : string, simplify : bool, prog : FiProgram) -> void {
@@ -205,10 +204,9 @@ findAllPathsToMain(uses : Tree<string, [string]>, paths : [[string]], acc : [[st
 	}
 }
 
-rewriteImports(prog : FiProgram, reportMissing : bool) -> void {
+rewriteImports(prog : FiProgram, fine : bool) -> void {
 	// Find out what dependencies each file has
 	deps : Tree<string, Set<string>> = moduleDependencies(prog);
-
 	simpleGraph = foldTree(deps, makeSimpleGraph(), \mod, uses, acc -> {
 		mods0 = mapSet(uses, \u -> lookupName2module(prog.names, u));
 		required = removeSet(mods0, mod);
@@ -217,7 +215,35 @@ rewriteImports(prog : FiProgram, reportMissing : bool) -> void {
 		});
 	});
 
+	// This is the graph of what we need
 	simplified = simpleTransitiveReduction(simpleGraph);
+
+	// OK, we we can find the real set of files we need
+	realNeed : Set<string> = reachableClosureFromSimpleNode(simplified, prog.config.flowfile);
+
+	if (false) {
+		println("Real need");
+		println(toString(set2array(realNeed)));
+	}
+
+	// This is what the real graph is
+	importGraph = foldTree(prog.modules, makeSimpleGraph(), \file, modul, acc -> {
+		addModuleToImportGraph(prog, acc, file)
+	});
+	// Remove redundant imports to simplify the graph
+	reduced = simpleTransitiveReduction(importGraph);
+	current : Set<string> = reachableClosureFromSimpleNode(reduced, prog.config.flowfile);
+
+	if (false) {
+		println("Current set");
+		println(toString(set2array(current)));
+	}
+
+	super = differenceSets(current, realNeed);
+	if (!isEmptySet(super)) {
+		println("At a top level, these imports are not required:");
+		println(toString(set2array(super)));
+	}
 
 	traverseInOrder(prog.modules, \name, module -> {
 		uses = lookupMultimap(deps, name);
@@ -232,10 +258,17 @@ rewriteImports(prog : FiProgram, reportMissing : bool) -> void {
 		extra = differenceSets(used, required);
 		missing = differenceSets(required, used);
 
-		if (!isEmptySet(extra)) {
+		if (!isEmptySet(extra) && (
+			fine || !isEmptySet(intersectSets(extra, super))
+		)) {
 			println("\n" + name + " can reduce imports:");
 			iterSet(extra, \i -> {
-				println("- import " + i);
+				superflous = differenceSets(reachableClosureFromSimpleNode(simplified, i), realNeed);
+				if (!isEmptySet(superflous)) {
+					println("- import " + i + "  saves " + toString(set2array(superflous)));
+				} else {
+					println("- import " + i);
+				}
 			});
 
 			if (!isEmptySet(missing)) {
