@@ -1,2 +1,2 @@
-proc length*[T](s: seq[T]): int32 {.inline.} =
-  cast[int32](len(s))
+proc length*[T](s: openArray[T]): int32 {.inline.} =
+  cast[int32](s.len)
