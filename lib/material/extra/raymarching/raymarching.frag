@@ -358,10 +358,8 @@ vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, s
 	py.x *= sign(normal.y);
 	vec2 pz = p.xy;
 	pz.x *= -1. * sign(normal.z);
-	pz.y *= -1.;
 	vec2 px = p.zy;
-	px.x *= sign(normal.x);
-	px.y *= -1.;
+	px.x *= -1. * sign(normal.x);
 
 	py = (py - 0.5) * makeRotate2vec2(textureParameter.rotate.zx) + 0.5 - textureParameter.translate.zx;
 	pz = (pz - 0.5) * makeRotate2vec2(textureParameter.rotate.xy) + 0.5 - textureParameter.translate.xy;
