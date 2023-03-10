@@ -25,9 +25,12 @@ export {
 		// From job id to the job
 		jobs : ref Tree<int, Job<?, ??>>,
 		// Priorities - list of jobs with a given priority
+		// We only keep jobs that have dependencies solved here
 		jobPriorities : ref Tree<int, [int]>,
 		// Tracking the dependencies between jobs
 		dependencies : ref SimpleGraph<int, int>,
+		// Our cache from cacheId to the job that made it when we have one
+		results : ref Tree<string, int>,
 	);
 
 	Job(
@@ -45,21 +48,22 @@ export {
 		cacheId : string,
 		// Persist the result on disk?
 		persist : bool,
-		// What is the result of this job?
-		result : ref Maybe<??>,
 		// The function that runs the job when dependencies are done
 		// If we have an older cached value, that is also given
 		run : (Task<?, ??>) -> Promise<??, string>,
+		// The result of the job after it has run
+		result : ref Maybe<??>
 	);
 
+	// When we need to run a thing, this is what we get
 	Task(
 		s : Scheduler<?, ??>, 
 		job : Job<?, ??>, 
 		parents : [Job<?, ??>], 
 		dependencies : [Job<?, ??>], 
+		// Value from previous cache
 		cache : Maybe<??>
 	);
-
 }
 
 makeScheduler() -> Scheduler<?, ??> {
@@ -72,6 +76,8 @@ makeScheduler() -> Scheduler<?, ??> {
 		ref makeTree(),
 		// Tracking the dependencies between jobs
 		ref makeSimpleGraph(),
+		// Results.
+		ref makeTree(),
 	);
 }
 
@@ -113,16 +119,76 @@ pingScheduler(scheduler : Scheduler<?, ??>) -> void {
 		PopResult(prio, tasks, rest): {
 			if (length(tasks) > 0) {
 				jobid = tasks[0];
-				// Push the rest
-				scheduler.jobPriorities := setTree(^(scheduler.jobPriorities), prio, tail(tasks));
-				println("TODO: Run " + toString(jobid));
-				timer(10, \ -> {
-					println("TODO: Job done");
-				});
+				mjob = lookupTree(^(scheduler.jobs), jobid);
+				mjob ?? {
+					// Push the rest of the queue
+					if (length(tasks) != 1) {
+						scheduler.jobPriorities := setTree(^(scheduler.jobPriorities), prio, tail(tasks));
+					} else {
+						// We are done with this priority
+						scheduler.jobPriorities := rest;
+					}
+					runJob(scheduler, mjob);
+				} : {
+					println("Error: Job went missing");
+					// We are done with this priority
+					scheduler.jobPriorities := rest;
+				}
 			} else {
 				// We are done with this priority
 				scheduler.jobPriorities := rest;
 			}
+		}
+	}
+}
+
+runJob(scheduler : Scheduler, job : Job<?, ??>) -> void {
+	// Pull together the parents
+	parents : [Job<?, ??>] = getJobParents(scheduler, [], job);
+	// Pull together the dependencies
+	deps : [Job<?, ??>] = filtermap(job.dependencies, \dep -> {
+		lookupTree(^(scheduler.jobs), dep);
+	});
+	if (length(deps) != length(job.dependencies)) {
+		println("Could not find dependendents");
+	}
+	mcacheId : Maybe<int> = if (job.cacheId != "") lookupTree(^(scheduler.results), job.cacheId) else None();
+	mcache : Maybe<??> = mcacheId ?? {
+		mcjob : Maybe<Job<?, ??>> = lookupTree(^(scheduler.jobs), mcacheId);
+		switch (mcjob) {
+			None(): None();
+			Some(j): ^(j.result);
+		}
+	} : None();
+
+	task = Task(scheduler, job, parents, deps, mcache);
+	println("Running " + toString(job));
+	promise : Promise<??, string> = job.run(task);
+	doneP(promise, \res : ?? -> {
+		println("Job done");
+		job.result := Some(res);
+		if (job.cacheId != "") {
+			// Caching the result
+			scheduler.results := setTree(^(scheduler.results), job.cacheId, job.id);
+		}
+		println("TODO: If someone depends on us, put them in the job queue");
+	}, \err -> {
+		println(err);
+		if (job.cacheId != "") {
+			scheduler.results := removeFromTree(^(scheduler.results), job.cacheId);
+		}
+	})
+}
+
+getJobParents(scheduler : Scheduler<?, ??>, acc : [Job<?, ??>], job : Job<?, ??>) -> [Job<?, ??>] {
+	if (job.parent == 0) acc
+	else {
+		mparent = lookupTree(^(scheduler.jobs), job.parent);
+		mparent ?? {
+			getJobParents(scheduler, arrayPush(acc, mparent), mparent)
+		} : {
+			println("Could not find parent " + i2s(job.parent));
+			acc;
 		}
 	}
 }
@@ -134,9 +200,26 @@ getJobId(scheduler : Scheduler<?, ??>) -> int {
 addJob(scheduler : Scheduler<?, ??>, job : Job<?, ??>) -> void {
 	if (job.dependencies != []) {
 		println("TODO: Add job dependencies to scheduler");
+		scheduler.jobs := setTree(^(scheduler.jobs), job.id, job);
+	} else {
+		// TODO: Check if we already have this job and the cache is valid
+		if (job.cacheId != "") {
+			mexist = lookupTree(^(scheduler.results), job.cacheId);
+			mexist ?? {
+				// We have a cached value, so check that it is valid
+				println("TODO: Check that the cache is ok")
+			} : {
+				// No cached result
+				// This is ready for scheduling
+				scheduler.jobs := setTree(^(scheduler.jobs), job.id, job);
+				scheduler.jobPriorities := treePushToArrayValue(^(scheduler.jobPriorities), job.priority, job.id);
+			}
+		} else {
+			// This is ready for scheduling
+			scheduler.jobs := setTree(^(scheduler.jobs), job.id, job);
+			scheduler.jobPriorities := treePushToArrayValue(^(scheduler.jobPriorities), job.priority, job.id);
+		}
 	}
-	scheduler.jobs := setTree(^(scheduler.jobs), job.id, job);
-	scheduler.jobPriorities := treePushToArrayValue(^(scheduler.jobPriorities), job.priority, job.id);
 }
 
 invalidateJobCache(scheduler : Scheduler<?, ??>, cacheId : string) -> void {
