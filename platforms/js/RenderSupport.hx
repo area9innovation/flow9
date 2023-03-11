@@ -3022,6 +3022,13 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
+		} else if (event == "resize") {
+			var eventFn = function() {
+				fn([clip._width, clip._height]);
+			};
+
+			clip.on(event, eventFn);
+			return function() { clip.off(event, eventFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -4096,6 +4103,10 @@ class RenderSupport {
 		return Browser.document.getElementById(selector);
 	}
 
+	public static function getElementBySelector(selector : String) : Element {
+		return Browser.document.querySelector(selector);
+	}
+
 	public static function getElementChildren(element : Dynamic) : Array<Element> {
 		if (element.isHTMLStage) {
 			return untyped Array.from(element.nativeWidget.childNodes);
@@ -4220,6 +4231,27 @@ class RenderSupport {
 		return color & 0xFFFFFF;
 	}
 
+	public static function makeReactContainer(element, props, state, onStateChange) : ReactContainer {
+		return new ReactContainer(element, props, state, onStateChange);
+	}
+
+	public static function updateReactState(container, key, value) : Void {
+		container.updateReactState(key, value);
+	}
+
+	public static function setReactListener(container, name, fn) : Void {
+		container.setReactListener(name, fn);
+	}
+
+	public static function getReactEventAttribute(event, name) : String {
+		try {
+			var attribute = untyped __js__("event[name]");
+			return attribute != null ? haxe.Json.stringify(attribute) : "";
+		} catch (e : Dynamic) {
+			return "";
+		}
+	}
+	
 	public static function getInstanceByRootId(rootId : String) : FlowInstance {
 		if (Platform.isIE) {
 			for (instance in FlowInstances) {

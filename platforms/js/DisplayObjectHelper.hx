@@ -1931,7 +1931,13 @@ class DisplayObjectHelper {
 	public static function addNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
-		} else if (isHTMLRenderer(clip)) {
+		} else {
+			addNativeWidgetDefault(clip);
+		}
+	}
+
+	public static function addNativeWidgetDefault(clip : DisplayObject) : Void {
+		if (isHTMLRenderer(clip)) {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren)) {
 				if (untyped clip.forceParentNode != null) {
 					untyped clip.forceParentNode.append(clip.nativeWidget);
@@ -1951,16 +1957,20 @@ class DisplayObjectHelper {
 		if (untyped clip.removeNativeWidget != null) {
 			untyped clip.removeNativeWidget();
 		} else {
-			if (untyped isNativeWidget(clip)) {
-				var nativeWidget : Dynamic = untyped clip.nativeWidget;
+			removeNativeWidgetDefault(clip);
+		}
+	}
 
-				if (untyped nativeWidget.parentNode != null) {
-					nativeWidget.parentNode.removeChild(nativeWidget);
+	public static function removeNativeWidgetDefault(clip : DisplayObject) : Void {
+		if (untyped isNativeWidget(clip)) {
+			var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
-					if (untyped clip.parentClip != null) {
-						applyScrollFn(untyped clip.parentClip);
-						untyped clip.parentClip = null;
-					}
+			if (untyped nativeWidget.parentNode != null) {
+				nativeWidget.parentNode.removeChild(nativeWidget);
+
+				if (untyped clip.parentClip != null) {
+					applyScrollFn(untyped clip.parentClip);
+					untyped clip.parentClip = null;
 				}
 			}
 		}
