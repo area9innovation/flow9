@@ -1,7 +1,5 @@
-import tools/flowc/backends/common;
 import tools/flowc/backends/nim/fi2nim_assemble;
-import tools/flowc/backends/nim/fi2nim_defines;
-import tools/flowc/backends/nim/fi2nim_utils;
+import tools/flowc/backends/nim/fi2nim_types;
 import tools/flowc/backends/nim/fi2nim_compile;
 import tools/flowc/manipulation/flatten_unions;
 import tools/flowc/manipulation/specialization;
@@ -32,24 +30,24 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
 		is_explicit_polymorphic(nm)
 	);
-	//println("polymorphics:\n" + strIndent(
-	//	superglue(tree2pairs(polymorphics), \p -> p.first + " => " + prettyFiType(dummyPretty, p.second, makeSet()), "\n")
-	//));
+	println("polymorphics:\n" + strIndent(
+		superglue(tree2pairs(polymorphics), \p -> p.first + " => " + prettyFiType(dummyPretty, p.second, makeSet()), "\n")
+	));
 	specializations = filterTree(
 		mapTree(
 			find_specializations(program, polymorphics, makeTree(), false), 
-			\specs -> mapSet(specs, \spec -> fiType2NimType(program.names, spec))
+			\specs -> mapSet(specs, \spec -> fiPurifyType(fiType2NimType(program.names, spec)))
 		),
 		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
 		\nm,__ -> is_explicit_polymorphic(nm)
 	);
-	//println("specializations:\n" + strIndent(
-	//	superglue(
-	//		tree2pairs(specializations), 
-	//		\p -> p.first + " =>\n" + strIndent(superglue(set2array(p.second), \t -> prettyFiType(dummyPretty, t, makeSet()), "\n")), 
-	//		"\n"
-	//	))
-	//);
+	println("specializations:\n" + strIndent(
+		superglue(
+			tree2pairs(specializations), 
+			\p -> p.first + " =>\n" + strIndent(superglue(set2array(p.second), \t -> prettyFiType(dummyPretty, t, makeSet()), "\n")), 
+			"\n"
+		))
+	);
 	structs = fold(program.traversal, [], \acc, mname ->
 		eitherFn(lookupTree(program.modules, mname), \module -> concat(acc, module.structs), \ -> acc)
 	);
@@ -71,9 +69,12 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 			}
 		}
 	));
-	//println("struct_ids:\n" +
-	//	strIndent(superglue(structs, \s -> prettyFiStructOrUnion(dummyPretty, s, makeSet()), "\n"))
-	//);
+	println("structs:\n" +
+		strIndent(superglue(structs, \s -> prettyFiStructOrUnion(dummyPretty, s), "\n"))
+	);
+	println("specialized_structs:\n" +
+		strIndent(superglue(specialized_structs, \s -> prettyFiStructOrUnion(dummyPretty, s), "\n"))
+	);
 
 	casts_from_to = fiFoldProgramToplevel(program, makeTree(), \decl,__,__,acc ->
 		switch (decl) {
@@ -108,7 +109,7 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 	// Declarations stored in init order (order of their appearance in files).
 	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
 
-	env = FiNimEnv(cfg, program, ref makeList(), ref makeSet(),
+	env0 = FiNimEnv(cfg, program, ref makeList(), ref makeSet(),
 		structs,
 		specialized_structs,
 		specializations,
@@ -116,8 +117,10 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		set2array(lookupTreeDef(casts_to_from, FiTypeFlow(), makeSet())),
 		set2array(lookupTreeDef(casts_to_from, FiTypeString(), makeSet())),
 		collectFiEffects(program), "", [],
-		fi2nimNatives(cfg)
+		fi2nimNatives(cfg),
+		[], makeTree(), makeTree()
 	);
+	env = fi2nimInitTypeIndexes(env0);
 	moduleCount = i2s(length(decls));
 
 	fcVerbose(cfg, 0, "Generating Nim code for declarations...");
@@ -142,30 +145,44 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		}
 	});
 
-	types = "type\n" + concatStrings([
-		fiNimIndent+ "# Struct Ids\n", 
-		fi2nimStructIds(env) + "\n",
-		fiNimIndent + "# Struct definitions\n",
-		concatStrings(map(env.structs, \s -> fi2nimStructDef(env, s))) + "\n",
-	]);
-
 	runtime = fi2nimRuntime(cfg);
 	runtime_imports = buildSet(filter(strSplit(runtime, "\n"), fi2nimIsImportLine));
 	native_imports = set2array(differenceSets(^(env.native_imports), runtime_imports));
-	fi2nimAssemble(cfg, [
-		runtime,
-		"\n# Types\n", 
-		types,
+
+	// All definitions of types
+	type_defs = "type\n" + concatStrings([
+		fiNimIndent+ "# Struct Ids\n", 
+		fi2nimStructType(env) + "\n",
+		fiNimIndent + "# Struct definitions\n",
+		concatStrings(map(env.structs, \s -> fi2nimStructDef(env, s))) + "\n",
+		fi2nimTypeTable(env)
+	]);
+
+	type_funcs = concatStrings([
 		"# Struct functions\n",
 		concatStrings(map(env.structs, \s -> fi2nimStructFuncs(env, s))),
 		"# Union functions\n",
 		fi2nimUnionFuncs(env) + "\n",
+	]);
+
+	source_code = concatStrings([
 		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
 		"# Forward declarations\n",
 		list2string(^(env.forward_decls)), 
 		"\n",
-		"# Source code\n",
+		"# Source code of functions / global variables\n",
 		list2string(modulesCode), 
+	]);
+
+	fi2nimAssemble(cfg, [
+		"#[ COMMON RUNTIME ]#\n", 
+		runtime,
+		"\n#[ TYPE DEFINITIONS ]#\n", 
+		type_defs,
+		"\n#[ TYPE FUNCTIONS ]#\n", 
+		type_funcs,
+		"\n#[ SOURCE CODE ]#\n", 
+		source_code,
 		"main()\n"
 	]);
 

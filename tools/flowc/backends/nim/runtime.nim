@@ -3,6 +3,8 @@ import typetraits
 import strutils
 import unicode
 import math
+import tables
+import hashes
 
 # Runtime for NIM backend
 
@@ -45,19 +47,23 @@ proc rt_to_double*(x: float): float = x
 proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
 proc rt_to_double*(x: string): float = parseFloat(x)
 
-#[ Runtime type ids ]#
-
 type
+  # Basic runtime type kinds
   RtType* = enum
-    rtVoid,
-    rtBool,
-    rtInt,
-    rtDouble,
-    rtString,
-    rtNative,
-    rtArray,
-    rtFunc,
-    rtStruct
+    # Atiomic types
+    rtVoid, rtBool, rtInt, rtDouble, rtString, rtNative,
+    # Composite types
+    rtArray, rtFunc, rtStruct
+
+  # Compile time type kinds
+  CtType* = enum
+    # Atiomic types
+    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow, ctUnion,
+    # Composite types
+    ctArray, ctFunc, ctStruct
+
+  # A complex type descriptor.
+  AlType* = tuple[op: CtType, args: seq[int32], name: string]
 
 #[ Representation of a dynamic type ]#
 
@@ -67,12 +73,14 @@ type
 
   Flow* = ref object
     case tp*: RtType
+    # Atiomic types
     of rtVoid:   discard
     of rtBool:   bool_v:   bool
     of rtInt:    int_v:    int32
     of rtDouble: double_v: float
     of rtString: string_v: string
     of rtNative: native_v: Native
+    # Composite types
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
@@ -86,6 +94,41 @@ type
   Native* = ref object of RootObj
     what: string
     val: RootObj
+
+# Type index oprations
+
+var id2type*: seq[AlType];
+var type2id*: Table[AlType, int32];
+
+proc rt_type_id_to_string*(id: int32): string =
+  let tp = id2type[id]
+  case tp.op:
+  of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
+  of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
+  of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
+  else: tp.name
+
+proc rt_type_id_to_struct_id*(id: int32): int32 =
+  #echo "struct_id of " & rt_type_id_to_string(id) & " (id: " & intToStr(id) & ") is: " & intToStr(id2type[id].args[0])
+  return id2type[id].args[0]
+
+proc rt_find_type*(tp: AlType): int32 =
+  return if not type2id.hasKey(tp): -1 else: type2id[tp]
+
+proc rt_register_type*(tp: AlType): void =
+  if not type2id.hasKey(tp):
+    let id: int32 = int32(id2type.len)
+    id2type.add(tp)
+    type2id[tp] = id
+  else:
+    echo "trying to regidter a type, which is aleady registered: " & rt_type_id_to_string(type2id[tp])
+
+proc hash*(tp: AlType): Hash =
+  var h: Hash = 0
+  h = h !& hash(tp.op)
+  for arg in tp.args:
+    h = h !& hash(arg)
+  result = !$h
 
   # to_string conversions
 proc rt_to_string*(x: Struct): string
