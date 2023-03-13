@@ -1,4 +1,9 @@
-# dayOfWeek1 : io (year: int, month: int, day: int) -> int = Native.dayOfWeek;
+# dayOfWeek : io (year: int, month: int, day: int) -> int
+#  Monday is zero
+import times
 
 func dayOfWeek*(year: int32, month: int32, day: int32): int32 =
-  return -1
+    if (month >= 1 and month <= 12):
+        return cast[int32](ord(getDayOfWeek(day, Month(month), year)))
+    else:
+        return 0
