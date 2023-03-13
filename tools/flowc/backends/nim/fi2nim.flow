@@ -146,8 +146,7 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 	});
 
 	runtime = fi2nimRuntime(cfg);
-	runtime_imports = buildSet(filter(strSplit(runtime, "\n"), fi2nimIsImportLine));
-	native_imports = set2array(differenceSets(^(env.native_imports), runtime_imports));
+	native_imports = fi2nimNativeImports(env, runtime);
 
 	// All definitions of types
 	type_defs = "type\n" + concatStrings([
@@ -190,6 +189,31 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 	]);
 
 	fi2nimBuild(program, cfg, callback);
+}
+
+fi2nimNativeImports(env: FiNimEnv, runtime: string) -> [string] {
+	trim_std = \imp -> if (startsWith(imp, "std/")) strRight(imp, 4) else imp;
+	runtime_imports = filter(strSplit(runtime, "\n"), fi2nimIsImportLine);
+	runtime_import_modules = filtermap(runtime_imports, \str -> 
+		if (!startsWith(str, "import")) None() else {
+			components = filter(strSplit(str, " "), isNotSpace);
+			Some(trim_std(components[1]));
+		}
+	)
+	runtime_imports_set = buildSet(runtime_imports);
+	runtime_import_modules_set = buildSet(runtime_import_modules);
+	filter(set2array(^(env.native_imports)), \str ->
+		if (containsSet(runtime_imports_set, str)) false else {
+			if (startsWith(str, "from")) {
+				components = filter(strSplit(str, " "), isNotSpace);
+				// Check if a module/component is already imported
+				!containsSet(runtime_import_modules_set, trim_std(components[1]));
+			} else {
+				// Leave an import of unrecognized kind
+				true;
+			}
+		}
+	);
 }
 
 fi2nimBuild(program : FiProgram, cfg: FiNimConfig, callback : (int) -> void) -> void {
