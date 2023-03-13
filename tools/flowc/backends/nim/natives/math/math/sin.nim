@@ -1,0 +1,1 @@
+#native sin : (double) -> double = Native.sin; - is already defined

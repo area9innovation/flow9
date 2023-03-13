@@ -1,3 +1,5 @@
+import tools/flow9/pexp/parse;
+import tools/flow9/dexp/desugar;
 import sandbox/scheduler/scheduler;
 import math/md5;
 
@@ -6,7 +8,8 @@ JobContext(
 );
 
 JobOutput(
-	output : string
+	output : string,
+	parse : PExp
 );
 
 makeCompileProgramJob(scheduler : Scheduler<JobContext, JobOutput>, file : string) -> Job<JobContext, JobOutput> {
@@ -14,6 +17,7 @@ makeCompileProgramJob(scheduler : Scheduler<JobContext, JobOutput>, file : strin
 	cacheId = md5(getFileContent(file));
 
 	parseJob = makeParseJob(scheduler, parentId, cacheId, file);
+	addJob(scheduler, parseJob);
 	Job(
 		parentId,
 		2, 0,
@@ -25,7 +29,7 @@ makeCompileProgramJob(scheduler : Scheduler<JobContext, JobOutput>, file : strin
 		\task : Task<JobContext, JobOutput> -> {
 			Promise(
 				\onDone : (JobOutput) -> void, onError : (string) -> void -> {
-					onError("TODO: Implement compile of " + file)
+					onDone(JobOutput("done", PVoid(-1)))
 				}
 			)
 		},
@@ -34,8 +38,9 @@ makeCompileProgramJob(scheduler : Scheduler<JobContext, JobOutput>, file : strin
 }
 
 makeParseJob(scheduler : Scheduler<JobContext, JobOutput>, parentId : int, cacheId : string, file : string) -> Job<JobContext, JobOutput> {
+	id = makeJobId(scheduler);
 	Job(
-		makeJobId(scheduler),
+		id,
 		1, parentId,
 		[
 		],
@@ -46,7 +51,23 @@ makeParseJob(scheduler : Scheduler<JobContext, JobOutput>, parentId : int, cache
 		\task : Task<JobContext, JobOutput> -> {
 			Promise(
 				\onDone : (JobOutput) -> void, onError : (string) -> void -> {
-					onDone(JobOutput(getFileContent(file)));
+					err = ref false;
+					pexp = parsePExp(getFileContent(file), \e -> {
+						err := true;
+						println(e);
+						onError(e);
+					});
+					if (^err){
+					} else {
+						println("Parsed " + file);
+						imports = getDImports(pexp);
+						importDeps = map(imports, \i : DImport -> {
+							icacheId = md5(getFileContent(i.path));
+							makeParseJob(scheduler, id, icacheId, i.path)
+						});
+						println("TODO: Add desugaring job with dependent parses");
+						onDone(JobOutput("file", pexp));
+					}
 				}
 			)
 		},
