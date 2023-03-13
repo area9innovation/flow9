@@ -8,11 +8,4 @@ proc makeStructValue*(name : string, args : seq[Flow], default_value : Flow): Fl
     if (type_id == -1):
       rt_register_type(al_type)
       type_id = rt_find_type_id(al_type)
-    let field_names = id2fields[struct_id]
-    var i = 0
-    let fields = map(field_names, proc(field_name: string): FlowField =
-      let ind = i
-      i += 1
-      FlowField(name: field_name, val: args[ind])
-    )
-    return Flow(tp: rtStruct, str_id: type_id, str_name: name, str_fields: fields)
+    return Flow(tp: rtStruct, str_id: type_id, str_name: name, str_args: args)

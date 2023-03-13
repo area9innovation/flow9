@@ -67,10 +67,6 @@ type
 
 #[ Representation of a dynamic type ]#
 
-  FlowField* = object
-    name*: string
-    val*: Flow
-
   Flow* = ref object
     case tp*: RtType
     # Atiomic types
@@ -86,7 +82,7 @@ type
     of rtStruct:
       str_id: int32
       str_name: string
-      str_fields: seq[FlowField]
+      str_args: seq[Flow]
 
   Struct* = ref object of RootObj
     id: int32
@@ -146,11 +142,11 @@ proc rt_struct_name_to_id*(name: string): int32 =
   else:
     return -1
 
-proc rt_struct_id_to_fields*(name: string): seq[string] =
-  if struct2id.hasKey(name):
-    return id2fields[struct2id[name]]
-  else:
-    assert(false, "unregistered struct: " & name)
+proc rt_struct_id_to_fields*(id: int32): seq[string] =
+  return if id < id2fields.len: id2fields[id] else: @[]
+
+proc rt_struct_name_to_fields*(name: string): seq[string] =
+  return rt_struct_id_to_fields(rt_struct_name_to_id(name))
 
 #[
 	tp_v # 0 = void,
@@ -209,10 +205,10 @@ proc rt_to_string*(f: Flow): string =
   of rtFunc:   return "<function>"
   of rtStruct:
     var s = f.str_name & "("
-    for i in 0..f.str_fields.len - 1:
+    for i in 0..f.str_args.len - 1:
         if i > 0:
            s.add(", ")
-        s.add(rt_to_string(f.str_fields[i].val))
+        s.add(rt_to_string(f.str_args[i]))
     s.add(")")
     return s
 
@@ -277,24 +273,22 @@ proc rt_to_native*(x: Flow): Native =
 proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
   case x.tp:
   of rtStruct:
-    for field in x.str_fields:
-      if field.name == field_name:
-        return field.val
+    let fields = rt_struct_name_to_fields(x.str_name)
+    var i = 0
+    for arg in x.str_args:
+      if fields[i] == field_name:
+        return arg
+      i += 1
     assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
   else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
 
-#[
-
-	Doesn't work: complains that
-		field.val = v
-	can't be assigned to
-
-proc rt_set_flow_field*(x: Flow, field_name: string, v: Flow): void =
-  case x.tp:
-  of rtStruct:
-    for field in x.str_fields:
-      if field.name == field_name:
-        field.val = v
-    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
-  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
-]#
+proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
+  if s.tp == rtStruct:
+    let s_fields = rt_struct_name_to_fields(s.str_name)
+    var i = 0
+    for f in s_fields:
+      if f == field:
+        break
+      i += 1
+    if i != s_fields.len:
+      s.str_args[i] = val
