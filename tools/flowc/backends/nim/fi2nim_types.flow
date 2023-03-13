@@ -1,0 +1,311 @@
+import tools/flowc/backends/nim/fi2nim_utils;
+import tools/flowc/incremental/fi_helpers2;
+import string_utils;
+
+export {
+	fi2nimStructType(env : FiNimEnv) -> string;
+	fi2nimStructDecl(env : FiNimEnv, struct : FiTypeStruct) -> string;
+	fi2nimStructDef(env : FiNimEnv, struct : FiTypeStruct) -> string;
+	fi2nimUnionFuncs(env : FiNimEnv) -> string;
+	fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string;
+
+	fi2nimInitTypeIndexes(env : FiNimEnv) -> FiNimEnv;
+	fi2nimTypeTable(env : FiNimEnv) -> string;
+}
+
+fi2nimStructType(env : FiNimEnv) -> string {
+	"# All structs, used in program \n" +
+	fiNimIndent + "StructType = enum\n" +
+	strGlue(mapi(env.structs, \i, s -> fiNimIndent2 + fi2nimStructId(env, s) + " # " + i2s(i)), ",\n") + "\n\n" +
+	/*fiNimIndent + "StructSpecType = enum\n" +
+	strGlue(mapi(env.specializedStructs, \i, s -> 
+		//if (length(s.typars) == 0) {
+			fiNimIndent2 + fi2nimStructSpecId(env, s) + " # " + i2s(i)
+		//} else {
+		//	fiNimIndent2 + fi2nimStructSpecId(env, s)
+		//s}
+	), ",\n") + "\n\n"*/
+	"# All types, used in program\n" +
+	fiNimIndent + "ProgType = enum\n" +
+	strGlue(mapi(env.ordered_types, \i, tp -> 
+		//if (length(s.typars) == 0) {
+			fiNimIndent2 + fi2nimTypeId(env, tp) + " # " + i2s(i)  + " = " + pretFiType(tp)
+		//} else {
+		//	fiNimIndent2 + fi2nimStructSpecId(env, s)
+		//s}
+	), ",\n") + "\n\n"
+}
+
+fi2nimStructDecl(env : FiNimEnv, struct : FiTypeStruct) -> string {
+	typars = fiNimParamsForInstantiate(env, struct.typars);
+	fields = if (length(struct.args) == 0) "" else
+	"\n" + superglue(struct.args, \arg -> fiNimIndent2 + fiNimRenameKeyword(arg.name) + ": " + fiNimCompileType(env, arg.type), "\n");
+	struct_type = struct.name + typars;
+	fiNimIndent + struct_type + " = ref object of Struct" + fields + "\n\n";
+}
+
+fi2nimStructDef(env : FiNimEnv, struct : FiTypeStruct) -> string {
+	"rt_register_struct(\"" + struct.name  + "\", @[" + superglue(struct.args, \arg -> "\"" + arg.name + "\"", ", ") + "])\n"
+}
+
+fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string {
+	typars = fiNimParamsForInstantiate(env, struct.typars);
+	struct_type = struct.name + typars;
+	specs = set2array(lookupTreeDef(env.specializations, struct.name, makeSet()));
+
+	// struct_id
+	struct_ids = map(specs, \spec ->
+		switch (spec) {
+			FiTypeName(nm, spec_typars): {
+				spec_struct = fiTypeName2Struct(spec, env.prog.names);
+				/*"#" + prettyFiType(dummyPretty, spec, makeSet()) + "\n" + 
+				"# spec_typars: " + toString(spec_typars) + "\n" + 
+				"# typars_subst: " + superglue(tree2pairs(typars_subst), \p -> "# " + p.first + " => " + prettyFiType(dummyPretty, p.second, makeSet()) , "\n") + "\n" + 
+				supergluei(struct.args, \i, arg -> 
+					"# " + i2s(i) + " arg.type: " + prettyFiType(dummyPretty, arg.type, makeSet()) + "\n" +
+					"# fiApplyTypeSubstitution(typars_subst, arg.type): " + prettyFiType(dummyPretty, fiApplyTypeSubstitution(typars_subst, arg.type), makeSet())
+					, "\n"
+				) + "\n" +*/
+				"proc rt_struct_id_" + nm + "(" +  
+					supergluei(spec_struct.args, \i, arg -> 
+						"a_" + i2s(i) + ": " + fiNimCompileType(env, arg.type), 
+						", "
+					)
+				+ "): int32 = cast[int32](" + fi2nimTypeId(env, spec) + ")\n\n";
+			}
+			default: fail0("struct specialization must be FiTypeName");
+		}
+	);
+
+	// struct_id
+	struct_id = \x -> if (length(specs) == 0) {
+		"int32(" + fi2nimTypeId(env, FiTypeName(struct.name, struct.typars)) + ")";
+	} else {
+		"rt_struct_id_" + struct.name + "(" + 
+			supergluei(struct.args, \i, arg -> 
+				if (x) "a_" + i2s(i) else "x." + fiNimRenameKeyword(arg.name), ", "
+			) + 
+		")";
+	}
+
+	// make struct
+	make_args = concat(["id: " + struct_id(true)], mapi(struct.args, \i, arg -> fiNimRenameKeyword(arg.name) + ": a_" + i2s(i)));
+	make_struct = "proc make_" + struct_type + "(" + 
+		supergluei(struct.args, \i, arg -> "a_" + i2s(i) + ": " + fiNimCompileType(env, arg.type), ", ")  + "): " + struct_type + " =\n" +
+	fiNimIndent + struct_type + "(" + strGlue(make_args, ", ") + ")\n\n";
+
+	concatStrings(concat(struct_ids, [make_struct]));
+}
+
+// Union is a general struct 
+fi2nimUnionFuncs(env : FiNimEnv) -> string {
+	to_flow_cases = concat(
+		map(env.specializedStructs, 
+			\spec -> {
+				spec_type = FiTypeName(spec.name, spec.typars);
+				fiNimIndent + "of " + fi2nimTypeId(env, spec_type) + ":\n" + 
+				(if (length(spec.args) == 0) "" else fiNimIndent2 + "let y = " + fiNimCompileType(env, spec_type) + "(x)\n") +
+				fiNimIndent2 + "return Flow(tp: rtStruct, " + 
+				"str_id: cast[int32](" + fi2nimTypeId(env, spec_type) + "), " +
+				"str_name: \"" + spec.name + "\", " +
+				"str_fields: @[" + superglue(spec.args, \arg ->
+					"FlowField(name: \"" + arg.name + "\", val: rt_to_flow(y." + fiNimRenameKeyword(arg.name) + "))", ", ") + 
+				"])"
+			}
+		), 
+		[fiNimIndent + "else: assert(false,\"is not a struct:\" & rt_type_id_to_string(x.id))"]
+	);
+
+	to_flow = "proc rt_to_flow(x: Struct): Flow =\n" +
+		fiNimIndent + "case ProgType(x.id):\n" +
+		strGlue(to_flow_cases, "\n") + "\n\n";
+
+	to_string_cases = concat(
+		map(env.specializedStructs, 
+			\spec -> {
+				spec_type = FiTypeName(spec.name, spec.typars);
+				fiNimIndent + "of " + fi2nimTypeId(env, spec_type) + ":\n" +
+				(if (length(spec.args) == 0) "" else fiNimIndent2 + "let y = " + fiNimCompileType(env, spec_type) + "(x)\n") +
+				fiNimIndent2 + "return \"" + spec.name + if (length(spec.args) == 0) "()\"" else
+					"(\" & " + superglue(spec.args, \arg -> "rt_to_string(y." + fiNimRenameKeyword(arg.name) + ")", " & \", \" & ") + " & \")\""
+			}
+		),
+		[fiNimIndent + "else: assert(false,\"is not a struct:\" & rt_type_id_to_string(x.id))"]
+	);
+
+	to_string = "proc rt_to_string(x: Struct): string =\n" +
+		fiNimIndent + "case ProgType(x.id):\n" +
+		strGlue(to_string_cases, "\n") + "\n\n";
+
+	// proc rt_struct_id_to_string*(id: int32): string
+	/*rt_struct_id_to_string = "proc rt_struct_id_to_string(id: int32): string =\n" +
+		fiNimIndent + "case StructType(id):\n" +
+		superglue(env.structs, 
+			\spec -> fiNimIndent + "of " + fi2nimStructId(env, spec) + ": return \"" + spec.name + "\"", "\n"	
+		) + "\n\n";*/
+
+	concatStrings([to_flow, to_string]);
+}
+
+fi2nim_basic_types = [
+	FiTypeVoid(), 
+	FiTypeBool(), 
+	FiTypeInt(), 
+	FiTypeDouble(), 
+	FiTypeString(), 
+	FiTypeNative(), 
+	FiTypeFlow()
+];
+
+fi2nimType2RtType(env : FiNimEnv, tp: FiType, type_index: Tree<FiType, int>, struct_index: Tree<string, int>) -> string {
+	type_ind = \t0 -> {
+		t = fiPurifyType(fiType2NimType(env.prog.names, t0));
+		err = \msg -> fail0(msg + " subtype " + pretFiType(t) + " of " + pretFiType(tp) + " is not found in index");
+		switch (lookupTree(type_index, t)) {
+			Some(ind): i2s(ind) + "i32";
+			None(): {
+				switch (t) {
+					FiTypeName(nm,__): {
+						fiMapTypeName(t, env.prog.names, 
+							\struct -> {
+								err("(struct?): " + pretFiStructOrUnion(struct));
+							},
+							\union -> {
+								switch (lookupTree(type_index, FiTypeName("Struct", []))) {
+									Some(ind): i2s(ind) + "i32";
+									None(): {
+										err("(union?): " + pretFiStructOrUnion(union));
+									}
+								}
+							},
+							\tn -> {
+								err("(typename?): " + pretFiType(t));
+							}
+						);
+					}
+					default: err("(unknown?): " + pretFiType(t));
+				}
+			}
+		}
+	}
+	struct_ind = \nm -> {
+		switch (lookupTree(struct_index, nm)) {
+			Some(ind): i2s(ind) + "i32";
+			None(): fail0("struct " + nm + " is not found in index");
+		}
+	}
+	p = switch (tp) {
+		FiTypeVoid():    Triple("ctVoid", [], "void");
+		FiTypeBool():    Triple("ctBool", [], "bool");
+		FiTypeInt():     Triple("ctInt", [], "int");
+		FiTypeDouble():  Triple("ctDouble", [], "double");
+		FiTypeString():  Triple("ctString", [], "string");
+		FiTypeNative():  Triple("ctNative", [], "native");
+		FiTypeFlow():    Triple("ctFlow", [], "flow");
+		FiTypeArray(at): Triple("ctArray", [type_ind(at)], "");
+		FiTypeFunction(as, rt): {
+			Triple("ctFunc", concat([type_ind(rt)], map(as, \arg -> type_ind(arg.type))),"");
+		}
+		FiTypeName(nm, tps): {
+			if (nm == "Struct") {
+				Triple("ctUnion", [], "Struct");
+			} else {
+				fiMapTypeName(tp, env.prog.names, 
+					\struct -> Triple("ctStruct", concat([struct_ind(nm)], map(struct.args, \arg -> type_ind(arg.type))), nm),
+					\union -> Triple("ctUnion", [], "Struct"),
+					\__ -> Triple("ctUnion", [], "Struct")
+				);
+			}
+		}
+		FiTypeRef(__):       fail0("FiTypeRef must not occur in nim");
+		FiTypeParameter(__): fail0("FiTypeParameter must not occur in complete specialization in nim");
+	}
+	"(" + p.first + ", @[" + strGlue(p.second, ", ") + "], \"" + p.third + "\")";
+}
+
+fi2nimOrderTypes(types0: [FiType]) -> [FiType] {
+	types = filter(types0, \tp -> !exists(fi2nim_basic_types, \x -> fiEqualTypes(x, tp)));
+	fi2nimDoOrderTypes(types, fi2nim_basic_types);
+}
+
+fi2nimDoOrderTypes(types: [FiType], acc: [FiType]) -> [FiType] {
+	if (length(types) == 0) acc else {
+		p = unzip(types, \tp -> {
+			subterms = set2array(fiTypeSubterms(tp, true));
+			forall(subterms, \st -> exists(acc, \x -> fiEqualTypes(x, st)));
+		});
+		if (length(p.first) == 0) {
+			println("types:\n" +
+				strIndent(concatStrings(map(types, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))) + "\n"
+				"acc:\n" + 
+				strIndent(concatStrings(map(acc, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))) + "\n" 
+			);
+			fail("cyclic dependency in a set of types - is impossible");
+		}
+		fi2nimDoOrderTypes(p.second, concat(acc, p.first));
+	}
+}
+
+fi2nimAddTypenameSubterms(type: FiType, acc: Set<FiType>, names: FiGlobalNames) -> Set<FiType> {
+	if (containsSet(acc, type)) acc else {
+		acc1 = insertSet(acc, type);
+		switch (type) {
+			FiTypeName(name, typars): {
+				if (name == "Struct") {
+					// Special case: universal struct, which represents all structs (thus universal union)
+					acc1;
+				} else {
+					fiMapTypeName(type, names,
+						\struct -> fold(struct.args, acc1, \ac, arg -> {
+							arg_type = fiPurifyType(fiType2NimType(names, arg.type));
+							foldSet(fiTypeSubterms(arg_type, false), ac, \a, st ->
+								fi2nimAddTypenameSubterms(st, a, names)
+							)
+						}), 
+						\union -> fold(union.typenames, acc1, \ac, tn ->
+							fi2nimAddTypenameSubterms(tn, ac, names)
+						), 
+						\tn -> fail0("typename " + tn.name + " is not found")
+					);
+				}
+			}
+			default: acc1;
+		}
+	}
+}
+
+fi2nimInitTypeIndexes(env : FiNimEnv) -> FiNimEnv {
+	spec_structs = map(env.specializedStructs, \s -> FiTypeName(s.name, s.typars));
+	all_subterms = set2array(fold(spec_structs, makeSet(), \acc, s -> mergeSets(acc, fiTypeSubterms(s, false))));
+	println("all_subterms:\n" + 
+		concatStrings(map(all_subterms, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+	);
+	all_types = concat([FiTypeName("Struct", [])], all_subterms);
+	println("all_types:\n" + 
+		concatStrings(map(all_types, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+	);
+	complete_types = set2array(fold(all_types, makeSet(), \acc, tp ->
+		fi2nimAddTypenameSubterms(tp, acc, env.prog.names)
+	));
+	println("complete_types:\n" + 
+		concatStrings(map(complete_types, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+	);
+	ordered_types = fi2nimOrderTypes(complete_types);
+	println("ordered_types:\n" + 
+		concatStrings(mapi(ordered_types, \i, t -> "\t" + i2s(i) + ": " + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+	);
+	type_index = foldi(ordered_types, makeTree(), \i, acc, tp -> setTree(acc, tp, i));
+	struct_index = foldi(env.structs, makeTree(), \i, acc, s -> setTree(acc, s.name, i));
+	FiNimEnv(env with
+		ordered_types = ordered_types,
+		type_index = type_index,
+		struct_index = struct_index
+	);
+}
+
+fi2nimTypeTable(env : FiNimEnv) -> string {
+	supergluei(env.ordered_types, 
+		\i, tp -> "rt_register_type(" + fi2nimType2RtType(env, tp, env.type_index, env.struct_index) + ") # " + i2s(i) + ": " + pretFiType(tp), 
+		"\n"
+	) + "\n\n";
+}

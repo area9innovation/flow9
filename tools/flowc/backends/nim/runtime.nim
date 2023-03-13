@@ -90,15 +90,18 @@ type
 
   Struct* = ref object of RootObj
     id: int32
+  Array* = ref object
+    id: int32
 
   Native* = ref object of RootObj
     what: string
     val: RootObj
 
 # Type index oprations
-
-var id2type*: seq[AlType];
-var type2id*: Table[AlType, int32];
+var id2type*: seq[AlType]
+var type2id*: Table[AlType, int32]
+var id2fields*: seq[seq[string]]
+var struct2id*: Table[string, int32]
 
 proc rt_type_id_to_string*(id: int32): string =
   let tp = id2type[id]
@@ -109,10 +112,9 @@ proc rt_type_id_to_string*(id: int32): string =
   else: tp.name
 
 proc rt_type_id_to_struct_id*(id: int32): int32 =
-  #echo "struct_id of " & rt_type_id_to_string(id) & " (id: " & intToStr(id) & ") is: " & intToStr(id2type[id].args[0])
   return id2type[id].args[0]
 
-proc rt_find_type*(tp: AlType): int32 =
+proc rt_find_type_id*(tp: AlType): int32 =
   return if not type2id.hasKey(tp): -1 else: type2id[tp]
 
 proc rt_register_type*(tp: AlType): void =
@@ -121,7 +123,7 @@ proc rt_register_type*(tp: AlType): void =
     id2type.add(tp)
     type2id[tp] = id
   else:
-    echo "trying to regidter a type, which is aleady registered: " & rt_type_id_to_string(type2id[tp])
+    echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
 
 proc hash*(tp: AlType): Hash =
   var h: Hash = 0
@@ -129,6 +131,58 @@ proc hash*(tp: AlType): Hash =
   for arg in tp.args:
     h = h !& hash(arg)
   result = !$h
+
+proc rt_register_struct*(name: string, fields: seq[string]): void =
+  if not struct2id.hasKey(name):
+    let id: int32 = int32(id2fields.len)
+    id2fields.add(fields)
+    struct2id[name] = id
+  else:
+    echo "struct " & name & " is aleady registered"
+
+proc rt_struct_name_to_id*(name: string): int32 =
+  if struct2id.hasKey(name):
+    return struct2id[name]
+  else:
+    return -1
+
+proc rt_struct_id_to_fields*(name: string): seq[string] =
+  if struct2id.hasKey(name):
+    return id2fields[struct2id[name]]
+  else:
+    assert(false, "unregistered struct: " & name)
+
+#[
+	tp_v # 0 = void,
+    tp_b # 1 = bool,
+    tp_i # 2 = int,
+    tp_d # 3 = double,
+    tp_s # 4 = string,
+    tp_n # 5 = native,
+    tp_f # 6 = flow,
+]#
+
+proc rt_flow_type_id(f: Flow): int32 =
+  case f.tp:
+  of rtVoid:   return 0
+  of rtBool:   return 1
+  of rtInt:    return 2
+  of rtDouble: return 3
+  of rtString: return 4
+  of rtNative: return 5
+  of rtArray:
+    if f.array_v.len == 0:
+      echo "type of an empty array can't be resolved at runtime"
+      return -1
+    else:
+      let el_type = rt_flow_type_id(f.array_v[0])
+      return rt_find_type_id((ctArray, @[el_type], ""))
+  of rtFunc:
+    echo "type of a function can't be resolved at runtime"
+    return -1
+  of rtStruct: return f.str_id
+
+
 
   # to_string conversions
 proc rt_to_string*(x: Struct): string
