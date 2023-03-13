@@ -16,7 +16,7 @@ export {
 
 	// Construct a new job id
 	makeJobId(scheduler : Scheduler<?, ??>) -> int;
-	// Schedule this job
+	// Schedule this job. TODO: Make sure we can add a child job to a parent as the parent runs
 	addJob(scheduler : Scheduler<?, ??>, job : Job<?, ??>) -> void;
 	// Invalidate cache item (for all job kinds)
 	invalidateJobCache(scheduler : Scheduler<?, ??>, cacheId : string) -> void;
@@ -81,7 +81,7 @@ export {
 /*
 TODO:
 - Fix dynamic containment. When a job finishes, but needs N other jobs to be done before
-  it is done to the parent
+  it is done to the parent.
 - Add tracking of currently running jobs
 - Improve error handling and reporting
 - Figure out how a job can dynamically add more work it depends on
@@ -128,8 +128,13 @@ runScheduler(scheduler : Scheduler<?, ??>) -> () -> void {
 	);
 
 	\ -> {
-		// TODO: Also count jobs in motion and jobs that wait on stuff to give more info
-		println("Cancelling " + i2s(sizeTree(^(scheduler.jobPriorities))) + " ready jobs");
+		// TODO: Also count jobs in motion
+		outstanding = sizeTree(^(scheduler.jobPriorities)) + sizeTree(^(scheduler.missingCount));
+		if (outstanding == 0) {
+			println("Scheduler stopped");
+		} else {
+			println("Cancelling " + i2s(outstanding) + " jobs");
+		}
 		stop := true;
 	}
 }
@@ -168,6 +173,8 @@ pingScheduler(scheduler : Scheduler<?, ??>) -> void {
 	}
 }
 
+// It is important that we can ask the same job to run multiple
+// times, but not redo the work the second time
 runJob(scheduler : Scheduler, job : Job<?, ??>) -> void {
 	// Pull together the parents
 	parents : [Job<?, ??>] = getJobParents(scheduler, [], job);
@@ -210,18 +217,6 @@ runJob(scheduler : Scheduler, job : Job<?, ??>) -> void {
 			scheduler.results := removeFromTree(^(scheduler.results), job.cacheId);
 		}
 	})
-}
-
-decreaseJobDependency(scheduler : Scheduler<?, ??>, job : Job<?, ??>, dependent : int) -> void {
-	count = lookupTreeDef(^(scheduler.missingCount), dependent, 0);
-	if (count <= 1) {
-		println("Job ready to run");
-		scheduler.missingCount := removeFromTree(^(scheduler.missingCount), dependent);
-		djob = lookupTreeDef(^(scheduler.jobs), dependent, job);
-		runJob(scheduler, djob);
-	} else {
-		scheduler.missingCount := setTree(^(scheduler.missingCount), dependent, count - 1)
-	}
 }
 
 // Remove all resources about this job
@@ -332,6 +327,18 @@ addJobDependency(scheduler : Scheduler<?, ??>, from : int, to : int) -> void {
 	if (!contains(deps, from)) {
 		scheduler.dependents := setTree(^(scheduler.dependents), to, arrayPush(deps, from));
 		scheduler.missingCount := incTreeValue(^(scheduler.missingCount), from);
+	}
+}
+
+decreaseJobDependency(scheduler : Scheduler<?, ??>, job : Job<?, ??>, dependent : int) -> void {
+	count = lookupTreeDef(^(scheduler.missingCount), dependent, 0);
+	if (count <= 1) {
+		println("Job ready to run");
+		scheduler.missingCount := removeFromTree(^(scheduler.missingCount), dependent);
+		djob = lookupTreeDef(^(scheduler.jobs), dependent, job);
+		runJob(scheduler, djob);
+	} else {
+		scheduler.missingCount := setTree(^(scheduler.missingCount), dependent, count - 1)
 	}
 }
 
