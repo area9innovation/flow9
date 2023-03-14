@@ -5,6 +5,7 @@ import unicode
 import math
 import tables
 import hashes
+import asyncdispatch
 
 # Runtime for NIM backend
 
