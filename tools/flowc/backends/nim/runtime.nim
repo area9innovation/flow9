@@ -111,7 +111,7 @@ proc rt_type_id_to_struct_id*(id: int32): int32 =
   return id2type[id].args[0]
 
 proc rt_find_type_id*(tp: AlType): int32 =
-  return if not type2id.hasKey(tp): -1 else: type2id[tp]
+  return if type2id.hasKey(tp): type2id[tp] else: -1
 
 proc rt_register_type*(tp: AlType): void =
   if not type2id.hasKey(tp):
@@ -158,24 +158,31 @@ proc rt_struct_name_to_fields*(name: string): seq[string] =
     tp_f # 6 = flow,
 ]#
 
-proc rt_flow_type_id(f: Flow): int32 =
+proc rt_type_id*(): int32 = 0i32
+proc rt_type_id*(v: bool): int32 = 1i32
+proc rt_type_id*(v: int): int32 = 2i32
+proc rt_type_id*(v: float): int32 = 3i32
+proc rt_type_id*(v: string): int32 = 4i32
+proc rt_type_id*(v: Native): int32 = 5i32
+
+proc rt_type_id*(f: Flow): int32 =
   case f.tp:
-  of rtVoid:   return 0
-  of rtBool:   return 1
-  of rtInt:    return 2
-  of rtDouble: return 3
-  of rtString: return 4
-  of rtNative: return 5
+  of rtVoid:   return 0i32
+  of rtBool:   return 1i32
+  of rtInt:    return 2i32
+  of rtDouble: return 3i32
+  of rtString: return 4i32
+  of rtNative: return 5i32
   of rtArray:
     if f.array_v.len == 0:
       echo "type of an empty array can't be resolved at runtime"
-      return -1
+      return -1i32
     else:
-      let el_type = rt_flow_type_id(f.array_v[0])
+      let el_type = rt_type_id(f.array_v[0])
       return rt_find_type_id((ctArray, @[el_type], ""))
   of rtFunc:
     echo "type of a function can't be resolved at runtime"
-    return -1
+    return -1i32
   of rtStruct: return f.str_id
 
 
