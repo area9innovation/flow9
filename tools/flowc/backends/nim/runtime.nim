@@ -3,6 +3,7 @@ import typetraits
 import strutils
 import unicode
 import math
+import asyncdispatch
 
 # Runtime for NIM backend
 
