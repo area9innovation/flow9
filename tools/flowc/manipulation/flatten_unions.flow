@@ -1,6 +1,7 @@
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/common;
 import math/stringmath;
+import string_utils;
 
 export {
 	// Expand all occurences of unions inside other unions to pure structs so that
@@ -61,7 +62,7 @@ fiUnion2Structs(union : FiTypeUnion, acc: Tree<string, [FiTypeStruct]>, names : 
 							Pair(concat(ac.first, lookupTreeDef(ac1, union1.name, [])), ac1);
 						}
 						None(): {
-							fail("must not happen");
+							fail("must not happen, type: " + type.name + " is not found");
 							ac;
 						}
 					}
@@ -112,18 +113,9 @@ fiStrcutFullTypars(struct : FiTypeStruct, struct2union: Tree<string, [FiTypeUnio
 		}
 	);
 	supertypes = lookupTreeDef(struct2union, struct.name, []);
-	sort(uniq(fold(supertypes, fiFilterTypars(struct.typars), \acc, union ->
-		concat(acc, fiFilterTypars(union.typeparameters))
+	sort(uniq(fold(supertypes, filter_typars(struct.typars), \acc, union ->
+		concat(acc, filter_typars(union.typeparameters))
 	)));
-}
-
-fiFilterTypars(types: [FiType]) -> [FiTypeParameter] {
-	filtermap(types, \type -> 
-		switch (type) {
-			FiTypeParameter(__): Some(type);
-			default: None();
-		}
-	);
 }
 
 fiRemoveImplicitStructTypars(program : FiProgram) -> FiProgram {
@@ -138,35 +130,33 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 	on_err = \msg -> {
 		fcPrintln(msg, program.config.threadId);
 	}
-	remove_func = \func -> {
+	names = program.names;
+	remove_func = \func: FiFunctionDec -> {
 		typars = fiCollectTypars(func.type, makeSet());
-		lambda_removed = fiTransformImplicitStructTyparsFromFiExp(func.lambda, typars, on_err, fn);
+		lambda_removed = fiTransformImplicitStructTyparsFromFiExp(func.lambda, typars, on_err, fn, names, func.name);
 		FiFunctionDec(func with
 			lambda = cast(lambda_removed: FiExp -> FiLambda)
 		);
 	}
-	remove_var = \var -> {
+	remove_var = \var: FiGlobalVar -> {
 		typars = fiCollectTypars(var.type, makeSet());
 		FiGlobalVar(var with
-			value = fiTransformImplicitStructTyparsFromFiExp(var.value, typars, on_err, fn)
+			value = fiTransformImplicitStructTyparsFromFiExp(var.value, typars, on_err, fn, names, var.name)
 		);
 	}
-	remove_nat = \nat -> {
+	remove_nat = \nat: FiNativeDec -> {
 		typars = fiCollectTypars(nat.type, makeSet());
 		FiNativeDec(nat with
-			fallbackLambda = fiTransformImplicitStructTyparsFromFiExp(nat.fallbackLambda, typars, on_err, fn)
+			fallbackLambda = fiTransformImplicitStructTyparsFromFiExp(nat.fallbackLambda, typars, on_err, fn, names, nat.name)
 		);
 	}
 	toplevel_removed = mapTree(program.names.toplevel, \decl ->
 		switch (decl) {
 			FiFunctionDec(__,__,__, __, __): remove_func(decl);
 			FiGlobalVar(__,__,__,__,__): remove_var(decl);
-			FiNativeDec(__,__,type,__, fallback,__,__): remove_nat(decl);
+			FiNativeDec(__,__,__,__,__,__,__): remove_nat(decl);
 		}
 	);
-	dummyFiTypeFunction = FiTypeFunction([], FiTypeVoid());
-	dummyFiLambda = FiLambda([], FiVoid(-1), dummyFiTypeFunction, -1);
-	dummyFiFunctionDec = FiFunctionDec("", dummyFiLambda, dummyFiTypeFunction, -1, -1);
 	FiProgram(program with
 		modules = mapTree(program.modules, \module ->
 			FiModule(module with
@@ -181,13 +171,17 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 	);
 }
 
-fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err: (string) -> void, fn: (FiTypeParameter) -> Maybe<FiType>) -> FiExp {
-	re = \x -> fiTransformImplicitStructTyparsFromFiExp(x, typars, on_err, fn);
-	rt = \x -> switch (fiTransformImplicitStructTyparsFromFiType(x, typars, fn)) {
+fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err: (string) -> void, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames, toplevel_name: string) -> FiExp {
+	re = \x -> fiTransformImplicitStructTyparsFromFiExp(x, typars, on_err, fn, names, toplevel_name);
+	rt = \x -> switch (fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names)) {
 		Some(tp): tp;
 		None(): {
-			on_err("type dissapeared: " + prettyFiType(dummyPretty, x, makeSet()) + 
-				", typars: [" + strGlue(set2array(typars), ", ") + "]");
+			on_err(
+				"type dissapeared: " + prettyFiType(dummyPretty, x, makeSet()) + 
+				", typars: [" + strGlue(set2array(typars), ", ") + "]\n" + 
+				"expression: " + prettyFiExp(dummyPretty, e) + "\n" +
+				"in declaration: " + toplevel_name
+			);
 			x;
 		}
 	}
@@ -195,8 +189,8 @@ fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err:
 		FiLambda(args, body, type, start): {
 			body_typars = fold(args, typars, \acc, arg -> fiCollectTypars(arg.type, acc));
 			FiLambda(args,
-				fiTransformImplicitStructTyparsFromFiExp(body, body_typars, on_err, fn),
-				type, start
+				fiTransformImplicitStructTyparsFromFiExp(body, body_typars, on_err, fn, names, toplevel_name),
+				cast(rt(type): FiType -> FiTypeFunction), start
 			);
 		}
 		FiCall(f, args, type, start): {
@@ -234,8 +228,15 @@ fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err:
 	}
 }
 
-fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (FiTypeParameter) -> Maybe<FiType>) -> Maybe<FiType> {
-	doit = \x -> fiTransformImplicitStructTyparsFromFiType(x, typars, fn);
+fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames) -> Maybe<FiType> {
+	doit = \x -> fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names);
+	typename_typars = \nm -> switch (lookupTree(names.structs, nm)) {
+		Some(struct): struct.typars;
+		None(): switch (lookupTree(names.unions, nm)) {
+			Some(union): union.typeparameters;
+			None(): [];
+		}
+	}
 	switch (t) {
 		FiTypeParameter(n): {
 			if (containsSet(typars, n)) Some(t) else fn(t);
@@ -247,7 +248,20 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 			maybeMap(doit(at), \a -> FiTypeArray(a));
 		}
 		FiTypeName(id, tps): {
-			Some(FiTypeName(id, filtermap(tps, doit)));
+			type_tps = typename_typars(id);
+			filtered = filtermap(tps, doit);
+			if (length(type_tps) == 0) {
+				Some(FiTypeName(id, []));
+			} else {
+				if (length(type_tps) != length(filtered)) {
+					println("length(type_tps) != length(filtered)\n" +
+						"type:\n" + toStringFormatted(t) + "\n" +
+						"type_tps:\n" + toStringFormatted(type_tps) + "\n" +
+						"filtered:\n" + toStringFormatted(filtered) + "\n"
+					);
+				}
+				Some(FiTypeName(id, filtered));
+			}
 		}
 		FiTypeFunction(args, rt): {
 			maybeBind(doit(rt),

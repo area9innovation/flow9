@@ -66,6 +66,8 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 
 	attachOutline = \text -> "<p style=\"text-shadow: -1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white\">" + text + "</p>";
 
+	meshesB = make(extractRMMeshFromRMScene(initialScene));
+
 	MConstruct(
 		[
 			make2Subscribe2(
@@ -101,6 +103,15 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 								"numRepetitions", i2s(fixCounter(newRMIScene.first.repetitionCounter)),
 								"numParameters", i2s(newRMIScene.first.offset / 4 + 1),
 								"generatedFunctions", generatePolygonFunctions(newRMIScene.first.polygonPoints),
+							]
+						)
+					]);
+					hostCall("recompileMeshShader", [
+						i2s(id),
+						blueprint(
+							"#include material/extra/raymarching/mesh.frag",
+							[
+								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
 							]
 						)
 					]);
@@ -404,6 +415,39 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					hostCall("setSurfaceDistance", [flow(i2s(id)), flow(surfaceDistance)])|> ignore;
 				}
 			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(fmap(meshesB, \m -> m.mesh), FLift(fmerge)),
+				\meshes -> {
+					iter(meshes, \m -> {
+						mesh = parseObj(m.mesh);
+						hostCall("addMesh", [flow(i2s(id)), flow(mesh.first), flow(mesh.second), flow(mesh.third)])|> ignore;
+					})
+				}
+			),
+			makeSubscribeTrigger(
+				webglContextLoadedB,
+				fsubselect(fmap(meshesB, \m -> fpair(ftriple(m.position, m.rotation, m.scale), switch (m.material) {
+					RMColor(color): fpair(color, const(""));
+					RMTexture(texture, parameters): fpair(const(0xFFFFFF), texture);
+				})), FLift(fmerge)),
+				\meshParameters -> {
+					model = map(meshParameters, \m : Pair<Triple<RMCoordinate, RMCoordinate, RMCoordinate>, Pair<int, string>> -> {
+						position = expandRMCoordinate(m.first.first);
+						rotation = expandRMCoordinate(m.first.second);
+						scale = expandRMCoordinate(m.first.third);
+						[position.x, position.y, position.z, rotation.x, rotation.y, rotation.z, scale.x, scale.y, scale.z]
+					});
+					colors = map(meshParameters, \m -> {
+						color = hexColor2RMI(m.second.first);
+						[color.x, color.y, color.z]
+					});
+					textures = map(meshParameters, \m -> {
+						m.second.second
+					});
+					hostCall("updateMeshParameters", [flow(i2s(id)), flow(model), flow(colors), flow(textures)])|> ignore;
+				}
+			),
 			\ -> when(webglContextLoadedB, \-> getTextCoords(id, textPositionsB)),
 		],
 		MGroup([
@@ -430,6 +474,10 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					"numRepetitions", i2s(fixCounter(rmiScene.first.repetitionCounter)),
 					"numParameters", i2s(rmiScene.first.offset / 4 + 1),
 					"generatedFunctions", generatePolygonFunctions(rmiScene.first.polygonPoints),
+				]),
+				"#include material/extra/raymarching/mesh.vert",
+				blueprint("#include material/extra/raymarching/mesh.frag", [
+					"light", lightGlsl,
 				])
 			),
 			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(attachOutline(i2s(fps) + " fps"), [EscapeHTML(false)]))),
@@ -454,7 +502,15 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 }
 
 sharedScriptInserted : ref Maybe<native> = ref None();
-displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
+displayRaymarchingCanvas(
+	id : int,
+	webglContextLoadedB : Transform<bool>,
+	scriptContent : string,
+	rayShaderVertex : string,
+	rayShaderFragment : string,
+	meshShaderVertex : string,
+	meshShaderFragment : string,
+) -> Material {
 	whB = make(WidthHeight(0.0, 0.0));
 	MInspect([IAvailable(whB)], 
 		MHTMLStage(whB, \stage -> {
@@ -462,6 +518,8 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			scriptGLM = createElement("script");
 			scriptShaderVertex = createElement("script");
 			scriptShaderFragment = createElement("script");
+			scriptMeshShaderVertex = createElement("script");
+			scriptMeshShaderFragment = createElement("script");
 			script = createElement("script");
 
 			setCanvasSize = \wh -> {
@@ -480,10 +538,16 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			})();
 			setAttribute(scriptShaderVertex, "type", "text/plain", true);
 			setAttribute(scriptShaderVertex, "id", "vertex-shader" + i2s(id), true);
-			setAttribute(scriptShaderVertex, "innerHTML", shaderVertex, true);
+			setAttribute(scriptShaderVertex, "innerHTML", rayShaderVertex, true);
 			setAttribute(scriptShaderFragment, "type", "text/plain", true);
-			setAttribute(scriptShaderFragment, "id", "fragment-shader"  + i2s(id), true);
-			setAttribute(scriptShaderFragment, "innerHTML", shaderFragment, false);
+			setAttribute(scriptShaderFragment, "id", "fragment-shader" + i2s(id), true);
+			setAttribute(scriptShaderFragment, "innerHTML", rayShaderFragment, false);
+			setAttribute(scriptMeshShaderVertex, "type", "text/plain", true);
+			setAttribute(scriptMeshShaderVertex, "id", "mesh-vertex-shader" + i2s(id), true);
+			setAttribute(scriptMeshShaderVertex, "innerHTML", meshShaderVertex, true);
+			setAttribute(scriptMeshShaderFragment, "type", "text/plain", true);
+			setAttribute(scriptMeshShaderFragment, "id", "mesh-fragment-shader" + i2s(id), true);
+			setAttribute(scriptMeshShaderFragment, "innerHTML", meshShaderFragment, false);
 			setAttribute(script, "innerHTML", scriptContent, false);
 
 			// This script contains global storage to dipatch hostCalls between multiple contexts. So it is injected only once.
@@ -498,6 +562,8 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			appendChild(stage, canvas);
 			appendChild(stage, scriptShaderVertex);
 			appendChild(stage, scriptShaderFragment);
+			appendChild(stage, scriptMeshShaderVertex);
+			appendChild(stage, scriptMeshShaderFragment);
 			appendChild(stage, script);
 			\ -> {
 				unsSize();
@@ -505,6 +571,8 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 				removeElementChild(stage, canvas);
 				removeElementChild(stage, scriptShaderVertex);
 				removeElementChild(stage, scriptShaderFragment);
+				removeElementChild(stage, scriptMeshShaderVertex);
+				removeElementChild(stage, scriptMeshShaderFragment);
 				removeElementChild(stage, script);
 				removeElementChild(stage, sharedScript);
 			}
@@ -536,6 +604,7 @@ extractMaterialsFromRMScene(obj : RMScene) -> [RMMaterial] {
 		RMMaterial(object, color, materialProperties): [obj];
 		RMInteractive(object, trigger): extractMaterialsFromRMScene(object);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -570,6 +639,7 @@ extractTriggersFromRMScene(obj : RMScene) -> [DynamicBehaviour<RMTrigger>] {
 			ConstBehaviour(__): [];
 		};
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -598,6 +668,7 @@ extractTransformationsFromRMScene(obj : RMScene) -> [RMUnaryOperator] {
 		RMMaterial(object, color, materialProperties): extractTransformationsFromRMScene(object);
 		RMInteractive(object, trigger): extractTransformationsFromRMScene(object);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -626,6 +697,7 @@ extractTransformationsBehaviours(obj : RMScene) -> [Behaviour<RMCoordinate>] {
 		RMMaterial(object, color, materialProperties): extractTransformationsBehaviours(object);
 		RMInteractive(object, trigger): extractTransformationsBehaviours(object);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -719,6 +791,7 @@ extractObjectParametersFromRMScene(obj : RMScene) -> [Transform<double>] {
 		RMMaterial(object, color, materialProperties): extractObjectParametersFromRMScene(object);
 		RMInteractive(object, trigger): extractObjectParametersFromRMScene(object);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -747,6 +820,7 @@ extractSmoothCoefficientsFromRMScene(obj : RMScene) -> [Transform<double>] {
 		RMMaterial(object, color, materialProperties): extractSmoothCoefficientsFromRMScene(object);
 		RMInteractive(object, trigger): extractSmoothCoefficientsFromRMScene(object);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -787,6 +861,7 @@ extractRepetitionCoefficientsFromRMScene0(obj : RMScene, repetitionsList : List<
 		RMMaterial(object, color, materialProperties): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales);
 		RMInteractive(object, trigger): extractRepetitionCoefficientsFromRMScene0(object, repetitionsList, scales);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -815,6 +890,7 @@ extractShowStatusFromRMScene(obj : RMScene) -> [Behaviour<bool>] {
 		RMMaterial(object, color, materialProperties): extractShowStatusFromRMScene(object);
 		RMInteractive(object, trigger): extractShowStatusFromRMScene(object);
 		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [];
 		RMEmpty(): [];
 	}
 }
@@ -843,6 +919,36 @@ extractRMTextFromRMScene(obj : RMScene) -> [RMText] {
 		RMMaterial(object, color, materialProperties): extractRMTextFromRMScene(object);
 		RMInteractive(object, trigger): extractRMTextFromRMScene(object);
 		RMText(text, position, showDot): [RMText(text, position, showDot)];
+		RMMesh(mesh, position, rotation, scale, color): [];
+		RMEmpty(): [];
+	}
+}
+
+extractRMMeshFromRMScene(obj : RMScene) -> [RMMesh] {
+	switch(obj) {
+		RMCompositeObject(object, name, color, materialProperties, position, rotation, scale, trigger, shown): [];
+		RMPrimitive(): [];
+		RMTranslate(object, d): extractRMMeshFromRMScene(object);
+		RMRotate(object, r): extractRMMeshFromRMScene(object);
+		RMScale(object, s): extractRMMeshFromRMScene(object);
+		RMRepetitionLimited(object, c, l): extractRMMeshFromRMScene(object);
+		RM3DRound(object, radius): extractRMMeshFromRMScene(object);
+		RMUnion2(object1, object2): concat(extractRMMeshFromRMScene(object1), extractRMMeshFromRMScene(object2));
+		RMUnion(objects): mapConcat(objects, extractRMMeshFromRMScene);
+		RMIntersection2(object1, object2): concat(extractRMMeshFromRMScene(object1), extractRMMeshFromRMScene(object2));
+		RMIntersection(objects): mapConcat(objects, extractRMMeshFromRMScene);
+		RMSubtraction2(object1, object2): concat(extractRMMeshFromRMScene(object1), extractRMMeshFromRMScene(object2));
+		RMSubtraction(objects): mapConcat(objects, extractRMMeshFromRMScene);
+		RMSmoothUnion2(object1, object2, k): concat(extractRMMeshFromRMScene(object1), extractRMMeshFromRMScene(object2));
+		RMSmoothUnion(objects, k): mapConcat(objects, extractRMMeshFromRMScene);
+		RMSmoothIntersection2(object1, object2, k): concat(extractRMMeshFromRMScene(object1), extractRMMeshFromRMScene(object2));
+		RMSmoothIntersection(objects, k): mapConcat(objects, extractRMMeshFromRMScene);
+		RMSmoothSubtraction2(object1, object2, k): concat(extractRMMeshFromRMScene(object1), extractRMMeshFromRMScene(object2));
+		RMSmoothSubtraction(objects, k): mapConcat(objects, extractRMMeshFromRMScene);
+		RMMaterial(object, color, materialProperties): extractRMMeshFromRMScene(object);
+		RMInteractive(object, trigger): extractRMMeshFromRMScene(object);
+		RMText(text, position, showDot): [];
+		RMMesh(mesh, position, rotation, scale, color): [RMMesh(mesh, position, rotation, scale, color)];
 		RMEmpty(): [];
 	}
 }
@@ -934,4 +1040,62 @@ generatePolygonFunctions(polygonPoints : Set<int>) -> string {
 	foldSet(polygonPoints, "", \acc, num -> {
 		acc + "\n\n" + formatString(template, [i2s(num)]);
 	})
+}
+
+parseObj(str : string) {
+	lines = strSplit(str, "\n");
+
+	parsed = fold(
+		lines,
+		Quadruple(
+			[],//v
+			[],//vt
+			[],//vn
+			Triple([], [], [])//f
+		),
+		\acc, line -> {
+			segments = strSplit(line, " ");
+			if (segments[0] == "v") {
+				Quadruple(acc with first = arrayPush(acc.first, [s2d(segments[1]), s2d(segments[2]), s2d(segments[3])]))
+			} else if (segments[0] == "vt") {
+				Quadruple(acc with second = arrayPush(acc.second, [s2d(segments[1]), s2d(segments[2])]))
+			} else if (segments[0] == "vn") {
+				Quadruple(acc with third = arrayPush(acc.third, [s2d(segments[1]), s2d(segments[2]), s2d(segments[3])]))
+			} else if (segments[0] == "f") {
+				processFaceSegment = \seg -> {
+					f = strSplit(seg, "/");
+					v = acc.first[s2i(f[0]) - 1];
+					vt = elementAtMap(f, 1, \vti -> if (vti != "") Some(acc.second[s2i(vti) - 1]) else None(), None());
+					vn = elementAtMap(f, 2, \vni -> Some(acc.third[s2i(vni) - 1]), None());
+					Triple(v, vt, vn)
+				};
+				if (length(segments) == 5) {
+					processedFaces = map(tail(segments), processFaceSegment);
+					Quadruple(acc with fourth = Triple(
+						concat(acc.fourth.first, concatA([
+							processedFaces[0].first, processedFaces[1].first, processedFaces[2].first,
+							processedFaces[0].first, processedFaces[2].first, processedFaces[3].first
+						])),
+						concat(acc.fourth.second, concatA(filtermap([
+							processedFaces[0].second, processedFaces[1].second, processedFaces[2].second,
+							processedFaces[0].second, processedFaces[2].second, processedFaces[3].second
+						], idfn))),
+						concat(acc.fourth.third, concatA(filtermap([
+							processedFaces[0].third, processedFaces[1].third, processedFaces[2].third,
+							processedFaces[0].third, processedFaces[2].third, processedFaces[3].third
+						], idfn)))
+					))
+				} else if (length(segments) == 4) {
+					processedFaces = map(tail(segments), processFaceSegment);
+					Quadruple(acc with fourth = Triple(
+						concat(acc.fourth.first, concatA([processedFaces[0].first, processedFaces[1].first, processedFaces[2].first])),
+						concat(acc.fourth.second, concatA(filtermap([processedFaces[0].second, processedFaces[1].second, processedFaces[2].second], idfn))),
+						concat(acc.fourth.third, concatA(filtermap([processedFaces[0].third, processedFaces[1].third, processedFaces[2].third], idfn)))
+					))
+				} else acc;
+			} else acc;
+		}
+	)
+
+	parsed.fourth
 }

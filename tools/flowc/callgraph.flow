@@ -1,6 +1,5 @@
-import tools/flowc/manipulation/deadcode;
-import tools/flowc_lsp/lsp_utils;
 import tools/flowc/symbol_nature;
+import formats/lsp;
 
 export {
 	// Print the import graph in dot format
@@ -28,6 +27,8 @@ export {
 	// - callHierarchy/outgoingCalls
 	// Output is made in LSP format (JSON).
 	lspCallHierarchyMethods(prog : FiProgram, globEnv : FcTypeEnvGlobal) -> void;
+
+	rewriteImports(fi : FiProgram, fine : bool) -> void;
 }
 
 saveImportGraph(filename : string, simplify : bool, prog : FiProgram) -> void {
@@ -140,6 +141,44 @@ symbolDependencies(prog : FiProgram) -> Tree<string, Set<string>> {
 	});
 }
 
+// For each module, collects globals, functinos and type names that are required
+moduleDependencies(prog : FiProgram) -> Tree<string, Set<string>> {
+	free : (FiExp) -> Set<string> = \e -> mergeSets(fifreevars(e), fifreetypes(e));
+	fold(getTreeValues(prog.modules), makeTree(), \acc : Tree<string, Set<string>>, module -> {
+		acc1 = fold(module.functions, acc, \ac : Tree<string, Set<string>>, fn ->
+			insertMultipleMultimap(ac, module.fileinfo.flowfile, free(fn.lambda))
+		);
+		acc2 = fold(module.globalVars, acc1, \ac : Tree<string, Set<string>>, gl -> {
+			insertMultipleMultimap(ac, module.fileinfo.flowfile, free(gl.value))
+		});
+		acc3 = fold(module.structs, acc2, \ac, st -> {
+			used = fold(st.args, makeSet(), \ac2, arg -> {
+				extractTypeNames(ac2, arg.type)
+			});
+			insertMultipleMultimap(ac, module.fileinfo.flowfile, used)
+		});
+		acc4 = fold(module.unions, acc3, \ac, un -> {
+			used = fold(un.typenames, makeSet(), \ac2, tn -> {
+				extractTypeNames(ac2, tn)
+			});
+			insertMultipleMultimap(ac, module.fileinfo.flowfile, used)
+		});
+		fold(module.natives, acc4, \ac, nat ->
+			switch (nat.fallbackLambda) {
+				FiLambda(__, __, __, __): {
+					insertMultipleMultimap(ac, module.fileinfo.flowfile, free(nat.fallbackLambda));
+				}
+				FiVoid(__): ac;
+				default: {
+					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, nat.fallbackLambda), prog.config.threadId);
+					ac;
+				}
+			}
+		);
+	});
+}
+
+
 pathInCallGraph(func_from : string, func_to : string, max_num : int, exclude : Set<string>, prog : FiProgram) -> void {
 	// Uses - inversed dependencies
 	uses = foldTree(symbolUses(prog), makeTree(), \id, uses, acc ->
@@ -163,6 +202,130 @@ findAllPathsToMain(uses : Tree<string, [string]>, paths : [[string]], acc : [[st
 		new_acc = concat(acc, filter(new_paths, \path -> lastElement(path, "") == func_to));
 		findAllPathsToMain(uses, new_paths, new_acc, func_to, max_num);
 	}
+}
+
+rewriteImports(prog : FiProgram, fine : bool) -> void {
+	// Find out what dependencies each file has
+	deps : Tree<string, Set<string>> = moduleDependencies(prog);
+	simpleGraph = foldTree(deps, makeSimpleGraph(), \mod, uses, acc -> {
+		mods0 = mapSet(uses, \u -> lookupName2module(prog.names, u));
+		required = removeSet(mods0, mod);
+		foldSet(required, acc, \acc2, n -> {
+			addSimpleEdge(acc2, mod, n, 1, 1)
+		});
+	});
+
+	// This is the graph of what we need
+	simplified = simpleTransitiveReduction(simpleGraph);
+
+	// OK, we we can find the real set of files we need
+	realNeed : Set<string> = reachableClosureFromSimpleNode(simplified, prog.config.flowfile);
+
+	pr = \s -> fcPrintln(s, prog.config.threadId);
+
+	if (false) {
+		pr("Real need");
+		pr(toString(set2array(realNeed)));
+	}
+
+	// This is what the real graph is
+	importGraph = foldTree(prog.modules, makeSimpleGraph(), \file, modul, acc -> {
+		addModuleToImportGraph(prog, acc, file)
+	});
+	// Remove redundant imports to simplify the graph
+	reduced = simpleTransitiveReduction(importGraph);
+	current : Set<string> = reachableClosureFromSimpleNode(reduced, prog.config.flowfile);
+
+	if (false) {
+		println("Current set");
+		println(toString(set2array(current)));
+	}
+
+	super = differenceSets(current, realNeed);
+	if (!isEmptySet(super)) {
+		pr("At a top level, these imports are not required:");
+		files : [Pair<string, int>] = map(set2array(super), \s -> {
+			mod = lookupTreeDef(prog.modules, s, dummyFiModule);
+			Pair(s, round(mod.fileinfo.filesize))
+		});
+		order = sortCustom(files, \a -> a.second, false);
+		pr(
+			strGlue(strWordWrap(
+				superglue(order, \p -> {
+					size = p.second;
+					t = if (size > 1024 * 1024) {
+						d2st(i2d(size) / (1024.0 * 1024.0), 1) + "M"
+					}  else if (size > 1024) {
+						d2st(i2d(size) / 1024.0, 1) + "k"
+					} else i2s(size);
+					p.first + "(" + t + ")"
+				}, ", "),
+				80, [" "]
+			), "\n")
+		);
+	}
+	pr("The real need is " + i2s(sizeSet(realNeed)) + " modules while the current program uses " + i2s(sizeSet(current)) + " modules");
+
+	traverseInOrder(prog.modules, \name, module -> {
+		uses = lookupMultimap(deps, name);
+		// These are the modules that this module really requires
+		mods0 = mapSet(uses, \u -> lookupName2module(prog.names, u));
+		required = removeSet(mods0, name);
+
+		used = fold(module.imports, makeSet(), \acc, i -> {
+			insertSet(acc, i.flowfile)
+		});
+
+		extra = differenceSets(used, required);
+		missing = differenceSets(required, used);
+
+		if (!isEmptySet(extra) && (
+			fine || !isEmptySet(intersectSets(extra, super))
+		)) {
+			pr("\n" + name + " can reduce imports:");
+			iterSet(extra, \i -> {
+				superflous = differenceSets(reachableClosureFromSimpleNode(simplified, i), realNeed);
+				if (!isEmptySet(superflous)) {
+					pr("- import " + i + "  saves " + toString(set2array(superflous)));
+				} else {
+					pr("- import " + i);
+				}
+			});
+
+			if (!isEmptySet(missing)) {
+				realMiss = intersectSets(simplifyExtraImports(simplified, required), missing);
+				iterSet(realMiss, \i -> {
+					pr("+ import " + i + ";");
+				});
+			}
+		}
+	});
+}
+
+simplifyExtraImports(simplified : SimpleGraph<string, int>, missing : Set<string>) -> Set<string> {
+	realMiss = foldSet(missing, missing, \acc, m -> {
+		// Remove those that are reached from other means
+		reach = intersectSets(
+				reachableClosureFromSimpleNode(simplified, m),
+				acc
+			);
+		differenceSets(acc, reach);
+	});
+	if (sizeSet(realMiss) != sizeSet(missing)) simplifyExtraImports(simplified, realMiss)
+	else realMiss;
+}
+
+// Find out what module defines a given name
+lookupName2module(globalNames : FiGlobalNames, name : string) -> string {
+	lookupTreeDef(globalNames.function2module, name,
+		lookupTreeDef(globalNames.globalVar2module, name,
+			lookupTreeDef(globalNames.struct2module, name,
+				lookupTreeDef(globalNames.union2module, name,
+					lookupTreeDef(globalNames.native2module, name, "")
+				)
+			)
+		)
+	);
 }
 
 type2LspSymbolkind(type : FiType, names : FiGlobalNames) -> int {

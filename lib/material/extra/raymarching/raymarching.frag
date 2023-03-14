@@ -5,8 +5,10 @@ out vec4 fragColor;
 
 uniform vec2 screenSize;
 uniform vec3 rayOrigin;
-uniform mat4 projection;
 uniform mat4 view;
+uniform mat4 projection;
+uniform mat4 inverseView;
+uniform mat4 inverseProjection;
 
 const int numTextures = %numTextures%; //max 16
 uniform sampler2D textures[numTextures];
@@ -356,10 +358,8 @@ vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, s
 	py.x *= sign(normal.y);
 	vec2 pz = p.xy;
 	pz.x *= -1. * sign(normal.z);
-	pz.y *= -1.;
 	vec2 px = p.zy;
-	px.x *= sign(normal.x);
-	px.y *= -1.;
+	px.x *= -1. * sign(normal.x);
 
 	py = (py - 0.5) * makeRotate2vec2(textureParameter.rotate.zx) + 0.5 - textureParameter.translate.zx;
 	pz = (pz - 0.5) * makeRotate2vec2(textureParameter.rotate.xy) + 0.5 - textureParameter.translate.xy;
@@ -529,17 +529,19 @@ vec3 getColorReflect(vec3 newRayOrigin, vec3 rayDirection, vec3 normalOrigin) {
 }
 
 vec4 getColor(vec2 uv) {
-	vec3 rayDirection = normalize(vec3 (uv.x, uv.y, 1));
-	rayDirection = (view*vec4(rayDirection, 1)).xyz;
+	vec4 rd = inverseProjection * vec4(uv, -1., 1.);
+	rd /= rd.w;
+	rd = inverseView * rd;
+	vec3 rayDirection = normalize(rd.xyz - rayOrigin);
 
 	ObjectInfo oiSimple = rayMarch(rayOrigin, rayDirection);
 	vec4 col = backgroundColor;
 
-	if (oiSimple.d < MAX_DIST) {
-		vec3 p = rayOrigin + rayDirection * oiSimple.d;
-		vec4 ndc = projection * inverse(view) * vec4(p, 1);
-		gl_FragDepth = (ndc.z / ndc.w) * .5f + .5f;
+	vec3 p = rayOrigin + rayDirection * oiSimple.d;
+	vec4 ndc = projection * view * vec4(p, 1);
+	gl_FragDepth = (ndc.z / ndc.w) * .5f + .5f;
 
+	if (oiSimple.d < MAX_DIST) {
 		vec3 normal = getObjectNormal(p);
 		ObjectInfo oi = oiSimple;
 		if (!oi.topLevel) {
@@ -562,6 +564,9 @@ vec4 getColor(vec2 uv) {
 }
 
 void main() {
-	vec2 uv = (gl_FragCoord.xy - 0.5 * screenSize) / screenSize.y;
+	vec2 uv = vec2(
+		(gl_FragCoord.x / screenSize.x - 0.5) * 2.0,
+		(gl_FragCoord.y / screenSize.y - 0.5) * 2.0
+	);
 	fragColor = getColor(uv);
 }

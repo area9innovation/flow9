@@ -1,9 +1,7 @@
 import form/paragraphtypes;
-import form/line;
 import form/baseline;
 import text/bidi_text;
-
-import text/blueprint;
+import form/gui;
 
 export {
 	makeAlphabetAwareTextField(txt : string, style : [CharacterStyle]) -> native;
@@ -91,6 +89,8 @@ export {
 		element: ParaElement,
 		filler : bool
 	);
+
+	roundUIMetricsValue = \v -> roundTo(v, 0.01);
 }
 
 // TODO:
@@ -520,10 +520,10 @@ renderParagraphEx(
 
 				oldLines = getValue(linesCountB);
 				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				traceApi.traceAndNest(\-> "updateFn [" + id + "] START " + toString(wi) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
+				traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi: " + toString(wi) + ". w: " + toString(w) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
 				// Ignore negative widths
 				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
-				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
 				iter(wordGroups, \wg ->
 					wg.width := foldi(wg.words, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
 						addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
@@ -546,12 +546,15 @@ renderParagraphEx(
 				nextDistinct(linesCountB, length(infos));
 				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
 				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
+				if (maxLineWidth > w) {
+					traceApi.trace(\-> "DONT_FIT: " + toString(maxLineWidth) + " > " + toString(w));
+				}
 
-				traceApi.traceAndNest(\-> "updateFn [" + id + "] lines SET START maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.traceAndNest(\-> "updateFn [" + id + "] lines SET START w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] lines SET END  maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] lines SET END  w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 
-				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END " + toString(wi) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END   w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
 			};
 
 			uns = concatA([
@@ -640,10 +643,12 @@ getParaLineInfos(
 				if (width > getParaWordWidthValue(^(maxGroup.width), 1.0)) group else maxGroup
 			}
 		);
-		if (getParaWordWidthValue(^(maxWidthGroup.width), 1.0) > availableWidth) {
+		softPart = (^(maxWidthGroup.width).rigidWidth) - paraLinePartFRemakeD*(^(maxWidthGroup.width).finalRigidWidthDelta);
+
+		if (getParaWordWidthValue(^(maxWidthGroup.width), 1.0) > availableWidth && softPart < availableWidth) {
 			maxSoftWidth = ((^(maxWidthGroup.width).softWidth) + paraLinePartFRemakeD*(^(maxWidthGroup.width).finalSoftWidthDelta));
 			if (maxSoftWidth != 0.0)
-				(availableWidth - (^(maxWidthGroup.width).rigidWidth) - paraLinePartFRemakeD*(^(maxWidthGroup.width).finalRigidWidthDelta)) / maxSoftWidth
+				(availableWidth - softPart) / maxSoftWidth
 			else 1.0
 		} else 1.0
 	} else 1.0;
@@ -686,12 +691,12 @@ getParaLineInfos(
 
 		paraLineInfo = ParaLineInfo(
 			optimizedLine,
-			lineAscAndDynamic.first,
-			lineHeightAndWidth.first,
-			lineHeightAndWidth.second,
-			line.indent,
+			roundUIMetricsValue(lineAscAndDynamic.first),
+			roundUIMetricsValue(lineHeightAndWidth.first),
+			roundUIMetricsValue(lineHeightAndWidth.second),
+			roundUIMetricsValue(line.indent),
 			lineAscAndDynamic.second,
-			acc.y
+			roundUIMetricsValue(acc.y)
 		);
 		ParaLinesInfoAcc(
 			Cons(paraLineInfo, acc.lines),
@@ -1164,11 +1169,13 @@ reflowParaWords2(
 				[], addLine(),
 				paraIndent, fontSize, textScale
 			)
-		} else reflowParaWords2(
-			restGroups, availableWidth, remaining - groupWidth,
-			arrayPush(currentWordGroups, group), result,
-			paraIndent, fontSize, textScale
-		);
+		} else {
+			reflowParaWords2(
+				restGroups, availableWidth, remaining - groupWidth,
+				arrayPush(currentWordGroups, group), result,
+				paraIndent, fontSize, textScale
+			);
+		}
 	}
 }
 
@@ -1746,16 +1753,7 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 			wordSpacingStyle = WordSpacing(const(wordSpacing));
 			map(arr, \e -> {
 				switch (e.f : GhostForm) {
-					Text(t, s): {
-						fMetrics : FormMetrics = fgetValue(e.metrics);
-						OptimizedLineElement(
-							e with
-							f = Text(t, arrayPush(s, wordSpacingStyle)),
-							metrics = FormMetrics(fMetrics with
-								width = roundTo(fMetrics.width, 0.01)
-							) |> const
-						)
-					}
+					Text(t, s): OptimizedLineElement(e with f = Text(t, arrayPush(s, wordSpacingStyle)))
 					default: e;
 				}
 			});

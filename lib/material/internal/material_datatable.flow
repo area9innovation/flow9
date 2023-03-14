@@ -165,7 +165,7 @@ MDynamicDataTable2TInner(
 				t
 			)
 		)
-		|> (\t -> TAccess([TagName("tr")], t));
+		|> (\t -> TAccess([TagName("tr"), AccessRole("row")], t));
 
 	addHeaderActions = \p -> \t : Tropic ->
 		if (state.headerActions.actions != TEmpty())
@@ -262,7 +262,7 @@ MDynamicDataTable2TInner(
 						)
 					)
 					|> (\t -> if (state.separators) addSeparator(manager, p, t, false) else t)
-					|> (\t -> TAccess([TagName("tr")], t))
+					|> (\t -> TAccess([TagName("tr"), AccessRole("row")], t))
 					|> (\t -> TDispose([\ -> dispUnsM(disp)], t));
 				})
 				|> (\t ->
@@ -321,7 +321,7 @@ MDynamicDataTable2TInner(
 
 							MCustomLine(
 								MGetFocusGroup(makeLineContent),
-								[state.clickEnabled, MHeight(countRowHeight(er)), TagName("tr")]
+								[state.clickEnabled, MHeight(countRowHeight(er)), TagName("tr"), AccessRole("row")]
 							);
 						})
 					)
@@ -559,7 +559,7 @@ MDynamicDataTable2TInner(
 		|> MDTFirstColumn(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, yTranslation,
 				rowBackgroundStyle, selectedBgStyle, totalRowsHeight, visibleRowsHeight, rowsAvailableHeight, page, lightweight)
 		|> (\t -> TAccess([TagName("tbody")], t))
-		|> (\t -> TAccess([TagName("table")], t))
+		|> (\t -> TAccess([TagName("table"), AccessRole("table")], t))
 		|> addHeaderActions(p)
 		// Bottom bar
 		|> (\f : Tropic -> TLines2Dir(f, footer, p.rtl))
@@ -731,7 +731,16 @@ makeMDataTableState(
 	showRowNumbers = contains(style, MShowRowNumbers());
 
 	widthByContent = contains(style, MWidthByContent());
-	headCount = 1 + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
+	
+	headCount =
+		eitherMap(
+			tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), [])),
+			\is -> switch (is.mode) {
+				MGluedFirstColumnMode(gluedStyle) : extractStruct(gluedStyle, MGluedColumns(1)).columns;
+				default : 1
+			},
+			1
+		) + b2i(showRowNumbers) + b2i(isSome(checkboxSelection));
 
 	columns = columns0
 		|> (\arr -> map(arr, \col ->
@@ -897,7 +906,7 @@ makeMDataTableState(
 					|> alignCellContent(p, cellBorder, colStyle, box)
 					|> TFixHeight(TFixed(0., lineHeight(false)))
 					|> (\t -> TAccess(concatA([
-							[TagName("td")],
+							[TagName("td"), AccessRole("cell")],
 							if (cell.colspan > 1) [FAccessAttribute("colspan", const(i2s(cell.colspan)))] else [],
 							if (cell.rowspan > 1) [FAccessAttribute("rowspan", const(i2s(cell.rowspan)))] else [],
 						]), t))
@@ -1368,9 +1377,17 @@ MDTTitles(
 				defHeaderTitle
 			);
 
+		ascendingAttribute =
+			if (sortable) fselectLift(sorting.sortedBy, \sb -> {
+				if (sb.column == i) {
+					if (sb.ascending) "ascending" else "descending"
+				} else "none"
+			}) else const("");
+
 		(if (sortable) {
 			hover = make(false);
 			clickColumn = \initialClick -> sorting.onColumnClick(i, sortStyle, sortByValueStyle, autoSortByRowData, caseInsensitive, initialClick);
+			isAscending = fselectLift(sorting.sortedBy, \sb -> sb.ascending);
 
 				TIfLazy2(
 					fselect(sorting.sortedBy, FLift(\sb : MDataTableSorting -> sb.column == i)),
@@ -1383,8 +1400,8 @@ MDTTitles(
 										makeHeaderTitle(h)
 											|> (\t -> TBorderDir(0.0, 0.0, 4.0, 0.0, t, p.rtl)),
 										if (isSorting)
-											TIfLazy2(fselect(sorting.sortedBy, FLift(\sb -> sb.ascending)), \sb0 ->
-												MIcon2T(p, if (sb0) "arrow_upward" else "arrow_downward", concat([MIconSize(16.)], arrowStyle)),
+											TIfLazy2(isAscending, \isAsc ->
+												MIcon2T(p, if (isAsc) "arrow_upward" else "arrow_downward", concat([MIconSize(16.)], arrowStyle)),
 												true
 											)
 											|> TBorderTop(-1.)
@@ -1488,7 +1505,7 @@ MDTTitles(
 				else t,
 				t
 			))
-		|> (\t -> TAccess([TagName("th"), FAccessAttribute("scope", const("col"))], t))
+		|> (\t -> TAccess([TagName("th"), AccessRole("columnheader"), FAccessAttribute("scope", const("col")), FAccessAttribute("aria-sort", ascendingAttribute)], t))
 		|> (\t -> TShow(colEnabled, t))
 	});
 }
@@ -1540,16 +1557,18 @@ MDTFirstColumn(
 				)
 				|> implementExpandRow(false)
 				|> (\t -> TBorderDir(state.externalBorder, 0., 0., 0., t, parent.rtl))
-				|> (\t -> if (is.glued)
-						eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
+				|> (\t -> if (is.glued) {
+						if (j == -1) t
+						else
 							TIfLazy2(
 								fcontains(state.selection.selected, const(j)),
-								\v -> if (v && isSome(selectedBgStyle)) TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, []), t)
-									else TFrame(0., 0., rb.fn(j), t),
+								\v -> if (v)
+										TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, getDefLineSelectedBackground(parent)), t)
+									else
+										eitherMap(rowBackgroundStyle, \rb -> TFrame(0., 0., rb.fn(j), t), t),
 								false
-							), t
-						)
-					else t
+							)
+					} else t
 				)
 				|> (\t -> if (state.separators && is.glued) addSeparator(state.manager, parent, t, false) else t)
 				|> (\t -> if (is.glued)
@@ -1558,7 +1577,8 @@ MDTFirstColumn(
 						MRippleType(const(MRippleFill())),
 						state.clickEnabled,
 						MHighlightOnHover(state.hoverEnabled.enabled),
-						TagName("tr")
+						TagName("tr"),
+						AccessRole("row")
 					], \__ -> t, state.m2t) else t
 				)
 			}

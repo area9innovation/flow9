@@ -1,9 +1,5 @@
-import ds/tuples;
-import flowstructs;
 import tools/flowc/fcexp;
 import tools/flowc/incremental/fiprettyprint;
-import tools/common/config;
-import string_utils;
 
 export {
 	mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp;
@@ -18,6 +14,9 @@ export {
 
 	// Greneral transformation of a program: on a declaration level
 	fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram;
+
+	// Greneral transformation of a program: on a declaration level
+	fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ?;
 
 	// Greneral transformation of a program: on an expression level
 	fiMapProgramExp(prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram;
@@ -58,6 +57,9 @@ export {
 	//fiCompileTime(var: FiVar, conf: CompilerConfig, on_err: (string) -> void) -> FiExp;
 
 	fcSplitCompileTimeVar(id: string) -> Pair<string, string>;
+
+	// Folding over a type (as an AST tree structure).
+	fiFoldType(tp : FiType, v: ?, fn: (?, FiType) -> ?) -> ?;
 }
 
 mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
@@ -319,6 +321,33 @@ fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [
 			FiGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree()),
 			\__,module, acc -> fiModule2GlobalNames(module, acc)
 		)
+	);
+}
+
+fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ? {
+	names = prog.names;
+	decl_module = \name -> switch (lookupTree(names.function2module, name)) {
+		Some(mname): mname;
+		None(): {
+			switch (lookupTree(names.globalVar2module, name)) {
+				Some(mname): mname;
+				None(): {
+					switch (lookupTree(names.native2module, name)) {
+						Some(mname): mname;
+						None(): "";
+					}
+				}
+			}
+		}
+	}
+	acc1 = foldTree(names.structs, init, \name, struct, acc-> 
+		fn(struct, lookupTreeDef(prog.modules, lookupTreeDef(names.struct2module, name, ""), dummyFiModule), prog, acc)
+	);
+	acc2 = foldTree(names.unions, acc1, \name, union, acc -> 
+		fn(union, lookupTreeDef(prog.modules, lookupTreeDef(names.struct2module, name, ""), dummyFiModule), prog, acc)
+	);
+	foldTree(prog.names.toplevel, acc2, \name, decl, acc ->
+		fn(decl, lookupTreeDef(prog.modules, decl_module(name), dummyFiModule), prog, acc)
 	);
 }
 
@@ -846,4 +875,22 @@ fiDoMapExp2(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv, [?]) 
 		FiVar(__,__,__): [];
 		FiConst(): [];
 	});
+}
+
+fiFoldType(tp : FiType, v: ?, fn: (?, FiType) -> ?) -> ? {
+	fn(switch (tp) {
+		FiTypeRef(rt): {
+			fiFoldType(rt, v, fn);
+		}
+		FiTypeArray(at): {
+			fiFoldType(at, v, fn);
+		}
+		FiTypeName(n, ts): {
+			fold(ts, v, \acc, x -> fiFoldType(x, acc, fn));
+		}
+		FiTypeFunction(args, rt):{
+			fold(args, fiFoldType(rt, v, fn), \acc, x -> fiFoldType(x.type, acc, fn));
+		}
+		default: v;
+	}, tp)
 }

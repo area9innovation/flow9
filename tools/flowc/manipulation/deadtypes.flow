@@ -1,0 +1,99 @@
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/common;
+import string_utils;
+
+export {
+	// Remove unused structs/unions
+	deadFiTypes(prog: FiProgram, preserveNames: Set<string>, eliminateNames: Set<string>, verbose: int) -> FiProgram;
+}
+
+deadFiTypes(prog: FiProgram, preserveNames: Set<string>, eliminateNames: Set<string>, verbose: int) -> FiProgram {
+	// Grab all type names, used in expression
+	used_in_exp = \e, acc -> fiFoldExp(e, acc, \x,__,ac -> usedFiTypesAddTypeFlat(fiExpType(x), ac), AstTraverseOrder(true, true));
+	// Collect all type names, used in toplevel funcs/vars of a program
+	used_in_code = foldTree(prog.names.toplevel, makeSet(), \__,decl, acc ->
+		switch (decl) {
+			FiFunctionDec(__,lambda, type,__,__): {
+				usedFiTypesAddTypeFlat(type, used_in_exp(lambda, acc));
+			}
+			FiGlobalVar(__,value, type,__,__): {
+				usedFiTypesAddTypeFlat(type, used_in_exp(value, acc));
+			}
+			FiNativeDec(__,__,type,__,fallback,__,__): {
+				usedFiTypesAddTypeFlat(type, used_in_exp(fallback, acc));
+			}
+		}
+	);
+	used = foldSet(used_in_code, used_in_code, \acc, nm ->
+		usedFiTypesAddName(nm, acc, prog.names)
+	);
+	dead = ref makeList();
+	remove_dead = \nm -> {
+		dead := Cons(nm, ^dead);
+		[];
+	}
+	// Filter out unused structs/unions
+	optimized = fiMapProgramToplevel(prog, \toplevel,__,__ -> 
+		switch (toplevel) {
+			FiTypeStruct(nm, typars, args,__): {
+				if (containsSet(eliminateNames, nm)) remove_dead(nm) else
+				if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
+			}
+			FiTypeUnion(nm,__,__,__): {
+				if (containsSet(eliminateNames, nm)) remove_dead(nm) else
+				if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
+			}
+			default: [toplevel];
+		}
+	);
+
+	// Show list of dead items only on verbose=2
+	if (verbose > 1) {
+		all_dead = splitByNumber(list2array(^dead), 16);
+		//all_used = splitByNumber(set2array(used), 16);
+		show = \arr -> strGlue(map(arr, \x -> strGlue(x, ", ")), ",\n");
+		fcPrintln("Dead types:\n" + show(all_dead) + "\n\n", prog.config.threadId);
+		//fcPrintln("Used types: " + show(all_used) + "\n\n", prog.config.threadId);
+	}
+	optimized;
+}
+
+usedFiTypesAddName(nm: string, used: Set<string>, names: FiGlobalNames) -> Set<string> {
+	switch (lookupTree(names.structs, nm)) {
+		Some(struct): {
+			fold(struct.args, used, \acc, arg -> usedFiTypesAddTypeDeep(arg.type, acc, names));
+		}
+		None(): {
+			switch (lookupTree(names.unions, nm)) {
+				Some(union): {
+					fold(union.typenames, used, \acc, tn -> usedFiTypesAddTypeDeep(tn, acc, names));
+				}
+				None(): {
+					fail0("type " + nm + " is not found");
+				}
+			}
+		}
+	}
+}
+
+usedFiTypesAddTypeFlat(tp: FiType, used: Set<string>) -> Set<string> {
+	fiFoldType(tp, used, \acc, t ->
+		switch (t) {
+			FiTypeName(nm,__): insertSet(acc, nm);
+			default: acc;
+		}
+	)
+}
+
+usedFiTypesAddTypeDeep(tp: FiType, used: Set<string>, names: FiGlobalNames) -> Set<string> {
+	fiFoldType(tp, used, \acc, t ->
+		switch (t) {
+			FiTypeName(nm,__): {
+				if (containsSet(acc, nm)) acc else {
+					usedFiTypesAddName(nm, insertSet(acc, nm), names);
+				}
+			}
+			default: acc;
+		}
+	)
+}

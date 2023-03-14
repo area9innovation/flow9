@@ -361,8 +361,8 @@ class Native {
 		return HaxeRuntime.toString(value, keepStringEscapes);
 	}
 
-	public static function toStringEscapeControlChars(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
-		return HaxeRuntime.toStringEscapeControlChars(value, keepStringEscapes);
+	public static function toStringForJson(value : String) : String {
+		return HaxeRuntime.toStringForJson(value);
 	}
 
 	public static inline function gc() : Void {

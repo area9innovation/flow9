@@ -1,0 +1,1 @@
+proc voidValue(): Flow = Flow(tp: rtVoid)

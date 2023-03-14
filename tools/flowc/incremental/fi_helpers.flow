@@ -36,6 +36,7 @@ export {
 
 	isSameFiExp(e1 : FiExp, e2 : FiExp) -> bool;
 	getFiTypeName(t : FiType) -> string;
+	extractTypeNames(types : Set<string>, type : FiType) -> Set<string>;
 
 	// This function compares two types structurally, and in places, where
 	// there is a FiTypeParameter(name), it matches name with the 
@@ -112,6 +113,9 @@ export {
 	fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType;
 
 	fiSetExpType(e : FiExp, t: FiType) -> FiExp;
+
+	// Remove argument names from functional types
+	fiPurifyType(t: FiType) -> FiType;
 }
 
 fiDeclarationArgNames(decl) {
@@ -803,7 +807,8 @@ fiEqualTypes(type1 : FiType, type2 : FiType) -> bool {
 		FiTypeName(id1, tp1): {
 			switch (type2) {
 				FiTypeName(id2, tp2): {
-					id1 == id2 && all(mapi(tp1, \i, t1 -> fiEqualTypes(t1, tp2[i])));
+					id1 == id2 && length(tp1) == length(tp2) 
+					&& all(mapi(tp1, \i, t1 -> fiEqualTypes(t1, tp2[i])));
 				}
 				default: false;
 			}
@@ -811,7 +816,8 @@ fiEqualTypes(type1 : FiType, type2 : FiType) -> bool {
 		FiTypeFunction(args1, rt1): {
 			switch (type2) {
 				FiTypeFunction(args2, rt2): {
-					fiEqualTypes(rt1, rt2) && all(mapi(args1, \i, t1 -> fiEqualTypes(t1.type, args2[i].type)));
+					fiEqualTypes(rt1, rt2) && length(args1) == length(args2) 
+					&& all(mapi(args1, \i, t1 -> fiEqualTypes(t1.type, args2[i].type)));
 				}
 				default: false;
 			}
@@ -897,5 +903,48 @@ fiSetExpType(e : FiExp, t: FiType) -> FiExp {
 		FiInt(__,__):     e;
 		FiString(__,__):  e;
 		FiBool(__,__):    e;
+	}
+}
+
+fiPurifyType(t: FiType) -> FiType {
+	switch (t) {
+		FiTypeRef(rt): {
+			FiTypeRef(fiPurifyType(rt));
+		}
+		FiTypeArray(at): {
+			FiTypeArray(fiPurifyType(at));
+		}
+		FiTypeName(n, ts): {
+			FiTypeName(n, map(ts, fiPurifyType));
+		}
+		FiTypeFunction(args, rt): {
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg("", arg.type)), 
+				fiPurifyType(rt)
+			);
+		}
+		FiTypeParameter(n): t;
+		default: t;
+	}
+}
+
+
+extractTypeNames(types : Set<string>, type : FiType) -> Set<string> {
+	rec = \acc2, tt -> extractTypeNames(acc2, tt);
+	switch (type) {
+		FiTypeArray(t): rec(types, t);
+		FiTypeFunction(args, returnType): rec(fold(args, types, \acc, fa -> rec(acc, fa.type)), returnType);
+		FiTypeRef(t): rec(types, t);
+		FiTypeParameter(n): types;
+		FiTypeBool(): types;
+		FiTypeInt(): types;
+		FiTypeDouble(): types;
+		FiTypeString(): types;
+		FiTypeFlow(): types;
+		FiTypeVoid(): types;
+		FiTypeNative(): types;
+		FiTypeName(name, typeparameters): {
+			fold(typeparameters, insertSet(types, name), rec);
+		}
 	}
 }

@@ -2589,5 +2589,55 @@ public class Native extends NativeHost {
 			return "undef";
 		}
 	}
+
+	public static final String toStringForJson(String value) {
+		String sv = value;
+		// Make room for some escape
+		StringBuilder buf = new StringBuilder(sv.length() + 20);
+		buf.append('"');
+		for (int i = 0; i < sv.length(); i++) {
+			char c = sv.charAt(i);
+			switch (c) {
+				// In JSON all control charters must be escaped. 
+				case 0x00: buf.append("\\u0000"); break;	// Do not allow 0 in strings
+				case 0x01: buf.append("\\u0001"); break;
+				case 0x02: buf.append("\\u0002"); break;
+				case 0x03: buf.append("\\u0003"); break;
+				case 0x04: buf.append("\\u0004"); break;
+				case 0x05: buf.append("\\u0005"); break;
+				case 0x06: buf.append("\\u0006"); break;
+				case 0x07: buf.append("\\u0007"); break;	// Terminal bell, \a
+				case 0x08: buf.append("\\u0008"); break;	// Backspace \b
+				case '\t': buf.append("\\t"); break;
+				case '\n': buf.append("\\n"); break;
+				case 0x0b: buf.append("\\u000b"); break;	// Vertical Tab \v
+				case 0x0c: buf.append("\\u000c"); break;	// Formfeed \f
+				case '\r': buf.append("\\u000d"); break;	// Keep the flow tradition of not using \r
+				case 0x0e: buf.append("\\u000e"); break;
+				case 0x0f: buf.append("\\u000f"); break;
+				case 0x10: buf.append("\\u0010"); break;
+				case 0x11: buf.append("\\u0011"); break;
+				case 0x12: buf.append("\\u0012"); break;
+				case 0x13: buf.append("\\u0013"); break;
+				case 0x14: buf.append("\\u0014"); break;
+				case 0x15: buf.append("\\u0015"); break;
+				case 0x16: buf.append("\\u0016"); break;
+				case 0x17: buf.append("\\u0017"); break;
+				case 0x18: buf.append("\\u0018"); break;
+				case 0x19: buf.append("\\u0019"); break;
+				case 0x1a: buf.append("\\u001a"); break;
+				case 0x1b: buf.append("\\u001b"); break;
+				case 0x1c: buf.append("\\u001c"); break;
+				case 0x1d: buf.append("\\u001d"); break;
+				case 0x1e: buf.append("\\u001e"); break;
+				case 0x1f: buf.append("\\u001f"); break;
+				case '\\': buf.append("\\\\"); break;
+				case '"': buf.append("\\\""); break;
+				default: buf.append(c); break;
+			}
+		}
+		buf.append('"');
+		return buf.toString();
+	}
 }
 

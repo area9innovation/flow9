@@ -2,224 +2,301 @@ import sequtils
 import typetraits
 import strutils
 import unicode
-
-type
-  List*[T] = object of RootObj
-
-  Cons*[T] = object of List[T]
-    head*: T
-    tail*: List[T]
-
-  EmptyList*[T] = object of List[T]
+import math
+import tables
+import hashes
+import asyncdispatch
 
 # Runtime for NIM backend
 
-proc println2*[T](t : T): void =
-    echo(t)
+proc rt_escape(s: string): string = 
+  var r: string = ""
+  for ch in s:
+    case ch:
+    of '\n': r.add("\\n")
+    of '\t': r.add("\\t")
+    of '\r': r.add("\\r")
+    of '\\': r.add("\\\\")
+    of '"': r.add("\\\"")
+    else: r.add(ch)
+  return r
 
-proc fcPrintln2*[Ty](x: Ty): void =
-  debugEcho $x
+#[ General conversions ]#
 
-# Get a subrange of an array from index
-# if index < 0 or length < 1 it returns an empty array
-proc subrange*[T](s: seq[T], index: int, length : int): seq[T] {.inline.} =
-  s[index, index + len]
+  # to_string conversions
+proc rt_to_string*(): string = "{}"
+proc rt_to_string*(x: int32): string = intToStr(x)
+proc rt_to_string*(x: float): string = formatFloat(x)
+proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
+proc rt_to_string*(x: string): string = "\"" & x.rt_escape & "\""
 
-proc length*[T](s: seq[T]): int {.inline.} =
-  len(s)
+  # to_bool conversions
+proc rt_to_bool*(x: int32): bool = x != 0
+proc rt_to_bool*(x: float): bool = x != 0.0
+proc rt_to_bool*(x: bool): bool = x
+proc rt_to_bool*(x: string): bool = x != "false"
 
-proc concat*[T](s1, s2: seq[T]): seq[T] {.inline.} =
-  sequtils.concat(s1, s2)
+  # to_int conversions
+proc rt_to_int*(x: int32): int32 = x
+proc rt_to_int*(x: float): int32 = int32(round(x))
+proc rt_to_int*(x: bool): int32 = return if x: 1 else: 0
+proc rt_to_int*(x: string): int32 = int32(parseInt(x))
 
-proc map*[T, S](s: seq[T], op: proc (x: T): S): seq[S] {.inline.} =
-  sequtils.map(s, op)
+  # to_double conversions
+proc rt_to_double*(x: int32): float = float(x)
+proc rt_to_double*(x: float): float = x
+proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
+proc rt_to_double*(x: string): float = parseFloat(x)
 
-# Replace a given element in an array with a new value. Makes a copy
-#native replace : ([?], int, ?) -> [?] = Native.replace;
-proc replace*[T](s: seq[T], i: int, v: T): seq[T] =
-  if i<0 or s == nil:
-    return @[]
+type
+  # Basic runtime type kinds
+  RtType* = enum
+    # Atiomic types
+    rtVoid, rtBool, rtInt, rtDouble, rtString, rtNative,
+    # Composite types
+    rtArray, rtFunc, rtStruct
+
+  # Compile time type kinds
+  CtType* = enum
+    # Atiomic types
+    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow, ctUnion,
+    # Composite types
+    ctArray, ctFunc, ctStruct
+
+  # A complex type descriptor.
+  AlType* = tuple[op: CtType, args: seq[int32], name: string]
+
+#[ Representation of a dynamic type ]#
+
+  Flow* = ref object
+    case tp*: RtType
+    # Atiomic types
+    of rtVoid:   discard
+    of rtBool:   bool_v:   bool
+    of rtInt:    int_v:    int32
+    of rtDouble: double_v: float
+    of rtString: string_v: string
+    of rtNative: native_v: Native
+    # Composite types
+    of rtArray:  array_v:  seq[Flow]
+    of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
+    of rtStruct:
+      str_id: int32
+      str_name: string
+      str_args: seq[Flow]
+
+  Struct* = ref object of RootObj
+    id: int32
+  Array* = ref object
+    id: int32
+
+  Native* = ref object of RootObj
+    what: string
+    val: RootObj
+
+# Type index oprations
+var id2type*: seq[AlType]
+var type2id*: Table[AlType, int32]
+var id2fields*: seq[seq[string]]
+var struct2id*: Table[string, int32]
+
+proc rt_type_id_to_string*(id: int32): string =
+  let tp = id2type[id]
+  case tp.op:
+  of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
+  of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
+  of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
+  else: tp.name
+
+proc rt_type_id_to_struct_id*(id: int32): int32 =
+  return id2type[id].args[0]
+
+proc rt_find_type_id*(tp: AlType): int32 =
+  return if type2id.hasKey(tp): type2id[tp] else: -1
+
+proc rt_register_type*(tp: AlType): void =
+  if not type2id.hasKey(tp):
+    let id: int32 = int32(id2type.len)
+    id2type.add(tp)
+    type2id[tp] = id
   else:
-    var s1 = s & @[] # Copy of s
-    if len(s1) > i:
-      s1[i] = v
-    else:
-      add(s1, v) # Append item to the end of array, increasing length
-    return s1
+    echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
 
-# Apply a function which takes an index and each element of an array to give a new array
-proc mapi*[T, S](s: seq[T], op: proc (i: int, v: T): S): seq[S] =
-  var rv: seq[S] = newSeq(length(s))
-  for i in 0 .. s.len-1:
-    rv[i] = op(i, s[i])
-  return rv
+proc hash*(tp: AlType): Hash =
+  var h: Hash = 0
+  h = h !& hash(tp.op)
+  for arg in tp.args:
+    h = h !& hash(arg)
+  result = !$h
 
-proc enumFromTo*(f: int, t: int): seq[int] =
-  var n: int = t - f + 1
-  var rv: seq[int]
-
-  if (n < 0):
-    rv = @[]
-    return rv
-
-  for i in 0 .. n-1:
-    rv[i] = f + i
-
-  return rv
-
-# Apply a collecting function.  This is a left fold, i.e., it folds with the start of
-# the array first, i.e., fold([x1, x2, x3], x0, o) = ((x0 o x1) o x2) o x3
-proc fold*[T, S](arr: seq[T], init: S, op: proc(acc: S, v: T): S): S =
-  var ini = init
-  for x in arr:
-    ini = op(ini, x)
-  return ini
-
-# Apply a collecting function which takes an index, initial value and each element
-proc foldi*[T, S](xs: seq[T], init: S, fn: proc(idx: int, acc: S, v: T): S): S =
-  for i in 0..length(xs)-1:
-    init = fn(i, init, xs[i])
-  return init
-
-# Creates a new array, whose elements are selected from 'a' with a condition 'test'.
-proc filter*[T](a: seq[T]; test: proc (v: T): bool): seq[T] =
-  return sequtils.filter(a, test)
-
-# Apply a function which takes an index and each element of an array until it returns true
-# Returns index of last element function was applied to.
-proc iteriUntil*[T](a: seq[T], op: proc(idx: int, v: T): bool): int =
-  for i in 0..length(a)-1:
-    if op(i, a[i]):
-      return i
-  return length(a)
-
-# Apply a function to each element of an array
-proc iter*[T](a: seq[T], op: proc (v: T): void): void =
-  for x in a:
-    op(x)
-  return
-
-proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
-  return name(a.type) == name(b.type)
-
-proc getUrlParameter*(name: string): string =
-  ""
-
-proc toString*[T](a: T): string =
-  return $a
-
-proc strlen*(s: string): int =
-  return len(s);
-
-proc clipLenToRange(start: int, leng: int, size: int): int =
-  var leng1 = leng
-  var send = start + leng
-  if send > size or send  < 0:
-    leng1 = size - start
-  return leng1
-
-proc substring*(str: string, start: int, leng: int): string =
-  var slen = leng
-  var sstart = start
-  var strlen = len(str)
-  if slen < 0:
-    if (sstart < 0) :
-      slen = 0
-    else:
-      var smartLen1 = slen + sstart
-      if smartLen1 >= 0:
-        slen = 0
-      else:
-        var smartLen2 = smartLen1 + strlen
-        if (smartLen2 <= 0):
-          slen = 0
-        else:
-          slen = smartLen2
-
-  if (sstart < 0):
-    var smartStart = sstart + strlen
-    if (smartStart > 0):
-      sstart = smartStart
-    else:
-      sstart = 0
+proc rt_register_struct*(name: string, fields: seq[string]): void =
+  if not struct2id.hasKey(name):
+    let id: int32 = int32(id2fields.len)
+    id2fields.add(fields)
+    struct2id[name] = id
   else:
-    if (sstart >= strlen):
-      slen = 0
+    echo "struct " & name & " is aleady registered"
 
-    if (slen < 1):
-      return "";
-
-  slen = clipLenToRange(start, slen, strlen)
-  return substr(str, sstart, sstart + slen)
-
-proc strIndexOf*(s: string, sub: string): int =
-  return strutils.find(s, sub, 0)
-
-proc toLowerCase*(s: string): string =
-  return unicode.toLower(s)
-
-proc toUpperCase*(s: string): string =
-  return unicode.toLower(s)
-
-proc getCharCodeAt*(s: string, i: int): int =
-  if i >= 0 and i < len(s):
-    return cast[int](unicode.runeAt(s, i))
+proc rt_struct_name_to_id*(name: string): int32 =
+  if struct2id.hasKey(name):
+    return struct2id[name]
   else:
     return -1
 
-proc strsubsmart*(s: string, start: int, fl0wlen: int): string =
-    if start >= 0 and fl0wlen > 0:
-      substring(s, start, fl0wlen)
-    else:
-      var slen: int =
-        strlen(s)
-      var trueStart: int = (
-        if start >= 0: (
-          start
-        ) else: (
-          var ss: int =
-            slen+start;
-          if ss >= 0: (
-            ss
-          ) else:
-            0
-          )
-        )
-      var trueLength: int =
-        if fl0wlen > 0:
-          fl0wlen
-        else:
-          slen+fl0wlen-trueStart
-      substring(s, trueStart, trueLength)
+proc rt_struct_id_to_fields*(id: int32): seq[string] =
+  return if id < id2fields.len: id2fields[id] else: @[]
 
-proc list2array*[T](list: RootObj): seq[T] =
-  var p = list
-  var r = newSeq[T]()
-
-  while true:
-    echo name(p.type)
-    var n = name(p.type)
-    case n:
-    of "EmptyList":
-      break
-    of "Cons":
-      var c = cast[Cons[T]](p)
-      r = r & @[c.head]
-      p = c.tail
-    else:
-      discard
+proc rt_struct_name_to_fields*(name: string): seq[string] =
+  return rt_struct_id_to_fields(rt_struct_name_to_id(name))
 
 #[
-    if (p of EmptyList):
-      break
-    else:
-      if (p of Cons):
-        var c = cast[Cons[T]](p)
-        r = r & @[c.head]
-        p = c.tail
-      else:
-        discard
+	tp_v # 0 = void,
+    tp_b # 1 = bool,
+    tp_i # 2 = int,
+    tp_d # 3 = double,
+    tp_s # 4 = string,
+    tp_n # 5 = native,
+    tp_f # 6 = flow,
 ]#
-  return r
+
+proc rt_type_id*(): int32 = 0i32
+proc rt_type_id*(v: bool): int32 = 1i32
+proc rt_type_id*(v: int): int32 = 2i32
+proc rt_type_id*(v: float): int32 = 3i32
+proc rt_type_id*(v: string): int32 = 4i32
+proc rt_type_id*(v: Native): int32 = 5i32
+
+proc rt_type_id*(f: Flow): int32 =
+  case f.tp:
+  of rtVoid:   return 0i32
+  of rtBool:   return 1i32
+  of rtInt:    return 2i32
+  of rtDouble: return 3i32
+  of rtString: return 4i32
+  of rtNative: return 5i32
+  of rtArray:
+    if f.array_v.len == 0:
+      echo "type of an empty array can't be resolved at runtime"
+      return -1i32
+    else:
+      let el_type = rt_type_id(f.array_v[0])
+      return rt_find_type_id((ctArray, @[el_type], ""))
+  of rtFunc:
+    echo "type of a function can't be resolved at runtime"
+    return -1i32
+  of rtStruct: return f.str_id
 
 
+
+  # to_string conversions
+proc rt_to_string*(x: Struct): string
+proc rt_to_string*[R](fn: proc(): R): string = "<function>"
+proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
+proc rt_to_string*[T](x: seq[T]): string = 
+  var s = "["
+  for i in 0..x.len - 1:
+    if i > 0:
+      s.add(", ")
+    s.add(rt_to_string(x[i]))
+  s.add("]")
+  return s
+
+proc rt_to_string*(f: Flow): string = 
+  case f.tp:
+  of rtVoid:   return rt_to_string()
+  of rtBool:   return rt_to_string(f.bool_v)
+  of rtInt:    return rt_to_string(f.int_v)
+  of rtDouble: return rt_to_string(f.double_v)
+  of rtString: return rt_to_string(f.string_v)
+  of rtNative: return rt_to_string(f.native_v)
+  of rtArray:  return rt_to_string(f.array_v)
+  of rtFunc:   return "<function>"
+  of rtStruct:
+    var s = f.str_name & "("
+    for i in 0..f.str_args.len - 1:
+        if i > 0:
+           s.add(", ")
+        s.add(rt_to_string(f.str_args[i]))
+    s.add(")")
+    return s
+
+  # to_flow conversions
+proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
+proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, bool_v: b)
+proc rt_to_flow*(i: int32): Flow = Flow(tp: rtInt, int_v: i)
+proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
+proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
+proc rt_to_flow*(f: Flow): Flow = f
+proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, native_v: n)
+proc rt_to_flow*(x: Struct): Flow
+proc rt_to_flow*[T](arr: seq[T]): Flow =
+  var flow_seq = newSeq[Flow](arr.len)
+  for i in 0..arr.len - 1:
+    flow_seq[i] = rt_to_flow(arr[i])
+  Flow(tp: rtArray, array_v: flow_seq)
+
+proc rt_to_flow*[R](fn: proc(): R): Flow =
+  Flow(
+    tp: rtFunc, 
+    func_v: proc(x: seq[Flow]): Flow =
+      let y: R = fn()
+      return rt_to_flow(y)
+  )
+
+  # to_void conversions
+proc rt_to_void*(x: Flow): void = 
+  case x.tp:
+  of rtVoid: discard
+  else: assert(false, "illegal conversion")
+
+proc rt_to_bool*(x: Flow): bool =
+  case x.tp:
+  of rtInt:    return rt_to_bool(x.int_v)
+  of rtBool:   return rt_to_bool(x.bool_v)
+  of rtDouble: return rt_to_bool(x.double_v)
+  of rtString: return rt_to_bool(x.string_v)
+  else: assert(false, "illegal conversion")
+
+proc rt_to_int*(x: Flow): int32 =
+  case x.tp:
+  of rtInt:    return rt_to_int(x.int_v)
+  of rtBool:   return rt_to_int(x.bool_v)
+  of rtDouble: return rt_to_int(x.double_v)
+  of rtString: return rt_to_int(x.string_v)
+  else: assert(false, "illegal conversion")
+
+proc rt_to_double*(x: Flow): float =
+  case x.tp:
+  of rtInt:    return rt_to_double(x.int_v)
+  of rtBool:   return rt_to_double(x.bool_v)
+  of rtDouble: return rt_to_double(x.double_v)
+  of rtString: return rt_to_double(x.string_v)
+  else: assert(false, "illegal conversion")
+
+proc rt_to_native*(x: Flow): Native =
+  case x.tp:
+  of rtNative: return x.native_v
+  else: assert(false, "illegal conversion")
+
+proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
+  case x.tp:
+  of rtStruct:
+    let fields = rt_struct_name_to_fields(x.str_name)
+    var i = 0
+    for arg in x.str_args:
+      if fields[i] == field_name:
+        return arg
+      i += 1
+    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
+  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
+
+proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
+  if s.tp == rtStruct:
+    let s_fields = rt_struct_name_to_fields(s.str_name)
+    var i = 0
+    for f in s_fields:
+      if f == field:
+        break
+      i += 1
+    if i != s_fields.len:
+      s.str_args[i] = val

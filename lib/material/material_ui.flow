@@ -6,6 +6,7 @@ import material/internal/material_moving_point;
 import ui/animate/teasing;
 import form/realhtmlworkaround;
 import net/integration_url_parameter;
+import sys/progressivewebtools;
 
 export {
 	// A function which constructs a bunch of MRadio that belong to one group
@@ -13,6 +14,30 @@ export {
 	MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material];
 	MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material;
 		MRadioParams(caption : Material, title : Maybe<string>);
+	// Helper to navigate list like in radio-group
+	MRadioArrowNavigation(
+		i : int,
+		listLen : int,
+		makeListItem : ([MButtonState]) -> Material,
+		focusedIdx : DynamicBehaviour<int>,
+		focusEnabledIdx : DynamicBehaviour<int>,
+		getDefFocusableItem : () -> int,
+		selectItem : () -> void,
+		resetSelection : () -> bool,
+		keys : Pair<int, int>
+	) -> Material;
+
+	MRadioArrowNavigationExt(
+		i : int,
+		listLen : int,
+		makeListItem : ([MButtonState]) -> Material,
+		focusedIdx : DynamicBehaviour<int>,
+		focusEnabledIdx : DynamicBehaviour<int>,
+		getDefFocusableItem : () -> int,
+		selectItem : () -> void,
+		resetSelection : () -> bool,
+		keys : Pair<int, int>
+	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
 
 	// Help to create common patterns, when you need to place smth at the top
 	// of another material
@@ -228,7 +253,7 @@ MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Ma
 
 MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material {
 	MRadiosExtended(index, style, params, colsCombiner)
-	|> (\radios -> if (colsCombiner) MFlexibleGrid(const(radios), []) else MLinesA(radios))
+	|> (\radios -> if (colsCombiner) MFlexibleGrid(const(radios), [TightWidth()]) else MLinesA(radios))
 }
 
 MRadiosExtended(
@@ -244,52 +269,95 @@ MRadiosExtended(
 	forwardKey = if (isColsCombiner) KEY_RIGHT else KEY_DOWN;
 
 	mapi(params, \i, par -> {
-		focused = make(false);
 		radioStyle = concatA([
 			style,
 			eitherMap(par.title, \str -> [MButtonTitle(const(str))], []),
-			[MFocused(focused), MFocusEnabled(feq(focusEnabledIdx, i))]
 		]);
 
-		MRadio(par.caption, i, index, radioStyle)
-		|> (\m -> MInteractive([
-			KeyUp2(\handled, ke -> {
-				if (!handled && fgetValue(focused)) {
-					idx = getValue(focusedIdx);
-					updateFocusedAnswer = \newIdx -> nextDistinct(focusedIdx, newIdx);
-					if (ke.keycode == backwardsKey) {
-						updateFocusedAnswer(if (idx == 0) length(params) - 1 else idx - 1);
-						true
-					} else if (ke.keycode == forwardKey) {
-						updateFocusedAnswer(if (idx == length(params) - 1) 0 else idx + 1);
-						true
-					} else if (ke.keycode == KEY_ESCAPE) {
-						nextDistinct(index, -1);
-						true
-					} else {
-						false
-					}
-				} else handled
+		MRadioArrowNavigation(
+			i,
+			length(params),
+			\st -> MRadio(par.caption, i, index, concat(radioStyle, st)),
+			focusedIdx,
+			focusEnabledIdx,
+			\ -> {
+				currentSelected = fgetValue(index);
+				if (currentSelected == -1) 0 else currentSelected
+			},
+			\ -> nextDistinct(index, i),
+			\ -> {nextDistinct(index, -1); true},
+			Pair(backwardsKey, forwardKey)
+		)
+	})
+}
+
+// Navigate through list by arrows, not by tab. Wrap each item of list into this.
+MRadioArrowNavigation(
+	i : int,
+	listLen : int,
+	makeListItem : ([MButtonState]) -> Material,
+	focusedIdx : DynamicBehaviour<int>,
+	focusEnabledIdx : DynamicBehaviour<int>,
+	getDefFocusableItem : () -> int,
+	selectItem : () -> void,
+	resetSelection : () -> bool,
+	keys : Pair<int, int>
+) -> Material {
+	MRadioArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, selectItem, resetSelection, keys).first;	
+}
+
+MRadioArrowNavigationExt(
+	i : int,
+	listLen : int,
+	makeListItem : ([MButtonState]) -> Material,
+	focusedIdx : DynamicBehaviour<int>,
+	focusEnabledIdx : DynamicBehaviour<int>,
+	getDefFocusableItem : () -> int,
+	selectItem : () -> void,
+	resetSelection : () -> bool,
+	keys : Pair<int, int>
+) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>> {
+
+	focused = make(false);
+	focusEnabled = feq(focusEnabledIdx, i);
+
+	makeListItem([MFocused(focused), MFocusEnabled(focusEnabled)])
+	|> (\m -> MInteractive([
+		KeyUp2(\handled, ke -> {
+			if (!handled && fgetValue(focused)) {
+				idx = getValue(focusedIdx);
+				updateFocusedAnswer = \newIdx -> nextDistinct(focusedIdx, newIdx);
+				if (ke.keycode == keys.first) { // backwards
+					updateFocusedAnswer(if (idx == 0) listLen - 1 else idx - 1);
+					true
+				} else if (ke.keycode == keys.second) { // forward
+					updateFocusedAnswer(if (idx == listLen - 1) 0 else idx + 1);
+					true
+				} else if (ke.keycode == KEY_ESCAPE) {
+					resetSelection()
+				} else {
+					false
+				}
+			} else handled
+		})
+	], m))
+	|> (\m -> MConstruct([
+			makeSubscribe(focusedIdx, \focIdx ->
+				if (focIdx == i) deferUntilNextFrameRendered(\ -> {
+					nextDistinct(focusEnabledIdx, i);
+					nextDistinct(focused, true);
+					selectItem()
+				}) else {
+					nextDistinct(focused, false);
+				}
+			),
+			makeSubscribe(focused, \foc -> if (foc) {
+				deferUntilNextFrameRendered(\ -> nextDistinct(focusedIdx, i))
+			} else {
+				nextDistinct(focusEnabledIdx, getDefFocusableItem());
 			})
 		], m))
-		|> (\m -> MConstruct([
-				makeSubscribe(focusedIdx, \focIdx ->
-					if (focIdx == i) deferUntilNextFrameRendered(\ -> {
-						nextDistinct(focusEnabledIdx, i);
-						nextDistinct(focused, true);
-						nextDistinct(index, i);
-					}) else {
-						nextDistinct(focused, false);
-					}
-				),
-				makeSubscribe(focused, \foc -> if (foc) {
-					deferUntilNextFrameRendered(\ -> nextDistinct(focusedIdx, i))
-				} else {
-					currentSelected = getValue(index);
-					nextDistinct(focusEnabledIdx, if (currentSelected == -1) 0 else currentSelected);
-				})
-			], m))
-	})
+	|> (\m -> Triple(m, focused, focusEnabled))
 }
 
 MRightShift(m : Material) -> Material {
