@@ -1,15 +1,8 @@
-import string_utils;
-import tools/flowc/backends/common;
-import tools/flowc/backends/nim/fi2nim_defines;
 import tools/flowc/backends/nim/fi2nim_utils;
 import tools/flowc/manipulation/transform_exps;
 
 export {
 	fiNimCompileToplevel(env : FiNimEnv, decl: FiDeclaration, indent : string) -> string;
-	fi2nimStructIds(env : FiNimEnv) -> string;
-	fi2nimStructDef(env : FiNimEnv, struct : FiTypeStruct) -> string;
-	fi2nimUnionFuncs(env : FiNimEnv) -> string;
-	fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string;
 }
 
 fiNimCompileToplevel(env : FiNimEnv, decl : FiDeclaration, indent : string) {
@@ -351,10 +344,12 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 				Some(dc): fi2nimMaybeIndent(fiNimCompile(env, dc.body, returns));
 				None(): "assert(false,\"illegal struct id in switch: \" & $StructType(" + x_code + ".id))";
 			}
-			"case StructType(" + x_code + ".id)" + "\n" +
+			"case StructType(rt_type_id_to_struct_id(" + x_code + ".id))" + "\n" +
 			concatStrings(add_newlines(concat(
-				map(non_defcases, \c -> {
-					superglue(
+				map(non_defcases, \c ->
+					"of st_" + c.struct + ": # " + c.struct + 
+							fi2nimSureIndent(fiNimCompile(env, c.body, returns))
+					/*superglue(
 						filtermap(
 							switch (lookupTree(env.specializations, c.struct)) {
 								Some(specs): set2array(specs);
@@ -367,8 +362,8 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 						),
 						\spec -> "of " + fi2nimTypeNameId(env, spec) + ": # " + prettyFiType(dummyPretty, spec, makeSet()) + 
 							fi2nimSureIndent(fiNimCompile(env, c.body, returns)), "\n"
-					)
-				}),
+					)*/
+				),
 				["else:" + fi2nimSureIndent(def_case)]
 			)));
 		}
@@ -508,114 +503,4 @@ fiNimCompileDiv(env : FiNimEnv, arg_type: FiType, a1 : string, op : string, a2 :
 	} else {
 		a1 + op + a2
 	}) + ")";
-}
-
-fi2nimStructId(env : FiNimEnv, struct: FiTypeStruct) -> string {
-	"st_" +
-	if (containsKeyTree(env.specializations, struct.name)) {
-		fi2nimMangleStruct(struct);
-	} else {
-		struct.name;
-	}
-}
-
-fi2nimTypeNameId(env : FiNimEnv, typename: FiTypeName) -> string {
-	"st_" +
-	if (containsKeyTree(env.specializations, typename.name)) {
-		fi2nimMangleType(typename);
-	} else {
-		typename.name;
-	}
-}
-
-fi2nimStructIds(env : FiNimEnv) -> string {
-	fiNimIndent + "StructType = enum\n" +
-	strGlue(map(env.specializedStructs, \s -> fiNimIndent2 + fi2nimStructId(env, s)), ",\n") + "\n\n"
-}
-
-fi2nimStructDef(env : FiNimEnv, struct : FiTypeStruct) -> string {
-	typars = fiNimParamsForInstantiate(env, struct.typars);
-	fields = if (length(struct.args) == 0) "" else
-	"\n" + superglue(struct.args, \arg -> fiNimIndent2 + fiNimRenameKeyword(arg.name) + ": " + fiNimCompileType(env, arg.type), "\n");
-	struct_type = struct.name + typars;
-	fiNimIndent + struct_type + " = ref object of Struct" + fields + "\n\n";
-}
-
-fi2nimStructFuncs(env : FiNimEnv, struct : FiTypeStruct) -> string {
-	typars = fiNimParamsForInstantiate(env, struct.typars);
-	struct_type = struct.name + typars;
-	specs = set2array(lookupTreeDef(env.specializations, struct.name, makeSet()));
-
-	// struct_id
-	struct_ids = map(specs, \spec ->
-		switch (spec) {
-			FiTypeName(__,spec_typars): {
-				typars_subst = foldi(struct.typars, makeTree(), \i, acc, tp -> 
-					switch (tp) {
-						FiTypeParameter(nm): setTree(acc, nm, spec_typars[i]);
-						default: fail0("must be FiTypeParameter, got: " + toString(tp));
-					}
-				);
-				"#" + prettyFiType(dummyPretty, spec, makeSet()) + "\n" + 
-				"proc rt_struct_id_" + struct.name + "(" +  
-					supergluei(struct.args, \i, arg -> 
-						"a_" + i2s(i) + ": " + fiNimCompileType(env, fiApplyTypeSubstitution(typars_subst, arg.type)), 
-						", "
-					)
-				+ "): int32 =\n" +
-					fiNimIndent + "cast[int32](st_" + fi2nimMangleType(spec) + ")\n\n";
-			}
-			default: fail0("struct specialization must be FiTypeName");
-		}
-	);
-
-	// struct_id
-	struct_id = \x -> if (length(specs) == 0) {
-		"int32(" + fi2nimStructId(env, struct) + ")";
-	} else {
-		"rt_struct_id_" + struct.name + "(" + 
-			supergluei(struct.args, \i, arg -> 
-				if (x) "a_" + i2s(i) else "x." + fiNimRenameKeyword(arg.name), ", "
-			) + 
-		")";
-	}
-
-	// make struct
-	make_args = concat(["id: " + struct_id(true)], mapi(struct.args, \i, arg -> fiNimRenameKeyword(arg.name) + ": a_" + i2s(i)));
-	make_struct = "proc make_" + struct_type + "(" + 
-		supergluei(struct.args, \i, arg -> "a_" + i2s(i) + ": " + fiNimCompileType(env, arg.type), ", ")  + "): " + struct_type + " =\n" +
-	fiNimIndent + struct_type + "(" + strGlue(make_args, ", ") + ")\n\n";
-
-	concatStrings(concat(struct_ids, [make_struct]));
-}
-
-// Union is a general struct 
-fi2nimUnionFuncs(env : FiNimEnv) -> string {
-	to_flow = "proc rt_to_flow(x: Struct): Flow =\n" +
-		fiNimIndent + "case StructType(x.id):\n" +
-		superglue(env.specializedStructs, 
-			\spec -> {
-				spec_type = FiTypeName(spec.name, spec.typars);
-				fiNimIndent + "of " + fi2nimStructId(env, spec) + ":\n" + 
-				(if (length(spec.args) == 0) "" else fiNimIndent2 + "let y = " + fiNimCompileType(env, spec_type) + "(x)\n") +
-				fiNimIndent2 + "Flow(tp: rtStruct, " + 
-				"str_id: cast[int32](" + fi2nimStructId(env, spec) + "), " +
-				"str_name: \"" + spec.name + "\", " +
-				"str_fields: @[" + superglue(spec.args, \arg ->
-					"FlowField(name: \"" + arg.name + "\", val: rt_to_flow(y." + fiNimRenameKeyword(arg.name) + "))", ", ") + 
-				"])"
-			}, "\n"
-		) + "\n\n";
-	to_string = "proc rt_to_string(x: Struct): string =\n" +
-		fiNimIndent + "case StructType(x.id):\n" +
-		superglue(env.specializedStructs, 
-			\spec -> {
-				spec_type = FiTypeName(spec.name, spec.typars);
-				fiNimIndent + "of " + fi2nimStructId(env, spec) + ":\n" +
-				(if (length(spec.args) == 0) "" else fiNimIndent2 + "let y = " + fiNimCompileType(env, spec_type) + "(x)\n") +
-				fiNimIndent2 + "return \"" + spec.name + if (length(spec.args) == 0) "()\"" else
-					"(\" & " + superglue(spec.args, \arg -> "rt_to_string(y." + fiNimRenameKeyword(arg.name) + ")", " & \", \" & ") + " & \")\""
-			}, "\n"	
-		) + "\n\n";
-	concatStrings([to_flow, to_string]);
 }
