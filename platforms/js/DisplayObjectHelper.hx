@@ -518,7 +518,14 @@ class DisplayObjectHelper {
 		if (untyped clip.setFocus != null && clip.setFocus(focus)) {
 			return true;
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
-			if (focus && accessWidget.element.focus != null) {
+			// To temprorarily set focus on simple text
+			if (untyped clip.nativeWidget && untyped clip.nativeWidget.classList.contains('flow_focusable')) {
+				if (focus) {
+					untyped clip.nativeWidget.setAttribute('tabindex', '-1');
+					untyped clip.nativeWidget.focus();
+					return true;
+				}
+			} else if (focus && accessWidget.element.focus != null) {
 				accessWidget.element.focus();
 				if (RenderSupport.EnableFocusFrame) accessWidget.element.classList.add("focused");
 
@@ -2062,11 +2069,10 @@ class DisplayObjectHelper {
 			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
 				if (childWidget.getAttribute('flow-force-focus') == 'true') {
 					RenderSupport.once("stagechanged", function() {
-						var childrenArray = untyped Array.from(child.nativeWidget.children);
-						untyped __js__("childrenArray.forEach(ch => ch.setAttribute('aria-hidden', 'true'));");
+						updateDialogElementsAriaHidden(childWidget, true);
 						var unhideDialogContent = function() {
 							Native.timer(500, function() {
-								untyped __js__("childrenArray.forEach(ch => ch.removeAttribute('aria-hidden'));");
+								updateDialogElementsAriaHidden(childWidget, false);
 							});
 						};
 
@@ -2076,6 +2082,7 @@ class DisplayObjectHelper {
 								var dialogTitle = dialogTitleArr[0];
 								if (dialogTitle != null) {
 									dialogTitle.setAttribute("tabindex", "-1");
+									dialogTitle.setAttribute('aria-hidden', 'false');
 									dialogTitle.focus();
 								}
 								unhideDialogContent();
@@ -2096,6 +2103,21 @@ class DisplayObjectHelper {
 			applyScrollFnChildren(child);
 		} else {
 			appendNativeWidget(clip.parent, child);
+		}
+	}
+
+	public static function updateDialogElementsAriaHidden(parent : Element, isAriaHidden : Bool) : Void {
+		var childrenArray = untyped Array.from(parent.children);
+		if (parent.tagName == 'P' || parent.tagName == 'SPAN' || parent.tagName == 'BUTTON') {
+			if (isAriaHidden) {
+				parent.setAttribute("aria-hidden", 'true');
+			} else {
+				parent.removeAttribute("aria-hidden");
+			}
+		}
+
+		for (child in parent.children) {
+			updateDialogElementsAriaHidden(child, isAriaHidden);
 		}
 	}
 

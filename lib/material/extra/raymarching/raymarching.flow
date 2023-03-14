@@ -106,6 +106,15 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 							]
 						)
 					]);
+					hostCall("recompileMeshShader", [
+						i2s(id),
+						blueprint(
+							"#include material/extra/raymarching/mesh.frag",
+							[
+								"light", RMIExp2GLSL(RMLights2RMIExp(l)),
+							]
+						)
+					]);
 					hostCall(
 						"setDistanceFunction",
 						[
@@ -418,28 +427,25 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 			),
 			makeSubscribeTrigger(
 				webglContextLoadedB,
-				fsubselect(fmap(meshesB, \m -> fquadruple(m.position, m.rotation, m.scale, switch (m.color) {
-					RMColor(color): color;
-					RMTexture(texture, parameters): const(0xFFFFFF);
+				fsubselect(fmap(meshesB, \m -> fpair(ftriple(m.position, m.rotation, m.scale), switch (m.material) {
+					RMColor(color): fpair(color, const(""));
+					RMTexture(texture, parameters): fpair(const(0xFFFFFF), texture);
 				})), FLift(fmerge)),
 				\meshParameters -> {
-					positions =  map(meshParameters, \m -> {
-						position = expandRMCoordinate(m.first);
-						[position.x, position.y, position.z]
+					model = map(meshParameters, \m : Pair<Triple<RMCoordinate, RMCoordinate, RMCoordinate>, Pair<int, string>> -> {
+						position = expandRMCoordinate(m.first.first);
+						rotation = expandRMCoordinate(m.first.second);
+						scale = expandRMCoordinate(m.first.third);
+						[position.x, position.y, position.z, rotation.x, rotation.y, rotation.z, scale.x, scale.y, scale.z]
 					});
-					rotations =  map(meshParameters, \m -> {
-						rotation = expandRMCoordinate(m.second);
-						[rotation.x, rotation.y, rotation.z]
-					});
-					scales =  map(meshParameters, \m -> {
-						scale = expandRMCoordinate(m.third);
-						[scale.x, scale.y, scale.z]
-					});
-					colors =  map(meshParameters, \m -> {
-						color = hexColor2RMI(m.fourth);
+					colors = map(meshParameters, \m -> {
+						color = hexColor2RMI(m.second.first);
 						[color.x, color.y, color.z]
 					});
-					hostCall("updateMeshParameters", [flow(i2s(id)), flow(positions), flow(rotations), flow(scales), flow(colors)])|> ignore;
+					textures = map(meshParameters, \m -> {
+						m.second.second
+					});
+					hostCall("updateMeshParameters", [flow(i2s(id)), flow(model), flow(colors), flow(textures)])|> ignore;
 				}
 			),
 			\ -> when(webglContextLoadedB, \-> getTextCoords(id, textPositionsB)),
@@ -468,6 +474,10 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 					"numRepetitions", i2s(fixCounter(rmiScene.first.repetitionCounter)),
 					"numParameters", i2s(rmiScene.first.offset / 4 + 1),
 					"generatedFunctions", generatePolygonFunctions(rmiScene.first.polygonPoints),
+				]),
+				"#include material/extra/raymarching/mesh.vert",
+				blueprint("#include material/extra/raymarching/mesh.frag", [
+					"light", lightGlsl,
 				])
 			),
 			MShow(settings.showFps, MSelect(fpsB, \fps -> MText(attachOutline(i2s(fps) + " fps"), [EscapeHTML(false)]))),
@@ -492,7 +502,15 @@ MDynamicRaymarching(sceneB : Transform<RMScene>, lightB : Transform<RMLights>, s
 }
 
 sharedScriptInserted : ref Maybe<native> = ref None();
-displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, scriptContent : string, shaderVertex : string, shaderFragment : string) -> Material {
+displayRaymarchingCanvas(
+	id : int,
+	webglContextLoadedB : Transform<bool>,
+	scriptContent : string,
+	rayShaderVertex : string,
+	rayShaderFragment : string,
+	meshShaderVertex : string,
+	meshShaderFragment : string,
+) -> Material {
 	whB = make(WidthHeight(0.0, 0.0));
 	MInspect([IAvailable(whB)], 
 		MHTMLStage(whB, \stage -> {
@@ -500,8 +518,8 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			scriptGLM = createElement("script");
 			scriptShaderVertex = createElement("script");
 			scriptShaderFragment = createElement("script");
-			meshShaderVertex = createElement("script");
-			meshShaderFragment = createElement("script");
+			scriptMeshShaderVertex = createElement("script");
+			scriptMeshShaderFragment = createElement("script");
 			script = createElement("script");
 
 			setCanvasSize = \wh -> {
@@ -520,16 +538,16 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			})();
 			setAttribute(scriptShaderVertex, "type", "text/plain", true);
 			setAttribute(scriptShaderVertex, "id", "vertex-shader" + i2s(id), true);
-			setAttribute(scriptShaderVertex, "innerHTML", shaderVertex, true);
+			setAttribute(scriptShaderVertex, "innerHTML", rayShaderVertex, true);
 			setAttribute(scriptShaderFragment, "type", "text/plain", true);
 			setAttribute(scriptShaderFragment, "id", "fragment-shader" + i2s(id), true);
-			setAttribute(scriptShaderFragment, "innerHTML", shaderFragment, false);
-			setAttribute(meshShaderVertex, "type", "text/plain", true);
-			setAttribute(meshShaderVertex, "id", "mesh-vertex-shader" + i2s(id), true);
-			setAttribute(meshShaderVertex, "innerHTML", "#include material/extra/raymarching/mesh.vert", true);
-			setAttribute(meshShaderFragment, "type", "text/plain", true);
-			setAttribute(meshShaderFragment, "id", "mesh-fragment-shader" + i2s(id), true);
-			setAttribute(meshShaderFragment, "innerHTML", "#include material/extra/raymarching/mesh.frag", false);
+			setAttribute(scriptShaderFragment, "innerHTML", rayShaderFragment, false);
+			setAttribute(scriptMeshShaderVertex, "type", "text/plain", true);
+			setAttribute(scriptMeshShaderVertex, "id", "mesh-vertex-shader" + i2s(id), true);
+			setAttribute(scriptMeshShaderVertex, "innerHTML", meshShaderVertex, true);
+			setAttribute(scriptMeshShaderFragment, "type", "text/plain", true);
+			setAttribute(scriptMeshShaderFragment, "id", "mesh-fragment-shader" + i2s(id), true);
+			setAttribute(scriptMeshShaderFragment, "innerHTML", meshShaderFragment, false);
 			setAttribute(script, "innerHTML", scriptContent, false);
 
 			// This script contains global storage to dipatch hostCalls between multiple contexts. So it is injected only once.
@@ -544,8 +562,8 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 			appendChild(stage, canvas);
 			appendChild(stage, scriptShaderVertex);
 			appendChild(stage, scriptShaderFragment);
-			appendChild(stage, meshShaderVertex);
-			appendChild(stage, meshShaderFragment);
+			appendChild(stage, scriptMeshShaderVertex);
+			appendChild(stage, scriptMeshShaderFragment);
 			appendChild(stage, script);
 			\ -> {
 				unsSize();
@@ -553,8 +571,8 @@ displayRaymarchingCanvas(id : int, webglContextLoadedB : Transform<bool>, script
 				removeElementChild(stage, canvas);
 				removeElementChild(stage, scriptShaderVertex);
 				removeElementChild(stage, scriptShaderFragment);
-				removeElementChild(stage, meshShaderVertex);
-				removeElementChild(stage, meshShaderFragment);
+				removeElementChild(stage, scriptMeshShaderVertex);
+				removeElementChild(stage, scriptMeshShaderFragment);
 				removeElementChild(stage, script);
 				removeElementChild(stage, sharedScript);
 			}

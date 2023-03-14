@@ -1,9 +1,12 @@
 import tools/flowc/incremental/fiexp;
+import tools/flowc/incremental/fi_helpers;
 import ds/set;
 
 export {
 	fifreevars(e : FiExp) -> Set<string>;
 	fcfreevars(e : FcExp) -> Set<string>;
+	// Find what constructors are called, and what types we switch on
+	fifreetypes(e : FiExp) -> Set<string>;
 }
 
 fifreevars(e : FiExp) -> Set<string> {
@@ -31,6 +34,55 @@ fifreevarsBoundFree(expr : FiExp, bound : Set<string>, free : Set<string>) -> Se
         FiUnsafe(__, fb, __, __):     fifreevarsBoundFree(fb, bound, free);
 	}
 }
+
+fifreetypes(e : FiExp) -> Set<string> {
+	fifreetypesFree(e, makeSet());
+}
+
+fifreetypesFree(expr : FiExp, ofree : Set<string>) -> Set<string> {
+	fold_freetypes = \es, f -> fold(es, f, \acc, e -> fifreetypesFree(e, acc));
+	free = extractTypeNames(ofree, fiExpType(expr));
+	switch (expr) {
+		FiLambda(args, e, __, __): {
+			nfree = fold(args, free, \acc, arg -> {
+				extractTypeNames(acc, arg.type)
+			});
+			fifreetypesFree(e, nfree);
+		}
+		FiCall(f, es, __, __):        fold_freetypes(es, fifreetypesFree(f, free));
+		FiVar(x, __, __):             free;
+		FiLet(x, __, e1, e2, __, __): fifreetypesFree(e2, fifreetypesFree(e1, free));
+		FiIf(e1, e2, e3, __, __):     fold_freetypes([e1, e2, e3], free);
+		FiSwitch(e, t, cs, __, __):  {
+			nfree = extractTypeNames(free, t);
+			fold(cs, fifreetypesFree(e, nfree), \acc, c -> {
+				if (c.struct == "default") fifreetypesFree(c.body, acc)
+				else fifreetypesFree(c.body, insertSet(acc, c.struct))
+			});
+		}
+		FiCast(e, f, t, __, __):    {
+			// TODO: We could extract types from the casts?
+			fifreetypesFree(e, free);
+		}
+		FiSeq(es, __, __):            fold_freetypes(es, free);
+		FiCallPrim(prim, es, __, __):   {
+			nfree = switch (prim) {
+				FcStructPrim(s): insertSet(free, s);
+				default: free;
+			};
+			fold_freetypes(es, nfree);
+		}
+		FiString(__, __):             free;
+		FiBool(__, __):               free;
+		FiDouble(__, __):             free;
+		FiVoid(__):                   free;
+		FiInt(__, __):                free;
+        FiRequire(__, e, __, __):     fifreetypesFree(e, free);
+        FiUnsafe(__, fb, __, __):     fifreetypesFree(fb, free);
+	}
+}
+
+
 
 fcfreevars(e : FcExp) -> Set<string> {
 	fcfreevarsBoundFree(e, makeSet(), makeSet());

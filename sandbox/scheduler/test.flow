@@ -1,0 +1,90 @@
+import tools/flow9/pexp/parse;
+import tools/flow9/dexp/desugar;
+import sandbox/scheduler/scheduler;
+import math/md5;
+
+JobContext(
+	filename : string,
+);
+
+JobOutput(
+	output : string,
+	parse : PExp
+);
+
+makeCompileProgramJob(scheduler : Scheduler<JobContext, JobOutput>, file : string) -> Job<JobContext, JobOutput> {
+	parentId = makeJobId(scheduler);
+	cacheId = md5(getFileContent(file));
+
+	parseJob = makeParseJob(scheduler, parentId, cacheId, file);
+	addJob(scheduler, parseJob);
+	Job(
+		parentId,
+		2, 0,
+		[parseJob.id],
+		"Compile Program",
+		JobContext(file),
+		cacheId,
+		true,
+		\task : Task<JobContext, JobOutput> -> {
+			Promise(
+				\onDone : (JobOutput) -> void, onError : (string) -> void -> {
+					onDone(JobOutput("done", PVoid(-1)))
+				}
+			)
+		},
+		ref None()
+	);
+}
+
+makeParseJob(scheduler : Scheduler<JobContext, JobOutput>, parentId : int, cacheId : string, file : string) -> Job<JobContext, JobOutput> {
+	id = makeJobId(scheduler);
+	Job(
+		id,
+		1, parentId,
+		[
+		],
+		"Parse",
+		JobContext(file),
+		cacheId,
+		true,
+		\task : Task<JobContext, JobOutput> -> {
+			Promise(
+				\onDone : (JobOutput) -> void, onError : (string) -> void -> {
+					err = ref false;
+					pexp = parsePExp(getFileContent(file), \e -> {
+						err := true;
+						println(e);
+						onError(e);
+					});
+					if (^err){
+					} else {
+						println("Parsed " + file);
+						imports = getDImports(pexp);
+						importDeps = map(imports, \i : DImport -> {
+							icacheId = md5(getFileContent(i.path));
+							makeParseJob(scheduler, id, icacheId, i.path)
+						});
+						println("TODO: Add desugaring job with dependent parses");
+						onDone(JobOutput("file", pexp));
+					}
+				}
+			)
+		},
+		ref None()
+	)
+}
+
+main() {
+	scheduler = makeScheduler();
+
+	dispose = runScheduler(scheduler);
+
+	job1 = makeCompileProgramJob(scheduler, "file.flow");
+	addJob(scheduler, job1);
+
+	timer(1000, \ -> {
+		dispose();
+		quit(0);
+	})
+}

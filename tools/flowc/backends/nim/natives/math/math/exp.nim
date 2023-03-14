@@ -1,0 +1,1 @@
+#native exp : (double) -> double = Native.exp; - is already defined

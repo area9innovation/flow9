@@ -1,0 +1,1 @@
+#native quit : io (code : int32) -> void = Native.quit; - is already defined in nim environment

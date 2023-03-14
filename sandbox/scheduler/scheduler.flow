@@ -1,0 +1,351 @@
+import ds/tree;
+import sys/concurrent;
+import promise;
+
+export {
+	/*
+	A scheduler for running a bunch of jobs based on asynchronous functions
+	that will run in multiple threads. The jobs support priorities, parents and dependencies. 
+	There is also a caching mechanism.
+	*/
+	makeScheduler() -> Scheduler<?, ??>;
+
+	// Run a scheduler asynchronously. 
+	// Call the destructor when you want to stop the pipeline completely
+	runScheduler(scheduler : Scheduler<?, ??>) -> () -> void;
+
+	// Construct a new job id
+	makeJobId(scheduler : Scheduler<?, ??>) -> int;
+	// Schedule this job. TODO: Make sure we can add a child job to a parent as the parent runs
+	addJob(scheduler : Scheduler<?, ??>, job : Job<?, ??>) -> void;
+	// Invalidate cache item (for all job kinds)
+	invalidateJobCache(scheduler : Scheduler<?, ??>, cacheId : string) -> void;
+
+	// This is the internal structure used by the scheduler
+	Scheduler(
+		// What is a next id for a job?
+		nextId : ref int,
+		// From job id to the job. We keep jobs here after finishing when they have a result to cache
+		jobs : ref Tree<int, Job<?, ??>>,
+		// Priorities - list of jobs with a given priority
+		// We only keep jobs that have dependencies solved here
+		jobPriorities : ref Tree<int, [int]>,
+		// Tracking the dependencies between jobs: Who depends on us?
+		dependents : ref Tree<int, [int]>,
+		// Tracking outstanding dependencies each job has. From job id to count. Used to track when we can run
+		missingCount : ref Tree<int, int>,
+		// Our cache from cacheId to the kinds of job to the job id that made it when we have a cached result
+		results : ref Tree<string, Tree<string, int>>,
+	);
+
+	// A job to run
+	Job(
+		// Unique id for the job - make with makeJobId.
+		id : int,
+		// Lower is earlier
+		priority : int,
+		// Is this a part of a group of work? 0 if no parent
+		parent : int,
+		// What other jobs do we depend on to complete before we run?
+		dependencies : [int],
+		// What is the kind of job? Caching takes this into account
+		kind : string,
+		// Any information about the job that the job would like to get
+		context : ?,
+		// Should we cache the result? "" is no, otherwise it is the unique hash id for this kind of task
+		cacheId : string,
+		// Persist the result on disk? TODO: Implement this
+		persist : bool,
+		// The function that runs the job when dependencies are ready.
+		run : (Task<?, ??>) -> Promise<??, string>,
+		// The result of the job after it has run - udpated by the scheduler itself
+		result : ref Maybe<??>
+	);
+
+	// When we need to run a thing, this is what we get
+	Task(
+		// The scheduler. This allows us to put more tasks if we need to
+		s : Scheduler<?, ??>, 
+		// The job we are running
+		job : Job<?, ??>, 
+		// The parents and grandparents all the way up for context
+		parents : [Job<?, ??>], 
+		// The resolved dependencies we have. Their results are resolved before we are called
+		dependencies : [Job<?, ??>], 
+		// Value from previous cache entry we might be able to reuse
+		cache : Maybe<??>
+	);
+}
+
+
+/*
+TODO:
+- Fix dynamic containment. When a job finishes, but needs N other jobs to be done before
+  it is done to the parent.
+- Add tracking of currently running jobs
+- Improve error handling and reporting
+- Figure out how a job can dynamically add more work it depends on
+- Detect dependency loops
+*/
+
+makeScheduler() -> Scheduler<?, ??> {
+	Scheduler(
+		// What is a next id for a job?
+		ref 1,
+		// From job id to the job
+		ref makeTree(),
+		// Priorities - list of jobs with a given priority
+		ref makeTree(),
+		// Tracking the dependencies between jobs
+		ref makeTree(),
+		// Count of missing dependencies
+		ref makeTree(),
+		// Cache of result -> kind -> job id
+		ref makeTree(),
+	);
+}
+
+runScheduler(scheduler : Scheduler<?, ??>) -> () -> void {
+	println("Starting scheduler in a new thread");
+	stop = ref false;
+	concurrentAsyncCallback(
+		// Task
+		\threadId : string, callback : (int) -> void -> {
+			if (^stop) {
+				callback(0);
+			} else {
+				pingScheduler(scheduler);
+			}
+		},
+		// onDone
+		\res : int -> {
+			println("Process complete");
+		},
+		// onFail
+		\err : string -> {
+			println("Failure: " + err);
+		}
+	);
+
+	\ -> {
+		// TODO: Also count jobs in motion
+		outstanding = sizeTree(^(scheduler.jobPriorities)) + sizeTree(^(scheduler.missingCount));
+		if (outstanding == 0) {
+			println("Scheduler stopped");
+		} else {
+			println("Cancelling " + i2s(outstanding) + " jobs");
+		}
+		stop := true;
+	}
+}
+
+pingScheduler(scheduler : Scheduler<?, ??>) -> void {
+	p : TreePopResult<int, [int]> = popmin(^(scheduler.jobPriorities));
+	switch (p) {
+		EmptyPopResult(): {
+			println("No job, so wait");
+			timer(100, \ -> pingScheduler(scheduler));
+		}
+		PopResult(prio, tasks, rest): {
+			if (length(tasks) > 0) {
+				jobid = tasks[0];
+				mjob = lookupTree(^(scheduler.jobs), jobid);
+				mjob ?? {
+					// Push the rest of the queue
+					if (length(tasks) != 1) {
+						scheduler.jobPriorities := setTree(^(scheduler.jobPriorities), prio, tail(tasks));
+					} else {
+						// We are done with this priority
+						scheduler.jobPriorities := rest;
+					}
+					// OK, run the job
+					runJob(scheduler, mjob);
+				} : {
+					println("Error: Job went missing");
+					// We are done with this priority
+					scheduler.jobPriorities := rest;
+				}
+			} else {
+				// We are done with this priority
+				scheduler.jobPriorities := rest;
+			}
+		}
+	}
+}
+
+// It is important that we can ask the same job to run multiple
+// times, but not redo the work the second time
+runJob(scheduler : Scheduler, job : Job<?, ??>) -> void {
+	// Pull together the parents
+	parents : [Job<?, ??>] = getJobParents(scheduler, [], job);
+	// Pull together the dependencies
+	deps : [Job<?, ??>] = filtermap(job.dependencies, \dep -> {
+		lookupTree(^(scheduler.jobs), dep);
+	});
+	if (length(deps) != length(job.dependencies)) {
+		println("Could not find dependendents");
+	}
+	task = Task(scheduler, job, parents, deps, getJobResult(scheduler, job));
+	println("Running " + job2string(job));
+	promise : Promise<??, string> = job.run(task);
+	doneP(promise, \res : ?? -> {
+		println("Completed: " + job2string(job));
+		job.result := Some(res);
+		if (job.cacheId != "") {
+			// Caching the result
+			cachedTasks = lookupTreeDef(^(scheduler.results), job.cacheId, makeTree());
+			scheduler.results := setTree(^(scheduler.results), 
+				job.cacheId, setTree(cachedTasks, job.kind, job.id)
+			);
+		}
+		// OK, update dependent jobs
+		dependents = getTreeArrayValue(^(scheduler.dependents), job.id);
+		if (dependents == []) {
+			if (job.cacheId == "") {
+				// OK, this job is done and nobody needs the result
+				cleanupJob(scheduler, job);
+			}
+		} else {
+			iter(dependents, \dep -> {
+				decreaseJobDependency(scheduler, job, dep);
+			});
+			scheduler.dependents := removeFromTree(^(scheduler.dependents), job.id);
+		}
+	}, \err -> {
+		println(err);
+		if (job.cacheId != "") {
+			scheduler.results := removeFromTree(^(scheduler.results), job.cacheId);
+		}
+	})
+}
+
+// Remove all resources about this job
+cleanupJob(scheduler : Scheduler<?, ??>, job : Job<?, ??>) -> void {
+	job.result := None();
+	if (job.cacheId != "") {
+		if (containsKeyTree(^(scheduler.results), job.cacheId)) {
+			println("TODO: Remove job id from the results cache")
+		}
+	}
+	scheduler.jobs := removeFromTree(^(scheduler.jobs), job.id);
+	scheduler.missingCount := removeFromTree(^(scheduler.missingCount), job.id);
+}
+
+getJobParents(scheduler : Scheduler<?, ??>, acc : [Job<?, ??>], job : Job<?, ??>) -> [Job<?, ??>] {
+	if (job.parent == 0) acc
+	else {
+		mparent = lookupTree(^(scheduler.jobs), job.parent);
+		mparent ?? {
+			getJobParents(scheduler, arrayPush(acc, mparent), mparent)
+		} : {
+			println("Could not find parent " + i2s(job.parent));
+			acc;
+		}
+	}
+}
+
+// See if we have a cached result anywhere
+getJobResult(scheduler : Scheduler<?, ??>, job : Job<?, ??>) -> Maybe<??> {
+	switch (^(job.result) : Maybe<??>) {
+		None(): {
+			if (job.cacheId == "") None()
+			else {
+				mcachedTasks = lookupTree(^(scheduler.results), job.cacheId);
+				mcachedTasks ?? {
+					cachedId : int = lookupTreeDef(mcachedTasks, job.kind, 0);
+					mjob : Maybe<Job<?, ??>> = lookupTree(^(scheduler.jobs), cachedId);
+					switch (mjob) {
+						None(): None();
+						Some(j): ^(j.result);
+					}
+				} : None();
+			}
+		}
+		Some(r): Some(r);
+	}
+}
+
+makeJobId(scheduler : Scheduler<?, ??>) -> int {
+	atomicRefIntAddition(scheduler.nextId, 1)
+}
+
+addJob(scheduler : Scheduler<?, ??>, job : Job<?, ??>) -> void {
+	schedule = \ -> {
+		// This is ready for scheduling
+		scheduler.jobs := setTree(^(scheduler.jobs), job.id, job);
+		scheduler.jobPriorities := treePushToArrayValue(^(scheduler.jobPriorities), job.priority, job.id);
+		println("Enqueued " + job2string(job));
+	}
+	if (job.dependencies != []) {
+		doneJobs : [Job<?, ??>]= filtermap(job.dependencies, \d -> {
+			mjob = lookupTree(^(scheduler.jobs), d);
+			switch (mjob) {
+				None(): {
+					// Unknown job. Let us record that we are dependent on it
+					addJobDependency(scheduler, job.id, d);
+					None();
+				}
+				Some(j): {
+					switch (^(j.result)) {
+						None(): {
+							// Unfinished job. Let us record that we are dependent on it
+							addJobDependency(scheduler, job.id, d);
+							None();
+						}
+						Some(r): mjob;
+					}
+				}
+			}
+		});
+
+		if (length(doneJobs) != length(job.dependencies)) {
+			// We are not ready to run, so just keep it
+			scheduler.jobs := setTree(^(scheduler.jobs), job.id, job);
+			println("Can not start due to dependencies " + job2string(job));
+		} else {
+			// OK, we are ready to run
+			schedule();
+		}
+	} else {
+		if (job.cacheId != "") {
+			mexist = lookupTree(^(scheduler.results), job.cacheId);
+			mexist ?? {
+				// We have a cached value, so check that it is valid
+				println("TODO: Check that the cache is ok")
+			} : {
+				// No cached result
+				schedule();
+			}
+		} else {
+			schedule();
+		}
+	}
+}
+
+addJobDependency(scheduler : Scheduler<?, ??>, from : int, to : int) -> void {
+	deps = getTreeArrayValue(^(scheduler.dependents), to);
+	if (!contains(deps, from)) {
+		scheduler.dependents := setTree(^(scheduler.dependents), to, arrayPush(deps, from));
+		scheduler.missingCount := incTreeValue(^(scheduler.missingCount), from);
+	}
+}
+
+decreaseJobDependency(scheduler : Scheduler<?, ??>, job : Job<?, ??>, dependent : int) -> void {
+	count = lookupTreeDef(^(scheduler.missingCount), dependent, 0);
+	if (count <= 1) {
+		println("Job ready to run");
+		scheduler.missingCount := removeFromTree(^(scheduler.missingCount), dependent);
+		djob = lookupTreeDef(^(scheduler.jobs), dependent, job);
+		runJob(scheduler, djob);
+	} else {
+		scheduler.missingCount := setTree(^(scheduler.missingCount), dependent, count - 1)
+	}
+}
+
+invalidateJobCache(scheduler : Scheduler<?, ??>, cacheId : string) -> void {
+	println("TODO: Invalidate cache entry");
+}
+
+job2string(job : Job<?, ??>) -> string {
+	"Job " + i2s(job.id) + " " + job.kind + " (" + toString(job.context) + ")"
+}

@@ -2,25 +2,33 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/nim/fi2nim_defines;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/common;
+import tools/flowc/backends/nim/fi2nim_mangle;
 
 export {
-	fi2nimStrIndent(s : string) -> string;
-	fi2nimMaybeIndent(s : string) -> string;
-	fi2nimSureIndent(s : string) -> string;
-	fiNimRenameKeyword(kwd : string) -> string;
+	fi2nimIsImportLine(line: string) -> bool;
 
-	fiFuncType2NimType(env : FiNimEnv, type : FiTypeFunction) -> string;
-	fiType2NimType(env : FiNimEnv, type : FiType) -> string;
+	fi2nimStrIndent(s: string) -> string;
+	fi2nimMaybeIndent(s: string) -> string;
+	fi2nimSureIndent(s: string) -> string;
+	fiNimRenameKeyword(kwd: string) -> string;
+
+	fiNimCompileFuncType(env: FiNimEnv, type: FiTypeFunction) -> string;
+	fiNimCompileType(env: FiNimEnv, type: FiType) -> string;
 	fiNimDerefType(t: FiType) -> FiType;
 
-	fiNimTypeParamsList(env : FiNimEnv, fn : FiFunctionDec) -> string;
-	fiNimParamsForInstantiate(env : FiNimEnv, params: [FiType]) -> string;
+	fiNimTypeParamsList(env: FiNimEnv, type: FiType) -> string;
+	fiNimParamsForInstantiate(env: FiNimEnv, params: [FiType]) -> string;
 
 	// Get all casts from expression
-	fiAllCasts(e: FiExp, acc : Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType>>;
+	fiAllCasts(e: FiExp, acc :Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType>>;
+
+	// Remove all FiTypeRef and replace union type names onto 'Struct' type name (represents a general union)
+	fiType2NimType(names: FiGlobalNames, type: FiType) -> FiType;
 }
 
-fiProcCounter : ref int = ref 0;
+fi2nimIsImportLine(line: string) -> bool {
+	startsWith(line, "import") || startsWith(line, "from");
+}
 
 fi2nimStrIndent(s : string) -> string {
 	strGlue(map(
@@ -42,47 +50,44 @@ fiNimRenameKeyword(kwd : string) -> string {
 	strReplace(k, "_", "u")
 }
 
-fiNimTypeParamsList(env : FiNimEnv, fn : FiFunctionDec) -> string {
-	tps = foldi(fn.lambda.args, makeSet(), \idx, accT, arg ->
-		fiCollectTypars(arg.type, accT)
-	);
-	rt = fiCollectTypars(fn.type.returnType, tps);
-	tp = fold(sort(set2array(rt)), [], \acc1, e -> concat(acc1, ["T" + i2s(strlen(e))]));
+fiNimTypeParamsList(env : FiNimEnv, type : FiType) -> string {
+	tps = fiCollectTypars(type, makeSet());
+	tp = fold(sort(set2array(tps)), [], \acc1, e -> concat(acc1, ["T" + i2s(strlen(e))]));
 	if (tp == []) "" else { "[" + strGlue(tp, ", ") + "]" }
 }
 
 fiNimParamsForInstantiate(env : FiNimEnv, params : [FiType]) -> string {
 	if (params == []) "" else {
-		"[" + strGlue(map(params, \tp -> fiType2NimType(env, tp)), ", ") + "]"
+		"[" + strGlue(map(params, \tp -> fiNimCompileType(env, tp)), ", ") + "]"
 	}
 }
 
-fiFuncType2NimType(env : FiNimEnv, type : FiTypeFunction) -> string {
+fiNimCompileFuncType(env : FiNimEnv, type : FiTypeFunction) -> string {
 	rt_code = switch (type.returnType) {
-		FiTypeFunction(__,__): "(" + fiType2NimType(env, type.returnType) + ")";
-		default: fiType2NimType(env, type.returnType);
+		FiTypeFunction(__,__): "(" + fiNimCompileType(env, type.returnType) + ")";
+		default: fiNimCompileType(env, type.returnType);
 	}
 	"(" + 
 		supergluei(type.args, \i, arg -> 
 			fiNimRenameKeyword(if (arg.name == "" || arg.name == "__") "a" + i2s(i) else arg.name) + ": " +
-			fiType2NimType(env, arg.type), 
+			fiNimCompileType(env, arg.type), 
 			", "
 		) + 
 	"): " + rt_code;
 }
 
-fiType2NimType(env : FiNimEnv, type : FiType) -> string {
+fiNimCompileType(env : FiNimEnv, type : FiType) -> string {
 	switch (type) {
 		FiTypeArray(t) :           {
-			"seq[" + fiType2NimType(env, t) + "]";
+			"seq[" + fiNimCompileType(env, t) + "]";
 		}
 		FiTypeFunction(args, rt) : {
-			"proc" + fiFuncType2NimType(env, type);
+			"proc" + fiNimCompileFuncType(env, type);
 		}
-		FiTypeRef(t) :             fiType2NimType(env, t);
+		FiTypeRef(t) :             fiNimCompileType(env, t);
 		FiTypeParameter(n) :       "T" + i2s(strlen(n));
 		FiTypeBool() :             "bool";
-		FiTypeInt() :              "int";
+		FiTypeInt() :              "int32";
 		FiTypeDouble() :           "float";
 		FiTypeString() :           "string";
 		FiTypeFlow() :             "Flow";
@@ -120,4 +125,31 @@ fiAllCasts(e: FiExp, acc : Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType
 		}, 
 		AstTraverseOrder(true, true)
 	);
+}
+
+fiType2NimType(names : FiGlobalNames, type : FiType) -> FiType {
+	switch (type) {
+		FiTypeArray(t) :           {
+			FiTypeArray(fiType2NimType(names, t));
+		}
+		FiTypeFunction(args, rt) : {
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg with type = fiType2NimType(names, arg.type))),
+				fiType2NimType(names, rt)
+			);
+		}
+		FiTypeRef(t): {
+			// Just skip references
+			fiType2NimType(names, t);
+		}
+		FiTypeName(name, params) : {
+			if (containsKeyTree(names.structs, name)) {
+				FiTypeName(name, map(params, \p -> fiType2NimType(names, p)));
+			} else {
+				// Unions are just unspecified structs
+				FiTypeName("Struct", []);
+			}
+		}
+		default: type;
+	}
 }
