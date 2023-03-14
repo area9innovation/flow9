@@ -59,9 +59,9 @@ type
   # Compile time type kinds
   CtType* = enum
     # Atiomic types
-    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow, ctUnion,
+    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
     # Composite types
-    ctArray, ctFunc, ctStruct
+    ctArray, ctFunc, ctStruct, ctUnion
 
   # A complex type descriptor.
   AlType* = tuple[op: CtType, args: seq[int32], name: string]
