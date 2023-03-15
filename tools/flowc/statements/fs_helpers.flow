@@ -3,12 +3,7 @@ import tools/flowc/statements/fs_exp;
 import string_utils;
 
 export {
-
-	fsExpType(e: FsExp) -> FiType;
-	fsStatType(s: FsStat) -> FiType;
-
-	fsExp2s(e: FsExp) -> string;
-	fsStat2s(s: FsStat) -> string;
+	fsType(e: FsAll) -> FiType;
 	fs2s(s: FsAll) -> string;
 
 	fsHasTailCall(s: FsStat) -> bool;
@@ -20,8 +15,17 @@ export {
 	fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVar) -> FsStat;
 }
 
-fsExpType(e: FsExp) -> FiType {
-	switch (e) {
+fsType(x: FsAll) -> FiType {
+	switch (x) {
+		FsIf(__,s1,__,__):       fsType(s1);
+		FsSwitch(__,__,cs,__):   if (length(cs) == 0) FiTypeVoid() else fsType(cs[0].body);
+		FsSeq(ss,__):            if (length(ss) == 0) FiTypeVoid() else fsType(ss[length(ss) - 1]);
+		FsWrapExp(e,__):         FiTypeVoid();
+		FsRet(e,__):             fsType(e);
+		FsLet(__,__,__)   :      FiTypeVoid();
+		FsAssign(__,__,__):      FiTypeVoid();
+		FsModRc(__,__,__):       FiTypeVoid();
+		FsDecRc(__,__):          FiTypeVoid();
 		FsLambda(__,__,__, type,__): type;
 		FsCall(__,__, type,__):      type;
 		FsVar(__,__,type,__):        type;
@@ -36,104 +40,6 @@ fsExpType(e: FsExp) -> FiType {
 				FiInt(__, __):    FiTypeInt();
 				FiString(__, __): FiTypeString();
 				FiBool(__, __):   FiTypeBool();
-			}
-		}
-	}
-}
-
-fsStatType(s: FsStat) -> FiType {
-	switch (s) {
-		FsIf(__,s1,__,__):       fsStatType(s1);
-		FsSwitch(__,__,cs,__):   if (length(cs) == 0) FiTypeVoid() else fsStatType(cs[0].body);
-		FsSeq(ss,__):            if (length(ss) == 0) FiTypeVoid() else fsStatType(ss[length(ss) - 1]);
-		FsWrapExp(e,__):         FiTypeVoid();
-		FsRet(e,__):             fsExpType(e);
-		FsLet(__,__,__)   :     FiTypeVoid();
-		FsAssign(__,__,__):      FiTypeVoid();
-		FsModRc(__,__,__):       FiTypeVoid();
-		FsDecRc(__,__):          FiTypeVoid();
-	}
-}
-
-fsStat2s(s: FsStat) -> string {
-	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
-	switch (s) {
-		FsIf(e, s1, s2,__): {
-			"if (" + fsExp2s(e) + ")\n" + strIndent(fsStat2s(s1)) + "\nelse\n" + strIndent(fsStat2s(s2));
-		}
-		FsSwitch(v,__, cases,__): {
-			"switch (" + fsExp2s(v) + ") {\n" +
-				strIndent(superglue(cases, \c -> {
-					body_s = fsStat2s(c.body);
-					body_s1 = if (strContains(body_s, "\n") || startsWith(body_s, "{")) body_s else body_s + ";";
-					c.struct + "(" + superglue(c.args, \arg -> arg.name, ", ") + "): " + body_s1;
-				}, "\n")) +
-			"\n}";
-		}
-		FsSeq(ss,__): {
-			if (length(ss) == 0) "{}" else
-			if (length(ss) == 1) fsStat2s(ss[0]) else
-			"{\n" + strIndent(superglue(ss, fsStat2s, "\n")) + "\n}";
-		}
-		FsLet(var, def,__): {
-			var.name + " : " + t2s(var.type) + " = " + fsExp2s(def) + ";";
-		}
-		FsWrapExp(e,__): {
-			fsExp2s(e) + ";";
-		}
-		FsRet(e,__): {
-			"return " + fsExp2s(e) + ";";
-		}
-		FsAssign(to, what,__): {
-			fsExp2s(to) + " := " +  fsExp2s(what) + ";";
-		}
-		FsModRc(d, e,__): {
-			if (d >= 0) {
-				"incRc(" + fsExp2s(e) + (if (d == 1) "" else ", " + i2s(d)) + ");";
-			} else {
-				"decRc(" + fsExp2s(e) + (if (d == -1) "" else ", " + i2s(-d)) + ");";
-			}
-		}
-		FsDecRc(e,__): {
-			"decRc(" + fsExp2s(e) + ");";
-		}
-	}
-}
-
-fsExp2s(e: FsExp) -> string {
-	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
-	switch (e) {
-		FsLambda(closure, args, body,__, id): {
-			body_s = fsStat2s(body);
-			closure_s = "[" + superglue(closure, fsExp2s, ", ") + "]";
-			header = closure_s + "\\" + superglue(args, \arg -> fsExp2s(arg) + ":" + t2s(arg.type), ", ") + " -> ";
-			if (!strContains(body_s, "\n") || startsWith(body_s, "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
-		}
-		FsCall(f, args,__, id): {
-			fsExp2s(f) + "(" + superglue(args, fsExp2s, ", ") + ")";
-		}
-		FsCallPrim(op, es, type, id): {
-			fsPrim2s(op, map(es, fsExp2s), type);
-		}
-		FsTailCall(args, vals, type, id): {
-			"tailcall(" + supergluei(args, \i, a -> a.name + " = " + fsExp2s(vals[i]), ", ") + ");";
-		}
-		FsCast(e1, from, to, id): {
-			"cast(" + fsExp2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
-		}
-		FsVar(name, last, type, id): {
-			name + (if (last && !fiTypeIsScalar(type)) "/*last*/" else "");
-		}
-		FsIncRc(x,__,__): {
-			"incRc(" + fsExp2s(x) + ");";
-		}
-		FsConst(c, id): {
-			switch (c) {
-				FiVoid(__):      "{}";
-				FiDouble(d, __): d2s(d);
-				FiInt(i, __):    i2s(i)
-				FiString(s, __): "\"" + escapeStr(s) + "\"";
-				FiBool(b, __):   b2s(b);
 			}
 		}
 	}
