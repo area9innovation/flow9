@@ -1,0 +1,102 @@
+import tools/flowc/statements/fs_transform;
+
+export {
+	fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat;
+	fsTailCallExpansion(c: FsTailCall) -> FsStat;
+}
+
+fsTailCallExpansion(c: FsTailCall) -> FsStat {
+	tmp_vars = map(c.args, \arg ->
+		FsVar(arg.name + "__tailcall__", false, arg.type, -1)
+	);
+	assign_func_vars = mapi(c.args, \i, arg ->
+		FsAssign(arg, tmp_vars[i], -1)
+	);
+	foldri(c.args, FsSeq(assign_func_vars, -1), \i, acc, arg ->
+		FsLet(tmp_vars[i], c.vals[i], acc, -1)
+	);
+}
+
+fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
+	cast(fsMap(s, \x -> switch (x) {
+		FsRet(ex,__): {
+			switch (ex) {
+				FsCall(f, args, type,__): {
+					switch (f) {
+						FsVar(nm,__,__,__): {
+							if (nm != fn.name) x else {
+								remove_arg = \arg, fn_arg -> {
+									switch (arg) {
+										FsVar(name,__,__,__): {
+											name == fn_arg.name &&
+											(fiTypeIsScalar(fn_arg.type) || fiIsGlobalFunction(fn_arg.name, names));
+										}
+										default: false;
+									}
+								}
+								tailcall_args = filtermapi(args, \i, arg ->
+									if (remove_arg(arg, fn.lambda.args[i])) None() else {
+										fn_arg = fn.lambda.args[i];
+										Some(FsVar(fn_arg.name, false, fn_arg.type, -1))
+									}
+								);
+								tailcall_vals = filtermapi(args, \i, arg ->
+									if (remove_arg(arg, fn.lambda.args[i])) None() else {
+										Some(arg)
+									}
+								);
+								FsRet(FsTailCall(tailcall_args, tailcall_vals, type, -1), -1);
+							}
+						}
+						default: x;
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true): FsAll -> FsStat);
+}
+
+/*
+fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
+	fsStatMap(s, \x -> switch (x) {
+		FsRet(ex,__): {
+			switch (ex) {
+				FsCall(f, args, type,__): {
+					switch (f) {
+						FsVar(nm,__,__,__): {
+							if (nm != fn.name) x else {
+								remove_arg = \arg, fn_arg -> {
+									switch (arg) {
+										FsVar(name,__,__,__): {
+											name == fn_arg.name &&
+											(fiTypeIsScalar(fn_arg.type) || fiIsGlobalFunction(fn_arg.name, names));
+										}
+										default: false;
+									}
+								}
+								tailcall_args = filtermapi(args, \i, arg ->
+									if (remove_arg(arg, fn.lambda.args[i])) None() else {
+										fn_arg = fn.lambda.args[i];
+										Some(FsVar(fn_arg.name, false, fn_arg.type, -1))
+									}
+								);
+								tailcall_vals = filtermapi(args, \i, arg ->
+									if (remove_arg(arg, fn.lambda.args[i])) None() else {
+										Some(arg)
+									}
+								);
+								FsRet(FsTailCall(tailcall_args, tailcall_vals, type, -1), -1);
+							}
+						}
+						default: x;
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, idfn);
+}
+*/
