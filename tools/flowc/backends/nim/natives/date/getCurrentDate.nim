@@ -1,5 +1,6 @@
 # getCurrentDate : io () -> Date = Native.getCurrentDate;
 # Date(year : int, month : int, day : int);
+import times
 
 proc getCurrentDate*(): Date =
   let dt = now()
