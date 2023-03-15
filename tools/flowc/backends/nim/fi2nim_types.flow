@@ -20,14 +20,14 @@ fi2nimStructType(env : FiNimEnv) -> string {
 	structs_enum = if (length(env.structs) == 0) "" else {
 		fiNimIndent + "# All structs, used in program \n" +
 		fiNimIndent + "StructType = enum\n" +
-		supergluei(env.structs, \i, s -> 
+		supergluei(env.structs, \i, s ->
 			fiNimIndent2 + fi2nimStructId(env, s) + (if (i + 1 == length(env.structs)) "" else "," ) + " # " + i2s(i), "\n"
 		) + "\n\n";
 	}
 	types_enum = if (length(env.ordered_types) == 0) "" else {
 		fiNimIndent + "# All types, used in program\n" +
 		fiNimIndent + "ProgType = enum\n" +
-		supergluei(env.ordered_types, \i, tp -> 
+		supergluei(env.ordered_types, \i, tp ->
 			fiNimIndent2 + fi2nimTypeId(env, tp) + (if (i + 1 == length(env.ordered_types)) "" else "," ) + " # " + i2s(i)  + " = " + pretFiType(tp), "\n"
 		) + "\n\n";
 	}
@@ -43,7 +43,17 @@ fi2nimStructDecl(env : FiNimEnv, struct : FiTypeStruct) -> string {
 }
 
 fi2nimUnionDecl(env : FiNimEnv, union : FiTypeUnion) -> string {
-	fiNimIndent + union.name + fiNimParamsForInstantiate(env, union.typeparameters) + " = ref object of Struct\n\n";
+	kinds = fiNimIndent + "Uk_" + union.name + " = enum\n" + superglue(union.typenames,
+		\tn -> fiNimIndent2 + "uk_" + union.name + "_" + tn.name, ",\n"
+	) + "\n";
+	union_def = fiNimIndent + union.name + fiNimParamsForInstantiate(env, union.typeparameters) + " = ref object of Struct\n" +
+		fiNimIndent2 + "case kind: Uk_" + union.name + "\n" +
+		superglue(union.typenames,
+			\tn -> fiNimIndent2 + "of uk_" + union.name + "_" + tn.name + ": " +
+				toLowerCase(tn.name) + ": " + fiNimCompileType(env, tn),
+			"\n"
+		);
+	kinds + "\n" + union_def + "\n";
 }
 
 fi2nimStructRegister(env : FiNimEnv, struct : FiTypeStruct) -> string {
@@ -261,9 +271,15 @@ fi2nimAddTypenameSubterms(type: FiType, acc: Set<FiType>, names: FiGlobalNames) 
 								fi2nimAddTypenameSubterms(st, a, names)
 							)
 						}), 
-						\union -> fold(union.typenames, acc1, \ac, tn ->
-							fi2nimAddTypenameSubterms(tn, ac, names)
-						), 
+						\union -> {
+							//println("observing union: " + pretFiStructOrUnion(union) + ", type: " + pretFiType(type));
+							//println("acc before:\n" + strIndent(superglue(set2array(acc), pretFiType, "\n")));
+							ret = fold(union.typenames, acc1, \ac, tn ->
+								fi2nimAddTypenameSubterms(tn, ac, names)
+							);
+							//println("acc after:\n" + strIndent(superglue(set2array(ret), pretFiType, "\n")));
+							ret;
+						},
 						\tn -> fail0("typename " + tn.name + " is not found")
 					);
 				}
@@ -275,16 +291,18 @@ fi2nimAddTypenameSubterms(type: FiType, acc: Set<FiType>, names: FiGlobalNames) 
 
 fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 	spec_structs = map(env.specializedStructs, \s -> FiTypeName(s.name, s.typars));
+	//spec_unions = map(env.specializedUnions, \u -> FiTypeName(u.name, s.typeparameters));
+	//all_specs = concat(spec_structs, spec_unions);
 	all_subterms = set2array(fold(spec_structs, makeSet(), \acc, s -> mergeSets(acc, fiTypeSubterms(s, false))));
 	if (debug_nim_type_ids) {
 		println("all_subterms:\n" +
-			concatStrings(map(all_subterms, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+			concatStrings(map(all_subterms, \t -> "\t" + pretFiType(t) + "\n"))
 		);
 	}
 	all_types = concat([FiTypeName("Struct", [])], all_subterms);
 	if (debug_nim_type_ids) {
 		println("all_types:\n" +
-			concatStrings(map(all_types, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+			concatStrings(map(all_types, \t -> "\t" + pretFiType(t) + "\n"))
 		);
 	}
 	complete_types = fold(all_types, makeSet(), \acc, tp ->
@@ -292,17 +310,17 @@ fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 	);
 	if (debug_nim_type_ids) {
 		println("complete_types:\n" +
-			concatStrings(map(set2array(complete_types), \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+			concatStrings(map(set2array(complete_types), \t -> "\t" + pretFiType(t) + "\n"))
 		);
 	}
 	/*mapped_complete_types = mapSet(complete_types, \tp -> fiType2NimType(env.prog.names, tp));
 	println("mapped_complete_types:\n" + 
-		concatStrings(map(set2array(mapped_complete_types), \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+		concatStrings(map(set2array(mapped_complete_types), \t -> "\t" + pretFiType(t) + "\n"))
 	);*/
 	ordered_types = fi2nimOrderTypes(set2array(complete_types));
 	if (debug_nim_type_ids) {
 		println("ordered_types:\n" +
-			concatStrings(mapi(ordered_types, \i, t -> "\t" + i2s(i) + ": " + prettyFiType(dummyPretty, t, makeSet()) + "\n"))
+			concatStrings(mapi(ordered_types, \i, t -> "\t" + i2s(i) + ": " + pretFiType(t) + "\n"))
 		);
 	}
 	type_index = foldi(ordered_types, makeTree(), \i, acc, tp -> setTree(acc, tp, i));
