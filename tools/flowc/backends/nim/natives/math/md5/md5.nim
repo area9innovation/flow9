@@ -1,0 +1,1 @@
+# native md5 : (s : string) -> string = Native.md5;

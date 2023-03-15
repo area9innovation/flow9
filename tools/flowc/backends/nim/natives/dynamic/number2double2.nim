@@ -1,0 +1,1 @@
+# native number2double2 : io (value : flow) -> double = Native.number2double;

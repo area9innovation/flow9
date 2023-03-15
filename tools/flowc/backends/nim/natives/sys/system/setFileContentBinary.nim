@@ -1,0 +1,1 @@
+# native setFileContentBinary : io (filename : string, content : string) -> bool  = Native.setFileContentBinary;

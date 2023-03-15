@@ -1,0 +1,1 @@
+# native stringbytes2double : (str : string) -> double = Native.stringbytes2double;
