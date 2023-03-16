@@ -1,0 +1,1 @@
+# native toBinary : (value : flow) -> string = Native.toBinary;
