@@ -35,13 +35,13 @@ fiNimCompileToplevel(env : FiNimEnv, decl : FiDeclaration, indent : string) {
 							nat.code;
 						}
 						None(): {
-							fcPrintln("Error: native " + name + prettyFiType(dummyPretty, type, makeSet()) + " = " + nativeName + " is not implemented in nim backend", env.cfg.threadId);
+							fcPrintln("Error: native " + name + pretFiType(type) + " = " + nativeName + " is not implemented in nim backend", env.cfg.threadId);
 							"# native: " + name + "(" + nativeName + ")\n";
 						}
 					}
 				}
 				default: {
-					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, fallback), env.cfg.threadId);
+					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + pretFiExp(fallback), env.cfg.threadId);
 					"# native: " + nativeName + " " + name + "\n"
 				}
 			}
@@ -68,38 +68,45 @@ nim_debug_lambda : ref FiExp = ref FiVoid(0);
 
 fiNimFail(msg: string, expr: FiExp) -> void {
 	fail("fail: " + msg + "\n" +
-		"expr: " + prettyFiExp(dummyPretty, expr) + "\n" +
-		"lambda0: " + prettyFiExp(dummyPretty, ^nim_debug_lambda0) + "\n" +
-		"lambda: " + prettyFiExp(dummyPretty, ^nim_debug_lambda0) + "\n" +
-		"\n" +
-		"RAW expr: " + toStringFormatted(expr) + "\n" +
-		"RAW lambda0: " + toStringFormatted(^nim_debug_lambda0) + "\n" +
-		"RAW lambda: " + toStringFormatted(^nim_debug_lambda0) + "\n"
+		"expr: " + pretFiExp(expr) + "\n" +
+		"lambda0: " + pretFiExp(^nim_debug_lambda0) + "\n" +
+		"lambda: " + pretFiExp(^nim_debug_lambda0) + "\n"
+		//"\n" +
+		//"RAW expr: " + toStringFormatted(expr) + "\n" +
+		//"RAW lambda0: " + toStringFormatted(^nim_debug_lambda0) + "\n" +
+		//"RAW lambda: " + toStringFormatted(^nim_debug_lambda0) + "\n"
 	);
 }
 
 fiNimShow(msg: string, expr: FiExp) -> void {
 	println("show: " + msg + "\n" +
-		"expr: " + prettyFiExp(dummyPretty, expr) + "\n" +
-		"lambda0: " + prettyFiExp(dummyPretty, ^nim_debug_lambda0) + "\n" +
-		"lambda: " + prettyFiExp(dummyPretty, ^nim_debug_lambda) + "\n" +
-		"\n" +
-		"RAW expr: " + toStringFormatted(expr) + "\n" +
-		"RAW lambda0: " + toStringFormatted(^nim_debug_lambda0) + "\n" +
-		"RAW lambda: " + toStringFormatted(^nim_debug_lambda) + "\n"
+		"expr: " + pretFiExp(expr) + "\n" +
+		"lambda0: " + pretFiExp(^nim_debug_lambda0) + "\n" +
+		"lambda: " + pretFiExp(^nim_debug_lambda) + "\n"
+		//"\n" +
+		//"RAW expr: " + toStringFormatted(expr) + "\n" +
+		//"RAW lambda0: " + toStringFormatted(^nim_debug_lambda0) + "\n" +
+		//"RAW lambda: " + toStringFormatted(^nim_debug_lambda) + "\n"
 	);
 }
 
-fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType) -> FiExp {
+fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType, debug: bool) -> FiExp {
+	maybe_show = \fn, msg -> \x -> {
+		e1 = fn(x);
+		if (!debug) e1 else {
+			println(msg + ":\n" + pretFiExp(e1));
+			e1;
+		}
+	}
 	e 
-	|> fiFixVarInSameStructType1 
-	|> \x -> fiExpMakeCastsExplicit(x, type, env.prog.names)
-	|> \y -> fiExplicitCastInSwitch1(y, env.prog.names)
-	|> \z -> fiRemoveUnusedVars(z, env.effects)
-	|> fiExpChangeAndOr2If
-	|> fiExpShortcutIf
-	|> fiExpNormalizeSeqences
-	|> fiPullStatementsUp
+	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
+	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, env.prog.names), "fiExpMakeCastsExplicit")
+	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, env.prog.names), "fiExplicitCastInSwitch1")
+	|> maybe_show(\z -> fiRemoveUnusedVars(z, env.effects), "fiRemoveUnusedVars")
+	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
+	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
+	|> maybe_show(fiExpNormalizeSeqences, "fiExpNormalizeSeqences")
+	|> maybe_show(fiPullStatementsUp, "fiPullStatementsUp")
 }
 
 fiNimCompileFunction(env : FiNimEnv, func: FiFunctionDec) -> string {
@@ -107,15 +114,16 @@ fiNimCompileFunction(env : FiNimEnv, func: FiFunctionDec) -> string {
 		env.forward_decls := Cons("# " + func.name + " forbidden with nimForbiddenFunctions\n", ^(env.forward_decls));
 		""
 	} else {
+		debug = (func.name == getUrlParameter("nim-debug"));
 		type = FiTypeFunction(func.type with args = func.lambda.args);
 		nim_debug_lambda0 := func.lambda;
-		lambda = cast(fiNimPrepareExp(env, func.lambda, type): FiExp -> FiLambda);
+		lambda = cast(fiNimPrepareExp(env, func.lambda, type, debug): FiExp -> FiLambda);
 		nim_debug_lambda := lambda;
 
-		/*if (func.name == "euler2") {
+		if (debug) {
 			fiNimShow(func.name, FiVoid(0));
 			//println(toStringFormatted(fiExpMakeCastsExplicit(lambda0, type, env.prog.names)))
-		}*/
+		}
 
 		fn_typars = fiNimTypeParamsList(env, func.type);
 
@@ -163,7 +171,8 @@ fiNimCompileFunction(env : FiNimEnv, func: FiFunctionDec) -> string {
 }
 
 fiNimCompileGlobalVar(env : FiNimEnv, var: FiGlobalVar) {
-	value = fiNimPrepareExp(env, var.value, var.type);
+	debug = (var.name == getUrlParameter("nim-debug"));
+	value = fiNimPrepareExp(env, var.value, var.type, debug);
 	value1 = if (fiNimIsExp(value)) value else {
 		FiCall(FiLambda([], value, FiTypeFunction([], var.type), 0), [], var.type, 0);
 	} 
@@ -344,7 +353,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 				Some(dc): fi2nimMaybeIndent(fiNimCompile(env, dc.body, returns));
 				None(): "assert(false,\"illegal struct id in switch: \" & $StructType(" + x_code + ".id))";
 			}
-			"case StructType(rt_type_id_to_struct_id(" + x_code + ".id))" + "\n" +
+			"case " + x_code + ".kind" + "\n" +
 			concatStrings(add_newlines(concat(
 				map(non_defcases, \c ->
 					"of st_" + c.struct + ": # " + c.struct + 
@@ -360,7 +369,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 								default: None();
 							}
 						),
-						\spec -> "of " + fi2nimTypeNameId(env, spec) + ": # " + prettyFiType(dummyPretty, spec, makeSet()) + 
+						\spec -> "of " + fi2nimTypeNameId(env, spec) + ": # " + prettyFiType(spec, makeSet()) + 
 							fi2nimSureIndent(fiNimCompile(env, c.body, returns)), "\n"
 					)*/
 				),
@@ -403,7 +412,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 					}
 				}
 				FcSetMutablePrim(name): {
-					"(" + args[0] + "." + fiNimRenameKeyword(name) + "=" + args[1] + ")";
+					"(" + args[0] + "." + fiNimRenameKeyword(name) + " = " + args[1] + ")";
 				}
 				FcCreateClosurePrim(__, __): fail0("TODO"); // should not happen - Nim does not use lambda lifting
                 FcQuote(): fail0("TODO");
@@ -412,11 +421,15 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 			wrap_ret(opt);
 		}
 		FiCast(e, from, to, __, __): {
-			wrap_ret(fiNimCompileCast(env, 
-				fiNimDerefType(from), 
-				fiNimDerefType(to), 
-				fiNimCompile(env, e, false)
-			));
+			e_code = fiNimCompile(env, e, false);
+			cast_code = if (fiEqualTypes(from, to)) e_code else {
+				fiNimCompileCast(env, 
+					fiNimDerefType(from), 
+					fiNimDerefType(to), 
+					e_code	
+				);
+			}
+			wrap_ret(cast_code);
 		}
 		default: "#!other!\n" + toString(expr);
 	}
@@ -439,7 +452,10 @@ fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: string) -> string 
 								None(): {
 									switch (lookupTree(unions, to_name)) {
 										Some(to_union): {
-											"Struct(" +  ex + ")";
+											to_name + fiNimParamsForInstantiate(env, to_typars) + "(" + 
+												"kind: st_" + from_name + ", " + 
+												"ust_" + from_name + ": " + ex +
+											")";
 										}
 										None(): {
 											fail0(to_name + " type is not found");
@@ -453,7 +469,8 @@ fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: string) -> string 
 								Some(from_union): {
 									switch (lookupTree(structs, to_name)) {
 										Some(to_struct): {
-											fiNimCompileType(env, to) + "(" + ex + ")";
+											//fiNimCompileType(env, to) + "(Struct(" + ex + "))";
+											ex + ".ust_" + to_name;
 										}
 										None(): {
 											ex;

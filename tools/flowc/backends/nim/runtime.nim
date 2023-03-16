@@ -9,6 +9,8 @@ import asyncdispatch
 
 # Runtime for NIM backend
 
+{.experimental: "overloadableEnums".}
+
 proc rt_escape(s: string): string = 
   var r: string = ""
   for ch in s:
