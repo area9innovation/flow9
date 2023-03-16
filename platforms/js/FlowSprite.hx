@@ -67,7 +67,7 @@ class FlowSprite extends Sprite {
 			url = StringTools.replace(url, ".swf", ".png");
 		};
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			// Chrome can't render svgs with <img> element if file contains "data:img" type instead of "data:image"
 			// As workaround we insert svg content directly to innerHTML
 			forceSvg = Platform.isChrome && url.indexOf(".svg") > 0;
@@ -248,7 +248,7 @@ class FlowSprite extends Sprite {
 						}
 					}
 				} else {
-					if (RenderSupport.RendererType == "html") {
+					if (this.isHTMLRenderer()) {
 						if (nativeWidget == null) {
 							return;
 						}
@@ -262,8 +262,30 @@ class FlowSprite extends Sprite {
 							}
 						});
 
-						var width = Math.isFinite(widgetBounds.maxX) ? widgetBounds.maxX : 0;
-						var height = Math.isFinite(widgetBounds.maxY) ? widgetBounds.maxY : 0;
+						// With Chrome svg data:img images are not scaled correctly for devicePixelRatio > 1.
+						// For instance, with Retina display, which has a factor from 2 to 3.
+						var width = Math.isFinite(widgetBounds.maxX) ? {
+							if (
+								forceSvg
+								&& Browser.window.devicePixelRatio > 1
+								&& Platform.isChrome
+							) {
+								widgetBounds.maxX / Browser.window.devicePixelRatio;
+							 } else {
+								widgetBounds.maxX;
+							}
+						} : 0;
+						var height = Math.isFinite(widgetBounds.maxY) ? {
+							if (
+								forceSvg
+								&& Browser.window.devicePixelRatio > 1
+								&& Platform.isChrome
+							) {
+								widgetBounds.maxY / Browser.window.devicePixelRatio;
+							 } else {
+								widgetBounds.maxY;
+							}
+						} : 0;
 
 						metricsFn(width, height);
 					} else {
@@ -365,12 +387,20 @@ class FlowSprite extends Sprite {
 				}
 
 				try {
-					if (svgXhr.getResponseHeader("content-type").indexOf("svg") > 0 && svgXhr.response.indexOf("data:img") > 0) {
+					var isContentTypeSvg = svgXhr.getResponseHeader("content-type").indexOf("svg") > 0;
+					if (isContentTypeSvg && svgXhr.response.indexOf("data:img") > 0) {
 						nativeWidget.style.width = null;
 						nativeWidget.style.height = null;
 						nativeWidget.innerHTML = svgXhr.response;
 
 						onLoaded();
+					} else if (isContentTypeSvg && svgXhr.response.indexOf('foreignObject') > 0) {
+						var warnMessage = 'Warning! SVG (' + url + ') has a <foreignObject> inside, which could effect file size and ability to take a screenshot';
+						untyped console.warn(warnMessage);
+						errorFn(warnMessage);
+						// SVG with foreignObject taints canvas, so we have to trick it
+						url = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
+						forceImageElement();
 					} else {
 						forceImageElement();
 					}
@@ -413,12 +443,18 @@ class FlowSprite extends Sprite {
 		}
 	}
 
+	public function setPictureReferrerPolicy(referrerpolicy) : Void {
+		if (nativeWidget != null) {
+			nativeWidget.referrerPolicy = referrerpolicy;
+		}
+	}
+
 	public function calculateWidgetBounds() : Void {
 		if (!widgetBoundsChanged) {
 			return;
 		}
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (nativeWidget == null) {
 				widgetBounds.clear();
 			} else {
@@ -427,8 +463,30 @@ class FlowSprite extends Sprite {
 
 				widgetBounds.minX = 0;
 				widgetBounds.minY = 0;
-				widgetBounds.maxX = nativeWidget.naturalWidth != null && nativeWidget.naturalWidth > 0 ? nativeWidget.naturalWidth : nativeWidget.clientWidth;
-				widgetBounds.maxY = nativeWidget.naturalHeight != null && nativeWidget.naturalHeight > 0 ? nativeWidget.naturalHeight : nativeWidget.clientHeight;
+
+				if (nativeWidget.naturalWidth != null && nativeWidget.naturalHeight != null && (nativeWidget.naturalWidth > 0 || nativeWidget.naturalHeight > 0)) {
+					widgetBounds.maxX = nativeWidget.naturalWidth;
+					widgetBounds.maxY = nativeWidget.naturalHeight;
+				} else if (isSvg) {
+					var svgElement = nativeWidget.children[0];
+					if (svgElement != null) {
+						var viewBox = svgElement.viewBox.baseVal;
+						var IMG_STANDARD_WIDTH = 300;
+						var IMG_STANDARD_HEIGHT = 150;
+						var svgWidth = viewBox.width;
+						var svgHeight = viewBox.height;
+						var scale = Math.min(1, Math.min(IMG_STANDARD_WIDTH / svgWidth, IMG_STANDARD_HEIGHT / svgHeight));
+						widgetBounds.maxX = svgWidth * scale;
+						widgetBounds.maxY = svgHeight * scale;
+					}
+				} else {
+					Browser.document.body.appendChild(nativeWidget);
+
+					widgetBounds.maxX = nativeWidget.clientWidth * RenderSupport.backingStoreRatio;
+					widgetBounds.maxY = nativeWidget.clientHeight * RenderSupport.backingStoreRatio;
+
+					this.addNativeWidget();
+				}
 			}
 		} else {
 			widgetBounds.minX = 0;

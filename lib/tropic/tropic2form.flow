@@ -22,6 +22,31 @@ export {
 	staticTropic2form(b : Tropic, sheet : Stylesheet) -> Form {staticTropic2fform(b, sheet) |> fform2form};
 
 	tropic2nativeForm(b : Tropic, sheet : Stylesheet) -> Form;
+	tropic2nativeFormInit(tr : Tropic, sheet : Stylesheet, init : flow) -> Form;
+
+	// The current accessibility zoom
+	accessibilityZoom : DynamicBehaviour<double> = make(if (!js) s2d(getKeyValue("accessibility_zoom", "1.0")) else 1.0);
+
+	extractMetrictWidthFLift() -> FLift;
+
+	extractMetrictHeightFLift() -> FLift;
+
+	extractMetrictBaselineFLift() -> FLift;
+
+	extractMetrictMinWidthFLift() -> FLift;
+
+	extractMetrictMinHeightFLift() -> FLift;
+
+	extractMetrictMaxWidthFLift() -> FLift;
+
+	extractMetrictMaxHeightFLift() -> FLift;
+
+	extractMetrictXFillersFLift() -> FLift;
+
+	extractMetrictYFillersFLift() -> FLift;
+
+	extractMetrictAddFillersFLift() -> FLift;
+	extractFormFromTAccFLift() -> FLift;
 }
 
 makeContext(availableWH : Transform<WidthHeight>) -> TParentInfo {
@@ -156,6 +181,10 @@ staticTropic2fform(b : Tropic, sheet : Stylesheet) -> FForm {
 }
 
 tropic2nativeForm(tr : Tropic, sheet : Stylesheet) -> Form {
+	tropic2nativeFormInit(tr, sheet, tr)
+}
+
+tropic2nativeFormInit(tr : Tropic, sheet : Stylesheet, init : flow) -> Form {
 	metrics = make(FormMetrics(0., 0., 0., 0.));
 	transformMatrix = make(getDummyTransformMatrix());
 
@@ -182,7 +211,7 @@ tropic2nativeForm(tr : Tropic, sheet : Stylesheet) -> Form {
 	Inspect(
 		[IAvailable2(available)],
 		NativeForm(
-			trop,
+			init,
 			metrics,
 			\ -> fform2form(^form.second),
 			\__, zorder, tabOrder -> {
@@ -279,86 +308,188 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				concat(ba1.disposers, ba2.disposers)
 			)
 		}
-		TDynamicGroup2(stackChanges, currentStack, combiner) : {
+		TDynamicGroup2(stackChanges, currentStack, combiner0) : {
 			fgroupChanges : DynamicBehaviour<[FGroupChange]> = make([]);
 			tropicItems : DynamicBehaviour<[TDynamicGroupItem]> = make([]);
-			verticalCombiner = if (combiner == TLinesCombiner() || combiner == TLinesACombiner()) FAddition() else FMax();
-			horizontalCombiner = if (combiner == TColsCombiner() || combiner == TColsACombiner()) FAddition() else FMax();
-
 			rtl = getDefaultRtl();
-			rtlCols = combiner == TColsACombiner() && rtl;
-			rtlLines = combiner == TLinesACombiner() && rtl;
-			maxWidth = if (rtlLines) fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0) else const(0.0);
+			maxWidth = fsubselectFn(tropicItems, \item -> item.acc.metrics.width, FMax(), 0.0);
+			isBaselineCols = combiner0 == TBaselineColsCombiner() || combiner0 == TBaselineColsACombiner();
+			maxBaseline =
+				if (isBaselineCols)
+					fsubselect(tropicItems, FLift(\itms ->
+						fmaxA(map(itms, \it : TDynamicGroupItem -> it.acc.metrics.baseline), 0.)
+					))
+				else zero;
+			maxOffset =
+				if (isBaselineCols)
+					fsubselect(tropicItems, FLift(\itms ->
+						fmaxA(map(itms, \it : TDynamicGroupItem -> fsubtract(maxBaseline, it.acc.metrics.baseline)), 0.)
+					))
+				else zero;
+
+			itemPositionFn = \previousItem, isVertical ->
+				fsubselect(previousItem, FLift(\prevItem ->
+					fselect2(
+						prevItem.position,
+						if (isVertical)
+							prevItem.acc.metrics.height
+						else
+							prevItem.acc.metrics.width,
+						FLift2(\p : Point, metric : double ->
+							if (isVertical)
+								Point(
+									0.0,
+									p.y + metric
+								)
+							else
+								Point(
+									p.x + metric,
+									0.0
+								)
+						)
+					)
+				));
+
+			itemPositionRtlFn = \currentItem, previousItem ->
+				fsubselect2(currentItem, previousItem, \curItem : TDynamicGroupItem, prevItem ->
+					fselect4(
+						prevItem.position,
+						prevItem.acc.metrics.height,
+						maxWidth,
+						curItem.acc.metrics.width,
+						\p : Point, prevHeight : double, containerWidth, currentWidth : double ->
+							Point(
+								max(containerWidth - currentWidth, 0.),
+								p.y + prevHeight
+							)
+					)
+				);
+
+			itemPositionBaselineColsFn = \currentItem, previousItem ->
+				fsubselect2(currentItem, previousItem, \curItem : TDynamicGroupItem, prevItem ->
+					fselect4(
+						curItem.acc.metrics.baseline,
+						maxBaseline,
+						prevItem.position,
+						prevItem.acc.metrics.width,
+						\iBas, maxBas : double, p : Point, metric : double ->
+							Point(
+								p.x + metric,
+								maxBas - iBas
+							)
+					)
+				);
+
+			firstItemBaselineFn =
+				\items : [TDynamicGroupItem] ->
+					if (length(items) > 0) items[0].acc.metrics.baseline
+					else const(0.0);
+
+			lastItemBaselineFn =
+				\items : [TDynamicGroupItem] ->
+					foldi(items, const(0.0), \i, acc, it ->
+						faddition(acc,
+							if (i < length(items) - 1) it.acc.metrics.height
+							else it.acc.metrics.baseline
+						)
+					);
+
+			combiner : TCustomCombiner = switch (combiner0) {
+				TCustomCombiner(__, __, __, __, __) : combiner0;
+				TGroupCombiner() : TCustomCombiner(
+					\__, __ -> const(zeroPoint),
+					None(),
+					None(),
+					false,
+					false
+				);
+				TLinesCombiner() : TCustomCombiner(
+					\__, previousItem -> itemPositionFn(previousItem, true),
+					None(),
+					Some(lastItemBaselineFn),
+					true,
+					false
+				);
+				TLinesACombiner() : TCustomCombiner(
+					\currentItem, previousItem ->
+						if (rtl) itemPositionRtlFn(currentItem, previousItem)
+						else itemPositionFn(previousItem, true),
+					None(),
+					Some(lastItemBaselineFn),
+					true,
+					false
+				);
+				TBaselineLinesCombiner() : TCustomCombiner(
+					\__, previousItem -> itemPositionFn(previousItem, true),
+					None(),
+					Some(firstItemBaselineFn),
+					true,
+					false
+				);
+				TBaselineLinesACombiner() : TCustomCombiner(
+					\currentItem, previousItem ->
+						if (rtl) itemPositionRtlFn(currentItem, previousItem)
+						else itemPositionFn(previousItem, true),
+					None(),
+					Some(firstItemBaselineFn),
+					true,
+					false
+				);
+				TColsCombiner() : TCustomCombiner(
+					\__, previousItem -> itemPositionFn(previousItem, false),
+					None(),
+					None(),
+					false,
+					true
+				);
+				TColsACombiner() : TCustomCombiner(
+					\__, previousItem -> itemPositionFn(previousItem, false),
+					if (rtl) Some(\i -> i + 1) else None(),
+					None(),
+					false,
+					true
+				);
+				TBaselineColsCombiner() : TCustomCombiner(
+					\currentItem, previousItem -> itemPositionBaselineColsFn(currentItem, previousItem),
+					None(),
+					None(),
+					false,
+					true
+				);
+				TBaselineColsACombiner() : TCustomCombiner(
+					\currentItem, previousItem -> itemPositionBaselineColsFn(currentItem, previousItem),
+					if (rtl) Some(\i -> i + 1) else None(),
+					None(),
+					false,
+					true
+				);
+			}
+
+			makeMetricsCombiner = \v -> if (v) FAddition() else FMax();
+			verticalCombiner = makeMetricsCombiner(combiner.vertical);
+			horizontalCombiner = makeMetricsCombiner(combiner.horizontal);
 
 			createNewTAcc = \itemIndex, tropic -> {
-				if (combiner == TGroupCombiner()) {
-					Pair(
-						const(zeroPoint),
-						tropic2Acc(
-							tropic,
-							parent,
-							sheet,
-							metricsOnly
-						)
-					)
-				} else {
-					previousItem : Transform<TDynamicGroupItem> =
-						fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
-							elementAt(ti, if (rtlCols) i + 1 else i - 1, zeroTDynamicGroupItem)
-						));
+				currentItem : Transform<TDynamicGroupItem> =
+					fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
+						elementAt(ti, i, zeroTDynamicGroupItem)
+					));
+				previousItem : Transform<TDynamicGroupItem> =
+					fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
+						elementAt(ti, eitherMap(combiner.getPrevItemIndex, \fn -> fn(i), i - 1), zeroTDynamicGroupItem)
+					));
 
-					tropicWidth = make(0.0);
-					itemPosition =
-						fsubselect(
-							previousItem,
-							FLift(\prevItem ->
-								if (rtlLines)
-									fselect4(
-										prevItem.position,
-										prevItem.acc.metrics.height,
-										maxWidth,
-										tropicWidth,
-										\p : Point, prevHeight : double, containerWidth, currentWidth : double ->
-											Point(
-												if (containerWidth > currentWidth) containerWidth - currentWidth else 0.0,
-												p.y + prevHeight
-											)
-									)
-								else
-									fselect2(
-										prevItem.position,
-										if (combiner == TLinesCombiner() || combiner == TLinesACombiner())
-											prevItem.acc.metrics.height
-										else
-											prevItem.acc.metrics.width,
-										if (combiner == TLinesCombiner() || combiner == TLinesACombiner())
-											FLift2(\p : Point, metric : double ->
-												Point(
-													0.0,
-													p.y + metric
-												)
-											)
-										else
-											FLift2(\p : Point, metric : double ->
-												Point(
-													p.x + metric,
-													0.0
-												)
-											)
-									)
-							)
-						);
+				itemPosition = combiner.itemPositionFn(currentItem, previousItem);
 
-					Pair(
-						itemPosition,
-						tropic2Acc(
-							TTranslate(itemPosition, TAttachWidth(tropic, tropicWidth)),
-							parent,
-							sheet,
-							metricsOnly
-						)
+				Pair(
+					itemPosition,
+					tropic2Acc(
+						TTranslate(itemPosition, tropic),
+						parent,
+						sheet,
+						metricsOnly
 					)
-				}
+				)
 			}
 
 			handleAdd = \tropic, z -> {
@@ -498,6 +629,12 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				);
 			};
 
+			baseline =
+				eitherFn(combiner.baselineFn,
+					\fn -> fsubselect(tropicItems, FLift(fn)),
+					\ -> fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
+				);
+
 			TAcc(
 				if (metricsOnly)
 					FEmpty()
@@ -508,13 +645,13 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					),
 				TFormMetrics(
 					fsubselectFn(tropicItems, \item -> item.acc.metrics.width, horizontalCombiner, 0.0),
-					fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0),
-					fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
+					faddition(maxOffset, fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0)),
+					baseline
 				),
 				fsubselectFn(tropicItems, \item -> item.acc.minWidth, horizontalCombiner, 0.0),
-				fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0),
+				faddition(maxOffset, fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0)),
 				fsubselectFn(tropicItems, \item -> item.acc.maxWidth, horizontalCombiner, 0.0),
-				fsubselectFn(tropicItems, \item -> item.acc.maxHeight, verticalCombiner, 0.0),
+				faddition(maxOffset, fsubselectFn(tropicItems, \item -> item.acc.maxHeight, verticalCombiner, 0.0)),
 				fsubselectFn(tropicItems, \item -> item.acc.xFillers, horizontalCombiner, 0.0),
 				fsubselectFn(tropicItems, \item -> item.acc.yFillers, verticalCombiner, 0.0),
 				const(false),
@@ -1112,6 +1249,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				else
 					\val -> fmultiply(fselect(fdivide(val, const(snapSize.ysnap)), FLift(dfloor)), const(snapSize.ysnap));
 
+			useMinMetricsFix = !isUrlParameterFalse("fitzoom_min_metrics");
+
 			eitherFn(
 				tryExtractStruct(style, TFillZoom(false)),
 				\fillZoom -> {
@@ -1147,7 +1286,9 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					xscale = fdivide(ba2Metrics.width, ba1.metrics.width);
 					yscale = fdivide(ba2Metrics.height, ba1.metrics.height);
 					customScale = extractStruct(style, TFillScale(const(0.0))).scale;
-					scale = fmax3(xscale, yscale, customScale);
+					scale = 
+						if (isUrlParameterTrue("new")) faddition(customScale, fmax(xscale, yscale))
+						else fmax3(xscale, yscale, customScale);
 
 					if (metricsOnly) {
 						TAcc(
@@ -1270,8 +1411,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 										ba1.form
 									),
 								ba2Metrics,
-								ba2.minWidth |> snapSizeX,
-								ba2.minHeight |> snapSizeY,
+								if (useMinMetricsFix)
+									fmin(fmultiply(xscale, ba1.minWidth), ba2.minWidth) |> snapSizeX
+								else
+									ba2.minWidth |> snapSizeX,
+								if (useMinMetricsFix)
+									fmin(fmultiply(yscale, ba1.minHeight), ba2.minHeight) |> snapSizeY
+								else
+									ba2.minHeight |> snapSizeY,
 								ba2.maxWidth |> snapSizeX,
 								ba2.maxHeight |> snapSizeY,
 								ba2.xFillers,
@@ -1320,8 +1467,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									ba1.form
 								),
 								ba1Metrics,
-								ba2.minWidth |> snapSizeX,
-								ba2.minHeight |> snapSizeY,
+								if (useMinMetricsFix)
+									fmin(fmultiply(scale, ba1.minWidth), ba2.minWidth) |> snapSizeX
+								else
+									ba2.minWidth |> snapSizeX,
+								if (useMinMetricsFix)
+									fmin(fmultiply(scale, ba1.minHeight), ba2.minHeight) |> snapSizeY
+								else
+									ba2.minHeight |> snapSizeY,
 								ba2.maxWidth |> snapSizeX,
 								ba2.maxHeight |> snapSizeY,
 								ba2.xFillers,
@@ -1379,8 +1532,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									)
 								),
 								ba2Metrics,
-								ba2.minWidth |> snapSizeX,
-								ba2.minHeight |> snapSizeY,
+								if (useMinMetricsFix)
+									fmin(fmultiply(scale, ba1.minWidth), ba2.minWidth) |> snapSizeX
+								else
+									ba2.minWidth |> snapSizeX,
+								if (useMinMetricsFix)
+									fmin(fmultiply(scale, ba1.minHeight), ba2.minHeight) |> snapSizeY
+								else
+									ba2.minHeight |> snapSizeY,
 								ba2.maxWidth |> snapSizeX,
 								ba2.maxHeight |> snapSizeY,
 								ba2.xFillers,
@@ -1826,22 +1985,26 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				if (metricsOnly)
 					FEmpty()
 				else
-					FMutable(fselect(f, FLift(\ta : TAcc -> ta.form))),
+					FMutable(fselect(f, extractFormFromTAccFLift())),
 				TFormMetrics(
-					fsubselect(f, FLift(\ta : TAcc -> ta.metrics.width)),
-					fsubselect(f, FLift(\ta : TAcc -> ta.metrics.height)),
-					fsubselect(f, FLift(\ta : TAcc -> ta.metrics.baseline))
+					fsubselect(f, extractMetrictWidthFLift()),
+					fsubselect(f, extractMetrictHeightFLift()),
+					fsubselect(f, extractMetrictBaselineFLift())
 				),
-				fsubselect(f, FLift(\ta : TAcc -> ta.minWidth)),
-				fsubselect(f, FLift(\ta : TAcc -> ta.minHeight)),
-				fsubselect(f, FLift(\ta : TAcc -> ta.maxWidth)),
-				fsubselect(f, FLift(\ta : TAcc -> ta.maxHeight)),
-				fsubselect(f, FLift(\ta : TAcc -> ta.xFillers)),
-				fsubselect(f, FLift(\ta : TAcc -> ta.yFillers)),
-				fsubselect(f, FLift(\ta : TAcc -> ta.addFillers)),
+				fsubselect(f, extractMetrictMinWidthFLift()),
+				fsubselect(f, extractMetrictMinHeightFLift()),
+				fsubselect(f, extractMetrictMaxWidthFLift()),
+				fsubselect(f, extractMetrictMaxHeightFLift()),
+				fsubselect(f, extractMetrictXFillersFLift()),
+				fsubselect(f, extractMetrictYFillersFLift()),
+				fsubselect(f, extractMetrictAddFillersFLift()),
 				false,
 				false,
-				[disp, \ -> applyall(getValue(f).disposers)]
+				[disp, \ -> {
+					applyall(getValue(f).disposers);
+					// Synchronous call causes buggy benaviour in MAutoComplete in dynamicList mode
+					deferred(\ -> nextDistinct(f, zeroTAcc))
+				}]
 			);
 		}
 		TSizeOf(content) : {
@@ -1911,20 +2074,13 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		}
 		TConstruct(cs, tr): {
 			bf = tropic2Acc(tr, parent, sheet, metricsOnly);
-
 			if (metricsOnly) {
 				TAcc(bf with disposers = concat(bf.disposers, map(cs, \fn -> fn())))
 			} else {
-				returnTAcc(
-					bf,
-					\ -> FConstructor(
-						bf.form,
-						\ ->
-							map(cs, \fn -> fn())
-							|> (\disp -> \ -> applyall(disp))
-					),
-					metricsOnly
-				)
+				TAcc(bf with form = FConstructor(
+					bf.form,
+					makeTConstructFconstruct(cs)
+				))
 			}
 		}
 		TCreate2(current, fn): {
@@ -2157,26 +2313,28 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TText(t, s): {
 			charStyle = tcharacterStyle2charStyle(s);
 			fTextStyle = tcharacterStyle2FTextStyle(s);
-			wh = getStaticFormSize2(Text(t, charStyle), false);
+			localizationEnabled = extractStruct(s, LocalizationEnabled(false)).enabled;
+			wh = getStaticFormSizeReal(Text(t, charStyle), false, None(), localizationEnabled);
+			textWidth = extractStruct(s, TextWidthInspector(make(wh.width))).width;
 
 			TAcc(
 				if (metricsOnly)
 					FEmpty()
 				else
-					FText(const(t), fTextStyle),
+					FText(const(t), replaceStruct(fTextStyle, TextWidthInspector(textWidth))),
 				TFormMetrics(
-					const(wh.width),
+					textWidth,
 					const(wh.height),
 					const(wh.baseline)
 				),
-				const(wh.width),
+				textWidth,
 				const(wh.height),
-				const(wh.width),
+				textWidth,
 				const(wh.height),
 				zero,
 				zero,
 				const(true),
-				true,
+				false,
 				true,
 				[]
 			)
@@ -2189,30 +2347,39 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			parMargin = extractStruct(style, ParagraphMargin(0., 0.));
 			parEllipsis = tryExtractStruct(style, ParagraphEllipsis(0, nop1));
 			parInterlineSpacing = extractStruct(style, InterlineSpacing(0.));
+			metricsListeners = extractStructMany(style, ParagraphMetrics(nop1));
 			parRightAlign = contains(style, RightAlign());
 			parCenterAlign = contains(style, CenterAlign());
 			parWidthB = fsubselect(parWidth, FLift(\pw -> if (pw < 0.) fmax(parent.maxX, zero) else const(pw)));
 			parStyle : [FParagraphStyle] =
-				concat(
+				concatA([
 					charStyle,
+					metricsListeners,
 					[
 						ParagraphWidth(parWidthB),
 						ParagraphMetrics(\met -> nextDistinct(metrics, met)),
 						parInterlineSpacing
 					]
 					|> (\s -> arrayPushMaybe(s, parEllipsis))
-					|> (\s -> arrayPushMaybe(s, tryExtractStruct(style, Resolution(1.0))))
-				)
-				|> (\parStyle -> {
-					arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromTParagraphStyles(style), getDefaultRtl()))
-				});
+					|> (\s -> arrayPushMaybe(s, tryExtractStruct(style, CropWords(true))))
+					|> (\s -> arrayPushMaybe(s, tryExtractStruct(style, Resolution(1.0)))),
+					[paraLineAlignment2abs(extractParaLineAlignment(style))]
+				]);
 
 			if (metricsOnly) {
 				applyall(renderFParagraph(text, parStyle).disposers);
 			}
 
 			isFullWidth = contains(style, FullWidth()) || parRightAlign || parCenterAlign;
-			wd = if (isFullWidth) parWidthB else fselect(metrics, FLift(\met -> met.width));
+			metWidth = fselect(metrics, FLift(\met -> met.width));
+			wd =
+				if (isFullWidth) {
+					if (!isUrlParameterFalse("paragraph_width_fix_enabled")) {
+						fmax(parWidthB, metWidth)
+					} else {
+						parWidthB
+					}
+				} else metWidth;
 			hgt = fselect(metrics, FLift(\met -> met.height + parMargin.top + parMargin.bottom));
 
 			TAcc(
@@ -2347,8 +2514,8 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					scaleX = if (keepAspect) fmin(scaleX0, scaleY0) else scaleX0;
 					scaleY = if (keepAspect) fmin(scaleX0, scaleY0) else scaleY0;
 
-					w = if (keepAspect) fif(feq(pictureWidth, 0.), parent.maxX, fmultiply(pictureWidth, scaleX)) else boxWidth;
-					h = if (keepAspect) fif(feq(pictureHeight, 0.), parent.maxY, fmultiply(pictureHeight, scaleY)) else boxHeight;
+					w = if (keepAspect) fif(fand(fillerModeX, feq(pictureWidth, 0.)), parent.maxX, fmultiply(pictureWidth, scaleX)) else boxWidth;
+					h = if (keepAspect) fif(fand(fillerModeY, feq(pictureHeight, 0.)), parent.maxY, fmultiply(pictureHeight, scaleY)) else boxHeight;
 
 					TAcc(
 						optimizeFPicture(FScale(scaleX, scaleY, fpicture)),
@@ -2904,7 +3071,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 									if (isSome(inside)) {
 										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
 										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !mobile && m.inside);
+										nextDistinct(inb, !handled && !mobile && m.inside);
 									}
 
 									// On touch device, this is useful
@@ -3061,18 +3228,19 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TFullWindow(fs, bt): {
 			wh0 = makeWH();
 
-			factor = const(Factor(screenDensity, screenDensity));
+			factor = ffactor2(fmultiply(accessibilityZoom, const(screenDensity)));
 
 			// TScale from trender2 is ignored in fullscreen mode, so let`s scale content here
 			whF = fselect2(wh0, factor, FLift2(\stage, f -> WidthHeight(stage.width / f.x, stage.height / f.y)));
 			wh = fif(fs, whF, wh0);
+			isWhInit = fneq(wh0, WidthHeight(0., 0.));
 
 			bf =
 				tropic2Acc(
 					bt,
 					TParentInfo(
-						fif(fs, fwidth(wh), parent.maxX),
-						fif(fs, fheight(wh), parent.maxY),
+						fif(fand(fs, isWhInit), fwidth(wh), parent.maxX),
+						fif(fand(fs, isWhInit), fheight(wh), parent.maxY),
 						parent.environment,
 						fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix)
 					),
@@ -3094,7 +3262,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TFullScreen(fs, bt): {
 			wh0 = makeWH();
 
-			factor = const(Factor(screenDensity, screenDensity));
+			factor = ffactor2(fmultiply(accessibilityZoom, const(screenDensity)));
 
 			// TScale from trender2 is ignored in fullscreen mode, so let`s scale content here
 			whF = fselect2(wh0, factor, FLift2(\stage, f -> WidthHeight(stage.width / f.x, stage.height / f.y)));
@@ -3188,6 +3356,12 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						}
 						IMaxSize(wh) : {
 							fconnect(fwh(bf.maxWidth, bf.maxHeight), wh);
+						}
+						IXFillers(xFillers) : {
+							fconnect(bf.xFillers, xFillers);
+						}
+						IYFillers(yFillers) : {
+							fconnect(bf.yFillers, yFillers);
 						}
 						IMetricsOnly() : { nop; }
 					}
@@ -3364,16 +3538,6 @@ distributeAsks(
 	|> (\f -> Pair(fFirstOfPair(f), fSecondOfPair(f)))
 }
 
-// TDynamicGroup tools
-
-TDynamicGroupItem : (
-	acc : TAcc,
-	index : DynamicBehaviour<int>,
-	position : Transform<Point>
-);
-
-zeroTDynamicGroupItem = TDynamicGroupItem(zeroTAcc, make(0), const(zeroPoint));
-
 fsubselectFn(
 	array : Transform<[?]>,
 	key : (?) -> Transform<??>,
@@ -3389,4 +3553,57 @@ fsubselectFn(
 				ConstBehaviour(def)
 		)
 	);
+}
+
+// We need these methods to avoid closure to capture big unsuded objects
+makeTConstructFconstruct(cs) -> () -> () -> void {
+	\ -> {
+		map(cs, \fn -> fn()) |> (\disp -> \ -> {
+			applyall(disp)
+		})
+	}
+}
+
+extractMetrictWidthFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.metrics.width);
+}
+
+extractMetrictHeightFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.metrics.height);
+}
+
+extractMetrictBaselineFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.metrics.baseline);
+}
+
+extractMetrictMinWidthFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.minWidth);
+}
+
+extractMetrictMinHeightFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.minHeight);
+}
+
+extractMetrictMaxWidthFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.maxWidth);
+}
+
+extractMetrictMaxHeightFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.maxHeight);
+}
+
+extractMetrictXFillersFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.xFillers);
+}
+
+extractMetrictYFillersFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.yFillers);
+}
+
+extractMetrictAddFillersFLift() -> FLift {
+	FLift(\ta : TAcc -> ta.addFillers);
+}
+
+extractFormFromTAccFLift() -> FLift {
+	FLift(\ba0 : TAcc -> ba0.form)
 }

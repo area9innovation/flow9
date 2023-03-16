@@ -27,15 +27,19 @@ export {
 		FiJavaConfig,
 		FcBytecodeConfig,
 		FiHTMLConfig,
+		FcProtobufConfig,
+		FcSpeedyConfig,
 		FcLISPConfig,
 		FcCppConfig,
+		FcCpp2Config,
 		FiDConfig,
 		FcMLConfig,
 		FiDocConfig,
 		FiWasmConfig,
 		FcIncaConfig,
 		FcFlowConfig,
-		FiTsdConfig;
+		FiTsdConfig,
+		FiWiseConfig;
 
 	FcCommonConfig ::= FcBackendConfig, CompilerConfig;
 
@@ -75,13 +79,24 @@ export {
 		// Is inlined into the final assembled JS code.
 		externLib : string,
 		// Names from the external natives lib.
-		externNatives : Set<string>
+		externNatives : Set<string>,
+		// like: Pair("npm[@myorg/privatepackage@1.5.0]", "NativeHost") - see 'npm help install' for package format
+		dependencies : [FiJsDependency],
+	);
+
+	// Examples:
+	//    npm[@braintree/sanitize-url;SanitizeUrl]
+	FiJsDependency(
+		provider : string,  // one of: npm, yarn or file
+		host : string,      // native host name
+		package : string    // i.e. @myorg/privatepackage@1.5.0 or path to the file
 	);
 
 	FiNimConfig(
 		flowfile : string,
 		outputfile : string,
 		includes : [string],
+		nativeDirs : [string], // directories, containing native runtime function definition
 		debug : bool,
 		verbose : int,
 		threadId : int,
@@ -132,13 +147,15 @@ export {
 		flowfile : string,
 		outputFile : string,
 		outputDir : string,
+		generateDir : string,
 		buildExe : bool,
 		includes : [string],
 		debug : bool,
 		verbose : int,
 		threadId : int,
 		extStructDefs : bool,
-		entry : string
+		entry : string,
+		useGui : bool
 	);
 
 	FcRustConfig(
@@ -176,6 +193,11 @@ export {
 		debug : bool,
 		verbose : int,
 		threadId : int,
+		dependencies : [string],  // like: "io.jsonwebtoken:jjwt-api:0.11.0"
+		externNatives : [string], // paths to com/area9innovation/flow/*.java, containing custom native hosts
+		builder : string,         // possible builders: "mvn", "gradle", "raw"
+		builderXmX : string,      // -Xmx parameter for builder JVM. Default value is 1024M.
+		options : Tree<string, string> // all other config options
 	);
 
 	FiHTMLConfig(
@@ -185,6 +207,7 @@ export {
 		jsfile : string,
 		verbose : int,
 		threadId : int,
+		debug : bool,
 		title : string,
 		splash : string,
 		minify : bool,
@@ -192,13 +215,23 @@ export {
 		additionalScripts: [string],
 		predefinedParams: [Pair<string, string>],
 		workingDir : string,
-		manifestFileName: string
+		manifestFileName: string,
+		noTranslate: bool
 	);
 
 	FcProtobufConfig(
 		flowfile : string,
 		outputfile : string,
 		types : [string],
+		verbose : int,
+		threadId : int,
+	);
+
+	FcSpeedyConfig(
+		flowfile : string,
+		outputfile : string,
+		types : [string],
+		verbose : int,
 		threadId : int,
 	);
 
@@ -251,6 +284,14 @@ export {
         doinline : bool
 	);
 
+    FiWiseConfig(
+		flowfile : string,
+		outputfolder : string,
+		includes : [string],
+		verbose : int,
+		threadId : int,
+	);
+
 	FiTsdConfig(
 		flowfile : string,
 		jslibrary : Set<string>,
@@ -258,6 +299,17 @@ export {
 		outputfolder : string,
 		verbose : int,
 		threadId : int,
+	);
+
+	FiCpp3Config(
+		outfile : string,      // name of an pitput file. If not explicitly set, is a flowfile name
+		outputdir : string,    // directory for the translated sources
+		namespace : string,    // namespace, enclosing the generated code
+		monolith : bool,       // build a single source file
+		volatile : [string],   // variables, which must be initialized inside main function
+		nativeDirs : [string], // directories, containing native runtime function definition
+		qtOpts: [string],      // options for Qt build
+		config: CompilerConfig
 	);
 
 	FcBackendConfigs(
@@ -273,13 +325,16 @@ export {
 		lispconfig: Maybe<FcLISPConfig>,
 		cppconfig : Maybe<FcCppConfig>,
 		protobufconfig : Maybe<FcProtobufConfig>,
+		speedyconfig : Maybe<FcSpeedyConfig>,
 		mlconfig : Maybe<FcMLConfig>,
 		docconfig : Maybe<FiDocConfig>,
 		wasmconfig : Maybe<FiWasmConfig>,
 		incaconfig : Maybe<FcIncaConfig>,
 		flowconfig : Maybe<FcFlowConfig>,
 		tsdconfig : Maybe<FiTsdConfig>,
-		cpp2config : Maybe<FcCpp2Config>,		
+		cpp2config : Maybe<FcCpp2Config>,
+		wiseconfig : Maybe<FiWiseConfig>,
+		cpp3config : Maybe<FiCpp3Config>,
 	);
 
 	getFcBackendConfigs(config : CompilerConfig) -> FcBackendConfigs;
@@ -291,6 +346,8 @@ export {
 	saveFileContent(filename : string, content : string, threadId : int) -> void;
 
 	updateJsConfig(conf : CompilerConfig, file : string) -> CompilerConfig;
+
+	fcBackendConfigs2array(configs : FcBackendConfigs) -> [FcBackendConfig];
 }
 
 getFcBackendConfigs(config : CompilerConfig) {
@@ -298,6 +355,59 @@ getFcBackendConfigs(config : CompilerConfig) {
 	outdir = if (outdir1 == "" || endsWith(outdir1, "/")) outdir1 else outdir1 + "/";
 	js_external_natives = \-> if (!isConfigParameterSet(config.config, "js-extern-natives")) makeSet() else {
 		buildSet(strSplit(getConfigParameter(config.config, "js-extern-natives"), ","));
+	}
+	js_dependencies = \-> if (!isConfigParameterSet(config.config, "js-dependencies")) [] else {
+		deps = uniq(strSplit(getConfigParameter(config.config, "js-dependencies"), ","));
+		// Dependecy look like:
+		//    npm[@braintree/sanitize-url;SanitizeUrl]
+		filtermap(deps, \dep0 -> {
+			dep = trim2(dep0, " \t");
+			err_mesg = \-> {
+				fcPrintln(
+					"Wrong format of JS dependency: '" + dep + "'. Should look like one of the following:\n" +
+					"\tnpm[@braintree/sanitize-url;NativeHost]\n" +
+					"\tyarn[@braintree/sanitize-url;NativeHost]\n" +
+					"\tfile[some_dir1/some_dir2/some_natives_sources.ts;NativeHost]",
+					config.threadId
+				);
+			}
+			if (startsWith(dep, "npm")) {
+				parts = strSplit(substring(dep, 4, strlen(dep) - 5), ";");
+				if (length(parts) != 2) { err_mesg(); None(); } else Some(FiJsDependency("npm", parts[1], parts[0]));
+			} else if (startsWith(dep, "yarn")) {
+				parts = strSplit(substring(dep, 5, strlen(dep) - 6), ";");
+				if (length(parts) != 2) { err_mesg(); None(); } else Some(FiJsDependency("yarn", parts[1], parts[0]));
+			} else if (startsWith(dep, "file")) {
+				parts = strSplit(substring(dep, 5, strlen(dep) - 6), ";");
+				if (length(parts) != 2) { err_mesg(); None(); } else {
+					file = parts[0];
+					// Try to find a full path, extending config.includes with a file postfix.
+					full_path = if (fileExists(file)) file else {
+						flow_dir = findFlowDir();
+						file1 = pathCombineMany([flow_dir, "platforms", "ts", file]);
+						if (fileExists(file1)) {
+							file1;
+						} else {
+							fold(config.includes, "", \acc, incl ->
+								if (acc != "") acc else {
+									path = pathCombine(incl, file);
+									if (fileExists(path)) path else "";
+								}
+							);
+						}
+					}
+					if (full_path != "") {
+						Some(FiJsDependency("file", parts[1], full_path));
+					} else {
+						fcPrintln("Location of a JS dependency file: " + file + " cannot be resolved. Check the file and -I or 'include' config options.", config.threadId);
+						None();
+					}
+				}
+			} else {
+				err_mesg();
+				None();
+			}
+		});
 	}
 	jsconfig = if (config.jsParams.jsfile != "") {
 			Some(FiJsConfig(
@@ -324,7 +434,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "js-call-main"),
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
-				js_external_natives()
+				js_external_natives(),
+				js_dependencies()
 			))
 		} else None();
 
@@ -360,7 +471,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "js-call-main"),
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
-				js_external_natives()
+				js_external_natives(),
+				js_dependencies()
 			))
 		} else None();
 
@@ -389,35 +501,12 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "js-call-main"),
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
-				js_external_natives()
+				js_external_natives(),
+				js_dependencies()
 			))
 		} else None();
 
-	jar0 = getConfigParameter(config.config, "jar");
-	jar = if (jar0 != "1") jar0 else changeFileExt(config.flowfile, ".jar");
-	jv = if (jar == "" || isConfigParameterSet(config.config, "java")) {
-		dir = getConfigParameter(config.config, "java");
-		if (dir == "1") "javagen" else dir;
-	} else "javagen";
-	java_package = getConfigParameter(config.config, "java-package");
-	javaconfig =
-		if (jv != "")
-			Some(FiJavaConfig(
-				config.flowfile,
-				outdir,
-				fcConcatTarget(config, outdir, jv),
-				if (java_package == "") strReplace(config.flowfile, "/", ".") else java_package,
-				getConfigParameterDef(config.config, "java-main", fileNameOnly(config.flowfile)),
-				jar,
-				buildSet(filtermap(strSplit(getConfigParameterDef(config.config, "java-library", ""), ","), 
-					\n -> if (n == "") None() else Some(n)
-				)),
-				config.includes,
-				config.jsParams.debug,
-				config.verbose,
-				config.threadId,
-				)
-			) else None();
+	javaconfig = fcMakeJavaConfig(config, outdir);
 
 	rs = getConfigParameter(config.config, "rust");
 	rustconfig =
@@ -436,8 +525,12 @@ getFcBackendConfigs(config : CompilerConfig) {
 		if (nim != "")
 			Some(FiNimConfig(
 				config.flowfile,
-				fcConcatTarget(config, outdir, nim),
+				fcConcatTarget(config, outdir, if (nim != "1") nim else (fileNameOnly(config.flowfile) + ".nim")),
 				config.includes,
+				concat(
+					[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "nim"])],
+					filter(strSplit(getConfigParameter(config.config, "nim-natives"), ","), isNotSpace)
+				),
 				config.jsParams.debug,
 				config.verbose,
 				config.threadId,
@@ -504,22 +597,25 @@ getFcBackendConfigs(config : CompilerConfig) {
 				),
 			) else None();
 
-	cpp2 = getConfigParameter(config.config, "cpp2");
+	cpp2 = getConfigParameterDef(config.config, "cpp2", getConfigParameter(config.config, "exe"));
+	cpp2_output = if (isAbsolutePath(cpp2) || outdir == "") cpp2 else pathCombine(outdir, cpp2);
+	cpp2_gendir = getConfigParameter(config.config, "cpp-gendir");
 	cpp2config =
 		if (cpp2 != "")
 			Some(FcCpp2Config(
 				config.flowfile,
-				if (cpp2 != "1") cpp2 else resolveRelativePath(".") + "/" + fileNameOnly(config.flowfile),
-				if (outdir != "") rtrim2(outdir, "/") else "./cppgen",
-				getConfigParameterDef(config.config, "exe", "1") == "1",
+				if (cpp2 != "1") cpp2_output else pathCombine(outdir, fileNameOnly(config.flowfile)),
+				if (outdir == "") "." else outdir,
+				if (cpp2_gendir != "") rtrim2(cpp2_gendir, "/") else pathCombine(outdir, "cppgen"),
+				getConfigParameterDef(config.config, "cpp-no-exe", "1") == "1",
 				config.includes,
 				config.jsParams.debug,
 				config.verbose,
 				config.threadId,
 				true, // extStructDefs
 				"native_program", // entry
-				),
-			) else None();
+				getConfigParameterDef(config.config, "cpp-gui", "0") == "1"
+			)) else None();
 
 	bc0 = getConfigParameter(config.config, "bytecode");
 	bc1 = if (bc0 == "1") fileNameOnly(config.flowfile) else bc0;
@@ -573,6 +669,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 				config.jsParams.jsfile,
 				config.verbose,
 				config.threadId,
+				config.jsParams.debug,
 				htmlTitle,
 				htmlSplash,
 				htmlMinify,
@@ -580,18 +677,36 @@ getFcBackendConfigs(config : CompilerConfig) {
 				htmlAdditionalScripts,
 				htmlPredefinedParams,
 				getConfigParameterDef(config.config, "working-dir", ""),
-				if (htmlManifest == "1") "manifest.json" else htmlManifest)
-			) else None();
+				if (htmlManifest == "1") "manifest.json" else htmlManifest,
+				getConfigParameterDef(config.config, "html-no-translate", "1") == "1"
+			)) else None();
 
 	protobuffile = getConfigParameter(config.config, "protobuf");
 	protobuftypes =  strSplit(getConfigParameter(config.config, "protobuf-types"), ",");
 
-	protobufconfig = 
+	protobufconfig =
 		if (protobuffile != "") {
 			Some(FcProtobufConfig(
-				config.flowfile, 
-				fcConcatTarget(config,  outdir, protobuffile), 
+				config.flowfile,
+				fcConcatTarget(config,  outdir, protobuffile),
 				protobuftypes,
+				config.verbose,
+				config.threadId,
+				)
+			)
+		} else None();
+
+
+	speedyfile = getConfigParameter(config.config, "speedy");
+	speedytypes =  strSplit(getConfigParameter(config.config, "speedy-types"), ",");
+
+	speedyconfig =
+		if (speedyfile != "") {
+			Some(FcSpeedyConfig(
+				config.flowfile,
+				fcConcatTarget(config,  outdir, speedyfile),
+				speedytypes,
+				config.verbose,
 				config.threadId,
 				)
 			)
@@ -623,6 +738,17 @@ getFcBackendConfigs(config : CompilerConfig) {
 				getConfigParameter(config.config, "wasmast"),
                 getConfigParameterInt(config.config, "wasm-memory", 100),
 				isConfigParameterTrue(config.config, "wasminline")
+				)
+			) else None();
+
+    wiseparam = getConfigParameter(config.config, "wise");
+    wiseconfig = if (wiseparam != "")
+			Some(FiWiseConfig(
+				config.flowfile,
+				fcConcatTarget(config, outdir, wiseparam),
+				config.includes,
+				config.verbose,
+				config.threadId,
 				)
 			) else None();
 
@@ -664,6 +790,28 @@ getFcBackendConfigs(config : CompilerConfig) {
 				)
 			) else None();
 
+	cpp3param = getConfigParameter(config.config, "cpp3");
+	cpp3volatile = getConfigParameter(config.config, "cpp-volatile");
+	cpp3qtOpts = getConfigParameter(config.config, "cpp-qt-opts");
+	cpp3config =
+		if (cpp3param != "") {
+			plain_flowfile = strReplace(config.flowfile, "/", "_");
+			outfile = if (cpp3param == "1") changeFileExt(fileNameOnly(config.flowfile), "") else cpp3param;
+			Some(FiCpp3Config(
+				outfile,
+				fcConcatTarget(config, outdir, pathCombine("cpp3gen", outfile)),
+				getConfigParameterDef(config.config, "cpp-namespace", plain_flowfile),
+				getConfigParameterDef(config.config, "cpp-mono", "0") == "1",
+				concat(["allUrlParameters"], if (cpp3volatile == "") [] else strSplit(cpp3volatile, ",")),
+				concat(
+					[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "cpp3"])],
+					filter(strSplit(getConfigParameter(config.config, "cpp-natives"), ","), isNotSpace)
+				),
+				if (cpp3qtOpts == "") [] else strSplit(cpp3qtOpts, ";"),
+				config
+			));
+		} else None();
+
 	FcBackendConfigs(
 		jsconfig,
 		es6config,
@@ -677,6 +825,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 		lispconfig,
 		cppconfig,
 		protobufconfig,
+		speedyconfig,
 		mlconfig,
 		docconfig,
 		wasmconfig,
@@ -684,6 +833,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 		flowconfig,
 		tsdconfig,
 		cpp2config,
+		wiseconfig,
+		cpp3config,
 	)
 }
 
@@ -699,7 +850,7 @@ fcConcatTarget(config : CompilerConfig, outDir : string, targetName : string) ->
 	if (config.verbose >= 1) {
 		fcPrintln("Using compilation target '" + target + "'", config.threadId);
 	}
-	fcCorrectUriPath(target);
+	fcUriPath2path(target);
 }
 
 fcVerbose(cfg : FcCommonConfig, level : int, message : string) -> void {
@@ -752,7 +903,7 @@ updateJsConfig(conf : CompilerConfig, file : string) -> CompilerConfig {
 			conf.objectFolders,
 			conf.verbose,
 			JSCliParams(
-				j with 
+				j with
 				jsfile = jsfile
 			),
 			setTree(
@@ -763,4 +914,91 @@ updateJsConfig(conf : CompilerConfig, file : string) -> CompilerConfig {
 			conf.threadId
 		)
 	}
+}
+
+fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig> {
+	if (!(isConfigParameterSet(config.config, "java") || isConfigParameterSet(config.config, "jar"))) {
+		None();
+	} else {
+		jar0 = getConfigParameter(config.config, "jar");
+		jar_file = if (jar0 != "1") jar0 else changeFileExt(config.flowfile, ".jar");
+
+		// Directory, where generated sources are placed
+		gen_dir0 = if (jar_file == "" || isConfigParameterSet(config.config, "java")) {
+			dir = getConfigParameter(config.config, "java");
+			if (dir == "1") "javagen" else dir;
+		} else "javagen";
+		gen_dir = fcConcatTarget(config, outdir, gen_dir0);
+
+		// Choose a builder
+		java_builder = getConfigParameter(config.config, "java-builder");
+
+		// Choose a java package
+		java_package0= getConfigParameter(config.config, "java-package");
+		java_package = if (java_package0 == "") strReplace(config.flowfile, "/", ".") else java_package0;
+
+		// Java main class
+		java_main = getConfigParameterDef(config.config, "java-main", fileNameOnly(config.flowfile));
+
+		// java library
+		java_library = buildSet(filter(strSplit(getConfigParameterDef(config.config, "java-library", ""), ","), isNotSpace));
+
+		// External dependencies
+		java_dependencies = filter(strSplit(getConfigParameter(config.config, "java-dependencies"), ","), isNotSpace);
+
+		// External native hosts
+		java_externNatives = filter(strSplit(getConfigParameter(config.config, "java-natives"), ","), isNotSpace);
+
+		java_builder_xmx = getConfigParameterDef(config.config, "java-builder-xmx", "1024M");
+
+		Some(FiJavaConfig(
+			config.flowfile,
+			outdir,
+			gen_dir,
+			java_package,
+			java_main,
+			jar_file,
+			java_library,
+			config.includes,
+			config.jsParams.debug,
+			config.verbose,
+			config.threadId,
+			java_dependencies,
+			java_externNatives,
+			java_builder,
+			java_builder_xmx,
+			config.config
+		));
+	}
+}
+
+fcBackendConfigs2array(configs : FcBackendConfigs) -> [FcBackendConfig] {
+	extract = \field : Maybe<FcBackendConfig> -> {
+		switch (field) {
+			None(): [];
+			Some(f): [f];
+		}
+	}
+	concatA([
+		extract(configs.jsconfig),
+		extract(configs.es6config),
+		extract(configs.tsconfig),
+		extract(configs.bcconfig),
+		extract(configs.javaconfig),
+		extract(configs.rustconfig),
+		extract(configs.nimconfig),
+		extract(configs.htmlconfig),
+		extract(configs.dconfig),
+		extract(configs.lispconfig),
+		extract(configs.cppconfig),
+		extract(configs.protobufconfig),
+		extract(configs.mlconfig),
+		extract(configs.docconfig),
+		extract(configs.wasmconfig),
+		extract(configs.incaconfig),
+		extract(configs.flowconfig),
+		extract(configs.tsdconfig),
+		extract(configs.cpp2config),
+		extract(configs.wiseconfig),
+	]);
 }

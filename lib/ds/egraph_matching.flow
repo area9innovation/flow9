@@ -1,0 +1,286 @@
+import ds/egraph;
+import loop;
+
+export {
+	// Prepare a matching engine to be used with a given EGraph
+	makeEMatchEngine(e : EGraph<?>, def : ?, 
+		// How to construct a value, from a head and recursive arguments
+		combine : (head : ?, args : [?]) -> ?,
+	) -> EMatchEngine<?>;
+
+	// Pattern matching language
+	EPattern<?> ::= EPatternVar, EPatternTerm<?>;
+		EPatternVar(id : string);
+		EPatternTerm(head : ?, args : [EPattern<?>]);
+
+	// Find all matches to this pattern to a given class. Calls the onMatch function
+	// for each. Traverses all down recursive
+	findAllEClassMatches(
+		acc : EMatchEngine<?>, class : int, pattern : EPattern<?>, visited : Set<int>,
+		onMatch : (bindings : Tree<string, ?>, ?) -> void
+	) -> Set<int>;
+
+	// Performs all replacements possible, repeatedly up to the given number of iterations
+	performEReplacements(e : EMatchEngine<?>, iterations : int, class : int, 
+		replacements : [EReplacement<?>]) -> void;
+
+		EReplacement(
+			// The pattern to look for
+			pattern : EPattern<?>, 
+			// Once we have a match, then construct a new value, and that
+			// value will be unified with the original
+			rewrite : (bindings : Tree<string, ?>) -> ?
+		);
+}
+
+//
+// Pattern matching on the egraph
+//
+
+EMatchEngine(
+	// The equivalence graph we are building
+	egraph : EGraph<?>,
+	// Any bindings we have from a pattern
+	bindings : Tree<string, EGraphMatch<?>>, 
+	// What node was matched?
+	matchNode : EGraphMatch<?>,
+	// Did we fail the matching?
+	fail : bool,
+	// To make everything work, have a default value
+	def : ?,
+	// How to combine two the head and the arguments into a value
+	combine : (head : ?, args : [?]) -> ?,
+);
+
+// What kind of match is this?
+EGraphMatch<?> ::= EHeadMatch<?>, ENodeMatch<?>;
+	// We match a specific head, with various children
+	EHeadMatch(head : ?, args : [EGraphMatch<?>]);
+	// We match a specific node
+	ENodeMatch(node : ENode<?>);
+
+
+makeEMatchEngine(e : EGraph<?>, def : ?, 
+		combine : (head : ?, args : [?]) -> ?,
+	) -> EMatchEngine<?> {
+	EMatchEngine(e, makeTree(), EHeadMatch(def, []), false, def, combine)
+}
+
+// Looks transitively throughout the entire graph and find all matches to the
+// given pattern
+findAllEClassMatches(acc : EMatchEngine<?>, class : int, pattern : EPattern<?>, visited : Set<int>,
+		onMatch : (bindings : Tree<string, ?>, ?) -> void
+) -> Set<int> {
+	if (containsSet(visited, class)) visited
+	else {
+		nodes = getEClassNodes(acc.egraph, class);
+		foldSet(nodes, insertSet(visited, class), \nacc, node -> {
+			match = epatternENodeMatch(acc, node, pattern);
+			if (!match.fail) {
+				expr = egraphMatch2Exp(acc.egraph, acc.def, acc.combine, match.matchNode);
+				bindings = mapTree(match.bindings, \mat -> {
+					egraphMatch2Exp(acc.egraph, acc.def, acc.combine, mat)
+				});
+				onMatch(bindings, expr)
+			}
+		
+			// OK, look at the children
+			fold(node.args, nacc, \acc2, arg -> {
+				findAllEClassMatches(acc, arg, pattern, acc2, onMatch)
+			})
+		});
+	}
+}
+
+// Will match the pattern against this node, and bind as specific bindings
+// as possible
+epatternENodeMatch(acc : EMatchEngine, term : ENode<?>, pattern : EPattern<?>) -> EMatchEngine {
+	if (acc.fail) acc
+	else switch (pattern) {
+		EPatternVar(id): {
+			mbind = lookupTree(acc.bindings, id);
+			mbind ?? {
+				// OK, already is bound. Check that it is consistent
+				mmatch = consistentEGraphMatch(acc.egraph, mbind, term);
+				switch (mmatch) {
+					None(): {
+						// These are not consistent. fail
+						EMatchEngine(acc with fail = true);
+					}
+					Some(match): {
+						// OK, we have a match. Let us update it to the newest one
+						EMatchEngine(acc with 
+							bindings = setTree(acc.bindings, id, match), 
+							matchNode = match
+						);
+					}
+				}
+			} : {
+				match = ENodeMatch(term);
+
+				EMatchEngine(acc with 
+					bindings = setTree(acc.bindings, id, match), 
+					matchNode = match
+				);
+			}
+		}
+		EPatternTerm(head, pargs): {
+			if (term.head == head && length(term.args) == length(pargs)) {
+				// OK, the head and # args match
+				res = foldi(term.args, Pair(acc, []), \i, acc2 : Pair<EMatchEngine, [EGraphMatch<?>]>, class : int -> {
+					if (acc2.first.fail) acc2
+					else {
+						cm = epatternEClassMatch(acc2.first, class, pargs[i]);
+						Pair(cm, arrayPush(acc2.second, cm.matchNode))
+					}
+				});
+				match = if (res.second == []) {
+					ENodeMatch(ENode(head, []));
+				} else {
+					EHeadMatch(head, res.second);
+				};
+				EMatchEngine(
+					res.first
+					with matchNode = match
+				);
+			} else {
+				// No match
+				EMatchEngine(acc with fail = true);
+			}
+		}
+	}
+}
+
+// Will match the pattern against this class, and bind as specific bindings
+// as possible
+epatternEClassMatch(acc : EMatchEngine<?>, class : int, pattern : EPattern<?>) -> EMatchEngine<?> {
+	nodes = getEClassNodes(acc.egraph, class);
+	epatternENodesMatch(acc, nodes, pattern);
+}
+
+// Check if any of these nodes match, and bind with the first that works
+epatternENodesMatch(acc : EMatchEngine<?>, nodes : Set<ENode<?>>, pattern : EPattern<?>) -> EMatchEngine<?> {
+	pm : Maybe<PopSetResult<ENode<?>>> = popMaxSet(nodes);
+	pm ?? {
+		node = pm.value;
+		rest = pm.rest;
+		nodematch = epatternENodeMatch(acc, node, pattern);
+		if (nodematch.fail) {
+			// Didn't work. Try the next node
+			epatternENodesMatch(acc, rest, pattern)
+		} else {
+			nodematch
+		}
+	} : {
+		EMatchEngine(acc with fail = true);		
+	}
+}
+
+// Is this term consistent with a previous match?
+// If so, provide the most specialized match we can provide
+consistentEGraphMatch(e : EGraph<?>, match : EGraphMatch<?>, term : ENode<?>) -> Maybe<EGraphMatch<?>> {
+	switch (match) {
+		ENodeMatch(node): if (node == term) Some(match) else None();
+		EHeadMatch(head, args): {
+			if (term.head == head && length(term.args) == length(args)) {
+				matches : [EGraphMatch<?>] = filtermapi(args, \i, arg : EGraphMatch<?> -> {
+					argClass = term.args[i];
+					consistentEGraphClassMatch(e, arg, argClass);
+				});
+				if (length(matches) == length(args)) {
+					Some(
+						EHeadMatch(head, matches)
+					)
+				} else None();
+			} else None();
+		}
+	}
+}
+
+// Is this class consistent with a previous match?
+// If so, provide the most specialized match we can provide
+consistentEGraphClassMatch(e : EGraph<?>, match : EGraphMatch<?>, class : int) -> Maybe<EGraphMatch<?>> {
+	switch (match) {
+		ENodeMatch(node): {
+			nodes = getEClassNodes(e, class);
+			if (containsSet(nodes, node)) {
+				Some(match)
+			} else None();
+		}
+		EHeadMatch(head, args): {
+			nodes = getEClassNodes(e, class);
+			foldUntil(set2array(nodes), None(), \acc : Maybe<EGraphMatch<?>>, node -> {
+				mm = consistentEGraphMatch(e, match, node);
+				mm ?? {
+					Pair(false, Some(mm));
+				} : Pair(true, acc)
+			})
+		}
+	}
+}
+
+// Convert a match into a real value
+egraphMatch2Exp(
+		e : EGraph<?>, def : ?,
+		combine : (head : ?, args : [?]) -> ?,
+		match : EGraphMatch<?>, 
+	) -> ? {
+	switch (match) {
+		EHeadMatch(head, args): {
+			combine(head, map(args, \a -> egraphMatch2Exp(e, def, combine, a)))
+		}
+		ENodeMatch(node): {
+			combine(node.head, map(node.args, \class -> egraphClass2Exp(e, def, combine, class)))
+		}
+	}
+}
+
+egraphClass2Exp(
+	e : EGraph<?>, def : ?,
+	combine : (head : ?, args : [?]) -> ?,
+	class : int, 
+) -> ? {
+	nodes = getEClassNodes(e, class);
+	mnode = popMinSet(nodes);
+	mnode ?? {
+		egraphMatch2Exp(e, def, combine, ENodeMatch(mnode.value))
+	} : def
+}
+
+//
+// Do the central replacement loop
+//
+
+performEReplacements(e : EMatchEngine<?>, iterations : int, class : int, replacements : [EReplacement<?>]) -> void {
+	// Here, we record all the unifications to be done
+	unifications = ref makeSet();
+	iter(replacements, \replacement -> {
+		findAllEClassMatches(e, class, replacement.pattern, makeSet(), \bindings, match : ? -> {
+			rep = replacement.rewrite(bindings);
+			unifications := insertSet(^unifications, Pair(match, rep))
+		});
+		{}
+	});
+
+	if (!isEmptySet(^unifications)) {
+		more = ref false;
+		iterSet(^unifications, \u : Pair<?, ?> -> {
+			c1 = addEExp(e.egraph, u.first);
+			c2 = addEExp(e.egraph, u.second);
+			if (c1 != c2) {
+				// println("Unifying " + toString(u));
+				unionEClass(e.egraph, c1, c2);
+				more := true;
+			}
+			{}
+		});
+		if (^more) {
+			// OK, make it canonical again
+			canonicalizeEGraph(e.egraph);
+			if (iterations > 0) {
+				// And go again
+				performEReplacements(e, iterations - 1, class, replacements);
+			}
+		}
+	}
+}

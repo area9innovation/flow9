@@ -4,14 +4,15 @@ import material/internal/material_shadow;
 export {
 	MPopup(items : [[Material]], positionScale : Transform<PositionScale>, style : [MPopupStyle]);
 
-	MPopupStyle ::= RMWidth, RMOffset, MElevation, RMSelected, RMBorders, RMOutterBorder, MOpenMenu,
+	MPopupStyle ::= RMWidth, RMWidthLimits, RMOffset, MElevation, RMSelected, RMBorders, RMOutterBorder, MOpenMenu,
 		RMLeftAnimation, RMHeight, RMClickOutToClose, RMTranslateAnimation, RMScaleAnimation, RMExpandingAnimation,
 		RMAlphaAnimation, MSameZorder, RMSameFocus, RMScrollArea, MFixPosition,
 		MBackgroundStyle, // Transparency only works in combination with RMNoShadow
 		RMNoScrollbars, TScrollPersistent, TScrollPosition, RMCurrentHeight, RMCurrentWidth, RMCurrentMaxSize, RMDontHandle, RMNoSnapSize,
-		RMNoShadow, TScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive;
+		RMNoShadow, TScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive, MVirtualScreen;
 
 		RMWidth(width : Transform<double>);
+		RMWidthLimits(min : Transform<double>, max : Transform<double>);
 		RMOffset(offset : Transform<Pair<WidthHeight, double>>);
 		RMSelected(selected : int);
 		RMBorders(borders : double);
@@ -53,12 +54,20 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 
 	dpiScale = extractStruct(manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
 	elevation = extractStruct(style, MElevation(const(8.))).elevation;
+	virtualScreen = tryExtractStruct(style, MVirtualScreen(makeWH(), make(zeroPositionScale)));
 	customScale = tryExtractStruct(style, MCustomScale(const(Factor(1., 1.))));
-	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale0, cus.factor, FLift2(\ps, cs ->
-		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale0);
+	positionScale1 = eitherMap(virtualScreen, \vs ->
+		fselect2(vs.position, positionScale0, FLift2(\vsp, ps ->
+			PositionScale(Point(ps.pos.x - vsp.pos.x, ps.pos.y - vsp.pos.y), ps.scale)
+		)),
+		positionScale0
+	);
+	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale1, cus.factor, FLift2(\ps, cs ->
+		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale1);
 
 	offset = extractStruct(style, RMOffset(const(Pair(WidthHeight(0., 0.), 0.)))).offset;
 	mWidth = extractStruct(style, RMWidth(const(-1.))).width;
+	mWidthLimits = extractStruct(style, RMWidthLimits(const(-1.), const(-1.)));
 	fixPosition = tryExtractStruct(style, MFixPosition(true));
 	scrollArea = extractStruct(style, RMScrollArea(0, 0));
 	borders = extractStruct(style, RMBorders(16.)).borders;
@@ -71,8 +80,11 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 		hgt =
 			eitherMap(fixPosition,
 				\fp ->
-					if (fp.top) {if (ps.pos.y > 0.) hgt0 - (ps.pos.y / ps.scale.y + offs.y) else hgt0}
-					else max(ps.pos.y, 0.),
+					if (fp.top) {
+						if (ps.pos.y > 0.) {
+							hgt0 - additionalBorder - (ps.pos.y / ps.scale.y + offs.y)
+						} else hgt0
+					} else max(ps.pos.y, 0.),
 				hgt0
 			);
 
@@ -164,7 +176,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 						),
 						min(
 							if (ps.pos.y + so.y < additionalBorder)
-								min(ps.pos.x, additionalBorder)
+								min(ps.pos.y, additionalBorder)
 							else
 								ps.pos.y + so.y,
 							max(
@@ -174,18 +186,12 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 						)
 					)
 			})
-		);
+		)
+		|> (\sp -> eitherMap(virtualScreen, \vs -> fpointaddition(sp, fselect(vs.position, FLift(\vsp -> vsp.pos))), sp));
 
 	popupDownFn = \h, mi : MouseDownInfo -> {
 			if (mi.inside()) {
-				dispUnsM(popupDownFnUns);
-
-				manager.downInsideFocus ::= Some(either(sameFocus, RMSameFocus(manager.focus)).focus);
-				// Timeout to keep focus inside autocomplete popup
-				setUnsM(
-					popupDownFnUns,
-					interruptibleTimer(120, \ -> manager.downInsideFocus ::= None())
-				);
+				setDownInsideFocusTimer(manager, either(sameFocus, RMSameFocus(manager.focus)).focus, popupDownFnUns)
 			}
 
 			h
@@ -199,22 +205,22 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			h || blockClicks
 		};
 
-	contentWH =
-		fselect2(sizesB, mWidth, FLift2(\szs, w ->
+	contentWH : Transform<WidthHeight> =
+		fselect4(sizesB, mWidth, mWidthLimits.min, mWidthLimits.max, \szs, w, minW, maxW ->
 			fold(szs, WidthHeight(0., 0.), \acc, sz ->
 				WidthHeight(if (w > 0.) w else max(sz.width, acc.width), sz.height + acc.height)
 			)
-			|> (\wh ->
-				WidthHeight(
-					if (contains(style, RMNoSnapSize()) || w > 0.)
-						wh.width
-					else
-						(if (mobile) 56. else 64.)
-						|> (\snappingSize -> dceil(wh.width / snappingSize) * snappingSize),
+			|> (\wh : WidthHeight -> WidthHeight(max(minW, wh.width), wh.height))
+			|> (\wh : WidthHeight -> if (maxW > 0.) WidthHeight(min(maxW, wh.width), wh.height) else wh)
+			|> (\wh : WidthHeight ->
+				if (contains(style, RMNoSnapSize()) || w > 0. || minW > 0. || maxW > 0.) wh
+				else WidthHeight(
+					(if (mobile) 56. else 64.)
+					|> (\snappingSize -> dceil(wh.width / snappingSize) * snappingSize),
 					wh.height
 				)
 			)
-		));
+		);
 
 	popupPart = \par, start, end ->
 		TEvenGrid(
@@ -242,7 +248,8 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 				else
 					[],
 				if (scrollArea.from < scrollArea.to) {
-					if (scrollArea.to - scrollArea.from > 100)
+					if (scrollArea.to - scrollArea.from > 100) {
+						gridContentSize = makeWH();
 						[
 							generate(max(scrollArea.from, 0), min(scrollArea.to, length(items)), \i ->
 								mapi(items[i], \j, it -> MGetFocusGroup(\p2 -> TAttachBox(m2t(it, p2), sizes[i][j])))
@@ -253,13 +260,29 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 									p,
 									MRecyclerGrid(
 										const(f),
-										scrollStyle
+										arrayPush(scrollStyle, MRecyclerGridInspectContentSize(gridContentSize))
 									),
 									m2t
 								)
 							)
+							// Initialize sizes of non-rendered items by average values, evaluated in MRecyclerGrid
+							|> (\f -> TConstruct([
+									makeSubscribe2(gridContentSize, \gsz -> {
+										if (length(sizes) > 0) {
+											hgt = gsz.height / i2d(length(sizes));
+											iter(sizes, \part -> if (length(part) > 0) {
+												wd = gsz.width / i2d(length(part));
+												iter(part, \sz -> if (getValue(sz).width == 0. && getValue(sz).height == 0.) {
+													nextDistinct(sz, WidthHeight(wd, hgt))
+												})
+											})
+										}
+									})
+								],
+								f
+							))
 						]
-					else
+					} else
 						[
 							MGetFocusGroup(\p2 ->
 								popupPart(p2, max(scrollArea.from, 0), min(scrollArea.to, length(items)))
@@ -295,7 +318,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 						stageWH,
 						offset,
 						positionDpiScale,
-						\realSize, wh, offs, ps -> {
+						\realSize : WidthHeight, wh : WidthHeight, offs : Pair<WidthHeight, double>, ps : PositionScale -> {
 							maxSize =
 								WidthHeight(
 									max(wh.width / ps.scale.x, 0.),
@@ -386,7 +409,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			TInteractive(
 				[
 					KeyDown2(\h, ke -> {
-						if (fgetValue(p.keysEnabled) && ke.keycode == 27) {
+						if (fgetValue(p.keysEnabled) && ke.keycode == KEY_ESCAPE) {
 							nextDistinct(menuOpened, false);
 
 							true;
@@ -406,6 +429,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			"MPopup",
 			concat(
 				extractMComponentGroupState(style)
+				|> (\f2 -> replaceStruct(f2, MFocusOnPrevious(false)))
 				|> (\f2 -> if (sameZorder) f2 else concatStyles(f2, [MZorder(const(newZorder))])),
 				[
 					IScriptBehaviour("opened", menuOpened, ISInputValue([], "bool", false)),
@@ -442,13 +466,20 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 		)
 	)
 	|> (\t -> TAttachAvailable(t, stageWH))
+	|> (\t -> eitherMap(virtualScreen, \vs ->
+		TAvailable(t, TSized(fselect2(vs.size, vs.position, FLift2(\vss, vsp ->
+			WidthHeight(vss.width * vsp.scale.x, vss.height * vsp.scale.y)))
+		)),
+		t
+	))
 	|> (\t -> TShow(parent.ready, t))
 	|> (\f -> {
-		tUns = ref Some(trender(f, manager.manager.renderStyle));
+		renderFn = \ -> trender(f, manager.manager.renderStyle);
+		tUns = ref Some(renderFn());
 
 		fwUns = onFullWindow(\fw -> if (fw) {
 			dispUnsM(tUns);
-			setUnsM(tUns, trender(f, manager.manager.renderStyle));
+			setUnsM(tUns, renderFn());
 		});
 
 		setUnsM(
@@ -468,8 +499,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 					});
 
 					if (isNone(manager.downInsideFocus)) {
-						manager.downInsideFocus ::= Some(pf);
-						deferred(\ -> manager.downInsideFocus ::= None());
+						setDownInsideFocus(manager, pf);
 					}
 				});
 			}

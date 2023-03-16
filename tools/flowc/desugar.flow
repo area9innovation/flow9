@@ -52,17 +52,18 @@ extractFcForbids(fileinfo : FcFileInfo, st : SyntaxTree) -> [FcForbid] {
 
 
 DesugarAcc(
-	fileinfo : FcFileInfo, 
-	names : FcGlobalNames, 
-	fileStructs : Tree<string, FcTypeStruct>, 
-	fileUnions : Tree<string, FcTypeUnion>, 
+	fileinfo : FcFileInfo,
+	names : FcGlobalNames,
+	fileStructs : Tree<string, FcTypeStruct>,
+	fileUnions : Tree<string, FcTypeUnion>,
 	// Should we instantiate type names we see?
 	instantiateTypenames : bool,
-	env : FcTypeEnv, 
+	env : FcTypeEnv,
 	tyvarIdGroup : IdGroup,
 	errors : ref [FcError],
 	stringIncludes : ref [string],
-	supressUnknownType : bool
+	supressUnknownType : bool,
+	switchVarTypes : Tree<string, Pair<FcType, FcTypeUnion>>
 );
 
 desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, st : SyntaxTree) -> FcModule {
@@ -140,7 +141,9 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 
 	// OK, we construct a new tyvar group factory
 	dacc0 = DesugarAcc(fileinfo, facc.names, makeTree(), makeTree(), false, dummyFcTypeEnv, makeIdGroup(facc.tyvarIdFactory), errors, ref [],
-		isConfigParameterTrue(facc.config.config, "supress-unknown-type"));
+		isConfigParameterTrue(facc.config.config, "supress-unknown-type"),
+		makeTree()
+	);
 
 	// Find all struct defs
 	structs : Tree<string, FcTypeStruct> = fold(toplevels, makeTree(), \acc, t -> {
@@ -209,7 +212,11 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 		}
 	});
 
-	dacc1 = DesugarAcc(fileinfo, facc.names, structs, makeTree(), false, dacc0.env, dacc0.tyvarIdGroup, dacc0.errors, dacc0.stringIncludes, dacc0.supressUnknownType);
+	dacc1 = DesugarAcc(dacc0 with
+		fileinfo = fileinfo,
+		names = facc.names,
+		fileStructs = structs
+	);
 
 	// Find all unions, but keep them named, and unresolved
 	unions : Tree<string, FcTypeUnion> = fold(toplevels, makeTree(), \acc, t -> {
@@ -226,7 +233,10 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 		} else acc;
 	});
 
-	dacc = DesugarAcc(fileinfo, facc.names, structs, unions, true, dacc1.env, dacc1.tyvarIdGroup, dacc1.errors, dacc1.stringIncludes, dacc1.supressUnknownType);
+	dacc = DesugarAcc(dacc1 with
+		fileUnions = unions,
+		instantiateTypenames = true
+	);
 
 	// Collect all definitions and declaration of each function
 	functions1 : Tree<string, [FcFunctionDec]> = fold(toplevels, makeTree(), \acc, t -> {
@@ -364,7 +374,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 							(lm.info).type := Some(fntype);
 							// Make sure the function arguments are the right type in the lambda
 							FcFunctionDec(
-								ffn.name, 
+								ffn.name,
 								Some(FcLambda(fntype.args, lm.body, lm.info)),
 								ffn.declType, ffn.declInfo, ffn.defiInfo
 							);
@@ -391,7 +401,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 					}
 				}
 				None():
-					refArrayPush(errors, FcError("Function " + name + " definition is not found", 
+					refArrayPush(errors, FcError("Function " + name + " definition is not found",
 						[FcPosition(fileinfo.flowfile, decl1.declInfo.start, decl1.declInfo.end)])
 					);
 			}
@@ -497,7 +507,7 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 									// with a new declType : FcTypeFunction2 with the joined result
 
 									nt : FcTypeFunction2 = fcTypeFunction2(fct);
-									jt2 = fillFcTypeFunction(dummyFcTypeEnv, ft, nt, 
+									jt2 = fillFcTypeFunction(dummyFcTypeEnv, ft, nt,
 										\m, t1, t2 -> {
 											refArrayPush(errors, FcError(m, [
 												FcPosition(fileinfo.flowfile, t1.info.start, t2.info.end),
@@ -620,12 +630,12 @@ createStringIncludes(includes : [string], config : CompilerConfig) -> [FiFileInf
 	useMd5 = getConfigParameter(config.config, "use-md5") == "1";
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
 	fold(includes, [], \acc, include -> {
-		realfile = findFlowRelativePath(include, false, config.includes, workingDir); 
+		realfile = findFlowRelativePath(include, false, config.includes, workingDir);
 		fileexists = fileExists(realfile);
 		fileinfo = FiFileInfo(
-			include, 
-			if (fileexists) fileModified(realfile) else 0.0, 
-			realfile, 
+			include,
+			if (fileexists) fileModified(realfile) else 0.0,
+			realfile,
 			if (useMd5) fileChecksum(realfile) else dummyFiFileInfo.md5sum,
 			if (fileexists) fileSize(realfile) else 0.0,
 			-1.0
@@ -697,9 +707,14 @@ resolveFunArg2(tyvarIdGroup : IdGroup, a : FcFunArg2, info : FcInfo2) -> FcFunAr
 	)
 }
 
+getVarType(dacc : DesugarAcc, name : string) -> Maybe<FcType> {
+	maybeMap(lookupTree(dacc.switchVarTypes, name), firstOfPair);
+}
+
 desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 	info = dacc.fileinfo;
 	finfo = \ -> FcInfo(ref None(), st.start, st.end);
+	varInfo = \name -> FcInfo(ref getVarType(dacc, name), st.start, st.end);
 	ci = FcInfo2(st.start, st.end);
     if (st.rule == st_exp) {
     	if (st.choice == 0) {
@@ -922,9 +937,9 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 				fcPrintln(id + " is struct", dacc.env.program.acc.config.threadId);
 				// TODO: Somehow, we could check if the following is a call, and if not convert
 				// this to CallPrim(struct)
-				FcVar(id, finfo());
+				FcVar(id, varInfo(id));
 			} else {
-				FcVar(id, finfo());
+				FcVar(id, varInfo(id));
 			}
 		} else if (st.choice == 2) {
 			number = get_flow_number(st);
@@ -1020,12 +1035,18 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 		}
 		// If not, we produce a new name for it
 		varname = if (existingvar == "") desugarGenSym(info, "switch") else existingvar;
+		varTypePairM = if (existingvar == "") {
+			None();
+		} else {
+			lookupTree(dacc.switchVarTypes, existingvar);
+		}
+		st4 = eitherMap(varTypePairM, secondOfPair, st3);
 
 		typars = ref makeTree();
 
 		body = FcSwitch(
-				FcVar(varname, FcInfo(ref None(), se.start, se.end)), 
-				st3,
+				FcVar(varname, FcInfo(ref maybeMap(varTypePairM, firstOfPair), se.start, se.end)),
+				st4,
 				concatA(map(cases, \c : SyntaxTree -> {
 					struct = if (c.choice == 0) {
 						"default"
@@ -1045,12 +1066,13 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 					}
 
 					bexp = get_flow_exp(c);
-					body = desugarFcExp(dacc, bexp);
+					mkBody = \ -> desugarFcExp(dacc, bexp);
 
 					if (struct == "default") {
 						if (argnames != []) {
 							refArrayPush(dacc.errors, FcError("default case should not have arguments", [FcPosition(info.flowfile, c.end, c.end)]));
 						};
+						body = mkBody();
 						[FcCase(struct, [], body, FcInfo(body.info.type, c.start, c.end))];
 					} else {
 						structdef0 = lookupTree(dacc.names.structs, struct);
@@ -1077,6 +1099,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 										if (!dacc.supressUnknownType) {
 											refArrayPush(dacc.errors, FcError("Unknown struct or union '" + struct + "' in switch", [FcPosition(info.flowfile, c.start, c.end)]));
 										}
+										body = mkBody();
 										// Construct a case anyways
 										x : [FcCase] = [FcCase(struct, argnames, body, body.info)];
 										x;
@@ -1101,6 +1124,11 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 												structDef = lookupDesugarTypename(dacc, FcTypeName(ts.name, [], FcInfo2(c.start, c.end)));
 												switch (structDef) {
 													FcTypeStruct(__, __, sargs, __): {
+														dacc2 = DesugarAcc(dacc with
+															switchVarTypes = setTree(dacc.switchVarTypes, varname, Pair(structDef, uf))
+														);
+														body = desugarFcExp(dacc2, bexp);
+
 														// OK, construct dummy arguments for this dude
 														newCase = FcCase(ts.name, map(sargs, \__ -> "__"), body, FcInfo(body.info.type, c.start, c.end));
 														Some(newCase);
@@ -1120,12 +1148,13 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 								// A struct. Unfold let-bindings
 								stargs : [FcStructArg] = sf.args;
 								rnames = reverseA(argnames);
+								body = mkBody();
 								bb = foldi(reverseA(stargs), body, \i, acc, starg -> {
 									// We have to instantiate any typars from the struct field here!
 									at = instantiateTypeTyPars(dacc.env.local, dacc.tyvarIdGroup, typars, starg.type);
 
 									// Here we set start-end to negative values because the introduced entities are not really present in code
-									cinfo1 = FcInfo(ref None(), -c.start, -c.end);
+									cinfo1 = FcInfo(ref getVarType(dacc, varname), -c.start, -c.end);
 									cinfo2 = FcInfo(ref Some(at), -c.start, -c.end);
 									cinfo3 = FcInfo(ref None(), -c.start, -c.end);
 									name = if (i < length(rnames)) {
@@ -1136,7 +1165,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 									}
 
 									var : FcExp = FcVar(varname, cinfo1);
-									FcLet(name, at, 
+									FcLet(name, at,
 										FcCallPrim(FcFieldPrim(starg.name), [var], cinfo2),
 										acc,
 										cinfo3
@@ -1151,7 +1180,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 				finfo()
 			);
 		if (existingvar == "") {
-			FcLet(varname, st3, fce, body, finfo())
+			FcLet(varname, st4, fce, body, finfo())
 		} else body;
 	} else if (st.rule == st_string) {
 		if (st.choice == 0) {
@@ -1168,7 +1197,7 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 			}
 			content = getFileContent(resolved);
 			FcString(content, finfo());
-		} else {
+		} else if (st.choice == 1) {
 			// Concatenate all strings, and de-escape it
 			strings = get_flow_singlestring_s(st);
 			strin = fold(strings, "", \acc, str -> {
@@ -1177,6 +1206,10 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 				acc + deserializeRestOfString(snip).first;
 			});
 			FcString(strin, finfo())
+		} else {
+			string_tree = get_flow_frenchstring(st);
+			strin = grabSTText(string_tree, info.content);
+			FcString(strin, finfo());
 		}
 	} else {
 		fcPrintln("TODO: " + i2s(st.rule), dacc.env.program.acc.config.threadId);
@@ -1289,7 +1322,7 @@ desugarWithConstruction(acc : FcExp, dacc : DesugarAcc, finfo : () -> FcInfo, po
 			}
 		}
 	}
-	
+
 	sourceType = switch (acc) {
 		FcVar(typeName, __) : typeName;
 		default : "";
@@ -1570,19 +1603,19 @@ desugarNumber(info : FcFileInfo, number : SyntaxTree) -> FcConst {
 	if (number.rule == st_number && number.choice == 0) {
 		t : FcType = FcTypeInt(FcInfo2(number.start, number.end));
 		FcInt(
-			parseHex(strRight(text, 2)), 
+			parseHex(strRight(text, 2)),
 			FcInfo(ref Some(t), number.start, number.end)
 		);
 	} else if (number.rule == st_number_float1 || number.rule == st_number_float2) {
 		t : FcType = FcTypeDouble(FcInfo2(number.start, number.end));
 		FcDouble(
-			s2d(text), 
+			s2d(text),
 			FcInfo(ref Some(t), number.start, number.end)
 		);
 	} else {
 		t : FcType = FcTypeInt(FcInfo2(number.start, number.end));
 		FcInt(
-			s2i(text), 
+			s2i(text),
 			FcInfo(ref Some(t), number.start, number.end)
 		);
 	}
@@ -1708,7 +1741,7 @@ desugarFcCall(dacc : DesugarAcc, call : FcCall) {
 // Instantiate a typename by expanding it to a struct or union with the given types bound to the type parameters
 instantiateDesugarTypename(dacc : DesugarAcc, typename : FcTypeName) -> FcType {
 	error = \m -> {
-		refArrayPush(dacc.errors, 
+		refArrayPush(dacc.errors,
 			FcError(m, [FcPosition(dacc.fileinfo.flowfile, typename.info.start, typename.info.end)])
 		);
 	}
@@ -1743,7 +1776,7 @@ lookupDesugarTypename(dacc : DesugarAcc, typename : FcTypeName) -> FcType {
 							switch (munion) {
 								None(): {
 									error = \m -> {
-										refArrayPush(dacc.errors, 
+										refArrayPush(dacc.errors,
 											FcError(m, [FcPosition(dacc.fileinfo.flowfile, typename.info.start, typename.info.end)])
 										);
 									}

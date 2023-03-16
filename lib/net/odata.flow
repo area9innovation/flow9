@@ -23,6 +23,15 @@ export {
 		DCountQuery(resource : DCommonResourceU, parameters : [DParameter]);
 		DBatchQuery(queries : [DQuery]);
 
+	DRequestStyle ::= DRequestTag, DRequestRestrictWithRis;
+		// Use query DRequestTag to terminate odata request processing.
+		// Tag should consist only of a-z A-Z 0-9 - _ .		r'^[0-9A-Za-z_\-.]+$'
+		// Tag consists of two parts: mandatory main part and optional comment. Parts are separated by comma.
+		// Example: REPORT_QUERY_1600420942721.base where REPORT_QUERY_1600420942721 - main part and base is a comment
+		// When sending kill requests only main part matters, comments could be omitted or differ from original request.
+		DRequestTag(tag : string);
+		DRequestRestrictWithRis(useRis : bool);
+
 	DResource ::= DCommonResourceU, DSpecificResource, DFunction;
 		DCommonResourceU ::= DCommonResource, DCommonResource2;
 			// Resource is typically a table name
@@ -162,26 +171,24 @@ export {
 		jwt : string,
 		query : DQuery,
 		callback : (Json) -> void,
-		onError : (string) -> void
+		onError : (int, string) -> void
 	) -> void;
-	// Tagget query is used to terminate odata request processing.
-	// Tag should consist only of a-z A-Z 0-9 - _ .		r'^[0-9A-Za-z_\-.]+$'
-	// Tag consists of two parts: mandatory main part and optional comment. Parts are separated by comma.
-	// Example: REPORT_QUERY_1600420942721.base where REPORT_QUERY_1600420942721 - main part and base is a comment
-	// When sending kill requests only main part matters, comments could be omitted or differ from original request.
-	makeTaggedODataRequest(
+
+	makeStyledODataRequest(
 		host : string,
 		jwt : string,
 		query : DQuery,
-		queryTag : string,
+		style : [DRequestStyle],
 		callback : (Json) -> void,
-		onError : (string) -> void
+		onError : (int, string) -> void
 	) -> void;
 	// Calls onError if whole batch or at least one of subrequests has failed
-	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
-	makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void;
+	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (int, string) -> void) -> void;
+	makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (int, string) -> void) -> void;
 	// Checks the length of resulting select query. If it exceeds maximum posible length, batch request should be used
 	isBatchQueryNeeded(host : string, query : DQuery) -> bool;
+
+	buildODataQuery(query : DQuery) -> ODataQuery;
 
 	DResponse ::= DGoodResponse, DBadResponse;
 		DGoodResponse(data : Json);
@@ -190,6 +197,9 @@ export {
 	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResource;
 	makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json>;
 	json2ResourceValue(json : Json) -> DResourceValue;
+
+	// Doesn't check the correctness of the string: some strings could be converted to DDuration though they don't fit the template
+	string2DDuration(value : string, def : DDuration) -> DDuration;
 
 	// Area9 specific function (move to another place?)
 	// Kills all currently running sql server processes associated with jwt and queryTag
@@ -417,13 +427,43 @@ json2ResourceValue(json : Json) -> DResourceValue {
 	}
 }
 
+string2DDuration(value : string, def : DDuration) -> DDuration {
+	val0 = toUpperCase(value);
+	factor = if (getCharAt(val0, 0) == "-") -1 else 1;
+	val1 = takeAfter(val0, "P", "");
+	if (val1 == "") {
+		def
+	} else {
+		days = s2i(takeBefore(val1, "D", "0"));
+		val2 = takeAfter(val1, "T", "");
+		if (val2 == "") {
+			DDuration(days * factor, 0, 0, 0.0)
+		} else {
+			hours = s2i(takeBefore(val2, "H", "0"));
+			val3 = takeAfter(val2, "H", val2);
+			if (val3 == "") {
+				DDuration(days * factor, hours * factor, 0, 0.0)
+			} else {
+				minutes = s2i(takeBefore(val3, "M", "0"));
+				val4 = takeAfter(val3, "M", val3);
+				if (val4 == "") {
+					DDuration(days * factor, hours * factor, minutes * factor, 0.0)
+				} else {
+					seconds = s2d(takeBefore(val4, "S", "0"));
+					DDuration(days * factor, hours * factor, minutes * factor, seconds * i2d(factor))
+				}
+			}
+		}
+	}
+}
+
 isBatchQueryNeeded(host : string, query : DQuery) -> bool {
 	if (isSameStructType(query, DBatchQuery([]))) {
 		true;
 	} else {
 		url = host + buildODataQuery(query).resource;
 		urlLength = strlen(url);
-		urlLength > 2000;
+		urlLength > 2000 || java;
 	}
 }
 
@@ -773,7 +813,7 @@ orderBy2string(values : [DOrderByValue<DPropertyU, bool>]) -> string {
 }
 
 
-makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void {
+makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (int, string) -> void) -> void {
 	callback = \responses : [DResponse] -> {
 		errorM = findmap(responses, \response -> {
 			switch (response) {
@@ -783,7 +823,7 @@ makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([
 		});
 		eitherFn(
 			errorM,
-			onError,
+			\err -> onError(-1, err),
 			\-> {
 				results = map(responses, \response -> {
 					switch (response) {
@@ -798,9 +838,9 @@ makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([
 	makeODataBatchRequest2(host, jwt, queries, callback, onError)
 }
 
-makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void {
+makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (int, string) -> void) -> void {
 	callback2 = \data, headers -> callback(parseBatchResponse(data, headers));
-	makeODataRequest2(host, jwt, DBatchQuery(queries), "", callback2, onError)
+	makeODataRequest2(host, jwt, DBatchQuery(queries), [], callback2, onError)
 }
 
 makeODataRequest(
@@ -808,18 +848,18 @@ makeODataRequest(
 	jwt : string,
 	query : DQuery,
 	callback : (Json) -> void,
-	onError : (string) -> void
+	onError : (int, string) -> void
 ) -> void {
-	makeTaggedODataRequest(host, jwt, query, "", callback, onError);
+	makeStyledODataRequest(host, jwt, query, [], callback, onError);
 }
 
-makeTaggedODataRequest(
+makeStyledODataRequest(
 	host : string,
 	jwt : string,
 	query : DQuery,
-	queryTag : string,
+	style : [DRequestStyle],
 	callback : (Json) -> void,
-	onError : (string) -> void
+	onError : (int, string) -> void
 ) -> void {
 	callback2 = \data, headers -> {
 		isBatch = isSameStructType(query, DBatchQuery([]));
@@ -836,17 +876,20 @@ makeTaggedODataRequest(
 		}
 		callback(result)
 	}
-	makeODataRequest2(host, jwt, query, queryTag, callback2, onError)
+	makeODataRequest2(host, jwt, query, style, callback2, onError)
 }
 
 makeODataRequest2(
 	host : string,
 	jwt : string,
 	query : DQuery,
-	queryTag : string,
+	style : [DRequestStyle],
 	callback : (string, [KeyValue]) -> void,
-	onError : (string) -> void
+	onError : (int, string) -> void
 ) -> void {
+	queryTag : string = extractStruct(style, DRequestTag("")).tag;
+	useRisRuleResolution : bool = extractStruct(style, DRequestRestrictWithRis(false)).useRis;
+
 	if (isUrlParameterTrue("odataDQuery")) println(query);
 	odataQuery = buildODataQuery(query);
 	method = odataQuery.method;
@@ -868,8 +911,10 @@ makeODataRequest2(
 		KeyValue("Accept", accept),
 		KeyValue("Authorization", "Bearer " + jwt),
 		KeyValue("Content-Type", contentType)
-	] |> (\acc -> ifArrayPush(acc, isBatch, KeyValue("Prefer", "continue-on-error=true")))
-	|> (\acc -> ifArrayPush(acc, queryTag != "", KeyValue("X-Request-Tag", queryTag)));
+	]
+	|> (\acc -> ifArrayPush(acc, isBatch, KeyValue("Prefer", "continue-on-error=true")))
+	|> (\acc -> ifArrayPush(acc, queryTag != "", KeyValue("X-Request-Tag", queryTag)))
+	|> (\acc -> ifArrayPush(acc, useRisRuleResolution, KeyValue("X-Use-Ris", "1")));
 
 	httpCustomRequest(
 		host + odataQuery.resource,
@@ -878,7 +923,7 @@ makeODataRequest2(
 		data,
 		\status, respData, respHeaders -> {
 			if (isErrorStatus(status)) {
-				onError(respData)
+				onError(status, respData)
 			} else {
 				callback(respData, respHeaders)
 			}

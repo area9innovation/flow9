@@ -1,18 +1,90 @@
+import tools/common/prog_version;
 import tools/flowc/backends/java/fi2java_compile;
 import tools/flowc/backends/java/fi2java_main;
-import tools/flowc/backends/java/fi2jar;
+import tools/flowc/backends/java/fi2java_runtime;
+import tools/flowc/backends/java/fi2jar_raw;
+import tools/flowc/backends/java/fi2jar_gradle;
 
 export {
-	fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void;
+	fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> void;
 }
 
-fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void {
-	fcVerbose(cfg, 0, "Making Java '" + cfg.flowfile + "'...");
+fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> void {
+	fcVerbose(cfg, 0, "Building a Java '" + cfg.flowfile + "' application " + (if (cfg.builder == "") "" else "with " + cfg.builder ) + "...");
 
+	builder_is_ready = if (cfg.builder == "gradle") {
+		gradle_version = fcGradleVersion(cfg);
+		if (gradle_version < 0.0) {
+			fcPrintln("No gradle is found in the system", cfg.threadId);
+			false;
+		} else if (gradle_version < 6.7) {
+			fcPrintln("Gradle version is: " + d2s(gradle_version) + ", while should be >= 6.7", cfg.threadId);
+			false;
+		} else {
+			true;
+		}
+	} else {
+		true;
+	}
+	if (!builder_is_ready) callback(5) else {
+		package_path = if (cfg.builder != "gradle") {
+			pathCombineMany(concat([cfg.generatedir], strSplit(cfg.packageName, ".")));
+		} else {
+			pathCombineMany(concat([cfg.generatedir, fileNameOnly(changeFileExt(cfg.jarfile, "")), "src", "main", "java"], strSplit(cfg.packageName, ".")));
+		}
+		ensureDirectoryExists(package_path);
+		java_start = timestamp();
+		translate_start = timestamp();
+		gcontext = fi2javaTranslate(program, cfg, package_path);
+		translate_time = timestamp() - translate_start;
+		print_timephase = \label, time -> {
+			total = timestamp() - java_start;
+			fcPrintln(label + ": " + d2st(time / total * 100.0, 1) + "% (" + d2st(time / 1000.0, 2) + "s)", cfg.threadId);
+		}
+
+		if (length(gcontext.errors) > 0) {
+			callback(5);
+		} else {
+			sources_list_file = pathCombine(package_path, "sources");
+			if (!setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""))) {
+				callback(5);
+			} else {
+				if (cfg.jarfile != "") {
+					build_start = timestamp();
+					if (fi2javaCheckJavaVersion(cfg)) {
+						if (cfg.builder == "gradle") {
+							fi2javaBuildWithGradle(cfg, gcontext.uses_host, gcontext.runtime, \code -> {
+								build_time = timestamp() - build_start;
+								if (isConfigParameterTrue(cfg.options, "java-timephases")) {
+									print_timephase("Translate ", translate_time);
+									print_timephase("Build     ", build_time);
+								}
+								callback(code)
+							});
+						} else {
+							fi2JavaBuildRaw(cfg, package_path, \code -> {
+								build_time = timestamp() - build_start;
+								if (isConfigParameterTrue(cfg.options, "java-timephases")) {
+									print_timephase("Translate ", translate_time);
+									print_timephase("Build     ", build_time);
+								}
+								callback(code)
+							});
+						}
+					} else {
+						callback(5);
+					}
+				} else {
+					callback(0);
+				}
+			}
+		}
+	}
+}
+
+fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string) -> JavaGlobalContext {
 	fcVerbose(cfg, 1, "Collecting code for all imported files...");
 
-	package_path = pathCombineMany(concat([cfg.generatedir], strSplit(cfg.packageName, ".")));
-	ensureDirectoryExists(package_path);
 	main_fname = pathCombine(package_path, "Main.java");
 	prev_build_has_collisions = getCollisionAndTimestampOfFile(main_fname).first;
 	cmodules_info = indexJavaModules(program);
@@ -27,27 +99,31 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 	};
 
 	gcontext = JavaGlobalContext(
-		program, package_path, cfg.mainClassName,
+		cfg, program, package_path,
 		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
+		fi2javaRuntime(cfg), // runtime
 		makeTree(), // globals
 		makeTree(), // globalFuncs
+		makeSet(), // missing_natives
 		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)), // has_func_def
 		makeTree(), // has_field_accessor
-		makeTree(), // uses_host
+		makeSet(), // uses_host
 		ref makeList(), // init_code
 		ref makeList(), // wrapper_code
 		ref makeList(), // native wrapper_code
 		header_generator,
 		cstructs_collisions.second || prev_build_has_collisions,
 		ref makeList(),
+		[]
 	);
 
 	indexJavaGlobals(gcontext);
 	generateJavaModules(gcontext, package_path);
 	generateJavaStructDefs(gcontext, package_path);
-	generateJavaMain(gcontext, cfg);
+	generateJavaMainClass(gcontext);
 	generateJavaSingletonStructs(gcontext);
 	generateJavaStructs(gcontext);
+	generateJavaWrappers(gcontext);
 
 	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
 		if (has) {
@@ -61,6 +137,9 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 					rlistPush(gcontext.to_compile, field_fname + "\n");
 				}
 			} else {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Creating java field module '" + field_fname + "'", cfg.threadId);
+				}
 				ftext = gcontext.header_generator(timestamp());
 				text = "interface Field_" + name + "<T> {\n" +
 					"\tT get_" + name + "();\n" +
@@ -84,6 +163,9 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 					rlistPush(gcontext.to_compile, func_fname + "\n");
 				}
 			} else {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Creating java struct module '" + func_fname + "'", cfg.threadId);
+				}
 				ftext = gcontext.header_generator(timestamp());
 				rlistPush(ftext,
 					"interface Func" + i2s(nargs) + "<RT," +
@@ -98,13 +180,40 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 			}
 		}
 	});
+	gcontext;
+}
 
-	sources_list_file = pathCombine(package_path, "sources");
-	setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""));
-
-	if (cfg.jarfile != "") {
-		buildFiJarFile(cfg, package_path, callback)
+fi2javaCheckJavaVersion(cfg : FiJavaConfig) -> bool {
+	java_version_opt = lookupTreeDef(cfg.options, "java-version", "");
+	if (java_version_opt == "") {
+		// No restrictions on java version
+		true;
 	} else {
-		callback();
+		java_version = map(strSplit(java_version_opt, "."), s2i);
+		java_installed = programVersion("java", "-version", "version");
+		javac_installed = programVersion("javac", "-version", "javac");
+		ver2s = \v -> superglue(v, i2s, ".");
+		if (java_installed == []) {
+			fcPrintln("java is not functioning for some reason", cfg.threadId);
+			false;
+		} else if (javac_installed == []) {
+			fcPrintln("javac is not functioning for some reason", cfg.threadId);
+			false;
+		} else if (java_installed != javac_installed) {
+			fcPrintln(
+				"java and javac versions differ: " + ver2s(java_installed) + " != " + ver2s(javac_installed),
+				cfg.threadId
+			);
+			false;
+		} else if (!compareVersion(java_version, java_installed, \v1, v2 -> v1 == v2)) {
+			fcPrintln(
+					"Installed java version: " + ver2s(java_installed) +
+					" doesn't match the required java version from config: " + java_version_opt,
+					cfg.threadId
+			);
+			false;
+		} else {
+			true;
+		}
 	}
 }

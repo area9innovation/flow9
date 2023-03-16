@@ -1,0 +1,187 @@
+import text/gringo/gringo_action;
+import text/gringo/gringo_ast;
+import ds/list;
+import math/math;
+
+export {
+	// This is a hand-written action handler for Gringo itself
+	// We could probably replace it with the typed helper, but it is not really needed.
+	gringoAstAction = GringoAction(
+		\acc : List<GTerm>, v -> {
+			if (v == "GRule") {
+				// GRule(id : string, term : GTerm, body : GTerm);
+				pbody = popAstStack(acc);
+				pterm = popAstStack(pbody.second);
+				pid = popAstStack(pterm.second);
+				rule = GRule(gtermAsString(pid.first), pterm.first, pbody.first);
+				pushAstStack(pid.second, rule);
+			} else if (v == "GSeq") {
+				// GSeq(left : GTerm, right : GTerm);
+				pright = popAstStack(acc);
+				pleft = popAstStack(pright.second);
+				seq = GSeq(pleft.first, pright.first);
+				pushAstStack(pleft.second, seq);
+			} else if (v == "GPrecedence") {
+				// GPrecedence(left : GTerm, right : GTerm);
+				pright = popAstStack(acc);
+				pleft = popAstStack(pright.second);
+				choice = GPrecedence(pleft.first, pright.first);
+				pushAstStack(pleft.second, choice);
+			} else if (v == "GChoice") {
+				// GChoice(left : GTerm, right : GTerm);
+				pright = popAstStack(acc);
+				pleft = popAstStack(pright.second);
+				choice = GChoice(pleft.first, pright.first);
+				pushAstStack(pleft.second, choice);
+			} else if (v == "GUnquote") {
+				// GUnquote(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GUnquote(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GStackOp") {
+				// GUnquote(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = switch (pterm.first) {
+					GVar(id): GUnquote(GString(id));
+					default: {GUnquote(pterm.first);}
+				};
+				pushAstStack(pterm.second, unquote);
+
+			} else if (v == "GGrammarMacro") {
+				arg = popAstStack(acc);
+				name = popAstStack(arg.second);
+				if (name.first == GString("list")) {
+					switch (arg.first) {
+						GSeq(l, r): {
+							res = GSeq(GUnquote(GString("nil")), GOpt(GSeq(
+								l, 
+								GSeq(GUnquote(GString("cons")), GSeq(GStar(GSeq(r, GSeq(GVar("ws"), GSeq(l, GUnquote(GString("cons")))))), GOpt(GSeq(r, GVar("ws")))))))
+							);
+							pushAstStack(name.second, res);
+						}
+						default: {
+							println("ERROR: @list expected two arguments");
+							acc;
+						}
+					}
+				} else {
+					println("TODO: Implement grammar macro " + toString(name.first));
+					acc;
+				}
+			} else if (v == "GConstruct") {
+				// GUnquote(term : GTerm);
+				arity = popAstStack(acc);
+				name = popAstStack(arity.second);
+				unquote = GUnquote(GString(gtermAsString(name.first) + "_" + gtermAsString(arity.first)));
+				pushAstStack(name.second, unquote);
+			} else if (v == "GStar") {
+				// GStar(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GStar(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GPlus") {
+				// GPlus(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GPlus(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GNegate") {
+				// GNegate(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GNegate(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GError") {
+				// GError(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GError(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GLower") {
+				// GLower(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GLower(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GOpt") {
+				// GOpt(term : GTerm);
+				pterm = popAstStack(acc);
+				unquote = GOpt(pterm.first);
+				pushAstStack(pterm.second, unquote);
+			} else if (v == "GVar") {
+				// GVar(id : string);
+				pid = popAstStack(acc);
+				var = GVar(gtermAsString(pid.first));
+				pushAstStack(pid.second, var);
+			} else if (v == "GString") {
+				// GString(text : string);
+				pstring = popAstStack(acc);
+
+				rstr = gtermAsString(pstring.first);
+				// TODO: This is poor mans escaping. It only works for single chars
+				dstr = if (rstr == "\\n") "\n" 
+					else if (rstr == "\\r") "\x0d"
+					else if (rstr == "\\t") "\t"
+					else rstr;
+				str = GString(dstr);
+				pushAstStack(pstring.second, str);
+			} else if (v == "GRange") {
+				// GRange(lower : int, upper : int);
+				pupper = popAstStack(acc);
+				plower = popAstStack(pupper.second);
+				chfn = \s -> if (startsWith(s, "0x")) parseHex(s) else getCharCodeAt(s, 0);
+				str = GRange(
+					chfn(gtermAsString(plower.first)), 
+					chfn(gtermAsString(pupper.first))
+				);
+				pushAstStack(plower.second, str);
+			} else {
+				println("TODO: Handle "+ v);
+				acc;
+			}
+		},
+		\acc : List<GTerm>, m -> {
+			pushAstStack(acc, GString(m));
+		}
+	);
+
+	getAstResult(s : List<GTerm>) -> GTerm;
+
+
+	pushAstStack(a : List<GTerm>, e : GTerm) -> List<GTerm>;
+	popAstStack(a : List<GTerm>) -> Pair<GTerm, List<GTerm>>;
+}
+
+pushAstStack(a : List<GTerm>, e : GTerm) -> List<GTerm> {
+	Cons(e, a);
+}
+
+popAstStack(stack : List<GTerm>) -> Pair<GTerm, List<GTerm>> {
+	switch (stack) {
+		EmptyList(): {
+			println("Stack underflow");
+			Pair(GEpsilon(), stack);
+		}
+		Cons(head, tailL): {
+			Pair(head, tailL)
+		}
+	}
+}
+
+getAstResult(stack : List<GTerm>) -> GTerm {
+	switch (stack) {
+		EmptyList(): {
+			println("Stack underflow");
+			GEpsilon()
+		}
+		Cons(head, tailL): {
+			head;
+		}
+	}
+}
+
+gtermAsString(g : GTerm) -> string {
+	switch (g) {
+		GString(s): s;
+		default: {
+			println("Expected string");
+			"";
+		}
+	}
+}

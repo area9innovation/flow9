@@ -3,25 +3,48 @@
 
 stylesheet = ws ruleset*:r { CssStylesheet(:r) };
 
-ruleset = selector:h (',' ws selector)*:t declarations:d { CssRuleset(consArray(:h, :t), :d) };
+ruleset = ruleset_media
+	| ruleset_simple;
+
+	ruleset_simple = selector:h (',' ws selector)*:t declarations:d { CssRulesetSimple(consArray(:h, :t), :d) };
+	ruleset_media = "@media" ws
+		media_type_comparison? ws media_type ws
+		(media_feature_comparison ws "(" declaration ")" ws)+
+		"{" (ws ruleset_simple)+:r "}" ws { CssRulesetMedia(:r) };
+
+		media_type_comparison = "not"
+			| "only";
+		media_type = "all"
+			| "print"
+			| "screen"
+			| "speech";
+
+		media_feature_comparison = "and"
+			| "or"
+			| "not"
+			| ",";
 
 // Here is the standard for selectors in CSS3:
 
 // https://www.w3.org/TR/selectors-3/
 
 selector = simple_selector:h (combinator:c selector:s { CssCombination(:c, :s) }):t { CssCombinators(:h, :t) }
+	| attribute_selector
 	| simple_selector;
 
 	combinator = '>' ws { CssGreaterCombinator() } | '+' ws { CssPlusCombinator() };
+
+attribute_selector = simple_selector:s attribute+:a ws { CssAttributeSelector(:s, :a) };
+	attribute = '[' letterOrDigit+$k '=' quote? letterOrDigit+$v quote? ']' { CssAttribute($k, $v) };
 
 simple_selector = single_selector+:s { CssSelectorSequence(:s) };
 
 single_selector = rulename:n pseudo+:ps { CssRuleNameWithPseudos(:n, :ps) }
 	| rulename:n { CssRuleName(:n) }; 
 
-pseudo = ':' ws rulename:n '(' ws rulename?:a ')' ws { CssFunction(:n, :a) }
-	| ':' ws rulename:n { CssModifier(:n) };
-
+pseudo = pseudo_colon ws rulename:n '(' ws rulename?:a ')' ws { CssFunction(:n, :a) }
+	| pseudo_colon ws rulename:n { CssModifier(:n) };
+	pseudo_colon = '::' | ':';
 
 declarations = '{' ws declaration:d (';' ws declaration)*:ds (';' ws)? '}' ws { consArray(:d, :ds) }
 	| '{' ws '}' ws;
@@ -29,7 +52,7 @@ declaration = name:n ':' ws term:t importantConst* { CssDeclaration(:n, :t) };
 
 importantConst = '!important';
 
-term = aterm:n (',' ws aterm)+:ns { CssList( consArray(:n, :ns) ) }
+term = quote? aterm:n (',' ws aterm)+:ns quote? { CssList( consArray(:n, :ns) ) }
 	| aterm:n (ws aterm)+:ns { CssList( consArray(:n, :ns) ) }
 	| aterm;
 
@@ -43,7 +66,7 @@ aterm = minus_operator unary_term:n { CssNegate(:n) }
 	| "inherit" ws { CssInherit() }
 	| "solid" ws { CssSolid() }
 	| "linear-gradient" ws "(" ws degOrString:d ws "," ws term:t ")" ws { CssLinearGradient(:d, :t) }
-	| name:n "(" ws terms:t ")" ws { CssStruct(:n, :t) }
+	| name:n "(" ws quote? terms:t quote? ")" ws { CssStruct(:n, :t) }
 	| name:n "(" ws ")" ws { CssStruct(:n, array()) }
 	| name:n { CssName(:n) }
 	| hexcolor
@@ -59,7 +82,10 @@ minus_operator = '-' ws;
 array = "[" ws terms:t "]" ws { CssArray(:t) }
 	| "[" ws "]" ws { CssArray( array() ) };
 
-rulename = "*" letterOrDigitOrDotOrSharp+$n ws {$n} | letterOrDigitOrDotOrSharp+$n ws {$n};
+rulename = "*" letterOrDigitOrDotOrSharp+$n ws {$n}
+	| letterOrDigitOrDotOrSharp+$n ws {$n}
+	| "@" letterOrDigitOrDotOrSharp+$n ws {$n}
+;
 rulfunc = (letterOrDigit | '(' | ')')+$n ws {$n};
 
 name = nameNoWs$n ws {$n};
@@ -69,7 +95,7 @@ nameNoWs = letterOrDigitOrDot+;
 degOrString = deg:d { :d } | string:s { :s };
 
 urlString = "url(" ws string:s ")" { CssUrl(:s) } 
-	| "url(" ws (urlChar)*$s ws ")" ws { CssUrl($s) }
+	| "url(" ws quote? (urlChar)*$s quote? ws ")" ws { CssUrl($s) }
 	| "url(" ws string2:z ")" { CssUrl(:z) };
 
 urlChar = letterOrDigitOrDotOrSharp | '/' | '?' | '=' | '&' | '+';
@@ -105,6 +131,7 @@ hexword = hexdigit hexdigit hexdigit hexdigit;
 onechar = '\\u' hexword | "\\" char | char;
 char = '\u0000' - '\uffff';
 quotedchar = "'"$q onechar$c "'" ws { strUnescape($c, $q) };
+quote = "'" | '"';
 ws = whitespace*;
 whitespace = ' ' | '\u000d' | '\n' | '\t' | comment | linecomment | xmlComment | '-->' | charset;
 comment = '/*' nonstarchar* '*/';

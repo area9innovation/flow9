@@ -1,0 +1,339 @@
+import tools/flow9/types/cgraph/cmap;
+import tools/flow9/types/cgraph/unionmap;
+import tools/flow9/types/cgraph/pretty;
+import tools/flow9/types/ugraph/class;
+import tools/flow9/types/ugraph/tmap;
+import tools/flow9/types/typars;
+import tools/flow9/types/cgraph/dtype;
+
+export {
+	// Find all subtypes of this (super) node
+	makeSubtypeOverload(tmap : TMap, nodeClass : int, node : CNode, checkOnly : bool, reason : ErrorReason) -> Maybe<CNode>;
+
+	// Find all supertypes of this (sub)node. Constructs new eclasses as required
+	// Required: The node is the cmap value of nodeClass.
+	makeSupertypeOverload(tmap : TMap, nodeClass : int, node : CNode, reason : ErrorReason) -> Maybe<CNode>;
+
+	// Given a subtype, construct the corresponding supertype with the right type parameters
+	makeSupertypeFromSub(tmap : TMap, sub : CName, super : string) -> int;
+}
+
+makeSubtypeOverload(tmap : TMap, nodeClass : int, node : CNode, checkOnly : bool, reason0 : ErrorReason) -> Maybe<CNode> {
+	switch (node) {
+		CEpsilon(): None();
+		CName(name, typars, reason): {
+			subs = ^(tmap.resolveSubtypes)(name);
+			if (subs == []) Some(node)
+			else {
+				msubtypes = map(subs, \sub -> {
+					makeSubtypeFromSuper(tmap, node, sub);
+				});
+				subtypes = filtermap(msubtypes, idfn);
+				if (length(subtypes) < length(subs)) {
+					if (!checkOnly) {
+						problematic = filtermapi(subs, \i, sub -> {
+							if (msubtypes[i] == None()) {
+								Some(sub)
+							} else None();
+						});
+						tmap.onError(elaborateReason(reason, "Could not expand " + name + " to subtypes. Typar mismatch for " + strGlue(problematic, ", ")));
+					}
+					None();
+				} else {
+					if (nodeClass == -1) {
+						println("Not Supposed to Happen. Could not find eclass for " + prettyCNode(tmap.cmap, node));
+					}
+					all = buildSet(arrayPush(subtypes, nodeClass));
+					Some(COverload(
+						if (checkOnly) makeSet() else makeSet1(tmap.mkUnique()),
+						all,
+						reason
+					))
+				}
+			}
+		}
+		CFunction(args, return, reason): {
+			// We just sub the child
+			retNode = getUnionMapValue(tmap.cmap.cmap, return);
+			subRet = makeSubtypeOverload(tmap, return, retNode, checkOnly, reason);
+			subRet ?? {
+				subClass = findOrMakeCNode(tmap, subRet);
+				if (subClass != -1) {
+					Some(CFunction(args, subClass, reason));
+				} else {
+					None();
+				}
+			} : None();
+		}
+		COverload(unique, options, reason): {
+			// OK, here, we should arguably collect the total set of subtypes
+			// and check if they are the same as the overload, in which case
+			// we are all good already
+			None();
+		}
+	}
+}
+
+// Find all supertypes of this (sub)node. Constructs new eclasses as required
+makeSupertypeOverload(tmap : TMap, nodeClass : int, node : CNode, reason0 : ErrorReason) -> Maybe<CNode> {
+	switch (node) {
+		CEpsilon(): None();
+		CName(name, typars, reason): {
+			supers = ^(tmap.resolveSupertypes)(name);
+			if (supers == []) {
+				if (true) {
+					// OK, it is a struct, but the type parameters might be lifted
+					supernode = CName(node with typars = 
+						map(node.typars, \tp -> {
+							makeEClassSupertypeOverload(tmap, tp, reason0);
+						})
+					);
+					Some(supernode);
+				} else {
+					Some(node)
+				}
+			} else {
+				supertypes = map(supers, \super -> {
+					makeSupertypeFromSub(tmap, node, super);
+				});
+				if (nodeClass == -1) {
+					println("Not Supposed to Happen in Super. Could not find eclass for " + prettyCNode(tmap.cmap, node));
+					None();
+				} else {
+					all = buildSet(arrayPush(supertypes, nodeClass));
+					Some(COverload(
+						makeSet1(tmap.mkUnique()),
+						all,
+						node.reason
+					))
+				}
+			}
+		}
+		CFunction(args, return, reason): {
+			returnNode = getUnionMapValue(tmap.cmap.cmap, return);
+			if (returnNode != CEpsilon()) {
+				// OK, find the supertype of the return type
+				superReturn : Maybe<CNode> = makeSupertypeOverload(tmap, return, returnNode, reason0);
+				superReturn ?? {
+					supClass = findOrMakeCNode(tmap, superReturn);
+					if (supClass != -1) {
+						Some(CFunction(args, supClass, reason));
+					} else {
+						None();
+					}
+				} : {
+					None();
+				}
+			} else {
+				// OK, it is an unknown return type, so we should set up a type var
+				// and subtype it. Or maybe just postpone it?
+				None();
+			}
+		}
+		COverload(unique, options, reason): {
+			if (true) {
+				// println("OK, asked to make an overload of an overload " + prettyCEClass(tmap.cmap, nodeClass));
+				// println("We just keep it as is");
+				Some(node);
+			} else {
+				println("OK, asked to make an overload of an overload " + prettyCEClass(tmap.cmap, nodeClass));
+				supers : Set<int> = foldSet(options, makeSet(), \acc, opt -> {
+					super = getUnionMapValue(tmap.cmap.cmap, opt);
+					// TODO: Check if this is already a subtype of another option in our own overload
+					// and if so, ignore it
+					println("  TODO: Check if " + prettyCEClass(tmap.cmap, opt) + " is already a subtype of another option");
+					msup = makeSupertypeOverload(tmap, opt, super, reason);
+					msup ?? {
+						eclass = findOrMakeCNode(tmap, msup);
+						insertSet(acc, eclass);
+					} : insertSet(acc, -1);
+				});
+				if (containsSet(supers, -1)) {
+					None()
+				} else {
+					ov = COverload(makeSet1(tmap.mkUnique()), supers, reason);
+					println("And it is " + prettyCNode(tmap.cmap, ov));
+					Some(ov);
+				}
+
+			}
+		}
+	}
+}
+
+// Used when we are lifting type parameters in a subtyping relation
+makeEClassSupertypeOverload(tmap : TMap, eclass : int, reason0 : ErrorReason) -> int {
+	node = getUnionMapValue(tmap.cmap.cmap, eclass);
+	if (node != CEpsilon()) {
+		snode = makeSupertypeOverload(tmap, eclass, node, reason0);
+		snode ?? {
+			// println("OK, we have " + prettyCNode(tmap.cmap, snode) + " as super of " + prettyCEClass(tmap.cmap, eclass));
+			findOrMakeCNode(tmap, snode);
+		} : eclass;
+	} else {
+		// It seems to work without this.
+		// println("TODO: Make a new class and postpone a subtyping for it");
+		eclass;
+	}
+}
+
+makeSupertypeFromSub(tmap : TMap, sub : CName, super : string) -> int {
+	error = \ -> {
+		println("ERROR: Could not make supertype " + super + " from " + prettyCNode(tmap.cmap, sub));
+		node = CName(super, [], sub.reason);
+		findOrMakeCNode(tmap, node);
+	}	
+	msuperdef = ^(tmap.resolveUnionName)(super);
+	switch (msuperdef) {
+		None(): error()
+		Some(superdef): {
+			mtypars = extractTyparsFromSubtype2(tmap, sub, super);
+			switch (mtypars) {
+				None(): error();
+				Some(typars): {
+					// TODO: Arguably, we should do subtypes for these typars
+					node = CName(super, typars, sub.reason);
+					findOrMakeCNode(tmap, node);
+				}
+			}
+		}
+	}
+}
+
+makeSubtypeFromSuper(tmap : TMap, super : CName, sub : string) -> Maybe<int> {
+	msuperdef = ^(tmap.resolveUnionName)(super.name);
+	switch (msuperdef) {
+		None(): {
+			None();
+		}
+		Some(superdef): {
+			mtypars = extractTyparsFromSuper2(tmap, super, sub);
+			switch (mtypars) {
+				None(): {
+					None();
+				}
+				Some(tps): {
+					// TODO: Arguably, we should do subtypes for these typars
+					node = CName(sub, tps, super.reason);
+					Some(findOrMakeCNode(tmap, node));
+				}
+			}
+		}
+	}
+}
+
+
+// This is basically identical to extractTyparsFromSubtype
+// Given a subtype, we need to construct the typars for this super type.
+extractTyparsFromSubtype2(tmap : TMap, sub : CName, super : string) -> Maybe<[int]> {
+	if (super == sub.name) {
+		Some(sub.typars)
+	} else {
+		munion = ^(tmap.resolveUnionName)(super);
+		switch (munion) {
+			None(): {
+				// OK, it is not found, so give up
+				None();
+			}
+			Some(union): {
+				stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == sub.name);
+				stype ?? {
+					// OK, we have the relation from the union to the struct in this union
+
+					// Expand our subtype to have sufficient typars. Example is FMaxConst<?> vs FFn<?, ??>.
+					expandTypars = concat(sub.typars, generate(0, length(union.typars) - length(sub.typars), \i -> {
+						makeTNodeClass(tmap);
+					}));
+					Some(extractTyparsFromSubTypeDTypename(union, stype, expandTypars))
+				} : {
+					// We could not find it directly, go look for it in the union members
+					utypars = filtermap(union.types, \t : DTypeName -> {
+						// OK, find the relation between t and the sub
+						mstypars = extractTyparsFromSubtype2(tmap, sub, t.id);
+						switch (mstypars) {
+							None(): None();
+							Some(stypars): {
+								// OK, we have the relation from t to sub, but
+								// we have to relate that back to the super
+								styped = CName(t.id, stypars, sub.reason);
+								extractTyparsFromSubtype2(tmap, styped, super);
+							}
+						}
+					});
+					if (utypars == []) {
+						None();
+					} else {
+						// OK, multiple ways might lead to Rome, but the first is good enough
+						Some(utypars[0]);
+					}
+				}
+			}
+		}
+	}
+}
+
+// This is basically identical to extractTyparsFromSuper
+// OK, given a super type, go and extract the typars for the subtype
+extractTyparsFromSuper2(tmap : TMap, super : CName, subname : string) -> Maybe<[int]> {
+	def = \ -> {
+		munion = ^(tmap.resolveUnionName)(super.name);
+		switch (munion) {
+			None(): None();
+			Some(union): {
+				stype : Maybe<DTypeName> = find(union.types, \tn -> tn.id == subname);
+				stype ?? {
+					// OK, we have the relation from the union to the struct in this union
+					if (length(super.typars) < length(union.typars)) {
+						println("Error: Missing typars for converting " + union.id + " to " + subname + ": " + toString(union.typars) + " with " + toString(super.typars) + " with " + toString(stype));
+						None();
+					} else if (length(super.typars) < length(stype.typars)) {
+						if (super.typars == []) {
+							types = map(stype.typars, \tp : DType -> {
+								tt = dtype2CType2(tmap, tp);
+								findOrMakeCNodeClass(tmap, tt, makeErrorReason([-1], ""));
+							});
+							Some(types);
+						} else {
+							// OK, there is some complicated relation between the super and sub with implicit typars
+							println("TODO: Missing typars for converting " + union.id + " to " + subname + ": " + toString(union.typars) + " with " + toString(super.typars) + " with " + toString(stype));
+							None();
+						}
+					} else {
+						Some(extractTyparsFromSuperDTypename(union, stype, super.typars));
+					}
+				} : {
+					// We could not find it, go look for it in the children
+					utypars = filtermap(union.types, \t : DTypeName -> {
+						mstypars = extractTyparsFromSuper2(tmap, super, t.id);
+						switch (mstypars) {
+							None(): None();
+							Some(stypars): {
+								// OK, we have the relation from super to t, but
+								// we have to relate that back to the subname
+								styped = CName(t.id, stypars, super.reason);
+								extractTyparsFromSuper2(tmap, styped, subname);
+							}
+						}
+					});
+					if (utypars == []) {
+						None();
+					} else {
+						Some(utypars[0]);
+					}
+				}
+			}
+		}
+	};
+	if (super.name == subname) {
+		Some(super.typars)
+	} else {
+		mstruct = ^(tmap.resolveStructName)(subname);
+		switch (mstruct) {
+			None(): def();
+			Some(struct): {
+				if (struct.typars == []) Some([])
+				else def();
+			}
+		}
+	}
+}

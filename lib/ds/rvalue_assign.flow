@@ -1,0 +1,76 @@
+import ds/rvalue;
+import ds/reducer;
+
+export {
+	assignRValue(r : RValue<?>, lvalue : RLValue, value : ?) -> RValue<?>;
+	assignRValue2(r : RValue<?>, path : RPath, value : RValue<?>) -> RValue<?>;
+
+	rreduceRValue(value : RValue<?>, reducer : Reducer<RAssign<?>, ??>) -> ??;
+}
+
+assignRValue(r : RValue<?>, lvalue : RLValue, value : ?) -> RValue<?> {
+	switch (lvalue) {
+		RLeaf(): RValue(value, []);
+		RLObject(key, clvalue): {
+			index = findiDef(r.children, \mem -> mem.key == key, length(r.children));
+			cval = elementAt(r.children, index, RMember(key, RValue(value, [])));
+			updated = assignRValue(cval.value, clvalue, value);
+			nchildren = replace(r.children, index, RMember(key, updated));
+			RValue(r with children = nchildren);
+		}
+		RLArrayIndex(index, clvalue): {
+			assignRValue(r, RLObject(i2s(index), clvalue), value)
+		}
+	}
+}
+
+assignRValue2(r : RValue<?>, path : RPath, value : RValue<?>) -> RValue<?> {
+	if (path.path == []) value
+	else {
+		key = path.path[0];
+		index = findiDef(r.children, \mem -> mem.key == key, length(r.children));
+		cval = elementAt(r.children, index, RMember(key, value));
+		updated = assignRValue2(cval.value, RPath(tail(path.path)), value);
+		nchildren = replace(r.children, index, RMember(key, updated));
+		RValue(r with children = nchildren);
+	}
+}
+
+rreduceRValue(value : RValue<?>, reducer : Reducer<RAssign<?>, ??>) -> ?? {
+	acc = doRReduceRValue(reducer, reducer.init(), \v -> v, value);
+	reducer.final(acc.value);
+}
+
+doRReduceRValue(reducer : Reducer<RAssign<?>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, value : RValue<?>) -> ReducerResult<??> {
+	// Send the value
+	result = reducer.reduce(acc, RAssign(lvalueWrap(RLeaf()), value.value));
+	switch (result) {
+		Reduced(val): result;
+		ReduceAcc(nacc): {
+			doRReduceRMembers(reducer, nacc, lvalueWrap, 0, value.children)
+		}
+	}
+}
+
+doRReduceRMembers(reducer : Reducer<RAssign<?>, ??>, acc : ??, lvalueWrap : (RLValue) -> RLValue, i : int, members : [RMember<?>]) -> ReducerResult<??> {
+	if (i < length(members)) {
+		member = members[i];
+		lvalue = \v -> lvalueWrap(
+			// Decide whether to use RLArrayIndex when the key is int?
+			if (isDigits(member.key)) {
+				RLArrayIndex(s2i(member.key), v)
+			} else {
+				RLObject(member.key, v)
+			}
+		);
+		v = doRReduceRValue(reducer, acc, lvalue, member.value);
+		switch (v) {
+			ReduceAcc(nacc): {
+				doRReduceRMembers(reducer, nacc, lvalueWrap, i + 1, members)
+			}
+			Reduced(val): v;
+		}
+	} else {
+		ReduceAcc(acc);
+	}
+}

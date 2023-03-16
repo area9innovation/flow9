@@ -23,10 +23,10 @@ export {
 
 	// Apply a function to each element of an array to give a new array and concat resulting array of arrays to array
 	// O(n * log(n)) time in size of result
-	mapConcat : ([?], (?) -> [??]) -> [??];
+	mapConcat : (l : [?], fn : (?) -> [??]) -> [??];
 
 	// O(n * log(n)) time in size of result
-	mapiConcat : ([?], (int, ?) -> [??]) -> [??];
+	mapiConcat : (l : [?], fn : (int, ?) -> [??]) -> [??];
 
 	// Map where we get the previous element to build on
 	mapWithPrevious(cs : [?], first : (?) -> ??, rest : (previous : ?, current : ?) -> ??) -> [??];
@@ -44,6 +44,9 @@ export {
 
 	// Reversed fold. O(n)
 	foldr(cs : [?], acc : ??, fn : (??, ?) -> ??) -> ??;
+
+	// Reversed foldi. O(n)
+	foldri(cs : [?], acc : ??, fn : (int, ??, ?) -> ??) -> ??;
 
 	// Append an element at the end of an array. Makes a copy! O(n)!
 	// Try to avoid in folds/recursion, have a look on filtermap instead.
@@ -121,6 +124,7 @@ export {
 
 	// Creates a new array, whose elements are selected from 'a' with a function 'test' returns Some(v). O(n)
 	filtermapi : (a : [?], test : (int, ?) -> Maybe<??>) -> [??];
+	native filtermapi : (a : [?], test : (int, ?) -> Maybe<??>) -> [??] = Native.filtermapi;
 
 	// Insert 'v' element to the 'index' place. O(n)
 	insertArray(a : [?], index : int, v : ?) -> [?];
@@ -256,6 +260,9 @@ export {
 	// Folds over the integers from start to end (inclusive). If end < start, result is def.
 	foldRange(start : int, end : int, def : ?, fn : (?, int) -> ?) -> ?;
 
+	// Folds over the integers from start to end (inclusive). If end > start, result is def.
+	foldrRange(start : int, end : int, def : ?, fn : (?, int) -> ?) -> ?;
+
 	// Folds over a non-negative integer: peanoFold(3, z, s) == s(s(s(z)))
 	peanoFold : (i : int, z : ?, s : (?)->?)->?;
 
@@ -324,8 +331,13 @@ doConcatA(a : [[?]], i : int, l : int) -> [?] {
 	}
 }
 
-mapConcat(l, fn) { map(l, fn) |> concatA }
-mapiConcat(l, fn) { mapi(l, fn) |> concatA }
+mapConcat(l : [?], fn : (?) -> [??]) -> [??] {
+	map(l, fn) |> concatA
+}
+
+mapiConcat(l : [?], fn : (int, ?) -> [??]) -> [??] {
+	mapi(l, fn) |> concatA
+}
 
 mapWithPrevious(cs : [?], first : (?) -> ??, rest : (?, ?) -> ??) -> [??] {
 	mapi(cs, \i, c -> {
@@ -341,6 +353,18 @@ foldr(cs : [?], acc : ??, fn : (??, ?) -> ??) -> ?? {
 doFoldr(cs : [?], i : int, acc : ??, fn : (??, ?) -> ??) -> ?? {
 	if (i >= 0) {
 		doFoldr(cs, i - 1, fn(acc, cs[i]), fn);
+	} else {
+		acc;
+	}
+}
+
+foldri(cs : [?], acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
+	doFoldri(cs, length(cs) - 1, acc, fn);
+}
+
+doFoldri(cs : [?], i : int, acc : ??, fn : (int, ??, ?) -> ??) -> ?? {
+	if (i >= 0) {
+		doFoldri(cs, i - 1, fn(i, acc, cs[i]), fn);
 	} else {
 		acc;
 	}
@@ -391,39 +415,15 @@ zip3With(a, b, c, fn) {
 }
 
 filtermap(a : [?], test : (?) -> Maybe<??>) -> [??] {
-	if (false) {
-		list2array(fold(a, makeList(), \acc, e -> {
-			mv = test(e);
-			switch (mv) {
-				None(): acc;
-				Some(v): Cons(v, acc)
-			}
-		}));
-	} else {
-		mapped = map(a, test);
-		filtered = filter(mapped, isSome);
-		map(filtered, \v ->
-			cast(v : Maybe<??> -> Some<??>).value
-		);
-	}
+	filtermapi(a, \i, v -> test(v));
 }
 
 filtermapi(a : [?], test : (int, ?) -> Maybe<??>) -> [??] {
-	if (false) {
-		list2array(foldi(a, makeList(), \i, acc, e -> {
-			mv = test(i, e);
-			switch (mv) {
-				None(): acc;
-				Some(v): Cons(v, acc)
-			}
-		}));
-	} else {
-		mapped = mapi(a, test);
-		filtered = filter(mapped, isSome);
-		map(filtered, \v ->
-			cast(v : Maybe<??> -> Some<??>).value
-		);
-	}
+	mapped : [Maybe<??>] = mapi(a, test);
+	filtered = filter(mapped, isSome);
+	map(filtered, \v : Maybe<??> ->
+		cast(v : Maybe<??> -> Some<??>).value
+	);
 }
 
 removeFirst(a, v) {
@@ -475,7 +475,7 @@ elemIndex(a, elem, illegal) {
 // implemented by the C++ runner
 native exists : (a : [?], fn : (?) -> bool) -> bool = Native.exists;
 
-exists(a, fn) {
+exists(a : [?], fn : (?) -> bool) -> bool {
 	foundIndex = iteriUntil(a, \i, e -> fn(e));
 	foundIndex != length(a);
 }
@@ -484,7 +484,7 @@ countA(a, fn) {
 	fold(a, 0, \cnt, e -> if (fn(e)) cnt+1 else cnt)
 }
 
-contains(a, v) {
+contains(a : [?], v : ?) -> bool {
 	elemIndex(a, v, -1) != -1;
 }
 
@@ -735,6 +735,14 @@ swapIndexes(a : [?], index1 : int, index2 : int) -> [?] {
 foldRange(start : int, end : int, acc : ?, fn : (?, int) -> ?) -> ? {
 	if (start <= end) {
 		foldRange(start + 1, end, fn(acc, start), fn)
+	} else {
+		acc;
+	}
+}
+
+foldrRange(start : int, end : int, acc : ?, fn : (?, int) -> ?) -> ? {
+	if (start >= end) {
+		foldRange(start - 1, end, fn(acc, start), fn)
 	} else {
 		acc;
 	}

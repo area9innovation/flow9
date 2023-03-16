@@ -39,8 +39,8 @@ export {
 		// Needed because paragraph elements get expanded to words before rendering of paragraph lines.
 		ParagraphInteractiveStyleTree(styleTree : Tree<int, [ParaElementInteractiveStyle]>);
 
-		ParaElementInteractiveStyle ::= DynamicCharStyle, EventListeners, FormModifiers, IgnoreMetrics, ParaElementScriptType;
-				DynamicCharStyle(styleB : Behaviour<[CharacterStyle]>);
+		ParaElementInteractiveStyle ::= DynamicHighlightStyle, EventListeners, FormModifiers, IgnoreMetrics, ParaElementScriptType;
+				DynamicHighlightStyle(styleB : Behaviour<[CharacterStyle]>, extraHighlight : bool);
 				EventListeners(listeners : [EventHandler]);
 				FormModifiers(fns : [(Form) -> Form]);
 				IgnoreMetrics();
@@ -68,13 +68,14 @@ export {
 
 
 	TextElement ::= InspectElement, LinePart, NewLine, Space;
-	WrapElement ::= Form, GlueFragments, TextElement, InspectableElement, WordWrapInteractive;
-		WordWrapInteractive(elem : WrapElement, interactiveId : int);
+	WrapElement ::= NonInteractiveWrapElement, WordWrapInteractive;
+		NonInteractiveWrapElement  ::= Form, GlueFragments, TextElement, InspectableElement;
+		WordWrapInteractive(elem : NonInteractiveWrapElement, interactiveId : int);
 
 		// What form to take depending on whether we are first, in the middle, or the last item on a line in a paragraph
 		// If this is the first item in a line, it has the first shape.
 		// If it is the last item, the last shape. Otherwise the inline shape.
-		LinePart(first : Form, inline : Form, last : Form);
+		LinePart(first : Form, inline : Form, last : Form, allowBreakAfter : bool);
 
 		// A space, which disappears at start of a line and at the end of a line.
 		// The same as LinePart(Empty(), space, Empty()), just more efficient
@@ -94,15 +95,23 @@ export {
 		AllowLineBreak = TextFragments(Cons(Space(Empty()), EmptyList()));
 
 		GeneralTextFragments : (elements : List<GeneralWrapElement>, style : [CharacterStyle]);
-			GeneralWrapElement ::= GeneralText, GeneralSpace, NewLine,
+			GeneralWrapElement ::=
+				GeneralText, GeneralSpace, NewLine,
 				GeneralLinePart, GeneralInspectElement, EmptyLineElement,
 				NonTextElement, GeneralDynamicText;
+
 				GeneralText(txt : string);
 				GeneralSpace(str : string, alphabetBefore : string, alphabetAfter : string);
-				GeneralLinePart(first : string, mid : string, end : string);
+				// What form to take depending on whether we are first, in the middle, or the last item on a line in a paragraph
+				// If this is the first item in a line, it has the first shape.
+				// If it is the last item, the last shape. Otherwise the inline shape.
+				GeneralLinePart(first : string, mid : string, end : string, allowBreakAfter : bool);
 				GeneralInspectElement(inspector : ParaElementInspector, element : GeneralWrapElement);
 				EmptyLineElement();
-				NonTextElement();
+				NonTextElement(keepTogether : bool);
+					nonTextElementKeep = NonTextElement(true);
+					nonTextElementDontKeep = NonTextElement(false);
+					isNonTextElement(GeneralWrapElement) -> bool;
 				// Same as general text but allows to reflow words after metrics of word changes
 				// Behaves as NonTextElement
 				GeneralDynamicText(txt : string);
@@ -116,12 +125,34 @@ export {
 			baseline : DynamicBehaviour<double>,
 			lineHeight : DynamicBehaviour<double>,
 			lineNumber : DynamicBehaviour<int>,
-			detached : DynamicBehaviour<bool>
+			detached : DynamicBehaviour<bool>,
+			lineWordSpacing : DynamicBehaviour<double>,
+			lineAsc : DynamicBehaviour<double>,
+			wordPositionInLine : DynamicBehaviour<WordPositionInLine>,
 		);
+
+	WordPositionInLine ::= WordPositionInLineFirst, WordPositionInLineMiddle, WordPositionInLineEnd;
+		WordPositionInLineFirst();
+		WordPositionInLineMiddle();
+		WordPositionInLineEnd();
 
 	// n sets upper bound of dynamic blocks in paragraph for not making a delay at rendering
 	setParagraphDynamicBlockDelay(n : int) -> void;
 	getParagraphDynamicBlockDelay() -> int;
+
+	nonBreakableSpaceCode = 0x00a0;
+	wordJoinerCode = 0x2060;
+	zeroWidthJoinerCode = 0x200d;
+	getGeneralLinePartText(e : GeneralLinePart, positionInLine : WordPositionInLine) -> string;
+	zeroLetterSpacing = LetterSpacing(0.0);
+}
+
+getGeneralLinePartText(e : GeneralLinePart, positionInLine : WordPositionInLine) -> string {
+	switch (positionInLine) {
+		WordPositionInLineFirst(): e.first;
+		WordPositionInLineMiddle(): e.mid;
+		WordPositionInLineEnd(): e.end
+	}
 }
 
 paragraphDynamicBlockDelay : ref int = ref 1;
@@ -142,4 +173,11 @@ peIsForm(pe) {
 
 isParagraphRtl(style : [ParagraphStyle]) -> bool {
 	extractStruct(style, ParagraphRtl(getDefaultRtl())).rtl;
+}
+
+isNonTextElement(e : GeneralWrapElement) -> bool {
+	switch (e) {
+		NonTextElement(__): true;
+		default: false;
+	}
 }

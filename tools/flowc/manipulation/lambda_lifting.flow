@@ -45,7 +45,7 @@ lift_lambdas_module(program : FiProgram, moduleName : string) -> FiProgram {
         None(): program;
         Some(m): {
             context = LLContext(program, m, moduleName, ref makeTree());
-			do_lift = \e -> lift_lambdas_exp(context, None(), e);
+			do_lift = \e -> lift_lambdas_exp(context, None(), e, None());
 
             // lifting lambdas in functions
             functions = map(m.functions, \f : FiFunctionDec -> {
@@ -121,8 +121,8 @@ resolve_variable(scope : LexicalScope, closureRef : FiExp, name : string, type :
     }
 } 
 
-lift_lambdas_exp(context : LLContext, sc : Maybe<LexicalScope>, ex : FiExp) -> FiExp {
-    process = \exp0 -> lift_lambdas_exp(context, sc, exp0);
+lift_lambdas_exp(context : LLContext, sc : Maybe<LexicalScope>, ex : FiExp, expType : Maybe<FiType>) -> FiExp {
+    process = \exp0 -> lift_lambdas_exp(context, sc, exp0, None());
 
     switch (ex) {
 		FiBool(b, start): ex;
@@ -138,13 +138,16 @@ lift_lambdas_exp(context : LLContext, sc : Maybe<LexicalScope>, ex : FiExp) -> F
                         FiTypeName(scope.closure.name, scope.closure.typars), start), name, type, start, context.program.config.threadId)
                 else ex;
         }
-		FiCall(f, args, type, start):
-			FiCall(process(f), map(args, process), type, start);
+		FiCall(f, args, type, start): {
+			argTypes = either(maybeMap(extractFiTypeFunctionFromFiExp(f), \t -> map(t.args, \a -> a.type)), []);
+			newArgs = mapi(args, \i, arg -> lift_lambdas_exp(context, sc, arg, elementAtM(argTypes, i)));
+			FiCall(process(f), newArgs, type, start);
+		}
 		FiSwitch(__, __, __, __, __): 
             FiSwitch(ex with cases = 
                 map(ex.cases, \c -> FiCase(c with body = process(c.body))));
 		FiLambda(args, body, type, start): 
-            lift_lambda(context, sc, ex);
+			lift_lambda(context, sc, ex, expType);
 		FiLet(name, type, e1, e2, type2, start): 
 			FiLet(ex with e1 = process(e1), e2 = process(e2));
 		FiIf(e1, e2, e3, type, start): 
@@ -162,6 +165,31 @@ lift_lambdas_exp(context : LLContext, sc : Maybe<LexicalScope>, ex : FiExp) -> F
 	}
 }
 
+extractFiTypeFunctionFromFiExp(e : FiExp) -> Maybe<FiTypeFunction> {
+	type = switch (e : FiExp) {
+		FiBool(__, __) : FiTypeBool();
+		FiInt(__, __) : FiTypeInt();
+		FiDouble(__, __) : FiTypeDouble();
+		FiString(__, __) : FiTypeString();
+		FiVoid(__) : FiTypeVoid();
+		FiVar(__, type, __) : type;
+		FiCallPrim(__, __, type, __): type;
+		FiIf(__, __, __, type, __) : type;
+		FiLambda(__, __, type, __) : type;
+		FiCall(__, __, type, __) : type;
+		FiLet(__, type, __, __, type2, __) : type;
+		FiSwitch(__, switchType, __, type, __) : type;
+		FiCast(__, tFrom, tTo, type, __) : tTo;
+		FiSeq(__, type, __) : type;
+		FiRequire(__, __, type, __) : type;
+		FiUnsafe(__, __, type, __) : type;
+	}
+	switch (type : FiType) {
+		FiTypeFunction(__, __): Some(type);
+		default: None();
+	}
+}
+
 lambda_index = ref 0;
 
 generate_lambda_name(context : LLContext, lambda : FiLambda) {
@@ -171,9 +199,14 @@ generate_lambda_name(context : LLContext, lambda : FiLambda) {
     lambdaName;
 }
 
-lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) -> FiExp {
+lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda, type : Maybe<FiType>) -> FiExp {
 	lambdaName = generate_lambda_name(context, lambda);
-    originalLambdaType = lambda.type;
+	originalLambdaType = eitherMap(type, \t -> updateFiTypeFunction(lambda.type, t), lambda.type);
+	lambdaArgs = if (length(originalLambdaType.args) == length(lambda.args)) {
+		mapi(lambda.args, \i, a -> FiFunArg(a.name, setDeclaredTypes(a.type, originalLambdaType.args[i].type)));
+	} else {
+		lambda.args;
+	}
 
     // vars from outer scope are already bound - we do not need to store those in a closure
     parentScopeVars = switch (sc) {
@@ -183,7 +216,7 @@ lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) ->
 
     // collecting free variables
 	lambdaAllVars1 = tree2pairs(find_free_vars_with_types(
-        lambda.body, buildSet(map(lambda.args, \x -> x.name)), makeTree()
+		lambda.body, buildSet(map(lambdaArgs, \x -> x.name)), makeTree()
     ));
 	lambdaAllVars = filter(lambdaAllVars1, \p -> !containsKeyTree(context.program.names.toplevel, p.first));
 
@@ -203,7 +236,7 @@ lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) ->
     potentiallyGenericVars = concat(lambdaOwnVars, 
         map(originalLambdaType.args, \a -> Pair(a.name, a.type)));
     closureTyparNames = sort(set2array(fold(potentiallyGenericVars, makeSet(), 
-        \acc, v -> fiCollectTypars(context.program, v.second, acc))));
+        \acc, v -> fiCollectTypars(v.second, acc))));
     closureTypars = map(closureTyparNames, \n -> FiTypeParameter(n));
 
 	// closure represented by struct
@@ -235,7 +268,7 @@ lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) ->
 
 	// generating lifted function declaration
     lambdaDecl = FiFunctionDec(lambdaName, 
-        FiLambda(arrayPush(lambda.args, closureFunArg), lift_lambdas_exp(context, Some(nestedScope), lambda.body), 
+		FiLambda(arrayPush(lambdaArgs, closureFunArg), lift_lambdas_exp(context, Some(nestedScope), lambda.body, None()), 
             lambdaType, lambda.start),
         lambdaType, lambda.start, lambda.start + 1);
 
@@ -271,5 +304,69 @@ find_free_vars_with_types(expr : FiExp, bound : Set<string>, free : Tree<string,
 		FiInt(__, __):                free;
         FiRequire(__, e, __, __):     find_free_vars_with_types(e, bound, free);
         FiUnsafe(__, fb, __, __):     find_free_vars_with_types(fb, bound, free);
+	}
+}
+
+updateFiTypeFunction(realType : FiTypeFunction, declaredType : FiType) -> FiTypeFunction {
+	newType = setDeclaredTypes(realType, declaredType);
+	switch (newType : FiType) {
+		FiTypeArray(__): realType;
+		FiTypeFunction(__, __): newType;
+		FiTypeRef(__): realType;
+		FiTypeParameter(n): realType;
+		FiTypeBool(): realType;
+		FiTypeInt(): realType;
+		FiTypeDouble(): realType;
+		FiTypeString(): realType;
+		FiTypeFlow(): realType;
+		FiTypeVoid(): realType;
+		FiTypeNative(): realType;
+		FiTypeName(__, __): realType;
+	}
+}
+
+setDeclaredTypes(realType : FiType, declaredType : FiType) -> FiType {
+	switch (realType : FiType) {
+		FiTypeArray(t): switch (declaredType : FiType) {
+			FiTypeArray(t2): FiTypeArray(setDeclaredTypes(t, t2));
+			default : realType;
+		}
+		FiTypeFunction(args, returnType): switch (declaredType : FiType) {
+			FiTypeFunction(args2, returnType2): {
+				if (length(args) == length(args2)) {
+					FiTypeFunction(
+						mapi(args, \i, a -> {
+							FiFunArg(a.name, setDeclaredTypes(a.type, args2[i].type));
+						}),
+						setDeclaredTypes(returnType, returnType2)
+					);
+				} else {
+					realType;
+				}
+			}
+			default : realType;
+		}
+		FiTypeRef(t): switch (declaredType : FiType) {
+			FiTypeRef(t2): FiTypeRef(setDeclaredTypes(t, t2));
+			default : realType;
+		}
+		FiTypeParameter(n): realType;
+		FiTypeBool(): realType;
+		FiTypeInt(): realType;
+		FiTypeDouble(): realType;
+		FiTypeString(): realType;
+		FiTypeFlow(): declaredType;
+		FiTypeVoid(): realType;
+		FiTypeNative(): realType;
+		FiTypeName(name, typeparameters): switch (declaredType : FiType) {
+			FiTypeName(name2, typeparameters2): {
+				if (name == name2 && length(typeparameters) == length(typeparameters2)) {
+					FiTypeName(name, mapi(typeparameters, \i, a -> setDeclaredTypes(a, typeparameters2[i])));
+				} else {
+					realType;
+				}
+			}
+			default : realType;
+		}
 	}
 }

@@ -3,9 +3,14 @@ import text/serialize;
 import net/http;
 import tools/common/compilerconfig;
 import tools/common/logging;
+import tools/common/utils;
 
 export {
+	// Makes diagnostic message from compiler's output
 	lspErrorDiagnostics(file : URI, s : string) -> Json;
+	// Sends multiple diagnostic message from compiler's output. We need it because error might be in different files
+	lspCallOutErrorDiagnostics(callOut : (Json) -> void, msg : string) -> void;
+
 	lspParseErrors(s : string) -> [LspDiagnostic];
 	lspFileConfig(file : string) -> CompilerConfig;
 	lspParseLocations(s : string) -> [Json];
@@ -16,31 +21,48 @@ export {
 
 	lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void;
 	lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string];
+
+	string2LspSymbolKind(s : string) -> int;
 }
 
 lspErrorDiagnostics(file : URI, s : string) -> Json {
-	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics", 
-		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", lspParseErrors(s)))
+	lspDiagnostics2notificationMessageJson(file, lspParseErrors(s));
+}
+
+lspDiagnostics2notificationMessageJson(file : URI, diagnostics : [LspDiagnostic]) -> Json {
+	lspNotificationMessage2Json(LspNotificationMessage("2.0", "textDocument/publishDiagnostics",
+		lspPublishDiagnosticsParams2Json(LspPublishDiagnosticsParams(file, "", diagnostics))
 	));
 }
 
+emptyLspDiagnosticRelatedInformation = LspDiagnosticRelatedInformation(LspLocation(URI("", URIAuthority("", "", ""), "", "", ""), LspRange(LspPosition(0, 0), LspPosition(0, 0))), "");
+lspCallOutErrorDiagnostics(callOut : (Json) -> void, msg : string) -> void {
+	diagnostics = lspParseErrors(msg);
+	byUri = fold(diagnostics, makeTree(), \acc, d -> {
+		uri = extractStruct(d.relatedInformation, emptyLspDiagnosticRelatedInformation).location.uri;
+		treePushToArrayValue(acc, uri, d);
+	});
+	iter(map(tree2pairs(byUri), unpairC(lspDiagnostics2notificationMessageJson)), callOut);
+}
+
 lspParseErrors(s : string) -> [LspDiagnostic] {
-	if (!strContains(s, "Error: ")) [] else {
+	if (!strContains(s, "Error: ")) {
+		[];
+	} else {
 		err_lines = filtermap(strSplit(s, "\n"), \l -> lspParseLocation(l, true));
 		fold(err_lines, [], \acc, p -> {
 			loc = p.first; msg = p.second;
-			diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], []);
-			acc1 = if (strContains(msg, "Error: ")) {
+			diag = LspDiagnostic(loc.range, 1, "", "flowc", msg, [], [LspDiagnosticRelatedInformation(loc, "")]);
+			if (strContains(msg, "Error: ")) {
 				concat(acc, [diag]);
 			} else if (acc != []) {
 				last = lastElement(acc, diag);
-				replace(acc, length(acc) - 1, LspDiagnostic(last with 
-					relatedInformation = concat(last.relatedInformation, [LspDiagnosticRelatedInformation(loc, "")])
+				replace(acc, length(acc) - 1, LspDiagnostic(last with
+					relatedInformation = concat(last.relatedInformation, diag.relatedInformation)
 				));
 			} else {
 				acc;
 			}
-			acc1
 		});
 	}
 }
@@ -79,7 +101,7 @@ lspParseLocations(s : string) -> [Json] {
 
 lspParseSymbols(s : string) -> [Json] {
 	isNum = \st -> st != "" && isDigits(st);
-	filtermap(strSplit(s, "\n"), \l -> 
+	filtermap(strSplit(s, "\n"), \l ->
 		maybeBind(lspParseLocation(l, false), \p -> {
 			loc = p.first;
 			descr_parts = strSplit(trim(p.second), " ");
@@ -88,29 +110,7 @@ lspParseSymbols(s : string) -> [Json] {
 				Some(lspSymbol2Json(LspSymbol(p.second, "", 0, false, loc.range, loc.range, [])))
 			} else if (length(descr_parts) > 1) {
 				name = descr_parts[1];
-				kind = if (descr_parts[0] == "import") {
-					lookupTreeDef(lspSymbolKindName2id, "Module", 0);
-				} else if (descr_parts[0] == "forbid") {
-					lookupTreeDef(lspSymbolKindName2id, "Package", 0);
-				} else if (descr_parts[0] == "struct") {
-					lookupTreeDef(lspSymbolKindName2id, "Struct", 0);
-				} else if (descr_parts[0] == "union") {
-					lookupTreeDef(lspSymbolKindName2id, "Enum", 0);
-				} else if (descr_parts[0] == "fundef") {
-					lookupTreeDef(lspSymbolKindName2id, "Function", 0);
-				} else if (descr_parts[0] == "fundecl") {
-					lookupTreeDef(lspSymbolKindName2id, "Interface", 0);
-				} else if (descr_parts[0] == "vardef") {
-					lookupTreeDef(lspSymbolKindName2id, "Object", 0);
-				} else if (descr_parts[0] == "vardecl") {
-					lookupTreeDef(lspSymbolKindName2id, "Variable", 0);
-				} else if (descr_parts[0] == "natdef") {
-					lookupTreeDef(lspSymbolKindName2id, "Method", 0);
-				} else if (descr_parts[0] == "natdecl") {
-					lookupTreeDef(lspSymbolKindName2id, "Method", 0);
-				} else {
-					0
-				}
+				kind = string2LspSymbolKind(descr_parts[0]);
 				Some(lspSymbol2Json(LspSymbol(name, "", kind, false, loc.range, loc.range, [])));
 			} else {
 				None();
@@ -122,13 +122,17 @@ lspParseSymbols(s : string) -> [Json] {
 lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, string>> {
 	isNum = \st -> st != "" && isDigits(st);
 	parts0 = strSplit(s, ":");
-	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) None() else {
-		// Windows path may start with C:/... and 
-		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) parts0 else {
+	if (length(parts0) < 3 || (!admit_errors && (strContains(s, "Error: ") || strContains(s, "Fail: ")))) {
+		None();
+	} else {
+		// Windows path may start with C:/... and
+		parts = if (!hasTargetName("windows") || !isLetter(parts0[0])) {
+			parts0;
+		} else {
 			concat(["/" + parts0[0] + ":" + parts0[1]], tailFrom(parts0, 2));
 		}
 		if (length(parts) < 3 || parts[0] == "" || !isNum(parts[1]) || !isNum(parts[2])) {
-			None() ;
+			None();
 		} else {
 			path = strReplace(parts[0], "\\", "/");
 			sline = s2i(parts[1]) - 1;
@@ -153,7 +157,7 @@ lspParseLocation(s : string, admit_errors : bool) -> Maybe<Pair<LspLocation, str
 }
 
 lspServerLog(message : string, conf : Tree<string, string>) -> void {
-	log_file = lookupTreeDef(conf, "server-log", findFlowDir() + 
+	log_file = lookupTreeDef(conf, "server-log", findFlowDir() +
 		"/.log/flowc_lsp_server.log");
 	log_dir = fcDirName(log_file);
 	if (log_dir != "") {
@@ -186,56 +190,6 @@ lspDetectLspError(out : string, conf : Tree<string, string>) -> bool {
 	} else false;
 }
 
-lspLTrimLines(lines : [string]) -> [string] {
-	if (length(lines) == 0 || trim2(lines[0], " \t\r") != "") {
-		lines 
-	} else {
-		lspLTrimLines(tail(lines));
-	}
-}
-
-lspLTrimLines2(lines : [string], beginning : string) -> [string] {
-	if (length(lines) == 0 || !startsWith(lines[0], beginning)) {
-		lines 
-	} else {
-		lspLTrimLines(tail(lines));
-	}
-}
-
-lspRTrimLines(lines : [string]) -> [string] {
-	if (length(lines) == 0 || trim2(lastElement(lines, ""), " \t\r") != "") {
-		lines 
-	} else {
-		lspRTrimLines(take(lines, length(lines) - 1));
-	}
-}
-
-lspRTrimLines2(lines : [string], beginning : string) -> [string] {
-	if (length(lines) == 0 || !startsWith(lastElement(lines, ""), beginning)) {
-		lines 
-	} else {
-		lspRTrimLines(take(lines, length(lines) - 1));
-	}
-}
-
-lspTrimLines(lines : [string]) -> [string] {
-	lspLTrimLines(lspRTrimLines(lines));
-}
-
-lspTrimOutput(out : string) -> string {
-	lines0 = strSplit(out, "\n");
-	
-	lines1 = lspLTrimLines2(lines0, "Flow compiler (3rd generation)");
-	lines2 = lspLTrimLines(lines1);
-	lines3 = lspLTrimLines2(lines2, "Processing '");
-	lines4 = lspLTrimLines(lines3);
-
-	lines5 = lspRTrimLines(lines4);
-	lines6 = lspRTrimLines2(lines5, "done in ");
-	lines7 = lspRTrimLines(lines6);
-	strGlue(lines7, "\n");
-}
-
 lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string] {
 	map(tree2pairs(conf), \pair -> {
 		key = pair.first;
@@ -246,11 +200,12 @@ lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string] {
 
 lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void {
 	on_exit_1 = \code, out, err -> {
-		out1 = if (trim_out) lspTrimOutput(out) else out;
+		out1 = if (trim_out) trimFlowcHeaderFromOutput(out) else out;
 		on_exit(code, out1, err);
 	}
 	run_locally = \-> {
-		startProcess("flowc1", lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
+		flowc = if (windows()) "flowc1.bat" else "flowc1";
+		startProcess(flowc, lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
 	}
 	if (containsKeyTree(conf.config, "server-kill")) {
 		// Executing 'server-kill=1' on server makes no sense - must be executed on a distinguished process.
@@ -269,16 +224,16 @@ lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, strin
 }
 
 lspRunConfViaHttp(
-	conf : CompilerConfig, 
-	on_exit : (int, string, string) -> void, 
+	conf : CompilerConfig,
+	on_exit : (int, string, string) -> void,
 	on_fail : (int, string) -> void
 ) -> void {
-	serverUrl = 
+	serverUrl =
 		"http://localhost:" +
 		getConfigParameterDef(conf.config, "server-port", "10001");
 	patchedConfig = patchRemoteConfig(conf);
-	serialized_server_job = 
-		(getConfigParameterDef(conf.config, "compile-expression", "") != "") || 
+	serialized_server_job =
+		(getConfigParameterDef(conf.config, "compile-expression", "") != "") ||
 		(getConfigParameterDef(conf.config, "dump-program", "") == "1");
 	serialized_config = "config_" + serialize(patchedConfig);
 	httpCustomRequest(
@@ -310,4 +265,30 @@ lspRunConfViaHttp(
 		},
 		false
 	);
+}
+
+string2LspSymbolKind(s : string) -> int {
+	if (s == "import") {
+		lookupTreeDef(lspSymbolKindName2id, "Module", 0);
+	} else if (s == "forbid") {
+		lookupTreeDef(lspSymbolKindName2id, "Package", 0);
+	} else if (s == "struct") {
+		lookupTreeDef(lspSymbolKindName2id, "Struct", 0);
+	} else if (s == "union") {
+		lookupTreeDef(lspSymbolKindName2id, "Enum", 0);
+	} else if (s == "fundef") {
+		lookupTreeDef(lspSymbolKindName2id, "Function", 0);
+	} else if (s == "fundecl") {
+		lookupTreeDef(lspSymbolKindName2id, "Interface", 0);
+	} else if (s == "vardef") {
+		lookupTreeDef(lspSymbolKindName2id, "Object", 0);
+	} else if (s == "vardecl") {
+		lookupTreeDef(lspSymbolKindName2id, "Variable", 0);
+	} else if (s == "natdef") {
+		lookupTreeDef(lspSymbolKindName2id, "Method", 0);
+	} else if (s == "natdecl") {
+		lookupTreeDef(lspSymbolKindName2id, "Method", 0);
+	} else {
+		0
+	}
 }

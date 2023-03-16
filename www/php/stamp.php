@@ -62,8 +62,11 @@ if ($isJson) {
 } else {
 	header('Content-type: text/plain');
 	$humanFormat = getParameter('h') != '';
+	$dbFormat = getParameter('db') != '';
 	if ($humanFormat) {
 		echo $hrts;
+	} elseif ($dbFormat) {
+		echo date('Y-m-d H:i:s', $timestamp);
 	} else {
 		echo $timestamp;
 	}

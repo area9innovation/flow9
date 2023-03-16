@@ -21,6 +21,7 @@ class iosGLRenderSupport;
     CADisplayLink * DisplayLink;
     CGPoint currentTouchPos;
     
+    UIView * statusBar;
     BOOL statusBarVisible, statusBarIconsTheme;
     
     IBOutlet UIActivityIndicatorView * ActivityIndicator;
@@ -45,4 +46,5 @@ class iosGLRenderSupport;
 - (void) hideActivityIndicator;
 - (void) setStatusBarVisible: (BOOL)visible;
 - (void) setStatusBarIconsTheme: (BOOL)light;
+- (void) setStatusBarColor: (UIColor*)color;
 @end

@@ -109,7 +109,7 @@ TPicture(url : string, style : [TPictureStyle]);
 	TPictureSize(size : Transform<WidthHeight>); // Scales to available area for WidthHeight(-1., -1.)
 	TPictureKeepAspectRatio(); // Keep aspect ratio while scaling to TPictureSize
 
-TRealHTML(url : string, wh : Transform<WidthHeight>, style : [RealHTMLStyle]);
+TRealHTML(url : string, wh : Transform<WidthHeight>, style : [FRealHTMLStyle]);
 
 TVideo(filename : string, wh : DynamicBehaviour<WidthHeight>, style : [FVideoStyle]);
 
@@ -132,6 +132,7 @@ TCrop(topleft : Transform<Point>, widthHeight : Transform<WidthHeight>, form : T
 TCrop2 : (topleft : Transform<Point>, widthHeight : Transform<WidthHeight>, enabled : Transform<bool>, form : Tropic);
 
 // The tropic is NOT destroyed/reconstructed when 'visible' becomes false/true for performance, only hidden.
+// Be careful, in JS 'visible=false' causes element to be removed from the DOM, while it remains constructed on flow level.
 // See TShow in tropic_gui.flow if you want it to be destroyed and reconstructed.
 TVisible : (visible : Transform<bool>, tropic : Tropic);
 
@@ -325,7 +326,7 @@ TAttach(ghost : Tropic, fn : (TFormMetrics) -> Tropic);
 	zeroTMetrics = TFormMetrics(zero, zero, zero);
 
 // A rounded rectangle that is as big as the size metrics
-TRounded(nw : double, ne : double, lw : double, le : double, style : [TGraphicsStyle], size : Tropic);
+TRounded(topLeft : double, topRight : double, bottomRight : double, bottomLeft : double, style : [TGraphicsStyle], size : Tropic);
 
 // Like Crop, except it only crops the size, and not any position
 TCropSize(size : Tropic, form : Tropic);
@@ -380,7 +381,7 @@ TPositionScale(positionScale : DynamicBehaviour<PositionScale>, t : Tropic);
 // Inspects metrics of t. See TAttach* helpers into tropic_gui also.
 TInspect(inspectors : [TInspector], t : Tropic);
 	TInspector ::= Width, Height, IBaseline, AvailableWidth, AvailableHeight, ISize, IAvailable, IMinWidth, IMinHeight, IMaxWidth, IMaxHeight,
-		IMinSize, IMaxSize, IMetricsOnly;
+		IMinSize, IMaxSize, IMetricsOnly, IXFillers, IYFillers;
 
 		IWidth(width : DynamicBehaviour<double>) -> Width { Width(width); };
 		IHeight(height : DynamicBehaviour<double>) -> Height { Height(height); };
@@ -397,6 +398,9 @@ TInspect(inspectors : [TInspector], t : Tropic);
 
 		IMinSize(widthHeight : DynamicBehaviour<WidthHeight>);
 		IMaxSize(widthHeight : DynamicBehaviour<WidthHeight>);
+
+		IXFillers(xFillers : DynamicBehaviour<double>);
+		IYFillers(yFillers : DynamicBehaviour<double>);
 
 		// Don't show content, only calculate metrics
 		IMetricsOnly();
@@ -467,12 +471,30 @@ TDynamicGroup2 : (stackChanges : DynamicBehaviour<[TGroupChange]>, currentStack 
 		TGroupMove : (from : int, to : int);
 		TGroupReplace : (tropic : Tropic, z : int);
 
-	TCombiner ::= TGroupCombiner, TLinesCombiner, TColsCombiner, TColsACombiner, TLinesACombiner;
+	TCombiner ::= TCustomCombiner, TGroupCombiner, TLinesCombiner, TLinesACombiner, TBaselineLinesCombiner, TBaselineLinesACombiner,
+		TColsCombiner, TColsACombiner, TBaselineColsCombiner, TBaselineColsACombiner;
+		TCustomCombiner(
+			itemPositionFn : (currentItem : Transform<TDynamicGroupItem>, previousItem : Transform<TDynamicGroupItem>) -> Transform<Point>,
+			getPrevItemIndex : Maybe<(int) -> int>,
+			baselineFn : Maybe<(allItems : [TDynamicGroupItem]) -> Transform<double>>,
+			vertical : bool,
+			horizontal : bool
+		);
 		TGroupCombiner();
 		TLinesCombiner();
 		TLinesACombiner();
+		TBaselineLinesCombiner();
+		TBaselineLinesACombiner();
 		TColsCombiner();
 		TColsACombiner();
+		TBaselineColsCombiner();
+		TBaselineColsACombiner();
+
+	TDynamicGroupItem : (
+		acc : TAcc,
+		index : DynamicBehaviour<int>,
+		position : Transform<Point>
+	);
 
 TDynamicGroup(stackChanges : DynamicBehaviour<[TGroupChange]>) -> TDynamicGroup2 {
 	TDynamicGroup2(stackChanges, ref [], TGroupCombiner());
@@ -504,6 +526,7 @@ TDynamicGroup(stackChanges : DynamicBehaviour<[TGroupChange]>) -> TDynamicGroup2
 	);
 
 	zeroTAcc = TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(true), true, true, []);
+	zeroTDynamicGroupItem = TDynamicGroupItem(zeroTAcc, make(0), const(zeroPoint));
 
 	TParentInfo(
 		// How much is allocated to this element, including any x-fill expanders here?

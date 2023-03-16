@@ -72,9 +72,9 @@ export class MI2 extends EventEmitter {
 			this.process.stderr.on("data", this.stderr.bind(this));
 			this.process.on("exit", (() => { this.emit("quit"); this.process = null; }).bind(this));
 			this.process.on("error", ((err) => { this.emit("launcherror", err); }).bind(this));
-			
+
 			this.emit("debug-ready");
-			resolve();
+			resolve(this);
 		});
 	}
 
@@ -132,10 +132,10 @@ export class MI2 extends EventEmitter {
 					this.log("stdout", line);
 			}
 			else {
-				if (this.debugOutput) 
+				if (this.debugOutput)
 					this.log("log", "GDB -> App [raw]: " + line);
 				let parsed = parseMI(line);
-				if (this.debugOutput) 
+				if (this.debugOutput)
 					this.log("log", "GDB -> App: " + JSON.stringify(parsed));
 				let handled = false;
 				if (parsed.token !== undefined) {
@@ -168,20 +168,20 @@ export class MI2 extends EventEmitter {
 								} else if (record.asyncClass == "stopped") {
 									this.state = ProcessState.Stopped;
 									let reason = parsed.record("reason");
-									// flowcpp does not return reason - assuming breakpoint-hit unless 
+									// flowcpp does not return reason - assuming breakpoint-hit unless
 									// there was 'exited normally' or 'interrupt' message before (see above)
 									if (reason == undefined) {
 										if (this.exitedNormallyReceived)
 											reason = "exited-normally";
 										else if (this.interruptDetected)
 											reason = "interrupt-stop";
-										else 
+										else
 											reason = "breakpoint-hit";
 									}
 
 									this.exitedNormallyReceived = false;
 									this.interruptDetected = false;
-										
+
 									if (trace)
 										this.log("stderr", "stop: " + reason);
 									if (reason == "breakpoint-hit")
@@ -303,7 +303,7 @@ export class MI2 extends EventEmitter {
 	async addBreakPoint(breakpoint: BackendBreakpoint): Promise<[boolean, BackendBreakpoint]> {
 		if (trace)
 			this.log("stderr", "addBreakPoint");
-		
+
 		if (this.breakpoints.has(breakpoint))
 			return [false, undefined];
 		let location = "";
@@ -324,7 +324,7 @@ export class MI2 extends EventEmitter {
 			location += '"' + escape(breakpoint.raw) + '"';
 		else
 			location += '"' + escape(breakpoint.file) + ":" + breakpoint.line + '"';
-		try { 
+		try {
 			let result = await this.sendCommand("break-insert " + location);
 			if (result.resultRecords.resultClass == "done") {
 				let bkptNum = parseInt(result.result("bkpt.number"));
@@ -346,7 +346,7 @@ export class MI2 extends EventEmitter {
 					return [true, newBrk];
 				}
 			}
-			else 
+			else
 				return [false, undefined];
 		} catch (e) {
 			this.log("stderr", "Error setting breakpoint: " + e);
@@ -364,7 +364,7 @@ export class MI2 extends EventEmitter {
 			this.breakpoints.delete(breakpoint);
 			return true;
 		}
-		else 
+		else
 			return false;
 	}
 
@@ -375,12 +375,12 @@ export class MI2 extends EventEmitter {
 			if (!await this.interrupt())
 				return false;
 		let breakpointIndices = Array.from(this.breakpoints.values());
-		let result = await this.sendCommand("break-delete " + 
+		let result = await this.sendCommand("break-delete " +
 			breakpointIndices.join(" "));
 		if (result.resultRecords.resultClass == "done") {
 			this.breakpoints.clear();
 			return true;
-		} else 
+		} else
 			return false;
 	}
 
@@ -416,7 +416,7 @@ export class MI2 extends EventEmitter {
 				args: args
 			};
 		});
-		return ret; 
+		return ret;
 	}
 
 	async evalExpression(name: string): Promise<any> {
@@ -436,26 +436,26 @@ export class MI2 extends EventEmitter {
 			this.log("stderr", "getStackVariables");
 
 		const selectRes = await this.sendCommand(`stack-select-frame ${frame}`);
-		
+
 		if (argsOnly) {
 			const stackInfo = await this.sendCommand("stack-info-frame");
 			// args - they are returned with values, wrapping into Variable
 			const argsRaw: any[] = MINode.valueOf(stackInfo.result("frame"), "args") || [];
-			const args = argsRaw.map(a => 
+			const args = argsRaw.map(a =>
 				({name : MINode.valueOf(a, "name"), valueStr : MINode.valueOf(a, "value")}));
-			return args; 
+			return args;
 		} else {
 			const localsResult = await this.sendCommand("stack-list-locals");
 			const locals: any[] = localsResult.result("locals");
-			// locals - we only get names - but we do not actually need values 
+			// locals - we only get names - but we do not actually need values
 			const varNamesRaw: any = MINode.valueOf(locals, "name") || [];
 			const varNames: string[] = typeof(varNamesRaw) == "string" ? [varNamesRaw] : varNamesRaw;
-			
+
 			return varNames.map(a => ({ name : a}));
 		}
 	}
 
-	async varCreate(expression: string, frameNum : number, name: string = "-"): Promise<VariableObject> {
+	async varCreate(expression: string, frameNum : number | "*", name: string = "-"): Promise<VariableObject> {
 		if (trace)
 			this.log("stderr", "varCreate");
 		const res = await this.sendCommand(`var-create ${name} ${frameNum} "${expression}"`);
@@ -488,14 +488,14 @@ export class MI2 extends EventEmitter {
 		if (trace)
 			this.log("stderr", "varAssign");
 		return this.sendCommand(`var-delete ${name}`);
-	}	
+	}
 
 	logNoNewLine(type: string, msg: string) {
 		this.emit("msg", type, msg);
 	}
 
 	log(type: string, msg: string) {
-		this.emit("msg", type, msg[msg.length - 1] == '\n' ? msg : (msg + "\n"));
+		this.emit("msg", type, (msg.length && msg[msg.length - 1] == '\n') ? msg : (msg + "\n"));
 	}
 
 	sendUserInput(command: string): Thenable<any> {
@@ -511,7 +511,7 @@ export class MI2 extends EventEmitter {
 	sendRaw(raw: string) {
 		if (this.printCalls)
 			this.log("log", raw);
-		
+
 		this.process.stdin.write(raw + "\n");
 	}
 

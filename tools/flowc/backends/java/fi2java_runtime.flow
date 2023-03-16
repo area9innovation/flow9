@@ -1,0 +1,106 @@
+import lingo/pegcode/pegcode;
+import lingo/compiler/syntaxtree_util;
+import tools/flowc/backends/common;
+import tools/flowc/backends/java/parser/java_parser;
+import tools/flowc/backends/java/parser/java_ast;
+import tools/flowc/backends/java/fi2java_defines;
+
+export {
+	// Organize runtime files for a current program:
+	// - Parse all java files with classes derived from 'NativeHost' from config and find all their public methods.
+	// - Gather all other files, which form a runtime
+	fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime;
+}
+
+fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
+	flow_dir = getFlowDir();
+	lib_natives = pathCombineMany([flow_dir, "platforms", "java", "com", "area9innovation", "flow"]);
+	extern_native_dirs = filtermap(cfg.externNatives, \nat -> {
+		native_path = resolveRelativePath(nat);
+		if (isDirectory(native_path)) {
+			Some(native_path);
+		} else {
+			fcPrintln("Java external native directory '" + nat + "' does't exist", cfg.threadId);
+			None();
+		}
+	});
+	native_dirs = concat([lib_natives], extern_native_dirs);
+	fold(native_dirs, JavaRuntime(makeTree(), makeSet()), \acc, native_dir ->
+		fold(readDirectoryRecursively(native_dir), acc, \ac, file ->
+			if (!endsWith(file, ".java")) ac else {
+				code = getFileContent(file);
+				if (code == "") {
+					fcPrintln("empty source code for file: " + file, cfg.threadId);
+					ac;
+				} else {
+					name = changeFileExt(fileNameOnly(file), "");
+					if (name == "NativeHost" || name == "FlowRuntime" || !strContains(code, "NativeHost")) {
+						JavaRuntime(ac.natives, insertSet(ac.classes, name));
+					} else {
+						res = parse_Compilation(code);
+						ast = res.first;
+						err = res.second;
+						if (ast.rule == -1) {
+							fcPrintln(
+								"Error wile parsing file: '" + file + "', pos: " + i2s(err.pos) + ", met: '" + err.met + "', expected: '" + strGlue(err.expected, ", ") + "' in:\n" +
+								fi2javaShowPos(code, err.pos),
+								cfg.threadId
+							);
+							ac;
+						} else {
+							natives = fi2javaNativesFromAst(ast, code);
+							if (length(natives) == 0) ac else {
+								JavaRuntime(setTree(ac.natives, name, buildSet(natives)), ac.classes);
+							}
+						}
+					}
+				}
+			}
+		)
+	);
+}
+
+fi2javaShowPos(code : string, pos : int) -> string {
+	begin = for(pos, 
+		\p -> p > 0 && (getCharAt(code, p - 1) != "\n"),
+		\p -> p - 1
+	);
+	end = for(pos, 
+		\p -> p + 1 < strlen(code) && (getCharAt(code, p + 1) != "\n"),
+		\p -> p + 1
+	);
+	err_str = strReplace(substring(code, begin, end - begin), "\t", " ");
+	err_pointer = strRepeat(" ", pos - begin) + "^" + strRepeat(" ", end - pos);
+	err_str + "\n" + err_pointer;
+}
+
+fi2javaNativesFromAst(ast : SyntaxTree, code : string) -> [string] {
+	unit = get_Compilation_CompilationUnit(ast);
+	type_decls = get_Compilation_TypeDeclaration_s(unit);
+	concatA(filtermap(type_decls, \class_decl ->
+		if (class_decl.rule != st_NormalClassDeclaration) None() else {
+			class_header = get_Compilation_NormalClassHeader(class_decl);
+			superclass = get_Compilation_Superclass_s(class_header);
+			if (length(superclass) == 0) None() else {
+				extends = trim2(grabSTText(get_Compilation_ClassType(superclass[0]), code), " \t\n\r");
+				if (extends != "NativeHost") None() else {
+					body = get_Compilation_ClassBody(class_decl);
+					members = get_Compilation_ClassBodyDeclaration_s(body);
+					Some(filtermap(members, \member ->
+						if (member.rule != st_MethodDeclaration) None() else {
+							method_modifiers = map(get_Compilation_MethodModifier_s(member), \modifier ->
+								trim2(grabSTText(modifier, code), " \t\n\r")
+							);
+							if (!contains(method_modifiers, "public") || !contains(method_modifiers, "static")) None() else {
+								method_header = get_Compilation_MethodHeader(member);
+								method_declarator = get_Compilation_MethodDeclarator(method_header);
+								identificator = trim2(grabSTText(get_Compilation_Identifier(method_declarator), code), " \t\n\r");
+								Some(identificator);
+							}
+						}
+					));
+				}
+			}
+		}
+	));
+}

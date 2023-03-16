@@ -23,7 +23,7 @@ MAppState(
 	state : [MComponentGroupState]
 );
 
-MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, fullHeight : bool, persistent : Transform<bool>, width : double, miniWidth : double,
+MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, fullHeight : bool, persistent : Transform<bool>, width : Transform<double>, miniWidth : double,
 	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>, elevation : Transform<double>, focusOnPrevious : bool);
 
 MAppFlexibleState(persistent : Transform<bool>, persistentB : DynamicBehaviour<bool>, showExpander : Transform<bool>, showToolbar : Transform<bool>);
@@ -57,6 +57,7 @@ MBottomSheetState(
 	expanding : Maybe<MExpandingBottomSheet>,
 	modal : Maybe<MModalBottomSheetState>,
 	enabled : Transform<bool>,
+	backgroundEnabled : Transform<bool>,
 	focusEnabled : Transform<bool>,
 	style : [MBottomSheetStyle]
 );
@@ -151,7 +152,15 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 		)
 		|> (\t -> eitherMap(
 				state.bottomSheet,
-				\bs -> eitherMap(bs.expanding, \__ -> t, TLines2(t, TGhost("MAppBottomSheet"))),
+				\bs ->
+					if (isSome(bs.expanding)) t
+					else TLines2(
+						t,
+						TShow(
+							fand(bs.backgroundEnabled, eitherMap(bs.modal, \mdl -> feq(mdl.progress, 1.), const(true))),
+							TGhost("MAppBottomSheet")
+						)
+					),
 				t
 			))
 		|> (\t -> TGroupSameMetrics(concatA([[
@@ -339,7 +348,7 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 						t,
 						TFillXHT(bottomSheetHeight),
 						[
-							TScrollCropByContent(),
+							MScrollCropByContent(),
 							TScrollDisableOutOfBounds(const(true)),
 							TScrollEnabled(bottom.expanded),
 							TScrollbars(scrollBarStyle, scrollBarStyle),
@@ -378,7 +387,7 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 						m
 					)
 				)
-			|> (\t -> eitherMap(bottom.expanding, \__ -> t, TShadowShape(parent, const(16.), t, RectangleShape("MBottomSheet"))))
+			|> (\t -> if (isSome(bottom.expanding)) t else TShadowShape(parent, fif(bottom.backgroundEnabled, const(16.), zero), t, RectangleShape("MBottomSheet")))
 			|> (\t -> TConstruct([
 					[
 						makeSubscribe2(mouseDown, \d -> {
@@ -496,6 +505,14 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 
 				navPersistent = extractStruct(nav.style, MSideNavPersistent(const(fullHeight))).persistent;
 
+				navWidthStatic =
+					extractStruct(
+						nav.style,
+						MSideNavWidth(if (getStageWidth() > 360. || cpp) sideNavStandardWidth else getStageWidth() / 9. * 8.)
+					).width;
+
+				navWidth = extractStruct(nav.style, MSideNavWidthDynamic(const(navWidthStatic))).width;
+
 				MAppNav(
 					nav.content,
 					nav.expander,
@@ -506,10 +523,7 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 						\flx -> fOr(navPersistent, flx.persistent),
 						navPersistent
 					),
-					extractStruct(
-						nav.style,
-						MSideNavWidth(if (getStageWidth() > 360. || cpp) sideNavStandardWidth else getStageWidth() / 9. * 8.)
-					).width,
+					navWidth,
 					navMiniWidth,
 					navSwipe.gapLength,
 					navSwipe.enabled,
@@ -539,10 +553,11 @@ makeMAppState(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure
 				if (mobile)
 					maybeMap(
 						tryExtractStruct(bs.style, MModalBottomSheet(make(false), false)),
-						\mdl -> MModalBottomSheetState(mdl.show, mdl.closeOnClick, make(0.))
+						\mdl -> MModalBottomSheetState(mdl.show, mdl.closeOnClick, extractStruct(bs.style, MModalBottomProgress(make(0.))).progress)
 					)
 				else None(),
 				extractStruct(bs.style, MEnabled(const(true))).enabled,
+				extractStruct(bs.style, MBackgroundEnabled(const(true))).enabled,
 				focusEnabled0,
 				bs.style
 			)
@@ -723,6 +738,7 @@ letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tro
 		TAttachBox(TDisplay("MAppSize"), state.wh),
 		TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
 	)
+	|> (\f -> TCropSize(TGhost("MAppSize"), f))
 	|> (\t -> TAttachAvailable(t, state.availWH))
 	|> (\t -> TLet("MAppSize", content, t))
 	|> (\t -> TLet("MAppContent", mainContent, t))
@@ -839,7 +855,7 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 				content
 			)
 			|> (\t -> TLet("MAppBarSize", makeAppBar(ab), t)),
-		content
+		TLet("MAppBar", TEmpty(), content)
 	)
 }
 
@@ -904,35 +920,35 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 			scaleX = fif(
 				fand(nav.persistent, nav.expander),
 				const(1.),
-				const(if (nav.mini) nav.miniWidth / nav.width else 0.)
+				if (nav.mini) fselect(nav.width, FLift(\w -> nav.miniWidth / w)) else zero
 			);
 
 			eContent =
 				switch (nav.content) {
 					MSideNav(h, l, ex, st): {
-						MSideNav(
+						MSelect(nav.width, \w -> MSideNav(
 							h,
 							l,
 							ex,
 							replaceStructMany(
 								st,
 								if (nav.mini)
-									[MSideNavMini(), MListMinimizedWidth(nav.miniWidth), MSideNavWidth(nav.width)]
+									[MSideNavMini(), MListMinimizedWidth(nav.miniWidth), MSideNavWidth(w)]
 								else
-									[MSideNavWidth(nav.width)]
+									[MSideNavWidth(w)]
 							)
-						)
+						))
 					}
 					default: nav.content;
 				}
 
-			expander2Point = if (left) {\e -> if (e) 0. else -nav.width} else {\e -> if (e) 0. else nav.width};
+			expander2Point = if (left) {\e -> if (e) 0. else -fgetValue(nav.width)} else {\e -> if (e) 0. else fgetValue(nav.width)};
 			ePointX = make(expander2Point(getValue(nav.expander)));
 			delta2Point =
 				if (left)
-					{\d -> min(max(-nav.width, expander2Point(getValue(nav.expander)) + d), 0.)}
+					{\d -> min(max(-fgetValue(nav.width), expander2Point(getValue(nav.expander)) + d), 0.)}
 				else
-					{\d -> min(max(0., expander2Point(getValue(nav.expander)) + d), nav.width)};
+					{\d -> min(max(0., expander2Point(getValue(nav.expander)) + d), fgetValue(nav.width))};
 			bgMouseDown = make(false);
 			mouseDown = ref false;
 			startingPoint = ref Point(-1., -1.);
@@ -940,10 +956,11 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 			showPanel = fneq(ePointX, expander2Point(false));
 			panelName = if (left) "MAppLeftPanel" else "MAppRightPanel";
 			bgAlpha =
-				if (nav.width != 0.)
-					flerp(0., 0.6, fselect(ePointX, FLift(\ep -> 1. - ep / expander2Point(false))))
+				if (isFConst(nav.width) && fgetValue(nav.width) == 0.)
+					const(0.6)
 				else
-					const(0.6);
+					flerp(0., 0.6, fselect(ePointX, FLift(\ep -> 1. - ep / expander2Point(false))));
+			
 			animated = make(false);
 
 			otherNavExpanded =
@@ -972,8 +989,8 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 					if (nav.mini)
 						TCropSize(
 							TFillWYT(
-								fselect(ePointX, FLift(\ep ->
-									max(nav.width - abs(ep), nav.miniWidth)
+								fselect2(ePointX, nav.width, FLift2(\ep, w ->
+									max(w - abs(ep), nav.miniWidth)
 								))
 							),
 							t
@@ -1059,7 +1076,7 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 									pt = fgetValue(state.point);
 
 									// Start panel movement
-									if (pt.x < (if (left) fgetValue(nav.gap) else getRealStageWidthHeight(manager).width - fgetValue(nav.gap)) ||
+									if ((if (left) (pt.x < fgetValue(nav.gap)) else (pt.x > getRealStageWidthHeight(manager).width - fgetValue(nav.gap))) ||
 										fgetValue(nav.expander)) {
 										nextDistinct(trigger, Pair(fgetValue(ePointX), fgetValue(ePointX)));
 

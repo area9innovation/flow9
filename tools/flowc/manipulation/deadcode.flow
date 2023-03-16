@@ -1,3 +1,4 @@
+import tools/flowc/backends/common;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/manipulation/effects;
 import tools/flowc/manipulation/freevars;
@@ -9,16 +10,53 @@ export {
 deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
 	used = deadFiCodeAlive(prog, effects, preserveNames, eliminateNames, removeMain, removeGlobals);
 	dead = ref makeList();
+	conf = prog.config;
+	backends = fcBackendConfigs2array(getFcBackendConfigs(conf));
+	no_target_dep = isParameterFalse(getConfigParameter(conf.config, "dce-target-dependent"));
 	reportdead = \n -> dead := Cons(n, ^dead);
 	modules = foldTree(
 		prog.modules, 
 		makeTree(), 
 		\modname : string, mo : FiModule, acc -> {
-			nfns = fold(mo.functions, [], \a, fn -> if (containsSet(used, fn.name)) concat(a, [fn]) else { reportdead(fn.name); a });
-			nglobals = fold(mo.globalVars, [], \a, gv -> if (containsSet(used, gv.name)) concat(a, [gv]) else { reportdead(gv.name); a });
-			nnatives = fold(mo.natives, [], \a, nat -> if (containsSet(used, nat.name)) concat(a, [nat]) else { reportdead(nat.name); a });
+			nfns = filtermap(mo.functions, \fn ->
+				if (containsSet(used, fn.name)) {
+					Some(if (no_target_dep) fn else
+						FiFunctionDec(fn with
+							lambda = cast(removeUnreacheableFromFiExp(fn.lambda, backends, conf) : FiExp -> FiLambda)
+						)
+					);
+				} else {
+					reportdead(fn.name);
+					None();
+				}
+			);
+			nglobals = filtermap(mo.globalVars, \gv ->
+				if (containsSet(used, gv.name)) {
+					Some(if (no_target_dep) gv else FiGlobalVar(gv with
+						value = removeUnreacheableFromFiExp(gv.value, backends, conf)
+					));
+				} else {
+					reportdead(gv.name);
+					None();
+				}
+			);
+			nnatives = filtermap(mo.natives, \nat ->
+				if (containsSet(used, nat.name)) {
+					Some(if (no_target_dep) nat else FiNativeDec(nat with
+						fallbackLambda = removeUnreacheableFromFiExp(nat.fallbackLambda, backends, conf)
+					));
+				} else {
+					reportdead(nat.name);
+					None();
+				}
+			);
 			ninitorder = filter(mo.initOrder, \n : string -> containsSet(used, n));
-			nexports = set2array(intersectSets(buildSet(mo.exports), used));
+			nexports = filter(mo.exports, \n ->
+				containsSet(used, n) ||
+				// Structs and unions are preserved, so these exports should be kept
+				containsKeyTree(prog.names.structs, n) ||
+				containsKeyTree(prog.names.unions, n)
+			);
 			nmo = FiModule(
 				mo.fileinfo, 
 				mo.imports, mo.forbids,
@@ -43,7 +81,10 @@ deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, e
 		prog.config,
 		modules,
 		prog.traversal,
-		prog.names,	// TODO: We should probably filter this dude as well
+		// Filter toplevels as well 
+		FiGlobalNames(prog.names with
+			toplevel = filterTree(prog.names.toplevel, \name,__ -> containsSet(used, name))
+		)
 	);
 }
 
@@ -105,5 +146,119 @@ deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> De
 			nused2 = mergeSets(nused, newnames);
 			DeadCodeAcc(acc.effects, acc.modules, nqueue, nused2)
 		}
+	}
+}
+
+isJSBackendConfig(cfg : FcBackendConfig) -> bool {
+	switch (cfg) {
+		FiJsConfig(__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__): true;
+		default: false;
+	}
+}
+
+isCppOrBytecodeBackendConfig(cfg : FcBackendConfig) -> bool {
+	switch (cfg) {
+		FcBytecodeConfig(__,__,__,__,__,__,__,__,__,__): true;
+		FcCppConfig(__,__,__,__,__,__,__,__): true;
+		FcCpp2Config(__,__,__,__,__,__,__,__,__,__,__,__): true;
+		default: false;
+	}
+}
+
+isJavaBackendConfig(cfg : FcBackendConfig) -> bool {
+	switch (cfg) {
+		FiJavaConfig(__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__): true;
+		default: false;
+	}
+}
+
+/*
+In case a compilation target is definite (like a single one), we can be sure about
+the boolean value of such global variables from 'sys/target' like 'js', 'cpp', 'java'
+and eliminate the appropriate branches from 'if (java) { .. }' statements.
+
+This function returns Some(b) in such cases, and None() in the others.
+*/
+compileTimeIfCondition(ex : FiExp, backends : [FcBackendConfig]) -> Maybe<bool> {
+	if (length(backends) == 0) None() else {
+		switch (ex) {
+			FiVar(name, __,__): {
+				if (name == "js" || name == "nodejs" || name == "nwjs" || name == "jslibrary") {
+					if (forall(backends, isJSBackendConfig)) Some(true) else
+					if (!exists(backends, isJSBackendConfig)) Some(false) else None();
+				} else if (name == "qt") {
+					// TODO: should it be the same as cpp ?
+					None();
+				} else if (name == "cpp") {
+					// Both cpp and bytecode use the same execution engine, written in cpp.
+					if (forall(backends, isCppOrBytecodeBackendConfig)) Some(true) else
+					if (!exists(backends, isCppOrBytecodeBackendConfig)) Some(false) else None();
+				} else if (name == "java") {
+					if (forall(backends, isJavaBackendConfig)) Some(true) else
+					if (!exists(backends, isJavaBackendConfig)) Some(false) else None();
+				} else None();
+			}
+			default: None();
+		}
+	}
+}
+
+removeUnreacheableFromFiExp(expr : FiExp, backends : [FcBackendConfig], conf : CompilerConfig) -> FiExp {
+	switch (expr) {
+		FiLambda(args, body, type, s):
+			FiLambda(args, removeUnreacheableFromFiExp(body, backends, conf), type, s);
+		FiCall(f, es, type, s):
+			FiCall(
+				removeUnreacheableFromFiExp(f, backends, conf),
+				map(es, \e -> removeUnreacheableFromFiExp(e, backends, conf)),
+				type, s
+			);
+		FiVar(x, type, s):
+			expr;
+		FiLet(x, type, e1, e2, type2, s):
+			FiLet(x, type,
+				removeUnreacheableFromFiExp(e1, backends, conf),
+				removeUnreacheableFromFiExp(e2, backends, conf),
+				type2, s
+			);
+		FiIf(e1, e2, e3, type, s):
+			switch (compileTimeIfCondition(e1, backends)) {
+				Some(val): {
+					fcVerbose(conf, 1, "Removing resolved compile-time if condition");
+					if (val) {
+						removeUnreacheableFromFiExp(e2, backends, conf);
+					} else {
+						removeUnreacheableFromFiExp(e3, backends, conf);
+					}
+				}
+				None():
+					FiIf(
+						removeUnreacheableFromFiExp(e1, backends, conf),
+						removeUnreacheableFromFiExp(e2, backends, conf),
+						removeUnreacheableFromFiExp(e3, backends, conf),
+						type, s
+					);
+			}
+		FiSwitch(x, s_type, cs, type, s):
+			FiSwitch(
+				x, s_type,
+				map(cs, \c -> FiCase(c with body = removeUnreacheableFromFiExp(c.body, backends, conf))),
+				type, s
+			);
+		FiCast(e, from, to, type, s):
+			FiCast(removeUnreacheableFromFiExp(e, backends, conf), from, to, type, s);
+		FiSeq(es, type, s):
+			FiSeq(map(es, \e -> removeUnreacheableFromFiExp(e, backends, conf)), type, s);
+		FiCallPrim(op, es, type, s):
+			FiCallPrim(op, map(es, \e -> removeUnreacheableFromFiExp(e, backends, conf)), type, s);
+		FiRequire(file, e, type, s):
+			FiRequire(file, removeUnreacheableFromFiExp(e, backends, conf), type, s);
+		FiUnsafe(name, fb, type, s):
+			FiUnsafe(name, removeUnreacheableFromFiExp(fb, backends, conf), type, s);
+		FiString(__, __):  expr;
+		FiBool(__, __):    expr;
+		FiDouble(__, __):  expr;
+		FiVoid(__):        expr;
+		FiInt(__, __):     expr;
 	}
 }

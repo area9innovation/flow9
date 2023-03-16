@@ -1,0 +1,93 @@
+import tools/dsl/dsl_util;
+import fs/filesystem;
+
+export {
+	// Find this file, using the include path
+	resolveDslFile(includes : [string], file : string) -> string;
+
+	// Process all includes in this AST
+    DslInclude(
+        // A set of directories we will use to find includes
+        includes : [string],
+        // A list of file suffixes .wasm, .wat that will be appending the include paths
+        suffixes : [string],
+        // The name of the DslNode which signifies an include node. The first child is a string with the path
+        // and the rest is the body
+        includeNodeName : string,
+        // The name of the last/empty node, where the include will splice the body of the host include into, 
+        // so we produce one big AST
+        lastNodeName : string,
+        // Parse the given file. Takes the include path, the resolved filename including suffix 
+        // and the content of the file, and produces a AST that will be "inlined"
+        parser : (string, string, string) -> DslAst,
+        // What files have already been included?
+        included : ref Set<string>, 
+    );
+	processDslIncludes(include : DslInclude, d : DslAst) -> DslAst;
+}
+
+resolveDslFile(includes : [string], file : string) -> string {
+	if (fileExists(file)) resolveRelativePath(file)
+	else if (includes == []) ""
+	else {
+		path = pathCombine(includes[0], file);
+		if (fileExists(path)) resolveRelativePath(path)
+		else {
+			resolveDslFile(tail(includes), file);
+		}
+	}
+}
+
+processDslIncludes(include : DslInclude, d : DslAst) -> DslAst {
+	switch (d) {
+		DslBool(value): d;
+		DslInt(value): d;
+		DslDouble(value): d;
+		DslString(value): d;
+		DslList(value): DslList(mapList(value, \vv -> processDslIncludes(include, vv)));
+		DslNode(name, args, pos): {
+			if (name == include.includeNodeName) {
+				file = getDslString(args[0]);
+                // Try all suffixes in turn
+                filename = fold(include.suffixes, file, \acc, s -> {
+                    res = resolveDslFile(include.includes, changeFileExt(file, s));
+                    if (res != "") res else acc
+                });
+				if (containsSet(^(include.included), filename)) {
+					// Already included. No need to do it again
+					args[1];
+				} else if (fileExists(filename)) {
+					include.included := insertSet(^(include.included), filename);
+					code = getFileContent(filename);
+					program = include.parser(file, filename, code);
+					if (isUrlParameterTrue("verbose")) {
+						println("  Included '" + file + "' as " + resolveRelativePath(filename));
+					}
+					processDslIncludes(include, replaceDslEmpty(include.lastNodeName, program, args[1]));
+				} else {
+					println("ERROR: Could not include " + file);
+					args[1];
+				}
+			} else {
+				DslNode(name, map(args, \a -> processDslIncludes(include, a)), pos);
+			}
+		}
+	}
+}
+
+replaceDslEmpty(lastNodeName : string, d : DslAst, replacement : DslAst) {
+	switch (d) {
+		DslBool(value): d;
+		DslInt(value): d;
+		DslDouble(value): d;
+		DslString(value): d;
+		DslList(value): DslList(mapList(value, \vv -> replaceDslEmpty(lastNodeName, vv, replacement)));
+		DslNode(name, args, pos): {
+			if (name == lastNodeName) {
+				replacement;
+			} else {
+				DslNode(name, map(args, \a -> replaceDslEmpty(lastNodeName, a, replacement)), pos);
+			}
+		}
+	}
+}

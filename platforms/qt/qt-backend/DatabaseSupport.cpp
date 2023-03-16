@@ -5,6 +5,7 @@
 #include <QSqlQuery>
 #include <QSqlRecord>
 #include <QSqlField>
+#include <QDateTime>
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(DatabaseConnection, FlowNativeObject);
 IMPLEMENT_FLOW_NATIVE_OBJECT(DatabaseResult, FlowNativeObject);
@@ -37,6 +38,7 @@ NativeFunction * DatabaseSupport::MakeNativeFunction(const char *name, int num_a
     TRY_USE_OBJECT_METHOD(DatabaseConnection, closeDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, escapeDb, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDb, 2);
+    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDbWithQueryParams, 3);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDbMulti, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, lastInsertIdDb, 1);
@@ -159,11 +161,35 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
     RUNNER_CheckTag(TString, rawquery);
 
     QString queryString = RUNNER->GetQString(rawquery);
+
+    return requestDbBase(RUNNER, queryString, NULL);
+}
+
+StackSlot DatabaseConnection::requestDbWithQueryParams(RUNNER_ARGS) {
+    RUNNER_PopArgs2(rawquery, params);
+    RUNNER_CheckTag(TString, rawquery);
+    RUNNER_CheckTag(TArray, params);
+
+    QString queryString = RUNNER->GetQString(rawquery);
+
+    return requestDbBase(RUNNER, queryString, &params);
+}
+
+StackSlot DatabaseConnection::requestDbBase(ByteCodeRunner *const RUNNER, QString queryString,  StackSlot* params) {
     QSqlQuery *query = new QSqlQuery(db);
 
     // Tell last result it's not last anymore
     if (last_result)
         last_result->releaseLast();
+
+    if (params) {
+        int nParams = RUNNER->GetArraySize(*params);
+        for (int i = 0; i < nParams; i++) {
+            StackSlot querySlot = RUNNER->GetArraySlot(*params, i);
+            QString param = RUNNER->GetQString(querySlot);
+            query->addBindValue(param);
+        }
+    }
 
     DatabaseResult *result = new DatabaseResult(this, query);
     results.insert(result);
@@ -393,6 +419,10 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
                 break;
             case QVariant::Double:
                 value = StackSlot::MakeDouble(field.value().toDouble());
+                break;
+            case QVariant::Time:
+            case QVariant::DateTime:
+                value = RUNNER->AllocateString(field.value().toDateTime().toString("yyyy-MM-dd'T'HH:mm:ss'Z'"));
                 break;
             default:
                 value = RUNNER->AllocateString(field.value().toString());

@@ -1,0 +1,93 @@
+import ds/egraph;
+import math/math;
+
+export {
+	// Extracts the best enode for each class
+	extractEGraph(e : EGraph<?>, 
+		// Given a node, and the cost of the children, what is the cost of this node?
+		costFn : (ENode<?>, [EClassCost<?>]) -> int
+	) -> Tree<int, EClassCost<?>>;
+
+	EClassCost(
+		// The cost of this. The smaller, the better
+		cost : int,
+		// The node that wins
+		node : ENode<?>
+	);
+}
+
+ExtractorEnv(
+	egraph : EGraph<?>,
+	// Function to extract the best alternative and the cost of that
+	costFn : (ENode<?>, [EClassCost<?>]) -> int,
+	// The lowest cost so far per class
+	costs : ref Tree<int, EClassCost<?>>,
+	// What eclasses are we currently extracting? Attempt to avoid infinite loops
+	extracting : ref Set<int>,
+);
+
+// https://github.com/egraphs-good/egg/blob/main/src/extract.rs
+extractEGraph(e : EGraph<?>, costFn : (ENode<?>, [EClassCost<?>]) -> int) -> Tree<int,  EClassCost<?>> {
+	env = ExtractorEnv(e, costFn, ref makeTree(), ref makeSet());
+	calcEClassCosts(env);
+	^(env.costs);
+}
+
+calcEClassCosts(e : ExtractorEnv<?>) -> void {
+	work = ref false;
+	iterEGraph(e.egraph, \eclass : int, nodes : Set<ENode<?>> -> {
+		getEClassCost(e, eclass);
+		{}
+	});
+	if (^work) {
+		calcEClassCosts(e);
+	}
+}
+
+getEClassCost(env : ExtractorEnv<?>, eclass : int) -> Maybe<EClassCost<?>> {
+	mcost = lookupTree(^(env.costs), eclass);
+	mcost ?? {
+		Some(mcost)
+	} : {
+		if (containsSet(^(env.extracting), eclass)) None()
+		else {
+			env.extracting := insertSet(^(env.extracting), eclass);
+			nodes = getEClassNodes(env.egraph, eclass);
+			res = foldSet(nodes, mcost, \acc, node -> {
+				ncost = getENodeCost(env, node);
+				switch (ncost) {
+					None(): acc;
+					Some(cost): {
+						switch (acc) {
+							None(): {
+								classCost = EClassCost(cost, node);
+								env.costs := setTree(^(env.costs), eclass, classCost);
+								Some(classCost);
+							}
+							Some(ec): {
+								if (cost < ec.cost) {
+									classCost = EClassCost(cost, node);
+									env.costs := setTree(^(env.costs), eclass, classCost);
+									Some(classCost);
+								} else acc;
+							}
+						}
+					}
+				}
+			});
+			env.extracting := removeSet(^(env.extracting), eclass);
+
+			res;
+		}
+	}
+}
+
+getENodeCost(env : ExtractorEnv<?>, node : ENode<?>) -> Maybe<int> {
+	childcosts = filtermap(node.args, \arg -> {
+		getEClassCost(env, arg)
+	});
+	if (length(childcosts) == length(node.args)) {
+		cost = env.costFn(node, map(childcosts, \cc -> cc));
+		Some(cost);
+	} else None();
+}

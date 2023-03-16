@@ -17,6 +17,8 @@ export {
 	fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]>;
 	fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Transform<[?]>;
 
+	// These two are intended to use with relatively small arrays(< 400) or if `fn` has heavy calculations
+	// See /innovation/doc/faq.md for more info
 	ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?>;
 	ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?>;
 
@@ -43,6 +45,7 @@ export {
 	fwhsubtract(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhmultiply(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhdivide(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
+	fwhscale(wh : Transform<WidthHeight>, factor : Transform<double>) -> Transform<WidthHeight>;
 	fwhmin(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhmax(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 
@@ -76,9 +79,9 @@ export {
 	fFirstOfPair(b : Transform<Pair<?, ??>>) -> Transform<?>;
 	fSecondOfPair(b : Transform<Pair<?, ??>>) -> Transform<??>;
 
-	fFirstOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<?>;
-	fSecondOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??>;
-	fThirdOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??>;
+	fFirstOfTriple(b : Transform<Triple<?, ??, ???>>) -> Transform<?>;
+	fSecondOfTriple(b : Transform<Triple<?, ??, ???>>) -> Transform<??>;
+	fThirdOfTriple(b : Transform<Triple<?, ??, ???>>) -> Transform<???>;
 
 	feq2(a : Transform<?>, b : Transform<?>) -> Transform<bool>;
 	fneq2(a : Transform<?>, b : Transform<?>) -> Transform<bool>;
@@ -173,13 +176,10 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 					}
 				);
 			} else {
-				if (isUrlParameterTrue("check_same_item"))
-					output := mapi(a0, \i, v -> 
-						if (i < length(^input) && ^input[i] == v) ^output[i]
-						else fn(v)
-					)
-				else
-					output := map(a0, fn);
+				output := mapi(a0, \i, v -> 
+					if (i < length(^input) && ^input[i] == v) ^output[i]
+					else fn(v)
+				)
 			}
 
 			input := a0;
@@ -770,9 +770,13 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 					);
 				} else {
 					output :=
-						fold(a0, Pair(def, []), \acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
-							newAcc = fn(acc.first, v);
-							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+						foldi(a0, Pair(def, []), \i : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
+							if (i < length(^input) && ^input[i] == v && acc.first == ^output[i].first) {
+								Pair(^output[i].second, arrayPush(acc.second, ^output[i]))
+							} else {
+								newAcc = fn(acc.first, v);
+								Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+							}
 						}).second;
 				}
 
@@ -828,9 +832,13 @@ ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?> {
 					);
 				} else {
 					output :=
-						foldi(a0, Pair(def, []), \y : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
-							newAcc = fn(y, acc.first, v);
-							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+						foldi(a0, Pair(def, []), \i : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
+							if (i < length(^input) && ^input[i] == v && acc.first == ^output[i].first) {
+								Pair(^output[i].second, arrayPush(acc.second, ^output[i]))
+							} else {
+								newAcc = fn(i, acc.first, v);
+								Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+							}
 						}).second;
 				}
 
@@ -948,6 +956,10 @@ fwhmultiply(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Trans
 
 fwhdivide(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
 	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(v1.width / v2.width, v1.height / v2.height)));
+}
+
+fwhscale(wh : Transform<WidthHeight>, factor : Transform<double>) -> Transform<WidthHeight> {
+	fselect2(wh, factor, FLift2(\v, f -> WidthHeight(v.width * f, v.height * f)));
 }
 
 fwhmin(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
@@ -1169,16 +1181,16 @@ fSecondOfPair(b : Transform<Pair<?, ??>>) -> Transform<??> {
 	fselect(b, FLift(\p : Pair<?, ??> -> p.second))
 }
 
-fFirstOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<?> {
-	fselect(b, FLift(\p : Triple<?, ??, ??> -> p.first))
+fFirstOfTriple(b : Transform<Triple<?, ??, ???>>) -> Transform<?> {
+	fselect(b, FLift(\p : Triple<?, ??, ???> -> p.first))
 }
 
-fSecondOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??> {
-	fselect(b, FLift(\p : Triple<?, ??, ??> -> p.second))
+fSecondOfTriple(b : Transform<Triple<?, ??, ???>>) -> Transform<??> {
+	fselect(b, FLift(\p : Triple<?, ??, ???> -> p.second))
 }
 
-fThirdOfTriple(b : Transform<Triple<?, ??, ??>>) -> Transform<??> {
-	fselect(b, FLift(\p : Triple<?, ??, ??> -> p.third))
+fThirdOfTriple(b : Transform<Triple<?, ??, ???>>) -> Transform<???> {
+	fselect(b, FLift(\p : Triple<?, ??, ???> -> p.third))
 }
 
 feq2(a : Transform<?>, b : Transform<?>) -> Transform<bool> {

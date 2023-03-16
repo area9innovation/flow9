@@ -1,19 +1,25 @@
 import math/stringmath;
 import tools/flowc_lsp/lsp_protocol;
+import string_utils;
 
 runLspServer(lsp_conf : Tree<string, string>) -> void {
+	runLspServer2(lsp_conf, ref 0);
+}
+
+runLspServer2(lsp_conf : Tree<string, string>, errCount : ref int) -> void {
 	out_cb = \log_request, st, msg -> {
 		if (log_request) {
 			lspServerLog("Response[" + d2st((timestamp() - st) / 1000.0, 2) + " s.]: " + escapeStr(msg), lsp_conf);
 		}
 		print(msg);
 	}
-	exit_cb = \-> {
+	exit_cb = \code -> {
 		lspServerLog("LSP server stopped.", lsp_conf);
-		quit(0);
+		quit(code);
 	}
 	switch (lspReadRequest()) {
 		Some(req): {
+			errCount := 0;
 			// Special watermark for non-logging
 			log_request = !strContains(req.request, "do_not_log_this");
 			if (log_request) {
@@ -24,19 +30,24 @@ runLspServer(lsp_conf : Tree<string, string>) -> void {
 			if (json == JsonNull()) {
 				lspServerLog("WARNING: Illegal request:\n" + req.request, lsp_conf);
 			} else {
-				// Run a request processing asynchronious, because the main loop - 
+				// Run a request processing asynchronious, because the main loop -
 				// runLspServer must be tail-recursive to avoid stack overflow.
-				deferred(\ -> lspProcessRequest(lsp_conf, json, 
+				deferred(\ -> lspProcessRequest(lsp_conf, json,
 					\msg -> out_cb(log_request, start_time, msg),
-					exit_cb
+					\ -> exit_cb(0)
 				));
 			}
 		}
 		None(): {
 			lspServerLog("Failed to read a request.", lsp_conf);
+			atomicRefIntAddition(errCount, 1);
+			if (^errCount >= 3) {
+				lspServerLog("Give up after third error.", lsp_conf);
+				exit_cb(1);
+			}
 		}
 	}
-	runLspServer(lsp_conf);
+	runLspServer2(lsp_conf, errCount);
 }
 
 main() {

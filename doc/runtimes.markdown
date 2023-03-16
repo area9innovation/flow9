@@ -9,7 +9,7 @@ Compilers
 There are two different compilers for flow.
 
 - `flow` is the original compiler, written in haxe. Invoke `flow` for usage info
-- `flowc` is the current compiler, written in flow. Invoke `flowc` for usage info
+- `flowc` is the current compiler, written in flow. Invoke `flowc1` for usage info
 
 The languages supported by these compilers is almost identical. The biggest difference
 is that `flowc` requires semi-colons at the end of types in export sections, and that
@@ -27,7 +27,7 @@ For more information about `flowc`, see `tools/flowc/readme.md`.
 
 Both compilers support setting up a compile/build configuration using a `flow.config` file 
 in the current working directory when invoking the compiler. This is a .ini-syntax file, where
-can provide options to the compilers, compatible with 'the arguments as given to `flowc`.
+can provide options to the compilers, compatible with the arguments as given to `flowc`.
 
 Include
 
@@ -63,7 +63,7 @@ haXe based runtimes
 		<td>JavaScript</td>
 		<td>HTML5 via RenderSupportJsPixiHx.hx</td>
 		<td>(JsWriter.hx)</td>
-		<td>program.js, made using `flowc js=program.js program.flow` or `flow --js program.js program.flow` </td>
+		<td>program.js, made using `flowc1 js=program.js program.flow` or `flow --js program.js program.flow` </td>
 		<td>Compiles to Javascript.</td>
 		<td>Native JavaScript values.</td>
 		<td>Our production target for HTML5. Consider to optimise further using Google closure compiler:<br/>
@@ -158,12 +158,11 @@ Get the Java SDK. Be sure to have version 8 or later in 64-bit version:
 
 Test with something like
 
-	flowjava sandbox/fun.flow
+	flowc1 sandbox/fun.flow jar=fun.jar
 
-or on Linux and Mac,
+which generates a .jar file, which can be run with
 
-	flowjava.sh sandbox/fun.flow
-
+	java -jar fun.jar
 
 C# based runtime
 ----------------
@@ -328,3 +327,15 @@ To link the flow code in JS, add something like this in the HTML:
 		...
 		</body>
 	</html>
+
+To use external natives from third-party packages you need to supply the flow.config file with section:
+
+	js-dependencies += yarn[@braintree/sanitize-url;NativeHost],yarn[@vendor/other-lib;OtherNativeHost]
+	js-dependencies += npm[@another-src/another-lib;NativeHostA]
+	js-dependencies += file[platforms/js/lib/SomeNativeHost.ts;NativeHostB]
+
+So, a single dependency is formed out of three parts (caps-locked parts are placeholders for corresponding string):
+
+	SOURCE_PROVIDER[PACKAGE;NATIVE_HOST_NAME]
+
+Following source providers are available: npm, yarn and file. The latter just adds a file from a local filesystem.

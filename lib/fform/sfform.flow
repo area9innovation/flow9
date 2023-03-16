@@ -7,10 +7,9 @@ export {
 		FEmpty, SFBorder, SFMask, SFFilter, SFCrop, SFPicture, SFFullWindow, SFFullScreen, FMForm, SFAccess, SFRealHTML, SFSetPending, SFVideo, SFTextInput,
 		SFCanvas;
 
-	SFText(text : string, style : [SFTextStyle]);
-		SFTextStyle ::= FTextStyle;
+	SFText(text : string, style : [FTextStyle]);
 	SFParagraph(text : string, style : [SFParagraphStyle]);
-		SFParagraphStyle ::= SFTextStyle, SFParagraphWidth, SFParagraphEllipsis, CommonAlignment, CropWords, InterlineSpacing, Resolution;
+		SFParagraphStyle ::= FTextStyle, SFParagraphWidth, SFParagraphEllipsis, CommonAlignment, Justify, CropWords, InterlineSpacing, Resolution;
 
 			SFParagraphWidth(width : double);
 			SFParagraphEllipsis(lines : int);
@@ -61,7 +60,7 @@ export {
 
 	SFRealHTML(url : string, wh : WidthHeight, style : [SFRealHTMLStyle]);
 		SFRealHTMLStyle ::= UpdateCachedContent, OverridePageDomain, SZoomEnabled, ReloadBlock, SMouseDisabled, SandBoxJS, RealHtmlShrink2Fit,
-			WhitelistDomains, SViewBounds, NoScroll;
+			WhitelistDomains, SViewBounds, NoScroll, PassEvents, SFAccessProperty;
 
 			SZoomEnabled(enabled : bool);
 			SMouseDisabled(disabled : bool);
@@ -177,13 +176,13 @@ fform2sfform(fform : FForm, callConstructors : bool) -> SFForm {
 		}
 		FCreate2(current, fn) : fform2sfform(if (^current != FEmpty()) ^current else fn(), callConstructors);
 		FFullWindow(fullscreen, __, form) : SFFullWindow(fgetValue(fullscreen), fform2sfform(form, callConstructors));
-		FFullScreen(fullscreen, __, form) : SFFullScreen(fgetValue(fullscreen), fform2sfform(form, callConstructors));
+		FFullScreen2(fullscreen, __, form, __) : SFFullScreen(fgetValue(fullscreen), fform2sfform(form, callConstructors));
 		FBaseline(__, form) : fform2sfform(form, callConstructors);
 		FSize2(__, form) : fform2sfform(form, callConstructors);
 		FAvailable2(__, form) : fform2sfform(form, callConstructors);
 		FAccess(prop, form) : SFAccess(FAccessProperty2SFAccessProperty(prop), fform2sfform(form, callConstructors));
 		FSetPending(setpending, form) : SFSetPending(fgetValue(setpending), fform2sfform(form, callConstructors));
-		FRealHTML(url, wh, s) : SFRealHTML(url, fgetValue(wh), RealHTMLStyle2SFRealHTMLStyle(s));
+		FRealHTML(url, wh, s) : SFRealHTML(url, fgetValue(wh), FRealHTMLStyle2SFRealHTMLStyle(s));
 		FMForm(form) : {
 			if (isConvertableForm(form))
 				fform2sfform(form2fform(form), callConstructors)
@@ -193,20 +192,22 @@ fform2sfform(fform : FForm, callConstructors : bool) -> SFForm {
 		FDynamicGroup2(__, currentStack, __) : SFGroup(map(getValue(currentStack), \l -> fform2sfform(l, callConstructors)), true);
 		FVideo(fn, wh, s) : SFVideo(fn, getValue(wh), FVideoStyle2SFVideoStyle(s));
 		FNativeForm(__, __, ff, __): fform2sfform(ff(), callConstructors);
-		FTextInput(c, wh, s) : SFTextInput(getValue(c), getValue(wh), FTextInputStyle2SFTextInputStyle(s));
+		FTextInput(c, wh, s) : SFTextInput(getValue(c), fgetValue(wh), FTextInputStyle2SFTextInputStyle(s));
 		FCanvas(content): SFCanvas(fform2sfform(content, callConstructors));
 		FAnimation(content, __, __): fform2sfform(content, callConstructors); // TODO:
 		FOrigin(origin, form): fform2sfform(form, callConstructors); // TODO:
 	}
 }
 
-FTextStyle2SFTextStyle(style : [FTextStyle]) -> [SFTextStyle] {
-	map(style, \s -> {
+FTextStyle2SFTextStyle(style : [FTextStyle]) -> [FTextStyle] {
+	filtermap(style, \s -> {
 		switch (s : FTextStyle) {
-			CharacterStyle() : s;
-			FDynamicColor(color): FDynamicColor(const(fgetValue(color)));
-			TagName(__): s;
-			LangAttribute(code): LangAttribute(const(fgetValue(code)));
+			FDynamicColor(color): cast(Some(FDynamicColor(const(fgetValue(color)))) : Some -> Maybe<FTextStyle>);
+			CharacterStyle() : Some(s);
+			TagName(__): Some(s);
+			LangAttribute(code): Some(LangAttribute(const(fgetValue(code))));
+			LocalizationEnabled(__): Some(s);
+			TextWidthInspector(__): None();
 		}
 	})
 }
@@ -215,18 +216,21 @@ FParagraphStyle2SFParagraphStyle(style : [FParagraphStyle]) -> [SFParagraphStyle
 	filtermap(style, \s -> {
 		switch (s : FParagraphStyle) {
 			// This cast helps the neko compiler
-			ParagraphMetrics(__) : None();
-			ParagraphWidth(wd) : cast(Some(SFParagraphWidth(fgetValue(wd))) : Some -> Maybe<SFParagraphStyle>);
+			ParagraphMetrics(__) :         None();
+			ParagraphWidth(wd) :      cast(Some(SFParagraphWidth(fgetValue(wd))) : Some -> Maybe<SFParagraphStyle>);
 			ParagraphEllipsis(lines, __) : Some(SFParagraphEllipsis(lines));
-			CharacterStyle() :     Some(s);
-			CommonAlignment() :    Some(s);
-			CropWords(__) :        Some(s);
-			InterlineSpacing(__) : Some(s);
-			Resolution(__) :       Some(s);
-			SetRTL(__) :           Some(s);
-			FDynamicColor(col) :   Some(FDynamicColor(const(fgetValue(col))));
-			TagName(__) :          Some(s);
-			LangAttribute(code) :  Some(LangAttribute(const(fgetValue(code))));
+			CharacterStyle() :             Some(s);
+			CommonAlignment() :            Some(s);
+			Justify() :                    Some(s);
+			CropWords(__) :                Some(s);
+			InterlineSpacing(__) :         Some(s);
+			Resolution(__) :               Some(s);
+			SetRTL(__) :                   Some(s);
+			FDynamicColor(col) :           Some(FDynamicColor(const(fgetValue(col))));
+			TagName(__) :                  Some(s);
+			LangAttribute(code) :          Some(LangAttribute(const(fgetValue(code))));
+			TextWidthInspector(__) :       Some(s);
+			LocalizationEnabled(__) :      Some(s);
 		}
 	})
 }
@@ -244,7 +248,7 @@ PictureStyle2SFPictureStyle(style : [PictureStyle]) -> [SFPictureStyle] {
 FAccessProperty2SFAccessProperty(style : [FAccessProperty]) -> [SFAccessProperty] {
 	filtermap(style, \s ->
 		switch (s : FAccessProperty) {
-			FAccessTabindex(tabindex) : cast(Some(AccessTabindex(fgetValue(tabindex))) : Some<AccessTabindex> -> Maybe<SFAccessProperty>);// annoying typechecker
+			FAccessTabindex(tabindex) : cast(Some(AccessTabindex(fgetValue(tabindex))) : Some<SFAccessProperty> -> Maybe<SFAccessProperty>);// annoying typechecker
 			FAccessEnabled(enabled) : Some(SFAccessEnabled(fgetValue(enabled)));
 			FAccessAttribute(name, value) : Some(SFAccessAttribute(name, fgetValue(value)));
 			FAccessStyle(name, value) : Some(SFAccessStyle(name, fgetValue(value)));
@@ -261,7 +265,10 @@ FAccessProperty2SFAccessProperty(style : [FAccessProperty]) -> [SFAccessProperty
 			AccessState(state) : Some(SFAccessState(getValue(state)));
 			TagName(__) : Some(s);
 			ClassName(__) : Some(s);
+			FAccessProtected() : None();
+			FAccessHidden() : Some(SFAccessAttribute("aria-hidden", "true"));
 			LangAttribute(code) :  Some(LangAttribute(const(fgetValue(code))));
+			AccessForceMakeClip(__) : None();
 		}
 	)
 }
@@ -269,7 +276,7 @@ FAccessProperty2SFAccessProperty(style : [FAccessProperty]) -> [SFAccessProperty
 RealHTMLStyle2SFRealHTMLStyle(style : [RealHTMLStyle]) -> [SFRealHTMLStyle] {
 	filtermap(style, \s ->
 		switch (s : RealHTMLStyle) {
-			ZoomEnabled(enabled) : cast(Some(SZoomEnabled(getValue(enabled))) : Some<SZoomEnabled> -> Maybe<SFRealHTMLStyle>); // annoying typechecker
+			ZoomEnabled(enabled) : cast(Some(SZoomEnabled(getValue(enabled))) : Some<SFRealHTMLStyle> -> Maybe<SFRealHTMLStyle>); // annoying typechecker
 			MouseDisabled(disabled) : Some(SMouseDisabled(fgetValue(disabled)));
 			FlowCallback(__) : None();
 			PageEvalJS(__) : None();
@@ -284,14 +291,42 @@ RealHTMLStyle2SFRealHTMLStyle(style : [RealHTMLStyle]) -> [SFRealHTMLStyle] {
 			WhitelistDomains(__) : Some(s);
 			ViewBounds(bounds) : Some(SViewBounds(fgetValue(bounds)));
 			NoScroll() : Some(s);
+			PassEvents() : Some(s);
 		}
+	)
+}
+
+FRealHTMLStyle2SFRealHTMLStyle(style : [FRealHTMLStyle]) -> [SFRealHTMLStyle] {
+	concat(
+		filtermap(style, \s ->
+			switch (s : FRealHTMLStyle) {
+				ZoomEnabled(enabled) : cast(Some(SZoomEnabled(getValue(enabled))) : Some<SFRealHTMLStyle> -> Maybe<SFRealHTMLStyle>); // annoying typechecker
+				MouseDisabled(disabled) : Some(SMouseDisabled(fgetValue(disabled)));
+				FlowCallback(__) : None();
+				PageEvalJS(__) : None();
+				OnError(__) : None();
+				RealHtmlShrink2Fit() : Some(s);
+				UpdateCachedContent(__) : Some(s);
+				SandBoxJS(__) : Some(s);
+				OverridePageDomain(__) : Some(s);
+				PageHostcallSetter(__) : None();
+				OnPageLoaded(__) : None();
+				ReloadBlock(__) : Some(s);
+				WhitelistDomains(__) : Some(s);
+				ViewBounds(bounds) : Some(SViewBounds(fgetValue(bounds)));
+				NoScroll() : Some(s);
+				PassEvents() : Some(s);
+				FAccessProperty(): None();
+			}
+		),
+		FAccessProperty2SFAccessProperty(style |> extractFAccessProperties)
 	)
 }
 
 FVideoStyle2SFVideoStyle(style : [FVideoStyle]) -> [SFVideoStyle] {
 	filtermap(style, \s ->
 		switch (s : FVideoStyle) {
-			FVideoKeepAspectRatio(keep) : cast(Some(SFVideoKeepAspectRatio(fgetValue(keep))) : Some<SFVideoKeepAspectRatio> -> Maybe<SFVideoStyle>); // annoying typechecker
+			FVideoKeepAspectRatio(keep) : cast(Some(SFVideoKeepAspectRatio(fgetValue(keep))) : Some<SFVideoStyle> -> Maybe<SFVideoStyle>); // annoying typechecker
 			FVideoLoop(lp) : Some(SFVideoLoop(fgetValue(lp)));
 			FVideoSubtitles(subtitles) : Some(SFVideoSubtitles(fgetValue(subtitles)));
 			FVideoTimeRange(start, end) : Some(SFVideoTimeRange(fgetValue(start), fgetValue(end)));
@@ -313,12 +348,15 @@ FTextInputStyle2SFTextInputStyle(style : [FTextInputStyle]) -> [SFTextInputStyle
 	concat(
 		filtermap(style, \s ->
 			switch (s : FTextInputStyle) {
-				FWordWrap(wrap) : cast(Some(SWordWrap(fgetValue(wrap))) : Some<SWordWrap> -> Maybe<SFTextInputStyle>); // annoying typechecker
+				FWordWrap(wrap) : cast(Some(SWordWrap(fgetValue(wrap))) : Some<SFTextInputStyle> -> Maybe<SFTextInputStyle>); // annoying typechecker
 				FMultiline(multiline) : Some(SMultiline(fgetValue(multiline)));
 				FInputType(type) : Some(SInputType(fgetValue(type)));
 				FReadOnly(readOnly) : Some(SReadOnly(fgetValue(readOnly)));
+				FPreventContextMenu() : None();
 				FInputFilter(__): None();
+				FInputEventFilter(__): None();
 				FInputKeyFilter(__): None();
+				FInputOnCopy(__): None();
 				FMaxChars(maxChars) : Some(SMaxChars(fgetValue(maxChars)));
 				FAutoAlign(align) : Some(SAutoAlign(fgetValue(align)));
 				FNumericStep(step) : Some(SNumericStep(fgetValue(step)));
@@ -329,6 +367,9 @@ FTextInputStyle2SFTextInputStyle(style : [FTextInputStyle]) -> [SFTextInputStyle
 				FFocus(focus) : Some(SFocus(getValue(focus)));
 				FPosition(position) : Some(SPosition(getValue(position)));
 				FSelection(selection) : Some(SSelection(getValue(selection)));
+				FPositionSelection(__) : None();
+				FInputOnSelect(__) : None();
+				FInputOnSelectAll(__) : None();
 				FScrollInfo(info) : Some(SScrollInfo(getValue(info)));
 				FAccessProperty() : None();
 
@@ -364,7 +405,7 @@ sfform2fform(sfform : SFForm) -> FForm {
 		SFBorder(left, top, right, bottom, form) : FBorder(left, top, right, bottom, sfform2fform(form));
 		SFMask(form, mask) : FMask(sfform2fform(form), sfform2fform(mask));
 
-		SFPicture(url, size, s) : FPicture(url, make(size), s);
+		SFPicture(url, size, s) : FPicture(url, make(size), SFPictureStyle2PictureStyle(s));
 		SFAccess(properties, form) : FAccess(SFAccessProperty2FAccessProperty(properties), sfform2fform(form));
 		SFVideo(fn, wh, s) : FVideo(fn, make(wh), SFVideoStyle2FVideoStyle(s));
 		SFTextInput(c, wh, s) : FTextInput(make(c), make(wh), SFTextInputStyle2FTextInputStyle(s));
@@ -375,7 +416,7 @@ sfform2fform(sfform : SFForm) -> FForm {
 		SFFilter(fltrs, form) : FFilter(fltrs, sfform2fform(form));
 		FMForm(__) : sfform;
 		SFSetPending(pending, form) : FSetPending(const(pending), sfform2fform(form));
-		SFRealHTML(url, wh, s) : FRealHTML(url, const(wh), SFRealHTMLStyle2RealHTMLStyle(s));
+		SFRealHTML(url, wh, s) : FRealHTML(url, const(wh), SFRealHTMLStyle2FRealHTMLStyle(s));
 		SFCanvas(content) : FCanvas(sfform2fform(content));
 	}
 }
@@ -389,6 +430,7 @@ SFParagraphStyle2FParagraphStyle(style : [SFParagraphStyle]) -> [FParagraphStyle
 			RightAlign() : s;
 			CenterAlign() : s;
 			EndAlign() : s;
+			Justify() : s;
 			Sharpness(__, __, __) : s;
 			Fill(color) : s;
 			FontSize(__) : s;
@@ -398,6 +440,7 @@ SFParagraphStyle2FParagraphStyle(style : [SFParagraphStyle]) -> [FParagraphStyle
 			StartAlign() : s;
 			InterlineSpacing(__) : s;
 			LetterSpacing(__) : s;
+			WordSpacing(__) : s;
 			LeftAlign() : s;
 			FillOpacity(__) : s;
 			FontFamily(__) : s;
@@ -407,8 +450,20 @@ SFParagraphStyle2FParagraphStyle(style : [SFParagraphStyle]) -> [FParagraphStyle
 			FDynamicColor(__) : s;
 			TagName(__) : s;
 			LangAttribute(__) : s;
+			TextWidthInspector(__) : s;
+			SkipOrderCheck(): s;
+			LocalizationEnabled(__): s;
 		}
 	)
+}
+
+SFPictureStyle2PictureStyle(style : [SFPictureStyle]) -> [PictureStyle] {
+	map(style, \s : SFPictureStyle -> {
+		switch (s) {
+			DontCache(): s;
+			OnlyDownloadToCache(): s;
+		}
+	})
 }
 
 SFAccessProperty2FAccessProperty(style : [SFAccessProperty]) -> [FAccessProperty] {
@@ -433,20 +488,25 @@ SFAccessProperty2FAccessProperty(style : [SFAccessProperty]) -> [FAccessProperty
 	)
 }
 
-SFRealHTMLStyle2RealHTMLStyle(style : [SFRealHTMLStyle]) -> [RealHTMLStyle] {
-	map(style, \s ->
-		switch (s : SFRealHTMLStyle) {
-			SZoomEnabled(enabled) : ZoomEnabled(const(enabled));
-			SMouseDisabled(disabled) : MouseDisabled(const(disabled));
-			RealHtmlShrink2Fit() : s;
-			UpdateCachedContent(__) : s;
-			SandBoxJS(__) : s;
-			OverridePageDomain(__) : s;
-			ReloadBlock(__) : s;
-			WhitelistDomains(__) : s;
-			SViewBounds(bounds) : ViewBounds(const(bounds));
-			NoScroll() : s;
-		}
+SFRealHTMLStyle2FRealHTMLStyle(style : [SFRealHTMLStyle]) -> [FRealHTMLStyle] {
+	concat(
+		filtermap(style, \s ->
+			switch (s : SFRealHTMLStyle) {
+				SZoomEnabled(enabled) : cast(Some(ZoomEnabled(const(enabled))) : Some<FRealHTMLStyle> -> Maybe<FRealHTMLStyle>);
+				SMouseDisabled(disabled) : Some(MouseDisabled(const(disabled)));
+				RealHtmlShrink2Fit() : Some(s);
+				UpdateCachedContent(__) : Some(s);
+				SandBoxJS(__) : Some(s);
+				OverridePageDomain(__) : Some(s);
+				ReloadBlock(__) : Some(s);
+				WhitelistDomains(__) : Some(s);
+				SViewBounds(bounds) : Some(ViewBounds(const(bounds)));
+				NoScroll() : Some(s);
+				PassEvents() : Some(s);
+				SFAccessProperty() : None();
+			}
+		),
+		SFAccessProperty2FAccessProperty(style |> extractSFAccessProperties)
 	)
 }
 
@@ -474,7 +534,7 @@ SFTextInputStyle2FTextInputStyle(style : [SFTextInputStyle]) -> [FTextInputStyle
 	concat(
 		filtermap(style, \s ->
 			switch (s : SFTextInputStyle) {
-				SWordWrap(wrap) : cast(Some(FWordWrap(const(wrap))) : Some<FWordWrap> -> Maybe<FTextInputStyle>);
+				SWordWrap(wrap) : cast(Some(FWordWrap(const(wrap))) : Some<FTextInputStyle> -> Maybe<FTextInputStyle>);
 				SMultiline(multiline) : Some(FMultiline(const(multiline)));
 				SInputType(type) : Some(FInputType(const(type)));
 				SReadOnly(readOnly) : Some(FReadOnly(const(readOnly)));

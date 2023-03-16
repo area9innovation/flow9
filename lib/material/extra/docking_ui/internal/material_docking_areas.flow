@@ -1,0 +1,810 @@
+import material/material_ui;
+import material/extra/docking_ui/internal/material_docking_utils;
+import material/extra/docking_ui/internal/material_docking_panels;
+// import material/extra/docking_ui/internal/material_docking_drop;
+
+
+export {
+	// NOTE:
+	// - MDockingAreas can act as a "dockable MCols" or "MLines" (by "isColumn")
+	// - each MDockingArea has unique id
+	// - different MDockingAreas can have the same groupName
+	// - the groupNames are used by MDockingPanel in the "allowedGroups" field
+	// - each panel can have a vertical or horizontal orientation, but its size is defined by default as vertical
+	// - when docked on cols a panel will be shown as vertical, when on lines as horizontal
+	// - example in flow9/lib/material/tests/test_docking_ui.flow
+
+	MDockingArea(isColumn : bool, state : MDockingState, areaId : int, areaStyle : [MDockingAreaStyle]) -> Material;
+	// Used Internally
+	makeMDockingArea(isColumn : bool, state : MDockingState, areaId : int) -> Material;
+
+	// Place the docking content here, and wrap it with docking areas
+	MDContent(state : MDockingState, content : Material) -> Material;
+}
+
+
+MDContent(state : MDockingState, content : Material) -> Material {
+	dontHandleBg = contains(state.style, MDEditorContentBackgroundDontHandle());
+
+	workigArea = if (dontHandleBg) content else 
+		MGroup2(
+			MSelect(state.manager.white, \w -> MGroup2(
+				TRectangle([MFill(editorBgColorFn(w, state.style))], TFillXY()),
+				MFrame(0.0, getDockingRadius(state.style), [MFill(editorContentBgColorFn(w, state.style))], TFillXY())
+			)),
+			MCropSize(TFillXY(), content)
+		);
+	
+	workigArea |> (\c -> MAttachBox(c, state.stageWH));
+}
+
+MDockingArea(isColumn : bool, state : MDockingState, areaId : int, areaStyle : [MDockingAreaStyle]) -> Material {
+	next(state.areaStyle, setTree(getValue(state.areaStyle), areaId, areaStyle));
+	makeMDockingArea(isColumn, state, areaId);
+}
+
+// Let's think about dockable/resizable MCols with inside MLines of panels, 
+// the logic can be swithched and we get MLines with inside MCols 
+makeMDockingArea(isColumn : bool, state : MDockingState, areaId : int) -> Material {
+	areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
+	areaEnable = extractStruct(areaStyle, MDAreaEnable(make(true))).enable;
+
+	MShowLazy(fand(fselectLift(state.size, \sz -> sz != []), areaEnable),
+		\ -> {
+			manager = state.manager;
+			itemId = makeTropicTag(manager);
+			zorder = getValue(manager.manager.zorder);
+			contentA = getValue(state.content);
+			sizeA = getValue(state.size);
+			groupName = extractStruct(areaStyle, MDAreaGroupName("")).groupName;
+			accordion = extractStruct(areaStyle, MDAreaAccordion(make(true), None()));
+
+			// Drop
+			onDragging = manager.manager.dragging;
+			onDrop = make(-1);
+			order = make([0, 0]);
+			dockedPanelsGrid = make([[]]);
+			isRow = make(false);
+
+			// Drop Info
+			dropInfo = 
+				MDockingDropInfo(
+					areaId, 		// NOTE: maybe removable
+					groupName,		// NOTE: maybe removable
+					onDrop, 
+					order, 
+					dockedPanelsGrid, 
+					isRow
+				);
+
+			// Inactive drop bar
+			dropSize = extractStruct(areaStyle, MDockingDropSize(inactiveDropLineSize)).size;
+			inactiveDropSize = makeVSize(dropSize, isColumn);
+			inactiveDropBar = TRectangle([MFill(MGrey(300))], TFillXY());
+
+			// Array of cols, each col has two areas for panel alignment (used for toolbars)
+			areaGridAlignedT = fsubselect(state.dock, FLift(\dockA -> {
+				make(extractAreaGridAlignedById(state, dockA, areaId))
+			}));
+
+			MSelect2(areaGridAlignedT, accordion.enable, \areaGridAligned : [Pair<[int], [int]>], enAcc : bool -> {
+				areaGrid = map(areaGridAligned, \p -> concat(p.first, p.second));
+				next(dockedPanelsGrid, extractAreaGridById(getValue(state.dock), areaId));
+
+				mapi(areaGridAligned, \colId, colAlignedA -> {
+					startA = colAlignedA.first;
+					endA = colAlignedA.second;
+					colA = concat(startA, endA);
+	
+					// We need take the cols with only enabled panels
+					colWithEnabledpanelsA = filtermap(areaGridAligned,\c -> {
+						enabledCols = filtermap(concat(c.first, c.second), \pid -> {
+							if (getValue(getValue(state.enabled)[pid])) Some(pid) else None();
+						});
+						if (enabledCols != []) Some(enabledCols) else None()
+					});
+
+					atLeastOneEnabledInColT = fselectLift(fmerge(getValue(state.enabled)), \enA ->
+						 fold(colA, false, \acc, a -> acc || enA[a])
+					);
+
+					atLeastOneEnabledT = fselectLift(fmerge(getValue(state.enabled)), \enA -> 
+						fold(areaGrid, false, \acc, singleColA -> acc || fold(singleColA, false, \acc2, a -> acc2 || enA[a]))
+					);
+					
+					// Area theme
+					containsDark = fold(colA, false, \acc, a -> acc || contains(getValue(state.panelStyle)[a], MDPanelForceDarkTheme()));
+					containsLight = fold(colA, false, \acc, a -> acc || contains(getValue(state.panelStyle)[a], MDPanelForceLightTheme()));
+					isAreaDark = contains(areaStyle, MDAreaForceDarkTheme());
+					isAreaLight = contains(areaStyle, MDAreaForceLightTheme());
+					areaTheme = if (containsDark || isAreaDark) const(false) else if (containsLight || isAreaLight) const(true) else manager.white;
+
+					MSelect2(
+						areaTheme,
+						fmerge(map(colA, \c -> getValue(state.enabled)[c])),
+						\lg, __ -> {	
+							makeDockedPanelA(
+								isColumn,
+								dropInfo,
+								state,
+								length(colWithEnabledpanelsA),
+								colAlignedA,
+								colId,
+								lg,
+								areaStyle		
+							)
+							|> (\m -> MShowLazy(atLeastOneEnabledT, \ -> m))
+							|> (\m -> MShowLazy(atLeastOneEnabledInColT, \ -> m))
+						}
+					)
+				}) |> (\f -> if (isColumn) MColsA(f) else MLines(f))
+
+				// NO PANELS DOCKED
+				|> (\f -> if (areaGrid != []) f 
+					else 
+					MAvailable(dockingDropLine(true, isColumn, false, dropInfo, state, [0, 0], false, inactiveDropBar, inactiveDropSize, inactiveDropSize, true, false), inactiveDropSize)
+				)
+			});
+		} 
+	);
+}
+
+
+
+makeDockedPanelA(
+	isColumn : bool,
+	dropInfo : MDockingDropInfo,
+	state : MDockingState, 
+	numOfCols : int,
+	colAlignedA : Pair<[int], [int]>,
+	colId : int,
+	areaTheme : bool,
+	areaStyle : [MDockingAreaStyle]
+) -> Material {
+
+	manager = state.manager;
+	onDragging = manager.manager.dragging;
+	zorder = getValue(manager.manager.zorder);
+	groupA = state.group;
+	contentA = getValue(state.content);
+	dockingRadius = getDockingRadius(state.style);
+
+	startA = colAlignedA.first;
+	endA = colAlignedA.second;
+	colA = concat(startA, endA);
+
+	// Drop info
+	areaId = dropInfo.areaId;
+	groupName = dropInfo.groupName;
+
+	fillLast =  contains(areaStyle, MDAreaExpandLastPanel());
+	lastPanel = length(colA) - 1;
+	lastCol = numOfCols - 1;
+			
+	dontResize  = contains(areaStyle, MDAreaDontResize());
+	dontSideExpandPanel = fold(colA, false, \acc, p -> acc || 
+		contains(getValue(state.panelStyle)[p], MDPanelHideSideExpander()) ||
+		isSameStructType(getValue(state.content)[p], MDToolbarContent([]))
+	);
+	showSideExpanderBtn = isColumn && !contains(areaStyle, MDAreaHideSideExpander()) && !dontSideExpandPanel;
+	dontResizeAll = fold(colA, true, \acc, p -> acc && contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
+
+	// Default scroll for areas
+	dontScrollArea  = contains(areaStyle, MDAreaDontScroll());
+	defAreaScrollBar = 
+		TScrollbarStyle(
+			const(true),
+			const(if (mobile) 4. else 8.),
+			\ins, dwn ->
+				TBorder4(
+					if (mobile) 2. else 2.,
+					TAlpha(
+						fif(dwn, const(1.0), fif(ins, const(0.8), const(0.6))),
+						TRoundedFull([Fill(0x888888), Stroke(white), StrokeOpacity(0.3)], TFillXY())
+					)
+				),
+			\__, __ -> TEmpty()
+		);
+
+	customEditorScrollStyleA = extractStruct(state.style, MDEditorAreaScrollStyle([
+		MScrollbars(defAreaScrollBar, defAreaScrollBar)
+	])).style;
+	customScrollStyleA = extractStruct(areaStyle, MDAreaScrollStyle(customEditorScrollStyleA)).style;
+
+	// Resizable area size
+	containsToolbar = containsDockingToolbar(state, colA);
+	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
+	containsToolbarFillSize = foldi(colA, false, \p, acc, pId -> acc || isPanelFullSize(state, pId));
+	containsHideTopBar = fold(colA, false, \acc, p -> acc || contains(getValue(state.panelStyle)[p], MDPanelHideTopbar()));
+
+
+	dockedWidthA = map(colA, \s -> getValue(state.dockedSize)[s].width);
+	dockedHeightA = map(colA, \s -> getValue(state.dockedSize)[s].height);
+	maxDockedWidth = either(maxA(dockedWidthA), -doubleMax);
+	maxDockedHeight = either(maxA(dockedHeightA), -doubleMax);
+		
+	areaW = if (isColumn) maxDockedWidth else {
+		if (containsToolbar) maxDockedWidth else {
+			// We need to add the topbar height for area lines (content panel)
+			maxDockedHeight + if (containsHideTopBar) 0.0 else dockingBarHeightPanel
+		}
+	}
+
+	areaWB = make(areaW);
+	maxAreaSizeB = make(0.0);
+
+	// Side expander button
+	isBottomLine = contains(areaStyle, MDockingBottomLines());
+	isRightCol  = contains(areaStyle, MDockingRightCols());
+	isReversed = isRightCol || isBottomLine;
+	showSideMenu = if (isReversed) colId == 0 else colId == lastCol;
+	sideExpBtn = makeSideExpanderBtn(isColumn, state, areaId, colA, areaTheme, showSideMenu, state.style)
+		|> showIf(showSideExpanderBtn);
+
+	// Panel containers in a col
+	panelsHA = map(colA, \__ -> make(0.0));
+
+	enabledColT = fmerge(map(colA, \c -> getValue(state.enabled)[c]));
+	expandedColT = fmerge(map(colA, \c -> getValue(state.expanded)[c]));
+	sideExpandedColT = fmerge(map(colA, \c -> getValue(state.sideExpanded)[c]));
+
+	// Alignment
+	dropTr = makeVSize(32.0, isColumn);
+	hoverTr = makeHSize(dockingDropLineHoverSize, isColumn);
+	makeHandlesDrop = \resizeW : bool, order : [int], endpointOffset : bool, endAlignment : bool -> {	
+		dockingDropLine(false, resizeW, containsToolbar, dropInfo, state, order, true, MEmpty(), hoverTr, dropTr, endpointOffset, endAlignment);
+	}
+	panelAlignmentFiller	= \cId : int, rd : int -> {
+		[
+			makeHandlesDrop(!isColumn, [cId, rd], true /*endpoint*/, false), 		// top
+			if (isColumn) TFillY() else TFillX(),	
+			makeHandlesDrop(!isColumn, [cId, rd], false, true), 				// bottom
+		] 
+		|> (\f -> if (isColumn) MLinesA(f) else MColsA(f))
+	}
+
+	// Array of docked panels
+	makeDockedResizablePanels = \colA_ : [int], offSet : int, endAlignment : bool -> {
+		MSelect(fselectLift(fmerge(getValue(state.enabled)), \enA -> enA[lastElement(colA, 0)] == false), \__ -> {
+			// Only enabled panels in col
+			colAEnabled = filtermap(colA_, \panelId -> {
+				enabled = getValue(state.enabled)[panelId];
+				if (getValue(enabled)) Some(panelId) else None()
+			});
+
+			mapi(colAEnabled, \rId, panelId -> {
+				rowId = rId + offSet;
+				pstyle = getValue(state.panelStyle)[panelId];
+				isToolbar = isDockingToolbar(state, panelId);
+				dontMove  = contains(pstyle, MDPanelDontMove());
+				hideTopbar = contains(pstyle, MDPanelHideTopbar());
+				topBarH = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else {if (hideTopbar) 0.0 else dockingBarHeightPanel};
+				topBarW = if (isToolbar) {if (dontMove) 0.0 else dockingBarHeightToolbar} else 0.0;
+
+				// Expanded
+				expanded = getValue(state.expanded)[panelId];
+				sideExpanded = getValue(state.sideExpanded)[panelId];
+				enabled = getValue(state.enabled)[panelId];
+
+				// Do not collapse in rows
+				if (!isColumn) nextDistinct(expanded, true);
+
+				// Panel size
+				dockedSize = getValue(state.dockedSize)[panelId];
+				panelHB = panelsHA[rowId];
+
+				MConstruct([
+						// Fill correction
+						// makeFillPanelSubscriber(isColumn, rowId, panelId, state, maxAreaSizeB, panelHB, colA_, style),   // CHECK SIZES
+					], 
+					makeDockedPanel(isColumn, colAEnabled, state, areaId, colId, panelId) // CHECK: colAEnabled instead of colA
+				)
+				// Wrapper with drop area and resize handle for a row
+				|> (\f -> resizePanelH(f, isColumn, dropInfo, state, panelHB, panelId, colAEnabled, colId, rowId, endAlignment, areaTheme, areaStyle))
+			})
+			|> (\f -> if (isColumn) MLines(f) else MColsA(f))
+			// Scroll without side expander button
+			|> (\f -> if (dontScrollArea || containsToolbarFillSize || containsToolbar || containsToolbarButtons) f else MScroll(f, TFillXY(), customScrollStyleA))
+			|> (\f -> if (isColumn) MLines2(sideExpBtn /* |> (\m -> MGroup2(m, MCenterX(MText(toString(colId), []))))  DEBUG */, f) else MCols2A(f, sideExpBtn))
+		})
+	}
+
+
+	MConstruct(
+		[
+			makeSubscribe(expandedColT , \exA -> {
+				enA = map(colA, \c -> getValue(getValue(state.enabled)[c]));
+				seA = map(colA, \c -> getValue(getValue(state.sideExpanded)[c]));
+				iteri(exA, \i, ex -> {
+					pId = colA[i];
+					npH = calculatePanelH(isColumn, state, colA, enA[i], seA[i], ex, pId);
+					nextDistinct(panelsHA[i], npH);
+				});
+			}),
+			makeSubscribe(enabledColT , \enA -> {
+				exA = map(colA, \c -> getValue(getValue(state.expanded)[c]));
+				seA = map(colA, \c -> getValue(getValue(state.sideExpanded)[c]));
+				iteri(enA, \i, en -> {
+					pId = colA[i];
+					npH = calculatePanelH(isColumn, state, colA, en, seA[i], exA[i], pId);
+					nextDistinct(panelsHA[i], npH);
+				});
+			}),
+			makeSubscribe(sideExpandedColT, \seA  -> {
+				exA = map(colA, \c -> getValue(getValue(state.expanded)[c]));
+				enA = map(colA, \c -> getValue(getValue(state.enabled)[c]));
+				// Area container
+				nextDistinct(areaWB, if (seA[0]) areaW else dockingSideCollapsedSize);
+				// Panel containers
+				iteri(seA, \i, se -> {
+					pId = colA[i];
+					npH = calculatePanelH(isColumn, state, colA, enA[i], se, exA[i], pId);
+					nextDistinct(panelsHA[i], npH);
+				})
+			})
+		],
+		MFrame(0.0, 0.0, [MFill(editorBgColorFn(areaTheme, state.style))],
+			MGroup2(
+				if (isColumn) {
+					TFillY() |> (\f -> MAttachHeight(f, maxAreaSizeB))  // Get max column height
+				} else {
+					TFillX() |> (\f -> MAttachWidth(f, maxAreaSizeB))  // Get max row width
+				},
+				// Docked panels
+				if (!containsToolbar) makeDockedResizablePanels(colA, 0, false) else {
+					if (containsToolbarFillSize) makeDockedResizablePanels(colA, 0, false) else {
+						[
+							makeDockedResizablePanels(startA, 0, false),
+							panelAlignmentFiller(colId, length(startA)),
+							makeDockedResizablePanels(endA, length(startA), true)
+						]|> (\f -> if (isColumn) MLinesA(f) else MColsA(f))
+					}
+				}
+				|> (\f -> MFrame(0.0, if (isColumn) dockingRadius else 0.0, [MFill(panelBgColorFn(areaTheme, state.style))], f))
+			)
+		)
+	) |> (\f -> {
+		// Wrapper with drop area and resize handle for a col
+		resizeAreaW(f, isColumn, dropInfo, state, areaWB, numOfCols, colA, colId, areaTheme, areaStyle)
+	})
+}
+
+
+resizePanelH(
+	box : Material, 
+	isColumn : bool,
+	dropInfo : MDockingDropInfo,
+	state : MDockingState,
+	sizeB : DynamicBehaviour<double>, 
+	panelId : int, 
+	colA : [int], 
+	colId : int,
+	rowId : int,
+	endAlignment : bool,	
+	areaTheme : bool,
+	areaStyle : [MDockingAreaStyle], 
+) -> Material {
+	manager = state.manager;
+	itemId = makeTropicTag(manager);
+	zorder = getValue(manager.manager.zorder);
+	pstyle = getValue(state.panelStyle)[panelId];
+	groupA = state.group;
+
+	// Size	
+	sideCollapsedSize = dockingSideCollapsedSize;
+	panelDockedSize = getValue(state.dockedSize)[panelId];
+	pWidth = panelDockedSize.width;
+	pHeight = panelDockedSize.height;
+
+	// Container size
+	tempWH = make(WidthHeight(pWidth, pHeight));
+
+	resizePressed = make(false);
+	isResizing = make(false);
+	isHovering = make(false);
+	mouseXyLocal = make(zeroPoint);
+	
+	// Expanded
+	expanded = getValue(state.expanded)[panelId];
+	sideExpanded = getValue(state.sideExpanded)[panelId];
+	enabled = getValue(state.enabled)[panelId];
+
+	// Order
+	isLastPanel = panelId == lastElement(colA, intMax);
+	isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
+
+	se = getValue(getValue(state.sideExpanded)[colA[0]]);
+	isToolbar = isDockingToolbar(state, panelId);
+	isToolbarFillSize = isToolbar && isPanelFullSize(state, panelId);
+
+	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
+	dontMove  = contains(pstyle, MDPanelDontMove());
+	hideTopbar = contains(pstyle, MDPanelHideTopbar());
+	topBarH = if (dontMove || hideTopbar) 0.0 else {if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel};
+	topBarCorrection = if (isColumn) topBarH else {
+		if (isToolbar) dockingBarHeightToolbar else 0.0;
+	}
+
+	isBottomLine = contains(areaStyle, MDockingBottomLines());
+	dontResizeAll = fold(colA, true, \acc, p -> acc || contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
+	dontResize = isLastPanel;
+
+	// Rows separator with drop
+	resizeTr = makeHSize(dockingHelperResize, isColumn);
+	dropTr = makeHSize(dockingHelperDropSize, isColumn);
+	hoverTr = makeHSize(dockingDropLineHoverSize, isColumn);
+	rowFiller = if (isColumn) TFillY() else TFillX();
+
+	makeHandlesDrop = \resizeW : bool, order : [int], showResize : bool, endpointOffset : bool -> {
+		resizeHelper = dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, resizeTr) 
+			|> (\m -> MShowLazy(expanded, \ -> m))
+			|> showIf(showResize && !isToolbar);
+		dockingDropLine(false, resizeW, isToolbar, dropInfo, state, order, true, resizeHelper, hoverTr, dropTr, endpointOffset, endAlignment)
+			|> (\m -> MShowLazy(sideExpanded, \ -> m));
+	} |> showIf(!isToolbarFillSize);
+
+	rowsWithHandles = 
+		if (isColumn) {
+			// Resize H
+			MLines( 
+				if (rowId == 0 && length(colA) == 1)
+				[
+					makeHandlesDrop(false, [colId, rowId], false, true /*endpoint*/) 		// top
+						|> showIf(!isToolbar || (isToolbar && !isEndAligned)),
+					rowFiller,
+					makeHandlesDrop(false, [colId, rowId + 1 ], false, false) 				// bottom
+						|> showIf(!isToolbar || (isToolbar && isEndAligned))
+				]
+				else if (rowId == 0 && length(colA) != 1)
+				[
+					makeHandlesDrop(false, [colId, rowId], false, true /*endpoint*/)
+						|> showIf(!isToolbar || (isToolbar && !isEndAligned)),
+					rowFiller,
+					makeHandlesDrop(false, [colId, rowId + 1], true /*resize*/, false),
+				]
+				else if (rowId ==  length(colA) - 1 && length(colA) != 1)
+				[
+					rowFiller,
+					makeHandlesDrop(false, [colId, rowId + 1 ], false, false),
+				]
+				else
+				[	
+					rowFiller,
+					makeHandlesDrop(false, [colId, rowId + 1], true /*resize*/, false),
+				]
+			)
+		} else {
+			// Resize W
+			MCols(
+				if (rowId == 0 && length(colA) != 1)
+				[
+					makeHandlesDrop(true, [colId, rowId], false, true),
+					rowFiller,
+					makeHandlesDrop(true, [colId, rowId + 1], true, false)
+
+				]
+				else if (rowId == 0 && length(colA) == 1)
+				[
+					makeHandlesDrop(true, [colId, rowId], false, true),
+					rowFiller,
+					makeHandlesDrop(true, [colId, rowId + 1], true, false)
+						|> showIf(!isToolbar)
+				]
+				else if (rowId == length(colA) -1)
+				[
+					rowFiller,
+					makeHandlesDrop(true, [colId, rowId + 1], true, false)
+						|> showIf(!isToolbar)
+				]
+				else
+				[
+					rowFiller,
+					makeHandlesDrop(true, [colId, rowId + 1], true, false)
+				]
+			)
+		}
+
+	addRowSeparators = \f : Material -> [ f,
+			if (isLastPanel) TEmpty() else makeSeparatorBar(!isColumn, isToolbar, state, panelId, areaTheme)    // bottom/dx
+		] |> (\r -> if (isColumn) MLines(r) else MCols(r));
+
+	addDragAndDropHelperGroup = \ f : Material ->  MGroup2(f, rowsWithHandles);
+
+	MConstruct([
+		makeSubscribe2(isResizing, \rs -> { 
+			if (!rs) {
+				// Update docked size removing correction
+				if (isColumn) updateH(state.dockedSize, panelId,  getValue(sizeB) - topBarCorrection)
+					else updateW(state.dockedSize, panelId,  getValue(sizeB) - topBarCorrection);
+			}
+		}),
+		makeSubscribe(resizePressed, \p -> {
+			if (p) {
+				addMInteractionItemId(manager, itemId);
+				next(isResizing, true);
+			} else {
+				if (getValue(isResizing)) next(isResizing, false);
+			}
+		}),
+		makeSubscribe(mouseXyLocal, \mxy -> {
+			// Update container
+			if (isCurrentMInteractionItemId(manager, itemId) && getValue(isResizing)) {
+				blockOtherMInteractionItemIds(manager, itemId);
+				if (isColumn) nextDistinct(sizeB, max(dockingBarHeightPanel, mxy.y)) else nextDistinct(sizeB, max(mxy.x, dockingBarHeightPanel));
+			};
+		})
+	],
+	MInteractive([
+		TMouseXY(mouseXyLocal)
+		],
+		box |> (\m -> if (isToolbarFillSize) MCropSize(TFillXY(), m) else { 
+			MAvailable(	
+				m,
+				TSelect(sizeB, \s -> makeHSize(s, isColumn)) 
+				|> (\f -> if (!isToolbar && isLastPanel) TGroup2(TFillXY(), f) else f)
+			)
+		})
+		// Keep separator and topbar sizes out of MAvailable
+		|> addRowSeparators
+		|> (\t -> 
+			MCopySize(t, \sz -> 	
+				MAvailable(
+					TRectangle([MFill(MWhite()), FillOpacity(0.0)], TFillXY()) |> addDragAndDropHelperGroup,
+					sz
+				),
+			true
+			)
+		)
+		|> (\m -> MShowLazy(enabled, \ -> m))
+	))
+}
+
+
+resizeAreaW(
+	box : Material, 
+	isColumn : bool,
+	dropInfo : MDockingDropInfo,
+	state : MDockingState, 
+	sizeB : DynamicBehaviour<double>,
+	numOfCols : int,
+	colA : [int], 
+	colId : int,
+	areaTheme : bool,
+	areaStyle : [MDockingAreaStyle]
+) -> Material {
+
+	manager = state.manager;
+	itemId = makeTropicTag(manager);
+	zorder = getValue(manager.manager.zorder);
+
+	isBottomLine = contains(areaStyle, MDockingBottomLines());
+	isRightCol  = contains(areaStyle, MDockingRightCols());
+
+	dontResizeAll = fold(colA, true, \acc, p -> acc && contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
+	dontResizeCol  = contains(areaStyle, MDAreaDontResize());
+	dontResize = dontResizeCol || dontResizeAll;
+
+	resizePressed = make(false);
+	isResizing = make(false);
+	mouseXyLocal = make(zeroPoint);
+	currXy = make(zeroPoint);
+	tempWH = makeWH();
+	startingValueB = make(0.0);
+	firstPanelId = firstElement(colA, 0);
+	containsToolbar = containsDockingToolbar(state, colA);
+
+	panelsWidthA = map(colA, \s -> getValue(state.size)[s].width);
+	maxPanelsWidth = either(maxA(panelsWidthA), -doubleMax);
+	se = getValue(getValue(state.sideExpanded)[firstPanelId]);
+
+	lastCol = numOfCols - 1;
+
+	isReversed = isRightCol || isBottomLine;
+	isEdge = colId == numOfCols - 1;
+	isEdgeReverse = colId == 0 && isReversed;
+
+	// Cols separator with drop
+	resizeTr = makeVSize(dockingHelperResize, isColumn);
+	dropTr = makeVSize(dockingHelperDropSize, isColumn);
+	hoverTr = makeVSize(dockingDropLineHoverSize, isColumn);
+
+	colFiller = if (isColumn) TFillX() else TFillY();
+
+	makeHandlesDrop = \resizeW : bool, order : [int], showResize : bool, endpointOffset : bool -> {
+		resizeHelper = dockingResizeLine(isColumn, resizeW, dontResize, resizePressed, resizeTr)  
+			|> (\m -> MIfLazy(fselectLift(fmerge(map(colA, \c -> getValue(state.sideExpanded)[c])), \seA -> contains(seA, false)), \nse -> if (nse) MEmpty() else m))
+			|> showIf(showResize && !containsToolbar);
+		dockingDropLine(true, resizeW, containsToolbar, dropInfo, state, order, false, resizeHelper, hoverTr, dropTr, endpointOffset, false);
+	}
+	
+	colWithHandles =
+		if (isColumn) {
+			// Resize W
+			MCols(
+				if (colId == 0 && numOfCols == 1)
+				[
+					makeHandlesDrop(true, [colId, 0], isRightCol, !isRightCol), // sx
+					colFiller,
+					makeHandlesDrop(true, [colId + 1, 0], !isRightCol, isRightCol), // dx
+				]
+				else if (colId == 0 && numOfCols != 1)
+				[
+					makeHandlesDrop(true, [colId, 0], isRightCol, !isRightCol),
+					colFiller,
+					if (isRightCol) TEmpty() else makeHandlesDrop(true, [colId + 1, 0], true, false)
+				]
+				else if (colId != 0 && colId == numOfCols - 1)
+				[
+					if (isRightCol) makeHandlesDrop(true, [colId, 0], true, false) else  TEmpty(),
+					colFiller,
+					makeHandlesDrop(true, [colId + 1, 0], !isRightCol, isRightCol),
+				]
+				else
+				[
+					if (isRightCol) makeHandlesDrop(true, [colId, 0], true, false) else  TEmpty(),
+					colFiller,
+					if (isRightCol) TEmpty() else makeHandlesDrop(true, [colId + 1, 0], true, false)
+				]
+			)
+		} else {
+			// Resize H
+			MLines(
+				if (colId == 0 && numOfCols == 1)
+				[
+					makeHandlesDrop(false, [colId, 0], isBottomLine, !isBottomLine),
+					colFiller,
+					makeHandlesDrop(false, [colId + 1, 0], !isBottomLine, isBottomLine),
+				]
+				else if (colId == 0 && numOfCols != 1)
+				[
+					makeHandlesDrop(false, [colId, 0], isBottomLine, !isBottomLine),
+					colFiller,
+					if (isBottomLine) TEmpty() else makeHandlesDrop(false, [colId + 1, 0], true, false)
+				]
+				else if (colId != 0 && colId == numOfCols - 1)
+				[
+					if (isBottomLine) makeHandlesDrop(false, [colId, 0], true, false) else  TEmpty(),
+					colFiller,
+					makeHandlesDrop(false, [colId + 1, 0], !isBottomLine, isBottomLine),
+				]
+				else
+				[
+					if (isBottomLine) makeHandlesDrop(false, [colId, 0], true, false) else  TEmpty(),
+					colFiller,
+					if (isBottomLine) TEmpty() else makeHandlesDrop(false, [colId + 1, 0], true, false)
+				]
+			)
+		}
+
+
+	addColSeparators = \ f : Material ->
+		if (isColumn) {
+			MColsA([
+				/*if (isEdgeReverse && dontResize) TEmpty() else */ {
+					if (isRightCol) makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme) else TEmpty()	// sx
+				},
+				f,
+				/*if (isEdge && dontResize) TEmpty() else*/ {
+					if (isRightCol) TEmpty() else makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme)  	// dx
+				}
+			])
+		} else {
+			MLines([
+				/*if (isEdgeReverse && dontResize) TEmpty() else */ {
+					if (isBottomLine)  makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme) else TEmpty()  // top
+				},	
+				f,
+				/*if (isEdge && dontResize) TEmpty() else*/ {
+					if (isBottomLine) TEmpty() else makeSeparatorBar(isColumn, false, state, firstPanelId, areaTheme)  // bottom
+				}	
+			])
+		}
+
+	addDragAndDropHelperGroup = \ f : Material ->  MGroup2(f, colWithHandles);
+
+	contentWidth = make(0.0);
+	contentHeight = make(0.0);
+
+	MConstruct([
+		// makeSubscribe(sizeB, \p -> println(i2s(colId) + " - " + toString(p))),
+		makeSubscribe2(isResizing, \rs -> { 
+			if (!rs) {
+				// Update all docked panels in a col removing correction
+				iter(colA, \pId -> {
+					isToolbar = isDockingToolbar(state, pId);
+					topBarCorrection = if (isToolbar) dockingBarHeightToolbar else 0.0;
+					if (isColumn) updateW(state.dockedSize, pId,  getValue(sizeB))
+						else updateH(state.dockedSize, pId,  getValue(sizeB)- topBarCorrection);
+				});
+			}
+		}),
+		// Register starting informations for resizing
+		makeSubscribe(resizePressed, \p -> {
+			if (p) {
+				addMInteractionItemId(manager, itemId);
+				next(currXy, getValue(state.mouseXy));
+				next(startingValueB, getValue(sizeB));
+				next(tempWH, WidthHeight(getValue(sizeB), getValue(sizeB)));
+				next(isResizing, true);
+				// Resize should not go over the content size
+				next(contentWidth, getValue(state.stageWH).width);
+				next(contentHeight, getValue(state.stageWH).height);				
+			} else {
+				if (getValue(isResizing)) next(isResizing, false);
+			}
+		}),
+
+		makeSubscribe(state.mouseXy, \mxy -> {
+			if (isCurrentMInteractionItemId(manager, itemId) && getValue(isResizing)) {
+				rtlCorrection = if (getDefaultRtl()) -1.0 else 1.0; // correction the direction of width changing depending of rtl mode
+				blockOtherMInteractionItemIds(manager, itemId);
+				if (isColumn) {
+					if (isRightCol) nextDistinct(sizeB, 
+							max(
+								maxPanelsWidth, 
+								getValue(startingValueB) + rtlCorrection * (
+									min(
+										getValue(contentWidth),
+										getValue(currXy).x - mxy.x
+									)
+								)
+							)
+						)
+						else nextDistinct(sizeB, 
+							max(
+								maxPanelsWidth, 
+								getValue(startingValueB) - rtlCorrection * (
+									max(
+										- getValue(contentWidth),
+										getValue(currXy).x - mxy.x
+									)
+								)
+							)
+						);
+				} else {
+					if (isBottomLine) nextDistinct(sizeB, 
+							max(
+								dockingItemHeight, 
+								getValue(tempWH).height + 
+								min(
+									getValue(contentHeight),
+									getValue(currXy).y - mxy.y
+								)
+							)
+						)
+						else nextDistinct(sizeB, 
+							max(
+								dockingItemHeight, 
+								getValue(tempWH).height -
+								max(
+									- getValue(contentHeight),
+									getValue(currXy).y - mxy.y
+								)
+							)
+						);
+				}
+			};
+		}),
+		// \ -> \-> println("dispose" + i2s(areaId)),
+	],
+	MInteractive([
+			TMouseXY(mouseXyLocal)
+		],
+		MAvailable(
+			// scrollBox,
+			box,
+			TSelect(sizeB, \s  ->  makeVSize(s, isColumn)) 
+		)
+		// Keep separator's size out of MAvailable
+		|> addColSeparators
+		|> (\t -> 
+			MCopySize(t, \sz -> 
+				MAvailable(
+					TRectangle([MFill(MBlack()), FillOpacity(0.0)], TFillXY()) |> addDragAndDropHelperGroup,
+					sz
+				), 
+			true
+			)
+		)
+	));
+}

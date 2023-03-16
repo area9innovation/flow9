@@ -27,8 +27,11 @@ MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGr
 			extractStructMany(m.style, CenterAlign()),
 			extractStructMany(m.style, EndAlign()),
 			extractStructMany(m.style, TFillersSupport()),
+			extractStructMany(m.style, TightWidth()),
 			extractStructMany(m.style, TFlexibleGridContentSizeInspector(makeWH())),
+			extractStructMany(m.style, TFlexibleGridMaxContentWidthInspector(make(0.))),
 			extractStructMany(m.style, TAvailableMinMax(zero, zero)),
+			extractStructMany(m.style, TArrayThreshold(const(0))),
 			if (enableAnimation) [TAnimationTimer(manager.manager.deltaTimer)] else [],
 			if (ordered) [TOrder(fmapi(m.items, \i, __ -> i))] else [],
 			if (verticalGrid) [TVertical()] else [],
@@ -72,6 +75,7 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorde
 	itemsLength = length(items) + if (customDraggingOrder) 2 else 1;
 	draggingPlaceholder = map(extractStructMany(style, MReorderDropSpot(TEmpty())), \c -> MDraggingPlaceholder(c.spot));
 	dragLowestPrioriry = contains(style, MDragLowestPriority());
+	reorderOnDragEnd = contains(style, MReorderOnDragEnd());
 
 	uniqueIds = ref makeTree();
 	getUniqueIdByIndex = \index -> lookupTreeSet(uniqueIds, index, \__ -> makeTropicTag(manager));
@@ -194,7 +198,7 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorde
 	)
 	|> (\f ->
 		TConstruct(
-			[
+			concat([
 				makeSubscribe(manager.manager.dragging, \dr0 -> {
 					dr = getIndexByUniqueId(dr0);
 					nextDistinct(
@@ -220,10 +224,8 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorde
 					orderIn,
 					order,
 					\o ->
-						nextDistinct(
-							order,
-							tail(o)
-						),
+						if (!reorderOnDragEnd)
+							nextDistinct(order, tail(o)),
 					\o ->
 						nextDistinct(
 							orderIn,
@@ -231,6 +233,17 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorde
 						)
 				)
 			],
+			if (reorderOnDragEnd) [
+				makeSubscribe(draggingItem, \di -> {
+					if (di == -1) {
+						nextDistinct(
+							order,
+							tail(fgetValue(orderIn))
+						)
+					}
+				})
+			] else []
+			),
 			f
 		)
 	))
@@ -356,9 +369,10 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 
 	boxSize = extractStruct(m.style, MBoxSize(make(zeroWH))).wh;
 	contentSize = make(zeroWH);
-	position = make(zeroPoint);
+	position = extractStruct(m.style, TScrollPosition(make(zeroPoint))).position;
+	inspectVisible = extractStruct(m.style, TScrollInspectVisible(make(zeroPoint), makeWH()));
 	containers = make([]);
-	itemSize = extractStruct(m.style, MItemSize(fselect(contentSize, FLift(\cs -> WidthHeight(cs.width / 5., cs.width / 5.))))).wh;
+	itemSize = extractStruct(m.style, MItemSize(fselect(boxSize, FLift(\cs -> WidthHeight(cs.width / 5., cs.width / 5.))))).wh;
 
 	SelectMGroup2T(manager, parent, containers, \__, __, c, p -> {
 		TransformTAcc2(\t2a -> {
@@ -366,7 +380,7 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 					TTranslate(
 						c.tr,
 						TAvailable(
-							TCenter(TMutable(fselect2(c.id, items.first, FLift2(\i, it -> m2t(if (existsIndex(it, i)) it[i] else TEmpty(), p))))),
+							TCenter(m2t(MMutable(felementAt(items.first, c.id, const(TEmpty()))), p)),
 							TSized(itemSize)
 						)
 					)
@@ -401,7 +415,7 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 			MScroll(
 				f,
 				TFillXY(),
-				[MScrollPosition(position), MScrollWidthHeight(make(zeroWH), boxSize)]
+				[MScrollPosition(position), MScrollWidthHeight(make(zeroWH), boxSize), inspectVisible]
 			),
 			m2t
 		)

@@ -1,0 +1,256 @@
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/freevars;
+import tools/flowc/backends/cpp3/fi2cpp3_defines;
+import string_utils;
+
+export {
+	// Wrap a string with ( ... ) if it's not yet wrapped
+	fiWrapWithPars(s : string) -> string;
+
+	// Wrap a string with { ... } if it's not yet wrapped
+	fiWrapWithBraces(s : string) -> string;
+
+	// Wrap a string with { ... } if it's not yet wrapped
+	fiWrapWith(s : string, open: string, close: string) -> string;
+
+	// Remove outer open and close wrappers
+	fiUnwrap(s : string, open: string, close: string) -> string;
+
+	// Collect all type parameters, met in a type
+	fiTypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter>;
+
+	// Checks if a type is void, bool, int or double.
+	fiIsScalarType(t : FiType) -> bool;
+
+	// Perform a transformation in all type parameters. Used to remove stray type parameters on void
+	fiTransformTypars(t : FiType, transform : (FiTypeParameter) -> FiType) -> FiType;
+
+	// For each global name associates a set of all other global names, on which it depends
+	varsDependencies(prog : FiProgram) -> Tree<string, Set<string>>;
+
+	// Utility function which saves a file in an output directory
+	fi2cpp3SaveFile(file: string, content: string, cfg: FiCpp3Config) -> void;
+
+	// Only calls, primitive operators and constant values
+	fiExpIsSimple(e: FiExp) -> bool;
+
+	// Count the number of nodes in AST
+	fiExpAstNodesCount(e: FiExp) -> int;
+}
+
+fiWrapWith(s : string, open: string, close: string) -> string {
+	if (fiIsWrapedWith(s, open, close)) s else {
+		if (strlen(s) > 64 || strContains(s, "\n")) {
+			open + "\n" + strIndent(s) + "\n" + close;
+		} else {
+			open + s + close;
+		}
+	}
+}
+
+fiUnwrap(s : string, open: string, close: string) -> string {
+	if (!fiIsWrapedWith(s, open, close)) s else {
+		strUnindent(trim2(substring(s, 1, strlen(s) - 2), " \t\n\r"));
+	}
+}
+
+fiIsWrapedWith(s : string, open: string, close: string) -> bool {
+	if (strlen(s) < 2) false else {
+		pair = fiCheckIsWrapedWith(s, open, close, 1, 1, 1, 1);
+		startsWith(s, open) && endsWith(s, close) && pair.first == 1;
+	}
+}
+
+fiCheckIsWrapedWith(s : string, open: string, close: string, i: int, depth: int, min_depth: int, max_depth: int) -> Pair<int, int> {
+	if (i == strlen(s) - 1) Pair(min_depth, max_depth) else {
+		ch = getCharAt(s, i);
+		if (ch == open)  fiCheckIsWrapedWith(s, open, close, i + 1, depth + 1, min(min_depth, depth), max(max_depth, depth)) else
+		if (ch == close) fiCheckIsWrapedWith(s, open, close, i + 1, depth - 1, min(min_depth, depth), max(max_depth, depth)) else
+		                 fiCheckIsWrapedWith(s, open, close, i + 1, depth,     min(min_depth, depth), max(max_depth, depth)); 
+	}
+}
+
+fiWrapWithPars(s : string) -> string {
+	fiWrapWith(s, "(", ")");
+}
+
+fiWrapWithBraces(s : string) -> string {
+	fiWrapWith(s, "{", "}");
+}
+
+fiTypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter> {
+	switch (type) {
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
+		FiTypeParameter(n): insertSet(acc, type);
+		FiTypeRef(rt):      fiTypeTypars(acc, rt);
+		FiTypeArray(at):    fiTypeTypars(acc, at);
+		FiTypeName(id, tp): fold(tp, acc, fiTypeTypars);
+		FiTypeFunction(args, rt): fold(args, fiTypeTypars(acc, rt), \ac, arg -> fiTypeTypars(ac, arg.type));
+	}
+}
+
+fiIsScalarType(t : FiType) -> bool {
+	switch (t) {
+		FiTypeVoid():   true;
+		FiTypeBool():   true;
+		FiTypeInt():    true;
+		FiTypeDouble(): true;
+		default:        false;
+	}
+}
+
+fiTransformTypars(t : FiType, transform : (FiTypeParameter) -> FiType) -> FiType {
+	switch (t) {
+		FiTypeArray(arr): 
+			FiTypeArray(fiTransformTypars(arr, transform));
+		FiTypeFunction(args, retType):
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg with type = fiTransformTypars(arg.type, transform))), 
+				fiTransformTypars(retType, transform)
+			);
+		FiTypeRef(tp):
+			FiTypeRef(fiTransformTypars(tp, transform));
+		FiTypeParameter(nm):
+			transform(t);
+		FiTypeName(name, typars):
+			FiTypeName(name, map(typars, \tp -> fiTransformTypars(tp, transform)));
+		default: t;
+	}
+}
+
+fiDeclDependencies(d : FiDeclaration, deps : Tree<string, Set<string>>, visited : Set<string>, names : FiGlobalNames) -> Tree<string, Set<string>> {
+	if (containsKeyTree(deps, d.name) || containsSet(visited, d.name)) deps else {
+		visited1 = insertSet(visited, d.name);
+		find_deps = \e -> {
+			free = fifreevars(e);
+			deps1 = foldSet(free, deps, \acc, v -> 
+				switch (lookupTree(names.toplevel, v)) {
+					Some(v_d): {
+						fiDeclDependencies(v_d, acc, visited1, names);
+					}
+					None(): acc;
+				}
+			);
+			decl_deps = foldSet(free, free, \acc, v -> 
+				mergeSets(acc, lookupTreeDef(deps1, v, makeSet()))
+			);
+			setTree(deps1, d.name, decl_deps);
+		}
+		switch (d) {
+			FiFunctionDec(__, lambda,__,__,__): find_deps(lambda);
+			FiGlobalVar(__, value,__,__,__): find_deps(value);
+			FiNativeDec(__,__,__,__,fallback,__,__): find_deps(fallback);
+		}
+	}
+}
+
+varsDependencies(prog : FiProgram) -> Tree<string, Set<string>> {
+	fold(prog.traversal, makeTree(), \acc, mod_name -> {
+		module = lookupTreeDef(prog.modules, mod_name, dummyFiModule);
+		fold(module.initOrder, acc, \ac, name -> {
+			switch (lookupTree(prog.names.toplevel, name)) {
+				Some(d): {
+					switch (d) {
+						FiGlobalVar(__,__,__,__,__): {
+							fiDeclDependencies(d, ac, makeSet(), prog.names);
+						}
+						default: ac;
+					}
+ 				}
+				None(): ac;
+			}
+
+		})
+	});
+}
+
+fi2cpp3SaveFile(file: string, content: string, cfg: FiCpp3Config) -> void {
+	path = pathCombine(cfg.outputdir, file);
+	do_save = \-> {
+		ensureDirectoryExists(dirName(path));
+		if (!setFileContent(path, content)) {
+			fcPrintln("Failed to save " + file, cfg.config.threadId);
+		}
+	}
+	if (!fileExists(path)) {
+		if (cfg.config.verbose > 0) {
+			fcPrintln("Saving file: " + file, cfg.config.threadId);
+		}
+		do_save();
+	} else {
+		if (getFileContent(path) != content) {
+			if (cfg.config.verbose > 0) {
+				fcPrintln("Replacing file: " + file, cfg.config.threadId);
+			}
+			do_save();
+		} else {
+			if (cfg.config.verbose > 0) {
+				fcPrintln("Keeping file: " + file, cfg.config.threadId);
+			}
+		}
+	}
+}
+
+fiExpIsSimple(e: FiExp) -> bool {
+	switch(e) {
+		FiLambda(args, body,__, start): false;
+		FiCall(fn, args,__,__): {
+			switch (fn) {
+				FiVar(__,__,__): forall(args, fiExpIsSimple);
+				default: false;
+			}
+		}
+		FiLet(v, t, e1, e2,__, start): false;
+		FiIf(e1, e2, e3,__, __): false;
+		FiSwitch(v, vtype, cases, type, start): false;
+		FiCast(ex, __, __, __, __): fiExpIsSimple(ex);
+		FiSeq(es,__,__): false;
+		FiCallPrim(__, es,__,__): forall(es, fiExpIsSimple);
+		FiRequire(__, ex,__,__): false;
+		FiUnsafe(__, ex,__,__): false;
+		FiVar(name,__,__): true;
+		default: true;
+	}
+}
+
+fiExpAstNodesCount(e: FiExp) -> int {
+	switch(e) {
+		FiLambda(args, body,__, start): {
+			fiExpAstNodesCount(body) + 1;
+		}
+		FiCall(fn, args,__,__): {
+			fold(args, fiExpAstNodesCount(fn), \acc, x -> acc + fiExpAstNodesCount(x));
+		}
+		FiLet(v, t, e1, e2,__, start): {
+			fiExpAstNodesCount(e1) + fiExpAstNodesCount(e2) + 1;
+		}
+		FiIf(e1, e2, e3,__, __): {
+			fiExpAstNodesCount(e1) + fiExpAstNodesCount(e2) + fiExpAstNodesCount(e3) + 1;
+		}
+		FiSwitch(v, vtype, cases, type, start): {
+			fold(cases, 1, \acc, c -> acc + fiExpAstNodesCount(c.body));
+		}
+		FiCast(ex, __, __, __, __): {
+			fiExpAstNodesCount(ex) + 1;
+		}
+		FiSeq(es,__,__): {
+			fold(es, 1, \acc, x -> acc + fiExpAstNodesCount(x));
+		}
+		FiCallPrim(__, es,__,__): {
+			fold(es, 1, \acc, x -> acc + fiExpAstNodesCount(x));
+		}
+		FiRequire(__, ex,__,__): {
+			fiExpAstNodesCount(ex) + 1;
+		}
+		FiUnsafe(__, ex,__,__): {
+			fiExpAstNodesCount(ex) + 1;
+		}
+		default: 1;
+	}
+}

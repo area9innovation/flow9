@@ -1,0 +1,370 @@
+import text/gringo/gringo_ast;
+import tools/gringo/utils;
+import tools/gringo/gringo_pretty;
+import tools/gringo/type/types;
+import ds/tree;
+import algorithms;
+import string_utils;
+
+export {
+	GTypeEnv(
+		rules : Tree<string, GTerm>,
+		env : Tree<string, [GType]>,
+		stack : [GType]
+	);
+
+	// Do a type evaluation and discover the types of the productions
+	gringoType(d : GTerm) -> GTypeEnv;
+
+	prettyGType(t : GType) -> string;
+}
+
+gringoType(g : GTerm) -> GTypeEnv {
+	d = renameAmbiguiousRules(g);
+	// println(gterm2string(d));
+	env = GTypeEnv(findRules(makeTree(), d), makeTree(), []);
+	nenv = gringoTypeEval(env, d);
+	// OK, go and clean up the types where we have references to named rules
+	nenv;
+}
+
+gringoTypeEval(env : GTypeEnv, d : GTerm) -> GTypeEnv {
+	// println(gterm2summary(d));
+	switch (d) {
+		GRule(id, term, body): {
+			if (containsKeyTree(env.env, id)) {
+				gringoTypeEval(env, body);
+			} else {
+				type = gringoTypeEval(GTypeEnv(env with stack = []), term);
+				if (length(type.stack) > 1) {
+					println("Error: " + id + " produces more than 1 result");
+				}
+				// println("Typing " + id + " as " + toString(type.stack));
+				nenv = GTypeEnv(env with env = setTree(env.env, id, type.stack));
+				gringoTypeEval(nenv, body);
+			}
+		}
+		GPrecedence(left, right): {
+			ltype = gringoTypeEval(env, left);
+			rtype = gringoTypeEval(env, right);
+			joinGTypeEnvs(env, ltype, rtype, left, right);
+		}
+		GChoice(left, right): {
+			ltype = gringoTypeEval(env, left);
+			rtype = gringoTypeEval(env, right);
+			joinGTypeEnvs(env, ltype, rtype, left, right);
+		}
+		GSeq(left, right): {
+			ltype = gringoTypeEval(env, left);
+			gringoTypeEval(ltype, right);
+		}
+		GStar(term): {
+			handleMultiGType(env, term);
+		}
+		GPlus(term): {
+			handleMultiGType(env, term);
+		}
+		GOpt(term): {
+			handleMultiGType(env, term);
+		}
+		GNegate(term): {
+			type = gringoTypeEval(GTypeEnv(env with stack = []), term);
+			if (type.stack != []) {
+				println("Negate can not produce anything");
+				println(type.stack);
+			}
+			env;
+		}
+		GError(term): {
+			type = gringoTypeEval(GTypeEnv(env with stack = []), term);
+			if (type.stack != []) {
+				println("Error can not produce anything")
+			}
+			env;
+		}
+		GLower(term): gringoTypeEval(env, term);
+		GUnquote(term): {
+			switch (term) {
+				GString(action): {
+					// We know about the actions from tools/dsl/dsl_parse.flow
+					if (action == "s2i") {
+						// Pop and return int
+						replaceLastGType(env, GTypeInt());
+					} else if (action == "s2d") {
+						// Pop and return int
+						replaceLastGType(env, GTypeDouble());
+					} else if (action == "unescape") {
+						replaceLastGType(env, GTypeString());
+					} else if (action == "nil") {
+						GTypeEnv(env with stack = arrayPush(env.stack, GTypeNil()));
+					} else if (action == "reverse") {
+						// Takes list, gives list
+						env;
+					} else if (action == "dump") {
+						// nop
+						env;
+					} else if (action == "true") {
+						GTypeEnv(env with stack = arrayPush(env.stack, GTypeBool()));
+					} else if (action == "false") {
+						GTypeEnv(env with stack = arrayPush(env.stack, GTypeBool()));
+					} else if (action == "cons") {
+						elm : Pair<GTypeEnv, GType> = popGTypeStack(env);
+						list : Pair<GTypeEnv, GType> = popGTypeStack(elm.first);
+						listtype = list.second;
+						// Add a star element
+						res = switch (listtype) {
+							GTypeStar(le): joinGTypes(listtype, GTypeStar(elm.second));
+							GTypeNil(): GTypeStar(elm.second);
+							default: joinGTypes(listtype, GTypeStar(elm.second));
+						}
+						// println("  Cons gives: " + toString(res));
+						GTypeEnv(list.first with stack = arrayPush(list.first.stack, res));
+
+					} else if (action == "drop") {
+						top : Pair<GTypeEnv, GType> = popGTypeStack(env);
+						top.first;
+
+					} else if (action == "swap") {
+						top : Pair<GTypeEnv, GType> = popGTypeStack(env);
+						other : Pair<GTypeEnv, GType> = popGTypeStack(top.first);
+						GTypeEnv(other.first with stack = concat(other.first.stack, [top.second, other.second]));
+
+					} else if (action == "parsehex") {
+						elm : Pair<GTypeEnv, GType> = popGTypeStack(env);
+						if (elm.second != GTypeString()) {
+							println("ERROR: parsehex expects string, not " + toString(elm.second));
+						}
+						GTypeEnv(elm.first with stack = arrayPush(elm.first.stack, GTypeInt()));
+
+					} else if (action == "make_node") {
+						println("TODO: Handle make_node in Gringo typing");
+						env;
+
+					} else if (action == "") {
+
+						GTypeEnv(env with stack = arrayPush(env.stack, GTypeString()));
+					} else {
+						// OK, find out about the name of the action and the number of parameters
+						parts = strSplit(action, "_");
+						n = length(parts);
+						if (n == 1) {
+							println("Unknown action: " + action);
+						}
+						splitted : Pair<string, int> = if (n >= 2 && i2s(s2i(parts[n - 1])) == parts[n - 1]) {
+							arity = s2i(parts[n - 1]);
+							name = strGlue(subrange(parts, 0, n - 1), "_");
+							Pair(name, arity)
+						} else Pair(action, 0);
+						depth = length(env.stack);
+						// println("  Action " + splitted.first + " takes " + i2s(splitted.second) + " args and the stack is " + toString(env.stack));
+						type = GTypeAction(splitted.first, tailFrom(env.stack, depth - splitted.second));
+						// println("  Result: " + toString(type));
+						GTypeEnv(env with stack = arrayPush(subrange(env.stack, 0, depth - splitted.second), type));
+					}
+				}
+				GUnquote(v): {
+					switch (v) {
+						GString(__): GTypeEnv(env with stack = arrayPush(env.stack, GTypeString()));
+						default: {
+							println("TODO: Handle unquote of " + toString(term));
+							env;
+						}
+					}
+				}
+				default: {
+					GTypeEnv(env with stack = arrayPush(env.stack, GTypeString()));
+				}
+			}
+		}
+		GString(text): env;
+		GRange(lower, upper): env;
+		GVar(id): {
+			mres = lookupTree(env.env, id);
+			mres ?? {
+				if (mres == []) {
+					// It does nothing, so just keep it like that
+					env;
+				} else {
+					// OK, just push the resulting name instead of the expanded thing
+					GTypeEnv(
+						env with stack = concat(env.stack, [GTypeResult(id)])
+					);
+				}
+			} : {
+				code = lookupTreeDef(env.rules, id, d);
+				// OK, set up recursive results
+				nenv = GTypeEnv(env with env = setTree(env.env, id, [GTypeResult(id)]), stack = []);
+				// Find out what this rule does
+				type = gringoTypeEval(nenv, code);
+				result = type.stack;
+				if (length(result) > 1) {
+					println("ERROR: " + id + " produces more than one result");
+				}
+				if (result == []) {
+					GTypeEnv(type with env = setTree(nenv.env, id, result), stack = env.stack);
+				} else {
+					// Then update the type, and push the result on the stack
+					GTypeEnv(type with env = setTree(nenv.env, id, result), stack = arrayPush(env.stack, GTypeResult(id)));
+				}
+			}
+		}
+		GEpsilon(): env;
+	}
+}
+
+handleMultiGType(env : GTypeEnv, term : GTerm) -> GTypeEnv {
+	prod = gringoTypeEval(env, term);
+	// Revert the stack
+	nenv = GTypeEnv(prod with stack = env.stack);
+	if (prod.stack == env.stack) {
+		// Takes nothing, and produces nothing
+		nenv;
+	} else {
+		// OK, does it transform or produce?
+		if (length(prod.stack) - length(env.stack) == 1) {
+			// It produces one element
+			prod;
+		} else if (length(prod.stack) == length(env.stack)) {
+			// It transforms
+			product = lastElement(prod.stack, GTypeResult("EMPTY STACK"));
+			// println("  The star transforms to " + toString(product));
+			replaceLastGType(nenv, product);
+		} else {
+			println("Strange stack discipline of star is not supported");
+			nenv;
+		}
+	}
+
+}
+
+
+joinGTypeEnvs(orig : GTypeEnv, left : GTypeEnv, right : GTypeEnv, l : GTerm, r : GTerm) -> GTypeEnv {
+	if (length(left.stack) != length(right.stack)) {
+		println("ERROR: Choices do not have same stack discipline");
+		println("Left side " + gterm2summary(l) + " has ");
+		println(left.stack);
+		println("Right side " + gterm2summary(r) + " has ");
+		println(right.stack);
+		orig;
+	} else if (orig.stack == left.stack && orig.stack == right.stack) {
+		orig;
+	} else if (left.stack == []) {
+		left;
+	} else {
+		llast = lastElement(left.stack, GTypeResult("EMPTY STACK"));
+		rlast = lastElement(right.stack, GTypeResult("EMPTY STACK"));
+		j = joinGTypes(llast, rlast);
+		GTypeEnv(left with stack = replace(left.stack, length(left.stack) - 1, j));
+	}
+}
+
+replaceLastGType(e : GTypeEnv, type : GType) -> GTypeEnv {
+	if (e.stack == []) {
+		println("  Error: Expected at least one value");
+		e;
+	} else {
+		GTypeEnv(e with stack = replace(e.stack, length(e.stack) - 1, type));
+	}
+}
+
+joinGTypes(left : GType, right : GType) -> GType {
+	add = \ -> {
+		switch (right) {
+			GTypeUnion(rtypes): makeGTypeUnion(arrayPush(rtypes, left));
+			default: {
+				if (left == right) {
+					left
+				} else {
+					makeGTypeUnion([left, right]);
+				}
+			}
+		}
+	}
+	switch (left) {
+		GTypeResult(r): add();
+		GTypeNil(): if (left == right) left else joinGTypes(right, left);
+		GTypeBool(): add();
+		GTypeInt(): add();
+		GTypeDouble(): add();
+		GTypeString(): add();
+		GTypeAction(name, args): add();
+		GTypeStar(ltype): {
+			switch (right) {
+				GTypeStar(rtype): GTypeStar(joinGTypes(ltype, rtype));
+				GTypeNil(): left;
+				default: {
+					add();
+				}
+			}
+		}
+		GTypeUnion(ltypes): {
+			makeGTypeUnion(
+				switch (right) {
+					GTypeUnion(rtypes): concat(ltypes, rtypes);
+					default: arrayPush(ltypes, right);
+				}
+			);
+		}
+	}
+}
+
+makeGTypeUnion(types : [GType]) -> GType {
+	so = sortUnique(types);
+	if (length(so) == 1) so[0]
+	else GTypeUnion(so);
+}
+
+popGTypeStack(e : GTypeEnv) -> Pair<GTypeEnv, GType> {
+	if (e.stack == []) {
+		println("  Stack is empty when popping");
+		// println(set2array(^(e.typing)));
+		Pair(e, GTypeResult("EMPTY STACK"))
+	} else {
+		nenv = GTypeEnv(e with stack = subrange(e.stack, 0, length(e.stack) - 1));
+		Pair(nenv, lastElement(e.stack, GTypeResult("EMPTY STACK")));
+	}
+}
+
+
+prettyGType(t : GType) -> string {
+	switch (t) {
+		GTypeResult(rule): capitalize(rule);
+		GTypeNil(): "nil";
+		GTypeBool(): "bool";
+		GTypeInt(): "int"
+		GTypeDouble(): "double";
+		GTypeString(): "string";
+		GTypeAction(name, args): capitalize(name) + "(" + superglue(args, prettyGType, ", ") + ")";
+		GTypeStar(type): "[" + prettyGType(type) + "]";
+		GTypeUnion(types): superglue(types, prettyGType, " | ");
+	}
+}
+
+// Rename rules to avoid collisions with common names
+renameAmbiguiousRules(g : GTerm) -> GTerm {
+	switch (g) {
+		GRule(id, term, body): {
+			nbody = renameAmbiguiousRules(body);
+			nterm = renameAmbiguiousRules(term);
+			GRule(renameAmbiguiousId(id), nterm, nbody);
+		}
+		GPrecedence(left, right): GPrecedence(renameAmbiguiousRules(left), renameAmbiguiousRules(right)); 
+		GChoice(left, right): GChoice(renameAmbiguiousRules(left), renameAmbiguiousRules(right)); 
+		GSeq(left, right): GSeq(renameAmbiguiousRules(left), renameAmbiguiousRules(right));
+		GStar(term): GStar(renameAmbiguiousRules(term));
+		GPlus(term): GPlus(renameAmbiguiousRules(term));
+		GOpt(term): GOpt(renameAmbiguiousRules(term));
+		GNegate(term): GNegate(renameAmbiguiousRules(term));
+		GError(term): GError(renameAmbiguiousRules(term));
+		GLower(term): GLower(renameAmbiguiousRules(term));
+		GUnquote(term): GUnquote(renameAmbiguiousRules(term));
+		GString(text): g;
+		GRange(lower, upper): g;
+		GVar(id): GVar(renameAmbiguiousId(id));
+		GEpsilon(): g;
+	}
+}
+
+renameAmbiguiousId(id : string) -> string {
+	if (contains(["bool", "int", "double", "string"], id)) { id + "_0" } else id
+}

@@ -1,0 +1,794 @@
+import ds/hashmap;
+import math/hash;
+import tools/flowc/flowc_helpers;
+import tools/flowc/incremental/fiprettyprint;
+
+export {
+	FcEvalGlobal(
+		value : flow,
+		fileinfo : FiFileInfo
+	);
+
+	// Setup the global variables and toplevel functions
+	fcInitEvalGlobals(program: FiProgram, onError : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal>;
+
+	// Perform the evaluation of function 'name'.
+	// Returns the return value, if no errors occur, or 'flow()' as a return value for a runtime error.
+	fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow;
+}
+
+// Struct, which are not used in flowc compiler are not present in runtime explicitly,
+// so we use a general data structure, which represents struct in runtime.
+FcRuntimeStruct(
+	name : string,
+	fields : [FcRuntimeField]
+);
+// Struct, which represents a field.
+// Uses a ref to a value in order to model mutable fields.
+FcRuntimeField(
+	name : string,
+	value : ref flow
+);
+
+fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal> {
+	structs = makeHashMap(fastHashString);
+	traverseInOrder(prog.names.structs, \name, struct ->
+		setHashMap(structs, name, struct)
+	);
+	globals = makeHashMap(fastHashString);
+	iter(prog.traversal, \mod_name ->
+		switch (lookupTree(prog.modules, mod_name)) {
+			Some(module): {
+				onError = \message, pos -> {
+					where = makeLocation(prog.config, env, module.fileinfo, pos, -1);
+					onErr(where + " " + message);
+				}
+				iter(module.natives, \nat : FiNativeDec -> {
+					fn = if (nat.name == "makeStructValue") {
+						flow(\n, args, def -> fcMakeStruct(n, args, structs, \__ -> def));
+					} else if (hostCallExists(nat.nativeName)) {
+						fcMakeFnFromNative(nat, onError);
+					} else {
+						switch (nat.fallbackLambda) {
+							FiLambda(args, body, type,__): {
+								fcMakeFnFromLambda(nat.fallbackLambda, structs, globals, None(), onError);
+							}
+							default: {
+								err_message = "No native : " + nat.nativeName;
+								onError(err_message, nat.declStart);
+								flow(err_message);
+							}
+						}
+					}
+					setHashMap(globals, nat.name, FcEvalGlobal(fn, module.fileinfo));
+				});
+				iter(module.initOrder, \name ->
+					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
+						switch (decl) {
+							FiFunctionDec(__, lambda, type,__,__): {
+								fn = fcMakeFnFromLambda(lambda, structs, globals, None(), onError);
+								setHashMap(globals, name, FcEvalGlobal(fn, module.fileinfo));
+							}
+							FiGlobalVar(__, value, __,__,__): {
+								gv = fcReplEval(value, structs, globals, makeHashMap(fastHashString), onError);
+								setHashMap(globals, name, FcEvalGlobal(gv, module.fileinfo));
+							}
+							FiNativeDec(__,__,__, nativeName, fallback, __,__): {
+								// are already added
+							}
+						}
+					)
+				);
+			}
+			None(): {
+				// Never should be
+			}
+		}
+	);
+	globals;
+}
+
+fcCallFunction(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow {
+	switch (lookupHashMap(globals, name)) {
+		Some(global): {
+			fv = global.value;
+			if (getDataTagForValue(fv) != function_data_tag) {
+				flow("not a function is called: " + toString(fv));
+			} else {
+				arity = extractFuncArity(fv);
+				if (length(args) != arity) {
+					flow("called function arity mismatch: " + i2s(arity) + " != " + i2s(length(args)));
+				} else {
+					if (arity == 0) {
+						cast(fv : flow -> (() -> flow))();
+					} else if (arity == 1) {
+						cast(fv : flow -> ((flow) -> flow))(args[0]);
+					} else if (arity == 2) {
+						cast(fv : flow -> ((flow, flow) -> flow))(args[0], args[1]);
+					} else if (arity == 3) {
+						cast(fv : flow -> ((flow, flow, flow) -> flow))(args[0], args[1], args[2]);
+					} else if (arity == 4) {
+						cast(fv : flow -> ((flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3]);
+					} else if (arity == 5) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4]);
+					} else if (arity == 6) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5]);
+					} else if (arity == 7) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+					} else if (arity == 8) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
+					} else if (arity == 9) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]);
+					} else if (arity == 10) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]);
+					} else if (arity == 11) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]);
+					} else if (arity == 12) {
+						cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
+					} else {
+						// TODO: add more arities
+						flow("unsupported arity " + i2s(arity));
+					}
+				}
+			}
+		}
+		None(): {
+			flow("function " + name + " is not found");
+		}
+	};
+}
+
+// A wrapper for local variable value. It is necessary since interpreted functions may return void value,
+// which in java backend is just null and may lead to 'variable 'ret' is not defined' in case ret has a void value.
+FcEvalLocal(val: flow);
+
+fcReplEval(
+	ex : FiExp,
+	structs : HashMap<string, FiTypeStruct>,
+	globals : HashMap<string, FcEvalGlobal>,
+	locals : HashMap<string, FcEvalLocal>,
+	onError : (string, int) -> void
+) -> flow {
+	make_err = \msg, pos -> {
+		onError(msg, pos);
+		flow(msg);
+	}
+	switch (ex) {
+		FiLambda(args, body,__,__): {
+			arity = length(args);
+			closure = copyHashMap(locals);
+			fcMakeFnFromLambda(ex, structs, globals, Some(closure), onError);
+		}
+		FiCall(f, args,__,pos): {
+			fv = fcReplEval(f, structs, globals, locals, onError);
+			arity = length(args);
+			argsv = map(args, \a -> fcReplEval(a, structs, globals, locals, onError));
+			if (arity == 0) {
+				cast(fv : flow -> (() -> flow))();
+			} else if (arity == 1) {
+				cast(fv : flow -> ((flow) -> flow))(argsv[0]);
+			} else if (arity == 2) {
+				cast(fv : flow -> ((flow, flow) -> flow))(argsv[0], argsv[1]);
+			} else if (arity == 3) {
+				cast(fv : flow -> ((flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2]);
+			} else if (arity == 4) {
+				cast(fv : flow -> ((flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3]);
+			} else if (arity == 5) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4]);
+			} else if (arity == 6) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5]);
+			} else if (arity == 7) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6]);
+			} else if (arity == 8) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7]);
+			} else if (arity == 9) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8]);
+			} else if (arity == 10) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9]);
+			} else if (arity == 11) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9], argsv[10]);
+			} else if (arity == 12) {
+				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(argsv[0], argsv[1], argsv[2], argsv[3], argsv[4], argsv[5], argsv[6], argsv[7], argsv[8], argsv[9], argsv[10], argsv[11]);
+			} else {
+				// TODO: add more arities
+				make_err("unsupported arity " + i2s(arity), pos);
+			}
+		}
+		FiVar(x,__,pos): {
+			switch (lookupHashMap(locals, x)) {
+				Some(v): v.val;
+				None(): {
+					switch (lookupHashMap(globals, x)) {
+						Some(global): global.value;
+						None(): make_err("variable '" + x + "' is not defined", pos);
+					}
+				}
+			}
+		}
+		FiLet(x, __, e1, e2,__,__): {
+			xv = fcReplEval(e1, structs, globals, locals, onError);
+			if (x != "__") setHashMap(locals, x, FcEvalLocal(xv));
+			fcReplEval(e2, structs, globals, locals, onError);
+		}
+		FiIf(e1, e2, e3, __,__): {
+			if (cast(fcReplEval(e1, structs, globals, locals, onError) : flow -> bool)) {
+				fcReplEval(e2, structs, globals, locals, onError);
+			} else {
+				fcReplEval(e3, structs, globals, locals, onError);
+			}
+		}
+		FiSwitch(v,__,cs,__,pos): {
+			w = fcReplEval(v, structs, globals, locals, onError);
+			name0 = extractStructName(w);
+			name = if (name0 != "FcRuntimeStruct") name0 else {
+				runtime_struct = cast(w : flow -> FcRuntimeStruct);
+				runtime_struct.name;
+			}
+			switch (find(cs, \c -> c.struct == name || c.struct == "default")) {
+				Some(case): {
+					args = if (name0 != "FcRuntimeStruct") extractStructArguments(w) else {
+						runtime_struct = cast(w : flow -> FcRuntimeStruct);
+						map(runtime_struct.fields, \field -> ^(field.value));
+					}
+					if (case.struct != "default") {
+						iteri(case.argNames, \i, arg ->
+							if (arg != "__") setHashMap(locals, arg, FcEvalLocal(args[i]))
+						);
+					}
+					fcReplEval(case.body, structs, globals, locals, onError);
+				}
+				None(): {
+					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w), pos);
+				}
+			}
+		}
+		FiCast(e, __,to,__,__): {
+			ev = fcReplEval(e, structs, globals, locals, onError);
+			if (getDataTagForValue(ev) == int_data_tag) {
+				// int case
+				switch (to) {
+					FiTypeDouble(): flow(i2d(cast(ev : flow -> int)));
+					FiTypeString(): flow(i2s(cast(ev : flow -> int)));
+					default: ev;
+				}
+			} else if (getDataTagForValue(ev) == double_data_tag) {
+				// double case
+				switch (to) {
+					FiTypeInt(): flow(round(cast(ev : flow -> double)));
+					FiTypeString(): flow(d2s(cast(ev : flow -> double)));
+					default: ev;
+				}
+			} else {
+				ev;
+			}
+		}
+		FiSeq(es,__,__): {
+			ret : ref flow = ref voidValue();
+			iter(es, \e -> ret := fcReplEval(e, structs, globals, locals, onError));
+			^ret;
+		}
+		FiCallPrim(op, es, __,__): {
+			fcReplEvalCallPrim(ex, es, structs, globals, locals, onError);
+		}
+		FiString(s,__): flow(s);
+		FiBool(b,__):   flow(b);
+		FiDouble(d,__): flow(d);
+		FiVoid(__):     voidValue();
+		FiInt(i,__):    flow(i);
+		FiRequire(flowfile, __,__,pos): {
+			make_err("FiRequire is not implemented yet", pos);
+		}
+		FiUnsafe(name, __,__,pos): {
+			make_err("FiUnsafe is not implemented yet", pos);
+		}
+	}
+}
+
+fcReplEvalCallPrim(
+	call : FiCallPrim, es : [FiExp],
+	structs : HashMap<string, FiTypeStruct>,
+	globals : HashMap<string, FcEvalGlobal>,
+	locals : HashMap<string, flow>,
+	onError : (string, int) -> void
+) -> flow {
+	make_err = \msg -> {
+		onError(msg, call.start);
+		flow(msg);
+	}
+	switch (call.op) {
+		FcOrPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			if (cast(a0 : flow -> bool)) flow(true) else {
+				fcReplEval(es[1], structs, globals, locals, onError);
+			}
+		}
+		FcAndPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			if (!cast(a0 : flow -> bool)) flow(false) else {
+				fcReplEval(es[1], structs, globals, locals, onError);
+			}
+		}
+		FcNotPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			flow(!cast(a0 : flow -> bool));
+		}
+		FcEqPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			flow(a0 == a1);
+		}
+		FcNePrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			flow(a0 != a1);
+		}
+		FcLePrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			flow(a0 <= a1);
+		}
+		FcGePrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			flow(a0 >= a1);
+		}
+		FcLtPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			flow(a0 < a1);
+		}
+		FcGtPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			flow(a0 > a1);
+		}
+		FcPlusPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			if (getDataTagForValue(a0) == int_data_tag) {
+				// int case
+				flow(cast(a0 : flow -> int) + cast(a1 : flow -> int));
+			} else if (getDataTagForValue(a0) == double_data_tag) {
+				// double case
+				flow(cast(a0 : flow -> double) + cast(a1 : flow -> double));
+			} else {
+				// string case
+				flow(cast(a0 : flow -> string) + cast(a1 : flow -> string));
+			}
+		}
+		FcMinusPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			if (getDataTagForValue(a0) == int_data_tag) {
+				// int case
+				flow(cast(a0 : flow -> int) - cast(a1 : flow -> int));
+			} else {
+				// double case
+				flow(cast(a0 : flow -> double) - cast(a1 : flow -> double));
+			}
+		}
+		FcMulPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			if (getDataTagForValue(a0) == int_data_tag) {
+				// int case
+				flow(cast(a0 : flow -> int) * cast(a1 : flow -> int));
+			} else {
+				// double case
+				flow(cast(a0 : flow -> double) * cast(a1 : flow -> double));
+			}
+		}
+		FcDivPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			if (getDataTagForValue(a0) == int_data_tag) {
+				// int case
+				d = cast(a1 : flow -> int);
+				if (d == 0) {
+					make_err("division by zero");
+				} else {
+ 					flow(cast(a0 : flow -> int) / d);
+				}
+			} else {
+				// double case
+				d = cast(a1 : flow -> double);
+				if (d == 0.0) {
+					make_err("division by zero");
+				} else {
+					flow(cast(a0 : flow -> double) / d);
+				}
+			}
+		}
+		FcModPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			if (getDataTagForValue(a0) == int_data_tag) {
+				// int case
+				d = cast(a1 : flow -> int);
+				if (d == 0) {
+					make_err("division by zero");
+				} else {
+ 					flow(cast(a0 : flow -> int) % d);
+				}
+			} else {
+				// double case
+				d = cast(a1 : flow -> double);
+				if (d == 0.0) {
+					make_err("division by zero");
+				} else {
+					flow(cast(a0 : flow -> double) % d);
+				}
+			}
+		}
+		FcNegPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			if (getDataTagForValue(a0) == int_data_tag) {
+				// int case
+				flow(-cast(a0 : flow -> int));
+			} else {
+				// double case
+				flow(-cast(a0 : flow -> double));
+			}
+		}
+		FcArrayPrim(): {
+			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
+			flow(args);
+		}
+		FcIndexPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			arr = cast(a0 : flow -> [flow]);
+			ind = cast(a1 : flow -> int);
+			if (0 <= ind && ind < length(arr)) {
+				arr[ind];
+			} else {
+				make_err("index " + i2s(ind) + " is out of bounds, array length: " + i2s(length(arr)));
+			}
+		}
+		FcDerefPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			flow(^cast(a0 : flow -> ref flow));
+		}
+		FcAssignPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			a1 = fcReplEval(es[1], structs, globals, locals, onError);
+			cast(a0 : flow -> ref flow) := a1;
+			voidValue();
+		}
+		FcRefPrim(): {
+			a0 = fcReplEval(es[0], structs, globals, locals, onError);
+			ref a0;
+		}
+		FcStructPrim(name): {
+			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
+			fcMakeStruct(name, args, structs, make_err);
+		}
+		FcFieldPrim(field): {
+			struct = fcReplEval(es[0], structs, globals, locals, onError);
+			name = extractStructName(struct);
+			if (name != "FcRuntimeStruct") {
+				fields = structFieldNames(name);
+				i = elemIndex(fields, field, -1);
+				struct_args = extractStructArguments(struct);
+				struct_args[i];
+			} else {
+				runtime_struct = cast(struct : flow -> FcRuntimeStruct);
+				switch (find(runtime_struct.fields, \f -> f.name == field)) {
+					Some(f): ^(f.value);
+					None(): {
+						make_err("unknown field " + field + " in struct");
+					}
+				}
+			}
+		}
+		FcSetMutablePrim(field): {
+			struct = fcReplEval(es[0], structs, globals, locals, onError);
+			value = fcReplEval(es[1], structs, globals, locals, onError);
+			name = extractStructName(struct);
+			if (name != "FcRuntimeStruct") {
+				setMutableField(struct, field, value);
+				voidValue();
+			} else {
+				runtime_struct = cast(struct : flow -> FcRuntimeStruct);
+				switch (find(runtime_struct.fields, \f -> f.name == field)) {
+					Some(f): {
+						f.value := value;
+						voidValue();
+					}
+					None(): {
+						make_err("unknown field " + field + " in struct");
+					}
+				}
+			}
+		}
+		// creates a closure explicitly - appears after lambda lifting
+		FcCreateClosurePrim(structName, functionName): {
+			make_err("operator FcCreateClosurePrim is not implemented yet");
+			// TODO
+		}
+		FcQuote(): {
+			make_err("operator FcQuote is not implemented yet");
+			// TODO
+		}
+		FcUnquote(): {
+			make_err("operator FcUnquote is not implemented yet");
+			// TODO
+		}
+	}
+}
+
+fcMakeStruct(
+	name : string,
+	args : [flow],
+	structs : HashMap<string, FiTypeStruct>,
+	onError : (string) -> flow
+) -> flow {
+	if (isStructName(name)) {
+		makeStructValue(name, args, IllegalStruct());
+	} else {
+		switch (lookupHashMap(structs, name)) {
+			Some(struct): {
+				FcRuntimeStruct(
+					name,
+					mapi(args, \i, val -> FcRuntimeField(struct.args[i].name, ref val))
+				);
+			}
+			None(): {
+				onError("unknown struct " + name);
+			}
+		}
+	}
+}
+
+fcMakeFnFromLambda(
+	lambda : FiLambda,
+	structs : HashMap<string, FiTypeStruct>,
+	globals : HashMap<string, FcEvalGlobal>,
+	closure : Maybe<HashMap<string, FcEvalLocal>>,
+	onError : (string, int) -> void
+) -> flow {
+	arity = length(lambda.args);
+	if (arity == 0) {
+		flow(\ -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			fcReplEval(lambda.body, structs, globals, locals, onError)
+		});
+	} else if (arity == 1) {
+		flow(\a0 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 2) {
+		flow(\a0, a1 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 3) {
+		flow(\a0, a1, a2 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 4) {
+		flow(\a0, a1, a2, a3 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 5) {
+		flow(\a0, a1, a2, a3, a4 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 6) {
+		flow(\a0, a1, a2, a3, a4, a5 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 7) {
+		flow(\a0, a1, a2, a3, a4, a5, a6 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 8) {
+		flow(\a0, a1, a2, a3, a4, a5, a6, a7 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 8) {
+		flow(\a0, a1, a2, a3, a4, a5, a6, a7 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 9) {
+		flow(\a0, a1, a2, a3, a4, a5, a6, a7, a8 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 10) {
+		flow(\a0, a1, a2, a3, a4, a5, a6, a7, a8, a9 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			setHashMap(locals, lambda.args[9].name, FcEvalLocal(a9));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 11) {
+		flow(\a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			setHashMap(locals, lambda.args[9].name, FcEvalLocal(a9));
+			setHashMap(locals, lambda.args[10].name, FcEvalLocal(a10));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else if (arity == 12) {
+		flow(\a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11 -> {
+			locals = switch (closure) {
+				None(): makeHashMap(fastHashString);
+				Some(cl): copyHashMap(cl);
+			}
+			setHashMap(locals, lambda.args[0].name, FcEvalLocal(a0));
+			setHashMap(locals, lambda.args[1].name, FcEvalLocal(a1));
+			setHashMap(locals, lambda.args[2].name, FcEvalLocal(a2));
+			setHashMap(locals, lambda.args[3].name, FcEvalLocal(a3));
+			setHashMap(locals, lambda.args[4].name, FcEvalLocal(a4));
+			setHashMap(locals, lambda.args[5].name, FcEvalLocal(a5));
+			setHashMap(locals, lambda.args[6].name, FcEvalLocal(a6));
+			setHashMap(locals, lambda.args[7].name, FcEvalLocal(a7));
+			setHashMap(locals, lambda.args[8].name, FcEvalLocal(a8));
+			setHashMap(locals, lambda.args[9].name, FcEvalLocal(a9));
+			setHashMap(locals, lambda.args[10].name, FcEvalLocal(a10));
+			setHashMap(locals, lambda.args[11].name, FcEvalLocal(a11));
+			fcReplEval(lambda.body, structs, globals, locals, onError);
+		});
+	} else {
+		err_message = "unsupproted arity: " + i2s(arity) + " for lambda\n" + prettyFiExp(dummyPretty, lambda);
+		onError(err_message, lambda.start);
+		flow(err_message)
+	}
+}
+
+fcMakeFnFromNative(nat : FiNativeDec, onError : (string, int) -> void) -> flow {
+	arity = switch (nat.type) {
+		FiTypeFunction(arg_types,__): {
+			length(arg_types);
+		}
+		default: -1;
+	}
+	if (arity == 0) {
+		flow(\ -> hostCall(nat.nativeName, []));
+	} else if (arity == 1) {
+		flow(\a1 -> hostCall(nat.nativeName, [a1]));
+	} else if (arity == 2) {
+		flow(\a1, a2 -> hostCall(nat.nativeName, [a1, a2]));
+	} else if (arity == 3) {
+		flow(\a1, a2, a3 -> hostCall(nat.nativeName, [a1, a2, a3]));
+	} else if (arity == 4) {
+		flow(\a1, a2, a3, a4 -> hostCall(nat.nativeName, [a1, a2, a3, a4]));
+	} else if (arity == 5) {
+		flow(\a1, a2, a3, a4, a5 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5]));
+	} else if (arity == 6) {
+		flow(\a1, a2, a3, a4, a5, a6 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6]));
+	} else if (arity == 7) {
+		flow(\a1, a2, a3, a4, a5, a6, a7 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7]));
+	} else if (arity == 8) {
+		flow(\a1, a2, a3, a4, a5, a6, a7, a8 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7, a8]));
+	} else if (arity == 9) {
+		flow(\a1, a2, a3, a4, a5, a6, a7, a8, a9 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7, a8, a9]));
+	} else if (arity == 10) {
+		flow(\a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10]));
+	} else if (arity == 11) {
+		flow(\a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11]));
+	} else if (arity == 12) {
+		flow(\a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12 -> hostCall(nat.nativeName, [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12]));
+	} else {
+		err_message = "unsupproted arity: " + i2s(arity) + " for native " + nat.nativeName;
+		onError(err_message, nat.declStart);
+		flow(err_message);
+	}
+}

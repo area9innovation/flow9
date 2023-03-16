@@ -1,0 +1,180 @@
+import text/gringo/gringo_ast;
+import text/gringo/gringo_action;
+import text/gringo/gringo_env;
+import tools/gringo/utils;
+import ds/tree;
+import string;
+import ds/set;
+
+export {
+	// Do a parse at runtime.
+	gringoParse(env : GringoEnv<?>, term : GTerm) -> GringoEnv<?>;
+}
+
+gringoParse(env : GringoEnv<?>, gterm : GTerm) -> GringoEnv<?> {
+	switch (gterm) {
+		GRule(id, term, body): {
+			nenv = GringoEnv(
+				env with names = setTree(env.names, id, term)
+			);
+			gringoParse(nenv, body);
+		}
+		GPrecedence(left, right): {
+			lenv = gringoParse(env,left);
+			if (lenv.fail) {
+				gringoParse(env, right);
+			} else lenv
+		}
+		GChoice(left, right): {
+			lenv = gringoParse(env, left);
+			if (lenv.fail) {
+				gringoParse(grabMaxi(env, lenv), right);
+			} else lenv
+		}
+		GSeq(left, right): {
+			lenv = gringoParse(env, left);
+			if (lenv.fail) lenv // GringoEnv(env with fail = true)
+			else gringoParse(lenv, right);
+		}
+		GStar(term): {
+			senv = gringoParse(env, term);
+			if (senv.fail) {
+				grabMaxi(env, senv);
+			} else {
+				gringoParse(senv, gterm);
+			}
+		}
+		GPlus(term): {
+			senv = gringoParse(env, term);
+			if (senv.fail) {
+				senv;
+			} else {
+				gringoParse(senv, GStar(term));
+			}
+		}
+		GOpt(term): {
+			senv = gringoParse(env, term);
+			if (senv.fail) {
+				grabMaxi(env, senv);
+			} else {
+				senv;
+			}
+		}
+		GError(term): {
+			switch (term) {
+				GNegate(nterm): {
+					senv = gringoParse(env, nterm);
+					if (senv.fail) {
+						GringoEnv(senv with fail = false);
+					} else {
+						error = "Superfluous " + makeGExplanation(nterm);
+						GringoEnv(
+							senv with errors = setTree(env.errors, env.i, error)
+						);
+					}
+				}
+				default: {
+					senv = gringoParse(env, term);
+					if (senv.fail) {
+						error = "Expected " + makeGExplanation(term);
+						GringoEnv(
+							senv with fail = false, errors = setTree(env.errors, env.i, error)
+						);
+					} else {
+						senv;
+					}
+				}
+			}
+		}
+		GLower(term): {
+			gringoParse(env, term);
+		}
+		GNegate(term): {
+			senv = gringoParse(env, term);
+			if (senv.fail) {
+				env;
+			} else {
+				GringoEnv(env with fail = true);
+			}
+		}
+		GUnquote(term): {
+			unquoteGTerm(env, term);
+		}
+		GString(text): {
+			if (strContainsAt(env.input, env.i, text) || text == "") {
+				ni = env.i + strlen(text);
+				GringoEnv(
+					env with i = ni,
+					maxi = max(env.maxi, ni)
+				)
+			} else {
+				GringoEnv(env with fail = true)
+			}
+		}
+		GRange(lower, upper): {
+			code = getCharCodeAt(env.input, env.i);
+			if (lower <= code && code <= upper) {
+				// println(^indent + "Parsed " + getCharAt(env.input, env.i));
+				ni = env.i + 1;
+				GringoEnv(
+					env with i = ni,
+					maxi = max(env.maxi, ni)
+				)
+			} else {
+				GringoEnv(env with fail = true)
+			}
+		}
+		GVar(id): {
+			mterm = lookupTree(env.names, id);
+			mterm ?? {
+				gringoParse(env, mterm);
+			} : {
+				println("Unknown name: " + id);
+				GringoEnv(env with fail = true);
+			}
+		}
+		GEpsilon(): env;
+	}
+}
+
+// OK, to keep the max parsing length relevant, we have this helper
+grabMaxi(env : GringoEnv<?>, env2 : GringoEnv<?>) -> GringoEnv<?> {
+	GringoEnv(env with maxi = max(env2.maxi, env.maxi));
+}
+
+unquoteGTerm(env : GringoEnv<?>, term : GTerm) -> GringoEnv<?> {
+	def = \ -> {
+		starti = env.i;
+		rec = gringoParse(env, term);
+		if (rec.fail) {
+			rec;
+		} else {
+			matched = substring(env.input, starti, rec.i - starti);
+			GringoEnv(rec with output = env.action.addMatched(rec.output, matched))
+		}
+	};
+	switch (term) {
+		GString(text): GringoEnv(env with output = env.action.addVerbatim(env.output, text));
+		GUnquote(nt): {
+			switch (nt) {
+				GString(text): {
+					GringoEnv(env with output = env.action.addMatched(env.output, text));
+				}
+				GVar(id): {
+					if (id == "pos") {
+						GringoEnv(env with output = env.action.addMatched(env.output, i2s(env.i)));
+					} else {
+						def();
+					}
+				}
+				default: {
+					println("Does not support double unquote of anything but strings");
+					env;
+				}
+			}
+		}
+		default: {
+			def();
+		}
+	}
+}

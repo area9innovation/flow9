@@ -1,0 +1,422 @@
+<html>
+	<head>
+		<script	src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js" ></script>
+		<script id="raymarchingVert" type="text/plain">
+			@vertex
+			fn main(
+				@builtin(vertex_index) VertexIndex : u32
+			) -> @builtin(position) vec4<f32> {
+				var pos = array<vec2<f32>, 4>(
+					vec2(-1.0, -1.0),
+					vec2(-1.0, 1.0),
+					vec2(1.0, -1.0),
+					vec2(1.0, 1.0)
+				);
+
+				return vec4<f32>(pos[VertexIndex], 0.0, 1.0);
+			}
+		</script>
+		<script id="raymarchingFrag" type="text/plain">
+			fn GetDist(p : vec3<f32>) -> f32{
+				var minSphereDist = 1000.;
+			
+				minSphereDist = length(p - vec3(-6, 1, 2)) - 3;
+			
+				let planeDist = 1000.;//p.y;
+				let d = min(minSphereDist, planeDist);
+				return d;
+			}
+			
+			fn RayMarch(ro : vec3<f32>, rd : vec3<f32>) -> f32 {
+				var dO = 0.;
+				for (var i : i32 =0; i< 1000; i++){
+					let p = ro +rd*dO;
+					let ds = GetDist(p);
+					dO += ds;
+					if (dO>1000. || ds<0.001) {break;}
+				}
+				return dO; 
+			}
+
+			fn GetNormal(p : vec3<f32>) -> vec3<f32>{
+				let d = GetDist(p);
+				let e = vec2(.01,0.);
+				let n = d - vec3(
+					GetDist(p - e.xyy),
+					GetDist(p - e.yxy),
+					GetDist(p - e.yyx)
+				);
+				return normalize(n);
+			}
+			
+			fn GetLight(p : vec3<f32>) -> f32 {
+				let lightPos = vec3<f32>(0, 5, 6);
+				let l = normalize (lightPos-p);
+				let n = GetNormal(p);
+				var dif = clamp(dot(n,l),0.,1.);
+				let d = RayMarch(p+n*0.001*2.,l);
+				if (d<length(lightPos-p)) {dif *= .1;}
+				return dif;
+			}
+
+			struct MyOutputs {
+				@builtin(frag_depth) x: f32,
+				@location(0) y: vec4<f32>
+			}
+
+			@fragment
+			fn main(
+				@builtin(position) coord: vec4<f32>,
+			) -> MyOutputs {
+
+				//let cameraPosition = vec3(6, 8, 12);
+				//let cameraDirection = vec3(0, 1, 6);
+				var view = mat4x4(
+					-0.707, 0., 0.707, 0.,
+					-0.45, 0.771, -0.45, 0.,
+					-0.545, -0.636, -0.545, 0.,
+					0., 0., 0., 1.
+				);
+
+				var viewi = mat4x4(
+					-0.707, -0.45, -0.545, 0.,
+					0, 0.771, -0.636, 0.,
+					0.707, -0.45, -0.545, 0.,
+					0., 0., 0., 1.
+				);
+
+				let screenSize = vec2<f32>(800, 600);
+				let uv = (coord.xy - 0.5 * screenSize.xy)/screenSize.y;
+				var rayDirection = normalize(vec3 (uv.x, uv.y, 1));
+				rayDirection = (view*vec4(rayDirection, 1)).xyz;
+				let rayOrigin = vec3(6., 8., 12.);
+
+				let d = RayMarch(rayOrigin, rayDirection);
+				let p = rayOrigin + rayDirection * d;
+				let dif = GetLight(p);
+
+				let color = vec3(dif);
+				let ndc = viewi * vec4(p, 1f);
+				let depth = (ndc.z / ndc.w) * .5f + .5f;
+				return MyOutputs(depth, vec4<f32>(color, 1.0));
+			}
+		</script>
+		<script id="cubeVert" type="text/plain">
+			struct Uniforms {
+				modelViewProjectionMatrix : mat4x4<f32>,
+			}
+			@binding(0) @group(0) var<uniform> uniforms : Uniforms;
+				
+			struct VertexOutput {
+				@builtin(position) Position : vec4<f32>,
+				@location(0) fragUV : vec2<f32>,
+				@location(1) fragPosition: vec4<f32>,
+			}
+				
+			@vertex
+			fn main(
+				@location(0) position : vec4<f32>,
+				@location(1) uv : vec2<f32>
+			) -> VertexOutput {
+				var output : VertexOutput;
+				output.Position = uniforms.modelViewProjectionMatrix * position;
+				output.fragUV = uv;
+				output.fragPosition = 0.5 * (position + vec4(1.0, 1.0, 1.0, 1.0));
+				return output;
+			}
+		</script>
+		<script id="cubeFrag" type="text/plain">
+			@fragment
+			fn main(
+				@location(0) fragUV: vec2<f32>,
+				@location(1) fragPosition: vec4<f32>
+			) -> @location(0) vec4<f32> {
+				return fragPosition;
+			}
+		</script>
+		<script>
+			var device;
+			var context;
+
+			const cubeVertexSize = 4 * 10;
+			const cubePositionOffset = 0;
+			const cubeUVOffset = 4 * 8;
+			const cubeVertexCount = 36;
+
+			const cubeVertexArray = new Float32Array([
+				// float4 position, float4 color, float2 uv,
+				1, -1, 1, 1,	1, 0, 1, 1,	1, 1,
+				-1, -1, 1, 1,	0, 0, 1, 1,	0, 1,
+				-1, -1, -1, 1,	0, 0, 0, 1,	0, 0,
+				1, -1, -1, 1,	1, 0, 0, 1,	1, 0,
+				1, -1, 1, 1,	1, 0, 1, 1,	1, 1,
+				-1, -1, -1, 1,	0, 0, 0, 1,	0, 0,
+
+				1, 1, 1, 1,		1, 1, 1, 1,	1, 1,
+				1, -1, 1, 1,	1, 0, 1, 1,	0, 1,
+				1, -1, -1, 1,	1, 0, 0, 1,	0, 0,
+				1, 1, -1, 1,	1, 1, 0, 1,	1, 0,
+				1, 1, 1, 1,		1, 1, 1, 1,	1, 1,
+				1, -1, -1, 1,	1, 0, 0, 1,	0, 0,
+
+				-1, 1, 1, 1,	0, 1, 1, 1,	1, 1,
+				1, 1, 1, 1,		1, 1, 1, 1,	0, 1,
+				1, 1, -1, 1,	1, 1, 0, 1,	0, 0,
+				-1, 1, -1, 1,	0, 1, 0, 1,	1, 0,
+				-1, 1, 1, 1,	0, 1, 1, 1,	1, 1,
+				1, 1, -1, 1,	1, 1, 0, 1,	0, 0,
+
+				-1, -1, 1, 1,	0, 0, 1, 1,	1, 1,
+				-1, 1, 1, 1,	0, 1, 1, 1,	0, 1,
+				-1, 1, -1, 1,	0, 1, 0, 1,	0, 0,
+				-1, -1, -1, 1,	0, 0, 0, 1,	1, 0,
+				-1, -1, 1, 1,	0, 0, 1, 1,	1, 1,
+				-1, 1, -1, 1,	0, 1, 0, 1,	0, 0,
+
+				1, 1, 1, 1,		1, 1, 1, 1,	1, 1,
+				-1, 1, 1, 1,	0, 1, 1, 1,	0, 1,
+				-1, -1, 1, 1,	0, 0, 1, 1,	0, 0,
+				-1, -1, 1, 1,	0, 0, 1, 1,	0, 0,
+				1, -1, 1, 1,	1, 0, 1, 1,	1, 0,
+				1, 1, 1, 1,		1, 1, 1, 1,	1, 1,
+
+				1, -1, -1, 1,	1, 0, 0, 1,	1, 1,
+				-1, -1, -1, 1,	0, 0, 0, 1,	0, 1,
+				-1, 1, -1, 1,	0, 1, 0, 1,	0, 0,
+				1, 1, -1, 1,	1, 1, 0, 1,	1, 0,
+				1, -1, -1, 1,	1, 0, 0, 1,	1, 1,
+				-1, 1, -1, 1,	0, 1, 0, 1,	0, 0,
+			]);
+
+
+			const initFn = async function() {
+				if (!navigator.gpu) throw Error("WebGPU not supported.");
+
+				const adapter = await navigator.gpu.requestAdapter();
+				if (!adapter) throw Error("Couldn’t request WebGPU adapter.");
+				
+				device = await adapter.requestDevice();
+				if (!device) throw Error("Couldn’t request WebGPU logical device.");
+
+				let canvas = document.getElementById('rc');
+				context = canvas.getContext('webgpu');
+
+				const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+				
+				const devicePixelRatio = window.devicePixelRatio || 1;
+				const presentationSize = [
+					canvas.clientWidth * devicePixelRatio,
+					canvas.clientHeight * devicePixelRatio,
+				];
+
+				context.configure({
+					device,
+					format: presentationFormat,
+					alphaMode: 'opaque',
+				});
+				let raymarchingVertCode = document.getElementById("raymarchingVert").text;
+				let raymarchingFragCode = document.getElementById("raymarchingFrag").text;
+				let cubeVertCode = document.getElementById("cubeVert").text;
+				let cubeFragCode = document.getElementById("cubeFrag").text;
+
+				const verticesBuffer = device.createBuffer({
+					size: cubeVertexArray.byteLength,
+					usage: GPUBufferUsage.VERTEX,
+					mappedAtCreation: true,
+				});
+				new Float32Array(verticesBuffer.getMappedRange()).set(cubeVertexArray);
+				verticesBuffer.unmap();
+
+				const raymarchingPipeline = device.createRenderPipeline({
+					layout: 'auto',
+					vertex: {
+						module: device.createShaderModule({
+							code: raymarchingVertCode,
+						}),
+						entryPoint: 'main',
+					},
+					fragment: {
+						module: device.createShaderModule({
+							code: raymarchingFragCode,
+						}),
+						entryPoint: 'main',
+						targets: [
+							{
+							format: presentationFormat,
+							},
+						],
+					},
+					primitive: {
+						topology: 'triangle-strip',
+					},
+					depthStencil: {
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+						format: 'depth24plus',
+					},
+				});
+
+				const cubePipeline = device.createRenderPipeline({
+					layout: 'auto',
+					vertex: {
+						module: device.createShaderModule({
+							code: cubeVertCode,
+						}),
+						entryPoint: 'main',
+						buffers: [
+							{
+							arrayStride: cubeVertexSize,
+							attributes: [
+								{
+								// position
+								shaderLocation: 0,
+								offset: cubePositionOffset,
+								format: 'float32x4',
+								},
+								{
+								// uv
+								shaderLocation: 1,
+								offset: cubeUVOffset,
+								format: 'float32x2',
+								},
+							],
+							},
+						],
+					},
+					fragment: {
+						module: device.createShaderModule({
+							code: cubeFragCode,
+						}),
+						entryPoint: 'main',
+						targets: [
+							{
+							format: presentationFormat,
+							},
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+					},
+					depthStencil: {
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+						format: 'depth24plus',
+					},
+				});
+
+				const depthTexture = device.createTexture({
+					size: presentationSize,
+					format: 'depth24plus',
+					usage: GPUTextureUsage.RENDER_ATTACHMENT,
+				}).createView();
+
+				const uniformBufferSize = 4 * 16; // 4x4 matrix
+				const uniformBuffer = device.createBuffer({
+					size: uniformBufferSize,
+					usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+				});
+
+				const uniformBindGroup = device.createBindGroup({
+					layout: cubePipeline.getBindGroupLayout(0),
+					entries: [
+					{
+						binding: 0,
+						resource: {
+							buffer: uniformBuffer,
+						},
+					},
+					],
+				});
+
+				const renderPassDescriptor = {
+					colorAttachments: [
+						{
+							view: undefined,
+							clearValue: { r: 0.0, g: 0.3, b: 0.0, a: 1.0 },
+							loadOp: 'clear',
+							storeOp: 'store',
+						},
+					],
+					depthStencilAttachment: {
+						view: depthTexture,
+						depthClearValue: 1.0,
+						depthLoadOp: 'clear',
+						depthStoreOp: 'store',
+					},
+				};
+
+				const projectionMatrix = mat4.create();
+				mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, canvas.width / canvas.height, 1, 100.0);
+
+				function getTransformationMatrix() {
+					const viewMatrix = mat4.create();
+					mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(0, 0, -4));
+					const now = Date.now() / 1000;
+					mat4.rotate(
+						viewMatrix,
+						viewMatrix,
+						1,
+						vec3.fromValues(Math.sin(now), Math.cos(now), 0)
+					);
+
+					const modelViewProjectionMatrix = mat4.create();
+					mat4.multiply(modelViewProjectionMatrix, projectionMatrix, viewMatrix);
+
+					return modelViewProjectionMatrix;
+				}
+
+
+				function frame() {
+					const transformationMatrix = getTransformationMatrix();
+					device.queue.writeBuffer(
+						uniformBuffer,
+						0,
+						transformationMatrix.buffer,
+						transformationMatrix.byteOffset,
+						transformationMatrix.byteLength
+					);
+
+					const commandEncoder = device.createCommandEncoder();
+
+					renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+
+					const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+
+					passEncoder.setPipeline(raymarchingPipeline);
+					passEncoder.draw(4, 1, 0, 0);
+
+					passEncoder.setPipeline(cubePipeline);
+					passEncoder.setBindGroup(0, uniformBindGroup);
+					passEncoder.setVertexBuffer(0, verticesBuffer);
+					passEncoder.draw(cubeVertexCount, 1, 0, 0);
+
+					passEncoder.end();
+
+					device.queue.submit([commandEncoder.finish()]);
+					requestAnimationFrame(frame);
+				}
+
+				requestAnimationFrame(frame);
+			};
+			
+			initFn();
+
+			function downloadCanvasAsImage(){
+				let downloadLink = document.createElement('a');
+				downloadLink.setAttribute('download', 'CanvasAsImage.png');
+				let canvas = document.getElementById('rc');
+				canvas.toBlob(function(blob) {
+					let url = URL.createObjectURL(blob);
+					downloadLink.setAttribute('href', url);
+					downloadLink.click();
+				});
+			}
+
+		</script>
+	</head>
+	<body>
+		<button onclick="downloadCanvasAsImage()">Download</button>
+		<canvas id="rc" width="800" height="600"></canvas>
+	</body>
+</html>

@@ -1,7 +1,7 @@
 Flow: getting started (on Linux)
 ================================
 
-Much of the information in this getting-started is created for Ubuntu 18.04,
+Much of the information in this getting-started is created for Ubuntu 18.04/20.04,
 so some of the operations may be different for your Operating System of
 choice.
 
@@ -15,19 +15,13 @@ choice.
 4.  [Install `Haxe`](#install-haxe)
 5.  [Install `Neko`](#install-neko)
 6.  [Install `JDK`](#install-jdk)
-7.  [Compile Flow itself(Optional)](#compile-flow-itself-optional)
+7.  [Compile Flow itself(Optional)](#compile-flow-itselfoptional)
 8.  [Check it using flowcpp (C++ runner)](#c-runner-flowcpp)
 9.  [Install fdb, the Flow debugger](#fdb-the-flow-debugger)
 10. [Check it using flowjs (Javascript in browser)](#try-it-javascript-in-browser)
 11. [Try it (Executed via apache, in browser)](#try-it-executed-via-apache-in-browser)
 12. [Tools](#tools)
 13. [Profiling](#profiling)
-## Sample install script
-The `.travis.yml` file at the root level of the Flow repository is used
-on Travis-CI integration to install and configure Flow’s dependencies,
-build the Flow compiler, and run the flowunit tests suite, all on Ubuntu
-Linux. The commands in this file may be a useful guide for making the
-same happen on your own Linux system.
 # Environment configuration
 All environment variables should be defined in `~/.profile`. This is
 necessary since applications that are started from an application menu
@@ -40,13 +34,16 @@ so as a compromise you can store variables in some file, which is
 touch ~/.env
 echo "source ~/.env" | tee -a ~/.bashrc ~/.profile
 ```
-Also it can be useful to define environment variables in .xsessionrc. This way they will be 
+Also it can be useful to define environment variables in .xsessionrc. This way they will be
 [enabled for any X session](https://askubuntu.com/questions/82120/how-do-i-set-an-environment-variable-in-a-unity-session)
 
 # Backend
 ## MySQL
 Set up MySQL and MySQL Workbench:
+> https://dev.mysql.com/downloads/repo/apt/
 ```bash
+sudo dpkg -i mysql-apt-config_0.8.16-1_all.deb
+sudo apt update
 sudo apt install -y mysql-server mysql-client
 ```
 Make root@localhost user with empty password:
@@ -58,7 +55,7 @@ Configure MySQL-server mode:
 printf '[mysqld]
 sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
-More details on mysql setup can be found in `flow9/doc/mysql.markdown`
+More details on mysql setup can be found in [innovation/doc/mysql.markdown](https://github.com/area9innovation/innovation/blob/master/doc/mysql.markdown)
 
 ## PHP7.2
 Set up PHP:
@@ -119,7 +116,7 @@ git clone ssh://git@github.com/area9innovation/flow9.git
 ```
 
 Notice, that flow9 repo requires installed [Git LFS](https://git-lfs.github.com).
-You have to reclone the flow9 repository after installing Git LFS, or use 
+You have to reclone the flow9 repository after installing Git LFS, or use
 ```bash
 git lfs pull
 ```
@@ -166,9 +163,9 @@ work as well, but it is not guaranteed.
 version, you can do it manually either by downloading it from the
 official site
 
-    The [Neko download site](http://nekovm.org/download) offers both
-    32-bit and 64-bit binaries.  Make sure your haxe and neko match. Most
-    use the 32-bit version.
+The [Neko download site](http://nekovm.org/download) offers both
+32-bit and 64-bit binaries.  Make sure your haxe and neko match. Most
+use the 32-bit version.
 
 or via package manager like this:
 ```bash
@@ -260,12 +257,25 @@ wget -q -O /tmp/libpng12.deb http://mirrors.kernel.org/ubuntu/pool/main/libp/lib
   && sudo dpkg -i /tmp/libpng12.deb \
   && rm /tmp/libpng12.deb
 ```
+With Ubuntu 20.04, follow the instruction [here](https://askubuntu.com/questions/1136302/can-not-install-libpng12-so-0-on-ubuntu-19-04-for-packet-tracert-7) to proper install libpng12.
+
+Some distributions don't have latest `libpng12` versions in their repositories,
+and it can conflict with other packages, like `usrmerge`. You can find info on
+installing more recent versions of `libpng12` [here](https://askubuntu.com/questions/1116185/cant-install-libpng12-due-to-usrmerge-cant-run-packettracer-without-it).
+
 Download and setup QT 5.12.0 (or later):
 ```bash
 wget https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
 chmod +x qt-opensource-linux-x64-5.12.0.run
 ```
-**Install into `/opt/Qt5.12.0` and be sure to select all items to install!**
+
+If you are using Ubuntu, then you can also install QT via apt. This means you can install it without a UI, and without an QT account. It is done via:
+```bash
+sudo apt update
+sudo apt install qt5-default qtmultimedia5-dev qtwebengine5-dev libqt5websockets5-dev
+```
+
+**Install into `/opt/Qt/5.12.0` and be sure to select all items to install!**
 You might want to install into a different folder but it's important to create
 a symlink to the folder mentioned above and build with libraries statically
 linked from it if you plan on committing your QT byte runner to this repo.
@@ -276,7 +286,7 @@ rm qt-opensource-linux-x64-5.12.0.run
 
 ```bash
 sudo apt install libpulse-dev libglu1-mesa-dev qtchooser -y
-qtchooser -install qt512 ~/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
+qtchooser -install qt512 /opt/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
 echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone Area9's fork of asmjit repo:

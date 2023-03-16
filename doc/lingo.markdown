@@ -12,15 +12,33 @@ interprets pegcode bytecode.
 *lingo* is based on [Parsing Expression Grammars (PEG)](http://en.wikipedia.org/wiki/Parsing_expression_grammar)
 and inspired by [Ometa](http://tinlizzie.org/ometa/).
 
+* [Syntax](#syntax)
+* [Bindings and actions](#bindings-and-actions)
+* [Position of match in string](#position-of-match-in-string)
+* [Testing a grammar](#testing-a-grammar)
+* [Debug](#debug)
+* [Tracing](#tracing)
+* [Caching](#caching)
+* [Clearing the cache](#clearing-the-cache)
+* [Instruction level rule profiling](#instruction-level-rule-profiling)
+* [Common problems](#common-problems)
+* [Basic way of using a grammar in a flow program](#basic-way-of-using-a-grammar-in-a-flow-program)
+* [Using custom semantic actions](#using-custom-semantic-actions)
+* [Precompiling a grammar for efficiency](#precompiling-a-grammar-for-efficiency)
+* [How to handle white-space](#how-to-handle-white-space)
+* [Checking text for matching to grammar](#checking-text-for-matching-to-grammar)
+* [Joining multiple grammars](#joining-multiple-grammars)
+* [Compiling to native flow code](#compiling-to-native-flow-code)
 
-Syntax
-------
+
+
+## Syntax
 
 A *lingo* grammar consists of productions:
 
 	language = "World, hello" | "World, goodbye";
 
-A production starts with a name ('language'), an equal sign, and then a list of choices separted by
+A production starts with a name ('language'), an equal sign, and then a list of choices separated by
 pipes, and end with a semi-colon. This grammar matches the two strings "World, hello" or "World, goodbye".
 
 Each choice itself is a sequence of parsing elements. The following matches the same grammar:
@@ -32,7 +50,7 @@ where each choice is a sequence of three terminals.
 A terminal is the name used for lexical elements in a grammar - i.e. the basic elementary symbols 
 or words of the language, such as integers, keywords, identifiers, operator-symbols and similar. 
 Conversely, non-terminals are the "grammar" rules, where the rules for how the terminals (words) 
-can combine. In addition to terminals and non-terminals, normally white-space is considered a seperate
+can combine. In addition to terminals and non-terminals, normally white-space is considered a separate
 category. White-space is commonly any sequence, potentially empty, of space, tabs, newlines, carriage
 returns as well as comments. White-space is parsed, but otherwise thrown away.
 
@@ -53,7 +71,7 @@ Even though this grammar requires look-ahead to resolve, PEG grammars can parse 
 grammars efficiently, because it can cache partial parsings, and thus backtracking is
 efficient.
 
-The choice operator (`|`) is a committed choice operator, so if two choices are ambigious, 
+The choice operator (`|`) is a committed choice operator, so if two choices are ambiguous, 
 the first one matching is chosen:
 
 	dangling_else_solved = "if" exp "then" exp "else" exp | "if" exp "then" exp;
@@ -81,8 +99,7 @@ choices to the top-most choice level and it will work fine:
 
 For all normal use, the compiler does this automatically in the background.
 
-Bindings and actions
---------------------
+## Bindings and actions
 
 To build a structure to represent the outcome of a parsing, you can bind the results of productions
 to names, and use actions to build structures. Let's start with a simple grammar for adding 
@@ -141,8 +158,7 @@ Unfortunately, you cannot include information about the AST data structures type
 to either include the corresponding file in the flow program or, if you running lingo from command line, into 
 `pegcompiler.flow`.
 
-Position of match in string
----------------------------
+## Position of match in string
 
 As a special action, you can use `#` as a name which will give the index into the parsed string at this point.
 The grammar
@@ -151,10 +167,9 @@ The grammar
 
 will give the position of where the b's start, as well as where they end.
 
-Testing a grammar
------------------
+## Testing a grammar
 
-In this section we are going to change files in flow/lib folder. Be sure not to commit this to the public repo.
+In this section we are going to change files in flow/lib folder. Make sure not to commit this to the public repo.
 
 The recommended way of testing a lingo grammar:
 
@@ -227,17 +242,16 @@ which prints
 	ParseResult(3, Some(FaProgram([], [FaVarDecl("a", [], [FaInt(1, 2, 3)], 0, 3)], 0)))
 
 As you can see, the program also prints the number of seconds required to parse the string. Often, this number
-is too small to be noticable. To get more statistical data, you can parse the same string many times using
+is too small to be noticeable. To get more statistical data, you can parse the same string many times using
 the `testruns=10` flag:
 
 	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo test=a=1 testruns=100
 
 which takes 0.0156 seconds for 100 runs on my machine.
 
-Debug
------
+## Debug
 
-To help debugging lingo syntax and contructions the debug() pegaction, which prints the current Flow construct 
+To help debugging lingo syntax and constructions the debug() pegaction, which prints the current Flow construct 
 to console, helps quite a bit. Changing the example above: 
 
 	exp = int:e1 { debug(:e1) } "+" exp:e2 { debug(Add(:e1, :e2)) } 
@@ -258,8 +272,7 @@ will produce this console output
 
 for the input string "1+2".
 
-Tracing
--------
+## Tracing
 
 Another option to using the `debug()` action is to use tracing. This is done by adding `trace=1` to the invocation
 of pegcompiler when testing your grammar:
@@ -311,8 +324,7 @@ which results in this:
 	PARSE OF TEST SUCCESSFUL
 	Time to parse: 0
 
-Caching
--------
+## Caching
 
 To speed up parsing, it is possible to enable caching of the parsing of productions. This is useful
 to make backtracking efficient. To enable caching, append an exclamation mark right after the production name:
@@ -348,8 +360,7 @@ like
 
 to dump the cache stats in your own program.
 
-Clearing the cache
-------------------
+## Clearing the cache
 
 As an advanced feature, Lingo supports marking places in the grammar when the parsing cache can be safely
 cleared using the ~ operator:
@@ -363,8 +374,7 @@ automated analysis to find cutpoints, but we do support up-cuts and down-cuts wi
 clearing the cache. There is no choice-cut optimization implemented for these operators yet, but since
 we optimize the pegcode, there is probably little gain to be had from this.
 
-Instruction level rule profiling
---------------------------------
+## Instruction level rule profiling
 
 Normally, you get acceptable performance from adding the correct caching as noticed above, but sometimes,
 you really need to optimize a grammar to the max. In that situation, it is useful to do a very detailed 
@@ -378,8 +388,7 @@ including how many times each individual pegcode instruction is run to parse you
 you to see what choices to reorder to move the most common taken routes to the top, notice any parsing errors, 
 and otherwise allow fine-tuning of the grammar.
 
-Common problems
----------------
+## Common problems
 
 Unfortunately, our parser is not clever enough to find certain, common problems. Grammars
 like the following will seemingly compile just fine, but when you try to use them, they will 
@@ -415,8 +424,7 @@ This will not parse. You have to restructure the grammar not to have any indirec
 	int = digit+;
 	digit = '0'-'9';
 
-Basic way of using a grammar in a flow program
-----------------------------------------------
+## Basic way of using a grammar in a flow program
 
 Normally using the pegcompiler directly to compile and test your grammar is the best way to develop it,
 but sometimes, you want to use special semantic actions or integrate the grammar in an interactive
@@ -445,11 +453,10 @@ program. In this case, *flow* code like the following will work to prepare and r
 In production code where less console output is wanted `parsic3` can be used. It prepares a nice
 error message on parse failures, as well as a default value on errors.
 
-Once the grammar works, then you want to precompile the grammar for effiency and use that in production. 
+Once the grammar works, then you want to precompile the grammar for efficiency and use that in production. 
 See the next section to learn how to do that.
 
-Using custom semantic actions
------------------------------
+## Using custom semantic actions
 
 Now let's consider the example with a sum of integers and see how we can build a correct tree. Let's use
 subtraction to see why the order really matters. Here is the grammar:
@@ -550,7 +557,7 @@ We reach the end of input, but we do not expect anything else. So we fold the re
 buildSub([Int(1), [Int(2), Int(3)]])
 
 Now we need to define `buildSub` in our code. We have a list of arguments: the first one is the leftmost
-integer (which corrseponds to `int` in `exp` rule), the second one is the array of all other integers
+integer (which corresponds to `int` in `exp` rule), the second one is the array of all other integers
 (which corresponds to `sub*` in the `exp` rule), so we can just fold them this way:
 
 	buildSub(xs : [flow]) {
@@ -566,8 +573,7 @@ This function will produce Sub(Sub(Int(1), Int(2)), Int(3)) for the given exampl
 	}
 	parsic(lingoGrammar(), s, specialPegActions);
 
-Precompiling a grammar for efficiency
--------------------------------------
+## Precompiling a grammar for efficiency
 
 Instead of compiling the grammar at runtime with code like the above, it is more efficient to precompile 
 the grammar to pegcodes and then just use the opcodes at runtime.
@@ -614,8 +620,7 @@ when you use Yacc or Bison.
 If you need to have debugging info for the grammar, you can add `debug=1` to the pegcompiler, and it will also
 define a pegop4GrammarDebug variable. This is rarely needed.
 
-How to handle white-space
--------------------------
+## How to handle white-space
 
 You must pick a consistent policy for white-space (ws), so you do not have 
 more than one white-space rule in a row (for efficiency), but more importantly: 
@@ -694,8 +699,8 @@ this does not happen, since *Lingo* is eager and deterministic, but in case of
 parse errors, the engine will backtrack and could run into exponential slowdowns 
 because of an error like this.
 
-Checking text for matching to grammar
--------------------------------------
+
+## Checking text for matching to grammar
 
 If you just want to check if some text is matching to grammar you can use 
 `matchLingo(grammar : string, text : string) -> bool` from `lingo/match.flow`.
@@ -703,9 +708,7 @@ If you just want to check if some text is matching to grammar you can use
 	matchLingo("#include my.lingo", "r5")
 	matchLingo("digit = ('0'-'9')$s {$s};", "1")
 
-Joining multiple grammars
--------------------------
-
+## Joining multiple grammars
 When you use the pegcompiler to compile Lingo grammars, it is possible to provide multiple `.lingo` files to 
 join together into one grammar.
 
@@ -744,8 +747,7 @@ that allows foreign grammars to introduce their own constructs into the AST:
 
 See the flow AST for an example.
 
-Compiling to native flow code
------------------------------
+## Compiling to native flow code
 
 When the ultimate parsing speed is required, you can compile a Lingo grammar to a flow program, 
 which parses the grammar efficiently.

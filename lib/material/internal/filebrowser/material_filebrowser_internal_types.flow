@@ -1,15 +1,16 @@
 import fs/filebrowser;
-import material/material;
 import material/extra/filesystem/filesystem_extended_types;
+import material/internal/filebrowser/material_filebrowser_internal_engine;
 
 export {
 	FbObject(fullPath : string, url : string);
 
 	FbMStyle ::= FbStyle, FbMInitStyle;
 		FbMInitStyle ::= FbPathProcessing, FbAdditionalText, FbTopPanelCustomItem, FbGetCurrentPathB,
-				FbGetContentUpdateFn, FbFolderSelection, FbInitialSelection, FbDropFileFn, FbMultiSelect, FbHideBottomPanel,
+				FbGetContentUpdateFn, FbFolderSelection, FbInitialSelection, FbDropFilesCheckMaxFn, FbMultiSelect, FbHideBottomPanel,
 				FbAllowPathInput, FbFileFilter, FbSelectedNames, FbWhatIsChanged, FbGetFilesPreview, FbUploadMaxFileSize,
-				FbFileUseRegisteredIcons;
+				FbUploadImageMaxResolution, FbUploadVideoMaxBitrate, FbFileUseRegisteredIcons, FbEngine, FbImportEngine,
+				FbFilesUploadStyle;
 
 			FbPathProcessing(func:(string) -> string);
 			FbTopPanelCustomItem(getItem : (closeDialog : () -> void, enabled : Transform<bool>) -> Material, requiredAccessRight : PathAccessRight);
@@ -19,7 +20,9 @@ export {
 			// sel name will be displayed in filename textinput on start
 			// default value is ""
 			FbInitialSelection(sel : string);
-			FbDropFileFn(fn : (files : [native]) -> void);
+			// function to upload native files with filter on max size/resolution/bitrate
+			// if you need no filter - use the "FbDropFileFn()", see below
+			FbDropFilesCheckMaxFn(fn : (normalFiles : [native], toReduce : [native], largeSize : [native]) -> void);
 			// allows to select several files at once
 			FbMultiSelect();
 			// hide panel with "file name" input
@@ -35,14 +38,21 @@ export {
 			// Does not catch any changes if folder is not active
 			// (i.e. if you will open a folder where some elements were added/removed - you will not get callback)
 			// Returns full path to changed element
-			FbWhatIsChanged(fn : (added : [string], removed : [string], closeDialog : () -> void) -> void);
-			// Define the converter for "Files Paths" to "Material Preview"
-			// Used to load all preview contents at once
-			FbGetFilesPreview(fn : (filesPaths : [string], ([Pair<string, Material>]) -> void) -> void);
+			FbWhatIsChanged(fn : (added : [string], removed : [string], updated : [string], closeDialog : () -> void) -> void);
 			// Maximal allowed size of files for uploading (bytes) - used for files dropping
 			FbUploadMaxFileSize(size : int);
+			// Maximal allowed resolution of the images for uploading (pixels) - used for files dropping
+			FbUploadImageMaxResolution(resolution : int);
+			// Maximal allowed bitrate of the videos for uploading (kbps) - used for files dropping
+			FbUploadVideoMaxBitrate(bitrate : int);
 			// Allows to use in filebrowser icons, registerd by the app (for every extension), or simple (by default)
 			FbFileUseRegisteredIcons(useRegistered : bool);
+			// Allows to use given engine for filebrowser instead of current api
+			FbEngine(engine : FilesystemAsyncEngine<?, ??>);
+			// Activate `Import` button to copy files from the engines in the style to the current filebrowser
+			FbImportEngine(engines : [FilesystemAsyncEngine<?, ??>]);
+			// Default behaviour on files uploat (for reduce file dialog)
+			FbFilesUploadStyle(style : [FbFilterUploadDialog]);
 
 	FileBrowserButtonsM ::= OpenExtFBB, SaveExtFBB, CancelExtFBB, CustomExtFBB, CustomWithUpdateFBB;
 		OpenExtFBB(func : ([FbObject]) -> void);
@@ -50,4 +60,50 @@ export {
 		CancelExtFBB(func : () -> void);
 		CustomExtFBB(caption : string, func : (string, [string]) -> void);
 		CustomWithUpdateFBB(caption : string, func : (string, [string], () -> void) -> void);
+
+	FbSourceBase64(filename : string, contentBase64 : string);
+
+	FbFilterUploadDialog ::= FbFilterMaxValues, FbFilterDefaultBehaviours;
+
+		FbFilterMaxValues ::= FbFilterMaxFileSize, FbFilterMaxImageResolution, FbFilterMaxVideoBitrate;
+
+			// Max allowed size of the file (in bytes)
+			FbFilterMaxFileSize(size : int, behaviour : FbReduceShowInDialog);
+			FbFilterMaxSize(size : int) -> FbFilterMaxFileSize { FbFilterMaxFileSize(size, FbReduceShowInDialog(true)); };
+
+			// Max allowed resolution for each dimension (in px)
+			FbFilterMaxImageResolution(size : int, behaviour : FbReduceBehaviours);
+			FbFilterMaxResolution(size : int) -> FbFilterMaxImageResolution { FbFilterMaxImageResolution(size, FbReduceAskUser(true)); };
+
+			// Max allowed bitrate for the video (in kb/sec)
+			FbFilterMaxVideoBitrate(bitrate : int, behaviour : FbReduceBehaviours);
+			FbFilterMaxBitrate(bitrate : int) -> FbFilterMaxVideoBitrate { FbFilterMaxVideoBitrate(bitrate, FbReduceAskUser(true)); };
+
+		FbFilterDefaultBehaviours ::= FbDefaultResolutionReduce, FbDefaultBitrateReduce;
+
+			// Deprecated.
+			// Has the same meaning like FbReduceAskUser(reduce : bool)
+			FbDefaultResolutionReduce(reduce : bool);
+			FbDefaultBitrateReduce(reduce : bool);
+
+		FbReduceBehaviours ::= FbReduceDoAuto, FbReduceSkip, FbReduceAskUser;
+
+			// Reduce an image if necessary, without asking to user
+			FbReduceDoAuto();
+			// Do not reduce files any case
+			FbReduceSkip();
+			// Ask user what to do with a `large` file
+			FbReduceAskUser(defaultBehaviour : bool);
+			// Should we show such files in the doalog
+			FbReduceShowInDialog(show : bool);
+
+	filebrowserPictureExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".svg", ".gif"];
+	filebrowserVideoExtensions = [".mp4", ".webm", ".m4v", ".mov", ".flv", ".avi"];
+	filebrowserAudioExtensions = [".mp3", ".m4a"];
+
+	removeDotInExtensions(ext : [string]) -> [string] { map(ext, \e -> ltrim2(e, ".")); }
+
+	FbDropFileFn(fn : (files : [native]) -> void) -> FbDropFilesCheckMaxFn {
+		FbDropFilesCheckMaxFn(\normalFiles, toReduce, __ -> fn(concat(normalFiles, toReduce)));
+	};
 }

@@ -31,6 +31,7 @@ class VideoClip extends FlowContainer {
 	private var subtitlesScaleModeMin : Float = -1.0;
 	private var subtitlesScaleModeMax : Float = -1.0;
 	private var autoPlay : Bool = false;
+	private var isAudio : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
@@ -48,7 +49,7 @@ class VideoClip extends FlowContainer {
 				var checkingGap = Platform.isIOS ? 0.5 : 0.0;
 				v.checkTimeRange(videoWidget.currentTime, true, checkingGap);
 
-				if (RenderSupport.RendererType != "html") {
+				if (!v.isHTMLRenderer()) {
 					if (videoWidget.width != videoWidget.videoWidth || videoWidget.height != videoWidget.videoHeight) {
 						videoWidget.dispatchEvent(new js.html.Event("resize"));
 					}
@@ -69,6 +70,7 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
+		isFlowContainer = false;
 		super();
 
 		this.keepNativeWidget = true;
@@ -88,7 +90,10 @@ class VideoClip extends FlowContainer {
 					videoWidget.currentTime = endTime;
 				} else {
 					videoWidget.currentTime = startTime;
-					if (!videoWidget.loop) videoWidget.pause();
+					if (!videoWidget.loop) {
+						videoWidget.pause();
+						onStreamEnded();
+					}
 				}
 				positionFn(videoWidget.currentTime);
 			} else if (videoResponse) {
@@ -104,9 +109,9 @@ class VideoClip extends FlowContainer {
 
 		autoPlay = !startPaused;
 		addVideoSource(filename, "");
-		videoWidget = Browser.document.createElement("video");
+		videoWidget = Browser.document.createElement(this.isAudio ? "audio" : "video");
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.initNativeWidget("div");
 			nativeWidget.appendChild(videoWidget);
 		}
@@ -121,7 +126,7 @@ class VideoClip extends FlowContainer {
 			videoWidget.appendChild(source);
 		}
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			videoTexture = Texture.fromVideo(videoWidget);
 			untyped videoTexture.baseTexture.autoUpdate = false;
 			videoSprite = new Sprite(videoTexture);
@@ -172,8 +177,11 @@ class VideoClip extends FlowContainer {
 			this.updateNativeWidgetMask();
 			nativeWidget.style.transform = 'none';
 
-			var width = Math.round(this.getWidth() * untyped this.transform.scale.x);
-			var height = Math.round(this.getHeight() * untyped this.transform.scale.y);
+			var width0 = Math.round(this.getWidth() * untyped this.transform.scale.x);
+			var height0 = Math.round(this.getHeight() * untyped this.transform.scale.y);
+
+			var width = Math.isNaN(width0) ? 0 : width0;
+			var height = Math.isNaN(height0) ? 0 : height0;
 
 			videoWidget.width = width;
 			videoWidget.height = height;
@@ -215,6 +223,10 @@ class VideoClip extends FlowContainer {
 		}
 	}
 
+	public function setIsAudio() : Void {
+		this.isAudio = Util.getParameter("video2audio") != "0";
+	}
+
 	public function playVideo(filename : String, startPaused : Bool) : Void {
 		createVideoClip(filename, startPaused);
 	}
@@ -227,8 +239,8 @@ class VideoClip extends FlowContainer {
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {
-		startTime = start >= 0 ? start : 0;
-		endTime = end > startTime ? end : videoWidget.duration;
+		startTime = start >= 0 ? floorTime(start) : 0;
+		endTime = end > startTime ? floorTime(end) : videoWidget.duration;
 		checkTimeRange(videoWidget.currentTime, true);
 	}
 
@@ -375,14 +387,14 @@ class VideoClip extends FlowContainer {
 		this.invalidateTransform('onMetadataLoaded'); // Update the widget
 
 		if (textField != null) {
-			if (RenderSupport.RendererType != "html" && getChildIndex(videoSprite) > getChildIndex(textField)) {
+			if (!this.isHTMLRenderer() && getChildIndex(videoSprite) > getChildIndex(textField)) {
 				swapChildren(videoSprite, textField);
 			}
 
 			updateSubtitlesClip();
 		};
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			videoTexture.update();
 		}
 
@@ -401,7 +413,7 @@ class VideoClip extends FlowContainer {
 		calculateWidgetBounds();
 		this.invalidateTransform('updateVideoMetrics');
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			videoWidget.style.width = '${this.getWidth()}px';
 			videoWidget.style.height = '${this.getHeight()}px';
 		} else {
@@ -457,6 +469,22 @@ class VideoClip extends FlowContainer {
 		}
 	}
 
+	private function onStreamPlaying() : Void {
+		if (videoWidget != null) {
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Playing");
+			}
+		}
+	}
+
+	private function onStreamWaiting(e) : Void {
+		if (videoWidget != null) {
+			for (l in streamStatusListener) {
+				l("FlowGL.User.Waiting");
+			}
+		}
+	}
+
 	private function onFullScreen() : Void {
 		if (videoWidget != null) {
 			RenderSupport.fullScreenTrigger();
@@ -477,6 +505,7 @@ class VideoClip extends FlowContainer {
 
 	public function addVideoSource(src : String, type : String) : Void {
 		var source = Browser.document.createElement('source');
+		source.onerror = onStreamError;
 
 		untyped source.src = src;
 		if (type != "") {
@@ -490,6 +519,29 @@ class VideoClip extends FlowContainer {
 		}
 	}
 
+	public function setVideoExternalSubtitle(src : String, kind : String) : Void -> Void {
+		if (src == "") return function() {};
+
+		var track = Browser.document.createElement('track');
+		track.setAttribute('default', '');
+		track.setAttribute('src', src);
+		if (kind != "") {
+			track.setAttribute('kind', kind);
+		}
+
+		sources.push(track);
+		if (videoWidget != null) {
+			videoWidget.appendChild(track);
+		}
+
+		return function() {
+			sources.remove(track);
+			if (videoWidget != null) {
+				videoWidget.removeChild(track);
+			}
+		}
+	}
+
 	private function createStreamStatusListeners() {
 		if (videoWidget != null) {
 			videoWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
@@ -499,6 +551,8 @@ class VideoClip extends FlowContainer {
 			videoWidget.addEventListener("error", onStreamError, false);
 			videoWidget.addEventListener("play", onStreamPlay, false);
 			videoWidget.addEventListener("pause", onStreamPause, false);
+			videoWidget.addEventListener("playing", onStreamPlaying, false);
+			videoWidget.addEventListener("waiting", onStreamWaiting, false);
 		}
 	}
 
@@ -511,6 +565,8 @@ class VideoClip extends FlowContainer {
 			videoWidget.removeEventListener("error", onStreamError);
 			videoWidget.removeEventListener("play", onStreamPlay);
 			videoWidget.removeEventListener("pause", onStreamPause);
+			videoWidget.removeEventListener("playing", onStreamPlaying, false);
+			videoWidget.removeEventListener("waiting", onStreamWaiting, false);
 		}
 	}
 
@@ -559,6 +615,10 @@ class VideoClip extends FlowContainer {
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
 		return localBounds.getRectangle(rect);
+	}
+
+	private function floorTime(time : Float) : Float {
+		return Math.floor(time * 100) / 100;
 	}
 
 	public function calculateWidgetBounds() : Void {

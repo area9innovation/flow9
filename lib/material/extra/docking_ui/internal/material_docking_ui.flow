@@ -1,0 +1,285 @@
+import material/material;
+import material/internal/types;
+import material/internal/material_util;
+
+import material/extra/docking_ui/internal/material_docking_state;
+import material/extra/docking_ui/internal/material_docking_styles;
+import material/extra/docking_ui/internal/material_docking_theme;
+import material/extra/docking_ui/internal/material_docking_areas;
+
+export {
+
+	// USAGE:
+	// - Set up a dockable UI defining two main elements, "panels" and "layout", and stores layout changes into a "state".
+	// - Define your panels as of array of MDockingPanels, each one differs for the content type (MDockingPanelItem)
+	// - Inizialize the MDockingState with panel's information using "makeMDockingState" function
+	// - Design your layout using MDockingAreas as dockable areas.
+
+	// NOTE: example in flow9/lib/material/tests/test_docking_ui.flow
+
+	MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, style : [MDockingStyle]) -> Material;
+}
+
+
+MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, style : [MDockingStyle]) -> Material {
+	// Update state
+	filteredStyle = fold(style, [], \acc, st -> if (containsStruct(state.style, st)) acc else arrayPush(acc, st)); // avoid duplicates
+	uiStyle = concat(filteredStyle, state.style);
+	cacheEnabled = extractStruct(uiStyle, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
+	updateMDockingState(state, panelsA, cacheEnabled, uiStyle);
+
+	MSelect(state.redraw, \__ -> {
+		manager = state.manager;
+		titleA = state.title;
+		panelIconA = state.panelIcon;
+		contentA = state.content;
+		dockA = state.dock;
+		groupA = state.group;
+		sizeA = state.size;
+		mPositiosA = state.positions;
+		expandedA = state.expanded;
+		panelsStyleA = state.panelStyle;
+
+		onDrop = make(-1);
+		localPositionA = make([]);
+		minimizedA = make([]);
+		visibleA = make([]);
+		defSizeA = make([]);
+		start = make(false);
+		positionScale = make(zeroPositionScale);
+		zorder = getValue(manager.manager.zorder);
+		isDragging = manager.manager.dragging;
+		isDraggingT = fselect(isDragging, FLift(\dr -> (dr >= 0) && (dr < length(panelsA)) && getValue(state.dock)[dr].areaId >= 0 && zorder >= getValue(manager.manager.zorder)));
+
+		iteri(panelsA, \i, p -> {
+			next(localPositionA, replace(getValue(localPositionA), i , zeroPoint));
+		});
+
+		//overlay layout
+		movableDropArea = 
+			MConstruct([
+				// Redraw UI
+				makeSubscribe2(state.loadWorkspace, \__ -> {
+					// if redraw is false resets to default values, else takes panels from cache
+					updateMDockingState(state, panelsA, cacheEnabled && getValue(state.redraw), uiStyle);
+				}),
+				// makeSubscribe(state.dock, \d -> {println(d)}),
+				makeSubscribe(onDrop, \d -> {
+					if (d >= 0) {
+						posCorrection =
+							if (getValue(dockA)[d].areaId >= 0) {
+								isToolbar = isDockingToolbar(state, d);
+								topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
+								Point(10.0, topBarH / 2.0);
+							} else {
+								getValue(localPositionA)[d];
+							}
+
+						next(getValue(state.positions)[d], Point(
+							manager.manager.xy().x  - posCorrection.x - getValue(positionScale).pos.x,
+							manager.manager.xy().y - posCorrection.y - getValue(positionScale).pos.y
+						));
+
+						nextDistinct(getValue(state.enabled)[d], true);
+						nextDistinct(getValue(state.expanded)[d], true); // Alwaus open when undocking a panel to mobile
+						if (getValue(dockA)[d].areaId >= 0) undockPanel(state, d); //undock panel
+						next(localPositionA, replace(getValue(localPositionA), d, zeroPoint));
+					}
+				}),
+				// Update borwser cache
+				\ -> \ -> {
+					if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
+				}
+			],
+			MShow(isDraggingT,
+				MDropSpot2(make(-1), onDrop, TRectangle(interactiveRectangleStyle, TFillXY()), false)
+			));
+
+		movablePanelsLayer = mapi(panelsA, \i, p -> makeMovablePanel(state, i, localPositionA, style));
+
+		layoutBoxed = layout 
+			|> (\m -> { 
+				b = extractStruct(uiStyle, MDEditorBorders(dockingGap, dockingGap, dockingGap, dockingGap));
+				MGroup2(
+					MSelect(state.manager.white, \lg -> 
+						TRectangle([MFill(editorBgColorFn(lg, state.style))], TFillXY())
+					),
+					MBorder(b.left, b.top, b.right, b.bottom, m)
+				)
+			});
+
+		MInteractive([TMouseXY(state.mouseXy)],
+			MGroup(concatA([
+				// [makeMDockingDebugPrints(state)],        // Uncomment for debug prints
+				[TPositionScale(positionScale, TRectangle([MFill(MGrey(100))], TFillXY()))],
+				[MScroll(layoutBoxed, TFillXY(), [])],
+				movablePanelsLayer,
+				[movableDropArea]
+			]))
+		)
+	})
+}
+
+
+
+// Update MDockingState collecting data from panels and areas
+updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabled : bool, style : [MDockingStyle]) -> void {
+	titleA = state.title;
+	panelIconA = state.panelIcon;
+	contentA = state.content;
+	dockA = state.dock;
+	groupA = state.group;
+	mPositiosA = state.positions;
+	enabledA = state.enabled;
+	expandedA = state.expanded;
+	panelsStyleA = state.panelStyle;
+	offsetP = extractStruct(style, MDMobileOffset(Point(72.0, 72.0))).offsetPosition;
+
+	// Cache
+	keyGroupName = extractStruct(style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
+	savedString = getKeyValue(keyGroupName |> addDockingSuffix, "");
+
+	currentAreasA = getJsonFieldValueCustom(parseJson(savedString), "Current.DockingAreas", JsonNull(), [JsonFieldTreatAsPath(".")]);
+	currentPanelsA = getJsonFieldValueCustom(parseJson(savedString), "Current.Panels", JsonNull(), [JsonFieldTreatAsPath(".")]);
+
+	// Docking Areas
+	iter(reverseA(getTreeKeys(getValue(state.dockingAreas))),\areaName -> {
+		areaId = lookupTreeDef(getValue(state.dockingAreas), areaName, intMin);
+		areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
+
+		cachedArea = getJsonFieldValue(currentAreasA, areaName, JsonNull());
+
+		// Area Enable
+		areaEnableB = extractStruct(areaStyle, MDAreaEnable(make(true))).enable;
+		cAreaEnab = getJsonBoolValue(getJsonFieldValueCustom(currentAreasA, areaName + ".enabled", JsonNull(), [JsonFieldTreatAsPath(".")]), getValue(areaEnableB));
+		aenab = if (cacheEnabled) cAreaEnab else getValue(areaEnableB);
+		nextDistinct(areaEnableB, aenab);
+
+		// Area Accordion
+		accordionB = extractStruct(areaStyle, MDAreaAccordion(make(false), None())).enable;
+		cAreaAcc = getJsonBoolValue(getJsonFieldValueCustom(currentAreasA, areaName + ".accordion", JsonNull(), [JsonFieldTreatAsPath(".")]), getValue(accordionB));
+
+
+		aacc = if (cacheEnabled) cAreaAcc else getValue(accordionB);
+		nextDistinct(accordionB, aacc);
+	});
+
+	// End Alignment
+	alignToolbar = \pId : int  -> {
+		cachedPanel = getJsonFieldValueCustom(currentPanelsA, i2s(pId), JsonNull(), [JsonFieldTreatAsPath(".")]);
+		pstyle = getValue(state.panelStyle)[pId];
+		isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
+		cEndAligned = getJsonBoolValue(getJsonFieldValue(cachedPanel, "endAligned", JsonNull()), isEndAligned);
+		endAligned = if (cacheEnabled) cEndAligned else isEndAligned;
+
+		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), pId , 
+			replaceStruct(getValue(panelsStyleA)[pId], MDToolbarEndAlign(make(endAligned)))
+		));
+	}
+
+	// Panel's size
+	getPanelSize = \p : MDockingPanel, pId : int -> {
+		cachedPanel = getJsonFieldValueCustom(currentPanelsA, i2s(pId), JsonNull(), [JsonFieldTreatAsPath(".")]);
+
+		cWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "w", JsonNull()), doubleMax);
+		cHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "h", JsonNull()), doubleMax);
+		pWidth = if (cacheEnabled && (cWidth != doubleMax)) cWidth else p.size.width;
+		pHeight = (if (cacheEnabled && (cHeight != doubleMax)) cHeight else p.size.height);
+		cDockedWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "dockedW", JsonNull()), doubleMax);
+		cDockedHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "dockedH", JsonNull()), doubleMax);
+		dockedWidth = if (cacheEnabled && (cDockedWidth != doubleMax)) cDockedWidth else p.size.width;
+		dockedHeight = if (cacheEnabled && (cDockedHeight != doubleMax)) cDockedHeight else p.size.height;
+		cMobileWidth = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "mobileW", JsonNull()), doubleMax);
+		cMobileHeight = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "mobileH", JsonNull()), doubleMax);
+		mobileWidth = if (cacheEnabled && (cMobileWidth != doubleMax)) cMobileWidth else p.size.width;
+		mobileHeight = if (cacheEnabled && (cMobileHeight != doubleMax)) cMobileHeight else p.size.height;
+
+		nextDistinct(state.size, replace(getValue(state.size), pId , WidthHeight(pWidth, pHeight)));
+		nextDistinct(state.mobileSize, replace(getValue(state.mobileSize), pId , WidthHeight(mobileWidth, mobileHeight)));
+		nextDistinct(state.dockedSize, replace(getValue(state.dockedSize), pId , WidthHeight(dockedWidth, dockedHeight)));
+	}
+
+	// Update UI layout
+	iteri(panelsA, \i, p -> {
+
+		cachedPanel = getJsonFieldValueCustom(currentPanelsA, i2s(i), JsonNull(), [JsonFieldTreatAsPath(".")]);
+		
+		// Docking positions
+		cAreaId = getJsonIntValue(getJsonFieldValue(cachedPanel, "areaId", JsonNull()), intMax);
+		cColId = getJsonIntValue(getJsonFieldValue(cachedPanel, "colId", JsonNull()), intMax);
+		cRowId = getJsonIntValue(getJsonFieldValue(cachedPanel, "rowId", JsonNull()), intMax);
+		aId = if (cacheEnabled && cAreaId != intMax) cAreaId else p.panelDock.areaId;
+		cId = if (cacheEnabled && cColId != intMax) cColId else p.panelDock.colId;
+		rId = if (cacheEnabled && cRowId != intMax) cRowId else p.panelDock.rowId;
+		nextDistinct(dockA, replace(getValue(dockA), i , MDock(aId, cId, rId)));
+
+		// Panels
+		nextDistinct(titleA, replace(getValue(titleA), i , p.title));
+		nextDistinct(panelIconA, replace(getValue(panelIconA), i , extractStruct(p.style, MDPanelIcon("web_asset")).icon));
+		nextDistinct(contentA, replace(getValue(contentA), i , p.content));
+		nextDistinct(groupA, replace(getValue(groupA), i ,  extractStruct(p.style, MDPanelAllowedGroups([])).allowedGroups));
+		
+		// End Alignment
+		defPStyle = addMissingStruct(p.style, MDToolbarEndAlign(make(false)));
+		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), i , defPStyle));
+			
+		switch (p.content) {
+			// Toolbar
+			MDToolbarContent(buttonsA) : {
+				alignToolbar(i);
+				minWidth = extractStruct(p.style, MDToolbarThickness(dockingItemHeight)).thickness;
+				panelHeight = minWidth * i2d(length(buttonsA));
+				// NOTE: Toolbar size is given in vertical orientation, as a panel
+				size = WidthHeight(minWidth, panelHeight);
+				nextDistinct(state.size, replace(getValue(state.size), i , size));
+				nextDistinct(state.dockedSize, replace(getValue(state.dockedSize), i , size));
+				nextDistinct(state.mobileSize, replace(getValue(state.mobileSize), i , size));
+			}
+			// Content
+			MDPanelContent(__): {
+				getPanelSize(p, i);
+			}
+		};
+
+		// Expanded - accordion
+		areaStyle = lookupTreeDef(getValue(state.areaStyle), aId, []);
+		accordionA = eitherMap(tryExtractStruct(areaStyle, MDAreaAccordion(make(true), None())), \some -> [some], []);
+		accordion = firstElement(accordionA, MDAreaAccordion(make(true), None()));
+		isAccordion = accordionA != [];
+		isAccordionOpen = (isAccordion && either(accordion.openPanelName, "all_accordion_panel_closed") == p.title);
+		expandendDef = if (isAccordion) isAccordionOpen else true;
+		
+		// Expanded
+		expandedB = extractStruct(p.style, MDPanelExpanded(make(expandendDef))).expanded;
+		cExpanded = getJsonBoolValue(getJsonFieldValue(cachedPanel, "expanded", JsonNull()), getValue(expandedB));
+		expB = if (cacheEnabled) make(cExpanded) else expandedB;
+		nextDistinct(state.expanded, replace(getValue(state.expanded), i , expB));
+
+		// Side Expanded
+		sideExpandedB = extractStruct(p.style, MDPanelSideExpanded(make(true))).sideExpanded;
+		csideExpanded = getJsonBoolValue(getJsonFieldValue(cachedPanel, "sideExpanded", JsonNull()), getValue(sideExpandedB));
+		sExpB = if (cacheEnabled) make(csideExpanded) else sideExpandedB;
+		nextDistinct(state.sideExpanded, replace(getValue(state.sideExpanded), i , sExpB));
+
+		// Positions
+		zeroPosition = Point(
+			offsetP.x + 36.0 * i2d(i),
+			offsetP.y + dockingItemHeight * i2d(i)
+		);
+		positionB = extractStruct(p.style, MDPanelPosition(make(zeroPosition))).position;
+		cPosX = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "x", JsonNull()), getValue(positionB).x);
+		cPosY = getJsonDoubleValue(getJsonFieldValue(cachedPanel, "y", JsonNull()), getValue(positionB).y);
+		posB = if (cacheEnabled) make(Point(cPosX, cPosY)) else positionB;
+		nextDistinct(state.positions, replace(getValue(state.positions), i , posB));
+
+		// Enabled
+		enabledB = extractStruct(p.style, MDPanelEnabled(make(true))).enabled;
+		cEnabled = getJsonBoolValue(getJsonFieldValue(cachedPanel, "enabled", JsonNull()), getValue(enabledB));
+		enB = if (cacheEnabled) make(cEnabled) else enabledB;
+		nextDistinct(state.enabled, replace(getValue(state.enabled), i , enB));
+		// Undock disabled panels by default
+		// if (!getValue(enB)) undockPanel(state, i);
+	});
+
+	next(state.redraw, true);
+}

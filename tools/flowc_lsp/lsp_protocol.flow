@@ -20,6 +20,9 @@ import tools/flowc_lsp/lsp_utils;
 	- textDocument/hover
 	- textDocument/rename
 	- textDocument/completion
+	- textDocument/callHierarchy
+	- callHierarchy/incomingCalls
+	- callHierarchy/outgoingCalls
 	- workspace/executeCommand
 */
 
@@ -62,7 +65,7 @@ lspReadRequest() -> Maybe<LspRequest> {
 			json = readBytes(s2i(len));
 			Some(LspRequest(
 				header + json,
-				s2i(len), 
+				s2i(len),
 				lookupTreeDef(key_value, "Content-Type", ""),
 				json
 			));
@@ -73,9 +76,9 @@ lspReadRequest() -> Maybe<LspRequest> {
 
 LspMethodCall(
 	lspConf : Tree<string, string>,
-	id : Json, 
-	params : Json, 
-	out_cb : (Json) ->  void, 
+	id : Json,
+	params : Json,
+	out_cb : (Json) ->  void,
 	exit_cb : () -> void
 );
 
@@ -94,6 +97,9 @@ lspMethods = pairs2tree([
 	Pair("textDocument/hover", lspTextDocumentHover),
 	Pair("textDocument/rename", lspTextDocumentRename),
 	Pair("textDocument/completion", lspTextDocumentCompletion),
+	Pair("textDocument/prepareCallHierarchy", lspTextDocumentPrepareCallHierarchy),
+	Pair("callHierarchy/incomingCalls", lspCallHierarchyIncomingCalls),
+	Pair("callHierarchy/outgoingCalls", lspCallHierarchyOutgoingCalls),
 	Pair("workspace/executeCommand", lspWorkspaceExecuteCommand),
 ]);
 
@@ -106,7 +112,7 @@ LspServerState(
 lspServerState = LspServerState(JsonNull(), 1, makeTree());
 
 lspErrorResponse(id : Json, code : int, msg : string) -> Json {
-	lspResponseMessage2Json(LspResponseMessage("2.0", id, JsonNull(), 
+	lspResponseMessage2Json(LspResponseMessage("2.0", id, JsonNull(),
 		Some(LspResponseError(code, msg, JsonNull()))
 	));
 }
@@ -146,8 +152,8 @@ lspProcessRequest(lsp_conf : Tree<string, string>, json : Json, str_out_cb : (st
 					// TODO: handle properly
 					switch (lookupTree(lspServerState.requests, response.id)) {
 						Some(request): {
-							lspServerLog("response to the request: " + 
-								json2string(lspRequestMessage2Json(request)) + ":\n" + 
+							lspServerLog("response to the request: " +
+								json2string(lspRequestMessage2Json(request)) + ":\n" +
 								json2string(lspResponseMessage2Json(response))
 								, lsp_conf
 							);
@@ -178,9 +184,9 @@ lspExit(call : LspMethodCall) -> void {
 
 lspInitialized(call: LspMethodCall) -> void {
 	if (getJsonBoolField(getJsonNestedField(lspServerState.clientConf, ["capabilities", "workspace", "didChangeConfiguration"]), "dynamicRegistration", false)) {
-		request = LspRequestMessage("2.0", JsonDouble(i2d(lspServerState.currId)), "client/registerCapability", 
+		request = LspRequestMessage("2.0", JsonDouble(i2d(lspServerState.currId)), "client/registerCapability",
 			lspRegistrationParams2Json(LspRegistrationParams([
-				LspRegistration(makeUuid(), "textDocument/didChange", 
+				LspRegistration(makeUuid(), "textDocument/didChange",
 					lspTextDocumentChangeRegistrationOptions2Json(
 						LspTextDocumentChangeRegistrationOptions([LspDocumentFilter("flow", "file", "*.{flow}")], 1)
 					)
@@ -196,7 +202,7 @@ lspInitialized(call: LspMethodCall) -> void {
 
 lspInitialize(call: LspMethodCall) -> void {
 	lspServerState.clientConf ::= call.params;
-	call.out_cb(lspNormalResponse(call.id, 
+	call.out_cb(lspNormalResponse(call.id,
 		JsonObject([
 			Pair("capabilities", JsonObject([
 					Pair("declarationProvider", JsonBool(true)),
@@ -207,10 +213,10 @@ lspInitialize(call: LspMethodCall) -> void {
 					Pair("documentSymbolProvider", JsonBool(true)),
 					Pair("hoverProvider", JsonBool(true)),
 					Pair("renameProvider", JsonBool(true)),
-					Pair("executeCommandProvider", 
+					Pair("executeCommandProvider",
 						JsonObject([Pair("commands", JsonArray([JsonString("compile")]))])
 					),
-					Pair("completionProvider", 
+					Pair("completionProvider",
 						JsonObject([
 							Pair("triggerCharacters", JsonArray([JsonString("."), JsonString("/")])),
 							Pair("allCommitCharacters", JsonArray([])),
@@ -218,6 +224,7 @@ lspInitialize(call: LspMethodCall) -> void {
 							Pair("workDoneProgress", JsonBool(false))
 						])
 					),
+					Pair("callHierarchyProvider", JsonBool(true)),
 					Pair("textDocumentSync",
 						JsonObject([
 							Pair("openClose", JsonBool(true)),
@@ -233,8 +240,8 @@ lspInitialize(call: LspMethodCall) -> void {
 lspTextDocumentDidOpen(call: LspMethodCall) -> void {
 	switch (json2LspTextDocumentItem(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textitem): {
-			path = fcCorrectUriPath(textitem.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(textitem.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOption(conf, "update-cache", "1"),
 				\code, out, err -> {
@@ -262,9 +269,9 @@ lspTextDocumentDidOpen(call: LspMethodCall) -> void {
 
 lspTextDocumentDidChange(call: LspMethodCall) -> void {
 	switch (json2LspDidChangeTextDocumentParams(call.params)) {
-		Some(params): { 
-			path = fcCorrectUriPath(params.textDocument.uri.path);
-			conf = lspFileConfig(path);
+		Some(params): {
+			path = fcUriPath2path(params.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
 						Pair("did-change", path),
@@ -287,8 +294,8 @@ lspTextDocumentDidChange(call: LspMethodCall) -> void {
 lspTextDocumentDidSave(call: LspMethodCall) -> void {
 	switch (json2LspDidSaveTextDocumentParams(call.params)) {
 		Some(params): {
-			path = fcCorrectUriPath(params.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(params.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true, setConfigOption(conf, "did-save", path), nop3);
 		}
 		None(): {
@@ -300,8 +307,8 @@ lspTextDocumentDidSave(call: LspMethodCall) -> void {
 lspTextDocumentDocumentSymbol(call: LspMethodCall) -> void {
 	switch (json2LspTextDocumentIdentifier(getJsonObjectField(call.params, "textDocument"))) {
 		Some(textid): {
-			path = fcCorrectUriPath(textid.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(textid.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOption(conf, "print-outline", "1"),
 				\code, out, err -> {
@@ -324,12 +331,12 @@ lspTextDocumentDocumentSymbol(call: LspMethodCall) -> void {
 lspTextDocumentDeclaration(call: LspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			path = fcCorrectUriPath(textpos.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(textpos.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
-						Pair("exp-line", i2s(textpos.position.line)), 
-						Pair("exp-column", i2s(textpos.position.character)), 
+						Pair("exp-line", i2s(textpos.position.line)),
+						Pair("exp-column", i2s(textpos.position.character)),
 						Pair("find-declaration", "1")
 					]
 				),
@@ -353,12 +360,12 @@ lspTextDocumentDeclaration(call: LspMethodCall) -> void {
 lspTextDocumentDefinition(call: LspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			path = fcCorrectUriPath(textpos.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(textpos.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
-						Pair("exp-line", i2s(textpos.position.line)), 
-						Pair("exp-column", i2s(textpos.position.character)), 
+						Pair("exp-line", i2s(textpos.position.line)),
+						Pair("exp-column", i2s(textpos.position.character)),
 						Pair("find-definition", "1")
 					]
 				),
@@ -382,12 +389,12 @@ lspTextDocumentDefinition(call: LspMethodCall) -> void {
 lspTextDocumentReferences(call: LspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			path = fcCorrectUriPath(textpos.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(textpos.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
-						Pair("exp-line", i2s(textpos.position.line)), 
-						Pair("exp-column", i2s(textpos.position.character)), 
+						Pair("exp-line", i2s(textpos.position.line)),
+						Pair("exp-column", i2s(textpos.position.character)),
 						Pair("find-uses", "1")
 					]
 				),
@@ -411,13 +418,13 @@ lspTextDocumentReferences(call: LspMethodCall) -> void {
 lspTextDocumentHover(call: LspMethodCall) -> void {
 	switch (json2LspTextDocumentPositionParams(call.params)) {
 		Some(textpos): {
-			path = fcCorrectUriPath(textpos.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(textpos.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
-						Pair("exp-line", i2s(textpos.position.line)), 
-						Pair("exp-column", i2s(textpos.position.character)), 
-						Pair("symbol-info", "1")
+						Pair("exp-line", i2s(textpos.position.line)),
+						Pair("exp-column", i2s(textpos.position.character)),
+						Pair("symbol-info-md", "1")
 					]
 				),
 				\code, out, err -> {
@@ -426,7 +433,7 @@ lspTextDocumentHover(call: LspMethodCall) -> void {
 						call.out_cb(lspNormalResponse(call.id, JsonNull()));
 					} else {
 						if (isNotSpace(out)) {
-							hover = LspHover([LspMarkedString("flow", out)], None());
+							hover = LspHover(LspMarkupContent("markdown", out), None());
 							call.out_cb(lspNormalResponse(call.id, lspHover2Json(hover)));
 						} else {
 							call.out_cb(lspNormalResponse(call.id, JsonNull()));
@@ -444,12 +451,12 @@ lspTextDocumentHover(call: LspMethodCall) -> void {
 lspTextDocumentRename(call: LspMethodCall) -> void {
 	switch (json2LspRename(call.params)) {
 		Some(rename): {
-			path = fcCorrectUriPath(rename.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(rename.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
-						Pair("exp-line", i2s(rename.position.line)), 
-						Pair("exp-column", i2s(rename.position.character)), 
+						Pair("exp-line", i2s(rename.position.line)),
+						Pair("exp-column", i2s(rename.position.character)),
 						Pair("rename", "1"),
 						Pair("to", rename.newName),
 					]
@@ -473,12 +480,12 @@ lspTextDocumentRename(call: LspMethodCall) -> void {
 lspTextDocumentCompletion(call: LspMethodCall) -> void {
 	switch (json2LspCompletionParams(call.params)) {
 		Some(completion): {
-			path = fcCorrectUriPath(completion.textDocument.uri.path);
-			conf = lspFileConfig(path);
+			path = fcUriPath2path(completion.textDocument.uri.path);
+			conf = lspFileConfig2(path);
 			lspRunConf(true,
 				setConfigOptions(conf, [
-						Pair("exp-line", i2s(completion.position.line)), 
-						Pair("exp-column", i2s(completion.position.character)), 
+						Pair("exp-line", i2s(completion.position.line)),
+						Pair("exp-column", i2s(completion.position.character)),
 						Pair("complete", "1"),
 						Pair("complete-kind", i2s(completion.context.triggerKind)),
 						Pair("complete-character", completion.context.triggerCharacter),
@@ -509,6 +516,102 @@ lspTextDocumentCompletion(call: LspMethodCall) -> void {
 	}
 }
 
+lspTextDocumentPrepareCallHierarchy(call: LspMethodCall) -> void {
+	switch (json2LspTextDocumentPositionParams(call.params)) {
+		Some(textpos): {
+			path = fcUriPath2path(textpos.textDocument.uri.path);
+			conf = lspFileConfig2(path);
+			lspRunConf(true,
+				setConfigOptions(conf, [
+						Pair("exp-line", i2s(textpos.position.line)),
+						Pair("exp-column", i2s(textpos.position.character)),
+						Pair("calls-info", "1")
+					]
+				),
+				\code, out, err -> {
+					if (lspDetectLspError(out, call.lspConf)) {
+						call.out_cb(lspErrorDiagnostics(textpos.textDocument.uri, out));
+						call.out_cb(lspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							item = parseJsonSafe(out); //LspHover([LspMarkedString("flow", out)], None());
+							call.out_cb(lspNormalResponse(call.id, JsonArray([item])));
+						} else {
+							call.out_cb(lspNormalResponse(call.id, JsonNull()));
+						}
+					}
+				}
+			);
+		}
+		None(): {
+			call.out_cb(lspErrorResponse(call.id, 1, "prepareCallHierarchy request is illegal"));
+		}
+	}
+}
+
+lspCallHierarchyIncomingCalls(call: LspMethodCall) -> void {
+	switch (json2LspCallHierarchyIncomingCallsParams(call.params)) {
+		Some(params): {
+			path = fcUriPath2path(params.item.uri.path);
+			conf = lspFileConfig2(path);
+			lspRunConf(true,
+				setConfigOptions(conf, [
+						Pair("calls-incoming", json2string(lspCallHierarchyItem2Json(params.item))),
+					]
+				),
+				\code, out, err -> {
+					if (lspDetectLspError(out, call.lspConf)) {
+						call.out_cb(lspErrorDiagnostics(params.item.uri, out));
+						call.out_cb(lspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							incoming = parseJsonSafe(out);
+							call.out_cb(lspNormalResponse(call.id, incoming));
+						} else {
+							call.out_cb(lspNormalResponse(call.id, JsonNull()));
+						}
+					}
+				}
+			);
+		}
+		None(): {
+			call.out_cb(lspErrorResponse(call.id, 1, "callHierarchy/incomingCalls request is illegal"));
+		}
+	}
+}
+
+lspCallHierarchyOutgoingCalls(call: LspMethodCall) -> void {
+	switch (json2LspCallHierarchyOutgoingCallsParams(call.params)) {
+		Some(params): {
+			path = fcUriPath2path(params.item.uri.path);
+			conf = lspFileConfig2(path);
+			lspRunConf(true,
+				setConfigOptions(conf, [
+						Pair("calls-outgoing", json2string(lspCallHierarchyItem2Json(params.item)))
+					]
+				),
+				\code, out, err -> {
+					if (lspDetectLspError(out, call.lspConf)) {
+						call.out_cb(lspErrorDiagnostics(params.item.uri, out));
+						call.out_cb(lspNormalResponse(call.id, JsonNull()));
+					} else {
+						if (isNotSpace(out)) {
+							outgoing = parseJsonSafe(out);
+							call.out_cb(lspNormalResponse(call.id, outgoing));
+						} else {
+							call.out_cb(lspNormalResponse(call.id, JsonNull()));
+						}
+					}
+				}
+			);
+		}
+		None(): {
+			call.out_cb(lspErrorResponse(call.id, 1, "callHierarchy/outgoingCalls request is illegal"));
+		}
+	}
+}
+
+
 lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 	switch (json2LspExecuteCommandParams(call.params)) {
 		Some(commandParams): {
@@ -518,7 +621,7 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 					call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation is provided"));
 				} else {
 					file = ref "";
-					params = filtermap(commandParams.arguments, \arg -> 
+					params = filtermap(commandParams.arguments, \arg ->
 						switch (arg) {
 							JsonString(str): {
 								opt_val = strSplit(str, "=");
@@ -540,13 +643,12 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 					if (^file == "") {
 						call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation"));
 					} else {
-						path = fcCorrectUriPath(^file);
-						conf = lspFileConfig(path);
+						conf = lspFileConfig2(^file);
 						lspRunConf(false,
-							setConfigOptions(conf, params), 
+							setConfigOptions(conf, params),
 							\code, out, err -> {
 								msg = if (err == "") out else err + "\n" + out;
-								call.out_cb(lspErrorDiagnostics(parseURI(path), msg));
+								lspCallOutErrorDiagnostics(call.out_cb, msg);
 								call.out_cb(lspNormalResponse(call.id, JsonString(msg)));
 							}
 						);
@@ -554,7 +656,7 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 				}
 			} else if (commandParams.command == "command") {
 				// Execute a general command
-				params = filtermap(commandParams.arguments, \arg -> 
+				params = filtermap(commandParams.arguments, \arg ->
 					switch (arg) {
 						JsonString(str): {
 							opt_val = strSplit(str, "=");
@@ -570,12 +672,25 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 				);
 				conf = compilerConfigFromConfig(pairs2tree(params));
 				lspRunConf(false,
-					conf, 
+					conf,
 					\code, out, err -> {
 						msg = if (err == "") out else err + "\n" + out;
 						call.out_cb(lspNormalResponse(call.id, JsonString(msg)));
 					}
 				);
+			} else if (commandParams.command == "setVerbose") {
+				verboseM = findmap(commandParams.arguments, \arg -> {
+					argStr = getJsonStringValue(arg, "");
+					if (startsWith(argStr, "verbose=")) {
+						Some(s2i(takeAfter(argStr, "verbose=", "")));
+					} else {
+						None();
+					}
+				});
+				maybeApply(verboseM, \verbose -> {
+					lspVerbose := verbose;
+					call.out_cb(lspNormalResponse(call.id, JsonString("verbose: " + i2s(verbose))));
+				});
 			} else {
 				call.out_cb(lspErrorResponse(call.id, 1, "Unknown command: '" + commandParams.command + "'"));
 			}
@@ -583,5 +698,15 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 		None(): {
 			call.out_cb(lspErrorResponse(call.id, 1, "ExecuteCommand request is illegal"));
 		}
+	}
+}
+
+lspVerbose = ref 0;
+lspFileConfig2(path : string) -> CompilerConfig {
+	config = lspFileConfig(path);
+	if (^lspVerbose == 0) {
+		config;
+	} else {
+		CompilerConfig(config with verbose = ^lspVerbose);
 	}
 }

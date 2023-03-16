@@ -26,14 +26,17 @@ export {
 		parameterName : string,
 		tabIndexB : DynamicBehaviour<int>,
 		action : PebbleAction,
-		tabs : [PebbleTab],
+		tabs : Transform<[PebbleTabDynamic]>,
 		style : [MTabsStyle]
 	) -> Material;
 
-	PebbleTab : (uid : string, name : string, content : Material, style : [MTabStyle]);
+	PebbleTabDynamic : (uid : string, name : Transform<string>, content : Material, style : [MTabStyle]);
+	PebbleTab(uid : string, name : string, content : Material, style : [MTabStyle]) -> PebbleTabDynamic {
+		PebbleTabDynamic(uid, const(name), content, style);
+	}
 
 	makePebbleTabName(s : string) -> string;
-	tabs2PebbleTabs(tabs : [Pair<string, Material>]) -> [PebbleTab];
+	tabs2PebbleTabs(tabs : [Pair<string, Material>]) -> [PebbleTabDynamic];
 }
 
 buildPebbledTabs(
@@ -47,13 +50,9 @@ buildPebbledTabs(
 		"t",
 		make(0),
 		RecordURLRestoreOrChange(),
-		tabs2PebbleTabs(tabs),
+		const(tabs2PebbleTabs(tabs)),
 		style
 	)
-}
-
-makeDummyPebbleTab() -> PebbleTab {
-	PebbleTab("", "", MEmpty(), [])
 }
 
 buildCustomPebbledTabs(
@@ -61,19 +60,18 @@ buildCustomPebbledTabs(
 	parameterName : string,
 	tabIndexB : DynamicBehaviour<int>,
 	action : PebbleAction,
-	tabs : [PebbleTab],
+	tabs : Transform<[PebbleTabDynamic]>,
 	style : [MTabsStyle]
 ) -> Material {
-	if (tabs == []) {
-		MEmpty()
-	} else {
-		tabUids = map(tabs, \t -> t.uid);
-		findTabIndexByUid = \uid -> findiDef(tabUids, eq(uid), 0);
-		findTabUidByIndex = \index -> elementAt(tabUids, index, "");
+	tabUids = fmap(tabs, \t -> t.uid);
+	findTabIndexByUid = \uid -> findiDef(fgetValue(tabUids), eq(uid), 0);
+	findTabUidByIndex = \index -> elementAt(fgetValue(tabUids), index, "");
 
-		zeroTabUid = findTabUidByIndex(getValue(tabIndexB));
-		tabUidB = make(zeroTabUid);
+	zeroTabUid = fselect(tabUids, FLift(\__ -> findTabUidByIndex(getValue(tabIndexB))));
+	tabUidB = make(fgetValue(zeroTabUid));
 
+	MConstruct(
+		[makeSubscribe2(zeroTabUid, \ztuid -> nextDistinct(tabUidB, ztuid))],
 		MLinkPebbleParameters(controller,
 			[
 				PebbleStringLink(
@@ -82,12 +80,12 @@ buildCustomPebbledTabs(
 					\tabUid -> {
 						// It's for lost filters in case of opening tabs without preset "t" parameter
 						pebbleStack = getValue(controller.pebbleStackB);
-						if (!contains(tabUids, tabUid) && pebbleStack != [] && length(tabs) > 1) {
+						if (!contains(fgetValue(tabUids), tabUid) && pebbleStack != [] && length(fgetValue(tabs)) > 1) {
 							currentURL = getBrowserURL();
 							correctURL = takeBefore(currentURL, "#", currentURL) +
-								pebble2UrlHash(extendCurrentPebbleWithParameter(controller, parameterName, zeroTabUid));
+								pebble2UrlHash(extendCurrentPebbleWithParameter(controller, parameterName, fgetValue(zeroTabUid)));
 							last = length(pebbleStack) - 1;
-							fixedPebble = setLastPathPartParameter(pebbleStack[last], parameterName, zeroTabUid);
+							fixedPebble = setLastPathPartParameter(pebbleStack[last], parameterName, fgetValue(zeroTabUid));
 							next(
 								controller.pebbleStackB,
 								replace(
@@ -104,8 +102,8 @@ buildCustomPebbledTabs(
 			],
 			MConstruct([
 					\-> bidirectionalLink(tabUidB, tabIndexB, findTabIndexByUid, findTabUidByIndex)
-				], MTabs(
-					mapi(tabs, \index, tab -> {
+				], MDynamicTabs(
+					fmapi(tabs, \index, tab -> {
 						switch (tryExtractStruct(tab.style, MTabConfirmSwitch(nop1))) {
 							Some(confirmStyle): {
 								MTab(
@@ -127,12 +125,12 @@ buildCustomPebbledTabs(
 										Some(\-> true),
 										tab.content
 									),
-									const(tab.name),
+									tab.name,
 									tab.style
 								)
 							}
 							None(): {
-								MTab(tab.content, const(tab.name), tab.style)
+								MTab(tab.content, tab.name, tab.style)
 							}
 						}
 					}),
@@ -141,14 +139,14 @@ buildCustomPebbledTabs(
 				)
 			)
 		)
-	}
+	)
 }
 
 makePebbleTabName(s : string) -> string {
 	humanizeName(s)
 }
 
-tabs2PebbleTabs(tabs : [Pair<string, Material>]) -> [PebbleTab] {
+tabs2PebbleTabs(tabs : [Pair<string, Material>]) -> [PebbleTabDynamic] {
 	map(tabs, \tab -> {
 		PebbleTab(
 			makePebbleTabUid(tab.first),

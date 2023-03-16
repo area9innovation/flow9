@@ -1,0 +1,427 @@
+import tools/gringo/compiler/dopcode;
+import runtime;
+
+export {
+	optimizeDOpCode(d : DOpCode) -> DOpCode;
+}
+
+optimizeDOpCode(d : DOpCode) -> DOpCode {
+	switch (d) {
+		DFunction(name, code, body): {
+			DFunction(name, optimizeDOpCode(code), optimizeDOpCode(body));
+		}
+		DTrue(): d;
+		DFalse(): d;
+		DString(s): d;
+		DIf(cond, then, else_): {
+			// Split any prefix in the condition out in front
+			oc = optimizeDOpCode(cond);
+			split = splitDSequence(oc);
+
+			ot = optimizeDOpCode(then);
+			oe = optimizeDOpCode(else_);
+			seq = concat(split.first,
+					if (isDOpCodeTrue(split.second)) {
+						[ot]
+					} else if (split.second == DFalse()) {
+						[oe];
+					} else if (ot == DTrue() && oe == DFalse()) {
+						[split.second]
+					} else if (isDOpCodeAlwaysTrue(split.second)) {
+						// No need for the else, but we keep the condition for side-effect
+						[split.second, ot]
+					} else {
+						[optimizeNestedDIfForOr(optimizeNestedDIfForAnd(DIf(split.second, ot, oe)))]
+					}
+				);
+			if (length(seq) == 1) seq[0]
+			else optimizeDOpCode(DSequence(seq))
+		}
+		DSequence(exps): {
+			seq = concatA(filtermapi(exps, \i, e -> {
+				co = optimizeDOpCode(e);
+				islast = i == length(exps) - 1;
+				if (!islast && (co == DSequence([]) || co == DTrue() || co == DFalse())) {
+					None();
+				} else {
+					Some(switch (co) {
+						DSequence(ns): ns;
+						default: [co];
+					})
+				}
+			}));
+			nseq = optimizeDMatchString(seq, 0, []);
+			if (nseq == [DMatched(), DTrue()]) {
+				DMatched();
+			} else {
+				r = optimizeDPushDiscardSequence(nseq);
+				if (r != d) {
+					optimizeDOpCode(r);
+				} else r
+			}
+		}
+		DPushCheckpoint(): d;
+		DDiscardCheckpoint(): d;
+		DRestoreCheckpoint(): d;
+		DParseStar(term): DParseStar(optimizeDOpCode(term));
+		DAddError(error): d;
+		DCaptureI(): d;
+		DMatched(): d;
+		DPosition(): d;
+		DAddVerbatim(e): DAddVerbatim(optimizeDOpCode(e));
+		DAddMatched(e): DAddMatched(optimizeDOpCode(e));
+		DMatchString(text): d;
+		DMatchRange(lower, upper): d;
+		DCall(id): d;
+		DAnd(left, right): {
+			DAnd(optimizeDOpCode(left), optimizeDOpCode(right));
+		}
+		DOr(left, right): {
+			DOr(optimizeDOpCode(left), optimizeDOpCode(right));
+		}
+	}
+}
+
+/*
+	if (<cond1>) {
+		if (<cond2>) {
+			<something>
+		} else {
+			<else>
+		}
+	} else {
+		<else>
+	}
+
+can be rewritten to be
+
+	if (<cond1> && <cond2>) {
+		<something>
+	} else {
+		<else>
+	}
+
+*/
+optimizeNestedDIfForAnd(d : DIf) -> DIf {
+	switch (d.then) {
+		DIf(cond, then, else_): {
+			if (existsDOpCode(d.cond, isDNotAndable)
+				|| existsDOpCode(cond, isDNotAndable)) {
+				d;
+			} else if (else_ == d.else_) {
+				// OK, we can rewrite to use an and
+				DIf(DAnd(d.cond, cond), then, else_)
+			} else {
+				d;
+			}
+		}
+		default: d;
+	}
+}
+
+/*
+Also,
+
+	if (<cond1>) {
+		<then>
+	} else {
+		if (<cond2>) {
+			<then>
+		} else {
+			<else>
+		}
+	}
+
+can be rewritten to be
+
+	if (<cond1> || <cond2>) {
+		<then>
+	} else {
+		<else>
+	}
+
+*/
+optimizeNestedDIfForOr(d : DIf) -> DIf {
+	switch (d.else_) {
+		DIf(cond, then, else_): {
+			if (existsDOpCode(d.cond, isDNotAndable)
+				|| existsDOpCode(cond, isDNotAndable)) {
+				d;
+			} else if (then == d.then) {
+				// OK, we can rewrite to use an or
+				DIf(DOr(d.cond, cond), then, else_)
+			} else {
+				d;
+			}
+		}
+		default: d;
+	}
+}
+
+
+// If this is a sequence, split into the head and the tail
+splitDSequence(f : DOpCode) -> Pair<[DOpCode], DOpCode> {
+	switch (f) {
+		DSequence(exprs): {
+			n = length(exprs);
+			if (n == 0) Pair([], f)
+			else Pair(subrange(exprs, 0, n - 1), exprs[n-1]);
+		}
+		default: Pair([], f);
+	}
+}
+
+
+// Does this always return true?
+isDOpCodeTrue(d : DOpCode) -> bool {
+	switch (d) {
+		DTrue(): true;
+		default: false;
+	}
+}
+
+doesDOpCodeReturnTrue(d : DOpCode) -> bool {
+	switch (d) {
+		DTrue(): true;
+		DAddVerbatim(__): true;
+		DAddMatched(__): true;
+		DAddError(__): true;
+		DDiscardCheckpoint(): true;
+		DSequence(ops): {
+			if (ops == []) false
+			else isDOpCodeTrue(lastElement(ops, DTrue()))
+		}
+		default: false;
+	}
+}
+
+/*
+	DSequence([
+		...,
+		DPushCheckpoint(),
+		DIf(
+			DMatchString(<string>) or DMatchRange or sequence of and|or of these,
+			<exp>,
+			DRestoreCheckpoint()
+		),
+		...
+	])
+
+	can become
+
+		DIf(
+			DMatchString(<string>) or DMatchRange,
+			<exp>,
+			DFalse()
+		),
+
+*/
+optimizeDMatchString(seq : [DOpCode], i : int, acc : [DOpCode]) -> [DOpCode] {
+	rest = \ -> {
+		optimizeDMatchString(seq, i + 1, arrayPush(acc, seq[i]));
+	}
+	if (i + 1 < length(seq)) {
+		if (seq[i] == DPushCheckpoint()) {
+			// OK, see if we have an DIf
+			after = seq[i + 1];
+			switch (after) {
+				DIf(cond, then, else_): {
+					if (else_ == DRestoreCheckpoint()) {
+						if (isDOpCodeMatch(cond) && !existsDOpCode(then, isDPushCheckPoint)) {
+							// OK, we have something of the given pattern.
+							/*
+							DIf(
+								DMatchString(<string>) or DMatchRange,
+								<exp>,
+								DFalse()
+							),
+							where <exp> should not have a DPushCheckpoint,
+							and we replace all discardDCheckpoint with True
+							and restoreDCheckpoint with False
+							*/
+							nthen = replaceDCheckpoints(then);
+							con = if (nthen == DTrue()) cond else DIf(cond, nthen, DFalse());
+							optimizeDMatchString(seq, i + 2, arrayPush(acc, con));
+						} else {
+							rest();
+						}
+					} else rest();
+				}
+				default: rest();
+			}
+		} else {
+			rest();
+		}
+	} else {
+		if (i < length(seq)) {
+			rest();
+		} else acc
+	}
+}
+
+isDOpCodeMatch(d : DOpCode) -> bool {
+	switch (d) {
+		DMatchString(__): true;
+		DMatchRange(__, __): true;
+		DAnd(left, right): isDOpCodeMatch(left) && isDOpCodeMatch(right);
+		DOr(left, right): isDOpCodeMatch(left) && isDOpCodeMatch(right);
+		DParseStar(t): isDOpCodeMatch(t);
+		DCall(__): false; // This is not trivial if there is prefix overlap
+		DAddError(__): true;
+		DAddVerbatim(e): isDOpCodeMatch(e);
+		DAddMatched(e): isDOpCodeMatch(e);
+		DTrue(): true;
+		DFalse(): true;
+
+		default: false;
+	}
+}
+
+existsDOpCode(d : DOpCode, fn : (DOpCode) -> bool) -> bool {
+	fn(d) || switch (d) {
+		DFunction(name, code, body): existsDOpCode(body, fn);
+		DTrue(): false;
+		DFalse(): false;
+		DString(s): false;
+		DIf(cond, then, else_): existsDOpCodes([cond, then, else_], fn);
+		DSequence(exps): existsDOpCodes(exps, fn);
+		DPushCheckpoint(): false;
+		DDiscardCheckpoint(): false;
+		DRestoreCheckpoint(): false;
+		DParseStar(term): existsDOpCode(term, fn);
+		DAddError(error): false;
+		DCaptureI(): false;
+		DMatched(): false;
+		DPosition(): false;
+		DAddVerbatim(e): existsDOpCode(e, fn);
+		DAddMatched(e): existsDOpCode(e, fn);
+		DMatchString(text): false;
+		DMatchRange(lower, upper): false;
+		DCall(id): false;
+		DAnd(left, right): existsDOpCode(left, fn) || existsDOpCode(right, fn);
+		DOr(left, right): existsDOpCode(left, fn) || existsDOpCode(right, fn);
+	}
+}
+
+existsDOpCodes(d : [DOpCode], fn : (DOpCode) -> bool) -> bool {
+	fold(d, false, \acc, dd -> acc || existsDOpCode(dd, fn))
+}
+
+replaceDCheckpoints(d : DOpCode) -> DOpCode {
+	switch (d) {
+		DFunction(name, code, body): DFunction(name, code, replaceDCheckpoints(body));
+		DTrue(): d;
+		DFalse(): d;
+		DString(s): d;
+		DIf(cond, then, else_): {
+			tcond = replaceDCheckpoints(cond);
+			tthen = replaceDCheckpoints(then);
+			telse = replaceDCheckpoints(else_);
+			if (tthen == DTrue() && telse == DFalse()) tcond
+			else DIf(tcond, tthen, telse);
+		}
+		DSequence(exps): DSequence(map(exps, replaceDCheckpoints));
+		DPushCheckpoint(): d;
+		DDiscardCheckpoint(): DTrue();
+		DRestoreCheckpoint(): DFalse();
+		DParseStar(term): DParseStar(replaceDCheckpoints(term));
+		DAddError(error): d;
+		DCaptureI(): d;
+		DMatched(): d;
+		DPosition(): d;
+		DAddVerbatim(e): DAddVerbatim(replaceDCheckpoints(e));
+		DAddMatched(e): DAddMatched(replaceDCheckpoints(e));
+		DMatchString(text): d;
+		DMatchRange(lower, upper): d;
+		DCall(id): d;
+		DAnd(left, right): DAnd(replaceDCheckpoints(left), replaceDCheckpoints(right));
+		DOr(left, right): DOr(replaceDCheckpoints(left), replaceDCheckpoints(right));
+	}
+}
+
+
+isDPushCheckPoint(d : DOpCode) -> bool {
+	switch (d) {
+		DPushCheckpoint(): true;
+		DCall(id): true;
+		default: false;
+	}
+}
+
+// Should this be avoided inside an && construct?
+isDNotAndable(d : DOpCode) -> bool {
+	switch (d) {
+		DCaptureI(): true;
+		DPosition(): true;
+		default: false;
+	}
+}
+
+/*
+	{
+		pushDCheckpoint(acc);
+		if ((matchRange(acc, 48, 57) && parseStar(acc, \ -> {
+			matchRange(acc, 48, 57)
+		}))) {
+			discardDCheckpoint(acc)
+		} else {
+			restoreDCheckpoint(acc)
+		}
+	}
+
+	can be optimized to just
+
+	((matchRange(acc, 48, 57) && parseStar(acc, \ -> {
+		matchRange(acc, 48, 57)
+	})))
+*/
+optimizeDPushDiscardSequence(d : [DOpCode]) -> DOpCode {
+	n = length(d);
+	if (n >= 2) {
+		if (d[n - 2] == DPushCheckpoint()) {
+			switch (d[n - 1]) {
+				DIf(cond, then, else_): {
+					if (!isDOpCodeMatch(cond)) {
+						DSequence(d);
+					} else if (then == DDiscardCheckpoint()
+						&& else_ == DRestoreCheckpoint()) {
+						pre = subrange(d, 0, n - 2);
+						DSequence(arrayPush(pre, cond));
+					} else DSequence(d);
+				}
+				default: DSequence(d);
+			}
+		} else DSequence(d);
+	} else if (n == 1) {
+		d[0]
+	} else {
+		DSequence(d);
+	}
+}
+
+// Does this opcode always succeed (it might have side effects)
+isDOpCodeAlwaysTrue(o : DOpCode) -> bool {
+	switch (o) {
+		DFunction(name, code, body): false;
+		DTrue(): true;
+		DFalse(): false;
+		DString(s): false;
+		DIf(cond, then, else_): false;
+		DSequence(exps): false;
+		DPushCheckpoint(): false;
+		DDiscardCheckpoint(): false;
+		DRestoreCheckpoint(): false;
+		DParseStar(term): true; // This is maybe surprising, but it always succeeds
+		DAddError(error): true;
+		DCaptureI(): false;
+		DMatched(): true;
+		DPosition(): false;
+		DAddVerbatim(e): true;
+		DAddMatched(e): true;
+		DMatchString(text): false;
+		DMatchRange(lower, upper): false;
+		DCall(id): false;
+		DAnd(left, right): false;
+		DOr(left, right): isDOpCodeAlwaysTrue(left) || isDOpCodeAlwaysTrue(right);
+	}
+}

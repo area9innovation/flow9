@@ -1,0 +1,210 @@
+import tools/gringo/gringo_embed;
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_util;
+import tools/dsl/replace_gringo;
+import tools/dsl/dsl_language;
+import tools/dsl/dsl_tracing;
+
+export {
+	// Prepares a grammar for a language "name". A set of common rules can be
+	// added by being listed in the "add" list. These are:
+	// ws - whitespace
+	// id - flow-like identifier
+	// int - integer with whitespace
+	// string - flow-like string
+	defineGrammar(name : string, grammar : string, add : [string]) -> DslGrammar;
+
+	/*
+	Override productions in a grammar. Example:
+
+		extendGrammar(lambda, <<
+			postfix = postfix | "." ws id $"dot_2";
+		>>)
+
+	which extends the postfix production with the . syntax
+	*/
+	extendGrammar(grammar : DslGrammar, extension : string) -> DslGrammar;
+	// A helper that parses the grammar extensions
+	parseGrammarExtension(extension : string) ->  Tree<string, GTerm>;
+
+	// Parses a program in the given language
+	parseProgram(file : string, grammar : DslGrammar, program : string) -> DslAst;
+
+	// Helper that splits "bind_2" into Pair("bind", 2)
+	splitDslAction(v : string) -> Pair<string, int>;
+
+	// The default actions for DslAst construction
+	dslAction : GringoAction<List<DslAst>>;
+}
+
+defineGrammar(name : string, grammar : string, add : [string]) -> DslGrammar {
+	predefined = [
+		Pair("ws", <<
+				ws = s*;
+				s = cs+;
+				anychar = '0x0000'-'0xffff';
+				cs = " " | "\t" | "\n" | "//" (!"\n" anychar)* "\n" | "/*" (!"*/" anychar)* "*/" | "\r";
+				lastLineComment = "//" (!"\n" anychar)*;
+			>>
+		),
+		Pair("int", << int = $('0'-'9'+) ws $"s2i"; >>),
+		Pair("double", << 
+			double = $(digits '.' (!'.') digits?) ws $"s2d"
+				| $('.' digits) ws $"s2d";
+			digits = '0'-'9'+;
+		>>),
+		Pair("string", <<
+			string = $('"' onechar_* '"') $"unescape" ws;
+
+			onechar_ = backslash "u" hexdigit hexdigit hexdigit hexdigit
+				| backslash "x" hexdigit hexdigit
+				| backslash escapedchar_
+				| !'"' !backslash anychar;
+
+			hexdigit = '0'-'9'
+				| 'a'-'f'
+				| 'A'-'F';
+
+			escapedchar_ = backslash | '"' | "n" | "t" | "r";
+			backslash = '\';
+		>>),
+		Pair("id", << 
+			id = $(('a'-'z' | 'A'-'Z' | '_') letterOrDigit*) ws;
+
+			letterOrDigit = 'a'-'z'
+				| 'A'-'Z'
+				| '_'
+				| '0'-'9';
+		>>),
+	];
+	additions = fold(predefined, "", \acc, pre -> {
+		if (contains(add, pre.first)) acc + pre.second
+		else acc;
+	});
+
+	// We have a standard white-space grammar ready for embedding
+	text = additions + grammar;
+	check = isDslTracing(parseDslLanguage(name), "parse");
+	DslGrammar(parseAndCheckGringoGrammar(name, text, check, getUrlParameter("types")));
+}
+
+parseGrammarExtension(extension : string) ->  Tree<string, GTerm> {
+	extend = defineGrammar("grammar_extension", <<
+		extensions = ws $"nil" (extension $"cons")+;
+		extension = id "=" $('"' (!'"' anychar)* '"' | "'" (!"'" anychar)* "'" | !";" anychar)* ";" ws $"extension_2";
+		extensions
+	>>, ["ws", "id", "string"]);
+
+	extensions : List<DslAst> = getDslList(parseProgram("extension", extend, extension));
+	foldList(extensions, makeTree(), \acc, ex : DslAst -> {
+		node = getDslNode(ex);
+		name = getDslString(node.args[0]);
+		snippet = getDslString(node.args[1]);
+		term = parseAndCheckGringoGrammar("extension", snippet, false, getUrlParameter("types"));
+		// println(name + ": " + gterm2string(term));
+		setTree(acc, name, term);
+	});
+}
+
+extendGrammar(grammar : DslGrammar, extension : string) -> DslGrammar {
+	newTerms = parseGrammarExtension(extension);
+	DslGrammar(extendGringoRules(grammar.term, newTerms))
+}
+
+popDslStack(a : List<DslAst>, op : string) -> Pair<DslAst, List<DslAst>> {
+	switch (a) {
+		EmptyList(): {
+			println("Stack underflow for " + op);
+			Pair(DslNode("Stack underflow", [], 0), a);
+		}
+		Cons(head, tailL): {
+			Pair(head, tailL)
+		}
+	}
+}
+
+pushDslValue(list : DslAst, value : DslAst) -> DslList {
+	switch (list) {
+		DslList(av): DslList(Cons(value, av));
+		default: {
+			// Well, we drop whatever we had before
+			DslList(makeList1(value));
+		}
+	}
+}
+
+dslAction = GringoAction(
+		\acc : List<DslAst>, v -> {
+			if (v == "nil") {
+				Cons(DslList(makeList()), acc);
+			} else if (v == "cons") {
+				elm = popDslStack(acc, v);
+				list = popDslStack(elm.second, v);
+				narray = pushDslValue(list.first, elm.first);
+				Cons(narray, list.second);
+			} else if (v == "swap") {
+				top = popDslStack(acc, v);
+				other = popDslStack(top.second, v);
+				Cons(
+					other.first, Cons(top.first, other.second)
+				)
+			} else if (v == "drop") {
+				popDslStack(acc, v).second;
+			} else if (v == "true") {
+				Cons(DslBool(true), acc);
+			} else if (v == "false") {
+				Cons(DslBool(false), acc);
+			} else if (v == "s2i") {
+				elm = popDslStack(acc, v);
+				Cons(DslInt(s2i(getDslString(elm.first))), elm.second);
+			} else if (v == "s2d") {
+				elm = popDslStack(acc, v);
+				Cons(DslDouble(s2d(getDslString(elm.first))), elm.second);
+			} else if (v == "dump") {
+				iterList(acc, \a -> println(prettyDsl(a)));
+				acc;
+			} else if (v == "unescape") {
+				elm = popDslStack(acc, v);
+				val = DslString(deserializeString(getDslString(elm.first)).first);
+				Cons(val, elm.second);
+			} else if (v == "make_node") {
+				args = popDslStack(acc, v);
+				name = popDslStack(args.second, v);
+				val = DslNode(getDslString(name.first), list2array(getDslList(args.first)), 0);
+				Cons(val, name.second)
+			} else if (v == "reverse") {
+				list = popDslStack(acc, v);
+				rlist = DslList(reverseList(getDslList(list.first)));
+				Cons(rlist, list.second)
+			} else {
+				// An AST node
+				parts = splitDslAction(v);
+				name = parts.first;
+				arity = parts.second;
+				args : Pair<[DslAst], List<DslAst>> = fold(enumFromTo(1, arity), Pair([], acc), \acc2, arg -> {
+					e = popDslStack(acc2.second, v);
+					Pair(concat([e.first], acc2.first), e.second)
+				});
+				val = DslNode(name, args.first, 0);
+				Cons(val, args.second)
+			}
+		},
+		\acc : List<DslAst>, m -> {
+			Cons(DslString(m), acc)
+		}
+	);
+
+splitDslAction(v : string) -> Pair<string, int> {
+	parts = strSplit(v, "_");
+	n = length(parts);
+	if (n >= 2 && i2s(s2i(parts[n - 1])) == parts[n - 1]) {
+		arity = s2i(parts[n - 1]);
+		name = strGlue(subrange(parts, 0, n - 1), "_");
+		Pair(name, arity)
+	} else Pair(v, 0);
+}
+
+parseProgram(file : string, grammar : DslGrammar, program : string) -> DslAst {
+	genv = doGringoParse(file, grammar.term, dslAction, makeList(), program, false, false);
+	popDslStack(genv.output, "").first;
+}

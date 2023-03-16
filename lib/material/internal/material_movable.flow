@@ -10,34 +10,50 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 	position = extractStruct(m.style, MMovablePosition(make(zeroPoint))).position;
 	expand = contains(m.style, MMovableExpandArea());
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
+	interactionsOnTop = contains(m.style, MInteractionsOnTop());
+	dontPassClicks = contains(m.style, MMovableDontPassClicks());
+	origin = extractStruct(m.style, MMovableOrigin(const(Factor(0., 0.)))).origin;
+	limits = extractStruct(m.style, MMovableLimits(None(), None(), None(), None()));
 
 	isDragging = make(false);
-	mouseXY = make(zeroPoint);
+	mouseXY = extractStruct(m.style, MMousePosition(make(zeroPoint))).point;
 	mouseXYLocal = make(zeroPoint);
 	cursorPosition = ref zeroPoint;
 
 	movableAreaWH = makeWH();
 	paddingWH = makeWH();
 	targetWH = makeWH();
+	targetWHBuffer = cloneBehaviour(targetWH);
 	safetySpace = 36.0;
 
 	grabArea = extractStruct(m.style, MMovableGrabArea(TEmpty(), TSized(targetWH)));
 
-	updatePosition = \movWH, tarWH, mxy, dxy -> {
+	updatePosition = \movWH, prevTarWH, tarWH, mxy, dxy -> {
 		expandGapWidth = if (expand) tarWH.width - safetySpace else 0.;
 		expandGapHeight = if (expand) tarWH.height - safetySpace else 0.;
+		or = fgetValue(origin);
+
+		newPosition =
+			Point(
+				mxy.x - dxy.x + or.x * (prevTarWH.width - tarWH.width),
+				mxy.y - dxy.y + or.y * (prevTarWH.height - tarWH.height)
+			);
+
+		leftLim = eitherMap(limits.left, fgetValue, -expandGapWidth);
+		topLim = eitherMap(limits.top, fgetValue, -expandGapHeight);
+		rightLim = eitherMap(limits.right, fgetValue, expandGapWidth);
+		bottomLim = eitherMap(limits.bottom, fgetValue, expandGapHeight);
 
 		nextDistinct(
 			position,
 			Point(
-				max(-expandGapWidth, min(mxy.x - dxy.x, movWH.width - tarWH.width + expandGapWidth)),
-				max(-expandGapHeight, min(mxy.y - dxy.y, movWH.height - tarWH.height + expandGapHeight))
+				max(leftLim, min(newPosition.x, movWH.width - tarWH.width + rightLim)),
+				max(topLim, min(newPosition.y, movWH.height - tarWH.height + bottomLim))
 			)
-
 		)
 	};
 
-	cursor = fif(isDragging, const(GrabbingCursor()), const(GrabCursor()));
+	cursor = extractStruct(m.style, MMovableCustomCursor(DynamicCursor(fif(isDragging, const(GrabbingCursor()), const(GrabCursor()))))).cursor;
 
 	target = \p ->
 		m2t(m.target, p)
@@ -50,11 +66,11 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 			|> (\t ->
 				TInteractive(
 					[
-						TMouseDownGhost(isDragging),
+						if (dontPassClicks) TMouseDown(isDragging) else TMouseDownGhost(isDragging),
 						TMouseXY(mouseXYLocal)
 					], t)
 				)
-			|> (\t -> TCursor(DynamicCursor(cursor), t))
+			|> (\t -> TCursor(cursor, t))
 			|> (\t -> TBorderT(fwidth(paddingWH), fheight(paddingWH), zero, zero, t))
 			|> (\t -> TAttachBox2(m2t(grabArea.padding, p), paddingWH, t))
 			|> (\t -> TAvailable(t, TSized(targetWH)));
@@ -64,9 +80,9 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 		|> (\t -> TFrame(0., 0., interactiveRectangleStyle, t))
 		|> (\t -> TInteractive([TMouseXY(mouseXY)], t))
 		|> (\t ->
-			TGroup2(
-				grabAreaM(p),
-				target(p)
+			(
+				if (interactionsOnTop) TGroup2(target(p), grabAreaM(p))
+				else TGroup2(grabAreaM(p), target(p))
 			)
 			|> (\t2 -> TTranslate(position, t2))
 			|> (\t2 -> TFixSize(t2, TEmpty()))
@@ -75,7 +91,13 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 		|> (\t ->
 			TConstruct(
 				[
-					make2Subscribe(movableAreaWH, targetWH, \movWH, tarWH -> updatePosition(movWH, tarWH, getValue(position), zeroPoint)),
+					\ -> {nextDistinct(targetWHBuffer, fgetValue(targetWH)); nop},
+					\ -> fconnect(fstall(targetWH, 0), targetWHBuffer),
+					make2Subscribe(
+						movableAreaWH,
+						fselectWithLast(targetWHBuffer, FLift2(\old, new -> Pair(old, new))),
+						\movWH, tarWH -> updatePosition(movWH, tarWH.first, tarWH.second, getValue(position), zeroPoint)
+					),
 					makeSubscribe2(isDragging, \dr -> if (dr) {
 						addMInteractionItemId(manager, movableId);
 						local = getValue(mouseXYLocal);
@@ -86,7 +108,7 @@ MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : 
 					makeSubscribe2(mouseXY, \mxy ->
 						if (isCurrentMInteractionItemId(manager, movableId) && getValue(isDragging) && fgetValue(enabled)) {
 							blockOtherMInteractionItemIds(manager, movableId);
-							updatePosition(getValue(movableAreaWH), getValue(targetWH), mxy, ^cursorPosition)
+							updatePosition(getValue(movableAreaWH), getValue(targetWH), getValue(targetWH), mxy, ^cursorPosition)
 						}
 					)
 				],
@@ -103,11 +125,14 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 	style = m.style;
 	minMax : MResizableMinMax = extractStruct(style, MResizableMinMax(TFixed(20., 20.), TFillXY()));
 	onCreate = extractStruct(style, MResizableOnCreate(minMax.max)).size;
+	controlOnStart = contains(style, MResizableControlOnStart());
 	availableWH : DynamicBehaviour<WidthHeight> = make(WidthHeight(100., 100.));
-
+	resizableEnabled = extractStruct(style, MResizableEnabled(const(true), const(true)));
+	multipleHandlesMode = tryExtractStruct(style, MMultipleHandlesMode(const([]), \__ -> TEmpty(), makePoint(), makePoint()));
+	
+	activeHandle = make(None());
 	mouseDown = make(false);
 	mouseXY = make(zeroPoint);
-	startPoint = ref zeroPoint;
 	minWH = makeWH();
 	maxWH = makeWH();
 	createWH = makeWH();
@@ -116,55 +141,66 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 		nextDistinct(
 			availableWH,
 			WidthHeight(
-				max(min(mWH.width, maWH.width), if (parent.rtl) max(mWH.width, maWH.width) - aWH.width else min(aWH.width, max(mWH.width, maWH.width))),
+				max(min(mWH.width, maWH.width), min(aWH.width, max(mWH.width, maWH.width))),
 				max(min(mWH.height, maWH.height), min(aWH.height, max(mWH.height, maWH.height)))
 			)
 		);
 
-	(\p ->
+	makeDefHandle = \reversed ->
+		TRectangle(interactiveRectangleStyle, TFixed(10., 10.))
+		|> (\f2 ->
+			TGroup2(
+				f2,
+				TGraphics(
+					if (reversed)
+						[
+							LineTo(9., 9.),
+							MoveTo(0., 4.),
+							LineTo(5., 9.)
+						]
+					else
+						[
+							MoveTo(0., 9.),
+							LineTo(9., 0.),
+							MoveTo(4., 9.),
+							LineTo(9., 4.)
+						],
+					[
+						StrokeOpacity(1.),
+						Stroke(black),
+						FillOpacity(0.)
+					]
+				)
+			)
+		);
+
+	(\p -> {
+		reversed = p.rtl != controlOnStart;
 		TDisplay("MResizableContent")
 		|> (\f ->
-			TGroup2(
+			TGroup([
 				f,
-				TRectangle(interactiveRectangleStyle, TFixed(10., 10.))
-				|> (\f2 ->
-					TGroup2(
-						f2,
-						TGraphics(
-							if (p.rtl)
-								[
-									LineTo(9., 9.),
-									MoveTo(0., 4.),
-									LineTo(5., 9.)
-								]
-							else
-								[
-									MoveTo(0., 9.),
-									LineTo(9., 0.),
-									MoveTo(4., 9.),
-									LineTo(9., 4.)
-								],
-							[
-								StrokeOpacity(1.),
-								Stroke(black),
-								FillOpacity(0.)
-							]
-						)
-					)
+				eitherMap(
+					multipleHandlesMode,
+					\mhm ->
+						SelectTGroup(mhm.handles, \__, __, handle -> {
+							handleMouseDown = make(false);
+							TConstruct(
+								[makeSubscribe2(handleMouseDown, \d -> nextDistinct(activeHandle, if (d) Some(handle) else None()))],
+								m2t(mhm.materialize(handle), p)
+							)
+							|> (\h -> TInteractive([TMouseDown(handleMouseDown)], h))
+							|> (\h -> if (isHandleRight(handle)) TAlignRight(h) else h)
+							|> (\h -> if (isHandleVerticalCenter(handle)) TCenterY(h) else h)
+							|> (\h -> if (isHandleBottom(handle)) TAlignBottom(h) else h)
+						}),
+					makeDefHandle(reversed)
+					|> (\f2 -> TInteractive([TMouseDown(mouseDown)], f2))
+					|> (\f2 -> TCols2Dir(TFillX(), f2, reversed))
+					|> (\f2 -> TLines2(TFillY(), f2))
 				)
-				|> (\f2 ->
-					TInteractive(
-						[
-							TMouseDown(mouseDown)
-						],
-						f2
-					)
-				)
-				// |> (\f2 -> TCursor(MoveCursor, f2))
-				|> (\f2 -> TCols2Dir(TFillX(), f2, p.rtl))
-				|> (\f2 -> TLines2(TFillY(), f2))
-				|> (\f2 -> TAvailable(f2, TGhost("MResizableContent")))
-			)
+				|> (\f2 -> TAvailable(f2, TGhost("MResizableContent"))),
+			])
 		)
 		|> (\f -> TAvailable(f, TSized(availableWH)))
 		|> (\f -> TInteractive([TMouseXY(mouseXY)], f))
@@ -175,25 +211,73 @@ MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2
 		|> (\f -> TLet("MResizableContent", m2t(m.content, p), f))
 		|> (\f ->
 			TConstruct(
-				[
-					makeSubscribe(mouseDown, \md -> if (md) addMInteractionItemId(manager, resizableId)),
-					makeSubscribe2(mouseXY, \xy ->
-						if (isCurrentMInteractionItemId(manager, resizableId) && getValue(mouseDown)) {
-							blockOtherMInteractionItemIds(manager, resizableId);
-							// nextDistinct(manager.currentInteractionItemID, resizableId);
-							updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(xy.x, xy.y))
-						}
-					),
-					\ -> {
-						updateWidthHeight(getValue(minWH), getValue(maxWH), getValue(createWH) |> (\wh -> if (p.rtl) WidthHeight(0.0, wh.height) else wh));
-						make3Subscribe(minWH, maxWH, availableWH, \mWH, maWH, aWH ->
-							if (!p.rtl) updateWidthHeight(mWH, maWH, aWH)
-						)()
-					}
-				],
+				concat([
+						makeSubscribe(fOr(mouseDown, fIsSome(activeHandle)), \md -> if (md) addMInteractionItemId(manager, resizableId)),
+						\ -> {updateWidthHeight(getValue(minWH), getValue(maxWH), getValue(createWH)); nop},
+						make3Subscribe(minWH, maxWH, availableWH, updateWidthHeight)
+					],
+					eitherMap(multipleHandlesMode,
+						\mhm -> [
+							makeSubscribe2(ftransistor(fIsSome(activeHandle), mhm.mousePosition), \mousePos ->
+								if (isCurrentMInteractionItemId(manager, resizableId)) {
+									maybeApply(getValue(activeHandle), \handle -> {
+										blockOtherMInteractionItemIds(manager, resizableId);
+
+										isRight = isHandleRight(handle);
+										isBottom = isHandleBottom(handle);
+										resEnX = fgetValue(resizableEnabled.x);
+										resEnY = fgetValue(resizableEnabled.y) && !isHandleVerticalCenter(handle);
+
+										prevSize = getValue(availableWH);
+										prevLT = getValue(mhm.leftTop);
+										prevPoint = Point(
+											prevLT.x + if (isRight) prevSize.width else 0.,
+											prevLT.y + if (isBottom) prevSize.height else 0.
+										);
+										dx = if (resEnX) (mousePos.x - prevPoint.x) * (if (isRight) 1. else -1.) else 0.;
+										dy = if (resEnY) (mousePos.y - prevPoint.y) * (if (isBottom) 1. else -1.) else 0.;
+										updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(prevSize.width + dx, prevSize.height + dy));
+									
+										newSize = getValue(availableWH);
+										newX =
+											if (!resEnX) prevLT.x
+											else if (isRight) max(prevLT.x, mousePos.x - newSize.width)
+											else min(prevLT.x + prevSize.width, mousePos.x + newSize.width) - newSize.width;
+										newY =
+											if (!resEnY) prevLT.y
+											else if (isBottom) max(prevLT.y, mousePos.y - newSize.height)
+											else min(prevLT.y + prevSize.height, mousePos.y + newSize.height) - newSize.height;
+										nextDistinct(mhm.leftTop, Point(newX, newY));
+									})
+								}
+							)
+						],
+						[
+							makeSubscribe2(mouseXY, \xy ->
+								if (isCurrentMInteractionItemId(manager, resizableId) && getValue(mouseDown)) {
+									blockOtherMInteractionItemIds(manager, resizableId);
+									avX = if (reversed) getValue(availableWH).width - xy.x else xy.x;
+									updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(avX, xy.y))
+								}
+							)
+						]
+					)
+				),
 				f
 			)
 		)
-	)
-	|> (\f -> MComponentGroup2T(manager, parent, "MMovable", [IScriptBehaviour("available", availableWH, ISInputValue([], serialize(getValue(availableWH)), true))], f))
+	})
+	|> (\f -> MComponentGroup2T(manager, parent, "MResizable", [IScriptBehaviour("available", availableWH, ISInputValue([], serialize(getValue(availableWH)), true))], f))
+}
+
+isHandleRight(handle : MResizableHandle) -> bool {
+	handle == MTopRight() || handle == MBottomRight() || handle == MCenterRight()
+}
+
+isHandleVerticalCenter(handle : MResizableHandle) -> bool {
+	handle == MCenterLeft() || handle == MCenterRight()
+}
+
+isHandleBottom(handle : MResizableHandle) -> bool {
+	handle == MBottomLeft() || handle == MBottomRight()
 }

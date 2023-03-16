@@ -1,0 +1,111 @@
+import text/gringo/gringo_ast;
+import text/blueprint;
+import string;
+
+export {
+	gterm2string(g : GTerm) -> string;
+	gterm2summary(g : GTerm) -> string;
+}
+
+gterm2string(g : GTerm) -> string {
+	gterm2stringPred(g).first;
+}
+
+
+gterm2stringPred(g : GTerm) -> Pair<string, int> {
+	pre = \op, t, pred -> {
+		term = gterm2stringPred(t);
+		if (term.second < pred) {
+			Pair(op + "(" + term.first + ")", 100);
+		} else Pair(op + term.first, pred);
+	};
+	post = \t, op, pred -> {
+		term = gterm2stringPred(t);
+		if (term.second < pred) {
+			Pair("(" + term.first + ")" + op, 100);
+		} else Pair(term.first + op, pred);
+	};
+	bin = \l, op, r, pred -> {
+		left = gterm2stringPred(l);
+		right = gterm2stringPred(r);
+		lbody = if (left.second < pred) {
+			"(" + left.first + ")"
+		} else left.first;
+		rbody = if (right.second < pred) {
+			"(" + right.first + ")"
+		} else right.first;
+		cpred = min(left.second, right.second);
+		body = lbody + op + rbody;
+		Pair(body, pred)
+	};
+	switch (g) {
+		GRule(id, term, body): Pair(id + " = " 
+			+ strGlue(strWordWrap(gterm2string(term), 80, [" | "]), "\n  ")
+			+ ";\n" + gterm2string(body), 0);
+		GPrecedence(left, right): Pair(gterm2string(left) + " \n\t|> " + gterm2string(right), 10);
+		GChoice(left, right): bin(left, " | ", right, 20);
+		GSeq(left, right): bin(left, " ", right, 30);
+		GStar(term): post(term, "*", 40);
+		GPlus(term): post(term, "+", 50);
+		GOpt(term): post(term, "?", 60);
+		GNegate(term): pre("!", term, 70);
+		GError(term): pre("#", term, 75);
+		GLower(term): pre("<", term, 80);
+		GUnquote(term): {
+			switch (term) {
+				GString(text): {
+					first = getCharAt(text, 0);
+					if (toUpperCase(first) == first && strContains(text, "_")) {
+						Pair(strReplace(text, "_", "/"), 100);
+					} else {
+						Pair("@" + text, 90)
+//						pre("@", term, 90);
+					}
+				}
+				default: pre("$", term, 90);
+			}
+			
+		}
+		GString(text): {
+			Pair(
+				if (text == "\"") "'\"'"
+				else if (text == "\u000d") "'\\r'"
+				else toString(text),
+				100
+			)
+		}
+		GRange(lower, upper): {
+			c = \code -> {
+				if (code < 0x20 || code > 0xff) {
+					"0x" + formatHex(code)
+				} else fromCharCode(code)
+			};
+			Pair(
+				"'" + c(lower) + "'-'" + c(upper) + "'", 100
+			);
+		}
+		GVar(id): Pair(id, 100);
+		GEpsilon(): Pair("<epsilon>", 100);
+	}
+}
+
+gterm2summary(g : GTerm) -> string {
+	switch (g) {
+		GSeq(left, right): {
+			gterm2summary(left) + " " + shortGTerm(right);
+		}
+		GRule(id, v, body): id + "=...";
+		GChoice(left, right): {
+			gterm2summary(left) + "|" + shortGTerm(right);
+		}
+		default : gterm2string(g);
+	}
+}
+
+shortGTerm(g : GTerm) -> string {
+	switch (g) {
+		GSeq(left, right): shortGTerm(left);
+		GChoice(l, r): shortGTerm(l);
+		default: gterm2summary(g);
+	}
+}

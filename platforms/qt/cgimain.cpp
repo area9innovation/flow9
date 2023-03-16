@@ -171,6 +171,7 @@ int main(int argc, char *argv[])
 
         QUrl params = getParameters(query);
         FlowRunner.NotifyStubs = QUrlQuery(params).hasQueryItem("debug");
+        setUtf8JsStyleGlobalFlag(QUrlQuery(params).hasQueryItem("use_utf8_js_style"));
         //FlowRunner.flow_err << "URL: " << params.toString().toStdString() << endl;
 
         FlowRunner.setUrl(params);

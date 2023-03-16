@@ -1,0 +1,309 @@
+import tools/dsl/dsl_pretty;
+import tools/dsl/dsl_util;
+import tools/dsl/dsl_eval_natives;
+
+export {
+	makeDslEnv() -> DslEnv;
+	evaluateDsl(env : DslEnv, p : DslAst) -> DslAst;
+
+	DslEnv(
+		locals : Tree<string, DslAst>,
+		natives : Tree<string, ([DslAst]) -> DslAst>,
+		// Set of variables that are dynamic
+		dynamic : Set<string>,
+		// For generated functions by join, we need to have unique id counter
+		nextId : ref int
+	);
+}
+
+makeDslEnv() -> DslEnv {
+	DslEnv(makeTree(), makeTree(), makeSet(), ref 0);
+}
+
+evaluateDsl(env : DslEnv, p : DslAst) -> DslAst {
+	switch (p) {
+		DslNode(name, args, pos): {
+			if (name == "int" || name == "double" || name == "string") {
+				args[0]
+			} else if (name == "ifelse") {
+				cond = evaluateDsl(env, args[0]);
+				switch (cond) {
+					DslBool(c): {
+						evaluateDsl(env, if (c) args[1] else args[2]);
+					}
+					default: {
+						// OK, we dare not evaluate either end
+						DslNode(name, [cond, args[1], args[2]], pos)
+					}
+				}
+			} else if (name == "let") {
+				let = getDslString(args[0]);
+				val = evaluateDsl(env, args[1]);
+				if (let == "") {
+					// Check if we are a dyn
+					letnode = getDslNode(args[0]);
+					if (letnode.name == "dyn") {
+						// TODO: Make a tmp variable name for this
+						// and replace all occurences in the body with 
+						// this new var
+						varname = getDslString(letnode.args[0]);
+						nenv = DslEnv(env with dynamic = insertSet(env.dynamic, varname));
+						nbody = evaluateDsl(nenv, args[2]);
+						DslNode("let", [letnode.args[0], val, nbody], pos);
+					} else {
+						error = "Unsupported let-binding " + prettyDsl(args[0]);
+						println(error);
+						DslString(error);
+					}
+				} else {
+					nenv = DslEnv(env with locals = setTree(env.locals, let, val));
+					evaluateDsl(nenv, args[2]);
+				}
+			} else if (name == "var") {
+				varname = getDslString(args[0]);
+				mvar = lookupTree(env.locals, varname);
+				mvar ?? mvar : {
+					// Check that p is dynamic, otherwise complain
+					if (!containsSet(env.dynamic, varname)
+						&& !containsKeyTree(env.natives, varname)
+						&& isNone(getDslNative(varname))) {
+						println("Unknown var '" + varname + "'");
+					}
+					p;
+				}
+			} else if (name == "lambda") {
+				instantiateDslLocals(env, p);
+			} else if (name == "call") {
+				fn = evaluateDsl(env, args[0]);
+				// println("Call to " + prettyDsl(fn));
+				lambda : DslNode = getDslNode(fn);
+				if (lambda.name == "lambda") {
+					eargs : [DslAst] = list2array(getDslList(evaluateDsl(env, args[1])));
+					nargs = list2array(getDslList(lambda.args[0]));
+					body = lambda.args[1];
+					nenv = foldi(eargs, env, \i, acc, arg -> {
+						// println("Setting par " + getDslString(nargs[i]) + " to " + prettyDsl(arg));
+						argname = getDslString(nargs[i]);
+						if (argname == "") {
+							dynnode = getDslNode(nargs[i]);
+							if (dynnode.name == "dyn") {
+								dynarg = getDslString(dynnode.args[0]);
+								// If this is dyn, we should mark this var as dynamic
+								DslEnv(acc with dynamic = insertSet(acc.dynamic, dynarg))
+							} else {
+								acc
+							}
+						} else {
+							DslEnv(acc with locals = setTree(acc.locals, argname, arg))
+						}
+					});
+					
+					nbody = evaluateDsl(nenv, body);
+
+					// TODO: We should do this in opposite order?
+					foldi(eargs, nbody, \i, acc, arg -> {
+						dynnode = getDslNode(nargs[i]);
+						if (dynnode.name == "dyn") {
+							dynarg = getDslString(dynnode.args[0]);
+							DslNode("let", [dynnode.args[0], arg, acc], pos);
+						} else if (dynnode.name != "") {
+							println("Unsupported argument " + prettyDsl(nargs[i]));
+							acc
+						} else acc;
+					})
+				} else if (lambda.name == "var") {
+					// Normal functions
+					vname = getDslString(lambda.args[0]);
+					eargs : List<DslAst> = getDslList(evaluateDsl(env, args[1]));
+					envNative = lookupTree(env.natives, vname);
+					switch (envNative) {
+						None(): {
+							mnative = getDslNative(vname);
+							mnative ?? {
+								mnative.fn(list2array(eargs));
+							} : {
+								// Unknown, so error out
+								node = DslNode(vname, list2array(eargs), pos);
+								error = "Unknown call to '" + vname + "'";
+								println(error);
+								DslString(error);
+							}
+						}
+						Some(nativeFn): nativeFn(list2array(eargs));
+					}
+				} else {
+					println("ERROR: Can not call " + prettyDsl(fn));
+					p;
+				}
+			} else if (name == "and") {
+				// Shortcircut
+				left = evaluateDsl(env, args[0]);
+				if (getDslBool(left)) {
+					evaluateDsl(env, args[1]);
+				} else left;
+			} else if (name == "or") {
+				// Shortcircut
+				left = evaluateDsl(env, args[0]);
+				if (getDslBool(left)) {
+					left
+				} else evaluateDsl(env, args[1]);
+			} else if (name == "quote") {
+				unquoteDsl(env, args[0])
+			} else if (name == "join") {
+				val = evaluateDsl(env, args[0]);
+				lambdaName = makeDslName(env);
+				lambdaArgs = foldSet(captureDynDsl(env, makeSet(), val), makeList(), \acc, argname -> {
+					Cons(DslString(argname), acc)
+				});
+				// We should probably have a map with the generated functions
+				// or maybe we should just deduplicate later.
+				// Seems like deduplication is the easiest option
+
+				lambda = DslNode(
+					"lambda", 
+					[DslList(lambdaArgs), val], 
+					pos
+				);
+
+				DslNode("let",
+					[	
+						DslString(lambdaName), lambda,
+						DslNode("call", [
+							DslNode("var", [DslString(lambdaName)], pos),
+							DslList(mapList(lambdaArgs, \arg -> {
+								DslNode("var", [arg], pos)
+							}))
+						], pos)
+					], pos
+				)
+			} else {
+				// Normal functions
+				eargs = map(args, \a -> {
+					evaluateDsl(env, a);
+				});
+				mnative = getDslNative(name);
+				mnative ?? {
+					mnative.fn(eargs)
+				} : {
+					if (name == "bind") {
+						// OK, we just evaluate the child an extra time
+						evaluateDsl(env, eargs[0]);
+					} else {
+						println("UNKNOWN name " + name);
+						DslNode(name, eargs, pos);
+					}
+				}
+			}
+		}
+		DslList(value): {
+			vals = map(list2array(value), \v -> evaluateDsl(env, v));
+			DslList(fold(vals, makeList(), \acc, val -> Cons(val, acc)));
+		}
+		DslBool(value): p;
+		DslInt(value): p;
+		DslDouble(value): p;
+		DslString(value): p;
+	}
+}
+
+makeDslName(env : DslEnv) -> string {
+	tmp = ^(env.nextId);
+	env.nextId := tmp + 1;
+	"__tmp__" + i2s(tmp);
+}
+
+// For handling lambdas
+instantiateDslLocals(env : DslEnv, p : DslAst) -> DslAst {
+	var = \id : string -> {
+		DslNode("var", [DslString(id)], 0)
+	};
+	switch (p) {
+		DslNode(name, args, pos): {
+			if (name == "let") {
+				let = getDslString(args[0]);
+				val = instantiateDslLocals(env, args[1]);
+				nenv = DslEnv(env with locals = setTree(env.locals, let, var(let)));
+				DslNode(name, [args[0], val, 
+					instantiateDslLocals(nenv, args[2])
+				], pos);
+			} else if (name == "var") {
+				lookupTreeDef(env.locals, getDslString(args[0]), p);
+			} else if (name == "lambda") {
+				largs = getDslList(args[0]);
+				nlocals : Tree<string, DslAst> = foldList(largs, env.locals, \acc, darg -> {
+					arg = getDslString(darg);
+					setTree(acc, arg, DslNode("var", [darg], pos))
+				});
+				newBody = instantiateDslLocals(DslEnv(env with locals = nlocals), args[1]);
+				DslNode(name, [args[0], newBody], pos)
+			} else {
+				// Normal functions
+				eargs = map(args, \a -> {
+					instantiateDslLocals(env, a);
+				});
+				DslNode(name, eargs, pos);
+			}
+		}
+		DslList(value): {
+			DslList(mapList(value, \v -> instantiateDslLocals(env, v)));
+		}
+		DslBool(value): p;
+		DslInt(value): p;
+		DslDouble(value): p;
+		DslString(value): p;
+	}
+}
+
+// For unquoting -> evaluate binds
+unquoteDsl(env : DslEnv, p : DslAst) -> DslAst {
+	switch (p) {
+		DslNode(name, args, pos): {
+			if (name == "bind") {
+				let = getDslString(args[0]);
+				if (let == "") {
+					evaluateDsl(env, args[0]);
+				} else {
+					lookupTreeDef(env.locals, let, p);
+				}
+			} else {
+				// Normal functions
+				eargs = map(args, \a -> {
+					unquoteDsl(env, a);
+				});
+				DslNode(name, eargs, pos);
+			}
+		}
+		DslList(value): {
+			DslList(mapList(value, \v -> unquoteDsl(env, v)));
+		}
+		DslBool(value): p;
+		DslInt(value): p;
+		DslDouble(value): p;
+		DslString(value): p;
+	}
+}
+
+// What dynamic variables are referenced in this expression?
+captureDynDsl(env : DslEnv, acc : Set<string>, e : DslAst) -> Set<string> {
+	switch (e) {
+		DslBool(value): acc;
+		DslInt(value): acc;
+		DslDouble(value): acc;
+		DslString(value): acc;
+		DslList(value): foldList(value, acc, \acc2, val -> {
+			captureDynDsl(env, acc2, val)
+		})
+		DslNode(name, args, pos): {
+			if (name == "var") {
+				varname = getDslString(args[0]);
+				if (containsSet(env.dynamic, varname)) {
+					insertSet(acc, varname)
+				} else acc;
+			} else {
+				fold(args, acc, \acc2, arg -> {
+					captureDynDsl(env, acc2, arg)
+				})
+			}
+		}
+	}
+}

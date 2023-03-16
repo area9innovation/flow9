@@ -102,7 +102,6 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 	mTextStyle = style2MTextStyle(m.style);
 	minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
 	tooltipMaxWidth = extractStruct(m.style, MTooltipMaxWidth(400.0)).width;
-	lines = extractStruct(m.style, MMaxLines(1)).lines;
 	textAlignment = maybeMap(tryExtractStruct(m.style, MEllipsisTextAlignment(StartAlign())), \al -> al.alignment);
 	rightAlign0 = contains(m.style, RightAlign());
 	centerAlign0 = contains(m.style, CenterAlign());
@@ -117,12 +116,20 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 	unescape = if (escapeHTML.escape) idfn else unescapeSpacesIntoTags;
 	text = unescape(m.text);
 
+	makeTropic = \ -> {
 	charStyle = MTextStyle2TCharacterStyle(parent, text, mTextStyle);
 	textT = TText(text, charStyle);
-	fullWidth = getTWordMetrics(textT, makeTree()).width;
+	fullMetrics = getTWordMetrics(textT, makeTree());
+	fullWidth = fullMetrics.width;
 	maybeApply(tryExtractStruct(m.style, MEllipsisTextGetFullWidth(nop1)), \getfw -> getfw.fn(fullWidth));
 	variants = arrayPush(extractStruct(m.style, MTextVariants([])).variants, m.text);
 	variantWidths = map(variants, \v -> getTWordMetrics(TText(v, charStyle), makeTree()).width);
+	defLines = eitherMap(
+		tryExtractStruct(m.style, MMaxHeight(0.)),
+		\maxH -> max(1, floor(maxH.height / (fullMetrics.height + interlineSpacing.d))),
+		1
+	);
+	lines = extractStruct(m.style, MMaxLines(defLines)).lines;
 
 	if (minWidth > 0. && minWidth >= fullWidth && strCountOf(text, "\n") < lines) {
 		setIsTruncated(false);
@@ -192,9 +199,9 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 						TShowLazy(
 							showTooltip,
 							\ ->
-								MParagraph2T(
+								MDynamicParagraph2T(
 									parent,
-									if (strlen(text) > 1000) strSubRange(text, 0, 1000) + THREE_DOTS else text,
+									const(if (strlen(text) > 1000) strSubRange(text, 0, 1000) + THREE_DOTS else text),
 									[sameLightMColor(parent), MTooltipDesktop(), CropWords(true), MWidth(min(fullWidth, tooltipMaxWidth)), escapeHTML]
 								)
 						),
@@ -207,11 +214,31 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 					m2t
 				)
 		)
-		|> (\t -> if (centerAlign) TCenterX(t) else if (rightAlign) TCols2(TFillX(), t) else if (isFullWidth) TCols2(t, TFillX()) else t)
+		|> (\t ->
+			if (!isUrlParameterFalse("ellipsis_fix")) {
+				align =
+					if (centerAlign) 0.5
+					else if (rightAlign) {
+						if (parent.rtl) -1.0 else 1.0
+					} else {
+						if (isFullWidth) 0.0 else -1.0
+					}
+				if (align == -1.0) t
+				else TTweak([TAlign(const(align), zero)], t, TFillX())
+			} else {
+				if (centerAlign) TCenterX(t) else if (rightAlign) TCols2(TFillX(), t) else if (isFullWidth) TCols2(t, TFillX()) else t
+			}
+		)
 		|> (\t -> TGroup2(t, THeight(dottedTextSize)))
 		|> (\t ->
 			TAttachWidth2(
-				if ((isFullWidth || centerAlign) && !getDefaultRtl()) TFillX() else TMinimumGroup2(TFixed(fullWidth, 0.0), TFillX())
+				(
+					if (
+						(isFullWidth || centerAlign)
+						&& (!getDefaultRtl() || !isUrlParameterFalse("ellipsis_fix"))
+					) TFillX()
+					else TMinimumGroup2(TFixed(fullWidth, 0.0), TFillX())
+				)
 				|> (\f ->
 					if (strlen(text) > 1)
 						TGroup2(TWidth(dottedTextSize), f)
@@ -223,6 +250,9 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 			)
 		)
 	}
+	}
+
+	updateOnFontWrapper(parent, makeTropic);
 }
 
 unescapeSpacesIntoTags(s : string) -> string{
@@ -232,6 +262,6 @@ unescapeSpacesIntoTags(s : string) -> string{
 			else if (fromCharCode(c) == ">") acc - 1
 			else acc
 		);
-		if (tagsCount > 0) Some(" ") else	None()
+		if (tagsCount > 0) Some(" ") else None()
 	})
 }

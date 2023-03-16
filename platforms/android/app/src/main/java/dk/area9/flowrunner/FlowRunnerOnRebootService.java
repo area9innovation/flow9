@@ -7,7 +7,7 @@ import android.app.IntentService;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 // We use this service to run some operations after device boot, like:
 // - Recreating and rescheduling local notifications

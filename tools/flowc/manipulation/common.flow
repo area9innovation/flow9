@@ -1,19 +1,71 @@
-import ds/tuples;
-import flowstructs;
 import tools/flowc/fcexp;
-import tools/flowc/incremental/fiexp;
+import tools/flowc/incremental/fiprettyprint;
 
 export {
 	mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp;
 	mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp;
 	fiVarIsUsed(var : string, expr : FiExp) -> bool;
 	fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string];
+
+	AstTraverseOrder(
+		argsFirst: bool, // fold args first, a node afterwards vs. in opposite order
+		direct: bool     // direct vs. reverse iteration over args
+	);
+
+	// Greneral transformation of a program: on a declaration level
+	fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram;
+
+	// Greneral transformation of a program: on a declaration level
+	fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ?;
+
+	// Greneral transformation of a program: on an expression level
+	fiMapProgramExp(prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram;
+
+	// A local description of scope environment in expression
+	FiExpTraverseEnv(
+		// Pair: the AST parent node and the index of a child, containing the current node
+		parents: List<Pair<FiExp, int>>,
+		locals: Tree<string, FiVar>,
+		args: Tree<string, FiVar>,
+		lets: Tree<string, FiVar>
+	);
+
+	// General form of expression transformation
+	fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp;
+
+	// General form of expression polymorphic mapping. argsFirst = true.
+	fiMapExp2(e: FiExp, fn: (FiExp, FiExpTraverseEnv, [?]) -> ?) -> ?;
+
+	fiFoldExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> ?, order: AstTraverseOrder) -> ?;
+
+	// General form of expression folding, combined with mapping
+	fiFoldMapExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?>;
+
+	// Find anything in AST
+	fiFindInExpr(e : FiExp, pred: (FiExp) -> Maybe<?>) -> Maybe<?>;
+
+	// Try to find a named constant from config and pass it to AST. 
+	// In case no such a value is found, the default value  is used.
+	// Format of a compile-time variable:
+	//    __compiletime__somevar_true
+	//    __compiletime__anothervar_42
+	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
+	// default fallback value, which should be used, in case no proper variable is defined in config.
+	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
+	// default value.
+	//fcCompileTimeType(id: string, conf: CompilerConfig, on_err: (string) -> void) -> FcType;
+	//fiCompileTime(var: FiVar, conf: CompilerConfig, on_err: (string) -> void) -> FiExp;
+
+	fcSplitCompileTimeVar(id: string) -> Pair<string, string>;
+
+	// Folding over a type (as an AST tree structure).
+	fiFoldType(tp : FiType, v: ?, fn: (?, FiType) -> ?) -> ?;
 }
 
 mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
-	switch (expr) {
+	fn(switch (expr) {
 		FcLambda(args, body, i): {
-			mapped_body = fn(mapFcExp(body, fn));
+			mapped_body = mapFcExp(body, fn);
 			if (isSameObj(body, mapped_body)) {
 				expr 
 			} else {
@@ -21,8 +73,8 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 			}
 		}
 		FcCall(f, args, i): {
-			mapped_f = fn(mapFcExp(f, fn));
-			mapped_args = map(args, \arg -> fn(mapFcExp(arg, fn)));
+			mapped_f = mapFcExp(f, fn);
+			mapped_args = map(args, \arg -> mapFcExp(arg, fn));
 			if (isSameObj(f, mapped_f) && forall(zipWith(args, mapped_args, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -31,8 +83,8 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 		}
 		FcVar(x, i): fn(expr);
 		FcLet(x, t, e1, e2, i): {
-			mapped_e1 = fn(mapFcExp(e1, fn));
-			mapped_e2 = fn(mapFcExp(e2, fn));
+			mapped_e1 = mapFcExp(e1, fn);
+			mapped_e2 = mapFcExp(e2, fn);
 			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2)) {
 				expr
 			} else {
@@ -40,9 +92,9 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 			}
 		}
 		FcIf(e1, e2, e3, i): {
-			mapped_e1 = fn(mapFcExp(e1, fn));
-			mapped_e2 = fn(mapFcExp(e2, fn));
-			mapped_e3 = fn(mapFcExp(e3, fn));
+			mapped_e1 = mapFcExp(e1, fn);
+			mapped_e2 = mapFcExp(e2, fn);
+			mapped_e3 = mapFcExp(e3, fn);
 			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2) && isSameObj(e3, mapped_e3)) {
 				expr
 			} else {
@@ -56,7 +108,7 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 				default: v;
 			}
 
-			mapped_cs = map(cs, \c -> FcCase(c.struct, c.argNames, fn(mapFcExp(c.body, fn)), c.info));
+			mapped_cs = map(cs, \c -> FcCase(c.struct, c.argNames, mapFcExp(c.body, fn), c.info));
 			if (v == map_v && forall(zipWith(cs, mapped_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -64,7 +116,7 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 			}
 		}
 		FcCast(e, tFrom, tTo, i): {
-			mapped_e = fn(mapFcExp(e, fn));
+			mapped_e = mapFcExp(e, fn);
 			if (isSameObj(e, mapped_e)) {
 				expr
 			} else {
@@ -72,7 +124,7 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 			}
 		}
 		FcSeq(es, i): {
-			mapped_es = map(es, \e -> fn(mapFcExp(e, fn)));
+			mapped_es = map(es, \e -> mapFcExp(e, fn));
 			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -80,7 +132,7 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 			}
 		}
 		FcCallPrim(op, es, i):{
-			mapped_es = map(es, \e -> fn(mapFcExp(e, fn)));
+			mapped_es = map(es, \e -> mapFcExp(e, fn));
 			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -93,7 +145,7 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 		FcVoid(i):      fn(expr);
 		FcInt(i, inf):  fn(expr);
 		FcRequire(flowfile, e, i): {
-			mapped_e = fn(mapFcExp(e, fn));
+			mapped_e = mapFcExp(e, fn);
 			if (isSameObj(e, mapped_e)) {
 				expr
 			} else {
@@ -101,20 +153,20 @@ mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
 			}
 		}
 		FcUnsafe(name, fb, i): {
-			mapped_fb = fn(mapFcExp(fb, fn));
+			mapped_fb = mapFcExp(fb, fn);
 			if (isSameObj(fb, mapped_fb)) {
 				expr
 			} else {
 				FcUnsafe(name, mapped_fb, i);
 			}	
 		}
-	}
+	});
 }
 
 mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
-	switch (expr) {
+	fn(switch (expr) {
 		FiLambda(args, body, type, start): {
-			mapped_body = fn(mapFiExp(body, fn));
+			mapped_body = mapFiExp(body, fn);
 			if (isSameObj(body, mapped_body)) {
 				expr 
 			} else {
@@ -122,8 +174,8 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiCall(f, args, type, start): {
-			mapped_f = fn(mapFiExp(f, fn));
-			mapped_args = map(args, \arg -> fn(mapFiExp(arg, fn)));
+			mapped_f = mapFiExp(f, fn);
+			mapped_args = map(args, \arg -> mapFiExp(arg, fn));
 			if (isSameObj(f, mapped_f) && forall(zipWith(args, mapped_args, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -132,8 +184,8 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 		}
 		FiVar(x, type, start): fn(expr);
 		FiLet(x, t, e1, e2, type, start): {
-			mapped_e1 = fn(mapFiExp(e1, fn));
-			mapped_e2 = fn(mapFiExp(e2, fn));
+			mapped_e1 = mapFiExp(e1, fn);
+			mapped_e2 = mapFiExp(e2, fn);
 			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2)) {
 				expr
 			} else {
@@ -141,9 +193,9 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiIf(e1, e2, e3, type, start): {
-			mapped_e1 = fn(mapFiExp(e1, fn));
-			mapped_e2 = fn(mapFiExp(e2, fn));
-			mapped_e3 = fn(mapFiExp(e3, fn));
+			mapped_e1 = mapFiExp(e1, fn);
+			mapped_e2 = mapFiExp(e2, fn);
+			mapped_e3 = mapFiExp(e3, fn);
 			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2) && isSameObj(e3, mapped_e3)) {
 				expr
 			} else {
@@ -151,7 +203,7 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiSwitch(v, typ, cs, type, start): {
-			mapped_cs = map(cs, \c -> FiCase(c.struct, c.argNames, fn(mapFiExp(c.body, fn)), c.start));
+			mapped_cs = map(cs, \c -> FiCase(c.struct, c.argNames, mapFiExp(c.body, fn), c.start));
 			if (forall(zipWith(cs, mapped_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -159,7 +211,7 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiCast(e, tFrom, tTo, type, start): {
-			mapped_e = fn(mapFiExp(e, fn));
+			mapped_e = mapFiExp(e, fn);
 			if (isSameObj(e, mapped_e)) {
 				expr
 			} else {
@@ -167,7 +219,7 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiSeq(es, type, start): {
-			mapped_es = map(es, \e -> fn(mapFiExp(e, fn)));
+			mapped_es = map(es, \e -> mapFiExp(e, fn));
 			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -175,7 +227,7 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiCallPrim(op, es, type, start):{
-			mapped_es = map(es, \e -> fn(mapFiExp(e, fn)));
+			mapped_es = map(es, \e -> mapFiExp(e, fn));
 			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
@@ -188,7 +240,7 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 		FiVoid(__):       fn(expr);
 		FiInt(__, __):  fn(expr);
 		FiRequire(flowfile, e, type, start): {
-			mapped_e = fn(mapFiExp(e, fn));
+			mapped_e = mapFiExp(e, fn);
 			if (isSameObj(e, mapped_e)) {
 				expr
 			} else {
@@ -196,14 +248,14 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiUnsafe(name, fb, type, start): {
-			mapped_fb = fn(mapFiExp(fb, fn));
+			mapped_fb = mapFiExp(fb, fn);
 			if (isSameObj(fb, mapped_fb)) {
 				expr
 			} else {
 				FiUnsafe(name, mapped_fb, type, start);
 			}	
 		}
-	}
+	});
 }
 
 fiVarIsUsed(var : string, expr : FiExp) -> bool {
@@ -259,4 +311,586 @@ fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string] {
 		FiRequire(__, e, __, __):      fiCollectUsedNames(e, acc);
 		FiUnsafe(__, fallback, __, __):fiCollectUsedNames(fallback, acc);
 	}
+}
+
+fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram {
+	modules = mapTree(prog.modules, \module -> fiMapModule(prog, module, fn));
+	FiProgram(prog with
+		modules = modules,
+		names = foldTree(modules, 
+			FiGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree()),
+			\__,module, acc -> fiModule2GlobalNames(module, acc)
+		)
+	);
+}
+
+fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ? {
+	names = prog.names;
+	decl_module = \name -> switch (lookupTree(names.function2module, name)) {
+		Some(mname): mname;
+		None(): {
+			switch (lookupTree(names.globalVar2module, name)) {
+				Some(mname): mname;
+				None(): {
+					switch (lookupTree(names.native2module, name)) {
+						Some(mname): mname;
+						None(): "";
+					}
+				}
+			}
+		}
+	}
+	acc1 = foldTree(names.structs, init, \name, struct, acc-> 
+		fn(struct, lookupTreeDef(prog.modules, lookupTreeDef(names.struct2module, name, ""), dummyFiModule), prog, acc)
+	);
+	acc2 = foldTree(names.unions, acc1, \name, union, acc -> 
+		fn(union, lookupTreeDef(prog.modules, lookupTreeDef(names.struct2module, name, ""), dummyFiModule), prog, acc)
+	);
+	foldTree(prog.names.toplevel, acc2, \name, decl, acc ->
+		fn(decl, lookupTreeDef(prog.modules, decl_module(name), dummyFiModule), prog, acc)
+	);
+}
+
+fiModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames {
+	names1 = fold(module.structs, names, \acc, x -> 
+		FiGlobalNames(acc with 
+			struct2module = setTree(acc.struct2module, x.name, module.fileinfo.flowfile),
+			structs = setTree(acc.structs, x.name, x)
+		)
+	);
+	names2 = fold(module.unions, names1, \acc, x -> 
+		FiGlobalNames(acc with 
+			union2module = setTree(acc.union2module, x.name, module.fileinfo.flowfile),
+			unions = setTree(acc.unions, x.name, x)
+		)
+	);
+	names3 = fold(module.functions, names2, \acc, x -> 
+		FiGlobalNames(acc with 
+			function2module = setTree(acc.function2module, x.name, module.fileinfo.flowfile),
+			toplevel = setTree(acc.toplevel, x.name, x)
+		)
+	);
+	names4 = fold(module.globalVars, names3, \acc, x -> 
+		FiGlobalNames(acc with 
+			globalVar2module = setTree(acc.globalVar2module, x.name, module.fileinfo.flowfile),
+			toplevel = setTree(acc.toplevel, x.name, x)
+		)
+	);
+	names5 = fold(module.natives, names4, \acc, x -> 
+		FiGlobalNames(acc with 
+			native2module = setTree(acc.native2module, x.name, module.fileinfo.flowfile),
+			toplevel = setTree(acc.toplevel, x.name, x)
+		)
+	);
+	names5;
+}
+
+fiMapModule(prog: FiProgram, module: FiModule, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiModule {
+	toplevels = mapConcat(fiModuleToplevels(module), \x -> fn(x, module, prog));
+	FiModule(module with
+		structs = filtermap(toplevels, \x -> switch (x) { 
+			FiTypeStruct(__,__,__,__): Some(x);
+			default: None();
+		}),
+		unions = filtermap(toplevels, \x -> switch (x) { 
+			FiTypeUnion(__,__,__,__): Some(x);
+			default: None();
+		}),
+		functions = filtermap(toplevels, \x -> switch (x) { 
+			FiFunctionDec(__,__,__,__,__): Some(x);
+			default: None();
+		}),
+		globalVars = filtermap(toplevels, \x -> switch (x) { 
+			FiGlobalVar(__,__,__,__,__): Some(x);
+			default: None();
+		}),
+		natives = filtermap(toplevels, \x -> switch (x) { 
+			FiNativeDec(__,__,__,__,__,__,__): Some(x);
+			default: None();
+		}),
+	);
+}
+
+fiModuleToplevels(module: FiModule) -> [FiToplevel] {
+	concatA([
+		filtermap(module.structs, \s -> Some(s)),
+		filtermap(module.unions, \u -> Some(u)),
+		filtermap(module.functions, \f -> Some(f)),
+		filtermap(module.globalVars, \v -> Some(v)),
+		filtermap(module.natives, \n -> Some(n)),
+	]);
+}
+
+fiMapProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram {
+	fiMapProgramToplevel(program, \toplevel, module, prog -> 
+		switch (toplevel) {
+			FiTypeStruct(__,__,__,__): [toplevel];
+			FiTypeUnion(__,__,__,__): [toplevel];
+			FiFunctionDec(__,lambda,__,__,__): {
+				mapped = fn(lambda, toplevel, module, prog);
+				if (isSameObj(lambda, mapped)) [toplevel] else {
+					switch (mapped) {
+						FiLambda(__,__,__,__): [FiFunctionDec(toplevel with lambda = mapped)];
+						default: fail0("During declaration mapping of function expected lambda, got:\n" + prettyFiExp(dummyPretty, mapped));
+					}
+				}
+			}
+			FiGlobalVar(__,value,__,__,__): {
+				mapped = fn(value, toplevel, module, prog);
+				if (isSameObj(value, mapped)) [toplevel] else {
+					[FiGlobalVar(toplevel with value = mapped)];
+				}
+			}
+			FiNativeDec(__,__,__,__,fallback,__,__): {
+				mapped = fn(fallback, toplevel, module, prog);
+				if (isSameObj(fallback, mapped)) [toplevel] else {
+					[FiNativeDec(toplevel with fallbackLambda = mapped)];
+				}
+			}
+		}
+	);
+}
+
+fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp {
+	fiDoMapExp(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), fn, argsFirst);
+}
+
+fiDoMapExp(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp {
+	if (argsFirst) {
+		fn(fiMapExpArgs(e, env, fn, argsFirst), env);
+	} else {
+		fiMapExpArgs(fn(e, env), env, fn, argsFirst);
+	}
+}
+
+fiMapExpArgs(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp {
+	set_parent = \env1, i -> FiExpTraverseEnv(env1 with parents = Cons(Pair(e, i), env.parents));
+	switch (e) {
+		FiLambda(args, body, type, start): {
+			env1 = fold(args, env, \acc, arg -> {
+				if (arg.name == "__") acc else {
+					var = FiVar(arg.name, arg.type, start);
+					FiExpTraverseEnv(acc with 
+						locals = setTree(acc.locals, arg.name, var),
+						args = setTree(acc.args, arg.name, var),
+					);
+				}
+			});
+			mapped = fiDoMapExp(body, set_parent(env1, 0), fn, argsFirst);
+			if (isSameObj(mapped, body)) e else 
+			FiLambda(e with body = mapped);
+		}
+		FiCall(f, args, type, start): {
+			f_mapped = fiDoMapExp(f, set_parent(env, 0), fn, argsFirst);
+			args_mapped = mapi(args, \i, arg -> fiDoMapExp(arg, set_parent(env, i + 1), fn, argsFirst));
+			if (isSameObj(f_mapped, f) && all(mapi(args_mapped, \i, arg_mapped -> isSameObj(arg_mapped, args[i])))) e else
+			FiCall(e with f = f_mapped, args = args_mapped);
+		}
+		FiLet(name, type, e1, e2,__,start): {
+			env1 = if (name == "__") env else { 
+				var = FiVar(name, type, start);
+				FiExpTraverseEnv(env with 
+					locals = setTree(env.locals, name, var),
+					lets = setTree(env.args, name, var),
+				);
+			}
+			e1_mapped = fiDoMapExp(e1, set_parent(env, 0), fn, argsFirst);
+			e2_mapped = fiDoMapExp(e2, set_parent(env, 1), fn, argsFirst);
+			if (isSameObj(e1_mapped, e1) && isSameObj(e2_mapped, e2)) e else
+			FiLet(e with e1 = e1_mapped, e2 = e2_mapped);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			e1_mapped = fiDoMapExp(e1, env, fn, argsFirst);
+			e2_mapped = fiDoMapExp(e2, env, fn, argsFirst);
+			e3_mapped = fiDoMapExp(e3, env, fn, argsFirst);
+			if (isSameObj(e1_mapped, e1) && isSameObj(e2_mapped, e2) && isSameObj(e3_mapped, e3)) e else
+			FiIf(e with e1 = e1_mapped, e2 = e2_mapped, e3 = e3_mapped);
+		}
+		FiSwitch(x, typ, cs, type, start): {
+			x_mapped = fiDoMapExp(x, set_parent(env, 0), fn, argsFirst);
+			switch (x_mapped) {
+				FiVar(__,__,__): {
+					cases_mapped = mapi(cs, \i, c -> FiCase(c with body = fiDoMapExp(c.body, set_parent(env, i), fn, argsFirst)));
+					if (isSameObj(x_mapped, x) && all(mapi(cases_mapped, \i, c_mapped -> isSameObj(c_mapped.body, cs[i].body)))) e else
+					FiSwitch(e with x = x_mapped, cases = cases_mapped);
+				}
+				default: fail0("During switch mapping of expression expected a var in switch, got:\n" + prettyFiExp(dummyPretty, x_mapped));
+			}
+		}
+		FiCast(e1, tFrom, tTo, type, start): {
+			e1_mapped = fiDoMapExp(e1, set_parent(env, 0), fn, argsFirst);
+			if (isSameObj(e1_mapped, e1)) e else
+			FiCast(e with e = e1_mapped);
+		}
+		FiSeq(es, type, start): {
+			es_mapped = mapi(es, \i, x -> fiDoMapExp(x, set_parent(env, i), fn, argsFirst));
+			if (all(mapi(es_mapped, \i, e_mapped -> isSameObj(e_mapped, es[i])))) e else
+			FiSeq(e with es = es_mapped);
+		}
+		FiCallPrim(op, es, type, start):{
+			es_mapped = mapi(es, \i, x -> fiDoMapExp(x, set_parent(env, i), fn, argsFirst));
+			if (all(mapi(es_mapped, \i, e_mapped -> isSameObj(e_mapped, es[i])))) e else
+			FiCallPrim(e with es = es_mapped);
+		}
+		FiRequire(flowfile, e1, type, start): {
+			e1_mapped = fiDoMapExp(e1, set_parent(env, 0), fn, argsFirst);
+			if (isSameObj(e1_mapped, e1)) e else
+			FiRequire(e with e = e1_mapped);
+		}
+		FiUnsafe(name, fb, type, start): {
+			fb_mapped = fiDoMapExp(fb, set_parent(env, 0), fn, argsFirst);
+			if (isSameObj(fb_mapped, fb)) e else
+			FiUnsafe(e with fallback = fb_mapped);
+		} 
+		FiVar(__,__,__): e;
+		FiConst(): e;
+	}
+}
+
+fiFoldExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> ?, order: AstTraverseOrder) -> ? {
+	fiFoldMapExp(e, acc, \x, env, ac -> Pair(x, fn(x, env, ac)), order).second;
+}
+
+fiFoldMapExp(e: FiExp, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?> {
+	fiDoFoldMapExp(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), acc, fn, order); 
+}
+
+fiDoFoldMapExp(e: FiExp, env: FiExpTraverseEnv, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?> {
+	if (order.argsFirst) {
+		p = fiFoldMapExpArgs(e, env, acc, fn, order);
+		fn(p.first, env, p.second);
+	} else {
+		p = fn(e, env, acc);
+		fiFoldMapExpArgs(p.first, env, p.second, fn, order);
+	}
+}
+
+fiFoldMapExpArgs(e: FiExp, env: FiExpTraverseEnv, acc: ?, fn: (FiExp, FiExpTraverseEnv, ?) -> Pair<FiExp, ?>, order: AstTraverseOrder) -> Pair<FiExp, ?> {
+	set_parent = \env1, i -> FiExpTraverseEnv(env1 with parents = Cons(Pair(e, i), env.parents));
+	switch (e) {
+		FiLambda(args, body, type, start): {
+			env1 = fold(args, env, \env_acc, arg -> {
+				if (arg.name == "__") env_acc else {
+					var = FiVar(arg.name, arg.type, start);
+					FiExpTraverseEnv(env_acc with
+						locals = setTree(env_acc.locals, arg.name, var),
+						args = setTree(env_acc.args, arg.name, var),
+					);
+				}
+			});
+			p = fiDoFoldMapExp(body, set_parent(env1, 0), acc, fn, order);
+			mapped_e = if (isSameObj(p.first, body)) e else FiLambda(e with body = p.first);
+			Pair(mapped_e, p.second);
+		}
+		FiCall(f, args, type, start): {
+			if (order.direct) {
+				p_f = fiDoFoldMapExp(f, set_parent(env, 0), acc, fn, order);
+				p_args = foldi(args, Pair([], p_f.second), \i, p_arg, x -> {
+					p_x = fiDoFoldMapExp(x, set_parent(env, i + 1), p_arg.second, fn, order);
+					Pair(concat(p_arg.first, [p_x.first]), p_x.second);
+				});
+				mapped_e = if (
+					isSameObj(p_f.first, f) && 
+					all(mapi(p_args.first, \i, arg_mapped -> isSameObj(arg_mapped, args[i])))
+				) e else {
+					FiCall(e with f = p_f.first, args = p_args.first);
+				}
+				Pair(mapped_e, p_args.second);
+			} else {
+				p_args = foldri(args, Pair([], acc), \i, p_arg, x -> {
+					p_x = fiDoFoldMapExp(x, set_parent(env, i), p_arg.second, fn, order);
+					Pair(concat([p_x.first], p_arg.first), p_x.second);
+				});
+				p_f = fiDoFoldMapExp(f, set_parent(env, 0), p_args.second, fn, order);
+				mapped_e = if (
+					isSameObj(p_f.first, f) && 
+					all(mapi(p_args.first, \i, arg_mapped -> isSameObj(arg_mapped, args[i])))
+				) e else {
+					FiCall(e with f = p_f.first, args = p_args.first);
+				}
+				Pair(mapped_e, p_f.second);
+			}
+		}
+		FiLet(name, type, e1, e2, __, start): {
+			env1 = if (name == "__") env else {
+				var = FiVar(name, type, start);
+				FiExpTraverseEnv(env with 
+					locals = setTree(env.locals, name, var),
+					lets = setTree(env.args, name, var),
+				);
+			}
+			if (order.direct) {
+				p_e1 = fiDoFoldMapExp(e1, set_parent(env, 0), acc, fn, order);
+				p_e2 = fiDoFoldMapExp(e2, set_parent(env1, 1), p_e1.second, fn, order);
+				e_mapped = if (isSameObj(p_e1.first, e1) && isSameObj(p_e2.first, e2)) e else
+				FiLet(e with e1 = p_e1.first, e2 = p_e2.first);
+				Pair(e_mapped, p_e2.second);
+			} else {
+				p_e2 = fiDoFoldMapExp(e2, set_parent(env1, 1), acc, fn, order);
+				p_e1 = fiDoFoldMapExp(e1, set_parent(env, 0), p_e2.second, fn, order);
+				e_mapped = if (isSameObj(p_e1.first, e1) && isSameObj(p_e2.first, e2)) e else
+				FiLet(e with e1 = p_e1.first, e2 = p_e2.first);
+				Pair(e_mapped, p_e1.second);
+			}
+		}
+		FiIf(e1, e2, e3, type, start): {
+			if (order.direct) {
+				p_e1 = fiDoFoldMapExp(e1, set_parent(env, 0), acc, fn, order);
+				p_e2 = fiDoFoldMapExp(e2, set_parent(env, 1), p_e1.second, fn, order);
+				p_e3 = fiDoFoldMapExp(e3, set_parent(env, 2), p_e2.second, fn, order);
+				e_mapped = if (isSameObj(p_e1.first, e1) && isSameObj(p_e2.first, e2) && isSameObj(p_e3.first, e3)) e else
+				FiIf(e with e1 = p_e1.first, e2 = p_e2.first, e3 = p_e3.first);
+				Pair(e_mapped, p_e3.second);
+			} else {
+				p_e3 = fiDoFoldMapExp(e3, set_parent(env, 2), acc, fn, order);
+				p_e2 = fiDoFoldMapExp(e2, set_parent(env, 1), p_e3.second, fn, order);
+				p_e1 = fiDoFoldMapExp(e1, set_parent(env, 0), p_e2.second, fn, order);
+				e_mapped = if (isSameObj(p_e1.first, e1) && isSameObj(p_e2.first, e2) && isSameObj(p_e3.first, e3)) e else
+				FiIf(e with e1 = p_e1.first, e2 = p_e2.first, e3 = p_e3.first);
+				Pair(e_mapped, p_e1.second);
+			}
+		}
+		FiSwitch(x, typ, cs, type, start): {
+			if (order.direct) {
+				p_x = fiDoFoldMapExp(x, set_parent(env, 0), acc, fn, order);
+				x_mapped = p_x.first;
+				switch (x_mapped) {
+					FiVar(__,__,__): {
+						p_cs = foldi(cs, Pair([], p_x.second), \i, p_acc, c -> {
+							p_c = fiDoFoldMapExp(c.body, set_parent(env, i), p_acc.second, fn, order);
+							Pair(concat(p_acc.first, [FiCase(c with body = p_c.first)]), p_c.second);
+						});
+						e_mapped = if (isSameObj(x_mapped, x) && all(mapi(p_cs.first, \i, c_mapped -> isSameObj(c_mapped.body, cs[i].body)))) e else
+						FiSwitch(e with x = x_mapped, cases = p_cs.first);
+						Pair(e_mapped, p_cs.second);
+					}
+					default: fail0("During switch mapping of expression expected a var in switch, got:\n" + prettyFiExp(dummyPretty, x_mapped));
+				}
+			} else {
+				p_cs = foldri(cs, Pair([], acc), \i, p_acc, c -> {
+					p_c = fiDoFoldMapExp(c.body, set_parent(env, i), p_acc.second, fn, order);
+					Pair(concat(p_acc.first, [FiCase(c with body = p_c.first)]), p_c.second);
+				});
+				p_x = fiDoFoldMapExp(x, set_parent(env, 0), p_cs.second, fn, order);
+				x_mapped = p_x.first;
+				switch (x_mapped) {
+					FiVar(__,__,__): {
+						e_mapped = if (isSameObj(x_mapped, x) && all(mapi(p_cs.first, \i, c_mapped -> isSameObj(c_mapped.body, cs[i].body)))) e else
+						FiSwitch(e with x = x_mapped, cases = p_cs.first);
+						Pair(e_mapped, p_x.second);
+					}
+					default: fail0("During switch mapping of expression expected a var in switch, got:\n" + prettyFiExp(dummyPretty, x_mapped));
+				}
+			}
+		}
+		FiCast(e1, tFrom, tTo, type, start): {
+			p_e1 = fiDoFoldMapExp(e1, set_parent(env, 0), acc, fn, order);
+			e_mapped = if (isSameObj(p_e1.first, e1)) e else FiCast(e with e = p_e1.first);
+			Pair(e_mapped, p_e1.second);
+		}
+		FiSeq(es, type, start): {
+			if (order.direct) {
+				p_es = foldi(es, Pair([], acc), \i, p_acc, x -> {
+					p_x = fiDoFoldMapExp(x, set_parent(env, i), p_acc.second, fn, order);
+					Pair(concat(p_acc.first, [p_x.first]), p_x.second);
+				});
+				e_mapped = if (all(mapi(p_es.first, \i, e_mapped -> isSameObj(e_mapped, es[i])))) e else
+				FiSeq(e with es = p_es.first);
+				Pair(e_mapped, p_es.second);
+			} else {
+				p_es = foldri(es, Pair([], acc), \i, p_acc, x -> {
+					p_x = fiDoFoldMapExp(x, set_parent(env, i), p_acc.second, fn, order);
+					Pair(concat([p_x.first], p_acc.first), p_x.second);
+				});
+				e_mapped = if (all(mapi(p_es.first, \i, e_mapped -> isSameObj(e_mapped, es[i])))) e else
+				FiSeq(e with es = p_es.first);
+				Pair(e_mapped, p_es.second);
+			}
+		}
+		FiCallPrim(op, es, type, start):{
+			if (order.direct) {
+				p_es = foldi(es, Pair([], acc), \i, p_acc, x -> {
+					p_x = fiDoFoldMapExp(x, set_parent(env, i), p_acc.second, fn, order);
+					Pair(concat(p_acc.first, [p_x.first]), p_x.second);
+				});
+				e_mapped = if (all(mapi(p_es.first, \i, e_mapped -> isSameObj(e_mapped, es[i])))) e else
+				FiCallPrim(e with es = p_es.first);
+				Pair(e_mapped, p_es.second);
+			} else {
+				p_es = foldri(es, Pair([], acc), \i, p_acc, x -> {
+					p_x = fiDoFoldMapExp(x, set_parent(env, i), p_acc.second, fn, order);
+					Pair(concat([p_x.first], p_acc.first), p_x.second);
+				});
+				e_mapped = if (all(mapi(p_es.first, \i, e_mapped -> isSameObj(e_mapped, es[i])))) e else
+				FiCallPrim(e with es = p_es.first);
+				Pair(e_mapped, p_es.second);
+			}
+		}
+		FiRequire(flowfile, e1, type, start): {
+			p_e1 = fiDoFoldMapExp(e1, set_parent(env, 0), acc, fn, order);
+			e_mapped = if (isSameObj(p_e1.first, e1)) e else FiRequire(e with e = p_e1.first);
+			Pair(e_mapped, p_e1.second);
+		}
+		FiUnsafe(name, fb, type, start): {
+			p_e1 = fiDoFoldMapExp(fb, set_parent(env, 0), acc, fn, order);
+			e_mapped = if (isSameObj(p_e1.first, fb)) e else FiUnsafe(e with fallback = p_e1.first);
+			Pair(e_mapped, p_e1.second);
+		} 
+		FiVar(__,__,__): Pair(e, acc);
+		FiConst(): Pair(e, acc);
+	}
+}
+
+fiFindInExpr(e : FiExp, pred: (FiExp) -> Maybe<?>) -> Maybe<?> {
+	check_e = \x -> fiFindInExpr(x, pred);
+	check_es = \xs -> fold(xs, None(), \acc, x ->
+		if (isSome(acc)) acc else fiFindInExpr(x, pred)
+	);
+	switch (pred(e)) {
+		Some(x): Some(x);
+		None(): {
+			switch (e) {
+				FiLambda(args, body,__, start): {
+					check_e(body);
+				}
+				FiCall(fn, args,__,__): {
+					switch (check_e(fn)) {
+						Some(t): Some(t);
+						None():  check_es(args);
+					}
+				}
+				FiLet(v, t, e1, e2,__, start): {
+					check_es([e1, e2]);
+				}
+				FiIf(e1, e2, e3,__, __): {
+					check_es([e1, e2, e3]);
+				}
+				FiSwitch(v, vtype, cases, type, start): {
+					switch (check_e(v)) {
+						Some(x): Some(x);
+						None(): check_es(map(cases, \c -> c.body));
+					}
+				}
+				FiCast(ex, __, __, __, __): {
+					check_e(ex);
+				}
+				FiSeq(es,__,__): {
+					check_es(es);
+				}
+				FiCallPrim(__, es,__,__): {
+					check_es(es);
+				}
+				FiRequire(__, ex,__,__): {
+					check_e(ex);
+				}
+				FiUnsafe(__, ex,__,__): {
+					check_e(ex);
+				}
+				default: None();
+			}
+		}
+	}
+}
+
+fcSplitCompileTimeVar(id: string) -> Pair<string, string> {
+	// Usage of a special compile-time constants, which may be substituted from config during compilation
+	// Format of a compile-time variable:
+	//    __compiletime__somevar_true
+	//    __compiletime__anothervar_42
+	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
+	// default fallback value, which should be used, in case no proper variable is defined in config.
+	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
+	// default value.
+	if (startsWith(id, "__compiletime__")) {
+		compile_time_val = substring(id, 15, strlen(id) - 15);
+		defval_sep = strIndexOf(compile_time_val, "_");
+		Pair(
+			substring(compile_time_val, 0, defval_sep),
+			substring(compile_time_val, defval_sep + 1, strlen(compile_time_val) - (defval_sep + 1))
+		);
+	} else {
+		Pair(id, "");
+	}
+}
+
+fiMapExp2(e: FiExp, fn: (FiExp, FiExpTraverseEnv, [?]) -> ?) -> ? {
+	fiDoMapExp2(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), fn);
+}
+
+fiDoMapExp2(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv, [?]) -> ?) -> ? {
+	set_parent = \env1, i -> FiExpTraverseEnv(env1 with parents = Cons(Pair(e, i), env.parents));
+	fn(e, env, switch (e) {
+		FiLambda(args, body, type, start): {
+			env1 = fold(args, env, \acc, arg -> {
+				if (arg.name == "__") acc else {
+					var = FiVar(arg.name, arg.type, start);
+					FiExpTraverseEnv(acc with 
+						locals = setTree(acc.locals, arg.name, var),
+						args = setTree(acc.args, arg.name, var),
+					);
+				}
+			});
+			[fiDoMapExp2(body, set_parent(env1, 0), fn)];
+		}
+		FiCall(f, args, type, start): {
+			concat(
+				[fiDoMapExp2(f, set_parent(env, 0), fn)], 
+				mapi(args, \i, arg -> fiDoMapExp2(arg, set_parent(env, i + 1), fn))
+			);
+		}
+		FiLet(name, type, e1, e2,__,start): {
+			env1 = if (name == "__") env else { 
+				var = FiVar(name, type, start);
+				FiExpTraverseEnv(env with 
+					locals = setTree(env.locals, name, var),
+					lets = setTree(env.args, name, var),
+				);
+			}
+			[fiDoMapExp2(e1, set_parent(env, 0), fn), fiDoMapExp2(e2, set_parent(env, 1), fn)];
+		}
+		FiIf(e1, e2, e3, type, start): {
+			[fiDoMapExp2(e1, env, fn), fiDoMapExp2(e2, env, fn), fiDoMapExp2(e3, env, fn)];
+		}
+		FiSwitch(x, typ, cs, type, start): {
+			concat([
+				fiDoMapExp2(x, set_parent(env, 0), fn)],
+				mapi(cs, \i, c -> fiDoMapExp2(c.body, set_parent(env, i), fn))
+			);
+		}
+		FiCast(e1, tFrom, tTo, type, start): {
+			[fiDoMapExp2(e1, set_parent(env, 0), fn)];
+		}
+		FiSeq(es, type, start): {
+			mapi(es, \i, x -> fiDoMapExp2(x, set_parent(env, i), fn));
+		}
+		FiCallPrim(op, es, type, start):{
+			mapi(es, \i, x -> fiDoMapExp2(x, set_parent(env, i), fn));
+		}
+		FiRequire(flowfile, e1, type, start): {
+			[fiDoMapExp2(e1, set_parent(env, 0), fn)];
+		}
+		FiUnsafe(name, fb, type, start): {
+			[fiDoMapExp2(fb, set_parent(env, 0), fn)];
+		} 
+		FiVar(__,__,__): [];
+		FiConst(): [];
+	});
+}
+
+fiFoldType(tp : FiType, v: ?, fn: (?, FiType) -> ?) -> ? {
+	fn(switch (tp) {
+		FiTypeRef(rt): {
+			fiFoldType(rt, v, fn);
+		}
+		FiTypeArray(at): {
+			fiFoldType(at, v, fn);
+		}
+		FiTypeName(n, ts): {
+			fold(ts, v, \acc, x -> fiFoldType(x, acc, fn));
+		}
+		FiTypeFunction(args, rt):{
+			fold(args, fiFoldType(rt, v, fn), \acc, x -> fiFoldType(x.type, acc, fn));
+		}
+		default: v;
+	}, tp)
 }

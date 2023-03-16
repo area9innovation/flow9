@@ -1,0 +1,169 @@
+import material/internal/filebrowser/material_filebrowser_internal;
+import material/material_ui;
+
+export {
+	material_filebrowser_test_upload_styles(material : MaterialManager) -> void;
+}
+
+material_filebrowser_test_upload_styles(manager : MaterialManager) -> void {
+		maxSize = make(10);
+		maxRes = make(1000);
+		maxBit = make(2000);
+		isManager = make(true);
+
+		stylesOnB = [make(false), make(false), make(false), make(false), make(false)];
+		flagsOnB = [make(true), make(true), make(true), make(true), make(true)];
+		maxValB = [make("5"), make("1000"), make("2000")];
+		styleIdxB = [make(0), make(0)];
+
+		testResultB = make([[], [], []]);
+
+		getSubStyle = \idxB, flagB -> {
+			idx = getValue(idxB);
+			if (idx == 0) FbReduceDoAuto()
+			else if (idx == 1) FbReduceSkip()
+			else FbReduceAskUser(getValue(flagB));
+		}
+
+		testFilesFromDrop = \nativeFiles : [native] -> {
+			next(testResultB, [[], [], []]);
+
+			resStyle = concatA([
+				if (getValue(stylesOnB[0])) [FbFilterMaxFileSize(s2i(getValue(maxValB[0])) * 1024 * 1024, FbReduceShowInDialog(getValue(flagsOnB[0])))] else [],
+				if (getValue(stylesOnB[1])) [FbFilterMaxImageResolution(s2i(getValue(maxValB[1])), getSubStyle(styleIdxB[0], flagsOnB[1]))] else [],
+				if (getValue(stylesOnB[2])) [FbFilterMaxVideoBitrate(s2i(getValue(maxValB[2])), getSubStyle(styleIdxB[1], flagsOnB[2]))] else [],
+				if (getValue(stylesOnB[3])) [FbDefaultResolutionReduce(getValue(flagsOnB[3]))] else [],
+				if (getValue(stylesOnB[4])) [FbDefaultBitrateReduce(getValue(flagsOnB[4]))] else [],
+			]);
+
+			//println(resStyle);
+
+			filterUploadedFilesForRestrictionsNative(
+				nativeFiles,
+				if (getValue(isManager)) Some(manager) else None(),
+				\m, p -> material2tropicWithParent(manager, p, m),
+				\toUpload, toReduce, tooLagre -> next(testResultB, [toUpload, toReduce, tooLagre]),
+				resStyle
+			);
+		}
+		
+		getNativeFilesView = \title, nFiles-> {
+			MLines([
+				MText(title, [MFont(MSubheading() with family="RobotoMedium")]),
+				MFixedY(8.),
+				MCols([
+					MFixedX(32.),
+					if (nFiles == []) MText(_("No files here"), [MGrey(500)])
+					else MLines(
+						map(nFiles, \f -> MCols([MText(fileNameClient(f), [MGrey(800)]), MFillX(), MText(i2s(trunc(fileSizeClient(f) / 1024. / 1024.)) + " Mb", [MGrey(600)])]))
+						|> (\arr -> interleave(arr, MFixedY(8.)))
+					)
+				])
+			])
+		}
+
+		addSpacesX = \arr -> interleave(arr, MFixedX(8.));
+		addSpacesY = \arr -> interleave(arr, MFixedY(8.));
+
+		getNamedValueRow = \title, mRow, unit, enabledB -> {
+			MBaselineCols([
+				MFixedX(32.),
+				MIf(enabledB, MText(title, []), MText(title, [MGrey(500)])),				
+				mRow,
+				MText(unit, [])
+			] |> addSpacesY)
+		}
+
+		getRadiosStyleRow = \title, v1B, unit, v2B, v3B, enabledB -> {
+			MLines([
+				getNamedValueRow(title, MTextInput(v1B, [MWidth(-1.), TextInputType(NumericType())], [MEnabled(enabledB)]), unit, enabledB),
+				getNamedValueRow("behaviour:",
+					MBaselineCols([
+						MFixedX(32.),
+						MLines(
+							MRadios(v2B, [MEnabled(enabledB), getPrimaryColor(manager)], [
+								MIf(enabledB, MText("FbReduceDoAuto()", []), MText("FbReduceDoAuto()", [MGrey(500)])),
+								MIf(enabledB, MText("FbReduceSkip()", []), MText("FbReduceSkip()", [MGrey(500)])),
+								MBaselineCols([
+									MIf(enabledB, MText("FbReduceAskUser(...):", []), MText("FbReduceAskUser(...):", [MGrey(500)])),
+									MSwitchControl(v3B, [getPrimaryColor(manager), MEnabled(fand(enabledB, feq(v2B, 2)))])
+								] |> addSpacesX),
+							]) |> addSpacesY
+						)
+					] |> addSpacesX),
+					"",
+					enabledB
+				),
+			] |> addSpacesY)
+		}
+
+		makeTestArea = \w, title, m -> {
+			MFrame(w, 8., [MStroke(MGrey(500))], 
+				MLines([
+					MFixedY(abs(w - 8.)),
+					MCenterX(MText(title, [MTitle()])),
+					MFixedY(8.),
+					m
+				])
+			)
+		}
+
+		viewDrop = makeTestArea(8., "Test area", MInteractive(
+			[TFileDrop(-1, "", testFilesFromDrop)],
+			MFrame(8., 8., [MFill(MGrey(100))], MCenter(MText("Drop files there", [MTitle()])))
+		));
+		viewResult = makeTestArea(8., "Result", MScroll(
+			MSelect(testResultB, \res -> 
+				MLines([
+					getNativeFilesView("Normal", res[0]),
+					getNativeFilesView("Reduce", res[1]),
+					getNativeFilesView("Large", res[2])
+				] |> addSpacesY)
+			),
+			MFillXY(),
+			[]
+		));
+		viewStyle = makeTestArea(0., "Filebrowser styles", MBorder(8., 0., 0., 8., MScroll(
+			MBorderRight(24.)(MLines([
+				MCheckBox(MText("Show UI Dialog", [MBodyBold()]), isManager, [getPrimaryColor(manager)]),
+				MCheckBox(MText("FbFilterMaxFileSize(...)", [MBodyBold()]), stylesOnB[0], [getPrimaryColor(manager)]),
+				MLines([
+					getNamedValueRow("size:", MTextInput(maxValB[0], [MWidth(-1.), TextInputType(NumericType())], [MEnabled(stylesOnB[0])]), "Mb", stylesOnB[0]),
+					getNamedValueRow("behaviour: FbReduceShowInDialog(...):", MSwitchControl(flagsOnB[0], [MEnabled(stylesOnB[0]), getPrimaryColor(manager)]), "", stylesOnB[0]),
+				] |> addSpacesY),
+				
+				MCheckBox(MText("FbFilterMaxImageResolution(...)", [MBodyBold()]), stylesOnB[1], [getPrimaryColor(manager)]),
+				getRadiosStyleRow("size:", maxValB[1], "px", styleIdxB[0], flagsOnB[1], stylesOnB[1]),
+				
+				MCheckBox(MText("FbFilterMaxVideoBitrate(...)", [MBodyBold()]), stylesOnB[2], [getPrimaryColor(manager)]),
+				getRadiosStyleRow("bitrate:", maxValB[2], "kb/s",styleIdxB[1], flagsOnB[2], stylesOnB[2]),
+				
+				MCheckBox(MText("FbDefaultResolutionReduce(...)", [MBodyBold()]), stylesOnB[3], [getPrimaryColor(manager)]),
+				getNamedValueRow("reduce:", MSwitchControl(flagsOnB[3], [MEnabled(stylesOnB[3]), getPrimaryColor(manager)]), "", stylesOnB[3]),
+				
+				MCheckBox(MText("FbDefaultBitrateReduce(...)", [MBodyBold()]), stylesOnB[4], [getPrimaryColor(manager)]),
+				getNamedValueRow("reduce:", MSwitchControl(flagsOnB[4], [MEnabled(stylesOnB[4]), getPrimaryColor(manager)]), "", stylesOnB[4])
+			] |> addSpacesY)),
+			MFillXY(), []
+		)));
+
+		closeTestB = make(false);
+		ShowMDialog(manager, closeTestB,
+			[
+				MDialogTitle(_("Test how works the filebrowser `FbFilterUploadDialog` style")),
+				MDialogUseFrame(),
+				MDialogActions([
+					MTextButton(_("CLOSE"), \-> next(closeTestB, true), [], [MShortcut("esc")])
+				]),
+			],
+			MCols([
+				MLines([
+					viewDrop,
+					MFixedY(16.),
+					viewResult
+				]),
+				MFixedX(16.),
+				viewStyle
+			])
+		);
+	}

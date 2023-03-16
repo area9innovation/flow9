@@ -38,9 +38,17 @@ export {
 	*/
 	TextFragment(text : string, charStyle : [CharacterStyle]) -> TextFragments;
 	TextFragmentExt(text : string, charStyle : [CharacterStyle], styles : [TextFragmentStyle]) -> TextFragments;
-		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild;
+	TextFragmentWithDecorator(
+		text : string,
+		charStyle : [CharacterStyle],
+		styles : [TextFragmentStyle],
+		wordDecorator : (Form) -> Form,
+		customParagraphStyle : [ParagraphStyle]
+	) -> TextFragments;
+		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild, TextFragmentFirstChild;
 			TextFragmentMoreLineBreaks();
 			TextFragmentLastChild();
+			TextFragmentFirstChild();
 
 	replaceDoubleNL(s : string) -> string {
 		if (strIndexOf(s, "\n\n") >= 0)
@@ -63,8 +71,13 @@ export {
 		indexingInit : int,
 		init : List<GeneralWrapElement>,
 		isLastChild : bool,
-		disableBreaksAfterHyphen : bool
+		isFirstChild : bool,
+		disableBreaksAfterHyphen : bool,
+		emulateLetterspacing : bool,
+		allowAnySoftBreak : bool
 	) -> GeneralTextFragments;
+	// it uses breakTextFragment inside and count resulting list of fragments
+	countTextFragments(text : string) -> int;
 	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
 	// also we have to add such element after the last \n in the last child text element of the paragraph
 	// makeEmptyLineInspectElement take index and style of the text and returns InspectElement with form with width=0., height={height of the Text with passed style}
@@ -113,6 +126,8 @@ export {
 		//    • punctuation,
 		//    • number boundary.
 		PositionCharCat : ();
+
+	softBreakLinePart = GeneralLinePart("", "", softBreakVisualSymbol, true);
 }
 
 // Paragraph transformations
@@ -122,8 +137,8 @@ transformParagraphElement(e : ParagraphElement, fn : (Form) -> Form) -> Paragrap
 		TextFragments(parts): TextFragments(mapList(parts, \p ->
 			switch(p : WrapElement) {
 			NewLine() : p;
-			LinePart(f, in, l): {
-				LinePart(fn(f), fn(in), fn(l))
+			LinePart(f, in, l, allowBreakAfter): {
+				LinePart(fn(f), fn(in), fn(l), allowBreakAfter)
 			}
 			Space(s): {
 				Space(fn(s))
@@ -281,6 +296,10 @@ TextFragment(text, charStyle) {
 }
 
 TextFragmentExt(text, charStyle, style) {
+	TextFragmentWithDecorator(text, charStyle, [], idfn, [])
+}
+
+TextFragmentWithDecorator(text, charStyle, style, wordDecorator : (Form) -> Form, customParagraphStyle : [ParagraphStyle]) {
 	generalFragments = breakTextFragment(
 		text,
 		charStyle,
@@ -288,10 +307,16 @@ TextFragmentExt(text, charStyle, style) {
 		-100000,
 		makeList(),
 		containsStruct(style, TextFragmentLastChild()),
+		containsStruct(style, TextFragmentFirstChild()),
+		false,
+		containsStruct(customParagraphStyle, IgnoreLetterspacingOnReflow()),
 		false
 	);
 	TextFragments(
-		mapList(generalFragments.elements, \e -> general2WrapElement(e, generalFragments.style))
+		mapList(
+			generalFragments.elements,
+			\e -> general2WrapElement(e, generalFragments.style, wordDecorator)
+		)
 	)
 }
 
@@ -301,16 +326,17 @@ DynamicWrapElement(index : int, form : WrapElement, width : Behaviour<double>);
 // It will monitor the available width, and reflow as necessary (also when dynamic
 // forms change size).
 // The result is a behaviour that produces an array of lines (each expressed as a Form)
-Wrap(availableWidth : Behaviour<double>, elements : [WrapElement],
-     alignment : ParagraphAlignment, interlineSpacing : double,
-     background : int, opacity : double)
-    -> DynamicBehaviour<[Form]> {
-    dynamicElementsList = ref makeList();
+Wrap(
+	availableWidth : Behaviour<double>, elements : [WrapElement],
+	alignment : ParagraphAlignment, interlineSpacing : double,
+	background : int, opacity : double
+) -> DynamicBehaviour<[Form]> {
+	dynamicElementsList = ref makeList();
 
 	widths = mapi(elements, \i, e -> {
 		switch(e : WrapElement) {
 			NewLine() : 0.0;
-			LinePart(f, in, l): {
+			LinePart(f, in, l, allowBreakAfter): {
 				if (!isStaticForm(f) || !isStaticForm(in) || !isStaticForm(l)) {
 					bf = make(0.0);
 					bin = make(0.0);
@@ -319,6 +345,7 @@ Wrap(availableWidth : Behaviour<double>, elements : [WrapElement],
 						Inspect([Width(bf)], f),
 						Inspect([Width(bin)], in),
 						Inspect([Width(bl)], l),
+						allowBreakAfter
 					);
 					width = select3(bf, bin, bl, max3);
 					dyn = DynamicWrapElement(i, wrappedForms, width);
@@ -510,8 +537,8 @@ resolveWrapElement(line : [WrapElement]) -> [Form] {
 
 				Empty()
 			}
-			LinePart(f, in, last): if (i == ^realFirst) f else if (i == ^realLast) last else in;
-			Space(space): if (i == ^realFirst) Empty() else if (i == ^realLast) Empty() else space;
+			LinePart(f, in, last, __): if (i == ^realFirst) f else if (i == ^realLast) last else in;
+			Space(space): if (i == ^realFirst || i == ^realLast) Empty() else space;
 			GlueFragments() : Empty();
 			// We know this is a Form, so to satisfy the type checker, we cast it
 			default: cast(element : WrapElement -> Form);
@@ -544,10 +571,26 @@ applyAlignment(line : [Form], alignment : ParagraphAlignment, width : double,
 
 makeEmptyLineInspectElement(indexing : int, style : [CharacterStyle]) -> WrapElement {
 	InspectElement(
-		ParaElementInspector(make(indexing), make(0.0), make(0.0), makeWH(), make(0.0), make(0.0), make(-1), make(false)),
+		ParaElementInspector(make(indexing), make(0.0), make(0.0), makeWH(), make(0.0), make(0.0), make(-1), make(false), make(0.0), make(0.0), make(WordPositionInLineFirst())),
 		makeZeroSpaceElement(style)
 	)
 }
+
+countTextFragments(text : string) -> int {
+	breakTextFragment(
+		text,
+		[],
+		false,
+		-100000,
+		makeList(),
+		false,
+		false,
+		false,
+		false,
+		false
+	).elements |> countList;
+}
+
 
 breakTextFragment(
 	text : string,
@@ -556,13 +599,73 @@ breakTextFragment(
 	indexingInit : int,
 	init : List<GeneralWrapElement>,
 	isLastChild : bool,
-	disableBreaksAfterHyphen : bool
+	isFirstChild : bool,
+	disableBreaksAfterHyphen : bool,
+	emulateLetterspacing : bool,
+	allowAnySoftBreak : bool,
 ) -> GeneralTextFragments {
+	textLen = strlen(text);
 
-	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing, offset, f -> {
-		if (0 <= indexing) {
+	elements = breakTextFragmentIntoElements(
+		0,
+		indexingInit,
+		init,
+		makeCharCatSplitPosText(text),
+		disableBreaksAfterHyphen,
+		isFirstChild,
+		moreLineBreaks,
+		textLen,
+		-1,
+		-1,
+		Pair(-1, false),
+		-1,
+		"",
+		isBiDiEnabled(),
+		allowAnySoftBreak,
+		isUrlParameterTrue("debug")
+	);
+
+	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
+	// If paragraph has several successive WigiText fragments with letterspacing, then the space between them will be lost
+	// so we make a trick - add zero-width space to the end of text in Text to force it to add last letterspacing space
+	// It is not used for TropicWigify
+	letterspacingNeeded = emulateLetterspacing && !isLastChild && containsStruct(style, LetterSpacing(0.0));
+
+	GeneralTextFragments(
+		if (letterspacingNeeded) switch(elements) {
+			Cons(h, t) : Cons(makeLetterSpacingForWord(h), t);
+			EmptyList() : elements;
+		} else elements,
+		style
+	);
+}
+
+breakTextFragmentIntoElements(
+	i : int,
+	indexing : int,
+	acc : List<GeneralWrapElement>,
+	textData : CharCatSplitPosText,
+	disableBreaksAfterHyphen : bool,
+	isFirstChild : bool,
+	moreLineBreaks : bool,
+	textLen : int,
+	space1Pos : int, // next pos of space char
+	newLinePos : int, // next pos of newline symbol
+	hyphenPos : Pair<int, bool>, // pair of next pos of hyphen and soft sign
+	chrCatPos : int, // next pos of split in respect of characters' categories
+	wordAlphabet : string,
+	bidiEnabled : bool,
+	allowAnySoftBreak : bool,
+	debug : bool
+) -> List<GeneralWrapElement> {
+	text = textData.text;
+	toInspectingElementIfNecessary : (int, int, GeneralWrapElement) -> GeneralWrapElement = \indexing2, offset, f -> {
+		if (0 <= indexing2) {
 			GeneralInspectElement(
-				ParaElementInspector(make(offset), make(0.0), make(0.0), makeWH(), make(0.0), make(0.0), make(-1), make(false)),
+				ParaElementInspector(
+					make(offset), make(0.0), make(0.0), makeWH(), make(0.0), make(0.0), make(-1), make(false), make(0.0), make(0.0),
+					make(WordPositionInLineFirst())
+				),
 				f
 			)
 		} else {
@@ -570,173 +673,198 @@ breakTextFragment(
 		}
 	};
 
-	makeTextFn = \indexing, t -> {
-		toInspectingElementIfNecessary(indexing, indexing, GeneralText(t))
+	makeTextFn = \indexing2, t -> {
+		toInspectingElementIfNecessary(indexing2, indexing2, GeneralText(t))
 	};
-
-	textLen = strlen(text);
-
-	space1Pos = ref -1;                                        // next pos of space char
-	// space2Pos = ref -1;                                        // next pos of zero-width space char
-	newLinePos = ref -1;                                       // next pos of newline symbol
-	hyphenPos : ref Pair<int, bool> = ref Pair(-1, false);     // pair of next pos of hyphen and soft sign
-	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
-	wordAlphabet : ref string = ref("");
-
 	remapMinusOne = \p -> if (p >= 0) p else textLen;
-	loop1 : ref (int, int, List<GeneralWrapElement>) -> List<GeneralWrapElement> = ref \i, indexing, acc -> EmptyList();
-	loop1 := \i : int, indexing : int, acc : List<GeneralWrapElement> -> {
-		if (i >= textLen) {
-			acc
+
+	if (i >= textLen) {
+		acc
+	} else {
+
+		// update key positions
+
+		newChrCatPos = if (bidiEnabled) {
+			if (i >= chrCatPos) remapMinusOne(getCharCatSplitPos(textData, i+1, textLen)-1) else chrCatPos;
+		} else i;
+
+		newSpace1Pos = if (newChrCatPos > space1Pos) indexOfWordDivider(text, i, textLen) else space1Pos;
+		newLinePos2 = if (newChrCatPos > newLinePos) remapMinusOne(strRangeIndexOf(text, "\n", i, textLen)) else newLinePos;
+		newHhyphenPos = if (newChrCatPos >= hyphenPos.first) {  // soft inequality because we want to keep hyphenPos greater than newChrCatPos (findBreakAfterAllowPos2 returns at least newChrCatPos+1)
+			{
+				if (disableBreaksAfterHyphen || isUrlParameterTrue("fix40612"))
+					Pair(textLen, false)
+				else {
+					posAndSoft = findBreakAfterAllowPos2(text, i, moreLineBreaks, !isFirstChild, allowAnySoftBreak);
+					Pair(remapMinusOne(posAndSoft.first), posAndSoft.second);
+				}
+			};
 		} else {
+			hyphenPos
+		}
 
-			// update key positions
-
-			if (isBiDiEnabled()) {
-				if (i >= ^chrCatPos) chrCatPos := remapMinusOne(getCharCatSplitPos(text, i+1, textLen)-1);
-			} else chrCatPos := i;
-			if (^chrCatPos > ^space1Pos) space1Pos := indexOfWordDivider(text, ^chrCatPos, textLen);
-			if (^chrCatPos > ^newLinePos) newLinePos := remapMinusOne(strRangeIndexOf(text, "\n", ^chrCatPos, textLen));
-			if (^chrCatPos >= ^hyphenPos.first) {  // soft inequality because we want to keep hyphenPos greater than ^chrCatPos (findBreakAfterAllowPos2 returns at least ^chrCatPos+1)
-				hyphenPos := {
-					if (disableBreaksAfterHyphen || isUrlParameterTrue("fix40612"))
-						Pair(textLen, false)
-					else {
-						posAndSoft = findBreakAfterAllowPos2(text, ^chrCatPos, moreLineBreaks);
-						Pair(remapMinusOne(posAndSoft.first), posAndSoft.second);
+		positions = if (bidiEnabled) {
+			[
+				Pair(newSpace1Pos, PositionSpace()),
+				Pair(newLinePos2, PositionLineBreak()),
+				Pair(newHhyphenPos.first,
+					if (newHhyphenPos.second) {
+						PositionAllowSoftBreakAfter()
+					} else {
+						PositionAllowBreakAfter()
 					}
-				};
-			}
-
-			// TODO try to get rid of array hence malloc optimisation needed.
-			noBiDiPositions : [Pair<int, SymbolAtPositionType>] = [
-				Pair(^space1Pos, PositionSpace()),
-				// Pair(^space2Pos, PositionSpace()),
-				Pair(^newLinePos, PositionLineBreak()),
-				Pair(^hyphenPos.first,
-					if (^hyphenPos.second) {
+				),
+				Pair(newChrCatPos, PositionCharCat())
+			]
+		} else {
+			[
+				Pair(newSpace1Pos, PositionSpace()),
+				Pair(newLinePos2, PositionLineBreak()),
+				Pair(newHhyphenPos.first,
+					if (newHhyphenPos.second) {
 						PositionAllowSoftBreakAfter()
 					} else {
 						PositionAllowBreakAfter()
 					}
 				)
-			];
-			positions = if (isBiDiEnabled())
-				arrayPush(noBiDiPositions, Pair(^chrCatPos, PositionCharCat()))
-			else
-				noBiDiPositions;
+			]
+		}
 
-			keyPosM = fold(positions, None(), \posM : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
-				if (currPos.first >= textLen) {
-					posM
-				} else {
-					switch (posM) {
-						None(): Some(currPos);
-						Some(pos): {
-							Some(if (pos.first <= currPos.first) pos else currPos)
-						}
+		if (debug) {
+			println(formatString("Text splitting @%1: %2", [i2s(i), strGlue(map(positions, \p -> strInsert(toString(p.second), i2s(p.first), -1)), ", ")]));
+		}
+
+		keyPosM = fold(positions, None(), \posM : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
+			if (currPos.first >= textLen) {
+				posM
+			} else {
+				switch (posM) {
+					None(): Some(currPos);
+					Some(pos): {
+						Some(if (pos.first <= currPos.first) pos else currPos)
 					}
-				}
-			});
-
-			//Do not replace with eitherFn - tail recursion optimization will not happen
-			switch(keyPosM : Maybe<Pair<int, SymbolAtPositionType>>) {
-				Some(keyPosPair) : {
-					keyPos = keyPosPair.first;
-					keyPosRelative = keyPos - i;
-					posType = keyPosPair.second;
-
-					makeSpaceText = \-> getCharAt(text, keyPos);
-					keyFragment = switch(posType : SymbolAtPositionType) {
-						PositionLineBreak() : {
-							wordAlphabet := "";
-							NewLine();
-						}
-						PositionSpace() : {
-							// To get constant time concatenation of paragraph strings to work, we send
-							// the space from the original string to this guy.
-							space = GeneralSpace(makeSpaceText(), ^wordAlphabet, "");
-							wordAlphabet := "";
-							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
-						}
-						PositionAllowBreakAfter() : {
-							space = GeneralSpace(if (isCJKLang()) "" else makeSpaceText(), ^wordAlphabet, "");
-							wordAlphabet := "";
-							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
-						}
-						PositionAllowSoftBreakAfter() : {
-							wordAlphabet := "";
-							toInspectingElementIfNecessary(indexing,
-								indexing + keyPosRelative,
-								GeneralLinePart("", "", softBreakVisualSymbol)
-							)
-						}
-						PositionCharCat(): {
-							wordAlphabet := getUnicodeAlphabet(getCharCodeAt(text, keyPos));
-							// Used only for case break happens immediately after current position
-							// not to remake current implementation.
-							makeTextFn(indexing, getCharAt(text, keyPos));
-						}
-					};
-					spaceAcc = switch(acc) {
-						EmptyList(): acc;
-						Cons(lhead, ltail): switch(lhead) {
-							GeneralSpace(txt, alpB, alpA): Cons(GeneralSpace(lhead with alphabetAfter=^wordAlphabet), ltail);
-							default: acc;
-						}
-					};
-					if (keyPos == i) {
-						//Cannot happen for hyphen
-						// if we have only NewLine, we have to add empty space form to be able to position on this line
-						// we can't treat "\n" as two lines because in SmartBuilder a lot of content think different (treats it as one line)
-						newAcc = if (text == "\n") {
-							Cons(keyFragment, spaceAcc)
-						} else {
-							switch (keyFragment) {
-								NewLine(): {
-									// we should insert special element that forms empty line in rendering time.
-									// in edit mode (indexing >= 0) it should be InspectElement in order to be able to position in the line
-									// in preview mode (indexing < 0) it should be fixBaseline with appropriate height
-									newLineElement = toInspectingElementIfNecessary(indexing, indexing, EmptyLineElement());
-									Cons(keyFragment, Cons(newLineElement, acc))
-								}
-
-								default: Cons(keyFragment, spaceAcc);
-							}
-						}
-						^loop1(i + 1, indexing + 1, newAcc);
-					} else if (keyPos == textLen - 1) {
-						word = substring(text, i, keyPos - i); //println("word:" + word);
-						//Cannot happen for hyphen
-						//We have found following pattern: <more than zero non-special symbols><special symbol><end>
-						//So, recursive call will return Cons(makeTextFn(word), acc) in
-						//Cons(keyFragment, breakTextFragment(word, style, moreLineBreaks, indexing, acc));
-						//So, refactored as
-						Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc));
-						//to make the function tail recursive
-					} else {
-						doNotSkipSymbolDelta = if (doNotSkipSymbolDeltaOnLang(posType == PositionAllowBreakAfter()) || posType == PositionCharCat()) 1 else 0;
-						word = substring(text, i, keyPos - i + doNotSkipSymbolDelta); //println("word:" + word);
-						^loop1(
-							keyPos + 1,
-							indexing + keyPosRelative + 1,
-							if (posType == PositionCharCat())
-								Cons(makeTextFn(indexing, word), spaceAcc)
-							else
-								Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc))
-						)
-					}
-				}
-				None() : {
-					Cons(makeTextFn(indexing, strRight(text, i)), acc)
 				}
 			}
+		});
+
+		//Do not replace with eitherFn - tail recursion optimization will not happen
+		switch(keyPosM : Maybe<Pair<int, SymbolAtPositionType>>) {
+			Some(keyPosPair) : {
+				keyPos = keyPosPair.first;
+				keyPosRelative = keyPos - i;
+				posType = keyPosPair.second;
+
+				makeSpaceText = \-> getCharAt(text, keyPos);
+				keyFragment = switch(posType : SymbolAtPositionType) {
+					PositionLineBreak() : {
+						NewLine();
+					}
+					PositionSpace() : {
+						// To get constant time concatenation of paragraph strings to work, we send
+						// the space from the original string to this guy.
+						space = GeneralSpace(makeSpaceText(), wordAlphabet, "");
+						toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
+					}
+					PositionAllowBreakAfter() : {
+						space = GeneralSpace(if (isCJKLang()) "" else makeSpaceText(), wordAlphabet, "");
+						toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
+					}
+					PositionAllowSoftBreakAfter() : {
+						toInspectingElementIfNecessary(indexing,
+							indexing + keyPosRelative,
+							softBreakLinePart
+						)
+					}
+					PositionCharCat(): {
+						// Used only for case break happens immediately after current position
+						// not to remake current implementation.
+						makeTextFn(indexing, getCharAt(text, keyPos));
+					}
+				};
+				newWordAlphabet = switch(posType : SymbolAtPositionType) {
+					PositionLineBreak() : "";
+					PositionSpace() : "";
+					PositionAllowBreakAfter() : "";
+					PositionAllowSoftBreakAfter() : "";
+					PositionCharCat(): getUnicodeAlphabet(getCharCodeAt(text, keyPos));
+				}
+				spaceAcc = \ -> switch(acc) {
+					EmptyList(): acc;
+					Cons(lhead, ltail): switch(lhead) {
+						GeneralSpace(txt, alpB, alpA): Cons(GeneralSpace(lhead with alphabetAfter=newWordAlphabet), ltail);
+						default: acc;
+					}
+				};
+				if (keyPos == i) {
+					//Cannot happen for hyphen
+					// if we have only NewLine, we have to add empty space form to be able to position on this line
+					// we can't treat "\n" as two lines because in SmartBuilder a lot of content think different (treats it as one line)
+					newAcc = if (text == "\n") {
+						Cons(keyFragment, spaceAcc())
+					} else {
+						switch (keyFragment) {
+							NewLine(): {
+								// we should insert special element that forms empty line in rendering time.
+								// in edit mode (indexing >= 0) it should be InspectElement in order to be able to position in the line
+								// in preview mode (indexing < 0) it should be fixBaseline with appropriate height
+								newLineElement = toInspectingElementIfNecessary(indexing, indexing, EmptyLineElement());
+								Cons(keyFragment, Cons(newLineElement, acc))
+							}
+
+							default: Cons(keyFragment, spaceAcc());
+						}
+					}
+					breakTextFragmentIntoElements(i + 1, indexing + 1, newAcc, textData, disableBreaksAfterHyphen, isFirstChild, moreLineBreaks, textLen, newSpace1Pos, newLinePos2, newHhyphenPos, newChrCatPos, newWordAlphabet, bidiEnabled, allowAnySoftBreak, debug);
+				} else if (keyPos == textLen - 1) {
+					word = substring(text, i, keyPos - i);
+					//Cannot happen for hyphen
+					//We have found following pattern: <more than zero non-special symbols><special symbol><end>
+					//So, recursive call will return Cons(makeTextFn(word), acc) in
+					//Cons(keyFragment, breakTextFragment(word, style, moreLineBreaks, indexing, acc));
+					//So, refactored as
+					Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc()));
+					//to make the function tail recursive
+				} else {
+					doNotSkipSymbolDelta = if (doNotSkipSymbolDeltaOnLang(posType == PositionAllowBreakAfter()) || posType == PositionCharCat()) 1 else 0;
+					word = substring(text, i, keyPos - i + doNotSkipSymbolDelta);
+					breakTextFragmentIntoElements(
+						keyPos + 1,
+						indexing + keyPosRelative + 1,
+						if (posType == PositionCharCat())
+							Cons(makeTextFn(indexing, word), spaceAcc())
+						else
+							Cons(keyFragment, Cons(makeTextFn(indexing, word), spaceAcc())),
+						textData,
+						disableBreaksAfterHyphen,
+						isFirstChild,
+						moreLineBreaks,
+						textLen,
+						newSpace1Pos,
+						newLinePos2,
+						newHhyphenPos,
+						newChrCatPos,
+						detectAlphabet(word), bidiEnabled,
+						allowAnySoftBreak,
+						debug
+					)
+				}
+			}
+			None() : {
+				Cons(makeTextFn(indexing, strRight(text, i)), acc)
+			}
 		}
-	}; // loop1
+	}
+}
 
-	elements = ^loop1(0, indexingInit, init);
-
-	GeneralTextFragments(elements, style);
+makeLetterSpacingForWord(w : GeneralWrapElement) -> GeneralWrapElement {
+	switch(w) {
+		GeneralInspectElement(inspector, word) : GeneralInspectElement(
+			inspector,
+			makeLetterSpacingForWord(word)
+		);
+		GeneralText(txt) : GeneralText(txt + "\u200b");
+		default : w
+	}
 }
 
 wordDividers = map(

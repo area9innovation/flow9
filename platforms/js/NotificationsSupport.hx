@@ -2,6 +2,7 @@
 import js.Browser;
 import haxe.Timer;
 import NativeTime;
+import js.html.MessageChannel;
 
 // Notification class was removed somehow in the haxe 3.3
 // DesktopNotificationCenter was introduced instead
@@ -65,6 +66,8 @@ typedef NotificationOptions = {
 
 class NotificationsSupport {
     private static var messaging : Dynamic;
+    private static var globalFBRegistration : Dynamic = null;
+    private static var subscribedOnBackgroundMessage : Bool = false;
 
     private static var onNotificationFBListeners : Array<Dynamic> = [];
     private static var onTokenResreshFBListeners : Array<Dynamic> = [];
@@ -197,16 +200,20 @@ class NotificationsSupport {
                     if (untyped navigator.serviceWorker) {
                         untyped navigator.serviceWorker.register('js/firebase/firebase-messaging-sw.js').then(function(registration) {
                             messaging.useServiceWorker(registration);
+                            globalFBRegistration = registration;
 
                             messaging.onMessage(function(payload) {
                                 var data : Array<Array<String>> = [];
                                 for(key in (Object.keys(payload.data) : Array<String>)) {
                                     data.push([key, payload.data[key]]);
                                 }
+                                var title = (payload.notification && payload.notification.title) ? payload.notification.title : (payload.data && payload.data.title ? payload.data.title : "Undefined");
+                                var body = (payload.notification && payload.notification.body) ? payload.notification.body : (payload.data && payload.data.body ? payload.data.body : "Undefined");
+
                                 for(listener in onNotificationFBListeners) {
                                     listener(payload.data["google.c.a.c_id"],
-                                        payload.notification.title,
-                                        payload.notification.body,
+                                        title,
+                                        body,
                                         payload.from,
                                         payload.data["google.c.a.ts"] * 1000,
                                         data
@@ -283,6 +290,72 @@ class NotificationsSupport {
     #if (js && !flow_nodejs)
         callFirebaseServiceSubscription(false, name);
     #end
+    }
+
+    public static function subscribeOnBackgroundMessages(
+        delay : Int,
+        onOK : Void -> Void,
+        onError : String -> Void
+    ) : (Void -> Void) {
+        #if flash
+        onError("Works only for JS target");
+        #elseif js
+        if (globalFBRegistration && !subscribedOnBackgroundMessage) {
+            var messageChannel = new MessageChannel();
+            var registerResultEnt = false;
+            
+            messageChannel.port1.onmessage = function(event) {
+                if (event.data.action != null) {
+                    if (event.data.action == "subscribe_on_messages" || event.data.action == "unsubscribe_from_messages") {
+                        if (registerResultEnt) {
+                            /*skip onOK/onError callbacks*/
+                        } else if (event.data.error || event.data.status == null) {
+                            onError("ServiceWorker can't subscribe on messages");
+                        } else if (event.data.status == "OK") {
+                            subscribedOnBackgroundMessage = true;
+                            onOK();
+                        } else {
+                            onError("ServiceWorker can't subscribe on messages");
+                        }
+                        registerResultEnt = true;
+                    } else if (event.data.action == "notification") {
+                        if (subscribedOnBackgroundMessage) {
+                            for(listener in onNotificationFBListeners) {
+                                listener(event.data.id,
+                                    event.data.title,
+                                    event.data.body,
+                                    event.data.from,
+                                    event.data.stamp * 1000,
+                                    event.data.data
+                                );
+                            }
+                        }
+                    } else {
+                        trace("Unsupported responce");
+                    }
+                }
+            };
+
+            globalFBRegistration.active.postMessage({
+                    "action" : "subscribe_on_messages",
+                    "delay" : delay
+                },
+                [messageChannel.port2]
+            );
+
+            return function() {
+                subscribedOnBackgroundMessage = false;
+                globalFBRegistration.active.postMessage({
+                        "action" : "unsubscribe_from_messages"
+                    },
+                    [messageChannel.port2]
+                );
+            };
+        } else {
+            onError("ServiceWorker is not initialized");
+            return function() { /*nothing*/ };
+        }
+        #end
     }
 
 }

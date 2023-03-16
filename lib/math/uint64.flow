@@ -1,5 +1,6 @@
 import math/math;
 import loop;
+import math/bits;
 
 export {
 	// a are the 32-bit highest bits, b the 32 lowest
@@ -12,14 +13,20 @@ export {
 	hex2uint64(hex : string) -> UInt64;
 	uint642hex(uint64 : UInt64) -> string;
 
-	// Convert a string to an UInt64
+	// Convert a string (integer or positive double) to an UInt64
 	string2uint64(str : string) -> UInt64;
 
-	// Convert 31 low bits of UInt64 to a string
+	// Convert UInt64 to a decimal string
 	uint642string(uint64 : UInt64) -> string;
 
 	// Correct addition of two 64-bit ints
 	add64(a : UInt64, b : UInt64) -> UInt64;
+
+	// Correct multiplication of two 64-bit ints
+	mult64(a : UInt64, b : UInt64) -> UInt64;
+
+	// Right shift of a unsigned 64 bit value
+	shiftR64(a : UInt64, bits : int) -> UInt64;
 
 	// Convert a 64-bit int to a double
 	uint642double(u : UInt64) -> double;
@@ -29,6 +36,11 @@ export {
 
 	// Convert a 64-bit to a int, only correct for 31 bits
 	uint642int(u : UInt64) -> int;
+
+	// Decimal string to hex string
+	strDec2hex(dec : string) -> string;
+	// Hex string to decimal string
+	strHex2dec(hex : string) -> string;
 }
 
 intLength = 8;
@@ -53,19 +65,94 @@ uint642hex(uint64 : UInt64) -> string {
 }
 
 string2uint64(str : string) -> UInt64 {
-	hex2uint64(strDec2hex(str));
+	to64 = \s -> hex2uint64(strDec2hex(s));
+
+	parts = strSplit(str, ".");
+	if (length(parts) < 2) {
+		to64(str);
+	} else if (strLeft(parts[1], 1) >= "5") {
+		add64(to64(parts[0]), UInt64(0, 1));
+	} else {
+		to64(parts[0]);
+	}
 }
 
 uint642string(uint64 : UInt64) -> string {
-	if (uint64.a == 0) i2s(uint64.b)
-	else "0x" + uint642hex(uint64);
+	if (uint64.a == 0 && uint64.b >= 0) i2s(uint64.b)
+	else strHex2dec(uint642hex(uint64));
 }
 
 add64(a : UInt64, b : UInt64) -> UInt64 {
-	int2double = \i -> i2d(i) + if (i < 0) 4294967296.0 else 0.0;
-	c = floor((int2double(a.b) + int2double(b.b)) / 4294967296.0);
+	bNew = a.b + b.b;
+	c = if (a.b < 0) {
+		if (b.b < 0 || bNew >= 0) {
+			1;
+		} else {
+			0;
+		}
+	} else {
+		if (b.b < 0 && bNew >= 0) {
+			1;
+		} else {
+			0;
+		}
+	}
+	UInt64(a.a + b.a + c, bNew);
+}
 
-	UInt64(a.a + b.a + c, a.b + b.b);
+splitInt(i : int) -> Pair<int, int> {
+	if (i >= 0) {
+		Pair(i / 65536, i % 65536);
+	} else {
+		l0 = i % 65536;
+		l = if (l0 < 0) {
+			65536 + l0;
+		} else {
+			0;
+		}
+		h = 65536 - b2i(l0 < 0) + i / 65536;
+		Pair(h, l);
+	}
+}
+
+multIntInt(a : int, b : int) -> UInt64 {
+	ap = splitInt(a);
+	bp = splitInt(b);
+
+	h = ap.first * bp.first;
+	l = ap.second * bp.second;
+	m1 = ap.first * bp.second;
+	m2 = ap.second * bp.first;
+
+	m1p = splitInt(m1);
+	m2p = splitInt(m2);
+
+	add64(
+		UInt64(h, l),
+		add64(
+			UInt64(m1p.first, m1p.second * 65536),
+			UInt64(m2p.first, m2p.second * 65536)
+		)
+	);
+}
+
+mult64(a : UInt64, b : UInt64) -> UInt64 {
+	l = multIntInt(a.b, b.b);
+
+	m1 = multIntInt(a.a, b.b);
+	m2 = multIntInt(a.b, b.a);
+
+	UInt64(l.a + m1.b + m2.b, l.b);
+}
+
+shiftR64(u : UInt64, bits : int) -> UInt64 {
+	a = bitUshr(u.a, bits);
+	// Grab the lower bits from a
+	lowBitMask = pot2(bits) - 1;
+	lowA = bitAnd(u.a, lowBitMask);
+	highB = if (bits < 32) bitShl(lowA, 32 - bits) else 0;
+	b = bitOr(bitUshr(u.b, bits), highB);
+	UInt64(a, b);
 }
 
 uint642double(u : UInt64) -> double {
@@ -90,14 +177,27 @@ strDec2hex(dec : string) -> string {
 		unpair(strDecDivInt(accDec, 65536), \div, rem -> {
 			Pair(
 				Pair(lpad(formatHex(rem), "0", 4) + accHex, div),
-				div != ""
+				div != "0"
 			);
 		});
 	})).first;
 	ltrim2(hex0, "0");
 }
 
+strHex2dec(hex : string) -> string {
+	dec0 = updateWhile2(Pair("", hex), unpairC(\accDec, accHex -> {
+		unpair(strHexDivInt(accHex, 10000000), \div, rem -> {
+			Pair(
+				Pair(lpad(i2s(rem), "0", 7) + accDec, div),
+				div != "0"
+			);
+		});
+	})).first;
+	ltrim2(dec0, "0");
+}
+
 // returns the result of division and remainder
+// den should be positive less than 0x08000000
 strDecDivInt(num0 : string, den : int) -> Pair<string, int> {
 	num = ltrim2(num0, "0");
 	denL = strlen(i2s(den));
@@ -106,13 +206,9 @@ strDecDivInt(num0 : string, den : int) -> Pair<string, int> {
 		i = s2i(num);
 		div = i / den;
 		rem = i % den;
-		if (div > 0) {
-			Pair(i2s(div), rem);
-		} else {
-			Pair("", rem);
-		}
+		Pair(i2s(div), rem);
 	} else {
-		res : Pair<string, int> = stringFold(
+		stringFold(
 			substring(num, denL, numL - denL),
 			Pair("", s2i(substring(num, 0, denL))),
 			\acc, ch -> {
@@ -123,6 +219,30 @@ strDecDivInt(num0 : string, den : int) -> Pair<string, int> {
 				Pair(acc.first + i2s(div), rem);
 			}
 		);
-		res;
+	}
+}
+
+// returns the result of division in hex format and integer remainder
+// den should be positive less than 0x04000000
+strHexDivInt(num0 : string, den : int) -> Pair<string, int> {
+	num = ltrim2(num0, "0");
+	numL = strlen(num);
+	if (numL <= 6) {
+		i = parseHex(num);
+		div = i / den;
+		rem = i % den;
+		Pair(formatHex(div), rem);
+	} else {
+		stringCharsFold(
+			substring(num, 6, numL - 6),
+			Pair("", parseHex(substring(num, 0, 6))),
+			\acc, char -> {
+				i = acc.second * 16 + parseHex(char);
+				div = i / den;
+				rem = i % den;
+
+				Pair(acc.first + formatHex(div), rem);
+			}
+		);
 	}
 }

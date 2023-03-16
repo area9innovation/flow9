@@ -1,0 +1,169 @@
+import formats/html/html_node;
+import math/matrix;
+
+export {
+	// Converts HTML into markdown. Following markdown constructions are supported:
+	// - headings
+	// - line breaks
+	// - emphasize with bold/itallic font
+	// - block code quotations
+	// - lists (ordered, unordered)
+	// - tables
+	ruHtml2md(html : [HtmlNode]) -> string;
+}
+
+ruHtml2md(html : [HtmlNode]) -> string {
+	ruDoHtml2md(html, "*");
+}
+
+ruDoHtml2md(html : [HtmlNode], indent : string) -> string {
+	concatStrings(map(html, \elem -> ruHtmlNode2md(elem, indent)))
+}
+
+ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
+	switch (html) {
+		HtmlTag(tag, attribs, body): {
+			contents = ruDoHtml2md(body, indent);
+			if (strlen(tag) == 2 && getCharAt(tag, 0) == "h") {
+				ruHtmlHeading2md(s2i(getCharAt(tag, 1)), contents);
+			} else if (tag == "p") {
+				trim2(contents, " \n\t\r") + "\n\n";
+			} else if (tag == "br") {
+				"\n";
+			} else if (tag == "strong") {
+				"**" + contents + "**";
+			} else if (tag == "em") {
+				"*" + contents + "*";
+			} else if (tag == "blockquote") {
+				strGlue(map(strSplit(contents, "\n"), \line -> "> " + line), "\n");
+			} else if (tag == "ol" || tag == "ul") {
+				ruHtmlList2md(tag, body, indent);
+			} else if (tag == "sub") {
+				"_" + contents;
+			} else if (tag == "table") {
+				ruHtmlTable2md(body);
+			} else {
+				contents;
+			}
+		}
+		HtmlText(text): text;
+		HtmlComment(text): "";
+		HtmlEntity(prefix, body): unescapeHtmlEntity(html);
+	}
+}
+
+ruHtmlHeading2md(level : int, body : string) -> string {
+	if (level < 1 || level > 5) {
+		// Illegal heading level
+		body;
+	} else if (strContains(body, "\n")) {
+		// Heading has new lines
+		body;
+	} else {
+		if (level == 1) {
+			body1 = trim(body);
+			body1 + "\n" + strRepeat("=", strlen(body1)) + "\n";
+		} else if (level == 2) {
+			body1 = trim(body);
+			body1 + "\n" + strRepeat("-", strlen(body1)) + "\n";
+		} else  {
+			strRepeat("#", level) + (if (startsWith(body, " ")) "" else " ") + body;
+		}
+	}
+}
+
+insertPrefix2md(pref : string, s : string) -> string {
+	non_space = findiDef(s2a(s), \code -> code > 32, -1);
+	if (non_space == -1) {
+		s + pref;
+	} else {
+		spaces = strLeft(s, non_space);
+		contents = strRight(s, non_space);
+		spaces + pref + contents;
+	}
+}
+
+ruHtmlList2md(tag : string, body : [HtmlNode], indent : string) -> string {
+	next_indent = if (indent == "*") "+" else if (indent == "+") "-" else "*";
+	i = ref 0;
+	"\n" + concatStrings(
+		map(body, \elem ->  {
+			str = ruHtmlNode2md(elem, next_indent);
+			switch (elem) {
+				HtmlTag(tag1, __,__): {
+					if (tag1 != "li") str else {
+						i := ^i + 1;
+						if (tag == "ol") {
+							insertPrefix2md(i2s(^i) + ". ", str);
+						} else {
+							insertPrefix2md(indent + " ", str);
+						}
+					}
+				}
+				default: str;
+			}
+		})
+	);
+}
+
+ruExtractHtmlTags(body : [HtmlNode]) -> [HtmlTag] {
+	filtermap(body, \elem ->
+		switch(elem) {
+			HtmlTag(tag, attibs, body1): Some(elem);
+			default: None();
+		}
+	);
+}
+
+ruFirstTag(body : [HtmlNode]) -> HtmlTag {
+	tags = ruExtractHtmlTags(body);
+	firstElement(tags, HtmlTag("", [], [])); 
+}
+
+ruHtmlTable2md(children : [HtmlNode]) -> string {
+	first_row = ruFirstTag(children);
+	first_col = ruFirstTag(first_row.children);
+	headers = if (first_col.tag != "th") None() else {
+		Some(filtermap(first_row.children, \elem ->
+			switch(elem) {
+				HtmlTag(tag, __, children1): {
+					if (tag != "th") None() else Some(ruDoHtml2md(children1, ""));
+				}
+				default: None();
+			}
+		));
+	}
+	tags = filtermap(children, \elem ->
+		switch(elem) {
+			HtmlTag(__,__,__): Some(elem);
+			default: None();
+		}
+	);
+	rows = filtermap(children, \elem ->
+		switch(elem) {
+			HtmlTag(tag, __, children1): {
+				if (tag != "tr") None() else {
+					col_tags = ruExtractHtmlTags(children1);
+					if (col_tags == []) None() else {
+						if (col_tags[0].tag == "th") None() else {
+							cols = filtermap(children1, \elem1 -> 
+								switch(elem1) {
+									HtmlTag(tag1, __, cell): {
+										if (tag1 != "td") None() else {
+											Some(ruDoHtml2md(cell, ""));
+										}
+									}
+									default: None();
+								}
+							);
+							Some(cols);
+						}
+					}
+				}
+			}
+			default: None();
+		}
+	);
+	cols = transposeMatrix(rows);
+	"\n" + stringMatrix2s(cols, headers, None());
+}

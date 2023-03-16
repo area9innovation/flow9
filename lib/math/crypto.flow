@@ -2,6 +2,8 @@ import runtime;
 import math/bits;
 import math/md5;
 import text/translation;
+import fs/filesystem;
+import text/blueprint;
 
 export {
 	// generate unique string specified length
@@ -13,7 +15,8 @@ export {
 	encrypt(data : string, key : string, mode : Encrypt_Mode) -> string;
 	decrypt(encrypteddata : string, key : string, mode : Encrypt_Mode, onOk : (string) -> void, onError : (string) -> void) -> void;
 
-	Encrypt_Mode ::= Encrypt_XOR, Encrypt_TEA;
+	Encrypt_Mode ::= Encrypt_NONE, Encrypt_XOR, Encrypt_TEA;
+		Encrypt_NONE();
 		Encrypt_XOR();
 		Encrypt_TEA();
 }
@@ -23,19 +26,19 @@ generateUID(prefix : string, postfix : string, desiredBodyLength : int) -> strin
 		codeAlphabet = "1234567890ABCDEFGHJKMNPQRSTUVXYZ";
 		maxlen = strlen(codeAlphabet);
 
-		prefix + 
+		prefix +
 		foldRange(0, desiredBodyLength - 1, "", \acc, i -> {
 			acc + getCharAt(codeAlphabet, round(random() * i2d(maxlen - 1)));
-		}) + 
+		}) +
 		postfix;
 	}
 }
 
 generateUIDEx(prefix : string, postfix : string, desiredBodyLength : int, check : (string) -> bool) -> string {
 	r = generateUID(prefix, postfix, desiredBodyLength);
-	if (check(r)) 
+	if (check(r))
 		r
-	else 
+	else
 		generateUIDEx(prefix, postfix, desiredBodyLength, check);
 }
 
@@ -45,7 +48,7 @@ keystring2ints(key : string) -> [int] {
 		key_md5 = md5(key);
 		key_md5_len = strlen(key_md5);
 
-		// pack md5 string into array of ints (use 4 chars per int)		
+		// pack md5 string into array of ints (use 4 chars per int)
 		foldRange(0, 3, [], \acc, i -> {
 			v = foldRange(0, 3, 0, \acc1, j -> {
 				ind = mod(i * 4 + j, key_md5_len);
@@ -60,32 +63,42 @@ EncryptMarker = "DECR";
 EncryptMarkerR = "RCED";
 
 encrypt(data : string, key : string, mode : Encrypt_Mode) -> string {
-	if (key == "") data else {
+	if (key == "" || mode == Encrypt_NONE()) data else {
 		d = EncryptMarker + data + EncryptMarkerR;
 		switch (mode) {
-			Encrypt_XOR(): {	
-				decryptencrypt_xor(d, key);		
+			Encrypt_NONE(): {
+				data;
 			}
-			Encrypt_TEA(): {	
-				encrypt_tea(d, key);		
+			Encrypt_XOR(): {
+				decryptencrypt_xor(d, key);
+			}
+			Encrypt_TEA(): {
+				encrypt_tea(d, key);
 			}
 		}
 	};
 }
 
 decrypt(encrypteddata : string, key : string, mode : Encrypt_Mode, onOk : (string) -> void, onError : (string) -> void) -> void {
-	if (key == "") onOk(encrypteddata) else {
-		data = switch (mode) {
-			Encrypt_XOR(): {	
-				decryptencrypt_xor(encrypteddata, key);		
+	if (key == "" || mode == Encrypt_NONE()) onOk(encrypteddata) else {
+		tmp = switch (mode) {
+			Encrypt_NONE(): {
+				encrypteddata;
 			}
-			Encrypt_TEA(): {	
-				decrypt_tea(encrypteddata, key);		
+			Encrypt_XOR(): {
+				decryptencrypt_xor(encrypteddata, key);
+			}
+			Encrypt_TEA(): {
+				decrypt_tea(encrypteddata, key);
 			}
 		}
 
+		// trim trailing 0
+		// this fixes a bug when decryption may fail because of string length
+		data = trim2(tmp, fromCharCode(0));
+
 		if (startsWith(data, EncryptMarker) && endsWith(data, EncryptMarkerR)) {
-			res = strsubsmart(data, 4, -4); 
+			res = strsubsmart(data, 4, -4);
 			onOk(res);
 		} else onError(_("Can't decrypt data"));
 	}
@@ -114,19 +127,19 @@ pack_string_bytes(data : string) -> [int] {
 	d_arr_tmp = s2a(data);
 	d_len_tmp = length(d_arr_tmp);
 
-	foldRange(0, (d_len_tmp + 1) / 2 - 1, [], \acc, i -> {
+	foldRange(0, (d_len_tmp + 1) / 2 - 1, makeList(), \acc, i -> {
 		v0 = d_arr_tmp[i * 2];
 		v1 = if (i * 2 + 1 >= d_len_tmp) 0 else d_arr_tmp[i * 2 + 1];
-		arrayPush(acc, bitOr(bitShl(v1, 16), v0));
-	});
+		Cons(bitOr(bitShl(v1, 16), v0), acc);
+	}) |> list2array;
 }
 
 unpack_string_bytes(data : [int]) -> [int] {
-	fold(data, [], \acc, d -> {
+	fold(data, makeList(), \acc : List<int>, d -> {
 		v0 = bitAnd(d, 65535);
 		v1 = bitAnd(bitUshr(d, 16), 65535);
-		concat(acc, [v0, v1]);
-	});
+		Cons(v1, Cons(v0, acc))
+	}) |> list2array;
 }
 
 encrypt_tea(data : string, key : string) -> string {
@@ -134,43 +147,53 @@ encrypt_tea(data : string, key : string) -> string {
 	d_len = length(d_arr);
 
 	k_arr = keystring2ints(key);
+	init : List<int> = makeList1(if (odd(d_len)) 65537 else 131074);
 
-	ret = foldRange(0, (d_len + 1) / 2 - 1, [if (odd(d_len)) 1 else 0], \acc, i -> {
+	ret = foldRange(0, (d_len + 1) / 2 - 1, init, \acc : List<int>, i -> {
 		v0 = d_arr[i * 2];
 		v1 = if (i * 2 + 1 >= d_len) 0 else d_arr[i * 2 + 1];
-		r = foldRange(0, 31, Pair([v0, v1], 0), \p, j -> {
-			_sum = p.second + tea_delta;
-			_v0 = p.first[0] + bitXor(bitXor((bitShl(p.first[1], 4) + k_arr[0]), (p.first[1] + _sum)), (bitUshr(p.first[1], 5) + k_arr[1]));
-			_v1 = p.first[1] + bitXor(bitXor((bitShl(_v0, 4) + k_arr[2]), (_v0 + _sum)), (bitUshr(_v0, 5) + k_arr[3]));
-			Pair([_v0, _v1], _sum);
+		acc2 = Triple(ref v0, ref v1, ref 0);
+		r = foldRange(0, 31, acc2, \p, j -> {
+			_sum = ^(p.third) + tea_delta;
+			_v0 = ^(p.first) + bitXor(bitXor((bitShl(^(p.second), 4) + k_arr[0]), (^(p.second) + _sum)), (bitUshr(^(p.second), 5) + k_arr[1]));
+			_v1 = ^(p.second) + bitXor(bitXor((bitShl(_v0, 4) + k_arr[2]), (_v0 + _sum)), (bitUshr(_v0, 5) + k_arr[3]));
+			p.first := _v0;
+			p.second := _v1;
+			p.third := _sum;
+			p
 		});
 
-		concat(acc, r.first);
-	});
+		Cons(^(r.second), Cons(^(r.first), acc));
+	})|> list2array;
 
-	a2s2(unpack_string_bytes(ret), "", fromCharCode)
+	superglue(unpack_string_bytes(ret), fromCharCode, "")
 }
 
 decrypt_tea(data : string, key : string) -> string {
 	d_arr = pack_string_bytes(data);
-	is_odd = d_arr[0];
+	is_odd = bitAnd(d_arr[0], 1);
 	d_len = length(d_arr) - 1;
 	k_arr = keystring2ints(key);
 
-	ret = foldRange(0, (d_len + 1) / 2 - 1, [], \acc, i -> {
+	ret = foldRange(0, (d_len + 1) / 2 - 1, makeList(), \acc, i -> {
 		v0 = d_arr[i * 2 + 1];
 		v1 = if (i * 2 + 1 >= d_len) 0 else d_arr[i * 2 + 2];
 
-		r = foldRange(0, 31, Pair([v0, v1], 32 * tea_delta), \p, j -> {
-			_v1 = p.first[1] - bitXor(bitXor((bitShl(p.first[0], 4) + k_arr[2]), (p.first[0] + p.second)), (bitUshr(p.first[0], 5) + k_arr[3]));
-			_v0 = p.first[0] - bitXor(bitXor((bitShl(_v1, 4) + k_arr[0]), (_v1 + p.second)), (bitUshr(_v1, 5) + k_arr[1]));
-			_sum = p.second - tea_delta;
+		acc2 = Triple(ref v0, ref v1, ref (32 * tea_delta));
 
-			Pair([_v0, _v1], _sum);
+		r = foldRange(0, 31, acc2, \p, j -> {
+			_v1 = ^(p.second) - bitXor(bitXor((bitShl(^(p.first), 4) + k_arr[2]), (^(p.first) + ^(p.third))), (bitUshr(^(p.first), 5) + k_arr[3]));
+			_v0 = ^(p.first) - bitXor(bitXor((bitShl(_v1, 4) + k_arr[0]), (_v1 + ^(p.third))), (bitUshr(_v1, 5) + k_arr[1]));
+			_sum = ^(p.third) - tea_delta;
+
+			p.first := _v0;
+			p.second := _v1;
+			p.third := _sum;
+			p
 		});
 
-		concat(acc, r.first);
-	});
+		Cons(^(r.second), Cons(^(r.first), acc));
+	}) |> list2array;
 
-	a2s2(unpack_string_bytes(ret), "", fromCharCode);
+	superglue(unpack_string_bytes(ret), fromCharCode, "");
 }

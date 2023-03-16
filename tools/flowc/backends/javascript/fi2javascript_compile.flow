@@ -4,10 +4,12 @@ import ds/tree;
 import lingo/flow/javascript_keywords;
 import tools/flowc/backends/javascript/fi2javascript_defines;
 import tools/flowc/backends/javascript/fi2javascript_utils;
+import tools/flowc/backends/javascript/fi2javascript_natives;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/freevars;
 import tools/flowc/manipulation/find_unused;
 import text/compression/lzw;
+import string_utils;
 
 export {
 	fiJsCompileToplevel(
@@ -78,44 +80,71 @@ fiJsCompileToplevel(cfg : FiJsConfig, ctx : FiJsToplevelContext, decl : FiDeclar
 	strict = if (cfg.jsmode == STANDARD_JS) "" else "var ";
 	toplevel = switch (decl : FiDeclaration) {
 		FiNativeDec(name0, io, type, nativeName, fallback, declStart, defiStart) : {
-			no_fallback = \ -> {
-				if (containsSet(cfg.externNatives, nativeName)) {
-					(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + fiJsMangleNativeName(ctx.ovl, nativeName, false) + ";";
-				} else {
-					if (cfg.debug) {
-						name = fiJsPrefixedName(cfg, ctx, name0);
+			switch (fiJsNative(name0)) {
+				Some(def): {
+					// A native, defined explicitly in JS.
+					strApplyFns(def)([
+						\name -> {
+							id1 = lookupTreeDef(ctx.renamings, name, name);
+							fiJsPrefixedName(cfg, ctx, id1);
+						},
+						\structname -> {
+							switch (lookupTree(ctx.ovl.structs, structname)) {
+								Some(sinfo): {
+									if (length(sinfo.struct.args) == 0) {
+										"st_" + if (cfg.readable) sinfo.struct.name else i2s(sinfo.id);
+									} else {
+										"c$" + formatId(sinfo.id);
+									}
+								}
+								None(): {
+									fail0("unknown struct " + structname);
+								}
+							}
+						}
+					]);
+				}
+				None(): {
+					no_fallback = \ -> {
+						if (containsSet(cfg.externNatives, nativeName)) {
+							(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + fiJsMangleNativeName(ctx.ovl, nativeName, false) + ";";
+						} else {
+							if (cfg.debug) {
+								name = fiJsPrefixedName(cfg, ctx, name0);
 
-						if (!startsWith(nativeName, "RenderSupport")) {
-							"var " + (if (name == "length") "length__" else name) + "=" +
-							(if (cfg.modules != "") "R." else "") +
-							fiJsMangleNativeName(ctx.ovl, nativeName, true) + ";"
-						} else ""
-					} else {
-						(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName, true) + ";";
+								if (!startsWith(nativeName, "RenderSupport")) {
+									"var " + (if (name == "length") "length__" else name) + "=" +
+									(if (cfg.modules != "") "R." else "") +
+									fiJsMangleNativeName(ctx.ovl, nativeName, true) + ";"
+								} else ""
+							} else {
+								(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName, true) + ";";
+							}
+						}
 					}
-				}
-			}
-			switch (fallback) {
-				FiVoid(__): no_fallback();
-				FiLambda(__, __, __, __): {
-					// fcPrintln("FcNative fallback: " + toString(e));
-					// TODO: TS processing
-					mn = fiJsMangleNativeName(ctx.ovl, nativeName, true);
-					fd =
-						FiFunctionDec(
-							name0,
-							fallback,
-							FiTypeFunction([], FiTypeVoid()), // TODO: is it ok to pass FiTypeVoid here?
-							declStart,
-							defiStart);
-					prfx = fiJsES6FunctionPrefix(cfg, ctx, mn);
+					switch (fallback) {
+						FiVoid(__): no_fallback();
+						FiLambda(__, __, __, __): {
+							// fcPrintln("FcNative fallback: " + toString(e));
+							// TODO: TS processing
+							mn = fiJsMangleNativeName(ctx.ovl, nativeName, !containsSet(cfg.externNatives, nativeName));
+							fd =
+								FiFunctionDec(
+									name0,
+									fallback,
+									FiTypeFunction([], FiTypeVoid()), // TODO: is it ok to pass FiTypeVoid here?
+									declStart,
+									defiStart);
+							prfx = fiJsES6FunctionPrefix(cfg, ctx, mn);
 
-					(if (cfg.jsmode == TS_MODE) "var " else "") +
-					fiJsCompileToplevel(cfg, ctx, fd, fiJsRename(cfg, ctx, name0), prfx, None());
-				}
-				default: {
-					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, fallback), cfg.threadId);
-					no_fallback()
+							(if (cfg.jsmode == TS_MODE) "var " else "") +
+							fiJsCompileToplevel(cfg, ctx, fd, fiJsRename(cfg, ctx, name0), prfx, None());
+						}
+						default: {
+							fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, fallback), cfg.threadId);
+							no_fallback()
+						}
+					}
 				}
 			}
 		}
@@ -970,7 +999,7 @@ fiJsSubstituteJSNative(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp
 		("~" + args[0])
 
 	else if (cfg.debug && op == "println")
-		"console.log(HaxeRuntime.toString(" + args[0] + "))"
+		"console.log(HaxeRuntime.toString(" + args[0] + ", true))"
 
 	else closure;
 }

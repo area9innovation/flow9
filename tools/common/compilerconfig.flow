@@ -5,10 +5,10 @@ import lingo/flow/fail;
 export {
 	// Reads compiler options from config file (relative to given dir) and url parameters.
 	getCompilerConfig(dir : string) -> Fail<CompilerConfig>;
-	
+
 	// Read a compilefile and for each line make a config, combined with a given one.
 	readConfigsFormCompileFile(config : CompilerConfig, compilefile : string) -> [CompilerConfig];
-	
+
 	// Find out what file to compile, returns a path
 	// Extract compilation file from: command line and flow.config
 	getCompilationFile(config : Tree<string, string>, verbose : int) -> string;
@@ -28,10 +28,33 @@ export {
 
 getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 	conf_dir = findFlowConfigDir(dir);
-	configFile = if (conf_dir == "") {
+	configFile0 = if (conf_dir == "") {
 		getAllUrlConfig();
 	} else {
-		combineConfigsOverride(getAllUrlConfig(), parseFlowConfig(getFileContent(conf_dir + "/flow.config"), conf_dir));
+		config_file = getFileContent(pathCombine(conf_dir, "flow.config"));
+		combineConfigsOverride(getAllUrlConfig(), parseFlowConfig(config_file, conf_dir));
+	};
+
+	// config paths => dir path
+	conf_dir2 = strReplace(conf_dir, "\\", "/") + "/";
+	updatePaths = \paths -> {
+		pathsA = filter(map(strSplit(paths, ","), trim), neq(""));
+		strGlue(map(pathsA, \path -> conf_dir2 + path), ",");
+	}
+
+	// Here we pick up all external 'flow.config' files, which may be attached to the current
+	// 'flow.config' with 'include-extern=<conf1,conf2,...>' option,
+	// collect all includes from those configs, join them, resolve to absolute paths and add to the
+	// includes from the currently used 'flow.config'.
+	extern_includes = strGlue(fcExternIncludes(updatePaths(lookupTreeDef(configFile0, "include-extern", ""))), ",");
+	base_includes = updatePaths(lookupTreeDef(configFile0, "include", ""));
+	all_includes = if (base_includes == "") extern_includes else {
+		if (extern_includes == "") base_includes else {
+			base_includes + "," + extern_includes;
+		}
+	}
+	configFile = if (all_includes == "") configFile0 else {
+		setTree(configFile0, "include", all_includes);
 	}
 
 	v = getUrlParameterDef("verbose", "0");
@@ -48,12 +71,13 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 	includesArray = concat(strSplit(cliIncludes, ","), strSplit(configIncludes, ","));
 	includesNFlowLib = uniq(concat(includesArray, [flowLibDir, flowLibMaterialDir, innovationLibDir]));
 	includesNFlow = uniq(concat(includesNFlowLib, [flowDir, innovationDir]));
-	includesCwd = concat(includesNFlow, ["."]);    
+	includesCwd = concat(includesNFlow, ["."]);
 
 	includes = filter(includesCwd, neq(""));
 
 	if (verbose > 0) {
 		println("Current dir: " + resolveRelativePath("."));
+		println("Config dir: " + conf_dir);
 		println("Flow path: " + flowDir);
 		println("Flow library path: " + flowLibDir);
 		println("Flow includes paths: " + toString(includes));
@@ -173,71 +197,74 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 	} else if ((dceRemoveMain == "1") && (isEmptySet(dcePreservedNames))) {
 		Failed("ERROR: set 'dce-preserved-names' if you want to remove 'main' with 'dce-remove-main'");
 	} else {
-		configTree = combineConfigsOverride(getConstConfig([
-			Pair("include", strGlue(includes, ",")),
-			Pair("readable", if (readable) "1" else ""),
-			Pair("flowfile", flowfile),
-			Pair("obj", strGlue(objectFolders, ",")),
-			Pair("js", jsfile),
-			Pair("es6", es6file),
-			Pair("ts", typescriptFile),
-			Pair("jscode", if (jscode) "1" else ""),
-			Pair("jsmodules", jsmodules),
-			Pair("jscomments", if (jscomments) "1" else ""),
-			Pair("nwjs", if (nwjsmode) "1" else ""),
-			Pair("jsbeautify", if (beautify) "1" else ""),
-			Pair("js-source-map", if (sourcemap) "1" else ""),
-			Pair("verbose", if (verbose>0) i2s(verbose) else ""),
-			Pair("debug", if (debug) "1" else ""),
-			Pair("regen", if (regen) "1" else ""),
-			Pair("bytecode", bytecode),
-			Pair("upload", if (upload) "1" else ""),
-			Pair("haskell", haskell),
-			Pair("csharp", csharpPath),
-			Pair("java", javaPath),
-			Pair("find-declaration", finddecl),
-			Pair("find-definition", finddef),
-			Pair("find-uses", finduses),
-			Pair("extract", extractName),
-			Pair("xliff", if (xliff) "1" else ""),
-			Pair("pe", partialevaluate),
-			Pair("pp", prettyprint),
-			Pair("servicefile", "/flowcompiler.rpc"),
-			Pair("servicetimeout", "30"),
-			Pair("keepmodules", "1"),
+		configTree = combineConfigsOverride(getConstConfig(filtermap([
+			Some(Pair("include", strGlue(includes, ","))),
+			Some(Pair("readable", if (readable) "1" else "")),
+			Some(Pair("flowfile", flowfile)),
+			Some(Pair("confdir", conf_dir2)),
+			Some(Pair("obj", strGlue(objectFolders, ","))),
+			Some(Pair("js", jsfile)),
+			Some(Pair("es6", es6file)),
+			Some(Pair("ts", typescriptFile)),
+			Some(Pair("jscode", if (jscode) "1" else "")),
+			Some(Pair("jsmodules", jsmodules)),
+			Some(Pair("jscomments", if (jscomments) "1" else "")),
+			Some(Pair("nwjs", if (nwjsmode) "1" else "")),
+			Some(Pair("jsbeautify", if (beautify) "1" else "")),
+			Some(Pair("js-source-map", if (sourcemap) "1" else "")),
+			Some(Pair("verbose", if (verbose>0) i2s(verbose) else "")),
+			Some(Pair("debug", if (debug) "1" else "")),
+			Some(Pair("regen", if (regen) "1" else "")),
+			Some(Pair("bytecode", bytecode)),
+			Some(Pair("upload", if (upload) "1" else "")),
+			Some(Pair("haskell", haskell)),
+			Some(Pair("csharp", csharpPath)),
+			Some(Pair("java", javaPath)),
+			Some(Pair("find-declaration", finddecl)),
+			Some(Pair("find-definition", finddef)),
+			Some(Pair("find-uses", finduses)),
+			Some(Pair("extract", extractName)),
+			Some(Pair("xliff", if (xliff) "1" else "")),
+			Some(Pair("pe", partialevaluate)),
+			Some(Pair("pp", prettyprint)),
+			Some(Pair("servicefile", "/flowcompiler.rpc")),
+			Some(Pair("servicetimeout", "30")),
+			Some(Pair("keepmodules", "1")),
 
 			// HTML bundle
-			Pair("html", htmlMonolithic),
-			Pair("html-minify", if (htmlMinify) "1" else ""),
-			Pair("html-title", htmlTitle),
-			Pair("html-splash", htmlSplash),
+			Some(Pair("html", htmlMonolithic)),
+			Some(Pair("html-minify", if (htmlMinify) "1" else "")),
+			Some(Pair("html-title", htmlTitle)),
+			Some(Pair("html-splash", htmlSplash)),
 
 			// HTML Application manifest
-			Pair("html-app-manifest", htmlManifest),
-			Pair("ham-name", hamName),
-			Pair("ham-short-name", hamShortName),
-			Pair("ham-start-url", hamStartUrl),
-			Pair("ham-dir", hamDir),
-			Pair("ham-lang", hamLang),
-			Pair("ham-orientation", hamOrientation),
-			Pair("ham-display", hamDisplay),
-			Pair("ham-background-color", hamBackgroundColor),
-			Pair("ham-description", hamDescription),
-			Pair("ham-icons", hamIcons),
+			Some(Pair("html-app-manifest", htmlManifest)),
+			Some(Pair("ham-name", hamName)),
+			Some(Pair("ham-short-name", hamShortName)),
+			Some(Pair("ham-start-url", hamStartUrl)),
+			Some(Pair("ham-dir", hamDir)),
+			Some(Pair("ham-lang", hamLang)),
+			Some(Pair("ham-orientation", hamOrientation)),
+			Some(Pair("ham-display", hamDisplay)),
+			Some(Pair("ham-background-color", hamBackgroundColor)),
+			Some(Pair("ham-description", hamDescription)),
+			Some(Pair("ham-icons", hamIcons)),
 
-			Pair("use-haxe-runtime", fcUseHaxeRuntime),
-			Pair("dce-preserved-names", preservedNames),
-			Pair("dce-remove-main", dceRemoveMain),
-			Pair("dce-force-remove-globals", fcDceForceRemoveGlobals),
-			Pair("keep-sources", fcKeepSources),
-			Pair("fontconfig-file", fontconfigFile),
-			Pair("js-call-main", jsCallMain),
-			Pair("force-build", fcForceBuild),
-			Pair("incremental", if (fcIncremental) "1" else ""),
-			Pair("js-no-otc", noOtc),
-			Pair("server-port", fcServerPort),
-			Pair("java-library", javaLibrary),
-		]), configFile);
+			Some(Pair("use-haxe-runtime", fcUseHaxeRuntime)),
+			Some(Pair("dce-preserved-names", preservedNames)),
+			Some(Pair("dce-remove-main", dceRemoveMain)),
+			Some(Pair("dce-force-remove-globals", fcDceForceRemoveGlobals)),
+			Some(Pair("keep-sources", fcKeepSources)),
+			Some(Pair("fontconfig-file", fontconfigFile)),
+			Some(Pair("js-call-main", jsCallMain)),
+			Some(Pair("force-build", fcForceBuild)),
+			Some(Pair("incremental", if (fcIncremental) "1" else "")),
+			Some(Pair("js-no-otc", noOtc)),
+			Some(Pair("server-port", fcServerPort)),
+			Some(Pair("java-library", javaLibrary)),
+			// Add 'dce-types=1' in case of nim backend
+			if (!containsKeyTree(configFile, "nim")) None() else Some(Pair("dce-types", "1"))
+		], idfn)), configFile);
 
 		// FontConfig. When empty - fallback to default fontconfig filename.
 		// If default filename doesn't exist as relative path - fallback to absolute path in flowDir.
@@ -249,7 +276,7 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 		dceRemoveMainParam = isConfigParameterTrue(configTree, "dce-remove-main");
 		jsCallMainParam = isConfigParameterTrue(configTree, "js-call-main");
 		Some(CompilerConfig(
-			flowfile, 
+			flowfile,
 			includes,
 			objectFolders,
 			verbose,
@@ -312,7 +339,7 @@ readConfigFormString(config : CompilerConfig, str : string) -> Maybe<CompilerCon
 
 readConfigsFormCompileFile(config : CompilerConfig, compilefile : string) -> [CompilerConfig] {
 	if (fileExists(compilefile)) {
-		fold(strSplit(getFileContent(compilefile), "\n"), [], 
+		fold(strSplit(getFileContent(compilefile), "\n"), [],
 			\acc, line -> eitherMap(readConfigFormString(config, line), \conf -> concat(acc, [conf]), acc)
 		);
 	} else [];
@@ -339,7 +366,7 @@ getCompilationFile(config : Tree<string, string>, verbose : int) -> string {
 
 	deleteFile("mkdot.bat");
 
-	file2 = if (file0 == "" && test != "") "tools/flowc/tests/test" + test 
+	file2 = if (file0 == "" && test != "") "tools/flowc/tests/test" + test
 	else if (file0 == "" && error != "") "tools/flowc/tests/errors/error" + error
 	else file0;
 	strReplace(file2, "\\", "/");
@@ -415,14 +442,17 @@ updateConfigForFile(def : CompilerConfig, file : string) -> CompilerConfig {
 	if (conf_dir == "") def else {
 		switch (getCompilerConfig(file_dir)) {
 			Some(conf): {
-				if (conf_dir == "") def else {
-					CompilerConfig(conf with 
-						includes = update_dirs(def.includes, conf.includes),
-						objectFolders = update_dirs(def.objectFolders, conf.objectFolders),
-						config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
-						flowfile = file
-					);
-				}
+				// Here we pick up all external 'flow.config' files, which may be attached to the current
+				// 'flow.config' with 'include-extern=<conf1,conf2,...>' option,
+				// collect all includes from those configs, join them, resolve to absolute paths and add to the
+				// includes from the currently used 'flow.config'.
+				extern_includes = fcExternIncludes(lookupTreeDef(conf.config, "include-extern", ""));
+				CompilerConfig(conf with
+					includes = concat(update_dirs(def.includes, conf.includes), extern_includes),
+					objectFolders = update_dirs(def.objectFolders, conf.objectFolders),
+					config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
+					flowfile = file
+				);
 			}
 			Failed(msg): def;
 		}

@@ -1,69 +1,76 @@
 package com.area9innovation.flow;
 
-import java.util.Hashtable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
 
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+
 public abstract class FlowRuntime {
-	private IHostFactory host_factory;
-	public Struct[] struct_prototypes;
-	public Hashtable<String,Integer> struct_ids;
-	private Hashtable<Class,NativeHost> hosts;
+	public static Struct[] struct_prototypes;
+	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
+	public static String[] program_args;
+	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
 
-	private String[] str_args;
-
-	protected FlowRuntime(Struct[] structs, String[] args) {
-		struct_prototypes = structs;
-		struct_ids = new Hashtable<String,Integer>();
-		hosts = new Hashtable<Class,NativeHost>();
-		str_args = args;
-
-		for (int i = 0; i < structs.length; i++)
-			struct_ids.put(structs[i].getTypeName(), i);
-	}
-
-	public synchronized void start(IHostFactory factory) {
-		host_factory = factory;
-		main();
-	}
-
-	protected abstract void main();
+	private static final ThreadLocal<DecimalFormat> decimalFormat = new ThreadLocal<DecimalFormat>(){
+        @Override
+        protected DecimalFormat initialValue()
+        {
+			DecimalFormat df = new DecimalFormat("0.0");
+			df.setDecimalFormatSymbols(new DecimalFormatSymbols(Locale.US));
+			df.setMaximumFractionDigits(340); // DecimalFormat.DOUBLE_FRACTION_DIGITS
+			return df;
+        }
+    };
 
 	@SuppressWarnings("unchecked")
-	protected final <T extends NativeHost> T getNativeHost(Class<T> cls) {
+	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
 		T host = (T)hosts.get(cls);
-		if (host != null)
+		if (host != null) {
 			return host;
-
-		try {
-			if (host_factory != null)
-				host = (T)host_factory.allocateHost(cls);
-			if (host == null)
+		} else {
+			try {
 				host = cls.getDeclaredConstructor().newInstance();
-
-			if (!cls.isInstance(host))
-				throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
-
-			host.runtime = this;
+				if (!cls.isInstance(host)) {
+					throw new RuntimeException("Invalid host: " + cls.getName() + " expected, " + host.getClass().getName() + " allocated");
+				}
+				hosts.put(cls, host);
+				host.initialize();
+				return host;
+			} catch (ReflectiveOperationException e) {
+				throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
+			}
+		}
+	}
+	@SuppressWarnings("unchecked")
+	protected static final <T extends NativeHost> void registerNativeHost(Class<T> cls) {
+		try {
+			T host = cls.getDeclaredConstructor().newInstance();
+			if (!cls.isInstance(host)) {
+				throw new RuntimeException("Invalid host: " + cls.getName() + " expected, " + host.getClass().getName() + " allocated");
+			}
 			hosts.put(cls, host);
 			host.initialize();
-			return host;
-		} catch (ReflectiveOperationException e) {
-			throw new RuntimeException("Could not instantiate native method host "+cls.getName(), e);
+		} catch (ReflectiveOperationException e)  {
+			throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
 		}
 	}
 	public static boolean compareEqual(Object a, Object b) {
 		if (a == b) return true;
-		if (a.getClass() != b.getClass()) return false;
-		if (a instanceof Integer || a instanceof Boolean || a instanceof Double || a instanceof String) {
-			return a.equals(b);
-		}
-		if (a instanceof Object[]) {
-			int len = ((Object[])a).length;
-			if (len != ((Object[])b).length) return false;
-			for (int i = len; i-- != 0;) {
-				if (!compareEqual(((Object[])a)[i], ((Object[])b)[i])) return false;
+		// void values (null in java backend) may also be compared in the interpreter, so we check this case
+		if (a == null || b == null) return false;
+		if (a.getClass().isArray() && b.getClass().isArray()) {
+			Object[] ao = (Object[])a;
+			Object[] bo = (Object[])b;
+			if (ao.length != bo.length) return false;
+			for (int i = ao.length; i-- != 0;) {
+				if (!compareEqual(ao[i], bo[i])) return false;
 			}
 			return true;
+		}
+		if (!a.getClass().equals(b.getClass())) return false;
+		if (a instanceof Integer || a instanceof Boolean || a instanceof Double || a instanceof String) {
+			return a.equals(b);
 		}
 		if (a instanceof Struct) {
 			if (((Struct)a).getTypeId() != ((Struct)b).getTypeId()) return false;
@@ -143,11 +150,23 @@ public abstract class FlowRuntime {
 	}
 
 	public static String toString(Object value) {
-		if (value == null)
+		if (value == null) {
 			return "{}";
+		} else if (value instanceof Function) {
+			return "<function " + value + ">";
+		} else if (value instanceof Double) {
+			return doubleToStringInternal((Double)value);
+		}
 
-		if (value instanceof String) {
-			StringBuilder buf = new StringBuilder();
+		StringBuilder buf = new StringBuilder();
+		toStringAppend(value, buf);
+		return buf.toString();
+	}
+
+	public static void toStringAppend(Object value, StringBuilder buf) {
+		if (value == null) {
+			buf.append("{}");
+		} else if (value instanceof String) {
 			String sv = (String)value;
 
 			buf.append('"');
@@ -175,72 +194,37 @@ public abstract class FlowRuntime {
 
 			}
 			buf.append('"');
-			return buf.toString();
-		}
-
-		if (value instanceof Object[]) {
-			StringBuilder buf = new StringBuilder();
+		} else if (value instanceof Object[]) {
 			Object[] arr = (Object[])value;
 
 			buf.append("[");
 			for (int i = 0; i < arr.length; i++) {
 				if (i > 0)
 					buf.append(", ");
-				buf.append(toString(arr[i]));
+				toStringAppend(arr[i], buf);
 			}
 			buf.append("]");
-
-			return buf.toString();
+		} else if (value instanceof Function) {
+			buf.append("<function " + value + ">");
+		} else if (value instanceof Double) {
+			buf.append(doubleToStringInternal((Double)value));
+		} else if (value instanceof Struct) {
+			((Struct)value).toStringAppend(buf);
+		} else {
+			buf.append(value.toString());
 		}
+	}
 
-		if (value instanceof Function)
-			return "<function>";
-
-		if (value instanceof Double)
-			return doubleToString((Double)value);
-
-		return value.toString();
+	private static String doubleToStringInternal(double value) {
+		return decimalFormat.get().format(value);
 	}
 
 	public static String doubleToString(double value) {
-		String rstr = Double.toString(value);
+		String rstr = doubleToStringInternal(value);
 		return rstr.endsWith(".0") ? rstr.substring(0, rstr.length()-2) : rstr;
-/*
-		String rstr = "";
-
-		if (value > 1.0) {
-			rstr = String.format(Locale.US, "%f", value);
-		} else {
-			rstr = String.format(Locale.US, "%g", value);
-			//String ss = Double.toString(value);
-
-			//rstr = ss.endsWith(".0") ? ss.substring(0, rstr.length()-2) : ss;
-		}
-		
-		return removeTrailingZeros(rstr);
-*/
 	}
 
-	private static String removeTrailingZeros(String s) {
-		int j = s.length();
-		for (int i = s.length() - 1; i > 1; i--) {
-			char c = s.charAt(i);
-
-			if (c != '0') {
-				break;
-			} else {
-				char pc = s.charAt(i-1);
-
-				if (c == '0' && (pc != '.' && pc != ',')) {
-					j = i;
-				}
-			}
-		}
-
-		return s.substring(0, j);
-	}
-
-	public final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
+	public static final Struct makeStructValue(String name, Object[] fields, Struct default_value) {
 		Integer id = struct_ids.get(name);
 		if (id == null)
 			return default_value;
@@ -248,7 +232,7 @@ public abstract class FlowRuntime {
 		return makeStructValue(id, fields, default_value);
 	}
 
-	public final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
+	public static final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
 		try {
 			Struct copy = struct_prototypes[id].clone();
 			copy.setFields(fields);
@@ -293,9 +277,5 @@ public abstract class FlowRuntime {
 		if (o1 instanceof Double || o2 instanceof Double)
 			return Double.valueOf(((Number)o1).doubleValue() % ((Number)o2).doubleValue());
 		return Integer.valueOf(((Number)o1).intValue() % ((Number)o2).intValue());
-	}
-
-	public String[] getUrlArgs() {
-		return str_args;
 	}
 }

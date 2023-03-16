@@ -1,0 +1,153 @@
+import tools/dsl/registry/dsl_parser;
+import tools/dsl/dsl_compiler;
+import tools/dsl/dsl_costs;
+import tools/dsl/dsl_eval;
+import tools/dsl/gringo_actions;
+
+export {
+	// This defines a simple functional language with flow expressions syntax and bool, int, double, and lists
+	defineLambda() -> DslGrammar;
+}
+
+defineLambda() -> DslGrammar {
+	// The grammar of the language where arity of actions is a naming convention
+	lambda = registerDslParser("lambda", <<
+		exp = 
+			"@" exp $"quote_1"
+			|> idbind "=" ws exp ";" ws expsemi $"brace_1" $"let_3"
+			|> exp "||" ws exp $"or_2"
+			|> exp "&&" ws exp $"and_2"
+			|> exp "==" ws exp $"equal_2" | exp "!=" ws exp $"not_equal_2"
+			|> exp ("<=" ws exp $"less_equal_2" | "<" ws exp $"less_2" | ">=" ws exp $"greater_equal_2" | ">" ws exp $"greater_2")
+
+			|> exp < ("+" ws exp $"add_2" | "-" ws exp $"sub_2")*
+			|> exp ("*" ws exp $"mul_2" | "/" ws exp $"div_2" | "%"  ws exp $"mod_2")*
+
+			|> (
+				'!' ws exp $"not_1"
+				| "-" ws exp $"negate_1"
+				| lambda
+				| exp (
+					postfix
+				)*
+			)
+
+			|> "{" ws expsemi "}" ws $"brace_1"
+			|> "(" ws exp ")" ws
+			|> atom;
+
+		lambda = '\' ws lambdaargs "->" ws exp "" $"lambda_2"; // The "" makes right-recursion disappear
+			lambdaargs = $"nil" idbind $"cons" ("," ws idbind $"cons")*
+				| $"nil";
+
+		// Give this a name, so it can be extended
+		postfix = ( "(" ws exps ")" ws $"call_2");
+			// | "." ws id $"dot_2"   // This can be done with syntactic sugar pair.first => first(pair), a.b(args) => b(a, args)
+			// | "[" ws exp "]" ws $"index_2"
+
+		atom = "if" !letterOrDigit ws exp exp "else" ws exp $"ifelse_3"
+				| "true" !letterOrDigit $"true" ws
+				| "false" !letterOrDigit $"false" ws
+				| id $"var_1"
+				| string $"string_1"
+				| double $"double_1"
+				| int $"int_1"
+				| "$" ws id $"bind_1"	// For pattern matching
+				;
+
+		exps = $"nil" exp $"cons" ("," ws exp $"cons")* ("," ws)? 
+			| $"nil";
+
+		expsemi = $"nil" exp $"cons" (";" ws exp $"cons")* (";" ws)? 
+			| $"nil";
+
+		idbind = id | "$" ws id $"bind_1";
+
+		// Extension points for other languages that provide typing
+		colontype = "" $"nil";
+		type = "" $"nil";
+	
+		ws exp
+	>>, ["ws", "id", "int", "double", "string"]); // true adds definitions for whitespace
+
+	// The set of rewriting rules we want for optimizations
+	// TODO: Register these somewhere
+	/*rewriting = defineDslRewriting(lambda, lambda, ";",
+		<<
+			$a + $b => $b + $a;
+			$a * $b => $b * $a;
+			$a + $a => 2 * $a;
+			2 * $a => $a + $a;
+			$a + 0 => $a;
+			$a * 0 => 0;
+			$a * 1 => $a;
+			if (true) $a else $b => $a;
+			if (false) $a else $b => $b;
+		>>,*/
+	costs = rewriteCosts(
+		// These costs refer to the semantic actions without arity
+		// so we can figure out what the costs are. This is used to extract the best reduction
+		<<
+			int => 1;
+			add => 2;
+			sub => 2;
+			mul => 3;
+			div => 4;
+		>>);
+
+	// This is how to define a compiler of a language.
+	flowCompiler = makeCompiler("flow", <<
+		ifelse(a, b, c) => "if (" $a(5) ") " $b(5) " else " $c(5);
+		or(a, b) => $a(10) "||" $b(9);
+		and(a, b) => $a(20) "&&" $b(19);
+
+		equal(a, b) => $a(30) "==" $b(30);
+		not_equal(a, b) => $a(30) "!=" $b(30);
+
+		less(a, b) => $a(35) "<" $b(35);
+		less_equal(a, b) => $a(35) "<=" $b(35);
+		greater(a, b) => $a(35) ">" $b(35);
+		greater_equal(a, b) => $a(35) ">=" $b(35);
+
+		add(a, b) => $a(40) "+" $b(39);
+		sub(a, b) => $a(40) "-" $b(39);
+		mul(a, b)  => $a(50) "*" $b(49);
+		div(a, b)  => $a(50) "/" $b(49);
+		mod(a, b)  => $a(50) "%" $b(49);
+		let(id, v, b) => $id(1) "=" $v(1) ";" $b(1);
+		lambda(args, body) => "\\" $glue(args, ",") "->" $body(4);
+		var(id) => $id(100);
+		call(fn, args) => $fn(80) "(" $glue(args, ",") ")";
+		brace(a) => "{" $glue(a, ";") "}";
+		false() => "false";
+		true() => "true";
+		not(a) => "!" $a(90); // Check precedence
+		negate(a) => "-" $a(90); // Check precedence
+
+		string(a) => $a(100);
+		double(a) => $a(100);
+		int(a) => $a(100);
+
+		// bind, cons, nil
+		// s2d, s2i
+	>>);
+
+	// js compiler is defined by overriding ifelse, let, lambda but otherwise reuse all
+	// TODO: Figure out how rewrites could turn an expression into a statement-language
+	// We need returns, and want to avoid nested lambdas
+	// TODO: Do we also need to change brace?
+	jsCompiler = overlayCompiler(flowCompiler, makeCompiler("js", <<
+		ifelse(a, b, c) => "(" $a(5) ") ? " $b(5) " : " $c(5);
+		let(id, v, b) => "function() {var " $id(1) "=" $v(1) ";" $b(1) "}()";
+		lambda(args, body) => "function(" $glue(args, ",") ") {" $body(4) "}";
+	>>));
+
+	if (false) {
+		// TODO: Move this to a separate checker for a language?
+		actions : Set<string> = extractGringoActions(makeSet(), lambda.term);
+		missingDslCosts(actions, costs);
+		missingDslCompiler(actions, flowCompiler);
+	}
+
+	lambda;
+}

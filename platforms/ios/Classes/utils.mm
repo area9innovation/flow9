@@ -18,7 +18,8 @@ CGRect screenBounds() {
 
 NSString * applicationLibraryDirectory() {
     NSURL * url = [[[NSFileManager defaultManager] URLsForDirectory: NSLibraryDirectory inDomains: NSUserDomainMask] lastObject];
-    return [url path];
+    // Add "private" to unify folders with C++ part
+    return [@"/private" stringByAppendingString:[url path]];
 }
 
 

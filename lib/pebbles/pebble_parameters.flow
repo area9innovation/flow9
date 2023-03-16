@@ -57,20 +57,23 @@ export {
 			);
 
 		// How do we want to handle pebble parameter update?
-		PebbleAction ::= RecordURLChange, RecordURLRestoreOrChangeParameters, DoNotRecord, RecordURLChangeCheckPebble;
+		PebbleAction ::= RecordURLChange, RecordURLRestoreOrChangeParametersControlled, DoNotRecord, RecordURLChangeCheckPebble;
 			// change URL that will be stored in browser history
 			RecordURLChange : ();
 			// will try to restore last pebble from stack with the same parameter and value
 			// or make new one with only that parameter and value
 			// shared parameters will be passed from tabs to tabs it's useful in case of some parameters
 			// have to be chosen for all tabs on current pebble level
-			RecordURLRestoreOrChangeParameters(shared : [string]);
+			// fn modifies pebble that is going to be set
+			// can be used for setting initial pebble parameters e.g.
+			RecordURLRestoreOrChangeParametersControlled(shared : [string], fn : (Pebble, restored : bool) -> Pebble);
 			// don't handle this event using pebbles
 			DoNotRecord : ();
 			// allow to modify checkPebble function (usefull for pebble parameter global functionality)
 			RecordURLChangeCheckPebble : (fn : () -> bool);
 
-		RecordURLRestoreOrChange() -> RecordURLRestoreOrChangeParameters {RecordURLRestoreOrChangeParameters([])};
+	RecordURLRestoreOrChange() -> RecordURLRestoreOrChangeParametersControlled;
+	RecordURLRestoreOrChangeParameters(shared : [string]) -> RecordURLRestoreOrChangeParametersControlled;
 
 	makeDummyPebbleParameterLink() -> PebbleParameterLink;
 
@@ -144,6 +147,14 @@ export {
 		controller : PebbleController,
 		parameters : [KeyValue], // pairs of parameters & values
 		confirm : (callback : (/* approve or cancel */ bool) -> void) -> void,
+		warn : Maybe<() -> bool>, // it will add leaveHandler on top, pass None() if you don't need it
+		m : Material
+	) -> Material;
+
+	MConfirmPebbleParameterSwitch2(
+		controller : PebbleController,
+		parameters : [KeyValue], // pairs of parameters & values
+		confirm : (old : Pebble, new : Pebble, callback : (/* approve or cancel */ bool) -> void) -> void,
 		warn : Maybe<() -> bool>, // it will add leaveHandler on top, pass None() if you don't need it
 		m : Material
 	) -> Material;
@@ -253,6 +264,14 @@ MSelectPebbleParameters(
 	)
 }
 
+RecordURLRestoreOrChange() -> RecordURLRestoreOrChangeParametersControlled {
+	RecordURLRestoreOrChangeParameters([])
+}
+
+RecordURLRestoreOrChangeParameters(shared : [string]) -> RecordURLRestoreOrChangeParametersControlled {
+	RecordURLRestoreOrChangeParametersControlled(shared, \p, __ -> p)
+}
+
 makeDummyPebbleParameterLink() -> PebbleParameterLink {
 	PebbleStringLink("", make(""), nop1, DoNotRecord())
 }
@@ -327,7 +346,7 @@ setViewOnParameterChange2(
 ) -> () -> () -> void {
 
 	extendPebble = \val -> extendCurrentPebbleWithParameter(controller, parameter, converValueToString(val));
-	tryToRestorePebble = \val, shared -> restoreLastPebbleWithParameter(controller, parameter, converValueToString(val), shared);
+	tryToRestorePebble = \val, shared, fn -> restoreLastPebbleWithParameter(controller, parameter, converValueToString(val), shared, fn);
 
 	makeSubscribe2(valueB, \value -> {
 		updatePinnedParameter(parameter, converValueToString(value));
@@ -335,7 +354,7 @@ setViewOnParameterChange2(
 			controller,
 			switch (action : PebbleAction) {
 				RecordURLChange(): extendPebble(value);
-				RecordURLRestoreOrChangeParameters(shared): tryToRestorePebble(value, shared);
+				RecordURLRestoreOrChangeParametersControlled(shared, modify): tryToRestorePebble(value, shared, modify);
 				DoNotRecord(): extendPebble(value);
 				RecordURLChangeCheckPebble(__): extendPebble(value);
 			}
@@ -345,8 +364,14 @@ setViewOnParameterChange2(
 
 // It will try to find last pebble in stack which is same type with current pebble but contains these parameter and value in last pathPart
 // otherwise it will replace last pathpart of current pebble with only one passed parameter
-restoreLastPebbleWithParameter(controller : PebbleController, parameter : string, value : string, shared : [string]) -> Pebble {
-	// there is no sence to find pebble with empty parameter in stack
+restoreLastPebbleWithParameter(
+	controller : PebbleController,
+	parameter : string,
+	value : string,
+	shared : [string],
+	modify : (Pebble, bool) -> Pebble
+) -> Pebble {
+	// there is no sense to find pebble with empty parameter in stack
 	if (value == "") {
 		extendCurrentPebbleWithParameter(controller, parameter, value)
 	} else {
@@ -354,10 +379,14 @@ restoreLastPebbleWithParameter(controller : PebbleController, parameter : string
 		currentPPName = getLastPathPart(currentPebble, makeEmptyPathPart()).name;
 		pp = PathPart(currentPPName, [KeyValue(parameter, value)]);
 		defPebble = replacePebbleLastPathPart(currentPebble, pp);
-		setLastPathPartParameters(
-			findLastPebbleInStack(controller, pp, defPebble),
-			getLastPathPartParametersDefs(currentPebble, map(shared, \s -> KeyValue(s, "")))
-		);
+		foundPebbleM = findLastPebbleInStackM(controller, pp, defPebble);
+		modify(
+			setLastPathPartParameters(
+				either(foundPebbleM, defPebble),
+				getLastPathPartParametersDefs(currentPebble, map(shared, \s -> KeyValue(s, "")))
+			),
+			isSome(foundPebbleM)
+		)
 	}
 }
 
@@ -470,12 +499,28 @@ MConfirmPebbleParameterSwitch(
 	warn : Maybe<() -> bool>,
 	m : Material
 ) -> Material {
+	MConfirmPebbleParameterSwitch2(
+		controller,
+		parameters,
+		\__, __, callback -> confirm(callback),
+		warn,
+		m
+	);
+}
+
+MConfirmPebbleParameterSwitch2(
+	controller : PebbleController,
+	parameters : [KeyValue],
+	confirm : (Pebble, Pebble, (bool) -> void) -> void,
+	warn : Maybe<() -> bool>,
+	m : Material
+) -> Material {
 	confirmation = \oldPebble : Pebble, newPebble : Pebble, callback : (bool) -> void -> {
 		if (exists(parameters, \parameter -> {
 			oldValue = getLastPathPartParameter(oldPebble, parameter.key, "");
 			newValue = getLastPathPartParameter(newPebble, parameter.key, "");
 			oldValue == parameter.value && newValue != parameter.value
-		})) confirm(callback)
+		})) confirm(oldPebble, newPebble, callback)
 		else callback(true)
 	};
 
@@ -510,7 +555,7 @@ getLastPathPartName(controller : PebbleController) -> string {
 checkCustomCheckPebble(action : PebbleAction) -> () -> bool {
 	switch (action) {
 		RecordURLChange(): \-> false;
-		RecordURLRestoreOrChangeParameters(__): \-> false;
+		RecordURLRestoreOrChangeParametersControlled(__, __): \-> false;
 		DoNotRecord(): \-> false;
 		RecordURLChangeCheckPebble(fn): fn;
 	}

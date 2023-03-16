@@ -1,9 +1,13 @@
 import ds/tuples;
-import string;
+import formats/json/json;
+import fusion;
+import string_utils;
+import text/translation;
 
 export {
 	FBContentPath(
 		item : ?,
+		propertiesR : ref Tree<string, Json>,
 		isFolder : bool,
 		dirPath : string, 	// path without the item name and ends with `/`
 		filename : string 	// name with extension
@@ -12,6 +16,16 @@ export {
 	addSlash2pathEnd(path : string) -> string;
 	split2Name_Path(fullPath : string) -> Pair<string /*name*/, string /*path*/>;
 	getItemFullname(item : FBContentPath<?>) -> string;
+
+	// Symbols, forbidded in the names
+	forbiddenChars : [string] = ["\\", "/", ":", "*", "?", "<", ">", "|", "\"", "\n", "\t"];
+
+	// Create a fusion which fire an error on incorrect name
+	fsValidateNameTransform(nameB : DynamicBehaviour<string>, existsNames : [string], isFolder : bool, addYourChecking : [(string) -> Maybe<string>]) -> Transform<Maybe<Pair<string, bool>>>;
+	// Check that the name is correct
+	fsValidateName(name : string, existsNames : [string], isFolder : bool, addYourChecking : [(string) -> Maybe<string>], style : [FSValidateNameStyle]) -> Maybe<string>;
+	FSValidateNameStyle ::= FSValidateNameForbiddenCharsError;
+		FSValidateNameForbiddenCharsError(fn : (foundForbiddenChars : [string]) -> string);
 }
 
 addSlash2pathEnd(path : string) -> string {
@@ -43,4 +57,29 @@ split2Name_Path(fullPath : string) -> Pair<string /*name*/, string /*path*/> {
 
 getItemFullname(item : FBContentPath<?>) -> string {
 	item.dirPath + item.filename + (if (item.isFolder) "/" else "");
+}
+
+fsValidateNameTransform(nameB : DynamicBehaviour<string>, existsNames : [string], isFolder : bool, addYourChecking : [(string) -> Maybe<string>]) -> Transform<Maybe<Pair<string, bool>>> {
+	existsNamesLower = map(existsNames, toLowerCase);
+	fselect(nameB, FLift(\name -> maybeMap(fsValidateName(name, existsNamesLower, isFolder, addYourChecking, []), \v -> Pair(capitalize(v), false))))
+}
+
+fsValidateName(name : string, existsNames : [string], isFolder : bool, addYourChecking : [(string) -> Maybe<string>], style : [FSValidateNameStyle]) -> Maybe<string> {
+	forbiddenCharsError = extractStruct(style, FSValidateNameForbiddenCharsError(\chars -> _("Do not use these symbols: ") +  strGlue(chars, ", "))).fn;
+	nameTL = toLowerCase(trim(name));
+	existsNamesLower = map(existsNames, toLowerCase);
+
+	if (nameTL == "") Some(_("Specify the name"))
+	else if (contains(existsNamesLower, nameTL)) Some(_("Such name already exists"))
+	else if (nameTL == "." || nameTL == "..") Some(_("Could not resolved the name"))
+	else {
+		chars = filter(forbiddenChars, \c -> strIndexOf(nameTL, c) != -1);
+		if (chars != []) Some(forbiddenCharsError(chars))
+		else if (!isFolder && strlen(takeAfterLast(nameTL, ".", "")) > 30) Some(_("Filename extension is too long"))
+		else {
+			fold(addYourChecking, None(), \acc, fn -> {
+				eitherFn(acc, \__ -> acc, \-> fn(nameTL))
+			});
+		}
+	}
 }

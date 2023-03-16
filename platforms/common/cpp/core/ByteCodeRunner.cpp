@@ -72,6 +72,15 @@ StackSlot flowgen_common::error_stub_slot = StackSlot::MakeVoid();
     * heapEnd           ----------------------------------------------------------------------
 */
 
+#if defined(ANDROID) || defined(IOS)
+    unsigned int EPHEMERAL_HEAP_SIZE = 2*1024*1024;
+    unsigned int MAX_EPHEMERAL_ALLOC = 32*1024;
+#else
+    unsigned int EPHEMERAL_HEAP_SIZE = 128*1024*1024;
+    unsigned int MAX_EPHEMERAL_ALLOC = 1*1024*1024;
+#endif
+
+
 #ifndef MIN
     #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #endif

@@ -902,6 +902,13 @@ bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
         return true;
     }
     
+    if ([ns_url hasPrefix: @"file://"]) {
+        NSString* imagePath = [ns_url substringWithRange:NSMakeRange(7, [ns_url length]-7)];
+        NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
+        resolvePictureDataAsBitmap(url, imageData);
+        return true;
+    }
+    
     void (^on_success)(NSData * data) = ^void(NSData * data) {
         resolvePictureDataAsBitmap(url, data);
     };
@@ -1402,7 +1409,7 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     
     NSString * ns_url = UNICODE2NS( web_clip->getUrl() );
     
-    NSURL* baseResourceUrl = [[NSBundle mainBundle] resourceURL];
+    NSURL* baseResourceUrl = [NSURL fileURLWithPath:applicationLibraryDirectory()];
     NSURL* baseResourceWwwUrl = [baseResourceUrl URLByAppendingPathComponent:@"www"];
     bool isLocalFile = [ns_url hasPrefix:@"./"];
     NSURL * rq_url = nil;
@@ -1430,8 +1437,10 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
     [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
     
+    NSString* path = [[[baseResourceWwwUrl URLByDeletingLastPathComponent] path] stringByAppendingString:@"/flow-local-store/images/pwa_nnc_logo.png"];
+    
     if (isLocalFile) {
-        [web_view loadFileURL:rq_url allowingReadAccessToURL:[baseResourceUrl URLByDeletingLastPathComponent]];
+        [web_view loadFileURL:rq_url allowingReadAccessToURL:[baseResourceWwwUrl URLByDeletingLastPathComponent]];
     } else {
         [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
     }
@@ -1623,6 +1632,16 @@ StackSlot iosGLRenderSupport::hostCall(RUNNER_ARGS)
     {
         [UIScreen mainScreen].brightness = RUNNER->GetArraySlot(args, 0).GetDouble();
     }
+    if ( encodeUtf8(RUNNER->GetString(name)) == "getBrowser" )
+	{
+    	NSString* code = [DeviceInfo getMachineName];
+		return jsstring2stackslot(code);
+	}
+    if ( encodeUtf8(RUNNER->GetString(name)) == "getSysVersion" )
+	{
+    	NSString* code = [DeviceInfo getSysVersion];
+		return jsstring2stackslot(code);
+	}
     
     RETVOID;
 }
@@ -1644,15 +1663,8 @@ StackSlot iosGLRenderSupport::setStatusBarColor(RUNNER_ARGS)
     RUNNER_PopArgs1(sbColor);
     RUNNER_CheckTag1(TInt, sbColor);
     
-    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"13.0")) {
-        CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
-        UIView *statusBar = [[UIView alloc]initWithFrame:frame];
-        statusBar.backgroundColor =  UIColorFromRGB(sbColor.GetInt());
-        [[UIApplication sharedApplication].keyWindow addSubview:statusBar];
-    } else {
-        UIView *bar = [[UIApplication sharedApplication] valueForKeyPath:@"statusBarWindow.statusBar"];
-        bar.backgroundColor = UIColorFromRGB(sbColor.GetInt());
-    }
+    UIColor* color = UIColorFromRGB(sbColor.GetInt());
+    [GLViewController setStatusBarColor: color];
     
     RETVOID;
 }

@@ -383,6 +383,10 @@ class PixiWorkarounds {
 
 			PIXI.TextMetrics.wordWrap = function(text, style, canvas)
 			{
+				if (TextClip.isJapaneseFont(style)) {
+					return text;
+				}
+
 				if (canvas == null) {
 					canvas = PIXI.TextMetrics._canvas;
 				}
@@ -672,7 +676,12 @@ class PixiWorkarounds {
 				{
 					let lineWidth;
 					lineWidth = widthContext.measureText(lines[i]).width / widthMulti;
-					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(' ').length - 1) : 0.0);
+					// Super-specific bug in Safari : when it measures full string, which contains 'T ' combination, it returns a little shorter width than
+					// the sum of words separately
+					if (Platform.isSafari && lines[i].includes('T ')) {
+						lineWidth += 0.3
+					}
+					lineWidth += (lines[i].length - 1) * style.letterSpacing + (style.wordSpacing ? style.wordSpacing * (lines[i].split(/[\\s]+/).length - 1) : 0.0);
 
 					lineWidths[i] = lineWidth;
 					maxLineWidth = Math.max(maxLineWidth, lineWidth);
@@ -706,7 +715,7 @@ class PixiWorkarounds {
 				);
 			}
 
-			PIXI.TextMetrics.measureFont = function(font)
+			PIXI.TextMetrics.measureFont = function(font, fontSize)
 			{
 				// as this method is used for preparing assets, don't recalculate things if we don't need to
 				if (PIXI.TextMetrics._fonts[font])
@@ -748,12 +757,16 @@ class PixiWorkarounds {
 				var idx = 0;
 				var stop = false;
 
+				// Some OS (like MacOS) and video adapters renders font with more or less blureness
+				// this check helps to minimize the impact of blureness (which leads to difference in measured sizes and baselines)
+				// Note: we found that for small fonts like 9 and lower, we should use strict check because bold and normal fonts measured wrong
+				const checkBlureness = typeof RenderSupport !== 'undefined' && RenderSupport.RendererType === 'canvas' || (typeof fontSize !== 'undefined' && fontSize <= 10);
 				// ascent. scan from top to bottom until we find a non red pixel
 				for (i = 0; i < baseline; ++i)
 				{
 					for (var j = 0; j < line; j += 4)
 					{
-						if (imagedata[idx + j] !== 255)
+						if (checkBlureness ? imagedata[idx + j] !== 255 : imagedata[idx + j] <= 150)
 						{
 							stop = true;
 							break;
@@ -779,7 +792,7 @@ class PixiWorkarounds {
 				{
 					for (var j = 0; j < line; j += 4)
 					{
-						if (imagedata[idx + j] !== 255)
+						if (checkBlureness ? imagedata[idx + j] !== 255 : imagedata[idx + j] <= 150)
 						{
 							stop = true;
 							break;
@@ -798,48 +811,6 @@ class PixiWorkarounds {
 
 				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
-
-				context.fillStyle = '#f00';
-				context.fillRect(0, 0, width, height);
-
-				context.textBaseline = 'alphabetic';
-				context.fillStyle = '#000';
-				context.fillText('B', 0, baseline);
-
-				imagedata = context.getImageData(0, 0, width, height).data;
-				pixels = imagedata.length;
-				line = width * 4;
-
-				i = 0;
-				idx = 0;
-				stop = false;
-
-				// ascent. scan from top to bottom until we find a non red pixel
-				for (i = 0; i < baseline; ++i)
-				{
-					for (var j = 0; j < line; j += 4)
-					{
-						if (imagedata[idx + j] !== 255)
-						{
-							stop = true;
-							break;
-						}
-					}
-					if (!stop)
-					{
-						idx += line;
-					}
-					else
-					{
-						break;
-					}
-				}
-
-				if (Platform.isMacintosh) {
-					properties.baselineCorrection = (properties.descent - (properties.ascent - (baseline - i - 1.0))) / 2.0;
-					properties.descent -= properties.baselineCorrection;
-					properties.ascent += properties.baselineCorrection;
-				}
 
 				PIXI.TextMetrics._fonts[font] = properties;
 
@@ -1009,7 +980,7 @@ class PixiWorkarounds {
 
 						this.emit('transformchanged');
 
-						if (RenderSupport.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html' && !this.isHTML) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1022,7 +993,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {
@@ -1047,7 +1018,7 @@ class PixiWorkarounds {
 						this.transform.updateTransform(this.parent.transform);
 						this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-						if (RenderSupport.RendererType == 'html') {
+						if (RenderSupport.RendererType == 'html' || this.isHTML) {
 							if (RenderSupport.LayoutText || this.isCanvas) {
 								this.textClipChanged = true;
 								this.layoutText();
@@ -1071,7 +1042,7 @@ class PixiWorkarounds {
 							}
 						}
 
-						if (RenderSupport.RendererType != 'html') {
+						if (RenderSupport.RendererType != 'html' && !this.isHTML) {
 							if (this.accessWidget) {
 								this.accessWidget.updateTransform();
 							}
@@ -1086,7 +1057,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if (RenderSupport.RendererType == 'html' && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {

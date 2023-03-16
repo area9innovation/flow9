@@ -8,6 +8,7 @@ typedef FlowFile = flash.net.FileReference;
 typedef FlowFile = Dynamic; // cannot use js.html.File, because can be sliced to js.html.Blob
 #end
 
+
 class FlowFileSystem {
 
 	public static function createTempFile(name : String, content0 : String) : FlowFile {
@@ -22,6 +23,19 @@ class FlowFileSystem {
 		}
 
 		return new js.html.File([content], name);
+	}
+
+	public static function makeFileByBlobUrl(url : String, name : String, onFile : FlowFile -> Void, onError : String -> Void) : Void {
+		var xhr = new js.html.XMLHttpRequest();
+		xhr.open('GET', url, true);
+		xhr.responseType = untyped 'blob';
+		xhr.addEventListener("load", function(e : Dynamic) {
+			if (xhr.status == 200) {
+				onFile(new js.html.File([xhr.response], name));
+			}
+		}, false);
+		xhr.addEventListener("error", function(e : Dynamic) { onError(xhr.responseText); }, false);
+		xhr.send("");
 	}
 
 	// to change Blob to File

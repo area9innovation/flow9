@@ -171,7 +171,7 @@ bool QGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *in
     int yoff = (header->tile_size - rect.height()) / 2;
 
     info->unicode_char = code;
-    info->advance = metrics.width(qchar) * coeff;
+    info->advance = metrics.horizontalAdvance(qchar) * coeff;
     info->bearing_x = rect.left() * coeff;
     info->bearing_y = rect.top() * coeff;
     info->size_x = rect.width() * coeff;
@@ -743,6 +743,8 @@ bool QGLRenderSupport::doCreateWebWidget(QWidget *&widget, GLWebClip *web_clip) 
             getFlowRunner()->flow_err << "HTML URL: " << encodeUtf8(qt2unicode(rq_url.toString())) << std::endl;
         web_view->load(rq_url);
     }
+
+    web_view->setFocusPolicy(Qt::NoFocus);
 
     connect(web_view, SIGNAL(loadFinished(bool)), SLOT(webPageLoaded(bool)));
 

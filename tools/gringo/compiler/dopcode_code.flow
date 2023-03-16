@@ -1,0 +1,143 @@
+import tools/gringo/compiler/dopcode;
+import string;
+import text/blueprint;
+import net/url_parameter;
+
+export {
+	opcode2code(c : DOpCode) -> string;
+}
+
+opcode2code(c : DOpCode) -> string {
+	switch (c) {
+		DFunction(name, code, body): {
+			prefix = getUrlParameter("prefix");
+			profile = getUrlParameter("profile");
+			blueprint("
+				%id%(acc : DParseAcc<?>) -> bool {
+					%prof%%term%
+				}
+
+				%body%
+				", [
+					"id", prefix + "parse_" + name,
+					"prof", if (profile != "" && startsWith(name, profile)) {
+						"profileProductions := incTreeValue(^profileProductions, " + toString(name) + ");"
+					} else "", 
+					"term", opcode2code(code),
+					"body", opcode2code(body),
+				]
+			)
+		}
+		DTrue(): "true";
+		DFalse(): "false";
+		DString(s): toString(s);
+		DIf(cond, then, else_): {
+			blueprint("
+				if (%cond%) {
+					%then%
+				} else {
+					%else%
+				}", [
+					"cond", opcode2code(cond),
+					"then", opcode2code(then),
+					"else", opcode2code(else_),
+			]);
+		}
+		DSequence(exps): {
+			if (length(exps) == 0) {
+				""
+			} else if (length(exps) == 1) {
+				opcode2code(exps[0])
+			} else {
+				blueprint("
+					{
+						%seq%
+					}", [
+					"seq", superglue(exps, opcode2code, ";\n")
+				]);
+			}
+		}
+		DPushCheckpoint(): "pushDCheckpoint(acc)";
+		DDiscardCheckpoint(): "discardDCheckpoint(acc)";
+		DRestoreCheckpoint(): "restoreDCheckpoint(acc)";
+		DParseStar(term): {
+			blueprint("
+				parseStar(acc, \\ -> {
+					%term%
+				})", [
+				"term", opcode2code(term)
+			]);
+		}
+		DAddError(error): {
+			blueprint("
+				addParseError(acc, %error%)", [
+				"error", toString(error)
+			]);
+		}
+		DCaptureI(): "acc.starti ::= acc.i";
+		DMatched(): "addMatched(acc, substring(acc.input, acc.starti, acc.i - acc.starti))";
+		DPosition(): "i2s(acc.i)";
+		DAddVerbatim(e): {
+			blueprint("
+				addVerbatim(acc, %term%)", [
+				"term", opcode2code(e)
+			]);
+		}
+		DAddMatched(e): {
+			blueprint("
+				addMatched(acc, %term%)", [
+				"term", opcode2code(e)
+			]);
+		}
+		DMatchString(text): "matchString(acc, " + toString(text) + ")";
+		DMatchRange(lower, upper): "matchRange(acc, " + i2s(lower) + ", " + i2s(upper) + ")";
+		DCall(id): {
+			prefix = getUrlParameter("prefix");
+			prefix + "parse_" + id + "(acc)";
+		}
+		DAnd(left, right): {
+			"(" + superglue([left, right], \o -> {
+				if (needDOpCodeParenthesis(o)) {
+					"(" + opcode2code(o) + ")"
+				} else {
+					opcode2code(o)
+				}
+			}, " && ") + ")"
+		}
+		DOr(left, right): {
+			superglue([left, right], \o -> {
+				if (needDOpCodeParenthesis(o)) {
+					"(" + opcode2code(o) + ")"
+				} else {
+					opcode2code(o)
+				}
+			}, " || ")
+		}
+	}
+}
+
+needDOpCodeParenthesis(o : DOpCode) -> bool {
+	switch (o) {
+		DFunction(name, code, body): true;
+		DTrue(): false;
+		DFalse(): false;
+		DString(s): false;
+		DIf(cond, then, else_): true;
+		DSequence(exps): length(exps) == 1;
+		DPushCheckpoint(): false;
+		DDiscardCheckpoint(): false;
+		DRestoreCheckpoint(): false;
+		DParseStar(term): false;
+		DAddError(error): false;
+		DCaptureI(): true;
+		DMatched(): false;
+		DPosition(): false;
+		DAddVerbatim(e): false;
+		DAddMatched(e): false;
+		DMatchString(text): false;
+		DMatchRange(lower, upper): false;
+		DCall(id): false;
+		DAnd(left, right): true;
+		DOr(left, right): true;
+	}
+}

@@ -6,7 +6,8 @@ import fusion;
 export {
 	DynamicArray<?> ::= DynamicArrayContainer<?>, DynamicArrayModifier<?>;
 		DynamicArrayModifier<?> ::= DynamicArrayMap<?>, DynamicArrayMapi<?>, DynamicArraySubMap<?>, DynamicArraySubMapi<?>, DynamicArrayMapu<?>, DynamicArrayMapiu<?>,
-			DynamicArrayFilter<?>, DynamicArrayConcat<?>, DynamicArraySubrange<?>, DynamicArrayMerge<?>, DynamicArrayConstruct<?>;
+			DynamicArrayFilter<?>, DynamicArrayConcat<?>, DynamicArraySubrange<?>, DynamicArrayMerge<?>, DynamicArrayConstruct<?>,
+			DynamicArrayMapiWithPrevious<?>, DynamicArrayMapiuWithPrevious<?>;
 
 		DynamicArrayContainer(
 			mutable values : [?],
@@ -25,7 +26,16 @@ export {
 
 		DynamicArrayMapi(
 			container : DynamicArray<flow>,
-			fn : (int, flow) -> ?,
+			fn : (Transform<int>, flow) -> ?,
+			mutable values : [?],
+			mutable linked : bool,
+			subscribers : DList<(HeckelOperationSimple<?>) -> void>,
+			mutable dispose : [() -> void]
+		);
+
+		DynamicArrayMapiWithPrevious(
+			container : DynamicArray<flow>,
+			fn : (Transform<Maybe<?>>, Transform<int>, flow) -> ?,
 			mutable values : [?],
 			mutable linked : bool,
 			subscribers : DList<(HeckelOperationSimple<?>) -> void>,
@@ -62,6 +72,15 @@ export {
 		DynamicArrayMapiu(
 			container : DynamicArray<flow>,
 			fn : (Transform<int>, flow) -> Disposable<?>,
+			mutable values : [?],
+			mutable linked : bool,
+			subscribers : DList<(HeckelOperationSimple<?>) -> void>,
+			mutable dispose : [() -> void]
+		);
+
+		DynamicArrayMapiuWithPrevious(
+			container : DynamicArray<flow>,
+			fn : (Transform<Maybe<?>>, Transform<int>, flow) -> Disposable<?>,
 			mutable values : [?],
 			mutable linked : bool,
 			subscribers : DList<(HeckelOperationSimple<?>) -> void>,
@@ -113,7 +132,7 @@ export {
 			mutable dispose : [() -> void]
 		);
 
-			HeckelOperationSimple<?> ::= HeckelInsert<?>, HeckelDelete;
+			HeckelOperationSimple<?> ::= HeckelInsert<?>, HeckelDelete<?>;
 
 	makeDynamicArray(values : [?]) -> DynamicArray<?>;
 	makeDynamicArrayFromTransform(a : Transform<[?]>) -> DynamicArray<?>;
@@ -135,11 +154,13 @@ export {
 	nextDynamicArray(a : DynamicArray<?>, b : [?]) -> void;
 
 	mapDynamicArray(a : DynamicArray<?>, fn : (?) -> ??) -> DynamicArray<??>;
-	mapiDynamicArray(a : DynamicArray<?>, fn : (int, ?) -> ??) -> DynamicArray<??>;
+	mapiDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> ??) -> DynamicArray<??>;
+	mapiDynamicArrayWithPrevious(a : DynamicArray<?>, fn : (Transform<Maybe<??>>, Transform<int>, ?) -> ??) -> DynamicArray<??>;
 	submapDynamicArray(a : DynamicArray<?>, fn : (?) -> Transform<??>) -> DynamicArray<??>;
 	submapiDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> Transform<??>) -> DynamicArray<??>;
 	mapuDynamicArray(a : DynamicArray<?>, fn : (?) -> Disposable<??>) -> DynamicArray<??>;
 	mapiuDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> Disposable<??>) -> DynamicArray<??>;
+	mapiuDynamicArrayWithPrevious(a : DynamicArray<?>, fn : (Transform<Maybe<??>>, Transform<int>, ?) -> Disposable<??>) -> DynamicArray<??>;
 
 	iteriuDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> [() -> void]) -> () -> void;
 
@@ -307,29 +328,41 @@ linkDynamicArray(a : DynamicArray<?>) -> void {
 				a.values ::= map(a.container.values, a.fn);
 			}
 			DynamicArrayMapi(__, __, __, __, __, __) : {
+				indexes = ref [];
+
 				a.dispose ::=
 					[
 						listen2DynamicArray(a.container, \op -> {
 							switch (op : HeckelOperationSimple<?>) {
 								HeckelInsert(i, v): {
-									insertDynamicArray(a, i, a.fn(i, v));
-									fori(i + 1, getDynamicArrayLengthInternal(a.container) - 1, \j -> {
-										maybeApply(getDynamicArrayElementAtInternal(a.container, j), \vv -> replaceDynamicArray(a, j, a.fn(j, vv)));
-									});
+									index = make(i);
+									indexes := insertArray(^indexes, i, index);
+									r = a.fn(index, v);
+									insertDynamicArray(a, i, r);
+
+									fori(i + 1, length(^indexes) - 1, \j -> next(^indexes[j], j));
 								}
 								// HeckelMove(f, t): {
 								// 	moveDynamicArray(a, f, t);
 								// }
 								HeckelDelete(i, __): {
+									indexes := removeIndex(^indexes, i);
+
 									deleteDynamicArray(a, i);
-									fori(i, getDynamicArrayLengthInternal(a.container) - 1, \j -> {
-										maybeApply(getDynamicArrayElementAtInternal(a.container, j), \vv -> replaceDynamicArray(a, j, a.fn(j, vv)));
-									});
+									fori(i, length(^indexes) - 1, \j -> next(^indexes[j], j));
 								}
 							}
-						})
+						}),
+						\ -> {
+							indexes := [];
+						}
 					];
-				a.values ::= mapi(a.container.values, a.fn);
+
+				a.values ::= mapi(a.container.values, \i, v -> {
+					index = make(i);
+					indexes := insertArray(^indexes, i, index);
+					a.fn(index, v);
+				});
 			}
 			DynamicArraySubMap(__, __, __, __, __, __) : {
 				disposers = ref [];
@@ -494,6 +527,99 @@ linkDynamicArray(a : DynamicArray<?>) -> void {
 					index = make(i);
 					r = a.fn(index, v);
 					indexes := insertArray(^indexes, i, index);
+					r;
+				});
+
+				disposers := map(valuesDisposers, \v -> v.dispose);
+				a.values ::= map(valuesDisposers, \v -> v.value);
+			}
+			DynamicArrayMapiWithPrevious(__, __, __, __, __, __) : {
+				indexes = ref [];
+				b = makeDynamicArray([]);
+
+				a.dispose ::=
+					[
+						listen2DynamicArray(a.container, \op -> {
+							switch (op : HeckelOperationSimple<?>) {
+								HeckelInsert(i, v): {
+									index = make(i);
+									r = a.fn(elementAtDynamicArray(b, fsubtracti(index, const(1))), index, v);
+									indexes := insertArray(^indexes, i, index);
+
+									insertDynamicArray(a, i, r);
+									insertDynamicArray(b, i, r);
+									fori(i + 1, length(^indexes) - 1, \j -> next(^indexes[j], j));
+								}
+								// HeckelMove(f, t): {
+								// 	moveDynamicArray(a, f, t);
+								// }
+								HeckelDelete(i, __): {
+									indexes := removeIndex(^indexes, i);
+
+									deleteDynamicArray(a, i);
+									deleteDynamicArray(b, i);
+									fori(i, length(^indexes) - 1, \j -> next(^indexes[j], j));
+								}
+							}
+						}),
+						\ -> {
+							indexes := [];
+						}
+					];
+
+				a.values ::= mapi(a.container.values, \i, v -> {
+					index = make(i);
+					r = a.fn(elementAtDynamicArray(b, fsubtracti(index, const(1))), index, v);
+					indexes := insertArray(^indexes, i, index);
+					insertDynamicArray(b, i, r);
+					r;
+				});
+			}
+			DynamicArrayMapiuWithPrevious(__, __, __, __, __, __) : {
+				disposers = ref [];
+				indexes = ref [];
+				b = makeDynamicArray([]);
+
+				a.dispose ::=
+					[
+						listen2DynamicArray(a.container, \op -> {
+							switch (op : HeckelOperationSimple<?>) {
+								HeckelInsert(i, v): {
+									index = make(i);
+									r = a.fn(elementAtDynamicArray(b, fsubtracti(index, const(1))), index, v);
+									indexes := insertArray(^indexes, i, index);
+									disposers := insertArray(^disposers, i, r.dispose);
+
+									insertDynamicArray(a, i, r.value);
+									insertDynamicArray(b, i, r.value);
+									fori(i + 1, length(^indexes) - 1, \j -> next(^indexes[j], j));
+								}
+								// HeckelMove(f, t): {
+								// 	moveDynamicArray(a, f, t);
+								// }
+								HeckelDelete(i, __): {
+									^disposers[i];
+									indexes := removeIndex(^indexes, i);
+									disposers := removeIndex(^disposers, i);
+
+									deleteDynamicArray(a, i);
+									deleteDynamicArray(b, i);
+									fori(i, length(^indexes) - 1, \j -> next(^indexes[j], j));
+								}
+							}
+						}),
+						\ -> {
+							applyall(^disposers);
+							disposers := [];
+							indexes := [];
+						}
+					];
+
+				valuesDisposers = mapi(a.container.values, \i, v -> {
+					index = make(i);
+					r = a.fn(elementAtDynamicArray(b, fsubtracti(index, const(1))), index, v);
+					indexes := insertArray(^indexes, i, index);
+					insertDynamicArray(b, i, r.value);
 					r;
 				});
 
@@ -712,10 +838,26 @@ linkDynamicArray(a : DynamicArray<?>) -> void {
 		}
 
 		switch (a : DynamicArray<?>) {
-			DynamicArrayModifier(): {
-				iterDList(a.subscribers, \fn -> iteri(a.values, \i, aa -> fn(HeckelInsert(i, aa))));
-			}
+			DynamicArrayModifier(): iterSubscribersOfDynamicArrayModifier(a);
 			default: {}
+		}
+	}
+}
+
+iterSubscribersOfDynamicArrayModifier(a : DynamicArrayModifier<?>) -> void {
+	iterDynamicArraySubscribers(a.subscribers, \fn -> iteri(a.values, \i, aa -> fn(HeckelInsert(i, aa))));
+}
+
+iterDynamicArraySubscribers(list : DList<?>, fn : (?) -> void) -> void {
+	iterDynamicArraySubscribersNode(list.first, fn);
+}
+
+iterDynamicArraySubscribersNode(node : DNode<?>, fn : (?) -> void) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(v, before, after, __): {
+			fn(v);
+			iterDynamicArraySubscribersNode(after, fn);
 		}
 	}
 }
@@ -725,16 +867,18 @@ unlinkDynamicArray(a : DynamicArray<?>) -> void {
 		a.linked ::= false;
 
 		switch (a : DynamicArray<?>) {
-			DynamicArrayModifier(): {
-				if (debugDynamicArray) {
-					println("unlinkDA:\n" + dynamicArray2s(a));
-				}
-				applyall(a.dispose);
-				a.dispose ::= [];
-			}
+			DynamicArrayModifier(): unlinkDynamicArrayModifier(a);
 			default : {}
 		}
 	}
+}
+
+unlinkDynamicArrayModifier(a : DynamicArrayModifier) -> void {
+	if (debugDynamicArray) {
+		println("unlinkDA:\n" + dynamicArray2s(a));
+	}
+	applyall(a.dispose);
+	a.dispose ::= [];
 }
 
 insertDynamicArray(a : DynamicArray<?>, i : int, v : ?) -> void {
@@ -743,7 +887,7 @@ insertDynamicArray(a : DynamicArray<?>, i : int, v : ?) -> void {
 	a.values ::= insertArray(a.values, ii, v);
 
 	if (a.linked) {
-		iterDList(a.subscribers, \fn -> fn(HeckelInsert(ii, v)));
+		iterDynamicArraySubscribers(a.subscribers, \fn -> fn(HeckelInsert(ii, v)));
 	}
 }
 
@@ -754,7 +898,7 @@ insertDynamicArray(a : DynamicArray<?>, i : int, v : ?) -> void {
 // 		a.values ::= moveElement(a.values, f, tt);
 
 // 		if (a.linked) {
-// 			iterDList(a.subscribers, \fn -> fn(HeckelMove(f, tt)));
+// 			iterDynamicArraySubscribers(a.subscribers, \fn -> fn(HeckelMove(f, tt)));
 // 		}
 // 	}
 // }
@@ -765,7 +909,7 @@ deleteDynamicArray(a : DynamicArray<?>, i : int) -> void {
 		a.values ::= removeIndex(a.values, i);
 
 		if (a.linked) {
-			iterDList(a.subscribers, \fn -> fn(HeckelDelete(i, v)));
+			iterDynamicArraySubscribers(a.subscribers, \fn -> fn(HeckelDelete(i, v)));
 		}
 	}
 }
@@ -831,8 +975,12 @@ mapDynamicArray(a : DynamicArray<?>, fn : (?) -> ??) -> DynamicArray<??> {
 	DynamicArrayMap(a, fn, [], false, makeDList(), []);
 }
 
-mapiDynamicArray(a : DynamicArray<?>, fn : (int, ?) -> ??) -> DynamicArray<??> {
+mapiDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> ??) -> DynamicArray<??> {
 	DynamicArrayMapi(a, fn, [], false, makeDList(), []);
+}
+
+mapiDynamicArrayWithPrevious(a : DynamicArray<?>, fn : (Transform<Maybe<??>>, Transform<int>, ?) -> ??) -> DynamicArray<??> {
+	DynamicArrayMapiWithPrevious(a, fn, [], false, makeDList(), []);
 }
 
 submapDynamicArray(a : DynamicArray<?>, fn : (?) -> Transform<??>) -> DynamicArray<??> {
@@ -849,6 +997,10 @@ mapuDynamicArray(a : DynamicArray<?>, fn : (?) -> Disposable<??>) -> DynamicArra
 
 mapiuDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> Disposable<??>) -> DynamicArray<??> {
 	DynamicArrayMapiu(a, fn, [], false, makeDList(), []);
+}
+
+mapiuDynamicArrayWithPrevious(a : DynamicArray<?>, fn : (Transform<Maybe<??>>, Transform<int>, ?) -> Disposable<??>) -> DynamicArray<??> {
+	DynamicArrayMapiuWithPrevious(a, fn, [], false, makeDList(), []);
 }
 
 iteriuDynamicArray(a : DynamicArray<?>, fn : (Transform<int>, ?) -> [() -> void]) -> () -> void {
@@ -1069,7 +1221,7 @@ elementAtDynamicArray(a : DynamicArray<?>, index : Transform<int>) -> Transform<
 						}
 					}),
 					makeSubscribe(index, \ind -> {
-						next(elem, if (getDynamicArrayLengthInternal(a) > ind) Some(a.values[ind]) else None());
+						next(elem, if (getDynamicArrayLengthInternal(a) > ind && ind >= 0) Some(a.values[ind]) else None());
 					})()
 				];
 
@@ -1165,12 +1317,10 @@ getDynamicArrayValue(a : DynamicArray<?>) -> [?] {
 		DynamicArrayModifier(): {
 			linkDynamicArray(a);
 			unlinkDynamicArray(a);
-			a.values;
 		}
-		default: {
-			a.values;
-		}
+		default: {}
 	}
+	a.values;
 }
 
 getDynamicArrayElementAt(a : DynamicArray<?>, index : int) -> Maybe<?> {
@@ -1222,6 +1372,9 @@ dynamicArray2s(a : DynamicArray<?>) -> string {
 		DynamicArrayMapi(__, __, __, __, __, __) : {
 			dynamicArray2s(a.container) + "\n\t|> DynamicArrayMapi";
 		}
+		DynamicArrayMapiWithPrevious(__, __, __, __, __, __) : {
+			dynamicArray2s(a.container) + "\n\t|> DynamicArrayMapiWithPrevious";
+		}
 		DynamicArraySubMap(__, __, __, __, __, __) : {
 			dynamicArray2s(a.container) + "\n\t|> DynamicArraySubMap";
 		}
@@ -1233,6 +1386,9 @@ dynamicArray2s(a : DynamicArray<?>) -> string {
 		}
 		DynamicArrayMapiu(__, __, __, __, __, __) : {
 			dynamicArray2s(a.container) + "\n\t|> DynamicArrayMapiu";
+		}
+		DynamicArrayMapiuWithPrevious(__, __, __, __, __, __) : {
+			dynamicArray2s(a.container) + "\n\t|> DynamicArrayMapiuWithPrevious";
 		}
 		DynamicArrayFilter(__, __, __, __, __, __) : {
 			dynamicArray2s(a.container) + "\n\t|> DynamicArrayFilter";

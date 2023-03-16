@@ -21,7 +21,9 @@ export {
 	insertDList(list : DList<?>, node : DNode<?>, v : ?) -> DLink<?>;
 
 	// Is this list empy?
-	emptyDList(list : DList<?>) -> bool;
+	isEmptyDList(list : DList<?>) -> bool;
+
+	popDList(list : DList<?>) -> Maybe<?>;
 
 	// Take the first element out. Constant time
 	popFirstDListDef(list : DList<?>, def : ?) -> ?;
@@ -61,9 +63,9 @@ export {
 	// Transform DList to a list removing elements from DList - notice, it does this in REVERSE order!
 	// Initial DList will be empty as result (DEnd).
 	dList2list(dList : DList<?>) -> List<?>;
-}
 
-DLink(v : ?, mutable before : DNode<?>, mutable after : DNode<?>, mutable attached : bool);
+	DLink(v : ?, mutable before : DNode<?>, mutable after : DNode<?>, mutable attached : bool);
+}
 
 makeDList() {
 	DList(DEnd(), DEnd());
@@ -130,12 +132,23 @@ insertDList(list : DList<?>, place : DNode<?>, v : ?) -> DLink<?> {
 	}
 }
 
-emptyDList(list : DList<?>) -> bool {
+isEmptyDList(list : DList<?>) -> bool {
 	list.first == DEnd();
 }
 
+// Remove and return last element if not empty, otherwise None
+popDList(list : DList<?>) -> Maybe<?> {
+	l = list.last;
+	switch (l : DNode) {
+		DEnd(): None();
+		DLink(v, __, __, __): {
+			removeDList(list, l);
+			Some(v)
+		}
+	}
+}
 
-// Take the first element out
+// Remove and return first element if not empty, otherwise default value
 popFirstDListDef(list : DList<?>, def : ?) -> ? {
 	f = list.first;
 	switch (f : DNode) {
@@ -147,25 +160,27 @@ popFirstDListDef(list : DList<?>, def : ?) -> ? {
 	}
 }
 
-// Maybe take the first element out
+// Remove and return first element if not empty, otherwise None
 popFirstDList(list : DList<?>) -> Maybe<?> {
 	f = list.first;
 	switch (f : DNode) {
 		DEnd(): None();
 		DLink(v, __, __, __): {
-			removeDList(list, f);
+			removeFirstFromDList(list, f);
 			Some(v)
 		}
 	}
 }
 
-removeDList(list : DList<?>, n : DLink<?>) -> void {
-	if (isSameObj(list.first, n)) {
-		list.first ::= n.after;
+removeFirstFromDList(list : DList<?>, firstItem : DLink<?>) -> void {
+	list.first ::= firstItem.after;
+	if (isSameObj(list.last, firstItem)) {
+		list.last ::= firstItem.before;
 	};
-	if (isSameObj(list.last, n)) {
-		list.last ::= n.before;
-	};
+	removeDListItem(list, firstItem);
+}
+
+removeDListItem(list : DList<?>, n : DLink<?>) -> void {
 	prevv = n.before;
 	switch (prevv : DNode) {
 		DEnd(): {}
@@ -183,6 +198,16 @@ removeDList(list : DList<?>, n : DLink<?>) -> void {
 	n.before ::= DEnd();
 	n.after ::= DEnd();
 	n.attached ::= false;
+}
+
+removeDList(list : DList<?>, n : DLink<?>) -> void {
+	if (isSameObj(list.first, n)) {
+		list.first ::= n.after;
+	};
+	if (isSameObj(list.last, n)) {
+		list.last ::= n.before;
+	};
+	removeDListItem(list, n);
 }
 
 iterDList(list : DList<?>, fn : (?) -> void) -> void {
@@ -255,15 +280,15 @@ riterDNode(node : DNode<?>, fn : (?) -> void) -> void {
 	}
 }
 
-foldDNode(node : DNode<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
+foldDNode(node : DNode<?>, init : ??, fn : (??, DLink<?>) -> ??) -> ?? {
 	switch (node : DNode) {
 		DEnd(): init;
-		DLink(v, __, after, __): foldDNode(after, fn(init, v), fn);
-	}	
+		DLink(v, __, after, __): foldDNode(after, fn(init, node), fn);
+	}
 }
 
 foldDList(l : DList<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
-	foldDNode(l.first, init, fn)
+	foldDNode(l.first, init, \a, n -> fn(a, n.v))
 }
 
 rfoldDNode(node : DNode<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
@@ -293,19 +318,19 @@ lengthDNode(node : DNode<?>, count : int) -> int {
 
 concatDList(l1, l2) {
 	la = l1.last;
-
-	switch(la) {
+	switch (la) {
 		DEnd(): {
 			l1.first ::= l2.first;
 			l1.last ::= l2.last;
 		}
 		DLink(v, before, after, l): {
-			switch(l2.first) {
+			lf = l2.first;
+			switch (lf) {
 				DEnd(): {
 					// do nothing, l1 is already a result
 				}
 				DLink(v2, before2, after2, __) : {
-					cast(l2.first : DNode -> DLink).before ::= la;
+					lf.before ::= la;
 					la.after ::= l2.first;
 					l1.last ::= l2.last;
 				}
@@ -315,7 +340,7 @@ concatDList(l1, l2) {
 }
 
 dList2array(dList : DList<?>) -> [?] {
-	dList |> dList2list |> list2array
+	list2array(dList2list(dList));
 }
 
 dList2list(dList : DList<?>) -> List<?> {
@@ -323,5 +348,12 @@ dList2list(dList : DList<?>) -> List<?> {
 }
 
 doDList2list(dList : DList<?>, acc : List<?>) -> List<?> {
-	eitherMap(popFirstDList(dList), \v -> doDList2list(dList, Cons(v, acc)), acc)
+	f = dList.first;
+	switch (f : DNode) {
+		DEnd(): acc;
+		DLink(v, __, __, __): {
+			removeFirstFromDList(dList, f);
+			doDList2list(dList, Cons(v, acc));
+		}
+	}
 }

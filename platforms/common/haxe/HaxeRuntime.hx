@@ -23,6 +23,10 @@ class HaxeRuntime {
 	static public var _structargtypes_ : haxe.ds.IntMap<Array<RuntimeType>>;
 	static public var _structids_ : haxe.ds.StringMap<Int>;
 	static public var _structtemplates_ : haxe.ds.IntMap<Dynamic>;
+#if (js)
+	static var regexCharsToReplaceForString : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t]/g");
+	static var regexCharsToReplaceForJson : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g");
+#end
 	static public inline function ref__<T>(val : T) : Dynamic { return new FlowRefObject(val); }
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
 	static public inline function setref__<T>(r : Dynamic, v : T) : Void { r.__v = v; }
@@ -31,10 +35,12 @@ class HaxeRuntime {
 #if (js)
 	untyped __js__("var j='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';var l=j.length;function f(i){var c=j[i%l|0];var r=i/l|0;return r>0?c+f(r-1):c;}");
 
+	// Do not use 'eval' directly here: https://esbuild.github.io/content-types/#direct-eval
+	// Using 'new Function('arg', 'code')' instead
 #if (readable)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {name:'+ name+',' + a + '};}')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') +'){return {name:\"'+ name+'\",' + a + '};}'))($global)}");
 #else
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1); eval('$global.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}')}");
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}'))($global)}");
 #end
 #end
 		_structnames_.set(id, name);
@@ -229,7 +235,7 @@ if (a === b) return true;
 		#end
 	}
 
-	public static function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+	static function toStringCommon(value : Dynamic, ?keepStringEscapes : Bool = false, additionalEscapingFn : Dynamic->String->String) : String {
 		if (value == null) return "{}";
 
 /*
@@ -259,7 +265,7 @@ if (a === b) return true;
 			var r = "[";
 			var s = "";
 			for (v in a) {
-				var vc = toString(v);
+				var vc = toStringCommon(v, false, additionalEscapingFn);
 				r += s + vc;
 				s = ", ";
 			}
@@ -267,7 +273,7 @@ if (a === b) return true;
 		}
 		if (Reflect.hasField(value, "__v")) {
 			// Reference
-			return "ref " + toString(value.__v);
+			return "ref " + toStringCommon(value.__v, false, additionalEscapingFn);
 		}
 		#if (js && readable)
 		if (Reflect.hasField(value, "_name")) {
@@ -298,7 +304,7 @@ if (a === b) return true;
 						r += s + v + ( (Std.int(v) == v) ? ".0" : "" );
 					}
 					case RTArray(arrtype): {
-						if (!isArray(v) || arrtype != RTDouble) r += s + toString(v);
+						if (!isArray(v) || arrtype != RTDouble) r += s + toStringCommon(v, false, additionalEscapingFn);
 						else {
 							r += s + "[";
 							for (j in 0...v.length)
@@ -307,7 +313,7 @@ if (a === b) return true;
 						}
 					}
 					default:
-						r += s + toString(v);
+						r += s + toStringCommon(v, false, additionalEscapingFn);
 				}
 				s = ", ";
 			}
@@ -323,12 +329,7 @@ if (a === b) return true;
 			var s : String = value;
 
 			if (!keepStringEscapes) {
-				s = StringTools.replace(s, "\\", "\\\\");
-				s = StringTools.replace(s, "\"", "\\\"");
-				s = StringTools.replace(s, "\n", "\\n");
-				s = StringTools.replace(s, "\t", "\\t");
-
-				return "\"" + s + "\"";
+				return additionalEscapingFn(value, s);
 			} else {
 				StringTools.replace(s, "\\", "\\\\"); // Check if really a string
 
@@ -337,6 +338,67 @@ if (a === b) return true;
 		} catch(e : Dynamic) {
 			return "<native>";//haxe.Json.stringify(value);
 		}
+		// #end
+	}
+
+	public static function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return toStringCommon(value, keepStringEscapes, function(val, s){
+			#if js
+				untyped __js__("
+					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForString, function (c) {
+						if (c==='\\\\') {
+							return '\\\\\\\\';
+						} else if (c==='\\\"') {
+							return '\\\\\"';
+						} else if (c === '\\n') {
+							return '\\\\n';
+						} else if (c==='\\t') {
+							return '\\\\t';
+						} else {
+							return c;
+						}
+					}) + '\"';
+				");
+			#else
+				s = StringTools.replace(s, "\\", "\\\\");
+				s = StringTools.replace(s, "\"", "\\\"");
+				s = StringTools.replace(s, "\n", "\\n");
+				s = StringTools.replace(s, "\t", "\\t");
+			#end
+
+			return "\"" + s + "\"";
+		});
+	}
+
+	public static function toStringForJson(value : String) : String {
+		return toStringCommon(value, false, function(val, s){
+			#if js
+				untyped __js__("
+					return '\"' + val.replace(HaxeRuntime.regexCharsToReplaceForJson, function (c) {
+						if (c==='\\\\') {
+							return '\\\\\\\\';
+						} else if (c==='\\\"') {
+							return '\\\\\"';
+						} else if (c === '\\n') {
+							return '\\\\n';
+						} else if (c==='\\t') {
+							return '\\\\t';
+						} else if (c.length===1 && c.charCodeAt(0)<0x20) {
+							return \"\\\\u\" + c.charCodeAt(0).toString(16).padStart(4, \"0\");
+						} else {
+							return c;
+						}
+					}) + '\"';
+				");
+			#else
+				s = StringTools.replace(s, "\\", "\\\\");
+				s = StringTools.replace(s, "\"", "\\\"");
+				s = StringTools.replace(s, "\n", "\\n");
+				s = StringTools.replace(s, "\t", "\\t");
+			#end
+
+			return "\"" + s + "\"";
+		});
 	}
 
 	#if (!neko && !cpp)
@@ -351,7 +413,7 @@ if (a === b) return true;
 				return true;
 			}
 			case RTInt: return typeOf(value) == RTDouble; // There are only numbers for JS and Flash runtime. Check if integer?
-			case RTRefTo(reftype): switch (typeOf(value)) {case RTRefTo(t): return isValueFitInType(reftype, value.__v); default: return false; }; 
+			case RTRefTo(reftype): switch (typeOf(value)) {case RTRefTo(t): return isValueFitInType(reftype, value.__v); default: return false; };
 			case RTUnknown: return true;
 			case RTStruct(name): switch (typeOf(value)) { case RTStruct(n): return name == "" || n == name; default: return false; };
 			default: return typeOf(value) == type;
@@ -388,7 +450,7 @@ if (a === b) return true;
 
 
 	#if js
-	// Use these when sure args types and count is correct and struct exists 
+	// Use these when sure args types and count is correct and struct exists
 	public static inline function fastMakeStructValue(n : String, a1 : Dynamic) : Dynamic {
 		var sid  = _structids_.get(n);
 		var o = {
@@ -484,7 +546,7 @@ if (a === b) return true;
 
 	public static function getStructName(id : Int) : String {
 		return _structnames_.get(id);
-	} 
+	}
 
 	// Some characters can NOT be represented in UTF-16, believe it or not!
 	public static function wideStringSafe(str : String) : Bool {

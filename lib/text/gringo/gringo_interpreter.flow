@@ -1,0 +1,151 @@
+import text/gringo/gringo_typed_action;
+
+import tools/gringo/gringo_grammar;
+import tools/gringo/gringo_ast_actions;
+import tools/gringo/gringo_prepare;
+
+export {
+	// Given a grammar, prepare it to be used for the interpretative parse
+	prepareGringoParser(grammar : string, onError : (string) -> void) -> GTerm;
+
+	// Parse a text. This corresponds to gringoTypedParse from `gringo_typed_action`
+	gringoInterpretedParse(
+		// The text to parse
+		text : string, 
+		// The actions - make this with gringoTypedAction
+		action : GringoAction<List<?>>, 
+		// The grammar as a GTerm
+		grammar : GTerm,
+		// A default value in case parsing fail
+		defaultVal : ?,
+		// For parse errors
+		onError : (string) -> void,
+	) -> ?;
+
+	// The same, but with checking of missing actions, as well as unused actions
+	gringoParseWithActionCheck(
+		// The text to parse
+		text : string, 
+		// The operators
+		ops : GringoTypedOperators<?>,
+		// The actions - make this with gringoTypedAction
+		action : GringoAction<List<?>>, 
+		// The grammar as a GTerm
+		grammar : GTerm,
+		// A default value in case parsing fail
+		defaultVal : ?,
+		// For parse errors
+		onError : (string) -> void,
+	) -> ?;
+}
+
+prepareGringoParser(grammar : string, onError : (string) -> void) -> GTerm {
+	ggrammar = gringoGrammar();
+	genv = GringoEnv(grammar, makeTree(), gringoAstAction, makeList(), makeTree(), 0, false, 0);
+	env = gringoParse(genv, gringoGrammar());
+	term = gringoEndGame(grammar, !env.fail, env.i, env.maxi, env.output, env.errors, GEpsilon(), onError);
+	prepareGringoGrammar(optimizeGTerm(term));
+}
+
+gringoInterpretedParse(
+		// The text to parse
+		text : string, 
+		// The actions - make this with gringoTypedAction
+		action : GringoAction<List<?>>, 
+		// The grammar as a GTerm
+		grammar : GTerm,
+		// A default value in case parsing fail
+		defaultVal : ?,
+		// For parse errors
+		onError : (string) -> void,
+	) -> ? {
+	genv : GringoEnv<List<?>> = GringoEnv(text, makeTree(), action, makeList(), makeTree(), 0, false, 0);
+	env = gringoParse(genv, grammar);
+
+	gringoEndGame(text, !env.fail, env.i, env.maxi, env.output, env.errors, defaultVal, onError);
+}
+
+gringoParseWithActionCheck(
+	// The text to parse
+	text : string, 
+	// The operators
+	ops : GringoTypedOperators<?>,
+	// The actions - make this with gringoTypedAction
+	action : GringoAction<List<?>>, 
+	// The grammar as a GTerm
+	gterm : GTerm,
+	// A default value in case parsing fail
+	defaultVal : ?,
+	// For parse errors
+	onError : (string) -> void,
+) -> ? {
+	checkGringoTypedOps(ops, gterm);
+	used = ref makeSet();
+	actions = collectUsedGringoActions(action, used);
+	r = gringoInterpretedParse(text, actions, gterm, defaultVal, onError);
+	reportUnusedGringoActions(ops, used);
+	r;
+}
+
+checkGringoTypedOps(ops : GringoTypedOperators<?>, grammar : GTerm) -> void {
+	rec = \gg -> checkGringoTypedOps(ops, gg);
+	switch (grammar) {
+		GRule(id, term, body): { rec(term); rec(body); }
+		GPrecedence(left, right): { rec(left); rec(right); }
+		GChoice(left, right): { rec(left); rec(right); }
+		GSeq(left, right): { rec(left); rec(right); }
+		GStar(term): { rec(term); }
+		GPlus(term): { rec(term); }
+		GOpt(term): { rec(term); }
+		GNegate(term): { rec(term); }
+		GError(term): { rec(term); }
+		GLower(term): { rec(term); }
+		GUnquote(term): {
+			switch (term) {
+				GString(op): {
+					if (!containsKeyTree(ops.nullops, op)
+						&& !containsKeyTree(ops.unops, op)
+						&& !containsKeyTree(ops.binops, op)
+						&& !containsKeyTree(ops.ternops, op)
+						&& !containsKeyTree(ops.quadops, op)
+						&& !containsKeyTree(ops.stackops, op)
+						&& !contains(["true", "false", "s2i", "s2d", "list", "cons", "print", "dump"], op)
+					) {
+						println("$\"" + op + "\" is an unknown semantic action");
+					}
+				}
+				default: {}
+			}
+		}
+		GString(text): {}
+		GRange(lower, upper): {}
+		GVar(id): {}
+		GEpsilon(): {}
+	}
+}
+
+collectUsedGringoActions(a : GringoAction<List<?>>, used : ref Set<string>) -> GringoAction<List<?>> {
+	GringoAction(
+		\acc, s -> {
+			used := insertSet(^used, s);
+			a.addVerbatim(acc, s);
+		},
+		a.addMatched
+	)
+}
+
+reportUnusedGringoActions(ops : GringoTypedOperators<?>, used : ref Set<string>) -> void {
+	allActions = buildSet(concatA([
+		getTreeKeys(ops.nullops), 
+		getTreeKeys(ops.unops), 
+		getTreeKeys(ops.binops), 
+		getTreeKeys(ops.ternops), 
+		getTreeKeys(ops.quadops), 
+	]));
+	missingActions = differenceSets(allActions, ^used);
+	if (!isEmptySet(missingActions)) {
+		println("These actions are not exercised:");
+		println(set2array(missingActions));
+	}
+}
+

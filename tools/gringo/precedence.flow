@@ -1,0 +1,129 @@
+import text/gringo/gringo_ast;
+import tools/gringo/utils;
+import math/math;
+
+export {
+	/*
+		e = e tail e |> rest;
+		->
+		e = e1 tail e1 | e1;
+		e1 = rest;
+	*/
+	expandPrecedence(g : GTerm) -> GTerm;
+}
+
+expandPrecedence(g : GTerm) -> GTerm {
+	switch (g) {
+		GRule(id, term, body): {
+			expandPrecedenceInRule(id, term, expandPrecedence(body), 0);
+		}
+		default: g;
+	}
+}
+
+// e = <term> -> e0 = <term>
+expandPrecedenceInRule(id : string, term : GTerm, body : GTerm, level : int) -> GTerm {
+	switch (term) {
+		GPrecedence(left, right): {
+			newid = id + (if (level == 0) "" else i2s(level));
+			nextid = id + i2s(level + 1);
+			nleft = replaceLeftRecursion(id, GVar(nextid), GVar(newid), false, false, left);
+			GRule(newid, 
+				GChoice(
+					nleft, 
+					GVar(nextid)
+				),
+				expandPrecedenceInRule(id, right, body, level + 1)
+			)
+		}
+		default: {
+			newid = id + (if (level == 0) "" else i2s(level));
+			GRule(newid, term, 
+				body
+			)
+		}
+	}
+}
+
+
+// Does basic replacement in the term
+// somethingBefore and somethingFollows help find left- and right-recursions
+// somethingBefore is true if we already potentially matched tokens before this term in this rule
+// somethingFollows is true if we can potentially match tokens after this term in this rule
+replaceLeftRecursion(find : string, replaceLeft : GTerm, replaceRest : GTerm, somethingBefore : bool, somethingFollows : bool, g : GTerm) -> GTerm {
+	switch (g) {
+		GRule(id, term, body): {
+			nbody = replaceLeftRecursion(find, replaceLeft, replaceRest, false, false, body);
+			nterm = replaceLeftRecursion(find, replaceLeft, replaceRest, false, false, term);
+			GRule(id, nterm, nbody);
+		}
+		GPrecedence(left, right): {
+			GPrecedence(
+				replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, left), 
+				replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, right)
+			); 
+		}
+		GChoice(left, right): {
+			GChoice(
+				replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, left), 
+				replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, right)
+			);
+		}
+		GSeq(left, right): {
+			leftRep = replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, isSomething(right), left);
+			rightRep = switch (right) {
+				GLower(rp): {
+					// OK, we have to replace all with the lower version in this area
+					replaceLeftRecursion(find, replaceLeft, replaceLeft, isSomething(left), somethingFollows, rp);
+				}
+				// OK, we use the other replacement for the rest
+				default: replaceLeftRecursion(find, replaceRest, replaceRest, isSomething(left), somethingFollows, right);
+			};
+			GSeq(
+				leftRep,
+				rightRep
+			);
+		}
+		GStar(term): GStar(replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, term));
+		GPlus(term): GPlus(replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, term));
+		GOpt(term): GOpt(replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, term));
+		GNegate(term): GNegate(replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, term));
+		GError(term): GError(replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, term));
+		GLower(term): {
+			// Force substitution in the children
+			replaceLeftRecursion(find, replaceLeft, replaceRest, false, false, term);
+		}
+		GUnquote(term): GUnquote(replaceLeftRecursion(find, replaceLeft, replaceRest, somethingBefore, somethingFollows, term));
+		GString(text): g;
+		GRange(lower, upper): g;
+		GVar(id): {
+			if (id == find && !(somethingBefore && somethingFollows)) {
+				// If we are left- or right- recursive, we do replacement
+				// If there is something both before and after, it can not be left- or right-recursion
+				replaceLeft 
+			} else g;
+		}
+		GEpsilon(): g;
+	}
+}
+
+// Could this match some token?
+isSomething(g : GTerm) -> bool {
+	switch (g) {
+		GRule(id, term, body): isSomething(body);
+		GPrecedence(left, right): isSomething(left) || isSomething(right);
+		GChoice(left, right): isSomething(left) || isSomething(right);
+		GSeq(left, right): isSomething(left) || isSomething(right);
+		GStar(term): isSomething(term);
+		GPlus(term): isSomething(term);
+		GOpt(term): isSomething(term);
+		GNegate(term): false;
+		GError(term): isSomething(term);
+		GLower(term): isSomething(term);
+		GUnquote(term): false;
+		GString(text): true;
+		GRange(lower, upper): true;
+		GVar(id): true;	// Technically, we could have "null" rules, but we ignore that
+		GEpsilon(): false;
+	}
+}

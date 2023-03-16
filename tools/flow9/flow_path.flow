@@ -1,0 +1,77 @@
+import net/url_parameter;
+import fs/filesystem;
+import sys/system;
+
+export {
+	// Convert real path to flow path without .flow
+	path2flowPath(includes : [string], path : string) -> string;
+
+	// Find the file, using includes. Requires .flow extension
+	flowPath2path(includes : [string], path : string) -> string;
+
+	// Find the directory from the list, which contains the path. When not found returns "".
+	findDirectoryContainingFile(dirs : [string], file : string) -> string;
+
+	// Try to find a flow9 repo directory
+	getFlowDirectory() -> string;
+}
+
+getFlowDirectory() -> string {
+	paths = [
+		getUrlParameter("flowdir"),
+		".", "../flow9", "../../flow9", "../../../flow9", "../../../../flow9",
+		"..", "../flow", "../../flow", "../../../flow", "../../../../flow"
+	];
+	flowdir = findDirectoryContainingFile(paths, "bin/flowc.bat");
+	if (flowdir != "") flowdir else getFlowDirFromFlowc();
+}
+
+flow_dir_from_flowc : ref Maybe<string> = ref None();
+
+getFlowDirFromFlowc() -> string {
+	onlyOnce(flow_dir_from_flowc, \-> {
+		dir = ref "";
+		execSystemProcess("flowc1", ["print-flow-dir=1"], ".", \out -> dir := ^dir + " " + out, nop1);
+		trim2(^dir, " \t\n\r")
+	});
+}
+
+// Convert real path to flow path without .flow
+path2flowPath(includes : [string], path : string) -> string {
+	abspath = resolveRelativePath(path);
+	mrel = find(map(includes, resolveRelativePath), \incpath -> {
+		startsWith(abspath, incpath)
+	});
+	rel = mrel ?? {
+		ltrim2(takeAfter(abspath, mrel, path), "/\\")
+	} : path;
+	rel2 = strReplace(changeFileExt(rel, ""), "\\", "/");
+	if (startsWith(rel2, "lib/")) strRight(rel2, 4) else rel2
+}
+
+// Find the file, using includes. Requires .flow extension
+flowPath2path(includes : [string], path : string) -> string {
+	minclude = find(includes, \i -> {
+		fileExists(pathCombine(i, path))
+	});
+	minclude ?? {
+		resolveRelativePath(pathCombine(minclude, path))
+	} : {
+		println("Couldn't find " + path);
+		println(includes);
+		path;
+	}
+}
+
+findDirectoryContainingFile(dirs : [string], file : string) -> string {
+	dir = find(dirs, \i -> {
+		i != "" && fileExists(pathCombine(i, file))
+	});
+	dir ?? {
+		resolveRelativePath(dir);
+	} : {
+		println("Couldn't find " + file);
+		println(dirs);
+		"";
+	}
+}

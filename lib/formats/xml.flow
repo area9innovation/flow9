@@ -5,6 +5,7 @@ import behaviour;
 import ds/list;
 import math/math;
 import net/url_parameter;
+import math/uint64;
 
 // A SAX-style and a DOM-style XML parser.
 
@@ -100,6 +101,8 @@ export {
 
 	getXmlChildren(xml : XmlNode) -> [XmlNode];
 	getXmlChildren2(xml : XmlNode2) -> [XmlNode2];
+	getXmlNodeById(nodes : [XmlNode], filterId : string) -> Maybe<XmlElement>;
+	getXmlNode2ById(nodes : [XmlNode2], filterId : string) -> Maybe<XmlElement2>;
 	getXmlAttributes(xml : XmlNode) -> [XmlAttribute];
 	getXmlAttribute(attributes : [XmlAttribute], attribute : string, default_ : string) -> string;
 	getXmlAttributeM(attributes : [XmlAttribute], attribute : string) -> Maybe<string>;
@@ -111,7 +114,10 @@ export {
 	// to get rid of one 'switch' structure, to be able to access tag, attributes and children of every resulting element
 	// NOTE: tagFilter must be lowercase!
 	filterElements(children : [XmlNode], tagFilter : string) -> [XmlElement];
-	xmlElements(nodes) filterElements(nodes, "");
+	filterElementsByTag(elements : [XmlNode2], tagFilter : string) -> [XmlElement2];
+	xmlElements(nodes : [XmlNode]) -> [XmlElement] {
+		filterElements(nodes, "");
+	}
 
 	// searches for the first tag within xmlroots or their children.
 	// tag must be lowercase; comparison is case-insensitive!
@@ -126,6 +132,7 @@ export {
 	getFirstXmlTextContents(children : [XmlNode]) -> string;
 
 	xml2string(xml : XmlNode) -> string;
+	xmlNode2String(xhml : XmlNode2) -> string;
 
 	// Preserve attributes; omit text escaping, so might fuck up quoting
 	poorXml2text(xml : XmlNode) -> string;
@@ -168,7 +175,39 @@ xmlUnescape(s : string) -> string {
 	s2 = strReplace(s1, "&gt;", ">");
 	s3 = strReplace(s2, "&lt;", "<");
 	s4 = strReplace(s3, "&amp;", "&");
-	s4;
+	xmlUnescapeHelp(s4);
+}
+
+// https://www.w3.org/TR/REC-xml/#sec-references
+xmlUnescapeHelp(s : string) -> string {
+	unescapeHex = \onNotFound -> {
+		eitherFn(
+			findMatchingPairM(s, "&#x", ";"),
+			\pair -> {
+				encodedValue = strSubRange(s, pair.first, pair.second);
+				hex = strSubRange(encodedValue, 3, strlen(encodedValue) - 1);
+				xmlUnescapeHelp(strReplace(s, encodedValue, fromCharCode(s2i(strHex2dec(hex)))));
+			},
+			onNotFound
+		);
+	};
+
+	unescapeUCS2 = \onNotFound -> {
+		eitherFn(
+			findMatchingPairM(s, "&#", ";"),
+			\pair -> {
+				encodedValue = strSubRange(s, pair.first, pair.second);
+				charCode = s2i(strSubRange(encodedValue, 2, strlen(encodedValue) - 1));
+				if (charCode < 0) {
+					println("ERROR. Enexpected char code: " + encodedValue);
+				};
+				xmlUnescapeHelp(strReplace(s, encodedValue, fromCharCode(charCode)));
+			},
+			onNotFound
+		);
+	};
+
+	unescapeHex(\ -> unescapeUCS2(\ -> s));
 }
 
 
@@ -640,6 +679,39 @@ getXmlChildren2(xml : XmlNode2) -> [XmlNode2] {
 	}
 }
 
+getXmlNodeById(nodes : [XmlNode], filterId : string) -> Maybe<XmlElement> {
+	findmap(nodes, \node -> {
+		switch(node : XmlNode) {
+			XmlElement(tag, attributes, children): {
+				id = getXmlAttribute(attributes, "id", "");
+				if (id == filterId) {
+					Some(node);
+				} else {
+					getXmlNodeById(children, filterId);
+				};
+			};
+			XmlText(t): None();		
+		}
+	})
+}
+
+getXmlNode2ById(nodes : [XmlNode2], filterId : string) -> Maybe<XmlElement2> {
+	findmap(nodes, \node -> {
+		switch(node : XmlNode2) {
+			XmlElement2(tag, attributes, children): {
+				id = getXmlAttribute(attributes, "id", "");
+				if (id == filterId) {
+					Some(node)
+				} else {
+					getXmlNode2ById(children, filterId)
+				};
+			};
+			XmlText(t): None();
+			XmlComment(t): None();			
+		}
+	})
+}
+
 getXmlAttributes(xml : XmlNode) -> [XmlAttribute] {
 	switch (xml : XmlNode) {
 		XmlElement(tag, attributes, children): attributes;
@@ -671,6 +743,22 @@ filterElements(children : [XmlNode], filterstr : string) -> [XmlElement] {
 	});
 
 	map(onlyElems, \c -> cast(c : XmlNode -> XmlElement))
+}
+
+filterElementsByTag(elements : [XmlNode2], tagFilter : string) -> [XmlElement2] {
+	fold(elements, [], \acc, element -> {
+		switch(element : XmlNode2) {
+			XmlElement2(tag, attributes, children): {
+				if (toLowerCase(tagFilter) == toLowerCase(tag)) {
+					arrayPush(acc, element);
+				} else {
+					concat(acc, filterElementsByTag(children, tagFilter));
+				};
+			};
+			XmlComment(text): acc;
+			XmlText(text): acc;
+		}
+	})
 }
 
 getXmlElement(xmlroots: [XmlElement], tag: string) -> Maybe<XmlElement> {
@@ -753,6 +841,25 @@ xml2string(xml : XmlNode) -> string {
 			xmlEscapeText(text);
 		}
 	}
+}
+
+xmlNode2String(xhml : XmlNode2) -> string {
+	switch(xhml) {
+		XmlElement2(tag, attributes, children): {
+				atts = fold(attributes, "", \acc, a -> 
+					acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\""
+				);
+				("<" + tag + atts + ">")
+				+ concatStrings(map(children, xmlNode2String))
+				+ ("</" + tag + ">");
+		};
+		XmlText(text): {
+			xmlEscapeText(text);
+		};
+		XmlComment(comment): {
+			""
+		};
+	};
 }
 
 xml2text(xml : XmlNode) -> string {

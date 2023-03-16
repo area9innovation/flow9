@@ -48,14 +48,11 @@ export {
 
 	addKeyboardShortcut(shortcut : string, description : string) -> () -> void;
 	getKeyboardShortcuts() -> string;
-
-	getYouTubeURL(url : string) -> Maybe<string>;
-	getVimeoURL(url : string) -> Maybe<string>;
 }
 
 makeStyledTextfield(text : string, style : [FTextStyle]) -> native {
 	cs = style2characterStyle(style);
-	r = makeTextfield(getMappedFontFamily(cs));
+	r = makeTextfield(getMappedFontFace(cs));
 	rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 	maybeApply(tryExtractStruct(style, TagName("")), \tn -> setClipTagName(r, tn.tagName));
 	setEscapeHTML(r, extractStruct(style, EscapeHTML(false)).escape);
@@ -169,7 +166,7 @@ defineTextStyle(textfield, text, style) {
 			strGlue(definedTextStyle.face.families, ",")
 		else
 			definedTextStyle.face.family,
-		definedTextStyle.fontSize,
+		min(1024.0, definedTextStyle.fontSize),
 		definedTextStyle.face.weight,
 		definedTextStyle.face.slope,
 		definedTextStyle.fillColor,
@@ -205,6 +202,7 @@ renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle])
 			StrokeOpacity(opacity): strokeopacity := opacity;
 			StrokeWidth(width): strokewidth := width;
 			StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+			UseSvg() : {}
 		}
 	});
 	if (0xdeaddead != (^fillcolour)) {
@@ -277,10 +275,15 @@ renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle])
 		None() : {}
 	}
 
+	if (contains(style, UseSvg()) && !isUrlParameterFalse("useSvg")) {
+		useSvg(clip);
+	}
+
 	// Render the path
 	needClose = ref false;
 	moveTo(g, 0.0, 0.0); // Make sure we start from (0.0, 0.0). JS works incorrectly without this
-	iter(if (js && length(path) == 1) path else deconstructGraphicsPath(path), \op ->
+	path2 = if (js && length(path) == 1) path else deconstructGraphicsPath(path);
+	iter(path2, \op ->
 		switch (op : StaticGraphicOp) {
 			MoveTo(x, y) : {
 				moveTo(g, x, y);
@@ -319,6 +322,20 @@ renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle])
 			}
 		}
 	);
+	// Workaround for cpp : single LineTo with Fill can disappear.
+	if (cpp) {
+		lines = fold(path2, Pair(true, 0), \acc : Pair<bool, int>, p ->
+			if (acc.first) switch(p) {
+				LineTo(__, __) : Pair(acc with second = acc.second + 1);
+				CubicBezierTo(__, __, __, __) : Pair(acc with first = false);
+				QuadraticBezierTo(__, __, __, __) : Pair(acc with first = false);
+				default : acc
+			} else acc
+		);
+		if (lines.first && lines.second == 1) {
+			needClose := false;
+		}
+	}
 	if (^needClose) {
 		endFill(g);
 	}
@@ -338,39 +355,4 @@ addKeyboardShortcut(shortcut : string, description : string) -> () -> void {
 getKeyboardShortcuts() {
 	default_shortcuts = if (js) "Ctrl+Up : Zoom in\nCtrl+Dn : Zoom out\n" else "";
 	fold(^keyboardShortcuts, default_shortcuts, \in, sc -> in + sc.keys + " : " + sc.description + "\n");
-}
-
-getYouTubeURL(url0 : string) -> Maybe<string> {
-	if (strContains(url0, "youtu.be") || strContains(url0, "youtube.com")) {
-		if (strContains(url0, "/embed"))
-			Some(url0)
-		else {
-			deconstructedLink = strSplit(elementAt(strSplit(url0, "?"), 1, ""), "&");
-
-			url = either(find(deconstructedLink, \p -> startsWith(p, "v=")), "");
-			parameters = strGlue(filter(deconstructedLink, \p -> p != url), "&");
-
-			if (url != "") {
-				Some("https://youtube.com/embed/" + substring(url, 2, strlen(url)) + if (parameters != "") "?" + parameters else "") 
-			} else {
-				None();
-			}
-		}
-	} else {
-		None();
-	}
-}
-
-getVimeoURL(url0 : string) -> Maybe<string> {
-	if (strContains(url0, "vimeo.com")) {
-		url = firstElement(strSplit(lastElement(strSplit(url0, "/"), ""), "#"), "");
-
-		if (url != "") {
-			Some("https://player.vimeo.com/video/" + url);
-		} else {
-			None();
-		}
-	} else {
-		None();
-	}
 }

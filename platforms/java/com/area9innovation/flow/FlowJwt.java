@@ -1,70 +1,78 @@
 package com.area9innovation.flow;
 
 import java.util.*;
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.lang.*;
-import io.jsonwebtoken.security.Keys;
-import io.jsonwebtoken.security.SecurityException;
-import java.text.ParseException;
+import java.text.*;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
-import static io.jsonwebtoken.Claims.*;
+import com.auth0.jwt.JWTVerifier.*;
+import com.auth0.jwt.interfaces.*;
+import com.auth0.jwt.exceptions.*;
+import com.auth0.jwt.algorithms.*;
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.JWTCreator;
 
 public class FlowJwt extends NativeHost {
-	private static SignatureAlgorithm algorithm = SignatureAlgorithm.HS256;
-
 	// value parameter - supposed to be a string representation of ISO date without milliseconds,
 	// so we need to multiply the parsed value to 1000
-	private Date getDateFromIsoString(String value) throws NumberFormatException {
+	private static Date getDateFromIsoString(String value) throws NumberFormatException {
 		return new Date(Long.parseLong(value) * 1000);
 	}
 
-	private SecretKeySpec getSecretKey(String key) {
-		return new SecretKeySpec(key.getBytes(), algorithm.getJcaName());
+	private static String date2formatIso8601(Date date) {
+		TimeZone tz = TimeZone.getTimeZone("UTC");
+		DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'");
+		df.setTimeZone(tz);
+		return df.format(date);
 	}
 
-	public String verifyJwt(String jwt, String key) {
+	public static String verifyJwt(String jwt, JWTVerifier verifier) {
 		try {
-			Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt);
+			DecodedJWT jwtObj = verifier.verify(jwt);
 			return "OK";
-		} catch (MalformedJwtException e) {
-			System.out.println(e.getMessage());
-			return "Wrong token format";
-		} catch (ExpiredJwtException e) {
-			System.out.println(e.getMessage());
-			return "Token has expired";
-		} catch (PrematureJwtException e) {
-			System.out.println(e.getMessage());
-			return "Token was accepted before it is allowed";
-		} catch (SecurityException e) {
-			System.out.println(e.getMessage());
-			return "Wrong signature";
+		} catch (JWTVerificationException e){
+			System.out.println(jwt + "/" + e.getMessage());
+			return "Wrong signature or expired";
 		} catch (Exception e) {
 			System.out.println(jwt + "/" + e.getMessage());
 			return "Other exception";
 		}
 	}
 
-	public Object decodeJwt(String jwt, String key, Func7<Object, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
-		String verify = verifyJwt(jwt, key);
+	public static String verifyJwt(String jwt, String key) {
+		JWTVerifier verifier = getVerifier(key);
+		return verifyJwt(jwt, verifier);
+	}
+
+	private static JWTVerifier getVerifier(String key) {
+		Algorithm algorithm = Algorithm.HMAC256(key);
+		return JWT.require(algorithm).build();
+	}
+
+	public static Object decodeJwt(String jwt, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+		JWTVerifier verifier = getVerifier(key);
+		String verify = verifyJwt(jwt, verifier);
 		if (verify == "OK") {
 			String iss;
 			String sub;
-			String aud;
+			List<String> aud;
 			Date exp;
 			Date nbf;
 			Date iat;
 			String jti;
+			String impersonatedByUserId;
 			try {
-				Claims jws = Jwts.parserBuilder().setSigningKey(getSecretKey(key)).build().parseClaimsJws(jwt).getBody();
-				iss = jws.getIssuer();
-				sub = jws.getSubject();
-				aud = jws.getAudience();
-				exp = jws.getExpiration();
-				nbf = jws.getNotBefore();
-				iat = jws.getIssuedAt();
-				jti = jws.get("id").toString();
+				DecodedJWT jwtObj = verifier.verify(jwt);
+
+				iss = jwtObj.getIssuer();
+				sub = jwtObj.getSubject();
+				aud = jwtObj.getAudience();
+				exp = jwtObj.getExpiresAt();
+				nbf = jwtObj.getNotBefore();
+				iat = jwtObj.getIssuedAt();
+				//jti = jwtObj.getId();
+				jti = jwtObj.getClaim("id").asString();
+				impersonatedByUserId = jwtObj.getClaim("iid").asString();
 			} catch (Exception e) {
 				System.out.println(e.getMessage());
 				onError.invoke("Hash problems");
@@ -73,11 +81,12 @@ public class FlowJwt extends NativeHost {
 			callback.invoke(
 				(iss == null ? "" : iss),
 				(sub == null ? "" : sub),
-				(aud == null ? "" : aud),
-				(exp == null ? "" : DateFormats.formatIso8601(exp, false)),
-				(nbf == null ? "" : DateFormats.formatIso8601(nbf, false)),
-				(iat == null ? "" : DateFormats.formatIso8601(iat, false)),
-				(jti == null ? "" : jti)
+				(aud == null ? "" : aud.toString()),
+				(exp == null ? "" : date2formatIso8601(exp)),
+				(nbf == null ? "" : date2formatIso8601(nbf)),
+				(iat == null ? "" : date2formatIso8601(iat)),
+				jti == null ? "" : jti,
+				impersonatedByUserId == null ? "" : impersonatedByUserId
 			);
 		} else {
 			onError.invoke(verify);
@@ -85,57 +94,54 @@ public class FlowJwt extends NativeHost {
 		return null;
 	}
 
-	public String createJwt(String key, String issuer, String subject, String audience, String expiration, String notBefore, String issuedAt, String id) {
-		JwtBuilder builder = Jwts.builder();
+	public static String createJwt(String key, String issuer, String subject, String audience, String expiration, String notBefore, String issuedAt, String id) {
 		try {
+			Algorithm algorithm = Algorithm.HMAC256(key);
+			JWTCreator.Builder builder = JWT.create();
 			if (!issuer.isEmpty()) {
-				builder = builder.setIssuer(issuer);
+				builder = builder.withIssuer(issuer);
 			}
 			if (!subject.isEmpty()) {
-				builder = builder.setSubject(subject);
+				builder = builder.withSubject(subject);
 			}
 			if (!audience.isEmpty()) {
-				builder = builder.setAudience(audience);
+				builder = builder.withAudience(audience);
 			}
 			if (!issuedAt.isEmpty()) {
-				builder = builder.setIssuedAt(getDateFromIsoString(issuedAt));
+				builder = builder.withIssuedAt(getDateFromIsoString(issuedAt));
 			} else {
-				builder = builder.setIssuedAt(new Date());
+				builder = builder.withIssuedAt(new Date());
 			}
 			if (!id.isEmpty()) {
-				builder = builder.setId(id);
+				//builder = builder.withJWTId(id);
+				builder = builder.withClaim("id", id);
 			}
 			if (!expiration.isEmpty()) {
-				builder = builder.setExpiration(getDateFromIsoString(expiration));
+				builder = builder.withExpiresAt(getDateFromIsoString(expiration));
 			}
 			if (!notBefore.isEmpty()) {
-				builder = builder.setNotBefore(getDateFromIsoString(notBefore));
+				builder = builder.withNotBefore(getDateFromIsoString(notBefore));
 			}
-
-			Map<String, Object> header = new HashMap<String, Object>();
-			header.put(JwsHeader.ALGORITHM, algorithm.getValue());
-			header.put(Header.TYPE, "JWT");
-
-			return builder.setHeader(header).signWith(getSecretKey(key), algorithm).compact();
-
+			return builder.sign(algorithm);
 		} catch (NumberFormatException e) {
 			System.out.println(e.getMessage());
 			return "";
 		}
 	}
 
-
-	public String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
-		JwtBuilder builder = Jwts.builder();
-
+	public static String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
+		Algorithm algorithm = Algorithm.HMAC256(jwtKey);
+		JWTCreator.Builder builder = JWT.create();
 		for (int i = 0; i < keys.length; i++) {
-			builder.claim((String)keys[i], values[i]);
+			if (values[i] instanceof Double) {
+				builder = builder.withClaim((String)keys[i], (Double)values[i]);
+			} else if (values[i] instanceof Boolean) {
+				builder = builder.withClaim((String)keys[i], (Boolean)values[i]);
+			} else {
+				// Assume string
+				builder = builder.withClaim((String)keys[i], (String)values[i]);
+			}
 		}
-
-		Map<String, Object> header = new HashMap<String, Object>();
-		header.put(JwsHeader.ALGORITHM, algorithm.getValue());
-		header.put(Header.TYPE, "JWT");
-
-		return builder.setHeader(header).signWith(getSecretKey(jwtKey), algorithm).compact();
+		return builder.sign(algorithm);
 	}
 }

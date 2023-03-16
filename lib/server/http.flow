@@ -54,6 +54,20 @@ export {
 		onMessage : (HttpRequest, (HttpResponse) -> void) -> void
 	) -> () -> void;
 
+	// HTTP/HTTPS chunked server
+	// TODO: support in nodeJS target
+	createHttpChunkedServer(
+		port : int,
+		credentials : Maybe<SecureContext>, // for HTTPS
+		onOpen : () -> void,
+		onMessage : (
+			request : HttpRequest,
+			sendHeaders : (status : int, headers : [KeyValue], compressBody : bool) -> string,
+			sendBodyChunk : (string) -> string,	// returns error message (if not empty)
+			finishSend : () -> void
+		) -> void
+	) -> () -> void;
+
 	// Struct
 
 	HttpRequest : (
@@ -164,13 +178,73 @@ createHttpServerBase(
 						setResponseHeader
 					);
 					endResponse(response.body);
-				}
+				};
 
 			onMessage(request, sendResponse);
 		}
 
 	server =
 		createHttpServerNative(
+			port,
+			isSome(credentials),
+			eitherMap(
+				credentials,
+				\cs -> cs.pfxPath,
+				""
+			),
+			eitherMap(
+				credentials,
+				\cs -> cs.pfxPassword,
+				""
+			),
+			onOpen,
+			onRequest
+		);
+
+	\ -> closeHttpServerNative(server);
+}
+
+createHttpChunkedServer(
+	port : int,
+	credentials : Maybe<SecureContext>,
+	onOpen : () -> void,
+	onMessage : (
+		request : HttpRequest,
+		sendHeaders : (status : int, headers : [KeyValue], compressBody : bool) -> string,
+		sendBodyChunk : (string) -> string,
+		endResponse : () -> void
+	) -> void
+) -> () -> void {
+	onRequest =
+		\requestUrl : string,
+		requestBody : string,
+		requestMethod : string,
+		requestHeaders : [[string]],
+		endResponse : () -> void,
+		setChunk : (string) -> string,
+		sendResponseStatusAndHeaders : (int, bool) -> string,
+		setResponseHeader : (string, [string]) -> void -> {
+			request : HttpRequest =
+				HttpRequest(
+					requestUrl,
+					requestBody,
+					headersToKeyValues(requestHeaders),
+					requestMethodFromString(requestMethod)
+				);
+
+			sendHeaders = \status, headers, compressBody -> {
+				traversePreOrder(
+					collectHeaders(headers),
+					setResponseHeader
+				);
+				sendResponseStatusAndHeaders(status, compressBody);
+			};
+
+			onMessage(request, sendHeaders, setChunk, endResponse);
+		}
+
+	server =
+		createHttpChunkedServerNative(
 			port,
 			isSome(credentials),
 			eitherMap(
@@ -296,6 +370,24 @@ native createHttpServerNative : (
 		setResponseStatus : (int) -> void
 	) -> void
 ) -> native = HttpServerSupport.createHttpServerNative;
+
+native createHttpChunkedServerNative : (
+	port : int,
+	isHttps : bool,
+	pfxPath : string,
+	pfxPassword : string,
+	onOpen : () -> void,
+	onMessage : (
+		requestUrl : string,
+		requestBody : string,
+		requestMethod : string,
+		requestHeaders : [[string]],
+		endResponse : () -> void,
+		setChunk : (string) -> string,
+		sendResponseStatusAndHeaders : (int, bool) -> string,
+		setResponseHeader : (string, [string]) -> void
+	) -> void
+) -> native = HttpServerSupport.createHttpChunkedServerNative;
 
 native closeHttpServerNative : (server : native) -> void =
 	HttpServerSupport.closeHttpServerNative;

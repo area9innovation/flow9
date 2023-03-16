@@ -1,7 +1,6 @@
 import { LoggingDebugSession, Logger, logger, InitializedEvent, TerminatedEvent, StoppedEvent, OutputEvent, Thread, StackFrame, Scope, Source, Handles, DebugSession, Breakpoint } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import { Variable, Stack, VariableObject, MIError } from './backend/backend';
-import { expandValue } from './backend/gdb_expansion';
 import { MI2 } from './backend/flowcpp_runtime';
 
 
@@ -66,6 +65,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 		response.body.supportsFunctionBreakpoints = true;
         response.body.supportsEvaluateForHovers = true;
         response.body.supportsDelayedStackTraceLoading = false;
+		//TODO: support
 		//response.body.supportsSetVariable = true;
 		this.sendResponse(response);
 	}
@@ -152,7 +152,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			this.miDebugger.start();
 		}, err => {
 			this.sendErrorResponse(response, 103, `Failed to load MI Debugger: ${err.toString()}`)
-		});		
+		});
 	}
 
 	protected launchError(err: any) {
@@ -219,7 +219,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			if (running)
 				await this.miDebugger.continue();
 			response.body = {
-				breakpoints: brkpoints.map(brkp => 
+				breakpoints: brkpoints.map(brkp =>
 					new Breakpoint(brkp[0], brkp[0] ? brkp[1].line : undefined))
 			};
 			this.sendResponse(response);
@@ -239,9 +239,9 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	// performs deep compare of two stacks
 	private compareStacks(s1: Stack[], s2: Stack[]) {
-		return (null == s1 && null == s2) || 
+		return (null == s1 && null == s2) ||
 			(s1 && s2 && s1.length == s2.length && s1.reduce(
-				(acc, s, i) => acc && (s.address == s2[i].address), 
+				(acc, s, i) => acc && (s.address == s2[i].address),
 				true));
 	}
 
@@ -292,17 +292,17 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
 		// 2 handles - one for args, one for locals
-		const stackHandle = STACK_HANDLES_START + (parseInt(args.frameId as any) || 0) * 2; 
+		const stackHandle = STACK_HANDLES_START + (parseInt(args.frameId as any) || 0) * 2;
 		response.body = {
 			scopes: [
-				new Scope("Locals", stackHandle + 1, false),			
+				new Scope("Locals", stackHandle + 1, false),
 				new Scope("Arguments",  stackHandle, false),
 			]
 		};
 		this.sendResponse(response);
     }
-    
-    private createVariable(arg) { 
+
+    private createVariable(arg) {
         return this.variableHandles.create(arg);
     }
 
@@ -318,6 +318,33 @@ export class FlowDebugSession extends LoggingDebugSession {
         return varObj.isCompound() ? id : 0;
     };
 
+	protected async updateOrCreateVariable(variableName: string, varObjName : string, frameNum): Promise<DebugProtocol.Variable> {
+		let varObj: VariableObject;
+		try {
+			const changes = await this.miDebugger.varUpdate(varObjName);
+			const changeList = changes.result("changelist");
+			changeList.forEach(change => {
+				const vId = this.variableHandlesReverse[varObjName];
+				const v = this.variableHandles.get(vId) as any;
+				v.applyChanges(change);
+			});
+			const varId = this.variableHandlesReverse[varObjName];
+			varObj = this.variableHandles.get(varId) as any;
+		}
+		catch (err) {
+			if (err instanceof MIError && err.message.startsWith("No such var:")) {
+				varObj = await this.miDebugger.varCreate(variableName, frameNum, varObjName);
+				const varId = this.findOrCreateVariable(varObj);
+				varObj.exp = variableName;
+				varObj.id = varId;
+			}
+			else {
+				throw err;
+			}
+		}
+		return varObj.toProtocolVariable();
+	}
+
     protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
 		const variables: DebugProtocol.Variable[] = [];
 
@@ -332,30 +359,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 					if (this.useVarObjects) {
 						try {
 							let varObjName = `var_${frameNum}_${variable.name}`;
-							let varObj: VariableObject;
-							try {
-								const changes = await this.miDebugger.varUpdate(varObjName);
-								const changelist = changes.result("changelist");
-								changelist.forEach((change) => {
-									const vId = this.variableHandlesReverse[varObjName];
-									const v = this.variableHandles.get(vId) as any;
-									v.applyChanges(change);
-								});
-								const varId = this.variableHandlesReverse[varObjName];
-								varObj = this.variableHandles.get(varId) as any;
-							}
-							catch (err) {
-								if (err instanceof MIError && err.message.startsWith("No such var:")) {
-									varObj = await this.miDebugger.varCreate(variable.name, frameNum, varObjName);
-									const varId = this.findOrCreateVariable(varObj);
-									varObj.exp = variable.name;
-									varObj.id = varId;
-								}
-								else {
-									throw err;
-								}
-							}
-							variables.push(varObj.toProtocolVariable());
+							let protocolVar = await this.updateOrCreateVariable(variable.name, varObjName, frameNum);
+							variables.push(protocolVar);
 						}
 						catch (err) {
 							variables.push({
@@ -374,8 +379,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 			catch (err) {
 				this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
 			}
-		}
-		else {
+		} else {
             const varObj = this.variableHandles.get(args.variablesReference);
             try {
                 // Variable members
@@ -437,19 +441,79 @@ export class FlowDebugSession extends LoggingDebugSession {
 		});
 	}
 
-	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
-		if (args.context == "watch" || args.context == "hover")
-			this.miDebugger.evalExpression(args.expression).then((res) => {
+	protected async evaluateExpression(response: DebugProtocol.EvaluateResponse, expression: string): Promise<DebugProtocol.EvaluateResponse> {
+		let expressionA: string[] = expression.replace(/\[(\d+)\]/g, '.$1').split(".");
+		let currExpression = expressionA[0];
+		let varObjName = "var__" + currExpression;
+		try {
+			await this.updateOrCreateVariable(currExpression, varObjName, "*");
+		} catch (err) {
+			if (err instanceof MIError && err.message.startsWith("Duplicate variable name:")) {
+				// Ignore this error. Multiple watches can refer the same object variable.
+				// For example "struct.field1" and "struct.filed2" need only one object variable for "struct",
+				// in parallel we can get this exception "Duplicate variable name:" in this case.
+			} else {
+				throw err;
+			}
+		}
+		if (expressionA.length == 1) {
+			try {
+				let res: any = await this.miDebugger.evalExpression(expression);
 				response.body = {
-					variablesReference: 0,
+					variablesReference: this.variableHandlesReverse[varObjName] || 0,
 					result: res.result("value")
 				}
-				this.sendResponse(response);
+				return response;
+			} catch (err) {
+				response.message = err.message;
+				response.success = false;
+				return response;
+			}
+		} else {
+			for (let j = 1; j < expressionA.length; j++) {
+				let name = expressionA[j];
+				let children: VariableObject[] = await this.miDebugger.varListChildren(varObjName);
+				let childrenIdx = -1;
+				for (let i = 0; i < children.length; i++) {
+					if (children[i].exp == name) {
+						if (j == expressionA.length - 1) {
+							response.body = {
+								variablesReference: this.findOrCreateVariable(children[i]),
+								result: children[i].value
+							}
+							return response;
+						} else {
+							childrenIdx = i;
+							currExpression += "." + name;
+							varObjName = children[i].name;
+							break;
+						}
+					}
+				}
+				if (childrenIdx == -1) {
+					response.message = `No ${name} in ${currExpression}`;
+					response.success = false;
+					return response;
+				}
+			}
+		}
+	}
+
+	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
+		let expression: string = args.expression;
+		if (args.context == "watch" || args.context == "hover") {
+			if (args.context == "hover" && expression && expression[0] == "\\") {
+				expression = expression.substring(1);
+			}
+			this.evaluateExpression(response, expression).then(response2 => {
+				this.sendResponse(response2);
 			}, msg => {
-				this.sendErrorResponse(response, 7, msg.toString());
+				response.message = msg.toString();
+				response.success = false;
+				this.sendResponse(response);
 			});
-		else {
-			this.miDebugger.sendUserInput(args.expression).then(output => {
+		} else {
+			this.miDebugger.sendUserInput(expression).then(output => {
 				if (typeof output == "undefined")
 					response.body = {
 						result: "",
@@ -462,7 +526,9 @@ export class FlowDebugSession extends LoggingDebugSession {
 					};
 				this.sendResponse(response);
 			}, msg => {
-				this.sendErrorResponse(response, 8, msg.toString());
+				response.message = msg.toString();
+				response.success = false;
+				this.sendResponse(response);
 			});
 		}
 	}

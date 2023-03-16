@@ -14,6 +14,7 @@ import form/graphics;
 import form/formtransforms;
 import maybe;
 import basecolors;
+import form/baseline;
 
 export {
 	// When removed, the given function is called. Very useful to allow cleanup activities
@@ -390,6 +391,10 @@ export {
 
 	// If you have problems with your gui, this helper provides inspection into construction/deconstruction as well as size and available space changes
 	Debug(text : string, form : Form) -> Form;
+	DebugRed(form : Form) -> Form { DebugColor(form, red); }
+	DebugGreen(form : Form) -> Form { DebugColor(form, green); }
+	DebugBlue(form : Form) -> Form { DebugColor(form, blue); }
+	DebugBaseline(form : Form) -> Form;
 
 	// Explicitly prevent Mouse{Up/Down}2 from falling further. Best used as form |> MouseUD2Catcher
 	MouseUD2Catcher : (form : Form) -> Form;
@@ -793,14 +798,14 @@ linearGradient(rotation, colors) {
 	if (li == 1) {
 		GradientFill(0.0, [GradientPoint(colors[0], 1.0, 0.0), GradientPoint(colors[0], 1.0, 1.0)]);
 	} else {
-		l = cast(li - 1 : int -> double);
-		GradientFill(rotation, mapi(colors, \i, c -> GradientPoint(c, 1.0, cast(i : int -> double) / l)));
+		l = i2d(li - 1);
+		GradientFill(rotation, mapi(colors, \i, c -> GradientPoint(c, 1.0, i2d(i) / l)));
 	}
 }
 
 linearGradientA(rotation, alpha, colors) {
-	l = cast(length(colors) - 1 : int -> double);
-	GradientFill(rotation, mapi(colors, \i, c -> GradientPoint(c, alpha, cast(i : int -> double) / l)));
+	l = i2d(length(colors) - 1);
+	GradientFill(rotation, mapi(colors, \i, c -> GradientPoint(c, alpha, i2d(i) / l)));
 }
 
 BehindForms(fn : (double, double)->Form, form : Form) -> [Form] {
@@ -1915,7 +1920,9 @@ shrinkToFitB2(widthHeight : Behaviour<WidthHeight>, form : Form, enabled : Behav
 			Scale(scale, scale, formi)
 		)),
 		\ -> {
-			uns1 = connectSelectu(scale, size, \s -> WidthHeight((getValue(rwh)).width * s, (getValue(rwh)).height * s));
+			uns1 = connectSelectu(scale, size, \s -> WidthHeight(
+				roundTo((getValue(rwh)).width * s, 0.01), roundTo((getValue(rwh)).height * s, 0.01))
+			);
 			uns2 = connectSelect3u(rwh, widthHeight, enabled, scale, \whr, wht, e -> {
 				if ( (whr.width * whr.height == 0.0) || (wht.width * wht.height == 0.0) || (whr.width <= wht.width && whr.height <= wht.height) || !e) {
 					1.0
@@ -2257,19 +2264,63 @@ FixHeight(h : Behaviour<double>, f : Form) {
 Debug(text : string, form : Form) -> Form {
 	wh = makeWH();
 	awh = makeWH();
+	metrics = make(FormMetrics(0., 0., 0., 0.));
+	baselineB = make(0.0);
 
 	Constructor(
-		Group([
-			Select(wh, \wh0 -> Rectangle(wh0.width, wh0.height, [Fill(green), FillOpacity(0.3)])),
-			Inspect([ISize(wh), IAvailable2(awh)], form),
-		]),
+		fixBaselineB(
+			baselineB,
+			Group([
+				Select(wh, \wh0 -> Rectangle(wh0.width, wh0.height, [Fill(green), FillOpacity(0.3)])),
+				Inspect([ISize(wh), IAvailable2(awh)], form),
+			])
+		),
 		\ -> {
 			println(text + " construct");
 			u1 = subscribe(wh, \wh2 -> { println("  " + text + " size: " + d2s(wh2.width) + "x" + d2s(wh2.height)); });
 			u2 = subscribe(awh, \wh2 -> { println("  " + text + " available: " + d2s(wh2.width) + "x" + d2s(wh2.height)); });
-			\ -> { println(text + " destroy"); u1(); u2(); }
+			u3 = connectSelectDistinctu(metrics, baselineB, \m -> m.baseline);
+			\ -> { println(text + " destroy"); u1(); u2(); u3(); }
 		}
 	);
+}
+
+DebugColor(form : Form, color : int) -> Form {
+	wh = makeWH();
+	metrics = make(FormMetrics(0., 0., 0., 0.));
+	baselineB = make(0.0);
+
+	Constructor(
+		fixBaselineB(
+			baselineB,
+			Group([
+				Inspect([ISize(wh), IMetrics(metrics)], form),
+				Select(wh, \wh0 -> Rectangle(wh0.width, wh0.height, [Fill(color), FillOpacity(0.3)])),
+				Select(metrics, \met ->
+					Graphics([MoveTo(0.0, met.baseline), LineTo(met.width, met.baseline)], [Stroke(black), StrokeWidth(1.0), StrokeOpacity(0.7)])
+				)
+			])
+		),
+		\-> connectSelectDistinctu(metrics, baselineB, \m -> m.baseline)
+	)
+}
+
+DebugBaseline(form : Form) -> Form {
+	metrics = make(FormMetrics(0., 0., 0., 0.));
+	baselineB = make(0.0);
+
+	Constructor(
+		fixBaselineB(
+			baselineB,
+			Group([
+				Inspect([IMetrics(metrics)], form),
+				Select(metrics, \met ->
+					Graphics([MoveTo(0.0, met.baseline), LineTo(met.width, met.baseline)], [Stroke(black), StrokeWidth(1.0), StrokeOpacity(0.7)])
+				)
+			])
+		),
+		\ -> connectSelectDistinctu(metrics, baselineB, \m -> m.baseline)
+	)
 }
 
 // Explicitly prevent Mouse{Up/Down}2 from falling further. Best used as form |> MouseUD2Catcher.

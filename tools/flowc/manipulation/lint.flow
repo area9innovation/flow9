@@ -4,7 +4,7 @@ import tools/flowc/incremental/fiprettyprint;
 import ds/arrayutils;
 
 export {
-	lintCode(prog : FiProgram, env : FcTypeEnvGlobal, picky : bool, onError : (FcError) -> void) -> void;
+	lintCode(prog : FiProgram, env : FcTypeEnvGlobal, picky : bool, file : string, onError : (FcError) -> void) -> void;
 }
 
 /*
@@ -45,11 +45,22 @@ Formattng rules from rubrics:
 - either put the whole if-else statement in one line (both branches) or put "else" on a new line.
 */
 
-lintCode(prog : FiProgram, globEnv : FcTypeEnvGlobal, picky : bool, onErr : (FcError) -> void) -> void {
+lintCode(prog : FiProgram, globEnv : FcTypeEnvGlobal, picky : bool, file : string, onErr : (FcError) -> void) -> void {
 	pt = \t -> prettyFiType(FcPretty(false, true, makeTree(), makeTree()), t, makeSet());
 
 	env = LintEnv(prog, picky, fiStruct2unions(prog));
-	iter(getTreeValues(prog.modules), \module -> {
+	module_name = trimFlowfile(file, prog.config.includes, lookupTreeDef(prog.config.config, "working-dir", ""));
+	modules_to_lint = if (file == "") {
+		// lint all modules
+		getTreeValues(prog.modules);
+	} else {
+		// lint only a specified file
+		switch (lookupTree(prog.modules, module_name)) {
+			Some(m): [m];
+			None(): [];
+		}
+	}
+	iter(modules_to_lint, \module -> {
 		onError = \m : string, start : int -> {
 			onErr(FcError(m, [FcPosition(module.fileinfo.flowfile, start, start)]));
 		}
@@ -139,7 +150,7 @@ lintCode(prog : FiProgram, globEnv : FcTypeEnvGlobal, picky : bool, onErr : (FcE
 		}
 
 		// Check all functions
-		iter(module.functions, \fn : FiFunctionDec -> 
+		iter(module.functions, \fn : FiFunctionDec ->
 			// Check the code
 			lintExp(env, fn.lambda, onError)
 		);
@@ -209,7 +220,7 @@ lintExp(env : LintEnv, expr : FiExp, onErr : (string, int) -> void) -> void {
 				default: {}
 			}
 
-			rec(f); iter(args, rec); 
+			rec(f); iter(args, rec);
 		}
 		FiVar(x, __, __): {
 			lintVarName(env, x, onError);
@@ -218,7 +229,7 @@ lintExp(env : LintEnv, expr : FiExp, onErr : (string, int) -> void) -> void {
 			lintVarName(env, x, onError);
 			rec(e1); rec(e2);
 		}
-		FiIf(e1, e2, e3, __, __): { 
+		FiIf(e1, e2, e3, __, __): {
 			if (isBoolExp(e2, false) && isBoolExp(e3, false)) {
 				if (false) true else false;
 				onError("Redundant if with bool constants in both branches");
@@ -242,7 +253,7 @@ lintExp(env : LintEnv, expr : FiExp, onErr : (string, int) -> void) -> void {
 				}
 			}
 
-			rec(e1); rec(e2); rec(e3); 
+			rec(e1); rec(e2); rec(e3);
 		}
 		FiSwitch(e0, typ, cs, __, __): {
 			// OK, find out what type we are switching on
@@ -454,11 +465,11 @@ isFunction(type : FiType) -> bool {
 isBoolExp(e : FiExp, checkType : bool) -> bool {
 	switch (e) {
 		FiBool(__, __): true;
-		default: checkType && isBool(fiExpType(e));
+		default: checkType && isBoolType(fiExpType(e));
 	}
 }
 
-isBool(type : FiType) -> bool {
+isBoolType(type : FiType) -> bool {
 	switch (type) {
 		FiTypeBool(): true;
 		default: false;

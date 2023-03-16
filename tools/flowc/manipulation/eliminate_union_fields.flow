@@ -1,0 +1,554 @@
+import tools/flowc/incremental/fi_helpers; 
+import string_utils;
+
+export {
+
+// Make explicit cast of a switch variable to all particular cases.
+fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp;
+
+// Expand calls of common field of a struct in some unions to switch with individual 
+// structs.
+fiEliminateUnionFields(expr : FiExp, names: FiGlobalNames, local: int) -> FiExp;
+
+/*
+Example: 
+	U :: S1, S2;
+		S1(a: int, b: string);
+		S2(x: double, a: int);
+
+function 
+	makeU() -> U { 
+		...
+	}
+
+	someFn() -> void {
+		...
+		makeU().a
+		...
+	}
+
+will expand to
+	someFn() -> void {
+		...
+		__union_3 = makeU();
+		switch(__union_3) {
+			S1(__field_3,__): __field_3;
+			S2(__,__field_3): __field_3;
+		}
+		...
+	}
+
+*/
+
+// Rename enclosed same var name in recurring FiLet.
+/* Example: here rettype is recurring, i.e. needs renaming in the inner scope
+rettype = {
+		switch (type) {
+			FiTypeFunction(__, rettype): fiCppLambdaRetType(cfg, program, rettype);
+			default: "TODO";
+		}
+}
+*/
+fiExpRenameRecurringVars(e: FiExp, locals: Set<string>) -> FiExp;
+
+/* Undo type coercing inside: 
+	`if (isSameStructType(a, b)) { 
+		e 
+	}`  
+transform it to:
+	`if (isSameStructType(a, b)) { 
+		__prime_a = cast(e: a.type -> b.type);
+		e_prime
+	}`
+where `e_prime` - is e with `a` replaced by `__prime_a`
+ */
+fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp;
+
+}
+
+fiEliminateUnionFields(e : FiExp, names: FiGlobalNames, local: int) -> FiExp {
+	elim = \x -> fiEliminateUnionFields(x, names, local);
+	switch(e) {
+		FiLambda(__, body,__, __): {
+			FiLambda(e with body = elim(body));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = elim(fn),
+				args = map(args, elim)
+			);
+		}
+		FiLet(__, __,e1, e2,__, __): {
+			FiLet(e with
+				e1 = elim(e1),
+				e2 = elim(e2)
+			);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with
+				e1 = elim(e1),
+				e2 = elim(e2),
+				e3 = elim(e3)
+			);
+		}
+		FiSwitch(__, __,cases,__, __): {
+			FiSwitch(e with 
+				cases = map(cases, \c -> FiCase(c with body = elim(c.body)))
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = elim(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, elim));
+		}
+		FiCallPrim(op, es, rtype, start): {
+			switch (op) {
+				FcFieldPrim(field): {
+					if (field == "structname") {
+						FiCallPrim(e with es = map(es, elim));
+					} else {
+						arg = es[0];
+						arg_type = fiExpType(arg);
+						switch (arg_type) {
+							FiTypeName(__,__): {
+								switch (lookupTree(names.unions, arg_type.name)) {
+									Some(union): {
+										make_switch = \switch_var -> {
+											FiSwitch(switch_var, switch_var.type, 
+												map(union.typenames, \tn -> {
+													struct = lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0));
+													FiCase(
+														tn.name,
+														map(struct.args, \__ -> "__"),
+														FiCallPrim(op, [switch_var], rtype, start),
+														start
+													)
+												}),
+												rtype, start
+											);
+										}
+										switch (arg) {
+											FiVar(var, vtype,__): {
+												make_switch(arg);
+											}
+											default: {
+												union_var = "__union_" + i2s(local);
+												FiLet(
+													union_var, arg_type,
+													fiEliminateUnionFields(arg, names, local + 1),
+													make_switch(FiVar(union_var, arg_type, start)),
+													rtype, start
+												);
+											}
+										}
+									}
+									None(): {
+										FiCallPrim(e with es = map(es, elim));
+									}
+								}
+							}
+							default: {
+								FiCallPrim(e with es = map(es, elim));
+							}
+						}
+					}
+				}
+				FcSetMutablePrim(field): {
+					arg = es[0];
+					val = fiEliminateUnionFields(es[1], names, local + 1);
+					arg_type = fiExpType(arg);
+					switch (arg_type) {
+						FiTypeName(__,__): { 
+							switch (lookupTree(names.unions, arg_type.name)) {
+								Some(union): {
+									make_switch = \switch_var -> {
+										FiSwitch(switch_var, switch_var.type, 
+											map(union.typenames, \tn -> {
+												struct = lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0));
+												FiCase(
+													tn.name,
+													map(struct.args, \__ -> "__"),
+													FiCallPrim(e with es = [switch_var, val]),
+													start
+												)
+											}),
+											rtype, start
+										);
+									}
+									switch (arg) {
+										FiVar(var, vtype,__): {
+											make_switch(arg);
+										}
+										default: {
+											union_var = "__union_" + i2s(local);
+											FiLet(
+												union_var, arg_type,
+												fiEliminateUnionFields(arg, names, local + 1),
+												make_switch(FiVar(union_var, arg_type, start)),
+												rtype, start
+											);
+										}
+									}
+								}
+								None(): {
+									FiCallPrim(e with es = map(es, elim));
+								}
+							}
+						}
+						default: {
+							FiCallPrim(e with es = map(es, elim));
+						}
+					}
+				}
+				default: FiCallPrim(e with es = map(es, elim));
+			}
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = elim(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = elim(ex));
+		}
+		FiVar(__,__, __): e;
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+
+fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
+	ex_cast = \x -> fiExplicitCastInSwitch(x, names);
+	switch(e) {
+		FiLambda(__, body,__, __): {
+			FiLambda(e with body = ex_cast(body));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = ex_cast(fn),
+				args = map(args, ex_cast)
+			);
+		}
+		FiLet(__, __,e1, e2,__, __): {
+			FiLet(e with
+				e1 = ex_cast(e1),
+				e2 = ex_cast(e2)
+			);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with
+				e1 = ex_cast(e1),
+				e2 = ex_cast(e2),
+				e3 = ex_cast(e3)
+			);
+		}
+		FiSwitch(var, vtype, cases, type, start): {
+			do_switch = \ -> {
+				FiSwitch(e with 
+					cases = map(cases, \c -> {
+						if (c.struct == "default") {
+							FiCase(c with body = ex_cast(c.body));
+						} else {
+							new_var = "___explicit_" + var.name + "_";
+							switch (lookupTree(names.structs, c.struct)) {
+								Some(struct): {
+									typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), vtype);
+									case_type = FiTypeName(struct.name, typars_instances);
+									body = ex_cast(c.body);
+									FiCase(c with body = 
+										FiLet(new_var, case_type, FiCast(var, var.type, case_type, case_type, start),
+											fiRenameVar(body, var.name, new_var), type, start
+										)
+									);
+								}
+								None(): {
+									fail0("all switch cases must be structs, met: " + toStringFormatted(c));
+								}
+							}
+						}
+					})
+				);
+			}
+			switch (vtype) {
+				FiTypeName(typename, __): {
+					if (containsKeyTree(names.unions, typename)) {
+						do_switch();
+					} else {
+						switch (find(cases, \c -> c.struct == typename)) {
+							Some(c): {
+								ex_cast(c.body);
+							}
+							None(): {
+								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+							}
+						}
+					}
+				}
+				default: {
+					do_switch();
+				}
+			}
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = ex_cast(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, ex_cast));
+		}
+		FiCallPrim(__, es,__,__): {
+			FiCallPrim(e with es = map(es, ex_cast));
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = ex_cast(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = ex_cast(ex));
+		}
+		FiVar(name,__, __): e;
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+
+fiNewVar(v: string, locals: Set<string>, i: int) -> string {
+	w = "__" + v + "_" + i2s(i);
+	if (!containsSet(locals, w)) w else fiNewVar(v, locals, i + 1);
+}
+
+fiExpRenameRecurringVars(e: FiExp, locals: Set<string>) -> FiExp {
+	rename_rvars = \x -> fiExpRenameRecurringVars(x, locals);
+	switch(e) {
+		FiLambda(args, body,__, __): {
+			new_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
+			FiLambda(e with body = fiExpRenameRecurringVars(body, new_locals));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = rename_rvars(fn),
+				args = map(args, rename_rvars)
+			);
+		}
+		FiLet(v, __,e1, e2,__, __): {
+			if (v == "__" || !containsSet(locals, v)) {
+				new_locals = insertSet(locals, v);
+				FiLet(e with
+					e1 = fiExpRenameRecurringVars(e1, new_locals),
+					e2 = fiExpRenameRecurringVars(e2, new_locals);
+				);
+			} else {
+				w = fiNewVar(v, locals, 0);
+				new_locals = insertSet(locals, w);
+				FiLet(e with
+					name = w,
+					e1 = fiExpRenameRecurringVars(e1, new_locals),
+					e2 = fiExpRenameRecurringVars(fiRenameVar(e2, v, w), new_locals);
+				);
+			}
+		}
+		FiIf(e1, e2, e3,__, __): {
+			FiIf(e with
+				e1 = rename_rvars(e1),
+				e2 = rename_rvars(e2),
+				e3 = rename_rvars(e3)
+			);
+		}
+		FiSwitch(var, vtype, cases, type, start): {
+			FiSwitch(e with
+				cases = map(cases, \c -> {
+					new_args = map(c.argNames, \arg -> 
+						if (arg == "__" || !containsSet(locals, arg)) arg else
+						fiNewVar(arg, locals, 0)
+					);
+					FiCase(c with 
+						argNames = new_args, 
+						body = rename_rvars(c.body)
+					);
+				})
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = rename_rvars(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, rename_rvars));
+		}
+		FiCallPrim(__, es,__,__): {
+			FiCallPrim(e with es = map(es, rename_rvars));
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = rename_rvars(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = rename_rvars(ex));
+		}
+		FiVar(__,__, __): e;
+		FiVoid(__):       e;
+		FiDouble(__,__):  e;
+		FiInt(__,__):     e;
+		FiString(__,__):  e;
+		FiBool(__,__):    e;
+	}
+}
+
+fiDetectIfIsSameStructType(e : FiIf) -> [FiVar] {
+	switch (e.e1) {
+		FiCall(f, args, __,__): {
+			switch (f) {
+			FiVar(name,__,__): {
+				if (name == "isSameStructType") {
+					filtermap(args, \arg -> 
+						switch (arg) {
+							FiVar(__,__,__): Some(arg);
+							default: None();
+						}
+					);
+				} else {
+					[];
+				}
+			}
+			default: [];
+			}
+		}
+		default: [];
+	}
+}
+
+fiFixVarInSameStructType(e : FiExp, locals: Tree<string, FiVar>, names: FiGlobalNames) -> FiExp {
+	fix = \x -> fiFixVarInSameStructType(x, locals, names);
+	switch(e) {
+		FiLambda(args, body,__, start): {
+			new_locals = fold(args, locals, \acc, arg -> 
+				setTree(acc, arg.name, FiVar(arg.name, arg.type, start))
+			);
+			FiLambda(e with body = fiFixVarInSameStructType(body, new_locals, names));
+		}
+		FiCall(fn, args,__,__): {
+			FiCall(e with
+				f = fix(fn),
+				args = map(args, fix)
+			);
+		}
+		FiLet(v, t, e1, e2,__, start): {
+			new_locals = setTree(locals, v, FiVar(v, t, start));
+			FiLet(e with
+				e1 = fix(e1),
+				e2 = fiFixVarInSameStructType(e2, new_locals, names);
+			);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			def_case = \-> FiIf(e with e1 = fix(e1), e2 = fix(e2), e3 = fix(e3));
+			vars = fiDetectIfIsSameStructType(e);
+			if (length(vars) == 2) {
+				v0 = vars[0];
+				v1 = vars[1];
+				fix_vars = \old: FiVar, new: FiVar -> {
+					prim_name = "__prim_" + old.name;
+					e2_prim = FiLet(prim_name, new.type, 
+						FiCast(old, old.type, new.type, new.type, start),
+						fiRenameVar(fix(e2), old.name, prim_name), type, start
+					);
+					FiIf(e with e1 = fix(e1), e2 = e2_prim, e3 = fix(e3));
+				}
+				switch (fiVarTypeInExpr(e2, v0.name)) {
+					Some(v0_prim): {
+						switch (fiVarTypeInExpr(e2, v1.name)) {
+							Some(v1_prim): fail0("both variables change types in 'if' with 'isSameStructType' condition");
+							None(): fix_vars(v0, v0_prim);
+						}
+					}
+					None(): {
+						switch (fiVarTypeInExpr(e2, v1.name)) {
+							Some(v1_prim): fix_vars(v1, v1_prim);
+							None(): def_case();
+						}
+					}
+				} 
+			} else {
+				def_case();
+			}
+		}
+		FiSwitch(var, vtype, cases, type, start): {
+			FiSwitch(e with
+				cases = map(cases, \c -> {
+					struct = lookupTreeDef(names.structs, c.struct, FiTypeStruct("", [], [], 0));
+					new_locals = foldi(c.argNames, locals, \i, acc, arg -> 
+						setTree(acc, arg, FiVar(arg, struct.args[i].type, start))
+					);
+					FiCase(c with body = fiFixVarInSameStructType(c.body, new_locals, names));
+				})
+			);
+		}
+		FiCast(ex, __, __, __, __): {
+			FiCast(e with e = fix(ex));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, fix));
+		}
+		FiCallPrim(__, es,__,__): {
+			FiCallPrim(e with es = map(es, fix));
+		}
+		FiRequire(__, ex,__,__): {
+			FiRequire(e with e = fix(ex));
+		}
+		FiUnsafe(__, ex,__,__): {
+			FiUnsafe(e with fallback = fix(ex));
+		}
+		FiVar(__,__,__): e;
+		FiVoid(__):      e;
+		FiDouble(__,__): e;
+		FiInt(__,__):    e;
+		FiString(__,__): e;
+		FiBool(__,__):   e;
+	}
+}
+
+fiVarTypeInExpr(e : FiExp, var: string) -> Maybe<FiVar> {
+	check_e = \x -> fiVarTypeInExpr(x, var);
+	check_es = \xs -> fold(xs, None(), \acc, x ->
+		if (isSome(acc)) acc else fiVarTypeInExpr(x, var)
+	);
+	switch(e) {
+		FiLambda(args, body,__, start): {
+			check_e(body);
+		}
+		FiCall(fn, args,__,__): {
+			switch (check_e(fn)) {
+				Some(t): Some(t);
+				None():  check_es(args);
+			}
+		}
+		FiLet(v, t, e1, e2,__, start): {
+			check_es([e1, e2]);
+		}
+		FiIf(e1, e2, e3,__, __): {
+			check_es([e1, e2, e3]);
+		}
+		FiSwitch(v, vtype, cases, type, start): {
+			if (v.name == var) Some(v) else {
+				check_es(map(cases, \c -> c.body));
+			}
+		}
+		FiCast(ex, __, __, __, __): {
+			check_e(ex);
+		}
+		FiSeq(es,__,__): {
+			check_es(es);
+		}
+		FiCallPrim(__, es,__,__): {
+			check_es(es);
+		}
+		FiRequire(__, ex,__,__): {
+			check_e(ex);
+		}
+		FiUnsafe(__, ex,__,__): {
+			check_e(ex);
+		}
+		FiVar(name,__,__): if (name == var) Some(e) else None();
+		default: None();
+	}
+}

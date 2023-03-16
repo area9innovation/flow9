@@ -13,7 +13,7 @@ export {
 	// "flash", "js", "neko", "qt", "opengl", "dpi=..." defined so far.
 	native getTargetName : io () -> string = Native.getTargetName;
 
-	allTargets = strSplit(getTargetName(), ",");
+	allTargets : [string] = strSplit(getTargetName(), ",");
 
 	hasTargetName(s : string) -> bool { contains(allTargets, s) }
 
@@ -34,7 +34,6 @@ export {
 	cgi : bool;
 
 	// Is this a mobile device (iOS or Android)?
-	// 'true' for C++ mobile targets only
 	// Also set when using "--touch" parameter with desktop QtByteRunner
 	mobile : bool;
 
@@ -97,14 +96,51 @@ export {
 	checkFlashStorage : (fn : () -> void) -> void;
 
 	isSafariBrowser() -> bool;
-
 	isIE() -> bool;
-
+	isEdge() -> bool;
 	isChrome() -> bool;
+	isFirefox() -> bool;
+	isSamsungBrowser() -> bool;
 
 	// Only implemented for JS
 	isMobilePhone() -> bool;
 	isTablet() -> bool;
+
+
+	// JS: Performance helpers
+
+	// How much time in ms passed from domLoading to dom domComplete events
+	// Useful to estimate approximate device performace when divided by overall amount of clips created (countClips native from rendersupport.flow)
+	native domCompleteTiming : io () -> double = Native.domCompleteTiming;
+
+	// Run empty 'for' loop to estimate CPU speed in Ghz (compared with average time 1.7Ghz CPU took to execute this loop)
+	native estimateCPUSpeed : io () -> double = Native.estimateCPUSpeed;
+
+	// Detect dedicated video card available for web page rendering
+	native detectDedicatedGPU : io () -> bool = Native.detectDedicatedGPU;
+
+	// Get device memory size in Gb, returns -1 if size cannot be detected
+	// Uses window.navigator.deviceMemory
+	// Upper bound is 8Gb so devices with more memory will still return 8Gb
+	native getDeviceMemory : io () -> double = Native.getDeviceMemory;
+
+	// Get device architecture type, returns empty string if platform cannot be detected
+	// Uses window.navigator.platform
+	//
+	// Examples:
+	// 64 bit MacOS + 64 bit Safari or 32 bit Chrome: MacIntel
+	// 32 bit windows + Safari: Win32
+	// 64 bit windows + Chrome: Win32
+	// 64 bit Windows + 64 bit IE: Win64
+	// 64 bit Windows + 32 bit IE: Win32
+	// 64 bit Windows + 32 Firefox (or Chrome): Win32
+	// 32 bit linux mint (i686) + firefox: Linux i686
+	// 64 bit Ubuntu (x86_64) + 32 bit Chrome: Linux i686
+	// 64 bit Ubuntu + 64 bit Epiphany: Linux x86_64
+	native getDevicePlatform  : io () -> string = Native.getDevicePlatform;
+
+	is64BitPlatform() -> bool;
+	is32BitPlatform() -> bool;
 }
 
 // Gets the OS of the client. Returns a string of the format "<major>,<minor>"
@@ -125,7 +161,7 @@ cpp = hasTargetName("c++");
 java = hasTargetName("java");
 csharp = hasTargetName("csharp");
 cgi = hasTargetName("cgi");
-nativevideo = hasTargetName("nativevideo");
+nativevideo : bool = hasTargetName("nativevideo");
 nogui = neko || cgi || (cpp && !hasTargetName("gui")) || getUrlParameter("nogui") != "";
 
 // in fact it's rather has "isTouchScreen" logic
@@ -147,18 +183,18 @@ screenDensity =
 	};
 
 
-isWindows = ref false;
-isMacOSX = ref false;
-isLinux = ref false;
-isIos = ref false;
-isAndroid = ref false;
-majorOsPart = ref "";
-minorOsPart = ref "";
-flashVersion = ref "";
-browser = ref "";
-resolution = ref "";
-userAgent = ref "";
-deviceType = ref "";
+isWindows : ref bool = ref false;
+isMacOSX : ref bool = ref false;
+isLinux : ref bool = ref false;
+isIos : ref bool = ref false;
+isAndroid : ref bool = ref false;
+majorOsPart : ref string = ref "";
+minorOsPart : ref string = ref "";
+flashVersion : ref string = ref "";
+browser : ref string = ref "";
+resolution : ref string = ref "";
+userAgent : ref string = ref "";
+deviceType : ref string = ref "";
 
 getFlashVersion() -> string {
 	initOsParts();
@@ -194,7 +230,7 @@ isCapacitor() {
 	strContains(getUserAgent(), "CapacitorJS")
 }
 
-initOsParts() {
+initOsParts() -> void {
 	if (^majorOsPart == "") {
 		browserOs = hostCall("getOs", []);
 
@@ -342,11 +378,12 @@ isMobileBrowser() -> bool {
 	js && mobile;
 }
 
+safariBrowser : bool = js && strContains(toLowerCase(getBrowser()), "safari");
 isSafariBrowser() -> bool {
 	// https://github.com/faisalman/ua-parser-js#methods
 	// Safari
 	// Mobile Safari
-	js && strContains(toLowerCase(getBrowser()), "safari")
+	safariBrowser
 }
 
 isIE() -> bool {
@@ -355,10 +392,24 @@ isIE() -> bool {
 	js && startsWith(getBrowser(), "IE")
 }
 
+isEdge() -> bool {
+	js && startsWith(getBrowser(), "Edge")
+}
+
 isChrome() -> bool {
 	// https://github.com/faisalman/ua-parser-js#methods
 	// Chrome Headless, Chrome WebView, Chrome
 	js && startsWith(getBrowser(), "Chrome")
+}
+
+isSamsungBrowser() -> bool {
+	// https://github.com/faisalman/ua-parser-js#methods
+	// Samsung Browser
+	js && startsWith(getBrowser(), "Samsung Browser")
+}
+
+isFirefox() -> bool {
+	js && strContains(toLowerCase(getBrowser()), "firefox")
 }
 
 isMobilePhone() -> bool {
@@ -367,4 +418,18 @@ isMobilePhone() -> bool {
 
 isTablet() -> bool {
 	mobile && getDeviceType() != "mobile"
+}
+
+domCompleteTiming() { -1.0; }
+estimateCPUSpeed() { -1.0; }
+detectDedicatedGPU() { false; }
+getDeviceMemory() { -1.0; }
+getDevicePlatform() { ""; }
+
+is64BitPlatform() -> bool {
+	strContains(getDevicePlatform(), "64") || strContains(getUserAgent(), "x64")
+}
+
+is32BitPlatform() -> bool {
+	!is64BitPlatform() && (strContains(getDevicePlatform(), "32") || strContains(getDevicePlatform(), "86"))
 }

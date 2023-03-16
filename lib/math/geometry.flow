@@ -27,10 +27,11 @@ export {
 
 	deg2rad(d : double) -> double;
 	rad2deg(r : double) -> double;
-	
+
 	dotProduct(x1 : double, y1 : double, x2 : double, y2 : double) -> double;
 
 	v2Len(v : V2) -> double;
+	v2SqLen(v : V2) -> double;
 	v2SetLen(v : V2, l : double) -> V2;
 	v2Mul(v : V2, m : double) -> V2;
 	v2Add(v1 : V2, v2 : V2) -> V2;
@@ -53,6 +54,12 @@ export {
 
 	rectsUnion(r1 : Rect, r2 : Rect) -> Rect;
 	rectsIntersection(a : Rect, b : Rect) -> Rect;
+
+	v2IsInCircle(v : V2, c : V2Circle) -> bool;
+	v2DiameterCircle(a : V2, b : V2) -> V2Circle;
+	v2CircumCircle(a : V2, b : V2, c : V2) -> V2Circle;
+	v2MiniDisc(pts : [?], getCoords : (?) -> V2) -> V2Circle;
+	v2MiniDisc0(ptFrom : int, ptTo : int, pts : [?], getCoords : (?) -> V2) -> V2Circle;
 }
 
 PositionScale2Point(ps : PositionScale) -> Point {
@@ -72,7 +79,11 @@ dotProduct(x1 : double, y1 : double, x2 : double, y2 : double) -> double {
 }
 
 v2Len(v : V2) -> double {
-	sqrt(v.x * v.x + v.y * v.y);
+	sqrt(v2SqLen(v));
+}
+
+v2SqLen(v : V2) -> double {
+	v.x * v.x + v.y * v.y;
 }
 
 v2SetLen(v : V2, l : double) -> V2 {
@@ -103,7 +114,12 @@ v2Ort(v : V2) -> V2 {
 
 v2AngleBetween(v1 : V2, v2 : V2) -> double { //radians
 	if (v2Len(v1) > 0.0 && v2Len(v2) > 0.0) {
-		(v2ScalarMul(v1, v2) / (v2Len(v1)*v2Len(v2))) |> acos
+		vec = v2ScalarMul(v1, v2) / (v2Len(v1)*v2Len(v2));
+		if (vec > 1.0) { // might happen because of limited precision
+			0.0
+		} else {
+			acos(vec)
+		}
 	} else {
 		0.0
 	}
@@ -191,3 +207,65 @@ rectsIntersection(a : Rect, b : Rect) -> Rect {
 		zeroRect;
 	}
 }
+
+v2IsInCircle(v : V2, c : V2Circle) -> bool {
+	v2Len(V2(v.x - c.center.x, v.y - c.center.y)) <= c.radius
+}
+
+v2DiameterCircle(a : V2, b : V2) -> V2Circle {
+	V2Circle(V2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0), v2Len(V2((a.x - b.x) / 2.0, (a.y - b.y) / 2.0)))
+}
+
+v2CircumCircle(a : V2, b : V2, c : V2) -> V2Circle {
+	bc = v2Sub(b, c);
+	ab = v2Sub(a, b);
+	ca = v2Sub(c, a);
+	la = v2Len(bc);
+	lb = v2Len(ca);
+	lc = v2Len(ab);
+	if (la == 0.0) v2DiameterCircle(a, b) else
+	if (lb == 0.0) v2DiameterCircle(b, c) else
+	if (lc == 0.0) v2DiameterCircle(c, a) else {
+		fn = \ma, mb, mc -> ma * bc.y + mb * ca.y + mc * ab.y;
+		d = 2.0 * fn(a.x, b.x, c.x);
+		sqa = v2SqLen(a);
+		sqb = v2SqLen(b);
+		sqc = v2SqLen(c);
+		p = la + lb + lc;
+		V2Circle(
+			V2(fn(sqa, sqb, sqc) / d, -(sqa * bc.x + sqb * ca.x + sqc * ab.x) / d),
+			la * lb * lc / sqrt(p * (p - 2.0*la) * (p - 2.0*lb) * (p - 2.0*lc))
+		)
+	}
+}
+
+v2MiniDisc(pts : [?], getCoords : (?) -> V2) -> V2Circle {
+	v2MiniDisc0(0, length(pts)-1, pts, getCoords)
+}
+
+v2MiniDisc0(ptFrom : int, ptTo : int, pts : [?], getCoords : (?) -> V2) -> V2Circle {
+	// TODO shuffle
+	if (ptTo-ptFrom > 0) {  // Two or more
+		foldRange(ptFrom+2, ptTo, v2DiameterCircle(getCoords(pts[ptFrom]), getCoords(pts[ptFrom+1])), \disc, i -> {
+			pt = getCoords(pts[i]);
+			if (v2IsInCircle(pt, disc)) disc else v2MiniDiscPt(ptFrom, i-1, pts, getCoords, pt)
+		})
+	} else if (ptTo == ptFrom) V2Circle(getCoords(pts[ptTo]), 0.0)
+	else V2Circle(V2(s2d("NaN"), s2d("NaN")), s2d("NaN"))
+}
+
+v2MiniDiscPt(ptFrom : int, ptTo : int, pts : [?], getCoords : (?) -> V2, q : V2) -> V2Circle {
+	// TODO shuffle
+	foldRange(ptFrom+1, ptTo, v2DiameterCircle(getCoords(pts[ptFrom]), q), \disc, i -> {
+		pt = getCoords(pts[i]);
+		if (v2IsInCircle(pt, disc)) disc else v2MiniDisc2Pt(ptFrom, i-1, pts, getCoords, pt, q)
+	})
+}
+
+v2MiniDisc2Pt(ptFrom : int, ptTo : int, pts : [?], getCoords : (?) -> V2, q1 : V2, q2 : V2) -> V2Circle {
+	foldRange(ptFrom, ptTo, v2DiameterCircle(q1, q2), \disc, i -> {
+		pt = getCoords(pts[i]);
+		if (v2IsInCircle(pt, disc)) disc else v2CircumCircle(pt, q1, q2)
+	})
+}
+

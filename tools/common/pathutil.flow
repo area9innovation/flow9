@@ -1,9 +1,10 @@
 import fs/filesystem;
 import sys/target;
+import sys/system;
 
 export {
 	// Trims the filename to be a flow path, i.e. no .flow suffix, and no lib/ prefix or anything like that
-	trimFlowfile : (flowfile : string, imports : [string], workingDir : string)->string;
+	trimFlowfile : (flowfile : string, imports : [string], workingDir : string) -> string;
 
 	// Find the given flow-file, using imports. Returns a full filesystem path
 	findFlowPath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string) -> string;
@@ -24,11 +25,32 @@ export {
 	//	/c:/Users/dmitr/area9/flow9/tools/flowc
 	// which is wrong in windows, first slash must be removed.
 	//
-	fcCorrectUriPath(path : string) -> string;
+	fcUriPath2path(path : string) -> string;
+	fcPath2uriPath(path : string) -> string;
+
+	// Copy a file relative to some base directory, e.g.:
+	//   base = /home/user/lib
+	//   from = /home/user/lib/src/java/com/package/class.java
+	//   to   = /home/user/dir1/dir2
+	// will copy a 'from' file to
+	//   /home/user/dir1/dir2/src/java/com/package/class.java
+	// Returns an error string, when copying fails, empty string otherwise.
+	copyFileRelative(base : string, from : string, to : string) -> string;
+
+	// Copies all files from the directory directory, which satisfy predicate,
+	// keeping the relative path.
+	// Returns a non-empty array of errors, when copying fails and empty array otherwise.
+	copyDirectory(base : string, from : string, to : string, pred : (string) -> bool) -> [string];
+
+
+	// Try to resolve a flowpath (file exists) with all possible variants:
+	// absolute/relative; current dir/working dir; as is/via an import path.
+	// If there's more then one possible variant - it's an ambiguity (error).
+	findAllFlowPaths(flowpath : string, imports : [string], workingDir : string) -> [string];
 }
 
-trimFlowfile(flowfile : string, imports : [string], workingDir : string) {
-	noflow0 = if (endsWith(flowfile, ".flow")) strsubsmart(flowfile, 0, -5) 
+trimFlowfile(flowfile : string, imports : [string], workingDir : string) -> string {
+	noflow0 = if (endsWith(flowfile, ".flow")) strsubsmart(flowfile, 0, -5)
 	else flowfile;
 	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
 	pathShift = if (shift == "") shift else shift + "/";
@@ -45,11 +67,16 @@ trimFlowfile(flowfile : string, imports : [string], workingDir : string) {
 	};
 
 	// Find the path-less path - the flowpath
-	trim2(fold(imports, noflow, \acc, inc -> {
+	trim2(fold(imports, noflow, \acc, inc0 -> {
+		inc = if (endsWith(inc0, "/")) {
+			inc0;
+		} else {
+			inc0 + "/";
+		}
 		acc1 = if (pathShift != "") {
 			processInculde(acc, pathShift + inc)
 		} else acc;
-		processInculde(acc1, inc)
+		processInculde(acc1, inc);
 	}), "/")
 }
 
@@ -110,14 +137,14 @@ fcNormalizeWindowsPath(path : string) -> string {
 			// Convert C:, D:, ... to lowercase c:, d:, ...
 			toLowerCase(drive) + ":" + strRight(path1, 2);
 		} else {
-			path1
+			path1;
 		}
 	} else {
 		path1;
 	}
 }
 
-fcCorrectUriPath(path : string) -> string {
+fcUriPath2path(path : string) -> string {
 	if (!(startsWith(path, "/") || startsWith(path, "\\")) || !hasTargetName("windows")) path else {
 		// Detect c:, d:, C:, D:, etc.
 		drive = getCharAt(path, 1);
@@ -129,4 +156,70 @@ fcCorrectUriPath(path : string) -> string {
 			path
 		}
 	}
+}
+
+fcPath2uriPath(path : string) -> string {
+	if (hasTargetName("windows")) {
+		path2 = if (startsWith(path, "/") || startsWith(path, "\\")) {
+			path;
+		} else {
+			// Detect c:, d:, C:, D:, etc.
+			drive = getCharAt(path, 0);
+			if (isLetter(drive) && getCharAt(path, 1) == ":") {
+				// Convert C: to c:
+				"/" + toLowerCase(drive) + ":" + strRight(path, 2);
+			} else {
+				// keep original path
+				path;
+			}
+		}
+		strReplace(path2, "\\", "/");
+	} else {
+		path;
+	}
+}
+
+copyFileRelative(base : string, from : string, to : string) -> string {
+	if (!fileExists(from)) {
+		"file: '" + from + "' doesn't exist - not possible to copy";
+	} else {
+		name = strRight(from, strlen(base));
+		path_to = pathCombine(to, name);
+		ensureDirectoryExists(dirName(path_to));
+		if (copyFile(from, path_to)) "" else {
+			"error while copying file '" + path_to + "' from '" + from + "' to '" + to + "'";
+		}
+	}
+}
+
+copyDirectory(base : string, from : string, to : string, pred : (string) -> bool) -> [string] {
+	filtermap(
+		filter(readDirectoryRecursively(from), pred),
+		\file -> {
+			ret = copyFileRelative(base, file, to);
+			if (ret == "") None() else Some(ret)
+		}
+	);
+}
+
+findAllFlowPaths(flowpath : string, imports : [string], workingDir : string) -> [string] {
+	file = fcNormalizeWindowsPath(changeFileExt(flowpath, ".flow"));
+	path1 = if (fileExists(file)) [file] else [];
+
+	file_shifted = fcNormalizeWindowsPath(pathCombine(workingDir, file));
+	path2 = if (fileExists(file_shifted)) [file_shifted] else [];
+
+	paths1 = filtermap(imports, \imp -> {
+		file_via_imp = fcNormalizeWindowsPath(pathCombine(imp, file));
+		if (!fileExists(file_via_imp)) None() else {
+			Some(file_via_imp)
+		}
+	});
+	paths2 = filtermap(imports, \imp -> {
+		file_shifted_via_imp = fcNormalizeWindowsPath(pathCombineMany([workingDir, imp, file]));
+		if (!fileExists(file_shifted_via_imp)) None() else {
+			Some(file_shifted_via_imp);
+		}
+	});
+	uniq(map(concatA([path1, path2, paths1, paths2]), resolveRelativePath));
 }

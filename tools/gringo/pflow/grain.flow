@@ -1,0 +1,94 @@
+import tools/gringo/pflow/texp;
+import text/blueprint;
+
+export {
+	compile2grain(t : TExp) -> string;
+}
+
+compile2grain(p : TExp) -> string {
+	switch (p) {
+		TBool(b): b2s(b);
+		TInt(i): i2s(i);
+		TString(s): toString(s);
+		TArrayValue(values, type): "[>" + superglue(values, \arg ->compile2grain(arg), ", ") + "]";
+		TLambda(args, body, type): "(" + strGlue(args, ", ") + ") => " + compile2grain(body);
+		TLet(id, value, body): {
+			rec = if (containsTVar(value, id)) {
+				"rec "
+			} else {
+				"";
+			};
+			blueprint("
+				let %rec%%id% = %value%;
+				%body%", [
+				"id", id,
+				"value", compile2grain(value),
+				"body", compile2grain(body),
+				"rec", rec
+			])
+		}
+		TVar(id, type): "(" + id + ")";
+		TIf(cond, then, else_, type): {
+			blueprint("
+				if (%cond%) {
+					%then%
+				} else {
+					%else%
+				}", [
+				"cond", compile2grain(cond),
+				"then", compile2grain(then),
+				"else", compile2grain(else_),
+			])
+		}
+		TCall(fn, args, type): {
+			builtin = switch (fn) {
+				TVar(id, tv): {
+					compileBuiltin2Grain(id, args);
+				}
+				default: "";
+			};
+			if (builtin == "") {
+				compile2grain(fn) + "(" + superglue(args, \arg ->compile2grain(arg), ", ") + ")";
+			} else {
+				builtin;
+			}
+		}
+		TArray(values, type): "[>" + superglue(values, \arg ->compile2grain(arg), ", ") + "]";
+		TSequence(values, type): {
+			blueprint("
+				{
+					%values%
+				}", [
+				"values", superglue(values, \arg ->compile2grain(arg), ";\n"),
+			]) 
+		}
+	}
+}
+
+compileBuiltin2Grain(id : string, args : [TExp]) -> string {
+	bin = \ -> {
+		"(" + compile2grain(args[0]) + id + compile2grain(args[1]) + ")"
+	}
+	if (contains(["||", "&&", "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">="], id)) {
+		bin();
+	} else if (id == "println") {
+		"print(" + compile2grain(args[0]) + ")"
+	} else "";
+}
+
+containsTVar(e : TExp, id : string) -> bool {
+	rec = \ee -> containsTVar(ee, id);
+	switch (e) {
+		TBool(b): false;
+		TInt(i): false;
+		TString(s): false;
+		TArrayValue(values, type): exists(values, rec);
+		TLambda(args, body, type): !contains(args, id) && rec(body);
+		TLet(lid, value, body): id != lid && (rec(value) || rec(body));
+		TVar(vid, type): vid == id;
+		TIf(cond, then, else_, type): rec(cond) || rec(then) || rec(else_);
+		TCall(fn, args, type): rec(fn) || exists(args, rec);
+		TArray(values, type): exists(values, rec);
+		TSequence(values, type): exists(values, rec);
+	}
+}

@@ -25,6 +25,9 @@ unix:contains(QMAKE_HOST.arch,x86_64) {
 
 DEFINES += FLOW_COMPACT_STRUCTS
 
+#  Exclude some deprecated classes from Qt4
+DEFINES += QT_NO_BEARERMANAGEMENT
+
 CONFIG(use_gui) {
     QT += gui opengl multimedia multimediawidgets
 
@@ -40,6 +43,7 @@ CONFIG(use_gui) {
     macx {
         # -O2 is too crashy on Mac; see #34057 - ST 12/17/14, 3/30/15
         INCLUDEPATH += /usr/local/include
+        INCLUDEPATH += /usr/local/opt/brew/include
         QMAKE_CFLAGS_RELEASE -= -O2
         QMAKE_CXXFLAGS_RELEASE -= -O2
         LIBS += -framework GLUT

@@ -201,7 +201,8 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateDisplay() : Void {
-		if (RenderSupport.RendererType != "html") {
+		if (RenderSupport.RendererType != "html" &&
+			(accessWidget == null || accessWidget.clip != null || !accessWidget.clip.isHTMLRenderer())) {
 			updateTransform();
 
 			for (child in children) {
@@ -211,7 +212,7 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	public function updateTransform() : Void {
-		if (RenderSupport.RendererType != "html" && accessWidget != null) {
+		if (accessWidget != null && accessWidget.clip != null && !accessWidget.clip.isHTMLRenderer()) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -421,8 +422,12 @@ class AccessWidget extends EventEmitter {
 		"button" => "button",
 		"checkbox" => "button",
 		"combobox" => "button",
+		"slider" => "button",
+		"alertdialog" => "dialog",
+		"dialog" => "dialog",
 		"radio" => "button",
 		"tab" => "button",
+		"link" => "button",
 		"banner" => "header",
 		"main" => "section",
 		"navigation" => "nav",
@@ -431,7 +436,11 @@ class AccessWidget extends EventEmitter {
 		"textbox" => "input",
 		"switch" => "button",
 		"menuitem" => "button",
-		"option" => "button"
+		"option" => "button",
+		"table" => "table",
+		"row" => "tr",
+		"columnheader" => "th",
+		"cell" => "td"
 	];
 
 	public static var zIndexValues = {
@@ -444,6 +453,7 @@ class AccessWidget extends EventEmitter {
 
 	public var clip : DisplayObject;
 	public var tagName : String = "div";
+	private var keepTagName : Bool = false;
 	@:isVar public var element(get, set) : Element;
 
 	@:isVar public var nodeindex(get, set) : Array<Int>;
@@ -481,7 +491,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (clip.isHTMLRenderer()) {
 			return;
 		}
 
@@ -508,12 +518,13 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public inline function hasTabIndex() : Bool {
-		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider";
+		return this.tagName == "button" || this.tagName == "input" || this.tagName == "textarea" || this.role == "slider" || this.tagName == "iframe";
 	}
 
 	public function set_element(element : Element) : Element {
 		if (this.element != element) {
-			if (this.element != null && this.element.parentNode != null && (element != null || RenderSupport.RendererType != "html")) {
+			if (this.element != null && this.element.parentNode != null &&
+				(element != null || (RenderSupport.RendererType != "html" && (this.clip == null || !this.clip.isHTMLRenderer())))) {
 				this.element.parentNode.removeChild(this.element);
 
 				untyped __js__("delete this.element;");
@@ -528,8 +539,7 @@ class AccessWidget extends EventEmitter {
 					this.clip.updateKeepNativeWidgetChildren();
 				}
 
-				// Add focus notification. Used for focus control
-				this.element.addEventListener("focus", function () {
+				var onFocus = function () {
 					focused = true;
 					if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 
@@ -538,14 +548,14 @@ class AccessWidget extends EventEmitter {
 							"stagechanged",
 							function() {
 								if (focused) {
-									this.element.focus();
+									if (this.element != null) this.element.focus();
 									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 								}
 							}
 						);
 
 						return;
-					}
+					};
 
 					clip.emit("focus");
 
@@ -553,31 +563,69 @@ class AccessWidget extends EventEmitter {
 
 					if (parent != null) {
 						parent.emitEvent("childfocused", clip);
-					}
-				});
+					};
+				};
 
-				// Add blur notification. Used for focus control
-				this.element.addEventListener("blur", function () {
+				var onBlur = function () {
 					if (untyped RenderSupport.Animating || clip.preventBlur) {
 						RenderSupport.once(
 							"stagechanged",
 							function() {
 								if (focused) {
-									this.element.focus();
+									if (this.element != null) this.element.focus();
 									if (RenderSupport.EnableFocusFrame) this.element.classList.add("focused");
 								}
 							}
 						);
 
 						return;
-					}
+					};
 
 					RenderSupport.once("drawframe", function() {
 						focused = false;
 						if (this.element != null) this.element.classList.remove("focused");
 						clip.emit("blur");
 					});
-				});
+				};
+
+				if (this.element.tagName.toLowerCase() == "iframe") {
+					this.element.tabIndex = tabindex;
+					var fn = function () {};
+
+					fn = function () {
+						RenderSupport.defer(function () {
+							if (Browser.document.activeElement == this.element) {
+								onFocus();
+							} else {
+								onBlur();
+
+								Browser.window.removeEventListener("focus", fn);
+								Browser.window.removeEventListener("blur", fn);
+							}
+						});
+					}
+
+					this.element.addEventListener("mouseenter", function () {
+						if (Browser.document.activeElement == null || Browser.document.activeElement == Browser.document.body) {
+							Browser.window.focus();
+						}
+
+						Browser.window.addEventListener("focus", fn);
+						Browser.window.addEventListener("blur", fn);
+					});
+
+					this.element.addEventListener("mouseleave", function () {
+						if (!focused) {
+							Browser.window.removeEventListener("focus", fn);
+							Browser.window.removeEventListener("blur", fn);
+						}
+					});
+				};
+
+				// Add focus notification. Used for focus control
+				this.element.addEventListener("focus", onFocus);
+				// Add blur notification. Used for focus control
+				this.element.addEventListener("blur", onBlur);
 
 				if (this.tagName == "button") {
 					this.element.classList.remove("accessElement");
@@ -655,7 +703,7 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function set_role(role : String) : String {
-		if (role != "") {
+		if (role != "" && role != "iframe") {
 			element.setAttribute("role", role);
 		} else {
 			element.removeAttribute("role");
@@ -666,7 +714,7 @@ class AccessWidget extends EventEmitter {
 			this.clip.updateKeepNativeWidgetChildren();
 		}
 
-		if (RenderSupport.RendererType == "html" && accessRoleMap.get(role) != null &&
+		if (RenderSupport.RendererType == "html" && !this.keepTagName && (this.clip == null || this.clip.isHTMLRenderer()) && accessRoleMap.get(role) != null &&
 			accessRoleMap.get(role) != "input" && element.tagName.toLowerCase() != accessRoleMap.get(role)) {
 			var newElement = Browser.document.createElement(accessRoleMap.get(role));
 
@@ -690,42 +738,45 @@ class AccessWidget extends EventEmitter {
 		// Sets events
 		if (accessRoleMap.get(role) == "button") {
 			element.onclick = function(e : Dynamic) {
-				if (e.target == element && e.detail == 0) {
+				if (e.target == element && (e.detail == 0 || e.detail == 1 && RenderSupport.IsFullScreen)) {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
-					} else {
-						RenderSupport.emulateMouseClickOnClip(clip);
 					}
 				}
 			};
+
+			var stage = RenderSupport.PixiStage;
 
 			var onpointerdown = function(e : Dynamic) {
 				// Prevent default drop focus on canvas
 				// Works incorrectly in Edge
 				e.preventDefault();
 
+				var rootPos = RenderSupport.getRenderRootPos(stage);
+				var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
+
 				if (e.touches != null) {
 					RenderSupport.TouchPoints = e.touches;
 					RenderSupport.emit("touchstart");
 
 					if (e.touches.length == 1) {
-						RenderSupport.MousePos.x = e.touches[0].pageX;
-						RenderSupport.MousePos.y = e.touches[0].pageY;
-
-						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+						var touchPos = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
+						RenderSupport.setMousePosition(touchPos);
+						if (RenderSupport.MouseUpReceived) stage.emit("mousedown");
 					} else if (e.touches.length > 1) {
-						GesturesDetector.processPinch(new Point(e.touches[0].pageX, e.touches[0].pageY), new Point(e.touches[1].pageX, e.touches[1].pageY));
+						var touchPos1 = RenderSupport.getMouseEventPosition(e.touches[0], rootPos);
+						var touchPos2 = RenderSupport.getMouseEventPosition(e.touches[1], rootPos);
+						GesturesDetector.processPinch(touchPos1, touchPos2);
 					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
-					RenderSupport.MousePos.x = e.pageX;
-					RenderSupport.MousePos.y = e.pageY;
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
+					RenderSupport.setMousePosition(mousePos);
 
 					if (e.which == 3 || e.button == 2) {
-						RenderSupport.PixiStage.emit("mouserightdown");
+						stage.emit("mouserightdown");
 					} else if (e.which == 2 || e.button == 1) {
-						RenderSupport.PixiStage.emit("mousemiddledown");
+						stage.emit("mousemiddledown");
 					} else if (e.which == 1 || e.button == 0) {
-						if (RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mousedown");
+						if (RenderSupport.MouseUpReceived) stage.emit("mousedown");
 					}
 				}
 
@@ -734,6 +785,9 @@ class AccessWidget extends EventEmitter {
 			};
 
 			var onpointerup = function(e : Dynamic) {
+				var rootPos = RenderSupport.getRenderRootPos(stage);
+				var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
+
 				if (e.touches != null) {
 					RenderSupport.TouchPoints = e.touches;
 					RenderSupport.emit("touchend");
@@ -741,18 +795,17 @@ class AccessWidget extends EventEmitter {
 					GesturesDetector.endPinch();
 
 					if (e.touches.length == 0) {
-						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+						if (!RenderSupport.MouseUpReceived) stage.emit("mouseup");
 					}
-				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || RenderSupport.MousePos.x != e.pageX || RenderSupport.MousePos.y != e.pageY) {
-					RenderSupport.MousePos.x = e.pageX;
-					RenderSupport.MousePos.y = e.pageY;
+				} else if (!Platform.isMobile || e.pointerType == null || e.pointerType != 'touch' || !RenderSupport.isMousePositionEqual(mousePos)) {
+					RenderSupport.setMousePosition(mousePos);
 
 					if (e.which == 3 || e.button == 2) {
-						RenderSupport.PixiStage.emit("mouserightup");
+						stage.emit("mouserightup");
 					} else if (e.which == 2 || e.button == 1) {
-						RenderSupport.PixiStage.emit("mousemiddleup");
+						stage.emit("mousemiddleup");
 					} else if (e.which == 1 || e.button == 0) {
-						if (!RenderSupport.MouseUpReceived) RenderSupport.PixiStage.emit("mouseup");
+						if (!RenderSupport.MouseUpReceived) stage.emit("mouseup");
 					}
 				}
 
@@ -761,13 +814,15 @@ class AccessWidget extends EventEmitter {
 			};
 
 			if (Platform.isMobile) {
-				if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
-					element.onpointerdown = onpointerdown;
-					element.onpointerup = onpointerup;
-				}
+				if (role == "button") {
+					if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+						element.onpointerdown = onpointerdown;
+						element.onpointerup = onpointerup;
+					}
 
-				element.ontouchstart = onpointerdown;
-				element.ontouchend = onpointerup;
+					element.ontouchstart = onpointerdown;
+					element.ontouchend = onpointerup;
+				}
 			} else if (Platform.isSafari) {
 				element.onmousedown = onpointerdown;
 				element.onmouseup = onpointerup;
@@ -776,7 +831,12 @@ class AccessWidget extends EventEmitter {
 				element.onpointerup = onpointerup;
 			}
 
-			element.oncontextmenu = function (e) { e.stopPropagation(); return untyped clip.isInput == true; };
+			element.oncontextmenu = function (e) {
+				var preventContextMenu = untyped clip.isInput != true;
+				if (preventContextMenu) e.preventDefault();
+				e.stopPropagation();
+				return !preventContextMenu;
+			};
 		} else if (role == "textbox") {
 			element.onkeyup = function(e) {
 				if (e.keyCode == 13 && untyped clip.accessCallback != null) {
@@ -888,6 +948,10 @@ class AccessWidget extends EventEmitter {
 		for (key in attributes.keys()) {
 			switch (key) {
 				case "role" : role = attributes.get(key);
+				case "keepableTagName" : {
+					tagName = attributes.get(key);
+					keepTagName = true;
+				};
 				case "description" : description = attributes.get(key);
 				case "zorder" : {
 					if (zorder != null) {
@@ -903,6 +967,7 @@ class AccessWidget extends EventEmitter {
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
 				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true");
+				case "nextWidgetId" : untyped clip.nextWidgetId = attributes.get(key);
 				default : {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
@@ -1064,7 +1129,7 @@ class AccessWidget extends EventEmitter {
 			var accessWidget = child.accessWidget;
 
 			if (accessWidget != null && accessWidget.element != null) {
-				if (RenderSupport.RendererType != "html") {
+				if (RenderSupport.RendererType != "html" && (accessWidget.clip == null || !accessWidget.clip.isHTMLRenderer())) {
 					if (child.changed) {
 						try {
 							if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {

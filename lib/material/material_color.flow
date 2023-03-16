@@ -110,11 +110,17 @@ export {
 
 		MErrorMColor(lightBackground : bool) -> MColor { if (lightBackground) MCustomColor(0xB00020) else MCustomColor(0xCF6679) }
 
+	MAccessibilityContrastLevel ::= ContrastLevelA, ContrastLevelAA, ContrastLevelAAA;
+		ContrastLevelA(); // 3:1 min contrast
+		ContrastLevelAA(); // 4.5:1 min contrast
+		ContrastLevelAAA(); // 7:1 min contrast
+
 	// Convert this color to RGB hex
 	MColor2int(m : MColor) -> int;
 
 	// What color should text have with this background color?
 	MTextMColor(m : MColor) -> MColor;
+	MTextMColorContrast(m : MColor, level : MAccessibilityContrastLevel) -> MColor;
 
 	// Make this color lighter
 	MTintColor(m : MColor) -> int;
@@ -148,6 +154,7 @@ export {
 	materialAccentShades = [100, 200, 400, 700];
 
 	mCustomColor2MColor(color : MColor) -> MColor;
+	colorInt2MColor(intColor : int) -> MColor;
 
 	adjustMColorShade(color : MColor, delta : int) -> MColor;
 
@@ -157,13 +164,25 @@ export {
 	// https://material.io/design/usability/accessibility.html#color-and-contrast
 	// https://www.w3.org/TR/UNDERSTANDING-WCAG20/visual-audio-contrast-contrast.html
 	//
-	// Checks if luminance ratio is more than 3:1 or less than 1:3
-	isAccessibleContrastRatio(luminance1 : double, luminance2 : double) -> bool;
+	// Checks if luminance ratio is more than contrastLevel or less than 1/contrastLevel
+	isAccessibleContrastRatio(luminance1 : double, luminance2 : double, contrast : MAccessibilityContrastLevel) -> bool;
 
 	randomMColor() -> MColor;
 
 	findMColor(color : int) -> MColor;
 	findMColorWithBackground(color : int, background : int) -> MColor;
+
+	colorAddOpacity(color : int) -> int;
+
+	colorDeleteOpacity(color : int) -> int;
+}
+
+colorAddOpacity(color : int) -> int {
+	bitOr(color, 0x7F000000)
+}
+
+colorDeleteOpacity(color : int) -> int {
+	bitAnd(color, 0xFFFFFF)
 }
 
 mColorPalette = pairs2tree([
@@ -250,6 +269,8 @@ findMColor(color : int) -> MColor {
 }
 
 findMColorWithBackground(color : int, background : int) -> MColor {
+	if (isUrlParameterTrue("check_white_contrast")) findContrastMColorWithBackground(color, background, ContrastLevelA())
+	else {
 	cieColor = rgb2cielab(int2rgb(color));
 	backgroundLuminance = getColorLuminance(background);
 
@@ -258,7 +279,7 @@ findMColorWithBackground(color : int, background : int) -> MColor {
 		cieAcc = rgb2cielab(int2rgb(acc));
 
 		if (colorDistance(cieC, cieColor) < colorDistance(cieAcc, cieColor)) {
-			if (isAccessibleContrastRatio(backgroundLuminance, getColorLuminance(c)))
+			if (isAccessibleContrastRatio(backgroundLuminance, getColorLuminance(c), ContrastLevelA()))
 				c
 			else
 				acc;
@@ -266,6 +287,33 @@ findMColorWithBackground(color : int, background : int) -> MColor {
 			acc
 		}
 	})
+	|> MCustomColor
+	|> mCustomColor2MColor
+	}
+}
+
+findContrastMColorWithBackground(color : int, background : int, contrast : MAccessibilityContrastLevel) -> MColor {
+	cieColor = rgb2cielab(int2rgb(color));
+	backgroundLuminance = getColorLuminance(background);
+
+	foundColor =
+		fold(concatA([[white], mColorPaletteAccentValues, mColorPaletteValues, [black]]), None(), \acc, c -> {
+			checkColor = 
+				eitherMap(acc,
+					\curColor -> {
+						cieC = rgb2cielab(int2rgb(c));
+						cieAcc = rgb2cielab(int2rgb(curColor));
+						colorDistance(cieC, cieColor) < colorDistance(cieAcc, cieColor)
+					},
+					true
+				);
+			if (checkColor && isAccessibleContrastRatio(backgroundLuminance, getColorLuminance(c), contrast))
+				Some(c)
+			else
+				acc;
+		});
+
+	either(foundColor, color)
 	|> MCustomColor
 	|> mCustomColor2MColor
 }
@@ -303,6 +351,14 @@ MTextMColor(m : MColor) -> MColor {
 		MBlack()
 	else
 		MWhite();
+}
+
+MTextMColorContrast(background : MColor, contrast : MAccessibilityContrastLevel) -> MColor {
+	findContrastMColorWithBackground(
+		MColor2int(MTextMColor(background)),
+		MColor2int(background),
+		contrast
+	)
 }
 
 // Make this color lighter
@@ -598,6 +654,8 @@ mCustomColor2MColor(color : MColor) -> MColor {
 	}
 }
 
+colorInt2MColor(intColor : int) -> MColor {intColor |> MCustomColor |> mCustomColor2MColor}
+
 adjustMColorShade(color : MColor, delta : int) -> MColor {
 	MColor(color.color, color.shade + delta, color.accent)
 }
@@ -608,8 +666,13 @@ isLightMColor(color : MColor) -> bool {
 
 // https://material.io/design/usability/accessibility.html#color-and-contrast
 // https://www.w3.org/TR/UNDERSTANDING-WCAG20/visual-audio-contrast-contrast.html
-isAccessibleContrastRatio(luminance1 : double, luminance2 : double) -> bool {
-	(luminance1 + 0.05) / (luminance2 + 0.05) > 3.0 || (luminance2 + 0.05) / (luminance1 + 0.05) > 3.0
+isAccessibleContrastRatio(luminance1 : double, luminance2 : double, contrast : MAccessibilityContrastLevel) -> bool {
+	contrastLevel = switch (contrast) {
+		ContrastLevelA() : 3.0;
+		ContrastLevelAA() : 4.5;
+		ContrastLevelAAA() : 7.0;
+	};
+	(luminance1 + 0.05) / (luminance2 + 0.05) > contrastLevel || (luminance2 + 0.05) / (luminance1 + 0.05) > contrastLevel
 }
 
 invertMColorBrightness(color : MColor) -> MColor {

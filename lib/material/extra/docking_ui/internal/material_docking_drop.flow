@@ -1,0 +1,247 @@
+import material/material_ui;
+import material/extra/docking_ui/internal/material_docking_state;
+import material/extra/docking_ui/internal/material_docking_theme;
+import material/extra/docking_ui/internal/material_docking_utils;
+
+
+export {
+	// Resizing cols and rows, and drop panels
+	dockingResizeLine(
+		isColumn : bool,
+		resizeW : bool,  	// resize cols (W) or panels (H)
+		dontResize : bool,
+		resizePressed : DynamicBehaviour<bool>,
+		size : Tropic
+	) -> Material;
+
+	// The place where we can drop panels
+	dockingDropLine(
+		resizeArea : bool,  // This dropline can be placed into a resizable Area or resizable Panel
+		resizeW : bool,
+		isToolbarArea : bool,
+		dropInfo : MDockingDropInfo,
+		state : MDockingState,   
+		defPanelsOrderA : [int], // colId, rowId
+		updateRow : bool, // Update row or col
+		resizeBar : Material,
+		hoverSize : Tropic,
+		dropSize : Tropic,
+		isEndpoint : bool,
+		endAlignment : bool
+	) -> Material;
+
+	// Drop info
+	MDockingDropInfo(
+		areaId : int, 
+		groupName : string, 
+		onDrop : DynamicBehaviour<int>,
+		order : DynamicBehaviour<[int]>,
+		dockedPanelsGrid : DynamicBehaviour<[[int]]>,
+		isRow : DynamicBehaviour<bool>
+	);
+}
+
+
+dockingResizeLine(
+	isColumn : bool,
+	resizeW : bool,  	// resize cols (W) or panels (H)
+	dontResize : bool,
+	resizePressed : DynamicBehaviour<bool>,
+	size : Tropic
+) -> Material {
+	dragHelper = 
+		MCursor(
+			if (resizeW) EWResizeCursor() else NSResizeCursor(),
+			MInteractive([
+					TMouseDown(resizePressed), 
+				],
+				// TRectangle([MFill(if (resizeW) MRed(500) else MPurple(500)), FillOpacity(dockingHelperResizeOpacity)], size)	
+				TRectangle([MFill(MRed(500)), FillOpacity(dockingHelperResizeOpacity)], size)
+			)
+		);
+	if (dontResize) TEmpty() else dragHelper;
+};
+
+
+dockingDropLine(
+	resizeArea : bool,  // This dropline can be placed into a resizable Area or resizable Panel
+	resizeW : bool,
+	isToolbarArea : bool,
+	dropInfo : MDockingDropInfo,
+	state : MDockingState,
+	order : [int], // colId, rowId
+	updateRow : bool, // Update row or col
+	resizeBar : Material,
+	hoverSize : Tropic,
+	dropSize : Tropic,
+	isEndpoint : bool,
+	endAlignment : bool
+) -> Material {
+
+	manager = state.manager;
+	zorder = getValue(manager.manager.zorder);
+	dockA = state.dock;
+	groupA = state.group;
+	onHover = make(-1);
+	hovering = make(false);
+	cacheEnabled = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).cacheEnabled;
+
+	isOuterDropH = !updateRow && !resizeW;
+	isInnerDropV = updateRow && resizeW;
+	isTInnerDropV = isInnerDropV && isToolbarArea;
+
+	// Drop info
+	areaId = dropInfo.areaId;
+	groupName = dropInfo.groupName; 
+	onDrop = dropInfo.onDrop;
+	panelsOrderB = dropInfo.order;
+	panelsArray = dropInfo.dockedPanelsGrid;
+
+	areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
+	isRightCol  = contains(areaStyle, MDockingRightCols());
+	isBottomLine = contains(areaStyle, MDockingBottomLines());
+
+	isRow = dropInfo.isRow; 
+
+	alignLine =  \f : Material -> {
+		if (resizeW) {
+			if ((isRightCol && isEndpoint) || (!isRightCol && !isEndpoint)) MAlignCenterEndFill(f) else f
+		} else {
+			if ((isBottomLine && isEndpoint) || (!isBottomLine && !isEndpoint)) MAlignBottomEndFill(f) else f
+		}
+	}
+
+	isToolbarButtons = \pId : int -> isSameStructType(getValue(state.content)[pId], MDToolbarContent([]));
+	isToolbarFixed = \pId : int -> contains(getValue(state.panelStyle)[pId], MDToolbarFullSizeFixed());
+	isPanel = \pId : int -> !isDockingToolbar(state, pId);
+
+	// Accordion menu
+	isAccordion = isSome(tryExtractStruct(areaStyle, MDAreaAccordion(make(true), None())));
+
+	MIfLazy(
+		fselect(manager.manager.dragging, 
+			FLift(\dr -> {
+				(dr >= 0) &&
+				(dr < length(getValue(state.title))) &&
+				(zorder >= getValue(manager.manager.zorder))&&
+				(dr < length(getValue(groupA))) &&
+				(
+					resizeArea && 
+					// Toolbar buttons both
+					!updateRow && isToolbarButtons(dr) ||
+					isToolbarArea && updateRow && isToolbarButtons(dr) ||
+					// Toolbar custom, only horizontal
+					isOuterDropH && isToolbarFixed(dr) ||
+					isTInnerDropV && isToolbarFixed(dr) ||
+					// Panels
+					!isToolbarArea && isPanel(dr) ||
+					!updateRow && isPanel(dr)
+				) &&
+				(if (getValue(groupA)[dr] == []) true else contains(getValue(groupA)[dr], groupName))
+			})
+		),	\e -> if (e) {
+
+			MGroup([
+				resizeBar |> alignLine,
+				// Drop Line
+				MDropSpot2(onHover, onDrop, 		
+					TRectangle([MFill(if (resizeW) dockingHelperDropColorV else dockingHelperDropColorH), FillOpacity(dockingHelperDropOpacity)], dropSize), // Hightlight allowed dropping areas
+					false
+				) 	
+				// |> (\f -> MGroup2(f, MCenterIn(MText(toString(order), [MOverline(), MBlack()])|> (\m -> if (resizeW) MRotate90Left(m) else m), dropSize))) // debug
+				|> (\f -> if (!updateRow) f else {if (resizeW) MCenterY(f) else MCenterX(f)})
+				|> alignLine,
+				
+				MConstruct([
+					makeSubscribe(onHover, \h -> if (h >= 0) {
+						next(panelsOrderB, order);
+						next(isRow, updateRow);
+						next(hovering, true);
+
+							// Align to end
+							isToolbar = isDockingToolbar(state, h);
+							if (isToolbar) {
+								pstyle = getValue(state.panelStyle)[h];
+								isEndAlignedB = extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign;
+								next(isEndAlignedB, endAlignment);
+							}
+							
+						} else next(hovering, false)
+					),
+					// On drop function
+					makeSubscribe(onDrop, \d -> if (d >= 0) {
+
+						// Close a panel when docking into an accordion column
+						if (isPanel(d)) {
+							if (isAccordion) {
+								if (!resizeArea && getValue(isRow) && !resizeW) nextDistinct(getValue(state.expanded)[d], false);	
+							} else nextDistinct(getValue(state.expanded)[d], true);
+						} else nextDistinct(getValue(state.expanded)[d], true);
+
+						updateDockingPositions(d, areaId, dockA, panelsArray, panelsOrderB, isRow);
+					})],
+					// Visible drop line on hover
+					MShowLazy(hovering, \ -> TRectangle([MFill(dockingDropLineHoverColor), FillOpacity(dockingDropLineHoverOpacity)], hoverSize)) |> alignLine
+				) 
+			])
+		} else resizeBar
+	);
+}
+
+
+
+updateDockingPositions(droppedId: int, areaId : int, dockA : DynamicBehaviour<[MDock]>, panelsArray : DynamicBehaviour<[[int]]>, panelsOrder : DynamicBehaviour<[int]>, isRow : DynamicBehaviour<bool>) -> void {
+	tempA = make([]);
+	colId = firstElement(getValue(panelsOrder), 0);
+	rowId = lastElement(getValue(panelsOrder), 0);
+
+	if (!fold(getValue(panelsArray), false, \acc, a -> acc || contains(a, droppedId))) {
+		if (getValue(panelsArray) != [[]]) {
+			if (getValue(isRow)) next(panelsArray, replace(getValue(panelsArray), colId, insertArray(getValue(panelsArray)[colId], rowId, droppedId)))
+				else next(panelsArray, insertArray(getValue(panelsArray), colId, [droppedId]));
+		} else {
+			println("error: empty panels array");
+		}
+
+	} else {
+		colIndex = if (colId < length(getValue(panelsArray))) colId else (length(getValue(panelsArray)) - 1);
+		prevPos = if (getValue(isRow)) elemIndex(getValue(panelsArray)[colIndex], droppedId, -intMax) else elemIndex(getValue(panelsArray), [droppedId], -intMax);
+		if (prevPos == -intMax) {
+
+			replaced = if (getValue(isRow)) {
+				index = if (colId < length(getValue(panelsArray))) colId else (length(getValue(panelsArray)) - 1);
+				replace(getValue(panelsArray), index, insertArray(getValue(panelsArray)[index], rowId, droppedId));
+			} else {
+				insertArray(getValue(panelsArray), colId, [droppedId]);
+			}
+			next(panelsArray, mapi(replaced, \i, item -> if (i == colId) item else removeFirst(item, droppedId)));
+
+		} else {
+			if (getValue(isRow)) {
+				updated = if (prevPos <= rowId) {
+					inserted = insertArray(getValue(panelsArray)[colIndex], rowId, droppedId);
+					removeIndex(inserted, prevPos);
+				} else {
+					uniq(insertArray(getValue(panelsArray)[colId], rowId, droppedId));
+				};
+				next(panelsArray, replace(getValue(panelsArray), colId, updated));
+			} else {
+				updated = if (prevPos <= colId) {
+					inserted = insertArray(getValue(panelsArray), colId, [droppedId]);
+					removed = mapi(inserted, \i, item -> if (i == colId) item else removeFirst(item, droppedId));
+					removeIndex(removed, prevPos);
+				} else {
+					uniq(insertArray(getValue(panelsArray), colId, [droppedId]));
+				};
+				next(panelsArray, updated);
+			}
+		}
+	};
+	//Update state
+	next(tempA, getValue(dockA));
+	iteri(getValue(panelsArray), \i, item -> {
+		index = if (i < length(getValue(panelsArray))) i else length(getValue(panelsArray)) - 1;
+		iteri(item, \j, itm ->next(tempA, replace(getValue(tempA), itm, MDock(areaId, index, j))));
+	});
+	next(dockA, getValue(tempA));
+}

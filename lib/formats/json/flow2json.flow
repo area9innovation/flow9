@@ -1,0 +1,88 @@
+import dynamic;
+import formats/json/json;
+
+export {
+	// Tries to convert any flow object to a corresponding json.
+	// Doesn't work with native and functional types: these types are mapped onto JsonNull.
+	// Refs are dereferenced, i.e. not kept.
+	// Currently is implemented in: java backend.
+	flow2json(any : flow) -> Json;
+
+	// Convert any json into some flow value. In case of error, or when a JsonNull is
+	// met during the conversion, returns IllegalStruct().
+	// Currently is implemented in: java backend.
+	json2flow(json : Json) -> flow;
+}
+
+flow2json(any : flow) -> Json {
+	type = runtimeValueType(any);
+	if (type == "void" || type == "function" || type == "undef") {
+		JsonNull();
+	} else if (type == "int") {
+		JsonDouble(i2d(cast(any : flow -> int)));
+	} else if (type == "double") {
+		JsonDouble(cast(any : flow -> double));
+	} else if (type == "bool") {
+		JsonBool(cast(any : flow -> bool));
+	} else if (type == "string") {
+		JsonString(cast(any : flow -> string));
+	} else if (type == "array") {
+		JsonArray(map(cast(any : flow -> [flow]), flow2json));
+	} else if (type == "ref") {
+		flow2json(^cast(any : flow -> ref flow));
+	} else {
+		name = extractStructName(any);
+		if (name == "") {
+			// Not a struct
+			JsonNull();
+		} else {
+			args = extractStructArguments(any);
+			fields = structFieldNames(name);
+			JsonObject(concat(
+				[Pair("struct", JsonString(name))],
+				mapi(fields, \i, field ->
+					Pair(field, flow2json(args[i]))
+				))
+			);
+		}
+	}
+}
+
+json2flow(json : Json) -> flow {
+	switch (json) {
+		JsonObject(fields): {
+			switch (find(fields, \f -> f.first == "struct")) {
+				Some(str): {
+					name = getJsonStringValue(str.second, "");
+					field_names = structFieldNames(name);
+					args = map(field_names, \field ->
+						switch (find(fields, \f -> f.first == field)) {
+							Some(f): json2flow(f.second);
+							None(): IllegalStruct();
+						}
+					);
+					if (exists(args, \arg -> arg == IllegalStruct())) {
+						flow(IllegalStruct());
+					} else {
+						makeStructValue(name, args, IllegalStruct());
+					}
+				}
+				None(): {
+					IllegalStruct();
+				}
+			}
+		}
+		JsonArray(arr): {
+			vals : flow = map(arr, json2flow);
+			if (exists(vals, \val -> val == IllegalStruct())) {
+				IllegalStruct();
+			} else {
+				vals;
+			}
+		}
+		JsonBool(v): v;
+		JsonString(s): s;
+		JsonDouble(v): v;
+		JsonNull(): IllegalStruct();
+	}
+}

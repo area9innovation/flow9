@@ -43,7 +43,7 @@ The main design goals of *flow* are:
    iPhone, Android and HTML5. This implies that the runtime needs to be small, because 
    we can not reuse the same implementation on all these targets.
    
-Although *flow* can be utilized to build server-side functionality it is primarily used for 
+Although *flow* can be utilized to build server-side functionality, it is primarily used for 
 building complicated UIs. That is the field where it starts shining and shows its real power. 
 Worth keeping in mind when working with it.
 
@@ -707,8 +707,8 @@ Example:
 	a = Pair(1, "text");
 	switch (a : Pair) {
 		Pair(f, s):  {
-			println( f ); // Prints 1
-			println( s ); // Prints "text"
+			println(f); // Prints 1
+			println(s); // Prints "text"
 		}
 	}
 
@@ -719,8 +719,8 @@ This code is practically equivalent to
 	if (a.structname == "Pair") {
 		f = a.first;
 		s = a.second;
-		println( f ); // Prints 1
-		println( s ); // Prints "text"
+		println(f); // Prints 1
+		println(s); // Prints "text"
 	}
 
 although it is more efficient with the switch.
@@ -1330,11 +1330,8 @@ Here program will print just "Value is " in case of value=true, since flow parse
 and then they are processed as the arguments of **+** operator, which serves as final expression for the *else* block.
 Fix will look like this
 
-	println("Value is " + if (value) {""} else {"not "}; + "true");
+	println("Value is " + (if (value) {""} else {"not "}) + "true");
 
-or like this
-
-	println("Value is " + {if (value) {""} else {"not "}} + "true");
 
 ### Example 2
 

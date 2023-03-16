@@ -10,9 +10,9 @@ export {
 	TScrollStyle ::= TScrollSetPosition, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TScrollPersistent,
 		TScrollDisableMouseWheel, TReverseMouseWheel, TScrollDisableOutOfBounds, TScrollKeysEnabled, TScrollbarsVisible,
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
-		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
+		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition, TScrollStep,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled, TScrollSkipInteractivityOnHold;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -29,6 +29,9 @@ export {
 
 		// Do not handle the mouse events, so they are also sent to stuff below
 		TScrollDontHandle();
+		// If tap inside scroll box without moving for more than 200 ms, then interactive state will be withdrawed.
+		// Helpful for scroll inside MDragDrop 
+		TScrollSkipInteractivityOnHold();
 
 		// Disables Mouse Wheel
 		TScrollDisableMouseWheel();
@@ -115,7 +118,7 @@ export {
 		TScrollBarTop();
 		TScrollBarStart();
 
-		TScrollCropByContent();
+		TScrollCropByContent(xEnabled : Transform<bool>, yEnabled : Transform<bool>);
 		TScrollOutOfBounds(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>);
 
 		TScrollWidthHeight(content : DynamicBehaviour<WidthHeight>, box : DynamicBehaviour<WidthHeight>);
@@ -139,6 +142,10 @@ export {
 		TScrollbarOverlapContent(overlap : bool); // true by default
 		TScrollResizeBeforePrint(resize : bool); // Resize to the max content height before printing page, true by default
 
+		TScrollCropEnabled(enabled : Transform<bool>); // showScrolling by default
+		// Round scroll position to the corresponding step
+		TScrollStep(step : Transform<double>);
+
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
 
 	nativeScroll = \ -> isUrlParameterTrue("native_scroll") && getRendererType() == "html";
@@ -150,9 +157,10 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	// Current scroll offset
 	scrollPosition = make(zeroPoint);
 	scrollPercent = tryExtractStruct(style, TScrollPercent(make(zeroPoint)));
-	cropByContent = contains(style, TScrollCropByContent());
+	cropByContent = tryExtractStruct(style, TScrollCropByContent(const(false), const(false)));
 	inspectVisible = tryExtractStruct(style, makeTScrollInspectVisible());
 	setPosition = tryExtractStruct(style, TScrollSetPosition(const(zeroPoint)));
+	scrollStep = tryExtractStruct(style, TScrollStep(const(-1.)));
 	// Do we restrict dragging "out" of bounds? Setting to false will allow swiping content over of bound.
 	scrollBound = extractStruct(style, TScrollBound(const(true), const(true)));
 	scrollOutOfBounds = tryExtractStruct(style, TScrollOutOfBounds(make(0.), make(0.)));
@@ -214,19 +222,32 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 
 	scrollBoxHover = make(false);
 
+	// Don't activate scroll if content and box metrics difference is too tiny.
+	e = 0.1;
+
 	showScrolling =
 		fthrottleNextFrame(fselect2(contentWH, boxWH0, FLift2(\cwh, bwh ->
-			cwh.height > 0. && cwh.width > 0. && (dfloor(cwh.height) > bwh.height || dfloor(cwh.width) > bwh.width)
+			cwh.height > 0. && cwh.width > 0. && (dfloor(cwh.height) - bwh.height > e || dfloor(cwh.width) - bwh.width > e)
 		)));
 
 	inspectShowScrolling = tryExtractStruct(style, TScrollInspectShowScrolling(make(false)));
+	cropEnabled = extractStruct(style, TScrollCropEnabled(showScrolling)).enabled;
+
+	skipInteractivityOnHold = contains(style, TScrollSkipInteractivityOnHold());
+	currentInteractiveUns = initUnsM();
+	resetCurrentInteractive = \ -> {dispUnsM(currentInteractiveUns); nextDistinct(currentInteractive, None())}
 
 	TransformTAcc2(\t2a -> {
 		boxWH =
-			if (cropByContent)
-				fwhmin(boxWHCutted, contentWH)
-			else
-				boxWHCutted;
+			eitherMap(cropByContent, \crop ->
+				fselect4(boxWHCutted, contentWH, crop.xEnabled, crop.yEnabled, \b, c, xEn, yEn ->
+					WidthHeight(
+						if (xEn) min(b.width, c.width) else b.width,
+						if (yEn) min(b.height, c.height) else b.height
+					)
+				),
+				boxWHCutted
+			);
 
 		rend = make(false);
 		printMode = make(false);
@@ -278,7 +299,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					else TSized(boxWHCutted)
 				));
 
-			if (cropByContent)
+			if (isSome(cropByContent))
 				TransformTAcc2(\t2a2 -> {
 					cAcc2 := cont |> t2a2;
 					^cAcc2;
@@ -293,7 +314,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					fand(showScrolling, enabled),
 					\ -> TScrollHandlePosition(scrollId, manager, style, contentWH, boxWH, scrollPosition, maxWH,
 						currentPoint, xMoving, yMoving, inspectVisible, scrollBound, moving, currentInteractive, downXBar, downYBar,
-						TRectangle(interactiveRectangleStyle, TSized(boxWH)))
+						maybeMap(scrollStep, \ss -> ss.step), currentInteractiveUns, TRectangle(interactiveRectangleStyle, TSized(boxWH)))
 				),
 				TConstruct(
 					[
@@ -349,7 +370,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 								concat(
 									f2,
 									[
-										\ -> fconnect(scrollPosition, iv.topleft),
+										\ -> fconnectSelect(scrollPosition, iv.topleft, \p -> eitherMap(scrollStep, \ss -> roundToStep(p, ss), p)),
 										\ -> fconnect(boxWH, iv.widthHeight)
 									]
 								),
@@ -421,7 +442,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 										sp.position,
 										scrollPosition,
 										\p -> boundScrollPosition(p, fgetValue(maxWH), fgetValue(scrollBound.x), fgetValue(scrollBound.y)),
-										idfn
+										\p -> eitherMap(scrollStep, \ss -> roundToStep(p, ss), p)
 									)
 								),
 							f2
@@ -490,8 +511,19 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					|> (\t ->
 						if (nativeScroll())
 							TScrollRectT(scrollPosition, boxWH, t, enabled)
-						else
-							TCrop2(scrollPosition, boxWH, showScrolling, t)
+						else {
+							sPosition =
+								eitherMap(
+									scrollStep,
+									\ss -> fselectLift(scrollPosition, \p -> roundToStep(p, ss)),
+									scrollPosition
+								)
+								|> (\scrollPositionFixed ->
+									if (isRTL) fselect2(maxWH, scrollPositionFixed, FLift2(\mwh, sp -> Point(mwh.width - sp.x, sp.y)))
+									else scrollPositionFixed
+								);
+							TCrop2(sPosition, boxWH, cropEnabled, t)
+						}
 					)
 				),
 				eitherMap(
@@ -529,7 +561,9 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 									)]
 								else []
 							])
-							|> (\t -> if (vertical) TLines(t) else TColsDir(t, isRTL));
+							// Gradients pre-built geometrically to be left and right
+							// and this does not depend of text direction, so TCols.
+							|> (\t -> if (vertical) TLines(t) else TCols(t));
 						}
 						TGroup2(
 							TShowLazy(
@@ -552,12 +586,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 								next(currentPoint, Point(mi.x, mi.y));
 								next(moving, true);
 								nextDistinct(currentInteractive, Some(false));
+								if (skipInteractivityOnHold) {
+									setUnsM(currentInteractiveUns, interruptibleTimer(200, resetCurrentInteractive));
+								}
 								scrollHandle && (getValue(xMoving) || getValue(yMoving))
 							} else {
 								false
 							}
 						}),
-						MouseUp(\__ -> { nextDistinct(currentInteractive, None()); false }),
+						MouseUp(\__ -> { resetCurrentInteractive(); false }),
 						TMouseInside(scrollBoxHover, false)
 					],
 					TRectangle(interactiveRectangleStyle, TSized(boxWH))
@@ -583,12 +620,16 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 			])
 			|> t2a;
 
-		if (cropByContent)
+		eitherMap(cropByContent, \crop ->
 			TAcc(
 				c.form,
-				minMetrics(b.metrics, ^cAcc2.metrics),
-				fif(xEnabled, fmin(b.minWidth, ^cAcc2.minWidth), ^cAcc.minWidth),
-				fif(yEnabled, fmin(b.minHeight, ^cAcc2.minHeight), ^cAcc.minHeight),
+				TFormMetrics(
+					fif(crop.xEnabled, fmin(b.metrics.width, ^cAcc2.metrics.width), b.metrics.width),
+					fif(crop.yEnabled, fmin(b.metrics.height, ^cAcc2.metrics.height), b.metrics.height),
+					fif(crop.yEnabled, fmin(b.metrics.baseline, ^cAcc2.metrics.baseline), b.metrics.baseline),
+				),
+				fif(xEnabled, fif(crop.xEnabled, fmin(b.minWidth, ^cAcc2.minWidth), b.minWidth), ^cAcc.minWidth),
+				fif(yEnabled, fif(crop.yEnabled, fmin(b.minHeight, ^cAcc2.minHeight), b.minHeight), ^cAcc.minHeight),
 				b.maxWidth,
 				b.maxHeight,
 				fif(xEnabled, b.xFillers, ^cAcc.xFillers),
@@ -597,8 +638,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				false,
 				false,
 				concat(b.disposers, c.disposers)
-			)
-		else
+			),
 			TAcc(
 				c.form,
 				b.metrics,
@@ -613,6 +653,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				b.yConstant,
 				concat(b.disposers, c.disposers)
 			)
+		)
 	})
 }
 
@@ -716,12 +757,13 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	boxWH : Transform<WidthHeight>, scrollPosition : DynamicBehaviour<Point>, maxWH : Transform<WidthHeight>, currentPoint : DynamicBehaviour<Point>,
 	xMoving: DynamicBehaviour<bool>, yMoving : DynamicBehaviour<bool>, inspectVisible : Maybe<TScrollInspectVisible>, scrollBound : TScrollBound,
 	moving : DynamicBehaviour<bool>, currentInteractive : DynamicBehaviour<Maybe<bool>>, downXBar : DynamicBehaviour<bool>,
-	downYBar : DynamicBehaviour<bool>, tr : Tropic) -> Tropic {
+	downYBar : DynamicBehaviour<bool>, scrollStep : Maybe<Transform<double>>, currentInteractiveUns : ref Maybe<() -> void>, tr : Tropic) -> Tropic {
 	// Disable mouse wheel
 	disableWheel = contains(style, TScrollDisableMouseWheel());
 	// Reverse mouse wheel
 	reverseWheel = contains(style, TReverseMouseWheel());
 	disableOutOfBounds = extractStruct(style, TScrollDisableOutOfBounds(const(false))).disable;
+	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 
 	axisEnabled = extractStruct(style, TScrollAxisEnabled(const(true), const(true)));
 	xEnabled = axisEnabled.x;
@@ -824,7 +866,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId) && getValue(manager.dragging) == -1) {
 			sp = getValue(scrollPosition);
 
-			dx = if (fgetValue(xEnabled)) ^startPoint.x - getValue(currentPoint).x else 0.;
+			dx = if (fgetValue(xEnabled)) (^startPoint.x - getValue(currentPoint).x) * (if (isRTL) -1. else 1.) else 0.;
 			nx = sp.x + dx;
 
 			dy = if (fgetValue(yEnabled)) ^startPoint.y - getValue(currentPoint).y else 0.;
@@ -911,7 +953,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		speedY := [];
 	}
 
-	scrollStep = 20.;
+	scrollStepKey = 20.;
 	inside = make(false);
 	mouseWheelPos = ref None();
 
@@ -941,19 +983,19 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				if (fgetValue(keysEnabled) && !handled && !hasKeyboardFocus() && getValue(inside) && keyFilter(ke)) {
 					if (ke.utf == "up" && fgetValue(yEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStep)));
+						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStepKey)));
 						true
 					} else if (ke.utf == "down" && fgetValue(yEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStep, fgetValue(maxWH).height)));
+						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStepKey, fgetValue(maxWH).height)));
 						true
 					} else if (ke.utf == "left" && fgetValue(xEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStep), sp.y));
+						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStepKey), sp.y));
 						true
 					} else if (ke.utf == "right" && fgetValue(xEnabled)) {
 						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(min(sp.x + scrollStep, fgetValue(maxWH).width), sp.y));
+						nextDistinct(scrollPosition, Point(min(sp.x + scrollStepKey, fgetValue(maxWH).width), sp.y));
 						true
 					} else if (ke.keycode == KEY_PAGEUP) {
 						handlePageKeys(ke,
@@ -1002,6 +1044,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				false
 			}),
 			IgnoreHitTest(MouseMove2(\h, mi -> {
+				dispUnsM(currentInteractiveUns);
 				if (getValue(moving)) {
 					next(currentPoint, mi() |> (\f -> Point(f.x, f.y)));
 				} else if (isSome(getValue(currentInteractive)) && !getValue(downXBar) && !getValue(downYBar)) {
@@ -1026,9 +1069,9 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				TMouseWheelInteractive(
 					manager,
 					tr,
-					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
+					TScrollMouseWheelCallback(scrollPosition, scrollBound, scrollStep, maxWH, mouseWheelPos,
 						deltaTimer, reverseWheel, speedX, speedY, xEnabled, xMoving, true),
-					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
+					TScrollMouseWheelCallback(scrollPosition, scrollBound, scrollStep, maxWH, mouseWheelPos,
 						deltaTimer, reverseWheel, speedX, speedY, yEnabled, yMoving, false)
 				)
 			])
@@ -1052,6 +1095,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 TScrollMouseWheelCallback(
 	scrollPosition : DynamicBehaviour<Point>,
 	scrollBound : TScrollBound,
+	scrollStep : Maybe<Transform<double>>,
 	maxWH : Transform<WidthHeight>,
 	mousePos : ref Maybe<Point>,
 	deltaTimer : LazyDeltaTimer,
@@ -1064,9 +1108,12 @@ TScrollMouseWheelCallback(
 ) -> (double) -> bool {
 	uns = initUnsM();
 
+	stage = getStage();
+	wheelStep = either(scrollStep, const(100.));
+
 	\d -> {
 		dispUnsM(uns);
-		currentMousePos = Point(getMouseX(getStage()), getMouseY(getStage()));
+		currentMousePos = Point(getMouseX(stage), getMouseY(stage));
 
 		speedX := [];
 		speedY := [];
@@ -1077,7 +1124,7 @@ TScrollMouseWheelCallback(
 			spV = if (horizontal) sp.x else sp.y;
 			bound = fgetValue(if (horizontal) scrollBound.y else scrollBound.x);
 
-			delta = -d * 100. * if (!reverseWheel) 1. else -1.;
+			delta = -d * fgetValue(wheelStep) * if (!reverseWheel) 1. else -1.;
 
 			newV =
 				if (bound)
@@ -1094,7 +1141,7 @@ TScrollMouseWheelCallback(
 			updateScrollPosition = \v -> {
 				nextDistinct(scrollPosition, if (horizontal) Point(v, getValue(scrollPosition).y) else Point(getValue(scrollPosition).x, v));
 				// Emit mousemove to update hovers and tooltips
-				emitMouseEvent(getStage(), "mousemove", getMouseX(getStage()), getMouseY(getStage()));
+				emitMouseEvent(stage, "mousemove", getMouseX(stage), getMouseY(stage));
 			}
 
 			if (newV != spV || eitherMap(^mousePos, \mp -> mp == currentMousePos, false)) {
@@ -1179,13 +1226,14 @@ createTScrollBars(
 		contentSize = sizeFn(contentWH);
 		scale = fdivide(boxSize, contentSize);
 
-		updateScrollPosition = \coord -> {
+		updateScrollPosition = \coord0 -> {
 			contentSz = fgetValue(contentSize);
 			boxSz = fgetValue(boxSize);
 			scl = fgetValue(scale);
 			height = getValue(scrollbarLength);
 			gap = getValue(barGap);
 
+			coord = if (horizontal && isRTL) boxSz - gap - coord0 else coord0;
 			ncoord = (coord - height / 2.) / scl / (boxSz + gap) * boxSz;
 			newCoord = max(0., min(ncoord, contentSz - boxSz));
 
@@ -1196,7 +1244,7 @@ createTScrollBars(
 			TShowLazy(fand(axEnabled, fand(fless(scale, const(1.)), barStyle.visible)), \ -> {
 				prevPosition = ref if (horizontal) getValue(scrollPosition).x else getValue(scrollPosition).y;
 
-				translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
+				translatePoint = fselect4(boxSize, scrollPosition, barGap, scrollbarLength, \boxSz, sp, gap, barLen -> {
 					if (horizontal) {
 						if (sp.x != ^prevPosition) {
 							prevPosition := sp.x;
@@ -1212,7 +1260,13 @@ createTScrollBars(
 					}
 
 					scl = fgetValue(scale);
-					coord2point(if (boxSz > 0.) point2coord(sp) * scl * (boxSz + gap) / boxSz else 0.)
+					coord =
+						if (boxSz > 0.) {
+							if (horizontal && isRTL) boxSz - barLen - point2coord(sp) * scl * (boxSz + gap) / boxSz
+							else point2coord(sp) * scl * (boxSz + gap) / boxSz
+						} else 0.;
+
+					coord2point(coord)
 				});
 
 				thickness =
@@ -1233,8 +1287,7 @@ createTScrollBars(
 				|> (\t -> TTranslate(translatePoint, t))
 				|> (\t ->
 					TGroup2(
-						TAvailable(if (mobile || !expandOnHover) barStyle.background(const(false), const(false)) else barStyle.background(dwn, ins), makeScrollbarBox(boxSize))
-						|> (\f -> TCursor(ArrowCursor(), f)),
+						TAvailable(if (mobile || !expandOnHover) barStyle.background(const(false), const(false)) else barStyle.background(dwn, ins), makeScrollbarBox(boxSize)),
 						t
 					)
 				)
@@ -1314,7 +1367,6 @@ createTScrollBars(
 				f2
 			)
 		)
-		|> (\f2 -> TCursor(DefaultCursor(), f2))
 		|> checkAlign
 		|> (\f2 -> TAvailable(f2, tr))
 	};
@@ -1391,6 +1443,11 @@ updateScrollPositionOnDragging(scrollPosition : DynamicBehaviour<Point>, boxWH :
 			)
 		}
 	}
+}
+
+roundToStep(point : Point, ss : TScrollStep) {
+	step = fgetValue(ss.step);
+	Point(dround(point.x / step) * step, dround(point.y / step) * step)
 }
 
 TFadeInOut(manager : TManager, fadeIn : Transform<bool>, content : Tropic) -> Tropic {

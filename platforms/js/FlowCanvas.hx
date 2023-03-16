@@ -4,19 +4,22 @@ import haxe.extern.EitherType;
 using DisplayObjectHelper;
 
 class FlowCanvas extends FlowContainer {
+	public var isCanvasStage = true;
 	public function new(?worldVisible : Bool = false) {
+		isFlowContainer = false;
 		super(worldVisible);
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.initNativeWidget('canvas');
-			untyped this.isCanvas = true;
 		}
 	}
 
 	public function updateNativeWidget() {
 		if (visible && worldAlpha > 0 && renderable) {
 			var tempResolution = RenderSupport.PixiRenderer.resolution;
-			RenderSupport.PixiRenderer.resolution =  Math.max(worldTransform.a, worldTransform.d) * tempResolution;
+			RenderSupport.PixiRenderer.resolution = Math.max(worldTransform.a, worldTransform.d) >= 1.0
+				? Math.ceil(Math.max(worldTransform.a, worldTransform.d) * tempResolution)
+				: Math.max(worldTransform.a, worldTransform.d) * tempResolution;
 
 			if (DisplayObjectHelper.DebugUpdate) {
 				nativeWidget.setAttribute("update", Std.int(nativeWidget.getAttribute("update")) + 1);

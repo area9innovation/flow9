@@ -16,12 +16,13 @@ export {
 	getJsonArrayValue(json : Json, def : [Json]) -> [Json];
 	getJsonBoolValue(json : Json, def : bool) -> bool;
 	getJsonStringValue(json : Json, def : string) -> string;
+	getJsonStringValueM(json : Json) -> Maybe<string>;
 	getJsonDoubleValue(json : Json, def : double) -> double;
 	getJsonDoubleValueM(json : Json) -> Maybe<double>;
 	getJsonIntValue(json : Json, def : int) -> int;
 	getJsonIntValueM(json : Json) -> Maybe<int>;
 
-	parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> Pair<[Pair<string, Json>], int>;
+	parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> ParsingAcc<Json>;
 	skipJson(json : string, start : int, char : string) -> int;
 	parseJsonDouble(s : string, start : int) -> Pair<Json, int>;
 
@@ -59,6 +60,8 @@ export {
 	// returns `json` if it's not JsonObject
 	removeJsonField(json : Json, field : string) -> Json;
 
+	ParsingAcc(data : ?, start : int, finish : int);
+
 	Json ::= JsonObject, JsonArray, JsonNull, JsonBool, JsonString, JsonDouble;
 		JsonObject(members : [Pair<string, Json>]);
 		JsonArray(value : [Json]);
@@ -85,27 +88,26 @@ export {
 
 	//equals Json
 	isJsonEqual(first : Json, second : Json) -> bool;
+	isJsonEqualIgnoreOrder(first : Json, second : Json, ignoreOrder : bool) -> bool;
 
 	// Returns true if json is an object and has appropriate member.
 	jsonObjectHasField(json : Json, member : string) -> bool;
 	// Access to a nested field like obj.f1.f2.f3, where fields = [f1, f2, f3]
 	getJsonNestedField(json: Json, fields: [string]) -> Json;
-
-	// escape chars not allowed for JSON
-	toStringForJson(s : string) -> string;
+	// The setter to the nested field, dual to getJsonNestedField
+	setJsonNestedField(json: Json, fields: [string], value : Json) -> Json;
 }
 
 parseJson(json : string) -> Json {
-	v = doParseJson(json, strlen(json), 0);
-	v.first;
+	parseJsonSafe(json)
 }
 
 parseJsonSafe(json : string) -> Json {
 	v = doParseJson(json, strlen(json), 0);
-	v.first;
+	if (v.start == v.finish) JsonDouble(0.0) else v.data;
 }
 
-getJsonObjectValue(json, def) {
+getJsonObjectValue(json : Json, def : [Pair<string, Json>]) -> [Pair<string, Json>] {
 	switch (json : Json) {
 		JsonObject(members): members;
 		default: def;
@@ -147,7 +149,7 @@ findObjectByName(objects : [Pair<string, Json>], key : string, ignoreCase : bool
 	}, Pair(key2, defaultValue)).second;
 }
 
-getJsonArrayValue(json, def) {
+getJsonArrayValue(json : Json, def : [Json]) -> [Json] {
 	switch (json : Json) {
 		JsonArray(value): value;
 		default: def;
@@ -166,11 +168,15 @@ getJsonBoolValue(json : Json, def : bool) -> bool {
 }
 
 getJsonStringValue(json : Json, def : string) -> string {
+	either(getJsonStringValueM(json), def);
+}
+
+getJsonStringValueM(json : Json) -> Maybe<string> {
 	switch (json : Json) {
-		JsonString(s): s;
-		JsonDouble(d): d2s(d);
-		JsonBool(b): b2s(b);
-		default: def;
+		JsonString(s): Some(s);
+		JsonDouble(d): Some(d2s(d));
+		JsonBool(b): Some(b2s(b));
+		default: None();
 	}
 }
 
@@ -181,8 +187,9 @@ getJsonDoubleValue(json : Json, def : double) -> double {
 getJsonDoubleValueM(json : Json) -> Maybe<double> {
 	switch (json : Json) {
 		JsonDouble(value): Some(value);
-		// Ints are sometimes taken as strings!
-		JsonString(s): Some(s2d(s));
+		// Doubles are sometimes taken as strings!
+		// we have to check the s, otherwise non digital strings will be converted into Some(0.0)
+		JsonString(s): if (isDouble(s)) Some(s2d(s)) else None();
 		default: None();
 	}
 }
@@ -195,92 +202,112 @@ getJsonIntValueM(json : Json) -> Maybe<int> {
 	switch (json : Json) {
 		JsonDouble(value): Some(floor(value));
 		// Ints are sometimes taken as strings!
-		JsonString(s): Some(s2i(s));
+		// we have to check the s, otherwise non digital strings will be converted into Some(0)
+		JsonString(s): if (isDouble(s)) Some(s2i(s)) else None();
 		default: None();
 	}
 }
 
-doParseJson(json : string, jsonLength : int, start : int) -> Pair<Json, int> {
+doParseJson(json : string, jsonLength : int, start : int) -> ParsingAcc<Json> {
 	charCode = getCharCodeAt(json, start);
 	if (charCode == 32 || charCode == 9 || charCode == 10 || charCode == 13) { // " " || "\t" || "\n" || "\r"
 		// Eat white space
 		doParseJson(json, jsonLength, start + 1);
 	} else {
 		if (charCode == 91) {				// "["
-			v = parseJsonArray2(json, jsonLength, start + 1, makeList());
-			Pair(JsonArray(v.first), v.second);
+			parseJsonArray2(json, jsonLength, start + 1, makeList());
 		} else if (charCode == 123) {		// "{"
-			v = parseJsonObject2(json, jsonLength, start + 1, makeList());
-			Pair(JsonObject(v.first), v.second);
+			parseJsonObject2(json, jsonLength, start + 1, makeList());
 		} else if (charCode == 34) {		// "\""
 			v = deserializeRestOfString2(json, start + 1);
-			Pair(JsonString(v.first), v.second);
+			ParsingAcc(JsonString(v.first), start + 1, v.second);
 		} else if (charCode == 110 /* "n" */ && substring(json,start, 4) == "null") {
-			Pair(JsonNull(), start + 4);
+			ParsingAcc(JsonNull(), start, start + 4);
 		} else if (charCode == 116 /* "t" */ && substring(json,start, 4) == "true") {
-			Pair(JsonBool(true), start + 4);
+			ParsingAcc(JsonBool(true), start, start + 4);
 		} else if (charCode == 102 /* "f" */ && substring(json,start, 5) == "false") {
-			Pair(JsonBool(false), start + 5);
+			ParsingAcc(JsonBool(false), start, start + 5);
 		} else {
-			parseJsonDouble2(json, jsonLength, start);
+			v = parseJsonDouble2(json, jsonLength, start);
+			ParsingAcc(v.first, start, v.second)
 		}
 	}
 }
 
-parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> Pair<[Pair<string, Json>], int> {
+parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> ParsingAcc<Json> {
 	parseJsonObject2(json, strlen(json), start, acc)
 }
 
-parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<string, Json>>) -> Pair<[Pair<string, Json>], int> {
-	head = skipJson2(json, jsonLength, start, ",");
-	charCode = getCharCodeAt(json, head);
-	if (head >= jsonLength || charCode == 125) { // "}"
-		Pair(list2array(acc), head + 1);
-	} else {
+parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<string, Json>>) -> ParsingAcc<Json> {
+	fin = skipJson2(json, jsonLength, start, " ").second;
+	head = switch (acc) {
+		EmptyList(): Pair(fin, fin);
+		Cons(__, __): skipJson2(json, jsonLength, start, ",");
+	};
+	charCode = getCharCodeAt(json, head.second);
+	if (getCharCodeAt(json, fin) == 125) // "}"
+		ParsingAcc(JsonObject(list2array(acc)), start, fin + 1)
+	else if (head.second >= jsonLength || head.first < 0)  // No comma nor brace
+		ParsingAcc(JsonObject([]), start, start)
+	else {
 		key =
-			if (charCode == 34) // "\""
-				deserializeRestOfString2(json, head + 1)
-			else
-				parseId(json, jsonLength, head);
+			if (charCode == 34) {// "\""
+				v = deserializeRestOfString2(json, head.second + 1);
+				if (v.second == head.second + 1) Pair("", head.second + 1) else v
+			} else
+				Pair("", head.second + 1);
 
 		afterColon = skipJson2(json, jsonLength, key.second, ":");
-		value = doParseJson(json, jsonLength, afterColon);
-		parseJsonObject2(json, jsonLength, value.second, Cons(Pair(key.first, value.first), acc));
+		value = doParseJson(json, jsonLength, afterColon.second);
+		if (key.second == head.second + 1 || afterColon.first < 0 || value.start == value.finish)
+			ParsingAcc(JsonObject([]), start, start)
+		else {
+			parseJsonObject2(json, jsonLength, value.finish, Cons(Pair(key.first, value.data), acc));
+		}
 	}
 }
 
 skipJson(json : string, start : int, char : string) -> int {
-	skipJson2(json, strlen(json), start, char);
+	skipJson2(json, strlen(json), start, char).second;
 }
 
-skipJson2(json : string, jsonLength : int, start : int, char : string) -> int {
+skipJson2(json : string, jsonLength : int, start : int, char : string) -> Pair<int, int> {
 	if (start >= jsonLength) {
-		start
+		Pair(-1, start);
 	} else {
 		headCharCode = getCharCodeAt(json, start);
-		if (fromCharCode(headCharCode) == char || headCharCode == 32 || headCharCode == 9 || headCharCode == 10 || headCharCode == 13) {
+		if (fromCharCode(headCharCode) == char) {
+			v = skipJson2(json, jsonLength, start + 1, " ");
+			Pair(start, v.second);
+		} else if (headCharCode == 32 || headCharCode == 9 || headCharCode == 10 || headCharCode == 13) {
 			skipJson2(json, jsonLength, start + 1, char);
 		} else {
-			start;
+			Pair(-1, start);
 		}
 	}
 }
 
-parseJsonArray(json : string, start : int, acc : List<Json>) -> Pair<[Json], int> {
+parseJsonArray(json : string, start : int, acc : List<Json>) -> ParsingAcc<Json> {
 	parseJsonArray2(json, strlen(json), start, acc);
 }
 
-parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) -> Pair<[Json], int> {
-	head = skipJson2(json, jsonLength, start, ",");
-	if (head >= jsonLength || getCharCodeAt(json, head) == 93) { // "]"
-		Pair(list2array(acc), head + 1);
-	} else {
-		value = doParseJson(json, jsonLength, head);
-		if (value.second == start) {
+parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) -> ParsingAcc<Json> {
+	fin = skipJson2(json, jsonLength, start, " ").second;
+	head = switch (acc) {
+		EmptyList(): Pair(fin, fin);
+		Cons(__, __): skipJson2(json, jsonLength, start, ",");
+	};
+	if (getCharCodeAt(json, fin) == 93) // "]"
+		ParsingAcc(JsonArray(list2array(acc)), start, fin + 1)
+	else if (head.second >= jsonLength || head.first < 0)  // No comma nor bracket
+		ParsingAcc(JsonArray([]), start, start)
+	else {
+		value = doParseJson(json, jsonLength, head.second);
+		if (value.start == value.finish) {
 			// No progress, so we have some problem
-			Pair(list2array(acc), value.second);
+			ParsingAcc(JsonArray([]), start, start)
 		} else {
-			parseJsonArray2(json, jsonLength, value.second, Cons(value.first, acc));
+			parseJsonArray2(json, jsonLength, value.finish, Cons(value.data, acc));
 		}
 	}
 }
@@ -296,13 +323,6 @@ parseJsonDouble2(s : string, stringLength: int, start : int) -> Pair<Json, int> 
 		! ((48 <= c && c <= 57) || c == 46 || c == 45 || c == 101 || c == 69 || c == 43);
 	});
 	Pair(JsonDouble(s2d(substring(s, start, end - start))), end);
-}
-
-parseId(s : string, l : int, start : int) -> Pair<string, int> {
-	end = countUntil(start, l, \i -> {
-		getCharCodeAt(s, i) == 58; // ":"
-	});
-	Pair(cloneString(trim(substring(s, start, end - start))), end);
 }
 
 getJsonStringField(json: Json, field: string, def: string) -> string {
@@ -353,24 +373,6 @@ getJsonMaybeValue(value : Json, getJsonValueFn : (Json, ?) -> ?, def : ?) -> May
 	}
 }
 
-toStringForJson(s : string) -> string {
-	f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
-		Cons(if (code < 0x20) {
-			if (code == 0x08) "\\b"
-			else if (code == 0x09) "\\t"
-			else if (code == 0x0A) "\\n"
-			else if (code == 0x0C) "\\f"
-			else if (code == 0x0D) "\\r"
-			else "\\u" + lpad(formatHex(code), "0", 4);
-		} else {
-			if (code == 0x22) "\\\""
-			else if (code == 0x5c) "\\\\"
-			else fromCharCode(code);
-		}, acc);
-	});
-	list2string(Cons("\"", f));
-}
-
 json2string(j : Json) -> string {
 	switch (j : Json) {
 		JsonNull(): "null";
@@ -391,8 +393,8 @@ json2stringFormatted(j : Json) -> string {
 		JsonArray(arr): {
 			if (arr == []) "[]" else {
 				a = map(arr, \v -> json2stringFormatted(v));
-				b = length(arr) > 1 || strContains(a[0], "\n");
-				if (!b)	"[" + a[0] + "]"
+				if (length(arr) <= 1) "[" + a[0] + "]"
+				else if (length(arr) == 1) "[" + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "]"
 				else "[\n" + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "\n]";
 			}
 		}
@@ -401,9 +403,11 @@ json2stringFormatted(j : Json) -> string {
 				"{}";
 			} else {
 				a = map(arr, \v : Pair<string, Json> -> toStringForJson(v.first) + ": " + json2stringFormatted(v.second));
-				b = length(arr) > 1 || strContains(a[0], "\n");
-				if (!b)	"{" + a[0] + "}"
-				else "{\n" + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "\n}";
+				if (length(arr) <= 1) {
+					"{" + a[0] + "}"
+				} else if (length(arr) == 1) {
+					"{ " + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "}";
+				} else "{\n" + strGlue(map(strSplit(strGlue(a, ",\n"), "\n"), \l -> "\t" + l),"\n") + "\n}";
 			}
 		}
 	}
@@ -464,6 +468,10 @@ getBoolValueFromJsonArray(json: Json, index: int, defaultValue: bool) -> bool {
 }
 
 isJsonEqual(first : Json, second : Json) -> bool {
+	isJsonEqualIgnoreOrder(first, second, false);
+}
+
+isJsonEqualIgnoreOrder(first : Json, second : Json, ignoreOrder : bool) -> bool {
 	switch (first : Json) {
 		JsonBool(v): switch (second : Json) {
 			JsonBool(val): v == val;
@@ -484,7 +492,26 @@ isJsonEqual(first : Json, second : Json) -> bool {
 		JsonArray(value): switch (second : Json) {
 			JsonArray(values): {
 				if (length(value) == length(values)) {
-					iteriUntil(value, \id, val -> !isJsonEqual(val, values[id])) == length(value);
+					if (ignoreOrder) {
+						equalMembersIndiecesM : Maybe<Pair<int, int>> = findmapi(
+							value,
+							\i1, v1 -> maybeMap(
+								findi(values, \v2 -> isJsonEqualIgnoreOrder(v1, v2, ignoreOrder)),
+								\i2 -> Pair(i1, i2)
+							)
+						);
+						eitherMap(
+							equalMembersIndiecesM,
+							\equalMembersIndieces -> isJsonEqualIgnoreOrder(
+								JsonArray(removeIndex(value, equalMembersIndieces.first)),
+								JsonArray(removeIndex(values, equalMembersIndieces.second)),
+								ignoreOrder
+							),
+							length(value) == 0
+						);
+					} else {
+						iteriUntil(value, \id, val -> !isJsonEqual(val, values[id])) == length(value);
+					}
 				} else {
 					false;
 				}
@@ -496,7 +523,11 @@ isJsonEqual(first : Json, second : Json) -> bool {
 				if (length(obj) == length(objs)) {
 					compareFn = \x : Pair, y : Pair -> if (x.first < y.first) -1 else if (x.first == y.first) 0 else 1;
 					sortedObjs = mergeSort(objs, compareFn);
-					iteriUntil(mergeSort(obj, compareFn), \id, val -> val.first != sortedObjs[id].first || !isJsonEqual(val.second, sortedObjs[id].second)) == length(obj);
+					iteriUntil(
+						mergeSort(obj, compareFn),
+						\id, val -> val.first != sortedObjs[id].first
+							|| !isJsonEqualIgnoreOrder(val.second, sortedObjs[id].second, ignoreOrder)
+					) == length(obj);
 				} else {
 					false;
 				}
@@ -560,6 +591,34 @@ jsonObjectHasField(json : Json, member : string) -> bool {
 
 getJsonNestedField(json: Json, fields: [string]) -> Json {
 	if (fields == []) json else {
-		getJsonNestedField(getJsonObjectField(json, fields[0]), tail(fields));
+		getJsonNestedField(getJsonFieldValue(json, fields[0], JsonNull()), tail(fields));
+	}
+}
+
+setJsonNestedField(json: Json, fields: [string], value : Json) -> Json {
+	if (fields == []) value else {
+		field = fields[0];
+		switch (json) {
+			JsonObject(members): {
+				switch (findi(members, \memb -> memb.first == field)) {
+					Some(i): {
+						member = members[i].second;
+						JsonObject(replace(members, i,
+							Pair(field, setJsonNestedField(member, tail(fields), value))
+						));
+					}
+					None(): {
+						JsonObject(arrayPush(members,
+							Pair(field, setJsonNestedField(JsonNull(), tail(fields), value))
+						));
+					}
+				}
+			}
+			default: {
+				JsonObject([
+					Pair(field, setJsonNestedField(JsonNull(), tail(fields), value))
+				]);
+			}
+		}
 	}
 }

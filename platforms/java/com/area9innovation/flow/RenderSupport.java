@@ -5,444 +5,450 @@ import java.nio.charset.Charset;
 
 @SuppressWarnings("unchecked")
 public class RenderSupport extends NativeHost {
-	private Func0<Object> no_op = new Func0<Object>() {
+	private static Func0<Object> no_op = new Func0<Object>() {
 		public Object invoke() { return null; }
 	};
 
-	public Object getStage() {
+	public static Object getStage() {
 		return null;
 	}
-	public double getStageWidth() {
+	public static double getStageWidth() {
 		return 0;
 	}
-	public double getStageHeight() {
+	public static double getStageHeight() {
 		return 0;
 	}
-	public Object setHitboxRadius(double val) {
+	public static Object setHitboxRadius(double val) {
 		return null;
 	}
-	public Object setWindowTitle(String title) {
+	public static Object setWindowTitle(String title) {
 		return null;
 	}
-	public Object setFavIcon(String url) {
+	public static Object setFavIcon(String url) {
 		return null;
 	}
-	public int getScreenPixelColor(double x, double y) {
+	public static int getScreenPixelColor(double x, double y) {
 		return 0;
 	}
-	public Object enableResize() {
+	public static Object enableResize() {
 		return null;
 	}
-	public Object makeClip() {
+	public static Object makeClip() {
 		return null;
 	}
-	public Object makeGraphics() {
+	public static Object assignClip(Object stage, String className, Object clip) {
 		return null;
 	}
-	public Object currentClip() {
+	public static Object makeGraphics() {
 		return null;
 	}
-	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
+	public static Object currentClip() {
 		return null;
 	}
-	public String webClipHostCall(Object clip,String fn,Object[] args) {
+	public static Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
 		return null;
 	}
-	public Object setWebClipSandBox(Object clip,String value) {
+	public static String webClipHostCall(Object clip,String fn,Object[] args) {
 		return null;
 	}
-	public Object setWebClipDisabled(Object clip,boolean value) {
+	public static Object setWebClipSandBox(Object clip,String value) {
 		return null;
 	}
-	public Object webClipEvalJS(Object clip,String code, Func1<Object,String> cb) {
+	public static Object setWebClipDisabled(Object clip,boolean value) {
 		return null;
 	}
-	public Object setWebClipZoomable(Object clip,Boolean zoomable) {
+	public static Object webClipEvalJS(Object clip,String code, Func1<Object,String> cb) {
 		return null;
 	}
-	public Object setWebClipDomains(Object clip, Object[] domains) {
+	public static Object setWebClipZoomable(Object clip,Boolean zoomable) {
 		return null;
 	}
-	public Object makeHTMLStage(double width, double height) {
+	public static Object setWebClipDomains(Object clip, Object[] domains) {
 		return null;
 	}
-	public Object createElement(String tagName) {
+	public static Object makeHTMLStage(double width, double height) {
 		return null;
 	}
-	public Object createTextNode(String text) {
+	public static Object createElement(String tagName) {
 		return null;
 	}
-	public Object setAttribute(Object element, String name, String value) {
+	public static Object createTextNode(String text) {
 		return null;
 	}
-	public Object appendChild(Object element, Object child) {
+	public static Object setAttribute(Object element, String name, String value, Boolean safe) {
 		return null;
 	}
-	public Object insertBefore(Object element, Object child, Object reference) {
+	public static Object appendChild(Object element, Object child) {
 		return null;
 	}
-	public Object removeElementChild(Object element, Object child) {
+	public static Object insertBefore(Object element, Object child, Object reference) {
 		return null;
 	}
-	public Object addFilters(Object stg, Object[] filters) {
+	public static Object removeElementChild(Object element, Object child) {
 		return null;
 	}
-	public Object setAccessAttributes(Object stg, Object[] attrs) {
+	public static Object addFilters(Object stg, Object[] filters) {
 		return null;
 	}
-	public Object setAccessCallback(Object stg, Func0<Object> fn) {
+	public static Object setAccessAttributes(Object stg, Object[] attrs) {
 		return null;
 	}
-	public Object addChild(Object stg, Object child) {
+	public static Object setAccessCallback(Object stg, Func0<Object> fn) {
 		return null;
 	}
-	public Object addChildAt(Object stg, Object child, Integer at) {
+	public static Object addChild(Object stg, Object child) {
 		return null;
 	}
-	public Object removeChild(Object stg, Object child) {
+	public static Object addChildAt(Object stg, Object child, Integer at) {
 		return null;
 	}
-	public Object setClipMask(Object stg, Object mask) {
+	public static Object removeChild(Object stg, Object child) {
 		return null;
 	}
-	public Object setClipCallstack(Object stg, Object stack) {
+	public static Object setClipMask(Object stg, Object mask) {
 		return null;
 	}
-	public double getMouseX(Object stg) {
+	public static Object setClipCallstack(Object stg, Object stack) {
+		return null;
+	}
+	public static double getMouseX(Object stg) {
 		return 0;
 	}
-	public double getMouseY(Object stg) {
+	public static double getMouseY(Object stg) {
 		return 0;
 	}
-	public boolean getClipVisible(Object stg) {
+	public static boolean getClipVisible(Object stg) {
 		return false;
 	}
-	public Object setClipVisible(Object stg, boolean on) {
+	public static Object setClipVisible(Object stg, boolean on) {
 		return null;
 	}
-	public Object setClipX(Object stg, double val) {
+	public static Object setClipX(Object stg, double val) {
 		return null;
 	}
-	public Object setClipY(Object stg, double val) {
+	public static Object setClipY(Object stg, double val) {
 		return null;
 	}
-	public Object setClipScaleX(Object stg, double val) {
+	public static Object setClipScaleX(Object stg, double val) {
 		return null;
 	}
-	public Object setClipScaleY(Object stg, double val) {
+	public static Object setClipScaleY(Object stg, double val) {
 		return null;
 	}
-	public Object setClipAlpha(Object stg, double val) {
+	public static Object setClipAlpha(Object stg, double val) {
 		return null;
 	}
-	public Object setClipRotation(Object stg, double val) {
+	public static Object setClipRotation(Object stg, double val) {
 		return null;
 	}
-	public Object setClipWidth(Object clip, double width) {
+	public static Object setClipWidth(Object clip, double width) {
 		return null;
 	}
-	public double getClipHeight(Object clip) {
+	public static double getClipHeight(Object clip) {
 		return 0;
 	}
-	public double getClipWidth(Object clip) {
+	public static double getClipWidth(Object clip) {
 		return 0;
 	}
-	public Object setClipHeight(Object clip, double height) {
+	public static Object setClipHeight(Object clip, double height) {
 		return null;
 	}
-	public Object setClipResolution(Object clip, double resolution) {
+	public static Object setClipResolution(Object clip, double resolution) {
 		return null;
 	}
-	public Object setScrollRect(Object stg, double x, double y, double w, double h) {
+	public static Object setScrollRect(Object stg, double x, double y, double w, double h) {
 		return null;
 	}
-	public String getCursor() {
+	public static String getCursor() {
 		return null;
 	}
-	public Object setCursor(String val) {
+	public static Object setCursor(String val) {
 		return null;
 	}
-	public Func0<Object> addEventListener(Object stg, String name, Func0<Object> fn) {
+	public static Func0<Object> addEventListener(Object stg, String name, Func0<Object> fn) {
 		return null;
 	}
-	public Func0<Object> addFileDropListener(Object clib, Integer maxFilesCount, String mimeTypeRegExFilter, Func1<Object,Object[]> onDone) {
+	public static Func0<Object> addFileDropListener(Object clib, Integer maxFilesCount, String mimeTypeRegExFilter, Func1<Object,Object[]> onDone) {
 		return null;
 	}
-	public Func0<Object> addVirtualKeyboardHeightListener(Func1<Object, Double> fn) {
+	public static Func0<Object> addVirtualKeyboardHeightListener(Func1<Object, Double> fn) {
 		return null;
 	}
-	public Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> cb) {
+	public static Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> cb) {
 		return null;
 	}
-	public Object emitKeyEvent(Object stg, String name, String key, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer code) {
+	public static Object emitKeyEvent(Object stg, String name, String key, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer code) {
 		return null;
 	}
-	public Func0<Object> addMouseWheelEventListener(Object stg, Func1<Object,Double> cb) {
+	public static Func0<Object> addMouseWheelEventListener(Object stg, Func1<Object,Double> cb) {
 		return null;
 	}
-	public Func0<Object> addFinegrainMouseWheelEventListener(Object stg, Func2<Object,Double,Double> cb) {
+	public static Func0<Object> addFinegrainMouseWheelEventListener(Object stg, Func2<Object,Double,Double> cb) {
 		return null;
 	}
-	public Func0<Object> addGestureListener(String name, Func5<Boolean,Integer,Double,Double,Double,Double> cb) {
+	public static Func0<Object> addGestureListener(String name, Func5<Boolean,Integer,Double,Double,Double,Double> cb) {
 		return null;
 	}
-	public boolean hittest(Object stg, double x, double y) {
+	public static boolean hittest(Object stg, double x, double y) {
 		return false;
 	}
-	public Object makeTextField(String fontfamily) {
+	public static String getFontStylesConfigString() {
 		return null;
 	}
-	public Object setTextInput(Object stg) {
+	public static Object makeTextField(String fontfamily) {
 		return null;
 	}
-	public double getTextFieldWidth(Object stg) {
+	public static Object setTextInput(Object stg) {
+		return null;
+	}
+	public static double getTextFieldWidth(Object stg) {
 		return 0;
 	}
-	public double getTextFieldHeight(Object stg) {
+	public static double getTextFieldHeight(Object stg) {
 		return 0;
 	}
-	public Object setTextFieldWidth(Object stg, double val) {
+	public static Object setTextFieldWidth(Object stg, double val) {
 		return null;
 	}
-	public Object setTextFieldHeight(Object stg, double val) {
+	public static Object setTextFieldHeight(Object stg, double val) {
 		return null;
 	}
-	public Object setTextFieldCropWords(Object stg, boolean val) {
+	public static Object setTextFieldCropWords(Object stg, boolean val) {
 		return null;
 	}
-	public Object setAdvancedText(Object stg,int a,int o,int e) {
+	public static Object setAdvancedText(Object stg,int a,int o,int e) {
 		return null;
 	}
-	public Object setTextInputType(Object stg, String type) {
+	public static Object setTextInputType(Object stg, String type) {
 		return null;
 	}
-	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+	public static Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		return null;
 	}
-	public Object setTextFieldInterlineSpacing(Object stg, double val) {
+	public static Object setTextFieldInterlineSpacing(Object stg, double val) {
 		return null;
 	}
-	public Object setTextDirection(Object stg, String val) {
+	public static Object setTextDirection(Object stg, String val) {
 		return null;
 	}
-	public int getNumLines(Object stg) {
+	public static int getNumLines(Object stg) {
 		return 0;
 	}
-	public int getCursorPosition(Object stg) {
+	public static int getCursorPosition(Object stg) {
 		return 0;
 	}
-	public boolean getFocus(Object stg) {
+	public static boolean getFocus(Object stg) {
 		return false;
 	}
-	public Object setFocus(Object stg, boolean val) {
+	public static Object setFocus(Object stg, boolean val) {
 		return null;
 	}
-	public String getContent(Object stg) {
+	public static String getContent(Object stg) {
 		return null;
 	}
-	public Object setMultiline(Object stg, boolean val) {
+	public static Object setMultiline(Object stg, boolean val) {
 		return null;
 	}
-	public Object setWordWrap(Object stg, boolean val) {
+	public static Object setWordWrap(Object stg, boolean val) {
 		return null;
 	}
-	public Object setReadOnly(Object stg, boolean val) {
+	public static Object setReadOnly(Object stg, boolean val) {
 		return null;
 	}
-	public Object setAutoAlign(Object stg, String val) {
+	public static Object setAutoAlign(Object stg, String val) {
 		return null;
 	}
-	public Object setTabIndex(Object stg, int val) {
+	public static Object setTabIndex(Object stg, int val) {
 		return null;
 	}
-	public int getScrollV(Object stg) {
+	public static int getScrollV(Object stg) {
 		return 0;
 	}
-	public int getBottomScrollV(Object stg) {
+	public static int getBottomScrollV(Object stg) {
 		return 0;
 	}
-	public Object setScrollV(Object stg, int val) {
+	public static Object setScrollV(Object stg, int val) {
 		return null;
 	}
-	public Object setMaxChars(Object stg, int val) {
+	public static Object setMaxChars(Object stg, int val) {
 		return null;
 	}
-	public Object[] getTextMetrics(Object stg) {
+	public static Object[] getTextMetrics(Object stg) {
 		return new Object[] { 0.0, 0.0, 0.0 };
 	}
-	public int getSelectionStart(Object stg) {
+	public static int getSelectionStart(Object stg) {
 		return 0;
 	}
-	public int getSelectionEnd(Object stg) {
+	public static int getSelectionEnd(Object stg) {
 		return 0;
 	}
-	public Object setSelection(Object stg, int start, int end) {
+	public static Object setSelection(Object stg, int start, int end) {
 		return null;
 	}
-	public Object makeVideo(Func2<Object,Double,Double> mfn, Func1<Object, Boolean> pfn, Func1<Object, Double> dfn, Func1<Object, Double> posfn) {
+	public static Object makeVideo(Func2<Object,Double,Double> mfn, Func1<Object, Boolean> pfn, Func1<Object, Double> dfn, Func1<Object, Double> posfn) {
 		return null;
 	}
-	public Object pauseVideo(Object stg) {
+	public static Object pauseVideo(Object stg) {
 		return null;
 	}
-	public Object resumeVideo(Object stg) {
+	public static Object resumeVideo(Object stg) {
 		return null;
 	}
-	public Object closeVideo(Object stg) {
+	public static Object closeVideo(Object stg) {
 		return null;
 	}
-	public Object playVideo(Object obj, String name, boolean pause) {
+	public static Object playVideo(Object obj, String name, boolean pause) {
 		return null;
 	}
-	public double getVideoPosition(Object stg) {
+	public static double getVideoPosition(Object stg) {
 		return 0;
 	}
-	public Object seekVideo(Object stg, double val) {
+	public static Object seekVideo(Object stg, double val) {
 		return null;
 	}
-	public Object setVideoVolume(Object stg, double val) {
+	public static Object setVideoVolume(Object stg, double val) {
 		return null;
 	}
-	public Object setVideoLooping(Object stg, boolean val) {
+	public static Object setVideoLooping(Object stg, boolean val) {
 		return null;
 	}
-	public Object setVideoControls(Object stg, Object[] info) {
+	public static Object setVideoControls(Object stg, Object[] info) {
 		return null;
 	}
-	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+	public static Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour, double backgroundOpacity, boolean alignBottom,
 								  double bottomBorder, boolean scaleMode, double scaleModeMin, double scaleModeMax, boolean escapeHTML) {
 		return null;
 	}
-	public Object setVideoPlaybackRate(Object tf, Double rate) {
+	public static Object setVideoPlaybackRate(Object tf, Double rate) {
 		return null;
 	}
-	public Func0<Object> addStreamStatusListener(Object vid, Func1<Object,String> cb) {
+	public static Func0<Object> addStreamStatusListener(Object vid, Func1<Object,String> cb) {
 		return null;
 	}
-	public boolean isFullScreen() {
+	public static boolean isFullScreen() {
 		return false;
 	}
-	public Object toggleFullScreen(Boolean fs) {
+	public static Object toggleFullScreen(Boolean fs) {
 		return null;
 	}
-	public Object toggleFullWindow(Boolean fs) {
+	public static Object toggleFullWindow(Boolean fs) {
 		return null;
 	}
-	public Func0<Object> onFullScreen(Func1<Object,Boolean> cb) {
+	public static Func0<Object> onFullScreen(Func1<Object,Boolean> cb) {
 		return null;
 	}
-	public Object setFullScreen(Boolean fs) {
+	public static Object setFullScreen(Boolean fs) {
 		return null;
 	}
-	public Object setFullWindowTarget(Object stg) {
+	public static Object setFullWindowTarget(Object stg) {
 		return null;
 	}
-	public Object resetFullWindowTarget() {
+	public static Object resetFullWindowTarget() {
 		return null;
 	}
-	public Object setFullScreenRectangle(double x, double y, double w, double h) {
+	public static Object setFullScreenRectangle(double x, double y, double w, double h) {
 		return null;
 	}
-	public Object makeBevel(double a,double b,double c,double d,int e,double f,int g,double h,boolean i) {
+	public static Object makeBevel(double a,double b,double c,double d,int e,double f,int g,double h,boolean i) {
 		return null;
 	}
-	public Object makeDropShadow(double a1,double a2,double a3,double a4,int a5,double a6,boolean a7) {
+	public static Object makeDropShadow(double a1,double a2,double a3,double a4,int a5,double a6,boolean a7) {
 		return null;
 	}
-	public Object makeBlur(double a,double b) {
+	public static Object makeBlur(double a,double b) {
 		return null;
 	}
-	public Object makeBackdropBlur(double a) {
+	public static Object makeBackdropBlur(double a) {
 		return null;
 	}
-	public Object makeGlow(double a,double b,int c, double d,boolean e) {
+	public static Object makeGlow(double a,double b,int c, double d,boolean e) {
 		return null;
 	}
-	public Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt) {
+	public static Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt) {
 		return null;
 	}
-	public Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {
+	public static Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {
 		return null;
 	}
-	public Object startRecord(Object cm,String a,String o) {
+	public static Object startRecord(Object cm,String a,String o) {
 		return null;
 	}
-	public Object stopRecord(Object cm) {
+	public static Object stopRecord(Object cm) {
 		return null;
 	}
-	public Object getGraphics(Object clip) {
+	public static Object getGraphics(Object clip) {
 		return null;
 	}
-	public Object beginFill(Object gr,int c,double a) {
+	public static Object beginFill(Object gr,int c,double a) {
 		return null;
 	}
-	public Object setLineStyle(Object gr,double a,int o,double e) {
+	public static Object setLineStyle(Object gr,double a,int o,double e) {
 		return null;
 	}
-	public Object setLineStyle2(Object gr,double a,int o,double e, boolean b) {
+	public static Object setLineStyle2(Object gr,double a,int o,double e, boolean b) {
 		return null;
 	}
-	public Object makeMatrix(double a,double o,double e,double u,double i) {
+	public static Object makeMatrix(double a,double o,double e,double u,double i) {
 		return null;
 	}
-	public Object beginGradientFill(Object gr,Object[] a,Object[] o,Object[] e,Object u,String i) {
+	public static Object beginGradientFill(Object gr,Object[] a,Object[] o,Object[] e,Object u,String i) {
 		return null;
 	}
-	public Object setLineGradientStroke(Object gr,Object[] a,Object[] o,Object[] e,Object u) {
+	public static Object setLineGradientStroke(Object gr,Object[] a,Object[] o,Object[] e,Object u) {
 		return null;
 	}
-	public Object moveTo(Object gr,double x,double y) {
+	public static Object moveTo(Object gr,double x,double y) {
 		return null;
 	}
-	public Object lineTo(Object gr,double x,double y) {
+	public static Object lineTo(Object gr,double x,double y) {
 		return null;
 	}
-	public Object curveTo(Object gr,double x,double y,double cx, double cy) {
+	public static Object curveTo(Object gr,double x,double y,double cx, double cy) {
 		return null;
 	}
-	public Object endFill(Object gr) {
-		return null;
-	}
-
-	public Object cameraTakePhoto(int cameraId, String additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, String fileName, int fitMode) {
+	public static Object endFill(Object gr) {
 		return null;
 	}
 
-	public Object cameraTakeVideo(int cameraId, String additionalInfo, int duration, int size, int quality, String fileName) {
+	public static Object cameraTakePhoto(int cameraId, String additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, String fileName, int fitMode) {
 		return null;
 	}
-    public Integer getNumberOfCameras() {
+
+	public static Object cameraTakeVideo(int cameraId, String additionalInfo, int duration, int size, int quality, String fileName) {
+		return null;
+	}
+    public static Integer getNumberOfCameras() {
 	return -1;
     }
-    public Object makeShader(Object[] vertex, Object[] fragment, Object[] uniform) {
+    public static Object makeShader(Object[] vertex, Object[] fragment, Object[] uniform) {
     	 return null;
     }
-    public Object setClipViewBounds(Object cl, double minX, double minY, double maxX, double maxY) {
+    public static Object setClipViewBounds(Object cl, double minX, double minY, double maxX, double maxY) {
     	return null;
     }
-    public String getVideoCurrentFrame(Object cl) {
+    public static String getVideoCurrentFrame(Object cl) {
     	return "";
     }
 
-    public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
+    public static Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
     	return no_op;
     }
-	public Object playVideoFromMediaStream(Object clip, Object stream, Boolean startPaused) {
+	public static Object playVideoFromMediaStream(Object clip, Object stream, Boolean startPaused) {
 		return null;
 	}
-	public Object compareImages(String image1, String image2, Func1<Object, String> cb) {
+	public static Object compareImages(String image1, String image2, Func1<Object, String> cb) {
 		return null;
 	}
 
-	public Func0<Object> addUrlHashListener(Func1<Object,String> cb) {
+	public static Func0<Object> addUrlHashListener(Func1<Object,String> cb) {
 		return no_op;
 	}
 
-	public Object takeSnapshot(String path) {
+	public static Object takeSnapshot(String path) {
 		return null;
 	}
 }

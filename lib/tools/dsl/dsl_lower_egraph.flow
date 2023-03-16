@@ -1,0 +1,97 @@
+import tools/dsl/registry/dsl_registry;
+import tools/dsl/registry/dsl_specification;
+import tools/dsl/dsl_match_egraph;
+import tools/dsl/registry/dsl_run;
+import tools/dsl/dsl_rules;
+import tools/dsl/dsl_rightside;
+
+export {
+	// Does a bottom-up visit of the e-graph, visiting the nodes that
+	// match the language suffix, and then applying those nodes with the
+	// result of their children
+	lowerDslEGraph(e : DslAstEnv, eclass : int,
+		specification : DslLanguage,
+		lowering : DslLowering,
+	) -> Maybe<DslAst>;
+}
+
+lowerDslEGraph(env : DslAstEnv, eclass : int, 
+	specification : DslLanguage,
+	lowering : DslLowering,
+) -> Maybe<DslAst> {
+	e = env.egraph;
+	root = getDslEClassRoot(e, eclass);
+	nodes = getDslEClassNodes(e, root);
+	matching = set2array(filterSet(nodes, \n -> matchDslSpecification(n.language, specification)));
+	if (matching == []) None()
+	else {
+		if (length(matching) > 1) {
+			println("We have more nodes than one");
+		}
+		resultLanguage = resultDslTransformation(matching[0].language, specification);
+
+		best : Maybe<DslAst> = fold(matching, None(), \acc, preferred : DslENode -> {
+			children = filtermap(preferred.args, \childClass -> {
+				lowerDslEGraph(env, childClass, specification, lowering)
+			});
+			if (length(children) != length(preferred.args)) {
+				println("ERROR: Expected more children in lowering");
+				acc
+			} else {
+				term = combineDslAst(preferred.value, children);
+				// println("e" + i2s(eclass) + " is combined to " + prettyDsl(term));
+
+				result = lowerDslENode(env, specification, resultLanguage, lowering, root, preferred, term);
+				switch (result) {
+					None(): if (acc == None()) Some(term) else None();
+					Some(new): result
+				}
+			}
+		});
+
+		switch (best) {
+			None(): {
+				// OK, we have to just lower it immediately
+				node = matching[0];
+				// println("No rewrite for e" + i2s(eclass) + " " + prettyDsl(node.value));
+
+				newENode = DslENode(node with language = resultLanguage);
+				newEclass = addDslENode(env.egraph, newENode);
+				unionDslEClass(env.egraph, eclass, newEclass);
+				Some(node.value);
+			}
+			Some(new): {
+				//println("e" + i2s(eclass) + " is rewritten " + prettyDsl(new));
+				newEClass = addDslAst(env.egraph, resultLanguage, new);
+				unionDslEClass(env.egraph, eclass, newEClass);
+				best;
+			}
+		}
+	}
+}
+
+// OK, we know this node is the right language. Process it
+lowerDslENode(e : DslAstEnv, specification : DslLanguage, resultLanguage : DslLanguage, 
+			lowering : DslLowering, eclass : int, node : DslENode, term : DslAst) -> Maybe<DslAst> {
+	foldList(lowering.replacements, None(), \acc, r : DslReplacement -> {
+		res = lowerDslENodeWithReplacement(e, specification, resultLanguage, lowering.toLanguage, r, eclass, term);
+		res ?? Some(res) : acc;
+	});
+}
+
+lowerDslENodeWithReplacement(e : DslAstEnv, specification : DslLanguage, resultLanguage : DslLanguage, 
+		toLanguage : DslLanguage, replacement : DslReplacement, eclass : int, term : DslAst) -> Maybe<DslAst> {
+	acc = DslENodeMatch(makeTree(), false);
+	bindings = dslENodeMatch(acc, term, replacement.pattern);
+	if (!bindings.fail) {
+		result = evalDslRightSide(e, bindings.bindings, specification, toLanguage, replacement.replacement);
+
+		if (isDslTracing(specification, "desugar")) {
+			println("This term " + prettyDsl(term) + " against " + prettyDsl(replacement.pattern));
+			println("gives " + prettyDsl(result));
+		}
+		Some(result);
+	} else {
+		None()
+	}
+}

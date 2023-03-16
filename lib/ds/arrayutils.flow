@@ -118,6 +118,8 @@ export {
 	maybeArrayPush : (array : [?], value : Maybe<?>) -> [?];
 	maybeArrayPushMany : (array : [?], values : [Maybe<?>]) -> [?];
 
+	ifArrayReverse(array : [?], cond : bool) -> [?];
+
 	// Selects array elements based on the given indexes
 	reorderArray(a : [?], indexes : [int]) -> [?];
 
@@ -131,13 +133,21 @@ export {
 
 	// map while fn returns something
 	mapM(xs : [?], fn : (?) -> Maybe<??>) -> Maybe<[??]>;
-	mapiM(xs : [?], fn : (int, ?) -> Maybe<??>) -> Maybe<[??]>;
+	native mapiM : (xs : [?], fn : (int, ?) -> Maybe<??>) -> Maybe<[??]> = Native.mapiM;
 	// fold while fn returns something
 	foldM(xs : [?], init : ??, fn : (??, ?) -> Maybe<??>) -> Maybe<??>;
 	foldiM(xs : [?], init : ??, fn : (int, ??, ?) -> Maybe<??>) -> Maybe<??>;
 
 	// Removes the last element of the array. O(n)
 	removeLastElement(a : [?]) -> [?];
+
+	// Split array into m arrays, lentghs of which differ by at most one.
+	// Example: splitModulo([1,2,3,4,5], 3) = [[1, 4], [2, 5], [3]]
+	splitModulo(a : [?], m : int) -> [[?]];
+
+	// Iverse operation to 'splitModulo' - gathers the initial array back.
+	// Example: concatAModulo([[1, 4], [2, 5], [3]]) = [1,2,3,4,5]
+	concatAModulo(a : [[?]]) -> [?];
 }
 
 // Removes elements from a that are equal to elements of b.
@@ -234,13 +244,11 @@ foldiAsync(xs : [?], init : ??, fn : (int, ??, ?, (??) -> void, (???) -> void) -
 }
 
 foldiAsync2(xs : [?], i : int, acc : ??, fn : (int, ??, ?, (??) -> void, (???) -> void) -> void, onOK : (??) -> void, onError : (???) -> void) -> void {
-	if (xs == []) {
+	if (i == length(xs)) {
 		onOK(acc)
 	} else {
-		x = xs[0];
-		t = tail(xs);
-		fn(i, acc, x, \acc2 -> {
-			foldiAsync2(t, i + 1, acc2, fn, onOK, onError)
+		fn(i, acc, xs[i], \acc2 -> {
+			foldiAsync2(xs, i + 1, acc2, fn, onOK, onError)
 		}, onError)
 	}
 }
@@ -278,15 +286,11 @@ mapAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?]
 }
 
 iterAsync(xs : [?], fn : (?, () -> void, (??) -> void) -> void, onOK : () -> void, onError : (??) -> void) -> void {
-	foldAsync(xs, 0, \acc, x, onOKFn, onErrorFn -> {
-		fn(x, \-> onOKFn(acc), onErrorFn)
-	}, \__ -> onOK(), onError)
+	mapAsync(xs, \x, onOKFn, onErrorFn -> fn(x, \ -> onOKFn(x), onErrorFn), \__ -> onOK(), onError)
 }
 
 iteriAsync(xs : [?], fn : (int, ?, () -> void, (??) -> void) -> void, onOK : () -> void, onError : (??) -> void) -> void {
-	foldiAsync(xs, 0, \i, acc, x, onOKFn, onErrorFn -> {
-		fn(i, x, \-> onOKFn(acc), onErrorFn)
-	}, \__ -> onOK(), onError)
+	mapiAsync(xs, \i, x, onOKFn, onErrorFn -> fn(i, x, \ -> onOKFn(x), onErrorFn), \__ -> onOK(), onError)
 }
 
 iterAsyncParallelChunked(xs : [?], chunkSize : int, simultaneous : int, fn : ([?], () -> void, (???) -> void) -> void, fulfill : () -> void, reject : (???) -> void) -> void {
@@ -333,7 +337,7 @@ padArray(xs : [?], pad : ?, i : int) -> [?] {
 }
 
 isIncreasingArray(xs : [?], gt : (?, ?) -> bool) -> bool {
-	fold(enumFromTo(1, length(xs) - 1), true, \p, i -> {
+	foldRange(1, length(xs) - 1, true, \p, i -> {
 		p && gt(xs[i], xs[i - 1])
 	});
 }
@@ -353,7 +357,7 @@ zipFold(left : [?], right : [??], acc : ???, fallback : () -> ???, f : (???, ?, 
 	l2 = length(right);
 
 	if (l1 == l2) {
-		fold(enumFromTo(0, l1 - 1), acc, \acc1, i->f(acc1, left[i], right[i]))
+		foldRange(0, l1 - 1, acc, \acc1, i->f(acc1, left[i], right[i]))
 	} else {
 		fallback()
 	}
@@ -364,9 +368,9 @@ zipFoldShorter(left : [?], right : [??], acc : ???, f : (???, ?, ??) -> ???) -> 
 	l2 = length(right);
 
 	if (l1 <= l2) {
-		fold(enumFromTo(0, l1 - 1), acc, \acc1, i -> f(acc1, left[i], right[i]))
+		foldRange(0, l1 - 1, acc, \acc1, i -> f(acc1, left[i], right[i]))
 	} else {
-		fold(enumFromTo(0, l2 - 1), acc, \acc1, i -> f(acc1, left[i], right[i]))
+		foldRange(0, l2 - 1, acc, \acc1, i -> f(acc1, left[i], right[i]))
 	}
 }
 
@@ -450,6 +454,10 @@ maybeArrayPushMany(array : [?], values : [Maybe<?>]) -> [?] {
 	concat(array, filtermap(values, idfn));
 }
 
+ifArrayReverse(array : [?], cond : bool) -> [?] {
+	if (cond) reverseA(array) else array
+}
+
 reorderArray(a : [?], indexes : [int]) -> [?] {
 	l = fold(indexes, makeList(), \acc, index -> {
 		if (existsIndex(a, index)) {
@@ -486,11 +494,16 @@ removeLastElement(a : [?]) -> [?] {
 }
 
 mapM(xs : [?], fn : (?) -> Maybe<??>) -> Maybe<[??]> {
-	fold(xs, Some([]), \accM : Maybe<[??]>, x : ? -> maybeBind(accM, \acc : [??] -> maybeMap(fn(x), \y -> arrayPush(acc, y))));
+	mapiM(xs, \__, x -> fn(x));
 }
 
 mapiM(xs : [?], fn : (int, ?) -> Maybe<??>) -> Maybe<[??]> {
-	foldi(xs, Some([]), \i, accM : Maybe<[??]>, x : ? -> maybeBind(accM, \acc : [??] -> maybeMap(fn(i, x), \y -> arrayPush(acc, y))));
+	results = filtermapi(xs, fn);
+	if (length(results) == length(xs)) {
+		Some(results);
+	} else {
+		None();
+	}
 }
 
 foldM(xs : [?], init : ??, fn : (??, ?) -> Maybe<??>) -> Maybe<??> {
@@ -499,4 +512,22 @@ foldM(xs : [?], init : ??, fn : (??, ?) -> Maybe<??>) -> Maybe<??> {
 
 foldiM(xs : [?], init : ??, fn : (int, ??, ?) -> Maybe<??>) -> Maybe<??> {
 	foldi(xs, Some(init), \i, accM : Maybe<??>, x : ? -> maybeBind(accM, \acc : ?? -> fn(i, acc, x)));
+}
+
+splitModulo(a : [?], m : int) -> [[?]] {
+	n = length(a) / m;
+	rest = length(a) % m;
+	generate(0, m, \i ->
+		generate(0, if (i < rest) n + 1 else n, \j ->
+			a[j * m + i]
+		)
+	);
+}
+
+concatAModulo(a : [[?]]) -> [?] {
+	m = length(a);
+	len = fold(a, 0, \acc, x -> acc + length(x));
+	generate(0, len, \i ->
+		a[i % m][i / m]
+	);
 }

@@ -1,4 +1,3 @@
-import material/internal/material_grid;
 import material/internal/material_list_util;
 
 export {
@@ -7,7 +6,10 @@ export {
 }
 
 MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
+	style : [MListStyle] = m.style;
+	mstate : [flow] = m.state;
+	stateList : [flow] = concat(m.style, mstate);
+	state = makeMListInnerState(defaultListState(manager, parent, m2t), stateList);
 
 	down = make(false);
 	MComponentGroup2T(
@@ -24,27 +26,37 @@ MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Mater
 				state.reorder,
 				\rdr -> {
 					reorderState = concatA([
-						[MEnabled(fminA([state.enabled, rdr.enabled, fnot(down)], false)), MWrapNewColumn(true)],
+						[
+							MEnabled(fminA([state.enabled, rdr.enabled, fnot(down)], false)),
+							MWrapNewColumn(true),
+							MDragLowestPriority()
+						],
 						extractStructMany(m.state, MGrabDelay(0)),
 						extractStructMany(m.state, MReorderDropSpot(MEmpty())),
 						extractStructMany(m.state, MReorderCustomDraggingOrder()),
+						extractStructMany(m.state, MReorderOnDragEnd())
 					]);
 
 					MReorderGrid2T(
 						manager,
 						p2,
-						mapi(m.lines, \i, line -> MReorderItem(MGetFocusGroup(\par -> MListLine2T(par, const(i), const(line), state, down)), [])),
+						mapi(m.lines, \i, line -> MReorderItem(MGetFocusGroup(\par -> MListLine2T(par, const(i), const(line), state, down, true)), [])),
 						rdr.order,
 						reorderState,
 						m2t
 					)
 				},
-				\ ->
-					TLines(mapi(m.lines, \i, line -> MListLine2T(p2, const(i), const(line), state, down)))
+				\ -> {
+					listHeight = make(0.);
+
+					TLines(mapi(m.lines, \i, line -> MListLine2T(p2, const(i), const(line), state, down, false)))
+					|> (\t -> TAttachHeight(t, listHeight)) 
+					|> TSetMinHeight2(listHeight)
+				}
 			))
 			|> (\f : Material ->
 				eitherMap(
-					tryExtractStruct(m.style, MAddScroll(None())),
+					tryExtractStruct(style, MAddScroll(None())),
 					\addScroll -> {
 						scrl = either(addScroll.scrollInpect, TScrollInspectVisible(make(zeroPoint), make(WidthHeight(-1., -1.))));
 						wh = getValue(scrl.widthHeight);
@@ -77,14 +89,16 @@ MDynamicListItem(
 );
 
 MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-
-	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
+	mstate : [flow] = m.state;
+	stateList : [flow] = concat(m.style, mstate);
+	state = makeMListInnerState(defaultListState(manager, parent, m2t), stateList);
 	scrollPosition : TScrollPosition = extractStruct(m.state, MScrollPosition(make(zeroPoint)));
 	addScroll = !contains(m.state, MNoScroll());
 
 	boxH = make(0.);
 	availableW = make(0.);
 	hgt = make(0.);
+	listMinHeight = make(0.);
 
 	down = make(false);
 	draggingItem = make(-1);
@@ -177,6 +191,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 	hasItems = fselect(itemsLength, FLift(\il -> il > 0));
 
 	translates : DynamicBehaviour<[DynamicBehaviour<MDynamicListItem>]> = make([]);
+	mainHoverTrigger = make(false);
 
 	(\par ->
 		MGetFocusGroup(\p ->
@@ -198,19 +213,19 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 							itemId
 						);
 
-					lineContent =
+					lineContent : Transform<MListLine> =
 						fselect2(items, lineId, FLift2(\itms, i ->
 							elementAt(itms, i, dummySingleLine())
 						));
 
-					MListLine2T(p, lineId, lineContent, state, down)
+					MListLine2T(p, lineId, lineContent, state, down, true)
 					|> (\line -> TAttachHeightTrigger(line, lineHeight, fnot(sameHeight)))
 					|> (\t -> TConstruct(
 							[
 								make2SubscribeTrigger(fnot(sameHeight), lineHeight, lineId, \hg, i -> {
 									dispUnsM(hgtUns);
 									itemHgt : DynamicBehaviour<Maybe<double>> = itemsHeights(i);
-									hgFn = \ -> nextDistinct(itemHgt, Some(hg));
+									hgFn = \ -> nextDistinct(itemHgt, Some(hg + state.gap));
 
 									if (^metricsLock)
 										setUnsM(
@@ -237,39 +252,57 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 									grabDelay = extractStruct(m.state, MGrabDelay(300)).delay;
 
 									TVisible(fselect2(draggingItem, lineId, FLift2(\dr, ln -> dr != ln)), listLine)
-									|> (\listLineVisible ->
-										TCopySize(
+									|> (\listLineVisible -> {
+										above = fselectLift(lineContent, \lc -> 
+											switch (lc : MListLine) {
+												MSingleLine(__, state0): contains(state0, MInteractionsOnTop());
+												MDoubleLine(__, __, state0): contains(state0, MInteractionsOnTop());
+												MTripleLine(__, __, state0): contains(state0, MInteractionsOnTop());
+												MCustomLine(__, state0): contains(state0, MInteractionsOnTop());
+												MSubmenuLine(__, __, __, __): false;
+												MSeparatorLine(): false;
+											}
+										);
+
+										TCopySize2(
 											listLineVisible,
-											\trop ->
-												MComponent2T(
-													manager,
-													p,
-													"MDynamicListDragDropHandle",
-													[
-														MFocusEnabled(const(false)),
-														MClickEnabled(rdr.enabled),
-														THovering(hover),
-														TPressed(rdrdown),
-														MMousePosition(point),
-														MOnTouch(grabDelay, \ -> {
-															if (!getValue(down)) {
-																nextDistinct(draggingXY, getValue(point));
-																nextDistinct(draggingItem, fgetValue(lineId));
-															}
-														}),
-														MCursorShape(const(DefaultCursor())),
-														MPassClicks(),
-														MMobileForceHover()
-													],
-													\__ -> trop,
-													m2t
-												),
-											true
+											\sz, trop -> {
+												dragDropHandleLayer =
+													MComponent2T(
+														manager,
+														p,
+														"MDynamicListDragDropHandle",
+														[
+															MFocusEnabled(const(false)),
+															MClickEnabled(rdr.enabled),
+															THovering(hover),
+															TPressed(rdrdown),
+															MMousePosition(point),
+															MOnTouch(grabDelay, \ -> {
+																if (!getValue(down)) {
+																	nextDistinct(draggingXY, getValue(point));
+																	nextDistinct(draggingItem, fgetValue(lineId));
+																}
+															}),
+															MCursorShape(const(if (mobile) FingerCursor() else DefaultCursor())),
+															MPassClicks(),
+															MMobileForceHover(),
+															AccessRole("")
+														],
+														\__ -> sz,
+														m2t
+													);
+												TGroup([
+													TShow(fnot(above), dragDropHandleLayer),
+													trop,
+													TShow(above, dragDropHandleLayer)
+												])
+											}
 										)
-									)
+									})
 									|> (\listLineVisible ->
 										TConstruct(
-											[
+											concat([
 												make2Subscribe(hover, fif(rdr.enabled, draggingItem, const(-1)), \h, hId -> if (h && hId >= 0) {
 													id = fgetValue(lineId);
 													ordr = fgetValue(rdr.order);
@@ -280,10 +313,15 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 													);
 												}),
 												makeSubscribe2(fand(rdr.enabled, rdrdown), \d ->
-													if (!d)
-														nextDistinct(draggingItem, -1)
+													if (!d) {
+														nextDistinct(draggingItem, -1);
+														nextDistinct(mainHoverTrigger, false);
+													}
 												)
-											],
+											], if (mobile) [
+												makeSubscribe2(hover, \h -> if (h) nextDistinct(mainHoverTrigger, true)),
+												makeSubscribe2(mainHoverTrigger, \mh -> if (!mh) nextDistinct(hover, false))
+											] else []),
 											listLineVisible
 										)
 									)
@@ -567,29 +605,26 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 			manager,
 			parent,
 			"MDynamicList",
-			concat(
+			concatA([
 				[
 					IScriptBehaviour("selected", state.selection.selected, ISInputValue([], "[int]", true)),
-					AccessRole(if (isSome(state.reorder)) "listbox" else "list")
+					AccessRole(if (isSome(state.reorder)) "listbox" else "list"),
 				],
-				// |> (\st ->
-				// 	eitherMap(
-				// 		state.reorder,
-				// 		\rdr -> {
-				// 			arrayPush(st, IScriptBehaviour("order", rdr.order, ISInputValue([], "[int]", true)));
-				// 		},
-				// 		st
-				// 	)
-				// ),
+				eitherMap(
+					tryExtractStruct(m.state, MButtonTitle(const(""))),
+					\bt -> [FAccessAttribute("aria-label", bt.title)],
+					[]
+				),
 				extractStructMany(m.state, IScriptRecordingEnabled(const(true)))
-			),
+			]),
 			f
 		)
 	)
 	|> (\f ->
 		eitherMap(
 			state.reorder,
-			\rdr ->
+			\rdr -> {
+				posScaleB = make(zeroPositionScale);
 				TConstruct(
 					[
 						makeSubscribe2Uns(fif(rdr.enabled, draggingItem, const(-1)), \dr ->
@@ -598,9 +633,10 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 
 								[
 									(\par ->
-										MListLine2T(par, const(dr), const(fgetValue(items)[dr]), state, down)
+										MListLine2T(par, const(dr), const(fgetValue(items)[dr]), state, down, true)
+										|> (\t -> TScale(fselect(posScaleB, FLift(\ps -> Factor(ps.scale.x, ps.scale.y))), t)) 
 										|> (\t -> TAvailableWidth(t, availableW))
-										|> (\t -> MGrabAnimation(state.manager, par, t))
+										|> (\t -> MGrabAnimation(state.manager, par, t, Some(getValue(draggingXY))))
 									)
 									|> (\fn -> MComponentGroup2T(manager, parent, "MDynamicListDraggable", [], fn))
 									|> (\t -> TTranslate(
@@ -615,12 +651,16 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 						)
 					],
 					f
-				),
+				)
+				|> (\t -> TPositionScale(posScaleB, t))
+			},
 			f
 		)
 	)
 	|> (\f -> TAttachWidth(f, availableW))
+	|> (\f -> TInspect([IMinHeight(listMinHeight)], f))
 	|> (\f -> TAttachAvailableHeight(f, boxH))
+	|> (\f -> TOverride([OMinHeight(listMinHeight)], f))
 	|> MListAddAvailable(state)
 }
 

@@ -103,7 +103,7 @@ switchTransform(tr : Transform<?>, fn : (b : Behaviour<?>) -> Form) -> Form {
 	}
 }
 
-switchTransform2(tr : Transform<?>, convertFn : (?) -> (??), fn : (b : Behaviour<??>) -> Form) -> Form {
+switchTransform2(tr : Transform<?>, convertFn : (?) -> ??, fn : (b : Behaviour<??>) -> Form) -> Form {
 	switch (tr) {
 		ConstBehaviour(__) : fn(const(convertFn(fgetValue(tr))));
 		default: {
@@ -193,13 +193,13 @@ fform2form(fform : FForm) -> Form {
 		FConstructor(form, fn) : Constructor(fform2form(form), fn);
 		FCreate2(current, fn) : Create2(ref fform2form(^current), \ -> fform2form(fn()));
 		FFullWindow(fullscreen, available, form) : FullWindow(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
-		FFullScreen(fullscreen, available, form) : FullScreen(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
+		FFullScreen2(fullscreen, available, form, __) : FullScreen(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
 		FBaseline(b, form) : Baseline(b, fform2form(form));
 		FSize2(s, form) : Size2(s, fform2form(form));
 		FAvailable2(a, form) : Available2(a, fform2form(form));
 		FAccess(prop, form) : FAccessProperties2AccessProperties(prop) |> (\f -> Constructor(Access(f.first, fform2form(form)), f.second));
 		FSetPending(setpending, form) : switchTransform(setpending, \sp -> SetPending(sp, fform2form(form)));
-		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, style));
+		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, FRealHTMLStyle2RealHTMLStyle(style)));
 		FMForm(form) : form;
 		FDynamicGroup2(__, __, __) : FDynamicGroup2DynamicGroup(fform) |> (\f -> Constructor(f.first, f.second));
 		FVideo(__, __, __) : FVideo2Video(fform) |> (\f -> Constructor(f.first, f.second));
@@ -209,6 +209,15 @@ fform2form(fform : FForm) -> Form {
 		FAnimation(content, __, __) : fform2form(content); // TODO:
 		FOrigin(origin, form) : fform2form(form); // TODO:
 	}
+}
+
+FRealHTMLStyle2RealHTMLStyle(style : [FRealHTMLStyle]) -> [RealHTMLStyle] {
+	filtermap(style, \st -> 
+		switch (st) {
+			RealHTMLStyle(): cast(Some(st) : Some<FRealHTMLStyle> -> Maybe<RealHTMLStyle>);
+			default: None();
+		}
+	)
 }
 
 form2fform(_form : Form) -> FForm {
@@ -267,6 +276,7 @@ AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty]
 			AccessEnabled(enabled) : arrayPush(acc, FAccessEnabled(enabled));
 			AccessCallback(__) : arrayPush(acc, p);
 			AccessAttribute(name, value) : arrayPush(acc, FAccessAttribute(name, value));
+			AccessStyle(name, value) : arrayPush(acc, FAccessStyle(name, value));
 			AccessDescription(__) : arrayPush(acc, p);
 			AccessKbdShortcutString(__) : arrayPush(acc, p);
 			AccessTabOrder(tabOrder) : arrayPush(acc, FAccessTabOrder(tabOrder));
@@ -276,6 +286,7 @@ AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty]
 			AccessZorder(zOrder) : arrayPush(acc, FAccessZorder(zOrder));
 			TagName(__) : arrayPush(acc, p);
 			LangAttribute(__) : arrayPush(acc, p);
+			AccessForceMakeClip(__) : arrayPush(acc, p);
 		}
 	)
 }
@@ -345,6 +356,14 @@ FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProp
 					arrayPush(secondOfPair(acc), makeSubscribe2(value, \v -> nextDistinct(valueB, v)))
 				);
 			}
+			FAccessStyle(name, value) : {
+				valueB = make(fgetValue(value));
+
+				Pair(
+					arrayPush(firstOfPair(acc), AccessStyle(name, valueB)),
+					arrayPush(secondOfPair(acc), makeSubscribe2(value, \v -> nextDistinct(valueB, v)))
+				);
+			}
 			FAccessTabOrder(tabOrder) : {
 				tabOrderB = make(fgetValue(tabOrder));
 
@@ -373,8 +392,20 @@ FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProp
 			LangAttribute(__): {
 				acc;
 			}
-			FAccessStyle(name, value) : {
+			FAccessProtected() : {
 				acc;
+			}
+			FAccessHidden() : {
+				Pair(
+					arrayPush(firstOfPair(acc), AccessAttribute("aria-hidden", const("true"))),
+					secondOfPair(acc)
+				)
+			}
+			AccessForceMakeClip(__) : {
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
 			}
 		}
 	)
@@ -667,7 +698,7 @@ TextInput2FTextInput(textInput : TextInput) -> Pair<FTextInput, () -> () -> void
 FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> void> {
 	state = make([]);
 	content = ftextInput.content;
-	textSize = ftextInput.wh;
+	textSize = make(fgetValue(ftextInput.wh));
 	charStyle = style2characterStyle(ftextInput.style);
 	autoAlign = extractStruct(ftextInput.style, FAutoAlign(const(AutoAlignLeft()))).align;
 	multiline = extractStruct(ftextInput.style, FMultiline(const(false))).multiline;
@@ -704,7 +735,7 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 		nextDistinct(content, model.content);
 		nextDistinct(textSize, WidthHeight(model.width, model.height));
 		nextDistinct(position, model.cursorPosition);
-		nextDistinct(selection, model.selection.end);
+		nextDistinct(selection, if (model.selection.end == model.selection.start) model.cursorPosition else model.selection.end);
 		nextDistinct(focused, model.focus);
 		nextDistinct(scrollInfo, either(model.scrollinfo, ScrollInfo(-1, -1, -1)));
 	}
@@ -724,6 +755,7 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 		),
 		\ -> {
 			disp = [
+				fconnect(ftextInput.wh, textSize),
 				makeSubscribe(content, \__ -> stateFn())(),
 				makeSubscribe(textSize, \__ -> stateFn())(),
 				makeSubscribe(autoAlign, \__ -> stateFn())(),
@@ -744,6 +776,7 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 
 FParagraphStyle2FTextStyle(style : [FParagraphStyle]) -> [FTextStyle] {
 	filtermap(style, \s -> switch (s) {
+		Underlined(__) : None();
 		FTextStyle() : {a : Maybe<FTextStyle> = Some(s); a}
 		default : None()
 	})
@@ -886,6 +919,7 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 					StrokeOpacity(opacity): strokeopacity := opacity;
 					StrokeWidth(width): strokewidth := width;
 					StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+					UseSvg() : {}
 				}
 			);
 
@@ -940,6 +974,10 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 				offsets = map(gf.points, \c -> c.offset);
 				maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
 			});
+
+			if (contains(style, UseSvg()) && !isUrlParameterFalse("useSvg")) {
+				useSvg(clip);
+			}
 
 			// Render the path
 			needClose = ref false;
@@ -1026,23 +1064,42 @@ renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
 
 renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
-	textfield = makeStyledTextfield(fgetValue(text), style);
-	u1 =
+	localizationEnabled = extractStruct(style, LocalizationEnabled(false)).enabled;
+	localizedText = if (localizationEnabled) fselectLift(text, localizeNumbers) else text;
+	textfield = makeStyledTextfield(fgetValue(localizedText), style);
+
+	if (contains(style, SkipOrderCheck())) {
+		setTextSkipOrderCheck(textfield, true);
+	}
+
+	uns = [
 		eitherFn(
 			tryExtractStruct(style, FDynamicColor(const(-1))),
-			\dc -> make2Subscribe(text, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
-			makeSubscribe(text, \t -> defineTextStyle(textfield, t, charStyle))
-		);
-	u2 =
+			\dc -> make2Subscribe(localizedText, dc.color, \t, col -> defineTextStyle(textfield, t, replaceStruct(charStyle, Fill(col))))(),
+			makeSubscribe(localizedText, \t -> defineTextStyle(textfield, t, charStyle))
+		),
+
 		eitherMap(
 			tryExtractStruct(style, LangAttribute(const(""))),
 			\la -> makeSubscribe(la.languageCode, \code -> setAccessAttributes(textfield, [["lang", code]]))(),
 			nop
-		);
+		),
+
+		eitherMap(
+			tryExtractStruct(style, TextWidthInspector(make(0.))),
+			\tw -> addEventListener(textfield, "textwidthchanged", \ -> nextDistinct(tw.width, getTextFieldWidth(textfield))),
+			nop
+		),
+
+		eitherMap(
+			tryExtractStruct(style, WordSpacing(zero)),
+			\ws -> makeSubscribe(ws.spacing, \spacing -> setTextWordSpacing(textfield, spacing))(),
+			nop
+		)
+	];
 
 	disposer = \ -> {
-		u1();
-		u2();
+		applyall(uns);
 
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {
@@ -1055,24 +1112,7 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	eitherFn(
 		tryExtractStruct(style, Underlined([])),
 		\undr -> {
-			uStyle = undr.style;
-			wd = getTextFieldWidth(textfield);
-			hgt = getTextFieldHeight(textfield) - 1.;
-
-			urr =
-				renderFGraphics(
-					const([
-						MoveTo(0., hgt),
-						LineTo(wd, hgt),
-					]),
-					const(
-						if (uStyle != [])
-							uStyle
-						else
-							[Stroke(extractStruct(style, Fill(0x000000)).color)]
-					)
-				);
-
+			urr = renderUnderline(textfield, undr, StartAlign(), None(), style);
 			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), [FClipMask()])
 		},
 		\ ->
@@ -1170,20 +1210,19 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		maybeApply(tryExtractStruct(style, Resolution(1.0)), \r -> setClipResolution(textfield, r.resolution));
 	}
 
+	metricsListeners = extractStructMany(style, ParagraphMetrics(nop1));
+
 	updateMetricsFn =
-		eitherMap(
-			tryExtractStruct(style, ParagraphMetrics(nop1)),
-			\fn -> \ ->
-				fn.fn(
-					FFormMetrics(
-						getTextFieldWidth(textfield),
-						getTextFieldHeight(textfield),
-						getTextMetrics(textfield)[0],
-						getTextFieldMaxWidth(textfield)
-					)
-				),
-			nop
-		);
+		if (length(metricsListeners) == 0) nop
+		else \ -> {
+			metrics = FFormMetrics(
+				getTextFieldWidth(textfield),
+				getTextFieldHeight(textfield),
+				getTextMetrics(textfield)[0],
+				getTextFieldMaxWidth(textfield)
+			);
+			iter(metricsListeners, \listener -> listener.fn(metrics))
+		}
 
 	maybeApply(
 		tryExtractStruct(style, InterlineSpacing(0.)),
@@ -1200,6 +1239,8 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 			"AutoAlignRight"
 		else if (contains(style, CenterAlign()))
 			"AutoAlignCenter"
+		else if (js && contains(style, Justify()))
+			"AutoAlignJustify"
 		else
 			"AutoAlignNone";
 
@@ -1232,7 +1273,68 @@ renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRender
 		makeSubscribe2(text, \__ -> updateMetricsFn())()
 	);
 
-	FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities)
+	refArrayPush(disposers,
+		addEventListener(textfield, "textwidthchanged", updateMetricsFn)
+	);
+
+	result = FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities);
+
+	eitherMap(
+		tryExtractStruct(style, Underlined([])),
+		\undr -> {
+			urr = renderUnderline(textfield, undr, extractCommonAlignment(style), tryExtractStruct(style, ParagraphWidth(const(-1.))), charStyle);
+			FRenderResult(
+				concat(result.clips, urr.clips),
+				concat(result.disposers, urr.disposers),
+				concat(result.capabilities, urr.capabilities)
+			)
+		},
+		result
+	)
+}
+
+renderUnderline(
+	textfield : native,
+	underlined : Underlined,
+	align : CommonAlignment,
+	paragraphWidth : Maybe<ParagraphWidth>,
+	style : [FTextStyle]) -> FRenderResult {
+
+	renderFGraphics(
+		eitherFn(
+			paragraphWidth,
+			\parWd ->
+				fselect(parWd.width, FLift(\pwd -> {
+					wd = getTextFieldWidth(textfield);
+					hgt = getTextFieldHeight(textfield) - 1.;
+
+					left = max(0.,
+						if (align == RightAlign()) pwd - wd
+						else if (align == CenterAlign()) (pwd - wd) / 2.
+						else 0.
+					);
+
+					[
+						MoveTo(left, hgt),
+						LineTo(left + wd, hgt),
+					]
+				})),
+			\ -> {
+				wd = getTextFieldWidth(textfield);
+				hgt = getTextFieldHeight(textfield) - 1.;
+				const([
+					MoveTo(0., hgt),
+					LineTo(wd, hgt),
+				])
+			}
+		),
+		const(
+			if (underlined.style != [])
+				underlined.style
+			else
+				[Stroke(extractStruct(style, Fill(0x000000)).color)]
+		)
+	);
 }
 
 renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void {
@@ -1458,6 +1560,7 @@ addFClipAnimation(
 								if (percent < 1.0) {
 									next(ap.percent, percent);
 								} else {
+									next(ap.percent, 1.0);
 									^disp();
 									disp := nop;
 								}
@@ -1646,6 +1749,8 @@ addFClipAnimation(
 										}
 									});
 								} else {
+									maybeApply(animationPercent, \ap -> next(ap.percent, 1.));
+
 									iteration := ^iteration + 1;
 
 									if (^iteration >= iterations) {
@@ -1803,7 +1908,7 @@ fform2s(rform : FForm, level : int) -> string {
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"
 		}
-		FFullScreen(fullscreen, wh, form) : {
+		FFullScreen2(fullscreen, wh, form, __) : {
 			generateSpaces + structName + "\n" +
 			fform2s(form, level + 1) + "\n" +
 			generateSpaces + ")"
@@ -1959,7 +2064,13 @@ addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) 
 					AccessCallback(cb): {
 						accessCallback := Some(cb);
 
-						acc
+						Pair(
+							acc.first,
+							arrayPush(acc.second, \ -> \ -> {
+								setAccessCallback(clip, nop);
+								accessCallback := None()
+							})
+						)
 					}
 					AccessChildSelected(acsFn): {
 						uns = \ -> addExtendedEventListener(clip, "childfocused", \args : [flow]-> {
@@ -2034,7 +2145,10 @@ addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) 
 					TagName(tagName): {
 						setClipTagName(clip, tagName);
 
-						acc;
+						Pair(
+							setTree(acc.first, "keepableTagName", \ -> tagName),
+							acc.second
+						);
 					}
 					ClassName(className): {
 						setClipClassName(clip, className);
@@ -2048,6 +2162,20 @@ addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) 
 							setTree(acc.first, "lang", \ -> fgetValue(languageCode)),
 							arrayPush(acc.second, uns)
 						)
+					}
+					FAccessProtected() : {
+						setClipProtected(clip);
+
+						acc;
+					}
+					FAccessHidden(): {
+						Pair(
+							setTree(acc.first, "aria-hidden", \ -> "true"),
+							acc.second
+						)
+					}
+					AccessForceMakeClip(__) : {
+						acc;
 					}
 				}
 			}

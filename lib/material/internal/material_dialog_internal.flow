@@ -4,15 +4,16 @@ import material/internal/material_component;
 import material/internal/tropic_size_util;
 
 export {
-	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
-		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
-		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MFocusOnPrevious, MFloatingContent, MDialogCloseButton,
+	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogAccessibleName, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
+		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable, MMovableOrigin,
+		MDialogResizable, MResizableControlOnStart, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MFocusOnPrevious, MFloatingContent, MDialogCloseButton,
 		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MAddSafeArea,
-		MPassClicks;
+		MPassClicks, MDialogDraggableInitialAlign, MDialogInspectWidth, MDialogInspectHeight;
 
 		// These are very commonly recommended
 		MDialogTitle(title : string);
 		MDialogCustomTitle(title : Material);
+		MDialogAccessibleName(name : Transform<string>); // It will be used by screenreader
 		MDialogUseFrame();
 		MDialogScroll();
 		MDialogScrollStyle(style : [MScrollStyle]);
@@ -33,6 +34,8 @@ export {
 		MDialogClickOutToCancel(pickerValue : DynamicBehaviour<flow>);
 		// See MMovableGrabArea for info on padding and grabArea
 		MDialogDraggable(padding : Material, grabArea : Material);
+		// Align draggable dialog
+		MDialogDraggableInitialAlign(xAlign : double, yAlign : double);
 		// Set the Resizable mode. The dialog size depends on its content.
 		MDialogResizable();
 		// Set the Resizable mode. Set the initial size of the dialog.
@@ -44,6 +47,8 @@ export {
 		// Allow to run callback every time the dialog is getting closed
 		MDialogOnClose(onClose : () -> void);
 		MDialogActionsNoEndAlign();
+		MDialogInspectWidth(width : DynamicBehaviour<double>);
+		MDialogInspectHeight(height : DynamicBehaviour<double>);
 
 		MDialogPopupStyle ::= MDialogPopupCanClose, MDialogPopupSaveEnabled, MDialogPopupNotResize, MDialogPopupOnClose, MDialogPopupFullScreen;
 			MDialogPopupCanClose(canCloseCheck : () -> bool);
@@ -76,8 +81,25 @@ export {
 		MSnackbarOnDisappear(fn : () -> void);
 }
 
+isDialogRendering = ref false;
+
 fwZorder = make(-1);
 fwAnimated = ref make(false);
+fwDialogs : ref [Pair<int, DynamicBehaviour<bool>>] = ref [];
+
+registerFWDialog(zorder, isCurrent) {
+	refArrayPush(fwDialogs, Pair(zorder, isCurrent))
+};
+
+unregisterFWDialog(zorder) {
+	fwDialogs := filter(^fwDialogs, \p -> p.first != zorder)
+};
+
+// Workaround to control the order of subscriptions
+updateCurrentFWDialog(zorder) {
+	iter(^fwDialogs, \p -> nextDistinct(p.second, false));
+	maybeApply(find(^fwDialogs, \p -> p.first == zorder), \p -> nextDistinct(p.second, true))
+}
 
 renderMDialog2(
 	manager : MaterialManager,
@@ -101,10 +123,11 @@ renderMDialog3(
 	us = ref [];
 	disp = \ -> dispUnsA(us);
 
+	currentFocusedItem = fgetValue(manager.latelyFocused);
 	previousFocus =
 		if (extractStruct(style, MFocusOnPrevious(true)).enabled) {
 			eitherFn(
-				getCurrentFocusedItem(manager),
+				currentFocusedItem,
 				\fi -> Some(fi),
 				\ -> getPreviousFocusedItem(manager)
 			)
@@ -137,6 +160,7 @@ renderMDialog3(
 	createSize = maybeMap(tryExtractStruct(style, MDialogResizableWithInitialSize(MEmpty())), \st -> MResizableOnCreate(st.size));
 	resizable = contains(style, MDialogResizable()) || isSome(createSize);
 	draggable = tryExtractStruct(style, MDialogDraggable(TEmpty(), TEmpty()));
+	initialAlign = extractStruct(style, MDialogDraggableInitialAlign(0.5, 0.5));
 	hideDialog0 = tryExtractStruct(style, MDialogHide(const(false)));
 	hideDialog = eitherMap(hideDialog0, \hd -> hd.hide, const(false));
 	noCenter = contains(style, MDialogNoCenter());
@@ -176,8 +200,8 @@ renderMDialog3(
 	down = make(false);
 	point = make(zeroPoint);
 	insideDialogB = make(false);
-	pressedOutsideB = fand(down, fnot(insideDialogB));
-	noAnimation = contains(style, MDialogNoAnimation()) || (!cpp && contains(style, MDialogFullScreen()))
+	pressedOutsideB = fstall(fand(down, fnot(insideDialogB)), 0);
+	noAnimation = contains(style, MDialogNoAnimation()) || (!cpp && fullScreen)
 		|| !manager.theme.enableAnimations || noCenter || isSome(draggable);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
 	cs = if (isMaterialLogLevelEnabled(MaterialError())) captureStringCallstack() else "";
@@ -188,11 +212,11 @@ renderMDialog3(
 	titleW = make(0.);
 	titleCloseW = make(0.);
 
-	boxW = make(0.);
-	boxH = make(0.);
+	boxW = extractStruct(style, MDialogInspectWidth(make(0.))).width;
+	boxH = extractStruct(style, MDialogInspectHeight(make(0.))).height;
 
 	availW = make(0.);
-	animated = make(noAnimation);
+	animated = make(false);
 
 	(\p -> {
 		isRTL = p.rtl;
@@ -209,7 +233,7 @@ renderMDialog3(
 									MShape(
 										manager.focus,
 										[Fill(white)],
-										TBorder(0., 0., 0., 8., tr),
+										TBorder(0., 0., 0., 8., sz),
 										name
 									)
 								)
@@ -219,11 +243,12 @@ renderMDialog3(
 					eitherMap(
 						title,
 						\ttl ->
-							MParagraph2T(
+							MDynamicParagraph2T(
 								p,
-								ttl.title,
-								[MTitle(), ParagraphMargin(0.0, 0.0)]
+								const(ttl.title),
+								[MTitle(), ParagraphMargin(0.0, 0.0), TagName("h2")]
 							)
+							|> (\t -> if (p.theme.dialogActivationEnabled) TAccess([FAccessHidden()], t) else t)
 							|> (\t ->
 								eitherMap(
 									customFrame,
@@ -235,17 +260,26 @@ renderMDialog3(
 						TEmpty()
 					)
 			)
+			|> (\t -> TAttachWidth(t, titleW))
+			|> (\t -> if (p.theme.dialogActivationEnabled) TAccess([
+				TagName("button"),
+				AccessRole("heading"),
+				AccessForceMakeClip(true),
+				ClassName("dialog_title"),
+				FAccessAttribute("aria-label", const(if (isSome(customTitle)) "" else eitherMap(title, \ttl -> ttl.title, "")))
+			], t) else t)
 			|> (\t ->
 				eitherMap(
 					closeButton,
-					\cb ->
-						TAvailableWidth(
-							TBaselineCols2(TAlignLeft(TAttachWidth(t, titleW)), TAttachWidth(m2t(cb.close, p), titleCloseW)),
-							fsubtract(fmax(contentW, actionsW), eitherMap(customFrame, \cf -> const(cf.end), zero))
-						),
-					TAttachWidth(t, titleW)
+					\cb -> TBaselineCols2Dir(
+						t |> TAlignStart,
+						TAttachWidth(m2t(cb.close, p), titleCloseW),
+						isRTL
+					),
+					t
 				)
-			);
+			)
+			|> (\t -> TAvailableWidth(t, fmax(contentW, actionsW)));
 
 		contentM : Tropic =
 			(if (content != TEmpty() && content != MEmpty())
@@ -286,13 +320,15 @@ renderMDialog3(
 			eitherMap(
 				actions,
 				\act -> {
+					actionsW0 = make(0.);
 					actionsBorderLeft = if (contains(act.actions, TFillX()) || contains(style, MDialogActionsNoEndAlign())) 16.0 else 0.0;
+					endBorderGap = eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero);
 
 					availMinW =
 						fsubtract(
 							faddition(
 								fmax(contentW, faddition(titleW, titleCloseW)),
-								eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero)
+								endBorderGap
 							),
 							const(actionsBorderLeft)
 						);
@@ -312,8 +348,9 @@ renderMDialog3(
 					)
 					|> TBorderLeft(actionsBorderLeft)
 					|> TBorderTopBottom(8.)
-					|> (\t -> TAttachWidth(t, actionsW))
+					|> (\t -> TAttachWidth(t, actionsW0))
 					|> (\t -> eitherMap(customFrame, \cf -> TBorderDir(cf.start, 0.0, if (fullScreen) max(cf.end - 8.0, 0.0) else 0.0, 0.0, t, isRTL), t))
+					|> (\t -> TConstruct([\ -> fconnect(fmin(availMaxW, fsubtract(actionsW0, endBorderGap)), actionsW)], t))
 				},
 				TEmpty()
 			);
@@ -335,7 +372,7 @@ renderMDialog3(
 				t
 			)
 		)
-		|> (\t -> TLines2Dir(t, actionsM, isRTL))
+		|> (\t -> TLines2(t, actionsM)) // Do not use TLines2Dir here, actions are already aligned into TFlexibleGrid
 		|> (\t -> TAttachWidthHeight(t, boxW, boxH))
 		|> (\t ->
 			if (clickOutToClose || isSome(clickOutToCancel))
@@ -371,12 +408,13 @@ renderMDialog3(
 					p,
 					MResizable(
 						t,
-						[
-							MResizableMinMax(
+						concatA([
+							[MResizableMinMax(
 								TFixed(dialogResizableMinSize, dialogResizableMinSize),
 								TFillXY()
-							)
-						]
+							)],
+							extractStructMany(style, MResizableControlOnStart())
+						])
 						|> (\st -> maybeArrayPush(st, createSize))
 					),
 					m2t
@@ -386,7 +424,7 @@ renderMDialog3(
 		)
 		|> (\t ->
 			if (noAnimation) {
-				t
+				TConstruct([\ -> {deferred(\ -> nextDistinct(animated, true)); nop}], t)
 			} else {
 				TOrigin(
 					const(Factor(-0.5, -0.5)),
@@ -435,7 +473,10 @@ renderMDialog3(
 		|> (\t : Tropic ->
 			eitherMap(
 				draggable,
-				\dr ->
+				\dr -> {
+					sPos = make(zeroPoint);
+					origin = extractStruct(style, MMovableOrigin(const(Factor(0.5, 0.5))));
+
 					MMovable(
 						t,
 						TFillXY(),
@@ -445,44 +486,43 @@ renderMDialog3(
 								|> (\m -> MAvailableWidthHeight(m, boxW, boxH)),
 								dr.grabArea
 								|> (\m -> MAvailableWidthHeight(m, boxW, boxH))
-							)
+							),
+							MInteractionsOnTop(),
+							MMovablePosition(sPos),
+							origin
 						]
 					)
-					|> (\m : MMovable ->
-						if (noCenter)
-							MMovable2T(manager, p, m, m2t)
+					|> (\mov -> MMovable2T(manager, p, mov, m2t))
+					|> (\mov ->
+						if (noCenter) mov
 						else {
-							sPos = make(zeroPoint);
 							avH = make(0.);
-
 							TConstruct(
 								[
-									\ -> { // center dialog
-										nextDistinct(
-											sPos,
-											Point(
-												(getValue(availW) - getValue(boxW)) / 2. - sideBorder,
-												(getValue(avH) - getValue(boxH)) / 2. - sideBorder
-											)
-										);
+									\ -> {
+										// align dialog
+										nextDistinct(sPos, Point(
+											(getValue(availW) - getValue(boxW)) * initialAlign.xAlign,
+											(getValue(avH) - getValue(boxH)) * initialAlign.yAlign
+										));
 										nop
-									}
+									},
 								],
-								MMovable2T(manager, p, MMovable(m.target, m.movableArea, arrayPush(m.style, MMovablePosition(sPos))), m2t)
-								|> (\t2 -> TAttachAvailableHeight(t2, avH))
-							)
+								TAttachAvailableHeight(mov, avH)
+							);
 						}
-					),
+					);
+				},
 				t
 			))
 		|> (\t -> TAttachAvailableWidth(t, availW))
 		|> (\t -> TBorder(sideBorder, sideBorder, sideBorder, sideBorder, t))
 		|> (\t : Tropic -> if (extractStruct(style, MAddSafeArea(true)).add) m2t(MSafeArea(t), p) else t)
 		|> (\t ->
-			TGroup2( // click events shall not pass
+			TGroup([ // click events shall not pass
 				TInteractive(
 					[
-						TMouseDown(down),
+						TMouseDownGhost(down),
 						TMouseXY(point)
 					]
 					|> (\inter -> ifArrayPush(inter, blockKeyboardEvents, makeTKey(\k -> {materialLog(toString(k), MaterialInfo()); k != noKey}))),
@@ -490,7 +530,7 @@ renderMDialog3(
 					TFillXY()
 					|> (\t2 ->
 						if (nonModal) {
-							t2
+							TRectangle(interactiveRectangleStyle, t2)
 						} else {
 							if (noAnimation) {
 								TRectangle([Fill(black), FillOpacity(0.5)], t2)
@@ -551,8 +591,25 @@ renderMDialog3(
 				)
 				|> disableBelow(!nonModal), // Disable all other mouse events except handled
 
+				{
+					keyWasDown = ref false;
+					TInteractive(
+						[
+							KeyDown2(\h, ke -> {
+								if (!h && ke.keycode == KEY_ESCAPE) {keyWasDown := true}; h
+							}),
+							KeyUp2(\h, ke -> {
+								handled = if (!h && ^keyWasDown && ke.keycode == KEY_ESCAPE) {disp(); true} else h
+								keyWasDown := false;
+								handled
+							})
+						],
+						TRectangle(interactiveRectangleStyle, TFillXY())
+					)
+				},
+
 				t
-			)
+			])
 		)
 		|> (\t ->
 			if (isSome(hideDialog0)) {
@@ -626,10 +683,18 @@ renderMDialog3(
 			f;
 		}
 	)
+	|> (\t -> TAccess([
+		AccessRole("dialog"),
+		FAccessAttribute("aria-label", extractStruct(style, MDialogAccessibleName(const(eitherMap(title, \ttl -> ttl.title, "Dialog")))).name),
+		FAccessAttribute("flow-force-focus", const(b2s(manager.focus.theme.dialogActivationEnabled && isSome(currentFocusedItem))))
+	], t))
 	|> (\t ->
 		if (!fullWindow || resizable) {
 			t
 		} else {
+			isCurrent = make(false);
+			registerFWDialog(zorder, isCurrent);
+
 			fw = make(false);
 
 			keysCapture = extractStruct(manager.style, MCaptureKeys(\__ -> TEmpty())).capture(manager);
@@ -637,7 +702,11 @@ renderMDialog3(
 			longTouchCapture = extractStruct(manager.style, MCaptureLongTouch(\__ -> TEmpty())).capture(manager);
 
 			TConstruct(
-				[\ -> fconnect(fand(fand(animated, fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), fselectdelay(feq(fwZorder, zorder), b2i))), fw)],
+				[
+					makeSubscribe(feq(fwZorder, zorder), \cur -> if (cur) updateCurrentFWDialog(zorder)),
+					\ -> fconnect(fand(fand(animated, fnot(hideDialog)), fand(fnot(manager.iscript.showPanel), isCurrent)), fw)
+				],
+
 				TFullWindow(
 					fw,
 					TGroup([
@@ -668,12 +737,29 @@ renderMDialog3(
 				makeSubscribe2(feq(fwZorder, zorder), \fwz ->
 					if (fwz) fwAnimated := animated
 				)(),
-				renderFn(t)
+				renderFn(t),
+				\ -> unregisterFWDialog(zorder)
 			]
-			else if (fgetValue(fwZorder) < 0 || zorder < fgetValue(fwZorder))
-				[renderFn(t)]
-			else
-				[make2SubscribeUnsTimer(fwZorder, ^fwAnimated, 1, \fzorder, an -> if (zorder >= fzorder && an) [renderFn(t)] else [])()],
+			else {
+				startRender = \ -> {
+					uns = initUnsM();
+					rFn = \ -> {
+						isDialogRendering := true;
+						setUnsM(uns, renderFn(t));
+						isDialogRendering := false;
+					}
+					if (^isDialogRendering) {
+						setUnsM(uns, interruptibleTimer(0, rFn))
+					} else {
+						rFn()
+					};
+					[\ -> dispUnsM(uns)]
+				}
+				if (fgetValue(fwZorder) < 0 || zorder < fgetValue(fwZorder))
+					startRender()
+				else
+					[make2SubscribeUns(fwZorder, ^fwAnimated, \fzorder, an -> if (zorder >= fzorder && an) startRender() else [])()]
+			},
 			[
 				\ -> maybeApply(previousFocus, \pf -> {
 					deferred(\ -> {
@@ -683,8 +769,7 @@ renderMDialog3(
 					});
 
 					if (isNone(manager.downInsideFocus)) {
-						manager.downInsideFocus ::= Some(pf);
-						deferred(\ -> manager.downInsideFocus ::= None());
+						setDownInsideFocus(manager, pf)
 					}
 				})
 			]
@@ -693,11 +778,14 @@ renderMDialog3(
 }
 
 snackbarDisp = initUnsM();
+snackbarClosingDelayDisp = initUnsM();
+deferredRenderFn = initUnsM();
+
+SNACKBAR_CLOSING_DELAY = 300 //ms
 
 renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn  : (Tropic) -> () -> void) -> void {
-	closeSnackbar = \ -> maybeApply(^snackbarDisp, \fn -> {
-		snackbarDisp := None();
-		fn();
+	closeSnackbar = \ -> maybeApply(^snackbarDisp, \__ -> {
+		dispUnsM(snackbarDisp);
 		maybeApply(tryExtractStruct(style, MSnackbarOnDisappear(nop)), \d -> d.fn());
 	});
 	closeSnackbar();
@@ -739,12 +827,13 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 	button =
 		either(customButton,
 			if (contains(style, MSnackbarNoButton())) TEmpty()
-			else MIconButton("clear", closeSnackbar, [textColor], [])
+			else MIconButton("clear", closeSnackbar, [textColor], [MButtonTitle(const("Close snackbar"))])
 		)
 		|> MCenterY |> MBorderLeft(8.0);
 
 	snackBar =
 		MParagraph(text, [textColor, MBody()])
+		|> (\m -> MAccess([FAccessHidden()], m))
 		|> MBorderTopBottom(16.)
 		|> MCenterY
 		|> (\t -> MGroup2(t, TFixed(minWidth, 0.)))
@@ -773,20 +862,39 @@ renderMSnackbar(manager : MaterialManager, text0 : string, style : [MSnackbarSty
 			else
 				TAnimatedExpander(manager, manager.focus, t, visible, [MNoCrop(), MExpanderProgress(progress), MExpandFromStart()])
 		)
+		|> (\t -> TAccess(concat([
+			AccessRole("alertdialog"),
+			ClassName("snackbar"),
+			FAccessAttribute("aria-label", const(text)),
+			FAccessAttribute("flow-force-focus", const(b2s(manager.focus.theme.dialogActivationEnabled)))
+		], if (isSafariBrowser()) [TagName("div")] else []), t))
 		|> TAlignBottom
 		|> TAlignHorizontalDir(alignment, manager.focus.rtl)
 		|> (\t -> TConstruct([\ -> subscribe2(visible, \v -> if (!v) closeSnackbar())], t));
 
-	renderDisp = renderFn(snackBar);
-	nextDistinct(visible, true);
-	timerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+	renderSnackbar = \ -> {
+		renderDisp = renderFn(snackBar);
+		nextDistinct(visible, true);
+		autoDisappearTimerDisp = if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
 
-	setUnsM(
-		snackbarDisp,
-		\ -> {
-			timerDisp();
-			timer(300, renderDisp);
-			nextDistinct(visible, false);
-		}
-	)
+		setUnsM(
+			snackbarDisp,
+			\ -> {
+				autoDisappearTimerDisp();
+				timer(SNACKBAR_CLOSING_DELAY, renderDisp);
+				setUnsM(snackbarClosingDelayDisp, interruptibleTimer(SNACKBAR_CLOSING_DELAY, \ -> {
+					dispUnsM(deferredRenderFn);
+					dispUnsM(snackbarClosingDelayDisp);
+				}));
+
+				nextDistinct(visible, false);
+			}
+		);
+	}
+
+	if (isSome(^snackbarClosingDelayDisp)) {
+		setUnsM(deferredRenderFn, renderSnackbar);
+	} else {
+		renderSnackbar()
+	}
 }

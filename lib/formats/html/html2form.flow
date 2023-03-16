@@ -48,6 +48,7 @@ export {
 		stylesheet : Tree<string, HTMLStyle>,
 		maxw : Maybe<double>,
 		scale : Maybe<double>,
+		zoomCustomUIFnM : Maybe<() -> void>,
 		extraZoom : bool,
 		backgroundColor : Maybe<Color>,
 		closeButtonAlign : int,
@@ -63,6 +64,7 @@ export {
 		backgroundColor : Maybe<Color>,
 		zoomBtnFormFn : (() -> void) -> Form,
 		zoomBtnAlign : Corner,
+		zoomCustomUIFnM : Maybe<() -> void>,
 		closeBtnFormFn : (() -> void) -> Form,
 		closeBtnAlign : int,
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>
@@ -303,7 +305,7 @@ getHtmlPictureMagnify2(
 	extraZoom : bool,
 	backgroundColor : Maybe<int>
 ) -> Pair<Form, (Form) -> Form> {
-	getHtmlPictureMagnifyWithCloseButton(fullForm, scaledForm, p_caption, stylesheet, maxw, scale, extraZoom, eitherMap(backgroundColor, \color -> Some(Color(color, 0.5)), None()), -1, \__ -> Empty(), None());
+	getHtmlPictureMagnifyWithCloseButton(fullForm, scaledForm, p_caption, stylesheet, maxw, scale, None(), extraZoom, eitherMap(backgroundColor, \color -> Some(Color(color, 0.5)), None()), -1, \__ -> Empty(), None());
 }
 
 openMagnifyWindow(
@@ -527,16 +529,17 @@ getHtmlPictureMagnifyWithCloseButton(
 	stylesheet : Tree<string, HTMLStyle>,
 	maxw : Maybe<double>,
 	scale : Maybe<double>,
+	zoomCustomUIFnM : Maybe<() -> void>,
 	extraZoom : bool,
 	backgroundColor : Maybe<Color>,
 	closeButtonAlign : int,
 	closeButtonFormFn : (() -> void) -> Form,
 	virtualScreenInfoM : Maybe<VirtualScreenInfo>
 ) -> Pair<Form, (Form) -> Form> {
-	if (mobile) {
+	if (mobile && isNone(zoomCustomUIFnM)) {
 		// small mobiles will better display fullscreen zoomed images
 		getHtmlPictureMagnifyPDA(scaledForm, fullForm, !isPhoneScreen())
-	} else if (extraZoom) {
+	} else if (extraZoom && isNone(zoomCustomUIFnM)) {
 		Pair(makePopupWithLockAndWheel(scaledForm, fullForm, false, true, virtualScreenInfoM), idfn)
 	} else {
 		plusCursorVisible = make(false);
@@ -594,6 +597,15 @@ getHtmlPictureMagnifyWithCloseButton(
 			^closeMagnifyWindow();
 			closeMagnifyWindow := nop;
 		}
+		onClick = either(
+			zoomCustomUIFnM,
+			\ -> {
+				next(magnifyWindowVisible, true);
+				next(plusCursorVisible, false);
+				next(plusBubbleVisible, false);
+				closeMagnifyWindow := openMagnifyWindow(fullForm, p_caption, stylesheet, maxw, scale, backgroundColor, closeButtonAlign, closeButtonFormFn, false, virtualScreenInfoM, closeMagnify);
+			}
+		);
 
 		cursorB = make(DefaultCursor());
 		form =
@@ -602,10 +614,7 @@ getHtmlPictureMagnifyWithCloseButton(
 					MouseClick(nop1),
 					MouseUp(\mi -> {
 						if (mi().inside) {
-							next(magnifyWindowVisible, true);
-							next(plusCursorVisible, false);
-							next(plusBubbleVisible, false);
-							closeMagnifyWindow := openMagnifyWindow(fullForm, p_caption, stylesheet, maxw, scale, backgroundColor, closeButtonAlign, closeButtonFormFn, false, virtualScreenInfoM, closeMagnify);
+							onClick();
 							true
 						} else {
 							false
@@ -670,11 +679,11 @@ getHtmlPictureMagnifyCustom(
 	backgroundColor : Maybe<Color>,
 	zoomBtnFormFn : (() -> void) -> Form,
 	zoomBtnAlign : Corner,
+	zoomCustomUIFnM : Maybe<() -> void>,
 	closeBtnFormFn : (() -> void) -> Form,
 	closeBtnAlign : int,
 	virtualScreenInfoM : Maybe<VirtualScreenInfo>
 ) -> Pair<Form, (Form) -> Form> {
-
 	closeMagnifyWindow = ref nop;
 	magnifyWindowVisible = make(false);
 	closeMagnify = \ -> {
@@ -683,10 +692,13 @@ getHtmlPictureMagnifyCustom(
 		closeMagnifyWindow := nop;
 	};
 
-	onClick = \ -> {
-		next(magnifyWindowVisible, true);
-		closeMagnifyWindow := openMagnifyWindow(fullForm, "", TreeEmpty(), maxw, scale, backgroundColor, closeBtnAlign, closeBtnFormFn, true, virtualScreenInfoM, closeMagnify);
-	};
+	onClick = either(
+		zoomCustomUIFnM,
+		\ -> {
+			next(magnifyWindowVisible, true);
+			closeMagnifyWindow := openMagnifyWindow(fullForm, "", TreeEmpty(), maxw, scale, backgroundColor, closeBtnAlign, closeBtnFormFn, true, virtualScreenInfoM, closeMagnify);
+		}
+	);
 
 	postCropTransfrom = \f -> {
 		formSize = makeWH();
@@ -711,7 +723,7 @@ getHtmlPictureMagnifyCustom(
 		]);
 	};
 
-	resultForm = Disposer(postCropTransfrom(scaledForm), closeMagnify);
+	resultForm = Disposer(scaledForm, closeMagnify);
 	Pair(resultForm, postCropTransfrom)
 }
 
@@ -916,7 +928,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 						TextFragments(f): {
 							TextFragments(mapList(f, \ tf -> {
 								switch (tf : WrapElement) {
-									LinePart(__, __, __): tf;
+									LinePart(__, __, __, __): tf;
 									NewLine(): tf;
 									Space(sf): Space(buttonify(sf));
 									GlueFragments(): tf;
@@ -1229,10 +1241,10 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				mediaCollector = extractStruct(special, HTMLMediaCollector(ref [])).acc;
 				mediaCollector := arrayPush(^mediaCollector, pictureUrl);
 				p2 = Picture(pictureUrl, [
-					OnLoaded(\-> { 
+					OnLoaded(\-> {
 						nextDistinct(pictureLoadBeh, 1);
 						println("OnLoaded");
-					}), 
+					}),
 					OnLoadingError(\__ -> {
 						nextDistinct(pictureLoadBeh, 1);
 						println("OnLoadingError");
@@ -1267,7 +1279,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					}
 				);
 
-				p_fixed = 
+				p_fixed =
 					Group([
 						p_zoomed,
 						Select(pictureLoadBeh, \flag -> if (flag != 0) Empty() else {
@@ -1390,7 +1402,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					inners = fold(children, [], \ac, elem -> {
 						arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [TightWidth()], special) );
 					});
-					fraction2formWithColor(inners[0], inners[1], acc.htmlStyle.characterStyle |> colorOfText)
+					fraction2formWithColor(inners[0], inners[1], acc.htmlStyle.characterStyle |> colorOfText |> const, false)
 				}
 				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(fracForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			 } else if (tag == "msqrt") {
@@ -1401,7 +1413,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [TightWidth()], special) );
 				});
 				sizeForm = Text(" ",acc.htmlStyle.characterStyle);
-				sqrtForm = root2formWithColor(sizeForm, if (l >= 1) inners |> toOneForm else sizeForm, acc.htmlStyle.characterStyle |> colorOfText);
+				sqrtForm = root2formWithColor(sizeForm, if (l >= 1) inners |> toOneForm else sizeForm, acc.htmlStyle.characterStyle |> colorOfText |> const);
 
 				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(sqrtForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "msub") {
@@ -1440,7 +1452,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special) ;
 					degree = renderHtmlXml(children[1], availableWidth, stylesheet, [TightWidth()], newSpecial) ;
 
-					root2formWithColor(body, degree, acc.htmlStyle.characterStyle |> colorOfText)
+					root2formWithColor(body, degree, acc.htmlStyle.characterStyle |> colorOfText |> const)
 				}
 				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(supForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "mover") {
@@ -1491,7 +1503,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				ob = getXmlAttribute(attrs, "open", "(") |> getBracketType;
 				cb = getXmlAttribute(attrs, "close", ")") |> getBracketType;
 
-				bracketsForm = brackets2formWithColor(ob, cb, inners |> toOneForm,  acc.htmlStyle.characterStyle |> colorOfText);
+				bracketsForm = brackets2formWithColor(ob, cb, inners |> toOneForm,  acc.htmlStyle.characterStyle |> colorOfText |> const);
 
 				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(bracketsForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "mtext" || tag == "math") {

@@ -1,0 +1,91 @@
+import tools/dsl/registry/dsl_parser;
+import tools/dsl/registry/dsl_lowering;
+import tools/dsl/dsl_compiler;
+import tools/dsl/dsl_eval;
+import tools/dsl/gringo_actions;
+
+export {
+	defineGringo() -> void;
+}
+
+defineGringo() -> void {
+	gringo = registerDslParser("gringo", <<
+		term = 
+			term "|>" ws term 							$"GPrecedence_2"
+			|> term "|" ws term 						$"GChoice_2"
+			|> term term								$"GSeq_2"
+			|> "$" ws term								$"GUnquote_1"
+			|> "<" ws term								$"GLower_1"
+			|> "#" ws term								$"GError_1"
+			|> term "*" ws								$"GStar_1"
+			|> term "+" ws								$"GPlus_1"
+			|> term "?" ws								$"GOpt_1"
+			|> "!" ws term								$"GNegate_1"
+			|> "@" id 									$"bind_1"	// For pattern matching
+			|> 
+				"list(" ws term ")" ws					$"GList_1"
+				| "listof(" ws term "," ws term ")" ws		$"GListOf_2"
+				| "keyword(" ws term ")" ws					$"GKeyword_1"
+				| "(" ws term ")" ws							
+				| '"' string '"' ws							$"GString_1"
+				| "'" char "'" ws "-" ws "'" char "'" ws	$"GRange_2"
+				| "'" stringq "'" ws						$"GString_1"
+				| id "=" ws term ";" ws term				$"GRule_3"
+				| id 									$"GVar_1"
+			;
+
+		string = $(!'"' anychar)*;
+		stringq = $(!"'" anychar)*;
+		char = $("0x" hexdigit+) | $anychar;
+		hexdigit = 'a'-'f' | 'A'-'F' | '0'-'9';
+		grammar = ws term;
+		grammar
+	>>, ["ws", "id"]);
+
+	// TODO: Here, we have the problem that overlapping rules
+	// mean that the second one does not trigger since
+	// it expands to something much more expensive.
+
+	// So we should aim to have a lowering engine,
+	// which replaces more deterministically with the most
+	// specific match, so we could write
+	/*
+		lowering = prepareDslLowering(gringo, ".",
+		<<
+			list(@t @s) => $"nil" @t $"cons" (@s @t $"cons")* @s? | $"nil".
+			list(@t) => $"nil" (@t $"cons")*.
+			keyword(@k) => @k !letterOrDigit ws.
+		>>);
+		instead
+	*/
+
+	// TODO: Figure out where this should live
+	registerDslLowering("desugar", "gringo", "gringo", "gringo", ".",
+		<<
+			listof(@t, @s) => ($"nil" @t $"cons" (@s @t $"cons")* @s? | $"nil").
+			list(@t) => $"nil" (@t $"cons")*.
+			keyword(@k) => @k !letterOrDigit ws.
+		>>);
+
+	// println(prettyDsl(rewriting.rules.rules));
+
+	compiler = makeCompiler("gringo", <<
+		GPrecedence(a, b) => $a(0) " |> " $b(0);
+		GChoice(a, b) => $a(10) " | " $b(10);
+		GSeq(a, b) => $a(20) " " $b(20);
+		GUnquote(a) => "$" $a(30);
+		GLower(a) => "<" $a(40);
+		GError(a) => "#" $a(50);
+		GStar(a) => $a(60) "*";
+		GPlus(a) => $a(70) "+";
+		GOpt(a) => $a(80) "?";
+		GNegate(a) => "!" $a(90);
+		GString(a) => $a(100);
+		GRange(a, b) => $a(100) "-" $b(100);
+		GRule(id, v, b) => $id(100) "=" $v(100) ";\n" $b(100);
+		GVar(id) => $id(100);
+		string(a) => "\"" $a(100) "\"";
+	>>);
+
+	// TODO: Do something with this compiler
+}

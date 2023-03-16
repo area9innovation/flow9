@@ -1,0 +1,449 @@
+//import runtime;
+//import formats/json/json;
+import material/material;
+import text/serialize;
+import material/extra/filesystem/filesystem_extended_api;
+
+export {
+	// Filesystem extended Async API
+	FilesystemAsyncEngine : (
+		// Get the files-source (partition) name
+		whoAmI : (
+			onDone : (string) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Get the root name of the partition, if has (by default is `DB`)
+		myRootName : () -> Maybe<string>,
+		// Get contents of the folder
+		readDirectory : (
+			string /* directory full path */,
+			onDone : ([string] /* folder names*/, [string] /* file names*/) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Check does the given path correponds to the folder
+		isDirectory : (
+			string /* directory full path */,
+			onDone : (bool) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Check does the file exists (for the given path)
+		fileExists : (
+			string /* file full path */,
+			onDone : (bool) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Create a new folder (will be created all folders in the path, if they does not exists)
+		createDirectory : (
+			string /* folder full path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Update a content of the file. Create a file, if does not exists.
+		setFileContent : (
+			string /* full path */,
+			string /* content */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Rename the file/folder
+		renamePath : (
+			string /* full path */,
+			string /* new name, without path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Read the file content
+		getFileContent : (
+			string /* full path */,
+			formatBase64 : bool /* format of the content should be base64? */,
+			onDone : (string /* content */) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Copy given paths to the destination folder
+		copyPaths : (
+			[string] /* full path */,
+			string /* destination directory */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Move given paths to the destination folder
+		movePaths : (
+			[string] /* full path */,
+			string /* destination directory */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Create a file from specific type (if the type supported)
+		copySpecial : (
+			[??] /* native or some info about a file-source */,
+			string /* destination directory */,
+			/* if type does not supported, create a file from content */
+			getContentBase64 : (??, onContentDone : (filename : string, content : string) -> void, onContentError : (string) -> void) -> void,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Remove the directories
+		deleteDirectories : (
+			[string] /* full path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Remove the files
+		deleteFiles : (
+			[string] /* full path */,
+			onDone : () -> void,
+			onError : (string) -> void
+		) -> void,
+		// Searching of files/folders by the key in the given path (recursively)
+		search : (
+			fromPath : string,
+			text : string,
+			exactMatch : bool,
+			stopSearchB : DynamicBehaviour<bool>,
+			onDataPiece : (peiceFolders : [string], peiceFiles : [string], isLastLiece : bool) -> void,
+			onError : (string) -> void
+		) -> void,
+		// make preview of the files for the given paths
+		getPathsPreview : (
+			[string] /* full path */,
+			onDone : ([Pair<string, Material>]) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Resolve relative paths which begins with "../", "./"
+		resolveRelativePath : (string) -> string,
+		// Converting filebrowser path to url for file downloading
+		path2url : (string) -> string,
+		// Converting filebrowser path to original file type
+		paths2originals : (
+			[string] /* full paths */,
+			// responce is in the same order as `full paths`
+			onDone : ([Maybe<?>]) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Get access right for the given path to know what we can do with it
+		getAccessRight : (
+			string /* path */,
+			onDone : (PathAccessRight) -> void,
+			onError : (string) -> void
+		) -> void,
+		// Get any specific info about a path
+		getExtraInfo : (
+			[string] /* paths */,
+			string /* type */,
+			onDone : ([Maybe<Json>]) -> void,
+			onError : (string) -> void
+		) -> void,
+		// UI should be updated
+		subscribeOnUpdates : (onUpdated : () -> void) -> () -> void
+	);
+
+	isFilesystemExtAsyncAPIinitialized() -> bool;
+	setFilesystemExtAsyncAPI(api : FilesystemAsyncEngine) -> void;
+	getFilesystemExtAsyncAPI() -> FilesystemAsyncEngine;
+	makeDummyFilesystemExtAsyncAPI(errorText : string) -> FilesystemAsyncEngine<?, ??>;
+
+	convertExtApi2asyncApi(
+		api : FilesystemExtAPI,
+		previewFnM : Maybe<(filesPaths : [string], ([Pair<string, Material>]) -> void) -> void>,
+		createFromNativesFnM : Maybe<([native]) -> void>
+	) -> FilesystemAsyncEngine<?, ??>;
+
+	// files and folders searching in the "currentPath", including subfolders
+	searchRecursiveApi(
+		readDirectory : (string, ([string], [string]) -> void) -> void,
+		currentPath : string,
+		textLowerCase : string,
+		exactMatch : bool,
+		stopSearchB : DynamicBehaviour<bool>,
+		onDataPiece : (peiceFolders : [string], peiceFiles : [string], isLastPiece : bool) -> void
+	) -> void;
+}
+
+isAsyncInitialized = ref false;
+
+isFilesystemExtAsyncAPIinitialized() -> bool {
+	^isAsyncInitialized;
+}
+
+setFilesystemExtAsyncAPI(api : FilesystemAsyncEngine) -> void {
+	isAsyncInitialized := true;
+	filesystemExtAsyncAPI := api;
+}
+
+getFilesystemExtAsyncAPI() -> FilesystemAsyncEngine {
+	if (!^isAsyncInitialized && isFilesystemExtAPIinitialized()) {
+		convertExtApi2asyncApi(getFilesystemExtAPI(), None(), None());
+	} else {
+		^filesystemExtAsyncAPI;
+	}
+}
+
+// callbacks in the implementation of the stub,
+// needed to prevent the application from getting stuck
+filesystemExtAsyncAPI : ref FilesystemAsyncEngine<?, ??> = ref makeDummyFilesystemExtAsyncAPI("ERROR: FilesystemAsyncEngine is not set");
+
+makeDummyFilesystemExtAsyncAPI(errorText : string) -> FilesystemAsyncEngine<?, ??> {
+	FilesystemAsyncEngine(
+		// whoAmI
+		\onDone, onError -> onError(errorText),
+		// myRootName
+		\-> Some("DUMMY"),
+		// readDirectory
+		\path, onDone, onError -> onError(errorText),
+		// isDirectory
+		\path, onDone, onError -> onError(errorText),
+		// fileExists
+		\path, onDone, onError -> onError(errorText),
+		// createDirectory
+		\path, onDone, onError -> onError(errorText),
+		// setFileContent
+		\path, content, onDone, onError -> onError(errorText),
+		// renamePath
+		\path, name, onDone, onError -> onError(errorText),
+		// getFileContent
+		\path, format, onDone, onError -> onError(errorText),
+		// copyPaths
+		\paths, dest, onDone, onError -> onError(errorText),
+		// movePaths
+		\paths, dest, onDone, onError -> onError(errorText),
+		// copySpecial
+		\paths, dest, fn, onDone, onError -> onError(errorText),
+		// deleteDirectories
+		\paths, onDone, onError -> onError(errorText),
+		// deleteFiles
+		\paths, onDone, onError -> onError(errorText),
+		// search
+		\fromPath, text, exactMatch, stopSearchB, onDataPiece, onError -> onError(errorText),
+		// getPathsPreview
+		\paths, onDone, onError -> onError(errorText),
+		// resolveRelativePath
+		idfn,
+		// path2url
+		idfn,
+		// paths2originals
+		\paths, onDone, onError -> onError(errorText),
+		// getAccessRight
+		\path, onDone, onError -> onError(errorText),
+		// getExtraInfo
+		\paths, type, onDone, onError -> onError(errorText),
+		// subscribeOnUpdates
+		\fn -> nop
+	);
+}
+
+convertExtApi2asyncApi(
+	api : FilesystemExtAPI,
+	previewFnM : Maybe<(filesPaths : [string], ([Pair<string, Material>]) -> void) -> void>,
+	createFromNativesFnM : Maybe<([native]) -> void>
+) -> FilesystemAsyncEngine<?, ??> {
+	FilesystemAsyncEngine(
+		//whoAmI
+		\onDone, onError -> {
+			onDone("Unknown: converted from extended sync API");
+		},
+		// myRootName
+		\-> None(),
+		// readDirectory
+		api.readDirectory,
+		// isDirectory
+		\path, onDone, __ -> api.isDirectory(path, onDone),
+		// fileExists
+		\path, onDone, __ -> api.fileExists(path, onDone),
+		// createDirectory
+		\path, onDone, onError -> {
+			api.createFolder(path, onDone, onError);
+		},
+		// setFileContent
+		\path, content, onDone, onError -> {
+			api.setFileContent(path, content, \-> onDone(), onError);
+		},
+		// renamePath
+		\path, onlyNameNew, onDone, onError -> {
+			api.renameElement(path, onlyNameNew, onDone, onError);
+		},
+		// getFileContent
+		\path, formatBase64, onDone, onError -> {
+			api.getFileContent(path, formatBase64, onDone, onError);
+		},
+		// copyPaths
+		\paths, pathTo, onDone, onError -> {
+			iterAsync(
+				paths,
+				\path, ff, rj -> api.copyElement(path, pathTo, ff, rj),
+				onDone,
+				onError
+			);
+		},
+		// movePaths
+		\paths, pathTo, onDone, onError -> {
+			iterAsync(
+				paths,
+				\path, ff, rj -> api.moveElement(path, pathTo, ff, rj),
+				onDone,
+				onError
+			);
+		},
+		// copySpecial /* TODO: createFromNativesFn supports copying into root folder only */
+		\files, pathTo, getContentBase64, onDone, onError -> {
+			pathTo2 = rtrim2(pathTo, "/") + "/";
+			copySpecialSimple = \items, ff, rj -> {
+				iterAsync(
+					items,
+					\item, ff2, rj2 -> {
+						getContentBase64(
+							item,
+							\filename, contentBase64 -> {
+								api.setFileContent(pathTo2 + filename, contentBase64 /* BlobBase64()*/, ff2, rj2);
+							},
+							rj2
+						);
+					},
+					ff,
+					rj
+				)
+			}
+
+			eitherFn(
+				createFromNativesFnM,
+				\createFromNativesFn -> {
+					splittedNativeOthers = partition(files, \item -> serialize(item) == "native");
+					iterAsync([
+							\ff, rj -> {
+								if (splittedNativeOthers.first != []) {
+									createFromNativesFn(
+										map(splittedNativeOthers.first, \item -> cast(item : flow -> native))
+									);
+									ff()
+								} else ff();
+							},
+							\ff, rj -> {
+								if (splittedNativeOthers.second != []) copySpecialSimple(splittedNativeOthers.second, ff, rj)
+								else ff();
+							},
+						],
+						\fn, ff, rj -> fn(ff, rj),
+						onDone,
+						onError
+					);
+				},
+				\-> copySpecialSimple(files, onDone, onError)
+			);
+		},
+		// deleteDirectories
+		\paths, onDone, onError -> {
+			iterAsync(paths, api.deleteElement, onDone, onError);
+		},
+		// deleteFiles
+		\paths, onDone, onError -> {
+			iterAsync(paths, api.deleteElement, onDone, onError);
+		},
+		// search
+		\fromPath, searchText, exactMatch, stopSearchB, onDataPiece, onError -> {
+			searchRecursiveApi(\a, b -> api.readDirectory(a, b, onError), fromPath, toLowerCase(searchText), exactMatch, stopSearchB, onDataPiece);
+		},
+		//getPathsPreview
+		\paths, onDone, onError -> {
+			eitherFn(
+				previewFnM,
+				\fn -> fn(paths, onDone),
+				\-> onDone([])
+			);
+		},
+		// resolveRelativePath
+		api.resolveRelativePath,
+		// path2url
+		api.convert2realPath,
+		// paths2originals
+		\paths, onDone, onError -> {
+			onError("The engine does not supports `paths2originals` operation.");
+		},
+		// getAccessRight
+		\path, onDone, onError -> {
+			onDone(api.getAccessRight(path));
+		},
+		// getExtraInfo
+		\paths, type, onDone, onError -> {
+			onDone(map(paths, \path -> api.getExtraInfo(path, type)));
+		},
+		// UI should be updated
+		\onUpdated -> nop
+	);
+}
+
+searchRecursiveApi(
+	readDirectory : (string, ([string], [string]) -> void) -> void,
+	currentPath : string,
+	textLowerCase : string,
+	exactMatch : bool,
+	stopSearchB : DynamicBehaviour<bool>,
+	onDataPiece : (peiceFolders : [string], peiceFiles : [string], isLastPiece : bool) -> void
+) -> void {
+	//start search in the currentPath
+	correctedCurPath = if (currentPath == "") ""
+		else if (endsWith(currentPath, "/")) currentPath
+		else currentPath + "/";
+
+	// A small delay to update UI
+	deferUntilRender(\-> if (!getValue(stopSearchB)) {
+		readDirectory(currentPath, \dirs, files -> {
+				dirs2 = filtermap(dirs, \dir -> {
+					r = takeAfterLast(dir, "/", dir);
+					if (r != "..") Some(r)
+					else None();
+				});
+
+				if (!getValue(stopSearchB)) {
+					res = if (exactMatch) {
+						Pair(
+							filtermap(dirs2, \dir -> {
+								name = takeAfterLast(dir, "/", dir);
+								if (toLowerCase(name) ==  textLowerCase) Some(name)
+								else None();
+							}),
+							filtermap(files, \file -> {
+								name = takeAfterLast(file, "/", file);
+								if (toLowerCase(name) == textLowerCase) Some(name)
+								else None();
+							})
+						);
+					} else {
+						Pair(
+							filtermap(dirs2, \dir -> {
+								name = takeAfterLast(dir, "/", dir);
+								if (strContains(toLowerCase(name), textLowerCase)) Some(name)
+								else None();
+							}),
+							filtermap(files, \file -> {
+								name = takeAfterLast(file, "/", file);
+								if (strContains(toLowerCase(name), textLowerCase)) Some(name)
+								else None();
+							})
+						);
+					}
+
+					onDataPiece(
+						map(res.first, \d -> correctedCurPath + d + "/"),
+						map(res.second, \f -> correctedCurPath + f),
+						(dirs2 == [])
+					);
+				}
+
+				// go to in the sub folders
+				if (!getValue(stopSearchB) && dirs2 != []) {
+					counterR = ref length(dirs2);
+					iter(dirs2, \dir -> searchRecursiveApi(
+						readDirectory,
+						correctedCurPath + dir + "/",
+						textLowerCase,
+						exactMatch,
+						stopSearchB,
+						\dd, ff, isLast -> {
+							if (isLast) counterR := ^counterR - 1;
+							onDataPiece(dd, ff, (^counterR == 0))
+						}
+					));
+				}
+			}
+		);
+	})
+}

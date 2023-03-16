@@ -17,6 +17,11 @@ class DisplayObjectHelper {
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var SkipOrderCheckEnabled : Bool = Util.getParameter("skip_order_check") != "0";
+	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
+	public static var ScreenreaderDialog : Bool = Util.getParameter("screenreader_dialog") != "0";
+	public static var CheckUniqueClipID : Bool = Util.getParameter("check_unique_clip_id") == "1";
+	public static var UniqueClipIds : Array<String> = [];
 
 	private static var InvalidateStage : Bool = true;
 
@@ -96,7 +101,7 @@ class DisplayObjectHelper {
 				}
 			} else if (clip.parent == RenderSupport.PixiStage) {
 				untyped clip.stage = clip;
-				if (RenderSupport.RendererType != "html") {
+				if (!isHTMLRenderer(clip)) {
 					untyped clip.createView(clip.parent.children.indexOf(clip) + 1);
 				}
 
@@ -155,7 +160,7 @@ class DisplayObjectHelper {
 				}
 			}
 
-			if (RenderSupport.RendererType != "html") {
+			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
 			}
 
@@ -175,15 +180,15 @@ class DisplayObjectHelper {
 		if (clip.parent != null) {
 			untyped clip.transformChanged = true;
 
-			if (isCanvas(clip)) {
+			if (isCanvas(clip) || isCanvasStage(clip)) {
 				untyped clip.localTransformChanged = true;
 			}
 
-			if (RenderSupport.RendererType != "html") {
+			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
 			}
 
-			if (untyped clip.parent.parent != null && (!clip.parent.transformChanged || (isCanvas(clip.parent) && !clip.parent.localTransformChanged))) {
+			if (untyped clip.parent.parent != null && (!clip.parent.transformChanged || ((isCanvas(clip.parent) || isCanvasStage(clip.parent)) && !clip.parent.localTransformChanged))) {
 				invalidateParentTransform(clip.parent);
 			} else {
 				invalidateParentLocalBounds(clip);
@@ -229,7 +234,7 @@ class DisplayObjectHelper {
 				invalidateVisible(child, updateAccess && !updateAccessWidget, parentClip);
 			}
 
-			if (RenderSupport.RendererType != "html" && updateAccessWidget) {
+			if (!isHTMLRenderer(clip) && updateAccessWidget) {
 				untyped clip.accessWidget.updateDisplay();
 			}
 
@@ -238,11 +243,12 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateInteractive(clip : DisplayObject, ?interactiveChildren : Bool = false) : Void {
+
 		clip.interactive = untyped clip.scrollRectListener != null || clip.listeners("pointerout").length > 0 || clip.listeners("pointerover").length > 0 || clip.cursor != null || clip.isInteractive;
 		clip.interactiveChildren = clip.interactive || interactiveChildren;
 
 		if (clip.interactive) {
-			if (RenderSupport.RendererType == "html") {
+			if (isHTMLRenderer(clip)) {
 				if (!isNativeWidget(clip)) {
 					initNativeWidget(clip);
 				} else {
@@ -276,7 +282,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function setChildrenInteractive(clip : DisplayObject) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (isHTMLRenderer(clip)) {
 			return;
 		}
 
@@ -310,12 +316,20 @@ class DisplayObjectHelper {
 				updateIsMask(clip);
 			}
 
-			if (isCanvas(clip.parent)) {
+			if (isCanvas(clip.parent) || isCanvasStage(clip.parent)) {
 				updateIsCanvas(clip);
+			}
+
+			if (isHTML(clip.parent) || isHTMLStage(clip.parent)) {
+				updateIsHTML(clip);
 			}
 
 			if (untyped clip.keepNativeWidgetChildren || clip.keepNativeWidget) {
 				updateKeepNativeWidgetChildren(clip);
+			}
+
+			if (untyped clip.parent.keepNativeWidgetParent) {
+				updateKeepNativeWidgetParent(clip, untyped clip.parent.keepNativeWidgetParent);
 			}
 
 			clip.once('removed', function() { invalidate(clip); });
@@ -383,7 +397,7 @@ class DisplayObjectHelper {
 
 			clip.scale.x = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 0.0) {
+			if (isHTMLRenderer(clip) && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -397,7 +411,7 @@ class DisplayObjectHelper {
 
 			clip.scale.y = scale;
 
-			if (RenderSupport.RendererType == "html" && scale != 0.0) {
+			if (isHTMLRenderer(clip) && scale != 0.0) {
 				initNativeWidget(clip);
 			}
 
@@ -420,7 +434,7 @@ class DisplayObjectHelper {
 
 			untyped clip.origin = new Point(x, y);
 
-			if (RenderSupport.RendererType == "html") {
+			if (isHTMLRenderer(clip)) {
 				initNativeWidget(clip);
 
 				if (untyped clip.nativeWidget != null) {
@@ -490,7 +504,7 @@ class DisplayObjectHelper {
 		if (untyped clip.cursor != cursor) {
 			untyped clip.cursor = cursor;
 
-			if (RenderSupport.RendererType == "html" && !isNativeWidget(clip)) {
+			if (isHTMLRenderer(clip) && !isNativeWidget(clip)) {
 				initNativeWidget(clip);
 			}
 
@@ -504,7 +518,14 @@ class DisplayObjectHelper {
 		if (untyped clip.setFocus != null && clip.setFocus(focus)) {
 			return true;
 		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
-			if (focus && accessWidget.element.focus != null) {
+			// To temprorarily set focus on simple text
+			if (untyped clip.nativeWidget && untyped clip.nativeWidget.classList.contains('flow_focusable')) {
+				if (focus) {
+					untyped clip.nativeWidget.setAttribute('tabindex', '-1');
+					untyped clip.nativeWidget.focus();
+					return true;
+				}
+			} else if (focus && accessWidget.element.focus != null) {
 				accessWidget.element.focus();
 				if (RenderSupport.EnableFocusFrame) accessWidget.element.classList.add("focused");
 
@@ -531,7 +552,7 @@ class DisplayObjectHelper {
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
-	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
+	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float, ?fromSnapshot : Bool = false) : Void {
 		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		left = round(left);
@@ -557,7 +578,7 @@ class DisplayObjectHelper {
 			clip.scrollRect = new FlowGraphics();
 			scrollRect = clip.scrollRect;
 
-			setClipMask(clip, scrollRect);
+			setClipMask(clip, scrollRect, fromSnapshot);
 			clip.addChild(scrollRect);
 		}
 
@@ -622,14 +643,13 @@ class DisplayObjectHelper {
 			clip.mask = null;
 			untyped clip.maskContainer = null;
 
-			deleteNativeWidget(clip);
 
 			invalidateTransform(clip, 'removeScrollRect');
 		}
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
-	public static inline function setClipMask(clip : FlowContainer, maskContainer : Container) : Void {
+	public static inline function setClipMask(clip : FlowContainer, maskContainer : Container, ?fromSnapshot : Bool = false) : Void {
 		if (maskContainer != clip.scrollRect) {
 			removeScrollRect(clip);
 		}
@@ -645,9 +665,7 @@ class DisplayObjectHelper {
 			untyped clip.alphaMask = null;
 
 			// If it's one Graphics, use clip mask; otherwise use alpha mask
-			var obj : Dynamic = maskContainer;
-			while (obj.children != null && obj.children.length == 1)
-				obj = obj.children[0];
+			var obj : Dynamic = getLastGraphicsOrSprite(maskContainer);
 
 			if (untyped HaxeRuntime.instanceof(obj, FlowGraphics)) {
 				clip.mask = obj;
@@ -661,7 +679,7 @@ class DisplayObjectHelper {
 			untyped clip.mask.child = clip;
 			untyped clip.maskContainer = maskContainer;
 
-			if (RenderSupport.RendererType == "html" && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
+			if (isHTMLRenderer(clip) && (Platform.isIE || Platform.isEdge) && untyped clip.mask.isSvg) {
 				updateHasMask(clip);
 			}
 
@@ -682,7 +700,7 @@ class DisplayObjectHelper {
 		setClipRenderable(maskContainer, false);
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 
-		if (RenderSupport.RendererType == "html") {
+		if (isHTMLRenderer(clip) && !(fromSnapshot && Util.getParameter("webclip_snapshot_enabled") != "0")) {
 			if (untyped clip.mask != null || clip.alphaMask != null) {
 				initNativeWidget(clip);
 			}
@@ -692,7 +710,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateHasMask(clip : DisplayObject) : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (isHTMLRenderer(clip)) {
 			if (!untyped clip.hasMask) {
 				untyped clip.hasMask = true;
 
@@ -729,7 +747,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateIsCanvas(clip : DisplayObject) : Void {
-		if (clip.parent != null && isCanvas(clip.parent)) {
+		if (clip.parent != null && (isCanvas(clip.parent) || isCanvasStage(clip.parent))) {
 			untyped clip.isCanvas = true;
 
 			deleteNativeWidget(clip);
@@ -744,6 +762,41 @@ class DisplayObjectHelper {
 		return untyped clip.isCanvas;
 	}
 
+	public static inline function isCanvasStage(clip : DisplayObject) : Bool {
+		return untyped clip.isCanvasStage;
+	}
+
+	public static function updateIsHTML(clip : DisplayObject) : Void {
+		if (clip.parent != null && (isHTML(clip.parent) || isHTMLStage(clip.parent))) {
+			untyped clip.isHTML = true;
+
+			if (untyped clip.nativeWidget == null && !clip.isEmpty && !isHTMLStageContainer(clip) &&
+				(clip.children == null || clip.children.length == 0 || clip.transform.a != 1 || clip.transform.d != 1)) {
+				initNativeWidget(clip);
+			}
+
+			for (child in getClipChildren(clip)) {
+				updateIsHTML(child);
+			}
+		}
+	}
+
+	public static inline function isHTML(clip : DisplayObject) : Bool {
+		return untyped clip.isHTML;
+	}
+
+	public static inline function isHTMLStage(clip : DisplayObject) : Bool {
+		return untyped clip.isHTMLStage;
+	}
+
+	public static inline function isHTMLStageContainer(clip : DisplayObject) : Bool {
+		return untyped clip == null ? false : clip.isHTMLStageContainer;
+	}
+
+	public static inline function isHTMLRenderer(clip : DisplayObject) : Bool {
+		return untyped (RenderSupport.RendererType == "html" || clip.isHTML) && !clip.isCanvas;
+	}
+
 	public static function updateKeepNativeWidgetChildren(clip : DisplayObject, keepNativeWidgetChildren : Bool = false) : Void {
 		untyped clip.keepNativeWidgetChildren = keepNativeWidgetChildren || clip.keepNativeWidget;
 
@@ -753,7 +806,7 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (RenderSupport.RendererType == "html" && isNativeWidget(clip)) {
+		if (isHTMLRenderer(clip) && isNativeWidget(clip) && untyped clip.nativeWidget.style != null) {
 			untyped clip.nativeWidget.style.visibility = untyped clip.keepNativeWidget ? "visible" : clip.keepNativeWidgetChildren ? "inherit" : null;
 		}
 
@@ -762,6 +815,18 @@ class DisplayObjectHelper {
 		}
 
 		invalidateTransform(clip, 'updateKeepNativeWidgetChildren');
+	}
+
+	public static function updateKeepNativeWidgetParent(clip : DisplayObject, keepNativeWidget : Bool) : Void {
+		if (untyped clip.keepNativeWidgetParent != keepNativeWidget) {
+			untyped clip.keepNativeWidget = keepNativeWidget;
+			untyped clip.keepNativeWidgetParent = keepNativeWidget;
+			updateKeepNativeWidgetChildren(clip);
+
+			for (child in getClipChildren(clip)) {
+				updateKeepNativeWidgetParent(child, keepNativeWidget);
+			}
+		}
 	}
 
 	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
@@ -823,6 +888,26 @@ class DisplayObjectHelper {
 		}
 
 		return null;
+	}
+
+
+	// Get the last Graphics from the Pixi DisplayObjects tree
+	public static function getLastGraphicsOrSprite(clip : DisplayObject) : DisplayObject {
+		var g = null;
+
+		if (untyped HaxeRuntime.instanceof(clip, FlowGraphics) || untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
+			g = clip;
+		}
+
+		for (c in getClipChildren(clip)) {
+			var g2 = getLastGraphicsOrSprite(untyped c);
+
+			if (g2 != null) {
+				g = g2;
+			}
+		}
+
+		return g;
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree
@@ -958,7 +1043,17 @@ class DisplayObjectHelper {
 		var nativeWidget = untyped clip.nativeWidget;
 
 		if (nativeWidget != null && nativeWidget.getAttribute("id") == null) {
-			nativeWidget.setAttribute('id', untyped __js__("'_' + Math.random().toString(36).substr(2, 9)"));
+			var newId = untyped __js__("'_' + Math.random().toString(36).substr(2, 9)");
+			if (CheckUniqueClipID) {
+				if (untyped __js__("DisplayObjectHelper.UniqueClipIds.includes(newId)")) {
+					updateClipID(clip);
+				} else {
+					nativeWidget.setAttribute('id', newId);
+					UniqueClipIds.push(newId);
+				}
+			} else {
+				nativeWidget.setAttribute('id', newId);
+			}
 		}
 	}
 
@@ -966,7 +1061,7 @@ class DisplayObjectHelper {
 		if (untyped clip.updateNativeWidget != null) {
 			untyped clip.updateNativeWidget();
 		} else {
-			if (RenderSupport.RendererType == "html") {
+			if (isHTMLRenderer(clip)) {
 				if (isNativeWidget(clip)) {
 					if (clip.visible) {
 						if (DebugUpdate) {
@@ -1022,8 +1117,8 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getNativeWidgetTransform(clip : DisplayObject) : Matrix {
-		if (RenderSupport.RendererType == "html") {
-			if (untyped !clip.parentClip || RenderSupport.RenderContainers) {
+		if (isHTMLRenderer(clip)) {
+			if (untyped !clip.parentClip || RenderSupport.RenderContainers || isHTMLStageContainer(clip.parent)) {
 				if (untyped clip.localTransformChanged) {
 					untyped clip.transform.updateLocalTransform();
 				}
@@ -1120,7 +1215,7 @@ class DisplayObjectHelper {
 
 		var localBounds = untyped clip.localBounds;
 
-		if (isCanvas(clip)) {
+		if (isCanvasStage(clip)) {
 			tx -= Math.max(-localBounds.minX, 0.0);
 			ty -= Math.max(-localBounds.minY, 0.0);
 			untyped clip.nativeWidgetBoundsChanged = true;
@@ -1129,7 +1224,7 @@ class DisplayObjectHelper {
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
 
-			if (isCanvas(clip)) {
+			if (isCanvasStage(clip)) {
 				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}');
 				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupport.PixiRenderer.resolution), 0.0)}');
 				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}px';
@@ -1164,9 +1259,11 @@ class DisplayObjectHelper {
 		}
 
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
-		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
+		if (!nativeWidget.classList.contains("print-page-container")) {
+			nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
+		}
 
-		if (isCanvas(clip)) {
+		if (isCanvasStage(clip)) {
 			nativeWidget.style.transform = 'matrix(${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0, ${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0)';
 		} else {
 			nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
@@ -1179,7 +1276,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getNativeWidgetAlpha(clip : DisplayObject) : Float {
-		if (RenderSupport.RendererType == "html" && !RenderSupport.RenderContainers) {
+		if (isHTMLRenderer(clip) && !RenderSupport.RenderContainers) {
 			if (untyped clip.parentClip && clip.parentClip.worldAlpha > 0) {
 				return clip.worldAlpha / untyped clip.parentClip.worldAlpha;
 			} else if (clip.parent != null && !isNativeWidget(clip.parent)) {
@@ -1203,7 +1300,7 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = untyped clip.isFocused ? alpha : 0;
+				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline ? alpha : 0;
 			}
 		} else {
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
@@ -1222,7 +1319,7 @@ class DisplayObjectHelper {
 				var filter = filters[0];
 
 				if (untyped HaxeRuntime.instanceof(filter, DropShadowFilter)) {
-					if (untyped BoxShadow || clip.isGraphics()) {
+					if (untyped BoxShadow || filter.useBoxShadow || clip.isGraphics()) {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
 						var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);
@@ -1277,7 +1374,7 @@ class DisplayObjectHelper {
 			if (svgs.length > 0) {
 				var svg = svgs[0];
 				var elementId = untyped svg.parentNode.getAttribute('id');
-				var clipFilter : Element = Browser.document.getElementById(elementId + "filter");
+				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
 
 				if (clipFilter != null && clipFilter.parentNode != null) {
 					clipFilter.parentNode.removeChild(clipFilter);
@@ -1326,7 +1423,7 @@ class DisplayObjectHelper {
 				clipFilter.appendChild(feOffset);
 				clipFilter.appendChild(feGaussianBlur);
 
-				if (!Platform.isSafari) {
+				if (!Platform.isSafari && !(Platform.isIOS && Platform.isChrome)) {
 					var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
 					feBlend.setAttribute("in2", "blurOut");
 					feBlend.setAttribute("in", "SourceGraphic");
@@ -1411,7 +1508,9 @@ class DisplayObjectHelper {
 
 				y = 0;
 			} else {
-				nativeWidget.firstChild.style.top = null;
+				if (!nativeWidget.classList.contains("print-page-container")) {
+					nativeWidget.firstChild.style.top = null;
+				}
 			}
 		}
 
@@ -1754,8 +1853,10 @@ class DisplayObjectHelper {
 				};
 			} else {
 				nativeWidget.oncontextmenu = function (e) {
+					var preventContextMenu = untyped clip.isInput != true;
+					if (preventContextMenu) e.preventDefault();
 					e.stopPropagation();
-					return untyped clip.isInput == true;
+					return !preventContextMenu;
 				};
 			}
 		} else {
@@ -1808,11 +1909,13 @@ class DisplayObjectHelper {
 					untyped clip.nativeWidget.style.display = 'none';
 				}
 
-				RenderSupport.once("drawframe", function() {
+				var removeFn = function() {
 					if (untyped isNativeWidget(clip) && !clip.onStage && (!clip.visible || clip.parent == null)) {
 						removeNativeWidget(clip);
 					}
-				});
+				}
+
+				RenderSupport.once("drawframe", removeFn);
 			}
 		}
 	}
@@ -1822,20 +1925,22 @@ class DisplayObjectHelper {
 	}
 
 	public static function isClipOnStage(clip : DisplayObject) : Bool {
-		return untyped clip.onStage && clip.tansform != null;
+		return untyped clip.onStage && clip.transform != null;
 	}
 
 	public static function addNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
-		} else if (RenderSupport.RendererType == "html") {
+		} else if (isHTMLRenderer(clip)) {
 			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren)) {
 				if (untyped clip.forceParentNode != null) {
 					untyped clip.forceParentNode.append(clip.nativeWidget);
 				} else {
 					appendNativeWidget(untyped clip.parentClip || findParentClip(clip), clip);
 				}
-				RenderSupport.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
+				if (!UseOptimization || (untyped clip.skipOrderCheck == null || !clip.skipOrderCheck)) {
+					RenderSupport.once("drawframe", function() { broadcastEvent(clip, "pointerout"); });
+				}
 			}
 		} else {
 			clip.once('removed', function() { deleteNativeWidget(clip); });
@@ -1896,7 +2001,7 @@ class DisplayObjectHelper {
 	public static function findNativeWidgetChild(clip : DisplayObject, parent : DisplayObject) : Element {
 		if (untyped isNativeWidget(clip) && clip.parentClip == parent && getParentNode(clip) == parent.nativeWidget) {
 			return untyped clip.nativeWidget;
-		} else if (!RenderSupport.RenderContainers && RenderSupport.RendererType == "html") {
+		} else if (!RenderSupport.RenderContainers && isHTMLRenderer(clip)) {
 			for (child in getClipChildren(clip)) {
 				if (untyped child.visible && (!isNativeWidget(child) || child.parentClip == parent)) {
 					var nativeWidget = findNativeWidgetChild(child, parent);
@@ -1924,22 +2029,95 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var nextWidget = findNextNativeWidget(child, clip);
+			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
+
+			var nextWidget = null;
+			if (!skipOrderCheck) {
+				var nextWidgetId = untyped child.nextWidgetId;
+				if (nextWidgetId != null && nextWidgetId != "") {
+					nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
+				}
+
+				if (nextWidget == null) {
+					nextWidget = findNextNativeWidget(child, clip);
+				}
+			}
+
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
 					cont.className = 'nativeWidget';
 					untyped clip.nativeWidget.appendChild(cont);
 				}
-
-				untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				try {
+					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				} catch (e : Dynamic) {
+					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
+					nextWidget = findNextNativeWidget(child, clip);
+					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+				}
 			} else {
-				untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				try {
+					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				} catch (e : Dynamic) {
+					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
+					nextWidget = findNextNativeWidget(child, clip);
+					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				}
+			}
+
+			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
+				if (childWidget.getAttribute('flow-force-focus') == 'true') {
+					RenderSupport.once("stagechanged", function() {
+						updateDialogElementsAriaHidden(childWidget, true);
+						var unhideDialogContent = function() {
+							Native.timer(500, function() {
+								updateDialogElementsAriaHidden(childWidget, false);
+							});
+						};
+
+						var dialogTitleArr = untyped Array.from(Browser.document.getElementsByClassName("dialog_title"));
+						if (dialogTitleArr != null && dialogTitleArr[0] != null) {
+							RenderSupport.once("stagechanged", function() {
+								var dialogTitle = dialogTitleArr[0];
+								if (dialogTitle != null) {
+									dialogTitle.setAttribute("tabindex", "-1");
+									dialogTitle.setAttribute('aria-hidden', 'false');
+									dialogTitle.focus();
+								}
+								unhideDialogContent();
+							});
+						} else {
+							if (untyped child.nativeWidget.showModal != null) {
+								untyped child.nativeWidget.showModal();
+								RenderSupport.once("stagechanged", function() {
+									if (untyped child.nativeWidget != null) untyped child.nativeWidget.close();
+								});
+							}
+							unhideDialogContent();
+						}
+					});
+				};
 			}
 
 			applyScrollFnChildren(child);
 		} else {
 			appendNativeWidget(clip.parent, child);
+		}
+	}
+
+	public static function updateDialogElementsAriaHidden(parent : Element, isAriaHidden : Bool) : Void {
+		var childrenArray = untyped Array.from(parent.children);
+		if (parent.tagName == 'P' || parent.tagName == 'SPAN' || parent.tagName == 'BUTTON') {
+			if (isAriaHidden) {
+				parent.setAttribute("aria-hidden", 'true');
+			} else {
+				parent.removeAttribute("aria-hidden");
+			}
+		}
+
+		for (child in parent.children) {
+			updateDialogElementsAriaHidden(child, isAriaHidden);
 		}
 	}
 
@@ -1961,10 +2139,10 @@ class DisplayObjectHelper {
 				if (Platform.isIE) {
 					untyped clip.nativeWidget.blur();
 					RenderSupport.once("drawframe", function() {
-						untyped clip.nativeWidget.focus();
+						if (untyped clip.nativeWidget != null) untyped clip.nativeWidget.focus();
 					});
 				} else {
-					untyped clip.nativeWidget.focus();
+					if (untyped clip.nativeWidget != null) untyped clip.nativeWidget.focus();
 				}
 			}
 		}
@@ -2013,7 +2191,8 @@ class DisplayObjectHelper {
 
 	public static inline function getWidgetWidth(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
-		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) : getWidth(clip);
+		var widgetWidth = widgetBounds != null && Math.isFinite(widgetBounds.minX) ? getBoundsWidth(widgetBounds) :
+			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxX : getWidth(clip);
 
 		return widgetWidth;
 	}
@@ -2040,7 +2219,8 @@ class DisplayObjectHelper {
 
 	public static inline function getWidgetHeight(clip : DisplayObject) : Float {
 		var widgetBounds : Bounds = untyped clip.widgetBounds;
-		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) : getHeight(clip);
+		return (widgetBounds != null && Math.isFinite(widgetBounds.minY)) ? getBoundsHeight(widgetBounds) :
+			untyped clip.isFlowContainer && clip.mask == null ? clip.localBounds.maxY : getHeight(clip);
 	}
 
 	public static function invalidateLocalBounds(clip : DisplayObject, ?invalidateMask : Bool = false) : Void {
@@ -2054,7 +2234,7 @@ class DisplayObjectHelper {
 				untyped clip.calculateWidgetBounds();
 				applyNewBounds(clip, untyped clip.widgetBounds);
 
-				if (untyped clip.isHTMLStage && clip.children && clip.children.length > 0) {
+				if (untyped (isHTMLStage(clip) || isHTML(clip)) && clip.children && clip.children.length > 0) {
 					for (child in getClipChildren(clip)) {
 						if (untyped (!child.isMask || invalidateMask) && child.clipVisible && child.localBounds != null) {
 							invalidateLocalBounds(child, invalidateMask);
@@ -2090,12 +2270,12 @@ class DisplayObjectHelper {
 			}
 
 			if (untyped clip.nativeWidgetBoundsChanged || clip.localTransformChanged) {
-				if (RenderSupport.RendererType != "html") {
+				if (!isHTMLRenderer(clip)) {
 					untyped clip.nativeWidgetBoundsChanged = false;
 				}
 
 				if (untyped clip.origin != null) {
-					if (RenderSupport.RendererType == "html") {
+					if (isHTMLRenderer(clip)) {
 						initNativeWidget(clip);
 
 						if (untyped clip.nativeWidget != null) {
@@ -2140,7 +2320,7 @@ class DisplayObjectHelper {
 
 		if (!isEqualBounds(untyped clip.localBounds, newBounds)) {
 			if (isNativeWidget(clip)) {
-				if (RenderSupport.RendererType == "html") {
+				if (isHTMLRenderer(clip)) {
 					invalidateTransform(clip);
 				} else {
 					invalidateParentTransform(clip);
@@ -2148,7 +2328,7 @@ class DisplayObjectHelper {
 			}
 
 			untyped clip.nativeWidgetBoundsChanged = true;
-			if (RenderSupport.RendererType != "html") {
+			if (!isHTMLRenderer(clip)) {
 				untyped clip.rvlast = null;
 			}
 
@@ -2398,7 +2578,7 @@ class DisplayObjectHelper {
 
 		untyped clip.viewBounds = viewBounds;
 
-		if ((RenderSupport.RendererType != "html" && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
+		if ((!isHTMLRenderer(clip) && untyped clip.styleChanged != null) || untyped HaxeRuntime.instanceof(clip, DropAreaClip)) {
 			untyped clip.invalidateStyle();
 			invalidateTransform(clip, 'invalidateRenderable');
 		}
@@ -2567,5 +2747,15 @@ class DisplayObjectHelper {
 		} else {
 			return child.parent != null && isParentOf(parent, child.parent);
 		}
+	}
+
+	public static function countClips(parent : DisplayObject) : Int {
+		var count = 1;
+
+		for (child in getClipChildren(parent)) {
+			count += countClips(child);
+		}
+
+		return count;
 	}
 }

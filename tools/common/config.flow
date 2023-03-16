@@ -1,4 +1,5 @@
 import sys/concurrent;
+import sys/system;
 import fs/filesystem;
 import ds/tree;
 import net/url_parameter;
@@ -47,24 +48,24 @@ export {
     // Gets config from all url parameters
     getAllUrlConfig() -> Tree<string, string>;
 
-    // Gets config from select url parameters given by first of params and 
+    // Gets config from select url parameters given by first of params and
     // stores them under second of params.
     getUrlConfigMapNames : (params : [Pair<string, string>])->Tree<string, string>;
 
     // Combines two configs. Settings in over overrides settings in under.
     combineConfigsOverride : (
-        over : Tree<string, string>, 
+        over : Tree<string, string>,
         under : Tree<string, string>
     )->Tree<string, string>;
     combineConfigs : (
-        left : Tree<string, string>, 
+        left : Tree<string, string>,
         right : Tree<string, string>,
         combine : (param : string, fromLeft : string, fromRight : string)->string
     )->Tree<string, string>;
 
     // The structure to contain the configuration for a compiler invocation
     CompilerConfig(
-        flowfile : string, 
+        flowfile : string,
         includes : [string],
         objectFolders : [string],
         verbose : int,
@@ -95,6 +96,14 @@ export {
 	// Set (add or modify) a config field(s) in conf struct.
 	setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig;
 	setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig;
+
+	// Gather includes from external flow.config's, listed in include_extern as CSV.
+	// When gathering external includes, relative paths are resolved to absolute.
+	fcExternIncludes(include_extern : string) -> [string];
+
+	// Tries to run a program with '-version' option, and output the result.
+	// In case a program doesn't exist on path or any other errors return an empty string.
+	fcProgramVersion(program : string) -> string;
 }
 
 getFlowDir() -> string {
@@ -103,7 +112,7 @@ getFlowDir() -> string {
 		println("WARNING: Could not determine the flow directory.");
 		println("Defaults to ../flow9/. Use bin-dir=<path> to specify where the flow folder is");
 		"../flow9/";
-	} 
+	}
 }
 
 fcFlowDir : ref Maybe<string> = ref None();
@@ -113,14 +122,14 @@ findFlowDir() -> string {
 		// Use the 'print-flow-dir=1' option of flowc
 		flowDirByFlowc = \-> {
 			if (strContains(getApplicationPath(), "flowc1")) {
-				// flowc1 must not use itsef in this function, 
+				// flowc1 must not use itsef in this function,
 				// otherwise there's a fork bomb.
-				"" 
+				""
 			} else {
 				dir_lines = ref "";
 				err_lines = ref "";
-				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".", 
-					\out -> dir_lines := ^dir_lines + out, 
+				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".",
+					\out -> dir_lines := ^dir_lines + out,
 					\err -> {
 						println(err);
 						err_lines := err;
@@ -197,26 +206,37 @@ fcFirstExistentFile(files : [string], i : int, def : string) -> string {
 }
 
 parseFlowConfig(config : string, dir : string) -> Tree<string, string> {
-	lines = strSplit(config, "\n");
-	fold(lines, makeTree(), \acc, l -> {
-		// Skip comment lines in flow.config
-		if (!startsWith(ltrim2(l, " \t"), "#")) {
-			opts = strSplit(l, "=");
-			if (length(opts) == 2) {
-				opt = trim2(opts[0], " \t\u000d");
-				val = trim2(opts[1], " \t\u000d");
-				val1 = if (opt == "resource-file") {
-						val2 = if (endsWith(val, ".swf")) val
-							else val + ".swf";
-						if (strFindFirstOf(val2, "/\\") != -1) val2
-						else "resources/" + val2
-					} else val;
-				val2 = if (!contains(["fontconfig", "html-splash", "js-extern-lib"], opt)) val1 else {
-					fcFirstExistentFile([val1, pathCombine(dir, val1)], 0, val1)
-				}
-				setTree(acc, opt, val2)
-			} else acc;
-		} else acc;
+	// Skip comment lines and empty lines in flow.config
+	lines = filtermap(strSplit(config, "\n"), \line0 -> {
+		line = trim2(line0, " \t\r\u000d");
+		if (line == "" || startsWith(line, "#")) None() else Some(line)
+	});
+	fold(lines, makeTree(), \acc, line -> {
+		eq_ind = strIndexOf(line, "=");
+		if (eq_ind <= 0) acc else {
+			// Check if actually there's '+=' operator or just '='
+			eq_plus = (getCharAt(line, eq_ind - 1) == "+");
+			opt_end = if (eq_plus) eq_ind - 1 else eq_ind;
+			opt = trim2(substring(line, 0, opt_end), " \t\u000d");
+			val = trim2(substring(line, eq_ind + 1, strlen(line) - (eq_ind + 1)), " \t\u000d");
+			val1 = if (opt == "resource-file") {
+					val2 = if (endsWith(val, ".swf")) val
+						else val + ".swf";
+					if (strFindFirstOf(val2, "/\\") != -1) val2
+					else "resources/" + val2
+				} else val;
+			val2 = if (!contains(["fontconfig", "html-splash", "js-extern-lib"], opt)) val1 else {
+				fcFirstExistentFile([val1, pathCombine(dir, val1)], 0, val1)
+			}
+			if (eq_plus) {
+				// Add a value to the already stored value. Values are stored as CSV.
+				val0 = lookupTreeDef(acc, opt, "");
+				setTree(acc, opt, if (val0 == "") val2 else val0 + "," + val2);
+			} else {
+				// Set the value. If there already was a value - overwrite it.
+				setTree(acc, opt, val2);
+			}
+		}
 	});
 }
 
@@ -230,16 +250,16 @@ getConfigParameter(config : Tree<string, string>, paramName : string) -> string 
 
 getConfigParameterInt(config : Tree<string, string>, paramName : string, defValue : int) -> int {
     raw = getConfigParameterDef(config, paramName, "");
-    if (raw == "") defValue else s2i(raw); 
+    if (raw == "") defValue else s2i(raw);
 }
 
 isConfigParameterSet(config, param)
     getConfigParameter(config, param) != "";
 
-isConfigParameterTrue(config, param) 
+isConfigParameterTrue(config, param)
     isParameterTrue(getConfigParameter(config, param));
 
-isConfigParameterFalse(config, param) 
+isConfigParameterFalse(config, param)
     isParameterFalse(getConfigParameter(config, param));
 
 isAnyConfigParametersTrue(config : Tree<string, string>, params : [string]) -> bool {
@@ -265,7 +285,7 @@ underrideConfigParameter(conf, key, value)
     if (containsKeyTree(conf.config, key)) conf
     else setConfigParameter(conf, key, value);
 
-getConstConfig(params) 
+getConstConfig(params)
     fold(params, makeTree(), \t, pair->
         if (pair.second != "") setTree(t, pair.first, pair.second)
         else t
@@ -286,7 +306,7 @@ getAllUrlConfig() -> Tree<string, string> {
 	fold(getAllUrlParametersArray(), makeTree(), \acc, param -> setTree(acc, param[0], param[1]))
 }
 
-combineConfigsOverride(over, under) 
+combineConfigsOverride(over, under)
     mergeTreeCustom(over, under, \__, upper, __ -> upper);
 
 combineConfigs(left, right, combine)
@@ -415,7 +435,9 @@ setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
 
 patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	cwd = strReplace(resolveRelativePath("."), "\\", "/");
-	conf_dir = findFlowConfigDir(dirName(conf.flowfile));
+	conf_dir = findFlowConfigDir(dirName(resolveRelativePath(changeFileExt(conf.flowfile, ".flow"))));
+	resolve_relative_to_conf = \file ->
+		fcFirstExistentFile([file, resolveRelativePath(pathCombine(conf_dir, file))], 0, file);
 
 	// Setup the 'output-dir' in case it is not set explicitly.
 	conf1 = switch (lookupTree(conf.config, "output-dir")) {
@@ -429,7 +451,7 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	conf3 = setTree(conf2, "working-dir", lookupTreeDef(conf2, "working-dir", cwd));
 
 	resolve_fontconfig = \file -> {
-		resolved = fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file);
+		resolved = resolve_relative_to_conf(file);
 		setTree(setTree(conf3, "fontconfig", resolved), "fontconfig-file", resolved);
 	}
 
@@ -438,7 +460,7 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 		Some(file): resolve_fontconfig(file);
 		None(): {
 			switch (lookupTree(conf3, "fontconfig-file")) {
-				Some(file): resolve_fontconfig(file)
+				Some(file): resolve_fontconfig(file);
 				None(): conf3;
 			}
 		}
@@ -446,13 +468,13 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 
 	// Resolve relative path for 'html-splash', because server may run in a different place.
 	conf5 = switch (lookupTree(conf4, "html-splash")) {
-		Some(file): setTree(conf4, "html-splash", fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file));
+		Some(file): setTree(conf4, "html-splash", resolve_relative_to_conf(file));
 		None(): conf4;
 	}
 
 	// Resolve relative path for 'js-extern-lib', because server may run in a different place.
 	conf6 = switch (lookupTree(conf5, "js-extern-lib")) {
-		Some(file): setTree(conf5, "js-extern-lib", fcFirstExistentFile([file, pathCombine(file, conf_dir)], 0, file));
+		Some(file): setTree(conf5, "js-extern-lib", resolve_relative_to_conf(file));
 		None(): conf5;
 	}
 
@@ -460,12 +482,52 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	fontconfig = lookupTreeDef(conf6, "fontconfig-file", conf.jsParams.fontconfig);
 	jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
 
+	conf7 = switch (lookupTree(conf6, "java-natives")) {
+		Some(natives):
+			setTree(conf6, "java-natives",
+				strGlue(filtermap(strSplit(natives, ","), \nat ->
+					if (isSpace(nat)) None() else {
+						Some(resolve_relative_to_conf(nat))
+					}
+				), ",")
+			);
+		None(): conf6;
+	}
+
+	conf8 = switch (lookupTree(conf7, "include")) {
+		Some(includes):
+			setTree(conf7, "include",
+				strGlue(filtermap(strSplit(includes, ","), \include ->
+					if (isSpace(include)) None() else {
+						Some(resolve_relative_to_conf(include))
+					}
+				), ",")
+			);
+		None(): conf7;
+	}
+
+	conf9 = switch (lookupTree(conf8, "I")) {
+		Some(includes):
+			setTree(conf8, "I",
+				strGlue(filtermap(strSplit(includes, ","), \include ->
+					if (isSpace(include)) None() else {
+						Some(resolve_relative_to_conf(include));
+					}
+				), ",")
+			);
+		None(): conf8;
+	}
+
 	// Output the result
-	CompilerConfig(conf with config = conf6, jsParams = jsParams);
+	CompilerConfig(conf with
+		includes = map(conf.includes, resolve_relative_to_conf),
+		config = conf9,
+		jsParams = jsParams
+	);
 }
 
 setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
-	CompilerConfig(conf with 
+	CompilerConfig(conf with
 		flowfile = if (opt == "file" || opt == "flowfile") val else conf.flowfile,
 		includes = if (opt == "I" || opt == "include") strSplit(val, ",") else conf.includes,
 		objectFolders = if (opt == "obj" || opt == "objectFolders") strSplit(val, ",") else conf.objectFolders,
@@ -497,4 +559,35 @@ setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerCo
 
 setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> CompilerConfig {
 	fold(opt_pairs, conf, \acc, pair -> setConfigOption(acc, pair.first, pair.second));
+}
+
+fcExternIncludes(include_extern : string) -> [string] {
+	if (include_extern == "") [] else {
+		configs_to_merge = filter(strSplit(include_extern, ","), neq(""));
+		fold(configs_to_merge, [], \acc, conf_file -> {
+			if (!fileExists(conf_file)) {
+				acc;
+			} else {
+				conf_str = getFileContent(conf_file);
+				conf_dir = fcDirName(conf_file);
+				extern_conf = parseFlowConfig(conf_str, conf_dir);
+				includes_str = lookupTreeDef(extern_conf, "include", "");
+				acc1 = concat(acc, [resolveRelativePath(conf_dir)]);
+				if (includes_str == "") acc1 else {
+					includes = filter(strSplit(includes_str, ","), neq(""));
+					concat(acc1, map(includes, \incl ->
+						if (isAbsolutePath(incl)) incl else
+						resolveRelativePath(pathCombine(fcDirName(conf_file), incl))
+					));
+				}
+			}
+		});
+	}
+}
+
+fcProgramVersion(program : string) -> string {
+	out = ref "";
+	err = ref false;
+	exit_code = execSystemProcess(program, ["-version"], ".", \o -> out := ^out + "\n" + o, \e -> err := true);
+	if (exit_code == 0 && !^err) ^out else "";
 }

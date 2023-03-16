@@ -15,8 +15,11 @@ export {
 	// Create a vector with a given capacity. Initially it is empty.
 	makeVector(capacity : int) -> Vector<?>;
 
-	//Create a vector with a given capacity and one element v.
+	// Create a vector with a given capacity and one element v.
 	makeVector1(capacity : int, v : ?) -> Vector<?>;
+
+	// Create a vector from an array.
+	buildVector(arr : [?]) -> Vector<?>;
 
 	// Create a vector with a given capacity and default value. Initially it is empty.
 	makeVectorDefVal(capacity : int, defVal : ?) -> Vector<?>;
@@ -27,6 +30,9 @@ export {
 	// Safely access vector by index, O(1)
 	getVector(vector : Vector<?>, i : int) -> Maybe<?>;
 
+	// Safely access vector by index using a default value in case index is out of bounds, O(1)
+	getVectorDef(vector : Vector<?>, i : int, def : ?) -> ?;
+
 	// Unsafe vector getter, may cause runtime errors. 
 	// Use only if you are sure that index is valid.
 	getVectorUnsafe(vector : Vector<?>, i : int) -> ?;
@@ -35,7 +41,7 @@ export {
 	setVector(vector : Vector<?>, i : int, val : ?) -> void;
 
 	// Vector setter: modifies vector at index i, O(1).
-	// Use only if you are sure that index is valid.
+	// Use only if you are sure that index is valid, otherwise runtime error will occur.
 	setVectorUnsafe(vector : Vector<?>, i : int, val : ?) -> void;
 
 	// Adds a new element to a vector, O(1)
@@ -73,6 +79,12 @@ export {
 
 	// Append one vector with another. Modifies (expands) the first one.
 	appendVector(v1 : Vector<?>, v2 : Vector<?>) -> void;
+
+	// Reduces a vector to a given size. Capacity is kept.
+	shrinkVector(v : Vector<?>, size : int) -> void;
+
+	// Takes a fragment of v at given index with a give length
+	subVector(v : Vector<?>, index : int, len : int) -> Vector<?>;
 }
 
 // Set of private natives
@@ -83,7 +95,10 @@ native addNativeVector : (vector : native, val : ?) -> void = Native.addVector;
 native removeNativeVector : (vector : native, i : int) -> void = Native.removeVector;
 native sizeNativeVector : (vector : native) -> int = Native.sizeVector;
 native clearNativeVector : (vector : native) -> void = Native.clearVector;
-
+native shrinkNativeVector : (vector : native, size : int) -> void = Native.shrinkVector;
+native subNativeVector : (vector : native, index : int, len : int) -> native = Native.subVector;
+native vector2arrayNative : (vector : native) -> [?] = Native.vector2array;
+native array2vectorNative : (arr : [?]) -> native = Native.array2vector;
 
 // Accessors to natives:
 
@@ -94,6 +109,12 @@ makeVector(capacity : int) -> Vector<?> {
 makeVector1(capacity : int, v : ?) -> Vector<?> {
 	ret = Vector(makeNativeVector(capacity), None());
 	addNativeVector(ret.vect, v);
+	ret;
+}
+
+buildVector(arr : [?]) -> Vector<?> {
+	ret = Vector(makeNativeVector(length(arr) * 2), None());
+	iter(arr, \v -> addNativeVector(ret.vect, v));
 	ret;
 }
 
@@ -114,6 +135,15 @@ getVector(vector : Vector<?>, i : int) -> Maybe<?> {
 		vector.defVal;
 	}
 }
+
+getVectorDef(vector : Vector<?>, i : int, def : ?) -> ? {
+	if (0 <= i && i < sizeNativeVector(vector.vect)) {
+		getNativeVector(vector.vect, i);
+	} else {
+		def;
+	}
+}
+
 
 getVectorUnsafe(vector : Vector<?>, i : int) -> ? {
 	getNativeVector(vector.vect, i);
@@ -147,6 +177,21 @@ clearVector(vector : Vector<?>) -> void {
 	clearNativeVector(vector.vect);
 }
 
+shrinkVector(vector : Vector<?>, size : int) -> void {
+	shrinkNativeVector(vector.vect, size);
+}
+
+subVector(vector : Vector<?>, index : int, len : int) -> Vector<?> {
+	Vector(subNativeVector(vector.vect, index, len), vector.defVal);
+}
+
+vector2array(vector : Vector<?>) -> [?] {
+	vector2arrayNative(vector.vect);
+}
+
+array2vector(arr : [?]) -> Vector<?> {
+	Vector(array2vectorNative(arr), None());
+}
 
 // Set of flow fallbacks for natives:
 
@@ -170,21 +215,37 @@ addNativeVector(vector : native, val : ?) -> void {
 }
 
 removeNativeVector(vector : native, i : int) -> void {
-	arr = cast(flow(vector) : flow -> ref [?]);
+	arr = cast(flow(vector) : flow -> ref [flow]);
 	arr := removeIndex(^arr, i);
 }
 
 sizeNativeVector(vector : native) -> int {
-	arr = cast(flow(vector) : flow -> ref [?]);
+	arr = cast(flow(vector) : flow -> ref [flow]);
 	length(^arr);
 }
 
 clearNativeVector(vector : native) -> void {
-	arr = cast(flow(vector) : flow -> ref [?]);
+	arr = cast(flow(vector) : flow -> ref [flow]);
 	arr := [];
 }
 
+shrinkNativeVector(vector : native, size : int) -> void {
+	arr = cast(flow(vector) : flow -> ref [flow]);
+	arr := take(^arr, size);
+}
 
+subNativeVector(vector : native, index : int, len : int) -> native {
+	arr = cast(flow(vector) : flow -> ref [flow]);
+	flow(ref subrange(^arr, index, len));
+}
+
+vector2arrayNative(vector : native) -> [?] {
+	^cast(flow(vector) : flow -> ref [?]);
+}
+
+array2vectorNative(arr : [?]) -> native {
+	cast((ref arr) : ref [?] -> flow);
+}
 
 // Auxiliary vector functions:
 
@@ -217,7 +278,7 @@ mapVector(vector : Vector<?>, fn : (?) -> ??) -> Vector<??> {
 
 doMapVector(vector : Vector<?>, fn : (?) -> ??, ret : Vector<??>, i : int) -> Vector<??> {
 	if (i == sizeVector(vector)) ret else {
-		setVector(ret, i, fn(getNativeVector(vector.vect, i)));
+		pushVector(ret, fn(getNativeVector(vector.vect, i)));
 		doMapVector(vector, fn, ret, i + 1);
 	}
 }
@@ -229,7 +290,7 @@ mapiVector(vector : Vector<?>, fn : (int, ?) -> ??) -> Vector<??> {
 
 doMapiVector(vector : Vector<?>, fn : (int, ?) -> ??, ret : Vector<??>, i : int) -> Vector<??> {
 	if (i == sizeVector(vector)) ret else {
-		setVector(ret, i, fn(i, getNativeVector(vector.vect, i)));
+		pushVector(ret, fn(i, getNativeVector(vector.vect, i)));
 		doMapiVector(vector, fn, ret, i + 1);
 	}
 }
@@ -252,16 +313,6 @@ doFoldiVector(vector : Vector<?>, val : ??,  fn : (int, ??, ?) -> ??, i : int) -
 	if (i == sizeVector(vector)) val else {
 		doFoldiVector(vector, fn(i, val, getNativeVector(vector.vect, i)), fn, i + 1);
 	}
-}
-
-vector2array(vector : Vector<?>) -> [?] {
-	foldVector(vector, [], \acc, x -> concat(acc, [x]));
-}
-
-array2vector(arr : [?]) -> Vector<?> {
-	ret = makeVector(length(arr));
-	iter(arr, \x -> pushVector(ret, x));
-	ret;
 }
 
 copyVector(vector : Vector<?>) -> Vector<?> {

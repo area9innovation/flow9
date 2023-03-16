@@ -39,7 +39,7 @@ export {
 
 	makeMEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDeltaTimer) -> MEasing;
 
-	MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
+	MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic, originPoint : Maybe<Point>) -> Tropic;
 
 	mStepOf5TransitionDuration = \step : int -> easingTransitionDuration * i2d(step) / 5.;
 
@@ -53,6 +53,14 @@ export {
 	MSizeAnimation(content : Material, style : [MEasingAnimationStyle<Pair<WidthHeight, WidthHeight>>]) -> Material;
 	MWidthAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
 	MHeightAnimation(content : Material, style : [MEasingAnimationStyle<Pair<double, double>>]) -> Material;
+	MZoomAnimation(
+		targetZoom : Transform<double>,
+		startZoom : Transform<double>,
+		content : Material,
+		tweakStyle : [TTweakStyle],
+		size : Transform<WidthHeight>,
+		style : [MEasingAnimationStyle<Pair<double, double>>]
+	) -> Material;
 
 	MEasingScaleAnimation(factor : Transform<Factor>, content : Material, style : [MEasingAnimationStyle<Pair<Factor, Factor>>]) -> Material;
 
@@ -307,11 +315,12 @@ makeMEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDelt
 	)
 }
 
-MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic {
+MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic, originPoint : Maybe<Point>) -> Tropic {
 	scaleRange = 0.1;
 	trigger = make(true);
 	scale = make(1.);
 	contentWH = makeWH();
+	originPoint2 = eitherMap(originPoint, \op -> const(op), fselectLift(contentWH, \wh -> Point(0.5 * wh.width, 0.5 * wh.height)));
 
 	MEasingAnimation(
 		manager,
@@ -334,7 +343,9 @@ MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 			MAutoStart()
 		],
 		TTranslate(
-			fselect2(scale, contentWH, FLift2(\sc, wh -> Point(wh.width * (0.5 - sc / 2.), wh.height * (0.5 - sc / 2.)))),
+			fselect2Lift(scale, originPoint2, \sc, op ->
+				Point((1. - sc) * op.x, (1. - sc) * op.y)
+			),
 			TScale(ffactor2(scale), TAttachBox(content, contentWH))
 		)
 	)
@@ -664,6 +675,42 @@ MBorderAnimation(
 				easedEnd,
 				easedBottom,
 				content
+			)
+		)
+	);
+}
+
+MZoomAnimation(
+	targetZoom : Transform<double>,
+	startZoom : Transform<double>,
+	content : Material,
+	tweakStyle : [TTweakStyle],
+	size : Transform<WidthHeight>,
+	style : [MEasingAnimationStyle<Pair<double, double>>]
+) -> Material {
+	easedZoom = make(0.0);
+	autoStart = contains(style, MAutoStart());
+	animating = extractStruct(style, MAnimating(make(false))).animating;
+	enabled = extractStruct(style, MEnabled(const(false))).enabled;
+
+	MConstruct(
+		[
+			\ -> {
+				nextDistinct(easedZoom, if (autoStart) fgetValue(startZoom) else fgetValue(targetZoom));
+				nop;
+			}
+		],
+		MMEasingAnimation(
+			const(0.3),
+			const(CubicBezierEasing(0.42, 0.0, 0.58, 1.0)),
+			targetZoom,
+			\z -> Some(Pair(getValue(easedZoom), z)),
+			\z, v -> nextDistinct(easedZoom, lerp(z.first, z.second, v)),
+			replaceStruct(style, MAnimating(animating)),
+			MTweak(
+				replaceStructMany(tweakStyle, [TFillZoom(true), TFillScale(fif(enabled, easedZoom, startZoom))]),
+				content,
+				TSized(size)
 			)
 		)
 	);

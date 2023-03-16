@@ -1,0 +1,75 @@
+import tools/dsl/dsl_util;
+import tools/dsl/dsl_pretty;
+import ds/tree;
+
+//	applyFn : (node : DslENode, children : [DslENode]) -> DslENode
+
+export {
+	dslENodeMatch(acc : DslENodeMatch, term : DslAst, pattern : DslAst) -> DslENodeMatch;
+
+	DslENodeMatch(
+		bindings : Tree<string, DslAst>,
+		fail : bool
+	);
+}
+
+dslENodeMatch(acc : DslENodeMatch, term : DslAst, pattern : DslAst) -> DslENodeMatch {
+	if (acc.fail) acc
+	else {
+		// println("Matching " + prettyDsl(term) + " against " + prettyDsl(pattern));
+		def = \ -> {
+			DslENodeMatch(acc with fail = term != pattern);
+		}
+		switch (pattern) {
+			DslBool(value): def();
+			DslInt(value): def();
+			DslDouble(value): def();
+			DslString(value): def();
+			DslList(value): {
+				switch (term) {
+					DslList(tvalues): {
+						// TODO: This can be done directly on the lists
+						patterns = list2array(value);
+						terms = list2array(tvalues);
+						if (length(patterns) == length(terms)) {
+							foldi(patterns, acc, \i, acc2, val -> {
+								dslENodeMatch(acc2, terms[i], val)
+							})
+						} else DslENodeMatch(acc with fail = true);
+					}
+					default: DslENodeMatch(acc with fail = true);
+				}
+			}
+			DslNode(name, args, pos): {
+				if (name == "bind") {
+					id = getDslString(args[0]);
+					mbind = lookupTree(acc.bindings, id);
+					mbind ?? {
+						// OK, already is bound. Check that it is consistent
+						if (mbind == term) {
+							acc;
+						} else {
+							DslENodeMatch(acc with fail = true);
+						}
+					} : {
+						DslENodeMatch(acc with 
+							bindings = setTree(acc.bindings, id, term)
+						);
+					}
+				} else {
+					node = getDslNode(term);
+					if (node.name == name && length(node.args) == length(args)) {
+						foldi(node.args, acc, \i, acc2 : DslENodeMatch, arg : DslAst -> {
+							if (acc2.fail) acc2
+							else {
+								dslENodeMatch(acc2, arg, args[i]);
+							}
+						});
+					} else {
+						DslENodeMatch(acc with fail = true);
+					}
+				}
+			}
+		}
+	}
+}

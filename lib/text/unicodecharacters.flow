@@ -1,17 +1,18 @@
 import runtime;
 import math/bits;
+import ds/tree;
 
 /*
-Unicode aware case mapping (converting between upper and lower case). Is based 
-on UnicodeData.txt and only contains a single case for ß (German double s) 
-from SpecialCasing.txt. That means that most primarily western languages with 
-casing are supported except for ligatures (in Latin, Greek, Armenian) and 
-Turkish, Azeri, Lithuanian. 
+Unicode aware case mapping (converting between upper and lower case). Is based
+on UnicodeData.txt and only contains a single case for ß (German double s)
+from SpecialCasing.txt. That means that most primarily western languages with
+casing are supported except for ligatures (in Latin, Greek, Armenian) and
+Turkish, Azeri, Lithuanian.
 
-Combining characters are not factored into the case mapping so there are no 
-guarantees case mapping will work correct. By chance "Å" = "\u0041\u030A" -> 
-"\u0061\u030A" = "å" but there are bound to be characters where the base 
-character 
+Combining characters are not factored into the case mapping so there are no
+guarantees case mapping will work correct. By chance "Å" = "\u0041\u030A" ->
+"\u0061\u030A" = "å" but there are bound to be characters where the base
+character
 
 Case mapping is not reversible even for single letter strings:
   toTitlecaseUnicode("ß") = "Ss"
@@ -27,13 +28,13 @@ export {
 	// True if all characters in the string are titlecase letters.
 	isTitlecaseUnicode(s : string)->bool;
 
-	// Converts all letters in the string to uppercase. Uppercase letters and 
+	// Converts all letters in the string to uppercase. Uppercase letters and
 	// other characters are not changed.
 	toUppercaseUnicode(s : string)->string;
-	// Converts all letters in the string to lowercase. Lowercase letters and 
+	// Converts all letters in the string to lowercase. Lowercase letters and
 	// other characters are not changed.
 	toLowercaseUnicode(s : string)->string;
-	// Converts all letters in the string to titlecase. Titlecase letters and 
+	// Converts all letters in the string to titlecase. Titlecase letters and
 	// other characters are not changed.
 	toTitlecaseUnicode(s : string)->string;
 
@@ -117,10 +118,10 @@ isLetterUnicode(s) {
 	else
 		stringAll(s, \c -> {
 			cat = getUnicodeCategory(c);
-			cat == uc_uppercaseLetter || 
-			cat == uc_lowercaseLetter || 
-			cat == uc_titlecaseLetter || 
-			cat == uc_uppercaseLetter || 
+			cat == uc_uppercaseLetter ||
+			cat == uc_lowercaseLetter ||
+			cat == uc_titlecaseLetter ||
+			cat == uc_uppercaseLetter ||
 			cat == uc_modifierLetter ||
 			cat == uc_otherLetter ||
 			cat == uc_letterNumber
@@ -129,7 +130,7 @@ isLetterUnicode(s) {
 
 containsLettersUnicode(s) {
 	len = strlen(s);
-	countUntil(0, len, \i -> isLetterUnicode(getCharAt(s, i))) != len	
+	countUntil(0, len, \i -> isLetterUnicode(getCharAt(s, i))) != len
 }
 
 containsSymbolFromCategoryUnicode(s : string, categories : [int]) -> bool {
@@ -166,14 +167,14 @@ toTitlecase(c : int) -> string {
 }
 
 
-// True if condition holds for the character codes of all the characters in s. 
+// True if condition holds for the character codes of all the characters in s.
 stringAll(s, condition) {
 	len = strlen(s);
 	countUntil(0, len, \i -> !condition(getCharCodeAt(s, i))) == len
 }
 
 
-/// Looks up the given character code in the talbe returning fallback if it is 
+/// Looks up the given character code in the talbe returning fallback if it is
 /// not defined in the table.
 ucLookupTable : (table : [[int]], c : int, fallback : int)->int;
 ucLookupTable(table, c, fallback) {
@@ -185,12 +186,19 @@ ucLookupTable(table, c, fallback) {
 			subtable[lo]
 		else fallback;
 	} else fallback;
-} 
+}
 
+UnicodeDirectionCache = {
+	generate(0, 65535, getUnicodeDirection_computeValue);
+}
 
 getUnicodeDirection(code: int) -> int {
+	if (code < 65535) UnicodeDirectionCache[code] else getUnicodeDirection_computeValue(code)
+}
+
+getUnicodeDirection_computeValue(code: int) -> int {
 	cat = getUnicodeCategory(code);
-	if (contains([0x3C, 0x3E], code))
+	if (contains([0x3C, 0x3E, 0x7B, 0x7D], code))
 		uc_dir_coupled
 	else if(contains([0x200E, 0x202D], code))
 		uc_dir_ltr
@@ -201,7 +209,8 @@ getUnicodeDirection(code: int) -> int {
 	], cat))
 		uc_dir_flow
 	else if (
-		   (code >= 0x590 && code < 0x900)
+		   (code >= 0x590 && code < 0x660)
+		|| (code >= 0x66D && code < 0x900)
 		|| (code >= 0xFB1D && code < 0xFDD0)
 		|| (code >= 0xFDF0 && code < 0xFE00)
 		|| (code >= 0xFE70 && code < 0xFF00)
@@ -233,14 +242,30 @@ getUnicodePair(code: int) -> int {
 	foldi(left, code, \i, acc, c -> if (c == code) right[i] else if (code == right[i]) c else acc);
 }
 
-// This should be extended, hence detects only arabic.
+UnicodeAlphabetCache = {
+	generate(0, 65535, getUnicodeAlphabet_computeValue);
+}
+
 getUnicodeAlphabet(code : int) -> string {
-	if ((code >= 0x600 && code < 0x700) || (code >= 0xFB50 && code < 0xFE00) || (code >= 0xFE70 && code < 0xFF00)) "arb"
+	if (code < 65535) UnicodeAlphabetCache[code] else getUnicodeAlphabet_computeValue(code)
+}
+
+// This should be extended, hence detects only arabic.
+getUnicodeAlphabet_computeValue(code : int) -> string {
+	if ((code >= 0x600 && code < 0x660) || (code >= 0x66D && code < 0x700) || (code >= 0xFB50 && code < 0xFE00) || (code >= 0xFE70 && code < 0xFF00)) "arb"
 	// TODO "cyr", "lat" and others.
 	else "";
 }
 
+UnicodeCategoryCache = {
+	generate(0, 65535, getUnicodeCategory_computeValue);
+}
+
 getUnicodeCategory(code) {
+	if (code < 65535) UnicodeCategoryCache[code] else getUnicodeCategory_computeValue(code)
+}
+
+getUnicodeCategory_computeValue(code) {
 	hi = bitUshr(code, 8);
 	if (0 <= hi && hi < length(unicodeCategoryTable)) {
 		subtable = unicodeCategoryTable[hi];
@@ -1294,4 +1319,3 @@ unicodeToTitleTable = [
 	[],
 	[65280, 65281, 65282, 65283, 65284, 65285, 65286, 65287, 65288, 65289, 65290, 65291, 65292, 65293, 65294, 65295, 65296, 65297, 65298, 65299, 65300, 65301, 65302, 65303, 65304, 65305, 65306, 65307, 65308, 65309, 65310, 65311, 65312, 65313, 65314, 65315, 65316, 65317, 65318, 65319, 65320, 65321, 65322, 65323, 65324, 65325, 65326, 65327, 65328, 65329, 65330, 65331, 65332, 65333, 65334, 65335, 65336, 65337, 65338, 65339, 65340, 65341, 65342, 65343, 65344, 65345, 65346, 65347, 65348, 65349, 65350, 65351, 65352, 65353, 65354, 65355, 65356, 65357, 65358, 65359, 65360, 65361, 65362, 65363, 65364, 65365, 65366, 65367, 65368, 65369, 65370, 65371, 65372, 65373, 65374, 65375, 65376, 65377, 65378, 65379, 65380, 65381, 65382, 65383, 65384, 65385, 65386, 65387, 65388, 65389, 65390, 65391, 65392, 65393, 65394, 65395, 65396, 65397, 65398, 65399, 65400, 65401, 65402, 65403, 65404, 65405, 65406, 65407, 65408, 65409, 65410, 65411, 65412, 65413, 65414, 65415, 65416, 65417, 65418, 65419, 65420, 65421, 65422, 65423, 65424, 65425, 65426, 65427, 65428, 65429, 65430, 65431, 65432, 65433, 65434, 65435, 65436, 65437, 65438, 65439, 65440, 65441, 65442, 65443, 65444, 65445, 65446, 65447, 65448, 65449, 65450, 65451, 65452, 65453, 65454, 65455, 65456, 65457, 65458, 65459, 65460, 65461, 65462, 65463, 65464, 65465, 65466, 65467, 65468, 65469, 65470, 65471, 65472, 65473, 65474, 65475, 65476, 65477, 65478, 65479, 65480, 65481, 65482, 65483, 65484, 65485, 65486, 65487, 65488, 65489, 65490, 65491, 65492, 65493, 65494, 65495, 65496, 65497, 65498, 65499, 65500, 65501, 65502, 65503, 65504, 65505, 65506, 65507, 65508, 65509, 65510, 65511, 65512, 65513, 65514, 65515, 65516, 65517, 65518, 65519, 65520, 65521, 65522, 65523, 65524, 65525, 65526, 65527, 65528, 65529, 65530, 65531, 65532, 65533, 65534, 65535]
 ];
-

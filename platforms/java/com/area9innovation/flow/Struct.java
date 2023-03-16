@@ -18,9 +18,7 @@ public abstract class Struct implements Comparable<Struct>, Cloneable {
 
 	public abstract int compareTo(Struct b);
 
-	public String toString() {
-		StringBuilder buf = new StringBuilder();
-
+	public void toStringAppend(StringBuilder buf) {
 		buf.append(getTypeName());
 		buf.append('(');
 
@@ -31,14 +29,15 @@ public abstract class Struct implements Comparable<Struct>, Cloneable {
 			if (i > 0)
 				buf.append(", ");
 
-			if (types[i] == RuntimeType.DOUBLE && values[i] instanceof Number)
-				buf.append(((Number)values[i]).doubleValue());
-			else
-				buf.append(FlowRuntime.toString(values[i]));
+			FlowRuntime.toStringAppend(values[i], buf);
 		}
 
 		buf.append(')');
+	}
 
+	public String toString() {
+		StringBuilder buf = new StringBuilder();
+		toStringAppend(buf);
 		return buf.toString();
 	}
 }

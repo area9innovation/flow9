@@ -6,6 +6,37 @@ import Platform;
 class FontLoader {
 	private static var FontLoadingTimeout = 30000; //ms
 
+	public static function loadPreconfiguredWebFonts(names : Array<String>, onDone : Void -> Void) {
+		var config : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
+		var fontFields = ["google", "custom"];
+		for (i in 0...names.length) untyped loadCSSFileInternal("fonts/"+names[i]+"/def.css");
+
+		for (i in 0...fontFields.length) {
+			var fontFieldsConfig = Reflect.field(config, fontFields[i]);
+			var fonts = Reflect.field(fontFieldsConfig, "families");
+			if (fonts != null) for (j in 0...fonts.length) {
+				var font = untyped fonts[j];
+				var parts : Array<String> = font.split(":");
+				var family = parts[0];
+				var testString : String = null;
+				if (names.indexOf(family) >= 0) {
+					var testStrings = Reflect.field(fontFieldsConfig, "testStrings");
+					if (testStrings != null) {
+						testString = Reflect.field(testStrings, family);
+						if (testString == null) testString = "русский العصور english";
+					}
+					addStyledTexts(family, parts.length > 1? parts[1] : null, testString);
+				}
+			}
+		}
+		untyped __js__("setTimeout(onDone, 25)");
+	}
+
+	public static function loadFSFont(family : String, url : String) {
+		addFontFace(family, url);
+		addStyledText(family);
+	}
+
 	public static function loadWebFonts(onDone : Void -> Void) {
 		if (HaxeRuntime.typeof(WebFont) != "undefined") {
 			var webfontconfig : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
@@ -49,28 +80,33 @@ class FontLoader {
 			}
 		}
 
-		// 400italic, 400 - examples of valid strings to parse
-		var wsReg = ~/([0-9]+)([A-Za-z]*)/;
-
 		for (i in 0...fontList.length) {
 			var font = untyped fontList[i];
 			var parts : Array<String> = font.split(":");
 			var family = parts[0];
 			var testString = testStringsMap.get(family);
-			if (parts.length > 1) {
-				var styles = parts[1].split(",");
-				for (j in 0...styles.length) {
-					var weight = "", style = "";
+			addStyledTexts(family, parts.length > 1? parts[1] : null);
+		}
+	}
 
-					if (wsReg.match(styles[j])) {
-						weight = wsReg.matched(1);
-						style = wsReg.matched(2);
-					}
-					addStyledText(family, untyped weight, untyped style, testString);
+	// 400italic, 400 - examples of valid strings to parse
+	private static var wsReg = ~/([0-9]+)([A-Za-z]*)/;
+
+	private static function addStyledTexts(family : String, facesStr : String, testString : String = "") {
+		if (facesStr == null) {
+			addStyledText(family, "", "", testString);
+		} else {
+			var styles = facesStr.split(",");
+			for (j in 0...styles.length) {
+				var weight = "", style = "";
+
+				if (wsReg.match(styles[j])) {
+					weight = wsReg.matched(1);
+					style = wsReg.matched(2);
 				}
-			} else {
-				addStyledText(family, "", "", testString);
+				addStyledText(family, untyped weight, untyped style, testString);
 			}
+
 		}
 	}
 
@@ -81,10 +117,18 @@ class FontLoader {
 		if (weight != "") text.style.fontWeight = weight;
 		if (style != "") text.style.fontStyle = style;
 		text.style.visibility = "hidden";
+		text.style.position = "fixed";
 		Browser.document.body.appendChild(text);
 
 		Native.timer(FontLoadingTimeout, function() {
 			Browser.document.body.removeChild(text);
 		});
+	}
+
+	private static function addFontFace(family : String, url : String) {
+		var css = "@font-face {	font-family: " + family + "; src: url(" + url + "); }";
+		var style = Browser.document.createElement('style');
+		style.appendChild(Browser.document.createTextNode(css));
+		Browser.document.head.appendChild(style);
 	}
 }

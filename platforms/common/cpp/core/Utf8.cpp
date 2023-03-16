@@ -17,27 +17,94 @@
 #import <UIKit/UIKit.h>
 #endif
 
+// We store here compiler flag about which logic of utf8 decode we should use:
+//  false - usual way with loss real code for 3 bytes codes,
+//  true - with decoding 3 bytes codes into UTF-16 codes (pairs of 2 bytes codes).
+bool utf8_js_style_global_flag = false;
+
+void setUtf8JsStyleGlobalFlag(const bool flag)
+{
+    utf8_js_style_global_flag = flag;
+}
+
 /* Character encoding */
 
-static inline int encode(uint8_t *out, uint16_t c) {
-    if (c <= 0x7F)
+static unsigned encode(uint16_t c, uint16_t next_c, bool is_last, uint8_t *out, int &cnt)
+{
+    // How much symbols (chars) used to decode original symbol
+    unsigned usedSymbolsCount = 1;
+    uint16_t encode_error = (uint16_t)0xFFFD;
+    // Some of utf8 codes are 4 bytes length
+    uint32_t code = c;
+
+    // If we started in utf8_js_style - we need to check utf-16 codes first.
+    if (::utf8_js_style_global_flag)
     {
-        out[0] = c;
-        return 1;
+        // `code` is the highest part of the surrogate pair
+        if (0xD800 <= code && code <= 0xDBFF)
+        {
+            // We have second symbol of surrogate pair and we can decode original symbol
+            if (!is_last)
+            {
+                uint16_t hi = code;
+                uint16_t low = next_c;
+                code = ((hi & 0x3FF) << 10) + (low & 0x3FF) + 0x10000;
+                usedSymbolsCount = 2;
+            }
+            else
+            {
+                code = encode_error;
+                usedSymbolsCount = 1;
+            }
+        }
+        // `code` is the lowest part of the surrogate pair
+        // If we meet it - something went wrong.
+        else if (0xDC00 <= code && code <= 0xDFFF)
+        {
+            code = encode_error;
+            usedSymbolsCount = 1;
+        }
+        // Otherwise we do nothing - we have utf8 code.
+        // Will process it below.
     }
-    else if (c <= 0x7FF)
+
+    // Let's check on errors: UTF-8 accept only max 4 bytes
+    if (code > 0x1FFFFF) // 5 (or more) bytes sequence, 0x1FFFFF = 0001 1111 1111 1111 1111 1111
     {
-        out[0] = (0xC0 | (c >> 6));
-        out[1] = (0x80 | (c & 0x3F));
-        return 2;
+        code = encode_error;
+        usedSymbolsCount = 1;
     }
-    else /*if (c <= 0xFFFF)*/
+
+    if (code <= 0x7F) // 1 byte sequence, 0x7F = 0111 1111
     {
-        out[0] = (0xE0 | (c >> 12));
-        out[1] = (0x80 | ((c >> 6) & 0x3F));
-        out[2] = (0x80 | (c & 0x3F));
-        return 3;
+        out[0] = code;
+        cnt = 1;
     }
+    else if (code <= 0x7FF) //2 bytes sequence, 0x7FF = 0111 1111 1111
+    {
+        out[0] = (0xC0 | (code >> 6));   // 110x xxxx + first 5 bits
+        out[1] = (0x80 | (code & 0x3F)); // 10xx xxxx + last 6 bits
+        cnt =  2;
+    }
+    else if (code <= 0xFFFF) // 3 bytes sequence, 0xFFFF = 1111 1111 1111 1111
+    {
+        out[0] = (0xE0 | (code >> 12));         // 1110 xxxx + first 4 bits
+        out[1] = (0x80 | ((code >> 6) & 0x3F)); // 10xx xxxx + next 6 bits
+        out[2] = (0x80 | (code & 0x3F));        // 10xx xxxx + last 6 bits
+        cnt = 3;
+    }
+    else if (code <= 0x1FFFFF) // 4 bytes sequence, 0x1FFFFF = 0001 1111 1111 1111 1111 1111
+    {
+        out[0] = (0xF0 | (code >> 18));         // 1111 0xxx + first 3 bits
+        out[1] = (0x80 | ((code >> 12) & 0x3F));// 10xx xxxx + next 6 bits
+        out[2] = (0x80 | ((code >> 6) & 0x3F)); // 10xx xxxx + next 6 bits
+        out[3] = (0x80 | (code & 0x3F));        // 10xx xxxx + last 6 bits
+        cnt = 4;
+    }
+    //else //error, UTF-8 accept only max 4 bytes
+    // but we already checked for error above.
+
+    return usedSymbolsCount;
 }
 
 /* String processing */
@@ -49,62 +116,163 @@ struct Utf8Parser
     int bytes;
 
     unicode_string parse(const C &str, unsigned size);
+    unicode_string parse_base(const C &str, unsigned size, bool js_style);
     void parse_range(unicode_string &out, const C &str, unsigned size);
+    void parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style);
 };
 
 template<class C>
 unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
 {
+    return parse_base(str, size, ::utf8_js_style_global_flag);
+}
+
+template<class C>
+unicode_string Utf8Parser<C>::parse_base(const C &str, unsigned size, bool js_style)
+{
     unicode_string out;
     w = 0;
     bytes = 0;
     uint32_t err = L'?';
-    parse_range(out, str, size);
+    parse_range_base(out, str, size, js_style);
     if (bytes)
         out.push_back(err);
     return out;
 }
 
+/*
+ * | Symbol octets | Binary representation               | First octet max value | Second octet max value |
+ * |------------------------------------------------------------------------------------------------------|
+ * | 1 octet       | 0xxxxxxx                            | 0000007F              | --                     |
+ * | 2 octets      | 110xxxxx 10xxxxxx                   | 000000DF              | 000000BF               |
+ * | 3 octets      | 1110xxxx 10xxxxxx 10xxxxxx          | 000000EF              | 000000BF               |
+ * | 4 octets      | 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx | 000000F7              | 000000BF               |
+ * |------------------------------------------------------------------------------------------------------|
+*/
+
+// Also, here is a BUG:
+//  We store decoded char in the 2 bytes structure
+//  so, we can loos the real code (symbol) in case
+//  if the code large than 0xFFFF.
+//
+// For example, hex string 0xF0 0x9F 0x98 0x89
+//  should be decoded as 0x1F609 (3 bytes code) = 128521,
+//  but really we got 0xF609 (2 bytes code) = 62985
+
 template<class C>
 void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
 {
-    uint32_t w = 0;
-    int bytes = 0;
-    for (size_t i = 0; i < size; i++){
-        unsigned char c = (unsigned char) str[i];
+    return parse_range_base(out, str, size, ::utf8_js_style_global_flag);
+}
 
-        if(bytes) {
-            if (c > 0x7f && c <= 0xbf) {//second/third/etc byte
-                w = ((w << 6)|(c & 0x3f));
-                bytes--;
-                if (bytes == 0) {
-                    out.push_back(w);
-                }
-                continue;
-            } else {
-                bytes = 0;
-                out.push_back((uint16_t)0xfffd);
+template<class C>
+void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style)
+{
+    int bytes = 0;
+    uint16_t decode_error = (uint16_t)0xFFFD;
+
+    // js and cpp targets decode utf8 in different ways.
+    // In some cases (when we have specific symbols in the text) js and cpp apps will works by different too.
+    // Historically becomes that js store text in 2bytes chars and by this reason can't store specific large-code symbols.
+    // In this case js decode those symbols into UTF-16.
+    // It is not easy to fix js native (and browsers) to get "works" utf8 text properly, let's break cpp in the same way. :)
+    // In this case we will convert 3 bytes (and more) symbols into UTF-16 pairs (like that do js target).
+    // But only in case, if compiler started with "--use_utf8_js_style" flag.
+    auto to_utf16_js_style = [&out, js_style](uint64_t w)
+    {
+        if (w < 0x10000 /* 2 bytes or less */ || !js_style)
+        {
+            out.push_back((uint32_t) w);
+        }
+        else
+        {
+            w = w - 0x10000;
+            out.push_back((uint32_t) ((w >> 10) + 0xD800));
+            out.push_back((uint32_t) ((w & 0x3FF) + 0xDC00));
+        }
+    };
+
+    // Before decode the symbol from bytes chain we should check, does the chain is correct.
+    // Each byte after the first should contains signature that it is a part of chain.
+    //  second/third/fourth bytes should starts with 10xxxxxx
+    auto is_sequence_correct = [str, size](size_t i, int bytes)
+    {
+        bool is_correct = true;
+        if (size - i >= bytes)
+        {
+            unsigned char mask = 0xC0; // xx000000
+            unsigned char next_octet_mask = 0x80; // 10xxxxxx
+
+            for (size_t j = 1; j < bytes; j++)
+            {
+                unsigned char c = (unsigned char) str[i + j];
+                is_correct = is_correct && ((c&mask) == next_octet_mask);
             }
         }
+        else
+        {
+            is_correct = false;
+        }
 
-        if (c <= 0x7f) { //first byte
-            bytes = 0;
+        return is_correct;
+    };
+
+    // Decode the chain of bytes into one symbol.
+    auto push_sequence = [&out, str, decode_error, is_sequence_correct, to_utf16_js_style](unsigned char mask, unsigned char c, size_t i, int bytes)
+    {
+        if (is_sequence_correct(i, bytes))
+        {
+            uint64_t w = (c & mask);
+
+            // second/third/fourth bytes
+            for (size_t j = 1; j < bytes; j++)
+            {
+                c = (unsigned char) str[i + j];
+                w = ((w << 6)|(c & 0x3F)); // 0x3F = 0011 1111
+            }
+            
+            to_utf16_js_style(w);
+        }
+        else
+        {
+            out.push_back(decode_error);
+        }
+
+        return;
+    };
+
+    // Here we check signature of first byte - how much bytes in the chain (to read one utf8 symbol).
+    // If one byte chain - we push it at the end of the our decoded string.
+    // Otherwise (more that one byte) - we read the sequence and decode it into one symbol.
+    for (size_t i = 0; i < size; i++)
+    {
+        unsigned char c = (unsigned char) str[i];
+
+        if (c <= 0x7F)  // 1 byte sequence, 0x7F = 0111 1111
+        {
             out.push_back((uint32_t) c);
         }
-        else if (c <= 0xdf){//2byte sequence start
-            bytes = 1;
-            w = c & 0x1f;
-        }
-        else if (c <= 0xef){//3byte sequence start
+        else if (c <= 0xDF) //2 bytes sequence, 0xDF = 1101 1111
+        {
             bytes = 2;
-            w = c & 0x0f;
+            push_sequence(0x1F, c, i, bytes); // 0x1F = 0001 1111
+            i += bytes - 1;
         }
-        else if (c <= 0xf7){//4byte sequence start
+        else if (c <= 0xEF) // 3 bytes sequence, 0xEF = 1110 1111
+        {
             bytes = 3;
-            w = c & 0x07;
-        } else {
-            bytes = 0;
-            out.push_back((uint16_t)0xfffd);
+            push_sequence(0x0F, c, i, bytes); // 0x0F = 0000 1111
+            i += bytes - 1;
+        }
+        else if (c <= 0xF7) // 4 bytes sequence, 0xF7 = 1111 0111
+        {
+            bytes = 4;
+            push_sequence(0x07, c, i, bytes); // 0x07 = 0000 0111
+            i += bytes - 1;
+        }
+        else //error, UTF-8 accept only max 4 octets
+        {
+            out.push_back(decode_error);
         }
     }
 }
@@ -124,7 +292,11 @@ unicode_string parseUtf8(const std::string &str) {
 }
 
 unicode_string parseUtf8(const char *str, unsigned size) {
-    return Utf8Parser<const char*>().parse(str, size);
+    return parseUtf8Base(str, size, ::utf8_js_style_global_flag);
+}
+
+unicode_string parseUtf8Base(const char *str, unsigned size, bool js_style) {
+    return Utf8Parser<const char*>().parse_base(str, size, js_style);
 }
 
 unicode_string parseUtf8u(const unicode_string &str) {
@@ -135,11 +307,19 @@ template<class C, class I>
 inline C doEncodeUtf8(I str, unsigned size)
 {
     C out;
-    out.reserve(size*3);
+    // Max length of the one coded symbol is 4 bytes.
+    out.reserve(size*4);
 
     uint8_t buf[4];
-    for (unsigned i = 0; i < size; i++) {
-        int cnt = encode(buf, str[i]);
+    int cnt = 0;
+    for (unsigned i = 0; i < size; i++)
+    {
+        bool is_last = size - i == 1;
+        // Sometimes in case of flag `defaultResponseEncoding = ResponseEncodingUTF8js` we will need the next symbol to do decode
+        //  original symbol from the utf16 surrogate pair.
+        uint16_t next_c = str[i];
+        if (!is_last) next_c = str[i + 1];
+        i += encode(str[i], next_c, is_last, buf, cnt) - 1;
         out.append(&buf[0], &buf[cnt]);
     }
 

@@ -14,6 +14,7 @@ class FlowContainer extends Container {
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 
+	public var flowInstance : RenderSupport.FlowInstance;
 	private var stage : FlowContainer;
 	private var view : CanvasElement;
 	private var context : Dynamic;
@@ -35,9 +36,12 @@ class FlowContainer extends Container {
 
 	public var isCanvas : Bool = false;
 	public var isSvg : Bool = false;
+	public var isFlowContainer : Bool = true;
 	public var isNativeWidget : Bool = false;
 	public var keepNativeWidget : Bool = false;
 	public var keepNativeWidgetChildren : Bool = false;
+	
+	private static var lastId : Int = 0;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
@@ -45,11 +49,12 @@ class FlowContainer extends Container {
 		visible = worldVisible;
 		clipVisible = worldVisible;
 		interactiveChildren = false;
-		isNativeWidget = (RenderSupport.RendererType == "html" && RenderSupport.RenderContainers) || worldVisible;
+		isNativeWidget = (this.isHTMLRenderer() && RenderSupport.RenderContainers) || worldVisible;
 
 		if (worldVisible) {
-			nativeWidget = Browser.document.body;
-		} else if (RenderSupport.RendererType == "html") {
+			nativeWidget = RenderSupport.RenderRoot != null ? (Platform.isIE ? RenderSupport.RenderRoot : RenderSupport.RenderRoot.shadowRoot) : Browser.document.body;
+			untyped this.id = lastId++ + 1;
+		} else if (this.isHTMLRenderer()) {
 			createNativeWidget();
 		}
 	}
@@ -134,7 +139,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (this.isHTMLRenderer() && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -153,7 +158,7 @@ class FlowContainer extends Container {
 			this.emitEvent("childrenchanged");
 		}
 
-		if (RenderSupport.RendererType == "html" && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
+		if (this.isHTMLRenderer() && (scale.x != 1.0 || scale.y != 1.0) && this.getClipChildren().length > 16) {
 			this.initNativeWidget();
 		}
 
@@ -168,7 +173,7 @@ class FlowContainer extends Container {
 				this.updateKeepNativeWidgetChildren();
 			}
 
-			if (RenderSupport.RendererType != "html" || this.isCanvas) {
+			if (!this.isHTMLRenderer()) {
 				this.invalidateTransform("removeChild");
 			}
 
@@ -190,7 +195,7 @@ class FlowContainer extends Container {
 	}
 
 	public function render(renderer : CanvasRenderer) {
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (stageChanged) {
 				stageChanged = false;
 

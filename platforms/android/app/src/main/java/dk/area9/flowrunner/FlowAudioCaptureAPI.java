@@ -11,7 +11,7 @@ import android.media.MediaRecorder;
 import android.media.MediaRecorder.OnInfoListener;
 import android.net.Uri;
 import android.os.Build;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.util.Log;
 
 @TargetApi(Build.VERSION_CODES.GINGERBREAD_MR1)

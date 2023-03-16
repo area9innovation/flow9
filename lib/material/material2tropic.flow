@@ -19,7 +19,6 @@ import material/iscript/material_iscript;
 import material/iscript/material_subscribers_panel;
 
 import tropic/tropic_profile;
-import sys/progressivewebtools;
 
 export {
 	// Use this if you render multiple materials with single MaterialManager
@@ -35,6 +34,7 @@ export {
 	material2tropicWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Tropic;
 
 	material2nativeForm(manager : MaterialManager, m : Material) -> Form;
+	material2nativeFormInit(manager : MaterialManager, m : Material) -> Form;
 	material2nativeFormWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Form;
 }
 
@@ -59,7 +59,7 @@ mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m :
 		initSpeechSynthesis();
 
 	if (js && (isUrlParameterTrue("accessenabled") || ((isChrome() || strContains(toLowerCase(getBrowser()), "crios")
-		|| strContains(toLowerCase(getBrowser()), "firefox") || isSafariBrowser() || isIE())
+		|| isFirefox() || isSafariBrowser() || isIE() || isEdge())
 		&& !isUrlParameterFalse("accessenabled")))) {
 		fAccessibilityEnabled := true;
 		setAccessibilityEnabled(true);
@@ -112,7 +112,8 @@ mrender2stage(manager : MaterialManager, toStage : bool, captureKeys : bool, m :
 				\ -> f
 			)
 		)
-		|> (\f -> TIf(manager.iscript.showPanel, TLines2(TFixed(0.0, 48.0), TCropSize(TSized(manager.iscript.available), f)), f));
+		|> (\f -> TCrop2(const(Point(0., 0.)), manager.iscript.available, manager.iscript.showPanel, f))
+		|> (\f -> TBorderT(zero, fif(manager.iscript.showPanel, const(48.), zero), zero, zero, f));
 
 	initMaterialManagerSubs(manager);
 
@@ -200,7 +201,7 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 						userDefinedLetterSpacingPercent := getUserDefinedLetterSpacingPercent();
 						reverseBehaviour(manager.forceRender);
 					}),
-					handleRealEvents(
+					handleRealEventsDeferred(
 						MouseDown2(\h, mi -> captureIScriptMouseDownEvent(manager, h, mi, \ -> Point(0., 0.), "canvas")),
 						getStage(),
 						ref true,
@@ -209,7 +210,7 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 						false,
 						false
 					),
-					handleRealEvents(
+					handleRealEventsDeferred(
 						MouseUp2(\h, mi -> captureIScriptMouseEvent(manager, h, mi, \ -> Point(0., 0.), "canvas", "mouseup")),
 						getStage(),
 						ref true,
@@ -218,7 +219,7 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 						false,
 						false
 					),
-					handleRealEvents(
+					handleRealEventsDeferred(
 						MouseMove2(\h, mi -> captureIScriptMouseEvent(manager, h, mi, \ -> Point(0., 0.), "canvas", "mousemove")),
 						getStage(),
 						ref true,
@@ -288,11 +289,21 @@ initMaterialManagerSubs(manager : MaterialManager) -> void {
 							]
 						else
 							[]
-					})()
+					})(),
+					// Just to keep subscription alive
+					makeSubscribe(manager.latelyFocused, \__ -> {})()
 				]
 				|> (\d -> \ -> applyall(d))
 			);
 	}
+}
+
+handleRealEventsDeferred(l : EventHandler, clip : native, clipalive : ref bool, stage : native, zorder : [int], doHittest : bool, doRespectHandled : bool) -> () -> void {
+	disp = initUnsM();
+	deferUntilNextFrameRendered(\ -> {
+		setUnsM(disp, handleRealEvents(l, clip, clipalive, stage, zorder, doHittest, doRespectHandled))
+	});
+	\ -> dispUnsM(disp);
 }
 
 disposeMaterialManagerSubs(manager : MaterialManager) -> void {
@@ -306,6 +317,10 @@ disposeMaterialManagerSubs(manager : MaterialManager) -> void {
 
 material2nativeForm(manager : MaterialManager, m : Material) -> Form {
 	tropic2nativeForm(material2tropic(manager, m), emptyStylesheet);
+}
+
+material2nativeFormInit(manager : MaterialManager, m : Material) -> Form {
+	tropic2nativeFormInit(material2tropic(manager, m), emptyStylesheet, m);
 }
 
 material2nativeFormWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Form {
@@ -486,6 +501,14 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MDynamicDataTable2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 
+		MLightweightDataTable(__, __, __, __): {
+			MLightweightDataTable2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
+		}
+
+		MSpannableDataTable(__, __, __, __): {
+			MSpannableDataTable2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
+		}
+
 		MChart(__, __): {
 			MChart2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
@@ -510,6 +533,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MCard2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 
+		MDynamicCard(__, __, __): {
+			MDynamicCard2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
+		}
+
 		MFlexibleGrid(__, __): {
 			MFlexibleGrid2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
@@ -524,6 +551,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 
 		MTree(__, __): {
 			MTree2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
+		}
+
+		MDynamicArrayTree(__, __): {
+			MDynamicArrayTree2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
 
 		MReorderGrids(__, __, __, __): {
@@ -597,6 +628,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MConstruct(c, mat): TConstruct(c, doMaterial2tropic(rend, mat, parent));
 		MCreate2(current, fn): TCreate2(ref doMaterial2tropic(rend, ^current, parent), \ -> doMaterial2tropic(rend, fn(), parent));
 		MDynamicGroup2(__, __, __): MDynamicGroup2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
+		// Do not use TDispose here, because it implements "reverse" logic of calling disposers
 		MDispose(d, mat): TConstruct([\ -> \ -> applyall(d)], doMaterial2tropic(rend, mat, parent));
 		MInteractive(i, mat): TInteractive(i, doMaterial2tropic(rend, mat, parent));
 		MCursor(kind, mat): TCursor(kind, doMaterial2tropic(rend, mat, parent));
@@ -731,7 +763,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		}
 
 		MBottomNav(__, __, __, __): {
-			MBottomNav2T(rend.manager, parent, m)
+			MBottomNav2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 
 		MChip(__, __): {
@@ -806,6 +838,10 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 
 		MGetMaterial2Tropic(fn): {
 			doMaterial2tropic(rend, fn(\mat, p -> doMaterial2tropic(rend, mat, p)), parent)
+		}
+
+		MSetFocusGroup(newParent, mat): {
+			doMaterial2tropic(rend, mat, newParent)
 		}
 
 		MDragDrop(__, __, __): {

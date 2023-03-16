@@ -8,6 +8,11 @@ export {
 
 	MTree2s(tree : MTree<?>) -> string;
 	MTreeOrder2s(nodes : [MTreeOrderNode<?>]) -> string;
+
+	MDynamicArrayTree2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicArrayTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	MDynamicArrayTree2s(tree : MDynamicArrayTree<?>) -> string;
+	MDynamicArrayTreeOrder2s(nodes : [MDynamicArrayTreeOrderNode<?>]) -> string;
 }
 
 MTree2s(tree : MTree<?>) -> string {
@@ -15,8 +20,8 @@ MTree2s(tree : MTree<?>) -> string {
 
 	if (length(children) > 0) {
 		"MTree([" + "\n" +
-		strGlue(map(fgetValue(tree.children), \c -> MTreeNode2s(c, "\t")), "\n") + "\n"
-		"])"
+		strGlue(map(fgetValue(tree.children), \c -> MTreeNode2s(c, "\t")), "\n") 
+		+ "\n])"
 	} else {
 		"MTree()"
 	}
@@ -37,8 +42,8 @@ MTreeNode2s(tree : MTreeNode<?>, prefix : string) -> string {
 MTreeOrder2s(nodes : [MTreeOrderNode<?>]) -> string {
 	if (length(nodes) > 0) {
 		"MTreeOrder([" + "\n" +
-		strGlue(map(nodes, \c -> MTreeOrderNode2s(c, "\t")), "\n") + "\n"
-		"])"
+		strGlue(map(nodes, \c -> MTreeOrderNode2s(c, "\t")), "\n") 
+		+ "\n])"
 	} else {
 		"MTreeOrder()"
 	}
@@ -59,13 +64,17 @@ MTreeOrderNode2s(tree : MTreeOrderNode<?>, prefix : string) -> string {
 MTreeState(
 	items : Behaviour<[[int]]>,
 	selected : DynamicBehaviour<Set<[int]>>,
+	selectionEnabled : bool,
 	expanded : DynamicBehaviour<Set<[int]>>,
+	expandedEnabled : bool,
 	color : MColor,
 	multiSelection : bool,
 	showSeparators : bool,
+	simplifiedView : bool,
 	dragDropState : Maybe<MTreeDragDropState<?>>,
 	lazyScrollMode : Maybe<MTreeLazyScrollModeState>,
-	loadLazyButtonMode : Maybe<MTreeLazyLoad>
+	loadLazyButtonMode : Maybe<MTreeLazyLoad>,
+	isRenderable : DynamicBehaviour<bool>
 );
 
 MTreeDragDropState(
@@ -80,7 +89,8 @@ MTreeLazyScrollModeState(
 	enabled : Transform<bool>,
 	scrollWH : DynamicBehaviour<WidthHeight>,
 	scrollPositionScale : DynamicBehaviour<PositionScale>,
-	externalScroll : Maybe<MTreeLazyScrollModeExternalInfo>
+	externalScroll : Maybe<MTreeLazyScrollModeExternalInfo>,
+	sameHeight : Maybe<DynamicBehaviour<Maybe<double>>>
 );
 
 fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
@@ -278,27 +288,89 @@ MTreeOrderNode2MTreeNode(node : MTreeOrderNode<?>, tree : Transform<Tree<?, [MTr
 	);
 }
 
-applyMTreeLazyScrollMode(state : MTreeState<?>) -> (Tropic) -> Tropic {
-	\node ->
+isTreeIndexGreater(index1 : [int], index2 : [int]) -> bool {
+	index1 == index2
+	|| either(
+		foldi(index1, None(), \i, acc, idx -> {
+			if (isSome(acc)) acc
+			else {
+				idx2 = elementAt(index2, i, -1);
+				if (idx == idx2) None()
+				else Some(idx > idx2)
+			}
+		}),
+		false
+	);
+}
+
+applyMTreeLazyScrollMode(state : MTreeState<?>, treeNode : Transform<MTreeNode<?>>, nodeTreeIndex : Transform<[int]>) -> (Tropic) -> Tropic {
+	\view ->
 		eitherMap(state.lazyScrollMode, \lsm -> {
-			nodePosScale = make(PositionScale(zeroPoint, zeroPoint));
-			showItem = make(false);
-			if (fgetValue(lsm.enabled))
-				node
-				|> (\t -> TShow(showItem, t))
+			if (fgetValue(lsm.enabled)) {
+				nodePosScale = make(zeroPositionScale);
+				showItem = make(false);
+				forcedShow = make(false);
+				forcedShowSize = make(false);
+				nodeHeight = make(0.);
+
+				view
+				|> (\t -> TShow(fOr(showItem, forcedShow), t))
+				|> (\t -> 
+					eitherMap(lsm.sameHeight, \sh ->
+						TGroup2(
+							TShow(forcedShowSize, TSizedHeight(0., fsubselect(treeNode, FLift(\node -> {
+								expanded = extractStruct(node.style, MExpanded(make(false))).expanded;
+								fselect2Lift(fif(expanded, flength(node.children), const(0)), sh, \len, lh ->
+									i2d(len + 1) * either(lh, 0.) + i2d(b2i(state.showSeparators) * len)
+								)
+							})))),
+							t
+						),
+						t
+					)
+				)
 				|> (\t -> TPositionScale(nodePosScale, t))
-				|> (\t -> TConstruct([
-						make3SubscribeTrigger(fnot(showItem), lsm.scrollWH, fstall(nodePosScale, 0), lsm.scrollPositionScale, \swh, ps, sps -> {
-							y = ps.pos.y - sps.pos.y;
-							if (y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
-						})
-					], t))
-			else
-				node
+				|> (\t -> TAttachHeight(t, nodeHeight))
+				|> (\t -> TConstruct(
+						concat(
+							[make4SubscribeTrigger(fnot(showItem), fstall(lsm.scrollWH, 0), nodeHeight, nodePosScale, lsm.scrollPositionScale, \swh, hgt, ps, sps -> {
+								y = ps.pos.y - sps.pos.y;
+								if (y >= -hgt && y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
+							})],
+							eitherMap(
+								lsm.sameHeight,
+								\__ -> [
+									\ -> fconnect(
+										fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+											foldSet(s, false, \acc, si -> acc || subrange(si, 0, length(i)) == i)
+										),
+										forcedShow
+									),
+									\ -> fconnect(
+										fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+											foldSet(s, false, \acc, si -> acc || isTreeIndexGreater(si, i))
+										),
+										forcedShowSize
+									),
+								],
+								[
+									\ -> fconnect(
+										fselect2Lift(state.selected, nodeTreeIndex, \s, i ->
+											foldSet(s, false, \acc, si -> acc || isTreeIndexGreater(si, i))
+										),
+										forcedShow
+									),
+								]
+							)
+						),
+						t
+					))
+			} else
+				view
 			},
-			node
+			view
 		)
-} 
+}
 
 makeMTreeDragDropState(
 	manager : MaterialManager,
@@ -342,12 +414,16 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 
 	lazyScrollMode =
 		maybeMap(
-			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), None())),
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), [])),
 			\lsm -> MTreeLazyScrollModeState(
 				lsm.enabled,
 				makeWH(),
 				make(zeroPositionScale),
-				lsm.externalScroll
+				tryExtractStruct(lsm.style, MTreeLazyScrollModeExternalInfo(makePoint(), makeWH(), const(0.))),
+				maybeMap(
+					tryExtractStruct(lsm.style, MTreeLazyScrollModeSameHeight(None())),
+					\sh -> make(sh.sameHeight)
+				)
 			)
 		);
 
@@ -383,17 +459,23 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 	itemsLength = tryExtractStruct(m.style, MItemsLength(make(0)));
 	showSeparators = !contains(m.style, MTreeHideSeparators());
 
+	isRenderable = make(false);
+
 	state =
 		MTreeState(
 			selIndexes.first,
 			extractStruct(m.style, MTreeSelection(make(makeSet()))).selected,
+			!contains(m.style, MTreeDisableSelection()),
 			extractStruct(m.style, MTreeExpanded(make(makeSet()))).expanded,
+			!contains(m.style, MTreeDisableExpanded()),
 			extractMColor(parent, m.style, MPrimaryColor()),
 			isSome(multiSelection),
 			showSeparators,
+			contains(m.style, MTreeSimplifiedView()),
 			dragDropStateM,
 			lazyScrollMode,
-			loadLazyButtonMode
+			loadLazyButtonMode,
+			isRenderable
 		);
 
 	(\p -> (\p2 -> TIf(
@@ -402,116 +484,132 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			manager,
 			p2,
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
-			\index, __, __, p3 ->
-				TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c ->
+			\index, __, __, p3 -> {
+				nodeTreeIndex = farray(index);
+				treeNode = fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33);
+				TSelect(treeNode, \c ->
 					MTreeNode2T(
 						manager,
 						p3,
 						state,
 						c,
-						farray(index),
+						nodeTreeIndex,
 						m2t,
-						const(showSeparators)
+						const(showSeparators),
+						true
 					)
 				)
-				|> applyMTreeLazyScrollMode(state)
+				|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
+			}
 		),
 		TSelect(
 			fmap(children.first, \c : MTreeNode<?> -> c.content),
-			\contents : [?] -> mapi(contents, \i, __ ->
+			\contents : [?] -> mapi(contents, \i, __ -> {
+				nodeTreeIndex = farray(const(i));
+				treeNode = fselect(children.first, FLift(\nodes -> nodes[i]));
 				TSelect(
-					fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
+					treeNode, \node ->
 					MTreeNode2T(
 						manager,
 						p2,
 						state,
 						node,
-						farray(const(i)),
+						nodeTreeIndex,
 						m2t,
-						const(showSeparators)
+						const(showSeparators),
+						false
 					)
 				)
-				|> applyMTreeLazyScrollMode(state)
-			)
+				|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
+			})
 			|> TLines
 		)
 	)
-	|> addUnfoldPanel(p2, m2t, m.children, lazyLoadState)
-	|> TBorderBottom(1.)
-	|> (\mtree ->
-		TConstruct(
-			[
-				makeSubscribe(state.selected, \selSet ->
-					iterSet(selSet, \sel ->
-						loop(
-							subrange(sel, 0, length(sel) - 1),
-							\s -> subrange(s, 0, length(s) - 1),
-							\s -> length(s) > 0,
-							\s -> nextDistinct(state.expanded, insertSet(getValue(state.expanded), s))
+	|> (if (state.simplifiedView) idfn else addUnfoldPanel(p2, m2t, m.children, lazyLoadState))
+	|> (if (state.simplifiedView) idfn else TBorderBottom(1.))
+	|> (\mtree : Tropic ->
+		if (state.selectionEnabled)
+			TConstruct(
+				[
+					makeSubscribe(state.selected, \selSet ->
+						iterSet(selSet, \sel ->
+							loop(
+								subrange(sel, 0, length(sel) - 1),
+								\s -> subrange(s, 0, length(s) - 1),
+								\s -> length(s) > 0,
+								\s -> nextDistinct(state.expanded, insertSet(getValue(state.expanded), s))
+							)
 						)
 					)
-				)
-			],
+				],
+				mtree
+			)
+		else
 			mtree
-		)
 	)
-	|> (\mtree ->
-		eitherMap(
-			singleSelection,
-			\ss ->
-				TConstruct(
-					[
-						\ -> fBidirectionalLink(
-							fselect2(state.items, state.selected, FLift2(\ids, s ->
-								if (sizeSet(s) > 0) findiDef(ids, \i -> containsSet(s, i), -1) else -1)),
-							fselect2(state.items, ss.selected, FLift2(\ids, s ->
-								if (s >= 0 && length(ids) > s) makeSet1(ids[s]) else makeSet())),
-							\s -> nextDistinct(ss.selected, s),
-							\s -> nextDistinct(state.selected, s)
-						)
-					],
-					mtree
-				),
+	|> (\mtree : Tropic ->
+		if (state.selectionEnabled)
+			eitherMap(
+				singleSelection,
+				\ss ->
+					TConstruct(
+						[
+							\ -> fBidirectionalLink(
+								fselect2(state.items, state.selected, FLift2(\ids, s ->
+									if (sizeSet(s) > 0) findiDef(ids, \i -> containsSet(s, i), -1) else -1)),
+								fselect2(state.items, ss.selected, FLift2(\ids, s ->
+									if (s >= 0 && length(ids) > s) makeSet1(ids[s]) else makeSet())),
+								\s -> nextDistinct(ss.selected, s),
+								\s -> nextDistinct(state.selected, s)
+							)
+						],
+						mtree
+					),
+				mtree
+			)
+		else
 			mtree
-		)
 	)
-	|> (\mtree ->
-		eitherMap(
-			multiSelection,
-			\ms ->
-				TConstruct(
-					[
-						\ -> fBidirectionalLink(
-							fselect2(state.items, state.selected, FLift2(\ids : [[int]], s : Set<[int]> ->
-								foldSet(s, makeSet(), \acc : Set<int>, sel : [int] -> {
-									id = findiDef(ids, \i -> i == sel, -1);
+	|> (\mtree : Tropic ->
+		if (state.selectionEnabled)
+			eitherMap(
+				multiSelection,
+				\ms ->
+					TConstruct(
+						[
+							\ -> fBidirectionalLink(
+								fselect2(state.items, state.selected, FLift2(\ids : [[int]], s : Set<[int]> ->
+									foldSet(s, makeSet(), \acc : Set<int>, sel : [int] -> {
+										id = findiDef(ids, \i -> i == sel, -1);
 
-									if (id >= 0) {
-										insertSet(acc, id);
-									} else {
-										acc;
-									}
-								})
-							)),
-							fselect2(state.items, ms.selected, FLift2(\ids : [[int]], s : Set<int> ->
-								foldSet(s, makeSet(), \acc : Set<[int]>, sel : int -> {
-									if (sel >= 0 && sel < length(ids)) {
-										insertSet(acc, ids[sel]);
-									} else {
-										acc;
-									}
-								})
-							)),
-							\s : Set<int> -> nextDistinct(ms.selected, s),
-							\s : Set<[int]> -> nextDistinct(state.selected, s)
-						)
-					],
-					mtree
-				),
+										if (id >= 0) {
+											insertSet(acc, id);
+										} else {
+											acc;
+										}
+									})
+								)),
+								fselect2(state.items, ms.selected, FLift2(\ids : [[int]], s : Set<int> ->
+									foldSet(s, makeSet(), \acc : Set<[int]>, sel : int -> {
+										if (sel >= 0 && sel < length(ids)) {
+											insertSet(acc, ids[sel]);
+										} else {
+											acc;
+										}
+									})
+								)),
+								\s : Set<int> -> nextDistinct(ms.selected, s),
+								\s : Set<[int]> -> nextDistinct(state.selected, s)
+							)
+						],
+						mtree
+					),
+				mtree
+			)
+		else
 			mtree
-		)
 	)
-	|> (\mtree ->
+	|> (\mtree : Tropic ->
 		TConstruct(
 			eitherMap(
 				state.dragDropState,
@@ -547,7 +645,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 			mtree
 		)
 	)
-	|> (\mtree ->
+	|> (\mtree : Tropic ->
 		eitherMap(
 			itemsLength,
 			\il ->
@@ -579,6 +677,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 		)
 	))
 	|> (\mtree -> MComponentGroup2T(manager, parent, "MTree", extractMComponentGroupState(m.style), mtree))
+	|> (\mtree -> TRenderable(isRenderable, mtree))
 
 }
 
@@ -644,8 +743,9 @@ DropOperation ::= DropAbove, DropBelow, DropInside;
 	DropInside();
 
 MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<?>, m : MTreeNode<?>, treeIndex : Transform<[int]>,
-	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
+	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>, method1 : bool) -> Tropic {
 
+	treeIndexStalled = fstall(treeIndex, 0);
 	lazyLoadState = maybeMap(state.loadLazyButtonMode, makeMTreeLazyLoadState);
 
 	children = fguard(eitherMap(lazyLoadState, \st -> fselect2(m.children, st.loadQuota, FLift2(\arr, lq -> take(arr, lq))), m.children), make([]));
@@ -672,7 +772,8 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					maybeApply(tryExtractStruct(m.style, MOnClick(nop)), \oc -> oc.click())
 				}),
 				MFocused(focused),
-				MDefaultShortcutEnabled(const(false))
+				MDefaultShortcutEnabled(const(false)),
+				MAddFocusGroup(true)
 			]
 		);
 
@@ -703,35 +804,75 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 	}));
 
 	TLinesDir([
-		(\p -> MComponent2T(
-			manager,
-			p,
-			"MTreeNode",
-			focusState,
-			\focus ->
-				TColsYCenterA([
-					TVisible(
-						fneq(childrenLength, 0),
-						m2t(buildIconFn(expanded, extractStruct(m.style, state.color)), focus.parent)
-					),
-					TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
-				])
-				|> (\t -> TAvailableHeight(t, const(0.)))
-				|> (\t ->
-					TDecorator(
-						t,
-						concat(
-							eitherMap(
-								tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
-								\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
-								[]
-							),
-							[Pair(fand(highlightOnSelect, selected), \wh -> m2t(highlightFn(wh), focus.parent))]
+		(\p ->
+		(
+			if (state.selectionEnabled)
+				MComponent2T(
+					manager,
+					p,
+					"MTreeNode",
+					focusState,
+					\focus ->
+						(
+							if (state.expandedEnabled)
+								TColsYCenterA([
+									TVisible(
+										fneq(childrenLength, 0),
+										m2t(buildIconFn(expanded, extractStruct(m.style, state.color)), focus.parent)
+									),
+									TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
+								])
+							else
+								TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
+						)
+						|> (\t -> TAvailableHeight(t, const(0.)))
+						|> (\t ->
+							TDecorator(
+								t,
+								concat(
+									eitherMap(
+										tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
+										\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
+										[]
+									),
+									[Pair(fand(highlightOnSelect, selected), \wh -> m2t(highlightFn(wh), focus.parent))]
+								),
+								false
+							)
 						),
-						false
-					)
+						m2t
+				)
+			else
+				(
+					if (state.expandedEnabled)
+						TColsYCenterA([
+							TVisible(
+								fneq(childrenLength, 0),
+								m2t(buildIconFn(expanded, extractStruct(m.style, state.color)), parent)
+							),
+							TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), parent)), contentBoxB)
+						])
+					else
+						TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), parent)), contentBoxB)
+				)
+				|> (\t -> TAvailableHeight(t, const(0.)))
+		)
+		|> (\f ->
+			eitherMap(state.lazyScrollMode, \lsm ->
+				eitherMap(lsm.sameHeight, \sh ->
+					if (isNone(getValue(sh))) {
+						lineHeight = make(0.);
+						TConstruct(
+							[makeSubscribe(lineHeight, \lh ->
+								if (lh > 0. && isNone(getValue(sh))) nextDistinct(sh, Some(lh))
+							)],
+							TAttachHeight(f, lineHeight)
+						)
+					} else f,
+					f
 				),
-				m2t
+				f
+			)
 		)
 		|> (\f ->
 			eitherMap(
@@ -827,7 +968,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 			)
 		),
 		TShowLazy(
-			fand(
+			ftransistor(state.isRenderable, fand(
 				fOr(
 					fneq(childrenLength, 0),
 					if (isSome(state.dragDropState))
@@ -836,7 +977,7 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 						const(false)
 				),
 				expanded
-			),
+			)),
 			\ -> TIf(
 				flessi(flength(children.first), const(ARRAY_DIFF_TRESHOLD)),
 				SelectMLines2T(
@@ -845,44 +986,50 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					fmap(children.first, \c : MTreeNode<?> -> c.content),
 					\index, __, __, p -> {
 						nextDistinct(expanded, true);
+						nodeTreeIndex = farrayPush(treeIndex, index);
+						treeNode = fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33);
 
-						TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c -> {
+						TSelect(treeNode, \c -> {
 							MTreeNode2T(
 								manager,
 								p,
 								state,
 								c,
-								farrayPush(treeIndex, index),
+								nodeTreeIndex,
 								m2t,
 								if (state.showSeparators)
 									flessi(index, fadditioni(childrenLength, const(-1)))
 								else
-									const(false)
+									const(false),
+								true
 							)
 						})
-						|> applyMTreeLazyScrollMode(state)
+						|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
 					}
 				),
 				TSelect(
 					fmap(children.first, \c : MTreeNode<?> -> c.content),
-					\contents -> mapi(contents, \i, __ ->
+					\contents -> mapi(contents, \i, __ -> {
+						nodeTreeIndex = farrayPush(treeIndex, const(i));
+						treeNode = fselect(children.first, FLift(\nodes -> nodes[i]));
 						TSelect(
-							fselect(children.first, FLift(\nodes -> nodes[i])), \node ->
+							treeNode, \node ->
 							MTreeNode2T(
 								manager,
 								parent,
 								state,
 								node,
-								farrayPush(treeIndex, const(i)),
+								nodeTreeIndex,
 								m2t,
 								if (state.showSeparators)
 									flessi(const(i), fadditioni(childrenLength, const(-1)))
 								else
-									const(false)
+									const(false),
+								false
 							)
 						)
-						|> applyMTreeLazyScrollMode(state)
-					)
+						|> applyMTreeLazyScrollMode(state, treeNode, nodeTreeIndex)
+					})
 					|> TLines
 				)
 			)
@@ -904,15 +1051,16 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					)
 				)
 				|> (\t ->
-					TCopySize(
-						t,
-						\tr ->
-							TAvailable(m2t(buildLineFn(contentBoxB, extractStruct(m.style, state.color)), parent), tr),
-						true
-					)
+					if (state.simplifiedView) t
+					else TCopySize(
+							t,
+							\tr ->
+								TAvailable(m2t(buildLineFn(contentBoxB, extractStruct(m.style, state.color)), parent), tr),
+							true
+						)
 				)
 				|> (\t -> TAvailableHeight(t, const(0.)))
-				|> addUnfoldPanel(parent, m2t, m.children, lazyLoadState)
+				|> if (state.expandedEnabled) addUnfoldPanel(parent, m2t, m.children, lazyLoadState) else idfn
 		),
 
 		m2t(separator, parent)
@@ -945,76 +1093,96 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 	)
 	|> (\treeNode ->
 		TConstruct(
-			[
-				children.second,
-				makeSubscribeUns(selected, \s -> if (s) [interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(focused, true))] else []),
-				\ -> fBidirectionalLink(
-					fselectWithLast(fif(selected, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
-					fselect2(state.selected, treeIndex, containsSet |> FLift2)
-						|> (\f -> eitherMap(state.lazyScrollMode, \__ -> f, fstall(f, 0))),
-					\s ->
-						if (length(s.first) > 0 || length(s.second) > 0)
-							nextDistinct(
-								state.selected,
-								getValue(state.selected)
-								|> (\sel ->
-									if (length(s.first) > 0 && (!contains(getValue(state.items), s.first) || length(s.second) == 0))
-										removeSet(sel, s.first)
-									else
-										sel
-								)
-								|> (\sel ->
+			concat3(
+				[children.second],
+				if (state.selectionEnabled) {
+					concat(
+						if (method1) [\ -> \ -> nextDistinct(state.selected, removeSet(getValue(state.selected), fgetValue(treeIndexStalled)))] else [], [
+
+						makeSubscribeUns(selected, \s -> if (s) [interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(focused, true))] else []),
+						\ -> fBidirectionalLink(
+							fselectWithLast(fif(selected, treeIndexStalled, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
+							fselect2(state.selected, treeIndexStalled, containsSet |> FLift2)
+								|> (\f -> eitherMap(state.lazyScrollMode, \__ -> f, fstall(f, 0))),
+							\s ->
+								if (length(s.first) > 0 || length(s.second) > 0) {
+									filteredSelected = 
+										getValue(state.selected)
+										|> (\sel ->
+											if (length(s.first) > 0) {
+												removeSet(sel, s.first)
+											}
+											else
+												sel
+										);
+									nextDistinct(state.selected, filteredSelected);
+
 									if (length(s.second) > 0) {
-										if (state.multiSelection) {
-											insertSet(sel, s.second)
-										} else {
-											makeSet1(s.second)
-										}
-									} else {
-										sel
+										deferred(\ -> {
+											newSelected = 
+												if (state.multiSelection) {
+													insertSet(getValue(state.selected), s.second)
+												} else {
+													makeSet1(s.second)
+												}
+											nextDistinct(state.selected, newSelected);
+										})
 									}
-								)
-							),
-					\s ->
-						nextDistinct(selected, s)
-				),
-				\ -> fBidirectionalLink(
-					fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
-					fstall(fselect2(state.expanded, treeIndex, containsSet |> FLift2), 0),
-					\e ->
-						if (length(e.first) > 0 || length(e.second) > 0)
-							nextDistinct(
-								state.expanded,
-								getValue(state.expanded)
-								|> (\ex ->
-									if (length(e.first) > 0)
-										removeSet(ex, e.first)
-									else
-										ex
-								)
-								|> (\ex ->
-									if (length(e.second) > 0)
-										insertSet(ex, e.second)
-									else
-										ex
-								)
-							),
-					\e ->
-						nextDistinct(expanded, e)
-				),
-				\ -> {
-					if (containsSet(getValue(state.selected), fgetValue(treeIndex)))
-						nextDistinct(selected, true);
+							},
+							\s -> {
+								nextDistinct(selected, s)
+							}
+						),
+						\ -> {
+							if (containsSet(getValue(state.selected), fgetValue(treeIndex)))
+								nextDistinct(selected, true);
 
-					if (containsSet(getValue(state.expanded), fgetValue(treeIndex)))
-						nextDistinct(expanded, true);
-
-					\ -> if (!contains(getValue(state.items), fgetValue(treeIndex))) {
-							nextDistinct(state.expanded, removeSet(getValue(state.expanded), fgetValue(treeIndex)));
-							nextDistinct(state.selected, removeSet(getValue(state.selected), fgetValue(treeIndex)));
+							\ -> if (!method1 || !contains(getValue(state.items), fgetValue(treeIndex))) {
+									nextDistinct(state.selected, removeSet(getValue(state.selected), fgetValue(treeIndex)));
+								}
 						}
-				}
-			]
+					])
+				} else
+					[],
+				if (state.expandedEnabled)
+					concat(
+						if (method1) [\ -> \ -> nextDistinct(state.expanded, removeSet(getValue(state.expanded), fgetValue(treeIndexStalled)))] else [], [
+						\ -> fBidirectionalLink(
+							fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
+							fstall(fselect2(state.expanded, treeIndex, containsSet |> FLift2), 0),
+							\e ->
+								if (length(e.first) > 0 || length(e.second) > 0)
+									nextDistinct(
+										state.expanded,
+										getValue(state.expanded)
+										|> (\ex ->
+											if (length(e.first) > 0)
+												removeSet(ex, e.first)
+											else
+												ex
+										)
+										|> (\ex ->
+											if (length(e.second) > 0)
+												insertSet(ex, e.second)
+											else
+												ex
+										)
+									),
+							\e ->
+								nextDistinct(expanded, e)
+						),
+						\ -> {
+							if (containsSet(getValue(state.expanded), fgetValue(treeIndex)))
+								nextDistinct(expanded, true);
+
+							\ -> if (!contains(getValue(state.items), fgetValue(treeIndex))) {
+									nextDistinct(state.expanded, removeSet(getValue(state.expanded), fgetValue(treeIndex)));
+								}
+						}
+					])
+				else
+					[]
+			)
 			|> (\arr ->
 				arrayPushMaybe(
 					arr,
@@ -1033,6 +1201,924 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 			|> (\arr -> arrayPushMaybe(arr, maybeMap(lazyLoadState, \st ->
 				makeSubscribe2(expanded, \e -> if (!e) st.resetFn())
 			))),
+			treeNode
+		)
+	)
+}
+
+
+// Dynamic Array Tree
+
+
+MDynamicArrayTree2s(tree : MDynamicArrayTree<?>) -> string {
+	children = getDynamicArrayValue(tree.children);
+
+	if (length(children) > 0) {
+		"MDynamicArrayTree([" + "\n" +
+		strGlue(map(children, \c -> MDynamicArrayTreeNode2s(c, "\t")), "\n") 
+		+ "\n])"
+	} else {
+		"MDynamicArrayTree()"
+	}
+}
+
+MDynamicArrayTreeNode2s(tree : MDynamicArrayTreeNode<?>, prefix : string) -> string {
+	children = getDynamicArrayValue(tree.children);
+
+	if (length(children) > 0) {
+		prefix + "MDynamicArrayTreeNode(" + toString(tree.content) + ", [" + "\n" +
+		strGlue(map(children, \c -> MDynamicArrayTreeNode2s(c, prefix + "\t")), "\n") + "\n" +
+		prefix + "])"
+	} else {
+		prefix + "MDynamicArrayTreeNode(" + toString(tree.content) + ")"
+	}
+}
+
+MDynamicArrayTreeOrder2s(nodes : [MDynamicArrayTreeOrderNode<?>]) -> string {
+	if (length(nodes) > 0) {
+		"MDynamicArrayTreeOrder([" + "\n" +
+		strGlue(map(nodes, \c -> MDynamicArrayTreeOrderNode2s(c, "\t")), "\n") 
+		+ "\n])"
+	} else {
+		"MDynamicArrayTreeOrder()"
+	}
+}
+
+MDynamicArrayTreeOrderNode2s(tree : MDynamicArrayTreeOrderNode<?>, prefix : string) -> string {
+	children = getDynamicArrayValue(tree.children);
+
+	if (length(children) > 0) {
+		prefix + "MDynamicArrayTreeOrderNode(" + toString(tree.content) + ", [" + "\n" +
+		strGlue(map(getDynamicArrayValue(tree.children), \c -> MDynamicArrayTreeOrderNode2s(c, prefix + "\t")), "\n") + "\n" +
+		prefix + "])"
+	} else {
+		prefix + "MDynamicArrayTreeOrderNode(" + toString(tree.content) + ")"
+	}
+}
+
+MDynamicArrayTreeState(
+	items : DynamicArray<[int]>,
+	selected : DynamicArray<[int]>,
+	selectionEnabled : bool,
+	expanded : Maybe<MDynamicArrayTreeExpanded>,
+	expandedEnabled : bool,
+	color : MColor,
+	multiSelection : bool,
+	showSeparators : bool,
+	dragDropState : Maybe<MDynamicArrayTreeDragDropState<?>>,
+	lazyScrollMode : Maybe<MTreeLazyScrollModeState>,
+	loadLazyButtonMode : Maybe<MTreeLazyLoad>
+);
+
+MDynamicArrayTreeDragDropState(
+	order : DynamicArray<MDynamicArrayTreeOrderNode<?>>,
+	onChange : Maybe<(newOrder : [MDynamicArrayTreeOrderNode<?>]) -> void>,
+	content2id : (content : ?) -> int,
+	id2content : (id : int) -> Maybe<?>,
+	current : DynamicBehaviour<Maybe<(MFocusGroup) -> Tropic>>
+);
+
+dynamicSelectionIndexes(children : DynamicArray<MDynamicArrayTreeNode<?>>) -> DynamicArray<[int]> {
+	mapiDynamicArray(children, \i, c -> dynamicSelectionIndexes2(farray(i), c.children))
+	|> mergeDynamicArray
+}
+
+dynamicSelectionIndexes2(index : Transform<[int]>, children : DynamicArray<MDynamicArrayTreeNode<?>>) -> DynamicArray<[int]> {
+	concatDynamicArray(
+		selectDynamicArray(index, \i -> [i]),
+		mapiDynamicArray(children, \i, c -> dynamicSelectionIndexes2(farrayPush(index, i), c.children))
+		|> mergeDynamicArray
+	)
+}
+
+unwrapMDynamicArrayTreeNodes(order : DynamicArray<MDynamicArrayTreeNode<?>>) -> DynamicArray<MDynamicArrayTreeNode<?>> {
+	mergeDynamicArray(mapDynamicArray(order, \o -> concatDynamicArray(makeDynamicArray([o]), unwrapMDynamicArrayTreeNodes(o.children))))
+}
+
+lengthMDynamicArrayTreeNodes(children : DynamicArray<MDynamicArrayTreeNode<?>>) -> Transform<int> {
+	lengthDynamicArray(unwrapMDynamicArrayTreeNodes(children));
+}
+
+MDynamicArrayTreeNodes2MDynamicArrayTreeOrderNodes(nodes : DynamicArray<MDynamicArrayTreeNode<?>>) -> DynamicArray<MDynamicArrayTreeOrderNode<?>> {
+	mapDynamicArray(nodes, MDynamicArrayTreeNode2MDynamicArrayTreeOrderNode)
+}
+
+MDynamicArrayTreeNode2MDynamicArrayTreeOrderNode(node : MDynamicArrayTreeNode<?>) -> MDynamicArrayTreeOrderNode<?> {
+	MDynamicArrayTreeOrderNode(node.content, mapDynamicArray(node.children, MDynamicArrayTreeNode2MDynamicArrayTreeOrderNode))
+}
+
+unwrapMDynamicArrayTreeOrderNodes(order : DynamicArray<MDynamicArrayTreeOrderNode<?>>) -> DynamicArray<MDynamicArrayTreeOrderNode<?>> {
+	mergeDynamicArray(mapDynamicArray(order, \o -> concatDynamicArray(makeDynamicArray([o]), unwrapMDynamicArrayTreeOrderNodes(o.children))))
+}
+
+moveMDynamicArrayTreeOrderNode(nodes : DynamicArray<MDynamicArrayTreeOrderNode<?>>, id1 : ?, id2 : ?, dropOperation : DropOperation) -> void {
+	maybeApply(
+		findMDynamicArrayTreeOrderNode(nodes, id1),
+		\n1 -> {
+			maybeApply(
+				findMDynamicArrayTreeOrderNode(nodes, id2),
+				\n2 -> {
+					moveMDynamicArrayTreeOrderNode2(nodes, n1, n2, dropOperation);
+				}
+			);
+		}
+	);
+}
+
+moveMDynamicArrayTreeOrderNode2(
+	nodes : DynamicArray<MDynamicArrayTreeOrderNode<?>>,
+	node1 : MDynamicArrayTreeOrderNode<?>,
+	node2 : MDynamicArrayTreeOrderNode<?>,
+	dropOperation : DropOperation
+) -> void {
+	id = ref 0;
+
+	iter(getDynamicArrayValue(nodes), \n -> {
+		if (n.content == node1.content) {
+			moveMDynamicArrayTreeOrderNode2(n.children, node1, node2, dropOperation);
+
+			if (dropOperation == DropAbove()) {
+				insertDynamicArray(nodes, ^id, node2);
+				id := ^id + 1;
+			} else if (dropOperation == DropBelow()) {
+				insertDynamicArray(nodes, ^id + 1, node2);
+				id := ^id + 1;
+			} else {
+				insertDynamicArray(n.children, 0, node2);
+			}
+
+			id := ^id + 1;
+		} else if (n.content == node2.content) {
+			deleteDynamicArray(nodes, ^id);
+		} else {
+			moveMDynamicArrayTreeOrderNode2(n.children, node1, node2, dropOperation);
+			id := ^id + 1;
+		}
+	});
+}
+
+findMDynamicArrayTreeOrderNode(nodes : DynamicArray<MDynamicArrayTreeOrderNode<?>>, id : ?) -> Maybe<MDynamicArrayTreeOrderNode<?>> {
+	fold(getDynamicArrayValue(nodes), None(), \acc, n -> {
+		if (isSome(acc)) {
+			acc;
+		} else if (n.content == id) {
+			Some(n);
+		} else {
+			findMDynamicArrayTreeOrderNode(n.children, id);
+		}
+	});
+}
+
+MDynamicArrayTreeOrder2MDynamicArrayTreeNodes(nodes : DynamicArray<MDynamicArrayTreeNode<?>>, order : DynamicArray<MDynamicArrayTreeOrderNode<?>>) -> DynamicArray<MDynamicArrayTreeNode<?>> {
+	filtersubmapDynamicArray(order, \n -> MDynamicArrayTreeOrderNode2MDynamicArrayTreeNode(nodes, n))
+}
+
+MDynamicArrayTreeOrderNode2MDynamicArrayTreeNode(nodes : DynamicArray<MDynamicArrayTreeNode<?>>, node : MDynamicArrayTreeOrderNode<?>) -> Transform<Maybe<MDynamicArrayTreeNode<?>>> {
+	treeNode = findMDynamicArrayTreeNode(nodes, node);
+
+	feitherMap(
+		treeNode,
+		\n -> {
+			Some(
+				MDynamicArrayTreeNode(
+					n.content,
+					n.content2material,
+					filtersubmapDynamicArray(node.children, \nn -> MDynamicArrayTreeOrderNode2MDynamicArrayTreeNode(nodes, nn)),
+					n.style
+				)
+			)
+		},
+		const(None())
+	);
+}
+
+findMDynamicArrayTreeNode(nodes : DynamicArray<MDynamicArrayTreeNode<?>>, node : MDynamicArrayTreeOrderNode<?>) -> Transform<Maybe<MDynamicArrayTreeNode<?>>> {
+	findsubmapDynamicArray(nodes, \n -> if (n.content == node.content) const(Some(n)) else findMDynamicArrayTreeNode(n.children, node));
+}
+
+makeMDynamicArrayTreeDragDropState(
+	manager : MaterialManager,
+	order : DynamicArray<MDynamicArrayTreeOrderNode<?>>,
+	onChange : Maybe<([MDynamicArrayTreeOrderNode<?>]) -> void>
+) -> MDynamicArrayTreeDragDropState<?> {
+	idContents = ref makeTree();
+	contentIds = ref makeTree();
+
+	content2id = \c -> {
+		eitherFn(
+			lookupTree(^idContents, c),
+			\i -> i,
+			\ -> {
+				i = makeTropicTag(manager);
+
+				idContents := setTree(^idContents, c, i);
+				contentIds := setTree(^contentIds, i, c);
+
+				i;
+			}
+		);
+	};
+
+	id2content = \i -> {
+		lookupTree(^contentIds, i);
+	};
+
+	MDynamicArrayTreeDragDropState(
+		order,
+		onChange,
+		content2id,
+		id2content,
+		make(None())
+	);
+}
+
+applyMDynamicArrayTreeLazyScrollMode(state : MDynamicArrayTreeState<?>) -> (Tropic) -> Tropic {
+	\node ->
+		eitherMap(state.lazyScrollMode, \lsm -> {
+			nodePosScale = make(PositionScale(zeroPoint, zeroPoint));
+			showItem = make(false);
+			if (fgetValue(lsm.enabled))
+				node
+				|> (\t -> TShow(showItem, t))
+				|> (\t -> TPositionScale(nodePosScale, t))
+				|> (\t -> TConstruct([
+						make3SubscribeTrigger(fnot(showItem), lsm.scrollWH, fstall(nodePosScale, 0), lsm.scrollPositionScale, \swh, ps, sps -> {
+							y = ps.pos.y - sps.pos.y;
+							if (y < swh.height && ps.scale.x > 0.) nextDistinct(showItem, true);
+						})
+					], t))
+			else
+				node
+			},
+			node
+		)
+}
+
+
+
+addMDynamicArrayTreeUnfoldPanel(parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic, children : DynamicArray<MDynamicArrayTreeNode>, state : Maybe<MTreeLazyLoadState>) -> (Tropic) -> Tropic {
+	\t ->
+		eitherMap(state, \st ->
+			TLines2(t, TShow(flessi(st.loadQuota, lengthDynamicArray(children)), m2t(st.panel, parent))),
+			t
+		)
+}
+
+MDynamicArrayTree2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicArrayTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	loadLazyButtonMode = tryExtractStruct(m.style, MTreeLazyLoad(0, None()));
+	lazyLoadState = maybeMap(loadLazyButtonMode, makeMTreeLazyLoadState);
+
+	lazyScrollMode =
+		maybeMap(
+			tryExtractStruct(m.style, MTreeLazyScrollMode(const(true), [])),
+			\lsm -> MTreeLazyScrollModeState(
+				lsm.enabled,
+				makeWH(),
+				make(zeroPositionScale),
+				tryExtractStruct(lsm.style, MTreeLazyScrollModeExternalInfo(makePoint(), makeWH(), const(0.))),
+				None()
+			)
+		);
+
+	dragDropStateM =
+		eitherFn(
+			maybeMap(
+				tryExtractStruct(m.style, MDynamicArrayTreeOrder(makeDynamicArray([]))),
+				\o ->
+					makeMDynamicArrayTreeDragDropState(manager, o.order, maybeMap(tryExtractStruct(m.style, MDynamicArrayTreeOnOrderChange(nop1)), \oc -> oc.onChange))
+			),
+			\dragDropState ->
+				Some(dragDropState),
+			\ ->
+				maybeMap(
+					tryExtractStruct(m.style, MDynamicArrayTreeOnOrderChange(nop1)),
+					\oc ->
+						makeMDynamicArrayTreeDragDropState(manager, makeDynamicArray([]), Some(oc.onChange))
+				)
+		);
+
+	children =
+		eitherMap(lazyLoadState, \st -> subrangeDynamicArray(m.children, const(0), st.loadQuota), m.children)
+		|> (\children -> eitherMap(dragDropStateM, \dragDropState -> MDynamicArrayTreeOrder2MDynamicArrayTreeNodes(children, dragDropState.order), children));
+
+	singleSelection = tryExtractStruct(m.style, MSingleSelection(make(-1)));
+	multiSelection = tryExtractStruct(m.style, MDynamicArrayTreeMultiSelection(makeDynamicArray([])));
+	itemsLength = tryExtractStruct(m.style, MItemsLength(make(0)));
+	showSeparators = !contains(m.style, MTreeHideSeparators());
+
+	state =
+		MDynamicArrayTreeState(
+			dynamicSelectionIndexes(children),
+			extractStruct(m.style, MDynamicArrayTreeSelection(makeDynamicArray([]))).selected,
+			!contains(m.style, MTreeDisableSelection()),
+			tryExtractStruct(m.style, MDynamicArrayTreeExpanded(makeDynamicArray([]))),
+			!contains(m.style, MTreeDisableExpanded()),
+			extractMColor(parent, m.style, MPrimaryColor()),
+			isSome(multiSelection),
+			showSeparators,
+			dragDropStateM,
+			lazyScrollMode,
+			loadLazyButtonMode
+		);
+
+	(\p -> (\p2 -> SelectMDynamicLines2T(
+		manager,
+		p2,
+		children,
+		\index, __, c, p3 ->
+			MDynamicArrayTreeNode2T(
+				manager,
+				p3,
+				state,
+				c,
+				farray(index),
+				m2t,
+				const(showSeparators)
+			)
+			|> applyMDynamicArrayTreeLazyScrollMode(state)
+	)
+	|> (if (state.selectionEnabled) addMDynamicArrayTreeUnfoldPanel(p2, m2t, m.children, lazyLoadState) else idfn)
+	|> (if (state.selectionEnabled) TBorderBottom(1.) else idfn)
+	|> (\mtree : Tropic ->
+		if (state.selectionEnabled)
+			eitherMap(
+				state.expanded,
+				\stateExpanded ->
+					TConstruct(
+						[
+							\ -> subscribeDynamicArray(state.selected, \selected ->
+								iter(selected, \sel ->
+									loop(
+										subrange(sel, 0, length(sel) - 1),
+										\s -> subrange(s, 0, length(s) - 1),
+										\s -> length(s) > 0,
+										\s -> pushDynamicArray(stateExpanded.expanded, s)
+									)
+								)
+							)
+						],
+						mtree
+					),
+				mtree
+			)
+		else
+			mtree
+	)
+	|> (\mtree : Tropic ->
+		if (state.selectionEnabled)
+			eitherMap(
+				singleSelection,
+				\ss ->
+					TConstruct(
+						[
+							\ -> fBidirectionalLink(
+								feither(
+									elementAtDynamicArrayDef(
+										submapDynamicArray(state.selected, \s -> findiDynamicArray(state.items, \i -> i == s)),
+										const(0),
+										None()
+									),
+									const(-1)
+								),
+								fsubselect(ss.selected, FLift(\s -> elementAtDynamicArrayDef(state.items, const(s), []))),
+								\s -> nextDistinct(ss.selected, s),
+								\s -> nextDynamicArray(state.selected, if (s == []) [] else [s])
+							)
+						],
+						mtree
+					),
+				mtree
+			)
+		else
+			mtree
+	)
+	|> (\mtree : Tropic ->
+		if (state.selectionEnabled)
+			eitherMap(
+				multiSelection,
+				\ms ->
+					TConstruct(
+						[
+							\ -> bidirectionalLinkDynamicArray(
+								filtersubmapDynamicArray(state.selected, \s -> findiDynamicArray(state.items, \i -> i == s)),
+								filtersubmapDynamicArray(ms.selected, \s -> elementAtDynamicArray(state.items, const(s))),
+								\s -> nextDynamicArray(ms.selected, s),
+								\s -> nextDynamicArray(state.selected, s)
+							)
+						],
+						mtree
+					),
+				mtree
+			)
+		else
+			mtree
+	)
+	|> (\mtree : Tropic ->
+		TConstruct(
+			eitherMap(
+				state.dragDropState,
+				\dragDropState -> {
+					order = MDynamicArrayTreeNodes2MDynamicArrayTreeOrderNodes(m.children);
+					orderA = unwrapMDynamicArrayTreeOrderNodes(order);
+
+					concat(
+						[
+							\ -> subscribe2DynamicArray(order, \or -> {
+								nextDynamicArray(dragDropState.order, or);
+							})
+						],
+						eitherFn(
+							dragDropState.onChange,
+							\oc ->
+								[
+									\ -> subscribe2DynamicArray(orderA, \__ -> {
+										oc(getDynamicArrayValue(order));
+									})
+								],
+							\ -> []
+						)
+					)
+				},
+				[]
+			),
+			mtree
+		)
+	)
+	|> (\mtree : Tropic ->
+		eitherMap(
+			itemsLength,
+			\il ->
+				TConstruct(
+					[ \ -> fconnect(lengthMDynamicArrayTreeNodes(children), il.length) ],
+					mtree
+				),
+			mtree
+		)
+	))
+	|> (\mtree : (MFocusGroup) -> Tropic ->
+		eitherMap(
+			state.lazyScrollMode,
+			\lsm ->
+				TPositionScale(lsm.scrollPositionScale,
+					MScroll2T(manager, p,
+						MScroll(
+							MGroup2(MGetFocusGroup(mtree), eitherMap(lsm.externalScroll, \es -> TSizedHeight(0., es.minHeight), TEmpty())),
+							TFillXY(),
+							concat(
+								[MScrollWidthHeight(eitherMap(lsm.externalScroll, \es -> es.contentWH, makeWH()), lsm.scrollWH)],
+								eitherMap(lsm.externalScroll, \es -> [MScrollPosition(es.scrollPosition)], [])
+							)
+						),
+						m2t
+					)
+				),
+			mtree(p)
+		)
+	))
+	|> (\mtree -> MComponentGroup2T(manager, parent, "MDynamicArrayTree", extractMComponentGroupState(m.style), mtree))
+
+}
+
+MDynamicArrayTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MDynamicArrayTreeState<?>, m : MDynamicArrayTreeNode<?>, treeIndex : Transform<[int]>,
+	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
+
+	lazyLoadState = maybeMap(state.loadLazyButtonMode, makeMTreeLazyLoadState);
+
+	children = eitherMap(lazyLoadState, \st -> subrangeDynamicArray(m.children, const(0), st.loadQuota), m.children);
+	childrenLength = lengthDynamicArray(children);
+	expanded = extractStruct(m.style, MExpanded(make(true))).expanded;
+	selected = extractStruct(m.style, MSelected(make(false))).selected;
+	focused = extractStruct(m.style, MFocused(make(false))).focused;
+	childSelected = tryExtractStruct(m.style, MChildSelected(make(false)));
+	highlightOnSelect = extractStruct(m.style, MHighlightOnSelect(const(true))).enabled;
+	shortHighlighter = contains(m.style, MShortHighlighter());
+	children2material =
+		extractStruct(
+			m.style,
+			MDynamicArrayTreeChildren2Material(
+				\da -> {
+					MGetFocusGroup(
+						\pp -> SelectMDynamicLines2T(
+							manager,
+							pp,
+							da,
+							\index, __, c, p -> m2t(c, p)
+						)
+					)
+				}
+			)
+		).fn;
+
+	highlightFn = extractStruct(m.style, MTreeNodeCustomHighlighter(hightlightFnDef(parent, shortHighlighter))).fn;
+	buildIconFn = extractStruct(m.style, MTreeNodeCustomIcon(buildIconFnDef)).fn;
+	buildLineFn = extractStruct(m.style, MTreeNodeCustomLine(buildLineFnDef(parent))).fn;
+	separatorDef = MSeparator(true) |> MBorderLeftRight(16.);
+	separator = extractStruct(m.style, MTreeNodeCustomSeparator(separatorDef)).separator;
+
+	focusState =
+		replaceStructMany(
+			m.style,
+			[
+				MOnClick(\ -> {
+					nextDistinct(selected, if (state.multiSelection) !getValue(selected) else true);
+					maybeApply(tryExtractStruct(m.style, MOnClick(nop)), \oc -> oc.click())
+				}),
+				MFocused(focused),
+				MDefaultShortcutEnabled(const(false))
+			]
+		);
+
+	contentBoxB = makeWH();
+
+	// Drag and Drop
+	hoveringIdB = make(-1);
+	draggingB = make(false);
+	hoveringCorner = make(None());
+	dropOperation = fselect2(feither(hoveringCorner, const(TopLeft())), lengthDynamicArray(children), FLift2(\c, l -> {
+		switch (c : Corner) {
+			TopLeft(): {
+				DropAbove();
+			}
+			TopRight(): {
+				DropInside();
+			}
+			BottomLeft(): {
+				if (l > 0)
+					DropInside()
+				else
+					DropBelow();
+			}
+			BottomRight(): {
+				DropInside();
+			}
+		}
+	}));
+
+	node2material =
+		extractStruct(
+			m.style,
+			MDynamicArrayTreeNode2Material(
+				\node, cc -> {
+					TLinesDir([
+						node,
+						cc,
+						m2t(separator, parent)
+						|> (\t -> TShow(addVerticalSeparator, t))
+						|> (\t -> TAlignStartDir(t, parent.rtl))
+					], parent.rtl)
+					|> (\treeNode -> if (length(fgetValue(treeIndex)) > 1) TBorderDir(24., 0., 0., 0., treeNode, parent.rtl) else treeNode)
+				}
+			)
+		).fn;
+
+	m2t(node2material(
+		(\p ->
+		(
+			if (state.selectionEnabled)
+				MComponent2T(
+					manager,
+					p,
+					"MDynamicArrayTreeNode",
+					focusState,
+					\focus ->
+						(
+							if (state.expandedEnabled)
+								TColsYCenterA([
+									TVisible(
+										fneq(childrenLength, 0),
+										m2t(buildIconFn(expanded, extractStruct(m.style, state.color)), focus.parent)
+									),
+									TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
+								])
+							else
+								TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
+						)
+						|> (\t -> TAvailableHeight(t, const(0.)))
+						|> (\t ->
+							TDecorator(
+								t,
+								concat(
+									eitherMap(
+										tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
+										\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
+										[]
+									),
+									[Pair(fand(highlightOnSelect, selected), \wh -> m2t(highlightFn(wh), focus.parent))]
+								),
+								false
+							)
+						),
+						m2t
+				)
+			else
+				(
+					if (state.expandedEnabled)
+						TColsYCenterA([
+							TVisible(
+								fneq(childrenLength, 0),
+								m2t(buildIconFn(expanded, extractStruct(m.style, state.color)), parent)
+							),
+							TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), parent)), contentBoxB)
+						])
+					else
+						TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), parent)), contentBoxB)
+				)
+				|> (\t -> TAvailableHeight(t, const(0.)))
+		)
+		|> (\f ->
+			eitherMap(
+				state.dragDropState,
+				\dragDropState ->
+					TLines2(
+						TShow(
+							fand(fneq(hoveringIdB, -1), feq(dropOperation, DropAbove())),
+							TMutable(feitherMap(dragDropState.current, \fn -> fn(p), const(TEmpty())))
+						),
+						TCopySize(
+							f,
+							\sz -> {
+								wh = makeWH();
+
+								TShow(
+									fneq(hoveringIdB, -1),
+									TInteractive(
+										[
+											MouseMove2(\h, mi0 -> {
+												mi = mi0();
+
+												if (mi.inside) {
+													if (mi.x < getValue(wh).width / 2.0) {
+														if (mi.y < getValue(wh).height / 2.0) {
+															nextDistinct(hoveringCorner, Some(TopLeft()));
+														} else {
+															nextDistinct(hoveringCorner, Some(BottomLeft()));
+														}
+													} else {
+														if (mi.y < getValue(wh).height / 2.0) {
+															nextDistinct(hoveringCorner, Some(TopRight()));
+														} else {
+															nextDistinct(hoveringCorner, Some(BottomRight()));
+														}
+													}
+												}
+
+												h;
+											})
+										],
+										TRectangle(interactiveRectangleStyle, TInspect([ISize(wh)], sz))
+									)
+								)
+							},
+							true
+						)
+					),
+				f
+			)
+		))
+		|> (\f : (MFocusGroup) -> Tropic ->
+			eitherFn(
+				state.dragDropState,
+				\dragDropState ->
+					MDragDrop2T(
+						manager,
+						parent,
+						MDragDrop(
+							const(dragDropState.content2id(m.content)),
+							MGetFocusGroup(f),
+							[
+								MOnDrop(\i ->
+									maybeApply(
+										dragDropState.id2content(i),
+										\c ->
+											moveMDynamicArrayTreeOrderNode(dragDropState.order, m.content, c, fgetValue(dropOperation))
+									)
+								),
+								MHoveringId(hoveringIdB),
+								MDragging(draggingB),
+								MOnDrag(\d -> {
+									if (d) {
+										next(
+											dragDropState.current,
+											Some(\pp ->
+												TFrame(0.0, 4.0, [MThemeFill(parent, MPrimaryColor()), FillOpacity(0.2)], TAlpha(const(0.5), f(pp)))
+											)
+										);
+									}
+								}),
+								MDraggingContent(
+									MShadow(
+										const(8.0),
+										MFrame(0.0, 4.0, [MThemeFill(parent, MBackgroundColor())], MGetFocusGroup(f))
+									)
+								)
+							]
+						),
+						m2t
+					),
+				\ -> f(parent)
+			)
+		),
+		TShowLazy(
+			fand(
+				fOr(
+					fneq(childrenLength, 0),
+					if (isSome(state.dragDropState))
+						fand(fneq(hoveringIdB, -1), feq(dropOperation, DropInside()))
+					else
+						const(false)
+				),
+				expanded
+			),
+			\ ->
+				m2t(
+					children2material(
+						mapiDynamicArray(
+							children,
+							\index, c -> {
+								MGetFocusGroup(\p -> {
+									MDynamicArrayTreeNode2T(
+										manager,
+										p,
+										state,
+										c,
+										farrayPush(treeIndex, index),
+										m2t,
+										if (state.showSeparators)
+											flessi(index, fadditioni(childrenLength, const(-1)))
+										else
+											const(false)
+									)
+									|> applyMDynamicArrayTreeLazyScrollMode(state)
+								})
+							}
+						)
+					),
+					parent
+				)
+				|> (\t ->
+					TLines2(
+						eitherMap(
+							state.dragDropState,
+							\dragDropState ->
+								TShow(
+									fand(fneq(hoveringIdB, -1), feq(dropOperation, DropInside())),
+									TCols2(
+										TFixed(24.0, 0.0),
+										TMutable(feitherMap(dragDropState.current, \fn -> fn(parent), const(TEmpty())))
+									)
+								),
+							TEmpty()
+						),
+						t
+					)
+				)
+				|> (\t ->
+					if (state.selectionEnabled)
+						TCopySize(
+							t,
+							\tr ->
+								TAvailable(m2t(buildLineFn(contentBoxB, extractStruct(m.style, state.color)), parent), tr),
+							true
+						)
+					else
+						t
+				)
+				|> (\t -> TAvailableHeight(t, const(0.)))
+				|> if (state.expandedEnabled) addMDynamicArrayTreeUnfoldPanel(parent, m2t, m.children, lazyLoadState) else idfn
+		)
+	), parent)
+	|> (\treeNode ->
+		eitherMap(
+			state.dragDropState,
+			\dragDropState ->
+				TEasingMetrics(
+					manager.manager.deltaTimer,
+					\__ -> easingTransitionDuration,
+					easingStandartCurve,
+					draggingB,
+					TLines2(
+						TScale(fif(draggingB, const(Factor(1.0, 0.0)), const(Factor(1.0, 1.0))), treeNode),
+						TShow(
+							fand(fneq(hoveringIdB, -1), feq(dropOperation, DropBelow())),
+							TCols2(
+								TFixed(24.0, 0.0),
+								TMutable(feitherMap(dragDropState.current, \fn -> fn(parent), const(TEmpty())))
+							)
+						)
+					),
+				),
+			treeNode
+		)
+	)
+	|> (\treeNode ->
+		TConstruct(
+			concat(
+				if (state.selectionEnabled)
+					[
+						makeSubscribeUns(selected, \s -> if (s) [interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(focused, true))] else []),
+						\ ->
+							fBidirectionalLink(
+								fselectWithLast(fif(selected, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
+								fsubselect(
+									eitherMap(state.lazyScrollMode, \__ -> treeIndex, fstall(treeIndex, 0)),
+									FLift(\ti -> containsDynamicArray(state.selected, ti))
+								),
+								\s -> {
+									if (length(s.first) > 0 || length(s.second) > 0) {
+										if (length(s.first) > 0 && (!contains(getDynamicArrayValue(state.items), s.first) || length(s.second) == 0)) {
+											removeDynamicArray(state.selected, s.first) |> ignore;
+										}
+
+										if (length(s.second) > 0) {
+											if (state.multiSelection) {
+												pushDynamicArray(state.selected, s.second);
+											} else {
+												nextDynamicArray(state.selected, [s.second]);
+											}
+										}
+									}
+								},
+								\s -> {
+									nextDistinct(selected, s);
+								}
+							),
+						\ -> {
+							if (contains(getDynamicArrayValue(state.selected), fgetValue(treeIndex)))
+								nextDistinct(selected, true);
+
+							\ -> if (!contains(getDynamicArrayValue(state.items), fgetValue(treeIndex))) {
+								removeDynamicArray(state.selected, fgetValue(treeIndex)) |> ignore;
+							}
+						}
+					]
+				else
+					[],
+				if (state.expandedEnabled)
+					[
+						\ ->
+							eitherFn(
+								state.expanded,
+								\stateExpanded -> fBidirectionalLink(
+									fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
+									fsubselect(
+										eitherMap(state.lazyScrollMode, \__ -> treeIndex, fstall(treeIndex, 0)),
+										FLift(\ti -> containsDynamicArray(stateExpanded.expanded, ti))
+									),
+									\e -> {
+										if (length(e.first) > 0 || length(e.second) > 0) {
+											if (length(e.first) > 0) {
+												removeDynamicArray(stateExpanded.expanded, e.first) |> ignore;
+											}
+
+											if (length(e.second) > 0) {
+												pushDynamicArray(stateExpanded.expanded, e.second);
+											}
+										}
+									},
+									\e ->
+										nextDistinct(expanded, e)
+								),
+								\ -> nop
+							),
+						\ -> {
+							maybeApply(state.expanded, \stateExpanded ->
+								if (contains(getDynamicArrayValue(stateExpanded.expanded), fgetValue(treeIndex)))
+									nextDistinct(expanded, true)
+							);
+
+							\ -> if (!contains(getDynamicArrayValue(state.items), fgetValue(treeIndex))) {
+								maybeApply(state.expanded, \stateExpanded -> removeDynamicArray(stateExpanded.expanded, fgetValue(treeIndex)) |> ignore);
+							}
+						}
+					]
+				else
+					[]
+			)
+			|> (\arr ->
+				arrayPushMaybe(
+					arr,
+					maybeMap(
+						childSelected,
+						\cs ->
+							\ -> fconnect(
+								fsubselect(treeIndex, FLift(\i ->
+									existsDynamicArray(state.selected, \si -> length(si) > length(i) && subrange(si, 0, length(i)) == i)
+								)),
+								cs.selected
+							)
+					)
+				)
+			)
+			|> (\arr ->
+				arrayPushMaybe(
+					arr,
+					maybeMap(
+						lazyLoadState,
+						\st ->
+							makeSubscribe2(expanded, \e -> if (!e) st.resetFn())
+					)
+				)
+			),
 			treeNode
 		)
 	)

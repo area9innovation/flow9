@@ -39,7 +39,9 @@ TropicParagraph(elements : [Tropic], minWidth : double, maxWidth : double, style
 	pars = fold(resolve, TropicParagraphAcc([], []), \acc, tr -> {
 		switch (tr) {
 			TText(t, s): {
-				breakTText(t, s, 0, strlen(t), acc, max(minWidth, maxWidth), extractStruct(style, CropWords(false)).crop);
+				breakTText(
+					makeCharCatSplitPosText(t),
+					s, 0, strlen(t), acc, max(minWidth, maxWidth), extractStruct(style, CropWords(false)).crop, isBiDiEnabled());
 			}
 			default: {
 				par = arrayPush(acc.words, tr);
@@ -112,6 +114,13 @@ setTWordText(w: TWord, t: string) -> TWord {
 	};
 };
 
+setTWordRTL(w: TWord, rtl: bool) -> TWord {
+	switch(w) {
+		TText(t, s): TText(t, replaceStruct(s, SetRTL(rtl)));
+		default: w;
+	};
+};
+
 // Breaks a text at newlines, spaces and zero-width spaces.
 // TODO: Support hyphenation (looks Forms text break algo supports, and looks more optimal).
 // We could also support more unicode space chars:
@@ -120,14 +129,24 @@ setTWordText(w: TWord, t: string) -> TWord {
 // - 00ad (invisible hypen)
 // Please avoid heap allocations here hence this is performance-critical part.
 // Structs, arrays — any complex stuff should be avoided.
-breakTText(t : string, s : [TCharacterStyle], i : int, l : int, acc : TropicParagraphAcc, maxWidth : double, cropLongWords : bool) -> TropicParagraphAcc {
+breakTText(
+	textData : CharCatSplitPosText,
+	s : [TCharacterStyle],
+	i : int,
+	l : int,
+	acc : TropicParagraphAcc,
+	maxWidth : double,
+	cropLongWords : bool,
+	bidiEnabled : bool
+) -> TropicParagraphAcc {
+	t = textData.text;
 	if (i < l) {
 		fixednextpos = nextValidStrPos(nextValidStrPos(
 			strRangeIndexOf(t, C_SP, i, l),
 			strRangeIndexOf(t, C_NL, i, l)),
 			strRangeIndexOf(t, C_ZSP, i, l),
 		);
-		charcatsplitpos = if (isBiDiEnabled()) getCharCatSplitPos(t, i+1, fixednextpos) else -1;
+		charcatsplitpos = if (bidiEnabled) getCharCatSplitPos(textData, i+1, fixednextpos) else -1;
 		nextpos = nextValidStrPos(charcatsplitpos, fixednextpos);
 		iscat = if (charcatsplitpos == nextpos) 1 else 0;
 		chr = if (nextpos < 0) "" else substring(t, nextpos, 1);
@@ -149,7 +168,7 @@ breakTText(t : string, s : [TCharacterStyle], i : int, l : int, acc : TropicPara
 				// Need to be splitted after punctuation
 				TropicParagraphAcc(acc.paragraphs, concatA([acc.words, before, [TZeroWidthSpace(s)], [TText(substring(t, nextpos, 1), s)], [TZeroWidthSpace(s)]]));
 			}
-			breakTText(t, s, nextpos + 1 - iscat, l, nacc, maxWidth, cropLongWords);
+			breakTText(textData, s, nextpos + 1 - iscat, l, nacc, maxWidth, cropLongWords, bidiEnabled);
 		}
 	} else acc
 }
@@ -260,7 +279,7 @@ twordwrap(p : [TWord], metrics : [FormMetrics], width : double, style : [TropicP
 	});
 	lines: [TLine0] = if (wrap.line != []) arrayPush(wrap.lines, TLine0(wrap.line)) else wrap.lines;
 	if (isBiDiEnabled())
-		map(reflowTextToBiDi(map(lines, \l -> l.words), isTWordEmpty, getTWordText, setTWordText, idfn, getDefaultRtl()), \l -> TLine0(l))
+		map(reflowTextToBiDi(map(lines, \l -> l.words), isTWordEmpty, getTWordText, setTWordText, setTWordRTL, getDefaultRtl()), \l -> TLine0(l))
 	else
 		lines;
 }

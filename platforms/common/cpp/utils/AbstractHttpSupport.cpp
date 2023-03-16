@@ -6,6 +6,9 @@
 #include <fstream>
 #include <sstream>
 
+// 
+ResponseEncoding defaultResponseEncoding = ResponseEncodingAuto;
+
 AbstractHttpSupport::AbstractHttpSupport(ByteCodeRunner *owner) : NativeMethodHost(owner)
 {
     next_http_request = 1;
@@ -203,7 +206,29 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             if (count >= 2 && pdata[0] == 0xFF && pdata[1] == 0xFE) { // UTF-16 BOM
                 data = RUNNER->AllocateString((unicode_char*)(pdata+2), (count-2)/2);
             } else {
-                data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
+                switch (rq->response_enc)
+                {
+                    case ResponseEncodingUTF8:
+                        data = RUNNER->AllocateString(parseUtf8Base((const char*)pdata, count, false));
+                        break;
+                    case ResponseEncodingUTF8js:
+                        data = RUNNER->AllocateString(parseUtf8Base((const char*)pdata, count, true));
+                        break;
+                    case ResponseEncodingByte:
+                        {
+                            unicode_string out;
+                            const char* str = (const char*)pdata;
+                            for (size_t i = 0; i < count; i++)
+                            {
+                                unsigned char c = (unsigned char) str[i];
+                                out.push_back((uint32_t) c);
+                            }
+                            data = RUNNER->AllocateString(out);
+                            break;
+                        }
+                    default: /* ResponseEncodingAuto */
+                        data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
+                }
             }
         }
 
@@ -277,9 +302,11 @@ NativeFunction *AbstractHttpSupport::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, systemDownloadFile, 1);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, sendHttpRequestWithAttachments, 6);
 
-    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, httpCustomRequestNative, 7);
+    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, httpCustomRequestNative, 8);
 
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, deleteAppCookies, 0);
+
+    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, setDefaultResponseEncoding, 1);
 
     return NULL;
 }
@@ -403,9 +430,13 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
         }
 
         if (encodeUtf8(rq.method) == "GET") {
-            std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
-
-            rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
+			if (params.empty()) {
+				// Avoid adding the ? on requests without parameters
+				rq.url = parseUtf8(url);
+			} else {
+				std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
+				rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
+			}
         } else if (rq.payload.empty()) {
             std::string params_str = encodeUtf8(params);
             rq.payload = std::vector<uint8_t>(params_str.begin(), params_str.end());
@@ -454,8 +485,8 @@ StackSlot AbstractHttpSupport::httpRequest(RUNNER_ARGS)
 
 StackSlot AbstractHttpSupport::httpCustomRequestNative(RUNNER_ARGS)
 {
-    RUNNER_PopArgs7(url, method, headers, params, data, onResponse, async);
-    RUNNER_CheckTag3(TString, url, method, data);
+    RUNNER_PopArgs8(url, method, headers, params, data, responseEncoding, onResponse, async);
+    RUNNER_CheckTag4(TString, url, method, data, responseEncoding);
     RUNNER_CheckTag2(TArray, headers, params);
     RUNNER_CheckTag1(TBool, async);
 
@@ -465,6 +496,8 @@ StackSlot AbstractHttpSupport::httpCustomRequestNative(RUNNER_ARGS)
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
     rq.method = RUNNER->GetString(method);
+    rq.response_enc = GetResponseEncodingFromString(encodeUtf8(RUNNER->GetString(responseEncoding)));
+    rq.response_enc = (rq.response_enc == ResponseEncodingAuto ? defaultResponseEncoding : rq.response_enc);
     std::string payload_string = encodeUtf8(RUNNER->GetString(data));
     rq.payload = std::vector<uint8_t>(payload_string.begin(), payload_string.end());
     rq.response_cb = onResponse;
@@ -628,4 +661,54 @@ StackSlot AbstractHttpSupport::deleteAppCookies(RUNNER_ARGS)
     doDeleteAppCookies();
 
     RETVOID;
+}
+
+ResponseEncoding AbstractHttpSupport::GetResponseEncodingFromString(std::string str)
+{
+    if (str == "utf8_js")
+        return ResponseEncodingUTF8js;
+    else if (str == "utf8") {
+        return ResponseEncodingUTF8;
+    } else if (str == "byte")
+        return ResponseEncodingByte;
+    else if (str == "auto")
+        return ResponseEncodingAuto;
+    else {
+        cout << "Invalid encoding '" << str << "'. Switched to 'auto'." << endl;
+        return ResponseEncodingAuto;
+    }
+}
+
+StackSlot AbstractHttpSupport::setDefaultResponseEncoding(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(tmp_value);
+    RUNNER_CheckTag1(TString, tmp_value);
+
+    defaultResponseEncoding = GetResponseEncodingFromString(encodeUtf8(RUNNER->GetString(tmp_value)));
+
+    static const char lookup[] = "Default response encoding switched to ";
+
+    switch (defaultResponseEncoding) {
+        case ResponseEncodingUTF8:
+            setUtf8JsStyleGlobalFlag(false);
+            cout << lookup << "'" << "utf8 without surrogate pairs" << "'." << endl;
+            break;
+        case ResponseEncodingUTF8js:
+            setUtf8JsStyleGlobalFlag(true);
+            cout << lookup << "'" << "utf8 with surrogate pairs" << "'." << endl;
+            break;
+        case ResponseEncodingByte:
+            setUtf8JsStyleGlobalFlag(false);
+            cout << lookup << "'" << "raw byte" << "'." << endl;
+            break;
+        case ResponseEncodingAuto:
+            setUtf8JsStyleGlobalFlag(false);
+            cout << lookup << "'" << "auto" << "'." << endl;
+            break;
+        default:
+            setUtf8JsStyleGlobalFlag(false);
+            cout << "Invalid encoding '" << encodeUtf8(RUNNER->GetString(tmp_value)) << "'. Switched to 'auto'." << endl;
+    }
+
+    RETVOID;  
 }

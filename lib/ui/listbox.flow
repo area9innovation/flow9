@@ -14,37 +14,36 @@ export {
 		ListBoxItem  : (selected : DynamicBehaviour<bool>, itemForm : Form);
 
 	ListBoxStyle ::= WidthHeight, UseAvailable, SelectedBackground, NotSelectedBackground, ResetChoice;
+		// Either WidthHeight or UseAvailable has to be used to make ListBox be renderred.
 		// WidthHeight										// ListBox uses constant area
 		UseAvailable : (); 									// ListBox dynamically uses all available area
+		
 		SelectedBackground(st : [GraphicsStyle]);			// This background style used for selected items
 		NotSelectedBackground(st : [GraphicsStyle]);		// This background style used for non-selected items
 		ResetChoice(reset : bool);							// To reset selected item immediately after click
 }
 
 ListBox(items : [Form], boxStyles : [ListBoxStyle], selected : DynamicBehaviour<int>) -> Form {
-	unsArry = ref [];
-	listBoxItems = 
-		mapi(items, \idx, itemForm -> {
-			itemFlag = make(getValue(selected) == idx); 
-			ListBoxItem(itemFlag, itemForm);
-		});
+	selectedValue = getValue(selected);
+	listBoxItems = mapi(items, \idx, itemForm -> {
+		itemFlag = make(selectedValue == idx); 
+		ListBoxItem(itemFlag, itemForm);
+	});
 	reset = extractStruct(boxStyles, ResetChoice(false)).reset;
 
 	Constructor(
 		ListBoxMain(listBoxItems, boxStyles, false),
 		\ -> {
-			iteri(listBoxItems, \idx, item ->
-				refArrayPush(unsArry, subscribe(item.selected, \flag -> if (flag) {
-					nextDistinct(selected, idx);
-					if (reset) nextDistinct(selected, -1);
-				}))
+			uns1 = mapi(listBoxItems, \idx, item ->
+				subscribe(item.selected, \flag -> if (flag) {
+					nextDistinct(selected, if (reset) -1 else idx);
+				})
 			);
-			refArrayPush(unsArry, subscribe(selected, \selIdx -> 
+			uns2 = subscribe(selected, \selIdx -> 
 				iteri(listBoxItems, \itemIdx, item -> nextDistinct(item.selected, itemIdx == selIdx))
-			));
+			);
 			\ -> {
-				applyall(^unsArry);
-				unsArry := [];
+				applyall(arrayPush(uns1, uns2));
 			}
 		}
 	) 
@@ -97,7 +96,7 @@ ListBoxMain(items : [ListBoxItem], boxStyles : [ListBoxStyle], multiselect : boo
 			bottomY = topY + wh.height;
 			if (itemY < topY || itemY > bottomY) {
 				newY = itemY - wh.height / 2.0; 
-				deferred(\-> next(scrollPointer, if (newY < 0.0) 0.0 else newY));
+				deferred(\-> nextDistinct(scrollPointer, if (newY < 0.0) 0.0 else newY));
 			}
 			if (^prevSelected < 0) prevSelected := itemIdx;
 		}
@@ -116,49 +115,44 @@ ListBoxMain(items : [ListBoxItem], boxStyles : [ListBoxStyle], multiselect : boo
 		})
 	}
 
-	itemsForm = {
-		Select(clientRect, \wh -> {
-			if (wh.width == 0.0) 
-				Empty()
-			else	
-				Lines(mapi(items, \idx, item -> listItemForm(wh, idx)));
-		})	
+	wrapForm = \wh -> {
+		form = Lines(mapi(items, \idx, __ -> listItemForm(wh, idx)));
+		VerticalScrollable(make(0.0), scrollPointer, const(wh.width), const(wh.height), 
+			Group([Rectangle(wh.width, wh.height, itemBackStyle), form])
+		);
 	}
 
-	findWrapArea = \ form -> {
-		wrapForm = \ wh -> {
-			VerticalScrollable(make(0.0), scrollPointer, const(wh.width), const(wh.height), 
-				Group([Rectangle(wh.width, wh.height, itemBackStyle), form]));
-		};
-		fold(boxStyles, form, \acc, s -> {
-			switch (s : ListBoxStyle) {
-				WidthHeight(w, h): { 
-					next(clientRect, WidthHeight(w, h)); 
-					wrapForm(WidthHeight(w, h));
-				}	
-				UseAvailable(): Inspect([IAvailable(clientRect)], Select(clientRect, wrapForm));
-				default: acc;
-			}
-		});
-	}
+	listbox = fold(boxStyles, Empty(), \acc, s -> {
+		switch (s : ListBoxStyle) {
+			WidthHeight(w, h): { 
+				nextDistinct(clientRect, s); 
+				wrapForm(s);
+			}	
+			UseAvailable(): Inspect([IAvailable(clientRect)], Select(clientRect, wrapForm));
+			default: acc;
+		}
+	});
 	
 	if (multiselect)
-		Interactive([
-					KeyDown2(\handled, key -> {
-						ctrlState := isCtrlAlone(key);
-						shiftState := isShiftAlone(key);
-						if (!handled && !hasKeyboardFocus() &&  toLowerCase(key.utf) == "a" && key.ctrl) {
-							iter(items, \item -> nextDistinct(item.selected, true));
-							true;
-						} else 
-							false;
-					}),
-					KeyUp2(\handled, key -> {
-						if (isCtrlIn(key)) ctrlState := false;
-						if (isShiftIn(key)) shiftState := false;
+		Interactive(
+			[
+				KeyDown2(\handled, key -> {
+					ctrlState := isCtrlAlone(key);
+					shiftState := isShiftAlone(key);
+					if (!handled && !hasKeyboardFocus() &&  toLowerCase(key.utf) == "a" && key.ctrl) {
+						iter(items, \item -> nextDistinct(item.selected, true));
+						true;
+					} else 
 						false;
-					}),
-				], findWrapArea(itemsForm))
+				}),
+				KeyUp2(\handled, key -> {
+					if (isCtrlIn(key)) ctrlState := false;
+					if (isShiftIn(key)) shiftState := false;
+					false;
+				}),
+			], 
+			listbox
+		)
 	else
-		findWrapArea(itemsForm);	
+		listbox
 }

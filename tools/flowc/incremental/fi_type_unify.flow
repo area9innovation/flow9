@@ -1,0 +1,203 @@
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fiApplyTypeSubstitution(s: Tree<string, FiType>, t: FiType) -> FiType;
+	fiComposeTypeSubstitutions(s1: Tree<string, FiType>, s2: Tree<string, FiType>) -> Tree<string, FiType>;
+	fiMatchTyparsSym(type1 : FiType, type2: FiType, acc: Pair<Tree<string, FiType>, Tree<string, FiType>>) -> Maybe<Pair<Tree<string, FiType>, Tree<string, FiType>>>;
+	fiUnifyTypes(type1 : FiType, type2: FiType) -> Pair<FiType, FiType>;
+	fiMakeCast(e: FiExp, from: FiType, to: FiType) -> FiExp;
+}
+
+fiApplyTypeSubstitution(s: Tree<string, FiType>, t: FiType) -> FiType {
+	switch (t) {
+		FiTypeRef(rt): {
+			FiTypeRef(fiApplyTypeSubstitution(s, rt));
+		}
+		FiTypeArray(at): {
+			FiTypeArray(fiApplyTypeSubstitution(s, at));
+		}
+		FiTypeName(id, tps): {
+			FiTypeName(id, map(tps, \tp -> fiApplyTypeSubstitution(s, tp)));
+		}
+		FiTypeFunction(args, rt): {
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg with type = fiApplyTypeSubstitution(s, arg.type))), 
+				fiApplyTypeSubstitution(s, rt)
+			);
+		}
+		FiTypeParameter(n): {
+			switch (lookupTree(s, n)) {
+				Some(tp): tp;
+				None(): t;
+			}
+		}
+		default: t;
+	}
+}
+
+fiComposeTypeSubstitutions(s1: Tree<string, FiType>, s2: Tree<string, FiType>) -> Tree<string, FiType> {
+	s11 = filterTree(
+		mapTree(s1, \x -> fiApplyTypeSubstitution(s2, x)), 
+		\n, tp -> switch (tp) {
+			FiTypeParameter(m): n != m;
+			default: true;
+		}
+	);
+	s22 = filterTree(s2, \n, __ -> !containsKeyTree(s1, n));
+	mergeTree(s11, s22);
+}
+
+fiMatchTyparsSym(type1 : FiType, type2: FiType, acc: Pair<Tree<string, FiType>, Tree<string, FiType>>) -> Maybe<Pair<Tree<string, FiType>, Tree<string, FiType>>> {
+	add_pair = \sub, nm, tp -> {
+		do_add = \-> {
+			switch (lookupTree(sub, nm)) {
+				Some(tq): {
+					if (fiEqualTypes(tp, tq)) Some(sub) else {
+						None();
+					}
+				}
+				None(): Some(setTree(sub, nm, tp));
+			}
+		}
+		switch (tp) {
+			FiTypeParameter(mm): if (nm == mm) Some(sub) else do_add();
+			default: do_add();
+		}
+	}
+	switch (type1) {
+		FiTypeRef(rt1): {
+			switch (type2) {
+				FiTypeRef(rt2): fiMatchTyparsSym(rt1, rt2, acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeArray(at1): {
+			switch (type2) {
+				FiTypeArray(at2): fiMatchTyparsSym(at1, at2, acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeName(id1, tps1): {
+			switch (type2) {
+				FiTypeName(id2, tps2): {
+					if (length(tps1) != length(tps2)) {
+						None();
+					} else {
+						foldi(tps1, Some(acc), \i, ac, tp1 -> maybeBind(ac, \acc1 -> fiMatchTyparsSym(tp1, tps2[i], acc1)));
+					} 
+				}
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeFunction(args1, rt1): {
+			switch (type2) {
+				FiTypeFunction(args2, rt2): {
+					maybeBind(fiMatchTyparsSym(rt1, rt2, acc), \acc1 ->
+						foldi(args1, Some(acc1), \i, ac, arg1 -> maybeBind(ac, \acc2 -> fiMatchTyparsSym(arg1.type, args2[i].type, acc2)))
+					);
+				}
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default:  None();
+			}
+		}
+		FiTypeParameter(n1): {
+			maybeMap(add_pair(acc.first, n1, type2), \s -> Pair(s, acc.second));
+		}
+		FiTypeVoid(): {
+			switch (type2) {
+				FiTypeVoid(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeInt(): {
+			switch (type2) {
+				FiTypeInt(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeDouble(): {
+			switch (type2) {
+				FiTypeDouble(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeNative(): {
+			switch (type2) {
+				FiTypeNative(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeString(): {
+			switch (type2) {
+				FiTypeString(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeBool(): {
+			switch (type2) {
+				FiTypeBool(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+		FiTypeFlow(): {
+			switch (type2) {
+				FiTypeFlow(): Some(acc);
+				FiTypeParameter(n2): {
+					maybeMap(add_pair(acc.second, n2, type1), \s -> Pair(acc.first, s));
+				}
+				default: None();
+			}
+		}
+	}
+}
+
+fiUnifyTypes(type1 : FiType, type2: FiType) -> Pair<FiType, FiType> {
+	switch (fiMatchTyparsSym(type1, type2, Pair(makeTree(), makeTree()))) {
+		Some(p): Pair(fiApplyTypeSubstitution(p.first, type1), fiApplyTypeSubstitution(p.second, type2));
+		None(): Pair(type1, type2);
+	}
+}
+
+fiMakeCast(e: FiExp, from: FiType, to: FiType) -> FiExp {
+	if (fiEqualTypes(from, to) || to == FiTypeVoid()) e else {
+		switch (fiMatchTyparsSym(from, to, Pair(makeTree(), makeTree()))) {
+			Some(p): {
+				from1 = fiApplyTypeSubstitution(p.first, from);
+				to1 = fiApplyTypeSubstitution(p.second, to);
+				if (fiEqualTypes(from1, to1)) e else FiCast(e, from1, to1, to1, e.start);
+			}
+			None(): {
+				FiCast(e, from, to, to, e.start);
+			}
+		}
+	}
+}

@@ -1,21 +1,18 @@
 // © Copyright 2011 Area9 Technologies.
 
-import sys/target;
-import net/url;
-import ds/arrayutils;
 import fs/filesystem;
 import net/http_types;
+import ds/arrayutils;
 
 export {
-	/*currentRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
-	okRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
-	errorRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
-	statusRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));*/
-
 	// Example simple call disregarding errors:
 	// httpRequest("http://localhost:81/flow/myfile.txt", false, [], [], \c -> println(c), \e -> {}, \s -> {});
 
 	// The response is assumed to be UTF-8 encoded, unless a UTF-16 BOM is present
+	// Also, js target uses UTF-8 encoding with surrogate pairs
+	//  and cpp target uses correct UTF8 encoding, but it returns only two bytes of symbol (even if the character is represented by 3 bytes) - it is a BUG.
+	// But js surrogate pairs and cpp `cropped` character codes are not often. Only for specific symbols, like emoji and etc..
+	//  (which has code more than 0xFFFF, an example is emoji smile with code 0x1F609 (one symbol (😉) with 3 bytes code (0x1F609) and stored in UTF8 with 4 bytes (0xF09F9889)).
 
 	// at the moment of comment POST-request parameters were encoded differently for different compiler backends:
 	// in flowcpp POST-request parameters arent url-encoded, thus doesn't work with getUrlParameter
@@ -30,7 +27,9 @@ export {
 		onStatus : (int) -> void
 	) -> void;
 
-	// Can be synchronous only for JS target
+	// For JS the async parameter works.
+	// For Java it is never asynchronous (The onResponse is called before httpCustomRequest returns)
+	// For Cpp it is always asynchronous, except maybe on failures (httpCustomRequest will return before onResponse is called)
 	httpCustomRequest(
 		url : string,
 		method : RequestMethod,
@@ -39,26 +38,30 @@ export {
 		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
 		async : bool
 	) -> void;
-	// This version currently implemented only in java backend
-	httpCustomRequestWithTimeout(
+	// Added `responseEncoding` parameter to return data in the requested encoding.
+	// Compiler or url parameter takes precedence:
+	//  - cpp flag is `use_utf8_js_style`;
+	//  - js flag is `utf8_no_surrogates`.
+	// If there is no such - `responseEncoding` will be used.
+	//
+	// RequestTimeout currently implemented only in java backend.
+	httpCustomRequestStyled(
 		url : string,
 		method : RequestMethod,
-		headers : [KeyValue],
-		data : RequestData,
 		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
-		async : bool,
-		timeout : int
+		style : [RequestStyle]
 	) -> void;
 
 	// Here and below. onProgress callback receives (done, total) parameters, so progress is done/total.
 	// downloadFile usually does not invoke onProgress(total, total) when download is over.
 	// So when some application code waits for 100% progress, it should consider onDone invokation as
 	// 100% and stop waiting then.
-	native downloadFile : io (url : string,
-					onData : (string) -> void,
-					onError : (string) -> void,
-					onProgress : (double, double) -> void,
-					) -> void = HttpSupport.downloadFile;
+	native downloadFile : io (
+		url : string,
+		onData : (string) -> void,
+		onError : (string) -> void,
+		onProgress : (double, double) -> void,
+	) -> void = HttpSupport.downloadFile;
 
 	// platform-specific call for system to download the file
 	native systemDownloadFile : (url : string) -> void = HttpSupport.systemDownloadFile;
@@ -116,30 +119,67 @@ export {
 
 	// current running HTTP requests
 	runningRealtimeHTTPrequests: ref int;
+
+	// Priority of response encoding flags (hight to low):
+	//  Request style -> Global setter -> Url parameter -> Compiler parameter
+	setDefaultResponseEncoding : (encoding : ResponseEncoding) -> void;
+
+	// Set function that updates arguments before passing them to native functions
+	// If it returns None() then the request should not be processed, in this case
+	// onData or onError have already been called
+	setHttpRequestArgsUpdater(update : (HttpRequestArgs) -> Maybe<HttpRequestArgs>) -> void;
+	HttpRequestArgs(
+		url : string,
+		method : RequestMethod,
+		headers : [KeyValue],
+		params : [KeyValue],
+		onData : (int, string, [KeyValue]) -> void,
+		onError : (int, string, [KeyValue]) -> void
+	);
 }
+
+httpRequestArgsUpdater : ref (HttpRequestArgs) -> Maybe<HttpRequestArgs> = ref \a -> Some(a);
+setHttpRequestArgsUpdater(update : (HttpRequestArgs) -> Maybe<HttpRequestArgs>) -> void {
+	httpRequestArgsUpdater := update;
+}
+
+setDefaultResponseEncoding(encoding : ResponseEncoding) -> void {
+	setDefaultResponseEncodingNative(responseEncoding2string(encoding));
+}
+
+native setDefaultResponseEncodingNative : (encoding : string) -> void = HttpSupport.setDefaultResponseEncoding;
 
 // passing array of KeyValue to native wasn't working in flash on 01.04.2011
 // hence this wrapper
-native makeHttpRequest : io (url : string,
-					postMethod : bool,
-					headers : [[string]],
-					params : [[string]],
-					onData : (string) -> void,
-					onError : (string) -> void,
-					onStatus : (int) -> void,
-					) -> void = HttpSupport.httpRequest;
+native makeHttpRequest : io (
+	url : string,
+	postMethod : bool,
+	headers : [[string]],
+	params : [[string]],
+	onData : (string) -> void,
+	onError : (string) -> void,
+	onStatus : (int) -> void,
+) -> void = HttpSupport.httpRequest;
 
-native httpCustomRequestNative : io (url : string,
+// responseEncoding parameter allows to set which encoding should be the response:
+//  'auto' - defined by target (js - 'utf8_js', cpp - 'utf8', but cropped by two bytes (it is bug));
+//  'utf8_js' -  UTF-8 encoding with surrogate pairs;
+//  'utf8' - original UTF-8 encoding with 1, 2, 3 bytes length;
+//  'byte' - 1 byte encoding (raw response).
+native httpCustomRequestNative : io (
+	url : string,
 	method : string,
 	headers : [[string]],
 	parameters : [[string]],
 	data : string,
+	responseEncoding : string, // ['auto', 'utf8_js', 'utf8', 'byte']
 	onResponse : (responseStatus : int, responseData : string, responseHeaders : [[string]]) -> void,
 	async : bool
 ) -> void = HttpSupport.httpCustomRequestNative;
 
 // This version currently implemented only in java backend
-native httpCustomRequestWithTimeoutNative : io (url : string,
+native httpCustomRequestWithTimeoutNative : io (
+	url : string,
 	method : string,
 	headers : [[string]],
 	parameters : [[string]],
@@ -149,7 +189,8 @@ native httpCustomRequestWithTimeoutNative : io (url : string,
 	timeout : int
 ) -> void = HttpSupport.httpCustomRequestWithTimeoutNative;
 
-httpCustomRequestWithTimeoutNative (url : string,
+httpCustomRequestWithTimeoutNative (
+	url : string,
 	method : string,
 	headers : [[string]],
 	parameters : [[string]],
@@ -158,7 +199,7 @@ httpCustomRequestWithTimeoutNative (url : string,
 	async : bool,
 	timeout : int
 ) -> void {
-	httpCustomRequestNative(url, method, headers, parameters, data, onResponse, async);
+	httpCustomRequestNative(url, method, headers, parameters, data, responseEncoding2string(ResponseEncodingAuto()), onResponse, async);
 }
 
 native doPreloadMediaUrl : io (url : string, onSuccess : () -> void, onError : (string) -> void) -> void = HttpSupport.preloadMediaUrl;
@@ -191,16 +232,16 @@ httpRequest(url, postMethod2, headers, params2, onData, onError, onStatus) {
 				}
 			},
 			true
-		)
+		);
 	} else {
-		// next(currentRequest, Quadruple(url, postMethod2, headers, params2));
-
 		// In OWASP mode GET request with parameters is forbidden, so we replace it with POST
-		postMethod = 
+		postMethod =
 			if (isOWASPLevel1() && !postMethod2 && (params2 != [] || strContains(url, "?"))) {
 				if (!cgi) println2(flow("GET request with parameters is forbidden by the current security settings. It is replaced by POST."));
 				true;
-			} else postMethod2;
+			} else {
+				postMethod2;
+			}
 
 		params = if (endsWith(url, ".php")) arrayPush(params2, KeyValue("t", d2s(timestamp()))) else params2;
 		runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests + 1;
@@ -210,30 +251,44 @@ httpRequest(url, postMethod2, headers, params2, onData, onError, onStatus) {
 			} else {
 				if (!nwjs && js && startsWith(url, "http://")) {
 					proto = if (startsWith(loaderUrl(), "http://")) "http" else "https";
-					proto + strRight(url, 4) 
-				} else url;
+					proto + strRight(url, 4)
+				} else {
+					url;
+				}
 			}
 
-		makeHttpRequest(
+		args = HttpRequestArgs(
 			fixedUrl,
-			postMethod,
-			map(headers, \header -> [header.key, header.value]),
-			map(params, \param -> [param.key, param.value]),
-			\ d -> {
-				// nextDistinct(okRequest, Quadruple(url, postMethod2, headers, params2));
+			if (postMethod) POST() else GET(),
+			headers,
+			params,
+			\status, data, __ -> {
 				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-				onData(d)
+				onStatus(status);
+				onData(data);
 			},
-			\ e -> {
-				// nextDistinct(errorRequest, Quadruple(url, postMethod2, headers, params2));
+			\status, error, __ -> {
 				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-				onError(e)
-			},
-			\st -> {
-				// nextDistinct(statusRequest, Quadruple(url, postMethod2, headers, params2));
-				onStatus(st)
+				onStatus(status);
+				onError(error);
 			}
-		)
+		);
+		eitherFn(
+			(^httpRequestArgsUpdater)(args),
+			\argsUpdated -> {
+				status = ref 0;
+				makeHttpRequest(
+					argsUpdated.url,
+					argsUpdated.method == POST(),
+					keyValues2strings(argsUpdated.headers),
+					keyValues2strings(argsUpdated.params),
+					\data -> argsUpdated.onData(^status, data, []),
+					\error -> argsUpdated.onError(^status, error, []),
+					\s -> status := s
+				);
+			},
+			\ -> args.onError(0, "Request denied", [])
+		);
 	}
 }
 
@@ -243,7 +298,8 @@ httpRequest2(url, onData) {
 
 httpRequest3(url, onData, onError) httpRequest(url, false, [], [], onData, onError, nop1);
 
-httpCustomRequest(url : string,
+httpCustomRequest(
+	url : string,
 	method : RequestMethod,
 	headers : [KeyValue],
 	data : RequestData,
@@ -251,16 +307,34 @@ httpCustomRequest(url : string,
 	async : bool
 ) -> void {
 	// Timeout 0 means no real timeout - it will wait for the response infinitely.
-	httpCustomRequestWithTimeout(url, method, headers, data, onResponse, async, 0)
+	httpCustomRequestBase(url, method, headers, data, onResponse, async, 0, ResponseEncodingAuto());
 }
 
-httpCustomRequestWithTimeout(url : string,
+httpCustomRequestStyled(
+	url : string,
+	method : RequestMethod,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	style : [RequestStyle]
+) -> void {
+	headers = extractStruct(style, RequestHeaders([])).headers;
+	data = either(tryExtractStruct(style, RequestPayload("")), extractStruct(style, RequestParameters([])));
+	async = extractStruct(style, RequestAsync(true)).async;
+	responseEncoding = extractStruct(style, RequestEncoding(ResponseEncodingAuto())).responseEncoding;
+	timeout = extractStruct(style, RequestTimeout(0)).timeout;
+
+	// Timeout 0 means no real timeout - it will wait for the response infinitely.
+	httpCustomRequestBase(url, method, headers, data, onResponse, async, timeout, responseEncoding);
+}
+
+httpCustomRequestBase(
+	url : string,
 	method : RequestMethod,
 	headers : [KeyValue],
 	data : RequestData,
 	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
 	async : bool,
-	timeout : int
+	timeout : int,
+	responseEncoding : ResponseEncoding
 ) -> void {
 	isPHPRequest = endsWith(url, ".php");
 	noCacheTimestamp = KeyValue("t", d2s(timestamp()));
@@ -271,18 +345,20 @@ httpCustomRequestWithTimeout(url : string,
 
 	headers2 = ifArrayPush(headers, isPHPRequest && !isSameStructType(data, RequestParameters([])), noCacheTimestamp);
 
-	payload = switch(data: RequestData) {
+	payload = switch(data : RequestData) {
 		RequestPayload(body): body;
 		default: "";
 	}
 
 	methodName = method2string(method);
 	// In OWASP mode GET request with parameters is forbidden, so we replace it with POST
-	methodName2 = 
+	methodName2 =
 		if (isOWASPLevel1() && methodName == "GET" && (payload != "" || params != [] || strContains(url, "?"))) {
 			if (!cgi) println2(flow("GET request with parameters is forbidden by the current security settings. It is replaced by POST."));
 			"POST"
-		} else methodName;
+		} else {
+			methodName;
+		}
 
 	runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests + 1;
 	fixedUrl =
@@ -291,55 +367,67 @@ httpCustomRequestWithTimeout(url : string,
 		} else {
 			if (!nwjs && js && !isCapacitor() && startsWith(url, "http://")) {
 				proto = if (startsWith(loaderUrl(), "http://")) "http" else "https";
-				proto + strRight(url, 4)
-			} else url;
+				proto + strRight(url, 4);
+			} else {
+				url;
+			}
 		}
 
-	if (timeout == 0) {
-		httpCustomRequestNative(
-			fixedUrl,
-			methodName2,
-			map(headers, \header -> [header.key, header.value]),
-			map(params, \param -> [param.key, param.value]),
-			payload,
-			\responseStatus, responseData, responseHeaders -> {
-				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-
-				onResponse(
-					responseStatus,
-					responseData,
-					map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
-				);
-			},
-			async
-		)
-	} else {
-		httpCustomRequestWithTimeoutNative(
-			fixedUrl,
-			methodName2,
-			map(headers, \header -> [header.key, header.value]),
-			map(params, \param -> [param.key, param.value]),
-			payload,
-			\responseStatus, responseData, responseHeaders -> {
-				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
-
-				onResponse(
-					responseStatus,
-					responseData,
-					map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
-				);
-			},
-			async,
-			timeout
-		)
+	onResponse2 = \responseStatus, responseData, responseHeaders -> {
+		runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+		onResponse(responseStatus, responseData, responseHeaders);
 	}
+	args = HttpRequestArgs(
+		fixedUrl,
+		string2method(methodName2),
+		headers,
+		params,
+		onResponse2,
+		onResponse2
+	);
+	eitherFn(
+		(^httpRequestArgsUpdater)(args),
+		\argsUpdated -> {
+			onResponse3 = \responseStatus, responseData, responseHeaders -> {
+				argsUpdated.onData(
+					responseStatus,
+					responseData,
+					strings2KeyValues(responseHeaders)
+				);
+			}
+			if (timeout == 0) {
+				httpCustomRequestNative(
+					argsUpdated.url,
+					method2string(argsUpdated.method),
+					keyValues2strings(argsUpdated.headers),
+					keyValues2strings(argsUpdated.params),
+					payload,
+					responseEncoding2string(responseEncoding),
+					onResponse3,
+					async
+				);
+			} else {
+				httpCustomRequestWithTimeoutNative(
+					argsUpdated.url,
+					method2string(argsUpdated.method),
+					keyValues2strings(argsUpdated.headers),
+					keyValues2strings(argsUpdated.params),
+					payload,
+					onResponse3,
+					async,
+					timeout
+				);
+			}
+		},
+		\ -> args.onError(0, "Request denied", [])
+	);
 }
 
 preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void {
 	if (cpp || csharp) {
-		doPreloadMediaUrl(url, onSuccess, onError)
+		doPreloadMediaUrl(url, onSuccess, onError);
 	} else {
-		httpRequest(url+"#", false, [], [], \data -> onSuccess(), onError, nop1)
+		httpRequest(url + "#", false, [], [], \data -> onSuccess(), onError, nop1);
 	}
 }
 
@@ -356,8 +444,8 @@ uploadFile(url, params, headers, fileTypes, listeners) {
 		if (length(files) > 0) {
 			if (onSelect.onSelect(fileNameClient(files[0]), trunc(fileSizeClient(files[0])))) {
 				uploadClientFile(
-					files[0], 
-					url, 
+					files[0],
+					url,
 					params,
 					headers,
 					[onData, onError, onOpen, onProgress]
@@ -391,8 +479,8 @@ uploadClientFile(file, url, params, headers, listeners) {
 	doUploadClientFile(
 		file,
 		url,
-		map(params, \param -> [param.key, param.value]),
-		map(headers, \header -> [header.key, header.value]),
+		keyValues2strings(params),
+		keyValues2strings(headers),
 		onOpen.onOpen,
 		onData.onData,
 		onError.onError,
@@ -415,9 +503,9 @@ sendHttpRequestWithAttachments(
 ) -> void {
 	makeSendHttpRequestWithAttachments(
 		url,
-		map(headers, \header -> [header.key, header.value]),
-		map(params, \param -> [param.key, param.value]),
-		map(attachments, \attachment -> [attachment.key, attachment.value]),
+		keyValues2strings(headers),
+		keyValues2strings(params),
+		keyValues2strings(attachments),
 		onData,
 		onError
 	);
@@ -444,4 +532,18 @@ deleteAppCookies() {
 enableCORSCredentials(enabled : bool) {
 	// NOP
 	// Works in JS only
+}
+
+keyValues2strings(kvs : [KeyValue]) -> [[string]] {
+	map(kvs, \kv -> [kv.key, kv.value]);
+}
+
+strings2KeyValues(strings : [[string]]) -> [KeyValue] {
+	filtermap(strings, \ss -> {
+		if (length(ss) >= 2) {
+			Some(KeyValue(ss[0], ss[1]));
+		} else {
+			None();
+		}
+	});
 }

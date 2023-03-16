@@ -18,7 +18,7 @@ export {
 		4. Change global view by passing any registered pebble to `setViewFromPebble`. Corresponding pebble will be pushed to the stack
 	*/
 
-	// Error handler will be called if user will try to set view based on unregistered pebble 
+	// Error handler will be called if user will try to set view based on unregistered pebble
 	//
 	// NOTE: using multiple controllers simultaneously is not supported and will trigger a warning!
 	// Call this function once per application somewhere on the top level (main function?)
@@ -33,23 +33,25 @@ export {
 	// - handle BACK/FORWARD browser buttons
 	// - update current pebble (global behaviour) based on the pebble stack
 	// - handle IScript
-	// NOTE: all pebble dependent modififcations of Material (for example wrapping with `MLinkPebbleParameters`) 
-	// should be done inside of dispatchers, this way they will appear as a part of `getPebblesControlledView` 
+	// NOTE: all pebble dependent modififcations of Material (for example wrapping with `MLinkPebbleParameters`)
+	// should be done inside of dispatchers, this way they will appear as a part of `getPebblesControlledView`
 	// and will work with the rest of pebble controlled evironment
 	getPebblesControlledView : (controller : PebbleController) -> Material;
 	// Register dispatcher for given pebble based on it's mask (prefix)
 	// The mask is formatted like this: "pathpartname/pathpartname/pathpartname" (i.e. omitting all parameters)
 	registerDispatcher : (controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
 	registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void;
+	overwriteDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
 	// Call corresponding dispatcher or onError if no dispatcher found to update the view
 	// If mask of the pebble is the same as the current one, just pushes pebble to the stack without calling dispatcher
 	// 	then the view update will be handled by MLinkPebbleParameters
+	// There's no need to urlEncode values of the pebble
 	setViewFromPebble : (controller : PebbleController, pebble : Pebble) -> void;
 	// It will try to find last similar pebble in pebbleStack and call setViewFronPebble on found pebble
 	// (from user point of view it will looks like you get back on previously opened screen with all parameters were set as you left),
 	// or setViewFromPebble on pebble if nothing was found
 	restoreLastPebble(controller : PebbleController, pebble : Pebble) -> void;
-	// Just refresh the view, i.e. call dispatcher once again. No URL or history changes 
+	// Just refresh the view, i.e. call dispatcher once again. No URL or history changes
 	refreshViewForCurrentPebble : (controller : PebbleController) -> void;
 	// we will find last visited pebble by this key if it was set, otherwise, it will be stored with default key
 	// in case of cpp we are always store last visited pebble and prompt developer to open it at application start
@@ -64,9 +66,11 @@ export {
 	getCurrentPebble : (controller : PebbleController) -> Pebble;
 	// Find last pebble in pebbleStack where last PathPart name == pathPart.name
 	// and last PathPart parameters contain pathPart.parameters
+	findLastPebbleInStackM(controller : PebbleController, pathPart : PathPart, def : Pebble) -> Maybe<Pebble>;
 	findLastPebbleInStack(controller : PebbleController, pathPart : PathPart, def : Pebble) -> Pebble;
 	maybeFindLastPebbleInStack(controller : PebbleController, test : (Pebble) -> bool) -> Maybe<Pebble>;
 	// Append given path part to the current pebble
+	extendCurrentPebbleWithPathParts : (controller : PebbleController, pathParts : [PathPart]) -> Pebble;
 	extendCurrentPebbleWithPathPart : (controller : PebbleController, pathPart : PathPart) -> Pebble;
 	// Append parameter to the last path part of the current pebble
 	extendCurrentPebbleWithParameter : (controller : PebbleController, parameter : string, value : string) -> Pebble;
@@ -92,7 +96,7 @@ export {
 
 	// NOTE: This is an internal function used to implement much better abstraction of the same idea: MLinkPebbleParameters
 	//
-	// DON'T use this function directly! 
+	// DON'T use this function directly!
 	makeCurrentPebbleLastParameterSubscribe : (controller : PebbleController, parameter : string, onChange : (string) -> void) -> () -> () -> void;
 
 	// UP button helpers
@@ -107,10 +111,10 @@ export {
 	// required will be added to pebble before it will be set (usefull for tabs e.g.)
 	PebbleDispatcher(dispatcher : () -> Material, handler : Maybe<(Pebble) -> void>, required : [KeyValue]);
 
-	// NOTE: This is an internal structure that is exported only because of technical restrictions in the old compiler! 
+	// NOTE: This is an internal structure that is exported only because of technical restrictions in the old compiler!
 	//
 	// DON'T create controller yourself, use `makePebbleController` instead!
-	// DON'T use any of the controller fields directly! 
+	// DON'T use any of the controller fields directly!
 	//
 	// TODO: remove from export section as soon as we migrate to flowc
 	PebbleController(
@@ -128,7 +132,7 @@ export {
 		dummy : bool,
 		// Async functions to be called right before updating current pebble. Allows to cancel that update.
 		// Takes: current pebble, new pebble, callback to approve or cancel the update
-		// Bookkeeping for MConfirmPebbleParameterSwitch 
+		// Bookkeeping for MConfirmPebbleParameterSwitch
 		confirmations : DynamicBehaviour<[(Pebble, Pebble, (bool) -> void) -> void]>
 	);
 	pinParameter(parameter : string, value : string, show : (Pebble) -> bool) -> void;
@@ -214,7 +218,7 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 	);
 
 	view = ref MEmpty();
-	
+
 	controller = PebbleController(
 		dispatchers,
 		view,
@@ -258,7 +262,7 @@ makePebbleController2(manager : MaterialManager) -> PebbleController {
 
 makeDummyPebbleController() -> PebbleController {
 	PebbleController(
-		ref makeTree(), 
+		ref makeTree(),
 		ref MEmpty(),
 		IScriptBehaviourDisposable1(
 			nop1,
@@ -288,10 +292,25 @@ getPebblesControlledView(controller : PebbleController) -> Material {
 }
 
 registerDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void {
-	controller.dispatchers := setTree(^(controller.dispatchers), mask, PebbleDispatcher(dispatcher, None(), []));
+	registerDispatcher2(controller, mask, PebbleDispatcher(dispatcher, None(), []));
 }
 
 registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
+	eitherFn(
+		lookupTree(^(controller.dispatchers), mask),
+		\__ -> {
+			println(formatString("Mask (%1) already in use, view won't be registered", [mask]));
+			println("In case you are doing it on purpose use overwriteDispatcher function");
+		},
+		\-> controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher)
+	)
+}
+
+overwriteDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void {
+	overwriteDispatcher2(controller, mask, PebbleDispatcher(dispatcher, None(), []));
+}
+
+overwriteDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
 	controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher);
 }
 
@@ -305,7 +324,7 @@ getPebbleDispatcher2(dispatchers : Tree<string, PebbleDispatcher>, pebble : Pebb
 		pbl = firstOfPair(pbl0);
 
 		eitherFn(
-			lookupTree(dispatchers, pebble2mask(pbl)), 
+			lookupTree(dispatchers, pebble2mask(pbl)),
 			\pebbleDispatcher -> {
 				Pair(Pair(pbl, Some(Pair(pbl, pebbleDispatcher))), false)
 			},
@@ -373,7 +392,7 @@ confirmPebbleSwitch(controller : PebbleController, current : Pebble, pebble : Pe
 setViewFromPebbleIfRequired(controller : PebbleController, current : Pebble, pebble : Pebble) -> void {
 	//if (!equalPebbles(current, pebble)) {
 		//println("setViewFromPebble: " + pebble2UrlHash(pebble) + " , current: " + pebble2UrlHash(current));
-	//} 
+	//}
 	// we don't want to push broken pebbles
 	if (!isBrokenPebble(pebble) && pebble != makeEmptyPebble()) {
 		pinnedPebble = setLastPathPartParameters(pebble, getPinnedParameters(pebble));
@@ -403,8 +422,8 @@ addBrowserUrlHashListener(manager : MaterialManager, controller : PebbleControll
 					if (length(pebbleStack) > 1) {
 						prevPebble = pebbleStack[length(pebbleStack) - 2];
 						if (equalPebbles(urlHashPebble, prevPebble)) {
-							//println("URL handler 2: " + pebble2UrlHash(urlHashPebble) + 
-							//	", prev="  + pebble2UrlHash(prevPebble) + 
+							//println("URL handler 2: " + pebble2UrlHash(urlHashPebble) +
+							//	", prev="  + pebble2UrlHash(prevPebble) +
 							//	", curr=" + pebble2UrlHash(currentPebble));
 							// back button was probably clicked
 							confirmPebbleSwitch(controller, currentPebble, prevPebble, \-> {
@@ -562,22 +581,29 @@ getCurrentPebble(controller : PebbleController) -> Pebble {
 	getValue(controller.currentPebbleB);
 }
 
-findLastPebbleInStack(controller : PebbleController, pathPart : PathPart, def : Pebble) -> Pebble {
+findLastPebbleInStackM(controller : PebbleController, pathPart : PathPart, def : Pebble) -> Maybe<Pebble> {
 	pebbleStack = getValue(controller.pebbleStackB);
-	findDef(
+	find(
 		reverseA(pebbleStack),
 		\pbbl -> {
 			lastPathPart = getLastPathPart(pbbl, makeEmptyPathPart());
 			lastPathPart.name == pathPart.name &&
 			pebble2mask(def) == pebble2mask(pbbl) &&
 			forall(pathPart.parameters, \p -> contains(lastPathPart.parameters, p))
-		},
-		def
+		}
 	)
+}
+
+findLastPebbleInStack(controller : PebbleController, pathPart : PathPart, def : Pebble) -> Pebble {
+	either(findLastPebbleInStackM(controller, pathPart, def), def)
 }
 
 maybeFindLastPebbleInStack(controller : PebbleController, test : (Pebble) -> bool) -> Maybe<Pebble> {
 	find(reverseA(getValue(controller.pebbleStackB)), test)
+}
+
+extendCurrentPebbleWithPathParts(controller : PebbleController, pathParts : [PathPart]) -> Pebble {
+	fold(pathParts, getCurrentPebble(controller), pushPathPart2Pebble)
 }
 
 extendCurrentPebbleWithPathPart(controller : PebbleController, pathPart : PathPart) -> Pebble {
@@ -654,14 +680,14 @@ makeCurrentPebbleLastParameterSubscribe(controller : PebbleController, key : str
 }
 
 isUpButtonEnabled(controller : PebbleController, topPebble : Pebble) -> Transform<bool> {
-	fselect(controller.currentPebbleB, FLift(\cp -> 
+	fselect(controller.currentPebbleB, FLift(\cp ->
 		length(cp.path) > 1 || getLastPathPart(cp, makeEmptyPathPart()).name != getLastPathPart(topPebble, makeEmptyPathPart()).name
 	))
 }
 
 onUpButtonClick(controller : PebbleController, topPebble : Pebble) -> void {
 	currentPebble = getCurrentPebble(controller);
-			
+
 	nextPebble = if (isTopLevelPebble(currentPebble)) {
 		topPebble
 	} else {

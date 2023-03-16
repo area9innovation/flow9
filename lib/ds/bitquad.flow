@@ -1,0 +1,286 @@
+import ds/bitvector;
+import math/math;
+import text/blueprint;
+
+// This is a data structure to represent sparse quadratic 2d bit arrays. It works well
+// if the array is sparse with 1s. It works by dividing the 2d array
+// into quadrants of equal size, and then collecting them into a tree.
+
+// Paper describing this here:
+// https://www.dcc.uchile.cl/TR/2009/TR_DCC-20090429-005.pdf
+
+// We follow this paper:
+// https://dl.acm.org/doi/abs/10.1145/3514231
+
+// Similar to theirs, we have each layer of internal nodes in a separate array.
+
+// There are other implementations here: 
+// https://github.com/simongog/sdsl-lite/blob/master/include/sdsl/k2_tree.hpp
+// https://github.com/GGabi/k2_tree/blob/master/src/tree/datastore.rs
+
+// At first, we do a k=2 implementation just to get it working
+
+export {
+	// Construct a compressed binary QuadTree for these bools. Could be [[bool]]
+	makeBitQuad(matrix : [[int]]) -> BitQuad;
+
+	// Check if a given coordinate in the bitmap is 1 or 0.
+	// Call with height = 0, node = 0. Log n time in size of bitmap
+	getBitQuad(q : BitQuad, height : int, node : int, x : int, y : int, debug : bool) -> bool;
+
+	intersectBitQuads(l : BitQuad, r : BitQuad) -> BitQuad;
+}
+
+BitQuad(
+    // How high is the tree in levels? Each level contains *4 more bits
+    height : int,
+	// These are really bits, so could be [[bool]]. The bits correspond to the internal nodes 
+	// in lexicographic order of the tree, but with a separate array for each level.
+	// The value is 0 when all leaves below this internal node are 0. That is why this representation
+	// is spare for spare bit arrays.
+	levelNodes : [[int]],
+    // These are really just bits, so could be [bool]. We keep groups of 4 bits for each leaf which is not 0
+	// So allow groups of 4 that are 0 are skipped here, meaning it is tricky to index into this array.
+    leaves : [int],
+    // Where does the leaf for each leaf quadrant begin in terms of index into leaves?
+	// Matches the last level of nodes in length. Required for efficient checking of
+	// a specific coordinate in the 2d array
+    leavesOffset : [int],
+);
+
+// Construct a compressed binary QuadTree for these bools. Could be [[bool]]
+makeBitQuad(matrix : [[int]]) -> BitQuad {
+    n = length(matrix);
+    if (n <= 2) {
+        xy = \x, y -> elementAt(elementAt(matrix, y, [0]), x, 0);
+        leaves = [
+                xy(0,0), xy(1, 0),
+                xy(0,1), xy(1, 1)
+            ];
+        if (leaves == [0, 0, 0, 0]) {
+            BitQuad(1, [[0]], [], [0]);
+        } else {
+            BitQuad(1, [[1]], leaves, [0]);
+        }
+    } else {
+        height = ceil(log(i2d(length(matrix))) / log(i2d(2)));
+        width = pow(2, height);
+        half = width / 2;
+		// TODO: If we send in x and y coordinates, we do not have to construct
+		// these temporary subrange arrays
+        nw = makeBitQuad(map(subrange(matrix, 0, half), \row -> subrange(row, 0, half)));
+        ne = makeBitQuad(map(subrange(matrix, 0, half), \row -> subrange(row, half, half)));
+        sw = makeBitQuad(map(subrange(matrix, half, half), \row -> subrange(row, 0, half)));
+        se = makeBitQuad(map(subrange(matrix, half, half), \row -> subrange(row, half, half)));
+        m = concatBitQuads(concatBitQuads(concatBitQuads(nw, ne), sw), se);
+        BitQuad(
+            m.height + 1,
+			concat(
+				if (m.leaves == []) [[0]] else [[1]],
+				m.levelNodes,
+			),
+            m.leaves,
+            m.leavesOffset
+        )
+    }
+}
+
+concatBitQuads(left : BitQuad, right : BitQuad) -> BitQuad {
+    BitQuad(
+        left.height,
+		mapi(left.levelNodes, \i, ln -> {
+			concat(ln, right.levelNodes[i])
+		}),
+        concat(left.leaves, right.leaves),
+        concat(left.leavesOffset, map(right.leavesOffset, \o -> o + length(left.leaves)))
+    )
+}
+
+// Check if a given coordinate in the bitmap is 1 or 0.
+// Call with height = 0, node = 0
+getBitQuad(q : BitQuad, height : int, node : int, x : int, y : int, debug : bool) -> bool {
+	if (debug) {
+		println("Looking for " + i2s(x) + "," + i2s(y) + ". Node offset: " + i2s(node) + " at height " + i2s(height) + "/" + i2s(q.height) + " with nodes " + toString(q.levelNodes[height]));
+		println(" has internal node value " + i2s(q.levelNodes[height][node]) + " from layer " + toString(tailFrom(q.levelNodes[height], node)));
+	}
+    // If the internal node on the way is false, we know the result is false
+	if (q.levelNodes[height][node] == 0) false
+	else if (height + 1 == q.height) {
+		offset = q.leavesOffset[node];
+		value = elementAt(q.leaves, offset + x + 2 * y, 0) == 1;
+		if (debug) {
+			println("We are at leaves at node " + i2s(node) + " with offset " + i2s(offset) + " with value " + b2s(value));
+		};
+		value
+   } else {
+		width = pow(2, q.height - height);
+		halfWidth = width / 2;
+        north = y < halfWidth;
+        west = x < halfWidth;
+
+		levelHalf = max(2, pow(2, height));
+		offset = (if (west) 0 else levelHalf / 2) + (if (north) 0 else levelHalf); 
+		newNode = 4 * node + offset;
+
+		if (debug) {
+			println(" with width " + i2s(width) + " and quadrant " + (if (north) "N" else "S") + (if (west) "W" else "E") + " gives node offset " + i2s(offset));
+			println(" giving new node " + i2s(newNode) + " with level half " + i2s(levelHalf) );
+		}
+
+        getBitQuad(q, 
+			height + 1,
+            newNode,
+			// Adjust the coordinates to the smaller quadrant
+			x % halfWidth, 
+			y % halfWidth,
+			debug
+        );
+    }
+}
+
+// TODO: Implement this, and generalize it
+cropBitQuad(b : BitQuad, height : int) -> BitQuad {
+	if (b.height <= height) b
+	else {
+		// TODO: Reduce the height by 
+		println("TODO: Implement this");
+		b;
+	}
+}
+
+// TODO: Redo similar to makeBitQuad. Requires some kind of "crop" on bitquads, or change of parameters.
+// OK, first rewrite makeBitQuad to avoid the subranges, and use quadrant navigations instead.
+intersectBitQuads(l : BitQuad, r : BitQuad) -> BitQuad {
+	minHeight = min(l.height, r.height);
+	left = cropBitQuad(l, minHeight);
+	right = cropBitQuad(r, minHeight);
+	doIntersectBitquads(left, right, 0, 0, BitQuad(0, [], [], []), 0);
+}
+
+doIntersectBitquads(l : BitQuad, r : BitQuad, leftOffset : int, rightOffset : int, acc : BitQuad, level : int) -> BitQuad {
+	if (level <= l.height) {
+		// OK, add one more level
+		if (level < length(l.levelNodes)) {
+			// This is wrong at the last level, since if the intersection of the leaves
+			// is all empty, this node is also empty
+			nodes = mapi(l.levelNodes[level], \i, lnode -> {
+				rnode = r.levelNodes[level][i];
+				bitAnd(lnode, rnode)
+			});
+			acc2 = BitQuad(acc with 
+				height = acc.height + 1, 
+				levelNodes = arrayPush(acc.levelNodes, nodes)
+			);
+			doIntersectBitquads(l, r, acc2, level + 1);
+		} else {
+			// OK, we are at the leafs
+			leaves = concatA(mapi(l.leavesOffset, \i, leftOffset -> {
+				rightOffset = r.leavesOffset[i];
+				leftLeaves = if (l.levelNodes[level - 1][i] == 0) [0, 0, 0, 0] else subrange(l.leaves, leftOffset, 4);
+				rightLeaves = if (r.levelNodes[level - 1][i] == 0) [0, 0, 0, 0] else subrange(r.leaves, rightOffset, 4);
+				mapi(leftLeaves, \j, left -> {
+					right = rightLeaves[j];
+					bitAnd(left, right)
+				});
+			}));
+			// TODO: Add leave offsets here
+			BitQuad(acc with leaves = leaves);
+		}
+	} else {
+		acc;
+	}
+}
+
+dumpBitQuad(q : BitQuad) -> void {
+    leaves = supergluei(q.leaves, \i, b -> (if (i % 4 == 0) " " else "") + if (b == 1) "1" else ".", "");
+    println("Tree Height: " + i2s(q.height) + ".   Width: " + i2s(pow(2, q.height)));
+	println("Level nodes:");
+	iter(q.levelNodes, println);
+    println("Leaves: " + leaves);
+    println("Leave offsets: " + superglue(q.leavesOffset, i2s, ", "));
+	println("");
+}
+
+dumpQGrid(q : BitQuad) -> void {
+	size = pow(2, q.height);
+
+	fori(0, size - 1, \y -> {
+		println(foldRange(0, size - 1, "", \acc, x -> {
+			acc + (if (getBitQuad(q, 0, 0, x, y, false)) "1" else ".")
+			+ (if (x % 4 == 3) " " else "")
+		}));
+		if (y % 4 == 3) println("");
+	})
+}
+
+main() {
+    if (false) {
+		// This works
+        q = makeBitQuad([
+                [0,1,0,0, 1,0,0,0],
+                [0,0,1,1, 1,0,0,0],
+                [0,0,1,0, 0,0,0,0],
+                [0,0,0,0, 0,0,0,0],
+
+                [0,0,0,0, 0,0,0,0],
+                [0,0,0,0, 0,0,0,0],
+                [0,1,0,0, 0,0,0,0],
+                [0,0,0,0, 1,0,0,0],
+            ]);
+        dumpBitQuad(q);
+		// println(getBitQuad(q, 0, 0, 2, 1, true));
+        // println("");
+		dumpQGrid(q);
+		{}
+    }
+
+    if (false) {
+		// This works
+        q = makeBitQuad([
+                [0,1, 0,1],
+                [1,1, 0,1],
+
+                [0,0, 0,1],
+                [0,0, 1,0],
+            ]);
+        dumpBitQuad( q );
+
+		println(getBitQuad(q, 0, 0, 2, 0, true));
+
+		dumpQGrid(q);
+    }
+
+    if (false) {
+        // This works
+        q = makeBitQuad([
+                [0,0],
+                [0,0],
+            ]);
+        dumpBitQuad(q);
+        dumpQGrid(q);
+    }
+
+	if (true) {
+        l = makeBitQuad([
+			[1,0],
+			[0,1],
+		]);
+		println("Left");
+        dumpBitQuad(l);
+
+        r = makeBitQuad([
+			[0,1],
+			[1,0],
+		]);
+
+		println("Right");
+        dumpBitQuad(l);
+
+		i = intersectBitQuads(l, r);
+		println(i);
+        // dumpBitQuad(i);
+        // dumpQGrid(i);
+	}
+
+    quit(0);
+}

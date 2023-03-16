@@ -43,8 +43,11 @@ export {
 	fcDebugLog(message : string, conf : CompilerConfig) -> void;
 	// Update a config for 'compile-expression' option
 	fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void>;
+	// Shorten a long string by cutting off the middle part
+	fcCutLongStringUpTo(str : string, up_to : int) -> string;
 
 	getNameByLineCol(line : int, col : int, src : string) -> string;
+	getNameAndPositionByLineCol(line : int, col : int, src : string) -> Pair<string, int>;
 	getNameByPos(pos : int, src : string) -> string;
 	getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2>;
 	getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2>;
@@ -54,7 +57,7 @@ export {
 	fcIsIdChar(s : string) -> bool;
 
 	// Approximate borders of toplevel function/global variable expressions.
-	// Returns a tree: a toplevel name is mapped onto a pair of start-end, 
+	// Returns a tree: a toplevel name is mapped onto a pair of start-end,
 	// of corresponding expression "{ ... }" in braces.
 	fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>>;
 
@@ -66,7 +69,7 @@ export {
 }
 
 addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram {
-	config = tenv.acc.config; 
+	config = tenv.acc.config;
 	acc = tenv.acc;
 	f = module.fileinfo.flowfile;
 	names = acc.names;
@@ -234,11 +237,11 @@ addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcType
 		},
 		structTypars,
 		setTree(
-			names.moduleImports, 
+			names.moduleImports,
 			module.fileinfo.flowfile,
 			fold(module.imports, makeSet1(module.fileinfo.flowfile), \acc2, imp -> {
 					mergeSets(
-						mergeSets(acc2, 
+						mergeSets(acc2,
 							lookupTreeDef(names.moduleImports, imp.flowfile, makeSet())
 						),
 						makeSet1(imp.flowfile)
@@ -314,20 +317,18 @@ addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProg
 }
 
 printFcError(config : CompilerConfig, env : FcTypeEnvGlobal, error : FcError) -> void {
-	un = uniq(error.positions);
-
 	if (length(error.positions) == 0) {
 		fcPrintln(error.message, config.threadId);
+	} else {
+		iteri(uniq(error.positions), \i, pos -> {
+			err =  (if (i == 0) " " + error.message else " and here");
+			fileinfo = switch (fcLoadFromCache(env, pos.file)) {
+				None():  fcfileinfo2fi(getFcFileInfo(pos.file, config));
+				Some(cached): cached.loaded.module.fileinfo;
+			}
+			printLocation(config, env, fileinfo, pos.start, -1, "Error: " + err);
+		});
 	}
-
-	iteri(un, \i : int, p : FcPosition -> {
-		err =  (if (i == 0) " " + error.message else " and here");
-		fileinfo = switch (fcLoadFromCache(env, p.file)) {
-			None():  fcfileinfo2fi(getFcFileInfo(p.file, config));
-			Some(cached): cached.loaded.module.fileinfo;
-		}
-		printLocation(config, env, fileinfo, p.start, -1, "Error: " + err);
-	});
 }
 
 prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc {
@@ -339,11 +340,11 @@ prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc {
 	FlowcAcc(
 		makeDependencyTracker(),
 		makeTree(),
-		makeTree(), 
+		makeTree(),
 		makeTree(),
 		[],
-		dummyFcGlobalNames, 
-		config, 
+		dummyFcGlobalNames,
+		config,
 		idfactory,
 		makeIdGroup(globalid),
 		makeTracer()
@@ -357,13 +358,13 @@ mergeTypechecked2TypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, ten
 	names = acc.names;
 
 	FcTypeEnvProgram(
-		tenv 
+		tenv
 		with acc = FlowcAcc(
 			acc with names = FcGlobalNames(
 				names with toplevel = updateToplevel(names.toplevel, fimodule)
 			)
 		),
-		types = foldTree(typing, tenv.types, \name, type, a -> 
+		types = foldTree(typing, tenv.types, \name, type, a ->
 			setTree(a, name, type)
 		),
 	)
@@ -411,19 +412,19 @@ runTasks(config : CompilerConfig, tasks : [() -> ?]) -> [?] {
 	if (isConfigParameterFalse(config.config, "parallel")) sequential(true, tasks)
 	else concurrent(true, tasks)
 }
-   
+
 fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool {
 	checkMd5 = isConfigParameterTrue(config.config, "use-md5");
 	changed = \ -> {
 		check_imports = exists(module.imports, \imp ->
 			switch (fcLoadFromCache(globEnv, imp.flowfile)) {
 				Some(cachedInc): {
-					cachedInc.outdated || 
-					module.fileinfo.lastupdate < cachedInc.loaded.module.fileinfo.lastupdate || 
+					cachedInc.outdated ||
+					module.fileinfo.lastupdate < cachedInc.loaded.module.fileinfo.lastupdate ||
 					cachedInc.loaded.dependencyChanged();
 				}
 				None(): {
-					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there", config.threadId); true; 
+					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there", config.threadId); true;
 				}
 			}
 		);
@@ -443,8 +444,8 @@ printLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileI
 
 makeLocation(config : CompilerConfig, env : FcTypeEnvGlobal, fileinfo : FiFileInfo, start : int, end : int) -> string {
 	if (fileinfo.fullpath == "") "" else {
+		resolver = fcFileLineResolver(env, fileinfo.fullpath);
 		code = fcFileSource(env, fileinfo.fullpath);
-		resolver = makeLineResolver(code);
 		s = findLine(resolver, start);
 		if (isConfigParameterTrue(config.config, "legacy-format")) {
 			fileinfo.fullpath + ":" + i2s(s.lineno) + " (" + fileinfo.fullpath + ":" + i2s(s.lineno) + ")";
@@ -497,7 +498,7 @@ name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> Fi
 }
 
 fcServerLog(message : string, conf : CompilerConfig) -> void {
-	log_file = getConfigParameterDef(conf.config, "server-log", getFlowDir() + 
+	log_file = getConfigParameterDef(conf.config, "server-log", getFlowDir() +
 		"/.log/flowc_" + getConfigParameter(conf.config, "server-mode") + "_server.log");
 	log_dir = fcDirName(log_file);
 	if (log_dir != "") {
@@ -561,15 +562,23 @@ fcPrepareConfig(conf : CompilerConfig) -> Pair<CompilerConfig, () -> void> {
 }
 
 getNameByLineCol(line : int, col : int, src : string) -> string {
+	getNameAndPositionByLineCol(line, col, src).first;
+}
+
+getNameAndPositionByLineCol(line : int, col : int, src : string) -> Pair<string, int> {
 	resolver = makeLineResolver(src);
-	getter = \c -> getNameByPos(findLineIndex(resolver, line, c), src);
-	name = getter(col);
+	getter = \c -> {
+		index = findLineIndex(resolver, line, c);
+		name = getNameByPos(index, src);
+		Pair(name, index);
+	}
+	res1 = getter(col);
 	// Fix for vscode behavior: it may give a first column after the last symbol if a word was selected.
-	if (name != "" || col <= 0) name else getter(col - 1);
+	if (res1.first != "" || col <= 0) res1 else getter(col - 1);
 }
 
 getNameByPos(pos : int, src : string) -> string {
-	eitherMap(getFcInfo2ByPos(pos, src), \info -> substring(src, info.start, info.end - info.start + 1), "");
+	eitherMap(getFcInfo2ByPos(pos, src), \info -> substring(src, info.start, info.end - info.start), "");
 }
 
 getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2> {
@@ -579,30 +588,30 @@ getFcInfo2ByLineCol(line : int, col : int, src : string) -> Maybe<FcInfo2> {
 
 getFcInfo2ByPos(pos : int, src : string) -> Maybe<FcInfo2> {
 	if (pos < 0 || pos >= strlen(src) || !fcIsIdChar(getCharAt(src, pos))) None() else {
-		start = for(pos, 
-			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(src, i - 1)), 
+		start = for(pos,
+			\i -> if (i <= 0) false else fcIsIdChar(getCharAt(src, i - 1)),
 			\i -> i - 1
 		);
-		end = for(pos, 
-			\i -> if (i + 1 >= strlen(src)) false else fcIsIdChar(getCharAt(src, i + 1)), 
+		end = for(pos,
+			\i -> if (i + 1 >= strlen(src)) false else fcIsIdChar(getCharAt(src, i + 1)),
 			\i -> i + 1
 		);
-		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end));
+		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end + 1));
 	}
 }
 
 getFcInfo2ByPos2(pos : int, allowed : string, src : string) -> Maybe<FcInfo2> {
 	ok_char = \c -> fcIsIdChar(c) || strContains(allowed, c);
 	if (pos < 0 || pos >= strlen(src) || !ok_char(getCharAt(src, pos))) None() else {
-		start = for(pos, 
-			\i -> if (i <= 0) false else ok_char(getCharAt(src, i - 1)), 
+		start = for(pos,
+			\i -> if (i <= 0) false else ok_char(getCharAt(src, i - 1)),
 			\i -> i - 1
 		);
-		end = for(pos, 
-			\i -> if (i + 1 >= strlen(src)) false else ok_char(getCharAt(src, i + 1)), 
+		end = for(pos,
+			\i -> if (i + 1 >= strlen(src)) false else ok_char(getCharAt(src, i + 1)),
 			\i -> i + 1
 		);
-		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end));
+		if (isDigit(getCharAt(src, start))) None() else Some(FcInfo2(start, end + 1));
 	}
 }
 
@@ -658,14 +667,14 @@ fcApproxToplevels(src : string) -> Tree<string, Pair<int, int>> {
 	fold(fcMatchingBrackets(src), makeTree(), \acc, pair -> {
 		bracket_depth = ref 0;
 		border = max(
-			backwardUntil(src, pair.first, \s -> s == "="), 
+			backwardUntil(src, pair.first, \s -> s == "="),
 			backwardUntil(src, pair.first, \s -> {
-				if (s == ")") bracket_depth := ^bracket_depth + 1 else 
+				if (s == ")") bracket_depth := ^bracket_depth + 1 else
 				if (s == "(") bracket_depth := ^bracket_depth - 1;
 				s == "(" && ^bracket_depth == 0;
 			})
 		);
-		if (border == -1) acc else { 
+		if (border == -1) acc else {
 			id_end = backwardUntil(src, border, fcIsIdChar);
 			id_beg = backwardWhile(src, id_end, fcIsIdChar);
 			if (id_end == -1 || id_beg == -1) acc else {

@@ -11,16 +11,16 @@ export {
 
 	// strIndexOf(text, substring) = index of substring in text, -1 if not found. Considering the string as UCS-2.
 	// returns 0 if substring is "" on cpp and js
-	native strIndexOf : (string, string) -> int = Native.strIndexOf;
+	native strIndexOf : (str : string, substr : string) -> int = Native.strIndexOf;
 
 	// index of substring in a sub-range of str specified as [start, end)
 	strRangeIndexOf : (str : string, substr : string, start : int, end : int) -> int;
 
 	// Find the last occurrence of a given substring. Returns -1 if not found. Considering the string as UCS-2
-	strLastIndexOf : (string, string) -> int;
+	strLastIndexOf : (str : string, substr : string) -> int;
 
 	// Maybe<> version of strIndexOf.
-	strIndexOfM : (string, string) -> Maybe<int>;
+	strIndexOfM : (str : string, substr : string) -> Maybe<int>;
 
 	// returns all positions of substr in str (for empty substring we returns empty array)
 	multipleStrIndexOf(str : string, substr : string) -> [int];
@@ -119,6 +119,9 @@ export {
 
 
 	// Get the character at index. Considering the string as UCS-2
+	// In JS target string can be String or JSBinflowBuffer,
+	// but flowc generates a wrong code for the case of JSBinflowBuffer because of this optimization:
+	// https://github.com/area9innovation/flow9/blob/0f0b457cf2e7151f8d83c321f9f249c512470fd0/tools/flowc/backends/javascript/fi2javascript_compile.flow#L966-L967
 	native getCharAt : (string, int) -> string = Native.getCharAt;
 
 	// Convert a string to an array of character codes in UTF-8 format
@@ -141,12 +144,19 @@ export {
 	isDigits(s : string) -> bool;
 
 	// Is this string could be properly converted to the double
+	native isDouble : (s : string) -> bool = Native.isDouble;
 	isDouble(s : string) -> bool;
 
 	// Is this a single hex letter string?
 	isHexLetter : (string) -> bool;
 	//Is this a single hex digit string?
 	isHexDigit : (string) -> bool;
+
+	// Returns true if string is not empty and consists of hex digits only.
+	isHexDigits : (string) -> bool;
+
+	// Is this string a base64 presentation of something
+	isBase64String : (string) -> bool;
 
 	// Is this a single letter string?
 	// Knows latin letters only! Consider using isLetterUnicode from unicodecharacters.flow
@@ -171,6 +181,9 @@ export {
 
 	// Convert a double to a string
 	d2s : (double) -> string;
+
+	// Rounds towards 0.0: trunc(-1.5) = -1
+	trunc : (double) -> int;
 
 	// Converts string to bool
 	s2b : (string) -> bool;
@@ -227,7 +240,9 @@ export {
 	// (or multiple separator occur after each other), empty strings result.
 	// has issues on the edges: strSplit("aba", "a") -> ["", "b", ""] instead of ["b"].
 	strSplit(a : string, sep : string) -> [string];
-	strSplitLeave(s : string, sep : string) -> [string]; // separators are included in resulting array, no issues from strSplit
+	// Separators are included in resulting array, no issues from strSplit
+	// FIXME: hangs when empty separator given
+	strSplitLeave(s : string, sep : string) -> [string];
 
 	// separators in some sub-pieces are ignored.
 	// updateContext takes one char at once.
@@ -259,6 +274,8 @@ export {
 
 	// Finds last occurance of sep, and returns whatever comes after. Returns def if the sep is not found
 	takeAfterLast(str : string, sep : string, def : string) -> string;
+	// Finds last occurance of any of seps, and returns whatever comes after. Returns def if no one of sep is found
+	takeAfterLastMult(str : string, seps : [string], def : string) -> string;
 
 	// Return text between start and stop separators (only first)
 	takeBetween(str : string, start : string, stop : string, def : string) -> string;
@@ -279,7 +296,13 @@ export {
 
 	/// Folds over the character codes of the left-to-right character sequence in s.
 	stringFold : (s : string, a : ?, f : (a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFold(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ?;
+	stringFoldr : (s : string, a : ?, f : (a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFoldr(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ?;
 	stringFoldi : (s : string, a : ?, f : (i : int, a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFoldi(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ?;
+	stringFoldri : (s : string, a : ?, f : (i : int, a2 : ?, c : int) -> ?) -> ?;
+	stringCharsFoldri(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ?;
 
 	// Reverses a string
 	reverse(s : string) -> string;
@@ -331,6 +354,12 @@ export {
 
 	// returns s repeated cnt times
 	strRepeat(s : string, cnt : int) -> string;
+
+	// checks if the word is an english auxiliary word
+	isAuxiliaryWord(word : string) -> bool;
+
+	// Make escaped string according to Json escaping
+	toStringForJson: (string) -> string;
 }
 
 _s(s) { s }
@@ -347,6 +376,7 @@ strsubsmart(s : string, start : int, len : int) -> string {
 	}
 }
 
+native startsWith : (string, string) -> bool = Native.endsWith;
 startsWith(s, start) {
 	sl = strlen(start);
 	if (sl > strlen(s)) {
@@ -356,6 +386,7 @@ startsWith(s, start) {
 	}
 }
 
+native endsWith : (string, string) -> bool = Native.endsWith;
 endsWith(s, end) {
 	sl = strlen(s);
 	el = strlen(end);
@@ -398,15 +429,15 @@ multipleSuperpositionStrIndexOf(str : string, substr : string, allowSuperpositio
 		[]
 	} else {
 		result = ref [];
-		subsrtLenght = strlen(substr);
-		step = if (allowSuperposition && strlen(str) > subsrtLenght) {
+		substrLength = strlen(substr);
+		step = if (allowSuperposition && strlen(str) > substrLength) {
 			firstCharCode = getCharCodeAt(substr, 0);
 			stepM = stringFoldi(substr, None(), \i, acc, c -> {
 				// i == 0 is trivial case with zero gap, so we ignore it
-				if (isNone(acc) && c == firstCharCode && i > 0 && startsWith(substr, substring(substr, i, subsrtLenght - i))) Some(i) else acc
+				if (isNone(acc) && c == firstCharCode && i > 0 && startsWith(substr, substring(substr, i, substrLength - i))) Some(i) else acc
 			});
-			either(stepM, subsrtLenght);
-		} else subsrtLenght;
+			either(stepM, substrLength);
+		} else substrLength;
 		for(0, \i -> i < strlen(str), \i -> {
 			pos = strRangeIndexOf(str, substr, i, strlen(str));
 			if (pos < 0) {
@@ -474,7 +505,7 @@ strReplaces(s : string, oldnew : [string]) -> string {
 	if (n < 2) s else strReplaces(strReplace(s, oldnew[0], oldnew[1]), subrange(oldnew, 2, n - 2));
 }
 
-strReplaceCustomRec(prefix : string, suffix : string, old : string, new : string, charBeforeFn : Maybe<(string) -> bool>, 
+strReplaceCustomRec(prefix : string, suffix : string, old : string, new : string, charBeforeFn : Maybe<(string) -> bool>,
 			charAfterFn : Maybe<(string) -> bool>) -> string {
 	if (old == "") {
 		prefix + suffix
@@ -555,11 +586,11 @@ strReplaceCustom2(str : string, substr : string, matchFn : (int, int) -> Maybe<s
 	}
 }
 
-getCharAt(s, n) {
+getCharAt(s : string, n : int) -> string {
 	substring(s, n, 1)
 }
 
-isDigits(s) {
+isDigits(s : string) -> bool {
 	isDigits0(s, 0, strlen(s))
 }
 
@@ -567,14 +598,28 @@ isDigits0(s : string, index : int, len : int) -> bool {
 	if (index < len) isDigit(getCharAt(s, index)) && isDigits0(s, index+1, len) else len > 0
 }
 
-isDigit(s) {
+isDigit(s : string) -> bool {
 	strlen(s) == 1 && (s >= "0" && s <= "9")
 }
 
 isDouble(s0 : string) -> bool {
-	s = ltrim2(trim(s0), "-");
+	s1 = trim(s0);
+	ch1 = getCharAt(s1, 0);
+	s = if (ch1 == "-" || ch1 == "\u2212") strRight(s1, 1) else s1;
 	arr = strSplit(s, ".");
-	strlen(s) > 0 && length(arr) < 3 && all(map(arr, \el -> isDigits(el)));
+	// the first condition makes sure that we have at least one character that is not '.'
+	// so in the last condition at least one part will be not empty, that allows to accept "1." and ".1"
+	strlen(s) >= length(arr) &&
+	length(arr) < 3 &&
+	all(mapi(arr, \i, el -> {
+		el == "" ||
+		if (i == 0) {
+			// we allow , as a thousands separator. Let's keep it simple for now.
+			isDigits(strReplace(el, ",", ""))
+		} else {
+			isDigits(el)
+		}
+	}));
 }
 
 isHexLetter(scs) {
@@ -584,6 +629,26 @@ isHexLetter(scs) {
 
 isHexDigit(scs) {
 	isDigit(scs) || isHexLetter(scs);
+}
+
+isHexDigits(s) {
+	isHexDigits0(s, 0, strlen(s))
+}
+
+isHexDigits0(s : string, index : int, len : int) -> bool {
+	if (index < len) isHexDigit(getCharAt(s, index)) && isHexDigits0(s, index+1, len) else len > 0;
+}
+
+isBase64String(s) {
+	isBase64Char0(s, 0, strlen(s))
+}
+
+isBase64Char0(s : string, index : int, len : int) -> bool {
+	if (index < len) isBase64Char(getCharAt(s, index)) && isBase64Char0(s, index+1, len) else len > 0
+}
+
+isBase64Char(c : string) -> bool {
+	isDigit(c) || isLetter(c) || c == "+" || c == "/" || c == "=";
 }
 
 isUpperLetter(s) { strlen(s) == 1 && s >= "A" && s <= "Z" }
@@ -602,6 +667,9 @@ i2s(i) { cast(i : int -> string); }
 native d2s : (double) -> string = Native.d2s;
 
 d2s(d) { cast(d : double -> string); }
+
+native trunc : (d : double) -> int = Native.trunc;
+trunc(d) cast(d : double -> int);
 
 s2b(s) { toLowerCase(s) == "true" || s == "1" }
 
@@ -740,8 +808,8 @@ doStrSplit(s: string, sep: string, start : int, acc: List<string>) -> List<strin
 	}
 }
 
-
-strSplit(s : string, sep : string) {
+native strSplit : (string, string) -> [string] = Native.strSplit;
+strSplit(s : string, sep : string) -> [string] {
 	if (sep == "") [s]
 	else list2array(doStrSplit(s, sep, 0, makeList()));
 }
@@ -791,7 +859,7 @@ strSplitIterate(s : string, sep : string, fn : (string) -> void) {
 	}
 }
 
-strSplitIterateDeferredStep(s : string, sep : string, fn : (string) -> void, chunkSize : int, current : int, onFinish : () -> void) {
+strSplitIterateDeferredStep(s : string, sep : string, fn : (string) -> void, chunkSize : int, current : int, onFinish : () -> void) -> void {
 	i = strIndexOf(s, sep);
 	if (i >= 0) {
 		part = substring(s, 0, i);
@@ -884,6 +952,14 @@ takeAfterLast(str : string, sep : string, def : string) -> string {
 	if (i == -1) def else strRight(str, i + strlen(sep));
 }
 
+takeAfterLastMult(str : string, seps : [string], def : string) -> string {
+	if (length(seps) == 0) def
+	else {
+		idxs = map(seps, \sep -> Pair(strLastIndexOf(str, sep), strlen(sep)));
+		i = fold(idxs, idxs[0], \acc, idx -> if (acc.first > idx.first) acc else idx);
+		if (i.first == -1) def else strRight(str, i.first + i.second);
+	}
+}
 
 takeBetween(str : string, start : string, stop : string, def : string) -> string {
 	after = takeAfter(str, start, def);
@@ -901,10 +977,10 @@ strSplitNext(str : string, sep : string) -> Pair<string, string> {
 
 
 time2s(tm : double) {
-	tmi = cast(tm : double -> int);
-	hours = tmi / 3600000;
-	mins  = (tmi - 3600000 * hours) / 60000;
-	secs =  (tmi - 3600000 * hours - 60000 * mins) / 1000;
+	tmi = trunc(tm / 1000.0);
+	hours = tmi / 3600;
+	mins  = (tmi - 3600 * hours) / 60;
+	secs =  (tmi - 3600 * hours - 60 * mins);
 
 	notZero = \i, s -> if (i > 9) i2s(i) + s else "0" + i2s(i) + s;
 
@@ -988,13 +1064,36 @@ strLastIndexOfM(s, s1) {
 }
 
 stringFold(s, a, f) {
-	fold(enumFromTo(0, strlen(s) - 1), a, \a2, i->f(a2, getCharCodeAt(s, i)));
+	foldRange(0, strlen(s) - 1, a, \a2, i->f(a2, getCharCodeAt(s, i)));
+}
+
+stringCharsFold(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ? {
+	foldRange(0, strlen(s) - 1, a, \acc, i -> f(acc, substring(s, i, 1)));
+}
+
+stringFoldr(s, a, f) {
+	foldrRange(strlen(s) - 1, 0, a, \a2, i->f(a2, getCharCodeAt(s, i)));
+}
+
+stringCharsFoldr(s : string, a : ? , f : (acc : ?, char : string) -> ?) -> ? {
+	foldrRange(strlen(s) - 1, 0, a, \acc, i -> f(acc, substring(s, i, 1)));
 }
 
 stringFoldi(s, a, f) {
-	fold(enumFromTo(0, strlen(s) - 1), a, \a2, i->f(i, a2, getCharCodeAt(s, i)));
+	foldRange(0, strlen(s) - 1, a, \a2, i -> f(i, a2, getCharCodeAt(s, i)));
 }
 
+stringCharsFoldi(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ? {
+	foldRange(0, strlen(s) - 1, a, \acc, i -> f(i, acc, substring(s, i, 1)));
+}
+
+stringFoldri(s, a, f) {
+	foldrRange(strlen(s) - 1, 0, a, \a2, i -> f(i, a2, getCharCodeAt(s, i)));
+}
+
+stringCharsFoldri(s : string, a : ? , f : (i : int, acc : ?, char : string) -> ?) -> ? {
+	foldrRange(strlen(s) - 1, 0, a, \acc, i -> f(i, acc, substring(s, i, 1)));
+}
 
 getUrlExtension(url) {
 	u0 = takeBefore(url, "?", url);
@@ -1143,22 +1242,26 @@ concatStrings(strings) {
 	}
 }
 
+isAuxiliaryWord(word : string) -> bool {
+	auxiliaryWords = ["a", "an", "and", "as", "at", "but", "by", "down", "for", "from", "in", "into", "near", "nor", "of", "on", "onto", "or", "the", "to", "up", "with"];
+	contains(auxiliaryWords, word);
+}
+
 toCapitalization(s : string) -> string {
 	if (toUpperCase(s) != s) {
-		exceptions = ["a", "an", "the", "and", "but", "or", "for", "nor", "as", "at", "by", "for", "from", "in", "into", "near", "of", "on", "onto", "to", "with", "down", "up"];
 		endMarks = [".", "!", "?", "...", "\n"];
 		separators = concat(["-", ":", ",", "\"", " ", "\xA0;", "\u00A0"], endMarks);
 		separatedString = strSplit2(s, separators);
 		len = length(separatedString);
 		hyphenCase = ref false;
-		
+
 		concatStrings(mapi(separatedString, \i, v -> {
 			w = toLowerCase(v);
 			isFirstWord = i <= 1 || separatedString[i - 1] == "\n" ||  contains(endMarks, separatedString[i - 2]);
 			isLastWord = i >= len - 1 || contains(endMarks, separatedString[i + 1]);
 			isSeparator = contains(separators, v);
 
-			res = if ((isFirstWord || isLastWord || ^hyphenCase || !contains(exceptions, w)) 
+			res = if ((isFirstWord || isLastWord || ^hyphenCase || !isAuxiliaryWord(w))
 					&& !isSeparator) {
 				toUpperCase(strLeft(v, 1)) + strRight(w, 1)
 			} else {
@@ -1268,4 +1371,46 @@ native cloneString : (s : string) -> string = Native.cloneString;
 
 cloneString(s : string) -> string {
 	s
+}
+
+// Haxe and Java have a native. 
+native toStringForJson : (string) -> string = Native.toStringForJson;
+
+// JSON all charaters below 0x20 must be escaped. The Flow toString method does not do this
+toStringForJson(v : string) -> string
+{
+	// Use lower case formatting, to be more consistent with most native Json formatters
+	formatHexDigit = \hexDigit: int -> {
+		if (hexDigit < 10) {
+			// 0x30 is '0'
+			fromCharCode(0x30 + hexDigit);
+		} else {
+			// 0x61 is 'a'
+			fromCharCode(0x61 + hexDigit - 10);
+		}
+	};
+
+	f = stringFold(v, makeList1("\""), \acc: List<string>, code: int -> {
+		Cons(
+			if (code < 0x20) {
+				if (code == 0x08) "\\b"
+				else if (code == 0x09) "\\t"
+				else if (code == 0x0A) "\\n"
+				else if (code == 0x0C) "\\f"
+				// Do not use \r to be consistent with Haxe implementation
+				// else if (code == 0x0D) "\\r"  
+				else if (code <= 0x10) {
+					"\\u000" + formatHexDigit(code);
+				} else {
+					"\\u001" + formatHexDigit(code - 0x10);
+				}
+			} else {
+				if (code == 0x22) "\\\""
+				else if (code == 0x5c) "\\\\"
+				else fromCharCode(code);
+			}, 
+			acc
+		);
+	});
+	list2string(Cons("\"", f));
 }

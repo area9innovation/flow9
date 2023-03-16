@@ -1,0 +1,155 @@
+import ds/tree;
+import tools/flowc/incremental/fitype;
+import tools/flowc/backends/wise/flow_wise_types;
+
+// it is wise-files. we don't have wise2flow, so we'll store some information.
+export {
+	// flow_name -> wise_name-arg_number
+	// result is a chain of ops (reversed order). For example, i2d = promote(extend(value)). Result = [extend, promote]
+	findWiseNativeFns(name : string) -> [WiseNativeFn];
+	WiseNativeFn(
+		nativeName : string,
+		type : FiTypeFunction,
+		polyParams : Tree<string, string>,
+		makeOperation : Maybe<([FlowWiExp]) -> FlowWiExp>, // for example, bitOr is |
+		exported : bool,
+	);
+}
+
+findWiseNativeFns(name : string) -> [WiseNativeFn] {
+	lookupTreeDef(registeredNatives, name, []);
+}
+
+makeSimpleWiseNativeFn(name : string, type : FiTypeFunction) -> WiseNativeFn {
+	WiseNativeFn(
+		name,
+		type,
+		makeTree(), // polyParams
+		None(), // makeOperation
+		false, // exported
+	);
+}
+
+registeredNatives = 
+	// wasm natives
+	makeTree1("trunc", [makeSimpleWiseNativeFn("trunc_s<>", FiTypeFunction([FiFunArg("", FiTypeDouble())], FiTypeInt()))])
+	// TODO: floor for different types
+	// |> (\t -> setTree(t, "floor", [makeSimpleWiseNativeFn("floor<>", FiTypeFunction([FiFunArg("", FiTypeDouble())], FiTypeDouble()))]))
+	|> (\t -> setTree(t, "sqrt", [makeSimpleWiseNativeFn("sqrt<>", FiTypeFunction([FiFunArg("", FiTypeDouble())], FiTypeDouble()))]))
+	|> (\t -> {
+		ops = [
+			makeSimpleWiseNativeFn("extend_s<>", FiTypeFunction([FiFunArg("", FiTypeInt())], FiTypeDouble())),
+			makeSimpleWiseNativeFn("convert_s<>", FiTypeFunction([FiFunArg("", FiTypeDouble())], FiTypeDouble())),
+		];
+		setTree(t, "i2d", ops)
+	})
+	|> (\t -> setTree(t, "log", [makeSimpleWiseNativeFn("log", FiTypeFunction([FiFunArg("", FiTypeDouble())], FiTypeDouble()))]))
+	|> (\t -> setTree(t, "bitShl", [makeSimpleWiseNativeFn("shl<>", FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "bitUshr", [makeSimpleWiseNativeFn("shr_u<>", FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "bitNot", [makeSimpleWiseNativeFn("bitNot", FiTypeFunction([FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "bitXor", [WiseNativeFn(
+		"bitXor",
+		FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()),
+		makeTree(),
+		Some(\vals -> if (length(vals) == 2) FlowWiXor(vals[0], vals[1]) else FlowWiWasmOp("bitXor", [], vals)),
+		false,
+	)]))
+	|> (\t -> setTree(t, "bitAnd", [WiseNativeFn(
+		"bitAnd",
+		FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()),
+		makeTree(),
+		Some(\vals -> if (length(vals) == 2) FlowWiAnd(vals[0], vals[1]) else FlowWiWasmOp("bitAnd", [], vals)),
+		false,
+	)]))
+	|> (\t -> setTree(t, "bitOr", [WiseNativeFn(
+		"bitOr",
+		FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()),
+		makeTree(),
+		Some(\vals -> if (length(vals) == 2) FlowWiOr(vals[0], vals[1]) else FlowWiWasmOp("bitOr", [], vals)),
+		false,
+	)]))
+
+	// string
+	|> (\t -> setTree(t, "substring", [makeSimpleWiseNativeFn("substring", FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "strlen", [makeSimpleWiseNativeFn("strlen", FiTypeFunction([FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "i2s", [makeSimpleWiseNativeFn("i2s", FiTypeFunction([FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "getCharCodeAt", [makeSimpleWiseNativeFn("getCharCodeAt", FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	// array
+	|> (\t -> setTree(t, "subrange", [WiseNativeFn(
+		"subrangeArray",
+		FiTypeFunction([FiFunArg("", FiTypeArray(FiTypeParameter("?"))), FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt())], FiTypeInt()),
+		makeTree1("?", "T"),
+		None(),
+		false
+	)]))
+	|> (\t -> setTree(t, "length", [makeSimpleWiseNativeFn("getLengthArray", FiTypeFunction([FiFunArg("", FiTypeInt())], FiTypeInt()))]))
+	|> (\t -> setTree(t, "arrayPush", [WiseNativeFn(
+		"arrayPush",
+		FiTypeFunction([FiFunArg("", FiTypeArray(FiTypeParameter("?"))), FiFunArg("", FiTypeParameter("?"))], FiTypeInt()),
+		makeTree1("?", "T"),
+		None(),
+		false
+	)]))
+	|> (\t -> setTree(t, "replace", [WiseNativeFn(
+		"replaceArray",
+		FiTypeFunction([FiFunArg("", FiTypeArray(FiTypeParameter("?"))), FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeParameter("?"))], FiTypeInt()),
+		makeTree1("?", "T"),
+		None(),
+		false
+	)]))
+	|> (\t -> setTree(t, "concat", [WiseNativeFn(
+		"concatArrays",
+		FiTypeFunction([FiFunArg("", FiTypeArray(FiTypeParameter("?"))), FiFunArg("", FiTypeArray(FiTypeParameter("?")))], FiTypeInt()),
+		makeTree1("?", "T"),
+		None(),
+		false
+	)]))
+	|> (\t -> setTree(t, "compareArrays", [WiseNativeFn(
+		"compareArrays",
+		FiTypeFunction([FiFunArg("", FiTypeArray(FiTypeParameter("?"))), FiFunArg("", FiTypeArray(FiTypeParameter("?"))), FiFunArg("", FiTypeFunction([FiFunArg("", FiTypeParameter("?")), FiFunArg("", FiTypeParameter("?"))], FiTypeInt()))], FiTypeInt()),
+		makeTree1("?", "T"),
+		None(),
+		false
+	)]))
+	|> (\t -> setTree(t, "fold", [WiseNativeFn(
+		"fold",
+		FiTypeFunction([
+			FiFunArg("", FiTypeArray(FiTypeParameter("??"))),
+			FiFunArg("", FiTypeParameter("?")),
+			FiFunArg("", FiTypeFunction([FiFunArg("", FiTypeParameter("?")), FiFunArg("", FiTypeParameter("??"))], FiTypeParameter("?"))),
+			FiFunArg("", FiTypeInt()), // __closure__
+		], FiTypeParameter("?")),
+		setTree(makeTree1("??", "T"), "?", "V"),
+		None(),
+		false,
+	)]))
+	|> (\t -> setTree(t, "filter", [WiseNativeFn(
+		"filter",
+		FiTypeFunction([
+			FiFunArg("", FiTypeArray(FiTypeParameter("?"))),
+			FiFunArg("", FiTypeFunction([FiFunArg("", FiTypeParameter("?")),], FiTypeBool())),
+			FiFunArg("", FiTypeInt()), // __closure__
+		], FiTypeArray(FiTypeParameter("?"))),
+		makeTree1("?", "T"),
+		None(),
+		false,
+	)]))
+	|> (\t -> setTree(t, "map", [WiseNativeFn(
+		"map",
+		FiTypeFunction([
+			FiFunArg("", FiTypeArray(FiTypeParameter("?"))),
+			FiFunArg("", FiTypeFunction([FiFunArg("", FiTypeParameter("?"))], FiTypeParameter("??"))),
+			FiFunArg("", FiTypeInt()), // __closure__
+		], FiTypeArray(FiTypeParameter("??"))),
+		setTree(makeTree1("?", "T"), "??", "V"),
+		None(),
+		false
+	)]))
+	|> (\t -> setTree(t, "enumFromTo", [makeSimpleWiseNativeFn(
+		"enumFromTo",
+		FiTypeFunction([FiFunArg("", FiTypeInt()), FiFunArg("", FiTypeInt()), ], FiTypeArray(FiTypeInt())),
+	)]))
+
+
+	// TODO: fori !
+	;

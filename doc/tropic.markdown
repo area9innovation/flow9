@@ -1,7 +1,7 @@
 *Tropic* & *Material*
 =====================
 
-*Tropic* is the second generation layout language for *flow* building on the lessons learned from *Form*. The main key difference is that *Tropic* no longer contains code, only data. This makes the language more robust, perform better and work at a higher level. The name *Tropic* relates to our first layout library developed in Haxe called *Arctic*. This library got superceded by *Form* in *flow*, which now in turn is superceded by *Tropic*,
+*Tropic* is the second generation layout language for *flow* building on the lessons learned from *Form*. The main key difference is that *Tropic* no longer contains code, only data. This makes the language more robust, perform better and work at a higher level. The name *Tropic* relates to our first layout library developed in Haxe called *Arctic*. This library got superseded by *Form* in *flow*, which now in turn is superseded by *Tropic*,
 which in turn is adopted by *Material*.
 
 *Material* is the recommended library for making UIs.
@@ -21,7 +21,7 @@ The main goals for *Tropic* & *Material* are:
 
 `Tropic` is implemented in *Flow*, and does support `Form` elements, so existing user interface components can be utilized in `Tropic` layouts.
 
-`Tropic` serves as the fundation for the `Material` library, which contains all of `Tropic`, and which is what you normally want to use.
+`Tropic` serves as the foundation for the `Material` library, which contains all of `Tropic`, and which is what you normally want to use.
 So learning `Tropic` is helpful, since the underlying principles and constructs are directly embedded in `Material`.
 
 Hello World using Tropic
@@ -563,5 +563,20 @@ To set different views for `TTextButton` in different states(hovered, pressed, d
 		TCssBlockStyle ::= TStyle, TStyleWithSelector;
 
 `TCssBlock` - allows you to create a Tropic from a CSS style. The second argument will be rendered, if unable to create Tropic from css stylesheet.
-Currenlty it is trying to create `TGroup2(TRounded, TPicture)`, if there enough properties in given css style.
+Currently it is trying to create `TGroup2(TRounded, TPicture)`, if there enough properties in given css style.
 
+Built-in rendering
+------------------
+
+In JS by default both Tropic and Material are rendered, using `<body>` as a root. You can make it via `trender` and `mrender`, respectively.
+
+But there is also an option to render them inside some specific element on a page. To make it, you should have static HTML page and
+add `<script type="text/javascript" src="flow_starter.js?name=<script_name>"></script>` to it. On flow side use `RenderRoot` style in `makeMaterialManager` with id of some html element on a page, which you want to be considered as renderRoot. It would be nice to set width/height attributes for this element, but default case is also handled.
+
+Multiple render roots are also supported, but in this case you have to create separate MaterialManager for each root.
+
+You will be able to find all flow stuff inside shadow DOM.
+
+Check [html](../www/test/test_flow_builtin.html) + [flow](../lib/material/test/test_flow_builtin.flow) for a tescase.
+
+Pay attention to the fact that this feature is available for JS target only.

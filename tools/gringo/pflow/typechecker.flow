@@ -1,0 +1,414 @@
+import tools/gringo/pflow/pexp;
+import tools/gringo/pflow/texp;
+import tools/gringo/pflow/prettyprint;
+import ds/tree;
+import ds/union_find_map;
+
+export {
+	makeTypeEnv() -> TypeEnv;
+	convertPExp2TExp(env : TypeEnv, e: PExp) -> TExp;
+	typecheckTExp(env : TypeEnv, e : TExp) -> TType;
+	resolveTExp(env : TypeEnv, t : TExp) -> TExp;
+	prettyTExp(env : TypeEnv, p : TExp) -> string;
+	prettyTType(env : TypeEnv, type : TType) -> string;
+}
+
+TypeEnv(
+	vars : Tree<string, TType>,
+	unionFindMap : UnionFindMap<[TType]>,
+	unique : ref int
+);
+
+makeTypeEnv() -> TypeEnv {
+	TypeEnv(
+		makeTree(),
+		makeUnionFindMap([], \l, r -> {
+			sortUnique(concat(l, r))
+		}),
+		ref 0
+	)
+}
+
+convertPExp2TExp(env : TypeEnv, e: PExp) -> TExp {
+	rec = \ee -> convertPExp2TExp(env, ee);
+	switch (e) {
+		PValue(): convertPValue2TValue(env, e);
+		PLet(id, value, body): TLet(id, rec(value), rec(body));
+		PVar(id): TVar(id, mkTypeVar(env));
+		PIf(cond, then, else_): TIf(rec(cond), rec(then), rec(else_), mkTypeVar(env));
+		PCall(fn, args): TCall(rec(fn), map(args, rec), mkTypeVar(env));
+		PArray(values): TArray(map(values, rec), mkTypeVar(env));
+		PSequence(values): TSequence(map(values, rec), mkTypeVar(env));
+	}
+}
+
+convertPValue2TValue(env : TypeEnv, e : PValue) -> TValue {
+	rec = \ee -> convertPValue2TValue(env, ee);
+	switch (e) {
+		PBool(b): TBool(b);
+		PInt(i): TInt(i);
+		PString(s): TString(s);
+		PArrayValue(values): TArrayValue(map(values, rec), mkTypeVar(env));
+		PLambda(args, body): TLambda(args, convertPExp2TExp(env, body), mkTypeVar(env));
+	}
+}
+
+mkTypeVar(env : TypeEnv) -> TType {
+	id = ^(env.unique);
+	env.unique := id + 1;
+	TTypeVar(id);
+}
+
+indent = ref "";
+typecheckTExp(env : TypeEnv, p : TExp) -> TType {
+	/*inden = ^indent;
+	println(inden + p.structname);
+	indent := ^indent + "  ";
+	*/
+	todo = \-> {
+		println("TODO: Type check "+ toString(p));
+		mkTypeVar(env);
+	}
+	resulttype = switch (p) {
+		TBool(b): TTypeBool();
+		TInt(i): TTypeInt();
+		TString(s): TTypeString();
+		TArrayValue(values, ttype): {
+			atype = mkTypeVar(env);
+			iter(values, \value -> {
+				tvalue = typecheckTExp(env, value);
+				unifyTypes(env, atype, tvalue)
+			});
+			rt = TTypeArray(atype);
+			unifyTypes(env, rt, ttype);
+			rt;
+		}
+		TLambda(args, body, ttype): {
+			argtypes = map(args, \__ -> {
+				mkTypeVar(env);
+			});
+			nenv = foldi(args, env, \i, acc, arg -> {
+				TypeEnv(acc with vars = setTree(acc.vars, arg, argtypes[i]));
+			});
+			rt = typecheckTExp(nenv, body);
+			ft = TTypeFunction(argtypes, rt);
+			unifyTypes(env, ft, ttype);
+			ft;
+		}
+		TLet(id, value, body): {
+			// Handle recursion:
+			tyvar = mkTypeVar(env);
+			venv = TypeEnv(env with vars = setTree(env.vars, id, tyvar));
+			valuet = typecheckTExp(venv, value);
+
+			unifyTypes(env, tyvar, valuet);
+
+			nenv = TypeEnv(env with vars = setTree(env.vars, id, valuet));
+			typecheckTExp(nenv, body);
+		}
+		TVar(id, ttype): {
+			mtype = lookupTree(env.vars, id);
+			mtype ?? {
+				unifyTypes(env, mtype, ttype);
+				mtype
+			} : {
+				println("ERROR: Unknown id " + id);
+				// println(getTreeKeys(env.vars));
+				ttype;
+			}
+		}
+		TIf(cond, then, else_, ttype): {
+			tcond = typecheckTExp(env, cond);
+			unifyTypes(env, tcond, TTypeBool());
+
+			tthen = typecheckTExp(env, then);
+			telse = typecheckTExp(env, else_);
+
+			unifyTypes(env, tthen, telse);
+			unifyTypes(env, tthen, ttype);
+
+			tthen;
+		}
+		TCall(fn, args, ttype): {
+			targs = map(args, \a -> {
+				typecheckTExp(env, a);
+			});
+			result = mkTypeVar(env);
+			callType = TTypeFunction(targs, result);
+
+			tfn = switch (fn) {
+				TVar(id, tv): {
+					mtype = typeBuiltin(env, id);
+					mtype ?? {
+						unifyTypes(env, mtype, tv);
+						mtype
+					} : {
+						typecheckTExp(env, fn);
+					}
+				}
+				default: typecheckTExp(env, fn);
+			};
+			unifyTypes(env, tfn, callType);
+
+			unifyTypes(env, ttype, result);
+
+			result;
+		}
+		TArray(values, ttype): {
+			atype = mkTypeVar(env);
+			iter(values, \value -> {
+				tvalue = typecheckTExp(env, value);
+				unifyTypes(env, atype, tvalue)
+			});
+			rt = TTypeArray(atype);
+			unifyTypes(env, ttype, rt);
+			rt;
+		}
+		TSequence(values, ttype): {
+			rt = fold(values, TTypeBool(), \acc, value -> {
+				typecheckTExp(env, value)
+			});
+			unifyTypes(env, ttype, rt);
+			rt;
+		}
+	};
+
+	// println(inden + p.structname + " gave " + prettyTType(env, resulttype));
+	// indent := inden;
+	resulttype
+}
+
+unifyTypes(env : TypeEnv, left : TType, right : TType) -> void {
+	if (left == right) {
+	} else {
+		error = \ -> {
+			println("ERROR: " + prettyTType(env, left) + " is not compatible with " + prettyTType(env, right));
+		};
+		doRight = \ -> {
+			switch (right) {
+				TTypeVar(rid): {
+					unifyTypes(env, right, left)
+				}
+				default: error();
+			}
+		};
+		bindTyvar = \tyvar, type -> {
+			types = getUnionMapValue(env.unionFindMap, tyvar);
+			ntypes = sortUnique(arrayPush(types, type));
+			setUnionMapValue(env.unionFindMap, tyvar, ntypes);
+		}
+		switch (left) {
+			TTypeVar(lid): {
+				switch (right) {
+					TTypeVar(rid): {
+						// println("Unifying " + i2s(lid) + " and " + i2s(rid));
+						root = unionUnionMap(env.unionFindMap, lid, rid);
+					}
+					TTypeFunction(__, __): {
+						unifyTypes(env, right, left);
+					}
+					TTypeArray(__): {
+						unifyTypes(env, right, left);
+					}
+					default: {
+						bindTyvar(lid, right);
+					}
+				}
+			}
+			TTypeBool(): doRight();
+			TTypeInt(): doRight();
+			TTypeString(): doRight();
+			TTypeArray(ltype): {
+				switch (right) {
+					TTypeArray(rtype): {
+						unifyTypes(env, ltype, rtype);
+					}
+					TTypeVar(id): {
+						tyvar = mkTypeVar(env);
+						rt = TTypeArray(tyvar);
+						bindTyvar(id, rt);
+						unifyTypes(env, ltype, tyvar)
+					}
+					default: error();
+				}
+			}
+			TTypeFunction(largs, lreturnType): {
+				switch (right) {
+					TTypeFunction(rargs, rreturnType): {
+						if (length(largs) != length(rargs)) {
+							error();
+						} else {
+							iteri(largs, \i, larg -> {
+								unifyTypes(env, larg, rargs[i]);
+							});
+						}
+						unifyTypes(env, lreturnType, rreturnType);
+					}
+					TTypeVar(id): {
+						retTyvar = mkTypeVar(env);
+						argTyvars = map(largs, \__ -> mkTypeVar(env));
+						rt = TTypeFunction(argTyvars, retTyvar);
+
+						bindTyvar(id, rt);
+						unifyTypes(env, left, rt)
+					}
+					default: error();
+				}
+			}
+		}
+	}
+}
+
+resolveTExp(env : TypeEnv, t : TExp) -> TExp {
+	resolve = \ty -> resolveType(env, ty);
+	rec = \ee -> resolveTExp(env, ee);
+	switch (t) {
+		TValue(): resolveTValue(env, t)
+		TLet(id, value, body): TLet(id, rec(value), rec(body));
+		TVar(id, type): TVar(id, resolve(type));
+		TIf(cond, then, else_, type): TIf(rec(cond), rec(then), rec(else_), resolve(type));
+		TCall(fn, args, type): TCall(rec(fn), map(args, rec), resolve(type));
+		TArray(values, type): TArray(map(values, rec), resolve(type));
+		TSequence(values, type): TSequence(map(values, rec), resolve(type));
+	}
+}
+
+resolveTValue(env : TypeEnv, t : TValue) -> TValue {
+	resolve = \ty -> resolveType(env, ty);
+	rec = \ee -> resolveTValue(env, ee);
+	switch (t) {
+		TBool(b): t;
+		TInt(i): t;
+		TString(s): t;
+		TArrayValue(values, type): TArrayValue(map(values, rec), resolve(type)); 
+		TLambda(args, body, type): TLambda(args, resolveTExp(env, body), resolve(type));
+	}
+}
+
+resolveType(env : TypeEnv, type : TType) -> TType {
+	switch (type) {
+		TTypeBool(): type;
+		TTypeInt(): type;
+		TTypeString(): type;
+		TTypeArray(atype): TTypeArray(resolveType(env, atype));
+		TTypeFunction(args, returnType): TTypeFunction(map(args, \a -> resolveType(env, a)), resolveType(env, returnType));
+		TTypeVar(id): {
+			types = getUnionMapValue(env.unionFindMap, id);
+			if (length(types) == 0) {
+				type
+			} else {
+				rtypes = sortUnique(map(types, \tt -> resolveType(env, tt)));
+				if (length(rtypes) == 1) {
+					rtypes[0];
+				} else {
+					println("ERROR: Could not find unique type: " + prettyTType(env, type));
+					rtypes[0];
+				}
+			}
+		}
+	}
+}
+
+typeBuiltin(env : TypeEnv, id : string) -> Maybe<TType> {
+	comparison = \ -> {
+		tyvar = mkTypeVar(env);
+		TTypeFunction([tyvar, tyvar], TTypeBool())
+	};
+	binInt = \ -> TTypeFunction([TTypeInt(), TTypeInt()], TTypeInt());
+	builtins = pairs2tree([
+		Pair("&&", \ -> TTypeFunction([TTypeBool(), TTypeBool()], TTypeBool())),
+		Pair("||", \ -> TTypeFunction([TTypeBool(), TTypeBool()], TTypeBool())),
+		Pair("<=", comparison),
+		Pair("<", comparison),
+		Pair("==", comparison),
+		Pair("!=", comparison),
+		Pair(">=", comparison),
+		Pair(">", comparison),
+
+		Pair("+", binInt),
+		Pair("-", binInt),
+		Pair("*", binInt),
+		Pair("/", binInt),
+		Pair("%", binInt),
+
+		Pair("index", \ -> {
+			tyvar = mkTypeVar(env);
+			TTypeFunction([TTypeArray(tyvar), TTypeInt()], tyvar)
+		}),
+		Pair("not", \ -> TTypeFunction([TTypeBool()], TTypeBool())),
+		Pair("negate", \ -> TTypeFunction([TTypeInt()], TTypeInt())),
+		Pair("println", \ -> TTypeFunction([mkTypeVar(env)], TTypeBool())),
+	]);
+	mfn = lookupTree(builtins, id);
+	mfn ?? {
+		Some(mfn());
+	} : None();
+}
+
+
+prettyTType(env : TypeEnv, type : TType) -> string {
+	switch (type) {
+		TTypeBool(): "bool";
+		TTypeInt(): "int";
+		TTypeString(): "string";
+		TTypeArray(atype): "[" + prettyTType(env, atype);
+		TTypeFunction(args, returnType): "(" + superglue(args, \a -> prettyTType(env, a), ", ") + ") -> " 
+			+ prettyTType(env, returnType);
+		TTypeVar(id): {
+			types : [TType] = getUnionMapValue(env.unionFindMap, id);
+			if (types == []) {
+				"a" + i2s(id);
+			} else if (length(types) == 1) {
+				prettyTType(env, types[0])
+			} else {
+				"{" + superglue(types, \tt -> prettyTType(env, tt), ", ") + "}"
+			}
+		}
+	}
+}
+
+
+prettyTExp(env : TypeEnv, p : TExp) -> string {
+	pt = \tt -> " : " + prettyTType(env, tt);
+	switch (p) {
+		TBool(b): b2s(b);
+		TInt(i): i2s(i);
+		TString(s): toString(s);
+		TArrayValue(values, type): "[" + superglue(values, \arg ->prettyTExp(env, arg), ", ") + "]" + pt(type);
+		TLambda(args, body, type): "\\" + strGlue(args, ", ") + pt(type) + " -> " + prettyTExp(env, body);
+		TLet(id, value, body): {
+			blueprint("
+				%id% = %value%;
+				%body%", [
+				"id", id,
+				"value", prettyTExp(env, value),
+				"body", prettyTExp(env, body),
+			])
+		}
+		TVar(id, type): "(" + id + pt(type) + ")";
+		TIf(cond, then, else_, type): {
+			blueprint("
+				if (%cond%) {
+					%then%
+				} else {
+					%else%
+				}%type%", [
+				"cond", prettyTExp(env, cond),
+				"then", prettyTExp(env, then),
+				"else", prettyTExp(env, else_),
+				"type", pt(type)
+			])
+		}
+		TCall(fn, args, type): prettyTExp(env, fn) + "(" + superglue(args, \arg ->prettyTExp(env, arg), ", ") + ")" + pt(type);
+		TArray(values, type): "[" + superglue(values, \arg ->prettyTExp(env, arg), ", ") + "]" + pt(type);
+		TSequence(values, type): {
+			blueprint("
+				{
+					%values%
+				}%type%", [
+				"values", superglue(values, \arg ->prettyTExp(env, arg), ";\n"),
+				"type", pt(type)
+			]) 
+		}
+	}
+}

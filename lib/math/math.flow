@@ -5,8 +5,8 @@ import string;
 export {
 	forceRange : (x : ?, xMin : ?, xMax : ?) -> ?;
 
-	max3 : (?, ?, ?) -> ?;
-	min3 : (?, ?, ?) -> ?;
+	max3 : (a : ?, b : ?, c : ?) -> ?;
+	min3 : (a : ?, b : ?, c : ?) -> ?;
 
 	maxA : ([?]) -> Maybe<?>;
 	minA : ([?]) -> Maybe<?>;
@@ -57,6 +57,9 @@ export {
 	s2i : (string) -> int;
 	s2d : (string) -> double;
 	s2dint(s : string, i : int, n : int, acc : double) -> double;
+	// the function equal to s2dint if (errValue == doubleMin). otherwise return errValue if error symbol found
+	s2dintWithError(s : string, i : int, n : int, acc : double, errValue : double) -> double;
+	getDigitCode(c : int) -> int;
 
 	// Rounds towards negative infinite: floor(-1.5) = -2
 	floor : (double) -> int;
@@ -65,19 +68,19 @@ export {
 	// Rounds towards positive infinite: ceil(-1.5) = -1
 	ceil : (double) -> int;
 	// Rounds towards 0.0: trunc(-1.5) = -1
-	trunc : (double) -> int;
+	// trunc : (double) -> int; // Imported from string.flow
 	// Rounds away from 0.0: round(-1.5) == -2
 	round : (double) -> int;
 
 	// Rounds to nearest value divided by second arg
 	// previous version (used floor logic) moved to floorTo()
-	roundTo : (double, double) -> double;
+	roundTo : (val : double, precision : double) -> double;
 
 	// Rounds to nearest value below divided by second arg
-	floorTo : (double, double) -> double;
+	floorTo : (val : double, precision : double) -> double;
 
 	// Rounds to nearest value above divided by second arg
-	ceilTo : (double, double) -> double;
+	ceilTo : (val : double, precision : double) -> double;
 
 	// floor for double, rounds towards zero: dfloor(-1.5) = -1.0
 	dfloor : (double) -> double;
@@ -110,7 +113,7 @@ export {
 	odd(x : int) -> bool;
 
 	sum : ([int]) -> int;
-	dsum :([double]) -> double;
+	dsum : ([double]) -> double;
 	// The same as dsum but number2double is added to each element of array.
 	// It helps to avoid crash when we serialize numbers in JS and deserialize them in c++
 	dsumPatched : ([double]) -> double;
@@ -152,7 +155,7 @@ export {
 	gigabyteUnit() -> double;
 }
 
-max3(a,b,c) {
+max3(a : ?, b : ?, c : ?) -> ? {
 	if (a > b) {
 		if (a > c) a else c;
 	} else {
@@ -160,7 +163,7 @@ max3(a,b,c) {
 	}
 }
 
-min3(a,b,c) {
+min3(a : ?, b : ?, c : ?) -> ? {
 	if (a < b) {
 		if (a < c) a else c;
 	} else {
@@ -168,7 +171,7 @@ min3(a,b,c) {
 	}
 }
 
-maxA(a) {
+maxA(a : [?]) -> Maybe<?> {
 	if (length(a) == 0) {
 		None()
 	} else {
@@ -176,7 +179,7 @@ maxA(a) {
 	}
 }
 
-minA(a) {
+minA(a : [?]) -> Maybe<?> {
 	if (length(a) == 0) {
 		None()
 	} else {
@@ -184,10 +187,10 @@ minA(a) {
 	}
 }
 
-forceRange(x, xMin, xMax) {
-	if (x < xMin) xMin else
-	if (x > xMax) xMax else
-	x
+forceRange(x : ?, xMin : ?, xMax : ?) -> ? {
+	if (x < xMin) xMin
+	else if (x > xMax) xMax
+	else x;
 }
 
 native i2d : (i : int) -> double = Native.i2d;
@@ -209,33 +212,41 @@ s2d(s) {
 	} else {
 		negative = (getCharCodeAt(s, 0) == 0x2d); // -
 		if (negative) {
-			-s2dint(s, 1, n, 0.0);
+			-s2dintWithError(s, 1, n, 0.0, doubleMin);
 		} else {
-			s2dint(s, 0, n, 0.0);
+			s2dintWithError(s, 0, n, 0.0, doubleMin);
 		}
 	}
 }
 
 // Handle the integer part at the start
 s2dint(s : string, i : int, n : int, acc : double) -> double {
+	s2dintWithError(s, i, n, acc, doubleMin);
+}
+
+// Handle the integer part at the start
+// errValue=doubleMin == ignore errors
+s2dintWithError(s : string, i : int, n : int, acc : double, errValue : double) -> double {
 	if (i < n) {
 		c = getCharCodeAt(s, i);
 		d = getDigitCode(c);
 		if (d != -1) {
-			s2dint(s, i + 1, n, 10.0 * acc + i2d(d));
+			s2dintWithError(s, i + 1, n, 10.0 * acc + i2d(d), errValue);
 		} else {
 			if (c == 0x2E) { // .
 				fracres : Pair<double, double> = s2dfrac(s, i + 1, n, acc, 10.0);
 				mult = 10.0 * fracres.first;
 				if (isNanOrInf(mult)) fracres.first / fracres.second * 10.0
-				else mult / fracres.second
+				else mult / fracres.second;
 			} else if (c == 0x45 || c == 0x65) { // E e
 				s2dexp(s, i + 1, n, acc);
 			} else {
-				acc;
+				if (equalDoubles(errValue, doubleMin)) acc else errValue;
 			}
 		}
-	} else acc
+	} else {
+		acc;
+	}
 }
 
 // Handle the decimal part after the dot
@@ -256,7 +267,9 @@ s2dfrac(s : string, i : int, n : int, acc : double, fracacc : double) -> Pair<do
 				Pair(acc, fracacc);
 			}
 		}
-	} else Pair(acc, fracacc);
+	} else {
+		Pair(acc, fracacc);
+	}
 }
 
 // Handle the exponent
@@ -267,7 +280,9 @@ s2dexp(s : string, i : int, n : int, acc : double) -> double {
 		expPos = c == 0x2b; // +
 		exponent = s2i2(s, i + b2i(expNeg || expPos), n, 0);
 		shiftExponent(acc, if (expNeg) -exponent else exponent);
-	} else acc
+	} else {
+		acc;
+	}
 }
 
 // Convert ascii code to number for "0"-"9"
@@ -299,11 +314,8 @@ shiftExponent(acc : double, exponent : int) -> double {
 }
 
 
-native trunc : (d : double) -> int = Native.trunc;
-trunc(d) cast(d : double -> int);
-
 floor(d) trunc(
-	if (d >= 0.0) d 
+	if (d >= 0.0) d
 	else if (-d - i2d(trunc(-d)) > 0.0) d-1.0
 	else d
 );
@@ -419,7 +431,7 @@ acot(x : double) -> double {
 }
 
 // Radians
-degrees2radians = 2.0 * PI / maxAngleDegrees;
+degrees2radians : double = 2.0 * PI / maxAngleDegrees;
 
 sinus(x : double) -> double {
 	sin(x * degrees2radians)
@@ -480,7 +492,7 @@ dsumPatched(l) {
 	fold(l, 0.0, \a, b -> a + number2double(b));
 }
 
-average(l) {
+average(l : [double]) -> double {
 	len = length(l);
 	if (len == 0) {
 		0.0;
@@ -543,8 +555,8 @@ equalRelative(a, b, maxRelativeError) {
 	relativeError <= maxRelativeError;
 }
 
-defaultMaxRelativeError = 0.0000000001;
-defaultMaxAbsoluteError = 0.000000000001;
+defaultMaxRelativeError : double = 0.0000000001;
+defaultMaxAbsoluteError : double = 0.000000000001;
 
 equalDoubles(a : double, b : double) -> bool {
 	// The absolute difference is suspect... It means you can not really use small numbers
@@ -588,42 +600,43 @@ lcm(a : int, b : int) -> int {
 	iabs(a / gcd(a, b) * b)		// prevents int overflow if possible
 }
 
-revertPrecision(precision : double) {
+revertPrecision(precision : double) -> double {
  // roundTo(8.76, 0.0000001), returns 8.799999999999999 if we multiply result of dround / dfloor by precision
  // so we try to round reverted precesion to be close to actual reverted value if possible.
 	reverted = 1.0 / precision;
-	roundedAsDouble = i2d(trunc(reverted + 0.5));
-	if (equalDoubles(roundedAsDouble, reverted)) {
+	rounded = trunc(reverted + 0.5);
+	roundedAsDouble = i2d(rounded);
+	if (rounded != 0 && equalDoubles(roundedAsDouble, reverted)) {
 		roundedAsDouble
 	} else {
 		reverted
 	}
 }
 
-roundTo(p, precision) {
+roundTo(val : double, precision : double) -> double {
 	if (equalDoubles(0.0, precision)) {
-		p
+		val;
 	} else {
 		reverted = revertPrecision(precision);
-		dround(p * reverted) / reverted
+		dround(val * reverted) / reverted;
 	}
 }
 
-floorTo(p, precision) {
+floorTo(val: double, precision : double) -> double {
 	if (equalDoubles(0.0, precision)) {
-		p
+		val;
 	} else {
 		reverted = revertPrecision(precision);
-		dfloor(p * reverted) / reverted
+		dfloor(val * reverted) / reverted;
 	}
 }
 
-ceilTo(p, precision) {
+ceilTo(val : double, precision : double) -> double {
 	if (equalDoubles(0.0, precision)) {
-		p
+		val;
 	} else {
 		reverted = revertPrecision(precision);
-		dceil(p * reverted) / reverted
+		dceil(val * reverted) / reverted;
 	}
 }
 
@@ -650,7 +663,7 @@ normalizeScientificNumber(m : double, p : double) -> Pair<double, double> {
 }
 
 roundWithPrecision(number : double, precision : int) -> double {
-	if (precision <= 0)
+	if (precision < 0)
 		number
 	else {
 		multiplier = i2d(pow(10, precision));

@@ -1,10 +1,6 @@
 import js.Browser;
 
-import pixi.core.math.Matrix;
 import pixi.core.display.Bounds;
-import pixi.core.display.DisplayObject;
-import pixi.core.math.shapes.Rectangle;
-import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -20,6 +16,7 @@ class NativeWidgetClip extends FlowContainer {
 	private var focusRetries : Int = 0;
 
 	public function new(?worldVisible : Bool = false) {
+		isFlowContainer = false;
 		super(worldVisible);
 	}
 
@@ -34,7 +31,7 @@ class NativeWidgetClip extends FlowContainer {
 		this.updateClipID();
 		nativeWidget.className = 'nativeWidget';
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			if (accessWidget == null) {
 				accessWidget = new AccessWidget(this, nativeWidget);
 			} else {
@@ -61,7 +58,7 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${this.getWidgetWidth()}px';
 		nativeWidget.style.height = '${this.getWidgetHeight()}px';
 
-		if (RenderSupport.RendererType != "html") {
+		if (!this.isHTMLRenderer()) {
 			var viewBounds = this.getViewBounds();
 
 			if (viewBounds != null) {
@@ -107,7 +104,12 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public function getFocus() : Bool {
-		return nativeWidget != null && Browser.document.activeElement == nativeWidget;
+		return nativeWidget != null && (Browser.document.activeElement == nativeWidget || (
+			untyped RenderSupport.FlowInstances.some(function(instance) {
+				var shadowRoot = instance.stage.nativeWidget; 
+				return shadowRoot.host == Browser.document.activeElement && shadowRoot.activeElement == nativeWidget;
+			})
+		));
 	}
 
 	public function requestFullScreen() : Void {

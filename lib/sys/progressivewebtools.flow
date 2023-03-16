@@ -2,6 +2,8 @@ import devmode;
 import net/http_types;
 import formats/json/json;
 import net/http;
+import date;
+import net/appurl;
 
 export {
 	// A service worker is a script which your browser runs in the background, separate from a web page, opening the door to features that don't need a web page or user interaction.
@@ -143,10 +145,28 @@ export {
 	SharedStoreAnswer ::= SharedStoreOK, SharedStoreError;
 		SharedStoreOK();
 		SharedStoreError(error : string);
+
+	native resetSwTimings : io (onOK : () -> void, onError : (string) -> void) -> void = ProgressiveWebTools.resetSwTimings;
+	getSwTimings : (onOK : ([SwTiming]) -> void, onError : (string) -> void) -> void;
+
+	SwTiming(
+		file : string,
+		operation : string,
+		startTimestamp : double,
+		totalDurationMs : int,
+		steps : [SwTimingStep]
+	);
+
+	SwTimingStep(
+		name : string,
+		durationMs : int
+	);
+
+	syncTimeWithServer(onDone : () -> void) -> void;
 }
 
 defaultServiceWorkerFilePath = "sw.min.js";
-service_worker_version = 21;
+service_worker_version = 27;
 
 enableServiceWorkerCaching(swFileName : string, callback : (bool) -> void) { callback(false) }
 disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
@@ -364,4 +384,36 @@ getServiceWorkerRequestsStats(
 		},
 		onError
 	);
+}
+
+native getSwTimingsNative : io (onOK : ([string]) -> void, onError : (string) -> void) -> void = ProgressiveWebTools.getSwTimingsNative;
+getSwTimings(onOK : ([SwTiming]) -> void, onError : (string) -> void) -> void {
+	getSwTimingsNative(
+		\data -> {
+			onOK(
+				map(data, \row -> {
+					parts = strSplit(row, "\t");
+					len = length(parts);
+					SwTiming(
+						if (len > 0) parts[0] else "ERROR",
+						if (len > 1) parts[1] else "ERROR",
+						if (len > 2) (s2d(parts[2]) / 1000.) else -1.,
+						if (len > 3) s2i(parts[3]) else -1,
+						if (len > 4) {
+							len2 = (len - 4) / 2;
+							generate(0, len2, \i -> SwTimingStep(parts[4 + i * 2], s2i(parts[5 + i * 2])))
+						} else []
+					);
+				})
+			);
+		},
+		onError
+	);
+}
+
+syncTimeWithServer(onDone : () -> void) -> void {
+	httpRequest2(rtrim2(getAppUrl(), "/") + "/php/stamp.php?db=1", \dbTime -> {
+		setUTCdiffFromServer(timestamp(), dbTime);
+		onDone();
+	});
 }

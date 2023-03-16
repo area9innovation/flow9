@@ -12,8 +12,8 @@ import sys.io.File;
 #end
 
 enum ParseCont {
-  ChainParse(cb : Void -> ParseCont);
-  EndParse(rv : Bool);
+	ChainParse(cb : Void -> ParseCont);
+	EndParse(rv : Bool);
 }
 
 /// The main engine for parsing, linking and running modules
@@ -226,8 +226,8 @@ class Modules {
 		#end
 	}
 	
-    private function parseFileAndImportsInner(filename : String, cont : Void -> ParseCont, checkTopmoduleDeps : Module -> Bool) : ParseCont {
-	    Assert.trace("parseFileAndImportsInner: " + filename);
+	private function parseFileAndImportsInner(filename : String, cont : Void -> ParseCont, checkTopmoduleDeps : Module -> Bool) : ParseCont {
+		Assert.trace("parseFileAndImportsInner: " + filename);
 		var module = newModule(filename);
 		if (topmodule == null) {
 			topmodule = module;
@@ -241,11 +241,11 @@ class Modules {
 				return ChainParse(parse.bind(module, contents, cont, checkTopmoduleDeps));
 			} else {
 				for (i in includes) {
-				    var f = Util.makePath(i, filename);
+					var f = Util.makePath(i, filename);
 					if (FileSystem.exists(f)) {
 						var contents = FilesCache.content(f);
 						module.fullFilename = FileSystem.fullPath(f);
-                        module.relativeFilename = f;
+						module.relativeFilename = f;
 						return ChainParse(parse.bind(module, contents, cont, checkTopmoduleDeps));
 					}
 				}
@@ -314,14 +314,14 @@ class Modules {
 	}
 
 	function processNestedImportsCont(owner : Module, ind : Int, cont : Void -> ParseCont) {
-	  //Util.println("2: Module " + owner.name + "  imported#" + ind + " #imps=" + owner.imports.length);
-  	        var importName = owner.imports[ind];
+		//Util.println("2: Module " + owner.name + "  imported#" + ind + " #imps=" + owner.imports.length);
+			var importName = owner.imports[ind];
 			var imported = modules.get(importName);
 			//Util.println("importName=" + importName + "  imported=" + (imported != null));
 			if (imported == null) {
-			  return ChainParse(parseFileAndImportsInner.bind(findModuleFile(importName), cont, null));
+				return ChainParse(parseFileAndImportsInner.bind(findModuleFile(importName), cont, null));
 			} else {
-			  //Util.println("   DONE PARSING: " + imported.doneParsing + " of " + owner.relativeFilename);
+				//Util.println("   DONE PARSING: " + imported.doneParsing + " of " + owner.relativeFilename);
 				if (! imported.doneParsing) {
 					// Cyclic imports cause spurious undefined names when a name in an
 					// incompletely loaded module is referenced from another module.  It
@@ -331,7 +331,7 @@ class Modules {
 				}
 			}
 			return ChainParse(cont);
-  	}
+	}
 
 	function parseFinished(module : Module, cont : Void -> ParseCont) : ParseCont {
 	    return processNestedImports(module, 0, function() { module.doneParsing = true; return ChainParse(cont); } );
@@ -368,14 +368,14 @@ class Modules {
 
 	// Apply the acceptor function to the content of file
 	function readFile(file : String, acceptor : String -> Void) : Bool {
-	    var contOpt = FilesCache.contentOpt(file);
+		var contOpt = FilesCache.contentOpt(file);
 		if (contOpt != null) {
-		  acceptor(contOpt);
-		  return true;
-	    }
-        #if sys
+			acceptor(contOpt);
+			return true;
+		}
+		#if sys
 			if (FileSystem.exists(file)) {
-			    acceptor(FilesCache.content(file));
+				acceptor(FilesCache.content(file));
 				return true;
 			} else {
 				return false;
@@ -449,7 +449,7 @@ class Modules {
 		cont : FlowInterpreter -> T,
 		bind : (Void -> T) -> String -> T 
 	) : T  {
-	        //Errors.resetCount();
+			//Errors.resetCount();
 		Profiler.get().profileStart("Typecheck");
 		var interpreter = new FlowInterpreter(allNodeTypes);
 		FlowInterpreter.debug = debug;
@@ -466,7 +466,7 @@ class Modules {
 				}, "typecheck");
 			}, "link");
 		} catch (e : String) {
-		    Options.DEBUG = true; Assert.printExnStack();
+			Options.DEBUG = true; Assert.printExnStack();
 			println("Link & typecheck error: " + e);
 			interpreter.printCallstack();
 		}
@@ -601,17 +601,17 @@ class Modules {
 	public function newModule(name : String) : Module { // overrided in IncrementalModules
 		return new Module(name, objectPath);
 	}
-	
+
 	public function objectModulesOrder() : Array <ObjectModule> { return null; }
 	public function postProcessWholeBytecode(b : haxe.io.Bytes) { }
 	public function isIncremental(): Bool { return false; }
-        public function coerce(): ObjectModules { Assert.fail("Modules.coerce() called"); return null; }
+		public function coerce(): ObjectModules { Assert.fail("Modules.coerce() called"); return null; }
 
 	// Include paths
 	var includes : Array<String>;
 	public var modules : Map<String,Module>;
 	public var objectPath : String;
-	
+
 	var allNodeTypes : Bool;
 
 	#if (flash || js)

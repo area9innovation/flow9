@@ -1,19 +1,14 @@
 import js.Browser;
 import pixi.core.display.Bounds;
 import pixi.core.display.Container;
-import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
-import pixi.core.math.Point;
 
 import js.three.Object3D;
 import js.three.Vector2;
 
 import js.three.Camera;
-import js.three.PerspectiveCamera;
 
 import js.three.OrbitControls;
-import js.three.TransformControls;
-import js.three.BoxHelper;
 
 import js.three.Scene;
 import js.three.Raycaster;
@@ -83,7 +78,7 @@ class ThreeJSStage extends Container {
 			dispose();
 		}
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.initNativeWidget('canvas');
 			this.renderer = new WebGLRenderer({antialias: !Platform.isIOS, alpha : true, canvas : nativeWidget, logarithmicDepthBuffer : true});
 		} else {
@@ -191,7 +186,7 @@ class ThreeJSStage extends Container {
 	}
 
 	public function invalidateStage() {
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			this.invalidateTransform('ThreeJSStage');
 		} else {
 			DisplayObjectHelper.invalidateStage(this);
@@ -496,7 +491,7 @@ class ThreeJSStage extends Container {
 	}
 
 	public function updateNativeWidget() : Void {
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			if (isNativeWidget) {
 				if (visible && camera != null && scene != null && getWidth() > 0 && getHeight() > 0) {
 					this.emit("drawframe");

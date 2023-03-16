@@ -1,25 +1,28 @@
-import formats/json/json;
 import formats/uri2/uri2;
 import lingo/linecolumn;
-import string_utils;
 
 /*
  This module describes basic structures and encoding/decoding functions for the language Server Protocol (LSP)
  The detailed description and specification of LSP may be found at https://microsoft.github.io/language-server-protocol/
+ Now we support version 3.17
 */
 
 export {
+
+LspMessage ::= LspRequestMessage, LspResponseMessage, LspNotificationMessage;
 
 LspRequestMessage : (jsonrpc: string, id : Json, method : string, params : Json);
 LspNotificationMessage : (jsonrpc: string, method : string, params : Json);
 LspResponseMessage : (jsonrpc: string, id: Json, result : Json, error : Maybe<LspResponseError>);
 LspResponseError : (code : int, message: string, data : Json);
+LspCancelParams : (id : Json);
 
 LspPosition : (line : int, character : int);
 LspRange : (start : LspPosition, end : LspPosition);
 LspLocation : (uri : URI, range : LspRange);
 LspCommand : (title : string, command : string, arguments : [Json]);
 LspTextEdit : (range: LspRange, newText: string);
+LspInsertReplaceEdit : (newText: string, insert: LspRange, replace: LspRange);
 LspTextDocumentIdentifier : (uri : URI);
 LspTextDocumentItem : (uri : URI, languageId : string, version : string, text : string);
 LspTextDocumentPositionParams : (textDocument : LspTextDocumentIdentifier, position : LspPosition);
@@ -27,8 +30,14 @@ LspSymbol : (name : string, detail : string, kind : int, deprecated : bool, rang
 LspSymbolInformation : (name : string, kind : int, deprecated : bool, location : LspLocation, containerName : string);
 LspWorkspaceSymbolParams : (query : string);
 
-LspHover : (contents : [LspMarkedString], range : Maybe<LspRange>);
-LspMarkedString : (language : string, value : string);
+LspMarkupContent : (
+	kind : string, // Values: 'plaintext' or 'markdown'
+	value : string
+);
+LspHoverContents ::= LspMarkupContent, LspMarkedString, LspMarkedStrings;
+LspHover : (contents : LspHoverContents, range : Maybe<LspRange>);
+LspMarkedString : (language : string, value : string); // This type is deprecated in LSP protocol, use LspMarkupContent instead
+LspMarkedStrings : (strings : [LspMarkedString]);
 LspRename : (textDocument : LspTextDocumentIdentifier, position : LspPosition, newName : string);
 LspExecuteCommandParams : (command : string, arguments: [Json]);
 LspCompletionContext : (
@@ -39,7 +48,8 @@ LspCompletionParams : (textDocument : LspTextDocumentIdentifier, position : LspP
 LspCompletionList : (isIncomplete : bool, items : [LspCompletionItem]);
 LspCompletionItem : (
 	label: string,
-	kind: int,
+	labelDetails: LspCompletionItemLabelDetails,
+	kind: int, // Values: None=0, others are constants shown below
 	tags: [int], // Values: Deprecated=1
 	detail: string,
 	documentation: string,
@@ -48,14 +58,16 @@ LspCompletionItem : (
 	sortText: string,
 	filterText: string,
 	insertText: string,
-	insertTextFormat: int, // Value: PlainText=1, Snippet=2
-	textEdit: Maybe<LspTextEdit>,
+	insertTextFormat: int, // Value: None=0, PlainText=1, Snippet=2
+	insertTextMode: int, // Value: None=0, asIs=1, adjustIndentation=2
+	textEdit: Maybe<LspCompletionTextEdit>,
 	additionalTextEdits: [LspTextEdit],
 	commitCharacters: [string],
 	command: Maybe<LspCommand>,
 	data: Json
 );
-LspWorkspaceSymbolParams(query : string);
+LspCompletionTextEdit ::= LspTextEdit, LspInsertReplaceEdit;
+LspCompletionItemLabelDetails(detail: string, description: string);
 
 LspVersionedTextDocumentIdentifier : (uri : URI, version : string);
 LspDidChangeTextDocumentParams : (textDocument : LspVersionedTextDocumentIdentifier, contentChanges : [LspTextDocumentContentChangeEvent]);
@@ -139,6 +151,38 @@ LspRenameFile : (oldUri: URI, newUri: URI, options : Maybe<LspRenameFileOptions>
 LspDeleteFileOptions : (recursive : bool, ignoreIfNotExists : bool);
 LspDeleteFile : (uri: URI, options : Maybe<LspDeleteFileOptions>);
 
+LspCallHierarchyItem : (
+	name : string,
+	kind : int,
+	tags : [int], // DiagnosticTag: Unnecessary = 1, Deprecated = 2
+	detail : string,
+	uri : URI,
+	range: LspRange,
+	selectionRange: LspRange,
+	data : Json
+);
+LspCallHierarchyIncomingCallsParams : (item : LspCallHierarchyItem);
+LspCallHierarchyIncomingCall : (from: LspCallHierarchyItem, fromRanges: [LspRange]);
+LspCallHierarchyOutgoingCallsParams : (item : LspCallHierarchyItem);
+LspCallHierarchyOutgoingCall : (to: LspCallHierarchyItem, fromRanges : [LspRange]);
+
+LspSetTrace : (value : string);
+LspLogTraceParams : (message : string, verbose : string);
+
+LspInitializeParams : (
+	processId : string,
+	clientInfo : LspClientInfo,
+	locale : string,
+	rootPath : string,
+	rootUri : string,
+	initializationOptions : Json,
+	capabilities: Json,
+	trace: string,
+	workspaceFolders : [LspWorkspaceFolder]
+);
+LspClientInfo : (name : string, version : string);
+LspWorkspaceFolder : (uri : string, name : string);
+
 lspRequestMessage2Json(request : LspRequestMessage) -> Json;
 lspNotificationMessage2Json(request : LspNotificationMessage) -> Json;
 lspResponseMessage2Json(response : LspResponseMessage) -> Json;
@@ -156,6 +200,8 @@ lspSymbolInformation2Json(symbol_info : LspSymbolInformation) -> Json;
 lspMarkedString2Json(str : LspMarkedString) -> Json;
 lspHover2Json(hover : LspHover) -> Json;
 lspTextEdit2Json(edit : LspTextEdit) -> Json;
+lspInsertReplaceEdit2json(edir : LspInsertReplaceEdit) -> Json;
+lspCompletionItem2Json(item : LspCompletionItem) -> Json;
 lspCompletionList2Json(list : LspCompletionList) -> Json;
 lspRegistration2Json(registration : LspRegistration) -> Json;
 lspRegistrationParams2Json(params : LspRegistrationParams) -> Json;
@@ -195,9 +241,24 @@ lspRenameFile2Json(rename : LspRenameFile) -> Json;
 lspDeleteFileOptions2Json(opts : LspDeleteFileOptions) -> Json;
 lspDeleteFile2Json(delete : LspDeleteFile) -> Json;
 
+lspCallHierarchyItem2Json(item : LspCallHierarchyItem) -> Json;
+lspCallHierarchyIncomingCallsParams2Json(params : LspCallHierarchyIncomingCallsParams) -> Json;
+lspCallHierarchyIncomingCall2Json(call : LspCallHierarchyIncomingCall) -> Json;
+lspCallHierarchyOutgoingCallsParams2Json(params : LspCallHierarchyOutgoingCallsParams) -> Json;
+lspCallHierarchyOutgoingCall2Json(call : LspCallHierarchyOutgoingCall) -> Json;
+
+lspCancelParams2Json(params : LspCancelParams) -> Json;
+lspSetTrace2Json(trace : LspSetTrace) -> Json;
+lspLogTraceParams2Json(params : LspLogTraceParams) -> Json;
+
+lspInitializeParams2Json(params : LspInitializeParams) -> Json;
+lspClientInfo2Json(info : LspClientInfo) -> Maybe<Json>;
+lspWorkspaceFolder2Json(folder : LspWorkspaceFolder) -> Json;
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage>;
 json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage>;
 json2LspResponseError(json : Json) -> Maybe<LspResponseError>;
+json2LspNotificationMessage(json : Json) -> Maybe<LspNotificationMessage>;
 
 json2LspPosition(json : Json) -> Maybe<LspPosition>;
 json2LspRange(json : Json) -> Maybe<LspRange>;
@@ -237,6 +298,7 @@ json2LspCodeAction(json : Json) -> Maybe<LspCodeAction>;
 json2Command(json : Json) -> Maybe<LspCommand>;
 json2LspTextDocumentEdit(json : Json) -> Maybe<LspTextDocumentEdit>;
 json2LspTextEdit(json : Json) -> Maybe<LspTextEdit>;
+json2LspInsertReplaceEdit(json : Json) -> Maybe<LspInsertReplaceEdit>;
 json2LspWorkspaceEdit(json : Json) -> Maybe<LspWorkspaceEdit>;
 json2LspWorkspaceEditChanges(json : Json) -> Maybe<LspWorkspaceEditChanges>;
 json2LspWorkspaceEditDocumentChange(json : Json) -> Maybe<LspWorkspaceEditDocumentChange>;
@@ -246,6 +308,20 @@ json2LspRenameFileOptions(json : Json) -> Maybe<LspRenameFileOptions>;
 json2LspRenameFile(json : Json) -> Maybe<LspRenameFile>;
 json2LspDeleteFileOptions(json : Json) -> Maybe<LspDeleteFileOptions>;
 json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile>;
+
+json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem>;
+json2LspCallHierarchyIncomingCallsParams(json : Json) -> Maybe<LspCallHierarchyIncomingCallsParams>;
+json2LspCallHierarchyIncomingCall(json : Json) -> Maybe<LspCallHierarchyIncomingCall>;
+json2LspCallHierarchyOutgoingCallsParams(json : Json) -> Maybe<LspCallHierarchyOutgoingCallsParams>;
+json2LspCallHierarchyOutgoingCall(json : Json) -> Maybe<LspCallHierarchyOutgoingCall>;
+
+json2LspCancelParams(json : Json) -> Maybe<LspCancelParams>;
+json2LspSetTrace(json : Json) -> Maybe<LspSetTrace>;
+json2LspLogTraceParams(json : Json) -> Maybe<LspLogTraceParams>;
+
+json2LspInitializeParams(json : Json) -> Maybe<LspInitializeParams>;
+json2LspClientInfo(json : Json) -> Maybe<LspClientInfo>;
+json2LspWorkspaceFolder(json : Json) -> Maybe<LspWorkspaceFolder>;
 
 // 0 stands for no kind
 lspSymbolKindName2id = pairs2tree([
@@ -266,28 +342,28 @@ lspCompletionItemKind2id = pairs2tree([
 	Pair("Constant", 21),  Pair("Struct", 22),     Pair("Event", 23),     Pair("Operator", 24),   Pair("TypeParameter", 25)
 ]);
 
-lspSymbolKindId2Name = ["", 
+lspSymbolKindId2Name = ["",
 	"File",      "Module",     "Namespace", "Package",     "Class",
-	"Method",    "Property",   "Field",     "Constructor", "Enum", 
+	"Method",    "Property",   "Field",     "Constructor", "Enum",
 	"Interface", "Function",   "Variable",  "Constant",    "String",
-	"Number",    "Boolean",    "Array",     "Object",      "Key", 
-	"Null",      "EnumMember", "Struct",    "Event",       "Operator", 
+	"Number",    "Boolean",    "Array",     "Object",      "Key",
+	"Null",      "EnumMember", "Struct",    "Event",       "Operator",
 	"TypeParameter"
 ];
 
-LspSymbolKind ::= 
+LspSymbolKind ::=
 	LspSymbolFile,      LspSymbolModule,     LspSymbolNamespace, LspSymbolPackage,     LspSymbolClass,
-	LspSymbolMethod,    LspSymbolProperty,   LspSymbolField,     LspSymbolConstructor, LspSymbolEnum, 
+	LspSymbolMethod,    LspSymbolProperty,   LspSymbolField,     LspSymbolConstructor, LspSymbolEnum,
 	LspSymbolInterface, LspSymbolFunction,   LspSymbolVariable,  LspSymbolConstant,    LspSymbolString,
 	LspSymbolNumber,    LspSymbolBoolean,    LspSymbolArray,     LspSymbolObject,      LspSymbolKey,
-	LspSymbolNull,      LspSymbolEnumMember, LspSymbolStruct,    LspSymbolEvent,       LspSymbolOperator, 
+	LspSymbolNull,      LspSymbolEnumMember, LspSymbolStruct,    LspSymbolEvent,       LspSymbolOperator,
 	LspSymbolTypeParameter;
 
 	LspSymbolFile();    LspSymbolModule();     LspSymbolNamespace(); LspSymbolPackage();     LspSymbolClass();
-	LspSymbolMethod();    LspSymbolProperty();   LspSymbolField();     LspSymbolConstructor(); LspSymbolEnum(); 
+	LspSymbolMethod();    LspSymbolProperty();   LspSymbolField();     LspSymbolConstructor(); LspSymbolEnum();
 	LspSymbolInterface(); LspSymbolFunction();   LspSymbolVariable();  LspSymbolConstant();    LspSymbolString();
 	LspSymbolNumber();    LspSymbolBoolean();    LspSymbolArray();     LspSymbolObject();      LspSymbolKey();
-	LspSymbolNull();      LspSymbolEnumMember(); LspSymbolStruct();    LspSymbolEvent();       LspSymbolOperator(); 
+	LspSymbolNull();      LspSymbolEnumMember(); LspSymbolStruct();    LspSymbolEvent();       LspSymbolOperator();
 	LspSymbolTypeParameter();
 
 LspCompletionItemKind ::=
@@ -296,7 +372,7 @@ LspCompletionItemKind ::=
 	LspCompletionItemUnit, LspCompletionItemValue, LspCompletionItemEnum, LspCompletionItemKeyword, LspCompletionItemSnippet,
 	LspCompletionItemColor, LspCompletionItemFile, LspCompletionItemReference, LspCompletionItemFolder, LspCompletionItemEnumMember,
 	LspCompletionItemConstant, LspCompletionItemStruct, LspCompletionItemEvent, LspCompletionItemOperator, LspCompletionItemTypeParameter;
-	
+
 	LspCompletionItemText(); LspCompletionItemMethod(); LspCompletionItemFunction(); LspCompletionItemConstructor(); LspCompletionItemField();
 	LspCompletionItemVariable(); LspCompletionItemClass(); LspCompletionItemInterface(); LspCompletionItemModule(); LspCompletionItemProperty();
 	LspCompletionItemUnit(); LspCompletionItemValue(); LspCompletionItemEnum(); LspCompletionItemKeyword(); LspCompletionItemSnippet();
@@ -304,6 +380,46 @@ LspCompletionItemKind ::=
 	LspCompletionItemConstant(); LspCompletionItemStruct(); LspCompletionItemEvent(); LspCompletionItemOperator(); LspCompletionItemTypeParameter();
 
 lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string;
+
+	// Lsp error codes:
+	lspParseError = -32700;
+	lspInvalidRequest = -32600;
+	lspMethodNotFound = -32601;
+	lspInvalidParams = -32602;
+	lspInternalError = -32603;
+	lspServerNotInitialized = -32002;
+	lspUnknownErrorCode = -32001;
+	lspRequestFailed = -32803;
+	lspServerCancelled = -32802;
+	lspContentModified = -32801;
+	lspRequestCancelled = -32800;
+
+	// CompletionItemKind constants:
+	lspCompletionItemText = 1;
+	lspCompletionItemMethod = 2;
+	lspCompletionItemFunction = 3;
+	lspCompletionItemConstructor = 4;
+	lspCompletionItemField = 5;
+	lspCompletionItemVariable = 6;
+	lspCompletionItemClass = 7;
+	lspCompletionItemInterface = 8;
+	lspCompletionItemModule = 9;
+	lspCompletionItemProperty = 10;
+	lspCompletionItemUnit = 11;
+	lspCompletionItemValue = 12;
+	lspCompletionItemEnum = 13;
+	lspCompletionItemKeyword = 14;
+	lspCompletionItemSnippet = 15;
+	lspCompletionItemColor = 16;
+	lspCompletionItemFile = 17;
+	lspCompletionItemReference = 18;
+	lspCompletionItemFolder = 19;
+	lspCompletionItemEnumMember = 20;
+	lspCompletionItemConstant = 21;
+	lspCompletionItemStruct = 22;
+	lspCompletionItemEvent = 23;
+	lspCompletionItemOperator = 24;
+	lspCompletionItemTypeParameter = 25;
 }
 
 lspRequestMessage2Json(request : LspRequestMessage) -> Json {
@@ -354,8 +470,8 @@ lspLocation2Json(loc : LspLocation) -> Json {
 
 lspCommand2Json(com : LspCommand) -> Json {
 	JsonObject([
-		Pair("title", JsonString(com.title)), 
-		Pair("command", JsonString(com.command)), 
+		Pair("title", JsonString(com.title)),
+		Pair("command", JsonString(com.command)),
 		Pair("arguments", JsonArray(com.arguments))
 	]);
 }
@@ -410,14 +526,32 @@ lspMarkedString2Json(str : LspMarkedString) -> Json {
 	}
 }
 
-lspHover2Json(hover : LspHover) -> Json {
-	properties0 = if (length(hover.contents) == 1) {
-		[Pair("contents", lspMarkedString2Json(hover.contents[0]))];
-	} else {
-		[Pair("contents", JsonArray(map(hover.contents, lspMarkedString2Json)))];
+LspHoverContents2Json(contents : LspHoverContents) -> Json {
+	switch (contents) {
+		LspMarkedString(__,__): {
+			lspMarkedString2Json(contents);
+		}
+		LspMarkupContent(__,__): {
+			lspMarkupContent2Json(contents);
+		}
+		LspMarkedStrings(arr): JsonArray(map(arr, LspHoverContents2Json));
 	}
-	properties1 = eitherMap(hover.range, \range -> concat(properties0, [Pair("range", lspRange2Json(range))]), properties0);
-	JsonObject(properties1);
+}
+
+lspMarkupContent2Json(content : LspMarkupContent) -> Json {
+	JsonObject([
+		Pair("kind", JsonString(content.kind)),
+		Pair("value", JsonString(content.value))
+	]);
+}
+
+lspHover2Json(hover : LspHover) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("contents",
+			LspHoverContents2Json(hover.contents)
+		)),
+		maybeMap(hover.range, \range -> Pair("range", lspRange2Json(range)))
+	], idfn));
 }
 
 lspTextEdit2Json(edit : LspTextEdit) -> Json {
@@ -427,22 +561,43 @@ lspTextEdit2Json(edit : LspTextEdit) -> Json {
 	]);
 }
 
+lspInsertReplaceEdit2json(edit : LspInsertReplaceEdit) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("newText", JsonString(edit.newText))),
+		if (edit.insert.start.line == -1) None() else Some(Pair("insert", lspRange2Json(edit.insert))),
+		if (edit.replace.start.line == -1) None() else Some(Pair("replace", lspRange2Json(edit.replace))),
+	], idfn));
+}
+
+lspCompletionItemLabelDetails2Json(details : LspCompletionItemLabelDetails) -> Json {
+	JsonObject(filtermap([
+		if (details.detail == "") None() else Some(Pair("detail", JsonString(details.detail))),
+		if (details.description == "") None() else Some(Pair("description", JsonString(details.description)))
+	], idfn));
+}
+
 lspCompletionItem2Json(item : LspCompletionItem) -> Json {
+	edit2json = \edit -> switch (edit) {
+		LspTextEdit(__,__): lspTextEdit2Json(edit);
+		LspInsertReplaceEdit(__,__,__): lspInsertReplaceEdit2json(edit);
+	}
 	JsonObject(filtermap([
 		Some(Pair("label", JsonString(item.label))),
-		if (item.kind == 0) None() else Some(Pair("kind", JsonString(i2s(item.kind)))),
-		Some(Pair("tags", JsonArray(map(item.tags, \tag -> JsonString(i2s(tag)))))),
-		Some(Pair("detail", JsonString(item.detail))),
-		Some(Pair("documentation", JsonString(item.documentation))),
-		Some(Pair("deprecated", JsonBool(item.deprecated))),
-		Some(Pair("preselect", JsonBool(item.preselect))),
-		Some(Pair("sortText", JsonString(item.sortText))),
-		Some(Pair("filterText", JsonString(item.filterText))),
-		Some(Pair("insertText", JsonString(item.insertText))),
-		Some(Pair("insertTextFormat", JsonString(i2s(item.insertTextFormat)))),
-		maybeMap(item.textEdit, \edit -> Pair("textEdit", lspTextEdit2Json(edit))),
-		Some(Pair("additionalTextEdits", JsonArray(map(item.additionalTextEdits, lspTextEdit2Json)))),
-		Some(Pair("commitCharacters", JsonArray(map(item.commitCharacters, \ch -> JsonString(ch))))),
+		if (item.labelDetails.detail == "" && item.labelDetails.description == "") None() else Some(Pair("labelDetails", lspCompletionItemLabelDetails2Json(item.labelDetails))),
+		if (item.kind == 0) None() else Some(Pair("kind", JsonDouble(i2d(item.kind)))),
+		if (item.tags == []) None() else Some(Pair("tags", JsonArray(map(item.tags, \tag -> JsonString(i2s(tag)))))),
+		if (item.detail == "") None() else Some(Pair("detail", JsonString(item.detail))),
+		if (item.documentation == "") None() else Some(Pair("documentation", JsonString(item.documentation))),
+		if (!item.deprecated) None() else Some(Pair("deprecated", JsonBool(item.deprecated))),
+		if (!item.preselect) None() else Some(Pair("preselect", JsonBool(item.preselect))),
+		if (item.sortText == "") None() else Some(Pair("sortText", JsonString(item.sortText))),
+		if (item.filterText == "") None() else Some(Pair("filterText", JsonString(item.filterText))),
+		if (item.insertText == "") None() else Some(Pair("insertText", JsonString(item.insertText))),
+		if (item.insertTextFormat == 0) None() else Some(Pair("insertTextFormat", JsonDouble(i2d(item.insertTextFormat)))),
+		if (item.insertTextMode == 0) None() else Some(Pair("insertTextMode", JsonDouble(i2d(item.insertTextMode)))),
+		maybeMap(item.textEdit, \edit -> Pair("textEdit", edit2json(edit))),
+		if (item.additionalTextEdits == []) None() else Some(Pair("additionalTextEdits", JsonArray(map(item.additionalTextEdits, lspTextEdit2Json)))),
+		if (item.commitCharacters == []) None() else Some(Pair("commitCharacters", JsonArray(map(item.commitCharacters, \ch -> JsonString(ch))))),
 		maybeMap(item.command, \command -> Pair("command", lspCommand2Json(command))),
 		if (item.data == JsonNull()) None() else Some(Pair("data", item.data))
 	], idfn));
@@ -500,7 +655,7 @@ lspDiagnostic2Json(diag : LspDiagnostic) -> Json {
 		if (diag.source == "") None() else Some(Pair("source", JsonString(diag.source))),
 		Some(Pair("message", JsonString(diag.message))),
 		if (diag.tags == []) None() else Some(Pair("tags", JsonArray(map(diag.tags, \tag -> JsonString(i2s(tag)))))),
-		if (diag.relatedInformation == []) None() else Some(Pair("relatedInformation", 
+		if (diag.relatedInformation == []) None() else Some(Pair("relatedInformation",
 			JsonArray(map(diag.relatedInformation, lspDiagnosticRelatedInformation2Json))
 		)),
 	], idfn));
@@ -718,12 +873,93 @@ lspDeleteFile2Json(delete : LspDeleteFile) -> Json {
 	], idfn));
 }
 
+lspCallHierarchyItem2Json(item : LspCallHierarchyItem) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("name", JsonString(item.name))),
+		Some(Pair("kind", JsonString(i2s(item.kind)))),
+		if (length(item.tags) == 0) None() else Some(Pair("tags", JsonArray(map(item.tags, \tag -> JsonString(i2s(tag)))))),
+		if (item.detail == "") None() else Some(Pair("detail", JsonString(item.detail))),
+		Some(Pair("uri", JsonString(uri2string(item.uri)))),
+		Some(Pair("range", lspRange2Json(item.range))),
+		Some(Pair("selectionRange", lspRange2Json(item.selectionRange))),
+		if (item.data == JsonNull()) None() else Some(Pair("data", item.data))
+	], idfn));
+}
+
+lspCallHierarchyIncomingCallsParams2Json(params : LspCallHierarchyIncomingCallsParams) -> Json {
+	JsonObject([Pair("item", lspCallHierarchyItem2Json(params.item))]);
+}
+
+lspCallHierarchyIncomingCall2Json(call : LspCallHierarchyIncomingCall) -> Json {
+	JsonObject([
+		Pair("from", lspCallHierarchyItem2Json(call.from)),
+		Pair("fromRanges", JsonArray(map(call.fromRanges, lspRange2Json))),
+	]);
+}
+
+lspCallHierarchyOutgoingCallsParams2Json(params : LspCallHierarchyOutgoingCallsParams) -> Json {
+	JsonObject([Pair("item", lspCallHierarchyItem2Json(params.item))]);
+}
+
+lspCallHierarchyOutgoingCall2Json(call : LspCallHierarchyOutgoingCall) -> Json {
+	JsonObject([
+		Pair("to", lspCallHierarchyItem2Json(call.to)),
+		Pair("fromRanges", JsonArray(map(call.fromRanges, lspRange2Json))),
+	]);
+}
+
+lspCancelParams2Json(params : LspCancelParams) -> Json {
+	JsonObject([Pair("id", params.id)]);
+}
+
+lspSetTrace2Json(trace : LspSetTrace) -> Json {
+	JsonObject([Pair("value", JsonString(trace.value))]);
+}
+
+lspLogTraceParams2Json(params : LspLogTraceParams) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("message", JsonString(params.message))),
+		if (params.verbose == "") None() else Some(Pair("verbose", JsonString(params.verbose))),
+	], idfn));
+}
+
+lspInitializeParams2Json(params : LspInitializeParams) -> Json {
+	JsonObject(filtermap([
+		Some(Pair("processId", JsonString(params.processId))),
+		maybeMap(lspClientInfo2Json(params.clientInfo), \info -> Pair("clientInfo", info)),
+		if (params.locale == "") None() else Some(Pair("locale", JsonString(params.locale))),
+		if (params.rootPath == "") None() else Some(Pair("rootPath", JsonString(params.rootPath))),
+		Some(Pair("rootUri", if (params.rootUri == "") JsonNull() else JsonString(params.rootUri))),
+		if (params.initializationOptions == JsonNull()) None() else Some(Pair("initializationOptions", params.initializationOptions)),
+		Some(Pair("capabilities", params.capabilities)),
+		Some(Pair("trace", JsonString(if (params.trace == "") "off" else params.trace))),
+		if (length(params.workspaceFolders) == 0) None() else Some(Pair("workspaceFolders", JsonArray(map(params.workspaceFolders, lspWorkspaceFolder2Json))))
+	], idfn));
+}
+
+lspClientInfo2Json(info : LspClientInfo) -> Maybe<Json> {
+	if (info.name == "") None() else
+	Some(JsonObject(filtermap([
+		Some(Pair("name", JsonString(info.name))),
+		if (info.version == "") None() else Some(Pair("version", JsonString(info.version)))
+	], idfn)));
+}
+
+lspWorkspaceFolder2Json(folder : LspWorkspaceFolder) -> Json {
+	JsonObject([
+		Pair("uri", JsonString(folder.uri)),
+		Pair("name", JsonString(folder.name))
+	]);
+}
+
+/// --------------------------------------------------------------
+
 json2LspRequestMessage(json : Json) -> Maybe<LspRequestMessage> {
 	jsonrpc = getJsonStringField(json, "jsonrpc", "");
 	id = getJsonFieldValue(json, "id", JsonNull());
 	method = getJsonStringField(json, "method", "");
 	params = getJsonFieldValue(json, "params", JsonNull());
-	if (jsonrpc == "" || method == "") None() else 
+	if (jsonrpc == "" || method == "") None() else
 	Some(LspRequestMessage(jsonrpc, id, method, params));
 }
 
@@ -732,15 +968,23 @@ json2LspResponseMessage(json : Json) -> Maybe<LspResponseMessage> {
 	id = getJsonFieldValue(json, "id", JsonNull());
 	result = getJsonFieldValue(json, "result", JsonNull());
 	error = getJsonFieldValue(json, "error", JsonNull());
-	if (jsonrpc == "") None() else 
+	if (jsonrpc == "" || id == JsonNull()) None() else
 	Some(LspResponseMessage(jsonrpc, id, result, json2LspResponseError(error)));
+}
+
+json2LspNotificationMessage(json : Json) -> Maybe<LspNotificationMessage> {
+	jsonrpc = getJsonStringField(json, "jsonrpc", "");
+	method = getJsonStringField(json, "method", "");
+	params = getJsonFieldValue(json, "params", JsonNull());
+	if (jsonrpc == "" || method == "") None() else
+	Some(LspNotificationMessage(jsonrpc, method, params));
 }
 
 json2LspResponseError(json : Json) -> Maybe<LspResponseError> {
 	code = getJsonStringField(json, "code", "");
 	message = getJsonStringField(json, "message", "");
 	data = getJsonFieldValue(json, "data", JsonNull());
-	if (code == "") None() else 
+	if (code == "") None() else
 	Some(LspResponseError(s2i(code), message, getJsonFieldValue(json, "data", JsonNull())));
 }
 
@@ -818,10 +1062,10 @@ json2LspCompletionParams(json : Json) -> Maybe<LspCompletionParams> {
 	maybeMap(json2LspTextDocumentPositionParams(json), \pos -> {
 			context = getJsonObjectField(json, "context");
 			LspCompletionParams(
-				pos.textDocument, 
-				pos.position, 
+				pos.textDocument,
+				pos.position,
 				LspCompletionContext(
-					getJsonIntField(context, "triggerKind", 0), 
+					getJsonIntField(context, "triggerKind", 0),
 					getJsonStringField(context, "triggerCharacter", "")
 				)
 			);
@@ -837,7 +1081,7 @@ json2LspVersionedTextDocumentIdentifier(json : Json) -> Maybe<LspVersionedTextDo
 
 json2LspDidChangeTextDocumentParams(json : Json) -> Maybe<LspDidChangeTextDocumentParams> {
 	maybeMap(json2LspVersionedTextDocumentIdentifier(getJsonObjectField(json, "textDocument")), \textDocument ->
-		LspDidChangeTextDocumentParams(textDocument, 
+		LspDidChangeTextDocumentParams(textDocument,
 			filtermap(getJsonArrayField(json, "contentChanges"), json2LspTextDocumentContentChangeEvent)
 		)
 	);
@@ -1003,7 +1247,7 @@ json2LspWorkDoneProgressCancelParams(json : Json) -> Maybe<LspWorkDoneProgressCa
 
 json2LspCodeActionOptions(json : Json) -> Maybe<LspCodeActionOptions> {
 	if (!jsonObjectHasField(json, "codeActionKinds")) None() else {
-		Some(LspCodeActionOptions(filtermap(getJsonArrayField(json, "codeActionKinds"), 
+		Some(LspCodeActionOptions(filtermap(getJsonArrayField(json, "codeActionKinds"),
 			\k -> {
 				kind = getJsonStringValue(k, "");
 				if (kind == "") None() else Some(kind);
@@ -1013,8 +1257,8 @@ json2LspCodeActionOptions(json : Json) -> Maybe<LspCodeActionOptions> {
 }
 
 json2LspCodeActionParams(json : Json) -> Maybe<LspCodeActionParams> {
-	maybeBind(json2LspTextDocumentIdentifier(getJsonObjectField(json, "textDocument")), 
-		\textDocument -> maybeBind(json2LspRange(getJsonObjectField(json, "range")), 
+	maybeBind(json2LspTextDocumentIdentifier(getJsonObjectField(json, "textDocument")),
+		\textDocument -> maybeBind(json2LspRange(getJsonObjectField(json, "range")),
 			\range -> maybeMap(json2LspCodeActionContext(getJsonObjectField(json, "context")),
 				\context -> LspCodeActionParams(textDocument, range, context)
 			)
@@ -1078,13 +1322,13 @@ json2Command(json : Json) -> Maybe<LspCommand> {
 }
 
 json2LspTextDocumentEdit(json : Json) -> Maybe<LspTextDocumentEdit> {
-	maybeMap(json2LspVersionedTextDocumentIdentifier(getJsonObjectField(json, "textDocument")), 
+	maybeMap(json2LspVersionedTextDocumentIdentifier(getJsonObjectField(json, "textDocument")),
 		\textDocument -> LspTextDocumentEdit(textDocument, filtermap(getJsonArrayField(json, "edits"), json2LspTextEdit))
 	);
 }
 
 json2LspTextEdit(json : Json) -> Maybe<LspTextEdit> {
-	maybeBind(json2LspRange(getJsonObjectField(json, "range")), 
+	maybeBind(json2LspRange(getJsonObjectField(json, "range")),
 		\range -> {
 			if (!jsonObjectHasField(json, "newText")) None() else {
 				Some(LspTextEdit(range, getJsonStringField(json, "newText", "")));
@@ -1093,8 +1337,17 @@ json2LspTextEdit(json : Json) -> Maybe<LspTextEdit> {
 	);
 }
 
+json2LspInsertReplaceEdit(json : Json) -> Maybe<LspInsertReplaceEdit> {
+	newText = getJsonStringField(json, "newText", "");
+	maybeMap2(\insert, replace -> LspInsertReplaceEdit(newText, insert, replace))
+	(
+		json2LspRange(getJsonObjectField(json, "insert")),
+		json2LspRange(getJsonObjectField(json, "replace")),
+	);
+}
+
 json2LspWorkspaceEdit(json : Json) -> Maybe<LspWorkspaceEdit> {
-	maybeMap(json2LspWorkspaceEditChanges(getJsonObjectField(json, "changes")), 
+	maybeMap(json2LspWorkspaceEditChanges(getJsonObjectField(json, "changes")),
 		\changes -> LspWorkspaceEdit(changes, filtermap(getJsonArrayField(json, "documentChanges"), json2LspWorkspaceEditDocumentChange))
 	);
 }
@@ -1106,7 +1359,7 @@ json2LspWorkspaceEditChanges(json : Json) -> Maybe<LspWorkspaceEditChanges> {
 			uri = parseURI(pair.first);
 			if (uri2string(uri) != pair.first) None() else {
 				Some(Pair(
-					uri, 
+					uri,
 					filtermap(getJsonArrayValue(pair.second, []), json2LspTextEdit)
 				));
 			}
@@ -1191,8 +1444,126 @@ json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile> {
 	}
 }
 
+json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem> {
+	if (!forall(["name", "kind", "uri", "range", "selectionRange"], \field -> jsonObjectHasField(json, field))) None() else {
+		name = getJsonStringField(json, "name", "");
+		kind = s2i(getJsonStringField(json, "kind", ""));
+		tags = filtermap(getJsonArrayField(json, "tags"), getJsonIntValueM);
+		detail = getJsonStringField(json, "detail", "");
+		uri = parseURI(getJsonStringField(json, "uri", ""));
+		data = getJsonFieldValue(json, "name", JsonNull());
+		maybeBind(json2LspRange(getJsonFieldValue(json, "range", JsonNull())), \range ->
+			maybeMap(json2LspRange(getJsonFieldValue(json, "selectionRange", JsonNull())), \selectionRange ->
+				LspCallHierarchyItem(
+					name, kind, tags, detail, uri, range, selectionRange, data
+				)
+			)
+		);
+	}
+}
+
+json2LspCallHierarchyIncomingCallsParams(json : Json) -> Maybe<LspCallHierarchyIncomingCallsParams> {
+	if (!jsonObjectHasField(json, "item")) None() else {
+		item_json = getJsonFieldValue(json, "item", JsonNull());
+		maybeMap(json2LspCallHierarchyItem(item_json), \item ->
+			LspCallHierarchyIncomingCallsParams(item)
+		)
+	}
+}
+
+json2LspCallHierarchyIncomingCall(json : Json) -> Maybe<LspCallHierarchyIncomingCall> {
+	if (!jsonObjectHasField(json, "from") || !jsonObjectHasField(json, "fromRanges")) None() else {
+		from_json = getJsonFieldValue(json, "from", JsonNull());
+		fromRanges_jsons = getJsonArrayField(json, "fromRanges");
+		maybeMap(json2LspCallHierarchyItem(from_json), \from ->
+			LspCallHierarchyIncomingCall(from, filtermap(fromRanges_jsons, json2LspRange))
+		)
+	}
+}
+
+json2LspCallHierarchyOutgoingCallsParams(json : Json) -> Maybe<LspCallHierarchyOutgoingCallsParams> {
+	if (!jsonObjectHasField(json, "item")) None() else {
+		item_json = getJsonFieldValue(json, "item", JsonNull());
+		maybeMap(json2LspCallHierarchyItem(item_json), \item ->
+			LspCallHierarchyOutgoingCallsParams(item)
+		)
+	}
+}
+
+json2LspCallHierarchyOutgoingCall(json : Json) -> Maybe<LspCallHierarchyOutgoingCall> {
+	if (!jsonObjectHasField(json, "to") || !jsonObjectHasField(json, "toRanges")) None() else {
+		to_json = getJsonFieldValue(json, "to", JsonNull());
+		toRanges_jsons = getJsonArrayField(json, "toRanges");
+		maybeMap(json2LspCallHierarchyItem(to_json), \to ->
+			LspCallHierarchyOutgoingCall(to, filtermap(toRanges_jsons, json2LspRange))
+		)
+	}
+}
+
+json2LspCancelParams(json : Json) -> Maybe<LspCancelParams> {
+	if (!jsonObjectHasField(json, "id")) None() else {
+		id = getJsonFieldValue(json, "id", JsonNull());
+		Some(LspCancelParams(id));
+	}
+}
+
+json2LspSetTrace(json : Json) -> Maybe<LspSetTrace> {
+	if (!jsonObjectHasField(json, "value")) None() else {
+		value = getJsonStringField(json, "value", "");
+		if (value == "off" || value == "message" || value == "verbose") {
+			Some(LspSetTrace(value));
+		} else {
+			None();
+		}
+	}
+}
+
+json2LspLogTraceParams(json : Json) -> Maybe<LspLogTraceParams> {
+	if (!jsonObjectHasField(json, "message")) None() else {
+		message = getJsonStringField(json, "message", "");
+		verbose = getJsonStringField(json, "verbose", "");
+		Some(LspLogTraceParams(message, verbose));
+	}
+}
+
+json2LspInitializeParams(json : Json) -> Maybe<LspInitializeParams> {
+	if (!jsonObjectHasField(json, "processId")) None() else {
+		processId = switch (getJsonFieldValue(json, "processId", JsonNull())) {
+			JsonString(id): id;
+			default: "";
+		}
+		maybeMap(json2LspClientInfo(getJsonObjectField(json, "clientInfo")), \clientInfo ->
+			LspInitializeParams(
+				processId,
+				clientInfo,
+				getJsonStringField(json, "locale", ""),
+				getJsonStringField(json, "rootPath", ""),
+				getJsonStringField(json, "rootUri", ""),
+				getJsonObjectField(json, "initializationOptions"),
+				getJsonObjectField(json, "capabilities"),
+				getJsonStringField(json, "trace", "off"),
+				filtermap(getJsonArrayField(json, "workspaceFolders"), json2LspWorkspaceFolder)
+			)
+		);
+	}
+}
+
+json2LspClientInfo(json : Json) -> Maybe<LspClientInfo> {
+	Some(LspClientInfo(
+		getJsonStringField(json, "name", ""),
+		getJsonStringField(json, "version", "")
+	));
+}
+
+json2LspWorkspaceFolder(json : Json) -> Maybe<LspWorkspaceFolder> {
+	Some(LspWorkspaceFolder(
+		getJsonStringField(json, "uri", ""),
+		getJsonStringField(json, "name", "")
+	));
+}
+
+
 lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string {
-	patch = unescapeStr(changeEvent.text);
 	if (changeEvent.range.start.line != -1) {
 		resolver = makeLineResolver(src);
 		start = findLineIndex(resolver, changeEvent.range.start.line, changeEvent.range.start.character);
@@ -1200,9 +1571,9 @@ lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src 
 
 		before = substring(src, 0, start);
 		after = substring(src, end, strlen(src) - end);
-		before + patch + after;
+		before + changeEvent.text + after;
 	} else {
 		// changed file is passed as a whole.
-		patch;
+		changeEvent.text;
 	}
 }

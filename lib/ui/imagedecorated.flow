@@ -7,6 +7,8 @@ import ui/imagedecoratedstructs;
 import form/form;
 import ui/activityindicator;
 
+import material/material2tropic;
+import material/material_gui;
 /*
  * The code below is full of callbacks and other tricks that makes it hard readable.
  * The reason is requirements of editors. Initially all the decorations were solid and scaled as whole.
@@ -24,16 +26,18 @@ export {
 		filename : string,
 		width : double,
 		height : double,
-		imageOnlyZoomFn : Maybe<((Form) ->Form) -> ((Form) -> Pair<Form, (Form) -> Form>)>,
+		imageOnlyZoomFn : Maybe<((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>>,
 		trustedSizes : bool,
 		decorations : [ImageDecoration],
 		makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 		preScaleCrop : bool,
 		noScalingDecorations : bool,
 		onLoaded : () -> void,
+		onWarning : () -> void,
 		hideLoadingSpinnerB : Behaviour<bool>
 	) -> Form;
 
+	makeImagePreZoomDecorationsForms(decorations : [PreZoomDecoration], width : double, height : double) -> [Form];
 	makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], width : double, height : double) -> Form;
 
 	splitImageDecorations(
@@ -57,12 +61,12 @@ export {
 	// without decorations.
 	// [-TODO-] simplify
 	// #41879 Now Pair<zoomed form, transform to be applied after crop is returned>
-	makeZoomAdder(zoom : ZoomDescription) -> ((Form) -> Form) -> ((Form) -> Form);
+	makeZoomAdder(zoom : ZoomDescription) -> ((Form) -> Form) -> (Form) -> Form;
 
 	makeZoomAdder3(
 		zoom : ZoomDescription,
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>
-	) -> ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>);
+	) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>;
 
 	// fn is given the image to generate small preview.
 	// only .mousezoom from ZoomDescription is checked.
@@ -71,7 +75,7 @@ export {
 		fn : (Form) -> Form,
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>,
 		backcolor : Maybe<Color>
-	) -> ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>);
+	) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>;
 
 	makeDimmerShape(
 		type : ImageDimmerType,
@@ -101,16 +105,25 @@ calculateAdaptiveCropValues(crop : ImageAdaptiveCrop, formSize : WidthHeight, gi
 	if (loading || formSize.width <= availableWH.width && formSize.height <= availableWH.height) {
 		Quadruple(0.0, 0.0, formSize.width, formSize.height);
 	} else {
-		awhRatio = availableWH.width / availableWH.height;
+		awhRatio = if (availableWH.height > 0.) {
+			availableWH.width / availableWH.height;
+		} else {
+			1.;
+		};
+
 		k = (awhRatio - 1.0) * (1.0 - squareness);
 
-		spaceWH =
-			if (availableWH.width <= 0.0)
-				givenSize
-			else
-				WidthHeight(availableWH.height + availableWH.height * k, availableWH.height);
+		spaceWH = if (availableWH.width <= 0.0) {
+			givenSize
+		} else {
+			WidthHeight(availableWH.height + availableWH.height * k, availableWH.height);
+		};
 
-		scale = max3(crop.width / spaceWH.width, crop.height / spaceWH.height, 1.0);
+		scale = if (spaceWH != zeroWH) {
+			max3(crop.width / spaceWH.width, crop.height / spaceWH.height, 1.0)
+		} else {
+			1.;
+		};
 
 		newCropW = min(max(spaceWH.width * scale, crop.width), formSize.width);
 		newCropH = min(max(spaceWH.height * scale, crop.height), formSize.height);
@@ -128,13 +141,14 @@ makeImageDecorated2(
 	filename : string,
 	_width : double,
 	_height : double,
-	imageOnlyZoomFn : Maybe<((Form) ->Form) -> ((Form) -> Pair<Form, (Form) -> Form>)>,
+	imageOnlyZoomFn : Maybe<((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>>,
 	trustedSizes : bool,
 	decorations : [ImageDecoration],
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 	preScaleCrop : bool,
 	noScalingDecorations : bool,
 	onLoaded : () -> void,
+	onWarning : () -> void,
 	hideLoadingSpinnerB : Behaviour<bool>
 ) -> Form {
 
@@ -142,8 +156,9 @@ makeImageDecorated2(
 	savedSize = either(getCachedPictureSize(filename), givenSize);
 
 	pictureIsLoading = make(true);
+	pictureWarning = make(false);
 
-	pictureWithWarning = makeImageWithWarning(filename, pictureIsLoading, hideLoadingSpinnerB);
+	pictureWithWarning = makeImageWithWarning(filename, pictureIsLoading, pictureWarning, hideLoadingSpinnerB);
 
 	wholeImageWH : DynamicBehaviour<WidthHeight> = makeWH();
 	savedOrRealSize = makeWH();
@@ -209,7 +224,7 @@ makeImageDecorated2(
 	}
 
 	//Takes a function to add decorations to full size image and returns (Form) -> Pair<Form, (Form) -> Form). It takes full size image and returns downscaled one and then second of the pair is applied.
-	zoommer : ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>) = either(imageOnlyZoomFn, \fn -> \form -> Pair(form, idfn));
+	zoommer : ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form> = either(imageOnlyZoomFn, \fn -> \form -> Pair(form, idfn));
 
 	useSavedSize = \f -> {
 		Size2(savedOrRealSize, f) |> NonZeroSize
@@ -282,13 +297,21 @@ makeImageDecorated2(
 	decoratedPicSize = makeWH();
 	Constructor(
 		Group([
-			Visibleb(
-				pictureIsLoading,
-				Available2(
-					decoratedPicSize,
-					Center(pictureWithWarning.warning)
+			if (isUrlParameterTrue("media_form"))
+				Visibleb(
+					pictureIsLoading,
+					Available2(
+						decoratedPicSize,
+						Center(pictureWithWarning.warning)
+					)
 				)
-			),
+			else
+				Select(pictureIsLoading, \l ->
+					if (l) Available2(
+						decoratedPicSize,
+						Center(pictureWithWarning.warning)
+					) else Empty()
+				),
 			Inspect([ISize(decoratedPicSize)], thePicture)
 		]),
 		\ -> {
@@ -300,6 +323,7 @@ makeImageDecorated2(
 
 			uns1 = connectSelect2Distinctu(pictureIsLoading, wholeImageWH, savedOrRealSize, \l, wh -> {(if (!l && wh.width > 0.0) wh else savedSize)});
 			uns2 = selectDistinctu(pictureIsLoading, \loading -> if (!loading) onLoaded()).second;
+			uns3 = selectDistinctu(pictureWarning, \warning -> if (warning) onWarning()).second;
 
 			\ -> {
 				uns0();
@@ -349,6 +373,8 @@ makeImageTextBox(ib : ImageTextBox) -> Form {
 		StartAlign(): b2d(getDefaultRtl());
 		EndAlign(): b2d(!getDefaultRtl());
 	};
+	widthManager = make(100000.0) |> \w -> ParagraphWidthManager(w, w, false);
+	scaleX = make(1.0);
 	Group([
 		makeImageRectangle(ib.rectangle, 0.0, 0.0),  // Only first parameter effective in the case.
 		Translate(
@@ -356,13 +382,72 @@ makeImageTextBox(ib : ImageTextBox) -> Form {
 			const(ib.rectangle.y),
 			Available(
 				const(recW), const(recH),
-				Align2(hAlignN, verticalAlign2d(ib.vAlign), Paragraph(
-					[TextFragment(ib.label.text, ib.label.style)],
-					[ib.hAlign]
+				Align2(hAlignN, verticalAlign2d(ib.vAlign), Constructor(
+					Scale(
+						scaleX, scaleX,
+						Border(8.0, 8.0, 8.0, 8.0, renderParagraph(
+							[TextFragment(ib.label.text, ib.label.style)],
+							[ib.hAlign, ParagraphSingleLine()],
+							getDefaultRtl(), widthManager
+						)
+					)),
+					\ -> {
+						[
+							connectSelectu(
+								widthManager.width, scaleX,
+								\w -> if (w < 1.0) 0.0 else min((recW - 16.0/*borders*/) / w, 1.0)
+							)
+						] |> \uns -> \-> applyall(uns)
+					}
 				))
 			)
 		),
 	]);
+}
+
+
+makeImageTextColumn(textCol : ImageTextColumn) -> Form {
+	heightB = make(0.);
+	topLeft = Point(textCol.x, textCol.y);
+	fontSize = extractStruct(textCol.label.style, FontSize(36.)).size;
+	textColor = extractStruct(textCol.label.style, Fill(0xFFFFFF)).color;
+	isItalicFont = isItalic(textCol.label.style);
+	isBoldFont = isBold(textCol.label.style);
+	backColor = extractStruct(textCol.style, Fill(0));
+	backOpacity = extractStruct(textCol.style, FillOpacity(0.5));
+
+	material2nativeForm(
+		makeMaterialManager([]),
+		MTranslate(
+			const(
+				topLeft
+			),
+			MGroup([
+				TRectangle(
+					[backColor, backOpacity],
+					TSizedHeight(textCol.width, heightB)
+				),
+				MAttachHeight(
+					MAvailableWidth(
+						MBorder4(8.,
+							MParagraph(textCol.label.text, [
+								MCustomColor(textColor),
+								MCustomFont(
+									fontSize,
+									switchFontFaceStyle(switchFontFaceStyle("Roboto", SItalic(), Some(isItalicFont)), SBold(), Some(isBoldFont)),
+									0.87
+								),
+								textCol.hAlign,
+								ParagraphMargin(0., 0.)
+							])
+						),
+						const(textCol.width)
+					),
+					heightB
+				)
+			])
+		)
+	)
 }
 
 makeImageCircle(iCircle : ImageCircle, _width : double, _height : double) -> Form {
@@ -391,55 +476,62 @@ makeImageCircle(iCircle : ImageCircle, _width : double, _height : double) -> For
 
 }
 
-makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : double, _height : double) -> Form {
-	if (decorations != []) {
-		fold(decorations, [], \prevD, d -> {
-			concat(prevD,
-				switch (d: PreZoomDecoration) {
-					ImageLabel(x, y, label): {
-						// We use a border to force the size to adjust accordingly
-						// We cut two pixel border of TextField, so we add them here to match view in Annotate
-						switch (label : Form) {
-							Text(text, style) : Offset(x, y, Border(2.0, 2.0, 0.0, 0.0, Text(getTranslationOnly(text), style))) |> v2a;
-							default : {
-								reportImageLabelError(d);
-								[]
-							}
-
+makeImagePreZoomDecorationsForms(decorations : [PreZoomDecoration], _width : double, _height : double) -> [Form] {
+	fold(decorations, [], \prevD, d -> {
+		concat(prevD,
+			switch (d: PreZoomDecoration) {
+				ImageLabel(x, y, label): {
+					// We use a border to force the size to adjust accordingly
+					// We cut two pixel border of TextField, so we add them here to match view in Annotate
+					switch (label : Form) {
+						Text(text, style) : Offset(x, y, Border(2.0, 2.0, 0.0, 0.0, Text(text, style))) |> v2a;
+						default : {
+							reportImageLabelError(d);
+							[]
 						}
-					}
-					ImageArrow(x, y, rotate, len, color, thickness, label): {
-						// (x, y) is a point to where the arrow points
-						angleRad = rotate * PI / 180.0;
 
-						arrow = FixSize(6.0, 9.0, Graphics(makeArrowGraphics(len, thickness), [Stroke(color), StrokeWidth(max(thickness, 1.0))]));
-						[
-							Offset(x, y, Rotate(const(-rotate - 90.0), arrow)),
-							Offset(x + len * cos(angleRad), y - len * sin(angleRad), label)
-						]
-					}
-					ImageCircle(x, y, radius, style, inverted): {
-						[ makeImageCircle(d, _width, _height) ]
-					}
-					ImageRectangle(x, y, width, height, style, inverted) : {
-						[ makeImageRectangle(d, _width, _height) ]
-					}
-					ImageTextBox(label, hAlign, vAlign, rect) : {
-						[ makeImageTextBox(d) ];
-					}
-					ImageDimmer(type, lt, rb, dimmerColor, borderColor, dimmerOpacity, borderOpacity) : {
-						shape = makeDimmerShape(type, lt, rb);
-						boxAround = [LineTo(0.0, 0.0), LineTo(0.0, _height), LineTo(_width, _height), LineTo(_width, 0.0), LineTo(0.0, 0.0)];
-						[
-							Group([
-								Graphics(concat(shape, boxAround), [Fill(dimmerColor), FillOpacity(dimmerOpacity)]),
-								Graphics(shape, [Stroke(borderColor), StrokeOpacity(borderOpacity)])
-							])
-						]
 					}
 				}
-			)
-		}) |> Group |> \f -> Size2(zeroSize, f)
+				ImageArrow(x, y, rotate, len, color, thickness, label): {
+					// (x, y) is a point to where the arrow points
+					angleRad = rotate * PI / 180.0;
+
+					arrow = FixSize(6.0, 9.0, Graphics(makeArrowGraphics(len, thickness), [Stroke(color), StrokeWidth(max(thickness, 1.0))]));
+					[
+						Offset(x, y, Rotate(const(-rotate - 90.0), arrow)),
+						Offset(x + len * cos(angleRad), y - len * sin(angleRad), label)
+					]
+				}
+				ImageCircle(x, y, radius, style, inverted): {
+					[ makeImageCircle(d, _width, _height) ]
+				}
+				ImageRectangle(x, y, width, height, style, inverted) : {
+					[ makeImageRectangle(d, _width, _height) ]
+				}
+				ImageTextBox(label, hAlign, vAlign, rect) : {
+					[ makeImageTextBox(d) ];
+				}
+				ImageTextColumn(__, __, __, __, __, __, __) : {
+					[ makeImageTextColumn(d) ]
+				}
+				ImageDimmer(type, lt, rb, dimmerColor, borderColor, dimmerOpacity, borderOpacity) : {
+					shape = makeDimmerShape(type, lt, rb);
+					boxAround = [LineTo(0.0, 0.0), LineTo(0.0, _height), LineTo(_width, _height), LineTo(_width, 0.0), LineTo(0.0, 0.0)];
+					[
+						Group([
+							Graphics(concat(shape, boxAround), [Fill(dimmerColor), FillOpacity(dimmerOpacity)]),
+							Graphics(shape, [Stroke(borderColor), StrokeOpacity(borderOpacity)])
+						])
+					]
+				}
+			}
+		)
+	})
+}
+
+makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : double, _height : double) -> Form {
+	if (decorations != []) {
+		makeImagePreZoomDecorationsForms(decorations, _width, _height) |> Group |> \f -> Size2(zeroSize, f)
 	} else {
 		Empty()
 	}
@@ -447,11 +539,12 @@ makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : doub
 
 
 PictureWithWarning(picture : Form, warning : Form);
-makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>, hideLoadingSpinnerB : Behaviour<bool>) -> PictureWithWarning {
+makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>, pictureWarning : DynamicBehaviour<bool>, hideLoadingSpinnerB : Behaviour<bool>) -> PictureWithWarning {
 	filenameUrl = unescapeHtml(filename);
 	warning = make(Empty());
 	setWarning = \t, isBrokenImage -> {
 		if (isBrokenImage) println(t);
+		nextDistinct(pictureWarning, isBrokenImage);
 		next(
 			warning,
 			Tooltip(
@@ -527,7 +620,7 @@ makeZoomAdder2(
 	fn: (Form) -> Form,
 	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
 	backcolor : Maybe<Color>
-) -> ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>)
+) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>
 {
 	if (zoom.mouseZoom) {
 		\makeExtDecForm -> \form -> {
@@ -543,8 +636,9 @@ makeZoomAdder2(
 					zoom.toWidth,
 					zoom.percent,
 					backcolor,
-					zoomBtn.formFn,
+					\onClickFn -> zoomBtn.formFn(onClickFn, None()),
 					zoomBtn.align,
+					zoom.zoomCustomUIFnM,
 					zoom.closeButtonFn,
 					zoom.closeButtonAlign,
 					virtualScreenInfoM
@@ -556,6 +650,7 @@ makeZoomAdder2(
 					TreeEmpty(),
 					zoom.toWidth,
 					zoom.percent,
+					zoom.zoomCustomUIFnM,
 					zoom.extraZoom,
 					backcolor,
 					zoom.closeButtonAlign,
@@ -588,7 +683,7 @@ splitImageDecorations(
 	decorations : [ImageDecoration]
 	) -> ImageDecoration4
 {
-	graphics = \q : ImageDecoration4, d : PreAndPostZoomDecoration -> {
+	graphics = \q : ImageDecoration4, d : PreOrPostZoomDecoration -> {
 		if (noScaleDecorations)
 			ImageDecoration4(q.preZoom, arrayPush(q.postZoom, d), q.sizeIndependent, q.crop)
 		else
@@ -611,6 +706,7 @@ splitImageDecorations(
 			ImageArrow(__, __, __, __, __, __, __) : graphics(acc, d);
 			ImageRectangle(__, __, __, __, __, __) : graphics(acc, d);
 			ImageTextBox(__, __, __, __) : graphics(acc, d);
+			ImageTextColumn(__, __, __, __, __, __, __) : graphics(acc, d);
 			ImageCaption(__, __, __, __, __): independent(acc, d);
 			ImagePadding(__, __, __, __): independent(acc, d);
 			ImageBorder(__, __, __): independent(acc, d);
@@ -696,7 +792,7 @@ makePostZoomDecorationsAdder(
 				switch (label : Form) {
 					Text(text, style) :
 						Scale(scale, scale,
-							Offset(x, y, Border(2.0, 2.0, 0.0, 0.0, Text(getTranslationOnly(text), style)))
+							Offset(x, y, Border(2.0, 2.0, 0.0, 0.0, Text(text, style)))
 						);
 					default : {
 						reportImageLabelError(d);
@@ -744,6 +840,7 @@ makePostZoomDecorationsAdder(
 			else
 				Empty()
 		}
+		ImageTextColumn(__,__, __, __, __, __, __) : Empty()
 	});
 	forms1 = filter(forms0, neq(Empty()));
 	forms = Group(forms1);
@@ -763,7 +860,7 @@ makeSizeIndependentDecorationsAdder(
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 	imgSize: WidthHeight,
 	zoom : bool
-	) -> ((Form) -> Form)
+	) -> (Form) -> Form
 {
 	imageWH = makeWH();
 	paragraphSizer = \l, t, r, b -> \f -> {

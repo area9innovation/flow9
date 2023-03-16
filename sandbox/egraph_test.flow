@@ -1,0 +1,166 @@
+import ds/egraph_matching;
+import formats/json/json;
+
+EMatchResult(bindings : Tree<string, ?>, fail : bool);
+
+// Does this pattern match this value at this point?
+epatternMatch(acc : EMatchResult, e : EGraph<?>, term : ?, pattern : EPattern<?>) -> EMatchResult {
+	switch (pattern) {
+		EPatternVar(id): {
+			mbind = lookupTree(acc.bindings, id);
+			mbind ?? {
+				// OK, already is bound. Check that it is consistent
+				if (mbind == term) {
+					acc
+				} else {
+					// otherwise, fail
+					EMatchResult(acc with fail = true);
+				}
+			} : EMatchResult(acc with bindings = setTree(acc.bindings, id, term));
+		}
+		EPatternTerm(head, pargs): {
+			split = e.splitChildren(term);
+			if (split.first == head && length(split.second) == length(pargs)) {
+				// OK, the head and # args match
+				foldi(split.second, acc, \i, acc2, cterm : ? -> {
+					epatternMatch(acc2, e, cterm, pargs[i]);
+				});
+			} else {
+				// No match
+				EMatchResult(acc with fail = true);
+			}
+		}
+	}
+}
+
+combineJson(head : Json, args : [Json]) -> Json {
+	switch (head) {
+		JsonNull(): head;
+		JsonBool(v): head;
+		JsonString(s): head;
+		JsonDouble(value): head;
+		JsonObject(members): {
+			JsonObject(mapi(members, \i, p -> {
+				arg = elementAt(args, i, JsonNull());
+				Pair(p.first, arg);
+			}))
+		}
+		JsonArray(value): JsonArray(args);
+	}
+}
+
+
+main() {
+	egraph : EGraph<Json> = makeEGraph(\json -> {
+		// Function to split out children
+		switch (json : Json) {
+			JsonNull(): Pair(json, []);
+			JsonBool(v): Pair(json, []);
+			JsonDouble(v): Pair(json, []);
+			JsonString(s): Pair(json, []);
+			JsonObject(members): {
+				Pair(
+					// We extract the children, but keep the member names
+					JsonObject(map(members, \m -> Pair(m.first, JsonNull()))),
+					map(members, \m -> m.second)
+				)
+			}
+			JsonArray(values): Pair(JsonArray([]), values);
+		}
+	});
+
+//	null = addEExp(egraph, JsonNull());
+	array1 = addEExp(egraph, JsonArray([JsonNull(), JsonDouble(2.0)]));
+	array2 = addEExp(egraph, JsonArray([JsonNull(), JsonDouble(1.0)]));
+	one = addEExp(egraph, JsonDouble(1.0));
+	two = addEExp(egraph, JsonDouble(2.0));
+	// OK, now we claim that 1.0 and 2.0 are equivalent
+	joinedDoubles = unionEClass(egraph, one, two);
+
+	// OK, clean up the graph
+	canonicalizeEGraph(egraph);	
+
+	// Now, array1 & array2 should be equivalent
+	array1Class = getEClassRoot(egraph, array1);
+	array2Class = getEClassRoot(egraph, array2);
+	if (array1Class != array2Class) {
+		println("INVARIANT BROKEN: these should be equivalent")
+	}
+
+	if (false) {
+		// Check basic pattern matching
+		pattern = EPatternTerm(
+			JsonArray([]), 
+			[
+				EPatternVar("elem1"),
+				EPatternVar("elem2"),
+			]
+		);
+
+		// Concrete term based matching
+		term = JsonArray([JsonNull(), JsonDouble(2.0)]);
+		res = epatternMatch(EMatchResult(makeTree(), false), egraph, term, pattern);
+		if (res.fail) {
+			println("Could not match pattern")
+		} else {
+			traverseInOrder(res.bindings, \name, val -> {
+				println(name + ": " + toString(val));
+			})
+		};
+	}
+
+	if (true) {
+		// OK, try a pattern match against a class
+		// This is the pattern "[null, $elem1]" where
+		// we match arrays with two elements, and bind the second
+		// value
+		pattern2 = EPatternTerm(
+			JsonArray([]), 
+			[
+				EPatternTerm(JsonNull(), []),
+				//EPatternTerm(JsonDouble(2.0), []),
+				EPatternVar("elem1"),
+			]
+		);
+
+		pattern4 = EPatternTerm(JsonNull(), []);
+		pattern3 = EPatternVar("elem");
+
+		replacement = EPatternTerm(
+			JsonArray([]),
+			[
+				EPatternVar("elem1")
+			]
+		);
+
+		engine = makeEMatchEngine(egraph, JsonNull(), combineJson);
+		findAllEClassMatches(engine, array1Class, pattern2, \bindings, match : Json -> {
+			println("Match: " + toString(match) + " gave bindings:");
+			traverseInOrder(bindings, \name, val : Json -> {
+				println(name + ": " + toString(val));
+			})
+		});
+
+		replacements = [
+			EReplacement(
+				EPatternTerm(JsonNull(), []),
+				\bin -> {
+					JsonDouble(1.0)
+				}
+			)
+		];
+
+		performEReplacements(engine, 5, array1Class, replacements);
+
+		test = JsonArray([JsonDouble(1.0), JsonDouble(2.0)]);
+		finalClass = addEExp(egraph, test);
+
+		if (isSameEClass(egraph, finalClass, array1Class)) {
+			println("Something is wrong");
+			println(finalClass);
+			println(array1Class);
+		}
+	}
+
+	quit(0);
+}

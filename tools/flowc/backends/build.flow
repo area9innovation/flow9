@@ -7,15 +7,17 @@ import tools/flowc/backends/lisp/fi2lisp;
 import tools/flowc/backends/ml/fi2ml;
 import tools/flowc/backends/cpp/fc2cpp;
 import tools/flowc/backends/bytecode/fi2bytecode;
-import tools/flowc/incremental/fc2fi;
 import tools/flowc/backends/protobuf/fi2protobuf;
+import tools/flowc/backends/speedy/fi2speedy;
 import tools/flowc/backends/html/fi2html;
 import tools/flowc/backends/doc/fi2doc;
 import tools/flowc/backends/wasm/fi2wasm;
 import tools/flowc/backends/inca/fi2inca;
 import tools/flowc/backends/cpp2/fi2cpp2;
 import tools/flowc/backends/flow/fi2flow;
-import tools/flowc/backends/tsd/fi2tsd;
+import tools/flowc/backends/cpp3/fi2cpp3;
+import tools/flowc/backends/wise/fi2wise;
+import promise;
 
 export {
 	buildFiProgram(program : FiProgram, globEnv : FcTypeEnvGlobal, callback : (int) -> void) -> void;
@@ -30,24 +32,31 @@ buildFiProgram(program0 : FiProgram, globEnv : FcTypeEnvGlobal, callback : (int)
 			fi2inca(program0, ic);
 		}
 	}
-	bc_step   = eitherFn(configs.bcconfig,   \cfg -> \->fi2bytecode(program, cfg, \ -> callback(0)), \ -> \ -> callback(0));
-	html_step = eitherFn(configs.htmlconfig, \cfg -> \->fi2html(program, cfg, bc_step), \ -> \ -> bc_step());
-	js_step   = eitherFn(configs.jsconfig,   \cfg -> \->fi2javascript(program, globEnv, cfg, html_step), \ -> \ -> html_step());
-	es_step   = eitherFn(configs.es6config,  \cfg -> \->fi2javascript(program, globEnv, cfg, js_step), \ -> \ -> js_step());
-	ts_step   = eitherFn(configs.tsconfig,   \cfg -> \->fi2javascript(program, globEnv, cfg, es_step), \ -> \ -> es_step());
-	java_step = eitherFn(configs.javaconfig, \cfg -> \->fi2java(program, cfg, ts_step), \ -> \ -> ts_step());
-	rust_step = eitherFn(configs.rustconfig, \cfg -> \->fi2rust(program, cfg, java_step), \ -> \ -> java_step());
-	nim_step  = eitherFn(configs.nimconfig,  \cfg -> \->fi2nim(program, cfg, rust_step), \ -> \ -> rust_step());
-	d_step    = eitherFn(configs.dconfig,    \cfg -> \->fi2d(program, cfg, nim_step), \ -> \ -> nim_step());
-	lisp_step = eitherFn(configs.lispconfig, \cfg -> \->fi2lisp(program, cfg, d_step), \ -> \ -> d_step());
-	cpp_step  = eitherFn(configs.cppconfig,  \cfg -> \->fc2cpp(program, cfg, lisp_step), \ -> \ -> lisp_step());
-	proto_step= eitherFn(configs.protobufconfig,\cfg -> \->fi2protobuf(program, cfg, cpp_step), \ -> \ -> cpp_step());
-	ml_step   = eitherFn(configs.mlconfig,   \cfg -> \->fi2ml(program, cfg, proto_step), \ -> \ -> proto_step());
-	doc_step  = eitherFn(configs.docconfig,  \cfg -> \->fi2doc(program, cfg, ml_step), \ -> \ -> ml_step());
-	wasm_step = eitherFn(configs.wasmconfig, \cfg -> \->fi2wasm(program, globEnv, cfg, doc_step), \ -> \ -> doc_step());
-	flow_step = eitherFn(configs.flowconfig, \cfg -> \->fi2flow(program, cfg, wasm_step), \ -> \ -> wasm_step());
-	tsd_step = eitherFn(configs.tsdconfig, \cfg -> \->fi2tsd(program, cfg, flow_step), \ -> \ -> flow_step());
-	cpp2_step = eitherFn(configs.cpp2config, \cfg -> \->fi2cpp2(program, cfg, tsd_step), \ -> \ -> tsd_step());
-	// Actual start of a program building
-	cpp2_step();
+	exit_code_callback = \fulfil, reject -> \e -> if (e == 0) fulfil(0) else reject(e);
+	doneP(
+		allP(filtermap([
+			maybeMap(configs.bcconfig,       \cfg -> Promise(\fulfil, reject-> fi2bytecode(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.jsconfig,       \cfg -> Promise(\fulfil, reject-> fi2javascript(program, globEnv, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.es6config,      \cfg -> Promise(\fulfil, reject-> fi2javascript(program, globEnv, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.tsconfig,       \cfg -> Promise(\fulfil, reject-> fi2javascript(program, globEnv, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.htmlconfig,     \cfg -> Promise(\fulfil, reject-> fi2html(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.javaconfig,     \cfg -> Promise(\fulfil, reject-> fi2java(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.rustconfig,     \cfg -> Promise(\fulfil, reject-> fi2rust(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.nimconfig,      \cfg -> Promise(\fulfil, reject-> fi2nim(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.dconfig,        \cfg -> Promise(\fulfil, reject-> fi2d(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.lispconfig,     \cfg -> Promise(\fulfil, reject-> fi2lisp(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.cppconfig,      \cfg -> Promise(\fulfil, reject-> fc2cpp(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.protobufconfig, \cfg -> Promise(\fulfil, reject-> fi2protobuf(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.speedyconfig,   \cfg -> Promise(\fulfil, reject-> fi2speedy(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.mlconfig,       \cfg -> Promise(\fulfil, reject-> fi2ml(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.docconfig,      \cfg -> Promise(\fulfil, reject-> fi2doc(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.wasmconfig,     \cfg -> Promise(\fulfil, reject-> fi2wasm(program, globEnv, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.flowconfig,     \cfg -> Promise(\fulfil, reject-> fi2flow(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.cpp2config,     \cfg -> Promise(\fulfil, reject-> fi2cpp2(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.wiseconfig,     \cfg -> Promise(\fulfil, reject-> fi2wise(program, cfg, exit_code_callback(fulfil, reject)))),
+			maybeMap(configs.cpp3config,     \cfg -> Promise(\fulfil, reject-> fi2cpp3(program, cfg, exit_code_callback(fulfil, reject)))),
+		], idfn)),
+		\codes -> if (forall(codes, \code -> code == 0)) callback(0) else callback(5),
+		callback
+	);
 }

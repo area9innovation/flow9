@@ -9,14 +9,13 @@ export {
 	// Will take care of font size, color opacity, interline spacing based on guidelines. Give it
 	// pure white or black as color
 	MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MParagraphStyle]) -> Tropic;
-	MParagraph2T(parent : MFocusGroup, text : string, style : [MParagraphStyle]) -> Tropic { MDynamicParagraph2T(parent, const(text), style); };
+
+	extractMTextStyleDef(style : [MParagraphStyle], def : MFontStyleBundle) -> [MTextStyle];
+	
+	MFontStyleBundle(color : MThemeColor, fontStyle : MFontStyle, enabled : bool);
 
 	MTextStyle2TCharacterStyle(parent : MFocusGroup, text : string, style : [MTextStyle]) -> [TCharacterStyle];
-
-	extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MThemeColor, MFontStyle, bool>) -> Triple<MThemeColor, MFontStyle, bool>;
-
 	MTextStyle2CharacterStyle(parent : MFocusGroup, style : [MParagraphStyle]) -> [CharacterStyle];
-	MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], def : Triple<MThemeColor, MFontStyle, bool>) -> [CharacterStyle];
 
 	MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle];
 	MFontStyle2MFont(parent : MFocusGroup, style : MFontStyle) -> MFont;
@@ -31,9 +30,8 @@ export {
 	// Use MTextStyle2CharacterStyle or MTextStyle2CharacterStyleDef instead.
 	MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
 
-	defaultMaterialFontSize = 14.0;
-
 	addTagName(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacterStyle];
+	updateOnFontWrapper(parent : MFocusGroup, makeTropic : () -> Tropic) -> Tropic;
 
 	getHeadingTagFromFontSize(fontSize : double) -> Maybe<string>;
 }
@@ -56,27 +54,33 @@ currentMLang = ref "";
 currentMLangFont = ref "";
 
 MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
-	TText(text, MTextStyle2TCharacterStyle(parent, text, style))
+	updateOnFontWrapper(parent, \ -> TText(text, MTextStyle2TCharacterStyle(parent, text, style)))
 }
 
 MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MParagraphStyle]) -> Tropic {
 	mTextStyle = style2MTextStyle(style);
-	defStyle = Triple(getTextColor(parent), getFontStyle(parent), true);
-	fontStyle = extractMTextStyleDef(mTextStyle, defStyle);
-	characterStyle = MTextStyle2TCharacterStyle(parent, fgetValue(text), mTextStyle);
+	fontStyle = extractMFontStyleDef(mTextStyle, getFontStyle(parent));
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 
-	interlineSpacing = eitherFn(tryExtractStruct(style, InterlineSpacing(0.)), idfn, \ -> MFontStyle2InterlineSpacing(parent, fontStyle.second));
-	paragraphMargin = eitherFn(tryExtractStruct(style, ParagraphMargin(0., 0.)), idfn, \ -> MFontStyle2ParagraphMargin(parent, fontStyle.second));
+	interlineSpacing = eitherFn(tryExtractStruct(style, InterlineSpacing(0.)), idfn, \ -> MFontStyle2InterlineSpacing(parent, fontStyle));
+	paragraphMargin = eitherFn(tryExtractStruct(style, ParagraphMargin(0., 0.)), idfn, \ -> MFontStyle2ParagraphMargin(parent, fontStyle));
 
 	cropLongWords = extractStructMany(style, CropWords(true));
 
-	concat3(characterStyle, [ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
-	|> (\parStyle : [TParagraphStyle] ->
-		arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style), extractStruct(style, SetRTL(parent.rtl)).rtl))
-	)
-	|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, FullWidth())))
-	|> (\parStyle -> TParagraph(text, parStyle))
+	parStyle =
+		concat([ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
+		|> (\parStyle : [TParagraphStyle] ->
+			arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style), extractStruct(style, SetRTL(parent.rtl)).rtl))
+		)
+		|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, FullWidth())))
+		|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, Justify())))
+		|> (\parStyle : [TParagraphStyle] -> arrayPushMaybe(parStyle, tryExtractStruct(style, ParagraphMetrics(nop1))));
+
+	makeTParagraph = \ -> {
+		characterStyle = MTextStyle2TCharacterStyle(parent, fgetValue(text), mTextStyle);
+		TParagraph(text, concat(characterStyle, parStyle))
+	};
+	updateOnFontWrapper(parent, makeTParagraph)
 }
 
 MTextStyle2TCharacterStyle(parent : MFocusGroup, text : string, style : [MTextStyle]) -> [TCharacterStyle] {
@@ -85,8 +89,9 @@ MTextStyle2TCharacterStyle(parent : MFocusGroup, text : string, style : [MTextSt
 		\dc -> FDynamicColor(fselect(dc.color, FLift(\col -> MThemeColor2int(parent, col))))
 	);
 
-	MTextStyle2CharacterStyleDef(parent, style, Triple(getTextColor(parent), getFontStyle(parent), true))
+	MTextStyle2CharacterStyleDef(parent, style, MFontStyleBundle(getTextColor(parent), getFontStyle(parent), true))
 	|> (\st -> arrayPush(st, extractStruct(style, SetRTL(parent.rtl))))
+	|> (\st -> arrayPush(st, extractStruct(style, LocalizationEnabled(parent.theme.localizationEnabled))))
 	|> (\st -> eitherMap(dynamicColor, \dc -> arrayPush(st, dc), st))
 	|> (\st -> addMLangFontFamily(text, st))
 	|> addTagName(style)
@@ -139,43 +144,70 @@ addLangAttribute(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacte
 		)
 }
 
-extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MThemeColor, MFontStyle, bool>) -> Triple<MThemeColor, MFontStyle, bool> {
-	fold(style, def, \acc : Triple<MThemeColor, MFontStyle, bool>, st : MParagraphStyle ->
+updateOnFontWrapper(parent : MFocusGroup, makeTropic : () -> Tropic) -> Tropic {
+	eitherFn(parent.theme.fontWrapper, \wrapper -> TSelect(wrapper, \__ -> makeTropic()), makeTropic);
+}
+
+extractMTextStyleDef(style : [MParagraphStyle], def : MFontStyleBundle) -> [MTextStyle] {
+	bundle = extractMFontStyleBundle(style, def);
+
+	[bundle.color, bundle.fontStyle]
+	|> (\st -> if (bundle.enabled) st else arrayPush(st, MTextDisabled()))
+
+}
+
+extractMFontStyleBundle(style : [MParagraphStyle], def : MFontStyleBundle) -> MFontStyleBundle {
+	fold(style, def, \acc : MFontStyleBundle, st : MParagraphStyle ->
 		switch (st : MParagraphStyle) {
-			MThemeColor() : Triple(acc with first = st);
-			MFontStyle() : Triple(acc with second = st);
-			MTextDisabled() : Triple(acc with third = false);
+			MThemeColor() : MFontStyleBundle(acc with color = st);
+			MFontStyle() : MFontStyleBundle(acc with fontStyle = st);
+			MTextDisabled() : MFontStyleBundle(acc with enabled = false);
+			default : acc;
+		}
+	)
+}
+
+extractMFontStyleDef(style : [MParagraphStyle], def : MFontStyle) -> MFontStyle {
+	fold(style, def, \acc : MFontStyle, st : MParagraphStyle ->
+		switch (st : MParagraphStyle) {
+			MFontStyle() : st;
 			default : acc;
 		}
 	)
 }
 
 MTextStyle2CharacterStyle(parent : MFocusGroup, style : [MParagraphStyle]) -> [CharacterStyle] {
-	MTextStyle2CharacterStyleDef(parent, style, Triple(if (getLightBackground(parent)) MBlack() else MWhite(), MBody(), true))
+	MTextStyle2CharacterStyleDef(parent, style, MFontStyleBundle(if (getLightBackground(parent)) MBlack() else MWhite(), MBody(), true))
 }
 
-MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], def : Triple<MThemeColor, MFontStyle, bool>) -> [CharacterStyle] {
-	extractMTextStyleDef(style, def)
-	|> (\fontStyle -> Triple(MThemeColor2int(parent, firstOfTriple(fontStyle)), secondOfTriple(fontStyle), thirdOfTriple(fontStyle)))
-	|> (\fontStyle : Triple<int, MFontStyle, bool> ->
+MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], def : MFontStyleBundle) -> [CharacterStyle] {
+	extractMFontStyleBundle(style, def)
+	|> (\bundle : MFontStyleBundle -> {
+		intColor = MThemeColor2int(parent, bundle.color);
+		font = MFontStyle2MFont(parent, bundle.fontStyle);
+		wrappedFont = eitherMap(
+			parent.theme.fontWrapper,
+			\wrapper -> fgetValue(wrapper).wrapper(font, intColor, bundle.enabled),
+			font
+		);
 		arrayPush(
-			MFont2CharacterStyle(MFontStyle2MFont(parent, secondOfTriple(fontStyle)), firstOfTriple(fontStyle) == black)
+			MFont2CharacterStyle(wrappedFont, intColor == black)
 			|> (\characterStyle ->
-				if (thirdOfTriple(fontStyle))
+				if (bundle.enabled)
 					arrayPushMaybe(characterStyle, tryExtractStruct(style, FillOpacity(1.0)))
 				else
-					replaceStruct(characterStyle, extractStruct(style, FillOpacity(getDisabledTextOpacity(firstOfTriple(fontStyle) == black))))
+					replaceStruct(characterStyle, extractStruct(style, FillOpacity(getDisabledTextOpacity(intColor == black))))
 			),
 			Fill(
-				if (thirdOfTriple(fontStyle))
-					firstOfTriple(fontStyle)
-				else if (rgb2cielab(int2rgb(firstOfTriple(fontStyle))).l < 50.)
+				if (bundle.enabled)
+					intColor
+				else if (rgb2cielab(int2rgb(intColor)).l < 50.)
 					black
 				else
 					white
 			)
 		)
-	)
+	})
 	|> (\characterStyle ->
 		eitherMap(
 			tryExtractStruct(style, Underlined([])),
@@ -197,6 +229,7 @@ MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], de
 	)
 	|> (\characterStyle -> arrayPush(characterStyle, extractStruct(style, EscapeHTML(true))))
 	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, LetterSpacing(0.0))))
+	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, WordSpacing(zero))))
 }
 
 MFont2CharacterStyle(mcf : MFont, darkText : bool) -> [BasicCharacterStyle] {
@@ -215,7 +248,7 @@ MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : b
 // Reverse function for special cases
 MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
 	fontFamily = ref "Roboto";
-	fontSize = ref defaultMaterialFontSize;
+	fontSize = ref 14.0;
 	fill = ref black;
 	fillOpacity = ref primaryTextOpacityDark;
 
@@ -235,12 +268,12 @@ MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
 MFontStyle2MFont(parent : MFocusGroup, style : MFontStyle) -> MFont {
 	switch (style : MFontStyle) {
 		MFont(__, __, __, __, __, __): style;
-		MThemedFont(): MFontStyle2MFont(parent, MThemedFont2MFont(parent, style));
+		MThemedFont(): MThemedFont2MFont(parent, style);
 	}
 }
 
 overrideMTextStylePerAlphabet(parent : MFocusGroup, text: string, styles: [MTextStyle]) -> [MTextStyle] {
-	alphabet = getUnicodeAlphabet(getCharCodeAt(text, strlen(text)-1));
+	alphabet = detectAlphabet(text);
 	if (alphabet == "arb") {
 		map(styles, \s -> {
 			switch (s) {

@@ -11,10 +11,10 @@ import tools/flowc/backends/html/fi2html_defines;
 export {
 	fi2MonolithicHTML(
 		cfg0 : FiHTMLConfig,
-		callback : () -> void) -> void;
+		callback : (int) -> void) -> void;
 }
 
-makeHtml(title, lnFavicon, scripts, lnCss, predefinedParams, manifestLink) {
+makeHtml(title, lnFavicon, scripts, lnCss, predefinedParams, manifestLink, noTranslate: bool) {
 // ****************************************************************
 // Please pay attention!
 // It is very important to have variable 'htmlBundle' defined
@@ -23,11 +23,13 @@ makeHtml(title, lnFavicon, scripts, lnCss, predefinedParams, manifestLink) {
 // or regular js file. Decision is made in www/js/jscommon.js
 // ****************************************************************
 
-Cons("<html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en' lang='en'>
+Cons("<!doctype html><html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en' lang='en'", Cons(if (noTranslate) " translate='no'" else "", Cons(">
   <head>
     <title>", Cons(title, Cons("</title>
 
-    <meta http-equiv='X-UA-Compatible' content='IE=11' />
+", Cons((if (noTranslate)
+"    <meta name='google' content='notranslate' />" else ""),
+Cons("<meta http-equiv='X-UA-Compatible' content='IE=11' />
     <meta http-equiv='content-type' content='application/xhtml+xml; charset=utf-8' />
     <meta http-equiv='cache-control' content='no-cache'/>
     <!-- disable user scaling on mobile devices -->
@@ -58,17 +60,18 @@ Cons(scripts, Cons("
 
 </body>
 </html>
-", makeList()))))))))))))) |> reverseList |> list2string;
+", makeList()))))))))))))))))) |> reverseList |> list2string;
 }
 
 
 includeScript(cfg : FiHTMLConfig, name: string)  {
 	fcVerbose(cfg, 1, "Linker: reading " + name);
 	content = getFileContent(findFlowPath(name, false, cfg.includes, cfg.workingDir));
+	fileNameComment = if (cfg.debug) "<!-- " + name + " -->" else "";
 
 	fcVerbose(cfg, 1, "Linker: blueprinting " + name + "...");
 	"
-<!-- " + name + " -->
+" + fileNameComment + "
 <script type='text/javascript'>
   <!--//--><![CDATA[//><!--
 " + content + "
@@ -105,7 +108,7 @@ filesAvailable(cfg : FiHTMLConfig) {
 		fe1 = fileExists(fe);
 		fcVerbose(cfg, 0, "Found '" + e + "' at: " + fe);
 		if (!fe1) {
-			println("!Not found '" + e + "' during linking...");
+			fcPrintln("!Not found '" + e + "' during linking...", cfg.threadId);
 		}
 		acc && fe1;
 	});
@@ -128,8 +131,9 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 			manifestLink = if (cfg.manifestFileName != "") {
 				"\n    var pwaLink = document.createElement('link');
     pwaLink.rel = 'manifest';
-    pwaLink.href = '" + cfg.manifestFileName + "' + (_s=>_s==''?_s:'" + (if (strContains(cfg.manifestFileName, "?")) "&" else "?") +
-		"'+_s)(window.location.search.substring(1).split('&').filter(_v=>(_v1=>_v1!='dev'&&_v1!='devtrace')(_v.split('=')[0])).join('&'));
+    var _s = window.location.search.substring(1).split('&').filter(_v=>(_v1=>_v1!='dev'&&_v1!='devtrace')(_v.split('=')[0])).join('&');
+    pwaLink.href = '" + cfg.manifestFileName + "' + (_s==''?_s:'" + (if (strContains(cfg.manifestFileName, "?")) "&" else "?") +
+		"'+_s);
 	document.head.appendChild(pwaLink);
     var pwaScript = document.createElement('script');
     pwaScript.src = 'js/pwacompat.min.js';
@@ -154,17 +158,21 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 				scripts,
 				includeCss(cfg, fiHTMLCss),
 				predefinedParams,
-				manifestLink
+				manifestLink,
+				cfg.noTranslate
 			);
 
 			fcVerbose(cfg, 1, "Saving...");
-			setFileContent(cfg.outputfile, res);
+			success = setFileContent(cfg.outputfile, res);
 			fcVerbose(cfg, 0, "File " + cfg.outputfile + " linked.");
+			success
 		} else {
-			println("Linking monolithic file " + cfg.outputfile + " failed.");
+			fcPrintln("Linking monolithic file " + cfg.outputfile + " failed.", cfg.threadId);
 			// If we already in verbose mode, do not show this help line.
-			if (cfg.verbose == 0)
-				println("Run once again with verbose=1 or verbose=2 to see which file missed.");
+			if (cfg.verbose == 0) {
+				fcPrintln("Run once again with verbose=1 or verbose=2 to see which file missed.", cfg.threadId);
+			}
+			false;
 		}
 	}
 
@@ -181,24 +189,27 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 					startProcess("uglifyjs.cmd", minify_params, ".", "",
 						\c1, o1, e1 -> {
 							fcVerbose(cfg, 0, "Trying 'uglifyjs.cmd' for " + cfg.jsfile);
-							doLink();
-							callback();
+							success = doLink();
 							if (c1 != 0) {
-								println("uglifyjs.cmd failed.");
-								println(e1);
-								println(o1);
-								println(c1);
+								fcPrintln(
+									"uglifyjs.cmd failed.\n" +
+									"err:\n" + e1 + "\n" +
+									"out:\n" + o1 + "\n" +
+									"exit code: " + i2s(c1), 
+									cfg.threadId
+								);
 							}
+							callback(if (c1 == 0 && success) 0 else 5 + c1);
 						}
 					);
 				} else {
-					doLink();
-					callback();
+					success = doLink();
+					callback(if (success) 0 else 5);
 				}
 			}
 		);
 	} else {
-		doLink();
-		callback();
+		success = doLink();
+		callback(if (success) 0 else 5);
 	}
 }

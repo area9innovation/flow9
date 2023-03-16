@@ -1,0 +1,79 @@
+import tools/gringo/gringo_grammar;
+import tools/gringo/exponential;
+import tools/gringo/gringo_ast_actions;
+import tools/gringo/type/output_types;
+import tools/gringo/gringo_parse;
+import tools/gringo/gringo_prepare;
+import tools/gringo/check;
+import lingo/linecolumn;
+
+export {
+	// Read a Gringo grammar and prepares it for parsing. Returns GEpsilon() if it does not work
+	// Prints syntax errors
+	parseAndCheckGringoGrammar(file : string, grammarText : string, check : bool, typeFile : string) -> GTerm;
+
+	// Parse using this grammar and these actions.
+	// Prints any errors
+	doGringoParse(file : string, grammar : GTerm, actions : GringoAction<?>, output : ?, text : string, verbose : bool, debugGrammar : bool) -> GringoEnv<?>;
+}
+
+parseAndCheckGringoGrammar(file : string, grammarText : string, check : bool, typeFile : string) -> GTerm {
+	// Construct a Gringo AST from the parse
+	grammar = gringoGrammar();
+	env = doGringoParse(file, grammar, gringoAstAction, makeList(), grammarText, false, false);
+
+	if (!env.fail && strlen(grammarText) == env.i) {
+		// println("  Parsed " + file + " (" + i2s(env.i) + " chars) successfully.");
+
+		origGrammar = getAstResult(env.output);
+
+		if (check && checkGTerms(origGrammar, println)) {
+			GEpsilon();
+		} else {
+			if (typeFile != "") {
+				produceGringoTypes(typeFile, origGrammar);
+			}
+
+			// OK, we have the result of the parse
+			resGrammar = optimizeGTerm(origGrammar);
+
+			grammar_term = prepareGringoGrammar(resGrammar);
+			if (check) {
+				checkRules(file, grammar_term);
+			}
+			grammar_term;
+		}
+	} else {
+		GEpsilon();
+	}
+}
+
+doGringoParse(file : string, grammar : GTerm, actions : GringoAction<?>, output : ?, text : string, verbose : bool, debugGrammar : bool) -> GringoEnv<?> {
+	if (false) {
+		println("Original:");
+		println(gterm2string(grammar));
+	};
+	ogrammar = prepareGringoGrammar(grammar);
+	if (debugGrammar) {
+		println("Fully optimized:");
+		println(gterm2string(ogrammar));
+	};
+
+	env = GringoEnv(text, makeTree(), actions, output, makeTree(), 0, false, 0);
+	genv = gringoParse(env, ogrammar);
+
+	if (genv.fail) {
+		println(file + ": Parsing failed");
+	};
+	linefn = \s -> if (strlen(s) > 80) strLeft(s, 80) + "..." else s;
+	traverseInOrder(genv.errors, \pos, error -> {
+		remaining = linefn(strRight(env.input, pos));
+		linecol = findLineOneTime(env.input, pos);
+		println(file + ":" + i2s(linecol.lineno) + ": Parse error: " + remaining);
+	});
+	if (genv.i < strlen(env.input) || genv.fail) {
+		remaining = linefn(strRight(env.input, genv.maxi));
+		println(file + ": Did not parse: " + remaining);
+	};
+	genv;
+}

@@ -2,6 +2,7 @@ import material/internal/material_menu;
 
 export {
 	MCard2T(manager : MaterialManager, parent : MFocusGroup, m : MCard, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MDynamicCard2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicCard, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
 defaultCardBorder = 4.0;
@@ -11,19 +12,32 @@ defaultCardMarginActions = 8.0;
 defaultCardElevation = 2.0;
 
 MCard2T(manager : MaterialManager, parent : MFocusGroup, m : MCard, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	wd = extractStruct(m.style, MCardWidth(0.)).width;
-	hgt = extractStruct(m.style, MCardHeight(0.)).height;
-
-	style =
-		ifArrayPush(m.style,
-			!containsStruct(m.style, MWhite()) && !containsStruct(m.style, MBackgroundImage("", false)),
-			MDialogMColor(getLightBackground(parent))
-		)
-		|> (\f -> replaceStruct(f, MCardWidth(wd)))
-		|> (\f -> replaceStruct(f, MCardHeight(hgt)));
+	style = fixMCardStyle(parent, m.style);
 
 	MCardBlock2T(manager, parent, MCard(m.blocks, style, []), TEmpty(), TEmpty(), [], false, m2t)
+	|> (\f -> MCardAddShadow(manager, parent, f, m.state, const(style), m2t))
+}
+
+MDynamicCard2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicCard, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	style = fselect(m.style, FLift(\st -> fixMCardStyle(parent, st)));
+
+	MCardBlock2T(manager, parent,
+		MDynamicBlock(fselect2(m.blocks, style, FLift2(\blcks, st -> [MCard(blcks, st, [])]))),
+		TEmpty(), TEmpty(), [], false, m2t
+	)
 	|> (\f -> MCardAddShadow(manager, parent, f, m.state, style, m2t))
+}
+
+fixMCardStyle(parent : MFocusGroup, style : [MCardStyle]) -> [MCardStyle] {
+	wd = extractStruct(style, MCardWidth(0.)).width;
+	hgt = extractStruct(style, MCardHeight(0.)).height;
+
+	ifArrayPush(style,
+		!containsStruct(style, MWhite()) && !containsStruct(style, MBackgroundImage("", false)),
+		MDialogMColor(getLightBackground(parent))
+	)
+	|> (\f -> replaceStruct(f, MCardWidth(wd)))
+	|> (\f -> replaceStruct(f, MCardHeight(hgt)));
 }
 
 MCardAddShadow(
@@ -31,42 +45,50 @@ MCardAddShadow(
 	parent : MFocusGroup,
 	card : Tropic,
 	state : [MButtonState],
-	style : [MCardStyle],
+	style : Transform<[MCardStyle]>,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
 	onClick = tryExtractStruct(state, MOnClick(nop));
+	highlightOnFocus = tryExtractStruct(state, MHighlightOnFocus(const(false)));
 	elevation = \hover, focused -> extractStruct(state, MElevation(fif(fOr(hover, focused), const(6.), const(2.)))).elevation;
-	outerBorders = !contains(style, MCardNoOuterBorders());
+	outerBorders = fif(fcontains(style, const(MCardNoOuterBorders())), zero, const(defaultCardBorder));
 	focusState = concatStyles(state, [AccessRole("button"), MRippleType(const(MRippleFill())), MRippleShape("MCard")]);
+	cardCorners = fselect(style, FLift(\st ->
+		tryExtractStruct(st, MCardCorners(RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.)))
+	));
 
+	(\p ->
 	TCopySize2(
 		card,
 		\cardSize, cardTropic ->
-			TMask(cardTropic, MShape(parent, [Fill(black)], cardSize, "MCard"))
+			TMask(cardTropic, MShape(p, [Fill(black)], cardSize, "MCard"))
 	)
 	|> (\f -> \hover, focused, enabled ->
 		TCopySize(
-			TEasedShadowShape(manager, parent, elevation(hover, focused), f, 0.3, RectangleShape("MCard")),
+			TEasedShadowShape(manager, p, elevation(hover, focused), f, 0.3, RectangleShape("MCard")),
 			\tr ->
 				TShowLazy(
 					fnot(enabled),
 					\ ->
-						MShape(parent, [Fill(white), FillOpacity(0.36)], tr, "MCard")
+						MShape(p, [Fill(white), FillOpacity(0.36)], tr, "MCard")
 				),
 			true
 		)
 	)
 	|> (\makeShadowedCard ->
-		eitherFn(onClick,
-			\__ -> MComponent2T(manager, parent, "MCard", focusState, \focus -> makeShadowedCard(focus.hover, focus.focused, focus.enabled), m2t),
-			\ -> makeShadowedCard(const(false), const(false), const(true))
-		))
-	|> (\f ->
-		if (outerBorders)
-			TBorder(defaultCardBorder, defaultCardBorder, defaultCardBorder, defaultCardBorder, f)
+		if (isSome(onClick) || isSome(highlightOnFocus))
+			MComponent2T(manager, p, "MCard", focusState, \focus -> makeShadowedCard(focus.hover, focus.focused, focus.enabled), m2t)
 		else
-			f
+			makeShadowedCard(const(false), const(false), const(true))
 	)
+	|> (\f -> TBorderT(outerBorders, outerBorders, outerBorders, outerBorders, f))
+	)
+	|> (\makeCard -> TSelect(cardCorners, \ccorners -> eitherMap(ccorners, \cc ->
+		MComponentGroup2T(manager, parent, "MCardWrapper", [
+			MUpdateShapeCorners("card", MaterialShape(cc.leftTop, cc.rightTop, cc.rightBottom, cc.leftBottom))
+		], makeCard),
+		makeCard(parent)
+	)))
 }
 
 MCardBlock2T(manager : MaterialManager, parent : MFocusGroup, block : MCardBlock, above : MCardBlock, below : MCardBlock, belowStyle : [MCardStyle],
@@ -88,9 +110,9 @@ MCardBlock2T(manager : MaterialManager, parent : MFocusGroup, block : MCardBlock
 		extractStruct(concat(belowStyle, st), MCardWidth(-1.)).width - (if (bord) ^l + ^r else 0.);
 
 	makeParagraph = \text, fontStyle : MFontStyle, iColor : MColor, cw ->
-		MParagraph2T(
+		MDynamicParagraph2T(
 			parent,
-			text,
+			const(text),
 			[fontStyle, iColor, MWidth(cw), InterlineSpacing(0.), ParagraphMargin(0., 0.)]
 		);
 
@@ -104,6 +126,34 @@ MCardBlock2T(manager : MaterialManager, parent : MFocusGroup, block : MCardBlock
 				itemsColor(style),
 				m2t
 			);
+
+	handleBlocks = \blocks, style, isLines -> {
+		if (length(blocks) == 1)
+			MCardBlock2T(
+				manager,
+				parent,
+				blocks[0],
+				TEmpty(),
+				TEmpty(),
+				style,
+				isLines,
+				m2t
+			)
+		else
+			mapi(blocks, \i, bl ->
+				MCardBlock2T(
+					manager,
+					parent,
+					bl,
+					if (i > 0) blocks[i - 1] else TEmpty(),
+					if (i < length(blocks) - 1) blocks[i + 1] else TEmpty(),
+					style,
+					isLines,
+					m2t
+				)
+			)
+			|> (\f -> if (isLines) TLinesDir(f, isRTL) else TColsDir(f, isRTL))
+	}
 
 	switch (block) {
 		MRichMediaBlock(content, style): {
@@ -160,34 +210,11 @@ MCardBlock2T(manager : MaterialManager, parent : MFocusGroup, block : MCardBlock
 			|> wrapToFrame(bord, style)
 		}
 		MCard(blocks, style, state): {
-			(
-				if (length(blocks) == 1)
-					MCardBlock2T(
-						manager,
-						parent,
-						blocks[0],
-						TEmpty(),
-						TEmpty(),
-						fold(style, belowStyle, \acc, s -> replaceStruct(acc, s)),
-						!lines,
-						m2t
-					)
-				else
-					mapi(blocks, \i, bl ->
-						MCardBlock2T(
-							manager,
-							parent,
-							bl,
-							if (i > 0) blocks[i - 1] else TEmpty(),
-							if (i < length(blocks) - 1) blocks[i + 1] else TEmpty(),
-							fold(style, belowStyle, \acc, s -> replaceStruct(acc, s)),
-							!lines,
-							m2t
-						)
-					)
-					|> (\f -> if (!lines) TLinesDir(f, isRTL) else TColsDir(f, isRTL))
-			)
+			handleBlocks(blocks, fold(style, belowStyle, \acc, s -> replaceStruct(acc, s)), !lines)
 			|> wrapToFrame(false, style)
+		}
+		MDynamicBlock(blocksT): {
+			TSelect(blocksT, \blocks -> handleBlocks(blocks, belowStyle, lines))
 		}
 		MExpanderBlock(header, details, expander, style): {
 			MCardBlock2T(
@@ -271,7 +298,7 @@ MCardAction2T(manager : MaterialManager, parent : MFocusGroup, action : Material
 						\ ->
 							ifArrayPush(
 								style2,
-								containsStruct(style, MBackgroundImage("", false)) || containsStruct(style2, MBackgroundImage("", false)),
+								containsStruct(style, MBackgroundImage("", false)),
 								normalizeColor(MCardTextColor2MColor(parent, style, belowStyle))
 							)
 					);
@@ -298,14 +325,14 @@ MCardAction2T(manager : MaterialManager, parent : MFocusGroup, action : Material
 MCardStyle2Frame(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MCardStyle], borders : Quadruple<double, double, double, double>,
 	itemsColor : MColor, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
-	normalize = \f -> if (f > 0.) i2d(floor(f / 4.0)) * 4.0 else f;
+	normalizeVal = \f -> if (f > 0.) i2d(floor(f / 4.0)) * 4.0 else f;
 
 	color = tryExtractMColor(parent, style);
 	image = extractStruct(style, MBackgroundImage("", false));
 	opacity = extractStruct(style, FillOpacity(1.0));
 	widthByContent = contains(style, MWidthByContent());
-	cardWidth = if (widthByContent) -1.0 else extractStruct(style, MCardWidth(-1.0)).width |> normalize;
-	cardHeight = extractStruct(style, MCardHeight(-1.0)).height |> normalize;
+	cardWidth = if (widthByContent) -1.0 else extractStruct(style, MCardWidth(-1.0)).width |> normalizeVal;
+	cardHeight = extractStruct(style, MCardHeight(-1.0)).height |> normalizeVal;
 	moreMenu = extractStruct(style, MMoreMenu([], [], []));
 	alignBottom = contains(style, MCardAlignBottom());
 	isRTL = parent.rtl;

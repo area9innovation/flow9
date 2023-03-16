@@ -10,6 +10,7 @@
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/RunParallel.h"
 #include "qt-backend/QWebSocketSupport.h"
+#include "qt-backend/QtNatives.h"
 
 #ifdef FLOW_MEDIARECORDER
 #include "qt-backend/QMediaStreamSupport.h"
@@ -88,13 +89,26 @@ static QString compileFlow(int const flowCompiler, QString const & flow, QString
     QString base = fileinfo.baseName();
     QString bytecode = base + ".bytecode";
     QString compilerCmd = flowCompiler == 1 ? "flowcompiler1" : "flowc1";
-    QString cmd = flowCompiler > 0 ?
-        QString("%1/bin/%6%5 file=%2 bytecode=%3.bytecode debug=1 %4").arg(
-            flow_path, flow, base, args.join(" "), EXECUTABLE_SCRIPT_EXT, compilerCmd
-        ) : "neko " + flow_path + "/bin/flow.n --compile " + bytecode + " --debuginfo " + base + ".debug " + args.join(" ") + " " + flow;
-
-    QProcess p;
-    p.start(cmd);
+	QString cmd = flowCompiler > 0 ? 
+        flow_path + QLatin1String("/bin/") + compilerCmd + EXECUTABLE_SCRIPT_EXT : 
+        QLatin1String("neko");
+	QStringList arg_list;
+	if (flowCompiler > 0) {
+		arg_list << QLatin1String("file=") + flow;
+		arg_list << QLatin1String("bytecode=") + base + QLatin1String(".bytecode");
+		arg_list << QLatin1String("debug=1");
+		arg_list << args;
+	} else {
+		arg_list << flow_path + QLatin1String("/bin/flow.n");
+		arg_list << QLatin1String("--compile");
+		arg_list << bytecode;
+		arg_list << QLatin1String("--debuginfo");
+		arg_list << base + QLatin1String(".debug");
+		arg_list << args;
+		arg_list << flow;
+	};
+	QProcess p;
+    p.start(cmd, arg_list);
     p.waitForFinished(-1);
     QString output = p.readAllStandardOutput() + p.readAllStandardError();
     qDebug().noquote() << output;
@@ -173,6 +187,15 @@ FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, con
 
 int main(int argc, char *argv[])
 {
+#ifdef WIN32
+    {
+        // It enables ANSI escape codes https://en.wikipedia.org/wiki/ANSI_escape_code
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD m = 0;
+        GetConsoleMode(h, &m);
+        SetConsoleMode(h, m | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+#endif
 #ifdef DEBUG_FLOW
     qDebug() << "&Running the debug build.";
 #endif
@@ -208,6 +231,8 @@ int main(int argc, char *argv[])
     bool fixed_screen = false;
     int msaa_samples = 16;
     QString fallback_font = "";
+#else
+	Q_UNUSED(gui_prof_cost)
 #endif
     QString media_path = "";
     QStringList flowArgs;
@@ -370,11 +395,11 @@ int main(int argc, char *argv[])
            screen_w = max(320, atoi(argv[2]));
            screen_h = max(200, atoi(argv[3]));
            shift_args(argc, argv, 3);
-        } else if (!strcmp(argv[1], "--max-heap")) {
-            MAX_HEAP_SIZE = atoi(argv[2]) * 1048576;
+        } else if (!strcmp(argv[1], "--ephemeral-heap")) {
+            EPHEMERAL_HEAP_SIZE = atoi(argv[2]) * 1048576;
             shift_args(argc, argv, 2);
-        } else if (!strcmp(argv[1], "--min-heap")) {
-            MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
+        } else if (!strcmp(argv[1], "--max-ephemeral-alloc")) {
+            MAX_EPHEMERAL_ALLOC = atoi(argv[2]) * 1048576;
             shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--no-qglfb")) {
             // GUI cannot work without qglfb now
@@ -387,6 +412,15 @@ int main(int argc, char *argv[])
             transparent = true;
             shift_args(argc, argv, 1);
 #endif
+        } else if (!strcmp(argv[1], "--max-heap")) {
+            MAX_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--min-heap")) {
+            MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--use_utf8_js_style")) {
+            setUtf8JsStyleGlobalFlag(true);
+            shift_args(argc, argv, 1);
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
             exit(1);
@@ -440,9 +474,9 @@ int main(int argc, char *argv[])
     QDir flowdir;
 
     if (qEnvironmentVariableIsSet("FLOW")) {
-        flowdir = qEnvironmentVariable("FLOW", QString(""));
+        flowdir.setPath(qEnvironmentVariable("FLOW", QString("")));
     } else {
-        flowdir = QCoreApplication::applicationDirPath();
+        flowdir.setPath(QCoreApplication::applicationDirPath());
 #if __APPLE__
         // Also need to move out of the app bundle directory structure on Mac OS
         flowdir.cd("../../../../../../../");
@@ -538,7 +572,7 @@ int main(int argc, char *argv[])
         }
 
         if (screen_pos_set) {
-            QRect screen = QApplication::desktop()->screenGeometry();
+            QRect screen = QApplication::primaryScreen()->geometry();
             screen_x = min(screen_x, screen.width() - screen_w);
             screen_y = min(screen_y, screen.height() - screen_h);
 
@@ -613,8 +647,12 @@ int main(int argc, char *argv[])
         }
 #endif
     }
-#else
+#else // no-gui:
     QtHttpSupport HttpManager(&FlowRunner);
+	QFileSystemInterface FileSystem(&FlowRunner);
+	QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
+    RunParallelHost RunParallel(&FlowRunner);
+	QtNatives qtNatives(&FlowRunner);
 #endif // QT_GUI_LIB
 
 #if !COMPILED
@@ -675,7 +713,8 @@ int main(int argc, char *argv[])
                 printf("Could not load extended debug info.\n");
                 return 1;
             }
-        } else
+        }
+        else
         {
             // Load debug info before the bytecode
             if (argc > 2 && argv[2][0] != '-') {
@@ -739,6 +778,8 @@ int main(int argc, char *argv[])
                     QString key = a.left(equal);
                     QString value = a.mid(equal + 1);
                     FlowRunner.setUrlParameter(key, value);
+
+                    setUtf8JsStyleGlobalFlag(!strcmp(argv[i], "use_utf8_js_style=1"));
                 } else {
                     FlowRunner.setUrlParameter(a, QString());
                 }
@@ -804,10 +845,12 @@ int main(int argc, char *argv[])
                        "--fixedscreen <w> <h>  Set these constant dimensions for the flow stage.\n"
                        "--max-heap <m>         Maximum size of the heap in mega-bytes.\n"
                        "--min-heap <m>         Starting size of the heap in mega-bytes.\n"
+                       "--ephemeral-heap <m>   Ephemeral heap size in mega-bytes.\n"
+                       "--max-ephemeral-alloc <m>  Max ephemeral allocation size in mega-bytes.\n"
                        "--fallback_font <font> Enables lookup of unknown glyphs in the <font>. <font> example - DejaVuSans.\n"
                        "--transparent          Enables GL transparency.\n"
 #endif
-
+                       "--use_utf8_js_style    To switch UTF-8 parser to js style (3 bytes or more symbol codes converts into UTF-16).\n"
                        "-I dir                 passes -I parameter to flow compiler\n"
                        "Compiler, media-path, and fallback_font options can also be specified in flow.config file in properties format:\n"
                        "    flowcompiler=flowcompiler|nekocompiler|flowc\n"

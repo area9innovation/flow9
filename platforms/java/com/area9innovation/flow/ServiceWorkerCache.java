@@ -7,10 +7,10 @@ import java.nio.charset.Charset;
 */
 @SuppressWarnings("unchecked")
 public class ServiceWorkerCache extends NativeHost {
-    public void enableServiceWorkerCaching (Func1<Object,Boolean> callback) {
+    public static void enableServiceWorkerCaching (Func1<Object,Boolean> callback) {
     }
-    public void disableServiceWorkerCaching (Func1<Object,Boolean> callback) {
+    public static void disableServiceWorkerCaching (Func1<Object,Boolean> callback) {
     }
-    public void checkServiceWorkerCachingEnabled (Func1<Object,Boolean> callback) {
+    public static void checkServiceWorkerCachingEnabled (Func1<Object,Boolean> callback) {
     }
 }

@@ -5,6 +5,15 @@
 
 #include "utils/flowfilestruct.h"
 
+enum ResponseEncoding {
+    ResponseEncodingAuto,
+    ResponseEncodingUTF8,
+    ResponseEncodingUTF8js,
+    ResponseEncodingByte
+};
+
+extern ResponseEncoding defaultResponseEncoding;
+
 struct HttpRequest {
     typedef std::map<unicode_string,unicode_string> T_SMap;
     typedef std::map<unicode_string,FlowFile*> T_FileMap;
@@ -13,6 +22,8 @@ struct HttpRequest {
 
     unicode_string url;
     unicode_string method;
+    unicode_string tmp_value;
+    ResponseEncoding response_enc;
     std::vector<uint8_t> payload;
     T_SMap headers, params;
     T_FileMap attachments;
@@ -65,6 +76,7 @@ class AbstractHttpSupport : public NativeMethodHost {
     unicode_string parseDataBytes(const void * buffer, size_t count);
     unicode_string urlencode(const unicode_string &url);
 
+
 public:
     typedef std::map<unicode_string, unicode_string> HeadersMap;
 
@@ -109,6 +121,8 @@ protected:
 
     NativeFunction *MakeNativeFunction(const char *name, int num_args);
 
+    ResponseEncoding GetResponseEncodingFromString(std::string str);
+
 private:
     static StackSlot cbCancel(ByteCodeRunner*, StackSlot*, void*);
 
@@ -125,6 +139,8 @@ private:
     DECLARE_NATIVE_METHOD(httpCustomRequestNative)
 
     DECLARE_NATIVE_METHOD(deleteAppCookies)
+
+    DECLARE_NATIVE_METHOD(setDefaultResponseEncoding)
 };
 
 #endif

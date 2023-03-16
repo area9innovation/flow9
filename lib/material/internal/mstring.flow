@@ -317,12 +317,14 @@ getTruncatedByWidthString(s : string, wd : double, style : [TCharacterStyle], ad
 						nop
 					);
 
-					truncated = getTruncatedByWidthString2(substring(s, strlen(splitted), strlen(s) - strlen(splitted)),
-						wid - splittedWd, dotsWd, style, 0, max(min(floor(i2d(end) / (textWd2 + dotsWd) * wid), end - 1), 1), addDots);
+					rest =
+						substring(s, strlen(splitted), strlen(s) - strlen(splitted))
+						|> (\str -> wrapBold(str, checkIsBolded(splitted)));
 
+					truncated = getTruncatedByWidthString2(rest, newWd, dotsWd, style, 0, max(min(floor(i2d(end) / (textWd2 + dotsWd) * wid), end - 1), 1), addDots);
 					truncatedWd = getTWordMetrics(TText(truncated, style), makeTree()).width;
 
-					splitted + if (truncatedWd <= newWd) truncated else if (addDots) THREE_DOTS else ""
+					splitted + if (truncatedWd > 0. && truncatedWd <= newWd) truncated else if (addDots) THREE_DOTS else ""
 				})
 			}
 		}
@@ -378,7 +380,7 @@ getSplittedAndTruncatedByWidthString(s : string, wd : double, style : [TCharacte
 		if (lines > 0) {
 			if (length(newStrConc) > lines) {
 				maxLines = ref lines;
-				dotsWd = getTWordMetrics(TText(THREE_DOTS, style), makeTree()).width;
+				dotsWd = \isBolded -> getTWordMetrics(TText(wrapBold(THREE_DOTS, isBolded), style), makeTree()).width;
 
 				foldWhile(newStr, "", \acc, l -> {
 					if (^maxLines > 0) {
@@ -390,8 +392,15 @@ getSplittedAndTruncatedByWidthString(s : string, wd : double, style : [TCharacte
 							strGlue(
 								if (^maxLines > 0)
 									nl
-								else
-									arrayPush(subrange(nl, 0, length(nl) - 1), getTruncatedByWidthString(concatStrings(subrange(l, length(nl) - 1, length(l))), wd - dotsWd, style, false)),
+								else {
+									handledLines = subrange(nl, 0, length(nl) - 1);
+									isBolded = checkIsBolded(concatStrings(handledLines));
+
+									rest = wrapBold(concatStrings(subrange(l, length(nl) - 1, length(l))), isBolded);
+									lastLine = getTruncatedByWidthString(rest, wd - dotsWd(isBolded), style, false) |> unwrapBold;
+
+									arrayPush(handledLines, lastLine);
+								},
 								"\n"
 							)
 						)
@@ -407,6 +416,12 @@ getSplittedAndTruncatedByWidthString(s : string, wd : double, style : [TCharacte
 			|> (\f -> strGlue(f, "\n"))
 	}
 }
+
+BOLD_TAG = "<b>";
+BOLD_TAG_CLOSE = "</b>";
+checkIsBolded = \s -> strCountOf(s, BOLD_TAG) > strCountOf(s, BOLD_TAG_CLOSE);
+wrapBold = \s, wrap -> if (wrap) BOLD_TAG + s + BOLD_TAG_CLOSE else s;
+unwrapBold = \s -> strReplaces(s, [BOLD_TAG, "", BOLD_TAG_CLOSE, ""]);
 
 containsHanScript(s : string) -> bool {
 	len = strlen(s);
@@ -437,7 +452,7 @@ filterEmojis2(s : string, i : int) -> string {
 			if ((c3 >= 0x1F600 && c3 < 0x1F64F) || // Emoticons
 				(c3 >= 0x1F300 && c3 < 0x1F5FF) || // Misc Symbols and Pictographs
 				(c3 >= 0x1F680 && c3 < 0x1F6FF) || // Transport and Map
-			   	(c3 >= 0x1F1E6 && c3 < 0x1F1FF) || // Regional country flags
+				(c3 >= 0x1F1E6 && c3 < 0x1F1FF) || // Regional country flags
 				(c3 >= 0x1F900 && c3 < 0x1F9FF))  // Supplemental Symbols and Pictographs
 				filterEmojis2(strRemove(s, i, 2), i)
 			else

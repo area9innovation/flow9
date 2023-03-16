@@ -1,0 +1,166 @@
+import tools/dsl/registry/dsl_run;
+import tools/dsl/registry/dsl_lowering;
+import fs/filesystem;
+import tools/dsl/languages/lambda;
+import tools/dsl/languages/gringo;
+import tools/dsl/languages/ast;
+import tools/dsl/preprocessor/dsl_lowering_args;
+
+export {
+	// Reads all DSL files in the given folder and registers them
+	// We get lambda, gringo, ast, quotestring explicitly.
+	// Requires filesystem access
+	populateDsls() -> void;
+
+	// Register all the parsing and rewriting features into the environment
+	// as natives
+	populateDslEnv(env : DslEnv) -> DslEnv;
+}
+
+populateDsls() -> void {
+	folders = filter(["languages", "tools/dsl/languages"], isDirectory);
+	folder = folders[0];
+	if (js) {
+		println("Can not populate in JS");
+	}
+
+	registerBasicDsls();
+
+	files = readDirectory(folder);
+	dsls = filter(files, \f -> endsWith(f, ".dsl"));
+
+	if (dsls == []) {
+		println("\n*****\nERROR: Could not find any .dsl files in " + resolveRelativePath(folder) + "\n*****\n");
+	}
+
+	lang_dependencies = fold(dsls, makeTree(), \acc, f -> {
+		content = trim2(getFileContent(pathCombine(folder, f)), " \n\t\r");
+		lang = changeFileExt(f, "");
+		deps0 = if (startsWith(content, "syntax ")) {
+			deps1 = takeAfter(content, "syntax ", content);
+			deps = trim(takeBefore(deps1, "{", deps1));
+			map(strSplit(deps, "+"), trim);
+		} else [];
+		// Filter out the base/preloaded syntax extensions
+		deps = filter(deps0, \dep -> dep != "lambda" && dep != "ast" && dep != "quotestring" && dep != "gringo");
+		setTree(acc, f, map(deps, \dep -> changeFileExt(dep, ".dsl")));
+	});
+
+	// Sort languages, respecting dependencies.
+	mdsls_ordered = topoSort(dsls, \f -> lookupTreeDef(lang_dependencies, f, []));
+
+	switch (mdsls_ordered) {
+		Some(dsls_ordered): {
+			iter(dsls_ordered, \dsl -> {
+				registerDslFile(pathCombine(folder, dsl));
+			});
+			println("Populating languages done.\n");
+		}
+		None(): {
+			println("Cyclic dependency between language syntaxes is detected.\n");
+		}
+	}
+	registeringDslLanguage("test");
+}
+
+populateDslEnv(env0 : DslEnv) -> DslEnv {
+	expect = \fn, args, n -> if (length(args) != n) {
+		println("Expected " + i2s(n) + " args to " + fn + ", got " + i2s(length(args)));
+	};
+
+	DslEnv(env0 with natives = 
+		pairs2tree([
+			Pair("registerDslParser", \args -> {
+				expect("registerDslParser", args, 3);
+				lang = getDslString(args[0]);
+				gram = getDslString(args[1]);
+				reqs = map(list2array(getDslList(args[2])), getDslString);
+				registerDslParser(lang, gram, reqs);
+				DslBool(true)
+			}),
+			Pair("registerDslParserExtension", \args -> {
+				expect("registerDslParserExtension", args, 2);
+				lang = getDslString(args[0]);
+				gram = getDslString(args[1]);
+				registerDslParserExtension(lang, gram);
+				DslBool(true)
+			}),
+			Pair("registerDslLowering", \args -> {
+				expect("registerDslLowering", args, 6);
+				phase = getDslString(args[0]);
+				spec = getDslString(args[1]);
+				from = getDslString(args[2]);
+				to = getDslString(args[3]);
+				sep = getDslString(args[4]);
+				rules = getDslString(args[5]);
+				dslLowering := Cons(DslLoweringArgs(phase, spec, from, to, sep, rules), ^dslLowering);
+				registerDslLowering(phase, spec, from, to, sep, rules);
+				DslBool(true)
+			}),
+			Pair("registerDslRuntime", \args -> {
+				expect("registerDslRuntime", args, 3);
+				lang = getDslString(args[0]);
+				codeLang = getDslString(args[1]);
+				runtime = getDslString(args[2]);
+				registerDslRuntime(lang, codeLang, runtime);
+				DslBool(true);
+			}),
+			Pair("eval", \args -> {
+				expect("eval", args, 2);
+				// What language to evaluate?
+				lang = getDslString(args[0]);
+				// What program to evaluate
+				program = getDslString(args[1]);
+				evalDslProgram(makeDslEnv(), lang, program)
+			}),
+			Pair("parse", \args -> {
+				expect("parse", args, 2);
+				// What language?
+				lang = getDslString(args[0]);
+				// What program?
+				program = getDslString(args[1]);
+				parseDslProgram(lang, program).ast
+			}),
+			Pair("compile", \args -> {
+				expect("compile", args, 2);
+				blueprints = getDslString(args[0]);
+				program = args[1];
+				compiler = makeCompiler("", blueprints);
+				result = compileDsl(compiler, program);
+				DslString(result)
+			}),
+		])
+	);
+}
+
+registerDslFile(file : string) -> void {
+	content = trim2(getFileContent(file), " \n\t\r");
+	println("\nRegistering " + file);
+
+	env = populateDslEnv(makeDslEnv());
+
+	splitLang = if (startsWith(content, "syntax ")) {
+		lang1 = takeAfter(content, "syntax ", content);
+		lang = trim(takeBefore(lang1, "{", lang1));
+		cont = "{" + takeAfter(content, "{", content);
+		Pair(lang, cont);
+	} else Pair("lambda+quotestring", content);
+
+	lang = takeBefore(fileNameOnly(file), ".dsl", file);
+	registeringDslLanguage(lang);
+
+	evalDslProgram(env, splitLang.first, splitLang.second);
+	{}
+}
+
+registerBasicDsls() {
+	defineLambda();
+	defineDslAst();	
+	defineGringo();
+
+	// OK: We need quote string
+	registerDslParserExtension("quotestring", "
+		atom = atom | '<<' $(!'>>' anychar)* '>>' ws;
+	");
+}
+

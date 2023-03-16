@@ -1,0 +1,131 @@
+import material/extra/raymarching/raymarching_types;
+import string;
+
+export {
+	RMIExp2GLSL(expr : RMIExp) -> string;
+	RMIExp2GLSLMaterial(expr : RMIExp) -> string;
+	RMIExp2JS(expr : RMIExp) -> string;
+
+	RMTextureTilingParameter2StringArray(parameter : RMTextureTilingParameter) -> [string];
+	RMTextureTilingParameter2FloatArray(parameter : RMTextureTilingParameter) -> [double];
+}
+
+RMIExp2GLSL(expr : RMIExp) -> string {
+	switch(expr) {
+		RMICall(fn, args): switch(fn) {
+			RMIOp(opName): if (length(args) == 1) {
+				opName + RMIExp2GLSL(args[0])
+			} else if (length(args) == 2) {
+				RMIExp2GLSL(args[0]) + " " + opName + " " + RMIExp2GLSL(args[1])
+			} else if (length(args) == 3) {
+				RMIExp2GLSL(args[0]) + "?" + RMIExp2GLSL(args[1]) + ":" + RMIExp2GLSL(args[2])
+			} else "";
+			RMIFn(fnName): fnName + "(" + strGlue(map(args, RMIExp2GLSL), ", ") + ")";
+		};
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
+		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2GLSL(exp1) + RMIExp2GLSL(exp2);
+		RMIProperty(exp2, id, property): RMIExp2GLSL(exp2);
+		RMIJSObject(properties): "";
+		RMIArrayIndex(varName, index): varName + formatString("[%1]", [i2s(index)]);
+		RMIStructMember(exp2, member): RMIExp2GLSL(exp2) + "." + member;
+		RMIBrackets(exp2): "(" + RMIExp2GLSL(exp2) + ")";
+		RMIArray(type, exps): type + "[](" + strGlue(map(exps, RMIExp2GLSL), ", ") + ")";
+		RMIEmpty(): "";
+	}
+}
+
+RMIExp2GLSLMaterial(expr : RMIExp) -> string {
+	switch(expr) {
+		RMICall(fn, args): strGlue(filter(map(filterRMIBlock(args), RMIExp2GLSLMaterial), \s -> s != ""), " else ");
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
+		RMIXYZ(x, y, z): formatString("vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2GLSLMaterial(exp1) + RMIExp2GLSLMaterial(exp2);
+		RMIProperty(exp2, id, property): if (property == RMIEmpty()) "" else formatString("if (id == %1) {\n\tmaterialColor = %2;\n}", [i2s(id), RMIExp2GLSL(property)]);
+		RMIJSObject(properties): "";
+		RMIArrayIndex(varName, index): varName + formatString("[%1]", [i2s(index)]);
+		RMIStructMember(exp2, member): RMIExp2GLSL(exp2) + "." + member;
+		RMIBrackets(exp2): "(" + RMIExp2GLSL(exp2) + ")";
+		RMIArray(type, exps): type + "[](" + strGlue(map(exps, RMIExp2GLSL), ", ") + ")";
+		RMIEmpty(): "";
+	}
+}
+
+filterRMIBlock(exps : [RMIExp]) -> [RMIExp] {
+	filter(exps, \expr -> {
+		switch(expr) {
+			RMICall(fn, args): true;
+			RMIP(): false;
+			RMIDouble(num):false;
+			RMIInt(num): false;
+			RMIBool(num): false;
+			RMIXYZ(x, y, z): false;
+			RMIVar(name): false;
+			RMIConcat(exp1, exp2): true;
+			RMIProperty(exp2, id, property): true;
+			RMIJSObject(properties): false;
+			RMIArrayIndex(varName, index): false;
+			RMIStructMember(exp2, member): false;
+			RMIBrackets(exp2): false;
+			RMIArray(__, __): false;
+			RMIEmpty(): false;
+		}
+	})
+}
+
+RMIExp2JS(expr : RMIExp) -> string {
+	switch(expr) {
+		RMICall(fn, args): switch(fn) {
+			RMIOp(opName): if (length(args) == 1) {
+				opName + RMIExp2JS(args[0])
+			} else if (length(args) == 2) {
+				RMIExp2JS(args[0]) + " " + opName + " " + RMIExp2JS(args[1])
+			} else if (length(args) == 3) {
+				RMIExp2JS(args[0]) + "?" + RMIExp2JS(args[1]) + ":" + RMIExp2JS(args[2])
+			} else "";
+			RMIFn(fnName): fnName + "(" + strGlue(map(args, RMIExp2JS), ", ") + ")";
+		};
+		RMIP(): "p";
+		RMIDouble(num): d2GLSLfloat(num);
+		RMIInt(num): i2s(num);
+		RMIBool(num): b2s(num);
+		RMIXYZ(x, y, z): formatString("glm.vec3(%1, %2, %3)", [d2GLSLfloat(x), d2GLSLfloat(y), d2GLSLfloat(z)]);
+		RMIVar(name): name;
+		RMIConcat(exp1, exp2): RMIExp2JS(exp1) + RMIExp2JS(exp2);
+		RMIProperty(exp2, id, property): "";
+		RMIJSObject(properties): "{" + strGlue(convertTreeToArray(properties, \k, v -> k + " : " + RMIExp2JS(v)), ", ") + "}";
+		RMIArrayIndex(varName, index): varName + formatString("[%1]", [i2s(index)]);
+		RMIStructMember(exp2, member): RMIExp2JS(exp2) + "." + member;
+		RMIBrackets(exp2): "(" + RMIExp2JS(exp2) + ")";
+		RMIArray(type, exps): "[" + strGlue(map(exps, RMIExp2JS), ", ") + "]";
+		RMIEmpty(): "";
+	}
+}
+
+d2GLSLfloat(num : double) {
+	s = d2s(num);
+	if (strContains(s, ".")) s else s + ".";
+}
+
+RMTextureTilingParameter2StringArray(parameter : RMTextureTilingParameter) -> [string] {
+	map(RMTextureTilingParameter2FloatArray(parameter), d2GLSLfloat)
+}
+
+RMTextureTilingParameter2FloatArray(parameter : RMTextureTilingParameter) -> [double] {
+	[
+		parameter.zx_z,
+		parameter.zx_x,
+		parameter.xy_x,
+		parameter.xy_y,
+		parameter.zy_z,
+		parameter.zy_y
+	]
+}

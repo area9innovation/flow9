@@ -1,0 +1,103 @@
+
+webvtt = bom? 'WEBVTT' s* vtt_caption?:caption vtt_block*:blocks empty_line* { VTT(unarrayDef(:caption, ''), :blocks) };
+
+	vtt_caption = nonlinebreakchar+$id line_end { $id };
+
+	vtt_block = empty_line+ (region_block | cue_block | style_block | note_block):block { :block };
+
+style_block = 'STYLE' empty_line not_empty_line*:s { CueStyle(concatLines(:s)) };
+
+note_block = 'NOTE' empty_line? not_empty_line*:note { CueNote(concatLines(:note)) };
+
+region_block = 'REGION' empty_line ws region_setting*:rs { CueRegion(:rs) };
+
+	region_setting =
+				'id:' nonspacechar+$id ws { CueRegionId($id) }
+				| 'width:' double:d '%'? ws { CueRegionWidth(:d) }
+				| 'lines:' positive_int:i ws{ CueRegionLines(:i) }
+				| 'regionanchor:' double:x '%'? ',' double:y '%'? ws { CueRegionAnchor(:x, :y) }
+				| 'viewportanchor:' double:x '%'? ',' double:y '%'? ws { CueRegionViewport(:x, :y) }
+				| 'scroll:up' ws { CueRegionScroll() };
+
+cue_block =
+		cue_id?:id
+		cue_timestamp:start s+ arrow s+ cue_timestamp:end ws cue_setting*:settings ws line_end
+		cue_text*:texts
+		{ CueBlock(unarrayDef(:id, ""), :start, :end, :settings, :texts) };
+
+	cue_id = !('NOTE' | 'STYLE' | 'REGION' | cue_timestamp) nonlinebreakchar*$id line_end { $id };
+
+	cue_timestamp =
+		digit+$h ':' (digit digit)$m ':' (digit digit)$s '.' digit+$ms { CueTimestamp(s2i(:h), s2i($m), s2i($s), s2i($ms)) }
+		| (digit digit)$m ':' (digit digit)$s '.' digit+$ms { CueTimestamp(zero(), s2i($m), s2i($s), s2i($ms)) };
+
+	cue_setting =
+				'vertical:' ('lr' | 'rl')$dir ws { CueVertical($dir) }
+				| 'line:' cue_line_offset:line_offset cue_line_align?:line_align ws { CueLine(:line_offset, unarrayDef(:line_align, CueStart())) }
+				| 'position:' percentage:pos cue_line_position?:pos_align ws { CuePosition(:pos, unarrayDef(:pos_align, CueAuto())) }
+				| 'size:' double:size '%'? ws { CueSize(:size) }
+				| 'align:' cue_align:a ws { CueAlign(:a) }
+				| 'region:' nonspacechar+$id ws { CueRegionId($id) };
+
+		cue_line_offset =
+				int:i { CueLineNumber(:i) }
+				| percentage;
+
+		cue_line_align = ','
+				'start' { CueStart() }
+				| 'center' { CueCenter() }
+				| 'end' { CueEnd() };
+
+		cue_line_position = ','
+				'line-left' { CueLeft() }
+				| 'center' { CueCenter() }
+				| 'line-right' { CueRight() }
+				| 'auto' { CueAuto() };
+
+		cue_align =
+				'start' { CueStart() }
+				| 'left' { CueLeft() }
+				| 'center' { CueCenter() }
+				| 'right' { CueRight() }
+				| 'end' { CueEnd() };
+
+	cue_text =
+			cue_text_char+$t { CueText($t, array()) }
+			| '<' cue_timestamp:ts ws '>' cue_text_char+$t { CueText($t, array(:ts)) }
+			| '<c' classname*:classes ws '>' cue_text_char+$t '</c' ws '>'? { CueText($t, :classes) }
+			| '<i' classname*:classes ws '>' cue_text_char+$t '</i' ws '>'? { CueText($t, consArray(CueItalics(), :classes)) }
+			| '<b' classname*:classes ws '>' cue_text_char+$t '</b' ws '>'? { CueText($t, consArray(CueBold(), :classes)) }
+			| '<u' classname*:classes ws '>' cue_text_char+$t '</u' ws '>'? { CueText($t, consArray(CueUnderline(), :classes)) }
+			| '<v' classname*:classes s+ cue_text_char+$v ws '>' cue_text_char+$t '</v' ws '>'? { CueText($t, consArray(CueVoice($v), :classes)) }
+			| '<lang' classname*:classes s+ cue_text_char+$l ws '>' cue_text_char+$t '</lang' ws '>'? { CueText($t, consArray(CueLanguage($l), :classes)) }
+			;
+
+		cue_text_char = !('&' | '<' | '>' | (line_end line_end)) char;
+		classname = '.' letterOrDigit+$name { CueClass($name) };
+
+
+
+
+char = '\u0000' - '\uffff';
+empty_line = s* line_end;
+not_empty_line = !empty_line (nonlinebreakchar+ line_end)$l { $l };
+nonlinebreakchar = !line_end char;
+nonspacechar = !(s | line_end) char;
+
+letterOrDigit = 'a'-'z' | 'A'-'Z' | '_' | '-' | digit;
+
+percentage = double:n '%' { CuePercentage(:n) };
+double = ((int+) | (int "." int?) | ("." int))$n { s2d($n) };
+int = ('-'? digit+)$i { s2i($i) };
+positive_int = digit+$i { s2i($i) };
+digit = '0'-'9';
+
+ws = s*;
+s = ' ' | '\t';
+arrow = '-->';
+
+bom = '\ufefe';
+line_end = cr lf | cr | lf;
+block_end = line_end line_end;
+cr = '\r';
+lf = '\n';

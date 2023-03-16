@@ -2,13 +2,16 @@ import tropic/selecttarray;
 import tropic/tropic_gui;
 import ui/animate/teasing;
 import form/gui;
+import form/paragraphalignments;
 import tropic/tropic2form;
 
 export {
+
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
-		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows,
-			CenterAlign, EndAlign, TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector,
-			TBaselineAlign, TFillersSupport, TAvailableMinMax;
+		FlexibleGridAlignment ::= RelativeAlignment, CenterAlign, TightWidth;
+		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, FlexibleGridAlignment,
+			TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector, TFlexibleGridMaxContentWidthInspector,
+			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold;
 
 			TWrapNewRow(wrap : bool); // New row should be below all the elements in the previous one (true by default for horizontal grid)
 			TWrapNewColumn(wrap : bool); // New column should be to the right of all the elements in the previous one (true by default for vertical grid)
@@ -22,8 +25,12 @@ export {
 			TFillersSupport(); // Allow size of the items to grow by available space
 			TCenterSupport() -> TFlexibleGridStyle { TFillersSupport(); };
 			TAvailableMinMax(min : Transform<double>, max : Transform<double>);
+			TArrayThreshold(threshold : Transform<int>); // Fine efficiency tuning : what algorithm to use depending on array size
 
+			// Size of the box, which content occupies inside the grid. Less or equal to outer grid box size
 			TFlexibleGridContentSizeInspector(wh : DynamicBehaviour<WidthHeight>);
+			// Sum of all content widths
+			TFlexibleGridMaxContentWidthInspector(maxWidth : DynamicBehaviour<double>);
 }
 
 TFlexibleGridItem(
@@ -63,10 +70,13 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	animation = tryExtractStruct(style, TAnimationTimer(LazyDeltaTimer(make(0.0), nop, nop)));
 	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
 	contentSizeInspector = tryExtractStruct(style, TFlexibleGridContentSizeInspector(makeWH()));
+	maxContentWidthInspector = tryExtractStruct(style, TFlexibleGridMaxContentWidthInspector(make(0.)));
 	stageSizeB = make(0.);
 	availableMinMax = extractStruct(style, TAvailableMinMax(stageSizeB, stageSizeB));
-	alignment =
-		if (contains(style, CenterAlign()))
+	alignment : FlexibleGridAlignment =
+		if (contains(style, TightWidth()))
+			TightWidth()
+		else if (contains(style, CenterAlign()))
 			CenterAlign()
 		else if (contains(style, EndAlign()))
 			EndAlign()
@@ -74,6 +84,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			StartAlign();
 	alignBaselines = contains(style, TBaselineAlign());
 	fillersSupport = contains(style, TFillersSupport()) || alignBaselines;
+	arrayThreshold = extractStruct(style, TArrayThreshold(const(ARRAY_DIFF_TRESHOLD))).threshold;
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 	isSameSize = contains(style, TSameSize());
@@ -83,7 +94,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	sameSizeMinWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
 	sameSizeMaxWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
 
-	itemsB =
+	itemsB0 =
 		fmap(items, \it -> {
 			flexibleGridItemId := ^flexibleGridItemId + 1;
 
@@ -99,20 +110,29 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				make(const(zeroWH))
 			)
 		});
+	// To protect itemsB0 fn from being called multiple times for each item
+	itemsB = fsubselect(itemsB0, FLift(\v -> const(v)));
 
 	contentBaseline = fsubselect(felementAt(itemsB, const(0), const(emptyTFlexibleGridItem)), FLift(\e : TFlexibleGridItem -> e.baseline));
-	contentSize =
+	contentSize0 =
 		fselect(
 			fsubmap(itemsB, \it : TFlexibleGridItem -> fpair(fsubselect(it.tr, idfn |> FLift), it.wh)),
 			FLift(\pairs : [Pair<Point, WidthHeight>]-> {
-				fold(pairs, zeroWH, \acc, v ->
-					WidthHeight(
-						max(acc.width, v.second.width + v.first.x),
-						max(acc.height, v.second.height + v.first.y)
+				fold(pairs, Triple(zeroWH, doubleMax, 0.), \acc, v ->
+					Triple(
+						WidthHeight(
+							max(acc.first.width, v.second.width + v.first.x),
+							max(acc.first.height, v.second.height + v.first.y)
+						),
+						min(acc.second, v.first.x),
+						acc.third + v.second.width
 					)
 				)
 			})
 		);
+
+	contentSize = fFirstOfTriple(contentSize0);
+
 	contentMinSize = fselect(fsubmap(itemsB, \it -> if (lockWidth) fwidth(it.minWH) else fheight(it.minWH)), FLift(\v -> either(maxA(v), 0.0)));
 
 	parameters =
@@ -178,27 +198,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			)
 		);
 
-	form2TAcc = \form, disposers ->
-		TAcc(
-			form,
-			TFormMetrics(
-				zero,
-				zero,
-				zero
-			),
-			zero,
-			zero,
-			zero,
-			zero,
-			zero,
-			zero,
-			const(false),
-			false,
-			false,
-			disposers
-		);
-
-	SelectTGroupFixed(itemsB, \idx, __, item -> item2Tropic(item, feq(idx, 0)))
+	SelectTGroupFixed(itemsB, \idx, __, item -> item2Tropic(item, feq(idx, 0)), arrayThreshold)
 	|> (\f ->
 		TransformTAcc2(\t2a -> {
 				b1 = f |> t2a;
@@ -227,22 +227,12 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	|> (\f ->
 		if (fillersSupport) {
 			f
-		} else if (alignment == CenterAlign()) {
-			if (verticalGrid)
-				TCenterY(f)
-			else
-				TCenterX(f)
-		} else if (((!isRTL || verticalGrid) && alignment == EndAlign()) || (isRTL && !verticalGrid && alignment == StartAlign())) {
-			if (verticalGrid)
-				TAlignBottom(f)
-			else
-				TAlignRight(f)
-		} else {
-			if (verticalGrid)
-				TAlignTop(f)
-			else
-				TAlignLeft(f)
-		}
+		} else switch (alignment) {
+			StartAlign(): if (verticalGrid) TAlignTop else if (isRTL) TAlignRight else TAlignLeft
+			EndAlign(): if (verticalGrid) TAlignBottom else if (isRTL) TAlignLeft else TAlignRight
+			CenterAlign(): if (verticalGrid) TCenterY else TCenterX
+			TightWidth(): idfn
+		}(f)
 	)
 	|> (\f ->
 		if (fillersSupport) {
@@ -319,8 +309,23 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			\inspector ->
 				TConstruct(
 					[
-						\ -> fconnect(contentSize, inspector.wh)
+						if (isRTL) {
+							\ -> fconnectSelect(contentSize0, inspector.wh, \cs -> WidthHeight(cs.first.width - cs.second, cs.first.height))
+						} else {
+							\ -> fconnect(contentSize, inspector.wh)
+						}
 					],
+					f
+				),
+			f
+		)
+	)
+	|> (\f ->
+		eitherMap(
+			maxContentWidthInspector,
+			\inspector ->
+				TConstruct(
+					[\ -> fconnect(fThirdOfTriple(contentSize0), inspector.maxWidth)],
 					f
 				),
 			f
@@ -558,12 +563,13 @@ fitTFlexibleGrid(
 	sizeMin : double,
 	sizeMax : double,
 	vertical : bool,
-	alignment : CommonAlignment,
+	alignment : FlexibleGridAlignment,
 	alignBaselines : bool,
 	maxRows : Maybe<int>,
 	isRTL : bool
 ) -> void {
 	currentPoint = ref const(zeroPoint);
+	currentCoord = ref const(0.);
 	currentLine = ref [];
 	availableSize = make(const(sizeMin));
 
@@ -607,7 +613,7 @@ fitTFlexibleGrid(
 						fmax(
 							if (alignment == CenterAlign())
 								fdivide(fsubtract(fsubselect(availableSize, idfn |> FLift), fwidth(t.wh)), const(2.0))
-							else if ((!isRTL && alignment == EndAlign()) || (isRTL && alignment == StartAlign()))
+							else if ((!isRTL && alignment == EndAlign()) || (isRTL && alignment == StartAlign()) || (alignment == RightAlign()))
 								fsubtract(fsubselect(availableSize, idfn |> FLift), fwidth(t.wh))
 							else
 								zero,
@@ -624,28 +630,27 @@ fitTFlexibleGrid(
 	}
 
 	iter(items, \it -> {
-		isFits =
-			if (vertical)
-				fgetValue(fpointY(^currentPoint)) + fgetValue(fheight(it.minWH)) < sizeMax
-			else
-				fgetValue(fpointX(^currentPoint)) + fgetValue(fwidth(it.minWH)) < sizeMax;
+		minSize = if (vertical) fheight(it.minWH) else fwidth(it.minWH); 
+		doesFit = fgetValue(^currentCoord) + fgetValue(minSize) < sizeMax;
 
-		if (eitherMap(maxRows, \mr -> length(^currentLine) < mr, true) && (isFits || length(^currentLine) == 0)) {
+		if (eitherMap(maxRows, \mr -> length(^currentLine) < mr, true) && (doesFit || length(^currentLine) == 0)) {
 			currentLine := arrayPush(^currentLine, it);
 
+			currentCoord := faddition(^currentCoord, minSize);
 			if (vertical) {
-				currentPoint := fpoint(fpointX(^currentPoint), faddition(fpointY(^currentPoint), fheight(it.minWH)));
+				currentPoint := fpoint(fpointX(^currentPoint), ^currentCoord);
 			} else {
-				currentPoint := fpoint(faddition(fpointX(^currentPoint), fwidth(it.minWH)), fpointY(^currentPoint));
+				currentPoint := fpoint(^currentCoord, fpointY(^currentPoint));
 			}
 		} else {
 			addLineFn();
 			currentLine := [it];
+			currentCoord := minSize;
 
 			if (vertical) {
-				currentPoint := fpoint(fpointX(^currentPoint), fheight(it.minWH));
+				currentPoint := fpoint(fpointX(^currentPoint), ^currentCoord);
 			} else {
-				currentPoint := fpoint(fwidth(it.minWH), fpointY(^currentPoint));
+				currentPoint := fpoint(^currentCoord, fpointY(^currentPoint));
 			}
 		}
 	});
@@ -951,16 +956,13 @@ checkBFMaxRows(state : BFState, block : BFBlock, point : Point, par : BFParamete
 	)
 }
 
-SelectTGroupFixed(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
-	if (isUrlParameterTrue("check_same_item"))
-		SelectTGroup(values, makeTropicFn)
-	else
-		TIf(
-			flessi(flength(values), const(ARRAY_DIFF_TRESHOLD)),
-			SelectTGroup(values, makeTropicFn),
-			TSelect(values, \vals ->
-				mapi(vals, \i, v -> makeTropicFn(const(i), i, v))
-				|> TGroup
-			)
+SelectTGroupFixed(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic, threshold : Transform<int>) -> Tropic {
+	TIf(
+		flessi(flength(values), threshold),
+		SelectTGroup(values, makeTropicFn),
+		TSelect(values, \vals ->
+			mapi(vals, \i, v -> makeTropicFn(const(i), i, v))
+			|> TGroup
 		)
+	)
 }

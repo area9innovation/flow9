@@ -1,0 +1,174 @@
+import tools/flowc/backends/wise/flow_wise_natives;
+import tools/flowc/backends/wise/flow_wise_compare;
+
+// TODO: think about
+// makeWiArrayConstruction()
+// create runtime fns : createArray_N - where n = array_length
+// -> we'll replace arr = {tmp=; ...  tmp} with arr = createArray_N(1,2,3);
+
+export {
+	makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp, type : FlowWiType) -> FlowWiExp;
+	makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int, type : FlowWiType) -> Maybe<FlowWiExp>;
+	isWiArrayConstruction(exp : FlowWiExp) -> bool;
+	// TODO: include instead of
+	getWiseArrayNativesRealPolyTypes(nativeFn : WiseNativeFn, argTypes : [FiType], retType : FiType) -> Maybe<[FiType]>;
+}
+
+makeWiArrayIndex(e1 : FlowWiExp, e2 : FlowWiExp, type : FlowWiType) -> FlowWiExp {
+	FlowWiCall(
+		FlowWiPolyCall(FlowWiVar("getValueArray"), makeWiArrayType(type)),
+		[e1, e2]
+	);
+}
+
+makeWiArrayConstruction(exps : [FlowWiExp], tmpIndex : int, type : FlowWiType) -> Maybe<FlowWiExp> {
+	if (exps == []) {
+		Some(makeCreateArrayCall(0, FlowWiBasictype("i32")));
+	} else {
+		valueType = extractWiseArrayType(type);
+		basicType = extractWiseBasicType(valueType);
+		if (basicType == "string") {
+			makeWiArrayConstructionByType(
+				exps,
+				FlowWiVar("setCharString"),
+				tmpIndex,
+				\e -> switch (e : FlowWiExp) {
+					FlowWiInt(__): Some(e);
+					default : None();
+				},
+				FlowWiBasictype(basicType)
+			);
+		} else if (basicType != "") {
+			makeWiArrayConstructionByType(
+				exps,
+				FlowWiPolyCall(FlowWiVar("setValueArray"), [FlowWiBasictype(basicType)]),
+				tmpIndex,
+				\e -> switch (e : FlowWiExp) {
+					FlowWiInt(__): Some(e);
+					FlowWiDouble(__): Some(e);
+					FlowWiBool(__): Some(e);
+					FlowWiTuple(__, __, __): Some(e);
+					// array ?
+					default : None();
+				},
+				FlowWiBasictype(basicType)
+			);
+		} else if (isSameStructType(valueType, FlowWiArrayType(FlowWiBasictype(""))) || isTupleType(valueType) || isRefType(valueType)) {
+			makeWiArrayConstructionByType(
+				exps,
+				FlowWiPolyCall(FlowWiVar("setValueArray"), makeWiArrayType(valueType)),
+				tmpIndex,
+				\e -> Some(e),
+				valueType
+			);
+		} else {
+			println("array of " + toString(type) + " is not implemented");
+			None();
+		}
+	} 
+}
+
+extractWiseBasicType(type : FlowWiType) -> string {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(t) : t;
+		FlowWiFntype(__, __) : "";
+		FlowWiTupletype(__, __) : "";
+		FlowWiArrayType(__) : "";
+		FlowWiRefType(__) : "";
+	}
+}
+
+extractWiseArrayType(type : FlowWiType) -> FlowWiType {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(__) : type;
+		FlowWiFntype(__, __) : type;
+		FlowWiTupletype(__, __) : type;
+		FlowWiArrayType(t) : t;
+		FlowWiRefType(__) : type;
+	}
+}
+
+makeWiArrayConstructionByType(exps : [FlowWiExp], setValFn : FlowWiExp, tmpIndex : int, getVal : (FlowWiExp) -> Maybe<FlowWiExp>, type : FlowWiType) -> Maybe<FlowWiExp> {
+	values = filtermap(exps, getVal);
+	if (length(values) == length(exps)) {
+		tmpVar = "tmp" + i2s(tmpIndex);
+		Some(FlowWiBrace([
+			FlowWiInt(0), // not to erase '{}' in the result string // TODO: fix it
+			FlowWiBrace([FlowWiLet(
+				tmpVar,
+				0,
+				FlowWiBasictype("i32"), // pointer
+				makeCreateArrayCall(length(values), type),
+				FlowWiBrace(arrayPush(
+					mapi(values, \i, value -> FlowWiCall(setValFn, [FlowWiVar(tmpVar), FlowWiInt(i), value])),
+					FlowWiVar(tmpVar)
+				)),
+			)])
+		]));
+	} else {
+		None();
+	}
+}
+
+makeCreateArrayCall(len : int, type : FlowWiType) -> FlowWiCall {
+	if (extractWiseBasicType(type) == "string") {
+		FlowWiCall(FlowWiVar("createString"), [FlowWiInt(len)])
+	} else {
+		FlowWiCall(
+			FlowWiPolyCall(FlowWiVar("createArray"), makeWiArrayType(type)),
+			[FlowWiInt(len)]
+		)
+	}
+}
+
+isWiArrayConstruction(exp : FlowWiExp) -> bool {
+	isCreateFn = \e -> {
+		switch (e : FlowWiExp) {
+			FlowWiCall(v, __) : {
+				v == makeCreateArrayCall(0, FlowWiBasictype("i32")).exp
+				|| v == makeCreateArrayCall(0, FlowWiBasictype("string")).exp;
+			}
+			default : false;
+		}
+	}
+	isCreateFn(exp)
+	|| {
+		switch (exp : FlowWiExp) {
+			FlowWiBrace(es): length(es) > 1
+							&& switch (es[1] : FlowWiExp) {
+								FlowWiBrace(es1): es1 != []
+													&& switch (es1[0] : FlowWiExp) {
+														FlowWiLet(__, __, __, e, __) : isCreateFn(e);
+														default : false;
+													};
+								default : false;
+							};
+			default : false;
+		}
+	}
+
+}
+
+// It is a very dirty function. delete it in the future
+getWiseArrayNativesRealPolyTypes(nativeFn : WiseNativeFn, argTypes : [FiType], retType : FiType) -> Maybe<[FiType]> {
+	nativePolyFns = ["arrayPush", "replaceArray", "concatArrays",  "compareArrays", "subrangeArray"];
+	if (!isEmptyTree(nativeFn.polyParams) && contains(nativePolyFns, nativeFn.nativeName)) {
+		arrTypes = filtermap(arrayPush(argTypes, retType), \t -> switch (t : FiType) {
+			FiTypeArray(tt) : Some(tt);
+			FiTypeName(__, __) : None();
+			FiTypeFunction(__, __) : None();
+			FiTypeRef(__) : None();
+			FiTypeParameter(__) : None();
+			FiTypeBool() : None();
+			FiTypeInt() : None();
+			FiTypeDouble() : None();
+			FiTypeString() : None();
+			FiTypeFlow() : None();
+			FiTypeVoid() : None();
+			FiTypeNative() : None();
+		});
+		if (arrTypes == []) None() else Some(take(arrTypes, sizeTree(nativeFn.polyParams)));
+	} else {
+		None();
+	}
+}

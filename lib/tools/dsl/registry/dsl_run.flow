@@ -1,0 +1,102 @@
+import tools/dsl/registry/dsl_registry;
+import tools/dsl/registry/dsl_parser;
+import tools/dsl/registry/dsl_specification;
+import tools/dsl/dsl_tracing;
+import tools/dsl/dsl_eval;
+import ds/tree;
+import string;
+
+export {
+	// Perform this transformations to this input, doing all that is required
+	performDslTransformations(phase : string, toLanguage : string, input : DslAstEnv) -> DslAstEnv;
+
+	// Parse and run this program in the given language, and this environment
+	evalDslProgram(env : DslEnv, language : string, program : string) -> DslAst;
+}
+
+// TODO: Rewrite this language manipulation
+performDslTransformations(phase : string, toLang : string, input : DslAstEnv) -> DslAstEnv {
+	toLanguage = parseDslLanguage(toLang);
+	transforms = getDslTransformations(phase);
+	iterate = fold(transforms, input, \acc, transformation -> {
+		// Are we done?
+		if (acc.language == toLanguage) acc
+		else {
+			// What would be the result?
+			result = resultDslTransformation(acc.language, transformation.specification);
+			if (result != acc.language) {
+				// OK, it does something
+				performDslTransformation(acc, transformation);
+			} else acc;
+		}
+	});
+	
+	if (iterate.language == toLanguage) {
+		// We made it!
+		iterate
+	} else if (iterate.language != input.language) {
+		// OK, continue
+		performDslTransformations(phase, toLang, iterate)
+	} else {
+		// OK, maybe it is just a pure syntax extension without rewrite rules?
+		lastExtension = takeAfterLast(iterate.language.language, "+", iterate.language.language);
+		if (lastExtension == "") {
+			println("Could not transform to " + toLang + ". Only got to " + dslLanguage2string(iterate.language) + ". Extension " + lastExtension);
+			DslAstEnv(
+				iterate with error = "Could not transform to " + toLang + ". Only got to " + dslLanguage2string(iterate.language)
+			)
+		} else {
+			implicitDropped = takeBeforeLast(iterate.language.language, "+", iterate.language.language);
+			implicit = doImplicitExtensionDrop(iterate, lastExtension, implicitDropped);
+			performDslTransformations(phase, toLang, implicit);
+		}
+	}
+}
+
+doImplicitExtensionDrop(env : DslAstEnv, extension : string, remaining : string) -> DslAstEnv {
+	// println("Doing an implicit drop of " + extension);
+	language = remaining + "+" + extension;
+	iterDslEGraph(env.egraph, \eclass, nodes : Set<DslENode> -> {
+		iterSet(nodes, \node : DslENode -> {
+			if (node.language == parseDslLanguage(language)) {
+				// OK, just lowering it directly
+				newEclass = addDslAst(env.egraph, parseDslLanguage(remaining), node.value);
+				unionDslEClass(env.egraph, eclass, newEclass);
+				{}
+			}
+		})
+	});
+	DslAstEnv(env with language = parseDslLanguage(remaining));
+}
+
+// Applies the given transformation
+performDslTransformation(input : DslAstEnv, transformation : DslTransformation) -> DslAstEnv {
+	// Make sure to update the language as well
+	result = resultDslTransformation(input.language, transformation.specification);
+
+	if (isDslTracing(input.language, transformation.phase)) {
+		println("  Running " + transformation.phase + " for " + dslLanguage2string(transformation.specification) + " to go from " + dslLanguage2string(input.language) + " to " + dslLanguage2string(result));
+	}
+	res = transformation.fn(input);
+
+	if (isDslTracing(input.language, transformation.phase)) {
+		println(prettyDsl(res.ast));
+	}
+
+	runtime = getDslLanguageRuntime(transformation.specification);
+
+	DslAstEnv(
+		res
+		with 
+		language = result,
+		env = mergeTree(res.env, runtime)
+	)		
+}
+
+evalDslProgram(env : DslEnv, language : string, program : string) -> DslAst {
+	parsed = parseDslProgram(language, program);
+	desugared = performDslTransformations("desugar", "lambda", parsed);
+	// println(prettyDsl(desugared.ast));
+	nenv = DslEnv(env with locals = desugared.env);
+	evaluateDsl(nenv, desugared.ast);
+}

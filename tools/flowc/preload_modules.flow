@@ -1,9 +1,6 @@
 import sys/concurrent;
-import ds/treeutils;
-import tools/common/compilerconfig;
 import tools/flowc/flowcacc;
 import tools/flowc/flowc_module;
-import tools/flowc/incremental/fc2fi;
 
 export {
 	preloadedFcImports(preloaded : FcPreloadedModule) -> [FcImport];
@@ -53,8 +50,15 @@ preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string
 	preloadedModulesAndErrors = preloadModulesInParallel(config, globEnv, makeTree1(flowfile, FcImport2(flowfile, "", 0, 0)), Pair(makeTree(), []));
 	all_preloaded = preloadedModulesAndErrors.first;
 	load_errors = preloadedModulesAndErrors.second;
-	if (load_errors != []) {
-		iter(load_errors, errHandler);
+
+	resolving_errors = if (!(isConfigParameterTrue(config.config, "check-ambig-modules") || isConfigParameterTrue(config.config, "strict"))) {
+		[];
+	} else 
+		checkAmbiguityOfModulePathResolving(all_preloaded, config);
+
+	all_errors = concat(load_errors, resolving_errors);
+	if (all_errors != []) {
+		iter(all_errors, errHandler);
 	}
 	cyclic_import_errors = checkImportCycles(all_preloaded);
 	if (cyclic_import_errors != []) {
@@ -62,6 +66,23 @@ preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string
 	}
 	all_preloaded
 }
+
+checkAmbiguityOfModulePathResolving(modules : Tree<string, FcPreloadedModule>, conf : CompilerConfig) -> [FcError] {
+	foldTree(modules, [], \mod_name, preloaded, acc -> {
+		paths = findAllFlowPaths(mod_name, conf.includes, lookupTreeDef(conf.config, "working-dir", ""));
+		if (length(paths) == 1) acc else
+		if (length(paths) == 0) {
+			// Impossible branch, since a module was loaded.
+			concat(acc, [FcError("Path for module name '" + mod_name + "' is not resolved (must be impossible)", [])]);
+		} else {
+			concat(acc, [FcError(
+				"Ambiguous module name '" + mod_name + "'",
+ 				map(paths, \path -> FcPosition(path, 0, 0))
+			)]);
+ 		}
+ 	});
+ }
+
 
 // Preloads given modules recursively adding imports. Either loads from cache or parses file.
 preloadModulesInParallel(
@@ -82,11 +103,25 @@ preloadModulesInParallel(
 		Triple(preloadedFiFileInfo(preloadedModule).flowfile, preloadedModule, errM)
 	}));
 
+	ambiguityErrors = ref [];
+
 	// Grab the results
 	parsedFiles2 : Tree<string, FcPreloadedModule> = fold(results, preloadedModulesAndErrors.first, \acc, r -> {
-		setTree(acc, r.first, r.second)
+		switch (lookupTree(acc, r.first)) {
+			Some(preloaded): {
+				refArrayPush(ambiguityErrors, FcError(
+					"Ambiguous module name '" + r.first + "'",
+					[
+						FcPosition(preloadedFiFileInfo(r.second).fullpath, 0, 0),
+						FcPosition(preloadedFiFileInfo(preloaded).fullpath, 0, 0)
+					]
+				));
+			}
+			None(): { }
+		}
+		setTree(acc, r.first, r.second);
 	});
-	newErrors = concat(preloadedModulesAndErrors.second, filtermap(results, \r -> r.third));
+	newErrors = concat3(preloadedModulesAndErrors.second, filtermap(results, \r -> r.third), ^ambiguityErrors);
 
 	// Find all the new imports in these files
 	newImports : Tree<string, FcImport2> = fold(results, makeTree(), \acc, r -> {

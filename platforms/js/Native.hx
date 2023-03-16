@@ -27,6 +27,7 @@ import flash.utils.ByteArray;
 #end
 
 class Native {
+	public static var isNew : Bool = Util.getParameter("new") == "1";
 #if (js && flow_nodejs && flow_webmodule)
 	static var webModuleResponseText = "";
 #end
@@ -102,6 +103,21 @@ class Native {
 		return result;
 	}
 
+	public static function importJSModule(arg : Dynamic, cb : Dynamic -> Void) : Void {
+		#if (js && !flow_nodejs)
+			try {
+				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
+				//untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+				untyped __js__("(new Function(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\"))()");
+			} catch( e : Dynamic) {
+				Errors.report(e);
+				cb(null);
+			}
+		#else
+			cb(null);
+		#end
+	}
+
 	static var complainedMissingExternal : Bool = false;
 
 	public static function hostAddCallback(name : String, cb : Void -> Dynamic) : Dynamic {
@@ -131,6 +147,65 @@ class Native {
 		Browser.document.body.appendChild(textArea);
 		return textArea;
 	}
+
+	public static function evaluateObjectSize(object : Dynamic) : Int {
+		var bytes = 0;
+		untyped __js__("
+			var objectList = [];
+			var stack = [object];
+
+			while (stack.length) {
+				var value = stack.pop();
+
+				if (typeof value === 'boolean') {
+					bytes += 4;
+				}
+				else if ( typeof value === 'string' ) {
+					bytes += value.length * 2;
+				}
+				else if ( typeof value === 'number' ) {
+					bytes += 8;
+				}
+				else if
+				(
+					typeof value === 'object'
+					&& objectList.indexOf( value ) === -1
+				)
+				{
+					objectList.push( value );
+
+					if (Object.prototype.toString.call(value) != '[object Array]'){
+					   for(var key in value) bytes += 2 * key.length;
+					}
+
+					for( var i in value ) {
+						stack.push( value[ i ] );
+					}
+				}
+			}
+		");
+		return bytes;
+	}
+
+	public static function usedJSHeapSize() : Int {
+		try {
+			return untyped Browser.window.performance.memory.usedJSHeapSize;
+		} catch (e : Dynamic) {
+			untyped console.log("Warning! performance.memory.usedJSHeapSize is not implemented in this target");
+			return 0;
+		}
+	}
+
+	public static function totalJSHeapSize() : Int {
+		try {
+			return untyped Browser.window.performance.memory.totalJSHeapSize;
+		} catch (e : Dynamic) {
+			untyped console.log("Warning! performance.memory.totalJSHeapSize is not implemented in this target");
+			return 0;
+		}
+	}
+
+	// TODO : Implement native for performance.measureUserAgentSpecificMemory() as well, when it will be supported by browsers.
 #end
 
 	private static function copyAction(textArea : Dynamic) {
@@ -185,11 +260,13 @@ class Native {
 	public static var clipboardDataHtml = "";
 
 	public static function getClipboard() : String {
-		#if flash
-			return clipboardData;
-		#elseif (js && !flow_nodejs)
+		#if (js && !flow_nodejs)
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				return untyped Browser.window.clipboardData.getData("Text");
+			}
+
+			if (isNew) {
+				return clipboardData;
 			}
 
 			// save current focus
@@ -202,6 +279,14 @@ class Native {
 			untyped textArea.select();
 
 			try {
+				#if js
+				untyped __js__("
+					if (typeof RenderSupport !== 'undefined') {
+						RenderSupport.disablePasteEventListener();
+					}
+				");
+				#end
+
 				var successful = Browser.document.execCommand('paste');
 
 				if (successful) {
@@ -213,10 +298,26 @@ class Native {
 				Errors.report('Oops, unable to paste');
 			}
 
+			#if js
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined') {
+					RenderSupport.enablePasteEventListener();
+				}
+			");
+			#end
+
 			Browser.document.body.removeChild(textArea);
 
 			// restore focus to the previous state
-			focusedElement.focus();
+			untyped __js__("
+				if (typeof RenderSupport !== 'undefined') {
+					RenderSupport.deferUntilRender(function() {
+						focusedElement.focus();
+					});
+				} else {
+					focusedElement.focus();
+				}
+			");
 			return result;
 		#else
 			return "";
@@ -224,12 +325,10 @@ class Native {
 	}
 
 	public static function getClipboardToCB(callback : String->Void) : Void {
-		#if flash
-			callback(clipboardData);
-		#elseif (js && !flow_nodejs)
+		#if (js && !flow_nodejs)
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				callback(untyped Browser.window.clipboardData.getData("Text"));
-			} else if (untyped navigator.clipboard) {
+			} else if (untyped navigator.clipboard && untyped navigator.clipboard.readText) {
 				untyped navigator.clipboard.readText().then(callback, function(e){
 					Errors.print(e);
 				});
@@ -260,6 +359,10 @@ class Native {
 
 	public static inline function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
 		return HaxeRuntime.toString(value, keepStringEscapes);
+	}
+
+	public static function toStringForJson(value : String) : String {
+		return HaxeRuntime.toStringForJson(value);
 	}
 
 	public static inline function gc() : Void {
@@ -594,6 +697,50 @@ class Native {
 				result.push(v);
 		}
 		return result;
+	}
+
+	public static function filtermapi<T>(values : Array<T>, clos : Int -> T -> Dynamic) : Array<T> {
+		var result = new Array();
+		var n = values.length;
+		for (i in 0...n) {
+			var v = values[i];
+			var maybe = clos(i, v);
+			var fields = Reflect.fields(maybe);
+			// Check if there is both an _id and a value field of some kind: Then it is some
+			if (fields.length == 2) {
+				for (f in fields) {
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "_id") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+				}
+			}
+		}
+		return result;
+	}
+
+	public static function mapiM<T>(values : Array<T>, clos : Int -> T -> Dynamic) : Dynamic {
+		var result = new Array();
+		var n = values.length;
+		for (i in 0...n) {
+			var v = values[i];
+			var maybe = clos(i, v);
+			var fields = Reflect.fields(maybe);
+			// Check if there is both an _id and a value field of some kind: Then it is Some
+			if (fields.length == 2) {
+				for (f in fields) {
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "_id") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+				}
+			} else {
+				return maybe;
+			}
+		}
+		return makeStructValue("Some", [ result ], makeStructValue("IllegalStruct", [], null));
 	}
 
 	public static inline function random() : Float {
@@ -1246,6 +1393,7 @@ class Native {
 			}
 			return true;
 		#elseif js
+			Errors.print("setFileContent '" + file + "' does not work in this target. Use the C++ runner");
 			return false;
 		#else
 			try {
@@ -1262,7 +1410,15 @@ class Native {
 		return false;
 	}
 
+	public static function setFileContentBinaryConvertToUTF8(file : String, content : String) : Bool {
+		return setFileContentBinaryCommon(file, content, true);
+	}
+
 	public static function setFileContentBinary(file : String, content : Dynamic) : Bool {
+		return setFileContentBinaryCommon(file, content, false);
+	}
+
+	public static function setFileContentBinaryCommon(file : String, content : Dynamic, convertToUTF8 : Bool) : Bool {
 		#if (js && (flow_nodejs || nwjs))
 			try {
 				Fs.writeFileSync(file, new Buffer(content), 'binary');
@@ -1272,24 +1428,38 @@ class Native {
 			return true;
 		#elseif (js)
 			try {
-				var fileBlob = new js.html.Blob([content]);
-
 				var a : Dynamic = js.Browser.document.createElement("a");
-				var url = js.html.URL.createObjectURL(fileBlob);
-
-				a.href = url;
 				a.download = file;
 				js.Browser.document.body.appendChild(a);
-				a.click();
 
+				if (convertToUTF8 || Util.getParameter("save_file_utf8") == "1") { // Old implementation, Blob converts to UTF-8
+					var fileBlob = new js.html.Blob([content], {type : 'application/octet-stream'});
+					var url = js.html.URL.createObjectURL(fileBlob);
+					a.href = url;
+					a.click();
+
+					Native.defer(function() {
+						js.html.URL.revokeObjectURL(url);
+					});
+				} else {
+					if (content.startsWith(Util.fromCharCode(0xFEFF))) {
+						content = content.substr(1);
+					}
+					var base64data = Browser.window.btoa(content);
+					a.href = 'data:application/octet-stream;base64,' + base64data;
+					a.click();
+				}
 				Native.defer(function() {
 					js.Browser.document.body.removeChild(a);
-					js.html.URL.revokeObjectURL(url);
 				});
 
 				return true;
 			} catch (error : Dynamic) {
-				return false;
+				if (convertToUTF8) {
+					return false;
+				} else {
+					return setFileContentBinaryCommon(file, content, true);
+				}
 			}
 
 		#else
@@ -1359,15 +1529,26 @@ class Native {
 	}
 
 	public static function getUrl(u : String, t : String) : Void {
+		getUrlBasic(u, t);
+	}
+
+	public static function getUrlAutoclose(u : String, t : String, delay : Int) : Void {
+		getUrlBasic(u, t, delay);
+	}
+
+	public static function getUrlBasic(u : String, t : String, ?autoCloseDelay : Int = -1) : Void {
 		#if (js && !flow_nodejs)
 		try {
-			Browser.window.open(u, t);
+			var openedWindow = Browser.window.open(u, t);
+			if (autoCloseDelay >= 0) {
+				openedWindow.addEventListener('pageshow', function() {
+					timer(autoCloseDelay, function() { openedWindow.close(); });
+				});
+			}
 		} catch (e:Dynamic) {
 			// Catch exception that tells that window wasn't opened after user chose to stay on page
 			if (e != null && e.number != -2147467259) throw e;
 		}
-		#elseif flash
-		flash.Lib.getURL(new flash.net.URLRequest(u), t);
 		#end
 	}
 
@@ -1650,6 +1831,67 @@ class Native {
 		#else
 		return 0.0;
 		#end
+	}
+
+	public static function detectDedicatedGPU() : Bool {
+		try {
+			var canvas = Browser.document.createElement('canvas');
+			var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
+
+			if (gl == null) {
+				return false;
+			}
+
+			var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+			var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+			var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+
+			return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
+		} catch (e : Dynamic) {
+			return false;
+		}
+	}
+
+	public static function domCompleteTiming() : Float {
+		try {
+			return untyped __js__("window.performance.timing.domComplete - window.performance.timing.domLoading");
+		} catch (e : Dynamic) {
+			return -1;
+		}
+	}
+
+	public static function estimateCPUSpeed() : Float {
+		#if js
+		untyped __js__("
+			var _speedconstant = 1.15600e-8;
+			var d = new Date();
+			var amount = 150000000;
+			var estprocessor = 1.7;
+			for (var i = amount; i > 0; i--) {}
+			var newd = new Date();
+			di = (newd.getTime() - d.getTime()) / 1000;
+			spd = ((_speedconstant * amount) / di);
+			return Math.round(spd * 1000) / 1000;
+		");
+		#end
+
+		return -1;
+	}
+
+	public static function getDeviceMemory() : Float {
+		try {
+			return untyped __js__("window.navigator.deviceMemory || -1");
+		} catch (e : Dynamic) {
+			return -1;
+		}
+	}
+
+	public static function getDevicePlatform() : Float {
+		try {
+			return untyped __js__("window.navigator.platform || ''");
+		} catch (e : Dynamic) {
+			return -1;
+		}
 	}
 
 	private static var FlowCrashHandlers : Array< String -> Void > = new Array< String -> Void>();
@@ -2057,50 +2299,52 @@ class Native {
 
 	private static var parseJsonFirstCall = true;
 	public static function parseJson(json : String) : Dynamic {
-		try {
-			if (parseJsonFirstCall) {
-				Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
-				Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
+		if (parseJsonFirstCall) {
+			Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
+			Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
 
-				Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
-				Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
+			Native.sidJsonString = HaxeRuntime._structids_.get("JsonString");
+			Native.sidJsonStringVal = HaxeRuntime._structargs_.get(Native.sidJsonString)[0];
 
-				Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
-				Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
+			Native.sidJsonDouble = HaxeRuntime._structids_.get("JsonDouble");
+			Native.sidJsonDoubleVal = HaxeRuntime._structargs_.get(Native.sidJsonDouble)[0];
 
-				Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
-				Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
+			Native.jsonBoolTrue = HaxeRuntime.fastMakeStructValue("JsonBool", true);
+			Native.jsonBoolFalse = HaxeRuntime.fastMakeStructValue("JsonBool", false);
 
-				Native.sidPair = HaxeRuntime._structids_.get("Pair");
-				Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
-				Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
+			Native.sidPair = HaxeRuntime._structids_.get("Pair");
+			Native.sidPairFirst = HaxeRuntime._structargs_.get(Native.sidPair)[0];
+			Native.sidPairSecond = HaxeRuntime._structargs_.get(Native.sidPair)[1];
 
-				Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
-				Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
+			Native.sidJsonObject = HaxeRuntime._structids_.get("JsonObject");
+			Native.sidJsonObjectFields = HaxeRuntime._structargs_.get(Native.sidJsonObject)[0];
 
-				Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
+			Native.jsonNull = HaxeRuntime.makeStructValue("JsonNull",[],null);
 
-				Native.jsonDoubleZero =  HaxeRuntime.makeStructValue("JsonDouble", [0.0], null);
-				Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
-				parseJsonFirstCall = false;
-			}
-			if (json == "") return Native.jsonDoubleZero;
-
-			if (Platform.isIOS && json.length > 1024) {
-				// on IOS memory restriction is very tight so we try to not create duplicate strings if possible
-				// it might have advantages for quite long parsed string only
-				return Platform.isFirefox ?
-				object2JsonStructsCompacting_FF(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}")) :
-				object2JsonStructsCompacting(haxe.Json.parse(json), untyped __js__("{}"), untyped __js__("{}"), untyped __js__("{}"));
-			} else {
-				return Platform.isFirefox ?
-				object2JsonStructs_FF(haxe.Json.parse(json)) :
-				object2JsonStructs(haxe.Json.parse(json));
-			}
-
-		} catch (e : Dynamic) {
-			return Native.jsonDoubleZero;
+			Native.jsonDoubleZero =  HaxeRuntime.makeStructValue("JsonDouble", [0.0], null);
+			Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
+			parseJsonFirstCall = false;
 		}
+		if (json == "") return Native.jsonDoubleZero;
+
+		untyped __js__("
+			try {
+				if (Platform.isIOS && json.length > 1024) {
+					// on IOS memory restriction is very tight so we try to not create duplicate strings if possible
+					// it might have advantages for quite long parsed string only
+					return Platform.isFirefox ?
+					Native.object2JsonStructsCompacting_FF(JSON.parse(json), {}, {}, {}) :
+					Native.object2JsonStructsCompacting(JSON.parse(json), {}, {}, {});
+				} else {
+					return Platform.isFirefox ?
+					Native.object2JsonStructs_FF(JSON.parse(json)) :
+					Native.object2JsonStructs(JSON.parse(json));
+				}
+			} catch (e) {
+				return Native.jsonDoubleZero;
+			}
+		");
+		return Native.jsonDoubleZero;
 	}
 	#end
 
@@ -2116,6 +2360,16 @@ var fns = tasks.map(function(c, i, a) {
 });
 
 async.parallel(fns, function(err, results) { cb(results) });");
+		#end
+	}
+
+	public static function preloadStaticResource(href : String, as : String) : Void {
+		#if (js && !flow_nodejs)
+			var tag : Dynamic = js.Browser.document.createElement("link");
+			tag.rel = "preload";
+			tag.href = href;
+			tag.as = as;
+			js.Browser.document.head.appendChild(tag);
 		#end
 	}
 }

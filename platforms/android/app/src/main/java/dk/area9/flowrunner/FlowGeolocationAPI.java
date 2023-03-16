@@ -6,9 +6,10 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.location.Location;
+import android.location.LocationManager;
 import android.provider.Settings;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.util.Log;
 
 public class FlowGeolocationAPI {
@@ -17,13 +18,13 @@ public class FlowGeolocationAPI {
     public final static int GEOLOCATIONERROR_POSITIONUNAVAILABLE = 2;
     public final static int GEOLOCATIONERROR_ERRORTIMEOUT = 3;
 
-    private Context context;
-    private FlowRunnerWrapper wrapper;
-    private IFlowGooglePlayServices flowGooglePlayServices;
+    private final Context context;
+    private final FlowRunnerWrapper wrapper;
+    private final IFlowGooglePlayServices flowGooglePlayServices;
     private boolean askedToTurnGeolocationOn = false;
-    private boolean geolocationPermissionGranted; // permission for geolocation requested in manifest
-    private FlowLocationListener balancedListener;
-    private FlowLocationListener highAccuracyListener;
+    private final boolean geolocationPermissionGranted; // permission for geolocation requested in manifest
+    private final FlowLocationListener balancedListener;
+    private final FlowLocationListener highAccuracyListener;
 
     @Nullable
     private String lastTurnOnGeolocationMessage = null;
@@ -85,7 +86,13 @@ public class FlowGeolocationAPI {
     }
     
     public boolean isGeolocationEnabled() {
-        return !Settings.Secure.getString(context.getContentResolver(), Settings.Secure.LOCATION_PROVIDERS_ALLOWED).equals("");
+        String le = Context.LOCATION_SERVICE;
+        LocationManager locationManager = (LocationManager) context.getSystemService(le);
+        if(!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)){
+            return false;
+        } else {
+            return true;
+        }
     }
     
     public void GeolocationExecuteOnOkCallback(int callbacksRoot, boolean removeAfterCall, @NonNull Location location) {

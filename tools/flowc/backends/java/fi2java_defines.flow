@@ -1,51 +1,71 @@
+import tools/flowc/backends/common;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/backends/java/fi2java_utils;
 
 export {
 	JavaModule(
-		key : string, 
-		module : FiModule, 
+		key : string,
+		module : FiModule,
 		id : string,
 		vars : ref List<string>,
 		decl_order : [FiDeclaration]
 	);
 
 	JavaStruct(
-		id : int, 
-		name : string, 
+		id : int,
+		name : string,
+		javaName : string,
 		csmodule : JavaModule,
 		fields : [JavaStructField],
 	);
 
 	JavaStructField(
-		name : string, 
-		type : FiType, 
+		name : string,
+		type : FiType,
 		isMutable : bool
 	);
-	
+
+	JavaWrapperCode(
+		name : string,
+		type : string,
+		code : string
+	);
+
+	JavaRuntime(
+		// Classes, derived from NativeHost mapped onto theis public static methods (potential natives)
+		natives: Tree<string, Set<string>>,
+		// All other classes in runtime
+		classes: Set<string>
+	);
+
 	JavaGlobalContext(
+		config : FiJavaConfig,
 		program : FiProgram,
 		package_path : string,
-		main_class : string,
 
 		cmodules : Tree<string, JavaModule>,
 		csm_list : [JavaModule],
 		cstructs : Tree<string, JavaStruct>,
 
+		// potential natives, which are present in a host (java source) and other runtime java files.
+		runtime : JavaRuntime, 
+
 		mutable globals : Tree<string, JavaGlobalInfo>,
 		mutable globalFuncs : Tree<string, JavaGlobalInfo>,
+		mutable missing_natives : Set<string>, // natives which are not implemented neither have fallbacks
 
 		mutable has_func_def : Tree<int,bool>,
 		mutable has_field_accessor : Tree<string,bool>,
 
-		mutable uses_host : Tree<string,bool>,
+		mutable uses_host : Set<string>,
 		init_code : ref List<string>,
-		wrapper_code : ref List<string>,
-		native_wrapper_code : ref List<string>,
+		wrapper_code : ref List<JavaWrapperCode>,
+		native_wrapper_code : ref List<JavaWrapperCode>,
 		header_generator : (double) -> ref List<string>,
 
 		hash_collisions : bool,
 		to_compile : ref List<string>, // set of java sources for compilation. Some may be already compiled
+		mutable errors : [string]
 	);
 
 	JavaScopeContext(
@@ -65,22 +85,23 @@ export {
 		mutable has_tail_call : bool,
 		arg_locals : [JavaLocalInfo],
 	);
-	
+
 	JavaLocalInfo(
-		name : string, 
-		id : string, 
-		type : string, 
-		is_final : bool, 
+		name : string,
+		id : string,
+		type : string,
+		is_final : bool,
 		is_obj : bool
 	);
-	
+
 	JavaGlobalInfo(
-		name : string, 
-		csmodule : JavaModule, 
-		type : FiType, 
-		global_scope : bool
+		class : string,
+		name : string,
+		csmodule : JavaModule,
+		type : FiType,
+		cast : string // in case a native returns some struct/union value we need an explicit cast
 	);
-	
+
 	JavaReturnLocation ::= JavaReturnIgnore, JavaReturnLocal, JavaReturnStmt;
 		JavaReturnIgnore();
 		JavaReturnLocal(name : string, type : string);
@@ -90,7 +111,9 @@ export {
 }
 
 writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void {
-	setFileContent(path, src);
+	if (!updateFileContent(path, src)) {
+		gctx.errors ::= concat(gctx.errors, ["failed to write java source " + path]);
+	}
 	resolved = resolveRelativePath(path);
 	rlistPush(gctx.to_compile, resolved + "\n");
 	{}

@@ -1,0 +1,194 @@
+import text/gringo/gringo_ast;
+import tools/gringo/gringo_pretty;
+import tools/gringo/utils;
+import ds/arrayutils;
+import net/url_parameter;
+
+export {
+	// This does a prefix-calculation and warns about potential backtracking
+	checkRules(file : string, g : GTerm) -> void;
+}
+
+checkRules(file : string, g : GTerm) -> void {
+	emptyRules = findEmptyRules(makeSet(), g);
+
+	rulePrefixes = buildRulePrefixes(makeTree(), emptyRules, g);
+	expanded = expandPrefixes(rulePrefixes);
+
+	if (isUrlParameterTrue("dump-prefix")) {
+		traverseInOrder(expanded, \id, prefixes -> {
+			println(id + ": " 
+				+ strReplace(superglue(prefixes, gterm2string, ", "), "\"", "'")
+				+ (if (containsSet(emptyRules, id)) {
+					" EPSILON"
+				} else "")
+			);
+		});
+	};
+
+	checkExponential(expanded, emptyRules, file, g);
+}
+
+// See if any part contain common prefixes which might be exponential
+checkExponential(rulePrefixes : Tree<string, [GTerm]>, emptyRules : Set<string>, rule : string, g : GTerm) -> void {
+	switch (g) {
+		GRule(trule, term, body): {
+			checkExponential(rulePrefixes, emptyRules, trule, term);
+			checkExponential(rulePrefixes, emptyRules, rule, body);
+		}
+		GPrecedence(left, right): checkCommonPrefix(rulePrefixes, emptyRules, rule, left, right);
+		GChoice(left, right): checkCommonPrefix(rulePrefixes, emptyRules, rule, left, right);
+		GSeq(left, right): {
+			checkExponential(rulePrefixes, emptyRules, rule, left);
+			checkExponential(rulePrefixes, emptyRules, rule, right);
+		}
+		GStar(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GPlus(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GOpt(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GNegate(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GError(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GLower(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GUnquote(term): checkExponential(rulePrefixes, emptyRules, rule, term);
+		GString(text): {}
+		GRange(lower, upper): {}
+		GVar(id): {}
+		GEpsilon(): {}
+	}
+}
+
+// Check if these two terms contain any common prefix, and complain if so
+checkCommonPrefix(rulePrefixes : Tree<string, [GTerm]>, emptyRules : Set<string>, rule : string, left : GTerm, right : GTerm) -> void {
+	pleft = stripToPrefixes(rulePrefixes, emptyRules, left);
+	pright = stripToPrefixes(rulePrefixes, emptyRules, right);
+	if (isIntersecting(pleft, pright)) {
+		println(rule + ": Common prefix detected in choices:");
+		println(superglue(intersection(pleft, pright), gterm2string, ", "));
+	}
+}
+
+// Build a map of prefixes for each rule
+buildRulePrefixes(rulePrefixes : Tree<string, [GTerm]>, emptyRules : Set<string>, g : GTerm) -> Tree<string, [GTerm]> {
+	switch (g) {
+		GRule(id, term, body): {
+			acc1 = buildRulePrefixes(rulePrefixes, emptyRules, body);
+			acc2 = buildRulePrefixes(acc1, emptyRules, term);
+
+			prefixes = sortUnique(stripToPrefixes(acc2, emptyRules, term));
+			setTree(acc2, id, prefixes);
+		}
+		default: rulePrefixes;
+	}
+}
+
+// The prefixes might reference other rules - expand these transitively
+expandPrefixes(rulePrefixes : Tree<string, [GTerm]>) -> Tree<string, [GTerm]> {
+	didWork = ref false;
+	nacc = foldTree(rulePrefixes, rulePrefixes, \id, prefixes, acc -> {
+		if (isPrefixResolved(prefixes)) {
+			// OK, substitute this wherever it occurs
+			mapTree2(acc, \nid, pf -> {
+				if (nid == id) pf
+				else {
+					sortUnique(concatA(map(pf, \pg -> {
+						if (pg == GVar(id)) {
+							didWork := true;
+							prefixes
+						} else [pg];
+					})))
+				}
+			});
+		} else { 
+			acc;
+		}
+	});
+	if (^didWork) expandPrefixes(nacc) else nacc;
+}
+
+isPrefixResolved(prefixes : [GTerm]) -> bool {
+	forall(prefixes, \g -> switch (g) {
+		GVar(__): false;
+		GString(__): true;
+		GRange(__, __): true;
+		default: {
+			println("Not supposed to happen");
+			true;
+		}
+	})
+}
+
+// Reduces the term t to the set of potential prefix terminals and non-terminals
+stripToPrefixes(rulePrefixes : Tree<string, [GTerm]>, emptyRules : Set<string>, t : GTerm) -> [GTerm] {
+	switch (t) {
+		GRule(id, term, body): stripToPrefixes(rulePrefixes, emptyRules, body);
+		GPrecedence(left, right): concat(stripToPrefixes(rulePrefixes, emptyRules, left), stripToPrefixes(rulePrefixes, emptyRules, right));
+		GChoice(left, right): concat(stripToPrefixes(rulePrefixes, emptyRules, left), stripToPrefixes(rulePrefixes, emptyRules, right));
+		GSeq(left, right): {
+			lp = stripToPrefixes(rulePrefixes, emptyRules, left);
+			if (canBeEmpty(emptyRules, left)) concat(lp, stripToPrefixes(rulePrefixes, emptyRules, right))
+			else lp;
+		}
+		GStar(term): stripToPrefixes(rulePrefixes, emptyRules, term);
+		GPlus(term): stripToPrefixes(rulePrefixes, emptyRules, term);
+		GOpt(term): stripToPrefixes(rulePrefixes, emptyRules, term);
+		GNegate(term): []; //stripToPrefixes(acc, term);
+		GError(term): stripToPrefixes(rulePrefixes, emptyRules, term);
+		GLower(term): stripToPrefixes(rulePrefixes, emptyRules, term);
+		GUnquote(term): {
+			switch (term) {
+				GString(__): [];
+				GUnquote(mt): [];
+				default: stripToPrefixes(rulePrefixes, emptyRules, term);
+			}
+		}
+		GString(text): [t];
+		GRange(lower, upper): [t];
+		GVar(id): arrayPush(getTreeArrayValue(rulePrefixes, id), t);
+		GEpsilon(): [];
+	}
+}
+
+// Build a set of what rules can be empty
+// TODO: Instead of this algorithm, collect the minimum prefix
+// since we have to resolve cycles of ids
+findEmptyRules(emptyRules : Set<string>, t : GTerm) -> Set<string> {
+	switch (t) {
+		GRule(id, term, body): {
+			nacc = if (canBeEmpty(emptyRules, term)) {
+				insertSet(emptyRules, id);
+			} else {
+				emptyRules;
+			};
+			findEmptyRules(nacc, body);
+		}
+		default: emptyRules;
+	}
+}
+
+// Check if this term can be empty?
+canBeEmpty(emptyRules : Set<string>, t : GTerm) -> bool {
+	switch (t) {
+		GRule(id, term, body): {
+			canBeEmpty(emptyRules, term);
+		}
+		GPrecedence(left, right): canBeEmpty(emptyRules, left) || canBeEmpty(emptyRules, right);
+		GChoice(left, right): canBeEmpty(emptyRules, left) || canBeEmpty(emptyRules, right);
+		GSeq(left, right): canBeEmpty(emptyRules, left) && canBeEmpty(emptyRules, right);
+		GStar(term): true;
+		GPlus(term): canBeEmpty(emptyRules, term);
+		GOpt(term): true;
+		GNegate(term): true;
+		GError(term): canBeEmpty(emptyRules, term);
+		GLower(term): canBeEmpty(emptyRules, term);
+		GUnquote(term): {
+			switch (term) {
+				GString(__): true;
+				GUnquote(mt): true;
+				default: canBeEmpty(emptyRules, term);
+			}
+		}
+		GString(text): false;
+		GRange(lower, upper): false;
+		GVar(id): containsSet(emptyRules, id);
+		GEpsilon(): true;
+	}
+}

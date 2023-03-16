@@ -1,5 +1,5 @@
 /*!
- * UAParser.js v0.7.21
+ * UAParser.js
  * Lightweight JavaScript-based User-Agent string parser
  * https://github.com/faisalman/ua-parser-js
  *

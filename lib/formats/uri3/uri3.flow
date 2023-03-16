@@ -1,0 +1,346 @@
+import ds/tuples;
+import string;
+import math/math;
+import formats/html/html;
+
+export {
+
+	// An API that follows the Browsers' URL object naming: 
+	// https://developer.mozilla.org/en-US/docs/Web/API/URL
+
+	// This will represent the logical (not syntactical format of an URI).
+	// Parsing an URL will, to some extend, try to correct misformed urls,
+	// It is not well suited for validating an url string
+
+	// - It is possible to represent duplicated keys in the search and hash params. For example a=1&a=2.
+	// - The protocol and hostname will be lowercase, the case of the path, search and hash is preserved.
+	// - If a search or hash is not on the key=value form, then it is still stored in a KeyValue with an empty key.
+	// - The search and hash params order is preserved.
+	
+	Uri3(
+		// For example "https"
+		protocol: string,
+
+		// For example "area9.dk"
+		hostname: string,
+
+		// For example 443. It is 0 if not specified
+		port: int,
+
+		// For example ["rhapsode", "flowjs.html"]
+		path: [string],
+
+		// An url with an hostname is always absolute, a relative path always have an empty host.
+		pathIsAbsolute: bool,
+		
+		// If the path ends with a slash then it is a folder. 
+		// If there is a host and no path, it is also a folder
+		pathIsFolder: bool,
+
+		// For example [KeyValue("name", "learner"), KeyValue("full", "Soren Andersen")];
+		search: [KeyValue],
+
+		// For example [KeyValue("", "home"), KeyValue("item", "123")];
+		hash: [KeyValue],
+	);
+
+	// A default Uri
+	makeUri3() -> Uri3;
+
+	// Parse a href as an Uri
+	uri3(href: string) -> Uri3;
+
+	// Convert the Uri to a string
+	uri3GetHref(u: Uri3) -> string;
+
+	// Returns for example: area9.dk:81
+	// It will omit default ports for known protocols.
+	uri3GetHost(u: Uri3) -> string;
+
+	// Returns for example: https://area9.dk:8080
+	uri3GetOrigin(u: Uri3) -> string;
+
+	// Returns for example "rhapsode/flowjs.html"
+	uri3GetPathname(u: Uri3) -> string;
+
+	// Returns for example: name=learner&full=Soren%20Andersen
+	uri3GetSearch(u: Uri3) -> string;
+
+	// Returns for example: home&item=123
+	uri3GetHash(u: Uri3) -> string;
+
+	// Convert search or hash parameters to a tree, so it is easy to use the lookupTreeDef function.
+	// If KeyValue.key is empty, then the value is used as key. 
+	// If there are duplicated keys, only the last is used. 
+	uri3MakeTree(params: [KeyValue]) -> Tree<string, string>;
+}
+
+makeUri3() -> Uri3 { Uri3("", "", 0, [], false, false, [], []); }
+
+
+uri3(href: string) -> Uri3 {
+
+	// takeTail gets the rest of the string, starting at index.
+	takeTail = \str: string, index: int -> substring(str, index, strlen(str) - index);
+
+	// Protocol
+	protocolIndex = strIndexOf(href, ":");
+	protocolRest = if (protocolIndex < 0) {
+		Pair("", href);
+	} else {
+		p = substring(href, 0, protocolIndex);
+		if (strIndexOf(p, "?") >= 0 || strIndexOf(p, "#") >= 0 || strIndexOf(p, "/") >=0 || strIndexOf(p, ":") >= 0) {
+			// This is not the protocol, assume it is something else.
+			Pair("", href);
+		} else {
+			// Protocols are case insensitive
+			Pair(toLowerCase(p), takeTail(href, protocolIndex + 1));
+		}
+	}
+	protocol = protocolRest.first;
+	rest = protocolRest.second;
+
+	// e is a triple of path, search and hash.
+	// The split at # is prioritized, because it is possible to have question marks in the hash, but not # in the search part.
+	hashIndex = strIndexOf(rest, "#");
+	e = if (hashIndex < 0) {
+		questionIndex = strIndexOf(rest, "?");
+		if (questionIndex < 0) {
+			[rest, "", ""];
+		} else {
+			[
+				substring(rest, 0, questionIndex),
+				takeTail(rest, questionIndex + 1),
+				""
+			];
+		}
+	} else {
+		e3 = takeTail(rest, hashIndex + 1);
+		e12 = substring(rest, 0, hashIndex);
+		questionIndex = strIndexOf(e12, "?");
+		if (questionIndex < 0) {
+			[e12, "", e3];
+		} else {
+			[
+				substring(e12, 0, questionIndex),
+				takeTail(e12, questionIndex + 1),
+				e3
+			];
+		}
+	}
+
+	// Split the string, and keep the slashes
+	slashes = strSplit2(e[0], ["/"]);
+	slashesCount = length(slashes);
+
+	hostPath = if (slashesCount >= 3 && slashes[0] == "/" && slashes[1] == "/") {
+		if (slashes[2] == "/") {
+			Pair("", subrange(slashes, 2, slashesCount - 2));
+		} else {
+			Pair(toLowerCase(slashes[2]), subrange(slashes, 3, slashesCount - 3));
+		}
+	} else {
+		Pair("", slashes);
+	}
+
+	haveHost = hostPath.first != "";
+	pathParts = length(hostPath.second);
+
+	// path is the Triple: [path], pathIsAbsolute, pathIsFolder
+	path = foldi(
+		hostPath.second, 
+		// If there is a host, then empty path is considered an absolute folder, 
+		Triple([], haveHost, haveHost), 
+		\i: int, acc: Triple<[string], bool, bool>, str -> {
+			if (i == 0) {
+				if (str == "/") {
+					if (i == pathParts - 1) {
+						Triple([], true, true);
+					} else {
+						Triple([], true, false);
+					}
+				} else {
+					Triple([urlDecode2(str)], acc.second, false);
+				}
+			} else if (str == "/") {
+				if (i == pathParts - 1) {
+					Triple(acc with third = true);
+				} else {
+					acc;
+				}
+			} else {
+				Triple(acc with first = arrayPush(acc.first, urlDecode2(str)));
+			}
+		}
+	);
+
+	// Ignore . and go back with ..
+	pathReduced = fold(
+		path.first,
+		[],
+		\acc: [string], str -> {
+			if (str == ".") {
+				// ignore
+				acc;
+			} else if (str == ".." && length(acc) >= 1) {
+				take(acc, length(acc) - 1);
+			} else {
+				arrayPush(acc, str);
+			}
+		}
+	);
+
+	// Hostname
+	colonIndex = strIndexOf(hostPath.first, ":");
+	hostname = if (colonIndex < 0) {
+		hostPath.first;
+	} else {
+		substring(hostPath.first, 0, colonIndex);
+	}
+
+	// Port
+	p = if (colonIndex < 0) {
+		0 
+	} else {
+		s2i(takeTail(hostPath.first, colonIndex + 1));
+	};
+	port = if (p != 0) {
+		p
+	} else if (protocol == "http") {
+		80
+	} else if (protocol == "https") {
+		443
+	} else if (protocol == "ftp") {
+		21
+	} else if (protocol == "ssh") {
+		22
+	} else {
+		0
+	};
+
+	// Make url decoded KeyValues
+	makeKv = \str, decode -> {
+		map(strSplit2WithoutLeave(str, ["&"]), \s -> {
+			eqIndex = strIndexOf(s, "=");
+			if (eqIndex < 0) {
+				KeyValue("", decode(s));
+			} else {
+				KeyValue(
+					decode(substring(s, 0, eqIndex)), 
+					decode(takeTail(s, eqIndex + 1))
+				);
+			}
+		});
+	};
+
+	Uri3(protocol, hostname, port, pathReduced, path.second, path.third, makeKv(e[1], urlDecode2), makeKv(e[2], urlDecode));
+}
+
+uri3GetHref(u: Uri3) -> string {
+	originStr = uri3GetOrigin(u);
+	searchStr = uri3GetSearch(u);
+	hashStr = uri3GetHash(u);
+
+	pathname = uri3GetPathname(u);
+	pathStr = if (pathname == "/" && originStr != "" && searchStr == "" && hashStr == "") {
+		// Do not add a trailing slash, this way it works like the browser
+		"";
+	} else {
+		pathname;
+	}
+
+	s = \sep: string, str: string -> if (str == "") "" else sep + str;
+
+	originStr + pathStr + s("?", searchStr) + s("#", hashStr);
+}
+
+uri3GetHost(u: Uri3) {
+	u.hostname + (if (
+		(u.port == 0) ||
+		(u.protocol == "http" && u.port == 80) || 
+		(u.protocol == "https" && u.port == 443) || 
+		(u.protocol == "ftp" && u.port == 21) ||
+		(u.protocol == "ssh" && u.port == 22)
+	) {
+		""
+	} else {
+		":" + i2s(u.port);
+	})
+}
+
+uri3GetOrigin(u: Uri3) -> string {
+	protocolStr = if (u.protocol != "") {
+		u.protocol + ":"
+	} else {
+		"";
+	};
+	hostStr = uri3GetHost(u);
+	if (protocolStr == "" && hostStr == "") {
+		""
+	} else {
+		// If either the protocol or the host is specified, then the url must include the //
+		protocolStr + "//" + hostStr
+	}
+}
+
+uri3GetPathname(u: Uri3) -> string { 
+	p1 = fold(u.path, "", \acc: string, p: string -> {
+		if (p == "") {
+			acc;
+		} else if (acc == "") {
+			urlEncode2(p);
+		} else {
+			acc + "/" + urlEncode2(p);
+		}
+	});
+
+	if (p1=="") {
+		if (u.pathIsAbsolute || u.pathIsFolder) {
+			"/"
+		} else {
+			"";
+		}
+	} else {
+		p2 = if (u.pathIsAbsolute) {
+			"/" + p1;
+		} else {
+			p1;
+		}
+		if (u.pathIsFolder) {
+			p2 + "/";
+		} else {
+			p2;
+		}
+	}
+}
+
+uri3GlueSearchParameters(params: [KeyValue], encode : (string) -> string) -> string  {
+	fold(params, "", \acc: string, kv: KeyValue -> {
+		s = if (kv.key == "") {
+			encode(kv.value);
+		} else {
+			encode(kv.key) + "=" + encode(kv.value);
+		};
+		if (s == "") {
+			acc;
+		} else if (acc == "") {
+			s;
+		} else {
+			acc + "&" + s;
+		}
+	});
+}
+
+uri3GetSearch(u: Uri3) -> string { uri3GlueSearchParameters(u.search, urlEncode2); }
+
+uri3GetHash(u: Uri3) -> string { uri3GlueSearchParameters(u.hash, urlEncode); }
+
+uri3MakeTree(params: [KeyValue]) -> Tree<string, string> {
+	fold(params, makeTree(), \acc: Tree<string, string>, kv: KeyValue -> {
+		if (kv.key == "") {
+			setTree(acc, kv.value, "")
+		} else {
+			setTree(acc, kv.key, kv.value)
+		}
+	});
+}

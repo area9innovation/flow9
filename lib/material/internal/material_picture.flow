@@ -1,0 +1,110 @@
+import material/internal/material_scroll;
+
+export {
+	MPicture2T(manager : MaterialManager, parent : MFocusGroup, m : MPicture, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	MPictureStyle2TPictureStyle(style : [MPictureStyle]) -> [TPictureStyle];
+}
+
+MPicture2T(manager : MaterialManager, parent : MFocusGroup, m : MPicture, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	showLoading = extractStruct(m.style, MPictureShowLoading(true)).show;
+	customLoading = tryExtractStruct(m.style, MPictureCustomLoadingExt(TEmpty(), None()));
+	tstyle = MPictureStyle2TPictureStyle(m.style);
+
+	createPictureBox = \style ->
+		if (contains(m.style, MPictureTileMode())) {
+			avBox = makeWH();
+			picWH = makeWH();
+
+			colsRows = fselect2Lift(avBox, picWH, \awh, pwh ->
+				if (awh.width > 0. && awh.height > 0. && pwh.width > 0. && pwh.height > 0.)
+					Pair(ceil(awh.width / pwh.width), ceil(awh.height / pwh.height))
+				else
+					Pair(1, 1)
+			);
+
+			style2 = eitherMap(
+				tryExtractStruct(style, TPictureSize(makeWH())),
+				\picSz -> replaceStruct(
+					style,
+					TPictureSize(fsubselect(picSz.size, FLift(\sz ->
+						if (sz.width == -1. && sz.height == -1.) avBox
+						else const(sz)
+					)))
+				),
+				style
+			);
+
+			tPicture = TPicture(m.picURL, style2);
+
+			items =
+				fselectLift(colsRows, \cr ->
+					generate(0, cr.second, \i ->
+						generate(0, cr.first, \j ->
+							tPicture
+						)
+					)
+				);
+
+			TGroup2(
+				TVisible(make(false), TAttachBox(tPicture, picWH)),
+				MRecyclerGrid2T(manager, parent, MRecyclerGrid(items, [TScrollEnabled(const(false)), TSameSize(), MNoProgress()]), m2t)
+			)
+			|> (\t -> TAttachAvailable(t, avBox))
+		} else {
+			TPicture(m.picURL, style)
+		}
+
+
+	if (showLoading || isSome(customLoading)) {
+		bgColor = MBackgroundColor();
+		itemsColor = MTextColor();
+		onPicLoaded = extractStruct(m.style, OnLoaded(nop)).fn;
+		picLoading = make(false);
+		uns = interruptibleTimer(100, \ -> next(picLoading, true));
+
+		picSize =
+			eitherMap(
+				tryExtractStruct(tstyle, TPictureSize(const(WidthHeight(0., 0.)))),
+				\ds -> Some(ds.size),
+				maybeMap(
+					tryExtractStruct(tstyle, WidthHeight(-1.0, -1.0)),
+					\cs -> const(cs)
+				)
+			);
+
+		pstyle = replaceStruct(tstyle, OnLoaded(\ -> {uns(); onPicLoaded(); nextDistinct(picLoading, false);}));
+
+		TDecorator(
+			createPictureBox(pstyle),
+			[
+				Pair(
+					picLoading,
+					\__ ->
+						eitherMap(customLoading, \cl ->
+							m2t(cl.loading, parent),
+							MProgressCircle2T(manager, parent, MProgressCircle([itemsColor]))
+						)
+						|> (\f -> TAlpha(const(0.72), f))
+						|> (\f -> {
+							defBgStyle = [MThemeFill(parent, bgColor)];
+							TFrame(0., 0., eitherMap(customLoading, \cl -> either(cl.backgroundStyle, defBgStyle), defBgStyle), f)
+						})
+						|> (\f -> TCenterIn(f, eitherMap(picSize, \ps -> TSized(ps), TFillXY())))
+				)
+			],
+			true
+		)
+	} else {
+		createPictureBox(tstyle)
+	}
+}
+
+MPictureStyle2TPictureStyle(style : [MPictureStyle]) -> [TPictureStyle] {
+	filtermap(style, \s -> switch (s) {
+		MPictureSize(wh) : Some(TPictureSize(wh));
+		TPictureStyle() : {a : Maybe<TPictureStyle> = Some(s); a};
+		InspectRealSize(__) : {a : Maybe<TPictureStyle> = Some(s); a};
+		default : None();
+	});
+}

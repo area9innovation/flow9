@@ -37,13 +37,15 @@ export {
 	) -> Material;
 
 	PebbledHierarchyBodyStyle ::= PebbledHierarchyBodyAdditionalChips, PebbledHierarchyBodyErrorView,
-		PebbledHierarchyBodyHideChips, PebbledHierarchyBodyChipBorders, PebbledHierarchyBodyChipPinnable;
+		PebbledHierarchyBodyHideChips, PebbledHierarchyBodyChipBorders, PebbledHierarchyBodyChipPinnable,
+		PebbleHierarchyBodyUntilWait;
 		PebbledHierarchyBodyAdditionalChips(chips : Transform<[Material]>);
 		PebbledHierarchyBodyErrorView(fn : (itemName : string, itemId : string) -> Material);
 		// useful when hierarchy view does not depend on chip filtration and uses visual elements like breadcrumbs
 		PebbledHierarchyBodyHideChips();
 		PebbledHierarchyBodyChipBorders(left : double, top : double, right : double, bottom : double);
 		PebbledHierarchyBodyChipPinnable(labels : [PinnedPebbleHierarchyChip]);
+		PebbleHierarchyBodyUntilWait(waitFn : ([string]) -> Material);
 
 	PinnedPebbleHierarchyChip(label : string, utf : string, show : (Pebble) -> bool);
 	// Display view corresponding to selected item preserving pebble parameters.
@@ -108,9 +110,17 @@ makePebbledHierarchyItem(name : string, id2label : (int) -> string, children : [
 	)
 }
 
-MPebbledHierarchyBody(controller : PebbleController, items : [PebbledHierarchyItem], content : (Tree<string, int>) -> Material, style : [PebbledHierarchyBodyStyle]) -> Material {
+MPebbledHierarchyBody(
+	controller : PebbleController,
+	items : [PebbledHierarchyItem],
+	content : (Tree<string, int>) -> Material,
+	style : [PebbledHierarchyBodyStyle]
+) -> Material {
 	allItems = getAllPebbledHierarchyItems(items);
 	valuesBs = map(allItems, \__ -> make(""));
+	parameters = map(allItems, \item -> item.parameter);
+	allItemsLength = length(allItems);
+	waitFn = extractStruct(style, PebbleHierarchyBodyUntilWait(\__ -> MEmpty())).waitFn;
 	hideChips = containsStruct(style, PebbledHierarchyBodyHideChips());
 
 	MLinkPebbleParameters(
@@ -119,26 +129,31 @@ MPebbledHierarchyBody(controller : PebbleController, items : [PebbledHierarchyIt
 			PebbleStringLink(item.parameter, valuesBs[i], nop1, RecordURLRestoreOrChangeParameters([]))
 		}),
 		MSelect(fmerge(valuesBs), \values -> {
-			hdata = collectPebbledHierarchyData2(allItems, values, false);
-			switch(hdata) {
-				PebbledHierarchyItemsData(datas): {
-					valuesMap = fold(datas, makeTree(), \acc, data -> {
-						setTree(acc, data.item.parameter, s2i(data.value))
-					});
-					chips = if (hideChips) MEmpty() else {
-						buildPebbledHierarchyChips(controller, datas, style);
+			foundDiffIdx = iteriUntil(parameters, \i, p -> getCurrentPebbleLastParameter(controller, p, "") != elementAt(values, i, ""));
+			if (foundDiffIdx != allItemsLength) {
+				waitFn(values)
+			} else {
+				hdata = collectPebbledHierarchyData2(allItems, values, false);
+				switch(hdata) {
+					PebbledHierarchyItemsData(datas): {
+						valuesMap = fold(datas, makeTree(), \acc, data -> {
+							setTree(acc, data.item.parameter, s2i(data.value))
+						});
+						chips = if (hideChips) MEmpty() else {
+							buildPebbledHierarchyChips(controller, datas, style);
+						}
+						MLines([
+							chips,
+							content(valuesMap)
+						])
 					}
-					MLines([
-						chips,
-						content(valuesMap)
-					])
-				}
-				PebbledHierarchyError(itemName, itemId): {
-					buildErrorView = extractStruct(
-						style,
-						PebbledHierarchyBodyErrorView(\name, id -> MCenter(MText(notFoundItemByPebbleParameterMessage(name, id), [MTitle()])))
-					).fn;
-					buildErrorView(itemName, itemId);
+					PebbledHierarchyError(itemName, itemId): {
+						buildErrorView = extractStruct(
+							style,
+							PebbledHierarchyBodyErrorView(\name, id -> MCenter(MText(notFoundItemByPebbleParameterMessage(name, id), [MTitle()])))
+						).fn;
+						buildErrorView(itemName, itemId);
+					}
 				}
 			}
 		})

@@ -28,7 +28,8 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 	outlined = contains(m.style, MOutlined());
 	fullWidth = contains(m.style, MFullWidth());
 	buttonTextColor = extractStructMany(m.style, MButtonTextColor(false));
-	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f();}));
+	progress = tryExtractStruct(m.style, MTextButtonProgress(make(false), false));
+	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f(); maybeApply(progress, \pr -> if (pr.activateOnClick) nextDistinct(pr.activated, true))}));
 	elevation = \focus ->
 		extractStruct(m.style,
 			MElevation(
@@ -38,8 +39,20 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 					zero
 			)
 		).elevation;
-	paddings = extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5));
+
 	isRTL = parent.rtl;
+
+	paddingsAM = tryExtractStruct(m.style, MButtonPaddingsA(16.0, 9.5, 16.0, 9.5));
+	paddings = eitherFn(
+		paddingsAM,
+		\paddingsA -> {
+			left = if (isRTL) paddingsA.end else paddingsA.start;
+			right = if (isRTL) paddingsA.start else paddingsA.end;
+			MButtonPaddings(left, paddingsA.top, right, paddingsA.bottom)
+		},
+		\-> extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5))
+	);
+
 	textAlignment = commonAlignment2abs(extractStruct(m.style, MTextAlignment(CenterAlign())).alignment, isRTL);
 	textAlignmentX = switch (textAlignment) {
 		LeftAlign() : 0.0;
@@ -100,6 +113,12 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 			m.text,
 			replaceStructMany(textStyle, [contrastingMColor(parent), MTextDisabled()])
 		)
+		|> (\f -> eitherMap(progress, \pr ->
+			TCopySize2(f, \sz, tr ->
+				TIf(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([contrastingMColor(parent)])), sz, true), tr)
+			),
+			f
+		))
 		|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, true))
 		|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
 		|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f)
@@ -121,7 +140,8 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 				MHighlightOnFocus(const(true)),
 				MHighlightOnHover(const(true)),
 				MRippleShape("MTextButton"),
-				MButtonTitle(const(m.text))
+				MButtonTitle(const(m.text)),
+				MClickEnabled(eitherMap(progress, \pr -> fnot(pr.activated), const(true)))
 			]
 		);
 
@@ -130,6 +150,15 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 		m.text,
 		textStyle
 	)
+	|> (\f -> eitherMap(progress, \pr ->
+		TCopySize2(f, \sz, tr ->
+			TGroup2(
+				TVisible(fnot(pr.activated), tr),
+				TShow(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([textColor])), sz, true))
+			)
+		),
+		f
+	))
 	|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, false))
 	|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
 	|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f))
@@ -170,22 +199,36 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 					else
 						f2
 				))
-				|> (\f2 -> TIfLazy2(focus.enabled, \b -> if (b) f2() else disabled(), !fullWidth))
+				|> (\f2 -> TIfLazy2(focus.enabled, \b -> if (b) f2() else disabled(), !fullWidth && isNone(parent.theme.fontWrapper)))
 			},
 			m2t
 		)
 	)
-	|> (if (fullWidth) makeTropicConstantHeight(None()) else makeTropicConstant(None(), None()))
+	|> (if (isSome(parent.theme.fontWrapper)) idfn else if (fullWidth) makeTropicConstantHeight(None()) else makeTropicConstant(None(), None()))
 }
 
 // This type is added for the correct typechecking of variable 'paddings'.
 MButtonBordersOrPaddings ::= MButtonBorders, MButtonPaddings;
 
 MTextClickable2T(manager : MaterialManager, parent : MFocusGroup, m : MTextClickable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	paddings : MButtonBordersOrPaddings = if (containsStruct(m.style, MButtonBorders(8., 4., 8., 4.)))
+	isRTL = parent.rtl;
+	paddings : MButtonBordersOrPaddings = if (
+		containsStruct(m.style, MButtonPaddingsA(8., 4., 8., 4.)) ||
+		containsStruct(m.style, MButtonPaddings(8., 4., 8., 4.))
+	) {
+		paddingsAM = tryExtractStruct(m.style, MButtonPaddingsA(16.0, 9.5, 16.0, 9.5));
+		eitherFn(
+			paddingsAM,
+			\paddingsA -> {
+				left = if (isRTL) paddingsA.end else paddingsA.start;
+				right = if (isRTL) paddingsA.start else paddingsA.end;
+				MButtonPaddings(left, paddingsA.top, right, paddingsA.bottom)
+			},
+			\-> extractStruct(m.style, MButtonPaddings(16.0, 9.5, 16.0, 9.5))
+		);
+	} else {
 		extractStruct(m.style, MButtonBorders(8., 4., 8., 4.))
-	else
-		extractStruct(m.style, MButtonPaddings(8., 4., 8., 4.));
+	}
 	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f();}));
 	backgroundStyle = extractStruct(m.style, MBackgroundStyle([])).style;
 	raised = isSome(tryExtractStruct(backgroundStyle, Fill(black))) && extractStruct(backgroundStyle, FillOpacity(1.)).opacity > 0.;
@@ -268,40 +311,36 @@ addLeftRightIcons(parent : MFocusGroup, t : Tropic, style : [flow], textColor : 
 
 	eitherMap(
 		leftIcon,
-		\li ->
-			TLet(
-				"buttonLeftIcon",
-				MIcon2T(parent, li.icon, arrayPush(li.style, if (disabled) MIconDisabled() else textColor)),
-				TColsDir(
-					[
-						TDisplay("buttonLeftIcon"),
-						TFixed(8.0, 0.0),
-						TCenterYIn(t, TGhost("buttonLeftIcon"))
-					],
-					parent.rtl
-				)
-			),
+		\li -> addButtonIcon(parent, t, li.icon, li.style, textColor, disabled, true),
 		t
 	)
 	|> (\f ->
 		eitherMap(
 			rightIcon,
-			\ri ->
-				TLet(
-					"buttonRightIcon",
-					MIcon2T(parent, ri.icon, arrayPush(ri.style, if (disabled) MIconDisabled() else textColor)),
-					TColsDir(
-						[
-							TCenterYIn(f, TGhost("buttonRightIcon")),
-							TFixed(8.0, 0.0),
-							TDisplay("buttonRightIcon")
-						],
-						parent.rtl
-					)
-				),
+			\ri -> addButtonIcon(parent, f, ri.icon, ri.style, textColor, disabled, false),
 			f
 		)
 	)
+}
+
+addButtonIcon(parent : MFocusGroup, text : Tropic, iconStr : string, style : [MIconStyle], textColor : MColor, disabled : bool, isLeft : bool) -> Tropic {
+	rtl = parent.rtl == isLeft;
+	iconHeight = make(0.);
+	textHeight = make(0.);
+	textBaseline = make(0.);
+	baseline = faddition(textBaseline, fmax(fdivide(fsubtract(iconHeight, textHeight), const(2.)), zero));
+	heightBox = TSizedHeight(0., fmax(iconHeight, textHeight));
+
+	icon = MIcon2T(parent, iconStr, arrayPush(style, if (disabled) MIconDisabled() else textColor)) |> TBorderEnd(8., rtl);
+
+	TColsDir(
+		map([
+			TInspect([IHeight(iconHeight)], icon),
+			TInspect([IHeight(textHeight), IBaseline(textBaseline)], text)
+		], \t -> TCenterYIn(t, heightBox)),
+		rtl
+	)
+	|> (\t -> TBaseline(baseline, t))
 }
 
 style2MIconStyle(style : [?]) -> [MIconStyle] {
@@ -367,7 +406,8 @@ MIconButton2T(manager : MaterialManager, parent : MFocusGroup, m : MIconButton, 
 			|> (\f -> eitherMap(borders,
 				\b -> TBorder(b.left, b.top, b.right, b.bottom, f),
 				TBorder4(border * 3.0 / 4.0, f)
-			)),
+			))
+			|> MHintMarker(manager, focus, false),
 		m2t
 	)
 	|> (\f -> if (isNone(borders)) TBorder4(border / 4.0, f) else f)
@@ -506,7 +546,7 @@ MIconToggle2T(manager : MaterialManager, parent : MFocusGroup, m : MIconToggle, 
 }
 
 MCheckBox2T(manager : MaterialManager, parent : MFocusGroup, m : MCheckBox, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	MCheckable2T(manager, parent, "MCheckBox", m.value, m.caption, m.style, "check_box", "check_box_outline_blank", false, false, "checkbox", m2t)
+	MCheckable2T(manager, parent, "MCheckBox", m.value, m.caption, m.style, "check_box", "check_box_outline_blank", false, "checkbox", m2t)
 }
 
 MRadio2T(manager : MaterialManager, parent : MFocusGroup, m : MRadio, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -515,12 +555,12 @@ MRadio2T(manager : MaterialManager, parent : MFocusGroup, m : MRadio, m2t : (Mat
 		[
 			\ -> fBidirectionalLink(m.activeValue, checked, \v -> nextDistinct(checked, v == m.thisValue), \ch -> if (ch) nextDistinct(m.activeValue, m.thisValue))
 		],
-		MCheckable2T(manager, parent, "MRadio", checked, m.caption, m.style, "radio_button_checked", "radio_button_unchecked", true, true, "radio", m2t)
+		MCheckable2T(manager, parent, "MRadio", checked, m.caption, m.style, "radio_button_checked", "radio_button_unchecked", true, "radio", m2t)
 	)
 }
 
 MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, value : DynamicBehaviour<bool>, captionM : Material, style : [MCheckableStyle],
-	iNameChecked : string, iNameUnchecked : string, cannotUncheck : bool, constHeight : bool, accessRole : string, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	iNameChecked : string, iNameUnchecked : string, cannotUncheck : bool, accessRole : string, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	mcolor : MColor = extractMColor(parent, style, MAccentColor());
 	iconStyle = MCheckableStyle2IconStyle(style);
 	iconSize = extractStruct(style, MIconSize(standardIconSize)).size;
@@ -536,12 +576,16 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			maybeMap(tryExtractStruct(style, MOnNewValue2(nop1)), \onv -> Pair(onv.fn, false))
 		);
 	mWidth = extractStruct(style, MWidth(-1.)).width;
-	clickEnabled = extractStruct(style, MClickEnabled(const(true))).enabled;
+	clickEnabled = extractStruct(style, MClickEnabled(const(true)));
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
+	captionClickable = !contains(style, MCaptionNonClickable());
+	checkableTitle = make(name); 
 
+	defFn = \en -> MComponentGroup2T(manager, parent, name + "Caption", [MEnabled(en)], \p2 -> m2t(captionM, p2));
 	caption = \en ->
 		switch (captionM) {
 			MText(text, tStyle): {
+				nextDistinct(checkableTitle, text);
 				MIfLazy2T(
 					manager,
 					parent,
@@ -554,8 +598,27 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 					true
 				)
 			}
-			default: m2t(captionM, parent)
+			MIcon(icon, icStyle): {
+				MIfLazy2T(
+					manager,
+					parent,
+					en,
+					\e, p2 ->
+						if (e)
+							m2t(captionM, p2)
+						else
+							MIcon2T(p2, icon, arrayPush(icStyle, MIconDisabled())),
+					true
+				)
+			}
+			MEllipsisText(text, __): {
+				nextDistinct(checkableTitle, text);
+				defFn(en);
+			}
+			default: defFn(en);
 		}
+
+	pressed = make(false);
 
 	focusState =
 		concat(
@@ -566,6 +629,7 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 					MRippleType(const(MRippleCenter())),
 					MHighlightOnFocus(const(true)),
 					MHighlightOnHover(const(true)),
+					TPressed(pressed),
 					MRippleOverlay(false),
 					AccessRole(accessRole),
 					MAddFocusGroup(true)
@@ -574,7 +638,7 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			[
 				IScriptBehaviour("value", value, ISInputValue([], "bool", true)),
 				FAccessAttribute("aria-checked", fif(value, const("true"), const("false"))),
-				extractStruct(style, MButtonTitle(const(name)))
+				extractStruct(style, MButtonTitle(checkableTitle))
 			]
 		);
 
@@ -594,12 +658,25 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 				),
 				true
 			)
+			|> (\t -> TAccess([FAccessHidden()], t))
 			|> (\f -> TBorder(border4.left * 3.0 / 4.0, border4.top * 3.0 / 4.0, border4.right * 3.0 / 4.0, border4.bottom * 3.0 / 4.0, f)),
 		m2t
 	)
 	|> (\f -> TBorder(border4.left / 4.0, border4.top / 4.0, border4.right / 4.0, border4.bottom / 4.0, f))
 	|> (\f -> {
-		cap = caption(fmin(enabled, parent.enabled));
+		cap =
+			if (captionClickable)
+				MComponent2T(
+					manager,
+					parent,
+					name + "Caption",
+					[onClick, clickEnabled, MEnabled(enabled), MFocusEnabled(const(false)), FAccessHidden()],
+					\foc ->
+						TConstruct([\ -> fconnect(foc.down, pressed)], caption(foc.enabled)),
+					m2t
+				)
+			else
+				caption(fmin(enabled, parent.enabled));
 
 		switch (captionPosition.pos) {
 			MBeforePosition() : TBaselineCols2Dir(cap, f, parent.rtl);
@@ -610,7 +687,6 @@ MCheckable2T(manager : MaterialManager, parent : MFocusGroup, name : string, val
 			MBottomPosition() : TLinesXCenter([f, cap]);
 		}
 	})
-	|> (if (constHeight) makeTropicConstantHeight(None()) else idfn)
 	|> (\checkable ->
 		eitherMap(
 			onNewValue,
@@ -802,9 +878,10 @@ MFloatingButton2T(manager : MaterialManager, parent : MFocusGroup, m : MFloating
 	bgColor = extractMColor(parent, m.style, MAccentColor());
 	iconColor = MThemeColor2MColor(parent, extractStruct(m.style, MIconColor(MWhite())).color);
 	iconOpacity = extractStruct(m.style, FillOpacity(1.));
-	buttonSize = if (extractStruct(m.style, MFabMini(false)).mini) 40. else 56.;
+	buttonSize = extractStruct(m.style, MFabSize(if (extractStruct(m.style, MFabMini(false)).mini) 40. else 56.)).size;
 	elevation = \down -> extractStruct(m.style, MElevation(fif(down, const(12.), const(6.)))).elevation;
 	scrollPoint = extractStruct(m.style, makeTScrollInspectVisible()).topleft;
+	centeredShape = contains(m.style, MFloatingButtonCenteredShape());
 
 	showActionButtons = make(false);
 	enabled = extractStruct(m.state, MEnabled(const(true))).enabled;
@@ -878,7 +955,9 @@ MFloatingButton2T(manager : MaterialManager, parent : MFocusGroup, m : MFloating
 			"MFloatingButton",
 			focusState,
 			\focus ->
-				TEasedShadowShape(manager, parent, elevation(focus.down), f, 0.3, RectangleShape("MFloatingButton"))
+				TEasedShadowShape(manager, parent, elevation(focus.down), f, 0.3,
+					if (centeredShape) RectangleCenteredShape("MFloatingButton") else RectangleShape("MFloatingButton")
+				)
 				|> (\f2 ->
 					eitherFn(
 						speedDial,
@@ -1132,6 +1211,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 	textStyle = eitherMap(textStyle0, \ts -> ts.style, [MDataRow()]);
 	color = extractMColor(parent, style, MPrimaryColor());
 	shadeColor = MColor(color.color, min(900, color.shade + 200), color.accent);
+	chipCorners = tryExtractStruct(style, MChipCorners(RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.)));
 	icon : Material =
 		extractStructMany(style, MAvatar("", []))
 		|> (\f ->
@@ -1164,8 +1244,8 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 
 		eitherMap(
 			width,
-			\w -> MEllipsisText2T(manager, parent, MEllipsisText(title, arrayPush(textStyle, col)), m2t),
-			MText2T(parent, title, arrayPush(textStyle, col))
+			\w -> MEllipsisText2T(manager, p, MEllipsisText(title, arrayPush(textStyle, col)), m2t),
+			MText2T(p, title, arrayPush(textStyle, col))
 		)
 		|> (\f -> eitherMap(textStyle0, \__ -> f, TCenterYIn(f, TFixed(0., chipContentHeight))))
 		|> (\f ->
@@ -1181,7 +1261,7 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 									replaceStruct(iconStyle, MIconSize(32.))
 									|> (\f2 ->
 										if (hov) {
-											extractMColor(parent, iconStyle, MPrimaryColor())
+											extractMColor(p, iconStyle, MPrimaryColor())
 											|> (\f3 -> replaceStruct(f2, MColor(f3.color, min(900, f3.shade + 200), f3.accent)))
 										} else f2),
 									txtStyle
@@ -1244,9 +1324,9 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 									if (sel) {
 										if (hov) shadeColor else color
 									} else
-										MGrey(if (hov) 600 else 300);
+										MThemeColor2MColor(p, extractStruct(style, MUnselectedColor(MGrey(if (hov) 600 else 300))).color);
 								MShapeFrame(
-									parent,
+									p,
 									[MFill(col)],
 									TBorder4(8., f(hov, sel)),
 									"MChip"
@@ -1260,8 +1340,8 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 					TAlpha(
 						const(0.63),
 						MShapeFrame(
-							parent,
-							[MFill(MGrey(300))],
+							p,
+							[MThemeFill(p, extractStruct(style, MUnselectedColor(MGrey(300))).color)],
 							TBorder4(8., f(false, false)),
 							"MChip"
 						)
@@ -1297,10 +1377,13 @@ MChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Mater
 			manager,
 			parent,
 			"MChipContainer",
-			[
-				IScriptBehaviour("visible", visible, ISAppearanceEvent()),
-				IScriptBehaviour("selected", selectable.selected, ISSelectionEvent())
-			],
+			concat(
+				[
+					IScriptBehaviour("visible", visible, ISAppearanceEvent()),
+					IScriptBehaviour("selected", selectable.selected, ISSelectionEvent())
+				],
+				eitherMap(chipCorners, \cc -> [MUpdateShapeCorners("chip", MaterialShape(cc.leftTop, cc.rightTop, cc.rightBottom, cc.leftBottom))], [])
+			),
 			\par -> MIfLazy2T(manager, par, visible, \v, p -> if (v) makeTropicConstant(None(), None())(f(p)) else TEmpty(), false)
 		)
 	)}
@@ -1328,14 +1411,17 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 	textStyle = eitherMap(textStyle0, \ts -> ts.style, [MDataRow()]);
 	mousePosition = makePoint();
 	outlined = contains(style, MOutlined());
-	strokeWidth = 1.;
+	outlineColor = tryExtractStruct(style, MOutlineColor(MBlack()));
+	outlineOpacity = extractStruct(style, MOutlineOpacity(1.)).opacity;
+	strokeWidth = extractStruct(style, MOutlineWidth(1.)).width;
+	chipCorners = tryExtractStruct(style, MChipCorners(RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.), RoundedCorner(0.)));
 
 	selectedColor = extractMColor(parent, style, MPrimaryColor());
 	colorOpacityDef = extractStruct(style, FillOpacity(1.)).opacity;
 	unselectedColor = MThemeColor2MColor(parent, extractStruct(style, MUnselectedColor(if (outlined) MWhite() else MGrey(300))).color);
 
-	growth = make(0.);
-	fade = make(0.);
+	growth = make(1.);
+	fade = make(1.);
 	isInside = make(false);
 
 	icon : Maybe<Material> =
@@ -1365,12 +1451,12 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 	(\p -> (\textColor, isEnabled, selected, hovered -> {
 		isRTL = p.rtl;
 
-		titleStyle =
+		titleStyle : Transform<[MTextStyle]> =
 			fselect2(textColor, isEnabled, FLift2(\col, en ->
 				ifArrayPush(arrayPush(textStyle, col), !en, MTextDisabled())
 			));
 
-		TSelect(titleStyle, \st ->
+		TSelect(titleStyle, \st : [MTextStyle] ->
 			eitherMap(
 				width,
 				\w -> MEllipsisText2T(manager, p, MEllipsisText(title, st), m2t),
@@ -1452,23 +1538,26 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 			MComponent2T(manager, p, "MChip", focusState, \foc -> {
 				isEnabled = fOr(foc.enabled, active);
 
-				downTrigger =
-					fif(
-						selectable.enabled,
-						fstall(fOr(foc.down, fand(fneq(growth, 0.), fneq(growth, 1.))), 0),
-						foc.down
-					);
+				rippleEnabled = fOr(fnot(selectable.enabled), fOr(fnot(isInside), foc.down));
+				selected = fOr(fand(selectable.enabled, selectable.selected), active);
 
-				rippleEnabled =
-					fOr(fnot(selectable.enabled), fOr(fnot(isInside), downTrigger));
-
-				selected =
-					ftransistor(fnot(downTrigger), fOr(fand(selectable.enabled, selectable.selected), active));
-
-				selectedProgress = fselect2(growth, fif(rippleEnabled, fade, const(0.)), FLift2(\gr, f -> {
-					pr = gr * (1. - f);
-					if (fgetValue(selected)) 1. - pr else pr
-				}));
+				selectedProgress = fif(selectable.enabled,
+					fselect3(
+						fif(rippleEnabled, growth, const(1.)),
+						fif(rippleEnabled, fade, const(0.)),
+						fif(foc.down, fnot(selectable.selected), selectable.selected),
+						\gr, f, sel -> {
+							if (gr != 0. && abs(gr - 1.) > 0.1) {
+								if (sel) gr else 1. - gr
+							} else if (f != 0. && abs(f - 1.) > 0.1) {
+								if (sel) f else 1. - f
+							} else {
+								if (sel) 1. else 0.
+							}
+						}
+					),
+					const(0.)
+				);
 
 				selectedColorWithOpacity =
 					MCustomColor(
@@ -1484,6 +1573,8 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						MCustomColor(mixColors(MColor2int(MTextMColor(unselectedColor)), MColor2int(MTextMColor(selectedColor)), 1. - pr, pr))
 					));
 
+				outlineMColor = maybeMap(outlineColor, \oc -> MThemeColor2MColor(foc, oc.color));
+
 				hovered = fand(isEnabled, fOr(foc.hover, extHover));
 				hoveredLayerOpacity =
 					fselect3(hovered, foc.focused, foc.down, \hov, focused, down ->
@@ -1495,12 +1586,14 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						TSelect2(mainLayerColor, mainLayerOpacity, \col, op ->
 							MShape(p, [MFill(col), FillOpacity(op)], sz, "MChip")
 						),
-						MRipple2T(manager, p, TBorder4(strokeWidth / 2., sz), downTrigger, [
+						MRipple2T(manager, p, TBorder4(strokeWidth / 2., sz), foc.down, [
 							MRippleType(const(MRippleFill())),
 							MRipplePosition(mousePosition),
 							MRippleColor(
 								fif(selectable.enabled,
-									fif(selected, const(unselectedColor), const(selectedColorWithOpacity)),
+									fselect(selectedProgress, FLift(\pr ->
+										MCustomColor(mixColors(MColor2int(unselectedColor), MColor2int(selectedColor), 1. - pr, pr))
+									)),
 									const(contrastingMColor(parent))
 								)
 							),
@@ -1513,8 +1606,16 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 						if (outlined) {
 							TSelect(selectedProgress, \pr ->
 								TGroup2(
-									MShape(p, [MStroke(MGrey(300)), StrokeOpacity(1. - pr), StrokeWidth(strokeWidth)], sz, "MChip"),
-									MShape(p, [MStroke(selectedColor), StrokeOpacity(min(1., 2. * colorOpacityDef) * pr), StrokeWidth(strokeWidth)], sz, "MChip")
+									MShape(p, [
+										MStroke(either(outlineMColor, MGrey(300))),
+										StrokeOpacity((1. - pr) * outlineOpacity),
+										StrokeWidth(strokeWidth)
+									], sz, "MChip"),
+									MShape(p, [
+										MStroke(either(outlineMColor, selectedColor)),
+										StrokeOpacity(min(1., 2. * colorOpacityDef) * pr * outlineOpacity),
+										StrokeWidth(strokeWidth)
+									], sz, "MChip")
 								)
 							)
 						} else TEmpty(),
@@ -1537,10 +1638,13 @@ MNewChip2T(manager : MaterialManager, parent : MFocusGroup, m : MChip, m2t : (Ma
 			manager,
 			parent,
 			"MChipContainer",
-			[
-				IScriptBehaviour("visible", visible, ISAppearanceEvent()),
-				IScriptBehaviour("selected", selectable.selected, ISSelectionEvent())
-			],
+			concat(
+				[
+					IScriptBehaviour("visible", visible, ISAppearanceEvent()),
+					IScriptBehaviour("selected", selectable.selected, ISSelectionEvent())
+				],
+				eitherMap(chipCorners, \cc -> [MUpdateShapeCorners("chip", MaterialShape(cc.leftTop, cc.rightTop, cc.rightBottom, cc.leftBottom))], [])
+			),
 			\par -> MIfLazy2T(manager, par, visible, \v, p -> if (v) makeTropicConstant(None(), None())(f(p)) else TEmpty(), false)
 		)
 	)

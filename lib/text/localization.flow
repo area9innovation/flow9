@@ -2,7 +2,7 @@ import string;
 import ui/fontmapping;
 export {
 	findBreakAfterAllowPos(s: string) -> int;
-	findBreakAfterAllowPos2(s: string, start: int, moreLineBreaks: bool) -> Pair<int, bool>;
+	findBreakAfterAllowPos2(s: string, start: int, moreLineBreaks: bool, allowBreakAtStart : bool, allowAnySoftBreak : bool) -> Pair<int, bool>;
 
 	createSpaceFormOnLang(spaceForm : Form) -> Form;
 	doNotSkipSymbolDeltaOnLang(doNotSkip : bool) -> bool;
@@ -18,6 +18,12 @@ export {
 			softBreakAllowAfter
 		}
 	);
+
+	// These do not yet support different size of digit groups, just character replacements.
+	// Maybe it worths to merge into i2s/d2s directly.
+	// If there is a need to enable/disable this functionality application-wise,
+	// use setUrlParameter("locnum", "1").
+	localizeNumbers(s: string) -> string;
 }
 
 //CJK consts
@@ -39,11 +45,24 @@ isEnLetterCode(charCode: int) {
 }
 
 isDigitCode(charCode: int) {
-	48 <= charCode && charCode <= 57
+	(48 <= charCode && charCode < 58) || (0x660 <= charCode && charCode < 0x66A)
+}
+
+localizeNumbers(s: string) -> string {
+	if (getLang() == "ar") {
+		strReplaces(
+			s,
+			[
+				"0", "٠", "1", "١", "2", "٢", "3", "٣", "4", "٤",
+				"5", "٥", "6", "٦", "7", "٧", "8", "٨", "9", "٩",
+				"%", "٪"
+			]
+		)
+	} else s
 }
 
 findBreakAfterAllowPos(s: string) -> int {
-	findBreakAfterAllowPos2(s, 0, false).first;
+	findBreakAfterAllowPos2(s, 0, false, false, false).first;
 }
 
 createSpaceFormOnLang(spaceForm : Form) -> Form {
@@ -123,63 +142,72 @@ chsNotEnd = [
 	0xA3B1, 0xA3B2, 0xA3B3, 0xA3B4, 0xA3B5, 0xA3B6, 0xA3B7, 0xA3B8, 0xA3B9, 0xA3DB, 0xA3FB
 ];
 
-findBreakAfterAllowPos2(s: string, start: int, moreLineBreaks: bool) -> Pair<int, bool> {
+findBreakAfterAllowPos2(s: string, start: int, moreLineBreaks: bool, allowBreakAtStart : bool, allowAnySoftBreak : bool) -> Pair<int, bool> {
 	strL = strlen(s);
 	if (strL - start < 3)
 		Pair(-1, false)
 	else {
 		endSymb = ref getCharCodeAt(s, start + 0);
-		posSymb = ref getCharCodeAt(s, start + 1);
-		begSymb = ref getCharCodeAt(s, start + 2);
+		fIdxAndSoft = if (allowBreakAtStart && contains(enBreakAllowAfter, ^endSymb)) {
+			Pair(start, false)
+		} else {
+			posSymb = ref getCharCodeAt(s, start + 1);
+			begSymb = ref getCharCodeAt(s, start + 2);
 
-		lang = getLang();
+			lang = getLang();
 
-		stdAction = \ -> {
-			containsBreaks = contains(enBreakAllowAfter, ^posSymb);
-			containsSoftBreaks = softBreakAllowAfter == ^posSymb;
-			Pair((containsBreaks || containsSoftBreaks)
-			&& (
-				(isEnLetterCode(^begSymb) && isEnLetterCode(^endSymb))  
-				||
-				(moreLineBreaks && isDigitCode(^begSymb) && isDigitCode(^endSymb)) //Allow breaks in <number>-<number> pattern
-			), containsSoftBreaks);
-		};
+			stdAction = \ -> {
+				containsBreaks = contains(enBreakAllowAfter, ^posSymb);
+				containsSoftBreaks = softBreakAllowAfter == ^posSymb;
+				Pair(
+					(containsBreaks || containsSoftBreaks)
+					&& (
+						(allowAnySoftBreak)
+						||
+						(isEnLetterCode(^begSymb) && isEnLetterCode(^endSymb))
+						||
+						(moreLineBreaks && isDigitCode(^begSymb) && isDigitCode(^endSymb)) //Allow breaks in <number>-<number> pattern
+					),
+					containsSoftBreaks
+				);
+			};
 
-		charAction = {
-			if (isCJKLang()) {
-				notBeg = {
-					if (lang == "ja") jpNotBeg
-					else if (lang == "ko") krNotBeg
-					else chsNotBeg
-				};
-				notEnd = {
-					if (lang == "ja") jpNotEnd
-					else if (lang == "ko") krNotEnd
-					else chsNotEnd
-				};
-				\ -> {
-					if (isCJKSymbol(^posSymb) || isSyllabarySymbol(^posSymb)) {
-						if (!contains(cjkNotBeg, ^begSymb)) {
-							Pair(!(contains(notBeg, ^begSymb) || contains(notEnd, ^endSymb)), false)
+			charAction = {
+				if (isCJKLang()) {
+					notBeg = {
+						if (lang == "ja" || isChinese(lang)) jpNotBeg
+						else if (lang == "ko") krNotBeg
+						else chsNotBeg
+					};
+					notEnd = {
+						if (lang == "ja" || isChinese(lang)) jpNotEnd
+						else if (lang == "ko") krNotEnd
+						else chsNotEnd
+					};
+					\ -> {
+						if (isCJKSymbol(^posSymb) || isSyllabarySymbol(^posSymb)) {
+							if (!contains(cjkNotBeg, ^begSymb)) {
+								Pair(!(contains(notBeg, ^begSymb) || contains(notEnd, ^endSymb)), false)
+							} else {
+								Pair(false, false)
+							}
 						} else {
-							Pair(false, false)
+							stdAction()
 						}
-					} else {
-						stdAction()
 					}
+				} else {
+					stdAction
 				}
-			} else {
-				stdAction
-			}
-		};
+			};
 
-		fIdxAndSoft = countUntilWithSign(start + 1, strL - 1, \idx -> {
-			fStepResult = charAction();
-			endSymb := ^posSymb;
-			posSymb := ^begSymb;
-			begSymb := getCharCodeAt(s, (idx + 2) % strL);
-			fStepResult
-		});
+			countUntilWithSign(start + 1, strL - 1, \idx -> {
+				fStepResult = charAction();
+				endSymb := ^posSymb;
+				posSymb := ^begSymb;
+				begSymb := getCharCodeAt(s, (idx + 2) % strL);
+				fStepResult
+			});
+		}
 		Pair(if (fIdxAndSoft.first < (strL - 1)) fIdxAndSoft.first else -1, fIdxAndSoft.second);
 	}
 }
@@ -196,4 +224,3 @@ countUntilWithSign(start: int, maxcount: int, predicate: (int) -> Pair<bool, boo
 		}
 	}
 }
-

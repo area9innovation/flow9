@@ -3,6 +3,7 @@ import behaviour;
 import runtime;
 import ds/tree;
 import math/geometry;
+import net/url_parameter;
 
 // This is a variant of behaviours where transforms are "distinct" and the transform
 // functions can be fused together. Things are guaranteed to be leak free when you
@@ -30,6 +31,7 @@ export {
 	fsubselect : (b : Transform<??>, fn : FFn<??, Transform<?>>) -> Transform<?>;
 	fsubselect2 : (b1 : Transform<??>, b2 : Transform<???>, fn : (??, ???) -> Transform<?>) -> Transform<?>;
 	fsubselect3 : (b1 : Transform<??>, b2 : Transform<???>, b3 : Transform<????>, fn : (??, ???, ????) -> Transform<?>) -> Transform<?>;
+	fsubselect4(b1 : Transform<??>, b2 : Transform<???>, b3 : Transform<????>, b4 : Transform<?????>, fn : (??, ???, ????, ?????) -> Transform<?>) -> Transform<?>;
 
 	// disposer is called after last unsubcription from b Transform
 	fdisposable(b : Transform<?>, disposer : () -> void) -> Transform<?>;
@@ -45,6 +47,8 @@ export {
 
 	// Same as when in transforms.flow
 	fwhen(t : Transform<bool>, fn : () -> void) -> () -> void;
+	// Wait until next change and unsubscribe after handling it
+	fOnce(t : Transform<?>, fn : (?) -> void) -> () -> void;
 
 	// Helpers for fsubscribe that returns () -> void disposer when called.
 	// These guys are distinctive, so f will not fire on updating v with the same value.
@@ -111,7 +115,7 @@ export {
 	// Relatively expensive if Transform has no subscribers
 	fgetValue(t : Transform<?>) -> ?;
 	// Extract all dynamic behaviours from the transform
-	fgetDynamicBehaviours(t : Transform<?>) -> [DynamicBehaviour];
+	fgetDynamicBehaviours(t : Transform<?>) -> [DynamicBehaviour<?>];
 
 	// Check if transform has any dynamic behaviours
 	isFConst(t : Transform<?>) -> bool;
@@ -165,6 +169,9 @@ export {
 	fnot(b : Transform<bool>) -> Transform<bool>;
 	fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
+	// Avoid calling fn inside second Transform if it is redundant. Temporary, it is expected to be default implementation in the future.
+	fandLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
+	fOrLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool>;
 	fabs(a : Transform<double>) -> Transform<double>;
 
@@ -173,6 +180,7 @@ export {
 	// fquadruple -> see fusion_utils.flow
 
 	fwidthheight(wd : Transform<double>, hgt : Transform<double>) -> Transform<WidthHeight>;
+	fsubwidthheight(wd : Transform<Transform<double>>, hgt : Transform<Transform<double>>) -> Transform<WidthHeight>;
 	fwh(wd : Transform<double>, hgt : Transform<double>) -> Transform<WidthHeight> { fwidthheight(wd, hgt) }
 	fpoint(x : Transform<double>, y : Transform<double>) -> Transform<Point>;
 	fpointX(point : Transform<Point>) -> Transform<double>;
@@ -211,10 +219,15 @@ export {
 
 	// Builtin functions - use the functions above instead
 	FFn<?, ??> ::= FLift<?, ??>, FCompose<?, ??>, FIdentity, FNegate,
-			FAddConst, FMulConst, FMaxConst, FMinConst, FEqual, FIf<??>;
+			FAddConst, FMulConst, FMaxConst<??>, FMinConst<??>, FEqual, FIf<??>;
 
 		// This is for using any other transform function
 		FLift(fn : (?) -> ??);
+
+		// f1 o f2 == f1(f2(x))
+		FCompose(f1 : FFn<flow, ??>, f2 : FFn<?, flow>);
+
+		FNegate();
 		FAddConst(c : double);
 		FMulConst(c : double);
 		FMaxConst(c : ?);
@@ -233,16 +246,13 @@ export {
 		FMax();
 		FMin();
 		FIdentity2();
-		// f1 o f2 == f1(f2(x))
-		FCompose(f1 : FFn<flow, ??>, f2 : FFn<?, flow>);
 		FAddition();
 		FSubtract();
 		FMultiply();
 		FDivide();
-		FNegate();
 		FEqual(v : ?);
-		FusionAnd();
-		FusionOr();
+		FusionAnd(lazy : bool);
+		FusionOr(lazy : bool);
 		FusionXor();
 		FusionWidthHeight();
 }
@@ -298,11 +308,19 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 				FSelect(nb2, nf2, __): {
 					ifn1 = instantiateFn(nf1);
 					ifn2 = instantiateFn(nf2);
-					FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed());
+					if (nb1 == nb2) {
+						FSelect(nb1, FLift(\f -> ifn(ifn1(f), ifn2(f))), FDestroyed());
+					} else {
+						FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed());
+					}
 				}
 				default: {
 					ifn1 = instantiateFn(nf1);
-					FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed());
+					if (nb1 == b2) {
+						FSelect(nb1, FLift(\f -> ifn(ifn1(f), f)), FDestroyed());
+					} else {
+						FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed());
+					}
 				}
 			}
 		}
@@ -313,9 +331,22 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 					fselect(b1, FLift(\v -> ifn(v, v2)));
 				}
 				FSelect(nb, nf2, __): {
-					ifn = instantiateFn2(fn);
 					ifn2 = instantiateFn(nf2);
-					FSelect2(b1, nb, FLift2(\f, s -> ifn(f, ifn2(s))), FDestroyed());
+					if (supportsLazy(fn)) {
+						ifn = instantiateFn2Lazy(fn);
+						if (b1 == nb) {
+							FSelect(b1, FLift(\f -> ifn(f, \ -> ifn2(f))), FDestroyed());
+						} else {
+							FSelect2(b1, nb, FLift2(\f, s -> ifn(f, \ -> ifn2(s))), FDestroyed());
+						}
+					} else {
+						ifn = instantiateFn2(fn);
+						if (b1 == nb) {
+							FSelect(b1, FLift(\f -> ifn(f, ifn2(f))), FDestroyed());
+						} else {
+							FSelect2(b1, nb, FLift2(\f, s -> ifn(f, ifn2(s))), FDestroyed());
+						}
+					}
 				}
 				default: {
 					FSelect2(b1, b2, fn, FDestroyed());
@@ -455,6 +486,12 @@ fsubselect3(b1 : Transform<??>, b2 : Transform<???>, b3 : Transform<????>, fn : 
 	fsubselect(fpair(fpair(b1, b2), b3), FLift(\p : Pair<Pair<??, ???>, ????> -> fn(firstOfPair(firstOfPair(p)), secondOfPair(firstOfPair(p)), secondOfPair(p))));
 }
 
+fsubselect4(b1 : Transform<??>, b2 : Transform<???>, b3 : Transform<????>, b4 : Transform<?????>, fn : (??, ???, ????, ?????) -> Transform<?>) -> Transform<?> {
+	fsubselect2(fpair(b1, b2), fpair(b3, b4), \p1 : Pair<??, ???>, p2 : Pair<????, ?????> ->
+		fn(firstOfPair(p1), secondOfPair(p1), firstOfPair(p2), secondOfPair(p2))
+	);
+}
+
 //indentation = ref "";
 
 fuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> void]> {
@@ -493,6 +530,12 @@ fsubscribe2(t : Transform<?>, fn : (?) -> void) -> List<() -> void> {
 fwhen(t : Transform<bool>, fn : () -> void) -> () -> void {
 	uns = ref nop;
 	uns := makeSubscribe(t, \v -> if (v) { ^uns(); uns := nop; fn(); })();
+	\ -> ^uns()
+}
+
+fOnce(t : Transform<?>, fn : (?) -> void) -> () -> void {
+	uns = ref nop;
+	uns := makeSubscribe2(t, \v -> { ^uns(); uns := nop; fn(v); })();
 	\ -> ^uns()
 }
 
@@ -825,7 +868,7 @@ fgetValue(t : Transform<?>) -> ? {
 	}
 }
 
-fgetDynamicBehaviours(t : Transform<?>) -> [DynamicBehaviour] {
+fgetDynamicBehaviours(t : Transform<?>) -> [DynamicBehaviour<?>] {
 	switch (t) {
 		ConstBehaviour(b): [];
 		DynamicBehaviour(b, s): [t];
@@ -867,11 +910,11 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 				}
 				FDestroyed(): {
 					ifn = instantiateFn(fn);
-					switch (b : Transform<??>) {
+					switch (b : Transform<flow>) {
 						DynamicBehaviour(dv, __): {
 							subs = ref 1;
 							dyn = make(ifn(^dv));
-							u = subscribe2(b, \v : ?? -> nextDistinct(dyn, ifn(v)));
+							u = subscribe2(b, \v : flow -> nextDistinct(dyn, ifn(v)));
 							disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); t.beh ::= FDestroyed();}};
 
 							t.beh ::= FInitialized(subs, disp, dyn);
@@ -882,7 +925,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 
 							subs = ref 1;
 							dyn = make(ifn(getValue(firstOfPair(cb))));
-							u = subscribe2(firstOfPair(cb), \v : ?? -> nextDistinct(dyn, ifn(v)));
+							u = subscribe2(firstOfPair(cb), \v : flow -> nextDistinct(dyn, ifn(v)));
 							disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); secondOfPair(cb)(); t.beh ::= FDestroyed();}};
 
 							t.beh ::= FInitialized(subs, disp, dyn);
@@ -900,14 +943,14 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 				}
 				FDestroyed(): {
 					ifn = instantiateFn2(fn);
-					switch (b1 : Transform<?>) {
+					switch (b1 : Transform<flow>) {
 						DynamicBehaviour(dv1, __): {
-							switch (b2 : Transform<??>) {
+							switch (b2 : Transform<flow>) {
 								DynamicBehaviour(dv2, __): {
 									subs = ref 1;
 									dyn = make(ifn(^dv1, ^dv2));
 									disp =
-										if (flow(b1) == b2) {
+										if (b1 == b2) {
 											u = subscribe2(b1, \b -> nextDistinct(dyn, ifn(b, flow(b))));
 											\ -> {subs := ^subs - 1; if (^subs == 0) {u(); t.beh ::= FDestroyed();}};
 										} else {
@@ -976,7 +1019,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 							}
 						}
 						default: {
-							switch (b2 : Transform<??>) {
+							switch (b2 : Transform<flow>) {
 								DynamicBehaviour(dv2, __): {
 									cb = doFuseDynamic(b1);
 
@@ -1015,7 +1058,8 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 										cb1 = doFuseDynamic(b1);
 
 										subs = ref 1;
-										dyn = make(ifn(getValue(firstOfPair(cb1)), getValue(firstOfPair(cb1))));
+										initValue = getValue(firstOfPair(cb1));
+										dyn = make(ifn(initValue, initValue));
 
 										u = subscribe2(firstOfPair(cb1), \b -> nextDistinct(dyn, ifn(b, b)));
 										disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); secondOfPair(cb1)(); t.beh ::= FDestroyed();}};
@@ -1073,10 +1117,10 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 				}
 				FDestroyed(): {
 					ifn = instantiateFn(fn);
-					switch (b : Transform<??>) {
+					switch (b : Transform<flow>) {
 						DynamicBehaviour(dv, __): {
 							subs = ref 1;
-							bf0 = doFuse(ifn(^dv));
+							bf0 : Pair<Behaviour<flow>, () -> void> = doFuse(ifn(^dv));
 							dyn = make(getValue(firstOfPair(bf0)));
 							u0 = subscribe2(firstOfPair(bf0), \v2 -> nextDistinct(dyn, v2));
 							disconnect = ref \ -> {
@@ -1649,18 +1693,33 @@ fnot(b : Transform<bool>) -> Transform<bool> {
 	feq(b, false)
 }
 
+lazyTransformEnabled = isUrlParameterTrue("new") && !isUrlParameterFalse("lazy_transform");
 fand(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
 	if (ConstBehaviour(false) == a || ConstBehaviour(false) == b)
 		ConstBehaviour(false)
 	else
-		fselect2(a, b, FusionAnd());
+		fselect2(a, b, FusionAnd(lazyTransformEnabled));
+}
+
+fandLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
+	if (ConstBehaviour(false) == a || ConstBehaviour(false) == b)
+		ConstBehaviour(false)
+	else
+		fselect2(a, b, FusionAnd(true));
 }
 
 fOr(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
 	if (a == ConstBehaviour(true) || b == ConstBehaviour(true))
 		ConstBehaviour(true)
 	else
-		fselect2(a, b, FusionOr());
+		fselect2(a, b, FusionOr(lazyTransformEnabled));
+}
+
+fOrLazy(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
+	if (a == ConstBehaviour(true) || b == ConstBehaviour(true))
+		ConstBehaviour(true)
+	else
+		fselect2(a, b, FusionOr(true));
 }
 
 fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
@@ -1677,6 +1736,10 @@ fpair(v1 : Transform<?>, v2 : Transform<??>) -> Transform<Pair<?, ??>> {
 
 fwidthheight(wd : Transform<double>, hgt : Transform<double>) -> Transform<WidthHeight> {
 	fselect2(wd, hgt, FusionWidthHeight());
+}
+
+fsubwidthheight(wd : Transform<Transform<double>>, hgt : Transform<Transform<double>>) -> Transform<WidthHeight> {
+	fsubselect2(wd, hgt, \w, h -> fselect2(w, h, FusionWidthHeight()));
 }
 
 fpoint(x : Transform<double>, y : Transform<double>) -> Transform<Point> {
@@ -1749,7 +1812,13 @@ fconnect2Select(t1 : Transform<?>, t2 : Transform<??>, v : DynamicBehaviour<???>
 
 fmerge(a : [Transform<?>]) -> Transform<[?]> {
 	if (length(a) > 0)
-		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [v], r)), ConstBehaviour([]))
+		foldTreeBinary(
+			pairs2tree(mapi(a, \k : int, v : Transform<?> -> Pair(k, v))),
+			\__ : int, vv : Transform<?>, ll : Transform<[?]>, rr : Transform<[?]> -> {
+				fselect3(ll, vv, rr, \l : [?], v : ?, r : [?]-> concat3(l, [v], r))
+			},
+			ConstBehaviour([])
+		)
 	else
 		ConstBehaviour([])
 }
@@ -1757,7 +1826,12 @@ fmerge(a : [Transform<?>]) -> Transform<[?]> {
 fmergeTree(tree : Tree<??, Transform<?>>) -> Transform<Tree<??, ?>> {
 	if (sizeTree(tree) > 0)
 		fselect(
-			foldTreeBinary(tree, \k, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> concat3(l, [Pair(k, v)], r)), ConstBehaviour([])),
+			foldTreeBinary(tree,
+				\k: ??, vv : Transform<?>, ll : Transform<[Pair<??, ?>]>, rr : Transform<[Pair<??, ?>]> -> {
+					fselect3(ll, vv, rr, \l : [Pair<??, ?>], v: ?, r : [Pair<??, ?>] -> concat3(l, [Pair(k, v)], r))
+				},
+				ConstBehaviour([])
+			),
 			pairs2tree |> FLift
 		)
 	else
@@ -1766,14 +1840,24 @@ fmergeTree(tree : Tree<??, Transform<?>>) -> Transform<Tree<??, ?>> {
 
 fsum(a : [Transform<double>]) -> Transform<double> {
 	if (length(a) > 0)
-		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), ConstBehaviour(0.0))
+		foldTreeBinary(
+			pairs2tree(mapi(a, \k : int, v : Transform<double> -> Pair(k, v))),
+			\__ : int, vv : Transform<double>, ll: Transform<double>, rr : Transform<double> -> {
+				fselect3(ll, vv, rr, \l: double, v: double, r: double -> l + v + r)
+			},
+			ConstBehaviour(0.0)
+		)
 	else
 		ConstBehaviour(0.0)
 }
 
 fsumi(a : [Transform<int>]) -> Transform<int> {
 	if (length(a) > 0)
-		foldTreeBinary(pairs2tree(mapi(a, \k, v -> Pair(k, v))), \__, vv, ll, rr -> fselect3(ll, vv, rr, \l, v, r -> l + v + r), ConstBehaviour(0))
+		foldTreeBinary(pairs2tree(mapi(a, \k : int, v : Transform<int> -> Pair(k, v))),
+		\__ : int, vv : Transform<int>, ll : Transform<int>, rr : Transform<int> -> {
+			fselect3(ll, vv, rr, \l : int, v : int, r : int -> l + v + r)
+		},
+		ConstBehaviour(0))
 	else
 		ConstBehaviour(0)
 }
@@ -1783,7 +1867,7 @@ faverage(a : [Transform<double>]) -> Transform<double> {
 		foldTreeBinary(
 			pairs2tree(mapi(a, \k, v -> Pair(k, Pair(1, v)))),
 			\__, vv : Pair<int, Transform<double>>, ll : Pair<int, Transform<double>>, rr : Pair<int, Transform<double>> -> {
-				Pair(ll.first + vv.first + rr.first, fselect3(ll.second, vv.second, rr.second, \l, v, r -> l + v + r));
+				Pair(ll.first + vv.first + rr.first, fselect3(ll.second, vv.second, rr.second, \l : double, v : double, r : double -> l + v + r));
 			},
 			Pair(0, ConstBehaviour(0.0))
 		)
@@ -1795,7 +1879,7 @@ faverage(a : [Transform<double>]) -> Transform<double> {
 ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?> {
 	currentV : ref ? = ref fgetValue(v);
 	newV =
-		fselect(v, FLift(\v0 -> {
+		fselect(v, FLift(\v0 : ? -> {
 			currentV := v0;
 			v0
 		}));
@@ -1998,6 +2082,14 @@ fBidirectionalLink(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2
 	\ -> applyList(concatList(u1, u2), apply0)
 }
 
+supportsLazy(fn : FFn2<?, ??, ???>) -> bool {
+	switch (fn : FFn2<?, ??, ???>) {
+		FusionAnd(lazy) : lazy;
+		FusionOr(lazy) : lazy;
+		default : false
+	}
+}
+
 instantiateFn(fn : FFn<?, ??>) -> (?) -> ?? {
 	// println(ffn2string(fn));
 	switch (fn : FFn<?, ??>) {
@@ -2011,34 +2103,54 @@ instantiateFn(fn : FFn<?, ??>) -> (?) -> ?? {
 			r : (?)->?? = \v : ? -> lf1(lf2(v));
 			r;
 		}
-		FIdentity(): flow(idfn);
+		FIdentity(): flow(\i : ? -> i);
 		FNegate(): flow(\p : double -> -p);
 		FAddConst(v): flow(\p : double -> p + v);
 		FMulConst(v): flow(\p : double -> p * v);
-		FMaxConst(v): flow(\p -> cast(flow(max(p, v)) : flow -> ??));
-		FMinConst(v): flow(\p -> min(p, v));
-		FEqual(v): flow(\p -> p == v);
+		FMaxConst(v): flow(\p : ? -> cast(flow(max(p, v)) : flow -> ??));
+		FMinConst(v): flow(\p : ? -> min(p, v));
+		FEqual(v): flow(\p : ? -> p == v);
 		FIf(t, e): flow(\c : bool -> if (c) t else e);
 	}
 }
 
 instantiateFn2(fn : FFn2<?, ??, ???>) -> (?, ??) -> ??? {
-	// println(ffn2string(fn));
+	// println(ffn22string(fn));
 	switch (fn : FFn2<?, ??, ???>) {
 		FLift2(f): f;
-		FIdentity2(): flow(\f, s -> Pair(f, s));
-		FAddition(): flow(\f: double, s: double -> f + s);
+		FIdentity2(): flow(\f : ? , s : ?? -> Pair(f, s));
+		FAddition(): flow(\f : double, s : double -> f + s);
 		FSubtract(): flow(\f : double, s : double-> f - s);
 		FMultiply(): flow(\f: double, s : double-> f * s);
 		FDivide(): {
-			flow(\f, s -> if (s == 0.0) 0.0 else f / s);
+			flow(\f : double, s : double -> if (s == 0.0) 0.0 else f / s);
 		}
-		FMax(): flow(max);
-		FMin(): flow(min);
-		FusionAnd() : flow(\a, b -> a && b);
-		FusionOr() : flow(\a, b -> a || b);
-		FusionXor() : flow(\a, b -> a != b);
-		FusionWidthHeight() : flow(\a, b -> WidthHeight(a, b));
+		FMax(): flow(\a : ?, b : ? -> max(a, b));
+		FMin(): flow(\a : ?, b : ? -> min(a, b));
+		FusionAnd(__) : flow(\a : bool, b : bool -> a && b);
+		FusionOr(__) : flow(\a : bool, b : bool -> a || b);
+		FusionXor() : flow(\a : bool, b : bool -> a != b);
+		FusionWidthHeight() : flow(\a : double, b : double -> WidthHeight(a, b));
+	}
+}
+
+instantiateFn2Lazy(fn : FFn2<?, ??, ???>) -> (?, () -> ??) -> ??? {
+	switch (fn : FFn2<?, ??, ???>) {
+		FusionAnd(__) : flow(\a : bool, b : () -> bool -> a && b());
+		FusionOr(__) : flow(\a : bool, b : () -> bool -> a || b());
+		// All below are not supposed to be called
+		FLift2(fn2): \f, s -> fn2(f, s());
+		FIdentity2(): flow(\f : ? , s : () -> ?? -> Pair(f, s()));
+		FAddition(): flow(\f : double, s : () -> double -> f + s());
+		FSubtract(): flow(\f : double, s : () -> double-> f - s());
+		FMultiply(): flow(\f: double, s : () -> double-> f * s());
+		FDivide(): {
+			flow(\f : double, s : () -> double -> {s2 = s(); if (s2 == 0.0) 0.0 else f / s2});
+		}
+		FMax(): flow(\a : ?, b : () -> ? -> max(a, b()));
+		FMin(): flow(\a : ?, b : () -> ? -> min(a, b()));
+		FusionXor() : flow(\a : bool, b : () -> bool -> a != b());
+		FusionWidthHeight() : flow(\a : double, b : () -> double -> WidthHeight(a, b()));
 	}
 }
 
@@ -2067,30 +2179,30 @@ ffn22string(fn : FFn2<?, ??, ???>) -> string {
 		FDivide(): "/";
 		FMax(): "max";
 		FMin(): "min";
-		FusionAnd() : "&&";
-		FusionOr() : "||";
+		FusionAnd(__) : "&&";
+		FusionOr(__) : "||";
 		FusionXor() : "^";
 		FusionWidthHeight() : "wh";
 	}
 }
 
 safeToString(t : flow) -> string {
-	if (isSameStructType(t, FLift(idfn))
-		|| isSameStructType(t, FLift2(\x, y -> x))) {
-		toString(t.fn)
-	} else if (isSameStructType(t, zero)) {
-		ct : ConstBehaviour<flow> = cast(t : flow -> ConstBehaviour<flow>);
-		"const(" + safeToString(getValue(ct)) + ")";
-	} else if (isSameStructType(t, FSelect(ConstBehaviour(flow(0)), FIdentity(), FDestroyed()))
-			|| isSameStructType(t, FSelect2(ConstBehaviour(flow(0)), ConstBehaviour(flow(0)), FAddition(), FDestroyed()))
-			|| isSameStructType(t, FSubSelect(ConstBehaviour(flow(0)), FIdentity(), FDestroyed()))
-		) {
-		ct : Transform<flow> = fselect(cast(t : flow -> Transform<?>), FLift(\v : ? -> cast(v : ? -> flow)));
-		transform2string(ct)
+	if (isSameStructType(t, t)) {
+		// OK, it is a struct
+		sname = t.structname;
+		if (sname == "FLift" || sname == "FLift2") {
+			toString(extractStructArguments(t)[0])
+		} else if (isSameStructType(t, zero)) {
+			ct : ConstBehaviour<flow> = cast(t : flow -> ConstBehaviour<flow>);
+			"const(" + safeToString(getValue(ct)) + ")";
+		} else if (sname == "FSelect" || sname == "FSelect2" || sname == "FSubSelect") {
+			ct : Transform<flow> = fselect(cast(t : flow -> Transform<flow>), FLift(\v : flow -> v));
+			transform2string(ct)
+		} else {
+			sname + "()"
+		}
 	} else if (isArray(t)) "array"
-	else if (isSameStructType(t, t)) {
-		t.structname + "()"
-	} else toString(t);
+	else toString(t);
 }
 
 /*

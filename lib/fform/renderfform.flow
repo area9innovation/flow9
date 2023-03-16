@@ -5,23 +5,27 @@ import formats/svg/svg;
 
 export {
 	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void;
+	// In JS - looks for html element and renders form inside it
+	// The same as frender for other targets
+	frenderTo(form : FForm, awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void;
 	frenderStage : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void;
 	renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult;
 	attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : [FClipCapability]) -> FRenderResult;
 
 	// Override to set custom stage wh
-	stageWidthHeight = make(None());
+	stageWidthHeight : DynamicBehaviour<Maybe<WidthHeight>> = make(None());
 	fAccessibilityEnabled = ref false;
 	fSvg2GraphicsEnabled = ref !js;
+	isFullScreenActive = make(false);
 }
 
 currentFFormCount = ref 0;
 
-frenderTo(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
+frenderToClip(parent : native, form : FForm, awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void {
 	renCt = ^globalRenderCount;
 	globalRenderCount := ^globalRenderCount + 1;
 
-	d1 = monitorFResize(awh);
+	d1 = monitorFResize(awh, rootId);
 	d2 = optimizeAndRenderFForm(parent, form, const([renCt]));
 
 	\ -> {d1(); applyall(d2.disposers); if (renCt == ^globalRenderCount - 1) globalRenderCount := renCt}
@@ -31,17 +35,25 @@ frenderStage(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
 	if (^globalRenderCount == 0)
 		println("Warning: Don't use overlay stage render as first layer render.");
 
-	frenderTo(currentClip(), form, awh);
+	frenderToClip(currentClip(), form, awh, "");
+}
+
+frenderTo(form : FForm, awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void {
+	if (rootId != "") {
+		if (js) setRenderRoot(rootId)
+		else println("Warning: no setRenderRoot implementation for this target");
+	}
+	frenderToClip(mainRenderClip(), form, awh, rootId);
 }
 
 frender(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> () -> void {
-	frenderTo(mainRenderClip(), form, awh);
+	frenderToClip(mainRenderClip(), form, awh, "");
 }
 
-monitorFResize(awh : DynamicBehaviour<WidthHeight>) -> () -> void {
+monitorFResize(awh : DynamicBehaviour<WidthHeight>, rootId : string) -> () -> void {
 	enableResize();
 	sendStageSize = \ -> {
-		nextDistinct(awh, WidthHeight(getStageWidth(), getStageHeight()));
+		nextDistinct(awh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
 	}
 
 	// We have to explicitly hold on to this function to keep it alive
@@ -116,20 +128,24 @@ attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapabilit
 
 fullScreenTarget : ref Maybe<native> = ref None();
 
-setFullScreenTarget(clip : native) -> void {
+setFullScreenTargetFlow(clip : native) -> void {
 	fullScreenTarget := Some(clip);
+	nextDistinct(isFullScreenActive, true);
+	setFullScreenTarget(clip);
 }
 
 isFullScreenTarget(clip : native) -> bool {
-	eitherFn(^fullScreenTarget, \ft -> ft == clip, \ -> { setFullScreenTarget(clip); true; });
+	eitherFn(^fullScreenTarget, \ft -> ft == clip, \ -> { setFullScreenTargetFlow(clip); true; });
 };
 
 removeFullScreenTarget(clip : native) -> void {
 	if (isSome(^fullScreenTarget)) {
 		if (isFullScreenTarget(clip)) {
-			setFullScreenTarget(clip);
+			setFullScreenTargetFlow(clip);
 		}
 	}
+	resetFullScreenTarget();
+	nextDistinct(isFullScreenActive, false);
 }
 
 renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
@@ -177,6 +193,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				cache = ref true;
 				onlydl = ref false;
 				picErrorHandler = ref nop1;
+				onWarning = ref nop1;
 				onLoaded = ref nop;
 				realSizeFn = ref nop1;
 				picAltText = ref "";
@@ -190,6 +207,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						DontCache(): cache := false;
 						OnlyDownloadToCache(): onlydl := true;
 						OnLoadingError(fn): picErrorHandler := fn;
+						OnWarning(fn): onWarning := fn;
 						OnLoaded(fn): {
 							onLoaded := {
 								prevOnLoaded = ^onLoaded;
@@ -202,6 +220,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						InspectRealSize(fn): realSizeFn := fn;
 						AltText(text): picAltText := text;
 						UseCrossOrigin(__) : {}
+						ReferrerPolicy(__) : {}
 					}
 				);
 
@@ -234,13 +253,17 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							},
 							\er -> {
 								if (^clipalive) {
-									e = "Cannot load " + url + " " + er;
+									if (startsWith(er, "Warning")) {
+										^onWarning(er);
+									} else {
+										e = "Cannot load " + url + " " + er;
 
-									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-									nextDistinct(wh, zeroWH);
+										CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+										nextDistinct(wh, zeroWH);
 
-									^picErrorHandler(e);
-									decreaseFFilesCount();
+										^picErrorHandler(e);
+										decreaseFFilesCount();
+									}
 								} else {
 									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
 
@@ -265,11 +288,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								^onLoaded();
 							},
 							\e -> {
-								CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-								nextDistinct(wh, zeroWH);
+								if (startsWith(e, "Warning")) {
+									^onWarning(e);
+								} else {
+									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+									nextDistinct(wh, zeroWH);
 
-								^picErrorHandler(e);
-								decreaseFFilesCount();
+									^picErrorHandler(e);
+									decreaseFFilesCount();
+								}
 							},
 							^onlydl,
 							^picAltText
@@ -277,6 +304,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					}
 
 				setPictureUseCrossOrigin(picture, extractStruct(style, UseCrossOrigin(false)).useCrossOrigin);
+				setPictureReferrerPolicy(picture, extractStruct(style, ReferrerPolicy("")).referrerpolicy);
 
 				FRenderResult(
 					[picture],
@@ -398,7 +426,13 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			handleAdd = \form, z -> {
 				childResult = renderFForm(form, farrayPush(zorder, const(z)));
 				childClip = map(childResult.clips, \c -> Pair(c, ref false));
-				clipsBefore = length(concatA(subrange(^childrenClips, 0, z)));
+				clipsBefore = foldi(^childrenClips, 0, \i, acc, c -> {
+					if (i < z) {
+						acc + length(c)
+					} else {
+						acc
+					}
+				});
 				iteri(childClip, \i, d -> addChildClipAt(parentClip, d.first, clipsBefore + i, d.second));
 
 				childrenClips := insertArray(^childrenClips, z, childClip);
@@ -651,13 +685,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		FFullWindow(fullwindow, wh, form) : {
 			resize = ref nop;
 			container = makeClip();
+			rootId = getRenderRoot();
 
 			setResize = \fw -> {
 				^resize();
 
 				if (fw) {
-					nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
-					resize := monitorFResize(wh);
+					nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+					resize := monitorFResize(wh, rootId);
 				} else {
 					resize := nop;
 				}
@@ -666,11 +701,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			setFullWindow = \fw -> {
 				setFullWindowTarget(container);
 				toggleFullWindow(fw);
+				if (!fw) resetFullWindowTarget()
 			};
 
 			if (getValue(fullwindow)) {
-				setResize(true);
-				setFullWindow(true);
+				deferred(\ -> {
+					setResize(true);
+					setFullWindow(true);
+				})
 			};
 
 			uns = subscribe2(fullwindow, \fw -> {
@@ -691,34 +729,48 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						if (getValue(fullwindow)) {
 							setFullWindow(false);
 						}
-						resetFullWindowTarget();
 						deleteNative(container);
 					}
 				),
 				d.capabilities
 			);
 		}
-		FFullScreen(fullscreen, wh, form): {
-			fw = make(false);
-
+		FFullScreen2(fullscreen, wh, form, appendToMainStage): {
+			resizeUns = initUnsM();
 			attachFChildAndCapability(
 				rform,
-				renderFForm(FFullWindow(fullscreen, wh, form), zorder),
+				renderFForm(if (appendToMainStage) FFullWindow(fullscreen, wh, form) else form, zorder),
 				[],
 				\clip -> {
 					changeFullscreen = \fsc -> {
 						if (fsc) {
-							setFullScreenTarget(clip);
+							setFullScreenTargetFlow(clip);
 						} else {
 							removeFullScreenTarget(clip);
 						}
 
-						nextDistinct(fw, fsc);
-						toggleFullScreen(fsc);
+						if (appendToMainStage) {
+							toggleFullScreen(fsc);
+						} else {
+							if (fsc) {
+								rootId = getRenderRoot();
+								nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+								setUnsM(resizeUns, monitorFResize(wh, rootId));
+								requestFullScreen(clip)
+							}
+							else {
+								dispUnsM(resizeUns);
+								exitFullScreen(clip);
+							}
+						}
 					}
 
 					if (getValue(fullscreen)) {
-						changeFullscreen(true);
+						if (appendToMainStage) {
+							changeFullscreen(true);
+						} else {
+							timer(200, \ -> changeFullscreen(true));
+						}
 					}
 
 					ofsd = onFullScreen(\change -> {
@@ -833,14 +885,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 									color = ref 0x000000;
 									alpha = ref 1.0;
 									inner = ref false;
+									useBoxShadow = ref false;
 									iter(params, \p -> switch (p : DropShadowParameter) {
 										Placement(a, ds): { angle := a; distance := ds; }
 										Radius(r): radius := r;
 										Spread(s): spread := s;
 										Color(c, a): { color := c; alpha := a; }
 										Inner(i): inner := i;
+										UseBoxShadow(): useBoxShadow := true;
 									});
-									makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+									ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+									if (^useBoxShadow) setUseBoxShadow(ds);
+									Some(ds);
 								}
 								Blur(params): {
 									radius = ref 3.0;
@@ -923,14 +979,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								color = ref 0x000000;
 								alpha = ref 1.0;
 								inner = ref false;
+								useBoxShadow = ref false;
 								iter(params, \p -> switch (p : DropShadowParameter) {
 									Placement(a, ds): { angle := a; distance := ds; }
 									Radius(r): radius := r;
 									Spread(s): spread := s;
 									Color(c, a): { color := c; alpha := a; }
 									Inner(i): inner := i;
+									UseBoxShadow(): useBoxShadow := true;
 								});
-								makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+								ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+								if (^useBoxShadow) setUseBoxShadow(ds);
+								Some(ds);
 							}
 							Blur(params): {
 								radius = ref 3.0;
@@ -1013,7 +1073,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			disps : ref [() -> void] = ref [];
 
 			iter(inspectors, \i ->
-				switch (i : FInspector) {
+				switch (i : Inspector) {
 					ITransformMatrix(setfn): {
 						if (length(d.clips) > 0) {
 							// interruptibleDeferUntilNextFrameRendered to have form built and transforms calculated
@@ -1094,10 +1154,18 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				(js && (extractStruct(properties, ClassName("")).className != "" || extractStruct(properties, TagName("")).tagName != ""))) {
 				d = renderFForm(form, zorder);
 
-				makeAccessClip =
-					(!contains(["button", "checkbox", "textbox", "video", "iframe"], extractStruct(properties, AccessRole("")).role) &&
-						!contains(["button", "textarea", "input", "video", "iframe"], extractStruct(properties, TagName("")).tagName))
+				role = extractStruct(properties, AccessRole("")).role;
+				tagName = extractStruct(properties, TagName("")).tagName;
+
+				defMakeAccessClip =
+					(
+						!contains(["button", "checkbox", "textbox", "video", "iframe"], role) &&
+						!contains(["button", "textarea", "input", "video", "iframe", "span"], tagName) &&
+						!(role == "presentation" && tagName == "p")
+					)
 					|| isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
+
+				makeAccessClip = extractStruct(properties, AccessForceMakeClip(defMakeAccessClip)).makeClip;
 
 				if (makeAccessClip) {
 					attachFChildAndCapability(
@@ -1143,9 +1211,12 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			disp =
 				fold(
 					style,
-					[makeSubscribe(wh, \whv ->  { setClipWidth(clip, whv.width); setClipHeight(clip, whv.height); })()],
+					arrayPush(
+						[makeSubscribe(wh, \whv ->  { setClipWidth(clip, whv.width); setClipHeight(clip, whv.height); })()],
+						addFAccessProperties(extractFAccessProperties(style), zorder)(clip)
+					),
 					\acc, st ->
-						switch (st : RealHTMLStyle) {
+						switch (st : FRealHTMLStyle) {
 							PageHostcallSetter(fn): {
 								fn(\name, args -> webClipHostCall(clip, name, args));
 								acc;
@@ -1190,6 +1261,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								setWebClipNoScroll(clip);
 								acc;
 							}
+							PassEvents(): {
+								setWebClipPassEvents(clip);
+								acc;
+							}
 							default: acc;
 						}
 				)
@@ -1208,7 +1283,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			FRenderResult(
 				[clip],
 				disp,
-				[FClipInteractive(), FClipFilters(), FClipMask()]
+				[FClipInteractive(), FClipFilters(), FClipMask(), FClipAccess()]
 			);
 		}
 		FVideo(filename, wh, style): {
@@ -1221,6 +1296,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			errorHandlerFn = extractStruct(style, OnVideoLoadingError(nop)).fn;
 			streamListenerFn = extractStruct(style, StreamStatus(nop1)).fn;
 			synchroCalls = extractStruct(style, SynchroCalls(nop, nop));
+			videoPlayStatus = extractStruct(style, FVideoPlayStatus(make(false)));
 			keepAspectRation = extractStruct(style, FVideoKeepAspectRatio(const(true))).keep;
 			coverBox = extractStruct(style, FVideoCoverBox(const(false), []));
 			coverBoxAlign = extractStruct(coverBox.style, FAlign(const(0.5), const(0.5)));
@@ -1233,6 +1309,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			subtitlesAlignBottom = contains(style, FVideoSubtitlesAlignBottom());
 			subtitlesBottomBorder = extractStruct(style, FVideoSubtitlesBottomBorder(-1.)).border;
 			subtitlesScaleMode = tryExtractStruct(style, FVideoSubtitlesScaleMode(-1., -1.));
+			externalSubtitles = tryExtractStruct(style, FVideoExternalSubtitles("", "", const(true)));
 			looping = tryExtractStruct(style, FVideoLoop(const(false)));
 			timeRange = tryExtractStruct(style, FVideoTimeRange(const(0.), const(0.)));
 			playbackRate = tryExtractStruct(style, FVideoPlaybackRate(make(0.)));
@@ -1252,6 +1329,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					\p -> {
 						streamListenerResponse := true;
 						nextDistinct(playing, p);
+						if (!p)
+							next(videoPlayStatus.playing, p);
 						streamListenerResponse := false;
 					},
 					\len -> {
@@ -1264,6 +1343,12 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					}
 				);
 			iter(additionalSources, \s -> addVideoSource(video, s.url, s.type));
+			esUns = initUnsM();
+			maybeApply(externalSubtitles, \es -> {
+				setUnsM(esUns, makeSubscribeUns(es.enabled, \en -> if (en) [setVideoExternalSubtitle(video, es.src, es.kind)] else [])());
+			});
+
+			if (contains(style, FAudio())) setVideoIsAudio(video);
 
 			eitherFn(mediaStream,
 				\ms -> playVideoFromMediaStream(video, ms.stream, !getValue(playing)),
@@ -1360,6 +1445,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					\fs -> {
 						resize = ref nop;
 						prevWH = ref getValue(wh);
+						rootId = getRenderRoot();
 
 						[
 							onFullScreen(\v -> if (isFullScreenTarget(video) || !v) nextDistinct(fs.fullscreen, v)),
@@ -1369,10 +1455,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								^resize();
 
 								if (v) {
-									setFullScreenTarget(video);
+									setFullScreenTargetFlow(video);
 									prevWH := getValue(wh);
-									nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
-									resize := monitorFResize(wh);
+									nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+									resize := monitorFResize(wh, rootId);
 								} else {
 									removeFullScreenTarget(video);
 									nextDistinct(wh, ^prevWH);
@@ -1425,6 +1511,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					[]
 				),
 				[
+					\ -> dispUnsM(esUns),
 					\ -> closeVideo(video),
 					\ -> deleteNative(video),
 				]
@@ -1446,12 +1533,22 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 					}
 				} else if (code == "FlowGL.User.Stop") {
 					synchroCalls.onStop();
+				} else if (code == "FlowGL.User.Playing") {
+					next(videoPlayStatus.playing, true)
+				} else if (code == "FlowGL.User.Waiting") {
+					next(videoPlayStatus.playing, false)
 				}
 
 				if (^dispR == []) {
 					dispR := [
 						makeSubscribe(playing, \pl -> if (!^streamListenerResponse) {
-							if (pl) resumeVideo(video) else pauseVideo(video);
+							if (pl) {
+								resumeVideo(video);
+							} else {
+								pauseVideo(video);
+
+								next(videoPlayStatus.playing, false);
+							}
 						})(),
 						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))()
 					];
@@ -1468,15 +1565,20 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		}
 		FTextInput(content, wh, style): {
 			textInputResponse = ref false;
-			characterStyle = extractStruct(style, FCharacterStyle(const(style2characterStyle(style)))).style;
-			textfield = makeTextfield(getMappedFontFamily(fgetValue(characterStyle)));
+			constCharacterStyle = style2characterStyle(style);
+			characterStyle = fconcat(extractStruct(style, FCharacterStyle(const([]))).style, const(constCharacterStyle));
+			textfield = makeTextfield(getMappedFontFace(fgetValue(characterStyle)));
 			rtl = extractStruct(style, SetRTL(getDefaultRtl())).rtl;
 			setTextDirection(textfield, if (rtl) "rtl" else "ltr");
+			setPreventContextMenu(textfield, contains(style, FPreventContextMenu()));
 			setTextInput(textfield);
 
 			focus = extractStruct(style, FFocus(make(false))).focus;
 			position = extractStruct(style, FPosition(make(0))).position;
 			selection = extractStruct(style, FSelection(make(-1))).selection;
+			positionSelection = extractStruct(style, FPositionSelection(make(PositionSelection(0, -1)))).positionSelection;
+			onSelection = tryExtractStruct(style, FInputOnSelect(nop2));
+			onSelectAll = tryExtractStruct(style, FInputOnSelectAll(nop));
 			scrollInfo = extractStruct(style, FScrollInfo(make(ScrollInfo(0, 0, 0)))).info;
 
 			inputType = extractStruct(style, FInputType(const(TextType()))).type;
@@ -1488,6 +1590,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			maxChars = extractStruct(style, FMaxChars(const(-1))).maxChars;
 			numericStep = tryExtractStruct(style, FNumericStep(const(1.)));
 			filterFn = tryExtractStruct(style, FInputFilter(idfn));
+			eventFilterFn = tryExtractStruct(style, dummyFInputEventFilter);
+			onCopyFn = tryExtractStruct(style, FInputOnCopy(\ -> None()));
+
 			keyFilterFn = tryExtractStruct(style, FInputKeyFilter(\__, __ -> true));
 			cursorColor = extractStruct(style, FCursorColor(fselect(characterStyle, FLift(\cs -> extractStruct(cs, Fill(0)).color)))).color;
 			cursorOpacity = extractStruct(style, FCursorOpacity(fselect(characterStyle, FLift(\cs -> extractStruct(cs, FillOpacity(1.)).opacity)))).opacity;
@@ -1496,6 +1601,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			interlineSpacing = extractStruct(style, InterlineSpacing(0.0)).d;
 
 			setTextFieldInterlineSpacing(textfield, interlineSpacing);
+			defineTextStyle(textfield, getValue(content), fgetValue(characterStyle));
 
 			disp =
 				concatA([
@@ -1510,10 +1616,30 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							setTextFieldWidth(textfield, v.width);
 							setTextFieldHeight(textfield, v.height);
 						})(),
-						makeSubscribe(focus, \f ->
+						if (mobile) subscribe(focus, \f ->
+							if (!^textInputResponse) setFocus(textfield, f)
+						) else makeSubscribe(focus, \f ->
 							if (!^textInputResponse) setFocus(textfield, f)
 						)(),
-						make2Subscribe(position, selection, \p, s -> if (!^textInputResponse) setSelection(textfield, p, s))(),
+						make2Subscribe(position, selection, \p, s -> if (!^textInputResponse) {
+							if (cpp && getValue(focus)) {
+								setFocus(textfield, false);
+								setSelection(textfield, p, s);
+								setFocus(textfield, true);
+							} else {
+								setSelection(textfield, p, s);
+							}
+							textInputResponse := true;
+							nextDistinct(positionSelection, PositionSelection(p, s));
+							textInputResponse := false;
+						})(),
+						makeSubscribe(positionSelection, \ps -> if (!^textInputResponse) {
+							setSelection(textfield, ps.position, ps.selection);
+							textInputResponse := true;
+							nextDistinct(position, ps.position);
+							nextDistinct(selection, ps.selection);
+							textInputResponse := false;
+						})(),
 						makeSubscribe(inputType, \t -> setTextInputType(textfield,
 							switch (t : InputType) {
 								EmailType(): "email";
@@ -1546,9 +1672,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						addEventListener(textfield, "change", \ -> {
 							textInputResponse := true;
 							nextDistinct(content, getContent(textfield));
-							// nextDistinct(wh, WidthHeight(getTextFieldWidth(textfield), getTextFieldHeight(textfield)));
-							nextDistinct(position, getCursorPosition(textfield));
-							nextDistinct(selection, getSelectionEnd(textfield));
+							pos = getCursorPosition(textfield);
+							sel = getSelectionEnd(textfield);
+							nextDistinct(position, pos);
+							nextDistinct(selection, sel);
+							nextDistinct(positionSelection, PositionSelection(pos, sel));
 							nextDistinct(focus, getFocus(textfield));
 							textInputResponse := false;
 						}),
@@ -1603,6 +1731,12 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						[]
 					),
 					eitherMap(
+						eventFilterFn,
+						\fn ->
+							[addTextInputEventFilter(textfield, fn.fn)],
+						[]
+					),
+					eitherMap(
 						keyFilterFn,
 						\fn ->
 							[
@@ -1611,6 +1745,12 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								addTextInputKeyEventFilter(textfield, "keyup", \utf, ctrl, shift, alt, meta, keycode ->
 									fn.fn("keyup", KeyEvent(utf, ctrl, shift, alt, meta, keycode, nop)))
 							],
+						[]
+					),
+					eitherMap(
+						onCopyFn,
+						\fn ->
+							[addTextInputOnCopyEvent(textfield, \setClipboardFn -> maybeApply(fn.fn(), setClipboardFn))],
 						[]
 					),
 					eitherMap(
@@ -1626,7 +1766,27 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								makeSubscribe(vb.bounds, \b -> if (isCorrectBounds(b)) setClipViewBounds(textfield, b.minX, b.minY, b.maxX, b.maxY))()
 							],
 						[]
-					)
+					),
+					eitherMap(
+						onSelection,
+						\onSelect ->
+							[
+								addEventListener(textfield, "selectionchange", \ -> {
+									onSelect.fn(getCursorPosition(textfield), getSelectionEnd(textfield))
+								})
+							],
+						[]
+					),
+					eitherMap(
+						onSelectAll,
+						\onSelect ->
+							[
+								addEventListener(textfield, "selectall", \ -> {
+									onSelect.fn()
+								})
+							],
+						[]
+					),
 				]);
 
 			FRenderResult(

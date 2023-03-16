@@ -1,0 +1,217 @@
+import tools/flowc/backends/wise/fituple2wise;
+
+
+
+export {
+	makeWiArrayCompareCall(array1 : FlowWiExp, array2 : FlowWiExp, type : FlowWiType) -> FlowWiExp;
+	makeComparisonWiTuples(v1 : FlowWiExp, v2 : FlowWiExp, type : FlowWiTupletype, tmpInd : ref int) -> FlowWiExp;
+	makeComparisonWiStrings(v1 : FlowWiExp, v2 : FlowWiExp) -> FlowWiExp; // compareStrings
+	// (T, T) -> i32
+	makeFlowWiComparatorFn(type : FlowWiType, tmpVarCounter : ref int) -> FlowWiFunction;
+
+	makeWiArrayType(type : FlowWiType) -> [FlowWiType];
+	isTupleType(type : FlowWiType) -> bool;
+	isRefType(type : FlowWiType) -> bool;
+}
+
+
+makeWiArrayCompareCall(array1 : FlowWiExp, array2 : FlowWiExp, type : FlowWiType) -> FlowWiExp {
+	fnDecl = unpair(arrayType2compareFnName(type), \name, tmpls -> {
+		fn = FlowWiVar(name);
+		if (tmpls == []) fn else FlowWiPolyCall(fn, map(tmpls, \a -> FlowWiBasictype(a)));
+	});
+	FlowWiCall(
+		FlowWiPolyCall(FlowWiVar("compareArrays"), makeWiArrayType(type)),
+		[array1, array2, fnDecl]
+	);
+}
+
+arrayType2compareFnName(type : FlowWiType) -> Pair<string, [string]> {
+	unpair(
+		arrayType2compareSfxFnName(type, []),
+		\name, tmpls -> Pair("_comparator_" + name, tmpls)
+	);
+}
+
+// TODO: string, refs, bool
+arrayType2compareSfxFnName(type : FlowWiType, templates : [string]) -> Pair<string, [string]> {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(s) : 
+			if (s == "i32") Pair(s, templates)
+			else if (s == "i64") Pair(s, templates)
+			else if (s == "f32") Pair(s, templates)
+			else if (s == "f64") Pair(s, templates)
+			else if (s == "bool") Pair(s, templates)
+			else if (s == "auto" || s == "v128") {
+				println("ERROR: Can not determine the default value for '" + s + "'");
+				Pair("ERROR_" + s, templates);
+			} else { // templates
+				Pair("TMPL_", arrayPush(templates, s));
+			};
+		FlowWiFntype(types, retType) : {
+			tt = map(types, \t -> arrayType2compareSfxFnName(t, templates));
+			rt = arrayType2compareSfxFnName(retType, templates);
+			Pair(
+				"fn_a_" + superglue(tt, firstOfPair, "_") + "_fn_r_" + rt.first,
+				concat3(templates, mapConcat(tt, secondOfPair), rt.second)
+			);
+		}
+		FlowWiTupletype(types, id) : Pair("tpl_" + id, templates);
+		FlowWiArrayType(t) : {
+			unpair(arrayType2compareSfxFnName(t, templates), \n, tt -> Pair("arr_" + n, concat(templates, tt)));
+		}
+		FlowWiRefType(t) : {
+			println("ERROR: Can not determine the default value for ' ref " + toString(t) + "'");
+			Pair("ERROR_" + toString(t), templates);
+		}
+	}
+}
+
+makeFlowWiComparatorFn(type : FlowWiType, tmpVarCounter : ref int) -> FlowWiFunction {
+	fnDecl = arrayType2compareFnName(type);
+	FlowWiFunction(
+		fnDecl.first, // name
+		"false", // export
+		fnDecl.second, // templates
+		[FlowWiIdtype("value1", makeWiArrayType(type)[0]), FlowWiIdtype("value2", makeWiArrayType(type)[0])],
+		FlowWiBasictype("i32"),
+		makeTwoValuesComparison(FlowWiVar("value1"), FlowWiVar("value2"), type, tmpVarCounter),
+		FlowWiWaseEmpty() // next declaration
+	); 
+}
+
+
+// ------------------------------------------------------------------
+// COMPARE
+// ------------------------------------------------------------------
+
+// the result of comparison is one of  (-1, 0, 1)
+// -1 - a1<a2, 0 - a1==a1, 1 - a1>a2
+makeBasicTypesComparison(v1 : FlowWiExp, v2 : FlowWiExp) -> FlowWiExp {
+	FlowWiIfelse(
+		FlowWiLess(v1, v2),
+		FlowWiInt(-1),
+		FlowWiIfelse(
+			FlowWiGreater(v1, v2),
+			FlowWiInt(1),
+			FlowWiInt(0)
+		)
+	);
+}
+
+// the result of comparison is 1 of  (-1, 0, 1)
+// -1 - a1<a2, 0 - a1==a1, 1 - a1>a2
+makeTwoValuesComparison(v1 : FlowWiExp, v2 : FlowWiExp, type : FlowWiType, tmpInd : ref int) -> FlowWiExp {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(s) : 
+			if (s == "i32") makeBasicTypesComparison(v1, v2)
+			else if (s == "i64") makeBasicTypesComparison(v1, v2)
+			else if (s == "f32") makeBasicTypesComparison(v1, v2)
+			else if (s == "f64") makeBasicTypesComparison(v1, v2)
+			else if (s == "bool") makeBasicTypesComparison(v1, v2)
+			else { // auto, v128, templates
+				println("ERROR: Comparison function for '" + s + "' doesn't exist");
+				makeBasicTypesComparison(v1, v2);
+			};
+		FlowWiFntype(types, retType) : {
+			println("TODO: compare fns");
+			makeComparison2WiExps(v1, v2, arrayPush(types, retType), \__, __ -> true, tmpInd); // TODO: cache ?
+		}
+		FlowWiTupletype(types, id) : makeComparisonWiTuples(v1, v2, type, tmpInd);
+		FlowWiArrayType(t) : makeWiArrayCompareCall(v1, v2, t);
+		FlowWiRefType(t) : {
+				println("ERROR: Comparison function for 'ref " + toString(t) + "' doesn't exist");
+				makeBasicTypesComparison(v1, v2);
+			};
+	}
+}
+
+// TODO: cache
+// compare each field. ignore counter (index=0)
+makeComparisonWiTuples(v1 : FlowWiExp, v2 : FlowWiExp, type : FlowWiTupletype, tmpInd : ref int) -> FlowWiExp {
+	value1 = decostructStructInExp(v1, type);
+	value2 = decostructStructInExp(v2, type);
+	ind = ^tmpInd;
+	tmpInd := ind + 2;
+	tmpVarName1 = "_tmp_" + i2s(ind);
+	tmpVarName2 = "_tmp_" + i2s(ind + 1);
+	tupleType = switch (value2.second : FlowWiType) {
+		FlowWiTupletype(tt, id): FlowWiTupletype(tt, id);
+		default : type; // error
+	}
+	cmprExp = FlowWiLet(
+		tmpVarName1,
+		0,
+		tupleType,
+		value1.first,
+		FlowWiBrace([
+			FlowWiLet(
+				tmpVarName2,
+				0,
+				tupleType,
+				value2.first,
+				FlowWiBrace([makeComparison2WiExps(
+					FlowWiVar(tmpVarName1),
+					FlowWiVar(tmpVarName2), 
+					tupleType.types,
+					\i, __ -> i != 0, // ignore counter
+					tmpInd
+				)])
+			)
+		])
+	);
+
+	FlowWiBrace([FlowWiInt(0), cmprExp]);  // 0 - to have {} in wise
+}
+
+makeComparison2WiExps(v1 : FlowWiExp, v2 : FlowWiExp, types : [FlowWiType], filterFn : (int, FlowWiType) -> bool, tmpInd : ref int) -> FlowWiExp {
+	foldi(types, FlowWiInt(0), \i, acc, t -> {
+		if (filterFn(i, t)) {
+			tmpVarName = "_tmp_" + i2s(^tmpInd);
+			tmpInd := (^tmpInd) + 1;
+			FlowWiLet(
+				tmpVarName,
+				0,
+				FlowWiBasictype("i32"),
+				makeTwoValuesComparison(FlowWiTupledot(v1, i), FlowWiTupledot(v2, i), t, tmpInd),
+				FlowWiBrace([
+					FlowWiIfelse(
+						FlowWiEqual(FlowWiVar(tmpVarName), FlowWiInt(0)),
+						acc,
+						FlowWiVar(tmpVarName)
+					)
+				])
+			)
+		} else {
+			acc
+		}
+	});
+}
+
+makeWiArrayType(type : FlowWiType) -> [FlowWiType] {
+	[if (isTupleType(type) || isRefType(type)) FlowWiBasictype("i32") else type];
+}
+
+isTupleType(type : FlowWiType) -> bool {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(__) : false;
+		FlowWiFntype(__, __) : false;
+		FlowWiTupletype(__, __) : true;
+		FlowWiArrayType(__) : false;
+		FlowWiRefType(__) : false;
+	}
+}
+
+isRefType(type : FlowWiType) -> bool {
+	switch (type : FlowWiType) {
+		FlowWiBasictype(__) : false;
+		FlowWiFntype(__, __) : false;
+		FlowWiTupletype(__, __) : false;
+		FlowWiArrayType(__) : false;
+		FlowWiRefType(__) : true;
+	}
+}
+
+makeComparisonWiStrings(v1 : FlowWiExp, v2 : FlowWiExp) -> FlowWiExp {
+	FlowWiCall(FlowWiVar("compareStrings"), [v1, v2]);
+}

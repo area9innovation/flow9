@@ -36,6 +36,7 @@
     }
     
     statusBarVisible = YES;
+    statusBar = nil;
     statusBarIconsTheme = NO;
     [self setNeedsStatusBarAppearanceUpdate];
 }
@@ -73,6 +74,20 @@
     }
 
     return UIInterfaceOrientationMaskAll;
+}
+
+- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id <UIViewControllerTransitionCoordinator>)coordinator {
+    [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+    
+    if (statusBar == nil) {
+        return;
+    }
+    
+    if (UIDeviceOrientationIsPortrait(UIDevice.currentDevice.orientation) and statusBarVisible) {
+        [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
+    } else {
+        [statusBar removeFromSuperview];
+    }
 }
 
 
@@ -233,6 +248,7 @@ static bool gestureBeingHandledByFlow = false;
 }
 
 - (void) hideActivityIndicator {
+    
     [ActivityIndicator stopAnimating];
 }
 
@@ -250,6 +266,14 @@ static bool gestureBeingHandledByFlow = false;
 
 - (void) setStatusBarVisible: (BOOL)visible {
     statusBarVisible = visible;
+    if (statusBar != nil) {
+        if (visible) {
+            [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
+        } else {
+            [statusBar removeFromSuperview];
+        }
+    }
+    
     [self setNeedsStatusBarAppearanceUpdate];
 }
 
@@ -257,6 +281,22 @@ static bool gestureBeingHandledByFlow = false;
     statusBarIconsTheme = light;
     [self setNeedsStatusBarAppearanceUpdate];
 }
+
+- (void) setStatusBarColor: (UIColor*)color {
+    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"13.0")) {
+        CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
+        statusBar = [[UIView alloc]initWithFrame:frame];
+        statusBar.backgroundColor =  color;
+        
+        if (statusBarVisible) {
+            [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
+        }
+    } else {
+        UIView *bar = [[UIApplication sharedApplication] valueForKeyPath:@"statusBarWindow.statusBar"];
+        bar.backgroundColor = color;
+    }
+}
+
 #pragma mark Debug console methods
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return [DebugLog sharedLog].LogMessages.count;

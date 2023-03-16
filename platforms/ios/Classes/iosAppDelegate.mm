@@ -1,6 +1,7 @@
 #import "iosAppDelegate.h"
 #import "BytecodeViewController.h"
 #import "WebCacheProtocol.h"
+#import "DeviceInfo.h"
 #import <iostream>
 
 #ifdef HOCKEY_APP_ID
@@ -398,6 +399,16 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     }
     LogI(@"Flow local storage path: %@", flow_local_storage_path);
     LocalStore->SetBasePath( [flow_local_storage_path UTF8String] );
+    
+    // Copy www bundle to Library to access preloaded content
+    NSString* wwwTargetDirectory = [applicationLibraryDirectory() stringByAppendingString: @"/www/"];
+    NSURL* wwwSourceDirectoryUrl = [[[NSBundle mainBundle] resourceURL] URLByAppendingPathComponent:@"www"];
+    
+    if (![[NSFileManager defaultManager] fileExistsAtPath:wwwTargetDirectory]) {
+        NSError *copyError = nil;
+        [[NSFileManager defaultManager] copyItemAtPath:[wwwSourceDirectoryUrl path] toPath:wwwTargetDirectory error:&copyError];
+    }
+    
 
     CFURLRef cwd = (CFURLRef)[NSURL fileURLWithPath: flow_local_storage_path isDirectory: YES];
     char path[PATH_MAX];
@@ -447,8 +458,16 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     
     [GLViewController setRenderSupport: RenderSupport];
     
-    NSString * user_agent = [NSString stringWithFormat:@"flow iOS(%@) dpi=%d %.0fx%.0f",
-                             UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone",
+	UIDevice* thisDevice = [UIDevice currentDevice];
+	NSString* encodedDeviceName = [[[[DeviceInfo getDeviceName]
+		stringByReplacingOccurrencesOfString:@" " withString:@"_"]
+		stringByReplacingOccurrencesOfString:@"(" withString:@"["]
+		stringByReplacingOccurrencesOfString:@")" withString:@"]"];
+
+    NSString * user_agent = [NSString stringWithFormat:@"%@/%@ iOS(%@) dpi=%d %.0fx%.0f",
+							 encodedDeviceName,
+							 thisDevice.systemVersion,
+                             thisDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone",
                              RenderSupport->getDPI(), [UIScreen mainScreen].bounds.size.width, [UIScreen mainScreen].bounds.size.height];
     HttpSupport = new iosHttpSupport(Runner, RenderSupport, user_agent);
     LogI(@"Set User agent for http request : %@", user_agent);

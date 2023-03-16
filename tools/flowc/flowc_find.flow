@@ -2,18 +2,21 @@ import tools/flowc/manipulation/countvars;
 import tools/flowc/preload_modules;
 import tools/flowc/completion;
 import tools/flowc/find_occurrences;
+import tools/flowc/backends/wise/fi2wise_utils;
 import lingo/linecolumn;
 
 export {
 	handleFindOptions(env : FcTypeEnvGlobal, flowfile : string, prog : FiProgram) -> void;
 
 	findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, symbol : string) -> void;
+	findDefDeclByPos(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, content : string, line : int, col : int) -> void;
 
 	// Uses global cache for lookups.
 	fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
 
 	// Find a type info for a symbol at given position.
 	fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
+	fcSymbolInfoMarkDown(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void;
 }
 
 handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> void {
@@ -32,8 +35,7 @@ handleFindOptions(env : FcTypeEnvGlobal, file : string, prog : FiProgram) -> voi
 findFiExpAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, file : string, line : int, col : int, wantType : bool) -> Pair<Maybe<FiExp>, string> {
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
 	filepath = findFlowPath(file, true, config.includes, workingDir);
-	code = fcFileSource(env, filepath);
-	resolver = makeLineResolver(code);
+	resolver = fcFileLineResolver(env, filepath);
 
 	linestart = findLineIndex(resolver, line, 0);
 	linetext = findLine(resolver, linestart).line;
@@ -49,8 +51,8 @@ findFiExpAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, file : string
 				fold(
 					module.natives,
 					fold(
-						module.functions, 
-						makeTree(), 
+						module.functions,
+						makeTree(),
 						\acc, fun -> start2ExpForTypes(fun.lambda, acc, wantType)
 					),
 					\acc, nat -> start2ExpForTypes(nat.fallbackLambda, acc, wantType)
@@ -86,31 +88,130 @@ goToColumn(line : string, col : int) -> int {
 
 // Here some starts are shifted, because we need to extract info about variable types, i.e. types of corresponding expressions
 start2ExpForTypes(e : FiExp, acc : Tree<int, FiExp>, wantType : bool) -> Tree<int, FiExp> {
+	rec = \a, ex -> start2ExpForTypes(ex, a, wantType);
 	switch (e) {
-		FiLambda(__, body, __, s):    setTree(start2ExpForTypes(body, acc, wantType), s, e);
-		FiCall(f, args, __, s):       setTree(start2ExpForTypes(f, fold(args, acc, \a, arg -> start2ExpForTypes(arg, a, wantType)), wantType), s, e);
+		FiLambda(__, body, __, s):    setTree(rec(acc, body), s, e);
+		FiCall(f, args, __, s):       setTree(rec(fold(args, acc, rec), f), s, e);
 		FiLet(__, __, e1, e2, __, s): {
 			// NOTE! Here we use e1, not e, because otherwise we'll get void!
-			setTree(start2ExpForTypes(e1, start2ExpForTypes(e2, acc, wantType), wantType), s, if (wantType) e1 else e); 
+			setTree(rec(rec(acc, e2), e1), s, if (wantType) e1 else e);
 		}
-		FiIf(e1, e2, e3, __, s):      setTree(start2ExpForTypes(e1, start2ExpForTypes(e2, start2ExpForTypes(e3, acc, wantType), wantType), wantType), s, e);
-		FiSwitch(v, __, cs, __, s):   setTree(start2ExpForTypes(v, fold(cs, acc, \a, c -> start2ExpForTypes(c.body, a, wantType)), wantType), s, e);
-		FiCast(e0, __, __, __, s):    setTree(start2ExpForTypes(e0, acc, wantType), s, e);
-		FiSeq(es, __, s):             setTree(fold(es, acc, \a, ex -> start2ExpForTypes(ex, a, wantType)), s, e);
-		FiCallPrim(op, es, __, s):
+		FiIf(e1, e2, e3, __, s):      setTree(rec(rec(rec(acc, e3), e2), e1), s, e);
+		FiSwitch(v, __, cs, __, s):   {
+			setTree(rec(fold(cs, acc, \a, c -> rec(a, c.body)), v), s, e);
+		}
+		FiCast(e0, __, __, __, s):    setTree(rec(acc, e0), s, e);
+		FiSeq(es, __, s):             setTree(fold(es, acc, rec), s, e);
+		FiCallPrim(op, es, __, s): {
+			acc2 = fold(es, acc, rec);
 			switch (op) {
 				// NOTE! Here we use es[1], not e, because otherwise we'll get void!
-				FcAssignPrim(): setTree(fold(es, acc, \a, ex -> start2ExpForTypes(ex, a, wantType)), s, if (wantType) es[1] else e);
-				default: setTree(fold(es, acc, \a, ex -> start2ExpForTypes(ex, a, wantType)), s, e);
+				FcAssignPrim(): setTree(acc2, s, if (wantType) es[1] else e);
+				default: setTree(acc2, s, e);
 			}
-		FiRequire(__, ex, __, s):     setTree(start2ExpForTypes(ex, acc, wantType), s, e);
-		FiUnsafe(__, fb, __, s):      setTree(start2ExpForTypes(fb, acc, wantType), s, e);
+		}
+		FiRequire(__, ex, __, s):     setTree(rec(acc, ex), s, e);
+		FiUnsafe(__, fb, __, s):      setTree(rec(acc, fb), s, e);
 		FiVar(__, __, s): setTree(acc, s, e);
 		FiString(__, s):  setTree(acc, s, e);
 		FiBool(__, s):    setTree(acc, s, e);
 		FiDouble(__, s):  setTree(acc, s, e);
 		FiVoid(s):        setTree(acc, s, e);
 		FiInt(__, s):     setTree(acc, s, e);
+	}
+}
+
+LocalNameSource ::= LocalNameSourceLambdaArg, LocalNameSourceSwitchCaseArg, LocalNameSourceLet, LocalNameSourceStructField;
+	LocalNameSourceLambdaArg(expr : FiLambda, idx : int);
+	LocalNameSourceSwitchCaseArg(expr : FiSwitch, idxCase : int, idxArg : int);
+	LocalNameSourceLet(expr : FiLet);
+	LocalNameSourceStructField(expr : FiCallPrim);
+
+findLocalNameSource(e : FiExp, name : string, maxPos : int, ignoreFields : bool) -> Pair<Maybe<LocalNameSource>, bool> {
+	rec = \ex, ignoreFields2 -> findLocalNameSource(ex, name, maxPos, ignoreFields2);
+	tryFn = \acc, fn -> {
+		if (isSome(acc.first)) {
+			acc;
+		} else {
+			fn(acc.second);
+		}
+	}
+	recAcc = \acc, ex -> tryFn(acc, \ignoreFields2 -> rec(ex, ignoreFields2));
+	recArr = \exs, ignoreFields2 -> foldr(exs, Pair(None(), ignoreFields2), recAcc);
+
+	notFound = Pair(None(), ignoreFields);
+	checkStart = \start -> start <= maxPos && start >= -maxPos;
+	checkMyStart = \fn -> if (checkStart(e.start)) fn() else notFound;
+	switch (e) {
+		FiLambda(args, body, __, __): checkMyStart(\ -> {
+			tryFn(rec(body, ignoreFields), \ignoreFields2 -> Pair(
+				maybeMap(
+					findi(args, \a -> a.name == name),
+					\idx -> LocalNameSourceLambdaArg(e, idx)
+				),
+				ignoreFields2
+			));
+		});
+		FiCall(f, args, __, __): checkMyStart(\ -> recAcc(recArr(args, ignoreFields), f));
+		FiLet(name2, __, e1, e2, __, __): checkMyStart(\ -> {
+			tryFn(recAcc(rec(e2, ignoreFields), e1), \ignoreFields2 -> Pair(
+				if (name2 == name) {
+					Some(LocalNameSourceLet(e));
+				} else {
+					None();
+				},
+				ignoreFields2
+			));
+		});
+		FiIf(e1, e2, e3, __, __): checkMyStart(\ -> recAcc(recAcc(rec(e3, ignoreFields), e2), e1));
+		FiSwitch(v, __, cases, __, __): checkMyStart(\ -> {
+			foldri(cases, Pair(None(), ignoreFields), \idxCase, acc, case -> {
+				if (checkStart(case.start)) {
+					tryFn(recAcc(acc, case.body), \ignoreFields2 -> Pair(
+						maybeMap(
+							findi(case.argNames, eq(name)),
+							\idxArg -> LocalNameSourceSwitchCaseArg(e, idxCase, idxArg)
+						),
+						ignoreFields2
+					));
+				} else {
+					notFound;
+				}
+			});
+		});
+		FiCast(e0, __, __, __, __): checkMyStart(\ -> rec(e0, ignoreFields));
+		FiSeq(es, __, __): checkMyStart(\ -> recArr(es, ignoreFields));
+		FiCallPrim(op, es, __, __): {
+			// Here we do not check children first (es) because FcFieldPrim has a different order than others:
+			//   struct.field
+			// Let "struct" has position 10 and "field" has position 17
+			// In FiCallPrim in this case looks like:
+			//   FiCallPrim(FcFieldPrim("field"), [FiVar("struct", FiType(), 10)], FiType(), 17)
+			switch (op) {
+				FcFieldPrim(name2): {
+					if (!ignoreFields && (name2 == name) && checkStart(e.start)) {
+						Pair(Some(LocalNameSourceStructField(e)), ignoreFields);
+					} else {
+						recArr(es, ignoreFields);
+					}
+				}
+				default: checkMyStart(\ -> recArr(es, ignoreFields));
+			}
+		}
+		FiRequire(__, ex, __, __): checkMyStart(\ -> rec(ex, ignoreFields));
+		FiUnsafe(__, fb, __, __): checkMyStart(\ -> rec(fb, ignoreFields));
+		FiVar(name2, __, __): {
+			if (name2 == name && checkStart(e.start)) {
+				Pair(None(), true);
+			} else {
+				notFound;
+			}
+		}
+		FiString(__, __): notFound;
+		FiBool(__, __): notFound;
+		FiDouble(__, __): notFound;
+		FiVoid(__): notFound;
+		FiInt(__, __): notFound;
 	}
 }
 
@@ -126,12 +227,11 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 	ids = foldTree(prog.modules, [], \modname, module : FiModule, acc -> {
 		pc = FcPretty(true, true, makeTree(), makeTree());
 		pt = \t -> prettyFiType(pc, t, makeSet());
-		psu = \t -> prettyFiStructOrUnion(pc, t, makeSet());
+		psu = \t -> prettyFiStructOrUnion(pc, t);
 		allIds = isConfigParameterTrue(prog.config.config, "dump-ids-all");
 
 		pathParts = ["file " + module.fileinfo.flowfile]; //], strSplit(module.flowfile, "/")));
-		content = fcFileSource(env, module.fileinfo.fullpath);
-		resolver = makeLineResolver(content);
+		resolver = fcFileLineResolver(env, module.fileinfo.fullpath);
 
 		fl = \pos -> {
 			i2s(findLine(resolver, pos).lineno);
@@ -147,7 +247,7 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 				arrayPush(acc2, "struct " + psu(s) + ";");
 			} else acc2
 		);
-		unions = fold(module.unions, [], \acc2, u -> 
+		unions = fold(module.unions, [], \acc2, u ->
 			if (allIds || containsSet(module_exports, u.name)) {
 				// TODO: We should expand the union structs here
 				// union Form ::= Text, ...;
@@ -156,7 +256,7 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 
 		);
 
-		natives = fold(module.natives, [], \acc2, na : FiNativeDec -> 
+		natives = fold(module.natives, [], \acc2, na : FiNativeDec ->
 			if (allIds || containsSet(module_exports, na.name)) {
 				arrayPush(acc2, "native " + na.name + " : " + pt(na.type) + " = " + na.nativeName + ";");
 			} else acc2
@@ -184,66 +284,149 @@ dumpFcProgramIds(env : FcTypeEnvGlobal, prog : FiProgram, file : string) -> void
 }
 
 findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string) -> void {
-	doFindDefDecl(config, globEnv, file, name, true) 
+	doFindDefDecl(config, globEnv, file, name, -1, true);
 }
 
-doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string, first_time : bool) -> void {
+findDefDeclByPos(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, content : string, line : int, col : int) -> void {
+	unpair(getNameAndPositionByLineCol(line, col, content), \name, index -> {
+		doFindDefDecl(config, globEnv, file, name, index, true)
+	});
+}
+
+doFindDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, name : string, index : int, first_time : bool) -> void {
+	proc_decl = \dec, def, fileinfo -> {
+		if (getConfigParameter(config.config, "find-definition") != "") {
+			if (def >= 0) {
+				printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
+			} else if (dec >=0) {
+				printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
+			}
+		} else if (getConfigParameter(config.config, "find-declaration") != "") {
+			if (dec >= 0) {
+				printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
+			} else if (def >= 0) {
+				printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
+			}
+		} else if (getConfigParameter(config.config, "find-defdecl") != "") {
+			if (def >= 0) {
+				printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
+			}
+			if (dec != def && dec >= 0) {
+				printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
+			}
+		}
+	}
+
+	err = \extraMsg -> {
+		if (config.verbose > 0) {
+			fcPrintln("Fail: could not find definition/declaration for " + name + ". " + extraMsg, config.threadId);
+		} else {
+			fcPrintln("Fail: could not find definition/declaration for " + name, config.threadId);
+		}
+	}
+
+	secondTry = \ -> {
+		if (first_time) {
+			if (fcTryToLoadFile(config, globEnv)) {
+				doFindDefDecl(config, globEnv, file, name, index, false);
+			} else {
+				err("Try compiling the file (F7)");
+			}
+		} else {
+			err("Try compiling the file (F7)");
+		}
+	}
+	tryLocalSearch = \ -> {
+		if (index == -1) {
+			secondTry();
+		} else {
+			moduleName = getTargetModuleName(config);
+			eitherFn(
+				fcLoadFromCache(globEnv, moduleName),
+				\cached : FcCacheModule -> {
+					if (!cached.outdated) {
+						eitherFn(
+							findNameSourceLocation(config, globEnv, cached.loaded.module, name, index),
+							untripleC(\start, end, fileinfo -> printLocation(config, globEnv, fileinfo, start, end, "")),
+							\ -> err("Could not find such local name, try recompiling the file (F7)")
+						);
+					} else {
+						err("Cache is out of date, try compiling the file (F7)");
+					}
+				},
+				secondTry
+			);
+		}
+	}
+
 	switch (fcLookupNameInCache(globEnv, name)) {
 		Some(symbol): {
 			switch (fcLoadFromCache(globEnv, symbol.module)) {
 				Some(cached): {
 					fileinfo = cached.loaded.module.fileinfo;
-					proc_decl = \dec, def -> {
-						if (getConfigParameter(config.config, "find-definition") != "") {
-							if (def >= 0) {
-								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
-							} else if (dec >=0) {
-								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
-							}
-						} else if (getConfigParameter(config.config, "find-declaration") != "") {
-							if (dec >= 0) {
-								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
-							} else if (def >= 0) {
-								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
-							}
-						} else if (getConfigParameter(config.config, "find-defdecl") != "") {
-							if (def >= 0) {
-								printLocation(config, globEnv, fileinfo, def, def + strlen(name), "");
-							}
-							if (dec != def && dec >= 0) {
-								printLocation(config, globEnv, fileinfo, dec, dec + strlen(name), "");
-							}
-						}
-					}
 					switch (symbol.named) {
 						FiTypeStruct(__,__,__, start): printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
 						FiTypeUnion(__,__,__, start):  printLocation(config, globEnv, fileinfo, start, start + strlen(name), "");
-						FiFunctionDec(__,__,__, dec, def): proc_decl(dec, def);
-						FiGlobalVar(__,__,__, dec, def): proc_decl(dec, def);
-						FiNativeDec(__,__,__,__,__, dec, def): proc_decl(dec, def);
+						FiFunctionDec(__,__,__, dec, def): proc_decl(dec, def, fileinfo);
+						FiGlobalVar(__,__,__, dec, def): proc_decl(dec, def, fileinfo);
+						FiNativeDec(__,__,__,__,__, dec, def): proc_decl(dec, def, fileinfo);
 					}
 				}
-				None(): {
-					if (first_time) {
-						if (fcTryToLoadFile(config, globEnv)) {
-							doFindDefDecl(config, globEnv, file, name, false);
-						}
-					} else {
-						fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
-					}
-				}
+				None(): secondTry();
 			}
 		}
-		None(): {
-			if (first_time) {
-				if (fcTryToLoadFile(config, globEnv)) {
-					doFindDefDecl(config, globEnv, file, name, false);
-				}
-			} else {
-				fcPrintln("Fail: cound not find definition/declaration for " + name, config.threadId);
-			}
-		}
+		None(): tryLocalSearch();
 	}
+}
+
+findNameSourceLocation(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, index : int) -> Maybe<Triple<int, int, FiFileInfo>> {
+	found = \start, len, fileinfo -> Some(Triple(iabs(start), iabs(start) + len, fileinfo));
+	foundLocal = \pos -> found(pos, 0, module.fileinfo);
+	maybeBind(
+		findNameDefInModuleAtIndex(config, env, module, name, index),
+		\localDef -> {
+			switch (localDef) {
+				LocalNameSourceLambdaArg(lambda, idx): foundLocal(lambda.start);
+				LocalNameSourceSwitchCaseArg(sw, idxCase, idxArg): foundLocal(sw.cases[idxCase].start);
+				LocalNameSourceLet(let): found(let.start, 0, module.fileinfo);
+				LocalNameSourceStructField(prim): {
+					notFound = \msg -> {
+						if (config.verbose > 0) {
+							fcPrintln("Could not find: " + name + ". " + msg, config.threadId);
+						}
+						None();
+					}
+					if (prim.es == []) {
+						notFound("Wrong state of FiCallPrim");
+					} else {
+						structType = extractFiTypeFromFiExp(prim.es[0]);
+						findStructPosition = \structName -> {
+							switch (fcLookupNameInCache(env, structName)) {
+								Some(symbol): {
+									switch (fcLoadFromCache(env, symbol.module)) {
+										Some(cached): {
+											fileinfo = cached.loaded.module.fileinfo;
+											switch (symbol.named) {
+												FiTypeStruct(__, __, __, start): found(start, strlen(structName), fileinfo);
+												default: notFound("Found wrong type for structure " + structName);
+											}
+										}
+										None(): notFound("Module is not cached: " + symbol.module);
+									}
+								}
+								None(): notFound("Unknown structure: " + structName);
+							}
+						}
+						switch (structType) {
+							FiTypeName(structName, __): findStructPosition(structName);
+							FiTypeStruct(structName, __, __, __): findStructPosition(structName);
+							default: notFound("Found not a structure, but only structures have fields");
+						}
+					}
+				}
+			}
+		}
+	);
 }
 
 fcFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
@@ -258,7 +441,7 @@ fcDoFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : strin
 					printLocation(config, globEnv, module.fileinfo, pos, pos + strlen(nature.name), " uses " + nature.name);
 				}
 			}
-			module_uses = \module -> 
+			module_uses = \module ->
 				iterSet(
 					fcFastFindOccurrencesInFiModule(config, globEnv, module, nature),
 					\pos -> print_location(module, pos)
@@ -269,17 +452,17 @@ fcDoFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : strin
 				}
 				FcModuleScope(): {
 					maybeApply(
-						fcLoadFromCache(globEnv, nature.module), 
+						fcLoadFromCache(globEnv, nature.module),
 						\cached -> if (!cached.outdated) module_uses(cached.loaded.module)
 					);
 				}
 				FcLocalScope(): {
 					maybeApply(
-						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
+						fcLoadFromCache(globEnv, getTargetModuleName(config)),
 						\cached -> {
 							if (!cached.outdated) {
 								module = cached.loaded.module;
-								iterSet(fcFindLocalOccurrences(globEnv, module, line, col, nature.name, nature.kind), 
+								iterSet(fcFindLocalOccurrences(globEnv, module, line, col, nature.name, nature.kind),
 									\pos -> print_location(module, pos + 1)
 								);
 							}
@@ -288,7 +471,7 @@ fcDoFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : strin
 				}
 			}
 		}
-		None(): { 
+		None(): {
 			if (first_time) {
 				if (fcTryToLoadFile(config, globEnv)) {
 					fcDoFastFindUses(config, globEnv, name, line, col, false);
@@ -301,7 +484,7 @@ fcDoFastFindUses(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : strin
 }
 
 fcSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
-	fcDoSymbolInfo(config, globEnv, name, line, col, true); 
+	fcDoSymbolInfo(config, globEnv, name, line, col, true);
 }
 
 fcDoSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int, first_time : bool) -> void {
@@ -313,10 +496,10 @@ fcDoSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 				}
 				None(): {
 					maybeApply(
-						fcLoadFromCache(globEnv, getTargetModuleName(config)), 
+						fcLoadFromCache(globEnv, getTargetModuleName(config)),
 						\cached -> {
 							if (!cached.outdated) {
-								maybeApply(findFiExpInModuleAtLineCol(globEnv, cached.loaded.module, line, col, true), 
+								maybeApply(findFiExpInModuleAtLineCol(globEnv, cached.loaded.module, line, col, true),
 									\e -> fcPrintln(prettyFiType(dummyPretty, fiExpType(e), makeSet()), config.threadId)
 								);
 							}
@@ -328,24 +511,120 @@ fcDoSymbolInfo(config: CompilerConfig, globEnv : FcTypeEnvGlobal, name : string,
 		None(): {
 			if (first_time) {
 				if (fcTryToLoadFile(config, globEnv)) {
-					fcDoSymbolInfo(config, globEnv, name, line, col, false); 
+					fcDoSymbolInfo(config, globEnv, name, line, col, false);
 				}
 			}
 		}
 	}
 }
 
+fcSymbolInfoMarkDown(config : CompilerConfig, globEnv : FcTypeEnvGlobal, name : string, line : int, col : int) -> void {
+	outputFlow = \description -> {
+		content = strGlue([
+			"```flow",
+			description,
+			"```",
+		], "\n");
+		fcPrintln(content, config.threadId);
+	}
+	err = \msg -> {
+		if (config.verbose > 0) {
+			fcPrintln("*Cannot find* `" + name + "`: *" + msg + "*", config.threadId);
+		}
+	}
+	def = \ -> {
+		moduleName = getTargetModuleName(config);
+		eitherFn(
+			fcLoadFromCache(globEnv, moduleName),
+			\cached : FcCacheModule -> {
+				if (!cached.outdated) {
+					eitherFn(
+						findNameTypeInFiExp(config, globEnv, cached.loaded.module, name, line, col),
+						\type -> {
+							outputFlow(name + " : " + prettyFiType(dummyPretty, type, makeSet()) + ";");
+							switch (type) {
+								FiTypeName(typeName, __): {
+									maybeApply(
+										fastSymbolNature(config, globEnv, typeName, -1, -1),
+										\nature -> maybeApply(nature.cached, \cachedType -> {
+											fcPrintln("\n\n---\n<br>\n", config.threadId);
+											outputFlow(fcCacheNamed2markdown(cachedType));
+										})
+									);
+								}
+								default: {}
+							}
+						},
+						\ -> err("`" + name + "` can't be found, try recompiling the file (F7)")
+					);
+				} else {
+					err("Cache is out of date, try compiling the file (F7)");
+				}
+			},
+			\ -> err("Module is not cached, try compiling the file (F7)")
+		);
+	}
+	if (name != "__") {
+		switch (fastSymbolNature(config, globEnv, name, line, col)) {
+			Some(nature): {
+				switch (nature.cached) {
+					Some(cached): {
+						outputFlow(fcCacheNamed2markdown(cached));
+					}
+					None(): def();
+				}
+			}
+			None(): {
+				def();
+			}
+		}
+	}
+}
+
+findNameTypeInFiExp(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, line : int, col : int) -> Maybe<FiType> {
+	maybeBind(
+		findNameDefInModuleAtLineCol(config, env, module, name, line, col),
+		\localDef -> {
+			switch (localDef) {
+				LocalNameSourceLambdaArg(lambda, idx): Some(lambda.args[idx].type);
+				LocalNameSourceSwitchCaseArg(sw, idxCase, idxArg): {
+					structName = sw.cases[idxCase].struct;
+					notFound = \reason -> {
+						if (config.verbose > 0) {
+							fcPrintln(reason + "<br>", config.threadId);
+						}
+						None();
+					}
+					eitherFn(
+						find(module.structs, \s -> s.name == structName),
+						\struct -> {
+							if (length(struct.args) > idxArg) {
+								Some(struct.args[idxArg].type);
+							} else {
+								// should not happen
+								notFound("There is no arg " + i2s(idxArg));
+							}
+						},
+						\ -> notFound("There is no struct `" + structName + "`")
+					);
+				}
+				LocalNameSourceLet(let): Some(let.type);
+				LocalNameSourceStructField(prim): Some(prim.type);
+			}
+		}
+	);
+}
+
 findFiExpInModuleAtLineCol(env : FcTypeEnvGlobal, module : FiModule, line : int, col : int, wantType : bool) -> Maybe<FiExp> {
-	code = fcFileSource(env, module.fileinfo.fullpath);
-	resolver = makeLineResolver(code);
+	resolver = fcFileLineResolver(env, module.fileinfo.fullpath);
 	index = findLineIndex(resolver, line, col);
 	starts2types = fold(
 		module.globalVars,
 		fold(
 			module.natives,
 			fold(
-				module.functions, 
-				makeTree(), 
+				module.functions,
+				makeTree(),
 				\acc, fun -> start2ExpForTypes(fun.lambda, acc, wantType)
 			),
 			\acc, nat -> start2ExpForTypes(nat.fallbackLambda, acc, wantType)
@@ -355,19 +634,104 @@ findFiExpInModuleAtLineCol(env : FcTypeEnvGlobal, module : FiModule, line : int,
 	treeIntervalSearch(starts2types, index);
 }
 
+findNameDefInModuleAtLineCol(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, line : int, col : int) -> Maybe<LocalNameSource> {
+	resolver = fcFileLineResolver(env, module.fileinfo.fullpath);
+	index = findLineIndex(resolver, line, col);
+	findNameDefInModuleAtIndex(config, env, module, name, index);
+}
+
+findNameDefInModuleAtIndex(config : CompilerConfig, env : FcTypeEnvGlobal, module : FiModule, name : string, index : int) -> Maybe<LocalNameSource> {
+	accFn = \acc, e : FiExp -> {
+		if (e.start > index) {
+			acc;
+		} else {
+			eitherFn(
+				acc,
+				\accExpr -> {
+					if (e.start > accExpr.start) {
+						Some(e);
+					} else {
+						acc;
+					}
+				},
+				\ -> Some(e)
+			);
+		}
+	}
+	// The function declaration lies above the body, but list of args is in the body (FiLambda),
+	// so we have to fix the start position of top level lambdas
+	fixLambdaStart = \lambda, start -> FiLambda(lambda with start = start);
+
+	nativeLambdas = filtermap(module.natives, \n -> {
+		e = n.fallbackLambda;
+		switch (e) {
+			FiLambda(__, __, __, __): Some(fixLambdaStart(e, n.declStart));
+			default: None();
+		}
+	});
+
+	exprM = fold(map(module.globalVars, \gv -> gv.value),
+		fold(nativeLambdas,
+			fold(
+				map(module.functions, \f -> fixLambdaStart(f.lambda, f.defiStart)),
+				None(),
+				accFn
+			),
+			accFn
+		),
+		accFn
+	);
+	eitherFn(exprM,
+		\expr -> {
+			source = findLocalNameSource(expr, name, index, false).first;
+			if (isNone(source)) {
+				if (config.verbose > 0) {
+					fcPrintln("`" + name + "` is not found at position " + i2s(index) + " in expression: " + toString(expr) + "<br>", config.threadId);
+				}
+			}
+			source;
+		},
+		\ -> {
+			if (config.verbose > 0) {
+				fcPrintln("There is no expression at position " + i2s(index) + "<br>", config.threadId);
+			}
+			None();
+		}
+	);
+}
+
+fcCacheNamed2markdown(cached : FcCacheNamed) -> string {
+	str0 = fcCacheNamed2strSimple(cached);
+	str = switch (cached.named) {
+		FiTypeUnion(__, __, __, __): {
+			if (startsWith(str0, "(") && endsWith(str0, ")")) {
+				substring(str0, 1, strlen(str0) -2);
+			} else {
+				str0;
+			}
+		};
+		default: str0;
+	}
+
+	"import " + cached.module + ";\n\n" + str + ";";
+}
+
 fcCacheNamed2s(cached : FcCacheNamed) -> string {
+	cached.module + (if (cached.exported) "" else " (local name)") + ":\n\n" + fcCacheNamed2strSimple(cached);
+}
+
+fcCacheNamed2strSimple(cached : FcCacheNamed) -> string {
 	symbol = cached.named;
-	decl = switch (symbol) {
-		FiStructOrUnion(): prettyFiStructOrUnion(FcPretty(true, true, makeTree(), makeTree()), symbol, makeSet());
-		FiDeclaration(): prettyFiDeclaration(dummyPretty, symbol, makeSet());
+	switch (symbol) {
+		FiStructOrUnion(): prettyFiStructOrUnion(FcPretty(true, true, makeTree(), makeTree()), symbol);
+		FiDeclaration(): prettyFiDeclarationType(dummyPretty, symbol);
 	};
-	cached.module + (if (cached.exported) "" else " (local name)") + ":\n\n" + decl;
 }
 
 fcTryToLoadFile(conf : CompilerConfig, env : FcTypeEnvGlobal) -> bool {
 	if (isConfigParameterSet(conf.config, "server-mode")) false else {
 		// Load silently: error messages are suppressed
 		config = CompilerConfig(conf with config = setTree(conf.config, "no-errors", "1"));
-		parseAndTypecheckProgram(config, env, config.flowfile).second == 0; 
+		parseAndTypecheckProgram(config, env, config.flowfile).second == 0;
 	}
 }

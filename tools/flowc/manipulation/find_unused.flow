@@ -6,14 +6,25 @@ import tools/flowc/fcmodule;
 
 export {
 	// Find unused local variables (and arguments)
-	findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, onError : (FcError) -> void) -> void;
+	findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, file : string, onError : (FcError) -> void) -> void;
 	// Find unused exports and unused functions
-	findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, onError : (FcError) -> void) -> void;
+	findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, file : string, onError : (FcError) -> void) -> void;
 	findUnusedLocalsExpSet(expr : FiExp, bound : Set<string>, arguments : bool, acc : Set<string>) -> Set<string>;
 }
 
-findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, onError : (FcError) -> void) {
-	iter(getTreeValues(prog.modules), \module ->
+findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, file : string, onError : (FcError) -> void) {
+	module_name = trimFlowfile(file, prog.config.includes, lookupTreeDef(prog.config.config, "working-dir", ""));
+	modules_to_process = if (file == "") {
+		// lint all modules
+		getTreeValues(prog.modules);
+	} else {
+		// lint only a specified file
+		switch (lookupTree(prog.modules, module_name)) {
+			Some(m): [m];
+			None(): [];
+		}
+	}
+	iter(modules_to_process, \module ->
 		iter(module.functions, \fn : FiFunctionDec ->
 			findUnusedLocalsExp(fn.lambda, makeSet(), module.fileinfo.flowfile, findUnusedArguments, onError)
 		)
@@ -107,8 +118,19 @@ findUnusedLocalsExpSet(expr : FiExp, bound : Set<string>, arguments : bool, acc 
 	}
 }
 
-findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, onError : (FcError) -> void) {
+findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, file : string, onError : (FcError) -> void) {
 	modules = filtermap(prog.traversal, \flowfile -> eitherMap(lookupTree(prog.modules, flowfile), \m -> Some(m), None()));
+	module_name = trimFlowfile(file, prog.config.includes, lookupTreeDef(prog.config.config, "working-dir", ""));
+	modules_to_process = if (file == "") {
+		// process all modules
+		modules;
+	} else {
+		// process only a specified file
+		switch (lookupTree(prog.modules, module_name)) {
+			Some(m): [m];
+			None(): [];
+		}
+	}
 	module2symbols = fold(
 		modules, 
 		makeTree(),
@@ -126,7 +148,7 @@ findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, onError : (FcErr
 		}
 	);
 	iter(
-		modules, 
+		modules_to_process, 
 		\module -> {
 			funcsVars = FuncVars(
 				pairs2tree(map(module.functions, \fn -> Pair(fn.name, fn))),

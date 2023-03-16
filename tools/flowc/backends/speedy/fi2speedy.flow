@@ -1,0 +1,95 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fi2speedy(program : FiProgram, cfg : FcSpeedyConfig, callback : (int) -> void) -> void;
+}
+
+fi2speedy(program : FiProgram, cfg : FcSpeedyConfig, callback : (int) -> void) -> void {
+	structs = extractSpeedyStructs(program, buildSet(cfg.types), makeTree());
+
+	output = toString(getTreeValues(structs));
+
+	fcPrintln("Saving " + cfg.outputfile, program.config.threadId);
+	saveFileContent(cfg.outputfile, output, cfg.threadId);
+
+	callback(0);
+}
+
+SpeedyStructDef(id : string, typars : [string], structArgs : [SpeedyStructArg]);
+	SpeedyStructArg(id : string, type : SpeedyType);
+SpeedyType(id : string, typars : [SpeedyType]);
+
+// Transitively extract all structs
+extractSpeedyStructs(program : FiProgram, types : Set<string>, acc : Tree<string, SpeedyStructDef>) -> Tree<string, SpeedyStructDef> {
+	mtype = popMinSet(types);
+	mtype ?? {
+		typename = mtype.value;
+		rest = mtype.rest;
+		if (containsKeyTree(acc, typename)) {
+			extractSpeedyStructs(program, rest, acc);
+		} else {
+			// A new type
+			mstruct = lookupTree(program.names.structs, typename);
+			switch (mstruct) {
+				None(): {
+					munion = lookupTree(program.names.unions, typename);
+					switch (munion) {
+						None(): {
+							println("Unknown type " + typename);
+							extractSpeedyStructs(program, rest, acc);
+						}
+						Some(undef): {
+							nrest = fold(undef.typenames, rest, \acc2, tn -> {
+								insertSet(acc2, tn.name)
+							});
+							extractSpeedyStructs(program, nrest, acc);
+						}
+					}
+				}
+				Some(stdef): {
+					spdef = SpeedyStructDef(stdef.name, 
+						map(stdef.typars, \tp -> {
+							switch (tp) {
+								FiTypeParameter(t): t;
+								default: {
+									println("Expected type parameter in " + stdef.name);
+									"";
+								}
+							}
+						}),
+						map(stdef.args, \sa -> {
+							SpeedyStructArg(sa.name, fiType2SpeedyType(sa.type))
+						})
+					);
+
+					nrest = fold(stdef.args, rest, \acc2, sa -> {
+						extractTypeNames(acc2, sa.type)
+					});
+
+					extractSpeedyStructs(program, nrest, setTree(acc, typename, spdef));
+				}
+			};
+		}
+	} : acc;
+}
+
+fiType2SpeedyType(type : FiType) -> SpeedyType {
+	switch (type) {
+		FiTypeArray(t): SpeedyType("array", [fiType2SpeedyType(t)]);
+		FiTypeFunction(args, returnType): SpeedyType("", []);
+		FiTypeRef(t): SpeedyType("ref", [fiType2SpeedyType(t)]);
+		FiTypeParameter(n): SpeedyType(n, []);
+		FiTypeBool(): SpeedyType("bool", []);
+		FiTypeInt(): SpeedyType("int", []);
+		FiTypeDouble(): SpeedyType("double", []);
+		FiTypeString(): SpeedyType("string", []);
+		FiTypeFlow(): SpeedyType("flow", []);
+		FiTypeVoid(): SpeedyType("void", []);
+		FiTypeNative(): SpeedyType("native", []);
+		FiTypeName(name, typeparameters): {
+			SpeedyType(name, map(typeparameters, fiType2SpeedyType));
+		}
+	}
+}

@@ -757,7 +757,7 @@ bool FlowJitProgram::find_structs()
                 sinfo->byte_size += size;
             }
 
-            if (sinfo->byte_size >= ByteCodeRunner::MAX_EPHEMERAL_ALLOC)
+            if (sinfo->byte_size >= MAX_EPHEMERAL_ALLOC)
             {
                 err << "Struct too big: " << sinfo->name << " size is " << sinfo->byte_size << std::endl;
                 return false;
@@ -1663,7 +1663,7 @@ void FlowJitProgram::assemble_util_allocate()
     as.cmp(eax, STATE(hpbound));
     as.short_().jb(alloc_big);
 
-    as.cmp(ecx, ByteCodeRunner::MAX_EPHEMERAL_ALLOC);
+    as.cmp(ecx, MAX_EPHEMERAL_ALLOC);
     as.short_().ja(alloc_big);
 
     as.mov(STATE(hp), eax);

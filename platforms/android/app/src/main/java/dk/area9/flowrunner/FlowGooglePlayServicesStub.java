@@ -1,7 +1,7 @@
 package dk.area9.flowrunner;
 
 import android.location.Location;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 
 public class FlowGooglePlayServicesStub implements IFlowGooglePlayServices {
     @Override

@@ -2,6 +2,7 @@ import material/measing;
 import tropic/tropic_constant;
 import material/internal/material_theme;
 import material/internal/material_debug;
+import text/serialize;
 
 export {
 	// Increases the size of this tropic to be a 8x8 multiple
@@ -18,6 +19,7 @@ export {
 	FixedTableAlignLeft(lines : [[Material]], widths : [double], height : double) -> Material;
 	FixedTableAlignBaselineLeft(lines : [[Material]], widths : [double], height : double) -> Material;
 	FixedTableAlignBaselineA(lines : [[Material]], widths : [double], height : double) -> Material;
+	FixedTableCenterAlignBaselineA(lines : [[Material]], widths : [double], height : double) -> Material;
 
 	getMaterialScrollBar() -> TScrollbars;
 
@@ -55,6 +57,9 @@ export {
 
 	interruptibleTimerChain(chain : List<Pair<double, ((bool) -> void) -> void>>, onFinished : (bool) -> void) -> () -> void;
 
+	setDownInsideFocus(manager : MaterialManager, focus : MaterialFocus) -> void;
+	setDownInsideFocusTimer(manager : MaterialManager, focus : MaterialFocus, uns : ref Maybe<() -> void>) -> void;
+
 	getTypeString(value : flow) -> string;
 
 	MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Point>, content : Tropic) -> () -> () -> void;
@@ -69,6 +74,9 @@ export {
 	// Helper for background drawing
 	addTBackground(color : MColor) -> (Tropic) -> Tropic;
 	addMBackground(color : MColor) -> (Material) -> Material;
+
+	addMTooltip(tooltip : string) -> (Material) -> Material;
+	addMTooltipT(tooltip : Transform<string>) -> (Material) -> Material;
 
 	getStrokeGraphicsStyle(stroke : MColor, opacity : double, width : double) -> [TGraphicsStyle];
 
@@ -163,6 +171,21 @@ FixedTableAlignBaselineA(lines : [[Material]], widths : [double], height : doubl
 				mapi(columns, \i, cell -> {
 					MAvailable(
 						MAlignStartFill(cell),
+						TFixed(widths[i], height)
+					)
+				})
+			)
+		})
+	)
+}
+
+FixedTableCenterAlignBaselineA(lines : [[Material]], widths : [double], height : double) -> Material {
+	MLinesA(
+		map(lines, \columns -> {
+			MBaselineColsA(
+				mapi(columns, \i, cell -> {
+					MAvailable(
+						MCenter(cell),
 						TFixed(widths[i], height)
 					)
 				})
@@ -565,6 +588,25 @@ interruptibleTimerChain2(prevDelay : double, chain : List<Pair<double, ((bool) -
 	\ -> dispUnsM(uns);
 }
 
+setDownInsideFocus(manager : MaterialManager, focus : MaterialFocus) -> void {
+	manager.downInsideFocus ::= Some(focus);
+	deferred(\ -> manager.downInsideFocus ::= None());
+}
+
+setDownInsideFocusTimer(manager : MaterialManager, focus : MaterialFocus, uns : ref Maybe<() -> void>) -> void {
+	dispUnsM(uns);
+
+	manager.downInsideFocus ::= Some(focus);
+	// Timeout to keep focus inside autocomplete popup
+	setUnsM(
+		uns,
+		interruptibleTimer(120, \ -> {
+			manager.downInsideFocus ::= None();
+			dispUnsM(uns)
+		})
+	);
+}
+
 getTypeString(value : flow) -> string {
 	sv : string = serialize(value);
 	ts : string = toStringNoExtraQuotes(value);
@@ -588,7 +630,7 @@ MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Poi
 	\ -> {
 		density = extractStruct(manager.manager.renderStyle, TDpif(screenDensity)).dpif;
 		stage = getStage();
-		aZoom = if (js) getAccessibilityZoom() else getValue(accessibilityZoom);
+		aZoom = if (js) getAccessibilityZoom() * getValue(accessibilityZoom) else getValue(accessibilityZoom);
 		nextDistinct(position, Point(getMouseX(stage) / density / aZoom, getMouseY(stage) / density / aZoom));
 
 		trender(
@@ -643,6 +685,32 @@ addTBackground(color : MColor) -> (Tropic) -> Tropic {
 
 addMBackground(color : MColor) -> (Material) -> Material {
 	\m -> MFrame(0.0, 0.0, [MFill(color)], m)
+}
+
+addMTooltip(tooltip : string) -> (Material) -> Material {
+	\m ->
+		if (tooltip == "") m
+		else 
+			switch (m) {
+				MIconButton(icon, onClick, style, state) :
+					MIconButton(icon, onClick, style, concat(state, [MTooltipText(const(tooltip)), MButtonTitle(const(tooltip))]));
+				MTextButton(title, onClick, style, state) :
+					MTextButton(title, onClick, style, concat(state, [MTooltipText(const(tooltip)), MButtonTitle(const(tooltip))]));
+				default : MTooltip(m, MText(tooltip, []), []);
+			}
+}
+
+addMTooltipT(tooltip : Transform<string>) -> (Material) -> Material {
+	\m ->
+		if (tooltip == const("")) m
+		else
+			switch (m) {
+				MIconButton(icon, onClick, style, state) :
+					MIconButton(icon, onClick, style, concat(state, [MTooltipText(tooltip), MButtonTitle(tooltip)]));
+				MTextButton(title, onClick, style, state) :
+					MTextButton(title, onClick, style, concat(state, [MTooltipText(tooltip), MButtonTitle(tooltip)]));
+				default : MTooltip(m, MSelect(tooltip, \tl -> MText(tl, [])), []);
+			}
 }
 
 getStrokeGraphicsStyle(stroke : MColor, opacity : double, width : double) -> [TGraphicsStyle] {
@@ -818,7 +886,7 @@ TAnimator(
 					else TTranslate(centerPoint, t2)
 				)
 	}
-	
+
 	scaleHandler = \sc, t -> {
 		scaleFactor = extractStruct(sc.style, MScaleAnimationCustomFactor(const(Factor(0., 0.)))).factor;
 		center = contains(sc.style, MCenterMode());
@@ -880,13 +948,13 @@ TAnimator(
 	|> (\t -> if (lazy) TShowLazy(fgreater(progress, const(0.)), \ -> t) else t)
 	|> (\t -> TAttachBox(t, contentWH))
 	|> (\t -> if (fade) TAlpha(progress, t) else t)
-	|> (\t -> 
+	|> (\t ->
 		fold(style, t, \acc, st ->
 			switch (st) {
 				MScaleAnimation(__) : scaleHandler(st, acc);
-				MRotateAnimation(__) : rotateHandler(st, acc); 
+				MRotateAnimation(__) : rotateHandler(st, acc);
 				MTranslateAnimation(__, __) : translateHandler(st, acc);
-				default : acc 
+				default : acc
 			}
 		)
 	)
@@ -898,8 +966,8 @@ TAnimator(
 					fselect(transformedContentWH, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),
 					TAttachBox(t, transformedContentWH)
 				)
-				|> (\t2 -> TIf(cropH, TCropHeight(t2, fheight(transformedContentWH)), t2))
-				|> (\t2 -> TIf(cropW, TCropWidth(t2, fwidth(transformedContentWH)), t2))
+				|> (\t2 -> TIf(cropH, TCropHeight2(t2, fheight(transformedContentWH)), t2))
+				|> (\t2 -> TIf(cropW, TCropWidth2(t2, fwidth(transformedContentWH)), t2))
 			} else {
 				TVisible(
 					fselect(contentWH, FLift(\wh -> wh.width > 0.5 && wh.height > 0.5)),

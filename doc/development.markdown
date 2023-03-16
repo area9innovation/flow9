@@ -7,8 +7,9 @@ TABLE OF CONTENTS:
 * [My program crashes!](#crash)
 * [My GUI is slow!](#slow)
 * [Memory leaks](#leaks)
-* [Profiling](#profiling)
+* [Profiling with flowcpp](#profiling)
 * [Profiling the JS target](#profjs)
+* [Profiling the Java target](#profjava)
 * [Code coverage](#coverage)
 * [Analyzing code](#analyzing)
 
@@ -16,7 +17,7 @@ TABLE OF CONTENTS:
 
 You can configure your editor to make it better to work with Flow
 code. At minimum, you'll want syntax highlighting.  Also, the compiler
-supports looking up the definition sites of flow functions, which is very 
+supports looking up the definition sites of flow functions, which is very
 handy.
 
 <h3>VS Code</h3>
@@ -44,7 +45,7 @@ See [resources/emacs/readme.txt](../resources/emacs/readme.txt) for instructions
 When you are developing *flow* programs, here are a few tips to make it easier:
 
 - Use `println()` for debugging output. For the JavaScript target, the output appears
-  in the JavaScript console of your browser. This is typically found in some Tools/Developer 
+  in the JavaScript console of your browser. This is typically found in some Tools/Developer
   menu of the browser.
 
 - Use `printCallstack()` to learn where code is called from. Requires that you compile
@@ -67,12 +68,12 @@ When you are developing *flow* programs, here are a few tips to make it easier:
 <h3>Single step debugging on the command line</h3>
 
 You can use the debugger from the command prompt using a command like
-`flowcpp --batch --debug flow9/sandbox/helloworld.flow`. Inside the debugger you can use 
-the `help` command to see a list of available commands, most of which behave exactly as 
-the analogous commands in `gdb`. For example, if you are in a directory such that `flow9` 
+`flowcpp --batch --debug flow9/sandbox/helloworld.flow`. Inside the debugger you can use
+the `help` command to see a list of available commands, most of which behave exactly as
+the analogous commands in `gdb`. For example, if you are in a directory such that `flow9`
 is a subdirectory, and you invoke the debugger with
-`flowcpp --batch --debug flow9/sandbox/helloworld.flow`, then at the `fdb` prompt you could 
-set a breakpoint at the call to `println` (line 4) of `helloworld.flow` by typing: 
+`flowcpp --batch --debug flow9/sandbox/helloworld.flow`, then at the `fdb` prompt you could
+set a breakpoint at the call to `println` (line 4) of `helloworld.flow` by typing:
 `break flow9/sandbox/helloworld.flow:4`.
 Note how the path is relative to the working directory from which you invoke the debugger.
 
@@ -96,9 +97,9 @@ in the console, but sometimes it is too deep to be readable or something like th
 
 Another cause of crashes is out-of-stack problems. This typically happens without any indication in
 Chrome on Macs, which seem to have the smallest call stacks of all targets. If you suspect this is the
-case, then you can simulate a small call stack using the c++ debugger. Set a break point at the start of 
-main, and start the program. Then type `set call-stack-limit 2048` in the GDB window. If your program 
-uses a deeper stack than this, you will get a "Call stack depth trap in function ..." error. The way to 
+case, then you can simulate a small call stack using the c++ debugger. Set a break point at the start of
+main, and start the program. Then type `set call-stack-limit 2048` in the GDB window. If your program
+uses a deeper stack than this, you will get a "Call stack depth trap in function ..." error. The way to
 avoid deep stacks is to use tail calls. See more information about it [here](./faq.markdown#why-we-must-use-tail-recursions)
 
 If you experience any crash problems due to resource exhaustion, see below to learn how to profile your program.
@@ -139,13 +140,13 @@ links chain is created ` globalAdditionalOffsetB` -> `offsetX` -> `Translate`
 	}
 
 There is no `unsubscriber` returned by `select` (unlike `selectu`) and, thus,
-it is not possible to break the links chain to aloow `GC` make its work.
+it is not possible to break the links chain to allow `GC` make its work.
 Library functions and Forms that accepts behaviours are (or at least should
 be) leaks free. It is safe to pass global behaviours as arguments directly.
 The problems arises due to transforms without unsubscribers.
 
-Note, it's often better to use `fselect` and friends from `fusion` instead 
-of `select`, `selectDistinct` or even `selectu`, `selectDistinctu`. Fusions 
+Note, it's often better to use `fselect` and friends from `fusion` instead
+of `select`, `selectDistinct` or even `selectu`, `selectDistinctu`. Fusions
 are leak free and distinct version of behaviours.
 
 However, you should be aware that `fselect` and friends will not run immediately,
@@ -175,7 +176,7 @@ you are disciplined, that technology is perfectly fine.
 
 #### Leaks. Typical refactorings
 
-- Use `Select(globalB, makeForm)` instead of `Mutable(select(globalB, makeForm))`. 
+- Use `Select(globalB, makeForm)` instead of `Mutable(select(globalB, makeForm))`.
   `Select2` and `Select3` also exist. But sometimes `Select` can destroy performance: compare
 	`Select(globalOffset, \val -> Translate(const(val + 10.0), zero, form))` and `Translate(select(globalOffset, \val -> val + 10.0), zero, form)`. The first one is rerendered each time `globalOffset` changes value.
 
@@ -199,7 +200,7 @@ or using helpers as
 
 #### Leaks. Examples
 
-Some leaks are caused by usage of select, selectDistinct and friends (NEVER DO THIS, use fusion from Tropic instead) 
+Some leaks are caused by usage of select, selectDistinct and friends (NEVER DO THIS, use fusion from Tropic instead)
 and part of them are caused by not calling corresponding unsubscriber, including tricky cases like this:
 
 	uns = subscribe(b, \x -> ...);
@@ -208,16 +209,21 @@ and part of them are caused by not calling corresponding unsubscriber, including
 		\-> uns
 	], m);
 
-This will call unsubscriber as soon as the Tropic will be destroyed. But the problem is that unsubscriber won't be called 
+This will call unsubscriber as soon as the Tropic will be destroyed. But the problem is that unsubscriber won't be called
 if the Tropic is not shown. So the better way to do it is:
 
 	TConstruct([
 		\ -> subscribe(b, \x -> ...)
 	], m)
 
+There is one more kind of leak - the scoupe of closure. Suppose we create in the code some closure and pass it to some long-lived object.
+Then all in the sope of closure will not be garbage collected till the end of lifetime of the long-lived object.
+So if we should make such registration, make sure the scope is small and de-register the closure in the end of lifetime of the scope manually.
+For example: https://git.area9lyceum.com/Lyceum/lyceum/commit/8f77ee3e90314553ba347570130fb74aadb6a86
+
 #### Leaks. Debug
 
-`behaviour.flow` is added with `setLeakingSubscribersHandler(minCountToReport : int, reportStep : int, handler : (int, string) -> void) -> void`. 
+`behaviour.flow` is added with `setLeakingSubscribersHandler(minCountToReport : int, reportStep : int, handler : (int, string) -> void) -> void`.
 It allows to register callback to be executed when behaviour gets minCountToReport, minCountToReport + reportStep, ... subscribers.
 
 printCallstack in cpp target shows line with transform which has added the last subscriber, but the line might be not leaky. For example, it might contain <transform>u (and unsubscriber might be used correctly), but leak of the `same` behaviour happens in other place.
@@ -227,7 +233,7 @@ printCallstack in cpp target shows line with transform which has added the last 
 - Note3: `Tropic` - our new GUI framework uses `Transform` instead of `behaviour`.  `Transform` do not have subscribers leak
 issues.
 
-Another way to check for memory leaks involving behaviours is to use `debugBehaviours` and `examineSuspects` functions 
+Another way to check for memory leaks involving behaviours is to use `debugBehaviours` and `examineSuspects` functions
 from behaviour.flow
 
 	debugBehaviours("my code", "my run", \-> {
@@ -236,16 +242,16 @@ from behaviour.flow
 
 	examineSuspects("my code")
 
-This will print list of suspects (behaviours without unsubscribers) to the console. Sometime you need to 
+This will print list of suspects (behaviours without unsubscribers) to the console. Sometime you need to
 defer `examineSuspects` call, i.e.
 
 	timer(500, \-> {
 		examineSuspects("my code")
 	})
 
-Also if you run `flowcpp` with `--debug` you can see a callstack for each of the suspect. Sometimes it's not easy to figure out as they all ends somewhere deep and it's not alway the end of the callstack that is causing the problem. You can do a quick check to see if there are any selects in the callstack.
+Also if you run `flowcpp` with `--debug` you can see a callstack for each of the suspect. Sometimes it's not easy to figure out as they all ends somewhere deep and it's not always the end of the callstack that is causing the problem. You can do a quick check to see if there are any selects in the callstack.
 
-<h2 id=profiling>Profiling</h2>
+<h2 id=profiling>Profiling with flowcpp</h2>
 
 There are various ways to profile flow code, both in terms of time and
 memory. The most precise way is:
@@ -258,7 +264,7 @@ select between making 3 kinds of profiles: time, instructions or memory. First, 
 the program when done. Then use ctrl+shift+p with "flow" again, and then view the profile. Notice that in the
 view window, you can right click and choose "self rating" and other things for advanced analysis.
 
-Note that the profile view feature requires that you have a 64-bit Java Runtime Environment installed. That's 
+Note that the profile view feature requires that you have a 64-bit Java Runtime Environment installed. That's
 because the viewer is a Clojure program, `flow9/debug/flowprof.clj`.
 
 If you do not have Sublimetext, you can do the same manually:
@@ -351,8 +357,46 @@ In the profiling view, you can find some special nodes like <special 0> and so o
 <h2 id=profjs>Profiling the JS target</h2>
 
 This is easy: Just compile your program in debug mode to preserve all identifiers in the
-generated JS. Then use your browser's profiler available through developer tools. In Chrome,
+generated JS:
+
+	flowc1 my/program.flow js=program.js debug=1
+
+Then use your browser's profiler available through developer tools. In Chrome,
 start the program in JS, then use More Tools -> Developer Tools, and then the Profiles tab.
+
+<h2 id=profjava>Profiling the Java target</h2>
+
+Compile your program to a Jar file like this:
+
+	flowc1 my/program.flow jar=program.jar
+
+Now, run your flow program with something like:
+
+	java -jar program.jar -- <args>
+
+to verify that it works.
+Next, download VisualVM from https://visualvm.github.io/.
+
+Start this program. Once it is ready, then run your flow program. As it runs,
+it will appear in the list of running Java programs in VisualVM.
+Click it, and you can start a profiling session.
+
+If you wish to profile your program from startup, then follow the instructions from this
+site:
+
+https://visualvm.github.io/startupprofiler.html
+
+In short, install the plugin to VisualVM, click the last icon in the toolbar.
+Use the defaults, except in the "<define classes to be profiled>", put
+"com.area9innovation.flow.**". Start the profiling, and then run something
+like
+
+	java -agentpath:C:/Work/visualvm_21/visualvm/lib/deployed/jdk16/windows-amd64/profilerinterface.dll=C:\Work\visualvm_21\visualvm\lib,5140 -jar program.jar -- <args>
+
+to start your program, where "-agentpath" comes from VisualVM.
+
+Some suggest that https://www.oracle.com/java/technologies/jdk-mission-control.html might also
+be useful.
 
 <h2 id=coverage>Code coverage profiler</h2>
 
@@ -395,7 +439,7 @@ or similar.
 
 <h2 id=slow>My GUI is slow!</h2>
 
-The most common cause of slowness is due to excessive repaiting in your GUI. The second most cause is
+The most common cause of slowness is due to excessive repainting in your GUI. The second most cause is
 overly complicated layout.
 
 The first cause can be improved by moving dynamic parts of your UI further down to minimize the parts that
@@ -403,7 +447,7 @@ change. Use the c++ runner with the --clip-tree argument to profile and find suc
 try to add 'redraw=1' in the URL or command line (`flowcpp sandbox/fun.flow -- redraw=1`) and visually
 inspect where redraws happen when, and thus get a sense of where to improve the code.
 
-The second cause can be improved by using explicit sizes and avoid having loops in the layouts. 
+The second cause can be improved by using explicit sizes and avoid having loops in the layouts.
 In particular, if you have a cyclic dependency in terms of size and available space from parent to children,
 you get into these vibration problems: The layout engine will layout the children. This in turns affects some
 parent grid to move things around, and also affect the layout of the children because of new available space

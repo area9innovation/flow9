@@ -249,7 +249,7 @@ Next up is the Text, which we saw a minute ago:
 
 	Text(text : string, style : [CharacterStyle]);
 
-This is a static text in a given character style. `CharacterStyle` is a sub-type for concrete
+This is a static text in a given character style. `CharacterStyle` is a union of concrete
 style attributes such as `FontFamily`, `FontSize`, and `Fill` for specifying the text color. It
 uses another pattern in `Form`: Instead of having an ever increasing number of arguments, we use 
 an array of properties instead and only include those we need to change from the defaults. This 

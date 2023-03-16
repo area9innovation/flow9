@@ -9,7 +9,21 @@ export {
 
 	// Kills a process with a given id.
 	// Currently is implemented only in linux platform.
-	killProcessId(proc_id : string) -> void;
+	// Returns empty string if succeeds, and error message otherwise.
+	killProcessId(proc_id : string) -> string;
+
+	// Returns an outline of a given process, or empty string if there's no such process.
+	// Currently is implemented only in linux platform.
+	outlineProcessId(proc_id : string) -> string;
+
+	SystemProcessOutput(
+		stdout : string,
+		stderr : string,
+		stdall : string,
+		exitCode : int
+	);
+	// Synchroniously execute and output the result in struct SystemProcessOutput.
+	execSystemProcessOutput(command : string, args : [string], currentWorkingDirectory : string) -> SystemProcessOutput;
 }
 
 findProcessIds(pattern : string) -> Maybe<[string]> {
@@ -39,19 +53,72 @@ findProcessIds(pattern : string) -> Maybe<[string]> {
 	}
 }
 
-killProcessId(proc_id : string) -> void {
+killProcessId(proc_id : string) -> string {
 	if (linux()) {
+		err = ref "";
+		add_err = \msg -> {
+			if (^err == "") {
+				err := msg;
+			} else {
+				err := ^err + "\n" + msg;
+			}
+		}
 		code = execSystemProcess("kill", [proc_id], ".", 
 			\out -> println(out), 
-			\err -> println("error: " + err)
+			\er -> add_err("error: " + er)
 		);
-		if (code == 0) {
-			println("Flowc http server process " + proc_id + " is killed\n");
-		} else {
-			println("code: " + i2s(code));
+		if (code != 0) {
+			add_err("kill " + proc_id + " failed with exit code: " + i2s(code));
 		}
+		^err;
 	} else {
 		// TODO: implement on other platforms
-		println("'killProcessId' is not implemented on " + getTargetName());
+		"'killProcessId' is not implemented on " + getTargetName();
 	}
+}
+
+outlineProcessId(proc_id : string) -> string {
+	if (linux()) {
+		outline = ref "";
+		code = execSystemProcess("ps", ["-ax"], ".",
+			\out0 -> {
+				out = trim(out0);
+				if (startsWith(out, proc_id)) {
+					outline := trim(substring(out, strlen(proc_id), strlen(out)));
+				}
+			},
+			\err -> println("error: " + err)
+		);
+		^outline;
+	} else {
+		// TODO: implement on other platforms
+		println("'outlintProcessId' is not implemented on " + getTargetName());
+		"";
+	}
+}
+
+execSystemProcessOutput(command : string, args : [string], cwd : string) -> SystemProcessOutput {
+	out = ref makeList();
+	err = ref makeList();
+	all = ref makeList();
+	on_out = \o -> {
+		out := Cons(o, ^out);
+		all := Cons(o, ^all);
+	}
+	on_err = \e -> {
+		err := Cons(e, ^err);
+		all := Cons(e, ^all);
+	}
+	// On windows platform involke a command via `cmd`
+	exit_code = if (windows()) {
+		execSystemProcess("cmd", concat(["/c", command], args), cwd, on_out, on_err);
+	} else {
+		execSystemProcess(command, args, cwd, on_out, on_err);
+	}
+	SystemProcessOutput(
+		strGlue(list2array(^out), "\n"),
+		strGlue(list2array(^err), "\n"),
+		strGlue(list2array(^all), "\n"),
+		exit_code
+	);
 }

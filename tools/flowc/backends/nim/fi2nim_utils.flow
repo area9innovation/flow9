@@ -1,253 +1,155 @@
 import tools/flowc/backends/common;
 import tools/flowc/backends/nim/fi2nim_defines;
 import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/common;
+import tools/flowc/backends/nim/fi2nim_mangle;
 
 export {
-//	fiCollectNIMStructs(cfg : FiNimConfig, nimEnv : FiNimEnv) -> string;
-	fiCollectNIMStructs2(cfg : FiNimConfig, nimEnv : FiNimEnv) -> string;
-	fiType2NimType(cfg : FiNimConfig, nimEnv : FiNimEnv, type : FiType) -> string;
-	fiType2NimTypeName(cfg : FiNimConfig, nimEnv : FiNimEnv, type : FiType) -> string;
-	fiDiscardExpr(exprStr : string, expr : FiExp) -> string;
-	fiDoDiscard(exprStr : string, discard : bool) -> string;
-	fiNimTypeParamsList(nimEnv : FiNimEnv, fn : FiFunctionDec) -> string;
-	fiNimTypeParamsListStruct(nimEnv : FiNimEnv, arg_types: [FiType]) -> string;
-	fiNimRenameKeyword(cfg : FiNimConfig, kwd : string) -> string;
-	fiNimParamsForInstantiate(cfg : FiNimConfig, nimEnv : FiNimEnv, params: [FiType]) -> string;
+	fi2nimIsImportLine(line: string) -> bool;
+
+	fi2nimStrIndent(s: string) -> string;
+	fi2nimMaybeIndent(s: string) -> string;
+	fi2nimSureIndent(s: string) -> string;
+	fiNimRenameKeyword(kwd: string) -> string;
+
+	fiNimCompileFuncType(env: FiNimEnv, type: FiTypeFunction) -> string;
+	fiNimCompileType(env: FiNimEnv, type: FiType) -> string;
+	fiNimDerefType(t: FiType) -> FiType;
+
+	fiNimTypeParamsList(env: FiNimEnv, type: FiType) -> string;
+	fiNimParamsForInstantiate(env: FiNimEnv, params: [FiType]) -> string;
+
+	// Get all casts from expression
+	fiAllCasts(e: FiExp, acc :Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType>>;
+
+	// Remove all FiTypeRef and replace union type names onto 'Struct' type name (represents a general union)
+	fiType2NimType(names: FiGlobalNames, type: FiType) -> FiType;
 }
 
-fiProcCounter : ref int = ref 0;
+fi2nimIsImportLine(line: string) -> bool {
+	startsWith(line, "import") || startsWith(line, "from");
+}
 
-fiNimRenameKeyword(cfg : FiNimConfig, kwd : string) -> string {
+fi2nimStrIndent(s : string) -> string {
+	strGlue(map(
+		filter(strSplit(s, "\n"), \line -> exists(s2a(line), \code -> code > 32)), 
+		\line -> fiNimIndent + line
+	), "\n");
+}
+
+fi2nimMaybeIndent(s : string) -> string {
+	if (!strContains(s, "\n")) " " + s + " " else "\n" + fi2nimStrIndent(s) + "\n";
+}
+
+fi2nimSureIndent(s : string) -> string {
+	"\n" + fi2nimStrIndent(s) + "\n";
+}
+
+fiNimRenameKeyword(kwd : string) -> string {
 	k = (if (containsSet(nimKeywordSet, kwd)) "fl0w" else "") + kwd;
 	strReplace(k, "_", "u")
 }
 
-fiNimTypeParamsList(nimEnv : FiNimEnv, fn : FiFunctionDec) -> string {
-	tps = foldi(fn.lambda.args, makeSet(), \idx, accT, arg ->
-		fiCollectTypars(nimEnv.prog, arg.type, accT)
-	);
-	rt = fiCollectTypars(nimEnv.prog, fn.type.returnType, tps);
-	tp = foldSet(rt, [], \acc1, e -> concat(acc1, ["T" + i2s(strlen(e))]));
+fiNimTypeParamsList(env : FiNimEnv, type : FiType) -> string {
+	tps = fiCollectTypars(type, makeSet());
+	tp = fold(sort(set2array(tps)), [], \acc1, e -> concat(acc1, ["T" + i2s(strlen(e))]));
 	if (tp == []) "" else { "[" + strGlue(tp, ", ") + "]" }
 }
 
-fiNimTypeParamsListStruct(nimEnv : FiNimEnv, arg_types : [FiType]) -> string {
-	tps = fold(arg_types, makeSet(), \a, t ->
-		fiCollectTypars(nimEnv.prog, t, a)
-	);
-	tp = foldSet(tps, [], \acc1, e ->
-		concat(acc1, ["T" + i2s(strlen(e))])
-	);
-	if (tp == []) "" else { "[" + strGlue(tp, ", ") + "]" }
-}
-
-fiNimParamsForInstantiate(cfg : FiNimConfig, nimEnv : FiNimEnv, params : [FiType]) -> string {
+fiNimParamsForInstantiate(env : FiNimEnv, params : [FiType]) -> string {
 	if (params == []) "" else {
-		"[" + strGlue(map(params, \tp ->
-			fiType2NimType(cfg, nimEnv, tp)
-		), ", ") + "]"
+		"[" + strGlue(map(params, \tp -> fiNimCompileType(env, tp)), ", ") + "]"
 	}
 }
 
-fiProcessStruct(cfg : FiNimConfig, nimEnv : FiNimEnv, name : string, struct : FiTypeStruct, init : string, structKind : ref [string]) -> string {
-	types = if (length(struct.args) == 0) "" else 
-		fiNimTypeParamsListStruct(nimEnv, map(struct.args, \a -> a.type));
-	fields = if (length(struct.args) == 0)
-			fiNimIndent + fiNimIndent + fiNimIndent + "discard"
-		else
-			strGlue(map(struct.args, 
-				\e -> {
-					typ = fiType2NimType(cfg, nimEnv, e.type);
-					fiNimIndent + fiNimIndent + fiNimIndent + name+fiNimRenameKeyword(cfg, e.name) + ": " + typ
-				}
-			), "\n");
-
-	structKind := arrayPush(^structKind, "st"+name);
-
-	init + fiNimIndent + name + "Obj" + types + " = object of RootObj\n" +
-	fiNimIndent + fiNimIndent + "case st: StructureType\n" +
-	fiNimIndent + fiNimIndent + "of st" + name + ":\n" +
-	fields + "\n" +
-	fiNimIndent + fiNimIndent + "else:\n" +
-	fiNimIndent + fiNimIndent + fiNimIndent + "discard\n\n"+
-	fiNimIndent + name + types + " = ref " + name + "Obj" + types + "\n\n";
-}
-
-fiProcessUnion(cfg : FiNimConfig, nimEnv : FiNimEnv, name : string, union: FiTypeUnion, init, structKind) -> string {
-	if (containsSet(nimForbiddenUnions, name)) {
-		init
-	} else {
-		// fcPrintln("HIA: union = " + toString(union));
-		typarams = fiNimParamsForInstantiate(cfg, nimEnv, union.typeparameters);
-
-		header = init + fiNimIndent + name + "Obj" +
-		typarams +
-		" = object of RootObj\n" +
-		fiNimIndent + fiNimIndent + "case st: StructureType\n";
-
-		footer = fiNimIndent + name + typarams + " = ref " + name + "Obj" + typarams + "\n";
-		prefix3 = fiNimIndent + fiNimIndent + fiNimIndent;
-		fold(union.typenames, header, \acc1, i -> {
-			mstruct = lookupTree(nimEnv.prog.names.structs, i.name);
-			fields = switch(mstruct) {
-				Some(struct): {
-					if (struct.args == []) {
-						prefix3 + "discard\n"
-					} else {
-						strGlue(map(struct.args, \e -> {
-							prefix3 + i.name+fiNimRenameKeyword(cfg, e.name) + ": " +
-							fiType2NimType(cfg, nimEnv, e.type);
-						}), "\n") + "\n";
-					}
-				}
-
-				None() : {
-					prefix3 + "discard\n"
-				}
-			}
-			structKind := arrayPush(^structKind, "st"+i.name);
-			acc1 + fiNimIndent + fiNimIndent + "of st" + i.name + ":\n" + fields;
-		}) + fiNimIndent + fiNimIndent + "else:\n"+prefix3 + "discard\n\n" + footer + "\n";
+fiNimCompileFuncType(env : FiNimEnv, type : FiTypeFunction) -> string {
+	rt_code = switch (type.returnType) {
+		FiTypeFunction(__,__): "(" + fiNimCompileType(env, type.returnType) + ")";
+		default: fiNimCompileType(env, type.returnType);
 	}
+	"(" + 
+		supergluei(type.args, \i, arg -> 
+			fiNimRenameKeyword(if (arg.name == "" || arg.name == "__") "a" + i2s(i) else arg.name) + ": " +
+			fiNimCompileType(env, arg.type), 
+			", "
+		) + 
+	"): " + rt_code;
 }
 
-fiCollectNIMStructs2(cfg : FiNimConfig, nimEnv : FiNimEnv) -> string {
-	structKind: ref [string] = ref [];
-	if (nimEnv.prog.names.unions == makeTree()) "" else {
-		start = "\n" + fiNimIndent + "#Unions\n";
-		uns = fold(nimEnv.prog.traversal, start, \acc, mname -> {
-			md = lookupTree(nimEnv.prog.modules, mname);
-			eitherFn(md, \module -> {
-				structs1 = fold(module.structs, acc, \acc1, struct -> {
-					t = lookupTree(nimEnv.struct2unions, struct.name);
-					if (struct.name == "FiFunArg")
-						fcPrintln("HIA: t = " + toString(t), cfg.threadId);
-					eitherFn(t, \v -> {
-						// Struct is a part of union, will be generated with fiProcessUnion
-						fcPrintln("HIA: " + struct.name + " found", cfg.threadId);
-						acc1
-					}, \-> {
-						// Struct is NOT part of union, generated with fiProcessStruct
-						fcPrintln("HIA: " + struct.name + " NOT found", cfg.threadId);
-						fiProcessStruct(cfg, nimEnv, struct.name, struct, acc1, structKind)
-					});
-				});
-				fold(module.unions, structs1, \acc1, union -> fiProcessUnion(cfg, nimEnv, union.name, union, acc1, structKind))
-			}, \ -> acc);
-		});
-
-		structKind := uniq(^structKind);
-
-		"type\n" +
-		fiNimIndent + "StructureType = enum\n" +
-		strGlue(map(^structKind, \e -> fiNimIndent + fiNimIndent + e), ",\n")+"\n" + uns;
-	}
-}
-/*
-fiCollectNIMStructs(cfg, nimEnv.prog) {
-	// Nim has "duck typing" for tuples and does not require strict
-	// order of tuples in declarations, so we just enumerate all
-	// Flow structures in nimEnv.prog and convert them to tuples
-	unions = if (nimEnv.prog.acc.names.unions == makeTree())
-		""
-	else
-		foldTree(nimEnv.prog.acc.names.unions, "#Unions\ntype\n", \name, union: FiTypeUnion, acc -> {
-			// fcPrintln("HIA: union = " + toString(union));
-			acc + fiNimIndent + name +
-			fiNimParamsForInstantiate(cfg, nimEnv.prog, union.typeparameters)
-			+ " = RootObj\n";
-		});
-
-	structs = if (nimEnv.prog.acc.names.structs == makeTree())
-		""
-	else
-		fold(nimEnv.prog.acc.traversal, "# Structures\ntype\n", \acc, mname -> {
-			md = lookupTree(nimEnv.prog.acc.modules, mname);
-			eitherFn(md, \module -> {
-				foldTree(module.structs, acc, \name, struct, acc1 -> fiProcessStruct(cfg, nimEnv.prog, name, struct, acc1, structKind));
-			}, \ -> acc);
-		});
-	unions + "\n" + structs + "\n";
-}
-*/
-fiType2NimType(cfg : FiNimConfig, nimEnv : FiNimEnv, type : FiType) -> string {
+fiNimCompileType(env : FiNimEnv, type : FiType) -> string {
 	switch (type) {
 		FiTypeArray(t) :           {
-			tp = fiType2NimType(cfg, nimEnv, t);
-			fcPrintln("HIA: tp = " + toString(tp), cfg.threadId);
-			if (tp == "FcFunArg") fcPrintln("HIA: tp == " + toString(type), cfg.threadId);
-			"seq[" + tp + "]";
+			"seq[" + fiNimCompileType(env, t) + "]";
 		}
 		FiTypeFunction(args, rt) : {
-			tp = fiNimTypeParamsListStruct(nimEnv, map(args, \arg -> arg.type));
-			r = "proc(" + strGlue(mapi(args, \ix, e -> {
-				(if (e.name == "") "t" + i2s(ix) else fiNimRenameKeyword(cfg, e.name)) + ": " + fiType2NimType(cfg, nimEnv, e.type);
-				//fiProcCounter := ^fiProcCounter + 1;
-			}), ", ") +"): " + fiType2NimType(cfg, nimEnv, rt);
-			r;
+			"proc" + fiNimCompileFuncType(env, type);
 		}
-		FiTypeRef(t) :             fiType2NimType(cfg, nimEnv, t);
-		FiTypeParameter(n) :       "T" + i2s(strlen(n));
-		FiTypeBool() :               "bool";
-		FiTypeInt() :                "int";
-		FiTypeDouble() :             "float";
-		FiTypeString() :             "string";
-		FiTypeFlow() :               "#[flow]# RootObj";
-		FiTypeVoid() :               "void";
-		FiTypeNative() :             "#[native]# RootObj";
-		FiTypeName(name, params) : {
-			union = lookupTree(nimEnv.struct2unions, name);
-			if (name == "FiTypeArg")
-				fcPrintln("HIA: tunion = " + toString(union), cfg.threadId);
-			types = fiNimParamsForInstantiate(cfg, nimEnv, params);
-			eitherFn(union, \u -> "#[" + name + "]# " + u[0] + types
-			, \-> name + types); // Name of union or struct
-		}
-		//FiTypeStruct(name, __, args) : {
-		//	if (name == "") {
-		//		"#[struct]# any"
-		//	} else {
-		//		union = lookupTree(nimEnv.prog.acc.names.struct2unions, name);
-		//		eitherFn(union, \u -> {
-		//			"#[" + name + "]# " +
-		//			u[0] + fiNimTypeParamsListStruct(nimEnv.prog, args);
-		//		}, \->{
-		//			name + fiNimTypeParamsListStruct(nimEnv.prog, args);
-		//		});
-		//	}
-		//}
-		//FiTypeUnion(name, __, __, __) : "#[U]#" + name;
-		//FiTypeVar(v) :              "#[typevar]# any"; // + " ?typevar("+toString(v)+")" + toString(getResolvedFiType(nimEnv.prog, type));
-	}
-}
-
-fiType2NimTypeName(cfg : FiNimConfig, nimEnv : FiNimEnv, type : FiType) -> string {
-	switch (type) {
-		FiTypeArray(t) :           fiType2NimTypeName(cfg, nimEnv, t);
-		FiTypeFunction(args, rt) : fiType2NimTypeName(cfg, nimEnv, rt);
-		FiTypeRef(t) :             fiType2NimType(cfg, nimEnv, t);
+		FiTypeRef(t) :             fiNimCompileType(env, t);
 		FiTypeParameter(n) :       "T" + i2s(strlen(n));
 		FiTypeBool() :             "bool";
-		FiTypeInt() :              "int";
+		FiTypeInt() :              "int32";
 		FiTypeDouble() :           "float";
 		FiTypeString() :           "string";
-		FiTypeFlow() :             "?flow";
+		FiTypeFlow() :             "Flow";
 		FiTypeVoid() :             "void";
-		FiTypeNative() :           "?native";
-		FiTypeName(name, params) : name; // Name of union or struct
-		//FiTypeStruct(name, __, args) : name;
-		//FiTypeUnion(name, __, __) : "any";
-		//FiTypeVar(v, i) :            "?typevar("+toString(v)+")";
+		FiTypeNative() :           "Native";
+		FiTypeName(name, params) : {
+			if (containsKeyTree(env.prog.names.structs, name)) {
+				name + fiNimParamsForInstantiate(env, params);
+			} else {
+				// Unions are just unspecified structs
+				"Struct";
+			}
+		}
 	}
 }
 
-fiDiscardExpr(exprStr : string, expr : FiExp) -> string {
-	switch (expr) {
-		FiCallPrim(__, __, __, __): "discard " + exprStr;
-		default : exprStr;
+fiNimDerefType(t: FiType) -> FiType {
+	switch (t) {
+		FiTypeRef(r): fiNimDerefType(r);
+		default: t;
 	}
 }
 
-fiDoDiscard(exprStr : string, discard : bool) -> string {
-	(if (discard) "discard " else "") + exprStr;
+fiAllCasts(e: FiExp, acc : Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType>> {
+	fiFoldExp(e, acc, \x, env, ac -> {
+			switch (x) {
+				FiCast(__,from, to,__,__): {
+					pure_from = fiPurifyType(from);
+					setTree(ac, pure_from, 
+						insertSet(lookupTreeDef(ac, pure_from, makeSet()), fiPurifyType(to))
+					)
+				}
+				default: ac;
+			}
+		}, 
+		AstTraverseOrder(true, true)
+	);
+}
+
+fiType2NimType(names : FiGlobalNames, type : FiType) -> FiType {
+	switch (type) {
+		FiTypeArray(t) :           {
+			FiTypeArray(fiType2NimType(names, t));
+		}
+		FiTypeFunction(args, rt) : {
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg with type = fiType2NimType(names, arg.type))),
+				fiType2NimType(names, rt)
+			);
+		}
+		FiTypeRef(t): {
+			// Just skip references
+			fiType2NimType(names, t);
+		}
+		FiTypeName(name, params) : {
+			if (containsKeyTree(names.structs, name)) {
+				FiTypeName(name, map(params, \p -> fiType2NimType(names, p)));
+			} else {
+				// Unions are just unspecified structs
+				FiTypeName("Struct", []);
+			}
+		}
+		default: type;
+	}
 }

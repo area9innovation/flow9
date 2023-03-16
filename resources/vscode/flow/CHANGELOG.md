@@ -111,7 +111,7 @@
 
 ## 0.3.2
  - separate scopes for Arguments and Locals
- - frame navigation works 
+ - frame navigation works
  - older unused code removed
  - watch expressions work
 
@@ -141,17 +141,17 @@
  - status of http and LSP servers are added to statusbar.
 
 ## 0.4.5
- - instant syntax check at typing is implemented. 
- 
+ - instant syntax check at typing is implemented.
+
 ## 0.4.6
- - flow interactive console is added. 
+ - flow interactive console is added.
 
 ## 0.4.7
- - another LSP server is added (flowc_lsp), choice of LSP servers is modified. 
+ - another LSP server is added (flowc_lsp), choice of LSP servers is modified.
 
 ## 0.4.8
  - command 'execCommand' on execution of a general command (like server-cache-info=1) on server is added.
- - http server status displays main memory stats: Used, Free and Total memory. 
+ - http server status displays main memory stats: Used, Free and Total memory.
 
 ## 0.4.9
  - 'runUI' command is added: runs a visual application, compiled to html+js, in webview panel.
@@ -164,3 +164,32 @@
 
  ## 0.4.12
  - html files are placed in the www2 directory in the nearest directory with flow.config file.
+
+## 0.4.13
+- a test editor written in flow is added. Readme is updated with instructions how to implement a custom editor written in flow.
+
+## 0.5.0
+ - flow notebook, based on Vscode Notebook API, is added.
+
+## 0.5.1
+ - syntax highlighting for gringo language is added.
+
+## 0.5.2
+ - syntax highlighting for lingo language is enhanced.
+
+## 0.5.3
+ - syntax highlighting for datawarp
+ - syntax highlighting for blueprint strings in flow
+ - syntax highlighting for lingo and sharekey is enhanced
+ - do not run REPL without notebook
+ - error handling fixed
+ - use pretty print JSON in `noteflow` files, represent a multi-line string as an array
+
+## 0.5.4
+ - compound expressions and folding on hover and watch
+
+## 0.6.0
+ - [PR #1141](https://github.com/area9innovation/flow9/pull/1141)
+	- Find definition and Hover for local variables
+	- Updated dependencies
+	- Improved verbose mode

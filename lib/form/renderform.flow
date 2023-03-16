@@ -15,7 +15,7 @@ export {
 	preloadAndCachePicture(url : string, onError : (string) -> void) -> void; //To start picture download at moment of Form creation
 
 	// Counter for pictures, videos & ActiveArt forms which are in rendering process state
-	loadingContentFilesCount = make(0);
+	loadingContentFilesCount : DynamicBehaviour<int> = make(0);
 	increaseFilesCount(filesCount : DynamicBehaviour<int>) -> void;
 	decreaseFilesCount(alreadyDecreased : DynamicBehaviour<bool>, filesCount : DynamicBehaviour<int>) -> void;
 
@@ -42,12 +42,12 @@ export {
 
 	setInterfaceOrientation : (o : ScreenOrientation) -> void;
 
-	accessibilityEnabled = ref false;
+	accessibilityEnabled : ref bool = ref false;
 
-	globalRenderCount = ref 0;
+	globalRenderCount : ref int = ref 0;
 
-	downloadPictures = !isUrlParameterFalse("download_pictures");
-	showRedraw = !js && isUrlParameterTrue("redraw");
+	downloadPictures : bool = !isUrlParameterFalse("download_pictures");
+	showRedraw : bool = !js && isUrlParameterTrue("redraw");
 
 	makeGlobalCursorListeners(shape : CursorShape2, zorder : Transform<[int]>) -> Pair<[EventHandler], () -> void>;
 
@@ -78,11 +78,11 @@ resetFocus() -> void {
 }
 
 
-allClipCapabilities = ClipCapabilities(true, true, true, true, true);
+allClipCapabilities : ClipCapabilities = ClipCapabilities(true, true, true, true, true);
 
 zeroSize = const(zeroWH);
 
-emptyRenderResult = RenderResult([], zeroSize, const(0.0), const(0), [], allClipCapabilities);
+emptyRenderResult : RenderResult = RenderResult([], zeroSize, const(0.0), const(0), [], allClipCapabilities);
 
 isPicturesDownloadingEnabled() {
 	downloadPictures
@@ -205,9 +205,11 @@ whenSizeChangedu(b : Behaviour<WidthHeight>) {
 }
 
 // Init gesture handlers for stage
-resetGestureCapture() { pinchCapture := None(); swipeCapture := None(); panCapture := None(); }
-intGestureStateToFlowGestureState = \state -> if (state == 1) GestureStateProgress() else if (state == 0) GestureStateBegin() else GestureStateEnd();
-stagePanDisposer = addGestureListener("pan", \state, x, y, dx, dy -> {
+resetGestureCapture() -> void { pinchCapture := None(); swipeCapture := None(); panCapture := None(); }
+intGestureStateToFlowGestureState(state : int) -> GestureState {
+	if (state == 1) GestureStateProgress() else if (state == 0) GestureStateBegin() else GestureStateEnd();
+}
+stagePanDisposer: () -> void = addGestureListener("pan", \state, x, y, dx, dy -> {
 	ret = switch(^panCapture) {
 		Some(v): v(intGestureStateToFlowGestureState(state), x, y, dx, dy);
 		None(): false
@@ -215,7 +217,7 @@ stagePanDisposer = addGestureListener("pan", \state, x, y, dx, dy -> {
 	if (state == 2 /* ended */) resetGestureCapture(); // No mouse up for pan
 	ret
 });
-stagePinchDisposer = addGestureListener("pinch", \state, x, y, scale, p4 -> {
+stagePinchDisposer : () -> void = addGestureListener("pinch", \state, x, y, scale, p4 -> {
 	ret = switch(^pinchCapture) {
 		Some(v): v(intGestureStateToFlowGestureState(state), x, y, scale, p4);
 		None(): false
@@ -223,8 +225,6 @@ stagePinchDisposer = addGestureListener("pinch", \state, x, y, scale, p4 -> {
 	if (state == 2 /* ended */) resetGestureCapture(); // No mouse up for pinch
 	ret
 });
-stageSwipeDisposer = addGestureListener("swipe", \state, x, y, dx, dy -> switch (^swipeCapture) { Some(v): v(x, y, dx, dy); None(): false });
-gestureEndDisposer = addEventListener(currentClip(), "mouseup", resetGestureCapture);
 
 increaseFilesCount(filesCount) {
 	next(filesCount, getValue(filesCount) + 1)
@@ -274,7 +274,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		if (downloadPictures && strlen(url_) > 0) {
 			cache = ref true;
 			onlydl = ref false;
-			errhndlr = ref \e -> {};
+			errhndlr = ref nop1;
+			onWarning = ref nop1;
 			onLoaded = ref nop;
 			realSizeFn = ref nop1;
 			picAltText = ref "";
@@ -282,6 +283,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				DontCache(): cache := false;
 				OnlyDownloadToCache(): onlydl := true;
 				OnLoadingError(fn): errhndlr := fn;
+				OnWarning(fn): onWarning := fn;
 				OnLoaded(fn) : onLoaded := {
 					prevOnLoaded = ^onLoaded;
 					\->{
@@ -292,6 +294,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				InspectRealSize(fn): realSizeFn := fn;
 				AltText(text): picAltText := text;
 				UseCrossOrigin(__) : {}
+				ReferrerPolicy(__) : {}
 			});
 			widthHeight = make(zeroWH);
 			baseline = make(0.0);
@@ -308,16 +311,21 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				^realSizeFn(WidthHeight(w, h));
 				^onLoaded();
 			}, \e -> {
-				CachedPicturesSizes := setTree(^CachedPicturesSizes, url, zeroWH);
-				^errhndlr(e);
-				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
-				nextDistinct(pending, 0);
-				if (e != "") {
-					println(e);
+				if (startsWith(e, "Warning")) {
+					^onWarning(e)
+				} else {
+					CachedPicturesSizes := setTree(^CachedPicturesSizes, url, zeroWH);
+					^errhndlr(e);
+					decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
+					nextDistinct(pending, 0);
+					if (e != "") {
+						println(e);
+					}
 				}
 			}, ^onlydl, ^picAltText);
 
 			setPictureUseCrossOrigin(picture, extractStruct(style, UseCrossOrigin(false)).useCrossOrigin);
+			setPictureReferrerPolicy(picture, extractStruct(style, ReferrerPolicy("")).referrerpolicy);
 
 			RenderResult(
 				[picture], widthHeight, baseline, pending,
@@ -798,7 +806,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				default: acc;
 			}
 		);
-		textfield = makeTextfield(getMappedFontFamily(fontStyle));
+		textfield = makeTextfield(getMappedFontFace(fontStyle));
 		setTextDirection(textfield, if (getDefaultRtl()) "rtl" else "ltr");
 		setTextFieldCropWords(textfield, true);
 		alive = ref true;
@@ -1229,14 +1237,18 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 							color = ref 0x000000;
 							alpha = ref 1.0;
 							inner = ref false;
+							useBoxShadow = ref false;
 							iter(params, \p -> switch (p : DropShadowParameter) {
 								Placement(a, ds): { angle := a; distance := ds; }
 								Radius(r): radius := r;
 								Spread(s): spread := s;
 								Color(c, a): { color := c; alpha := a; }
 								Inner(i): inner := i;
+								UseBoxShadow(): useBoxShadow := true;
 							});
-							makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+							ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+							if (^useBoxShadow) setUseBoxShadow(ds);
+							Some(ds);
 						}
 						Blur(params): {
 							radius = ref 3.0;
@@ -1317,14 +1329,18 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 						color = ref 0x000000;
 						alpha = ref 1.0;
 						inner = ref false;
+						useBoxShadow = ref false;
 						iter(params, \p -> switch (p : DropShadowParameter) {
 							Placement(a, ds): { angle := a; distance := ds; }
 							Radius(r): radius := r;
 							Spread(s): spread := s;
 							Color(c, a): { color := c; alpha := a; }
 							Inner(i): inner := i;
+							UseBoxShadow(): useBoxShadow := true;
 						});
-						makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner) |> Some;
+						ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+						if (^useBoxShadow) setUseBoxShadow(ds);
+						Some(ds);
 					}
 					Blur(params): {
 						radius = ref 3.0;
@@ -1492,6 +1508,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		customTabOrder = ref None();
 		customZorder = ref None();
 		accessAttributes : ref [Pair<string, Behaviour<string>>] = ref [];
+		accessStyles : ref [Pair<string, Behaviour<string>>] = ref [];
 		accessCallback : ref () -> void = ref nop;
 		tagName = ref None();
 		langAttribute = ref None();
@@ -1517,6 +1534,9 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				AccessAttribute(name, value): {
 					refArrayPush(accessAttributes, Pair(name, value)); None()
 				}
+				AccessStyle(name, value): {
+					refArrayPush(accessStyles, Pair(name, value)); None()
+				}
 				AccessTabOrder(to): {
 					customTabOrder := Some(to);
 					Some(["nodeindex", strGlue(map(getValue(to), i2s), " ")]);
@@ -1533,6 +1553,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 					langAttribute := Some(lang);
 					Some(["lang", toString(fgetValue(lang))])
 				}
+				AccessForceMakeClip(__) : { None(); }
 			}
 		});
 
@@ -1649,6 +1670,16 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 					}
 				);
 
+			dispAccessStyles =
+				map(
+					^accessStyles,
+					\as -> {
+						refArrayPush(attributes, [as.first, getValue(as.second)]);
+
+						subscribe2(as.second, \v -> setClipStyle(clip, as.first, v))
+					}
+				);
+
 			setAccessAttributes(clip, ^attributes);
 			setAccessCallback(clip, ^accessCallback);
 
@@ -1673,8 +1704,16 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				dispNodeIndex,
 				dispZorder,
 				dispAccessAttributes,
+				dispAccessStyles,
 				groupToDisposer,
-				[ set_focus_subscription_fn(clip), langAttributeDisposer ]
+				[
+					set_focus_subscription_fn(clip),
+					langAttributeDisposer,
+					\ -> {
+						setAccessCallback(clip, nop);
+						accessCallback := nop;
+					}
+				]
 			])
 		};
 		dontChangeChildrenFn = \clip -> [ ];
@@ -1683,8 +1722,9 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		// there are some Access forms with only TabIndex set around a syled button.
 		// such Access forms should not have their own clip(HTML element)
-		makeAccessClip = (^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
-			|| isSome(^access_child_selected_fn)) && isNone(^tagName) && isNone(^langAttribute);
+		defMakeAccessClip = (^role != "" && !contains(["button", "checkbox", "textbox", "video", "iframe"], ^role)
+			|| isSome(^access_child_selected_fn)) && isNone(^tagName) && isNone(^langAttribute) || contains(["table", "tbody", "thead", "tfoot", "tr", "th", "td"], either(^tagName, ""));
+		makeAccessClip = extractStruct(properties, AccessForceMakeClip(defMakeAccessClip)).makeClip;
 		d = renderForm(form, available, zorder, ownTabOrder);
 
 		if (makeAccessClip) {
@@ -1712,6 +1752,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		shrink2fit = ref false;
 		viewBounds = ref None();
 		noScroll = ref false;
+		passEvents = ref false;
 
 		iter(style, \s -> {
 			switch (s : RealHTMLStyle) {
@@ -1739,6 +1780,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				RealHtmlShrink2Fit(): shrink2fit := true;
 				ViewBounds(bounds): viewBounds := Some(bounds);
 				NoScroll(): noScroll := true;
+				PassEvents(): passEvents := true;
 			}
 		});
 
@@ -1754,6 +1796,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		setWebClipDomains(bridge_clip, ^whitelist_domains);
 		if (^noScroll) setWebClipNoScroll(bridge_clip);
+		if (^passEvents) setWebClipPassEvents(bridge_clip);
 
 		if (^accessibilityEnabled) {
 			setAccessAttributes(bridge_clip, [["zorder", toString(zorder[0])]]);
@@ -2156,8 +2199,13 @@ subselectSafe(
 }
 
 // This is basically htmlEscape, but it wouldn't be good to import formats/wiki/wikiwiki here
-htmlEscapeStr(str) strReplace(strReplace(strReplace(str, "&", "&amp;"), "<", "&lt;"), ">", "&gt;");
-htmlUnescapeStr(str) strReplace(strReplace(strReplace(str, "&amp;", "&"), "&lt;", "<"), "&gt;", ">");
+htmlEscapeStr(str : string) -> string {
+	strReplace(strReplace(strReplace(str, "&", "&amp;"), "<", "&lt;"), ">", "&gt;");
+}
+
+htmlUnescapeStr(str : string) -> string {
+	strReplace(strReplace(strReplace(str, "&amp;", "&"), "&lt;", "<"), "&gt;", ">");
+}
 
 defineTextInputState(textfield : native, state : [TextInputState], wh : DynamicBehaviour<WidthHeight>, state_disposers : ref [() -> void]) -> void {
 	disposers = ref [];
@@ -2481,7 +2529,19 @@ renderText(text : string, style : [CharacterStyle], available : Behaviour<WidthH
 	textfield = makeStyledTextfield(text, style);
 	metrics = getTextMetrics(textfield);
 
+	if (contains(style, SkipOrderCheck())) {
+		setTextSkipOrderCheck(textfield, true);
+	}
+
+	uns =
+		eitherMap(
+			tryExtractStruct(style, WordSpacing(zero)),
+			\ws -> [makeSubscribe(ws.spacing, \spacing -> setTextWordSpacing(textfield, spacing))()],
+			[]
+		);
+
 	disposer = \ -> {
+		applyall(uns);
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {
 			setFocus(getStage(), true);
@@ -2494,7 +2554,7 @@ renderText(text : string, style : [CharacterStyle], available : Behaviour<WidthH
 
 	uStruct = fold(style, None(), \acc, s -> switch(s) { Underlined(v): Some(s); default: acc});
 	if (isSome(uStruct)) {
-		uStyle = either(uStruct, Underlined([])).style;
+		uStyle : [GraphicsStyle] = either(uStruct, Underlined([])).style;
 		urr = renderForm(
 			Graphics(
 				[
@@ -2565,7 +2625,7 @@ setInterfaceOrientation(o : ScreenOrientation) {
 	)
 }
 // now we avoid caching only per session
-_DontCacheSuffix = "?v=" + d2s(random() * 100.0) + "_" + d2s(timestamp());
+_DontCacheSuffix : string = "?v=" + d2s(random() * 100.0) + "_" + d2s(timestamp());
 getDontCacheSuffix() {
 	if (AvoidMediaCacheRequest()) _DontCacheSuffix else "";
 }

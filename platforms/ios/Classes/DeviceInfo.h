@@ -2,5 +2,7 @@
 
 @interface DeviceInfo : NSObject
 + (NSString *) getDeviceName;
++ (NSString *) getMachineName;
++ (NSString *) getSysVersion;
 + (float) getScreenDiagonalIn;
 @end

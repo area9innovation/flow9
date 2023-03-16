@@ -1,0 +1,107 @@
+import tools/gringo/tutorial/exp;
+import tools/gringo/tutorial/exp_parser;
+import tools/gringo/tutorial/exp_grammar;
+import text/gringo/gringo_interpreter;
+import text/deserialize_string;
+
+export {
+	// Parse the Gringo grammar at runtime, and use that to parse
+	parseExpWithInterpretedGringo(program : string, onError : (string) -> void) -> Exp;
+
+	// Parse the Gringo grammar at runtime, and use that to parse, but also check that actions are ok
+	parseExpWithActionCheck(program : string, onError : (string) -> void) -> Exp;
+
+	// Use the preprocessed grammar in exp_grammar to parse, using the interpeter
+	parseExpWithPreprocessedGringo(program : string, onError : (string) -> void) -> Exp;
+
+	// Use the most efficient, compiled flow code for the grammar
+	parseExpWithCompiledGringo(program : string, onError : (string) -> void) -> Exp;
+}
+
+parseExpWithInterpretedGringo(program : string, onError : (string) -> void) -> Exp {
+	gterm = prepareGringoParser("#include tools/gringo/tutorial/exp.gringo", onError);
+	if (gterm != GEpsilon()) {
+		// OK, parse the program
+		gringoInterpretedParse(program, expTypeAction(onError), gterm, Int(0), onError);
+	} else {
+		onError("Could not understand grammar");
+		Int(0);
+	}
+}
+
+parseExpWithActionCheck(program : string, onError : (string) -> void) -> Exp {
+	gringoParseWithActionCheck(program, getExpOps(), expTypeAction(onError), expGrammar(), Int(0), onError);
+}
+
+parseExpWithPreprocessedGringo(program : string, onError : (string) -> void) -> Exp {
+	gringoInterpretedParse(program, expTypeAction(onError), expGrammar(), Int(0), onError);
+}
+
+parseExpWithCompiledGringo(program : string, onError : (string) -> void) -> Exp {
+	gringoTypedParse(program, expTypeAction(onError), parse_exp, Int(0), onError);
+}
+
+// This defines the semantic actions used in the grammar
+expTypeAction(onError : (string) -> void) -> GringoAction<List<Exp>> {
+	gringoTypedAction(
+		// Make a string
+		\s : string -> String(s),
+		// Extract a string from a value (typically a string)
+		\e : Exp -> switch (e) {
+			String(s): s;
+			default: { onError("Expected string"); ""; }
+		},
+		// Construct the basic value
+		\b -> Int(b2i(b)), // We do not have bools, so use ints
+		\i -> Int(s2i(i)),
+		\d -> Int(s2i(d)), // We do not have doubles, so just use ints
+		// Construct an empty array
+		\ -> Array([]),
+		// Append an element to an array
+		\h, t -> {
+			switch (t) {
+				Array(es): Array(arrayPush(es, h));
+				default: t;
+			}
+		},
+		getExpOps()
+	);
+}
+
+getExpOps() -> GringoTypedOperators {
+	un = \op -> Pair(op, \l -> Call(op, [l]));
+	bin = \op -> Pair(op, \l, r -> Call(op, [l, r]));
+	tri = \op -> Pair(op, \l, m, r -> Call(op, [l, m, r]));
+	GringoTypedOperators(
+		// Nullary
+		makeTree(),
+		// A Tree<string, (Exp) -> Exp> of unary operator constructors
+		pairs2tree([
+			un("negate"),
+			Pair("unescape", \e -> {
+				switch (e) {
+					String(t): String(deserializeString(t).first);
+					default: e;
+				}
+			})
+		]),
+		// A Tree<string, (Exp, Exp) -> Exp> of binary operator constructors
+		pairs2tree([
+			bin("||"), bin("&&"),
+			bin("=="), bin("!="),
+			bin("<="), bin("<"), bin(">"), bin(">="),
+			bin("+"), bin("-"), 
+			bin("*"), bin("/"), bin("%"), 
+			bin("index"), bin("dot"),
+			bin("if"), 
+		]),
+		// A Tree<string, (Exp, Exp, Exp) -> Exp> of ternary operator constructors
+		pairs2tree([
+			tri("ifelse")
+		]),
+		// Quadranary
+		makeTree(),
+		// Stack ops
+		makeTree(),
+	)
+}

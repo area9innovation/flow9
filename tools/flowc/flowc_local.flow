@@ -5,8 +5,10 @@ import tools/flowc/flowc_usage;
 import tools/flowc/flowc_version;
 import tools/flowc/flowc_rename;
 import tools/flowc/flowc_outline;
+import tools/flowc/callgraph;
 import tools/flowc/backends/build;
 import tools/flowc/manipulation/deadcode;
+import tools/flowc/manipulation/deadtypes;
 import tools/flowc/manipulation/cse;
 import tools/flowc/manipulation/cse_global;
 import tools/flowc/manipulation/lint;
@@ -68,7 +70,7 @@ fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int
 		progOptimized = doFiProgramAnalysis(globEnv, progTypechecked,
 			\err -> {
 				errors := ^errors + 1;
-				printFiError(progTypechecked, err)
+				printFcError(config, globEnv, err)
 			},
 			config.flowfile
 		);
@@ -112,40 +114,58 @@ fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int
 doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError) -> void, file : string) -> FiProgram {
 	config = prog.config.config;
 
+	importGraph = getConfigParameter(config, "importgraph");
+	if (importGraph != "") {
+		saveImportGraph(changeFileExt(importGraph, ".dot"), isConfigParameterTrue(config, "simplify"), prog);
+	}
+
 	callgraphFilename = getConfigParameter(config, "callgraph");
 	if (callgraphFilename != "") {
 		printCallGraph(callgraphFilename, prog);
 	}
 
+	rewrite = getConfigParameter(config, "optimize-imports");
+	if (rewrite != "") {
+		rewriteImports(prog, isConfigParameterTrue(config, "fine"));
+	}
+
+	callpathFuncFrom = getConfigParameter(config, "callpath-from");
+	if (callpathFuncFrom != "") {
+		callpathFuncTo = getConfigParameterDef(config, "callpath-to", "main");
+		callpathMaxNum = s2i(getConfigParameterDef(config, "callpath-num", "32"));
+		callpathFuncExclude = buildSet(strSplit(getConfigParameterDef(config, "callpath-exclude", ""), ","));
+		pathInCallGraph(callpathFuncFrom, callpathFuncTo, callpathMaxNum, callpathFuncExclude, prog);
+	}
+
+	if (isAnyConfigParametersSet(config, ["calls-info", "calls-incoming", "calls-outgoing"])) {
+		lspCallHierarchyMethods(prog, env);
+	}
+
 	// Handle all switches that look and dump info about the program
 	handleFindOptions(env, file, prog);
 
-	// Extract translation data from program
-	xliff = isConfigParameterTrue(config, "xliff");
-	if (xliff) {
-		saveXliffData(prog, changeFileExt(fileNameOnly(file), ".xlf"));
-	}
-
 	lint = getConfigParameterDef(config, "lint", "0");
+	lint_file = getConfigParameterDef(config, "lint-file", "");
 	findUnusedLocalsParam = getConfigParameterDef(config, "find-unused-locals", "0");
-	if (lint >= "1"|| findUnusedLocalsParam != "0") {
-		lintCode(prog, env, isConfigParameterTrue(config, "lint-picky"), onError);
-		findUnusedLocals(prog, findUnusedLocalsParam == "2", onError)
+	if (lint >= "1" || lint_file != "" || findUnusedLocalsParam != "0" ) {
+		lintCode(prog, env, isConfigParameterTrue(config, "lint-picky"), lint_file, onError);
+		findUnusedLocals(prog, findUnusedLocalsParam == "2", lint_file, onError)
 	}
 
 	findUnusedExportsParam = getConfigParameterDef(config, "find-unused-exports", "0");
 	if (lint >= "2" || findUnusedExportsParam != "0") {
-		findUnusedExports(prog, findUnusedExportsParam == "2", onError)
+		findUnusedExports(prog, findUnusedExportsParam == "2", lint_file, onError)
 	}
 
 	prog_elim =
-		if (isParameterFalse(getConfigParameter(config, "dce")) 
+		if (isParameterFalse(getConfigParameter(config, "dce"))
 			|| isConfigParameterTrue(config, "readable")
 			|| getConfigParameterDef(config, "inca", "") != "") {
 			prog
 		} else {
+			t = timestamp();
 			if (prog.config.verbose >= 1) fcPrintln("Dead code elimination...", prog.config.threadId);
-			preservedNames = fold(strSplit(getConfigParameterDef(config, "dce-preserved-names", ""), ","), makeSet(), \accPn, v -> 
+			preservedNames = fold(strSplit(getConfigParameterDef(config, "dce-preserved-names", ""), ","), makeSet(), \accPn, v ->
 				if (v != "") insertSet(accPn, v) else accPn
 			);
 			dceRemoveMain = isConfigParameterTrue(config, "dce-remove-main");
@@ -173,7 +193,14 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 				}
 			}
 			// TODO: use common effects for dead code and optimizations
-			deadFiCode(prog, collectFiEffects(prog), preservedNames, eliminateNames, dceRemoveMain, removeGlobals, prog.config.verbose);
+			dead_code_eliminated = deadFiCode(prog, collectFiEffects(prog), preservedNames, eliminateNames, dceRemoveMain, removeGlobals, prog.config.verbose);
+			dead_types_eliminated = if (getConfigParameterDef(config, "dce-types", "") != "1") {
+				dead_code_eliminated;
+			} else {
+				deadFiTypes(dead_code_eliminated, preservedNames, eliminateNames, prog.config.verbose);
+			}
+			incrementTimePhase(getTimePhases(prog.config.threadId).dce, t);
+			dead_types_eliminated;
 		};
 
 	cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global")) {
@@ -191,37 +218,12 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 	t = timestamp();
 	prog_optimized = optimizeCode(cse, env, file, makeTree());
 	incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
+
+	// Extract translation data from program
+	if (isConfigParameterTrue(config, "xliff")) {
+		saveXliffData(prog_optimized, changeFileExt(fileNameOnly(file), ".xlf"), getConfigParameter(config, "xliff-filter"));
+	}
 	prog_optimized
-}
-
-printCallGraph(filename : string, prog : FiProgram) -> void {
-	lines = concatA(map(getTreeValues(prog.modules), \module -> {
-		config = prog.config.config;
-		useFullPath = isConfigParameterTrue(config, "callgraph-fullpath");
-
-		heading = "*** file: " + (if (useFullPath) module.fileinfo.fullpath else {module.fileinfo.flowfile + ".flow"});
-		functions = map(module.functions, \f : FiFunctionDec ->
-			Pair(f.name, fifreevars(f.lambda))
-		);
-		natives = map(module.natives, \f : FiNativeDec ->
-			Pair(f.name,
-				switch (f.fallbackLambda) {
-					FiLambda(__, __, __, __): fifreevars(f.fallbackLambda);
-					FiVoid(__): makeSet();
-					default: {
-						fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, f.fallbackLambda), prog.config.threadId);
-						makeSet()
-					}
-				}
-			)
-		);
-		lines2 = map(concat(natives, functions), \p : Pair<string, Set<string>> ->
-			p.first + ": " + strGlue(set2array(p.second), " ")
-		);
-		concat([heading], lines2)
-	}));
-	if (setFileContent(filename, strGlue(map(lines, \l -> l + "\n"), ""))) {}
-	else fcPrintln("Cannot write callgraph to file '" + filename + "'", prog.config.threadId);
 }
 
 runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
@@ -286,7 +288,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 				onRunComplete(0);
 			} else if (isConfigParameterTrue(config.config, "server-mem-info")) {
 				fcPrintln(
-					memory2s(usedMemory()) + " + " + memory2s(freeMemory()) + " free = " + memory2s(totalMemory()), 
+					memory2s(usedMemory()) + " + " + memory2s(freeMemory()) + " free = " + memory2s(totalMemory()),
 					config.threadId
 				);
 				onRunComplete(0);
@@ -312,8 +314,8 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 			fcPrintln("Version " + flowc_version + " (git rev: " + flowc_git_revision + ")", config.threadId);
 			onRunComplete(0);
 		} else {
-			findSymbol = getConfigParameterDef(config.config, "find-definition", 
-				getConfigParameterDef(config.config, "find-declaration", 
+			findSymbol = getConfigParameterDef(config.config, "find-definition",
+				getConfigParameterDef(config.config, "find-declaration",
 					getConfigParameter(config.config, "find-defdecl")
 				)
 			);
@@ -322,8 +324,12 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 					findDefDecl(config, globalEnv, file, findSymbol);
 				} else {
 					if (line != -1 && col != -1) {
-						name = getNameByLineCol(line, col, current_fileinfo().content);
-						findDefDecl(config, globalEnv, file, name);
+						if (getConfigParameter(config.config, "find-definition") != "") {
+							findDefDeclByPos(config, globalEnv, file, current_fileinfo().content, line, col);
+						} else {
+							name = getNameByLineCol(line, col, current_fileinfo().content);
+							findDefDecl(config, globalEnv, file, name);
+						}
 					} else {
 						fcPrintln("find-defdecl: Expect exp-line and exp-column arguments", config.threadId);
 					}
@@ -363,7 +369,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 					json = getConfigParameter(config.config, "did-change-json");
 					switch (json2LspDidChangeTextDocumentParams(parseJson(json))) {
 						Some(params): {
-							path = fcCorrectUriPath(params.textDocument.uri.path);
+							path = fcUriPath2path(params.textDocument.uri.path);
 							contents = fcFileSource(globalEnv, path);
 							changed = fold(params.contentChanges, contents, \acc, changes -> lspApplyContentChangeEvent(changes, acc));
 							fcSetFileSource(globalEnv, path, changed);
@@ -401,6 +407,16 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 						} else {
 							fcPrintln("symbol-info: Expect exp-line and exp-column arguments", config.threadId);
 						}
+					}
+					onRunComplete(0);
+				} else if (isConfigParameterSet(config.config, "symbol-info-md")) {
+					if (line != -1 && col != -1) {
+						name = getNameByLineCol(line, col, current_fileinfo().content);
+						if (name != "") {
+							fcSymbolInfoMarkDown(config, globalEnv, name, line, col);
+						}
+					} else {
+						fcPrintln("symbol-info-md: Expect exp-line and exp-column arguments", config.threadId);
 					}
 					onRunComplete(0);
 				} else {

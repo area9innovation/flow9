@@ -1,7 +1,6 @@
-import material/material;
 import material/internal/material_iscript_internal;
 import sys/speechsynthesis;
-import material/internal/material_debug;
+import material/internal/material_util;
 
 export {
 	// when a modal dialog comes, use this to increase the z-order
@@ -28,13 +27,14 @@ export {
 		enabled : Transform<bool>,
 		focusEnabled : Transform<bool>,
 		keepFocus : bool,
+		importantFocus : bool,
 		behaviours : [IScriptBehaviour],
 		recordingEnabled : Transform<bool>,
 		iScriptId : Maybe<string>,
 		tabOrder : Maybe<Transform<int>>,
 		fn : (MFocus) -> Tropic
 	) -> Tropic;
-	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
+	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, isInitialized : bool, vertical : Maybe<bool>,
 		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, ready : Transform<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 		enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
 		keysEnabled : Transform<bool>, hintMarkerEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>,
@@ -326,6 +326,7 @@ addMaterialFocusId(
 	enabled : Transform<bool>,
 	focusEnabled : Transform<bool>,
 	keepFocus : bool,
+	importantFocus : bool,
 	behaviours : [IScriptBehaviour],
 	recordingEnabled : Transform<bool>,
 	iScriptId : Maybe<string>,
@@ -333,9 +334,12 @@ addMaterialFocusId(
 	fn : (MFocus) -> Tropic
 ) -> Tropic {
 	next(parent.isInitialized, true);
+	if (importantFocus) {
+		nextDistinct(parent.isImportantChild, true)
+	}
 
 	defaultFocusId = make(-1);
-	focusId = either(tabOrder, defaultFocusId);
+	focusId = if (importantFocus) const(0) else either(tabOrder, defaultFocusId);
 
 	en = fand(parent.enabled, enabled);
 	focusEn = fand(en, fand(parent.zorderEnabled, focusEnabled));
@@ -391,8 +395,7 @@ addMaterialFocusId(
 
 			if (keepFocus) {
 				if (foc) {
-					manager.downInsideFocus ::= Some(f);
-					deferred(\ -> manager.downInsideFocus ::= None());
+					setDownInsideFocus(manager, f);
 				} else {
 					manager.downInsideFocus ::= None();
 				}
@@ -475,14 +478,15 @@ addMaterialFocusId(
 	});
 }
 
-addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, accessRole : string, vertical : Maybe<bool>,
+addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, isInitialized : bool, vertical : Maybe<bool>,
 	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, ready : Transform<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 	enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
 	keysEnabled : Transform<bool>, hintMarkerEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>,
 	theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
 
 	defaultFocusId = make(-1);
-	focusId = either(tabOrder, defaultFocusId);
+	isImportantChild = make(false);
+	focusId = fif(isImportantChild, const(0), either(tabOrder, defaultFocusId));
 	focusedId = make(-1);
 
 	zorderKeeper = parent == manager.focus || isSome(zorderB);
@@ -515,11 +519,11 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 	TransformTAcc(\t2a, pi, s, mo -> {
 		f =
 			MFocusGroup(
-				make(accessRole != ""),
+				make(isInitialized),
 				parent.managerId,
 				focusId,
 				FEmpty(),
-				fselect2(parent.tabOrder, focusId, FLift2(\to, fi -> arrayPush(to, fi))),
+				farrayPush(parent.tabOrder, focusId),
 				zorder,
 				eitherMap(iScriptId, \ui -> Some(strReplaces(ui, [" ", "_", "[", "_", "]", "_", ",", "_"])), None()),
 				strReplace(name, " ", "_"),
@@ -543,8 +547,9 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				focused,
 				active,
 				pi.transformMatrix,
-				fsubselect2(boxWidth, boxHeight, \w, h -> fwidthheight(w, h)),
+				fsubwidthheight(boxWidth, boxHeight),
 				scrollInfo,
+				isImportantChild,
 				rtl,
 				theme,
 				behavioursWithFocusedId,
@@ -617,7 +622,8 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 
 							f.previousFocusedId ::= foc;
 						}
-					})
+					}),
+					makeSubscribe(isImportantChild, \ic -> if (ic) nextDistinct(parent.isImportantChild, ic))
 				]
 				|> (\disps ->
 					if (isIScriptRecording(manager))
@@ -665,7 +671,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 		next(boxWidth, b.metrics.width);
 		next(boxHeight, b.metrics.height);
 
-		b;
+		TAcc(b with disposers = arrayPush(b.disposers, \ -> f.form ::= FEmpty()))
 	});
 }
 
@@ -1044,109 +1050,113 @@ MComponent2TAccessibility(manager : MaterialManager, content : Tropic, focus : M
 	} else {
 		accessRole = extractStruct(properties, AccessRole("")).role;
 
-		switchMaterialFocus(
-			focus,
-			\f ->
-				TAccess(
-					(if (accessRole != "")
-						[
-							FAccessZorder(f.parent.zorder),
-							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.parent.zorder), const("true"), const(""))),
-							AccessFocused(f.focused),
-							FAccessEnabled(f.focusEnabled),
-							FAccessTabOrder(f.tabOrder),
-							FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
-						]
-					else
-						[
-							FAccessZorder(f.parent.zorder),
-							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.parent.zorder), const("true"), const(""))),
-							FAccessTabOrder(f.tabOrder),
-							FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
-						])
-					|> (\f3 ->
-						if (isUrlParameterTrue("accessorder"))
-							concat(
+		if (accessRole == "hidden") {
+			content;
+		} else {
+			switchMaterialFocus(
+				focus,
+				\f ->
+					TAccess(
+						(if (accessRole != "")
+							[
+								FAccessZorder(f.parent.zorder),
+								FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, fmax(f.parent.zorder, const(0))), const("true"), const(""))),
+								AccessFocused(f.focused),
+								FAccessEnabled(f.focusEnabled),
+								FAccessTabOrder(f.tabOrder),
+								FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
+							]
+						else
+							[
+								FAccessZorder(f.parent.zorder),
+								FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, fmax(f.parent.zorder, const(0))), const("true"), const(""))),
+								FAccessTabOrder(f.tabOrder),
+								FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
+							])
+						|> (\f3 ->
+							if (isUrlParameterTrue("accessorder"))
+								concat(
+										f3,
+										[
+											FAccessAttribute("aria-roledescription", const(f.name)),
+											FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
+										]
+									)
+							else
+								f3
+						)
+						|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
+						|> (\f3 -> concat(f3, properties)),
+						content
+					)
+					|> (\accessForm ->
+						if (^mSpeechAccessiblityEnabled) {
+							getSpeechName = \ -> {
+								controlName =
+									if (f.name == "MSwitchControl")
+										"switch"
+									else if (f.name == "MCheckBox")
+										"checkbox"
+									else if (f.name == "MRadio")
+										"radio"
+									else if (f.name == "MTextInput" || f.name == "MAutoComplete" || f.name == "MSmallEditDialog")
+										"input"
+									else
+										accessRole;
+								strReplace(fgetValue(f.title), "_", " ") + " " + controlName;
+							}
+
+							TConstruct(
+								[
+									makeSubscribeUns(f.focused, \foc ->
+										if (foc) {
+											[interruptibleTimer(100, \ -> speechSynthesis(getSpeechName(), [])), clearSpeechSynthesisQueue]
+										} else {
+											[]
+										}
+									)
+								],
+								accessForm
+							)
+						} else
+							accessForm
+					),
+				\f ->
+					TAccess(
+						(if (accessRole != "")
+							[
+								FAccessZorder(f.zorder),
+								FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.zorder), const("true"), const(""))),
+								FAccessEnabled(f.focusEnabled),
+								FAccessVisible(f.isInitialized),
+								FAccessTabOrder(f.tabOrder),
+								FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
+							]
+						else
+							[
+								FAccessZorder(f.zorder),
+								FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.zorder), const("true"), const(""))),
+								FAccessVisible(f.isInitialized),
+								FAccessTabOrder(f.tabOrder),
+								FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
+							])
+						|> (\f3 ->
+							if (isUrlParameterTrue("accessorder"))
+								concat(
 									f3,
 									[
 										FAccessAttribute("aria-roledescription", const(f.name)),
-										FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
+										FAccessAttribute("manager-id", const(i2s(manager.id)))
 									]
 								)
-						else
-							f3
-					)
-					|> (\f3 -> MComponent2TAccessibilityTabindex(manager, f, f3))
-					|> (\f3 -> concat(f3, properties)),
-					content
-				)
-				|> (\accessForm ->
-					if (^mSpeechAccessiblityEnabled) {
-						getSpeechName = \ -> {
-							controlName =
-								if (f.name == "MSwitchControl")
-									"switch"
-								else if (f.name == "MCheckBox")
-									"checkbox"
-								else if (f.name == "MRadio")
-									"radio"
-								else if (f.name == "MTextInput" || f.name == "MAutoComplete" || f.name == "MSmallEditDialog")
-									"input"
-								else
-									accessRole;
-							strReplace(fgetValue(f.title), "_", " ") + " " + controlName;
-						}
-
-						TConstruct(
-							[
-								makeSubscribeUns(f.focused, \foc ->
-									if (foc) {
-										[interruptibleTimer(100, \ -> speechSynthesis(getSpeechName(), [])), clearSpeechSynthesisQueue]
-									} else {
-										[]
-									}
-								)
-							],
-							accessForm
+							else
+								f3
 						)
-					} else
-						accessForm
-				),
-			\f ->
-				TAccess(
-					(if (accessRole != "")
-						[
-							FAccessZorder(f.zorder),
-							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.zorder), const("true"), const(""))),
-							FAccessEnabled(f.focusEnabled),
-							FAccessVisible(f.isInitialized),
-							FAccessTabOrder(f.tabOrder),
-							FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
-						]
-					else
-						[
-							FAccessZorder(f.zorder),
-							FAccessAttribute("aria-hidden", fif(fgreateri(manager.currentZorder, f.zorder), const("true"), const(""))),
-							FAccessVisible(f.isInitialized),
-							FAccessTabOrder(f.tabOrder),
-							FAccessAttribute("aria-disabled", fif(f.enabled, const(""), const("true")))
-						])
-					|> (\f3 ->
-						if (isUrlParameterTrue("accessorder"))
-							concat(
-								f3,
-								[
-									FAccessAttribute("aria-roledescription", const(f.name)),
-									FAccessAttribute("manager-id", const(i2s(manager.id)))
-								]
-							)
-						else
-							f3
+						|> (\f3 -> concat(f3, properties)),
+						content
 					)
-					|> (\f3 -> concat(f3, properties)),
-					content
-				)
-		)
+			);
+		}
 	}
 }
 

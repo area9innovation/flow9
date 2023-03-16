@@ -4,201 +4,313 @@ import material/internal/material_slider;
 import material/internal/material_textinput;
 import material/internal/material_splitter;
 import material/internal/filebrowser/material_filebrowser_internal_view;
-import tropic/tropic_ui;
+import formats/base64;
+import formats/mime/mime_types;
 
 export {
 	// Initialization and start of filebrowser using custom style
 	renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, caption : string, ext : [string], buttons : [FileBrowserButtonsM], styles : [FbMStyle], m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
-	//checks if file name has no conflicts with existing names
+	// Checks if file name has no conflicts with existing names
 	validateFileName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string], ignoreName : string) -> void;
 
-	//checks if partition name has no conflicts with existing names
+	// Checks if partition name has no conflicts with existing names
 	validatePartitionName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string]) -> void;
 
-	//filter (with dialog option) to exclude files with large size
-	filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void;
+	// Filter (with dialog option) to exclude files with large size (realisation for native files)
+	filterUploadedFilesForRestrictionsNative(
+		files : [native],
+		managerM : Maybe<MaterialManager>,
+		m2t : (Material, MFocusGroup) -> Tropic,
+		onDone : (/*toUpload*/ [native], /*toReduce*/ [native], /*largeSize*/ [native]) -> void,
+		style : [FbFilterUploadDialog]
+	) -> void;
+
+	// The same like above but for the string content
+	filterUploadedFilesForRestrictionsBase64(
+		files : [FbSourceBase64],
+		managerM : Maybe<MaterialManager>,
+		m2t : (Material, MFocusGroup) -> Tropic,
+		onDone : (/*toUpload*/ [FbSourceBase64], /*toReduce*/ [FbSourceBase64], /*largeSize*/ [FbSourceBase64]) -> void,
+		style : [FbFilterUploadDialog]
+	) -> void;
 }
 
+FBItemInfo(
+	name : string,
+	dirPath : Maybe<string>,	// if dir is differ than current - it is stored here
+	isFolder : bool
+);
+
+makeFBItemInfo = \-> FBItemInfo("", None(), false);
+
 SearchState(
+	engine : FilesystemAsyncEngine<?, ??>,
 	text : string,
 	ext : [string],
-	counterB : DynamicBehaviour<int>,
 	breakSearchB : DynamicBehaviour<bool>,
 	currentPathB : DynamicBehaviour<string>,
 	selectedNameB : DynamicBehaviour<[string]>
 );
 
 //
-makeSearchState(text : string, ext : [string], currentPathB : DynamicBehaviour<string>, selectedNameB : DynamicBehaviour<[string]>) -> SearchState {
+makeSearchState(engine : FilesystemAsyncEngine<?, ??>, text : string, ext : [string], currentPathB : DynamicBehaviour<string>, selectedNameB : DynamicBehaviour<[string]>) -> SearchState {
 	SearchState(
+		engine,
 		text,
 		ext,
-		make(0),
 		make(false),
 		currentPathB,
 		selectedNameB
 	)
 }
 
+createRequestPreviewFn(state : FilebrowserState<?, ??, ???>, onError) -> Pair<(Material) -> Material, (Pair<string, DynamicBehaviour<Maybe<Material>>>) -> void> {
+	filesB : DynamicBehaviour<[Pair<string, DynamicBehaviour<Maybe<Material>>>]> = make([]);
+	
+	requestPreviews = \files -> state.engine.getPathsPreview(
+		map(files, \f -> f.first),
+		\pairs -> {
+			iter(pairs, \pair -> {maybeApply(find(files, \file -> file.first == pair.first), \file -> nextDistinct(file.second, Some(pair.second)))});
+		},
+		onError
+	);
+
+	materialWrapper = \m -> MConstruct(
+		[makeSubscribe(fstall(filesB, 100), \files -> if (length(files) > 0) { requestPreviews(files); nextDistinct(filesB, []);})],
+		m
+	);
+
+	requestPreviewfn = \file : Pair<string, DynamicBehaviour<Maybe<Material>>> -> {
+		currentFiles = fgetValue(filesB);
+		if(isNone(find(currentFiles, \f -> f.first == file.first))) nextDistinct(filesB, arrayPush(currentFiles, file))
+	};
+
+	Pair(materialWrapper, requestPreviewfn);
+}
+
+startTimestampR : ref double = ref 0.0;
 // calls the content loading and view creating for the current path
-getLibraryUI(state : FilebrowserState<Pair<string, bool>>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string]) -> void, folderSelection : bool) -> Material {
+getLibraryUI(state : FilebrowserState<FBItemInfo, ?, ??>, ext : [string], filterFn : (string) -> bool, changesCallback : ([string], [string], [string]) -> void, folderSelection : bool, scrollPosition : DynamicBehaviour<Point>, setPosM : Maybe<(DynamicBehaviour<Point>) -> void>) -> Material {
 	currentPath = getValue(state.currentPathB);
 	viewB = make(MCenter(MLoading(_("Loading content, please wait..."))));
+	onError = \error -> next(viewB, MCenter(MText("Error: " + error, [])));
 
-	getContentAPI(currentPath, ext, filterFn,
+	curTimestamp = timestamp();
+	startTimestampR := curTimestamp;
+	getContentAPI(state.engine, currentPath, ext, filterFn, make(false),
 		\dirs : [string], files : [string] -> {
-			previewsB = make([]);
-			state.getPreviews(map(files, \f -> currentPath + f), \pairs -> nextDistinct(previewsB, pairs));
-			next(viewB, prepareAndGetContentUI(
-				state,
-				map(dirs, \d -> Pair(d, true)),
-				if (folderSelection) [] else map(files, \d -> Pair(d, false)),
-				contains(dirs, ".."),
-				previewsB
-			));
-			checkWhatIsChanged(currentPath, dirs, files, changesCallback)
+
+			previewsLoadingStatusB = make(Some(_("Thumbnails updating, please wait...")));
+			previewRequestFn = createRequestPreviewFn(state, onError);
+
+			next(
+				viewB,
+				prepareAndGetContentUI(
+					state,
+					map(dirs, \d -> FBItemInfo(d, None(), true)),
+					if (folderSelection) [] else map(files, \d -> FBItemInfo(d, None(), false)),
+					contains(dirs, ".."),
+					previewRequestFn.second,
+					previewsLoadingStatusB,
+					scrollPosition,
+					setPosM
+				) |> previewRequestFn.first
+			);
+			deferUntilRender(\-> checkWhatIsChanged(currentPath, dirs, files, state.engine, changesCallback, previewsLoadingStatusB, curTimestamp));
+
 		},
-		\error -> {
-			next(viewB, MCenter(MText("Error: " + error, [])));
-		}
+		onError
 	);
 
 	MMutable(viewB);
 }
 
+FSFileData(
+	fileName : string,
+	fileVersion : int
+);
+
 FSPathContent(
 	basePath : string,
 	dirs : [string],
-	files : [string]
+	files : [FSFileData]
 );
 
 lastCheckResultR : ref Maybe<FSPathContent> = ref None();
 
-checkWhatIsChanged(basePath : string, dirs : [string], files : [string], callback : ([string], [string]) -> void) -> void {
-	maybeApply(
-		^lastCheckResultR,
-		\lcr -> {
-			if (basePath == lcr.basePath) {
-				added = concat(
-					map(subtractA(dirs, lcr.dirs), \p -> basePath + p + "/"),
-					map(subtractA(files, lcr.files), \p -> basePath + p)
-				);
-				removed = concat(
-					map(subtractA(lcr.dirs, dirs), \p -> basePath + p + "/"),
-					map(subtractA(lcr.files, files), \p -> basePath + p)
-				);
+checkWhatIsChanged(
+	basePath : string,
+	dirs : [string],
+	files : [string],
+	engine : FilesystemAsyncEngine<?, ??>,
+	callback : ([string], [string], [string]) -> void,
+	previewsLoadingStatusB : DynamicBehaviour<Maybe<string>>,
+	curTimestamp : double
+) -> void {
+	updateLastCheckResult = \files3 -> {
+		eitherFn(
+			^lastCheckResultR,
+			\lcr -> {
+				if (basePath == lcr.basePath) {
+					files2 = map(lcr.files, \file -> file.fileName);
 
-				if (added != [] || removed != [])
-					callback(added, removed);
+					added = concat(
+						map(subtractA(dirs, lcr.dirs), \p -> basePath + p + "/"),
+						map(subtractA(files, files2), \p -> basePath + p)
+					);
+
+					removed = concat(
+						map(subtractA(lcr.dirs, dirs), \p -> basePath + p + "/"),
+						map(subtractA(files2, files), \p -> basePath + p)
+					);
+
+					updated = filter(
+						files3,
+						\f -> 
+							eitherMap(
+								find(lcr.files, \f2 -> f2.fileName == f.fileName),
+								\f2 -> !(f2.fileVersion == f.fileVersion || f2.fileVersion == 0),
+								false
+							)
+					);
+
+					updatedNames = map(updated, \file -> file.fileName);
+					lastCheckResultR := Some(FSPathContent(basePath, dirs, files3));
+					if (added != [] || removed != [] || updatedNames != []) {
+						callback(added, removed, updatedNames);
+					}
+				} else {
+					lastCheckResultR := Some(FSPathContent(basePath, dirs, files3));
+				}
+			},
+			\-> lastCheckResultR := Some(FSPathContent(basePath, dirs, files3))
+		);
+		nextDistinct(previewsLoadingStatusB, None());
+	}
+
+	nextDistinct(previewsLoadingStatusB, Some(_("Cache updating, please wait...")));
+	lastTimestamp = ^startTimestampR;
+	if (lastTimestamp == curTimestamp) {
+		engine.getExtraInfo(
+			map(files, \f -> basePath + f),
+			"version",
+			\versionsM -> {
+				updateLastCheckResult(mapi(
+					versionsM,
+					\i, m -> FSFileData(files[i], getJsonIntValue(either(m, JsonDouble(0.)), 0))
+				));
+			},
+			\err -> {
+				updateLastCheckResult(map(files, \f -> FSFileData(f, 0)));
 			}
-		}
-	);
-
-	lastCheckResultR := Some(FSPathContent(basePath, dirs, files));
+		)
+	} else if (lastTimestamp < curTimestamp) {
+		updateLastCheckResult(map(files, \f -> FSFileData(f, 0)));
+	}
 }
 
 // loading content of the selected folder using API
-getContentAPI(path : string, ext : [string], filterFn : (string) -> bool, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
-	getFilesystemExtAPI().readDirectory(path, \dirs, files -> {
-		nonEmpty = neq("");
-		okExt = if (ext == []) \f -> true
-			else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
+getContentAPI(engine : FilesystemAsyncEngine<?, ??>, path : string, ext : [string], filterFn : (string) -> bool, stopReadingB : DynamicBehaviour<bool>, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
+	// A small delay to show empty filebrowser before content loading
+	deferUntilRender(\->
+		if (!getValue(stopReadingB)) engine.readDirectory(path, \dirs, files -> {
+				nonEmpty = neq("");
+				okExt = if (ext == []) \f -> true
+					else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
 
-		callback(
-			filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
-			filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
-		);
+				callback(
+					filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
+					filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f))
+				);
 
-	}, onError);
+			},
+			onError
+		) else callback([], [])
+	);
 }
 
 // start the elements searching (which names contains searchText string) and updating the content view
-getSearchResultUI(state : FilebrowserState<Pair<string, bool>>, searchText : string, ext : [string], filterFn : (string) -> bool) -> Material {
-	stateSearch = makeSearchState(searchText |> toLowerCase, ext, state.currentPathB, state.selectedElementsB);
-	next(stateSearch.counterB, getValue(stateSearch.counterB) + 1);
-	currentPath = state.currentPathB |> getValue;
+getSearchResultUI(state : FilebrowserState<FBItemInfo, ?, ??>, searchText : string, ext : [string], filterFn : (string) -> bool, scrollPosition : DynamicBehaviour<Point>) -> Material {
+	// Special state2 for search case to have tooltips in result view.
+	// Without dummy `currentPathB` files in the current folder will be without tooltips.
+	state2 = FilebrowserState(state with currentPathB=make("-1"));
+	stateSearch = makeSearchState(state.engine, toLowerCase(searchText), ext, state.currentPathB, state.selectedElementsB);
+	currentPath = getValue(state.currentPathB);
 
-	itemB = make(MLoading(_("Searching, please wait...")));
+	itemB = make(MEmpty());
+	searchProgressTextB = make(Some(_("Searching, please wait...")));
 	resD = ref [];
 	resF = ref [];
 
-	resultScreen = \-> {
-		dirs = map(^resD, \d -> { r = split2Name_Path(d); FBContentPath(Pair(d, true), true, r.second, r.first); });
-		files = map(^resF, \f -> { r = split2Name_Path(f); FBContentPath(Pair(f, false), false, r.second, r.first); });
+	previewRequestFn = createRequestPreviewFn(state, nop1);
+	resultScreen = \isDone -> {
+		dirs = ^resD;
+		files = ^resF;
 
-		if (!getValue(stateSearch.breakSearchB)) {
-			l = length(dirs) + length(files);
-			next(
-				itemB,
-				if (l == 0)
-					MCenter(MText(_("Files for criteria") + " \"" + searchText + "\" " + _("are not found."), []))
-				else
-					MLines2(
-						MText(_("Elements found") + ": " + i2s(l), []),
-						getContentUI(state, dirs, files, None(), make([]))
-					)
-			)
-		}
-	};
+		l = length(dirs) + length(files);
+		next(
+			itemB,
+			if (isDone && l == 0)
+				MCenter(MText(_("Files for criteria") + " \"" + searchText + "\" " + _("are not found."), []))
+			else
+				MLines2(
+					MText(_("Elements found") + ": " + i2s(l), []),
+					getContentUI(state2, dirs, files, None(), previewRequestFn.second, searchProgressTextB, scrollPosition, None())|> previewRequestFn.first
+				)
+		);
+	}
+
+	makeF_B_C_P = \v, isFolder -> {
+		r = split2Name_Path(v);
+		FBContentPath(FBItemInfo(r.first, Some(r.second), isFolder), ref makeTree(), isFolder, r.second, r.first);
+	}
 
 	// adding new founded elenents to the result array
-	addResult = \dirs, files -> {
+	onDataPiece = \dirs, files, isDone -> {
 		if (!getValue(stateSearch.breakSearchB)) {
-			resD := concat(^resD, dirs);
-			resF := concat(^resF, files);
-		}
-	};
+			resD := concat(^resD, map(dirs, \d -> makeF_B_C_P(d, true)));
+			resF := concat(^resF, map(files, \f -> makeF_B_C_P(f, false)));
 
+			if (isDone || dirs != [] || files != []) resultScreen(isDone);
+			if (isDone) nextDistinct(searchProgressTextB, None());
+		}
+	}
+
+	resultScreen(false);
 	// a bit of time to render MLoading()
 	deferUntilRender(\-> {
-		getContentRecursive(stateSearch, currentPath, filterFn, addResult, \error ->
-			next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
+		nonEmpty = neq("");
+		okExt = if (ext == []) \f -> true
+			else \f -> exists(ext, \val -> endsWith(toLowerCase(f), val));
+		
+		onDataPiece2 = \dirs, files, isDone -> {
+			onDataPiece(
+				filter(dirs, \d -> nonEmpty(d) && filterFn(d)),
+				filter(files, \f -> nonEmpty(f) && okExt(f) && filterFn(f)),
+				isDone
+			);
+		}
+		state.engine.search(
+			currentPath,
+			stateSearch.text,
+			false,
+			stateSearch.breakSearchB,
+			onDataPiece2,
+			\error -> next(itemB, MCenter(MText(_("Error") + ": " + error, [])))
 		);
-
-		next(stateSearch.counterB, getValue(stateSearch.counterB) - 1);
 	});
 
 	MConstruct([
 			\-> subscribe(state.searchTextB, \text -> nextDistinct(stateSearch.breakSearchB, text != searchText)),
-			\-> subscribe(stateSearch.counterB, \count -> if (count == 0) resultScreen())
+			\-> \-> nextDistinct(stateSearch.breakSearchB, true)
 		],
 		MMutable(itemB)
 	);
 }
 
-// files and folders searching in the "currentPath", including subfolders
-getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onError : (string) -> void) -> void {
-	//start search in the currentPath
-	next(state.counterB, getValue(state.counterB) + 1);
-	correctedCurPath = addSlash2pathEnd(currentPath);
-
-	getContentAPI(currentPath, state.ext, filterFn, \dirs, files -> {
-		if (!getValue(state.breakSearchB)) {
-			resD = filter(dirs, \dir -> strContains(dir |> toLowerCase, state.text) && dir != "..");
-			resF = filter(files, \file -> strContains(file |> toLowerCase, state.text));
-
-			if (length(resD) + length(resF) > 0)
-				onOK(
-					map(resD, \d -> correctedCurPath + d + "/"),
-					map(resF, \f -> correctedCurPath + f)
-				);
-		}
-
-		// currentPath processing complete
-		next(state.counterB, getValue(state.counterB) - 1);
-
-		// go to in the sub folders
-		if (!getValue(state.breakSearchB))
-			iter(filter(dirs, \d -> d != ".."), \dir ->
-				getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, onError)
-			);
-	}, onError
-	);
-}
-
 //
-getPathExistsNames(currentPath : string, ext : string, isFolder : bool, filterFn : (string) -> bool, callback : (names : [string]) -> void, onError : (string) -> void) -> void {
+getPathExistsNames(engine : FilesystemAsyncEngine<?, ??>, currentPath : string, ext : string, isFolder : bool, filterFn : (string) -> bool, callback : (names : [string]) -> void, onError : (string) -> void) -> void {
 	callback2 = \dirs, files -> {
 		callback(
 			if (isFolder) dirs
@@ -206,11 +318,11 @@ getPathExistsNames(currentPath : string, ext : string, isFolder : bool, filterFn
 		)
 	};
 
-	getContentAPI(currentPath, [ext], filterFn, callback2, onError);
+	getContentAPI(engine, currentPath, [ext], filterFn, make(false), callback2, onError);
 }
 
 // file browser dialod view
-renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, caption : string, ext : [string], buttons : [FileBrowserButtonsM], styles2: [FbMStyle], m2t : (Material, MFocusGroup) -> Tropic) -> void {
+renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, caption : string, ext : [string], buttons : [FileBrowserButtonsM], styles2 : [FbMStyle], m2t : (Material, MFocusGroup) -> Tropic) -> void {
 	styles = if (extractStructMany(styles2, FbGetCurrentPathB(make(""))) != []) styles2
 		else arrayPush(styles2, FbGetCurrentPathB(make("")));
 	closeB = make(false);				// Close filebrowser dialog
@@ -224,98 +336,143 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 	dialogContentB = make(TEmpty());
 	closeMe = \-> next(closeB, true);
 	normalExts = uniq(map(ext, toLowerCase));
+	scrollPositionB = make(zeroPoint);
 
 	curPathOutAll = map(extractStructMany(styles, FbGetCurrentPathB(make(""))), \s -> s.path);
 	curPathOutArrB = tail(curPathOutAll);
 	currentPathInnerB = firstElement(curPathOutAll, make(""));
+	selectedFilesB = make([]);
 
-	doUpdateCallArr =  map(extractStructMany(styles, FbGetContentUpdateFn(\__ -> {})), \s -> s.fn);
+	doUpdateCallArr = map(extractStructMany(styles, FbGetContentUpdateFn(\__ -> {})), \s -> s.fn);
 	additionalText = extractStruct(styles, FbAdditionalText("")).text;
 	pathProcessing = extractStruct(styles, FbPathProcessing(\p -> p)).func;
 	folderSelection = contains(styles, FbFolderSelection());
 	initSelection = extractStruct(styles, FbInitialSelection("")).sel;
-	dropFnM = tryExtractStruct(styles, FbDropFileFn(\__ -> {}));
+	dropFnM = tryExtractStruct(styles, FbDropFilesCheckMaxFn(\__, __, __ -> {}));
 	onCancelFn = extractStruct(buttons, CancelExtFBB(nop)).func;
 	hideBottomPanel = contains(styles, FbHideBottomPanel());
 	allowPathInput = contains(styles, FbAllowPathInput());
 	fileFilterFn = extractStruct(styles, FbFileFilter(\__ -> true)).fn;
-	selectedFilesB = extractStruct(styles, FbSelectedNames(make([]))).filenamesB;
-	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
+	selectedFilesMany = map(extractStructMany(styles, FbSelectedNames(make([]))), \s -> s.filenamesB);
+	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop4)), \s -> s.fn);
 	uploadMaxSizeM = minA(map(extractStructMany(styles, FbUploadMaxFileSize(0)), \s -> s.size));
+	uploadMaxImageResolutionM = minA(map(extractStructMany(styles, FbUploadImageMaxResolution(0)), \s -> s.resolution));
+	uploadMaxVideoBitrateM = minA(map(extractStructMany(styles, FbUploadVideoMaxBitrate(0)), \s -> s.bitrate));
+	uploadStyle = extractStruct(styles, FbFilesUploadStyle([])).style;
+
+	importEngines = mapConcat(extractStructMany(styles, FbImportEngine([])), \s -> s.engines);
 
 	// Reset the last cache for the WhatIsChanged to start new `session`
 	lastCheckResultR := None();
 
 	//currentPathAccessRight = make(FileAccessRightOwner());
 	curDirAccessRightB = make(makePathAccessRight());
-	fsAPI : FilesystemExtAPI = getFilesystemExtAPI();
+	fbEngine = extractStruct(styles, FbEngine(convertExtApi2engine(
+		getFilesystemExtAPI(),
+		tryExtractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))),
+		maybeMap(tryExtractStruct(styles, FbDropFileFn(nop1)), \s -> \files -> s.fn(files, [], []))
+	))).engine;
 
 	itemProperties = [
 		FBItemProperty(
-			"Name",
-			\i1, i2 -> genericCompare(i1.first, i2.first),
-			firstOfPair
+			_("Name"),
+			\itemCP, onOK2, onError2 -> {
+				itemCP.propertiesR := setTree(^(itemCP.propertiesR), "Name", JsonString(itemCP.filename));
+				onOK2();
+			},
+			\itemCP1, itemCP2 -> genericCompare(itemCP1.filename, itemCP2.filename),
+			\itemCP -> itemCP.item.name
 		),
 		FBItemProperty(
-			"Size",
-			\i1, i2 -> {
-				f1 = getItemFullname(FBContentPath(i1, i1.second, addSlash2pathEnd(getValue(currentPathInnerB)), i1.first));
-				f2 = getItemFullname(FBContentPath(i2, i2.second, addSlash2pathEnd(getValue(currentPathInnerB)), i2.first));
-				v1 = eitherMap(fsAPI.getExtraInfo(f1, "filesize"), \v1 -> getJsonIntValue(v1, 0), 0);
-				v2 = eitherMap(fsAPI.getExtraInfo(f2, "filesize"), \v2 -> getJsonIntValue(v2, 0), 0);
-				genericCompare(v1, v2);
+			_("Size"),
+			\itemCP, onOK2, onError2 -> {
+				fbEngine.getExtraInfo([getItemFullname(itemCP)], "filesize",
+					\jsonM -> {
+						itemCP.propertiesR := setTree(^(itemCP.propertiesR), "Size", either(jsonM[0], JsonDouble(0.0)));
+						onOK2();
+					},
+					onError2
+				);
 			},
-			\item -> eitherMap(
-				fsAPI.getExtraInfo(getItemFullname(FBContentPath(item, item.second, addSlash2pathEnd(getValue(currentPathInnerB)), item.first)), "filedate"),
-				\v -> getJsonIntValue(v, 0),
-				0
-			) |> i2s
+			\itemCP1, itemCP2 -> {
+				genericCompare(
+					getJsonIntValue(lookupTreeDef(^(itemCP1.propertiesR), "Size", JsonDouble(0.0)), 0),
+					getJsonIntValue(lookupTreeDef(^(itemCP2.propertiesR), "Size", JsonDouble(0.0)), 0)
+				);
+			},
+			\itemCP -> {
+				getJsonIntValue(lookupTreeDef(^(itemCP.propertiesR), "Size", JsonDouble(0.0)), 0) |> i2s;
+			}
 		),
 		FBItemProperty(
-			"Created",
-			\i1, i2 -> {
-				f1 = getItemFullname(FBContentPath(i1, i1.second, addSlash2pathEnd(getValue(currentPathInnerB)), i1.first));
-				f2 = getItemFullname(FBContentPath(i2, i2.second, addSlash2pathEnd(getValue(currentPathInnerB)), i2.first));
-				v1 = eitherMap(fsAPI.getExtraInfo(f1, "filedate"), \v1 -> getJsonDoubleValue(v1, 0.0), 0.0);
-				v2 = eitherMap(fsAPI.getExtraInfo(f2, "filedate"), \v2 -> getJsonDoubleValue(v2, 0.0), 0.0);
-				genericCompare(v1, v2);
+			_("Created"),
+			\itemCP, onOK2, onError2 -> {
+				fbEngine.getExtraInfo([getItemFullname(itemCP)], "filedate",
+					\jsonM -> {
+						maybeApply(
+							jsonM[0],
+							\json -> itemCP.propertiesR := setTree(^(itemCP.propertiesR), "Created", json)
+						);
+						onOK2();
+					},
+					onError2
+				);
 			},
-			\item -> eitherMap(
-				fsAPI.getExtraInfo(getItemFullname(FBContentPath(item, item.second, addSlash2pathEnd(getValue(currentPathInnerB)), item.first)), "filedate"),
-				\v -> getJsonDoubleValue(v, 0.0),
-				0.0
-			) |> d2s
+			\itemCP1, itemCP2 -> {
+				genericCompare(
+					getJsonDoubleValue(lookupTreeDef(^(itemCP1.propertiesR), "Created", JsonDouble(0.0)), 0.0),
+					getJsonDoubleValue(lookupTreeDef(^(itemCP2.propertiesR), "Created", JsonDouble(0.0)), 0.0)
+				);
+			},
+			\itemCP -> {
+				eitherMap(
+					lookupTree(^(itemCP.propertiesR), "Created"),
+					\json -> time2string(getJsonDoubleValue(json, 0.0)),
+					""
+				);
+			}
 		)
 	];
 
-	state = makeFilebrowserState(firstOfPair, itemProperties, styles);
+	state = makeFilebrowserState(\item -> item.name, itemProperties, styles);
 
 	filterFn = \name -> {
 		fullName = getValue(state.currentPathB) + (if (name != "." && name != ".." && name != "/." && name != "/..")  name else "");
 		fileFilterFn(fullName);
 	}
 
-	changesCallbackFn = \added, removed -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, closeMe));
+	changesCallbackFn = \added, removed, updated -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, updated, closeMe));
 
-	updateFilesView = \-> next(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection));
-	iter(doUpdateCallArr, \fn -> fn(updateFilesView));
+	lastUpdateTimeMR = ref None();
+	updateFilesView = \setPosM -> {
+		if (eitherMap(^lastUpdateTimeMR, \t -> timestamp() - t, 10.0) > 1.0) {
+			nextDistinct(dialogContentB, getLibraryUI(state, normalExts, filterFn, changesCallbackFn, folderSelection, scrollPositionB, setPosM));
+			lastUpdateTimeMR := Some(timestamp());
+		}
+	}
 
-	fsAPI.isDirectory(
+	updateFilesViewWithZeroScrollPosition = \-> updateFilesView(None());
+	updateFilesViewWithSameScrollPosition = \-> {sp0 = getValue(scrollPositionB); updateFilesView(Some(\sp -> nextDistinct(sp, sp0)))};
+
+	iter(doUpdateCallArr, \fn -> fn(updateFilesViewWithSameScrollPosition));
+
+	state.engine.isDirectory(
 		state.startDir,
 		\doesExists -> {
 			if (!doesExists) println("WARNING: Filebrowser start path \"" + state.startDir + "\" does not exists");
 			next(state.currentPathB, {
 				defPath = if (state.startDir != "" && doesExists) state.startDir
-				else strReplace(fsAPI.resolveRelativePath("."), "\\", "/");
+				else if (state.limitAccess) state.startDir
+				else strReplace(state.engine.resolveRelativePath("./"), "\\", "/");
 
 				extractStruct(styles, FbCurrentPath(make(addSlash2pathEnd(defPath)))).path |> getValue;
 			})
-		}
+		},
+		println /* onError */
 	);
 
-	next(state.onRightClickB, \itemCP, clickPos, onUpdate -> {
-		filename = getItemFullname(either(itemCP, FBContentPath(Pair("", false), false, "", "")));
-		fileAccessRight = fsAPI.getAccessRight(filename);
+	openDialogMenu = \itemCP, clickPos, onUpdate, fileAccessRight -> {
+		filename = getItemFullname(either(itemCP, FBContentPath(makeFBItemInfo(), ref makeTree(), false, "", "")));
 		curDirAccessRight = getValue(curDirAccessRightB);
 
 		MDialogMenu(manager, parent, [
@@ -323,11 +480,11 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			MDialogMenuItem("content_cut", "cut", filename != "" && fileAccessRight.arUpdate && fileAccessRight.arDelete, \-> next(state.copiedElementsB, Pair(filename, true))),
 			MDialogMenuItem("create_new_folder", "create folder", isNone(itemCP) && !getValue(inSearchB) && curDirAccessRight.arCreate, \-> {
 				closeDialogB = make(false);
-				nameB = make(_("new folder"));
-				errorText = None() |> make;
-				saveEnable = make(true);
 
 				showDialog = \existsNames -> {
+					nameB = make(_("new folder"));
+					errorTextT = fsValidateNameTransform(nameB, existsNames, true, []);
+
 					renderMDialog(manager, closeDialogB,
 						[
 							MDialogTitle(_("Create new folder")),
@@ -335,37 +492,29 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 							MDialogActions([
 								MTextButton(_("CANCEL"), \-> next(closeDialogB, true), [], [MShortcut("esc")]),
 								MTextButton(_("CREATE"), \-> {
-									fsAPI.createFolder(
+									state.engine.createDirectory(
 										getValue(state.currentPathB) + getValue(nameB) + "/",
-										updateFilesView,
+										updateFilesViewWithSameScrollPosition,
 										println
 									);
 									next(closeDialogB, true);
-								}, [], [MShortcut("enter"), MEnabled(saveEnable)])
+								}, [MButtonRaised()], [MShortcut("enter"), MEnabled(feq(errorTextT, None()))])
 							]),
 							MDialogScroll(),
 						],
-						MConstruct(
-							[
-								makeSubscribe(nameB, \n -> validatePartitionName(n, errorText, existsNames)),
-								makeSubscribe(errorText, \t -> nextDistinct(saveEnable, t |> isNone))
-							],
-							MCols([
-								MFixSize(MText(_("Folder name") + ":", []), TFixed(75.0, 20.0)),
-								TFixed(8.0, 0.0),
-								MPad(0.0, -14.0,
-									MTextInput(
-										nameB,
-										[MWidth(400.0), MMaxLines(1)],
-										[MInputError(errorText, []), MEnabled(const(true))]
-									)
-								)
-							])
-						), m2t
+						MBaselineCols2A(
+							MText(_("Folder name:"), []),
+							MTextInput(
+								nameB,
+								[MWidth(400.0), MMaxLines(1)],
+								[MInputError(errorTextT, [])]
+							) |> MBorderStart(8.0)
+						),
+						m2t
 					);
 				}
 
-				getPathExistsNames(getValue(state.currentPathB), "", true, \__ -> true, showDialog, println);
+				getPathExistsNames(state.engine, getValue(state.currentPathB), "", true, \__ -> true, showDialog, println);
 			}),
 			MDialogMenuItem("delete", "delete", filename != "" && fileAccessRight.arDelete, \-> {
 				closeDialogB = make(false);
@@ -376,25 +525,13 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 						MDialogActions([
 							MTextButton(_("CANCEL"), \-> next(closeDialogB, true), [], [MShortcut("esc")]),
 							MTextButton(_("DELETE"), \-> {
-								fsAPI.deleteElement(filename, \-> {
+								deleteFn = if (endsWith(filename, "/")) state.engine.deleteDirectories else state.engine.deleteFiles;
+								deleteFn([filename], \-> {
 										onUpdate(None());
-										maybeApply(^lastCheckResultR,
-											\lcr -> {
-												if (getValue(state.currentPathB) == lcr.basePath) {
-													pair = split2Name_Path(filename);
-													if (contains(lcr.files, pair.first)) {
-														lastCheckResultR := Some(FSPathContent(lcr.basePath, lcr.dirs, subtractA(lcr.files, [pair.first])));
-													} else {
-														lastCheckResultR := Some(FSPathContent(lcr.basePath, subtractA(lcr.dirs, [pair.first]), lcr.files));
-													}
-												}
-											}
-										);
-										changesCallbackFn([], [filename]);
 									}, println
 								);
 								next(closeDialogB, true);
-							}, [], [MShortcut("enter")])
+							}, [MButtonRaised()], [MShortcut("enter")])
 						]),
 						MDialogScroll(),
 					],
@@ -405,12 +542,12 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				isFolder = endsWith(filename, "/");
 				pair = split2Name_Path(filename);
 				name_ext = pair.first |> split2name_ext;
-				nameB = make(name_ext.first);
-				errorText = None() |> make;
-				saveEnable = make(true);
 				closeDialogB = make(false);
 
 				showDialog = \existsNames -> {
+					nameB = make(name_ext.first);
+					errorTextT = fsValidateNameTransform(nameB, existsNames, true, []);
+
 					renderMDialog(manager, closeDialogB,
 						[
 							MDialogTitle(_("Renaming")),
@@ -421,36 +558,36 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 									newNameFull = pair.second + getValue(nameB) + (if (name_ext.second != "") "." + name_ext.second else "") + (if (isFolder) "/" else "");
 									
 									// itemCP
-									//fsAPI.renameElement(filename, getValue(nameB), \-> onUpdate(newNameFull), println);
+									/*state.engine.renamePath(
+										filename,
+										getValue(nameB),
+										\newName -> onUpdate(pair.second + newName + (if (name_ext.second != "") "." + name_ext.second else "") + (if (isFolder) "/" else "")),
+										println
+									);*/
 									
 									next(closeDialogB, true);
-								}, [], [MShortcut("enter"), MEnabled(saveEnable)])
+								}, [MButtonRaised()], [MShortcut("enter"), MEnabled(feq(errorTextT, None()))])
 							]),
 							MDialogScroll(),
 						],
-						MConstruct(
-							[
-								makeSubscribe(nameB, \n -> validateFileName(n, errorText, existsNames, "")),
-								makeSubscribe(errorText, \t -> nextDistinct(saveEnable, t |> isNone))
-							],
-							MCols([
-								MFixSize(MText(_("Filename") + ":", []), TFixed(75.0, 20.0)),
-								TFixed(8.0, 0.0),
-								MPad(0.0, -14.0,
-									MTextInput(
-										nameB,
-										[MWidth(400.0), MMaxLines(1)],
-										[MInputError(errorText, []), MEnabled(const(true))]
-									)
-								),
-								if (isFolder) TEmpty()
-								else MText("." + name_ext.second, [])
-							])
-						), m2t
+						MCols([
+							MFixSize(MText(_("Filename") + ":", []), TFixed(75.0, 20.0)),
+							TFixed(8.0, 0.0),
+							MPad(0.0, -14.0,
+								MTextInput(
+									nameB,
+									[MWidth(400.0), MMaxLines(1)],
+									[MInputError(errorTextT, []), MEnabled(const(true))]
+								)
+							),
+							if (isFolder) TEmpty()
+							else MText("." + name_ext.second, [])
+						]),
+						m2t
 					);
 				}
 
-				getPathExistsNames(getValue(state.currentPathB), if (isFolder) "" else "." + name_ext.second, isFolder, \__ -> true, showDialog, println);
+				getPathExistsNames(state.engine, getValue(state.currentPathB), if (isFolder) "" else "." + name_ext.second, isFolder, \__ -> true, showDialog, println);
 			}),
 			MDialogMenuItem(
 				"content_paste",
@@ -463,14 +600,14 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 
 					// do nothing if we cut/paste at the same place
 					if (pair.second != copyTo || !copied.second) {
-						fn = if (copied.second) fsAPI.moveElement
-							else fsAPI.copyElement;
+						fn = if (copied.second) state.engine.movePaths
+							else state.engine.copyPaths;
 
 						fn(
-							copied.first,
+							[copied.first],
 							copyTo,
 							\-> {
-								updateFilesView();
+								updateFilesViewWithSameScrollPosition();
 								if (copied.second) next(state.copiedElementsB, Pair("", false));
 							},
 							println
@@ -479,13 +616,22 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				}
 			)
 		], m2t, clickPos)
+	}
+
+	next(state.onRightClickB, \itemCP, clickPos, onUpdate -> {
+		state.engine.getAccessRight(
+			getItemFullname(either(itemCP, FBContentPath(makeFBItemInfo(), ref makeTree(), false, "", ""))),
+			\fileAccessRight -> openDialogMenu(itemCP, clickPos, onUpdate, fileAccessRight),
+			\err -> openDialogMenu(itemCP, clickPos, onUpdate, PathAccessRight(false, false, false, false)),
+		);
+		
 	});
 
 	if (getValue(state.currentPathB) == "") {
 		path = if (strlen(state.startDir) > 0) {
 			state.startDir;
 		} else {
-			p = strReplace(fsAPI.resolveRelativePath("."), "\\", "/");
+			p = strReplace(state.engine.resolveRelativePath("."), "\\", "/");
 			p + (if (p != "") "/" else "");
 		};
 
@@ -527,7 +673,12 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					|> (\m -> refArrayPush(iconsR, m));
 			}
 			None(): {};
-		};
+		}
+
+		if (isDevMode() || isUrlParameterTrue("devtrace"))
+			state.engine.whoAmI(\apiName -> addInfoIcon("perm_device_information", "Partition: `" + apiName + "`"), nop1);
+
+		if (state.limitAccess) addInfoIcon("call_missed", formatString(_("Top navigation restricted by the path: \"%1\""), [state.startDir]));
 
 		MSelect(state.copiedElementsB, \copied -> {
 			if (copied.first == "") TEmpty()
@@ -535,10 +686,10 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				{
 					if (copied.second)
 						MIcon("content_cut", [MIconSize(24.0)])
-						|> (\m -> MTooltip(m, MText(_("Element to cut") + ": " + copied.first, [MCaption()]), []))
+						|> (\m -> MTooltip(m, MText(_("Element to Cut") + ": " + copied.first, [MCaption()]), []))
 					else
 						MIcon("content_copy", [MIconSize(24.0)])
-						|> (\m -> MTooltip(m, MText(_("Element to copy") + ": " + copied.first, [MCaption()]), []));
+						|> (\m -> MTooltip(m, MText(_("Element to Copy") + ": " + copied.first, [MCaption()]), []));
 				}
 				|> MCenter
 				|> (\m -> MFixSize(m, TFixed(30.0, 30.0)))
@@ -556,97 +707,101 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		);
 	};
 
-	buttonFunc = \updateFilenameFn, fileExistsFn, noFileFn, folderFn -> {
-
+	buttonFunc = \updateFilenameFn, onFileExistsFn, onNoFileFn, onFolderFn -> {
 		selectedElementsPath = getValue(state.selectedElementsB);
 		currentPath = getValue(state.currentPathB);
 
-		filesFuncRespectExistence = \filesNames -> checkIsFilesAll(fsAPI, filesNames, true, \resultFiles -> {
+		filesFuncRespectExistence = \filesNames -> checkIsFilesAll(state.engine, filesNames, true, \resultFiles -> {
 			if (resultFiles) {
 				closeMe();
-				fileExistsFn(filesNames);
+				onFileExistsFn(filesNames);
 			} else {
-				noFileFn(filesNames)
+				onNoFileFn(filesNames)
 			}
 		});
 
 		if (selectedElementsPath != []) {
-			checkIsDirectoryAll(fsAPI, selectedElementsPath, true, \resultDir -> {
+			checkIsDirectoryAll(state.engine, selectedElementsPath, true, \resultDir -> {
 				if (resultDir) {
 					// in case if single folder selected - we open it
 					if (length(selectedElementsPath) == 1) next(state.currentPathB, selectedElementsPath[0]);
-					if (folderSelection) folderFn(selectedElementsPath);
+					if (folderSelection) onFolderFn(selectedElementsPath);
 				} else if (!folderSelection) {
 					filesFuncRespectExistence(map(selectedElementsPath, updateFilenameFn));
 				}
 			})
 		// if nothing selected we return the current path (in folder selection mode)
 		} else if (folderSelection) {
-			folderFn([currentPath]);
+			onFolderFn([currentPath]);
 		} else {
 			filesFuncRespectExistence([currentPath + updateFilenameFn(getValue(fileNameB))]);
 		}
 	}
 
-	initClickB = \action -> next(state.onClickB, \itemM -> {
-		eitherFn(
-			itemM,
-			\item -> {
-				fullName = getItemFullname(FBContentPath(item, item.second, addSlash2pathEnd(getValue(state.currentPathB)), item.first));
-				if (item.second /*isFolder*/) {
-					nextDistinct(state.currentPathB, fullName);
-				} else if (isNone(state.maybeMultiselectB)) {
-					nextDistinct(state.selectedElementsB, [fullName]);
-					action();
-				}
-			},
-			\-> {
-				correctCurPath = addSlash2pathEnd(getValue(state.currentPathB));
-				curPath = if (strlen(correctCurPath) > 0) strLeft(correctCurPath, strlen(correctCurPath) - 1) else correctCurPath;
-				lastSlashIdx = strLastIndexOf(curPath, "/");
-				prevPath = if (lastSlashIdx > 0) strLeft(curPath, lastSlashIdx) else "";
-				name = if (endsWith(prevPath, ":")) prevPath + "/" else prevPath + "/";
+	initClickLastR = ref 0;
+	initClickB = \priorityIdx, action -> if (^initClickLastR < priorityIdx) {
+		initClickLastR := priorityIdx;
+		next(state.onClickB, \itemM -> {
+			eitherFn(
+				itemM,
+				\item -> {
+					fullName = getItemFullname(FBContentPath(item, ref makeTree(), item.isFolder, addSlash2pathEnd(either(item.dirPath, getValue(state.currentPathB))), item.name));
+					if (item.isFolder /*isFolder*/) {
+						nextDistinct(state.searchTextB, "");
+						nextDistinct(state.currentPathB, fullName);
+					} else if (isNone(state.maybeMultiselectB)) {
+						nextDistinct(state.selectedElementsB, [fullName]);
+						action();
+					}
+				},
+				\-> {
+					correctCurPath = addSlash2pathEnd(getValue(state.currentPathB));
+					curPath = if (strlen(correctCurPath) > 0) strLeft(correctCurPath, strlen(correctCurPath) - 1) else correctCurPath;
+					lastSlashIdx = strLastIndexOf(curPath, "/");
+					prevPath = if (lastSlashIdx > 0) strLeft(curPath, lastSlashIdx) else "";
+					name = if (endsWith(prevPath, ":")) prevPath + "/" else prevPath + "/";
 
-				next(state.currentPathB, name);
-			}
-		)
-	});
+					next(state.currentPathB, name);
+				}
+			)
+		});
+	};
 
 	dialogActions = map(buttons, \button -> {
 		switch(button) {
 			OpenExtFBB(func): {
-				action = \-> buttonFunc(
+				action = \-> buttonFunc(/*updateFilenameFn, onFileExistsFn, onNoFileFn, onFolderFn*/
 					\name -> name,
-					\filesNames -> func(map(filesNames, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))),
+					\filesNames -> func(map(filesNames, \f -> FbObject(pathProcessing(f), state.engine.path2url(f)))),
 					\filesNames -> println("Files or folders '" + strGlue(filesNames, "', '") + "' doesn't exists."),
-					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))); }
+					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(pathProcessing(f), state.engine.path2url(f)))); }
 				);
 
-				initClickB(action);
+				initClickB(10, action);
 
 				enabledB = make(false);
 				MConstruct(
 					[\-> subscribe(state.selectedElementsB, \sel -> {
-						if (folderSelection) {
-							checkIsDirectoryAll(fsAPI, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
-						} else if (sel == []) {
+						if (sel == []) {
 							nextDistinct(enabledB, false);
+						} else if (folderSelection) {
+							checkIsDirectoryAll(state.engine, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
 						} else {
-							checkIsFilesAll(fsAPI, sel, true, \resultFiles -> nextDistinct(enabledB, resultFiles));
+							checkIsFilesAll(state.engine, sel, true, \resultFiles -> nextDistinct(enabledB, resultFiles));
 						}
 					})],
 					MTextButton(_("OPEN") + if (folderSelection) (" " + _("FOLDER")) else "", action, [], [MEnabled(enabledB), MShortcut("Enter")])
 				)
 			};
 			SaveExtFBB(func): {
-				action = \-> buttonFunc(
+				action = \-> buttonFunc(/*updateFilenameFn, onFileExistsFn, onNoFileFn, onFolderFn*/
 					\name -> if (strContains(name, ".")) name
 						else if (length(normalExts) > 0) name + normalExts[0]
 						else name,
 					\filesNames -> {
 						withConfirmation2(
 							_("File with specified name has already exist.\nDo you want to rewrite it?"),
-							\-> func(map(filesNames, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))),
+							\-> func(map(filesNames, \f -> FbObject(pathProcessing(f), state.engine.path2url(f)))),
 							onCancelFn
 						)
 					},
@@ -654,20 +809,20 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 						closeMe();
 						func(
 							if (filesNames == []) [FbObject(pathProcessing(getValue(state.currentPathB) + getValue(fileNameB) + if (folderSelection) "/" else ""), "")]
-							else map(filesNames, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))
+							else map(filesNames, \f -> FbObject(pathProcessing(f), state.engine.path2url(f)))
 						);
 					},
-					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(pathProcessing(f), fsAPI.convert2realPath(f)))); }
+					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(pathProcessing(f), state.engine.path2url(f)))); }
 				);
 
-				initClickB(action);
+				initClickB(9, action);
 
 				enabledB = make(false);
 				MConstruct(
 					[\-> subscribe(fileNameB, \fileName -> {
 						sel = getValue(state.selectedElementsB);
 						if (folderSelection) {
-							checkIsDirectoryAll(fsAPI, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
+							checkIsDirectoryAll(state.engine, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
 						} else {
 							nextDistinct(enabledB, fileName != "");
 						}
@@ -679,11 +834,34 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				MTextButton(_("CANCEL"), \-> { closeMe(); func(); }, [], [MShortcut("Esc")])
 			};
 			CustomExtFBB(cap, func): {
-				MTextButton(cap |> toUpperCase, \-> func(getValue(state.currentPathB), getValue(state.selectedElementsB)), [], [])
+				action = \-> buttonFunc(/*updateFilenameFn, onFileExistsFn, onNoFileFn, onFolderFn*/
+					\name -> name,
+					\filesNames -> func(getValue(state.currentPathB), map(getValue(state.selectedElementsB), pathProcessing)),
+					\filesNames -> println("Files or folders '" + strGlue(filesNames, "', '") + "' doesn't exists."),
+					\foldersPaths -> { closeMe(); func(getValue(state.currentPathB), map(foldersPaths, \f -> pathProcessing(f))); }
+				);
+
+				initClickB(4, action);
+
+				enabledB = make(false);
+				MConstruct(
+					[\-> subscribe(state.selectedElementsB, \sel -> {
+						if (sel == []) {
+							nextDistinct(enabledB, false);
+						} else if (folderSelection) {
+							checkIsDirectoryAll(state.engine, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
+						} else {
+							checkIsFilesAll(state.engine, sel, true, \resultFiles -> nextDistinct(enabledB, resultFiles));
+						}
+					})],
+					MTextButton(toUpperCase(cap), action, [], [MEnabled(enabledB), MShortcut("Enter")])
+				)
 			};
 			CustomWithUpdateFBB(cap, func): {
+				initClickB(5, nop);
+
 				MTextButton(cap |> toUpperCase, \->
-					func(getValue(state.currentPathB), getValue(state.selectedElementsB), updateFilesView),
+					func(getValue(state.currentPathB), getValue(state.selectedElementsB), updateFilesViewWithSameScrollPosition),
 					[],
 					[]
 				)
@@ -691,7 +869,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		}
 	});
 
-	checkForClicable = \path -> {
+	checkForClickable = \path -> {
 		if (state.limitAccess && startsWith(state.startDir, path)) false
 		else true;
 	}
@@ -725,7 +903,19 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 									mapi(pathSplitted, \i, name -> {
 										path = strGlue(take(pathSplitted, i + 1), "/") + "/";
 										if (name == "") TEmpty()
-										else MTextButton(name, \-> { nextDistinct(state.searchTextB, ""); nextDistinct(state.currentPathB, path) }, [MBlack()], [MEnabled(const(checkForClicable(path)))])
+										else {
+											isClickable = checkForClickable(path);
+											MTooltip(
+												MTextButton(
+													name,
+													\-> { nextDistinct(state.searchTextB, ""); nextDistinct(state.currentPathB, path) },
+													[MBlack()],
+													[MEnabled(const(isClickable))]
+												),
+												MText(formatString(_("Top navigation restricted by the path: \"%1\""), [state.startDir]), []),
+												[MEnabled(const(!isClickable))]
+											)
+										}
 									}),
 									MCenterY(MText("/", [MCustomFont(20.0, "Roboto", 0.5)]))
 								)
@@ -756,7 +946,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					MIconButton("edit", \-> { nextDistinct(inPathInputB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [])
 			)
 		)
-		|> (\m -> MFrame(1.0, 1.0, [Stroke(gray)], m));
+		|> (\m -> MFrame(1.0, 4.0, [Stroke(gray)], m));
 	}
 
 	menuIconB = make(MIcon("view_module", [MIconSize(32.0)]));
@@ -811,7 +1001,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		}
 
 		MMenuSingleLine(
-			"Sort by " + itemProperty.name,
+			_("Sort by") + " " + itemProperty.name,
 			[
 				MPrimaryAction(MIcon("sort_by_alpha", [])),
 				MSecondaryAction(MMutable(sortIconB)),
@@ -820,23 +1010,143 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		)
 	}
 
-	topNavPanel = MCols([
+	getSingleEngine = \onEngine -> {
+		if (length(importEngines) == 1) onEngine(importEngines[0])
+		else {
+			mapAsync(
+				importEngines,
+				\e, ff, rj -> e.whoAmI(\name -> ff([Pair(e, name)]), \err -> ff([])),
+				\resArr -> {
+					importEngines2 = concatA(resArr);
+					if (importEngines2 != []) {
+						closeListB = make(false);
+						renderMDialog2(
+							manager,
+							closeListB,
+							[
+								MDialogTitle(_("Choose a files storage")),
+								MDialogActions([MTextButton(_("CANCEL"), \-> next(closeListB, true), [], [MShortcut("esc")])]),
+								MDialogUseFrame(),
+								MFocusOnPrevious(true)
+							],
+							MDynamicList(
+								const(map(importEngines2, \pair -> MSingleLine(
+									pair.second,
+									[MOnClick(\-> { onEngine(pair.first); next(closeListB, true); })]
+								))),
+								[MEmptyMessage(MText(_("No partitions available"), [MListBody()])), MListWidth(240., 360.)],
+								[TScrollEnabled(const(true)), MScrollCropByContent()]
+							),
+							m2t,
+							\t -> {
+								trender(
+									TAvailable(
+										TTranslate(fif(manager.iscript.showPanel, const(Point(0.0, 48.0)), const(zeroPoint)), t),
+										TIf(manager.iscript.showPanel, TSized(manager.iscript.available), TFillXY())
+									)
+									|> (\f ->
+										materialLogFn(
+											\ ->
+												TFixSize(
+													TLines2(
+														TFixed(36., 36.),
+														f
+													),
+													TFillXY()
+												),
+											MaterialWarning(),
+											\ -> f
+										)
+									),
+									manager.manager.renderStyle
+								)
+							}
+						);
+					}
+				},
+				println
+			);
+		}
+	}
+
+	onClickImportFiles = \-> {
+		getSingleEngine(\curImportEngine -> {
+			renderCustomMFileBrowser(
+				manager,
+				manager.focus,
+				_("Choose files for import"),
+				normalExts,
+				[
+					CancelExtFBB(nop),
+					CustomExtFBB(_("IMPORT"), \__, filePaths -> {
+						if (filePaths != []) {
+							curImportEngine.paths2originals(
+								filePaths,
+								\origFiles -> state.engine.copySpecial(
+									filtermapi(origFiles, \i, fM -> {
+										dir = takeBeforeLast(filePaths[i], "/", "") + "/";
+										filename = takeAfterLast(filePaths[i], "/", filePaths[i]);
+										maybeMap(fM, \f -> FBContentPath(f, ref makeTree(), false, dir, filename));
+									}),
+									getValue(state.currentPathB),
+									\itemCP, onContentDone, onContentError -> {
+										curImportEngine.getFileContent(
+											itemCP.dirPath + itemCP.filename,
+											true,
+											\c -> onContentDone(itemCP.filename, c),
+											onContentError
+										);
+									},
+									updateFilesViewWithSameScrollPosition,
+									println
+								),
+								println
+							);
+						}
+					})
+				],
+				[
+					FbEngine(curImportEngine),
+					FbLimitAccessToUpperFolder(false),
+					FbMultiSelect()
+				],
+				m2t
+			);
+		});
+	}
+
+	topNavPanel = MColsA([
 		MSelect(state.currentPathB, makePathView),
 		TFixed(8.0, 0.0),
 		topActions,
+		if (importEngines == []) MEmpty()
+		else {
+			MCols2A(
+				MIconButton(
+					"import_export",
+					onClickImportFiles,
+					[MIconButtonBorder(1.0), MIconSize(34.0)],
+					[
+						MEnabled(fselect(curDirAccessRightB, FLift(\ar -> ar.arCreate))),
+						MTooltipText(const(_("Show another partition to import files from it")))
+					]
+				),
+				TFixed(8.0, 0.0)
+			)
+		},
 		MSelect(inSearchB, \inSearch ->
 			if (inSearch) {
 				MFixSize(
-					MCols([
+					MColsA([
 						TFixed(5.0, 0.0),
-						MPad(0.0, -6.0, MTextInput(state.searchTextB, [], [MEnabled(const(true))])),
+						MPadA(0.0, -6.0, MTextInput(state.searchTextB, [MShowUnderline(false)], [MEnabled(const(true))])),
 						MIconButton("close", \-> {nextDistinct(state.searchTextB, ""); nextDistinct(inSearchB, false);}, [MIconButtonBorder(1.0), MIconSize(34.0), MOrange(500)], [])
 					]),
 					TFixed(200.0, 36.0)
 				)
-				|> (\m -> MFrame(1.0, 1.0, [Stroke(newOrangeColor)], m))
+				|> (\m -> MFrame(1.0, 4.0, [Stroke(newOrangeColor)], m))
 			} else {
-				MIconButton("search", \-> { nextDistinct(inSearchB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [])
+				MIconButton("search", \-> { nextDistinct(inSearchB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [MTooltipText(const("Search in filenames here and in sub-folders"))])
 			}
 		),
 		TFixed(8.0, 0.0),
@@ -846,7 +1156,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 				"linear_scale",
 				\-> reverseBehaviour(showSliderB),
 				[MIconButtonBorder(1.0), MIconSize(34.0), if (showSlider) MOrange(500) else MBlack()],
-				[]
+				[MTooltipText(const(_("Show/Hide View Scale Slider.")))]
 			)
 		)),
 		TFixed(8.0, 0.0),
@@ -890,11 +1200,15 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 		)
 	);
 
+	selectedFilesLockedUpdateR = ref false;
 	dialogContent = MDispose(concat(
 		map(getStateSubscribers(state, fileNameB, selectedFilesB, \cp -> {
 				iter(curPathOutArrB, \pB -> nextDistinct(pB, cp));
 				// Updating of the access rights for the current path
-				nextDistinct(curDirAccessRightB, fsAPI.getAccessRight(cp));
+				state.engine.getAccessRight(cp,
+					\ar -> nextDistinct(curDirAccessRightB, ar),
+					\err -> nextDistinct(curDirAccessRightB, PathAccessRight(false, false, false, false))
+				);
 			}),
 			\fn -> fn()
 		),
@@ -903,7 +1217,7 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			subscribe(fileNameB, \fileName -> {
 				sel = getValue(state.selectedElementsB);
 				if (isNone(state.maybeMultiselectB) && sel != [] && (sel[0] |> split2Name_Path |> firstOfPair) != fileName || sel == []) {
-					if (toUpperCase(strLeft(fileName, 4)) == "DB:/") {
+					if (toUpperCase(strLeft(fileName, 4)) == either(state.engine.myRootName(), "DB") + ":/") {
 						nextDistinct(state.selectedElementsB, [toUpperCase(strLeft(fileName, 4)) + strRight(fileName, 4)]);
 					} else {
 						nextDistinct(state.selectedElementsB, [getValue(state.currentPathB) + fileName]);
@@ -912,29 +1226,59 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			}),
 			subscribe(zoomValueB, \zoomValue -> nextDistinct(state.iconSizeB, 20.0 + zoomValue * 100.0)),
 			// Update content if the current path changed
-			subscribe(state.currentPathB, \__ -> updateFilesView()),
+			subscribe(state.currentPathB, \__ -> updateFilesViewWithZeroScrollPosition()),
 			// Update content if the "searchText" changed. Updating starts if the "searchText" has not changed during one sec.
 			subscribe2(state.searchTextB, \searchText -> {
 				// clear selection on search start
 				nextDistinct(state.selectedElementsB, []);
 
-				if (strlen(searchText) == 0) updateFilesView()
+				if (strlen(searchText) == 0) updateFilesViewWithZeroScrollPosition()
 				else timer(1000, \-> {
 					if (searchText == getValue(state.searchTextB))
-						next(dialogContentB, getSearchResultUI(state, searchText, normalExts, filterFn))
+						next(dialogContentB, getSearchResultUI(state, searchText, normalExts, filterFn, scrollPositionB))
 				})
 			}),
+			state.engine.subscribeOnUpdates(updateFilesViewWithSameScrollPosition),
+			fBidirectionalLink(
+				selectedFilesB,
+				fmerge(selectedFilesMany),
+				\selectedFiles -> {
+					if (!^selectedFilesLockedUpdateR) {
+						selectedFilesLockedUpdateR := true;
+						iter(selectedFilesMany, \fileB -> nextDistinct(fileB, selectedFiles));
+						selectedFilesLockedUpdateR := false;
+					}
+					nextDistinct(
+						fileNameB,
+						if (selectedFiles == []) ""
+						else if (strContains(selectedFiles[0], "/") && endsWith(selectedFiles[0], "/")) takeAfterLast(selectedFiles[0], "/", "")
+						else if (!strContains(selectedFiles[0], "/")) selectedFiles[0]
+						else ""
+					);
+				},
+				\selectedFilesArr -> {
+					if (!^selectedFilesLockedUpdateR) {
+						selectedFilesLockedUpdateR := true;
+						selectedFilesOld = getValue(selectedFilesB);
+						selectedFiles = uniq(concatA(filter(selectedFilesArr, \arr -> arr != selectedFilesOld)));
+						iter(selectedFilesMany, \fileB -> nextDistinct(fileB, selectedFiles));
+						selectedFilesLockedUpdateR := false;
+
+						nextDistinct(selectedFilesB, selectedFiles);
+					}
+				}
+			),
 			// If smb wants to change a current folder from out of the MFileBrowser (Not tested)
 			/*subscribe(curPathOutArrB, \cp -> {
 				next(state.selectedElementsB, []);
 				nextDistinct(state.currentPathB, cp);
 				// Updating of the access rights for the current path
-				next(curDirAccessRightB, fsAPI.getAccessRight(cp));
+				next(curDirAccessRightB, state.engine.getAccessRight(cp));
 			}),*/
 		]),
 		MMutable(dialogContentB)
 	)
-	|> (\m -> MFrame(1.0, 1.0, [Stroke(gray)], m));
+	|> (\m -> MFrame(1.0, 4.0, [Stroke(gray)], m));
 
 	dialogFileName = MFixSize(
 		MCols([
@@ -962,17 +1306,18 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 			TFixed(0.0, 8.0),
 			eitherMap(dropFnM,
 				\dropFn -> {
-					dropFn2 = eitherMap(
-						uploadMaxSizeM,
-						\size -> {
-							\files -> {
-								filterFilesByMaxSizeDialog(manager, files, size, true, m2t, \files2 -> {
-									if (files2 != []) dropFn.fn(files2);
-								});
-							};
-						},
-						dropFn.fn
-					);
+					dropFn2 = {
+						\files -> {
+							filterUploadedFilesForRestrictionsNative(files, Some(manager), m2t, dropFn.fn,
+								concatA([
+									eitherMap(uploadMaxSizeM, \size -> [FbFilterMaxSize(size)], []),
+									eitherMap(uploadMaxImageResolutionM, \res -> [FbFilterMaxResolution(res)], []),
+									eitherMap(uploadMaxVideoBitrateM, \bitrate -> [FbFilterMaxBitrate(bitrate)], []),
+									uploadStyle
+								])
+							);
+						}
+					}
 					// we accept only list of extensions without "*." and "." prefixes
 					eRegFilter = if (normalExts == []) "" else strGlue(map(normalExts, \e -> strReplace(strReplace(e, "*.", ""), ".", "")), "|");
 					MInteractive([TFileDrop(-1, eRegFilter, dropFn2)], dialogContent);
@@ -1017,100 +1362,648 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 // Utils
 //////////
 
-filterFilesByMaxSizeDialog(manager : MaterialManager, files : [native], maxSize : int, showDialog : bool, m2t : (Material, MFocusGroup) -> Tropic, onDone : ([native]) -> void) -> void {
-	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
-	getText = \isMany -> if (isMany) _("Sorry, your files is too large for the system.")
-		else _("Sorry, your file is too large for the system.");
+FbSourceData(
+	index : int,
+	name : string,
+	extension : string,
+	size : double,
+	getContentBase64 : (onContent : (string) -> void, onError : (string) -> void) -> void
+);
 
-	files2 = filter(files, \file -> fileSizeClient(file) <= i2d(maxSize));
-	showErrorDialog = \isMany, title, text -> {
-		if (showDialog) {
-			closeB = make(false);
-			renderMDialog2(
-				manager,
-				closeB,
-				[
-					MDialogTitle(title),
-					MDialogUseFrame(),
-					MDialogActions([MTextButton("OK", \-> { onDone(files2); next(closeB, true); }, [], [MShortcut("enter")])]),
-					MDialogScroll()
-				],
-				MLines(interleave(map([
-						getText(isMany),
-						formatString(_("Try to compress it or break it up into smaller pieces (max size is %1 Mb)."), [i2s(maxSize / 1024 / 1024)]),
-						"",
-						text
-					],
-					\t -> MText(t, [MSubheading()])), TFixed(8.0, 8.0)
-				)),
-				m2t,
-				\t -> {
-					trender(
-						TAvailable(
-							TTranslate(fif(manager.iscript.showPanel, const(Point(0.0, 48.0)), const(zeroPoint)), t),
-							TIf(manager.iscript.showPanel, TSized(manager.iscript.available), TFillXY())
-						)
-						|> (\f ->
-							materialLogFn(
-								\ ->
-									TFixSize(
-										TLines2(
-											TFixed(36., 36.),
-											f
-										),
-										TFillXY()
-									),
-								MaterialWarning(),
-								\ -> f
-							)
-						),
-						manager.manager.renderStyle
-					)
-				}
+FbResultReduce(data : FbSourceData, reduceFile : bool);
+
+filterUploadedFilesForRestrictionsBase64(
+	files : [FbSourceBase64],
+	managerM : Maybe<MaterialManager>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onDone : (/*toUpload*/ [FbSourceBase64], /*toReduce*/ [FbSourceBase64], /*largeSize*/ [FbSourceBase64]) -> void,
+	style : [FbFilterUploadDialog]
+) -> void {
+	data = mapi(files, \i, file -> {
+		ext1 = toLowerCase(getFileExt(file.filename));
+		ext = if (startsWith(ext1, ".")) strRight(ext1, 1) else ext1;
+
+		FbSourceData(
+			i,
+			rtrim2(file.filename, "." + ext),
+			ext,
+			// we don't reduce length on amount of '=' in the base64 string
+			i2d(strlen(file.contentBase64) * 3 / 4),
+			\onContent, __ -> onContent(file.contentBase64)
+		)
+	});
+
+	filterUploadedFilesForRestrictions(
+		data, managerM, m2t,
+		\res1, res2, res3 -> {
+			idx1 = map(res1, \r -> r.index);
+			idx2 = map(res2, \r -> r.index);
+			idx3 = map(res3, \r -> r.index);
+
+			onDone(
+				filtermapi(files, \i, f -> if (contains(idx1, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx2, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx3, i)) Some(f) else None())
 			);
+		},
+		style
+	);
+}
+
+filterUploadedFilesForRestrictionsNative(
+	files : [native],
+	managerM : Maybe<MaterialManager>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onDone : (/*toUpload*/ [native], /*toReduce*/ [native], /*largeSize*/ [native]) -> void,
+	style : [FbFilterUploadDialog]
+) -> void {
+	data = mapi(files, \i, file -> {
+		filename = fileNameOnly(fileNameClient(file));
+		ext1 = toLowerCase(getFileExt(fileNameClient(file)));
+		ext = if (startsWith(ext1, ".")) strRight(ext1, 1) else ext1;
+
+		FbSourceData(
+			i,
+			rtrim2(filename, "." + ext),
+			ext,
+			fileSizeClient(file),
+			\onContent, onError -> readFileEncClient(
+				file,
+				"data",
+				"Win1252",
+				\binaryContent -> onContent(encodeBase64(binaryContent)),
+				onError
+			)
+		)
+	});
+
+	filterUploadedFilesForRestrictions(
+		data, managerM, m2t,
+		\res1, res2, res3 -> {
+			idx1 = map(res1, \r -> r.index);
+			idx2 = map(res2, \r -> r.index);
+			idx3 = map(res3, \r -> r.index);
+
+			onDone(
+				filtermapi(files, \i, f -> if (contains(idx1, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx2, i)) Some(f) else None()),
+				filtermapi(files, \i, f -> if (contains(idx3, i)) Some(f) else None())
+			);
+		},
+		style
+	);
+}
+
+FbFilesBehaviour(
+	ask : [FbSourceData],
+	normal : [FbSourceData],
+	reduce : [FbSourceData],
+);
+FbFilesByType(
+	images : FbFilesBehaviour,
+	videos : FbFilesBehaviour,
+	others : FbFilesBehaviour
+);
+FbFileTestResult(
+	file : FbSourceData,
+	wh : WidthHeight,
+	bitrate : int,
+	flagB : DynamicBehaviour<bool>
+);
+filterUploadedFilesForRestrictions(
+	data : [FbSourceData],
+	managerM : Maybe<MaterialManager>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onDone : (normal : [FbSourceData], toReduce : [FbSourceData], large : [FbSourceData]) -> void,
+	style : [FbFilterUploadDialog]
+) -> void {
+	maxSizeM = maybeMap(tryExtractStruct(style, FbFilterMaxFileSize(0, FbReduceShowInDialog(true))), \s -> i2d(s.size));
+	maxResolutionM = maybeMap(tryExtractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(true))), \s -> s.size);
+	maxBitrateM = maybeMap(tryExtractStruct(style, FbFilterMaxVideoBitrate(0, FbReduceAskUser(true))), \s -> s.bitrate);
+
+	defImageAskUserM = maybeMap(tryExtractStruct(style, FbDefaultResolutionReduce(true)), \s -> s.reduce);
+	defVideoAskUserM = maybeMap(tryExtractStruct(style, FbDefaultBitrateReduce(true)), \s -> s.reduce);
+
+	defFileBehaviour = extractStruct(style, FbFilterMaxFileSize(0, FbReduceShowInDialog(true))).behaviour;
+	defImageBehaviour = extractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(either(defImageAskUserM, true)))).behaviour;
+	defVideoBehaviour = extractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(either(defVideoAskUserM, true)))).behaviour;
+
+	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
+	getText = \isMany -> if (isMany) _("The files are very large. We recommend you to reduce them.")
+		else _("The file is very large. We recommend you to reduce it.");
+
+	videoExtensions = ["mp4", "webm", "m4v"];
+	imageExtensions = ["swf", "png", "jpg", "jpeg", "bmp"];
+
+	fbFilesBehaviourEmpty = FbFilesBehaviour([], [], []);
+	fbFilesTypeEmpty = FbFilesByType(fbFilesBehaviourEmpty, fbFilesBehaviourEmpty, fbFilesBehaviourEmpty);
+
+	// Concatenating files to the corresponding group of Base
+	fbUpdateBehaviours = \base, ask, normal, reduce -> FbFilesBehaviour(
+		concat(base.ask, ask),
+		concat(base.normal, normal),
+		concat(base.reduce, reduce),
+	);
+
+	// Cacl the default behaviour
+	getDefBehaviourFn = \isViewOnM, isMaxSetM, defAskUserM, defBehaviour -> {
+		if (isSome(isViewOnM)) {
+			switch (defBehaviour) {
+				// do reducing
+				FbReduceDoAuto(): \base, file -> fbUpdateBehaviours(base, [], [], [file]);
+				// keep as is
+				FbReduceSkip(): \base, file -> fbUpdateBehaviours(base, [], [file], []);
+				// ask user what to do
+				FbReduceAskUser(defReduce): \base, file -> {
+					// if possible to check - ask user
+					if (isSome(isMaxSetM) && either(isMaxSetM, 0) > 0) fbUpdateBehaviours(base, [file], [], [])
+					// do reducing
+					else if (defReduce) fbUpdateBehaviours(base, [], [], [file])
+					// keep as is
+					else fbUpdateBehaviours(base, [], [file], []);
+				}
+			}
 		} else {
-			onDone(files2);
+			if (defAskUserM == Some(true) || defBehaviour == FbReduceDoAuto() || defBehaviour == FbReduceAskUser(true)) {
+				// do reducing
+				\base, file -> fbUpdateBehaviours(base, [], [], [file])
+			} else {
+				// keep as is
+				\base, file -> fbUpdateBehaviours(base, [], [file], [])
+			}
 		}
 	}
 
-	if (files2 == []) {
-		isMany = length(files) > 1;
-		title = getTitle(isMany);
-		text = if (isMany) formatString(_("Nothing were uploaded from %1 files."), [i2s(length(files))])
-			else formatString(_("The file was not uploaded."), [i2s(length(files))]);
-		showErrorDialog(isMany, title, text);
-	} else if (length(files) != length(files2)) {
-		countOrig = length(files);
-		countFiltered = length(files2);
-		countDiff = countOrig - countFiltered;
+	// Default behaviours for the files types depends on Style
+	imageDefFn = getDefBehaviourFn(managerM, maxResolutionM, defImageAskUserM, defImageBehaviour);
+	videoDefFn = getDefBehaviourFn(managerM, maxBitrateM, defVideoAskUserM, defVideoBehaviour);
+	otherDefFn = getDefBehaviourFn(None(), None(), None(), FbReduceSkip());
 
-		title = getTitle(countDiff > 1);
-		text = if (countOrig > 1) {
-			if (countFiltered > 1) formatString(_("Only %1 of %2 files were uploaded."), [i2s(countFiltered), i2s(countOrig)])
-			else formatString(_("Only 1 of %1 files was uploaded."), [i2s(countOrig)]);
+	splitOnFileTypesFn = \acc, d -> {
+		if (contains(imageExtensions, d.extension)) {
+			FbFilesByType(imageDefFn(acc.images, d), acc.videos, acc.others);
+		} else if (contains(videoExtensions, d.extension)) {
+			FbFilesByType(acc.images, videoDefFn(acc.videos, d), acc.others);
 		} else {
-			// It should be never reached
-			_("... and something went wrong. Nothing were uploaded.");
-		};
-		showErrorDialog(countDiff > 1, title, text);
-	} else {
-		onDone(files2);
+			FbFilesByType(acc.images, acc.videos, otherDefFn(acc.others, d));
+		}
 	}
+
+	// Spliting the data into several groups
+	dataSplittedR : ref FbFilesByType = ref eitherFn(
+		maxSizeM,
+		\maxSize -> fold(data, fbFilesTypeEmpty, \acc, d : FbSourceData -> {
+			if (d.size > maxSize) {
+				FbFilesByType(
+					acc.images, acc.videos,
+					if (defFileBehaviour.show) fbUpdateBehaviours(acc.others, [d], [], [])
+					else fbUpdateBehaviours(acc.others, [], [], [d])
+				)
+			} else {
+				splitOnFileTypesFn(acc, d)
+			}
+		}),
+		\-> fold(data, fbFilesTypeEmpty, \acc, d : FbSourceData -> splitOnFileTypesFn(acc, d))
+	);
+
+	showDefaultDialog = \manager, closeB, title, buttons, view -> {
+		renderMDialog2(
+			manager,
+			closeB,
+			concat(
+				if (title != "") [MDialogTitle(title)] else [],
+				[
+					MDialogUseFrame(),
+					MDialogActions(buttons),
+					MDialogScroll(),
+					MDialogScrollStyle([MScrollCropByContent(), TExpandOnHover(true)])
+				]
+			),
+			MAvailable(view, TFillWY(418.)),
+			m2t,
+			\t -> {
+				trender(
+					TAvailable(
+						TTranslate(fif(manager.iscript.showPanel, const(Point(0.0, 48.0)), const(zeroPoint)), t),
+						TIf(manager.iscript.showPanel, TSized(manager.iscript.available), TFillXY())
+					)
+					|> (\f ->
+						materialLogFn(
+							\ ->
+								TFixSize(
+									TLines2(
+										TFixed(36., 36.),
+										f
+									),
+									TFillXY()
+								),
+							MaterialWarning(),
+							\ -> f
+						)
+					),
+					manager.manager.renderStyle
+				)
+			}
+		);
+	}
+	
+	doStepDialog = \manager, dataSplittedRR : ref FbFilesByType, askImages, askVideos -> {
+		defaultImageReduce = either(defImageAskUserM, true);
+		defaultVideoReduce = either(defVideoAskUserM, true);
+
+		iter(askImages, \r -> next(r.flagB, defaultImageReduce));
+		iter(askVideos, \r -> next(r.flagB, defaultVideoReduce));
+
+		if ((askImages == [] && askVideos == [] && (^dataSplittedRR).others.ask == []) || isNone(managerM)) {
+			onDone(
+				// resultNormal
+				concatA([
+					(^dataSplittedRR).images.normal,
+					(^dataSplittedRR).videos.normal,
+					(^dataSplittedRR).others.normal,
+				]),
+				// resultReduce
+				concatA([
+					(^dataSplittedRR).images.reduce,
+					(^dataSplittedRR).videos.reduce
+				]),
+				// resultLarge
+				concat(
+					(^dataSplittedRR).others.ask,
+					(^dataSplittedRR).others.reduce
+				)
+			);
+		} else {
+			closeB = make(false);
+			isMany = (length((^dataSplittedRR).others.ask) + length(askImages) + length(askVideos)) > 1;
+			title = getTitle(isMany);
+
+			onCancelFn = \-> {
+				onDone([], [], []);
+				next(closeB, true);
+			}
+
+			onUploadFn = \-> {
+				resultImageReduceNormal = partition(askImages, \r -> getValue(r.flagB));
+				resultVideoReduceNormal = partition(askVideos, \r -> getValue(r.flagB));
+				onDone(
+					// resultNormal
+					concatA([
+						(^dataSplittedRR).images.normal,
+						(^dataSplittedRR).videos.normal,
+						(^dataSplittedRR).others.normal,
+						map(resultImageReduceNormal.second, \d -> d.file),
+						map(resultVideoReduceNormal.second, \d -> d.file)
+					]),
+					// resultReduce
+					concatA([
+						(^dataSplittedRR).images.reduce,
+						(^dataSplittedRR).videos.reduce,
+						map(resultImageReduceNormal.first, \d -> d.file),
+						map(resultVideoReduceNormal.first, \d -> d.file)
+					]),
+					// resultLarge
+					concat(
+						(^dataSplittedRR).others.ask,
+						(^dataSplittedRR).others.reduce
+					)
+				);
+
+				next(closeB, true);
+			}
+
+			buttons = [
+				MTextButton(_("CANCEL"), onCancelFn, [], [MShortcut("esc")]),
+				MTextButton(_("UPLOAD"), onUploadFn, [MButtonRaised()], [
+					MShortcut("enter"),
+					MEnabled(const(true))
+				])
+			];
+
+			getExpander = \text, viewHeaderAdd, viewBody -> {
+				MGroup2(
+					MExpander(
+						MBaselineCols([
+							TFixed(8., 0.),
+							MText(text, [getToolbarItemsColor(manager), MSubheading()]),
+							TFixed(8., 0.),
+							TFillX(),
+							viewHeaderAdd
+						]),
+						\-> MBorder(16., 8., 8., 8., viewBody),
+						make(false),
+						[MWidth(416.0), getToolbarItemsColor(manager), MExpanderBackgroundStyle([MFill(getPrimaryColor(manager))], [])]
+					),
+					MEmpty()
+				);
+			}
+
+			getFileRow = \text, viewLast -> {
+				MBaselineCols([
+					MGroup2(
+						MEllipsisText(text, [MShowTooltip(const(true))]),
+						TFillX()
+					),
+					TFixed(8., 0.),
+					viewLast
+				]);
+			}
+
+			getInfoTextView = \text, value -> [
+				MText(formatString(text, [value]), [getPrimaryColor(manager)]),
+				TFixed(0., 8.)
+			];
+
+			view = MLines(concatA([
+				[MText(getText(isMany), [MSubheading()]), MEmpty()],
+				concatA([
+					(^dataSplittedRR).images.normal,
+					(^dataSplittedRR).images.reduce,
+					(^dataSplittedRR).videos.normal,
+					(^dataSplittedRR).videos.reduce,
+					(^dataSplittedRR).others.normal,
+				]) |> (\resultNormal ->
+					if (resultNormal != []) [
+						getExpander(
+							_("Normal files"), MEmpty(),
+							MLines(interleave(
+								map(sortCustom(resultNormal, \d -> d.name, true), \r -> {
+									getFileRow(r.name + "." + r.extension, MText(_("to upload"), [MGrey(400)]));
+								}),
+								TFixed(0., 8.)
+							))
+						)
+					] else []
+				),
+				concat(
+					(^dataSplittedRR).others.ask,
+					(^dataSplittedRR).others.reduce,
+				) |> (\resultLarge -> 
+					if (resultLarge != []) [
+						getExpander(
+							_("Extra large files"), MEmpty(),
+							MLines(concat(
+								eitherMap(maxSizeM, \size -> getInfoTextView(_("Allowed max file size is %1 bytes;"), d2s(size)), []),
+								interleave(
+									map(sortCustom(resultLarge, \d -> d.name, true), \r -> {
+										getFileRow(r.name + "." + r.extension, MText(_("to skip"), [MGrey(400)]));
+									}),
+									TFixed(0., 8.)
+								)
+							))
+						)
+					] else []
+				),
+				if (askImages != []) [
+					getExpander(
+						_("High resolution images"),
+						{
+							mainSwitcherB = make(defaultImageReduce);
+							MConstruct(
+								[makeSubscribe(mainSwitcherB, \v -> iter(askImages, \r -> nextDistinct(r.flagB, v)))],
+								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText(_("Reduce"), _("As is"))])
+							)
+						},
+						MLines(concat(
+							eitherMap(maxResolutionM, \res -> getInfoTextView(_("Allowed max resolution for the image is %1 x %1 pixels;"), i2s(res)), []),
+							map(sortCustom(askImages, \d -> d.file.name, true), \r -> {
+								maxRes = max(r.wh.width, r.wh.height);
+								k = maxRes / max(eitherMap(maxResolutionM, i2d, maxRes), 1.);
+								text = formatString(_("Current image resolution is %1 x %2 pixels."), [i2s(trunc(r.wh.width)), i2s(trunc(r.wh.height))]) + "\n" +
+									formatString(_("On image reducing the resolution will become %1 x %2 pixels."), [i2s(trunc(r.wh.width / k)), i2s(trunc(r.wh.height / k))]);
+								getFileRow(
+									r.file.name + "." + r.file.extension,
+									MSwitchControl(r.flagB, [getPrimaryColor(manager), MOnOffText(_("Reduce"), _("As is")), MTooltipText(const(text))])
+								)
+							})
+						))
+					)
+				] else [],
+				if (askVideos != []) [
+					getExpander(
+						_("High resolution videos"),
+						{
+							mainSwitcherB = make(defaultVideoReduce);
+							MConstruct(
+								[makeSubscribe(mainSwitcherB, \v -> iter(askVideos, \r -> nextDistinct(r.flagB, v)))],
+								MSwitchControl(mainSwitcherB, [getToolbarItemsColor(manager), MOnOffText(_("Reduce"), _("As is"))])
+							)
+						},
+						MLines(concat(
+							eitherMap(maxBitrateM, \bitrate -> getInfoTextView(_("Allowed max video bitrate is %1 kbps;"), i2s(bitrate)), []),
+							map(sortCustom(askVideos, \d -> d.file.name, true), \r -> {
+								getFileRow(
+									r.file.name + "." + r.file.extension,
+									MSwitchControl(r.flagB, [getPrimaryColor(manager), MOnOffText(_("Reduce"), _("As is"))])
+								)
+							})
+						))
+					)
+				] else []
+			]) |> (\arr -> interleave(arr, TFixed(0., 8.))));
+
+			showDefaultDialog(manager, closeB, title, buttons, view);
+		}
+	}
+
+	eitherFn(
+		managerM,
+		// Check restriction using UI
+		\manager -> {
+			defaultResultFn = \-> doStepDialog(manager, dataSplittedR, [], []);
+
+			if ((isSome(maxResolutionM) && (^dataSplittedR).images.ask != []) || (isSome(maxBitrateM) && (^dataSplittedR).videos.ask != [])) {
+				closeDialogB = make(false);
+				imageDataMB = make(None());
+				videoDataMB = make(None());
+				buttons = [MTextButton(_("CANCEL"), \-> { next(closeDialogB, true); onDone([], [], []); }, [MButtonRaised()], [])];
+
+				view = MLinesA([
+					MText(_("Checking of files..."), [MTitle()]),
+					TFixed(0.0, 8.0),
+					MProgressBar([WidthHeight(240.0, 4.0), MProgressBackgroundColor(MGrey(400))]),
+					MSelect(imageDataMB, \imageDataM -> {
+						eitherMap(
+							imageDataM,
+							\imageData -> MPicture(imageData.first, [InspectRealSize(imageData.second), MPictureShowLoading(false), MPictureSize(const(WidthHeight(1., 1.)))]),
+							MEmpty()
+						)
+					}),
+					MSelect(videoDataMB, \videoDataM -> {
+						eitherMap(
+							videoDataM,
+							\videoData -> {
+								lengthB = make(0.);
+								MConstruct(
+									[makeSubscribe2(lengthB, videoData.second)],
+									MVideo(
+										videoData.first,
+										make(WidthHeight(1., 1.)),
+										[FVideoLength(lengthB), FVideoPlay(make(false)), FVideoVolume(make(0.))]
+									)
+								);
+							},
+							MEmpty()
+						)
+					})
+				]);
+
+				showDefaultDialog(manager, closeDialogB, "", buttons, view);
+
+				checkImagesFn = \iData, onChecked -> mapAsync(
+					iData,
+					\iDataRow, ff, __ -> {
+						gotWHR = ref true;
+						gotWH = \wh -> {
+							if (^gotWHR) {
+								gotWHR := false;
+								ff(FbFileTestResult(iDataRow, wh, 0, make(false)));
+							}
+						}
+
+						iDataRow.getContentBase64(
+							\base64Content -> {
+								next(
+									imageDataMB, 
+									Some(Pair(
+										"data:image/" + iDataRow.extension + ";base64," + base64Content,
+										gotWH
+									))
+								);
+							},
+							\__ -> gotWH(WidthHeight(0., 0.))
+						);
+
+						// If can't load image for a long time
+						timer(5000, \-> gotWH(WidthHeight(0., 0.)));
+					},
+					onChecked,
+					// Never should happen
+					\__ -> onChecked(map(iData, \iDataRow -> FbFileTestResult(iDataRow, WidthHeight(0., 0.), 0, make(false))))
+				);
+
+				checkVideosFn = \vData, onChecked -> mapAsync(
+					vData,
+					\vDataRow, ff, __ -> {
+						lengthDoneR = ref false;
+						gotLen = \len -> {
+							if (!(^lengthDoneR)) {
+								lengthDoneR := true;
+								len2 = if (len == 0.) 1. else len;
+								ff(FbFileTestResult(vDataRow, WidthHeight(0., 0.), trunc(vDataRow.size * 8. / len2 / 1024. * 0.95), make(false)));
+							}
+						}
+
+						vDataRow.getContentBase64(
+							\base64Content -> {
+								next(
+									videoDataMB, 
+									Some(Pair(
+										"data:" + extension2mimeString("." + vDataRow.extension) + ";base64," + base64Content,
+										gotLen
+									))
+								);
+							},
+							\__ -> gotLen(1.)
+						);
+
+						// If can't load image for a long time
+						timer(5000, \-> gotLen(1.));
+					},
+					onChecked,
+					// Never should happen
+					\__ -> onChecked(map(vData, \vDataRow -> FbFileTestResult(vDataRow, WidthHeight(0., 0.), 0, make(false))))
+				);
+
+				mapAsync(
+					[
+						Quadruple(maxResolutionM, checkImagesFn, \maxResolution, r -> max(trunc(r.wh.width), trunc(r.wh.height)) <= maxResolution, (^dataSplittedR).images.ask),
+						Quadruple(maxBitrateM, checkVideosFn, \maxBitrate, r -> r.bitrate <= maxBitrate, (^dataSplittedR).videos.ask)
+					],
+					\itemTriple, ff, __ -> {
+						unquadruple(itemTriple, \sM, extractSizeFn, isLargeFn, files -> {
+							eitherFn(
+								sM,
+								\maxValue -> {
+									extractSizeFn(files, \result -> {
+										ff(map(result, \r -> { next(r.flagB, isLargeFn(maxValue, r)); r }))
+									})
+								},
+								\-> ff(map(files, \r -> FbFileTestResult(r, WidthHeight(0., 0.), 0, make(false))))
+							);
+						});
+					},
+					\resultA /* [images, videos] */ -> {
+						fbResetAskBehaviours = \base -> FbFilesBehaviour([], base.normal, base.reduce);
+						getFiles = \files -> filtermap(files, \d -> if (getValue(d.flagB)) Some(d.file) else None());
+
+						(if (resultA == []) Pair([], [])
+						else if (length(resultA) == 1) Pair(resultA[1], [])
+						else Pair(resultA[0], resultA[1]))
+							|> (\result2 -> unpair(result2, \testedImages, testedVideos -> {
+								(^dataSplittedR)
+									|> (\files -> FbFilesByType(fbUpdateBehaviours(files.images, [], getFiles(testedImages), []), files.videos, files.others))
+									|> (\files -> FbFilesByType(files.images, fbUpdateBehaviours(files.videos, [], getFiles(testedVideos), []), files.others))
+									|> (\files -> FbFilesByType(fbResetAskBehaviours(files.images), fbResetAskBehaviours(files.videos), files.others))
+									|> (\files -> dataSplittedR := files);
+
+								next(closeDialogB, true);
+								doStepDialog(
+									manager, dataSplittedR,
+									// resultImageLarge
+									filter(testedImages, \d -> !getValue(d.flagB)),
+									// resultVideoLarge
+									filter(testedVideos, \d -> !getValue(d.flagB))
+								);
+							}));
+					},
+					// Never should happen
+					\__ -> {
+						next(closeDialogB, true);
+						defaultResultFn();
+					}
+				)
+			} else {
+				defaultResultFn();
+			}
+		},
+		// or apply default options
+		\-> {
+			onDone(
+				// upolad as is
+				concatA([
+					(^dataSplittedR).images.normal,
+					(^dataSplittedR).videos.normal,
+					(^dataSplittedR).others.normal
+				]),
+				// to reduce
+				concatA([
+					(^dataSplittedR).images.reduce,
+					(^dataSplittedR).videos.reduce
+				]),
+				// extra lagre files
+				concat(
+					(^dataSplittedR).others.ask,
+					(^dataSplittedR).others.reduce
+				),
+			);
+		}
+	);
 }
 
-checkIsDirectoryAll(api : FilesystemExtAPI, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
+checkIsDirectoryAll(engine : FilesystemAsyncEngine<?, ??>, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
 	if (paths == [] || !lastResult) {
 		callback(lastResult)
 	} else {
-		api.isDirectory(paths[0], \resultDir -> checkIsDirectoryAll(api, tail(paths), lastResult && resultDir, callback))
+		engine.isDirectory(paths[0], \resultDir -> checkIsDirectoryAll(engine, tail(paths), lastResult && resultDir, callback), nop1 /* onError */)
 	}
 }
 
-checkIsFilesAll(api : FilesystemExtAPI, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
+checkIsFilesAll(engine : FilesystemAsyncEngine<?, ??>, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
 	if (paths == [] || !lastResult) {
 		callback(lastResult)
 	} else {
-		api.fileExists(paths[0], \resultDir -> checkIsFilesAll(api, tail(paths), lastResult && resultDir, callback))
+		engine.fileExists(paths[0], \resultDir -> checkIsFilesAll(engine, tail(paths), lastResult && resultDir, callback), nop1 /* onError */)
 	}
 }
 
@@ -1136,7 +2029,7 @@ MDialogMenu(manager : MaterialManager, parent : MFocusGroup, items : [MDialogMen
 	itemSize = 70.;
 	pressedB = make(false);
 	inside1B = make(false);
-	insideArrB = generate(1, length(items), \__ -> make(false));
+	insideArrB = generate(0, length(items), \__ -> make(false));
 
 	count = (if (length(items) > 6) 6 else (length(items))) |> i2d;
 	if (count > 0.0) {

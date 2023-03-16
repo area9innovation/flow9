@@ -30,7 +30,9 @@ MComponent2T(
 	clickEnabled = fand(parent.ready, extractStruct(state, MClickEnabled(const(true))).enabled);
 	keysEnabled = extractStruct(state, MKeysEnabled(const(true))).enabled;
 	recordingEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
+	forceTooltipEnabled = extractStruct(state, MForceTooltipEnabled(const(false))).enabled;
 	keepFocus = contains(state, MKeepFocusOnClickOut());
+	importantFocus = contains(state, MImportantFocus());
 	onClick =
 		tryExtractStruct(state, MOnClick(nop))
 		|> (\cl ->
@@ -78,7 +80,7 @@ MComponent2T(
 		maybeApply(getParent, \p2 -> next(p2.parent, Some(p)));
 
 		addMaterialFocusId(manager, p, name, title, maybeMap(onClick, \c -> c.fn), down, rightDown, middleDown, if (hoverEnabled) hover else make(false),
-			focused, active, selected, enabled, fand(eitherMap(forceFocusEnabled, \ffe -> ffe.enabled, p.focusEnabled), focusEnabled), keepFocus,
+			focused, active, selected, enabled, fand(eitherMap(forceFocusEnabled, \ffe -> ffe.enabled, p.focusEnabled), focusEnabled), keepFocus, importantFocus,
 			concat(
 				extractStructMany(state, IScriptBehaviour("", make(flow(false)), ISMiscEvent())),
 				concatA([
@@ -105,9 +107,10 @@ MComponent2T(
 				keyboardDownEnabled = fmin3(mouseDownEnabled, keysEnabled, p.keysEnabled);
 				maybeApply(mGetFocus, \getFoc -> getFoc.getFn(focus));
 
-				(if (mouseDownEnabled != const(false)) {
+				(if (mouseDownEnabled != const(false) || forceTooltipEnabled != const(false)) {
 					mCursorShape = extractStruct(state, MCursorShape(fif(clickEnabled, const(FingerCursor()), const(DefaultCursor())))).shape;
 					tooltipText = tryExtractStruct(state, MTooltipText(const("")));
+					tooltipCustomId = maybeMap(tooltipText, \__ -> makeTropicTag(manager));
 
 					fn(focus)
 					|> (\f ->
@@ -136,24 +139,31 @@ MComponent2T(
 							])
 						)
 					)
-					|> (\f ->
-						MComponent2TMouseDown(manager, state, focusClicks.mouseOnDownState, focus, point, mouseDownEnabled, keyboardDownEnabled, f)
+					|> (\f -> {
+						state2 = eitherMap(tooltipCustomId, \tcid ->
+							arrayPush(state, FAccessAttribute("aria-describedby", fif(focus.focused, const(makeTooltipId(tcid)), const("")))),
+							state
+						);
+						MComponent2TMouseDown(manager, state2, focusClicks.mouseOnDownState, focus, point, mouseDownEnabled, keyboardDownEnabled, f)
+					}
 					)
 					|> (\f : Tropic ->
 						eitherMap(
 							tooltipText,
-							\tt ->
+							\tt -> {
 								MTooltip2T(
 									manager,
 									p,
 									MTooltip(
 										f,
 										TSelect(tt.text, \t -> MText2T(p, t, [sameLightMColor(p), MTooltipDesktop()])),
-										[MEnabled(fand(focus.enabled, fneq(tt.text, ""))), MTooltipExternalFocused(focus.focused)]
+										[MEnabled(fand(fOr(focus.enabled, forceTooltipEnabled), fneq(tt.text, ""))), MTooltipExternalFocused(focus.focused)]
 										|> (\st -> arrayPushMaybe(st, tryExtractStruct(state, MTooltipAlignment(MBottom()))))
+										|> (\st -> arrayPushMaybe(st, maybeMap(tooltipCustomId, \tcid -> MTooltipCustomId(tcid))))
 									),
 									m2t
-								),
+								);
+							},
 							f
 						)
 					)
@@ -539,21 +549,22 @@ MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], 
 		|> (\properties ->
 			eitherMap(
 				tryExtractStruct(state, MSelected(make(false))),
-				\sel ->
+				\sel -> {
+					selectionEnabled = extractStruct(state, MSelectionEnabled(const(true))).enabled;
 					concat(
 						properties,
 						[
 							AccessRole("button"),
-							FAccessAttribute("aria-pressed", fselect(sel.selected, FLift(b2s)))
+							FAccessAttribute("aria-pressed", fif(selectionEnabled, fselect(sel.selected, FLift(b2s)), const("")))
 						]
-					),
+					)
+				},
 				properties
 			)
 		);
 	onDown = \d -> {
 		if (d && (getValue(focus.focused) || ^keepFocusOnDown) && isNone(manager.downInsideFocus)) {
-			manager.downInsideFocus ::= Some(focus);
-			deferred(\ -> manager.downInsideFocus ::= None());
+			setDownInsideFocus(manager, focus);
 		}
 	};
 

@@ -3,130 +3,115 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/java/fi2java_compile;
 
 export {
-	generateJavaMain(gctx : JavaGlobalContext, cfg : FiJavaConfig) -> void;
+	generateJavaMainClass(gctx : JavaGlobalContext) -> void;
 	generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void;
 	generateJavaStructs(gctx : JavaGlobalContext) -> void;
+	generateJavaWrappers(gctx : JavaGlobalContext) -> void;
 }
 
-generateJavaMain(gctx : JavaGlobalContext, cfg : FiJavaConfig) -> void {
+generateJavaMainClass(gctx : JavaGlobalContext) -> void {
 	main_file_text = gctx.header_generator(timestamp());
 	pushstr = \s -> rlistPush(main_file_text, s);
 	config = gctx.program.config;
-	//main_class = fileNameOnly(config.flowfile);
 	if (config.verbose > 0) {
-		fcPrintln("Generating the main java module '" + cfg.mainClassName + "'", config.threadId);
+		fcPrintln("Generating the main java module '" + gctx.config.mainClassName + "'", config.threadId);
 	}
 
-	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class " + cfg.mainClassName + " extends FlowRuntime {\n");
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class " + gctx.config.mainClassName + " extends FlowRuntime {\n");
 
-	// Module initializers
-	pushstr("\n\t// Modules\n");
-	iter(gctx.csm_list, \csm ->
-		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + " = new Module_" + csm.id + "(this);\n")
-	);
-	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-		fcPrintln("Main modules: " + i2s(length(gctx.csm_list)), config.threadId);
-	}
+	// Init hosts
+	generateJavaMainInitHosts(gctx, pushstr);
 
-	// Constructor
-	pushstr("\tpublic " + cfg.mainClassName  + "(String[] args) {\n");
-	pushstr("\t\tsuper(Structs.structList(), args);\n");
+	// Init modules
+	generateJavaMainInitModules(gctx, pushstr);
+
+	// General init function
+	pushstr("\tprivate static final void init() {\n");
+	pushstr("\t\tStructs.init();\n");
+	pushstr("\t\tinit_hosts();\n");
+	pushstr("\t\tinit_modules();\n");
 	pushstr("\t}\n");
 
-	wrappers = list2array(^(gctx.wrapper_code));
-	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-		fcPrintln(cfg.mainClassName + " wrappers: " + i2s(length(wrappers)), config.threadId);
-	}
-	pushstr("\n\t// Wrappers\n");
-	pushstr(concatStrings(wrappers));
+	generateJavaMainFunction(gctx, pushstr);
 
-	native_wrappers = list2array(^(gctx.native_wrapper_code));
-	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-		fcPrintln(cfg.mainClassName + " native wrappers: " + i2s(length(native_wrappers)), config.threadId);
-	}
-	pushstr("\n\t// Native Wrappers\n");
-	pushstr(concatStrings(native_wrappers));
+	main_fname = pathCombine(gctx.package_path, gctx.config.mainClassName + ".java");
+	writeJavaSource(gctx, main_fname, javaList2String(main_file_text, "}\n"));
+}
 
-	// init function
-	pushstr("\n\t// Init function\n");
-	host_inits = list2array(foldTree(gctx.uses_host, makeList(), \host, v, acc -> {
-		pushstr("\t" + host + " h_" + host + ";\n");
-		Cons("\t\th_" + host + " = super.getNativeHost(" + host + ".class);\n", acc);
+generateJavaMainInitHosts(gctx : JavaGlobalContext, pushstr : (string) -> void) -> void {
+	host_inits = list2array(foldSet(gctx.uses_host, makeList(), \acc, host -> {
+		if (containsKeyTree(gctx.runtime.natives, host)) {
+			Cons("\t\tFlowRuntime.registerNativeHost(" + host + ".class);\n", acc);
+		} else {
+			acc;
+		}
 	}));
-
-	pushstr("\n\t// Init hosts\n");
-	if (length(host_inits) < 32) {
-		pushstr("\tfinal private void init_hosts() {\n");
+	pushstr("\n\t// Init hosts: " + i2s(length(host_inits)) + "\n");
+	if (length(host_inits) < 512) {
+		pushstr("\tprivate static final void init_hosts() {\n");
 		pushstr(concatStrings(host_inits));
 		pushstr("\t}\n");
 	} else {
-		host_init_chuncks = splitByNumber(host_inits, 32);
+		host_init_chuncks = splitByNumber(host_inits, 512);
 		iteri(host_init_chuncks, \i, chunk -> {
-			pushstr("\tfinal private void init_hosts_" + i2s(i) + "() {\n");
+			pushstr("\tprivate static final void init_hosts_" + i2s(i) + "() {\n");
 			pushstr(concatStrings(chunk));
 			pushstr("\t}\n");
 		});
-		pushstr("\tfinal private void init_hosts() {\n");
+		pushstr("\tprivate static final void init_hosts() {\n");
 		iteri(host_init_chuncks, \i, __ ->
 			pushstr("\t\tinit_hosts_" + i2s(i) + "();\n")
 		);
 		pushstr("\t}\n");
 	}
+}
 
-	pushstr("\n\t// Init code\n");
+generateJavaMainInitModules(gctx : JavaGlobalContext, pushstr : (string) -> void) -> void {
+	config = gctx.program.config;
 	init_code = list2array(^(gctx.init_code));
-	if (length(init_code) < 32) {
-		pushstr("\tfinal private void init_code() {\n");
+	pushstr("\n\t// Init modules: " + i2s(length(init_code)) + "\n");
+	if (length(init_code) < 512) {
+		pushstr("\tprivate static final void init_modules() {\n");
 		pushstr(concatStrings(init_code));
 		pushstr("\t}\n");
 	} else {
-		init_code_chuncks = splitByNumber(init_code, 32);
+		init_code_chuncks = splitByNumber(init_code, 512);
 		iteri(init_code_chuncks, \i, chunk -> {
-			pushstr("\tfinal private void init_code_" + i2s(i) + "() {\n");
+			pushstr("\tprivate static final void init_modules_" + i2s(i) + "() {\n");
 			pushstr(concatStrings(chunk));
 			pushstr("\t}\n");
 		});
-		pushstr("\tfinal private void init_code() {\n");
+		pushstr("\tprivate static final void init_modules() {\n");
 		iteri(init_code_chuncks, \i, __ ->
-			pushstr("\t\tinit_code_" + i2s(i) + "();\n")
+			pushstr("\t\tinit_modules_" + i2s(i) + "();\n")
 		);
 		pushstr("\t}\n");
 		if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
-			fcPrintln(cfg.mainClassName + " init_code chunks: " + i2s(length(init_code_chuncks)), config.threadId);
+			fcPrintln(gctx.config.mainClassName + " init_modules chunks: " + i2s(length(init_code_chuncks)), config.threadId);
 		}
 	}
-
-	pushstr("\tfinal private void init() {\n");
-	pushstr("\t\tinit_hosts();\n");
-	pushstr("\t\tinit_code();\n");
-	pushstr("\t}\n");
-
-	if (isEmptySet(cfg.javaLibrary)) {
+}
+generateJavaMainFunction(gctx : JavaGlobalContext, pushstr : (string) -> void) -> void {
+	if (isEmptySet(gctx.config.javaLibrary)) {
 		// main function
-		pushstr("\tprotected void main() {\n");
-		pushstr("\t\tinit();\n");
-
 		switch (lookupTree(gctx.globalFuncs, "main")) {
-			Some(finfo):
-				pushstr("\t\tm_" + finfo.csmodule.id + "." + finfo.name + "();\n");
-			None():
+			Some(main): {
+				// program entry point
+				pushstr("\tpublic static void main(String[] args) {\n");
+				// init program args
+				pushstr("\t\tFlowRuntime.program_args = args;\n");
+				// init all internal stuff
+				pushstr("\t\t" + gctx.config.mainClassName + ".init();\n");
+				// run a compiled main function
+				pushstr("\t\t" + "Module_" + main.csmodule.id + "." + main.name + "();\n");
+				pushstr("\t}\n");
+			}
+			None(): {
 				fail0("No main function");
+			}
 		}
-		pushstr("\t}\n");
-
-		// program entry point
-		pushstr("\tpublic static void main(String[] args) {\n");
-		pushstr("\t\t" + cfg.mainClassName + " runner = new " + cfg.mainClassName + "(args);\n");
-		pushstr("\t\trunner.start(null);\n");
-		pushstr("\t}\n");
 	} else {
-		// main function - does only initialization. 
-		// Overrides abstract FlowRuntime method.
-		pushstr("\tprotected void main() {\n");
-		pushstr("\t\tinit();\n");
-		pushstr("\t}\n");
-
-		iterSet(cfg.javaLibrary, \name ->
+		iterSet(gctx.config.javaLibrary, \name ->
 			switch (lookupTree(gctx.globalFuncs, name)) {
 				Some(finfo): pushstr(javaInterfaceWrapper(name, gctx, finfo));
 				None(): fail0("No function " + name);
@@ -134,15 +119,13 @@ generateJavaMain(gctx : JavaGlobalContext, cfg : FiJavaConfig) -> void {
 		);
 
 		// program initialization
-		pushstr("\tprivate static " + cfg.mainClassName + " runner = null;\n\n");
 		pushstr("\tpublic static void init(String[] args) {\n");
-		pushstr("\t\trunner = new " + cfg.mainClassName + "(args);\n");
-		pushstr("\t\trunner.start(null);\n");
+		// init program args
+		pushstr("\t\tFlowRuntime.program_args = args;\n");
+		// init all internal stuff
+		pushstr("\t\t" + gctx.config.mainClassName + ".init();\n");
 		pushstr("\t}\n");
 	}
-
-	main_fname = pathCombine(gctx.package_path, cfg.mainClassName + ".java");
-	writeJavaSource(gctx, main_fname, javaList2String(main_file_text, "}\n"));
 }
 
 javaInterfaceWrapper(name : string, gctx : JavaGlobalContext, finfo : JavaGlobalInfo) -> string {
@@ -152,7 +135,7 @@ javaInterfaceWrapper(name : string, gctx : JavaGlobalContext, finfo : JavaGlobal
 			arg_uses = mapi(arg_types, \j, t -> "a" + i2s(j));
 			ret_typestr = type2javaObjType(gctx, ret_type, false, false, false);
 			"\tstatic public " + ret_typestr + " " + name + "(" + strGlue(arg_names, ", ") + ") {\n" +
-			"\t\treturn runner.m_" + finfo.csmodule.id + "." + finfo.name + "(" + strGlue(arg_uses, ", ") + ")" + ";\n" +
+			"\t\treturn " + gctx.config.mainClassName + ".m_" + finfo.csmodule.id + "." + finfo.name + "(" + strGlue(arg_uses, ", ") + ")" + ";\n" +
 			"\t}\n";
 		}
 		default: fail0(name + "must be a function");
@@ -188,38 +171,37 @@ generateJavaStructs(gctx : JavaGlobalContext) -> void {
 
 	struct_list = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
 		if (length(sdata.fields) == 0) {
-			arrayPush(acc, "\t\t\tSingletonStructs.str_" + sname);
+			arrayPush(acc, "\t\tSingletonStructs.str_" + sname);
 		} else {
-			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
+			arrayPush(acc, "\t\tnew Struct_" + sdata.javaName + "()");
 		}
 	});
 	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
 		fcPrintln("Structs: " + i2s(length(struct_list)), config.threadId);
 	}
-	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Structs {\n");
-	pushstr("\n\t// Structs array\n");
+	pushstr("import java.util.concurrent.ConcurrentHashMap;\n\n");
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Structs {\n\n");
+	pushstr("\t// Structs array\n");
 	if (length(struct_list) < 512) {
-		// All structs array
 		pushstr("\tstatic final private Struct[] struct_list = {\n");
 		pushstr(strGlue(struct_list, ",\n") + "\n");
 		pushstr("\t};\n");
-
-		pushstr("\tstatic final Struct[] structList() {\n");
-		pushstr("\t\treturn struct_list;\n");
-		pushstr("\t}\n");
+		pushstr("\tpublic static final void init() {\n");
+		pushstr("\t\tFlowRuntime.struct_prototypes = struct_list;\n");
 	} else {
+		pushstr("\tpublic static final void init() {\n");
 		struct_list_chunks = splitByNumber(struct_list, 512);
-		// All structs array
 		iteri(struct_list_chunks, \i, chunk -> generateJavaStructsChunk(gctx, chunk, i));
-		pushstr("\tstatic final Struct[] structList() {\n");
-		pushstr("\t\tStruct[] structs = new Struct[" + i2s(length(struct_list)) + "];\n");
+		pushstr("\t\tFlowRuntime.struct_prototypes = new Struct[" + i2s(length(struct_list)) + "];\n");
 		pushstr("\t\tint k = 0;\n");
 		iteri(struct_list_chunks, \i, __ ->
-			pushstr("\t\tfor (Struct s : Structs_" + i2s(i) +  ".structList()) structs[k++] = s;\n")
+			pushstr("\t\tfor (Struct s : Structs_" + i2s(i) +  ".structList()) FlowRuntime.struct_prototypes[k++] = s;\n")
 		);
-		pushstr("\t\treturn structs;\n");
-		pushstr("\t}\n");
 	}
+	pushstr("\t\tfor (int i = 0; i < FlowRuntime.struct_prototypes.length; i++) {\n");
+	pushstr("\t\t\tFlowRuntime.struct_ids.put(FlowRuntime.struct_prototypes[i].getTypeName(), i);\n");
+	pushstr("\t\t}\n");
+	pushstr("\t}\n");
 	fname = pathCombine(gctx.package_path, "Structs.java");
 	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
 }
@@ -236,5 +218,20 @@ generateJavaStructsChunk(gctx : JavaGlobalContext, chunk : [string], i : int) ->
 	pushstr("\t\treturn struct_list;\n");
 	pushstr("\t}\n");
 	fname = pathCombine(gctx.package_path, "Structs_" + i2s(i) + ".java");
+	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
+}
+
+generateJavaWrappers(gctx : JavaGlobalContext) -> void {
+	code = gctx.header_generator(timestamp());
+	pushstr = \s -> rlistPush(code, s);
+	config = gctx.program.config;
+	wrappers = list2array(^(gctx.wrapper_code));
+	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
+		fcPrintln("Wrappers: " + i2s(length(wrappers)), config.threadId);
+	}
+	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class Wrappers {\n\n");
+	pushstr("\t// Functional wrappers for methods: " + i2s(length(wrappers)) + "\n");
+	iter(wrappers, \wr -> pushstr("\tstatic " + wr.type + " " + wr.name + " = " + wr.code + ";\n"));
+	fname = pathCombine(gctx.package_path, "Wrappers.java");
 	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
 }

@@ -22,6 +22,8 @@ import js.html.Uint8Array;
 class HttpSupport {
 	static var TimeoutInterval = 1200000;	// twenty minutes in ms
 
+	static var defaultResponseEncoding = null;
+
 	#if (js && !flow_nodejs)
 	private static var XMLHttpRequestOverriden : Bool = false;
 	private static var CORSCredentialsEnabled = true;
@@ -121,7 +123,8 @@ class HttpSupport {
 	#end
 
 	public static function httpRequest(url : String, post : Bool, headers : Array<Array<String>>,
-		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void, ?request : Dynamic = null) : Void {
+		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void,
+		onStatusFn : Int -> Void, ?request : Dynamic = null) : Void {
 		#if flow_nodejs
 
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url, request);
@@ -203,21 +206,30 @@ class HttpSupport {
 
 		var handled = false;	// Whether the request has already completed, failed or timed out
 
+#if js
+		var http = new haxe.Http(url);
 		// Set up timeout
 		var checkTimeout = function() {
 			if (!handled) {
 				handled = true;
 				onErrorFn(url + ": request timed out");
+				http.cancel();
 			}
 		}
 		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
-
+		var stopTimer = function () {
+			timeoutInspector.stop();
+		}
+#else
 		var http = new haxe.Http(url);
+		http.cnxTimeout = TimeoutInterval / 1000.0 // ms to seconds;
+		var stopTimer = function () {}
+#end
 
 		http.onData = function (res: String) {
 			if (!handled) {
 				handled = true;
-				timeoutInspector.stop();
+				stopTimer();
 				try {
 					onDataFn(res);
 				} catch (e : Dynamic) {
@@ -234,7 +246,7 @@ class HttpSupport {
 		http.onError = function (err: String) {
 			if (!handled) {
 				handled = true;
-				timeoutInspector.stop();
+				stopTimer();
 				try {
 					onErrorFn(err);
 				} catch (e : Dynamic) {
@@ -287,7 +299,11 @@ class HttpSupport {
 	}
 
 	public static function httpCustomRequestNative(url : String, method : String, headers : Array<Array<String>>,
-		params: Array<Array<String>>, data : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool, ?request : Dynamic = null) : Void {
+		params: Array<Array<String>>, data : String, responseEncoding : String, onResponseFn : Int -> String -> Array<Array<String>> -> Void, async : Bool, ?request : Dynamic = null) : Void {
+
+		if (defaultResponseEncoding != null && responseEncoding == "auto") {
+			responseEncoding = defaultResponseEncoding;
+		}
 
 		if ((method == 'DELETE' || method == 'PATCH' || method == "PUT") && !Lambda.exists(headers, function(h) return h[0] == "If-Match")) {
 			headers.push(["If-Match", "*"]);
@@ -336,7 +352,7 @@ class HttpSupport {
 
 			if (response.statusCode == 301) {
 				// We have to redirect to the correct Location url
-				httpCustomRequestNative(untyped response.headers.location, method, headers, params, data, onResponseFn, async, request);
+				httpCustomRequestNative(untyped response.headers.location, method, headers, params, data, responseEncoding, onResponseFn, async, request);
 
 				return;
 			}
@@ -371,20 +387,21 @@ class HttpSupport {
 		#else
 		var handled = false;	// Whether the request has already completed, failed or timed out
 
-		// Set up timeout
-		var checkTimeout = function() {
-			if (!handled) {
-				handled = true;
-				onResponseFn(408, url + ": request timed out", []);
-			}
-		}
-		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
-
 		#if (js && !nwjs)
 		var http = new HttpCustom(url, method);
 		#else
 		var http = new HttpCustom(url);
 		#end
+
+		// Set up timeout
+		var checkTimeout = function() {
+			if (!handled) {
+				handled = true;
+				onResponseFn(408, url + ": request timed out", []);
+				http.cancel();
+			}
+		}
+		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
 
 		if (data != "") {
 			http.setPostData(data);
@@ -502,9 +519,10 @@ class HttpSupport {
 
 		#if (js && !nwjs)
 		http.async = async;
-		#end
-
+		http.requestExt(method == "POST", responseEncoding);
+		#else
 		http.request(method == "POST");
+		#end
 		#end
 	}
 
@@ -670,6 +688,25 @@ class HttpSupport {
 	public static function sendHttpRequestWithAttachments(url : String, headers : Array<Array<String>>, params : Array<Array<String>>,
 			attachments : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void) : Void {
 		// NOP
+	}
+
+	public static function setDefaultResponseEncoding (responseEncoding : String) : Void {
+		defaultResponseEncoding = responseEncoding;
+
+		var encodingName = "";
+		if (responseEncoding == "auto") {
+			encodingName = "auto";
+		} else if (responseEncoding == "utf8_js") {
+			encodingName = "utf8 with surrogate pairs";
+		} else if (responseEncoding == "utf8") {
+			encodingName = "utf8 without surrogate pairs";
+		} else if (responseEncoding == "byte") {
+			encodingName = "raw byte";
+		} else {
+			encodingName = "auto";
+		}
+
+		Native.println("Default response encoding switched to '" + encodingName + "'");
 	}
 }
 

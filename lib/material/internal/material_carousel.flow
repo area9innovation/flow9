@@ -23,7 +23,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 						[
 							makeSubscribe(state.width, \w -> updateTxForWidth(w, state))
 						],
-						TAttachAvailableWidth(TCropWidth(f, state.width), state.width)
+						TAttachAvailableWidth(TCropWidth2(f, state.width), state.width)
 					);
 				} else {
 					awh = makeWH();
@@ -211,7 +211,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 						TCopySize(
 							f,
 							\tr -> {
-								defTranslation = const(Point(0., -state.bottomMargin));
+								defTranslation = fselect(state.bottomPanelHeight, FLift(\bph -> Point(0., -bph)));
 
 								TBaselineColsDir(buttons, p.rtl)
 								|> TBorderLeftRight(8.)
@@ -291,8 +291,10 @@ MCarouselState(
 	enableChevrons : bool,
 	disableSideChevrons : bool,
 	tuneChevrons : Maybe<MCarouselChevronTunes>,
+	chevronsStyle : Maybe<MCarouselChevronStyle>,
 	progress : Maybe<MCarouselProgressState>,
-	bottomMargin : double,
+	wrapBottomTitle : (Tropic) -> Tropic,
+	bottomPanelHeight : Transform<double>,
 	buttonsColor : MThemeColor,
 	iconSize : double,
 	heightByContent : bool,
@@ -302,7 +304,8 @@ MCarouselState(
 MCarouselProgressState(
 	bottom : bool,
 	activeColor : MThemeColor,
-	inactiveColor : MThemeColor
+	inactiveColor : MThemeColor,
+	spacing : double
 );
 
 makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
@@ -311,6 +314,7 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	endlessScroll = contains(m.style, MLoopScroll());
 	contentSideOffset = extractStruct(m.style, MCarouselSidesOffset(0.)).sideOffset;
 	tuneChevrons = tryExtractStruct(m.style, MCarouselChevronTunes(true, 0.0));
+	chevronsStyle = tryExtractStruct(m.style, MCarouselChevronStyle([]));
 
 	// Group carousel items by N elements
 	itemsSpan = max(extractStruct(m.style, MCarouselItemSpan(1)).span, 1);
@@ -333,8 +337,8 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	tx = customPanning.shiftX;
 	down = customPanning.mousedown;
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
-	activeIdx = m.activeIdx;
-	activeI = make(0);
+	activeI = m.activeIdx;
+	activeIdx = cloneBehaviour(activeI);
 	fs = make(false);
 
 	hasPrev = make(false);
@@ -373,17 +377,14 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 				f2(nop1)
 			)
 		);
-	hasTitle = exists(m.contents, \c -> extractStruct(c.style, MCarouselText("", "")).title != "");
-	hasSubtitle = exists(m.contents, \c -> extractStruct(c.style, MCarouselText("", "")).subtitle != "");
-	bottomMargin =
-		if (hasTitle && hasSubtitle)
-			64.
-		else if (hasTitle)
-			50.
-		else if (hasSubtitle)
-			46.
-		else
-			0.;
+	bottomTitleHeights = make([]);
+	wrapBottomTitle = \m2 -> {
+		hgt = make(0.);
+		dynArrayPush(bottomTitleHeights, hgt);
+		TAttachHeight(m2, hgt)
+	}
+	bottomPanelHeight = fsubselect(bottomTitleHeights, FLift(\bth -> fmaxA(bth, 0.)));
+
 	buttonsColor = extractStruct(m.style, MCarouselButtonsColor(MWhite())).color;
 
 	progress =
@@ -393,7 +394,8 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 				MCarouselProgressState(
 					contains(m.style, MProgressAtBottom()),
 					progressColors.active,
-					progressColors.inactive
+					progressColors.inactive,
+					extractStruct(m.style, MCarouselProgressSpacing(2.0)).spacing
 				)
 			)
 		} else None();
@@ -509,8 +511,10 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		enableChevrons,
 		disableSideChevrons,
 		tuneChevrons,
+		chevronsStyle,
 		progress,
-		bottomMargin,
+		wrapBottomTitle,
+		bottomPanelHeight,
 		buttonsColor,
 		iconSize,
 		heightByContent,
@@ -539,7 +543,7 @@ MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, content : Tro
 							)
 						)
 					)
-					|> (\f -> TBorder(2., 16., 2., 16., f))
+					|> (\f -> TBorder(pr.spacing, 16., pr.spacing, 16., f))
 				)
 				|> TCols
 				|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f)
@@ -568,7 +572,11 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 			MIconButton(
 				if (isLeft) "chevron_start" else "chevron_end",
 				onClick,
-				ifArrayPush([state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.)], eitherMap(state.tuneChevrons, \ts -> ts.shadows, false), MElevation(const(1.))),
+				concatA([
+					[state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.)],
+					eitherMap(state.chevronsStyle, \cs -> cs.style, []),
+					eitherMap(state.tuneChevrons, \ts -> if (ts.shadows) [MElevation(const(1.))] else [], [])
+				]),
 				[MEnabled(fand(state.enabled, buttonEnabled))]
 				|> (\f ->
 					eitherMap(state.enableArrows, \ea ->
@@ -612,11 +620,13 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	bgStyle = extractStruct(style, MBackgroundStyle([MFill(MBackgroundMColor(!getLightBackground(parent)))])).style;
 	contentSideOffset = extractStruct(style, MCarouselSidesOffset(0.)).sideOffset;
 
-	makeTitle = \text, font : MFontStyle ->
-		if (text != "")
-			MEllipsisText2T(manager, parent, MEllipsisText(text, [font, textColor, MShowTooltip(const(true))]), m2t)
-		else
+	makeTitle = \text, st : [MTextStyle] -> {
+		if (text != "") {
+			MEllipsisText2T(manager, parent, MEllipsisText(text, arrayPush(st, MShowTooltip(const(true)))), m2t)
+		} else {
 			TEmpty();
+		}
+	};
 
 	(\p ->
 		(\p2 ->
@@ -625,7 +635,7 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 				if (contentScaling) // Crop content to the size of the box
 					TTweak([TFillZoom(true)], t, TSizedWidthHeight(state.itemWidth, state.height))
 				else
-					TCropWidth(t, state.itemWidth)
+					TCropWidth2(t, state.itemWidth)
 			)
 		)
 		|> (\f : (MFocusGroup) -> Tropic ->
@@ -691,22 +701,22 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 			} else
 				f(p)
 		)
-		|> (\f ->
-			if (state.bottomMargin != 0.) { // Add text overlay and place it at the bottom
-				text = extractStruct(c.style, MCarouselText("", ""));
+		|> (\f -> {
+				txt = extractStruct(c.style, MCarouselText("", ""));
+				textStyle = extractStruct(c.style, MCarouselTextStyle([MSubheading(), textColor], [MCaption(), textColor]));
 				footerColor = extractStruct(style, MCarouselFooterColor(MGrey(900))).color;
 				footerOpacity = extractStruct(style, MCarouselFooterOpacity(0.8)).opacity;
-
 				TCopySize(
 					f,
-					\tr ->
+					\tr -> {
 						TLines2(
-							makeTitle(text.title, MSubheading()),
-							makeTitle(text.subtitle, MCaption())
+							makeTitle(txt.title, textStyle.title),
+							makeTitle(txt.subtitle, textStyle.subtitle)
 						)
+						|> state.wrapBottomTitle
+						|> (\f2 -> TCenterYIn(f2, TSizedHeight(0., state.bottomPanelHeight)))
 						|> (\f2 -> TBorder4(16., f2))
 						|> (\f2 -> TGroup2(TFillX(), f2))
-						|> (\f2 -> TFixSize(f2, TFillXH(state.bottomMargin)))
 						|> (\f2 -> TFrame(0., 0., [MThemeFill(parent, footerColor), FillOpacity(footerOpacity)], f2))
 						|> (\f2 -> TAvailableWidth(f2, state.itemWidth))
 						|> (\f2 ->
@@ -720,32 +730,40 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 								f2
 							)
 						)
-						|> (\f2 -> TTweak([TAlign(const(0.), const(1.))], f2, tr)),
+						|> (\f2 -> TVisible(fgreater(state.bottomPanelHeight, zero), f2))
+						|> (\f2 -> TTweak([TAlign(const(0.), const(1.))], f2, tr))
+					},
 					true
 				)
-			} else
-				f
+			}
 		)
 	)
-	|> (\f -> // Add OnClick
-		eitherFn(
-			tryExtractStruct(c.style, MOnClick(nop)),
-			\oc ->
+	|> (\f -> { // Add OnClick
+			onClickM = tryExtractStruct(c.style, MOnClick(nop));
+			selectionM = tryExtractStruct(style, MSingleSelection(make(-1)));
+			if (isSome(onClickM) || isSome(selectionM)) {
+				clickFn = \ -> {
+					maybeMap(selectionM, \selection ->
+						nextDistinct(selection.selected, if (getValue(selection.selected) == i) -1 else i)
+					);
+					maybeApply(onClickM, \oc -> oc.click())
+				}
 				TIf(
 					state.enabled,
 					MComponent2T(
 						manager,
 						parent,
 						"MCarouselClickable",
-						[MOnClick(oc.click), MFocusEnabled(const(false)), MAddFocusGroup(true)],
+						[MOnClick(clickFn), MFocusEnabled(const(false)), MAddFocusGroup(true), MPassClicks()],
 						\focus -> f(focus.parent),
 						m2t
 					),
 					f(parent)
-				),
-			\ ->
+				)
+			} else {
 				f(parent)
-		)
+			}
+		}
 	)
 	|> (\f -> TFrame(0., 0., bgStyle, f)) // Add background
 	|> (\f ->

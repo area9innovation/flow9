@@ -12,14 +12,14 @@ export {
 	Date(year : int, month : int, day : int);
 	Time(year : int, month : int, day : int, hour : int, min : int, sec : int);
 
-	nullDate = Date(0,0,0);
-	nullTime = Time(0,0,0,0,0,0);
+	nullDate = Date(0, 0, 0);
+	nullTime = Time(0, 0, 0, 0, 0, 0);
 	// We need some invalid timestamp to represent nullTime distinct from epoch, since string2time(time2string(nullTime))
 	// is not defined on C++
 	nullTimestamp = -123.0;
 
-	isNullDate(date : Date) -> bool { date == nullDate};
-	isNullTime(time : Time) -> bool { time == nullTime};
+	isNullDate(date : Date) -> bool { date == nullDate };
+	isNullTime(time : Time) -> bool { time == nullTime };
 
 	isValidDate(date : Date) -> bool;
 	isValidTime(time : Time) -> bool;
@@ -105,7 +105,7 @@ export {
 
 	db2time(s : string) -> Time;
 	db2timeDef(s : string, def : Time) -> Time;
-	time2db : (t : Time) -> string;
+	time2db(dt : Time) -> string;
 	// It converts nullTime to None() then buildKeyValueForPhp won't pass it to php and it will be
 	// considered as NULL in sql. It is necessary because mysql won't accept 0000-00-00 00:00:00 in strict_mode (which is recommended)
 	time2dbValid(t : Time) -> Maybe<string>;
@@ -134,7 +134,6 @@ export {
 	hour2ms(h : int) -> double;
 	day2ms(d : int) -> double;
 
-	setUTCdiff(offset : double) -> void;
 	setUTCdiffFromServer(localtime : double, dbValue : string) -> void;
 	localTime2utc(t: double) -> double;
 	utc2localTime(t: double) -> double;
@@ -206,10 +205,6 @@ date2dbWithUTCCorrection(date : Date) -> string {
 	|> stamp2time2
 	|> time2db
 };
-
-setUTCdiff(offset: double) -> void {
-	utcDiff := offset;
-}
 
 localTime2utc(t: double) -> double {
 	t - ^utcDiff
@@ -560,13 +555,13 @@ getDaysBetweenDates(first : Date, second : Date) -> int {
 	}
 	datesRelation = compareDates(first, second);
 	switch (datesRelation : DateComparisonResult) {
-		DateBefore() : calculateDuration(first, second);
-		DateEqual() : 0;
-		DateAfter() : -calculateDuration(second, first);
+		DateBefore(): calculateDuration(first, second);
+		DateEqual(): 0;
+		DateAfter(): -calculateDuration(second, first);
 	}
 }
 
-addDaysToDate(date, days) {
+addDaysToDate(date : Date, days : int) -> Date {
 	stamp = string2timeUtc(date2string(date) + " 12:00:00");
 	(stamp + day2ms(days)) |> stamp2date
 }
@@ -637,22 +632,16 @@ db2time(s : string) -> Time {
 	if (length(parts) >= 1) {
 		dateParts = strSplit(parts[0], "-");
 		timeParts = if (length(parts) == 1) ["0", "0", "0"] else strSplit(parts[1], ":");
-		if (
-			length(dateParts) == 3 && isDigits(dateParts[0]) && isDigits(dateParts[1]) && isDigits(dateParts[2])
-			&& length(timeParts) == 3 && isDigits(timeParts[0]) && isDigits(timeParts[1])
-				// The last part can contain fractional seconds
-				&& isDouble(timeParts[2])
-		) {
+		if (length(dateParts) == 3 && length(timeParts) == 3) {
 			tm = Time(
-				s2i(dateParts[0]),
-				s2i(dateParts[1]),
-				s2i(dateParts[2]),
-				s2i(timeParts[0]),
-				s2i(timeParts[1]),
-				s2i(timeParts[2])
+				s2timePart(dateParts[0]),
+				s2timePart(dateParts[1]),
+				s2timePart(dateParts[2]),
+				s2timePart(timeParts[0]),
+				s2timePart(timeParts[1]),
+				dbSec2string(timeParts[2])
 			);
-			if (isValidTime(tm)) tm
-			else nullTime;
+			if (isValidTime(tm)) tm else nullTime;
 		} else {
 			nullTime;
 		}
@@ -661,12 +650,35 @@ db2time(s : string) -> Time {
 	}
 }
 
+dbSec2string(s : string) -> int {
+	dVal = s2dintWithError(s, 0, strlen(s), 0.0, -1.0);
+	if (dVal < 0.) -1 else floor(dVal);
+}
+
+s2timePart(s : string) -> int {
+	s2timePartWithError(s, 0, strlen(s), 0, -1);
+}
+
+s2timePartWithError(s : string, i : int, n : int, acc : int, errValue : int) -> int {
+	if (i < n) {
+		c = getCharCodeAt(s, i);
+		d = getDigitCode(c);
+		if (d != -1) {
+			s2timePartWithError(s, i + 1, n, 10 * acc + d, errValue);
+		} else {
+			errValue;
+		}
+	} else {
+		acc;
+	}
+}
+
 db2timeDef(s : string, def : Time) -> Time {
 	t = db2time(s);
 	if (t == nullTime) def else t
 }
 
-daysIn(m : int, leap : bool) -> int{
+daysIn(m : int, leap : bool) -> int {
 	if (m <= 7)
 		if (m == 2)
 			if (leap) 29 else 28
@@ -719,7 +731,7 @@ validateTime(s : string) -> Maybe<Time> {
 	}
 }
 
-time2db(dt) {
+time2db(dt : Time) -> string {
 	lpad(i2s(dt.year), "0", 4) + "-" + lpad(i2s(dt.month), "0", 2) + "-" + lpad(i2s(dt.day), "0", 2)
 	+ " " + lpad(i2s(dt.hour), "0", 2) + ":" + lpad(i2s(dt.min), "0", 2) + ":" + lpad(i2s(dt.sec), "0", 2)
 }

@@ -16,12 +16,14 @@ class Platform {
 	public static var isMobile : Bool = false;
 	public static var isRetinaDisplay : Bool = false;
 	public static var isHighDensityDisplay : Bool = false;
+	public static var isWKWebView : Bool = false;
 
 	public static var isMacintosh : Bool = false;
 	public static var isWindows : Bool = false;
 	public static var isLinux : Bool = false;
 
 	public static var isDarkMode = false;
+	public static var isMouseSupported = false;
 
 	public static var browserMajorVersion : Int = 0;
 
@@ -48,6 +50,7 @@ class Platform {
 	public static var isLinux : Bool = ~/Linux/i.match(Browser.window.navigator.platform);
 
 	public static var isDarkMode = Browser.window.matchMedia("(prefers-color-scheme: dark)").matches;
+	public static var isMouseSupported = Browser.window.matchMedia("(any-pointer: fine)").matches;
 
 	public static var browserMajorVersion : Int = untyped __js__("function() {
 		var version = window.navigator.userAgent.match(/version\\/(\\d+)/i);
@@ -60,7 +63,7 @@ class Platform {
 	public static var SupportsVideoTexture = !Platform.isIEMobile;
 	public static var AccessiblityAllowed =
 		Util.getParameter("accessenabled") == "1" ||
-		((Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isMobile && !Platform.isEdge);
+		((Platform.isFirefox || Platform.isChrome || Platform.isSafari) && !Platform.isEdge);
 
 	private static function getIsRetinaDisplay() : Bool {
 		if (Platform.isMacintosh && Browser.window.matchMedia != null) {

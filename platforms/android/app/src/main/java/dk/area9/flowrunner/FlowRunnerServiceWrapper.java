@@ -7,8 +7,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.util.Log;
 import dk.area9.flowrunner.FlowRunnerService.FlowRunnerServiceBinder;
 
@@ -104,7 +104,7 @@ public class FlowRunnerServiceWrapper {
     
     public void scheduleNotification(double time, int notificationId, String notificationCallbackArgs,
             String notificationTitle, String notificationText, boolean withSound, boolean pinNotification, boolean afterBoot) {
-        //Log.e(Utils.LOG_TAG, "TAG: Inside wrapper.scheduleNotification. serviceBound: " + serviceBound);
+        Log.i(Utils.LOG_TAG, "TAG: Inside wrapper.scheduleNotification. serviceBound: " + serviceBound);
         if (serviceBound) {
             flowRunnerService.scheduleNotification(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification, afterBoot);
         }

@@ -1,4 +1,5 @@
 import js.Browser;
+import pixi.core.math.Point;
 
 using DisplayObjectHelper;
 
@@ -8,7 +9,8 @@ class WebClip extends NativeWidgetClip {
 	private var htmlPageWidth : Dynamic = null;
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
-	private var noScroll : Dynamic = null;
+	private var noScroll : Bool = false;
+	private var passEvents : Bool = false;
 
 	private static function isUrl(str) : Bool {
 		return ~/^(\S+[.?][^\/\s]+(\/\S+|\/|))$/g.match(str);
@@ -68,7 +70,7 @@ class WebClip extends NativeWidgetClip {
 		iframe = Browser.document.createElement("iframe");
 		iframe.style.visibility = "hidden";
 
-		if (RenderSupport.RendererType == "html") {
+		if (this.isHTMLRenderer()) {
 			iframe.className = 'nativeWidget';
 			iframe.style.pointerEvents = 'auto';
 		}
@@ -83,6 +85,7 @@ class WebClip extends NativeWidgetClip {
 		iframe.frameBorder = "no";
 		iframe.callflow = cb; // Store for crossdomain calls
 
+		iframe.id = nativeWidget.id + "_iframe";
 		nativeWidget.appendChild(iframe);
 
 		if (reloadBlock) {
@@ -92,47 +95,80 @@ class WebClip extends NativeWidgetClip {
 		iframe.onload = function() {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
+				try {
+					if (!this.isHTMLRenderer()) {
+						iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+						if (Native.isTouchScreen()) {
+							iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+						}
+					} else if (this.passEvents) {
+						var listenAndDispatch = function(eventName : String) {
+							iframeDocument.addEventListener(eventName, function(e : Dynamic) {
+								var pos0 = Util.getPointerEventPosition(e);
+								var iframeBoundingRect = iframe.getBoundingClientRect();
+								var pos = new Point(
+									pos0.x * this.worldTransform.a + iframeBoundingRect.x,
+									pos0.y * this.worldTransform.d + iframeBoundingRect.y
+								);
+								var emittedEventName = (Platform.isSafari && Platform.isMobile) ? switch (eventName) {
+									case "pointerdown": "mousedown";
+									case "pointerup": "mouseup";
+									case "pointermove": "mousemove";
+									default: eventName;
+								} : eventName;
 
-				if (RenderSupport.RendererType != "html") {
-					iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
-					if (Native.isTouchScreen()) {
-						iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, emittedEventName, pos.x, pos.y);
+							}, false);
+						}
+
+						if (Platform.isSafari && !Platform.isMobile) {
+							listenAndDispatch('mousedown');
+							listenAndDispatch('mouseup');
+							listenAndDispatch('mousemove');
+						} else {
+							listenAndDispatch('pointerdown');
+							listenAndDispatch('pointerup');
+							listenAndDispatch('pointermove');
+						}
 					}
-				}
 
-				if (this.noScroll) {
-					untyped iframeDocument.body.style["overflow"] = "hidden";
-					iframeDocument.addEventListener('wheel', function (e) {
-						RenderSupport.provideEvent(e);
-					}, true);
-				}
-
-				if (shrinkToFit) {
-					try {
-						this.htmlPageWidth = iframeDocument.body.scrollWidth;
-						this.htmlPageHeight = iframeDocument.body.scrollHeight;
-						applyShrinkToFit();
-					} catch(e : Dynamic) {
-						// if we can't get the size of the html page, we can't do shrink so disable it
-						this.shrinkToFit = false;
-						Errors.report(e);
-						applyNativeWidgetSize();
+					if (this.noScroll) {
+						untyped iframeDocument.body.style["overflow"] = "hidden";
+						iframeDocument.addEventListener('wheel', function (e) {
+							RenderSupport.provideEvent(e);
+						}, true);
 					}
-				}
 
+					if (shrinkToFit) {
+						try {
+							this.htmlPageWidth = iframeDocument.body.scrollWidth;
+							this.htmlPageHeight = iframeDocument.body.scrollHeight;
+							applyShrinkToFit();
+						} catch(e : Dynamic) {
+							// if we can't get the size of the html page, we can't do shrink so disable it
+							this.shrinkToFit = false;
+							Errors.report(e);
+							applyNativeWidgetSize();
+						}
+					}
+
+					ondone("OK");
+
+					if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) {
+						iframe.scrolling = "no";
+					}
+					iframe.contentWindow.callflow = cb;
+					if (iframe.contentWindow.pushCallflowBuffer) {
+						iframe.contentWindow.pushCallflowBuffer();
+					}
+					if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
+						iframe.scrolling = "no"; // Obviousely it is flow page.
+					}
+				} catch(e : Dynamic) { Errors.report(e); ondone(e);}
+			} catch(e : Dynamic) {
+				// Keep working in case of CORS error
 				ondone("OK");
-
-				if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) {
-					iframe.scrolling = "no";
-				}
-				iframe.contentWindow.callflow = cb;
-				if (iframe.contentWindow.pushCallflowBuffer) {
-					iframe.contentWindow.pushCallflowBuffer();
-				}
-				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
-					iframe.scrolling = "no"; // Obviousely it is flow page.
-				}
-			} catch(e : Dynamic) { Errors.report(e); ondone(e);}
+			}
 		};
 	}
 
@@ -179,8 +215,7 @@ class WebClip extends NativeWidgetClip {
 		while (i > iframeZorder) {
 			var pos = Util.getPointerEventPosition(e);
 
-			RenderSupport.MousePos.x = pos.x;
-			RenderSupport.MousePos.y = pos.y;
+			RenderSupport.setMousePosition(pos);
 
 			if (RenderSupport.getClipAt(localStages[i], RenderSupport.MousePos, true, 0.0) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
@@ -254,6 +289,10 @@ class WebClip extends NativeWidgetClip {
 
 	public function setNoScroll() : Void {
 		this.noScroll = true;
+	}
+
+	public function setPassEvents() : Void {
+		this.passEvents = true;
 	}
 
 	public function setSandBox(value : String) : Void {

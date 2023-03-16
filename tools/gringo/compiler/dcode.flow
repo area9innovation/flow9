@@ -1,0 +1,182 @@
+import text/gringo/dcode_lib;
+import tools/gringo/compiler/dopcode;
+import tools/gringo/compiler/dopcode_opt;
+import tools/gringo/compiler/dopcode_code;
+import tools/gringo/compiler/dopcode_debug;
+import tools/gringo/utils;
+import text/blueprint;
+
+export {
+	makeDExpParser(g : GTerm, file : string) -> string;
+}
+
+makeDExpParser(g : GTerm, file : string) -> string {
+	// println(dopcode2string(compileDExp(g)));
+	opcode = optimizeDOpCode(compileDExp(g));
+	// println("After optimization:");
+	// println(dopcode2string(opcode));
+	// setFileContent("opcodes.txt", dopcode2string(opcode));
+	term = opcode2code(opcode);
+
+	prefix = getUrlParameter("prefix");
+
+	profile = getUrlParameter("profile");
+
+	main = prefix + "parse_" + mainRule(g);
+	blueprint("
+		// Produced by  flowcpp gringo/gringo.flow -- file=%file% compile=1
+		import text/gringo/dcode_lib;
+		import string;
+		
+		export {
+			%main%(acc : DParseAcc<?>) -> bool;%profile1%
+		}
+
+		%profile2%
+		%term%"
+		, [
+			"file", file,
+			"term", term,
+			"main", main,
+			"profile1", if (profile == "") "" else "\ndumpParseProfile() -> void { traverseInOrder(^profileProductions, \\n, v -> println(n + \": \" + i2s(v))) }",
+			"profile2", if (profile == "") "" else "profileProductions : ref Tree<string, int> = ref makeTree();"
+		]
+	);
+}
+
+compileDExp(t : GTerm) -> DOpCode {
+	switch (t) {
+		GRule(id, term, body): {
+			DFunction(id, compileDExp(term),
+				switch (body) {
+					GVar(__): DSequence([]);
+					default: compileDExp(body)
+				}
+			);
+		}
+		GPrecedence(left, right): DSequence([]);
+		GChoice(left, right): {
+			choices = getGChoice(t);
+			DSequence(
+				[
+					DPushCheckpoint(),
+					fold(reverseA(choices), DRestoreCheckpoint(), \acc, s -> {
+						DIf(compileDExp(s), DDiscardCheckpoint(), acc);
+					})
+				]
+			);
+		}
+		GSeq(left, right): {
+			seq = getGSequence(t);
+			DSequence(
+				[
+					DPushCheckpoint(),
+					fold(reverseA(seq), DDiscardCheckpoint(), \acc, s -> {
+						DIf(compileDExp(s), acc, DRestoreCheckpoint());
+					})
+				]
+			);
+		}
+		GStar(term): {
+			DParseStar(compileDExp(term));
+		}
+		GPlus(term): {
+			compileDExp(
+				GSeq(term, GStar(term))
+			);
+		}
+		GOpt(term): {
+			DSequence([
+				DPushCheckpoint(),
+				DIf(
+					compileDExp(term),
+					DDiscardCheckpoint(),
+					DRestoreCheckpoint(),
+				),
+				DTrue()
+			])
+		}
+		GNegate(term): {
+			DSequence([
+				DPushCheckpoint(),
+				DIf(
+					compileDExp(term),
+					DRestoreCheckpoint(),	// Basically false
+					DSequence([
+						DRestoreCheckpoint(),
+						DTrue()
+					]),
+				)
+			])
+		}
+		GError(term): {
+			switch (term) {
+				GNegate(nterm): {
+					DIf(
+						compileDExp(nterm),
+						DAddError("Superfluous " + makeGExplanation(nterm)),
+						DTrue()
+					);
+				}
+				default: {
+					DIf(
+						compileDExp(term),
+						DTrue(),
+						DAddError("Expected " + makeGExplanation(term)),
+					);
+				}
+			}
+		}
+		GLower(term): compileDExp(term);
+		GUnquote(term): {
+			def = \ -> {
+				DSequence([
+					DCaptureI(),
+					DIf(
+						compileDExp(term),
+						DSequence([
+							DMatched(),
+							DTrue(),
+						]),
+						DFalse()
+					)
+				])
+			}
+			switch (term) {
+				GString(text): {
+					DAddVerbatim(DString(text));
+				}
+				GUnquote(nt): {
+					switch (nt) {
+						GString(text): {
+							DAddMatched(DString(text));
+						}
+						GEpsilon(): {
+							// OK, this is special
+							DAddMatched(DString(""));
+						}
+						GVar(id): {
+							if (id == "pos") {
+								DAddMatched(DPosition());
+							} else def();
+						}
+						default: def();
+					}
+				}
+				default: def();
+			}
+		}
+		GString(text): {
+			if (text == "") {
+				DTrue();
+			} else {
+				DMatchString(text)
+			}
+		}
+		GRange(lower, upper): {
+			DMatchRange(lower, upper);
+		}
+		GVar(id): DCall(id);
+		GEpsilon(): DSequence([]);
+	}
+}

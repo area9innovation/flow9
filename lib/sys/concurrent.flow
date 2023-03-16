@@ -1,5 +1,4 @@
-import ds/array;
-import algorithms;
+import sys/target;
 
 export {
 	//
@@ -12,7 +11,7 @@ export {
 	// Launch loaded bytecode in a parallel thread with the specified url and parameters.
 	// The loaded code object can be reused for more runBytecode calls.
 	// Specified callbacks are invoked on completion and via child's notifyParentRunner.
-	native runBytecode : io (code : native, url : string, onDone : (code : int, output : string) -> void, 
+	native runBytecode : io (code : native, url : string, onDone : (code : int, output : string) -> void,
 			onMessage : (id : string, msg : string) -> void) -> native = Native.runBytecode;
 
 	// Send an asynchronous message to the child thread started with runBytecode.
@@ -40,7 +39,11 @@ export {
 
 	// Runs asynchronous task in a new thread passing it's ID as an argument as well as a callback
 	// to return a result in the end. Will call onDone when task is finished and send result to the main thread.
-	native concurrentAsyncCallback : (task : (threadId : string, callback : (?) -> void) -> void, onDone : (?) -> void) -> void = Native.concurrentAsyncCallback;
+	native concurrentAsyncCallback : (
+		task : (threadId : string, callback : (?) -> void) -> void,
+		onDone : (?) -> void,
+		onFail : (string) -> void
+	) -> void = Native.concurrentAsyncCallback;
 
 	native getThreadId : () -> string = Native.getThreadId;
 
@@ -48,6 +51,8 @@ export {
 	native initConcurrentHashMap : () -> native = Native.initConcurrentHashMap;
 	native setConcurrentHashMap : (m : native, key : ?, value : ??) -> void = Native.setConcurrentHashMap;
 	native getConcurrentHashMap : (m : native, key : ?, defval : ??) -> ?? = Native.getConcurrentHashMap;
+	// merge m1 and m2 into m1
+	native setAllConcurrentHashMap : (m1 : native, m2 : native) -> void = Native.setAllConcurrentHashMap;
 	native containsConcurrentHashMap : (m : native, key : ?) -> bool = Native.containsConcurrentHashMap;
 	native valuesConcurrentHashMap : (m : native) -> [??] = Native.valuesConcurrentHashMap;
 	native removeConcurrentHashMap : (m : native, key : ?) -> void = Native.removeConcurrentHashMap;
@@ -69,8 +74,10 @@ export {
 	native synchronizedConstFn : (lock : flow, fn : () -> ?) -> () -> ? = Native.synchronizedConstFn;
 	native synchronizedUnaryFn : (lock : flow, fn : (?) -> ??) -> (?) -> ?? = Native.synchronizedUnaryFn;
 	native synchronizedBinaryFn : (lock : flow, fn : (?, ??) -> ???) -> (?, ??) -> ??? = Native.synchronizedBinaryFn;
+	native synchronizedTernaryFn : (lock : flow, fn : (?, ??, ???) -> ????) -> (?, ??, ???) -> ???? = Native.synchronizedTernaryFn;
 
-	// Change number of available threads in the thead pool. Make sure to call it before thread pool is used
+	// Change number of available threads in the thread pool. Make sure to call it before thread pool is used.
+	// Note: The call of requireExplicitQuitCall function spends 1 thread from the thread pool.
 	native setThreadPoolSize : (threads : int) -> void = Native.setThreadPoolSize;
 
 	// Returns number of CPUs on the machine
@@ -94,21 +101,33 @@ export {
 	notConcurrent : (fine : bool, tasks : [() -> ?]) -> [?];
 
 	sequential : (fine : bool, tasks : [() -> ?]) -> [?];
+
+	// Call it to prevent the java program from exiting before the quit() function is called.
+	// Without calling this function java target closes the program when the main function exits.
+	// Attention: if quit() is never called, the program will hang forever!
+	// If thread poll is used, then this function spends 1 thread of the thread pool.
+	requireExplicitQuitCall() -> void;
 }
 
 // C++ runner native stubs
 
 loadBytecode(file : string) -> native {
-	flow([]);
+	r : [int] = [];
+	flow(r);
 }
 
 availableProcessors() -> int {
 	1
 }
 
+synchronizedConstFn(lock : flow, fn : () -> ?) -> () -> ? { fn; }
+synchronizedUnaryFn(lock : flow, fn : (?) -> ??) -> (?) -> ?? { fn; }
+synchronizedBinaryFn(lock : flow, fn : (?, ??) -> ???) -> (?, ??) -> ??? { fn; }
+
 runBytecode(code : native, url : string, onDone : (code : int, output : string) -> void, onMessage : (id : string, msg : string) -> void) -> native {
 	deferred(\ -> onDone(-1, "NOT IMPLEMENTED"));
-	flow([]);
+	r : [int] = [];
+	flow(r);
 }
 notifyChildRunner(thread, id, message) {}
 notifyParentRunner(id, message) {}
@@ -153,45 +172,59 @@ getThreadId() -> string {
 // Fallbacks for concurrent hash map
 
 initConcurrentHashMap() -> native {
-	flow(ref makeTree())
+	r : ref Tree<flow, flow> = ref makeTree();
+	flow(r)
 }
 
 setConcurrentHashMap(m : native, key : ?, value : ??) -> void {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
 	t := setTree(^t, key, value);
 }
 
 getConcurrentHashMap(m : native, key : ?, defval : ??) -> ?? {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
-	lookupTreeDef(^t, key, defval);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
+	cast(lookupTreeDef(^t, key, defval) : flow -> ??);
+}
+
+setAllConcurrentHashMap(m1 : native, m2 : native) -> void {
+	t1 = cast(flow(m1) : flow -> ref Tree<flow, flow>);
+	t2 = cast(flow(m2) : flow -> ref Tree<flow, flow>);
+	t1 := mergeTree(^t1, ^t2);
 }
 
 containsConcurrentHashMap(m : native, key : ?) -> bool {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
 	containsKeyTree(^t, key);
 }
 
 valuesConcurrentHashMap(m : native) -> [??] {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
-	getTreeValues(^t);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
+	map(getTreeValues(^t), \x -> cast(x: flow -> ??));
 }
 
 removeConcurrentHashMap(m : native, key : ?) -> void {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
 	t := removeFromTree(^t, key);
 }
 
 keysConcurrentHashMap(m : native) -> [?] {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
-	getTreeKeys(^t);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
+	map(getTreeKeys(^t), \x -> cast(x: flow -> ?));
 }
 
 sizeConcurrentHashMap(m : native) -> int {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
 	sizeTree(^t);
 }
 
 clearConcurrentHashMap(m : native) -> void {
-	t = cast(flow(m) : flow -> ref Tree<?, ??>);
+	t = cast(flow(m) : flow -> ref Tree<flow, flow>);
 	t := makeTree();
+}
+
+requireExplicitQuitCall() -> void {
+	if (java) {
+		devtrace("The program will not exit until the quit function is called");
+		concurrentAsyncCallback(\i : string, callback : (?) -> void -> {}, \d : ? -> {}, \s : string -> {});
+	}
 }

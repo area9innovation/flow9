@@ -37,6 +37,7 @@ NativeFunction *StartProcess::MakeNativeFunction(const char *name, int num_args)
 {
     #undef NATIVE_NAME_PREFIX
     #define NATIVE_NAME_PREFIX "Native."
+	TRY_USE_NATIVE_METHOD(StartProcess, execSystemProcess, 5);
     TRY_USE_NATIVE_METHOD(StartProcess, startProcess, 5);
     TRY_USE_NATIVE_METHOD(StartProcess, runSystemProcess, 6);
     TRY_USE_NATIVE_METHOD(StartProcess, writeProcessStdin, 2);
@@ -44,6 +45,60 @@ NativeFunction *StartProcess::MakeNativeFunction(const char *name, int num_args)
     TRY_USE_NATIVE_METHOD(StartProcess, startDetachedProcess, 3);
     TRY_USE_NATIVE_METHOD(StartProcess, getApplicationPath, 0);
     return NULL;
+}
+
+// native execSystemProcess : io (
+//	command : string, 
+//	args : [string], 
+//	currentWorkingDirectory : string, 
+//	onStdOutLine : (out : string) -> void, 
+//	onStdErr : (error : string) -> void
+//) -> int = Native.execSystemProcess;
+
+StackSlot StartProcess::execSystemProcess(RUNNER_ARGS)
+{
+    RUNNER_PopArgs5(command_str, args_str, cwd_str, onstdout, onstderr);
+    RUNNER_CheckTag2(TString, command_str, cwd_str);
+    RUNNER_CheckTag(TArray, args_str);
+
+    // Extract args in case an error occurs
+    QStringList args;
+    int nargs = RUNNER->GetArraySize(args_str);
+
+    for (int i = 0; i != nargs; i++) {
+      const StackSlot &item = RUNNER->GetArraySlot(args_str, i);
+      RUNNER_CheckTag(TString, item);
+      args.append(QString::fromUtf16(RUNNER->GetStringPtr(item), RUNNER->GetStringSize(item)));
+    }
+
+    // Allocate the process
+    FlowProcess *p = new FlowProcess(this);
+
+    p->controlled_process = true;
+    p->out_pos = p->stdout_pos = p->stderr_pos = 0;
+    p->stdout_cb = onstdout;
+    p->stderr_cb = onstderr;
+    p->exit_cb = FLOWVOID;
+
+    process_set[p->process] = p;
+
+    QString cwd = RUNNER->GetQString(cwd_str);
+    if (!cwd.isEmpty())
+        p->process->setWorkingDirectory(cwd);
+
+    connect(p->process, SIGNAL(started()), SLOT(processReadyWrite()));
+
+    connect(p->process, SIGNAL(bytesWritten(qint64)), SLOT(processReadyWrite()));
+    connect(p->process, SIGNAL(readyReadStandardOutput()), SLOT(processReadyStdout()));
+    connect(p->process, SIGNAL(readyReadStandardError()), SLOT(processReadyStderr()));
+
+    connect(p->process, SIGNAL(finished(int,QProcess::ExitStatus)), SLOT(processFinished(int,QProcess::ExitStatus)));
+    connect(p->process, SIGNAL(error(QProcess::ProcessError)), SLOT(processFailed(QProcess::ProcessError)));
+
+    p->process->start(RUNNER->GetQString(command_str), args);
+	p->process->waitForFinished(-1);
+
+    return StackSlot::MakeInt(p->process->exitCode());
 }
 
 // 	native startProcess : io (command : string, args : [string],
@@ -314,7 +369,9 @@ void StartProcess::endProcess(FlowProcess *p, int code)
 
         WITH_RUNNER_LOCK_DEFERRED(RUNNER);
 
-        RUNNER->EvalFunction(p->exit_cb, 1, StackSlot::MakeInt(code));
+        if (p->exit_cb.GetType() != TVoid) {
+            RUNNER->EvalFunction(p->exit_cb, 1, StackSlot::MakeInt(code));
+        }
     } else {
         p->stdout_buf.append(p->process->readAllStandardOutput());
         p->stderr_buf.append(p->process->readAllStandardError());

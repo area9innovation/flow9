@@ -386,6 +386,8 @@ class Lexer {
 								c = "\n".code;
 							} else if (n == "t".code) {
 								c = "\t".code;
+							} else if (n == "r".code) {
+								c = "\r".code;
 							} else if (n == "\\".code) {
 								c = "\\".code;
 							} else if (n == "\"".code) {

@@ -2,6 +2,7 @@ import string;
 import text/deserialize_string;
 import math/bits;
 import math/stringmath;
+import math/matrix;
 
 export {
 	humpCase(s : string, initial : bool) -> string;
@@ -15,6 +16,8 @@ export {
 
 	// Checks string starts from letter or underscore and continues with same or numbers.
 	isValidIdentifier(s : string) -> bool;
+
+	stringMap : (s : string, f : (string)->?)->[?];
 
 	/// Folds over the left-to-right character sequence in s
 	stringFoldChar : (s : string, a : ?, f : (a2 : ?, c : string) -> ?) -> ?;
@@ -37,8 +40,62 @@ export {
 	// Prefix all lines from a string with tab.
 	strIndent(lines : string) -> string;
 
-	// Prints the memory size in human-reafable (like '45.56 Mb') format.
+	// Inverse strIndent function: try to remove a tab at the beginning of each line (if exists)
+	strUnindent(s : string) -> string;
+
+	// Prints the memory size in human-readable (like '45.56 Mb') format.
 	memory2s(mem : double) -> string;
+
+	// Smart toString: structures the output with indents
+	toStringFormatted : (?) -> string;
+
+	// Checks if all characters in the string are ASCII, i.e. their codes don't exceed 127
+	isAsciiString(s : string) -> bool;
+
+	// Replaces all non-ascii characters with their hex-codes, thus making a string ASCII.
+	encodeAscii(s : string) -> string;
+
+	// Decode non-ascii characters from hex-codes of unicode code points.
+	decodeAscii(s : string) -> string;
+
+	/*
+	Formats the input matrix (array of columns, which are arrays of rows) into the output like:
+
+	| # | MPE# | ND Expression                | MPE Translation                        | ND Rationale | MPE Rationale                               |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 1 | 5    |  ` ( ( ps /\ ch ) -> th ) `  |  ` ( ph -> ( ( ps /\ ch ) -> th ) ) `  | Given        | $e.                                         |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 2 | 2    |  ` ( ch -> ps ) `            |  ` ( ph -> ( ch -> ps ) ) `            | Given        | $e.                                         |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 3 | 1    |  ` ch `                      |  ` ( ph -> ch ) `                      | Given        | $e.                                         |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 4 | 3    |  ` ps `                      |  ` ( ph -> ps ) `                      |  ` -> `E 2,3 |  ~ mpd , the MPE equivalent of ` -> `E, 1,2 |
+	-------------------------------------------------------------------------------------------------------------------------------------------------
+	| 5 | 4    |  ` ( ps /\ ch ) `            |  ` ( ph -> ( ps /\ ch ) ) `            |  ` /\ `I 4,3 |  ~ jca , the MPE equivalent of ` /\ `I, 3,1 |
+
+	*/
+	stringMatrix2s(m : [[string]], colHeaders : Maybe<[string]>, rowHeadres : Maybe<[string]>) -> string;
+
+	/*
+	Formats the input matrix (array of columns, which are arrays of rows) into the output like:
+
+	 #   MPE#   ND Expression                  MPE Translation                          ND Rationale   MPE Rationale                               
+	------------------------------------------------------------------------------------------------------------------------------------------------
+	 1   5       ` ( ( ps /\ ch ) -> th ) `     ` ( ph -> ( ( ps /\ ch ) -> th ) ) `    Given          $e.                                         
+	 2   2       ` ( ch -> ps ) `               ` ( ph -> ( ch -> ps ) ) `              Given          $e.                                         
+	 3   1       ` ch `                         ` ( ph -> ch ) `                        Given          $e.                                         
+	 4   3       ` ps `                         ` ( ph -> ps ) `                         ` -> `E 2,3    ~ mpd , the MPE equivalent of ` -> `E, 1,2 
+	 5   4       ` ( ps /\ ch ) `               ` ( ph -> ( ps /\ ch ) ) `               ` /\ `I 4,3    ~ jca , the MPE equivalent of ` /\ `I, 3,1 
+
+	*/
+	stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string;
+
+
+	// Replace patterns like: "$F_2(some_arg)" with corresponding function invocation
+	strApplyFns(s: string) -> ([(string) -> string]) -> string;
+
+	// Replace patterns like: "$A_1" with corresponding values
+	strSubstituteArgs(pattern: string) -> ([string]) -> string;
 }
 
 humpCase(s : string, initial : bool) -> string {
@@ -122,12 +179,16 @@ isValidIdentifier(name : string) -> bool {
 	strlen(name) > 0 && goodName;
 }
 
+stringMap(s, f) {
+	map(enumFromTo(0, strlen(s) - 1), \i->f(getCharAt(s, i)));
+}
+
 stringFoldChar(s, a, f) {
-	fold(enumFromTo(0, strlen(s) - 1), a, \a2, i->f(a2, getCharAt(s, i)));
+	foldRange(0, strlen(s) - 1, a, \a2, i->f(a2, getCharAt(s, i)));
 }
 
 stringFoldiChar(s, a, f) {
-	fold(enumFromTo(0, strlen(s) - 1), a, \a2, i->f(i, a2, getCharAt(s, i)));
+	foldRange(0, strlen(s) - 1, a, \a2, i->f(i, a2, getCharAt(s, i)));
 }
 
 hexDigitFilter(s, init) {
@@ -167,6 +228,11 @@ strIndent(s : string) -> string {
 	strGlue(map(strSplit(s, "\n"), \line -> "\t" + line), "\n");
 }
 
+strUnindent(s : string) -> string {
+	strGlue(map(strSplit(s, "\n"), \line -> if (startsWith(line, "\t")) strRight(line, 1) else line), "\n");
+}
+
+
 memory2s(mem : double) -> string {
 	if (mem < kilobyteUnit()) {
 		i2s(round(mem)) + " B";
@@ -177,4 +243,199 @@ memory2s(mem : double) -> string {
 	} else {
 		d2st(mem / gigabyteUnit(), 1) + " Gb";
 	}
+}
+
+toStringFormatted(v : ?) -> string {
+	toStringFormatted2(flow(v));
+}
+
+toStringFormatted2(v : flow) -> string {
+	type = runtimeValueType(v);
+	if (type == "void") {
+		// Must not ever happen
+		"{}";
+	} else if (type == "function" || type == "undef") {
+		type;
+	} else if (type == "int") {
+		i2s(cast(v : flow -> int));
+	} else if (type == "double") {
+		d2s(cast(v : flow -> double));
+	} else if (type == "bool") {
+		b2s(cast(v : flow -> bool));
+	} else if (type == "string") {
+		"\"" + escapeStr(cast(v : flow -> string)) + "\"";
+	} else if (type == "array") {
+		arr = map(cast(v : flow -> [flow]), toStringFormatted2);
+		arr_sl = "[" + strGlue(arr, ", ") + "]";
+		if (!strContains(arr_sl, "\n") && strlen(arr_sl) < 64) arr_sl else {
+			"[\n" + strIndent(strGlue(arr, ",\n")) + "\n]";
+		}
+
+	} else if (type == "ref") {
+		"ref " + toStringFormatted2(^cast(v : flow -> ref flow));
+	} else {
+		name = extractStructName(v);
+		if (name == "") {
+			// give up with formatted output
+			toString(v);
+		} else {
+			args = map(extractStructArguments(v), toStringFormatted2);
+			struct_sl = name + "(" + strGlue(args, ", ") + ")";
+			if (!strContains(struct_sl, "\n") && strlen(struct_sl) < 64) struct_sl else {
+				name + "(\n" + strIndent(strGlue(args, ",\n")) + "\n)";
+			}
+		}
+	}
+}
+
+isAsciiString(s : string) -> bool {
+	forall(s2a(s), \code -> code < 128);
+}
+
+encodeAscii(s : string) -> string {
+	// escape all \u substrings
+	s1 = strReplace(s, "\\u", "\\\\u");
+	// encode all non-ascii symbols and NULL
+	concatStrings(map(s2a(s1), \code ->
+		if (0 < code && code < 0x80) fromCharCode(code) else
+		"\\u" + lpad(formatHex(code), "0", 4)
+	));
+}
+
+decodeAscii(s : string) -> string {
+	u_inds = multipleStrIndexOf(s, "\\u");
+	p = fold(u_inds, Pair("", 0), \acc, i -> {
+		if (i > 0 && getCharAt(s, i - 1) == "\\") {
+			// escaped: \\u as \u
+			Pair(acc.first + substring(s, acc.second, i - 1 - acc.second), i);
+		} else {
+			// encoded: \uXXXX as unicode point XXXX
+			code = parseHex(substring(s, i + 2, 4));
+			Pair(acc.first + substring(s, acc.second, i - acc.second) + fromCharCode(code), i + 6);
+		}
+	});
+	p.first + substring(s, p.second, strlen(s) - p.second);
+}
+
+// Returns a pair: first is a longest line in the string (lines are separated by a '\n')
+// and second is a number of lines in the string.
+stringDims(s : string) -> Pair<int, int> {
+	lines = strSplit(s, "\n");
+	Pair(
+		fold(tail(lines), strlen(lines[0]), \acc, line -> max(acc, strlen(line))),
+		length(lines)
+	);
+}
+
+// Makes a complete rectangular cell out of string `s` with a given dimensions:
+// the length of each line - `dims.first` and number of lines - `dims.second`
+fillCell(s : string, dims : Pair<int, int>) -> [string] {
+	s_lines = strSplit(s, "\n");
+	map(enumFromTo(0, dims.second - 1), \i ->
+		if (i < length(s_lines)) {
+			line = " " + s_lines[i];
+			if (strlen(line) < dims.first) {
+				rpad(line, " ", dims.first);
+			} else {
+				substring(line, 0, dims.first);
+			}
+		} else {
+			strRepeat(" ", dims.first);
+		}
+	);
+}
+
+stringMatrix2s(m : [[string]], colHeaders : Maybe<[string]>, rowHeadres : Maybe<[string]>) -> string {
+	if (m == []) "" else {
+		m1 = eitherMap(colHeaders, \hs -> mapi(m, \i, col -> concat([if (i < length(hs)) hs[i] else ""], col)), m);
+		m2 = eitherMap(rowHeadres, \hs -> concat(if (isNone(colHeaders)) [hs] else [concat([""], hs)], m1), m1);
+		matr = completeMatrix(m2, "");
+		n_rows = length(matr[0]);
+		dims = map(matr, \col -> map(col, \row -> stringDims(row)));
+		cols = map(dims, \col -> fold(col, 0, \ac, row -> max(ac, row.first + 2)));
+		rows = map(enumFromTo(0, n_rows - 1), \i -> fold(dims, 0, \ac, col -> max(ac, col[i].second)));
+		cells = mapi(matr, \i, col -> mapi(col, \j, row -> fillCell(row, Pair(cols[i], rows[j]))));
+		leng = fold(cols, 0, \acc, col -> acc + col + 1) + 1;
+		strGlue(
+			map(enumFromTo(0, n_rows - 1),
+				\i -> strGlue(
+					map(enumFromTo(0, rows[i] - 1),
+						\j -> "|" + strGlue(mapi(cols, \k,__ -> cells[k][i][j]), "|") + "|"
+					),
+					"\n"
+				)
+			),
+			"\n" + strRepeat("-", leng) + "\n"
+		)
+	}
+}
+
+stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string {
+	if (m == []) "" else {
+		m1 = eitherMap(colHeaders, \hs -> mapi(m, \i, col -> concat([if (i < length(hs)) hs[i] else ""], col)), m);
+		matr = completeMatrix(m1, "");
+		n_rows = length(matr[0]);
+		dims = map(matr, \col -> map(col, \row -> stringDims(row)));
+		cols = map(dims, \col -> fold(col, 0, \ac, row -> max(ac, row.first + 2)));
+		rows = map(enumFromTo(0, n_rows - 1), \i -> fold(dims, 0, \ac, col -> max(ac, col[i].second)));
+		cells = mapi(matr, \i, col -> mapi(col, \j, row -> fillCell(row, Pair(cols[i], rows[j]))));
+		leng = fold(cols, 0, \acc, col -> acc + col + 1);
+		foldi(
+			map(enumFromTo(0, n_rows - 1),
+				\i -> strGlue(
+					map(enumFromTo(0, rows[i] - 1),
+						\j -> strGlue(mapi(cols, \k,__ -> cells[k][i][j]), " ")
+					),
+					"\n"
+				)
+			),
+			"",
+			\i, acc, s -> {
+				if (i != 1 || isNone(colHeaders)) acc + "\n" + s else  {
+					acc + "\n" + strRepeat("-", leng) + "\n" + s
+				}
+			}
+		)
+	}
+}
+
+strApplyFns(s: string) -> ([(string) -> string]) -> string {
+	\fns -> foldi(fns, s, \k, acc, fn -> {
+		name = "$F_" + i2s(k) + "(";
+		next_close_bracket = \i -> for(
+			Pair(i, 0),
+			\p -> {
+				x = p.first;
+				x + 1 < strlen(acc) && !(p.second == 1 && getCharAt(acc, x + 1) == ")");
+			},
+			\p -> Pair(p.first + 1,
+				if (getCharAt(acc, p.first) == "(") p.second + 1 else
+				if (getCharAt(acc, p.first) == ")") p.second - 1 else p.second
+			)
+		).first + 1;
+		start_inds = multipleStrIndexOf(acc, name);
+		if (length(start_inds) == 0) acc else
+		if (length(start_inds) == 1) {
+			start_ind = start_inds[0];
+			end_ind = next_close_bracket(start_ind);
+			applied = fn(substring(acc, start_ind + strlen(name), end_ind - start_ind - strlen(name)));
+			substring(acc, 0, start_ind) + applied + substring(acc, end_ind + 1, strlen(acc) - end_ind - 1);
+		} else {
+			end_inds = map(start_inds, next_close_bracket);
+			applied = mapi(start_inds, \i, start -> fn(substring(acc, start + strlen(name), end_inds[i] - start - strlen(name))));
+			concatStrings(mapi(start_inds, \i, start ->
+				if (i == 0) {
+					substring(acc, 0, start) + applied[0] + substring(acc, end_inds[i] + 1, start_inds[i + 1] - end_inds[i] - 1);
+				} else if (i + 1 == length(start_inds)) {
+					applied[i] + substring(acc, end_inds[i] + 1, strlen(acc) - end_inds[i] - 1);
+				} else {
+					applied[i] + substring(acc, end_inds[i] + 1, start_inds[i + 1] - end_inds[i] - 1);
+				}
+			));
+		}
+	});
+}
+
+strSubstituteArgs(pattern: string) -> ([string]) -> string {
+	\args -> strReplaces(pattern, concatA(mapi(args, \i, arg -> ["$A_" + i2s(i), arg])));
 }

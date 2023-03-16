@@ -1,0 +1,137 @@
+import tools/dsl/registry/dsl_transformation;
+import tools/dsl/dsl_extract_egraph;
+import tools/dsl/dsl_parse;
+import tools/dsl/dsl_util;
+
+export {
+	// Register a pure Gringo grammar for a language
+	registerDslParser(language : string, grammar : string, requires : [string]) -> DslGrammar;
+
+	// Extend an existing grammar with a new language syntax
+	registerDslParserExtension(language : string, grammar : string) -> void;
+
+	// Build a grammar for this language
+	buildDslGrammar(language : string) -> Maybe<DslGrammar>;
+
+	// Parse this program in this language using the registry
+	parseDslProgram(language : string, program : string) -> DslAstEnv;
+
+	getDslGrammars() -> Tree<string, DslGrammar>;
+	setDslGrammar(lang : string, grammar : DslGrammar) -> void;
+
+	getDslGrammarExtensions() -> Tree<string, Tree<string, GTerm>>;
+	setDslGrammarExtensions(lang : string, extension : Tree<string, GTerm>) -> void;
+}
+
+// From complete language to the grammar
+dslGrammars : ref Tree<string, DslGrammar> = ref makeTree();
+
+registerDslParser(language : string, grammar : string, requires : [string]) -> DslGrammar {
+	dslgrammar = defineGrammar(language, grammar, requires);
+	if (isDslTracing(parseDslLanguage(language), "parse")) {
+		println("Registering parser for " + language);
+	}
+	dslGrammars := setTree(^dslGrammars, language, dslgrammar);
+	dslgrammar
+}
+
+// From language extension name to the grammar
+dslGrammarExtensions : ref Tree<string, Tree<string, GTerm>> = ref makeTree();
+
+registerDslParserExtension(language : string, grammar : string) -> void {
+	if (isDslTracing(parseDslLanguage(language), "parse")) {
+		println("Registering parser extension for " + language);
+	}
+	extension = parseGrammarExtension(grammar);
+	dslGrammarExtensions := setTree(^dslGrammarExtensions, language, extension);
+}
+
+parseDslProgram(lang : string, program : string) -> DslAstEnv {
+	astenv = DslAstEnv(parseDslLanguage(lang), DslString(program), makeTree(), makeDslEGraph(), 0, "");
+
+	mgrammar = lookupTree(^dslGrammars, lang);
+	mgrammar ?? {
+		// TODO: We could do error handling better
+		// TODO: We could insert directly into the egraph as well
+		ast = parseProgram(lang, mgrammar, program);
+
+		// This does side effects.
+		root = addDslAst(astenv.egraph, parseDslLanguage(lang), ast);
+
+		if (false) {
+			println("We parsed " + dslLanguage2string(astenv.language) + " to " + prettyDsl(ast));
+			// printDslEGraph(astenv.egraph, root);
+		}
+		DslAstEnv(astenv with ast = ast, root = root);
+	} : {
+		// Could not find it. Let us build one
+		mgram = buildDslGrammar(lang);
+		switch (mgram) {
+			None(): {
+				println("\n---\nERROR! Could not build grammar for " + lang + "\n---");
+				DslAstEnv(astenv with error = "Could not build grammar for " + lang);
+			}
+			Some(gram): {
+				// And go pick it up
+				parseDslProgram(lang, program);
+			}
+		}
+	}
+}
+
+buildDslGrammar(language : string) -> Maybe<DslGrammar> {
+	switch (lookupTree(^dslGrammars, language)) {
+		None(): {
+			// Unknown, ok, find the core language and go from there
+			core = takeBefore(language, "+", language);
+			mgram = lookupTree(^dslGrammars, core);
+			mgram ?? {
+				extensions = strRight(language, strlen(core) + 1);
+		//		println("We start with " + language + " which is " + core + " and then extensions " + extensions);
+				extendDslGrammar(mgram, core, extensions);
+			} : {
+				println("Could not find base language for " + language + ". Did you mean lambda+" + language + "?");
+				None();
+			}
+		}
+		Some(g): Some(g);
+	}
+}
+
+// OK, from this langauge and grammar, extend it with the given extensions
+extendDslGrammar(grammar : DslGrammar, language : string, extensions : string) -> Maybe<DslGrammar> {
+	if (extensions == "") Some(grammar)
+	else {
+		foldTree(^dslGrammarExtensions, None(), \name, extension, acc : Maybe<DslGrammar> -> {
+			if (acc == None() && startsWith(extensions, name)) {
+				// OK, we got it
+				// Cut off the 'name' from the string
+				remaining = strRight(extensions, strlen(name) + 1);
+				extend = DslGrammar(extendGringoRules(grammar.term, extension));
+				// Register the new, combined grammar
+				fullname = language + "+" + name;
+				dslGrammars := setTree(^dslGrammars, fullname, extend);
+				// println("Registering parser for " + fullname + " from extending " + language + " with " + name);
+				extendDslGrammar(extend, fullname, remaining)
+			} else {
+				acc;
+			}
+		});
+	}
+}
+
+getDslGrammars() -> Tree<string, DslGrammar> {
+	^dslGrammars
+}
+
+setDslGrammar(lang : string, grammar : DslGrammar) -> void {
+	dslGrammars := setTree(^dslGrammars, lang, grammar)
+}
+
+getDslGrammarExtensions() -> Tree<string, Tree<string, GTerm>> {
+	^dslGrammarExtensions
+}
+
+setDslGrammarExtensions(lang : string, extension : Tree<string, GTerm>) {
+	dslGrammarExtensions := setTree(^dslGrammarExtensions, lang, extension)
+}

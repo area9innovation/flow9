@@ -1,0 +1,94 @@
+import tools/dsl/dynjoin/eval;
+import tools/dsl/preprocessor/dsl_register;
+
+// Test that evaluation of this testcase gives the expected program
+testDynJoin(testname : string, testcase : string, expected : string) -> void {
+	program = parseDynJoin(testname, testcase);
+	env = makeDynJoinEnv();
+	value = cleanDsl(evaluateDsl(env, program));
+
+	expectedAst = cleanDsl(parseDynJoin(testname + " expected", expected));
+	if (value != expectedAst) {
+		println(testname + " FAILED. Expected: ");
+		println(prettyDsl(expectedAst));
+		println("Got after eval:");
+		println(prettyDsl(value));
+		println("Before eval it was:");
+		println(prettyDsl(program));
+	}
+}
+
+// Cleans up excessive brace nodes
+cleanDsl(e : DslAst) -> DslAst {
+	switch (e) {
+		DslBool(value): e;
+		DslInt(value): e;
+		DslDouble(value): e;
+		DslString(value): e;
+		DslList(value): DslList(mapList(value, cleanDsl));
+		DslNode(name, args, pos): {
+			if (name == "brace") {
+				bargs = list2array(getDslList(args[0]));
+				if (length(bargs) == 1) {
+					cleanDsl(bargs[0]);
+				} else {
+					DslNode(name, map(args, cleanDsl), pos);
+				}
+			} else if (name == "int" || name == "double" || name == "string") {
+				args[0];
+			} else {
+				DslNode(name, map(args, cleanDsl), pos);
+			}
+		}
+	}
+}
+
+main() {
+	registerDslPreprocessed();
+
+	if (false) {
+		testDynJoin("dyn var 1", 
+			<< ~a = 1 + 1; a >>, 
+			<< a = 2; a >>
+		);
+		testDynJoin("dyn fn 1", 
+			<< add = \~a, ~b -> a + b; add(1 + 3, 1 + 2) >>, 
+			<< b = 3; a = 4; a + b >>
+		);
+
+		testDynJoin("join 1",
+			<< ~a = 1; join a + 1 >>,
+			<< a = 1; __tmp__0 = \a -> a + 1; __tmp__0(a) >>
+		);
+
+		testDynJoin("runtime", 
+			<< range(1, 3) >>,
+			<< [1, 2, 3] >>
+		);
+	}
+
+	if (false) {
+		// Shows that recursion of dynamic code does not work well at compile time
+		testDynJoin("problem 1",
+			<< fact = \~n -> if (n <= 1) n else n * fact(n - 1); fact(5) >>,
+			<< n = 5; if (n <= 1) n else n * fact(n - 1) >>
+		);
+
+		// Shows that recursion of dynamic code does not work well at compile time
+		testDynJoin("problem 2", 
+			<< ~n = 3; range(1, n) >>,
+			<< [1, 2, 3] >>
+		);
+	}
+
+	if (js) {
+		testDynJoin("web", <<
+			evaljs("console.log('Hello');")
+		>>, "");
+	} else {
+		testDynJoin("compile", "#include tools/dsl/dynjoin/compiler.dynjoin", 
+			<< "a=1+3;{a}" >>
+		);
+		quit(0);
+	}
+}

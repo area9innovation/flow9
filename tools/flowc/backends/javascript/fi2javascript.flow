@@ -2,6 +2,7 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/javascript/fi2javascript_utils;
 import tools/flowc/backends/javascript/fi2javascript_compile;
 import tools/flowc/backends/javascript/fi2javascript_assemble;
+import tools/flowc/backends/javascript/fi2javascript_sourcemap;
 import tools/flowc/backends/javascript/size_tracker;
 import tools/flowc/manipulation/optimizer;
 import tools/flowc/manipulation/specialization;
@@ -10,10 +11,10 @@ import tools/flowc/incremental/fitype;
 import lingo/flow/javascript_keywords;
 
 export {
-	fi2javascript(program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : () -> void) -> void;
+	fi2javascript(program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : (int) -> void) -> void;
 }
 
-fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : ()  -> void) -> void {
+fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig, callback : (int)  -> void) -> void {
 	program = if (isConfigParameterTrue(orig_program.config.config, "optimize")) {
 		makeBool = \v -> { e : FiExp = FiBool(v, -1); e };
 		optimizeCode(
@@ -133,8 +134,8 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 					tl = fiJsCompileToplevel(cfg, gctx, v, id, "", None());
 
 					if (cfg.sourcemap && !cfg.beautify && !cfg.compress && tl != "") {
+						resolver = fcFileLineResolver(env, module.fileinfo.fullpath);
 						code = fcFileSource(env, module.fileinfo.fullpath);
-						resolver = makeLineResolver(code);
 						s = findLine(resolver, if (v.defiStart > 0) v.defiStart else v.declStart);
 
 						sourceMap :=
@@ -186,19 +187,23 @@ fi2javascript(orig_program : FiProgram, env : FcTypeEnvGlobal, cfg : FiJsConfig,
 		}
 		// When Haxe compilation fails, runtimeContent == ""
 		if (runtimeContents != "") {
-			fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContents, modulesCode);
-			// Beautify and compress are mutually exclusive
-			if (cfg.beautify && !cfg.compress)
-				fiJsBeautify(cfg, ovl, callback)
-			else if (cfg.compress)
-				fiJsCompress(cfg, ovl, callback)
-			else if (cfg.sourcemap)
-				fiAssembleSourceMapFile(cfg, ovl, headerCode, runtimeContents, ^sourceMap, callback)
-			else
-				callback();
+			assembled = fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContents, modulesCode);
+			if (assembled) {
+				// Beautify and compress are mutually exclusive
+				if (cfg.beautify && !cfg.compress)
+					fiJsBeautify(cfg, ovl, callback)
+				else if (cfg.compress)
+					fiJsCompress(cfg, ovl, callback)
+				else if (cfg.sourcemap)
+					fiAssembleSourceMapFile(cfg, ovl, headerCode, runtimeContents, ^sourceMap, callback)
+				else
+					callback(0);
+			} else {
+				callback(5);
+			}
 		} else {
 			fcPrintln("'" + cfg.outputfile + "' is NOT generated.", cfg.threadId);
-			callback();
+			callback(5);
 		}
 	});
 }

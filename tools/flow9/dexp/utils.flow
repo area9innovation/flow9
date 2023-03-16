@@ -1,0 +1,80 @@
+import tools/flow9/dexp/dexp;
+
+export {
+	// Find the typenames that are used in this struct
+	extractTypeNamesDType(acc : Set<string>, t : DType, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> Set<string>;
+
+	extractTypeNamesDUnion(acc : Set<string>, t : DUnion, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> Set<string>;
+	extractTypeNamesDStruct(acc : Set<string>, t : DStruct, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> Set<string>;
+
+	// Instantiates ? as auto
+	instantiateDType(d : DType) -> DType;
+}
+
+extractTypeNamesDUnion(acc : Set<string>, t : DUnion, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> Set<string> {
+	if (containsSet(acc, t.id)) acc else {
+		fold(t.types, 
+			fold(t.typars, insertSet(acc, t.id), \ac, typar -> 
+				extractTypeNamesDType(ac, typar, structs, unions)
+			),
+			\ac, type -> 
+				extractTypeNamesDType(ac, type, structs, unions)
+		);
+	}
+}
+
+extractTypeNamesDStruct(acc : Set<string>, t : DStruct, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> Set<string> {
+	if (containsSet(acc, t.id)) acc else {
+		fold(t.structArgs, 
+			fold(t.typars, insertSet(acc, t.id), \ac, typar -> 
+				extractTypeNamesDType(ac, DTypePar(typar, 0), structs, unions)
+			),
+			\ac, struct_arg -> 
+				extractTypeNamesDType(ac, struct_arg.type, structs, unions)
+		);
+	}
+
+}
+
+extractTypeNamesDType(acc : Set<string>, t : DType, structs : Tree<string, DStruct>, unions : Tree<string, DUnion>) -> Set<string> {
+	switch (t) {
+		DTypeName(id, typars, __): {
+			if (containsSet(acc, id)) acc else {
+				fold(typars, insertSet(acc, id), \ac, typar -> 
+					extractTypeNamesDType(ac, typar, structs, unions)
+				);
+			}
+		}
+		DTypePar(id,__): {
+			switch (lookupTree(structs, id)) {
+				Some(s): extractTypeNamesDStruct(acc, s, structs, unions);
+				None(): {
+					switch (lookupTree(unions, id)) {
+						Some(u): extractTypeNamesDUnion(acc, u, structs, unions);
+						None(): {
+							// Unresolved(?) (free?) typar?
+							acc;
+						}
+					}
+				}
+			}
+		}
+		DTypeFunction(args, returnType, __): {
+			fold(args, extractTypeNamesDType(acc, returnType, structs, unions), \ac, arg_type -> 
+				extractTypeNamesDType(ac, arg_type, structs, unions)
+			);
+		}
+	}
+}
+
+instantiateDType(d : DType) -> DType {
+	switch (d) {
+		DTypePar(id, pos): DTypeName("auto", [], pos);
+		DTypeName(id, typars, pos): {
+			DTypeName(id, map(typars, instantiateDType), pos);
+		}
+		DTypeFunction(args, returnType, pos): {
+			DTypeFunction(map(args, instantiateDType), instantiateDType(returnType), pos)
+		}
+	}
+}

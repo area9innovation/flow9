@@ -1,13 +1,14 @@
 #if js
 import js.Browser;
 import js.html.MessageChannel;
+import js.Lib;
 #end
 
 class ProgressiveWebTools {
 	public function new() {}
 
 	public static function __init__() {
-		if (Browser.window.matchMedia("(display-mode: fullscreen)").matches || ~/CapacitorJS/i.match(Browser.window.navigator.userAgent)) {
+		if (untyped __js__("typeof window !== 'undefined'") && (Browser.window.matchMedia("(display-mode: fullscreen)").matches || ~/CapacitorJS/i.match(Browser.window.navigator.userAgent))) {
 			var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
 			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {
@@ -535,6 +536,113 @@ class ProgressiveWebTools {
 			);
 		} else {
 			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function resetSwTimings(onOK : Void -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't reset the timmings");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't change the cache parameter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "reset_timings"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function getSwTimingsNative(onOK : Array<String> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					onError("ServiceWorker can't get requests stats");
+				} else {
+					onOK(event.data.data.map(function(row) {
+						if (row.name == Lib.undefined) row.name = "";
+						if (row.operation == Lib.undefined) row.operation = "";
+						if (row.startTimestamp == Lib.undefined) row.startTimestamp = "0";
+						if (row.duration == Lib.undefined) row.duration = "-1";
+
+						return row.name + "\t" + row.operation + "\t" + row.startTimestamp + "\t" + row.duration + "\t"
+							+ row.steps.map(function(step) { return step.name + "\t" + step.time + "\t"; }).join("");
+					}));
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_timings"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function getSwTimingsFilterConsoleNative(files : Array<String>, operations : Array<String>) : Void {
+		#if flash
+		trace("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.data == null) {
+					trace("ServiceWorker can't get requests stats");
+				} else {
+					trace("\nfilename - operation - timestamp (msec) - duration (msec):\n" +
+						event.data.data
+						.map(function(row) {
+							if (row.name == Lib.undefined) row.name = "";
+							if (row.operation == Lib.undefined) row.operation = "";
+							if (row.startTimestamp == Lib.undefined) row.startTimestamp = "0";
+							if (row.duration == Lib.undefined) row.duration = "-1";
+
+							return row;
+						})
+						.filter(function(row) {
+							return (files.length == 0 || untyped files.includes(row.name)) && (operations.length == 0 || untyped operations.includes(row.operation));
+						})
+						.map(function(row) {
+							return
+								"\"" + row.name + "\"" + " - " +
+								"\"" + row.operation + "\"" + " - " +
+								row.startTimestamp + " - " +
+								row.duration + ":\n" +
+									row.steps.map(function(step) { return "\t• \"" + step.name + "\"\t - " + step.time; }).join("\n");
+						})
+						.join("\n")
+					);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "get_timings"
+				},
+				[messageChannel.port2]
+			);
+		} else {
+			trace("ServiceWorker is not initialized");
 		}
 		#end
 	}

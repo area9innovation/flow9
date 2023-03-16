@@ -1,0 +1,185 @@
+import string_utils;
+import tools/flowc/backends/common;
+import tools/flowc/backends/java/fi2jar_utils;
+import tools/flowc/backends/java/fi2java_defines;
+
+export {
+	fi2javaBuildWithGradle(cfg : FiJavaConfig, used_hosts: Set<string>, runtime: JavaRuntime, callback : (int) -> void) -> void;
+	fi2javaDownloadDependenciesWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void;
+}
+
+fi2javaBuildWithGradle(cfg : FiJavaConfig, used_hosts: Set<string>, runtime: JavaRuntime, callback : (int) -> void) -> void {
+	flow_dir = findFlowDir();
+	if (flow_dir == "") {
+		fcPrintln("flow directory is not found - can't copy java runtime files", cfg.threadId);
+		callback(5);
+	} else {
+		jar_name = fileNameOnly(changeFileExt(cfg.jarfile, ""));
+		is_native_host = \file -> {
+			file_name = fileNameOnly(changeFileExt(file, ""));
+			(containsSet(used_hosts, file_name) || containsSet(runtime.classes, file_name)) && endsWith(file, ".java");
+		}
+		fcVerbose(cfg, 1, "Copying java runtime files");
+		java_dir = pathCombineMany([flow_dir, "platforms", "java"]);
+		runtime_from = pathCombineMany([java_dir, "com", "area9innovation", "flow"]);
+		runtime_to = pathCombineMany([cfg.generatedir, jar_name, "src", "main", "java"]);
+		runtime_errs = if (!isDirectory(runtime_from)) {
+			["Java runtime directory '" + runtime_from + "' does't exist"];
+		} else {
+			copyDirectory(java_dir, runtime_from, runtime_to, is_native_host);
+		}
+		if (runtime_errs != []) {
+			fcPrintln(concatStrings(map(runtime_errs, \err -> err + "\n")), cfg.verbose);
+		}
+
+		fcVerbose(cfg, 1, "Copying java external natives from:\n" + strIndent(strGlue(cfg.externNatives, "\n")));
+		natives_errs = concatA(map(cfg.externNatives, \native_host -> {
+			native_from = pathCombineMany([native_host, "com", "area9innovation", "flow"]);
+			native_to = pathCombineMany([cfg.generatedir, jar_name, "src", "main", "java"]);
+			if (isDirectory(native_from)) {
+				copyDirectory(native_host, native_from, native_to, is_native_host);
+			} else {
+				["Java external native directory '" + native_from + "' does't exist"];
+			}
+		}));
+		if (natives_errs != []) {
+			fcPrintln(concatStrings(map(natives_errs, \err -> err + "\n")), cfg.verbose);
+		}
+
+		setFileContent(
+			pathCombine(cfg.generatedir, "settings.gradle"),
+			fiSettingsGradle(cfg, jar_name)
+		);
+		setFileContent(
+			pathCombine(cfg.generatedir, "gradle.properties"),
+			fiGradleProperties(cfg)
+		);
+		setFileContent(
+			pathCombineMany([cfg.generatedir, jar_name, "build.gradle"]),
+			fiGradleBuild(cfg)
+		);
+		fcVerbose(cfg, 0, "Building a program with gradle");
+		output = ref "";
+		runGradle(["jar", "--warning-mode", "all"], cfg.generatedir,
+			\out -> {
+				fcVerbose(cfg, 0, out);
+				output := (^output) + "stdout: " + out + "\n";
+			},
+			\err -> {
+				fcVerbose(cfg, 0, err);
+				output := (^output) + "stderr: " + err + "\n";
+			},
+			\code -> if (code != 0) {
+				fcPrintln("Gradle fails with exit code " + i2s(code) + "\n" + (^output), cfg.threadId);
+				callback(5 + code);
+			} else {
+				jar_file_from = pathCombineMany([cfg.generatedir, jar_name, "build", "libs", jar_name + ".jar"]);
+				jar_file_to = pathCombineMany([cfg.outputdir, cfg.jarfile]);
+				if (fileNameOnly(cfg.jarfile) == cfg.jarfile) {
+					ensureDirectoryExists(cfg.outputdir);
+				} else {
+					ensureDirectoryExists(dirName(jar_file_to));
+				}
+				if (!copyFile(jar_file_from, jar_file_to)) {
+					fcPrintln("failed to copy *.jar file '"+ jar_file_from + "' to '" + jar_file_to + "'", cfg.threadId);
+					callback(5);
+				} else {
+					callback(0);
+				}
+			}
+		);
+		{}
+	}
+}
+
+fi2javaDownloadDependenciesWithGradle(cfg : FiJavaConfig, callback : (int) -> void) -> void {
+	flow_dir = findFlowDir();
+	if (flow_dir == "") {
+		fcPrintln("flow directory is not found - can't download dependencies", cfg.threadId);
+		callback(5);
+	} else {
+		java_lib_dir = pathCombineMany([flow_dir, "platforms", "java", "lib"]);
+		jar_deps = fi2javaGradleDeps2JarDeps(cfg);
+		missing_jar_deps = filter(jar_deps, \dep -> !fileExists(pathCombine(java_lib_dir, dep)));
+		if (length(missing_jar_deps) == 0) {
+			fcVerbose(cfg, 1, "All dependencies are already downloaded");
+			callback(0);
+		} else {
+			java_tmp_dir = pathCombineMany([flow_dir, "platforms", "java", "tmp"]);
+			ensureDirectoryExists(java_tmp_dir);
+			setFileContent(
+				pathCombine(java_tmp_dir, "build.gradle"),
+				fiGradleDownloadDependencies(cfg, java_lib_dir)
+			);
+			fcVerbose(cfg, 1, "Downloading dependencies with gradle");
+			runGradle(["getDeps", "--warning-mode", "all"], java_tmp_dir,
+				\out -> fcVerbose(cfg, 0, out),
+				\err -> fcVerbose(cfg, 0, err),
+				\code -> if (code != 0) callback(5 + code) else {
+					fcVerbose(cfg, 0,
+						"Dependencies downloaded to '" + java_lib_dir + "':\n" +
+						concatStrings(map(cfg.dependencies, \dep -> "\t" + dep + "\n"))
+					);
+					deleteRecursively(java_tmp_dir);
+					callback(0);
+				}
+			);
+			{}
+		}
+	}
+}
+
+fiGradleProperties(cfg : FiJavaConfig) -> string {
+"org.gradle.jvmargs=-Xmx" + cfg.builderXmX + "
+org.gradle.parallel=true
+org.gradle.daemon=true
+org.gradle.caching=true"
+}
+
+fiSettingsGradle(cfg : FiJavaConfig, jar_name : string) -> string {
+"rootProject.name = '" + jar_name + "'
+include('" + jar_name + "')"
+}
+
+fiGradleBuild(cfg : FiJavaConfig) -> string {
+	main_class = if (cfg.packageName == "") cfg.mainClassName else cfg.packageName + "." + cfg.mainClassName;
+	dependencies = concatStrings(filtermap(cfg.dependencies, \dep ->
+		if (!startsWith(dep, "gradle")) None() else Some("\timplementation \"" + substring(dep, 7, strlen(dep) - 8) + "\"\n")
+	));
+"plugins {
+    id 'application'
+}
+repositories {
+    mavenCentral()
+}
+dependencies {\n" + dependencies + "}
+application {
+    mainClass.set(\"" + main_class + "\")
+}
+jar {
+	duplicatesStrategy = DuplicatesStrategy.INCLUDE
+	manifest {
+		attributes \"Main-Class\": \"" + main_class + "\"
+	}
+	from {
+		configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+	}
+}"
+}
+
+fiGradleDownloadDependencies(cfg : FiJavaConfig, java_lib_dir : string) -> string {
+	dependencies = concatStrings(filtermap(cfg.dependencies, \dep ->
+		if (!startsWith(dep, "gradle")) None() else Some("\timplementation \"" + substring(dep, 7, strlen(dep) - 8) + "\"\n")
+	));
+"plugins {
+    id 'java'
+}
+repositories {
+    mavenCentral()
+}
+dependencies {\n" + dependencies + "}
+task getDeps(type: Copy) {
+  from sourceSets.main.runtimeClasspath
+  into '" + java_lib_dir + "'
+}"
+}

@@ -7,12 +7,11 @@ import java.util.stream.Collectors;
 import java.io.*;
 import java.security.KeyStore;
 import javax.net.ssl.*;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
-public class HttpServerSupport extends NativeHost
-{
+public class HttpServerSupport extends NativeHost {
 
-	public Object createHttpServerNative(
+	public static Object createHttpServerNative(
 		int port,
 		boolean isHttps,
 		String pfxPath,
@@ -28,12 +27,59 @@ public class HttpServerSupport extends NativeHost
 			Func2<Object,String,Object[]>,
 			Func1<Object,Integer>
 		> onMessage
-	)
-	{
-		try
-		{
-			if (isHttps)
-			{
+	) {
+		try {
+			if (isHttps) {
+				HttpsServer server = HttpsServer.create();
+				server.setExecutor(Executors.newCachedThreadPool());
+				SSLContext sslContext = setupSSLContext(pfxPath, pfxPassword);
+				configureHttpsServer(server, sslContext);
+
+				server.bind(new InetSocketAddress(port), 0);
+				server.createContext("/", new EchoHandler(onMessage));
+
+				server.start();
+				onOpen.invoke();
+
+				return server;
+			} else {
+				HttpServer server = HttpServer.create();
+				server.bind(new InetSocketAddress(port), 0);
+				server.setExecutor(Executors.newCachedThreadPool());
+				server.createContext("/", new EchoHandler(onMessage));
+
+				server.start();
+				onOpen.invoke();
+
+				return server;
+			}
+		} catch (Exception e) {
+			System.out.println(e);
+			System.out.println("Failed to create HTTPS server");
+			return null;
+		}
+	}
+
+	public static Object createHttpChunkedServerNative(
+		int port,
+		boolean isHttps,
+		String pfxPath,
+		String pfxPassword,
+		Func0<Object> onOpen,
+		Func8<
+			Object,
+			String,
+			String,
+			String,
+			Object[],
+			Func0<Object>,
+			Func1<String, String>,
+			Func2<String, Integer, Boolean>,
+			Func2<Object, String, Object[]>
+		> onMessage
+	) {
+		try {
+			if (isHttps) {
 				HttpsServer server = HttpsServer.create();
 				server.setExecutor(Executors.newCachedThreadPool());
 				SSLContext sslContext = setupSSLContext(pfxPath, pfxPassword);
@@ -41,40 +87,33 @@ public class HttpServerSupport extends NativeHost
 
 				server.bind(new InetSocketAddress(port), 0);
 
-				HttpContext context =
-					server.createContext("/", new EchoHandler(onMessage));
+				server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
 
 				return server;
-			}
-			else
-			{
+			} else {
 				HttpServer server = HttpServer.create();
 				server.bind(new InetSocketAddress(port), 0);
 				server.setExecutor(Executors.newCachedThreadPool());
 
-				HttpContext context =
-					server.createContext("/", new EchoHandler(onMessage));
+				server.createContext("/", new ChunkedHandler(onMessage));
 
 				server.start();
 				onOpen.invoke();
 
 				return server;
 			}
-		}
-		catch (Exception e)
-		{
+		} catch (Exception e) {
 			System.out.println(e);
 			System.out.println("Failed to create HTTPS server");
 			return null;
 		}
 	}
 
-	public Object closeHttpServerNative(Object server)
-	{
-		( (HttpServer)server ).stop(0);
+	public static Object closeHttpServerNative(Object server) {
+		((HttpServer)server).stop(0);
 		return null;
 	}
 
@@ -132,16 +171,16 @@ public class HttpServerSupport extends NativeHost
 		});
 	}
 
-	static class EchoHandler implements HttpHandler {
+	static class EchoHandler extends HttpHandlerBase implements HttpHandler {
 		private Func7<
 			Object,
 			String,
 			String,
 			String,
 			Object[],
-			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
-			Func1<Object,Integer>
+			Func1<Object, String>,
+			Func2<Object, String, Object[]>,
+			Func1<Object, Integer>
 		> onMessage;
 
 		public EchoHandler(Func7<
@@ -151,7 +190,7 @@ public class HttpServerSupport extends NativeHost
 			String,
 			Object[],
 			Func1<Object,String>,
-			Func2<Object,String,Object[]>,
+			Func2<Object,String, Object[]>,
 			Func1<Object,Integer>
 		> _onMessage)
 		{
@@ -172,8 +211,55 @@ public class HttpServerSupport extends NativeHost
 				handler.makeResponseStatus()
 			);
 		}
+	}
 
-		private static String readInputStream(InputStream stream)
+	static class ChunkedHandler extends HttpHandlerBase implements HttpHandler {
+		private Func8<
+			Object,
+			String,
+			String,
+			String,
+			Object[],
+			Func0<Object>,
+			Func1<String, String>,
+			Func2<String, Integer, Boolean>,
+			Func2<Object, String, Object[]>
+		> onMessage;
+
+		public ChunkedHandler(Func8<
+			Object,
+			String,
+			String,
+			String,
+			Object[],
+			Func0<Object>,
+			Func1<String, String>,
+			Func2<String, Integer, Boolean>,
+			Func2<Object, String, Object[]>
+		> _onMessage)
+		{
+			onMessage = _onMessage;
+		}
+
+		@Override
+		public void handle(HttpExchange exchange) throws IOException
+		{
+			ResponseHandler handler = new ResponseHandler(exchange);
+			onMessage.invoke(
+				exchange.getRequestURI().toString(),
+				readInputStream(exchange.getRequestBody()),
+				exchange.getRequestMethod(),
+				readHeaders(exchange.getRequestHeaders().entrySet()),
+				handler.makeEndResponse(),
+				handler.makeSendChunk(),
+				handler.makeSendHeaders(),
+				handler.makeSetHeaders()
+			);
+		}
+	}
+
+	abstract static class HttpHandlerBase implements HttpHandler {
+		public String readInputStream(InputStream stream)
 		{
 			// https://stackoverflow.com/questions/309424/how-do-i-read-convert-an-inputstream-into-a-string-in-java
 			try {
@@ -191,7 +277,7 @@ public class HttpServerSupport extends NativeHost
 			}
 		}
 
-		private static String[][] readHeaders(Set<Map.Entry<String,List<String>>> entries)
+		public static String[][] readHeaders(Set<Map.Entry<String,List<String>>> entries)
 		{
 			String[][] result = new String[entries.size()][];
 			int i = 0;
@@ -214,14 +300,43 @@ public class HttpServerSupport extends NativeHost
 			return result;
 		}
 
-		private static class ResponseHandler {
+		public static class ResponseHandler {
 			private Integer responseStatusCode = 200;
 			private HttpExchange exchange;
+			private OutputStream os;
 
 			public ResponseHandler(HttpExchange _exchange)
 			{
 				exchange = _exchange;
 			}
+
+			public Func1<String, String> makeSendChunk() {
+				return new Func1<String, String>() {
+					public String invoke(String chunk) {
+						try {
+							os.write(chunk.getBytes("UTF-8"));
+							os.flush();
+							return "";
+						} catch (IOException e) {
+							return "Sending chunk error: " + e.getMessage();
+						}
+					}
+				};
+			}
+
+			public Func0<Object> makeEndResponse() {
+				return new Func0<Object>() {
+					public Object invoke() {
+						try {
+							os.close();
+						} catch (IOException e) {
+							System.out.println(e);
+						}
+						return null;
+					}
+				};
+			}
+
 
 			public Func1<Object,Integer> makeResponseStatus()
 			{
@@ -248,7 +363,7 @@ public class HttpServerSupport extends NativeHost
 								responseStatusCode,
 								responseBytes.length
 							);
-							OutputStream os = exchange.getResponseBody();
+							if (os == null) os = exchange.getResponseBody();
 							os.write(responseBytes);
 							os.close();
 						}
@@ -276,6 +391,29 @@ public class HttpServerSupport extends NativeHost
 									.collect(Collectors.toList())
 							);
 						return null;
+					}
+				};
+			}
+
+			public Func2<String, Integer, Boolean> makeSendHeaders() {
+				return new Func2<String, Integer, Boolean>() {
+					public String invoke(Integer status, Boolean compressBody) {
+						try {
+							os = exchange.getResponseBody();
+							if (compressBody) {
+								exchange.getResponseHeaders().put(
+									"Content-Encoding",
+									Collections.singletonList("gzip")
+								);
+								exchange.sendResponseHeaders(status, 0);
+								os = new java.util.zip.GZIPOutputStream(os, true);
+							} else {
+								exchange.sendResponseHeaders(status, 0);
+							}
+							return "";
+						} catch (IOException e) {
+							return "Sending headers error: " + e.getMessage();
+						}
 					}
 				};
 			}

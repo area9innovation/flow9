@@ -1,0 +1,206 @@
+import text/blueprint;
+import tools/flow9/dexp/pretty;
+import tools/flow9/bexp/bmodule;
+
+export {
+	prettyBModule(b : BModule) -> string;
+	prettyBExp(b : BExp) -> string;
+	prettyBType(t : BType) -> string;
+}
+
+prettyBModule(bmodule : BModule) -> string {
+	head = "\nMODULE " + bmodule.flowpath + " (" + bmodule.fullpath + "):\n"
+		+ concatStrings(map(bmodule.imports, \i : DImport -> {
+			"import " + i.path + ";\n"
+		}))
+		+ concatStrings(map(bmodule.forbids, \i : DForbid -> {
+			"forbid " + i.path + ";\n"
+		}))
+		;
+
+/*
+	// TODO:
+	//	exported : DExport, 
+*/
+	structs = foldTree(bmodule.structs, "", \__, str, acc -> {
+		acc + prettyDStruct("", str) + "\n"
+	});
+
+	unions = foldTree(bmodule.unions, "", \__, un, acc -> {
+		acc + prettyDUnion("", un) + "\n"
+	});
+
+	natives = foldTree(bmodule.natives, "", \nat, bnat, acc -> {
+		acc + "native " + nat + " : " + prettyBType(bnat.type) + "\n"
+	});
+
+	globals = list2string(fold(bmodule.order, makeList(), \acc, tl -> {
+		mglobal = lookupTree(bmodule.globals, tl);
+		mglobal ?? {
+			glob = blueprint("
+					%id% : %type% /* %typars% */=
+						%body%
+					
+				",
+				[
+					"id", tl,
+					"type", prettyBType(mglobal.type),
+					"typars", "<" + strGlue(mglobal.typars, ", ") + ">",
+					"body", prettyBExp(mglobal.value)
+				]
+			);
+			Cons(glob, acc);
+		} : {
+			acc
+		}
+	}));
+
+	head + "\n" + 
+	(if (structs =="") "" else structs + "\n") + 
+	(if (unions == "") "" else unions + "\n") + 
+	(if (natives == "") "" else natives + "\n") + 
+	globals;
+}
+
+prettyBExp(b : BExp) -> string {
+	switch (b) {
+		BVoid(): "{}";
+		BBool(v): b2s(v);
+		BInt(v): i2s(v);
+		BDouble(v): d2s(v);
+		BString(v): toString(v);
+		BVar(id, type): id + "/*" + prettyBType(type) + "*/";
+		BLet(id, value, body, type): {
+			blueprint("
+					%id% = %value%;
+					%body% : %type%",
+				[
+					"id", id,
+					"value", prettyBExp(value),
+					"body", prettyBExp(body),
+					"type", prettyBType(type),
+			]);
+		}
+		BIf(cond, then, else_, type): {
+			blueprint("
+					if (%c%) // %type%
+						%then%
+					else
+						%else%",
+				[
+					"c", prettyBExp(cond),
+					"then", prettyBExp(then),
+					"else", prettyBExp(else_),
+					"type", prettyBType(type),
+			]);
+		}
+		BConstruct(struct, args, type): {
+			blueprint("
+					%struct%( // struct
+						%args%
+					) /* %type% */",
+				[
+					"struct", struct,
+					"args", superglue(args, prettyBExp, ",\n"),
+					"type", prettyBType(type),
+			]);
+		}
+		BField(value, field, type): {
+			blueprint("
+					%value%.%field% /* %type% */",
+				[
+					"value", prettyBExp(value),
+					"field", field,
+					"type", prettyBType(type),
+			]);
+		}
+		BSetMutable(left, field, value, type): {
+			blueprint("
+					%left%.%field% ::= %value% /* %type% */",
+				[
+					"left", prettyBExp(left),
+					"field", field,
+					"value", prettyBExp(value),
+					"type", prettyBType(type),
+			]);
+		}
+		BCall(fn, args, type): {
+			blueprint("
+					%fn%(
+						%args%
+					) /* %type% */",
+				[
+					"fn", prettyBExp(fn),
+					"args", superglue(args, prettyBExp, ",\n"),
+					"type", prettyBType(type),
+			]);
+		}
+		BLambda(args, body, type, capturedVars): {
+			blueprint("
+					\\%args% %captured% -> /* %type% */ 
+						%body%",
+				[
+					"args", strGlue(args, ", "),
+					"body", prettyBExp(body),
+					"type", prettyBType(type),
+					"captured", if (capturedVars == []) "" else ("[" + strGlue(capturedVars, ", ") + "]")
+			]);
+		}
+		BSequence(exps, type): {
+			blueprint("
+					{ /* %type% */
+						%exps%
+					}",
+				[
+					"exps", superglue(exps, prettyBExp, ";\n"),
+					"type", prettyBType(type),
+			]);
+		}
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			blueprint("
+					switch (%value% : %type1%) {
+						%cases%
+						%default%
+					} /* %type2% */",
+				[
+					"value", prettyBExp(value),
+					"cases", superglue(cases, \case -> {
+						case.id + "(): " + prettyBExp(case.body);
+					}, ";\n"),
+					"default", defaultCase ?? ("default: " + prettyBExp(defaultCase)) : "",
+					"type1", prettyBType(switchType),
+					"type2", prettyBType(type),
+			]);
+		}
+		BArray(args, type): {
+			blueprint("
+					[ // array
+						%args%
+					) /* %type% */",
+				[
+					"args", superglue(args, prettyBExp, ",\n"),
+					"type", prettyBType(type),
+			]);
+		}
+		BCast(value, from, to): {
+			blueprint("
+					(cast : '%from%' -> '%to%')%exp%",
+				[
+					"exp", prettyBExp(value),
+					"from", prettyBType(from),
+					"to", prettyBType(to),
+			]);
+		}
+		BDupValue(value) : blueprint("dup( %exp% )", ["exp", prettyBExp(value)]);
+		BDropValue(value) : blueprint("drop( %exp% )", ["exp", prettyBExp(value)]);
+		BReuseValue(value) : blueprint("reuse( %exp% )", ["exp", prettyBExp(value)]);
+	}
+}
+
+prettyBType(t : BType) -> string {
+	switch (t) {
+		BTypePar(id): id;
+		BTypeName(id, typars): id + (if (typars != []) "<" + superglue(typars, prettyBType, ", ") + ">" else "")
+		BTypeFunction(args, returnType): "(" + superglue(args, prettyBType, ", ") + ") -> " + prettyBType(returnType);
+	}
+}
