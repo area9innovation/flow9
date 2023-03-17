@@ -2517,7 +2517,7 @@ class DisplayObjectHelper {
 
 		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
 
-		if (untyped clip.scrollRect != null) {
+		if (untyped clip.scrollRect != null && !clip.keepNativeWidgetChildren) {
 			viewBounds.minX = Math.max(viewBounds.minX, localBounds.minX);
 			viewBounds.minY = Math.max(viewBounds.minY, localBounds.minY);
 			viewBounds.maxX = Math.min(viewBounds.maxX, localBounds.maxX);
