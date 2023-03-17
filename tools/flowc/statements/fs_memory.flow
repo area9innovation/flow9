@@ -14,57 +14,73 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 	}
 	s1 = cast(fsMap(s, fsIds(new_id), false): FsAll -> FsStat);
 	if (debug) {
-		println("s1 with ids:\n" + 
-			//"s:\n" + fs2s(s) + "\n" + 
+		println("s1 with ids:\n" +
+			//"s:\n" + fs2s(s) + "\n" +
 			"s1:\n" + fs2s(s1) + "\n"
 			//"s RAW:\n" + toStringFormatted(s1) + "\n"
 		);
 	}
-
-	pre_order = ref [];
 	merge_vars = \p1, p2 -> Pair(
 		mergeTreeCustom(p1.first, p2.first, \id, x1, x2 -> mergeSets(x1, x2)),
 		mergeSets(p1.second, p2.second)
 	);
-	id2vars_pre: Tree<int, Set<FsVar>> = fsFold(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll -> {
-		refArrayPush(pre_order, i2s(x.id));
-		add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
-		s2 = switch (x) {
-			FsLet(v, __, id): add_v(acc.second, v);
-			FsLambda(__, args,__,__,__): {
-				fold(args, acc.second,
-					\ac, v -> add_v(ac, v)
-				);
+	id2vars_pre: Tree<int, Set<FsVar>> = fsFold1(s1, Pair(makeTree(), makeSet()),
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
+			s2 = switch (x) {
+				FsLet(v, __, id): add_v(acc.second, v);
+				FsLambda(clos, args,__,__,__): {
+					fold(clos,
+						fold(args, makeSet(),
+							\ac, v -> add_v(ac, v)
+						),
+						\ac, v -> add_v(ac, v)
+					);
+				}
+				default: acc.second;
 			}
-			default: acc.second;
-		}
-		Pair(setTree(acc.first, x.id, s2), s2);
-	}, merge_vars, false).first;
+			Pair(setTree(acc.first, x.id, s2), s2);
+		},
+		\acc, x -> acc,
+		\args -> args,
+		merge_vars
+	).first;
 
-	post_order = ref [];
-	id2vars_post: Tree<int, Set<FsVar>> = fsFoldr(s1, Pair(makeTree(), makeSet()), \acc, x: FsAll -> {
-		refArrayPush(post_order, i2s(x.id));
-		add_v = \ac, v -> if (fiIsGlobal(v.name, names)) ac else insertSet(ac, v);
-		s2 = switch (x) {
-			FsVarUse(v, id): add_v(acc.second, v);
-			default: acc.second;
-		}
-		Pair(setTree(acc.first, x.id, acc.second), s2)
-	}, merge_vars, false).first;
+	id2vars_post: Tree<int, Set<FsVar>> = fsFold1(s1, Pair(makeTree(), makeSet()),
+		\acc, x -> acc,
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (fiIsGlobal(v.name, names)) ac else insertSet(ac, v);
+			s2 = switch (x) {
+				FsVarUse(v, id): add_v(acc.second, v);
+				default: acc.second;
+			}
+			Pair(setTree(acc.first, x.id, acc.second), s2)
+		},
+		\args -> reverseA(args),
+		merge_vars
+	).first;
 
-	if (debug) {
-		println("fsFold   order: [" + strGlue(^pre_order, ", ") + "]");
-		println("fsrFold* order: [" + strGlue(reverseA(^post_order), ", ") + "]");
-		println("fsrFold  order: [" + strGlue(^post_order, ", ") + "]");
-	}
+	//id2vars_last1 = mapTree2(id2vars_pre, \id, pre_vars ->
+	//	differenceSets(pre_vars, lookupTreeDef(id2vars_post, id, makeSet()))
+	//);
 
-	id2vars_last = mapTree2(id2vars_pre, \id, pre_vars -> 
-		differenceSets(pre_vars, lookupTreeDef(id2vars_post, id, makeSet()))
-	);
+	id2vars_last: Tree<int, Set<FsVar>> = fsFold1(s1, Pair(makeTree(), makeSet()),
+		\acc, x: FsAll -> {
+			pre_vars = lookupTreeDef(id2vars_pre, x.id, makeSet());
+			post_vars = lookupTreeDef(id2vars_post, x.id, makeSet());
+			diff1 = differenceSets(pre_vars, post_vars);
+			diff = differenceSets(diff1, acc.second);
+			Pair(setTree(acc.first, x.id, diff), mergeSets(acc.second, diff1));
+		},
+		\acc, x -> acc,
+		\args -> args,
+		merge_vars
+	).first;
+
 	if (debug) {
 		set_tree2s = \st -> {
-			superglue(tree2pairs(st), \p -> 
-				i2s(p.first) + ": [" + superglue(set2array(p.second), \v -> v.name, ", ") + "]", "\n" 
+			superglue(tree2pairs(st), \p ->
+				i2s(p.first) + ": [" + superglue(set2array(p.second), \v -> v.name, ", ") + "]", "\n"
 			);
 		}
 		println(
@@ -74,12 +90,12 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 			""
 		);
 	}
-	dec_unused = \x -> {
-		unused = set2array(lookupTreeDef(id2vars_last, x.id, makeSet()));
+	dec_unused = \id, x -> {
+		unused = set2array(lookupTreeDef(id2vars_last, id, makeSet()));
+		if (debug) {
+			println("to dec <" + i2s(id) + "> unused: [" + superglue(unused, \v -> v.name, ", ") + "]");
+		}
 		if (length(unused) == 0) x else {
-			if (debug) {
-				println("to dec <" + i2s(x.id) + "> unused: [" + superglue(unused, \v -> v.name, ", ") + "]");
-			}
 			FsSeq(concat(
 				map(unused, \v -> FsDecRc(FsVarUse(v, -1), -1)),
 				fsUnwrapSeq(x)
@@ -88,10 +104,10 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 	}
 	cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
-			FsIf(x with s1 = dec_unused(pos), s2 = dec_unused(neg));
+			FsIf(x with s1 = dec_unused(pos.id, pos), s2 = dec_unused(neg.id, neg));
 		};
 		FsSwitch(__,__, cs,__): {
-			FsSwitch(x with cases = map(cs, \c -> FsCase(c with body = dec_unused(c.body))));
+			FsSwitch(x with cases = map(cs, \c -> FsCase(c with body = dec_unused(c.body.id, c.body))));
 		}
 		FsWrapExp(e1,__): {
 			if (fiTypeIsScalar(fsType(e1))) x else {
@@ -112,8 +128,8 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 				}
 			}
 		}
-		FsLambda(__,__, body,__,__): {
-			FsLambda(x with body = dec_unused(body));
+		FsLambda(__,__, body,__,id): {
+			FsLambda(x with body = dec_unused(id, body));
 		}
 		default: x;
 	}, true): FsAll -> FsStat);
