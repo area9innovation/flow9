@@ -49,7 +49,6 @@ The `Maybe` type is used for when you are not sure you have a value. It is defin
         None();
         Some(value : ?);
 
-
 `Maybe` is a union type, while `None` and `Some` are structs. Structs and unions start with uppercase, while functions and variables start with lowercase.
 
 You can switch on unions using the `switch` syntax:
@@ -71,7 +70,7 @@ Functions are written like this:
 		else n * fact(n - 1);
 	}
 
-The last value in a sequence is the result. Flow is an expression-based language without statements. here is no `return` expression.
+The last value in a sequence is the result. Flow is an expression-based language without statements. There is no `return` expression.
 
 Lambdas are defined using this syntax:
 
