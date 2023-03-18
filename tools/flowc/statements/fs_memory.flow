@@ -58,7 +58,7 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 			new_stack = switch (x) {
 				FsLambda(__,__,__,__,id): {
 					if (debug) {
-						println("(A) pushing stack: " + superglue(set2array(acc.first.vars), \v -> v.name, ", "));
+						println("(A) id=" + i2s(id) + " pushing stack: " + superglue(set2array(acc.first.vars), \v -> v.name, ", "));
 					}
 					Cons(acc.first.vars, acc.second);
 				}
@@ -68,11 +68,11 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 		},
 		\acc, x -> {
 			switch (x) {
-				FsLambda(__,__,__,__,__): {
+				FsLambda(__,__,__,__,id): {
 					switch (acc.second) {
 						Cons(vars, t): {
 							if (debug) {
-								println("(A) poping stack: " + 
+								println("(A) id=" + i2s(id) + " poping stack: " + 
 									superglue(set2array(vars), \v -> v.name, ", ")
 								);
 							}
@@ -97,8 +97,8 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 							Cons(vs,__): superglue(set2array(vs), \v -> v.name, ", ");
 							EmptyList(): ""
 						}
-						println("(B) pushing stack: [" + superglue(set2array(acc.first.vars), \v -> v.name, ", ") + "]\n" +
-							"(B) acc.second: [" + st + "]"
+						println("(B) id=" + i2s(id) + " pushing stack: [" + superglue(set2array(acc.first.vars), \v -> v.name, ", ") + "]\n" +
+							"\tacc.second: [" + st + "]"
 						);
 					}
 					Pair(FsPerceusAcc(acc.first.id2vars, makeSet()), Cons(acc.first.vars, acc.second));
@@ -110,20 +110,20 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 			add_v = \ac, v -> if (fiIsGlobal(v.name, names) || fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
 			new_vars = switch (x) {
 				FsVarUse(v,__,id): add_v(acc.first.vars, v);
-				FsLambda(__,__,__,__,__): {
+				FsLambda(__,__,__,__,id): {
 					switch (acc.second) {
 						Cons(vars, t): {
 							if (debug) {
-								println("(B) poping stack: [" + superglue(set2array(vars), \v -> v.name, ", ") + "]\n" +
-									"(B) (acc.first.vars: [" + superglue(set2array(acc.first.vars), \v -> v.name, ", ") + "]"
+								println("(B) id=" + i2s(id) + " poping stack: [" + superglue(set2array(vars), \v -> v.name, ", ") + "]\n" +
+									"\tacc.first.vars: [" + superglue(set2array(acc.first.vars), \v -> v.name, ", ") + "]"
 								);
 							}
 							vars;
 						}
 						default: {
 							if (debug) {
-								println("(B) poping stack: EMPTY (??? WTF)\n" +
-									"(B) acc.first.vars: [" + superglue(set2array(acc.first.vars), \v -> v.name, ", ") + "]"
+								println("(B) id=" + i2s(id) + " poping stack: EMPTY (??? WTF)\n" +
+									"\tacc.first.vars: [" + superglue(set2array(acc.first.vars), \v -> v.name, ", ") + "]"
 								);
 							}
 							acc.first.vars;
@@ -147,18 +147,45 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 		\p1, p2 -> Pair(merge_vars(p1.first, p2.first), fsMergeStacks(p1.second, p2.second))
 	).first.id2vars;
 
-	id2vars_last: Tree<int, Set<FsVar>> = fsFold1(s1, empty_acc,
+	id2vars_last: Tree<int, Set<FsVar>> = fsFold1(s1, Pair(empty_acc, makeList()),
 		\acc, x: FsAll -> {
 			pre_vars = lookupTreeDef(id2vars_pre, x.id, makeSet());
 			post_vars = lookupTreeDef(id2vars_post, x.id, makeSet());
 			diff1 = differenceSets(pre_vars, post_vars);
-			diff = differenceSets(diff1, acc.vars);
-			FsPerceusAcc(setTree(acc.id2vars, x.id, diff), mergeSets(acc.vars, diff1));
+			diff = differenceSets(diff1, acc.first.vars);
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					if (debug) {
+						println("(C) id=" + i2s(id) + " pushing stack: " + superglue(set2array(acc.first.vars), \v -> v.name, ", "));
+					}
+					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, diff), makeSet()), Cons(acc.first.vars, acc.second));
+				}
+				default: {
+					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, diff), mergeSets(acc.first.vars, diff1)), acc.second);
+				}
+			}
 		},
-		\acc, x -> acc,
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					switch (acc.second) {
+						Cons(vars, t): {
+							if (debug) {
+								println("(C) id=" + i2s(id) + " poping stack: " + 
+									superglue(set2array(vars), \v -> v.name, ", ")
+								);
+							}
+							Pair(FsPerceusAcc(acc.first.id2vars, vars), t);
+						}
+						default: acc;
+					}
+				}
+				default: acc;
+			}
+		},
 		\args -> args,
-		merge_vars
-	).id2vars;
+		\p1, p2 -> Pair(merge_vars(p1.first, p2.first), fsMergeStacks(p1.second, p2.second))
+	).first.id2vars;
 
 	if (debug) {
 		set_tree2s = \st -> {
@@ -220,7 +247,9 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 				FsLambda(closure,__,__,__,__): {
 					inc_closure = filter(closure, \v -> v.incRc);
 					if (length(inc_closure) == 0) x else {
-						FsSeq(concat(map(inc_closure, \v -> FsWrapExp(v, -1)), [x]), -1);
+						lambda = FsLambda(e with closure = map(closure, \v -> FsVarUse(v with incRc = false)));
+						let = FsLet(x with e = lambda);
+						FsSeq(concat(map(inc_closure, \v -> FsWrapExp(v, -1)), [let]), -1);
 					}
 				}
 				default: x;
