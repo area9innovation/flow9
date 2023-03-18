@@ -14,6 +14,7 @@ export {
 fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 	map_exp = \x -> cast(fsMap(x, f, args_first): FsAll -> FsExp);
 	map_stat = \x -> cast(fsMap(x, f, args_first): FsAll -> FsStat);
+	map_var = \x -> cast(fsMap(x, f, args_first): FsAll -> FsVarUse);
 	do_args = \s -> switch (s) {
 		FsIf(cond, s1, s2,__):
 			FsIf(s with cond = map_exp(cond), s1 = map_stat(s1), s2 = map_stat(s2));
@@ -29,14 +30,10 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 			FsRet(s with e = map_exp(e));
 		FsAssign(to, what,__):
 			FsAssign(s with to = map_exp(to), what = map_exp(what));
-		FsModRc(__, e,__):
-			FsModRc(s with e = map_exp(e));
 		FsDecRc(e,__):
 			FsDecRc(s with e = map_exp(e));
-		FsIncRc(e,__,__):
-			FsIncRc(s with e = map_exp(e));
-		FsLambda(__,__, body, __,__):
-			FsLambda(s with body = map_stat(body));
+		FsLambda(closure,__, body, __,__):
+			FsLambda(s with closure = map(closure, map_var), body = map_stat(body));
 		FsCall(fn, args, __,__):
 			FsCall(s with f = map_exp(fn), args = map(args, \x -> map_exp(x)));
 		FsCallPrim(__, es, __,__):
@@ -45,7 +42,7 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 			FsTailCall(s with vals = map(vals, \x -> map_exp(x)));
 		FsCast(e, from, type,__):
 			FsCast(s with e = map_exp(e));
-		FsVarUse(__,__): s;
+		FsVarUse(__,__,__): s;
 		FsConst(__,__): s;
 	}
 	if (args_first) f(do_args(a)) else do_args(f(a));
@@ -82,16 +79,35 @@ fsArgs(s: FsAll) -> [[FsAll]] {
 		FsWrapExp(e1,__):         [[e1]];
 		FsRet(e1,__):             [[e1]];
 		FsAssign(to, what,__):    [[to, what]];
-		FsModRc(__, e1,__):       [[e1]];
-		FsIncRc(e1,__,__):        [[e1]];
 		FsDecRc(e1,__):           [[e1]];
-		FsLambda(cl,as,e1,__,__): [[e1]];
+		FsLambda(cl,__,e1,__,__): [concat(cl, [e1])];
 		FsCall(fn, args, __,__):  [concat([fn], args)];
 		FsCallPrim(__,es,__,__):  [es];
 		FsTailCall(__,vs,__,__):  [vs];
 		FsCast(e1,__,__,__):      [[e1]];
-		FsVarUse(__,__):          [[]];
+		FsVarUse(__,__,__):       [[]];
 		FsConst(__,__):           [[]];
+	}
+}
+
+fsFold2(s: FsAll, v0: ?, 
+	pre: (?, FsAll) -> ?, 
+	post: (?, FsAll) -> ?, 
+	order: ([FsAll]) -> [FsAll],
+	init: (FsAll) -> ?, 
+	merge: (?, ?) -> ?
+) -> ? {
+	switch (s) {
+		FsLambda(__,__,body,__,__): {
+			fsFold2(body, init(s), pre, post, order, init, merge);
+		}
+		default: {
+			v1 = pre(v0, s);
+			v2 = fold(fsArgs(s), v1,
+				\acc, as -> merge(acc, fold(order(as), v1, \ac, x -> fsFold1(x, ac, pre, post, order, merge)))
+			);
+			post(v2, s);
+		}
 	}
 }
 

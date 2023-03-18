@@ -88,7 +88,8 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	type = globalVar.type;
 	gctx = Cpp3GlobalContext(gctx0 with 
 		currentToplevel = Some(globalVar),
-		toplevelTypars = fiCollectTypars(type, makeSet())
+		toplevelTypars = fiCollectTypars(type, makeSet()),
+		currentToplevelName = name
 	);
 	value1 = fiPrepareFiExp2cpp3(globalVar.value, type, gctx, name);
 	value2 = fiPrepareFsExp2cpp3(value1, gctx, name);
@@ -98,7 +99,7 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 			gctx.varname2cpp(name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 		default: {
-			value4 = fsStatReplaceReturnOntoAssign(value3, FsVarUse(FsVar(name, type), -1));
+			value4 = fsStatReplaceReturnOntoAssign(value3, FsVarUse(FsVar(name, type), false, -1));
 			"{\n" + strIndent(fsStat2cpp3(value4, gctx)) + "\n}";
 		}
 	}
@@ -112,7 +113,8 @@ fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	fn_type = fun.type;
 	gctx = Cpp3GlobalContext(
 		gctx0 with currentToplevel = Some(fun),
-		toplevelTypars = fiCollectTypars(fn_type, makeSet())
+		toplevelTypars = fiCollectTypars(fn_type, makeSet()),
+		currentToplevelName = name
 	);
 	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
@@ -315,17 +317,6 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 					fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
 			}
 		}
-		FsModRc(delta, ex,__): {
-			if (delta >= 0) {
-				"incRc<" + fiType2cpp3(fsType(ex), gctx) + ">(" + 
-						fsExp2cpp3(ex, gctx) + (if (delta == 1) "" else ", " + i2s(delta)) + 
-				");";
-			} else {
-				"decRc<" + fiType2cpp3(fsType(ex), gctx) + ">(" + 
-						fsExp2cpp3(ex, gctx) + (if (delta == -1) "" else ", " + i2s(-delta)) + 
-				");";
-			}
-		}
 		FsDecRc(ex,__): {
 			"decRc<" + fiType2cpp3(fsType(ex), gctx) + ">(" + fsExp2cpp3(ex, gctx) + ");";
 		}
@@ -425,7 +416,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			}
 			call_args = fiWrapWithPars(s_args_all);
 			switch(f) {
-				FsVarUse(v,__): {
+				FsVarUse(v, incRc,__): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, v.name);
 					typars = switch (toplevel) {
 						Some(fn): {
@@ -436,18 +427,25 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 						}
 						None(): "";
 					}
+					wrap_with_incRc = \call_name -> {
+						if (!incRc) call_name else "incRc(" + call_name + ")";
+					}
+					call_fn = gctx.varname2cpp(v.name) + typars;
+								if (!incRc) call_fn + "->callRc" + call_args else {
+									"incRc(" + call_fn + ")" + "->callRc" + call_args;
+								}
 					switch (lookupTree(gctx.natives, v.name)) {
 						Some(nat): {
 							switch (nat.inline) {
 								Some(inline): inline.def(s_args);
-								None(): gctx.varname2cpp(v.name) + typars + call_args;
+								None(): wrap_with_incRc(gctx.varname2cpp(v.name) + typars) + call_args;
 							}
 						}
 						None(): {
 							if (fiIsGlobalFunction(v.name, gctx.program.names)) {
 								gctx.varname2cpp(v.name) + typars + call_args;
 							} else {
-								gctx.varname2cpp(v.name) + typars + "->callRc" + call_args;
+								wrap_with_incRc(gctx.varname2cpp(v.name) + typars) + "->callRc" + call_args;
 							}
 						}
 					}
@@ -458,11 +456,11 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			};
 		}
 		FsLambda(closure, args, body, type,__): {
-			ref_counted_closure = filter(closure, \v -> !fiTypeIsScalar(v.type));
+			ref_counted_closure = filter(closure, \v -> !fiTypeIsScalar(v.var.type));
 			"Fun<" + fiType2cpp3(type.returnType, gctx) + concatStrings(map(type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">::make" +
-			"([" + superglue(closure, \v -> gctx.varname2cpp(v.name), ", ") + "] " + fsArgs2cpp(args, gctx) +
+			"([" + superglue(closure, \v -> gctx.varname2cpp(v.var.name), ", ") + "] " + fsArgs2cpp(args, gctx) +
 			" " + fiWrapWithBraces(fsStat2cpp3(body, gctx)) + 
-				", Vec<Flow*>({" + superglue(ref_counted_closure, \v -> gctx.varname2cpp(v.name), ", ") + "})" +
+				", Vec<Flow*>({" + superglue(ref_counted_closure, \v -> gctx.varname2cpp(v.var.name), ", ") + "})" +
 			")";
 		}
 		FsCallPrim(op, es, type,__): {
@@ -475,11 +473,10 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			e1_cpp = fsExp2cpp3(e1, gctx);
 			"castRc<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + e1_cpp + ")";
 		}
-		FsIncRc(ex, type,__): {
-			"incRc<" + fiType2cpp3(type, gctx) + ">(" + fsExp2cpp3(ex, gctx) + ")";
-		}
-		FsVarUse(v,__): {
-			gctx.varname2cpp(v.name);
+		FsVarUse(v, incRc,__): {
+			if (!incRc) gctx.varname2cpp(v.name) else {
+				"incRc<" + fiType2cpp3(v.type, gctx) + ">(" + gctx.varname2cpp(v.name) + ")";
+			}
 		}
 	}
 }
