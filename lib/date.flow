@@ -596,18 +596,49 @@ isLeapYear(year : int) -> bool {
 }
 
 db2date(s : string) -> Date {
-	parts = strSplit(s, " ");
-	if (length(parts) > 0){
-		dateParts = strSplit(parts[0], "-");
-		if (length(dateParts) == 3 && isDigits(dateParts[0]) && isDigits(dateParts[1]) && isDigits(dateParts[2])) {
-			Date(
-				s2i(dateParts[0]),
-				s2i(dateParts[1]),
-				s2i(dateParts[2])
-			)
-		} else nullDate;
-	} else nullDate;
+	n = strlen(s);
+	isDateSep = \p -> getCharCodeAt(s, p) == 45; // -
+	if (n < 5) {
+		nullDate;
+	} else {
+		pos = ref 0;
+		parseNext = \-> {
+			if (isDateSep(^pos)) {
+				pos := ^pos + 1;
+				parseIntPartFromStr(s, pos, 0, n);
+			} else {
+				-1;
+			}
+		}
+		year = parseIntPartFromStr(s, pos, 0, n);
+		if (year > 0) {
+			month = parseNext();
+			if (month > 0) {
+				day = parseNext();
+				if (day > 0) Date(year, month, day) else nullDate;
+			} else {
+				nullDate;
+			}
+		} else {
+			nullDate;
+		}
+	}
+}
 
+parseIntPartFromStr(s : string, start : ref int, acc : int, stop : int) -> int {
+	i = ^start;
+	if (i < stop) {
+		c = getCharCodeAt(s, i);
+		d = getDigitCode(c);
+		if (d != -1) {
+			start := ^start + 1;
+			parseIntPartFromStr(s, start, 10 * acc + d, stop);
+		} else {
+			acc; // error
+		}
+	} else {
+		acc;
+	}
 }
 
 db2dateDef(s : string, def : Date) -> Date {
@@ -624,52 +655,63 @@ date2dbValid(dt : Date) -> Maybe<string> {
 }
 
 db2time(s : string) -> Time {
-	parts = if (strContains(s, "T")) {
-		strSplit(s, "T");
+	n = strlen(s);
+	isDateSep = \p -> getCharCodeAt(s, p) == 45; // -
+	isDTSep = \p -> {
+		c = getCharCodeAt(s, p);
+		c == 84 || c == 32 // T or Space
+	}
+	isTimeSep = \p -> getCharCodeAt(s, p) == 58; // :
+	isIgnoreChar = \c -> c == 90; // Z
+	if (n < 5) {
+		nullTime;
 	} else {
-		strSplit(s, " ");
-	};
-	if (length(parts) >= 1) {
-		dateParts = strSplit(parts[0], "-");
-		timeParts = if (length(parts) == 1) ["0", "0", "0"] else strSplit(parts[1], ":");
-		if (length(dateParts) == 3 && length(timeParts) == 3) {
-			tm = Time(
-				s2timePart(dateParts[0]),
-				s2timePart(dateParts[1]),
-				s2timePart(dateParts[2]),
-				s2timePart(timeParts[0]),
-				s2timePart(timeParts[1]),
-				dbSec2string(timeParts[2])
-			);
-			if (isValidTime(tm)) tm else nullTime;
+		pos = ref 0;
+		parseNextDate = \-> {
+			if (isDateSep(^pos)) {
+				pos := ^pos + 1;
+				parseIntPartFromStr(s, pos, 0, n);
+			} else {
+				-1;
+			}
+		}
+		year = parseIntPartFromStr(s, pos, 0, n);
+		if (year > 0) {
+			month = parseNextDate();
+			if (month > 0) {
+				day = parseNextDate();
+				if (day > 0 && isDTSep(^pos)) {
+					pos := ^pos + 1;
+					if ((n - ^pos) < 5) {
+						tm = Time(year, month, day, 0, 0, 0);
+						if (isValidTime(tm)) tm else nullTime;
+					} else {
+						hour = parseIntPartFromStr(s, pos, 0, n);
+						if (isTimeSep(^pos)) {
+							pos := ^pos + 1;
+							min = parseIntPartFromStr(s, pos, 0, n);
+							if (isTimeSep(^pos)) {
+								pos := ^pos + 1;
+								dVal = s2dintWithError(s, ^pos, n, 0.0, -1.0);
+								sec = if (dVal < 0.) -1 else floor(dVal);
+								tm = Time(year, month, day, hour, min, sec);
+								if (isValidTime(tm)) tm else nullTime;
+							} else {
+								nullTime;
+							}
+						} else {
+							nullTime;
+						}
+					}
+				} else {
+					nullTime;
+				}
+			} else {
+				nullTime;
+			}
 		} else {
 			nullTime;
 		}
-	} else {
-		nullTime;
-	}
-}
-
-dbSec2string(s : string) -> int {
-	dVal = s2dintWithError(s, 0, strlen(s), 0.0, -1.0);
-	if (dVal < 0.) -1 else floor(dVal);
-}
-
-s2timePart(s : string) -> int {
-	s2timePartWithError(s, 0, strlen(s), 0, -1);
-}
-
-s2timePartWithError(s : string, i : int, n : int, acc : int, errValue : int) -> int {
-	if (i < n) {
-		c = getCharCodeAt(s, i);
-		d = getDigitCode(c);
-		if (d != -1) {
-			s2timePartWithError(s, i + 1, n, 10 * acc + d, errValue);
-		} else {
-			errValue;
-		}
-	} else {
-		acc;
 	}
 }
 
