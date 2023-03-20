@@ -15,71 +15,17 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 	}
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
 	env = fi2nimInitEnv(program0, cfg);
-	program = env.prog;
-
-	fcVerbose(cfg, 1, "Collecting code for all imported files...");
-
-	// Store all declarations of a program into one large array.
-	// Declarations stored in init order (order of their appearance in files).
-	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
-	moduleCount = i2s(length(decls));
-
-	fcVerbose(cfg, 0, "Generating Nim code for declarations...");
-	modulesCode = foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
-		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
-		mdl = lookupTree(program.modules, p.first);
-		switch (mdl) {
-			None(): fail0("Could not retrieve module " + p.first);
-			Some(module): {
-				r = fold(p.second, acc, \l, v -> {
-					cfg.fileinfo ::= module.fileinfo;
-					tl = fiNimCompileToplevel(env, v, fiNimIndent);
-					Cons(if (tl == "") "" else "\n", Cons(tl, l));
-				});
-				Cons("\n", r);
-			}
-		}
-	});
-
 	runtime = fi2nimRuntime(cfg);
-	native_imports = fi2nimNativeImports(env, runtime);
-
-	// All definitions of types
-	type_defs = fi2nimCompileTypes(env);
-
-	type_funcs = concatStrings([
-		"# Struct functions\n",
-		concatStrings(map(env.structs, \s ->
-			fi2nimStructRegister(env, s) + "\n" +
-			fi2nimStructFuncs(env, s))
-		),
-		"# Union functions\n",
-		fi2nimUnionFuncs(env) + "\n",
-	]);
-
-	source_code = concatStrings([
-		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
-		"# Forward declarations\n",
-		list2string(^(env.forward_decls)),
-		"\n",
-		"# Source code of functions / global variables\n",
-		list2string(modulesCode),
-	]);
-
 	fi2nimAssemble(cfg, [
 		"#[ COMMON RUNTIME ]#\n",
 		runtime,
-		"\n#[ TYPE DEFINITIONS ]#\n",
-		type_defs,
-		"\n#[ TYPE FUNCTIONS ]#\n",
-		fi2nimTypeTable(env),
-		type_funcs,
+		"\n#[ TYPES ]#\n",
+		fi2nimCompileTypes(env),
 		"\n#[ SOURCE CODE ]#\n",
-		source_code,
+		fi2nimCompileSourceCode(env, runtime),
 		"main()\n"
 	]);
-
-	fi2nimBuild(program, cfg, callback);
+	fi2nimBuild(env.prog, cfg, callback);
 }
 
 fi2nimCompileTypes(env: FiNimEnv) -> string {
@@ -91,9 +37,53 @@ fi2nimCompileTypes(env: FiNimEnv) -> string {
 			map(module.unions, \u -> fi2nimUnionDecl(env, u))
 		));
 	}));
-	"type\n" + concatStrings([
+	type_defs = "type\n" + concatStrings([
 		if (structs_enum == "") "" else fiNimIndent+ "# Struct Ids\n" + structs_enum + "\n",
 		if (type_decls == "") "" else fiNimIndent + "# Type definitions\n" + type_decls + "\n"
+	]);
+	type_register = fi2nimRegisterTypes(env);
+	type_funcs = concatStrings([
+		"# Struct functions\n",
+		concatStrings(map(env.structs, \s ->
+			fi2nimStructRegister(env, s) + "\n" +
+			fi2nimStructFuncs(env, s))
+		),
+		"# Union functions\n",
+		concatStrings(map(env.unions, \u -> fi2nimUnionFuncs(env, u))) + "\n",
+	]);
+	type_defs + type_register + type_funcs;
+}
+
+fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> string {
+	fcVerbose(env.cfg, 1, "Collecting code for all imported files...");
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(env.prog);
+	moduleCount = i2s(length(decls));
+
+	fcVerbose(env.cfg, 0, "Generating Nim code for declarations...");
+	modulesCode = foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+		fcVerbose(env.cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
+		mdl = lookupTree(env.prog.modules, p.first);
+		switch (mdl) {
+			None(): fail0("Could not retrieve module " + p.first);
+			Some(module): {
+				r = fold(p.second, acc, \l, v -> {
+					tl = fiNimCompileToplevel(env, v, fiNimIndent);
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+	native_imports = fi2nimNativeImports(env, runtime);
+	concatStrings([
+		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
+		"# Forward declarations\n",
+		list2string(^(env.forward_decls)),
+		"\n",
+		"# Source code of functions / global variables\n",
+		list2string(modulesCode),
 	]);
 }
 
