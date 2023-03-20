@@ -18,6 +18,11 @@ Git-lfs is needed to use flow9. So make sure, that you install it
 		source ~/.bash_profile
 
 ## Install neko/haxe
+	- I use these verions:
+		haxe -version
+		4.2.5
+		neko -version
+		2.3.0
 	-Install neko and haxe:
 		pacman -S neko haxe
 	- Setup base haxelib repository:
