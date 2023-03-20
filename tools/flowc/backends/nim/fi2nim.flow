@@ -14,7 +14,90 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		FiNimConfig(cfg0 with outputfile = changeFileExt(cfg0.flowfile, ".nim"));
 	}
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
+	env = fi2nimInitEnv(program0, cfg);
+	program = env.prog;
 
+	fcVerbose(cfg, 1, "Collecting code for all imported files...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+	moduleCount = i2s(length(decls));
+
+	fcVerbose(cfg, 0, "Generating Nim code for declarations...");
+	modulesCode = foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): fail0("Could not retrieve module " + p.first);
+			Some(module): {
+				r = fold(p.second, acc, \l, v -> {
+					cfg.fileinfo ::= module.fileinfo;
+					tl = fiNimCompileToplevel(env, v, fiNimIndent);
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+
+	runtime = fi2nimRuntime(cfg);
+	native_imports = fi2nimNativeImports(env, runtime);
+
+	// All definitions of types
+	type_defs = fi2nimCompileTypes(env);
+
+	type_funcs = concatStrings([
+		"# Struct functions\n",
+		concatStrings(map(env.structs, \s ->
+			fi2nimStructRegister(env, s) + "\n" +
+			fi2nimStructFuncs(env, s))
+		),
+		"# Union functions\n",
+		fi2nimUnionFuncs(env) + "\n",
+	]);
+
+	source_code = concatStrings([
+		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
+		"# Forward declarations\n",
+		list2string(^(env.forward_decls)),
+		"\n",
+		"# Source code of functions / global variables\n",
+		list2string(modulesCode),
+	]);
+
+	fi2nimAssemble(cfg, [
+		"#[ COMMON RUNTIME ]#\n",
+		runtime,
+		"\n#[ TYPE DEFINITIONS ]#\n",
+		type_defs,
+		"\n#[ TYPE FUNCTIONS ]#\n",
+		fi2nimTypeTable(env),
+		type_funcs,
+		"\n#[ SOURCE CODE ]#\n",
+		source_code,
+		"main()\n"
+	]);
+
+	fi2nimBuild(program, cfg, callback);
+}
+
+fi2nimCompileTypes(env: FiNimEnv) -> string {
+	structs_enum = fi2nimStructType(env);
+	type_decls = concatStrings(map(env.prog.traversal, \mod_name -> {
+		module = lookupTreeDef(env.prog.modules, mod_name, dummyFiModule);
+		concatStrings(concat(
+			map(module.structs, \s -> fi2nimStructDecl(env, s)),
+			map(module.unions, \u -> fi2nimUnionDecl(env, u))
+		));
+	}));
+	"type\n" + concatStrings([
+		if (structs_enum == "") "" else fiNimIndent+ "# Struct Ids\n" + structs_enum + "\n",
+		if (type_decls == "") "" else fiNimIndent + "# Type definitions\n" + type_decls + "\n"
+	]);
+}
+
+fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	// Unions shouldn't contain other unions - only structs
 	program = program0 |> fiRemoveImplicitStructTypars |> fiFlattenUnions;
 
@@ -138,12 +221,6 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		types_map_to_s(casts_to_from) + "\n"
 	);*/
 
-	fcVerbose(cfg, 1, "Collecting code for all imported files...");
-
-	// Store all declarations of a program into one large array.
-	// Declarations stored in init order (order of their appearance in files).
-	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
-
 	env0 = FiNimEnv(cfg, program, ref makeList(), ref makeSet(),
 		structs,
 		unions,
@@ -157,77 +234,7 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 		fi2nimNatives(cfg),
 		[], makeTree(), makeTree()
 	);
-	env = fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
-	moduleCount = i2s(length(decls));
-
-	fcVerbose(cfg, 0, "Generating Nim code for declarations...");
-	modulesCode = foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
-
-		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
-
-		mdl = lookupTree(program.modules, p.first);
-		switch (mdl) {
-			None(): {
-				fail("Could not retrieve module " + p.first);
-				EmptyList();
-			}
-			Some(module): {
-				r = fold(p.second, acc, \l, v -> {
-					cfg.fileinfo ::= module.fileinfo;
-					tl = fiNimCompileToplevel(env, v, fiNimIndent);
-					Cons(if (tl == "") "" else "\n", Cons(tl, l));
-				});
-				Cons("\n", r);
-			}
-		}
-	});
-
-	runtime = fi2nimRuntime(cfg);
-	native_imports = fi2nimNativeImports(env, runtime);
-
-	// All definitions of types
-	structs_enum = fi2nimStructType(env);
-	structs_decls = concatStrings(map(env.structs, \s -> fi2nimStructDecl(env, s)));
-	union_decls = concatStrings(map(getTreeValues(env.prog.names.unions), \s -> fi2nimUnionDecl(env, s)));
-	type_defs = "type\n" + concatStrings([
-		if (structs_enum == "") "" else fiNimIndent+ "# Struct Ids\n" + structs_enum + "\n",
-		if (structs_decls == "") "" else fiNimIndent + "# Struct definitions\n" + structs_decls + "\n",
-		if (union_decls == "") "" else fiNimIndent + "# union definitions\n" + union_decls + "\n",
-	]);
-
-	type_funcs = concatStrings([
-		"# Struct functions\n",
-		concatStrings(map(env.structs, \s ->
-			fi2nimStructRegister(env, s) + "\n" +
-			fi2nimStructFuncs(env, s))
-		),
-		"# Union functions\n",
-		fi2nimUnionFuncs(env) + "\n",
-	]);
-
-	source_code = concatStrings([
-		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
-		"# Forward declarations\n",
-		list2string(^(env.forward_decls)), 
-		"\n",
-		"# Source code of functions / global variables\n",
-		list2string(modulesCode), 
-	]);
-
-	fi2nimAssemble(cfg, [
-		"#[ COMMON RUNTIME ]#\n", 
-		runtime,
-		"\n#[ TYPE DEFINITIONS ]#\n", 
-		type_defs,
-		"\n#[ TYPE FUNCTIONS ]#\n", 
-		fi2nimTypeTable(env),
-		type_funcs,
-		"\n#[ SOURCE CODE ]#\n",
-		source_code,
-		"main()\n"
-	]);
-
-	fi2nimBuild(program, cfg, callback);
+	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
 }
 
 fi2nimNativeImports(env: FiNimEnv, runtime: string) -> [string] {
