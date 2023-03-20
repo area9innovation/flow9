@@ -30,10 +30,10 @@ Git-lfs is needed to use flow9. So make sure, that you install it
 		haxelib install threejs
 
 ## Build Byterunner for flowcpp
-		pacman -S qt5-base qt5-websockets qt5-webengine
-		cd $FLOW/platforms/common/cpp
-		git clone https://github.com/area9innovation/asmjit
-		cd asmjit
-		git checkout next
-		cd $FLOW/platforms/qt
-		./build.sh 
+	pacman -S qt5-base qt5-websockets qt5-webengine
+	cd $FLOW/platforms/common/cpp
+	git clone https://github.com/area9innovation/asmjit
+	cd asmjit
+	git checkout next
+	cd $FLOW/platforms/qt
+	./build.sh 
