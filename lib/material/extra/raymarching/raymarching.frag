@@ -375,6 +375,16 @@ vec3 getTextureColor(vec3 p, vec3 normal, TextureParamerters textureParameter, s
 	return (texture(txtr, py) * normal.y + texture(txtr, pz) * normal.z + texture(txtr, px) * normal.x).rgb;
 }
 
+ObjectInfo absoluteDistance(ObjectInfo obj) {
+	return ObjectInfo(
+		abs(obj.d),
+		obj.id,
+		obj.textureId,
+		obj.topLevel,
+		obj.material
+	);
+}
+
 vec3 getBaseMaterial(int id, vec3 p, vec3 normal) {
 	vec3 materialColor = vec3(0);
 
