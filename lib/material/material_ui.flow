@@ -100,10 +100,12 @@ export {
 
 	// FVideoTimeRange style disabled
 	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
-		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist;
+		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist, MMultiAudioLength;
 
 		// to switch files (samples) in multiplayer
 		IndexInPlaylist(index : DynamicBehaviour<int>);
+		// Length of each audio.
+		MMultiAudioLength(lengths : [FVideoLength]);
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -851,39 +853,45 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 
 		// rendering (empty)
 		MConstruct(
-			[
-				// when all audios ready
-				makeSubscribe(fands(states.isReady, false), \isReady ->
-					if (isReady) synchrocallEx.onStart()
-				),
-				// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
-				\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
-						if (all(map(lens, \l -> l > 0.0)))
-							dsum(lens)
-						else
-							0.0
-					}),
-				// set possition
-				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
-				// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
-				makeSubscribeUns(fselectWithLast(currIndexB, FLift2(\old, new -> Pair(old, new))), \oldAndNewIndexes ->
-					unpair(oldAndNewIndexes, \oldIndex, newIndex -> {
-						if (oldIndex != newIndex) {
-							// reset current player before switching
-							nextDistinct(states.isPlay[oldIndex], false);
-							nextDistinct(states.position[oldIndex], 0.0);
-						}
-						changeAudioPlaying(newIndex, getValue(playEx));
+			concat(
+				[
+					\-> \-> next(currIndexB, 0),
+					// when all audios ready
+					makeSubscribe(fands(states.isReady, false), \isReady ->
+						if (isReady) synchrocallEx.onStart()
+					),
+					// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
+					\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
+							if (all(map(lens, \l -> l > 0.0)))
+								dsum(lens)
+							else
+								0.0
+						}),
+					// set possition
+					\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
+					// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
+					makeSubscribeUns(fselectWithLast(currIndexB, FLift2(\old, new -> Pair(old, new))), \oldAndNewIndexes ->
+						unpair(oldAndNewIndexes, \oldIndex, newIndex -> {
+							if (oldIndex != newIndex) {
+								// reset current player before switching
+								nextDistinct(states.isPlay[oldIndex], false);
+								nextDistinct(states.position[oldIndex], 0.0);
+							}
+							changeAudioPlaying(newIndex, getValue(playEx));
 
-						[
-							fconnect(fdelayUntilNextFrameRendered(states.isPlay[newIndex]), playEx)
-						]
-					})
-				),
-				\-> subscribe(playEx, \isPlay -> {
-					changeAudioPlaying(getValue(currIndexB), isPlay);
+							[
+								fconnect(fdelayUntilNextFrameRendered(states.isPlay[newIndex]), playEx)
+							]
+						})
+					),
+					\-> subscribe(playEx, \isPlay -> {
+						changeAudioPlaying(getValue(currIndexB), isPlay);
+					}),
+				],
+				mapi(extractStruct(mStyle, MMultiAudioLength([])).lengths, \i, length -> {
+					\-> fconnect(states.length[i], length.length)
 				})
-			],
+			),
 			MGroup(players)
 		)
 		|> (\m -> if (unstoppable) MVisible(make(false), m) else m)

@@ -1,0 +1,100 @@
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fi_type_unify;
+
+export {
+	// Use type parameters of type name in struct s (substitute into arguments)
+	fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct;
+
+	// Use type parameters of type name in union s (substitute into all typenames of a union)
+	fiSpecializeUnion(tn: FiTypeName, u: FiTypeUnion) -> FiTypeUnion;
+
+	// Transform typename to FiTypeStruct with type parameters substituted
+	fiTypeName2Struct(tn: FiTypeName, names: FiGlobalNames) -> FiTypeStruct;
+
+	// Examine two cases of a typename: a struct and a union
+	fiConsiderTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> void, fn_union: (FiTypeUnion) -> void, err: (FiTypeName) -> void) -> void;
+
+	// Map two cases of a typename: a struct and a union
+	fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (FiTypeName) -> ?) -> ?;
+}
+
+fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
+	typars_subst = foldi(s.typars, makeTree(), \i, acc, tp -> 
+		switch (tp) {
+			FiTypeParameter(nm): {
+				if (i < length(tn.typeparameters)) {
+					setTree(acc, nm, tn.typeparameters[i]);
+				} else acc
+			}
+			default: fail0("must be FiTypeParameter, got: " + toString(tp));
+		}
+	);
+	FiTypeStruct(s with typars = tn.typeparameters,
+		args = map(s.args, \arg ->
+			FiStructArg(arg with type = fiApplyTypeSubstitution(typars_subst, arg.type))
+		)
+	);
+}
+
+fiSpecializeUnion(tn: FiTypeName, u: FiTypeUnion) -> FiTypeUnion {
+	typars_subst = foldi(u.typeparameters, makeTree(), \i, acc, tp -> 
+		switch (tp) {
+			FiTypeParameter(nm): setTree(acc, nm, tn.typeparameters[i]);
+			default: fail0("must be FiTypeParameter, got: " + toString(tp));
+		}
+	);
+	FiTypeUnion(u with typeparameters = tn.typeparameters,
+		typenames = map(u.typenames, \t ->
+			FiTypeName(t with 
+				typeparameters = map(t.typeparameters, \x -> fiApplyTypeSubstitution(typars_subst, x))
+			)
+		)
+	);
+}
+
+fiTypeName2Struct(tn: FiTypeName, names: FiGlobalNames) -> FiTypeStruct {
+	switch (lookupTree(names.structs, tn.name)) {
+		Some(struct): {
+			fiSpecializeStruct(tn, struct);
+		}
+		None(): {
+			fail0("struct expected, but " + tn.name + " is not found among structs");
+		}
+	}
+}
+
+fiConsiderTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> void, fn_union: (FiTypeUnion) -> void, err: (FiTypeName) -> void) -> void {
+	switch (lookupTree(names.structs, tn.name)) {
+		Some(struct): {
+			fn_struct(fiSpecializeStruct(tn, struct));
+		}
+		None(): {
+			switch (lookupTree(names.unions, tn.name)) {
+				Some(union): {
+					fn_union(fiSpecializeUnion(tn, union));
+				}
+				None(): {
+					err(tn);
+				}
+			}
+		}
+	}
+}
+
+fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (FiTypeName) -> ?) -> ? {
+	switch (lookupTree(names.structs, tn.name)) {
+		Some(struct): {
+			fn_struct(fiSpecializeStruct(tn, struct));
+		}
+		None(): {
+			switch (lookupTree(names.unions, tn.name)) {
+				Some(union): {
+					fn_union(FiTypeUnion(union with typeparameters = tn.typeparameters));
+				}
+				None(): {
+					err(tn);
+				}
+			}
+		}
+	}
+}
