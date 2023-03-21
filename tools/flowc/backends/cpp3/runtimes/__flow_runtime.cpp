@@ -352,6 +352,7 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 }
 
 /*
+template<typename T> struct Hash { inline size_t operator() (T n) const { return hash(FNV_offset_basis, n); } };
 
 const uint32_t FNV_offset_basis = 0x811C9DC5;
 const uint32_t FNV_prime = 16777619;
@@ -396,12 +397,9 @@ template<> inline uint32_t hash(uint32_t h, String* v) {
 	return h; 
 }
 template<> inline uint32_t hash(uint32_t h, Native* n) { 
-	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(n->nat));
+	return hash<uint64_t>(h, reinterpret_cast<uint64_t>(n));
 }
 template<> uint32_t hash(uint32_t h, Flow* n);
-
-template<typename T> struct Hash { inline size_t operator() (T n) const { return hash(FNV_offset_basis, n); } };
-
 
 template<> uint32_t hash(uint32_t h, Flow* v) {
 	uint32_t ret = 0;
@@ -411,27 +409,27 @@ template<> uint32_t hash(uint32_t h, Flow* v) {
 		case TypeFx::DOUBLE: ret = hash(h, v->get<Double>()); break;
 		case TypeFx::STRING: ret = hash(h, v->get<String*>()); break;
 		case TypeFx::ARRAY: {
-			AVec* a = v->get<AVec*>();
-			for (Int i = 0; i < a->size(); ++i) {
-				h = hash(h, a->getFlowItem(i));
+			for (Int i = 0; i < v->size(); ++i) {
+				incRc(v);
+				h = hash(h, v->getFlowRc(i));
 			}
 			ret = h;
 			break;
 		}
 		case TypeFx::REF:
-			ret = hash(h, reinterpret_cast<uint64_t>(v->get<ARef*>()->getFlowRef().ptr));
+			ret = hash(h, reinterpret_cast<uint64_t>(v->getFlowRc(0)));
 			break;
 		case TypeFx::FUNC:
-			ret = hash(h, reinterpret_cast<uint64_t>(v->get<AFun*>().ptr));
+			ret = hash(h, reinterpret_cast<uint64_t>(v));
 			break;
 		case TypeFx::NATIVE: 
 			ret = hash(h, v->get<Native*>());
 			break;
 		default: {
-			AStr* s = v->get<AStr*>();
-			h = hash(h, s->name());
-			for (Int i = 0; i < s->size(); ++ i) {
-				h = hash(h, s->getFlowField(i));
+			h = hash(h, v->typeId());
+			for (Int i = 0; i < v->size(); ++ i) {
+				incRc(v);
+				h = hash(h, v->getFlowRc(i));
 			}
 			ret = h;
 			break;
@@ -439,7 +437,7 @@ template<> uint32_t hash(uint32_t h, Flow* v) {
 	}
 	return ret;
 }
-
 */
+
 
 }
