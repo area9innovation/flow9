@@ -6,6 +6,7 @@ import maybe;
 import ds/tuples;
 import runtime;
 import ds/list;
+import compare;
 
 export {
 	// A binary tree with keys of type ? and values of type ??
@@ -110,8 +111,11 @@ export {
 
 	// Recursively travel the tree and collect all it's keys in an array
 	getTreeKeys(tree : Tree<?, ??>) -> [?];
+	getTreeKeysList(tree : Tree<?, ??>) -> List<?>;
+
 	// Recursively travel the tree and collect all it's values in an array
 	getTreeValues(tree : Tree<?, ??>) -> [??];
+	getTreeValuesList(tree : Tree<?, ??>) -> List<??>;
 
 	// Merges two trees. t2 overrides t1 on duplicate entries.
 	// (complexity is O(t2 log (t1+t2)))
@@ -151,6 +155,8 @@ export {
 	// some value using pr.
 	convertTreeToArray : (tree : Tree<?, ??>, conv : (?, ??) -> ???) -> [???];
 	filtermapTreeToArray : (tree : Tree<?, ??>, filterMapFn : (?, ??) -> Maybe<???>) -> [???];
+	// This function produces less memory garbage than filtermapTreeToArray because of does not creates the Some structures
+	filterAndMapTreeToArray(tree : Tree<?, ??>, filterFn : (?, ??) -> bool, mapFn : (?, ??) -> ???) -> [???];
 
 	// Useful for counting
 	incTreeValue : (tree : Tree<?, int>, key : ?) -> Tree<?, int>;
@@ -203,9 +209,10 @@ native setTree : (tree : Tree<?, ??>, key : ?, value : ??) -> Tree<?, ??> = Nati
 setTree(set : Tree<?, ??>, key : ?, value : ??) -> Tree<?, ??> {
 	switch (set : Tree) {
 		TreeNode(k, v, left, right, depth): {
-			if (key < k) {
+			c = genericCompare(key, k);
+			if (c < 0) {
 				rebalancedTree(k, v, setTree(left, key, value), right);
-			} else if (key == k) {
+			} else if (c == 0) {
 				// Update the value of this node
 				TreeNode(k, value, left, right, depth);
 			} else {
@@ -268,14 +275,16 @@ native lookupTree : (tree : Tree<?, ??>, key : ?) -> Maybe<??> = Native.fast_loo
 
 lookupTree(set : Tree<?, ??>, key : ?) {
 	switch (set : Tree) {
-		TreeNode(k, v, l, r, depth):
-			if (key < k) {
+		TreeNode(k, v, l, r, depth): {
+			c = genericCompare(key, k);
+			if (c < 0) {
 				lookupTree(l, key);
-			} else if (key == k) {
+			} else if (c == 0) {
 				Some(v);
 			} else {
 				lookupTree(r, key);
 			}
+		}
 		TreeEmpty():
 			None();
 	}
@@ -299,14 +308,17 @@ lookupTreeSet(refTree, key, setFn) {
 removeFromTree(set : Tree<?, ??>, key : ?) {
 	// TODO: We should do rebalancing here as well. http://en.wikipedia.org/wiki/AVL_tree
 	switch (set : Tree) {
-		TreeNode(k, v, left, right, depth):
-					if (key < k) {
-						mkTreeNode(k, v, removeFromTree(left, key), right);
-					} else if (key == k) {
-						mergeTreeInternal(left, right);
-					} else {
-						mkTreeNode(k, v, left, removeFromTree(right, key));
-					}
+		TreeNode(k, v, left, right, depth): {
+			c = genericCompare(key, k);
+			if (c < 0) {
+				mkTreeNode(k, v, removeFromTree(left, key), right);
+			} else if (c == 0) {
+				mergeTreeInternal(left, right);
+			} else {
+				mkTreeNode(k, v, left, removeFromTree(right, key));
+			}
+
+		}
 		TreeEmpty(): set;
 	}
 }
@@ -653,12 +665,20 @@ containsKeyTree(tree : Tree<?, ??>, key : ?) -> bool {
 	isSome(lookupTree(tree, key))
 }
 
+getTreeKeysList(tree : Tree<?, ??>) -> List<?> {
+	foldTree(tree, makeList(), \k : ?, __, acc : List<?> -> Cons(k, acc))
+}
+
 getTreeKeys(tree : Tree<?, ??>) -> [?] {
-	list2array(foldTree(tree, makeList(), \k : ?, __, acc : List<?> -> Cons(k, acc)))
+	list2array(getTreeKeysList(tree))
+}
+
+getTreeValuesList(tree : Tree<?, ??>) -> List<??> {
+	foldTree(tree, makeList(), \__, v : ??, acc : List<??> -> Cons(v, acc))
 }
 
 getTreeValues(tree : Tree<?, ??>) -> [??] {
-	list2array(foldTree(tree, makeList(), \__, v : ??, acc : List<??> -> Cons(v, acc)))
+	list2array(getTreeValuesList(tree))
 }
 
 mergeTree(t1 : Tree<?, ??>, t2 : Tree<?, ??>) -> Tree<?, ??> {
@@ -741,6 +761,16 @@ convertTreeToArray(tree : Tree<?, ??>, conv : (?, ??) -> ???) -> [???] {
 filtermapTreeToArray(tree : Tree<?, ??>, filterMapFn : (?, ??) -> Maybe<???>) -> [???] {
 	list2array(foldTree(tree, EmptyList(), \k, v, acc -> {
 		eitherMap(filterMapFn(k, v), \r -> Cons(r, acc), acc);
+	}));
+}
+
+filterAndMapTreeToArray(tree : Tree<?, ??>, filterFn : (?, ??) -> bool, mapFn : (?, ??) -> ???) -> [???] {
+	list2array(foldTree(tree, EmptyList(), \k, v, acc -> {
+		if (filterFn(k, v)) {
+			Cons(mapFn(k, v), acc);
+		} else {
+			acc;
+		}
 	}));
 }
 

@@ -875,29 +875,32 @@ jsGenerateTailCall(
 						+ freeRenamings[ix] + "=" + renameTo + ";";
 					});
 
-					// TODO: we can skip unmodified variables
-					// var $a_ = n;
-					// n = $a_;
-					// but for this purpose we have to combine next two operations.
-					vars = foldi(fnparams, "", \in, acc, e -> {
-						if (e == ctx.toplevel_args[in] ) {
-							acc
-						} else {
+					// What args should be assigned what expressions? Skip identical assignments
+					changed : [Pair<string, string>] = filtermapi(fnparams, \in, e -> {
+						arg = fiJsRename(cfg, ctx, ctx.toplevel_args[in]);
+						if (e != arg) Some(Pair(arg, e)) else None()
+					});
+					if (length(changed) == 1) {
+						// If there is only one update, we do not need temporaries
+						change = changed[0];
+						tailVars + change.first + "=" + change.second + ";" 
+						+ finl(cfg) + indent + "continue T";
+					} else {
+						// var $a_ = n;
+						// n = $a_;
+						vars = foldi(changed, "", \in, acc, p -> {
+							e = p.second;
 							acc + finl(cfg) +
 							indent + (if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "let " else "var ")
 							+ (if (cfg.debug) "$" else "") + formatIdSmall(in) + "_=" + e + ";";
-						}
-					});
-					nextStep = foldi(ctx.toplevel_args, "", \in, acc, e -> {
-						if (e == fnparams[in] ) {
-							acc
-						} else {
+						});
+						nextStep = foldi(changed, "", \in, acc, p -> {
 							acc + finl(cfg) +
-							indent + fiJsRename(cfg, ctx, e) + "=" + (if (cfg.debug) "$" else "") + formatIdSmall(in) + "_;"
-						}
-					}) + finl(cfg);
-					// TAIL_CALL: changed to T:
-					tailVars + vars + nextStep + indent + "continue T";
+							indent + p.first + "=" + (if (cfg.debug) "$" else "") + formatIdSmall(in) + "_;"
+						}) + finl(cfg);
+						// TAIL_CALL: changed to T:
+						tailVars + vars + nextStep + indent + "continue T";
+					}
 				}
 				default : ""
 			}

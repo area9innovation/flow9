@@ -659,6 +659,10 @@ public class Native extends NativeHost {
 		return rv;
 	}
 
+	public static final int genericCompare(Object o1, Object o2) {
+		return FlowRuntime.compareByValue(o1, o2);
+	}
+
 	public static final int bitXor(int a, int b) {
 		return a^b;
 	}
