@@ -209,8 +209,8 @@ class DisplayObjectHelper {
 
 	public static function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
 		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
-		var visible = untyped clip.parent != null && (getClipRenderable(clip.parent) || clip.keepNativeWidgetChildren)
-			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren)));
+		var visible = untyped clip.parent != null && (getClipRenderable(clip.parent) || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)
+			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)));
 
 		if (untyped !parentClip) {
 			parentClip = untyped clip.parentClip != null ? clip.parentClip : findParentClip(clip);
@@ -825,6 +825,38 @@ class DisplayObjectHelper {
 
 			for (child in getClipChildren(clip)) {
 				updateKeepNativeWidgetParent(child, keepNativeWidget);
+			}
+		}
+	}
+
+	public static function updateKeepNativeWidgetInFullScreenModeChildren(clip : DisplayObject, keepNativeWidgetChildren : Bool = false) : Void {
+		untyped clip.keepNativeWidgetFSChildren = keepNativeWidgetChildren || clip.keepNativeWidgetFS;
+
+		if (untyped !clip.keepNativeWidgetFSChildren) {
+			for (child in getClipChildren(clip)) {
+				untyped clip.keepNativeWidgetFSChildren = clip.keepNativeWidgetFSChildren || child.keepNativeWidgetFSChildren || child.keepNativeWidgetFSParent;
+			}
+		}
+
+		if (isHTMLRenderer(clip) && isNativeWidget(clip) && untyped clip.nativeWidget.style != null) {
+			untyped clip.nativeWidget.style.visibility = untyped clip.keepNativeWidgetFSParent ? "visible" : clip.keepNativeWidgetFSChildren ? "inherit" : null;
+		}
+
+		if (untyped clip.parent != null && clip.parent.keepNativeWidgetFSChildren != clip.keepNativeWidgetFSChildren) {
+			updateKeepNativeWidgetInFullScreenModeChildren(clip.parent, untyped clip.keepNativeWidgetFSChildren);
+		}
+
+		invalidateTransform(clip, 'updateKeepNativeWidgetInFullScreenModeChildren');
+	}
+
+	public static function updateKeepNativeWidgetInFullScreenModeParent(clip : DisplayObject, keepNativeWidget : Bool) : Void {
+		if (untyped clip.keepNativeWidgetFSParent != keepNativeWidget) {
+			untyped clip.keepNativeWidgetFS = keepNativeWidget;
+			untyped clip.keepNativeWidgetFSParent = keepNativeWidget;
+			updateKeepNativeWidgetInFullScreenModeChildren(clip);
+
+			for (child in getClipChildren(clip)) {
+				updateKeepNativeWidgetInFullScreenModeParent(child, keepNativeWidget);
 			}
 		}
 	}
@@ -1889,7 +1921,7 @@ class DisplayObjectHelper {
 				untyped clip.visibilityChanged = false;
 				untyped clip.nativeWidget.style.visibility = clip.loaded ? (Platform.isIE ? "visible" : null) : "hidden";
 			} else {
-				untyped clip.nativeWidget.style.visibility = clip.renderable || clip.keepNativeWidget ? (Platform.isIE || clip.keepNativeWidget ? "visible" : null) : "hidden";
+				untyped clip.nativeWidget.style.visibility = clip.renderable || clip.keepNativeWidget || clip.keepNativeWidgetFS ? (Platform.isIE || clip.keepNativeWidget || clip.keepNativeWidgetFS ? "visible" : null) : "hidden";
 			}
 
 			if (clip.visible) {
@@ -1932,7 +1964,7 @@ class DisplayObjectHelper {
 		if (untyped clip.addNativeWidget != null) {
 			untyped clip.addNativeWidget();
 		} else if (isHTMLRenderer(clip)) {
-			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren)) {
+			if (isNativeWidget(clip) && untyped clip.parent != null && clip.visible && (clip.renderable || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)) {
 				if (untyped clip.forceParentNode != null) {
 					untyped clip.forceParentNode.append(clip.nativeWidget);
 				} else {
@@ -2569,7 +2601,7 @@ class DisplayObjectHelper {
 
 		viewBounds = applyInvertedTransform(viewBounds, untyped clip.localTransform);
 
-		if (untyped clip.scrollRect != null && !clip.keepNativeWidgetChildren) {
+		if (untyped clip.scrollRect != null && !clip.keepNativeWidgetFSChildren) {
 			viewBounds.minX = Math.max(viewBounds.minX, localBounds.minX);
 			viewBounds.minY = Math.max(viewBounds.minY, localBounds.minY);
 			viewBounds.maxX = Math.min(viewBounds.maxX, localBounds.maxX);
