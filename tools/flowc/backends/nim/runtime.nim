@@ -83,6 +83,7 @@ type
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
+      #tp_id: int32
       str_id: int32
       str_name: string
       str_args: seq[Flow]
@@ -255,6 +256,7 @@ proc rt_from_flow*[R](fn: proc(): R): Flow =
   )
 
 # from_flow conversions
+
 #[
 proc rt_from_flow*[T](x: Flow): T =
   when T is void:   return rt_to_void(x)

@@ -8,13 +8,17 @@ export {
 	fi2nimStrIndent(s: string) -> string;
 	fi2nimMaybeIndent(s: string) -> string;
 	fi2nimSureIndent(s: string) -> string;
+	fi2nimAssureNewLineAtEnd(s : string) -> string;
+	fi2nimAssureEmptyLineAtEnd(s : string) -> string;
 	fiNimRenameKeyword(kwd: string) -> string;
 
+	fiNimCompileReturnType(env : FiNimEnv, type : FiType) -> string;
 	fiNimCompileFuncType(env: FiNimEnv, type: FiTypeFunction) -> string;
 	fiNimCompileType(env: FiNimEnv, type: FiType) -> string;
 	fiNimDerefType(t: FiType) -> FiType;
 
 	fiNimTypeParamsList(env: FiNimEnv, type: FiType) -> string;
+	//fiNimTypeTypars(env : FiNimEnv, t: FiType) -> string;
 	fiNimParamsForInstantiate(env: FiNimEnv, params: [FiType]) -> string;
 
 	// Get all casts from expression
@@ -49,15 +53,27 @@ fi2nimSureIndent(s : string) -> string {
 	"\n" + fi2nimStrIndent(s) + "\n";
 }
 
+fi2nimAssureNewLineAtEnd(s : string) -> string {
+	if (s == "") s else if (endsWith(s, "\n")) s else s + "\n";
+}
+
+fi2nimAssureEmptyLineAtEnd(s : string) -> string {
+	if (s == "") s else if (endsWith(s, "\n\n")) s else if (endsWith(s, "\n")) s + "\n" else s + "\n\n";
+}
+
 fiNimRenameKeyword(kwd : string) -> string {
 	k = (if (containsSet(nimKeywordSet, kwd)) "fl0w" else "") + kwd;
 	strReplace(k, "_", "u")
 }
 
 fiNimTypeParamsList(env : FiNimEnv, type : FiType) -> string {
-	tps = fiCollectTypars(type, makeSet());
-	tp = fold(sort(set2array(tps)), [], \acc1, e -> concat(acc1, ["T" + i2s(strlen(e))]));
-	if (tp == []) "" else { "[" + strGlue(tp, ", ") + "]" }
+	typars = switch (type) {
+		FiTypeName(__, typars): typars;
+		default: {
+			map(sort(set2array(fiCollectTypars(type, makeSet()))), \n -> FiTypeParameter(n));	
+		}
+	}
+	fiNimParamsForInstantiate(env, typars);
 }
 
 fiNimParamsForInstantiate(env : FiNimEnv, params : [FiType]) -> string {
@@ -66,18 +82,40 @@ fiNimParamsForInstantiate(env : FiNimEnv, params : [FiType]) -> string {
 	}
 }
 
-fiNimCompileFuncType(env : FiNimEnv, type : FiTypeFunction) -> string {
-	rt_code = switch (type.returnType) {
-		FiTypeFunction(__,__): "(" + fiNimCompileType(env, type.returnType) + ")";
-		default: fiNimCompileType(env, type.returnType);
+/*fiNimStructOrUnionTypars(env : FiNimEnv, t: FiStructOrUnion) -> string {
+	switch (t) {
+		FiTypeStruct(__,typars,__,__): fiNimParamsForInstantiate(env, typars);
+		FiTypeUnion(__,typars,__,__): fiNimParamsForInstantiate(env, typars);
 	}
+}*/
+/*
+fiNimTypeTypars(env : FiNimEnv, t: FiType) -> string {
+	switch (t) {
+		FiTypeName(__,typars): fiNimParamsForInstantiate(env, typars);
+		default: {
+			fiNimParamsForInstantiate(env, 
+				map(set2array(fiCollectTypars(t, makeSet())), \n -> FiTypeParameter(n))
+			);
+		}
+	}
+}
+*/
+
+fiNimCompileReturnType(env : FiNimEnv, type : FiType) -> string {
+	switch (type) {
+		FiTypeFunction(__,__): "(" + fiNimCompileType(env, type) + ")";
+		default: fiNimCompileType(env, type);
+	}
+}
+
+fiNimCompileFuncType(env : FiNimEnv, type : FiTypeFunction) -> string {
 	"(" + 
 		supergluei(type.args, \i, arg -> 
 			fiNimRenameKeyword(if (arg.name == "" || arg.name == "__") "a" + i2s(i) else arg.name) + ": " +
 			fiNimCompileType(env, arg.type), 
 			", "
 		) + 
-	"): " + rt_code;
+	"): " + fiNimCompileReturnType(env, type.returnType);
 }
 
 fiNimCompileType(env : FiNimEnv, type : FiType) -> string {
@@ -98,12 +136,7 @@ fiNimCompileType(env : FiNimEnv, type : FiType) -> string {
 		FiTypeVoid() :             "void";
 		FiTypeNative() :           "Native";
 		FiTypeName(name, params) : {
-			//if (containsKeyTree(env.prog.names.structs, name)) {
-				name + fiNimParamsForInstantiate(env, params);
-			//} else {
-				// Unions are just unspecified structs
-				//"Struct";
-			//}
+			name + fiNimParamsForInstantiate(env, params);
 		}
 	}
 }

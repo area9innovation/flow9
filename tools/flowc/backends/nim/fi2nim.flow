@@ -29,7 +29,8 @@ fi2nim(program0 : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> vo
 }
 
 fi2nimCompileTypes(env: FiNimEnv) -> string {
-	structs_enum = fi2nimStructType(env);
+	structs_enum = fi2nimTypeEnums(env);
+
 	type_decls = concatStrings(map(env.prog.traversal, \mod_name -> {
 		module = lookupTreeDef(env.prog.modules, mod_name, dummyFiModule);
 		concatStrings(concat(
@@ -42,16 +43,25 @@ fi2nimCompileTypes(env: FiNimEnv) -> string {
 		if (type_decls == "") "" else fiNimIndent + "# Type definitions\n" + type_decls + "\n"
 	]);
 	type_register = fi2nimRegisterTypes(env);
-	type_funcs = concatStrings([
-		"# Struct functions\n",
-		concatStrings(map(env.structs, \s ->
-			fi2nimStructRegister(env, s) + "\n" +
-			fi2nimStructFuncs(env, s))
-		),
-		"# Union functions\n",
-		concatStrings(map(env.unions, \u -> fi2nimUnionFuncs(env, u))) + "\n",
+
+	register_structs = concatStrings(map(env.structs, \s -> fi2nimStructRegister(env, s)));
+
+	/*compiled_funcs = concat3(
+		mapConcat(env.structs, \s -> fi2nimStructFuncs(env, s)),
+		mapConcat(env.unions, \u -> fi2nimUnionFuncs(env, u)),
+		mapConcat(env.funcTypes, \f -> fi2nimFuncTypeFuncs(env, f)),
+	);*/
+
+	compiled_funcs = concatA([
+		filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t)),
+		filtermap(env.ordered_types, \t -> fi2nimTypeFromFlow(env, t)),
+		filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t)),
+		map(env.structs, \s -> fi2nimStructMake(env, s))
 	]);
-	type_defs + type_register + type_funcs;
+
+	type_defs + "\n\n" + type_register + "\n\n" + register_structs + "\n\n" +
+	concatStrings(map(compiled_funcs, \fn -> fn.decl + "\n")) + "\n\n" +
+	concatStrings(map(compiled_funcs, \fn -> fn.def));
 }
 
 fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> string {
@@ -62,28 +72,22 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> string {
 	moduleCount = i2s(length(decls));
 
 	fcVerbose(env.cfg, 0, "Generating Nim code for declarations...");
-	modulesCode = foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
-		fcVerbose(env.cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
-		mdl = lookupTree(env.prog.modules, p.first);
-		switch (mdl) {
-			None(): fail0("Could not retrieve module " + p.first);
-			Some(module): {
-				r = fold(p.second, acc, \l, v -> {
-					tl = fiNimCompileToplevel(env, v, fiNimIndent);
-					Cons(if (tl == "") "" else "\n", Cons(tl, l));
-				});
-				Cons("\n", r);
-			}
-		}
+	modulesCode : List<NimCompiled> = foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+		fcVerbose(env.cfg, 1, "[" + i2s(i + 1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
+		module = lookupTreeDef(env.prog.modules, p.first, dummyFiModule);
+		fold(p.second, acc, \ac, decl -> {
+			compiled = fiNimCompileToplevel(env, decl);
+			if (compiled.decl == "" && compiled.def == "") ac else Cons(compiled, ac);
+		});
 	});
 	native_imports = fi2nimNativeImports(env, runtime);
 	concatStrings([
 		if (length(native_imports) == 0) "" else "# Native function imports\n" + strGlue(native_imports, "\n") + "\n\n",
 		"# Forward declarations\n",
-		list2string(^(env.forward_decls)),
+		list2string(mapList(modulesCode, \c -> fi2nimAssureNewLineAtEnd(c.decl))),
 		"\n",
 		"# Source code of functions / global variables\n",
-		list2string(modulesCode),
+		list2string(mapList(modulesCode, \c -> fi2nimAssureEmptyLineAtEnd(c.def))),
 	]);
 }
 
@@ -211,9 +215,19 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		types_map_to_s(casts_to_from) + "\n"
 	);*/
 
-	env0 = FiNimEnv(cfg, program, ref makeList(), ref makeSet(),
+	funcTypes = set2array(fold(structs, makeSet(), \acc, struct ->
+		fold(struct.args, acc, \ac, arg -> 
+			switch (arg.type) {
+				FiTypeFunction(__,__): insertSet(ac, cast(fiPurifyType(arg.type): FiType -> FiTypeFunction));
+				default: ac;
+			}
+		)
+	));
+
+	env0 = FiNimEnv(cfg, program, ref makeSet(),
 		structs,
 		unions,
+		funcTypes,
 		specialized_structs,
 		specialized_unions,
 		specializations,
