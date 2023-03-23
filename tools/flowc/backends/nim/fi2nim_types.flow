@@ -68,6 +68,11 @@ fi2nimStructRegister(env : FiNimEnv, struct : FiTypeStruct) -> string {
 fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 	decl = "proc rt_to_flow(x: " + fiNimCompileType(env, t) + "): Flow";
 	switch (t) {
+		FiTypeRef(__): {
+			Some(NimCompiled(decl,
+				decl + " = Flow(" + "tp: rtRef, " + "ref_v: rt_to_flow(x.val))\n"
+			));
+		}
 		FiTypeArray(__): {
 			Some(NimCompiled(decl,
 				decl + " = Flow(" + "tp: rtArray, " + "array_v: map(x, rt_to_flow))\n"
@@ -118,7 +123,6 @@ fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 				\__ -> fail0("unknown struct or union: " + nm)
 			);
 		}
-		FiTypeRef(__):       fail0("FiTypeRef must not occur in nim");
 		FiTypeParameter(__): fail0("FiTypeParameter must not occur in complete specialization in nim: " + pretFiType(t));
 		default: None();
 	}
@@ -127,6 +131,11 @@ fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 	decl = "proc rt_to_" + fi2nimMangleType(t) + "(x: Flow): " + fiNimCompileReturnType(env, t);
 	switch (t) {
+		FiTypeRef(rt): {
+			Some(NimCompiled(decl,
+				decl + " = Ref[" + fiNimCompileType(env, rt) + "](val: rt_to_" + fi2nimMangleComplexType(rt) + "(x.ref_v))\n"
+			));
+		}
 		FiTypeArray(at): {
 			Some(NimCompiled(decl,
 				decl + " = map(x.array_v, " + "rt_to_" + fi2nimMangleComplexType(at) + ")\n"
@@ -168,7 +177,6 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 				\__ -> fail0("unknown struct or union: " + nm)
 			);
 		}
-		FiTypeRef(__):       fail0("FiTypeRef must not occur in nim");
 		FiTypeParameter(__): fail0("FiTypeParameter must not occur in complete specialization in nim: " + pretFiType(t));
 		default: None();
 	}
@@ -177,6 +185,11 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 	decl = "proc rt_to_string(x: " + fiNimCompileType(env, t) + "): string";
 	switch (t) {
+		FiTypeRef(rt): {
+			Some(NimCompiled(decl,
+				decl + " = \"ref \" & rt_to_string(x.val)\n"
+			));
+		}
 		FiTypeArray(at): {
 			Some(NimCompiled(decl,
 				decl + " = \"[\" & map(x, rt_to_string).join(\", \") & \"]\" \n"
@@ -210,7 +223,6 @@ fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 				\__ -> fail0("unknown struct or union: " + nm)
 			);
 		}
-		FiTypeRef(__):       fail0("FiTypeRef must not occur in nim");
 		FiTypeParameter(__): fail0("FiTypeParameter must not occur in complete specialization in nim: " + pretFiType(t));
 		default: None();
 	}
@@ -249,7 +261,7 @@ fi2nimStructMake(env : FiNimEnv, struct : FiTypeStruct) -> NimCompiled {
 		supergluei(struct.args, \i, arg -> "a_" + i2s(i) + ": " + fiNimCompileType(env, arg.type), ", ")  + 
 	"): " + struct_type;
 	NimCompiled(decl,
-		concatStrings(struct_ids) + decl + " = " + fiNimIndent + struct_type + "(" + strGlue(make_args, ", ") + ")\n\n"
+		concatStrings(struct_ids) + decl + " = " + struct_type + "(" + strGlue(make_args, ", ") + ")\n\n"
 	);
 }
 
@@ -409,7 +421,7 @@ fi2nim_basic_types = [
 
 fi2nimType2RtType(env : FiNimEnv, tp: FiType, type_index: Tree<FiType, int>, struct_index: Tree<string, int>) -> string {
 	type_ind = \t0 -> {
-		t = fiPurifyType(fiType2NimType(env.prog.names, t0));
+		t = fiPurifyType(t0);
 		err = \msg -> fail0(msg + " subtype " + pretFiType(t) + " of " + pretFiType(tp) + " is not found in index");
 		switch (lookupTree(type_index, t)) {
 			Some(ind): i2s(ind) + "i32";
@@ -452,6 +464,7 @@ fi2nimType2RtType(env : FiNimEnv, tp: FiType, type_index: Tree<FiType, int>, str
 		FiTypeString():  Triple("ctString", [], "string");
 		FiTypeNative():  Triple("ctNative", [], "native");
 		FiTypeFlow():    Triple("ctFlow", [], "flow");
+		FiTypeRef(rt):   Triple("ctRef", [type_ind(rt)], "");
 		FiTypeArray(at): Triple("ctArray", [type_ind(at)], "");
 		FiTypeFunction(as, rt): {
 			Triple("ctFunc", concat([type_ind(rt)], map(as, \arg -> type_ind(arg.type))),"");
@@ -460,11 +473,10 @@ fi2nimType2RtType(env : FiNimEnv, tp: FiType, type_index: Tree<FiType, int>, str
 			fiMapTypeName(tp, env.prog.names, 
 				\struct -> Triple("ctStruct", concat([struct_ind(nm)], map(struct.args, \arg -> type_ind(arg.type))), nm),
 				\union -> Triple("ctUnion", map(union.typenames, type_ind), nm),
-				\__ -> //fail0("unknown struct or union: " + nm)
-				Triple("ctStruct", [], "Struct"),
+				\__ -> fail0("unknown struct or union: " + nm)
+				//Triple("ctStruct", [], "Struct"),
 			);
 		}
-		FiTypeRef(__):       fail0("FiTypeRef must not occur in nim");
 		FiTypeParameter(__): fail0("FiTypeParameter must not occur in complete specialization in nim: " + pretFiType(tp));
 	}
 	"(" + p.first + ", @[" + strGlue(p.second, ", ") + "], \"" + p.third + "\")";
@@ -504,7 +516,7 @@ fi2nimAddTypenameSubterms(type: FiType, acc: Set<FiType>, names: FiGlobalNames) 
 				} else {
 					fiMapTypeName(type, names,
 						\struct -> fold(struct.args, acc1, \ac, arg -> {
-							arg_type = fiPurifyType(fiType2NimType(names, arg.type));
+							arg_type = fiPurifyType(arg.type);
 							foldSet(fiTypeSubterms(arg_type, false), ac, \a, st ->
 								fi2nimAddTypenameSubterms(st, a, names)
 							)

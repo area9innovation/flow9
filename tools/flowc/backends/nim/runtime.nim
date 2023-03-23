@@ -56,14 +56,14 @@ type
     # Atiomic types
     rtVoid, rtBool, rtInt, rtDouble, rtString, rtNative,
     # Composite types
-    rtArray, rtFunc, rtStruct
+    rtRef, rtArray, rtFunc, rtStruct
 
   # Compile time type kinds
   CtType* = enum
     # Atiomic types
     ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
     # Composite types
-    ctArray, ctFunc, ctStruct, ctUnion
+    ctRef, ctArray, ctFunc, ctStruct, ctUnion
 
   # A complex type descriptor.
   AlType* = tuple[op: CtType, args: seq[int32], name: string]
@@ -80,6 +80,7 @@ type
     of rtString: string_v: string
     of rtNative: native_v: Native
     # Composite types
+    of rtRef:    ref_v:    Flow
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
@@ -90,8 +91,9 @@ type
 
   Struct* = ref object of RootObj
     id: int32
-  Array* = ref object
-    id: int32
+
+  Ref*[T] = ref object of RootObj
+    val: T
 
   Native* = ref object of RootObj
     what: string
@@ -106,6 +108,7 @@ var struct2id*: Table[string, int32]
 proc rt_type_id_to_string*(id: int32): string =
   let tp = id2type[id]
   case tp.op:
+  of ctRef:    return "ref " & rt_type_id_to_string(tp.args[0])
   of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
   of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
   of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
@@ -177,6 +180,9 @@ proc rt_type_id*(f: Flow): int32 =
   of rtDouble: return 3i32
   of rtString: return 4i32
   of rtNative: return 5i32
+  of rtRef:
+    let r_type = rt_type_id(f.ref_v)
+    return rt_find_type_id((ctRef, @[r_type], ""))
   of rtArray:
     if f.array_v.len == 0:
       echo "type of an empty array can't be resolved at runtime"
@@ -191,10 +197,12 @@ proc rt_type_id*(f: Flow): int32 =
 
 
 
-  # to_string conversions
-proc rt_to_string*(x: Struct): string
+# to_string conversions
+
+#proc rt_to_string*(x: Struct): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
 proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
+proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
   for i in 0..x.len - 1:
@@ -212,6 +220,7 @@ proc rt_to_string*(f: Flow): string =
   of rtDouble: return rt_to_string(f.double_v)
   of rtString: return rt_to_string(f.string_v)
   of rtNative: return rt_to_string(f.native_v)
+  of rtRef:    return "ref " & rt_to_string(f.ref_v)
   of rtArray:  return rt_to_string(f.array_v)
   of rtFunc:   return "<function>"
   of rtStruct:
@@ -232,13 +241,15 @@ proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
 proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
 proc rt_to_flow*(f: Flow): Flow = f
 proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, native_v: n)
-proc rt_to_flow*(x: Struct): Flow
+#proc rt_to_flow*(x: Struct): Flow
+proc rt_to_flow*[T](rf: Ref[T]): Flow = Flow(tp: rtRef, ref_v: rt_to_flow(rf.val))
 proc rt_to_flow*[T](arr: seq[T]): Flow =
   var flow_seq = newSeq[Flow](arr.len)
   for i in 0..arr.len - 1:
     flow_seq[i] = rt_to_flow(arr[i])
   Flow(tp: rtArray, array_v: flow_seq)
 
+#[
 proc rt_to_flow*[R](fn: proc(): R): Flow =
   Flow(
     tp: rtFunc, 
@@ -254,6 +265,8 @@ proc rt_from_flow*[R](fn: proc(): R): Flow =
       let y: R = fn()
       return rt_to_flow(y)
   )
+]#
+
 
 # from_flow conversions
 
