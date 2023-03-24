@@ -6,6 +6,7 @@ import math
 import tables
 import hashes
 import asyncdispatch
+import osproc
 
 # Runtime for NIM backend
 
@@ -90,9 +91,13 @@ type
   Array* = ref object
     id: int32
 
-  Native* = ref object of RootObj
-    what: string
-    val: RootObj
+#[ Native Types ]#
+  NativeType* = enum
+    ntProcess
+  Native* = ref object
+   case tp*: NativeType
+    of ntProcess: p: Process
+   what: string
 
 # Type index oprations
 var id2type*: seq[AlType]
@@ -191,7 +196,7 @@ proc rt_type_id*(f: Flow): int32 =
   # to_string conversions
 proc rt_to_string*(x: Struct): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
-proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
+proc rt_to_string*(x: Native): string = x.what #& ":" & $(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
   for i in 0..x.len - 1:
