@@ -1,4 +1,4 @@
-# Arch-based distribution (Manjaro/Endeavour etc)
+# Arch-based distribution (Manjaro/EndeavourOS etc)
 
 ## Git
 Git-lfs is needed to use flow9. So make sure, that you install it
