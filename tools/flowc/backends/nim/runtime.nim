@@ -169,12 +169,14 @@ proc rt_struct_name_to_fields*(name: string): seq[string] =
     tp_f # 6 = flow,
 ]#
 
+#[
 proc rt_type_id*(): int32 = 0i32
 proc rt_type_id*(v: bool): int32 = 1i32
 proc rt_type_id*(v: int): int32 = 2i32
 proc rt_type_id*(v: float): int32 = 3i32
 proc rt_type_id*(v: string): int32 = 4i32
 proc rt_type_id*(v: Native): int32 = 5i32
+]#
 
 proc rt_type_id*(f: Flow): int32 =
   case f.tp:
