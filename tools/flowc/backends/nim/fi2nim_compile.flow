@@ -5,7 +5,8 @@ export {
 	fiNimCompileToplevel(env : FiNimEnv, decl: FiDeclaration) -> NimCompiled;
 }
 
-fiNimCompileToplevel(env : FiNimEnv, decl : FiDeclaration) -> NimCompiled {
+fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> NimCompiled {
+	env = FiNimEnv(env0 with currentToplevel = decl.name);
 	switch (decl) {
 		FiNativeDec(name, io, type, nativeName, fallback, __, __) : {
 			switch (lookupTree(env.natives, name)) {
@@ -72,6 +73,14 @@ fiNimShow(msg: string, expr: FiExp) -> void {
 	);
 }
 
+nimSubtypeFlags = FiSubtypeFlags(
+	false, // allowFlow
+	false, // allowArray
+	false, // allowUnions 
+	true,  // checkNamed
+	true   // ignoreTypeparsForTypenames
+);
+
 fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType, debug: bool) -> FiExp {
 	maybe_show = \fn, msg -> \x -> {
 		e1 = fn(x);
@@ -80,9 +89,10 @@ fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType, debug: bool) -> FiExp {
 			e1;
 		}
 	}
+	debug_fiExpMakeCastsExplicit := env.currentToplevel == "captureFreeVars";
 	e 
 	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
-	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, env.prog.names), "fiExpMakeCastsExplicit")
+	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, nimSubtypeFlags, env.prog.names), "fiExpMakeCastsExplicit")
 	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, env.prog.names), "fiExplicitCastInSwitch1")
 	|> maybe_show(\z -> fiRemoveUnusedVars(z, env.effects), "fiRemoveUnusedVars")
 	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
@@ -269,8 +279,20 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 							}
 							None(): [];
 						}
+						decl_type = switch (n) {
+							Some(decl): decl.type;
+							None(): FiTypeVoid();
+						}
 						typars_str = if (length(typars) == 0) "" else {
 							"[" + superglue(typars, \tp -> fiNimCompileType(env, tp), ", ") + "]";
+						}
+						if (env.currentToplevel == "captureFreeVars" && x == "lookupTreeDef") {
+							println(env.currentToplevel + ":\n" +
+								"fiExpType(fn): " + pretFiType(fiExpType(fn)) + "\n" +
+								"decl.type: " + pretFiType(decl_type) + "\n" +
+								"typars: [" + superglue(typars, pretFiType, ", ") + "]\n" +
+								"expr:\n" + pretFiExp(expr)
+							);
 						}
 						wrap_ret(fiNimRenameKeyword(x) + typars_str + args);
 					} else {
@@ -386,14 +408,42 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 				FcAssignPrim():	"(" + args[0] + ".val = " + args[1] + ")";
 				FcRefPrim():    "Ref[" + fiNimCompileType(env, arg_type) + "](val: " + args[0] + ")";
 				FcStructPrim(struct_name): {
-					typars = fiNimParamsForInstantiate(env, cast(tp: FiType -> FiTypeName).typeparameters);
-					"make_" + struct_name + typars + "(" + strGlue(args, ", ") + ")";
+					tn = cast(tp: FiType -> FiTypeName);
+					//"make_" + struct_name + typars + "(" + strGlue(args, ", ") + ")";
+					fiMapTypeName(tn, env.prog.names, 
+						\struct -> {
+							fiNimCompileType(env, tn) + "(" + 
+								supergluei(args, \i, val -> fiNimRenameKeyword(struct.args[i].name) + ": " + val, ", ") + 
+							")";
+							/*decl = "proc rt_make_" + fi2nimMangleType(t) + "(" + 
+								supergluei(struct.args, \i, arg -> fiNimRenameKeyword(arg.name) + ": " + fiNimCompileType(env, arg.type), ", ") + 
+							"): " + fiNimCompileType(env, t);
+							Some(NimCompiled(decl,
+								decl + " =\n" +
+								fiNimIndent + fiNimCompileType(env, t) + "(" + 
+									concatStrings(map(struct.args, \arg -> " & rt_to_string(x." + fiNimRenameKeyword(arg.name) + ")")) + " & \")\"" + 
+								"\n\n"
+							));*/
+						},
+						\union -> {
+							/*Some(NimCompiled(decl,
+								decl + " =\n" +
+								fiNimIndent + "case x.kind:\n" +
+								superglue(union.typenames, 
+									\tn -> fiNimIndent + "of st_" + tn.name + ": " + 
+										"rt_to_string(x)", "\n"
+								) + "\n\n"
+							));*/
+							fail0("cannot construct union explicitly: " + tn.name)
+						},
+						\__ -> fail0("unknown struct or union: " + tn.name)
+					);
 				};
 				FcFieldPrim(name): {
-					switch (fiExpType(es[0])) {
+					switch (arg_type) {
 						FiTypeName(__,__): args[0] +  "." + fiNimRenameKeyword(name);
 						FiTypeFlow(): "rt_get_flow_field(" + args[0] +  ", \"" + fiNimRenameKeyword(name) + "\")";
-						default: fail0("field may be get of a struct or a flow");
+						default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 					}
 				}
 				FcSetMutablePrim(name): {
