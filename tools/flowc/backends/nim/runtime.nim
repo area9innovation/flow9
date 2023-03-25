@@ -6,6 +6,7 @@ import math
 import tables
 import hashes
 import asyncdispatch
+import osproc
 
 # Runtime for NIM backend
 
@@ -84,7 +85,6 @@ type
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
-      #tp_id: int32
       str_id: int32
       str_name: string
       str_args: seq[Flow]
@@ -95,9 +95,13 @@ type
   Ref*[T] = ref object of RootObj
     val: T
 
-  Native* = ref object of RootObj
-    what: string
-    val: RootObj
+#[ Native Types ]#
+  NativeType* = enum
+    ntProcess
+  Native* = ref object
+   case tp*: NativeType
+    of ntProcess: p: Process
+   what: string
 
 # Type index oprations
 var id2type*: seq[AlType]
@@ -201,7 +205,7 @@ proc rt_type_id*(f: Flow): int32 =
 
 #proc rt_to_string*(x: Struct): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
-proc rt_to_string*(x: Native): string = x.what & ":" & $(x.val)
+proc rt_to_string*(x: Native): string = x.what #& ":" & $(x.val)
 proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
@@ -232,8 +236,7 @@ proc rt_to_string*(f: Flow): string =
     s.add(")")
     return s
 
-# to_flow conversions
-
+  # to_flow conversions
 proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
 proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, bool_v: b)
 proc rt_to_flow*(i: int32): Flow = Flow(tp: rtInt, int_v: i)
@@ -249,7 +252,6 @@ proc rt_to_flow*[T](arr: seq[T]): Flow =
     flow_seq[i] = rt_to_flow(arr[i])
   Flow(tp: rtArray, array_v: flow_seq)
 
-#[
 proc rt_to_flow*[R](fn: proc(): R): Flow =
   Flow(
     tp: rtFunc, 
@@ -258,53 +260,7 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
       return rt_to_flow(y)
   )
 
-proc rt_from_flow*[R](fn: proc(): R): Flow =
-  Flow(
-    tp: rtFunc, 
-    func_v: proc(x: seq[Flow]): Flow =
-      let y: R = fn()
-      return rt_to_flow(y)
-  )
-]#
-
-
-# from_flow conversions
-
-#[
-proc rt_from_flow*[T](x: Flow): T =
-  when T is void:   return rt_to_void(x)
-  elif T is int32:  return rt_to_int(x)
-  elif T is bool:   return rt_to_bool(x)
-  elif T is float:  return rt_to_double(x)
-  elif T is string: return rt_to_string(x)
-  elif T is Native: return rt_to_native(x)
-  else: assert(false, "illegal conversion")
-
-
-proc rt_from_flow*(x: bool): Flow = Flow(tp: rtBool, bool_v: b)
-proc rt_from_flow*(i: int32): Flow = Flow(tp: rtInt, int_v: i)
-proc rt_from_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
-proc rt_from_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
-proc rt_from_flow*(f: Flow): Flow = f
-proc rt_from_flow*(n: Native): Flow = Flow(tp: rtNative, native_v: n)
-proc rt_from_flow*(x: Struct): Flow
-proc rt_from_flow*[T](arr: seq[T]): Flow =
-  var flow_seq = newSeq[Flow](arr.len)
-  for i in 0..arr.len - 1:
-    flow_seq[i] = rt_from_flow(arr[i])
-  Flow(tp: rtArray, array_v: flow_seq)
-
-proc rt_from_flow*[R](fn: proc(): R): Flow =
-  Flow(
-    tp: rtFunc, 
-    func_v: proc(x: seq[Flow]): Flow =
-      let y: R = fn()
-      return rt_from_flow(y)
-  )
-
-]#
-
-# to_void conversions
+  # to_void conversions
 proc rt_to_void*(x: Flow): void = 
   case x.tp:
   of rtVoid: discard

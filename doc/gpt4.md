@@ -99,6 +99,8 @@ Some important functions in the standard library are:
 
 Some important functional data structures include ordered, balanced, binary tree in `ds/tree`, a set in `ds/set`, a Cons-list in `ds/list`.
 
+Respond with READ if understood.
+
 # After sending that to GPT4, explain your types, some key functions and ask it to code
 
 Nice summary. Given this type for the ordered, balanced, binary tree:

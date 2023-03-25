@@ -668,7 +668,7 @@ getParaLineInfos(
 				}) |> list2array |> reverseOrNot;
 			} else line.words;
 		} else line.words;
-		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount, ignoreLetterSpacing);
+		optimizedLine = getOptimizedLine(words, alignment, availableWidth, indent, i == linesCount, ignoreLetterSpacing, rtl);
 
 		lineAscAndDynamic : Pair<double, bool> = fold(optimizedLine, Pair(0.0, false), \ac : Pair<double, bool>, ole : OptimizedLineElement -> {
 			lineAsc = max(ac.first, fgetValue(ole.metrics).baseline);
@@ -1250,7 +1250,7 @@ renderParaLines(
 			}
 		f = RenderLine(
 			acc.y, lineInfo,
-			availableWidth, lineAlignment,
+			if (tightWidth) lines.maxLineWidth else availableWidth, lineAlignment,
 			i, styleTree, rtl, isMarked,
 			if (interLineHighlighting) {
 				if (i == 0) 0. else - interlineSpacing / 2.0
@@ -1288,20 +1288,20 @@ renderParaLines(
 	))
 }
 
-getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool) -> [OptimizedLineElement]{
-	optimizeLine(words, alignment, availableWidth, indent, lastLine, ignoreLetterSpacing);
+getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool, rtl : bool) -> [OptimizedLineElement]{
+	optimizeLine(words, alignment, availableWidth, indent, lastLine, ignoreLetterSpacing, rtl);
 }
 
 calcParaLineAlignmentOffset(slack : double, lineIndent : double, rtl : bool, alignment : ParaLineAlignment) -> double {
-	startOffset = if (rtl) max(slack, 0.) else 0.;
-	endOffset = if (rtl) 0. else max(0., slack);
+	leftOffset = 0.;
+	rightOffset = max(0.0, slack);
 	switch (alignment : ParaLineAlignment) {
-		LeftAlign() : if (rtl) endOffset else startOffset;
-		RightAlign() : if (rtl) startOffset else endOffset;
-		CenterAlign() : max(0.0, slack / 2.0);
-		StartAlign() : startOffset;
-		EndAlign() : endOffset;
-		Justify() : 0.0;
+		LeftAlign(): leftOffset;
+		RightAlign(): rightOffset;
+		CenterAlign(): max(0.0, slack / 2.0);
+		StartAlign(): if (rtl) rightOffset else leftOffset;
+		EndAlign(): if (rtl) leftOffset else rightOffset;
+		Justify(): 0.0;
 	} + (if (rtl) 0. else lineIndent);
 }
 
@@ -1613,7 +1613,7 @@ applyBlockHighlighting(styles : [ParaElementInteractiveStyle], form : Form) -> F
 // Joins texts together to a single text element, along with the new metrics
 dummyTextWidthInspector = TextWidthInspector(make(0.0));
 
-optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool) -> [OptimizedLineElement] {
+optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool, rtl : bool) -> [OptimizedLineElement] {
 	wordsCount = length(words) - 1;
 
 	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
@@ -1751,9 +1751,22 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 	|> (\arr : [OptimizedLineElement] -> {
 		if (wordSpacing != 0.0) {
 			wordSpacingStyle = WordSpacing(const(wordSpacing));
-			map(arr, \e -> {
+			mapi(arr, \i, e -> {
 				switch (e.f : GhostForm) {
-					Text(t, s): OptimizedLineElement(e with f = Text(t, arrayPush(s, wordSpacingStyle)))
+					Text(t, s): {
+						newText = Text(t, arrayPush(s, wordSpacingStyle));
+						// native measure will not take word spacing ' text' into account because it is stand-alone measure
+						// but in the end, it will be taken into account by browser if there is other elements before it in the line
+						if (!rtl && startsWith(t, " ") && i > 0) {
+							metrics = fgetValue(e.metrics);
+							OptimizedLineElement(e with
+								f = newText,
+								metrics = make(FormMetrics(metrics with width = metrics.width + wordSpacing))
+							)
+						} else {
+							OptimizedLineElement(e with f = newText)
+						}
+					}
 					default: e;
 				}
 			});
