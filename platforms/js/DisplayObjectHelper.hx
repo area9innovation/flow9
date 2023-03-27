@@ -2115,7 +2115,9 @@ class DisplayObjectHelper {
 								if (dialogTitle != null) {
 									dialogTitle.setAttribute("tabindex", "-1");
 									dialogTitle.setAttribute('aria-hidden', 'false');
-									dialogTitle.focus();
+									Native.timer(200, function() {
+										dialogTitle.focus();
+									});
 								}
 								unhideDialogContent();
 							});
