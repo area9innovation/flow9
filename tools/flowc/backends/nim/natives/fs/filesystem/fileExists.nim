@@ -1,2 +1,2 @@
-proc fileExists*(path : string): bool =
-  return fileExists(path)
+# native fileExists : (string) -> bool = FlowFileSystem.fileExists
+# the same name function

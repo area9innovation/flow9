@@ -3732,6 +3732,7 @@ class RenderSupport {
 	public static function requestFullScreenClip(clip : FlowContainer) {
 		if (IsFullScreen || clip == null || untyped !clip.isNativeWidget) return;
 		var nativeWidget = clip.nativeWidget;
+		clip.updateKeepNativeWidgetInFullScreenModeParent(true);
 		if (nativeWidget != null) {
 			var elementBRect = nativeWidget.getBoundingClientRect();
 			requestFullScreen(nativeWidget);
@@ -3747,6 +3748,7 @@ class RenderSupport {
 	public static function exitFullScreenClip(clip : FlowContainer) {
 		if (clip == null || untyped !clip.isNativeWidget) return;
 		var nativeWidget = clip.nativeWidget;
+		clip.updateKeepNativeWidgetInFullScreenModeParent(false);
 		if (nativeWidget != null) {
 			exitFullScreen(nativeWidget);
 			PixiStage.nativeWidget.style.position = null;
