@@ -2,4 +2,7 @@ import os
 import times
 
 proc fileModifiedPrecise*(path : string) : float = 
-    getLastModificationTime(path).toUnixFloat()
+    try:
+        getLastModificationTime(path).toUnixFloat().float * 1000.0
+    except OSError:
+        0.0

@@ -3,7 +3,7 @@ import os
 
 proc deleteDirectory*(dir : string): string =
     try:
-        os.removeDir(dir)
+        os.removeDir(dir, true)
         return ""
     except OSError as e:
         return e.msg
