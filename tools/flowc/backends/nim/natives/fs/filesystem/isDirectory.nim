@@ -1,0 +1,1 @@
+# native isDirectory : (string) -> bool = FlowFileSystem.isDirectory;

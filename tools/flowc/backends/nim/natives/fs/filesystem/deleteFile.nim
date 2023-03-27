@@ -1,0 +1,1 @@
+# native deleteFile : (string) -> string = FlowFileSystem.deleteFile;

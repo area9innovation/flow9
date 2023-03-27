@@ -1,0 +1,1 @@
+#  native deleteDirectory : (string) -> string = FlowFileSystem.deleteDirectory;
