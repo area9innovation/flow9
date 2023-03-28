@@ -24,7 +24,7 @@ RMObjectCounter(
 	smoothObjectsCounter : int,
 	repetitionCounter : int,
 	polygonPoints : Set<int>,
-	separateObjects : Tree<int, RMIExp>,
+	separateObjects : Tree<int, Pair<RMIExp, RMBoundingBoxTransformations>>,
 );
 
 RMSceneAccumulators(
@@ -756,14 +756,20 @@ RMScene2RMIExpJS0(
 					),
 					"id", RMIInt(id.objectId))
 				)
-			}
+			};
+			//println(getRMPrimitiveBoundingBoxJS(obj, RMIP(), id.offset));
+			boundBox = getRMPrimitiveBoundingBoxJS(obj, RMIP(), id.offset);
 			Pair(
 				RMObjectCounter(
 					id with
 					objectId = id.objectId + 1,
 					repetitionCounter = id.repetitionCounter + countList(repetition),
 					offset = id.offset + primitive.second,
-					separateObjects = if (topLevel) setTree(id.separateObjects, id.objectId, toRMIJSObject(primitiveUnwrap.first)) else id.separateObjects
+					separateObjects = if (topLevel) {
+						setTree(id.separateObjects, id.objectId, Pair(toRMIJSObject(primitiveUnwrap.first), boundBox))
+					} else {
+						setTree(id.separateObjects, id.objectId, Pair(RMIEmpty(), boundBox))
+					}
 				),
 				toRMIJSObject(RMIBrackets(RMICall(RMIOp("+"), [
 					RMICall(RMIOp("*"), [
@@ -777,9 +783,48 @@ RMScene2RMIExpJS0(
 				])))
 			);
 		}
-		RMTranslate(object, d): RMScene2RMIExpJS0(object, repetition, id, topLevel);
-		RMRotate(object, r): RMScene2RMIExpJS0(object, repetition, id, topLevel);
-		RMScale(object, s): RMScene2RMIExpJS0(object, repetition, id, topLevel);
+		RMTranslate(object, d): {
+			exp = RMScene2RMIExpJS0(object, repetition, id, topLevel);
+			if (!topLevel) Pair(
+				RMObjectCounter(
+					exp.first with
+					separateObjects = eitherMap(
+						lookupTree(exp.first.separateObjects, id.objectId),
+						\bb -> setTree(exp.first.separateObjects, id.objectId, Pair(bb.first, RMBoundingBoxTranslate(bb.second, d))),
+						exp.first.separateObjects
+					)
+				),
+				exp.second
+			) else exp
+		}
+		RMRotate(object, r): {
+			exp = RMScene2RMIExpJS0(object, repetition, id, topLevel);
+			if (!topLevel) Pair(
+				RMObjectCounter(
+					exp.first with
+					separateObjects = eitherMap(
+						lookupTree(exp.first.separateObjects, id.objectId),
+						\bb -> setTree(exp.first.separateObjects, id.objectId, Pair(bb.first, RMBoundingBoxRotate(bb.second, r))),
+						exp.first.separateObjects
+					)
+				),
+				exp.second
+			) else exp
+		}
+		RMScale(object, s): {
+			exp = RMScene2RMIExpJS0(object, repetition, id, topLevel);
+			if (!topLevel) Pair(
+				RMObjectCounter(
+					exp.first with
+					separateObjects = eitherMap(
+						lookupTree(exp.first.separateObjects, id.objectId),
+						\bb -> setTree(exp.first.separateObjects, id.objectId, Pair(bb.first, RMBoundingBoxScale(bb.second, s))),
+						exp.first.separateObjects
+					)
+				),
+				exp.second
+			) else exp
+		}
 		RMRepetitionLimited(object, space, repetitions): RMScene2RMIExpJS0(object, Cons(Pair(getValue(space), getValue(repetitions)), repetition), id, topLevel);
 		RM3DRound(object, radius): {
 			exp = RMScene2RMIExpJS0(object, repetition, id, topLevel);
@@ -931,10 +976,30 @@ RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, 
 				]
 			)));
 
+			boundingBox1 = eitherFn(
+				lookupTree(exp1.first.separateObjects, id.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			boundingBox2 = eitherFn(
+				lookupTree(exp2.first.separateObjects, exp1.first.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			cleanTree = fold(
+				enumFromTo(id.objectId + 1, resultExp.first.objectId - 1),
+				resultExp.first.separateObjects,
+				removeFromTree
+			);
+
 			if (topLevel) Pair(
 				RMObjectCounter(
 					resultExp.first with
-					separateObjects = setTree(resultExp.first.separateObjects, id.objectId, resultExp.second),
+					separateObjects = eitherMap(
+						lookupTree(resultExp.first.separateObjects, id.objectId),
+						\bb -> setTree(cleanTree, id.objectId, Pair(resultExp.second, RMBoundingBoxUnion(boundingBox1, boundingBox2))),
+						cleanTree
+					)
 				),
 				resultExp.second
 			) else resultExp
@@ -956,10 +1021,31 @@ RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, 
 					exp2.second,
 				]
 			)));
+
+			boundingBox1 = eitherFn(
+				lookupTree(exp1.first.separateObjects, id.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			boundingBox2 = eitherFn(
+				lookupTree(exp2.first.separateObjects, exp1.first.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			cleanTree = fold(
+				enumFromTo(id.objectId + 1, resultExp.first.objectId - 1),
+				resultExp.first.separateObjects,
+				removeFromTree
+			);
+
 			if (topLevel) Pair(
 				RMObjectCounter(
 					resultExp.first with
-					separateObjects = setTree(resultExp.first.separateObjects, id.objectId, resultExp.second),
+					separateObjects = eitherMap(
+						lookupTree(resultExp.first.separateObjects, id.objectId),
+						\bb -> setTree(cleanTree, id.objectId, Pair(resultExp.second, RMBoundingBoxUnion(boundingBox1, boundingBox2))),
+						cleanTree
+					)
 				),
 				resultExp.second
 			) else resultExp
@@ -983,11 +1069,31 @@ RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, 
 				]
 			)));
 
+			boundingBox1 = eitherFn(
+				lookupTree(exp1.first.separateObjects, id.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			boundingBox2 = eitherFn(
+				lookupTree(exp2.first.separateObjects, exp1.first.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			cleanTree = fold(
+				enumFromTo(id.objectId + 1, resultExp.first.objectId - 1),
+				resultExp.first.separateObjects,
+				removeFromTree
+			);
+
 			if (topLevel) Pair(
 				RMObjectCounter(
 					resultExp.first with
 					smoothObjectsCounter = id.smoothObjectsCounter + 1,
-					separateObjects = setTree(resultExp.first.separateObjects, id.objectId, resultExp.second),
+					separateObjects = eitherMap(
+						lookupTree(resultExp.first.separateObjects, id.objectId),
+						\bb -> setTree(cleanTree, id.objectId, Pair(resultExp.second, RMBoundingBoxUnion(boundingBox1, boundingBox2))),
+						cleanTree
+					)
 				),
 				resultExp.second
 			) else resultExp
@@ -1011,11 +1117,31 @@ RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, 
 				]
 			)));
 
+			boundingBox1 = eitherFn(
+				lookupTree(exp1.first.separateObjects, id.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			boundingBox2 = eitherFn(
+				lookupTree(exp2.first.separateObjects, exp1.first.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			cleanTree = fold(
+				enumFromTo(id.objectId + 1, resultExp.first.objectId - 1),
+				resultExp.first.separateObjects,
+				removeFromTree
+			);
+
 			if (topLevel) Pair(
 				RMObjectCounter(
 					resultExp.first with
 					smoothObjectsCounter = id.smoothObjectsCounter + 1,
-					separateObjects = setTree(resultExp.first.separateObjects, id.objectId, resultExp.second),
+					separateObjects = eitherMap(
+						lookupTree(resultExp.first.separateObjects, id.objectId),
+						\bb -> setTree(cleanTree, id.objectId, Pair(resultExp.second, RMBoundingBoxUnion(boundingBox1, boundingBox2))),
+						cleanTree
+					)
 				),
 				resultExp.second
 			) else resultExp
@@ -1039,11 +1165,31 @@ RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, 
 				]
 			)));
 
+			boundingBox1 = eitherFn(
+				lookupTree(exp1.first.separateObjects, id.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			boundingBox2 = eitherFn(
+				lookupTree(exp2.first.separateObjects, exp1.first.objectId),
+				secondOfPair,
+				makeDefaultRMBoundingBox
+			);
+			cleanTree = fold(
+				enumFromTo(id.objectId + 1, resultExp.first.objectId - 1),
+				resultExp.first.separateObjects,
+				removeFromTree
+			);
+
 			if (topLevel) Pair(
 				RMObjectCounter(
 					resultExp.first with
 					smoothObjectsCounter = id.smoothObjectsCounter + 1,
-					separateObjects = setTree(resultExp.first.separateObjects, id.objectId, resultExp.second),
+					separateObjects = eitherMap(
+						lookupTree(resultExp.first.separateObjects, id.objectId),
+						\bb -> setTree(cleanTree, id.objectId, Pair(resultExp.second, RMBoundingBoxUnion(boundingBox1, boundingBox2))),
+						cleanTree
+					)
 				),
 				resultExp.second
 			) else resultExp
@@ -1059,11 +1205,35 @@ RMBinaryOperator2RMIExpJS(obj : RMBinaryOperator, repetition : List<Pair<RMXYZ, 
 	}
 }
 
-getRMPrimitiveBoundingBoxJS(obj : RMPrimitive, distance : RMIExp, offset : int){ 
+RMBoundingBoxTransformations ::= RMBoundingBoxTranslate, RMBoundingBoxRotate, RMBoundingBoxScale, RMBoundingBoxUnion, RMBoundingBox;
+
+RMBoundingBoxTranslate(box : RMBoundingBoxTransformations, position : Transform<RMCoordinate>);
+RMBoundingBoxRotate(box : RMBoundingBoxTransformations, rotation : Transform<RMCoordinate>);
+RMBoundingBoxScale(box : RMBoundingBoxTransformations, scale : Transform<RMCoordinate>);
+RMBoundingBoxUnion(box1 : RMBoundingBoxTransformations, box2 : RMBoundingBoxTransformations);
+
+RMBoundingBox(
+	minX : RMIExp,
+	minY : RMIExp,
+	minZ : RMIExp,
+	maxX : RMIExp,
+	maxY : RMIExp,
+	maxZ : RMIExp,
+);
+
+getRMPrimitiveBoundingBoxJS(obj : RMPrimitive, distance : RMIExp, offset : int) -> RMBoundingBox { 
 	switch(obj) {
-		RMSphere(radius): Triple(getObjectParameter(offset, 0), getObjectParameter(offset, 0), getObjectParameter(offset, 0));
-		default: Triple(RMIDouble(1.), RMIDouble(1.), RMIDouble(1.));
+		RMSphere(radius): {
+			e = getObjectParameterJS(offset, 0);
+			me = RMICall(RMIOp("*"), [e, RMIDouble(-1.)]);
+			RMBoundingBox(me, me, me, e, e, e);
+		}
+		default: makeDefaultRMBoundingBox();
 	}
+}
+
+makeDefaultRMBoundingBox() -> RMBoundingBox {
+	RMBoundingBox(RMIDouble(-1.), RMIDouble(-1.), RMIDouble(-1.), RMIDouble(1.), RMIDouble(1.), RMIDouble(1.))
 }
 
 expandRMCoordinate(c : RMCoordinate) -> RMXYZ {
