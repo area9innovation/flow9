@@ -7,7 +7,10 @@ export {
 
 fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> NimCompiled {
 	env = FiNimEnv(env0 with currentToplevel = decl.name);
-	switch (decl) {
+	if (env.cfg.verbose > 1) {
+		println("\tcompiling decl: " + decl.name + " ... ");
+	}
+	compiled = switch (decl) {
 		FiNativeDec(name, io, type, nativeName, fallback, __, __) : {
 			switch (lookupTree(env.natives, name)) {
 				Some(nat): {
@@ -44,6 +47,10 @@ fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> NimCompiled {
 			fiNimCompileGlobalVar(env, decl);
 		}
 	};
+	if (env.cfg.verbose > 1) {
+		println("\t" + decl.name + " is COMPILED");
+	}
+	compiled;
 }
 
 nim_debug_lambda0 : ref FiExp = ref FiVoid(0);
@@ -94,6 +101,7 @@ fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType, debug: bool) -> FiExp {
 	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
 	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, nimSubtypeFlags, env.prog.names), "fiExpMakeCastsExplicit")
 	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, env.prog.names), "fiExplicitCastInSwitch1")
+	//|> maybe_show(\x -> fiExpInterpolateTypars(x, env.prog.names), "fiExpInterpolateTypars")
 	|> maybe_show(\z -> fiRemoveUnusedVars(z, env.effects), "fiRemoveUnusedVars")
 	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
 	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
@@ -375,10 +383,18 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 				Some(dc): fi2nimMaybeIndent(fiNimCompile(env, dc.body, returns));
 				None(): "assert(false,\"illegal struct id in switch: \" & $StructType(" + x_code + ".id))";
 			}
-			"case " + x_code + ".kind" + "\n" +
+			case_id = switch (x_type) {
+				FiTypeName(__,__): x_code + ".id";
+				FiTypeFlow(): x_code + ".str_id";
+				default: fail0("switch var type must be a flow or union, got: " + pretFiType(x_type));
+			}
+			"case " + case_id + "\n" +
 			concatStrings(add_newlines(concat(
-				map(non_defcases, \c ->
-					"of st_" + c.struct + ": # " + c.struct + fi2nimSureIndent(fiNimCompile(env, c.body, returns))
+				mapConcat(non_defcases, \c ->
+					map(set2array(lookupTreeDef(env.specializations, c.struct, makeSet())), \spec ->
+						"of int32(" + fi2nimTypeId(env, spec) + "): # " + c.struct + 
+							fi2nimSureIndent(fiNimCompile(env, c.body, returns))
+					)
 				),
 				["else:" + fi2nimSureIndent(def_case)]
 			)));
@@ -412,8 +428,9 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 					//"make_" + struct_name + typars + "(" + strGlue(args, ", ") + ")";
 					fiMapTypeName(tn, env.prog.names, 
 						\struct -> {
-							fiNimCompileType(env, tn) + "(" + 
-								supergluei(args, \i, val -> fiNimRenameKeyword(struct.args[i].name) + ": " + val, ", ") + 
+							fiNimCompileType(env, tn) + "(" +
+								"id: rt_type_id_" + struct_name + fiNimParamsForInstantiate(env, tn.typeparameters) + "()" +
+								concatStrings(mapi(args, \i, val -> ", " + fiNimRenameKeyword(struct.args[i].name) + ": " + val)) + 
 							")";
 							/*decl = "proc rt_make_" + fi2nimMangleType(t) + "(" + 
 								supergluei(struct.args, \i, arg -> fiNimRenameKeyword(arg.name) + ": " + fiNimCompileType(env, arg.type), ", ") + 
@@ -470,72 +487,50 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> string {
 
 fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: string) -> string {
 	def_cast = \-> "cast[" + fiNimCompileType(env, to) + "](" + ex + ")";
-	structs = env.prog.names.structs;
-	unions = env.prog.names.unions;
-	switch (to) {
-		FiTypeName(to_name, to_typars): {
-			switch (from) {
-				FiTypeName(from_name, from_typars): {
-					switch (lookupTree(structs, from_name)) {
-						Some(from_struct): {
-							switch (lookupTree(structs, to_name)) {
-								Some(to_struct): {
-									def_cast();
-								}
-								None(): {
-									switch (lookupTree(unions, to_name)) {
-										Some(to_union): {
-											to_name + fiNimParamsForInstantiate(env, to_typars) + "(" + 
-												"kind: st_" + from_name + ", " + 
-												"ust_" + from_name + ": " + ex +
-											")";
-										}
-										None(): {
-											fail0(to_name + " type is not found");
-										}
-									}
-								}
-							}
-						}
-						None(): {
-							switch (lookupTree(unions, from_name)) {
-								Some(from_union): {
-									switch (lookupTree(structs, to_name)) {
-										Some(to_struct): {
-											//fiNimCompileType(env, to) + "(Struct(" + ex + "))";
-											ex + ".ust_" + to_name;
-										}
-										None(): {
-											ex;
-										}
-									}
-								}
-								None(): {
-									fail0(to_name + " type is not found");
-								}
-							}
-						}
-					}
-				}
-				default: def_cast();
+	err_cast = \-> fail0("illegal cast from " + pretFiType(from) + " to" + pretFiType(to));
+	if (from == FiTypeFlow()) {
+		"rt_to_" + fi2nimMangleComplexType(to) + "(" + ex + ")";
+	} else {
+		switch (to) {
+			FiTypeName(to_name,__): {
+				fiMapTypeName(to, env.prog.names, 
+					\struct_to -> switch (from) {
+						FiTypeName(from_name,__): 
+							fiMapTypeName(from, env.prog.names, 
+								\struct_from -> if (to_name == from_name) def_cast() else err_cast(),
+								\union_from -> fiNimCompileType(env, to) + "(" + ex + ")", 
+								\err -> err_cast()
+							);
+						default: err_cast();
+					},
+					\union_to -> switch (from) {
+						FiTypeName(__,__): ex;
+						default: err_cast();
+					}, 
+					\err -> err_cast()
+				);
 			}
+			FiTypeArray(__): switch (from) {
+				FiTypeArray(__): def_cast();
+				default: err_cast();
+			}
+			FiTypeRef(__): switch (from) {
+				FiTypeRef(__): def_cast();
+				default: err_cast();
+			}
+			FiTypeFunction(__,__): switch (from) {
+				FiTypeFunction(__,__): def_cast();
+				default: err_cast();
+			}
+			FiTypeFlow():   "rt_to_flow(" + ex + ")";
+			FiTypeString(): "rt_to_string(" + ex + ")";
+			FiTypeDouble(): "rt_to_double(" + ex + ")";
+			FiTypeBool():   "rt_to_bool(" + ex + ")";
+			FiTypeInt():    "rt_to_int(" + ex + ")";
+			FiTypeNative(): "rt_to_native(" + ex + ")";
+			FiTypeParameter(__): def_cast();
+			FiTypeVoid(): err_cast();
 		}
-		FiTypeFlow(): {
-			"rt_to_flow(" + ex + ")";
-		}
-		FiTypeString(): {
-			"rt_to_string(" + ex + ")";
-		}
-		FiTypeDouble(): {
-			"rt_to_double(" + ex + ")";
-		}
-		FiTypeBool(): {
-			"rt_to_bool(" + ex + ")";
-		}
-		FiTypeInt(): {
-			"rt_to_int(" + ex + ")";
-		}
-		default: def_cast();
 	}
 }
 

@@ -33,10 +33,9 @@ fi2nimCompileTypes(env: FiNimEnv) -> string {
 
 	type_decls = concatStrings(map(env.prog.traversal, \mod_name -> {
 		module = lookupTreeDef(env.prog.modules, mod_name, dummyFiModule);
-		concatStrings(concat(
-			map(module.structs, \s -> fi2nimStructDecl(env, s)),
-			map(module.unions, \u -> fi2nimUnionDecl(env, u))
-		));
+		module_types = concat(module.unions, module.structs);
+		ordered_types = fi2nimToposortTypes(env, module_types, []);
+		concatStrings(map(ordered_types, \tp -> fi2nimTypeDecl(env, tp)));
 	}));
 	type_defs = "type\n" + concatStrings([
 		if (structs_enum == "") "" else fiNimIndent+ "# Struct Ids\n" + structs_enum + "\n",
@@ -46,23 +45,35 @@ fi2nimCompileTypes(env: FiNimEnv) -> string {
 
 	register_structs = concatStrings(map(env.structs, \s -> fi2nimStructRegister(env, s)));
 
-	/*compiled_funcs = concat3(
-		mapConcat(env.structs, \s -> fi2nimStructFuncs(env, s)),
-		mapConcat(env.unions, \u -> fi2nimUnionFuncs(env, u)),
-		mapConcat(env.funcTypes, \f -> fi2nimFuncTypeFuncs(env, f)),
-	);*/
-
 	compiled_funcs = concatA([
-		filtermap(env.ordered_types, \t -> fi2nimTypeToTypeId(env, t)),
+		//filtermap(env.ordered_types, \t -> fi2nimTypeToTypeId(env, t)),
 		filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t)),
 		filtermap(env.ordered_types, \t -> fi2nimTypeFromFlow(env, t)),
 		filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t)),
-		//map(env.structs, \s -> fi2nimStructMake(env, s))
+		filtermap(env.structs, \s -> {
+			ret = fi2nimTypeToTypeId(env, FiTypeName(s.name, s.typars));
+			switch (ret) {
+				Some(x): {
+					println(
+						"STRUCT IDS: " + pretFiType(FiTypeName(s.name, s.typars)) + "\n" + 
+						"DECL:\n" + x.decl + "\nDEF:\n" + x.def + "\n\n"
+					);
+				}
+				None(): {
+					println("STRUCT IDS: " + pretFiType(FiTypeName(s.name, s.typars)) + "\nNOXXXX\n\n");
+				}
+			}
+			ret;
+		}),
+		//fi2nimTypeNameToTypeId(env : FiNimEnv, tn: FiTypeName) -> NimCompiled;
 	]);
 
 	type_defs + "\n\n" + type_register + "\n\n" + register_structs + "\n\n" +
 	concatStrings(map(compiled_funcs, \fn -> fn.decl + "\n")) + "\n\n" +
-	concatStrings(map(compiled_funcs, \fn -> fn.def));
+	concatStrings(map(compiled_funcs, \fn -> fn.def)) + "\n"
+	//fi2nimStructToFlow(env).def + "\n" +
+	//fi2nimStructToString(env).def + "\n"
+	;
 }
 
 fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> string {
@@ -93,8 +104,10 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> string {
 }
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
-	// Unions shouldn't contain other unions - only structs
-	program = program0 |> fiRemoveImplicitStructTypars |> fiFlattenUnions;
+	// fiFlattenUnions: Unions shouldn't contain other unions - only structs
+	// fiCompleteStructTypars: None() is inherently polymorphic via Maybe<?>
+	// fiAddSuperUnions: Nim doesn't support a multiple inheritance
+	program = program0 |> fiCompleteStructTypars |> fiFlattenUnions |> fiAddSuperUnions;
 
 	is_explicit_polymorphic = \nm -> switch (lookupTree(program.names.structs, nm)) {
 		Some(struct): length(struct.typars) > 0;
@@ -189,33 +202,6 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		);
 	}
 
-	casts_from_to = fiFoldProgramToplevel(program, makeTree(), \decl,__,__,acc ->
-		switch (decl) {
-			FiFunctionDec(__,lambda,__,__,__): fiAllCasts(lambda, acc);
-			FiGlobalVar(__,value,__,__,__):    fiAllCasts(value, acc);
-			FiNativeDec(__,__,__,__,fb,__,__): fiAllCasts(fb, acc);
-			default: acc;
-		}
-	);
-	casts_to_from = foldTree(casts_from_to, makeTree(), \from, to_set, acc ->
-		foldSet(to_set, acc, \ac, to ->
-			setTree(ac, to, insertSet(lookupTreeDef(ac, to, makeSet()), from))
-		)
-	);
-	types_map_to_s = \tree -> {
-		concatStrings(map(tree2pairs(tree), \p -> 
-			"\t" + prettyFiType(dummyPretty, p.first, makeSet()) + " => [" + 
-				superglue(set2array(p.second), \t -> prettyFiType(dummyPretty, t, makeSet()), ", ")
-			+ "]\n"
-		))
-	}
-
-	/*println("casts_from_to:\n" +
-		types_map_to_s(casts_from_to) + "\n" +
-		"casts_to_from:\n" +
-		types_map_to_s(casts_to_from) + "\n"
-	);*/
-
 	funcTypes = set2array(fold(structs, makeSet(), \acc, struct ->
 		fold(struct.args, acc, \ac, arg -> 
 			switch (arg.type) {
@@ -225,6 +211,61 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		)
 	));
 
+	choose_smallest_superunion = \name, unions0 : [FiTypeUnion] -> {
+		if (length(unions0) == 0) {
+			fail0("none upper boundaries for a type " + name);
+		} else {
+			// Leave only the minimal supertypes 
+			unions1 = fold(unions0, [], \acc, un -> 
+				if (exists(unions0, \u -> u.name != un.name && forall(u.typenames, \tn -> contains(un.typenames, tn)))) {
+					acc;
+				} else {
+					concat(acc, [un]);
+				}
+			);
+			smallest_upper_boundary = if (length(unions1) == 0) {
+				fail0("must not ever happen - error in kicking out non-minimal upper boundaries: " + superglue(unions0, \u -> u.name, ", "));
+			} else if (length(unions1) == 1) {
+				unions1[0];
+			} else {
+				// A set of all types in a super union for a struct 'str'
+				super_names = set2array(fold(unions1, makeSet(), \ac, un -> 
+					fold(un.typenames, ac, \a, tn -> insertSet(a, tn))
+				));
+				// A set of all upper boundaries
+				super_unions = filter(unions,
+					\un -> forall(super_names, \tn -> contains(un.typenames, tn))
+				);
+				if (length(super_unions) == 0) {
+					fail0("no super union is found for " + name);
+				} else {
+					fold(tail(super_unions), super_unions[0], \acc, super ->
+						if (length(super.typenames) < length(acc.typenames)) super else acc
+					);
+				}
+			}
+			FiTypeName(smallest_upper_boundary.name, smallest_upper_boundary.typeparameters);
+		}
+	}
+
+	struct2superUnion = mapTree2(
+		fold(unions, makeTree(), \acc, union ->
+			fold(union.typenames, acc, \ac, tn -> 
+				setTree(ac, tn.name, insertSet(lookupTreeDef(ac, tn.name, makeSet()), union))
+			)
+		), 
+		\x, unions_ -> choose_smallest_superunion(x, set2array(unions_))
+	);
+	union2superUnion = mapTree2(
+		fold(unions, makeTree(), \acc, union -> {
+			super_unions = filter(unions, \u -> 
+				u.name != union.name && forall(union.typenames, \tn -> contains(u.typenames, tn))
+			);
+			if (length(super_unions) == 0) acc else setTree(acc, union.name, super_unions);
+		}), 
+		choose_smallest_superunion
+	);
+
 	env0 = FiNimEnv(cfg, program, "", ref makeSet(),
 		structs,
 		unions,
@@ -232,9 +273,7 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		specialized_structs,
 		specialized_unions,
 		specializations,
-		casts_to_from,
-		set2array(lookupTreeDef(casts_to_from, FiTypeFlow(), makeSet())),
-		set2array(lookupTreeDef(casts_to_from, FiTypeString(), makeSet())),
+		mergeTree(struct2superUnion, union2superUnion),
 		collectFiEffects(program), "", [],
 		fi2nimNatives(cfg),
 		[], makeTree(), makeTree()

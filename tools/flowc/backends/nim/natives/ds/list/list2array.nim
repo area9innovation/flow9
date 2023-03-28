@@ -1,9 +1,9 @@
-proc list2array*[T](list: Struct): seq[T] =
+proc list2array*[T](list: List[T]): seq[T] =
   var p = list
   var r = newSeq[T]()
 
   while true:
-    if cast[StructType](rt_type_id_to_struct_id(p.id)) == st_EmptyList:
+    if p of EmptyList[T]:
       break
     else:
       let cons = Cons[T](p)
