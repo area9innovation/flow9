@@ -3700,7 +3700,7 @@ class RenderSupport {
 	public static var IsFullScreen : Bool = false;
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
-		if (FullWindowTargetClip != null && IsFullWindow != fw) {
+		if (FullWindowTargetClip != null && IsFullWindow != fw && getClipPixiStage(FullWindowTargetClip) != null) {
 			var mainStage : FlowContainer = cast(getClipPixiStage(FullWindowTargetClip).children[0], FlowContainer);
 
 			if (fw) {

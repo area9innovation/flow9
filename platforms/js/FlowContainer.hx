@@ -131,8 +131,10 @@ class FlowContainer extends Container {
 		if (child.parent != null) {
 			child.parent.removeChild(child);
 		}
-
-		var newChild = super.addChild(child);
+		var newChild = null;
+		if (child != null && untyped child.transform != null) {
+			newChild = super.addChild(child);
+		}
 
 		if (newChild != null) {
 			newChild.invalidate();
