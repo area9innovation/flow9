@@ -1,0 +1,209 @@
+import tools/flowc/backends/nim/fi2nim_defines;
+import tools/flowc/backends/nim/fi2nim_mangle;
+
+export {
+	fi2nimIsImportLine(line: string) -> bool;
+
+	fi2nimMaybeIndent(c: NimCode) -> NimCode;
+	fi2nimSureIndent(c: NimCode) -> NimCode;
+	fi2nimEmptyLine() -> NimCode;
+	fi2nimAddEmptyLine(c : NimCode) -> NimCode;
+
+	fi2nimNimCodeStartsWith(c: NimCode, what: string) -> bool;
+	fi2nimNimCodeEndsWith(c: NimCode, what: string) -> bool;
+
+	fi2nimCode2Block(c: NimCode) -> NimBlock;
+	fi2nimJoinNimCode(c1: NimCode, c2: NimCode) -> NimCode;
+	fi2nimJoinNimCode3(c1: NimCode, c2: NimCode, c3: NimCode) -> NimCode;
+	fi2nimJoinNimCodeMany(cs: [NimCode]) -> NimCode;
+
+	// Special code operators
+	fi2nimGlueNimCode(cs: [NimCode], delim: string) -> NimCode;
+	fi2nimBracketNimCode(c: NimCode) -> NimCode;
+	fi2nimBinOpNimCode(c1: NimCode, op: string, c2: NimCode) -> NimCode;
+
+	fi2nimMakeNimBlock1(ind: int, c: string)-> NimBlock;
+	fi2nimMakeNimBlock(ind: int, ls: [string])-> NimBlock;
+
+	fi2nimNimCode2s(c: NimCode, indentation: string) -> string;
+
+	fiNimRenameKeyword(kwd: string) -> string;
+
+	fi2nimTypeId(env : FiNimEnv, type: FiType) -> string;
+	fi2nimStructId(env : FiNimEnv, struct: FiTypeStruct) -> string;
+}
+
+fi2nimIsImportLine(line: string) -> bool {
+	startsWith(line, "import") || startsWith(line, "from");
+}
+
+fi2nimBlockIndent(b : NimBlock) -> NimCode {
+	NimBlock(b with 
+		lines = map(b.lines, \line -> 
+			if (line.code == "") line else {
+				NimLine(line with indent = line.indent + 1)
+			}
+		)
+	);
+}
+
+fi2nimMaybeIndent(c : NimCode) -> NimCode {
+	switch (c) {
+		NimBlock(lines): {
+			fi2nimBlockIndent(c);
+		}
+		NimSnippet(code): {
+			code1 = if (startsWith(code, " ")) code else (" " + code);
+			code2 = if (endsWith(code, " ")) code1 else (code1 + " ");
+			NimSnippet(code2);
+		}
+	}
+}
+
+fi2nimSureIndent(c : NimCode) -> NimCode {
+	fi2nimBlockIndent(fi2nimCode2Block(c));
+}
+
+fi2nimEmptyLine() -> NimCode {
+	NimBlock([NimLine(0, "")]);
+}
+
+fi2nimAddEmptyLine(c : NimCode) -> NimCode {
+	switch (c) {
+		NimBlock(lines): {
+			if (length(lines) == 0) c else {
+				last_line = lines[length(lines) - 1];
+				if (last_line.code == "") c else {
+					NimBlock(c with lines = concat(lines, [NimLine(0, "")]));
+				}
+			}
+		}
+		NimSnippet(code): {
+			NimBlock([NimLine(1, code), NimLine(0, "")]);
+		}
+	}
+}
+
+fi2nimNimCodeStartsWith(c: NimCode, what: string) -> bool {
+	switch (c) {
+		NimSnippet(code): startsWith(code, what);
+		NimBlock(lines): (length(lines) > 0) && startsWith(lines[0].code, what);
+	}
+}
+
+fi2nimNimCodeEndsWith(c: NimCode, what: string) -> bool {
+	switch (c) {
+		NimSnippet(code): endsWith(code, what);
+		NimBlock(lines): (length(lines) > 0) && endsWith(lines[length(lines) - 1].code, what);
+	}
+}
+
+fi2nimCode2Block(c: NimCode) -> NimBlock {
+	switch (c) {
+		NimBlock(lines): c;
+		NimSnippet(code): NimBlock([NimLine(0, code)]);
+	}
+}
+
+fi2nimJoinNimCode(c1: NimCode, c2: NimCode) -> NimCode {
+	switch (c1) {
+		NimBlock(lines1): {
+			if (length(lines1) == 0) c2 else {
+				switch (c2) {
+					NimBlock(lines2): {
+						NimBlock(concat(lines1, lines2));
+					}
+					NimSnippet(code2): {
+						if (code2 == "") c1 else {
+							last_line1 = lines1[length(lines1) - 1];
+							NimBlock(
+								replace(lines1, length(lines1) - 1, 
+									NimLine(last_line1 with code = last_line1.code + code2)
+								)
+							);
+						}
+					}
+				}
+			}
+		}
+		NimSnippet(code1): {
+			if (code1 == "") c2 else {
+				switch (c2) {
+					NimBlock(lines2): {
+						if (length(lines2) == 0) c1 else {
+							first_line2 = lines2[0];
+							NimBlock(
+								replace(lines2, 0, 
+									NimLine(first_line2 with code = code1 + first_line2.code)
+								)
+							);
+						}
+					}
+					NimSnippet(code2): {
+						NimSnippet(code1 + code2);
+					}
+				}
+			}
+		}
+	}
+}
+
+fi2nimJoinNimCode3(c1: NimCode, c2: NimCode, c3: NimCode) -> NimCode {
+	fi2nimJoinNimCode(fi2nimJoinNimCode(c1, c2), c3);
+}
+
+fi2nimJoinNimCodeMany(cs: [NimCode]) -> NimCode {
+	fold(cs, NimBlock([]), fi2nimJoinNimCode);
+}
+
+fi2nimGlueNimCode(cs: [NimCode], delim: string) -> NimCode {
+	fi2nimJoinNimCodeMany(
+		mapi(cs, \i, c -> 
+			if (i == 0) c else {
+				fi2nimJoinNimCode(NimSnippet(delim), c)
+			}
+		)
+	)
+}
+
+fi2nimBracketNimCode(c: NimCode) -> NimCode {
+	if (fi2nimNimCodeStartsWith(c, "(") && fi2nimNimCodeEndsWith(c, ")")) c else {
+		fi2nimJoinNimCode3(NimSnippet("("), c, NimSnippet(")"));
+	}
+}
+
+fi2nimBinOpNimCode(c1: NimCode, op: string, c2: NimCode) -> NimCode {
+	fi2nimJoinNimCodeMany([NimSnippet("("), c1, NimSnippet(op), c2, NimSnippet(")")]);
+}
+
+fi2nimMakeNimBlock1(ind: int, c: string)-> NimBlock {
+	NimBlock([NimLine(ind, c)]);
+}
+
+fi2nimMakeNimBlock(ind: int, ls: [string])-> NimBlock {
+	NimBlock(map(ls, \s -> NimLine(ind, s)));
+}
+
+fi2nimNimCode2s(c: NimCode, indentation: string) -> string {
+	switch (c) {
+		NimBlock(lines): 
+			strGlue(
+				map(lines, \line -> strRepeat(indentation, line.indent) + line.code), 
+				"\n"
+			);
+		NimSnippet(code): code;
+	}
+}
+
+fiNimRenameKeyword(kwd : string) -> string {
+	k = (if (containsSet(nimKeywordSet, kwd)) "fl0w" else "") + kwd;
+	strReplace(k, "_", "u")
+}
+
+fi2nimTypeId(env : FiNimEnv, type: FiType) -> string {
+	"tp_" + fi2nimMangleType(type);
+}
+
+fi2nimStructId(env : FiNimEnv, struct: FiTypeStruct) -> string {
+	"st_" + struct.name;
+}
