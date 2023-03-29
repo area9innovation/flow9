@@ -132,9 +132,18 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 		func = fiNimNormalizeMain(func0);
 		type = FiTypeFunction(func.type with args = func.lambda.args);
 		nim_debug_lambda0 := func.lambda;
+
+		/*t1 = timestamp();
+		if (func.name == "gringoTypedAction") {
+			println("\tpreparing exp ... ");
+		}*/
 		lambda = cast(fiNimPrepareExp(env, func.lambda, type, debug): FiExp -> FiLambda);
 		nim_debug_lambda := lambda;
 
+		/*if (func.name == "gringoTypedAction") {
+			println("\tpreparation is DONE in " + d2st((timestamp() - t1) / 1000.0, 2) + ".s\n" +
+			pretFiExp(lambda));
+		}*/
 		if (debug) {
 			fiNimShow(func.name, FiVoid(0));
 			//println(toStringFormatted(fiExpMakeCastsExplicit(lambda0, type, env.prog.names)))
@@ -143,6 +152,10 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 		fn_typars = fiNimTypeParamsList(env, func.type);
 		decl = "proc " + fiNimRenameKeyword(func.name) + fn_typars + fiNimCompileFuncType(env, type);
 		has_tail_call = fiNimHasTailCall(lambda.body, func.name);
+		/*t2 = timestamp();
+		if (func.name == "gringoTypedAction") {
+			println("\tcompiling exp ... ");
+		}*/
 		fn_code = if (!has_tail_call) {
 			fiNimCompile(env, lambda.body, true);
 		} else {
@@ -170,6 +183,9 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 				)
 			);
 		}
+		/*if (func.name == "gringoTypedAction") {
+			println("\tcompilation is DONE in " + d2st((timestamp() - t2) / 1000.0, 2) + ".s");
+		}*/
 		//we cannot terminate the program, if there is no quit(). maybe quit() in some callback.
 		waitMain = if (func.name == "main") {
 			fi2nimMakeNimBlock(0, [
@@ -406,22 +422,15 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> NimCode {
 			def_case = switch (find(cs, \c -> c.struct == "default")) {
 				Some(dc): fi2nimMaybeIndent(fiNimCompile(env, dc.body, returns));
 				None():   fi2nimJoinNimCode3(
-					NimSnippet("assert(false,\"illegal struct id in switch: \" & $StructType("), x_code, NimSnippet(".id))")
+					NimSnippet("assert(false,\"illegal struct id in switch: \" & $StructType("), x_code, NimSnippet(".str_id))")
 				);
 			}
-			case_id = switch (x_type) {
-				FiTypeName(__,__): fi2nimJoinNimCode(x_code, NimSnippet(".id"));
-				FiTypeFlow():      fi2nimJoinNimCode(x_code, NimSnippet(".str_id"));
-				default: fail0("switch var type must be a flow or union, got: " + pretFiType(x_type));
-			}
 			fi2nimJoinNimCodeMany(concat3(
-				[fi2nimCode2Block(fi2nimJoinNimCode3(NimSnippet("case "), case_id, NimSnippet(":")))],
-				mapConcat(filter(cs, \c -> c.struct != "default"), \c ->
-					map(set2array(lookupTreeDef(env.specializations, c.struct, makeSet())), \spec ->
-						fi2nimJoinNimCode(
-							fi2nimMakeNimLine(0, "of int32(" + fi2nimTypeId(env, spec) + "): #[" + c.struct + "]#"), 
-							fi2nimMaybeIndent(fiNimCompile(env, c.body, returns))
-						)
+				[fi2nimCode2Block(fi2nimJoinNimCodeMany([NimSnippet("case "), x_code, NimSnippet(".str_id"), NimSnippet(":")]))],
+				map(filter(cs, \c -> c.struct != "default"), \c ->
+					fi2nimJoinNimCode(
+						fi2nimMakeNimLine(0, "of int32(" + fi2nimStructId(env, c.struct) + "): #[" + c.struct + "]#"), 
+						fi2nimMaybeIndent(fiNimCompile(env, c.body, returns))
 					)
 				),
 				[fi2nimJoinNimCode(fi2nimMakeNimLine(0, "else:"), def_case)]
@@ -459,7 +468,10 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool) -> NimCode {
 							fi2nimBracketNimCode(
 								fi2nimGlueNimCode(
 									concat(
-										[NimSnippet("id: rt_type_id_" + struct_name + fiNimParamsForInstantiate(env, tn.typeparameters) + "()")],
+										[
+											NimSnippet("tp_id: rt_type_id_" + struct_name + fiNimParamsForInstantiate(env, tn.typeparameters) + "()"),
+											NimSnippet("str_id: int32(" + fi2nimStructId(env, struct_name) + ")")
+										],
 										mapi(args, \i, arg -> fi2nimJoinNimCode(NimSnippet(fiNimRenameKeyword(struct.args[i].name) + ": "), arg))
 									), ", "
 								)

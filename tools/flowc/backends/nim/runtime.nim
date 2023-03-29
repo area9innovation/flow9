@@ -86,6 +86,7 @@ type
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
+      tp_id: int32
       str_id: int32
       str_name: string
       str_args: seq[Flow]
@@ -107,7 +108,8 @@ type
     val: seq[T]
 
   Struct* = ref object of RootObj
-    id: int32
+    tp_id: int32
+    str_id: int32
 
   Struct0* = ref object of Struct
 
