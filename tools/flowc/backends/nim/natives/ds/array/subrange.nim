@@ -4,4 +4,4 @@ proc subrange*[T](s: openArray[T], index: int32, length : int32): seq[T] {.inlin
   if (index < 0) or (length < 1) or s.len <= index:
     return @[]
   else:
-    s[index .. index + length - 1]
+    s[index .. min(index + length, s.len) - 1]
