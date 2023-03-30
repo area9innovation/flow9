@@ -7,6 +7,6 @@ proc list2array*[T](list: List[T]): seq[T] =
       break
     else:
       let cons = Cons[T](p)
-      r = r & @[cons.head]
+      r = @[cons.head] & r
       p = cons.tail
   return r
