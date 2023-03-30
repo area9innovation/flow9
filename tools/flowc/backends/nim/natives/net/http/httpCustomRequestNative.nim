@@ -15,5 +15,5 @@ import threadpool
 
 proc httpCustomRequestNative*(url : string, method_0 : string, headers : seq[seq[string]], 
     parameters : seq[seq[string]], data : string, responseEncoding : string, 
-    onResponse : proc (responseStatus : int, responseData : string, responseHeaders : seq[seq[string]]) : void, async : bool): void =
-  spawn execHttpCustomRequest(url, method_0, headers, parameters, data, responseEncoding, onResponse, async)
+    onResponse : proc (responseStatus : int32, responseData : string, responseHeaders : seq[seq[string]]) : void, async : bool): void =
+  spawn execHttpCustomRequest(url, method_0, headers, parameters, data, responseEncoding, onResponse, async, defaultResponseEncoding)
