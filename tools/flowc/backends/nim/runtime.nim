@@ -183,7 +183,8 @@ proc rt_register_type*(tp: AlType): void =
     id2type.add(tp)
     type2id[tp] = id
   else:
-    echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
+    #echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
+    discard
 
 proc hash*(tp: AlType): Hash =
   var h: Hash = 0
@@ -296,6 +297,9 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
       let y: R = fn()
       return rt_to_flow(y)
   )
+
+proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
+proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
 
 proc rt_compare*(x: Flow, y: Flow): int32
 proc rt_compare*(x: Native, y: Native): int32 =
