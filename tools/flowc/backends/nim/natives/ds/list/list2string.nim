@@ -7,6 +7,6 @@ proc list2string*(list: List[string]): string =
       break
     else:
       let cons = Cons[string](p)
-      r.add(cons.head)
+      r = cons.head & r
       p = cons.tail
   return r
