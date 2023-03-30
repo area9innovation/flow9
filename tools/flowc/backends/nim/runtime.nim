@@ -10,6 +10,8 @@ import osproc
 
 # Runtime for NIM backend
 
+{.experimental: "overloadableEnums".}
+
 proc rt_escape(s: string): string = 
   var r: string = ""
   for ch in s:
@@ -55,21 +57,22 @@ type
     # Atiomic types
     rtVoid, rtBool, rtInt, rtDouble, rtString, rtNative,
     # Composite types
-    rtArray, rtFunc, rtStruct
+    rtRef, rtArray, rtFunc, rtStruct
 
   # Compile time type kinds
   CtType* = enum
     # Atiomic types
-    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow, ctUnion,
+    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
     # Composite types
-    ctArray, ctFunc, ctStruct
+    ctRef, ctArray, ctFunc, ctStruct, ctUnion
 
   # A complex type descriptor.
   AlType* = tuple[op: CtType, args: seq[int32], name: string]
 
 #[ Representation of a dynamic type ]#
 
-  Flow* = ref object
+  Flow* = ref object of RootObj
+    #tp: int32
     case tp*: RtType
     # Atiomic types
     of rtVoid:   discard
@@ -79,23 +82,66 @@ type
     of rtString: string_v: string
     of rtNative: native_v: Native
     # Composite types
+    of rtRef:    ref_v:    Flow
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
+      tp_id: int32
       str_id: int32
       str_name: string
       str_args: seq[Flow]
 
+  Void* = ref object of Flow
+  Bool* = ref object of Flow
+    val: bool
+  Int* = ref object of Flow
+    val: int32
+  Double* = ref object of Flow
+    val: float
+  String* = ref object of Flow
+    val: string
+
+  Ref*[T] = ref object of Flow
+    val: T
+
+  Array*[T] = ref object of Flow
+    val: seq[T]
+
   Struct* = ref object of RootObj
-    id: int32
-  Array* = ref object
-    id: int32
+    tp_id: int32
+    str_id: int32
+
+  Struct0* = ref object of Struct
+
+  Struct1*[A1] = ref object of Struct
+    arg1: A1
+
+  Struct2*[A1, A2] = ref object of Struct
+    arg1: A1
+    arg2: A2
+
+  Struct3*[A1, A2, A3] = ref object of Struct
+    arg1: A1
+    arg2: A2
+    arg3: A2
+
+  Func0*[R] = ref object of Flow
+    fn: proc(): R
+
+  Func1*[R, A1] = ref object of Flow
+    fn: proc(a1: A1): R
+
+  Func2*[R, A1, A2] = ref object of Flow
+    fn: proc(a1: A1, a2: A2): R
+
+  Func3*[R, A1, A2, A3] = ref object of Flow
+    fn: proc(a1: A1, a2: A2, a3: A3): R
 
 #[ Native Types ]#
   NativeType* = enum
     ntProcess
-  Native* = ref object
-   case tp*: NativeType
+  Native* = ref object of Flow
+   case ntp*: NativeType
     of ntProcess: p: Process
    what: string
 
@@ -108,6 +154,7 @@ var struct2id*: Table[string, int32]
 proc rt_type_id_to_string*(id: int32): string =
   let tp = id2type[id]
   case tp.op:
+  of ctRef:    return "ref " & rt_type_id_to_string(tp.args[0])
   of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
   of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
   of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
@@ -154,23 +201,6 @@ proc rt_struct_id_to_fields*(id: int32): seq[string] =
 proc rt_struct_name_to_fields*(name: string): seq[string] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
 
-#[
-	tp_v # 0 = void,
-    tp_b # 1 = bool,
-    tp_i # 2 = int,
-    tp_d # 3 = double,
-    tp_s # 4 = string,
-    tp_n # 5 = native,
-    tp_f # 6 = flow,
-]#
-
-proc rt_type_id*(): int32 = 0i32
-proc rt_type_id*(v: bool): int32 = 1i32
-proc rt_type_id*(v: int): int32 = 2i32
-proc rt_type_id*(v: float): int32 = 3i32
-proc rt_type_id*(v: string): int32 = 4i32
-proc rt_type_id*(v: Native): int32 = 5i32
-
 proc rt_type_id*(f: Flow): int32 =
   case f.tp:
   of rtVoid:   return 0i32
@@ -179,6 +209,9 @@ proc rt_type_id*(f: Flow): int32 =
   of rtDouble: return 3i32
   of rtString: return 4i32
   of rtNative: return 5i32
+  of rtRef:
+    let r_type = rt_type_id(f.ref_v)
+    return rt_find_type_id((ctRef, @[r_type], ""))
   of rtArray:
     if f.array_v.len == 0:
       echo "type of an empty array can't be resolved at runtime"
@@ -191,12 +224,11 @@ proc rt_type_id*(f: Flow): int32 =
     return -1i32
   of rtStruct: return f.str_id
 
-
-
-  # to_string conversions
-proc rt_to_string*(x: Struct): string
+# to_string conversions
+#proc rt_to_string*(x: Struct): string # forward declaration
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
 proc rt_to_string*(x: Native): string = x.what #& ":" & $(x.val)
+proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
   for i in 0..x.len - 1:
@@ -214,6 +246,7 @@ proc rt_to_string*(f: Flow): string =
   of rtDouble: return rt_to_string(f.double_v)
   of rtString: return rt_to_string(f.string_v)
   of rtNative: return rt_to_string(f.native_v)
+  of rtRef:    return "ref " & rt_to_string(f.ref_v)
   of rtArray:  return rt_to_string(f.array_v)
   of rtFunc:   return "<function>"
   of rtStruct:
@@ -233,7 +266,8 @@ proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
 proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
 proc rt_to_flow*(f: Flow): Flow = f
 proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, native_v: n)
-proc rt_to_flow*(x: Struct): Flow
+#proc rt_to_flow*(x: Struct): Flow # forward declaration
+proc rt_to_flow*[T](rf: Ref[T]): Flow = Flow(tp: rtRef, ref_v: rt_to_flow(rf.val))
 proc rt_to_flow*[T](arr: seq[T]): Flow =
   var flow_seq = newSeq[Flow](arr.len)
   for i in 0..arr.len - 1:
@@ -248,7 +282,16 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
       return rt_to_flow(y)
   )
 
-  # to_void conversions
+#[
+proc rt_to_flow_runtime_struct*(x: Struct): Flow =
+  if x.id >= id2type.len:
+    assert(false, "type index " & intToStr(x.id) & " is out of bounds: " & intToStr(id2type.len))
+  let tp = id2type[x.id]
+  let struct_id = tp.args[0]
+  return Flow(tp: rtVoid)
+]#
+
+# to_void conversions
 proc rt_to_void*(x: Flow): void = 
   case x.tp:
   of rtVoid: discard
