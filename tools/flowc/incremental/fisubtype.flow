@@ -17,17 +17,6 @@ We could probably also do that while we are type-checking in general.
 export {
 	isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool, checkNamed : bool) -> bool;
 
-	FiSubtypeFlags(
-		allowFlow: bool,     // flow type is assumed as a supertype for all types
-		allowArrays: bool,   // arrays may be in subtype-supertype relation
-		allowUnions: bool,   // unions may be supertypes of structs/other unions
-		checkNamed : bool,   // check subtype-supertype relation for named types
-		ignoreTypeparsForTypenames: bool, // do not check type parameters of typenames
-	);
-
-	// A version of subtype relations with FiGlobalNames instead of
-	isFiSubType2(names : FiGlobalNames, small : FiType, big : FiType, flags : FiSubtypeFlags) -> bool;
-
 	// Would we be able to find some super type to make these two types compatible?
 	fiSuperTypeExists(env : FcGlobalNames, t1 : FiType, t2 : FiType, allowFlow : bool) -> bool;
 }
@@ -305,101 +294,4 @@ expandFiUnion(env : FcGlobalNames, union : FcTypeUnion, acc : Set<string>) -> Se
 			Some(st): insertSet(acc0, tn.name);
 		}
 	});
-}
-
-isFiSubType2(names : FiGlobalNames, small : FiType, big : FiType, flags : FiSubtypeFlags) -> bool {
-    flowok = \ -> 
-		(flags.allowFlow && small == FiTypeFlow());
-	args = \s : [FiType], b : [FiType] -> {
-		length(s) == length(b) && foldi(s, true, \i, acc, sa ->
-			acc && isFiSubType2(names, sa, b[i], flags)
-		);
-	}
-	fiEqualTypes(small, big) ||
-    switch (small) {
-		FiTypeParameter(__): true; // We just accept this
-		default: {
-			switch (big) {
-				FiTypeVoid():   false;
-				FiTypeBool():   flowok();
-				FiTypeInt():    flowok();
-				FiTypeDouble(): flowok();
-				FiTypeString(): flowok();
-				FiTypeArray(bt): switch (small) {
-					FiTypeArray(st): {
-						flags.allowArrays && isFiSubType2(names, st, bt, flags);
-					}
-					default: flowok();
-				}
-				FiTypeFlow():   flags.allowFlow;
-				FiTypeNative(): flowok();
-				FiTypeFunction(bargs, breturnType): {
-					switch (small) {
-						FiTypeFunction(sargs, sreturnType): {
-							isFiSubType2(names, sreturnType, breturnType, flags)
-							// Here, we reverse
-							&& args(map(bargs, \ba -> ba.type), map(sargs, \sa -> sa.type))
-						}
-						default: flowok();
-					}
-				}
-				FiTypeRef(bt): switch (small) {
-					FiTypeRef(st): {
-						isFiSubType2(names, st, bt, FiSubtypeFlags(flags with allowFlow = false))
-					}
-					default: false;
-				}
-				FiTypeParameter(__): true; // We just accept this
-				FiTypeName(bname, btypeparameters): {
-					switch (small) {
-						FiTypeName(sname, stypeparameters): {
-							typarsok = \stypars, btypars -> stypars == [] || btypars == [] || args(stypars, btypars);
-							if (sname == bname) {
-								// This is required for some cases, like switch, where we do not have typars
-								// as well as for implicit polymorphism due to polymorphic unions
-								flags.ignoreTypeparsForTypenames || typarsok(stypeparameters, btypeparameters);
-							} else {
-								flags.allowUnions && (!flags.checkNamed ||
-									(
-										typarsok(stypeparameters, btypeparameters) && 
-										getFiTypenameSubType(names, sname, bname)
-									)
-								);
-							}
-						}
-						default: flowok();
-					}
-				}
-			}
-		}
-	}
-}
-
-getFiTypenameSubType(names : FiGlobalNames, sname : string, bname : string) -> bool {
-	(sname == bname) ||
-	switch (lookupTree(names.unions, sname)) {
-		Some(small_union): {
-			switch (lookupTree(names.unions, bname)) {
-				Some(big_union): {
-					forall(small_union.typenames, \tn1 -> 
-						exists(big_union.typenames, \tn2 -> tn1.name == tn2.name)
-					);
-				}
-				None(): {
-					exists(small_union.typenames, \tn -> tn.name == sname);
-				}
-			}
-		}
-		None(): {
-			switch (lookupTree(names.unions, bname)) {
-				Some(big_union): {
-					exists(big_union.typenames, \tn -> tn.name == sname);
-				}
-				None(): {
-					false;
-				}
-
-			}
-		}
-	}
 }

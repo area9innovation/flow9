@@ -1,11 +1,11 @@
 import os
 
 proc getAllUrlParametersArray*(): seq[seq[string]] =
-  var params = filter(commandLineParams(), proc(param: string): bool = param.len > 0)
-  return map(params, proc(param: string): seq[string] =
-    let p = split(param, "=")
-    if p.len == 1:
-      return @[param, ""]
+  let params = filter(commandLineParams(), proc(p: string): bool = p.len > 0)
+  return map(params, proc(p: string): seq[string] =
+    let eq_ind = find(p, "=")
+    if eq_ind == -1:
+      return @[p, ""]
     else:
-      return @[p[0], p[1]]
+      return @[p[0 .. (eq_ind - 1)], p[(eq_ind + 1) .. (p.len - 1)]]
   )
