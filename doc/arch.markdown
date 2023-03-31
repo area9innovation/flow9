@@ -15,7 +15,7 @@ If you pulled repository without git-lfs, then to fix it use:
 
 It works with jdk11 above
 
-	sudo pacman -S jdk-openjdk
+	sudo pacman -S jdk-openjdk maven
 
 ## Adding to path
 Open environment variables;
@@ -56,7 +56,7 @@ Install needed libraries:
 	haxelib install threejs
 
 ## Build Byterunner for flowcpp
-	pacman -S qt5-base qt5-websockets qt5-webengine
+	pacman -S qt5-base qt5-websockets qt5-webengine qt5-multimedia
 	cd $FLOW/platforms/common/cpp
 	git clone https://github.com/area9innovation/asmjit
 	cd asmjit

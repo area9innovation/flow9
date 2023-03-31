@@ -16,6 +16,12 @@ export {
 
 	// Map two cases of a typename: a struct and a union
 	fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (FiTypeName) -> ?) -> ?;
+
+	// Get all typenames used in a struct or union definition
+	fiStructOrUnionTypenames(tp: FiStructOrUnion, acc: Set<FiTypeName>) -> Set<FiTypeName>;
+
+	// Get all typenames used in a type
+	fiTypeTypenames(tp: FiType, acc: Set<FiTypeName>) -> Set<FiTypeName>;
 }
 
 fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
@@ -40,7 +46,7 @@ fiSpecializeUnion(tn: FiTypeName, u: FiTypeUnion) -> FiTypeUnion {
 	typars_subst = foldi(u.typeparameters, makeTree(), \i, acc, tp -> 
 		switch (tp) {
 			FiTypeParameter(nm): setTree(acc, nm, tn.typeparameters[i]);
-			default: fail0("must be FiTypeParameter, got: " + toString(tp));
+			default: fail0("must be FiTypeParameter, got: " + toString(tp) + ", union: " + u.name);
 		}
 	);
 	FiTypeUnion(u with typeparameters = tn.typeparameters,
@@ -89,12 +95,54 @@ fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) ->
 		None(): {
 			switch (lookupTree(names.unions, tn.name)) {
 				Some(union): {
-					fn_union(FiTypeUnion(union with typeparameters = tn.typeparameters));
+					fn_union(fiSpecializeUnion(tn, union));
 				}
 				None(): {
 					err(tn);
 				}
 			}
 		}
+	}
+}
+
+fiStructOrUnionTypenames(type: FiStructOrUnion, acc: Set<FiTypeName>) -> Set<FiTypeName> {
+	switch (type) {
+		FiTypeUnion(__, typars, typenames,__): {
+			fold(typenames,
+				fold(typars, acc, \ac, tp -> fiTypeTypenames(tp, ac)),
+				\ac, tn -> insertSet(ac, tn)
+			);
+		}
+		FiTypeStruct(__, typars, args, __): {
+			fold(args, 
+				fold(typars, acc, \ac, tp -> fiTypeTypenames(tp, ac)), 
+				\ac, arg -> fiTypeTypenames(arg.type, ac)
+			);
+		} 
+	}
+}
+
+fiTypeTypenames(type: FiType, acc: Set<FiTypeName>) -> Set<FiTypeName> {
+	switch (type) {
+		FiTypeRef(rt): {
+			fiTypeTypenames(rt, acc);
+		}
+		FiTypeArray(at): {
+			fiTypeTypenames(at, acc);
+		}
+		FiTypeName(id, tp): {
+			fold(tp, insertSet(acc, type), \ac, t -> fiTypeTypenames(t, ac));
+		}
+		FiTypeFunction(args, rt): {
+			fiTypeTypenames(rt, fold(args, acc, \ac, arg -> fiTypeTypenames(arg.type, ac)));
+		}
+		FiTypeParameter(n): acc;
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
 	}
 }

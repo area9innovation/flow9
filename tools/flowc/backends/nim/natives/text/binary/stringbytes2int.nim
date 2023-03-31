@@ -15,6 +15,6 @@ proc stringbytes2int(s : string) : int32 =
                 (cast[uint32](bb[2]) shl 16) or
                 (cast[uint32](bb[3]) shl 24)
         ) ]#
-        int32((int32(unicode.runeAt(s, 0)) and 0xff) or (int32(unicode.runeAt(s, 1)) shl 16))
+        result = int32((int32(unicode.runeAt(s, 0)) and 0xff) or (int32(unicode.runeAt(s, 1)) shl 16))
     else:
         result = -1i32 # error

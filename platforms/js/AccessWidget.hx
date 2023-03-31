@@ -971,7 +971,8 @@ class AccessWidget extends EventEmitter {
 					untyped clip.nextWidgetId = attributes.get(key);
 					RenderSupport.once("stagechanged", function() {
 						// To keep word order in wigi updated
-						clip.addNativeWidget();
+						// HOTFIX : To keep input focusable
+						// clip.addNativeWidget();
 					});
 				}
 				default : {

@@ -10,6 +10,8 @@ import osproc
 
 # Runtime for NIM backend
 
+{.experimental: "overloadableEnums".}
+
 proc rt_escape(s: string): string = 
   var r: string = ""
   for ch in s:
@@ -49,27 +51,38 @@ proc rt_to_double*(x: float): float = x
 proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
 proc rt_to_double*(x: string): float = parseFloat(x)
 
+#[ General comparison ]#
+proc rt_compare*(x: int32, y: int32): int32 = return if x < y: -1 elif x > y: 1 else: 0
+proc rt_compare*(x: float, y: float): int32 = return if x < y: -1 elif x > y: 1 else: 0
+proc rt_compare*(x: bool, y: bool): int32 = return if x < y: -1 elif x > y: 1 else: 0
+proc rt_compare*(x: string, y: string): int32 = return if x < y: -1 elif x > y: 1 else: 0
+proc rt_compare*[T](x: ptr T, y: ptr T): int32 = return if x < y: -1 elif x > y: 1 else: 0
+
+proc rt_equal*[T](x: T, y: T): bool = rt_compare(x, y) == 0
+proc rt_nequal*[T](x: T, y: T): bool = rt_compare(x, y) != 0
+
 type
   # Basic runtime type kinds
   RtType* = enum
     # Atiomic types
     rtVoid, rtBool, rtInt, rtDouble, rtString, rtNative,
     # Composite types
-    rtArray, rtFunc, rtStruct
+    rtRef, rtArray, rtFunc, rtStruct
 
   # Compile time type kinds
   CtType* = enum
     # Atiomic types
-    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow, ctUnion,
+    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
     # Composite types
-    ctArray, ctFunc, ctStruct
+    ctRef, ctArray, ctFunc, ctStruct, ctUnion
 
   # A complex type descriptor.
   AlType* = tuple[op: CtType, args: seq[int32], name: string]
 
 #[ Representation of a dynamic type ]#
 
-  Flow* = ref object
+  Flow* = ref object of RootObj
+    #tp: int32
     case tp*: RtType
     # Atiomic types
     of rtVoid:   discard
@@ -79,25 +92,69 @@ type
     of rtString: string_v: string
     of rtNative: native_v: Native
     # Composite types
+    of rtRef:    ref_v:    Flow
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
+      tp_id: int32
       str_id: int32
       str_name: string
       str_args: seq[Flow]
 
+  Void* = ref object of Flow
+  Bool* = ref object of Flow
+    val: bool
+  Int* = ref object of Flow
+    val: int32
+  Double* = ref object of Flow
+    val: float
+  String* = ref object of Flow
+    val: string
+
+  Ref*[T] = ref object of Flow
+    val: T
+
+  Array*[T] = ref object of Flow
+    val: seq[T]
+
   Struct* = ref object of RootObj
-    id: int32
-  Array* = ref object
-    id: int32
+    tp_id: int32
+    str_id: int32
+
+  Struct0* = ref object of Struct
+
+  Struct1*[A1] = ref object of Struct
+    arg1: A1
+
+  Struct2*[A1, A2] = ref object of Struct
+    arg1: A1
+    arg2: A2
+
+  Struct3*[A1, A2, A3] = ref object of Struct
+    arg1: A1
+    arg2: A2
+    arg3: A2
+
+  Func0*[R] = ref object of Flow
+    fn: proc(): R
+
+  Func1*[R, A1] = ref object of Flow
+    fn: proc(a1: A1): R
+
+  Func2*[R, A1, A2] = ref object of Flow
+    fn: proc(a1: A1, a2: A2): R
+
+  Func3*[R, A1, A2, A3] = ref object of Flow
+    fn: proc(a1: A1, a2: A2, a3: A3): R
 
 #[ Native Types ]#
   NativeType* = enum
-    ntProcess
-  Native* = ref object
-   case tp*: NativeType
+    ntProcess, ntFlow
+  Native* = ref object of Flow
+    case ntp*: NativeType
     of ntProcess: p: Process
-   what: string
+    of ntFlow: flow_v: Flow
+    what: string
 
 # Type index oprations
 var id2type*: seq[AlType]
@@ -108,6 +165,7 @@ var struct2id*: Table[string, int32]
 proc rt_type_id_to_string*(id: int32): string =
   let tp = id2type[id]
   case tp.op:
+  of ctRef:    return "ref " & rt_type_id_to_string(tp.args[0])
   of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
   of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
   of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
@@ -125,7 +183,8 @@ proc rt_register_type*(tp: AlType): void =
     id2type.add(tp)
     type2id[tp] = id
   else:
-    echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
+    #echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
+    discard
 
 proc hash*(tp: AlType): Hash =
   var h: Hash = 0
@@ -154,23 +213,6 @@ proc rt_struct_id_to_fields*(id: int32): seq[string] =
 proc rt_struct_name_to_fields*(name: string): seq[string] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
 
-#[
-	tp_v # 0 = void,
-    tp_b # 1 = bool,
-    tp_i # 2 = int,
-    tp_d # 3 = double,
-    tp_s # 4 = string,
-    tp_n # 5 = native,
-    tp_f # 6 = flow,
-]#
-
-proc rt_type_id*(): int32 = 0i32
-proc rt_type_id*(v: bool): int32 = 1i32
-proc rt_type_id*(v: int): int32 = 2i32
-proc rt_type_id*(v: float): int32 = 3i32
-proc rt_type_id*(v: string): int32 = 4i32
-proc rt_type_id*(v: Native): int32 = 5i32
-
 proc rt_type_id*(f: Flow): int32 =
   case f.tp:
   of rtVoid:   return 0i32
@@ -179,6 +221,9 @@ proc rt_type_id*(f: Flow): int32 =
   of rtDouble: return 3i32
   of rtString: return 4i32
   of rtNative: return 5i32
+  of rtRef:
+    let r_type = rt_type_id(f.ref_v)
+    return rt_find_type_id((ctRef, @[r_type], ""))
   of rtArray:
     if f.array_v.len == 0:
       echo "type of an empty array can't be resolved at runtime"
@@ -191,12 +236,15 @@ proc rt_type_id*(f: Flow): int32 =
     return -1i32
   of rtStruct: return f.str_id
 
-
-
-  # to_string conversions
-proc rt_to_string*(x: Struct): string
+# to_string conversions
+proc rt_to_string*(f: Flow): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
-proc rt_to_string*(x: Native): string = x.what #& ":" & $(x.val)
+proc rt_to_string*(x: Native): string =
+  case x.ntp:
+  of ntProcess: return "process"
+  of ntFlow:    return rt_to_string(x.flow_v)
+
+proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
 proc rt_to_string*[T](x: seq[T]): string = 
   var s = "["
   for i in 0..x.len - 1:
@@ -214,6 +262,7 @@ proc rt_to_string*(f: Flow): string =
   of rtDouble: return rt_to_string(f.double_v)
   of rtString: return rt_to_string(f.string_v)
   of rtNative: return rt_to_string(f.native_v)
+  of rtRef:    return "ref " & rt_to_string(f.ref_v)
   of rtArray:  return rt_to_string(f.array_v)
   of rtFunc:   return "<function>"
   of rtStruct:
@@ -225,15 +274,16 @@ proc rt_to_string*(f: Flow): string =
     s.add(")")
     return s
 
-  # to_flow conversions
+# to_flow conversions
 proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
 proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, bool_v: b)
 proc rt_to_flow*(i: int32): Flow = Flow(tp: rtInt, int_v: i)
 proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
 proc rt_to_flow*(s: string): Flow = Flow(tp: rtString, string_v: s)
 proc rt_to_flow*(f: Flow): Flow = f
-proc rt_to_flow*(n: Native): Flow = Flow(tp: rtNative, native_v: n)
-proc rt_to_flow*(x: Struct): Flow
+proc rt_to_flow*(n: Native): Flow =
+  return if n.ntp == ntFlow: return n.flow_v else: Flow(tp: rtNative, native_v: n)
+proc rt_to_flow*[T](rf: Ref[T]): Flow = Flow(tp: rtRef, ref_v: rt_to_flow(rf.val))
 proc rt_to_flow*[T](arr: seq[T]): Flow =
   var flow_seq = newSeq[Flow](arr.len)
   for i in 0..arr.len - 1:
@@ -248,7 +298,64 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
       return rt_to_flow(y)
   )
 
-  # to_void conversions
+proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
+proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
+
+proc rt_compare*(x: Flow, y: Flow): int32
+proc rt_compare*(x: Native, y: Native): int32 =
+  case x.ntp:
+  of ntProcess: return rt_compare(addr(x.p), addr(y.p))
+  of ntFlow:    return rt_compare(x.flow_v, y.flow_v)
+
+proc rt_compare*[T](x: Ref[T], y: Ref[T]): int32 = rt_compare(x.val, y.val)
+proc rt_compare*[T](x: openArray[T], y: openArray[T]): int32 =
+  if x.len < y.len: return -1
+  elif x.len > y.len: return 1
+  else:
+    for i in 0 .. x.len - 1:
+      let c = rt_compare(x[i], y[i])
+      if c != 0:
+        return c
+    return 0
+proc rt_compare*(x: Flow, y: Flow): int32 =
+  if x.tp < y.tp: return -1
+  elif x.tp > y.tp: return 1
+  else:
+    case x.tp:
+    of rtVoid:   return 0
+    of rtBool:   return rt_compare(x.bool_v, y.bool_v)
+    of rtInt:    return rt_compare(x.int_v, y.int_v)
+    of rtDouble: return rt_compare(x.double_v, y.double_v)
+    of rtString: return rt_compare(x.string_v, y.string_v)
+    of rtNative: return rt_compare(addr(x.native_v), addr(y.native_v))
+    of rtRef:    return rt_compare(x.ref_v, y.ref_v)
+    of rtArray:  return rt_compare(x.array_v, y.array_v)
+    of rtFunc:   return rt_compare(addr(x.func_v), addr(y.func_v))
+    of rtStruct:
+      if x.str_id < y.str_id: return -1
+      elif x.str_id > y.str_id: return 1
+      else:
+        for i in 0 .. x.str_args.len - 1:
+          let c = rt_compare(x.str_args[i], y.str_args[i])
+          if c != 0:
+            return c
+        return 0
+proc rt_compare*[R](x: var proc(): R, y: var proc(): R): int32 = rt_compare(addr(x), addr(y))
+proc rt_compare*[R, A1](x: var proc(a1: A1): R, y: var proc(a1: A1): R): int32 = rt_compare(addr(x), addr(y))
+proc rt_compare*[R, A1, A2](x: var proc(a1: A1, a2: A2): R, y: var proc(a1: A1, a2: A2): R): int32 = rt_compare(addr(x), addr(y))
+proc rt_compare*[R, A1, A2, A3](x: var proc(a1: A1, a2: A2, a3: A3): R, y: var proc(a1: A1, a2: A2, a3: A3): R): int32 = rt_compare(addr(x), addr(y))
+proc rt_compare*[R, A1, A2, A3, A4](x: var proc(a1: A1, a2: A2, a3: A3, a4: A4): R, y: var proc(a1: A1, a2: A2, a3: A3, a4: A4): R): int32 = rt_compare(addr(x), addr(y))
+
+#[
+proc rt_to_flow_runtime_struct*(x: Struct): Flow =
+  if x.id >= id2type.len:
+    assert(false, "type index " & intToStr(x.id) & " is out of bounds: " & intToStr(id2type.len))
+  let tp = id2type[x.id]
+  let struct_id = tp.args[0]
+  return Flow(tp: rtVoid)
+]#
+
+# to_void conversions
 proc rt_to_void*(x: Flow): void = 
   case x.tp:
   of rtVoid: discard
@@ -279,9 +386,7 @@ proc rt_to_double*(x: Flow): float =
   else: assert(false, "illegal conversion")
 
 proc rt_to_native*(x: Flow): Native =
-  case x.tp:
-  of rtNative: return x.native_v
-  else: assert(false, "illegal conversion")
+  return if x.tp == rtNative: x.native_v else: Native(ntp: ntFlow, flow_v: x)
 
 proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
   case x.tp:
