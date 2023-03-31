@@ -122,3 +122,7 @@ can you implement a tail recursive version of
 mergeTree(t1 : Tree<?, ??>, t2 : Tree<?, ??>) -> Tree<?, ??>;
 
 which preserves balancing and order?
+
+# Sometimes it will forget the syntax. This prompt reminds it
+
+Write the code in flow9. Flow9 is like ML, but use Typescript syntax for calls and function definitions, except that we omit "function", "case", "return", "const" and "let" keywords.
