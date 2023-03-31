@@ -1,7 +1,7 @@
 # native fileSize : (string) -> double = FlowFileSystem.fileSize;
 import os
 
-proc fileSize*(path : string): float =
+proc $F_0(fileSize)*(path : string): float =
     try:
         result = toBiggestFloat(os.getFileSize(path))
     except OSError:

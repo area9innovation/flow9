@@ -1,7 +1,7 @@
 import os
 import strutils
 
-proc getUrlParameterNative*(name: string): string =
+proc $F_0(getUrlParameterNative)*(name: string): string =
   # params from main() ?
   when declared(commandLineParams):
     let prefix = name & "="

@@ -1,4 +1,4 @@
-proc isSameObj*(a: Flow, b: Flow): bool =
+proc $F_0(isSameObj)*(a: Flow, b: Flow): bool =
   if a.tp != b.tp return false
   else:
     case a.tp:

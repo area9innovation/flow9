@@ -1,7 +1,7 @@
 # native readDirectory : (string) -> [string] = FlowFileSystem.readDirectory;
 import os
 
-proc readDirectory*(path :string): seq[string] =
+proc $F_0(readDirectory)*(path :string): seq[string] =
   let newPath = normalizedPath(path)
   if (newPath == ""):
     return @[]

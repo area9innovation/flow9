@@ -1,6 +1,6 @@
 # Remove element if found. . Makes a copy
 # removeIndex(a : [?], index : int) -> [?]
-proc removeIndex*[T](s: openArray[T], i: int32): seq[T] =
+proc $F_0(removeIndex)*[T](s: openArray[T], i: int32): seq[T] =
   if i < 0 or i >= s.len:
     return @s
   else:

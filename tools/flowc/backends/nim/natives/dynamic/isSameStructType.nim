@@ -1,5 +1,5 @@
-proc isSameStructType*[T1, T2](a: T1, b: T2): bool =
-  when (a is Struct) and (b is Struct):
+proc $F_0(isSameStructType)*[T1, T2](a: T1, b: T2): bool =
+  when (a of Struct) and (b of Struct):
     return a.id == b.id
   else:
     return false

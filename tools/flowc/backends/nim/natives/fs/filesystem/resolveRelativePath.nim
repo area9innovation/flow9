@@ -2,5 +2,5 @@
 import os
 import strutils
 
-proc resolveRelativePath*(path : string) : string = 
+proc $F_0(resolveRelativePath)*(path : string) : string = 
   replace(os.absolutePath(path), "\\", "/")

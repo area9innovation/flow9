@@ -1,2 +1,2 @@
-func log*(x: float): float =
+func $F_0(log)*(x: float): float =
   return ln(x)

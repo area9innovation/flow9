@@ -1,6 +1,6 @@
 #  native getFileContentBinary : io (filename : string) -> string = Native.getFileContentBinary;
 
-proc getFileContentBinary(filename: string): string =
+proc $F_0(getFileContentBinary)(filename: string): string =
   var f: File
   if open(f, filename, fmRead):
     try:

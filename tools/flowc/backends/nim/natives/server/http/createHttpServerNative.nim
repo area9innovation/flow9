@@ -3,7 +3,7 @@ import httpbeast, asyncdispatch, strtabs
 # nimble install httpbeast
 
 # Untested
-proc createHttpServerNative*(port: int, isHttps: bool, pfxPath: string, pfxPassword: string,
+proc $F_0(createHttpServerNative)*(port: int, isHttps: bool, pfxPath: string, pfxPassword: string,
                             onOpen: proc (): void,
                             onMessage: proc (requestUrl: string, requestBody: string,
                                              requestMethod: string, requestHeaders: seq[tuple[key, value: string]],
