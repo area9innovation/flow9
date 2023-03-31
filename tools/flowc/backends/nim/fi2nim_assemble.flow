@@ -1,11 +1,12 @@
 import tools/flowc/backends/common;
 import tools/flowc/backends/nim/fi2nim_utils;
+import tools/flowc/backends/nim/fi2nim_code;
 import string_utils;
 
 export {
 	fi2nimRuntime(cfg : FiNimConfig) -> string;
 	fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative>;
-	fi2nimAssemble(cfg : FiNimConfig, content : [string]) -> void;
+	fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void;
 }
 
 fi2nimRuntime(cfg : FiNimConfig) -> string {
@@ -34,14 +35,14 @@ fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
 			imports = filter(lines, fi2nimIsImportLine);
 			proc_decl = find(lines, \line0 -> {
 				line = rtrim(line0);
-				startsWith(line, "proc") && endsWith(line, "=");
+				(startsWith(line, "proc") || startsWith(line, "func")) && endsWith(line, "=");
 			});
 			code_lines = filter(lines, \line -> !fi2nimIsImportLine(line));
-			code = strGlue(code_lines, "\n");
 			name = changeFileExt(fileNameOnly(path), "");
+			code = fi2nimMakeNimBlock(0, concat3(["# native function " + name], code_lines, [""]));
+			decl = eitherMap(proc_decl, \decl -> rtrim2(decl, "= "), "");
 			nim_native = NimNative(name, imports, 
-				eitherMap(proc_decl, \decl -> rtrim2(decl, "= "), ""),
-				if (endsWith(code, "\n\n")) code else if (endsWith(code, "\n")) code + "\n" else code + "\n\n"
+				NimCompiled(NimLine(0, decl), code)
 			);
 			setTree(acc, name, nim_native);
 		}
@@ -61,6 +62,6 @@ fi2nimFindAllNativeFiles(dir: string, acc: [string]) -> [string] {
 	});
 }
 
-fi2nimAssemble(cfg : FiNimConfig, content : [string]) -> void {
-	saveFileContent(cfg.outputfile, concatStrings(content), cfg.threadId);
+fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void {
+	saveFileContent(cfg.outputfile, fi2nimNimCode2s(content, "  "), cfg.threadId);
 }

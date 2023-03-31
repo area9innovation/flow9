@@ -61,6 +61,10 @@ class Native {
 		#end
 	}
 
+	public static function genericCompare(a : Dynamic, b : Dynamic) : Int {
+		return HaxeRuntime.compareByValue(a, b);
+	}
+
 	public static function hostCall(name : String, args: Array<Dynamic>) : Dynamic {
 		var result = null;
 

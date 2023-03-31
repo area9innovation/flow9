@@ -1,12 +1,11 @@
 # timer : io (int, () -> void) -> void = Native.timer;
 
-proc timerFuture(delay : int32, fn : proc (): void) {.async.} =
-  var systemTimer = sleepAsync(int(delay))
-  try:
-    await systemTimer
-    fn()
-  except CatchableError:
-    discard # ignore error
+import os
+import threadpool
+
+proc timerBody(delay : int32, fn : proc (): void) : void =
+  sleep(int(delay))
+  fn()
 
 proc timer*(delay : int32, fn : proc (): void) : void =
-  asyncCheck timerFuture(delay, fn)
+  spawn timerBody(delay, fn)

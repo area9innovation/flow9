@@ -1,3 +1,5 @@
 proc getFileContent*(path : string): string =
-  # TODO: Handle exceptions
-  return readFile(path)
+  try:  
+    readFile(path)
+  except IOError:
+    return ""

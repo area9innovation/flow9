@@ -1,4 +1,4 @@
-import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fi_helpers2;
 import tools/flowc/manipulation/common;
 import tools/flowc/incremental/fi_type_unify;
 import tools/flowc/manipulation/effects;
@@ -96,6 +96,8 @@ fiNormalizeCasts(e: FiExp) -> FiExp;
 fiExpMakeVarsUnique(e: FiExp) -> FiExp;
 
 fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp;
+
+debug_fiExpMakeCastsExplicit = ref false;
 
 fiExpInterpolateTypars(e: FiExp, names: FiGlobalNames) -> FiExp;
 
@@ -235,14 +237,30 @@ fiRemoveUnusedVars(e : FiExp, effects : FiEffects) -> FiExp {
 				)) {
 					Some(__): x;
 					None(): {
-						// var is not used
-						if (hasFiSideEffects(effects, e1)) {
-							switch (e2) {
-								FiSeq(es,__,__): FiSeq(e2 with es = concat([e1], es));
-								default: FiSeq([e1, e2], fiExpType(e2), e1.start);
+						switch (e1) {
+							FiLambda(__,__,__,__): {
+								// We can safely skip unused lambda
+								e2;
 							}
-						} else {
-							e2;
+							default: {
+								// var is not used
+								if (hasFiSideEffects(effects, e1)) {
+									switch (e2) {
+										FiSeq(es,__,s): {
+											if (length(es) == 0) {
+												// In this case we can't just concat es with e1,
+												// since the type of the expression in that case would change
+												FiSeq(e2 with es = [e1, FiVoid(s)]);
+											} else {
+												FiSeq(e2 with es = concat([e1], es));
+											}
+										}
+										default: FiSeq([e1, e2], type, e1.start);
+									}
+								} else {
+									e2;
+								}
+							}
 						}
 					}
 				}
@@ -638,27 +656,6 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 									default: acc;
 								}
 							);
-							/*if (name == "Cons") {
-								println("Cons args:\n" + 
-									toStringFormatted(
-										mapi(es, \i, y ->
-											fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
-										)
-									) + "\n" +
-									"types:\n" +
-									toStringFormatted(
-										mapi(es, \i, y ->
-											fiApplyTypeSubstitution(typar_subst, struct.args[i].type)
-										)
-									) + "\n" +
-									"struct_arg types::\n" +
-									toStringFormatted(
-										mapi(es, \i, y ->
-											struct.args[i].type
-										)
-									)
-								);
-							}*/
 							x1 = FiCallPrim(x with es = mapi(es, \i, y ->
 								fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
 							));
@@ -724,14 +721,16 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 					fiMakeCast(x1, type, t);
 				}
 				FcSetMutablePrim(name): {
-					switch (fiExpType(es[0])) {
+					struct_type = fiExpType(es[0]);
+					switch (struct_type) {
 						FiTypeName(struct_name, typars): {
 							switch (lookupTree(names.structs, struct_name)) {
 								Some(struct): {
-									switch (find(struct.args, \arg -> arg.name == name)) {
+									spec = fiSpecializeStruct(struct_type, struct);
+									switch (find(spec.args, \arg -> arg.name == name)) {
 										Some(arg): {
 											x1 = FiCallPrim(x with es = [
-												fiExpMakeCastsExplicit(es[0], arg.type, names), 
+												fiExpMakeCastsExplicit(es[0], struct_type, names), 
 												fiExpMakeCastsExplicit(es[1], arg.type, names)
 											]);
 											fiMakeCast(x1, type, t);

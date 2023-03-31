@@ -22,6 +22,10 @@ export {
 	// If a native is implemented - remove a fallback, otherwise remove a native.
 	// In case a native is not implemented and 
 	fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram;
+
+	// For any struct, which is contained in several unions, add a super union, which
+	// is a set-theoretical union of all these unions, i.e. is a single supertype for all.
+	fiAddSuperUnions(program : FiProgram) -> FiProgram;
 }
 
 fiFlattenUnions(program : FiProgram) -> FiProgram {
@@ -308,6 +312,89 @@ fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -
 		names = FiGlobalNames(program.names with
 			// update toplevel declarations with proper ones
 			toplevel = mapTree2(program.names.toplevel, \name, decl -> lookupTreeDef(native_resolver, name, decl))
+		)
+	);
+}
+
+fiAddSuperUnions(program : FiProgram) -> FiProgram {
+	names = program.names;
+	all_unions = getTreeValues(names.unions);
+
+	gather_super_unions = \acc0, supers -> foldTree(supers, acc0, \str, unions, acc ->
+		if (length(unions) <= 1) {
+			// A struct is cointained in a single / none union - it is its super union.
+			acc;
+		} else {
+			// A set of all types in a super union for a struct 'str'
+			super_names = set2array(fold(unions, makeSet(), \ac, un ->
+				fold(un.typenames, ac, \a, tn -> insertSet(a, tn))
+			));
+			// try to find an existing superunion among a program unions
+			switch (find(all_unions, \un -> forall(super_names, \tn -> contains(un.typenames, tn)))) {
+				Some(super_union): {
+					// no need to create a new super union
+					acc;
+				}
+				None(): {
+					// try to find an existing superunion among a constructed new super unions
+					switch (findList(acc, \p -> forall(super_names, \tn -> contains(p.first.typenames, tn)))) {
+						Some(p): {
+							// no need to create a new super union
+							acc;
+						}
+						None(): {
+							// A super union for a current struct doesn't exist - let's create it and add it
+							super_union = FiTypeUnion(
+								"super_" + superglue(super_names, \tn -> tn.name, "_"),
+								set2array(fold(super_names, makeSet(), \ac, tn ->
+									fold(tn.typeparameters, ac, \a, tp -> insertSet(ac, tp))
+								)),
+								super_names,
+								-1
+							);
+							Cons(Pair(super_union, str), acc);
+						}
+					}
+				}
+			}
+		}
+	);
+
+	// Gather all unions, where a struct belongs to
+	struct2unions = fold(all_unions, makeTree(), \acc, union ->
+		fold(union.typenames, acc, \ac, tn ->
+			setTree(ac, tn.name, insertSet(lookupTreeDef(ac, tn.name, makeSet()), union))
+		)
+	);
+	// List of pairs: a super union and a corresponding struct name
+	struct_super_unions = gather_super_unions(makeList(), mapTree(struct2unions, set2array));
+
+	// Gather all unions, which form a superset of typenames of a given union
+	union2super_unions = fold(all_unions, makeTree(), \acc, union -> {
+			super_unions = filter(all_unions, \u ->
+				u.name != union.name && forall(union.typenames, \tn -> contains(u.typenames, tn))
+			);
+			if (length(super_unions) == 0) acc else setTree(acc, union.name, super_unions);
+		});
+
+	// Add missing amalgamating superunions for unions
+	super_unions = gather_super_unions(struct_super_unions, union2super_unions);
+
+	FiProgram(program with
+		// Add newly created super unions to a modules for a corresponding structs
+		modules = foldList(super_unions, program.modules, \acc, p -> {
+			mod_name = lookupTreeDef(names.struct2module, p.second, "");
+			module = lookupTreeDef(acc, mod_name, dummyFiModule);
+			setTree(acc, mod_name, FiModule(module with unions = concat(module.unions, [p.first])))
+		}),
+		// Update names with newly created super unions
+		names = FiGlobalNames(names with
+			unions = foldList(super_unions, names.unions, \acc, p ->
+				setTree(acc, p.first.name, p.first)
+			),
+			union2module = foldList(super_unions, names.union2module, \acc, p ->
+				setTree(acc, p.first.name, lookupTreeDef(names.struct2module, p.second, ""))
+			)
 		)
 	);
 }

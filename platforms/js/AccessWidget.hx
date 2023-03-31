@@ -967,7 +967,16 @@ class AccessWidget extends EventEmitter {
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
 				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true");
-				case "nextWidgetId" : untyped clip.nextWidgetId = attributes.get(key);
+				case "nextWidgetId" : {
+					untyped clip.nextWidgetId = attributes.get(key);
+					RenderSupport.once("stagechanged", function() {
+						for (textClip in getTextClipChildren(clip)) {
+							textClip.temporarilyPreventBlur();
+						}
+						// To keep word order in wigi updated
+						clip.addNativeWidget();
+					});
+				}
 				default : {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
@@ -981,6 +990,21 @@ class AccessWidget extends EventEmitter {
 				}
 			}
 		}
+	}
+
+	public function getTextClipChildren(clip : DisplayObject) : Array<TextClip> {
+		if (untyped clip.children == null) return [];
+		var textClips : Array<TextClip> = [];
+		
+		untyped clip.children.map(function(child) {
+			if (HaxeRuntime.instanceof(child, TextClip)) {
+				textClips = textClips.concat([child]);
+			} else {
+				textClips = textClips.concat(getTextClipChildren(child));
+			}
+		});
+
+		return textClips;
 	}
 
 	public function getAccessWidgetTransform() : Matrix {

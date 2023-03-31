@@ -3700,7 +3700,7 @@ class RenderSupport {
 	public static var IsFullScreen : Bool = false;
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
-		if (FullWindowTargetClip != null && IsFullWindow != fw) {
+		if (FullWindowTargetClip != null && IsFullWindow != fw && getClipPixiStage(FullWindowTargetClip) != null) {
 			var mainStage : FlowContainer = cast(getClipPixiStage(FullWindowTargetClip).children[0], FlowContainer);
 
 			if (fw) {
@@ -3732,6 +3732,7 @@ class RenderSupport {
 	public static function requestFullScreenClip(clip : FlowContainer) {
 		if (IsFullScreen || clip == null || untyped !clip.isNativeWidget) return;
 		var nativeWidget = clip.nativeWidget;
+		clip.updateKeepNativeWidgetInFullScreenModeParent(true);
 		if (nativeWidget != null) {
 			var elementBRect = nativeWidget.getBoundingClientRect();
 			requestFullScreen(nativeWidget);
@@ -3747,6 +3748,7 @@ class RenderSupport {
 	public static function exitFullScreenClip(clip : FlowContainer) {
 		if (clip == null || untyped !clip.isNativeWidget) return;
 		var nativeWidget = clip.nativeWidget;
+		clip.updateKeepNativeWidgetInFullScreenModeParent(false);
 		if (nativeWidget != null) {
 			exitFullScreen(nativeWidget);
 			PixiStage.nativeWidget.style.position = null;

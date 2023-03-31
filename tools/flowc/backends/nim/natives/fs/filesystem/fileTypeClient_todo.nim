@@ -1,0 +1,1 @@
+#  native fileTypeClient : (file : native) -> string = FlowFileSystem.fileType;

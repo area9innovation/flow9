@@ -1,0 +1,1 @@
+# native fileSizeClient : (file : native) -> double = FlowFileSystem.fileSizeNative;

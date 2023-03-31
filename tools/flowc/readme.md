@@ -709,6 +709,11 @@ nim/
 Each file represents a single native function. The path to the file may no accurately correspond to the corresponding path
 in the library, but its name must exactly coincide with the name of the native, because natives are indexed by their files names.
 
+#### Native type
+
+If native functions use *native type* arguments or return an object of *native type*, then you need to register this type.
+Find the _Native Types_ sections in runtime.nim and add your type.
+
 Then compile again, compile the resulting nim, and check that it works.
 
 	nim c gringo.nim
