@@ -118,7 +118,7 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 						default: fail0("empty stack pop");
 					}
 				}
-				FsVarUse(v,__,id): {
+				FsVarUse(v, id): {
 					new_vars = add_v(acc.first.vars, v);
 					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
 				}
@@ -201,47 +201,94 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 		}
 		if (length(unused) == 0) x else {
 			FsSeq(concat(
-				map(unused, \v -> FsDecRc(FsVarUse(v, false, -1), -1)),
+				map(unused, \v -> FsDecRc(FsVarUse(v, -1), -1)),
 				fsUnwrapSeq(x)
 			), -1);
 		}
 	}
-	inc_var = \id, x -> 
-		!fiIsGlobalFunction(x.name, names) && !fiTypeIsScalar(x.type) &&
-		!containsSet(lookupTreeDef(id2vars_last, id, makeSet()), x);
+	add_incs = \e: FsExp, x: FsStat -> {
+		incs = tree2pairs(fsExpVarIncs(e, makeTree(), names, id2vars_last));
+		if (debug) {
+			println("incs for <" + i2s(e.id) + ">: [" + superglue(incs, \p -> p.first.name + "=" + i2s(p.second), ", "  ) + "]");
+		}
+		if (length(incs) == 0) x else {
+			FsSeq(concat(
+				map(incs, \p -> FsIncRc(p.second, FsVarUse(p.first, -1), -1)),
+				fsUnwrapSeq(x)
+			), -1);
+		}
+	}
 	cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
-			FsIf(x with s1 = dec_unused(pos.id, pos), s2 = dec_unused(neg.id, neg));
+			add_incs(cond, 
+				FsIf(x with 
+					s1 = dec_unused(pos.id, pos),
+					s2 = dec_unused(neg.id, neg)
+				)
+			);
 		};
-		FsSwitch(__,__, cs,__): {
-			FsSwitch(x with cases = map(cs, \c -> FsCase(c with body = dec_unused(c.body.id, c.body))));
+		FsSwitch(v,__, cs,__): {
+			add_incs(v, 
+				FsSwitch(x with 
+					cases = map(cs, \c ->
+						FsCase(c with body = dec_unused(c.body.id, c.body))
+					)
+				)
+			);
 		}
-		FsWrapExp(e1,__): {
-			if (fiTypeIsScalar(fsType(e1))) x else {
-				FsDecRc(e1, -1);
+		FsRet(e,__): {
+			add_incs(e, x);
+		}
+		FsWrapExp(e,__): {
+			x1 = if (fiTypeIsScalar(fsType(e))) x else {
+				FsDecRc(e, -1);
 			}
+			add_incs(e, x1);
 		}
-		FsVarUse(v, __, id): {
-			FsVarUse(x with incRc = inc_var(id, v));
+		FsLet(__,e,__): {
+			add_incs(e, x);
 		}
+		FsAssign(to, what,__): {
+			add_incs(to, add_incs(what, x));
+		}
+		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
+		FsDecRc(__,__): fail0("FsDecRc met during memory operations markup");
 		FsLambda(__,__, body,__,id): {
 			FsLambda(x with body = dec_unused(id, body));
 		}
-		FsLet(__,e,__): {
-			switch (e) {
-				FsClosure(vars, lambda,__): {
-					inc_closure = filter(vars, \v -> inc_var(v.id, v.var));
-					if (length(inc_closure) == 0) x else {
-						FsSeq(concat(map(inc_closure, \v -> 
-							FsIncRc(1, FsVarUse(v with incRc = false), -1)
-						), [x]), -1);
-					}
-				}
-				default: x;
-			}
-		}
 		default: x;
 	}, true): FsAll -> FsStat);
+}
+
+fsExpVarIncs(e: FsExp, acc: Tree<FsVar, int>, names: FiGlobalNames, last: Tree<int, Set<FsVar>>) -> Tree<FsVar, int> {
+	switch (e) {
+		FsClosure(closure, __,__): {
+			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, names, last));
+		}
+		FsCall(f, args,__,__): {
+			fold(args, fsExpVarIncs(f, acc, names, last), \ac, x -> 
+				fsExpVarIncs(x, ac, names, last)
+			);
+		}
+		FsCallPrim(__, es,__,__): {
+			fold(es, acc, \ac, x -> fsExpVarIncs(x, ac, names, last));
+		}
+		FsTailCall(args, vals, type, id): {
+			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, names, last));
+		}
+		FsCast(e1,__,__,__): {
+			fsExpVarIncs(e1, acc, names, last);
+		}
+		FsVarUse(x, id): {
+			if (fiIsGlobalFunction(x.name, names) ||
+				fiTypeIsScalar(x.type) ||
+				containsSet(lookupTreeDef(last, id, makeSet()), x)
+			) acc else {
+				setTree(acc, x, lookupTreeDef(acc, x, 0) + 1);
+			}
+		}
+		FsConst(c, id): acc;
+	}
 }
 
 fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
@@ -262,6 +309,6 @@ fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 		FsCast(__,__,__,__):      FsCast(s with id = new_id());
 		FsConst(__,__):           FsConst(s with id = new_id());
 		FsTailCall(__,__,__,__):  FsTailCall(s with id = new_id());
-		FsVarUse(__,__,__):       FsVarUse(s with id = new_id()); 
+		FsVarUse(__,__):          FsVarUse(s with id = new_id()); 
 	}
 }
