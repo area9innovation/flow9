@@ -206,7 +206,10 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 			), -1);
 		}
 	}
-	rc_markuped = fsMap(s1, \x -> switch (x) {
+	inc_var = \id, x -> 
+		!fiIsGlobalFunction(x.name, names) && !fiTypeIsScalar(x.type) &&
+		!containsSet(lookupTreeDef(id2vars_last, id, makeSet()), x);
+	cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
 			FsIf(x with s1 = dec_unused(pos.id, pos), s2 = dec_unused(neg.id, neg));
 		};
@@ -219,32 +222,19 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 			}
 		}
 		FsVarUse(v, __, id): {
-			if (fiIsGlobalFunction(v.name, names) || fiTypeIsScalar(v.type)) x  else {
-				unused = lookupTreeDef(id2vars_last, id, makeSet());
-				if (!containsSet(unused, v)) {
-					FsVarUse(x with incRc = true);
-				} else {
-					x;
-				}
-			}
+			FsVarUse(x with incRc = inc_var(id, v));
 		}
 		FsLambda(__,__, body,__,id): {
 			FsLambda(x with body = dec_unused(id, body));
 		}
-		default: x;
-	}, true);
-
-	// Pull the closure incRc operations from let statements for lambdas
-	cast(fsMap(rc_markuped, \x -> switch (x) {
 		FsLet(__,e,__): {
 			switch (e) {
 				FsClosure(vars, lambda,__): {
-					inc_closure = filter(vars, \v -> v.incRc);
+					inc_closure = filter(vars, \v -> inc_var(v.id, v.var));
 					if (length(inc_closure) == 0) x else {
-						//lambda = FsLambda(e with closure = map(closure, \v -> FsVarUse(v with incRc = false)));
-						//let = FsLet(x with e = lambda);
-						//FsSeq(concat(map(inc_closure, \v -> FsWrapExp(v, -1)), [let]), -1);
-						FsSeq(concat(map(inc_closure, \v -> FsWrapExp(v, -1)), [x]), -1);
+						FsSeq(concat(map(inc_closure, \v -> 
+							FsIncRc(1, FsVarUse(v with incRc = false), -1)
+						), [x]), -1);
 					}
 				}
 				default: x;
