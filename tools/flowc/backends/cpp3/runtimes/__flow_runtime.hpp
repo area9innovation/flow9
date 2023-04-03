@@ -65,14 +65,14 @@ struct RTTI {
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
 		if (id < 9) return type_names[id + 1]; else
-		if (id - 9 < struct_defs.size()) {
+		if (id - 9 < static_cast<TypeId>(struct_defs.size())) {
 			return struct_defs.at(id - 9).name;
 		} else {
 			return type_names[0];
 		}
 	}
 	static const StructDef& structDef(TypeId id) {
-		if (id - 9 + 1 < struct_defs.size()) {
+		if (id - 9 + 1 < static_cast<TypeId>(struct_defs.size())) {
 			return struct_defs.at(id - 8);
 		} else {
 			// Special struct def - undefined.
