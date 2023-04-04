@@ -7,6 +7,8 @@ import tables
 import hashes
 import asyncdispatch
 import osproc
+import macros
+import "flow_lib/httpServer_type"
 
 # Runtime for NIM backend
 
@@ -149,12 +151,17 @@ type
 
 #[ Native Types ]#
   NativeType* = enum
-    ntProcess, ntFlow
-  Native* = ref object of Flow
+    ntProcess,
+    ntFlow,
+    ntHttpServer
+  Native* = ref object 
     case ntp*: NativeType
     of ntProcess: p: Process
+    of ntHttpServer: s: FlowHttpServer
     of ntFlow: flow_v: Flow
     what: string
+proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
+  Native(what : "HttpServer", ntp: ntHttpServer, s : srv)
 
 # Type index oprations
 var id2type*: seq[AlType]
@@ -242,6 +249,7 @@ proc rt_to_string*[R](fn: proc(): R): string = "<function>"
 proc rt_to_string*(x: Native): string =
   case x.ntp:
   of ntProcess: return "process"
+  of ntHttpServer: return "http server"
   of ntFlow:    return rt_to_string(x.flow_v)
 
 proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
@@ -305,6 +313,7 @@ proc rt_compare*(x: Flow, y: Flow): int32
 proc rt_compare*(x: Native, y: Native): int32 =
   case x.ntp:
   of ntProcess: return rt_compare(addr(x.p), addr(y.p))
+  of ntHttpServer: return rt_compare(addr(x.s), addr(y.s))
   of ntFlow:    return rt_compare(x.flow_v, y.flow_v)
 
 proc rt_compare*[T](x: Ref[T], y: Ref[T]): int32 = rt_compare(x.val, y.val)
@@ -410,3 +419,13 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
       i += 1
     if i != s_fields.len:
       s.str_args[i] = val
+
+# different libraries for different platforms
+macro importPlatformLib(
+  arg: static[string]): untyped = newTree(nnkImportStmt, newLit(arg)
+)
+
+const winHtppServer = "flow_lib/createHttpServerNative_win"
+const unixHtppServer = "flow_lib/createHttpServerNative_unix"
+const httpServerLib = when defined windows: winHtppServer else: unixHtppServer
+importPlatformLib(httpServerLib)

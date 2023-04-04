@@ -29,7 +29,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 	fullWidth = contains(m.style, MFullWidth());
 	buttonTextColor = extractStructMany(m.style, MButtonTextColor(false));
 	progress = tryExtractStruct(m.style, MTextButtonProgress(make(false), false));
-	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f(); maybeApply(progress, \pr -> if (pr.activateOnClick) nextDistinct(pr.activated, true))}));
+	onClick = extractStruct(m.state, MOnClick(nop)).click |> (\f -> MOnClick(\ -> {m.onClick(); f();}));	
 	elevation = \focus ->
 		extractStruct(m.style,
 			MElevation(
@@ -107,18 +107,15 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 				textStyle
 		);
 
+	progressState = makeButtonProgressState(manager, parent, m.style, textColor, onClick); 
+
 	disabled = \ ->
 		MText2T(
 			parent,
 			m.text,
 			replaceStructMany(textStyle, [contrastingMColor(parent), MTextDisabled()])
 		)
-		|> (\f -> eitherMap(progress, \pr ->
-			TCopySize2(f, \sz, tr ->
-				TIf(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([contrastingMColor(parent)])), sz, true), tr)
-			),
-			f
-		))
+		|> progressState.wrapContent(false)
 		|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, true))
 		|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
 		|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f)
@@ -133,7 +130,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 
 	focusState =
 		concatStyles(
-			replaceStruct(m.state, onClick),
+			replaceStruct(m.state, progressState.onClick),
 			[
 				MRippleType(const(MRippleFill())),
 				MRippleColor(const(textColor)),
@@ -141,7 +138,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 				MHighlightOnHover(const(true)),
 				MRippleShape("MTextButton"),
 				MButtonTitle(const(m.text)),
-				MClickEnabled(eitherMap(progress, \pr -> fnot(pr.activated), const(true)))
+				MClickEnabled(progressState.clickEnabled)
 			]
 		);
 
@@ -150,15 +147,7 @@ MTextButton2T(manager : MaterialManager, parent : MFocusGroup, m : MTextButton, 
 		m.text,
 		textStyle
 	)
-	|> (\f -> eitherMap(progress, \pr ->
-		TCopySize2(f, \sz, tr ->
-			TGroup2(
-				TVisible(fnot(pr.activated), tr),
-				TShow(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([textColor])), sz, true))
-			)
-		),
-		f
-	))
+	|> progressState.wrapContent(true)
 	|> (\f -> addLeftRightIcons(parent, f, m.style, textColor, false))
 	|> (\f -> TBorder(paddings.left, paddings.top, paddings.right, paddings.bottom, f))
 	|> (\f -> if (fullWidth) TTweak([TAlign(const(textAlignmentX), const(0.0))], f, TFillX()) else f))
@@ -376,15 +365,18 @@ MIconButton2T(manager : MaterialManager, parent : MFocusGroup, m : MIconButton, 
 				iconColor
 		);
 
+	progressState = makeButtonProgressState(manager, parent, m.style, iconColor, onClick); 
+
 	focusState = concatStyles(
-		replaceStruct(m.state, onClick),
+		replaceStruct(m.state, progressState.onClick),
 		[
 			MRippleType(const(MRippleCenter())),
 			MRippleColor(const(iconColor)),
 			MHighlightOnFocus(const(true)),
 			MHighlightOnHover(const(true)),
 			MButtonTitle(const(m.name)),
-			MRippleShape("MIconButton")
+			MRippleShape("MIconButton"),
+			MClickEnabled(progressState.clickEnabled)
 		]
 	);
 
@@ -400,7 +392,8 @@ MIconButton2T(manager : MaterialManager, parent : MFocusGroup, m : MIconButton, 
 					m.name,
 					style2MIconStyle(m.style)
 					|> (\f -> if (!en) replaceStruct(f, MIconDisabled()) else f)
-				),
+				)
+				|> progressState.wrapContent(en),
 				true
 			)
 			|> (\f -> eitherMap(borders,
@@ -1699,4 +1692,30 @@ extractMFloatingButtonCommonAlignment(style : [MFabStyle]) -> CommonAlignment {
 	);
 
 	extractCommonAlignment(alignments)
+}
+
+MButtonProgressState(
+	onClick : MOnClick,
+	clickEnabled : Transform<bool>,
+	wrapContent : (isEnabled : bool) -> (Tropic) -> Tropic
+);
+makeButtonProgressState(manager : MaterialManager, parent : MFocusGroup, style : [flow], activeColor : MColor, onClick0 : MOnClick) -> MButtonProgressState {
+	progress = tryExtractStruct(style, MButtonProgress(make(false), false));
+	onClick = MOnClick(\ -> {onClick0.click(); maybeApply(progress, \pr -> if (pr.activateOnClick) nextDistinct(pr.activated, true))});
+	clickEnabled = eitherMap(progress, \pr -> fnot(pr.activated), const(true));
+
+	disabledColor = contrastingMColor(parent);
+	wrapContent = \isEnabled -> \t ->
+		eitherMap(progress, \pr ->
+			TCopySize2(t, \sz, tr ->
+				TIf(pr.activated, TZoom(MProgressCircle2T(manager, parent, MProgressCircle([if (isEnabled) activeColor else disabledColor])), sz, true), tr)
+			),
+			t
+		);
+
+	MButtonProgressState(
+		onClick,
+		clickEnabled,
+		wrapContent
+	)
 }
