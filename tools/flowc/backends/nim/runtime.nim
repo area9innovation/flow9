@@ -420,8 +420,12 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
     if i != s_fields.len:
       s.str_args[i] = val
 
-proc getOs*(): string =
-  return hostOS & "," & hostCPU
+proc getOs*(): string = hostOS & "," & hostCPU
+proc getUserAgent*(): string = ""
+proc getVersion*(): string = ""
+proc getBrowser*(): string = ""
+proc getResolution*(): string = ""
+proc getDeviceType*(): string = ""
 
 # different libraries for different platforms
 macro importPlatformLib(
