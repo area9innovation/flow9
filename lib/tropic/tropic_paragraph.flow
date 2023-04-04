@@ -319,8 +319,7 @@ TRenderParagraph(
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 	stopDefer = ref nop;
 
-	updateFn = \wi_raw, alignWidthM -> {
-		id = traceApi.makeRenderingId();
+	updateFn = \id, wi_raw, alignWidthM -> {
 		oldWH = getValue(paragraphWHB);
 		wi = roundUIMetricsValue(wi_raw);
 		traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
@@ -339,37 +338,9 @@ TRenderParagraph(
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
 		newWH = paragraphSizeAndBaseline.first;
-		if (deferredRender) {
-			if (dropStale && ^stopDefer != nop) {
-				traceApi.traceAndNest(\-> "updateFn [" + id + "] CANCELING DEFER wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH));
-				(^stopDefer)();
-				stopDefer := nop;
-				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] CANCELING DEFER wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH));
-			}
-			traceApi.trace(\-> "updateFn [" + id + "] DEFER set paragraphWH wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-			doUpdate = \-> {
-				traceApi.traceAndNest(\-> "updateFn [" + id + "] DEFER set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-				nextDistinct(paragraphWHB, newWH);
-				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] DEFER set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-			}
-			if (dropStale) {
-				resetTimer = interruptibleTimer(10, \-> {
-					stopDefer := nop;
-					doUpdate();
-				});
-
-				stopDefer := \-> {
-					traceApi.trace(\-> "updateFn [" + id + "] CANCELED DEFER set paragraphWH wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-					resetTimer();
-				}
-			} else {
-				deferUntilNextFrameRendered(doUpdate);
-			}
-		} else {
-			traceApi.traceAndNest(\-> "updateFn [" + id + "] IMMEDIATE set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-			nextDistinct(paragraphWHB, newWH);
-			traceApi.unnestAndTrace(\-> "updateFn [" + id + "] IMMEDIATE set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-		}
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
+		nextDistinct(paragraphWHB, newWH);
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 
 		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
 		nextDistinct(scaleB, eitherMap(
@@ -383,7 +354,42 @@ TRenderParagraph(
 		deferred(\ -> reverseBehaviour(reflowHappenedB));
 	};
 
-	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+	deferredUpdate = \wi, alignWidthM -> {
+		id = traceApi.makeRenderingId();
+		if (deferredRender) {
+			traceApi.trace(\-> "deferredUpdate [" + id + "] DEFER update wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+			doUpdate = \-> {
+				traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] DEFER update START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+				updateFn(id, wi, alignWidthM);
+				traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] DEFER update END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+			}
+			if (dropStale) {
+				if (^stopDefer != nop) {
+					traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+					(^stopDefer)();
+					stopDefer := nop;
+					traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+				}
+				resetTimer = interruptibleTimer(10, \-> {
+					stopDefer := nop;
+					doUpdate();
+				});
+
+				stopDefer := \-> {
+					traceApi.trace(\-> "deferredUpdate [" + id + "] CANCELED DEFER wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+					resetTimer();
+				}
+			} else {
+				deferUntilNextFrameRendered(doUpdate);
+			}
+		} else {
+			traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] IMMEDIATE update START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+			updateFn(id, wi, alignWidthM);
+			traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] IMMEDIATE update END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+		}
+	}
+
+	executeReflow = \ -> updateFn(traceApi.makeRenderingId(), getValue(awB), maybeMap(alignWidthBM, getValue));
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
@@ -415,8 +421,12 @@ TRenderParagraph(
 		[
 			eitherFn(
 				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
+				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> {
+					deferredUpdate(aw, Some(alw));
+				}),
+				\ -> makeSubscribe(awB, \aw -> {
+					deferredUpdate(aw, None());
+				})
 			),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
