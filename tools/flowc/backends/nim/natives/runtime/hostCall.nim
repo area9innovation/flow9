@@ -1,6 +1,24 @@
 {.experimental: "dynamicBindSym".}
 import macros
 
+proc getOs*(): string =
+  return hostOS & "," & hostCPU
+
+proc getUserAgent*(): string =
+  return ""
+
+proc getVersion*(): string =
+  return ""
+
+proc getBrowser*(): string =
+  return ""
+
+proc getResolution*(): string =
+  return ""
+
+proc getDeviceType*(): string =
+  return ""
+
 # It works only with fnName = const_string
 # if we need to use variables, then we need to create a table function_name-expression
 

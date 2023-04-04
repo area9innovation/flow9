@@ -25,7 +25,7 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 		NimLine(0, "#[ TYPES ]#"),
 		fi2nimCompileTypes(env),
 		NimLine(0, "#[ SOURCE CODE ]#"),
-		fi2nimCompileSourceCode(env, runtime),
+		source,
 		NimLine(0, "main()")
 	]));
 	fi2nimBuild(env.prog, cfg, callback);
@@ -70,14 +70,29 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 	fcVerbose(env.cfg, 1, "Collecting code for all imported files...");
 	// Store all declarations of a program into one large array.
 	// Declarations stored in init order (order of their appearance in files).
-	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(env.prog);
+	decls : [Pair<string, [FiDeclaration]>] = fi2nimOrderDeclarations(env);
 	moduleCount = i2s(length(decls));
 
 	fcVerbose(env.cfg, 0, "Generating Nim code for declarations...");
 	modulesCode = list2array(foldi(decls, EmptyList(), \i, acc, p: Pair<string, [FiDeclaration]> -> {
 		fcVerbose(env.cfg, 1, "[" + i2s(i + 1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
 		module = lookupTreeDef(env.prog.modules, p.first, dummyFiModule);
-		fold(p.second, acc, \ac, decl ->
+		module_comment = NimLine(0, "# Module: " + p.first);
+		acc1 = Cons(NimCompiled(module_comment, module_comment), acc);
+		if (p.first == "string") {
+			decl_kind = \d -> switch (d) {
+				FiFunctionDec(__,__,__,__,__): "func";
+				FiGlobalVar(__,__,__,__,__): "var";
+				FiNativeDec(__,__,__,__,__,__,__): "native";
+			}
+			println("Module " + p.first + " decls:\n" + 
+				superglue(p.second, \d -> 
+					"\t" + decl_kind(d) + ": " + d.name, 
+					"\n"
+				)
+			);
+		}
+		fold(p.second, acc1, \ac, decl ->
 			eitherMap(fiNimCompileToplevel(env, decl), \compiled -> 
 				Cons(NimCompiled(compiled with def = fi2nimAddEmptyLine(compiled.def)), ac), 
 				ac
@@ -97,6 +112,30 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 		definitions,
 		fi2nimEmptyLine(),
 	]);
+}
+
+fi2nimOrderDeclarations(env : FiNimEnv) {
+	program = env.prog;
+	fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
+		switch (lookupTree(program.modules, file)) {
+			None(): {
+				fcPrintln("Could not find module '" + file + "'", program.config.threadId);
+				macc;
+			}
+			Some(module): {
+				module_natives = filtermap(module.natives, \n -> 
+					if (containsKeyTree(env.natives, n.name)) Some(n) else None()
+				);
+				module_natives_names = buildSet(map(module_natives, \n -> n.name));
+				notNatives = filter(module.initOrder, \mn -> !containsSet(module_natives_names, mn));
+				decls = concat(
+					module_natives,
+					filtermap(notNatives, \name -> lookupTree(program.names.toplevel, name))
+				);
+				arrayPush(macc, Pair(module.fileinfo.flowfile, decls));
+			}
+		}
+	);
 }
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
