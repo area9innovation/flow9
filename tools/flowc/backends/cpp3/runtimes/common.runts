@@ -72,17 +72,17 @@ inline void appendBinaryInt32(Int v, string& s) {
 	appendCharValue(i.chars.c0, s);
 	appendCharValue(i.chars.c1, s);
 }
-void appendBinaryValue(Flow v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<PStr>& structDefs);
+void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs);
 ",
 "
-void appendBinaryValue(Flow v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<PStr>& structDefs) {
-	switch (v->type()) {
+void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs) {
+	switch (v->typeId()) {
 		case Type::VOID: {
 			// void values shouldn't be serialized
 			break;
 		}
 		case Type::INT: {
-			Int val = v->getInt();
+			Int val = v->getRc<Int>();
 			if ((val & 0xFFFF8000) != 0) {
 				appendCharValue(0xFFF5, s);
 				appendBinaryInt32(val, s);
@@ -92,7 +92,7 @@ void appendBinaryValue(Flow v, string& s, std::unordered_map<Int, Int>& structId
 			break;
 		}
 		case Type::STRING: {
-			const string& val = v->getString()->str;
+			const string& val = v->get<String>()->str;
 			Int str_len = val.size();
 			if (str_len > 65535) {
 				appendCharValue(0xFFFB, s);
@@ -107,7 +107,7 @@ void appendBinaryValue(Flow v, string& s, std::unordered_map<Int, Int>& structId
 			break;
 		}
 		case Type::DOUBLE: {
-			Double val = v->getDouble();
+			Double val = v->get<Double>();
 			appendCharValue(0xFFFC, s);
 			DoubleOrChars d(val);
 			appendCharValue(d.chars.c0, s);
@@ -117,12 +117,11 @@ void appendBinaryValue(Flow v, string& s, std::unordered_map<Int, Int>& structId
 			break;
 		}
 		case Type::BOOL: {
-			appendCharValue(v->getBool() ? 0xFFFE : 0xFFFD, s);
+			appendCharValue(v->get<Bool>() ? 0xFFFE : 0xFFFD, s);
 			break;
 		}
 		case Type::ARRAY: {
-			PVec a = v->getAVec();
-			Int l = a->size();
+			Int l = v->size();
 			if (l == 0) {
 				appendCharValue(0xFFF7, s);
 			} else {
@@ -133,27 +132,29 @@ void appendBinaryValue(Flow v, string& s, std::unordered_map<Int, Int>& structId
 					appendCharValue(0xFFF8, s);
 					appendCharValue(l, s);
 				}
-				for (Int i = 0; i < a->size(); ++i) {
-					appendBinaryValue(a->getFlowItem(i), s, structIdxs, structDefs);
+				for (Int i = 0; i < v->size(); ++i) {
+					incRc(v);
+					appendBinaryValue(v->getFlowRc(i), s, structIdxs, structDefs);
 				}
 			}
 			break;
 		}
 		default: {
-			PStr str = v->getAStr();
-			if (structIdxs.find(str->type()) == structIdxs.end()) {
-				structIdxs[str->type()] = structDefs.size();
-				structDefs.push_back(str);
+			if (structIdxs.find(str->typeId()) == structIdxs.end()) {
+				structIdxs[v->typeId()] = structDefs.size();
+				structDefs.push_back(v->typeId());
 			}
-			Int struct_idx = structIdxs.at(str->type());
+			Int struct_idx = structIdxs.at(v->typeId());
 			appendCharValue(0xFFF4, s);
 			appendCharValue(struct_idx, s);
-			for (Int i = 0; i < str->size(); ++ i)  {
-				appendBinaryValue(str->getFlowField(i), s, structIdxs, structDefs);
+			for (Int i = 0; i < v->size(); ++ i)  {
+				incRc(v);
+				appendBinaryValue(v->getFlowRc(i), s, structIdxs, structDefs);
 			}
 			break;
 		}
 	}
+	decRc(v);
 }
 ", "", "",
 [Cpp3Std(["<unordered_map>"], [])], false
