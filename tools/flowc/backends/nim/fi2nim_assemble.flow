@@ -21,6 +21,38 @@ fi2nimRuntime(cfg : FiNimConfig) -> string {
 	}
 }
 
+ // Result : folderName - filePaths
+fi2nimLibs(cfg : FiNimConfig) -> Pair<string, [string]> {
+	path = findmap(cfg.backendDirs, \dir -> {
+		absPath = pathCombine(dir, "flow_lib");
+		if (isDirectory(absPath)) Some(absPath) else None();
+	});
+	eitherFn(
+		path,
+		\absPath -> {
+			files = filter(readDirectoryRecursively(absPath), fileExists);
+			Pair(if (files == []) "" else "flow_lib", files);
+		},
+		\-> Pair("", [])
+	);
+}
+
+// copy lib files
+createLibDirWithFiles(dstFolder : string, dirName : string, files : [string]) -> bool {
+	if (dirName == "" || files == []) {
+		true;
+	} else {
+		folderPath = pathCombine(dstFolder, dirName);
+		err = createDirectory(folderPath);
+		if (err != "") {
+			fcPrintln("Can't create directory: " + folderPath + " " + err, 0);
+			false;
+		} else {
+			fold(files, true, \acc, file -> acc && copyFile(file, pathCombine(folderPath, fileNameOnly(file))));
+		}
+	}
+}
+
 fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
 	native_files = fold(cfg.backendDirs, [], \acc, dir -> 
 		fi2nimFindAllNativeFiles(pathCombine(dir, "natives"), acc)
@@ -68,5 +100,10 @@ fi2nimFindAllNativeFiles(dir: string, acc: [string]) -> [string] {
 }
 
 fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void {
-	saveFileContent(cfg.outputfile, fi2nimNimCode2s(content, "  "), cfg.threadId);
+	if (saveFileContent(cfg.outputfile, fi2nimNimCode2s(content, "  "), cfg.threadId)) {
+		dirFiles = fi2nimLibs(cfg);
+		if (!createLibDirWithFiles(dirName(cfg.outputfile), dirFiles.first, dirFiles.second)) {
+			fcPrintln("Library folder creation error : " + dirFiles.first + "[" + i2s(length(dirFiles.second)) + "]", 0);
+		}
+	}
 }
