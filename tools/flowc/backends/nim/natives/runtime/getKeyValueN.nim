@@ -1,3 +1,3 @@
 proc getKeyValueN*(key : string, defaultValue : string): string =
-  echo "TODO: Implement getKeyValueN in Nim"
+  echo "getKeyValueN is not supported."
   return defaultValue

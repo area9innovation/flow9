@@ -39,6 +39,6 @@ proc runSystemProcess*(command: string, args: seq[string], currentWorkingDirecto
     spawn runErrorStream(process, onStdErr)
     spawn waitForProcessThread(process, onExit)
 
-    return Native(what : "Process", tp: ntProcess, p : process)
+    return Native(what : "Process", ntp: ntProcess, p : process)
   except OSError:
     return nil
