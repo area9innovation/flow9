@@ -1,4 +1,5 @@
 import tools/flowc/statements/fs_transform;
+import tools/flowc/manipulation/tail_call;
 
 export {
 	fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat;
@@ -19,42 +20,44 @@ fsTailCallExpansion(c: FsTailCall) -> FsStat {
 }
 
 fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
-	cast(fsMap(s, \x -> switch (x) {
-		FsRet(ex,__): {
-			switch (ex) {
-				FsCall(f, args, type,__): {
-					switch (f) {
-						FsVarUse(v,__): {
-							if (v.name != fn.name) x else {
-								remove_arg = \arg, fn_arg -> {
-									switch (arg) {
-										FsVarUse(w,__): {
-											w.name == fn_arg.name &&
-											(fiTypeIsScalar(fn_arg.type) || fiIsGlobalFunction(fn_arg.name, names));
+	if (!fcDetectTailCall(fn)) s else {
+		cast(fsMap(s, \x -> switch (x) {
+			FsRet(ex,__): {
+				switch (ex) {
+					FsCall(f, args, type,__): {
+						switch (f) {
+							FsVarUse(v,__): {
+								if (v.name != fn.name) x else {
+									remove_arg = \arg, fn_arg -> {
+										switch (arg) {
+											FsVarUse(w,__): {
+												w.name == fn_arg.name &&
+												(fiTypeIsScalar(fn_arg.type) || fiIsGlobalFunction(fn_arg.name, names));
+											}
+											default: false;
 										}
-										default: false;
 									}
+									tailcall_args = filtermapi(args, \i, arg ->
+										if (remove_arg(arg, fn.lambda.args[i])) None() else {
+											fn_arg = fn.lambda.args[i];
+											Some(FsVar(fn_arg.name, fn_arg.type))
+										}
+									);
+									tailcall_vals = filtermapi(args, \i, arg ->
+										if (remove_arg(arg, fn.lambda.args[i])) None() else {
+											Some(arg)
+										}
+									);
+									FsRet(FsTailCall(tailcall_args, tailcall_vals, type, -1), -1);
 								}
-								tailcall_args = filtermapi(args, \i, arg ->
-									if (remove_arg(arg, fn.lambda.args[i])) None() else {
-										fn_arg = fn.lambda.args[i];
-										Some(FsVar(fn_arg.name, fn_arg.type))
-									}
-								);
-								tailcall_vals = filtermapi(args, \i, arg ->
-									if (remove_arg(arg, fn.lambda.args[i])) None() else {
-										Some(arg)
-									}
-								);
-								FsRet(FsTailCall(tailcall_args, tailcall_vals, type, -1), -1);
 							}
+							default: x;
 						}
-						default: x;
 					}
+					default: x;
 				}
-				default: x;
 			}
-		}
-		default: x;
-	}, true): FsAll -> FsStat);
+			default: x;
+		}, true): FsAll -> FsStat);
+	}
 }

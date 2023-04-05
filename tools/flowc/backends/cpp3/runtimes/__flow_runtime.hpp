@@ -51,10 +51,13 @@ struct FieldDef {
 	TypeId type;
 };
 
+struct Flow;
+
 struct StructDef {
 	string name;
 	TypeId type;
 	std::vector<FieldDef> args;
+	std::function<Flow*(const std::vector<Flow*>&)> constructor;
 };
 
 struct RTTI {
