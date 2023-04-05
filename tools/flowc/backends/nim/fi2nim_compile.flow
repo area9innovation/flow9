@@ -1,6 +1,7 @@
 import tools/flowc/backends/nim/fi2nim_utils;
 import tools/flowc/backends/nim/fi2nim_code;
 import tools/flowc/manipulation/transform_exps;
+import tools/flowc/manipulation/tail_call;
 
 export {
 	fiNimCompileToplevel(env : FiNimEnv, decl: FiDeclaration) -> Maybe<NimCompiled>;
@@ -54,33 +55,6 @@ fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> Maybe<NimCompiled
 	compiled;
 }
 
-nim_debug_lambda0 : ref FiExp = ref FiVoid(0);
-nim_debug_lambda : ref FiExp = ref FiVoid(0);
-
-fiNimFail(msg: string, expr: FiExp) -> void {
-	fail("fail: " + msg + "\n" +
-		"expr: " + pretFiExp(expr) + "\n" +
-		"lambda0: " + pretFiExp(^nim_debug_lambda0) + "\n" +
-		"lambda: " + pretFiExp(^nim_debug_lambda0) + "\n"
-		//"\n" +
-		//"RAW expr: " + toStringFormatted(expr) + "\n" +
-		//"RAW lambda0: " + toStringFormatted(^nim_debug_lambda0) + "\n" +
-		//"RAW lambda: " + toStringFormatted(^nim_debug_lambda0) + "\n"
-	);
-}
-
-fiNimShow(msg: string, expr: FiExp) -> void {
-	println("show: " + msg + "\n" +
-		"expr: " + pretFiExp(expr) + "\n" +
-		"lambda0: " + pretFiExp(^nim_debug_lambda0) + "\n" +
-		"lambda: " + pretFiExp(^nim_debug_lambda) + "\n"
-		//"\n" +
-		//"RAW expr: " + toStringFormatted(expr) + "\n" +
-		//"RAW lambda0: " + toStringFormatted(^nim_debug_lambda0) + "\n" +
-		//"RAW lambda: " + toStringFormatted(^nim_debug_lambda) + "\n"
-	);
-}
-
 fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType, debug: bool) -> FiExp {
 	maybe_show = \fn, msg -> \x -> {
 		e1 = fn(x);
@@ -122,21 +96,15 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 		debug = (func0.name == getUrlParameter("nim-debug"));
 		func = fiNimNormalizeMain(func0);
 		type = FiTypeFunction(func.type with args = func.lambda.args);
-		nim_debug_lambda0 := func.lambda;
 
 		lambda = cast(fiNimPrepareExp(env, func.lambda, type, debug): FiExp -> FiLambda);
-		nim_debug_lambda := lambda;
-
-		if (debug) {
-			fiNimShow(func.name, FiVoid(0));
-			//println(toStringFormatted(fiExpMakeCastsExplicit(lambda0, type, env.prog.names)))
-		}
 
 		fn_typars = fiNimTypeParamsList(env, func.type);
 		decl = "proc " + fiNimRenameGlobal(func.name) + fn_typars + fiNimCompileFuncType(env, type);
+		has_tailcall = fcDetectTailCall(func);
 
 		locals = fold(lambda.args, makeSet(), \acc, arg -> insertSet(acc, arg.name));
-		fn_code = if (!fiNimHasTailCall(lambda.body, func.name)) {
+		fn_code = if (!fcDetectTailCall(func)) {
 			fiNimCompile(env, lambda.body, true, locals);
 		} else {
 			tailcall_args = map(lambda.args, \arg -> 
@@ -232,30 +200,6 @@ fiNimIsExp(e: FiExp) -> bool {
 	}
 }
 
-fiNimHasTailCall(expr: FiExp, fn_name: string) -> bool {
-	switch (expr) {
-		FiLet(__,__,__, e2,__,__): {
-			fiNimHasTailCall(e2, fn_name);
-		}
-		FiCall(fn,__, __, __): {
-			switch (fn) {
-				FiVar(x, __, __): x == fn_name;
-				default: false;
-			}
-		}
-		FiSeq(es, __, __): {
-			if (length(es) == 0) false else fiNimHasTailCall(es[length(es) - 1], fn_name);
-		}
-		FiIf(__, e2, e3, __, __): {
-			fiNimHasTailCall(e2, fn_name) || fiNimHasTailCall(e3, fn_name);
-		}
-		FiSwitch(__, __, cs, __, __): {
-			exists(cs, \c -> fiNimHasTailCall(c.body, fn_name));
-		}
-		default: false;
-	}
-}
-
 fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -> NimCode {
 	wrap_ret = \c -> if (!returns || fiExpType(expr) == FiTypeVoid()) c else {
 		fi2nimJoinNimCode(NimSnippet("return "), c)
@@ -321,7 +265,6 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 						});
 						fn_code = fiNimCompile(env, fn, false, locals);
 						wrap_ret(fi2nimJoinNimCode3(fn_code, typars_code, args));
-						//wrap_ret(fi2nimJoinNimCode(fn_code, args));
 					} else {
 						// Tail call detected
 						arg_is_not_changed = \y, i -> {

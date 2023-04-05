@@ -20,9 +20,9 @@ proc rt_escape(s: string): string =
     case ch:
     of '\n': r.add("\\n")
     of '\t': r.add("\\t")
-    of '\r': r.add("\\r")
+    of '\r': r.add("\\u000d")
     of '\\': r.add("\\\\")
-    of '"': r.add("\\\"")
+    of '"':  r.add("\\\"")
     else: r.add(ch)
   return r
 
@@ -31,9 +31,12 @@ proc rt_escape(s: string): string =
   # to_string conversions
 proc rt_to_string*(): string = "{}"
 proc rt_to_string*(x: int32): string = intToStr(x)
-proc rt_to_string*(x: float): string = formatFloat(x)
+proc rt_to_string*(x: float): string =
+  var x = formatFloat(x)
+  x.trimZeros()
+  return x
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
-proc rt_to_string*(x: string): string = "\"" & x.rt_escape & "\""
+proc rt_to_string*(x: string): string = x
 
   # to_bool conversions
 proc rt_to_bool*(x: int32): bool = x != 0
@@ -245,6 +248,8 @@ proc rt_type_id*(f: Flow): int32 =
 
 # to_string conversions
 proc rt_to_string*(f: Flow): string
+# this function quotes all strings in ".."
+proc rt_to_string_quot*(f: Flow): string
 proc rt_to_string*[R](fn: proc(): R): string = "<function>"
 proc rt_to_string*(x: Native): string =
   case x.ntp:
@@ -252,35 +257,47 @@ proc rt_to_string*(x: Native): string =
   of ntHttpServer: return "http server"
   of ntFlow:    return rt_to_string(x.flow_v)
 
-proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
-proc rt_to_string*[T](x: seq[T]): string = 
+proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string_quot(x.val)
+proc rt_to_string*[T](x: seq[T]): string =
   var s = "["
   for i in 0..x.len - 1:
     if i > 0:
       s.add(", ")
-    s.add(rt_to_string(x[i]))
+    s.add(rt_to_string_quot(x[i]))
   s.add("]")
   return s
 
-proc rt_to_string*(f: Flow): string = 
+# this function quotes all strings in ".."
+proc rt_to_string_quot*(f: Flow): string =
   case f.tp:
   of rtVoid:   return rt_to_string()
   of rtBool:   return rt_to_string(f.bool_v)
   of rtInt:    return rt_to_string(f.int_v)
   of rtDouble: return rt_to_string(f.double_v)
-  of rtString: return rt_to_string(f.string_v)
+  of rtString: return "\"" & rt_escape(f.string_v) & "\""
   of rtNative: return rt_to_string(f.native_v)
-  of rtRef:    return "ref " & rt_to_string(f.ref_v)
-  of rtArray:  return rt_to_string(f.array_v)
+  of rtRef:    return "ref " & rt_to_string_quot(f.ref_v)
+  of rtArray:
+    var s = "["
+    for i in 0..f.array_v.len - 1:
+      if i > 0:
+        s.add(", ")
+      s.add(rt_to_string_quot(f.array_v[i]))
+    s.add("]")
+    return s
   of rtFunc:   return "<function>"
   of rtStruct:
     var s = f.str_name & "("
     for i in 0..f.str_args.len - 1:
         if i > 0:
            s.add(", ")
-        s.add(rt_to_string(f.str_args[i]))
+        s.add(rt_to_string_quot(f.str_args[i]))
     s.add(")")
     return s
+
+# this function keeps toplevel strings as is and quotes strings in components in ".."
+proc rt_to_string*(f: Flow): string =
+  return if f.tp == rtString: f.string_v else: rt_to_string_quot(f)
 
 # to_flow conversions
 proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
