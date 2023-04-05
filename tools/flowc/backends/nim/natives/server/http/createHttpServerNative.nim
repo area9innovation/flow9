@@ -1,3 +1,10 @@
+# nimble install jester
+import jester
+import asyncdispatch
+import os
+import strutils
+import threadpool
+
 proc createHttpServerInner(
     port: int32,
     isHttps: bool,
@@ -14,6 +21,22 @@ proc createHttpServerInner(
         setResponseStatus: proc (code: int32): void): void
 ): FlowHttpServer =
   echo "Not implemented . " & getOS() & " target"
+
+
+router myrouter:
+  get "/":
+    resp "It's alive!"
+
+proc startServer(portId : int) =
+#   let port = paramStr(1).parseInt().Port
+  echo "startServer : " & $(portId)
+  let port = Port(portId)
+  let settings = newSettings(port=port)
+  var jester = initJester(myrouter, settings=settings)
+  jester.serve()
+
+
+startServer(8082)
   nil
 
 proc createHttpServerNative*(

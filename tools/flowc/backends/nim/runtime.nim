@@ -161,10 +161,9 @@ type
     what: string
   FlowHttpServer* = ref object
    port: int32
-#    server : HttpServer
-#    closeServer: Future[void]
-proc makeFlowHttpServer*(port : int32) : FlowHttpServer =
-  FlowHttpServer(port : port)
+   stopFn : proc(): void
+proc makeFlowHttpServer*(port : int32, stopFn : proc(): void) : FlowHttpServer =
+  FlowHttpServer(port : port, stopFn = startProcess)
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(what : "HttpServer", ntp: ntHttpServer, s : srv)
 
