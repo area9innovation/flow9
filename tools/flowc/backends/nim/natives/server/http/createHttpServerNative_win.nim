@@ -25,36 +25,40 @@ proc runServer(portId : int, mask : int) {.async.} =
     if (not isStopped()):
       await req.respond(Http200, "Hello World", headers.newHttpHeaders())
     else : 
-      discard fetchXor(createdSrvPortId, not mask)
+      # echo "  Request REJECTED [" & $portId & "]"
+      discard fetchAnd(createdSrvPortId, not mask)
+      discard fetchAnd(stopSrvPortId, not mask)
       stopped = true
       requestFuture.complete()
       discard
   try:
     server.listen(Port(portId))
-  except CatchableError:
+  except CatchableError as e:
+    # echo "error listen port=" & $portId & " " & $e.msg
     stopped = true
-#   echo "started thread server [" & $portId & "]. thread=" & $(getThreadId())
+  # echo "started thread server [" & $portId & "]. thread=" & $(getThreadId())
   # loop to wait for the next request
   while not stopped:
-    # echo "while REQUEST " & $portId
+    echo "while REQUEST " & $portId
     if server.shouldAcceptRequest():
       requestFuture = server.acceptRequest(cb)
       await requestFuture
     else:
-    #   echo "while Requset PAUSE" & $portId
+      # echo "while Requset PAUSE" & $portId
       # too many concurrent connections, `maxFDs` exceeded
       # wait 500ms for FDs to be closed
       await sleepAsync(500)
   server.close()
-#   echo "stopped server with port=" & $portId
+  # echo "stopped server with port=" & $portId
 
 proc startServerThread(port : int, mask : int) {.thread.} =
   waitFor runServer(port, mask)
-#   echo "stopped thread server [" & $port & "]. thread=" & $(getThreadId())
+  # echo "stopped thread server [" & $port & "]. thread=" & $(getThreadId())
 
 proc notifyServer(port : int): void =
   let client = newHttpClient()
   try:
+    # echo "    NOTIFY SERVER [" & $port & "]"
     discard client.request("http://localhost:" & $port, HttpGet)
   except CatchableError:
    discard
@@ -64,8 +68,9 @@ proc notifyServer(port : int): void =
 proc makeStopServerFn(port : int, mask : int): proc(): void =
   result = proc():void =
     # echo "stop server [" & $port & "]"
-    notifyServer(port)
     discard fetchOr(stopSrvPortId, mask)
+    notifyServer(port)
+
 
 #[ 
   FlowHttpServer* = ref object
@@ -76,7 +81,7 @@ proc makeFlowHttpServer*(port : int32, stopFn : proc(): void) : FlowHttpServer =
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(what : "HttpServer", ntp: ntHttpServer, s : srv)
  ]#
-proc createHttpServerInner(
+#[ proc createHttpServerInner(
     port: int32,
     isHttps: bool,
     pfxPath: string,
@@ -111,20 +116,19 @@ proc createHttpServerNative*(
         setResponseHeader: proc (key: string, values: seq[string]): void,
         setResponseStatus: proc (code: int32): void): void
 ): Native =
-  makeHttpServerNative(createHttpServerInner(port, isHttps, pfxPath, pfxPassword, onOpen, onMessage))
+  makeHttpServerNative(createHttpServerInner(port, isHttps, pfxPath, pfxPassword, onOpen, onMessage)) ]#
 
-#[ proc timerBody(delay : int32, fn : proc (): void) : void =
-  sleep(int(delay))
-  fn()
-proc timer*(delay : int32, fn : proc (): void) : void =
-  spawn timerBody(delay, fn)
-
-# == createHttpServerInner()
 proc startServer(port : int): proc(): void =
   let mask = (createdSrvPortId.load() shl 1) or 1 # nextBinVal. but we have to search for first 0
   discard createdSrvPortId.fetchOr(mask)
   result = makeStopServerFn(port, mask)
   spawn startServerThread(port, mask)
+
+proc timerBody(delay : int32, fn : proc (): void) : void =
+  sleep(int(delay))
+  fn()
+proc timer*(delay : int32, fn : proc (): void) : void =
+  spawn timerBody(delay, fn)
 
 echo "main thread=" & $(getThreadId())
 stopSrvPortId.store(0)
@@ -136,4 +140,12 @@ timer(5000, stop2)
 timer(6000, stop2)
 timer(6000, stop5)
 
-while true: waitFor(sleepAsync(2000000000)) ]#
+timer(15000, proc(): void =
+  echo " REUSE PORT"
+  # if one startServer(), the first request is ignored ....
+  let stop5_1 = startServer(8085)
+#   let stop6 = startServer(8086)
+)
+
+# runForever()
+while true: waitFor(sleepAsync(2000000000))
