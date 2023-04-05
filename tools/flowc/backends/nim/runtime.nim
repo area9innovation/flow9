@@ -420,6 +420,9 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
     if i != s_fields.len:
       s.str_args[i] = val
 
+proc getOs*(): string =
+  return hostOS & "," & hostCPU
+
 # different libraries for different platforms
 macro importPlatformLib(
   arg: static[string]): untyped = newTree(nnkImportStmt, newLit(arg)
