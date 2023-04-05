@@ -8,7 +8,6 @@ import hashes
 import asyncdispatch
 import osproc
 import macros
-import "flow_lib/httpServer_type"
 
 # Runtime for NIM backend
 
@@ -160,6 +159,12 @@ type
     of ntHttpServer: s: FlowHttpServer
     of ntFlow: flow_v: Flow
     what: string
+  FlowHttpServer* = ref object
+   port: int32
+#    server : HttpServer
+#    closeServer: Future[void]
+proc makeFlowHttpServer*(port : int32) : FlowHttpServer =
+  FlowHttpServer(port : port)
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(what : "HttpServer", ntp: ntHttpServer, s : srv)
 
@@ -423,12 +428,9 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
 proc getOs*(): string =
   return hostOS & "," & hostCPU
 
-# different libraries for different platforms
-macro importPlatformLib(
-  arg: static[string]): untyped = newTree(nnkImportStmt, newLit(arg)
-)
-
-const winHtppServer = "flow_lib/createHttpServerNative_win"
-const unixHtppServer = "flow_lib/createHttpServerNative_unix"
-const httpServerLib = when defined windows: winHtppServer else: unixHtppServer
-importPlatformLib(httpServerLib)
+when defined windows:
+  import asynchttpserver #except Request
+else:
+  import httpbeast #except Settings, Request
+#   import options
+#   from nativesockets import close
