@@ -317,7 +317,6 @@ TRenderParagraph(
 		|> fixAvailableWidthForIndent(awB, indent);
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
-	stopDefer = ref nop;
 
 	updateFn = \id, wi_raw, alignWidthM -> {
 		oldWH = getValue(paragraphWHB);
@@ -337,23 +336,32 @@ TRenderParagraph(
 			ignoreLetterSpacing, renderedLinesInfoM
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
+
+		newParagraphBaseline = paragraphSizeAndBaseline.second;
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphBaselineB START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphBaselineB -> " + toString(newParagraphBaseline));
+		nextDistinct(paragraphBaselineB, newParagraphBaseline);
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphBaselineB END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphBaselineB -> " + toString(newParagraphBaseline));
+
+		newScale = eitherMap(
+			paragraphSizeBaselineAndChanges.scaleM,
+			\scale -> Factor(scale, scale),
+			Factor(1., 1.)
+		);
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] set scaleB START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", scaleB -> " + toString(newScale));
+		nextDistinct(scaleB, newScale);
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set scaleB END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", scaleB -> " + toString(newScale));
+
 		newWH = paragraphSizeAndBaseline.first;
 		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		nextDistinct(paragraphWHB, newWH);
 		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-
-		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
-		nextDistinct(scaleB, eitherMap(
-			paragraphSizeBaselineAndChanges.scaleM,
-			\scale -> Factor(scale, scale),
-			Factor(1., 1.)
-		));
 
 		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(getValue(paragraphWHB))  + ", linesCount: " + toString(getValue(linesCountB)));
 
 		deferred(\ -> reverseBehaviour(reflowHappenedB));
 	};
 
+	stopDefer = initUnsM();
 	deferredUpdate = \wi, alignWidthM -> {
 		id = traceApi.makeRenderingId();
 		if (deferredRender) {
@@ -364,21 +372,20 @@ TRenderParagraph(
 				traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] DEFER update END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
 			}
 			if (dropStale) {
-				if (^stopDefer != nop) {
+				if (isSome(^stopDefer)) {
 					traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
-					(^stopDefer)();
-					stopDefer := nop;
+					dispUnsM(stopDefer);
 					traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
 				}
 				resetTimer = interruptibleTimer(10, \-> {
-					stopDefer := nop;
+					stopDefer := None();
 					doUpdate();
 				});
 
-				stopDefer := \-> {
+				setUnsM(stopDefer, \-> {
 					traceApi.trace(\-> "deferredUpdate [" + id + "] CANCELED DEFER wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
 					resetTimer();
-				}
+				})
 			} else {
 				deferUntilNextFrameRendered(doUpdate);
 			}
@@ -389,7 +396,7 @@ TRenderParagraph(
 		}
 	}
 
-	executeReflow = \ -> deferredUpdate(getValue(awB), maybeMap(alignWidthBM, getValue));
+	executeReflow = \ -> updateFn(traceApi.makeRenderingId(), getValue(awB), maybeMap(alignWidthBM, getValue));
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
