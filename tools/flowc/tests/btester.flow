@@ -4,32 +4,64 @@ import string_utils;
 
 TestRun(
 	compiled: bool,
+	compilationTime: double,
 	executed: bool,
+	executionTime: double, // in milliseconds
+	executionMem: int, // in kilobytes
 	output: string,
 );
+
+
+procRunner(command: string, args: [string]) -> Pair<SystemProcessOutput, int> {
+	out = execSystemProcessOutput("/usr/bin/time", concat(["-f", "%M", command], args), ".");
+	stderr_lines = strSplit(out.stderr, "\n");
+	stdall_lines = strSplit(out.stdall, "\n");
+	if (length(stderr_lines) == 0) {
+		println("must have at least one line with memory stats: '" + out.stderr + "'");
+		Pair(out, 0);
+	} else {
+		// Last line is the output of 'time -f %M'
+		mem_kb = s2i(stderr_lines[length(stderr_lines) - 1]);
+		Pair(
+			SystemProcessOutput(
+				out.stdout,
+				strGlue(take(stderr_lines, length(stderr_lines) - 1), "\n"),
+				strGlue(take(stdall_lines, length(stdall_lines) - 1), "\n"),
+				out.exitCode
+			),
+			mem_kb
+		);
+	}
+}
 
 runTest(test: string, back: string, verb: int) -> TestRun {
 	target = if (back == "java") "jar" else back;
 	if (verb > 2) {
 		println("\n\t\tcompiling target: " + back + " ...");
 	}
+	t1 = timestamp();
 	compile_out = execSystemProcessOutput("flowc1", ["server=0", target + "=1", test], ".");
+	compilation_time = timestamp() - t1;
 	compile_success = strlen(compile_out.stderr) == 0 && compile_out.exitCode == 0;
 	if (!compile_success) {
 		if (verb > 2) {
 			println("\t\tcompilation of target: " + back + " FAILED");
 		}
-		TestRun(false, false, compile_out.stdall);
+		TestRun(false, compilation_time, false, 0.0, 0, compile_out.stdall);
 	} else {
 		compiled_test = if (back == "java") changeFileExt(test, ".jar") else changeFileExt(test, "");
 		if (verb > 2) {
 			println("\t\trunning target: " + back + " ...");
 		}
-		run_out = if (back == "java") {
-			execSystemProcessOutput("java", ["-jar", compiled_test], ".");
+		t2 = timestamp();
+		run_pair = if (back == "java") {
+			procRunner("java", ["-jar", compiled_test]);
 		} else {
-			execSystemProcessOutput(compiled_test, [], ".");
+			procRunner(compiled_test, []);
 		}
+		run_out = run_pair.first;
+		execution_time = timestamp() - t2;
+		// cleanup the generated files
 		if (back == "nim") {
 			deleteFile(changeFileExt(test, ".nim")) |> ignore;
 		}
@@ -40,7 +72,7 @@ runTest(test: string, back: string, verb: int) -> TestRun {
 				println("\t\texecution of target: " + back + " FAILED");
 			}
 		}
-		TestRun(compile_success, run_success, run_out.stdall);
+		TestRun(compile_success, compilation_time, run_success, execution_time, run_pair.second, run_out.stdall);
 	}
 }
 
@@ -52,9 +84,13 @@ TestResult(
 main() {
 	ref_backend = getUrlParameterDef("ref-back", "java");
 	test_backend = getUrlParameter("back");
+	time_stats = getUrlParameterDef("time-stats", "1") != "";
 	keep_output = getUrlParameter("keep-out") != "";
 	verb = s2i(getUrlParameterDef("verb", "1"));
 	b2success = \b -> if (b) "success" else "failure";
+	time2s = \t -> d2st(t / 1000.0, 2) + "s.";
+	mem2s = \k -> i2s(k) + "kb.";
+	run2s = \r -> "compile: " + time2s(r.compilationTime) + " exec: " + time2s(r.executionTime) + " mem: " + mem2s(r.executionMem);
 
 	if (test_backend == "") {
 		println(usage);
@@ -66,6 +102,7 @@ main() {
 			(tests_param == [] || contains(tests_param, "all") || exists(tests_param, \inc -> strContains(file, inc)))
 		));
 		tests_str = strGlue(tests, ", ");
+		println("Testing backend: " + test_backend + " with reference backend: " + ref_backend);
 		if (strlen(tests_str) < 128) {
 			println("Going to run tests: [" + strGlue(tests, ", ") + "]");
 		} else {
@@ -75,44 +112,46 @@ main() {
 		failure_count = ref 0;
 		iter(tests, \test -> {
 			if (verb > 0) {
-				print("Running test: " + test + " ... ");
+				println("Running test: " + test + " ... ");
 			}
 			err_file = changeFileExt(test, ".err");
-			res = TestResult(runTest(test, ref_backend, verb), runTest(test, test_backend, verb));
+			refRun = runTest(test, ref_backend, verb);
+			testRun = runTest(test, test_backend, verb);
 			if (verb > 0) {
-				if (res.refRun.compiled != res.testRun.compiled) {
-					err_msg = if (!res.refRun.compiled) res.refRun.output else res.testRun.output;
-					println("Compilation differs, " + 
-						"on " + ref_backend + ": " + b2success(res.refRun.compiled) + ", " + 
-						"on " + test_backend + ": " + b2success(res.testRun.compiled) + 
+				if (refRun.compiled != testRun.compiled) {
+					err_msg = if (!refRun.compiled) refRun.output else testRun.output;
+					println(strIndent("Compilation differs, " +
+						"on " + ref_backend + ": " + b2success(refRun.compiled) + ", " +
+						"on " + test_backend + ": " + b2success(testRun.compiled) +
 						(if (verb > 1) ", error:\n" + strIndent(err_msg) else "")
-					);
+					));
 					setFileContent(err_file, err_msg);
 					failure_count := ^failure_count + 1;
-				} else if (res.refRun.executed != res.testRun.executed) {
-					err_msg = if (!res.refRun.executed) {
-						ref_backend + " execution output:\n" + res.refRun.output;
+				} else if (refRun.executed != testRun.executed) {
+					err_msg = if (!refRun.executed) {
+						ref_backend + " execution output:\n" + refRun.output;
 					} else {
-						test_backend + " execution output:\n" + res.testRun.output;
+						test_backend + " execution output:\n" + testRun.output;
 					}
-					println("Execution differs, " + 
-						"on " + ref_backend + ": " + b2success(res.refRun.compiled) + ", " + 
-						"on " + test_backend + ": " + b2success(res.testRun.compiled) + 
+					println(strIndent("Execution differs, " +
+						"on " + ref_backend + ": " + b2success(refRun.compiled) + ", " +
+						"on " + test_backend + ": " + b2success(testRun.compiled) +
 						(if (verb > 1) "\n" + strIndent(err_msg) else "")
-					);
+					));
 					setFileContent(err_file, err_msg);
 					failure_count := ^failure_count + 1;
-				} else if (res.refRun.output != res.testRun.output) {
+				} else if (refRun.output != testRun.output) {
 					ref_out = changeFileExt(test, "." + ref_backend + "_out");
 					test_out = changeFileExt(test, "." + test_backend + "_out");
-					setFileContent(ref_out, res.refRun.output);
-					setFileContent(test_out, res.testRun.output);
+					setFileContent(ref_out, refRun.output);
+					setFileContent(test_out, testRun.output);
 					diff_out = execSystemProcessOutput("diff", [ref_out, test_out], ".");
-					println("Output differs" + 
+					println(strIndent("Output differs" +
 						(if (verb > 1) ":\n" + strIndent(diff_out.stdout) else "")
-					);
+					));
 					setFileContent(err_file, diff_out.stdout);
 					if (!keep_output) {
+						// cleanup the saved output files
 						deleteFile(ref_out) |> ignore;
 						deleteFile(test_out) |> ignore;
 					} else {
@@ -122,11 +161,18 @@ main() {
 					}
 					failure_count := ^failure_count + 1;
 				} else {
-					println("PASSED");
+					println("\tPASSED");
 					success_count := ^success_count + 1;
+				}
+				if (time_stats) {
+					println(strIndent("Timings/memory:\n" +
+						"\t" + ref_backend + "\t" + run2s(refRun) + "\n" +
+						"\t" + test_backend + "\t" + run2s(testRun)
+					));
 				}
 			}
 		});
+		// cleanup java files
 		if (ref_backend == "java") {
 			deleteRecursively("./javagen") |> ignore;
 		}
@@ -150,4 +196,5 @@ Options:
 	ref-back=<backend>               reference backend, whith which tested is compared. Default is java.
 	exclude=<name1,name2,...>        skip those tests.
 	keep-out=1                       do not erase original output files which are used to produce diff. 
+	time-stats=1                     show time statistics: compilation time and execution time. Default is true
 >>
