@@ -1,6 +1,6 @@
 import os
 
-proc getAllUrlParametersArray*(): seq[seq[string]] =
+proc $F_0(getAllUrlParametersArray)*(): seq[seq[string]] =
   let params = filter(commandLineParams(), proc(p: string): bool = p.len > 0)
   return map(params, proc(p: string): seq[string] =
     let eq_ind = find(p, "=")

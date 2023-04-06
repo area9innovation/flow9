@@ -1,4 +1,4 @@
-proc substring*(str: string, start: int32, leng: int32): string =
+proc $F_0(substring)*(str: string, start: int32, leng: int32): string =
   var slen = leng
   var sstart = start
   var strlen = cast[int32](len(str))

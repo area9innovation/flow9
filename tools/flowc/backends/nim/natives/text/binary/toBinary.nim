@@ -81,7 +81,7 @@ proc writeBinaryValue(value: Flow, buf: var string, structIdxs: var Table[int32,
       for field in value.str_args:
         writeBinaryValue(field, buf, structIdxs, structDefs)
 
-proc toBinary*(value : Flow): string =
+proc $F_0(toBinary)*(value : Flow): string =
   var structIdxs = initTable[int32, int]()
   var structDefs = newSeq[Flow]()
 

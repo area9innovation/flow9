@@ -1,7 +1,7 @@
 import os, strutils, streams
 
 # Untested
-proc readUntil*(pattern: string): string =
+proc $F_0(readUntil)*(pattern: string): string =
   var line: string
   result = ""
   while true:

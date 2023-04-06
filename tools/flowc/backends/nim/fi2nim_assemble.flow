@@ -64,18 +64,23 @@ fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
 			acc;
 		} else {
 			src = getFileContent(path);
+			name = changeFileExt(fileNameOnly(path), "");
 			lines = strSplit(src, "\n");
 			imports = filter(lines, fi2nimIsImportLine);
 			proc_decl = find(lines, \line0 -> {
 				line = rtrim(line0);
-				(startsWith(line, "proc") || startsWith(line, "func")) && endsWith(line, "=");
+				(startsWith(line, "proc") || startsWith(line, "func")) && strContains(line, "$F_0(") && endsWith(line, "=");
 			});
-			code_lines = filter(lines, \line -> !fi2nimIsImportLine(line));
-			name = changeFileExt(fileNameOnly(path), "");
+			code_lines = filtermap(lines, \line -> 
+				if (fi2nimIsImportLine(line)) None() else Some(strApplyFns(line)([fiNimRenameGlobal]))
+			);
 			code = fi2nimMakeNimBlock(0, concat3(["# native function " + name], code_lines, [""]));
-			decl = eitherMap(proc_decl, \decl -> rtrim2(decl, "= "), "");
+			decl = switch(proc_decl) {
+				Some(d): NimLine(0, strApplyFns(rtrim2(d, "= "))([fiNimRenameGlobal]));
+				None(): NimSnippet("");
+			}
 			nim_native = NimNative(name, imports, 
-				NimCompiled(NimLine(0, decl), code)
+				NimCompiled(decl, code)
 			);
 			setTree(acc, name, nim_native);
 		}

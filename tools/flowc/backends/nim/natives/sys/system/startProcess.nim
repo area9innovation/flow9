@@ -15,5 +15,5 @@ proc startProcessAction( cmd: string, cmdArgs: seq[string], currentWorkingDirect
     except OSError:
         onExit(-1i32, "", getCurrentExceptionMsg())
 
-proc startProcess*( cmd: string, cmdArgs: seq[string], currentWorkingDirectory: string, stdin: string, onExit: proc(v1 : int32, v2 : string, v3 : string): void) : void =
+proc $F_0(startProcess)*( cmd: string, cmdArgs: seq[string], currentWorkingDirectory: string, stdin: string, onExit: proc(v1 : int32, v2 : string, v3 : string): void) : void =
     spawn startProcessAction(cmd, cmdArgs, currentWorkingDirectory, stdin, onExit)

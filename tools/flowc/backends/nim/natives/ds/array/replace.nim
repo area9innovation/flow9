@@ -1,6 +1,6 @@
 # Replace a given element in an array with a new value. Makes a copy
 #native replace : ([?], int32, ?) -> [?] = Native.replace;
-proc replace*[T](s: openArray[T], i: int32, v: T): seq[T] =
+proc $F_0(replace)*[T](s: openArray[T], i: int32, v: T): seq[T] =
   if i < 0:
     return @[]
   else:
