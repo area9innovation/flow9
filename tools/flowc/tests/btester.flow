@@ -1,0 +1,153 @@
+import sys/process;
+import fs/filesystem;
+import string_utils;
+
+TestRun(
+	compiled: bool,
+	executed: bool,
+	output: string,
+);
+
+runTest(test: string, back: string, verb: int) -> TestRun {
+	target = if (back == "java") "jar" else back;
+	if (verb > 2) {
+		println("\n\t\tcompiling target: " + back + " ...");
+	}
+	compile_out = execSystemProcessOutput("flowc1", ["server=0", target + "=1", test], ".");
+	compile_success = strlen(compile_out.stderr) == 0 && compile_out.exitCode == 0;
+	if (!compile_success) {
+		if (verb > 2) {
+			println("\t\tcompilation of target: " + back + " FAILED");
+		}
+		TestRun(false, false, compile_out.stdall);
+	} else {
+		compiled_test = if (back == "java") changeFileExt(test, ".jar") else changeFileExt(test, "");
+		if (verb > 2) {
+			println("\t\trunning target: " + back + " ...");
+		}
+		run_out = if (back == "java") {
+			execSystemProcessOutput("java", ["-jar", compiled_test], ".");
+		} else {
+			execSystemProcessOutput(compiled_test, [], ".");
+		}
+		if (back == "nim") {
+			deleteFile(changeFileExt(test, ".nim")) |> ignore;
+		}
+		deleteFile(compiled_test);
+		run_success = strlen(run_out.stderr) == 0 && run_out.exitCode == 0;
+		if (!run_success) {
+			if (verb > 2) {
+				println("\t\texecution of target: " + back + " FAILED");
+			}
+		}
+		TestRun(compile_success, run_success, run_out.stdall);
+	}
+}
+
+TestResult(
+	refRun: TestRun,
+	testRun: TestRun
+);
+
+main() {
+	ref_backend = getUrlParameterDef("ref-back", "java");
+	test_backend = getUrlParameter("back");
+	keep_output = getUrlParameter("keep-out") != "";
+	verb = s2i(getUrlParameterDef("verb", "1"));
+	b2success = \b -> if (b) "success" else "failure";
+
+	if (test_backend == "") {
+		println(usage);
+	} else {
+		exclude = filter(strSplit(getUrlParameter("exclude"), ","), isNotSpace);
+		tests_param = filter(strSplit(getUrlParameter("test"), ","), isNotSpace);
+		tests = sort(filter(readDirectoryRecursively("."), \file ->
+			endsWith(file, ".flow") && file != "test_runner.flow" && !exists(exclude, \exc -> strContains(file, exc)) &&
+			(tests_param == [] || contains(tests_param, "all") || exists(tests_param, \inc -> strContains(file, inc)))
+		));
+		tests_str = strGlue(tests, ", ");
+		if (strlen(tests_str) < 128) {
+			println("Going to run tests: [" + strGlue(tests, ", ") + "]");
+		} else {
+			println("Going to run tests: [\n" + strGlue(map(tests, \t -> "\t" + t), ",\n") + "\n]");
+		}
+		success_count = ref 0;
+		failure_count = ref 0;
+		iter(tests, \test -> {
+			if (verb > 0) {
+				print("Running test: " + test + " ... ");
+			}
+			err_file = changeFileExt(test, ".err");
+			res = TestResult(runTest(test, ref_backend, verb), runTest(test, test_backend, verb));
+			if (verb > 0) {
+				if (res.refRun.compiled != res.testRun.compiled) {
+					err_msg = if (!res.refRun.compiled) res.refRun.output else res.testRun.output;
+					println("Compilation differs, " + 
+						"on " + ref_backend + ": " + b2success(res.refRun.compiled) + ", " + 
+						"on " + test_backend + ": " + b2success(res.testRun.compiled) + 
+						(if (verb > 1) ", error:\n" + strIndent(err_msg) else "")
+					);
+					setFileContent(err_file, err_msg);
+					failure_count := ^failure_count + 1;
+				} else if (res.refRun.executed != res.testRun.executed) {
+					err_msg = if (!res.refRun.executed) {
+						ref_backend + " execution output:\n" + res.refRun.output;
+					} else {
+						test_backend + " execution output:\n" + res.testRun.output;
+					}
+					println("Execution differs, " + 
+						"on " + ref_backend + ": " + b2success(res.refRun.compiled) + ", " + 
+						"on " + test_backend + ": " + b2success(res.testRun.compiled) + 
+						(if (verb > 1) "\n" + strIndent(err_msg) else "")
+					);
+					setFileContent(err_file, err_msg);
+					failure_count := ^failure_count + 1;
+				} else if (res.refRun.output != res.testRun.output) {
+					ref_out = changeFileExt(test, "." + ref_backend + "_out");
+					test_out = changeFileExt(test, "." + test_backend + "_out");
+					setFileContent(ref_out, res.refRun.output);
+					setFileContent(test_out, res.testRun.output);
+					diff_out = execSystemProcessOutput("diff", [ref_out, test_out], ".");
+					println("Output differs" + 
+						(if (verb > 1) ":\n" + strIndent(diff_out.stdout) else "")
+					);
+					setFileContent(err_file, diff_out.stdout);
+					if (!keep_output) {
+						deleteFile(ref_out) |> ignore;
+						deleteFile(test_out) |> ignore;
+					} else {
+						if (verb > 2) {
+							println("\t\tkeeping output files: " + ref_out + " and " + test_out + " are kept");
+						}
+					}
+					failure_count := ^failure_count + 1;
+				} else {
+					println("PASSED");
+					success_count := ^success_count + 1;
+				}
+			}
+		});
+		if (ref_backend == "java") {
+			deleteRecursively("./javagen") |> ignore;
+		}
+		println("Testing results:\n" + 
+			"\tpassed: " + i2s(^success_count) + "\n" + 
+			"\tfailed: " + i2s(^failure_count) + "\n"
+		);
+	}
+	quit(0);
+}
+
+usage = <<Test utility to compare different backends.
+
+Options:
+	back=<backend>                   backend which is test_backend. Must be provided.
+	                                 Currently supported: java, nim
+
+	test=<dir1,dir2,file1,file2...>  test suite, which is used. May contain not full names, just parts. 
+	                                 By default all files in a current directory (recursively) are included into a test suite.
+
+	ref-back=<backend>               reference backend, whith which tested is compared. Default is java.
+	exclude=<name1,name2,...>        skip those tests.
+	keep-out=1                       do not erase original output files which are used to produce diff. 
+>>
