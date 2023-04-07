@@ -65,7 +65,7 @@ proc notifyServer(port : int): void =
   finally:
     client.close()
 
-proc makeStopServerFn(port : int, mask : int): proc(): void =
+proc makeStopServerFn(port : int, mask : int): proc(): void {.gcsafe.} =
   result = proc():void =
     # echo "stop server [" & $port & "]"
     discard fetchOr(stopSrvPortId, mask)
@@ -118,7 +118,7 @@ proc createHttpServerNative*(
 ): Native =
   makeHttpServerNative(createHttpServerInner(port, isHttps, pfxPath, pfxPassword, onOpen, onMessage)) ]#
 
-proc startServer(port : int): proc(): void =
+proc startServer(port : int): proc(): void  {.gcsafe.} =
   let mask = (createdSrvPortId.load() shl 1) or 1 # nextBinVal. but we have to search for first 0
   discard createdSrvPortId.fetchOr(mask)
   result = makeStopServerFn(port, mask)
