@@ -20,6 +20,34 @@ type
 var stopSrvPortId : Atomic[int]
 var createdSrvPortId : Atomic[int]
 
+proc onMessageFuture(req: Request, onMessage : HttpServerMessage): Future[void] =
+  var headers : seq[seq[string]] = newSeq[seq[string]](len(req.headers.table))
+  for k, v in req.headers.table.pairs:
+    var s = v
+    s.insert(k, 0)
+    headers.add(s)
+  var respStatus = Http500
+  var respHeaders : seq[tuple[key: string, val: string]] = @[]
+  var respBody = ""
+  var ready = false
+  onMessage(
+    $req.url,
+    req.body,
+    $req.reqMethod,
+    headers,
+    proc(body: string): void =
+      respBody = body
+      ready = true,
+    proc(key: string, values: seq[string]): void =
+      for v in values : respHeaders.add((key, v)),
+    proc(code: int32): void = respStatus = HttpCode(int(code))
+  )
+  while not ready:
+    #echo "waiting for response future"
+    sleep(100)
+  req.respond(respStatus, respBody, newHttpHeaders(respHeaders))
+
+
 # the server will not stop immediately, but only when the next request is received
 proc runServer(portId : int, mask : int, onMessage : HttpServerMessage) {.async.} =
   var server = newAsyncHttpServer()
@@ -31,37 +59,16 @@ proc runServer(portId : int, mask : int, onMessage : HttpServerMessage) {.async.
     result = not existsServer or stopSignal
   proc cb(req: Request) {.async, closure, gcsafe.} =
    {.cast(gcsafe).}: # <- MAGIC !
-    # echo (req.reqMethod, req.url, req.headers)
     echo "Received request [" & $portId & "]"
-    let headers = {"Content-type": "text/plain; charset=utf-8"}
+    # let headers = {"Content-type": "text/plain; charset=utf-8"}
     if (not isStopped()):
-      var headers : seq[seq[string]] = newSeq[seq[string]](len(req.headers.table))
-      for k, v in req.headers.table.pairs:
-        var s = v
-        s.insert(k, 0)
-        headers.add(s)
-      var respStatus = Http500
-      var respHeaders : seq[tuple[key: string, val: string]] = @[]
-      var respFuture : Future[void] = newFuture[void]("unspecified")
-      onMessage(
-         $req.url,
-         req.body,
-         $req.reqMethod,
-         headers,
-         proc(body: string): void =
-            respFuture = req.respond(respStatus, body, newHttpHeaders(respHeaders)),
-         proc(key: string, values: seq[string]): void =
-           for v in values : respHeaders.add((key, v)),
-         proc(code: int32): void = respStatus = HttpCode(int(code))
-      )
-      await respFuture
-    #   await req.respond(Http200, "Hello World", headers.newHttpHeaders())
+      await onMessageFuture(req, onMessage)
     else : 
       echo "  Request REJECTED [" & $portId & "]"
       discard fetchAnd(createdSrvPortId, not mask)
       discard fetchAnd(stopSrvPortId, not mask)
       stopped = true
-      requestFuture.complete()
+      if (not requestFuture.isNil): requestFuture.complete()
       discard
   try:
     server.listen(Port(portId))
@@ -134,7 +141,10 @@ let onMessage : HttpServerMessage = proc (
     echo "requestHeaders=" & $$requestHeaders
     setResponseHeader("customH", @["customV"])
     setResponseStatus(201)
-    endResponse("OK to request")
+    timer(1000, proc() = 
+      {.cast(gcsafe).}: # <- MAGIC !
+        endResponse("OK to request")
+    )
 
 let stop2 = startServer(8082, onMessage) # 0b0000_0001
 let stop5 = startServer(8085, onMessage) # 0b0000_0010
