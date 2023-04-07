@@ -1,2 +1,2 @@
-proc printCallstack*(): void =
+proc $F_0(printCallstack)*(): void =
   echo getStackTrace()

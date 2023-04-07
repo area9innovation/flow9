@@ -64,7 +64,7 @@ macro hostCallN(fnName : string, vargs: varargs[untyped]): untyped =
 macro hostCall0(fnName : string): untyped =
   result = newCall(bindSym(fnName))
 
-macro hostCall*(fnName : string, args: varargs[untyped]): untyped =
+macro $F_0(hostCall)*(fnName : string, args: varargs[untyped]): untyped =
   if (args != nil and args.len > 0):
     result = quote do:
       # no args

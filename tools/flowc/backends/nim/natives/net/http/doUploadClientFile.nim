@@ -63,7 +63,7 @@ proc uploadClientFSFile(
   else:
     client.close()
 
-proc doUploadClientFile*(
+proc $F_0(doUploadClientFile)*(
   file : Native,
   url: string,
   params: seq[seq[string]],

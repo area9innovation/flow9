@@ -80,8 +80,9 @@ proc writeBinaryValue(value: Flow, buf: var string, structIdxs: var Table[int32,
       writeCharValue(struct_idx, buf);
       for field in value.str_args:
         writeBinaryValue(field, buf, structIdxs, structDefs)
+    else: echo("Not implemented: toBinary of Native: " & rt_to_string(value))
 
-proc toBinary*(value : Flow): string =
+proc $F_0(toBinary)*(value : Flow): string =
   var structIdxs = initTable[int32, int]()
   var structDefs = newSeq[Flow]()
 
