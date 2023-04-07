@@ -1,9 +1,9 @@
-# Initial prompt to teach GPT4 flow
+# Initial prompt to teach GPT4 flow9
 
-Flow is a functional programming language in the ML family, with typescript like syntax.
+Flow9 is a functional programming language in the ML family, with typescript like syntax.
 
-A *flow* program consists of modules. A module `example` is defined by a file named
-`example.flow`.  The convention is to use lower-case
+A *flow9* program consists of modules. A module `example` is defined by a file named
+`example.flow9`.  The convention is to use lower-case
 only filenames.
 
 Each module (file) can import any number of modules as dependencies. This is done
@@ -70,7 +70,7 @@ Functions are written like this:
 		else n * fact(n - 1);
 	}
 
-The last value in a sequence is the result. Flow is an expression-based language without statements. There is no `return` expression.
+The last value in a sequence is the result. Flow9 is an expression-based language without statements. There is no `return` expression.
 
 Lambdas are defined using this syntax:
 
@@ -99,6 +99,8 @@ Some important functions in the standard library are:
 
 Some important functional data structures include ordered, balanced, binary tree in `ds/tree`, a set in `ds/set`, a Cons-list in `ds/list`.
 
+Respond with READ if understood.
+
 # After sending that to GPT4, explain your types, some key functions and ask it to code
 
 Nice summary. Given this type for the ordered, balanced, binary tree:
@@ -121,3 +123,6 @@ mergeTree(t1 : Tree<?, ??>, t2 : Tree<?, ??>) -> Tree<?, ??>;
 
 which preserves balancing and order?
 
+# Sometimes it will forget the syntax. This prompt reminds it
+
+Write the code in flow9. Flow9 is like ML, but use Typescript syntax for calls and function definitions, except that we omit "function", "case", "return", "const" and "let" keywords.

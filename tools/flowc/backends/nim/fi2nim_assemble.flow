@@ -1,11 +1,12 @@
 import tools/flowc/backends/common;
 import tools/flowc/backends/nim/fi2nim_utils;
+import tools/flowc/backends/nim/fi2nim_code;
 import string_utils;
 
 export {
 	fi2nimRuntime(cfg : FiNimConfig) -> string;
 	fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative>;
-	fi2nimAssemble(cfg : FiNimConfig, content : [string]) -> void;
+	fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void;
 }
 
 fi2nimRuntime(cfg : FiNimConfig) -> string {
@@ -20,6 +21,39 @@ fi2nimRuntime(cfg : FiNimConfig) -> string {
 	}
 }
 
+ // Result : folderName - filePaths
+fi2nimLibs(cfg : FiNimConfig) -> Pair<string, [string]> {
+	path = findmap(cfg.backendDirs, \dir -> {
+		absPath = pathCombine(dir, "flow_lib");
+		if (isDirectory(absPath)) Some(absPath) else None();
+	});
+	eitherFn(
+		path,
+		\absPath -> {
+			files = filter(readDirectoryRecursively(absPath), fileExists);
+			Pair(if (files == []) "" else "flow_lib", files);
+		},
+		\-> Pair("", [])
+	);
+}
+
+// copy lib files
+createLibDirWithFiles(dstFolder : string, dirName : string, files : [string]) -> bool {
+	if (dirName == "" || files == []) {
+		true;
+	} else {
+		folderPath = pathCombine(dstFolder, dirName);
+		deleteRecursively(folderPath);
+		err = createDirectory(folderPath);
+		if (err != "") {
+			fcPrintln("Can't create directory: " + folderPath + " " + err, 0);
+			false;
+		} else {
+			fold(files, true, \acc, file -> acc && copyFile(file, pathCombine(folderPath, fileNameOnly(file))));
+		}
+	}
+}
+
 fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
 	native_files = fold(cfg.backendDirs, [], \acc, dir -> 
 		fi2nimFindAllNativeFiles(pathCombine(dir, "natives"), acc)
@@ -30,18 +64,23 @@ fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
 			acc;
 		} else {
 			src = getFileContent(path);
+			name = changeFileExt(fileNameOnly(path), "");
 			lines = strSplit(src, "\n");
 			imports = filter(lines, fi2nimIsImportLine);
 			proc_decl = find(lines, \line0 -> {
 				line = rtrim(line0);
-				startsWith(line, "proc") && endsWith(line, "=");
+				(startsWith(line, "proc") || startsWith(line, "func")) && strContains(line, "$F_0(") && endsWith(line, "=");
 			});
-			code_lines = filter(lines, \line -> !fi2nimIsImportLine(line));
-			code = strGlue(code_lines, "\n");
-			name = changeFileExt(fileNameOnly(path), "");
+			code_lines = filtermap(lines, \line -> 
+				if (fi2nimIsImportLine(line)) None() else Some(strApplyFns(line)([fiNimRenameGlobal]))
+			);
+			code = fi2nimMakeNimBlock(0, concat3(["# native function " + name], code_lines, [""]));
+			decl = switch(proc_decl) {
+				Some(d): NimLine(0, strApplyFns(rtrim2(d, "= "))([fiNimRenameGlobal]));
+				None(): NimSnippet("");
+			}
 			nim_native = NimNative(name, imports, 
-				eitherMap(proc_decl, \decl -> rtrim2(decl, "= "), ""),
-				if (endsWith(code, "\n\n")) code else if (endsWith(code, "\n")) code + "\n" else code + "\n\n"
+				NimCompiled(decl, code)
 			);
 			setTree(acc, name, nim_native);
 		}
@@ -61,6 +100,13 @@ fi2nimFindAllNativeFiles(dir: string, acc: [string]) -> [string] {
 	});
 }
 
-fi2nimAssemble(cfg : FiNimConfig, content : [string]) -> void {
-	saveFileContent(cfg.outputfile, concatStrings(content), cfg.threadId);
+fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void {
+	if (saveFileContent(cfg.outputfile, fi2nimNimCode2s(content, "  "), cfg.threadId)) {
+		dirFiles = fi2nimLibs(cfg);
+		outputDir = dirName(cfg.outputfile);
+		dstDir = if (outputDir == cfg.outputfile) resolveRelativePath(".") else outputDir;
+		if (!createLibDirWithFiles(dstDir, dirFiles.first, dirFiles.second)) {
+			fcPrintln("Library folder creation error : " + dirFiles.first + "[" + i2s(length(dirFiles.second)) + "]", 0);
+		}
+	}
 }

@@ -99,13 +99,7 @@ export {
 		backendDirs : [string], // directories, containing native runtime function definition
 		debug : bool,
 		verbose : int,
-		threadId : int,
-		// For consistency, fileinfo should not be here,
-		// it should be in module's context.
-		// But in Nim generator context wasn't implemented,
-		// (wasn't required), and config is passed through
-		// all generator calls, so fileinfo is located here.
-		mutable fileinfo : FiFileInfo
+		threadId : int
 	);
 
 	FiDConfig(
@@ -343,11 +337,14 @@ export {
 	fiCollectDeclarationsCommon(program : FiProgram) -> [Pair<string, [FiDeclaration]>];
 
 	// Saves a file, but complains if unsuccessful
-	saveFileContent(filename : string, content : string, threadId : int) -> void;
+	saveFileContent(filename : string, content : string, threadId : int) -> bool;
 
 	updateJsConfig(conf : CompilerConfig, file : string) -> CompilerConfig;
 
 	fcBackendConfigs2array(configs : FcBackendConfigs) -> [FcBackendConfig];
+
+	// Adds underscore to name if it is reserved
+	escapeJavaReservedName(name : string) -> string;
 }
 
 getFcBackendConfigs(config : CompilerConfig) {
@@ -525,7 +522,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 		if (nim != "")
 			Some(FiNimConfig(
 				config.flowfile,
-				fcConcatTarget(config, outdir, if (nim != "1") nim else (fileNameOnly(config.flowfile) + ".nim")),
+				fcConcatTarget(config, outdir, if (nim != "1") nim else (changeFileExt(config.flowfile, ".nim"))),
 				config.includes,
 				concat(
 					[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "nim"])],
@@ -533,8 +530,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 				),
 				config.jsParams.debug,
 				config.verbose,
-				config.threadId,
-				dummyFiFileInfo)
+				config.threadId)
 			) else None();
 
 	dparam = getConfigParameter(config.config, "D");
@@ -882,10 +878,10 @@ fiCollectDeclarationsCommon(program : FiProgram) {
 	});
 }
 
-saveFileContent(filename : string, content : string, threadId : int) -> void {
-	if (!setFileContent(filename, content)) {
-		fcPrintln("Could not save " + filename, threadId);
-	}
+saveFileContent(filename : string, content : string, threadId : int) -> bool {
+	res = setFileContent(filename, content);
+	if (!res) fcPrintln("Could not save " + filename, threadId);
+	res;
 }
 
 updateJsConfig(conf : CompilerConfig, file : string) -> CompilerConfig {
@@ -935,7 +931,23 @@ fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig
 
 		// Choose a java package
 		java_package0= getConfigParameter(config.config, "java-package");
-		java_package = if (java_package0 == "") strReplace(config.flowfile, "/", ".") else java_package0;
+		java_package = if (java_package0 == "") {
+			strGlue(
+				filtermap(
+					strSplit(config.flowfile, "/"),
+					\name -> {
+						if (name == "") {
+							None();
+						} else {
+							Some(escapeJavaReservedName(name));
+						}
+					}
+				),
+				"."
+			);
+		} else {
+			java_package0;
+		}
 
 		// Java main class
 		java_main = getConfigParameterDef(config.config, "java-main", fileNameOnly(config.flowfile));
@@ -969,6 +981,22 @@ fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig
 			java_builder_xmx,
 			config.config
 		));
+	}
+}
+
+reservedJavaNames = buildSet([
+	// keywords
+	"abstract", "continue", "for", "new", "switch", "assert", "default", "if", "package", "synchronized", "boolean", "do", "goto", "private", "this", "break", "double", "implements", "protected", "throw", "byte", "else", "import", "public", "throws", "case", "enum", "instanceof", "return", "transient", "catch", "extends", "int", "short", "try", "char", "final", "interface", "static", "void", "class", "finally", "long", "strictfp", "volatile", "const", "float", "native", "super", "while",
+	// boolean
+	"true", "false",
+	// null
+	"null",
+]);
+escapeJavaReservedName(name : string) -> string {
+	if (containsSet(reservedJavaNames, name)) {
+		name + "_";
+	} else {
+		name;
 	}
 }
 

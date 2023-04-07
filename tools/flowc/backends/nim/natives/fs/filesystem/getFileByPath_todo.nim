@@ -1,0 +1,1 @@
+# native getFileByPath : (path : string) -> native = FlowFileSystem.getFileByPath;

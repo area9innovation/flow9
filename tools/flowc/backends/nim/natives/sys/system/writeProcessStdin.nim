@@ -1,6 +1,11 @@
 import osproc
+import streams
 
 # Untested
-proc writeProcessStdin*(process: Process, input: string) =
-  process.inputStream.write(input)
-  process.inputStream.flush()
+proc $F_0(writeProcessStdin)*(process: Native, input: string) =
+  case process.ntp:
+  of ntProcess:
+    if (process.p != nil and process.p.running and process.p.inputStream != nil):
+        process.p.inputStream.write(input)
+        process.p.inputStream.flush()
+  else : discard

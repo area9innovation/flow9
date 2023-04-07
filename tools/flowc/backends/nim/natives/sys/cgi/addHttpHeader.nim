@@ -1,4 +1,4 @@
 # native addHttpHeader : (string) -> void = Native.addHttpHeader;
 
-proc addHttpHeader(s : string): void =
+proc $F_0(addHttpHeader)(s : string): void =
     discard

@@ -84,9 +84,9 @@ doParseAndTypecheckProgram(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, p
 		// We are done, everything is processed
 		tenv
 	} else {
-		// Proceed with modules that are ready 
+		// Proceed with modules that are ready
 
-		resolved : [FcPreloadedModule] = map(readyForProcessing, \preloaded -> 
+		resolved : [FcPreloadedModule] = map(readyForProcessing, \preloaded ->
 			switch (preloaded : FcPreloadedModule) {
 				FcParsed(fileinfo, __, __, __, __): {
 					switch (fcLoadFromCache(globEnv, fileinfo.flowfile)) {
@@ -103,11 +103,26 @@ doParseAndTypecheckProgram(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, p
 				}
 				FcLoaded(module, dependencyChanged): {
 					if (dependencyChanged()) {
+						printError = if (tenv.acc.config.verbose >= 1) {
+							\fcError : FcError -> {
+								config = tenv.acc.config;
+								pos = fcError.positions[0];
+								fileinfo = switch (fcLoadFromCache(globEnv, pos.file)) {
+									None():  fcfileinfo2fi(getFcFileInfo(pos.file, config));
+									Some(cached): cached.loaded.module.fileinfo;
+								}
+								location = makeLocation(config, globEnv, fileinfo, pos.start, pos.end);
+								msg = "Error at " + location + ": " + fcError.message;
+								fcPrintln(msg, config.threadId);
+							}
+						} else {
+							nop1;
+						}
 						if (tenv.acc.config.verbose >= 1) {
 							fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "'", tenv.acc.config.threadId);
 						}
 						imports_updated = FiModule(module with allImports = updateAllImports(module.imports, tenv.acc.modules));
-						if (typeverifyFiModule(tenv, imports_updated, \__ -> {})) {
+						if (typeverifyFiModule(tenv, imports_updated, printError)) {
 							updated = FiModule(imports_updated with fileinfo = updateFiFileInfo(module.fileinfo));
 							if (!isConfigParameterFalse(tenv.acc.config.config, "incremental")) {
 								saveModuleInIncremental(tenv.acc.config, updated, tenv.acc.config.verbose, tenv);
@@ -125,7 +140,7 @@ doParseAndTypecheckProgram(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, p
 				}
 			}
 		);
-		
+
 		//
 		// First, grab those that are parsed, and ready for desugaring and typechecking
 		//
@@ -300,15 +315,15 @@ doParseAndDesugarProgram(tenv1: FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pre
 	if (readyForProcessing == []) tenv1 else {
 		// Now process parsed modules: desugar, keep modules with errors.
 		t1 = timestamp();
-		desugared : [Pair<FcModule, FcTypeEnvLocal>] = 
-			runTasks(config, 
+		desugared : [Pair<FcModule, FcTypeEnvLocal>] =
+			runTasks(config,
 				map(
-					filtermap(readyForProcessing, \preloaded -> 
+					filtermap(readyForProcessing, \preloaded ->
 						switch (preloaded : FcPreloadedModule) {
 							FcParsed(__,__,__,__,__): Some(preloaded);
 							FcLoaded(__,__): None();
 						}
-					), 
+					),
 					\parsed ->
 						\ -> {
 							localEnv = initFcTypeEnvLocal();
@@ -324,24 +339,24 @@ doParseAndDesugarProgram(tenv1: FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pre
 
 		// Convert all FcModules to FiModules, ignore errors.
 		tenv3 = fold(
-			runTasks(config, 
+			runTasks(config,
 				map(desugared, \modEnv : Pair<FcModule, FcTypeEnvLocal> -> \ ->
 					fcmodule2fi(FcTypeEnv(globEnv, tenv2, modEnv.second), modEnv.first)
 				)
-			), 
-			tenv2, 
+			),
+			tenv2,
 			\tenvCur, module -> mergeTypechecked2TypeEnv(makeTree(), module, tenvCur, globEnv)
 		);
 
 		// Now, do the incremental modules
 		tenv4 = fold(
-			filtermap(readyForProcessing, \preloaded -> 
+			filtermap(readyForProcessing, \preloaded ->
 				switch (preloaded : FcPreloadedModule) {
 					FcLoaded(module, __): Some(module);
 					FcParsed(__,__,__,__,__): None();
 				}
-			), 
-			tenv3, 
+			),
+			tenv3,
 			\acc, m : FiModule -> mergeIncremental2TypeEnvProgram(acc, globEnv, m)
 		);
 		processedNames = buildSet(map(readyForProcessing, \preloaded -> preloadedFiFileInfo(preloaded).flowfile));

@@ -709,6 +709,16 @@ nim/
 Each file represents a single native function. The path to the file may no accurately correspond to the corresponding path
 in the library, but its name must exactly coincide with the name of the native, because natives are indexed by their files names.
 
+#### Native type
+
+If native functions use *native type* arguments or return an object of *native type*, then you need to register this type.
+Find the _Native Types_ sections in runtime.nim and add your type.
+
+### Adding nim libraries
+
+If you want to use libraries written in Nim and include them via import, and not copy them into the body of the main program, then you can place them in the _flow_lib_ folder. When compiling the program, they will be copied to _path_to_destination_folder_ + _flow_lib_. All found files will be copied to the destination folder, ignoring the folder hierarchy.
+Now you can import your files in natives or somewhere else. You can also include different libraries depending on your operating system. To do this, use the macro _importPlatformLib_ in _runtime.nim_.
+
 Then compile again, compile the resulting nim, and check that it works.
 
 	nim c gringo.nim
