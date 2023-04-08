@@ -66,7 +66,6 @@ macro hostCall0(fnName : string): untyped =
 
 macro $F_0(hostCall)*(fnName : string, args: varargs[untyped]): untyped =
   if (args != nil and args.len > 0):
-    fnName.strVal = "$F_0()" & fnName.strVal
     result = quote do:
       # no args
       when type(`args`[0]) isnot Flow:
