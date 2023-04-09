@@ -463,13 +463,11 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
 
 # Implicit natives, which are called via `hostCall`
 proc getOs*(): string = hostOS & "," & hostCPU
-#[
 proc getVersion*(): string = ""
 proc getUserAgent*(): string = ""
 proc getBrowser*(): string = ""
 proc getResolution*(): string = ""
 proc getDeviceType*(): string = ""
-]#
 
 # different libraries for different platforms
 macro importPlatformLib(
