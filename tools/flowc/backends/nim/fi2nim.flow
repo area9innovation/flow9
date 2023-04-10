@@ -47,9 +47,15 @@ fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
 		fi2nimEmptyLine()
 	);
 
+	casts_from_flow = lookupTreeDef(env.castsFromTo, FiTypeFlow(), makeSet());
+	from_flow1 = concat(
+		set2array(casts_from_flow),
+		filtermap(env.ordered_types, \t -> if (containsSet(casts_from_flow, t)) None() else Some(t))
+	);
+
 	compiled_funcs = concatA([
 		filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t)),
-		filtermap(env.ordered_types, \t -> fi2nimTypeFromFlow(env, t)),
+		filtermap(from_flow1, \t -> fi2nimTypeFromFlow(env, t)),
 		filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t)),
 		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
 		filtermap(env.structs, \s -> fi2nimTypeToTypeId(env, FiTypeName(s.name, s.typars)))
@@ -239,11 +245,32 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		specialized_structs,
 		specialized_unions,
 		specializations,
+		fi2nimCasts(program),
 		effects, "", [],
 		fi2nimNatives(cfg),
 		[], makeTree(), makeTree()
 	);
 	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
+}
+
+fi2nimCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
+	proc_exp = \x, acc -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
+		FiCast(__,from, to,__,__): {
+			from1 = fiPurifyType(from);
+			setTree(ac, from1, 
+				insertSet(lookupTreeDef(ac, from1, makeSet()), fiPurifyType(to))
+			);
+		}
+		default: ac;
+	}, AstTraverseOrder(true, true));
+	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
+		switch (toplevel) {
+			FiFunctionDec(__,lambda,__,__,__): proc_exp(lambda, acc);
+			FiGlobalVar(__,value,__,__,__): proc_exp(value, acc);
+			FiNativeDec(__,__,__,__,fallback,__,__): proc_exp(fallback, acc);
+			default: acc;
+		}
+	);
 }
 
 fi2nimNativeImports(env: FiNimEnv, runtime: string) -> NimCode {
