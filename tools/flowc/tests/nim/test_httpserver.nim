@@ -5,6 +5,7 @@ import std/asyncdispatch
 import atomics
 import httpclient
 import tables
+import net, asyncnet
 
 type
   HttpServerMessage = proc (
@@ -51,6 +52,7 @@ proc onMessageFuture(req: Request, onMessage : HttpServerMessage): Future[void] 
 # the server will not stop immediately, but only when the next request is received
 proc runServer(portId : int, mask : int, onMessage : HttpServerMessage) {.async.} =
   var server = newAsyncHttpServer()
+#   wrapSocket(newContext(), server.socket)
   var stopped = false
   var requestFuture: Future[void]
   let isStopped = proc(): bool =
