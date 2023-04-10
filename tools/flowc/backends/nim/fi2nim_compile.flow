@@ -55,90 +55,6 @@ fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> Maybe<NimCompiled
 	compiled;
 }
 
-fiDecast(e: FiExp) -> FiExp {
-	switch (e) {
-		FiCast(x, __,__,__,__): fiDecast(x);
-		default: e;
-	}
-}
-
-fiNimInlineHostCalls(env: FiNimEnv, e: FiExp) -> FiExp {
-	fiMapExp(e, \x,__ -> switch (x) {
-		FiCall(f, args, ret_type, s1): {
-			switch(f) {
-				FiVar(v, v_type, s2): {
-					if (v != "hostCall") x else {
-						fn = cast(args[0]: FiExp -> FiString).s;
-						fn_args = cast(fiDecast(args[1]): FiExp -> FiCallPrim).es;
-						mdecl: Maybe<FiDeclaration> = lookupTree(env.prog.names.toplevel, fn);
-						switch (mdecl) {
-							Some(decl): {
-								fn_type = cast(decl.type: FiType -> FiTypeFunction);
-								out_type = FiTypeFunction(map(fn_args, \arg -> FiFunArg("", fiExpType(arg))), ret_type);
-								call1 = FiCall(x with f = FiVar(fn, fn_type, s2), args = fn_args);
-								if (fiEqualTypes(fn_type.returnType, ret_type)) call1 else {
-									switch (fn_type.returnType) {
-										FiTypeVoid(): {
-											FiCall(call1 with type = FiTypeVoid());
-										}
-										default: {
-											FiCast(call1, fn_type.returnType, ret_type, ret_type, s1);
-										}
-									}
-								}
-							}
-							None(): {
-								x;
-							}
-						}
-					}
-				}
-				default: x;
-			}
-		}
-		default: x;
-	}, true);
-}
-
-fiNimCastEmptyArrays(env: FiNimEnv, e: FiExp) -> FiExp {
-	fiMapExp(e, \x,__ -> switch (x) {
-		FiCallPrim(op, args, ret_type, s1): {
-			switch(op) {
-				FcArrayPrim(): {
-					if (length(args) > 0) x else {
-						FiCast(x, FiTypeArray(FiTypeFlow()), ret_type, ret_type, s1);
-					}
-				}
-				default: x;
-			}
-		}
-		default: x;
-	}, true);
-}
-
-fiNimPrepareExp(env: FiNimEnv, e: FiExp, type: FiType, debug: bool) -> FiExp {
-	maybe_show = \fn, msg -> \x -> {
-		e1 = fn(x);
-		if (!debug) e1 else {
-			println(msg + ":\n" + pretFiExp(e1));
-			e1;
-		}
-	}
-	debug_fiExpMakeCastsExplicit := env.currentToplevel == "captureFreeVars";
-	e 
-	//|> maybe_show(\x -> fiNimInlineHostCalls(env, x), "fiNimInlineHostCalls")
-	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
-	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, env.prog.names), "fiExpMakeCastsExplicit")
-	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, env.prog.names), "fiExplicitCastInSwitch1")
-	|> maybe_show(\z -> fiRemoveUnusedVars(z, env.effects), "fiRemoveUnusedVars")
-	|> maybe_show(\x -> fiNimInlineHostCalls(env, x), "fiNimInlineHostCalls")
-	|> maybe_show(\x -> fiNimCastEmptyArrays(env, x), "fiNimCastEmptyArrays")
-	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
-	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
-	|> maybe_show(fiExpNormalizeSeqences, "fiExpNormalizeSeqences")
-	|> maybe_show(fiPullStatementsUp, "fiPullStatementsUp")
-}
-
 fiNimNormalizeMain(func: FiFunctionDec) -> FiFunctionDec {
 	if (func.name != "main" || func.type.returnType == FiTypeVoid()) func else {
 		// In case 'main' is returning non-void value force it not to return.
@@ -161,7 +77,7 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 		func = fiNimNormalizeMain(func0);
 		type = FiTypeFunction(func.type with args = func.lambda.args);
 
-		lambda = cast(fiNimPrepareExp(env, func.lambda, type, debug): FiExp -> FiLambda);
+		lambda = func.lambda;
 
 		fn_typars = fiNimTypeParamsList(env, func.type);
 		decl = "proc " + fiNimRenameGlobal(func.name) + fn_typars + fiNimCompileFuncType(env, type);
@@ -218,15 +134,14 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 
 fiNimCompileGlobalVar(env : FiNimEnv, var: FiGlobalVar) -> NimCompiled {
 	debug = (var.name == getUrlParameter("nim-debug"));
-	value = fiNimPrepareExp(env, var.value, var.type, debug);
-	value1 = if (fiNimIsExp(value)) value else {
-		FiCall(FiLambda([], value, FiTypeFunction([], var.type), 0), [], var.type, 0);
+	value = if (fiNimIsExp(var.value)) var.value else {
+		FiCall(FiLambda([], var.value, FiTypeFunction([], var.type), 0), [], var.type, 0);
 	}
 	NimCompiled(
 		NimSnippet(""), 
 		fi2nimJoinNimCode(
 			NimLine(0, "var " + fiNimRenameGlobal(var.name) + ": " + fiNimCompileType(env, var.type) + " ="),
-			fi2nimDecideToIndent(value1, fiNimCompile(env, value1, false, makeSet()))
+			fi2nimDecideToIndent(value, fiNimCompile(env, value, false, makeSet()))
 		)
 	);
 }

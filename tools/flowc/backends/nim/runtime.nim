@@ -345,9 +345,9 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
   )
 
 
-proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
+#proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
 #proc rt_to_aaf*(x: Flow): seq[seq[Flow]] = map(x.array_v, rt_to_af)
-proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
+#proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
 #proc rt_to_rrf*(x: Flow): Ref[Flow] = Ref[Flow](val: rt_to_rf(x.ref_v))
 
 proc rt_compare*(x: Flow, y: Flow): int32
