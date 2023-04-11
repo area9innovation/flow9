@@ -1,10 +1,12 @@
 
-import strutils
-import unittest2
+# import strutils
+# import unittest2
 import chronos, chronos/apps/http/shttpserver
 import stew/base10
 import marshal
 
+# OK : win and linux
+# httpS - ok, http - error
 {.used.}
 
 # To create self-signed certificate and key you can use openssl
