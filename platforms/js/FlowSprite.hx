@@ -6,10 +6,6 @@ import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
 
-import StringTools;
-import js.html.Uint8Array;
-import js.html.URL;
-
 using DisplayObjectHelper;
 
 class FlowSprite extends Sprite {
@@ -19,7 +15,6 @@ class FlowSprite extends Sprite {
 	private var transformChanged : Bool = true;
 
 	private var url : String = "";
-	private var headers : Array<Array<String>> = [];
 	public var loaded : Bool = false;
 	public var failed : Bool = false;
 	private var visibilityChanged : Bool = true;
@@ -55,14 +50,13 @@ class FlowSprite extends Sprite {
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
 
-	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String, headers : Array<Array<String>>) {
+	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) {
 		super();
 
 		visible = false;
 		interactiveChildren = false;
 
 		this.url = url;
-		this.headers = headers;
 		this.cache = cache;
 		this.metricsFn = metricsFn;
 		this.errorFn = errorFn;
@@ -386,9 +380,6 @@ class FlowSprite extends Sprite {
 			var svgXhr = new js.html.XMLHttpRequest();
 			if (!Platform.isIE && !Platform.isEdge)
 				svgXhr.overrideMimeType('image/svg+xml');
-			for (header in this.headers) {
-				svgXhr.setRequestHeader(header[0], header[1]);
-			}
 
 			svgXhr.onload = function () {
 				if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
@@ -423,8 +414,7 @@ class FlowSprite extends Sprite {
 
 			svgXhr.open('GET', url, true);
 			svgXhr.send();
-		} else if (this.headers.length == 0) {
-
+		} else {
 			nativeWidget = Browser.document.createElement(tagName);
 			this.updateClipID();
 
@@ -432,33 +422,6 @@ class FlowSprite extends Sprite {
 			nativeWidget.onload = onLoaded;
 			nativeWidget.onerror = onError;
 			nativeWidget.src = url;
-		} else {
-			nativeWidget = Browser.document.createElement(tagName);
-			this.updateClipID();
-
-			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
-
-			var imgXhr = new js.html.XMLHttpRequest();
-			imgXhr.open("GET", url, true);
-			for (header in this.headers) {
-				imgXhr.setRequestHeader(header[0], header[1]);
-			}
-			
-			imgXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
-			imgXhr.onload = function (oEvent) {
-				if (imgXhr.status == 200) {
-					nativeWidget.src = js.html.URL.createObjectURL(imgXhr.response);
-
-					Native.defer(function() {
-						js.html.URL.revokeObjectURL(nativeWidget.src);
-					});
-
-					onLoaded();
-				}
-			};
-
-			imgXhr.onerror = onError;
-			imgXhr.send(null);
 		}
 
 		nativeWidget.className = 'nativeWidget';

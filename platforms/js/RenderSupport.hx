@@ -3303,8 +3303,8 @@ class RenderSupport {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String,  headers : Array<Array<String>>) : Dynamic {
-		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText, headers);
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
 	}
 
 	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
