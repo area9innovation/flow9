@@ -858,7 +858,13 @@ void QGLRenderSupport::paintGL()
     paintGLContext();
 }
 
-bool QGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
+bool QGLRenderSupport::loadPicture(unicode_string url, bool c /*cache*/)
+{
+    HttpRequest::T_SMap headers;
+    return loadPicture(url, headers, c);
+}
+
+bool QGLRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool /*cache*/)
 {
     QString name = unicode2qt(url);
     QString full_path = getFullResourcePath(name);
@@ -904,6 +910,17 @@ bool QGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
     QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
     QUrl rq_url = base.resolved(QUrl(unicode2qt(url)));
     QNetworkRequest request(rq_url);
+
+    // Set headers for HTTP request
+    if (headers.size() > 0) {
+        for (HttpRequest::T_SMap::iterator it = headers.begin(); it != headers.end(); ++it)
+        {
+            request.setRawHeader(
+                        unicode2qt(it->first).toLatin1(),
+                        unicode2qt(it->second).toUtf8()
+            );
+        }
+    }
 
     request_map[request_manager->get(request)] = url;
 
