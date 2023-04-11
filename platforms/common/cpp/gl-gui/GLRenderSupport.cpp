@@ -1010,7 +1010,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     // Root
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeClip, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeTextField, 1);
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 6);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 7);
     TRY_USE_NATIVE_METHOD_NAME(GLRenderSupport, makePicture4, "makePicture", 4);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeVideo, 4);
 
@@ -1236,12 +1236,25 @@ StackSlot GLRenderSupport::makePicture4(RUNNER_ARGS)
 
 StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
 {
-    RUNNER_PopArgs5(url_str, cache, metrix_cb, error_cb, only_download);
-    RUNNER_CheckTag(TString, url_str);
+    RUNNER_PopArgs7(url_str, cache, metrix_cb, error_cb, only_download, altText, headers);
+    RUNNER_CheckTag2(TString, url_str, altText);
     RUNNER_CheckTag2(TBool, cache, only_download);
     RUNNER_DefSlots1(retval);
+    RUNNER_CheckTag1(TArray, headers)
 
     unicode_string url = RUNNER->GetString(url_str);
+
+    HttpRequest::T_SMap map_headers;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(headers); i++) {
+        const StackSlot &header_slot = RUNNER->GetArraySlot(headers, i);
+        RUNNER_CheckTag(TArray, header_slot);
+
+        unicode_string name     = RUNNER->GetString(RUNNER->GetArraySlot(header_slot, 0));
+        unicode_string value    = RUNNER->GetString(RUNNER->GetArraySlot(header_slot, 1));
+
+        map_headers[name] = value;
+    }
 
     GLPictureClip *pclip = new GLPictureClip(this, url);
     retval = RUNNER->AllocNative(pclip);
@@ -1275,7 +1288,7 @@ StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
     if (already_pending)
         return retval;
 
-    if (!loadPicture(url, cache.GetBool()))
+    if (!loadPicture(url, map_headers, cache.GetBool()))
         resolvePictureError(url, parseUtf8("loadPicture failed"));
 
     return retval;
