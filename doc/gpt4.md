@@ -1,6 +1,6 @@
 # Initial prompt to teach GPT4 flow9
 
-Flow9 is a functional programming language in the ML family, with typescript like syntax except it does not use keywords.
+I'm teaching you the programming language flow9. Flow9 is a functional programming language in the ML family, with typescript-like syntax except it does not use keywords.
 
 A *flow9* program consists of modules. A module `example` is defined by a file named `example.flow9`.  The convention is to use lower-case only filenames.
 
@@ -139,7 +139,7 @@ Write the code in flow9. Flow9 is like ML, but use Typescript syntax for calls a
 
 # Syntax only prompt
 
-Flow9 is like ML, but use this syntax with very few keywords.
+I'm teaching you the programming language flow9. Flow9 is like ML, but use this syntax with very few keywords.
 
 // Data structures are structs and unions. No classes.
 
