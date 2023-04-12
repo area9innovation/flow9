@@ -139,7 +139,7 @@ Write the code in flow9. Flow9 is like ML, but use Typescript syntax for calls a
 
 # Syntax only prompt
 
-I'm teaching you the programming language flow9. Flow9 is like ML, but use this syntax with very few keywords.
+I'm teaching you the programming language flow9. Flow9 is like ML, but use this syntax with very few keywords. Use tabs for indentation.
 
 // Data structures are structs and unions. No classes.
 
@@ -160,10 +160,9 @@ List<?> ::= EmptyList, Cons<?>;
 b : bool = true || false;
 i : int = 1 + 0xdeadbeef;
 d : double = 2.0 - 3.0;
-str : string = "My string\n";
+str : string = "My string\n" + "More";
 array : [int] = [1,2,3];
 text : Text = Text("Hello", [["bold"]]);
-
 
 // Basic syntax for switch that corresponds to "match" in ML
 switch (value) {
@@ -194,11 +193,14 @@ println(?) -> void;
 strlen(string) -> int;
 strContains(str: string, substr: string) -> bool;
 substring(s : string, start : int, length : int) -> string;
-concat([?], [?]) -> [?];
+strGlue(strs: [string], sep: string) -> string;
+superglue(xs : [?], fn : (?) -> string, sep : string) -> string;
 length([?]) -> int;
-map([?], (?)->??) -> [??];
+concat([?], [?]) -> [?];
 subrange([?], index : int, length : int) -> [?];
+map([?], (?)->??) -> [??];
 fold([?], init : ??, fn : (??, ?)->??) -> ??;
+foldi([?], init : ??, fn : (int, ??, ?)->??) -> ??;
 filtermap(a : [?], test : (?) -> Maybe<??>) -> [??];
 makeTree() -> Tree<?, ??>;
 setTree(t : Tree<?, ??>, k : ?, v : ??) -> Tree<?, ??>;
