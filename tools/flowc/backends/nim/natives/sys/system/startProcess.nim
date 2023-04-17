@@ -1,29 +1,19 @@
-# native startProcess  io (command  string, args  [string], currentWorkingDirectory  string, stdin  string, onExit  (errorcode  int, stdout  string, stderr  string) - void) - void = Native.startProcess;
+import osproc
+import streams
+import threadpool
 
-import osproc, asyncdispatch, streams
 
-proc startProcessFlow*( cmd: string, cmdArgs: seq[string], currentWorkingDirectory: string, stdin: string, onExit: proc(v1 : int, v2 : string, v3 : string): void) : void =
-    proc waitFuture() {.async.} =
-        var systemTimer = sleepAsync(100)
-        try:
-            await systemTimer
-        except CatchableError:
-            discard # ignore errorv
-    var p = startProcess(command = cmd, workingDir = currentWorkingDirectory, args = cmdArgs)
-    echo("Started")
-    # stdin # var readStream = inputStream(p)
-    # var es = peekableErrorStream(p)
-    # var os = peekableOutputStream(p)
-    # var l =""
-    # doAssert peekLine(os, l)
-    # doAssert peekLine(os, l)
-    var errorcode = -1
-    var stdout = ""
-    var stderr = ""
-    while errorcode < 0:
-        errorcode = peekExitCode(p)
-        waitFor(waitFuture())
-    defer: 
-        echo("Ended")
-        close(p)
-        onExit(errorcode, stdout, stderr)
+proc startProcessAction( cmd: string, cmdArgs: seq[string], currentWorkingDirectory: string, stdin: string, onExit: proc(v1 : int32, v2 : string, v3 : string): void) : void =
+    try:
+        var p = startProcess(command = cmd, workingDir = currentWorkingDirectory, args = cmdArgs, options = {})
+        let errorcode = p.waitForExit()
+        defer: 
+            let stderr = p.errorStream().readAll()
+            let stdout = p.outputStream().readAll()
+            close(p)
+            onExit(int32(errorcode), stdout, stderr)
+    except OSError:
+        onExit(-1i32, "", getCurrentExceptionMsg())
+
+proc $F_0(startProcess)*( cmd: string, cmdArgs: seq[string], currentWorkingDirectory: string, stdin: string, onExit: proc(v1 : int32, v2 : string, v3 : string): void) : void =
+    spawn startProcessAction(cmd, cmdArgs, currentWorkingDirectory, stdin, onExit)

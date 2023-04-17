@@ -2,5 +2,5 @@
 
 import md5
 
-proc md5(s : string): string =
+proc $F_0(md5)(s : string): string =
   getMD5(s)

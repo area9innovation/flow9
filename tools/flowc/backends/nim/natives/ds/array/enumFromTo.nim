@@ -1,4 +1,4 @@
-proc enumFromTo*(f: int32, t: int32): seq[int32] =
+proc $F_0(enumFromTo)*(f: int32, t: int32): seq[int32] =
   let n: int32 = t - f + 1
   if (n <= 0):
     return @[]

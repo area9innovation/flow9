@@ -1137,12 +1137,8 @@ class DisplayObjectHelper {
 					untyped clip.updateNativeWidgetStyle();
 				}
 
-				if (untyped Platform.isIE && clip.isFocused) {
-					untyped clip.preventBlur = true;
-
-					RenderSupport.once("stagechanged", function() {
-						untyped clip.preventBlur = false;
-					});
+				if (untyped Platform.isIE && clip.temporarilyPreventBlur != null) {
+					untyped clip.temporarilyPreventBlur();
 				}
 			}
 		}
@@ -2115,7 +2111,9 @@ class DisplayObjectHelper {
 								if (dialogTitle != null) {
 									dialogTitle.setAttribute("tabindex", "-1");
 									dialogTitle.setAttribute('aria-hidden', 'false');
-									dialogTitle.focus();
+									Native.timer(200, function() {
+										dialogTitle.focus();
+									});
 								}
 								unhideDialogContent();
 							});
