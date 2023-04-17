@@ -108,7 +108,7 @@ fiExtractCallNonScalarExp(e: FiExp, names: FiGlobalNames) -> FiExp;
 // Remove casts from non-scalar types to flow - these casts are implicit
 fiRemoveImplicitCasts(e: FiExp) -> FiExp;
 
-fiPullStatementsUp(e: FiExp) -> FiExp;
+fiPushExpsDown(e: FiExp) -> FiExp;
 
 fiIsStat(e: FiExp) -> bool;
 
@@ -1041,149 +1041,157 @@ fiStatsArePulled(e: FiExp) -> bool {
 	));
 }
 
-fiPushExpsDown(i: int, xs: [FiExp], as: [FiExp], fn: ([FiExp]) -> FiExp, type: FiType) -> FiExp {
+fiDoPushExpsDown(i: int, xs: [FiExp], as: [FiExp], fn: ([FiExp]) -> FiExp, type: FiType) -> FiExp {
 	if (i == length(xs)) fn(as) else {
 		x = xs[i];
 		switch (x) {
 			FiIf(e1, e2, e3,__,__): {
 				FiIf(x with
 					type = type,
-					e2 = fiPushExpsDown(i + 1, xs, concat(as, [e2]), fn, type),
-					e3 = fiPushExpsDown(i + 1, xs, concat(as, [e3]), fn, type)
+					e2 = fiDoPushExpsDown(i + 1, xs, concat(as, [e2]), fn, type),
+					e3 = fiDoPushExpsDown(i + 1, xs, concat(as, [e3]), fn, type)
 				);
 			}
 			FiSeq(es,__,__): {
 				FiSeq(x with
 					type = type,
 					es = replace(es, length(es) - 1,
-						fiPushExpsDown(i + 1, xs, concat(as, [es[length(es) - 1]]), fn, type)
+						fiDoPushExpsDown(i + 1, xs, concat(as, [es[length(es) - 1]]), fn, type)
 					)
 				);
 			}
 			FiLet(__,__,e1,e2,__,__): {
 				FiLet(x with
 					type2 = type,
-					e2 = fiPushExpsDown(i + 1, xs, concat(as, [e2]), fn, type)
+					e2 = fiDoPushExpsDown(i + 1, xs, concat(as, [e2]), fn, type)
 				);
 			}
 			FiSwitch(__,__,cs,__,__): {
 				FiSwitch(x with
 					type = type,
 					cases = map(cs, \c -> 
-						FiCase(c with body = fiPushExpsDown(i + 1, xs, concat(as, [c.body]), fn, type))
+						FiCase(c with body = fiDoPushExpsDown(i + 1, xs, concat(as, [c.body]), fn, type))
 					)
 				);
 			}
 			default: {
-				fiPushExpsDown(i + 1, xs, concat(as, [x]), fn, type)
+				fiDoPushExpsDown(i + 1, xs, concat(as, [x]), fn, type)
 			}
 		}
 	}
 }
 
-fiPullStatementUp(x: FiExp) -> FiExp {
-	switch (x) {
-		FiLet(v, vtype, e1, e2, type, start): {
-			if (!fiIsStat(e1)) x else {
-				switch (e1) {
-					FiSeq(es1, type1, start1): {
-						if (length(es1) == 1) FiLet(v, vtype, es1[0], e2, type, start) else {
-							FiSeq(
-								concat(
-									take(es1, length(es1) - 1),
-									[FiLet(v, vtype, es1[length(es1) - 1], e2, type, start)]
-								), type, start1
+fiPushExpDown(x: FiExp) -> FiExp {
+	if (fiStatsArePulled(x)) x else {
+		switch (x) {
+			FiLet(v, vtype, e1, e2, type, start): {
+				if (!fiIsStat(e1)) x else {
+					switch (e1) {
+						FiSeq(es1, type1, start1): {
+							if (length(es1) == 1) FiLet(v, vtype, es1[0], e2, type, start) else {
+								FiSeq(
+									concat(
+										take(es1, length(es1) - 1),
+										[fiPushExpDown(FiLet(v, vtype, es1[length(es1) - 1], e2, type, start))]
+									), type, start1
+								);
+							}
+						}
+						FiLet(v1, vtype1, e1_1, e1_2, type1, start1): {
+							FiLet(v1, vtype1, e1_1,
+								fiPushExpDown(FiLet(v, vtype, e1_2, e2, type, start)),
+								type, start1
 							);
 						}
-					}
-					FiLet(v1, vtype1, e1_1, e1_2, type1, start1): {
-						FiLet(v1, vtype1, e1_1,
-							FiLet(v, vtype, e1_2, e2, type, start),
-							type, start1
-						);
-					}
-					FiSwitch(x1, swtype1, cs1, type1, start1): {
-						FiSwitch(x1, swtype1, map(cs1, \c1 ->
-								FiCase(c1 with body = FiLet(v, vtype, c1.body, e2, type, start))
-							), 
-							type, start1
-						);
-					}
-					FiIf(e1_1, e1_2, e1_3, type1, start_1): {
-						FiIf(e1_1, 
-							FiLet(v, vtype, e1_2, e2, type, start),
-							FiLet(v, vtype, e1_3, e2, type, start),
-							type, start_1
-						);
-					}
-					default: x; // TODO: FsAssign
-				}
-			}
-		}
-		FiIf(e1, e2, e3, type, start): {
-			if (!fiIsStat(e1)) x else {
-				switch (e1) {
-					FiSeq(es1, type1, start1): {
-						if (length(es1) == 1) FiIf(es1[0], e2, e3, type, start) else {
-							FiSeq(
-								concat(
-									take(es1, length(es1) - 1),
-									[FiIf(es1[length(es1) - 1], e2, e3, type, start)]
-								), type, start1
+						FiSwitch(x1, swtype1, cs1, type1, start1): {
+							FiSwitch(x1, swtype1, map(cs1, \c1 ->
+									FiCase(c1 with body = fiPushExpDown(FiLet(v, vtype, c1.body, e2, type, start)))
+								), 
+								type, start1
 							);
 						}
+						FiIf(e1_1, e1_2, e1_3, type1, start_1): {
+							FiIf(e1_1, 
+								fiPushExpDown(FiLet(v, vtype, e1_2, e2, type, start)),
+								fiPushExpDown(FiLet(v, vtype, e1_3, e2, type, start)),
+								type, start_1
+							);
+						}
+						default: x; // TODO: FsAssign
 					}
-					FiLet(v1, vtype1, e1_1, e1_2, type1, start1): {
-						FiLet(v1, vtype1, e1_1,
-							FiIf(e1_2, e2, e3, type, start),
-							type, start1
-						);
-					}
-					FiSwitch(x1, swtype1, cs1, type1, start1): {
-						FiSwitch(x1, swtype1, map(cs1, \c1 ->
-								FiCase(c1 with body = FiIf(c1.body, e2, e3, type, start))
-							), 
-							type, start1
-						);
-					}
-					FiIf(e1_1, e1_2, e1_3, type1, start_1): {
-						FiIf(e1_1, 
-							FiIf(e1_2, e2, e3, type, start),
-							FiIf(e1_3, e2, e3, type, start),
-							type, start_1
-						);
-					}
-					default: x; // TODO: FsAssign
 				}
 			}
-		}
-		FiCall(f, args, type, start): {
-			if (!exists(concat([f], args), fiIsStat)) x else {
-				fiPushExpsDown(0, concat([f], args), [], \as -> FiCall(as[0], tail(as), type, start), type);
+			FiIf(e1, e2, e3, type, start): {
+				if (!fiIsStat(e1)) x else {
+					switch (e1) {
+						FiSeq(es1, type1, start1): {
+							if (length(es1) == 1) FiIf(es1[0], e2, e3, type, start) else {
+								FiSeq(
+									concat(
+										take(es1, length(es1) - 1),
+										[fiPushExpDown(FiIf(es1[length(es1) - 1], e2, e3, type, start))]
+									), type, start1
+								);
+							}
+						}
+						FiLet(v1, vtype1, e1_1, e1_2, type1, start1): {
+							FiLet(v1, vtype1, e1_1,
+								fiPushExpDown(FiIf(e1_2, e2, e3, type, start)),
+								type, start1
+							);
+						}
+						FiSwitch(x1, swtype1, cs1, type1, start1): {
+							FiSwitch(x1, swtype1, map(cs1, \c1 ->
+									FiCase(c1 with body = fiPushExpDown(FiIf(c1.body, e2, e3, type, start)))
+								), 
+								type, start1
+							);
+						}
+						FiIf(e1_1, e1_2, e1_3, type1, start_1): {
+							FiIf(e1_1, 
+								fiPushExpDown(FiIf(e1_2, e2, e3, type, start)),
+								fiPushExpDown(FiIf(e1_3, e2, e3, type, start)),
+								type, start_1
+							);
+						}
+						default: x; // TODO: FsAssign
+					}
+				}
 			}
-		}
-		FiCast(e, from, to, type, start): {
-			if (!fiIsStat(e)) x else {
-				fiPushExpsDown(0, [e], [], \as -> FiCast(as[0], from, to, type, start), type);
+			FiCall(f, args, type, start): {
+				if (!exists(concat([f], args), fiIsStat)) x else {
+					fiDoPushExpsDown(0, concat([f], args), [], \as ->
+						fiPushExpDown(FiCall(as[0], tail(as), type, start)), 
+						type
+					);
+				}
 			}
-		}
-		FiLambda(__,body,__,__): {
-			x;
-		}
-		FiCallPrim(op, es, type, start): {
-			if (!exists(es, fiIsStat)) x else {
-				fiPushExpsDown(0, es, [], \as -> FiCallPrim(op, as, type, start), type);
+			FiCast(e, from, to, type, start): {
+				if (!fiIsStat(e)) x else {
+					fiDoPushExpsDown(0, [e], [], \as ->
+						fiPushExpDown(FiCast(as[0], from, to, type, start)),
+						type
+					);
+				}
 			}
+			FiLambda(__,body,__,__): {
+				x;
+			}
+			FiCallPrim(op, es, type, start): {
+				if (!exists(es, fiIsStat)) x else {
+					fiDoPushExpsDown(0, es, [], \as ->
+						fiPushExpDown(FiCallPrim(op, as, type, start)),
+						type
+					);
+				}
+			}
+			default: x;
 		}
-		default: x;
 	}
 }
 
-fiPullStatementsUp(e: FiExp) -> FiExp {
-	fiExpShortcutIf(for(e, 
-		\x -> !fiStatsArePulled(x),
-		\x -> mapFiExp(x, fiPullStatementUp)
-	));
+fiPushExpsDown(e: FiExp) -> FiExp {
+	fiExpShortcutIf(mapFiExp(e, fiPushExpDown));
 }
 
 // In case a switch has only one variant - remove it

@@ -1,0 +1,132 @@
+import tools/flowc/manipulation/transform_exps;
+
+export {
+
+fiPullStatementsUp(expr : FiExp) -> FiExp;
+
+}
+
+fiIsExp1(e: FiExp) -> bool {
+	switch (e) {
+		FiSeq(__,__,__): false;
+		FiLet(__,__,__,__,__,__): false;
+		FiSwitch(__,__,__,__,__): false;
+		FiIf(__,__,__,__,__): false;
+		FiCallPrim(op,__,__,__): {
+			switch (op) {
+				FcAssignPrim(): false;
+				FcSetMutablePrim(__): false;
+				default: true;
+			}
+		}
+		default: true;
+	}
+}
+
+FiPullRet ::= FiPullExp, FiPullLet;
+	FiPullExp(e: FiExp);
+	FiPullLet(var: FiVar, let: FiLet);
+
+fiPullRet2FiExp(r: FiPullRet) -> FiExp {
+	switch (r) {
+		FiPullLet(var, let): var;
+		FiPullExp(x): x;
+	}
+}
+
+fiPullStatementUp(x: FiExp, cnt: ref int) -> FiExp {
+	switch (x) {
+		FiLet(v, vtype, e1, e2, type, start): {
+			FiLet(x with
+				e1 = fiPullStatementUp(e1, cnt),
+				e2 = fiPullStatementUp(e2, cnt)
+			);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			switch (fiPullStatementUp1(e1, cnt)) {
+				FiPullLet(var, let): {
+					FiLet(let with
+						e2 = FiIf(x with 
+							e1 = var,
+							e2 = fiPullStatementUp(e2, cnt),
+							e3 = fiPullStatementUp(e3, cnt)
+						),
+						type2 = type
+					);
+				}
+				FiPullExp(e): {
+					FiIf(x with 
+						e1 = e,
+						e2 = fiPullStatementUp(e2, cnt),
+						e3 = fiPullStatementUp(e3, cnt)
+					);
+				}
+			}
+		}
+		FiSwitch(v, switchType, cases, type, start): {
+			FiSwitch(x with cases = map(cases, \c ->
+				FiCase(c with body = fiPullStatementUp(c.body, cnt))
+			));
+		}
+		FiSeq(es, type, start): {
+			FiSeq(x with es = map(es, \e -> fiPullStatementUp(e, cnt)));
+		}
+		FiCall(f, args, type, start): {
+			f_p = fiPullStatementUp1(f, cnt);
+			args_p = map(args, \arg -> fiPullStatementUp1(arg, cnt));
+			call = FiCall(x with f = fiPullRet2FiExp(f_p), args = map(args_p, fiPullRet2FiExp));
+			call_1 = foldr(args_p, call, \acc, e_p -> switch (e_p) {
+				FiPullLet(var, let): FiLet(let with e2 = acc, type2 = type);
+				FiPullExp(e): acc;
+			});
+			switch (f_p) {
+				FiPullLet(var, let): FiLet(let with e2 = call_1, type2 = type);
+				FiPullExp(e): call_1;
+			}
+		}
+		FiCast(e, from, to, type, start): {
+			switch (fiPullStatementUp1(e, cnt)) {
+				FiPullLet(var, let): {
+					FiLet(let with e2 = FiCast(x with e = var), type2 = type);
+				}
+				FiPullExp(e1): {
+					FiCast(x with e = e1);
+				}
+			}
+		}
+		FiLambda(args, body, type,__): {
+			FiLambda(x with body = fiPullStatementUp(body, cnt));
+		}
+		FiCallPrim(op, es, type, start): {
+			es_p = map(es, \e -> fiPullStatementUp1(e, cnt));
+			args = map(es_p, fiPullRet2FiExp);
+			foldr(es_p, 
+				FiCallPrim(x with es = args), 
+				\acc, e_p -> switch (e_p) {
+					FiPullLet(var, let): FiLet(let with e2 = acc, type2 = type);
+					FiPullExp(e): acc;
+				}
+			);
+		}
+		default: x;
+	}
+}
+
+fiPullStatementUp1(x: FiExp, cnt: ref int) -> FiPullRet {
+	y = fiPullStatementUp(x, cnt);
+	if (fiIsExp1(y)) {
+		FiPullExp(y);
+	} else {
+		tmp_var = "tmp_var_" + i2s(^cnt);
+		cnt := ^cnt + 1;
+		type = fiExpType(y);
+		FiPullLet(
+			FiVar(tmp_var, type, 0),
+			FiLet(tmp_var, type, y, FiVoid(0), FiTypeVoid(), 0)
+		);
+	}
+}
+
+fiPullStatementsUp(e: FiExp) -> FiExp {
+	fiExpShortcutIf(fiPullStatementUp(e, ref 0));
+}
