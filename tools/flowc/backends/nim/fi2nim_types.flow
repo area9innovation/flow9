@@ -230,7 +230,16 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 				)),
 				\union -> {
 					case = \spec -> {
-						struct = fiSpecializeStruct(spec, lookupTreeDef(env.prog.names.structs, spec.name, FiTypeStruct("", [], [], 0)));
+						struct = switch(lookupTree(env.prog.names.structs, spec.name)) {
+							Some(s): {
+								fiSpecializeStruct(spec, s);
+							}
+							None(): {
+								fail0("struct " + spec.name + " is not found\n" + 
+									"struct names:\n" + strGlue(getTreeKeys(env.prog.names.structs), "\n") + "\n\n"
+								);
+							}
+						}
 						"of int32(" + fi2nimTypeId(env, spec) + "): " +
 						"return cast[" + ret_type + "](" + fiNimCompileType(env, spec) + "(" +
 							"tp_id: x.tp_id, str_id: x.str_id" +  
@@ -251,11 +260,6 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 								concat3(
 									["case x.str_id:"],
 									map(union.typenames, case),
-									/*mapConcat(union.typenames, \c -> 
-										map(set2array(lookupTreeDef(env.specializations, c.name, makeSet())), \spec ->
-											case(cast(spec: FiType -> FiTypeName))
-										)
-									),*/
 									["else: assert(false, \"struct id \" & intToStr(x.str_id) & \" is not covered by union\" & \"" + union.name + "\")"]
 								)
 							)
@@ -411,10 +415,16 @@ fi2nimTypeToTypeId(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 						);
 					} else {
 						cases = concat(
-							mapi(set2array(lookupTreeDef(env.specializations, name, makeSet())), \i, spec -> {
-								spec_typars = cast(spec: FiType -> FiTypeName).typeparameters;
+							mapi(set2array(lookupTreeDef(env.specializations, name, makeSet())), \i, sp -> {
+								spec = cast(sp: FiType -> FiTypeName);
+								if (length(spec.typeparameters) != length(struct.typars)) {
+									fail("length of struct typeparameters mismatch with length of typename typeparameters: " + 
+											i2s(length(struct.typars)) + " != " + i2s(length(spec.typeparameters)) + " (length(tn.typeparameters))\n" +
+										"struct: " + pretFiStructOrUnion(struct) + ", typename: " + pretFiType(spec)
+									);
+								};
 								(if (i == 0) "when" else "elif") + " (" +  
-									supergluei(typars, \j, tp -> fiNimCompileType(env, tp) + " is " + fiNimCompileType(env, spec_typars[j]), " and ") +
+									supergluei(typars, \j, tp -> fiNimCompileType(env, tp) + " is " + fiNimCompileType(env, spec.typeparameters[j]), " and ") +
 								"): return int32(" + fi2nimTypeId(env, spec) + ")";
 							}),
 							["else: assert(false, \"'" + struct.name + "' typars are not known: \"" +
@@ -585,8 +595,10 @@ fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 			concatStrings(map(all_subterms, \t -> "\t" + pretFiType(t) + "\n"))
 		);
 	}
-	//all_types = concat([FiTypeName("Struct", [])], all_subterms);
-	all_types = all_subterms;
+	all_types = filter(all_subterms, \t -> switch(t) {
+		FiTypeParameter(__): false;
+		default: true;
+	});
 	if (debug_nim_type_ids) {
 		println("all_types:\n" +
 			concatStrings(map(all_types, \t -> "\t" + pretFiType(t) + "\n"))

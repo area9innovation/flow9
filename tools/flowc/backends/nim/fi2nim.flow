@@ -132,9 +132,37 @@ fi2nimOrderDeclarations(env : FiNimEnv) {
 	);
 }
 
+fi2nimCheckPolylorphism(p : FiProgram) -> void {
+	ignore(fiMapProgramExp(p, \e,__,__,__ -> {
+		fiMapExp(e, \x, env -> {
+			switch (fiExpType(x)) {
+				FiTypeName(nm, typars): {
+					switch (lookupTree(p.names.structs, nm)) {
+						Some(struct): {
+							if (length(struct.typars) != length(typars)) {
+								fail("Struct type parameters number mismatch the used type parameters number:\n" +
+									"struct: " + pretFiStructOrUnion(struct) + ", used type: " + pretFiType(fiExpType(x)) + "\n" +
+									pretFiExp(x) + "\n" +
+									pretFiExp(e)
+								);
+							}
+						}
+						None(): {}
+					}
+				}
+				default: {}
+			}
+			x;
+		}, true);
+		e;
+	}));
+}
+
+
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	effects = collectFiEffects(program0);
 	program = fiNimTransformProgram(program0, effects);
+	fi2nimCheckPolylorphism(program);
 
 	is_explicit_polymorphic = \nm -> switch (lookupTree(program.names.structs, nm)) {
 		Some(struct): length(struct.typars) > 0;
@@ -158,6 +186,22 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	specializations = filterTree(
 		mapTree(
 			find_specializations(program, polymorphics, makeTree(), false), 
+			/*\specs -> filterSet(mapSet(specs, \spec -> fiPurifyType(spec)), \spec -> {
+				switch (spec) {
+					FiTypeName(nm, typars): {
+						struct = lookupTreeDef(program.names.structs, nm, FiTypeStruct("", [], [], 0));
+						if (length(typars) == length(struct.typars)) {
+							true;
+						} else {
+							fcPrintln("Struct type parameters number mismatch the specialization type parameters number:\n" +
+								"struct: " + pretFiStructOrUnion(struct) + ", specialization: " + pretFiType(spec), cfg.threadId
+							);
+							false;
+						}
+					}
+					default: true;
+				}
+			})*/
 			\specs -> mapSet(specs, \spec -> fiPurifyType(spec))
 		),
 		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
@@ -182,7 +226,16 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		switch (lookupTree(specializations, struct.name)) {
 			Some(specs): foldSet(specs, acc, \ac, spec -> 
 				switch (spec) {
-					FiTypeName(nm, typars): Cons(fiSpecializeStruct(spec, struct), ac);
+					FiTypeName(nm, typars): {
+						if (length(typars) == length(struct.typars)) {
+							Cons(fiSpecializeStruct(spec, struct), ac);
+						} else {
+							fcPrintln("Struct type parameters number mismatch the specialization type parameters number:\n" +
+								"struct: " + pretFiStructOrUnion(struct) + ", specialization: " + pretFiType(spec), cfg.threadId
+							);
+							ac;
+						}
+					}
 					default: fail0("must be a typename");
 				}
 			);

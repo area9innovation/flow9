@@ -1,4 +1,5 @@
 import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/common;
 import math/stringmath;
 import string_utils;
 
@@ -134,9 +135,14 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 		fcPrintln(msg, program.config.threadId);
 	}
 	names = program.names;
+	do_transform = \e, typars, name -> {
+		fiCorrectVarTypars(
+			fiTransformImplicitStructTyparsFromFiExp(e, typars, on_err, fn, names, name)
+		);
+	}
 	remove_func = \func: FiFunctionDec -> {
 		typars = fiCollectTypars(func.type, makeSet());
-		lambda_removed = fiTransformImplicitStructTyparsFromFiExp(func.lambda, typars, on_err, fn, names, func.name);
+		lambda_removed = do_transform(func.lambda, typars, func.name);
 		FiFunctionDec(func with
 			lambda = cast(lambda_removed: FiExp -> FiLambda)
 		);
@@ -144,13 +150,13 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 	remove_var = \var: FiGlobalVar -> {
 		typars = fiCollectTypars(var.type, makeSet());
 		FiGlobalVar(var with
-			value = fiTransformImplicitStructTyparsFromFiExp(var.value, typars, on_err, fn, names, var.name)
+			value = do_transform(var.value, typars, var.name)
 		);
 	}
 	remove_nat = \nat: FiNativeDec -> {
 		typars = fiCollectTypars(nat.type, makeSet());
 		FiNativeDec(nat with
-			fallbackLambda = fiTransformImplicitStructTyparsFromFiExp(nat.fallbackLambda, typars, on_err, fn, names, nat.name)
+			fallbackLambda = do_transform(nat.fallbackLambda, typars, nat.name)
 		);
 	}
 	toplevel_removed = mapTree(program.names.toplevel, \decl ->
@@ -172,6 +178,79 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 			toplevel = toplevel_removed
 		)
 	);
+}
+
+/*
+Example of what is corrected:
+
+FiSwitch(
+		FiVar(
+			"gsymswitch26",
+			FiTypeName(
+				"Triple", // TYPE PARAMETERS EXIST
+				[
+					FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+					FiTypeArray(FiTypeName("FiExp", [])),
+					FiTypeName("OptEnvExp", [])
+				]
+			),
+			25916
+		),
+		FiTypeName(
+			"Triple",
+			[
+				FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+				FiTypeArray(FiTypeName("FiExp", [])),
+				FiTypeName("OptEnvExp", [])
+			]
+		),
+		[
+			FiCase(
+				"Triple",
+				["tmp_decls", "call_args", "effectedEnv"],
+				FiLet(
+					"tmp_decls",
+					FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+					FiCallPrim(
+						FcFieldPrim("first"),
+						[FiVar("gsymswitch26", FiTypeName("Triple", []), -25972)],      // NO TYPE PARAMETERS
+						FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+						-25972
+					),
+					FiLet(
+*/
+
+fiCorrectVarTypars(e: FiExp) -> FiExp {
+	fiMapExp(e, \x, env -> switch (x) {
+		FiVar(name, type1,__): {
+			eitherMap(lookupTree(env.locals, name), \v -> {
+				switch (type1) {
+					FiTypeName(tn1, typars1): {
+						switch (v.type) {
+							FiTypeName(tn2, typars2): {
+								if (length(typars1) == 0 && length(typars2) > 0) {
+									println(
+										"Mismatch of variable " + name + " type parameters. Variable type: " + tn1 + ",\n" +
+										"expression typars: [" + superglue(typars1, pretFiType, ", ") + "],\n" +
+										"type typars: [" + superglue(typars2, pretFiType, ", ") + "]\n" +
+										"expression:\n" + pretFiExp(e)
+									);
+									// Case, when a variable type parameters list is empty, while at definition
+									// it was not. Correct it.
+									FiVar(x with type = v.type);
+								} else {
+									x;
+								}
+							}
+							default: x;
+						}
+					}
+					default: x;
+				}
+			}, x);
+		}
+		default: x;
+	}, true);
 }
 
 fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err: (string) -> void, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames, toplevel_name: string) -> FiExp {
@@ -227,7 +306,10 @@ fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err:
 		FiUnsafe(name, ex, type, start): {
 			FiUnsafe(name, re(ex), rt(type), start);
 		}
-		default: e;
+		FiVar(name, type, start): {
+			FiVar(name, rt(type), start);
+		}
+		FiConst(): e;
 	}
 }
 
@@ -256,13 +338,6 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 			if (length(type_tps) == 0) {
 				Some(FiTypeName(id, []));
 			} else {
-				if (length(type_tps) != length(filtered)) {
-					println("length(type_tps) != length(filtered)\n" +
-						"type:\n" + toStringFormatted(t) + "\n" +
-						"type_tps:\n" + toStringFormatted(type_tps) + "\n" +
-						"filtered:\n" + toStringFormatted(filtered) + "\n"
-					);
-				}
 				Some(FiTypeName(id, filtered));
 			}
 		}
@@ -278,7 +353,13 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 				}
 			);
 		}
-		default: Some(t);
+		FiTypeBool(): Some(t);
+		FiTypeInt(): Some(t);
+		FiTypeDouble(): Some(t);
+		FiTypeString(): Some(t);
+		FiTypeFlow(): Some(t);
+		FiTypeVoid(): Some(t);
+		FiTypeNative(): Some(t);
 	}
 }
 
