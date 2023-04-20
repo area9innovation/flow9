@@ -1,3 +1,3 @@
-proc getKeyValueN*(key : string, defaultValue : string): string =
-  echo "TODO: Implement getKeyValueN in Nim"
+proc $F_0(getKeyValueN)*(key : string, defaultValue : string): string =
+  #echo "getKeyValueN is not supported."
   return defaultValue

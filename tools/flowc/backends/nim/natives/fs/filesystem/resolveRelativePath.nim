@@ -1,4 +1,6 @@
 # native resolveRelativePath : (string) -> string = FlowFileSystem.resolveRelativePath;
 import os
-proc resolveRelativePath*(path : string) : string = 
-  os.absolutePath(path)
+import strutils
+
+proc $F_0(resolveRelativePath)*(path : string) : string = 
+  replace(os.absolutePath(path), "\\", "/")

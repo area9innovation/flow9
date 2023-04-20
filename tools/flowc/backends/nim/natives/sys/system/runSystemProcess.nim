@@ -27,7 +27,7 @@ proc waitForProcessThread(process: Process, onExit: proc (errorCode: int32)) {.t
   let exitCode = process.waitForExit()
   onExit(int32(exitCode))
 
-proc runSystemProcess*(command: string, args: seq[string], currentWorkingDirectory: string,
+proc $F_0(runSystemProcess)*(command: string, args: seq[string], currentWorkingDirectory: string,
                       onStdOutLine: proc (output: string), onStdErr: proc (error: string),
                       onExit: proc (errorCode: int32)): Native =
   try:
@@ -39,6 +39,6 @@ proc runSystemProcess*(command: string, args: seq[string], currentWorkingDirecto
     spawn runErrorStream(process, onStdErr)
     spawn waitForProcessThread(process, onExit)
 
-    return Native(what : "Process", tp: ntProcess, p : process)
+    return Native(what : "Process", ntp: ntProcess, p : process)
   except OSError:
     return nil

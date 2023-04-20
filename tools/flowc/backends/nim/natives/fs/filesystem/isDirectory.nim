@@ -2,5 +2,5 @@
 
 import os
 
-proc isDirectory*(path : string): bool =
+proc $F_0(isDirectory)*(path : string): bool =
   dirExists(path)

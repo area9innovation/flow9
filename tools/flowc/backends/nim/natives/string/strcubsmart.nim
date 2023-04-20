@@ -1,4 +1,4 @@
-proc strsubsmart*(s: string, start: int32, fl0wlen: int32): string =
+proc $F_0(strsubsmart)*(s: string, start: int32, fl0wlen: int32): string =
     if start >= 0 and fl0wlen > 0:
       substring(s, start, fl0wlen)
     else:

@@ -317,11 +317,10 @@ TRenderParagraph(
 		|> fixAvailableWidthForIndent(awB, indent);
 
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
-	stopDefer = ref nop;
 
-	updateFn = \wi, alignWidthM -> {
-		id = traceApi.makeRenderingId();
+	updateFn = \id, wi_raw, alignWidthM -> {
 		oldWH = getValue(paragraphWHB);
+		wi = roundUIMetricsValue(wi_raw);
 		traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
 		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
@@ -337,44 +336,63 @@ TRenderParagraph(
 			ignoreLetterSpacing, renderedLinesInfoM
 		);
 		paragraphSizeAndBaseline = paragraphSizeBaselineAndChanges.metrics;
-		newWH = paragraphSizeAndBaseline.first;
-		if (deferredRender) {
-			if (newWH != oldWH) {
-				traceApi.trace(\-> "updateFn [" + id + "] DEFER set paragraphWH wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-				doUpdate = \-> {
-					traceApi.traceAndNest(\-> "updateFn [" + id + "] DEFER set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-					next(paragraphWHB, newWH);
-					traceApi.unnestAndTrace(\-> "updateFn [" + id + "] DEFER set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-				}
-				if (dropStale) {
-					(^stopDefer)();
-					stopDefer := interruptibleTimer(10, \-> {
-						stopDefer := nop;
-						doUpdate();
-					});
-				} else {
-					deferUntilNextFrameRendered(doUpdate);
-				}
-			}
-		} else if (newWH != oldWH) {
-			traceApi.traceAndNest(\-> "updateFn [" + id + "] IMMEDIATE set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-			next(paragraphWHB, newWH);
-			traceApi.unnestAndTrace(\-> "updateFn [" + id + "] IMMEDIATE set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
-		}
 
-		nextDistinct(paragraphBaselineB, paragraphSizeAndBaseline.second);
-		nextDistinct(scaleB, eitherMap(
-			paragraphSizeBaselineAndChanges.scaleM,
-			\scale -> Factor(scale, scale),
-			Factor(1., 1.)
-		));
+		newScale = eitherMap(paragraphSizeBaselineAndChanges.scaleM, \scale -> Factor(scale, scale), Factor(1., 1.));
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] set scaleB START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", scaleB -> " + toString(newScale));
+		nextDistinct(scaleB, newScale);
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set scaleB END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", scaleB -> " + toString(newScale));
+
+		newParagraphBaseline = paragraphSizeAndBaseline.second;
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphBaselineB START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphBaselineB -> " + toString(newParagraphBaseline));
+		nextDistinct(paragraphBaselineB, newParagraphBaseline);
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphBaselineB END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphBaselineB -> " + toString(newParagraphBaseline));
+
+		newWH = paragraphSizeAndBaseline.first;
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
+		nextDistinct(paragraphWHB, newWH);
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 
 		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(getValue(paragraphWHB))  + ", linesCount: " + toString(getValue(linesCountB)));
 
 		deferred(\ -> reverseBehaviour(reflowHappenedB));
 	};
 
-	executeReflow = \ -> updateFn(getValue(awB), maybeMap(alignWidthBM, getValue));
+	stopDefer = initUnsM();
+	deferredUpdate = \wi, alignWidthM -> {
+		id = traceApi.makeRenderingId();
+		if (deferredRender) {
+			traceApi.trace(\-> "deferredUpdate [" + id + "] DEFER update wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+			doUpdate = \-> {
+				traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] DEFER update START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+				updateFn(id, wi, alignWidthM);
+				traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] DEFER update END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+			}
+			if (dropStale) {
+				if (isSome(^stopDefer)) {
+					traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+					dispUnsM(stopDefer);
+					traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+				}
+				resetTimer = interruptibleTimer(10, \-> {
+					stopDefer := None();
+					doUpdate();
+				});
+
+				setUnsM(stopDefer, \-> {
+					traceApi.trace(\-> "deferredUpdate [" + id + "] CANCELED DEFER wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+					resetTimer();
+				})
+			} else {
+				deferUntilNextFrameRendered(doUpdate);
+			}
+		} else {
+			traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] IMMEDIATE update START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+			updateFn(id, wi, alignWidthM);
+			traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] IMMEDIATE update END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
+		}
+	}
+
+	executeReflow = \ -> updateFn(traceApi.makeRenderingId(), getValue(awB), maybeMap(alignWidthBM, getValue));
 
 	dynMetricsSubscription = \w -> {
 		apply0(make2Subscribe2(
@@ -383,11 +401,12 @@ TRenderParagraph(
 			\size, ba -> {
 				if (ndynamic <= ndymamicUpper || tightWidth) {
 					// There is less or equal than upper limit of dynamic elements here, so just update immediately
-					traceApi.trace(\-> "dynMetricsSubscription executeReflow IMMEDIATE size = " + toString(size));
-					executeReflow()
+					traceApi.traceAndNest(\-> "dynMetricsSubscription size = " + toString(size) + ", baseline = " + toString(ba));
+					executeReflow();
+					traceApi.unnestAndTrace(\-> "dynMetricsSubscription size = " + toString(size) + ", baseline = " + toString(ba));
 				} else {
 					// There are more, so to prevent unnecessary work, delay the update
-					traceApi.trace(\-> "dynMetricsSubscription executeReflow DEFERRED size = " + toString(size));
+					traceApi.trace(\-> "dynMetricsSubscription executeReflow DEFERRED size = " + toString(size) + ", baseline = " + toString(ba));
 					nextDistinct(update, 1);
 				}
 			}
@@ -406,8 +425,12 @@ TRenderParagraph(
 		[
 			eitherFn(
 				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> updateFn(aw, Some(alw))),
-				\ -> makeSubscribe(awB, \aw -> updateFn(aw, None()))
+				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> {
+					deferredUpdate(aw, Some(alw));
+				}),
+				\ -> makeSubscribe(awB, \aw -> {
+					deferredUpdate(aw, None());
+				})
 			),
 			\-> subscribe(update, \u -> {
 				if (u == 1) {
@@ -1208,12 +1231,12 @@ reflowTParaWordsRec(
 
 // This function gets the form and decides, should the next form kept together in the same line or should it be placed on the next line
 keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord) -> bool {
-	switch (currentWord.word) {
+	lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
+	isWordJoiner(lastChr) || switch (currentWord.word) {
 		NonTextElement(keep): keep;
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
-			lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
-			if (isWordJoiner(lastChr) || isWordJoiner(firstChr)) true else keepWordsTogetherRec(tr)
+			isWordJoiner(firstChr) || keepWordsTogetherRec(tr);
 		}
 	}
 }
@@ -1482,6 +1505,20 @@ generalWrapElement2string(e : GeneralWrapElement) -> string {
 	}
 }
 
+tParaWord2string(w : TParaWord) -> string {
+	e = w.word;
+	switch (e) {
+		GeneralText(txt): txt;
+		GeneralSpace(str, alphabetBefore, alphabetAfter): str;
+		NewLine(): "<NL>";
+		GeneralLinePart(first, mid, end, __): first + mid + end;
+		GeneralInspectElement(inspector, element): generalWrapElement2string(element);
+		EmptyLineElement(): "<EL>";
+		NonTextElement(__): "<NonText>" + getTropicText(w.ghostView) + "</NonText>";
+		GeneralDynamicText(txt): txt;
+	}
+}
+
 makeWigiTrace_Tropic(functionName : string, words : [TParaWord]) -> WigiTraceApi {
-	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> map(words, \w -> w.word), generalWrapElement2string))
+	makeWigiTraceGeneric(functionName, makeWigiTraceIdFn(\ -> words, tParaWord2string))
 }

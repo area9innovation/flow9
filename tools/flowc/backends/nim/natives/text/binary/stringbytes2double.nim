@@ -1,7 +1,9 @@
 # native stringbytes2double : (str : string) -> double = Native.stringbytes2double;
 # Read 8 bytes of the string in UTF-16 and converts to a double
+import endians
+import unicode
 
-proc stringbytes2double(s : string) : float =
+proc $F_0(stringbytes2double)(s : string) : float =
     if (len(s) == 4):
         var bb : array[8, byte]
         for i in 0..3:

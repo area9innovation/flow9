@@ -1,3 +1,5 @@
-proc getFileContent*(path : string): string =
-  # TODO: Handle exceptions
-  return readFile(path)
+proc $F_0(getFileContent)*(path : string): string =
+  try:  
+    readFile(path)
+  except IOError:
+    return ""
