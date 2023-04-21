@@ -1,10 +1,8 @@
 # Initial prompt to teach GPT4 flow9
 
-Flow9 is a functional programming language in the ML family, with typescript like syntax.
+I'm teaching you the programming language flow9. Flow9 is a functional programming language in the ML family, with typescript-like syntax except it does not use keywords.
 
-A *flow9* program consists of modules. A module `example` is defined by a file named
-`example.flow9`.  The convention is to use lower-case
-only filenames.
+A *flow9* program consists of modules. A module `example` is defined by a file named `example.flow9`.  The convention is to use lower-case only filenames.
 
 Each module (file) can import any number of modules as dependencies. This is done
 with
@@ -21,7 +19,7 @@ Each module exports a set of names. These are declared with an `export` block:
 		// A function taking an int and a string, and returns an array of bools
 		bar(i : int, s : string) -> [bool];
 
-		// A structure with two fields
+		// A structure with two fields. Structures start with capital letters
 		Text(text : string, style : [[string]]);
 	}
 
@@ -32,6 +30,7 @@ The syntax for values is listed here:
 	d : double = 2.0 - 3.0;
 	s : string = "My string\n";
 	a : [int] = [1,2,3];
+	// Constructing a structure
 	text : Text = Text("Hello", [["bold"]]);
 
 Ints are 32-bit. Comparisons and multiplicative operations on ints are signed.
@@ -74,7 +73,7 @@ The last value in a sequence is the result. Flow9 is an expression-based languag
 
 Lambdas are defined using this syntax:
 
-	\x, y -> x + y;
+	\x, y -> x + y
 
 Polymorphic functions use `?`, `??` and so on as polymorphic types:
 
@@ -98,6 +97,17 @@ Some important functions in the standard library are:
 	substring(s : string, start : int, length : int) -> string;
 
 Some important functional data structures include ordered, balanced, binary tree in `ds/tree`, a set in `ds/set`, a Cons-list in `ds/list`.
+
+	makeTree() -> Tree<?, ??>;
+	setTree(t : Tree<?, ??>, k : ?, v : ??) -> Tree<?, ??>;
+	lookupTree(tree : Tree<?, ??>, key : ?) -> Maybe<??>;
+	foldTree(tree : Tree<?, ??>, acc : ???, f : (key : ?, value : ??, acc : ???) -> ???) -> ???;
+
+	List<?> ::= EmptyList, Cons<?>;
+		// Add head to the list "tail"
+		Cons(head : ?, tail : List<?>);
+	makeList() -> List<?>;
+	mapList : (l : List<?>, fn : (?) -> ??) -> List<??>;
 
 Respond with READ if understood.
 
@@ -126,3 +136,77 @@ which preserves balancing and order?
 # Sometimes it will forget the syntax. This prompt reminds it
 
 Write the code in flow9. Flow9 is like ML, but use Typescript syntax for calls and function definitions, except that we omit "function", "case", "return", "const" and "let" keywords.
+
+# Syntax only prompt
+
+I'm teaching you the programming language flow9. Flow9 is like ML, but use this syntax with very few keywords. Use tabs for indentation.
+
+// Data structures are structs and unions. No classes.
+
+// A structure with two fields. Structures start with capital letters
+Text(text : string, style : [[string]]);
+
+// The `Maybe` type is defined as this polymorphic union, or abstract data type:
+Maybe<?> ::= None, Some<?>;
+	None();
+	Some(value : ?);
+
+// A polymorphic list
+List<?> ::= EmptyList, Cons<?>;
+	// Add head to the list "tail"
+	Cons(head : ?, tail : List<?>);
+
+// Variables and how values are written like this. No "var" or "let" keywords
+b : bool = true || false;
+i : int = 1 + 0xdeadbeef;
+d : double = 2.0 - 3.0;
+str : string = "My string\n" + "More";
+array : [int] = [1,2,3];
+text : Text = Text("Hello", [["bold"]]);
+
+// Basic syntax for switch that corresponds to "match" in ML
+switch (value) {
+	None(): defaultvalue;
+	Some(x): { ... };
+}
+
+// Functions
+fact(n : int) -> int {
+	if (n <= 1) n
+	else n * fact(n - 1); // No "return" keyword
+}
+// Polymorphic function
+max(l : ?, r : ?) -> ? {
+	if (l < r) r else l
+}
+// Lambda expression
+\x, y -> x + y
+// "if" are expressions. flow9 is an expression language without "return" keywords
+absi = if (i > 0) {
+	i;
+} else {
+	-i;
+};
+
+// Std lib
+println(?) -> void;
+strlen(string) -> int;
+strContains(str: string, substr: string) -> bool;
+substring(s : string, start : int, length : int) -> string;
+strGlue(strs: [string], sep: string) -> string;
+superglue(xs : [?], fn : (?) -> string, sep : string) -> string;
+length([?]) -> int;
+concat([?], [?]) -> [?];
+subrange([?], index : int, length : int) -> [?];
+map([?], (?)->??) -> [??];
+fold([?], init : ??, fn : (??, ?)->??) -> ??;
+foldi([?], init : ??, fn : (int, ??, ?)->??) -> ??;
+filtermap(a : [?], test : (?) -> Maybe<??>) -> [??];
+makeTree() -> Tree<?, ??>;
+setTree(t : Tree<?, ??>, k : ?, v : ??) -> Tree<?, ??>;
+lookupTree(tree : Tree<?, ??>, key : ?) -> Maybe<??>;
+foldTree(tree : Tree<?, ??>, acc : ???, f : (key : ?, value : ??, acc : ???) -> ???) -> ???;
+makeList() -> List<?>;
+mapList : (l : List<?>, fn : (?) -> ??) -> List<??>;
+
+Answer READ if understand.

@@ -38,6 +38,12 @@ proc rt_to_string*(x: float): string =
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
 proc rt_to_string*(x: string): string = x
 
+proc rt_to_string_quot*(): string = "{}"
+proc rt_to_string_quot*(x: int32): string = intToStr(x)
+proc rt_to_string_quot*(x: float): string = rt_to_string(x)
+proc rt_to_string_quot*(x: bool): string = rt_to_string(x)
+proc rt_to_string_quot*(x: string): string = '"' & rt_escape(x) & '"'
+
   # to_bool conversions
 proc rt_to_bool*(x: int32): bool = x != 0
 proc rt_to_bool*(x: float): bool = x != 0.0
@@ -256,8 +262,14 @@ proc rt_to_string*(x: Native): string =
   of ntProcess: return "process"
   of ntHttpServer: return "http server"
   of ntFlow:    return rt_to_string(x.flow_v)
+proc rt_to_string_quot*(x: Native): string =
+  case x.ntp:
+  of ntProcess: return "process"
+  of ntHttpServer: return "http server"
+  of ntFlow:    return rt_to_string_quot(x.flow_v)
 
 proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string_quot(x.val)
+proc rt_to_string_quot*[T](x: Ref[T]): string = return "ref " & rt_to_string_quot(x.val)
 proc rt_to_string*[T](x: seq[T]): string =
   var s = "["
   for i in 0..x.len - 1:
@@ -266,6 +278,15 @@ proc rt_to_string*[T](x: seq[T]): string =
     s.add(rt_to_string_quot(x[i]))
   s.add("]")
   return s
+proc rt_to_string_quot*[T](x: seq[T]): string =
+  var s = "["
+  for i in 0..x.len - 1:
+    if i > 0:
+      s.add(", ")
+    s.add(rt_to_string_quot(x[i]))
+  s.add("]")
+  return s
+
 
 # this function quotes all strings in ".."
 proc rt_to_string_quot*(f: Flow): string =
@@ -323,8 +344,11 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
       return rt_to_flow(y)
   )
 
-proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
-proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
+
+#proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
+#proc rt_to_aaf*(x: Flow): seq[seq[Flow]] = map(x.array_v, rt_to_af)
+#proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
+#proc rt_to_rrf*(x: Flow): Ref[Flow] = Ref[Flow](val: rt_to_rf(x.ref_v))
 
 proc rt_compare*(x: Flow, y: Flow): int32
 proc rt_compare*(x: Native, y: Native): int32 =
@@ -437,9 +461,10 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
     if i != s_fields.len:
       s.str_args[i] = val
 
+# Implicit natives, which are called via `hostCall`
 proc getOs*(): string = hostOS & "," & hostCPU
-proc getUserAgent*(): string = ""
 proc getVersion*(): string = ""
+proc getUserAgent*(): string = ""
 proc getBrowser*(): string = ""
 proc getResolution*(): string = ""
 proc getDeviceType*(): string = ""

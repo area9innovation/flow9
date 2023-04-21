@@ -10,7 +10,7 @@ export {
 	parseCss(css : string) -> Stylesheet;
 
 	mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle;
-	cssMarginWidth2double(margin : CssMarginWidth) -> double;	
+	cssMarginWidth2double(margin : CssMarginWidth) -> double;
 }
 
 parseCss(css : string) -> Stylesheet {
@@ -384,6 +384,43 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 				cssUpdateMargin(style, margin);
 			}
 		}
+	} else if (prop == "top") {
+		position = CssStylePosition(
+			cssTerm2double(d.expr, -1.0),
+			style.position.bottom,
+			style.position.left,
+			style.position.right
+		);
+		CssStyle(style with position=position);
+	} else if (prop == "bottom") {
+		position = CssStylePosition(
+			style.position.top,
+			cssTerm2double(d.expr, -1.0),
+			style.position.left,
+			style.position.right
+		);
+		CssStyle(style with position=position);
+	} else if (prop == "left") {
+		position = CssStylePosition(
+			style.position.top,
+			style.position.bottom,
+			cssTerm2double(d.expr, -1.0),
+			style.position.right
+		);
+		CssStyle(style with position=position);
+	} else if (prop == "right") {
+		position = CssStylePosition(
+			style.position.top,
+			style.position.bottom,
+			style.position.left,
+			cssTerm2double(d.expr, -1.0)
+		);
+		CssStyle(style with position=position);
+	} else if (
+		prop == "-webkit-transform"
+		|| prop == "transform"
+	) {
+		CssStyle(style with transform = cssTerm2Transform(d.expr));
 	} else {
 		devtrace("Unknown CSS property: " + prop + " " + toString(d.expr));
 		style;
@@ -570,7 +607,6 @@ cssUpdateMargin(style : CssStyle, margin : CssMargin) -> CssStyle {
 }
 
 cssTerm2CssMarginWidth(c : CssTerm) -> CssMarginWidth {
-
 	number = cssTerm2double(c, 0.0);
 	text = cssTerm2string(c, "");
 
@@ -581,7 +617,50 @@ cssTerm2CssMarginWidth(c : CssTerm) -> CssMarginWidth {
 	} else {
 		zeroCssLength();
 	};
+}
 
+cssTerm2Transform(c : CssTerm) -> CssStyleTransform {
+	defRotate = defCssStyle.transform.rotate;
+	defScaleX = defCssStyle.transform.scaleX;
+	defScaleY = defCssStyle.transform.scaleY;
+	switch(c : CssTerm) {
+		CssList(terms): {
+			fold(terms, defCssStyle.transform, \acc, term -> {
+				mergeCssStyleTransform(acc, cssTerm2Transform(term));
+			});
+		};
+		CssStruct(name, arguments): {
+			if (name == "rotate" && length(arguments) > 0) {
+					CssStyleTransform(
+						cssTerm2double(arguments[0], defRotate),
+						defScaleX,
+						defScaleY
+					);
+			} else if (name == "scale" && length(arguments) > 0) {
+				switch(arguments[0] : CssTerm) {
+					CssList(terms): {
+						if (length(terms) > 1) {
+							CssStyleTransform(
+								defRotate,
+								cssTerm2double(terms[0], defScaleX),
+								cssTerm2double(terms[1], defScaleY)
+							);
+						} else {
+							defCssStyle.transform;
+						}
+					};
+					default: CssStyleTransform(
+						defRotate,
+						cssTerm2double(arguments[0], defScaleX),
+						defScaleY
+					)
+				}
+			} else {
+				defCssStyle.transform;
+			}
+		};
+		default: defCssStyle.transform;
+	}
 }
 
 parseCssBackground(cssTerms : [CssTerm], cssStyle : CssStyle) -> CssStyle {
@@ -624,6 +703,8 @@ mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle {
 		if (new.width == defCssStyle.width) orig.width else new.width,
 		if (new.height == defCssStyle.height) orig.height else new.height,
 		if (new.opacity == defCssStyle.opacity) orig.opacity else new.opacity,
+		mergeCssStyleTransform(orig.transform, new.transform),
+		new.position,
 		if (length(new.border) == 0) orig.border else new.border,
 		if (new.borderRadius == defCssStyle.borderRadius) orig.borderRadius else new.borderRadius,
 		if (length(new.background) == 0) orig.background else new.background,
@@ -681,6 +762,14 @@ cssMarginWidth2double(margin : CssMarginWidth) -> double {
 		CssLength(value, unit): value;
 		default: 0.0;
 	}	
+}
+
+mergeCssStyleTransform(orig : CssStyleTransform, new : CssStyleTransform) -> CssStyleTransform {
+	CssStyleTransform(
+		if (new.rotate == defCssStyle.transform.rotate) orig.rotate else new.rotate,
+		if (new.scaleX == defCssStyle.transform.scaleX) orig.scaleX else new.scaleX,
+		if (new.scaleY == defCssStyle.transform.scaleY) orig.scaleY else new.scaleY,
+	);
 }
 
 /*

@@ -2051,7 +2051,11 @@ class RenderSupport {
 
 			return stage;
 		} else {
-			return cast(PixiStage.children[0], FlowContainer);
+			if (FullScreenClip != null) {
+				return FullScreenClip;
+			} else {
+				return cast(PixiStage.children[0], FlowContainer);
+			}
 		}
 	}
 
@@ -3729,8 +3733,10 @@ class RenderSupport {
 		}
 	}
 
+	private static var FullScreenClip : FlowContainer = null;
 	public static function requestFullScreenClip(clip : FlowContainer) {
 		if (IsFullScreen || clip == null || untyped !clip.isNativeWidget) return;
+		FullScreenClip = clip;
 		var nativeWidget = clip.nativeWidget;
 		clip.updateKeepNativeWidgetInFullScreenModeParent(true);
 		if (nativeWidget != null) {
@@ -3747,6 +3753,7 @@ class RenderSupport {
 
 	public static function exitFullScreenClip(clip : FlowContainer) {
 		if (clip == null || untyped !clip.isNativeWidget) return;
+		FullScreenClip = null;
 		var nativeWidget = clip.nativeWidget;
 		clip.updateKeepNativeWidgetInFullScreenModeParent(false);
 		if (nativeWidget != null) {
