@@ -143,7 +143,11 @@ public class FlowNotificationsAPI {
                 .setAction(pkgName + FlowNotificationsAPI.ON_NOTIFICATION_CANCEL)
                 .putExtra(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_ID, notificationId);
 
-        PendingIntent onClickPendingIntent = PendingIntent.getActivity(context, notificationId, onClickIntent, pendingIntentFlags);
+		if (android.os.Build.VERSION.SDK_INT >= 31) {
+			pendingIntentFlags |= 0x02000000; //PendingIntent.FLAG_MUTABLE;
+		}
+
+		PendingIntent onClickPendingIntent = PendingIntent.getActivity(context, notificationId, onClickIntent, pendingIntentFlags);
         PendingIntent onCancelPendingIntent = PendingIntent.getBroadcast(context, notificationId + FlowNotificationsAPI.CANCEL_INTENT_OFFSET, onCancelIntent, pendingIntentFlags);
 
         alarmIntent.putExtra(pkgName + FlowNotificationsAPI.EXTRA_ON_CLICK_INTENT, onClickPendingIntent);
