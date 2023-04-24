@@ -12,6 +12,9 @@ export {
 		direct: bool     // direct vs. reverse iteration over args
 	);
 
+	// Greneral transformation of a program: on a module level
+	fiMapProgramModule(prog: FiProgram, fn: (FiModule, FiProgram) -> FiModule) -> FiProgram;
+
 	// Greneral transformation of a program: on a declaration level
 	fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram;
 
@@ -313,15 +316,19 @@ fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string] {
 	}
 }
 
-fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram {
-	modules = mapTree(prog.modules, \module -> fiMapModule(prog, module, fn));
+fiMapProgramModule(prog: FiProgram, fn: (FiModule, FiProgram) -> FiModule) -> FiProgram {
+	modules = mapTree(prog.modules, \m -> fn(m, prog));
 	FiProgram(prog with
 		modules = modules,
 		names = foldTree(modules, 
 			FiGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree()),
-			\__,module, acc -> fiModule2GlobalNames(module, acc)
+			\__,module, acc -> fiAddModule2GlobalNames(module, acc)
 		)
 	);
+}
+
+fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram {
+	fiMapProgramModule(prog, \m, p -> fiMapModule(p, m, fn));
 }
 
 fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ? {
@@ -351,7 +358,7 @@ fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiPro
 	);
 }
 
-fiModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames {
+fiAddModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames {
 	names1 = fold(module.structs, names, \acc, x -> 
 		FiGlobalNames(acc with 
 			struct2module = setTree(acc.struct2module, x.name, module.fileinfo.flowfile),
@@ -442,9 +449,14 @@ fiMapProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgr
 				}
 			}
 			FiNativeDec(__,__,__,__,fallback,__,__): {
-				mapped = fn(fallback, toplevel, module, prog);
-				if (isSameObj(fallback, mapped)) [toplevel] else {
-					[FiNativeDec(toplevel with fallbackLambda = mapped)];
+				switch (fallback) {
+					FiVoid(__): [toplevel];
+					default: {
+						mapped = fn(fallback, toplevel, module, prog);
+						if (isSameObj(fallback, mapped)) [toplevel] else {
+							[FiNativeDec(toplevel with fallbackLambda = mapped)];
+						}
+					}
 				}
 			}
 		}

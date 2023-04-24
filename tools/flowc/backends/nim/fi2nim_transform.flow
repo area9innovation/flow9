@@ -6,38 +6,48 @@ import tools/flowc/manipulation/tail_call;
 import tools/flowc/manipulation/flatten_unions;
 
 export {
-	fiNimTransformProgram(program: FiProgram, effects: FiEffects) -> FiProgram;
+	fiNimTransformProgram(program: FiProgram, effects: FiEffects, natives: Tree<string, NimNative>) -> FiProgram;
 }
 
-fiNimTransformProgram(program: FiProgram, effects: FiEffects) -> FiProgram {
+fiNimTransformProgram(program: FiProgram, effects: FiEffects, natives: Tree<string, NimNative>) -> FiProgram {
 	names = program.names;
 	// fiFlattenUnions: Unions shouldn't contain other unions - only structs
 	// fiCompleteStructTypars: None() is inherently polymorphic via Maybe<?>
+	// fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram;
+	// fiNimMakeIdsUnique: `st_FINALLY` and `st_Finally` in nim are equivalent ids - fix it
+
 	p = program
-		|> \x -> fiMapProgramExp(x, \y,__,__,__ -> fiExplicitCastInSwitch1(y, names))
+		|> \x -> fiResolveNatives(x, \n -> containsKeyTree(natives, n))
 		|> fiRemoveImplicitStructTypars
 		|> fiFlattenUnions
+		|> fiNimMakeIdsUnique
 	;
+	debug_param = getUrlParameter("nim-debug");
 	fiMapProgramToplevel(p, \toplevel: FiToplevel, __,__ ->  {
-		debug = toplevel.name == getUrlParameter("nim-debug");
+		debug = (toplevel.name == debug_param); // || (debug_param == "1");
 		switch (toplevel) {
 			FiFunctionDec(name, lambda, type,__,__): {
 				[FiFunctionDec(toplevel with
 					lambda = cast(
-						fiNimPrepareExp(lambda, type, debug, p.names, effects):
+						fiNimPrepareExp(name, lambda, type, debug, p.names, effects):
 						FiExp -> FiLambda
 					)
 				)];
 			}
 			FiGlobalVar(name, value, type,__,__): {
 				[FiGlobalVar(toplevel with
-					value = fiNimPrepareExp(value, type, debug, p.names, effects)
+					value = fiNimPrepareExp(name, value, type, debug, p.names, effects)
 				)];
 			}
 			FiNativeDec(name, __, type, nativeName, fallback,__,__): {
-				[FiNativeDec(toplevel with
-					fallbackLambda = fiNimPrepareExp(fallback, type, debug, p.names, effects)
-				)];
+				switch (fallback) {
+					FiVoid(__): [toplevel];
+					default: {
+						[FiNativeDec(toplevel with
+							fallbackLambda = fiNimPrepareExp(name, fallback, type, debug, p.names, effects)
+						)];
+					}
+				}
 			}
 			default: [toplevel];
 		}
@@ -45,7 +55,7 @@ fiNimTransformProgram(program: FiProgram, effects: FiEffects) -> FiProgram {
 }
 
 
-fiNimPrepareExp(e: FiExp, type: FiType, debug: bool, names: FiGlobalNames, effects: FiEffects) -> FiExp {
+fiNimPrepareExp(name: string, e: FiExp, type: FiType, debug: bool, names: FiGlobalNames, effects: FiEffects) -> FiExp {
 	maybe_show = \fn, msg -> \x -> {
 		e1 = fn(x);
 		if (!debug) e1 else {
@@ -53,14 +63,18 @@ fiNimPrepareExp(e: FiExp, type: FiType, debug: bool, names: FiGlobalNames, effec
 			e1;
 		}
 	}
+	if (debug) {
+		println(name + " - EXPRR:\n" + toStringFormatted(e));
+	}
 	e
 	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
-	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, names), "fiExpMakeCastsExplicit")
 	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, names), "fiExplicitCastInSwitch1")
+	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, names), "fiExpMakeCastsExplicit")
 	|> maybe_show(\y -> fiExpShortcutTrivialSwitch(y, names), "fiExpShortcutTrivialSwitch")
 	|> maybe_show(\z -> fiRemoveUnusedVars(z, effects), "fiRemoveUnusedVars")
 	|> maybe_show(\x -> fiNimInlineHostCalls(names, x), "fiNimInlineHostCalls")
 	|> maybe_show(\x -> fiNimCastEmptyArrays(x), "fiNimCastEmptyArrays")
+	|> maybe_show(\x -> fiRemoveTrivialCasts(x), "fiRemoveTrivialCasts")
 	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
 	|> maybe_show(fiExpNormalizeSeqences, "fiExpNormalizeSeqences")
 	|> maybe_show(fiPullStatementsUp, "fiPullStatementsUp")
@@ -130,4 +144,173 @@ fiNimCastEmptyArrays(e: FiExp) -> FiExp {
 		}
 		default: x;
 	}, true);
+}
+
+fiNimMakeIdsUnique(program: FiProgram) -> FiProgram {
+	ids = concat3(
+		getTreeKeys(program.names.structs),
+		getTreeKeys(program.names.unions),
+		getTreeKeys(program.names.toplevel)
+	);
+	ambig_ids = fiNimAmbiguousIds(ids);
+	if (length(ambig_ids) == 0) program else {
+		ambig2s = \ambig -> {
+			strGlue(ambig, ", ") + " renamed to: " + strGlue(mapi(ambig, \i, nm -> nm + i2s(i + 1)), ", ")
+		}
+		if (program.config.verbose > 0) {
+			msg = if (length(ambig_ids) == 1) {
+				ambig2s(ambig_ids[0]);
+			} else {
+				"\n" + strGlue(map(ambig_ids, \ambig -> "\t" + ambig2s(ambig)), "\n")
+			}
+			fcPrintln("Ambiguous ids: " + msg, program.config.threadId);
+		}
+		renaming = fold(ambig_ids, makeTree(), \acc, ambig -> 
+			foldi(ambig, acc, \i, ac, id -> setTree(ac, id, id + i2s(i + 1)))
+		);
+		fiRenameGlobalsInProgram(program, renaming);
+	}
+}
+
+fiNimAmbiguousIds(ids: [string]) -> [[string]] {
+	nim_id = \x -> {
+		x1 = strReplace(x, "_", "");
+		getCharAt(x, 0) + toLowerCase(substring(x, 1, strlen(x) - 1));
+	}
+	nim_id_2_ids = fold(ids, makeTree(), \acc, id -> {
+		id1 = nim_id(id);
+		setTree(acc, id1, concat(lookupTreeDef(acc, id1, []), [id]));
+	});
+	filtermap(tree2pairs(nim_id_2_ids), \p -> if (length(p.second) == 1) None() else Some(p.second));
+}
+
+fiRenameGlobalsInProgram(prog: FiProgram, renaming: Tree<string, string>) -> FiProgram {
+	fiMapProgramModule(prog, \m,__ -> fiRenameGlobalsInModule(m, renaming));
+}
+
+fiRenameGlobalsInModule(m: FiModule, renaming: Tree<string, string>) -> FiModule {
+	FiModule(m with 
+		structs = map(m.structs, \s -> cast(fiRenameGlobalsInToplevel(s, renaming): FiToplevel -> FiTypeStruct)),
+		unions = map(m.unions, \u -> cast(fiRenameGlobalsInToplevel(u, renaming): FiToplevel -> FiTypeUnion)),
+		functions = map(m.functions, \s -> cast(fiRenameGlobalsInToplevel(s, renaming): FiToplevel -> FiFunctionDec)),
+		globalVars = map(m.globalVars, \s -> cast(fiRenameGlobalsInToplevel(s, renaming): FiToplevel -> FiGlobalVar)),
+		natives = map(m.natives, \s -> cast(fiRenameGlobalsInToplevel(s, renaming): FiToplevel -> FiNativeDec)),
+		initOrder = map(m.initOrder, \name -> lookupTreeDef(renaming, name, name))
+	);
+}
+
+fiRenameGlobalsInToplevel(x: FiToplevel, renaming: Tree<string, string>) -> FiToplevel {
+	switch (x) {
+		FiTypeStruct(name, typars, args, s):
+			FiTypeStruct(
+				lookupTreeDef(renaming, name, name),
+				map(typars, \t -> fiRenameGlobalsInType(t, renaming)),
+				map(args, \arg -> FiStructArg(arg with type = fiRenameGlobalsInType(arg.type, renaming))), s);
+		FiTypeUnion(name, typars, typenames, s): 
+			FiTypeUnion(
+				lookupTreeDef(renaming, name, name),
+				map(typars, \t -> fiRenameGlobalsInType(t, renaming)),
+				map(typenames, \tn -> cast(fiRenameGlobalsInType(tn, renaming): FiType -> FiTypeName)), s);
+		FiFunctionDec(name, lambda, type, s1, s2):
+			FiFunctionDec(
+				lookupTreeDef(renaming, name, name),
+				cast(fiRenameGlobalsInExp(lambda, renaming): FiExp -> FiLambda),
+				cast(fiRenameGlobalsInType(type, renaming): FiType -> FiTypeFunction), s1, s2);
+		FiGlobalVar(name, value, type, s1, s2):
+			FiGlobalVar(
+				lookupTreeDef(renaming, name, name),
+				fiRenameGlobalsInExp(value, renaming),
+				fiRenameGlobalsInType(type, renaming), s1, s2);
+		FiNativeDec(name, _io, type, nativename, fallback, s1, s2):
+			FiNativeDec(
+				lookupTreeDef(renaming, name, name), _io,
+				fiRenameGlobalsInType(type, renaming), nativename,
+				fiRenameGlobalsInExp(fallback, renaming), s1, s2);
+	}
+}
+
+fiRenameGlobalsInType(t: FiType, renaming: Tree<string, string>) -> FiType {
+	switch (t) {
+		FiTypeRef(rt): {
+			FiTypeRef(fiRenameGlobalsInType(rt, renaming));
+		};
+		FiTypeArray(at): {
+			FiTypeArray(fiRenameGlobalsInType(at, renaming));
+		}
+		FiTypeName(name, tps): {
+			FiTypeName(
+				lookupTreeDef(renaming, name, name),
+				map(tps, \x -> fiRenameGlobalsInType(x, renaming))
+			);
+		}
+		FiTypeFunction(args, rt): {
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg.name, fiRenameGlobalsInType(arg.type, renaming))),
+				fiRenameGlobalsInType(rt, renaming)
+			);
+		}
+		default: t;
+	}
+}
+
+fiRenameGlobalsInExp(e: FiExp, renaming: Tree<string, string>) -> FiExp {
+	switch (e) {
+		FiVar(name, type, s):
+			FiVar(
+				lookupTreeDef(renaming, name, name),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiCast(x, from, to, type, s): 
+			FiCast(
+				fiRenameGlobalsInExp(x, renaming),
+				fiRenameGlobalsInType(from, renaming),
+				fiRenameGlobalsInType(to, renaming),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiIf(cond, pos, neg, type, s): 
+			FiIf(
+				fiRenameGlobalsInExp(cond, renaming),
+				fiRenameGlobalsInExp(pos, renaming),
+				fiRenameGlobalsInExp(neg, renaming),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiCall(fn, as, type, s): 
+			FiCall(
+				fiRenameGlobalsInExp(fn, renaming),
+				map(as, \a -> fiRenameGlobalsInExp(a, renaming)),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiLet(nm, tp, e1, e2, type, s):
+			FiLet(nm,
+				fiRenameGlobalsInType(tp, renaming),
+				fiRenameGlobalsInExp(e1, renaming),
+				fiRenameGlobalsInExp(e2, renaming),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiCallPrim(op, es, type, s): 
+			FiCallPrim(op,
+				map(es, \x -> fiRenameGlobalsInExp(x, renaming)),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiSeq(es, type, s): 
+			FiSeq(
+				map(es, \x -> fiRenameGlobalsInExp(x, renaming)),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiLambda(args, lambda, type, s): 
+			FiLambda(
+				map(args, \arg -> FiFunArg(arg.name, fiRenameGlobalsInType(arg.type, renaming))),
+				fiRenameGlobalsInExp(lambda, renaming),
+				cast(fiRenameGlobalsInType(type, renaming): FiType -> FiTypeFunction), s);
+		FiSwitch(v, vtype, cases, type, s): 
+			FiSwitch(v,
+				fiRenameGlobalsInType(vtype, renaming),
+				map(cases, \case -> FiCase(case with
+					struct = lookupTreeDef(renaming, case.struct, case.struct),
+					body = fiRenameGlobalsInExp(case.body, renaming),
+				)),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiRequire(file, x, type, s): 
+			FiRequire(file,
+				fiRenameGlobalsInExp(x, renaming),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiUnsafe(name, x, type, s): 
+			FiUnsafe(name,
+				fiRenameGlobalsInExp(x, renaming),
+				fiRenameGlobalsInType(type, renaming), s);
+		FiConst(): e;
+	}
 }

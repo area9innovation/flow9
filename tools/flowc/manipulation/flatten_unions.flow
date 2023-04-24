@@ -136,7 +136,8 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 	}
 	names = program.names;
 	do_transform = \e, typars, name -> {
-		fiCorrectVarTypars(
+		//fiCorrectVarTypars(
+		fiCorrectVarTypes(
 			fiTransformImplicitStructTyparsFromFiExp(e, typars, on_err, fn, names, name)
 		);
 	}
@@ -248,6 +249,20 @@ fiCorrectVarTypars(e: FiExp) -> FiExp {
 					default: x;
 				}
 			}, x);
+		}
+		default: x;
+	}, true);
+}
+
+fiCorrectVarTypes(e: FiExp) -> FiExp {
+	fiMapExp(e, \x, env -> switch (x) {
+		FiVar(name, type1,__): {
+			eitherMap(lookupTree(env.locals, name), \v ->
+				if (fiEqualTypes(type1, v.type)) x else {
+					//println("Type of a var: " + name + " is reset to: " + pretFiType(v.type) + ", former type: " + pretFiType(type1));
+					FiVar(x with type = v.type);
+				}, x
+			);
 		}
 		default: x;
 	}, true);
@@ -365,12 +380,14 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 
 fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram {
 	// for each function name decide: if it is a true native or should use a fallback
-	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc ->
+	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc: Tree<string, FiDeclaration> ->
 		fold(module.natives,
 			fold(module.functions, acc, 
 				\ac, func -> if (native_is_implemented(func.name)) ac else setTree(ac, func.name, func)
 			),
-			\ac, nat -> if (native_is_implemented(nat.name)) setTree(ac, nat.name, nat) else ac
+			\ac, nat: FiNativeDec -> if (!native_is_implemented(nat.name)) ac else {
+				setTree(ac, nat.name, FiNativeDec(nat with fallbackLambda = FiVoid(0)))
+			}
 		)
 	);
 	FiProgram(program with
@@ -379,7 +396,9 @@ fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -
 				// Filter out fallbacks for non-true natives
 				functions = filter(module.functions, \func -> !native_is_implemented(func.name)),
 				// Filter out true natives
-				natives = filter(module.natives, \nat -> native_is_implemented(nat.name)),
+				natives = filtermap(module.natives, \nat -> if (!native_is_implemented(nat.name)) None() else
+					Some(FiNativeDec(nat with fallbackLambda = FiVoid(0)))
+				),
 			)
 		),
 		names = FiGlobalNames(program.names with

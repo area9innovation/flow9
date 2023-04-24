@@ -97,8 +97,6 @@ fiExpMakeVarsUnique(e: FiExp) -> FiExp;
 
 fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp;
 
-debug_fiExpMakeCastsExplicit = ref false;
-
 fiExpInterpolateTypars(e: FiExp, names: FiGlobalNames) -> FiExp;
 
 fiExpReturnVars(e: FiExp) -> FiExp;
@@ -107,6 +105,8 @@ fiExtractCallNonScalarExp(e: FiExp, names: FiGlobalNames) -> FiExp;
 
 // Remove casts from non-scalar types to flow - these casts are implicit
 fiRemoveImplicitCasts(e: FiExp) -> FiExp;
+
+fiRemoveTrivialCasts(e: FiExp) -> FiExp;
 
 fiPushExpsDown(e: FiExp) -> FiExp;
 
@@ -265,6 +265,13 @@ fiRemoveUnusedVars(e : FiExp, effects : FiEffects) -> FiExp {
 					}
 				}
 			}
+			FiSeq(es, __,__): {
+				es1 = filtermapi(es, \i, y ->
+					// Remove non-last elements with no effects
+					if (i + 1 == length(es) || hasFiSideEffects(effects, y)) Some(y) else None()
+				);
+				if (length(es1) == 1) es1[0] else FiSeq(x with es = es1);
+			}
 			default: x;
 		}
 	);
@@ -280,18 +287,24 @@ fiExplicitCastInSwitch1(e : FiExp, names: FiGlobalNames) -> FiExp {
 							if (c.struct == "default") c else {
 								switch (lookupTree(names.structs, c.struct)) {
 									Some(struct): {
-										is_var = \y -> switch (y) {
-											FiVar(z,__,__): if (z == var.name) Some(y) else None();
+										is_var = \y, nm -> switch (y) {
+											FiVar(z,__,__): if (z == nm) Some(y) else None();
 											default: None();
 										}
-										if (isNone(fiFindInExpr(c.body, is_var))) c else { 
+										spec_var = var.name + "__spec";
+										if (isNone(fiFindInExpr(c.body, \y -> is_var(y, var.name)))) {
+											// No variable in the body at all
+											c;
+										} else if (isSome(fiFindInExpr(c.body, \y -> is_var(y, spec_var)))) {
+											// Cast is already done
+											c;
+										} else { 
 											typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), vtype);
 											case_type = FiTypeName(struct.name, typars_instances);
-											spec_var = var.name + "__spec";
 											FiCase(c with body = 
 												FiLet(spec_var, case_type, 
 													FiCast(var, vtype, case_type, case_type, start),
-													fiRenameVar(c.body, var.name, spec_var),
+													fiReplaceVar(c.body, var.name, FiVar(spec_var, case_type, 0)),
 													fiExpType(c.body), c.body.start
 												)
 											);
@@ -585,10 +598,11 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 			);
 		}
 		FiSwitch(v, v_type, cases, type,__): {
-			FiSwitch(x with
+			x1 = FiSwitch(x with
 				cases = map(cases, \c -> FiCase(c with body = fiExpMakeCastsExplicit(c.body, t, names))),
 				type = t
 			);
+			fiMakeCast(x1, fiExpType(x1), t);
 		}
 		FiSeq(es, type,__): {
 			FiSeq(x with 
@@ -978,6 +992,15 @@ fiRemoveImplicitCasts(e: FiExp) -> FiExp {
 				}
 				default: x;
 			}
+		}
+		default: x;
+	});
+}
+
+fiRemoveTrivialCasts(e: FiExp) -> FiExp {
+	mapFiExp(e, \x -> switch (x) {
+		FiCast(y, from, to, type, start): {
+			if (fiEqualTypes(from, to)) y else x;
 		}
 		default: x;
 	});

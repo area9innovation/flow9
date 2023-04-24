@@ -161,7 +161,8 @@ fi2nimCheckPolylorphism(p : FiProgram) -> void {
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	effects = collectFiEffects(program0);
-	program = fiNimTransformProgram(program0, effects);
+	natives = fi2nimNatives(cfg);
+	program = fiNimTransformProgram(program0, effects, natives);
 	fi2nimCheckPolylorphism(program);
 
 	is_explicit_polymorphic = \nm -> switch (lookupTree(program.names.structs, nm)) {
@@ -186,22 +187,6 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	specializations = filterTree(
 		mapTree(
 			find_specializations(program, polymorphics, makeTree(), false), 
-			/*\specs -> filterSet(mapSet(specs, \spec -> fiPurifyType(spec)), \spec -> {
-				switch (spec) {
-					FiTypeName(nm, typars): {
-						struct = lookupTreeDef(program.names.structs, nm, FiTypeStruct("", [], [], 0));
-						if (length(typars) == length(struct.typars)) {
-							true;
-						} else {
-							fcPrintln("Struct type parameters number mismatch the specialization type parameters number:\n" +
-								"struct: " + pretFiStructOrUnion(struct) + ", specialization: " + pretFiType(spec), cfg.threadId
-							);
-							false;
-						}
-					}
-					default: true;
-				}
-			})*/
 			\specs -> mapSet(specs, \spec -> fiPurifyType(spec))
 		),
 		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
@@ -291,6 +276,15 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		)
 	));
 
+	casts = fi2nimCasts(program);
+	if (debug_polymorphics) {
+		println("casts:\n" +
+			strIndent(superglue(tree2pairs(casts), \p -> 
+				pretFiType(p.first) + " =>\n" + strIndent(superglue(set2array(p.second), \x -> pretFiType(x), "\n")),
+			"\n"))
+		);
+	}
+
 	env0 = FiNimEnv(cfg, program, "", ref makeSet(),
 		structs,
 		unions,
@@ -298,29 +292,34 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		specialized_structs,
 		specialized_unions,
 		specializations,
-		fi2nimCasts(program),
+		casts,
 		effects, "", [],
-		fi2nimNatives(cfg),
+		natives,
 		[], makeTree(), makeTree()
 	);
 	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
 }
 
 fi2nimCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
-	proc_exp = \x, acc -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
+	proc_exp = \x, acc, nm -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
 		FiCast(__,from, to,__,__): {
 			from1 = fiPurifyType(from);
-			setTree(ac, from1, 
-				insertSet(lookupTreeDef(ac, from1, makeSet()), fiPurifyType(to))
-			);
+			to1 = fiPurifyType(to);
+			if (fiEqualTypes(from1, to1)) {
+				ac;
+			} else {
+				setTree(ac, from1, 
+					insertSet(lookupTreeDef(ac, from1, makeSet()), to1)
+				);
+			}
 		}
 		default: ac;
 	}, AstTraverseOrder(true, true));
 	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
 		switch (toplevel) {
-			FiFunctionDec(__,lambda,__,__,__): proc_exp(lambda, acc);
-			FiGlobalVar(__,value,__,__,__): proc_exp(value, acc);
-			FiNativeDec(__,__,__,__,fallback,__,__): proc_exp(fallback, acc);
+			FiFunctionDec(nm, lambda,__,__,__): proc_exp(lambda, acc, nm);
+			FiGlobalVar(nm, value,__,__,__): proc_exp(value, acc, nm);
+			FiNativeDec(nm,__,__,__,fallback,__,__): proc_exp(fallback, acc, nm);
 			default: acc;
 		}
 	);
