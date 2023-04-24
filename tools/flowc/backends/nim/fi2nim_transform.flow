@@ -1,0 +1,128 @@
+import tools/flowc/backends/nim/fi2nim_utils;
+import tools/flowc/backends/nim/fi2nim_code;
+import tools/flowc/manipulation/transform_exps;
+import tools/flowc/manipulation/tail_call;
+import tools/flowc/manipulation/flatten_unions;
+
+export {
+	fiNimTransformProgram(program: FiProgram, effects: FiEffects) -> FiProgram;
+}
+
+fiNimTransformProgram(program: FiProgram, effects: FiEffects) -> FiProgram {
+	names = program.names;
+	// fiFlattenUnions: Unions shouldn't contain other unions - only structs
+	// fiCompleteStructTypars: None() is inherently polymorphic via Maybe<?>
+	p = program
+		//|> fiCompleteStructTypars
+		|> fiRemoveImplicitStructTypars
+		|> fiFlattenUnions
+	;
+	fiMapProgramToplevel(p, \toplevel: FiToplevel, __,__ ->  {
+		debug = toplevel.name == getUrlParameter("nim-debug");
+		switch (toplevel) {
+			FiFunctionDec(name, lambda, type,__,__): {
+				[FiFunctionDec(toplevel with
+					lambda = cast(
+						fiNimPrepareExp(lambda, type, debug, p.names, effects):
+						FiExp -> FiLambda
+					)
+				)];
+			}
+			FiGlobalVar(name, value, type,__,__): {
+				[FiGlobalVar(toplevel with
+					value = fiNimPrepareExp(value, type, debug, p.names, effects)
+				)];
+			}
+			FiNativeDec(name, __, type, nativeName, fallback,__,__): {
+				[FiNativeDec(toplevel with
+					fallbackLambda = fiNimPrepareExp(fallback, type, debug, p.names, effects)
+				)];
+			}
+			default: [toplevel];
+		}
+	});
+}
+
+
+fiNimPrepareExp(e: FiExp, type: FiType, debug: bool, names: FiGlobalNames, effects: FiEffects) -> FiExp {
+	maybe_show = \fn, msg -> \x -> {
+		e1 = fn(x);
+		if (!debug) e1 else {
+			println(msg + ":\n" + pretFiExp(e1));
+			e1;
+		}
+	}
+	e
+	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
+	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, names), "fiExpMakeCastsExplicit")
+	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, names), "fiExplicitCastInSwitch1")
+	|> maybe_show(\z -> fiRemoveUnusedVars(z, effects), "fiRemoveUnusedVars")
+	|> maybe_show(\x -> fiNimInlineHostCalls(names, x), "fiNimInlineHostCalls")
+	|> maybe_show(\x -> fiNimCastEmptyArrays(x), "fiNimCastEmptyArrays")
+	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
+	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
+	|> maybe_show(fiExpNormalizeSeqences, "fiExpNormalizeSeqences")
+	|> maybe_show(fiPullStatementsUp, "fiPullStatementsUp")
+}
+
+
+fiDecast(e: FiExp) -> FiExp {
+	switch (e) {
+		FiCast(x, __,__,__,__): fiDecast(x);
+		default: e;
+	}
+}
+
+fiNimInlineHostCalls(names: FiGlobalNames, e: FiExp) -> FiExp {
+	fiMapExp(e, \x,__ -> switch (x) {
+		FiCall(f, args, ret_type, s1): {
+			switch(f) {
+				FiVar(v, v_type, s2): {
+					if (v != "hostCall") x else {
+						fn = cast(args[0]: FiExp -> FiString).s;
+						fn_args = cast(fiDecast(args[1]): FiExp -> FiCallPrim).es;
+						mdecl: Maybe<FiDeclaration> = lookupTree(names.toplevel, fn);
+						switch (mdecl) {
+							Some(decl): {
+								fn_type = cast(decl.type: FiType -> FiTypeFunction);
+								out_type = FiTypeFunction(map(fn_args, \arg -> FiFunArg("", fiExpType(arg))), ret_type);
+								call1 = FiCall(x with f = FiVar(fn, fn_type, s2), args = fn_args);
+								if (fiEqualTypes(fn_type.returnType, ret_type)) call1 else {
+									switch (fn_type.returnType) {
+										FiTypeVoid(): {
+											FiCall(call1 with type = FiTypeVoid());
+										}
+										default: {
+											FiCast(call1, fn_type.returnType, ret_type, ret_type, s1);
+										}
+									}
+								}
+							}
+							None(): {
+								x;
+							}
+						}
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true);
+}
+
+fiNimCastEmptyArrays(e: FiExp) -> FiExp {
+	fiMapExp(e, \x,__ -> switch (x) {
+		FiCallPrim(op, args, ret_type, s1): {
+			switch(op) {
+				FcArrayPrim(): {
+					if (length(args) > 0) x else {
+						FiCast(x, FiTypeArray(FiTypeFlow()), ret_type, ret_type, s1);
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true);
+}
