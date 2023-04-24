@@ -11,7 +11,7 @@ export {
 		FlexibleGridAlignment ::= RelativeAlignment, CenterAlign, TightWidth;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, FlexibleGridAlignment,
 			TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector, TFlexibleGridMaxContentWidthInspector,
-			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold;
+			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode;
 
 			TWrapNewRow(wrap : bool); // New row should be below all the elements in the previous one (true by default for horizontal grid)
 			TWrapNewColumn(wrap : bool); // New column should be to the right of all the elements in the previous one (true by default for vertical grid)
@@ -31,6 +31,8 @@ export {
 			TFlexibleGridContentSizeInspector(wh : DynamicBehaviour<WidthHeight>);
 			// Sum of all content widths
 			TFlexibleGridMaxContentWidthInspector(maxWidth : DynamicBehaviour<double>);
+			// Renders only items inside a viewport, keeps their metrics when outside
+			TFlexibleGridLazyRenderingMode(viewport : Transform<WidthHeight>, scrollPosition : Transform<Point>);
 }
 
 TFlexibleGridItem(
@@ -72,6 +74,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	contentSizeInspector = tryExtractStruct(style, TFlexibleGridContentSizeInspector(makeWH()));
 	maxContentWidthInspector = tryExtractStruct(style, TFlexibleGridMaxContentWidthInspector(make(0.)));
 	stageSizeB = make(0.);
+	lazyRenderingMode = tryExtractStruct(style, TFlexibleGridLazyRenderingMode(makeWH(), makePoint()));
 	availableMinMax = extractStruct(style, TAvailableMinMax(stageSizeB, stageSizeB));
 	alignment : FlexibleGridAlignment =
 		if (contains(style, TightWidth()))
@@ -93,6 +96,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	sameSizeBaseline : DynamicBehaviour<double> = make(0.0);
 	sameSizeMinWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
 	sameSizeMaxWH : DynamicBehaviour<WidthHeight> = make(zeroWH);
+	firstItemWH = makeWH();
 
 	itemsB0 =
 		fmap(items, \it -> {
@@ -146,15 +150,43 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			isRTL
 		);
 
-	item2Tropic = \item : TFlexibleGridItem, isFirst : Transform<bool> ->
-		TIfLazy(if (isSameSize) isFirst else const(true), \b -> {
-			TInspect(
-				if (b) {
-					[ISize(item.wh), IMinSize(item.minWH), IMaxSize(item.maxWH), IBaseline(item.baseline)];
-				} else {
-					[];
+	item2Tropic = \item : TFlexibleGridItem, isFirst : Transform<bool> -> {
+		translatePoint = fsubselect(item.tr, FLift(idfn));
+		TIfLazy(if (isSameSize || isSome(lazyRenderingMode)) isFirst else const(true), \b -> {
+			eitherMap(lazyRenderingMode, \lrm -> {
+					showItem =
+						if (verticalGrid)
+							fselect4(fwidth(item.wh), fpointX(translatePoint), fwidth(lrm.viewport), fpointX(lrm.scrollPosition),
+								\w, trX, vw, spX -> {pos = trX - spX; pos >= -w && pos <= vw}
+							)
+						else
+							fselect4(fheight(item.wh), fpointY(translatePoint), fheight(lrm.viewport), fpointY(lrm.scrollPosition),
+								\h, trY, vh, spY -> {pos = trY - spY; pos >= -h && pos <= vh}
+							);
+					showInitialSize = make(!b);
+
+					if (b)
+						TInspect([ISize(firstItemWH)],
+							TInspect([ISize(item.wh), IMinSize(item.minWH), IMaxSize(item.maxWH), IBaseline(item.baseline)], item.t)
+						)
+					else
+						TInspect(
+							[ISize(item.wh), IMinSize(item.minWH), IMaxSize(item.maxWH), IBaseline(item.baseline)],
+							TGroup2(
+								TShow(showInitialSize, TSized(firstItemWH)),
+								TShowKeepMetrics(showItem, item.t)
+							)
+						)
+						|> (\t -> TConstruct([\ -> fwhen(showItem, \ -> nextDistinct(showInitialSize, false))], t))
 				},
-				item.t
+				TInspect(
+					if (b) {
+						[ISize(item.wh), IMinSize(item.minWH), IMaxSize(item.maxWH), IBaseline(item.baseline)];
+					} else {
+						[];
+					},
+					item.t
+				)
 			)
 			|> (\f ->
 				if (isSameSize) {
@@ -179,7 +211,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				animation,
 				\a -> {
 					pos = make(None());
-					trigger = ffuse(fsubselect(item.tr, idfn |> FLift));
+					trigger = ffuse(translatePoint);
 
 					TEasingAnimation(
 						a.deltaTimer,
@@ -189,14 +221,15 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 						\tr -> eitherMap(getValue(pos), \p -> Some(Pair(p, tr)), None()),
 						\tr -> nextDistinct(pos, Some(tr.second)),
 						\tr, p -> nextDistinct(pos, Some(Point(lerp(tr.first.x, tr.second.x, p), lerp(tr.first.y, tr.second.y, p)))),
-						TTranslate(feither(pos, fsubselect(item.tr, idfn |> FLift)), tropic)
+						TTranslate(feither(pos, translatePoint), tropic)
 					)
 					|> (\f -> TConstruct(trigger.second, f))
 					|> TOnConstruct(\ -> nextDistinct(pos, Some(fgetValue(getValue(item.tr)))))
 				},
-				TTranslate(fsubselect(item.tr, idfn |> FLift), tropic)
+				TTranslate(translatePoint, tropic)
 			)
 		);
+	}
 
 	SelectTGroupFixed(itemsB, \idx, __, item -> item2Tropic(item, feq(idx, 0)), arrayThreshold)
 	|> (\f ->
@@ -271,6 +304,8 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 				)
 				|> (\tr -> eitherMap(order, \or -> fdeorder(tr, or.order), tr));
 
+			initialRender = ref true;
+
 			TConstruct(
 				if (isSameSize) {
 					applyTranslationsTrigger = make(false);
@@ -291,12 +326,15 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 					make2Subscribe(
 						itemTranslations,
 						itemsB,
-						\tr, gridItems ->
+						\tr, gridItems -> {
 							iteri(tr, \i, p ->
 								if (length(gridItems) > i) {
-									nextDistinct(gridItems[i].tr, const(either(p, Point(0., 0.))));
+									fn = \ -> nextDistinct(gridItems[i].tr, const(either(p, Point(0., 0.))));
+									if (isSome(lazyRenderingMode) && !^initialRender) deferred(fn) else fn()
 								}
 							)
+							initialRender := false;
+						}
 					)
 				],
 				f
