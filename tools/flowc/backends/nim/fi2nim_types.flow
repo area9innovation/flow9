@@ -92,16 +92,31 @@ fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 				NimLine(0, decl + " = Flow(" + "tp: rtArray, " + "array_v: map(x, rt_to_flow))")
 			));
 		}
-		FiTypeFunction(args,__): {
-			Some(NimCompiled(
-				NimLine(0, decl),
-				NimLine(0, decl + " = Flow(" +
-					"tp: rtFunc, " +
-					"func_v: proc(y: seq[Flow]): Flow = rt_to_flow(x(" +
-						supergluei(args, \i, arg -> "rt_to_" + fi2nimMangleComplexType(arg.type) + "(y[" + i2s(i) + "])#[" + pretFiType(arg.type) + "]#", ", ") +
-					")))"
-				)
-			));
+		FiTypeFunction(args, rt): {
+			args_code = supergluei(args, \i, arg -> 
+				"rt_to_" + fi2nimMangleComplexType(arg.type) + "(y[" + i2s(i) + "])#[" + pretFiType(arg.type) + "]#", ", "
+			);
+			if (rt == FiTypeVoid()) {
+				Some(NimCompiled(
+					NimLine(0, decl),
+					NimBlock([
+						NimLine(0, decl + " ="),
+						NimBlock([
+							NimLine(1, "Flow(tp: rtFunc, func_v: proc(y: seq[Flow]): Flow = "),
+							NimLine(2, "x(" + args_code + ")"),
+							NimLine(2, "rt_to_flow())")
+						])
+					])
+				));
+			} else {
+				Some(NimCompiled(
+					NimLine(0, decl),
+					NimLine(0, decl + " = Flow(" +
+						"tp: rtFunc, " +
+						"func_v: proc(y: seq[Flow]): Flow = rt_to_flow(x(" + args_code + ")))"
+					)
+				));
+			}
 		}
 		FiTypeName(nm, tps): {
 			fiMapTypeName(t, env.prog.names, 
@@ -182,21 +197,22 @@ fi2nimStructToString(env : FiNimEnv) -> NimCompiled {
 */
 fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 	ret_type = fiNimCompileReturnType(env, t);
-	decl = "proc rt_to_" + fi2nimMangleType(t) + "(x: Flow): " + ret_type;
+	make_to_name = \x -> "rt_to_" + fi2nimMangleType(x) + fiNimTypeTyparsList(env, x);
+	decl = "proc " + make_to_name(t) + "(x: Flow): " + ret_type;
 	switch (t) {
 		FiTypeRef(rt): {
 			Some(NimCompiled(
 				NimLine(0, decl),
-				NimLine(0, decl + " = Ref[" + fiNimCompileType(env, rt) + "](val: rt_to_" + fi2nimMangleComplexType(rt) + "(x.ref_v))")
+				NimLine(0, decl + " = Ref[" + fiNimCompileType(env, rt) + "](val: " + make_to_name(rt) + "(x.ref_v))")
 			));
 		}
 		FiTypeArray(at): {
 			Some(NimCompiled(
 				NimLine(0, decl),
-				NimLine(0, decl + " = map(x.array_v, " + "rt_to_" + fi2nimMangleComplexType(at) + ")")
+				NimLine(0, decl + " = map(x.array_v, " + make_to_name(at) + ")")
 			));
 		}
-		FiTypeFunction(args, returnType): {
+		FiTypeFunction(args, rt): {
 			Some(NimCompiled(
 				NimLine(0, decl),
 				fi2nimJoinNimCodeMany([
@@ -204,10 +220,10 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 					NimLine(1, 
 						"return proc(" + 
 							supergluei(args, \i, arg -> "a_" + i2s(i) + ": " + fiNimCompileType(env, arg.type), ", ") + 
-						"): " + fiNimCompileType(env, returnType) + " ="
+						"): " + fiNimCompileType(env, rt) + " ="
 					),
 					NimLine(2, 
-						"rt_to_" + fi2nimMangleComplexType(returnType) + "(x.func_v(@[" +
+						make_to_name(rt) + "(x.func_v(@[" +
 							supergluei(args, \i,__ -> "rt_to_flow(a_" + i2s(i) + ")", ", ") +
 						"]))"
 					)
@@ -225,7 +241,9 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 						]),
 						NimLine(1, 
 							"return " + fiNimCompileType(env, t) + "(tp_id: int32(" + fi2nimTypeId(env, t) + "), str_id: int32(" + fi2nimStructId(env, struct.name) + ")" +
-								concatStrings(mapi(struct.args, \i, arg -> ", " + fiNimRenameKeyword(arg.name) + ": rt_to_" + fi2nimMangleComplexType(arg.type) + "(x.str_args[" + i2s(i) + "])")) + 
+								concatStrings(mapi(struct.args, \i, arg -> 
+									", " + fiNimRenameKeyword(arg.name) + ": " +
+									make_to_name(arg.type) + "(x.str_args[" + i2s(i) + "])")) + 
 							")"
 						)
 					)
@@ -246,8 +264,8 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 						"return cast[" + ret_type + "](" + fiNimCompileType(env, spec) + "(" +
 							"tp_id: x.tp_id, str_id: x.str_id" +  
 							concatStrings(mapi(struct.args, \i, val -> 
-								", " + fiNimRenameKeyword(struct.args[i].name) + ": rt_to_" + 
-								fi2nimMangleComplexType(struct.args[i].type) + "(x.str_args[" + i2s(i) + "])"
+								", " + fiNimRenameKeyword(struct.args[i].name) + ": " + make_to_name(struct.args[i].type) + 
+								"(x.str_args[" + i2s(i) + "])"
 							)) + 
 						")) #" + pretFiType(spec)
 					}
@@ -272,9 +290,50 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 			);
 		}
 		FiTypeParameter(__): {
-			fail0("while making rt_to_" + fi2nimMangleType(t) + ", FiTypeParameter must not occur in complete specialization in nim: " + pretFiType(t));
+			fail0("while making " + make_to_name(t) + ", FiTypeParameter must not occur in complete specialization in nim: " + pretFiType(t));
 		}
-		default: None();
+		FiTypeVoid(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = discard")
+			));
+		}
+		FiTypeInt(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = rt_to_int(x)")
+			));
+		}
+		FiTypeBool(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = rt_to_bool(x)")
+			));
+		}
+		FiTypeDouble(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = rt_to_double(x)")
+			));
+		}
+		FiTypeString(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = rt_to_string(x)")
+			));
+		}
+		FiTypeFlow(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = x")
+			));
+		}
+		FiTypeNative(): {
+			Some(NimCompiled(
+				NimLine(0, decl),
+				NimLine(0, decl + " = rt_to_native(x)")
+			));
+		}
 	}
 }
 

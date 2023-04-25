@@ -122,6 +122,12 @@ export {
 
 	// wrap `e` with FiExp in case of more then 1 element in array
 	wrapFiSeq(e: [FiExp]) -> FiExp;
+
+	// Checks if there's no type parameters (?, ??, ???, etc.) in type
+	fiIsCompleteType(type: FiType) -> bool;
+
+	// The same as fiCollectTypars, but collests types, not just names
+	fiCollectTypars2(type : FiType, acc : Set<FiTypeParameter>) -> Set<FiTypeParameter>;
 }
 
 fiDeclarationArgNames(decl) {
@@ -159,7 +165,7 @@ fiExpType(expr) {
 	}
 }
 
-resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnion {
+resolveFiTypeName(names : FiGlobalNames, t : FiType, thread_id : int) -> FiStructOrUnion {
 	switch (t) {
 		FiTypeName(n, tps): {
 			ms = lookupTree(names.structs, n);
@@ -168,7 +174,7 @@ resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnio
 					mu = lookupTree(names.unions, n);
 					switch (mu) {
 						None(): {
-							fcPrintln("Unknown type name " + n, id);
+							fcPrintln("Unknown type name " + n, thread_id);
 							dummyFiTypeStruct;
 						}
 						Some(u): {
@@ -966,5 +972,43 @@ wrapFiSeq(es: [FiExp]) -> FiExp {
 	if (length(es) == 0) FiVoid(0) else
 	if (length(es) == 1) es[0] else {
 		FiSeq(es, fiExpType(es[length(es) - 1]), 0);
+	}
+}
+
+fiIsCompleteType(type: FiType) -> bool {
+	switch (type) {
+		FiTypeParameter(n): false;
+		FiTypeArray(t): {
+			fiIsCompleteType(t);
+		}
+		FiTypeFunction(args, returnType): {
+			fiIsCompleteType(returnType) && forall(args, \arg -> fiIsCompleteType(arg.type));
+		}
+		FiTypeRef(t): {
+			fiIsCompleteType(t);
+		}
+		FiTypeName(__, typeparameters): {
+			forall(typeparameters, fiIsCompleteType);
+		}
+		default: true;
+	}
+}
+
+fiCollectTypars2(type : FiType, acc : Set<FiTypeParameter>) -> Set<FiTypeParameter> {
+	switch (type) {
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
+		FiTypeParameter(n): insertSet(acc, type);
+		FiTypeRef(rt):      fiCollectTypars2(rt, acc);
+		FiTypeArray(at):    fiCollectTypars2(at, acc);
+		FiTypeName(id, tp): fold(tp, acc, \ac, t -> fiCollectTypars2(t, ac));
+		FiTypeFunction(args, rt): {
+			fiCollectTypars2(rt, fold(args, acc, \ac, arg -> fiCollectTypars2(arg.type, ac)));
+		}
 	}
 }
