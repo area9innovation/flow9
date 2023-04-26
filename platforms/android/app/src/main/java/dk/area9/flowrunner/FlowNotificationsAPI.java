@@ -118,15 +118,15 @@ public class FlowNotificationsAPI {
         // false, because already removed from notification center
 
         // Delay for service to have a chance to be created and bound
-        Handler handler = new Handler();
-        handler.postDelayed(new Runnable() {
-
-            @Override
-            public void run() {
-                cancelLocalNotification(notificationId, true);
-            }
-
-        }, 500);
+		new java.util.Timer().schedule( 
+			new java.util.TimerTask() {
+				@Override
+				public void run() {
+					cancelLocalNotification(notificationId, true);
+				}
+			}, 
+			500
+		);
     }
     
     public static FlowLocalNotificationIntents getNotificationIntents(Context context, int pendingIntentFlags, double time, int notificationId, String notificationCallbackArgs,
