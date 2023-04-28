@@ -118,15 +118,15 @@ public class FlowNotificationsAPI {
         // false, because already removed from notification center
 
         // Delay for service to have a chance to be created and bound
-        Handler handler = new Handler();
-        handler.postDelayed(new Runnable() {
-
-            @Override
-            public void run() {
-                cancelLocalNotification(notificationId, true);
-            }
-
-        }, 500);
+		new java.util.Timer().schedule( 
+			new java.util.TimerTask() {
+				@Override
+				public void run() {
+					cancelLocalNotification(notificationId, true);
+				}
+			}, 
+			500
+		);
     }
     
     public static FlowLocalNotificationIntents getNotificationIntents(Context context, int pendingIntentFlags, double time, int notificationId, String notificationCallbackArgs,
@@ -143,7 +143,11 @@ public class FlowNotificationsAPI {
                 .setAction(pkgName + FlowNotificationsAPI.ON_NOTIFICATION_CANCEL)
                 .putExtra(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_ID, notificationId);
 
-        PendingIntent onClickPendingIntent = PendingIntent.getActivity(context, notificationId, onClickIntent, pendingIntentFlags);
+		if (android.os.Build.VERSION.SDK_INT >= 31) {
+			pendingIntentFlags |= 0x02000000; //PendingIntent.FLAG_MUTABLE;
+		}
+
+		PendingIntent onClickPendingIntent = PendingIntent.getActivity(context, notificationId, onClickIntent, pendingIntentFlags);
         PendingIntent onCancelPendingIntent = PendingIntent.getBroadcast(context, notificationId + FlowNotificationsAPI.CANCEL_INTENT_OFFSET, onCancelIntent, pendingIntentFlags);
 
         alarmIntent.putExtra(pkgName + FlowNotificationsAPI.EXTRA_ON_CLICK_INTENT, onClickPendingIntent);
