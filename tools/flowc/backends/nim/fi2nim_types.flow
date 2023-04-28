@@ -158,43 +158,7 @@ fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 		default: None();
 	}
 }
-/*
-fi2nimStructToFlow(env : FiNimEnv) -> NimCompiled {
-	decl = "proc rt_to_flow(x: Struct): Flow";
-	structs = filtermap(env.ordered_types, \tp -> switch (tp) {
-		FiTypeName(__,__): Some(tp);
-		default: None();
-	});
-	cases = map(structs, \s -> 
-		fiNimIndent + "of int32(" + fi2nimTypeId(env, s) + "): " + 
-			"return rt_to_flow(" + fiNimCompileType(env, s) + "(x))\n"
-	);
-	else_case = fiNimIndent + "else: assert(false,\"not a struct id: \" & intToStr(x.id))\n";
-	NimCompiled(decl, 
-		decl + " =\n" +
-		fiNimIndent + "case x.id:\n" +
-		concatStrings(concat(cases, [else_case])) + "\n"
-	);
-}
 
-fi2nimStructToString(env : FiNimEnv) -> NimCompiled {
-	decl = "proc rt_to_string(x: Struct): Flow";
-	structs = filtermap(env.ordered_types, \tp -> switch (tp) {
-		FiTypeName(__,__): Some(tp);
-		default: None();
-	});
-	cases = map(structs, \s -> 
-		fiNimIndent + "of int32(" + fi2nimTypeId(env, s) + "): " + 
-			"return rt_to_string(" + fiNimCompileType(env, s) + "(x))\n"
-	);
-	else_case = fiNimIndent + "else: assert(false,\"not a struct id: \" & intToStr(x.id))\n";
-	NimCompiled(decl, 
-		decl + " =\n" +
-		fiNimIndent + "case x.id:\n" +
-		concatStrings(concat(cases, [else_case])) + "\n"
-	);
-}
-*/
 fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 	ret_type = fiNimCompileReturnType(env, t);
 	make_to_name = \x -> "rt_to_" + fi2nimMangleType(x) + fiNimTypeTyparsList(env, x);
@@ -614,7 +578,10 @@ fi2nimDoOrderTypes(types: [FiType], acc: [FiType]) -> [FiType] {
 	if (length(types) == 0) acc else {
 		p = unzip(types, \tp -> {
 			subterms = set2array(fiTypeSubterms(tp, true));
-			forall(subterms, \st -> exists(acc, \x -> fiEqualTypes(x, st)));
+			forall(subterms, \st -> switch (st) {
+				FiTypeParameter(__): true;
+				default: exists(acc, \x -> fiEqualTypes(x, st));
+			});
 		});
 		if (length(p.first) == 0) {
 			println("types:\n" +
@@ -622,7 +589,10 @@ fi2nimDoOrderTypes(types: [FiType], acc: [FiType]) -> [FiType] {
 				"acc:\n" + 
 				strIndent(concatStrings(map(acc, \t -> "\t" + prettyFiType(dummyPretty, t, makeSet()) + "\n"))) + "\n" 
 			);
-			fail("cyclic dependency in a set of types - is impossible");
+			fail("cyclic dependency in a set of types - is impossible\n" +
+				"types:\n" + strIndent(superglue(types, pretFiType, "\n")) + "\n" +
+				"acc:\n" + strIndent(superglue(acc, pretFiType, "\n"))
+			);
 		}
 		fi2nimDoOrderTypes(p.second, concat(acc, p.first));
 	}
@@ -658,7 +628,8 @@ fi2nimAddTypenameSubterms(type: FiType, acc: Set<FiType>, names: FiGlobalNames) 
 
 fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 	spec_structs = map(env.specializedStructs, \s -> FiTypeName(s.name, s.typars));
-	all_subterms = set2array(fold(spec_structs, makeSet(), \acc, s -> mergeSets(acc, fiTypeSubterms(s, false))));
+	prog_types = fi2nimProgramTypes(env.prog);
+	all_subterms = set2array(fold(spec_structs, prog_types, \acc, s -> mergeSets(acc, fiTypeSubterms(s, false))));
 	if (debug_nim_type_ids) {
 		println("all_subterms:\n" +
 			concatStrings(map(all_subterms, \t -> "\t" + pretFiType(t) + "\n"))
@@ -694,4 +665,64 @@ fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 		type_index = type_index,
 		struct_index = struct_index
 	);
+}
+
+fi2nimProgramTypes(p: FiProgram) -> Set<FiType> {
+	fiFoldProgramToplevel(p, makeSet(), \toplevel,__,__,acc -> {
+
+		check_typars = \t -> {
+			switch (t) {
+				FiTypeName(name, typars): {
+					switch (lookupTree(p.names.structs, name)) {
+						Some(s): {
+							if (length(typars) != length(s.typars)) {
+								fail("length(typars) != length(s.typars): " + pretFiType(t) + " != " + pretFiStructOrUnion(s) + "\n" +
+									"toplevel:\n" + pretFiToplevel(toplevel)
+								);
+							}
+						}
+						None(): {
+							switch (lookupTree(p.names.unions, name)) {
+								Some(u): {
+									if (length(typars) != length(u.typeparameters)) {
+										fail("length(typars) != length(u.typeparameters): " + pretFiType(t) + " != " + pretFiStructOrUnion(u));
+									}
+								}
+								None(): {
+
+								}
+							}
+						}
+					}
+				}
+				default: {}
+			}
+		}
+
+		add_type = \ac, t -> {
+			subtypes = fiTypeSubterms(fiPurifyType(t), false);
+			iterSet(subtypes, \x -> check_typars(x));
+			mergeSets(ac, subtypes);
+		}
+		proc_exp = \ac, x -> {
+			fiFoldExp(x, ac, \e,__,a -> add_type(a, fiExpType(e)), AstTraverseOrder(true, true));
+		}
+		switch (toplevel) {
+			FiTypeStruct(name, typars, args,__): {
+				add_type(acc, FiTypeName(name, typars));
+			}
+			FiTypeUnion(name, typars, types,__): {
+				add_type(acc, FiTypeName(name, typars));
+			}
+			FiFunctionDec(name, lambda, type,__,__): {
+				proc_exp(add_type(acc, type), lambda);
+			}
+			FiGlobalVar(name, value, type,__,__): {
+				proc_exp(add_type(acc, type), value);
+			}
+			FiNativeDec(name,__,type,__,fallback,__,__): {
+				proc_exp(add_type(acc, type), fallback);
+			}
+		}
+	});
 }
