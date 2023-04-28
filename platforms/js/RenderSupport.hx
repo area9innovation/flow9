@@ -2134,6 +2134,10 @@ class RenderSupport {
 			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
 	}
 
+	public static function setLineHeightPercent(clip : TextClip, lineHeightPercent : Float) : Void {
+		clip.setLineHeightPercent(lineHeightPercent);
+	}
+
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
 		clip.setEscapeHTML(escapeHTML);
 	}
