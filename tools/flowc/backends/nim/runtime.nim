@@ -112,51 +112,12 @@ type
       str_name: string
       str_args: seq[Flow]
 
-  Void* = ref object of Flow
-  Bool* = ref object of Flow
-    val: bool
-  Int* = ref object of Flow
-    val: int32
-  Double* = ref object of Flow
-    val: float
-  String* = ref object of Flow
-    val: string
-
   Ref*[T] = ref object of Flow
     val: T
-
-  Array*[T] = ref object of Flow
-    val: seq[T]
 
   Struct* = ref object of RootObj
     tp_id: int32
     str_id: int32
-
-  Struct0* = ref object of Struct
-
-  Struct1*[A1] = ref object of Struct
-    arg1: A1
-
-  Struct2*[A1, A2] = ref object of Struct
-    arg1: A1
-    arg2: A2
-
-  Struct3*[A1, A2, A3] = ref object of Struct
-    arg1: A1
-    arg2: A2
-    arg3: A2
-
-  Func0*[R] = ref object of Flow
-    fn: proc(): R
-
-  Func1*[R, A1] = ref object of Flow
-    fn: proc(a1: A1): R
-
-  Func2*[R, A1, A2] = ref object of Flow
-    fn: proc(a1: A1, a2: A2): R
-
-  Func3*[R, A1, A2, A3] = ref object of Flow
-    fn: proc(a1: A1, a2: A2, a3: A3): R
 
 #[ Native Types ]#
   NativeType* = enum
@@ -171,6 +132,14 @@ type
     what: string
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(what : "HttpServer", ntp: ntHttpServer, s : srv)
+
+# Function type traits/utils
+$A_0
+
+# Array type traits
+template rt_type_is_array[T](X: typedesc[seq[T]]): bool = true
+template rt_type_is_array(X: typedesc): bool = false
+template rt_type_de_array[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
 
 # Type index oprations
 var id2type*: seq[AlType]
@@ -228,6 +197,10 @@ proc rt_struct_id_to_fields*(id: int32): seq[string] =
 
 proc rt_struct_name_to_fields*(name: string): seq[string] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
+
+proc rt_struct_name_wrapper*[R](v: R, name: string): string = name
+
+proc rt_flow_struct_name*(f: Flow): string = f.str_name
 
 proc rt_type_id*(f: Flow): int32 =
   case f.tp:
@@ -344,12 +317,6 @@ proc rt_to_flow*[R](fn: proc(): R): Flow =
       return rt_to_flow(y)
   )
 
-
-#proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
-#proc rt_to_aaf*(x: Flow): seq[seq[Flow]] = map(x.array_v, rt_to_af)
-#proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
-#proc rt_to_rrf*(x: Flow): Ref[Flow] = Ref[Flow](val: rt_to_rf(x.ref_v))
-
 proc rt_compare*(x: Flow, y: Flow): int32
 proc rt_compare*(x: Native, y: Native): int32 =
   case x.ntp:
@@ -358,7 +325,7 @@ proc rt_compare*(x: Native, y: Native): int32 =
   of ntFlow:    return rt_compare(x.flow_v, y.flow_v)
 
 proc rt_compare*[T](x: Ref[T], y: Ref[T]): int32 = rt_compare(x.val, y.val)
-proc rt_compare*[T](x: openArray[T], y: openArray[T]): int32 =
+proc rt_compare*[T](x: seq[T], y: seq[T]): int32 =
   if x.len < y.len: return -1
   elif x.len > y.len: return 1
   else:
@@ -390,20 +357,9 @@ proc rt_compare*(x: Flow, y: Flow): int32 =
           if c != 0:
             return c
         return 0
-proc rt_compare*[R](x: var proc(): R, y: var proc(): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1](x: var proc(a1: A1): R, y: var proc(a1: A1): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1, A2](x: var proc(a1: A1, a2: A2): R, y: var proc(a1: A1, a2: A2): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1, A2, A3](x: var proc(a1: A1, a2: A2, a3: A3): R, y: var proc(a1: A1, a2: A2, a3: A3): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1, A2, A3, A4](x: var proc(a1: A1, a2: A2, a3: A3, a4: A4): R, y: var proc(a1: A1, a2: A2, a3: A3, a4: A4): R): int32 = rt_compare(addr(x), addr(y))
 
-#[
-proc rt_to_flow_runtime_struct*(x: Struct): Flow =
-  if x.id >= id2type.len:
-    assert(false, "type index " & intToStr(x.id) & " is out of bounds: " & intToStr(id2type.len))
-  let tp = id2type[x.id]
-  let struct_id = tp.args[0]
-  return Flow(tp: rtVoid)
-]#
+# General comparison of all other values - by address
+proc rt_compare*[R](x: var R, y: var R): int32 = rt_compare(addr(x), addr(y))
 
 # to_void conversions
 proc rt_to_void*(x: Flow): void = 

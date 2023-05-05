@@ -178,7 +178,18 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 			s = d2s(d);
 			wrap_ret(NimSnippet(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s + ".0" else s));
 		}
-		FiString(s,__): wrap_ret(NimSnippet("\"" + escapeStr(s) + "\""));
+		FiString(s,__): {
+			s1 = concatStrings(mapi(s2a(s), \i, code ->
+				if (code == 0x09) "\\t" else
+				if (code == 0x0a) "\\n" else
+				if (code == 0x0d) "\\r" else
+				if (code == 0x22) "\\\"" else
+				if (code == 0x5c) "\\\\" else
+				if (0 < code && code < 0x80) fromCharCode(code) else
+				"\\u" + lpad(formatHex(code), "0", 4)
+			));
+			wrap_ret(NimSnippet("\"" + s1 + "\""));
+		}
 		FiVar(x,__,__): {
 			wrap_ret(NimSnippet(
 				if (containsSet(locals, x)) fiNimRenameKeyword(x) else fiNimRenameGlobal(x)
@@ -271,6 +282,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 					}
 				}
 				default: {
+					//fail0("caller must be a variable, got:\n" + pretFiExp(expr));
 					wrap_ret(fi2nimJoinNimCode(
 						fi2nimBracketNimCode(fiNimCompile(env, fn, FiNimReturnValue(), locals)),
 						fi2nimBracketNimCode(fi2nimGlueNimCode(args_code, ", "))
@@ -388,23 +400,41 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 						\__ -> fail0("unknown struct or union: " + tn.name)
 					);
 				};
-				FcFieldPrim(name): {
-					switch (arg_type) {
-						FiTypeName(__,__): {
-							fi2nimJoinNimCode(args[0], NimSnippet("." + fiNimRenameKeyword(name)));
+				FcFieldPrim(field): {
+					if (field == "structname") {
+						switch (arg_type) {
+							FiTypeName(name,__): {
+								fi2nimJoinNimCode3(
+									NimSnippet("rt_struct_name_wrapper("), 
+									args[0], NimSnippet(", \"" + name + "\")")
+								);
+							}
+							FiTypeFlow(): {
+								fi2nimJoinNimCode3(
+									NimSnippet("rt_flow_struct_name("), 
+									args[0], NimSnippet(")")
+								);
+							}
+							default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 						}
-						FiTypeFlow(): {
-							fi2nimJoinNimCode3(
-								NimSnippet("rt_get_flow_field("), 
-								args[0], NimSnippet(", \"" + name + "\")")
-							);
+					} else {
+						switch (arg_type) {
+							FiTypeName(__,__): {
+								fi2nimJoinNimCode(args[0], NimSnippet("." + fiNimRenameKeyword(field)));
+							}
+							FiTypeFlow(): {
+								fi2nimJoinNimCode3(
+									NimSnippet("rt_get_flow_field("), 
+									args[0], NimSnippet(", \"" + field + "\")")
+								);
+							}
+							default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 						}
-						default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 					}
 				}
-				FcSetMutablePrim(name): {
+				FcSetMutablePrim(field): {
 					fi2nimBracketNimCode(fi2nimJoinNimCode3(
-						args[0], NimSnippet("." + fiNimRenameKeyword(name) + " = "), args[1]
+						args[0], NimSnippet("." + fiNimRenameKeyword(field) + " = "), args[1]
 					))
 				}
 				FcCreateClosurePrim(__, __): fail0("TODO");
@@ -437,8 +467,7 @@ fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: NimCode, expr: FiE
 	def_cast = \-> make_cast("cast[" + fiNimCompileType(env, to) + "]");
 	err_cast = \-> fail0("illegal cast from " + pretFiType(from) + " to " + pretFiType(to) + ", expression:\n" + pretFiExp(expr));
 	if (from == FiTypeFlow()) {
-		typars = fiNimTypeParamsList(env, to);
-		make_cast("rt_to_" + fi2nimMangleComplexType(to) + typars);
+		fi2nimJoinNimCode3(NimSnippet("rt_from_flow("), ex, NimSnippet(", " + fiNimCompileType(env, to) + ")"));
 	} else {
 		switch (to) {
 			FiTypeName(to_name,__): {

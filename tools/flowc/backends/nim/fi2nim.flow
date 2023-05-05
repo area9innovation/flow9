@@ -16,7 +16,7 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 	}
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
 	env = fi2nimInitEnv(program, cfg);
-	runtime = fi2nimRuntime(cfg);
+	runtime = fi2nimRuntime(env);
 	types = fi2nimCompileTypes(env);
 	source = fi2nimCompileSourceCode(env, runtime);
 
@@ -58,10 +58,14 @@ fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
 	}
 
 	compiled_funcs = concatA([
+		comment_line("FROM FLOW CONVERSION"),
+		[fi2nimTypeFromFlow1(env)],
+		comment_line("TYPARS TYPE TRAITS"),
+		filtermap(env.structs, \s -> fi2nimStructTypars(env, s)),
 		comment_line("TO FLOW CONVERSIONS"),
 		filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t)),
-		comment_line("FROM FLOW CONVERSIONS"),
-		filtermap(from_flow1, \t -> fi2nimTypeFromFlow(env, t)),
+		//comment_line("FROM FLOW CONVERSIONS"),
+		//filtermap(from_flow1, \t -> fi2nimTypeFromFlow(env, t)),
 		comment_line("TO STRING CONVERSIONS"),
 		filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t)),
 		comment_line("COMPARE"),
@@ -304,7 +308,8 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		casts,
 		effects, "", [],
 		natives,
-		[], makeTree(), makeTree()
+		[], makeTree(), makeTree(),
+		fi2nimMaxFuncArity(program)
 	);
 	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
 }
@@ -369,12 +374,15 @@ fi2nimBuild(program : FiProgram, cfg: FiNimConfig, callback : (int) -> void) -> 
 		// No need to build binary
 		callback(0);
 	} else {
-		if (cfg.verbose > 1) {
-			fcPrintln("Going to build nim target: '" + cfg.outputfile + "'", cfg.threadId);
+		opts0 = ["--debuginfo:on", "--overflowChecks:off", "--threads:on", "-f", "-d:ssl", "--path:flow_lib"];
+		//opts = if (getConfigParameter(program.config.config, "nim-debug") != "") opts0 else concat(opts0, ["-d:release"]);
+		opts = opts0; // TODO: switch on optimization when backend is ready
+		command_args = concat(opts, ["c", cfg.outputfile]);
+		if (cfg.verbose > 0) {
+			fcPrintln("Going to build nim target: '" + cfg.outputfile + "'\n" + 
+			"nim " + strGlue(command_args, " "), cfg.threadId);
 		}
-		opts0 = ["--debuginfo:on", "--overflowChecks:off", "--threads:on", "-d:ssl"];
-		opts = if (getConfigParameter(program.config.config, "nim-debug") != "") opts0 else concat(opts0, ["-d:release"]);
-		out = execSystemProcessOutput("nim", concat(opts, ["c", cfg.outputfile]), ".");
+		out = execSystemProcessOutput("nim", command_args, ".");
 		if (out.exitCode != 0) {
 			fcPrintln("Building of " + cfg.outputfile + " failed:\n" + out.stdall, cfg.threadId);
 			callback(5);

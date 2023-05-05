@@ -11,6 +11,8 @@ export {
 	fi2nimTypeDecl(env : FiNimEnv, type : FiStructOrUnion) -> NimCode;
 	fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 	fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
+	fi2nimTypeFromFlow1(env : FiNimEnv) -> NimCompiled;
+	fi2nimStructTypars(env : FiNimEnv, s: FiTypeStruct) -> Maybe<NimCompiled>;
 	fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 	fi2nimTypeCompare(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 
@@ -94,7 +96,7 @@ fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 		}
 		FiTypeFunction(args, rt): {
 			args_code = supergluei(args, \i, arg -> 
-				"rt_to_" + fi2nimMangleComplexType(arg.type) + "(y[" + i2s(i) + "])#[" + pretFiType(arg.type) + "]#", ", "
+				"rt_from_flow(y[" + i2s(i) + "], " + fiNimCompileType(env, arg.type) + ")#[" + pretFiType(arg.type) + "]#", ", "
 			);
 			if (rt == FiTypeVoid()) {
 				Some(NimCompiled(
@@ -298,6 +300,167 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 				NimLine(0, decl + " = rt_to_native(x)")
 			));
 		}
+	}
+}
+
+nim_from_flow_patten = <<
+proc rt_from_flow(x: Flow, tp: typedesc): tp =
+  let err = proc(): void = assert(false, "illegal cast of " & rt_to_string(x) & " to type: " & $tp)
+  let nat_flow = proc(): tp =
+    if x.native_v.ntp == ntFlow: return rt_from_flow(x.native_v.flow_v, tp) else: err()
+  when tp is void:
+    case x.tp:
+    of rtVoid:   discard
+    of rtNative: return nat_flow()
+    else: err()
+  elif tp is bool:
+    case x.tp:
+    of rtBool:   return x.bool_v
+    of rtInt:    return rt_to_bool(x.int_v)
+    of rtDouble: return rt_to_bool(x.double_v)
+    of rtString: return rt_to_bool(x.string_v)
+    of rtNative: return nat_flow()
+    else: err()
+  elif tp is int32:
+    case x.tp:
+    of rtBool:   return rt_to_int(x.bool_v)
+    of rtInt:    return rt_to_int(x.int_v)
+    of rtDouble: return rt_to_int(x.double_v)
+    of rtString: return rt_to_int(x.string_v)
+    of rtNative: return nat_flow()
+    else: err()
+  elif tp is string:
+    case x.tp:
+    of rtBool:   return rt_to_string(x.bool_v)
+    of rtInt:    return rt_to_string(x.int_v)
+    of rtDouble: return rt_to_string(x.double_v)
+    of rtString: return rt_to_string(x.string_v)
+    of rtNative: return nat_flow()
+    else: err()
+  elif rt_type_is_array(tp):
+    case x.tp:
+    of rtArray:  return map(x.array_v, proc(y: Flow): rt_type_de_array(tp) = rt_from_flow(y, rt_type_de_array(tp)))
+    of rtNative: return nat_flow()
+    else: err()
+  elif rt_func_type_arity(tp) != -1:
+    case x.tp:
+    of rtFunc: 
+      const arity = rt_func_type_arity(tp)
+$A_0
+      #[when arity == 0: return proc(): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[]), rt_func_type_typar(tp, 0))
+      elif arity == 1: return proc(a1: rt_func_type_typar(tp, 1)): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[toFlow(a1)]), rt_func_type_typar(tp, 0))
+      elif arity == 2: return proc(a1: rt_func_type_typar(tp, 1), a2: rt_func_type_typar(tp, 2)): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[toFlow(a1), toFlow(a2)]), rt_func_type_typar(tp, 0))
+      elif arity == 3: return proc(a1: rt_func_type_typar(tp, 1), a2: rt_func_type_typar(tp, 2), a3: rt_func_type_typar(tp, 3)): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[toFlow(a1), toFlow(a2), toFlow(a3)]), rt_func_type_typar(tp, 0))]#
+      else: err()
+    of rtNative: return nat_flow()
+    else: err()
+  elif tp is Process: 
+    case x.tp:
+    of rtNative:
+      if x.native_v.ntp == ntProcess: return x.native_v.p else: err()
+    else: err()
+  elif tp is FlowHttpServer: 
+    case x.tp:
+    of rtNative:
+      if x.native_v.ntp == ntHttpServer: return x.native_v.s else: err()
+    else: err()
+  else:
+    case x.tp:
+    of rtStruct:
+$A_1
+      #[when typeId(tp) == 0: return makeNone()
+      elif typeId(tp) == 1: return makeSomefromFlow[typarId(tp, 0)](x.str_args)
+      elif typeId(tp) == 2: return makeObjfromFlow(x.str_args)
+      elif typeId(tp) == 3: return makePairfromFlow[typarId(tp, 0), typarId(tp, 1)](x.str_args)]#
+      else: err()
+    of rtNative: return nat_flow()
+    else: err()
+>>
+
+fi2nimTypeFromFlow1(env : FiNimEnv) -> NimCompiled {
+	funcs_from_flow = strGlue(
+		generate(0, env.max_func_arity + 1, \arity -> "      " +
+			(if (arity == 0) "when " else "elif ") + "arity == " + i2s(arity) + ": " + 
+			"return proc(" + 
+				strGlue(generate(1, arity + 1, \i -> "a" + i2s(i) + ": rt_func_type_typar(tp, " + i2s(i) + ")"), ", ") + 
+			"): rt_func_type_typar(tp, 0)" + 
+			" = rt_from_flow(x.func_v(@[" +
+				strGlue(generate(1, arity + 1, \i -> "rt_to_flow(a" + i2s(i) + ")"), ", ")
+			+ "]), rt_func_type_typar(tp, 0))"
+		), "\n"
+	);
+	num_structs = length(env.structs);
+	structs_from_flow = strGlue(
+		mapi(env.structs, \i, struct -> {
+			header = "      " + (if (i == 0) "when " else "elif ") + "tp is " + fiNimRenameType(struct.name) + ": ";
+			if (length(struct.args) == 0) {
+				// case of a singleton struct
+				header + "return " + fiNimRenameType(struct.name) + "(tp_id: " + i2s(i) + ", str_id: " + i2s(i) + ")";
+			} else {
+				// general case
+				typars = if (length(struct.typars) == 0) "" else {
+					"[" + strGlue(generate(0, length(struct.typars), \j -> "rt_struct_type_typar(tp, " + i2s(j) + ")"), ", ") + "]";
+				}
+				header + "return " + fiNimRenameType(struct.name) + typars +
+				"(tp_id: " + i2s(i) + ", str_id: " + i2s(i) + 
+					concatStrings(mapi(struct.args, \j, arg -> 
+						", " + fiNimRenameKeyword(arg.name) + ": rt_from_flow(x.str_args[" + i2s(j) + "], " + fi2nimTypeToTypars(arg.type) + ")"
+					)) + 
+				")"
+			}
+		}), "\n"
+	);
+	from_flow = strSubstituteArgs(nim_from_flow_patten)([funcs_from_flow, structs_from_flow]);
+	NimCompiled(
+		NimLine(0, "proc rt_from_flow(x: Flow, tp: typedesc): tp"),
+		NimBlock(
+			map(strSplit(from_flow, "\n"), \l -> NimLine(0, l))
+		)
+	);
+}
+
+fi2nimTypeToTypars(x: FiType) -> string {
+	switch (x) {
+		FiTypeArray(t) :           {
+			"seq[" + fi2nimTypeToTypars(t) + "]";
+		}
+		FiTypeFunction(args, rt) : {
+			rt_s = switch (rt) {
+				FiTypeFunction(__,__): "(" + fi2nimTypeToTypars(rt) + ")";
+				default: fi2nimTypeToTypars(rt);
+			}
+			"proc(" + supergluei(args, \i, arg -> 
+				"a" + i2s(i) + ": " + fi2nimTypeToTypars(arg.type), ", ") + "): " + rt_s;
+		}
+		FiTypeRef(t) :             "Ref[" + fi2nimTypeToTypars(t) + "]";
+		FiTypeParameter(n) :       "rt_struct_type_typar(tp, " + i2s(strlen(n) - 1) + ")";
+		FiTypeBool() :             "bool";
+		FiTypeInt() :              "int32";
+		FiTypeDouble() :           "float";
+		FiTypeString() :           "string";
+		FiTypeFlow() :             "Flow";
+		FiTypeVoid() :             "void";
+		FiTypeNative() :           "Native";
+		FiTypeName(name, params) : {
+			fiNimRenameType(name) + if (length(params) == 0) "" else "[" + superglue(params, fi2nimTypeToTypars, ", ") + "]";
+		}
+	}
+}
+
+fi2nimStructTypars(env : FiNimEnv, s: FiTypeStruct) -> Maybe<NimCompiled> {
+	if (length(s.typars) == 0) None() else {
+		typars = "[" + supergluei(s.typars, \i,__ -> "T" + i2s(i), ", ") + "]";
+		decl = "template rt_struct_type_typar" + typars + "(X: typedesc[" + fiNimRenameType(s.name) + typars + "], i: static int): typedesc";
+		body = "when (i == 0): T0" + 
+			concatStrings(mapi(s.typars, \i,__ -> if (i == 0) "" else " elif (i == " + i2s(i) + "): T" + i2s(i))) + 
+			" else: void";
+		Some(NimCompiled(
+			NimBlock([
+				NimLine(0, decl + " ="),
+				NimLine(1, body)
+			]),
+			NimSnippet("")
+		));
 	}
 }
 
@@ -628,8 +791,7 @@ fi2nimAddTypenameSubterms(type: FiType, acc: Set<FiType>, names: FiGlobalNames) 
 
 fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 	spec_structs = map(env.specializedStructs, \s -> FiTypeName(s.name, s.typars));
-	prog_types = fi2nimProgramTypes(env.prog);
-	all_subterms = set2array(fold(spec_structs, prog_types, \acc, s -> mergeSets(acc, fiTypeSubterms(s, false))));
+	all_subterms = set2array(fold(spec_structs, makeSet(), \acc, s -> mergeSets(acc, fiTypeSubterms(s, false))));
 	if (debug_nim_type_ids) {
 		println("all_subterms:\n" +
 			concatStrings(map(all_subterms, \t -> "\t" + pretFiType(t) + "\n"))
@@ -669,7 +831,6 @@ fi2nimInitTypeIndexes(env : FiNimEnv, debug_nim_type_ids: bool) -> FiNimEnv {
 
 fi2nimProgramTypes(p: FiProgram) -> Set<FiType> {
 	fiFoldProgramToplevel(p, makeSet(), \toplevel,__,__,acc -> {
-
 		check_typars = \t -> {
 			switch (t) {
 				FiTypeName(name, typars): {
