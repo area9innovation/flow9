@@ -190,10 +190,24 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 			));
 			wrap_ret(NimSnippet("\"" + s1 + "\""));
 		}
-		FiVar(x,__,__): {
-			wrap_ret(NimSnippet(
-				if (containsSet(locals, x)) fiNimRenameKeyword(x) else fiNimRenameGlobal(x)
-			));
+		FiVar(x, type,__): {
+			x_code = if (containsSet(locals, x)) fiNimRenameKeyword(x) else fiNimRenameGlobal(x);
+			typars = switch (type) {
+				FiTypeFunction(args, rt): {
+					n: Maybe<FiDeclaration> = lookupTree(env.prog.names.toplevel, x);
+					switch (n) {
+						Some(decl): {
+							tps = fiMatchTyparsOrdered(decl.type, type);
+							if (length(tps) == 0) "" else {
+								"[" + superglue(tps, \tp -> fiNimCompileType(env, tp), ", ") + "]";
+							}
+						}
+						None(): "";
+					}
+				}
+				default: "";
+			}
+			wrap_ret(NimSnippet(x_code + typars));
 		}
 		FiLet(x, tp, e1, e2, __, __): {
 			direct = \-> fi2nimJoinNimCode(
@@ -236,22 +250,8 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 						}
 						None(): {
 							if (!(returns == FiNimReturnOut() && x == env.tailcall_fn)) {
-								n: Maybe<FiDeclaration> = lookupTree(env.prog.names.toplevel, x);
-								typars = switch (n) {
-									Some(decl): {
-										fiMatchTyparsOrdered(decl.type, fiExpType(fn));
-									}
-									None(): [];
-								}
-								decl_type = switch (n) {
-									Some(decl): decl.type;
-									None(): FiTypeVoid();
-								}
-								typars_code = NimSnippet(if (length(typars) == 0) "" else {
-									"[" + superglue(typars, \tp -> fiNimCompileType(env, tp), ", ") + "]";
-								});
 								fn_code = fiNimCompile(env, fn, FiNimReturnValue(), locals);
-								wrap_ret(fi2nimJoinNimCode3(fn_code, typars_code, args));
+								wrap_ret(fi2nimJoinNimCode(fn_code, args));
 							} else {
 								// Tail call detected
 								arg_is_not_changed = \y, i -> {
