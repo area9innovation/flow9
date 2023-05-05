@@ -121,99 +121,66 @@ fiExpShortcutIf(x: FiExp) -> FiExp;
 
 fiExpReduceChainLets(x: FiExp) -> FiExp;
 
+fiMakeCallerVar(x: FiExp) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
 	fiFoldMapExp(expr, 0, 
-		\x,__,local -> {
+		\x, env, local -> {
 			switch (x) {
 				FiCallPrim(op, es, rtype, start): {
+					make_switch = \union, switch_var -> {
+						FiSwitch(switch_var, switch_var.type, 
+							map(union.typenames, \tn -> {
+								struct = fiSpecializeStruct(tn, lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0)));
+								case_var = FiVar(switch_var with 
+									type = FiTypeName(struct.name, struct.typars)
+								);
+								FiCase(
+									tn.name,
+									map(struct.args, \__ -> "__"),
+									FiCallPrim(x with es = [case_var]),
+									start
+								)
+							}),
+							rtype, start
+						);
+					}
+					do_work = \field -> {
+						arg = es[0];
+						arg_type = fiExpType(arg);
+						switch (arg_type) {
+							FiTypeName(__,typars): {
+								switch (lookupTree(names.unions, arg_type.name)) {
+									Some(union): {
+										switch (arg) {
+											FiVar(var, vtype,__): {
+												Pair(make_switch(union, arg), local);
+											}
+											default: {
+												union_var = "__union_" + i2s(local);
+												Pair(FiLet(
+													union_var, arg_type,
+													arg,
+													make_switch(union, FiVar(union_var, arg_type, start)),
+													rtype, start
+												), local + 1);
+											}
+										}
+									}
+									None(): Pair(x, local);
+								}
+							}
+							default: Pair(x, local);
+						}
+					}
 					switch (op) {
 						FcFieldPrim(field): {
-							if (field == "structname") Pair(x, local) else {
-								arg = es[0];
-								arg_type = fiExpType(arg);
-								switch (arg_type) {
-									FiTypeName(__,__): {
-										switch (lookupTree(names.unions, arg_type.name)) {
-											Some(union): {
-												make_switch = \switch_var -> {
-													FiSwitch(switch_var, switch_var.type, 
-														map(union.typenames, \tn -> {
-															struct = lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0));
-															FiCase(
-																tn.name,
-																map(struct.args, \__ -> "__"),
-																FiCallPrim(op, [switch_var], rtype, start),
-																start
-															)
-														}),
-														rtype, start
-													);
-												}
-												switch (arg) {
-													FiVar(var, vtype,__): {
-														Pair(make_switch(arg), local);
-													}
-													default: {
-														union_var = "__union_" + i2s(local);
-														Pair(FiLet(
-															union_var, arg_type,
-															arg,
-															make_switch(FiVar(union_var, arg_type, start)),
-															rtype, start
-														), local + 1);
-													}
-												}
-											}
-											None(): Pair(x, local);
-										}
-									}
-									default: Pair(x, local);
-								}
-							}
+							if (field == "structname") Pair(x, local) else do_work(field);
 						}
 						FcSetMutablePrim(field): {
-							arg = es[0];
-							arg_type = fiExpType(arg);
-							switch (arg_type) {
-								FiTypeName(__,__): { 
-									switch (lookupTree(names.unions, arg_type.name)) {
-										Some(union): {
-											make_switch = \switch_var -> {
-												FiSwitch(switch_var, switch_var.type, 
-													map(union.typenames, \tn -> {
-														struct = lookupTreeDef(names.structs, tn.name, FiTypeStruct("", [], [], 0));
-														FiCase(
-															tn.name,
-															map(struct.args, \__ -> "__"),
-															FiCallPrim(x with es = [switch_var, es[1]]),
-															start
-														)
-													}),
-													rtype, start
-												);
-											}
-											switch (arg) {
-												FiVar(var, vtype,__): {
-													Pair(make_switch(arg), local);
-												}
-												default: {
-													union_var = "__union_" + i2s(local);
-													Pair(FiLet(
-														union_var, arg_type,
-														arg,
-														make_switch(FiVar(union_var, arg_type, start)),
-														rtype, start
-													), local + 1);
-												}
-											}
-										}
-										None(): Pair(x, local);
-									}
-								}
-								default: Pair(x, local);
-							}
+							do_work(field);
 						}
 						default: Pair(x, local);
 					}
@@ -505,45 +472,66 @@ fiExpNormalizeSeqences(e: FiExp) -> FiExp {
 }
 
 fiExpMakeVarsUnique(e: FiExp) -> FiExp {
-	new_var = \vars, v -> if (v == "__") vars else setTree(vars, v, lookupTreeDef(vars, v, 0) + 1);
-	rename_var = \vars, v -> {
-		if (v == "__") v else {
-			i = lookupTreeDef(vars, v, 0);
-			if (i == 0) fail("fsSSAvar: i == 0, v=" + v);
-			v + if (i == 1) "" else "__ssa_" + i2s(i - 1);
-		}
-	}
-	fiFoldMapExp(e, makeTree(),
-		\x, env, vars -> {
-			switch (x) {
-				FiLambda(args, __,__,__): {
-					new_vars = fold(args, vars, \acc, arg -> new_var(acc, arg.name));
-					Pair(
-						FiLambda(x with 
-							args = map(args, \arg -> FiFunArg(arg with name = rename_var(new_vars, arg.name))),
-						), 
-						new_vars
-					);
-				}
-				FiLet(name,__,__,__,__,__): {
-					if (name == "__") Pair(x, vars) else {
-						new_vars = new_var(vars, name);
-						Pair(FiLet(x with name = rename_var(new_vars, name)), new_vars);
-					}
-				}
-				FiVar(name,__,__): {
-					if (containsKeyTree(vars, name)) {
-						Pair(FiVar(x with name = rename_var(vars, name)), vars);
-					} else {
-						Pair(x, vars);
-					}
-				}
-				default(): Pair(x, vars);
-			}
-		},
-		AstTraverseOrder(false, true)
-	).first;
+	fiDoExpMakeVarsUnique(e, makeTree(), makeTree());
 }
+
+fiDoExpMakeVarsUnique(e: FiExp, counter: Tree<string, int>, rename: Tree<string, string>) -> FiExp {
+	do = \x -> fiDoExpMakeVarsUnique(x, counter, rename);
+	switch (e) {
+		FiLet(name,__,e1, e2,__,__): {
+			if (name == "__") {
+				FiLet(e with e1 = do(e1), e2 = do(e2));
+			} else {
+				counter1 = setTree(counter, name, lookupTreeDef(counter, name, -1) + 1);
+				rename1 = if (!containsKeyTree(counter, name)) rename else {
+					setTree(rename, name, name + "__ssa_" + i2s(lookupTreeDef(counter1, name, 0) - 1))
+				}
+				FiLet(e with
+					name = lookupTreeDef(rename1, name, name),
+					e1 = fiDoExpMakeVarsUnique(e1, counter1, rename1), 
+					e2 = fiDoExpMakeVarsUnique(e2, counter, rename1),
+				);
+			}
+		}
+		FiVar(name,__,__): {
+			if (!containsKeyTree(rename, name)) e else {
+				FiVar(e with name = lookupTreeDef(rename, name, name));
+			}
+		}
+		FiLambda(args, body,__,__): {
+			FiLambda(e with body = do(body));
+		}
+		FiSwitch(v, vtype, cases,__,__): {
+			FiSwitch(e with 
+				x = FiVar(v with name = lookupTreeDef(rename, v.name, v.name)),
+				cases = map(cases, \c -> FiCase(c with body = do(c.body)))
+			);
+		}
+		FiIf(e1, e2, e3, __,__): { 
+			FiIf(e with e1 = do(e1), e2 = do(e2), e3 = do(e3));
+		}
+		FiSeq(es,__,__): {
+			FiSeq(e with es = map(es, do));
+		}
+		FiCast(x, from, to,__,__): { 
+			FiCast(e with e = do(x));
+		}
+		FiCall(f, args,__,__): { 
+			FiCall(e with f = do(f), args = map(args, do));
+		}
+		FiCallPrim(op, args,__,__): { 
+			FiCallPrim(e with es = map(args, do));
+		}
+		FiRequire(file, x,__,__): { 
+			FiRequire(e with e = do(x));
+		}
+		FiUnsafe(name, x,__,__): { 
+			FiUnsafe(e with fallback = do(x));
+		}
+		FiConst(): e;
+	}
+}
+
 
 fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 	switch (x) {
@@ -698,7 +686,9 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 												fiMakeCast(def_case(), arg.type, type);
 											}
 											None(): {
-												fail("field " + name + " of struct " + struct_name + " is not found");
+												fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
+													+ "\n" + strIndent(toStringFormatted(x))
+												);
 												def_case();
 											}
 										}
@@ -756,7 +746,9 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 											fiMakeCast(x1, type, t);
 										}
 										None(): {
-											fail("field " + name + " of struct " + struct_name + " is not found");
+											fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
+												+ "\n" + strIndent(toStringFormatted(x))
+											);
 											def_case();
 										}
 									}
@@ -1288,6 +1280,26 @@ fiExpReduceChainLets(x: FiExp) -> FiExp {
 					fiRenameVar(e2, v, w);
 				}
 				default: e;
+			}
+		}
+		default: e;
+	});
+}
+
+fiMakeCallerVar(x: FiExp) -> FiExp {
+	id = ref 0;
+	new_id = \-> {
+		nid = "tmp_fn_var_" + i2s(^id);
+		id := ^id + 1;
+		nid;
+	}
+	mapFiExp(x, \e -> switch (e) {
+		FiCall(fn, args, type, s): {
+			if (fiExpIsNestedField(fn)) e else {
+				n_var = FiVar(new_id(), fiExpType(fn), s);
+				FiLet(n_var.name, n_var.type, fn,
+					FiCall(n_var, args, type, s), type, s
+				);
 			}
 		}
 		default: e;
