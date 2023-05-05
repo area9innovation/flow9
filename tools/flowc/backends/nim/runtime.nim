@@ -136,6 +136,10 @@ proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
 # Function type traits/utils
 $A_0
 
+# Flow type traits
+template rt_type_is_flow(X: typedesc[Flow]): bool = true
+template rt_type_is_flow(X: typedesc): bool = false
+
 # Array type traits
 template rt_type_is_array[T](X: typedesc[seq[T]]): bool = true
 template rt_type_is_array(X: typedesc): bool = false

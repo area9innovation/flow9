@@ -26,10 +26,10 @@ fi2nimTypeEnums(env : FiNimEnv) -> NimCode {
 		fi2nimAddEmptyLine(fi2nimJoinNimCode(
 			fi2nimMakeNimBlock(0, [
 				"# All structs, used in program",
-				"StructType = enum"
+				"#StructType = enum"
 			]),
-			fi2nimMakeNimBlock(1, mapi(env.structs, \i, s ->
-				fi2nimStructId(env, s.name) + (if (i + 1 == length(env.structs)) "" else "," ) + " # " + i2s(i),
+			fi2nimMakeNimBlock(0, mapi(env.structs, \i, s ->
+				"const " + fi2nimStructId(env, s.name) + " = " + i2s(i) + "i32" // + (if (i + 1 == length(env.structs)) "" else "," ) + " # " + i2s(i),
 			))
 		));
 	}
@@ -37,10 +37,10 @@ fi2nimTypeEnums(env : FiNimEnv) -> NimCode {
 		fi2nimAddEmptyLine(fi2nimJoinNimCode(
 			fi2nimMakeNimBlock(0, [
 				"# All types, used in program",
-				"ProgType = enum"
+				"#ProgType = enum"
 			]),
-			fi2nimMakeNimBlock(1, mapi(env.ordered_types, \i, tp ->
-				fi2nimTypeId(env, tp) + (if (i + 1 == length(env.ordered_types)) "" else "," ) + " # " + i2s(i)  + " = " + pretFiType(tp),
+			fi2nimMakeNimBlock(0, mapi(env.ordered_types, \i, tp ->
+				"const " + fi2nimTypeId(env, tp) + " = " + i2s(i) + "i32" // + (if (i + 1 == length(env.ordered_types)) "" else "," ) + " # " + i2s(i)  + " = " + pretFiType(tp),
 			))
 		));
 	}
@@ -337,6 +337,16 @@ proc rt_from_flow(x: Flow, tp: typedesc): tp =
     of rtString: return rt_to_string(x.string_v)
     of rtNative: return nat_flow()
     else: err()
+  elif tp is float:
+    case x.tp:
+    of rtBool:   return rt_to_double(x.bool_v)
+    of rtInt:    return rt_to_double(x.int_v)
+    of rtDouble: return rt_to_double(x.double_v)
+    of rtString: return rt_to_double(x.string_v)
+    of rtNative: return nat_flow()
+    else: err()
+  elif rt_type_is_flow(tp):
+    return x
   elif rt_type_is_array(tp):
     case x.tp:
     of rtArray:  return map(x.array_v, proc(y: Flow): rt_type_de_array(tp) = rt_from_flow(y, rt_type_de_array(tp)))
@@ -347,11 +357,6 @@ proc rt_from_flow(x: Flow, tp: typedesc): tp =
     of rtFunc: 
       const arity = rt_func_type_arity(tp)
 $A_0
-      #[when arity == 0: return proc(): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[]), rt_func_type_typar(tp, 0))
-      elif arity == 1: return proc(a1: rt_func_type_typar(tp, 1)): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[toFlow(a1)]), rt_func_type_typar(tp, 0))
-      elif arity == 2: return proc(a1: rt_func_type_typar(tp, 1), a2: rt_func_type_typar(tp, 2)): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[toFlow(a1), toFlow(a2)]), rt_func_type_typar(tp, 0))
-      elif arity == 3: return proc(a1: rt_func_type_typar(tp, 1), a2: rt_func_type_typar(tp, 2), a3: rt_func_type_typar(tp, 3)): rt_func_type_typar(tp, 0) = rt_from_flow(x.func_v(@[toFlow(a1), toFlow(a2), toFlow(a3)]), rt_func_type_typar(tp, 0))]#
-      else: err()
     of rtNative: return nat_flow()
     else: err()
   elif tp is Process: 
@@ -368,11 +373,6 @@ $A_0
     case x.tp:
     of rtStruct:
 $A_1
-      #[when typeId(tp) == 0: return makeNone()
-      elif typeId(tp) == 1: return makeSomefromFlow[typarId(tp, 0)](x.str_args)
-      elif typeId(tp) == 2: return makeObjfromFlow(x.str_args)
-      elif typeId(tp) == 3: return makePairfromFlow[typarId(tp, 0), typarId(tp, 1)](x.str_args)]#
-      else: err()
     of rtNative: return nat_flow()
     else: err()
 >>
@@ -388,7 +388,7 @@ fi2nimTypeFromFlow1(env : FiNimEnv) -> NimCompiled {
 				strGlue(generate(1, arity + 1, \i -> "rt_to_flow(a" + i2s(i) + ")"), ", ")
 			+ "]), rt_func_type_typar(tp, 0))"
 		), "\n"
-	);
+	) + "\n      else: err()";
 	num_structs = length(env.structs);
 	structs_from_flow = strGlue(
 		mapi(env.structs, \i, struct -> {
@@ -409,8 +409,11 @@ fi2nimTypeFromFlow1(env : FiNimEnv) -> NimCompiled {
 				")"
 			}
 		}), "\n"
-	);
-	from_flow = strSubstituteArgs(nim_from_flow_patten)([funcs_from_flow, structs_from_flow]);
+	) + "\n      else: err()";
+	from_flow = strSubstituteArgs(nim_from_flow_patten)([
+		funcs_from_flow, 
+		if (length(env.structs) == 0) "      err()" else structs_from_flow
+	]);
 	NimCompiled(
 		NimLine(0, "proc rt_from_flow(x: Flow, tp: typedesc): tp"),
 		NimBlock(
