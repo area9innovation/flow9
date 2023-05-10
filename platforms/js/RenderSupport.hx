@@ -2138,6 +2138,10 @@ class RenderSupport {
 		clip.setLineHeightPercent(lineHeightPercent);
 	}
 
+	public static function setTextNeedBaseline(clip : TextClip, needBaseline : Bool) : Void {
+		clip.setNeedBaseline(needBaseline);
+	}
+
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
 		clip.setEscapeHTML(escapeHTML);
 	}

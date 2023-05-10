@@ -285,15 +285,7 @@ TRenderParagraph(
 	linesCountB = extractStruct(s, ParagraphLinesCount(make(0))).count;
 
 	awB = make(0.0);
-	update = make(0);
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
-
-	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
-	ndynamic = fold(words, 0, \acc, w -> switch (w.word) {
-		NonTextElement(__) : acc + 1;
-		default : acc;
-	});
-	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
 
 	rtl = isParagraphRtl(s);
 	reflowHappenedB = make(false);
@@ -358,9 +350,9 @@ TRenderParagraph(
 	};
 
 	stopDefer = initUnsM();
-	deferredUpdate = \wi, alignWidthM -> {
+	deferredUpdate = \wi, alignWidthM, immediate -> {
 		id = traceApi.makeRenderingId();
-		if (deferredRender) {
+		if (deferredRender && !immediate) {
 			traceApi.trace(\-> "deferredUpdate [" + id + "] DEFER update wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
 			doUpdate = \-> {
 				traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] DEFER update START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM));
@@ -399,16 +391,10 @@ TRenderParagraph(
 			w.inspector.size,
 			w.inspector.baseline,
 			\size, ba -> {
-				if (ndynamic <= ndymamicUpper || tightWidth) {
-					// There is less or equal than upper limit of dynamic elements here, so just update immediately
-					traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
-					executeReflow();
-					traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
-				} else {
-					// There are more, so to prevent unnecessary work, delay the update
-					traceApi.trace(\-> "dynMetricsSubscription executeReflow DEFERRED size = " + toString(size) + ", baseline = " + toString(ba));
-					nextDistinct(update, 1);
-				}
+				// we can't use deferred here - it leads to flickering
+				traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
+				executeReflow();
+				traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
 			}
 		))
 	}
@@ -421,27 +407,33 @@ TRenderParagraph(
 		}
 	}
 
+	wasRendered = ref false;
+
 	TConstruct(
 		[
+			// we can't render inline because of possible loop that would be missed in this case
+			// and we have to render first time immediate
 			eitherFn(
 				alignWidthBM,
-				\alignWidthB -> make2Subscribe(awB, alignWidthB, \aw, alw -> {
-					deferredUpdate(aw, Some(alw));
+				\alignWidthB -> make2SubscribeUns(awB, alignWidthB, \aw, alw -> {
+					if (^wasRendered) {
+						deferredUpdate(aw, Some(alw), false)
+					} else {
+						wasRendered := true;
+						deferredUpdate(aw, Some(alw), true);
+					}
+					[]
 				}),
-				\ -> makeSubscribe(awB, \aw -> {
-					deferredUpdate(aw, None());
-				})
+				\ -> makeSubscribeUns(awB, \aw -> {
+					if (^wasRendered) {
+						deferredUpdate(aw, None(), false)
+					} else {
+						wasRendered := true;
+						deferredUpdate(aw, None(), true)
+					}
+					[]
+				}),
 			),
-			\-> subscribe(update, \u -> {
-				if (u == 1) {
-					deferUntilNextFrameRendered(\ -> {
-						traceApi.trace(\-> "executeReflow DEFERRED STARTED with awB = " + toString(awB) + ", alignWidthB = " + toString(maybeMap(alignWidthBM, getValue)));
-						next(update, 0);
-						// Force an update
-						executeReflow()
-					})
-				}
-			}),
 			\ -> {
 				dynamicWordsUns = map(words, subscribe2dynWord);
 				\ -> {
