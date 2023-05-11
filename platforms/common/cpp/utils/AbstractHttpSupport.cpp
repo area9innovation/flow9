@@ -34,14 +34,19 @@ unicode_string AbstractHttpSupport::parseDataBytes(const void * buffer, size_t c
     const unsigned char *pdata = (const unsigned char*)buffer;
 
     if (count >= 2 && pdata[0] == 0xFF && pdata[1] == 0xFE) // UTF-16 BOM
-        return unicode_string((unicode_char*)(pdata+2), (count-2)/2);
+        return unicode_string((unicode_char*)(pdata+2), (count-2)/FLOW_CHAR_SIZE);
     else
         return parseUtf8((const char*)buffer, count);
 }
 
 void AbstractHttpSupport::deliverDataBytes(int id, const void *buffer, unsigned count)
 {
-    deliverData(id, parseDataBytes(buffer, count));
+    HttpRequest *rq = getRequestById(id);
+
+    if (rq->response_enc != ResponseEncodingByte)
+        deliverData(id, parseDataBytes(buffer, count));
+    else
+        deliverData(id, unicode_string((unicode_char*)buffer, count/FLOW_CHAR_SIZE));
 }
 
 void AbstractHttpSupport::deliverData(int id, const unicode_char *data, unsigned count)
@@ -110,7 +115,7 @@ void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigne
 
     if (rq->tmp_file)
     {
-        if (rq->is_utf)
+        if (rq->is_utf && rq->response_enc != ResponseEncodingByte)
         {
             unicode_string tmp;
             rq->tmp_parser.parse(tmp, (const char*)buffer, count);
@@ -204,7 +209,7 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             size_t count = rq->tmp_buffer.size();
 
             if (count >= 2 && pdata[0] == 0xFF && pdata[1] == 0xFE) { // UTF-16 BOM
-                data = RUNNER->AllocateString((unicode_char*)(pdata+2), (count-2)/2);
+                data = RUNNER->AllocateString((unicode_char*)(pdata+2), (count-2)/FLOW_CHAR_SIZE);
             } else {
                 switch (rq->response_enc)
                 {
@@ -215,17 +220,8 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
                         data = RUNNER->AllocateString(parseUtf8Base((const char*)pdata, count, true));
                         break;
                     case ResponseEncodingByte:
-                        {
-                            unicode_string out;
-                            const char* str = (const char*)pdata;
-                            for (size_t i = 0; i < count; i++)
-                            {
-                                unsigned char c = (unsigned char) str[i];
-                                out.push_back((uint32_t) c);
-                            }
-                            data = RUNNER->AllocateString(out);
-                            break;
-                        }
+                        data = RUNNER->AllocateString((unicode_char*)pdata, count/FLOW_CHAR_SIZE);
+                        break;
                     default: /* ResponseEncodingAuto */
                         data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
                 }
