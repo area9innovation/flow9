@@ -394,15 +394,25 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 
 				// constructor
 				pushstr("\n\tpublic Struct_" + sdata.javaName + "() {}\n");
-				pushstr(
-					"\tpublic Struct_" + sdata.javaName + "(" +
-					strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
-					") {\n"
-				);
-				iter(fnametypes, \f ->
-					pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
-				);
-				pushstr("\t}\n");
+				if (length(sdata.fields) < java_max_number_of_args) {
+					pushstr(
+						"\tpublic Struct_" + sdata.javaName + "(" +
+						strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
+						") {\n"
+					);
+					iter(fnametypes, \f ->
+						pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
+					);
+					pushstr("\t}\n");
+				} else {
+					// If a struct has mre then 255 fields java forbids passing them in a normal constructor - use array of args
+					pushstr("\t@SuppressWarnings(\"unchecked\")\n");
+					pushstr("\tpublic Struct_" + sdata.javaName + "(Object as[]) {\n");
+					iteri(fnametypes, \i, f ->
+						pushstr("\t\tf_" + f.first + " = (" + fnametypes[i].second + ")as[" + i2s(i) + "];\n")
+					);
+					pushstr("\t}\n");
+				}
 
 				// accessors
 				iter(accessor_flds, \f -> {
@@ -985,15 +995,13 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 								result("SingletonStructs.str_" + sname, "SingletonStruct")
 							else {
 								stype = "Struct_" + sinfo.javaName;
-								result(
-									"(new " + stype + "(" +
-									strGlue(mapi(es, \j, e ->
-										emitJavaExpression(ctx, e,
-											type2javaObjType(ctx.func.gctx, sinfo.fields[j].type, true, false, false))),
-										", ") +
-									"))",
-									stype
+								sargs = strGlue(mapi(es, \j, e ->
+									emitJavaExpression(ctx, e,
+										type2javaObjType(ctx.func.gctx, sinfo.fields[j].type, true, false, false))),
+									", "
 								);
+								sargs1 = if (nfields < java_max_number_of_args) sargs else "new Object[]{" + sargs + "}";
+								result("(new " + stype + "(" + sargs1 + "))", stype);
 							}
 						}
 					}

@@ -1328,7 +1328,7 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline ? alpha : 0;
+				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline || clip.autocomplete != '' ? alpha : 0;
 			}
 		} else {
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;

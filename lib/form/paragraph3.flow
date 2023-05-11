@@ -319,6 +319,8 @@ renderParagraphEx(
 ) -> Form {
 	traceApi = makeWigiTrace_Form("renderParagraphEx", p);
 	traceApi.trace(\-> "renderParagraphEx "+(if (widthManager==dummyParagraphWidthManager) "dummyWidth" else if (widthManager.infoOnly) "infoOnly" else "storyWidth")+", style: "+toString(s));
+	deferredRender = !renderInfo.inline && !isUrlParameterTrue("wigify_render_inline");
+	dropStale = !isUrlParameterFalse("wigify_render_drop_stale");
 
 	alignment : ParaLineAlignment = extractParaLineAlignment(s);
 	genIndent = extractStruct(s, GeneralIndent(0.0)).indent;
@@ -505,6 +507,83 @@ renderParagraphEx(
 		}
 	}) |> list2array;
 
+	updateFn = \id, wi-> {
+		oldLines = getValue(linesCountB);
+		oldMaxLineWidth = getValue(linesB).maxLineWidth;
+		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi: " + toString(wi) + ". w: " + toString(w) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
+		// Ignore negative widths
+		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
+		iter(wordGroups, \wg ->
+			wg.width := foldi(wg.words, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
+				addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
+			)
+		);
+		ignoreLetterspacing = containsStruct(s, IgnoreLetterspacingOnReflow());
+		infos = getParaLineInfos(
+			alignment,
+			wordGroups,
+			w,
+			indent,
+			isParagraphMarked,
+			rtl,
+			fitLongWords,
+			extractStruct(s, defaultFontSizeStyle).size,
+			ignoreLetterspacing,
+			interlineSpacing
+		);
+
+		nextDistinct(linesCountB, length(infos));
+		// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
+		maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
+		lineWidths = map(infos, \info -> info.lineWidth);
+		if (maxLineWidth > w) {
+			traceApi.trace(\-> "DONT_FIT: " + toString(maxLineWidth) + " > " + toString(w));
+		}
+
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] lines SET START w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+		next(linesB, ParaLinesInfos(infos, maxLineWidth));
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] lines SET END  w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+
+		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END   w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
+	};
+
+	stopDefer = initUnsM();
+	deferredUpdate = \wi, immediate -> {
+		id = traceApi.makeRenderingId();
+		if (deferredRender && !immediate) {
+			traceApi.trace(\-> "deferredUpdate [" + id + "] DEFER update wi = " + toString(wi));
+			doUpdate = \-> {
+				traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] DEFER update START wi = " + toString(wi));
+				updateFn(id, wi);
+				traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] DEFER update END   wi = " + toString(wi));
+			}
+			if (dropStale) {
+				if (isSome(^stopDefer)) {
+					traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi));
+					dispUnsM(stopDefer);
+					traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] CANCELING wi = " + toString(wi));
+				}
+				resetTimer = interruptibleTimer(10, \-> {
+					stopDefer := None();
+					doUpdate();
+				});
+
+				setUnsM(stopDefer, \-> {
+					traceApi.trace(\-> "deferredUpdate [" + id + "] CANCELED DEFER wi = " + toString(wi));
+					resetTimer();
+				})
+			} else {
+				deferUntilNextFrameRendered(doUpdate);
+			}
+		} else {
+			traceApi.traceAndNest(\-> "deferredUpdate [" + id + "] IMMEDIATE update START wi = " + toString(wi));
+			updateFn(id, wi);
+			traceApi.unnestAndTrace(\-> "deferredUpdate [" + id + "] IMMEDIATE update END   wi = " + toString(wi));
+		}
+	}
+
+	wasRendered = ref false;
 	Constructor(
 		Inspect(
 			[AvailableWidth2(awB)],
@@ -515,72 +594,45 @@ renderParagraphEx(
 			}
 		),
 		\ -> {
-			updateFn = \wi-> {
-				id = traceApi.makeRenderingId();
-
-				oldLines = getValue(linesCountB);
-				oldMaxLineWidth = getValue(linesB).maxLineWidth;
-				w = if (isSingleLine) INF_METRICS else max(0.0, wi);
-				traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi: " + toString(wi) + ". w: " + toString(w) + ". maxLineWidth: " + toString(oldMaxLineWidth) + ", lines: " + toString(oldLines));
-				// Ignore negative widths
-				// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
-				iter(wordGroups, \wg ->
-					wg.width := foldi(wg.words, zeroParaWordWidth, \i, acc : ParaWordWidth, pw : ParaWord ->
-						addParaWordWidth(acc, getParaWordWidth(pw, WordPositionInLineMiddle()))
-					)
-				);
-				ignoreLetterspacing = containsStruct(s, IgnoreLetterspacingOnReflow());
-				infos = getParaLineInfos(
-					alignment,
-					wordGroups,
-					w,
-					indent,
-					isParagraphMarked,
-					rtl,
-					fitLongWords,
-					extractStruct(s, defaultFontSizeStyle).size,
-					ignoreLetterspacing,
-					interlineSpacing
-				);
-
-				nextDistinct(linesCountB, length(infos));
-				// We have to rerender even when lines are identical, at minimum to move things because of potential size changes
-				maxLineWidth = fold(infos, 0.0, \acc, info -> max(info.lineWidth, acc));
-				if (maxLineWidth > w) {
-					traceApi.trace(\-> "DONT_FIT: " + toString(maxLineWidth) + " > " + toString(w));
-				}
-
-				traceApi.traceAndNest(\-> "updateFn [" + id + "] lines SET START w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
-				next(linesB, ParaLinesInfos(infos, maxLineWidth));
-				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] lines SET END  w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
-
-				traceApi.unnestAndTrace(\-> "updateFn [" + id + "] END   w: " + toString(w) + ". maxLineWidth " + toString(oldMaxLineWidth) + " -> " + toString(maxLineWidth) + ". lines " + toString(oldLines) + " -> " + toString(getValue(linesCountB)));
-			};
-
 			uns = concatA([
 				[
-					subscribe(awB, \v -> {
-						traceApi.trace(\-> "awB changed. calling updateFn. awB = " + toString(v));
-						updateFn(v);
-					}),
+					// we can't render inline because of possible loop that would be missed in this case
+					// we have to render first time immediate
+					makeSubscribeUns(awB, \v -> {
+						if (^wasRendered) {
+							deferredUpdate(v, false)
+						} else {
+							wasRendered := true;
+							deferredUpdate(v, true);
+						}
+						[]
+					})()
 				],
 				if (renderInfo.inline || ndynamic == 0 || ndynamic == ndymamicUpper) [] else
 				[
 					subscribe2(update, \u -> {
 						// When an update from a dynamic element is requested, we do it in the next frame
-						if (u == 1) deferUntilNextFrameRendered(\ -> {
-							traceApi.trace(\-> "updateFn DEFERRED STARTED");
-							next(update, 0);
-							updateFn(getValue(awB))
-						})
+						if (u == 1) {
+							id = traceApi.makeRenderingId();
+							traceApi.trace(\-> "updateFn["+id+"] TRIGGERED");
+
+							deferUntilNextFrameRendered(\ -> {
+								traceApi.traceAndNest(\-> "updateFn["+id+"] DEFERRED START");
+								next(update, 0);
+								updateFn(id, getValue(awB));
+								traceApi.unnestAndTrace(\-> "updateFn["+id+"] DEFERRED END");
+							})
+						}
 					})
 				],
 				mapi(dynamicWords, \i, w -> makeSubscribe2(w.metrics, \m -> {
+					id = traceApi.makeRenderingId();
 					if (renderInfo.inline || i < ndymamicUpper) {
-						traceApi.trace(\-> "dynamicWordsMetrics IMMEDIATE updateFn for m = " + toString(m));
-						updateFn(getValue(awB))
+						traceApi.traceAndNest(\-> "dynamicWordsMetrics IMMEDIATE updateFn["+id+"] for m = " + toString(m));
+						updateFn(id, getValue(awB));
+						traceApi.unnestAndTrace(\-> "dynamicWordsMetrics IMMEDIATE updateFn["+id+"] for m = " + toString(m));
 					} else {
-						traceApi.trace(\-> "dynamicWordsMetrics DEFERRED updateFn for m = " + toString(m));
+						traceApi.trace(\-> "dynamicWordsMetrics DEFERRED updateFn["+id+"] for m = " + toString(m));
 						nextDistinct(update, 1)
 					}
 				})())
@@ -1191,7 +1243,7 @@ reflowParaWords2(
 keepFormTogether(form : Form) -> bool {
 	switch (form) {
 		Empty() : true;
-		Text(t, __) : t != " " && t != "­";  // Space or soft hyphen.
+		Text(t, __) : t == " " || t == "­";  // Space or soft hyphen.
 		Alpha(__, f) : keepFormTogether(f);
 		Size2(__, f) : keepFormTogether(f);
 		Access(__, f) : keepFormTogether(f);
@@ -1258,7 +1310,7 @@ renderParaLines(
 			}
 		f = RenderLine(
 			acc.y, lineInfo,
-			if (tightWidth) lines.maxLineWidth else availableWidth, lineAlignment,
+			availableWidth, lineAlignment,
 			i, styleTree, rtl, isMarked,
 			if (interLineHighlighting) {
 				if (i == 0) 0. else - interlineSpacing / 2.0
@@ -1623,167 +1675,189 @@ dummyTextWidthInspector = TextWidthInspector(make(0.0));
 
 optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : double, indent : double, lastLine : bool, ignoreLetterSpacing : bool, rtl : bool) -> [OptimizedLineElement] {
 	wordsCount = length(words) - 1;
+	useWordSpacing = newJustifyEnabled && alignment == Justify() && !lastLine;
 
-	wordSpacing = if (newJustifyEnabled && alignment == Justify() && !lastLine) {
-		spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
-			lastWord = i == wordsCount;
-			firstWord = i == 0;
-			defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
-			switch (w.form : GhostForm) {
-				Text(text, __) : {
-					if (text == " " || text == nonBreakableSpace) {
-						if (lastWord || firstWord) acc
-						else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
-					} else defValue()
-				};
-				default: defValue()
-			};
-		});
-		if (spacesAndWordsWidth.first > 0) {
-			(availableWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
-		} else 0.0
-	} else 0.0;
-
-	foldi(words, makeList(), \i, acc : List<OptimizedLineElement>, word : ParaWord -> {
-		f = word.form;
-		w = word.word;
-		metrics = word.metrics;
-		intIdM = word.interactivityIdM;
-		nextWidgetId = word.nextWidgetId;
-		lastWord = i == wordsCount;
-		switch(acc){
-			EmptyList() : {
-				formMetrics = switch (w) {
-					Space(__): {
-						metricsWithoutLS = if (ignoreLetterSpacing) {
-							switch (f : GhostForm) {
-								Text(__, style) : {
-									spaceSize = getStaticFormSize(f);
-									FormMetrics(spaceSize with width = spaceSize.width - extractStruct(style, zeroLetterSpacing).spacing) |> const
-								}
-								default: metrics
-							}
-						} else metrics;
-						if (newJustifyEnabled && alignment == Justify()) {
-							switch (f : GhostForm) {
-								Text(text, __) : {
-									if (text == " ") {
-										spaceSize = getStaticFormSize(f);
-										FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
-									} else metricsWithoutLS
-								}
-								default: metricsWithoutLS
-							}
-						} else metricsWithoutLS
+	optimizeLineFn = \width : double -> {
+		wordSpacing = if (useWordSpacing) {
+			spacesAndWordsWidth : Pair<int, double> = foldi(words, Pair(0, indent), \i, acc : Pair<int, double>, w -> {
+				lastWord = i == wordsCount;
+				firstWord = i == 0;
+				defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+				switch (w.form : GhostForm) {
+					Text(text, __) : {
+						if (text == " " || text == nonBreakableSpace) {
+							if (lastWord || firstWord) acc
+							else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
+						} else defValue()
 					};
-					default: metrics;
+					default: defValue()
 				};
-				Cons(OptimizedLineElement(f, formMetrics, intIdM, nextWidgetId), acc)
-			};
-			Cons(p, tail_) : {
-				switch (p.f : GhostForm) {
-					Text(t1, s1) : {
-						switch (f : GhostForm) {
-							Text(t2, s2) : {
-								s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1;
-								s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2;
-								join = if (use_dynamic_text_metrics) {
-									joinText(
-										t1,
-										removeAllStructs(s1_withCorrectLS, dummyTextWidthInspector),
-										t2,
-										removeAllStructs(s1_withCorrectLS, dummyTextWidthInspector)
-									);
-								} else {
-									joinText(t1, s1_withCorrectLS, t2, s2_withCorrectLS);
+			});
+			if (spacesAndWordsWidth.first > 0) {
+				(width - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
+			} else 0.0
+		} else 0.0;
+
+		foldi(words, makeList(), \i, acc : List<OptimizedLineElement>, word : ParaWord -> {
+			f = word.form;
+			w = word.word;
+			metrics = word.metrics;
+			intIdM = word.interactivityIdM;
+			nextWidgetId = word.nextWidgetId;
+			lastWord = i == wordsCount;
+			switch(acc){
+				EmptyList() : {
+					formMetrics = switch (w) {
+						Space(__): {
+							metricsWithoutLS = if (ignoreLetterSpacing) {
+								switch (f : GhostForm) {
+									Text(__, style) : {
+										spaceSize = getStaticFormSize(f);
+										FormMetrics(spaceSize with width = spaceSize.width - extractStruct(style, zeroLetterSpacing).spacing) |> const
+									}
+									default: metrics
 								}
-
-								additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
-									switch (f) {
-										Text(text, __) : {
-											if (text == " " || text == nonBreakableSpace) {
-												wordSpacing;
-											} else 0.0
-										};
-										default: 0.0
-									};
-								} else 0.0;
-
-								if (length(join) == 1 && intIdM == p.interactivityIdM) {
-									t : Form = join[0];
-
-									jtf : Pair<Form, Transform<FormMetrics>> = if (use_dynamic_text_metrics) {
-										getJoinableTextMetrics(t, false, false)
-									} else {
-										// TODO: Do not do this until at the end of the joining fest
-										m = getStaticFormSize(t);
-										optimizedLineElementMetrics : FormMetrics = fgetValue(p.metrics);
-										wordWidth = getStaticFormSize(f).width;
-
-										Pair(
-											t,
-											FormMetrics(m with
-												width = optimizedLineElementMetrics.width + wordWidth + (if (ignoreLetterSpacing) 0.0 else extractStruct(s2, zeroLetterSpacing).spacing) + additionalWidth
-											) |> const
+							} else metrics;
+							if (newJustifyEnabled && alignment == Justify()) {
+								switch (f : GhostForm) {
+									Text(text, __) : {
+										if (text == " ") {
+											spaceSize = getStaticFormSize(f);
+											FormMetrics(spaceSize with width = spaceSize.width + wordSpacing) |> const;
+										} else metricsWithoutLS
+									}
+									default: metricsWithoutLS
+								}
+							} else metricsWithoutLS
+						};
+						default: metrics;
+					};
+					Cons(OptimizedLineElement(f, formMetrics, intIdM, nextWidgetId), acc)
+				};
+				Cons(p, tail_) : {
+					switch (p.f : GhostForm) {
+						Text(t1, s1) : {
+							switch (f : GhostForm) {
+								Text(t2, s2) : {
+									s1_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s1, zeroLetterSpacing) else s1;
+									s2_withCorrectLS = if (ignoreLetterSpacing) removeAllStructs(s2, zeroLetterSpacing) else s2;
+									join = if (use_dynamic_text_metrics) {
+										joinText(
+											t1,
+											removeAllStructs(s1_withCorrectLS, dummyTextWidthInspector),
+											t2,
+											removeAllStructs(s1_withCorrectLS, dummyTextWidthInspector)
 										);
+									} else {
+										joinText(t1, s1_withCorrectLS, t2, s2_withCorrectLS);
 									}
 
-									// Replace the last element with the newly joined
-									Cons(
-										OptimizedLineElement(jtf.first, jtf.second, intIdM, nextWidgetId),
-										tail_
-									);
-								} else {
-									fMetrics : FormMetrics = fgetValue(metrics);
-									Cons(
-										OptimizedLineElement(
-											f,
-											FormMetrics(fMetrics with
-												width = fMetrics.width + additionalWidth
-											) |> const,
-											intIdM,
-											nextWidgetId
-										),
-										acc
-									);
-								};
-							}
-							default : {
-								Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
+									additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
+										switch (f) {
+											Text(text, __) : {
+												if (text == " " || text == nonBreakableSpace) {
+													wordSpacing;
+												} else 0.0
+											};
+											default: 0.0
+										};
+									} else 0.0;
+
+									if (length(join) == 1 && intIdM == p.interactivityIdM) {
+										t : Form = join[0];
+
+										jtf : Pair<Form, Transform<FormMetrics>> = if (use_dynamic_text_metrics) {
+											getJoinableTextMetrics(t, false, false)
+										} else {
+											// TODO: Do not do this until at the end of the joining fest
+											m = getStaticFormSize(t);
+											optimizedLineElementMetrics : FormMetrics = fgetValue(p.metrics);
+											wordWidth = getStaticFormSize(f).width;
+
+											Pair(
+												t,
+												FormMetrics(m with
+													width = optimizedLineElementMetrics.width + wordWidth + (if (ignoreLetterSpacing) 0.0 else extractStruct(s2, zeroLetterSpacing).spacing) + additionalWidth
+												) |> const
+											);
+										}
+
+										// Replace the last element with the newly joined
+										Cons(
+											OptimizedLineElement(jtf.first, jtf.second, intIdM, nextWidgetId),
+											tail_
+										);
+									} else {
+										fMetrics : FormMetrics = fgetValue(metrics);
+										Cons(
+											OptimizedLineElement(
+												f,
+												FormMetrics(fMetrics with
+													width = fMetrics.width + additionalWidth
+												) |> const,
+												intIdM,
+												nextWidgetId
+											),
+											acc
+										);
+									};
+								}
+								default : {
+									Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
+								}
 							}
 						}
+						default : Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
 					}
-					default : Cons(OptimizedLineElement(f, metrics, intIdM, nextWidgetId), acc);
 				}
 			}
-		}
-	}) |> list2array
-	|> (\arr : [OptimizedLineElement] -> {
-		if (wordSpacing != 0.0) {
-			wordSpacingStyle = WordSpacing(const(wordSpacing));
-			mapi(arr, \i, e -> {
-				switch (e.f : GhostForm) {
-					Text(t, s): {
-						newText = Text(t, arrayPush(s, wordSpacingStyle));
-						// native measure will not take word spacing ' text' into account because it is stand-alone measure
-						// but in the end, it will be taken into account by browser if there is other elements before it in the line
-						if (!rtl && startsWith(t, " ") && i > 0) {
-							metrics = fgetValue(e.metrics);
-							OptimizedLineElement(e with
-								f = newText,
-								metrics = make(FormMetrics(metrics with width = metrics.width + wordSpacing))
-							)
-						} else {
-							OptimizedLineElement(e with f = newText)
+		}) |> list2array
+		|> (\arr : [OptimizedLineElement] -> {
+			if (wordSpacing != 0.0) {
+				wordSpacingStyle = WordSpacing(const(wordSpacing));
+				mapi(arr, \i, e -> {
+					switch (e.f : GhostForm) {
+						Text(t, s): {
+							newText = Text(t, arrayPush(s, wordSpacingStyle));
+							// native measure will not take word spacing ' text' into account because it is stand-alone measure
+							// but in the end, it will be taken into account by browser if there is other elements before it in the line
+							if (!rtl && startsWith(t, " ") && i > 0) {
+								metrics = fgetValue(e.metrics);
+								OptimizedLineElement(e with
+									f = newText,
+									metrics = make(FormMetrics(metrics with width = metrics.width + wordSpacing))
+								)
+							} else {
+								OptimizedLineElement(e with f = newText)
+							}
 						}
+						default: e;
 					}
-					default: e;
-				}
-			});
+				});
+			} else {
+				arr
+			}
+		});
+	}
+
+	optimizedLine = optimizeLineFn(availableWidth);
+	if (useWordSpacing) {
+		width_optimized = fold(optimizedLine, 0.0, \acc2, w -> acc2 + fgetValue(w.metrics).width) |> roundUIMetricsValue;
+		if (width_optimized > availableWidth) {
+			// sometimes optimized line takes more width that original because of some not fully understandable reasons
+			// it leads to odd behaviour like blowing and scrolls so we attempt to prevent it here
+			width = fold(words, 0.0, \acc2, w -> acc2 + fgetValue(w.metrics).width) |> roundUIMetricsValue;
+			if (width < availableWidth) {
+				optimizeLineFn(availableWidth - (width_optimized - availableWidth))
+			} else {
+				optimizedLine
+			}
 		} else {
-			arr
+			optimizedLine
 		}
-	})
+	} else {
+		optimizedLine
+	}
 }
 
 isWordEmpty(w : ParaWord) -> bool {

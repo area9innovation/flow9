@@ -111,8 +111,8 @@ class Native {
 		#if (js && !flow_nodejs)
 			try {
 				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
-				//untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
-				untyped __js__("(new Function(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\"))()");
+				untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+				//untyped __js__("(new Function(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\"))()");
 			} catch( e : Dynamic) {
 				Errors.report(e);
 				cb(null);
