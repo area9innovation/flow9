@@ -455,8 +455,8 @@ class RenderSupport {
 		style.setAttribute('type', 'text/css');
 
 		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
-			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important;} " +
-			".print-page-container [style*=transform] * {position : unset}";
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; background : white} " +
+			".print-page-container {position : fixed;} ";
 
 		Browser.document.head.appendChild(style);
 
