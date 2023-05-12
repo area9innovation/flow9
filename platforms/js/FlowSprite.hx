@@ -386,9 +386,6 @@ class FlowSprite extends Sprite {
 			var svgXhr = new js.html.XMLHttpRequest();
 			if (!Platform.isIE && !Platform.isEdge)
 				svgXhr.overrideMimeType('image/svg+xml');
-			for (header in this.headers) {
-				svgXhr.setRequestHeader(header[0], header[1]);
-			}
 
 			svgXhr.onload = function () {
 				if (untyped this.destroyed || parent == null || nativeWidget == null || disposed) {
@@ -422,6 +419,10 @@ class FlowSprite extends Sprite {
 			};
 
 			svgXhr.open('GET', url, true);
+			for (header in this.headers) {
+				svgXhr.setRequestHeader(header[0], header[1]);
+			}
+
 			svgXhr.send();
 		} else if (this.headers.length == 0) {
 
