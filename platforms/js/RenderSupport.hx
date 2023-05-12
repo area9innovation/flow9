@@ -2189,8 +2189,8 @@ class RenderSupport {
 		clip.setTimeRange(start, end);
 	}
 
-	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool) : Void {
-		vc.playVideo(filename, startPaused);
+	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
+		vc.playVideo(filename, startPaused, headers);
 	}
 
 	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
@@ -2888,8 +2888,8 @@ class RenderSupport {
 		return clip.addStreamStatusListener(fn);
 	}
 
-	public static function addVideoSource(clip : VideoClip, src : String, type : String) : Void {
-		clip.addVideoSource(src, type);
+	public static function addVideoSource(clip : VideoClip, src : String, type : String, headers : Array<Array<String>>) : Void {
+		clip.addVideoSource(src, type, headers);
 	}
 
 	public static function setVideoExternalSubtitle(clip : VideoClip, src : String, kind : String) : Void -> Void {
