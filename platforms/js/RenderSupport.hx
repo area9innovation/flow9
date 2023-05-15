@@ -455,9 +455,7 @@ class RenderSupport {
 		style.setAttribute('type', 'text/css');
 
 		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
-			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important;} " +
-			".print-page-container [style*=transform] * {position : unset}";
-
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
 		Browser.document.head.appendChild(style);
 
 		return function () {
@@ -2132,6 +2130,14 @@ class RenderSupport {
 		fillColor : Int, fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 		clip.setTextAndStyle(text, fontFamily, fontSize, fontWeight, fontSlope,
 			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
+	}
+
+	public static function setLineHeightPercent(clip : TextClip, lineHeightPercent : Float) : Void {
+		clip.setLineHeightPercent(lineHeightPercent);
+	}
+
+	public static function setTextNeedBaseline(clip : TextClip, needBaseline : Bool) : Void {
+		clip.setNeedBaseline(needBaseline);
 	}
 
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {

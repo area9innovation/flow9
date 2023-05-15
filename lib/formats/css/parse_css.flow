@@ -8,18 +8,24 @@ import lingo/pegcode/parsic;
 export {
 	// Parses a CSS snippet to a stylesheet
 	parseCss(css : string) -> Stylesheet;
+	parseCssTrace(css : string, addWarning : (string) -> void) -> Stylesheet;
 
 	mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle;
 	cssMarginWidth2double(margin : CssMarginWidth) -> double;
 }
 
 parseCss(css : string) -> Stylesheet {
-    result = parsic(pegOps4Css, css, defaultPegActions);
-    if (result == "PARSING FAILED") {
-        Stylesheet(makeTree());
-    } else {
-        css2stylesheet(result);
-    }
+	parseCssTrace(css, devtrace);
+}
+
+parseCssTrace(css : string, addWarning : (string) -> void) -> Stylesheet {
+	result = parsic(pegOps4Css, css, defaultPegActions);
+	if (result == "PARSING FAILED") {
+			addWarning(toString(result));
+			Stylesheet(makeTree());
+	} else {
+			css2stylesheet(result, addWarning);
+	}
 }
 
 defTreeValue = StyleWithSelectors(defCssStyle, makeTree());
@@ -45,15 +51,15 @@ extractNameFromPseudos(pseudos : [CssPseudo]) -> string {
 	)
 }
 
-css2stylesheet(css : CssStylesheet) -> Stylesheet {
+css2stylesheet(css : CssStylesheet, addWarning : (string) -> void) -> Stylesheet {
 	Stylesheet(fold(css.rules, makeTree(), \acc, r : CssRuleset -> {
 		switch(r: CssRuleset) {
 			CssRulesetSimple(ruleSelectors, ruleDeclarations): {
-				style = cssDeclarations2style(ruleDeclarations);
+				style = cssDeclarations2style(ruleDeclarations, addWarning);
 				fold(ruleSelectors, acc, \ac2, selector : CssSelector -> {
 					switch (selector) {	
 						CssCombinators(head, combinations) : {
-							devtrace("Not supported CssCombinators: " + toString(combinations));
+							addWarning("Not supported CssCombinators: " + toString(combinations));
 							ac2;
 						}
 						CssSelectorSequence(selectors) : {
@@ -79,13 +85,17 @@ cssSelectorName(s : string) -> string {
 	s;
 }
 
-cssDeclarations2style(ds : [CssDeclaration]) -> CssStyle {
+cssDeclarations2style(ds : [CssDeclaration], addWarning : (string) -> void) -> CssStyle {
 	fold(ds, defCssStyle, \acc, d -> {
-		addCssDeclaration2style(acc, d)
+		addCssDeclaration2style(acc, d, addWarning)
 	})
 }
 
-addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
+addCssDeclaration2style(
+	style : CssStyle,
+	d : CssDeclaration,
+	addWarning : (string) -> void
+) -> CssStyle {
 	prop = d.property;
 	if (prop == "font-family") {
 		switch (d.expr) {
@@ -130,7 +140,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		} else if (600 <= v) {
 			true;
 		} else {
-			devtrace("Unknown font-weight: " + toString(d.expr));
+			addWarning("Unknown font-weight: " + toString(d.expr));
 			style.bold;
 		};
 		CssStyle(style with bold=bold);
@@ -141,7 +151,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		} else if (st == "normal") {
 			false;
 		} else {
-			devtrace("Unknown font-style: " + toString(d.expr));
+			addWarning("Unknown font-style: " + toString(d.expr));
 			style.italic;
 		};
 		CssStyle(style with italic=italic);
@@ -150,7 +160,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		if (st == "none") {
 			style;
 		} else {
-			devtrace("Unknown text-decoration: " + toString(d.expr));
+			addWarning("Unknown text-decoration: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "color") {
@@ -208,7 +218,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		if (v != -1) {
 			CssStyle(style with backgroundFill=v);
 		} else {
-			devtrace("Unknown background-color: " + toString(d.expr));
+			addWarning("Unknown background-color: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "background-image") {
@@ -223,10 +233,13 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 				parseCssBackground([d.expr], style);
 			}
 			default: {
-				devtrace("Unknown background-image: " + toString(d.expr));
+				addWarning("Unknown background-image: " + toString(d.expr));
 				style;
 			}
 		}
+	} else if (prop == "line-height") {
+		lineHeight = cssTerm2double(d.expr, defCssStyle.lineHeight);
+		CssStyle(style with lineHeight=lineHeight);
 	} else if (prop == "width") {
 		width = switch (d.expr : CssTerm) {
 			CssPercentage(v): CssPercent(cssTerm2double(v, 0.0));
@@ -235,7 +248,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 				if (v != 0.0) {
 					CssLength(v, CssUnitPx());
 				} else {
-					devtrace("Unknown width: " + toString(d.expr));
+					addWarning("Unknown width: " + toString(d.expr));
 					style.width;
 				}
 			}
@@ -246,7 +259,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		if (v != 0.0) {
 			CssStyle(style with height=v);
 		} else {
-			devtrace("Unknown height: " + toString(d.expr));
+			addWarning("Unknown height: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "letter-spacing") {
@@ -254,7 +267,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		if (v != defCssStyle.letterSpacing) {
 			CssStyle(style with letterSpacing=v);
 		} else {
-			devtrace("Unknown letter-spacing: " + toString(d.expr));
+			addWarning("Unknown letter-spacing: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "word-spacing") {
@@ -262,19 +275,19 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		if (v != defCssStyle.wordSpacing) {
 			CssStyle(style with wordSpacing=v);
 		} else {
-			devtrace("Unknow work-spacing: " + d2s(v));
+			addWarning("Unknow work-spacing: " + d2s(v));
 			style;
 		}
 	} else if (prop == "border") {
-		CssStyle(style with border=cssTerm2Border(d.expr, style.border))
+		CssStyle(style with border=cssTerm2Border(d.expr, style.border, addWarning))
 	} else if (prop == "border-color") {
 		CssStyle(style with border=cssTerm2BorderColor(d.expr, style.border))
 	} else if (prop == "border-radius") {
-		br = cssTerm2BorderRadius(d.expr, emptyBorderRadius);
+		br = cssTerm2BorderRadius(d.expr, emptyBorderRadius, addWarning);
 		if (br != emptyBorderRadius) {
 			CssStyle(style with borderRadius=br);
 		} else {
-			devtrace("Unknown border-radius: " + toString(d.expr));
+			addWarning("Unknown border-radius: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "border-top-left-radius" || prop == "border-top-right-radius"
@@ -307,7 +320,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 		if (v == "none") {
 			CssStyle(style with display=CssDisplayNone());
 		} else {
-			devtrace("Unknown display: " + toString(d.expr));
+			addWarning("Unknown display: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "white-space") {
@@ -425,7 +438,7 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 	) {
 		CssStyle(style with transform = cssTerm2Transform(d.expr));
 	} else {
-		devtrace("Unknown CSS property: " + prop + " " + toString(d.expr));
+		addWarning("Unknown CSS property: " + prop + " " + toString(d.expr));
 		style;
 	}
 }
@@ -453,7 +466,11 @@ cssTerm2BorderColorHepler(t1 : CssTerm, colorAcc : int) -> int {
 	}
 }
 
-cssTerm2Border(c : CssTerm, def : [GraphicsStyle]) -> [GraphicsStyle] {
+cssTerm2Border(
+	c : CssTerm,
+	def : [GraphicsStyle],
+	addWarning : (string) -> void
+) -> [GraphicsStyle] {
 	getGraphicsStyleFromCssTerms = \terms -> {
 		getWidthFromCss = \-> {
 			width = fold(terms, 0.0, \acc, t -> {
@@ -510,13 +527,17 @@ cssTerm2Border(c : CssTerm, def : [GraphicsStyle]) -> [GraphicsStyle] {
 		}
 
 		default: {
-			devtrace("Expected CssSolid or CssLinearGradient or CssList in CSS term: " + toString(c));
+			addWarning("Expected CssSolid or CssLinearGradient or CssList in CSS term: " + toString(c));
 			def
 		}
 	}
 }
 
-cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
+cssTerm2BorderRadius(
+	c : CssTerm,
+	def : BorderRadius,
+	addWarning : (string) -> void
+) -> BorderRadius {
 	switch (c : CssTerm) {
 		CssInherit(): {
 			defCssStyle.borderRadius;
@@ -540,7 +561,7 @@ cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
 			} else if (len == 4) {
 				BorderRadius(r[0], r[1], r[2], r[3]);
 			} else {
-				devtrace("Invalid value for border-radius: " + toString(c));
+				addWarning("Invalid value for border-radius: " + toString(c));
 				def;
 			}
 		}
@@ -549,7 +570,7 @@ cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
 			if (v != -1.0) {
 				BorderRadius(v, v, v, v);
 			} else {
-				devtrace("Invalid value for border-radius: " + toString(c));
+				addWarning("Invalid value for border-radius: " + toString(c));
 				def;
 			}
 		}
@@ -703,6 +724,7 @@ mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle {
 		if (new.color == defCssStyle.color) orig.color else new.color,
 		if (new.fontBackgroundFill == defCssStyle.fontBackgroundFill) orig.fontBackgroundFill else new.fontBackgroundFill,
 		if (new.backgroundFill == defCssStyle.backgroundFill) orig.backgroundFill else new.backgroundFill,
+		if (new.lineHeight == defCssStyle.lineHeight) orig.lineHeight else new.lineHeight,
 		if (new.width == defCssStyle.width) orig.width else new.width,
 		if (new.height == defCssStyle.height) orig.height else new.height,
 		if (new.opacity == defCssStyle.opacity) orig.opacity else new.opacity,
