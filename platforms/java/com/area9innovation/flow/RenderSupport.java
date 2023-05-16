@@ -299,7 +299,7 @@ public class RenderSupport extends NativeHost {
 	public static Object closeVideo(Object stg) {
 		return null;
 	}
-	public static Object playVideo(Object obj, String name, boolean pause) {
+	public static Object playVideo(Object obj, String name, boolean pause, Object[] headers) {
 		return null;
 	}
 	public static double getVideoPosition(Object stg) {

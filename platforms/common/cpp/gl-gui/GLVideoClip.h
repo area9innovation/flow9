@@ -43,6 +43,7 @@ protected:
     unicode_string name;
     int media_stream_id;
     bool use_media_stream;
+    HttpRequest::T_SMap req_headers;
 
     int64_t position, lastPosition, duration, start, end;
     bool playing, failed, looping, loaded;
@@ -98,6 +99,8 @@ public:
     bool useMediaStream() { return use_media_stream; }
     const unicode_string &getName() { return name; }
     int getMediaStreamId() { return media_stream_id; }
+    bool isHeadersSet() { return req_headers.size() > 0; }
+    void applyHeaders(QNetworkRequest *request);
 
     bool isPlaying() { return playing; }
     bool isLooping() { return looping; }

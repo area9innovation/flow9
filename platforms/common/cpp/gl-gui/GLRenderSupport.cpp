@@ -1146,7 +1146,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLTextClip, addTextInputKeyEventFilter, 3);
 
     // Video Clip
-    TRY_USE_OBJECT_METHOD(GLVideoClip, playVideo, 3);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, playVideo, 4);
     TRY_USE_OBJECT_METHOD(GLVideoClip, playVideoFromMediaStream, 3);
     TRY_USE_OBJECT_METHOD_NAME(GLVideoClip, playVideo2, "playVideo", 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, seekVideo, 2);

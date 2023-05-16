@@ -526,7 +526,8 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
 #endif
     } else {
         // Media player does the video decoding and hands us new frames
-        QMediaPlayer* player = new QMediaPlayer(0, QMediaPlayer::VideoSurface);
+        QMediaPlayer* player = new QMediaPlayer(nullptr, QMediaPlayer::VideoSurface);
+
         connect(player, &QMediaPlayer::stateChanged, this, &QGLRenderSupport::videoStateChanged);
         connect(player, &QMediaPlayer::mediaStatusChanged, this, &QGLRenderSupport::mediaStatusChanged);
         connect(player, &QMediaPlayer::positionChanged, this, &QGLRenderSupport::videoPositionChanged);
@@ -557,13 +558,45 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
             player->setMedia(QUrl::fromLocalFile(full_path));
         else if (QFile::exists(name))
             player->setMedia(QUrl::fromLocalFile(name));
-        else
-            player->setMedia(rq_url);
+        else if (video_clip->isHeadersSet()) {
+            QNetworkRequest request = QNetworkRequest(rq_url);
+            video_clip->applyHeaders(&request);
 
-        if (video_clip->isPlaying()) {
-            player->play();
+            QNetworkAccessManager * manager = new QNetworkAccessManager(this);
+            connect(manager, &QNetworkAccessManager::finished, this, [player, video_clip, this](QNetworkReply* reply)
+            {
+                if (reply->error() == QNetworkReply::NoError) {
+                    QBuffer *buffer = new QBuffer(player);
+                    buffer->setData(reply->readAll());
+                    buffer->open(QIODevice::ReadOnly);
+
+                    player->setMedia(QMediaContent(), buffer);
+
+                    if (video_clip->isPlaying()) {
+                        player->play();
+                    } else {
+                        player->pause();
+                    }
+                } else {
+                    WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
+
+                    getFlowRunner()->flow_err << "Video error: " << encodeUtf8(qt2unicode(reply->errorString())) << endl;
+                    dispatchVideoNotFound(video_clip);
+                }
+            });
+
+            manager->get(request);
         } else {
-            player->pause();
+            player->setMedia(rq_url);
+        }
+
+        if (!video_clip->isHeadersSet())
+        {
+            if (video_clip->isPlaying()) {
+                player->play();
+            } else {
+                player->pause();
+            }
         }
     }
     return true;
