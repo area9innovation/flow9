@@ -1287,9 +1287,7 @@ class DisplayObjectHelper {
 		}
 
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
-		if (!nativeWidget.classList.contains("print-page-container")) {
-			nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
-		}
+		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
 
 		if (isCanvasStage(clip)) {
 			nativeWidget.style.transform = 'matrix(${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0, ${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0)';
@@ -1536,9 +1534,7 @@ class DisplayObjectHelper {
 
 				y = 0;
 			} else {
-				if (!nativeWidget.classList.contains("print-page-container")) {
-					nativeWidget.firstChild.style.top = null;
-				}
+				nativeWidget.firstChild.style.top = null;
 			}
 		}
 
