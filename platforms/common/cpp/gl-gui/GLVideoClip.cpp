@@ -2,6 +2,7 @@
 
 #include "core/GarbageCollector.h"
 #include "core/RunnerMacros.h"
+#include <QBuffer>
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
@@ -433,6 +434,26 @@ void GLVideoClip::setFocus(bool focus)
     GLClip::setFocus(focus);
 }
 
+void GLVideoClip::resetMediaBuffer()
+{
+    if (customHeadersRequestBuffer)
+    {
+        customHeadersRequestBuffer->close();
+        delete customHeadersRequestBuffer;
+    }
+}
+
+QBuffer* GLVideoClip::setMediaBuffer(QByteArray data)
+{
+    resetMediaBuffer();
+
+    customHeadersRequestBuffer = new QBuffer();
+    customHeadersRequestBuffer->setData(data);
+    customHeadersRequestBuffer->open(QIODevice::ReadOnly);
+
+    return customHeadersRequestBuffer;
+}
+
 StackSlot GLVideoClip::playVideo2(RUNNER_ARGS)
 {
     RUNNER_CopyArgArray(newargs, 1, 2);
@@ -646,4 +667,10 @@ void GLVideoClip::applyHeaders(QNetworkRequest *request) {
                     unicode2qt(it->second).toUtf8()
         );
     }
+}
+
+GLVideoClip::~GLVideoClip()
+{
+    req_headers.clear();
+    resetMediaBuffer();
 }

@@ -4,6 +4,7 @@
 #include "GLClip.h"
 #include "GLRenderer.h"
 #include "GLTextClip.h"
+#include <QBuffer>
 
 class GLVideoClip : public GLClip
 {
@@ -56,6 +57,8 @@ protected:
 
     GLTextClip *subtitle;
 
+    QBuffer *customHeadersRequestBuffer = nullptr;
+
     void update();
     void updatePlay(bool playing, bool video_response, bool notify = true);
     void updatePosition(int64_t position, bool video_response, bool notify = true);
@@ -77,6 +80,7 @@ protected:
     void notifyPosition(int64_t position);
 public:
     GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const StackSlot &play_cb, const StackSlot &dur_cb, const StackSlot &pos_cb);
+    ~GLVideoClip();
 
     enum Event {
         PlayStart = 0, // Loaded and/or start of video
@@ -120,6 +124,9 @@ public:
     void setVideoTextureImage(GLTextureImage::Ptr image);
 
     void setFocus(bool focus);
+
+    void resetMediaBuffer();
+    QBuffer* setMediaBuffer(QByteArray data);
 
     DEFINE_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 

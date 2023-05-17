@@ -566,11 +566,7 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
             connect(manager, &QNetworkAccessManager::finished, this, [player, video_clip, this](QNetworkReply* reply)
             {
                 if (reply->error() == QNetworkReply::NoError) {
-                    QBuffer *buffer = new QBuffer(player);
-                    buffer->setData(reply->readAll());
-                    buffer->open(QIODevice::ReadOnly);
-
-                    player->setMedia(QMediaContent(), buffer);
+                    player->setMedia(QMediaContent(), video_clip->setMediaBuffer(reply->readAll()));
 
                     if (video_clip->isPlaying()) {
                         player->play();
