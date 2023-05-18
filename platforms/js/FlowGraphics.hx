@@ -434,6 +434,8 @@ class FlowGraphics extends Graphics {
 				svg.style.position = 'absolute';
 				svg.style.left = "0";
 				svg.style.top = "0";
+				svg.style.width = "1px";
+				// svg.style.height = "1px";
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
@@ -523,6 +525,16 @@ class FlowGraphics extends Graphics {
 							element.removeAttribute("stroke-width");
 						}
 					};
+
+					Browser.window.addEventListener('beforeprint', function () {
+						nativeWidget.style.position = 'fixed';
+						svg.style.position = '';
+					}, false);
+
+					Browser.window.addEventListener('afterprint', function () {
+						nativeWidget.style.position = '';
+						svg.style.position = 'absolute';
+					}, false);
 
 					if (data.shape.type == 0) {
 						createSvgElement('path');
