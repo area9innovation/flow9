@@ -444,9 +444,8 @@ class TextClip extends NativeWidgetClip {
 		var alpha = this.getNativeWidgetAlpha();
 
 		if (isInput) {
-			if (multiline) {
-				nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
-			} else {
+			nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
+			if (!multiline) {
 				nativeWidget.setAttribute("type", type);
 			}
 			nativeWidget.value = text;
