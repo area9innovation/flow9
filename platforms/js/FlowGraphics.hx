@@ -434,8 +434,6 @@ class FlowGraphics extends Graphics {
 				svg.style.position = 'absolute';
 				svg.style.left = "0";
 				svg.style.top = "0";
-				svg.style.width = "1px";
-				// svg.style.height = "1px";
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
