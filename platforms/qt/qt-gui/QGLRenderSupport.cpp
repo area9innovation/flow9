@@ -526,15 +526,24 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
 #endif
     } else {
         // Media player does the video decoding and hands us new frames
-        QMediaPlayer* player = new QMediaPlayer(nullptr, QMediaPlayer::VideoSurface);
+        QMediaPlayer* player;
+        if (video_clip->isHeadersSet())
+            player = new QMediaPlayer(nullptr, QMediaPlayer::StreamPlayback);
+        else
+            player = new QMediaPlayer(nullptr, QMediaPlayer::VideoSurface);
+
+        widget = videoWidget = new VideoWidget(this);
+        VideoPlayerMap[player] = videoWidget;
 
         connect(player, &QMediaPlayer::stateChanged, this, &QGLRenderSupport::videoStateChanged);
         connect(player, &QMediaPlayer::mediaStatusChanged, this, &QGLRenderSupport::mediaStatusChanged);
         connect(player, &QMediaPlayer::positionChanged, this, &QGLRenderSupport::videoPositionChanged);
         connect(player, SIGNAL(error(QMediaPlayer::Error)), this, SLOT(handleVideoError()));
-
-        widget = videoWidget = new VideoWidget(this);
-        VideoPlayerMap[player] = videoWidget;
+        connect(videoWidget, &VideoWidget::onError, this, [this, video_clip](QString errorText){
+            WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
+            getFlowRunner()->flow_err << "Video error: " << encodeUtf8(qt2unicode(errorText)) << endl;
+            dispatchVideoNotFound(video_clip);
+        });
 
         videoWidget->hide();
         player->setVideoOutput(videoWidget->videoSurface());
@@ -548,51 +557,17 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         videoWidget->setVideoClip(video_clip);
 
         // Load the video file and start playing the video
+        videoWidget->setMediaSource(
+                    /* qtStrBase */
+                    unicode2qt(getFlowRunner()->getUrlString()),
+                    /* getFullResourcePath */
+                    [this](QString path) { return getFullResourcePath(path); }
+        );
 
-        QString name = unicode2qt(video_clip->getName());
-        QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
-        QString full_path = getFullResourcePath(name);
-        QUrl rq_url = base.resolved(QUrl(name));
-
-        if (QFile::exists(full_path))
-            player->setMedia(QUrl::fromLocalFile(full_path));
-        else if (QFile::exists(name))
-            player->setMedia(QUrl::fromLocalFile(name));
-        else if (video_clip->isHeadersSet()) {
-            QNetworkRequest request = QNetworkRequest(rq_url);
-            video_clip->applyHeaders(&request);
-
-            QNetworkAccessManager * manager = new QNetworkAccessManager(this);
-            connect(manager, &QNetworkAccessManager::finished, this, [player, video_clip, this](QNetworkReply* reply)
-            {
-                if (reply->error() == QNetworkReply::NoError) {
-                    player->setMedia(QMediaContent(), video_clip->setMediaBuffer(reply->readAll()));
-
-                    if (video_clip->isPlaying()) {
-                        player->play();
-                    } else {
-                        player->pause();
-                    }
-                } else {
-                    WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
-
-                    getFlowRunner()->flow_err << "Video error: " << encodeUtf8(qt2unicode(reply->errorString())) << endl;
-                    dispatchVideoNotFound(video_clip);
-                }
-            });
-
-            manager->get(request);
+        if (video_clip->isPlaying()) {
+            player->play();
         } else {
-            player->setMedia(rq_url);
-        }
-
-        if (!video_clip->isHeadersSet())
-        {
-            if (video_clip->isPlaying()) {
-                player->play();
-            } else {
-                player->pause();
-            }
+            player->pause();
         }
     }
     return true;
@@ -618,11 +593,10 @@ void QGLRenderSupport::doUpdateVideoPlay(GLVideoClip *video_clip)
     QMediaPlayer *player = videoWidget->mediaPlayer();
     if (!player) return;
 
-    if (video_clip->isPlaying()) {
+    if (video_clip->isPlaying())
         player->play();
-    } else {
+    else
         player->pause();
-    }
 }
 
 void QGLRenderSupport::doUpdateVideoPosition(GLVideoClip *video_clip)

@@ -125,9 +125,6 @@ public:
 
     void setFocus(bool focus);
 
-    void resetMediaBuffer();
-    QBuffer* setMediaBuffer(QByteArray data);
-
     DEFINE_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
 public:

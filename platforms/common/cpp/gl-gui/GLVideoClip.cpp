@@ -24,6 +24,8 @@ GLVideoClip::GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const
     subtitle = new GLTextClip(owner);
     addChild(subtitle);
 
+    customHeadersRequestBuffer = new QBuffer();
+
     updateVolume(1.0f);
     updatePlaybackRate(1.0f);
     updatePosition(0.0f, true);
@@ -434,26 +436,6 @@ void GLVideoClip::setFocus(bool focus)
     GLClip::setFocus(focus);
 }
 
-void GLVideoClip::resetMediaBuffer()
-{
-    if (customHeadersRequestBuffer)
-    {
-        customHeadersRequestBuffer->close();
-        delete customHeadersRequestBuffer;
-    }
-}
-
-QBuffer* GLVideoClip::setMediaBuffer(QByteArray data)
-{
-    resetMediaBuffer();
-
-    customHeadersRequestBuffer = new QBuffer();
-    customHeadersRequestBuffer->setData(data);
-    customHeadersRequestBuffer->open(QIODevice::ReadOnly);
-
-    return customHeadersRequestBuffer;
-}
-
 StackSlot GLVideoClip::playVideo2(RUNNER_ARGS)
 {
     RUNNER_CopyArgArray(newargs, 1, 2);
@@ -672,5 +654,4 @@ void GLVideoClip::applyHeaders(QNetworkRequest *request) {
 GLVideoClip::~GLVideoClip()
 {
     req_headers.clear();
-    resetMediaBuffer();
 }
