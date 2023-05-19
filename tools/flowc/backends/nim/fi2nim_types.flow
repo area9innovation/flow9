@@ -15,7 +15,7 @@ export {
 	fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 	fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 	fi2nimTypeFromFlow1(env : FiNimEnv) -> NimCompiled;
-	fi2nimStructTypars(env : FiNimEnv, s: FiTypeStruct) -> Maybe<NimCompiled>;
+	fi2nimTypenameTypars(env : FiNimEnv, t: FiTypeName) -> Maybe<NimCompiled>;
 	fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 	fi2nimTypeCompare(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled>;
 
@@ -424,29 +424,59 @@ fi2nimTypeFromFlow1(env : FiNimEnv) -> NimCompiled {
 		), "\n"
 	) + "\n      else: err()";
 	num_structs = length(env.structs);
-	structs_from_flow = strGlue(
+	structs_from_flow = concatStrings(
 		mapi(env.structs, \i, struct -> {
 			header = "      " + (if (i == 0) "when " else "elif ") + "tp is " + fiNimRenameType(struct.name) + ": ";
 			if (length(struct.args) == 0) {
 				// case of a singleton struct
-				header + "return " + fiNimRenameType(struct.name) + "(tp_id: " + i2s(i) + ", str_id: " + i2s(i) + ")";
+				header + "return " + fiNimRenameType(struct.name) + "(tp_id: " + i2s(i) + ", str_id: " + i2s(i) + ")\n";
 			} else {
 				// general case
 				typars = if (length(struct.typars) == 0) "" else {
-					"[" + strGlue(generate(0, length(struct.typars), \j -> "rt_struct_type_typar(tp, " + i2s(j) + ")"), ", ") + "]";
+					"[" + strGlue(generate(0, length(struct.typars), \j -> "rt_typename_type_typar(tp, " + i2s(j) + ")"), ", ") + "]";
 				}
 				header + "return " + fiNimRenameType(struct.name) + typars +
 				"(tp_id: " + i2s(i) + ", str_id: " + i2s(i) + 
 					concatStrings(mapi(struct.args, \j, arg -> 
 						", " + fiNimRenameKeyword(arg.name) + ": rt_from_flow(x.str_args[" + i2s(j) + "], " + fi2nimTypeToTypars(arg.type) + ")"
 					)) + 
-				")"
+				")\n"
 			}
-		}), "\n"
-	) + "\n      else: err()";
+		})
+	);
+	unions_from_flow = concatStrings(
+		mapi(env.unions, \i, union -> {
+			header = 
+			"      elif tp is " + fiNimRenameType(union.name) + ":\n" + 
+			"        case x.str_id:\n";
+			union_typars = fiTypes2typars(union.typeparameters);
+			union_typars_str = if (length(union.typeparameters) == 0) "" else {
+				"[" + strGlue(generate(0, length(union.typeparameters), \j -> "rt_typename_type_typar(tp, " + i2s(j) + ")"), ", ") + "]";
+			}
+			header + concatStrings(map(union.typenames, \tn -> {
+				struct = fiTypeName2Struct(tn, env.prog.names);
+				struct_typars = if (length(struct.typars) == 0) "" else {
+					"[" + superglue(fiTypes2typars(struct.typars), \typar -> 
+						"rt_typename_type_typar(tp, " + i2s(findiDef(union_typars, \tp -> tp.n == typar.n, -1)) + ")", ", ") + 
+					"]";
+				};
+				"        of " + fi2nimStructId(env, tn.name) + ": " +
+				"return cast[" + fiNimRenameType(union.name) + union_typars_str + "](" + 
+					fiNimRenameType(struct.name) + struct_typars +
+					"(" + 
+						"tp_id: " + i2s(lookupTreeDef(env.type_index, tn, -1)) + ", " + 
+						"str_id: " + i2s(lookupTreeDef(env.struct_index, tn.name, -1)) + 
+						concatStrings(mapi(struct.args, \j, arg -> 
+							", " + fiNimRenameKeyword(arg.name) + ": rt_from_flow(x.str_args[" + i2s(j) + "], " + fi2nimTypeToTypars(arg.type) + ")"
+						)) + 
+					")"
+				+ ")\n"
+			})) + "        else: err()";
+		})
+	);
 	from_flow = strSubstituteArgs(nim_from_flow_patten)([
 		funcs_from_flow, 
-		if (length(env.structs) == 0) "      err()" else structs_from_flow
+		structs_from_flow + unions_from_flow + "      else: err()"
 	]);
 	NimCompiled(
 		NimLine(0, "proc rt_from_flow*(x: Flow, tp: typedesc): tp"),
@@ -470,7 +500,7 @@ fi2nimTypeToTypars(x: FiType) -> string {
 				"a" + i2s(i) + ": " + fi2nimTypeToTypars(arg.type), ", ") + "): " + rt_s;
 		}
 		FiTypeRef(t) :             "Ref[" + fi2nimTypeToTypars(t) + "]";
-		FiTypeParameter(n) :       "rt_struct_type_typar(tp, " + i2s(strlen(n) - 1) + ")";
+		FiTypeParameter(n) :       "rt_typename_type_typar(tp, " + i2s(strlen(n) - 1) + ")";
 		FiTypeBool() :             "bool";
 		FiTypeInt() :              "int32";
 		FiTypeDouble() :           "float";
@@ -484,12 +514,12 @@ fi2nimTypeToTypars(x: FiType) -> string {
 	}
 }
 
-fi2nimStructTypars(env : FiNimEnv, s: FiTypeStruct) -> Maybe<NimCompiled> {
-	if (length(s.typars) == 0) None() else {
-		typars = "[" + supergluei(s.typars, \i,__ -> "T" + i2s(i), ", ") + "]";
-		decl = "template rt_struct_type_typar*" + typars + "(X: typedesc[" + fiNimRenameType(s.name) + typars + "], i: static int): typedesc";
+fi2nimTypenameTypars(env : FiNimEnv, tn: FiTypeName) -> Maybe<NimCompiled> {
+	if (length(tn.typeparameters) == 0) None() else {
+		typars = "[" + supergluei(tn.typeparameters, \i,__ -> "T" + i2s(i), ", ") + "]";
+		decl = "template rt_typename_type_typar*" + typars + "(X: typedesc[" + fiNimRenameType(tn.name) + typars + "], i: static int): typedesc";
 		body = "when (i == 0): T0" + 
-			concatStrings(mapi(s.typars, \i,__ -> if (i == 0) "" else " elif (i == " + i2s(i) + "): T" + i2s(i))) + 
+			concatStrings(mapi(tn.typeparameters, \i,__ -> if (i == 0) "" else " elif (i == " + i2s(i) + "): T" + i2s(i))) + 
 			" else: void";
 		Some(NimCompiled(
 			NimBlock([
