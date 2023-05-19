@@ -125,6 +125,8 @@ fiMakeCallerVar(x: FiExp) -> FiExp;
 
 fiWrapFunctionCasts(x: FiExp) -> FiExp;
 
+fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -1335,4 +1337,173 @@ fiWrapFunctionCasts(x: FiExp) -> FiExp {
 		}
 		default: e;
 	});
+}
+
+fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames) -> FiExp {
+	mapFiExp(x, \e -> switch (e) {
+		FiCast(e1, from, to, type, s): {
+			if (fiEqualTypes(from, to)) e1 else {
+				c = fiUnfoldCasts(e1, from, to, s, names);
+				if (c != e) {
+					println("CAST UNFOLD:\n" 
+						+ "e:\n" + strIndent(pretFiExp(e)) + "\n"
+						+ "c:\n" + strIndent(pretFiExp(c)) + "\n"
+					);
+				}
+				c
+			}
+		}
+		default: e;
+	});
+}
+
+fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames) -> FiExp {
+	if (fiEqualTypes(from, to)) e else {
+		println("going to cast: " + pretFiType(from) + " to " + pretFiType(to));
+		switch (from) {
+			FiTypeFunction(from_args, from_ret): {
+				switch (to) {
+					FiTypeFunction(to_args, to_ret): {
+						args = mapi(to_args, \i, arg ->
+							FiFunArg("fn_cast_wrapper_arg__" + i2s(i), arg.type)
+						);
+						FiLambda(
+							args,
+							FiCast(
+								FiCall(e, 
+									mapi(args, \i, arg ->
+										fiUnfoldCasts(FiVar(arg.name, arg.type, s), arg.type, from_args[i].type, s, names)
+									), 
+									from_ret, s
+								),
+								from_ret, to_ret, to_ret, s
+							),
+							to, s
+						);
+					}
+					default: FiCast(e, from, to, to, s);
+				}
+			}
+			FiTypeArray(from_arr): {
+				switch (to) {
+					FiTypeArray(to_arr): {
+						arg = FiFunArg("arr_cast_wrapper_arg__", from_arr);
+						FiCall(
+							FiVar("map", 
+								FiTypeFunction([
+									FiFunArg("", from), 
+									FiFunArg("", FiTypeFunction([FiFunArg("", from_arr)], to_arr))
+								], to), 
+								s
+							),
+							[e, FiLambda([arg],
+								fiUnfoldCasts(FiVar(arg.name, arg.type, s), from_arr, to_arr, s, names),
+								FiTypeFunction([arg], to_arr),
+								s
+							)],
+							to, s
+						);
+					}
+					default: FiCast(e, from, to, to, s);
+				}
+			}
+			FiTypeRef(from_ref): {
+				switch (to) {
+					FiTypeRef(to_ref): {
+						FiCallPrim(FcRefPrim(),
+							[fiUnfoldCasts(FiCallPrim(FcDerefPrim(), [e], from, s), from_ref, to_ref, s, names)],
+							to, s
+						);
+					}
+					default: FiCast(e, from, to, to, s);
+				}
+			}
+			FiTypeName(from_name, from_typars): {
+				cast_struct = \x, struct_from, struct_to -> {
+					from_tp = FiTypeName(struct_from.name, struct_from.typars);
+					to_tp = FiTypeName(struct_to.name, struct_to.typars);
+					if (struct_from == struct_to) x else {
+						tmp = FiVar("struct_cast_wrapper_arg__", from_tp, s);
+						FiLet(tmp.name, tmp.type, x, 
+							FiCallPrim(FcStructPrim(struct_to.name),
+								mapi(struct_from.args, \i, arg -> 
+									fiUnfoldCasts(
+										FiCallPrim(FcFieldPrim(arg.name), [tmp], arg.type, s),
+										arg.type, struct_to.args[i].type, s, names
+									)
+								),
+								to_tp, s
+							),
+							to_tp, s
+						);
+					}
+				}
+				fiMapTypeName(from, names, 
+					\struct_from -> switch (to) {
+						FiTypeName(to_name,__): {
+							fiMapTypeName(to, names, 
+								\struct_to -> {
+									if (from_name != to_name) {
+										fail("illegal cast of " + pretFiType(from) + " to " + pretFiType(to));
+									}
+									cast_struct(e, struct_from, struct_to);
+								},
+								\union_to -> FiCast(e, from, to, to, s),
+								\err -> FiCast(e, from, to, to, s)
+							);
+						}
+						default: FiCast(e, from, to, to, s)
+					},
+					\union_from -> {
+						switch (to) {
+							FiTypeName(to_name,__): {
+								fiMapTypeName(to, names, 
+									\struct_to -> FiCast(e, from, to, to, s),
+									\union_to -> {
+										tmp = FiVar("union_cast_wrapper_arg__", from, s);
+										FiLet(tmp.name, tmp.type, e, 
+											FiSwitch(tmp, tmp.type,
+												map(union_from.typenames,
+													\tn_from -> {
+														switch (find(union_to.typenames, \x -> x.name == tn_from.name)) {
+															Some(tn_to): {
+																struct_from = fiTypeName2Struct(tn_from, names);
+																struct_to = fiTypeName2Struct(tn_to, names);
+																from_tn = FiTypeName(struct_from.name, struct_from.typars);
+																to_tn = FiTypeName(struct_to.name, struct_to.typars);
+																FiCase(tn_from.name, map(struct_from.args, \__-> "__"),
+																	FiCast(
+																		cast_struct(
+																			FiCast(e, from, from_tn, from_tn, s),
+																			struct_from, struct_to
+																		),
+																		to_tn, to, to, s
+																	), 
+																	s
+																);
+															}
+															None(): {
+																fail0("missing typename: " + tn_from.name);
+															}
+														}
+													}),
+												to, s
+											),
+											to, s
+										);
+									},
+									\err -> fail0("error")
+								);
+							}
+							default: {
+								FiCast(e, from, to, to, s);
+							}
+						}
+					},
+					\err -> FiCast(e, from, to, to, s)
+				);
+			}
+			default: FiCast(e, from, to, to, s);
+		}
+	}
 }
