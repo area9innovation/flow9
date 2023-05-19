@@ -137,13 +137,13 @@ proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
 $A_0
 
 # Flow type traits
-template rt_type_is_flow(X: typedesc[Flow]): bool = true
-template rt_type_is_flow(X: typedesc): bool = false
+template rt_type_is_flow*(X: typedesc[Flow]): bool = true
+template rt_type_is_flow*(X: typedesc): bool = false
 
 # Array type traits
-template rt_type_is_array[T](X: typedesc[seq[T]]): bool = true
-template rt_type_is_array(X: typedesc): bool = false
-template rt_type_de_array[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
+template rt_type_is_array*[T](X: typedesc[seq[T]]): bool = true
+template rt_type_is_array*(X: typedesc): bool = false
+template rt_type_de_array*[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
 
 # Type index oprations
 var id2type*: seq[AlType]
@@ -233,7 +233,6 @@ proc rt_type_id*(f: Flow): int32 =
 proc rt_to_string*(f: Flow): string
 # this function quotes all strings in ".."
 proc rt_to_string_quot*(f: Flow): string
-proc rt_to_string*[R](fn: proc(): R): string = "<function>"
 proc rt_to_string*(x: Native): string =
   case x.ntp:
   of ntProcess: return "process"
@@ -312,14 +311,6 @@ proc rt_to_flow*[T](arr: seq[T]): Flow =
   for i in 0..arr.len - 1:
     flow_seq[i] = rt_to_flow(arr[i])
   Flow(tp: rtArray, array_v: flow_seq)
-
-proc rt_to_flow*[R](fn: proc(): R): Flow =
-  Flow(
-    tp: rtFunc, 
-    func_v: proc(x: seq[Flow]): Flow =
-      let y: R = fn()
-      return rt_to_flow(y)
-  )
 
 proc rt_compare*(x: Flow, y: Flow): int32
 proc rt_compare*(x: Native, y: Native): int32 =
