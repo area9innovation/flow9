@@ -32,6 +32,9 @@ export {
 
 	// Collects all types, used in a program.
 	fiProgramTypes(p : FiProgram) -> [FiType];
+
+	// Extract all casts in a program. Returns a tree: key - 'from' type, value - set of 'to' types
+	fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>>;
 }
 
 fiFlattenUnions(program : FiProgram) -> FiProgram {
@@ -620,4 +623,29 @@ fiProgramTypes(p : FiProgram) -> [FiType] {
 		iter(m.natives, observe_nat);
 	});
 	set2array(^types);
+}
+
+fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
+	proc_exp = \x, acc, nm -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
+		FiCast(__,from, to,__,__): {
+			from1 = fiPurifyType(from);
+			to1 = fiPurifyType(to);
+			if (fiEqualTypes(from1, to1)) {
+				ac;
+			} else {
+				setTree(ac, from1, 
+					insertSet(lookupTreeDef(ac, from1, makeSet()), to1)
+				);
+			}
+		}
+		default: ac;
+	}, AstTraverseOrder(true, true));
+	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
+		switch (toplevel) {
+			FiFunctionDec(nm, lambda,__,__,__): proc_exp(lambda, acc, nm);
+			FiGlobalVar(nm, value,__,__,__): proc_exp(value, acc, nm);
+			FiNativeDec(nm,__,__,__,fallback,__,__): proc_exp(fallback, acc, nm);
+			default: acc;
+		}
+	);
 }
