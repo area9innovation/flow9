@@ -14,6 +14,9 @@ import "flow_lib/httpServer_type"
 
 {.experimental: "overloadableEnums".}
 
+proc rt_runtime_error*(what: string): void =
+  assert(false, "runtime error: " & what)
+
 proc rt_escape(s: string): string = 
   var r: string = ""
   for ch in s:
@@ -360,7 +363,7 @@ proc rt_compare*[R](x: var R, y: var R): int32 = rt_compare(addr(x), addr(y))
 proc rt_to_void*(x: Flow): void = 
   case x.tp:
   of rtVoid: discard
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to void")
 
 proc rt_to_bool*(x: Flow): bool =
   case x.tp:
@@ -368,7 +371,7 @@ proc rt_to_bool*(x: Flow): bool =
   of rtBool:   return rt_to_bool(x.bool_v)
   of rtDouble: return rt_to_bool(x.double_v)
   of rtString: return rt_to_bool(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to bool")
 
 proc rt_to_int*(x: Flow): int32 =
   case x.tp:
@@ -376,7 +379,7 @@ proc rt_to_int*(x: Flow): int32 =
   of rtBool:   return rt_to_int(x.bool_v)
   of rtDouble: return rt_to_int(x.double_v)
   of rtString: return rt_to_int(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to int")
 
 proc rt_to_double*(x: Flow): float =
   case x.tp:
@@ -384,7 +387,7 @@ proc rt_to_double*(x: Flow): float =
   of rtBool:   return rt_to_double(x.bool_v)
   of rtDouble: return rt_to_double(x.double_v)
   of rtString: return rt_to_double(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to double")
 
 proc rt_to_native*(x: Flow): Native =
   return if x.tp == rtNative: x.native_v else: Native(ntp: ntFlow, flow_v: x)
@@ -398,8 +401,8 @@ proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
       if fields[i] == field_name:
         return arg
       i += 1
-    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
-  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
+    rt_runtime_error("flow struct " & x.str_name & "  has no field " & field_name)
+  else: rt_runtime_error("attempt to get field of non-struct: " & rt_to_string(x))
 
 proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
   if s.tp == rtStruct:
