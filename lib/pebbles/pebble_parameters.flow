@@ -218,32 +218,40 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 	// as old view is disposed after the new one is constructed we must check that we are not interfering in new view' pebble
 	checkPebble = \-> lastPathPartName == getLastPathPartName(controller);
 
+	constructedFlags = map(handlers, \__ -> make(true));
 	MSelectPebbleParameters(
 		controller,
 		map(handlers, \handler -> handler.parameter),
 		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
-			MGetManager(\manager ->
+			MGetManager(\manager -> {
 				MConstruct(concatA(
-					map(handlers, \handler -> {
+					mapi(handlers, \i, handler -> {
 						if (handler.action == DoNotRecord() || controller.dummy) {
 							[
 								// call onChange on every valueB update if user don't care about pebbles
 								callOnChangeOnParameterChange(manager, controller, handler, callstack)
 							]
 						} else {
+							nextDistinct(constructedFlags[i], false);
 							[
 								makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
+									nextDistinct(constructedFlags[i], true);
 									if (fgetValue(manager.pebblesEnabled)) {
-										changeParameterValue(handler, value, callstack, \-> checkPebble() || checkCustomCheckPebble(handler.action)());
+										changeParameterValue(handler, value, callstack, \ -> {
+											checkPebble() || checkCustomCheckPebble(handler.action)();
+										});
 									}
 								}),
 								setViewOnParameterChange(controller, handler)
 							]
 						}
 					})),
-					m
+					// We need to make sure that all subscribers are created before showing the content
+					MIfLazy(fands(constructedFlags, true), \constructed -> {
+						if (constructed) m else MEmpty();
+					})
 				)
-			)
+			})
 		}
 	)
 }
@@ -285,13 +293,13 @@ makeDummyPebbleParameterLink() -> PebbleParameterLink {
 	PebbleStringLink("", make(""), nop1, DoNotRecord())
 }
 
-getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Transform<string> {
+getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Behaviour<string> {
 	eitherFn(
 		find(parameters, \a -> a.first == key),
 		secondOfPair,
 		\ -> {
 			devtrace("Warning: Unknown pebble parameter: " + key);
-			make("");
+			const("");
 		}
 	);
 }
