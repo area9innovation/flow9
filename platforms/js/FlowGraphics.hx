@@ -524,6 +524,20 @@ class FlowGraphics extends Graphics {
 						}
 					};
 
+					Browser.window.addEventListener('beforeprint', function () {
+						try {
+							nativeWidget.style.position = 'fixed';
+							svg.style.position = '';
+						} catch (e : Dynamic) {}
+					}, false);
+
+					Browser.window.addEventListener('afterprint', function () {
+						try {
+							nativeWidget.style.position = '';
+							svg.style.position = 'absolute';
+						} catch (e : Dynamic) {}
+					}, false);
+
 					if (data.shape.type == 0) {
 						createSvgElement('path');
 
