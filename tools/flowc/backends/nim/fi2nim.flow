@@ -132,7 +132,8 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 
 fi2nimOrderDeclarations(env : FiNimEnv) -> [Pair<string, [FiDeclaration]>] {
 	program = env.prog;
-	fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
+	missing_predefined = ref buildSet(map(nimPredefinedNatives, \p -> p.name));
+	decls0 = fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
 		switch (lookupTree(program.modules, file)) {
 			None(): {
 				fcPrintln("Could not find module '" + file + "'", program.config.threadId);
@@ -148,10 +149,22 @@ fi2nimOrderDeclarations(env : FiNimEnv) -> [Pair<string, [FiDeclaration]>] {
 					module_natives,
 					filtermap(notNatives, \name -> lookupTree(program.names.toplevel, name))
 				);
+				iter(decls, \d -> if (containsSet(^missing_predefined, d.name)) {
+					// A pre-defined native is found - remove it from missing
+					missing_predefined := removeSet(^missing_predefined, d.name)
+				});
 				arrayPush(macc, Pair(module.fileinfo.flowfile, decls));
 			}
 		}
 	);
+	if (isEmptySet(^missing_predefined)) decls0 else {
+		concat(
+			[Pair("predefined", filtermap(nimPredefinedNatives, \nat ->
+				if (containsSet(^missing_predefined, nat.name)) Some(nat) else None()
+			))], 
+			decls0
+		);
+	}
 }
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
