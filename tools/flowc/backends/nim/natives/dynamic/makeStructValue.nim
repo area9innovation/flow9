@@ -8,4 +8,4 @@ proc $F_0(makeStructValue)*(name : string, args : seq[Flow], default_value : Flo
     if (type_id == -1):
       rt_register_type(al_type)
       type_id = rt_find_type_id(al_type)
-    return Flow(tp: rtStruct, tp_id: type_id, str_id: struct_id, str_name: name, str_args: args)
+    return Flow(tp: rtStruct, tp_id: type_id, str_id: struct_id, str_args: args)
