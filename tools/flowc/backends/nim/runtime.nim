@@ -14,6 +14,9 @@ import "flow_lib/httpServer_type"
 
 {.experimental: "overloadableEnums".}
 
+proc rt_runtime_error*(what: string): void =
+  assert(false, "runtime error: " & what)
+
 proc rt_escape(s: string): string = 
   var r: string = ""
   for ch in s:
@@ -80,16 +83,6 @@ type
     # Composite types
     rtRef, rtArray, rtFunc, rtStruct
 
-  # Compile time type kinds
-  CtType* = enum
-    # Atiomic types
-    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
-    # Composite types
-    ctRef, ctArray, ctFunc, ctStruct, ctUnion
-
-  # A complex type descriptor.
-  AlType* = tuple[op: CtType, args: seq[int32], name: string]
-
 #[ Representation of a dynamic type ]#
 
   Flow* = ref object of RootObj
@@ -107,16 +100,13 @@ type
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
-      tp_id: int32
       str_id: int32
-      str_name: string
       str_args: seq[Flow]
 
   Ref*[T] = ref object of Flow
     val: T
 
   Struct* = ref object of RootObj
-    tp_id: int32
     str_id: int32
 
 #[ Native Types ]#
@@ -145,47 +135,16 @@ template rt_type_is_array*[T](X: typedesc[seq[T]]): bool = true
 template rt_type_is_array*(X: typedesc): bool = false
 template rt_type_de_array*[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
 
-# Type index oprations
-var id2type*: seq[AlType]
-var type2id*: Table[AlType, int32]
-var id2fields*: seq[seq[string]]
+type StructDef* = tuple[name: string, fields: seq[string]]
+
+# Struct index
+var id2struct*: seq[StructDef]
 var struct2id*: Table[string, int32]
-
-proc rt_type_id_to_string*(id: int32): string =
-  let tp = id2type[id]
-  case tp.op:
-  of ctRef:    return "ref " & rt_type_id_to_string(tp.args[0])
-  of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
-  of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
-  of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
-  else: tp.name
-
-proc rt_type_id_to_struct_id*(id: int32): int32 =
-  return id2type[id].args[0]
-
-proc rt_find_type_id*(tp: AlType): int32 =
-  return if type2id.hasKey(tp): type2id[tp] else: -1
-
-proc rt_register_type*(tp: AlType): void =
-  if not type2id.hasKey(tp):
-    let id: int32 = int32(id2type.len)
-    id2type.add(tp)
-    type2id[tp] = id
-  else:
-    #echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
-    discard
-
-proc hash*(tp: AlType): Hash =
-  var h: Hash = 0
-  h = h !& hash(tp.op)
-  for arg in tp.args:
-    h = h !& hash(arg)
-  result = !$h
 
 proc rt_register_struct*(name: string, fields: seq[string]): void =
   if not struct2id.hasKey(name):
-    let id: int32 = int32(id2fields.len)
-    id2fields.add(fields)
+    let id: int32 = int32(id2struct.len)
+    id2struct.add((name, fields))
     struct2id[name] = id
   else:
     echo "struct " & name & " is aleady registered"
@@ -195,39 +154,14 @@ proc rt_struct_name_to_id*(name: string): int32 =
     return struct2id[name]
   else:
     return -1
-
 proc rt_struct_id_to_fields*(id: int32): seq[string] =
-  return if id < id2fields.len: id2fields[id] else: @[]
-
+  return if id < id2struct.len: id2struct[id].fields else: @[]
+proc rt_struct_id_to_name*(id: int32): string =
+  return if id < id2struct.len: id2struct[id].name else: ""
 proc rt_struct_name_to_fields*(name: string): seq[string] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
-
 proc rt_struct_name_wrapper*[R](v: R, name: string): string = name
-
-proc rt_flow_struct_name*(f: Flow): string = f.str_name
-
-proc rt_type_id*(f: Flow): int32 =
-  case f.tp:
-  of rtVoid:   return 0i32
-  of rtBool:   return 1i32
-  of rtInt:    return 2i32
-  of rtDouble: return 3i32
-  of rtString: return 4i32
-  of rtNative: return 5i32
-  of rtRef:
-    let r_type = rt_type_id(f.ref_v)
-    return rt_find_type_id((ctRef, @[r_type], ""))
-  of rtArray:
-    if f.array_v.len == 0:
-      echo "type of an empty array can't be resolved at runtime"
-      return -1i32
-    else:
-      let el_type = rt_type_id(f.array_v[0])
-      return rt_find_type_id((ctArray, @[el_type], ""))
-  of rtFunc:
-    echo "type of a function can't be resolved at runtime"
-    return -1i32
-  of rtStruct: return f.str_id
+proc rt_flow_struct_name*(f: Flow): string = rt_struct_id_to_name(f.str_id)
 
 # to_string conversions
 proc rt_to_string*(f: Flow): string
@@ -284,7 +218,7 @@ proc rt_to_string_quot*(f: Flow): string =
     return s
   of rtFunc:   return "<function>"
   of rtStruct:
-    var s = f.str_name & "("
+    var s = rt_struct_id_to_name(f.str_id) & "("
     for i in 0..f.str_args.len - 1:
         if i > 0:
            s.add(", ")
@@ -360,7 +294,7 @@ proc rt_compare*[R](x: var R, y: var R): int32 = rt_compare(addr(x), addr(y))
 proc rt_to_void*(x: Flow): void = 
   case x.tp:
   of rtVoid: discard
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to void")
 
 proc rt_to_bool*(x: Flow): bool =
   case x.tp:
@@ -368,7 +302,7 @@ proc rt_to_bool*(x: Flow): bool =
   of rtBool:   return rt_to_bool(x.bool_v)
   of rtDouble: return rt_to_bool(x.double_v)
   of rtString: return rt_to_bool(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to bool")
 
 proc rt_to_int*(x: Flow): int32 =
   case x.tp:
@@ -376,7 +310,7 @@ proc rt_to_int*(x: Flow): int32 =
   of rtBool:   return rt_to_int(x.bool_v)
   of rtDouble: return rt_to_int(x.double_v)
   of rtString: return rt_to_int(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to int")
 
 proc rt_to_double*(x: Flow): float =
   case x.tp:
@@ -384,7 +318,7 @@ proc rt_to_double*(x: Flow): float =
   of rtBool:   return rt_to_double(x.bool_v)
   of rtDouble: return rt_to_double(x.double_v)
   of rtString: return rt_to_double(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to double")
 
 proc rt_to_native*(x: Flow): Native =
   return if x.tp == rtNative: x.native_v else: Native(ntp: ntFlow, flow_v: x)
@@ -392,18 +326,18 @@ proc rt_to_native*(x: Flow): Native =
 proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
   case x.tp:
   of rtStruct:
-    let fields = rt_struct_name_to_fields(x.str_name)
+    let fields = rt_struct_id_to_fields(x.str_id)
     var i = 0
     for arg in x.str_args:
       if fields[i] == field_name:
         return arg
       i += 1
-    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
-  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
+    rt_runtime_error("flow struct " & rt_struct_id_to_name(x.str_id) & "  has no field " & field_name)
+  else: rt_runtime_error("attempt to get field of non-struct: " & rt_to_string(x))
 
 proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
   if s.tp == rtStruct:
-    let s_fields = rt_struct_name_to_fields(s.str_name)
+    let s_fields = rt_struct_id_to_fields(s.str_id)
     var i = 0
     for f in s_fields:
       if f == field:

@@ -85,7 +85,6 @@ fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
 
 	fi2nimJoinNimCodeMany(concatA([
 		[type_defs, fi2nimEmptyLine()],
-		mapi(env.ordered_types, \i, t -> fi2nimRegisterType(env, t, i)), 
 		[fi2nimEmptyLine()],
 		map(env.structs, \s -> fi2nimRegisterStruct(env, s)),
 		[fi2nimEmptyLine()],
@@ -132,7 +131,8 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 
 fi2nimOrderDeclarations(env : FiNimEnv) -> [Pair<string, [FiDeclaration]>] {
 	program = env.prog;
-	fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
+	missing_predefined = ref buildSet(map(nimPredefinedNatives, \p -> p.name));
+	decls0 = fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
 		switch (lookupTree(program.modules, file)) {
 			None(): {
 				fcPrintln("Could not find module '" + file + "'", program.config.threadId);
@@ -148,10 +148,22 @@ fi2nimOrderDeclarations(env : FiNimEnv) -> [Pair<string, [FiDeclaration]>] {
 					module_natives,
 					filtermap(notNatives, \name -> lookupTree(program.names.toplevel, name))
 				);
+				iter(decls, \d -> if (containsSet(^missing_predefined, d.name)) {
+					// A pre-defined native is found - remove it from missing
+					missing_predefined := removeSet(^missing_predefined, d.name)
+				});
 				arrayPush(macc, Pair(module.fileinfo.flowfile, decls));
 			}
 		}
 	);
+	if (isEmptySet(^missing_predefined)) decls0 else {
+		concat(
+			[Pair("predefined", filtermap(nimPredefinedNatives, \nat ->
+				if (containsSet(^missing_predefined, nat.name)) Some(nat) else None()
+			))], 
+			decls0
+		);
+	}
 }
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
@@ -271,7 +283,7 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		)
 	));
 
-	casts = fi2nimCasts(program);
+	casts = fiProgramCasts(program);
 	if (debug_polymorphics) {
 		println("casts:\n" +
 			strIndent(superglue(tree2pairs(casts), \p -> 
@@ -294,31 +306,6 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		fi2nimMaxFuncArity(program)
 	);
 	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
-}
-
-fi2nimCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
-	proc_exp = \x, acc, nm -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
-		FiCast(__,from, to,__,__): {
-			from1 = fiPurifyType(from);
-			to1 = fiPurifyType(to);
-			if (fiEqualTypes(from1, to1)) {
-				ac;
-			} else {
-				setTree(ac, from1, 
-					insertSet(lookupTreeDef(ac, from1, makeSet()), to1)
-				);
-			}
-		}
-		default: ac;
-	}, AstTraverseOrder(true, true));
-	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
-		switch (toplevel) {
-			FiFunctionDec(nm, lambda,__,__,__): proc_exp(lambda, acc, nm);
-			FiGlobalVar(nm, value,__,__,__): proc_exp(value, acc, nm);
-			FiNativeDec(nm,__,__,__,fallback,__,__): proc_exp(fallback, acc, nm);
-			default: acc;
-		}
-	);
 }
 
 fi2nimNativeImports(env: FiNimEnv, runtime: string) -> NimCode {
