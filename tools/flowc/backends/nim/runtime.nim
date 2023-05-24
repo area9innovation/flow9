@@ -83,16 +83,6 @@ type
     # Composite types
     rtRef, rtArray, rtFunc, rtStruct
 
-  # Compile time type kinds
-  CtType* = enum
-    # Atiomic types
-    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
-    # Composite types
-    ctRef, ctArray, ctFunc, ctStruct, ctUnion
-
-  # A complex type descriptor.
-  AlType* = tuple[op: CtType, args: seq[int32], name: string]
-
 #[ Representation of a dynamic type ]#
 
   Flow* = ref object of RootObj
@@ -110,7 +100,6 @@ type
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
-      tp_id: int32
       str_id: int32
       str_args: seq[Flow]
 
@@ -118,7 +107,6 @@ type
     val: T
 
   Struct* = ref object of RootObj
-    tp_id: int32
     str_id: int32
 
 #[ Native Types ]#
@@ -149,42 +137,9 @@ template rt_type_de_array*[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
 
 type StructDef* = tuple[name: string, fields: seq[string]]
 
-# Type index oprations
-var id2type*: seq[AlType]
-var type2id*: Table[AlType, int32]
+# Struct index
 var id2struct*: seq[StructDef]
 var struct2id*: Table[string, int32]
-
-proc rt_type_id_to_string*(id: int32): string =
-  let tp = id2type[id]
-  case tp.op:
-  of ctRef:    return "ref " & rt_type_id_to_string(tp.args[0])
-  of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
-  of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
-  of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
-  else: tp.name
-
-proc rt_type_id_to_struct_id*(id: int32): int32 =
-  return id2type[id].args[0]
-
-proc rt_find_type_id*(tp: AlType): int32 =
-  return if type2id.hasKey(tp): type2id[tp] else: -1
-
-proc rt_register_type*(tp: AlType): void =
-  if not type2id.hasKey(tp):
-    let id: int32 = int32(id2type.len)
-    id2type.add(tp)
-    type2id[tp] = id
-  else:
-    #echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
-    discard
-
-proc hash*(tp: AlType): Hash =
-  var h: Hash = 0
-  h = h !& hash(tp.op)
-  for arg in tp.args:
-    h = h !& hash(arg)
-  result = !$h
 
 proc rt_register_struct*(name: string, fields: seq[string]): void =
   if not struct2id.hasKey(name):
@@ -199,42 +154,14 @@ proc rt_struct_name_to_id*(name: string): int32 =
     return struct2id[name]
   else:
     return -1
-
 proc rt_struct_id_to_fields*(id: int32): seq[string] =
   return if id < id2struct.len: id2struct[id].fields else: @[]
-
 proc rt_struct_id_to_name*(id: int32): string =
   return if id < id2struct.len: id2struct[id].name else: ""
-
 proc rt_struct_name_to_fields*(name: string): seq[string] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
-
 proc rt_struct_name_wrapper*[R](v: R, name: string): string = name
-
 proc rt_flow_struct_name*(f: Flow): string = rt_struct_id_to_name(f.str_id)
-
-proc rt_type_id*(f: Flow): int32 =
-  case f.tp:
-  of rtVoid:   return 0i32
-  of rtBool:   return 1i32
-  of rtInt:    return 2i32
-  of rtDouble: return 3i32
-  of rtString: return 4i32
-  of rtNative: return 5i32
-  of rtRef:
-    let r_type = rt_type_id(f.ref_v)
-    return rt_find_type_id((ctRef, @[r_type], ""))
-  of rtArray:
-    if f.array_v.len == 0:
-      echo "type of an empty array can't be resolved at runtime"
-      return -1i32
-    else:
-      let el_type = rt_type_id(f.array_v[0])
-      return rt_find_type_id((ctArray, @[el_type], ""))
-  of rtFunc:
-    echo "type of a function can't be resolved at runtime"
-    return -1i32
-  of rtStruct: return f.str_id
 
 # to_string conversions
 proc rt_to_string*(f: Flow): string
