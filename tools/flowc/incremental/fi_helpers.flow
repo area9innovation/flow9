@@ -110,7 +110,13 @@ export {
 	// Unwrap the reference type from FiTypeRef
 	fiDerefType(tp: FiType) -> FiType;
 
+	// In case types t1 and t2 are comparable by relation of generality
+	// returns the bigger one, otherwise may return any of t1 and t2
 	fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType;
+
+	// In case types t1 and t2 are comparable by relation of generality
+	// returns the lesser one, otherwise may return any of t1 and t2
+	fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType;
 
 	fiSetExpType(e : FiExp, t: FiType) -> FiExp;
 
@@ -119,6 +125,15 @@ export {
 
 	// If 'e' is FiSeq - return its contents, otherwise return an array of single 'e'
 	unFiSeq(e: FiExp) -> [FiExp];
+
+	// wrap `e` with FiSeq in case of more then 1 element in array
+	wrapFiSeq(e: [FiExp]) -> FiExp;
+
+	// Checks if there's no type parameters (?, ??, ???, etc.) in type
+	fiIsCompleteType(type: FiType) -> bool;
+
+	// The same as fiCollectTypars, but collects types, not just names
+	fiCollectTypars2(type : FiType, acc : Set<FiTypeParameter>) -> Set<FiTypeParameter>;
 }
 
 fiDeclarationArgNames(decl) {
@@ -156,7 +171,7 @@ fiExpType(expr) {
 	}
 }
 
-resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnion {
+resolveFiTypeName(names : FiGlobalNames, t : FiType, thread_id : int) -> FiStructOrUnion {
 	switch (t) {
 		FiTypeName(n, tps): {
 			ms = lookupTree(names.structs, n);
@@ -165,7 +180,7 @@ resolveFiTypeName(names : FiGlobalNames, t : FiType, id : int) -> FiStructOrUnio
 					mu = lookupTree(names.unions, n);
 					switch (mu) {
 						None(): {
-							fcPrintln("Unknown type name " + n, id);
+							fcPrintln("Unknown type name " + n, thread_id);
 							dummyFiTypeStruct;
 						}
 						Some(u): {
@@ -439,7 +454,7 @@ fiMatchTyparsOrdered(type : FiType, pattern : FiType) -> [FiType] {
 		typar_instance = \typar -> {
 			switch (lookupTree(substitution, typar)) {
 				Some(tp): tp;
-				None(): fail0("unmatched typar: " + typar);
+				None(): fail0("unmatched typar: " + typar + ", type: " + pretFiType(type) + ", pattern: " + pretFiType(pattern));
 			}
 		}
 		map(typars, typar_instance);
@@ -880,6 +895,43 @@ fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
 	}
 }
 
+fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
+	if (t1 == t2) t1 else {
+		t0 = switch (t2) {
+			FiTypeFlow(): t1;
+			FiTypeNative(): t1;
+			default: t2;
+		}
+		switch (t1) {
+			FiTypeFlow(): t2;
+			FiTypeNative(): t2;
+			FiTypeName(n1, __): {
+				switch (t2) {
+					FiTypeFlow(): t1;
+					FiTypeNative(): t1;
+					FiTypeName(n2, __): {
+						switch (lookupTree(names.structs, n1)) {
+							Some(__): t1;
+							None(): {
+								switch (lookupTree(names.structs, n2)) {
+									Some(__): t2;
+									None(): {
+										u1 = lookupTreeDef(names.unions, n1, FiTypeUnion("", [], [], 0));
+										u2 = lookupTreeDef(names.unions, n2, FiTypeUnion("", [], [], 0));
+										if (isEmptySet(differenceSets(buildSet(u1.typenames), buildSet(u2.typenames)))) t1 else t2;
+									}
+								}
+							}
+						}
+					}
+					default: t0;
+				}
+			} 
+			default: t0;
+		}
+	}
+}
+
 fiSetExpType(e : FiExp, t: FiType) -> FiExp {
 	switch(e) {
 		FiLambda(__,__,__, __): {
@@ -956,5 +1008,50 @@ unFiSeq(e: FiExp) -> [FiExp] {
 	switch (e) {
 		FiSeq(es,__,__): es;
 		default: [e];
+	}
+}
+
+wrapFiSeq(es: [FiExp]) -> FiExp {
+	if (length(es) == 0) FiVoid(0) else
+	if (length(es) == 1) es[0] else {
+		FiSeq(es, fiExpType(es[length(es) - 1]), 0);
+	}
+}
+
+fiIsCompleteType(type: FiType) -> bool {
+	switch (type) {
+		FiTypeParameter(n): false;
+		FiTypeArray(t): {
+			fiIsCompleteType(t);
+		}
+		FiTypeFunction(args, returnType): {
+			fiIsCompleteType(returnType) && forall(args, \arg -> fiIsCompleteType(arg.type));
+		}
+		FiTypeRef(t): {
+			fiIsCompleteType(t);
+		}
+		FiTypeName(__, typeparameters): {
+			forall(typeparameters, fiIsCompleteType);
+		}
+		default: true;
+	}
+}
+
+fiCollectTypars2(type : FiType, acc : Set<FiTypeParameter>) -> Set<FiTypeParameter> {
+	switch (type) {
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
+		FiTypeParameter(n): insertSet(acc, type);
+		FiTypeRef(rt):      fiCollectTypars2(rt, acc);
+		FiTypeArray(at):    fiCollectTypars2(at, acc);
+		FiTypeName(id, tp): fold(tp, acc, \ac, t -> fiCollectTypars2(t, ac));
+		FiTypeFunction(args, rt): {
+			fiCollectTypars2(rt, fold(args, acc, \ac, arg -> fiCollectTypars2(arg.type, ac)));
+		}
 	}
 }

@@ -16,7 +16,7 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 	}
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
 	env = fi2nimInitEnv(program, cfg);
-	runtime = fi2nimRuntime(cfg);
+	runtime = fi2nimRuntime(env);
 	types = fi2nimCompileTypes(env);
 	source = fi2nimCompileSourceCode(env, runtime);
 
@@ -34,16 +34,20 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 
 fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
 	structs_enum = fi2nimTypeEnums(env);
-	type_decls = fi2nimJoinNimCodeMany(mapConcat(env.prog.traversal, \mod_name -> {
+	type_decls = mapConcat(env.prog.traversal, \mod_name -> {
 		module = lookupTreeDef(env.prog.modules, mod_name, dummyFiModule);
 		module_types = concat(module.unions, module.structs);
 		map(module_types, \tp -> fi2nimTypeDecl(env, tp));
-	}));
-	all_types = fi2nimJoinNimCode3(structs_enum, fi2nimEmptyLine(), type_decls);
+	});
 
 	type_defs = fi2nimJoinNimCode3(
-		NimLine(0, "type"),
-		fi2nimSureIndent(all_types),
+		structs_enum,
+		if (length(type_decls) == 0) NimBlock([]) else {
+			fi2nimJoinNimCode(
+				NimLine(0, "type"),
+				fi2nimSureIndent(fi2nimJoinNimCodeMany(type_decls))
+			)
+		},
 		fi2nimEmptyLine()
 	);
 
@@ -52,18 +56,35 @@ fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
 		set2array(casts_from_flow),
 		filtermap(env.ordered_types, \t -> if (containsSet(casts_from_flow, t)) None() else Some(t))
 	);
-
+	comment_line = \msg -> {
+		line = NimLine(0, "\n# " + msg + "\n");
+		[NimCompiled(line, line)];
+	}
+	typenames = list2array(fold(env.unions, 
+		fold(env.structs, makeList(), \acc, s -> Cons(FiTypeName(s.name, s.typars), acc)),
+		\acc, u -> Cons(FiTypeName(u.name, u.typeparameters), acc)
+	));
 	compiled_funcs = concatA([
-		filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t)),
-		filtermap(from_flow1, \t -> fi2nimTypeFromFlow(env, t)),
-		filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t)),
+		comment_line("FROM FLOW CONVERSION"),
+		[fi2nimTypeFromFlow1(env)],
+		comment_line("TYPARS TYPE TRAITS"),
+		filtermap(typenames, \t -> fi2nimTypenameTypars(env, t)),
+		comment_line("TO FLOW CONVERSIONS"),
+		concat(
+			[fi2nimFuncToFlow(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t))
+		),
+		comment_line("TO STRING CONVERSIONS"),
+		concat(
+			[fi2nimFuncToString(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t))
+		),
+		comment_line("COMPARE"),
 		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
-		filtermap(env.structs, \s -> fi2nimTypeToTypeId(env, FiTypeName(s.name, s.typars)))
 	]);
 
 	fi2nimJoinNimCodeMany(concatA([
 		[type_defs, fi2nimEmptyLine()],
-		mapi(env.ordered_types, \i, t -> fi2nimRegisterType(env, t, i)), 
 		[fi2nimEmptyLine()],
 		map(env.structs, \s -> fi2nimRegisterStruct(env, s)),
 		[fi2nimEmptyLine()],
@@ -108,9 +129,10 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 	]);
 }
 
-fi2nimOrderDeclarations(env : FiNimEnv) {
+fi2nimOrderDeclarations(env : FiNimEnv) -> [Pair<string, [FiDeclaration]>] {
 	program = env.prog;
-	fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
+	missing_predefined = ref buildSet(map(nimPredefinedNatives, \p -> p.name));
+	decls0 = fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
 		switch (lookupTree(program.modules, file)) {
 			None(): {
 				fcPrintln("Could not find module '" + file + "'", program.config.threadId);
@@ -126,15 +148,28 @@ fi2nimOrderDeclarations(env : FiNimEnv) {
 					module_natives,
 					filtermap(notNatives, \name -> lookupTree(program.names.toplevel, name))
 				);
+				iter(decls, \d -> if (containsSet(^missing_predefined, d.name)) {
+					// A pre-defined native is found - remove it from missing
+					missing_predefined := removeSet(^missing_predefined, d.name)
+				});
 				arrayPush(macc, Pair(module.fileinfo.flowfile, decls));
 			}
 		}
 	);
+	if (isEmptySet(^missing_predefined)) decls0 else {
+		concat(
+			[Pair("predefined", filtermap(nimPredefinedNatives, \nat ->
+				if (containsSet(^missing_predefined, nat.name)) Some(nat) else None()
+			))], 
+			decls0
+		);
+	}
 }
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	effects = collectFiEffects(program0);
-	program = fiNimTransformProgram(program0, effects);
+	natives = fi2nimNatives(cfg);
+	program = fiNimTransformProgram(program0, effects, natives);
 
 	is_explicit_polymorphic = \nm -> switch (lookupTree(program.names.structs, nm)) {
 		Some(struct): length(struct.typars) > 0;
@@ -163,6 +198,7 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
 		\nm,__ -> is_explicit_polymorphic(nm)
 	);
+
 	if (debug_polymorphics) {
 		println("specializations:\n" + strIndent(
 			superglue(
@@ -182,7 +218,16 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		switch (lookupTree(specializations, struct.name)) {
 			Some(specs): foldSet(specs, acc, \ac, spec -> 
 				switch (spec) {
-					FiTypeName(nm, typars): Cons(fiSpecializeStruct(spec, struct), ac);
+					FiTypeName(nm, typars): {
+						if (length(typars) == length(struct.typars)) {
+							Cons(fiSpecializeStruct(spec, struct), ac);
+						} else {
+							fcPrintln("Struct type parameters number mismatch the specialization type parameters number:\n" +
+								"struct: " + pretFiStructOrUnion(struct) + ", specialization: " + pretFiType(spec), cfg.threadId
+							);
+							ac;
+						}
+					}
 					default: fail0("must be a typename");
 				}
 			);
@@ -238,6 +283,15 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		)
 	));
 
+	casts = fiProgramCasts(program);
+	if (debug_polymorphics) {
+		println("casts:\n" +
+			strIndent(superglue(tree2pairs(casts), \p -> 
+				pretFiType(p.first) + " =>\n" + strIndent(superglue(set2array(p.second), \x -> pretFiType(x), "\n")),
+			"\n"))
+		);
+	}
+
 	env0 = FiNimEnv(cfg, program, "", ref makeSet(),
 		structs,
 		unions,
@@ -245,32 +299,13 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		specialized_structs,
 		specialized_unions,
 		specializations,
-		fi2nimCasts(program),
-		effects, "", [],
-		fi2nimNatives(cfg),
-		[], makeTree(), makeTree()
+		casts,
+		collectFiEffects(program), "", [],
+		natives,
+		[], makeTree(), makeTree(),
+		fi2nimMaxFuncArity(program)
 	);
 	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
-}
-
-fi2nimCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
-	proc_exp = \x, acc -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
-		FiCast(__,from, to,__,__): {
-			from1 = fiPurifyType(from);
-			setTree(ac, from1, 
-				insertSet(lookupTreeDef(ac, from1, makeSet()), fiPurifyType(to))
-			);
-		}
-		default: ac;
-	}, AstTraverseOrder(true, true));
-	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
-		switch (toplevel) {
-			FiFunctionDec(__,lambda,__,__,__): proc_exp(lambda, acc);
-			FiGlobalVar(__,value,__,__,__): proc_exp(value, acc);
-			FiNativeDec(__,__,__,__,fallback,__,__): proc_exp(fallback, acc);
-			default: acc;
-		}
-	);
 }
 
 fi2nimNativeImports(env: FiNimEnv, runtime: string) -> NimCode {
@@ -308,10 +343,19 @@ fi2nimBuild(program : FiProgram, cfg: FiNimConfig, callback : (int) -> void) -> 
 		// No need to build binary
 		callback(0);
 	} else {
-		if (cfg.verbose > 1) {
-			fcPrintln("Going to build nim target: '" + cfg.outputfile + "'", cfg.threadId);
+		debug = isConfigParameterSet(program.config.config, "nim-debug");
+		opts = concatA([
+			["--overflowChecks:off", "--threads:on", "-f", "-d:ssl", "--path:flow_lib"],
+			if (debug) ["--debuginfo:on"] else [],
+			if (!debug && getConfigParameterDef(program.config.config, "nim-release", "1") == "1") ["-d:release"] else [],
+			if (isConfigParameterSet(program.config.config, "nim-profile")) ["--profiler:on", "--stacktrace:on"] else [],
+		]);
+		command_args = concat(opts, ["c", cfg.outputfile]);
+		if (cfg.verbose > 0) {
+			fcPrintln("Going to build nim target: '" + cfg.outputfile + "'\n" + 
+			"nim " + strGlue(command_args, " "), cfg.threadId);
 		}
-		out = execSystemProcessOutput("nim", ["--overflowChecks:off", "--threads:on", "-d:ssl", "-d:release", "c", cfg.outputfile], ".");
+		out = execSystemProcessOutput("nim", command_args, ".");
 		if (out.exitCode != 0) {
 			fcPrintln("Building of " + cfg.outputfile + " failed:\n" + out.stdall, cfg.threadId);
 			callback(5);

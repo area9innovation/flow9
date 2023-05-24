@@ -1,7 +1,7 @@
 proc $F_0(substring)*(str: string, start: int32, leng: int32): string =
   var slen = leng
   var sstart = start
-  var strlen = cast[int32](len(str))
+  var strlen = cast[int32](runeLen(str))
   if slen < 0:
     if (sstart < 0) :
       slen = 0
@@ -31,4 +31,6 @@ proc $F_0(substring)*(str: string, start: int32, leng: int32): string =
 
   let send = start + slen
   slen = if send > strlen or send  < 0: strlen - start else: slen
-  return substr(str, sstart, sstart + slen - 1)
+  let runes = toRunes(str)
+  let sub = runes[sstart .. sstart + slen - 1]
+  return $sub

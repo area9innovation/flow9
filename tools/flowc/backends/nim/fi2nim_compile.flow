@@ -14,36 +14,14 @@ fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> Maybe<NimCompiled
 	}
 	compiled = switch (decl) {
 		FiNativeDec(name, io, type, nativeName, fallback, __, __) : {
-			switch (lookupTree(env.natives, name)) {
-				Some(nat): {
-					// native is implemented in runtime
-					env.native_imports := mergeSets(^(env.native_imports), buildSet(nat.imports));
-					Some(nat.code);
-				}
-				None(): {
-					// use a fallback
-					switch (fallback) {
-						FiLambda(__, __, fn_type, __): {
-							fiNimCompileFunction(env, FiFunctionDec(name, fallback, fn_type, 0, 0));
-						}
-						default: {
-							fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + pretFiExp(fallback), env.cfg.threadId);
-							None();
-						}
-					}
-				}
-			}
+			maybeMap(lookupTree(env.natives, name), \nat-> {
+				// native is implemented in runtime
+				env.native_imports := mergeSets(^(env.native_imports), buildSet(nat.imports));
+				nat.code;
+			});
 		}
 		FiFunctionDec(name, lambda,__,__, __): {
-			switch (lookupTree(env.natives, name)) {
-				Some(nat): {
-					//is implemented as native in runtime
-					None()
-				}
-				None(): {
-					fiNimCompileFunction(env, decl);
-				}
-			}
+			fiNimCompileFunction(env, decl);
 		}
 		FiGlobalVar(name, __,__,__,__): {
 			Some(fiNimCompileGlobalVar(env, decl));
@@ -73,7 +51,6 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 		fcPrintln("Program uses the forbidden function: " + func0.name, env.cfg.threadId);
 		None();
 	} else {
-		debug = (func0.name == getUrlParameter("nim-debug"));
 		func = fiNimNormalizeMain(func0);
 		type = FiTypeFunction(func.type with args = func.lambda.args);
 
@@ -85,7 +62,7 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 
 		locals = fold(lambda.args, makeSet(), \acc, arg -> insertSet(acc, arg.name));
 		fn_code = if (!fcDetectTailCall(func)) {
-			fiNimCompile(env, lambda.body, true, locals);
+			fiNimCompile(env, lambda.body, FiNimReturnOut(), locals);
 		} else {
 			tailcall_args = map(lambda.args, \arg -> 
 				FiFunArg(arg with name = fiNimRenameKeyword("tailcall_" + arg.name))
@@ -98,7 +75,7 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 				tailcall_fn = func.name,
 				tailcall_args = tailcall_args
 			);
-			body_code = fiNimCompile(env1, body, true, 
+			body_code = fiNimCompile(env1, body, FiNimReturnOut(), 
 				fold(tailcall_args, locals, \acc, arg -> insertSet(acc, arg.name))
 			);
 			fi2nimJoinNimCode(
@@ -133,7 +110,6 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiled>
 }
 
 fiNimCompileGlobalVar(env : FiNimEnv, var: FiGlobalVar) -> NimCompiled {
-	debug = (var.name == getUrlParameter("nim-debug"));
 	value = if (fiNimIsExp(var.value)) var.value else {
 		FiCall(FiLambda([], var.value, FiTypeFunction([], var.type), 0), [], var.type, 0);
 	}
@@ -141,7 +117,7 @@ fiNimCompileGlobalVar(env : FiNimEnv, var: FiGlobalVar) -> NimCompiled {
 		NimSnippet(""), 
 		fi2nimJoinNimCode(
 			NimLine(0, "var " + fiNimRenameGlobal(var.name) + ": " + fiNimCompileType(env, var.type) + " ="),
-			fi2nimDecideToIndent(value, fiNimCompile(env, value, false, makeSet()))
+			fi2nimDecideToIndent(value, fiNimCompile(env, value, FiNimReturnValue(), makeSet()))
 		)
 	);
 }
@@ -179,44 +155,109 @@ fiNimIsExp(e: FiExp) -> bool {
 	}
 }
 
-fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -> NimCode {
-	wrap_ret = \c -> if (!returns || fiExpType(expr) == FiTypeVoid()) c else {
-		fi2nimJoinNimCode(NimSnippet("return "), c)
+FiNimReturn ::= FiNimReturnOut, FiNimReturnLocal, FiNimReturnValue, FiNimDiscardValue;
+	FiNimReturnOut();
+	FiNimReturnLocal(var: string);
+	FiNimReturnValue();
+	FiNimDiscardValue();
+
+fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<string>) -> NimCode {
+	wrap_ret = \c -> {
+		make_ret = \-> switch (returns) {
+			FiNimReturnOut(): fi2nimJoinNimCode(NimSnippet("return "), c);
+			FiNimDiscardValue(): fi2nimJoinNimCode(NimSnippet("discard "), c)
+			FiNimReturnLocal(var): fi2nimJoinNimCode(NimSnippet(fiNimRenameKeyword(var) + " = "), c);
+			FiNimReturnValue(): c;
+		}
+		tp = fiExpType(expr);
+		switch (tp) {
+			FiTypeVoid(): c;
+			FiTypeParameter(nm): {
+				if (returns == FiNimReturnOut() || returns == FiNimDiscardValue()) {
+					NimBlock([
+						NimLine(0, "when " + fiNimCompileType(env, tp) + " is void:"),
+						fi2nimSureIndent(c),
+						NimLine(0, "else:"),
+						fi2nimSureIndent(make_ret())
+					]);
+				} else {
+					make_ret();
+				}
+			}
+			default: make_ret();
+		}
 	}
 	switch (expr) {
-		FiVoid(__):    NimSnippet(if (returns) "return" else "discard");
+		FiVoid(__):    if (returns == FiNimReturnOut()) NimLine(0, "return") else NimLine(0, "discard");
 		FiBool(b, __): wrap_ret(NimSnippet(if (b) "true" else "false"));
 		FiInt(v, __):  wrap_ret(NimSnippet(i2s(v) + "i32"));
 		FiDouble(d, __): {
 			s = d2s(d);
 			wrap_ret(NimSnippet(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s + ".0" else s));
 		}
-		FiString(s,__): wrap_ret(NimSnippet("\"" + escapeStr(s) + "\""));
-		FiVar(x,__,__): {
-			wrap_ret(NimSnippet(
-				if (containsSet(locals, x)) fiNimRenameKeyword(x) else fiNimRenameGlobal(x)
+		FiString(s,__): {
+			s1 = concatStrings(mapi(s2a(s), \i, code ->
+				if (code == 0x09) "\\t" else
+				if (code == 0x0a) "\\n" else
+				if (code == 0x0d) "\\r" else
+				if (code == 0x22) "\\\"" else
+				if (code == 0x5c) "\\\\" else
+				if (0 < code && code < 0x80) fromCharCode(code) else
+				"\\u" + lpad(formatHex(code), "0", 4)
 			));
+			wrap_ret(NimSnippet("\"" + s1 + "\""));
+		}
+		FiVar(x, type,__): {
+			x_code = if (containsSet(locals, x)) fiNimRenameKeyword(x) else fiNimRenameGlobal(x);
+			typars = switch (type) {
+				FiTypeFunction(args, rt): {
+					n: Maybe<FiDeclaration> = lookupTree(env.prog.names.toplevel, x);
+					switch (n) {
+						Some(decl): {
+							tps = fiMatchTyparsOrdered(decl.type, type);
+							if (length(tps) == 0) "" else {
+								"[" + superglue(tps, \tp -> fiNimCompileType(env, tp), ", ") + "]";
+							}
+						}
+						None(): "";
+					}
+				}
+				default: "";
+			}
+			wrap_ret(NimSnippet(x_code + typars));
 		}
 		FiLet(x, tp, e1, e2, __, __): {
-			fi2nimJoinNimCode(
+			direct = \-> fi2nimJoinNimCode(
 				fi2nimJoinNimCode(
 					NimLine(0, "var " + fiNimRenameKeyword(x) + ": " + fiNimCompileType(env, tp) + " ="),
-					fi2nimMaybeIndent(fiNimCompile(env, e1, false, locals))
+					fi2nimMaybeIndent(fiNimCompile(env, e1, FiNimReturnValue(), locals))
 				),
 				fi2nimCode2Block(fiNimCompile(env, e2, returns, insertSet(locals, x)))
 			);
+			indirect = \-> fi2nimJoinNimCode(
+				fi2nimJoinNimCode(
+					NimLine(0, "var " + fiNimRenameKeyword(x) + ": " + fiNimCompileType(env, tp)),
+					fiNimCompile(env, e1, FiNimReturnLocal(x), locals)
+				),
+				fi2nimCode2Block(fiNimCompile(env, e2, returns, insertSet(locals, x)))
+			);
+			switch (e1) {
+				FiSwitch(__,__,__,__,__): indirect();
+				FiLet(__,__,__,__,__,__): indirect();
+				default: direct();
+			}
 		}
 		FiLambda(args, body, type, __): {
 			wrap_ret(fi2nimJoinNimCode(
 				NimLine(0, fiNimCompileType(env, FiTypeFunction(type with args = args)) + " ="), 
 				fi2nimSureIndent(fiNimCompile(
-					FiNimEnv(env with tailcall_fn = ""), body, true, 
+					FiNimEnv(env with tailcall_fn = ""), body, FiNimReturnOut(), 
 					fold(args, locals, \acc, arg -> insertSet(acc, arg.name))
 				))
 			));
 		}
 		FiCall(fn, es, __, __): {
-			args_code: [NimCode] = map(es, \e -> fiNimCompile(env, e, false, locals));
+			args_code: [NimCode] = map(es, \e -> fiNimCompile(env, e, FiNimReturnValue(), locals));
 			switch (fn) {
 				FiVar(x, __, __): {
 					args: NimCode = fi2nimBracketNimCode(fi2nimGlueNimCode(args_code, ", "));
@@ -225,23 +266,9 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 							wrap_ret(fi2nimJoinNimCode(NimSnippet(inline), args));
 						}
 						None(): {
-							if (!(returns && x == env.tailcall_fn)) {
-								n: Maybe<FiDeclaration> = lookupTree(env.prog.names.toplevel, x);
-								typars = switch (n) {
-									Some(decl): {
-										fiMatchTyparsOrdered(decl.type, fiExpType(fn));
-									}
-									None(): [];
-								}
-								decl_type = switch (n) {
-									Some(decl): decl.type;
-									None(): FiTypeVoid();
-								}
-								typars_code = NimSnippet(if (length(typars) == 0) "" else {
-									"[" + superglue(typars, \tp -> fiNimCompileType(env, tp), ", ") + "]";
-								});
-								fn_code = fiNimCompile(env, fn, false, locals);
-								wrap_ret(fi2nimJoinNimCode3(fn_code, typars_code, args));
+							if (!(returns == FiNimReturnOut() && x == env.tailcall_fn)) {
+								fn_code = fiNimCompile(env, fn, FiNimReturnValue(), locals);
+								wrap_ret(fi2nimJoinNimCode(fn_code, args));
 							} else {
 								// Tail call detected
 								arg_is_not_changed = \y, i -> {
@@ -273,15 +300,18 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 				}
 				default: {
 					wrap_ret(fi2nimJoinNimCode(
-						fi2nimBracketNimCode(fiNimCompile(env, fn, false, locals)),
+						fi2nimBracketNimCode(fiNimCompile(env, fn, FiNimReturnValue(), locals)),
 						fi2nimBracketNimCode(fi2nimGlueNimCode(args_code, ", "))
 					));
 				}
 			}
 		}
 		FiSeq(es, __, __): {
-			if (length(es) == 0) NimSnippet(if (returns) "return" else "discard") else
-			if (length(es) == 1) fiNimCompile(env, es[0], returns, locals) else {
+			if (length(es) == 0) {
+				if (returns == FiNimReturnOut()) NimLine(0, "return") else NimLine(0, "discard");
+			} else if (length(es) == 1) {
+				fiNimCompile(env, es[0], returns, locals);
+			} else {
 				fi2nimJoinNimCodeMany(mapi(es, \i, x -> {
 					needs_discard = switch(x) {
 						FiLet(__, __, __, __, __, __) : false;
@@ -300,13 +330,9 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 						}
 						default: fiExpType(x) != FiTypeVoid();
 					}
-					last_returns = returns && i + 1 == length(es);
-					x_code = fiNimCompile(env, x, last_returns, locals);
-					fi2nimCode2Block(if (needs_discard && !last_returns) {
-						fi2nimJoinNimCode(NimSnippet("discard "), x_code)
-					} else {
-						x_code;
-					});
+					x_returns = if (i + 1 == length(es)) returns else 
+						if (needs_discard) FiNimDiscardValue() else FiNimReturnValue();
+					fi2nimCode2Line(fiNimCompile(env, x, x_returns, locals));
 				}))
 			}
 		}
@@ -314,7 +340,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 			fi2nimJoinNimCode(
 				fi2nimJoinNimCode(
 					fi2nimCode2Block(fi2nimJoinNimCode3(
-						NimSnippet("if "), fiNimCompile(env, e1, false, locals), NimSnippet(":")
+						NimSnippet("if "), fiNimCompile(env, e1, FiNimReturnValue(), locals), NimSnippet(":")
 					)), 
 					fi2nimSureIndent(fiNimCompile(env, e2, returns, locals))
 				),
@@ -325,11 +351,11 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 			);
 		}
 		FiSwitch(x, x_type, cs, __, __): {
-			x_code = fiNimCompile(env, x, false, locals);
+			x_code = fiNimCompile(env, x, FiNimReturnValue(), locals);
 			def_case = switch (find(cs, \c -> c.struct == "default")) {
 				Some(dc): fi2nimMaybeIndent(fiNimCompile(env, dc.body, returns, locals));
 				None():   fi2nimJoinNimCode3(
-					NimSnippet("assert(false,\"illegal struct id in switch: \" & $StructType("), x_code, NimSnippet(".str_id))")
+					NimSnippet("assert(false, \"illegal struct id in switch: \" & $"), x_code, NimSnippet(".str_id)")
 				);
 			}
 			fi2nimJoinNimCodeMany(concat3(
@@ -344,7 +370,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 			));
 		}
 		FiCallPrim(op, es, tp, __): {
-			args = map(es, \arg : FiExp -> fiNimCompile(env, arg, false, locals));
+			args = map(es, \arg : FiExp -> fiNimCompile(env, arg, FiNimReturnValue(), locals));
 			arg_type = if (length(es) > 0) fiExpType(es[0]) else FiTypeVoid();
 			opt = switch (op : FcPrim) {
 				FcOrPrim():     fi2nimBinOpNimCode(args[0], " or ", args[1]);
@@ -375,37 +401,53 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 							fi2nimBracketNimCode(
 								fi2nimGlueNimCode(
 									concat(
-										[
-											//NimSnippet("tp_id: rt_type_id_" + struct_name + fiNimParamsForInstantiate(env, tn.typeparameters) + "()"),
-											NimSnippet("tp_id: -1"),
-											NimSnippet("str_id: int32(" + fi2nimStructId(env, struct_name) + ")")
-										],
+										[NimSnippet("str_id: int32(" + fi2nimStructId(env, struct_name) + ")")],
 										mapi(args, \i, arg -> fi2nimJoinNimCode(NimSnippet(fiNimRenameKeyword(struct.args[i].name) + ": "), arg))
 									), ", "
 								)
 							)
 						),
-						\union -> fail0("cannot construct union explicitly: " + tn.name),
+						\union -> fail0("cannot construct union (" + struct_name + ") explicitly: " + pretFiType(tn) + "\n" + 
+							"in exp:\n" + strIndent(pretFiExp(expr))
+						),
 						\__ -> fail0("unknown struct or union: " + tn.name)
 					);
 				};
-				FcFieldPrim(name): {
-					switch (arg_type) {
-						FiTypeName(__,__): {
-							fi2nimJoinNimCode(args[0], NimSnippet("." + fiNimRenameKeyword(name)));
+				FcFieldPrim(field): {
+					if (field == "structname") {
+						switch (arg_type) {
+							FiTypeName(name,__): {
+								fi2nimJoinNimCode3(
+									NimSnippet("rt_struct_name_wrapper("), 
+									args[0], NimSnippet(", \"" + name + "\")")
+								);
+							}
+							FiTypeFlow(): {
+								fi2nimJoinNimCode3(
+									NimSnippet("rt_flow_struct_name("), 
+									args[0], NimSnippet(")")
+								);
+							}
+							default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 						}
-						FiTypeFlow(): {
-							fi2nimJoinNimCode3(
-								NimSnippet("rt_get_flow_field("), 
-								args[0], NimSnippet(", \"" + name + "\")")
-							);
+					} else {
+						switch (arg_type) {
+							FiTypeName(__,__): {
+								fi2nimJoinNimCode(args[0], NimSnippet("." + fiNimRenameKeyword(field)));
+							}
+							FiTypeFlow(): {
+								fi2nimJoinNimCode3(
+									NimSnippet("rt_get_flow_field("), 
+									args[0], NimSnippet(", \"" + field + "\")")
+								);
+							}
+							default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 						}
-						default: fail0("field may be get of a struct or a flow, got: " + pretFiExp(expr) + " of type: " + pretFiType(arg_type));
 					}
 				}
-				FcSetMutablePrim(name): {
+				FcSetMutablePrim(field): {
 					fi2nimBracketNimCode(fi2nimJoinNimCode3(
-						args[0], NimSnippet("." + fiNimRenameKeyword(name) + " = "), args[1]
+						args[0], NimSnippet("." + fiNimRenameKeyword(field) + " = "), args[1]
 					))
 				}
 				FcCreateClosurePrim(__, __): fail0("TODO");
@@ -415,9 +457,9 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: bool, locals: Set<string>) -
 			wrap_ret(opt);
 		}
 		FiCast(e, from, to, __, __): {
-			e_code = fiNimCompile(env, e, false, locals);
+			e_code = fiNimCompile(env, e, FiNimReturnValue(), locals);
 			cast_code = if (fiEqualTypes(from, to)) e_code else {
-				fiNimCompileCast(env, from, to, e_code);
+				fiNimCompileCast(env, from, to, e_code, expr);
 			}
 			wrap_ret(cast_code);
 		}
@@ -433,12 +475,12 @@ fiNimCompileComparison(x: NimCode, y: NimCode, op: string) -> NimCode {
 	]);
 }
 
-fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: NimCode) -> NimCode {
+fiNimCompileCast(env: FiNimEnv, from: FiType, to: FiType, ex: NimCode, expr: FiExp) -> NimCode {
 	make_cast = \prefix -> fi2nimJoinNimCode(NimSnippet(prefix), fi2nimBracketNimCode(ex));
 	def_cast = \-> make_cast("cast[" + fiNimCompileType(env, to) + "]");
-	err_cast = \-> fail0("illegal cast from " + pretFiType(from) + " to" + pretFiType(to));
+	err_cast = \-> fail0("illegal cast from " + pretFiType(from) + " to " + pretFiType(to) + ", expression:\n" + pretFiExp(expr));
 	if (from == FiTypeFlow()) {
-		make_cast("rt_to_" + fi2nimMangleComplexType(to));
+		fi2nimJoinNimCode3(NimSnippet("rt_from_flow("), ex, NimSnippet(", " + fiNimCompileType(env, to) + ")"));
 	} else {
 		switch (to) {
 			FiTypeName(to_name,__): {

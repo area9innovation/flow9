@@ -50,12 +50,5 @@ proc execHttpRequest(
     client.close()
 
 
-proc makeHttpRequest*(
-                     url : string,
-                     postMethod : bool,
-                     headers : seq[seq[string]],
-                     params : seq[seq[string]],
-                     onData : proc(r : string): void,
-                     onError : proc(e : string): void,
-                     onStatus : proc(c : int32): void,
-) = spawn execHttpRequest(url, postMethod, headers, params, onData, onError, onStatus)
+proc $F_0(makeHttpRequest)*(url : string, postMethod : bool, headers : seq[seq[string]], params : seq[seq[string]], onData : proc(r : string): void, onError : proc(e : string): void, onStatus : proc(c : int32): void) =
+  spawn execHttpRequest(url, postMethod, headers, params, onData, onError, onStatus)

@@ -7,6 +7,7 @@ export {
 	fi2nimIsImportLine(line: string) -> bool;
 	fiNimRenameKeyword(kwd: string) -> string;
 	fiNimRenameGlobal(v : string) -> string;
+	fiNimRenameType(v : string) -> string;
 
 	fi2nimTypeId(env : FiNimEnv, type: FiType) -> string;
 	fi2nimStructId(env : FiNimEnv, struct: string) -> string;
@@ -17,12 +18,15 @@ export {
 
 	fiNimTypeParamsList(env: FiNimEnv, type: FiType) -> string;
 	fiNimParamsForInstantiate(env: FiNimEnv, params: [FiType]) -> string;
+	fiNimTypeTyparsList(env : FiNimEnv, type : FiType) -> string;
 
 	// Get all casts from expression
 	fiAllCasts(e: FiExp, acc :Tree<FiType, Set<FiType>>) -> Tree<FiType, Set<FiType>>;
 
 	// All (proper) subterms of a type as a term. 'proper' means the term 't' itself is excluded from the set
 	fiTypeSubterms(t: FiType, proper: bool) -> Set<FiType>;
+
+	fi2nimMaxFuncArity(p: FiProgram) -> int;
 }
 
 fi2nimIsImportLine(line: string) -> bool {
@@ -31,17 +35,30 @@ fi2nimIsImportLine(line: string) -> bool {
 
 fiNimRenameKeyword(kwd : string) -> string {
 	k = (if (containsSet(nimKeywordSet, kwd)) "fl0w" else "") + kwd;
-	strReplace(k, "_", "u")
+	strReplace(k, "_", "u");
 }
 
 fiNimRenameGlobal(v : string) -> string {
 	if (v == "main") v else {
-		strReplace("fl0w" + v, "_", "u")
+		strReplace("fl0w" + v, "_", "u");
 	}
 }
 
+fiNimRenameType(v : string) -> string {
+	strReplace("Fl0w" + v, "_", "u");
+}
+
 fi2nimTypeId(env : FiNimEnv, type: FiType) -> string {
-	"tp_" + fi2nimMangleType(type);
+	if (fiIsCompleteType(type)) {
+		"tp_" + fi2nimMangleType(type);
+	} else {
+		switch (type) {
+			FiTypeName(name, typars): {
+				"rt_type_id_" + name + fiNimParamsForInstantiate(env, typars) + "()";
+			}
+			default: fail0("can't figure out type id of: " + pretFiType(type));
+		}
+	}
 }
 
 fi2nimStructId(env : FiNimEnv, struct: string) -> string {
@@ -63,6 +80,12 @@ fiNimParamsForInstantiate(env : FiNimEnv, params : [FiType]) -> string {
 		"[" + strGlue(map(params, \tp -> fiNimCompileType(env, tp)), ", ") + "]"
 	}
 }
+
+fiNimTypeTyparsList(env : FiNimEnv, type : FiType) -> string {
+	typars = map(sort(set2array(fiCollectTypars(type, makeSet()))), \n -> FiTypeParameter(n));
+	fiNimParamsForInstantiate(env, typars);
+}
+
 
 fiNimCompileReturnType(env : FiNimEnv, type : FiType) -> string {
 	switch (type) {
@@ -99,7 +122,7 @@ fiNimCompileType(env : FiNimEnv, type : FiType) -> string {
 		FiTypeVoid() :             "void";
 		FiTypeNative() :           "Native";
 		FiTypeName(name, params) : {
-			name + fiNimParamsForInstantiate(env, params);
+			fiNimRenameType(name) + fiNimParamsForInstantiate(env, params);
 		}
 	}
 }
@@ -132,3 +155,33 @@ fiTypeSubterms(t: FiType, proper: bool) -> Set<FiType> {
 	);
 }
 
+fi2nimMaxFuncArity(p: FiProgram) -> int {
+	fiFoldProgramToplevel(p, -1, \toplevel,__,__,acc -> {
+		add_type = \ac, t -> {
+			switch (t) {
+				FiTypeFunction(args,__): max(ac, length(args));
+				default: ac;
+			}
+		}
+		proc_exp = \ac, x -> {
+			fiFoldExp(x, ac, \e,__,a -> add_type(a, fiExpType(e)), AstTraverseOrder(true, true));
+		}
+		switch (toplevel) {
+			FiTypeStruct(name, typars, args,__): {
+				add_type(acc, FiTypeName(name, typars));
+			}
+			FiTypeUnion(name, typars, types,__): {
+				add_type(acc, FiTypeName(name, typars));
+			}
+			FiFunctionDec(name, lambda, type,__,__): {
+				proc_exp(add_type(acc, type), lambda);
+			}
+			FiGlobalVar(name, value, type,__,__): {
+				proc_exp(add_type(acc, type), value);
+			}
+			FiNativeDec(name,__,type,__,fallback,__,__): {
+				proc_exp(add_type(acc, type), fallback);
+			}
+		}
+	});
+}
