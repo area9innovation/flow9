@@ -667,6 +667,10 @@ and in the console, it prints the result.
 We recommend you use choosenim:
 https://github.com/dom96/choosenim#choosenim
 
+The flow runtime require the nim package called 'httpbeast'. If using choosenim, then the defailt package manager 'nimble' is already installed, and you can install the package with: 
+
+	nimble install httpbeast
+
 ### Adding new natives to nim
 
 Compile a program
