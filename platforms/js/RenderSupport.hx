@@ -455,9 +455,7 @@ class RenderSupport {
 		style.setAttribute('type', 'text/css');
 
 		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
-			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; background : white} " +
-			".print-page-container {position : fixed;} ";
-
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
 		Browser.document.head.appendChild(style);
 
 		return function () {
@@ -2051,7 +2049,11 @@ class RenderSupport {
 
 			return stage;
 		} else {
-			return cast(PixiStage.children[0], FlowContainer);
+			if (FullScreenClip != null) {
+				return FullScreenClip;
+			} else {
+				return cast(PixiStage.children[0], FlowContainer);
+			}
 		}
 	}
 
@@ -2128,6 +2130,14 @@ class RenderSupport {
 		fillColor : Int, fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
 		clip.setTextAndStyle(text, fontFamily, fontSize, fontWeight, fontSlope,
 			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
+	}
+
+	public static function setLineHeightPercent(clip : TextClip, lineHeightPercent : Float) : Void {
+		clip.setLineHeightPercent(lineHeightPercent);
+	}
+
+	public static function setTextNeedBaseline(clip : TextClip, needBaseline : Bool) : Void {
+		clip.setNeedBaseline(needBaseline);
 	}
 
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
@@ -3729,8 +3739,10 @@ class RenderSupport {
 		}
 	}
 
+	private static var FullScreenClip : FlowContainer = null;
 	public static function requestFullScreenClip(clip : FlowContainer) {
 		if (IsFullScreen || clip == null || untyped !clip.isNativeWidget) return;
+		FullScreenClip = clip;
 		var nativeWidget = clip.nativeWidget;
 		clip.updateKeepNativeWidgetInFullScreenModeParent(true);
 		if (nativeWidget != null) {
@@ -3747,6 +3759,7 @@ class RenderSupport {
 
 	public static function exitFullScreenClip(clip : FlowContainer) {
 		if (clip == null || untyped !clip.isNativeWidget) return;
+		FullScreenClip = null;
 		var nativeWidget = clip.nativeWidget;
 		clip.updateKeepNativeWidgetInFullScreenModeParent(false);
 		if (nativeWidget != null) {

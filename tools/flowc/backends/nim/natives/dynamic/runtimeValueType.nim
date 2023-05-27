@@ -1,4 +1,4 @@
-proc runtimeValueType(v: Flow): string =
+proc $F_0(runtimeValueType)(v: Flow): string =
   case v.tp:
   of rtVoid:   return "void"
   of rtBool:   return "bool"
@@ -9,4 +9,4 @@ proc runtimeValueType(v: Flow): string =
   of rtRef:    return "ref"
   of rtArray:  return "array"
   of rtFunc:   return "function"
-  of rtStruct: return v.str_name
+  of rtStruct: return rt_struct_id_to_name(v.str_id)

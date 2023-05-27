@@ -444,9 +444,8 @@ class TextClip extends NativeWidgetClip {
 		var alpha = this.getNativeWidgetAlpha();
 
 		if (isInput) {
-			if (multiline) {
-				nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
-			} else {
+			nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
+			if (!multiline) {
 				nativeWidget.setAttribute("type", type);
 			}
 			nativeWidget.value = text;
@@ -729,7 +728,8 @@ class TextClip extends NativeWidgetClip {
 		this.style.fontFamily = fontStyle.family;
 		this.style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		this.style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		this.style.lineHeight = Math.ceil(untyped RenderSupport.UserDefinedLineHeightPercent * this.style.fontSize);
+		var lineHeightPercent = this.style.lineHeightPercent != null ? this.style.lineHeightPercent : untyped RenderSupport.UserDefinedLineHeightPercent;
+		this.style.lineHeight = Math.ceil(lineHeightPercent * this.style.fontSize);
 		this.style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		this.style.padding = Math.ceil(fontSize * 0.2);
 
@@ -759,6 +759,10 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		invalidateMetrics();
+	}
+
+	public function setLineHeightPercent(lineHeightPercent : Float) : Void {
+		this.style.lineHeightPercent = lineHeightPercent;
 	}
 
 	public function setEscapeHTML(escapeHTML : Bool) : Void {

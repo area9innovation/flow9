@@ -1,4 +1,4 @@
-proc createHttpServerNative*(
+proc $F_0(createHttpServerNative)*(
     port: int32,
     isHttps: bool,
     pfxPath: string,

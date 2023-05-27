@@ -1,6 +1,6 @@
 import unicode
 
-proc s2a*(s : string): seq[int32] =
+proc $F_0(s2a)*(s : string): seq[int32] =
   let runes = toRunes(s)
   result = newSeq[int32](runes.len)
   for i in 0 .. (runes.len - 1):

@@ -1,5 +1,5 @@
 # native urlDecode2 : (s : string) -> string = Native.urlDecode;
 import uri
 
-proc urlDecode2(s : string): string =
+proc $F_0(urlDecode2)(s : string): string =
   decodeUrl(s)

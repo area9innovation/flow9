@@ -14,7 +14,8 @@ export {
 	// In other words, you can only track parameters changes on the current (last) level.
 	MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameterLink], m : Material) -> Material;
 
-		PebbleParameterLink ::= PebbleIntLink, PebbleStringLink, PebbleBoolLink, PebbleBoolBidirectionalLink, PebbleDoubleBidirectionalLink;
+		PebbleParameterLink ::= PebbleIntLink, PebbleStringLink, PebbleBoolLink,
+			PebbleBoolBidirectionalLink, PebbleDoubleBidirectionalLink, PebbleCustomBidirectionalLink;
 
 			// NOTE: Initial valueB will be rewritten by corresponding value from the current pebble
 			PebbleStringLink : (
@@ -53,6 +54,14 @@ export {
 				valueB : DynamicBehaviour<double>,
 				onParameterChange : (string) -> double,
 				onValueChange : (double) -> string,
+				action : PebbleAction
+			);
+
+			PebbleCustomBidirectionalLink : (
+				parameter : string,
+				valueT : Transform<string>,
+				onParameterChange : (string) -> void,  // call it when pebble has been changed in UI to adjust valueT to the new value
+				onValueChange : () -> void,  // call it when valueT get a new value
 				action : PebbleAction
 			);
 
@@ -209,32 +218,40 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 	// as old view is disposed after the new one is constructed we must check that we are not interfering in new view' pebble
 	checkPebble = \-> lastPathPartName == getLastPathPartName(controller);
 
+	constructedFlags = map(handlers, \__ -> make(true));
 	MSelectPebbleParameters(
 		controller,
 		map(handlers, \handler -> handler.parameter),
 		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
-			MGetManager(\manager ->
+			MGetManager(\manager -> {
 				MConstruct(concatA(
-					map(handlers, \handler -> {
+					mapi(handlers, \i, handler -> {
 						if (handler.action == DoNotRecord() || controller.dummy) {
 							[
 								// call onChange on every valueB update if user don't care about pebbles
 								callOnChangeOnParameterChange(manager, controller, handler, callstack)
 							]
 						} else {
+							nextDistinct(constructedFlags[i], false);
 							[
 								makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
+									nextDistinct(constructedFlags[i], true);
 									if (fgetValue(manager.pebblesEnabled)) {
-										changeParameterValue(handler, value, callstack, \-> checkPebble() || checkCustomCheckPebble(handler.action)());
+										changeParameterValue(handler, value, callstack, \ -> {
+											checkPebble() || checkCustomCheckPebble(handler.action)();
+										});
 									}
 								}),
 								setViewOnParameterChange(controller, handler)
 							]
 						}
 					})),
-					m
+					// We need to make sure that all subscribers are created before showing the content
+					MIfLazy(fands(constructedFlags, true), \constructed -> {
+						if (constructed) m else MEmpty();
+					})
 				)
-			)
+			})
 		}
 	)
 }
@@ -276,8 +293,15 @@ makeDummyPebbleParameterLink() -> PebbleParameterLink {
 	PebbleStringLink("", make(""), nop1, DoNotRecord())
 }
 
-getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Transform<string> {
-	findDef(parameters, \a -> a.first == key, Pair(key, make(""))).second;
+getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Behaviour<string> {
+	eitherFn(
+		find(parameters, \a -> a.first == key),
+		secondOfPair,
+		\ -> {
+			devtrace("Warning: Unknown pebble parameter: " + key);
+			const("");
+		}
+	);
 }
 
 // Process new value from current pebble parameter
@@ -313,6 +337,12 @@ changeParameterValue(handler : PebbleParameterLink, value : string, callstack : 
 				nextDistinct(valueB, onParameterChange(value));
 			}
 		};
+		PebbleCustomBidirectionalLink(parameter, valueT, onParameterChange, onValueChange, __): {
+			printPebbleCallStackInfo(parameter, value, callstack);
+			if (checkPebble()) {
+				onParameterChange(value);
+			}
+		}
 	}
 }
 
@@ -334,13 +364,16 @@ setViewOnParameterChange(controller : PebbleController, handler : PebbleParamete
 		PebbleDoubleBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, record): {
 			setViewOnParameterChange2(controller, parameter, valueB, onValueChange, record);
 		}
+		PebbleCustomBidirectionalLink(parameter, valueT, onParameterChange, onValueChange, record): {
+			setViewOnParameterChange2(controller, parameter, valueT, \v -> {onValueChange(); v;}, record);
+		}
 	}
 }
 
 setViewOnParameterChange2(
 	controller : PebbleController,
 	parameter : string,
-	valueB : DynamicBehaviour<?>,
+	valueB : Transform<?>,
 	converValueToString : (?) -> string,
 	action : PebbleAction
 ) -> () -> () -> void {
@@ -348,7 +381,7 @@ setViewOnParameterChange2(
 	extendPebble = \val -> extendCurrentPebbleWithParameter(controller, parameter, converValueToString(val));
 	tryToRestorePebble = \val, shared, fn -> restoreLastPebbleWithParameter(controller, parameter, converValueToString(val), shared, fn);
 
-	makeSubscribe2(valueB, \value -> {
+	makeSubscribe(valueB, \value -> {
 		updatePinnedParameter(parameter, converValueToString(value));
 		setViewFromPebble(
 			controller,
@@ -430,7 +463,14 @@ callOnChangeOnParameterChange(manager : MaterialManager, controller : PebbleCont
 					printPebbleCallStackInfo(parameter, onValueChange(value), callstack);
 				}
 			});
-		};
+		}
+		PebbleCustomBidirectionalLink(parameter, valueT, onParameterChange, onValueChange, record): {
+			makeSubscribe(valueT, \value -> {
+				if (getValue(manager.pebblesEnabled)) {
+					printPebbleCallStackInfo(parameter, value, callstack);
+				}
+			});
+		}
 	}
 }
 

@@ -1,12 +1,24 @@
-proc list2array*[T](list: List[T]): seq[T] =
+proc $F_0(list2array)*[T](list: $F_1(List)[T]): seq[T] =
+  # find out the number of elements in list
   var p = list
-  var r = newSeq[T]()
-
+  var count = 0
   while true:
-    if p of EmptyList[T]:
+    if p.str_id == int32(st_EmptyList):
       break
     else:
-      let cons = Cons[T](p)
-      r = @[cons.head] & r
+      let cons = cast[$F_1(Cons)[T]](p)
+      count += 1
       p = cons.tail
-  return r
+
+  # arrange elements in a backwards ordered array
+  p = list
+  var arr = newSeq[T](count)
+  while true:
+    if p.str_id == int32(st_EmptyList):
+      break
+    else:
+      let cons = cast[$F_1(Cons)[T]](p)
+      count -= 1
+      arr[count] = cons.head
+      p = cons.tail
+  return arr

@@ -1,4 +1,4 @@
 import os
 
-proc getApplicationPath*(): string =
+proc $F_0(getApplicationPath)*(): string =
   getAppFilename()

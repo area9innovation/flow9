@@ -26,6 +26,15 @@ export {
 	// For any struct, which is contained in several unions, add a super union, which
 	// is a set-theoretical union of all these unions, i.e. is a single supertype for all.
 	fiAddSuperUnions(program : FiProgram) -> FiProgram;
+
+	// Check if all type parameters lists size match the corresponding struct/union type parameters list
+	fiCheckPolymorphism(p : FiProgram, types: [FiType]) -> [string];
+
+	// Collects all types, used in a program.
+	fiProgramTypes(p : FiProgram) -> [FiType];
+
+	// Extract all casts in a program. Returns a tree: key - 'from' type, value - set of 'to' types
+	fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>>;
 }
 
 fiFlattenUnions(program : FiProgram) -> FiProgram {
@@ -135,49 +144,147 @@ fiTransformImplicitStructTypars(program : FiProgram, fn: (FiTypeParameter) -> Ma
 		fcPrintln(msg, program.config.threadId);
 	}
 	names = program.names;
+	unions2structs = fiUnions2Structs(program.names);
+	structs2unions = fiStucts2Unions(program.names, unions2structs);
+	do_type = \typars, x -> switch (fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names, structs2unions)) {
+		Some(tp): tp;
+		None(): {
+			on_err(
+				"type dissapeared: " + prettyFiType(dummyPretty, x, makeSet()) + ", " +
+				"typars: [" + strGlue(set2array(typars), ", ") + "]"
+			);
+			x;
+		}
+	}
+	do_exp = \e, typars, name -> {
+		fiTransformImplicitStructTyparsFromFiExp(fiCorrectVarTypes(e), typars, on_err, fn, names, structs2unions, name);
+	}
+	remove_struct = \s: FiTypeStruct -> {
+		typars = buildSet(filtermap(s.typars, \x -> switch (x) {
+			FiTypeParameter(p): Some(p);
+			default: None();
+		}));
+		FiTypeStruct(s with
+			args = map(s.args, \arg -> FiStructArg(arg with type = do_type(typars, arg.type)))
+		)
+	}
+	remove_union = \u: FiTypeUnion -> {
+		typars = buildSet(filtermap(u.typeparameters, \x -> switch (x) {
+			FiTypeParameter(p): Some(p);
+			default: None();
+		}));
+		FiTypeUnion(u with
+			typenames = map(u.typenames, \tn -> cast(do_type(typars, tn): FiType -> FiTypeName))
+		)
+	}
 	remove_func = \func: FiFunctionDec -> {
 		typars = fiCollectTypars(func.type, makeSet());
-		lambda_removed = fiTransformImplicitStructTyparsFromFiExp(func.lambda, typars, on_err, fn, names, func.name);
+		lambda_removed = do_exp(func.lambda, typars, func.name);
 		FiFunctionDec(func with
-			lambda = cast(lambda_removed: FiExp -> FiLambda)
+			lambda = cast(lambda_removed: FiExp -> FiLambda),
+			type = cast(do_type(typars, func.type): FiType -> FiTypeFunction)
 		);
 	}
 	remove_var = \var: FiGlobalVar -> {
 		typars = fiCollectTypars(var.type, makeSet());
 		FiGlobalVar(var with
-			value = fiTransformImplicitStructTyparsFromFiExp(var.value, typars, on_err, fn, names, var.name)
+			value = do_exp(var.value, typars, var.name),
+			type = do_type(typars, var.type)
 		);
 	}
 	remove_nat = \nat: FiNativeDec -> {
 		typars = fiCollectTypars(nat.type, makeSet());
 		FiNativeDec(nat with
-			fallbackLambda = fiTransformImplicitStructTyparsFromFiExp(nat.fallbackLambda, typars, on_err, fn, names, nat.name)
+			fallbackLambda = do_exp(nat.fallbackLambda, typars, nat.name),
+			type = do_type(typars, nat.type)
 		);
 	}
-	toplevel_removed = mapTree(program.names.toplevel, \decl ->
-		switch (decl) {
-			FiFunctionDec(__,__,__, __, __): remove_func(decl);
-			FiGlobalVar(__,__,__,__,__): remove_var(decl);
-			FiNativeDec(__,__,__,__,__,__,__): remove_nat(decl);
-		}
-	);
 	FiProgram(program with
 		modules = mapTree(program.modules, \module ->
 			FiModule(module with
+				structs = map(module.structs, remove_struct),
+				unions = map(module.unions, remove_union),
 				functions = map(module.functions, remove_func),
 				globalVars = map(module.globalVars, remove_var),
 				natives = map(module.natives, remove_nat)
 			)
 		),
-		names = FiGlobalNames(program.names with
-			toplevel = toplevel_removed
+		names = FiGlobalNames(names with
+			toplevel = mapTree(names.toplevel, \decl ->
+				switch (decl) {
+					FiFunctionDec(__,__,__, __, __): remove_func(decl);
+					FiGlobalVar(__,__,__,__,__): remove_var(decl);
+					FiNativeDec(__,__,__,__,__,__,__): remove_nat(decl);
+				}
+			),
+			structs = mapTree(names.structs, remove_struct),
+			unions = mapTree(names.unions, remove_union),
 		)
 	);
 }
 
-fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err: (string) -> void, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames, toplevel_name: string) -> FiExp {
-	re = \x -> fiTransformImplicitStructTyparsFromFiExp(x, typars, on_err, fn, names, toplevel_name);
-	rt = \x -> switch (fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names)) {
+/*
+Example of what is corrected:
+
+FiSwitch(
+		FiVar(
+			"gsymswitch26",
+			FiTypeName(
+				"Triple", // TYPE PARAMETERS EXIST
+				[
+					FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+					FiTypeArray(FiTypeName("FiExp", [])),
+					FiTypeName("OptEnvExp", [])
+				]
+			),
+			25916
+		),
+		FiTypeName(
+			"Triple",
+			[
+				FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+				FiTypeArray(FiTypeName("FiExp", [])),
+				FiTypeName("OptEnvExp", [])
+			]
+		),
+		[
+			FiCase(
+				"Triple",
+				["tmp_decls", "call_args", "effectedEnv"],
+				FiLet(
+					"tmp_decls",
+					FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+					FiCallPrim(
+						FcFieldPrim("first"),
+						[FiVar("gsymswitch26", FiTypeName("Triple", []), -25972)],      // NO TYPE PARAMETERS
+						FiTypeArray(FiTypeName("Maybe", [FiTypeName("TmpVar", [])])),
+						-25972
+					),
+					FiLet(
+*/
+
+fiCorrectVarTypes(e: FiExp) -> FiExp {
+	fiMapExp(e, \x, env -> switch (x) {
+		FiVar(name, type1,__): {
+			eitherMap(lookupTree(env.locals, name), \v ->
+				if (fiEqualTypes(type1, v.type)) x else {
+					FiVar(x with type = v.type);
+				}, x
+			);
+		}
+		default: x;
+	}, true);
+}
+
+fiTransformImplicitStructTyparsFromFiExp(
+	e : FiExp, typars: Set<string>, 
+	on_err: (string) -> void, 
+	fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames, 
+	structs2unions: Tree<string, [FiTypeUnion]>,
+	toplevel_name: string
+) -> FiExp {
+	re = \x -> fiTransformImplicitStructTyparsFromFiExp(x, typars, on_err, fn, names, structs2unions, toplevel_name);
+	rt = \x -> switch (fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names, structs2unions)) {
 		Some(tp): tp;
 		None(): {
 			on_err(
@@ -192,8 +299,9 @@ fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err:
 	switch(e) {
 		FiLambda(args, body, type, start): {
 			body_typars = fold(args, typars, \acc, arg -> fiCollectTypars(arg.type, acc));
-			FiLambda(args,
-				fiTransformImplicitStructTyparsFromFiExp(body, body_typars, on_err, fn, names, toplevel_name),
+			FiLambda(
+				map(args, \arg -> FiFunArg(arg.name, rt(arg.type))),
+				fiTransformImplicitStructTyparsFromFiExp(body, body_typars, on_err, fn, names, structs2unions, toplevel_name),
 				cast(rt(type): FiType -> FiTypeFunction), start
 			);
 		}
@@ -228,12 +336,60 @@ fiTransformImplicitStructTyparsFromFiExp(e : FiExp, typars: Set<string>, on_err:
 		FiUnsafe(name, ex, type, start): {
 			FiUnsafe(name, re(ex), rt(type), start);
 		}
-		default: e;
+		FiVar(name, type, start): {
+			FiVar(name, rt(type), start);
+		}
+		FiConst(): e;
 	}
 }
 
-fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (FiTypeParameter) -> Maybe<FiType>, names: FiGlobalNames) -> Maybe<FiType> {
-	doit = \x -> fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names);
+fiResoveStructTypars(s: FiTypeStruct, typars: [FiType], struct2unions: Tree<string, [FiTypeUnion]>) -> [FiType] {
+	num_typars = length(typars);
+	if (num_typars == length(s.typars)) {
+		typars;
+	} else {
+		unions = lookupTreeDef(struct2unions, s.name, []);
+		switch (find(unions, \union -> length(union.typeparameters) == num_typars)) {
+			Some(union): {
+				mapping = pairs2tree(mapi(union.typeparameters, \i, tp -> switch (tp) {
+					FiTypeParameter(nm): Pair(nm, typars[i]);
+					default: fail0("union " + union.name + " type parameter must be of FiTypeParameter type, got: " + pretFiType(tp));
+				}));
+				switch (find(union.typenames, \tn -> tn.name == s.name)) {
+					Some(tn): {
+						map(tn.typeparameters, \tp -> switch (tp) {
+							FiTypeParameter(nm): {
+								switch (lookupTree(mapping, nm)) {
+									Some(t): t;
+									None(): {
+										fail0("type parameter " + nm + " of a struct " + s.name + " is not found among type parameters of enclosing union " + union.name + " type parameters");
+									}
+								}
+							}
+							default: {
+								fail0("struct " + s.name + " among union typename " + union.name + " type parameter must be of FiTypeParameter type, got: " + pretFiType(tp));
+							}
+						});
+					}
+					None(): {
+						fail0("struct " + s.name + " is not found among union " + union.name + " typenames");
+					}
+				}
+			}
+			None(): {
+				fail0("can't resolve typars: [" + superglue(typars, pretFiType, ", ") + "] of a struct " + s.name);
+			}
+		}
+	}
+}
+
+fiTransformImplicitStructTyparsFromFiType(
+	t : FiType, typars: Set<string>, 
+	fn: (FiTypeParameter) -> Maybe<FiType>, 
+	names: FiGlobalNames,
+	structs2unions: Tree<string, [FiTypeUnion]>
+) -> Maybe<FiType> {
+	doit = \x -> fiTransformImplicitStructTyparsFromFiType(x, typars, fn, names, structs2unions);
 	typename_typars = \nm -> switch (lookupTree(names.structs, nm)) {
 		Some(struct): struct.typars;
 		None(): switch (lookupTree(names.unions, nm)) {
@@ -251,21 +407,16 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 		FiTypeArray(at): {
 			maybeMap(doit(at), \a -> FiTypeArray(a));
 		}
-		FiTypeName(id, tps): {
-			type_tps = typename_typars(id);
-			filtered = filtermap(tps, doit);
-			if (length(type_tps) == 0) {
-				Some(FiTypeName(id, []));
-			} else {
-				if (length(type_tps) != length(filtered)) {
-					println("length(type_tps) != length(filtered)\n" +
-						"type:\n" + toStringFormatted(t) + "\n" +
-						"type_tps:\n" + toStringFormatted(type_tps) + "\n" +
-						"filtered:\n" + toStringFormatted(filtered) + "\n"
-					);
+		FiTypeName(name, tps): {
+			tps1 = filtermap(tps, doit);
+			Some(FiTypeName(t with 
+				typeparameters = switch (lookupTree(names.structs, name)) {
+					Some(struct): {
+						fiResoveStructTypars(struct, tps1, structs2unions);
+					}
+					None(): tps1;
 				}
-				Some(FiTypeName(id, filtered));
-			}
+			));
 		}
 		FiTypeFunction(args, rt): {
 			maybeBind(doit(rt),
@@ -279,33 +430,36 @@ fiTransformImplicitStructTyparsFromFiType(t : FiType, typars: Set<string>, fn: (
 				}
 			);
 		}
-		default: Some(t);
+		FiTypeBool(): Some(t);
+		FiTypeInt(): Some(t);
+		FiTypeDouble(): Some(t);
+		FiTypeString(): Some(t);
+		FiTypeFlow(): Some(t);
+		FiTypeVoid(): Some(t);
+		FiTypeNative(): Some(t);
 	}
 }
 
 fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram {
 	// for each function name decide: if it is a true native or should use a fallback
-	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc ->
+	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc: Tree<string, FiDeclaration> ->
 		fold(module.natives,
 			fold(module.functions, acc, 
 				\ac, func -> if (native_is_implemented(func.name)) ac else setTree(ac, func.name, func)
 			),
-			\ac, nat -> if (native_is_implemented(nat.name)) setTree(ac, nat.name, nat) else ac
+			\ac, nat: FiNativeDec -> if (!native_is_implemented(nat.name)) ac else {
+				setTree(ac, nat.name, FiNativeDec(nat with fallbackLambda = FiVoid(0)))
+			}
 		)
 	);
-	func2native = \fn -> {
-		FiNativeDec(fn.name, false, fn.type, fn.name, fn.lambda, fn.declStart, fn.defiStart);
-	}
 	FiProgram(program with
 		modules = mapTree(program.modules, \module ->
 			FiModule(module with
 				// Filter out fallbacks for non-true natives
 				functions = filter(module.functions, \func -> !native_is_implemented(func.name)),
 				// Filter out true natives
-				natives = concat(
-					filter(module.natives, \nat -> native_is_implemented(nat.name)),
-					// Add implicit natives (functions from runtime with the same name)
-					map(filter(module.functions, \func -> native_is_implemented(func.name)), func2native)
+				natives = filtermap(module.natives, \nat -> if (!native_is_implemented(nat.name)) None() else
+					Some(FiNativeDec(nat with fallbackLambda = FiVoid(0)))
 				),
 			)
 		),
@@ -396,5 +550,102 @@ fiAddSuperUnions(program : FiProgram) -> FiProgram {
 				setTree(acc, p.first.name, lookupTreeDef(names.struct2module, p.second, ""))
 			)
 		)
+	);
+}
+
+fiCheckPolymorphism(p : FiProgram, types: [FiType]) -> [string] {
+	names = p.names;
+	type_arity = foldTree(names.unions, 
+		foldTree(names.structs, makeTree(), \name, s, acc -> setTree(acc, name, length(s.typars))),
+		\name, u, acc -> setTree(acc, name, length(u.typeparameters))
+	);
+	filtermap(types, \t -> switch (t) {
+		FiTypeName(nm, typars): {
+			arity = lookupTreeDef(type_arity, nm, -1);
+			if (arity == -1) {
+				fail("no arity for type: " + nm);
+			}
+			if (arity == length(typars)) None() else {
+				Some("Struct type parameters number mismatch the used type parameters number:\n" +
+					"type: " + nm + ", used type: " + pretFiType(t) + ", arity: " + i2s(arity));
+			}
+		}
+		default: None();
+	});
+}
+
+fiProgramTypes(p : FiProgram) -> [FiType] {
+	names = p.names;
+	types = ref makeSet();
+	add_type = \t -> {
+		t1 = fiPurifyType(t);
+		if (!containsSet(^types, t1)) {
+			types := insertSet(^types, t1);
+		}
+	}
+	observe_exp = \e -> {
+		ignore(mapFiExp(e, \x-> { add_type(fiExpType(x)); x; }));
+	}
+	observe_struct = \s -> {
+		iter(s.typars, \tp -> add_type(tp));
+		iter(s.args, \arg -> add_type(arg.type));
+	}
+	observe_union = \u -> {
+		iter(u.typeparameters, \tp -> add_type(tp));
+		iter(u.typenames, \tn -> add_type(tn));
+	}
+	observe_func = \fn -> {
+		observe_exp(fn.lambda);
+		add_type(fn.type);
+	}
+	observe_var = \var -> {
+		observe_exp(var.value);
+		add_type(var.type);
+	}
+	observe_nat = \nat -> {
+		observe_exp(nat.fallbackLambda);
+		add_type(nat.type);
+	}
+	iter(getTreeValues(names.toplevel), \decl -> 
+		switch (decl) {
+			FiFunctionDec(__,__,__,__,__): observe_func(decl);
+			FiGlobalVar(__,__,__,__,__): observe_var(decl);
+			FiNativeDec(__,__,__,__,__,__,__): observe_nat(decl);
+		}
+	);
+	traverseInOrder(names.structs, \__,s -> observe_struct(s));
+	traverseInOrder(names.unions, \__, u -> observe_union(u));
+	traverseInOrder(p.modules, \__,m -> { 
+		iter(m.structs, observe_struct);
+		iter(m.unions, observe_union);
+		iter(m.functions, observe_func);
+		iter(m.globalVars, observe_var);
+		iter(m.natives, observe_nat);
+	});
+	set2array(^types);
+}
+
+fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
+	proc_exp = \x, acc, nm -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
+		FiCast(__,from, to,__,__): {
+			from1 = fiPurifyType(from);
+			to1 = fiPurifyType(to);
+			if (fiEqualTypes(from1, to1)) {
+				ac;
+			} else {
+				setTree(ac, from1, 
+					insertSet(lookupTreeDef(ac, from1, makeSet()), to1)
+				);
+			}
+		}
+		default: ac;
+	}, AstTraverseOrder(true, true));
+	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
+		switch (toplevel) {
+			FiFunctionDec(nm, lambda,__,__,__): proc_exp(lambda, acc, nm);
+			FiGlobalVar(nm, value,__,__,__): proc_exp(value, acc, nm);
+			FiNativeDec(nm,__,__,__,fallback,__,__): proc_exp(fallback, acc, nm);
+			default: acc;
+		}
 	);
 }

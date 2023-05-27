@@ -1,4 +1,4 @@
 import sequtils
 
-proc concat*[T](s1, s2: openArray[T]): seq[T] {.inline.} =
-  sequtils.concat(@s1, @s2)
+proc $F_0(concat)*[T](s: varargs[seq[T]]): seq[T] {.inline.} =
+  sequtils.concat(s)

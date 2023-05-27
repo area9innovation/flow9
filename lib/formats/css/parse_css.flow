@@ -8,18 +8,24 @@ import lingo/pegcode/parsic;
 export {
 	// Parses a CSS snippet to a stylesheet
 	parseCss(css : string) -> Stylesheet;
+	parseCssTrace(css : string, addWarning : (string) -> void) -> Stylesheet;
 
 	mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle;
-	cssMarginWidth2double(margin : CssMarginWidth) -> double;	
+	cssMarginWidth2double(margin : CssMarginWidth) -> double;
 }
 
 parseCss(css : string) -> Stylesheet {
-    result = parsic(pegOps4Css, css, defaultPegActions);
-    if (result == "PARSING FAILED") {
-        Stylesheet(makeTree());
-    } else {
-        css2stylesheet(result);
-    }
+	parseCssTrace(css, devtrace);
+}
+
+parseCssTrace(css : string, addWarning : (string) -> void) -> Stylesheet {
+	result = parsic(pegOps4Css, css, defaultPegActions);
+	if (result == "PARSING FAILED") {
+			addWarning(toString(result));
+			Stylesheet(makeTree());
+	} else {
+			css2stylesheet(result, addWarning);
+	}
 }
 
 defTreeValue = StyleWithSelectors(defCssStyle, makeTree());
@@ -45,15 +51,15 @@ extractNameFromPseudos(pseudos : [CssPseudo]) -> string {
 	)
 }
 
-css2stylesheet(css : CssStylesheet) -> Stylesheet {
+css2stylesheet(css : CssStylesheet, addWarning : (string) -> void) -> Stylesheet {
 	Stylesheet(fold(css.rules, makeTree(), \acc, r : CssRuleset -> {
 		switch(r: CssRuleset) {
 			CssRulesetSimple(ruleSelectors, ruleDeclarations): {
-				style = cssDeclarations2style(ruleDeclarations);
+				style = cssDeclarations2style(ruleDeclarations, addWarning);
 				fold(ruleSelectors, acc, \ac2, selector : CssSelector -> {
 					switch (selector) {	
 						CssCombinators(head, combinations) : {
-							devtrace("Not supported CssCombinators: " + toString(combinations));
+							addWarning("Not supported CssCombinators: " + toString(combinations));
 							ac2;
 						}
 						CssSelectorSequence(selectors) : {
@@ -79,56 +85,40 @@ cssSelectorName(s : string) -> string {
 	s;
 }
 
-cssDeclarations2style(ds : [CssDeclaration]) -> CssStyle {
+cssDeclarations2style(ds : [CssDeclaration], addWarning : (string) -> void) -> CssStyle {
 	fold(ds, defCssStyle, \acc, d -> {
-		addCssDeclaration2style(acc, d)
+		addCssDeclaration2style(acc, d, addWarning)
 	})
 }
 
-addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
+addCssDeclaration2style(
+	style : CssStyle,
+	d : CssDeclaration,
+	addWarning : (string) -> void
+) -> CssStyle {
 	prop = d.property;
 	if (prop == "font-family") {
 		switch (d.expr) {
 			CssList(terms): {
 				fams = filter(map(terms, \t -> cssTerm2string(t, "")), \t -> t != "");
-				CssStyle(concat(style.family, fams), style.fontSize, style.letterSpacing, style.bold, style.italic,
-					style.color, style.fontBackgroundFill, style.backgroundFill,
-					style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-					style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-					style.box, style.whiteSpace, style.svgExtra, style.display
-				);
+				CssStyle(style with family=concat(style.family, fams));
 			}
 			default: {
 				fam = cssTerm2string(d.expr, "");
 				if (fam != "") {
-					CssStyle(arrayPush(style.family, fam), style.fontSize, style.letterSpacing, style.bold, style.italic,
-						style.color, style.fontBackgroundFill, style.backgroundFill,
-						style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-						style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-						style.box, style.whiteSpace, style.svgExtra, style.display
-					);
+					CssStyle(style with family=arrayPush(style.family, fam));
 				} else style;
 			}
 		}
 	} else if (prop == "font-size") {
 		size = cssTerm2double(d.expr, 0.0);
 		if (size != 0.0) {
-			CssStyle(style.family, size, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with fontSize=size);
 		} else style;
 	} else if (prop == "font-background") {
 		col = cssTerm2color(d.expr, -1);
 		if (col != -1) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, col, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with fontBackgroundFill=col);
 		} else {
 			style;
 		}
@@ -145,109 +135,69 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 			default: cssTerm2int(d.expr, 0);
 		}
 
-		if (300 <= v && v < 600) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, false, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+		bold = if (300 <= v && v < 600) {
+			false;
 		} else if (600 <= v) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, true, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			true;
 		} else {
-			devtrace("Unknown font-weight: " + toString(d.expr));
-			style;
-		}
+			addWarning("Unknown font-weight: " + toString(d.expr));
+			style.bold;
+		};
+		CssStyle(style with bold=bold);
 	} else if (prop == "font-style") {
 		st = toLowerCase(cssTerm2string(d.expr, ""));
-		if (st == "italic") {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, true,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+		italic = if (st == "italic") {
+			true;
 		} else if (st == "normal") {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, false,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			false;
 		} else {
-			devtrace("Unknown font-style: " + toString(d.expr));
-			style;
-		}
+			addWarning("Unknown font-style: " + toString(d.expr));
+			style.italic;
+		};
+		CssStyle(style with italic=italic);
 	} else if (prop == "text-decoration") {
 		st = toLowerCase(cssTerm2string(d.expr, ""));
 		if (st == "none") {
 			style;
 		} else {
-			devtrace("Unknown text-decoration: " + toString(d.expr));
+			addWarning("Unknown text-decoration: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "color") {
 		col = cssTerm2color(d.expr, -1);
-		if (col != -1) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				col, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+		st = toLowerCase(cssTerm2string(d.expr, ""));
+		if (st == "transparent") {
+			CssStyle(style with opacity=0.0);
+		} else if (col != -1) {
+			CssStyle(style with color=col);
 		} else {
 			style;
 		}
 	} else if (prop == "stroke") { // stroke is SVG CSS
 		col = cssTerm2color(d.expr, -1);
 		if (col != -1) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, col, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with stroke=col);
 		} else {
 			style;
 		}
 	} else if (prop == "stroke-width") {
 		v = cssTerm2double(d.expr, -1.0);
 		if (v > 0.0) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, v, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with strokeWidth=v);
 		} else {
 			style;
 		}
 	} else if (prop == "fill") { // fill is SVG CSS
 		col = cssTerm2color(d.expr, -1);
 		if (col != -1) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, col, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with fill=col);
 		} else {
 			style;
 		}
 	} else if (prop == "opacity") {
 		v = cssTerm2double(d.expr, -1.0);
 		if (v >= 0.0 && v <= 1.0) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, v, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with opacity=v);
 		} else {
 			style;
 		}
@@ -266,14 +216,9 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 	} else if (prop == "background-color") {
 		v = cssTerm2color(d.expr, -1);
 		if (v != -1) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, v,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with backgroundFill=v);
 		} else {
-			devtrace("Unknown background-color: " + toString(d.expr));
+			addWarning("Unknown background-color: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "background-image") {
@@ -288,10 +233,13 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 				parseCssBackground([d.expr], style);
 			}
 			default: {
-				devtrace("Unknown background-image: " + toString(d.expr));
+				addWarning("Unknown background-image: " + toString(d.expr));
 				style;
 			}
 		}
+	} else if (prop == "line-height") {
+		lineHeight = cssTerm2double(d.expr, defCssStyle.lineHeight);
+		CssStyle(style with lineHeight=lineHeight);
 	} else if (prop == "width") {
 		width = switch (d.expr : CssTerm) {
 			CssPercentage(v): CssPercent(cssTerm2double(v, 0.0));
@@ -300,58 +248,46 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 				if (v != 0.0) {
 					CssLength(v, CssUnitPx());
 				} else {
-					devtrace("Unknown width: " + toString(d.expr));
+					addWarning("Unknown width: " + toString(d.expr));
 					style.width;
 				}
 			}
-		}
-		CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-			style.color, style.fontBackgroundFill, style.backgroundFill,
-			width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-			style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-			style.box, style.whiteSpace, style.svgExtra, style.display
-		);
+		};
+		CssStyle(style with width=width);
 	} else if (prop == "height") {
 		v = cssTerm2double(d.expr, 0.0);
 		if (v != 0.0) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, v, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with height=v);
 		} else {
-			devtrace("Unknown height: " + toString(d.expr));
+			addWarning("Unknown height: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "letter-spacing") {
 		v = cssTerm2double(d.expr, defCssStyle.letterSpacing);
 		if (v != defCssStyle.letterSpacing) {
-			CssStyle(style.family, style.fontSize, v, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			)
+			CssStyle(style with letterSpacing=v);
 		} else {
-			devtrace("Unknown letter-spacing: " + toString(d.expr));
+			addWarning("Unknown letter-spacing: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "word-spacing") {
+		v = cssTerm2double(d.expr, defCssStyle.wordSpacing);
+		if (v != defCssStyle.wordSpacing) {
+			CssStyle(style with wordSpacing=v);
+		} else {
+			addWarning("Unknow work-spacing: " + d2s(v));
 			style;
 		}
 	} else if (prop == "border") {
-		CssStyle(style with border=cssTerm2Border(d.expr, style.border))
+		CssStyle(style with border=cssTerm2Border(d.expr, style.border, addWarning))
 	} else if (prop == "border-color") {
 		CssStyle(style with border=cssTerm2BorderColor(d.expr, style.border))
 	} else if (prop == "border-radius") {
-		br = cssTerm2BorderRadius(d.expr, emptyBorderRadius);
+		br = cssTerm2BorderRadius(d.expr, emptyBorderRadius, addWarning);
 		if (br != emptyBorderRadius) {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, br, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			);
+			CssStyle(style with borderRadius=br);
 		} else {
-			devtrace("Unknown border-radius: " + toString(d.expr));
+			addWarning("Unknown border-radius: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "border-top-left-radius" || prop == "border-top-right-radius"
@@ -371,35 +307,20 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 					BorderRadius(max(0.0, style.borderRadius.topLeft), max(0.0, style.borderRadius.topRight),
 						max(0.0, style.borderRadius.bottomRight), v);
 				}
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, br, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, style.display
-			);
+			CssStyle(style with borderRadius=br);
 		} else {
 			style;
 		}
 	} else if (contains(["fill-rule", "text-anchor", "text-transform", "stroke-linejoin"], prop)) {
 		// Extra SVG attributes
 		extra = setTree(style.svgExtra, prop, d.expr);
-		CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-			style.color, style.fontBackgroundFill, style.backgroundFill,
-			style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-			style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-			style.box, style.whiteSpace, extra, style.display
-		);
+		CssStyle(style with svgExtra=extra);
 	} else if (prop == "display") {
 		v = cssTerm2string(d.expr, "");
 		if (v == "none") {
-			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-				style.color, style.fontBackgroundFill, style.backgroundFill,
-				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-				style.box, style.whiteSpace, style.svgExtra, CssDisplayNone()
-			);
+			CssStyle(style with display=CssDisplayNone());
 		} else {
-			devtrace("Unknown display: " + toString(d.expr));
+			addWarning("Unknown display: " + toString(d.expr));
 			style;
 		}
 	} else if (prop == "white-space") {
@@ -479,8 +400,45 @@ addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
 				cssUpdateMargin(style, margin);
 			}
 		}
+	} else if (prop == "top") {
+		position = CssStylePosition(
+			Some(cssTerm2double(d.expr, -1.0)),
+			style.position.bottom,
+			style.position.left,
+			style.position.right
+		);
+		CssStyle(style with position=position);
+	} else if (prop == "bottom") {
+		position = CssStylePosition(
+			style.position.top,
+			Some(cssTerm2double(d.expr, -1.0)),
+			style.position.left,
+			style.position.right
+		);
+		CssStyle(style with position=position);
+	} else if (prop == "left") {
+		position = CssStylePosition(
+			style.position.top,
+			style.position.bottom,
+			Some(cssTerm2double(d.expr, -1.0)),
+			style.position.right
+		);
+		CssStyle(style with position=position);
+	} else if (prop == "right") {
+		position = CssStylePosition(
+			style.position.top,
+			style.position.bottom,
+			style.position.left,
+			Some(cssTerm2double(d.expr, -1.0))
+		);
+		CssStyle(style with position=position);
+	} else if (
+		prop == "-webkit-transform"
+		|| prop == "transform"
+	) {
+		CssStyle(style with transform = cssTerm2Transform(d.expr));
 	} else {
-		devtrace("Unknown CSS property: " + prop + " " + toString(d.expr));
+		addWarning("Unknown CSS property: " + prop + " " + toString(d.expr));
 		style;
 	}
 }
@@ -508,7 +466,11 @@ cssTerm2BorderColorHepler(t1 : CssTerm, colorAcc : int) -> int {
 	}
 }
 
-cssTerm2Border(c : CssTerm, def : [GraphicsStyle]) -> [GraphicsStyle] {
+cssTerm2Border(
+	c : CssTerm,
+	def : [GraphicsStyle],
+	addWarning : (string) -> void
+) -> [GraphicsStyle] {
 	getGraphicsStyleFromCssTerms = \terms -> {
 		getWidthFromCss = \-> {
 			width = fold(terms, 0.0, \acc, t -> {
@@ -565,13 +527,17 @@ cssTerm2Border(c : CssTerm, def : [GraphicsStyle]) -> [GraphicsStyle] {
 		}
 
 		default: {
-			devtrace("Expected CssSolid or CssLinearGradient or CssList in CSS term: " + toString(c));
+			addWarning("Expected CssSolid or CssLinearGradient or CssList in CSS term: " + toString(c));
 			def
 		}
 	}
 }
 
-cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
+cssTerm2BorderRadius(
+	c : CssTerm,
+	def : BorderRadius,
+	addWarning : (string) -> void
+) -> BorderRadius {
 	switch (c : CssTerm) {
 		CssInherit(): {
 			defCssStyle.borderRadius;
@@ -595,7 +561,7 @@ cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
 			} else if (len == 4) {
 				BorderRadius(r[0], r[1], r[2], r[3]);
 			} else {
-				devtrace("Invalid value for border-radius: " + toString(c));
+				addWarning("Invalid value for border-radius: " + toString(c));
 				def;
 			}
 		}
@@ -604,7 +570,7 @@ cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
 			if (v != -1.0) {
 				BorderRadius(v, v, v, v);
 			} else {
-				devtrace("Invalid value for border-radius: " + toString(c));
+				addWarning("Invalid value for border-radius: " + toString(c));
 				def;
 			}
 		}
@@ -665,7 +631,6 @@ cssUpdateMargin(style : CssStyle, margin : CssMargin) -> CssStyle {
 }
 
 cssTerm2CssMarginWidth(c : CssTerm) -> CssMarginWidth {
-
 	number = cssTerm2double(c, 0.0);
 	text = cssTerm2string(c, "");
 
@@ -676,7 +641,50 @@ cssTerm2CssMarginWidth(c : CssTerm) -> CssMarginWidth {
 	} else {
 		zeroCssLength();
 	};
+}
 
+cssTerm2Transform(c : CssTerm) -> CssStyleTransform {
+	defRotate = defCssStyle.transform.rotate;
+	defScaleX = defCssStyle.transform.scaleX;
+	defScaleY = defCssStyle.transform.scaleY;
+	switch(c : CssTerm) {
+		CssList(terms): {
+			fold(terms, defCssStyle.transform, \acc, term -> {
+				mergeCssStyleTransform(acc, cssTerm2Transform(term));
+			});
+		};
+		CssStruct(name, arguments): {
+			if (name == "rotate" && length(arguments) > 0) {
+					CssStyleTransform(
+						cssTerm2double(arguments[0], defRotate),
+						defScaleX,
+						defScaleY
+					);
+			} else if (name == "scale" && length(arguments) > 0) {
+				switch(arguments[0] : CssTerm) {
+					CssList(terms): {
+						if (length(terms) > 1) {
+							CssStyleTransform(
+								defRotate,
+								cssTerm2double(terms[0], defScaleX),
+								cssTerm2double(terms[1], defScaleY)
+							);
+						} else {
+							defCssStyle.transform;
+						}
+					};
+					default: CssStyleTransform(
+						defRotate,
+						cssTerm2double(arguments[0], defScaleX),
+						defScaleY
+					)
+				}
+			} else {
+				defCssStyle.transform;
+			}
+		};
+		default: defCssStyle.transform;
+	}
 }
 
 parseCssBackground(cssTerms : [CssTerm], cssStyle : CssStyle) -> CssStyle {
@@ -684,21 +692,11 @@ parseCssBackground(cssTerms : [CssTerm], cssStyle : CssStyle) -> CssStyle {
 		switch (term : CssTerm) {
 			CssLinearGradient(rotation, colors): {
 				gs = CssLinearGradient2GraphicsStyle(CssLinearGradient(rotation, colors), false, []);
-				CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-					style.color, style.fontBackgroundFill, style.backgroundFill,
-					style.width, style.height, style.opacity, style.border, style.borderRadius, gs,
-					style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-					style.box, style.whiteSpace, style.svgExtra, style.display
-				)
+				CssStyle(style with background=gs);
 			}
 			CssUrl(value) : {
 				if(value != "") {
-					CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-						style.color, style.fontBackgroundFill, style.backgroundFill,
-						style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-						concat([term], style.backgroundImage), style.stroke, style.strokeWidth, style.fill, style.form,
-						style.box, style.whiteSpace, style.svgExtra, style.display
-					)
+					CssStyle(style with backgroundImage=concat([term], style.backgroundImage));
 				} else {
 					style;
 				}
@@ -706,12 +704,7 @@ parseCssBackground(cssTerms : [CssTerm], cssStyle : CssStyle) -> CssStyle {
 			default: {
 				col = cssTerm2color(term, -1);
 				if (col != -1) {
-					CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
-						style.color, style.fontBackgroundFill, col,
-						style.width, style.height, style.opacity, style.border, style.borderRadius, style.background,
-						style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
-						style.box, style.whiteSpace, style.svgExtra, style.display
-					)
+					CssStyle(style with backgroundFill=col);
 				} else {
 					style;
 				}
@@ -725,14 +718,18 @@ mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle {
 		concat(new.family, orig.family),
 		if (new.fontSize == defCssStyle.fontSize) orig.fontSize else new.fontSize,
 		if (new.letterSpacing == defCssStyle.letterSpacing) orig.letterSpacing else new.letterSpacing,
+		if (new.wordSpacing == defCssStyle.wordSpacing) orig.wordSpacing else new.wordSpacing,
 		new.bold,
 		new.italic,
 		if (new.color == defCssStyle.color) orig.color else new.color,
 		if (new.fontBackgroundFill == defCssStyle.fontBackgroundFill) orig.fontBackgroundFill else new.fontBackgroundFill,
 		if (new.backgroundFill == defCssStyle.backgroundFill) orig.backgroundFill else new.backgroundFill,
+		if (new.lineHeight == defCssStyle.lineHeight) orig.lineHeight else new.lineHeight,
 		if (new.width == defCssStyle.width) orig.width else new.width,
 		if (new.height == defCssStyle.height) orig.height else new.height,
 		if (new.opacity == defCssStyle.opacity) orig.opacity else new.opacity,
+		mergeCssStyleTransform(orig.transform, new.transform),
+		new.position,
 		if (length(new.border) == 0) orig.border else new.border,
 		if (new.borderRadius == defCssStyle.borderRadius) orig.borderRadius else new.borderRadius,
 		if (length(new.background) == 0) orig.background else new.background,
@@ -790,6 +787,14 @@ cssMarginWidth2double(margin : CssMarginWidth) -> double {
 		CssLength(value, unit): value;
 		default: 0.0;
 	}	
+}
+
+mergeCssStyleTransform(orig : CssStyleTransform, new : CssStyleTransform) -> CssStyleTransform {
+	CssStyleTransform(
+		if (new.rotate == defCssStyle.transform.rotate) orig.rotate else new.rotate,
+		orig.scaleX * new.scaleX,
+		orig.scaleY * new.scaleY
+	);
 }
 
 /*

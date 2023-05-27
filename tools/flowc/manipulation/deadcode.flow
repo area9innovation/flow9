@@ -10,25 +10,22 @@ export {
 }
 
 deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
-	// In case of condition with value known at a compile time - leave only corresponding branch
-	prog = fiMapProgramExp(prog0, \e, decl, module, prg -> 
-		mapFiExp(e,
-			\x -> switch (x) {
-				FiIf(e1, e2, e3, __,__): {
-					switch (e1) {
-						FiBool(v,__): if (v) e2 else e3;
-						default: x;
-					}
+	conf = prog0.config;
+	backends = if (isParameterFalse(getConfigParameter(conf.config, "dce-target-dependent"))) [] else {
+		fcBackendConfigs2array(getFcBackendConfigs(conf));
+	}
+	prog = fiMapProgramExp(prog0, \x, decl,__,__ ->
+		fiMapExp(x, \e, __ -> 
+			switch (e) {
+				FiIf(cond, e1, e2, __,__): {
+					eitherMap(compileTimeIfCondition(cond, backends), \val -> if (val) e1 else e2, e);
 				}
-				default: x;
-			}
-		)
+				default: e;
+			}, 
+		true)
 	);
 	used = deadFiCodeAlive(prog, effects, preserveNames, eliminateNames, removeMain, removeGlobals);
 	dead = ref makeList();
-	conf = prog.config;
-	backends = fcBackendConfigs2array(getFcBackendConfigs(conf));
-	no_target_dep = isParameterFalse(getConfigParameter(conf.config, "dce-target-dependent"));
 	reportdead = \n -> dead := Cons(n, ^dead);
 	modules = foldTree(
 		prog.modules, 
@@ -36,11 +33,7 @@ deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, 
 		\modname : string, mo : FiModule, acc -> {
 			nfns = filtermap(mo.functions, \fn ->
 				if (containsSet(used, fn.name)) {
-					Some(if (no_target_dep) fn else
-						FiFunctionDec(fn with
-							lambda = cast(removeUnreacheableFromFiExp(fn.lambda, backends, conf) : FiExp -> FiLambda)
-						)
-					);
+					Some(fn);
 				} else {
 					reportdead(fn.name);
 					None();
@@ -48,9 +41,7 @@ deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, 
 			);
 			nglobals = filtermap(mo.globalVars, \gv ->
 				if (containsSet(used, gv.name)) {
-					Some(if (no_target_dep) gv else FiGlobalVar(gv with
-						value = removeUnreacheableFromFiExp(gv.value, backends, conf)
-					));
+					Some(gv);
 				} else {
 					reportdead(gv.name);
 					None();
@@ -58,9 +49,7 @@ deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, 
 			);
 			nnatives = filtermap(mo.natives, \nat ->
 				if (containsSet(used, nat.name)) {
-					Some(if (no_target_dep) nat else FiNativeDec(nat with
-						fallbackLambda = removeUnreacheableFromFiExp(nat.fallbackLambda, backends, conf)
-					));
+					Some(nat);
 				} else {
 					reportdead(nat.name);
 					None();
@@ -90,9 +79,9 @@ deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, 
 		}
 	);
 	// Show list of dead items only on verbose=2
-	if (verbose > 1 || isConfigParameterTrue(prog.config.config, "show-deadcode")) {
-		dead_array = sort(list2array(^dead));
-		fcPrintln("Dead (" + i2s(length(dead_array)) + " identifiers):\n" + strArrayWrap(dead_array, 200, false, ", "), prog.config.threadId);
+	tab2s = \lines -> strGlue(map(splitByNumber(lines, 10), \line -> strGlue(line, ", ")), ",\n");
+	if (verbose > 1) {
+		fcPrintln("Dead: " + tab2s(list2array(^dead)), prog.config.threadId);
 	}
 	FiProgram(
 		prog.config,
@@ -114,11 +103,10 @@ deadFiCode(prog0 : FiProgram, effects : FiEffects, preserveNames : Set<string>, 
 }
 
 DeadCodeAcc(
-	effects : FiEffects, 
-	modules : Tree<string, FiModule>, 
-	queue : Set<string>, 
-	used : Set<string>,
-	toplevel : Tree<string, FiDeclaration>
+	effects : FiEffects,
+	program : FiProgram,
+	queue : Set<string>,
+	used : Set<string>
 );
 
 deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool) -> Set<string> {
@@ -136,27 +124,30 @@ deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : Set<strin
 			)
 		}
 	);
-	visitDead(DeadCodeAcc(effects, prog.modules, queue, makeSet(), prog.names.toplevel), eliminateNames).used
+	visitDead(
+		DeadCodeAcc(effects, prog, queue, makeSet()),
+		preserveNames, eliminateNames
+	).used
 }
 
-visitDead(acc : DeadCodeAcc, eliminateNames : Set<string>) -> DeadCodeAcc {
+visitDead(acc : DeadCodeAcc, preserveNames : Set<string>, eliminateNames : Set<string>) -> DeadCodeAcc {
 	switch (popMinSet(acc.queue)) {
 		None(): acc;
 		Some(pop): {
 			name = pop.value;
 			visitDead(
-				deadFiName(DeadCodeAcc(acc with queue = pop.rest), name, eliminateNames),
-				eliminateNames
+				deadFiName(DeadCodeAcc(acc.effects, acc.program, pop.rest, acc.used),name, preserveNames, eliminateNames),
+				preserveNames, eliminateNames
 			)
 		}
 	}
 }
 
-deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> DeadCodeAcc {
-	mdec = lookupTree(acc.toplevel, name);
+deadFiName(acc : DeadCodeAcc, name : string, preserveNames : Set<string>, eliminateNames : Set<string>) -> DeadCodeAcc {
+	mdec = lookupTree(acc.program.names.toplevel, name);
 	switch (mdec) {
 		None(): {
-			if (name != "main") {
+			if (name != "main" && !containsSet(preserveNames, name)) {
 				fcPrintln("WARNING: Something is wrong with DCE: Could not find '" + name + "'", acc.effects.config.threadId);
 			}
 			acc
@@ -164,21 +155,14 @@ deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> De
 		Some(dec): {
 			nused = insertSet(acc.used, name);
 			referenced = switch (dec : FiDeclaration) {
-				FiFunctionDec(f, lambda, __, __, __):          fifreevars(lambda);
+				FiFunctionDec(f, lambda, __, __, __): fifreevars(lambda);
 				FiGlobalVar(x, value, __, __, __): fifreevars(value);
-				FiNativeDec(n, isio, type, nativeName, flowfallback, __, __):
-					switch (flowfallback) {
-						FiLambda(__, __, __, __): fifreevars(flowfallback);
-						default: makeSet();
-					}
+				FiNativeDec(n, isio, type, nativeName, fallback, __, __): fifreevars(fallback);
 			}
 			newnames = differenceSets(differenceSets(referenced, nused), eliminateNames);
 			nqueue = mergeSets(acc.queue, newnames);
 			nused2 = mergeSets(nused, newnames);
-			DeadCodeAcc(acc with
-				queue = nqueue, 
-				used = nused2
-			);
+			DeadCodeAcc(acc with queue = nqueue, used = nused2);
 		}
 	}
 }

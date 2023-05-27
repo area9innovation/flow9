@@ -225,7 +225,13 @@ utf32toUtf16(c : int) -> string {
 }
 
 escapeStr(s : string) -> string {
-	strsubsmart(toString(s), 1, -1);
+	stringCharsFold(s, "", \acc, ch ->
+		acc + if (ch == "\n") "\\n" else
+		if (ch == "\t") "\\t" else
+		if (ch == "\r") "\\r" else
+		if (ch == "\\") "\\\\" else
+		if (ch == "\"") "\\\"" else ch
+	);
 }
 
 unescapeStr(s : string) -> string {
@@ -258,30 +264,31 @@ toStringFormatted(v : ?) -> string {
 }
 
 toStringFormatted2(v : flow) -> string {
-	type = runtimeValueType(v);
-	if (type == "void") {
+	tag = getDataTagForValue(v);
+	if (tag == void_data_tag) {
 		// Must not ever happen
 		"{}";
-	} else if (type == "function" || type == "undef") {
-		type;
-	} else if (type == "int") {
+	} else if (tag == function_data_tag) {
+		"function";
+	} else if (tag == native_data_tag) {
+		"native";
+	} else if (tag == int_data_tag) {
 		i2s(cast(v : flow -> int));
-	} else if (type == "double") {
+	} else if (tag == double_data_tag) {
 		d2s(cast(v : flow -> double));
-	} else if (type == "bool") {
+	} else if (tag == bool_data_tag) {
 		b2s(cast(v : flow -> bool));
-	} else if (type == "string") {
+	} else if (tag == string_data_tag) {
 		"\"" + escapeStr(cast(v : flow -> string)) + "\"";
-	} else if (type == "array") {
+	} else if (tag == array_data_tag) {
 		arr = map(cast(v : flow -> [flow]), toStringFormatted2);
 		arr_sl = "[" + strGlue(arr, ", ") + "]";
 		if (!strContains(arr_sl, "\n") && strlen(arr_sl) < 64) arr_sl else {
 			"[\n" + strIndent(strGlue(arr, ",\n")) + "\n]";
 		}
-
-	} else if (type == "ref") {
+	} else if (tag == reference_data_tag) {
 		"ref " + toStringFormatted2(^cast(v : flow -> ref flow));
-	} else {
+	} else if (tag == struct_data_tag) {
 		name = extractStructName(v);
 		if (name == "") {
 			// give up with formatted output
@@ -293,6 +300,8 @@ toStringFormatted2(v : flow) -> string {
 				name + "(\n" + strIndent(strGlue(args, ",\n")) + "\n)";
 			}
 		}
+	} else {
+		"unknown data with tag " + i2s(tag) + ": " + toString(v);
 	}
 }
 
@@ -410,26 +419,30 @@ stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string {
 strApplyFns(s: string) -> ([(string) -> string]) -> string {
 	\fns -> foldi(fns, s, \k, acc, fn -> {
 		name = "$F_" + i2s(k) + "(";
+		next_open_bracket = \i -> for(i,
+			\x -> x < strlen(acc) && getCharAt(acc, x) != "(",
+			\x -> x + 1
+		);
 		next_close_bracket = \i -> for(
-			Pair(i, 0),
+			Pair(i, 1),
+			\p -> p.first < strlen(acc) && p.second != 0,
 			\p -> {
-				x = p.first;
-				x + 1 < strlen(acc) && !(p.second == 1 && getCharAt(acc, x + 1) == ")");
-			},
-			\p -> Pair(p.first + 1,
-				if (getCharAt(acc, p.first) == "(") p.second + 1 else
-				if (getCharAt(acc, p.first) == ")") p.second - 1 else p.second
-			)
-		).first + 1;
+				ch = getCharAt(acc, p.first);
+				Pair(p.first + 1,
+					if (ch == "(") p.second + 1 else
+					if (ch == ")") p.second - 1 else p.second
+				);
+			}
+		).first - 1;
 		start_inds = multipleStrIndexOf(acc, name);
 		if (length(start_inds) == 0) acc else
 		if (length(start_inds) == 1) {
-			start_ind = start_inds[0];
-			end_ind = next_close_bracket(start_ind);
-			applied = fn(substring(acc, start_ind + strlen(name), end_ind - start_ind - strlen(name)));
-			substring(acc, 0, start_ind) + applied + substring(acc, end_ind + 1, strlen(acc) - end_ind - 1);
+			start = start_inds[0];
+			end_ind = next_close_bracket(next_open_bracket(start) + 1);
+			applied = fn(substring(acc, start + strlen(name), end_ind - start - strlen(name)));
+			substring(acc, 0, start) + applied + substring(acc, end_ind + 1, strlen(acc) - end_ind - 1);
 		} else {
-			end_inds = map(start_inds, next_close_bracket);
+			end_inds = map(start_inds, \start -> next_close_bracket(next_open_bracket(start) + 1));
 			applied = mapi(start_inds, \i, start -> fn(substring(acc, start + strlen(name), end_inds[i] - start - strlen(name))));
 			concatStrings(mapi(start_inds, \i, start ->
 				if (i == 0) {

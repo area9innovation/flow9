@@ -22,6 +22,7 @@ export {
 	getChineseFontMinimal() -> FontFamily;
 
 	setLang(lang : string) -> void;
+	setContentLang(lang : string) -> void;
 
 	// WARNING! On first call also SETS language according to url flags.
 	getLang() -> string;
@@ -137,7 +138,7 @@ debugFontMapping = isUrlParameterTrue("debugfontmapping");
 relativeScaleArabicMultiplier = s2d(getUrlParameterDef("aafs", "1.0"));  // TODO generalize introducing a mapping alphabet→coeficient.
 
 isChinese(lang) {
-	lang == "zh" || lang == "zz"
+	contains(["zh", "zz", "zh-cht"], toLowerCase(lang))
 }
 
 cjkLang = ref false;
@@ -145,6 +146,10 @@ bidiSupport: ref Maybe<bool> = ref None();
 
 isCJKLang() -> bool {
 	^cjkLang
+}
+
+isCJK(lang : string) -> bool {
+	isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi"
 }
 
 getUniversalFont() -> FontFamily {
@@ -378,6 +383,7 @@ getMappedFont(face : string, size : double) {
 
 // This var must be set through setLangCore() function only, because this function sets some other related vars as well.
 currentLang = make("");
+currentContentLang = make("");
 
 getLang() {
 	if (getValue(currentLang) == "") {
@@ -400,13 +406,19 @@ setLang(lang) {
 		setLangCore(lang);
 }
 
+setContentLang(lang : string) -> void {
+	nextDistinct(currentContentLang, lang);
+	cjkLang := isCJK(lang) || isCJK(getLang());
+	updateFontMappingFunction(Some(lang));
+}
+
 setLangCore(lang0 : string) -> void{
 	lang = toLowerCase(lang0);
 	if (lang != getValue(currentLang)) {
 		if (!cgi) {
 			println("setting language to " + toString(lang));
 		}
-		cjkLang := isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi";
+		cjkLang := isCJK(lang);
 		updateFontMappingFunction(Some(lang));
 		next(currentLang, lang);
 		setApplicationLanguage(lang);
@@ -486,7 +498,7 @@ getMappedWigiFont(face : string) -> string {
 }
 
 cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
-	lang = getValue(currentLang);
+	lang = either(find([getValue(currentLang), getValue(currentContentLang)], isCJK), "");
 	makeFontMedium = \font1 -> font1 + "Medium";
 	makeFontSloped = \fam -> {
 		slopedStr = if (startsWith(fam, "DejaVu Sans") || startsWith(fam, "DejaVuSans")) "Oblique" else "Italic";
@@ -647,7 +659,7 @@ getNativeLangFromBCP(bcpLang : string) -> string {
 updateFontMappingFunction(langM : Maybe<string>) -> void {
 	lang = either(langM, getValue(currentLang));
 	getMappedFontFn := {
-		if (isCJKLang())
+		if (isCJKLang() || isCJK(lang))
 			cjkFontMappingFn
 		else
 			^defaultFontMappingFn

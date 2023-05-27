@@ -12,13 +12,16 @@ export {
 		direct: bool     // direct vs. reverse iteration over args
 	);
 
-	// Greneral transformation of a program: on a declaration level
+	// General transformation of a program: on a module level
+	fiMapProgramModule(prog: FiProgram, fn: (FiModule, FiProgram) -> FiModule) -> FiProgram;
+
+	// General transformation of a program: on a declaration level
 	fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram;
 
-	// Greneral transformation of a program: on a declaration level
+	// General transformation of a program: on a declaration level
 	fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ?;
 
-	// Greneral transformation of a program: on an expression level
+	// General transformation of a program: on an expression level
 	fiMapProgramExp(prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiProgram;
 
 	// A local description of scope environment in expression
@@ -60,6 +63,18 @@ export {
 
 	// Folding over a type (as an AST tree structure).
 	fiFoldType(tp : FiType, v: ?, fn: (?, FiType) -> ?) -> ?;
+
+	// General iteration of a program: on a module level
+	fiIterProgramModule(prog: FiProgram, fn: (FiModule, FiProgram) -> void) -> void;
+
+	// General transformation of a program: on a declaration level
+	fiIterProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> void) -> void;
+
+	// General transformation of a program: on an expression level
+	fiIterProgramExp(prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> void) -> void;
+
+	// General iteration over expressions
+	fiIterExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> void) -> void;
 }
 
 mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
@@ -313,15 +328,19 @@ fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string] {
 	}
 }
 
-fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram {
-	modules = mapTree(prog.modules, \module -> fiMapModule(prog, module, fn));
+fiMapProgramModule(prog: FiProgram, fn: (FiModule, FiProgram) -> FiModule) -> FiProgram {
+	modules = mapTree(prog.modules, \m -> fn(m, prog));
 	FiProgram(prog with
 		modules = modules,
 		names = foldTree(modules, 
 			FiGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree()),
-			\__,module, acc -> fiModule2GlobalNames(module, acc)
+			\__,module, acc -> fiAddModule2GlobalNames(module, acc)
 		)
 	);
+}
+
+fiMapProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiProgram {
+	fiMapProgramModule(prog, \m, p -> fiMapModule(p, m, fn));
 }
 
 fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiProgram, ?) -> ?) -> ? {
@@ -351,7 +370,7 @@ fiFoldProgramToplevel(prog: FiProgram, init: ?, fn: (FiToplevel, FiModule, FiPro
 	);
 }
 
-fiModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames {
+fiAddModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames {
 	names1 = fold(module.structs, names, \acc, x -> 
 		FiGlobalNames(acc with 
 			struct2module = setTree(acc.struct2module, x.name, module.fileinfo.flowfile),
@@ -442,9 +461,14 @@ fiMapProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgr
 				}
 			}
 			FiNativeDec(__,__,__,__,fallback,__,__): {
-				mapped = fn(fallback, toplevel, module, prog);
-				if (isSameObj(fallback, mapped)) [toplevel] else {
-					[FiNativeDec(toplevel with fallbackLambda = mapped)];
+				switch (fallback) {
+					FiVoid(__): [toplevel];
+					default: {
+						mapped = fn(fallback, toplevel, module, prog);
+						if (isSameObj(fallback, mapped)) [toplevel] else {
+							[FiNativeDec(toplevel with fallbackLambda = mapped)];
+						}
+					}
 				}
 			}
 		}
@@ -495,7 +519,7 @@ fiMapExpArgs(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> F
 				);
 			}
 			e1_mapped = fiDoMapExp(e1, set_parent(env, 0), fn, argsFirst);
-			e2_mapped = fiDoMapExp(e2, set_parent(env, 1), fn, argsFirst);
+			e2_mapped = fiDoMapExp(e2, set_parent(env1, 1), fn, argsFirst);
 			if (isSameObj(e1_mapped, e1) && isSameObj(e2_mapped, e2)) e else
 			FiLet(e with e1 = e1_mapped, e2 = e2_mapped);
 		}
@@ -893,4 +917,98 @@ fiFoldType(tp : FiType, v: ?, fn: (?, FiType) -> ?) -> ? {
 		}
 		default: v;
 	}, tp)
+}
+
+fiIterProgramModule(prog: FiProgram, fn: (FiModule, FiProgram) -> void) -> void {
+	traverseInOrder(prog.modules, \__, m -> fn(m, prog));
+}
+
+fiIterProgramToplevel(prog: FiProgram, fn: (FiToplevel, FiModule, FiProgram) -> void) -> void {
+	fiIterProgramModule(prog, \m, p -> fiIterModule(p, m, fn));
+}
+
+fiIterModule(prog: FiProgram, module: FiModule, fn: (FiToplevel, FiModule, FiProgram) -> void) -> void {
+	iter(fiModuleToplevels(module), \x -> fn(x, module, prog));
+}
+
+fiIterProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> void) -> void {
+	fiIterProgramToplevel(program, \toplevel, module, prog ->
+		switch (toplevel) {
+			FiTypeStruct(__,__,__,__): {}
+			FiTypeUnion(__,__,__,__): {}
+			FiFunctionDec(__,lambda,__,__,__): {
+				fn(lambda, toplevel, module, prog);
+			}
+			FiGlobalVar(__,value,__,__,__): {
+				fn(value, toplevel, module, prog);
+			}
+			FiNativeDec(__,__,__,__,fallback,__,__): {
+				fn(fallback, toplevel, module, prog);
+			}
+		}
+	);
+}
+
+fiIterExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> void) -> void {
+	fiDoIterExp(e, FiExpTraverseEnv(makeList(), makeTree(), makeTree(), makeTree()), fn);
+}
+
+fiDoIterExp(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> void) -> void {
+	set_parent = \env1, i -> FiExpTraverseEnv(env1 with parents = Cons(Pair(e, i), env.parents));
+	switch (e) {
+		FiLambda(args, body, type, start): {
+			env1 = fold(args, env, \acc, arg -> {
+				if (arg.name == "__") acc else {
+					var = FiVar(arg.name, arg.type, start);
+					FiExpTraverseEnv(acc with
+						locals = setTree(acc.locals, arg.name, var),
+						args = setTree(acc.args, arg.name, var),
+					);
+				}
+			});
+			fiDoIterExp(body, set_parent(env1, 0), fn);
+		}
+		FiCall(f, args, type, start): {
+			fiDoIterExp(f, set_parent(env, 0), fn);
+			iteri(args, \i, arg -> fiDoIterExp(arg, set_parent(env, i + 1), fn));
+		}
+		FiLet(name, type, e1, e2,__,start): {
+			env1 = if (name == "__") env else {
+				var = FiVar(name, type, start);
+				FiExpTraverseEnv(env with
+					locals = setTree(env.locals, name, var),
+					lets = setTree(env.args, name, var),
+				);
+			}
+			fiDoIterExp(e1, set_parent(env, 0), fn);
+			fiDoIterExp(e2, set_parent(env1, 1), fn);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			fiDoIterExp(e1, env, fn);
+			fiDoIterExp(e2, env, fn);
+			fiDoIterExp(e3, env, fn);
+		}
+		FiSwitch(x, typ, cs, type, start): {
+			fiDoIterExp(x, set_parent(env, 0), fn);
+			iteri(cs, \i, c -> fiDoIterExp(c.body, set_parent(env, i), fn));
+		}
+		FiCast(e1, tFrom, tTo, type, start): {
+			fiDoIterExp(e1, set_parent(env, 0), fn);
+		}
+		FiSeq(es, type, start): {
+			iteri(es, \i, x -> fiDoIterExp(x, set_parent(env, i), fn));
+		}
+		FiCallPrim(op, es, type, start):{
+			iteri(es, \i, x -> fiDoIterExp(x, set_parent(env, i), fn));
+		}
+		FiRequire(flowfile, e1, type, start): {
+			fiDoIterExp(e1, set_parent(env, 0), fn);
+		}
+		FiUnsafe(name, fb, type, start): {
+			fiDoIterExp(fb, set_parent(env, 0), fn);
+		}
+		FiVar(__,__,__): {}
+		FiConst(): {}
+	}
+	fn(e, env);
 }

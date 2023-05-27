@@ -1,2 +1,2 @@
-vsce package -o '../flow.vsix'
+node_modules/@vscode/vsce/vsce package -o '../flow.vsix'
 npm run clean

@@ -14,15 +14,18 @@ import "flow_lib/httpServer_type"
 
 {.experimental: "overloadableEnums".}
 
+proc rt_runtime_error*(what: string): void =
+  assert(false, "runtime error: " & what)
+
 proc rt_escape(s: string): string = 
   var r: string = ""
   for ch in s:
     case ch:
     of '\n': r.add("\\n")
     of '\t': r.add("\\t")
-    of '\r': r.add("\\r")
+    of '\r': r.add("\\u000d")
     of '\\': r.add("\\\\")
-    of '"': r.add("\\\"")
+    of '"':  r.add("\\\"")
     else: r.add(ch)
   return r
 
@@ -31,9 +34,18 @@ proc rt_escape(s: string): string =
   # to_string conversions
 proc rt_to_string*(): string = "{}"
 proc rt_to_string*(x: int32): string = intToStr(x)
-proc rt_to_string*(x: float): string = formatFloat(x)
+proc rt_to_string*(x: float): string =
+  var x = formatFloat(x)
+  x.trimZeros()
+  return x
 proc rt_to_string*(x: bool): string = return if (x): "true" else: "false"
-proc rt_to_string*(x: string): string = "\"" & x.rt_escape & "\""
+proc rt_to_string*(x: string): string = x
+
+proc rt_to_string_quot*(): string = "{}"
+proc rt_to_string_quot*(x: int32): string = intToStr(x)
+proc rt_to_string_quot*(x: float): string = rt_to_string(x)
+proc rt_to_string_quot*(x: bool): string = rt_to_string(x)
+proc rt_to_string_quot*(x: string): string = '"' & rt_escape(x) & '"'
 
   # to_bool conversions
 proc rt_to_bool*(x: int32): bool = x != 0
@@ -71,16 +83,6 @@ type
     # Composite types
     rtRef, rtArray, rtFunc, rtStruct
 
-  # Compile time type kinds
-  CtType* = enum
-    # Atiomic types
-    ctVoid, ctBool, ctInt, ctDouble, ctString, ctNative, ctFlow,
-    # Composite types
-    ctRef, ctArray, ctFunc, ctStruct, ctUnion
-
-  # A complex type descriptor.
-  AlType* = tuple[op: CtType, args: seq[int32], name: string]
-
 #[ Representation of a dynamic type ]#
 
   Flow* = ref object of RootObj
@@ -98,56 +100,14 @@ type
     of rtArray:  array_v:  seq[Flow]
     of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
     of rtStruct:
-      tp_id: int32
       str_id: int32
-      str_name: string
       str_args: seq[Flow]
-
-  Void* = ref object of Flow
-  Bool* = ref object of Flow
-    val: bool
-  Int* = ref object of Flow
-    val: int32
-  Double* = ref object of Flow
-    val: float
-  String* = ref object of Flow
-    val: string
 
   Ref*[T] = ref object of Flow
     val: T
 
-  Array*[T] = ref object of Flow
-    val: seq[T]
-
   Struct* = ref object of RootObj
-    tp_id: int32
     str_id: int32
-
-  Struct0* = ref object of Struct
-
-  Struct1*[A1] = ref object of Struct
-    arg1: A1
-
-  Struct2*[A1, A2] = ref object of Struct
-    arg1: A1
-    arg2: A2
-
-  Struct3*[A1, A2, A3] = ref object of Struct
-    arg1: A1
-    arg2: A2
-    arg3: A2
-
-  Func0*[R] = ref object of Flow
-    fn: proc(): R
-
-  Func1*[R, A1] = ref object of Flow
-    fn: proc(a1: A1): R
-
-  Func2*[R, A1, A2] = ref object of Flow
-    fn: proc(a1: A1, a2: A2): R
-
-  Func3*[R, A1, A2, A3] = ref object of Flow
-    fn: proc(a1: A1, a2: A2, a3: A3): R
 
 #[ Native Types ]#
   NativeType* = enum
@@ -163,47 +123,28 @@ type
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(what : "HttpServer", ntp: ntHttpServer, s : srv)
 
-# Type index oprations
-var id2type*: seq[AlType]
-var type2id*: Table[AlType, int32]
-var id2fields*: seq[seq[string]]
+# Function type traits/utils
+$A_0
+
+# Flow type traits
+template rt_type_is_flow*(X: typedesc[Flow]): bool = true
+template rt_type_is_flow*(X: typedesc): bool = false
+
+# Array type traits
+template rt_type_is_array*[T](X: typedesc[seq[T]]): bool = true
+template rt_type_is_array*(X: typedesc): bool = false
+template rt_type_de_array*[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
+
+type StructDef* = tuple[name: string, fields: seq[string]]
+
+# Struct index
+var id2struct*: seq[StructDef]
 var struct2id*: Table[string, int32]
-
-proc rt_type_id_to_string*(id: int32): string =
-  let tp = id2type[id]
-  case tp.op:
-  of ctRef:    return "ref " & rt_type_id_to_string(tp.args[0])
-  of ctArray:  return "[" & rt_type_id_to_string(tp.args[0]) & "]"
-  of ctFunc:   return "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ") -> " & rt_type_id_to_string(tp.args[0])
-  of ctStruct: return tp.name & "(" & map(tp.args[1..tp.args.len - 1], proc (arg: int32): string = rt_type_id_to_string(arg)).join(", ") & ")"
-  else: tp.name
-
-proc rt_type_id_to_struct_id*(id: int32): int32 =
-  return id2type[id].args[0]
-
-proc rt_find_type_id*(tp: AlType): int32 =
-  return if type2id.hasKey(tp): type2id[tp] else: -1
-
-proc rt_register_type*(tp: AlType): void =
-  if not type2id.hasKey(tp):
-    let id: int32 = int32(id2type.len)
-    id2type.add(tp)
-    type2id[tp] = id
-  else:
-    #echo "type is aleady registered: " & rt_type_id_to_string(type2id[tp])
-    discard
-
-proc hash*(tp: AlType): Hash =
-  var h: Hash = 0
-  h = h !& hash(tp.op)
-  for arg in tp.args:
-    h = h !& hash(arg)
-  result = !$h
 
 proc rt_register_struct*(name: string, fields: seq[string]): void =
   if not struct2id.hasKey(name):
-    let id: int32 = int32(id2fields.len)
-    id2fields.add(fields)
+    let id: int32 = int32(id2struct.len)
+    id2struct.add((name, fields))
     struct2id[name] = id
   else:
     echo "struct " & name & " is aleady registered"
@@ -213,74 +154,81 @@ proc rt_struct_name_to_id*(name: string): int32 =
     return struct2id[name]
   else:
     return -1
-
 proc rt_struct_id_to_fields*(id: int32): seq[string] =
-  return if id < id2fields.len: id2fields[id] else: @[]
-
+  return if id < id2struct.len: id2struct[id].fields else: @[]
+proc rt_struct_id_to_name*(id: int32): string =
+  return if id < id2struct.len: id2struct[id].name else: ""
 proc rt_struct_name_to_fields*(name: string): seq[string] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
-
-proc rt_type_id*(f: Flow): int32 =
-  case f.tp:
-  of rtVoid:   return 0i32
-  of rtBool:   return 1i32
-  of rtInt:    return 2i32
-  of rtDouble: return 3i32
-  of rtString: return 4i32
-  of rtNative: return 5i32
-  of rtRef:
-    let r_type = rt_type_id(f.ref_v)
-    return rt_find_type_id((ctRef, @[r_type], ""))
-  of rtArray:
-    if f.array_v.len == 0:
-      echo "type of an empty array can't be resolved at runtime"
-      return -1i32
-    else:
-      let el_type = rt_type_id(f.array_v[0])
-      return rt_find_type_id((ctArray, @[el_type], ""))
-  of rtFunc:
-    echo "type of a function can't be resolved at runtime"
-    return -1i32
-  of rtStruct: return f.str_id
+proc rt_struct_name_wrapper*[R](v: R, name: string): string = name
+proc rt_flow_struct_name*(f: Flow): string = rt_struct_id_to_name(f.str_id)
 
 # to_string conversions
 proc rt_to_string*(f: Flow): string
-proc rt_to_string*[R](fn: proc(): R): string = "<function>"
+# this function quotes all strings in ".."
+proc rt_to_string_quot*(f: Flow): string
 proc rt_to_string*(x: Native): string =
   case x.ntp:
   of ntProcess: return "process"
   of ntHttpServer: return "http server"
   of ntFlow:    return rt_to_string(x.flow_v)
+proc rt_to_string_quot*(x: Native): string =
+  case x.ntp:
+  of ntProcess: return "process"
+  of ntHttpServer: return "http server"
+  of ntFlow:    return rt_to_string_quot(x.flow_v)
 
-proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string(x.val)
-proc rt_to_string*[T](x: seq[T]): string = 
+proc rt_to_string*[T](x: Ref[T]): string = return "ref " & rt_to_string_quot(x.val)
+proc rt_to_string_quot*[T](x: Ref[T]): string = return "ref " & rt_to_string_quot(x.val)
+proc rt_to_string*[T](x: seq[T]): string =
   var s = "["
   for i in 0..x.len - 1:
     if i > 0:
       s.add(", ")
-    s.add(rt_to_string(x[i]))
+    s.add(rt_to_string_quot(x[i]))
+  s.add("]")
+  return s
+proc rt_to_string_quot*[T](x: seq[T]): string =
+  var s = "["
+  for i in 0..x.len - 1:
+    if i > 0:
+      s.add(", ")
+    s.add(rt_to_string_quot(x[i]))
   s.add("]")
   return s
 
-proc rt_to_string*(f: Flow): string = 
+
+# this function quotes all strings in ".."
+proc rt_to_string_quot*(f: Flow): string =
   case f.tp:
   of rtVoid:   return rt_to_string()
   of rtBool:   return rt_to_string(f.bool_v)
   of rtInt:    return rt_to_string(f.int_v)
   of rtDouble: return rt_to_string(f.double_v)
-  of rtString: return rt_to_string(f.string_v)
+  of rtString: return "\"" & rt_escape(f.string_v) & "\""
   of rtNative: return rt_to_string(f.native_v)
-  of rtRef:    return "ref " & rt_to_string(f.ref_v)
-  of rtArray:  return rt_to_string(f.array_v)
+  of rtRef:    return "ref " & rt_to_string_quot(f.ref_v)
+  of rtArray:
+    var s = "["
+    for i in 0..f.array_v.len - 1:
+      if i > 0:
+        s.add(", ")
+      s.add(rt_to_string_quot(f.array_v[i]))
+    s.add("]")
+    return s
   of rtFunc:   return "<function>"
   of rtStruct:
-    var s = f.str_name & "("
+    var s = rt_struct_id_to_name(f.str_id) & "("
     for i in 0..f.str_args.len - 1:
         if i > 0:
            s.add(", ")
-        s.add(rt_to_string(f.str_args[i]))
+        s.add(rt_to_string_quot(f.str_args[i]))
     s.add(")")
     return s
+
+# this function keeps toplevel strings as is and quotes strings in components in ".."
+proc rt_to_string*(f: Flow): string =
+  return if f.tp == rtString: f.string_v else: rt_to_string_quot(f)
 
 # to_flow conversions
 proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
@@ -298,17 +246,6 @@ proc rt_to_flow*[T](arr: seq[T]): Flow =
     flow_seq[i] = rt_to_flow(arr[i])
   Flow(tp: rtArray, array_v: flow_seq)
 
-proc rt_to_flow*[R](fn: proc(): R): Flow =
-  Flow(
-    tp: rtFunc, 
-    func_v: proc(x: seq[Flow]): Flow =
-      let y: R = fn()
-      return rt_to_flow(y)
-  )
-
-proc rt_to_af*(x: Flow): seq[Flow] = x.array_v
-proc rt_to_rf*(x: Flow): Ref[Flow] = Ref[Flow](val: x.ref_v)
-
 proc rt_compare*(x: Flow, y: Flow): int32
 proc rt_compare*(x: Native, y: Native): int32 =
   case x.ntp:
@@ -317,7 +254,7 @@ proc rt_compare*(x: Native, y: Native): int32 =
   of ntFlow:    return rt_compare(x.flow_v, y.flow_v)
 
 proc rt_compare*[T](x: Ref[T], y: Ref[T]): int32 = rt_compare(x.val, y.val)
-proc rt_compare*[T](x: openArray[T], y: openArray[T]): int32 =
+proc rt_compare*[T](x: seq[T], y: seq[T]): int32 =
   if x.len < y.len: return -1
   elif x.len > y.len: return 1
   else:
@@ -349,26 +286,15 @@ proc rt_compare*(x: Flow, y: Flow): int32 =
           if c != 0:
             return c
         return 0
-proc rt_compare*[R](x: var proc(): R, y: var proc(): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1](x: var proc(a1: A1): R, y: var proc(a1: A1): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1, A2](x: var proc(a1: A1, a2: A2): R, y: var proc(a1: A1, a2: A2): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1, A2, A3](x: var proc(a1: A1, a2: A2, a3: A3): R, y: var proc(a1: A1, a2: A2, a3: A3): R): int32 = rt_compare(addr(x), addr(y))
-proc rt_compare*[R, A1, A2, A3, A4](x: var proc(a1: A1, a2: A2, a3: A3, a4: A4): R, y: var proc(a1: A1, a2: A2, a3: A3, a4: A4): R): int32 = rt_compare(addr(x), addr(y))
 
-#[
-proc rt_to_flow_runtime_struct*(x: Struct): Flow =
-  if x.id >= id2type.len:
-    assert(false, "type index " & intToStr(x.id) & " is out of bounds: " & intToStr(id2type.len))
-  let tp = id2type[x.id]
-  let struct_id = tp.args[0]
-  return Flow(tp: rtVoid)
-]#
+# General comparison of all other values - by address
+proc rt_compare*[R](x: var R, y: var R): int32 = rt_compare(addr(x), addr(y))
 
 # to_void conversions
 proc rt_to_void*(x: Flow): void = 
   case x.tp:
   of rtVoid: discard
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to void")
 
 proc rt_to_bool*(x: Flow): bool =
   case x.tp:
@@ -376,7 +302,7 @@ proc rt_to_bool*(x: Flow): bool =
   of rtBool:   return rt_to_bool(x.bool_v)
   of rtDouble: return rt_to_bool(x.double_v)
   of rtString: return rt_to_bool(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to bool")
 
 proc rt_to_int*(x: Flow): int32 =
   case x.tp:
@@ -384,7 +310,7 @@ proc rt_to_int*(x: Flow): int32 =
   of rtBool:   return rt_to_int(x.bool_v)
   of rtDouble: return rt_to_int(x.double_v)
   of rtString: return rt_to_int(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to int")
 
 proc rt_to_double*(x: Flow): float =
   case x.tp:
@@ -392,7 +318,7 @@ proc rt_to_double*(x: Flow): float =
   of rtBool:   return rt_to_double(x.bool_v)
   of rtDouble: return rt_to_double(x.double_v)
   of rtString: return rt_to_double(x.string_v)
-  else: assert(false, "illegal conversion")
+  else: rt_runtime_error("illegal conversion of " & rt_to_string(x) & " to double")
 
 proc rt_to_native*(x: Flow): Native =
   return if x.tp == rtNative: x.native_v else: Native(ntp: ntFlow, flow_v: x)
@@ -400,18 +326,18 @@ proc rt_to_native*(x: Flow): Native =
 proc rt_get_flow_field*(x: Flow, field_name: string): Flow =
   case x.tp:
   of rtStruct:
-    let fields = rt_struct_name_to_fields(x.str_name)
+    let fields = rt_struct_id_to_fields(x.str_id)
     var i = 0
     for arg in x.str_args:
       if fields[i] == field_name:
         return arg
       i += 1
-    assert(false, "flow struct " & x.str_name & "  has no field " & field_name)
-  else: assert(false, "attempt to get field of non-struct: " & rt_to_string(x))
+    rt_runtime_error("flow struct " & rt_struct_id_to_name(x.str_id) & "  has no field " & field_name)
+  else: rt_runtime_error("attempt to get field of non-struct: " & rt_to_string(x))
 
 proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
   if s.tp == rtStruct:
-    let s_fields = rt_struct_name_to_fields(s.str_name)
+    let s_fields = rt_struct_id_to_fields(s.str_id)
     var i = 0
     for f in s_fields:
       if f == field:
@@ -420,8 +346,13 @@ proc rt_set_flow_field*(s: Flow, field: string, val: Flow): void =
     if i != s_fields.len:
       s.str_args[i] = val
 
-proc getOs*(): string =
-  return hostOS & "," & hostCPU
+# Implicit natives, which are called via `hostCall`
+proc getOs*(): string = hostOS & "," & hostCPU
+proc getVersion*(): string = ""
+proc getUserAgent*(): string = ""
+proc getBrowser*(): string = ""
+proc getResolution*(): string = ""
+proc getDeviceType*(): string = ""
 
 # different libraries for different platforms
 macro importPlatformLib(
