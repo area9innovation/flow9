@@ -40,8 +40,6 @@ export {
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 
-	spaceStr : string = " ";
-
 	isSpaceWord(word : TParaWord) -> bool;
 }
 
@@ -75,7 +73,7 @@ TRenderDynamicParagraph(
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
 	ndynamic = fold(getValue(wordsB), 0, \acc, w -> switch (w.word) {
-		NonTextElement(__) : acc + 1;
+		NonTextElement(__, __) : acc + 1;
 		default : acc;
 	});
 	ndymamicUpper = extractStruct(s, DynamicBlockDelay(getParagraphDynamicBlockDelay())).n;
@@ -149,7 +147,7 @@ TRenderDynamicParagraph(
 
 	subscribe2dynWord = \w -> {
 		switch (w.word : GeneralWrapElement) {
-			NonTextElement(__) : dynMetricsSubscription(w);
+			NonTextElement(__, __) : dynMetricsSubscription(w);
 			GeneralDynamicText(__): dynMetricsSubscription(w);
 			default: nop;
 		}
@@ -340,6 +338,11 @@ TRenderParagraph(
 		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphBaselineB END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphBaselineB -> " + toString(newParagraphBaseline));
 
 		newWH = paragraphSizeAndBaseline.first;
+
+		if (newWH.width > w) {
+			traceApi.trace(\-> "DONT_FIT: " + toString(newWH.width) + " > " + toString(w));
+		}
+
 		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		nextDistinct(paragraphWHB, newWH);
 		traceApi.unnestAndTrace(\-> "updateFn [" + id + "] set paragraphWH END   wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
@@ -405,7 +408,7 @@ TRenderParagraph(
 
 	subscribe2dynWord = \w -> {
 		switch (w.word : GeneralWrapElement) {
-			NonTextElement(__) : dynMetricsSubscription(w);
+			NonTextElement(__, __) : dynMetricsSubscription(w);
 			GeneralDynamicText(__): dynMetricsSubscription(w);
 			default: nop;
 		}
@@ -626,7 +629,7 @@ joinGroupedWords(
 			EmptyList()
 		);
 		switch (word.word) {
-			NonTextElement(__) : onDynamicElemCase();
+			NonTextElement(__, __) : onDynamicElemCase();
 			GeneralDynamicText(__) : onDynamicElemCase();
 			EmptyLineElement() : onDynamicElemCase();
 			GeneralLinePart(__, __, __, __) : onDynamicElemCase();
@@ -1161,7 +1164,7 @@ reflowTParaWordsRec(
 
 				// Number of words that should be on the same line
 				wordsCount = if (keepWordsTogether(form, word, dummyTParaWord)) {
-					iteriUntil(words, \i, _word -> {
+					iteriUntil(words, \i, _word : TParaWord -> {
 						switch (_word.word) {
 							NewLine(): true;
 							GeneralSpace(__, __, __): true;
@@ -1171,7 +1174,11 @@ reflowTParaWordsRec(
 								// it is no use to make line with zero-width content, so we continue counting if the width is 0
 								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if ((isMarked && i <= 1) || keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) || ^width == 0.0) {
+								if (
+									(isMarked && i <= 1) ||
+									keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
+									^width == 0.0
+								) {
 									width := ^width + getWordWidth(_word);
 									false;
 								} else {
@@ -1190,7 +1197,7 @@ reflowTParaWordsRec(
 
 					newCurrentWords = concat(currentWords, _words);
 					isText = switch(word.word) {
-						NonTextElement(__) : false;
+						NonTextElement(__, __) : false;
 						default : true;
 					}
 
@@ -1228,8 +1235,14 @@ reflowTParaWordsRec(
 // This function gets the form and decides, should the next form kept together in the same line or should it be placed on the next line
 keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord) -> bool {
 	lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
-	isWordJoiner(lastChr) || switch (currentWord.word) {
-		NonTextElement(keep): keep;
+
+	isWordJoiner(lastChr) ||
+	switch (previousWord.word) {
+		NonTextElement(__, filler): !filler;
+		default: true
+	} &&
+	switch (currentWord.word) {
+		NonTextElement(keep, filler): keep;
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
 			isWordJoiner(firstChr) || keepWordsTogetherRec(tr);
@@ -1240,7 +1253,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 keepWordsTogetherRec(tr : Tropic) -> bool {
 	switch (tr) {
 		TEmpty(): true;
-		TText(t, s): t != spaceStr;
+		TText(t, s): true;
 		TCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineLines2(top, bottom): keepWordsTogetherRec(top) && keepWordsTogetherRec(bottom);
@@ -1496,7 +1509,7 @@ generalWrapElement2string(e : GeneralWrapElement) -> string {
 		GeneralLinePart(first, mid, end, __): first + mid + end;
 		GeneralInspectElement(inspector, element): generalWrapElement2string(element);
 		EmptyLineElement(): "<EL>";
-		NonTextElement(__): "<NonText>";
+		NonTextElement(__, __): "<NonText>";
 		GeneralDynamicText(txt): txt;
 	}
 }
@@ -1510,7 +1523,7 @@ tParaWord2string(w : TParaWord) -> string {
 		GeneralLinePart(first, mid, end, __): first + mid + end;
 		GeneralInspectElement(inspector, element): generalWrapElement2string(element);
 		EmptyLineElement(): "<EL>";
-		NonTextElement(__): "<NonText>" + getTropicText(w.ghostView) + "</NonText>";
+		NonTextElement(__, __): "<NonText>" + getTropicText(w.ghostView) + "</NonText>";
 		GeneralDynamicText(txt): txt;
 	}
 }
