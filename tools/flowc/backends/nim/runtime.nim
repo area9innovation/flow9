@@ -57,19 +57,23 @@ template rt_string_char_code*(s: String, i: int32): int32 =
 template rt_char_code_to_string*(code: int32): String =
   when use16BitString: @[Utf16Char(cast[int16](code))] else: unicode.toUTF8(code)
 
-proc `&`(s1: String, s2: String): String = return rt_concat_strings(s1, s2)
+when use16BitString:
+  proc `&`(s1: String, s2: String): String = return rt_concat_strings(s1, s2)
 
 proc rt_glue_strings*(ss: seq[String], sep: String): String =
-  var len = 0
-  for x in ss:
-    len += x.len
-  result = newSeqOfCap[Utf16Char](len)
-  var first = true
-  for x in ss:
-    if not first:
-      result.add(sep)
-    first = false
-    result.add(x)
+  when use16BitString:
+    var len = 0
+    for x in ss:
+      len += x.len
+    result = newSeqOfCap[Utf16Char](len)
+    var first = true
+    for x in ss:
+      if not first:
+        result.add(sep)
+      first = false
+      result.add(x)
+  else:
+    return ss.join(sep)
 
 template rt_utf16char_to_int*(arg: Utf16Char): int32 = int32(cast[uint16](arg))
 

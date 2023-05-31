@@ -25,7 +25,8 @@ proc $F_0(list2string)*(list: $F_1(List)[String]): String =
       p = cons.tail
 
   # finally join elements of array into a single string
-  var r = newSeqOfCap[Utf16Char](len)
+
+  var r = when use16BitString: newSeqOfCap[Utf16Char](len) else: newStringOfCap(len)
   r = rt_empty_string()
   for x in arr:
     r.add(x)
