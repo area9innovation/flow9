@@ -3,11 +3,12 @@ import macros
 
 # It works only with fnName = const_string
 # if we need to use variables, then we need to create a table function_name-expression
-
-macro hostCallN(fnName : string, vargs: varargs[untyped]): untyped =
-  if (vargs != nil and vargs.len > 0):
-    let args = vargs[0]
-    case args.len:
+#[
+when use16BitString:
+  macro hostCallN(fnName : string, vargs: varargs[untyped]): untyped =
+    if (vargs != nil and vargs.len > 0):
+      let args = vargs[0]
+      case args.len:
           of 0: result = newCall(bindSym(fnName))
           of 1: result = newCall(bindSym(fnName))
           of 2: 
@@ -61,20 +62,30 @@ macro hostCallN(fnName : string, vargs: varargs[untyped]): untyped =
                     result = newCall(bindSym("rt_to_flow"))
           else: result = newCall(bindSym("rt_to_flow"))
 
-macro hostCall0(fnName : string): untyped =
-  result = newCall(bindSym(fnName))
+  macro hostCall0(fnName : string): untyped =
+    result = newCall(bindSym(fnName))
 
-macro $F_0(hostCall)*(fnName : string, args: varargs[untyped]): untyped =
-  if (args != nil and args.len > 0):
-    result = quote do:
-      # no args
-      when type(`args`[0]) isnot Flow:
-        when type(hostCall0(`fnName`)) is void:
-          hostCallN(`fnName`)
+  macro $F_0(hostCall)*(fnName : string, args: varargs[untyped]): untyped =
+    if (args != nil and args.len > 0):
+      result = quote do:
+        # no args
+        when type(`args`[0]) isnot Flow:
+          when type(hostCall0(fnName)) is void:
+            hostCallN(fnName)
+            rt_to_flow()
+          else : rt_to_flow(hostCall0(fnName))
+        elif type(hostCallN(fnName, `args`)) is void:
+          hostCallN(fnName, `args`)
           rt_to_flow()
-        else : rt_to_flow(hostCall0(`fnName`))
-      elif type(hostCallN(`fnName`, `args`)) is void:
-        hostCallN(`fnName`, `args`)
-        rt_to_flow()
-      else : rt_to_flow(hostCallN(`fnName`, `args`))
-  else: result = newCall(bindSym("rt_to_flow"))
+        else : rt_to_flow(hostCallN(fnName, `args`))
+    else: result = newCall(bindSym("rt_to_flow"))
+
+else:
+]#
+
+proc $F_0(hostCall)*(fnName : String, args: seq[Flow]): Flow =
+  rt_runtime_error("hostCall is not implemented")
+  if name2func.hasKey(fnName):
+    return name2func[fnName](args)
+  else:
+    return Flow(tp: rtString, string_v: rt_utf8_to_string("function '") & fnName & rt_utf8_to_string("' is not found"))

@@ -79,7 +79,7 @@ fi2nimFuncToString(env: FiNimEnv) -> NimCompiled {
 	decl = \arity -> "proc rt_to_string*" + func_typars(arity) + "(fn: " + func_sign(arity) + "): string";
 	NimCompiled(
 		NimBlock(generate(0, env.max_func_arity + 1, \arity ->
-			NimLine(0, decl(arity) + " = \"<function>\"")
+			NimLine(0, decl(arity) + " = rt_utf8_to_string(\"<function>\")")
 		)),
 		NimSnippet("")
 	);
@@ -170,7 +170,7 @@ fi2nimTypeToFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 								concat3(
 									["case x.str_id:"],
 									map(union.typenames, case),
-									["else: assert(false, \"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")"]
+									["else: rt_runtime_error(\"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")"]
 								)
 							)
 						)
@@ -271,7 +271,7 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 								concat3(
 									["case x.str_id:"],
 									map(union.typenames, case),
-									["else: assert(false, \"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")"]
+									["else: rt_runtime_error(\"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")"]
 								)
 							)
 						)
@@ -330,7 +330,7 @@ fi2nimTypeFromFlow(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 
 nim_from_flow_patten = <<
 proc rt_from_flow(x: Flow, tp: typedesc): tp =
-  let err = proc(): void = assert(false, "illegal cast of " & rt_to_string(x) & " to type: " & $tp)
+  let err = proc(): void = rt_runtime_error("illegal cast of " & rt_string_to_utf8(rt_to_string(x)) & " to type: " & $tp)
   let nat_flow = proc(): tp =
     if x.native_v.ntp == ntFlow: return rt_from_flow(x.native_v.flow_v, tp) else: err()
   when tp is void:
@@ -354,7 +354,7 @@ proc rt_from_flow(x: Flow, tp: typedesc): tp =
     of rtString: return rt_to_int(x.string_v)
     of rtNative: return nat_flow()
     else: err()
-  elif tp is string:
+  elif tp is String:
     case x.tp:
     of rtBool:   return rt_to_string(x.bool_v)
     of rtInt:    return rt_to_string(x.int_v)
@@ -495,7 +495,7 @@ fi2nimTypeToTypars(x: FiType) -> string {
 		FiTypeBool() :             "bool";
 		FiTypeInt() :              "int32";
 		FiTypeDouble() :           "float";
-		FiTypeString() :           "string";
+		FiTypeString() :           "String";
 		FiTypeFlow() :             "Flow";
 		FiTypeVoid() :             "void";
 		FiTypeNative() :           "Native";
@@ -523,24 +523,24 @@ fi2nimTypenameTypars(env : FiNimEnv, tn: FiTypeName) -> Maybe<NimCompiled> {
 }
 
 fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
-	decl = "proc rt_to_string*" + fiNimTypeTyparsList(env, t) + "(x: " + fiNimCompileType(env, t) + "): string";
+	decl = "proc rt_to_string*" + fiNimTypeTyparsList(env, t) + "(x: " + fiNimCompileType(env, t) + "): String";
 	switch (t) {
 		FiTypeRef(rt): {
 			Some(NimCompiled(
 				NimLine(0, decl),
-				NimLine(0, decl + " = \"ref \" & rt_to_string(x.val)")
+				NimLine(0, decl + " = rt_utf8_to_string(\"ref \") & rt_to_string(x.val)")
 			));
 		}
 		FiTypeArray(at): {
 			Some(NimCompiled(
 				NimLine(0, decl),
-				NimLine(0, decl + " = \"[\" & map(x, rt_to_string).join(\", \") & \"]\"")
+				NimLine(0, decl + " = rt_utf8_to_string(\"[\") & rt_glue_strings(map(x, rt_to_string), rt_utf8_to_string(\", \")) & rt_utf8_to_string(\"]\")")
 			));
 		}
 		FiTypeFunction(args, returnType): {
 			Some(NimCompiled(
 				NimLine(0, decl),
-				NimLine(0, decl + " = \"<function>\"")
+				NimLine(0, decl + " = rt_utf8_to_string(\"<function>\")")
 			));
 		}
 		FiTypeName(nm, tps): {
@@ -550,11 +550,11 @@ fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 						NimLine(0, decl),
 						fi2nimMakeNimBlock(0, [
 							"# to string from: struct " + pretFiType(t),
-							decl + " = \"" + struct.name + "(\"" + 
+							decl + " = rt_utf8_to_string(\"" + struct.name + "(\")" + 
 								concatStrings(mapi(struct.args, \i, arg ->
-									(if (i == 0) "" else " & \", \"") + " & rt_to_string(x." + fiNimRenameKeyword(arg.name) + ")")
+									(if (i == 0) "" else " & rt_utf8_to_string(\", \")") + " & rt_to_string(x." + fiNimRenameKeyword(arg.name) + ")")
 								) +
-							" & \")\""
+							" & rt_utf8_to_string(\")\")"
 						])
 					));
 				},
@@ -572,7 +572,7 @@ fi2nimTypeToString(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 								concat3(
 									["case x.str_id:"],
 									map(union.typenames, case),
-									["else: assert(false, \"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")"]
+									["else: rt_runtime_error(\"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")"]
 								)
 							)
 						)
@@ -635,7 +635,7 @@ fi2nimTypeCompare(env : FiNimEnv, t: FiType) -> Maybe<NimCompiled> {
 								concat3(
 									[NimLine(2, "case x.str_id:")],
 									map(union.typenames, \tn -> NimLine(2, case(tn))),
-									[NimLine(2, "else: assert(false, \"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")")]
+									[NimLine(2, "else: rt_runtime_error(\"struct id \" & intToStr(x.str_id) & \" is not covered by union \" & \"" + union.name + "\")")]
 								)
 							)
 						])

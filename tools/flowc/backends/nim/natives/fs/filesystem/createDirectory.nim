@@ -1,9 +1,9 @@
 # native createDirectory : (string) -> string = FlowFileSystem.createDirectory;
 import os
 
-proc $F_0(createDirectory)*(dir : string): string =
+proc $F_0(createDirectory)*(dir : String): String =
     try:
-        os.createDir(dir)
-        return ""
+        os.createDir(rt_string_to_utf8(dir))
+        return rt_empty_string()
     except OSError as e:
-        return e.msg
+        return rt_utf8_to_string(e.msg)

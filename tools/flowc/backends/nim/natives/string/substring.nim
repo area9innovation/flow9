@@ -1,7 +1,9 @@
-proc $F_0(substring)*(str: string, start: int32, leng: int32): string =
+proc $F_0(substring)*(str: String, start: int32, leng: int32): String =
+  var strlen = when use16BitString: int32(str.len) else: int32(runeLen(str))
+  if strlen == 0:
+    return str
   var slen = leng
   var sstart = start
-  var strlen = cast[int32](runeLen(str))
   if slen < 0:
     if (sstart < 0) :
       slen = 0
@@ -27,10 +29,11 @@ proc $F_0(substring)*(str: string, start: int32, leng: int32): string =
       slen = 0
 
     if (slen < 1):
-      return "";
+      return rt_empty_string();
 
   let send = start + slen
   slen = if send > strlen or send  < 0: strlen - start else: slen
-  let runes = toRunes(str)
-  let sub = runes[sstart .. sstart + slen - 1]
-  return $sub
+  when use16BitString:
+    return str[sstart .. sstart + slen - 1]
+  else:
+    return $toRunes(str)[sstart .. sstart + slen - 1]

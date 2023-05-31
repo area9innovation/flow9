@@ -1,9 +1,9 @@
 #  native deleteDirectory : (string) -> string = FlowFileSystem.deleteDirectory;
 import os
 
-proc $F_0(deleteDirectory)*(dir : string): string =
+proc $F_0(deleteDirectory)*(dir : String): String =
     try:
-        os.removeDir(dir, true)
-        return ""
+        os.removeDir(rt_string_to_utf8(dir), true)
+        return rt_empty_string()
     except OSError as e:
-        return e.msg
+        return rt_utf8_to_string(e.msg)

@@ -1,2 +1,2 @@
-proc $F_0(loaderUrl)*(): string =
-  return ""
+proc $F_0(loaderUrl)*(): String =
+  return rt_empty_string()

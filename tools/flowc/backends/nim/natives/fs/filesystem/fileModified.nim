@@ -2,9 +2,9 @@
 import os
 import times
 
-proc $F_0(fileModified)*(path : string) : float = 
+proc $F_0(fileModified)*(path : String) : float = 
     try:
-        getLastModificationTime(path).toUnix().float * 1000.0
+        getLastModificationTime(rt_string_to_utf8(path)).toUnix().float * 1000.0
     except OSError:
         0.0
     
