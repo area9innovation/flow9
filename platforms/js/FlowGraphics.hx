@@ -524,6 +524,8 @@ class FlowGraphics extends Graphics {
 						}
 					};
 
+					/*
+					// HOT FIX FOR https://trello.com/c/EeDgmRL3/21766-slideshow-editor-major-slowdowns
 					Browser.window.addEventListener('beforeprint', function () {
 						try {
 							nativeWidget.style.position = 'fixed';
@@ -537,7 +539,7 @@ class FlowGraphics extends Graphics {
 							svg.style.position = 'absolute';
 						} catch (e : Dynamic) {}
 					}, false);
-
+					*/
 					if (data.shape.type == 0) {
 						createSvgElement('path');
 
