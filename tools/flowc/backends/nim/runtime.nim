@@ -265,29 +265,20 @@ when use16BitString:
         if a[i] != b[i]: return false
       return true
   proc `!=`*(a: String, b: String): bool =
-    if a.len != b.len: return true
-    else:
-      for i in 0 ..< a.len:
-        if a[i] != b[i]: return true
-      return false
+    return not (a == b)
   proc `<`*(a: String, b: String): bool =
-    if a.len < b.len: return true
-    elif a.len > b.len: return false
-    else:
-      for i in 0 ..< a.len:
-        if a[i] < b[i]: return true
-        elif a[i] > b[i]: return false
-      return false
+    var i = 0
+    while true:
+      if a.len == i:
+        if b.len == i: return false else: return true
+      elif b.len == i: return false
+      elif a[i] < b[i]: return true
+      elif a[i] > b[i]: return false
+      inc i
   proc `<=`*(a: String, b: String): bool =
     return a < b or a == b
   proc `>`*(a: String, b: String): bool =
-    if a.len > b.len: return true
-    elif a.len < b.len: return false
-    else:
-      for i in 0 ..< a.len:
-        if a[i] > b[i]: return true
-        elif a[i] < b[i]: return false
-      return false
+    return b < a
   proc `>=`*(a: String, b: String): bool =
     return a > b or a == b
 
@@ -337,13 +328,14 @@ proc rt_compare*(x: float, y: float): int32 = return if x < y: -1 elif x > y: 1 
 proc rt_compare*(x: bool, y: bool): int32 = return if x < y: -1 elif x > y: 1 else: 0
 when use16BitString:
   proc rt_compare*(a: String, b: String): int32 =
-    if a.len < b.len: return -1
-    elif a.len > b.len: return 1
-    else:
-      for i in 0 ..< a.len:
-        if a[i] < b[i]: return -1
-        elif a[i] > b[i]: return 1
-      return 0
+    var i = 0
+    while true:
+      if a.len == i:
+        if b.len == i: return 0 else: return -1
+      elif b.len == i: return 1
+      elif a[i] < b[i]: return -1
+      elif a[i] > b[i]: return 1
+      inc i
 else:
   proc rt_compare*(x: String, y: String): int32 = return if x < y: -1 elif x > y: 1 else: 0
 
