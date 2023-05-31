@@ -3,23 +3,23 @@ import osproc
 import threadpool
 import streams
 
-proc runOutputStream(process: Process, onStdOutLine: proc (output: string)) {.thread.} =
+proc runOutputStream(process: Process, onStdOutLine: proc (output: String)) {.thread.} =
   let stream = process.outputStream()
   while true:
     try:
         let line = stream.readLine()
         if line.len == 0: break
-        onStdOutLine(line)
+        onStdOutLine(rt_utf8_to_string(line))
     except IOError:
         break
 
-proc runErrorStream(process: Process, onStdErr: proc (error: string)) {.thread.} =
+proc runErrorStream(process: Process, onStdErr: proc (error: String)) {.thread.} =
   let stream = process.errorStream()
   while true:
     try:
         let line = stream.readLine()
         if line.len == 0: break
-        onStdErr(line)
+        onStdErr(rt_utf8_to_string(line))
     except IOError:
         break
 
@@ -27,18 +27,18 @@ proc waitForProcessThread(process: Process, onExit: proc (errorCode: int32)) {.t
   let exitCode = process.waitForExit()
   onExit(int32(exitCode))
 
-proc $F_0(runSystemProcess)*(command: string, args: seq[string], currentWorkingDirectory: string,
-                      onStdOutLine: proc (output: string), onStdErr: proc (error: string),
+proc $F_0(runSystemProcess)*(command: String, args: seq[String], currentWorkingDirectory: String,
+                      onStdOutLine: proc (output: String), onStdErr: proc (error: String),
                       onExit: proc (errorCode: int32)): Native =
   try:
-    let process = startProcess(command, args = args,
-      workingDir = currentWorkingDirectory,
+    let process = startProcess(rt_string_to_utf8(command), args = map(args, rt_string_to_utf8),
+      workingDir = rt_string_to_utf8(currentWorkingDirectory),
       options = {})
 
     spawn runOutputStream(process, onStdOutLine)
     spawn runErrorStream(process, onStdErr)
     spawn waitForProcessThread(process, onExit)
 
-    return Native(what : "Process", ntp: ntProcess, p : process)
+    return Native(ntp: ntProcess, p : process)
   except OSError:
     return nil

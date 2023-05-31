@@ -3,16 +3,22 @@ import tables
 import strutils
 import unicode
 
-proc writeCharValue(c : int, buf : var string) =
-  buf.add(cast[Rune](c and 0xffff))
+proc writeCharValue(c: int32, buf: var String) =
+  let c1 = c and 0xffff
+  when use16BitString:
+    let c2: int16 = cast[int16](cast[uint16](c1))
+    let ch = Utf16Char(c2)
+    buf.add(ch)
+  else:
+    buf.add(cast[Rune](c1))
 
-proc writeBinaryInt32(i : int, buf : var string ) =
-  let lowC = (int16) (i and 0xffff)
-  let highC = (int16) (i shr 16)
+proc writeBinaryInt32(i: int32, buf: var String ) =
+  let lowC = int16(i and 0xffff)
+  let highC = int16(i shr 16)
   writeCharValue(lowC, buf)
   writeCharValue(highC, buf)
 
-proc writeBinaryValue(value: Flow, buf: var string, structIdxs: var Table[int32, int], structDefs: var seq[Flow]) =
+proc writeBinaryValue(value: Flow, buf: var String, structIdxs: var Table[int32, int32], structDefs: var seq[Flow]) =
   if value == nil:
     writeCharValue(0xffff, buf)
   else:
@@ -33,26 +39,26 @@ proc writeBinaryValue(value: Flow, buf: var string, structIdxs: var Table[int32,
       let bb = cast[array[0..7, int16]](value.double_v)
       var i = 0
       while (i < 4):
-        writeCharValue(int(bb[i]), buf)
+        writeCharValue(int32(bb[i]), buf)
         inc(i)
     of rtString:
       let s = value.string_v
-      let str_len = s.len
+      let str_len = rt_string_len(s)
       if str_len > 65535:
         writeCharValue(0xFFFB, buf)
         writeBinaryInt32(str_len, buf)
       else:
         writeCharValue(0xFFFA, buf)
         writeCharValue(str_len, buf)
-      var i = 0
+      var i = 0i32
       while i < str_len:
-        let v = s[i].ord
+        let v = rt_string_char_code(s, i)
         writeCharValue(v, buf)
         inc(i)
-    of rtNative: echo("Not implemented: toBinary of Native: " & rt_to_string(value))
+    of rtNative: echo("Not implemented: toBinary of Native: " & rt_string_to_utf8(rt_to_string(value)))
     of rtArray:
       let arr = value.array_v
-      let l = arr.len
+      let l = int32(arr.len)
       if l == 0:
         writeCharValue(0xFFF7, buf)
       else:
@@ -64,15 +70,15 @@ proc writeBinaryValue(value: Flow, buf: var string, structIdxs: var Table[int32,
           writeCharValue(l, buf)
         for v in arr:
           writeBinaryValue(v, buf, structIdxs, structDefs) 
-    of rtFunc: echo("Not implemented: toBinary of " & rt_to_string(value))
+    of rtFunc: echo("Not implemented: toBinary of " & rt_string_to_utf8(rt_to_string(value)))
     of rtStruct:
       let struct_id = value.str_id
 
-      var struct_idx = 0
+      var struct_idx = 0i32
       if structIdxs.hasKey(struct_id):
         struct_idx = structIdxs[struct_id]
       else:
-        struct_idx = structDefs.len
+        struct_idx = int32(structDefs.len)
         structIdxs[struct_id] = struct_idx
         structDefs.add(value)
 
@@ -80,40 +86,40 @@ proc writeBinaryValue(value: Flow, buf: var string, structIdxs: var Table[int32,
       writeCharValue(struct_idx, buf);
       for field in value.str_args:
         writeBinaryValue(field, buf, structIdxs, structDefs)
-    else: echo("Not implemented: toBinary of Native: " & rt_to_string(value))
+    else: echo("Not implemented: toBinary of Native: " & rt_string_to_utf8(rt_to_string(value)))
 
-proc $F_0(toBinary)*(value : Flow): string =
-  var structIdxs = initTable[int32, int]()
+proc $F_0(toBinary)*(value : Flow): String =
+  var structIdxs = initTable[int32, int32]()
   var structDefs = newSeq[Flow]()
 
-  var buf = ""
+  var buf = rt_empty_string()
   writeBinaryValue(value, buf, structIdxs, structDefs)
-  var buf2 = ""
-  writeBinaryInt32(buf.runeLen + 2, buf2)
+  var buf2 = rt_empty_string()
+  writeBinaryInt32(rt_string_len(buf) + 2, buf2)
 
   if structDefs.len == 0:
     writeCharValue(0xFFF7, buf)
   else:
     if structDefs.len > 65535:
       writeCharValue(0xFFF9, buf)
-      writeBinaryInt32(structDefs.len, buf)
+      writeBinaryInt32(int32(structDefs.len), buf)
     else:
       writeCharValue(0xFFF8, buf)
-      writeCharValue(structDefs.len, buf)
+      writeCharValue(int32(structDefs.len), buf)
 
     for struct_def in structDefs:
       case struct_def.tp:
         of rtStruct:
           writeCharValue(0xFFF8, buf)
           writeCharValue(0x0002, buf)
-          writeCharValue(struct_def.str_args.len, buf)
-          let s = struct_def.str_name
-          let str_len = s.len
+          writeCharValue(int32(struct_def.str_args.len), buf)
+          let s = rt_struct_id_to_name(struct_def.str_id)
+          let str_len = rt_string_len(s)
           writeCharValue(0xFFFA, buf)
           writeCharValue(str_len, buf)
-          var i =0
+          var i = 0i32
           while i < str_len:
-            let v = s[i].ord
+            let v = rt_string_char_code(s, i)
             writeCharValue(v, buf)
             inc(i)
         else: discard

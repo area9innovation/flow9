@@ -1,11 +1,12 @@
 import os, strutils, streams
 
 # Untested
-proc $F_0(readUntil)*(pattern: string): string =
+proc $F_0(readUntil)*(pattern: String): String =
   var line: string
-  result = ""
+  var have_read = ""
   while true:
     line = readLine(stdin)
     if line == "" or line.contains(pattern):
       break
-    result.add(line)
+    have_read.add(line)
+  return rt_utf8_to_string(have_read)

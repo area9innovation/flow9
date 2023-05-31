@@ -48,6 +48,15 @@ template rt_concat_strings*(s1: String, s2: String): String =
   else:
     s1 & s2
 
+template rt_string_len*(s: String): int32 =
+  when use16BitString: int32(s.len) else: int32(s.runeLen)
+
+template rt_string_char_code*(s: String, i: int32): int32 =
+  when use16BitString: int32(cast[uint16](s[i])) else: int32(s.runeAtPos(i))
+
+template rt_char_code_to_string*(code: int32): String =
+  when use16BitString: @[Utf16Char(cast[int16](code))] else: unicode.toUTF8(code)
+
 proc `&`(s1: String, s2: String): String = return rt_concat_strings(s1, s2)
 
 proc rt_glue_strings*(ss: seq[String], sep: String): String =
@@ -293,6 +302,7 @@ proc rt_to_string*(x: int32): String = rt_utf8_to_string(intToStr(x))
 proc rt_to_string*(x: float): String =
   var x = formatFloat(x)
   x.trimZeros()
+  if not x.contains('.'): x.add(".0")
   return rt_utf8_to_string(x)
 proc rt_to_string*(x: bool): String = return rt_utf8_to_string(if (x): "true" else: "false")
 proc rt_to_string*(x: String): String = x
@@ -325,7 +335,18 @@ proc rt_to_double*(x: String): float = parseFloat(rt_string_to_utf8(x))
 proc rt_compare*(x: int32, y: int32): int32 = return if x < y: -1 elif x > y: 1 else: 0
 proc rt_compare*(x: float, y: float): int32 = return if x < y: -1 elif x > y: 1 else: 0
 proc rt_compare*(x: bool, y: bool): int32 = return if x < y: -1 elif x > y: 1 else: 0
-proc rt_compare*(x: String, y: String): int32 = return if x < y: -1 elif x > y: 1 else: 0
+when use16BitString:
+  proc rt_compare*(a: String, b: String): int32 =
+    if a.len < b.len: return -1
+    elif a.len > b.len: return 1
+    else:
+      for i in 0 ..< a.len:
+        if a[i] < b[i]: return -1
+        elif a[i] > b[i]: return 1
+      return 0
+else:
+  proc rt_compare*(x: String, y: String): int32 = return if x < y: -1 elif x > y: 1 else: 0
+
 proc rt_compare*[T](x: ptr T, y: ptr T): int32 = return if x < y: -1 elif x > y: 1 else: 0
 
 proc rt_equal*[T](x: T, y: T): bool = rt_compare(x, y) == 0
