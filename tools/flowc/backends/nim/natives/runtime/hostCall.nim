@@ -84,7 +84,6 @@ else:
 ]#
 
 proc $F_0(hostCall)*(fnName : String, args: seq[Flow]): Flow =
-  rt_runtime_error("hostCall is not implemented")
   if name2func.hasKey(fnName):
     return name2func[fnName](args)
   else:
