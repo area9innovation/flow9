@@ -96,6 +96,32 @@ export {
 
 	// Replace patterns like: "$A_1" with corresponding values
 	strSubstituteArgs(pattern: string) -> ([string]) -> string;
+
+	// Glue a strings array with some delimiter so that the result has exactly width characters.
+	// Extra spaces are added to delimiter to enlarge the deserved string length.
+	strGlueToWidth(ss: [string], delim: string, width: int) -> string;
+
+	// Breaks array of strings into rows (arrays of strings) with maximum length of a row as maxWidth.
+	// If align is true, the strings are aligned as columns by a maximal string length in a row.
+	// Example of output with align = true:
+	//
+	//   Single-quoted  string         literals       (but
+	//   not            triple-quoted  string         literals!)
+	//   may            contain        escape         sequences
+	//   (denoted       by             a              preceding
+	//   backslash),    which          are            used
+	//   to             specify        special        characters.
+	//   A              full           list           of
+	//   available      escape         sequences      is
+	//   here.
+	//
+	// with align = false:
+	//   Single-quoted  string  literals  (but  not  triple-quoted string
+	//   literals!)  may contain escape sequences (denoted by a preceding
+	//   backslash),  which  are  used  to  specify special characters. A
+	//   full    list    of   available   escape   sequences   is   here.
+	//
+	strArrayWrap(s : [string], maxWidth : int, align: bool, delimiter: string) -> string;
 }
 
 humpCase(s : string, initial : bool) -> string {
@@ -451,4 +477,56 @@ strApplyFns(s: string) -> ([(string) -> string]) -> string {
 
 strSubstituteArgs(pattern: string) -> ([string]) -> string {
 	\args -> strReplaces(pattern, concatA(mapi(args, \i, arg -> ["$A_" + i2s(i), arg])));
+}
+
+strGlueToWidth(ss: [string], delim: string, width: int) -> string {
+	ss_len = length(ss);
+	if (ss_len == 0) "" else
+	if (ss_len == 1) ss[0] else {
+		len = fold(ss, 0, \acc, s -> acc + strlen(s));
+		glued_len = len + strlen(delim) * (ss_len - 1);
+		to_fill = width - glued_len;
+		on_single = to_fill / (ss_len - 1);
+		rest = to_fill % (ss_len - 1);
+		foldi(ss, "", \i, acc, s -> {
+			if (i + 1 == length(ss)) {
+				acc + s;
+			} else {
+				acc + s + delim + strRepeat(" ", on_single + if (i < rest) 1 else 0);
+			}
+		});
+	}
+}
+
+strArrayWrap(ss : [string], maxWidth : int, align: bool, delimiter: string) -> string {
+	if (length(ss) == 0) ""
+	else if (align) {
+		max_strlen = fold(ss, 0, \acc, s -> max(acc, strlen(s))) + 1;
+		ss1 = map(ss, \s -> rpad(s, " ", max_strlen));
+		n_cols = maxWidth / max_strlen;
+		rows = splitByNumber(ss1, n_cols);
+		strGlue(mapi(rows, \i, r ->
+			strGlue(r, delimiter) + if (i + 1 < length(rows)) delimiter else ""
+		), "\n");
+	} else {
+		delim_len = strlen(delimiter);
+		rows = list2array(foldi(ss, Triple(makeList(), [], 0), \i, acc, s ->
+			if (acc.third + strlen(s) + delim_len > maxWidth) {
+				if (i + 1 == length(ss)) {
+					Triple(Cons([s], Cons(acc.second, acc.first)), [], 0);
+				} else {
+					Triple(Cons(acc.second, acc.first), [s], strlen(s) + delim_len);
+				}
+			} else {
+				if (i + 1 == length(ss)) {
+					Triple(Cons(concat(acc.second, [s]), acc.first), [], 0);
+				} else {
+					Triple(acc.first, concat(acc.second, [s]), acc.third + strlen(s) + delim_len);
+				}
+			}
+		).first);
+		strGlue(mapi(rows, \i, r ->
+			strGlueToWidth(r, delimiter, maxWidth) + if (i + 1 < length(rows)) delimiter else ""
+		), "\n");
+	}
 }
