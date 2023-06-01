@@ -1,6 +1,6 @@
 # native strReplace : (string, string, string) -> string = Native.strReplace;
 import strutils
-func $F_0(strReplace)*(s, s1, s2 : String) : String =
+func $F_0(strReplace)*(s, s1, s2 : RtString) : RtString =
   when use16BitString:
     if s.len == 0 or s1.len == 0: return s
     else:

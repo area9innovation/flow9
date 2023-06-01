@@ -1,6 +1,6 @@
 import unicode
 
-func $F_0(fromCharCode)*(code: int32): String =
+func $F_0(fromCharCode)*(code: int32): RtString =
   when use16BitString:
     return @[Utf16Char(cast[int16](code))]
   else:

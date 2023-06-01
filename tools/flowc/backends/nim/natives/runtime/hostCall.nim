@@ -83,7 +83,7 @@ when use16BitString:
 else:
 ]#
 
-proc $F_0(hostCall)*(fnName : String, args: seq[Flow]): Flow =
+proc $F_0(hostCall)*(fnName : RtString, args: seq[Flow]): Flow =
   if name2func.hasKey(fnName):
     return name2func[fnName](args)
   else:

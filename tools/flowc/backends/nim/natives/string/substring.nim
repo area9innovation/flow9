@@ -1,4 +1,4 @@
-proc $F_0(substring)*(str: String, start: int32, leng: int32): String =
+proc $F_0(substring)*(str: RtString, start: int32, leng: int32): RtString =
   var strlen = when use16BitString: int32(str.len) else: int32(runeLen(str))
   if strlen == 0:
     return str

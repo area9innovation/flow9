@@ -1,6 +1,6 @@
 #  equal to nim
 
-func $F_0(startsWith)*(s: String, b: String): bool =
+func $F_0(startsWith)*(s: RtString, b: RtString): bool =
   when use16BitString:
     if b.len == 0: return true
     elif s.len < b.len: return false

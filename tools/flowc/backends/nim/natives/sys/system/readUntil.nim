@@ -1,7 +1,7 @@
 import os, strutils, streams
 
 # Untested
-proc $F_0(readUntil)*(pattern: String): String =
+proc $F_0(readUntil)*(pattern: RtString): RtString =
   var line: string
   var have_read = ""
   while true:

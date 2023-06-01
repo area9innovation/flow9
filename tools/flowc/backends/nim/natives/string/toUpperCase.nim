@@ -1,4 +1,4 @@
-proc $F_0(toUpperCase)*(s: String): String =
+proc $F_0(toUpperCase)*(s: RtString): RtString =
   const ascii_a = 97i32
   const ascii_z = 122i32
   when use16BitString:

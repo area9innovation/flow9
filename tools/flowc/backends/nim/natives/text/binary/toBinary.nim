@@ -3,7 +3,7 @@ import tables
 import strutils
 import unicode
 
-proc writeCharValue(c: int32, buf: var String) =
+proc writeCharValue(c: int32, buf: var RtString) =
   let c1 = c and 0xffff
   when use16BitString:
     let c2: int16 = cast[int16](cast[uint16](c1))
@@ -12,13 +12,13 @@ proc writeCharValue(c: int32, buf: var String) =
   else:
     buf.add(cast[Rune](c1))
 
-proc writeBinaryInt32(i: int32, buf: var String ) =
+proc writeBinaryInt32(i: int32, buf: var RtString ) =
   let lowC = int16(i and 0xffff)
   let highC = int16(i shr 16)
   writeCharValue(lowC, buf)
   writeCharValue(highC, buf)
 
-proc writeBinaryValue(value: Flow, buf: var String, structIdxs: var Table[int32, int32], structDefs: var seq[Flow]) =
+proc writeBinaryValue(value: Flow, buf: var RtString, structIdxs: var Table[int32, int32], structDefs: var seq[Flow]) =
   if value == nil:
     writeCharValue(0xffff, buf)
   else:
@@ -88,7 +88,7 @@ proc writeBinaryValue(value: Flow, buf: var String, structIdxs: var Table[int32,
         writeBinaryValue(field, buf, structIdxs, structDefs)
     else: echo("Not implemented: toBinary of Native: " & rt_string_to_utf8(rt_to_string(value)))
 
-proc $F_0(toBinary)*(value : Flow): String =
+proc $F_0(toBinary)*(value : Flow): RtString =
   var structIdxs = initTable[int32, int32]()
   var structDefs = newSeq[Flow]()
 

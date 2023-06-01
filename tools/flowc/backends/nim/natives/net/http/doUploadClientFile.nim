@@ -66,19 +66,19 @@ proc uploadClientFSFile(
 proc $F_0(doUploadClientFile)*(
   file : Native,
   url0: string,
-  params0: seq[seq[String]],
-  headers0: seq[seq[String]],
+  params0: seq[seq[RtString]],
+  headers0: seq[seq[RtString]],
   onOpen: proc(): void,
-  onData0: proc(r : String): void,
-  onError0: proc(e: String): void,
+  onData0: proc(r : RtString): void,
+  onError0: proc(e: RtString): void,
   onProgress: proc(loaded : float, total : float): void{.gcsafe.}
 ) : proc(): void =
   let url = rt_string_to_utf8(url0)
-  let params = map(params0, proc(param: seq[String]): seq[string] =
-    map(param, proc(x: String) = rt_string_to_utf8(x))
+  let params = map(params0, proc(param: seq[RtString]): seq[string] =
+    map(param, proc(x: RtString) = rt_string_to_utf8(x))
   )
-  let headers = map(headers0, proc(header: seq[String]): seq[string] =
-    map(header, proc(x: String) = rt_string_to_utf8(x))
+  let headers = map(headers0, proc(header: seq[RtString]): seq[string] =
+    map(header, proc(x: RtString) = rt_string_to_utf8(x))
   )
   let onData = proc(x: string): void = onData0(rt_utf8_to_string(x))
   let onError = proc(x: string): void = onError0(rt_utf8_to_string(x))

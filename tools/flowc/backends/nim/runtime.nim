@@ -20,11 +20,11 @@ import "flow_lib/httpServer_type"
 const use16BitString = when defined UTF8: false else: true
 
 when use16BitString:
-  type String = seq[Utf16Char]
+  type RtString = seq[Utf16Char]
 else:
-  type String = string
+  type RtString = string
 
-proc rt_utf8_to_string*(s: string): String =
+proc rt_utf8_to_string*(s: string): RtString =
   when use16BitString:
     # Convert utf8 to utf16
     var wcs = newWideCString(s)
@@ -40,27 +40,27 @@ template `<=`*(a: Utf16Char, b: Utf16Char): bool = cast[uint16](a) <= cast[uint1
 template `>`*(a: Utf16Char, b: Utf16Char): bool = cast[uint16](a) > cast[uint16](b)
 template `>=`*(a: Utf16Char, b: Utf16Char): bool = cast[uint16](a) >= cast[uint16](b)
 
-proc rt_empty_string*(): String = return when use16BitString: @[] else: ""
+proc rt_empty_string*(): RtString = return when use16BitString: @[] else: ""
 
-template rt_concat_strings*(s1: String, s2: String): String =
+template rt_concat_strings*(s1: RtString, s2: RtString): RtString =
   when use16BitString:
     sequtils.concat(s1, s2)
   else:
     s1 & s2
 
-template rt_string_len*(s: String): int32 =
+template rt_string_len*(s: RtString): int32 =
   when use16BitString: int32(s.len) else: int32(s.runeLen)
 
-template rt_string_char_code*(s: String, i: int32): int32 =
+template rt_string_char_code*(s: RtString, i: int32): int32 =
   when use16BitString: int32(cast[uint16](s[i])) else: int32(s.runeAtPos(i))
 
-template rt_char_code_to_string*(code: int32): String =
+template rt_char_code_to_string*(code: int32): RtString =
   when use16BitString: @[Utf16Char(cast[int16](code))] else: unicode.toUTF8(code)
 
 when use16BitString:
-  proc `&`(s1: String, s2: String): String = return rt_concat_strings(s1, s2)
+  proc `&`(s1: RtString, s2: RtString): RtString = return rt_concat_strings(s1, s2)
 
-proc rt_glue_strings*(ss: seq[String], sep: String): String =
+proc rt_glue_strings*(ss: seq[RtString], sep: RtString): RtString =
   when use16BitString:
     var len = 0
     for x in ss:
@@ -91,7 +91,7 @@ const
   UNI_REPL* = 0xFFFD
 
 # Convert the utf8, implementation is adapted from lib/system/widestrs.nim
-proc rt_string_to_utf8*(s: String): string =
+proc rt_string_to_utf8*(s: RtString): string =
   when use16BitString:
     # Guess length
     result = newStringOfCap(s.len * 3)
@@ -138,7 +138,7 @@ proc rt_string_to_utf8*(s: String): string =
         result.add chr(0xFFFD and rt_binary_ones(6) or 0b10_0000_00)
   else: return s
 
-proc rt_escape*(s: String): String =
+proc rt_escape*(s: RtString): RtString =
   when use16BitString:
     var escaped_len = s.len
     for ch in s:
@@ -149,7 +149,7 @@ proc rt_escape*(s: String): String =
       of Utf16Char('\\'): inc escaped_len
       of Utf16Char('"'):  inc escaped_len
       else: discard
-    var r: String = newSeq[Utf16Char](escaped_len)
+    var r: RtString = newSeq[Utf16Char](escaped_len)
     var i = 0
     for ch in s:
       case ch:
@@ -181,7 +181,7 @@ proc rt_escape*(s: String): String =
       else: r.add(ch)
     return r
 
-proc rt_unescape*(s: String): String =
+proc rt_unescape*(s: RtString): RtString =
   when use16BitString:
     var unescaped_len = s.len
     var k = 0
@@ -198,7 +198,7 @@ proc rt_unescape*(s: String): String =
           inc k
         else: inc k
       else: inc k
-    var r: String = newSeq[Utf16Char](unescaped_len)
+    var r: RtString = newSeq[Utf16Char](unescaped_len)
     var j = 0
     for i in 0 ..< unescaped_len:
       let ch = s[j]
@@ -231,7 +231,7 @@ proc rt_unescape*(s: String): String =
           inc k
         else: inc k
       else: inc k
-    var r: String = newStringOfCap(unescaped_len)
+    var r: RtString = newStringOfCap(unescaped_len)
     var j = 0
     for i in 0 ..< unescaped_len:
       let ch = s[j]
@@ -253,7 +253,7 @@ proc rt_unescape*(s: String): String =
 #  when use16BitString:
 #	return a < b
 when use16BitString:
-  proc hash(s: String): Hash =
+  proc hash(s: RtString): Hash =
     var h: Hash = 0
     for ch in s:
       h = h !& rt_utf16char_to_int(ch)
@@ -262,15 +262,15 @@ when use16BitString:
   proc rt_runtime_error*(what: string): void =
     assert(false, "runtime error: " & what)
 
-  proc `==`*(a: String, b: String): bool =
+  proc `==`*(a: RtString, b: RtString): bool =
     if a.len != b.len: return false
     else:
       for i in 0 ..< a.len:
         if a[i] != b[i]: return false
       return true
-  proc `!=`*(a: String, b: String): bool =
+  proc `!=`*(a: RtString, b: RtString): bool =
     return not (a == b)
-  proc `<`*(a: String, b: String): bool =
+  proc `<`*(a: RtString, b: RtString): bool =
     var i = 0
     while true:
       if a.len == i:
@@ -279,59 +279,59 @@ when use16BitString:
       elif a[i] < b[i]: return true
       elif a[i] > b[i]: return false
       inc i
-  proc `<=`*(a: String, b: String): bool =
+  proc `<=`*(a: RtString, b: RtString): bool =
     return a < b or a == b
-  proc `>`*(a: String, b: String): bool =
+  proc `>`*(a: RtString, b: RtString): bool =
     return b < a
-  proc `>=`*(a: String, b: String): bool =
+  proc `>=`*(a: RtString, b: RtString): bool =
     return a > b or a == b
 
-proc rt_runtime_error*(what: String): void =
+proc rt_runtime_error*(what: RtString): void =
   assert(false, "runtime error: " & rt_string_to_utf8(what))
 
 #[ General conversions ]#
 
   # to_string conversions
-proc rt_to_string*(): String = rt_utf8_to_string("{}")
-proc rt_to_string*(x: int32): String = rt_utf8_to_string(intToStr(x))
-proc rt_to_string*(x: float): String =
+proc rt_to_string*(): RtString = rt_utf8_to_string("{}")
+proc rt_to_string*(x: int32): RtString = rt_utf8_to_string(intToStr(x))
+proc rt_to_string*(x: float): RtString =
   var x = formatFloat(x)
   x.trimZeros()
   if not x.contains('.'): x.add(".0")
   return rt_utf8_to_string(x)
-proc rt_to_string*(x: bool): String = return rt_utf8_to_string(if (x): "true" else: "false")
-proc rt_to_string*(x: String): String = x
+proc rt_to_string*(x: bool): RtString = return rt_utf8_to_string(if (x): "true" else: "false")
+proc rt_to_string*(x: RtString): RtString = x
 
-proc rt_to_string_quot*(): String = rt_to_string()
-proc rt_to_string_quot*(x: int32): String = rt_to_string(x)
-proc rt_to_string_quot*(x: float): String = rt_to_string(x)
-proc rt_to_string_quot*(x: bool): String = rt_to_string(x)
-proc rt_to_string_quot*(x: String): String = rt_utf8_to_string("\"") & rt_escape(x) & rt_utf8_to_string("\"")
+proc rt_to_string_quot*(): RtString = rt_to_string()
+proc rt_to_string_quot*(x: int32): RtString = rt_to_string(x)
+proc rt_to_string_quot*(x: float): RtString = rt_to_string(x)
+proc rt_to_string_quot*(x: bool): RtString = rt_to_string(x)
+proc rt_to_string_quot*(x: RtString): RtString = rt_utf8_to_string("\"") & rt_escape(x) & rt_utf8_to_string("\"")
 
   # to_bool conversions
 proc rt_to_bool*(x: int32): bool = x != 0
 proc rt_to_bool*(x: float): bool = x != 0.0
 proc rt_to_bool*(x: bool): bool = x
-proc rt_to_bool*(x: String): bool = x != rt_utf8_to_string("false")
+proc rt_to_bool*(x: RtString): bool = x != rt_utf8_to_string("false")
 
   # to_int conversions
 proc rt_to_int*(x: int32): int32 = x
 proc rt_to_int*(x: float): int32 = int32(round(x))
 proc rt_to_int*(x: bool): int32 = return if x: 1 else: 0
-proc rt_to_int*(x: String): int32 = int32(parseInt(rt_string_to_utf8(x)))
+proc rt_to_int*(x: RtString): int32 = int32(parseInt(rt_string_to_utf8(x)))
 
   # to_double conversions
 proc rt_to_double*(x: int32): float = float(x)
 proc rt_to_double*(x: float): float = x
 proc rt_to_double*(x: bool): float = return if x: 1.0 else: 0.0
-proc rt_to_double*(x: String): float = parseFloat(rt_string_to_utf8(x))
+proc rt_to_double*(x: RtString): float = parseFloat(rt_string_to_utf8(x))
 
 #[ General comparison ]#
 proc rt_compare*(x: int32, y: int32): int32 = return if x < y: -1 elif x > y: 1 else: 0
 proc rt_compare*(x: float, y: float): int32 = return if x < y: -1 elif x > y: 1 else: 0
 proc rt_compare*(x: bool, y: bool): int32 = return if x < y: -1 elif x > y: 1 else: 0
 when use16BitString:
-  proc rt_compare*(a: String, b: String): int32 =
+  proc rt_compare*(a: RtString, b: RtString): int32 =
     var i = 0
     while true:
       if a.len == i:
@@ -341,7 +341,7 @@ when use16BitString:
       elif a[i] > b[i]: return 1
       inc i
 else:
-  proc rt_compare*(x: String, y: String): int32 = return if x < y: -1 elif x > y: 1 else: 0
+  proc rt_compare*(x: RtString, y: RtString): int32 = return if x < y: -1 elif x > y: 1 else: 0
 
 proc rt_compare*[T](x: ptr T, y: ptr T): int32 = return if x < y: -1 elif x > y: 1 else: 0
 
@@ -366,7 +366,7 @@ type
     of rtBool:   bool_v:   bool
     of rtInt:    int_v:    int32
     of rtDouble: double_v: float
-    of rtString: string_v: String
+    of rtString: string_v: RtString
     of rtNative: native_v: Native
     # Composite types
     of rtRef:    ref_v:    Flow
@@ -408,11 +408,11 @@ template rt_type_is_array*[T](X: typedesc[seq[T]]): bool = true
 template rt_type_is_array*(X: typedesc): bool = false
 template rt_type_de_array*[T](X: typedesc[seq[T]]): typedesc[T] = typedesc[T]
 
-type StructDef* = tuple[name: String, fields: seq[String]]
+type StructDef* = tuple[name: RtString, fields: seq[RtString]]
 
 # Struct index
 var id2struct*: seq[StructDef]
-var struct2id*: Table[String, int32]
+var struct2id*: Table[RtString, int32]
 
 proc rt_register_struct*(name0: string, fields0: seq[string]): void =
   let name = rt_utf8_to_string(name0)
@@ -424,38 +424,38 @@ proc rt_register_struct*(name0: string, fields0: seq[string]): void =
   else:
     echo "struct " & name0 & " is aleady registered"
 
-proc rt_struct_name_to_id*(name: String): int32 =
+proc rt_struct_name_to_id*(name: RtString): int32 =
   if struct2id.hasKey(name):
     return struct2id[name]
   else:
     return -1
-proc rt_struct_id_to_fields*(id: int32): seq[String] =
+proc rt_struct_id_to_fields*(id: int32): seq[RtString] =
   return if id < id2struct.len: id2struct[id].fields else: @[]
-proc rt_struct_id_to_name*(id: int32): String =
+proc rt_struct_id_to_name*(id: int32): RtString =
   return if id < id2struct.len: id2struct[id].name else: rt_empty_string()
-proc rt_struct_name_to_fields*(name: String): seq[String] =
+proc rt_struct_name_to_fields*(name: RtString): seq[RtString] =
   return rt_struct_id_to_fields(rt_struct_name_to_id(name))
-proc rt_struct_name_wrapper*[R](v: R, name: String): String = name
-proc rt_flow_struct_name*(f: Flow): String = rt_struct_id_to_name(f.str_id)
+proc rt_struct_name_wrapper*[R](v: R, name: RtString): RtString = name
+proc rt_flow_struct_name*(f: Flow): RtString = rt_struct_id_to_name(f.str_id)
 
 # to_string conversions
-proc rt_to_string*(f: Flow): String
+proc rt_to_string*(f: Flow): RtString
 # this function quotes all strings in ".."
-proc rt_to_string_quot*(f: Flow): String
-proc rt_to_string*(x: Native): String =
+proc rt_to_string_quot*(f: Flow): RtString
+proc rt_to_string*(x: Native): RtString =
   case x.ntp:
   of ntProcess:    return rt_utf8_to_string("process")
   of ntHttpServer: return rt_utf8_to_string("http server")
   of ntFlow:       return rt_to_string(x.flow_v)
-proc rt_to_string_quot*(x: Native): String =
+proc rt_to_string_quot*(x: Native): RtString =
   case x.ntp:
   of ntProcess:    return rt_utf8_to_string("process")
   of ntHttpServer: return rt_utf8_to_string("http server")
   of ntFlow:       return rt_to_string_quot(x.flow_v)
 
-proc rt_to_string*[T](x: Ref[T]): String = return rt_utf8_to_string("ref ") & rt_to_string_quot(x.val)
-proc rt_to_string_quot*[T](x: Ref[T]): String = return rt_utf8_to_string("ref ") & rt_to_string_quot(x.val)
-proc rt_to_string*[T](x: seq[T]): String =
+proc rt_to_string*[T](x: Ref[T]): RtString = return rt_utf8_to_string("ref ") & rt_to_string_quot(x.val)
+proc rt_to_string_quot*[T](x: Ref[T]): RtString = return rt_utf8_to_string("ref ") & rt_to_string_quot(x.val)
+proc rt_to_string*[T](x: seq[T]): RtString =
   var s = rt_utf8_to_string("[")
   for i in 0..x.len - 1:
     if i > 0:
@@ -463,7 +463,7 @@ proc rt_to_string*[T](x: seq[T]): String =
     s.add(rt_to_string_quot(x[i]))
   s.add(rt_utf8_to_string("]"))
   return s
-proc rt_to_string_quot*[T](x: seq[T]): String =
+proc rt_to_string_quot*[T](x: seq[T]): RtString =
   var s = rt_utf8_to_string("[")
   for i in 0..x.len - 1:
     if i > 0:
@@ -474,7 +474,7 @@ proc rt_to_string_quot*[T](x: seq[T]): String =
 
 
 # this function quotes all strings in ".."
-proc rt_to_string_quot*(f: Flow): String =
+proc rt_to_string_quot*(f: Flow): RtString =
   case f.tp:
   of rtVoid:   return rt_to_string()
   of rtBool:   return rt_to_string(f.bool_v)
@@ -502,7 +502,7 @@ proc rt_to_string_quot*(f: Flow): String =
     return s
 
 # this function keeps toplevel strings as is and quotes strings in components in ".."
-proc rt_to_string*(f: Flow): String =
+proc rt_to_string*(f: Flow): RtString =
   return if f.tp == rtString: f.string_v else: rt_to_string_quot(f)
 
 # to_flow conversions
@@ -510,7 +510,7 @@ proc rt_to_flow*(): Flow = Flow(tp: rtVoid)
 proc rt_to_flow*(b: bool): Flow = Flow(tp: rtBool, bool_v: b)
 proc rt_to_flow*(i: int32): Flow = Flow(tp: rtInt, int_v: i)
 proc rt_to_flow*(d: float): Flow = Flow(tp: rtDouble, double_v: d)
-proc rt_to_flow*(s: String): Flow = Flow(tp: rtString, string_v: s)
+proc rt_to_flow*(s: RtString): Flow = Flow(tp: rtString, string_v: s)
 proc rt_to_flow*(f: Flow): Flow = f
 proc rt_to_flow*(n: Native): Flow =
   return if n.ntp == ntFlow: return n.flow_v else: Flow(tp: rtNative, native_v: n)
@@ -598,7 +598,7 @@ proc rt_to_double*(x: Flow): float =
 proc rt_to_native*(x: Flow): Native =
   return if x.tp == rtNative: x.native_v else: Native(ntp: ntFlow, flow_v: x)
 
-proc rt_get_flow_field*(x: Flow, field_name: String): Flow =
+proc rt_get_flow_field*(x: Flow, field_name: RtString): Flow =
   case x.tp:
   of rtStruct:
     let fields = rt_struct_id_to_fields(x.str_id)
@@ -610,7 +610,7 @@ proc rt_get_flow_field*(x: Flow, field_name: String): Flow =
     rt_runtime_error("flow struct " & rt_string_to_utf8(rt_struct_id_to_name(x.str_id)) & "  has no field " & rt_string_to_utf8(field_name))
   else: rt_runtime_error("attempt to get field of non-struct: " & rt_string_to_utf8(rt_to_string(x)))
 
-proc rt_set_flow_field*(s: Flow, field: String, val: Flow): void =
+proc rt_set_flow_field*(s: Flow, field: RtString, val: Flow): void =
   if s.tp == rtStruct:
     let s_fields = rt_struct_id_to_fields(s.str_id)
     var i = 0
@@ -623,7 +623,7 @@ proc rt_set_flow_field*(s: Flow, field: String, val: Flow): void =
 
 # Table for implicit natives, which are called via `hostCall`
 
-var name2func*: Table[String, proc(args: seq[Flow]): Flow]
+var name2func*: Table[RtString, proc(args: seq[Flow]): Flow]
 
 name2func[rt_utf8_to_string("getOs")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_utf8_to_string(hostOS & "," & hostCPU))
 name2func[rt_utf8_to_string("getVersion")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_empty_string())

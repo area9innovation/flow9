@@ -3,7 +3,7 @@ import osproc
 import threadpool
 import streams
 
-proc runOutputStream(process: Process, onStdOutLine: proc (output: String)) {.thread.} =
+proc runOutputStream(process: Process, onStdOutLine: proc (output: RtString)) {.thread.} =
   let stream = process.outputStream()
   while true:
     try:
@@ -13,7 +13,7 @@ proc runOutputStream(process: Process, onStdOutLine: proc (output: String)) {.th
     except IOError:
         break
 
-proc runErrorStream(process: Process, onStdErr: proc (error: String)) {.thread.} =
+proc runErrorStream(process: Process, onStdErr: proc (error: RtString)) {.thread.} =
   let stream = process.errorStream()
   while true:
     try:
@@ -27,12 +27,12 @@ proc waitForProcessThread(process: Process, onExit: proc (errorCode: int32)) {.t
   let exitCode = process.waitForExit()
   onExit(int32(exitCode))
 
-proc $F_0(runSystemProcess)*(command: String, args: seq[String], currentWorkingDirectory: String,
-                      onStdOutLine: proc (output: String), onStdErr: proc (error: String),
+proc $F_0(runSystemProcess)*(command: RtString, args: seq[RtString], cwd: RtString,
+                      onStdOutLine: proc (output: RtString), onStdErr: proc (error: RtString),
                       onExit: proc (errorCode: int32)): Native =
   try:
     let process = startProcess(rt_string_to_utf8(command), args = map(args, rt_string_to_utf8),
-      workingDir = rt_string_to_utf8(currentWorkingDirectory),
+      workingDir = rt_string_to_utf8(cwd),
       options = {})
 
     spawn runOutputStream(process, onStdOutLine)

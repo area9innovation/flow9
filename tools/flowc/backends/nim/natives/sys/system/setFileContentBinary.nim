@@ -1,6 +1,6 @@
 # native setFileContentBinary : io (filename : string, content : string) -> bool  = Native.setFileContentBinary;
 
-proc $F_0(setFileContentBinary)(filename: String, content : String): bool =
+proc $F_0(setFileContentBinary)(filename: RtString, content : RtString): bool =
   var f: File
   if open(f, rt_string_to_utf8(filename), fmWrite):
     try:

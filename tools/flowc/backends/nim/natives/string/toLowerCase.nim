@@ -1,4 +1,4 @@
-proc $F_0(toLowerCase)*(s: String): String =
+proc $F_0(toLowerCase)*(s: RtString): RtString =
   const ascii_a_cap = 65i32
   const ascii_z_cap = 90i32
   when use16BitString:

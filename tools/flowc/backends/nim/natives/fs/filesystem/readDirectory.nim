@@ -1,7 +1,7 @@
 # native readDirectory : (string) -> [string] = FlowFileSystem.readDirectory;
 import os
 
-proc $F_0(readDirectory)*(path: String): seq[String] =
+proc $F_0(readDirectory)*(path: RtString): seq[RtString] =
   let path_utf8 = rt_string_to_utf8(path)
   let newPath = normalizedPath(path_utf8)
   if (newPath == ""):

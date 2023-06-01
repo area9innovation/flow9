@@ -3,7 +3,7 @@
 import endians
 import unicode
 
-proc $F_0(stringbytes2double)(s: String): float =
+proc $F_0(stringbytes2double)(s: RtString): float =
     if (len(s) == 4):
         var bb : array[8, byte]
         for i in 0..3:

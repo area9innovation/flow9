@@ -1,6 +1,6 @@
 import unicode
 
-func $F_0(getCharAt)*(s: String, i: int32): String =
+func $F_0(getCharAt)*(s: RtString, i: int32): RtString =
   when use16BitString:
     if i >= 0 and i < rt_string_len(s):
       return @[s[i]]

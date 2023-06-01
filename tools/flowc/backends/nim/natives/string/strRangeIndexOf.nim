@@ -2,7 +2,7 @@
 
 from strutils import find
 
-func $F_0(strRangeIndexOf)*(s : String, sub : String, start : int32, aend0 : int32) : int32 =
+func $F_0(strRangeIndexOf)*(s : RtString, sub : RtString, start : int32, aend0 : int32) : int32 =
   when use16BitString:
     let aend = min(aend0, s.len)
     if start >= aend or start >= s.len or s.len < sub.len: return -1

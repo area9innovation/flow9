@@ -1,7 +1,7 @@
 # native strSplit : (string, string) -> [string] = Native.strSplit;
 import strutils
 
-func $F_0(strSplit)*(s : String, sep : String) : seq[String] =
+func $F_0(strSplit)*(s : RtString, sep : RtString) : seq[RtString] =
   when use16BitString:
     if (sep.len == 0): return @[s]
     else:

@@ -1,4 +1,4 @@
-proc $F_0(strIndexOf)*(s: String, sub: String): int32 =
+proc $F_0(strIndexOf)*(s: RtString, sub: RtString): int32 =
   when use16BitString:
     if sub.len == 0: return 0
     elif s.len == 0: return -1

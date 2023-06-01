@@ -1,4 +1,4 @@
-func $F_0(endsWith)*(s: String, e: String): bool =
+func $F_0(endsWith)*(s: RtString, e: RtString): bool =
   when use16BitString:
     if e.len == 0: return true
     elif s.len == 0: return false

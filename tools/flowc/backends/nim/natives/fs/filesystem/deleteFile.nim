@@ -1,7 +1,7 @@
 # native deleteFile : (string) -> string = FlowFileSystem.deleteFile;
 import os
 
-proc $F_0(deleteFile)*(dir : String): String =
+proc $F_0(deleteFile)*(dir : RtString): RtString =
   let dir_utf8 = rt_string_to_utf8(dir)
   if (fileExists(dir_utf8)):
     try:
