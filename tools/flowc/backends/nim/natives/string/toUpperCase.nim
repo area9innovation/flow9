@@ -1,4 +1,6 @@
 proc $F_0(toUpperCase)*(s: RtString): RtString =
+  return rt_utf8_to_string(unicode.toUpper(rt_string_to_utf8(s)))
+#[
   const ascii_a = 97i32
   const ascii_z = 122i32
   when use16BitString:
@@ -20,3 +22,4 @@ proc $F_0(toUpperCase)*(s: RtString): RtString =
           result.add(ch)
   else:
     return unicode.toUpper(s)
+]#
