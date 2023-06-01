@@ -49,13 +49,10 @@ template rt_concat_strings*(s1: RtString, s2: RtString): RtString =
     s1 & s2
 
 template rt_string_len*(s: RtString): int32 =
-  when use16BitString: int32(s.len) else: int32(s.runeLen)
+  when use16BitString: int32(s.len) else: int32(s.len)
 
 template rt_string_char_code*(s: RtString, i: int32): int32 =
-  when use16BitString: int32(cast[uint16](s[i])) else: int32(s.runeAtPos(i))
-
-template rt_char_code_to_string*(code: int32): RtString =
-  when use16BitString: @[Utf16Char(cast[int16](code))] else: unicode.toUTF8(code)
+  when use16BitString: int32(cast[uint16](s[i])) else: int32(s.runeAt(i))
 
 when use16BitString:
   proc `&`(s1: RtString, s2: RtString): RtString = return rt_concat_strings(s1, s2)
@@ -297,7 +294,7 @@ proc rt_to_string*(x: int32): RtString = rt_utf8_to_string(intToStr(x))
 proc rt_to_string*(x: float): RtString =
   var x = formatFloat(x)
   x.trimZeros()
-  if not x.contains('.'): x.add(".0")
+  #if not x.contains('.'): x.add(".0")
   return rt_utf8_to_string(x)
 proc rt_to_string*(x: bool): RtString = return rt_utf8_to_string(if (x): "true" else: "false")
 proc rt_to_string*(x: RtString): RtString = x
