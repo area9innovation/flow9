@@ -1,4 +1,4 @@
-import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fi_helpers2;
 import tools/flowc/manipulation/common;
 import math/stringmath;
 import string_utils;
@@ -35,6 +35,9 @@ export {
 
 	// Extract all casts in a program. Returns a tree: key - 'from' type, value - set of 'to' types
 	fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>>;
+
+	// Adds functions for struct casts in situations like: cast(x: Tree<int, A> -> Tree<int, B>)
+	fiProgramAddPolymorphicStructsCasts(program: FiProgram) -> FiProgram;
 }
 
 fiFlattenUnions(program : FiProgram) -> FiProgram {
@@ -647,5 +650,63 @@ fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
 			FiNativeDec(nm,__,__,__,fallback,__,__): proc_exp(fallback, acc, nm);
 			default: acc;
 		}
+	);
+}
+
+
+fiProgramAddPolymorphicStructsCasts(program: FiProgram) -> FiProgram {
+	names = program.names;
+	polymorphic_structs = filter(getTreeValues(names.structs), \s -> length(s.typars) > 0);
+	struct_casts = map(polymorphic_structs, \s -> fiStructCastWrapperFunction(s, names));
+	casts_module = FiModule(
+		FiFileInfo("virtual_module_structs_casts", 0.0, "", "", 0.0, 0.0),
+		[], // imports
+		[], // forbids
+		map(struct_casts, \c -> c.name), // exports
+		[], // structs
+		[], // unions
+		struct_casts, // functions
+		[], // global vars
+		[], // natives
+		map(struct_casts, \c -> c.name), // initOrder
+		[], // stringIncludes
+		0, // start
+		0, // end
+		makeSet(), // allImports
+		false // incremental
+	);
+	FiProgram(program with 
+		modules = setTree(program.modules, casts_module.fileinfo.flowfile, casts_module),
+		names = FiGlobalNames(names with 
+			toplevel = fold(struct_casts, names.toplevel, \acc, fn -> setTree(acc, fn.name, fn))
+		)
+	);
+}
+
+fiStructCastWrapperFunction(s: FiTypeStruct, names: FiGlobalNames) -> FiFunctionDec {
+	max_typar = fold(fiTypes2typars(s.typars), 0, \acc, tp -> max(acc, strlen(tp.n)));
+	from = FiTypeName(s.name, s.typars);
+	make_typar = \n -> strRepeat("?", n);
+	sub = pairs2tree(generate(1, max_typar + 1, \n ->
+		Pair(make_typar(n), FiTypeParameter(make_typar(n + max_typar)))
+	));
+	to = fiApplyTypeSubstitution(sub, from);
+	fn_args = [FiFunArg("x", from)];
+	fn_type = FiTypeFunction(fn_args, to);
+	FiFunctionDec("__wrap_cast_of_" + s.name,
+		FiLambda(fn_args,
+			FiCallPrim(
+				FcStructPrim(s.name),
+				map(s.args, \arg -> {
+					field_val = FiCallPrim(FcFieldPrim(arg.name), [FiVar("x", from, 0)], arg.type, 0);
+					arg_typars = fiCollectTypars(arg.type, makeSet());
+					if (isEmptySet(arg_typars)) field_val else {
+						field_to = fiApplyTypeSubstitution(sub, arg.type);
+						FiCast(field_val, arg.type, field_to, field_to, 0);
+					}
+				}), to, 0
+			), fn_type, 0
+		),
+		fn_type, 0, 0
 	);
 }
