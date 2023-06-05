@@ -127,15 +127,20 @@ class VideoClip extends FlowContainer {
 		}
 
 		if (!this.isHTMLRenderer()) {
-			videoTexture = Texture.fromVideo(videoWidget);
-			untyped videoTexture.baseTexture.autoUpdate = false;
-			videoSprite = new Sprite(videoTexture);
-			untyped videoSprite._visible = true;
-			addChild(videoSprite);
+			addVideoSprite();
 		}
 
 		createStreamStatusListeners();
 		createFullScreenListeners();
+
+		this.onAdded(function() {
+			RenderSupport.on("enable_sprites", enableSprites);
+
+			return function() {
+				RenderSupport.off("enable_sprites", enableSprites);
+				disableSprites();
+			}
+		});
 
 		once("removed", deleteVideoClip);
 	}
@@ -332,6 +337,16 @@ class VideoClip extends FlowContainer {
 		textField = null;
 	}
 
+	private function addVideoSprite() : Void {
+		if (videoWidget != null) {
+			videoTexture = Texture.fromVideo(videoWidget);
+			untyped videoTexture.baseTexture.autoUpdate = false;
+			videoSprite = new Sprite(videoTexture);
+			untyped videoSprite._visible = true;
+			addChild(videoSprite);
+		}
+	}
+
 	private function deleteVideoSprite() : Void {
 		if (videoSprite != null) {
 			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
@@ -343,6 +358,20 @@ class VideoClip extends FlowContainer {
 			videoTexture.destroy(true);
 			videoTexture = null;
 		}
+	}
+
+	private function enableSprites() : Void {
+		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+			return;
+		}
+
+		addVideoSprite();
+		RenderSupport.on("disable_sprites", disableSprites);
+	}
+
+	private function disableSprites() : Void {
+		deleteVideoSprite();
+		RenderSupport.off("disable_sprites", disableSprites);
 	}
 
 	public function getCurrentTime() : Float {
