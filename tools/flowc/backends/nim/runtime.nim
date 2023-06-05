@@ -52,7 +52,7 @@ template rt_string_len*(s: RtString): int32 =
   when use16BitString: int32(s.len) else: int32(s.len)
 
 template rt_string_char_code*(s: RtString, i: int32): int32 =
-  when use16BitString: int32(cast[uint16](s[i])) else: int32(s.runeAt(i))
+  when use16BitString: int32(cast[uint16](s[i])) else: int32(s[i])
 
 when use16BitString:
   proc `&`(s1: RtString, s2: RtString): RtString = return rt_concat_strings(s1, s2)
@@ -294,7 +294,6 @@ proc rt_to_string*(x: int32): RtString = rt_utf8_to_string(intToStr(x))
 proc rt_to_string*(x: float): RtString =
   var x = formatFloat(x)
   x.trimZeros()
-  #if not x.contains('.'): x.add(".0")
   return rt_utf8_to_string(x)
 proc rt_to_string*(x: bool): RtString = return rt_utf8_to_string(if (x): "true" else: "false")
 proc rt_to_string*(x: RtString): RtString = x
@@ -476,7 +475,12 @@ proc rt_to_string_quot*(f: Flow): RtString =
   of rtVoid:   return rt_to_string()
   of rtBool:   return rt_to_string(f.bool_v)
   of rtInt:    return rt_to_string(f.int_v)
-  of rtDouble: return rt_to_string(f.double_v)
+  of rtDouble:
+    # NOTE: toString(42.0) == "42.0" BUT cast(42.0: double -> string) == "42"
+    var x = formatFloat(f.double_v)
+    x.trimZeros()
+    if not x.contains('.'): x.add(".0")
+    return rt_utf8_to_string(x)
   of rtString: return rt_utf8_to_string("\"") & rt_escape(f.string_v) & rt_utf8_to_string("\"")
   of rtNative: return rt_to_string(f.native_v)
   of rtRef:    return rt_utf8_to_string("ref ") & rt_to_string_quot(f.ref_v)
