@@ -626,7 +626,8 @@ proc rt_set_flow_field*(s: Flow, field: RtString, val: Flow): void =
 
 var name2func*: Table[RtString, proc(args: seq[Flow]): Flow]
 
-name2func[rt_utf8_to_string("getOs")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_utf8_to_string(hostOS & "," & hostCPU))
+# Such definition of getOs makes it compliant to `getFlowOs` from sys/target
+name2func[rt_utf8_to_string("getOs")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_utf8_to_string(title(hostOS) & " other"))
 name2func[rt_utf8_to_string("getVersion")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_empty_string())
 name2func[rt_utf8_to_string("getUserAgent")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_empty_string())
 name2func[rt_utf8_to_string("getBrowser")] = proc(args: seq[Flow]): Flow = rt_to_flow(rt_empty_string())
