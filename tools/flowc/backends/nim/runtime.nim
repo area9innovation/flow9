@@ -24,13 +24,40 @@ when use16BitString:
 else:
   type RtString = string
 
+const
+  uni_halfShift* = 10
+  uni_halfBase* = 0x0010000
+  uni_halfMask* = 0x3FF
+
+  UNI_MAX_BMP* = 0x0000FFFF
+  UNI_MAX_UTF16* = 0x0010FFFF
+
+  UNI_SUR_HIGH_START* = 0xD800
+  UNI_SUR_HIGH_END* = 0xDBFF
+  UNI_SUR_LOW_START* = 0xDC00
+  UNI_SUR_LOW_END* = 0xDFFF
+  UNI_REPL* = 0xFFFD
+
+# Convert the utf8, implementation is adapted from lib/system/widestrs.nim
+proc rt_utf8_to_utf16*(s: string): RtString =
+  var wcs = newWideCString(s.len)
+  var d = 0
+  for r in runes(s):
+    let ch = int32(r)
+    if ch <= UNI_MAX_BMP or ch > UNI_MAX_UTF16:
+      wcs[d] = cast[Utf16Char](uint16(ch))
+    else:
+      let ch = ch - uni_halfBase
+      wcs[d] = cast[Utf16Char](uint16((ch shr uni_halfShift) + UNI_SUR_HIGH_START))
+      inc d
+      wcs[d] = cast[Utf16Char](uint16((ch and uni_halfMask) + UNI_SUR_LOW_START))
+    inc d
+  result = newSeq[Utf16Char](wcs.len)
+  for i in 0 ..< wcs.len:
+    result[i] = wcs[i]
+
 proc rt_utf8_to_string*(s: string): RtString =
-  when use16BitString:
-    # Convert utf8 to utf16
-    var wcs = newWideCString(s)
-    result = newSeq[Utf16Char](wcs.len)
-    for i in 0 ..< wcs.len:
-      result[i] = wcs[i]
+  when use16BitString: rt_utf8_to_utf16(s)
   else: return s
 
 template `==`*(a: Utf16Char, b: Utf16Char): bool = cast[uint16](a) == cast[uint16](b)
@@ -76,63 +103,56 @@ template rt_utf16char_to_int*(arg: Utf16Char): int32 = int32(cast[uint16](arg))
 
 template rt_binary_ones*(n: untyped): untyped = ((1 shl n)-1)
 
-const
-  uni_halfShift* = 10
-  uni_halfBase* = 0x0010000
-  uni_halfMask* = 0x3FF
-
-  UNI_SUR_HIGH_START* = 0xD800
-  UNI_SUR_HIGH_END* = 0xDBFF
-  UNI_SUR_LOW_START* = 0xDC00
-  UNI_SUR_LOW_END* = 0xDFFF
-  UNI_REPL* = 0xFFFD
-
 # Convert the utf8, implementation is adapted from lib/system/widestrs.nim
+proc rt_convert_string_to_utf8*[T](s: RtString, ret: var T): void =
+  var i = 0
+  while i < s.len:
+    var ch = rt_utf16char_to_int(s[i])
+    inc i
+    if ch >= UNI_SUR_HIGH_START and ch <= UNI_SUR_HIGH_END:
+      if i >= s.len:
+        # Illegal utf8 sequence
+        break
+      # If the 16 bits following the high surrogate are in the source buffer...
+      let ch2 = rt_utf16char_to_int(s[i])
+
+      # If it's a low surrogate, convert to UTF32:
+      if ch2 >= UNI_SUR_LOW_START and ch2 <= UNI_SUR_LOW_END:
+        ch = (((ch and uni_halfMask) shl uni_halfShift) + (ch2 and uni_halfMask)) + uni_halfBase
+        inc i
+      else:
+        #invalid UTF-16
+        ch = UNI_REPL
+    elif ch >= UNI_SUR_LOW_START and ch <= UNI_SUR_LOW_END:
+      #invalid UTF-16
+      ch = UNI_REPL
+
+    if ch < 0x80:
+      ret.add chr(ch)
+    elif ch < 0x800:
+      ret.add chr((ch shr 6) or 0xc0)
+      ret.add chr((ch and 0x3f) or 0x80)
+    elif ch < 0x10000:
+      ret.add chr((ch shr 12) or 0xe0)
+      ret.add chr(((ch shr 6) and 0x3f) or 0x80)
+      ret.add chr((ch and 0x3f) or 0x80)
+    elif ch <= 0x10FFFF:
+      ret.add chr((ch shr 18) or 0xf0)
+      ret.add chr(((ch shr 12) and 0x3f) or 0x80)
+      ret.add chr(((ch shr 6) and 0x3f) or 0x80)
+      ret.add chr((ch and 0x3f) or 0x80)
+    else:
+      # replacement char(in case user give very large number):
+      ret.add chr(0xFFFD shr 12 or 0b1110_0000)
+      ret.add chr(0xFFFD shr 6 and rt_binary_ones(6) or 0b10_0000_00)
+      ret.add chr(0xFFFD and rt_binary_ones(6) or 0b10_0000_00)
+
 proc rt_string_to_utf8*(s: RtString): string =
   when use16BitString:
     # Guess length
-    result = newStringOfCap(s.len * 3)
-    var i = 0
-    while i < s.len:
-      var ch = rt_utf16char_to_int(s[i])
-      inc i
-      if ch >= UNI_SUR_HIGH_START and ch <= UNI_SUR_HIGH_END:
-        if i >= s.len:
-           # Illegal utf8 sequence
-           break
-        # If the 16 bits following the high surrogate are in the source buffer...
-        let ch2 = rt_utf16char_to_int(s[i])
-
-        # If it's a low surrogate, convert to UTF32:
-        if ch2 >= UNI_SUR_LOW_START and ch2 <= UNI_SUR_LOW_END:
-          ch = (((ch and uni_halfMask) shl uni_halfShift) + (ch2 and uni_halfMask)) + uni_halfBase
-          inc i
-        else:
-          #invalid UTF-16
-          ch = UNI_REPL
-      elif ch >= UNI_SUR_LOW_START and ch <= UNI_SUR_LOW_END:
-        #invalid UTF-16
-        ch = UNI_REPL
-
-      if ch < 0x80:
-        result.add chr(ch)
-      elif ch < 0x800:
-        result.add chr((ch shr 6) or 0xc0)
-        result.add chr((ch and 0x3f) or 0x80)
-      elif ch < 0x10000:
-        result.add chr((ch shr 12) or 0xe0)
-        result.add chr(((ch shr 6) and 0x3f) or 0x80)
-        result.add chr((ch and 0x3f) or 0x80)
-      elif ch <= 0x10FFFF:
-        result.add chr((ch shr 18) or 0xf0)
-        result.add chr(((ch shr 12) and 0x3f) or 0x80)
-        result.add chr(((ch shr 6) and 0x3f) or 0x80)
-        result.add chr((ch and 0x3f) or 0x80)
-      else:
-        # replacement char(in case user give very large number):
-        result.add chr(0xFFFD shr 12 or 0b1110_0000)
-        result.add chr(0xFFFD shr 6 and rt_binary_ones(6) or 0b10_0000_00)
-        result.add chr(0xFFFD and rt_binary_ones(6) or 0b10_0000_00)
+    var ret: string = newStringOfCap(s.len * 3)
+    rt_convert_string_to_utf8[string](s, ret)
+    return ret
   else: return s
 
 proc rt_escape*(s: RtString): RtString =
