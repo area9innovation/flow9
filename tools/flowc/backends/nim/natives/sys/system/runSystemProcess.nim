@@ -33,12 +33,12 @@ proc $F_0(runSystemProcess)*(command: RtString, args: seq[RtString], cwd: RtStri
   try:
     let process = startProcess(rt_string_to_utf8(command), args = map(args, rt_string_to_utf8),
       workingDir = rt_string_to_utf8(cwd),
-      options = {})
+      options = {poUsePath})
 
     spawn runOutputStream(process, onStdOutLine)
     spawn runErrorStream(process, onStdErr)
     spawn waitForProcessThread(process, onExit)
 
-    return Native(ntp: ntProcess, p : process)
+    return Native(ntp: ntProcess, p: process)
   except OSError:
-    return nil
+    return Native(ntp: ntProcess, p: nil)

@@ -524,22 +524,6 @@ class FlowGraphics extends Graphics {
 						}
 					};
 
-					/*
-					// HOT FIX FOR https://trello.com/c/EeDgmRL3/21766-slideshow-editor-major-slowdowns
-					Browser.window.addEventListener('beforeprint', function () {
-						try {
-							nativeWidget.style.position = 'fixed';
-							svg.style.position = '';
-						} catch (e : Dynamic) {}
-					}, false);
-
-					Browser.window.addEventListener('afterprint', function () {
-						try {
-							nativeWidget.style.position = '';
-							svg.style.position = 'absolute';
-						} catch (e : Dynamic) {}
-					}, false);
-					*/
 					if (data.shape.type == 0) {
 						createSvgElement('path');
 
@@ -667,7 +651,31 @@ class FlowGraphics extends Graphics {
 			nativeWidget.classList.add(this.className);
 		}
 		nativeWidget.setAttribute('role', 'presentation');
+		
+		if (graphicsData.length != 1 || isSvg || this.hasMask) {
+			this.setPrintingWorkaround();
+		}
 
 		isNativeWidget = true;
+	}
+
+	private function setPrintingWorkaround() {
+		Browser.window.addEventListener('beforeprint', function () {
+			try {
+				nativeWidget.style.position = 'fixed';
+				for (svg in nativeWidget.getElementsByTagName("svg")) {
+					svg.style.position = '';
+				}
+			} catch (e : Dynamic) {}
+		}, false);
+
+		Browser.window.addEventListener('afterprint', function () {
+			try {
+				nativeWidget.style.position = '';
+				for (svg in nativeWidget.getElementsByTagName("svg")) {
+					svg.style.position = 'absolute';
+				}
+			} catch (e : Dynamic) {}
+		}, false);
 	}
 }

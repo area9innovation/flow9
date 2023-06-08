@@ -1,5 +1,5 @@
 proc $F_0(substring)*(str: RtString, start: int32, leng: int32): RtString =
-  var strlen = when use16BitString: int32(str.len) else: int32(runeLen(str))
+  var strlen = rt_string_len(str)
   if strlen == 0:
     return str
   var slen = leng
@@ -33,7 +33,4 @@ proc $F_0(substring)*(str: RtString, start: int32, leng: int32): RtString =
 
   let send = start + slen
   slen = if send > strlen or send  < 0: strlen - start else: slen
-  when use16BitString:
-    return str[sstart .. sstart + slen - 1]
-  else:
-    return $toRunes(str)[sstart .. sstart + slen - 1]
+  return str[sstart .. sstart + slen - 1]
