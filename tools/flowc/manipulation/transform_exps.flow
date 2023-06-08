@@ -2,6 +2,7 @@ import tools/flowc/incremental/fi_helpers2;
 import tools/flowc/manipulation/common;
 import tools/flowc/incremental/fi_type_unify;
 import tools/flowc/manipulation/effects;
+import tools/flowc/manipulation/flatten_unions;
 import string_utils;
 import tools/flowc/backends/cpp3/fi2cpp3_util;
 
@@ -1416,22 +1417,36 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 			}
 			FiTypeName(from_name, from_typars): {
 				cast_struct = \x, struct_from, struct_to -> {
-					from_tp = FiTypeName(struct_from.name, struct_from.typars);
-					to_tp = FiTypeName(struct_to.name, struct_to.typars);
+					name = struct_from.name;
+					from_tp = FiTypeName(name, struct_from.typars);
+					to_tp = FiTypeName(name, struct_to.typars);
 					if (struct_from == struct_to) x else {
-						tmp = FiVar(new_id(), from_tp, s);
-						FiLet(tmp.name, tmp.type, x, 
-							FiCallPrim(FcStructPrim(struct_to.name),
-								mapi(struct_from.args, \i, arg -> 
-									fiUnfoldCasts(
-										FiCallPrim(FcFieldPrim(arg.name), [tmp], arg.type, s),
-										arg.type, struct_to.args[i].type, s, names, new_id
-									)
-								),
-								to_tp, s
-							),
-							to_tp, s
-						);
+						wrapper_name = fiStructCastWrapperName(name);
+						switch (lookupTree(names.toplevel, wrapper_name)) {
+							Some(wrapper): {
+								wrapper_fn = cast(wrapper: FiDeclaration -> FiFunctionDec);
+								wrapper_spec_type = FiTypeFunction(wrapper_fn.type with
+									args = [FiFunArg(wrapper_fn.type.args[0] with type = from_tp)],
+									returnType = to_tp
+								);
+								FiCall(FiVar(wrapper_name, wrapper_spec_type, 0), [x], to_tp, 0);
+							}
+							None(): {
+								tmp = FiVar(new_id(), from_tp, s);
+								FiLet(tmp.name, tmp.type, x, 
+									FiCallPrim(FcStructPrim(name),
+										mapi(struct_from.args, \i, arg -> 
+											fiUnfoldCasts(
+												FiCallPrim(FcFieldPrim(arg.name), [tmp], arg.type, s),
+												arg.type, struct_to.args[i].type, s, names, new_id
+											)
+										),
+										to_tp, s
+									),
+									to_tp, s
+								);
+							}
+						}
 					}
 				}
 				fiMapTypeName(from, names, 
