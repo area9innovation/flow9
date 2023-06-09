@@ -656,33 +656,33 @@ fiProgramCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
 	);
 }
 
-
 fiProgramAddPolymorphicStructsCasts(program: FiProgram) -> FiProgram {
 	names = program.names;
 	polymorphic_structs = filter(getTreeValues(names.structs), \s -> length(s.typars) > 0);
-	struct_casts = map(polymorphic_structs, \s -> fiStructCastWrapperFunction(s, names));
-	casts_module = FiModule(
-		FiFileInfo("virtual_module_structs_casts", 0.0, "", "", 0.0, 0.0),
-		[], // imports
-		[], // forbids
-		map(struct_casts, \c -> c.name), // exports
-		[], // structs
-		[], // unions
-		struct_casts, // functions
-		[], // global vars
-		[], // natives
-		map(struct_casts, \c -> c.name), // initOrder
-		[], // stringIncludes
-		0, // start
-		0, // end
-		makeSet(), // allImports
-		false // incremental
+	struct_casts = map(polymorphic_structs, \s -> Pair(s.name, fiStructCastWrapperFunction(s, names)));
+	updated_modules = fold(struct_casts, program.modules, \acc, p ->
+		switch (lookupTree(names.struct2module, p.first)) {
+			Some(module_name): {
+				switch (lookupTree(acc, module_name)) {
+					Some(module): {
+						setTree(acc, module_name,
+							FiModule(module with
+								functions = concat([p.second], module.functions),
+								exports = concat([p.second.name], module.exports),
+								initOrder = concat([p.second.name], module.initOrder),
+							)
+						);
+					}
+					None(): acc;
+				}
+			}
+			None(): acc;
+		}
 	);
-	FiProgram(program with 
-		modules = setTree(program.modules, casts_module.fileinfo.flowfile, casts_module),
-		traversal = concat(program.traversal, [casts_module.fileinfo.flowfile]),
-		names = FiGlobalNames(names with 
-			toplevel = fold(struct_casts, names.toplevel, \acc, fn -> setTree(acc, fn.name, fn))
+	FiProgram(program with
+		modules = updated_modules,
+		names = FiGlobalNames(names with
+			toplevel = fold(struct_casts, names.toplevel, \acc, p -> setTree(acc, p.second.name, p.second))
 		)
 	);
 }
@@ -701,7 +701,7 @@ fiStructCastWrapperFunction(s: FiTypeStruct, names: FiGlobalNames) -> FiFunction
 	to = fiApplyTypeSubstitution(sub, from);
 	fn_args = [FiFunArg("x", from)];
 	fn_type = FiTypeFunction(fn_args, to);
-	decl = FiFunctionDec(fiStructCastWrapperName(s.name),
+	FiFunctionDec(fiStructCastWrapperName(s.name),
 		FiLambda(fn_args,
 			FiCallPrim(
 				FcStructPrim(s.name),
@@ -717,6 +717,4 @@ fiStructCastWrapperFunction(s: FiTypeStruct, names: FiGlobalNames) -> FiFunction
 		),
 		fn_type, 0, 0
 	);
-	println(pretFiDeclaration(decl));
-	decl;
 }
