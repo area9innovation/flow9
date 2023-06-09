@@ -121,7 +121,7 @@ class SoundSupport {
 							}
 							
 							if (type != "") {
-								audio.src = js.html.URL.createObjectURL(audioXhr.response, { type: type });
+								audio.src = js.html.URL.createObjectURL(audioXhr.response/*, { type: type }*/);
 							} else {
 								audio.src = js.html.URL.createObjectURL(audioXhr.response);
 							}
