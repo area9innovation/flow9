@@ -17,7 +17,6 @@
     #endif
 #else
 #include <dirent.h>
-#include <unistd.h>
 #endif
 
 std::string urlEscapePath(std::string path)
@@ -68,10 +67,6 @@ void FileLocalStore::SetBasePath(std::string path)
 #endif
             cerr << "Could not create directory: " << base_path << endl;
     }
-
-#ifndef _MSC_VER
-    chdir(path.c_str());
-#endif
 }
 
 std::string FileLocalStore::makePath(unicode_string key)
