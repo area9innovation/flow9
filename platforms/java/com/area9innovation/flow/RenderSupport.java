@@ -299,7 +299,7 @@ public class RenderSupport extends NativeHost {
 	public static Object closeVideo(Object stg) {
 		return null;
 	}
-	public static Object playVideo(Object obj, String name, boolean pause) {
+	public static Object playVideo(Object obj, String name, boolean pause, Object[] headers) {
 		return null;
 	}
 	public static double getVideoPosition(Object stg) {
@@ -368,7 +368,7 @@ public class RenderSupport extends NativeHost {
 	public static Object makeGlow(double a,double b,int c, double d,boolean e) {
 		return null;
 	}
-	public static Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt) {
+	public static Object makePicture(String a,boolean b,Func2<Object,Double,Double> c,Func1<Object,String> d,boolean e, String alt, Object[] headers) {
 		return null;
 	}
 	public static Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {

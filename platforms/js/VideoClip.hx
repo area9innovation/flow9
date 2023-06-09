@@ -104,11 +104,11 @@ class VideoClip extends FlowContainer {
 		} catch (e : Dynamic) {}
 	}
 
-	private function createVideoClip(filename : String, startPaused : Bool) : Void {
+	private function createVideoClip(filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
 		deleteVideoClip();
 
 		autoPlay = !startPaused;
-		addVideoSource(filename, "");
+		addVideoSource(filename, "", headers);
 		videoWidget = Browser.document.createElement(this.isAudio ? "audio" : "video");
 
 		if (this.isHTMLRenderer()) {
@@ -232,12 +232,12 @@ class VideoClip extends FlowContainer {
 		this.isAudio = Util.getParameter("video2audio") != "0";
 	}
 
-	public function playVideo(filename : String, startPaused : Bool) : Void {
-		createVideoClip(filename, startPaused);
+	public function playVideo(filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
+		createVideoClip(filename, startPaused, headers);
 	}
 
 	public function playVideoFromMediaStream(mediaStream : FlowMediaStream, startPaused : Bool) : Void {
-		createVideoClip("", startPaused);
+		createVideoClip("", startPaused, []);
 		videoWidget.srcObject = mediaStream.mediaStream;
 		mediaStream.videoClip = this;
 		mediaStream.emit("attached");
@@ -532,20 +532,61 @@ class VideoClip extends FlowContainer {
 		return function () { streamStatusListener.remove(fn); };
 	}
 
-	public function addVideoSource(src : String, type : String) : Void {
+	public function addVideoSource(src : String, type : String, headers : Array<Array<String>>) : Void {
 		var source = Browser.document.createElement('source');
-		source.onerror = onStreamError;
+		var isAppended = false;
 
-		untyped source.src = src;
-		if (type != "") {
-			untyped source.type = type;
+		if (headers.length == 0) {
+			source.onerror = onStreamError;
+			untyped source.src = src;
+
+			if (type != "") {
+				untyped source.type = type;
+			}
+		} else {
+			var videoXhr = new js.html.XMLHttpRequest();
+			videoXhr.open("GET", src, true);
+			for (header in headers) {
+				videoXhr.setRequestHeader(header[0], header[1]);
+			}
+			
+			videoXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
+			videoXhr.onload = function (oEvent) {
+				if (videoXhr.status == 200) {
+					if (type == "") {
+						type = videoXhr.getResponseHeader("content-type");
+					}
+					
+					if (type != "") {
+						untyped source.type = type;
+						untyped source.src = js.html.URL.createObjectURL(videoXhr.response, { type: type });
+					} else {
+						untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
+					}
+
+					// Check and try add source here.
+					if (!isAppended && videoWidget != null) {
+						isAppended = true;
+						videoWidget.appendChild(source);
+					}
+				}
+			};
+
+			videoXhr.onerror = onStreamError;
+			videoXhr.send(null);
 		}
 
 		sources.push(source);
 
-		if (videoWidget != null) {
+		// Sometimes we do not have `videoWidget` initialized here. Will do it on source loaded.
+		if (!isAppended && videoWidget != null) {
+			isAppended = true;
 			videoWidget.appendChild(source);
 		}
+
+		Native.defer(function() {
+			js.html.URL.revokeObjectURL(untyped source.src);
+		});
 	}
 
 	public function setVideoExternalSubtitle(src : String, kind : String) : Void -> Void {

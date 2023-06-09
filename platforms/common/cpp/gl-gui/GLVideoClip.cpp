@@ -2,6 +2,7 @@
 
 #include "core/GarbageCollector.h"
 #include "core/RunnerMacros.h"
+#include <QBuffer>
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
@@ -22,6 +23,8 @@ GLVideoClip::GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const
     failed = looping = loaded = playing = false;
     subtitle = new GLTextClip(owner);
     addChild(subtitle);
+
+    customHeadersRequestBuffer = new QBuffer();
 
     updateVolume(1.0f);
     updatePlaybackRate(1.0f);
@@ -435,20 +438,32 @@ void GLVideoClip::setFocus(bool focus)
 
 StackSlot GLVideoClip::playVideo2(RUNNER_ARGS)
 {
-    RUNNER_CopyArgArray(newargs, 1, 1);
+    RUNNER_CopyArgArray(newargs, 1, 2);
     newargs[1] = StackSlot::MakeBool(false);
+    newargs[2] = StackSlot::MakeEmptyArray();
     return playVideo(RUNNER, newargs);
 }
 
 StackSlot GLVideoClip::playVideo(RUNNER_ARGS)
 {
-    RUNNER_PopArgs2(name_str, start_paused);
+    RUNNER_PopArgs3(name_str, start_paused, headers);
     RUNNER_CheckTag1(TString, name_str);
     RUNNER_CheckTag1(TBool, start_paused);
+    RUNNER_CheckTag1(TArray, headers)
 
     name = RUNNER->GetString(name_str);
     failed = false;
     playing = !start_paused.GetBool();
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(headers); i++) {
+       const StackSlot &header_slot = RUNNER->GetArraySlot(headers, i);
+       RUNNER_CheckTag(TArray, header_slot);
+
+       unicode_string name     = RUNNER->GetString(RUNNER->GetArraySlot(header_slot, 0));
+       unicode_string value    = RUNNER->GetString(RUNNER->GetArraySlot(header_slot, 1));
+
+       req_headers[name] = value;
+   }
 
     if (!owner->createNativeWidget(this))
         notifyNotFound();
@@ -623,4 +638,20 @@ StackSlot GLVideoClip::addStreamStatusListener(RUNNER_ARGS)
     RUNNER_PopArgs1(callback);
 
     return addEventCallback(RUNNER, FlowVideoStreamEvent, callback, "addStreamStatusListener$dispose");
+}
+
+void GLVideoClip::applyHeaders(QNetworkRequest *request) {
+    // Set headers for HTTP request
+    for (HttpRequest::T_SMap::iterator it = req_headers.begin(); it != req_headers.end(); ++it)
+    {
+        request->setRawHeader(
+                    unicode2qt(it->first).toLatin1(),
+                    unicode2qt(it->second).toUtf8()
+        );
+    }
+}
+
+GLVideoClip::~GLVideoClip()
+{
+    req_headers.clear();
 }

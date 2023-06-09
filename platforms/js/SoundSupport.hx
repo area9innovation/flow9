@@ -79,7 +79,7 @@ class SoundSupport {
 	#end
 
 	// loadSound : (url : String, onFail : (message : string) -> {}) -> native
-	public static function loadSound(url : String, onFail : String -> Void, onComplete : Void -> Void) : Dynamic {
+	public static function loadSound(url : String, headers : Array<Array<String>>, onFail : String -> Void, onComplete : Void -> Void) : Dynamic {
 		#if (js && !flow_nodejs)
 			if (UseAudioStream) {
 				haxe.Timer.delay(onComplete, 200);
@@ -87,8 +87,11 @@ class SoundSupport {
 			}
 			try {
 				var audio = untyped __js__ ("new Audio()");
-				audio.src = url;
 
+				if (headers.length == 0) {
+					audio.src = url;
+				}
+				
 				var remove_listeners : Dynamic = null;
 				var oncanplay = function() {
 					if (Util.getParameter("devtrace") == "1") Errors.print(url + " loaded");
@@ -100,7 +103,40 @@ class SoundSupport {
 
 				audio.addEventListener("canplay", oncanplay);
 				audio.addEventListener("error",  onerror);
-				audio.load();
+
+				if (headers.length > 0) {
+					var type = "";
+
+					var audioXhr = new js.html.XMLHttpRequest();
+					audioXhr.open("GET", url, true);
+					for (header in headers) {
+						audioXhr.setRequestHeader(header[0], header[1]);
+					}
+					
+					audioXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
+					audioXhr.onload = function (oEvent) {
+						if (audioXhr.status == 200) {
+							if (type == "") {
+								type = audioXhr.getResponseHeader("content-type");
+							}
+							
+							if (type != "") {
+								audio.src = js.html.URL.createObjectURL(audioXhr.response, { type: type });
+							} else {
+								audio.src = js.html.URL.createObjectURL(audioXhr.response);
+							}
+
+							audio.load();
+						} else {
+							onerror();
+						}
+					};
+
+					audioXhr.onerror = onerror;
+					audioXhr.send(null);
+				} else {
+					audio.load();
+				}
 
 				return audio;
 			} catch (e : Dynamic) {
