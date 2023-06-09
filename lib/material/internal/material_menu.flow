@@ -150,21 +150,16 @@ MDynamicMenuHandleShortcuts(
 }
 
 fgetShortcuts(items : Transform<[MMenuLine]>) -> Transform<[MShortcut]> {
+	extractShortcut = \st -> const(extractStructMany(st, MShortcut("shortcut")));
+	extractShortcutSub = \st, subItems -> fconcat(const(extractStructMany(st, MShortcut("shortcut"))), fgetShortcuts(subItems));
 	fsubmap(items, \it ->
 		switch (it : MMenuLine) {
-			MMenuSingleLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
-			MMenuCustomLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
-			MMenuGroupLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
-			MSubMenu(__, subItems, style) :
-				fconcat(
-					const(extractStructMany(style, MShortcut("shortcut"))),
-					fgetShortcuts(const(subItems))
-				);
-			MSubMenuDynamic(__, subItems, style) :
-				fconcat(
-					const(extractStructMany(style, MShortcut("shortcut"))),
-					fgetShortcuts(subItems)
-				);
+			MMenuSingleLine(__, style) : extractShortcut(style);
+			MMenuCustomLine(__, style) : extractShortcut(style);
+			MMenuGroupLine(__, style) : extractShortcut(style);
+			MSubMenu(__, subItems, style) : extractShortcutSub(style, const(subItems));
+			MSubMenuDynamic(__, subItems, style) : extractShortcutSub(style, subItems);
+			MSubMenuCustom(__, subItems, style) : extractShortcutSub(style, subItems);
 			MSeparatorLine() : const([])
 		}
 	)
@@ -1698,7 +1693,7 @@ MMenuLines2Material(
 		}
 	}
 
-	makeMSubMenu = \i, title, items, style : [MSubMenuStyle] -> {
+	makeMSubMenu = \i, title, contentM : Maybe<Material>, items, style : [MSubMenuStyle] -> {
 		subOpenMenu : MOpenMenu = extractStruct(style, MOpenMenu(make(false)));
 		expanding = contains(style, MExpanding());
 		lineTextStyle = \p -> extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(p)))).style;
@@ -1741,7 +1736,10 @@ MMenuLines2Material(
 				secondaryWidth = make(0.);
 
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
-					state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					eitherFn(contentM,
+						\content -> state.m2t(content, parent),
+						\ -> state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth)),
+					)
 					|> addActions(parent, actionsStyle, false, false, primaryWidth, secondaryWidth)
 					|> (\t ->
 						TAlpha(
@@ -1797,7 +1795,10 @@ MMenuLines2Material(
 					|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
 
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
-					state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					eitherFn(contentM,
+						\content -> state.m2t(content, parent),
+						\ -> state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					)
 					|> addActions(parent, style, false, true, primaryWidth, secondaryWidth)
 					|> (\t ->
 						TAlpha(
@@ -1900,9 +1901,11 @@ MMenuLines2Material(
 			MMenuGroupLine(title, style):
 				makeMMenuGroupLine(i, acc, title, style);
 			MSubMenu(title, items, style):
-				makeMSubMenu(i, const(title), const(items), style) |> distributeToColsA(acc);
+				makeMSubMenu(i, const(title), None(), const(items), style) |> distributeToColsA(acc);
 			MSubMenuDynamic(title, items, style):
-				makeMSubMenu(i, title, items, style) |> distributeToColsA(acc);
+				makeMSubMenu(i, title, None(), items, style) |> distributeToColsA(acc);
+			MSubMenuCustom(content, items, style):
+				makeMSubMenu(i, const(""), Some(content), items, style) |> distributeToColsA(acc);
 			MSeparatorLine():
 				makeSeparatorLine(acc);
 		}

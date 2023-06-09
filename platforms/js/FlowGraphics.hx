@@ -652,30 +652,6 @@ class FlowGraphics extends Graphics {
 		}
 		nativeWidget.setAttribute('role', 'presentation');
 		
-		if (graphicsData.length != 1 || isSvg || this.hasMask) {
-			this.setPrintingWorkaround();
-		}
-
 		isNativeWidget = true;
-	}
-
-	private function setPrintingWorkaround() {
-		Browser.window.addEventListener('beforeprint', function () {
-			try {
-				nativeWidget.style.position = 'fixed';
-				for (svg in nativeWidget.getElementsByTagName("svg")) {
-					svg.style.position = '';
-				}
-			} catch (e : Dynamic) {}
-		}, false);
-
-		Browser.window.addEventListener('afterprint', function () {
-			try {
-				nativeWidget.style.position = '';
-				for (svg in nativeWidget.getElementsByTagName("svg")) {
-					svg.style.position = 'absolute';
-				}
-			} catch (e : Dynamic) {}
-		}, false);
 	}
 }
