@@ -36,11 +36,20 @@ procRunner(command: string, args: [string]) -> Pair<SystemProcessOutput, int> {
 
 runTest(test: string, back: string, verb: int) -> TestRun {
 	target = if (back == "java") "jar" else back;
-	if (verb > 2) {
-		println("\n\t\tcompiling target: " + back + " ...");
-	}
 	t1 = timestamp();
-	compile_out = execSystemProcessOutput("flowc1", ["server=0", target + "=1", test], ".");
+	back_compiler_opts = getUrlParameter(back + "-back-opts");
+	back_flowc_opts = getUrlParameter(back + "-flowc-opts");
+	compile_args = concatA([
+		["server=0", target + "=1", test/*, "nim-utf8=1"*/],
+		if (back_compiler_opts == "") [] else [back + "-opts=" + back_compiler_opts],
+		filtermap(strSplit(back_flowc_opts, ","), \opt -> if (opt == "") None() else {
+			Some(opt + "=1")
+		})
+	]);
+	if (verb > 2) {
+		println("\n\t\tcompiling target: " + back + " ...: flowc1 " + strGlue(compile_args, " "));
+	}
+	compile_out = execSystemProcessOutput("flowc1", compile_args, ".");
 	compilation_time = timestamp() - t1;
 	compile_success = strlen(compile_out.stderr) == 0 && compile_out.exitCode == 0;
 	if (!compile_success) {
@@ -49,15 +58,18 @@ runTest(test: string, back: string, verb: int) -> TestRun {
 		}
 		TestRun(false, compilation_time, false, 0.0, 0, compile_out.stdall);
 	} else {
+		test_opts = filtermap(strSplit(getUrlParameter("test-opts"), ","), \opt -> if (opt == "") None() else {
+			Some(opt + "=1")
+		});
 		compiled_test = if (back == "java") changeFileExt(test, ".jar") else changeFileExt(test, "");
 		if (verb > 2) {
 			println("\t\trunning target: " + back + " ...");
 		}
 		t2 = timestamp();
 		run_pair = if (back == "java") {
-			procRunner("java", ["-jar", compiled_test]);
+			procRunner("java", concat(["-jar", compiled_test], test_opts));
 		} else {
-			procRunner(compiled_test, []);
+			procRunner(compiled_test, test_opts);
 		}
 		run_out = run_pair.first;
 		execution_time = timestamp() - t2;
@@ -114,14 +126,22 @@ main() {
 		}
 		success_count = ref 0;
 		failure_count = ref 0;
+		failed_tests = ref [];
 		iter(tests, \test -> {
 			if (verb > 0) {
 				println("Running test: " + test + " ... ");
 			}
+			log_err = \-> {
+				failure_count := ^failure_count + 1;
+				failed_tests := concat(^failed_tests, [test]);
+			}
 			err_file = changeFileExt(test, ".err");
+			if (fileExists(err_file)) {
+				ignore(deleteFile(err_file));
+			}
 			refRun = runTest(test, ref_backend, verb);
 			testRun = runTest(test, test_backend, verb);
-			if (verb > 0) {
+			//if (verb > 0) {
 				if (refRun.compiled != testRun.compiled) {
 					err_msg = if (!refRun.compiled) refRun.output else testRun.output;
 					println(strIndent("Compilation differs, " +
@@ -130,7 +150,7 @@ main() {
 						(if (verb > 1) ", error:\n" + strIndent(err_msg) else "")
 					));
 					setFileContent(err_file, err_msg);
-					failure_count := ^failure_count + 1;
+					log_err();
 				} else if (refRun.executed != testRun.executed) {
 					err_msg = if (!refRun.executed) {
 						ref_backend + " execution output:\n" + refRun.output;
@@ -143,7 +163,7 @@ main() {
 						(if (verb > 1) "\n" + strIndent(err_msg) else "")
 					));
 					setFileContent(err_file, err_msg);
-					failure_count := ^failure_count + 1;
+					log_err();
 				} else if (refRun.output != testRun.output) {
 					ref_out = changeFileExt(test, "." + ref_backend + "_out");
 					test_out = changeFileExt(test, "." + test_backend + "_out");
@@ -163,7 +183,7 @@ main() {
 							println("\t\tkeeping output files: " + ref_out + " and " + test_out + " are kept");
 						}
 					}
-					failure_count := ^failure_count + 1;
+					log_err();
 				} else {
 					println("\tPASSED");
 					success_count := ^success_count + 1;
@@ -174,7 +194,7 @@ main() {
 						"\t" + test_backend + "\t" + run2s(testRun)
 					));
 				}
-			}
+			//}
 		});
 		// cleanup java files
 		if (ref_backend == "java") {
@@ -182,7 +202,8 @@ main() {
 		}
 		println("Testing results:\n" + 
 			"\tpassed: " + i2s(^success_count) + "\n" +
-			"\tfailed: " + i2s(^failure_count) + "\n"
+			"\tfailed: " + i2s(^failure_count) + "\n" +
+			strIndent(strGlue(^failed_tests, "\n"))
 		);
 	}
 	quit(0);
@@ -191,16 +212,21 @@ main() {
 usage = <<Test utility to compare different backends.
 
 Options:
-	back=<backend>                   backend which is test_backend. Must be provided.
-	                                 Currently supported: java, nim
+	back=<backend>                     backend which is test_backend. Must be provided.
+	                                   Currently supported: java, nim
 
-	test=<dir1,dir2,file1,file2...>  test suite, which is used. May contain not full names, just parts. 
-	                                 By default all files in a current directory (recursively) are included into a test suite.
+	test=<dir1,dir2,file1,file2...>    test suite, which is used. May contain not full names, just parts. 
+	                                   By default all files in a current directory (recursively) are included into a test suite.
 
-	ref-back=<backend>               reference backend, whith which tested is compared. Default is java.
-	exclude=<name1,name2,...>        skip those tests.
-	keep-src=1                       do not erase generated sources.
-	keep-exe=1                       do not erase test executable.
-	keep-out=1                       do not erase original output files which are used to produce diff.
-	time-stats=1                     show time statistics: compilation time and execution time. Default is true
+	ref-back=<backend>                 reference backend, whith which tested is compared. Default is java.
+	exclude=<name1,name2,...>          skip those tests.
+	keep-src=1                         do not erase generated sources.
+	keep-exe=1                         do not erase test executable.
+	keep-out=1                         do not erase original output files which are used to produce diff.
+
+	<back>-flowc-opts=<opt1,opt2,...>  options, passed to flowc compiler, when transpiling to a target.
+	<back>-back-opts=<opt1,opt2,...>   options, passed to backend compiler.
+	test-opts=<opt1,opt2,...>          options, passed to the final program when executing the test.
+
+	time-stats=1                       show time statistics: compilation time and execution time. Default is true
 >>

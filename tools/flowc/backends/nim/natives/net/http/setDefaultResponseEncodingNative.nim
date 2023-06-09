@@ -2,8 +2,8 @@
 
 import http_utils
 
-proc setDefaultResponseEncodingNative*(encoding : string) =
-    defaultResponseEncoding = encoding
+proc setDefaultResponseEncodingNative*(encoding : RtString) =
+    defaultResponseEncoding = rt_string_to_utf8(encoding)
 
     var encodingName = ""
     if (encoding == "auto"):

@@ -44,8 +44,17 @@ export {
     // setfn returns None() when destroyed
     MPrintPagesExtractPNG(m : [Material], size : Transform<WidthHeight>, setfn : (fn : Maybe<(page : int, cb : (png : string) -> void) -> void>) -> void) -> Material;
 
+	MPrintPagesExtractPNG2(
+		mp : [Pair<DynamicBehaviour<bool>, Material>],
+		size : Transform<WidthHeight>,
+		setfn : (fn : Maybe<(page : int, cb : (png : string) -> void) -> void>) -> void
+	) -> Material;
+
 	// Default chrome print dialog sizes
 	MPrintPaperSizes : [Pair<string, WidthHeight>];
+
+	// Workaround for Chrome resizing print page when DOM element with absolute positioning is scaled. Not for general use.
+	MPrintNeutral(m : Material) { MAccess([ClassName("printNeutral")], m) }
 
 	// Printing units helpers
 
@@ -181,7 +190,7 @@ ShowMPrintPagesDialog(manager : MaterialManager, printPagesT : Transform<[MPrint
     heightS = make("29.7");
     isReady = make(false);
 	pagesB = make(MEmpty());
-	
+
 	ShowMDialog(
         manager,
         close,
@@ -192,7 +201,7 @@ ShowMPrintPagesDialog(manager : MaterialManager, printPagesT : Transform<[MPrint
                 MTextButton(_("PRINT"), \ -> {
 					onOK();
 					// Print pages to update pagesB
-					next(pagesB, 
+					next(pagesB,
 						MCropSize(
 							TFixed(0.0, 0.0),
 							MPrintPages(fmap(printPagesT, \p ->
@@ -324,4 +333,47 @@ MPrintPagesExtractPNG(m : [Material], size : Transform<WidthHeight>, setfn : (fn
             )
         )
     )
+}
+
+MPrintPagesExtractPNG2(
+	mp : [Pair<DynamicBehaviour<bool>, Material>],
+	size : Transform<WidthHeight>,
+	setfn : (fn : Maybe<(page : int, cb : (png : string) -> void) -> void>) -> void
+) -> Material {
+
+	pngFn = make(generate(0, length(mp), \__ -> None()));
+	pngMode = generate(0, length(mp), \__ -> make(false));
+
+	MConstruct(
+		[
+			makeSubscribe(pngFn, \pfn -> {
+				if (!contains(pfn, None())) {
+					setfn(Some(\i, cb -> {
+						next(pngMode[i], true);
+						maybeApply(pfn[i], \fn -> fn(\v -> {
+							deferUntilNextFrameRendered(\ -> next(pngMode[i], false));
+							cb(v);
+						}));
+					}))
+				} else {
+					setfn(None())
+				}
+			})
+		],
+		MLines(
+			mapi(mp, \i, mm -> unpair(mm, \ready, m ->
+				MExtractPNG2(
+					MIf(
+						pngMode[i],
+						MAccess([ClassName("print-page")],
+							MAvailable(m, TSized(size))
+						),
+						TEmpty()
+					),
+					ready,
+					\fn -> next(pngFn, replace(getValue(pngFn), i, fn))
+				)
+			))
+		)
+	)
 }

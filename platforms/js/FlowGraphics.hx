@@ -651,7 +651,7 @@ class FlowGraphics extends Graphics {
 			nativeWidget.classList.add(this.className);
 		}
 		nativeWidget.setAttribute('role', 'presentation');
-
+		
 		isNativeWidget = true;
 	}
 }

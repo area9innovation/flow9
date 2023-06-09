@@ -17,21 +17,31 @@ export {
 	// Map two cases of a typename: a struct and a union
 	fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (FiTypeName) -> ?) -> ?;
 
+	// Same as fiMapTypeName, but don't consider type parameters - use default from definition
+	fiMapTypeWithName(name: string, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (string) -> ?) -> ? ;
+
 	// Get all typenames used in a struct or union definition
 	fiStructOrUnionTypenames(tp: FiStructOrUnion, acc: Set<FiTypeName>) -> Set<FiTypeName>;
 
 	// Get all typenames used in a type
 	fiTypeTypenames(tp: FiType, acc: Set<FiTypeName>) -> Set<FiTypeName>;
+
+	// Check if an expression is like:  `x.f1.f2.f3`
+	fiExpIsNestedField(e: FiExp) -> bool;
+
+	// Convert types to type parameters. Used to take typars of FiTypeStruct/FiTypeUnion.
+	fiTypes2typars(ts: [FiType]) -> [FiTypeParameter];
 }
 
 fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
+	if (length(tn.typeparameters) != length(s.typars)) {
+		fail0("length of struct typeparameters mismatch with length of typename typeparameters: " + i2s(length(s.typars)) + " != " + i2s(length(tn.typeparameters)) + " (length(tn.typeparameters))\n" +
+			"struct: " + pretFiStructOrUnion(s) + ", typename: " + pretFiType(tn)
+		);
+	}
 	typars_subst = foldi(s.typars, makeTree(), \i, acc, tp -> 
 		switch (tp) {
-			FiTypeParameter(nm): {
-				if (i < length(tn.typeparameters)) {
-					setTree(acc, nm, tn.typeparameters[i]);
-				} else acc
-			}
+			FiTypeParameter(nm): setTree(acc, nm, tn.typeparameters[i]);
 			default: fail0("must be FiTypeParameter, got: " + toString(tp));
 		}
 	);
@@ -105,6 +115,24 @@ fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) ->
 	}
 }
 
+fiMapTypeWithName(name: string, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (string) -> ?) -> ? {
+	switch (lookupTree(names.structs, name)) {
+		Some(struct): {
+			fn_struct(struct);
+		}
+		None(): {
+			switch (lookupTree(names.unions, name)) {
+				Some(union): {
+					fn_union(union);
+				}
+				None(): {
+					err(name);
+				}
+			}
+		}
+	}
+}
+
 fiStructOrUnionTypenames(type: FiStructOrUnion, acc: Set<FiTypeName>) -> Set<FiTypeName> {
 	switch (type) {
 		FiTypeUnion(__, typars, typenames,__): {
@@ -145,4 +173,24 @@ fiTypeTypenames(type: FiType, acc: Set<FiTypeName>) -> Set<FiTypeName> {
 		FiTypeFlow():       acc;
 		FiTypeNative():     acc;
 	}
+}
+
+fiExpIsNestedField(e: FiExp) -> bool {
+	switch (e) {
+		FiVar(__,__,__): true;
+		FiCallPrim(op, es,__,__): {
+			switch (op) {
+				FcFieldPrim(__): fiExpIsNestedField(es[0]);
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
+fiTypes2typars(ts: [FiType]) -> [FiTypeParameter] {
+	map(ts, \t -> switch (t) {
+		FiTypeParameter(__): t;
+		default: fail0("must be a type parameter, got: " + pretFiType(t));
+	})
 }

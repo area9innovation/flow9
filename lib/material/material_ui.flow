@@ -149,7 +149,8 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton, MBrowseDialogStyles;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector,
+		MHideBrowseButton, MBrowseDialogStyles, MLazyAutoCompleteDictionary;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -164,6 +165,8 @@ export {
 		MHideBrowseButton(); // Browse button is shown by default in autocomplete mode
 		MBrowseDialogStyles(style : [MBrowseDialogStyle]);
 			MBrowseDialogStyle ::= MDialogStyle, MDynamicListStyle;
+		// We can use MAutoComplete with dynamic dictionary and update the dictionary according to input string
+		MLazyAutoCompleteDictionary(dictionaryT : Transform<[string]>, subscribeInput : (Transform<string>) -> () -> void);
 
 	MCollapsingBox(
 		content : Material,
@@ -305,7 +308,7 @@ MRadioArrowNavigation(
 	resetSelection : () -> bool,
 	keys : Pair<int, int>
 ) -> Material {
-	MRadioArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, selectItem, resetSelection, keys).first;	
+	MRadioArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, selectItem, resetSelection, keys).first;
 }
 
 MRadioArrowNavigationExt(
@@ -1033,10 +1036,23 @@ MDropDownOrAutoComplete(
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
 	changeOnlyOnClick = contains(style, MChangeOnClick());
+	lazyDictionaryM = tryExtractStruct(style, MLazyAutoCompleteDictionary(const([]), \__ -> nop));
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	anyItem = extractStruct(style, MCustomAnyItem(_("Any"))).text;
-	items = concat(if (showAnyItem) [anyItem] else [], items0);
+	addAny = \items2 -> concat(if (showAnyItem) [anyItem] else [], items2);
+	itemsT0 = eitherFn(
+		lazyDictionaryM,
+		\lazyDictionary -> lazyDictionary.dictionaryT,
+		\ -> {
+			eitherFn(
+				tryExtractStruct(style, MDictionaryDynamic(const([]))),
+				\st -> st.dictionaries,
+				\ -> const(items0)
+			);
+		}
+	);
+	itemsT = fselectLift(itemsT0, addAny);
 
 	isError =
 		eitherMap(
@@ -1047,9 +1063,15 @@ MDropDownOrAutoComplete(
 
 	makeMAutoCompleteControl = \manager -> {
 		inputInspector = tryExtractStruct(style, MInputInspector(make("")));
-		idx2string = \idx -> elementAt(items, idx, if (showAnyItem) items[0] else eitherMap(inputInspector, \inp -> getValue(inp.text), ""));
+		idx2string = \idx -> {
+			items = fgetValue(itemsT);
+			elementAt(items, idx, if (showAnyItem) items[0] else eitherMap(inputInspector, \inp -> getValue(inp.text), ""));
+		}
 		trimStr = \s -> trim(s) |> toLowerCase;
-		string2idx = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+		string2idx = \str -> {
+			str2 = trimStr(str);
+			findiDef(fgetValue(itemsT), \item -> trimStr(item) == str2, -1);
+		}
 
 		selectedStrB = make(if (isSome(multiSelection)) "" else idx2string(getValue(selected)));
 
@@ -1083,21 +1105,28 @@ MDropDownOrAutoComplete(
 						MTextInput(filterText, [], [])
 					);
 
-					matcher = simpleBuildSentenceMatcher(items);
-					filteredItems = fselect(filterText, FLift(\txt -> {
-						itms =
-							if (txt == "") mapi(items, \i, it -> Pair(it, i))
-							else map(
-								simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
-								\hit -> {
-									index = switch(hit : SentenceMatch) {
-										SentenceHit(__, __, __, __) : string2idx(hit.sentence);
-										SentenceHitExtended(__, __, __, __, idx) : idx;
+					makeFilterItems = \dictionary -> {
+						matcher = simpleBuildSentenceMatcher(dictionary);
+						fselectLift(filterText, \txt -> {
+							itms = if (txt == "") {
+								mapi(dictionary, \i, it -> Pair(it, i));
+							} else {
+								map(
+									simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
+									\hit -> {
+										index = switch(hit : SentenceMatch) {
+											SentenceHit(__, __, __, __) : string2idx(hit.sentence);
+											SentenceHitExtended(__, __, __, __, idx) : idx;
+										}
+										Pair(hit.sentence, index)
 									}
-									Pair(hit.sentence, index)
-								}
-							);
-						sortCustom(itms, \str -> toLowerCase(str.first), true);
+								);
+							}
+							sortCustom(itms, \str -> toLowerCase(str.first), true);
+						});
+					}
+					filteredItems = fsubselect(itemsT, FLift(\dictionary -> {
+						makeFilterItems(dictionary);
 					}));
 					selectedItems = make([]);
 
@@ -1147,7 +1176,17 @@ MDropDownOrAutoComplete(
 					], m));
 
 					listWidth = make(0.);
-					dialogContent = MLines2A(MAvailableWidth(filterInput, listWidth), MAttachWidth(list, listWidth));
+					dialogContent0 = MLines2A(MAvailableWidth(filterInput, listWidth), MAttachWidth(list, listWidth));
+					dialogContent = eitherMap(
+						lazyDictionaryM,
+						\lazyDictionary -> {
+							MConstruct(
+								[\ -> lazyDictionary.subscribeInput(filterText)],
+								dialogContent0
+							);
+						},
+						dialogContent0
+					);
 
 					ShowMDialog(manager, dialogClose, concat(dialogStyle, [
 						MDialogUseFrame(),
@@ -1160,7 +1199,9 @@ MDropDownOrAutoComplete(
 				concat(st, [MRightCustomButton(
 					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse Content")))])
 				), MShowDropDownArrow(false)])
-			});
+			})
+			|> (\st -> replaceStruct(st, MDictionaryDynamic(itemsT)))
+		;
 		autoCompleteState0 =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
@@ -1174,7 +1215,7 @@ MDropDownOrAutoComplete(
 		eitherFn(
 			multiSelection,
 			\ms ->
-				MAutoCompleteMultiSelectionBase(items, ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
+				MAutoCompleteMultiSelectionBase(fgetValue(itemsT), ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
 			\ -> {
 				preventSelectedChange = ref false;
 
@@ -1198,7 +1239,8 @@ MDropDownOrAutoComplete(
 								};
 								defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
 							})
-					)));
+					)))
+				;
 
 				autoCompleteState =
 					autoCompleteState0
@@ -1208,13 +1250,18 @@ MDropDownOrAutoComplete(
 					});
 
 				MConstruct(
-					[
-						\ -> bidirectionalLink(selected, selectedStrB,
+					concat(
+						[\ -> bidirectionalLink(selected, selectedStrB,
 							\idx -> idx2string(idx),
 							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idx(str)
+						)],
+						eitherMap(
+							lazyDictionaryM,
+							\lazyDictionary -> [\ -> lazyDictionary.subscribeInput(selectedStrB)],
+							[]
 						)
-					],
-					MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
+					),
+					MAutoComplete(selectedStrB, [], autoCompleteStyle, autoCompleteState)
 				)
 			}
 		)
@@ -1226,15 +1273,15 @@ MDropDownOrAutoComplete(
 		)
 	}
 
-	if (length(items0) > limit)
+	if (length(items0) > limit || isSome(lazyDictionaryM))
 		MGetManager(makeMAutoCompleteControl)
 	else
 		eitherMap(
 			multiSelection,
-			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
+			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, fgetValue(itemsT), concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
 			MConstruct(
 				[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
-				MDropDown(selected, "", items, extractStruct(style, MDropDownStyles([])).style)
+				MDropDown(selected, "", fgetValue(itemsT), extractStruct(style, MDropDownStyles([])).style)
 			)
 		)
 		|> (\m -> eitherMap(labelM,	\labelStyle ->
