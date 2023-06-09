@@ -1,2 +1,2 @@
-proc $F_0(strlen)*(s: string): int32 =
-  return cast[int32](runeLen(s));
+proc $F_0(strlen)*(s: RtString): int32 =
+  return rt_string_len(s)

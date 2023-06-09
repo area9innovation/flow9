@@ -2,5 +2,5 @@
 
 import md5
 
-proc $F_0(md5)(s : string): string =
-  getMD5(s)
+proc $F_0(md5)(s : RtString): RtString =
+  rt_utf8_to_string(getMD5(rt_string_to_utf8(s)))

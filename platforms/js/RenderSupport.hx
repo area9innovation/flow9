@@ -517,7 +517,7 @@ class RenderSupport {
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
-		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+		browserZoom = Platform.isSamsung ? Math.max(Browser.window.outerWidth / Browser.window.innerWidth, 1.0) : Browser.window.outerWidth / Browser.window.innerWidth;
 
 		if (!Platform.isMobile && browserZoom != 1.0) {
 			accessibilityZoom = 1.0;
@@ -1187,7 +1187,7 @@ class RenderSupport {
 		if (backingStoreRatio != PixiRenderer.resolution) {
 			createPixiRenderer();
 		} else {
-			var win_width = e.target.innerWidth;
+			var win_width = Platform.isSamsung ? Math.min(e.target.innerWidth, e.target.outerWidth) : e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
 			if (viewportScaleWorkaroundEnabled) {

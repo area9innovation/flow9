@@ -1,12 +1,3 @@
-import os
-import strutils
-
-proc $F_0(getUrlParameterNative)*(name: string): string =
-  # params from main() ?
-  when declared(commandLineParams):
-    let prefix = name & "="
-    for arg in commandLineParams():
-      if arg.startsWith(prefix):
-        return arg[prefix.len .. ^1]
-  else:
-    result = ""
+proc $F_0(getUrlParameterNative)*(name: RtString): RtString =
+  # getUrlParameterNative  is implemented in flow_lib/url_parameters
+  return rt_utf8_to_string(getUrlParameterNative(rt_string_to_utf8(name)))

@@ -1040,7 +1040,19 @@ MDropDownOrAutoComplete(
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	anyItem = extractStruct(style, MCustomAnyItem(_("Any"))).text;
-	items = concat(if (showAnyItem) [anyItem] else [], items0);
+	addAny = \items2 -> concat(if (showAnyItem) [anyItem] else [], items2);
+	itemsT0 = eitherFn(
+		lazyDictionaryM,
+		\lazyDictionary -> lazyDictionary.dictionaryT,
+		\ -> {
+			eitherFn(
+				tryExtractStruct(style, MDictionaryDynamic(const([]))),
+				\st -> st.dictionaries,
+				\ -> const(items0)
+			);
+		}
+	);
+	itemsT = fselectLift(itemsT0, addAny);
 
 	isError =
 		eitherMap(
@@ -1051,9 +1063,15 @@ MDropDownOrAutoComplete(
 
 	makeMAutoCompleteControl = \manager -> {
 		inputInspector = tryExtractStruct(style, MInputInspector(make("")));
-		idx2string = \idx -> elementAt(items, idx, if (showAnyItem) items[0] else eitherMap(inputInspector, \inp -> getValue(inp.text), ""));
+		idx2string = \idx -> {
+			items = fgetValue(itemsT);
+			elementAt(items, idx, if (showAnyItem) items[0] else eitherMap(inputInspector, \inp -> getValue(inp.text), ""));
+		}
 		trimStr = \s -> trim(s) |> toLowerCase;
-		string2idx = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+		string2idx = \str -> {
+			str2 = trimStr(str);
+			findiDef(fgetValue(itemsT), \item -> trimStr(item) == str2, -1);
+		}
 
 		selectedStrB = make(if (isSome(multiSelection)) "" else idx2string(getValue(selected)));
 
@@ -1091,7 +1109,7 @@ MDropDownOrAutoComplete(
 						matcher = simpleBuildSentenceMatcher(dictionary);
 						fselectLift(filterText, \txt -> {
 							itms = if (txt == "") {
-								mapi(items, \i, it -> Pair(it, i));
+								mapi(dictionary, \i, it -> Pair(it, i));
 							} else {
 								map(
 									simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
@@ -1107,15 +1125,9 @@ MDropDownOrAutoComplete(
 							sortCustom(itms, \str -> toLowerCase(str.first), true);
 						});
 					}
-					filteredItems = eitherFn(
-						lazyDictionaryM,
-						\lazyDictionary -> {
-							fsubselect(lazyDictionary.dictionaryT, FLift(\dictionary -> {
-								makeFilterItems(dictionary);
-							}));
-						},
-						\ -> makeFilterItems(items)
-					);
+					filteredItems = fsubselect(itemsT, FLift(\dictionary -> {
+						makeFilterItems(dictionary);
+					}));
 					selectedItems = make([]);
 
 					onItemClick = \it -> \ -> {
@@ -1187,7 +1199,9 @@ MDropDownOrAutoComplete(
 				concat(st, [MRightCustomButton(
 					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse Content")))])
 				), MShowDropDownArrow(false)])
-			});
+			})
+			|> (\st -> replaceStruct(st, MDictionaryDynamic(itemsT)))
+		;
 		autoCompleteState0 =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
@@ -1201,7 +1215,7 @@ MDropDownOrAutoComplete(
 		eitherFn(
 			multiSelection,
 			\ms ->
-				MAutoCompleteMultiSelectionBase(items, ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
+				MAutoCompleteMultiSelectionBase(fgetValue(itemsT), ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
 			\ -> {
 				preventSelectedChange = ref false;
 
@@ -1226,11 +1240,6 @@ MDropDownOrAutoComplete(
 								defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
 							})
 					)))
-					|> (\st -> eitherMap(
-						lazyDictionaryM,
-						\lazyDictionary -> replaceStruct(st, MDictionaryDynamic(lazyDictionary.dictionaryT)),
-						st
-					))
 				;
 
 				autoCompleteState =
@@ -1252,7 +1261,7 @@ MDropDownOrAutoComplete(
 							[]
 						)
 					),
-					MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
+					MAutoComplete(selectedStrB, [], autoCompleteStyle, autoCompleteState)
 				)
 			}
 		)
@@ -1269,10 +1278,10 @@ MDropDownOrAutoComplete(
 	else
 		eitherMap(
 			multiSelection,
-			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
+			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, fgetValue(itemsT), concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
 			MConstruct(
 				[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
-				MDropDown(selected, "", items, extractStruct(style, MDropDownStyles([])).style)
+				MDropDown(selected, "", fgetValue(itemsT), extractStruct(style, MDropDownStyles([])).style)
 			)
 		)
 		|> (\m -> eitherMap(labelM,	\labelStyle ->
