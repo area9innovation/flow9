@@ -67,11 +67,11 @@ void FileLocalStore::SetBasePath(std::string path)
         if (mkdir(base_path.c_str(), 0770) && errno != EEXIST)
 #endif
             cerr << "Could not create directory: " << base_path << endl;
-    }
 
-#ifndef _MSC_VER
-    chdir(path.c_str());
+#ifdef ANDROID
+    	chdir(path.c_str());
 #endif
+    }
 }
 
 std::string FileLocalStore::makePath(unicode_string key)

@@ -4,6 +4,7 @@
 #include "GLClip.h"
 #include "GLRenderer.h"
 #include "GLTextClip.h"
+#include <QBuffer>
 
 class GLVideoClip : public GLClip
 {
@@ -43,6 +44,7 @@ protected:
     unicode_string name;
     int media_stream_id;
     bool use_media_stream;
+    HttpRequest::T_SMap req_headers;
 
     int64_t position, lastPosition, duration, start, end;
     bool playing, failed, looping, loaded;
@@ -54,6 +56,8 @@ protected:
     StateChange current_event;
 
     GLTextClip *subtitle;
+
+    QBuffer *customHeadersRequestBuffer = nullptr;
 
     void update();
     void updatePlay(bool playing, bool video_response, bool notify = true);
@@ -76,6 +80,7 @@ protected:
     void notifyPosition(int64_t position);
 public:
     GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const StackSlot &play_cb, const StackSlot &dur_cb, const StackSlot &pos_cb);
+    ~GLVideoClip();
 
     enum Event {
         PlayStart = 0, // Loaded and/or start of video
@@ -98,6 +103,8 @@ public:
     bool useMediaStream() { return use_media_stream; }
     const unicode_string &getName() { return name; }
     int getMediaStreamId() { return media_stream_id; }
+    bool isHeadersSet() { return req_headers.size() > 0; }
+    void applyHeaders(QNetworkRequest *request);
 
     bool isPlaying() { return playing; }
     bool isLooping() { return looping; }
