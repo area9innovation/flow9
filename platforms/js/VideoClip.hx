@@ -559,16 +559,17 @@ class VideoClip extends FlowContainer {
 					
 					if (type != "") {
 						untyped source.type = type;
-						untyped source.src = js.html.URL.createObjectURL(videoXhr.response/*, { type: type }*/);
-					} else {
-						untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
 					}
-
+					
+					untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
+					
 					// Check and try add source here.
 					if (!isAppended && videoWidget != null) {
 						isAppended = true;
 						videoWidget.appendChild(source);
 					}
+				} else if (videoXhr.status >= 400) {
+					onStreamError();
 				}
 			};
 
