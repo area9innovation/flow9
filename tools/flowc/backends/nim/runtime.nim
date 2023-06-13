@@ -266,9 +266,6 @@ proc rt_unescape*(s: RtString): RtString =
       inc j
     return r
 
-#proc `<`(a: String, b: String): bool =
-#  when use16BitString:
-#	return a < b
 when use16BitString:
   proc hash(s: RtString): Hash =
     var h: Hash = 0
@@ -410,9 +407,6 @@ type
 
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(ntp: ntHttpServer, s : srv)
-
-# Function type traits/utils
-$A_0
 
 # Flow type traits
 template rt_type_is_flow*(X: typedesc[Flow]): bool = true
