@@ -4,7 +4,6 @@
 #include "GLClip.h"
 #include "GLRenderer.h"
 #include "GLTextClip.h"
-#include <QBuffer>
 
 class GLVideoClip : public GLClip
 {
@@ -57,8 +56,6 @@ protected:
 
     GLTextClip *subtitle;
 
-    QBuffer *customHeadersRequestBuffer = nullptr;
-
     void update();
     void updatePlay(bool playing, bool video_response, bool notify = true);
     void updatePosition(int64_t position, bool video_response, bool notify = true);
@@ -104,7 +101,7 @@ public:
     const unicode_string &getName() { return name; }
     int getMediaStreamId() { return media_stream_id; }
     bool isHeadersSet() { return req_headers.size() > 0; }
-    void applyHeaders(QNetworkRequest *request);
+    HttpRequest::T_SMap getHeaders();
 
     bool isPlaying() { return playing; }
     bool isLooping() { return looping; }

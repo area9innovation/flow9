@@ -197,6 +197,7 @@ protected:
     
     void resolvePictureDataAsBitmap(unicode_string url, NSData * data);
     bool loadPicture(unicode_string url, bool cache);
+    bool loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache);
     
     void abortPictureLoading(unicode_string url);
     

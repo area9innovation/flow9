@@ -133,14 +133,15 @@ class VideoClip extends FlowContainer {
 		createStreamStatusListeners();
 		createFullScreenListeners();
 
-		this.onAdded(function() {
-			RenderSupport.on("enable_sprites", enableSprites);
+		if (!this.isAudio) {
+			this.onAdded(function() {
+				RenderSupport.on("enable_sprites", enableSprites);
 
-			return function() {
-				RenderSupport.off("enable_sprites", enableSprites);
-				disableSprites();
-			}
-		});
+				return function() {
+					RenderSupport.off("enable_sprites", enableSprites);
+				}
+			});
+		}
 
 		once("removed", deleteVideoClip);
 	}
@@ -366,12 +367,6 @@ class VideoClip extends FlowContainer {
 		}
 
 		addVideoSprite();
-		RenderSupport.on("disable_sprites", disableSprites);
-	}
-
-	private function disableSprites() : Void {
-		deleteVideoSprite();
-		RenderSupport.off("disable_sprites", disableSprites);
 	}
 
 	public function getCurrentTime() : Float {

@@ -235,7 +235,16 @@ VideoCustomRequest::VideoCustomRequest(QWidget *parent)
 void VideoCustomRequest::setMediaFromCustomRequest(QUrl qUrl, GLVideoClip* video_clip, QMediaPlayer* player, std::function<void (QString)> onError)
 {
     this->request = QNetworkRequest(qUrl);
-    video_clip->applyHeaders(&request);
+    HttpRequest::T_SMap headers = video_clip->getHeaders();
+
+    // Set headers for HTTP request
+    for (HttpRequest::T_SMap::iterator it = headers.begin(); it != headers.end(); ++it)
+    {
+        request.setRawHeader(
+                    unicode2qt(it->first).toLatin1(),
+                    unicode2qt(it->second).toUtf8()
+        );
+    }
 
     connect(manager, &QNetworkAccessManager::finished, this, [this, player, onError](QNetworkReply* reply)
     {
