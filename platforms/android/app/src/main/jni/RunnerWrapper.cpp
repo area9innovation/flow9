@@ -1325,6 +1325,12 @@ void AndroidRenderSupport::doSetInterfaceOrientation(std::string orientation)
     env->CallVoidMethod(owner->owner, cbSetInterfaceOrientation, jorientation);
 }
 
+bool AndroidRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache)
+{
+    // TODO: Implement headers for loadPicture
+    return this->loadPicture(url, cache);
+}
+
 bool AndroidRenderSupport::loadPicture(unicode_string url, bool cache)
 {
     JNIEnv *env = owner->env;
