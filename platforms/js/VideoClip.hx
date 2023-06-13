@@ -133,14 +133,16 @@ class VideoClip extends FlowContainer {
 		createStreamStatusListeners();
 		createFullScreenListeners();
 
-		this.onAdded(function() {
-			RenderSupport.on("enable_sprites", enableSprites);
+		if (!this.isAudio) {
+			this.onAdded(function() {
+				RenderSupport.on("enable_sprites", enableSprites);
 
-			return function() {
-				RenderSupport.off("enable_sprites", enableSprites);
-				disableSprites();
-			}
-		});
+				return function() {
+					RenderSupport.off("enable_sprites", enableSprites);
+					disableSprites();
+				}
+			});
+		}
 
 		once("removed", deleteVideoClip);
 	}
