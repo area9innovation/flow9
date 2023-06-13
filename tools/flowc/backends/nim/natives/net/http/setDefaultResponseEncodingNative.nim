@@ -2,7 +2,7 @@
 
 import http_utils
 
-proc setDefaultResponseEncodingNative*(encoding : RtString) =
+proc $F_0(setDefaultResponseEncodingNative)*(encoding : RtString) =
     defaultResponseEncoding = rt_string_to_utf8(encoding)
 
     var encodingName = ""

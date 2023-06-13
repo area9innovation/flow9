@@ -1,4 +1,4 @@
-proc $F_0(getDataTagForValue)(v: Flow): int32 =
+proc $F_0(getDataTagForValue)*(v: Flow): int32 =
   case v.tp:
   of rtVoid:   return 0
   of rtBool:   return 1

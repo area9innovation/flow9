@@ -1,0 +1,61 @@
+import tools/flowc/backends/nim/fi2nim_assemble;
+import sys/process;
+
+export {
+	fi2nimBuild(cfg: FiNimConfig, callback : (int) -> void) -> void;
+}
+
+fi2nimBuild(cfg: FiNimConfig, callback : (int) -> void) -> void {
+	if (isConfigParameterFalse(cfg.options, "exe")) {
+		// No need to build binary
+		callback(0);
+	} else {
+		debug = isConfigParameterSet(cfg.options, "nim-debug");
+		final_exe = changeFileExt(cfg.outputfile, "");
+		opts = concatA([
+			filter(strSplit(getConfigParameter(cfg.options, "nim-opts"), ","), \opt -> !isSpace(opt)),
+			["--overflowChecks:off", "--threads:on", "-f", "-d:ssl", "--path:flow_lib", "--out:" + final_exe],
+			if (debug) ["--debuginfo:on"] else [],
+			if (getConfigParameterDef(cfg.options, "nim-utf8", "") == "1") ["-d:UTF8"] else [],
+			if (!debug && getConfigParameterDef(cfg.options, "nim-release", "1") == "1") ["-d:release"] else [],
+			if (isConfigParameterSet(cfg.options, "nim-profile")) ["--profiler:on", "--stacktrace:on"] else [],
+		]);
+		gen_dir = if2nimGenDir(cfg);
+		main_src = if (isConfigParameterTrue(cfg.options, "nim-mono")) cfg.outputfile else {
+			pathCombine(gen_dir, fiNimRenameFile(cfg.outputfile));
+		}
+		command_args = concat(opts, ["c", main_src]);
+		if (cfg.verbose > 0) {
+			fcPrintln("Going to build nim target: '" + main_src + "' with tmp dir for sources: '" + gen_dir + "' \n" + 
+			"nim " + strGlue(command_args, " "), cfg.threadId);
+		}
+		out = execSystemProcessOutput("nim", command_args, ".");
+		if (out.exitCode != 0) {
+			fcPrintln("Building of '" + main_src + "' in directory: '" + gen_dir + "' failed:\n" + out.stdall, cfg.threadId);
+			callback(5);
+		} else {
+			if (cfg.verbose > 0) {
+				fcPrintln("Building of '" + main_src + "' finished.", cfg.threadId);
+				if (cfg.verbose > 1) {
+					fcPrintln("Nim compiler output:", cfg.threadId);
+					fcPrintln(out.stdall, cfg.threadId);
+				}
+			}
+			fcPrintln("Executable '" + final_exe + "' is generated.", cfg.threadId);
+			cleanup_err = ref false;
+			show_err = \err -> if (err != "") {
+				cleanup_err := true;
+				fcPrintln(err, cfg.threadId);
+			}
+			if (getConfigParameterDef(cfg.options, "nim-cleanup", "1") == "1") {
+				if (isConfigParameterTrue(cfg.options, "nim-mono")) {
+					show_err(deleteRecursively("flow_lib"));
+					show_err(deleteFile(main_src));
+				} else {
+					show_err(deleteRecursively(gen_dir));
+				}
+			}
+			if (^cleanup_err) callback(5) else callback(0);
+		}
+	}
+}

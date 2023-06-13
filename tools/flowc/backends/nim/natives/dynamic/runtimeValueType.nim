@@ -1,4 +1,4 @@
-proc $F_0(runtimeValueType)(v: Flow): RtString =
+proc $F_0(runtimeValueType)*(v: Flow): RtString =
   case v.tp:
   of rtVoid:   return rt_utf8_to_string("void")
   of rtBool:   return rt_utf8_to_string("bool")

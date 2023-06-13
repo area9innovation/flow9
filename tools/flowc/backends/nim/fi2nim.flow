@@ -2,9 +2,8 @@ import tools/flowc/backends/nim/fi2nim_assemble;
 import tools/flowc/backends/nim/fi2nim_types;
 import tools/flowc/backends/nim/fi2nim_compile;
 import tools/flowc/backends/nim/fi2nim_transform;
+import tools/flowc/backends/nim/fi2nim_build;
 import tools/flowc/manipulation/specialization;
-
-import sys/process;
 
 export {
 	fi2nim(program : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> void;
@@ -18,18 +17,37 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 	env = fi2nimInitEnv(program, cfg);
 	runtime = fi2nimRuntime(env);
 	types = fi2nimCompileTypes(env);
-	source = fi2nimCompileSourceCode(env, runtime);
 
-	fi2nimAssemble(cfg, fi2nimJoinNimCodeMany([
-		NimLine(0, "#[ COMMON RUNTIME ]#"),
-		NimLine(0, runtime),
-		NimLine(0, "#[ TYPES ]#"),
-		fi2nimCompileTypes(env),
-		NimLine(0, "#[ SOURCE CODE ]#"),
-		source,
-		NimLine(0, "main()")
-	]));
-	fi2nimBuild(env.prog, cfg, callback);
+	compiled = if (isConfigParameterTrue(cfg.options, "nim-mono")) {
+		[NimCompiledSource(cfg.outputfile, fi2nimJoinNimCodeMany([
+			NimLine(0, "#[ COMMON RUNTIME ]#"),
+			NimLine(0, runtime),
+			NimLine(0, "#[ TYPES ]#"),
+			types,
+			NimLine(0, "#[ SOURCE CODE ]#"),
+			fi2nimCompileSourceCode(env, runtime),
+			NimLine(0, "main()")
+		]))];
+	} else {
+		concat(
+			[NimCompiledSource("flow_runtime", NimLine(0, runtime)),
+			NimCompiledSource("flow_types", 
+				fi2nimJoinNimCodeMany([
+					NimLine(0, "import osproc"),
+					NimLine(0, "import strutils"),
+					NimLine(0, "import sequtils"),
+					NimLine(0, "import asyncdispatch"),
+					NimLine(0, "import flow_lib/httpServer_type"),
+					NimLine(0, "import flow_runtime"),
+					fi2nimCompileTypes(env)
+				])
+			)],
+			map(getTreeValues(env.prog.modules), \m -> fiNimCompileModule(env, m))
+		);
+	}
+	if (!fi2nimSave(cfg, compiled)) callback(5) else {
+		fi2nimBuild(cfg, callback);
+	}
 }
 
 fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
@@ -115,10 +133,10 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 	fi2nimJoinNimCodeMany([
 		native_imports,
 		fi2nimEmptyLine(),
-		NimSnippet("# Forward declarations"),
+		NimLine(0, "# Forward declarations"),
 		forward_decls,
 		fi2nimEmptyLine(),
-		NimSnippet("# Source code of functions / global variables"),
+		NimLine(0, "# Source code of functions / global variables"),
 		definitions,
 		fi2nimEmptyLine(),
 	]);
@@ -331,41 +349,4 @@ fi2nimNativeImports(env: FiNimEnv, runtime: string) -> NimCode {
 			concat(["# Native function imports"], imports)
 		}
 	);
-}
-
-fi2nimBuild(program : FiProgram, cfg: FiNimConfig, callback : (int) -> void) -> void {
-	if (isConfigParameterFalse(program.config.config, "exe")) {
-		// No need to build binary
-		callback(0);
-	} else {
-		debug = isConfigParameterSet(program.config.config, "nim-debug");
-		opts = concatA([
-			filter(strSplit(getConfigParameter(program.config.config, "nim-opts"), ","), \opt -> !isSpace(opt)),
-			["--overflowChecks:off", "--threads:on", "-f", "-d:ssl", "--path:flow_lib"],
-			if (debug) ["--debuginfo:on"] else [],
-			if (getConfigParameterDef(program.config.config, "nim-utf8", "") == "1") ["-d:UTF8"] else [],
-			if (!debug && getConfigParameterDef(program.config.config, "nim-release", "1") == "1") ["-d:release"] else [],
-			if (isConfigParameterSet(program.config.config, "nim-profile")) ["--profiler:on", "--stacktrace:on"] else [],
-		]);
-		command_args = concat(opts, ["c", cfg.outputfile]);
-		if (cfg.verbose > 0) {
-			fcPrintln("Going to build nim target: '" + cfg.outputfile + "'\n" + 
-			"nim " + strGlue(command_args, " "), cfg.threadId);
-		}
-		out = execSystemProcessOutput("nim", command_args, ".");
-		if (out.exitCode != 0) {
-			fcPrintln("Building of " + cfg.outputfile + " failed:\n" + out.stdall, cfg.threadId);
-			callback(5);
-		} else {
-			if (cfg.verbose > 0) {
-				fcPrintln("Building of '" + cfg.outputfile + "' finished.", cfg.threadId);
-				if (cfg.verbose > 1) {
-					fcPrintln("Nim compiler output:", cfg.threadId);
-					fcPrintln(out.stdall, cfg.threadId);
-				}
-			}
-			fcPrintln("Executable '" + changeFileExt(cfg.outputfile, "") + "' is generated.", cfg.threadId);
-			callback(0);
-		}
-	}
 }
