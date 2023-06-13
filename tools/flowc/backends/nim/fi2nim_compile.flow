@@ -1,15 +1,12 @@
 import tools/flowc/backends/nim/fi2nim_utils;
-import tools/flowc/backends/nim/fi2nim_code;
-import tools/flowc/backends/nim/fi2nim_types;
-import tools/flowc/manipulation/transform_exps;
 import tools/flowc/manipulation/tail_call;
 
 export {
-	fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCode;
+	fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCompiledSource;
 	fiNimCompileToplevel(env : FiNimEnv, decl: FiDeclaration) -> Maybe<NimCompiledFunc>;
 }
 
-fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCode {
+fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCompiledSource {
 	missing_predefined = ref buildSet(map(nimPredefinedNatives, \p -> p.name));
 	module_natives = filtermap(module.natives, \n -> 
 		if (containsKeyTree(env.natives, n.name)) Some(n) else None()
@@ -28,17 +25,26 @@ fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCode {
 			acc
 		)
 	));
-	//native_imports = fi2nimNativeImports(env, runtime);
+	imported = concat(
+		["flow_runtime", "flow_types", "osproc", "asyncdispatch", "strutils", "sequtils", "flow_lib/httpServer_type"],
+		map(set2array(module.allImports), \imp -> fiNimRenameFile(imp))
+		//map(module.imports, \imp -> fiNimRenameFile(imp.flowfile))
+	);
+	imports = fi2nimJoinNimCodeMany(map(imported, \imp -> NimLine(0, "import " + imp)));
 	forward_decls = fi2nimJoinNimCodeMany(map(module_code, \c -> c.decl));
 	definitions = fi2nimJoinNimCodeMany(map(module_code, \c -> c.def));
-	fi2nimJoinNimCodeMany([
-		NimSnippet("# Forward declarations"),
+
+	code = fi2nimJoinNimCodeMany([
+		imports,
+		NimLine(0, "# Forward declarations"),
 		forward_decls,
 		fi2nimEmptyLine(),
-		NimSnippet("# Source code of functions / global variables"),
+		NimLine(0, "# Source code of functions / global variables"),
 		definitions,
 		fi2nimEmptyLine(),
+		if (exists(module.functions, \f -> f.name == "main")) NimLine(0, "main()") else NimSnippet("")
 	]);
+	NimCompiledSource(fiNimRenameFile(module.fileinfo.flowfile), code);
 }
 
 fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> Maybe<NimCompiledFunc> {
@@ -91,7 +97,7 @@ fiNimCompileFunction(env : FiNimEnv, func0: FiFunctionDec) -> Maybe<NimCompiledF
 		lambda = func.lambda;
 
 		fn_typars = fiNimTypeParamsList(env, func.type);
-		decl = "proc " + fiNimRenameGlobal(func.name) + fn_typars + fiNimCompileFuncType(env, type);
+		decl = "proc " + fiNimRenameGlobal(func.name) + "*" + fn_typars + fiNimCompileFuncType(env, type);
 		has_tailcall = fcDetectTailCall(func);
 
 		locals = fold(lambda.args, makeSet(), \acc, arg -> insertSet(acc, arg.name));
@@ -150,7 +156,7 @@ fiNimCompileGlobalVar(env : FiNimEnv, var: FiGlobalVar) -> NimCompiledFunc {
 	NimCompiledFunc(
 		NimSnippet(""), 
 		fi2nimJoinNimCode(
-			NimLine(0, "var " + fiNimRenameGlobal(var.name) + ": " + fiNimCompileType(env, var.type) + " ="),
+			NimLine(0, "var " + fiNimRenameGlobal(var.name) + "*: " + fiNimCompileType(env, var.type) + " ="),
 			fi2nimDecideToIndent(value, fiNimCompile(env, value, FiNimReturnValue(), makeSet()))
 		)
 	);
