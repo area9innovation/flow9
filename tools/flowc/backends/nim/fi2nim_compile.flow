@@ -1,10 +1,98 @@
 import tools/flowc/backends/nim/fi2nim_utils;
 import tools/flowc/backends/nim/fi2nim_code;
+import tools/flowc/backends/nim/fi2nim_types;
 import tools/flowc/manipulation/transform_exps;
 import tools/flowc/manipulation/tail_call;
 
 export {
+	fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCode;
 	fiNimCompileToplevel(env : FiNimEnv, decl: FiDeclaration) -> Maybe<NimCompiled>;
+}
+
+fiNimCompileModule(env : FiNimEnv, module: FiModule) -> NimCode {
+	missing_predefined = ref buildSet(map(nimPredefinedNatives, \p -> p.name));
+	module_natives = filtermap(module.natives, \n -> 
+		if (containsKeyTree(env.natives, n.name)) Some(n) else None()
+	);
+	module_natives_names = buildSet(map(module_natives, \n -> n.name));
+	notNatives = filter(module.initOrder, \mn -> !containsSet(module_natives_names, mn));
+	module_decls = concat(
+		module_natives,
+		filtermap(notNatives, \name -> lookupTree(env.prog.names.toplevel, name))
+	);
+	fcVerbose(env.cfg, 0, "Generating Nim code for module: '" + module.fileinfo.flowfile + "'");
+	module_comment = NimLine(0, "# Module: " + module.fileinfo.flowfile);
+	module_code = list2array(fold(module_decls, Cons(NimCompiled(module_comment, module_comment), EmptyList()), \acc, decl ->
+		eitherMap(fiNimCompileToplevel(env, decl), \compiled -> 
+			Cons(NimCompiled(compiled with def = fi2nimAddEmptyLine(compiled.def)), acc), 
+			acc
+		)
+	));
+	//native_imports = fi2nimNativeImports(env, runtime);
+	forward_decls = fi2nimJoinNimCodeMany(map(module_code, \c -> c.decl));
+	definitions = fi2nimJoinNimCodeMany(map(module_code, \c -> c.def));
+	fi2nimJoinNimCodeMany([
+		fiNimCompileTypes(env, module),
+		NimSnippet("# Forward declarations"),
+		forward_decls,
+		fi2nimEmptyLine(),
+		NimSnippet("# Source code of functions / global variables"),
+		definitions,
+		fi2nimEmptyLine(),
+	]);
+}
+
+fiNimCompileTypes(env: FiNimEnv, module: FiModule) -> NimCode {
+	structs_enum = fi2nimTypeEnums(module.structs);
+	type_decls = map(concat(module.unions, module.structs), \tp -> fi2nimTypeDecl(env, tp));
+
+	type_defs = fi2nimJoinNimCode3(
+		structs_enum,
+		if (length(type_decls) == 0) NimBlock([]) else {
+			fi2nimJoinNimCode(
+				NimLine(0, "type"),
+				fi2nimSureIndent(fi2nimJoinNimCodeMany(type_decls))
+			)
+		},
+		fi2nimEmptyLine()
+	);
+
+	comment_line = \msg -> {
+		line = NimLine(0, "\n# " + msg + "\n");
+		[NimCompiled(line, line)];
+	}
+	typenames = list2array(fold(module.unions, 
+		fold(module.structs, makeList(), \acc, s -> Cons(FiTypeName(s.name, s.typars), acc)),
+		\acc, u -> Cons(FiTypeName(u.name, u.typeparameters), acc)
+	));
+	compiled_funcs = concatA([
+		comment_line("FROM FLOW CONVERSION"),
+		[fi2nimTypeFromFlow1(env)],
+		comment_line("TYPARS TYPE TRAITS"),
+		filtermap(typenames, \t -> fi2nimTypenameTypars(env, t)),
+		comment_line("TO FLOW CONVERSIONS"),
+		concat(
+			[fi2nimFuncToFlow(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t))
+		),
+		comment_line("TO STRING CONVERSIONS"),
+		concat(
+			[fi2nimFuncToString(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t))
+		),
+		comment_line("COMPARE"),
+		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
+	]);
+
+	fi2nimJoinNimCodeMany(concatA([
+		[type_defs, fi2nimEmptyLine()],
+		[fi2nimEmptyLine()],
+		map(env.structs, \s -> fi2nimRegisterStruct(env, s)),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
 }
 
 fiNimCompileToplevel(env0 : FiNimEnv, decl : FiDeclaration) -> Maybe<NimCompiled> {
@@ -362,7 +450,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 				[fi2nimCode2Block(fi2nimJoinNimCodeMany([NimSnippet("case "), x_code, NimSnippet(".str_id"), NimSnippet(":")]))],
 				map(filter(cs, \c -> c.struct != "default"), \c ->
 					fi2nimJoinNimCode(
-						NimLine(0, "of int32(" + fi2nimStructId(env, c.struct) + "): #[" + c.struct + "]#"), 
+						NimLine(0, "of int32(" + fi2nimStructId(c.struct) + "): #[" + c.struct + "]#"), 
 						fi2nimMaybeIndent(fiNimCompile(env, c.body, returns, locals))
 					)
 				),
@@ -401,7 +489,7 @@ fiNimCompile(env : FiNimEnv, expr : FiExp, returns: FiNimReturn, locals: Set<str
 							fi2nimBracketNimCode(
 								fi2nimGlueNimCode(
 									concat(
-										[NimSnippet("str_id: int32(" + fi2nimStructId(env, struct_name) + ")")],
+										[NimSnippet("str_id: int32(" + fi2nimStructId(struct_name) + ")")],
 										mapi(args, \i, arg -> fi2nimJoinNimCode(NimSnippet(fiNimRenameKeyword(struct.args[i].name) + ": "), arg))
 									), ", "
 								)

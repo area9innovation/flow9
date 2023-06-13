@@ -375,7 +375,6 @@ type
 #[ Representation of a dynamic type ]#
 
   Flow* = ref object of RootObj
-    #tp: int32
     case tp*: RtType
     # Atiomic types
     of rtVoid:   discard
