@@ -1,3 +1,5 @@
+import unicode
+
 proc $F_0(fromCharCode)*(code: int32): RtString =
   when use16BitString:
     if (code < 0x0D800 or (0x0DFFF < code and code < 0xFFFF)):

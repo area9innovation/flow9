@@ -1,3 +1,5 @@
+import unicode
+
 proc $F_0(toLowerCase)*(s: RtString): RtString =
   return rt_utf8_to_string(unicode.toLower(rt_string_to_utf8(s)))
 #[  const ascii_a_cap = 65i32
