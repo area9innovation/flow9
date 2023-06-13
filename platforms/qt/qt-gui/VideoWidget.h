@@ -6,6 +6,8 @@
 #include <QWidget>
 #include "gl-gui/GLRenderer.h"
 #include "gl-gui/GLVideoClip.h"
+#include "QBuffer"
+#include "QNetworkAccessManager"
 
 class VideoSurface;
 

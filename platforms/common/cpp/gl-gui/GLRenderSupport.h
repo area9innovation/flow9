@@ -3,7 +3,7 @@
 
 #include "core/ByteCodeRunner.h"
 #include "font/TextFont.h"
-#include "qt-backend/HttpSupport.h"
+#include "utils/AbstractHttpSupport.h"
 
 #include <set>
 #ifdef linux
