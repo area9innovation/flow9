@@ -139,7 +139,6 @@ class VideoClip extends FlowContainer {
 
 				return function() {
 					RenderSupport.off("enable_sprites", enableSprites);
-					disableSprites();
 				}
 			});
 		}
@@ -368,12 +367,6 @@ class VideoClip extends FlowContainer {
 		}
 
 		addVideoSprite();
-		RenderSupport.on("disable_sprites", disableSprites);
-	}
-
-	private function disableSprites() : Void {
-		deleteVideoSprite();
-		RenderSupport.off("disable_sprites", disableSprites);
 	}
 
 	public function getCurrentTime() : Float {
