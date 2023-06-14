@@ -133,14 +133,15 @@ class VideoClip extends FlowContainer {
 		createStreamStatusListeners();
 		createFullScreenListeners();
 
-		this.onAdded(function() {
-			RenderSupport.on("enable_sprites", enableSprites);
+		if (!this.isAudio) {
+			this.onAdded(function() {
+				RenderSupport.on("enable_sprites", enableSprites);
 
-			return function() {
-				RenderSupport.off("enable_sprites", enableSprites);
-				disableSprites();
-			}
-		});
+				return function() {
+					RenderSupport.off("enable_sprites", enableSprites);
+				}
+			});
+		}
 
 		once("removed", deleteVideoClip);
 	}
@@ -366,12 +367,6 @@ class VideoClip extends FlowContainer {
 		}
 
 		addVideoSprite();
-		RenderSupport.on("disable_sprites", disableSprites);
-	}
-
-	private function disableSprites() : Void {
-		deleteVideoSprite();
-		RenderSupport.off("disable_sprites", disableSprites);
 	}
 
 	public function getCurrentTime() : Float {
@@ -559,16 +554,17 @@ class VideoClip extends FlowContainer {
 					
 					if (type != "") {
 						untyped source.type = type;
-						untyped source.src = js.html.URL.createObjectURL(videoXhr.response/*, { type: type }*/);
-					} else {
-						untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
 					}
-
+					
+					untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
+					
 					// Check and try add source here.
 					if (!isAppended && videoWidget != null) {
 						isAppended = true;
 						videoWidget.appendChild(source);
 					}
+				} else if (videoXhr.status >= 400) {
+					onStreamError();
 				}
 			};
 

@@ -877,6 +877,11 @@ void iosGLRenderSupport::resolvePictureDataAsBitmap(unicode_string url, NSData *
     resolvePicture(url, bmp);
 }
 
+bool iosGLRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache)
+{
+    return this->loadPicture(url, cache);
+}
+
 bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
 {
     NSString * ns_url =  UNICODE2NS(url);

@@ -2,7 +2,6 @@
 
 #include "core/GarbageCollector.h"
 #include "core/RunnerMacros.h"
-#include <QBuffer>
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
@@ -23,8 +22,6 @@ GLVideoClip::GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const
     failed = looping = loaded = playing = false;
     subtitle = new GLTextClip(owner);
     addChild(subtitle);
-
-    customHeadersRequestBuffer = new QBuffer();
 
     updateVolume(1.0f);
     updatePlaybackRate(1.0f);
@@ -640,15 +637,9 @@ StackSlot GLVideoClip::addStreamStatusListener(RUNNER_ARGS)
     return addEventCallback(RUNNER, FlowVideoStreamEvent, callback, "addStreamStatusListener$dispose");
 }
 
-void GLVideoClip::applyHeaders(QNetworkRequest *request) {
-    // Set headers for HTTP request
-    for (HttpRequest::T_SMap::iterator it = req_headers.begin(); it != req_headers.end(); ++it)
-    {
-        request->setRawHeader(
-                    unicode2qt(it->first).toLatin1(),
-                    unicode2qt(it->second).toUtf8()
-        );
-    }
+HttpRequest::T_SMap GLVideoClip::getHeaders()
+{
+    return this->req_headers;
 }
 
 GLVideoClip::~GLVideoClip()

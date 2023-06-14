@@ -1,5 +1,6 @@
 {.experimental: "dynamicBindSym".}
 import macros
+import tables
 
 # It works only with fnName = const_string
 # if we need to use variables, then we need to create a table function_name-expression

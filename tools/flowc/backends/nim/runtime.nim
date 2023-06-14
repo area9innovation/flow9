@@ -9,20 +9,19 @@ import asyncdispatch
 import osproc
 import macros
 import system/widestrs
+
 import "flow_lib/httpServer_type"
 
 # Runtime for NIM backend
 
-{.experimental: "overloadableEnums".}
-
 #[ Flow string: either a UTF-16 string of UTF-8 ]#
 
-const use16BitString = when defined UTF8: false else: true
+const use16BitString* = when defined UTF8: false else: true
 
 when use16BitString:
-  type RtString = seq[Utf16Char]
+  type RtString* = seq[Utf16Char]
 else:
-  type RtString = string
+  type RtString* = string
 
 const
   uni_halfShift* = 10
@@ -266,9 +265,6 @@ proc rt_unescape*(s: RtString): RtString =
       inc j
     return r
 
-#proc `<`(a: String, b: String): bool =
-#  when use16BitString:
-#	return a < b
 when use16BitString:
   proc hash(s: RtString): Hash =
     var h: Hash = 0
@@ -375,28 +371,27 @@ type
 #[ Representation of a dynamic type ]#
 
   Flow* = ref object of RootObj
-    #tp: int32
     case tp*: RtType
     # Atiomic types
     of rtVoid:   discard
-    of rtBool:   bool_v:   bool
-    of rtInt:    int_v:    int32
-    of rtDouble: double_v: float
-    of rtString: string_v: RtString
-    of rtNative: native_v: Native
+    of rtBool:   bool_v*:   bool
+    of rtInt:    int_v*:    int32
+    of rtDouble: double_v*: float
+    of rtString: string_v*: RtString
+    of rtNative: native_v*: Native
     # Composite types
-    of rtRef:    ref_v:    Flow
-    of rtArray:  array_v:  seq[Flow]
-    of rtFunc:   func_v:   proc(x: seq[Flow]): Flow
+    of rtRef:    ref_v*:    Flow
+    of rtArray:  array_v*:  seq[Flow]
+    of rtFunc:   func_v*:   proc(x: seq[Flow]): Flow
     of rtStruct:
-      str_id: int32
-      str_args: seq[Flow]
+      str_id*: int32
+      str_args*: seq[Flow]
 
   Ref*[T] = ref object of Flow
-    val: T
+    val*: T
 
   Struct* = ref object of RootObj
-    str_id: int32
+    str_id*: int32
 
 #[ Native Types ]#
   NativeType* = enum
@@ -405,15 +400,12 @@ type
     ntHttpServer
   Native* = ref object 
     case ntp*: NativeType
-    of ntProcess: p: Process
-    of ntHttpServer: s: FlowHttpServer
-    of ntFlow: flow_v: Flow
+    of ntProcess: p*: Process
+    of ntHttpServer: s*: FlowHttpServer
+    of ntFlow: flow_v*: Flow
 
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(ntp: ntHttpServer, s : srv)
-
-# Function type traits/utils
-$A_0
 
 # Flow type traits
 template rt_type_is_flow*(X: typedesc[Flow]): bool = true

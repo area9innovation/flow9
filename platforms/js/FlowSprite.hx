@@ -455,6 +455,8 @@ class FlowSprite extends Sprite {
 					});
 
 					onLoaded();
+				} else if (imgXhr.status >= 400) {
+					onError();
 				}
 			};
 

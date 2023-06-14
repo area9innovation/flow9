@@ -120,14 +120,10 @@ class SoundSupport {
 								type = audioXhr.getResponseHeader("content-type");
 							}
 							
-							if (type != "") {
-								audio.src = js.html.URL.createObjectURL(audioXhr.response/*, { type: type }*/);
-							} else {
-								audio.src = js.html.URL.createObjectURL(audioXhr.response);
-							}
+							audio.src = js.html.URL.createObjectURL(audioXhr.response);
 
 							audio.load();
-						} else {
+						} else if (audioXhr.status >= 400) {
 							onerror();
 						}
 					};
