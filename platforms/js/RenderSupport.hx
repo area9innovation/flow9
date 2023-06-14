@@ -517,7 +517,7 @@ class RenderSupport {
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
-		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+		browserZoom = Platform.isSamsung ? Math.max(Browser.window.outerWidth / Browser.window.innerWidth, 1.0) : Browser.window.outerWidth / Browser.window.innerWidth;
 
 		if (!Platform.isMobile && browserZoom != 1.0) {
 			accessibilityZoom = 1.0;
@@ -1187,7 +1187,7 @@ class RenderSupport {
 		if (backingStoreRatio != PixiRenderer.resolution) {
 			createPixiRenderer();
 		} else {
-			var win_width = e.target.innerWidth;
+			var win_width = Platform.isSamsung ? Math.min(e.target.innerWidth, e.target.outerWidth) : e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
 			if (viewportScaleWorkaroundEnabled) {
@@ -2187,8 +2187,8 @@ class RenderSupport {
 		clip.setTimeRange(start, end);
 	}
 
-	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool) : Void {
-		vc.playVideo(filename, startPaused);
+	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
+		vc.playVideo(filename, startPaused, headers);
 	}
 
 	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
@@ -2886,8 +2886,8 @@ class RenderSupport {
 		return clip.addStreamStatusListener(fn);
 	}
 
-	public static function addVideoSource(clip : VideoClip, src : String, type : String) : Void {
-		clip.addVideoSource(src, type);
+	public static function addVideoSource(clip : VideoClip, src : String, type : String, headers : Array<Array<String>>) : Void {
+		clip.addVideoSource(src, type, headers);
 	}
 
 	public static function setVideoExternalSubtitle(clip : VideoClip, src : String, kind : String) : Void -> Void {
@@ -3313,8 +3313,8 @@ class RenderSupport {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
-		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String,  headers : Array<Array<String>>) : Dynamic {
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText, headers);
 	}
 
 	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {

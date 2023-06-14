@@ -6,7 +6,8 @@ import string_utils;
 export {
 	fi2nimRuntime(env : FiNimEnv) -> string;
 	fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative>;
-	fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void;
+	if2nimGenDir(cfg : FiNimConfig) -> string;
+	fi2nimSave(cfg : FiNimConfig, content : [NimCompiledSource]) -> bool;
 }
 
 fi2nimRuntime(env : FiNimEnv) -> string {
@@ -15,7 +16,7 @@ fi2nimRuntime(env : FiNimEnv) -> string {
 		Some(runtime_dir): {
 			src = getFileContent(pathCombine(runtime_dir, "runtime.nim"));
 			// Add function utils, which depend on the max arity of functions
-			runtime = strSubstituteArgs(src)([fi2nimFuncUtils(env)]);
+			runtime = src + "\n\n# Function type traits/utils\n" + fi2nimFuncUtils(env) + "\n";
 			if (!isConfigParameterSet(env.prog.config.config, "nim-profile")) runtime else {
 				// Add profiling import
 				"import nimprof\n" + runtime;
@@ -32,16 +33,16 @@ fi2nimFuncUtils(env: FiNimEnv) -> string {
 	func_typars = \arity -> "[" + strGlue(concat(["R"], generate(1, arity + 1, \i -> "A" + i2s(i))), ", ") + "]";
 	func_sign = \arity -> "proc(" + strGlue(generate(1, arity + 1, \i -> "a" + i2s(i) + ": A" + i2s(i)), ", ") + "): R";
 	func_arity_traits = strGlue(concat(
-		["template rt_func_type_arity(X: typedesc): int = -1"],
+		["template rt_func_type_arity*(X: typedesc): int = -1"],
 		generate(0, env.max_func_arity + 1, \arity -> 
-			"template rt_func_type_arity" + func_typars(arity) + 
+			"template rt_func_type_arity*" + func_typars(arity) + 
 			"(X: typedesc[" + func_sign(arity) + "]): int = " + i2s(arity)
 		)
 	), "\n");
 	func_typar_traits = strGlue(concat(
-		["template rt_func_type_typar(X: typedesc, i: static int): int = void"],
+		["template rt_func_type_typar*(X: typedesc, i: static int): int = void"],
 		generate(0, env.max_func_arity + 1, \arity -> 
-			"template rt_func_type_typar" + func_typars(arity) + 
+			"template rt_func_type_typar*" + func_typars(arity) + 
 			"(X: typedesc[" + func_sign(arity) + "], i: static int): typedesc =\n" + 
 			"  when (i == 0): R " + concatStrings(generate(1, arity + 1, \i -> " elif (i == " + i2s(i) + "): A" + i2s(i))) + " else: void"
 		)
@@ -110,7 +111,7 @@ fi2nimNatives(cfg : FiNimConfig) -> Tree<string, NimNative> {
 				None(): NimSnippet("");
 			}
 			nim_native = NimNative(name, imports, 
-				NimCompiled(decl, code)
+				NimCompiledFunc(decl, code)
 			);
 			setTree(acc, name, nim_native);
 		}
@@ -130,13 +131,30 @@ fi2nimFindAllNativeFiles(dir: string, acc: [string]) -> [string] {
 	});
 }
 
-fi2nimAssemble(cfg : FiNimConfig, content : NimCode) -> void {
-	if (saveFileContent(cfg.outputfile, fi2nimNimCode2s(content, "  "), cfg.threadId)) {
+if2nimGenDir(cfg : FiNimConfig) -> string {
+	outputDir = dirName(cfg.outputfile);
+	dstDir = if (outputDir == cfg.outputfile) resolveRelativePath(".") else outputDir;
+	genDir = if (isConfigParameterTrue(cfg.options, "nim-mono")) dstDir else pathCombine(dstDir, "nimgen");
+	ensureDirectoryExists(genDir);
+	genDir;
+}
+
+fi2nimSave(cfg : FiNimConfig, content : [NimCompiledSource]) -> bool {
+	genDir = if2nimGenDir(cfg);
+	saved = ref true;
+	iter(content, \src -> {
+		src_path = if (isConfigParameterTrue(cfg.options, "nim-mono")) src.file else pathCombine(genDir, src.file);
+		if (!saveFileContent(changeFileExt(src_path, ".nim"), fi2nimNimCode2s(src.code, "  "), cfg.threadId)) {
+			fcPrintln("Failed to save nim source file: " + src_path, cfg.threadId);
+			saved := false;
+		}
+	});
+	if (^saved) {
 		dirFiles = fi2nimLibs(cfg);
-		outputDir = dirName(cfg.outputfile);
-		dstDir = if (outputDir == cfg.outputfile) resolveRelativePath(".") else outputDir;
-		if (!createLibDirWithFiles(dstDir, dirFiles.first, dirFiles.second)) {
-			fcPrintln("Library folder creation error : " + dirFiles.first + "[" + i2s(length(dirFiles.second)) + "]", 0);
+		if (!createLibDirWithFiles(genDir, dirFiles.first, dirFiles.second)) {
+			fcPrintln("Library folder creation error: " + dirFiles.first + "[" + i2s(length(dirFiles.second)) + "]", cfg.threadId);
+			saved := false;
 		}
 	}
+	^saved;
 }

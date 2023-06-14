@@ -1,6 +1,16 @@
 
 # execSystemProcess : io (command : string, args : [string], currentWorkingDirectory : string, onStdOutLine : (out : string) -> void, onStdErr : (error : string) -> void) -> int = Native.execSystemProcess;
 
-proc $F_0(execSystemProcess)(command: string, args: seq[string], cwd: string, onStdOutLine: proc(o: string): void, onStdErr: proc(error: string): void): int32 =
-  echo "execSystemProcess is not implemented yet"
-  return 1i32
+proc $F_0(execSystemProcess)*(command: RtString, args: seq[RtString], cwd: RtString, onStdOutLine: proc(o: RtString): void, onStdErr: proc(error: RtString): void): int32 =
+  try:
+    var p = startProcess(command = rt_string_to_utf8(cmd), workingDir = rt_string_to_utf8(cwd), args = map(args, rt_string_to_utf8), options = {poUsePath})
+    let errorcode = p.waitForExit()
+    let stderr = p.errorStream().readAll()
+    let stdout = p.outputStream().readAll()
+    close(p)
+    if stderr != "": onStdErr(rt_utf8_to_string(stderr))
+    if stdout != "": onStdOutLine(rt_utf8_to_string(stdout))
+    return errorcode
+  except OSError as ex:
+    onStdErr(rt_utf8_to_string(getCurrentExceptionMsg()))
+    return ex.errorCode

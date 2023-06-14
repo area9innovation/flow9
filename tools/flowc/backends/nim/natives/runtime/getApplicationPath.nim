@@ -1,4 +1,4 @@
 import os
 
-proc $F_0(getApplicationPath)*(): string =
-  getAppFilename()
+proc $F_0(getApplicationPath)*(): RtString =
+  rt_utf8_to_string(getAppFilename())

@@ -2,6 +2,7 @@ import tools/flowc/incremental/fi_helpers2;
 import tools/flowc/manipulation/common;
 import tools/flowc/incremental/fi_type_unify;
 import tools/flowc/manipulation/effects;
+import tools/flowc/manipulation/flatten_unions;
 import string_utils;
 import tools/flowc/backends/cpp3/fi2cpp3_util;
 
@@ -127,7 +128,7 @@ fiMakeCallerVar(x: FiExp) -> FiExp;
 
 fiWrapFunctionCasts(x: FiExp) -> FiExp;
 
-fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames) -> FiExp;
+fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames, toplevel_name: string) -> FiExp;
 
 }
 
@@ -1340,7 +1341,7 @@ fiWrapFunctionCasts(x: FiExp) -> FiExp {
 	});
 }
 
-fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames) -> FiExp {
+fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames, toplevel_name: string) -> FiExp {
 	id = ref 0;
 	new_id = \-> {
 		nid = "tmp_cast_wrapper_arg__" + i2s(^id);
@@ -1350,14 +1351,14 @@ fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames) -> FiExp {
 	mapFiExp(x, \e -> switch (e) {
 		FiCast(e1, from, to, type, s): {
 			if (fiEqualTypes(from, to)) e1 else {
-				fiUnfoldCasts(e1, from, to, s, names, new_id);
+				fiUnfoldCasts(e1, from, to, s, names, new_id, toplevel_name);
 			}
 		}
 		default: e;
 	});
 }
 
-fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, new_id: () -> string) -> FiExp {
+fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, new_id: () -> string, toplevel_name: string) -> FiExp {
 	if (fiEqualTypes(from, to)) e else {
 		switch (from) {
 			FiTypeFunction(from_args, from_ret): {
@@ -1368,7 +1369,7 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 						);
 						call = FiCall(e, 
 							mapi(args, \i, arg ->
-								fiUnfoldCasts(FiVar(arg.name, arg.type, s), arg.type, from_args[i].type, s, names, new_id)
+								fiUnfoldCasts(FiVar(arg.name, arg.type, s), arg.type, from_args[i].type, s, names, new_id, toplevel_name)
 							), 
 							from_ret, s
 						);
@@ -1394,7 +1395,7 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 								s
 							),
 							[e, FiLambda([arg],
-								fiUnfoldCasts(FiVar(arg.name, arg.type, s), from_arr, to_arr, s, names, new_id),
+								fiUnfoldCasts(FiVar(arg.name, arg.type, s), from_arr, to_arr, s, names, new_id, toplevel_name),
 								FiTypeFunction([arg], to_arr),
 								s
 							)],
@@ -1408,7 +1409,7 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 				switch (to) {
 					FiTypeRef(to_ref): {
 						FiCallPrim(FcRefPrim(),
-							[fiUnfoldCasts(FiCallPrim(FcDerefPrim(), [e], from, s), from_ref, to_ref, s, names, new_id)],
+							[fiUnfoldCasts(FiCallPrim(FcDerefPrim(), [e], from, s), from_ref, to_ref, s, names, new_id, toplevel_name)],
 							to, s
 						);
 					}
@@ -1417,22 +1418,44 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 			}
 			FiTypeName(from_name, from_typars): {
 				cast_struct = \x, struct_from, struct_to -> {
-					from_tp = FiTypeName(struct_from.name, struct_from.typars);
-					to_tp = FiTypeName(struct_to.name, struct_to.typars);
+					name = struct_from.name;
+					from_tp = FiTypeName(name, struct_from.typars);
+					to_tp = FiTypeName(name, struct_to.typars);
 					if (struct_from == struct_to) x else {
-						tmp = FiVar(new_id(), from_tp, s);
-						FiLet(tmp.name, tmp.type, x, 
-							FiCallPrim(FcStructPrim(struct_to.name),
-								mapi(struct_from.args, \i, arg -> 
-									fiUnfoldCasts(
-										FiCallPrim(FcFieldPrim(arg.name), [tmp], arg.type, s),
-										arg.type, struct_to.args[i].type, s, names, new_id
-									)
-								),
-								to_tp, s
-							),
-							to_tp, s
-						);
+						wrapper_name = fiStructCastWrapperName(name);
+						switch (lookupTree(names.toplevel, wrapper_name)) {
+							Some(wrapper): {
+								switch (wrapper) {
+									FiFunctionDec(__,__,fn_type,__,__): {
+										wrapper_spec_type = FiTypeFunction(fn_type with
+											args = [FiFunArg(fn_type.args[0] with type = from_tp)],
+											returnType = to_tp
+										);
+										FiCall(FiVar(wrapper_name, wrapper_spec_type, 0), [x], to_tp, 0);
+									}
+									default: {
+										fail0("must be a function, got:\n" +
+											strIndent(pretFiDeclaration(wrapper))
+										);
+									}
+								}
+							}
+							None(): {
+								tmp = FiVar(new_id(), from_tp, s);
+								FiLet(tmp.name, tmp.type, x, 
+									FiCallPrim(FcStructPrim(name),
+										mapi(struct_from.args, \i, arg -> 
+											fiUnfoldCasts(
+												FiCallPrim(FcFieldPrim(arg.name), [tmp], arg.type, s),
+												arg.type, struct_to.args[i].type, s, names, new_id, toplevel_name
+											)
+										),
+										to_tp, s
+									),
+									to_tp, s
+								);
+							}
+						}
 					}
 				}
 				fiMapTypeName(from, names, 
@@ -1441,7 +1464,10 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 							fiMapTypeName(to, names, 
 								\struct_to -> {
 									if (from_name != to_name) {
-										fail("illegal cast of " + pretFiType(from) + " to " + pretFiType(to));
+										fail(
+											"illegal cast of " + pretFiType(from) + " to " + pretFiType(to) + " in " + toplevel_name + ", expression:\n" +
+											strIndent(pretFiExp(e))
+										);
 									}
 									cast_struct(e, struct_from, struct_to);
 								},
