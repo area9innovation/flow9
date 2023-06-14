@@ -526,14 +526,24 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
 #endif
     } else {
         // Media player does the video decoding and hands us new frames
-        QMediaPlayer* player = new QMediaPlayer(0, QMediaPlayer::VideoSurface);
+        QMediaPlayer* player;
+        if (video_clip->isHeadersSet())
+            player = new QMediaPlayer(nullptr, QMediaPlayer::StreamPlayback);
+        else
+            player = new QMediaPlayer(nullptr, QMediaPlayer::VideoSurface);
+
+        widget = videoWidget = new VideoWidget(this);
+        VideoPlayerMap[player] = videoWidget;
+
         connect(player, &QMediaPlayer::stateChanged, this, &QGLRenderSupport::videoStateChanged);
         connect(player, &QMediaPlayer::mediaStatusChanged, this, &QGLRenderSupport::mediaStatusChanged);
         connect(player, &QMediaPlayer::positionChanged, this, &QGLRenderSupport::videoPositionChanged);
         connect(player, SIGNAL(error(QMediaPlayer::Error)), this, SLOT(handleVideoError()));
-
-        widget = videoWidget = new VideoWidget(this);
-        VideoPlayerMap[player] = videoWidget;
+        connect(videoWidget, &VideoWidget::onError, this, [this, video_clip](QString errorText){
+            WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
+            getFlowRunner()->flow_err << "Video error: " << encodeUtf8(qt2unicode(errorText)) << endl;
+            dispatchVideoNotFound(video_clip);
+        });
 
         videoWidget->hide();
         player->setVideoOutput(videoWidget->videoSurface());
@@ -547,18 +557,12 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         videoWidget->setVideoClip(video_clip);
 
         // Load the video file and start playing the video
-
-        QString name = unicode2qt(video_clip->getName());
-        QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
-        QString full_path = getFullResourcePath(name);
-        QUrl rq_url = base.resolved(QUrl(name));
-
-        if (QFile::exists(full_path))
-            player->setMedia(QUrl::fromLocalFile(full_path));
-        else if (QFile::exists(name))
-            player->setMedia(QUrl::fromLocalFile(name));
-        else
-            player->setMedia(rq_url);
+        videoWidget->setMediaSource(
+                    /* qtStrBase */
+                    unicode2qt(getFlowRunner()->getUrlString()),
+                    /* getFullResourcePath */
+                    [this](QString path) { return getFullResourcePath(path); }
+        );
 
         if (video_clip->isPlaying()) {
             player->play();
@@ -589,11 +593,10 @@ void QGLRenderSupport::doUpdateVideoPlay(GLVideoClip *video_clip)
     QMediaPlayer *player = videoWidget->mediaPlayer();
     if (!player) return;
 
-    if (video_clip->isPlaying()) {
+    if (video_clip->isPlaying())
         player->play();
-    } else {
+    else
         player->pause();
-    }
 }
 
 void QGLRenderSupport::doUpdateVideoPosition(GLVideoClip *video_clip)
@@ -858,7 +861,13 @@ void QGLRenderSupport::paintGL()
     paintGLContext();
 }
 
-bool QGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
+bool QGLRenderSupport::loadPicture(unicode_string url, bool c /*cache*/)
+{
+    HttpRequest::T_SMap headers;
+    return loadPicture(url, headers, c);
+}
+
+bool QGLRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool /*cache*/)
 {
     QString name = unicode2qt(url);
     QString full_path = getFullResourcePath(name);
@@ -904,6 +913,17 @@ bool QGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
     QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
     QUrl rq_url = base.resolved(QUrl(unicode2qt(url)));
     QNetworkRequest request(rq_url);
+
+    // Set headers for HTTP request
+    if (headers.size() > 0) {
+        for (HttpRequest::T_SMap::iterator it = headers.begin(); it != headers.end(); ++it)
+        {
+            request.setRawHeader(
+                        unicode2qt(it->first).toLatin1(),
+                        unicode2qt(it->second).toUtf8()
+            );
+        }
+    }
 
     request_map[request_manager->get(request)] = url;
 

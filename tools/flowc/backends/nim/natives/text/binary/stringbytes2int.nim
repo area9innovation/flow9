@@ -1,7 +1,7 @@
 # native stringbytes2int : (str : string) -> int = Native.stringbytes2int;
 # Read 4 bytes of the string in UTF-16 and converts to an int
 
-proc $F_0(stringbytes2int)(s: RtString): int32 =
+proc $F_0(stringbytes2int)*(s: RtString): int32 =
     let l = len(s)
     if (l == 2):
         #[ var bb = newSeq[byte](2 * 2)

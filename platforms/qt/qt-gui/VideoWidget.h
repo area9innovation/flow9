@@ -6,8 +6,12 @@
 #include <QWidget>
 #include "gl-gui/GLRenderer.h"
 #include "gl-gui/GLVideoClip.h"
+#include "QBuffer"
+#include "QNetworkAccessManager"
 
 class VideoSurface;
+
+class VideoCustomRequest;
 
 class VideoWidget : public QWidget
 {
@@ -25,9 +29,17 @@ public:
     void setMediaPlayer(QMediaPlayer *mediaPlayer);
     QMediaPlayer *mediaPlayer() const;
 
+    bool setMediaSource(QString qtStrBase, std::function<QString (QString)> getFullResourcePath);
+
+signals:
+    void onError(QString errorText);
+
 private:
 	VideoSurface *m_videoSurface;
     QMediaPlayer *m_mediaObject;
+    VideoCustomRequest *m_customRequest = nullptr;
+
+    void setMediaFromCustomRequest(QUrl qUrl, std::function<void (QString)> onError);
 };
 
 class VideoSurface : public QAbstractVideoSurface
@@ -90,6 +102,25 @@ private:
 	bool m_ready;
 
 	GLVideoClip *m_videoClip;
+};
+
+class VideoCustomRequest : public QObject
+{
+    Q_OBJECT
+
+public:
+    VideoCustomRequest(QWidget *parent = nullptr);
+    ~VideoCustomRequest();
+
+    void setMediaFromCustomRequest(QUrl qUrl, GLVideoClip* video_clip, QMediaPlayer* player, std::function<void (QString)> onError);
+
+private:
+    QNetworkAccessManager* manager = nullptr;
+    QNetworkRequest request;
+    QBuffer* customHeadersRequestBuffer = nullptr;
+
+    void resetMediaBuffer();
+    QBuffer* setMediaBuffer(QByteArray qData);
 };
 
 #endif // VIDEO_SURFACE_H

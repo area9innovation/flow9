@@ -13,7 +13,7 @@ proc initWindow() =
   if window == nil:
     raise newException(Exception, "Unable to create SDL2 window")
 
-proc toggleFullScreen*(fs: bool) =
+proc $F_0(toggleFullScreen)*(fs: bool) =
   if fs:
     window.setWindowFullscreen(SDL_WINDOW_FULLSCREEN)
   else:

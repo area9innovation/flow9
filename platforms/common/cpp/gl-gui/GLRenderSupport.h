@@ -3,6 +3,7 @@
 
 #include "core/ByteCodeRunner.h"
 #include "font/TextFont.h"
+#include "utils/AbstractHttpSupport.h"
 
 #include <set>
 #ifdef linux
@@ -400,6 +401,7 @@ protected:
     virtual void doOpenUrl(unicode_string, unicode_string) {}
 
     virtual bool loadPicture(unicode_string url, bool cache) = 0;
+    virtual bool loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache) = 0;
 
     virtual void abortPictureLoading(unicode_string /*url*/) {}
 
