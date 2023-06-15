@@ -130,6 +130,10 @@ fiWrapFunctionCasts(x: FiExp) -> FiExp;
 
 fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames, toplevel_name: string) -> FiExp;
 
+fiInlineHostCalls(e: FiExp, names: FiGlobalNames) -> FiExp;
+
+fiTypeEmptyArrays(e: FiExp) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -147,7 +151,7 @@ fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
 								FiCase(
 									tn.name,
 									map(struct.args, \__ -> "__"),
-									FiCallPrim(x with es = [case_var]),
+									FiCallPrim(x with es = replace(es, 0, case_var)),
 									start
 								)
 							}),
@@ -542,6 +546,12 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 			}
 			switch (t) {
 				FiTypeFunction(t_args, t_ret): {
+					if (length(args) != length(t_args)) {
+						fail("function args length mismatch with function arguments length:\n" +
+							"args: [" + superglue(args, \y -> pretFiType(y.type), ", ") + "]\n" + 
+							"t_args: [" + superglue(t_args, \y -> pretFiType(y.type), ", ") + "]\n"
+						);
+					}
 					p = foldi(args, Pair([], body1), \i, acc, arg -> 
 						if (fiEqualTypes(arg.type, t_args[i].type)) {
 							Pair(concat(acc.first, [arg]), acc.second);
@@ -603,6 +613,12 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 		}
 		FiCall(fn, args, type,__): {
 			fn_type = cast(fiExpType(fn): FiType -> FiTypeFunction);
+			if (length(args) != length(fn_type.args)) {
+				fail("function call args length mismatch with function arguments length:\n" +
+					"args: [" + superglue(args, \y -> pretFiType(fiExpType(y)), ", ") + "]\n" + 
+					"fn_type.args: [" + superglue(fn_type.args, \y -> pretFiType(y.type), ", ") + "]\n"
+				);
+			}
 			x1 = FiCall(x with
 				f = fiExpMakeCastsExplicit(fn, fn_type, names),
 				args = mapi(args, \i, arg ->
@@ -664,6 +680,12 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 									default: acc;
 								}
 							);
+							if (length(struct.args) != length(es)) {
+								fail("struct " + name + " arguments length mismatch with call arguments length:\n" +
+									"struct args: [" + superglue(struct.args, \y -> pretFiType(y.type), ", ") + "]\n" + 
+									"call args: [" + superglue(es, \y -> pretFiType(fiExpType(y)), ", ") + "]\n"
+								);
+							}
 							x1 = FiCallPrim(x with es = mapi(es, \i, y ->
 								fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
 							));
@@ -739,6 +761,12 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 									spec = fiSpecializeStruct(struct_type, struct);
 									switch (find(spec.args, \arg -> arg.name == name)) {
 										Some(arg): {
+											if (length(es) != 2) {
+												fail("set mutable operator has " + i2s(length(es)) + " arguments, not exactly 2 arguments:\n" +
+													"arguments:\n" + strIndent(toStringFormatted(es)) + "\n" +
+													"expression:\n" + strIndent(toStringFormatted(x))
+												);
+											}
 											x1 = FiCallPrim(x with es = [
 												fiExpMakeCastsExplicit(es[0], struct_type, names), 
 												fiExpMakeCastsExplicit(es[1], arg.type, names)
@@ -1533,4 +1561,74 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 			default: FiCast(e, from, to, to, s);
 		}
 	}
+}
+
+
+fiInlineHostCalls(e: FiExp, names: FiGlobalNames) -> FiExp {
+	fiMapExp(e, \x,__ -> switch (x) {
+		FiCall(f, args, ret_type, s1): {
+			switch(f) {
+				FiVar(v, v_type, s2): {
+					if (v != "hostCall") x else {
+						switch (args[0]) {
+							FiString(fn,__): {
+								switch (unFiCast(args[1])) {
+									FiCallPrim(op, fn_args,__,__): {
+										if (op != FcArrayPrim()) x else {
+											mdecl: Maybe<FiDeclaration> = lookupTree(names.toplevel, fn);
+											switch (mdecl) {
+												Some(decl): {
+													fn_type = cast(decl.type: FiType -> FiTypeFunction);
+													out_type = FiTypeFunction(map(fn_args, \arg -> FiFunArg("", fiExpType(arg))), ret_type);
+													call1 = FiCall(x with f = FiVar(fn, out_type, s2), args = fn_args);
+													if (fiEqualTypes(fn_type.returnType, ret_type)) call1 else {
+														switch (fn_type.returnType) {
+															FiTypeVoid(): {
+																FiCall(call1 with type = FiTypeVoid());
+															}
+															default: {
+																FiCast(call1, fn_type.returnType, ret_type, ret_type, s1);
+															}
+														}
+													}
+												}
+												None(): x;
+											}
+										}
+									}
+									default: x;
+								}
+							}
+							default: x;
+						}
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true);
+}
+
+fiTypeEmptyArrays(e: FiExp) -> FiExp {
+	id = ref 0;
+	new_id = \-> {
+		nid = "tmp_empty_array_var_" + i2s(^id);
+		id := ^id + 1;
+		nid;
+	}
+	fiMapExp(e, \x,__ -> switch (x) {
+		FiCallPrim(op, args, ret_type, s1): {
+			switch(op) {
+				FcArrayPrim(): {
+					if (length(args) > 0) x else {
+						tmp_var = new_id();
+						FiLet(tmp_var, ret_type, x, FiVar(tmp_var, ret_type, s1), ret_type, s1);
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true);
 }
