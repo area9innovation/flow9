@@ -39,21 +39,15 @@ const
 
 # Convert the utf8, implementation is adapted from lib/system/widestrs.nim
 proc rt_utf8_to_utf16*(s: string): RtString =
-  var wcs = newWideCString(s.len)
-  var d = 0
+  result = newSeqOfCap[Utf16Char](s.len)
   for r in runes(s):
     let ch = int32(r)
     if ch <= UNI_MAX_BMP or ch > UNI_MAX_UTF16:
-      wcs[d] = cast[Utf16Char](uint16(ch))
+      result.add(cast[Utf16Char](uint16(ch)))
     else:
       let ch = ch - uni_halfBase
-      wcs[d] = cast[Utf16Char](uint16((ch shr uni_halfShift) + UNI_SUR_HIGH_START))
-      inc d
-      wcs[d] = cast[Utf16Char](uint16((ch and uni_halfMask) + UNI_SUR_LOW_START))
-    inc d
-  result = newSeq[Utf16Char](wcs.len)
-  for i in 0 ..< wcs.len:
-    result[i] = wcs[i]
+      result.add(cast[Utf16Char](uint16((ch shr uni_halfShift) + UNI_SUR_HIGH_START)))
+      result.add(cast[Utf16Char](uint16((ch and uni_halfMask) + UNI_SUR_LOW_START)))
 
 proc rt_utf8_to_string*(s: string): RtString =
   when use16BitString: rt_utf8_to_utf16(s)
@@ -109,23 +103,23 @@ proc rt_convert_string_to_utf8*[T](s: RtString, ret: var T): void =
     var ch = rt_utf16char_to_int(s[i])
     inc i
     if ch >= UNI_SUR_HIGH_START and ch <= UNI_SUR_HIGH_END:
-      if i >= s.len:
-        # Illegal utf8 sequence
-        break
-      # If the 16 bits following the high surrogate are in the source buffer...
-      let ch2 = rt_utf16char_to_int(s[i])
+      if i < s.len:
+        # If the 16 bits following the high surrogate are in the source buffer...
+        let ch2 = rt_utf16char_to_int(s[i])
 
-      # If it's a low surrogate, convert to UTF32:
-      if ch2 >= UNI_SUR_LOW_START and ch2 <= UNI_SUR_LOW_END:
-        ch = (((ch and uni_halfMask) shl uni_halfShift) + (ch2 and uni_halfMask)) + uni_halfBase
-        inc i
+        # If it's a low surrogate, convert to UTF32:
+        if ch2 >= UNI_SUR_LOW_START and ch2 <= UNI_SUR_LOW_END:
+          ch = (((ch and uni_halfMask) shl uni_halfShift) + (ch2 and uni_halfMask)) + uni_halfBase
+          inc i
+        else:
+          #invalid UTF-16
+          discard
       else:
-        #invalid UTF-16
-        ch = UNI_REPL
+        # Illegal utf8 sequence
+        discard
     elif ch >= UNI_SUR_LOW_START and ch <= UNI_SUR_LOW_END:
       #invalid UTF-16
-      ch = UNI_REPL
-
+      discard
     if ch < 0x80:
       ret.add chr(ch)
     elif ch < 0x800:
