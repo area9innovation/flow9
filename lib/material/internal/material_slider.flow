@@ -11,7 +11,8 @@ MSliderThumb(
 	hovered : Transform<bool>,
 	min : Transform<double>,
 	max : Transform<double>,
-	restrictPercent : (double) -> double
+	restrictPercent : (double) -> double,
+	inputFocused : DynamicBehaviour<bool>
 );
 
 MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -53,6 +54,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	thumbRadius = extractStruct(m.style, MSliderThumbRadius(const(if (condensed) 6.0 else 8.0))).radius;
 	highlightedRanges = tryExtractStruct(m.style, MSliderHighlightedRanges(const([])));
 	captionFn = tryExtractStruct(m.style, MSliderCaption(\__ -> TEmpty()));
+	updateOnEnd = contains(m.style, MSliderUpdateOnEnd());
 
 	mousePosition : MMousePosition = extractStruct(m.style, MMousePosition(make(zeroPoint)));
 	point = mousePosition.point;
@@ -369,7 +371,10 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		)
 		|> (\t -> TTranslate(fpoint(fnegate(haloRadius), fnegate(haloRadius)), t))
 		|> (\t -> TBorderT(zero, fdivide(barHeight, const(2.)), zero, zero, t))
-		|> (\t -> TConstruct([makeSubscribe2Trigger(activeU, cursorPercent, \p -> setNewPercent(thumb, p))], t))
+		|> (\t -> TConstruct([
+			\ -> fconnect(thumb.focused, thumb.active),
+			makeSubscribe2Trigger(fand(activeU, down2), cursorPercent, \p -> setNewPercent(thumb, p))
+		], t))
 		|> (\t -> TTranslate(thumbPoint, t));
 	}
 
@@ -393,7 +398,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 					MInputFilter(\es, foc -> {
 						if (es != "") switchOffUndefined();
 						if (foc) es else if (fgetValue(sliderUndefined)) "" else percent2strvalue(getValue(thumb.percent))
-					})
+					}),
+					MFocused(thumb.inputFocused)
 				]
 			),
 			m2t
@@ -436,12 +442,18 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			|> (\t -> TBorderT(if (type == LeftBar()) zero else border, zero, if (type == RightBar()) zero else border, zero, t))
 		});
 
-	makeOuterValueLink = \value : DynamicBehaviour<double>, prc ->
-		[
-			\ -> { nextDistinct(prc, snapPercent(value2percent(getValue(value)))); nop},
-			makeSubscribe2(value, \v -> {nextDistinct(prc, snapPercent(value2percent(v))); switchOffUndefined()}),
-			makeSubscribe2(fpair(prc, sliderUndefined), \p -> if (!p.second) nextDistinct(value, percent2value(p.first)))
-		];
+	makeOuterValueLink = \value : DynamicBehaviour<double>, thumb -> {
+		prc = thumb.percent;	
+		concat([
+				\ -> { nextDistinct(prc, snapPercent(value2percent(getValue(value)))); nop},
+				makeSubscribe2(value, \v -> {nextDistinct(prc, snapPercent(value2percent(v))); switchOffUndefined()}),
+			],
+			if (updateOnEnd)
+				[makeSubscribe2(fOr(thumb.active, thumb.inputFocused), \act -> if (!act) nextDistinct(value, percent2value(getValue(prc))))]
+			else
+				[makeSubscribe2(fpair(prc, sliderUndefined), \p -> if (!p.second) nextDistinct(value, percent2value(p.first)))]
+		);
+	}
 
 	rangeStartPercent = make(0.);
 	rangeEndPercent = make(0.);
@@ -459,7 +471,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				p,
 				(if (fgetValue(showMainThumb)) min(fgetValue(rangeEndPercent), fgetValue(mainValuePercent)) else fgetValue(rangeEndPercent))
 					- (if (isDiscrete) stepPercent else min(0.01, stepPercent))
-			)
+			),
+			make(false)
 		);
 
 	endThumb =
@@ -474,7 +487,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				p,
 				(if (fgetValue(showMainThumb)) max(fgetValue(rangeStartPercent), fgetValue(mainValuePercent)) else fgetValue(rangeStartPercent))
 					+ (if (isDiscrete) stepPercent else min(0.01, stepPercent))
-			)
+			),
+			make(false)
 		);
 
 	mainThumb =
@@ -492,7 +506,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			if (isSome(chooseRange)) rangeStartPercent else const(value2percent(sliderRange.min)),
 			if (isSome(chooseRange)) rangeEndPercent else const(value2percent(sliderRange.max)),
 			if (isSome(chooseRange)) \p -> forceRange(p, fgetValue(rangeStartPercent), fgetValue(rangeEndPercent))
-			else idfn
+			else idfn,
+			make(false)
 		);
 
 	addDiscreteValues = \foc -> \f2 -> {
@@ -645,12 +660,12 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		eitherMap(
 			chooseRange,
 			\chR -> concat(
-				makeOuterValueLink(chR.end, rangeEndPercent),
-				makeOuterValueLink(chR.start, rangeStartPercent),
+				makeOuterValueLink(chR.end, endThumb),
+				makeOuterValueLink(chR.start, startThumb)
 			),
 			[]
 		),
-		makeOuterValueLink(m.value, mainValuePercent)
+		makeOuterValueLink(m.value, mainThumb)
 	), t))
 	|> (\t -> eitherMap(sliderTooltip, \tooltip -> {
 			contentW = make(0.);
