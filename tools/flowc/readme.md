@@ -137,6 +137,46 @@ You can inspect graphs of the iterations using
 
 if you have Graphviz installed.
 
+Compile-time variables
+----------------------
+
+In some cases it is desirable to control the compilation not by editing the source code directly, but rather to use more useful and flexible
+way - using compile-time variables and their overriding. So, a user may define a variable somewhere in code, like:
+
+  feature1_is_enabled = true; // May be set to false - it depends on the particular case
+
+  ...
+
+  if (feature1_is_enabled) {
+	 // implementation of feature
+	 ...
+  } else {
+	// Output the error message
+	...
+  }
+
+By default the variable `feature1_is_enabled` is true, and if nothing is set explicitly the feature should work.
+In order to change the value of the variable during compile-time, we can:
+  1. Either pass the `env` option to the invocation of compiler in a command line:
+		flowc1 <file> env=feature1_is_enabled=0,feature2_is_disabled=1,bit_width=32,pi=3.14,app_id=A9_APP
+	The option is a CSV list of values of variables.
+  2. Or set the `env` option in flow.config file in a more sparse format like:
+		env += feature1_is_enabled = 0
+		env += feature2_is_disabled = true
+		env += js=true, bit_width = 32
+		env += pi = 3.14, app_id=A9_APP
+
+The values of compile-time variables, which are passed to the compiler, are substituted at compilation time,
+thus the inaccessible branches, like in the upper example, are cut off by dead code optimization.
+
+Following types of compile-time constants are supported:
+	boolean, integer, double and string
+
+LIMITATIONS:
+ - spaces, tabs, etc. are not allowed in string values (i.e. are ignored)
+ - commas are not allowed in string values
+ - booleans are of the form: 1, 0, true, false, TRUE, FALSE
+
 
 Notes about incremental compilation
 ------------------------------------

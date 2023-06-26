@@ -2,76 +2,70 @@ import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/manipulation/common;
 
 export {
-	// Try to find a named constant from config and pass it to AST. 
-	// In case no such a value is found, the default value  is used.
-	// Format of a compile-time variable:
-	//    __compiletime__somevar_true
-	//    __compiletime__anothervar_42
-	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
-	// default fallback value, which should be used, in case no proper variable is defined in config.
-	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
-	// default value.
-	fiSubstituteCompileTimeProgram(program: FiProgram, on_err: (FcError) -> void) -> FiProgram;
+	// Try to find a named constant from config and pass it to AST.
+	// The definition of constants in options is done with `env` option and looks like:
+	//    env=bar=1,js=true,bit_width=32,pi=3.14,app_id=A9_APP
+	//
+	// If `env` option is defined in flow.config file, more sparse format is available:
+	//    env += bar = 1
+	//    env += js=true, bit_width = 32
+	//    env += pi = 3.14, app_id=A9_APP
+	//
+	// Following types of compile-time constants are supported:
+	//    boolean, integer, double and string
+	//
+	// LIMITATIONS:
+	//  - spaces, tabs, etc. are not allowed in string values
+	//  - commas are not allowed in string values
+	//  - booleans are of the form: 1, 0, true, false, TRUE, FALSE
+	//
+	substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram;
 }
 
-fiSubstituteCompileTimeProgram(program: FiProgram, on_err: (FcError) -> void) -> FiProgram {
-	if (program.config.verbose > 0) {
-		fcPrintln("Substituting compile-time constants from config", program.config.threadId);
-	}
-	fiMapProgramExp(program, \e, decl, module, prog ->
-		mapFiExp(e,
-			\x -> fiSubstituteCompileTimeVar(x, prog.config, \msg, pos -> 
-				on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]))
-			)
-		)
-	);
-}
-
-fiSubstituteCompileTimeVar(e: FiExp, conf: CompilerConfig, on_err: (string, int) -> void) -> FiExp {
-	// Usage of a special compile-time constants, which may be substituted from config during compilation
-	// Format of a compile-time variable:
-	//    __compiletime__somevar_true
-	//    __compiletime__anothervar_42
-	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
-	// default fallback value, which should be used, in case no proper variable is defined in config.
-	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
-	// default value.
-	switch (e) {
-		FiVar(name, type, start): {
-			if (startsWith(name, "__compiletime__")) {
-				compile_time_val = substring(name, 15, strlen(name) - 15);
-				defval_sep = strIndexOf(compile_time_val, "_");
-				compile_time_var = substring(compile_time_val, 0, defval_sep);
-				compile_time_def = substring(compile_time_val, defval_sep + 1, strlen(compile_time_val) - (defval_sep + 1));
-				if (strlen(compile_time_var) == 0 || strlen(compile_time_def) == 0) {
-					on_err("Wrong compile time constant: must be like '__compiletime__somevar_true' or '__compiletime__anothervar_42', got: " + name, start);
-				}
-				make_compile_time_val = \val, def -> {
-					if (def == "true" || def == "false") {
-						// Case of a boolean compile-time expression
-						if (type != FiTypeBool()) {
-							on_err("Inconsistent type of compile-time constant, is boolean while must be " + prettyFiType(dummyPretty, type, makeSet()), start);
-						}
-						FiBool(val == "true", start);
-					} else if (isDigits(val)) {
-						// Case of an integer compile-time expression
-						if (type != FiTypeInt()) {
-							on_err("Inconsistent type of compile-time constant, is integer while must be " + prettyFiType(dummyPretty, type, makeSet()), start);
-						}
-						FiInt(s2i(val), start);
-					} else {
-						on_err("Unsupported type of compile-time constant: " + val + ", must be an integer or boolean constant", start);
-						e;
-					}
-				}
-				switch (lookupTree(conf.config, compile_time_var)) {
-					Some(val): make_compile_time_val(trim2(val, " \t\r\n"), compile_time_def);
-					None(): make_compile_time_val(compile_time_def, compile_time_def);
-				}
-			} else {
-				e;
-			}
+substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	env_opt = getConfigParameter(program.config.config, "env");
+	if (env_opt == "") program else {
+		cp_vars = pairs2tree(map(strSplit(env_opt, ","), \opt -> {
+			name = trim2(takeBefore(opt, "=", opt), " \t");
+			value = trim2(takeAfter(opt, "=", ""), " \t");
+			Pair(name, value);
+		}));
+		if (program.config.verbose > 0) {
+			fcPrintln("Substituting compile-time constants from config:\n" + 
+				strGlue(map(tree2pairs(cp_vars), \p -> "\t" + p.first + " = " + p.second), "\n"), 
+				program.config.threadId
+			);
 		}
-		default: e;
+		fiMapProgramExp(program, \e, decl, module,__ -> {
+			module_err = \msg, pos -> on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]));
+			mapFiExp(e,
+				\x -> switch (x) {
+					FiVar(name, type, start): {
+						switch (lookupTree(cp_vars, name)) {
+							Some(val):
+								switch (compileTimeValue(val, type, start, module_err)) {
+									Some(c): c;
+									None(): x;
+								}
+							None(): x;
+						}
+					}
+					default: x;
+				}
+			);
+		});
+	}
+}
+
+compileTimeValue(val: string, type: FiType, start: int, on_err: (string, int) -> void) -> Maybe<FiExp> {
+	switch (type) {
+		FiTypeBool():   Some(FiBool(s2b(val), start));
+		FiTypeInt():    Some(FiInt(s2i(val), start));
+		FiTypeDouble(): Some(FiDouble(s2d(val), start));
+		FiTypeString(): Some(FiString(val, start));
+		default: {
+			on_err("Compile-time constant cannot be of type: " + pretFiType(type) + ", must be one of: bool, int, double or string", start);
+			None();
+		}
 	}
 }
