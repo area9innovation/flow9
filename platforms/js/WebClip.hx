@@ -134,6 +134,9 @@ class WebClip extends NativeWidgetClip {
 
 					if (this.noScroll) {
 						untyped iframeDocument.body.style["overflow"] = "hidden";
+					}
+
+					if (this.noScroll || this.passEvents) {
 						iframeDocument.addEventListener('wheel', function (e) {
 							RenderSupport.provideEvent(e);
 						}, true);

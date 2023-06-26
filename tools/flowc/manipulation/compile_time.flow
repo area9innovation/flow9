@@ -1,0 +1,71 @@
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/manipulation/common;
+
+export {
+	// Try to find a named constant from config and pass it to AST.
+	// The definition of constants in options is done with `env` option and looks like:
+	//    env=bar=1,js=true,bit_width=32,pi=3.14,app_id=A9_APP
+	//
+	// If `env` option is defined in flow.config file, more sparse format is available:
+	//    env += bar = 1
+	//    env += js=true, bit_width = 32
+	//    env += pi = 3.14, app_id=A9_APP
+	//
+	// Following types of compile-time constants are supported:
+	//    boolean, integer, double and string
+	//
+	// LIMITATIONS:
+	//  - spaces, tabs, etc. are not allowed in string values
+	//  - commas are not allowed in string values
+	//  - booleans are of the form: 1, 0, true, false, TRUE, FALSE
+	//
+	substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram;
+}
+
+substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	env_opt = getConfigParameter(program.config.config, "env");
+	if (env_opt == "") program else {
+		cp_vars = pairs2tree(map(strSplit(env_opt, ","), \opt -> {
+			name = trim2(takeBefore(opt, "=", opt), " \t");
+			value = trim2(takeAfter(opt, "=", ""), " \t");
+			Pair(name, value);
+		}));
+		if (program.config.verbose > 0) {
+			fcPrintln("Substituting compile-time constants from config:\n" + 
+				strGlue(map(tree2pairs(cp_vars), \p -> "\t" + p.first + " = " + p.second), "\n"), 
+				program.config.threadId
+			);
+		}
+		fiMapProgramExp(program, \e, decl, module,__ -> {
+			module_err = \msg, pos -> on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]));
+			mapFiExp(e,
+				\x -> switch (x) {
+					FiVar(name, type, start): {
+						switch (lookupTree(cp_vars, name)) {
+							Some(val):
+								switch (compileTimeValue(val, type, start, module_err)) {
+									Some(c): c;
+									None(): x;
+								}
+							None(): x;
+						}
+					}
+					default: x;
+				}
+			);
+		});
+	}
+}
+
+compileTimeValue(val: string, type: FiType, start: int, on_err: (string, int) -> void) -> Maybe<FiExp> {
+	switch (type) {
+		FiTypeBool():   Some(FiBool(s2b(val), start));
+		FiTypeInt():    Some(FiInt(s2i(val), start));
+		FiTypeDouble(): Some(FiDouble(s2d(val), start));
+		FiTypeString(): Some(FiString(val, start));
+		default: {
+			on_err("Compile-time constant cannot be of type: " + pretFiType(type) + ", must be one of: bool, int, double or string", start);
+			None();
+		}
+	}
+}
