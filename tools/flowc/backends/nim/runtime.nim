@@ -266,9 +266,6 @@ when use16BitString:
       h = h !& rt_utf16char_to_int(ch)
     return !$h
 
-  proc rt_runtime_error*(what: string): void =
-    assert(false, "runtime error: " & what)
-
   proc `==`*(a: RtString, b: RtString): bool =
     if a.len != b.len: return false
     else:
@@ -293,8 +290,13 @@ when use16BitString:
   proc `>=`*(a: RtString, b: RtString): bool =
     return a > b or a == b
 
+proc rt_runtime_error*(what: string): void =
+  echo "runtime error: " & what
+  echo getStackTrace()
+  quit(1)
+
 proc rt_runtime_error*(what: RtString): void =
-  assert(false, "runtime error: " & rt_string_to_utf8(what))
+  rt_runtime_error(rt_string_to_utf8(what))
 
 #[ General conversions ]#
 
@@ -391,12 +393,18 @@ type
   NativeType* = enum
     ntProcess,
     ntFlow,
-    ntHttpServer
+    ntHttpServer,
+    ntOther
   Native* = ref object 
     case ntp*: NativeType
     of ntProcess: p*: Process
     of ntHttpServer: s*: FlowHttpServer
     of ntFlow: flow_v*: Flow
+    of ntOther: native_v*: RootRef # any other pointer
+
+  # Wrapper of Table with RootObj - is used to store hash tables in natives
+  NimTable*[K, V] = ref object of RootObj
+    table*: TableRef[K, V]
 
 proc makeHttpServerNative*(srv : FlowHttpServer) : Native =
   Native(ntp: ntHttpServer, s : srv)
@@ -449,11 +457,13 @@ proc rt_to_string*(x: Native): RtString =
   of ntProcess:    return rt_utf8_to_string("process")
   of ntHttpServer: return rt_utf8_to_string("http server")
   of ntFlow:       return rt_to_string(x.flow_v)
+  of ntOther:      return rt_utf8_to_string("<native>")
 proc rt_to_string_quot*(x: Native): RtString =
   case x.ntp:
   of ntProcess:    return rt_utf8_to_string("process")
   of ntHttpServer: return rt_utf8_to_string("http server")
   of ntFlow:       return rt_to_string_quot(x.flow_v)
+  of ntOther:      return rt_utf8_to_string("<native>")
 
 proc rt_to_string*[T](x: Ref[T]): RtString = return rt_utf8_to_string("ref ") & rt_to_string_quot(x.val)
 proc rt_to_string_quot*[T](x: Ref[T]): RtString = return rt_utf8_to_string("ref ") & rt_to_string_quot(x.val)
@@ -534,6 +544,7 @@ proc rt_compare*(x: Native, y: Native): int32 =
   of ntProcess: return rt_compare(addr(x.p), addr(y.p))
   of ntHttpServer: return rt_compare(addr(x.s), addr(y.s))
   of ntFlow:    return rt_compare(x.flow_v, y.flow_v)
+  of ntOther: return rt_compare(addr(x.native_v), addr(y.native_v))
 
 proc rt_compare*[T](x: Ref[T], y: Ref[T]): int32 = rt_compare(x.val, y.val)
 proc rt_compare*[T](x: seq[T], y: seq[T]): int32 =
@@ -584,7 +595,7 @@ proc rt_to_bool*(x: Flow): bool =
   of rtBool:   return rt_to_bool(x.bool_v)
   of rtDouble: return rt_to_bool(x.double_v)
   of rtString: return rt_to_bool(x.string_v)
-  else: rt_runtime_error("illegal conversion of " & rt_string_to_utf8(rt_to_string(x)) & " to bool")
+  else: rt_runtime_error("illegal conversion of " & rt_string_to_utf8(rt_to_string(x)) & " to bool"); return false
 
 proc rt_to_int*(x: Flow): int32 =
   case x.tp:
@@ -592,7 +603,7 @@ proc rt_to_int*(x: Flow): int32 =
   of rtBool:   return rt_to_int(x.bool_v)
   of rtDouble: return rt_to_int(x.double_v)
   of rtString: return rt_to_int(x.string_v)
-  else: rt_runtime_error("illegal conversion of " & rt_string_to_utf8(rt_to_string(x)) & " to int")
+  else: rt_runtime_error("illegal conversion of " & rt_string_to_utf8(rt_to_string(x)) & " to int"); return 0
 
 proc rt_to_double*(x: Flow): float =
   case x.tp:
@@ -600,7 +611,7 @@ proc rt_to_double*(x: Flow): float =
   of rtBool:   return rt_to_double(x.bool_v)
   of rtDouble: return rt_to_double(x.double_v)
   of rtString: return rt_to_double(x.string_v)
-  else: rt_runtime_error("illegal conversion of " & rt_string_to_utf8(rt_to_string(x)) & " to double")
+  else: rt_runtime_error("illegal conversion of " & rt_string_to_utf8(rt_to_string(x)) & " to double"); return 0.0
 
 proc rt_to_native*(x: Flow): Native =
   return if x.tp == rtNative: x.native_v else: Native(ntp: ntFlow, flow_v: x)
@@ -615,7 +626,10 @@ proc rt_get_flow_field*(x: Flow, field_name: RtString): Flow =
         return arg
       i += 1
     rt_runtime_error("flow struct " & rt_string_to_utf8(rt_struct_id_to_name(x.str_id)) & "  has no field " & rt_string_to_utf8(field_name))
-  else: rt_runtime_error("attempt to get field of non-struct: " & rt_string_to_utf8(rt_to_string(x)))
+    return Flow(tp: rtVoid)
+  else: 
+    rt_runtime_error("attempt to get field of non-struct: " & rt_string_to_utf8(rt_to_string(x)))
+    return Flow(tp: rtVoid)
 
 proc rt_set_flow_field*(s: Flow, field: RtString, val: Flow): void =
   if s.tp == rtStruct:
