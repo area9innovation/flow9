@@ -52,19 +52,16 @@ struct FieldDef {
 };
 
 struct Flow;
+template<typename T>  struct Vec;
 
 struct StructDef {
 	string name;
 	TypeId type;
 	std::vector<FieldDef> args;
-	std::function<Flow*(const std::vector<Flow*>&)> constructor;
+	std::function<Flow*(const Vec<Flow*>*)> constructor;
 };
 
 struct RTTI {
-	// List of names for the types in TypeFx
-	static const string type_names[];
-	// Sequence of all struct definitions
-	static std::vector<StructDef> struct_defs;
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
 		if (id < 9) return type_names[id + 1]; else
@@ -90,6 +87,27 @@ struct RTTI {
 		}
 		return i;
 	}
+	static TypeId structId(const string& struct_name) {
+		auto x = struct_name_to_id.find(struct_name);
+		if (x == struct_name_to_id.end()) {
+			return -1;
+		} else {
+			return x->second;
+		}
+	}
+	static void initStructMap() {
+		for (int i = 9; i < struct_defs.size() + 9; ++i) {
+			const StructDef& def = struct_defs.at(i - 9);
+			struct_name_to_id[def.name] = i;
+		}
+	}
+private:
+	// List of names for the types in TypeFx
+	static const string type_names[];
+	// Sequence of all struct definitions
+	static std::vector<StructDef> struct_defs;
+	// Maps a struct name to its id.
+	static std::unordered_map<string, int32_t> struct_name_to_id;
 };
 
 // Basic types
@@ -685,6 +703,15 @@ private:
 	Vec<Flow*> closure;
 };
 
+// This function is for debugging purposes only! Doesn't cleanp v!
+template<typename T>
+inline std::string toStdStringRc(T v) {
+	string str;
+	incRc(v);
+	toStringRc(v, str);
+	return string2std(str);
+}
+
 // Cast templates: from any type to any
 
 template<typename T1, typename T2>
@@ -707,7 +734,9 @@ inline T2 castRc(T1 x) {
 					return x;
 				}
 			}
-			else if constexpr (std::is_pointer_v<T1>) { return x; }
+			else if constexpr (std::is_pointer_v<T1>) {
+				return x; 
+			}
 	} 
 	else if constexpr (std::is_same_v<T2, Int>) {
 		if constexpr (std::is_same_v<T1, Bool>) { return bool2int(x); }
@@ -1012,5 +1041,7 @@ inline T makeDefVal() {
 		(std::make_index_sequence<S::SIZE>{});
 	}
 }
+
+void cleanupAtExit();
 
 }

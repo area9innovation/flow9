@@ -45,7 +45,6 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		)
 		//|> resolveNatives
 		|> fiFlattenUnions
-		//|> fiCompleteStructTypars
 		|> fiRemoveImplicitStructTypars
 		|> setImplicitTypars
 		|> fiWasmWrapFuncArgs
@@ -84,7 +83,7 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 	volatile_vars = filter(vars, \v -> 
 		exists(cfg.volatile, \name -> v.name == name || containsSet(lookupTreeDef(var_deps, v.name, makeSet()), name))
 	);
-	gctx0 = Cpp3GlobalContext(globEnv, cfg, program, 
+	gctx = Cpp3GlobalContext(globEnv, cfg, program, 
 		collectFiEffects(program),
 		\flowfile -> strReplace(flowfile, "/", "_"),
 		structs,
@@ -97,9 +96,6 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		fiCpp3InitRuntimeParts(cfg),
 		buildSet(map(volatile_vars, \v -> v.name)),
 		ref [], ref [], "", None(), makeSet(), ""
-	);
-	gctx = Cpp3GlobalContext(gctx0 with 
-		runtimeParts = setTree(gctx0.runtimeParts, "struct_defs", cpp3StructDefsRuntimePart(gctx0))
 	);
 	fi2cpp3Translate(gctx);
 }
@@ -188,6 +184,8 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 	"\n};\nInt struct_count = " + i2s(length(gctx.structs)) + ";\n\n";
 
 	struct_defs = cpp3StructDefs(gctx);
+	cleanup = "void flow::cleanupAtExit() {" + ("\t" + if (dec_vars == "") " " else "\n" + strIndent(dec_vars) + "\n") + "}\n\n";
+
 "
 using namespace flow;
 using namespace std::string_literals;
@@ -195,7 +193,9 @@ using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
 //struct_names + 
 struct_defs +
+cleanup + 
 "int main(int argc, const char* argv[]) {\n" +
+"\tRTTI::initStructMap();\n" + 
 //"\talloc_stats = new AllocStats();\n" + 
 //"\tinitMaxHeapSize(argc, argv);\n" +
 (if (mainInits == "") "" else strIndent(mainInits) + "\n") +
@@ -210,10 +210,10 @@ struct_defs +
 
 	//strIndent(show_vars("(B+)")) + "\n" +
 
-(if (dec_vars == "") "" else strIndent(dec_vars) + "\n") +
+"\tcleanupAtExit();\n" + 
 //strIndent(show_vars("(B-)")) + "\n" +
 //"\talloc_stats->print();\n" + 
-"\tstd::cout << \" TERMINATION \" << std::endl;\n" + 
+//"\tstd::cout << \" TERMINATION \" << std::endl;\n" + 
 "\treturn 0;\n}\n";
 }
 
@@ -312,32 +312,6 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 			}
 		);
 	}
-}
-
-cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> Cpp3RuntimePart {
-Cpp3RuntimePart("struct_defs", 
-"struct StructDefs {
-	static void init();
-	static std::map<string, StructDef> defs;
-};
-", 
-fiCpp3StructDefs(gctx), 
-"StructDefs::init();", "", 
-[Cpp3Std(["<map>"], [])], true
-);
-}
-
-fiCpp3StructDefs(gctx : Cpp3GlobalContext) -> string {
-	struct_defs = map(getTreeValues(gctx.program.names.structs), \struct -> {
-		typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
-		"\tdefs[u\"" + struct.name + "\"] = " + gctx.typename2cpp(struct.name) + typars + "::def();\n"
-	});
-"
-std::map<string, StructDef> StructDefs::defs;
-void StructDefs::init() {\n" + 
-	concatStrings(struct_defs) + 
-"\n}\n";
-
 }
 
 fi2cpp3Monolith(main_name: string, compiled: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> Tree<string, Cpp3CompiledModule> {

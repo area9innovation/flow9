@@ -9,6 +9,8 @@ const string RTTI::type_names[] = {
 	u"string",  u"native", u"array", u"ref",  u"function"
 };
 
+std::unordered_map<string, int32_t> RTTI::struct_name_to_id;
+
 string double2string(Double x) { 
 	static std::ostringstream os; 
 	os << std::setprecision(12) << x;
@@ -210,7 +212,7 @@ void flow2stringRc(Flow* v, string& str) {
 		case TypeFx::BOOL:   str.append(bool2string(v->getRc<Bool>())); break;
 		case TypeFx::DOUBLE: str.append(double2string(v->getRc<Double>())); break;
 		case TypeFx::STRING: {
-			str.append(u"\""); appendEscaped(v->getRc<String*>(), str); str.append(u"\"");
+			str.append(u"\""); appendEscaped(v->get<String*>(), str); decRc(v); str.append(u"\"");
 			break;
 		}
 		case TypeFx::ARRAY: {
