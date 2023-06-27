@@ -807,6 +807,7 @@ inline T2 castRc(T1 x) {
 				incRc(e);
 				ret->pushBack(castRc<typename V1::ElType, typename V2::ElType>(e));
 			}
+			decRc(x);
 		} else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
 		} else {
@@ -815,6 +816,7 @@ inline T2 castRc(T1 x) {
 				incRc(e);
 				ret->pushBack(castRc<Flow*, typename V2::ElType>(e));
 			}
+			decRc(x);
 		}
 		return ret;
 	}
