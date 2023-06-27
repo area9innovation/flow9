@@ -111,8 +111,6 @@ fiRemoveTrivialCasts(e: FiExp) -> FiExp;
 
 fiPushExpsDown(e: FiExp) -> FiExp;
 
-//fiPullStatementsUp(e: FiExp) -> FiExp;
-
 fiIsStat(e: FiExp) -> bool;
 
 // In case a switch has only one variant - remove it
@@ -129,6 +127,8 @@ fiMakeCallerVar(x: FiExp) -> FiExp;
 fiWrapFunctionCasts(x: FiExp) -> FiExp;
 
 fiExpUnfoldCasts(x: FiExp, names: FiGlobalNames, toplevel_name: string) -> FiExp;
+
+fiWrapGlobalFuncInLambdas(ex : FiExp, names : FiGlobalNames) -> FiExp;
 
 fiInlineHostCalls(e: FiExp, names: FiGlobalNames) -> FiExp;
 
@@ -762,9 +762,9 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 									switch (find(spec.args, \arg -> arg.name == name)) {
 										Some(arg): {
 											if (length(es) != 2) {
-												fail("set mutable operator has " + i2s(length(es)) + " arguments, not exactly 2 arguments:\n" +
-													"arguments:\n" + strIndent(toStringFormatted(es)) + "\n" +
-													"expression:\n" + strIndent(toStringFormatted(x))
+												fail("FcSetMutablePrim must have exactly 2 arguments, but is:\n" + 
+													//pretFiExp(x) + "\n" + 
+													"raw format:\n" + toStringFormatted(x)
 												);
 											}
 											x1 = FiCallPrim(x with es = [
@@ -1563,6 +1563,62 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 	}
 }
 
+fiWrapGlobalFuncInLambdas(ex : FiExp, names : FiGlobalNames) -> FiExp {
+	fiDoWrapGlobalFuncInLambdas(names, ex, true);
+}
+
+fiDoWrapGlobalFuncInLambdas(names : FiGlobalNames, ex : FiExp, isArg : bool) -> FiExp {
+	processA = \exp0 -> fiDoWrapGlobalFuncInLambdas(names, exp0, true);
+	process = \exp0 -> fiDoWrapGlobalFuncInLambdas(names, exp0, false);
+	switch (ex) {
+		FiBool(b, start): ex;
+		FiInt(i, start): ex;
+		FiString(s, start): ex;
+		FiDouble(d, start): ex;
+		FiVoid(start): ex;
+		FiVar(name, type, start): {
+			if (isArg && fiTypeIsFunction(type) && containsKeyTree(names.toplevel, name)) {
+				ftype = cast (type : FiType -> FiTypeFunction);
+				fargs = mapi(ftype.args, \i, a -> {
+					FiFunArg("__" + name + "__arg__" + i2s(i) + "__" + a.name, a.type);
+				}); 
+				args = map(fargs, \aaa -> {
+					FiVar(aaa.name, aaa.type, 0);
+				});
+
+				FiLambda(
+					fargs,
+					FiCall(ex, args, ftype.returnType, start),
+					FiTypeFunction(fargs, ftype.returnType),
+					start
+				);
+			} else {
+				ex;
+			}
+		}
+		FiCall(f, args, type, start):
+			FiCall(process(f), map(args, \a -> processA(a)), type, start);
+		FiSwitch(__, __, __, __, __): 
+			FiSwitch(ex with cases = 
+				map(ex.cases, \c -> FiCase(c with body = processA(c.body))));
+		FiLambda(args, body, type, start):
+			FiLambda(args, processA(body), type, start); 
+		FiLet(name, type, e1, e2, type2, start): 
+			FiLet(ex with e1 = processA(e1), e2 = processA(e2));
+		FiIf(e1, e2, e3, type, start): 
+			FiIf(processA(e1), processA(e2), processA(e3), type, start);
+		FiCallPrim(__, es, __, __):
+			FiCallPrim(ex with es = map(es, processA));
+		FiRequire(flowfile, e, type, start):
+			FiRequire(flowfile, processA(e), type, start);
+		FiUnsafe(name, fallback, type, start):
+			FiUnsafe(name, processA(fallback), type, start);
+		FiSeq(es, type, start):
+			FiSeq(map(es, processA), type, start);
+		FiCast(__, __, __, __, __): 
+			FiCast(ex with e = processA(ex.e));
+	}
+}
 
 fiInlineHostCalls(e: FiExp, names: FiGlobalNames) -> FiExp {
 	fiMapExp(e, \x,__ -> switch (x) {

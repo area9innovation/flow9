@@ -53,10 +53,10 @@ proc execHttpRequest(
 proc $F_0(makeHttpRequest)*(url0 : RtString, postMethod : bool, headers0 : seq[seq[RtString]], params0 : seq[seq[RtString]], onData0 : proc(r : RtString): void, onError0 : proc(e : RtString): void, onStatus : proc(c : int32): void) =
   let url = rt_string_to_utf8(url0)
   let headers = map(headers0, proc(header: seq[RtString]): seq[string] =
-    map(header, proc(x: RtString) = rt_string_to_utf8(x))
+    map(header, proc(x: RtString): string = rt_string_to_utf8(x))
   )
   let params = map(params0, proc(param: seq[RtString]): seq[string] =
-    map(param, proc(x: RtString) = rt_string_to_utf8(x))
+    map(param, proc(x: RtString): string = rt_string_to_utf8(x))
   )
   let onData = proc(x: string): void = onData0(rt_utf8_to_string(x))
   let onError = proc(x: string): void = onError0(rt_utf8_to_string(x))
