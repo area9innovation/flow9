@@ -9,30 +9,27 @@ export {
 fi2cpp3Build(cfg: FiCpp3Config, main_name: string, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
 	if (length(qt_deps) == 0) {
 		if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") == "1") {
-			fi2cpp3BuildDirectly(cfg, main_name, sources, \code ->
-				if (code != 0) callback(code) else fi2cpp3CopyExecutable(cfg, main_name, callback)
-			);
+			fi2cpp3BuildDirectly(cfg, main_name, sources, callback);
 		} else {
 			callback(0);
 		}
 	} else {
-		fi2cpp3BuildWithQmake(cfg, sources, qt_deps, \code ->
-			if (code != 0) callback(code) else fi2cpp3CopyExecutable(cfg, main_name, callback)
-		);
+		fi2cpp3BuildWithQmake(cfg, sources, qt_deps, callback);
 	}
 }
 
 fi2cpp3BuildDirectly(cfg: FiCpp3Config, main_name: string, sources: [string], callback : (int) -> void) -> void {
 	cpp_sources = filter(sources, \path -> endsWith(path, ".cpp"));
 	opts = concat(fi2cpp3BuildOpts(cfg), ["-std=c++20"]);
-	args = concat3(cpp_sources, opts, ["-o", main_name]);
+	final_exe = changeFileExt(cfg.outfile, "");
+	args = concat3(cpp_sources, opts, ["-o", final_exe]);
 	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "g++");
 	if (cfg.config.verbose > 0) {
 		fcPrintln("Compiling: '" + cpp_compiler + " " + strGlue(args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
 	}
-	result_exit_code = execSystemProcess(cpp_compiler, args, cfg.outputdir,
+	result_exit_code = execSystemProcess(cpp_compiler, args, ".",
 		\out -> if (cfg.config.verbose > 0 && !isSpace(out)) {
-				fcPrintln(out, cfg.config.threadId);
+			fcPrintln(out, cfg.config.threadId);
 		},
 		\err -> if (!isSpace(err)) {
 			fcPrintln(err, cfg.config.threadId);
@@ -51,11 +48,15 @@ fi2cpp3BuildOpts(cfg: FiCpp3Config) -> [string] {
 	optimize = if (opt_param == "" || use_debug) [] else {
 		["-O" + opt_param]
 	}
-	concatA([debug, optimize, ["-Wno-unused-value", "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-return-type", "-Wno-unused-but-set-variable", "-Wno-trigraphs"]]);
+	include = ["-I", pathCombine(".", cfg.outputdir)];
+	concatA([debug, optimize, include, [
+		"-Wno-unused-value", "-Wno-unused-parameter",
+		"-Wno-unused-variable", "-Wno-return-type",
+		"-Wno-unused-but-set-variable", "-Wno-trigraphs"
+	]]);
 }
 
 fi2cpp3BuildWithQmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
-
 	qt_conf = fi2cpp3QmakeConf(qt_deps, sources, cfg);
 	qt_conf_file = cfg.outfile + ".pro";
 	fi2cpp3SaveFile(qt_conf_file, qt_conf, cfg);
@@ -63,7 +64,7 @@ fi2cpp3BuildWithQmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], c
 	if (cfg.config.verbose > 0) {
 		fcPrintln("Preparing Makefile with cpp3: 'qmake " + strGlue(qmake_args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
 	}
-	qmake_result = execSystemProcessOutput("qmake", qmake_args, cfg.outputdir);
+	qmake_result = execSystemProcessOutput("qmake", qmake_args, ".");
 	if (cfg.config.verbose > 0 || qmake_result.exitCode != 0) {
 		if (!isSpace(qmake_result.stdall)) {
 			fcPrintln(qmake_result.stdall, cfg.config.threadId);
@@ -123,6 +124,7 @@ fi2cpp3QmakeConf(qt_deps: [Cpp3Qt], sources: [string], cfg: FiCpp3Config) -> str
 	cxx_opts = superglue(concat(["-std=c++2a"], fi2cpp3BuildOpts(cfg)), \opt -> "QMAKE_CXXFLAGS += " + opt, "\n");
 	conf_opts = strGlue(cfg.qtOpts, "\n");
 	opt_param = getConfigParameterDef(cfg.config.config, "cpp-optimize", "");
+	final_exe = changeFileExt(cfg.outfile, "");
 
 	"QT += core\n" +
 	(if (exists(qt_deps, \dep -> exists(dep.includes, \inc -> strContains(inc, "QtConcurrent")))) "QT += concurrent\n" else "") +
@@ -148,27 +150,6 @@ fi2cpp3QmakeConf(qt_deps: [Cpp3Qt], sources: [string], cfg: FiCpp3Config) -> str
 	)) + "\n" +
 	concatStrings(map(cpp_sources, \cpp ->
 		"SOURCES += " + cpp + "\n"
-	)) + "\n";
-}
-
-fi2cpp3CopyExecutable(cfg: FiCpp3Config, main_name: string, callback : (int) -> void) -> void {
-	executable = if (windows()) {
-		changeFileExt(cfg.outfile, ".exe");
-	} else {
-		cfg.outfile;
-	}
-	built_executable = pathCombineMany([cfg.outputdir, main_name]);
-	if (fileExists(built_executable)) {
-		copy_code = execSystemProcess("cp", [built_executable, executable], ".",
-			\out -> if (cfg.config.verbose > 0 && !isSpace(out)) {
-				fcPrintln(out, cfg.config.threadId);
-			},
-			\err -> if (!isSpace(err)) {
-				fcPrintln(err, cfg.config.threadId);
-			}
-		);
-		if (copy_code != 0) callback(5) else callback(0);
-	} else {
-		callback(0);
-	}
+	)) + "\n" +
+	"TARGET = " + final_exe + "\n";
 }

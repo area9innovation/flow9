@@ -12,7 +12,7 @@ export {
 
 fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void {
 	if (cfg.config.verbose > 0) {
-		fcPrintln("Building a cpp3 '" + cfg.outfile + "' application ...", cfg.config.threadId);
+		fcPrintln("Building a cpp3 '" + cfg.outfile + "' in '" + cfg.outputdir + "', application ...", cfg.config.threadId);
 	}
 	compiled = fi2cpp3Compile(program, globEnv, cfg);
 	if (length(compiled.errors) > 0) {
@@ -107,9 +107,10 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	// The runtime fragents, which are used in a program
 	runtime_parts = fi2cpp3RuntimeParts(gctx);
-	fi2cpp3SaveFile("__flow_includes.hpp", fiCpp3RuntimeIncludes(gctx, runtime_parts), gctx.config);
-	fi2cpp3SaveFile("__flow_runtime.hpp", fiCpp3RuntimeHeader(gctx, runtime_parts), gctx.config);
-	fi2cpp3SaveFile("__flow_runtime.cpp", fiCpp3RuntimeSource(gctx, runtime_parts), gctx.config);
+	src_path = \name, ext -> pathCombine(gctx.config.outputdir, changeFileExt(name, ext));
+	fi2cpp3SaveFile(src_path("__flow_includes", ".hpp"), fiCpp3RuntimeIncludes(gctx, runtime_parts), gctx.config);
+	fi2cpp3SaveFile(src_path("__flow_runtime", ".hpp"), fiCpp3RuntimeHeader(gctx, runtime_parts), gctx.config);
+	fi2cpp3SaveFile(src_path("__flow_runtime", ".cpp"), fiCpp3RuntimeSource(gctx, runtime_parts), gctx.config);
 
 	compiled0 = fold(gctx.program.traversal, makeTree(), \acc, name -> {
 		if (gctx.config.config.verbose > 0) {
@@ -121,23 +122,28 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	});
 	main_name = either(findInOrder(compiled0, \__, module -> if (module.isMain) Some(module.name) else None()), "");
 	compiled = if (!gctx.config.monolith) compiled0 else fi2cpp3Monolith(main_name, compiled0, gctx);
-
 	sources = list2array(fold(gctx.program.traversal, 
-		array2list(["__flow_includes.hpp", "__flow_runtime.hpp", "__flow_runtime.cpp"]), 
+		array2list([
+			src_path("__flow_includes", ".hpp"),
+			src_path("__flow_runtime", ".hpp"),
+			src_path("__flow_runtime", ".cpp")
+		]), 
 		\srcs, module_name -> {
 			switch (lookupTree(compiled, module_name)) {
 				Some(module): {
 					name = module.name;
 					mod_gctx = Cpp3GlobalContext(gctx with currentModule = name);
 					header = fiCompiledModule2cpp3header(module, mod_gctx, runtime_parts);
-					fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, mod_gctx.config);
-					srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
+					header_path = src_path(name, ".hpp");
+					fi2cpp3SaveFile(header_path, header, mod_gctx.config);
+					srcs1 = Cons(header_path, srcs);
 					sources = fiCompiledModule2cpp3sources(module, mod_gctx, runtime_parts);
 					if (length(sources) == 0) srcs1 else {
 						foldi(sources, srcs, \i, acc, source -> {
 							src_name = if (i == 0) name else name + "_" + i2s(i);
-							fi2cpp3SaveFile(changeFileExt(src_name, ".cpp"), source, mod_gctx.config);
-							Cons(changeFileExt(src_name, ".cpp"), acc);
+							source_path = src_path(src_name, ".cpp");
+							fi2cpp3SaveFile(source_path, source, mod_gctx.config);
+							Cons(source_path, acc);
 						});
 					}
 				}
@@ -150,7 +156,7 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 			}
 		}
 	));
-	fi2cpp3SaveFile(gctx.config.outfile + "_sources", concatStrings(map(sources, \src -> src + "\n")), gctx.config);
+	fi2cpp3SaveFile(src_path(fileNameOnly(gctx.config.outfile) + "_sources", ""), concatStrings(map(sources, \src -> src + "\n")), gctx.config);
 	Cpp3CompiledProgram(
 		main_name,
 		sources, 
@@ -194,12 +200,16 @@ struct_defs +
 //"\tinitMaxHeapSize(argc, argv);\n" +
 (if (mainInits == "") "" else strIndent(mainInits) + "\n") +
 (if (init == "") "" else strIndent(init) + "\n") +
-strIndent(show_vars("(A-)")) + "\n" +
+
+	//strIndent(show_vars("(A-)")) + "\n" +
+
 //(if (inc_vars == "") "" else strIndent(inc_vars) + "\n") +
 //strIndent(show_vars("(A+")) + "\n" +
 "\t" + gctx.varname2cpp("main") + "();\n" +
 (if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
-strIndent(show_vars("(B+)")) + "\n" +
+
+	//strIndent(show_vars("(B+)")) + "\n" +
+
 (if (dec_vars == "") "" else strIndent(dec_vars) + "\n") +
 //strIndent(show_vars("(B-)")) + "\n" +
 //"\talloc_stats->print();\n" + 
