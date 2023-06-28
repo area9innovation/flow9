@@ -39,10 +39,45 @@ enum TypeFx {
 // Types with id values < 9 are from TypeFx, others are structs. 
 
 using TypeId = int32_t;
+const TypeId StructOffset = TypeFx::STRUCT;
 
 // Flow internally uses utf-16 string format
 
 using string = std::u16string;
+
+// String conversions
+
+std::string string2std(const string& str);
+string std2string(const std::string& s);
+
+// Basic types
+
+using Void = nullptr_t;
+const Void void_value = nullptr;
+
+// Scalar types
+using Int = int32_t;
+using Bool = bool;
+using Double = double;
+
+
+// Basic scalar type conversions
+
+inline Double int2double(Int x) { return x; }
+inline Bool int2bool(Int x) { return x != 0; }
+inline string int2string(Int x) { return std2string(std::to_string(x)); }
+
+inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
+inline Bool double2bool(Double x) { return x != 0.0; }
+string double2string(Double x, bool persistent_dot = false);
+
+inline Int bool2int(Bool x) { return x ? 1 : 0; }
+inline Double bool2double(Bool x) { return x ? 1.0 : 0.0; }
+inline string bool2string(Bool x) { return x ? u"true" : u"false"; }
+
+inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else { try { return std::stoi(string2std(s)); } catch (std::exception& e) { return 0; } } }
+inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }
+inline Bool string2bool(const string& s) { return s != u"false"; }
 
 // Runtime type information: structs
 
@@ -64,19 +99,20 @@ struct StructDef {
 struct RTTI {
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
-		if (id < 9) return type_names[id + 1]; else
-		if (id - 9 < static_cast<TypeId>(struct_defs.size())) {
-			return struct_defs.at(id - 9).name;
+		if (id < StructOffset) return type_names[id + 1]; else
+		if (id - StructOffset < static_cast<TypeId>(struct_defs.size())) {
+			return struct_defs.at(id - StructOffset).name;
 		} else {
 			return type_names[0];
 		}
 	}
 	static const StructDef& structDef(TypeId id) {
-		if (id - 9 + 1 < static_cast<TypeId>(struct_defs.size())) {
-			return struct_defs.at(id - 8);
+		if (id - StructOffset + 1 < static_cast<TypeId>(struct_defs.size())) {
+			return struct_defs.at(id - StructOffset);
 		} else {
-			// Special struct def - undefined.
-			return struct_defs.at(0);
+			static StructDef undef;
+			fail("undefined struct with type id: " + string2std(int2string(id)));
+			return undef;
 		}
 	}
 	static int structField(TypeId id, const string& field) {
@@ -96,7 +132,7 @@ struct RTTI {
 		}
 	}
 	static void initStructMap() {
-		for (int i = 9; i < struct_defs.size() + 9; ++i) {
+		for (int i = StructOffset; i < struct_defs.size() + StructOffset; ++i) {
 			const StructDef& def = struct_defs.at(i - 9);
 			struct_name_to_id[def.name] = i;
 		}
@@ -110,38 +146,6 @@ private:
 	static std::unordered_map<string, int32_t> struct_name_to_id;
 };
 
-// Basic types
-
-using Void = nullptr_t;
-const Void void_value = nullptr;
-
-// Scalar types
-using Int = int32_t;
-using Bool = bool;
-using Double = double;
-
-// String conversions
-
-std::string string2std(const string& str);
-string std2string(const std::string& s);
-
-// Basic scalar type conversions
-
-inline Double int2double(Int x) { return x; }
-inline Bool int2bool(Int x) { return x != 0; }
-inline string int2string(Int x) { return std2string(std::to_string(x)); }
-
-inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
-inline Bool double2bool(Double x) { return x != 0.0; }
-string double2string(Double x, bool persistent_dot = false);
-
-inline Int bool2int(Bool x) { return x ? 1 : 0; }
-inline Double bool2double(Bool x) { return x ? 1.0 : 0.0; }
-inline string bool2string(Bool x) { return x ? u"true" : u"false"; }
-
-inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else { try { return std::stoi(string2std(s)); } catch (std::exception& e) { return 0; } } }
-inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }	
-inline Bool string2bool(const string& s) { return s != u"false"; }
 
 // Forward declaration of all types
 
@@ -435,11 +439,10 @@ private:
 			if constexpr (i > 0) {
 				str.append(u", ");
 			}
-			if constexpr (i + 1 < SIZE) {
-				incRc(this);
-			}
-			toStringRc(getRc<i>(), str);
+			toStringRc(getRc1<i>(), str);
 			toStringArgsRc<i + 1>(str);
+		} else {
+			decRc(this);
 		}
 	}
 	Fields fields;
