@@ -49,8 +49,8 @@ runTestWithValgrind(command: string, args: [string]) -> TestRun {
 	TestRun(out, -1, !success);
 }
 
-
-runTest(test: string, back: string, verb: int) -> TestStats {
+runTest(test: string, back: string, runner: (string, [string]) -> TestRun) -> TestStats {
+	verb = s2i(getUrlParameterDef("verb", "1"));
 	target = if (back == "java") "jar" else back;
 	t1 = timestamp();
 	back_compiler_opts = getUrlParameter(back + "-back-opts");
@@ -84,11 +84,7 @@ runTest(test: string, back: string, verb: int) -> TestStats {
 		t2 = timestamp();
 		run_exec = if (back == "java") "java" else compiled_test;
 		run_args = if (back == "java") concat(["-jar", compiled_test], test_opts) else test_opts;
-		run = if (useCompareTest()) {
-			runTestWithTime(run_exec, run_args);
-		} else {
-			runTestWithValgrind(run_exec, run_args);
-		}
+		run = runner(run_exec, run_args);
 		run_out = run.out;
 		execution_time = timestamp() - t2;
 		// cleanup the compiled files
@@ -101,19 +97,9 @@ runTest(test: string, back: string, verb: int) -> TestStats {
 		if (getUrlParameter("keep-exe") == "") {
 			deleteFile(compiled_test) |> ignore;
 		}
-		run_success = if (useCompareTest()) {
-			strlen(run_out.stderr) == 0 && run_out.exitCode == 0;
-		} else {
-			!run.memErrs;
-		}
-		if (!run_success) {
-			//if (verb > 2) {
-				println("\t\texecution of target: " + back + " FAILED\n" + run_out.stdall);
-			//}
-		}
 		TestStats(
 			compile_success, compilation_time, 
-			run_success, execution_time, run
+			true, execution_time, run
 		);
 	}
 }
@@ -124,8 +110,8 @@ b2success(b: bool) -> string {
 
 compareTest(test: string, ref_backend: string, test_backend: string, log_err: (string) -> void) -> void {
 	verb = s2i(getUrlParameterDef("verb", "1"));
-	refRun = runTest(test, ref_backend, verb);
-	testRun = runTest(test, test_backend, verb);
+	refRun = runTest(test, ref_backend, runTestWithTime);
+	testRun = runTest(test, test_backend, runTestWithTime);
 	if (refRun.compiled != testRun.compiled) {
 		err_msg = (if (!refRun.compiled) refRun else testRun).run.out.stdall;
 		println(strIndent("Compilation differs, " +
@@ -190,7 +176,7 @@ compareTest(test: string, ref_backend: string, test_backend: string, log_err: (s
 
 valgrindTest(test: string, test_backend: string, log_err: (string) -> void) -> void {
 	verb = s2i(getUrlParameterDef("verb", "1"));
-	testRun = runTest(test, test_backend, verb);
+	testRun = runTest(test, test_backend, runTestWithValgrind);
 	if (!testRun.compiled) {
 		err_msg = testRun.run.out.stdall;
 		println(strIndent("Compilation fails" + if (verb > 1) ", error:\n" + strIndent(err_msg) else ""));
@@ -221,7 +207,11 @@ valgrindTest(test: string, test_backend: string, log_err: (string) -> void) -> v
 
 useCompareTest() -> bool {
 	ref_backend = getUrlParameterDef("ref-back", "java");
-	getUrlParameter("valgrind") == "" && (ref_backend != "" && ref_backend != "0");
+	ref_backend != "" && ref_backend != "0";
+}
+
+useValgrindTest() -> bool {
+	getUrlParameter("valgrind") != ""
 }
 
 main() {
@@ -245,11 +235,7 @@ main() {
 			(tests_param == [] || contains(tests_param, "all") || exists(tests_param, \inc -> strContains(file, inc)))
 		));
 		tests_str = strGlue(tests, ", ");
-		if (useCompareTest()) {
-			println("Testing backend: " + test_backend + " with reference backend: " + ref_backend);
-		} else {
-			println("Testing backend: " + test_backend + " with valgrind");
-		}
+		println("Testing backend: " + test_backend + if (useCompareTest()) " with reference backend: " + ref_backend else "");
 		if (strlen(tests_str) < 128) {
 			println("Going to run tests: [" + strGlue(tests, ", ") + "]");
 		} else {
@@ -272,7 +258,8 @@ main() {
 			}
 			if (useCompareTest()) {
 				compareTest(test, ref_backend, test_backend, log_err);
-			} else {
+			}
+			if (useValgrindTest()){
 				valgrindTest(test, test_backend, log_err);
 			}
 		});

@@ -244,16 +244,39 @@ cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
 			FiTypeParameter(__): -3;
 		}
 	}
-	"std::vector<StructDef> RTTI::struct_defs = {\n" + 
-		strIndent(strArrayWrap(mapi(gctx.structs, \i, s -> 
-			"StructDef{u\"" + s.name + "\", " + 
-			i2s(i + 9) + ", {" + 
-				superglue(s.args, 
-					\arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(type2id(arg.type)) + "}", 
-					", "
-				) + 
-			"}}"
-		), 128, false, ", ")) + 
+	struct_arg = \arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(type2id(arg.type)) + "}";
+	struct_fields = \s -> "{" + superglue(s.args, struct_arg, ", ") + "}";
+	struct_constructor = \s -> {
+		make_arg = \i, arg: FiStructArg -> {
+			getter = "args->get(" + i2s(i) + ")";
+			caster = if (arg.type == FiTypeFlow()) {
+				getter;
+			} else {
+				"castRc<Flow*, " + fiType2cpp3(arg.type, gctx) + ">(" + getter + ")";
+			};
+			"incRc(" + caster + ")";
+		}
+		check_arity = "if (args->size() != " + i2s(length(s.args)) + ") {\n" +
+		"\tfail(\"Struct " + s.name + " arity mismatch: expected " + i2s(length(s.args)) + " arguments, " +
+		"got: \" + string2std(int2string(args->size())) + \"  \");\n}";
+		"[](Vec<Flow*>* args){\n" + strIndent(
+			check_arity + "\n" +
+			"Flow* ret = static_cast<Flow*>(" +
+			fiStructName2cpp3(FiTypeName(s.name, s.typars), gctx) + "::make(\n" +
+				strIndent(strGlue(mapi(s.args, make_arg), ",\n")) +
+			"\n));\n" +
+			"decRc(args);\n" +
+			"return ret;"
+		) + "\n}";
+	}
+	"std::vector<StructDef> RTTI::struct_defs = {\n" +
+		strIndent(strGlue(mapi(gctx.structs, \i, s ->
+			"StructDef{\n" + strIndent(
+				"u\"" + s.name + "\", " + i2s(i + 9) + ",\n" +
+				struct_fields(s) + ",\n" +
+				struct_constructor(s)
+			 ) + "\n}"
+		), ",\n")) +
 	"\n};\n\n";
 }
 

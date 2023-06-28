@@ -93,7 +93,7 @@ struct StructDef {
 	string name;
 	TypeId type;
 	std::vector<FieldDef> args;
-	std::function<Flow*(const Vec<Flow*>*)> constructor;
+	std::function<Flow*(Vec<Flow*>*)> constructor;
 };
 
 struct RTTI {
@@ -132,7 +132,7 @@ struct RTTI {
 		}
 	}
 	static void initStructMap() {
-		for (int i = StructOffset; i < struct_defs.size() + StructOffset; ++i) {
+		for (int i = StructOffset; i < static_cast<TypeId>(struct_defs.size()) + StructOffset; ++i) {
 			const StructDef& def = struct_defs.at(i - 9);
 			struct_name_to_id[def.name] = i;
 		}
@@ -274,12 +274,20 @@ inline String* concatStringsRc(String* s1, String* s2) {
 
 struct Native : public Flow {
 	enum { TYPE = TypeFx::NATIVE };
+	enum Kind { SCALAR = 0, FLOW_PTR = 1, FOREIGN_PTR = 2 };
 	template<typename T>
-	Native(T v): val(v) { /*if constexpr (is_flow_ancestor_v<T>) incRc(v);*/ }
+	Native(T v): cleanup([](std::any x){}), val(v) {
+		if constexpr (is_flow_ancestor_v<T>) {
+			cleanup = [](std::any x){ decRc(std::any_cast<Flow*>(x)); };
+		} else if constexpr (std::is_pointer_v<T>) {
+			cleanup = [](std::any x){ delete std::any_cast<T>(x); };
+		}
+	}
 	~Native() override {
-		try {
+		cleanup(val);
+		/*try {
 			decRc(std::any_cast<Flow*>(val));
-		} catch(const std::bad_any_cast& e) { }
+		} catch(const std::bad_any_cast& e) { }*/
 	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
@@ -311,6 +319,7 @@ struct Native : public Flow {
 		return ret;
 	}
 private:
+	std::function<void(std::any)> cleanup;
 	std::any val;
 };
 
@@ -921,13 +930,14 @@ inline Int compareRc(T v1, T v2) {
 			decRc(v2);
 			return c1;
 		} else {
-			Int size = v1->vect.size();
-			for (std::size_t i = 0; i < size; ++ i) {
+			//Int size = v1->size();
+			for (Int i = 0; i < v1->size(); ++ i) {
 				//if (i + 1 < size) {
 					incRc(v1);
 					incRc(v2);
 				//}
-				Int c2 = compareRc<typename T::ElType>(v1->getRc(i), v2->getRc(i));
+				//using T0 = std::remove_pointer<T>::type;
+				Int c2 = compareRc<typename std::remove_pointer<T>::type::ElType>(v1->getRc(i), v2->getRc(i));
 				if (c2 != 0) {
 					//if (i + 1 < size) {
 						decRc(v1);
