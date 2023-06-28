@@ -56,7 +56,7 @@ runTest(test: string, back: string, runner: (string, [string]) -> TestRun) -> Te
 	back_compiler_opts = getUrlParameter(back + "-back-opts");
 	back_flowc_opts = getUrlParameter(back + "-flowc-opts");
 	compile_args = concatA([
-		["server=0", target + "=1", test/*, "nim-utf8=1"*/],
+		["server=0", target + "=1", test],
 		if (back_compiler_opts == "") [] else [back + "-opts=" + back_compiler_opts],
 		filtermap(strSplit(back_flowc_opts, ","), \opt -> if (opt == "") None() else {
 			Some(opt + "=1")
@@ -89,8 +89,13 @@ runTest(test: string, back: string, runner: (string, [string]) -> TestRun) -> Te
 		execution_time = timestamp() - t2;
 		// cleanup the compiled files
 		if (getUrlParameter("keep-src") == "") {
-			if (back == "nim") {
-				deleteFile(changeFileExt(test, ".nim")) |> ignore;
+			dir0 = dirName(test);
+			testdir = if (dir0 == test) "." else dir0;
+			gendir = if (back == "nim") "nimgen" else
+			if (back == "cpp3") "cpp3gen" else
+			if (back == "java") "javagen" else "";
+			if (gendir != "") {
+				ignore(deleteRecursively(pathCombine(testdir, gendir)));
 			}
 		}
 		// cleanup the executable files
@@ -116,7 +121,7 @@ compareTest(test: string, ref_backend: string, test_backend: string, log_err: (s
 		err_msg = (if (!refRun.compiled) refRun else testRun).run.out.stdall;
 		println(strIndent("Compilation differs, " +
 			"on " + ref_backend + ": " + b2success(refRun.compiled) + ", " +
-			"on " + test_backend + ": " + b2success(testRun.compiled) +
+			"on " + test_backend + ": " + b2success(testRun.compiled) + " - FAILED " +
 			(if (verb > 1) ", error:\n" + strIndent(err_msg) else "")
 		));
 		log_err(err_msg);
@@ -128,7 +133,7 @@ compareTest(test: string, ref_backend: string, test_backend: string, log_err: (s
 		}
 		println(strIndent("Execution differs, " +
 			"on " + ref_backend + ": " + b2success(refRun.compiled) + ", " +
-			"on " + test_backend + ": " + b2success(testRun.compiled) +
+			"on " + test_backend + ": " + b2success(testRun.compiled) + " - FAILED " +
 			(if (verb > 1) "\n" + strIndent(err_msg) else "")
 		));
 		log_err(err_msg);
@@ -138,15 +143,15 @@ compareTest(test: string, ref_backend: string, test_backend: string, log_err: (s
 		setFileContent(ref_out, refRun.run.out.stdall);
 		setFileContent(test_out, testRun.run.out.stdall);
 		diff_out = execSystemProcessOutput("diff", [ref_out, test_out], ".");
-		println(strIndent("Output differs" +
-			(if (verb > 1) ":\n" + strIndent(diff_out.stdout) else "")
+		println(strIndent("Output differs - FAILED" +
+			(if (verb > 0) ":\n" + strIndent(diff_out.stdout) else "")
 		));
 		if (getUrlParameter("keep-out") == "") {
 			// cleanup the saved output files
 			deleteFile(ref_out) |> ignore;
 			deleteFile(test_out) |> ignore;
 		} else {
-			if (verb > 2) {
+			if (verb > 1) {
 				println("\t\tkeeping output files: " + ref_out + " and " + test_out + " are kept");
 			}
 		}
@@ -155,22 +160,22 @@ compareTest(test: string, ref_backend: string, test_backend: string, log_err: (s
 		if (getUrlParameter("keep-out") == "1") {
 			ref_out = changeFileExt(test, "." + ref_backend + "_out");
 			test_out = changeFileExt(test, "." + test_backend + "_out");
-			if (verb > 2) {
+			if (verb > 1) {
 				println("\t\tkeeping output files: " + ref_out + " and " + test_out + " are kept");
 			}
 			ignore(setFileContent(ref_out, refRun.run.out.stdall));
 			ignore(setFileContent(test_out, testRun.run.out.stdall));
 		}
-		println("\tPASSED");
-	}
-	mem2s = \k -> i2s(k) + "kb.";
-	time2s = \t -> d2st(t / 1000.0, 2) + "s.";
-	run2s = \r -> "compile: " + time2s(r.compilationTime) + " exec: " + time2s(r.executionTime) + " mem: " + mem2s(r.run.execMem);
-	if (getUrlParameterDef("time-stats", "1") != "") {
-		println(strIndent("Timings/memory:\n" +
-			"\t" + ref_backend + "\t" + run2s(refRun) + "\n" +
-			"\t" + test_backend + "\t" + run2s(testRun)
-		));
+		mem2s = \k -> i2s(k) + "kb.";
+		time2s = \t -> d2st(t / 1000.0, 2) + "s.";
+		run2s = \r -> "compile: " + time2s(r.compilationTime) + " exec: " + time2s(r.executionTime) + " mem: " + mem2s(r.run.execMem);
+		if (getUrlParameterDef("time-stats", "1") != "") {
+			println(strIndent("Timings/memory:\n" +
+				"\t" + ref_backend + "\t" + run2s(refRun) + "\n" +
+				"\t" + test_backend + "\t" + run2s(testRun)
+			));
+		}
+		println("\tComparison with " + ref_backend +  " - PASSED");
 	}
 }
 
@@ -179,24 +184,24 @@ valgrindTest(test: string, test_backend: string, log_err: (string) -> void) -> v
 	testRun = runTest(test, test_backend, runTestWithValgrind);
 	if (!testRun.compiled) {
 		err_msg = testRun.run.out.stdall;
-		println(strIndent("Compilation fails" + if (verb > 1) ", error:\n" + strIndent(err_msg) else ""));
+		println(strIndent("Compilation fails" + if (verb > 0) ", error:\n" + strIndent(err_msg) else ""));
 		log_err(err_msg);
 	} else if (!testRun.executed) {
 		err_msg = test_backend + " execution output:\n" + testRun.run.out.stdall;
-		println(strIndent("Execution fails" + if (verb > 1) ", error:\n" + strIndent(err_msg) else ""));
+		println(strIndent("Execution fails" + if (verb > 0) ", error:\n" + strIndent(err_msg) else ""));
 		log_err(err_msg);
 	} else if (testRun.run.memErrs) {
-		println(strIndent("Memory errors" + if (verb > 1) ":\n" + strIndent(testRun.run.out.stdout) else ""));
+		println(strIndent("Memory errors - FAILED" + if (verb > 0) ":\n" + strIndent(testRun.run.out.stdout) else ""));
 		if (getUrlParameter("keep-out") == "1") {
 			test_out = changeFileExt(test, "." + test_backend + "_out");
-			if (verb > 2) {
+			if (verb > 1) {
 				println("\t\tkeeping output file: " + test_out + " are kept");
 			}
 			ignore(setFileContent(test_out, testRun.run.out.stdall));
 		}
 		log_err(testRun.run.out.stdout);
 	} else {
-		println("\tPASSED");
+		println("\tValgrind memory check - PASSED");
 		if (verb > 2) {
 			println("\tValgrind out:\n" +
 				strIndent(strIndent(testRun.run.out.stdall))
@@ -243,6 +248,7 @@ main() {
 		}
 		failure_count = ref 0;
 		failed_tests = ref [];
+		start = timestamp();
 		iter(tests, \test -> {
 			if (verb > 0) {
 				println("Running test: " + test + " ... ");
@@ -263,11 +269,8 @@ main() {
 				valgrindTest(test, test_backend, log_err);
 			}
 		});
-		// cleanup java files
-		if (ref_backend == "java") {
-			deleteRecursively("./javagen") |> ignore;
-		}
 		println("Testing results:\n" + 
+			"\ttime:   " + d2st((timestamp() - start) / 1000.0, 2) + "s.\n" +
 			"\tpassed: " + i2s(length(tests) - ^failure_count) + "\n" +
 			"\tfailed: " + i2s(^failure_count) + "\n" +
 			strIndent(strGlue(^failed_tests, "\n"))

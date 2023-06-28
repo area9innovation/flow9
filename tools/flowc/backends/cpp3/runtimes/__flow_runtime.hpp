@@ -186,7 +186,7 @@ template<typename T> inline T incRc(T x, Int d = 1) {
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
-	if constexpr (std::is_pointer_v<T>) { x->rc_ -= d; if (x->rc_ == 0) delete x; }
+	if constexpr (std::is_pointer_v<T>) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } }
 }
 
 template<typename T1, typename T2> T2 castRc(T1 x);
