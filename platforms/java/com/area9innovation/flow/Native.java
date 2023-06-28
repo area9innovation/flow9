@@ -36,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.lang.Runtime;
 import java.lang.ClassCastException;
 import java.lang.reflect.InvocationTargetException;
@@ -44,7 +45,7 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.*;
-import java.util.Arrays;
+import java.text.DecimalFormat;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDateTime;
 import java.time.Instant;
@@ -2642,6 +2643,14 @@ public class Native extends NativeHost {
 		}
 		buf.append('"');
 		return buf.toString();
+	}
+
+	public static final String i2s(int value) {
+		return String.valueOf(String.valueOf(value));
+	}
+	static DecimalFormat df = new DecimalFormat("#.###############");
+	public static final String d2s(double value) {
+		return df.format(value);
 	}
 }
 
