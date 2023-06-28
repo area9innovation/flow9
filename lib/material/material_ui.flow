@@ -15,31 +15,33 @@ export {
 	MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material;
 		MRadioParams(caption : Material, title : Maybe<string>);
 	// Helper to navigate list like in radio-group
-	MRadioArrowNavigation(
+	MArrowNavigation(
 		i : int,
 		listLen : int,
 		makeListItem : ([MButtonState]) -> Material,
 		focusedIdx : DynamicBehaviour<int>,
 		focusEnabledIdx : DynamicBehaviour<int>,
 		getDefFocusableItem : () -> int,
-		checkFocusability : (int) -> bool,
-		selectItem : () -> void,
-		resetSelection : () -> bool,
-		keys : Pair<int, int>
+		style : [MArrowNavigationStyle]
 	) -> Material;
 
-	MRadioArrowNavigationExt(
+	MArrowNavigationExt(
 		i : int,
 		listLen : int,
 		makeListItem : ([MButtonState]) -> Material,
 		focusedIdx : DynamicBehaviour<int>,
 		focusEnabledIdx : DynamicBehaviour<int>,
 		getDefFocusableItem : () -> int,
-		checkFocusability : (int) -> bool,
-		selectItem : () -> void,
-		resetSelection : () -> bool,
-		keys : Pair<int, int>
+		style : [MArrowNavigationStyle]
 	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
+
+	MArrowNavigationStyle ::= MArrowNavigationDirection, MArrowNavigationSupportHomeEnd, MArrowNavigationCheckFocusability,
+							MArrowNavigationSelectItem, MArrowNavigationResetSelection;
+		MArrowNavigationDirection(vertical : bool); // true by default
+		MArrowNavigationSupportHomeEnd(support : bool); // true by default
+		MArrowNavigationCheckFocusability(fn : (int) -> bool);
+		MArrowNavigationSelectItem(fn : () -> void);
+		MArrowNavigationResetSelection(fn : () -> bool);
 
 	// Help to create common patterns, when you need to place smth at the top
 	// of another material
@@ -274,61 +276,57 @@ MRadiosExtended(
 	focusedIdx = make(-1);
 	focusEnabledIdx = make(0);
 
-	backwardsKey = if (isColsCombiner) KEY_LEFT else KEY_UP;
-	forwardKey = if (isColsCombiner) KEY_RIGHT else KEY_DOWN;
-
 	mapi(params, \i, par -> {
 		radioStyle = concatA([
 			style,
 			eitherMap(par.title, \str -> [MButtonTitle(const(str))], []),
 		]);
 
-		MRadioArrowNavigation(
+		MArrowNavigation(
 			i,
 			length(params),
 			\st -> MRadio(par.caption, i, index, concat(radioStyle, st)),
 			focusedIdx,
 			focusEnabledIdx,
-			\ -> {
-				currentSelected = fgetValue(index);
-				if (currentSelected == -1) 0 else currentSelected
-			},
-			\__ -> true,
-			\ -> nextDistinct(index, i),
-			\ -> {nextDistinct(index, -1); true},
-			Pair(backwardsKey, forwardKey)
+			\ -> max(0, fgetValue(index)),
+			[
+				MArrowNavigationSelectItem(\ -> nextDistinct(index, i)),
+				MArrowNavigationResetSelection(\ -> {nextDistinct(index, -1); true}),
+				MArrowNavigationDirection(!isColsCombiner)
+			]
 		)
 	})
 }
 
 // Navigate through list by arrows, not by tab. Wrap each item of list into this.
-MRadioArrowNavigation(
+MArrowNavigation(
 	i : int,
 	listLen : int,
 	makeListItem : ([MButtonState]) -> Material,
 	focusedIdx : DynamicBehaviour<int>,
 	focusEnabledIdx : DynamicBehaviour<int>,
 	getDefFocusableItem : () -> int,
-	checkFocusability : (int) -> bool,
-	selectItem : () -> void,
-	resetSelection : () -> bool,
-	keys : Pair<int, int>
+	style : [MArrowNavigationStyle]
 ) -> Material {
-	MRadioArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, checkFocusability, selectItem, resetSelection, keys).first;
+	MArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, style).first;
 }
 
-MRadioArrowNavigationExt(
+MArrowNavigationExt(
 	i : int,
 	listLen : int,
 	makeListItem : ([MButtonState]) -> Material,
 	focusedIdx : DynamicBehaviour<int>,
 	focusEnabledIdx : DynamicBehaviour<int>,
 	getDefFocusableItem : () -> int,
-	checkFocusability : (int) -> bool,
-	selectItem : () -> void,
-	resetSelection : () -> bool,
-	keys : Pair<int, int>
+	style : [MArrowNavigationStyle]
 ) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>> {
+
+	vertical = extractStruct(style, MArrowNavigationDirection(true)).vertical;
+	supportHomeEnd = extractStruct(style, MArrowNavigationSupportHomeEnd(true)).support;
+	checkFocusability = extractStruct(style, MArrowNavigationCheckFocusability(\__ -> true)).fn;
+	selectItem = extractStruct(style, MArrowNavigationSelectItem(nop)).fn;
+	resetSelection = extractStruct(style, MArrowNavigationResetSelection(\ -> false)).fn;
+	mainKeys = if (vertical) Pair(KEY_UP, KEY_DOWN) else Pair(KEY_LEFT, KEY_RIGHT);
 
 	focused = make(false);
 	focusEnabled = feq(focusEnabledIdx, i);
@@ -339,16 +337,16 @@ MRadioArrowNavigationExt(
 			if (!handled && fgetValue(focused)) {
 				idx = getValue(focusedIdx);
 				updateFocusedAnswer = \newIdx -> if (checkFocusability(newIdx)) nextDistinct(focusedIdx, newIdx);
-				if (ke.keycode == keys.first) { // backwards
+				if (ke.keycode == mainKeys.first) { // backwards
 					updateFocusedAnswer(if (idx == 0) listLen - 1 else idx - 1);
 					true
-				} else if (ke.keycode == keys.second) { // forward
+				} else if (ke.keycode == mainKeys.second) { // forward
 					updateFocusedAnswer(if (idx == listLen - 1) 0 else idx + 1);
 					true
-				} else if (ke.keycode == KEY_HOME) {
+				} else if (supportHomeEnd && ke.keycode == KEY_HOME) {
 					updateFocusedAnswer(0);
 					true
-				} else if (ke.keycode == KEY_END) {
+				} else if (supportHomeEnd && ke.keycode == KEY_END) {
 					updateFocusedAnswer(listLen - 1);
 					true
 				} else if (ke.keycode == KEY_ESCAPE) {
