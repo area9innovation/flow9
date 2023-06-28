@@ -133,7 +133,7 @@ inline string int2string(Int x) { return std2string(std::to_string(x)); }
 
 inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
 inline Bool double2bool(Double x) { return x != 0.0; }
-string double2string(Double x);
+string double2string(Double x, bool persistent_dot = false);
 
 inline Int bool2int(Bool x) { return x ? 1 : 0; }
 inline Double bool2double(Bool x) { return x ? 1.0 : 0.0; }
@@ -203,13 +203,6 @@ struct Flow {
 	TypeId typeIdRc() const { TypeId ret = typeId(); decRc(this); return ret; }
 	Int sizeRc() const { Int ret = size(); decRc(this); return ret; }
 	
-	//virtual Flow* getFlow(Int i) { fail("invalid flow value getter"); return nullptr; }
-	//virtual void setFlow(Int i, Flow* v) { fail("invalid flow value setter"); }
-	//virtual Flow* callFlow(std::vector<Flow*>) { fail("invalid flow value getter"); return nullptr; }
-	//Flow* getFlowRc(Int i) { Flow* ret = getFlow(i); incRc(ret); decRc(this); return ret; }
-	//void setFlowRc(Int i, Flow* v) { decRc(getFlow(i)); setFlow(i, v); decRc(this); }
-	//Flow* callFlowRc(std::vector<Flow*> as) { Flow* ret = callFlow(as); for(Flow* a : as) decRc(a); decRc(this); return ret; }
-
 	virtual Flow* getFlowRc(Int i) { fail("invalid flow value getter"); return nullptr; }
 	virtual void setFlowRc(Int i, Flow* v) { fail("invalid flow value setter"); }
 	virtual Flow* callFlowRc(std::vector<Flow*>) { fail("invalid flow value getter"); return nullptr; }
@@ -793,7 +786,15 @@ inline T2 castRc(T1 x) {
 		if constexpr (std::is_same_v<T1, Int>) { return String::make(int2string(x)); }
 		else if constexpr (std::is_same_v<T1, Bool>) { return String::make(bool2string(x)); }
 		else if constexpr (std::is_same_v<T1, Double>) { return String::make(double2string(x)); }
-		else { return flow2stringRc(x); }
+		else if constexpr (std::is_same_v<T1, Flow*>) {
+			if (x->typeId() == TypeFx::STRING) {
+				return x->template get<String*>();
+			} else {
+				return flow2stringRc(x);
+			}
+		} else {
+			return flow2stringRc(x);
+		}
 	}
 	else if constexpr (std::is_same_v<T2, Native*>) {
 		return Native::make(x);
@@ -980,8 +981,10 @@ inline void toStringRc(T v, string& str) {
 	if constexpr (std::is_same_v<T, Void>) str.append(u"{}");
 	else if constexpr (std::is_same_v<T, Int>) str.append(int2string(v));
 	else if constexpr (std::is_same_v<T, Bool>) str.append(bool2string(v));
-	else if constexpr (std::is_same_v<T, Double>) str.append(int2string(v));
-	else if constexpr (std::is_same_v<T, String*>) { appendEscaped(v, str); decRc(v); }
+	else if constexpr (std::is_same_v<T, Double>) str.append(double2string(v, true));
+	else if constexpr (std::is_same_v<T, String*>) {
+		str.append(u"\""); appendEscaped(v, str); decRc(v); str.append(u"\"");
+	}
 	else if constexpr (std::is_same_v<T, Flow*>) { String* s = flow2stringRc(v); str.append(s->str); decRc(s); }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		str.append(u"[");
@@ -990,9 +993,7 @@ inline void toStringRc(T v, string& str) {
 			if (i > 0) {
 				str.append(u", ");
 			}
-			//if (i + 1 < size) {
-				incRc(v);
-			//}
+			incRc(v);
 			toStringRc(v->getRc(i), str);
 		}
 		decRc(v);

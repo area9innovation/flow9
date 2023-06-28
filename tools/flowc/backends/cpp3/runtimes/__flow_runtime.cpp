@@ -11,27 +11,27 @@ const string RTTI::type_names[] = {
 
 std::unordered_map<string, int32_t> RTTI::struct_name_to_id;
 
-string double2string(Double x) { 
-	static std::ostringstream os; 
-	os << std::setprecision(12) << x;
+string double2string(Double x, bool persistent_dot) {
+	static std::stringstream os;
+	os << std::setprecision(15) << x;
 	std::string str = os.str();
 	os.str("");
 	os.clear();
 	std::size_t point_pos = str.find('.');
-	if (point_pos == std::string::npos) {
-		return std2string(str);
-	} else {
-		bool is_integer = true;
-		for (std::size_t i = point_pos + 1; i < str.length() && is_integer; ++ i) {
+	if (point_pos != std::string::npos) {
+		bool trailing_zeroes = true;
+		for (std::size_t i = point_pos + 1; i < str.length() && trailing_zeroes; ++ i) {
 			char ch = str.at(i);
-			is_integer = !('1' < ch && ch < '9');
+			trailing_zeroes = !('1' < ch && ch < '9');
 		}
-		if (is_integer) {
-			return std2string(str.substr(0, point_pos)); 
-		} else {
-			return std2string(str); 
+		if (trailing_zeroes) {
+			str = str.substr(0, point_pos);
 		}
 	}
+	if (persistent_dot && str.find('.') == std::string::npos) {
+		str.append(".0");
+	}
+	return std2string(str);
 }
 
 std::string string2std(const string& str) {
@@ -210,7 +210,7 @@ void flow2stringRc(Flow* v, string& str) {
 		case TypeFx::VOID:   str.append(u"{}"); break;
 		case TypeFx::INT:    str.append(int2string(v->getRc<Int>())); break;
 		case TypeFx::BOOL:   str.append(bool2string(v->getRc<Bool>())); break;
-		case TypeFx::DOUBLE: str.append(double2string(v->getRc<Double>())); break;
+		case TypeFx::DOUBLE: str.append(double2string(v->getRc<Double>(), true)); break;
 		case TypeFx::STRING: {
 			str.append(u"\""); appendEscaped(v->get<String*>(), str); decRc(v); str.append(u"\"");
 			break;
