@@ -39,7 +39,7 @@ enum TypeFx {
 // Types with id values < 9 are from TypeFx, others are structs. 
 
 using TypeId = int32_t;
-const TypeId StructOffset = TypeFx::STRUCT;
+const TypeId structTypeIdOffset = TypeFx::STRUCT;
 
 // Flow internally uses utf-16 string format
 
@@ -99,16 +99,16 @@ struct StructDef {
 struct RTTI {
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
-		if (id < StructOffset) return type_names[id + 1]; else
-		if (id - StructOffset < static_cast<TypeId>(struct_defs.size())) {
-			return struct_defs.at(id - StructOffset).name;
+		if (id < structTypeIdOffset) return type_names[id + 1]; else
+		if (id - structTypeIdOffset < static_cast<TypeId>(struct_defs.size())) {
+			return struct_defs.at(id - structTypeIdOffset).name;
 		} else {
 			return type_names[0];
 		}
 	}
 	static const StructDef& structDef(TypeId id) {
-		if (id - StructOffset + 1 < static_cast<TypeId>(struct_defs.size())) {
-			return struct_defs.at(id - StructOffset);
+		if (id - structTypeIdOffset + 1 < static_cast<TypeId>(struct_defs.size())) {
+			return struct_defs.at(id - structTypeIdOffset);
 		} else {
 			static StructDef undef;
 			fail("undefined struct with type id: " + string2std(int2string(id)));
@@ -132,7 +132,7 @@ struct RTTI {
 		}
 	}
 	static void initStructMap() {
-		for (int i = StructOffset; i < static_cast<TypeId>(struct_defs.size()) + StructOffset; ++i) {
+		for (int i = structTypeIdOffset; i < static_cast<TypeId>(struct_defs.size()) + structTypeIdOffset; ++i) {
 			const StructDef& def = struct_defs.at(i - 9);
 			struct_name_to_id[def.name] = i;
 		}
@@ -209,6 +209,8 @@ struct Flow {
 	
 	virtual Flow* getFlowRc(Int i) { fail("invalid flow value getter"); return nullptr; }
 	virtual void setFlowRc(Int i, Flow* v) { fail("invalid flow value setter"); }
+	virtual Flow* getFlowRc(String* f) { fail("invalid flow value getter"); return nullptr; }
+	virtual void setFlowRc(String* f, Flow* v) { fail("invalid flow value setter"); }
 	virtual Flow* callFlowRc(std::vector<Flow*>) { fail("invalid flow value getter"); return nullptr; }
 
 	template<typename T> inline T get() { return dynamic_cast<T>(this); }
@@ -347,11 +349,12 @@ struct Str : public Flow {
 		setFlowRc_<0>(i, v);
 	}
 
-	Flow* getFlowRc(String* f) {
+	Flow* getFlowRc(String* f) override {
 		int field_idx = RTTI::structField(Id, f->str);
+		decRc(f);
 		return getFlowRc(field_idx); 
 	}
-	void setFlowRc(String* f, Flow* v) {
+	void setFlowRc(String* f, Flow* v) override {
 		int field_idx = RTTI::structField(Id, f->str);
 		setFlowRc(field_idx, v);
 	}
