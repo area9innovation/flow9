@@ -237,7 +237,7 @@ template<> inline Bool Flow::get<Bool>() { return dynamic_cast<FBool*>(this)->va
 template<> inline Double Flow::get<Double>() { return dynamic_cast<FDouble*>(this)->val; }
 
 const Int UNI_HALF_BASE = 0x10000;
-const Int UNI_HALF_SHIFH = 10;
+const Int UNI_HALF_SHIFT = 10;
 const Int UNI_HALF_MASK = 0x3FF;
 const Int UNI_SUR_HIGH_START = 0xD800;
 const Int UNI_SUR_HIGH_END = 0xDBFF;
@@ -258,7 +258,7 @@ struct String : public Flow {
 			str.append(1, static_cast<char16_t>(c));
 		} else {
 			c -= UNI_HALF_BASE;
-			str.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFH) + UNI_SUR_HIGH_START));
+			str.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
       		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		}
 	}
@@ -304,9 +304,6 @@ struct Native : public Flow {
 	}
 	~Native() override {
 		cleanup(val);
-		/*try {
-			decRc(std::any_cast<Flow*>(val));
-		} catch(const std::bad_any_cast& e) { }*/
 	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;

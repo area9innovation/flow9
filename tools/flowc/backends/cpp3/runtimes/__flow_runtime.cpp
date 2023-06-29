@@ -44,7 +44,7 @@ std::string string2std(const string& str) {
 			if (UNI_SUR_LOW_START <= ch1 && ch1 <= UNI_SUR_LOW_END) {
 				// surrogate pair detected
 				i += 1;
-				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFH) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
+				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFT) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
 			}
 		}
 		if (x <= 0x7F) len += 1; else 
@@ -64,7 +64,7 @@ std::string string2std(const string& str) {
 			if (UNI_SUR_LOW_START <= ch1 && ch1 <= UNI_SUR_LOW_END) {
 				// surrogate pair detected
 				i += 1;
-				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFH) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
+				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFT) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
 			}
 		}
 		if (x <= 0x7F) {
@@ -130,7 +130,7 @@ string std2string(const std::string& s) {
 
 			// Surrogate pair
 			h = h - UNI_HALF_BASE;
-			str.push_back((char16_t) ((h >> UNI_HALF_SHIFH)   + UNI_SUR_HIGH_START));
+			str.push_back((char16_t) ((h >> UNI_HALF_SHIFT)   + UNI_SUR_HIGH_START));
 			str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		} else if ((b1 & 0xF8) == 0xF0 && i < s.length() - 3) {
 			uint8_t b2 = s.at(i + 1);
@@ -147,7 +147,7 @@ string std2string(const std::string& s) {
 
 			// Surrogate pair
 			h = h - UNI_HALF_BASE;
-			str.push_back((char16_t) ((h >> UNI_HALF_SHIFH)   + UNI_SUR_HIGH_START));
+			str.push_back((char16_t) ((h >> UNI_HALF_SHIFT)   + UNI_SUR_HIGH_START));
 			str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		} else if ((b1 & 0xF0) == 0xE0 && i < s.length() - 2) {
 			uint8_t b2 = s.at(i + 1);
