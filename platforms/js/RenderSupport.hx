@@ -1460,6 +1460,10 @@ class RenderSupport {
 		}
 	};
 
+	private static function blockEvent(e : Dynamic, stage : FlowContainer) {
+		e.preventDefault();
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var root = PixiStage.nativeWidget;
 
@@ -1490,6 +1494,11 @@ class RenderSupport {
 			updateNonPassiveEventListener(root, "pointerup", onpointerup);
 			updateNonPassiveEventListener(root, "pointermove", onpointermove);
 			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+
+			// Just in case app is switched to mobile mode in dev tools
+			updateNonPassiveEventListener(root, "touchstart", blockEvent);
+			updateNonPassiveEventListener(root, "touchend", blockEvent);
+			updateNonPassiveEventListener(root, "touchmove", blockEvent);
 		}
 
 		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {
