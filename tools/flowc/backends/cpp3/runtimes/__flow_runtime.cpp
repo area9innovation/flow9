@@ -47,12 +47,10 @@ std::string string2std(const string& str) {
 				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFT) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
 			}
 		}
-		if (x <= 0x7F) len += 1; else 
-		if (x <= 0x7FF) len += 2; else 
-		if (x <= 0xFFFF) len += 3; else 
-		if (x <= 0x1FFFFF) len += 4; else 
-		if (x <= 0x3FFFFFFFFFF) len += 5; else
-		throw std::runtime_error("broken utf encoding");
+		if (x < 0x30) len += 1; else
+		if (x < 0x800) len += 2; else
+		if (x < 0x10000) len += 3; else
+		if (x < 0x10FFFF) len += 4; else len += 5;
 	}
 	std::string ret;
 	ret.reserve(len);
@@ -67,21 +65,21 @@ std::string string2std(const string& str) {
 				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFT) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
 			}
 		}
-		if (x <= 0x7F) {
+		if (x < 0x80) {
 			ret += x;
-		} else if (x <= 0x7FF) {
+		} else if (x < 0x800) {
 			ret += (0xC0 | ((x >> 6) & 0x3F));
 			ret += (0x80 | (x & 0x3F));
-		} else if (x <= 0xFFFF) {
+		} else if (x < 0x10000) {
 			ret += (0xE0 | ((x >> 12) & 0x3F));
 			ret += (0x80 | ((x >> 6)  & 0x3F));
 			ret += (0x80 | (x & 0x3F));
-		} else if (x <= 0x1FFFFF) {
+		} else if (x < 0x10FFFF) {
 			ret += (0xF0 | ((x >> 18) & 0x3F));
 			ret += (0x80 | ((x >> 12) & 0x3F));
 			ret += (0x80 | ((x >> 6)  & 0x3F));
 			ret += (0x80 | (x & 0x3F));
-		} else if (x <= 0x3FFFFFFFFFF) {
+		} else {
 			ret += (0xF8 | ((x >> 24) & 0x3F));
 			ret += (0x80 | ((x >> 18) & 0x3F));
 			ret += (0x80 | ((x >> 12) & 0x3F));
