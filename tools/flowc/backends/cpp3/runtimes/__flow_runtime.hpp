@@ -236,6 +236,14 @@ template<> inline Int Flow::get<Int>() { return dynamic_cast<FInt*>(this)->val; 
 template<> inline Bool Flow::get<Bool>() { return dynamic_cast<FBool*>(this)->val; }
 template<> inline Double Flow::get<Double>() { return dynamic_cast<FDouble*>(this)->val; }
 
+const Int UNI_HALF_BASE = 0x10000;
+const Int UNI_HALF_SHIFH = 10;
+const Int UNI_HALF_MASK = 0x3FF;
+const Int UNI_SUR_HIGH_START = 0xD800;
+const Int UNI_SUR_HIGH_END = 0xDBFF;
+const Int UNI_SUR_LOW_START = 0xDC00;
+const Int UNI_SUR_LOW_END = 0xDFFF;
+
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
 	String(): str() { }
@@ -245,6 +253,15 @@ struct String : public Flow {
 	String(const char16_t* s): str(s) { }
 	String(const char16_t* s, Int len): str(s, len) { }
 	String(char16_t c): str(1, c) { }
+	String(Int c) { 
+		if (c <= 0xFFFF) {
+			str.append(1, static_cast<char16_t>(c));
+		} else {
+			c -= UNI_HALF_BASE;
+			str.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFH) + UNI_SUR_HIGH_START));
+      		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+		}
+	}
 	String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
 	//String(String* s): str(s->str) { }
 

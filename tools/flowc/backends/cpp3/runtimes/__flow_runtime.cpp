@@ -39,19 +39,19 @@ std::string string2std(const string& str) {
 	for (std::size_t i = 0; i < str.size(); ++i) {
 		char16_t ch = str.at(i);
 		uint32_t x = ch;
-		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str.size()) {
+		if (UNI_SUR_HIGH_START <= ch && ch <= UNI_SUR_HIGH_END && i + 1 < str.size()) {
 			char16_t ch1 = str.at(i + 1);
-			if (0xDC00 <= ch1 && ch1 <= 0xDFFF) {
+			if (UNI_SUR_LOW_START <= ch1 && ch1 <= UNI_SUR_LOW_END) {
 				// surrogate pair detected
 				i += 1;
-				x = ((ch & 0x3FF) << 10) + (ch1 & 0x3FF) + 0x10000;
+				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFH) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
 			}
 		}
 		if (x <= 0x7F) len += 1; else 
 		if (x <= 0x7FF) len += 2; else 
 		if (x <= 0xFFFF) len += 3; else 
 		if (x <= 0x1FFFFF) len += 4; else 
-		if (x <= 0x3FFFFFF) len += 5; else
+		if (x <= 0x3FFFFFFFFFF) len += 5; else
 		throw std::runtime_error("broken utf encoding");
 	}
 	std::string ret;
@@ -59,12 +59,12 @@ std::string string2std(const string& str) {
 	for (std::size_t i = 0; i < str.size(); ++i) {
 		char16_t ch = str.at(i);
 		uint32_t x = ch; 
-		if (0xD800 <= ch && ch <= 0xDBFF && i + 1 < str.size()) {
+		if (UNI_SUR_HIGH_START <= ch && ch <= UNI_SUR_HIGH_END && i + 1 < str.size()) {
 			char16_t ch1 = str.at(i + 1);
-			if (0xDC00 <= ch1 && ch1 <= 0xDFFF) {
+			if (UNI_SUR_LOW_START <= ch1 && ch1 <= UNI_SUR_LOW_END) {
 				// surrogate pair detected
 				i += 1;
-				x = ((ch & 0x3FF) << 10) + (ch1 & 0x3FF) + 0x10000;
+				x = ((ch & UNI_HALF_MASK) << UNI_HALF_SHIFH) + (ch1 & UNI_HALF_MASK) + UNI_HALF_BASE;
 			}
 		}
 		if (x <= 0x7F) {
@@ -81,7 +81,7 @@ std::string string2std(const string& str) {
 			ret += (0x80 | ((x >> 12) & 0x3F));
 			ret += (0x80 | ((x >> 6)  & 0x3F));
 			ret += (0x80 | (x & 0x3F));
-		} else if (x <= 0x3FFFFFF) {
+		} else if (x <= 0x3FFFFFFFFFF) {
 			ret += (0xF8 | ((x >> 24) & 0x3F));
 			ret += (0x80 | ((x >> 18) & 0x3F));
 			ret += (0x80 | ((x >> 12) & 0x3F));
@@ -129,9 +129,9 @@ string std2string(const std::string& s) {
 			uint32_t h = h1 | h2 | h3 | h4 | h5;
 
 			// Surrogate pair
-			h = h - 0x10000;
-			str.push_back((char16_t) ((h >> 10)   + 0xD800));
-			str.push_back((char16_t) ((h & 0x3FF) + 0xDC00));
+			h = h - UNI_HALF_BASE;
+			str.push_back((char16_t) ((h >> UNI_HALF_SHIFH)   + UNI_SUR_HIGH_START));
+			str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		} else if ((b1 & 0xF8) == 0xF0 && i < s.length() - 3) {
 			uint8_t b2 = s.at(i + 1);
 			uint8_t b3 = s.at(i + 2);
@@ -146,9 +146,9 @@ string std2string(const std::string& s) {
 			uint32_t h = h1 | h2 | h3 | h4;
 
 			// Surrogate pair
-			h = h - 0x10000;
-			str.push_back((char16_t) ((h >> 10)   + 0xD800));
-			str.push_back((char16_t) ((h & 0x3FF) + 0xDC00));
+			h = h - UNI_HALF_BASE;
+			str.push_back((char16_t) ((h >> UNI_HALF_SHIFH)   + UNI_SUR_HIGH_START));
+			str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		} else if ((b1 & 0xF0) == 0xE0 && i < s.length() - 2) {
 			uint8_t b2 = s.at(i + 1);
 			uint8_t b3 = s.at(i + 2);
