@@ -107,7 +107,7 @@ struct RTTI {
 		}
 	}
 	static const StructDef& structDef(TypeId id) {
-		if (id - structTypeIdOffset + 1 < static_cast<TypeId>(struct_defs.size())) {
+		if (id - structTypeIdOffset < static_cast<TypeId>(struct_defs.size())) {
 			return struct_defs.at(id - structTypeIdOffset);
 		} else {
 			static StructDef undef;
@@ -117,7 +117,7 @@ struct RTTI {
 	}
 	static int structField(TypeId id, const string& field) {
 		int i = 0;
-		for (auto& arg : struct_defs.at(id).args) {
+		for (auto& arg : structDef(id).args) {
 			if (arg.name == field) break;
 			i += 1;
 		}
@@ -133,7 +133,7 @@ struct RTTI {
 	}
 	static void initStructMap() {
 		for (int i = structTypeIdOffset; i < static_cast<TypeId>(struct_defs.size()) + structTypeIdOffset; ++i) {
-			const StructDef& def = struct_defs.at(i - 9);
+			const StructDef& def = struct_defs.at(i - structTypeIdOffset);
 			struct_name_to_id[def.name] = i;
 		}
 	}
@@ -828,8 +828,8 @@ inline T2 castRc(T1 x) {
 			return f;
 		} else {
 			for (Int i = 0; i < x->size(); ++ i) {
+				incRc(x);
 				Flow* e = x->getFlowRc(i);
-				incRc(e);
 				ret->pushBack(castRc<Flow*, typename V2::ElType>(e));
 			}
 			decRc(x);

@@ -2,7 +2,7 @@ import ds/treeutils;
 import tools/flowc/statements/fs_transform;
 
 export {
-	fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat;
+	fsStatPerceus(s: FsStat, debug: bool) -> FsStat;
 }
 
 FsPerceusAcc(
@@ -24,7 +24,7 @@ fsMergeStacks(l1: List<Set<FsVar>>, l2: List<Set<FsVar>>) -> List<Set<FsVar>> {
 	}
 }
 
-fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
+fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 	id_counter = ref 0;
 	new_id = \-> {
 		id = ^id_counter;
@@ -105,7 +105,7 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 			}
 		},
 		\acc, x: FsAll -> {
-			add_v = \ac, v -> if (fiIsGlobal(v.name, names) || fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
 			switch (x) {
 				FsLambda(__,__,__,__,__): {
 					switch (acc.second) {
@@ -118,8 +118,8 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 						default: fail0("empty stack pop");
 					}
 				}
-				FsVarUse(v, id): {
-					new_vars = add_v(acc.first.vars, v);
+				FsVarUse(v, local, id): {
+					new_vars = if (local) add_v(acc.first.vars, v) else acc.first.vars;
 					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
 				}
 				default: {
@@ -201,19 +201,19 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 		}
 		if (length(unused) == 0) x else {
 			FsSeq(concat(
-				map(unused, \v -> FsDecRc(FsVarUse(v, -1), -1)),
+				map(unused, \v -> FsDecRc(FsVarUse(v, true, -1), -1)),
 				fsUnwrapSeq(x)
 			), -1);
 		}
 	}
 	add_incs = \e: FsExp, x: FsStat -> {
-		incs = tree2pairs(fsExpVarIncs(e, makeTree(), names, id2vars_last));
+		incs = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last));
 		if (debug) {
 			println("incs for <" + i2s(e.id) + ">: [" + superglue(incs, \p -> p.first.name + "=" + i2s(p.second), ", "  ) + "]");
 		}
 		if (length(incs) == 0) x else {
 			FsSeq(concat(
-				map(incs, \p -> FsIncRc(p.second, FsVarUse(p.first, -1), -1)),
+				map(incs, \p -> FsIncRc(p.second, FsVarUse(p.first, true, -1), -1)),
 				fsUnwrapSeq(x)
 			), -1);
 		}
@@ -260,29 +260,27 @@ fsStatPerceus(s: FsStat, names: FiGlobalNames, debug: bool) -> FsStat {
 	}, true): FsAll -> FsStat);
 }
 
-fsExpVarIncs(e: FsExp, acc: Tree<FsVar, int>, names: FiGlobalNames, last: Tree<int, Set<FsVar>>) -> Tree<FsVar, int> {
+fsExpVarIncs(e: FsExp, acc: Tree<FsVar, int>, last: Tree<int, Set<FsVar>>) -> Tree<FsVar, int> {
 	switch (e) {
 		FsClosure(closure, __,__): {
-			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, names, last));
+			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, last));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsExpVarIncs(f, acc, names, last), \ac, x -> 
-				fsExpVarIncs(x, ac, names, last)
+			fold(args, fsExpVarIncs(f, acc, last), \ac, x ->
+				fsExpVarIncs(x, ac, last)
 			);
 		}
 		FsCallPrim(__, es,__,__): {
-			fold(es, acc, \ac, x -> fsExpVarIncs(x, ac, names, last));
+			fold(es, acc, \ac, x -> fsExpVarIncs(x, ac, last));
 		}
 		FsTailCall(args, vals, type, id): {
-			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, names, last));
+			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, last));
 		}
 		FsCast(e1,__,__,__): {
-			fsExpVarIncs(e1, acc, names, last);
+			fsExpVarIncs(e1, acc, last);
 		}
-		FsVarUse(x, id): {
-			if (fiIsGlobalFunction(x.name, names) ||
-				fiTypeIsScalar(x.type) ||
-				containsSet(lookupTreeDef(last, id, makeSet()), x)
+		FsVarUse(x, local, id): {
+			if ((!local && fiTypeIsFunction(x.type)) || fiTypeIsScalar(x.type) || containsSet(lookupTreeDef(last, id, makeSet()), x)
 			) acc else {
 				setTree(acc, x, lookupTreeDef(acc, x, 0) + 1);
 			}
@@ -309,6 +307,6 @@ fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 		FsCast(__,__,__,__):      FsCast(s with id = new_id());
 		FsConst(__,__):           FsConst(s with id = new_id());
 		FsTailCall(__,__,__,__):  FsTailCall(s with id = new_id());
-		FsVarUse(__,__):          FsVarUse(s with id = new_id()); 
+		FsVarUse(__,__,__):       FsVarUse(s with id = new_id());
 	}
 }
