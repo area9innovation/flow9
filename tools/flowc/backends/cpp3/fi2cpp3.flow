@@ -24,17 +24,16 @@ fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, call
 }
 
 fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
-	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeFlow());
 	// fiToplevelResolveNatives
 	cpp_natives = fiCpp3InitNativeFuncs(cfg);
 	prog_natives = buildSet(filtermap(getTreeValues(program0.names.toplevel), \decl -> switch (decl) {
 		FiNativeDec(name,__,__,__,__,__,__): Some(name);
 		default: None();
 	}));
-	//resolveNatives = \prog -> fiResolveNatives(prog, \name -> containsKeyTree(cpp_natives, name));
 	uniformFuncs = \prog -> fiMapProgramToplevel(prog, \toplevel, __,__ -> fiToplevelGlobalVar2Function(toplevel));
 	program = program0
-		|> \p -> fiMapProgramToplevel(p, \x,__,__ ->
+		|> (\p -> fiAddMandatoryNatives(p, cpp3MandatoryNatives))
+		|> (\p -> fiMapProgramToplevel(p, \x,__,__ ->
 			mapConcat(
 				fiToplevelGlobalVar2Function(x), \y -> 
 				fiToplevelResolveNatives(y, 
@@ -42,11 +41,10 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 					\name -> containsSet(prog_natives, name)
 				)
 			)
-		)
-		//|> resolveNatives
+		))
 		|> fiFlattenUnions
 		|> fiRemoveImplicitStructTypars
-		|> setImplicitTypars
+		|> (\p -> fiSetImplicitStructTypars(p, FiTypeFlow()))
 		|> fiWasmWrapFuncArgs
 		// !!!! |> fiProgramAddPolymorphicStructsCasts
 		//|> uniformFuncs
@@ -85,12 +83,8 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 	);
 	gctx = Cpp3GlobalContext(globEnv, cfg, program, 
 		collectFiEffects(program),
-		\flowfile -> strReplace(flowfile, "/", "_"),
 		structs,
 		structs2cpp,
-		\t -> "T" + i2s(strlen(t.n)),
-		\name -> "_" + name,
-		\name -> "_" + name,
 		\name -> eitherMap(lookupTree(structs2cpp, name), \str -> i2s(str.id), ""),
 		cpp_natives,
 		fiCpp3InitRuntimeParts(cfg),
@@ -170,13 +164,13 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 		}
 	);
 	show_vars = \header -> superglue(non_scalar_vars, \var -> 
-		"std::cout << \"" + header + " " + var.name + "->rc_ = \" << " + gctx.varname2cpp(var.name) + "->rc_ << std::endl;",
+		"std::cout << \"" + header + " " + var.name + "->rc_ = \" << " + fi2cpp3varname2cpp(var.name) + "->rc_ << std::endl;",
 		"\n"
 	);
-	inc_vars = superglue(non_scalar_vars, \var -> "incRc(" + gctx.varname2cpp(var.name) + ");", "\n");
+	inc_vars = superglue(non_scalar_vars, \var -> "incRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
 	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
 	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
-	dec_vars = superglue(non_scalar_vars, \var -> "decRc(" + gctx.varname2cpp(var.name) + ");", "\n");
+	dec_vars = superglue(non_scalar_vars, \var -> "decRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
 	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
 
 	struct_names = "string struct_names[] = {\n" + 
@@ -205,7 +199,7 @@ cleanup +
 
 //(if (inc_vars == "") "" else strIndent(inc_vars) + "\n") +
 //strIndent(show_vars("(A+")) + "\n" +
-"\t" + gctx.varname2cpp("main") + "();\n" +
+"\t" + fi2cpp3varname2cpp("main") + "();\n" +
 (if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
 
 	//strIndent(show_vars("(B+)")) + "\n" +
