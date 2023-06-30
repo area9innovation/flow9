@@ -40,12 +40,23 @@ runTestWithTime(command: string, args: [string]) -> TestRun {
 }
 
 runTestWithValgrind(command: string, args: [string]) -> TestRun {
-	valgrind_opts = ["--tool=memcheck", "--leak-check=full", "--show-leak-kinds=all"];
+	strict = getUrlParameter("valgrind-strict") == "1";
+	valgrind_opts = concat(["--tool=memcheck", "--leak-check=full"], if (strict) ["--show-leak-kinds=all"] else []);
 	out = execSystemProcessOutput("valgrind", concat3(valgrind_opts, [command], concat(args, ["valgrind-test=1"])), ".");
-	success = out.exitCode == 0 &&
+	all_freed =
 		strContains(out.stdall, "All heap blocks were freed -- no leaks are possible") &&
-		strContains(out.stdall, "in use at exit: 0 bytes in 0 blocks") &&
+		strContains(out.stdall, "in use at exit: 0 bytes in 0 blocks");
+	no_lost =
+		strContains(out.stdall, "definitely lost: 0 bytes in 0 blocks") &&
+		strContains(out.stdall, "indirectly lost: 0 bytes in 0 blocks") &&
+		strContains(out.stdall, "  possibly lost: 0 bytes in 0 blocks");
+	success = out.exitCode == 0 && if (strict) {
+		all_freed &&
 		strContains(out.stdall, "ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)");
+	} else {
+		(all_freed || no_lost) &&
+		strContains(out.stdall, "ERROR SUMMARY: 0 errors from 0 contexts");
+	}
 	TestRun(out, -1, !success);
 }
 
@@ -304,4 +315,5 @@ Options:
 
 	time-stats=1                       show time statistics: compilation time and execution time. Default is true
 	valgrind=1                         check memory errors with valgrind. Refernce backend is ignored
+	valgrind-strict=1                  check that completely all memory is freed after test termination
 >>
