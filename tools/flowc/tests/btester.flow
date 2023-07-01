@@ -227,7 +227,8 @@ useCompareTest() -> bool {
 }
 
 useValgrindTest() -> bool {
-	getUrlParameter("valgrind") != ""
+	valgrind_opt = getUrlParameter("valgrind");
+	(valgrind_opt != "" && valgrind_opt != "0")
 }
 
 main() {
@@ -254,13 +255,15 @@ main() {
 			(tests_param == [] || contains(tests_param, "all") || exists(tests_param, \inc -> strContains(file, inc)))
 		));
 		tests_str = strGlue(tests, ", ");
-		println("Testing backend: " + test_backend + if (useCompareTest()) " with reference backend: " + ref_backend else "");
+		println("Testing backend: " + test_backend +
+			(if (useCompareTest()) " with reference backend: " + ref_backend else "") +
+			(if (useValgrindTest()) " with valgrind memory checks" else "")
+		);
 		if (strlen(tests_str) < 128) {
 			println("Going to run tests: [" + strGlue(tests, ", ") + "]");
 		} else {
 			println("Going to run tests: [\n" + strGlue(map(tests, \t -> "\t" + t), ",\n") + "\n]");
 		}
-		failure_count = ref 0;
 		failed_tests = ref [];
 		start = timestamp();
 		iter(tests, \test -> {
@@ -272,21 +275,26 @@ main() {
 				ignore(deleteFile(err_file));
 			}
 			log_err = \err_msg -> {
-				failure_count := ^failure_count + 1;
 				failed_tests := concat(^failed_tests, [test]);
 				ignore(setFileContent(err_file, err_msg));
 			}
+			num_errs = length(^failed_tests);
+			test_start = timestamp();
 			if (useCompareTest()) {
 				compareTest(test, ref_backend, test_backend, log_err);
 			}
 			if (useValgrindTest()){
 				valgrindTest(test, test_backend, log_err);
 			}
+			success = length(^failed_tests) == num_errs;
+			println("Test: " + test + " " + (if (success) "PASSED" else "FAILED") + " and took " + d2st((timestamp() - test_start) / 1000.0, 2) + ".s\n");
 		});
+		failure_count = length(^failed_tests);
+		success_count = length(tests) - failure_count;
 		println("Testing results:\n" + 
 			"\ttime:   " + d2st((timestamp() - start) / 1000.0, 2) + "s.\n" +
-			"\tpassed: " + i2s(length(tests) - ^failure_count) + "\n" +
-			"\tfailed: " + i2s(^failure_count) + "\n" +
+			"\tpassed: " + i2s(success_count) + "\n" +
+			"\tfailed: " + i2s(failure_count) + "\n" +
 			strIndent(strGlue(^failed_tests, "\n"))
 		);
 	}
