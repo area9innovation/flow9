@@ -1,5 +1,6 @@
 import tools/flowc/backends/cpp3/fi2cpp3_compile;
 import tools/flowc/backends/cpp3/fi2cpp3_build;
+import tools/flowc/backends/cpp3/fi2cpp3_transform;
 import tools/flowc/manipulation/tail_call;
 import tools/flowc/manipulation/flatten_unions;
 import tools/flowc/manipulation/wrap_funcs_as_args;
@@ -12,7 +13,7 @@ export {
 
 fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void {
 	if (cfg.config.verbose > 0) {
-		fcPrintln("Building a cpp3 '" + cfg.outfile + "' in '" + cfg.outputdir + "', application ...", cfg.config.threadId);
+		fcPrintln("Building a cpp3 '" + cfg.outfile + "' application in directory '" + cfg.outputdir + "' ...", cfg.config.threadId);
 	}
 	compiled = fi2cpp3Compile(program, globEnv, cfg);
 	if (length(compiled.errors) > 0) {
@@ -24,7 +25,6 @@ fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, call
 }
 
 fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
-	// fiToplevelResolveNatives
 	cpp_natives = fiCpp3InitNativeFuncs(cfg);
 	prog_natives = buildSet(filtermap(getTreeValues(program0.names.toplevel), \decl -> switch (decl) {
 		FiNativeDec(name,__,__,__,__,__,__): Some(name);
@@ -47,21 +47,10 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		|> (\p -> fiSetImplicitStructTypars(p, FiTypeFlow()))
 		|> fiWasmWrapFuncArgs
 		|> fiProgramAddPolymorphicStructsCasts
-		//|> uniformFuncs
 		|> fiRemoveSigletonSeqences
-		//|> fiExtractCallNonScalarProgram
 	;
 	ensureDirectoryExists(cfg.outputdir);
 	structs = getTreeValues(program.names.structs);
-	/*
-	maximum non-struct type id is 8
-	enum Type {
-		VOID = 0,
-		INT = 1,   BOOL = 2, DOUBLE = 3, STRING = 4, NATIVE = 5, // primary types
-		ARRAY = 6, REF = 7,  FUNC = 8,   STRUCT = 9,             // complex types
-		UNKNOWN = -1
-	};
-	*/
 	structs2cpp = foldi(structs, makeTree(), \i, acc, struct -> 
 		setTree(acc, struct.name, 
 			Cpp3Struct(i + 9, struct, 
@@ -107,7 +96,8 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 			fcPrintln("Compiling to cpp3: " + name, gctx.config.config.threadId);
 		}
 		module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
-		cpp_module = fiModule2cpp3(module, gctx);
+		fs_module = fi2cpp3TransformModule(module, gctx);
+		cpp_module = fiModule2cpp3(fs_module, gctx);
 		setTree(acc, name, cpp_module);
 	});
 	main_name = either(findInOrder(compiled0, \__, module -> if (module.isMain) Some(module.name) else None()), "");
@@ -173,10 +163,6 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> strin
 	dec_vars = superglue(non_scalar_vars, \var -> "decRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
 	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
 
-	struct_names = "string struct_names[] = {\n" + 
-		strIndent(strArrayWrap(map(gctx.structs, \s -> "u\"" + s.name + "\""), 128, false, ", "))  + 
-	"\n};\nInt struct_count = " + i2s(length(gctx.structs)) + ";\n\n";
-
 	struct_defs = cpp3StructDefs(gctx);
 	cleanup = "void flow::cleanupAtExit() {" + ("\t" + if (dec_vars == "") " " else "\n" + strIndent(dec_vars) + "\n") + "}\n\n";
 
@@ -185,42 +171,20 @@ using namespace flow;
 using namespace std::string_literals;
 using namespace " + gctx.config.namespace + ";\n\n" +
 (if (sources == "") "" else sources + "\n") +
-//struct_names + 
 struct_defs +
 cleanup + 
 "int main(int argc, const char* argv[]) {\n" +
 "\tRTTI::initStructMap();\n" + 
-//"\talloc_stats = new AllocStats();\n" + 
-//"\tinitMaxHeapSize(argc, argv);\n" +
 (if (mainInits == "") "" else strIndent(mainInits) + "\n") +
 (if (init == "") "" else strIndent(init) + "\n") +
-
-	//strIndent(show_vars("(A-)")) + "\n" +
-
-//(if (inc_vars == "") "" else strIndent(inc_vars) + "\n") +
-//strIndent(show_vars("(A+")) + "\n" +
 "\t" + fi2cpp3varname2cpp("main") + "();\n" +
 (if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
-
-	//strIndent(show_vars("(B+)")) + "\n" +
-
-"\tcleanupAtExit();\n" + 
-//strIndent(show_vars("(B-)")) + "\n" +
-//"\talloc_stats->print();\n" + 
-//"\tstd::cout << \" TERMINATION \" << std::endl;\n" + 
+"\tcleanupAtExit();\n" +
 "\treturn 0;\n}\n";
 }
 
 cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
 	type2id = \tp -> {
-		/*
-		enum TypeFx {
-			VOID = 0, // special void type - technically it is nullptr_t
-			INT = 1,   BOOL = 2, DOUBLE = 3, STRING = 4, NATIVE = 5, // primary types
-			ARRAY = 6, REF = 7,  FUNC = 8,   STRUCT = 9,             // complex types
-			UNKNOWN = -1
-		};
-		*/
 		switch (tp) {
 			FiTypeVoid(): 0;
 			FiTypeInt(): 1;

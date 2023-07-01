@@ -1,24 +1,17 @@
 import tools/flowc/backends/cpp3/fi2cpp3_runtime;
-import tools/flowc/backends/cpp3/fi2cpp3_compile_struct;
+import tools/flowc/backends/cpp3/fi2cpp3_types;
 import tools/flowc/statements/fs_tailcall;
-import tools/flowc/statements/fs_memory;
-import tools/flowc/statements/fs_transform;
-import tools/flowc/statements/fi2fs;
-import tools/flowc/manipulation/transform_exps;
-import tools/flowc/manipulation/pull_statements;
+import tools/flowc/statements/fs_module;
 
 export {
-	fiModule2cpp3(module : FiModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
+	fiModule2cpp3(module : FsModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
 }
 
-fiModule2cpp3(module : FiModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule {
+fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule {
 	gctx = Cpp3GlobalContext(gctx0 with currentModule = module.fileinfo.flowfile);
 	names = gctx.program.names;
 	compiled_structs = map(fiOrderStructs(module.structs, fail), \struct -> 
-		Cpp3CompiledDeclaration(struct.name, true, 
-			fiStruct2cpp3_new(struct, gctx, false),
-			"", //fiStruct2cpp3_new(struct, gctx, false)
-		)
+		Cpp3CompiledDeclaration(struct.name, true, fiStruct2cpp3(struct, gctx, false), "")
 	);
 	decls = concat(
 		module.natives,
@@ -29,7 +22,7 @@ fiModule2cpp3(module : FiModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 			}
 		})
 	);
-	compiled_decls = filtermap(decls, \decl -> fiDeclaration2cpp3(decl, gctx));
+	compiled_decls = filtermap(decls, \decl -> fsDeclaration2cpp3(decl, gctx));
 	is_main = exists(module.functions, \fn -> fn.name == "main");
 	Cpp3CompiledModule(
 		fi2cpp3flowfile2cpp(module.fileinfo.flowfile),
@@ -40,7 +33,52 @@ fiModule2cpp3(module : FiModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 	);
 }
 
-fiModuleNatives2cpp3(module: FiModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] {
+fiOrderStructs(structs: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
+	fiDoOrderStructs(structs, [], \str -> 
+		err(str + "\nstructs: " + superglue(structs, \s -> s.name, ", "))
+	);
+}
+
+fiStructDependencies(s: FiTypeStruct) -> [string] {
+	filtermap(s.args, \arg -> switch (arg.type) {
+		FiTypeName(n,__): Some(n);
+		default: None();
+	});
+}
+
+fiDoOrderStructs(left: [FiTypeStruct], ordered: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
+	if (length(left) == 0) ordered else {
+		ready = filter(left, \s1 -> forall(fiStructDependencies(s1), \n -> 
+			forall(left, \s2 -> n != s2.name))
+		);
+		if (length(ready) == 0) {
+			err("cyclic dependency in structs");
+			ordered;
+		} else {
+			new_left = filter(left, \s1 -> forall(ready, \s2 -> s1.name != s2.name));
+			new_ordered = concat(ordered, ready);
+			fiDoOrderStructs(new_left, new_ordered, err);
+		}
+	}
+}
+
+fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = Some(struct),
+		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
+	);
+	struct_name = fi2cpp3typename2cpp(struct.name);
+	template_header = fiDeclTypars2cpp3(struct.typars, gctx);
+	if (only_decl) {
+		template_header + "struct " + struct_name + ";\n";
+	} else {
+		struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
+		str_params = concat([struct_id], map(struct.args, \arg -> fiType2cpp3(arg.type, gctx)));
+		template_header + "using " + struct_name + " = Str<" + strGlue(str_params, ", ") + ">;\n\n";
+	}
+}
+
+fiModuleNatives2cpp3(module: FsModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] {
 	missing_natives = ref [];
 	natives = filtermap(module.natives, \nat -> {
 		if (!fiCpp3IsNative(nat.name, gctx) && !contains(module.initOrder, nat.name)) {
@@ -57,49 +95,46 @@ fiModuleNatives2cpp3(module: FiModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] 
 	natives;
 }
 
-cpp3InlineFunction(fn: FiFunctionDec) -> bool {
+cpp3InlineFunction(fn: FsFunctionDec) -> bool {
 	if (!isEmptySet(fiCollectTypars(fn.type, makeSet()))) true else {
-		if (!fiExpIsSimple(fn.lambda.body)) false else {
-			fiExpAstNodesCount(fn.lambda.body) < 9;
+		if (!fsIsSimple(fn.lambda.body)) false else {
+			fsAstNodesCount(fn.lambda.body) < 9;
 		}
 	}
 }
 
-fiDeclaration2cpp3(decl: FiDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3CompiledDeclaration> {
+fsDeclaration2cpp3(decl: FsDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3CompiledDeclaration> {
 	switch (decl) {
-		FiGlobalVar(name, value, type,__,__): {
+		FsGlobalVar(name, value, type,__,__): {
 			Some(fiGlobalVar2cpp3(decl, gctx));
 		}
-		FiFunctionDec(name, lambda, type,__,__): {
+		FsFunctionDec(name, lambda, type,__,__): {
 			if (fiCpp3IsNative(name, gctx)) None() else {
 				Some(fiFunc2cpp3(decl, gctx));
 			}
 		}
-		FiNativeDec(name, __,type,__, fallback,__,__):
+		FsNativeDec(name, __,type,__,__,__):
 			maybeMap(lookupTree(gctx.natives, name), \nat -> 
 				nat.declaration(fi2cpp3typename2cpp, fi2cpp3varname2cpp, gctx.structid2cpp)
 			);
 	}
 }
 
-fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
+fiGlobalVar2cpp3(globalVar : FsGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
 	names = gctx0.program.names;
 	name = globalVar.name;
 	type = globalVar.type;
 	gctx = Cpp3GlobalContext(gctx0 with 
-		currentToplevel = Some(globalVar),
+		currentToplevel = None(),
 		toplevelTypars = fiCollectTypars(type, makeSet()),
 		currentToplevelName = name
 	);
-	value1 = fiPrepareFiExp2cpp3(globalVar.value, type, gctx, name);
-	value2 = fiPrepareFsExp2cpp3(value1, gctx, name);
-	value3 = fsStatUnwrapLastReturnLetVar(value2);
-	init = switch (value3) {
+	init = switch (globalVar.value) {
 		FsRet(e,__): {
 			fi2cpp3varname2cpp(name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 		default: {
-			value4 = fsStatReplaceReturnOntoAssign(value3, FsVarUse(FsVar(name, type), false, -1));
+			value4 = fsStatReplaceReturnOntoAssign(globalVar.value, FsVarUse(FsVar(name, type), false, -1));
 			"{\n" + strIndent(fsStat2cpp3(value4, gctx)) + "\n}";
 		}
 	}
@@ -108,164 +143,27 @@ fiGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 	Cpp3CompiledDeclaration(name, false, "extern " + var_decl, var_decl);
 }
 
-fiFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
+fiFunc2cpp3(fun: FsFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
 	name = fun.name;
 	fn_type = fun.type;
 	gctx = Cpp3GlobalContext(
-		gctx0 with currentToplevel = Some(fun),
+		gctx0 with currentToplevel = None(),
 		toplevelTypars = fiCollectTypars(fn_type, makeSet()),
 		currentToplevelName = name
 	);
 	fun_typars = map(set2array(fiCollectTypars(fn_type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
 	headerOnly = cpp3InlineFunction(fun);
-	lambda1 = fiPrepareFiExp2cpp3(fun.lambda, fn_type, gctx, name);
-	lambda_stat = fiPrepareFsExp2cpp3(lambda1, gctx, name);
-	lambda_exp = switch (lambda_stat) {
-		FsRet(e,__): e;
-		default: fail0("value of '" + name + "' function must be FsRet, got:\n" + fs2s(lambda_stat));
-	}
-	// unwrap lambda from cast
-	stat_lambda = switch (lambda_exp) {
-		FsClosure(__,lambda,__): lambda;
-		FsCast(e,__,__,__): {
-			switch (e) {
-				FsClosure(__,lambda,__): lambda;
-				default: fail0("must be lambda or cast to lambda");
-			}
-		}
-		default: fail0("must be lambda or cast to lambda");
-	}
 	fun_signature =
 		(if (headerOnly) "inline " else "") + fiType2cpp3(fn_type.returnType, gctx) + " " + 
-		fi2cpp3varname2cpp(name) + fsArgs2cpp(stat_lambda.args, gctx);
+		fi2cpp3varname2cpp(name) + fsArgs2cpp(fun.lambda.args, gctx);
 	forward_decl = decl_typars + fun_signature + ";\n\n";
-	cpp_body = fsStat2cpp3(stat_lambda.body, gctx);
-	cpp_fun = if (!fsHasTailCall(stat_lambda.body)) cpp_body else {
+	cpp_body = fsStat2cpp3(fun.lambda.body, gctx);
+	cpp_fun = if (!fsHasTailCall(fun.lambda.body)) cpp_body else {
 		"while (true) " + fiWrapWithBraces(cpp_body);
 	}
 	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun) + "\n\n";
 	Cpp3CompiledDeclaration(name, headerOnly, forward_decl, definition);
-}
-
-fiPrepareFiExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string) -> FiExp {
-	names = gctx.program.names;
-	debug_cpp3 = getUrlParameter("cpp3-debug");
-	debug = (name == debug_cpp3);
-	maybe_show = \fn, msg -> \x -> {
-		e1 = fn(x);
-		if (!debug) e1 else {
-			println(msg + ":\n" + pretFiExp(e1));
-			e1;
-		}
-	}
-	if (debug) {
-		println(name + " - EXPRR:\n" + toStringFormatted(e));
-	}
-	e
-	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
-	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, names), "fiExplicitCastInSwitch1")
-	|> maybe_show(\x -> fiTransEliminateUnionFields(x, names), "fiTransEliminateUnionFields")
-	|> maybe_show(\y -> fiExplicitCastInSwitch1(y, names), "fiExplicitCastInSwitch1")
-	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, names), "fiExpMakeCastsExplicit")
-	|> maybe_show(\y -> fiExpShortcutTrivialSwitch(y, names), "fiExpShortcutTrivialSwitch")
-	|> maybe_show(\z -> fiRemoveUnusedVars(z, gctx.effects), "fiRemoveUnusedVars")
-	|> maybe_show(\x -> fiInlineHostCalls(x, names), "fiInlineHostCalls")
-	|> maybe_show(\x -> fiTypeEmptyArrays(x), "fiTypeEmptyArrays")
-	|> maybe_show(\x -> fiRemoveTrivialCasts(x), "fiRemoveTrivialCasts")
-	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
-	|> maybe_show(fiMakeCallerVar, "fiMakeCallerVar")
-	|> maybe_show(fiExpNormalizeSeqences, "fiExpNormalizeSeqences")
-	|> maybe_show(\x -> fiExpUnfoldCasts(x, names, name), "fiExpUnfoldCasts")
-	|> maybe_show(fiExpMakeVarsUnique, "fiExpMakeVarsUnique")
-	|> maybe_show(fiLabelAnonymLambdaArgs, "fiLabelAnonymLambdaArgs")
-	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
-	|> maybe_show(fiPullStatementsUp, "fiPullStatementsUp")
-}
-/*
-fiPrepareFiExp2cpp3(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string) -> FiExp {
-	names = gctx.program.names;
-	debug_cpp3 = getUrlParameter("debug-cpp3");
-	debug = (name == debug_cpp3 || debug_cpp3 == "1");
-	transforms = [
-		// fiRemoveUnusedVars
-		Pair("fiExpChangeAndOr2If", \x -> fiExpChangeAndOr2If(x)),
-		Pair("fiTransEliminateUnionFields", \x -> fiTransEliminateUnionFields(x, names)),
-		Pair("fiExpShortcutTrivialSwitch", \x -> fiExpShortcutTrivialSwitch(x, names)),
-		Pair("fiExplicitCastInSwitch1", \x -> fiExplicitCastInSwitch1(x, names)),
-		Pair("fiFixVarInSameStructType1", \x -> fiFixVarInSameStructType1(x)),
-		Pair("fiExpRenameRecurringVars1", \x -> fiExpRenameRecurringVars1(x, names)),
-		Pair("fiExpMakeVarsUnique", \x -> fiExpMakeVarsUnique(x)),
-		Pair("fiExpInterpolateTypars", \x -> fiExpInterpolateTypars(x, names)),
-		Pair("fiExpMakeCastsExplicit", \x -> fiExpMakeCastsExplicit(x, type, names)),
-		//Pair("fiRemoveImplicitCasts", \x -> fiRemoveImplicitCasts(x)),
-		Pair("fiExpNormalizeSeqences", \x -> fiExpNormalizeSeqences(x)),
-		Pair("fiRemoveUnusedVars", \x -> fiRemoveUnusedVars(x, gctx.effects)),
-		
-		Pair("fiExtractCallNonScalarExp", \x -> fiExtractCallNonScalarExp(x, names)),
-		Pair("fiExpShortcutIf", \x -> fiExpShortcutIf(x)),
-		Pair("fiExpReduceChainLets", \x -> fiExpReduceChainLets(x)),
-		//Pair("fiExpReturnVars", \x -> fiExpReturnVars(x)),
-		//Pair("fiExpMakeNoStatements", \x -> fiExpMakeNoStatements(x, gctx.effects)),
-	];
-	fold(transforms, e, \acc, tr -> {
-		new_acc = tr.second(acc);
-		if (debug) {
-			println(tr.first + ":\n" + fiExp2stringFull(new_acc) + "\n");
-		}
-		new_acc;
-	});
-}
-*/
-fiPrepareFsExp2cpp3(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsStat {
-	debug_cpp3 = getUrlParameter("cpp3-debug");
-	debug = (name == debug_cpp3);
-	names = gctx.program.names;
-	//if (true) {
-
-		//e1 = fiPullStatementsUp(e);
-		e1 = fiPushExpsDown(e);
-		if (debug) {
-			println("fiPrepareFsExp2cpp3: " + name);
-			//println("original expression:\n" + fiExp2stringFull(e));
-			//println("pulled and original are equal: " + b2s(e == e1));
-			println("statements are pulled:\n" + fiExp2stringFull(e1));
-		}
-
-		s1: FsStat = fiExp2FsStat2(e1, names, true, makeTree());
-		if (debug) {
-			println("FS RAW:\n" + fs2s(s1));
-		}
-		decl = lookupTreeDef(gctx.program.names.toplevel, name, FiGlobalVar("", FiVoid(0), FiTypeVoid(), 0, 0));
-		s2 = switch (decl) {
-			FiFunctionDec(__,__,__,__,__): {
-				// Make a tailcall optimization, if applicable
-				fsStatTailcall(s1, decl, names);
-			}
-			default: s1;
-		}
-		if (debug) {
-			println("TAICALLED:\n" + fs2s(s2));
-		}
-		// Memory: ref-counting operations are inserted
-		//s3 = fsStatPerceus(s2, names);
-		s3 = fsStatPerceus(s2, debug);
-		if (debug) {
-			println("MEM RAW:\n" + fs2s(s3));
-		}
-		s3;
-	/*} else {
-		s1 = fiExp2FsExp(e, name, gctx.effects, names);
-		if (show) {
-			println("FS RAW:\n" + fs2s(s1));
-		}
-		// Memory: ref-counting operations are inserted
-		s2 = fsStatPerceus1(s1, names);
-		if (show) {
-			println("MEM RAW:\n" + fs2s(s2));
-		}
-		s2;
-	}*/
 }
 
 fsArgs2cpp(args: [FsVar], gctx: Cpp3GlobalContext) -> string {
@@ -394,17 +292,10 @@ fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string 
 		}
 		None(): {
 			path = findFlowPath(gctx.currentModule, true, gctx.config.config.includes, ".");
-			//println("looking for a source of module: '" + gctx.currentModule + "' = " + path);
 			src = fcFileSource(gctx.globEnv, path);
-			//println("src:\n" + src + "\n");
-			//line_resolver = makeLineResolver(src);
-			//line_col = findLine(line_resolver, sw.start);
 			concat(nondef_cases, [
 				"default: " + fiWrapWithBraces(
 					"std::cerr << \"unexpected case: \" << " + sw_cond + " << \" of type \" << string2std(RTTI::typeName(" + sw_cond + ")) << \" = '" + sw_cond + "' in switch\" << std::endl;\n" +
-					//"std::cerr << \"module: " + gctx.currentModule + ", line: " + i2s(line_col.lineno) + ", col: " + i2s(line_col.column) + "\" << std::endl;\n" +
-					//"std::cerr << \"Value:\\n\" << flow2string(Cast<" + fiType2cpp3(sw.switchType, gctx) + ">::template To<Flow>::conv(" + sw_var  +"))->toStd() << std::endl;\n" +
-					//"std::cerr << R\"FLOW_LITERAL(\n" + toStringFormatted(sw)+ "\n)FLOW_LITERAL\" << std::endl;\n" +
 					"exit(1);\n" +
 					"break;"
 				)
@@ -685,120 +576,3 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		}
 	}
 }
-
-/*
-fsCast2cpp(e: string, from: FiType, to: FiType, gctx: Cpp3GlobalContext) -> string {
-	def_case = \-> "cast<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + e + ")";
-	fail_case = \-> fail0("illegal cast from " + prettyFiType(dummyPretty, from, makeSet()) + " to " + prettyFiType(dummyPretty, to, makeSet()));
-	switch (from) {
-		FiTypeArray(from_arr): {
-			switch (to) {
-				FiTypeArray(to_arr): def_case();
-				FiTypeParameter(to_typar): def_case();
-				FiTypeNative(): def_case();
-				FiTypeFlow(): e;
-				default: fail_case();
-			}
-		}
-		FiTypeFunction(from_args, from_retType): {
-			switch (to) {
-				FiTypeFunction(to_args, to_retType): def_case();
-				FiTypeParameter(to_typar): def_case();
-				FiTypeNative(): def_case();
-				FiTypeFlow(): e;
-				default: fail_case();
-			}
-		}
-		FiTypeRef(from_ref): {
-			switch (to) {
-				FiTypeRef(to_ref): def_case();
-				FiTypeParameter(to_typar): def_case();
-				FiTypeNative(): def_case();
-				FiTypeFlow(): def_case();
-				default: fail_case();
-			}
-		}
-		FiTypeParameter(from_typar):  {
-			def_case();	
-		}
-		FiTypeName(from_name, from_typars):  {
-			switch (to) {
-				FiTypeName(to_name, to_typars): def_case();
-				FiTypeNative(): def_case();
-				FiTypeFlow(): def_case();
-				default: fail_case();
-			}
-		}
-		FiTypeVoid(): {
-			switch (to) {
-				FiTypeVoid(): e;
-				default: fail_case();
-			}
-		}
-		FiTypeBool(): {
-			switch (to) {
-				FiTypeBool():   e;
-				FiTypeInt():    "bool2int(" + e + ")";
-				FiTypeDouble(): "bool2double(" + e + ")";
-				FiTypeString(): "bool2string(" + e + ")";
-				FiTypeFlow():   def_case();
-				default:        fail_case();
-			}
-		}
-		FiTypeInt(): {
-			switch (to) {
-				FiTypeBool():   "int2bool(" + e + ")";
-				FiTypeInt():    e;
-				FiTypeDouble(): "int2double(" + e + ")";
-				FiTypeString(): "int2string(" + e + ")";
-				FiTypeFlow():   def_case();
-				default:        fail_case();
-			}
-		}
-		FiTypeDouble(): {
-			switch (to) {
-				FiTypeBool():   "double2bool(" + e + ")";
-				FiTypeInt():    "double2int(" + e + ")";
-				FiTypeDouble(): e;
-				FiTypeString(): "double2string(" + e + ")";
-				FiTypeFlow():   def_case();
-				default:        fail_case();
-			}
-		}
-		FiTypeString(): {
-			switch (to) {
-				FiTypeBool():   "string2bool(" + e + ")";
-				FiTypeInt():    "string2int(" + e + ")";
-				FiTypeDouble(): "string2double(" + e + ")";
-				FiTypeString(): e;
-				FiTypeFlow():   def_case();
-				default:        fail_case();
-			}
-		}
-		FiTypeNative(): {
-			switch (to) {
-				FiTypeNative(): def_case();
-				FiTypeFlow():   def_case();
-				default:        fail_case();
-			}
-		}
-		FiTypeFlow(): {
-			switch (to) {
-				FiTypeArray(to_arr): def_case();
-				FiTypeFunction(to_args, to_retType): def_case();
-				FiTypeRef(to_ref): def_case();
-				FiTypeParameter(to_typar): def_case();
-				FiTypeName(to_name, to_typars): def_case();
-				FiTypeVoid(): def_case();
-				FiTypeBool(): def_case();
-				FiTypeInt(): def_case();
-				FiTypeDouble(): def_case();
-				FiTypeString(): def_case();
-				FiTypeNative(): def_case();
-				FiTypeFlow(): e;
-			}
-		}
-	}
-}
-*/
-
