@@ -169,6 +169,7 @@ template<> struct is_type<TypeFx::BOOL, Bool> { enum { result = true }; };
 template<> struct is_type<TypeFx::DOUBLE, Double> { enum { result = true }; };
 template<> struct is_type<TypeFx::STRING, String*> { enum { result = true }; };
 template<> struct is_type<TypeFx::NATIVE, Native*> { enum { result = true }; };
+template<> struct is_type<TypeFx::FLOW, Flow*> { enum { result = true }; };
 template<typename T> struct is_type<TypeFx::ARRAY, Vec<T>*> { enum { result = true }; };
 template<typename T> struct is_type<TypeFx::REF, Ref<T>*> { enum { result = true }; };
 template<typename R, typename... As> struct is_type<TypeFx::FUNC, Fun<R, As...>*> { enum { result = true }; };
@@ -179,7 +180,12 @@ template<typename T> struct is_struct { enum { result = false }; };
 template<TypeId Id, typename... Fs> struct is_struct<Str<Id, Fs...>*> { enum { result = true }; };
 template<typename T> constexpr bool is_struct_v = is_struct<T>::result;
 
-template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer<T>>;
+template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer_t<T>>;
+template<typename T> constexpr bool is_scalar_v =
+	is_type_v<TypeFx::VOID, T> ||
+	is_type_v<TypeFx::INT, T> ||
+	is_type_v<TypeFx::BOOL, T> ||
+	is_type_v<TypeFx::DOUBLE, T>;
 
 template<typename T> inline T incRc(T x, Int d = 1) {
 	if constexpr (std::is_pointer_v<T>) { x->rc_ += d; } return x;
@@ -195,7 +201,6 @@ template<typename T> inline Bool equalRc(T v1, T v2) { Int c = compareRc(v1, v2)
 template<typename T> inline String* toStringRc(T v);
 template<typename T> inline void toStringRc(T v, string& str);
 template<typename T> inline T makeDefVal();
-//template<typename T> inline void toStringRc(T v, string& str)
 
 // Dynamic wrapper for all values 
 
@@ -216,7 +221,7 @@ struct Flow {
 	template<typename T> inline T get() { return dynamic_cast<T>(this); }
 	template<typename T> inline T getRc() {  
 		if constexpr (is_flow_ancestor_v<T>) {
-			return dynamic_castRc<T>(this);
+			return dynamic_cast<T>(this);
 		} else {
 			T ret = get<T>();
 			decRc(this);
@@ -263,7 +268,6 @@ struct String : public Flow {
 		}
 	}
 	String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
-	//String(String* s): str(s->str) { }
 
 	String(const String& s): str(s.str) { }
 	String(String&& s): str(std::move(s.str)) { }
@@ -275,9 +279,6 @@ struct String : public Flow {
 
 	TypeId typeId() const override { return TypeFx::STRING; }
 	std::string toStd() const { return string2std(str); }
-
-	//String& operator = (const String& s) { str = s.str; return *this; }
-	//String& operator = (String&& s) { str = s.str; return *this; }
 
 	string str;
 };
@@ -345,7 +346,7 @@ template<TypeId Id, typename... Fs>
 struct Str : public Flow {
 	enum { TYPE = Id, SIZE = sizeof...(Fs) };
 	using Fields = std::tuple<Fs...>;
-	Str(Fs... fs): fields(fs...) { /*incRcFields<0>();*/ }
+	Str(Fs... fs): fields(fs...) { }
 	~Str() override { decRcFields<0>(); }
 
 	Str& operator = (Str&& r) = delete;
@@ -452,11 +453,11 @@ private:
 				incRc(this);
 				incRc(s);
 			}
-			Int c = compareRc<std::tuple_element_t<i, Fields>>(
+			Int c = flow::compareRc<std::tuple_element_t<i, Fields>>(
 				getRc<i>(), s->getRc<i>()
 			);
 			if (c != 0) return c;
-			compare_<i + 1>(s);
+			compareRc<i + 1>(s);
 		}
 	}
 	template<Int i>
@@ -482,11 +483,8 @@ struct Vec : public Flow {
 	using iterator = typename std::vector<T>::iterator;
 
 	Vec(): vect() { }
-	Vec(std::size_t s): vect() { vect.reserve(s); }
-	Vec(std::initializer_list<T>&& il): vect(std::move(il)) { /*incRcVec();*/ }
-	Vec(const std::initializer_list<T>& il): vect(il) { /*incRcVec();*/ }
-	//Vec(const std::vector<T>& v): vect(v) { /*incRcVec();*/ }
-	//Vec(std::vector<T>&& v): vect(std::move(v)) { /*incRcVec();*/ }
+	Vec(std::initializer_list<T>&& il): vect(std::move(il)) { }
+	Vec(const std::initializer_list<T>& il): vect(il) { }
 	Vec(Vec&& a): vect(std::move(a.vect)) { }
 	Vec(const Vec& a): vect(a.vect) { incRcVec(); }
 	~Vec() override { decRcVec(); }
@@ -496,20 +494,11 @@ struct Vec : public Flow {
 	Vec& operator = (Vec&& r) = delete;
 	Vec& operator = (const Vec& r) = delete;
 
-	/*Vec& operator = (const Vec& a) {
-		decRcVec();
-		vect.operator=(a.vect);
-		return *this;
-	}
-	Vec& operator = (Vec&& a) {
-		decRcVec();
-		vect.operator=(std::move(a.vect));
-		return *this;
-	}*/
-	static Vec* make() { return new Vec(0); }
 	template<typename... As>
 	static Vec* make(As... as) { return new Vec(as...); }
 	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
+
+	void reserve(std::size_t s) { vect.reserve(s); }
 
 	TypeId typeId() const override { return TYPE; }
 
@@ -573,17 +562,6 @@ struct Ref : public Flow {
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
 
-	/*Ref& operator = (Ref&& r) {
-		decRc(val);
-		val = std::move(r.val);
-		return *this;
-	}
-	Ref& operator = (const Ref& r) { 
-		decRc(val);
-		val = r.val;
-		return *this;
-	}*/
-
 	template<typename... As>
 	static Ref* make(As... as) { return new Ref(as...); }
 
@@ -611,28 +589,6 @@ private:
 	T val;
 };
 
-/*
-template<int i, typename Args>
-void doDecRcs(int n, As... as, va_list args) {
-	if constexpr (i == sizeof...(As)) {
-		va_end(args);
-	} else {
-		decRc(std::get<i>(as...));
-		doDecRcs<i + 1, As...>(n, as..., args);
-	}
-}*/
-/*
-template<typename Args>
-void decRcs(Args as) {
-	//doDecRcs<0, Args>(as);
-
-	[as]<std::size_t... I>(std::index_sequence<I...>){ 
-		decRcs(std::get<I>(as)...); 
-	}
-	(std::make_index_sequence<std::tuple_size<Args>::value>{});
-}
-*/
-
 template<typename R, typename... As> 
 struct Fun : public Flow, public std::function<R(As...)> {
 	enum { TYPE = TypeFx::FUNC, ARITY = sizeof...(As) };
@@ -644,14 +600,23 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	Fun() {}
 	Fun(Fn&& f): Fn(std::move(f)) { }
 	Fun(const Fn& f): Fn(f) { }
-
 	Fun(const Fn1& f): Fn(f) { }
 
-	Fun(Fn&& f, Vec<Flow*>&& cl): Fn(std::move(f)), closure(std::move(cl)) { }
-	Fun(const Fn& f, const Vec<Flow*>& cl): Fn(f), closure(cl) { }
+	template<typename... Cs>
+	Fun(Fn&& f, Cs... cl): Fn(std::move(f)) {
+		initClosure<Cs...>(cl...);
+	}
+	template<typename C1, typename... Cs>
+	constexpr void initClosure(C1 c1, Cs... cl) {
+		static_assert(is_flow_ancestor_v<C1> || is_scalar_v<C1>, "illegal type in closure");
+		if constexpr (is_flow_ancestor_v<C1>) {
+			closure.push_back(c1);
+		}
+		initClosure<Cs...>(cl...);
+	}
+	template<typename... Cs> constexpr void initClosure(Cs...) { }
 
-	Fun(Fn&& f, std::initializer_list<Flow*>&& cl): Fn(std::move(f)), closure(std::move(cl)) { }
-	Fun(const Fn& f, const std::initializer_list<Flow*>& cl): Fn(f), closure(cl) { }
+	~Fun() { for (Flow* x: closure) decRc(x); }
 
 	Fun(const Fun& f): Fn(f), closure(f.closure) { }
 	Fun(Fun&& f): Fn(std::move(f)), closure(std::move(f.closure)) { }
@@ -676,38 +641,9 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	inline R callRc(As... as) {
 		for (Flow* x: closure) incRc(x);
 		R ret = Fn::operator()(as...);
-		//Args args {as...};
-		//decArgRc<0>(args);
 		decRc(this);
 		return ret;
 	}
-	/*template<int i>
-	inline void decArgRc(Args as) {
-		if constexpr (i != ARITY) {
-			decRc(std::get<i>(as));
-			decArgRc<i + 1>(as);
-		}
-	}*/
-
-	/*inline R call_1(Args as) const {
-		return [as]<std::size_t... I>(std::index_sequence<I...>)
-			{ return call(std::get<I>(as)...); }
-			(std::make_index_sequence<ARITY>{});
-	}
-	template<typename R1, typename... As1> 
-	inline R1 call_2(As1... as) const {
-		return castRc<R, R1>(call(castRc<As1, As>(as)...));
-	}
-	template<typename R1, typename Args1> 
-	inline R1 call_3(Args1 as) const {
-		return [as]<std::size_t... I>(std::index_sequence<I...>)
-			{ 
-				return castRc<R, R1>(call(
-					castRc<std::tuple_element<I, Args1>, std::tuple_element<I, Args>>(std::get<I>(as))...
-				)); 
-			}
-			(std::make_index_sequence<ARITY>{});
-	}*/
 	Flow* callFlowRc(std::vector<Flow*> as) override { 
 		if (ARITY == as.size()) {
 			return [this, as]<std::size_t... I>(std::index_sequence<I...>) { 
@@ -722,7 +658,7 @@ struct Fun : public Flow, public std::function<R(As...)> {
 		}
 	}
 private:
-	Vec<Flow*> closure;
+	std::vector<Flow*> closure;
 };
 
 // This function is for debugging purposes only! Doesn't cleanp v!
@@ -830,7 +766,8 @@ inline T2 castRc(T1 x) {
 	}
 	else if constexpr (is_type_v<TypeFx::ARRAY, T2>) {
 		using V2 = std::remove_pointer<T2>::type;
-		T2 ret = new V2(x->size());
+		T2 ret = V2::make();
+		ret->reserve(x->size());
 		if constexpr (is_type_v<TypeFx::ARRAY, T1>) {
 			using V1 = std::remove_pointer<T1>::type;
 			for (auto e : *x) {
@@ -886,7 +823,7 @@ inline T2 castRc(T1 x) {
 				return new V2([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
 					std::vector<Flow*> as_vect {castRc<std::tuple_element_t<I, typename V2::Args>, Flow*>(as)...};
 					return castRc<Flow*, typename V2::RetType>(x->callFlowRc(as_vect));
-				}, {x});
+				}, x);
 			}
 			(std::make_index_sequence<V2::ARITY>{});
 			decRc(x);
@@ -947,19 +884,13 @@ inline Int compareRc(T v1, T v2) {
 			decRc(v2);
 			return c1;
 		} else {
-			//Int size = v1->size();
 			for (Int i = 0; i < v1->size(); ++ i) {
-				//if (i + 1 < size) {
-					incRc(v1);
-					incRc(v2);
-				//}
-				//using T0 = std::remove_pointer<T>::type;
+				incRc(v1);
+				incRc(v2);
 				Int c2 = compareRc<typename std::remove_pointer<T>::type::ElType>(v1->getRc(i), v2->getRc(i));
 				if (c2 != 0) {
-					//if (i + 1 < size) {
-						decRc(v1);
-						decRc(v2);
-					//}
+					decRc(v1);
+					decRc(v2);
 					return c2;
 				}
 			}

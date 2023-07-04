@@ -633,168 +633,177 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 			fiMakeCast(x1, type, t);
 		}
 		FiCallPrim(op, es, type,__): {
-			def_case = \ -> {
-				x1 = FiCallPrim(x with es = map(es, \y -> fiExpMakeCastsExplicit(y, fiExpType(y), names)));
-				fiMakeCast(x1, type, t);
-			}
-			typed_case = \tp -> {
-				x1 = FiCallPrim(x with es = map(es, \y -> fiExpMakeCastsExplicit(y, tp, names)));
-				fiMakeCast(x1, type, t);
-			}
-			switch (op) {
-				FcOrPrim():  def_case();
-				FcAndPrim(): def_case();
-				FcNotPrim(): def_case();
+			def_case = \ -> fiMakeCast(
+				FiCallPrim(x with es = map(es, \y -> fiExpMakeCastsExplicit(y, fiExpType(y), names))), 
+				type, t
+			);
+			switch (t) {
+				FiTypeFlow(): def_case();
+				default: {
+					typed_case = \tp -> FiCallPrim(x with 
+						es = map(es, \y -> fiExpMakeCastsExplicit(y, tp, names)),
+						type = t
+					);
+					switch (op) {
+						FcOrPrim():  def_case();
+						FcAndPrim(): def_case();
+						FcNotPrim(): def_case();
 
-				FcEqPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-				FcNePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-				FcLePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-				FcGePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-				FcLtPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-				FcGtPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcEqPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcNePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcLePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcGePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcLtPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcGtPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
 
-				FcPlusPrim():  typed_case(fiTypeLowerBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-				FcMinusPrim(): def_case();
-				FcMulPrim():   def_case();
-				FcDivPrim():   def_case();
-				FcModPrim():   def_case();
-				FcNegPrim():   def_case();
-				FcArrayPrim(): typed_case(fiDearrayType(type));
-				FcIndexPrim(): {
-					x1 = FiCallPrim(x with es = [
-						fiExpMakeCastsExplicit(es[0], FiTypeArray(type), names),
-						fiExpMakeCastsExplicit(es[1], FiTypeInt(), names)
-					]);
-					fiMakeCast(x1, type, t);
-				}
-				FcDerefPrim(): typed_case(FiTypeRef(type));
-				FcRefPrim(): typed_case(fiDerefType(type));
-				FcStructPrim(name): {
-					struct = lookupTreeDef(names.structs, name, FiTypeStruct("", [], [], 0));
-					switch (type) {
-						FiTypeName(__,typars): {
-							if (length(struct.typars) != length(typars)) {
-								fail("struct " + name + " typars length mismatch with typename typars length:\n" +
-									"struct typars: [" + superglue(struct.typars, pretFiType, ", ") + "]\n" + 
-									"typename typars: [" + superglue(typars, pretFiType, ", ") + "]\n"
-								);
-							}
-							typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
-								switch (tp) {
-									FiTypeParameter(nm): setTree(acc, nm, typars[i]);
-									default: acc;
-								}
-							);
-							if (length(struct.args) != length(es)) {
-								fail("struct " + name + " arguments length mismatch with call arguments length:\n" +
-									"struct args: [" + superglue(struct.args, \y -> pretFiType(y.type), ", ") + "]\n" + 
-									"call args: [" + superglue(es, \y -> pretFiType(fiExpType(y)), ", ") + "]\n"
-								);
-							}
-							x1 = FiCallPrim(x with es = mapi(es, \i, y ->
-								fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
-							));
-							fiMakeCast(x1, type, t);
-						}
-						default: {
-							fail("struct type must be FiTypeName, got: " + toString(type));
-							def_case();
-						}
-					}
-				}
-				FcFieldPrim(name): {
-					if (name == "structname") def_case() else {
-						switch (fiExpType(es[0])) {
-							FiTypeName(struct_name, typars): {
-								switch (lookupTree(names.structs, struct_name)) {
-									Some(struct): {
-										switch (find(struct.args, \arg -> arg.name == name)) {
-											Some(arg): {
-												fiMakeCast(def_case(), arg.type, type);
-											}
-											None(): {
-												fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
-													+ "\n" + strIndent(toStringFormatted(x))
-												);
-												def_case();
-											}
-										}
-									}
-									None(): def_case();
-								}
-							}
+						FcPlusPrim():  typed_case(fiTypeLowerBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcMinusPrim(): def_case();
+						FcMulPrim():   def_case();
+						FcDivPrim():   def_case();
+						FcModPrim():   def_case();
+						FcNegPrim():   def_case();
+						FcArrayPrim(): switch(t) {
+							FiTypeArray(at): typed_case(at);
 							default: def_case();
 						}
-					}
-				}
-				FcAssignPrim(): {
-					to = es[0];
-					what = es[1];
-					tp = fiExpType(to);
-					x1 = switch (tp) {
-						FiTypeRef(rt): {
-							switch (fiExpType(what)) {
-								FiTypeRef(__): {
+						FcIndexPrim(): FiCallPrim(x with
+							es = [
+								fiExpMakeCastsExplicit(es[0], FiTypeArray(t), names),
+									fiExpMakeCastsExplicit(es[1], FiTypeInt(), names)
+							],
+							type = t
+						);
+						FcDerefPrim(): typed_case(FiTypeRef(t));
+						FcRefPrim(): switch (t) {
+							FiTypeRef(rt): typed_case(rt);
+							default: def_case();
+						}
+						FcStructPrim(name): {
+							struct = lookupTreeDef(names.structs, name, FiTypeStruct("", [], [], 0));
+							switch (type) {
+								FiTypeName(__,typars): {
+									if (length(struct.typars) != length(typars)) {
+										fail("struct " + name + " typars length mismatch with typename typars length:\n" +
+											"struct typars: [" + superglue(struct.typars, pretFiType, ", ") + "]\n" + 
+											"typename typars: [" + superglue(typars, pretFiType, ", ") + "]\n"
+										);
+									}
+									typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
+										switch (tp) {
+											FiTypeParameter(nm): setTree(acc, nm, typars[i]);
+											default: acc;
+										}
+									);
+									if (length(struct.args) != length(es)) {
+										fail("struct " + name + " arguments length mismatch with call arguments length:\n" +
+											"struct args: [" + superglue(struct.args, \y -> pretFiType(y.type), ", ") + "]\n" + 
+											"call args: [" + superglue(es, \y -> pretFiType(fiExpType(y)), ", ") + "]\n"
+										);
+									}
+									x1 = FiCallPrim(x with es = mapi(es, \i, y ->
+										fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
+									));
+									fiMakeCast(x1, type, t);
+								}
+								default: {
+									fail("struct type must be FiTypeName, got: " + toString(type));
+									def_case();
+								}
+							}
+						}
+						FcFieldPrim(name): {
+							if (name == "structname") def_case() else {
+								switch (fiExpType(es[0])) {
+									FiTypeName(struct_name, typars): {
+										switch (lookupTree(names.structs, struct_name)) {
+											Some(struct): {
+												switch (find(struct.args, \arg -> arg.name == name)) {
+													Some(arg): {
+														fiMakeCast(def_case(), arg.type, type);
+													}
+													None(): {
+														fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
+															+ "\n" + strIndent(toStringFormatted(x))
+														);
+														def_case();
+													}
+												}
+											}
+											None(): def_case();
+										}
+									}
+									default: def_case();
+								}
+							}
+						}
+						FcAssignPrim(): {
+							to = es[0];
+							what = es[1];
+							tp = fiExpType(to);
+							switch (tp) {
+								FiTypeRef(rt): {
+									switch (fiExpType(what)) {
+										FiTypeRef(__): {
+											FiCallPrim(x with es = [
+												fiExpMakeCastsExplicit(to, tp, names), 
+												fiExpMakeCastsExplicit(what, tp, names)
+											]);
+										}
+										default: {
+											FiCallPrim(x with es = [
+												fiExpMakeCastsExplicit(to, tp, names), 
+												fiExpMakeCastsExplicit(what, rt, names)
+											]);
+										}
+									}
+								}
+								default: {
 									FiCallPrim(x with es = [
 										fiExpMakeCastsExplicit(to, tp, names), 
 										fiExpMakeCastsExplicit(what, tp, names)
 									]);
 								}
-								default: {
-									FiCallPrim(x with es = [
-										fiExpMakeCastsExplicit(to, tp, names), 
-										fiExpMakeCastsExplicit(what, rt, names)
-									]);
-								}
 							}
 						}
-						default: {
-							FiCallPrim(x with es = [
-								fiExpMakeCastsExplicit(to, tp, names), 
-								fiExpMakeCastsExplicit(what, tp, names)
-							]);
-						}
-					}
-					fiMakeCast(x1, type, t);
-				}
-				FcSetMutablePrim(name): {
-					struct_type = fiExpType(es[0]);
-					switch (struct_type) {
-						FiTypeName(struct_name, typars): {
-							switch (lookupTree(names.structs, struct_name)) {
-								Some(struct): {
-									spec = fiSpecializeStruct(struct_type, struct);
-									switch (find(spec.args, \arg -> arg.name == name)) {
-										Some(arg): {
-											if (length(es) != 2) {
-												fail("FcSetMutablePrim must have exactly 2 arguments, but is:\n" + 
-													//pretFiExp(x) + "\n" + 
-													"raw format:\n" + toStringFormatted(x)
-												);
+						FcSetMutablePrim(name): {
+							struct_type = fiExpType(es[0]);
+							switch (struct_type) {
+								FiTypeName(struct_name, typars): {
+									switch (lookupTree(names.structs, struct_name)) {
+										Some(struct): {
+											spec = fiSpecializeStruct(struct_type, struct);
+											switch (find(spec.args, \arg -> arg.name == name)) {
+												Some(arg): {
+													if (length(es) != 2) {
+														fail("FcSetMutablePrim must have exactly 2 arguments, but is:\n" + 
+															//pretFiExp(x) + "\n" + 
+															"raw format:\n" + toStringFormatted(x)
+														);
+													}
+													FiCallPrim(x with es = [
+														fiExpMakeCastsExplicit(es[0], struct_type, names), 
+														fiExpMakeCastsExplicit(es[1], arg.type, names)
+													]);
+												}
+												None(): {
+													fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
+														+ "\n" + strIndent(toStringFormatted(x))
+													);
+													def_case();
+												}
 											}
-											x1 = FiCallPrim(x with es = [
-												fiExpMakeCastsExplicit(es[0], struct_type, names), 
-												fiExpMakeCastsExplicit(es[1], arg.type, names)
-											]);
-											fiMakeCast(x1, type, t);
 										}
-										None(): {
-											fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
-												+ "\n" + strIndent(toStringFormatted(x))
-											);
-											def_case();
-										}
+										None(): def_case();
 									}
 								}
-								None(): def_case();
+								default: def_case();
 							}
 						}
-						default: def_case();
+						FcCreateClosurePrim(structName, functionName): def_case();
+						FcQuote(): def_case();
+						FcUnquote(): def_case();
 					}
 				}
-				FcCreateClosurePrim(structName, functionName): def_case();
-				FcQuote(): def_case();
-				FcUnquote(): def_case();
 			}
 		}
 		FiCast(e, from, to, type,__): {

@@ -40,10 +40,9 @@ fiOrderStructs(structs: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct]
 }
 
 fiStructDependencies(s: FiTypeStruct) -> [string] {
-	filtermap(s.args, \arg -> switch (arg.type) {
-		FiTypeName(n,__): Some(n);
-		default: None();
-	});
+	set2array(fold(s.args, makeSet(), \acc, arg ->
+		extractTypeNames(acc, arg.type)
+	));
 }
 
 fiDoOrderStructs(left: [FiTypeStruct], ordered: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
@@ -134,7 +133,7 @@ fiGlobalVar2cpp3(globalVar : FsGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 			fi2cpp3varname2cpp(name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 		default: {
-			value4 = fsStatReplaceReturnOntoAssign(globalVar.value, FsVarUse(FsVar(name, type), false, -1));
+			value4 = fsStatReplaceReturnOntoAssign(globalVar.value, FsVarUse(FsVar(name, type), false, false, -1));
 			"{\n" + strIndent(fsStat2cpp3(value4, gctx)) + "\n}";
 		}
 	}
@@ -358,7 +357,15 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsCall(f, args, type,__): {
-			f_type = cast(fsType(f): FiType -> FiTypeFunction);
+			f_raw_type = fsType(f);
+			f_type = switch (f_raw_type) {
+				FiTypeFunction(__,__): f_raw_type;
+				default: fail0("call first argument must have a functional type, got: \n" + 
+					pretFiType(f_raw_type) + "\n" +
+					"while compiling: " + gctx.currentToplevelName + "\n" +
+					"expression:\n" + fs2s(e)
+				);
+			}
 			s_args = map(args, \arg -> fsExp2cpp3(arg, gctx));
 			s_args_len = fold(s_args, 0, \acc, s_arg -> acc + strlen(s_arg) + 2);
 			s_args_all = if (length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
@@ -368,7 +375,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			}
 			call_args = fiWrapWithPars(s_args_all);
 			switch(f) {
-				FsVarUse(v, local,__): {
+				FsVarUse(v, local, isFunc,__): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, v.name);
 					typars = switch (toplevel) {
 						Some(fn): {
@@ -387,7 +394,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 							}
 						}
 						None(): {
-							if (!local && fiIsGlobalFunction(v.name, gctx.program.names)) {
+							if (!local && isFunc) {
 								fi2cpp3varname2cpp(v.name) + typars + call_args;
 							} else {
 								fi2cpp3varname2cpp(v.name) + typars + "->callRc" + call_args;
@@ -402,10 +409,11 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsClosure(closure, lambda,__): {
 			ref_counted_closure = filter(closure, \v -> !fiTypeIsScalar(v.var.type));
+			closure_code = superglue(ref_counted_closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ");
 			"Fun<" + fiType2cpp3(lambda.type.returnType, gctx) + concatStrings(map(lambda.type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">::make" +
 			"([" + superglue(closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ") + "] " + fsArgs2cpp(lambda.args, gctx) +
-			" " + fiWrapWithBraces(fsStat2cpp3(lambda.body, gctx)) + 
-				", Vec<Flow*>({" + superglue(ref_counted_closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ") + "})" +
+			" " + fiWrapWithBraces(fsStat2cpp3(lambda.body, gctx)) +
+				(if (closure_code == "") "" else ", " + closure_code) +
 			")";
 		}
 		FsCallPrim(op, es, type,__): {
@@ -418,7 +426,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			e1_cpp = fsExp2cpp3(e1, gctx);
 			"castRc<" + fiType2cpp3(from, gctx) + ", " + fiType2cpp3(to, gctx) + ">(" + e1_cpp + ")";
 		}
-		FsVarUse(v,__,__): {
+		FsVarUse(v,__,__,__): {
 			fi2cpp3varname2cpp(v.name);
 		}
 	}
