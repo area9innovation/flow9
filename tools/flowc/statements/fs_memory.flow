@@ -118,8 +118,8 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 						default: fail0("empty stack pop");
 					}
 				}
-				FsVarUse(v, local, isFunc, id): {
-					new_vars = if (local) add_v(acc.first.vars, v) else acc.first.vars;
+				FsVarUse(v, kind, id): {
+					new_vars = if (kind == FsVarLocal()) add_v(acc.first.vars, v) else acc.first.vars;
 					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
 				}
 				default: {
@@ -201,7 +201,7 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 		}
 		if (length(unused) == 0) x else {
 			FsSeq(concat(
-				map(unused, \v -> FsDecRc(FsVarUse(v, true, false, -1), -1)),
+				map(unused, \v -> FsDecRc(FsVarUse(v, FsVarLocal(), -1), -1)),
 				fsUnwrapSeq(x)
 			), -1);
 		}
@@ -209,11 +209,11 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 	add_incs = \e: FsExp, x: FsStat -> {
 		incs = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last));
 		if (debug) {
-			println("incs for <" + i2s(e.id) + ">: [" + superglue(incs, \p -> p.first.name + "=" + i2s(p.second), ", "  ) + "]");
+			println("incs for <" + i2s(e.id) + ">: [" + superglue(incs, \p -> p.first.name + "=" + i2s(p.second.first), ", "  ) + "]");
 		}
 		if (length(incs) == 0) x else {
 			FsSeq(concat(
-				map(incs, \p -> FsIncRc(p.second, FsVarUse(p.first, true, false, -1), -1)),
+				map(incs, \p -> FsIncRc(p.second.first, FsVarUse(p.first, p.second.second, -1), -1)),
 				fsUnwrapSeq(x)
 			), -1);
 		}
@@ -260,7 +260,7 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 	}, true): FsAll -> FsStat);
 }
 
-fsExpVarIncs(e: FsExp, acc: Tree<FsVar, int>, last: Tree<int, Set<FsVar>>) -> Tree<FsVar, int> {
+fsExpVarIncs(e: FsExp, acc: Tree<FsVar, Pair<int, FsVarKind>>, last: Tree<int, Set<FsVar>>) -> Tree<FsVar, Pair<int, FsVarKind>> {
 	switch (e) {
 		FsClosure(closure, __,__): {
 			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, last));
@@ -279,10 +279,13 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, int>, last: Tree<int, Set<FsVar>>) -> Tr
 		FsCast(e1,__,__,__): {
 			fsExpVarIncs(e1, acc, last);
 		}
-		FsVarUse(x, local, isFunc, id): {
-			if ((!local && isFunc) || fiTypeIsScalar(x.type) || containsSet(lookupTreeDef(last, id, makeSet()), x)
+		FsVarUse(x, kind, id): {
+			if (kind == FsVarGlobalFunc() || fiTypeIsScalar(x.type) || containsSet(lookupTreeDef(last, id, makeSet()), x)
 			) acc else {
-				setTree(acc, x, lookupTreeDef(acc, x, 0) + 1);
+				switch (lookupTree(acc, x)) {
+					Some(p): setTree(acc, x, Pair(p.first + 1, kind));
+					None(): setTree(acc, x, Pair(1, kind));
+				}
 			}
 		}
 		FsConst(c, id): acc;
@@ -307,6 +310,6 @@ fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 		FsCast(__,__,__,__):      FsCast(s with id = new_id());
 		FsConst(__,__):           FsConst(s with id = new_id());
 		FsTailCall(__,__,__,__):  FsTailCall(s with id = new_id());
-		FsVarUse(__,__,__,__):    FsVarUse(s with id = new_id());
+		FsVarUse(__,__,__):       FsVarUse(s with id = new_id());
 	}
 }
