@@ -220,9 +220,7 @@ void flow2stringRc(Flow* v, string& str) {
 				if (i > 0) {
 					str.append(u", ");
 				}
-				//if (i + 1 < size) {
-					incRc(v);
-				//}
+				incRc(v);
 				flow2stringRc(v->getFlowRc(i), str);
 			}
 			decRc(v);
@@ -252,9 +250,7 @@ void flow2stringRc(Flow* v, string& str) {
 				if (i > 0) {
 					str.append(u", ");
 				}
-				//if (i + 1 < size) {
-					incRc(v);
-				//}
+				incRc(v);
 				flow2stringRc(v->getFlowRc(i), str);
 			}
 			decRc(v);
@@ -279,7 +275,7 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 			case TypeFx::INT:    return compareRc<Int>(v1->getRc<Int>(), v2->getRc<Int>());
 			case TypeFx::BOOL:   return compareRc<Bool>(v1->getRc<Bool>(), v2->getRc<Bool>());
 			case TypeFx::DOUBLE: return compareRc<Double>(v1->getRc<Double>(), v2->getRc<Double>());
-			case TypeFx::STRING: return v1->getRc<String*>()->str.compare(v2->getRc<String*>()->str);
+			case TypeFx::STRING: { Int c = v1->getRc<String*>()->str.compare(v2->getRc<String*>()->str); decRc(v1); decRc(v2); return c; }
 			case TypeFx::ARRAY: {
 				Int c1 = compareRc<Int>(v1->size(), v2->size());
 				if (c1 != 0) {
@@ -289,10 +285,8 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 				} else {
 					Int size = v1->size();
 					for (Int i = 0; i < size; ++ i) {
-						//if (i + 1 < size) {
-							incRc(v1);
-							incRc(v2);
-						//}
+						incRc(v1);
+						incRc(v2);
 						Int c2 = flowCompareRc(v1->getFlowRc(i), v2->getFlowRc(i));
 						if (c2 != 0) {
 							decRc(v1);
@@ -330,10 +324,8 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 					} else {
 						Int size = v1->size();
 						for (Int i = 0; i < size; ++ i) {
-							//if (i + 1 < size) {
-								incRc(v1);
-								incRc(v2);
-							//}
+							incRc(v1);
+							incRc(v2);
 							Int c2 = flowCompareRc(v1->getFlowRc(i), v2->getFlowRc(i));
 							if (c2 != 0) {
 								decRc(v1);
