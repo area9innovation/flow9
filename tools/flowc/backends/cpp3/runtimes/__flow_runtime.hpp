@@ -528,9 +528,9 @@ struct Vec : public Flow {
 	T get(Int i) {
 		return vect.at(i);
 	}
-	/*void set(Int i, ElType x) { 
+	void set(Int i, ElType x) { 
 		vect[i] = x;
-	}*/
+	}
 	T getRc(Int i) {
 		T x = vect.at(i);
 		incRc(x);
