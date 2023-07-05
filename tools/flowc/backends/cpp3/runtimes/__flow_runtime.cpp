@@ -180,10 +180,10 @@ bool isSameObjRc(Flow* f1, Flow* f2) {
 	if (f1->typeId() == f2->typeId()) {
 		switch (f1->typeId()) {
 			case TypeFx::VOID:   decRc(f1); decRc(f2); return true;
-			case TypeFx::INT:    return (f1->getRc<Int>() == f2->getRc<Int>());
-			case TypeFx::BOOL:   return (f1->getRc<Bool>() == f2->getRc<Bool>());
-			case TypeFx::DOUBLE: return (f1->getRc<Double>() == f2->getRc<Double>());
-			case TypeFx::STRING: return (f1->getRc<String*>()->str == f2->getRc<String*>()->str);
+			case TypeFx::INT:    return equalRc<Int>(f1->getRc<Int>(), f2->getRc<Int>());
+			case TypeFx::BOOL:   return equalRc<Bool>(f1->getRc<Bool>(), f2->getRc<Bool>());
+			case TypeFx::DOUBLE: return equalRc<Double>(f1->getRc<Double>(), f2->getRc<Double>());
+			case TypeFx::STRING: return equalRc<String*>(f1->getRc<String*>(), f2->getRc<String*>());
 			case TypeFx::NATIVE: decRc(f1); decRc(f2); return (f1 == f2);
 			default:             decRc(f1); decRc(f2); return (f1 == f2);
 		}
@@ -275,7 +275,7 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 			case TypeFx::INT:    return compareRc<Int>(v1->getRc<Int>(), v2->getRc<Int>());
 			case TypeFx::BOOL:   return compareRc<Bool>(v1->getRc<Bool>(), v2->getRc<Bool>());
 			case TypeFx::DOUBLE: return compareRc<Double>(v1->getRc<Double>(), v2->getRc<Double>());
-			case TypeFx::STRING: { Int c = v1->getRc<String*>()->str.compare(v2->getRc<String*>()->str); decRc(v1); decRc(v2); return c; }
+			case TypeFx::STRING: return compareRc<String*>(v1->getRc<String*>(), v2->getRc<String*>());
 			case TypeFx::ARRAY: {
 				Int c1 = compareRc<Int>(v1->size(), v2->size());
 				if (c1 != 0) {

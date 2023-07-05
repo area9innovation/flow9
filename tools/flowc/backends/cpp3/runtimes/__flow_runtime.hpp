@@ -219,14 +219,13 @@ struct Flow {
 	virtual Flow* callFlowRc(std::vector<Flow*>) { fail("invalid flow value getter"); return nullptr; }
 
 	template<typename T> inline T get() { return dynamic_cast<T>(this); }
-	template<typename T> inline T getRc() {  
-		if constexpr (is_flow_ancestor_v<T>) {
-			return dynamic_cast<T>(this);
-		} else {
-			T ret = get<T>();
-			decRc(this);
-			return ret;
-		}
+	template<typename T> inline T getRc1() {
+		return incRc(dynamic_cast<T>(this)); 
+	}
+	template<typename T> inline T getRc() {
+		T ret = getRc1<T>();
+		decRc(this);
+		return ret;
 	}
 	mutable Int rc_;
 };
@@ -235,6 +234,11 @@ struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOI
 struct FInt : public Flow { FInt(Int v): val(v) {} TypeId typeId() const override { return TypeFx::INT; } Int val; };
 struct FBool : public Flow { FBool(Bool v): val(v) {} TypeId typeId() const override { return TypeFx::BOOL; } Bool val; };
 struct FDouble : public Flow { FDouble(Double v): val(v) {} TypeId typeId() const override { return TypeFx::DOUBLE; } Double val; };
+
+template<> inline Void Flow::getRc1<Void>() { return void_value; }
+template<> inline Int Flow::getRc1<Int>() { return dynamic_cast<FInt*>(this)->val; }
+template<> inline Bool Flow::getRc1<Bool>() { return dynamic_cast<FBool*>(this)->val; }
+template<> inline Double Flow::getRc1<Double>() { return dynamic_cast<FDouble*>(this)->val; }
 
 template<> inline Void Flow::get<Void>() { return void_value; }
 template<> inline Int Flow::get<Int>() { return dynamic_cast<FInt*>(this)->val; }
@@ -397,7 +401,12 @@ struct Str : public Flow {
 		std::get<i>(fields) = v;
 		decRc(this);
 	}
-	Int compareRc(Str* s) { return compareRc<0>(s); }
+	Int compareRc(Str* s) {
+		Int c = compareRc<0>(s);
+		decRc(s);
+		decRc(this);
+		return c;
+	}
 
 	void toStringStrRc(string& str) { 
 		str.append(RTTI::typeName(TYPE));
@@ -449,12 +458,8 @@ private:
 	template<Int i>
 	Int compareRc(Str* s) {
 		if constexpr(i == SIZE) return 0; else {
-			if constexpr (i + 1 < SIZE) {
-				incRc(this);
-				incRc(s);
-			}
 			Int c = flow::compareRc<std::tuple_element_t<i, Fields>>(
-				getRc<i>(), s->getRc<i>()
+				getRc1<i>(), s->getRc1<i>()
 			);
 			if (c != 0) return c;
 			compareRc<i + 1>(s);
@@ -705,7 +710,7 @@ inline T2 castRc(T1 x) {
 				case TypeFx::INT:    return x->template getRc<Int>();
 				case TypeFx::BOOL:   return bool2int(x->template getRc<Bool>());
 				case TypeFx::DOUBLE: return double2int(x->template getRc<Double>());
-				case TypeFx::STRING: return string2int(x->template getRc<String*>()->str);
+				case TypeFx::STRING: { Int ret = string2int(x->template get<String*>()->str); decRc(x); return ret; }
 				default:             fail("invalid conversion to int");
 			}
 		}
@@ -722,7 +727,7 @@ inline T2 castRc(T1 x) {
 				case TypeFx::INT:    return int2bool(x->template getRc<Int>());
 				case TypeFx::BOOL:   return x->template getRc<Bool>();
 				case TypeFx::DOUBLE: return double2bool(x->template getRc<Double>());
-				case TypeFx::STRING: return string2bool(x->template getRc<String*>()->str);
+				case TypeFx::STRING: { Bool ret = string2bool(x->template get<String*>()->str); decRc(x); return ret; }
 				default:             fail("invalid conversion to bool");
 			}
 		}
@@ -739,7 +744,7 @@ inline T2 castRc(T1 x) {
 				case TypeFx::INT:    return int2double(x->template getRc<Int>());
 				case TypeFx::BOOL:   return bool2double(x->template getRc<Bool>());
 				case TypeFx::DOUBLE: return x->template getRc<Double>();
-				case TypeFx::STRING: return string2double(x->template getRc<String*>()->str);
+				case TypeFx::STRING: { Double ret = string2double(x->template get<String*>()->str); decRc(x); return ret; }
 				default:             fail("invalid conversion to double");
 			}
 		}
@@ -753,7 +758,7 @@ inline T2 castRc(T1 x) {
 		else if constexpr (std::is_same_v<T1, Double>) { return String::make(double2string(x)); }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			if (x->typeId() == TypeFx::STRING) {
-				return x->template get<String*>();
+				return x->template getRc<String*>();
 			} else {
 				return flow2stringRc(x);
 			}
@@ -946,7 +951,9 @@ inline void toStringRc(T v, string& str) {
 	else if constexpr (std::is_same_v<T, String*>) {
 		str.append(u"\""); appendEscaped(v, str); decRc(v); str.append(u"\"");
 	}
-	else if constexpr (std::is_same_v<T, Flow*>) { String* s = flow2stringRc(v); str.append(s->str); decRc(s); }
+	else if constexpr (std::is_same_v<T, Flow*>) {
+		String* s = flow2stringRc(v); str.append(s->str); decRc(s);
+	}
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		str.append(u"[");
 		Int size = v->size();
