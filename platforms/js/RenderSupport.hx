@@ -1217,7 +1217,7 @@ class RenderSupport {
 					if (!Platform.isAndroid) {
 						win_width = screen_size.width;
 					}
-					win_height = Math.floor((screen_size.height - getMobileTopHeight()) / browserZoom);
+					win_height = Math.floor((screen_size.height - (IsFullScreen ? 0.0 : getMobileTopHeight())) / browserZoom);
 				}
 
 				if (Platform.isAndroid) {
