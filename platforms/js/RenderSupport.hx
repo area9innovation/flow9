@@ -1468,7 +1468,7 @@ class RenderSupport {
 		var root = PixiStage.nativeWidget;
 
 		if (Platform.isMobile) {
-			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+			if (Platform.isAndroid || Platform.isChrome || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
 				updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
 				updateNonPassiveEventListener(root, "pointerup", onpointerup);
 				updateNonPassiveEventListener(root, "pointermove", onpointermove);
