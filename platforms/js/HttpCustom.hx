@@ -7,7 +7,7 @@ class HttpCustom extends haxe.Http {
 	var arrayBufferEncodings = ['utf8', 'byte'];
 	var defaultEncodings = ['auto', 'utf8_js'];
 
-	var responseHeaders : Array<Array<String>>;
+	var responseHeaders2 : Array<Array<String>>;
 
 	public var onResponse : Int -> String -> Array<Array<String>> -> Void;
 
@@ -105,7 +105,7 @@ class HttpCustom extends haxe.Http {
 			else me.responseData = r.responseText;
 			#end
 
-			me.responseHeaders =
+			me.responseHeaders2 =
 				r
 					.getAllResponseHeaders()
 					.split("\r\n")
@@ -113,7 +113,7 @@ class HttpCustom extends haxe.Http {
 						return header.split(":").map(StringTools.ltrim);
 					});
 
-			me.onResponse(s, me.responseData, me.responseHeaders);
+			me.onResponse(s, me.responseData, me.responseHeaders2);
 		};
 		if( async )
 			r.onreadystatechange = onreadystatechange;
