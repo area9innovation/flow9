@@ -473,7 +473,7 @@ private:
 				getRc1<i>(), s->getRc1<i>()
 			);
 			if (c != 0) return c;
-			compareRc<i + 1>(s);
+			return compareRc<i + 1>(s);
 		}
 	}
 	template<Int i>
