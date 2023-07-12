@@ -542,10 +542,19 @@ struct Vec : public Flow {
 		decRc(this);
 		return x; 
 	}
+	T getRc1(Int i) {
+		T x = vect.at(i);
+		incRc(x);
+		return x;
+	}
 	void setRc(Int i, T x) {
 		decRc(vect[i]);
 		vect[i] = x;
 		decRc(this);
+	}
+	void setRc1(Int i, T x) {
+		decRc(vect[i]);
+		vect[i] = x;
 	}
 	void shrink() {
 		vect.shrink_to_fit();
@@ -635,10 +644,6 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override { return static_cast<Int>(closure.size()); }
 
-	inline R call(As... as) { 
-		for (Flow* x: closure) incRc(x);
-		return Fn::operator()(as...); 
-	}
 	inline R callRc1(As... as) { 
 		for (Flow* x: closure) incRc(x);
 		return Fn::operator()(as...); 
@@ -771,26 +776,29 @@ inline T2 castRc(T1 x) {
 	}
 	else if constexpr (is_type_v<TypeFx::ARRAY, T2>) {
 		using V2 = std::remove_pointer<T2>::type;
-		T2 ret = V2::make();
-		ret->reserve(x->size());
 		if constexpr (is_type_v<TypeFx::ARRAY, T1>) {
+			T2 ret = V2::make();
+			ret->reserve(x->size());
 			using V1 = std::remove_pointer<T1>::type;
 			for (auto e : *x) {
 				incRc(e);
 				ret->pushBack(castRc<typename V1::ElType, typename V2::ElType>(e));
 			}
 			decRc(x);
+			return ret;
 		} else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
 		} else {
+			T2 ret = V2::make();
+			ret->reserve(x->size());
 			for (Int i = 0; i < x->size(); ++ i) {
 				incRc(x);
 				Flow* e = x->getFlowRc(i);
 				ret->pushBack(castRc<Flow*, typename V2::ElType>(e));
 			}
 			decRc(x);
+			return ret;
 		}
-		return ret;
 	}
 	else if constexpr (is_type_v<TypeFx::REF, T2>) {
 		using V2 = std::remove_pointer<T2>::type;
