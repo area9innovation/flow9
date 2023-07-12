@@ -293,12 +293,18 @@ struct String : public Flow {
 };
 
 inline String* concatStringsRc(String* s1, String* s2) {
-	string ret;
-	ret.reserve(s1->str.size() + s2->str.size());
-	ret += s1->str;
-	ret += s2->str;
-	decRc(s1); decRc(s2);
-	return String::make(ret);
+	if (s1->rc_ == 1) {
+		s1->str += s2->str;
+		decRc(s2);
+		return s1;
+	} else {
+		string ret;
+		ret.reserve(s1->str.size() + s2->str.size());
+		ret += s1->str;
+		ret += s2->str;
+		decRc(s1); decRc(s2);
+		return String::make(ret);
+	}
 }
 
 struct Native : public Flow {
