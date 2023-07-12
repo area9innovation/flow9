@@ -162,23 +162,28 @@ using Union = Flow;
 
 // Predicate for compile-time type resolution
 
-template<TypeId Id, typename T> struct is_type { enum { result = false }; };
-template<> struct is_type<TypeFx::VOID, Void> { enum { result = true }; };
-template<> struct is_type<TypeFx::INT, Int> { enum { result = true }; };
-template<> struct is_type<TypeFx::BOOL, Bool> { enum { result = true }; };
-template<> struct is_type<TypeFx::DOUBLE, Double> { enum { result = true }; };
-template<> struct is_type<TypeFx::STRING, String*> { enum { result = true }; };
-template<> struct is_type<TypeFx::NATIVE, Native*> { enum { result = true }; };
-template<> struct is_type<TypeFx::FLOW, Flow*> { enum { result = true }; };
-template<typename T> struct is_type<TypeFx::ARRAY, Vec<T>*> { enum { result = true }; };
-template<typename T> struct is_type<TypeFx::REF, Ref<T>*> { enum { result = true }; };
-template<typename R, typename... As> struct is_type<TypeFx::FUNC, Fun<R, As...>*> { enum { result = true }; };
-template<TypeId Id, typename... Fs> struct is_type<Id, Str<Id, Fs...>*> { enum { result = true }; };
-template<TypeId Id, typename T> constexpr bool is_type_v = is_type<Id, T>::result;
+namespace traits {
+	template<TypeId Id, typename T> struct is_type { enum { result = false }; };
+	template<> struct is_type<TypeFx::VOID, Void> { enum { result = true }; };
+	template<> struct is_type<TypeFx::INT, Int> { enum { result = true }; };
+	template<> struct is_type<TypeFx::BOOL, Bool> { enum { result = true }; };
+	template<> struct is_type<TypeFx::DOUBLE, Double> { enum { result = true }; };
+	template<> struct is_type<TypeFx::STRING, String> { enum { result = true }; };
+	template<> struct is_type<TypeFx::NATIVE, Native> { enum { result = true }; };
+	template<> struct is_type<TypeFx::FLOW, Flow> { enum { result = true }; };
+	template<typename T> struct is_type<TypeFx::ARRAY, Vec<T>> { enum { result = true }; };
+	template<typename T> struct is_type<TypeFx::REF, Ref<T>> { enum { result = true }; };
+	template<typename R, typename... As> struct is_type<TypeFx::FUNC, Fun<R, As...>> { enum { result = true }; };
+	template<TypeId Id, typename... Fs> struct is_type<Id, Str<Id, Fs...>> { enum { result = true }; };
+}
+template<TypeId Id, typename T> constexpr bool is_type_v = traits::is_type<Id, std::remove_pointer_t<T>>::result;
 
-template<typename T> struct is_struct { enum { result = false }; };
-template<TypeId Id, typename... Fs> struct is_struct<Str<Id, Fs...>*> { enum { result = true }; };
-template<typename T> constexpr bool is_struct_v = is_struct<T>::result;
+namespace traits {
+	template<typename T> struct is_struct { enum { result = false }; };
+	template<TypeId Id, typename... Fs> struct is_struct<Str<Id, Fs...>> { enum { result = true }; };
+}
+template<typename T> constexpr bool is_struct_v = traits::is_struct<std::remove_pointer_t<T>>::result;
+template<typename T> constexpr bool is_struct_or_union_v = is_struct_v<T> || std::is_same_v<Union, std::remove_pointer_t<T>>;
 
 template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer_t<T>>;
 template<typename T> constexpr bool is_scalar_v =
