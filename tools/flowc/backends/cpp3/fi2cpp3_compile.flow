@@ -159,9 +159,9 @@ fiFunc2cpp3(fun: FsFunctionDec, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclara
 	forward_decl = decl_typars + fun_signature + ";\n\n";
 	cpp_body = fsStat2cpp3(fun.lambda.body, gctx);
 	cpp_fun = if (!fsHasTailCall(fun.lambda.body)) cpp_body else {
-		"while (true) " + fiWrapWithBraces(cpp_body);
+		"while (true) " + fiWrapWithBraces(cpp_body, gctx.config);
 	}
-	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun) + "\n\n";
+	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun, gctx.config) + "\n\n";
 	Cpp3CompiledDeclaration(name, headerOnly, forward_decl, definition);
 }
 
@@ -183,18 +183,18 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			neg_cpp = fsStat2cpp3(neg, gctx);
 			if (pos_cpp != "") {
 				if (neg_cpp != "") {
-					"if " + fiWrapWithPars(cond_cpp) + " " + 
-						fiWrapWithBraces(pos_cpp) +
+					"if " + fiWrapWithPars(cond_cpp, gctx.config) + " " + 
+						fiWrapWithBraces(pos_cpp, gctx.config) +
 					" else " + 
-						fiWrapWithBraces(neg_cpp);
+						fiWrapWithBraces(neg_cpp, gctx.config);
 				} else {
-					"if " + fiWrapWithPars(cond_cpp) + " " + 
-						fiWrapWithBraces(pos_cpp);
+					"if " + fiWrapWithPars(cond_cpp, gctx.config) + " " + 
+						fiWrapWithBraces(pos_cpp, gctx.config);
 				}
 			} else {
 				if (neg_cpp != "") {
 					"if (!" + cond_cpp + ") " + 
-						fiWrapWithBraces(neg_cpp);
+						fiWrapWithBraces(neg_cpp, gctx.config);
 				} else {
 					"";
 				}
@@ -296,7 +296,7 @@ fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string 
 				"default: " + fiWrapWithBraces(
 					"std::cerr << \"unexpected case: \" << " + sw_cond + " << \" of type \" << string2std(RTTI::typeName(" + sw_cond + ")) << \" = '" + sw_cond + "' in switch\" << std::endl;\n" +
 					"exit(1);\n" +
-					"break;"
+					"break;", gctx.config
 				)
 			]);
 		}
@@ -312,13 +312,13 @@ fsCase2cpp3(c: FsCase, gctx: Cpp3GlobalContext) -> string {
 			body = fsStat2cpp3(c.body, gctx);
 			id = eitherMap(lookupTree(gctx.structs2cpp, c.struct), \str -> str.id, -1);
 			"case " + i2s(id) + " /*" + c.struct + "*/: " +
-				fiWrapWithBraces(fiUnwrap(body, "{", "}") + "\nbreak;");
+				fiWrapWithBraces(fiUnwrap(body, "{", "}") + "\nbreak;", gctx.config);
 		}
 		None(): {
 			// default case
 			if (c.struct != "default") fail0("struct is not found") else {
 				body = fsStat2cpp3(c.body, gctx);
-				"default: " + fiWrapWithBraces(body);
+				"default: " + fiWrapWithBraces(body, gctx.config);
 			}
 		}
 	}
@@ -368,12 +368,12 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			}
 			s_args = map(args, \arg -> fsExp2cpp3(arg, gctx));
 			s_args_len = fold(s_args, 0, \acc, s_arg -> acc + strlen(s_arg) + 2);
-			s_args_all = if (length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
+			s_args_all = if (gctx.config.debug || length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
 				strGlue(s_args, ",\n");
 			} else {
 				strGlue(s_args, ", ");
 			}
-			call_args = fiWrapWithPars(s_args_all);
+			call_args = fiWrapWithPars(s_args_all, gctx.config);
 			switch(f) {
 				FsVarUse(v, kind,__): {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, v.name);
@@ -413,7 +413,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			closure_vars_2 = superglue(ref_counted_closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ");
 			"Fun<" + fiType2cpp3(lambda.type.returnType, gctx) + concatStrings(map(lambda.type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">::make" +
 			"(" + closure_vars_1 + " " + fsArgs2cpp(lambda.args, gctx) +
-			" " + fiWrapWithBraces(fsStat2cpp3(lambda.body, gctx)) +
+			" " + fiWrapWithBraces(fsStat2cpp3(lambda.body, gctx), gctx.config) +
 				(if (closure_vars_2 == "") "" else ", " + closure_vars_2) +
 			")";
 		}
@@ -507,7 +507,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 			} else {
 				arr_s = map(e.es, e2k);
 				s1 = strGlue(arr_s, ", ");
-				if (strlen(s1) < 64 && !strContains(s1, "\n")) {
+				if (!gctx.config.debug && strlen(s1) < 64 && !strContains(s1, "\n")) {
 					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({" + s1 + "})";
 				} else {
 					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({\n" + strIndent(strGlue(arr_s, ",\n")) + "\n})";
