@@ -232,6 +232,9 @@ struct Flow {
 		decRc(this);
 		return ret;
 	}
+	//mutable std::atomic<Int> rc_;
+	//mutable std::atomic_int_fast32_t rc_;
+	//mutable std::atomic_signed_lock_free rc_;
 	mutable Int rc_;
 };
 
@@ -503,6 +506,9 @@ struct Vec : public Flow {
 	Vec(const std::initializer_list<T>& il): vect(il) { }
 	Vec(Vec&& a): vect(std::move(a.vect)) { }
 	Vec(const Vec& a): vect(a.vect) { incRcVec(); }
+	Vec(std::vector<T>&& v): vect(std::move(v)) { }
+	Vec(const std::vector<T>& v): vect(v) { incRcVec(); }
+
 	~Vec() override { decRcVec(); }
 	inline void incRcVec() { for (T x : vect) incRc(x); }
 	inline void decRcVec() { for (T x : vect) decRc(x); }
@@ -570,6 +576,7 @@ struct Vec : public Flow {
 	void shrink() {
 		vect.shrink_to_fit();
 	}
+	std::vector<T>& getVect() { return vect; }
 private:
 	std::vector<T> vect;
 };
