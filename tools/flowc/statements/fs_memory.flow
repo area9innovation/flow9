@@ -206,30 +206,34 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 			), -1);
 		}
 	}
-	add_incs = \e: FsExp, x: FsStat, id -> {
-		incs = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last));
+	add_memops = \e: FsExp, x: FsStat, id -> {
+		memops = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last, -1, FsOrPrim()));
 		if (debug) {
-			println("incs for <" + i2s(e.id) + ">: [" + superglue(incs, \p -> p.first.name + "=" + i2s(p.second.first), ", "  ) + "]");
+			memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
+			println("memops for <" + i2s(e.id) + ">: [" + memops_str + "]");
 		}
-		if (length(incs) == 0) x else {
-			FsSeq(concat(
-				map(incs, \p -> FsIncRc(p.second.first, FsVarUse(p.first, p.second.second, -1), -1)),
-				fsUnwrapSeq(x)
+		if (length(memops) == 0) x else {
+			FsSeq(concat3(
+				map(memops, \p -> FsIncRc(p.second.incs, FsVarUse(p.first, p.second.kind, -1), -1)),
+				fsUnwrapSeq(x),
+				filtermap(memops, \p ->
+					if (p.second.dec) Some(FsDecRc(FsVarUse(p.first, p.second.kind, -1), -1)) else None()
+				),
 			), id);
 		}
 	}
 	cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
-			add_incs(cond, 
-				FsIf(x with 
+			add_memops(cond,
+				FsIf(x with
 					s1 = dec_unused(pos.id, pos),
 					s2 = dec_unused(neg.id, neg)
 				), id
 			);
 		};
 		FsSwitch(v,__, cs, id): {
-			add_incs(v, 
-				FsSwitch(x with 
+			add_memops(v,
+				FsSwitch(x with
 					cases = map(cs, \c ->
 						FsCase(c with body = dec_unused(c.body.id, c.body))
 					)
@@ -237,19 +241,19 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 			);
 		}
 		FsRet(e, id): {
-			add_incs(e, x, id);
+			add_memops(e, x, id);
 		}
 		FsWrapExp(e, id): {
 			x1 = if (fiTypeIsScalar(fsType(e))) x else {
 				FsDecRc(e, -1);
 			}
-			add_incs(e, x1, id);
+			add_memops(e, x1, id);
 		}
 		FsLet(__,e, id): {
-			add_incs(e, x, id);
+			add_memops(e, x, id);
 		}
 		FsAssign(to, what, id): {
-			add_incs(to, add_incs(what, x, -1), id);
+			add_memops(to, add_memops(what, x, -1), id);
 		}
 		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
 		FsDecRc(__,__): fail0("FsDecRc met during memory operations markup");
@@ -260,31 +264,37 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 	}, true): FsAll -> FsStat);
 }
 
-fsExpVarIncs(e: FsExp, acc: Tree<FsVar, Pair<int, FsVarKind>>, last: Tree<int, Set<FsVar>>) -> Tree<FsVar, Pair<int, FsVarKind>> {
+FsVarMemOps(
+	incs: int,  // How much we need to increment a RC of a var before evaluation of an expression
+	dec: bool,  // Should we drop the var in the end of evaluation of an expression explicitly
+	kind: FsVarKind
+);
+
+fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsVarMemOps>, last: Tree<int, Set<FsVar>>, ind: int, op: FsPrim) -> Tree<FsVar, FsVarMemOps> {
 	switch (e) {
 		FsClosure(closure, __,__): {
-			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, last));
+			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, last, -1, FsOrPrim()));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsExpVarIncs(f, acc, last), \ac, x ->
-				fsExpVarIncs(x, ac, last)
+			fold(args, fsExpVarIncs(f, acc, last, -1, FsOrPrim()), \ac, x ->
+				fsExpVarIncs(x, ac, last, -1, FsOrPrim())
 			);
 		}
-		FsCallPrim(__, es,__,__): {
-			fold(es, acc, \ac, x -> fsExpVarIncs(x, ac, last));
+		FsCallPrim(o, es,__,__): {
+			foldi(es, acc, \i, ac, x -> fsExpVarIncs(x, ac, last, i, o));
 		}
 		FsTailCall(args, vals, type, id): {
-			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, last));
+			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, last, -1, FsOrPrim()));
 		}
 		FsCast(e1,__,__,__): {
-			fsExpVarIncs(e1, acc, last);
+			fsExpVarIncs(e1, acc, last, -1, FsOrPrim());
 		}
 		FsVarUse(x, kind, id): {
 			if (kind == FsVarGlobalFunc() || fiTypeIsScalar(x.type) || containsSet(lookupTreeDef(last, id, makeSet()), x)
 			) acc else {
 				switch (lookupTree(acc, x)) {
-					Some(p): setTree(acc, x, Pair(p.first + 1, kind));
-					None(): setTree(acc, x, Pair(1, kind));
+					Some(p): setTree(acc, x, FsVarMemOps(p.incs + 1, false, kind));
+					None(): setTree(acc, x, FsVarMemOps(1, false, kind));
 				}
 			}
 		}
