@@ -220,8 +220,7 @@ void flow2stringRc(Flow* v, string& str) {
 				if (i > 0) {
 					str.append(u", ");
 				}
-				incRc(v);
-				flow2stringRc(v->getFlowRc(i), str);
+				flow2stringRc(v->getFlowRc1(i), str);
 			}
 			decRc(v);
 			str.append(u"]");
@@ -250,8 +249,7 @@ void flow2stringRc(Flow* v, string& str) {
 				if (i > 0) {
 					str.append(u", ");
 				}
-				incRc(v);
-				flow2stringRc(v->getFlowRc(i), str);
+				flow2stringRc(v->getFlowRc1(i), str);
 			}
 			decRc(v);
 			str.append(u")");
@@ -285,9 +283,7 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 				} else {
 					Int size = v1->size();
 					for (Int i = 0; i < size; ++ i) {
-						incRc(v1);
-						incRc(v2);
-						Int c2 = flowCompareRc(v1->getFlowRc(i), v2->getFlowRc(i));
+						Int c2 = flowCompareRc(v1->getFlowRc1(i), v2->getFlowRc1(i));
 						if (c2 != 0) {
 							decRc(v1);
 							decRc(v2);
@@ -324,9 +320,7 @@ Int flowCompareRc(Flow* v1, Flow* v2) {
 					} else {
 						Int size = v1->size();
 						for (Int i = 0; i < size; ++ i) {
-							incRc(v1);
-							incRc(v2);
-							Int c2 = flowCompareRc(v1->getFlowRc(i), v2->getFlowRc(i));
+							Int c2 = flowCompareRc(v1->getFlowRc1(i), v2->getFlowRc1(i));
 							if (c2 != 0) {
 								decRc(v1);
 								decRc(v2);
