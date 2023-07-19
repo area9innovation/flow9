@@ -465,10 +465,19 @@ struct Str : public Flow {
 		decRc(this);
 		return c;
 	}
-	void toStringStrRc(string& str) { 
+	Int compare(Str* s) {
+		return compare<0>(s);
+	}
+	void toStringStrRc(string& str) {
 		str.append(RTTI::typeName(TYPE));
 		str.append(u"(");
 		toStringArgsRc<0>(str);
+		str.append(u")");
+	}
+	void toStringStr(string& str) {
+		str.append(RTTI::typeName(TYPE));
+		str.append(u"(");
+		toStringArgs<0>(str);
 		str.append(u")");
 	}
 
@@ -523,6 +532,16 @@ private:
 		}
 	}
 	template<Int i>
+	Int compare(Str* s) {
+		if constexpr(i == SIZE) return 0; else {
+			Int c = flow::compare<std::tuple_element_t<i, Fields>>(
+				get<i>(), s->get<i>()
+			);
+			if (c != 0) return c;
+			return compare<i + 1>(s);
+		}
+	}
+	template<Int i>
 	void toStringArgsRc(string& str) {
 		if constexpr(i < SIZE) {
 			if constexpr (i > 0) {
@@ -532,6 +551,16 @@ private:
 			toStringArgsRc<i + 1>(str);
 		} else {
 			decRc(this);
+		}
+	}
+	template<Int i>
+	void toStringArgs(string& str) {
+		if constexpr(i < SIZE) {
+			if constexpr (i > 0) {
+				str.append(u", ");
+			}
+			toString(get<i>(), str);
+			toStringArgs<i + 1>(str);
 		}
 	}
 	Fields fields;
@@ -1228,6 +1257,50 @@ inline Int compareRc(T v1, T v2) {
 	}
 }
 
+template<typename T>
+inline Int compare(T v1, T v2) {
+	if constexpr (std::is_same_v<T, Void>) return true;
+	else if constexpr (std::is_same_v<T, void*>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Int>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Bool>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Double>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+	else if constexpr (std::is_same_v<T, Flow*>) { incRc(v1); incRc(v2); return flowCompareRc(v1, v2); }
+	else if constexpr (std::is_same_v<T, String*>) { return v1->str.compare(v2->str); }
+	else if constexpr (std::is_same_v<T, Native*>) { return compare<void*>(v1, v2); }
+	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
+		Int c1 = compare<Int>(v1->size(), v2->size());
+		if (c1 != 0) {
+			return c1;
+		} else {
+			for (Int i = 0; i < v1->size(); ++ i) {
+				Int c2 = compare<typename std::remove_pointer<T>::type::ElType>(v1->get(i), v2->get(i));
+				if (c2 != 0) {
+					return c2;
+				}
+			}
+			return 0;
+		}
+	}
+	else if constexpr (is_type_v<TypeFx::REF, T>) {
+		return compare<typename T::RefType>(v1->get(), v2->get());
+	}
+	else if constexpr (is_type_v<TypeFx::FUNC, T> || is_type_v<TypeFx::NATIVE, T>) {
+		return compare<void*>(v1, v2);
+	}
+	else if constexpr (is_struct_v<T>) {
+		if (v1 == void_value) {
+			return -1;
+		} else if (v2 == void_value) {
+			return 1;
+		} else {
+			return v1->compare(v2);
+		}
+	} else {
+		fail("illegal compare type");
+		return false;
+	}
+}
+
 // Convert any value to string
 
 String* flow2stringRc(Flow* f);
@@ -1235,23 +1308,31 @@ String* flow2stringRc(Flow* f);
 template<typename T>
 inline String* toStringRc(T v) {
 	string str;
-	toStringRc(v, str);
+	toString(v, str);
+	decRc(v);
+	return String::make(str);
+}
+
+template<typename T>
+inline String* toString(T v) {
+	string str;
+	toString(v, str);
 	return String::make(str);
 }
 
 void appendEscaped(String* x, string& str);
 
 template<typename T>
-inline void toStringRc(T v, string& str) {
+inline void toString(T v, string& str) {
 	if constexpr (std::is_same_v<T, Void>) str.append(u"{}");
 	else if constexpr (std::is_same_v<T, Int>) str.append(int2string(v));
 	else if constexpr (std::is_same_v<T, Bool>) str.append(bool2string(v));
 	else if constexpr (std::is_same_v<T, Double>) str.append(double2string(v, true));
 	else if constexpr (std::is_same_v<T, String*>) {
-		str.append(u"\""); appendEscaped(v, str); decRc(v); str.append(u"\"");
+		str.append(u"\""); appendEscaped(v, str); str.append(u"\"");
 	}
 	else if constexpr (std::is_same_v<T, Flow*>) {
-		String* s = flow2stringRc(v); str.append(s->str); decRc(s);
+		incRc(v); String* s = flow2stringRc(v); str.append(s->str); decRc(s);
 	}
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		str.append(u"[");
@@ -1260,15 +1341,13 @@ inline void toStringRc(T v, string& str) {
 			if (i > 0) {
 				str.append(u", ");
 			}
-			incRc(v);
-			toStringRc(v->getRc(i), str);
+			toString(v->get(i), str);
 		}
-		decRc(v);
 		str.append(u"]");
 	}
 	else if constexpr (is_type_v<TypeFx::REF, T>) {
 		str.append(u"ref ");
-		toStringRc(v->getRc(), str);
+		toString(v->get(), str);
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T>) {
 		decRc(v);
@@ -1279,7 +1358,7 @@ inline void toStringRc(T v, string& str) {
 		str.append(u"<native>");
 	}
 	else if constexpr (is_struct_v<T>) {
-		v->toStringStrRc(str);
+		v->toStringStr(str);
 	}
 }
 
