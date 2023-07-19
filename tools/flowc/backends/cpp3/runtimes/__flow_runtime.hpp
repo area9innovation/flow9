@@ -193,11 +193,11 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::DOUBLE, T>;
 
 template<typename T> inline T incRc(T x, Int d = 1) {
-	if constexpr (std::is_pointer_v<T>) { x->rc_ += d; } return x;
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { x->rc_ += d; } return x;
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
-	if constexpr (std::is_pointer_v<T>) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } }
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } }
 }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret, Int d = 1) {
@@ -1202,59 +1202,9 @@ Int flowCompareRc(Flow* v1, Flow* v2);
 
 template<typename T>
 inline Int compareRc(T v1, T v2) {
-	if constexpr (std::is_same_v<T, Void>) return true; 
-	else if constexpr (std::is_same_v<T, void*>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-	else if constexpr (std::is_same_v<T, Int>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-	else if constexpr (std::is_same_v<T, Bool>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-	else if constexpr (std::is_same_v<T, Double>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-	else if constexpr (std::is_same_v<T, Flow*>) return flowCompareRc(v1, v2);
-	else if constexpr (std::is_same_v<T, String*>) { Int c = v1->str.compare(v2->str); decRc(v1); decRc(v2); return c; }
-	else if constexpr (std::is_same_v<T, Native*>) { Int c = compareRc<void*>(v1, v2); decRc(v1); decRc(v2); return c; }
-	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
-		Int c1 = compareRc<Int>(v1->size(), v2->size());
-		if (c1 != 0) {
-			decRc(v1);
-			decRc(v2);
-			return c1;
-		} else {
-			for (Int i = 0; i < v1->size(); ++ i) {
-				incRc(v1);
-				incRc(v2);
-				Int c2 = compareRc<typename std::remove_pointer<T>::type::ElType>(v1->getRc(i), v2->getRc(i));
-				if (c2 != 0) {
-					decRc(v1);
-					decRc(v2);
-					return c2;
-				}
-			}
-			decRc(v1);
-			decRc(v2);
-			return 0;
-		}
-	}
-	else if constexpr (is_type_v<TypeFx::REF, T>) {
-		return compareRc<typename T::RefType>(v1->getRc(), v2->getRc()); 
-	}
-	else if constexpr (is_type_v<TypeFx::FUNC, T> || is_type_v<TypeFx::NATIVE, T>) {
-		Int ret = compareRc<void*>(v1, v2);
-		decRc(v1);
-		decRc(v2);
-		return ret;
-	}
-	else if constexpr (is_struct_v<T>) {
-		if (v1 == void_value) {
-			decRc(v2);
-			return -1;
-		} else if (v2 == void_value) {
-			decRc(v1);
-			return 1;
-		} else {
-			return v1->compareRc(v2);
-		}
-	} else {
-		fail("illegal compare type");
-		return false;
-	}
+	Int ret = compare(v1, v2);
+	decRc(v1); decRc(v2);
+	return ret;
 }
 
 template<typename T>
