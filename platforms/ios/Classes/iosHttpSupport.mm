@@ -124,7 +124,7 @@ void iosHttpSupport::removeActiveConnection(NSURLConnection *c)
 
 void iosHttpSupport::doRequest(HttpRequest &rq)
 {
-    NSString * url_string = [UNICODE2NS(rq.url) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    NSString * url_string = UNICODE2NS(rq.url);
     
     if (rq.is_media_preload) {
 #if !defined(IGNORE_MEDIA_PRELOAD)

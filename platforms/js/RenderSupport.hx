@@ -1217,7 +1217,7 @@ class RenderSupport {
 					if (!Platform.isAndroid) {
 						win_width = screen_size.width;
 					}
-					win_height = Math.floor((screen_size.height - getMobileTopHeight()) / browserZoom);
+					win_height = Math.floor((screen_size.height - (IsFullScreen ? 0.0 : getMobileTopHeight())) / browserZoom);
 				}
 
 				if (Platform.isAndroid) {
@@ -1460,11 +1460,15 @@ class RenderSupport {
 		}
 	};
 
+	private static function blockEvent(e : Dynamic, stage : FlowContainer) {
+		e.preventDefault();
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var root = PixiStage.nativeWidget;
 
 		if (Platform.isMobile) {
-			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+			if (Platform.isAndroid || Platform.isChrome || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
 				updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
 				updateNonPassiveEventListener(root, "pointerup", onpointerup);
 				updateNonPassiveEventListener(root, "pointermove", onpointermove);
@@ -1490,6 +1494,11 @@ class RenderSupport {
 			updateNonPassiveEventListener(root, "pointerup", onpointerup);
 			updateNonPassiveEventListener(root, "pointermove", onpointermove);
 			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+
+			// Just in case app is switched to mobile mode in dev tools
+			updateNonPassiveEventListener(root, "touchstart", blockEvent);
+			updateNonPassiveEventListener(root, "touchend", blockEvent);
+			updateNonPassiveEventListener(root, "touchmove", blockEvent);
 		}
 
 		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {

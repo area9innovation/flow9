@@ -17,6 +17,10 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 	env = fi2nimInitEnv(program, cfg);
 	runtime = fi2nimRuntime(env);
 	types = fi2nimCompileTypes(env);
+	convs = fi2nimCompileFlowConversions(env);
+	defvals = fi2nimCompileDefvals(env);
+	tostrings = fi2nimCompileToString(env);
+	compares = fi2nimCompileCompare(env);
 
 	compiled = if (isConfigParameterTrue(cfg.options, "nim-mono")) {
 		[NimCompiledSource(cfg.outputfile, fi2nimJoinNimCodeMany([
@@ -24,24 +28,36 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 			NimLine(0, runtime),
 			NimLine(0, "#[ TYPES ]#"),
 			types,
+			NimLine(0, "#[ CONVS ]#"),
+			convs,
+			NimLine(0, "#[ DEFVALS ]#"),
+			defvals,
+			NimLine(0, "#[ TO STRINGS ]#"),
+			tostrings,
+			NimLine(0, "#[ COMPARES ]#"),
+			compares,
 			NimLine(0, "#[ SOURCE CODE ]#"),
 			fi2nimCompileSourceCode(env, runtime),
 			NimLine(0, "main()")
 		]))];
 	} else {
+		imports = fi2nimJoinNimCodeMany([
+			NimLine(0, "import osproc"),
+			NimLine(0, "import strutils"),
+			NimLine(0, "import sequtils"),
+			NimLine(0, "import asyncdispatch"),
+			NimLine(0, "import flow_lib/httpServer_type"),
+			NimLine(0, "import flow_runtime")
+		]);
 		concat(
-			[NimCompiledSource("flow_runtime", NimLine(0, runtime)),
-			NimCompiledSource("flow_types", 
-				fi2nimJoinNimCodeMany([
-					NimLine(0, "import osproc"),
-					NimLine(0, "import strutils"),
-					NimLine(0, "import sequtils"),
-					NimLine(0, "import asyncdispatch"),
-					NimLine(0, "import flow_lib/httpServer_type"),
-					NimLine(0, "import flow_runtime"),
-					types
-				])
-			)],
+			[
+				NimCompiledSource("flow_runtime", NimLine(0, runtime)),
+				NimCompiledSource("flow_types", fi2nimJoinNimCode(imports, types)),
+				NimCompiledSource("flow_convs", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), convs)),
+				NimCompiledSource("flow_defvals", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), defvals)),
+				NimCompiledSource("flow_tostring", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), tostrings)),
+				NimCompiledSource("flow_compare", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), compares)),
+			],
 			map(getTreeValues(env.prog.modules), \m -> fiNimCompileModule(env, m))
 		);
 	}
@@ -68,38 +84,79 @@ fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
 		},
 		fi2nimEmptyLine()
 	);
-
-	comment_line = \msg -> {
-		line = NimLine(0, "\n# " + msg + "\n");
-		[NimCompiledFunc(line, line)];
-	}
 	typenames = list2array(fold(env.unions, 
 		fold(env.structs, makeList(), \acc, s -> Cons(FiTypeName(s.name, s.typars), acc)),
 		\acc, u -> Cons(FiTypeName(u.name, u.typeparameters), acc)
 	));
-	compiled_funcs = concatA([
-		comment_line("FROM FLOW CONVERSION"),
-		[fi2nimTypeFromFlow1(env)],
-		comment_line("TYPARS TYPE TRAITS"),
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("TYPARS TYPE TRAITS")],
 		filtermap(typenames, \t -> fi2nimTypenameTypars(env, t)),
-		comment_line("TO FLOW CONVERSIONS"),
-		concat(
-			[fi2nimFuncToFlow(env)],
-			filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t))
-		),
-		comment_line("TO STRING CONVERSIONS"),
-		concat(
-			[fi2nimFuncToString(env)],
-			filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t))
-		),
-		comment_line("COMPARE"),
-		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
-	]);
+	);
 
 	fi2nimJoinNimCodeMany(concatA([
 		[type_defs, fi2nimEmptyLine()],
 		[fi2nimEmptyLine()],
 		map(env.structs, \s -> fi2nimRegisterStruct(env, s)),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileFlowConversions(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concatA([
+		[fi2nimCommentAsCompiledFunc("FROM FLOW CONVERSION")],
+		[fi2nimTypeFromFlow(env)],
+		[fi2nimCommentAsCompiledFunc("TO FLOW CONVERSIONS")],
+		concat(
+			[fi2nimFuncToFlow(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t))
+		),
+	]);
+	fi2nimJoinNimCodeMany(concatA([
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileDefvals(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("DEFAULT VALUES")],
+		[fi2nimTypeDefVal(env)],
+	);
+	fi2nimJoinNimCodeMany(concatA([
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileToString(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("TO STRING CONVERSIONS")],
+		concat(
+			[fi2nimFuncToString(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t))
+		)
+	);
+	fi2nimJoinNimCodeMany(concatA([
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileCompare(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("COMPARE")],
+		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
+	);
+	fi2nimJoinNimCodeMany(concatA([
 		[fi2nimEmptyLine()],
 		map(compiled_funcs, \fn -> fn.decl),
 		[fi2nimEmptyLine()],
