@@ -86,19 +86,11 @@ public class HttpSupport extends NativeHost {
 			// TODO: Make this asynchronous
 			ResultStreamPair p = getResultStreamPair(con);
 			if (Objects.nonNull(p.stream)) {
-				BufferedReader in = new BufferedReader(new InputStreamReader(p.stream));
-				String inputLine;
-				StringBuffer response = new StringBuffer();
-
-				while ((inputLine = in.readLine()) != null) {
-					response.append(inputLine);
-					response.append('\n');
-				}
-				in.close();
+				String response = stream2string(p.stream, defaultResponseEncoding);
 				if (p.isData) {
-					onData.invoke(response.toString());
+					onData.invoke(response);
 				} else {
-					onError.invoke(response.toString());
+					onError.invoke(response);
 				}
 			} else {
 				onError.invoke("");
@@ -132,6 +124,92 @@ public class HttpSupport extends NativeHost {
 		} catch (IOException e) {
 			return new ResultStreamPair(con.getErrorStream(), false);
 		}
+	}
+
+	private static final String stream2string(InputStream inputStream, String responseEncoding) throws java.io.IOException {
+		if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
+			responseEncoding = "utf8_js";
+		} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
+			responseEncoding = "utf8";
+		} else if (responseEncoding.equals("auto")) {
+			responseEncoding = defaultResponseEncoding;
+		}
+
+		StringBuilder response = new StringBuilder();
+		// inputStream might be null, if body is empty
+		if (Objects.nonNull(inputStream)) {
+			final int bufferSize = 1024;
+
+			if (responseEncoding.equals("utf8")) {
+				// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
+				int additionalChars = 0;
+				// +1 additinal char from the prevoius chain
+				final char[] buffer = new char[bufferSize + 1];
+
+				int readSize = 0;
+				int countSize = 0;
+
+				Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
+				while (true) {
+					// How much chars we used to decode symbol into utf8 (1 or 2)
+					int codesUsed = 0;
+
+					readSize = in.read(buffer, additionalChars, bufferSize);
+
+					// We stop, if nothing read
+					if (readSize < 0) break;
+
+					// On one less of real to use it as index + 1 in `for`
+					countSize = readSize + additionalChars - 1;
+					// Now, how much unprocessed chars we have
+					additionalChars = (char)readSize;
+
+					int counter = 0;
+					while (counter < countSize) {
+						codesUsed = unpackSurrogatePair(response, buffer[counter], buffer[counter + 1]);
+						counter += codesUsed;
+
+						additionalChars -= codesUsed;
+					}
+
+					if (additionalChars > 0) {
+						buffer[0] = buffer[counter];
+						additionalChars = 1;
+					}
+				}
+
+				if (additionalChars > 0) {
+					unpackSurrogatePair(response, buffer[0], buffer[0]);
+				}
+			} else if (responseEncoding.equals("utf8_js")) {
+				final char[] buffer = new char[bufferSize];
+				Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
+				while (true) {
+					int rsz = in.read(buffer, 0, buffer.length);
+					// We stop, if nothing read
+					if (rsz < 0) break;
+					response.append(buffer, 0, rsz);
+				}
+			} else if (responseEncoding.equals("byte")) {
+				char c;
+				int length;
+				final byte[] buffer = new byte[bufferSize];
+
+				while ((length = inputStream.read(buffer)) != -1) {
+					for (int i=0; i< length; i++) {
+						response.append((char) (buffer[i]&0x00FF));
+					}
+				}
+			} else { // auto or other
+				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+				for (String line; (line = reader.readLine()) != null; ) {
+					response.append(line);
+					response.append("\n");
+				}
+				reader.close();
+			}
+		}
+		return response.toString();
 	}
 
 	private static final java.lang.reflect.Method string2utf8Bytes;
@@ -244,91 +322,8 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
-			InputStream inputStream = getResultStreamPair(con).stream;
-
-			if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
-				responseEncoding = "utf8_js";
-			} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
-				responseEncoding = "utf8";
-			} else if (responseEncoding.equals("auto")) {
-				responseEncoding = defaultResponseEncoding;
-			}
-
-			StringBuilder response = new StringBuilder();
-			// inputStream might be null, if body is empty
-			if (Objects.nonNull(inputStream)) {
-				final int bufferSize = 1024;
-
-				if (responseEncoding.equals("utf8")) {
-					// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
-					int additionalChars = 0;
-					// +1 additinal char from the prevoius chain
-					final char[] buffer = new char[bufferSize + 1];
-
-					int readSize = 0;
-					int countSize = 0;
-
-					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (true) {
-						// How much chars we used to decode symbol into utf8 (1 or 2)
-						int codesUsed = 0;
-
-						readSize = in.read(buffer, additionalChars, bufferSize);
-
-						// We stop, if nothing read
-						if (readSize < 0) break;
-
-						// On one less of real to use it as index + 1 in `for`
-						countSize = readSize + additionalChars - 1;
-						// Now, how much unprocessed chars we have
-						additionalChars = (char)readSize;
-
-						int counter = 0;
-						while (counter < countSize) {
-							codesUsed = unpackSurrogatePair(response, buffer[counter], buffer[counter + 1]);
-							counter += codesUsed;
-
-							additionalChars -= codesUsed;
-						}
-
-						if (additionalChars > 0) {
-							buffer[0] = buffer[counter];
-							additionalChars = 1;
-						}
-					}
-
-					if (additionalChars > 0) {
-						unpackSurrogatePair(response, buffer[0], buffer[0]);
-					}
-				} else if (responseEncoding.equals("utf8_js")) {
-					final char[] buffer = new char[bufferSize];
-					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (true) {
-						int rsz = in.read(buffer, 0, buffer.length);
-						// We stop, if nothing read
-						if (rsz < 0) break;
-						response.append(buffer, 0, rsz);
-					}
-				} else if (responseEncoding.equals("byte")) {
-					char c;
-					int length;
-					final byte[] buffer = new byte[bufferSize];
-
-					while ((length = inputStream.read(buffer)) != -1) {
-						for (int i=0; i< length; i++) {
-							response.append((char) (buffer[i]&0x00FF));
-						}
-					}
-				} else { // auto or other
-					BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-					for (String line; (line = reader.readLine()) != null; ) {
-						response.append(line);
-						response.append("\n");
-					}
-				}
-
-			}
-			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
+			String response = stream2string(getResultStreamPair(con).stream, responseEncoding);
+			onResponse.invoke(responseCode, response, responseHeaders.toArray());
 
 		} catch (MalformedURLException e) {
 			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
