@@ -122,6 +122,7 @@ class TextClip extends NativeWidgetClip {
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
+	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.browserMajorVersion < 15;
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var renderStage : FlowContainer;
@@ -1131,7 +1132,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
 		nativeWidget.addEventListener('contextmenu', onContextMenu);
-		if (Platform.isIOS) {
+		if (IosOnSelectWorkaroundEnabled) {
 			nativeWidget.addEventListener('select', onSelect);
 		}
 
@@ -1307,7 +1308,7 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
-		if (Platform.isIOS) {
+		if (IosOnSelectWorkaroundEnabled) {
 			Browser.document.addEventListener('selectionchange', onSelectionChange);
 		}
 
@@ -1336,7 +1337,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (Platform.isIOS) {
+		if (IosOnSelectWorkaroundEnabled) {
 			Browser.document.removeEventListener('selectionchange', onSelectionChange);
 		}
 
