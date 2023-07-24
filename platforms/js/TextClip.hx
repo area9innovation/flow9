@@ -1613,7 +1613,9 @@ class TextClip extends NativeWidgetClip {
 			if (start == nativeWidget.value.length && end == nativeWidget.value.length) {
 				nativeWidget.scrollLeft = nativeWidget.scrollWidth;
 			}
-			preventMouseUpEvent = true;
+			if (!(Platform.isIOS && Platform.isChrome)) {
+				preventMouseUpEvent = true;
+			}
 		} catch (e : Dynamic) {
 			return;
 		}

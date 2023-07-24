@@ -1338,7 +1338,7 @@ class RenderSupport {
 		}
 	}
 
-	public static var PreventDefault : Bool = true;
+	public static var PreventDefault : Bool = !(Platform.isIOS && Platform.isChrome);
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
 			// In case of using VoiceOver when inside frame, Safari tends to return wrong pageY value. We have to create an workaround and pass event
