@@ -67,11 +67,49 @@ buildCustomPebbledTabs(
 	findTabIndexByUid = \uid -> findiDef(fgetValue(tabUids), eq(uid), 0);
 	findTabUidByIndex = \index -> elementAt(fgetValue(tabUids), index, "");
 
-	zeroTabUid = fselect(tabUids, FLift(\__ -> findTabUidByIndex(getValue(tabIndexB))));
-	tabUidB = make(fgetValue(zeroTabUid));
+	zeroTabUidT = fselect(tabUids, FLift(\__ -> findTabUidByIndex(getValue(tabIndexB))));
+	tabUidB = make(getLastPathPartParameter(getCurrentPebble(controller), parameterName, fgetValue(zeroTabUidT)));
+
+	fixHistoryAndStackForTab = \tabUid -> {
+		pebbleStack = getValue(controller.pebbleStackB);
+		currentURL = getBrowserURL();
+		correctURL = takeBefore(currentURL, "#", currentURL) +
+			pebble2UrlHash(extendCurrentPebbleWithParameter(controller, parameterName, tabUid));
+		last = length(pebbleStack) - 1;
+		devtrace("pebbles: adding parameter for default tab: " + parameterName + " = " + tabUid);
+		lastPebble = pebbleStack[last];
+		fixedPebble = setLastPathPartParameter(lastPebble, parameterName, tabUid);
+		if (fixedPebble != lastPebble) {
+			head = if (last > 0 && equalPebbles(pebbleStack[last - 1], fixedPebble)) {
+				take(pebbleStack, last - 1);
+			} else {
+				take(pebbleStack, last);
+			}
+
+			devtrace("pebbles: added parameter for default tab: " + parameterName + " = " + tabUid + ", pebble = " + toString(fixedPebble));
+			historyReplaceState(JsonNull(), "", Some(correctURL));
+
+			// let's finish current event chain, then set fixed pebble
+			deferred(\ -> {
+				// fix current pebble only if stack is the same
+				if (getValue(controller.pebbleStackB) == pebbleStack) {
+					next(controller.pebbleStackB, arrayPush(head, fixedPebble));
+					nextDistinct(controller.currentPebbleB, fixedPebble);
+				}
+			});
+		}
+	}
 
 	MConstruct(
-		[makeSubscribe2(zeroTabUid, \ztuid -> nextDistinct(tabUidB, ztuid))],
+		[	makeSubscribe2(zeroTabUidT, \ztuid -> {
+				devtrace("pebbles: new zeroTabUid: " + parameterName + " : " + ztuid);
+				nextDistinct(tabUidB, ztuid);
+			}),
+			\ -> {
+				fixHistoryAndStackForTab(getValue(tabUidB));
+				nop;
+			}
+		],
 		MLinkPebbleParameters(controller,
 			[
 				PebbleStringLink(
@@ -81,25 +119,14 @@ buildCustomPebbledTabs(
 						// It's for lost filters in case of opening tabs without preset "t" parameter
 						pebbleStack = getValue(controller.pebbleStackB);
 						if (!contains(fgetValue(tabUids), tabUid) && pebbleStack != [] && length(fgetValue(tabs)) > 1) {
-							currentURL = getBrowserURL();
-							correctURL = takeBefore(currentURL, "#", currentURL) +
-								pebble2UrlHash(extendCurrentPebbleWithParameter(controller, parameterName, fgetValue(zeroTabUid)));
-							last = length(pebbleStack) - 1;
-							fixedPebble = setLastPathPartParameter(pebbleStack[last], parameterName, fgetValue(zeroTabUid));
-							next(
-								controller.pebbleStackB,
-								replace(
-									pebbleStack,
-									last,
-									fixedPebble
-								)
-							);
-							historyReplaceState(JsonNull(), "", Some(correctURL));
+							zeroTabUid = fgetValue(zeroTabUidT);
+							fixHistoryAndStackForTab(zeroTabUid);
 						}
 					},
 					action
 				)
 			],
+			// Can we move this subscriber to the MConstruct above?
 			MConstruct([
 					\-> bidirectionalLink(tabUidB, tabIndexB, findTabIndexByUid, findTabUidByIndex)
 				], MDynamicTabs(
@@ -118,7 +145,7 @@ buildCustomPebbledTabs(
 												// Tab switch is triggered by pebble changes (UP/BACK buttons, URL modification, etc)
 												confirmStyle.confirm(callback);
 											} else {
-												// Tab switch is triggered by UI and already confirmed by MTab itslef
+												// Tab switch is triggered by UI and already confirmed by MTab itself
 												callback(true)
 											}
 										},
