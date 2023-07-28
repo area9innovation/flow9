@@ -1,9 +1,9 @@
-import fs/filesystem;
+import net/http;
 import sys/system;
 
 HELP = "Tool to fix paths in a source map file.
 Options:
-  source_map=FILENAME              File to fix
+  source_map=FILENAME|URL          File to fix
   flow9_path=PATH                  Path to flow9 folder
   mode=path_to_var|var_to_path     Mode: replace paths with variables or vice versa
 ";
@@ -24,14 +24,14 @@ filePathToURL(path : string) -> string {
 }
 
 updateSourceMapFile(
-	file : string,
+	content : string,
+	destinationFile : string,
 	path2varMode : bool,
 	haxePath : string,
 	flow9Path : string,
 	onOK : () -> void,
 	onError : (string) -> void
 ) -> void {
-	content = getFileContent(file);
 	json = parseJson(content);
 	sources = getJsonArrayField(json, "sources");
 	rootPath = takeBeforeLast(flow9Path, "/", "");
@@ -82,10 +82,11 @@ updateSourceMapFile(
 			JsonString(path2);
 		});
 		json2 = setJsonField(json, "sources", JsonArray(sources2));
-		if (setFileContent(file, json2stringFormatted(json2))) {
+		if (setFileContent(destinationFile, json2stringFormatted(json2))) {
+			println("Saved file: " + destinationFile);
 			onOK();
 		} else {
-			onError("Cannot write file: " + file);
+			onError("Cannot write file: " + destinationFile);
 		}
 	}
 }
@@ -93,7 +94,7 @@ updateSourceMapFile(
 main() {
 	modes = ["path_to_var", "var_to_path"];
 
-	file = getUrlParameter("source_map");
+	file = normalizePath(getUrlParameter("source_map"));
 	flow9Path = normalizePath(getUrlParameter("flow9_path"));
 	mode = getUrlParameter("mode");
 
@@ -117,17 +118,38 @@ main() {
 				} else if (haxePath == "") {
 					onError("Cannot get result from where command");
 				} else {
-					updateSourceMapFile(
-						file,
-						mode == modes[0],
-						haxePath,
-						flow9Path,
-						\ -> {
-							println("File updated!");
-							onOK();
-						},
-						onError
-					);
+					isUrl = startsWith(file, "http://") || startsWith(file, "https://");
+					destinationFile = if (isUrl) {
+						takeAfterLast(file, "/", "source.map");
+					} else {
+						file;
+					}
+
+					updateAndSave = \content -> {
+						updateSourceMapFile(
+							content,
+							destinationFile,
+							mode == modes[0],
+							haxePath,
+							flow9Path,
+							onOK,
+							onError
+						);
+					}
+
+					if (isUrl) {
+						httpRequest(
+							file,
+							false,
+							[],
+							[],
+							updateAndSave,
+							onError,
+							nop1
+						);
+					} else {
+						updateAndSave(getFileContent(file));
+					}
 				}
 			}
 		);
