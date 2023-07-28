@@ -122,6 +122,7 @@ class TextClip extends NativeWidgetClip {
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
+	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.isSafari && Platform.browserMajorVersion < 15;
 
 	public static inline var UPM : Float = 2048.0;  // Const.
 	private var renderStage : FlowContainer;
@@ -576,7 +577,16 @@ class TextClip extends NativeWidgetClip {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
+				if (style.fontStyle == 'italic') {
+					var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
+					var top = DisplayObjectHelper.round(transform.ty);
+					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap + top)}px';
+					nativeWidget.style.top = 0;
+				} else {
+					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				}
+				
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				makeBaselineWidgetAmiriItalicBugWorkaround();
@@ -1131,7 +1141,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
 		nativeWidget.addEventListener('contextmenu', onContextMenu);
-		if (Platform.isIOS) {
+		if (IosOnSelectWorkaroundEnabled) {
 			nativeWidget.addEventListener('select', onSelect);
 		}
 
@@ -1307,7 +1317,7 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
-		if (Platform.isIOS) {
+		if (IosOnSelectWorkaroundEnabled) {
 			Browser.document.addEventListener('selectionchange', onSelectionChange);
 		}
 
@@ -1336,7 +1346,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		if (Platform.isIOS) {
+		if (IosOnSelectWorkaroundEnabled) {
 			Browser.document.removeEventListener('selectionchange', onSelectionChange);
 		}
 
@@ -1603,7 +1613,9 @@ class TextClip extends NativeWidgetClip {
 			if (start == nativeWidget.value.length && end == nativeWidget.value.length) {
 				nativeWidget.scrollLeft = nativeWidget.scrollWidth;
 			}
-			preventMouseUpEvent = true;
+			if (!(Platform.isIOS && Platform.isChrome)) {
+				preventMouseUpEvent = true;
+			}
 		} catch (e : Dynamic) {
 			return;
 		}
@@ -1832,6 +1844,7 @@ class TextClip extends NativeWidgetClip {
 			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
 				textBackgroundWidget.classList.add('textBackgroundWidget');
+				textBackgroundWidget.classList.add('textBackgroundLayer');				
 			}
 
 			isNativeWidget = true;

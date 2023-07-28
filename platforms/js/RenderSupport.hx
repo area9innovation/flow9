@@ -1217,7 +1217,7 @@ class RenderSupport {
 					if (!Platform.isAndroid) {
 						win_width = screen_size.width;
 					}
-					win_height = Math.floor((screen_size.height - getMobileTopHeight()) / browserZoom);
+					win_height = Math.floor((screen_size.height - (IsFullScreen ? 0.0 : getMobileTopHeight())) / browserZoom);
 				}
 
 				if (Platform.isAndroid) {
@@ -1350,7 +1350,11 @@ class RenderSupport {
 			// Works incorrectly in Edge
 			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
 			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-			if (PreventDefault) e.preventDefault();
+			if (
+				PreventDefault
+				// To fix iOS + Chrome input/wigi editor focusability
+				&& (!(Platform.isIOS && Platform.isChrome) || e.pointerType != 'touch')
+			) e.preventDefault();
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
@@ -1460,11 +1464,15 @@ class RenderSupport {
 		}
 	};
 
+	private static function blockEvent(e : Dynamic, stage : FlowContainer) {
+		e.preventDefault();
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var root = PixiStage.nativeWidget;
 
 		if (Platform.isMobile) {
-			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+			if (Platform.isAndroid || Platform.isChrome || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
 				updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
 				updateNonPassiveEventListener(root, "pointerup", onpointerup);
 				updateNonPassiveEventListener(root, "pointermove", onpointermove);
@@ -1490,6 +1498,11 @@ class RenderSupport {
 			updateNonPassiveEventListener(root, "pointerup", onpointerup);
 			updateNonPassiveEventListener(root, "pointermove", onpointermove);
 			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+
+			// Just in case app is switched to mobile mode in dev tools
+			updateNonPassiveEventListener(root, "touchstart", blockEvent);
+			updateNonPassiveEventListener(root, "touchend", blockEvent);
+			updateNonPassiveEventListener(root, "touchmove", blockEvent);
 		}
 
 		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {

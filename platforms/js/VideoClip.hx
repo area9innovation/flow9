@@ -544,20 +544,20 @@ class VideoClip extends FlowContainer {
 			for (header in headers) {
 				videoXhr.setRequestHeader(header[0], header[1]);
 			}
-			
+
 			videoXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
 			videoXhr.onload = function (oEvent) {
 				if (videoXhr.status == 200) {
 					if (type == "") {
 						type = videoXhr.getResponseHeader("content-type");
 					}
-					
+
 					if (type != "") {
 						untyped source.type = type;
 					}
-					
+
 					untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
-					
+
 					// Check and try add source here.
 					if (!isAppended && videoWidget != null) {
 						isAppended = true;
@@ -580,9 +580,10 @@ class VideoClip extends FlowContainer {
 			videoWidget.appendChild(source);
 		}
 
-		Native.defer(function() {
-			js.html.URL.revokeObjectURL(untyped source.src);
-		});
+// commented out for fast bugfix (see https://trello.com/c/T2mLO2y5)
+//		Native.defer(function() {
+//			js.html.URL.revokeObjectURL(untyped source.src);
+//		});
 	}
 
 	public function setVideoExternalSubtitle(src : String, kind : String) : Void -> Void {
