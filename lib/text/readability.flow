@@ -5,65 +5,71 @@ import text/unicodecharacters;
 
 export {
 	// Calculates readability according to https://en.wikipedia.org/wiki/Automated_readability_index
-	getTextReadabilityIndex(text : string) -> double;
+	// you can also fast check any text by rhapsode\test\ari.py
 	getTextsReadabilityIndex(texts : [string]) -> double;
 	getTextsReadabilityIndexIter(texts : [string], fn : (i : int, readability : double) -> void) -> double;
 	getTextReadabilityGrade(index : double) -> string;
-}
 
-getTextItemsCount(text) -> Triple<int, int, int> {
-	sentsCount = ref 0;
-	wordsCount = ref 0;
-	charsCount = ref 0;
+	TextReadabilityInfo : (
+		grade : double,
+		gradeLevel : string,
+		charactersCount : int,
+		words : [string],
+		sentences : [string]
+	);
 
-	len = strlen(text);
-
-	isld = \s -> isLetterUnicode(s) || isDigit(s);
-	isdel = \s -> s == "." || s == "?" || s == "!";
-
-	iter(enumFromTo(0, len - 1), \i -> {		
-		c = getCharAt(text, i);
-		if (i < len - 1) {
-			nc = getCharAt(text, i + 1);
-			ild = isld(c);
-			if (ild) { charsCount := ^charsCount + 1; if(!isld(nc)) wordsCount := ^wordsCount + 1; }
-			else if (isdel(c) && !isdel(nc)) { sentsCount := ^sentsCount + 1; }
-		} else {
-			if (isld(c)) { wordsCount := ^wordsCount + 1; charsCount := ^charsCount + 1; sentsCount := ^sentsCount + 1; }
-			else if (isdel(c)) { sentsCount := ^sentsCount + 1; }
-		}
-	});
-
-	Triple(^sentsCount, ^wordsCount, ^charsCount);
+	getTextReadabilityInfo(texts : [string]) -> TextReadabilityInfo;
 }
 
 textReadabilityGradeStrings = [
-		_("Kindergarten"), _("First/Second Grade"), _("Third Grade"), _("Fourth Grade"),
-		_("Fifth Grade"), _("Sixth Grade"), _("Seventh Grade"), _("Eighth Grade"),  _("Ninth Grade"),
-		_("Tenth Grade"),  _("Eleventh Grade"), _("Twelfth grade"), _("College student"), _("Professor")
-	];
-
-calculateReadability(items : Triple<int, int, int>) -> double {
-	ss = items.first; ww = items.second; cc = items.third;
-	if (ww != 0 && ss != 0) 4.71 * i2d(cc) / i2d(ww) + 0.5 * i2d(ww) / i2d(ss) - 21.43 else 0.0
-}
-
-getTextReadabilityIndex(text : string) -> double {
-	calculateReadability(getTextItemsCount(text))
-}
+	_("Kindergarten"), _("First/Second Grade"), _("Third Grade"), _("Fourth Grade"),
+	_("Fifth Grade"), _("Sixth Grade"), _("Seventh Grade"), _("Eighth Grade"),  _("Ninth Grade"),
+	_("Tenth Grade"),  _("Eleventh Grade"), _("Twelfth grade"), _("College student"), _("Professor")
+];
 
 getTextsReadabilityIndex(texts : [string]) -> double {
-	totalItems = fold(texts, Triple(0, 0, 0), \acc, text -> { items = getTextItemsCount(text); Triple(acc.first + items.first, acc.second + items.second, acc.third + items.third) })
-	r  = calculateReadability(totalItems);
-	r
+	getTextReadabilityInfo(texts).grade
 }
 
 getTextsReadabilityIndexIter(texts : [string], fn : (i : int, readability : double) -> void) -> double {
-	totalItems = foldi(texts, Triple(0, 0, 0), \i, acc, text -> { items = getTextItemsCount(text); fn(i, calculateReadability(items)); Triple(acc.first + items.first, acc.second + items.second, acc.third + items.third) })
-	r  = calculateReadability(totalItems);
-	r	
+	iteri(texts, \i, text -> { 
+		fn(i, getTextReadabilityInfo([text]).grade);
+	});
+	getTextReadabilityInfo(texts).grade
 }
 
 getTextReadabilityGrade(index : double) -> string {
 	textReadabilityGradeStrings[ forceRange( floor(index), 0, length(textReadabilityGradeStrings) - 1 ) ]
+}
+
+getTextReadabilityInfo(texts : [string]) -> TextReadabilityInfo {
+	updTexts = map(texts, \t -> {
+		trimT = trim(t); // don't need spaces
+		lastLetter = strsubsmart(trimT, -1, 0); 
+		// we divide sentences by ".", "!" and "?"
+		// so if sentence didn't end it with them - add "."!
+		if (lastLetter != "." && lastLetter != "!" && lastLetter != "?") {
+			trimT + "."
+		} else {
+			trimT
+		}
+	});
+	bigText = strGlue(updTexts, " ");
+
+	sentences = filter(strSplit2WithoutLeave(bigText, [".", "!", "?"]), \sentence -> strlen(sentence) > 3);
+	sentencesCount = length(sentences);
+	words = strSplit2WithoutLeave(bigText, [" "]);
+	wordsCount = length(words);
+	characters = stringCharsFold(bigText, 0, \acc, char -> if (isDigit(char) || isLetter(char)) acc + 1 else acc);
+
+	grade = roundWithPrecision(4.71 * (i2d(characters) / i2d(wordsCount)) + 0.5 * (i2d(wordsCount) / i2d(sentencesCount)) - 21.43, 2);
+	gradeLevel = getTextReadabilityGrade(grade);
+
+	TextReadabilityInfo(
+		grade,
+		gradeLevel,
+		characters,
+		words,
+		sentences
+	)
 }
