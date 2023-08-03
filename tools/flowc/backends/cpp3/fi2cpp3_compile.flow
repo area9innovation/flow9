@@ -47,11 +47,14 @@ fiStructDependencies(s: FiTypeStruct) -> [string] {
 
 fiDoOrderStructs(left: [FiTypeStruct], ordered: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
 	if (length(left) == 0) ordered else {
-		ready = filter(left, \s1 -> forall(fiStructDependencies(s1), \n -> 
-			forall(left, \s2 -> n != s2.name))
+		ready = filter(left, \s1 -> forall(fiStructDependencies(s1), \n ->
+			n == s1.name || forall(left, \s2 -> n != s2.name))
 		);
 		if (length(ready) == 0) {
-			err("cyclic dependency in structs");
+			err("cyclic dependency in structs:\n" +
+				"ordered:\n" + strIndent(superglue(ordered, pretFiStructOrUnion, "\n")) + "\n" +
+				"left:\n" + strIndent(superglue(left, pretFiStructOrUnion, "\n")) + "\n"
+			);
 			ordered;
 		} else {
 			new_left = filter(left, \s1 -> forall(ready, \s2 -> s1.name != s2.name));
@@ -236,9 +239,19 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 		}
 		FsLet(v, e,__): {
 			if (v.name == "__") {
-				fsExp2cpp3(e, gctx) + ";";
+				fail0("definition of anonymous variable");
 			} else {
-				fiType2cpp3(v.type, gctx) + " " + fi2cpp3varname2cpp(v.name) + " = " + fsExp2cpp3(e, gctx) + ";";
+				// `FiVoid` definition of a variable means that it is a forward declaration,
+				// so the variable is not initialized at this place, but somewhere later
+				normal_let = switch (e) {
+					FsConst(c,__): switch (c) {
+						FiVoid(__): false;
+						default: true;
+					}
+					default: true;
+				}
+				fiType2cpp3(v.type, gctx) + " " + fi2cpp3varname2cpp(v.name) +
+					if (normal_let) " = " + fsExp2cpp3(e, gctx) + ";" else ";";
 			}
 		}
 		FsAssign(to, what,__): {
@@ -247,7 +260,7 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 					switch (fsType(what)) {
 						FiTypeRef(__):
 							fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
-						FiTypeFlow(): 
+						FiTypeFlow():
 							fsExp2cpp3(to, gctx) + "->setFlowRc(0, " + fsExp2cpp3(what, gctx) + ");";
 						default:
 							fsExp2cpp3(to, gctx) + "->setRc(" + fsExp2cpp3(what, gctx) + ");";
@@ -396,10 +409,13 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 							}
 						}
 						None(): {
-							if (kind == FsVarGlobalFunc()) {
-								fi2cpp3varname2cpp(v.name) + typars + call_args;
-							} else {
-								fi2cpp3varname2cpp(v.name) + typars + "->callRc" + call_args;
+							switch (kind) {
+								FsVarGlobalFunc(): {
+									fi2cpp3varname2cpp(v.name) + typars + call_args;
+								}
+								default: {
+									fi2cpp3varname2cpp(v.name) + typars + "->callRc" + call_args;
+								}
 							}
 						}
 					}

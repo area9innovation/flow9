@@ -809,7 +809,7 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	Fun& operator = (const Fun& r) = delete;
 
 	template<typename... As1>
-	static Fun* make(As1... as) { return new Fun(as...); }
+	static Fun* make(As1... as) { return new Fun(std::move(as)...); }
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }

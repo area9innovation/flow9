@@ -3,11 +3,13 @@ import tools/flowc/manipulation/freevars;
 import tools/flowc/manipulation/transform_exps;
 
 export {
-	fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, FiVar>) -> FsStat;
-	fiExp2FsExp2(e : FiExp, names: FiGlobalNames, locals: Tree<string, FiVar>) -> FsExp;
+	// The variable pair second bool component tells, if a var was initialized, or is uninitialized (dangling pointer)
+	// The non-initialized are markuped with the `FiVoid` init value
+	fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, Pair<FiVar, bool>>) -> FsStat;
+	fiExp2FsExp2(e : FiExp, names: FiGlobalNames, locals: Tree<string, Pair<FiVar, bool>>) -> FsExp;
 }
 
-fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, FiVar>) -> FsStat {
+fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, Pair<FiVar, bool>>) -> FsStat {
 	wrap = \x -> if (returns) FsRet(x, -1) else FsWrapExp(x, -1);
 	switch (e) {
 		FiSeq(es, __, start): {
@@ -27,9 +29,14 @@ fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<strin
 			);
 		}
 		FiLet(name, vtype, e1, e2, type, start): {
+			// The void value of a variable means it is not initialized at this point
+			var_is_initialized = switch (e1) {
+				FiVoid(__): false;
+				default: true;
+			}
 			fsWrapSeq(concat(
 				[FsLet(FsVar(name, vtype), fiExp2FsExp2(e1, names, locals), -1)], 
-				fsUnwrapSeq(fiExp2FsStat2(e2, names, returns, setTree(locals, name, FiVar(name, vtype, start))))
+				fsUnwrapSeq(fiExp2FsStat2(e2, names, returns, setTree(locals, name, Pair(FiVar(name, vtype, start), var_is_initialized))))
 			));
 		}
 		FiIf(e1, e2, e3, type, start): {
@@ -86,17 +93,27 @@ fiFieldInd(e: FiExp, field_name: string, names: FiGlobalNames) -> int {
 	}
 }
 
-fiVar2FsVarUse(v: FsVar, names: FiGlobalNames, locals: Tree<string, FiVar>) -> FsVarUse {
-	if (containsKeyTree(locals, v.name)) {
-		FsVarUse(v, FsVarLocal(), -1);
-	} else if (fiIsGlobalFunction(v.name, names)) {
-		FsVarUse(v, FsVarGlobalFunc(), -1);
-	} else {
-		FsVarUse(v, FsVarGlobalVar(), -1);
+fiVar2FsVarUse(v: FsVar, names: FiGlobalNames, locals: Tree<string, Pair<FiVar, bool>>) -> FsVarUse {
+	kind = switch (lookupTree(locals, v.name)) {
+		Some(p): {
+			if (p.second) {
+				FsVarLocal();
+			} else {
+				FsVarUninit();
+			}
+		}
+		None(): {
+			if (fiIsGlobalFunction(v.name, names)) {
+				FsVarGlobalFunc();
+			} else {
+				FsVarGlobalVar();
+			}
+		}
 	}
+	FsVarUse(v, kind, -1);
 }
 
-fiExp2FsExp2(x : FiExp, names: FiGlobalNames, locals: Tree<string, FiVar>) -> FsExp {
+fiExp2FsExp2(x : FiExp, names: FiGlobalNames, locals: Tree<string, Pair<FiVar, bool>>) -> FsExp {
 	switch (x) {
 		FiSeq(es, type, start): {
 			fail("must not happen: expression expected, got: FiSeq " + prettyFiExp(dummyPretty, x));
@@ -119,11 +136,11 @@ fiExp2FsExp2(x : FiExp, names: FiGlobalNames, locals: Tree<string, FiVar>) -> Fs
 			fs_args = map(as, \arg -> FsVar(arg.name, arg.type));
 			closure_vars = map(set2array(closure), \name -> 
 				switch (lookupTree(locals, name)) {
-					Some(v): FsVar(v.name, v.type);
+					Some(v): FsVar(v.first.name, v.first.type);
 					None(): fail0("can't find type of a var: " + name);
 				}
 			);
-			lambda_locals = fold(as, locals, \acc, arg -> setTree(acc, arg.name, FiVar(arg.name, arg.type, start)));
+			lambda_locals = fold(as, locals, \acc, arg -> setTree(acc, arg.name, Pair(FiVar(arg.name, arg.type, start), true)));
 			lambda = FsLambda(closure_vars,fs_args, fiExp2FsStat2(body, names, true, lambda_locals), type, -1);
 			FsClosure(map(closure_vars, \v -> fiVar2FsVarUse(v, names, locals)), lambda, -1);
 		}
