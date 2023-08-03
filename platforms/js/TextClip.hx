@@ -157,6 +157,8 @@ class TextClip extends NativeWidgetClip {
 	private var background : FlowGraphics = null;
 
 	private var metrics : Dynamic;
+	private static var measureElement : Dynamic;
+	private static var measureRange : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -494,17 +496,7 @@ class TextClip extends NativeWidgetClip {
 				if (Platform.isIE && style.fontFamily == "Material Icons") {
 					nativeWidget.textContent = this.contentGlyphs.modified;
 				} else {
-					var textContent = "";
-
-					var textLines : Array<String> = metrics.lines;
-					for (line in textLines) {
-						textContent = textContent + line + "\n";
-					}
-
-					if (textLines.length > 0) {
-						textContent = textContent.substring(0, textContent.length - 1);
-					}
-
+					var textContent = calculateTextContent();
 					nativeWidget.textContent = textContent;
 					if (textBackgroundWidget != null) {
 						textBackgroundWidget.textContent = textContent;
@@ -622,6 +614,20 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMargin() : Float {
 		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
+	}
+
+	public function calculateTextContent() : String {
+		var textContent = "";
+
+		var textLines : Array<String> = metrics.lines;
+		for (line in textLines) {
+			textContent = textContent + line + "\n";
+		}
+
+		if (textLines.length > 0) {
+			textContent = textContent.substring(0, textContent.length - 1);
+		}
+		return textContent;
 	}
 
 	public static function bidiDecorate(text : String, dir : String) : String {
@@ -1666,7 +1672,7 @@ class TextClip extends NativeWidgetClip {
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 				if (isJapaneseFont(style) && this.isHTMLRenderer()) {
-					measureHTMLWidth();
+					measureHTMLWidthOptimized();
 				}
 			}
 
@@ -1699,7 +1705,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 
-		if (isJapaneseFont(style) || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
@@ -1724,6 +1730,54 @@ class TextClip extends NativeWidgetClip {
 				}
 			}
 		}
+	}
+
+	private function measureHTMLWidthOptimized() : Void {
+		if (Browser.document.createRange == null && nativeWidget == null) return;
+
+		if (TextClip.measureElement == null) {
+			TextClip.measureElement = Browser.document.createElement('p');
+			TextClip.measureElement.id = 'measureTextElement';
+			TextClip.measureElement.classList.add('nativeWidget');
+			TextClip.measureElement.classList.add('textWidget');
+			TextClip.measureElement.setAttribute('aria-hidden', 'true');
+			Browser.document.body.appendChild(TextClip.measureElement);
+		}
+
+		if (TextClip.measureRange == null) {
+			TextClip.measureRange = Browser.document.createRange();
+		}
+
+		var measureElement = TextClip.measureElement;
+		var measureRange = TextClip.measureRange;
+
+		measureElement.style.fontFamily = style.fontFamily;
+		measureElement.style.fontSize = '${style.fontSize}px';
+		measureElement.style.display = null;
+
+		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+		if (wordWrap) {
+			measureElement.style.width = '${style.wordWrapWidth}px';
+		} else {
+			measureElement.style.width = 'max-content';
+		}
+
+		measureElement.textContent = calculateTextContent();
+
+		measureRange.selectNodeContents(measureElement);
+		if (measureRange.getBoundingClientRect != null) {
+			var rect = measureRange.getBoundingClientRect();
+			if (rect != null) {
+				var viewportScale = RenderSupport.getViewportScale();
+				var textNodeWidth = (rect.right - rect.left) * viewportScale;
+
+				if (textNodeWidth >= 0.) {
+					metrics.width = textNodeWidth;
+				}
+			}
+		}
+
+		measureElement.style.display = 'none';
 	}
 
 	private function measureHTMLWidth() : Void {
