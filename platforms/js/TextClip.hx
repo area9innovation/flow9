@@ -1672,7 +1672,7 @@ class TextClip extends NativeWidgetClip {
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 				if (isJapaneseFont(style) && this.isHTMLRenderer()) {
-					measureHTMLWidthOptimized();
+					measureHTMLSize();
 				}
 			}
 
@@ -1732,7 +1732,7 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function measureHTMLWidthOptimized() : Void {
+	private function measureHTMLSize() : Void {
 		if (Browser.document.createRange == null && nativeWidget == null) return;
 
 		if (TextClip.measureElement == null) {
@@ -1751,9 +1751,13 @@ class TextClip extends NativeWidgetClip {
 		var measureElement = TextClip.measureElement;
 		var measureRange = TextClip.measureRange;
 
-		measureElement.style.fontFamily = style.fontFamily;
-		measureElement.style.fontSize = '${style.fontSize}px';
-		measureElement.style.display = null;
+		updateNativeWidgetStyle();
+
+		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
+		measureElement.style.fontSize = nativeWidget.style.fontSize;
+		measureElement.style.wrap = nativeWidget.style.wrap;
+		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
+		measureElement.style.display = nativeWidget.style.display;
 
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		if (wordWrap) {
@@ -1762,7 +1766,7 @@ class TextClip extends NativeWidgetClip {
 			measureElement.style.width = 'max-content';
 		}
 
-		measureElement.textContent = calculateTextContent();
+		measureElement.textContent = nativeWidget.textContent;
 
 		measureRange.selectNodeContents(measureElement);
 		if (measureRange.getBoundingClientRect != null) {
@@ -1770,9 +1774,19 @@ class TextClip extends NativeWidgetClip {
 			if (rect != null) {
 				var viewportScale = RenderSupport.getViewportScale();
 				var textNodeWidth = (rect.right - rect.left) * viewportScale;
+				var textNodeHeight = (rect.bottom - rect.top) * viewportScale;
 
 				if (textNodeWidth >= 0.) {
 					metrics.width = textNodeWidth;
+				}
+
+				if (textNodeHeight >= 0 && metrics.lineHeight > 0) {
+					var textNodeLines = Math.round(textNodeHeight / metrics.lineHeight);
+					var currentLines = Math.round(metrics.height / metrics.lineHeight);
+
+					if (currentLines > 0 && textNodeLines != currentLines) {
+						metrics.height = metrics.height * textNodeLines / currentLines;
+					}
 				}
 			}
 		}
