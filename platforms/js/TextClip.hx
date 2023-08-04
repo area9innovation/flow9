@@ -696,6 +696,17 @@ class TextClip extends NativeWidgetClip {
 		return st.fontFamily == "Meiryo" || st.fontFamily == "MeiryoBold";
 	}
 
+	public static var isMeiryoAvailable = false;
+	public static function useHTMLMeasurementJapaneseFont(st) : Bool {
+		if (isMeiryoAvailable) return false;
+		var checkMeyrioFont = function() {
+			var res = Browser.document.fonts.check("10px Meiryo");
+			if (res) isMeiryoAvailable = true;
+			return res;
+		}
+		return isJapaneseFont(st) && !checkMeyrioFont();
+	}
+
 	private static var ffMap : Dynamic;
 
 	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
@@ -1671,7 +1682,7 @@ class TextClip extends NativeWidgetClip {
 				}
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
-				if (isJapaneseFont(style) && this.isHTMLRenderer()) {
+				if (this.isHTMLRenderer() && useHTMLMeasurementJapaneseFont(style)) {
 					measureHTMLSize();
 				}
 			}
