@@ -1743,6 +1743,7 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	private static var metricsCache = new Map();
 	private function measureHTMLSize() : Void {
 		if (Browser.document.createRange == null && nativeWidget == null) return;
 
@@ -1763,6 +1764,14 @@ class TextClip extends NativeWidgetClip {
 		var measureRange = TextClip.measureRange;
 
 		updateNativeWidgetStyle();
+
+		var cacheKey = nativeWidget.textContent + '\n${nativeWidget.style.fontSize}\n${nativeWidget.style.fontWeight}';
+		var cachedMetrics = metricsCache.get(cacheKey);
+		if (cachedMetrics != null) {
+			metrics.width = cachedMetrics.width;
+			metrics.height = cachedMetrics.height;
+			return;
+		}
 
 		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
 		measureElement.style.fontSize = nativeWidget.style.fontSize;
@@ -1792,13 +1801,17 @@ class TextClip extends NativeWidgetClip {
 					metrics.width = textNodeWidth;
 				}
 
-				if (textNodeHeight >= 0 && metrics.lineHeight > 0) {
+				if (textNodeHeight >= 0. && metrics.lineHeight > 0) {
 					var textNodeLines = Math.round(textNodeHeight / metrics.lineHeight);
 					var currentLines = Math.round(metrics.height / metrics.lineHeight);
 
 					if (currentLines > 0 && textNodeLines != currentLines) {
 						metrics.height = metrics.height * textNodeLines / currentLines;
 					}
+				}
+
+				if (textNodeWidth >= 0. && textNodeHeight >= 0.) {
+					metricsCache.set(cacheKey, {width : textNodeWidth, height : textNodeHeight});
 				}
 			}
 		}
