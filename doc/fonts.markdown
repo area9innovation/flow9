@@ -27,4 +27,4 @@ How to update Material icons
 	2.5. Call `FlowFontConvertor.exe -x MaterialIcons-Regular.ttf`
 	2.6. Cut generated `*.xmf` and `index.dat` to `flow9/resources/dfont/MaterialIcons`
 
-Note : Do not forget to update MaterialIcons in depended projects as well.
+Note : Do not forget to update MaterialIcons in dependent projects as well.
