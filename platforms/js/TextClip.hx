@@ -1755,6 +1755,7 @@ class TextClip extends NativeWidgetClip {
 
 		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
 		measureElement.style.fontSize = nativeWidget.style.fontSize;
+		measureElement.style.fontWeight = nativeWidget.style.fontWeight;
 		measureElement.style.wrap = nativeWidget.style.wrap;
 		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
 		measureElement.style.display = nativeWidget.style.display;
