@@ -21,7 +21,7 @@ export {
 			PebbleStringLink : (
 				parameter : string,
 				valueB : DynamicBehaviour<string>,
-				onChange : (string) -> void,  // on change and on construct with MLinkPebbleParameters
+				onChange : (string) -> void,
 				action : PebbleAction
 			);
 
@@ -30,14 +30,14 @@ export {
 			PebbleIntLink : (
 				parameter : string,
 				valueB : DynamicBehaviour<int>,
-				onChange : (int) -> void,  // on change and on construct with MLinkPebbleParameters
+				onChange : (int) -> void,
 				action : PebbleAction
 			);
 
 			PebbleBoolLink : (
 				parameter : string,
 				valueB : DynamicBehaviour<bool>,
-				onChange : (bool) -> void,  // on change and on construct with MLinkPebbleParameters
+				onChange : (bool) -> void,
 				action : PebbleAction
 			);
 
@@ -219,73 +219,66 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 	checkPebble = \-> lastPathPartName == getLastPathPartName(controller);
 
 	constructedFlags = map(handlers, \__ -> make(true));
-	MComponentGroup(
-		MGetManager(\manager -> {
-			MConstruct(
-				mapiConcat(handlers, \i, handler -> {
-					currentPebble = getValue(controller.currentPebbleB);
-					currentValue = getLastPathPartParameter(currentPebble, handler.parameter, "");
-					switch (handler) {
-						PebbleStringLink(parameter, valueB, onChange, __): {
-							nextDistinct(valueB, currentValue);
-							onChange(currentValue);
+	MSelectPebbleParameters(
+		controller,
+		map(handlers, \handler -> handler.parameter),
+		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
+			MGetManager(\manager -> {
+				MConstruct(concatA(
+					mapi(handlers, \i, handler -> {
+						if (handler.action == DoNotRecord() || controller.dummy) {
+							[
+								// call onChange on every valueB update if user don't care about pebbles
+								callOnChangeOnParameterChange(manager, controller, handler, callstack)
+							]
+						} else {
+							nextDistinct(constructedFlags[i], false);
+							[
+								makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
+									nextDistinct(constructedFlags[i], true);
+									if (fgetValue(manager.pebblesEnabled)) {
+										changeParameterValue(handler, value, callstack, \ -> {
+											checkPebble() || checkCustomCheckPebble(handler.action)();
+										});
+									}
+								}),
+								setViewOnParameterChange(controller, handler)
+							]
 						}
-						PebbleIntLink(parameter, valueB, onChange, __): {
-							v = s2i(currentValue);
-							nextDistinct(valueB, v);
-							onChange(v);
-						}
-						PebbleBoolLink(parameter, valueB, onChange, __): {
-							v = s2b(currentValue);
-							nextDistinct(valueB, v);
-							onChange(v);
-						}
-						PebbleBoolBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, __): {}
-						PebbleDoubleBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, __): {}
-						PebbleCustomBidirectionalLink(parameter, valueT, onParameterChange, onValueChange, __): {}
-					}
-					uns2 = {
-						makeCurrentPebbleLastParameterSubscribe(controller, handler.parameter, \value -> {
-							changeParameterValue(handler, value, "",
-								\ -> checkPebble() || checkCustomCheckPebble(handler.action)()
-							);
-						});
-					}
-					uns1 = if (handler.action == DoNotRecord() || controller.dummy) {
-						[
-							// call onChange on every valueB update if user don't care about pebbles
-							callOnChangeOnParameterChange(manager, controller, handler, callstack)
-						]
-					} else {
-						nextDistinct(constructedFlags[i], false);
-						[
-							subscribePebbleParameterLink(handler, \ -> {
-								nextDistinct(constructedFlags[i], true);
-							}),
-							setViewOnParameterChange(controller, handler)
-						]
-					}
-					concat([uns2], uns1);
-				}),
-				// We need to make sure that all subscribers are created before showing the content
-				MIfLazy(fands(constructedFlags, true), \constructed -> {
-					if (constructed) m else MEmpty();
-				})
-			)
-		}),
-		[]
-	);
+					})),
+					// We need to make sure that all subscribers are created before showing the content
+					MIfLazy(fands(constructedFlags, true), \constructed -> {
+						if (constructed) m else MEmpty();
+					})
+				)
+			})
+		}
+	)
 }
 
-subscribePebbleParameterLink(handler : PebbleParameterLink, fn : () -> void) -> () -> () -> void {
-	switch (handler) {
-		PebbleIntLink(parameter, valueB, onChange, action): makeSubscribe(valueB, \__ -> fn());
-		PebbleStringLink(parameter, valueB, onChange, action): makeSubscribe(valueB, \__ -> fn());
-		PebbleBoolLink(parameter, valueB, onChange, action): makeSubscribe(valueB, \__ -> fn());
-		PebbleBoolBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, action): makeSubscribe(valueB, \__ -> fn());
-		PebbleDoubleBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, action): makeSubscribe(valueB, \__ -> fn());
-		PebbleCustomBidirectionalLink(parameter, valueT, onParameterChange, onValueChange, action): makeSubscribe(valueT, \__ -> fn());
-	}
+MSelectPebbleParameters(
+	controller : PebbleController,
+	parametersNames : [string],
+	display : (parameters : [Pair<string, DynamicBehaviour<string>>]) -> Material
+) -> Material {
+
+	parameters : [Pair<string, DynamicBehaviour<string>>] = map(parametersNames, \key -> Pair(key, make("")));
+
+	MConstruct(
+		map(parametersNames, \key -> {
+			makeCurrentPebbleLastParameterSubscribe(controller, key, \value -> {
+				//println("MSelectPebbleParameters, key=" + key + ", value=" + value);
+				switch(find(parameters, \x -> x.first == key)) {
+					Some(parameter): nextDistinct(parameter.second, urlDecode(value));
+					None(): {}
+				}
+			})
+		}),
+		MComponentGroup(
+			display(parameters),
+			[]
+		)
+	)
 }
 
 RecordURLRestoreOrChange() -> RecordURLRestoreOrChangeParametersControlled {
@@ -300,53 +293,50 @@ makeDummyPebbleParameterLink() -> PebbleParameterLink {
 	PebbleStringLink("", make(""), nop1, DoNotRecord())
 }
 
+getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Behaviour<string> {
+	eitherFn(
+		find(parameters, \a -> a.first == key),
+		secondOfPair,
+		\ -> {
+			devtrace("Warning: Unknown pebble parameter: " + key);
+			const("");
+		}
+	);
+}
+
 // Process new value from current pebble parameter
 changeParameterValue(handler : PebbleParameterLink, value : string, callstack : string, checkPebble : () -> bool) -> void {
-	urlValue = getUrlHashParameter(handler.parameter);
 	switch (handler) {
 		PebbleStringLink(parameter, valueB, onChange, __): {
 			urlDecodedValue = urlDecode(value);
 			printPebbleCallStackInfo(parameter, urlDecodedValue, callstack);
-			valueOld = getValue(valueB);
-			if (valueOld != urlDecodedValue || urlValue != urlDecodedValue) {
-				next(valueB, urlDecodedValue);
-				if (checkPebble()) {
-					onChange(urlDecodedValue);
-				}
-			}
-		}
+			nextDistinct(valueB, urlDecodedValue);
+			if (checkPebble()) onChange(urlDecodedValue);
+		};
 		PebbleIntLink(parameter, valueB, onChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
-			valueOld = getValue(valueB);
-			val = s2i(value);
-			if (valueOld != val || s2i(urlValue) != val) {
-				next(valueB, s2i(value));
-				if (checkPebble()) onChange(s2i(value));
-			}
-		}
+			nextDistinct(valueB, s2i(value));
+			if (checkPebble()) onChange(s2i(value));
+		};
 		PebbleBoolLink(parameter, valueB, onChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
-			valueOld = getValue(valueB);
-			val = s2b(value);
-			if (valueOld != val || s2b(urlValue) != val) {
-				next(valueB, val);
-				if (checkPebble()) onChange(val);
-			}
-		}
+			nextDistinct(valueB, s2b(value));
+			if (checkPebble()) onChange(s2b(value));
+		};
 		PebbleBoolBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
 
 			if (checkPebble()) {
 				nextDistinct(valueB, onParameterChange(value));
 			}
-		}
+		};
 		PebbleDoubleBidirectionalLink(parameter, valueB, onParameterChange, onValueChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
 
 			if (checkPebble()) {
 				nextDistinct(valueB, onParameterChange(value));
 			}
-		}
+		};
 		PebbleCustomBidirectionalLink(parameter, valueT, onParameterChange, onValueChange, __): {
 			printPebbleCallStackInfo(parameter, value, callstack);
 			if (checkPebble()) {
@@ -499,7 +489,7 @@ makePebbleStringTrigger(
 		valueB,
 		\value -> if (value != "") {
 			disposer = \-> deferred(\ -> next(valueB, ""));
-			onValue(value, feq(valueB, value), disposer);
+			onValue(value, fnot(feq(valueB, "")), disposer)
 		},
 		action
 	)
@@ -566,7 +556,7 @@ MConfirmPebbleParameterSwitch2(
 		if (exists(parameters, \parameter -> {
 			oldValue = getLastPathPartParameter(oldPebble, parameter.key, "");
 			newValue = getLastPathPartParameter(newPebble, parameter.key, "");
-			oldValue == parameter.value && newValue != parameter.value;
+			oldValue == parameter.value && newValue != parameter.value
 		})) confirm(oldPebble, newPebble, callback)
 		else callback(true)
 	};
