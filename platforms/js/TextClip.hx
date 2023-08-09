@@ -802,8 +802,8 @@ class TextClip extends NativeWidgetClip {
 	public function setTextWordSpacing(spacing : Float) : Void {
 		if (this.style.wordSpacing != spacing) {
 			this.style.wordSpacing = spacing;
-			invalidateMetrics();
-			this.emitEvent('textwidthchanged');
+			updateTextMetrics();
+			this.emitEvent('textwidthchanged', metrics.width);
 		}
 	}
 
@@ -1707,8 +1707,8 @@ class TextClip extends NativeWidgetClip {
 					Browser.document.fonts.addEventListener('loadingdone', function() {
 						updateTextWidth();
 						if (style.wordWrap) {
-							invalidateMetrics();
-							this.emitEvent('textwidthchanged');
+							updateTextMetrics();
+							this.emitEvent('textwidthchanged', metrics.width);
 						}
 					});
 				}
@@ -1737,7 +1737,7 @@ class TextClip extends NativeWidgetClip {
 						: textNodeWidth;
 				if (textWidth > 0 && textWidth != metrics.width) {
 					metrics.width = textWidth;
-					this.emitEvent('textwidthchanged');
+					this.emitEvent('textwidthchanged', textWidth);
 				}
 			}
 		}
