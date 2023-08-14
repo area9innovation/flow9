@@ -763,6 +763,7 @@ SampleStates(
 MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Material {
  	amount = length(filenames);
  	if (amount > 0) {
+
 	  	fvStyle = filtermap(removeAllStructs(mStyle, FVideoTimeRange(const(0.), const(0.))), \st ->
 			switch (st) {
 				FVideoStyle() : {a : Maybe<FVideoStyle> = Some(st); a};
@@ -778,6 +779,10 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 	synchrocallEx = extractStruct(fvStyle, SynchroCalls(nop, nop));
 		unstoppable = contains(fvStyle, MAudioUnstoppable());
 		timeRanges = extractStruct(mStyle, FAudioTimeRanges([])).timeRange;
+
+		pprint("timeRanges - ")(timeRanges);
+
+		hasTimeRanges = exists(timeRanges, \time -> time != Pair(0.0, 0.0));
 
 	  	// MMultiAudioPlayerStyle properties
 	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
@@ -818,7 +823,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 			make(WidthHeight(-1., -1.)),		// not to draw
 	 			replaceStructMany(fvStyle,
 	 				[
-	 					FVideoLength(states.length[i]),
+	 					FVideoLength(states.length[i] |> (\l -> {fpprint("FVideoLength - ")(l); l})),
 	 					FVideoPosition(states.position[i]),
 	 					FVideoPlay(states.isPlay[i]),
 	 					synchrocalls[i],
@@ -841,6 +846,18 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 			)
 	 		)
 	 	);
+
+
+		 
+		calculateAudioLengthWithTimeRanges = \audioLengths-> {
+			getLength = \index, fullAudioLengths, amountAudio -> {
+				defLength = if(length(audioLengths) > 1) fullAudioLengths[index] else 0.0;
+				timeRange1 = elementAt(timeRanges, index, Pair(0., 0.)).second -  elementAt(timeRanges, index, Pair(0., 0.)).first;
+				if (timeRange1 <= 0.0 || timeRange1 > elementAt(fullAudioLengths, index, firstElement(fullAudioLengths, 0.0))) defLength else timeRange1
+			}
+			getLength(0, audioLengths, amount)  + getLength(1, audioLengths, amount)
+		}
+
 	 	playerPosChange = \pos -> nextDistinct(posEx, pos);
 	 	userPosChange = \pos -> {
 	 		allLength = fgetValue(fmerge(states.length));
@@ -855,6 +872,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 		currIndex = getValue(currIndexB);
 	 		newIndex = lastEnd.first + 1;
 	 		if (newIndex != currIndex) {
+				println("IF");
 		  		// reset current player
 		 		changeAudioPlaying(currIndex, false);
 		 		nextDistinct(states.position[currIndex], 0.);
@@ -862,31 +880,42 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 		 		nextDistinct(states.position[newIndex], pos - lastEnd.second);
 		 		nextDistinct(currIndexB, newIndex);
 	 		} else {
+				println("ELSE");
+				pprint("pos - ")(pos);
+				pprint("lastEnd - ")(lastEnd.second);
+				pprint("newIndex - ")(newIndex);
+				fpprint("states.position[newIndex] - ")(states.position[newIndex]);
+				// if (hasTimeRanges) {
+				// 	if ()
+				// }
 	 			nextDistinct(states.position[newIndex], pos - lastEnd.second);
 	 		}
 	 	}
 
 		// rendering (empty)
 		MConstruct(
-			concat3(
+			concat(
 				[
 					\-> \-> next(currIndexB, 0),
 					// when all audios ready
 					make2Subscribe2(fands(states.isReady, false),  currIndexB, \isReady, currIndex ->
 						{
-							if(length(timeRanges) > 0) {
-								startPosition = elementAtMap(timeRanges, getValue(currIndexB), \times -> times.first, 0.0);
-								nextDistinct(states.position[currIndex], startPosition);
+							startTime = elementAtMap(timeRanges, currIndex, \times -> times.first, 0.0);
+							endTime = elementAtMap(timeRanges, currIndex, \times -> times.second, 0.0);
+							pprint("hasTimeRanges - ")(hasTimeRanges);
+							pprint("endTime - ")(endTime);
+							pprint("startTime - ")(startTime);
+							if(hasTimeRanges && endTime > 0.0 && startTime < endTime) {
+								nextDistinct(states.position[currIndex], startTime);
 							}
 							if (isReady) synchrocallEx.onStart()
 						}
 					),
 					// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
 					\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
-							if (all(map(lens, \l -> l > 0.0)))
-								dsum(lens)
-							else
-								0.0
+							if (hasTimeRanges) calculateAudioLengthWithTimeRanges(lens) 
+							else if (all(map(lens, \l -> l > 0.0))) dsum(lens)
+							else 0.0
 						}),
 					// set possition
 					\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
@@ -911,9 +940,6 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				],
 				filtermapi(extractStruct(mStyle, MMultiAudioLength([])).lengths, \i, length -> {
 					elementAtMap(states.length, i,  \l -> Some(\-> fconnect(l, length.length)), None())
-				}),
-				filtermapi(timeRanges, \i, timeRange -> {
-					elementAtMap(states.position, i,  \positionB -> Some(makeSubscribe(positionB, \position ->{println(position); if (position >= timeRange.second) println("synchrocallEx.onStop()"); nextDistinct(states.isReady[0], false)})), None())
 				})
 			),
 			MGroup(players)
