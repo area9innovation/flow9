@@ -5,6 +5,7 @@ import string_utils;
 export {
 	fsType(e: FsAll) -> FiType;
 	fs2s(s: FsAll) -> string;
+	fsEqualExprs(x: FsAll, y: FsAll) -> bool;
 
 	fsHasTailCall(s: FsStat) -> bool;
 
@@ -29,7 +30,7 @@ fsType(x: FsAll) -> FiType {
 		FsClosure(__,lambda,__):     lambda.type;
 		FsLambda(__,__,__, type,__): type;
 		FsCall(__,__, type,__):      type;
-		FsVarUse(v,__,__):           v.type;
+		FsVarUse(v,__,__,__):        v.type;
 		FsCallPrim(__,__,type,__):   type;
 		FsTailCall(__,__,type,__):   type;
 		FsCast(__,__,type,__):       type;
@@ -111,8 +112,8 @@ fs2s(s: FsAll) -> string {
 		FsCast(e1, from, to, id): {
 			"cast(" + fs2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
 		}
-		FsVarUse(v,__,__): {
-			v.name;
+		FsVarUse(v,__,last,__): {
+			v.name + if (last) "[LAST]" else "";
 		}
 		FsConst(c, id): {
 			switch (c) {
@@ -125,6 +126,120 @@ fs2s(s: FsAll) -> string {
 		}
 	}
 	"<id=" + i2s(s.id) + ">" + body;
+}
+
+fsEqualExprs(x: FsAll, y: FsAll) -> bool {
+	switch (x) {
+		FsIf(e1, s11, s12,__): switch (y) {
+			FsIf(e2, s21, s22,__): {
+				fsEqualExprs(e1, e2) && fsEqualExprs(s11, s21) && fsEqualExprs(s12, s22);
+			}
+			default: false;
+		}
+		FsSwitch(v1,__, cs1,__): switch (y) {
+			FsSwitch(v2,__, cs2,__): {
+				fsEqualExprs(v1, v2) && (length(cs1) == length(cs2)) &&
+				all(mapi(cs1, \i, c1 -> fsEqualExprs(c1.body, cs2[i].body)));
+			}
+			default: false;
+		}
+		FsSeq(ss1,__): switch (y) {
+			FsSeq(ss2,__): {
+				(length(ss1) == length(ss2)) &&
+				all(mapi(ss1, \i, s1 -> fsEqualExprs(s1, ss2[i])));
+			}
+			default: false;
+		}
+		FsLet(v1, e1,__): switch (y) {
+			FsLet(v2, e2,__): v1.name == v2.name && fsEqualExprs(e1, e2);
+			default: false;
+		}
+		FsWrapExp(e1,__): switch (y) {
+			FsWrapExp(e2,__): fsEqualExprs(e1, e2);
+			default: false;
+		}
+		FsRet(e1,__): switch (y) {
+			FsRet(e2,__): fsEqualExprs(e1, e2);
+			default: false;
+		}
+		FsAssign(to1, what1,__): switch (y) {
+			FsAssign(to2, what2,__): fsEqualExprs(to1, to2) && fsEqualExprs(what1, what2);
+			default: false;
+		}
+		FsIncRc(d1, e1,__): switch (y) {
+			FsIncRc(d2, e2,__): d1 == d2 && fsEqualExprs(e1, e2);
+			default: false;
+		}
+		FsDecRc(e1,__): switch (y) {
+			FsDecRc(e2,__): fsEqualExprs(e1, e2);
+			default: false;
+		}
+		FsClosure(vars1, lambda1,__): switch (y) {
+			FsClosure(vars2, lambda2,__): {
+				length(vars1) == length(vars2) &&
+				all(mapi(vars1, \i, v1 -> fsEqualExprs(v1, vars2[i]))) &&
+				fsEqualExprs(lambda1, lambda2);
+			}
+			default: false;
+		}
+		FsLambda(clos1, args1, body1,__,__): switch (y) {
+			FsLambda(clos2, args2, body2,__,__): {
+				length(clos1) == length(clos2) &&
+				length(args1) == length(args2) &&
+				all(mapi(clos1, \i, v1 -> v1.name == clos2[i].name)) &&
+				all(mapi(args1, \i, v1 -> v1.name == args2[i].name)) &&
+				fsEqualExprs(body1, body2);
+			}
+			default: false;
+		}
+		FsCall(f1, args1,__,__): switch (y) {
+			FsCall(f2, args2,__,__): {
+				length(args1) == length(args2) &&
+				all(mapi(args1, \i, a1 -> fsEqualExprs(a1, args2[i]))) &&
+				fsEqualExprs(f1, f2);
+			}
+			default: false;
+		}
+		FsCallPrim(op1, es1,__,__): switch (y) {
+			FsCallPrim(op2, es2,__,__): {
+				op1 == op2 &&
+				length(es1) == length(es2) &&
+				all(mapi(es1, \i, a1 -> fsEqualExprs(a1, es2[i])));
+			}
+			default: false;
+		}
+		FsTailCall(args1, vals1,__,__): switch (y) {
+			FsTailCall(args2, vals2, __,__): {
+				length(vals1) == length(vals2) &&
+				length(args1) == length(args2) &&
+				all(mapi(vals1, \i, v1 -> fsEqualExprs(v1, vals2[i]))) &&
+				all(mapi(args1, \i, v1 -> v1.name == args2[i].name));
+			}
+			default: false;
+		}
+		FsCast(e1, from1, to1,__): switch (y) {
+			FsCast(e2, from2, to2,__): {
+				fiEqualTypes(from1, from2) &&
+				fiEqualTypes(to1, to2) &&
+				fsEqualExprs(e1, e2);
+			}
+			default: false;
+		}
+		FsVarUse(v1, kind1, last1,__): switch (y) {
+			FsVarUse(v2, kind2, last2,__): {
+				v1.name == v2.name &&
+				kind1 == kind2;
+				//&& last1 == last2;
+			}
+			default: false;
+		}
+		FsConst(c1,__): switch (y) {
+			FsConst(c2, __): {
+				c1 == c2;
+			}
+			default: false;
+		}
+	}
 }
 
 fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {

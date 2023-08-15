@@ -4,6 +4,8 @@ import tools/flowc/manipulation/common;
 
 export {
 	fsMap(s: FsAll, fn: (FsAll) -> FsAll, args_first: bool) -> FsAll;
+	fsMap2(s: FsAll, locals: Tree<string, FsVar>, fn: (FsAll, Tree<string, FsVar>) -> FsAll, args_first: bool) -> FsAll;
+	fsIter(s: FsAll, fn: (FsAll) -> void, args_first: bool) -> void;
 	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?, merge: (?, ?) -> ?, args_first: bool) ->?;
 	fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll], merge: (?, ?) -> ?) -> ?;
 }
@@ -43,10 +45,111 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 			FsTailCall(s with vals = map(vals, \x -> map_exp(x)));
 		FsCast(e, from, type,__):
 			FsCast(s with e = map_exp(e));
-		FsVarUse(__,__,__): s;
+		FsVarUse(__,__,__,__): s;
 		FsConst(__,__): s;
 	}
 	if (args_first) f(do_args(a)) else do_args(f(a));
+}
+
+fsMap2(a: FsAll, locals: Tree<string, FsVar>, f: (FsAll, Tree<string, FsVar>) -> FsAll, args_first: bool) -> FsAll {
+	map_exp = \x -> cast(fsMap2(x, locals, f, args_first): FsAll -> FsExp);
+	map_stat = \x -> cast(fsMap2(x, locals, f, args_first): FsAll -> FsStat);
+	map_var = \x -> cast(fsMap2(x, locals, f, args_first): FsAll -> FsVarUse);
+	do_args = \s -> switch (s) {
+		FsIf(cond, s1, s2,__):
+			FsIf(s with cond = map_exp(cond), s1 = map_stat(s1), s2 = map_stat(s2));
+		FsSwitch(x, sw_type, cases,__):
+			FsSwitch(s with x = map_exp(x), cases = map(cases, \c -> FsCase(c with body = map_stat(c.body))));
+		FsSeq(ss,__):
+			FsSeq(s with ss = mapConcat(ss, \x -> fsUnwrapSeq(map_stat(x))));
+		FsLet(v, e1,__):
+			FsLet(s with 
+				e = cast(fsMap2(e1, setTree(locals, v.name, v), f, args_first): FsAll -> FsExp)
+			);
+		FsWrapExp(e,__):
+			FsWrapExp(s with e = map_exp(e));
+		FsRet(e,__):
+			FsRet(s with e = map_exp(e));
+		FsAssign(to, what,__):
+			FsAssign(s with to = map_exp(to), what = map_exp(what));
+		FsIncRc(__,e,__):
+			FsIncRc(s with e = map_exp(e));
+		FsDecRc(e,__):
+			FsDecRc(s with e = map_exp(e));
+		FsClosure(vars, lambda,__):
+			FsClosure(s with vars = map(vars, map_var), lambda = cast(fsMap2(lambda, locals, f, args_first): FsAll -> FsLambda));
+		FsLambda(__,args, body, __,__): {
+			lambda_locals = fold(args, locals, \acc, arg -> setTree(acc, arg.name, arg));
+			FsLambda(s with
+				body = cast(fsMap2(body, lambda_locals, f, args_first): FsAll -> FsStat)
+			);
+		}
+		FsCall(fn, args, __,__):
+			FsCall(s with f = map_exp(fn), args = map(args, \x -> map_exp(x)));
+		FsCallPrim(__, es, __,__):
+			FsCallPrim(s with es = map(es, \x -> map_exp(x)));
+		FsTailCall(__, vals,__,__):
+			FsTailCall(s with vals = map(vals, \x -> map_exp(x)));
+		FsCast(e, from, type,__):
+			FsCast(s with e = map_exp(e));
+		FsVarUse(__,__,__,__): s;
+		FsConst(__,__): s;
+	}
+	if (args_first) f(do_args(a), locals) else do_args(f(a, locals));
+}
+
+fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
+	do_x = \x -> fsIter(x, f, args_first);
+	do_args = \s -> switch (s) {
+		FsIf(cond, s1, s2,__): {
+			do_x(cond);
+			do_x(s1);
+			do_x(s2);
+		}
+		FsSwitch(x, sw_type, cases,__): {
+			do_x(x);
+			iter(cases, \c -> do_x(c.body));
+		}
+		FsSeq(ss,__):
+			iter(ss, do_x);
+		FsLet(__, e1,__):
+			do_x(e1);
+		FsWrapExp(e,__):
+			do_x(e);
+		FsRet(e,__):
+			do_x(e);
+		FsAssign(to, what,__): {
+			do_x(to);
+			do_x(what);
+		}
+		FsIncRc(__,e,__):
+			do_x(e);
+		FsDecRc(e,__):
+			do_x(e);
+		FsClosure(vars, lambda,__): {
+			iter(vars, do_x);
+			do_x(lambda);
+		}
+		FsLambda(__,__, body, __,__):
+			do_x(body);
+		FsCall(fn, args, __,__): {
+			do_x(fn);
+			iter(args, \x -> do_x(x));
+		}
+		FsCallPrim(__, es, __,__):
+			iter(es, do_x);
+		FsTailCall(__, vals,__,__):
+			iter(vals, do_x);
+		FsCast(e, from, type,__):
+			do_x(e);
+		FsVarUse(__,__,__,__): {}
+		FsConst(__,__): {}
+	}
+	if (args_first) {
+		do_args(a); f(a);	
+	} else {
+		f(a); do_args(a);
+	}
 }
 
 fsFold(s: FsAll, v0: ?, f: (?, FsAll) -> ?, merge: (?, ?) -> ?, args_first: bool) -> ? {
@@ -81,7 +184,7 @@ fsArgs(s: FsAll) -> [[FsAll]] {
 		FsCallPrim(__,es,__,__):  [es];
 		FsTailCall(__,vs,__,__):  [vs];
 		FsCast(e1,__,__,__):      [[e1]];
-		FsVarUse(__,__,__):       [[]];
+		FsVarUse(__,__,__,__):    [[]];
 		FsConst(__,__):           [[]];
 	}
 }
