@@ -803,7 +803,7 @@ class TextClip extends NativeWidgetClip {
 		if (this.style.wordSpacing != spacing) {
 			this.style.wordSpacing = spacing;
 			updateTextMetrics();
-			this.emitEvent('textwidthchanged', metrics.width);
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
 		}
 	}
 
