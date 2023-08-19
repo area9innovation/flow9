@@ -18,11 +18,14 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 		FsIf(cond, s1, s2,__):
 			FsIf(s with cond = map_exp(cond), s1 = map_stat(s1), s2 = map_stat(s2));
 		FsSwitch(x, sw_type, cases,__):
-			FsSwitch(s with x = map_exp(x), cases = map(cases, \c -> FsCase(c with body = map_stat(c.body))));
+			FsSwitch(s with 
+				x = map_exp(x),
+				cases = map(cases, \c -> FsCase(c with body = map_stat(c.body)))
+			);
 		FsSeq(ss,__):
 			FsSeq(s with ss = mapConcat(ss, \x -> fsUnwrapSeq(map_stat(x))));
-		FsLet(__, e1,__):
-			FsLet(s with e = map_exp(e1));
+		FsLet(__, e1, s1,__):
+			FsLet(s with e = map_exp(e1), s = map_stat(s1));
 		FsWrapExp(e,__):
 			FsWrapExp(s with e = map_exp(e));
 		FsRet(e,__):
@@ -34,7 +37,10 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 		FsDecRc(e,__):
 			FsDecRc(s with e = map_exp(e));
 		FsClosure(vars, lambda,__):
-			FsClosure(s with vars = map(vars, map_var), lambda = cast(fsMap(lambda, f, args_first): FsAll -> FsLambda));
+			FsClosure(s with
+				vars = map(vars, map_var),
+				lambda = cast(fsMap(lambda, f, args_first): FsAll -> FsLambda)
+			);
 		FsLambda(__,__, body, __,__):
 			FsLambda(s with body = map_stat(body));
 		FsCall(fn, args, __,__):
@@ -62,10 +68,12 @@ fsMap2(a: FsAll, locals: Tree<string, FsVar>, f: (FsAll, Tree<string, FsVar>) ->
 			FsSwitch(s with x = map_exp(x), cases = map(cases, \c -> FsCase(c with body = map_stat(c.body))));
 		FsSeq(ss,__):
 			FsSeq(s with ss = mapConcat(ss, \x -> fsUnwrapSeq(map_stat(x))));
-		FsLet(v, e1,__):
+		FsLet(v, e1, s1,__): {
 			FsLet(s with 
-				e = cast(fsMap2(e1, setTree(locals, v.name, v), f, args_first): FsAll -> FsExp)
+				e = cast(fsMap2(e1, locals, f, args_first): FsAll -> FsExp),
+				s = cast(fsMap2(s1, setTree(locals, v.name, v), f, args_first): FsAll -> FsStat),
 			);
+		}
 		FsWrapExp(e,__):
 			FsWrapExp(s with e = map_exp(e));
 		FsRet(e,__):
@@ -76,8 +84,13 @@ fsMap2(a: FsAll, locals: Tree<string, FsVar>, f: (FsAll, Tree<string, FsVar>) ->
 			FsIncRc(s with e = map_exp(e));
 		FsDecRc(e,__):
 			FsDecRc(s with e = map_exp(e));
-		FsClosure(vars, lambda,__):
-			FsClosure(s with vars = map(vars, map_var), lambda = cast(fsMap2(lambda, locals, f, args_first): FsAll -> FsLambda));
+		FsClosure(vars, lambda,__): {
+			closure_locals = fold(vars, makeTree(), \acc, arg -> setTree(acc, arg.var.name, arg.var));
+			FsClosure(s with 
+				vars = map(vars, map_var),
+				lambda = cast(fsMap2(lambda, closure_locals, f, args_first): FsAll -> FsLambda)
+			);
+		}
 		FsLambda(__,args, body, __,__): {
 			lambda_locals = fold(args, locals, \acc, arg -> setTree(acc, arg.name, arg));
 			FsLambda(s with
@@ -112,8 +125,10 @@ fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
 		}
 		FsSeq(ss,__):
 			iter(ss, do_x);
-		FsLet(__, e1,__):
+		FsLet(__, e1, s1,__): {
 			do_x(e1);
+			do_x(s1);
+		}
 		FsWrapExp(e,__):
 			do_x(e);
 		FsRet(e,__):
@@ -172,7 +187,7 @@ fsArgs(s: FsAll) -> [[FsAll]] {
 		FsIf(cond, s1, s2,__):    [[cond, s1], [cond, s2]];
 		FsSwitch(x,__, cs,__):    map(cs, \c -> [x, c.body]);
 		FsSeq(ss,__):             [ss];
-		FsLet(__, e1,__):         [[e1]];
+		FsLet(__, e1, s1,__):     [[e1, s1]];
 		FsWrapExp(e1,__):         [[e1]];
 		FsRet(e1,__):             [[e1]];
 		FsAssign(to, what,__):    [[to, what]];

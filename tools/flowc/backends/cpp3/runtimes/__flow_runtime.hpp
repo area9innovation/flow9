@@ -189,11 +189,11 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::DOUBLE, T>;
 
 template<typename T> inline T incRc(T x, Int d = 1) {
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { x->rc_ += d; } return x;
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ += d; } } return x;
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } }
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } } }
 }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret, Int d = 1) {
@@ -1215,6 +1215,15 @@ inline T makeDefVal() {
 		}
 		(std::make_index_sequence<S::SIZE>{});
 	}
+}
+
+template<typename T>
+inline T makeDefInit() {
+	if constexpr (std::is_same_v<T, Void>) return void_value;
+	else if constexpr (std::is_same_v<T, Int>) return 0;
+	else if constexpr (std::is_same_v<T, Bool>) return false;
+	else if constexpr (std::is_same_v<T, Double>) return 0.0;
+	else return nullptr;
 }
 
 void cleanupAtExit();

@@ -5,7 +5,32 @@ export {
 	fsStatPerceus1(s: FsStat, debug: bool) -> FsStat;
 }
 
-fsStatPerceus1(s: FsStat, debug: bool) -> FsStat {
+fsStatPerceus1(s0: FsStat, debug: bool) -> FsStat {
+	id_counter = ref 0;
+	new_id = \-> {
+		id = ^id_counter;
+		id_counter := ^id_counter + 1;
+		id;
+	}
+	s = cast(fsMap(s0, \s -> switch(s) {
+		FsIf(__,__,__,__):        FsIf(s with id = new_id());
+		FsSwitch(__,__,__,__):    FsSwitch(s with id = new_id());
+		FsSeq(__, __):            FsSeq(s with id = new_id());
+		FsWrapExp(__,__):         FsWrapExp(s with id = new_id());
+		FsRet(__,__):             FsRet(s with id = new_id());
+		FsAssign(__,__,__):       FsAssign(s with id = new_id());
+		FsIncRc(__,__,__):        FsIncRc(s with id = new_id());
+		FsDecRc(__,__):           FsDecRc(s with id = new_id());
+		FsLet(__,__,__,__):       FsLet(s with id = new_id());
+		FsClosure(__,__,__):      FsClosure(s with id = new_id());
+		FsLambda(__,__,__,__,__): FsLambda(s with id = new_id());
+		FsCall(__,__,__,__):      FsCall(s with id = new_id());
+		FsCallPrim(__,__,__,__):  FsCallPrim(s with id = new_id());
+		FsCast(__,__,__,__):      FsCast(s with id = new_id());
+		FsConst(__,__):           FsConst(s with id = new_id());
+		FsTailCall(__,__,__,__):  FsTailCall(s with id = new_id());
+		FsVarUse(__,__,__,__):    FsVarUse(s with id = new_id());
+	}, false): FsAll -> FsStat);
 	vars = ref makeTree();
 	fsIter(s, \x -> switch (x) {
 		FsVarUse(v, kind, last,__): {
@@ -30,14 +55,15 @@ fsStatPerceus1(s: FsStat, debug: bool) -> FsStat {
 			//"s RAW:\n" + toStringFormatted(s1) + "\n"
 		);
 	}
-	// fsMap2(s: FsAll, locals: Tree<string, FsVar>, fn: (FsAll, Tree<string, FsVar>) -> FsAll, args_first: bool) -> FsAll;
+	// fsId2varsPost1(s1: FsStat, debug: bool) -> Tree<int, Set<FsVar>>
+	post_vars = fsId2varsPost1(s, debug);
 	cast(fsMap2(s, makeTree(), \x, locals -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
 			memops = fsGetMemops1(cond, debug);
 			fsAddIncs1(memops,
 				FsIf(x with
-					s1 = fsDecUnused1(pos.id, locals, fsAddDecsx12(memops, pos, id), debug),
-					s2 = fsDecUnused1(neg.id, locals, fsAddDecsx12(memops, neg, id), debug)
+					s1 = fsDecUnused1(pos.id, locals, fsAddDecsx12(memops, pos, id), post_vars, debug),
+					s2 = fsDecUnused1(neg.id, locals, fsAddDecsx12(memops, neg, id), post_vars, debug)
 				), id
 			);
 		};
@@ -47,7 +73,7 @@ fsStatPerceus1(s: FsStat, debug: bool) -> FsStat {
 				FsSwitch(x with
 					cases = map(cs, \c ->
 						FsCase(c with
-							body = fsDecUnused1(c.body.id, locals, fsAddDecsx12(memops, c.body, id), debug)
+							body = fsDecUnused1(c.body.id, locals, fsAddDecsx12(memops, c.body, id), post_vars, debug)
 						)
 					)
 				), id
@@ -64,9 +90,10 @@ fsStatPerceus1(s: FsStat, debug: bool) -> FsStat {
 			}
 			fsAddIncs1(memops, fsAddDecsx1(memops, x1, id), id);
 		}
-		FsLet(__,e, id): {
+		FsLet(__,e, s2, id): {
 			memops = fsGetMemops1(e, debug);
-			fsAddIncs1(memops, fsAddDecsx1(memops, x, id), id);
+			//fsAddIncs1(memops, fsAddDecsx1(memops, x, id), id);
+			fsAddIncs1(memops, FsLet(x with s = fsAddDecsx12(memops, s2, s2.id)), id);
 		}
 		FsAssign(to, what, id): {
 			memops = fsGetMemops12(to, what, debug);
@@ -75,20 +102,11 @@ fsStatPerceus1(s: FsStat, debug: bool) -> FsStat {
 		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
 		FsDecRc(__,__): fail0("FsDecRc met during memory operations markup");
 		FsLambda(__,__, body,__,id): {
-			FsLambda(x with body = fsDecUnused1(id, locals, body, debug));
+			FsLambda(x with body = fsDecUnused1(id, locals, body, post_vars, debug));
 		}
 		default: x;
 	}, true): FsAll -> FsStat);
 }
-
-// fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?, merge: (?, ?) -> ?, args_first: bool) ->?;
-
-/*fsExtractVars(x: FsAll) -> [FsVarUse] {
-	fsFold(x, [], \acc, y -> switch (y) {
-		FsVarUse(__,__,__,__): arrayPush(acc, y);
-		default: acc;
-	}, concat, true);
-}*/
 
 fsExtractVars1(x: FsAll) -> Set<string> {
 	fsFold(x, makeSet(), \acc, y -> switch (y) {
@@ -97,24 +115,43 @@ fsExtractVars1(x: FsAll) -> Set<string> {
 	}, mergeSets, true);
 }
 
-fsDecUnused1(id: int, locals: Tree<string, FsVar>, x: FsStat, debug: bool) -> FsStat {
-	used = fsExtractVars1(x);
-	unused = foldTree(locals, [], \__,v, acc -> if (containsSet(used, v.name)) acc else arrayPush(acc, v));
+fsDecUnused1(id: int, locals: Tree<string, FsVar>, x: FsStat, post: Tree<int, Set<FsVar>>, debug: bool) -> FsStat {
+	//used = fsExtractVars1(x);
+	unused = foldTree(locals, [], \__,v, acc -> 
+		if (fiTypeIsScalar(v.type)) acc else {
+			switch (lookupTree(post, id)) {
+				Some(vs): {
+					if (containsSet(vs, v)) acc else arrayPush(acc, v);
+				}
+				None(): fail0(
+					"id: " + i2s(id) + " must be in a tree\n" + 
+					"stat:\n" + strIndent(fs2s(x))
+				);
+			}
+		}
+	);
 	if (debug) {
 		println("to dec <" + i2s(id) + "> unused: [" + superglue(unused, \v -> v.name, ", ") + "]");
 	}
 	if (length(unused) == 0) x else {
-		FsSeq(concat(
+		ret = FsSeq(concat(
 			map(unused, \v -> FsDecRc(FsVarUse(v, FsVarLocal(), false, -1), -1)),
 			fsUnwrapSeq(x)
 		), -1);
+		if (id == 117) {
+			println("AAA:\n" + 
+				"PRE:\n" + strIndent(fs2s(x)) + "\n" +
+				"POST:\n" + strIndent(fs2s(ret)) + "\n"
+			);
+		}
+		ret;
 	}
 }
 
 fsGetMemops1(e: FsExp, debug: bool) -> [Pair<FsVar, FsVarMemOps1>] {
 	memops = tree2pairs(fsExpVarIncs1(e, makeTree(), FsOrPrim()));
 	if (debug) {
-		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
+		memops_str = superglue(memops, \p -> p.first.name + ": inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) " + dec(1)" else "", ", ");
 		println("memops for <" + i2s(e.id) + ">: [" + memops_str + "]");
 	}
 	memops;
@@ -123,7 +160,7 @@ fsGetMemops1(e: FsExp, debug: bool) -> [Pair<FsVar, FsVarMemOps1>] {
 fsGetMemops12(e1: FsExp, e2: FsExp, debug: bool) -> [Pair<FsVar, FsVarMemOps1>] {
 	memops = tree2pairs(fsExpVarIncs1(e2, fsExpVarIncs1(e1, makeTree(), FsOrPrim()), FsOrPrim()));
 	if (debug) {
-		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
+		memops_str = superglue(memops, \p -> p.first.name + ": inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) " + dec(1)" else "", ", ");
 		println("memops for <" + i2s(e1.id) + ", " + i2s(e2.id) + ">: [" + memops_str + "]");
 	}
 	memops;
@@ -169,8 +206,16 @@ fsAddDecsx11(memops: [Pair<FsVar, FsVarMemOps1>], x: FsStat, id: int) -> FsStat 
 			}
 			default: {
 				ret_var = FsVar("tmp_return_var", fsType(ret));
-				seq2 = replace(seq1, length(seq1) - 1, FsLet(ret_var, ret.e, -1));
-				FsSeq(concat3(seq2, decs, [FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)]), id);
+				//seq2 = replace(seq1, length(seq1) - 1, FsLet(ret_var, ret.e, -1));
+				//FsSeq(concat3(seq2, decs, [FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)]), id);
+				FsSeq(
+					arrayPush(tail(seq1),
+						FsLet(ret_var, ret.e,
+							FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), id),
+							id
+						)
+					), id
+				);
 			}
 		}
 	}
@@ -250,4 +295,85 @@ fsExpVarIncs1(e: FsExp, acc: Tree<FsVar, FsVarMemOps1>, op: FsPrim) -> Tree<FsVa
 		}
 		FsConst(c, id): acc;
 	}
+}
+
+FsPerceusAcc1(
+	id2vars: Tree<int, Set<FsVar>>,
+	vars: Set<FsVar>
+);
+
+fsMergeStacks1(l1: List<Set<FsVar>>, l2: List<Set<FsVar>>) -> List<Set<FsVar>> {
+	switch (l1) {
+		Cons(s1, t1): {
+			switch (l2) {
+				Cons(s2, t2): {
+					Cons(mergeSets(s1, s2), fsMergeStacks1(t1, t2));
+				}
+				EmptyList(): l1;
+			}
+		}
+		EmptyList(): l2;
+	}
+}
+
+fsMergeVars1(p1: FsPerceusAcc1, p2: FsPerceusAcc1) -> FsPerceusAcc1 {
+	FsPerceusAcc1(
+		mergeTreeCustom(p1.id2vars, p2.id2vars, \id, x1, x2 -> mergeSets(x1, x2)),
+		mergeSets(p1.vars, p2.vars)
+	);
+}
+
+fsId2varsPost1(s1: FsStat, debug: bool) -> Tree<int, Set<FsVar>> {
+	show_vars = \vs -> "[" + superglue(set2array(vs), \v -> v.name, ", ") + "]";
+	fsFold2(s1, Pair(FsPerceusAcc1(makeTree(), makeSet()), makeList()),
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					if (debug) {
+						st = switch (acc.second) {
+							Cons(vars,__): show_vars(vars);
+							EmptyList(): ""
+						}
+						println(
+							"(B) id=" + i2s(id) + " pushing stack: [" + show_vars(acc.first.vars) + "]\n" +
+							"\tacc.second: [" + st + "]\n"
+						);
+					}
+					Pair(
+						FsPerceusAcc1(setTree(acc.first.id2vars, x.id, makeSet()), makeSet()), 
+						Cons(acc.first.vars, acc.second)
+					);
+				}
+				default: acc;
+			}
+		},
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
+			switch (x) {
+				FsLambda(__,__,__,__,__): {
+					switch (acc.second) {
+						Cons(new_vars, new_stack): {
+							if (debug) {
+								println("(B) id=" + i2s(x.id) + " poping stack: " + show_vars(new_vars));
+							}
+							Pair(FsPerceusAcc1(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), new_stack);
+						}
+						default: fail0("empty stack pop");
+					}
+				}
+				FsVarUse(v, kind, last, id): {
+					new_vars = switch (kind) {
+						FsVarLocal(): add_v(acc.first.vars, v);
+						default: acc.first.vars;
+					}
+					Pair(FsPerceusAcc1(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
+				}
+				default: {
+					Pair(FsPerceusAcc1(setTree(acc.first.id2vars, x.id, acc.first.vars), acc.first.vars), acc.second);
+				}
+			}
+		},
+		\args -> reverseA(args),
+		\p1, p2 -> Pair(fsMergeVars1(p1.first, p2.first), fsMergeStacks1(p1.second, p2.second))
+	).first.id2vars;
 }
