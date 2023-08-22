@@ -27,7 +27,8 @@ updateSourceMapFile(
 	content : string,
 	destinationFile : string,
 	path2varMode : bool,
-	haxePath : string,
+	haxeStdPath : string,
+	haxeLibPath : string,
 	flow9Path : string,
 	onOK : () -> void,
 	onError : (string) -> void
@@ -36,7 +37,8 @@ updateSourceMapFile(
 	sources = getJsonArrayField(json, "sources");
 	rootPath = takeBeforeLast(flow9Path, "/", "");
 	rootUrl = filePathToURL(rootPath);
-	haxeUrl = filePathToURL(haxePath);
+	haxeLibUrl = filePathToURL(haxeLibPath);
+	haxeStdUrl = filePathToURL(haxeStdPath);
 	if (content == "") {
 		onError("File is empty");
 	} else if (sources == []) {
@@ -44,17 +46,20 @@ updateSourceMapFile(
 	} else if (rootPath == "" || !isDirectory(rootPath)) {
 		onError("Wrong path: " + flow9Path);
 	} else {
-		println("Haxe path: " + haxePath);
+		println("Haxe std path: " + haxeStdPath);
+		println("Haxe lib path: " + haxeLibPath);
 		println("Root path: " + rootPath);
 
 		folders = getFolders(rootPath);
-		pathVar = arrayPush(
+		pathVar = concat(
 			map(folders, \name -> {
 				path = rootUrl + "/" + name;
 				var = "$" + toUpperCase(name) + "_PATH";
 				Pair(path, var);
 			}),
-			Pair(haxeUrl, "$HAXE_PATH")
+			[	Pair(haxeStdUrl, "$HAXE_STD_PATH"),
+				Pair(haxeLibUrl, "$HAXE_LIB_PATH"),
+			]
 		);
 		replaces0 = if (path2varMode) {
 			pathVar;
@@ -62,6 +67,11 @@ updateSourceMapFile(
 			map(pathVar, unpairC(\path, var -> Pair(var, path)));
 		}
 		replaces = map(replaces0, unpairC(\first, second -> Pair(toLowerCase(first), second)));
+		if (isUrlParameterTrue("verbose")) {
+			println("Replaces:");
+			iter(replaces, println);
+			println("");
+		}
 
 		updateFn = \path -> {
 			pathL = toLowerCase(path);
@@ -91,6 +101,18 @@ updateSourceMapFile(
 	}
 }
 
+executeCmd(cmd : string, args : [string], onOK : (string) -> void, onError : (string) -> void) -> void {
+	startProcess(cmd, args, "", "",
+		\__, out, err -> {
+			if (err != "") {
+				onError("Error executing " + cmd + ": " + err);
+			} else {
+				onOK(trim2(out, " \t\n\r"));
+			}
+		}
+	);
+}
+
 main() {
 	modes = ["path_to_var", "var_to_path"];
 
@@ -108,50 +130,58 @@ main() {
 		println(HELP);
 		onOK();
 	} else {
-		cmd = if (windows()) "where" else "which";
-		startProcess(cmd, ["haxe"], "", "",
-			\__, out, err -> {
-				haxePath0 = normalizePath(strSplit(trim(out), "\n")[0]);
-				haxePath = takeBeforeLast(haxePath0, "/", haxePath0);
-				if (err != "") {
-					onError("Error looking for haxe: " + err);
-				} else if (haxePath == "") {
-					onError("Cannot get result from where command");
+		executeCmd("haxelib", ["config"],
+			\out1 -> {
+				haxeLibPath = normalizePath(strSplit(out1, "\n")[0]);
+				if (haxeLibPath == "") {
+					onError("Cannot get path to haxe lib folder");
 				} else {
-					isUrl = startsWith(file, "http://") || startsWith(file, "https://");
-					destinationFile = if (isUrl) {
-						takeAfterLast(file, "/", "source.map");
-					} else {
-						file;
-					}
+					executeCmd("haxe", ["--cwd", flow9Path + "/tools/source_map", "--run", "ResolveStd.hx"],
+						\out2 -> {
+							haxeStdPath = normalizePath(strSplit(out2, "\n")[0]);
+							if (haxeStdPath == "") {
+								onError("Cannot get path to haxe std folder");
+							} else {
+								isUrl = startsWith(file, "http://") || startsWith(file, "https://");
+								destinationFile = if (isUrl) {
+									takeAfterLast(file, "/", "source.map");
+								} else {
+									file;
+								}
 
-					updateAndSave = \content -> {
-						updateSourceMapFile(
-							content,
-							destinationFile,
-							mode == modes[0],
-							haxePath,
-							flow9Path,
-							onOK,
-							onError
-						);
-					}
+								updateAndSave = \content -> {
+									updateSourceMapFile(
+										content,
+										destinationFile,
+										mode == modes[0],
+										haxeStdPath,
+										haxeLibPath,
+										flow9Path,
+										onOK,
+										onError
+									);
+								}
 
-					if (isUrl) {
-						httpRequest(
-							file,
-							false,
-							[],
-							[],
-							updateAndSave,
-							onError,
-							nop1
-						);
-					} else {
-						updateAndSave(getFileContent(file));
-					}
+								if (isUrl) {
+									httpRequest(
+										file,
+										false,
+										[],
+										[],
+										updateAndSave,
+										onError,
+										nop1
+									);
+								} else {
+									updateAndSave(getFileContent(file));
+								}
+							}
+						},
+						onError
+					);
 				}
-			}
+			},
+			onError
 		);
 	}
 }

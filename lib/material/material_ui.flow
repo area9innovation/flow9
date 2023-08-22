@@ -36,12 +36,13 @@ export {
 	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
 
 	MArrowNavigationStyle ::= MArrowNavigationDirection, MArrowNavigationSupportHomeEnd, MArrowNavigationCheckFocusability,
-							MArrowNavigationSelectItem, MArrowNavigationResetSelection;
+							MArrowNavigationSelectItem, MArrowNavigationResetSelection, MArrowNavigationCustomOnArrow;
 		MArrowNavigationDirection(vertical : bool); // true by default
 		MArrowNavigationSupportHomeEnd(support : bool); // true by default
 		MArrowNavigationCheckFocusability(fn : (int) -> bool);
-		MArrowNavigationSelectItem(fn : () -> void);
+		MArrowNavigationSelectItem(fn : () -> void, auto : bool);
 		MArrowNavigationResetSelection(fn : () -> bool);
+		MArrowNavigationCustomOnArrow(fn : (forw : bool) -> void, enabled : () -> bool);
 
 	// Help to create common patterns, when you need to place smth at the top
 	// of another material
@@ -290,7 +291,7 @@ MRadiosExtended(
 			focusEnabledIdx,
 			\ -> max(0, fgetValue(index)),
 			[
-				MArrowNavigationSelectItem(\ -> nextDistinct(index, i)),
+				MArrowNavigationSelectItem(\ -> nextDistinct(index, i), true),
 				MArrowNavigationResetSelection(\ -> {nextDistinct(index, -1); true}),
 				MArrowNavigationDirection(!isColsCombiner)
 			]
@@ -324,7 +325,8 @@ MArrowNavigationExt(
 	vertical = extractStruct(style, MArrowNavigationDirection(true)).vertical;
 	supportHomeEnd = extractStruct(style, MArrowNavigationSupportHomeEnd(true)).support;
 	checkFocusability = extractStruct(style, MArrowNavigationCheckFocusability(\__ -> true)).fn;
-	selectItem = extractStruct(style, MArrowNavigationSelectItem(nop)).fn;
+	customOnArrow = tryExtractStruct(style, MArrowNavigationCustomOnArrow(nop1, \ -> false));
+	selectItem = tryExtractStruct(style, MArrowNavigationSelectItem(nop, false));
 	resetSelection = extractStruct(style, MArrowNavigationResetSelection(\ -> false)).fn;
 	mainKeys = if (vertical) Pair(KEY_UP, KEY_DOWN) else Pair(KEY_LEFT, KEY_RIGHT);
 
@@ -337,20 +339,30 @@ MArrowNavigationExt(
 			if (!handled && fgetValue(focused)) {
 				idx = getValue(focusedIdx);
 				updateFocusedAnswer = \newIdx -> if (checkFocusability(newIdx)) nextDistinct(focusedIdx, newIdx);
+				onArrow = \forw, newIdx ->
+					eitherFn(customOnArrow,
+						\coa ->
+							if (coa.enabled()) coa.fn(forw)
+							else updateFocusedAnswer(newIdx),
+						\ -> updateFocusedAnswer(newIdx)
+					);
 				if (ke.keycode == mainKeys.first) { // backwards
-					updateFocusedAnswer(if (idx == 0) listLen - 1 else idx - 1);
+					onArrow(false, if (idx == 0) listLen - 1 else idx - 1);
 					true
 				} else if (ke.keycode == mainKeys.second) { // forward
-					updateFocusedAnswer(if (idx == listLen - 1) 0 else idx + 1);
+					onArrow(true, if (idx == listLen - 1) 0 else idx + 1);
 					true
 				} else if (supportHomeEnd && ke.keycode == KEY_HOME) {
-					updateFocusedAnswer(0);
+					onArrow(false, 0);
 					true
 				} else if (supportHomeEnd && ke.keycode == KEY_END) {
-					updateFocusedAnswer(listLen - 1);
+					onArrow(true, listLen - 1);
 					true
 				} else if (ke.keycode == KEY_ESCAPE) {
 					resetSelection()
+				} else if (eitherMap(selectItem, \si -> !si.auto, false) && ke.keycode == KEY_SPACE) {
+					maybeApply(selectItem, \si -> si.fn());
+					true
 				} else {
 					false
 				}
@@ -362,7 +374,7 @@ MArrowNavigationExt(
 				if (focIdx == i) deferUntilNextFrameRendered(\ -> {
 					nextDistinct(focusEnabledIdx, i);
 					nextDistinct(focused, true);
-					selectItem()
+					maybeApply(selectItem, \si -> if (si.auto) si.fn())
 				}) else {
 					nextDistinct(focused, false);
 				}

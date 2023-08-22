@@ -157,6 +157,8 @@ class TextClip extends NativeWidgetClip {
 	private var background : FlowGraphics = null;
 
 	private var metrics : Dynamic;
+	private static var measureElement : Dynamic;
+	private static var measureRange : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -494,17 +496,7 @@ class TextClip extends NativeWidgetClip {
 				if (Platform.isIE && style.fontFamily == "Material Icons") {
 					nativeWidget.textContent = this.contentGlyphs.modified;
 				} else {
-					var textContent = "";
-
-					var textLines : Array<String> = metrics.lines;
-					for (line in textLines) {
-						textContent = textContent + line + "\n";
-					}
-
-					if (textLines.length > 0) {
-						textContent = textContent.substring(0, textContent.length - 1);
-					}
-
+					var textContent = calculateTextContent();
 					nativeWidget.textContent = textContent;
 					if (textBackgroundWidget != null) {
 						textBackgroundWidget.textContent = textContent;
@@ -624,6 +616,20 @@ class TextClip extends NativeWidgetClip {
 		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
 	}
 
+	public function calculateTextContent() : String {
+		var textContent = "";
+
+		var textLines : Array<String> = metrics.lines;
+		for (line in textLines) {
+			textContent = textContent + line + "\n";
+		}
+
+		if (textLines.length > 0) {
+			textContent = textContent.substring(0, textContent.length - 1);
+		}
+		return textContent;
+	}
+
 	public static function bidiDecorate(text : String, dir : String) : String {
 		// I do not know how comes this workaround is needed.
 		// But without it, paragraph has &lt; and &gt; displayed wrong.
@@ -688,6 +694,17 @@ class TextClip extends NativeWidgetClip {
 
 	public static function isJapaneseFont(st) : Bool {
 		return st.fontFamily == "Meiryo" || st.fontFamily == "MeiryoBold";
+	}
+
+	public static var isMeiryoAvailable = false;
+	public static function useHTMLMeasurementJapaneseFont(st) : Bool {
+		if (isMeiryoAvailable) return false;
+		var checkMeyrioFont = function() {
+			var res = Browser.document.fonts.check("10px Meiryo");
+			if (res) isMeiryoAvailable = true;
+			return res;
+		}
+		return isJapaneseFont(st) && !checkMeyrioFont();
 	}
 
 	private static var ffMap : Dynamic;
@@ -785,8 +802,8 @@ class TextClip extends NativeWidgetClip {
 	public function setTextWordSpacing(spacing : Float) : Void {
 		if (this.style.wordSpacing != spacing) {
 			this.style.wordSpacing = spacing;
-			invalidateMetrics();
-			this.emitEvent('textwidthchanged');
+			updateTextMetrics();
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
 		}
 	}
 
@@ -1665,8 +1682,8 @@ class TextClip extends NativeWidgetClip {
 				}
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
-				if (isJapaneseFont(style) && this.isHTMLRenderer()) {
-					measureHTMLWidth();
+				if (this.isHTMLRenderer() && useHTMLMeasurementJapaneseFont(style)) {
+					measureHTMLSize();
 				}
 			}
 
@@ -1690,8 +1707,8 @@ class TextClip extends NativeWidgetClip {
 					Browser.document.fonts.addEventListener('loadingdone', function() {
 						updateTextWidth();
 						if (style.wordWrap) {
-							invalidateMetrics();
-							this.emitEvent('textwidthchanged');
+							updateTextMetrics();
+							this.emitEvent('textwidthchanged', metrics.width);
 						}
 					});
 				}
@@ -1699,7 +1716,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 
-		if (isJapaneseFont(style) || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
@@ -1720,10 +1737,86 @@ class TextClip extends NativeWidgetClip {
 						: textNodeWidth;
 				if (textWidth > 0 && textWidth != metrics.width) {
 					metrics.width = textWidth;
-					this.emitEvent('textwidthchanged');
+					this.emitEvent('textwidthchanged', textWidth);
 				}
 			}
 		}
+	}
+
+	private static var metricsCache = new Map();
+	private function measureHTMLSize() : Void {
+		if (Browser.document.createRange == null && nativeWidget == null) return;
+
+		if (TextClip.measureElement == null) {
+			TextClip.measureElement = Browser.document.createElement('p');
+			TextClip.measureElement.id = 'measureTextElement';
+			TextClip.measureElement.classList.add('nativeWidget');
+			TextClip.measureElement.classList.add('textWidget');
+			TextClip.measureElement.setAttribute('aria-hidden', 'true');
+			Browser.document.body.appendChild(TextClip.measureElement);
+		}
+
+		if (TextClip.measureRange == null) {
+			TextClip.measureRange = Browser.document.createRange();
+		}
+
+		var measureElement = TextClip.measureElement;
+		var measureRange = TextClip.measureRange;
+
+		updateNativeWidgetStyle();
+
+		var cacheKey = nativeWidget.textContent + '\n${nativeWidget.style.fontSize}\n${nativeWidget.style.fontWeight}';
+		var cachedMetrics = metricsCache.get(cacheKey);
+		if (cachedMetrics != null) {
+			metrics.width = cachedMetrics.width;
+			metrics.height = cachedMetrics.height;
+			return;
+		}
+
+		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
+		measureElement.style.fontSize = nativeWidget.style.fontSize;
+		measureElement.style.fontWeight = nativeWidget.style.fontWeight;
+		measureElement.style.wrap = nativeWidget.style.wrap;
+		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
+		measureElement.style.display = nativeWidget.style.display;
+
+		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+		if (wordWrap) {
+			measureElement.style.width = '${style.wordWrapWidth}px';
+		} else {
+			measureElement.style.width = 'max-content';
+		}
+
+		measureElement.textContent = nativeWidget.textContent;
+
+		measureRange.selectNodeContents(measureElement);
+		if (measureRange.getBoundingClientRect != null) {
+			var rect = measureRange.getBoundingClientRect();
+			if (rect != null) {
+				var viewportScale = RenderSupport.getViewportScale();
+				var textNodeWidth = (rect.right - rect.left) * viewportScale;
+				var textNodeHeight = (rect.bottom - rect.top) * viewportScale;
+
+				if (textNodeWidth >= 0.) {
+					metrics.width = textNodeWidth;
+				}
+
+				if (textNodeHeight >= 0. && metrics.lineHeight > 0) {
+					var textNodeLines = Math.round(textNodeHeight / metrics.lineHeight);
+					var currentLines = Math.round(metrics.height / metrics.lineHeight);
+
+					if (currentLines > 0 && textNodeLines != currentLines) {
+						metrics.height = metrics.height * textNodeLines / currentLines;
+					}
+				}
+
+				if (textNodeWidth >= 0. && textNodeHeight >= 0.) {
+					metricsCache.set(cacheKey, {width : textNodeWidth, height : textNodeHeight});
+				}
+			}
+		}
+
+		measureElement.style.display = 'none';
 	}
 
 	private function measureHTMLWidth() : Void {
