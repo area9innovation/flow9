@@ -783,6 +783,43 @@ class Native {
 		return NativeTime.timestamp();
 	}
 
+	#if js
+	public static function getLocalTimezoneId() : String {
+		return new js.lib.intl.DateTimeFormat().resolvedOptions().timeZone;
+	}
+
+	public static function getTimezoneTimeString(utcStamp : Float, timezoneId : String, language : String) : String {
+		var date = new js.lib.Date(utcStamp);
+		var tzName : Dynamic = "short";
+
+		if (timezoneId == "") {
+			timezoneId = "UTC";
+		}
+
+		var tz : Dynamic = timezoneId;
+
+		return date.toLocaleString(language, { timeZone: tz, timeZoneName: tzName });
+	}
+
+	public static function getTimezoneOffset(utcStamp : Float, timezoneId : String) : Float {
+		if (timezoneId == "") {
+			return 0;
+		}
+		var tz : Dynamic = timezoneId;
+
+		var stamp;
+		try {
+			var timeString = new js.lib.Date(utcStamp).toLocaleString("en-us", { timeZone: tz });
+			stamp = new js.lib.Date(timeString).getTime();
+		} catch (e : Dynamic) {
+			return 0;
+		}
+
+		var localOffset = new js.lib.Date().getTimezoneOffset();
+		return Math.round(Math.round((stamp - utcStamp) / 600) / 100 - localOffset) * 60 * 1000;
+	}
+	#end
+
 	// native getCurrentDate : () -> [Date] = Native.getCurrentDate;
 	public static function getCurrentDate() : Dynamic {
 		var date = Date.now();
