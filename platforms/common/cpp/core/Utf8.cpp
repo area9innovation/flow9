@@ -195,7 +195,7 @@ void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned
     // Before decode the symbol from bytes chain we should check, does the chain is correct.
     // Each byte after the first should contains signature that it is a part of chain.
     //  second/third/fourth bytes should starts with 10xxxxxx
-    auto is_sequence_correct = [str, size](size_t i, int bytes)
+    auto is_sequence_correct = [str, size](size_t i, size_t bytes)
     {
         bool is_correct = true;
         if (size - i >= bytes)
@@ -218,7 +218,7 @@ void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned
     };
 
     // Decode the chain of bytes into one symbol.
-    auto push_sequence = [&out, str, decode_error, is_sequence_correct, to_utf16_js_style](unsigned char mask, unsigned char c, size_t i, int bytes)
+    auto push_sequence = [&out, str, decode_error, is_sequence_correct, to_utf16_js_style](unsigned char mask, unsigned char c, size_t i, size_t bytes)
     {
         if (is_sequence_correct(i, bytes))
         {
