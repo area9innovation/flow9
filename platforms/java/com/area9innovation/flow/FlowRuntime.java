@@ -2,7 +2,6 @@ package com.area9innovation.flow;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
-
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 
@@ -277,5 +276,55 @@ public abstract class FlowRuntime {
 		if (o1 instanceof Double || o2 instanceof Double)
 			return Double.valueOf(((Number)o1).doubleValue() % ((Number)o2).doubleValue());
 		return Integer.valueOf(((Number)o1).intValue() % ((Number)o2).intValue());
+	}
+
+	public static void logCrash(Throwable ex) throws Throwable {
+		String timeStamp = new java.text.SimpleDateFormat("yyyy/MM/dd/HH:mm:ss").format(
+			java.util.Calendar.getInstance().getTime()
+		);
+		// Add timestamp to the crash message
+		String crash = "[" + timeStamp + "]\n" + exceptionStackTrace(ex);
+		String app_full_name = new java.io.File(
+				FlowRuntime.class.getProtectionDomain().getCodeSource().getLocation().getPath()
+			).getName();
+		// remove extension from app name
+		String app_name = app_full_name.substring(0, app_full_name.lastIndexOf('.'));
+		String flow_home = System.getenv("FLOW_HOME");
+		String log_file = app_name + "_crashes.log";
+		java.nio.file.Path log_path =
+			(flow_home == null) ?
+			java.nio.file.Paths.get(log_file) :
+			java.nio.file.Paths.get(flow_home, ".log", log_file);
+		java.util.function.Consumer<String> crash_crash = (String msg) ->
+			System.out.println("Could not write a crash log of " + app_name + "\n" + ", log path: " + log_path + "\n" + msg);
+		try {
+			String old_log = new String(java.nio.file.Files.readAllBytes(log_path));
+			String new_log = old_log + "\n" + crash;
+			// Trim log file in case it grows too big
+			if (new_log.length() > 16384) {
+				new_log = new_log.substring(new_log.length() - 16384);
+			}
+			java.nio.file.Files.write(log_path, new_log.getBytes());
+		} catch (java.io.IOException e) {
+			try {
+				java.nio.file.Files.write(log_path, crash.getBytes());
+			} catch (java.io.IOException x) {
+				crash_crash.accept(exceptionStackTrace(x));
+			}
+			throw e;
+		} catch (java.nio.file.InvalidPathException e) {
+			try {
+				java.nio.file.Files.write(log_path, crash.getBytes());
+			} catch (java.io.IOException x) {
+				crash_crash.accept(exceptionStackTrace(x));
+			}
+			throw e;
+		}
+	}
+
+	private final static String exceptionStackTrace(Throwable ex) {
+		java.io.StringWriter stackTrace = new java.io.StringWriter();
+		ex.printStackTrace(new java.io.PrintWriter(stackTrace));
+		return stackTrace.toString();
 	}
 }
