@@ -1350,7 +1350,11 @@ class RenderSupport {
 			// Works incorrectly in Edge
 			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
 			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-			if (PreventDefault) e.preventDefault();
+			if (
+				PreventDefault
+				// To fix iOS + Chrome input/wigi editor focusability
+				&& (!(Platform.isIOS && Platform.isChrome) || e.pointerType != 'touch')
+			) e.preventDefault();
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
@@ -3041,6 +3045,12 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
+		} if (event == "textwidthchanged") {
+			var widthFn = function(width : Float) {
+				fn([width]);
+			};
+			clip.on(event, widthFn);
+			return function() { clip.off(event, widthFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};

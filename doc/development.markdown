@@ -219,7 +219,6 @@ if the Tropic is not shown. So the better way to do it is:
 There is one more kind of leak - the scoupe of closure. Suppose we create in the code some closure and pass it to some long-lived object.
 Then all in the sope of closure will not be garbage collected till the end of lifetime of the long-lived object.
 So if we should make such registration, make sure the scope is small and de-register the closure in the end of lifetime of the scope manually.
-For example: https://git.area9lyceum.com/Lyceum/lyceum/commit/8f77ee3e90314553ba347570130fb74aadb6a86
 
 #### Leaks. Debug
 
