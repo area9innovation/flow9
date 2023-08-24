@@ -81,9 +81,9 @@ Finally, add the following lines to ~/.inputrc (create the file if necessary). T
 
 You will need to restart your terminal to benefit from those changes and enable bash completion.
 
-## Install Haxe 3
+## Install Haxe
 
-Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work, but you'll have to manually roll back neko version to 2.0.0. The simplest way is to get haxe 3.2.1.
+Our build servers use haxe 4.2.5 and neko 2.3.0.
 
 An OS X installer is available here:
 
@@ -109,7 +109,7 @@ Then install the required libraries:
     haxelib install pixijs 4.8.4
     (pixijs version 5 isn't supported)
 
-## Install Neko 2.0.0
+## Install Neko 2.3.0
 
 If the haxe installer above did not install Neko or installed a wrong version, you can do it manually like this:
 

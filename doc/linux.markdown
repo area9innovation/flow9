@@ -121,7 +121,7 @@ You have to reclone the flow9 repository after installing Git LFS, or use
 git lfs pull
 ```
 # Install `Haxe`
-Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work.
+Our build servers use haxe 4.2.5 and neko 2.3.0.
 
 A Linux installer is available here: [Haxe download
 site](https://haxe.org/download/)
@@ -156,7 +156,7 @@ haxelib install format 3.4.2
 haxelib install pixijs 4.8.4 #(pixijs version 5 isn't supported)
 ```
 # Install `Neko`
-Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might
+Our build servers use haxe 4.2.5 and neko 2.3.0. Newer versions might
 work as well, but it is not guaranteed.
 
 **If the haxe installer above did not install Neko** or installed a wrong
